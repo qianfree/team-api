@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(pnpm install:*)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(node -e \"const m = require\\('@arco-design/web-vue'\\); console.log\\(typeof m.MenuGroup\\)\")",
+      "Bash(node -e \"const m = require\\('@arco-design/web-vue'\\); const keys = Object.keys\\(m\\).filter\\(k => k.toLowerCase\\(\\).includes\\('menu'\\)\\); console.log\\(keys\\)\")",
+      "Bash(npx vite:*)",
+      "mcp__zai-mcp-server__analyze_image",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(node -e ':*)",
+      "Bash(node -e \"const m = require\\('@arco-design/web-vue'\\); console.log\\('RangePicker:', typeof m.RangePicker\\); console.log\\('Space:', typeof m.Space\\); console.log\\('Switch:', typeof m.Switch\\); console.log\\('Tabs:', typeof m.Tabs\\); console.log\\('TabPane:', typeof m.TabPane\\); console.log\\('Drawer:', typeof m.Drawer\\); console.log\\('MenuGroup:', typeof m.MenuGroup\\);\")",
+      "Bash(xargs grep:*)",
+      "Bash(goose -dir migrations postgres \"host=8.155.5.88 port=5432 user=postgres password=Aa112211! dbname=team_api sslmode=disable\" up)",
+      "Bash(goose -dir migrations postgres \"host=192.168.50.22 port=15432 user=qian password=PgDB123456! dbname=team-api_2 sslmode=disable\" up)",
+      "Bash(gf gen:*)",
+      "Bash(go build:*)",
+      "Bash(git mv:*)",
+      "Bash(mv AdminLayout.vue DashboardPage.vue LoginPage.vue ../)",
+      "Bash(mv ai:*)"
+    ]
+  }
+}

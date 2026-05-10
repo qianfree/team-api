@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite:*)",
+      "Bash(go build:*)",
+      "Bash(goose -dir migrations postgres \"postgres://postgres:Aa123456@117.72.51.73:5432/team_api?sslmode=disable\" up)",
+      "Bash(goose -dir migrations postgres \"postgres://qian:PgDB123456!@192.168.50.22:15432/team-api_2?sslmode=disable\" up)",
+      "Bash(xxd \"E:/project/team-api/web/tenant/src/views/tenant/ProfilePage.vue\")",
+      "Bash(perl -pi -e 's/orgInfo\\\\.value = res\\\\.data\\\\r?$/orgInfo.value = res.data.data/' \"E:/project/team-api/web/tenant/src/views/tenant/OrganizationPage.vue\")",
+      "Bash(perl -pi -e 's/nameForm\\\\.name = res\\\\.data\\\\?\\\\.name/nameForm.name = res.data?.data?.name/' \"E:/project/team-api/web/tenant/src/views/tenant/OrganizationPage.vue\")",
+      "Bash(xxd src/components/common/Icon.vue)",
+      "Bash(sed -i '103s/^\\\\t\\\\t/\\\\t/' src/components/common/Icon.vue)",
+      "Bash(sed -i '104s/^\\\\t\\\\t/\\\\t/' src/components/common/Icon.vue)"
+    ]
+  }
+}

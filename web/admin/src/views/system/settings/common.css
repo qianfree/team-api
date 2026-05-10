@@ -1,0 +1,43 @@
+.tab-content {
+	display: flex;
+	flex-direction: column;
+	gap: 28px;
+}
+
+.section-title {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--color-text-1);
+	margin-bottom: 14px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--color-fill-2);
+}
+
+.section-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 16px 28px;
+}
+
+.field-full {
+	grid-column: 1 / -1;
+}
+
+.switch-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 0;
+}
+
+.switch-label {
+	font-size: 14px;
+	color: var(--color-text-1);
+	font-weight: 500;
+}
+
+.switch-desc {
+	font-size: 12px;
+	color: var(--color-text-3);
+	flex: 1;
+}
