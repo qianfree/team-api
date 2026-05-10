@@ -1,9 +1,32 @@
 package consts
 
 import (
+	"os"
+	"strings"
+
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 )
+
+// Version can be set at build time via -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=x.y.z".
+// Falls back to reading the VERSION file in the project root, or "dev" if unavailable.
+var Version = ""
+
+func init() {
+	if Version != "" {
+		return
+	}
+	data, err := os.ReadFile("VERSION")
+	if err != nil {
+		Version = "dev"
+		return
+	}
+	if v := strings.TrimSpace(string(data)); v != "" {
+		Version = v
+	} else {
+		Version = "dev"
+	}
+}
 
 // Business error variables (using gerror for full stack traces)
 var (

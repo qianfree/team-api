@@ -289,7 +289,6 @@ var (
 func printBanner() {
 	cyan := "\x1b[36;1m"
 	green := "\x1b[32m"
-	yellow := "\x1b[33m"
 	dim := "\x1b[2m"
 	reset := "\x1b[0m"
 
@@ -300,12 +299,10 @@ func printBanner() {
 	fmt.Printf("  %s   ██║   ██╔══╝  ██╔══██║██║╚██╔╝██║╚════╝██╔══██║██╔═══╝ ██║%s\n", cyan, reset)
 	fmt.Printf("  %s   ██║   ███████╗██║  ██║██║ ╚═╝ ██║      ██║  ██║██║     ██║%s\n", cyan, reset)
 	fmt.Printf("  %s   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝      ╚═╝  ╚═╝╚═╝     ╚═╝%s\n", cyan, reset)
+	fmt.Printf("  %sTeam-API%s %s%s%s  %s|  %s%s企业级大模型 API 网关系统%s\n", cyan, reset, green, consts.Version, reset, dim, reset, dim, reset)
+	fmt.Printf("  %shttps://github.com/qianfree/team-api%s\n", dim, reset)
 	fmt.Println()
-	fmt.Printf("  %sTeam-API%s %sv0.1.0%s\n", cyan, reset, green, reset)
-	fmt.Printf("  %sMulti-tenant AI API Gateway%s\n", dim, reset)
-	fmt.Println()
-	fmt.Printf("  %sLicensed under GNU AGPL v3.0%s\n", yellow, reset)
-	fmt.Printf("  %sCopyright © 2025-2026 Team-API Contributors%s\n", dim, reset)
+	fmt.Printf("  %sAGPL v3.0 开源协议  |  Copyright © 2025-2026 Team-API Contributors%s\n", dim, reset)
 	fmt.Println()
 }
 
