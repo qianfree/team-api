@@ -1,0 +1,507 @@
+package billing
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"github.com/qianfree/team-api/internal/dao"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	rcommon "github.com/qianfree/team-api/relay/common"
+)
+
+// modelPriceCache 模型价格缓存（TTL 600s）
+var modelPriceCache = lcommon.NewCache("model_price", 600*time.Second)
+
+// ModelPrice 模型计费价格（含快照）
+type ModelPrice struct {
+	InputPrice      float64 // 每 1M input token 价格 (USD)
+	OutputPrice     float64 // 每 1M output token 价格 (USD)
+	BillingMode     string  // token / per_request / tiered
+	PerRequestPrice float64 // 按次单价
+	DiscountRatio   float64 // 折扣比例（优先于 TenantMultiplier）
+	Currency        string  // USD
+}
+
+// PricingResult 定价计算结果
+type PricingResult struct {
+	InputPrice       float64 // 最终输入单价（每 1M token）
+	OutputPrice      float64 // 最终输出单价（每 1M token）
+	BaseInputPrice   float64 // 基础模型输入单价（应用倍率前）
+	BaseOutputPrice  float64 // 基础模型输出单价（应用倍率前）
+	BillingMode      string  // token / per_request / tiered
+	BillingSource    string  // base / tenant_custom / plan
+	PerRequestPrice  float64 // 按次单价
+	DiscountRatio    float64 // 折扣比例
+	InputMultiplier  float64 // 输入价格倍率（兼容旧快照）
+	OutputMultiplier float64 // 输出价格倍率（兼容旧快照）
+	TenantMultiplier float64 // 租户倍率
+	ModelMultiplier  float64 // 模型倍率
+	Currency         string
+
+	// Cache 直接定价
+	CacheReadPrice     float64 // 缓存读取每 1M token 价格
+	CacheCreationPrice float64 // 缓存创建每 1M token 价格
+}
+
+// ClearTenantPriceCache 清除租户的所有模型价格缓存
+func ClearTenantPriceCache(ctx context.Context, tenantID int64) {
+	var models []struct {
+		ModelId string `json:"model_id"`
+	}
+	dao.MdlTenantModels.Ctx(ctx).
+		As("tm").
+		LeftJoin("mdl_models m ON tm.model_id = m.id").
+		Where("tm.tenant_id", tenantID).
+		Fields("m.model_id").
+		Scan(&models)
+
+	for _, m := range models {
+		cacheKey := fmt.Sprintf("%d:%s", tenantID, m.ModelId)
+		modelPriceCache.Delete(ctx, cacheKey)
+	}
+}
+
+// GetModelPrice 获取模型价格
+// 优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
+func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*PricingResult, error) {
+	cacheKey := fmt.Sprintf("%d:%s", tenantID, modelName)
+	var cached PricingResult
+	if modelPriceCache.GetJSON(ctx, cacheKey, &cached) {
+		return &cached, nil
+	}
+
+	// 1. 查模型基础信息
+	type modelRow struct {
+		ID      int64  `json:"id"`
+		ModelId string `json:"model_id"`
+		Status  string `json:"status"`
+	}
+
+	var model modelRow
+	err := dao.MdlModels.Ctx(ctx).
+		Where("model_id", modelName).
+		Where("status", "active").
+		Fields("id, model_id, status").
+		Scan(&model)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "query model price")
+	}
+	if model.ID == 0 {
+		return nil, gerror.Newf("model not found: %s", modelName)
+	}
+
+	// 2. 从 mdl_pricing 获取基础定价
+	type pricingRow struct {
+		BillingMode        string   `json:"billing_mode"`
+		InputPrice         float64  `json:"input_price"`
+		OutputPrice        float64  `json:"output_price"`
+		PerRequestPrice    *float64 `json:"per_request_price"`
+		CacheReadPrice     float64  `json:"cache_read_price"`
+		CacheCreationPrice float64  `json:"cache_creation_price"`
+	}
+
+	var pricing pricingRow
+	err = dao.MdlPricing.Ctx(ctx).
+		Where("model_id", model.ID).
+		Where("min_tokens", 0).
+		Scan(&pricing)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "query model pricing")
+	}
+
+	billingMode := pricing.BillingMode
+	if billingMode == "" {
+		billingMode = "token"
+	}
+	inputPrice := pricing.InputPrice
+	outputPrice := pricing.OutputPrice
+	baseInputPrice := pricing.InputPrice
+	baseOutputPrice := pricing.OutputPrice
+	var perRequestPrice float64
+	if pricing.PerRequestPrice != nil {
+		perRequestPrice = *pricing.PerRequestPrice
+	}
+	cacheReadPrice := pricing.CacheReadPrice
+	cacheCreationPrice := pricing.CacheCreationPrice
+
+	// 3. 查租户独立价格（mdl_tenant_models）
+	type tenantModelRow struct {
+		CustomInputPrice  *float64 `json:"custom_input_price"`
+		CustomOutputPrice *float64 `json:"custom_output_price"`
+		Multiplier        *float64 `json:"multiplier"`
+		DiscountRatio     *float64 `json:"discount_ratio"`
+		BillingMode       *string  `json:"billing_mode"`
+		PerRequestPrice   *float64 `json:"per_request_price"`
+		Enabled           bool     `json:"enabled"`
+	}
+
+	var tm tenantModelRow
+	err = dao.MdlTenantModels.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("model_id", model.ID).
+		Fields("custom_input_price, custom_output_price, multiplier, discount_ratio, billing_mode, per_request_price, enabled").
+		Scan(&tm)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "query tenant model price")
+	}
+
+	tenantMultiplier := 1.0
+	discountRatio := 1.0
+	billingSource := "base"
+
+	if tm.Enabled {
+		billingSource = "tenant_custom"
+		if tm.BillingMode != nil && *tm.BillingMode != "" {
+			billingMode = *tm.BillingMode
+		}
+
+		// 租户独立价优先
+		if tm.CustomInputPrice != nil && *tm.CustomInputPrice > 0 {
+			inputPrice = *tm.CustomInputPrice
+		}
+		if tm.CustomOutputPrice != nil && *tm.CustomOutputPrice > 0 {
+			outputPrice = *tm.CustomOutputPrice
+		}
+
+		// discount_ratio 优先于 multiplier
+		if tm.DiscountRatio != nil && *tm.DiscountRatio > 0 {
+			discountRatio = *tm.DiscountRatio
+			tenantMultiplier = *tm.DiscountRatio
+		} else if tm.Multiplier != nil && *tm.Multiplier > 0 {
+			tenantMultiplier = *tm.Multiplier
+			discountRatio = *tm.Multiplier
+		}
+
+		// 租户覆盖按次单价
+		if tm.PerRequestPrice != nil && *tm.PerRequestPrice > 0 {
+			perRequestPrice = *tm.PerRequestPrice
+		}
+	}
+
+	// 4. 套餐价（待实现）
+	// 前置条件：需新增 pln_plan_model_pricing 表存储每个套餐的每个模型定价，
+	// 或为 pln_plans 增加 billing_discount_ratio 全局折扣字段。
+	// 查询链路：pln_tenant_plans → pln_plans → pln_plan_model_pricing
+	// 定价优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
+
+	result := &PricingResult{
+		InputPrice:         inputPrice,
+		OutputPrice:        outputPrice,
+		BaseInputPrice:     baseInputPrice,
+		BaseOutputPrice:    baseOutputPrice,
+		BillingMode:        billingMode,
+		BillingSource:      billingSource,
+		PerRequestPrice:    perRequestPrice,
+		DiscountRatio:      discountRatio,
+		TenantMultiplier:   tenantMultiplier,
+		ModelMultiplier:    1.0,
+		Currency:           "USD",
+		CacheReadPrice:     cacheReadPrice,
+		CacheCreationPrice: cacheCreationPrice,
+	}
+
+	modelPriceCache.Set(ctx, cacheKey, result)
+	return result, nil
+}
+
+// CalculateCost 计算实际费用（含阶梯定价）
+// inputTokens / outputTokens 为实际使用的 token 数
+func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputTokens, outputTokens int) (*CostBreakdown, error) {
+	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		return nil, err
+	}
+
+	// 按次计费：直接返回单价
+	if pricing.BillingMode == "per_request" {
+		return &CostBreakdown{
+			BaseCost:         pricing.PerRequestPrice,
+			InputCost:        0,
+			OutputCost:       0,
+			TotalCost:        pricing.PerRequestPrice,
+			InputTokens:      inputTokens,
+			OutputTokens:     outputTokens,
+			BillingMode:      pricing.BillingMode,
+			PerRequestPrice:  pricing.PerRequestPrice,
+			DiscountRatio:    pricing.DiscountRatio,
+			TenantMultiplier: pricing.TenantMultiplier,
+			Currency:         pricing.Currency,
+		}, nil
+	}
+
+	// Token / Tiered 计费
+	var inputCost, outputCost float64
+	if pricing.BillingMode == "tiered" {
+		inputCost, _ = calculateTieredCostFromPricing(ctx, modelName, inputTokens, true)
+		outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+	} else {
+		// 统一单价模式
+		inputCost = float64(inputTokens) / 1_000_000.0 * pricing.InputPrice
+		outputCost = float64(outputTokens) / 1_000_000.0 * pricing.OutputPrice
+	}
+
+	// 基础费用（应用租户折扣前）
+	baseCost := inputCost + outputCost
+	// 最终费用 = 基础费用 × 租户倍率
+	totalCost := baseCost * pricing.TenantMultiplier
+
+	return &CostBreakdown{
+		BaseCost:         baseCost,
+		InputCost:        inputCost * pricing.TenantMultiplier,
+		OutputCost:       outputCost * pricing.TenantMultiplier,
+		TotalCost:        totalCost,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		BillingMode:      pricing.BillingMode,
+		PerRequestPrice:  pricing.PerRequestPrice,
+		DiscountRatio:    pricing.DiscountRatio,
+		TenantMultiplier: pricing.TenantMultiplier,
+		Currency:         pricing.Currency,
+	}, nil
+}
+
+// CalculateCostWithUsage 计算实际费用（含 cache token 计费）
+// 传入完整的 Usage 结构，支持 cache_creation / cache_read 等 token 的费用计算
+func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName string, usage *rcommon.Usage) (*CostBreakdown, error) {
+	if usage == nil {
+		return nil, gerror.New("usage is nil")
+	}
+
+	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		return nil, err
+	}
+
+	inputTokens := usage.PromptTokens
+	outputTokens := usage.CompletionTokens
+
+	// 提取 cache token 数量
+	var cacheReadTokens, cacheCreationTokens int
+	if usage.PromptTokensDetails != nil {
+		cacheReadTokens = usage.PromptTokensDetails.CachedTokens
+		cacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
+	}
+
+	// 按次计费：直接返回单价
+	if pricing.BillingMode == "per_request" {
+		return &CostBreakdown{
+			BaseCost:            pricing.PerRequestPrice,
+			TotalCost:           pricing.PerRequestPrice,
+			InputTokens:         inputTokens,
+			OutputTokens:        outputTokens,
+			BillingMode:         pricing.BillingMode,
+			PerRequestPrice:     pricing.PerRequestPrice,
+			DiscountRatio:       pricing.DiscountRatio,
+			TenantMultiplier:    pricing.TenantMultiplier,
+			Currency:            pricing.Currency,
+			CacheCreationTokens: cacheCreationTokens,
+			CacheReadTokens:     cacheReadTokens,
+		}, nil
+	}
+
+	// 基础 token = 总 input - cache 部分（避免重复计费）
+	// 仅当 PromptTokens 包含 cache tokens 时才扣减（如 OpenAI 格式）。
+	// Claude API 和大部分第三方兼容 API 的 input_tokens 不含 cache，无需扣减。
+	baseInputTokens := inputTokens
+	if usage.CacheIncludedInPrompt {
+		baseInputTokens = inputTokens - cacheReadTokens - cacheCreationTokens
+		if baseInputTokens < 0 {
+			baseInputTokens = 0
+		}
+	}
+
+	// 基础输入费用
+	var baseInputCost float64
+	if pricing.BillingMode == "tiered" {
+		baseInputCost, _ = calculateTieredCostFromPricing(ctx, modelName, baseInputTokens, true)
+	} else {
+		baseInputCost = float64(baseInputTokens) / 1_000_000.0 * pricing.InputPrice
+	}
+
+	// 输出费用
+	var outputCost float64
+	if pricing.BillingMode == "tiered" {
+		outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+	} else {
+		outputCost = float64(outputTokens) / 1_000_000.0 * pricing.OutputPrice
+	}
+
+	// Cache 费用计算（直接定价）
+	cacheReadCost := float64(cacheReadTokens) / 1_000_000.0 * pricing.CacheReadPrice
+	cacheCreationCost := float64(cacheCreationTokens) / 1_000_000.0 * pricing.CacheCreationPrice
+
+	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
+	subtotal := baseInputCost + outputCost + cacheReadCost + cacheCreationCost
+	totalCost := subtotal * pricing.TenantMultiplier
+
+	return &CostBreakdown{
+		BaseCost:            subtotal,
+		InputCost:           baseInputCost * pricing.TenantMultiplier,
+		OutputCost:          outputCost * pricing.TenantMultiplier,
+		TotalCost:           totalCost,
+		InputTokens:         baseInputTokens,
+		OutputTokens:        outputTokens,
+		BillingMode:         pricing.BillingMode,
+		PerRequestPrice:     pricing.PerRequestPrice,
+		DiscountRatio:       pricing.DiscountRatio,
+		TenantMultiplier:    pricing.TenantMultiplier,
+		Currency:            pricing.Currency,
+		CacheCreationTokens: cacheCreationTokens,
+		CacheReadTokens:     cacheReadTokens,
+		CacheCreationCost:   cacheCreationCost * pricing.TenantMultiplier,
+		CacheReadCost:       cacheReadCost * pricing.TenantMultiplier,
+	}, nil
+}
+
+// CostBreakdown 费用明细
+type CostBreakdown struct {
+	BaseCost         float64 // 基础费用（应用租户折扣前）
+	InputCost        float64
+	OutputCost       float64
+	TotalCost        float64 // 含折扣后的总费用
+	InputTokens      int
+	OutputTokens     int
+	BillingMode      string
+	PerRequestPrice  float64
+	DiscountRatio    float64
+	InputMultiplier  float64
+	OutputMultiplier float64
+	TenantMultiplier float64
+	Currency         string
+
+	// Cache token 费用
+	CacheCreationTokens int
+	CacheReadTokens     int
+	CacheCreationCost   float64
+	CacheReadCost       float64
+}
+
+// EstimatePreDeductAmount 估算预扣金额
+// 非流式：输入 + max_tokens；流式：输入 + 预估上限（模型 max_output_tokens 的 80%）
+// 上限 $1.00
+func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		return 0.01, nil
+	}
+
+	// 按次计费：直接用单价
+	if pricing.BillingMode == "per_request" {
+		if pricing.PerRequestPrice > 1.0 {
+			return 1.0, nil
+		}
+		return pricing.PerRequestPrice, nil
+	}
+
+	// Token 计费：估算
+	type modelRow struct {
+		MaxOutputTokens int `json:"max_output_tokens"`
+	}
+	var model modelRow
+	err = dao.MdlModels.Ctx(ctx).
+		Where("model_id", modelName).
+		Fields("max_output_tokens").
+		Scan(&model)
+	if err != nil {
+		return 0, err
+	}
+
+	estimatedOutput := requestedMaxTokens
+	if estimatedOutput <= 0 || isStream {
+		estimatedOutput = int(float64(model.MaxOutputTokens) * 0.8)
+		if estimatedOutput <= 0 {
+			estimatedOutput = 4096
+		}
+	}
+
+	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, estimatedOutput)
+	if err != nil {
+		return 0.01, nil
+	}
+
+	if breakdown.TotalCost > 1.0 {
+		return 1.0, nil
+	}
+	if breakdown.TotalCost < 0.001 {
+		return 0.001, nil
+	}
+
+	return math.Ceil(breakdown.TotalCost*10000) / 10000, nil
+}
+
+// pricingTierRow 定价阶梯行（绝对价格）
+type pricingTierRow struct {
+	MinTokens   int64   `json:"min_tokens"`
+	MaxTokens   *int64  `json:"max_tokens"`
+	InputPrice  float64 `json:"input_price"`
+	OutputPrice float64 `json:"output_price"`
+}
+
+// calculateTieredCostFromPricing 从 mdl_pricing 读取阶梯绝对价格计算费用
+func calculateTieredCostFromPricing(ctx context.Context, modelName string, tokens int, isInput bool) (float64, float64) {
+	if tokens <= 0 {
+		return 0, 1.0
+	}
+
+	// 查模型ID
+	type modelIDRow struct {
+		ID int64 `json:"id"`
+	}
+	var mid modelIDRow
+	err := dao.MdlModels.Ctx(ctx).
+		Where("model_id", modelName).
+		Fields("id").
+		Scan(&mid)
+	if err != nil || mid.ID == 0 {
+		return 0, 1.0
+	}
+
+	// 查阶梯定价（绝对价格）
+	var tiers []pricingTierRow
+	err = dao.MdlPricing.Ctx(ctx).
+		Where("model_id", mid.ID).
+		Where("billing_mode", "tiered").
+		OrderAsc("min_tokens").
+		Fields("min_tokens, max_tokens, input_price, output_price").
+		Scan(&tiers)
+	if err != nil || len(tiers) == 0 {
+		return 0, 1.0
+	}
+
+	var totalCost float64
+	remaining := int64(tokens)
+
+	for _, tier := range tiers {
+		if remaining <= 0 {
+			break
+		}
+
+		price := tier.InputPrice
+		if !isInput {
+			price = tier.OutputPrice
+		}
+
+		if tier.MaxTokens == nil {
+			// 最后一段无上限
+			totalCost += float64(remaining) / 1_000_000.0 * price
+			remaining = 0
+		} else {
+			available := *tier.MaxTokens - tier.MinTokens
+			if available <= 0 {
+				continue
+			}
+			useTokens := remaining
+			if useTokens > available {
+				useTokens = available
+			}
+			totalCost += float64(useTokens) / 1_000_000.0 * price
+			remaining -= useTokens
+		}
+	}
+
+	return totalCost, 1.0
+}

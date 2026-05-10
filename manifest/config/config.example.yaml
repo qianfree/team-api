@@ -1,0 +1,56 @@
+# Team-API Runtime Configuration
+
+# Server
+server:
+  address:     ":18888"
+  serverAgent: "team-api"
+  dumpRouterMap: false
+
+# Logger
+logger:
+  level:  "all"
+  stdout: true
+  ctxKeys: ["RequestId"]
+
+# Database (PostgreSQL)
+database:
+  default:
+    type:     "pgsql"
+    link:     "pgsql:<user>:<password>@tcp(<host>:<port>)/<database>?sslmode=disable"
+    debug:    false
+    dryRun:   false
+    maxIdle:  10
+    maxOpen:  100
+    maxLifetime: "30s"
+
+# Redis
+redis:
+  default:
+    address: "<host>:<port>"
+    db:      0
+
+# Cache (GoFrame built-in, uses Redis as adapter)
+cache:
+  default:
+    adapter: "redis"
+
+# JWT Authentication
+jwt:
+  secret:          "<change-me-to-a-random-secret>"
+  accessTokenExpire:  "12h"
+  refreshTokenExpire: "7d"
+  issuer:          "team-api"
+  adminMaxSessions:  5
+  tenantMaxSessions: 10
+
+# Email SMTP (fallback defaults, override via opt_options or env vars)
+email:
+  smtp:
+    host:     ""
+    port:     587
+    username: ""
+    password: ""
+    from:     ""
+
+# Channel proxy (for accessing Google/Anthropic etc. from China)
+channel_proxy_url: ""
