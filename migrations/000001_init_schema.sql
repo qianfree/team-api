@@ -965,6 +965,7 @@ CREATE TABLE tnt_tenants (
     logo_url                                 VARCHAR(500),
     owner_user_id                            BIGINT,
     status                                   VARCHAR(20) DEFAULT 'active' NOT NULL,
+    max_members                              INTEGER DEFAULT 10 NOT NULL,
     settings                                 JSONB DEFAULT '{}'::jsonb,
     created_at                               TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at                               TIMESTAMPTZ DEFAULT now() NOT NULL,
