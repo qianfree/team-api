@@ -12,7 +12,7 @@
 - **数据库**：PostgreSQL（唯一，不用 MySQL/SQLite）
 - **缓存**：Redis + 内存缓存（双层缓存）
 - **前端**：Vue 3 + Vite + TailwindCSS + Naive UI（管理后台）
-- **包管理**：pnpm
+- **包管理**：bun
 - **对象存储**：S3 / OSS / COS / MinIO（禁止纯本地磁盘作为生产存储）
 
 ## 项目结构

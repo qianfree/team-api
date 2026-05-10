@@ -1,6 +1,7 @@
 ROOT_DIR    = $(shell pwd)
 DEPLOY_NAME = "team-api"
 DOCKER_NAME = "team-api"
+VERSION     ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
 
 # DB_URL 设置方式（三选一）：
 #   1. 创建 .env 文件（推荐）：  DB_URL = "host=... port=... user=... password=... dbname=... sslmode=disable"
@@ -21,7 +22,7 @@ run:
 
 # Build production binary
 build:
-	gf build
+	go build -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)" -o ./tmp/team-api main.go
 
 # Tidy go modules
 tidy:
