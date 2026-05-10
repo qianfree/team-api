@@ -120,7 +120,7 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-org/team-api.git
+git clone https://github.com/qianfree/team-api.git
 cd team-api
 ```
 
