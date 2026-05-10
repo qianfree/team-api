@@ -1,0 +1,48 @@
+package openai
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+
+	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
+)
+
+// handleEmbeddingResponse 处理 Embeddings 非流式响应
+func (a *Adaptor) handleEmbeddingResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+	}
+
+	if info.ChannelMeta.IsModelMapped {
+		body = replaceModelName(body, info.OriginModelName)
+	}
+
+	var embedResp dto.EmbeddingResponse
+	if err := json.Unmarshal(body, &embedResp); err == nil {
+		return &common.Usage{
+			PromptTokens:           embedResp.Usage.PromptTokens,
+			CompletionTokens:       embedResp.Usage.CompletionTokens,
+			TotalTokens:            embedResp.Usage.TotalTokens,
+			PromptTokensDetails:    common.DtoTokenDetailsToCommon(embedResp.Usage.PromptTokensDetails),
+			CompletionTokenDetails: common.DtoTokenDetailsToCommon(embedResp.Usage.CompletionTokenDetails),
+		}, nil
+	}
+
+	// 解析失败也透传 body
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(resp.StatusCode)
+	_, _ = writer.Write(body)
+
+	return &common.Usage{}, nil
+}

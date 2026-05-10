@@ -1,0 +1,31 @@
+
+# CLI tool configuration, only used in development environment.
+# https://goframe.org/docs/cli
+gfcli:
+  gen:
+    dao:
+      - link: "pgsql:<user>:<password>@tcp(<host>:<port>)/<database>"
+        type: "pgsql"
+        tables: ""
+        tablesEx: ""
+        prefix: ""
+        removePrefix: ""
+        descriptionTag: true
+        noModelComment: false
+        fieldTag: "json,cbor,yaml,xml,toml"
+        jsonCase: "SnakeCase"
+        path: "./"
+        modelPath: "./internal/model"
+        daoPath: "./internal/dao"
+        doPath: "./internal/model/do"
+        entityPath: "./internal/model/entity"
+    ctrl:
+      - apiPath:       "./api"
+        outPath:       "./internal/controller"
+        withService:   true
+        withModel:     false
+
+  docker:
+    build: "-a amd64 -s linux -p temp -ew"
+    tagPrefixes:
+      - team-api

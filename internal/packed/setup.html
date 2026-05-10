@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team-API - 系统初始化</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['DM Sans', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'DM Sans', system-ui, sans-serif; }
+
+        .setup-card {
+            box-shadow:
+                0 0 0 1px rgba(0, 0, 0, 0.03),
+                0 2px 4px rgba(0, 0, 0, 0.03),
+                0 12px 24px rgba(0, 0, 0, 0.06);
+        }
+
+        .input-field {
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .input-field:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .btn-primary {
+            background-color: #2563eb;
+            transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background-color: #1d4ed8;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+        }
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0.5px);
+        }
+        .btn-primary:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-up {
+            animation: fadeUp 0.4s ease-out both;
+        }
+        .delay-1 { animation-delay: 0.05s; }
+        .delay-2 { animation-delay: 0.1s; }
+        .delay-3 { animation-delay: 0.15s; }
+        .delay-4 { animation-delay: 0.2s; }
+        .delay-5 { animation-delay: 0.25s; }
+        .delay-6 { animation-delay: 0.3s; }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            display: inline-block;
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        .error-box {
+            transition: opacity 0.2s ease, max-height 0.2s ease;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+        }
+        .error-box.visible {
+            max-height: 80px;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4" style="background: linear-gradient(160deg, #f0f4f8 0%, #e8edf5 50%, #f5f3ff 100%);">
+
+    <div class="w-full max-w-md">
+        <div class="setup-card bg-white rounded-2xl p-8 sm:p-10">
+
+            <!-- Branding -->
+            <div class="text-center mb-8 animate-fade-up">
+                <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl mb-4" style="background: linear-gradient(135deg, #2563eb, #1d4ed8);">
+                    <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-semibold text-gray-900 tracking-tight">Team-API</h1>
+                <p class="text-sm text-gray-500 mt-1.5">系统初始化设置</p>
+            </div>
+
+            <!-- Description -->
+            <p class="text-sm text-gray-400 mb-7 animate-fade-up delay-1">
+                首次使用，请创建管理员账号以开始配置系统
+            </p>
+
+            <!-- Form -->
+            <form id="setupForm" class="space-y-4.5" autocomplete="off">
+                <div class="space-y-4">
+                    <!-- Username -->
+                    <div class="animate-fade-up delay-2">
+                        <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">用户名</label>
+                        <input
+                            type="text" id="username" name="username" required autofocus
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none"
+                            placeholder="3-20位，字母/数字/下划线" autocomplete="off" spellcheck="false">
+                    </div>
+
+                    <!-- Display Name -->
+                    <div class="animate-fade-up delay-3">
+                        <label for="displayName" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            显示名称 <span class="text-gray-400 font-normal">(可选)</span>
+                        </label>
+                        <input
+                            type="text" id="displayName" name="displayName"
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none"
+                            placeholder="管理员显示名称" autocomplete="off">
+                    </div>
+
+                    <!-- Password -->
+                    <div class="animate-fade-up delay-4">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">密码</label>
+                        <input
+                            type="password" id="password" name="password" required
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none font-mono"
+                            placeholder="至少8位，含大小写字母和数字" autocomplete="new-password">
+                    </div>
+
+                    <!-- Confirm Password -->
+                    <div class="animate-fade-up delay-5">
+                        <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1.5">确认密码</label>
+                        <input
+                            type="password" id="confirmPassword" name="confirmPassword" required
+                            class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none font-mono"
+                            placeholder="再次输入密码" autocomplete="new-password">
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div id="errorArea" class="error-box">
+                    <div class="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-100 px-3.5 py-2.5 rounded-lg">
+                        <svg class="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/>
+                        </svg>
+                        <span id="errorText"></span>
+                    </div>
+                </div>
+
+                <!-- Submit -->
+                <div class="pt-1.5 animate-fade-up delay-6">
+                    <button
+                        type="submit" id="submitBtn"
+                        class="btn-primary w-full text-white py-2.5 rounded-lg text-sm font-medium">
+                        初始化系统
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <p class="text-center text-xs text-gray-400 mt-6">
+            初始化完成后将自动跳转至登录页面
+        </p>
+    </div>
+
+    <script>
+        (function() {
+            var form = document.getElementById('setupForm');
+            var errorArea = document.getElementById('errorArea');
+            var errorText = document.getElementById('errorText');
+            var submitBtn = document.getElementById('submitBtn');
+
+            function showError(msg) {
+                errorText.textContent = msg;
+                errorArea.classList.add('visible');
+            }
+
+            function hideError() {
+                errorArea.classList.remove('visible');
+            }
+
+            function setLoading(loading) {
+                submitBtn.disabled = loading;
+                if (loading) {
+                    submitBtn.innerHTML = '<span class="spinner"></span>正在初始化...';
+                } else {
+                    submitBtn.textContent = '初始化系统';
+                }
+            }
+
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                hideError();
+
+                var username = document.getElementById('username').value.trim();
+                var displayName = document.getElementById('displayName').value.trim();
+                var password = document.getElementById('password').value;
+                var confirmPassword = document.getElementById('confirmPassword').value;
+
+                if (!username) {
+                    showError('请输入用户名');
+                    document.getElementById('username').focus();
+                    return;
+                }
+                if (!password) {
+                    showError('请输入密码');
+                    document.getElementById('password').focus();
+                    return;
+                }
+                if (password !== confirmPassword) {
+                    showError('两次输入的密码不一致');
+                    document.getElementById('confirmPassword').focus();
+                    return;
+                }
+
+                setLoading(true);
+
+                fetch('/api/setup/initialize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username,
+                        displayName: displayName,
+                        password: password,
+                        confirmPassword: confirmPassword
+                    })
+                })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data.code === 0) {
+                        window.location.href = '/admin/login';
+                    } else {
+                        showError(data.message || '初始化失败，请重试');
+                        setLoading(false);
+                    }
+                })
+                .catch(function() {
+                    showError('网络错误，请检查连接后重试');
+                    setLoading(false);
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

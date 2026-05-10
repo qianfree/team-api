@@ -1,0 +1,43 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Node.js
+node_modules/
+dist/
+build/
+
+# IDE
+.idea/
+
+# Environment files with sensitive data
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# 外部文件
+new-api/
+sub2api/
+
+# 配置文件（含敏感信息，使用 .example 模板代替）
+hack/config.yaml
+manifest/config/config.yaml
+
