@@ -30,31 +30,68 @@
 - **异步任务引擎** — 支持 Midjourney、Suno、可灵、Sora 等异步生成任务
 - **全链路可观测** — 请求日志、操作审计、监控告警，Request ID 贯穿全链路
 
-## 系统架构
+## 项目截图
 
-```
-                                ┌─────────────────────────────────┐
-                                │          负载均衡器              │
-                                └──────────┬──────────────────────┘
-                                           │
-                    ┌──────────────────────┼──────────────────────┐
-                    │                      │                      │
-            ┌───────▼──────┐    ┌──────────▼──────┐    ┌─────────▼────────┐
-            │  /api/admin  │    │  /api/tenant    │    │   /v1/*          │
-            │  管理后台 API │    │  租户控制台 API  │    │   AI 代理转发    │
-            └───────┬──────┘    └──────────┬──────┘    └─────────┬────────┘
-                    │                      │                      │
-            ┌───────▼──────────────────────▼──────┐    ┌─────────▼────────┐
-            │        GoFrame 业务服务层            │    │   Relay 代理层   │
-            │   (Controller → Service → Logic)    │    │  (25+ 适配器)    │
-            └───────┬─────────────────────────────┘    └─────────┬────────┘
-                    │                                             │
-         ┌──────────┼──────────┐                    ┌────────────┼────────┐
-         │          │          │                    │            │        │
-    ┌────▼───┐ ┌───▼────┐ ┌───▼───┐          ┌────▼───┐  ┌─────▼──┐  ┌──▼──┐
-    │PostgreSQL│ │ Redis  │ │  S3   │          │ OpenAI │  │ Claude │  │ ... │
-    └────────┘ └────────┘ └───────┘          └────────┘  └────────┘  └─────┘
-```
+### 管理后台
+
+<table>
+  <tr>
+    <td align="center">管理仪表盘</td>
+    <td align="center">用量统计</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshot/admin_dashboard.png" width="600"/></td>
+    <td><img src="docs/screenshot/admin_usage_log.png" width="600"/></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">请求日志</td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/screenshot/admin_request_log.png" width="600"/></td>
+  </tr>
+</table>
+
+### 租户控制台
+
+<table>
+  <tr>
+    <td align="center">租户仪表盘</td>
+    <td align="center">成员管理</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshot/tenant_dashboard.png" width="600"/></td>
+    <td><img src="docs/screenshot/tenant_person.png" width="600"/></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">用量统计</td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/screenshot/tenant_usage_log.png" width="600"/></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">用量详情</td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/screenshot/tenant_usage_detail.png" width="600"/></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">请求日志</td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/screenshot/tenant_request_log.png" width="600"/></td>
+  </tr>
+</table>
+
+### 运维监控
+
+<table>
+  <tr>
+    <td align="center">实时监控面板</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshot/实时监控面板.png" width="600"/></td>
+  </tr>
+</table>
 
 ## 技术栈
 
@@ -67,7 +104,7 @@
 | 管理后台前端 | Vue 3 + Vite + [Naive UI](https://www.naiveui.com/) + TailwindCSS |
 | 租户控制台前端 | Vue 3 + Vite + TailwindCSS |
 | 对象存储 | S3 / 阿里云 OSS / 腾讯云 COS / MinIO |
-| 前端包管理 | pnpm |
+| 前端包管理 | bun |
 
 ## 快速开始
 
@@ -76,7 +113,7 @@
 - Go 1.25+
 - PostgreSQL 15+
 - Redis 7+
-- Node.js 18+ & pnpm（前端开发）
+- Node.js 18+ & bun（前端开发）
 - [GoFrame CLI](https://goframe.org/pages/viewpage.action?pageId=1114260)（`gf` 命令）
 - [Goose](https://github.com/pressly/goose)（数据库迁移）
 
@@ -146,13 +183,13 @@ API 服务将在 `http://localhost:18888` 启动。
 ```bash
 # 管理后台
 cd web/admin
-pnpm install
-pnpm dev
+bun install
+bun dev
 
 # 租户控制台（另开终端）
 cd web/tenant
-pnpm install
-pnpm dev
+bun install
+bun dev
 ```
 
 ### 7. 生产构建
@@ -162,8 +199,8 @@ pnpm dev
 make build
 
 # 构建前端
-cd web/admin && pnpm build
-cd web/tenant && pnpm build
+cd web/admin && bun run build
+cd web/tenant && bun run build
 ```
 
 ## API 接口
@@ -298,7 +335,7 @@ make migrate-status  # 查看迁移状态
 Team-API 实现了五层额度体系：
 
 ```
-租户钱包（人民币）
+租户钱包
   └─ 套餐额度（资源池）
       └─ 成员额度（控制线）
           └─ 项目预算（控制线）
@@ -395,7 +432,7 @@ Team-API 实现了五层额度体系：
 
 ### 不适用场景
 
-如果你想将本项目代码用于闭源商业产品，需要单独获取商业授权。请联系：**business@team-api.com**
+如果你想将本项目代码用于闭源商业产品，需要单独获取商业授权。请联系：**406615373@qq.com**
 
 ## 致谢
 
