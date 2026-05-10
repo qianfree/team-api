@@ -1,0 +1,27 @@
+{
+  "name": "admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.5",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.4"
+  },
+  "dependencies": {
+    "@arco-design/web-vue": "^2.57.0",
+    "@tailwindcss/vite": "^4.2.2",
+    "axios": "^1.15.0",
+    "echarts": "^5.6.0",
+    "pinia": "^3.0.4",
+    "tailwindcss": "^4.2.2",
+    "vue": "^3.5.32",
+    "vue-echarts": "^7.0.3",
+    "vue-router": "^4.6.4"
+  }
+}
