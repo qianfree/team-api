@@ -1,0 +1,5 @@
+# Ignore frontend build output, keep .gitkeep for go:embed
+admin/dist/*
+!admin/dist/.gitkeep
+tenant/dist/*
+!tenant/dist/.gitkeep

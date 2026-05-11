@@ -1,4 +1,4 @@
-import { ref, watch, onUnmounted, type Ref } from 'vue'
+import { watch, onUnmounted, type Ref } from 'vue'
 
 interface WatermarkOptions {
   text: string

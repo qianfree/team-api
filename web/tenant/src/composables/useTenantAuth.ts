@@ -13,8 +13,8 @@ export function useTenantAuth() {
 
   const user = computed<TenantUser | null>(() => store.user)
 
-  async function login(account: string, password: string): Promise<void> {
-    await store.login(account, password)
+  async function login(account: string, password: string, type: 'ram' | 'admin', captcha?: { captchaKey: string; captchaX: number }): Promise<void> {
+    await store.login(account, password, type, captcha)
   }
 
   async function register(payload: RegisterPayload): Promise<void> {
