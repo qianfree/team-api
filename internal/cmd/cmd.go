@@ -3,6 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"net/http"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -28,6 +31,7 @@ import (
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
 	wsHandler "github.com/qianfree/team-api/internal/handler/ws"
 	"github.com/qianfree/team-api/internal/plugin"
+	"github.com/qianfree/team-api/web"
 )
 
 var (
@@ -266,6 +270,9 @@ var (
 			// Register plugin routes
 			plugin.RegisterAllRoutes(ctx, s)
 
+			// Embedded frontend SPA serving
+			registerFrontendRoutes(s)
+
 			// Initialize active task count and start polling
 			task.InitActiveCount(ctx)
 			go task.StartAsyncPolling(ctx)
@@ -361,4 +368,61 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
 	})
+}
+
+// registerFrontendRoutes serves embedded frontend SPA assets.
+// Admin console at /admin, tenant console at / (catch-all).
+// Existing API routes take priority over these wildcard routes.
+// When built without the "embedweb" tag, this is a no-op.
+func registerFrontendRoutes(s *ghttp.Server) {
+	if !web.Enabled {
+		return
+	}
+
+	adminSub, _ := fs.Sub(web.AdminFS, "admin/dist")
+	tenantSub, _ := fs.Sub(web.TenantFS, "tenant/dist")
+
+	// Admin SPA: /admin/* → web/admin/dist/
+	s.Group("/admin", func(group *ghttp.RouterGroup) {
+		group.ALL("/*any", ghttp.WrapF(spaHandler(adminSub, "/admin")))
+	})
+
+	// Tenant SPA: /* → web/tenant/dist/ (lowest priority catch-all)
+	s.Group("/", func(group *ghttp.RouterGroup) {
+		group.ALL("/*any", ghttp.WrapF(spaHandler(tenantSub, "")))
+	})
+}
+
+// spaHandler returns an http.HandlerFunc that serves static files from the
+// given filesystem, falling back to index.html for SPA client-side routing.
+func spaHandler(root fs.FS, prefix string) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(root))
+	if prefix != "" {
+		fileServer = http.StripPrefix(prefix, fileServer)
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Resolve the file path within the embedded FS
+		path := strings.TrimPrefix(r.URL.Path, prefix)
+		path = strings.TrimPrefix(path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+
+		// Try to open the file; if it exists, serve it directly
+		if f, err := root.Open(path); err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// File not found — serve index.html (SPA fallback)
+		indexBytes, err := fs.ReadFile(root, "index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexBytes)
+	}
 }

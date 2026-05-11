@@ -21,9 +21,9 @@ declare module 'axios' {
   }
 }
 
-const ACCESS_TOKEN_KEY = 'access_token'
-const REFRESH_TOKEN_KEY = 'refresh_token'
-const EXPIRES_AT_KEY = 'token_expires_at'
+const ACCESS_TOKEN_KEY = 'admin_access_token'
+const REFRESH_TOKEN_KEY = 'admin_refresh_token'
+const EXPIRES_AT_KEY = 'admin_token_expires_at'
 const TOKEN_BUFFER_SECONDS = 60
 
 export function setTokens(tokens: TokenPair): void {

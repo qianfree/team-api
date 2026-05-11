@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 const version = readFileSync(resolve(__dirname, '../../VERSION'), 'utf-8').trim()
 
 export default defineConfig({
+  base: '/',
   define: {
     __APP_VERSION__: JSON.stringify(version),
   },

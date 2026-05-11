@@ -11,7 +11,7 @@ ifneq (,$(wildcard .env))
     include .env
 endif
 
-.PHONY: run build tidy migrate-up migrate-down migrate-status migrate-reset
+.PHONY: run build tidy migrate-up migrate-down migrate-status migrate-reset build-web build-all
 
 include ./hack/hack-cli.mk
 include ./hack/hack.mk
@@ -20,9 +20,18 @@ include ./hack/hack.mk
 run:
 	gf run main.go
 
-# Build production binary
+# Build production binary (backend only, no frontend embedded)
 build:
 	go build -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)" -o ./tmp/team-api main.go
+
+# Build frontend assets
+build-web:
+	cd web/admin && bun install && bun run build
+	cd web/tenant && bun install && bun run build
+
+# Build all (frontend embedded into backend binary)
+build-all: build-web
+	go build -tags embedweb -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)" -o ./tmp/team-api main.go
 
 # Tidy go modules
 tidy:
