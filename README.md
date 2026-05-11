@@ -195,13 +195,38 @@ bun dev
 ### 7. 生产构建
 
 ```bash
-# 构建后端二进制文件
+# 仅构建后端（前端由 Nginx/CDN 独立托管）
 make build
 
-# 构建前端
-cd web/admin && bun run build
-cd web/tenant && bun run build
+# 前后端一体（前端嵌入二进制，单文件部署）
+make build-all
 ```
+
+#### 交叉编译
+
+通过 `GOOS` 和 `GOARCH` 参数指定目标平台，在任意系统上构建其他平台的二进制：
+
+```bash
+# Linux x86_64
+make build GOOS=linux GOARCH=amd64
+
+# Linux ARM64（树莓派、ARM 服务器）
+make build GOOS=linux GOARCH=arm64
+
+# macOS Apple Silicon
+make build GOOS=darwin GOARCH=arm64
+
+# macOS Intel
+make build GOOS=darwin GOARCH=amd64
+
+# Windows
+make build GOOS=windows GOARCH=amd64
+
+# 交叉编译 + 嵌入前端
+make build-all GOOS=linux GOARCH=amd64
+```
+
+输出文件名自动适配：Windows 下为 `team-api.exe`，其他平台为 `team-api`。
 
 ## API 接口
 
@@ -323,8 +348,13 @@ gf gen ctrl
 
 ```bash
 make run             # 启动开发服务器（热编译）
-make build           # 构建生产二进制文件
+make build           # 构建后端二进制（不含前端）
+make build-web       # 仅构建前端资源
+make build-all       # 前后端一体构建（前端嵌入二进制）
 make tidy            # 整理 Go 模块依赖
+make ctrl            # 从 API 定义生成 Controller
+make dao             # 从数据库生成 DAO/DO/Entity
+make service         # 从 Logic 层生成 Service 接口
 make migrate-up      # 执行数据库迁移
 make migrate-down    # 回滚上一次迁移
 make migrate-status  # 查看迁移状态

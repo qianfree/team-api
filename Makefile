@@ -2,6 +2,18 @@ ROOT_DIR    = $(shell pwd)
 DEPLOY_NAME = "team-api"
 DOCKER_NAME = "team-api"
 VERSION     ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
+LDFLAGS     = -X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)
+
+# Cross-compile: make build GOOS=windows GOARCH=amd64
+GOOS    ?= $(shell go env GOOS)
+GOARCH  ?= $(shell go env GOARCH)
+export GOOS GOARCH
+
+ifeq ($(GOOS),windows)
+    BINARY = team-api.exe
+else
+    BINARY = team-api
+endif
 
 # DB_URL 设置方式（三选一）：
 #   1. 创建 .env 文件（推荐）：  DB_URL = "host=... port=... user=... password=... dbname=... sslmode=disable"
@@ -11,10 +23,7 @@ ifneq (,$(wildcard .env))
     include .env
 endif
 
-.PHONY: run build tidy migrate-up migrate-down migrate-status migrate-reset build-web build-all
-
-include ./hack/hack-cli.mk
-include ./hack/hack.mk
+.PHONY: run build build-web build-all tidy ctrl dao service migrate-up migrate-down migrate-status migrate-reset
 
 # GoFrame hot-reload dev server
 run:
@@ -22,7 +31,7 @@ run:
 
 # Build production binary (backend only, no frontend embedded)
 build:
-	go build -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)" -o ./tmp/team-api main.go
+	go build -ldflags "$(LDFLAGS)" -o ./$(BINARY) main.go
 
 # Build frontend assets
 build-web:
@@ -31,11 +40,21 @@ build-web:
 
 # Build all (frontend embedded into backend binary)
 build-all: build-web
-	go build -tags embedweb -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)" -o ./tmp/team-api main.go
+	go build -tags embedweb -ldflags "$(LDFLAGS)" -o ./$(BINARY) main.go
 
 # Tidy go modules
 tidy:
 	go mod tidy
+
+# GoFrame code generation
+ctrl:
+	gf gen ctrl
+
+dao:
+	gf gen dao
+
+service:
+	gf gen service
 
 # Goose migration commands
 migrate-up:
