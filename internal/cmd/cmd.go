@@ -44,6 +44,11 @@ var (
 
 			printBanner()
 
+			// Auto-migrate database schema
+			if err := runAutoMigrate(ctx); err != nil {
+				return err
+			}
+
 			// Initialize JWT secret
 			common.InitJWTSecret(ctx)
 
