@@ -24,7 +24,7 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		Status    string `json:"status"`
 	}
 
-	var ch channelRow
+	var ch *channelRow
 	err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
 		Fields("id, name, type, base_url, test_model, status").
@@ -32,7 +32,7 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	if err != nil {
 		return nil, err
 	}
-	if ch.ID == 0 {
+	if ch == nil {
 		return nil, common.NewNotFoundError("渠道")
 	}
 	if ch.Status == "disabled" {
@@ -51,7 +51,7 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	type keyRow struct {
 		EncryptedKey string `json:"encrypted_key"`
 	}
-	var keyInfo keyRow
+	var keyInfo *keyRow
 	err = dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", channelID).
 		Where("status", "active").
@@ -59,7 +59,7 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		OrderAsc("last_used_at").
 		Limit(1).
 		Scan(&keyInfo)
-	if err != nil || keyInfo.EncryptedKey == "" {
+	if err != nil || keyInfo == nil || keyInfo.EncryptedKey == "" {
 		return nil, common.NewNotFoundError("渠道没有可用的 API Key")
 	}
 

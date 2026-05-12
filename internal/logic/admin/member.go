@@ -43,7 +43,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Check tenant exists and get max_members
-		var tenant struct {
+		var tenant *struct {
 			Id         int64  `json:"id"`
 			MaxMembers int    `json:"max_members"`
 			Status     string `json:"status"`
@@ -53,7 +53,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		if err != nil {
 			return err
 		}
-		if tenant.Id == 0 {
+		if tenant == nil {
 			return common.NewNotFoundError("租户")
 		}
 		if tenant.Status != "active" {
@@ -216,7 +216,7 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 
 // DisableMember disables a tenant member by admin.
 func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableReq) (*v1.AdminMemberDisableRes, error) {
-	var user struct {
+	var user *struct {
 		Role   string `json:"role"`
 		Status string `json:"status"`
 	}
@@ -226,7 +226,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 	if err != nil {
 		return nil, err
 	}
-	if user.Status == "" {
+	if user == nil {
 		return nil, common.NewNotFoundError("成员")
 	}
 	if user.Status == "disabled" {
@@ -254,7 +254,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 
 // EnableMember re-enables a tenant member by admin.
 func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq) (*v1.AdminMemberEnableRes, error) {
-	var user struct {
+	var user *struct {
 		Role   string `json:"role"`
 		Status string `json:"status"`
 	}
@@ -264,7 +264,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 	if err != nil {
 		return nil, err
 	}
-	if user.Status == "" {
+	if user == nil {
 		return nil, common.NewNotFoundError("成员")
 	}
 	if user.Status != "disabled" {
@@ -292,7 +292,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 
 // ResetMemberPassword resets a member's password by admin, returns the new random password.
 func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberResetPasswordReq) (*v1.AdminMemberResetPasswordRes, error) {
-	var user struct {
+	var user *struct {
 		Status string `json:"status"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -301,7 +301,7 @@ func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberRes
 	if err != nil {
 		return nil, err
 	}
-	if user.Status == "" {
+	if user == nil {
 		return nil, common.NewNotFoundError("成员")
 	}
 

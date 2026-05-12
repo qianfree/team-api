@@ -318,14 +318,14 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 
 // GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error) {
-	var record entity.AudRequestLogs
+	var record *entity.AudRequestLogs
 	err := dao.AudRequestLogs.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&record)
 	if err != nil {
 		return nil, err
 	}
-	if record.Id == 0 {
+	if record == nil {
 		return nil, common.NewNotFoundError("审计日志")
 	}
 	b, _ := json.Marshal(record)

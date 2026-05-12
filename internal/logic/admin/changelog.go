@@ -59,14 +59,14 @@ func (s *sAdmin) ListChangelogs(ctx context.Context, req *v1.ChangelogListReq) (
 
 // UpdateChangelog 更新更新日志
 func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq) (*v1.ChangelogUpdateRes, error) {
-	var cl struct {
+	var cl *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
 	if err != nil {
 		return nil, err
 	}
-	if cl.Id == 0 {
+	if cl == nil {
 		return nil, common.NewBusinessError(10064, "更新日志不存在")
 	}
 
@@ -89,14 +89,14 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 
 // DeleteChangelog 删除更新日志
 func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq) (*v1.ChangelogDeleteRes, error) {
-	var cl struct {
+	var cl *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
 	if err != nil {
 		return nil, err
 	}
-	if cl.Id == 0 {
+	if cl == nil {
 		return nil, common.NewBusinessError(10064, "更新日志不存在")
 	}
 
@@ -110,7 +110,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 
 // PublishChangelog 发布更新日志
 func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishReq) (*v1.ChangelogPublishRes, error) {
-	var cl struct {
+	var cl *struct {
 		Id     int64  `json:"id"`
 		Status string `json:"status"`
 	}
@@ -118,7 +118,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 	if err != nil {
 		return nil, err
 	}
-	if cl.Id == 0 {
+	if cl == nil {
 		return nil, common.NewBusinessError(10064, "更新日志不存在")
 	}
 	if cl.Status == "published" {

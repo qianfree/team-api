@@ -88,7 +88,7 @@ func (s *sAdmin) ListAllFeedbacks(ctx context.Context, req *v1.FeedbackListAllRe
 
 // ReplyToFeedback 管理员回复反馈
 func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) (*v1.FeedbackReplyRes, error) {
-	var fb struct {
+	var fb *struct {
 		Id       int64  `json:"id"`
 		TenantId int64  `json:"tenant_id"`
 		UserId   int64  `json:"user_id"`
@@ -98,7 +98,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 	if err != nil {
 		return nil, err
 	}
-	if fb.Id == 0 {
+	if fb == nil {
 		return nil, common.NewBusinessError(10063, "反馈不存在")
 	}
 
@@ -140,14 +140,14 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 
 // UpdateFeedbackStatus 更新反馈状态
 func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdateStatusReq) (*v1.FeedbackUpdateStatusRes, error) {
-	var fb struct {
+	var fb *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_feedbacks").Ctx(ctx).Where("id", req.Id).Scan(&fb)
 	if err != nil {
 		return nil, err
 	}
-	if fb.Id == 0 {
+	if fb == nil {
 		return nil, common.NewBusinessError(10063, "反馈不存在")
 	}
 
