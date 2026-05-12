@@ -124,7 +124,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 // CloneChannel 克隆渠道
 func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1.ChannelCloneRes, error) {
 	// 查询源渠道
-	var src struct {
+	var src *struct {
 		ID                       int64   `json:"id"`
 		Name                     string  `json:"name"`
 		Type                     int     `json:"type"`
@@ -146,7 +146,7 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 	if err != nil {
 		return nil, err
 	}
-	if src.ID == 0 {
+	if src == nil {
 		return nil, common.NewBusinessError(404, "源渠道不存在")
 	}
 
@@ -370,7 +370,7 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 
 // GetChannelDetail 获取渠道详情
 func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq) (*v1.ChannelDetailRes, error) {
-	var ch struct {
+	var ch *struct {
 		ID                       int64       `json:"id"`
 		Name                     string      `json:"name"`
 		Type                     int         `json:"type"`
@@ -398,7 +398,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	if err != nil {
 		return nil, err
 	}
-	if ch.ID == 0 {
+	if ch == nil {
 		return nil, common.NewBusinessError(404, "渠道不存在")
 	}
 

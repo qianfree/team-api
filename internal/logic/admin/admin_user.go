@@ -198,13 +198,16 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 	}
 
 	// Check if target is super_admin
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("管理员")
 	}
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("不能删除超级管理员")
@@ -235,13 +238,16 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 	}
 
 	// Check if target is super_admin
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("管理员")
 	}
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("不能修改超级管理员状态")

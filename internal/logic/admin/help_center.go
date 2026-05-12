@@ -50,14 +50,14 @@ func (s *sAdmin) CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCre
 
 // UpdateHelpCategory 更新帮助分类
 func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpdateReq) (*v1.HelpCategoryUpdateRes, error) {
-	var cat struct {
+	var cat *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.Id).Scan(&cat)
 	if err != nil {
 		return nil, err
 	}
-	if cat.Id == 0 {
+	if cat == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
 	}
 
@@ -100,14 +100,14 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 
 // DeleteHelpCategory 删除帮助分类
 func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDeleteReq) (*v1.HelpCategoryDeleteRes, error) {
-	var cat struct {
+	var cat *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.Id).Scan(&cat)
 	if err != nil {
 		return nil, err
 	}
-	if cat.Id == 0 {
+	if cat == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
 	}
 
@@ -170,14 +170,14 @@ func (s *sAdmin) ListHelpCategories(ctx context.Context, req *v1.HelpCategoryLis
 // CreateHelpArticle 创建帮助文章
 func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreateReq) (*v1.HelpArticleCreateRes, error) {
 	// 检查分类是否存在
-	var cat struct {
+	var cat *struct {
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)
 	if err != nil {
 		return nil, err
 	}
-	if cat.Id == 0 {
+	if cat == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
 	}
 
@@ -220,7 +220,7 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 
 // UpdateHelpArticle 更新帮助文章
 func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdateReq) (*v1.HelpArticleUpdateRes, error) {
-	var article struct {
+	var article *struct {
 		Id         int64  `json:"id"`
 		CategoryId int64  `json:"category_id"`
 		Status     string `json:"status"`
@@ -229,7 +229,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	if err != nil {
 		return nil, err
 	}
-	if article.Id == 0 {
+	if article == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 
@@ -291,7 +291,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 
 // DeleteHelpArticle 删除帮助文章
 func (s *sAdmin) DeleteHelpArticle(ctx context.Context, req *v1.HelpArticleDeleteReq) (*v1.HelpArticleDeleteRes, error) {
-	var article struct {
+	var article *struct {
 		Id         int64 `json:"id"`
 		CategoryId int64 `json:"category_id"`
 	}
@@ -299,7 +299,7 @@ func (s *sAdmin) DeleteHelpArticle(ctx context.Context, req *v1.HelpArticleDelet
 	if err != nil {
 		return nil, err
 	}
-	if article.Id == 0 {
+	if article == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 
@@ -345,16 +345,16 @@ func (s *sAdmin) ListHelpArticles(ctx context.Context, req *v1.HelpArticleListRe
 
 // GetHelpArticle 帮助文章详情（管理后台）
 func (s *sAdmin) GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error) {
-	var article v1.HelpArticleGetRes
+	var article *v1.HelpArticleGetRes
 	err := g.DB().Model("spt_articles").Ctx(ctx).Where("id", req.Id).Scan(&article)
 	if err != nil {
 		return nil, err
 	}
-	if article.Id == 0 {
+	if article == nil {
 		return nil, common.NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 
-	return &article, nil
+	return article, nil
 }
 
 // refreshCategoryArticleCount 刷新分类的文章计数

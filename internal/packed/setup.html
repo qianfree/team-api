@@ -248,7 +248,7 @@
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
                     if (data.code === 0) {
-                        window.location.href = '/admin/login';
+                        window.location.href = '/admin/#/admin/login';
                     } else {
                         showError(data.message || '初始化失败，请重试');
                         setLoading(false);

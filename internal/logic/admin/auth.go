@@ -56,14 +56,14 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	deviceFP := common.DeviceFingerprint(ua, ipAddress)
 
 	// Find admin user by username
-	var user entity.SysAdminUsers
+	var user *entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("username", strings.TrimSpace(req.Username)).
 		Scan(&user)
 	if err != nil {
 		return nil, err
 	}
-	if user.Id == 0 {
+	if user == nil {
 		_ = common.RecordLoginHistory(ctx, "admin", 0, 0, "password", ipAddress, ua, deviceFP, false, "用户不存在")
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
@@ -211,10 +211,13 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 	}
 
 	// Fetch current role from user table
-	var adminUser entity.SysAdminUsers
+	var adminUser *entity.SysAdminUsers
 	err = dao.SysAdminUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&adminUser)
 	if err != nil {
 		return nil, err
+	}
+	if adminUser == nil {
+		return nil, common.NewUnauthorizedError("用户不存在")
 	}
 
 	// Generate new token pair with same session ID
@@ -345,12 +348,15 @@ func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (
 func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePasswordReq) (*v1.AdminChangePasswordRes, error) {
 	userID := ctxUserID(ctx)
 
-	var user entity.SysAdminUsers
+	var user *entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", userID).
 		Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewUnauthorizedError("用户不存在")
 	}
 
 	// Verify old password
