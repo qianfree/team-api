@@ -23,7 +23,7 @@ ifneq (,$(wildcard .env))
     include .env
 endif
 
-.PHONY: run build build-web build-all tidy ctrl dao service migrate-up migrate-down migrate-status migrate-reset
+.PHONY: run build build-web build-all tidy ctrl dao service migrate-up migrate-down migrate-status migrate-reset docker-build docker-up docker-down docker-logs docker-rebuild
 
 # GoFrame hot-reload dev server
 run:
@@ -68,3 +68,23 @@ migrate-status:
 
 migrate-reset:
 	goose -dir migrations postgres $(DB_URL) reset
+
+# Docker commands
+docker-build:
+	cd manifest/docker && docker compose build
+
+docker-up:
+	cd manifest/docker && docker compose up -d
+
+docker-down:
+	cd manifest/docker && docker compose down
+
+docker-logs:
+	cd manifest/docker && docker compose logs -f
+
+docker-rebuild: docker-down
+	cd manifest/docker && docker compose build --no-cache && docker compose up -d
+
+docker-clean:
+	cd manifest/docker && docker compose down -v
+	docker volume rm team-api-postgres_data team-api-redis_data team-api-app_logs 2>/dev/null || true
