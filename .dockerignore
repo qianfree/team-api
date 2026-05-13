@@ -1,0 +1,38 @@
+# Reference projects (read-only, not needed in build)
+new-api/
+sub2api/
+
+# Temporary files
+tmp/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend node_modules (rebuilt in container)
+web/admin/node_modules/
+web/tenant/node_modules/
+
+# Frontend dist (rebuilt in container)
+web/admin/dist/
+web/tenant/dist/
+
+# Local env and config
+.env
+manifest/config/config.yaml
+
+# Documentation
+docs/
+
+# Build artifacts
+*.exe
+team-api

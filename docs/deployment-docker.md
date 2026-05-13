@@ -19,16 +19,6 @@ vim config.yaml
 
 **注意**：本配置不对外开放 PostgreSQL 和 Redis 端口，仅应用服务（18888 端口）对外暴露。如需外部访问数据库，请自行添加端口映射。
 
-```bash
-# 1. 进入 Docker 配置目录
-cd manifest/docker
-
-# 2. 复制配置模板
-cp ../../manifest/config/config.example.yaml ./config.yaml
-
-# 3. 编辑配置文件，修改数据库和 Redis 连接信息
-vim config.yaml
-```
 
 ### 二、修改 docker-compose.yaml
 

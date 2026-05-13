@@ -187,8 +187,8 @@ var (
 					r.Middleware.Next()
 					return
 				}
-				// Allow setup endpoints
-				if r.URL.Path == "/setup" || r.URL.Path == "/api/setup/initialize" || r.URL.Path == "/api/setup/status" {
+				// Allow setup and health endpoints
+				if r.URL.Path == "/setup" || r.URL.Path == "/api/setup/initialize" || r.URL.Path == "/api/setup/status" || r.URL.Path == "/api/health" {
 					r.Middleware.Next()
 					return
 				}
@@ -215,6 +215,16 @@ var (
 				group.Middleware(middleware.ErrorHandler)
 				group.GET("/status", setupHandler.HandleSetupStatus)
 				group.POST("/initialize", setupHandler.HandleSetupInitialize)
+			})
+
+			// Health check endpoint (always accessible, used by Docker/K8s probes)
+			s.Group("/api", func(group *ghttp.RouterGroup) {
+				group.GET("/health", func(r *ghttp.Request) {
+					r.Response.WriteJson(g.Map{
+						"status":  "ok",
+						"version": consts.Version,
+					})
+				})
 			})
 
 			// WebSocket endpoints — 独立于 MiddlewareHandlerResponse，避免升级后中间件干扰
