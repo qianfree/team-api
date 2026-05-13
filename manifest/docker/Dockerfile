@@ -11,6 +11,7 @@ COPY web/tenant/package.json web/tenant/bun.lock* ./tenant/
 RUN cd admin && bun install --frozen-lockfile && \
     cd ../tenant && bun install --frozen-lockfile
 
+COPY VERSION /build/VERSION
 COPY web/admin ./admin
 COPY web/tenant ./tenant
 
