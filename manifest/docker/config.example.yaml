@@ -1,0 +1,68 @@
+# =============================================================================
+# Team-API 运行时配置（Docker Compose 部署示例）
+# =============================================================================
+# 使用方法：
+#   cp config.example.yaml config.yaml
+#   然后修改下方标注 "请修改" 的配置项
+#
+# 注意：数据库和 Redis 的密码需要与 docker-compose.yaml 中的设置保持一致
+# =============================================================================
+
+# 服务配置
+server:
+  address: ":18888"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+  serverAgent: "team-api"
+  dumpRouterMap: false
+  accessLogEnabled: true
+  errorLogEnabled: true
+
+# 日志配置
+logger:
+  level: "all"
+  stdout: true
+  ctxKeys: ["RequestId"]
+
+# 数据库配置（PostgreSQL）
+# 连接地址中的 postgres 是 docker-compose 中的服务名
+database:
+  default:
+    type: "pgsql"
+    link: "pgsql:team_api:team_api_secret@tcp(postgres:5432)/team_api?sslmode=disable"
+    debug: false
+    dryRun: false
+    maxIdle: 10
+    maxOpen: 100
+    maxLifetime: "30s"
+
+# Redis 配置
+# 连接地址中的 redis 是 docker-compose 中的服务名
+redis:
+  default:
+    address: "redis:6379"
+    pass: "redis_secret"
+    db: 0
+
+# 缓存配置
+cache:
+  default:
+    adapter: "redis"
+
+# JWT 认证配置
+jwt:
+  secret: "team-api-jwt-secret-key-please-change-me"  # 请修改为随机强密钥
+  accessTokenExpire: "12h"
+  refreshTokenExpire: "7d"
+  issuer: "team-api"
+  adminMaxSessions: 5
+  tenantMaxSessions: 10
+
+# 邮件 SMTP 配置（可选，用于邮箱验证码等功能）
+email:
+  smtp:
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    from: ""

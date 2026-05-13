@@ -307,18 +307,67 @@ make migrate-status
 
 ## Docker 部署
 
-### 构建镜像
+项目提供多阶段 Dockerfile（前端构建 → Go 编译 → 精简运行镜像）和完整的 Docker Compose 编排，包含 PostgreSQL、Redis 和应用服务。
+
+### 快速启动（推荐）
 
 ```bash
-gf build
-docker build -t team-api:latest -f manifest/docker/Dockerfile .
-```
+# 1. 复制示例配置文件并重命名
+cp manifest/docker/config.example.yaml manifest/docker/config.yaml
 
-### 使用 Docker Compose 运行
+# 2. 编辑配置文件（修改数据库密码、Redis 密码、JWT 密钥等）
+vim manifest/docker/config.yaml
 
-```bash
+# 3. 修改 docker-compose.yaml 中的密码（与 config.yaml 保持一致）
+#    - POSTGRES_PASSWORD
+#    - Redis --requirepass
+
+# 4. 一键启动所有服务
 docker compose -f manifest/docker/docker-compose.yaml up -d
 ```
+
+服务启动后访问 `http://localhost:18888`，首次部署会进入系统初始化向导（`/api/setup`）。
+
+### 仅构建镜像
+
+```bash
+# 构建镜像（多阶段构建，自动编译前端和后端）
+docker build -t team-api:latest -f manifest/docker/Dockerfile .
+
+# 指定版本号
+docker build -t team-api:v1.0.0 --build-arg VERSION=v1.0.0 -f manifest/docker/Dockerfile .
+```
+
+### 部署架构
+
+```
+docker-compose.yaml
+├── postgres (PostgreSQL 17)  — 数据持久化到 volume
+├── redis (Redis 7)           — AOF 持久化到 volume
+└── app (team-api)            — 挂载 config.yaml，依赖 postgres/redis 健康检查
+```
+
+### 配置说明
+
+部署配置文件位于 `manifest/docker/`：
+
+| 文件 | 用途 |
+|------|------|
+| `config.yaml` | 应用运行时配置（数据库连接、Redis、JWT 等） |
+| `Dockerfile` | 多阶段构建（bun 前端 → Go 编译 → Alpine 运行） |
+| `docker-compose.yaml` | 服务编排（PostgreSQL + Redis + App） |
+
+### 健康检查
+
+应用内置健康检查端点 `/api/health`，Docker 每 30 秒探测一次，启动宽限期 30 秒。
+
+### 数据持久化
+
+Docker Compose 使用命名卷持久化数据：
+
+- `postgres_data` — PostgreSQL 数据目录
+- `redis_data` — Redis AOF 持久化
+- `app_logs` — 应用日志
 
 ## 开发指南
 

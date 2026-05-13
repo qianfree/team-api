@@ -1,14 +1,27 @@
+# =============================================================================
+# Team-API Docker Compose 配置文件
+# =============================================================================
+# 使用说明：
+# 1. 修改下方 "数据库配置" 中的 POSTGRES_PASSWORD
+# 2. 修改下方 "Redis 配置" 中的 --requirepass 密码
+# 3. 将 manifest/docker/config.yaml 修改为实际配置
+#    （确保数据库密码和 Redis 密码与上方设置一致）
+# 4. 运行: docker compose up -d
+# =============================================================================
+
 services:
+  # -----------------------------------------------------------------------------
+  # PostgreSQL 数据库
+  # -----------------------------------------------------------------------------
   postgres:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: team-api-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_USER: team_api
-      POSTGRES_PASSWORD: team_api_secret
+      POSTGRES_PASSWORD: team_api_secret  # 请修改为强密码
       POSTGRES_DB: team_api
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,41 +29,74 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - team-api-network
 
+  # -----------------------------------------------------------------------------
+  # Redis 缓存
+  # -----------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: team-api-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redis_secret  # 请修改为强密码
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis_secret", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - team-api-network
 
-  minio:
-    image: minio/minio:latest
-    container_name: team-api-minio
+  # -----------------------------------------------------------------------------
+  # Team-API 应用
+  # -----------------------------------------------------------------------------
+  app:
+    image: team-api:${VERSION:-v0.1.0}
+    build:
+      context: ../..
+      dockerfile: manifest/docker/Dockerfile
+      args:
+        VERSION: latest
+    container_name: team-api-app
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "18888:18888"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin_secret
+      TZ: Asia/Shanghai
     volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
+      - ./config.yaml:/app/config/config.yaml:ro
+      - app_logs:/app/logs
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "curl", "-f", "http://localhost:18888/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - team-api-network
 
+# -----------------------------------------------------------------------------
+# 数据卷定义
+# -----------------------------------------------------------------------------
 volumes:
   postgres_data:
+    driver: local
   redis_data:
-  minio_data:
+    driver: local
+  app_logs:
+    driver: local
+
+# -----------------------------------------------------------------------------
+# 网络定义
+# -----------------------------------------------------------------------------
+networks:
+  team-api-network:
+    driver: bridge
