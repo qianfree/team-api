@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	relaycommon "github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/handler"
 )
 
@@ -68,7 +70,7 @@ func buildPlaygroundRelayContext(ctx context.Context, key *playgroundApiKey, rec
 func callRelayAndParseUsage(relayFunc func() (*relaycommon.Usage, *handler.BillingResult, error)) (promptTokens, completionTokens, totalTokens int, err error) {
 	usage, _, relayErr := relayFunc()
 	if relayErr != nil {
-		return 0, 0, 0, relayErr
+		return 0, 0, 0, convertRelayError(relayErr)
 	}
 	if usage != nil {
 		promptTokens = usage.PromptTokens
@@ -76,6 +78,26 @@ func callRelayAndParseUsage(relayFunc func() (*relaycommon.Usage, *handler.Billi
 		totalTokens = usage.TotalTokens
 	}
 	return
+}
+
+// convertRelayError 将 relay 层的 RelayError 转换为 GoFrame gerror，使响应中间件能正确处理
+func convertRelayError(err error) error {
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		return err
+	}
+	switch relayErr.StatusCode {
+	case 402:
+		return common.NewBusinessError(10001, "余额不足，请充值后重试")
+	case 429:
+		return common.NewBusinessError(10014, "请求过于频繁，请稍后重试")
+	case 401:
+		return common.NewBadRequestError("API Key 认证失败")
+	case 503:
+		return common.NewBusinessError(10003, "当前无可用渠道，请稍后重试")
+	default:
+		return common.NewBadRequestError(relayErr.Message)
+	}
 }
 
 func getRequestID(ctx context.Context) string {
