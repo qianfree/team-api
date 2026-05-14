@@ -1,13 +1,14 @@
-ROOT_DIR    = $(shell pwd)
+ROOT_DIR    = $(CURDIR)
 DEPLOY_NAME = "team-api"
 DOCKER_NAME = "team-api"
-VERSION     ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
+VERSION     ?= $(strip $(file < VERSION))
 LDFLAGS     = -X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)
 
 # Mirror acceleration (override for non-China regions)
 GOPROXY     ?= https://goproxy.cn,direct
 BUN_REGISTRY ?= https://registry.npmmirror.com
-export GOPROXY
+BUN_CONFIG_REGISTRY = $(BUN_REGISTRY)
+export GOPROXY BUN_CONFIG_REGISTRY
 
 # Cross-compile: make build GOOS=windows GOARCH=amd64
 GOOS    ?= $(shell go env GOOS)
@@ -40,8 +41,8 @@ build:
 
 # Build frontend assets
 build-web:
-	cd web/admin && BUN_CONFIG_REGISTRY=$(BUN_REGISTRY) bun install && bun run build
-	cd web/tenant && BUN_CONFIG_REGISTRY=$(BUN_REGISTRY) bun install && bun run build
+	cd web/admin && bun install && bun run build
+	cd web/tenant && bun install && bun run build
 
 # Build all (frontend embedded into backend binary)
 build-all: build-web
@@ -92,4 +93,4 @@ docker-rebuild: docker-down
 
 docker-clean:
 	cd manifest/docker && docker compose down -v
-	docker volume rm team-api-postgres_data team-api-redis_data team-api-app_logs 2>/dev/null || true
+	-docker volume rm team-api-postgres_data team-api-redis_data team-api-app_logs
