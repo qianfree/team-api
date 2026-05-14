@@ -2,6 +2,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 interface OpenApp {
   id: number
@@ -126,7 +129,7 @@ async function handleSave() {
 }
 
 async function handleDelete(id: number) {
-  if (!confirm('确定要删除此应用吗？此操作不可恢复。')) return
+  if (!await confirm({ message: '确定要删除此应用吗？此操作不可恢复。', confirmText: '确认删除', danger: true })) return
   try {
     const res = await request.delete(`/tenant/open/apps/${id}`)
     if (res.data?.code === 0) {
@@ -138,7 +141,7 @@ async function handleDelete(id: number) {
 }
 
 async function handleResetSecret(id: number) {
-  if (!confirm('确定要重置密钥吗？旧密钥将立即失效。')) return
+  if (!await confirm({ message: '确定要重置密钥吗？旧密钥将立即失效。', confirmText: '确认重置', danger: true })) return
   try {
     const res = await request.post(`/tenant/open/apps/${id}/reset-secret`)
     if (res.data?.code === 0) {

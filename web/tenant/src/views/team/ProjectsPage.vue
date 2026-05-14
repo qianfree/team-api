@@ -4,6 +4,9 @@ import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 const router = useRouter()
 const loading = ref(false)
@@ -61,7 +64,7 @@ async function handleSubmit() {
 }
 
 async function handleArchive(item: any) {
-	if (!confirm(`确定归档项目「${item.name}」？归档后所有 API Key 将失效。`)) return
+	if (!await confirm({ message: `确定归档项目「${item.name}」？归档后所有 API Key 将失效。`, confirmText: '确认归档', danger: true })) return
 	try {
 		await request.post(`/tenant/projects/${item.id}/archive`)
 		await fetchProjects()
