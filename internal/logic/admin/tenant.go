@@ -239,12 +239,14 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		}
 
 		// Get owner name
-		var owner struct {
+		var owner *struct {
 			DisplayName string `json:"display_name"`
 		}
 		_ = dao.TntUsers.Ctx(ctx).
 			Where("id", t.OwnerUserID).Scan(&owner)
-		item.OwnerName = owner.DisplayName
+		if owner != nil {
+			item.OwnerName = owner.DisplayName
+		}
 
 		// Get member count
 		memberCount, _ := dao.TntUsers.Ctx(ctx).
@@ -252,12 +254,12 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		item.MemberCount = memberCount
 
 		// Get wallet balance
-		var wallet struct {
+		var wallet *struct {
 			Balance string `json:"balance"`
 		}
 		_ = dao.BilWallets.Ctx(ctx).
 			Where("tenant_id", t.Id).Scan(&wallet)
-		if wallet.Balance != "" {
+		if wallet != nil && wallet.Balance != "" {
 			item.WalletBalance = wallet.Balance
 		} else {
 			item.WalletBalance = "0"
@@ -276,7 +278,7 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 
 // GetTenant returns detail of a single tenant.
 func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.TenantGetRes, error) {
-	var tenant struct {
+	var tenant *struct {
 		Id                  int64       `json:"id"`
 		Name                string      `json:"name"`
 		Code                string      `json:"code"`
@@ -295,12 +297,12 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	if err != nil {
 		return nil, err
 	}
-	if tenant.Id == 0 {
+	if tenant == nil {
 		return nil, common.NewNotFoundError("租户")
 	}
 
 	// Get owner name
-	var owner struct {
+	var owner *struct {
 		DisplayName string `json:"display_name"`
 	}
 	_ = dao.TntUsers.Ctx(ctx).
@@ -311,12 +313,20 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		Where("tenant_id", req.Id).Count()
 
 	// Get wallet balance
-	var wallet struct {
+	var wallet *struct {
 		Balance string `json:"balance"`
 	}
 	_ = dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", req.Id).Scan(&wallet)
 
+	walletBalance := "0"
+	if wallet != nil && wallet.Balance != "" {
+		walletBalance = wallet.Balance
+	}
+	ownerName := ""
+	if owner != nil {
+		ownerName = owner.DisplayName
+	}
 	return &v1.TenantGetRes{
 		TenantItem: v1.TenantItem{
 			ID:                  tenant.Id,
@@ -324,13 +334,13 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 			Code:                tenant.Code,
 			LogoURL:             tenant.LogoURL,
 			OwnerUserID:         tenant.OwnerUserID,
-			OwnerName:           owner.DisplayName,
+			OwnerName:           ownerName,
 			Status:              tenant.Status,
 			MaxMembers:          tenant.MaxMembers,
 			MaxConcurrency:      tenant.MaxConcurrency,
 			DefaultChannelScope: tenant.DefaultChannelScope,
 			MemberCount:         memberCount,
-			WalletBalance:       wallet.Balance,
+			WalletBalance:       walletBalance,
 			CreatedAt:           tenant.CreatedAt.String(),
 			UpdatedAt:           tenant.UpdatedAt.String(),
 		},
@@ -345,7 +355,7 @@ func (s *sAdmin) UpdateTenantStatus(ctx context.Context, req *v1.TenantUpdateSta
 	}
 
 	// Check tenant exists
-	var tenant struct {
+	var tenant *struct {
 		Id int64 `json:"id"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
@@ -353,7 +363,7 @@ func (s *sAdmin) UpdateTenantStatus(ctx context.Context, req *v1.TenantUpdateSta
 	if err != nil {
 		return nil, err
 	}
-	if tenant.Id == 0 {
+	if tenant == nil {
 		return nil, common.NewNotFoundError("租户")
 	}
 
@@ -442,27 +452,32 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 		MaxConcurrency int         `json:"max_concurrency"`
 		CreatedAt      *gtime.Time `json:"created_at"`
 	}) map[string]any {
-		var owner struct {
+		var owner *struct {
 			DisplayName string `json:"display_name"`
 		}
 		_ = dao.TntUsers.Ctx(ctx).Where("id", t.OwnerUserID).Scan(&owner)
 
 		memberCount, _ := dao.TntUsers.Ctx(ctx).Where("tenant_id", t.Id).Count()
 
-		var wallet struct {
+		var wallet *struct {
 			Balance string `json:"balance"`
 		}
 		_ = dao.BilWallets.Ctx(ctx).Where("tenant_id", t.Id).Scan(&wallet)
 		walletBalance := "0"
-		if wallet.Balance != "" {
+		if wallet != nil && wallet.Balance != "" {
 			walletBalance = wallet.Balance
+		}
+
+		ownerName := ""
+		if owner != nil {
+			ownerName = owner.DisplayName
 		}
 
 		return map[string]any{
 			"id":             t.Id,
 			"name":           t.Name,
 			"code":           t.Code,
-			"owner_name":     owner.DisplayName,
+			"owner_name":     ownerName,
 			"status":         t.Status,
 			"member_count":   memberCount,
 			"wallet_balance": walletBalance,

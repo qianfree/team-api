@@ -137,7 +137,7 @@ func (s *sAdmin) ChannelOAuthExchange(ctx context.Context, req *v1.ChannelOAuthE
 // ChannelOAuthRefresh 手动刷新 OAuth 令牌
 func (s *sAdmin) ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRefreshReq) (*v1.ChannelOAuthRefreshRes, error) {
 	// 读取密钥记录
-	var key struct {
+	var key *struct {
 		ID           int64  `json:"id"`
 		ChannelID    int64  `json:"channel_id"`
 		EncryptedKey string `json:"encrypted_key"`
@@ -151,7 +151,7 @@ func (s *sAdmin) ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRe
 	if err != nil {
 		return nil, gerror.Wrap(err, "查询密钥失败")
 	}
-	if key.ID == 0 {
+	if key == nil {
 		return nil, gerror.New("密钥不存在")
 	}
 	if key.KeyType != "oauth" {

@@ -161,7 +161,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 
 // AssignTicket 分配工单给管理员
 func (s *sAdmin) AssignTicket(ctx context.Context, req *v1.TicketAssignReq) (*v1.TicketAssignRes, error) {
-	var ticket struct {
+	var ticket *struct {
 		Status string `json:"status"`
 	}
 	err := dao.SptTickets.Ctx(ctx).
@@ -171,7 +171,7 @@ func (s *sAdmin) AssignTicket(ctx context.Context, req *v1.TicketAssignReq) (*v1
 	if err != nil {
 		return nil, err
 	}
-	if ticket.Status == "" {
+	if ticket == nil {
 		return nil, common.NewNotFoundError("工单")
 	}
 
@@ -200,7 +200,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 
 	adminID := getCtxUserID(ctx)
 
-	var ticket struct {
+	var ticket *struct {
 		Status          string `json:"status"`
 		AssignedAdminID *int64 `json:"assigned_admin_id"`
 	}
@@ -211,7 +211,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 	if err != nil {
 		return nil, err
 	}
-	if ticket.Status == "" {
+	if ticket == nil {
 		return nil, common.NewNotFoundError("工单")
 	}
 	if ticket.Status == "closed" {
@@ -251,7 +251,7 @@ func (s *sAdmin) UpdateTicketStatus(ctx context.Context, req *v1.TicketStatusUpd
 		return nil, common.NewBadRequestError("无效的工单状态")
 	}
 
-	var ticket struct {
+	var ticket *struct {
 		Status string `json:"status"`
 	}
 	err := dao.SptTickets.Ctx(ctx).
@@ -261,7 +261,7 @@ func (s *sAdmin) UpdateTicketStatus(ctx context.Context, req *v1.TicketStatusUpd
 	if err != nil {
 		return nil, err
 	}
-	if ticket.Status == "" {
+	if ticket == nil {
 		return nil, common.NewNotFoundError("工单")
 	}
 

@@ -31,7 +31,7 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 		Currency         string  `json:"currency"`
 	}
 
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance, warning_threshold, currency").
@@ -39,7 +39,8 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	if err != nil {
 		return nil, err
 	}
-	if w.Balance == 0 && w.FrozenBalance == 0 && w.Currency == "" {
+	if w == nil {
+		// 钱包不存在，初始化
 		// 钱包不存在，初始化
 		_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
 			TenantId:         tenantID,

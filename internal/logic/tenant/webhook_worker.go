@@ -37,13 +37,13 @@ var retryIntervals = []time.Duration{
 
 // deliverEventByID loads an event by ID and delivers it.
 func deliverEventByID(ctx context.Context, eventID int64) {
-	var evt entity.OpnWebhookEvents
+	var evt *entity.OpnWebhookEvents
 	err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", eventID).Scan(&evt)
 	if err != nil {
 		g.Log().Errorf(ctx, "webhook: load event %d failed: %v", eventID, err)
 		return
 	}
-	if evt.Id == 0 {
+	if evt == nil {
 		return
 	}
 
@@ -55,14 +55,18 @@ func deliverEventByID(ctx context.Context, eventID int64) {
 		return
 	}
 
-	deliverEvent(ctx, evt)
+	deliverEvent(ctx, *evt)
 }
 
 // deliverEvent delivers a single webhook event.
 func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
-	var config entity.OpnWebhookConfigs
+	var config *entity.OpnWebhookConfigs
 	err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", evt.WebhookConfigId).Scan(&config)
-	if err != nil || config.Id == 0 {
+	if err != nil {
+		g.Log().Errorf(ctx, "webhook: load config %d failed: %v", evt.WebhookConfigId, err)
+		return
+	}
+	if config == nil {
 		g.Log().Errorf(ctx, "webhook: config %d not found", evt.WebhookConfigId)
 		return
 	}
@@ -83,7 +87,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.Url, bytes.NewReader(body))
 	if err != nil {
-		recordDeliveryLog(ctx, evt, config, newAttempts, 0, "", fmt.Sprintf("build request failed: %v", err))
+		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, "", fmt.Sprintf("build request failed: %v", err))
 		markEventFailed(ctx, evt.Id, newAttempts)
 		return
 	}
@@ -100,7 +104,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	elapsed := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		recordDeliveryLog(ctx, evt, config, newAttempts, 0, "", err.Error())
+		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, "", err.Error())
 		markEventFailed(ctx, evt.Id, newAttempts)
 		return
 	}
@@ -109,7 +113,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, webhookMaxResponseSize))
 	respBodyStr := string(respBody)
 
-	recordDeliveryLog(ctx, evt, config, newAttempts, elapsed, respBodyStr, "")
+	recordDeliveryLog(ctx, evt, *config, newAttempts, elapsed, respBodyStr, "")
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		_, _ = dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(g.Map{

@@ -71,14 +71,14 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 
 	for _, a := range req.Assignments {
 		// Check model exists and is active
-		var model struct {
+		var model *struct {
 			ID     int64  `json:"id"`
 			Status string `json:"status"`
 		}
 		err := dao.MdlModels.Ctx(ctx).
 			Where("id", a.ModelID).
 			Scan(&model)
-		if err != nil || model.ID == 0 || model.Status != "active" {
+		if err != nil || model == nil || model.Status != "active" {
 			continue
 		}
 

@@ -46,7 +46,7 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		Scan(&monthRow)
 
 	// 钱包余额
-	var wallet struct {
+	var wallet *struct {
 		Balance          float64 `json:"balance"`
 		FrozenBalance    float64 `json:"frozen_balance"`
 		WarningThreshold float64 `json:"warning_threshold"`
@@ -55,6 +55,14 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance, warning_threshold").
 		Scan(&wallet)
+
+	if wallet == nil {
+		wallet = &struct {
+			Balance          float64 `json:"balance"`
+			FrozenBalance    float64 `json:"frozen_balance"`
+			WarningThreshold float64 `json:"warning_threshold"`
+		}{Balance: 0, FrozenBalance: 0, WarningThreshold: 0}
+	}
 
 	// 活跃Key数
 	activeKeys, _ := dao.ApiKeys.Ctx(ctx).
@@ -230,7 +238,7 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 
 	dailyAvg := stats.TotalCost / 7.0
 
-	var wallet struct {
+	var wallet *struct {
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
@@ -238,6 +246,12 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance").
 		Scan(&wallet)
+	if wallet == nil {
+		wallet = &struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}{Balance: 0, FrozenBalance: 0}
+	}
 
 	available := wallet.Balance - wallet.FrozenBalance
 	res := &v1.TenantBalancePredictionRes{

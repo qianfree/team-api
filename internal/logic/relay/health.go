@@ -200,14 +200,18 @@ func checkAutoDisable(ctx context.Context, channelID int64, consecutiveFailures 
 		scheduler.GetGlobalAffinity().DeleteByChannel(channelID)
 
 		// 查询渠道名称用于通知
-		var chName string
+		var chName *string
 		dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName)
+		channelName := ""
+		if chName != nil {
+			channelName = *chName
+		}
 
 		go func() {
 			bgCtx := context.Background()
 			engine := common.NewNotificationEngine()
 			if err := engine.SendToAllTenants(bgCtx, "channel_auto_disabled", g.Map{
-				"channel_name": chName,
+				"channel_name": channelName,
 				"threshold":    threshold,
 			}, ""); err != nil {
 				g.Log().Errorf(bgCtx, "[AutoDisable] send notification failed: %v", err)

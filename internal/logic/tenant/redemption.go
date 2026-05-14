@@ -28,7 +28,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 
-	var redemption struct {
+	var redemption *struct {
 		ID           int64     `json:"id"`
 		Type         string    `json:"type"`
 		Value        float64   `json:"value"`
@@ -45,7 +45,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	if err != nil {
 		return nil, err
 	}
-	if redemption.ID == 0 {
+	if redemption == nil {
 		return nil, lcommon.NewBadRequestError("兑换码无效")
 	}
 	if redemption.Status != "active" {
@@ -124,12 +124,12 @@ func creditWalletForRedemption(ctx context.Context, tenantID int64, amount float
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
-	var w walletRow
+	var w *walletRow
 	dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id").
 		Scan(&w)
-	if w.ID == 0 {
+	if w == nil {
 		return 0
 	}
 

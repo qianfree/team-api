@@ -243,7 +243,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	}
 
 	// 检查分类是否存在
-	var cat struct {
+	var cat *struct {
 		Id int64 `json:"id"`
 	}
 	err = g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)

@@ -310,11 +310,14 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 			Where("status", "active").
 			Count()
 
-		var tenant struct {
+		var tenant *struct {
 			MaxMembers int `json:"max_members"`
 		}
 		dao.TntTenants.Ctx(ctx).
 			Where("id", tenantID).Scan(&tenant)
+		if tenant == nil {
+			return 0, gerror.Newf("租户不存在")
+		}
 
 		if int(currentCount)+pendingCount > tenant.MaxMembers {
 			return 0, gerror.Newf("导入%d条后将超出成员上限%d（当前%d，上限%d）",

@@ -78,7 +78,7 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 
 // TaskDetail 任务详情
 func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.TaskDetailRes, error) {
-	var task struct {
+	var task *struct {
 		Id           int64       `json:"id"`
 		Name         string      `json:"name"`
 		Handler      string      `json:"handler"`
@@ -95,7 +95,7 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 	if err != nil {
 		return nil, err
 	}
-	if task.Id == 0 {
+	if task == nil {
 		return nil, gerror.NewCode(gcode.New(consts.CodeNotFound, consts.MsgNotFound, nil), consts.MsgNotFound)
 	}
 
@@ -167,7 +167,7 @@ func (s *sAdmin) TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (*v1.Tas
 
 // TaskRetry 重试失败任务
 func (s *sAdmin) TaskRetry(ctx context.Context, req *v1.TaskRetryReq) (*v1.TaskRetryRes, error) {
-	var task struct {
+	var task *struct {
 		Id         int64  `json:"id"`
 		Status     string `json:"status"`
 		RetryCount int    `json:"retry_count"`
@@ -177,7 +177,7 @@ func (s *sAdmin) TaskRetry(ctx context.Context, req *v1.TaskRetryReq) (*v1.TaskR
 	if err != nil {
 		return nil, err
 	}
-	if task.Id == 0 {
+	if task == nil {
 		return nil, gerror.NewCode(gcode.New(consts.CodeNotFound, consts.MsgNotFound, nil), consts.MsgNotFound)
 	}
 	if task.Status != "failed" {

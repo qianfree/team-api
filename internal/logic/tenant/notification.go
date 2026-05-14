@@ -112,7 +112,7 @@ func (s *sTenant) MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.
 	userID := ctxUserID(ctx)
 
 	// Verify the message belongs to this tenant
-	var msg struct {
+	var msg *struct {
 		ID          int64  `json:"id"`
 		IsBroadcast int    `json:"is_broadcast"`
 		UserID      *int64 `json:"user_id"`
@@ -126,7 +126,7 @@ func (s *sTenant) MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.
 	if err != nil {
 		return nil, err
 	}
-	if msg.ID == 0 {
+	if msg == nil {
 		return nil, common.NewNotFoundError("消息")
 	}
 
@@ -268,7 +268,7 @@ func (s *sTenant) NotificationPreferencesUpdate(ctx context.Context, req *v1.Ten
 	}
 
 	// Check if preference record exists
-	var existing struct {
+	var existing *struct {
 		ID int64 `json:"id"`
 	}
 	query := dao.NtfPreferences.Ctx(ctx).
@@ -281,7 +281,7 @@ func (s *sTenant) NotificationPreferencesUpdate(ctx context.Context, req *v1.Ten
 	}
 	query.Fields("id").Scan(&existing)
 
-	if existing.ID > 0 {
+	if existing != nil && existing.ID > 0 {
 		// Update existing
 		_, err = dao.NtfPreferences.Ctx(ctx).
 			Where("id", existing.ID).

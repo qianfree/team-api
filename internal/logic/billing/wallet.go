@@ -50,7 +50,7 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 		Currency         string  `json:"currency"`
 	}
 
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id, tenant_id, balance, frozen_balance, warning_threshold, currency").
@@ -58,7 +58,7 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query wallet")
 	}
-	if w.ID == 0 {
+	if w == nil {
 		return nil, gerror.New("wallet not found")
 	}
 
@@ -202,14 +202,14 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("balance - frozen_balance >= ?", amount).
 		Fields("id, balance, frozen_balance").
 		LockUpdate().
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return false, gerror.New("insufficient balance")
 	}
 
@@ -236,12 +236,12 @@ func preDeductSyncDB(tenantID int64, amount float64, requestID string) {
 	type walletRow struct {
 		ID int64
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(bgCtx).
 		Where("tenant_id", tenantID).
 		Fields("id").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		g.Log().Errorf(bgCtx, "pre-deduct sync: wallet not found for tenant %d", tenantID)
 		return
 	}
@@ -287,12 +287,12 @@ func unfreezeDB(ctx context.Context, tenantID int64, amount float64, requestID s
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return
 	}
 
@@ -320,19 +320,25 @@ func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType st
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	var w walletRow
+	var w *walletRow
 	dao.BilWallets.Ctx(ctx).
 		Where("id", walletID).
 		Fields("balance, frozen_balance").
 		Scan(&w)
+
+	var balanceAfter, frozenAfter float64
+	if w != nil {
+		balanceAfter = w.Balance
+		frozenAfter = w.FrozenBalance
+	}
 
 	_, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 		TenantId:     tenantID,
 		WalletId:     walletID,
 		Type:         txnType,
 		Amount:       amount,
-		BalanceAfter: w.Balance,
-		FrozenAfter:  w.FrozenBalance,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
 		Description:  description,
 	})
 	if err != nil {
@@ -351,13 +357,16 @@ func syncWalletToRedis(ctx context.Context, tenantID int64) error {
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance").
 		Scan(&w)
 	if err != nil {
 		return gerror.Wrapf(err, "sync wallet to redis")
+	}
+	if w == nil {
+		return gerror.New("wallet not found")
 	}
 
 	// 检查 key 是否已存在

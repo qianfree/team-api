@@ -255,3 +255,19 @@ r := g.RequestFromCtx(ctx)
 **问题**：所有错误（包括 400 参数校验、401 认证失败等正常业务流）都以 Warning 级别记录日志，大量无意义日志淹没真正的异常。
 
 **修复**：增加 `isSystemError()` 函数，4xx 和 >= 10000 的业务错误不记日志，只有 5xx 和未知错误才记录。
+
+### 2026-05-14：Scan(&struct) 查询无结果返回 sql: no rows in result set
+
+**问题**：GoFrame v2 中 `dao.Xxx.Ctx(ctx).Where(...).Scan(&structValue)` 当查询无匹配行时，返回 `sql: no rows in result set` 错误（Go 标准库 `sql.ErrNoRows`）。后续通过 `structField == 0` 判断"无数据"的代码永远不会执行，因为 `err != nil` 会先返回。导致 playground chat、定价查询、钱包查询、渠道调度等链路在数据库无对应记录时暴露原始 SQL 错误给用户。
+
+**原因**：GoFrame v2 的 `Scan` 对 struct 值类型和指针类型行为不同：
+- `Scan(&structValue)` — 无行时返回 `sql.ErrNoRows`
+- `Scan(&pointerValue)` — 无行时返回 `nil`，指针设为 `nil`
+
+**修复**：将所有"期望零或一行"的 `Scan` 调用从值类型改为指针类型，用 `if x == nil` 替代 `if x.Field == 0` 判断。涉及文件：
+- `internal/logic/tenant/playground.go`（findActiveApiKey）
+- `internal/logic/relay/provider.go`（CheckTenantModelAccess、tryAffinityChannel、GetModelDetail、getChannelKey）
+- `internal/logic/billing/pricing.go`（GetModelPrice 的三次 Scan、EstimatePreDeductAmount）
+- `internal/logic/billing/wallet.go`（GetWallet、syncWalletToRedis、preDeductDB、preDeductSyncDB、unfreezeDB、recordTransaction）
+
+**正确做法**：查询单行记录时，始终使用指针类型接收 Scan 结果，通过 `nil` 检查判断无数据。

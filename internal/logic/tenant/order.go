@@ -188,7 +188,7 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		return nil, err
 	}
 
-	var channel struct {
+	var channel *struct {
 		Channel   string `json:"channel"`
 		Config    string `json:"config"`
 		IsEnabled bool   `json:"is_enabled"`
@@ -197,6 +197,9 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		Where("id", req.PaymentChannelID).Scan(&channel)
 	if err != nil {
 		return nil, err
+	}
+	if channel == nil {
+		return nil, lcommon.NewBusinessError(422, "支付渠道不存在")
 	}
 	if !channel.IsEnabled {
 		return nil, lcommon.NewBusinessError(422, "支付渠道已禁用")
@@ -269,7 +272,7 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 
 // getOrderForPay 获取待支付订单信息（供 OrderPay 内部调用）
 func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo string, finalAmount float64, currency string, orderType string, description string, err error) {
-	var order struct {
+	var order *struct {
 		OrderNo     string  `json:"order_no"`
 		FinalAmount float64 `json:"final_amount"`
 		Currency    string  `json:"currency"`
@@ -280,6 +283,10 @@ func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).Where("tenant_id", tenantID).Scan(&order)
 	if err != nil {
+		return
+	}
+	if order == nil {
+		err = lcommon.NewNotFoundError("订单")
 		return
 	}
 	if order.Status != "pending" {

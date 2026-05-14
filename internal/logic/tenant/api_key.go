@@ -213,7 +213,7 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 		KeyType   string `json:"key_type"`
 		KeyPrefix string `json:"key_prefix"`
 	}
-	var info keyInfo
+	var info *keyInfo
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", keyID).
 		Where("tenant_id", tenantID).
@@ -222,7 +222,7 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 	if err != nil {
 		return nil, err
 	}
-	if info.KeyPrefix == "" {
+	if info == nil {
 		return nil, lcommon.NewNotFoundError("API key")
 	}
 
@@ -270,7 +270,7 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 	type keyInfo struct {
 		KeyType string `json:"key_type"`
 	}
-	var info keyInfo
+	var info *keyInfo
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", keyID).
 		Where("tenant_id", tenantID).
@@ -279,7 +279,7 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 	if err != nil {
 		return nil, err
 	}
-	if info.KeyType == "" {
+	if info == nil {
 		return nil, lcommon.NewNotFoundError("API key")
 	}
 

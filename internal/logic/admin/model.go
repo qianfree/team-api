@@ -142,12 +142,12 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 
 // UpdateModel 更新模型（含弃用状态管理）
 func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error) {
-	var oldModel struct {
+	var oldModel *struct {
 		ModelId string `json:"model_id"`
 		Status  string `json:"status"`
 	}
 	err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Fields("model_id, status").Scan(&oldModel)
-	if err != nil || oldModel.ModelId == "" {
+	if err != nil || oldModel == nil {
 		return nil, common.NewBusinessError(404, "模型不存在")
 	}
 
@@ -427,7 +427,7 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 
 // FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）
 func (s *sAdmin) FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchOfficialReq) (*v1.PricingFetchOfficialRes, error) {
-	var model struct {
+	var model *struct {
 		ModelId string `json:"model_id"`
 	}
 	err := dao.MdlModels.Ctx(ctx).Where("id", req.ModelID).Fields("model_id").Scan(&model)

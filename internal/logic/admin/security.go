@@ -40,10 +40,13 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	}
 
 	// Get user info for response
-	var user entity.SysAdminUsers
+	var user *entity.SysAdminUsers
 	err = dao.SysAdminUsers.Ctx(ctx).Where("id", claims.UserID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 	if user.Status != "active" {
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
