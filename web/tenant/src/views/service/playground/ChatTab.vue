@@ -81,7 +81,7 @@ async function sendMessage() {
 	}
 
 	try {
-		const res = await request.post('/tenant/playground/chat', requestBody)
+		const res = await request.post('/tenant/playground/chat', requestBody, { _suppressErrorMsg: true } as any)
 		if (res.data?.code === 0) {
 			const data = res.data.data
 			messages.value.push({ role: 'assistant', content: data.content || '(无响应内容)' })
@@ -90,9 +90,9 @@ async function sendMessage() {
 			tokenUsage.total = data.total_tokens || 0
 			tokenUsage.cost = data.estimated_cost || ''
 		}
-	} catch (e) {
-		console.error(e)
-		messages.value.push({ role: 'assistant', content: '请求失败，请重试' })
+	} catch (e: any) {
+		const errMsg = e?.message || '请求失败，请重试'
+		messages.value.push({ role: 'assistant', content: errMsg })
 	} finally {
 		sending.value = false
 		await nextTick()
