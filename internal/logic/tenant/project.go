@@ -114,7 +114,7 @@ func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreate
 func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdateReq) (*v1.TenantProjectUpdateRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var project struct {
+	var project *struct {
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
 	}
@@ -125,7 +125,7 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 	if err != nil {
 		return nil, err
 	}
-	if project.ID == 0 {
+	if project == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 
@@ -163,7 +163,7 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchiveReq) (*v1.TenantProjectArchiveRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var project struct {
+	var project *struct {
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
 	}
@@ -174,7 +174,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 	if err != nil {
 		return nil, err
 	}
-	if project.ID == 0 {
+	if project == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 	if project.Status == "archived" {
@@ -205,7 +205,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUnarchiveReq) (*v1.TenantProjectUnarchiveRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var project struct {
+	var project *struct {
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
 	}
@@ -216,7 +216,7 @@ func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUna
 	if err != nil {
 		return nil, err
 	}
-	if project.ID == 0 {
+	if project == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 	if project.Status != "archived" {
@@ -289,7 +289,7 @@ func CheckBudgetExhausted(ctx context.Context) error {
 func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (*v1.TenantProjectGetRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var p projectRow
+	var p *projectRow
 	err := dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
@@ -298,7 +298,7 @@ func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (
 	if err != nil {
 		return nil, err
 	}
-	if p.Id == 0 {
+	if p == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 
@@ -394,7 +394,7 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 	userID := ctxUserID(ctx)
 
 	// Verify project exists and belongs to tenant
-	var project struct {
+	var project *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.TntProjects.Ctx(ctx).
@@ -405,7 +405,7 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 	if err != nil {
 		return nil, err
 	}
-	if project.ID == 0 {
+	if project == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 
@@ -465,7 +465,7 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 	tenantID := ctxTenantID(ctx)
 
 	// Verify the key belongs to the project and tenant
-	var key struct {
+	var key *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.ApiKeys.Ctx(ctx).
@@ -477,7 +477,7 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 	if err != nil {
 		return nil, err
 	}
-	if key.ID == 0 {
+	if key == nil {
 		return nil, common.NewNotFoundError("密钥")
 	}
 

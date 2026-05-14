@@ -417,10 +417,13 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 	}
 
 	// Fetch current role from user table
-	var tntUser entity.TntUsers
+	var tntUser *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&tntUser)
 	if err != nil {
 		return nil, err
+	}
+	if tntUser == nil {
+		return nil, common.NewUnauthorizedError("用户不存在")
 	}
 
 	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", tntUser.Role, session.TenantId, session.Id)
@@ -439,11 +442,14 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 func (s *sTenant) ChangePassword(ctx context.Context, req *v1.TenantChangePasswordReq) (*v1.TenantChangePasswordRes, error) {
 	userID := ctxUserID(ctx)
 
-	var user entity.TntUsers
+	var user *entity.TntUsers
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", userID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 
 	if !crypto.VerifyPassword(req.OldPassword, user.PasswordHash) {

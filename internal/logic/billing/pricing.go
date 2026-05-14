@@ -81,7 +81,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		Status  string `json:"status"`
 	}
 
-	var model modelRow
+	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Where("status", "active").
@@ -90,7 +90,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query model price")
 	}
-	if model.ID == 0 {
+	if model == nil {
 		return nil, gerror.Newf("model not found: %s", modelName)
 	}
 
@@ -104,7 +104,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		CacheCreationPrice float64  `json:"cache_creation_price"`
 	}
 
-	var pricing pricingRow
+	var pricing *pricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.ID).
 		Where("min_tokens", 0).
@@ -113,20 +113,29 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		return nil, gerror.Wrapf(err, "query model pricing")
 	}
 
-	billingMode := pricing.BillingMode
-	if billingMode == "" {
-		billingMode = "token"
-	}
-	inputPrice := pricing.InputPrice
-	outputPrice := pricing.OutputPrice
-	baseInputPrice := pricing.InputPrice
-	baseOutputPrice := pricing.OutputPrice
+	billingMode := "token"
+	inputPrice := 0.0
+	outputPrice := 0.0
+	baseInputPrice := 0.0
+	baseOutputPrice := 0.0
 	var perRequestPrice float64
-	if pricing.PerRequestPrice != nil {
-		perRequestPrice = *pricing.PerRequestPrice
+	cacheReadPrice := 0.0
+	cacheCreationPrice := 0.0
+
+	if pricing != nil {
+		if pricing.BillingMode != "" {
+			billingMode = pricing.BillingMode
+		}
+		inputPrice = pricing.InputPrice
+		outputPrice = pricing.OutputPrice
+		baseInputPrice = pricing.InputPrice
+		baseOutputPrice = pricing.OutputPrice
+		if pricing.PerRequestPrice != nil {
+			perRequestPrice = *pricing.PerRequestPrice
+		}
+		cacheReadPrice = pricing.CacheReadPrice
+		cacheCreationPrice = pricing.CacheCreationPrice
 	}
-	cacheReadPrice := pricing.CacheReadPrice
-	cacheCreationPrice := pricing.CacheCreationPrice
 
 	// 3. 查租户独立价格（mdl_tenant_models）
 	type tenantModelRow struct {
@@ -139,7 +148,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		Enabled           bool     `json:"enabled"`
 	}
 
-	var tm tenantModelRow
+	var tm *tenantModelRow
 	err = dao.MdlTenantModels.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("model_id", model.ID).
@@ -153,7 +162,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	discountRatio := 1.0
 	billingSource := "base"
 
-	if tm.Enabled {
+	if tm != nil && tm.Enabled {
 		billingSource = "tenant_custom"
 		if tm.BillingMode != nil && *tm.BillingMode != "" {
 			billingMode = *tm.BillingMode
@@ -401,18 +410,23 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 	type modelRow struct {
 		MaxOutputTokens int `json:"max_output_tokens"`
 	}
-	var model modelRow
+	var model *modelRow
 	err = dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Fields("max_output_tokens").
 		Scan(&model)
 	if err != nil {
-		return 0, err
+		return 0.01, nil
+	}
+
+	maxOutput := 4096
+	if model != nil && model.MaxOutputTokens > 0 {
+		maxOutput = model.MaxOutputTokens
 	}
 
 	estimatedOutput := requestedMaxTokens
 	if estimatedOutput <= 0 || isStream {
-		estimatedOutput = int(float64(model.MaxOutputTokens) * 0.8)
+		estimatedOutput = int(float64(maxOutput) * 0.8)
 		if estimatedOutput <= 0 {
 			estimatedOutput = 4096
 		}

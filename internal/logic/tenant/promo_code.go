@@ -18,7 +18,7 @@ import (
 func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var promo struct {
+	var promo *struct {
 		ID            int64     `json:"id"`
 		Type          string    `json:"type"`
 		DiscountValue float64   `json:"discount_value"`
@@ -37,7 +37,7 @@ func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidateP
 	if err != nil {
 		return nil, err
 	}
-	if promo.ID == 0 {
+	if promo == nil {
 		return nil, lcommon.NewBusinessError(404, "优惠码无效")
 	}
 	if promo.Status != "active" {
@@ -95,13 +95,16 @@ func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidateP
 
 // applyPromoCode 应用优惠码到订单
 func applyPromoCode(ctx context.Context, tenantID int64, code string, orderID int64) error {
-	var promo struct {
+	var promo *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.OrdPromoCodes.Ctx(ctx).
 		Where("code", code).
 		Scan(&promo)
-	if err != nil || promo.ID == 0 {
+	if err != nil {
+		return lcommon.NewBusinessError(404, "优惠码无效")
+	}
+	if promo == nil {
 		return lcommon.NewBusinessError(404, "优惠码无效")
 	}
 
@@ -133,7 +136,7 @@ func applyPromoCode(ctx context.Context, tenantID int64, code string, orderID in
 
 // validatePromoCodeInternal is the internal version of promo code validation used by applyPromoCode.
 func validatePromoCodeInternal(ctx context.Context, tenantID int64, code string, amount float64) (map[string]any, error) {
-	var promo struct {
+	var promo *struct {
 		ID            int64     `json:"id"`
 		Type          string    `json:"type"`
 		DiscountValue float64   `json:"discount_value"`
@@ -152,7 +155,7 @@ func validatePromoCodeInternal(ctx context.Context, tenantID int64, code string,
 	if err != nil {
 		return nil, err
 	}
-	if promo.ID == 0 {
+	if promo == nil {
 		return nil, lcommon.NewBusinessError(404, "优惠码无效")
 	}
 	if promo.Status != "active" {

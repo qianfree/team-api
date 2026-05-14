@@ -113,17 +113,23 @@ func ParseConfirmToken(tokenStr string) (*ConfirmClaims, error) {
 func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri string, err error) {
 	var accountName string
 	if userType == "admin" {
-		var user entity.SysAdminUsers
+		var user *entity.SysAdminUsers
 		err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return "", "", err
 		}
+		if user == nil {
+			return "", "", NewBusinessError(10024, "用户不存在")
+		}
 		accountName = user.Username
 	} else {
-		var user entity.TntUsers
+		var user *entity.TntUsers
 		err = dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return "", "", err
+		}
+		if user == nil {
+			return "", "", NewBusinessError(10024, "用户不存在")
 		}
 		accountName = fmt.Sprintf("%s@%d", user.Username, user.TenantId)
 	}
@@ -148,17 +154,23 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 	// Verify current password
 	var passwordHash string
 	if userType == "admin" {
-		var user entity.SysAdminUsers
+		var user *entity.SysAdminUsers
 		err := dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return nil, err
 		}
+		if user == nil {
+			return nil, NewBusinessError(10024, "用户不存在")
+		}
 		passwordHash = user.PasswordHash
 	} else {
-		var user entity.TntUsers
+		var user *entity.TntUsers
 		err := dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return nil, err
+		}
+		if user == nil {
+			return nil, NewBusinessError(10024, "用户不存在")
 		}
 		passwordHash = user.PasswordHash
 	}
@@ -272,10 +284,13 @@ func GetUserTOTPSecret(ctx context.Context, userType string, userID int64) (secr
 	encKey := getEncryptionKey(ctx)
 
 	if userType == "admin" {
-		var user entity.SysAdminUsers
+		var user *entity.SysAdminUsers
 		err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return "", nil, err
+		}
+		if user == nil {
+			return "", nil, NewBusinessError(10024, "用户不存在")
 		}
 		if user.TotpSecret != "" {
 			secret, err = crypto.DecryptString(encKey, user.TotpSecret)
@@ -287,10 +302,13 @@ func GetUserTOTPSecret(ctx context.Context, userType string, userID int64) (secr
 			_ = json.Unmarshal([]byte(user.BackupCodes), &backupCodes)
 		}
 	} else {
-		var user entity.TntUsers
+		var user *entity.TntUsers
 		err = dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 		if err != nil {
 			return "", nil, err
+		}
+		if user == nil {
+			return "", nil, NewBusinessError(10024, "用户不存在")
 		}
 		if user.TotpSecret != "" {
 			secret, err = crypto.DecryptString(encKey, user.TotpSecret)
@@ -347,13 +365,25 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 // Is2FAEnabled checks if 2FA is enabled for a user.
 func Is2FAEnabled(ctx context.Context, userType string, userID int64) (bool, error) {
 	if userType == "admin" {
-		var user entity.SysAdminUsers
+		var user *entity.SysAdminUsers
 		err := dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
-		return user.TotpEnabled, err
+		if err != nil {
+			return false, err
+		}
+		if user == nil {
+			return false, nil
+		}
+		return user.TotpEnabled, nil
 	}
-	var user entity.TntUsers
+	var user *entity.TntUsers
 	err := dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
-	return user.TotpEnabled, err
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
+	}
+	return user.TotpEnabled, nil
 }
 
 // RecordLoginHistory records a login attempt in aud_login_history.

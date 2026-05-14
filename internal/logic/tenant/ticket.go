@@ -121,7 +121,7 @@ func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq)
 		return nil, common.NewBadRequestError("回复内容不能为空")
 	}
 
-	var ticket struct {
+	var ticket *struct {
 		TenantID int64  `json:"tenant_id"`
 		UserID   int64  `json:"user_id"`
 		Status   string `json:"status"`
@@ -133,7 +133,7 @@ func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq)
 	if err != nil {
 		return nil, err
 	}
-	if ticket.TenantID == 0 {
+	if ticket == nil {
 		return nil, common.NewNotFoundError("工单")
 	}
 	if ticket.TenantID != tenantID || ticket.UserID != userID {

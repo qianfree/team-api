@@ -59,7 +59,7 @@ func UnlockOrder(orderNo string) {
 // ProcessCallback 统一回调处理流程。
 func ProcessCallback(ctx context.Context, r *http.Request, channelID int64) error {
 	// 1. 加载支付渠道配置
-	var channel struct {
+	var channel *struct {
 		Channel   string `json:"channel"`
 		Config    string `json:"config"`
 		IsEnabled bool   `json:"is_enabled"`
@@ -69,7 +69,7 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelID int64) erro
 	if err != nil {
 		return gerror.Wrapf(err, "加载支付渠道失败")
 	}
-	if channel.Channel == "" {
+	if channel == nil {
 		return common.NewNotFoundError("支付渠道")
 	}
 	if !channel.IsEnabled {
@@ -97,7 +97,7 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelID int64) erro
 	defer UnlockOrder(result.OrderNo)
 
 	// 5. 幂等检查：仅处理 pending 状态
-	var order struct {
+	var order *struct {
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
 	}
@@ -105,6 +105,9 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelID int64) erro
 		Where("order_no", result.OrderNo).Scan(&order)
 	if err != nil {
 		return gerror.Wrapf(err, "查询订单失败")
+	}
+	if order == nil {
+		return common.NewNotFoundError("订单")
 	}
 	if order.Status != "pending" {
 		return nil // 已处理，幂等返回

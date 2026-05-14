@@ -408,7 +408,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	}
 
 	// 查询 Key 信息
-	var keyInfo struct {
+	var keyInfo *struct {
 		KeyType        string      `json:"key_type"`
 		Status         string      `json:"status"`
 		Name           string      `json:"name"`

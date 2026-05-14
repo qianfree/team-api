@@ -18,10 +18,13 @@ import (
 
 // getTenantSettings 读取租户的 settings JSONB 为 map。
 func getTenantSettings(ctx context.Context, tenantID int64) (map[string]any, error) {
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Fields("settings").Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return make(map[string]any), nil
 	}
 	settings := make(map[string]any)
 	if tenant.Settings != "" {
@@ -235,7 +238,7 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 	}
 	tenantID := ctxTenantID(ctx)
 
-	var record entity.AudRequestLogs
+	var record *entity.AudRequestLogs
 	err := dao.AudRequestLogs.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
@@ -243,7 +246,7 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 	if err != nil {
 		return nil, err
 	}
-	if record.Id == 0 {
+	if record == nil {
 		return nil, common.NewNotFoundError("请求审计日志")
 	}
 

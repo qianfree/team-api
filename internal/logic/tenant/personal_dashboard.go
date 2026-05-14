@@ -162,14 +162,14 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 		QuotaPeriod  string  `json:"quota_period"`
 		QuotaResetAt string  `json:"quota_reset_at"`
 	}
-	var qRow quotaRow
+	var qRow *quotaRow
 	err = g.DB().Ctx(ctx).Raw(`
 		SELECT quota_type, COALESCE(quota_limit, 0) as quota_limit,
 			COALESCE(quota_used, 0) as quota_used, quota_period,
 			COALESCE(TO_CHAR(quota_reset_at, 'YYYY-MM-DD HH24:MI:SS'), '') as quota_reset_at
 		FROM tnt_users WHERE id = ? AND tenant_id = ?
 	`, userID, tenantID).Scan(&qRow)
-	if err == nil && qRow.QuotaType != "" && qRow.QuotaType != "none" {
+	if err == nil && qRow != nil && qRow.QuotaType != "" && qRow.QuotaType != "none" {
 		q := &v1.PersonalQuotaStatus{
 			QuotaType:   qRow.QuotaType,
 			QuotaLimit:  qRow.QuotaLimit,

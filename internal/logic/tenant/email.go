@@ -57,14 +57,14 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 	}
 
 	// Find user by email (search across all tenants)
-	var user entity.TntUsers
+	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
 		Where("email", email).
 		Scan(&user)
 	if err != nil {
 		return nil, err
 	}
-	if user.Id == 0 {
+	if user == nil {
 		return nil, common.NewBadRequestError("该邮箱未注册")
 	}
 
@@ -126,11 +126,14 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	}
 
 	// Get old email for notification
-	var user entity.TntUsers
+	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
 		Where("id", userID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
 	}
 	oldEmail := user.Email
 

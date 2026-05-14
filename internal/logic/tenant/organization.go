@@ -24,7 +24,7 @@ func ownerOnly(ctx context.Context) error {
 func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1.TenantOrgInfoRes, error) {
 	tenantID := ctxTenantID(ctx)
 
-	var tenant struct {
+	var tenant *struct {
 		Id         int64  `json:"id"`
 		Name       string `json:"name"`
 		Code       string `json:"code"`
@@ -37,6 +37,9 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		Where("id", tenantID).Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return nil, common.NewNotFoundError("租户")
 	}
 
 	memberCount, err := dao.TntUsers.Ctx(ctx).
@@ -170,7 +173,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1.TenantProfileRes, error) {
 	userID := ctxUserID(ctx)
 
-	var user struct {
+	var user *struct {
 		Id          int64  `json:"id"`
 		Username    string `json:"username"`
 		Email       string `json:"email"`
@@ -183,6 +186,9 @@ func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1
 		Where("id", userID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
 	}
 
 	return &v1.TenantProfileRes{

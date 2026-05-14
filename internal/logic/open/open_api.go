@@ -178,12 +178,15 @@ func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteRe
 	}
 
 	// Prevent deleting owner
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, fmt.Errorf("用户不存在")
 	}
 	if user.Role == "owner" {
 		return nil, fmt.Errorf("不能删除所有者")

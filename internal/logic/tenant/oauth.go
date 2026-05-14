@@ -119,7 +119,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	}
 
 	// 查找已绑定的身份
-	var identity struct {
+	var identity *struct {
 		Id       int64 `json:"id"`
 		TenantId int64 `json:"tenant_id"`
 		UserId   int64 `json:"user_id"`
@@ -136,7 +136,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	var tenantID int64
 	var userID int64
 
-	if identity.Id > 0 {
+	if identity != nil && identity.Id > 0 {
 		tenantID = identity.TenantId
 		userID = identity.UserId
 
@@ -221,7 +221,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	}
 
 	// 查找用户角色
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	g.DB().Model("tnt_users").Ctx(ctx).Where("id", userID).Scan(&user)
@@ -244,6 +244,14 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
+	}
+
+	if user == nil {
+		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
+	}
+
+	if user == nil {
+		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
 	}
 
 	// 生成 JWT token pair

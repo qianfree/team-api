@@ -382,12 +382,12 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id, balance, frozen_balance").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return nil, gerror.Newf("wallet not found for tenant %d", tenantID)
 	}
 
@@ -428,12 +428,12 @@ func (s *sAdmin) GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) 
 		FrozenBalance    float64  `json:"frozen_balance"`
 		WarningThreshold *float64 `json:"warning_threshold"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", req.TenantID).
 		Fields("id, balance, frozen_balance, warning_threshold").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
 	}
 
@@ -449,14 +449,14 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	// 获取钱包 ID
-	var w struct {
+	var w *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", req.TenantID).
 		Fields("id").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
 	}
 
@@ -487,12 +487,12 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
-	var w walletRow
+	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", req.TenantID).
 		Fields("id").
 		Scan(&w)
-	if err != nil || w.ID == 0 {
+	if err != nil || w == nil {
 		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
 	}
 

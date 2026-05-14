@@ -103,7 +103,7 @@ func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int6
 		Settings      string `json:"settings"`
 	}
 
-	var ch channelRow
+	var ch *channelRow
 	err := dao.ChnChannels.Ctx(ctx).As("c").
 		LeftJoin("chn_abilities a ON a.channel_id = c.id").
 		Where("c.id", preferredChannelID).
@@ -112,7 +112,7 @@ func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int6
 		Where("a.enabled", true).
 		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.settings").
 		Scan(&ch)
-	if err != nil || ch.ChannelID == 0 {
+	if err != nil || ch == nil {
 		return nil, common.ErrChannelUnavailable
 	}
 
@@ -218,7 +218,7 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		ChannelScope string `json:"channel_scope"`
 	}
 
-	var row accessRow
+	var row *accessRow
 	err := dao.MdlTenantModels.Ctx(ctx).As("tm").
 		LeftJoin("mdl_models m ON tm.model_id = m.id").
 		Where("tm.tenant_id", tenantID).
@@ -230,18 +230,10 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 	}
 
 	// 如果没有分配记录，默认允许（向后兼容：未分配模型时所有活跃模型可用）
+	if row == nil {
+		return true, nil, nil
+	}
 	if !row.Enabled && row.ChannelScope == "" {
-		// 检查是否有任何记录（可能是 enabled=false）
-		count, _ := g.DB().Model("mdl_tenant_models tm").Ctx(ctx).
-			LeftJoin("mdl_models m ON tm.model_id = m.id").
-			Where("tm.tenant_id", tenantID).
-			Where("m.model_id", modelName).
-			Count()
-		if count == 0 {
-			// 无分配记录，默认允许
-			return true, nil, nil
-		}
-		// 有记录但 enabled=false
 		return false, nil, nil
 	}
 
@@ -662,7 +654,7 @@ func (p *DataProviderImpl) GetModelDetail(ctx context.Context, tenantID int64, m
 		CreatedAt        string `json:"created_at"`
 	}
 
-	var model modelRow
+	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Fields("id, model_id, model_name, category, status, max_context_tokens, max_output_tokens, description, capabilities, created_at").
@@ -670,7 +662,7 @@ func (p *DataProviderImpl) GetModelDetail(ctx context.Context, tenantID int64, m
 	if err != nil {
 		return nil, err
 	}
-	if model.ID == 0 {
+	if model == nil {
 		return nil, common.ErrModelNotFound
 	}
 
@@ -756,13 +748,13 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 		TokenExpiresAt *gtime.Time `json:"token_expires_at"`
 	}
 
-	var key keyRow
+	var key *keyRow
 	err := dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", channelID).
 		Where("status", "active").
 		Fields("id, encrypted_key, key_type, token_expires_at").
 		Scan(&key)
-	if err != nil || key.ID == 0 {
+	if err != nil || key == nil {
 		return "", common.ErrChannelUnavailable
 	}
 

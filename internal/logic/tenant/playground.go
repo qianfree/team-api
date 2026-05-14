@@ -33,7 +33,7 @@ func findActiveApiKey(ctx context.Context) (*playgroundApiKey, error) {
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 
-	var key playgroundApiKey
+	var key *playgroundApiKey
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
@@ -43,10 +43,10 @@ func findActiveApiKey(ctx context.Context) (*playgroundApiKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if key.Id == 0 {
+	if key == nil {
 		return nil, common.NewBusinessError(10055, "没有可用的 API Key，请先创建")
 	}
-	return &key, nil
+	return key, nil
 }
 
 func buildPlaygroundRelayContext(ctx context.Context, key *playgroundApiKey, recorder http.ResponseWriter) *handler.RelayContext {

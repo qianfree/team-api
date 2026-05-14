@@ -39,10 +39,13 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
 	}
 
-	var user entity.TntUsers
+	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).Where("id", claims.UserID).Scan(&user)
 	if err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 	if user.Status != "active" {
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
@@ -77,10 +80,13 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "totp", ipAddress, ua, deviceFP, true, "")
 
 	// Get tenant info
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err = dao.TntTenants.Ctx(ctx).Where("id", user.TenantId).Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 
 	res := &v1.Tenant2FAVerifyRes{
@@ -269,10 +275,13 @@ func getEncKey(ctx context.Context) []byte {
 // GetIPWhitelist returns the tenant's IP whitelist configuration.
 func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error) {
 	tenantID := ctxTenantID(ctx)
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return nil, common.NewNotFoundError("租户")
 	}
 
 	settings := make(map[string]any)
@@ -299,10 +308,13 @@ func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGet
 // UpdateIPWhitelist updates the tenant's IP whitelist configuration.
 func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhitelistUpdateReq) (*v1.TenantIPWhitelistUpdateRes, error) {
 	tenantID := ctxTenantID(ctx)
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return nil, common.NewNotFoundError("租户")
 	}
 
 	settings := make(map[string]any)
@@ -335,9 +347,15 @@ func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhiteli
 // CheckIPWhitelist checks if the given IP is allowed for the tenant.
 // Returns true if allowed (or whitelist is disabled).
 func CheckIPWhitelist(ctx context.Context, tenantID int64, ip string) bool {
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
-	if err != nil || tenant.Settings == "" {
+	if err != nil {
+		return true
+	}
+	if tenant == nil {
+		return true
+	}
+	if tenant.Settings == "" {
 		return true
 	}
 
