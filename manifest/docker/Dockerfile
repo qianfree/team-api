@@ -1,7 +1,16 @@
 # Multi-stage build for Team-API
+#
+# Mirror acceleration build args (for mainland China users):
+#   GOPROXY             - Go module proxy (default: https://goproxy.cn,direct)
+#   BUN_CONFIG_REGISTRY - Bun npm registry (default: https://registry.npmmirror.com)
+#
+# Override example: docker compose build --build-arg GOPROXY=https://proxy.golang.org,direct
 
 # Stage 1: Frontend build
 FROM oven/bun:1-alpine AS frontend
+
+ARG BUN_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV BUN_CONFIG_REGISTRY=${BUN_CONFIG_REGISTRY}
 
 WORKDIR /build/web
 
@@ -20,6 +29,9 @@ RUN cd admin && bun run build && \
 
 # Stage 2: Go build
 FROM golang:1.25-alpine AS builder
+
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 
 RUN apk add --no-cache git make gcc musl-dev
 
