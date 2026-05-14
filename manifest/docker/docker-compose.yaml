@@ -6,7 +6,15 @@
 # 2. 修改下方 "Redis 配置" 中的 --requirepass 密码
 # 3. 将 manifest/docker/config.yaml 修改为实际配置
 #    （确保数据库密码和 Redis 密码与上方设置一致）
-# 4. 运行: docker compose up -d
+# 4. （可选）复制 .env.example 为 .env 并按需调整镜像加速配置
+# 5. 运行: docker compose up -d
+#
+# 镜像加速说明（大陆用户）：
+# 构建时默认使用 goproxy.cn 和 npmmirror 作为 Go/Bun 的下载源。
+# 拉取基础镜像缓慢时，可配置 Docker daemon 镜像加速器：
+#   编辑 /etc/docker/daemon.json，添加：
+#   {"registry-mirrors": ["https://mirror.ccs.tencentyun.com", "https://docker.1ms.run"]}
+#   然后重启 Docker: systemctl restart docker
 # =============================================================================
 
 services:
@@ -59,7 +67,9 @@ services:
       context: ../..
       dockerfile: manifest/docker/Dockerfile
       args:
-        VERSION: latest
+        VERSION: ${VERSION:-latest}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        BUN_CONFIG_REGISTRY: ${BUN_CONFIG_REGISTRY:-https://registry.npmmirror.com}
     container_name: team-api-app
     restart: unless-stopped
     ports:

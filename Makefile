@@ -4,6 +4,11 @@ DOCKER_NAME = "team-api"
 VERSION     ?= $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
 LDFLAGS     = -X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)
 
+# Mirror acceleration (override for non-China regions)
+GOPROXY     ?= https://goproxy.cn,direct
+BUN_REGISTRY ?= https://registry.npmmirror.com
+export GOPROXY
+
 # Cross-compile: make build GOOS=windows GOARCH=amd64
 GOOS    ?= $(shell go env GOOS)
 GOARCH  ?= $(shell go env GOARCH)
@@ -35,8 +40,8 @@ build:
 
 # Build frontend assets
 build-web:
-	cd web/admin && bun install && bun run build
-	cd web/tenant && bun install && bun run build
+	cd web/admin && BUN_CONFIG_REGISTRY=$(BUN_REGISTRY) bun install && bun run build
+	cd web/tenant && BUN_CONFIG_REGISTRY=$(BUN_REGISTRY) bun install && bun run build
 
 # Build all (frontend embedded into backend binary)
 build-all: build-web
