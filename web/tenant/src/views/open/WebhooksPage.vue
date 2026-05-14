@@ -2,6 +2,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 interface WebhookConfig {
   id: number
@@ -128,7 +131,7 @@ async function handleSave() {
 }
 
 async function handleDelete(id: number) {
-  if (!confirm('确定要删除此 Webhook 配置吗？')) return
+  if (!await confirm({ message: '确定要删除此 Webhook 配置吗？', confirmText: '确认删除', danger: true })) return
   try {
     const res = await request.delete(`/tenant/open/webhooks/${id}`)
     if (res.data?.code === 0) await loadConfigs()

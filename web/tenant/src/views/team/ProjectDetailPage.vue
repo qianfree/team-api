@@ -5,6 +5,9 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 const route = useRoute()
 const router = useRouter()
@@ -209,7 +212,7 @@ function copyKey() {
 }
 
 async function deleteKey(keyId: number) {
-	if (!confirm('确定禁用该密钥？')) return
+	if (!await confirm({ message: '确定禁用该密钥？', confirmText: '确认禁用', danger: true })) return
 	try {
 		await request.delete(`/tenant/projects/${projectId.value}/api-keys/${keyId}`)
 		fetchKeys()

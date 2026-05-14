@@ -5,6 +5,9 @@ import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 interface ApiKey {
 	id: number
@@ -115,11 +118,12 @@ function copyKey() {
 	})
 }
 
-async function deleteKey(keyId: number) {
-	if (!confirm('确定禁用该 API Key？禁用后将无法使用。')) return
+async function disableKey(keyId: number) {
+	if (!await confirm({ message: '确定禁用该 API Key？禁用后将无法使用。', confirmText: '确认禁用', danger: true })) return
 	try {
 		await request.delete(`/tenant/api-keys/${keyId}`)
-		keys.value = keys.value.filter((k) => k.id !== keyId)
+		const key = keys.value.find((k) => k.id === keyId)
+		if (key) key.status = 'disabled'
 	} catch {
 	}
 }
@@ -198,7 +202,7 @@ onMounted(fetchKeys)
 							<td class="text-right">
 								<button
 									v-if="key.status === 'active'"
-									@click="deleteKey(key.id)"
+									@click="disableKey(key.id)"
 									class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
 								>
 									<Icon name="trash" size="xs" />
