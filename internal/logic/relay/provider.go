@@ -402,7 +402,8 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 		tntReq, tntResp = truncateBody(tntReq, maxBodyLen), truncateBody(tntResp, maxBodyLen)
 
 		// 仅审计级别为 all 时记录请求头和响应头
-		var requestHeadersJSON, responseHeadersJSON string
+		requestHeadersJSON := "null"
+		responseHeadersJSON := "null"
 		if globalLevel == lcommon.AuditLevelFull {
 			if record.RequestHeaders != nil {
 				b, _ := json.Marshal(record.RequestHeaders)
@@ -415,7 +416,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 		}
 
 		// 序列化转发路径追踪
-		var forwardingTraceJSON string
+		forwardingTraceJSON := "null"
 		if record.ForwardingTrace != nil {
 			if b, err := json.Marshal(record.ForwardingTrace); err == nil {
 				forwardingTraceJSON = string(b)

@@ -27,6 +27,18 @@ func TestCheckScope(t *testing.T) {
 		{"read_only allows empty mode (models GET)", ScopeReadOnly, "", true},
 		{"audio_only allows audio", ScopeAudioOnly, "audio", true},
 		{"audio_only denies chat", ScopeAudioOnly, "chat_completions", false},
+		// short alias scope names (sent by frontend)
+		{"chat alias allows chat_completions", "chat", "chat_completions", true},
+		{"chat alias allows completions", "chat", "completions", true},
+		{"chat alias allows claude_messages", "chat", "claude_messages", true},
+		{"chat alias denies embeddings", "chat", "embeddings", false},
+		{"embedding alias allows embeddings", "embedding", "embeddings", true},
+		{"embedding alias denies chat", "embedding", "chat_completions", false},
+		{"image alias allows images_generations", "image", "images_generations", true},
+		{"image alias denies chat", "image", "chat_completions", false},
+		{"audio alias allows audio", "audio", "audio", true},
+		{"audio alias allows tts", "audio", "tts", true},
+		{"audio alias denies chat", "audio", "chat_completions", false},
 	}
 
 	for _, tt := range tests {
