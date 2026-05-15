@@ -71,6 +71,13 @@ func StreamHandler(ctx context.Context, resp *http.Response, info *common.RelayI
 		usage.TotalTokens = usage.PromptTokens + estimated
 	}
 
+	// 正常结束：发送 [DONE] 通知客户端流结束。
+	// 客户端依赖 data: [DONE] 判断流结束而非连接关闭；
+	// 弱网环境下后处理耗时较长，不发 [DONE] 客户端会一直等待直到网络超时。
+	if info.StreamStatus == nil || !info.StreamStatus.IsPartialStreamEnd() {
+		_ = helper.WriteSSEData(writer, "[DONE]")
+	}
+
 	if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
 		return usage, common.ErrStreamInterrupted
 	}
@@ -124,6 +131,10 @@ func StreamHandlerForCompletions(ctx context.Context, resp *http.Response, info 
 		estimated := responseTextBuf.Len() / 4
 		usage.CompletionTokens = estimated
 		usage.TotalTokens = usage.PromptTokens + estimated
+	}
+
+	if info.StreamStatus == nil || !info.StreamStatus.IsPartialStreamEnd() {
+		_ = helper.WriteSSEData(writer, "[DONE]")
 	}
 
 	if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
