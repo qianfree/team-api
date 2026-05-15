@@ -26,9 +26,16 @@
 - **五层额度模型** — 租户钱包 → 套餐额度 → 成员额度 → 项目预算 → Key 额度
 - **实时计费引擎** — 预扣 → 转发 → 结算 → 退款，Redis 原子操作保证并发安全
 - **双控制台** — 管理后台（Naive UI）用于平台运营 + 租户控制台（TailwindCSS）面向终端用户
-- **RBAC 权限控制** — 角色 + 权限点 + 数据范围，前端按钮级权限控制
-- **异步任务引擎** — 支持 Midjourney、Suno、可灵、Sora 等异步生成任务
 - **全链路可观测** — 请求日志、操作审计、监控告警，Request ID 贯穿全链路
+
+
+> 在线演示地址：
+> 
+> 管理端：https://team-api.net/admin/, 为做好数据安全措施，暂不公开登录方式
+> 
+> 用户端：https://tem-api.net, 用户名：liu@163.com, 密码：Demo123456
+
+---
 
 ## 项目截图
 
@@ -230,19 +237,6 @@ make build-all GOOS=linux GOARCH=amd64
 
 ## API 接口
 
-### 管理类接口
-
-| 路径 | 说明 | 认证方式 |
-|------|------|---------|
-| `/api/admin/*` | 管理后台 API | JWT（admin_users 表） |
-| `/api/tenant/*` | 租户控制台 API | JWT（tenant_users 表） |
-| `/api/payment/*` | 支付回调 | 签名验证 |
-| `/api/open/*` | 开放平台 API | HMAC-SHA256 |
-| `/api/status` | 公开状态页 | 无需认证 |
-| `/api/captcha/*` | 验证码服务 | 无需认证 |
-| `/api/docs/*` | OpenAPI 文档 | 无需认证 |
-| `/api/setup/*` | 系统初始化向导 | 仅首次部署 |
-
 ### AI 代理接口（OpenAI 兼容）
 
 | 接口 | 说明 |
@@ -270,40 +264,6 @@ curl http://localhost:18888/v1/chat/completions \
   }'
 ```
 
-## 配置说明
-
-### 环境变量
-
-所有配置项均可通过 `GF_` 前缀的环境变量覆盖（GoFrame 框架约定）：
-
-```bash
-# 数据库
-GF_DATABASE_DEFAULT_LINK="pgsql:user:pass@tcp(host:5432)/dbname?sslmode=disable"
-
-# Redis
-GF_REDIS_DEFAULT_ADDRESS="127.0.0.1:6379"
-
-# JWT
-GF_JWT_SECRET="your-production-secret"
-
-# 服务端口
-GF_SERVER_ADDRESS=":18888"
-```
-
-### 数据库迁移
-
-使用 [Goose](https://github.com/pressly/goose) 管理数据库迁移，按六位序号递增编号：
-
-```bash
-# 执行所有待迁移脚本
-make migrate-up
-
-# 回滚上一次迁移
-make migrate-down
-
-# 查看迁移状态
-make migrate-status
-```
 
 ## Docker 部署
 
@@ -338,14 +298,6 @@ docker build -t team-api:latest -f manifest/docker/Dockerfile .
 docker build -t team-api:v1.0.0 --build-arg VERSION=v1.0.0 -f manifest/docker/Dockerfile .
 ```
 
-### 部署架构
-
-```
-docker-compose.yaml
-├── postgres (PostgreSQL 17)  — 数据持久化到 volume
-├── redis (Redis 7)           — AOF 持久化到 volume
-└── app (team-api)            — 挂载 config.yaml，依赖 postgres/redis 健康检查
-```
 
 ### 配置说明
 
@@ -356,18 +308,6 @@ docker-compose.yaml
 | `config.yaml` | 应用运行时配置（数据库连接、Redis、JWT 等） |
 | `Dockerfile` | 多阶段构建（bun 前端 → Go 编译 → Alpine 运行） |
 | `docker-compose.yaml` | 服务编排（PostgreSQL + Redis + App） |
-
-### 健康检查
-
-应用内置健康检查端点 `/api/health`，Docker 每 30 秒探测一次，启动宽限期 30 秒。
-
-### 数据持久化
-
-Docker Compose 使用命名卷持久化数据：
-
-- `postgres_data` — PostgreSQL 数据目录
-- `redis_data` — Redis AOF 持久化
-- `app_logs` — 应用日志
 
 ## 开发指南
 
@@ -409,79 +349,14 @@ make migrate-down    # 回滚上一次迁移
 make migrate-status  # 查看迁移状态
 ```
 
-## 计费模型
+## 主线路线图
 
-Team-API 实现了五层额度体系：
+1. 完善大模型支持，特别是图像和视频的支持
+2. 支付模块（Easy Pay）
+3. 插件功能（定制功能通过插件实现，确保不与主线代码冲突）
+4. 开放平台（对接OA的能力，方便企业对接管理）
+5. 在线升级
 
-```
-租户钱包
-  └─ 套餐额度（资源池）
-      └─ 成员额度（控制线）
-          └─ 项目预算（控制线）
-              └─ Key 额度（控制线）
-```
-
-- 大模型定价使用**美元**（与上游供应商报价一致）
-- 用户钱包与支付使用**人民币**
-- 管理后台可配置人民币/美元兑换比例
-- 预扣通过 Redis 原子操作保证并发安全
-- 价格查询优先级：租户独立价 > 套餐价 > 模型基础价 > 默认价
-
-## 功能模块开发进度
-
-> ✅ 已完成 &nbsp; 🚧 部分完成 &nbsp; ⬜ 未开始
-
-| 模块             | 状态 | 说明                                                                   |
-|----------------|:----:|----------------------------------------------------------------------|
-| 项目骨架与基础设施      | ✅ | GoFrame v2 项目结构、数据库迁移、双层缓存、异步任务框架、文件存储                               |
-| 双控制台认证系统       | ✅ | 管理后台/租户控制台独立认证、JWT 双 Token、会话控制、登录锁定、邀请注册                            |
-| RBAC 权限控制      | ✅ | 角色 + 权限点 + 数据范围三层模型                                                  |
-| 操作审计日志         | ✅ | 全链路 Request ID、操作日志中间件、敏感访问记录、登录历史                                   |
-| OpenAI 适配器     | ✅ | Chat/Embeddings/Images/Completions/Audio/Rerank/Moderations/Realtime |
-| Claude 适配器     | ✅ | Messages API、OpenAI ↔ Claude 协议转换                                    |
-| Gemini 适配器     | ✅ | GenerateContent API、OpenAI ↔ Gemini 协议转换                             |
-| 24 大模型供应商      | ✅ | DeepSeek、通义千问、智谱、Moonshot、Mistral、xAI、Bedrock、Vertex AI、Ollama 等     |
-| 渠道调度引擎         | ✅ | 优先级/权重路由、自动故障转移、渠道亲和性、健康评分                                           |
-| 计费引擎           | ✅ | 预扣→转发→结算→退款、梯度定价、双层乘数、五层额度校验                                         |
-| 限流与并发控制        | ✅ | 四级 QPS 限流 + 三级并发限制（系统→租户→成员→Key）                                     |
-| 管理后台前端         | ✅ | Vue 3 + Naive UI、仪表盘、模型/渠道/租户/账单/权限管理                                |
-| 租户控制台前端        | ✅ | Vue 3 + TailwindCSS、注册登录、仪表盘、API Key/用量/钱包/成员管理                      |
-| 套餐与定价系统        | ✅ | 套餐 CRUD、Feature Flag、升降级差价计算、自动续费、月度额度重置                             |
-| 订单与支付框架        | ✅ | 订单状态机、统一支付回调、退款审批、履约逻辑                                               |
-| 支付渠道对接         | 🚧 | 框架已完成，支付宝/微信/Stripe 待对接                                              |
-| 租户生命周期         | ✅ | 试用→活跃→逾期→冻结→终止、宽限期处理、注销冷却期、数据清理                                      |
-| 兑换码/优惠券        | ✅ | 批量生成、使用记录、核销逻辑                                                       |
-| 收入报表           | ✅ | 日/月度用量与收入汇总、租户额度水位快照                                                 |
-| 成员管理增强         | ✅ | 批量导入、额度分配、模型范围分配、禁用/移除联动                                             |
-| 项目管理           | ✅ | 项目预算控制、项目归档/恢复                                                       |
-| 通知系统           | ✅ | 35+ 模板、站内信、邮件推送、通知偏好设置、发送失败重试                                        |
-| 公告管理           | ✅ | 全局/定向公告发布、已读状态追踪                                                     |
-| 工单系统           | ✅ | 提交/回复/分配/关闭工单、附件管理                                                   |
-| 帮助中心           | ✅ | 文章/分类管理、富文本内容                                                        |
-| 用户反馈           | ✅ | 反馈收集与管理                                                              |
-| 更新日志           | ✅ | 版本变更记录发布                                                             |
-| 系统监控           | ✅ | CPU/内存/磁盘/网络采集、Go 运行时指标、数据库/Redis 连接池监控                              |
-| 应用指标           | ✅ | QPS/TPM/并发数/P95/P99 延迟/错误率                                           |
-| 告警引擎           | ✅ | 告警规则 CRUD、检测引擎、抑制策略、通知分发、确认/解决流程                                     |
-| 渠道健康可视化        | ✅ | 24h 健康趋势、自动禁用/恢复、健康评分快照                                              |
-| 模型生命周期         | ✅ | active→deprecated→sunset→removed 状态机、Deprecation/Sunset 响应头          |
-| 敏感词过滤          | ✅ | 4 种策略（关闭/仅记录/替换/拦截）、匹配引擎、中间件集成                                       |
-| 维护模式           | ✅ | 控制台维护横幅、API 维护 503 响应、维护期代理继续服务                                      |
-| 数据治理           | ✅ | 数据保留策略、自动清理、数据导出权/删除权、租户注销清理                                         |
-| 异步任务管理         | ✅ | 任务状态查看、超时处理、Midjourney/Suno/可灵/Sora 适配                               |
-| 开放平台           | ✅ | 应用管理、HMAC-SHA256 认证、成员/Key/用量/账单 Open API                            |
-| Webhook        | ✅ | 30+ 事件订阅、签名验证、失败重试、投递日志                                              |
-| OAuth/SSO      | ✅ | OAuth 集成、SSO 自动建户                                                    |
-| API Playground | ✅ | 在线调试（真实调用、计费）                                                        |
-| OpenAPI 文档     | ✅ | 3.0 规范自动生成                                                           |
-| 图片模型适配验证       | 🚧 | 系统已有部分代码，但未进行验证                                                      |
-| 视频模型适配验证       | 🚧 | 系统已有部分代码，但未进行验证                                                      |
-| 嵌入模型适配验证       | 🚧 | 系统已有部分代码，但未进行验证                                                      |
-| 新手引导流程         | ⬜ | 5 步引导、空状态提示                                                          |
-| 在线审计           | ⬜ | 在线升级                                                                 |
-| 演示站点           | ⬜ | 在线演示                                                                 |
-| 审计日志分库存储       | ⬜ | 审计日志存入独立库中维护                                                         |
-| 插件功能           | ⬜ | 计划参考GVA或者Hotgo的实现                                                    |
 
 ## 参与贡献
 
