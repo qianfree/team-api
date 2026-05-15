@@ -19,8 +19,12 @@ type (
 		ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateReq) (*v1.TenantApiKeyCreateRes, error)
 		// ApiKeyDelete 禁用 API Key
 		ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteReq) (*v1.TenantApiKeyDeleteRes, error)
+		// ApiKeyUpdate 更新 API Key 的可编辑字段
+		ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateReq) (*v1.TenantApiKeyUpdateRes, error)
 		// ApiKeyUpdateScopes 更新 API Key 的模型 scope
 		ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUpdateScopesReq) (*v1.TenantApiKeyUpdateScopesRes, error)
+		// ApiKeyModelScopes 查询 API Key 的模型范围
+		ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (*v1.TenantApiKeyModelScopesRes, error)
 		// ExportApiKeys exports the tenant API key list as CSV or Excel.
 		ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error)
 		// AuditConfigGet returns the tenant's own audit level.
