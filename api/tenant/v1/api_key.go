@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+)
 
 // === 租户 API Key 管理 ===
 
@@ -20,13 +23,13 @@ type TenantApiKeyListRes struct {
 }
 
 type TenantApiKeyCreateReq struct {
-	g.Meta        `path:"/api-keys" method:"post" mime:"json" tags:"租户控制台-API Key" summary:"创建API Key"`
-	Name          string   `json:"name" v:"required"`
-	Scope         string   `json:"scope"`
-	KeyType       string   `json:"key_type"`
-	ProjectID     int64    `json:"project_id"`
-	ExpiresInDays int      `json:"expires_in_days"`
-	ModelNames    []string `json:"model_names"`
+	g.Meta     `path:"/api-keys" method:"post" mime:"json" tags:"租户控制台-API Key" summary:"创建API Key"`
+	Name       string      `json:"name" v:"required"`
+	Scope      string      `json:"scope"`
+	KeyType    string      `json:"key_type"`
+	ProjectID  int64       `json:"project_id"`
+	ExpiresAt  *gtime.Time `json:"expires_at"`
+	ModelNames []string    `json:"model_names"`
 }
 
 type TenantApiKeyCreateRes struct {
@@ -45,6 +48,21 @@ type TenantApiKeyDeleteReq struct {
 
 type TenantApiKeyDeleteRes struct{}
 
+type TenantApiKeyUpdateReq struct {
+	g.Meta               `path:"/api-keys/{id}" method:"put" mime:"json" tags:"租户控制台-API Key" summary:"更新API Key"`
+	Id                   int64       `json:"id" in:"path" v:"required|min:1"`
+	Name                 string      `json:"name"`
+	Scope                string      `json:"scope"`
+	Status               string      `json:"status"`
+	ExpiresAt            *gtime.Time `json:"expires_at"`
+	RateLimitQps         *int        `json:"rate_limit_qps"`
+	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	TotalQuota           *float64    `json:"total_quota"`
+	ModelNames           []string    `json:"model_names"`
+}
+
+type TenantApiKeyUpdateRes struct{}
+
 type TenantApiKeyUpdateScopesReq struct {
 	g.Meta     `path:"/api-keys/{id}/scopes" method:"put" mime:"json" tags:"租户控制台-API Key" summary:"更新API Key模型范围"`
 	Id         int64    `json:"id" in:"path" v:"required|min:1"`
@@ -52,6 +70,15 @@ type TenantApiKeyUpdateScopesReq struct {
 }
 
 type TenantApiKeyUpdateScopesRes struct{}
+
+type TenantApiKeyModelScopesReq struct {
+	g.Meta `path:"/api-keys/{id}/model-scopes" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"查询API Key模型范围"`
+	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+}
+
+type TenantApiKeyModelScopesRes struct {
+	ModelNames []string `json:"model_names"`
+}
 
 // TenantApiKeyExportReq 导出API Key列表请求
 type TenantApiKeyExportReq struct {

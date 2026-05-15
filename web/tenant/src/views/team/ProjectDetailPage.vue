@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
+import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
@@ -51,6 +53,10 @@ interface ApiKey {
 	model_count: number
 	status: string
 	expires_at: string | null
+	rate_limit_qps: number | null
+	rate_limit_concurrency: number | null
+	total_quota: number | null
+	used_quota: number | null
 	created_at: string
 }
 const keys = ref<ApiKey[]>([])
@@ -59,81 +65,35 @@ const keysPage = ref(1)
 const keysPageSize = 20
 const keysTotal = ref(0)
 
+// Key modals (shared component)
 const showCreateModal = ref(false)
-const createForm = reactive({ name: '', expires_in_days: 0 })
-const createLoading = ref(false)
-const createdKey = ref('')
+const showEditModal = ref(false)
+const editingKey = ref<ApiKeyData | null>(null)
 
-// Model selection for API key
-interface ModelItem {
-	id: number
-	model_id: string
-	model_name: string
-	category: string
-}
-const allModels = ref<ModelItem[]>([])
-const selectedModelNames = ref<string[]>([])
-const modelSearch = ref('')
+// Model scope modal
+const showScopeModal = ref(false)
+const scopeModalTitle = ref('')
+const scopeModalModels = ref<string[]>([])
+const scopeModalLoading = ref(false)
 
-const categoryLabel: Record<string, string> = {
-	chat: '对话',
-	embedding: '嵌入',
-	image: '图像',
-	audio: '语音',
-	rerank: '重排',
-}
-const categoryBadgeClass: Record<string, string> = {
-	chat: 'badge-primary',
-	embedding: 'badge-purple',
-	image: 'badge-warning',
-	audio: 'badge-success',
-	rerank: 'badge-gray',
-}
-
-const filteredModels = computed(() => {
-	if (!modelSearch.value) return allModels.value
-	const q = modelSearch.value.toLowerCase()
-	return allModels.value.filter(
-		m => m.model_id.toLowerCase().includes(q) || m.model_name.toLowerCase().includes(q)
-	)
-})
-
-const groupedFilteredModels = computed(() => {
-	const groups: Record<string, ModelItem[]> = {}
-	for (const m of filteredModels.value) {
-		const cat = m.category || 'other'
-		if (!groups[cat]) groups[cat] = []
-		groups[cat].push(m)
-	}
-	return groups
-})
-
-function toggleModelName(modelId: string) {
-	const idx = selectedModelNames.value.indexOf(modelId)
-	if (idx >= 0) {
-		selectedModelNames.value.splice(idx, 1)
-	} else {
-		selectedModelNames.value.push(modelId)
-	}
-}
-
-function selectAllModels() {
-	selectedModelNames.value = allModels.value.map(m => m.model_id)
-}
-
-function clearAllModels() {
-	selectedModelNames.value = []
-}
-
-async function fetchAllModels() {
+async function openScopeModal(keyId: number, keyName: string) {
+	scopeModalTitle.value = keyName + ' — 可用模型'
+	scopeModalModels.value = []
+	scopeModalLoading.value = true
+	showScopeModal.value = true
 	try {
-		const res: any = await request.get('/tenant/models')
-		const raw = res.data?.data
-		allModels.value = Array.isArray(raw) ? raw : (raw?.list || [])
+		const res: any = await request.get(`/tenant/api-keys/${keyId}/model-scopes`)
+		scopeModalModels.value = res.data?.data?.model_names || []
 	} catch {
-		allModels.value = []
+		scopeModalModels.value = []
+	} finally {
+		scopeModalLoading.value = false
 	}
 }
+
+onMounted(() => {
+	fetchProject()
+})
 
 // Usage stats
 const usageStats = ref<any>(null)
@@ -244,38 +204,16 @@ async function fetchKeys() {
 	}
 }
 
-function openCreateKey() {
-	createForm.name = ''
-	createForm.expires_in_days = 0
-	selectedModelNames.value = []
-	modelSearch.value = ''
-	createdKey.value = ''
-	showCreateModal.value = true
-}
-
-async function handleCreateKey() {
-	if (!createForm.name.trim()) return
-	createLoading.value = true
-	try {
-		const body: any = { name: createForm.name, scope: 'full', model_names: selectedModelNames.value }
-		if (createForm.expires_in_days > 0) {
-			body.expires_in_days = createForm.expires_in_days
-		}
-		const res: any = await request.post(`/tenant/projects/${projectId.value}/api-keys`, body)
-		const raw = res.data?.data
-		createdKey.value = (raw?.data || raw)?.key || ''
-		if (createdKey.value) fetchKeys()
-	} catch {
-	} finally {
-		createLoading.value = false
+function openEditModal(key: ApiKey) {
+	editingKey.value = {
+		id: key.id,
+		name: key.name,
+		expires_at: key.expires_at,
+		rate_limit_qps: key.rate_limit_qps,
+		total_quota: key.total_quota,
+		used_quota: key.used_quota,
 	}
-}
-
-function copyKey() {
-	if (!createdKey.value) return
-	navigator.clipboard.writeText(createdKey.value).then(() => {
-		toast.success('密钥已复制到剪贴板')
-	})
+	showEditModal.value = true
 }
 
 async function deleteKey(keyId: number) {
@@ -342,11 +280,6 @@ function switchTab(tab: 'overview' | 'keys' | 'usage') {
 		fetchUsageLogs()
 	}
 }
-
-onMounted(() => {
-	fetchProject()
-	fetchAllModels()
-})
 </script>
 
 <template>
@@ -379,7 +312,7 @@ onMounted(() => {
 							<p class="text-sm text-gray-500">{{ project.description || '暂无描述' }}</p>
 						</div>
 						<div class="flex items-center gap-2 flex-shrink-0">
-							<button v-if="project.status === 'active'" class="btn btn-secondary btn-sm" @click="openCreateKey">
+							<button v-if="project.status === 'active'" class="btn btn-secondary btn-sm" @click="showCreateModal = true">
 								<Icon name="plus" size="xs" />
 								创建密钥
 							</button>
@@ -482,7 +415,14 @@ onMounted(() => {
 								<tr v-for="key in keys" :key="key.id">
 									<td class="font-medium text-gray-900">{{ key.name }}</td>
 									<td><span class="code">{{ key.key_prefix }}...</span></td>
-									<td><span class="badge badge-gray">{{ key.model_count > 0 ? key.model_count + ' 个模型' : '不限模型' }}</span></td>
+									<td>
+										<template v-if="key.model_count > 0">
+											<button class="badge badge-primary cursor-pointer hover:bg-primary-100 transition-colors" @click="openScopeModal(key.id, key.name)">
+												{{ key.model_count }} 个模型
+											</button>
+										</template>
+										<span v-else class="badge badge-gray">不限模型</span>
+									</td>
 									<td>
 										<span class="badge" :class="keyStatusBadgeClass[key.status] || 'badge-gray'">
 											{{ keyStatusLabel[key.status] || key.status }}
@@ -491,15 +431,25 @@ onMounted(() => {
 									<td class="text-gray-500 text-xs">{{ formatDate(key.expires_at) }}</td>
 									<td class="text-gray-500 text-xs">{{ (key.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
 									<td class="text-right">
-										<button
-											v-if="key.status === 'active'"
-											@click="deleteKey(key.id)"
-											class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
-										>
-											<Icon name="trash" size="xs" />
-											禁用
-										</button>
-										<span v-else class="text-xs text-gray-400">{{ keyStatusLabel[key.status] || '已禁用' }}</span>
+										<div class="flex items-center justify-end gap-1">
+											<button
+												v-if="key.status === 'active'"
+												@click="openEditModal(key)"
+												class="btn btn-ghost btn-sm"
+											>
+												<Icon name="edit" size="xs" />
+												编辑
+											</button>
+											<button
+												v-if="key.status === 'active'"
+												@click="deleteKey(key.id)"
+												class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
+											>
+												<Icon name="trash" size="xs" />
+												禁用
+											</button>
+											<span v-if="key.status === 'disabled'" class="text-xs text-gray-400">{{ keyStatusLabel[key.status] || '已禁用' }}</span>
+										</div>
 									</td>
 								</tr>
 							</tbody>
@@ -627,98 +577,42 @@ onMounted(() => {
 		</template>
 
 		<!-- Create Key Modal -->
+		<ApiKeyEditModal
+			v-model:show="showCreateModal"
+			mode="create"
+			:project-id="projectId"
+			@saved="fetchKeys"
+		/>
+
+		<!-- Edit Key Modal -->
+		<ApiKeyEditModal
+			v-model:show="showEditModal"
+			mode="edit"
+			:api-key="editingKey"
+			:project-id="projectId"
+			@saved="fetchKeys"
+		/>
+
+		<!-- Model Scope Modal -->
 		<BaseModal
-			:show="showCreateModal"
-			:title="createdKey ? '密钥创建成功' : '创建项目密钥'"
-			width="wide"
-			@close="showCreateModal = false"
+			:show="showScopeModal"
+			:title="scopeModalTitle"
+			width="narrow"
+			@close="showScopeModal = false"
 		>
-			<div v-if="!createdKey" class="space-y-4">
-				<div>
-					<label class="input-label">名称</label>
-					<input v-model="createForm.name" type="text" placeholder="例如：测试环境密钥" class="input" />
-				</div>
-				<div>
-					<label class="input-label">可用模型</label>
-					<p class="text-xs text-gray-500 mb-2">留空表示不限制，密钥可使用所有租户可用模型。</p>
-					<div class="flex items-center gap-3 mb-2">
-						<div class="relative flex-1">
-							<Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-							<input v-model="modelSearch" type="text" class="input pl-9" placeholder="搜索模型..." />
-						</div>
-						<button class="btn btn-ghost btn-sm" @click="selectAllModels">全选</button>
-						<button class="btn btn-ghost btn-sm" @click="clearAllModels">清空</button>
-					</div>
-					<div class="max-h-60 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
-						<template v-for="(items, cat) in groupedFilteredModels" :key="cat">
-							<div class="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider sticky top-0">
-								{{ categoryLabel[cat as string] || cat }}
-								<span class="text-gray-300">({{ items.length }})</span>
-							</div>
-							<label
-								v-for="m in items"
-								:key="m.id"
-								class="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
-							>
-								<input
-									type="checkbox"
-									:checked="selectedModelNames.includes(m.model_id)"
-									@change="toggleModelName(m.model_id)"
-									class="h-4 w-4 rounded border-gray-300 text-primary-500 focus:ring-primary-500/30"
-								/>
-								<div class="min-w-0 flex-1">
-									<p class="text-sm font-medium text-gray-900 truncate">{{ m.model_name || m.model_id }}</p>
-									<p class="text-xs text-gray-400 font-mono truncate">{{ m.model_id }}</p>
-								</div>
-								<span class="badge shrink-0" :class="categoryBadgeClass[m.category] || 'badge-gray'">
-									{{ categoryLabel[m.category] || m.category }}
-								</span>
-							</label>
-						</template>
-						<div v-if="filteredModels.length === 0" class="px-4 py-6 text-center text-sm text-gray-400">
-							没有匹配的模型
-						</div>
-					</div>
-					<p class="text-xs text-gray-500 mt-1">
-						已选择 <span class="font-medium text-gray-700">{{ selectedModelNames.length }}</span> 个模型
-						<template v-if="selectedModelNames.length === 0">（不限制）</template>
-					</p>
-				</div>
-				<div>
-					<label class="input-label">有效天数（0 = 永不过期）</label>
-					<input v-model.number="createForm.expires_in_days" type="number" placeholder="0" min="0" max="365" class="input" />
-				</div>
+			<div v-if="scopeModalLoading" class="flex justify-center py-8">
+				<div class="spinner h-6 w-6 text-primary-500"></div>
 			</div>
-
-			<div v-else class="space-y-4">
-				<div class="flex items-center gap-3 mb-2">
-					<div class="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
-						<Icon name="checkCircle" size="md" class="text-emerald-600" />
-					</div>
-					<div>
-						<p class="text-sm text-gray-500">请立即复制密钥，关闭后将无法再次查看</p>
-					</div>
+			<div v-else class="max-h-80 overflow-y-auto">
+				<div v-for="name in scopeModalModels" :key="name" class="px-3 py-2 border-b border-gray-100 last:border-b-0">
+					<p class="text-sm font-mono text-gray-700">{{ name }}</p>
 				</div>
-				<div class="p-3 bg-gray-900 rounded-xl">
-					<p class="text-sm font-mono text-emerald-400 break-all select-all">{{ createdKey }}</p>
-				</div>
-				<button @click="copyKey" class="btn btn-primary w-full">
-					<Icon name="copy" size="sm" />
-					复制密钥
-				</button>
+				<div v-if="scopeModalModels.length === 0" class="py-8 text-center text-sm text-gray-400">无模型</div>
 			</div>
-
 			<template #footer>
-				<button v-if="!createdKey" @click="showCreateModal = false" class="btn btn-secondary">取消</button>
-				<button
-					v-if="!createdKey"
-					@click="handleCreateKey"
-					:disabled="createLoading || !createForm.name.trim()"
-					class="btn btn-primary"
-				>
-					{{ createLoading ? '创建中...' : '创建' }}
-				</button>
-				<button v-else @click="showCreateModal = false" class="btn btn-secondary w-full">完成</button>
+				<div class="text-xs text-gray-500">
+					共 {{ scopeModalModels.length }} 个模型
+				</div>
 			</template>
 		</BaseModal>
 	</div>

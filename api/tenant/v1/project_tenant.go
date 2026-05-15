@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+)
 
 // === 租户项目管理 ===
 
@@ -78,12 +81,12 @@ type TenantProjectApiKeyListRes struct {
 }
 
 type TenantProjectApiKeyCreateReq struct {
-	g.Meta        `path:"/projects/{id}/api-keys" method:"post" mime:"json" tags:"租户控制台-项目" summary:"项目密钥创建"`
-	Id            int64    `json:"id" in:"path" v:"required|min:1"`
-	Name          string   `json:"name" v:"required"`
-	Scope         string   `json:"scope" d:"full"`
-	ExpiresInDays int      `json:"expires_in_days"`
-	ModelNames    []string `json:"model_names"`
+	g.Meta     `path:"/projects/{id}/api-keys" method:"post" mime:"json" tags:"租户控制台-项目" summary:"项目密钥创建"`
+	Id         int64       `json:"id" in:"path" v:"required|min:1"`
+	Name       string      `json:"name" v:"required"`
+	Scope      string      `json:"scope" d:"full"`
+	ExpiresAt  *gtime.Time `json:"expires_at"`
+	ModelNames []string    `json:"model_names"`
 }
 
 type TenantProjectApiKeyCreateRes struct {

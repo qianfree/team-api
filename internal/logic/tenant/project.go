@@ -426,8 +426,8 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 		Scope:        req.Scope,
 	}
 
-	if req.ExpiresInDays > 0 {
-		insertData.ExpiresAt = gtime.Now().AddDate(0, 0, req.ExpiresInDays)
+	if req.ExpiresAt != nil {
+		insertData.ExpiresAt = req.ExpiresAt
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()
@@ -678,11 +678,13 @@ func convertApiKeyRowsToMaps(ctx context.Context, rows any) []map[string]any {
 	switch v := rows.(type) {
 	case []apiKeyRow:
 		for _, r := range v {
+			modelCount, _ := dao.ApiKeyModelScopes.Ctx(ctx).Where("api_key_id", r.Id).Count()
 			m := map[string]any{
-				"id":         r.Id,
-				"name":       r.Name,
-				"key_prefix": r.KeyPrefix,
-				"status":     r.Status,
+				"id":          r.Id,
+				"name":        r.Name,
+				"key_prefix":  r.KeyPrefix,
+				"status":      r.Status,
+				"model_count": modelCount,
 			}
 			if r.CreatedAt != nil {
 				m["created_at"] = r.CreatedAt.String()
