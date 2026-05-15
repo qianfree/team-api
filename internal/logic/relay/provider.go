@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -940,6 +941,57 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	}
 
 	memberModelCache.Set(ctx, cacheKey, names)
+
+	if len(names) == 0 {
+		return true, nil
+	}
+	for _, name := range names {
+		if name == modelName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// apiKeyModelCache API Key 模型范围缓存（TTL 60s）
+var apiKeyModelCache = lcommon.NewCache("apikey_model", 60*time.Second)
+
+// CheckApiKeyModelAccess 检查 API Key 是否有权使用指定模型。
+// 无 scope 记录表示不限制（向后兼容）。
+func (p *DataProviderImpl) CheckApiKeyModelAccess(ctx context.Context, apiKeyID int64, modelName string) (bool, error) {
+	cacheKey := strconv.FormatInt(apiKeyID, 10)
+
+	var cachedModelNames []string
+	if apiKeyModelCache.GetJSON(ctx, cacheKey, &cachedModelNames) {
+		if len(cachedModelNames) == 0 {
+			return true, nil
+		}
+		for _, name := range cachedModelNames {
+			if name == modelName {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	type scopeRow struct {
+		ModelName string `json:"model_name"`
+	}
+	var rows []scopeRow
+	err := dao.ApiKeyModelScopes.Ctx(ctx).
+		Where("api_key_id", apiKeyID).
+		Fields("model_name").
+		Scan(&rows)
+	if err != nil {
+		return false, err
+	}
+
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		names = append(names, r.ModelName)
+	}
+
+	apiKeyModelCache.Set(ctx, cacheKey, names)
 
 	if len(names) == 0 {
 		return true, nil
