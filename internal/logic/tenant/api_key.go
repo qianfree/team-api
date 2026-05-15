@@ -81,11 +81,13 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 
 	list := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
+		modelCount, _ := dao.ApiKeyModelScopes.Ctx(ctx).Where("api_key_id", k.Id).Count()
 		list = append(list, map[string]any{
 			"id":                     k.Id,
 			"name":                   k.Name,
 			"key_prefix":             k.KeyPrefix,
 			"scope":                  k.Scope,
+			"model_count":            modelCount,
 			"status":                 k.Status,
 			"key_type":               k.KeyType,
 			"project_id":             k.ProjectId,

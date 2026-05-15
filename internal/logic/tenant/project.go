@@ -376,7 +376,7 @@ func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectAp
 	}
 
 	return &v1.TenantProjectApiKeyListRes{
-		List:     convertApiKeyRowsToMaps(keys),
+		List:     convertApiKeyRowsToMaps(ctx, keys),
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
@@ -673,7 +673,7 @@ func convertProjectRowsToMaps(rows any) []map[string]any {
 }
 
 // convertApiKeyRowsToMaps converts api key rows to []map[string]any for JSON serialization.
-func convertApiKeyRowsToMaps(rows any) []map[string]any {
+func convertApiKeyRowsToMaps(ctx context.Context, rows any) []map[string]any {
 	result := make([]map[string]any, 0)
 	switch v := rows.(type) {
 	case []apiKeyRow:

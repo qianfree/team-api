@@ -78,6 +78,10 @@ type DataProvider interface {
 	// CheckMemberModelAccess 检查成员是否有权使用指定模型。
 	// 空 scope（无记录）表示不限制。
 	CheckMemberModelAccess(ctx context.Context, tenantID, userID int64, modelName string) (bool, error)
+
+	// CheckApiKeyModelAccess 检查 API Key 是否有权使用指定模型。
+	// 无 scope 记录表示不限制（向后兼容）。
+	CheckApiKeyModelAccess(ctx context.Context, apiKeyID int64, modelName string) (bool, error)
 }
 
 // ApiKeyInfo API Key 验证结果

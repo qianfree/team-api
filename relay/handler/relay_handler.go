@@ -109,9 +109,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		return nil, nil, constant.NewAuthError("model not allowed for this member")
 	}
 
-	// 4. API Key Scope 校验
-	if billing != nil && !billing.CheckScope(rc.Scope, relayModeStr) {
-		return nil, nil, constant.NewAuthError("API key scope denied for this endpoint")
+	// 4. API Key 模型范围校验
+	if allowed, err := provider.CheckApiKeyModelAccess(ctx, rc.ApiKeyID, lookupModel); err != nil {
+		return nil, nil, err
+	} else if !allowed {
+		return nil, nil, constant.NewAuthError("model not allowed for this API key")
 	}
 
 	// 5. QPS 限流检查

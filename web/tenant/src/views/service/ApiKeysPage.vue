@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
@@ -14,6 +14,7 @@ interface ApiKey {
 	name: string
 	key_prefix: string
 	scope: string
+	model_count: number
 	status: string
 	expires_at: string | null
 	rate_limit_qps: number | null
@@ -40,11 +41,81 @@ const { exporting, exportFile } = useExport({
 const showCreateModal = ref(false)
 const createForm = reactive({
 	name: '',
-	scope: 'full',
 	expires_in_days: 0,
 })
 const createLoading = ref(false)
 const createdKey = ref('')
+
+// Model selection
+interface ModelItem {
+	id: number
+	model_id: string
+	model_name: string
+	category: string
+}
+const allModels = ref<ModelItem[]>([])
+const selectedModelNames = ref<string[]>([])
+const modelSearch = ref('')
+
+const categoryLabel: Record<string, string> = {
+	chat: '对话',
+	embedding: '嵌入',
+	image: '图像',
+	audio: '语音',
+	rerank: '重排',
+}
+const categoryBadgeClass: Record<string, string> = {
+	chat: 'badge-primary',
+	embedding: 'badge-purple',
+	image: 'badge-warning',
+	audio: 'badge-success',
+	rerank: 'badge-gray',
+}
+
+const filteredModels = computed(() => {
+	if (!modelSearch.value) return allModels.value
+	const q = modelSearch.value.toLowerCase()
+	return allModels.value.filter(
+		m => m.model_id.toLowerCase().includes(q) || m.model_name.toLowerCase().includes(q)
+	)
+})
+
+const groupedFilteredModels = computed(() => {
+	const groups: Record<string, ModelItem[]> = {}
+	for (const m of filteredModels.value) {
+		const cat = m.category || 'other'
+		if (!groups[cat]) groups[cat] = []
+		groups[cat].push(m)
+	}
+	return groups
+})
+
+function toggleModelName(modelId: string) {
+	const idx = selectedModelNames.value.indexOf(modelId)
+	if (idx >= 0) {
+		selectedModelNames.value.splice(idx, 1)
+	} else {
+		selectedModelNames.value.push(modelId)
+	}
+}
+
+function selectAllModels() {
+	selectedModelNames.value = allModels.value.map(m => m.model_id)
+}
+
+function clearAllModels() {
+	selectedModelNames.value = []
+}
+
+async function fetchAllModels() {
+	try {
+		const res: any = await request.get('/tenant/models')
+		const raw = res.data?.data
+		allModels.value = Array.isArray(raw) ? raw : (raw?.list || [])
+	} catch {
+		allModels.value = []
+	}
+}
 
 const statusBadgeClass: Record<string, string> = {
 	active: 'badge-success',
@@ -56,13 +127,6 @@ const statusLabel: Record<string, string> = {
 	active: '活跃',
 	disabled: '已禁用',
 	revoked: '已吊销',
-}
-
-const scopeLabel: Record<string, string> = {
-	full: '全权限',
-	chat: '对话',
-	embedding: '嵌入',
-	image: '图像',
 }
 
 async function fetchKeys() {
@@ -83,8 +147,9 @@ async function fetchKeys() {
 
 function openCreateModal() {
 	createForm.name = ''
-	createForm.scope = 'full'
 	createForm.expires_in_days = 0
+	selectedModelNames.value = []
+	modelSearch.value = ''
 	createdKey.value = ''
 	showCreateModal.value = true
 }
@@ -95,7 +160,8 @@ async function handleCreate() {
 	try {
 		const body: any = {
 			name: createForm.name,
-			scope: createForm.scope,
+			scope: 'full',
+			model_names: selectedModelNames.value,
 		}
 		if (createForm.expires_in_days > 0) {
 			body.expires_in_days = createForm.expires_in_days
@@ -133,7 +199,10 @@ function formatDate(d: string | null): string {
 	return d.replace('T', ' ').substring(0, 16)
 }
 
-onMounted(fetchKeys)
+onMounted(() => {
+	fetchKeys()
+	fetchAllModels()
+})
 </script>
 
 <template>
@@ -190,7 +259,7 @@ onMounted(fetchKeys)
 								<span class="code">{{ key.key_prefix }}...</span>
 							</td>
 							<td>
-								<span class="badge badge-gray">{{ scopeLabel[key.scope] || key.scope }}</span>
+								<span class="badge badge-gray">{{ key.model_count > 0 ? key.model_count + ' 个模型' : '不限模型' }}</span>
 							</td>
 							<td>
 								<span class="badge" :class="statusBadgeClass[key.status] || 'badge-gray'">
@@ -236,7 +305,7 @@ onMounted(fetchKeys)
 		<BaseModal
 			:show="showCreateModal"
 			:title="createdKey ? '密钥创建成功' : '创建 API 密钥'"
-			width="narrow"
+			width="wide"
 			@close="showCreateModal = false"
 		>
 			<div v-if="!createdKey" class="space-y-4">
@@ -251,13 +320,50 @@ onMounted(fetchKeys)
 				</div>
 
 				<div>
-					<label class="input-label">权限范围</label>
-					<select v-model="createForm.scope" class="input bg-white">
-						<option value="full">全权限</option>
-						<option value="chat">对话（Chat）</option>
-						<option value="embedding">嵌入（Embedding）</option>
-						<option value="image">图像生成</option>
-					</select>
+					<label class="input-label">可用模型</label>
+					<p class="text-xs text-gray-500 mb-2">留空表示不限制，密钥可使用所有租户可用模型。</p>
+					<div class="flex items-center gap-3 mb-2">
+						<div class="relative flex-1">
+							<Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+							<input v-model="modelSearch" type="text" class="input pl-9" placeholder="搜索模型..." />
+						</div>
+						<button class="btn btn-ghost btn-sm" @click="selectAllModels">全选</button>
+						<button class="btn btn-ghost btn-sm" @click="clearAllModels">清空</button>
+					</div>
+					<div class="max-h-60 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+						<template v-for="(items, cat) in groupedFilteredModels" :key="cat">
+							<div class="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider sticky top-0">
+								{{ categoryLabel[cat as string] || cat }}
+								<span class="text-gray-300">({{ items.length }})</span>
+							</div>
+							<label
+								v-for="m in items"
+								:key="m.id"
+								class="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
+							>
+								<input
+									type="checkbox"
+									:checked="selectedModelNames.includes(m.model_id)"
+									@change="toggleModelName(m.model_id)"
+									class="h-4 w-4 rounded border-gray-300 text-primary-500 focus:ring-primary-500/30"
+								/>
+								<div class="min-w-0 flex-1">
+									<p class="text-sm font-medium text-gray-900 truncate">{{ m.model_name || m.model_id }}</p>
+									<p class="text-xs text-gray-400 font-mono truncate">{{ m.model_id }}</p>
+								</div>
+								<span class="badge shrink-0" :class="categoryBadgeClass[m.category] || 'badge-gray'">
+									{{ categoryLabel[m.category] || m.category }}
+								</span>
+							</label>
+						</template>
+						<div v-if="filteredModels.length === 0" class="px-4 py-6 text-center text-sm text-gray-400">
+							没有匹配的模型
+						</div>
+					</div>
+					<p class="text-xs text-gray-500 mt-1">
+						已选择 <span class="font-medium text-gray-700">{{ selectedModelNames.length }}</span> 个模型
+						<template v-if="selectedModelNames.length === 0">（不限制）</template>
+					</p>
 				</div>
 
 				<div>
