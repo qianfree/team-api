@@ -1,6 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { marked } from 'marked'
 import Icon from '@/components/common/Icon.vue'
+
+// Configure marked to allow HTML
+marked.setOptions({
+	breaks: true,
+	gfm: true,
+})
+
+function renderMarkdown(content: string): string {
+	return marked.parse(content) as string
+}
 
 const props = defineProps<{
 	announcements: {
@@ -131,7 +142,7 @@ onBeforeUnmount(() => {
 	<Teleport to="body">
 		<Transition name="fade">
 			<div v-if="showDetail && currentItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click.self="showDetail = false">
-				<div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-gray-200 animate-scale-in" @click.stop>
+				<div class="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-gray-200 animate-scale-in" @click.stop>
 					<!-- Header -->
 					<div class="flex items-start gap-3 px-6 py-4 border-b border-gray-100">
 						<div :class="['flex-shrink-0 mt-0.5 h-8 w-8 rounded-lg flex items-center justify-center', getTypeConfig(currentItem.type).bg]">
@@ -147,7 +158,7 @@ onBeforeUnmount(() => {
 					</div>
 					<!-- Body -->
 					<div class="px-6 py-5 max-h-[60vh] overflow-y-auto">
-						<div class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{{ currentItem.content }}</div>
+						<div class="announcement-content prose prose-sm max-w-none text-gray-700" v-html="renderMarkdown(currentItem.content)"></div>
 					</div>
 					<!-- Footer -->
 					<div class="px-6 py-3 border-t border-gray-100 flex justify-end">
@@ -181,4 +192,75 @@ onBeforeUnmount(() => {
 	from { transform: scale(0.95); opacity: 0; }
 	to { transform: scale(1); opacity: 1; }
 }
+</style>
+
+<style>
+.announcement-content {
+	font-size: 14px;
+	line-height: 1.75;
+	color: #374151;
+}
+.announcement-content h1 { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; }
+.announcement-content h2 { font-size: 1.3em; font-weight: 600; margin: 0.8em 0 0.4em; }
+.announcement-content h3 { font-size: 1.15em; font-weight: 600; margin: 0.6em 0 0.3em; }
+.announcement-content p { margin: 0.5em 0; }
+.announcement-content ul, .announcement-content ol { padding-left: 1.5em; margin: 0.5em 0; }
+.announcement-content li { margin: 0.2em 0; }
+.announcement-content blockquote {
+	border-left: 3px solid #14b8a6;
+	padding: 0.5em 1em;
+	margin: 0.5em 0;
+	background: #f0fdfa;
+	border-radius: 0 8px 8px 0;
+}
+.announcement-content code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 0.9em;
+	background: #f3f4f6;
+	padding: 0.15em 0.4em;
+	border-radius: 4px;
+}
+.announcement-content pre {
+	background: #1e293b;
+	color: #e2e8f0;
+	padding: 1em;
+	border-radius: 12px;
+	overflow-x: auto;
+	margin: 0.5em 0;
+}
+.announcement-content pre code {
+	background: transparent;
+	padding: 0;
+	color: inherit;
+}
+.announcement-content a {
+	color: #14b8a6;
+	text-decoration: underline;
+}
+.announcement-content img {
+	max-width: 100%;
+	border-radius: 8px;
+	margin: 0.5em 0;
+}
+.announcement-content table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0.5em 0;
+}
+.announcement-content th, .announcement-content td {
+	border: 1px solid #e5e7eb;
+	padding: 0.5em 0.75em;
+	text-align: left;
+}
+.announcement-content th {
+	background: #f9fafb;
+	font-weight: 600;
+}
+.announcement-content hr {
+	border: none;
+	border-top: 1px solid #e5e7eb;
+	margin: 1em 0;
+}
+.announcement-content strong { font-weight: 600; }
+.announcement-content em { font-style: italic; }
 </style>
