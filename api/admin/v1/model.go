@@ -172,6 +172,7 @@ type PricingFetchOfficialRes struct {
 type OfficialPricingSource struct {
 	Source     string               `json:"source"`                       // 数据来源（"litellm" / "models.dev"）
 	Found      bool                 `json:"found"`                        // 是否找到
+	Error      string               `json:"error,omitempty"`              // 获取远程数据失败时的错误信息
 	Provider   string               `json:"provider,omitempty"`           // 供应商（anthropic/openai/...）
 	Mode       string               `json:"mode,omitempty"`               // 模型类型（chat/embedding/...）
 	MaxContext int                  `json:"max_context_tokens,omitempty"` // 最大上下文
@@ -197,6 +198,7 @@ type ModelFetchOfficialInfoReq struct {
 // ModelFetchOfficialInfoRes 官方模型信息响应
 type ModelFetchOfficialInfoRes struct {
 	Found            bool            `json:"found"`
+	Error            string          `json:"error,omitempty"` // 获取远程数据失败时的错误信息
 	Provider         string          `json:"provider,omitempty"`
 	MaxContextTokens int             `json:"max_context_tokens,omitempty"`
 	MaxOutputTokens  int             `json:"max_output_tokens,omitempty"`
