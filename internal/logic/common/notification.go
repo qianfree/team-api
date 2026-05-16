@@ -2,12 +2,9 @@ package common
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"time"
 
 	"github.com/qianfree/team-api/internal/dao"
-	ws "github.com/qianfree/team-api/internal/handler/ws"
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -79,7 +76,7 @@ func (e *NotificationEngine) SendNotification(ctx context.Context, tenantID, use
 
 	// 6. Create in-app message
 	if sendInApp {
-		result, insertErr := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
+		_, insertErr := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
 			TenantId:    tenantID,
 			UserId:      userID,
 			Type:        category,
@@ -92,8 +89,7 @@ func (e *NotificationEngine) SendNotification(ctx context.Context, tenantID, use
 		})
 		if insertErr != nil {
 			g.Log().Warningf(ctx, "notification engine: create in-app message failed: %v", insertErr)
-		} else {
-			go e.pushNotificationToWs(ctx, tenantID, userID, result, category, subject, body, false)
+
 		}
 	}
 
@@ -126,7 +122,7 @@ func (e *NotificationEngine) SendBroadcast(ctx context.Context, tenantID int64, 
 	category := e.templateCategory(tpl.Channel, templateCode)
 
 	// 3. Create broadcast in-app message (user_id=NULL)
-	result, err := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
+	_, err = dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
 		TenantId:    tenantID,
 		UserId:      nil,
 		Type:        category,
@@ -141,7 +137,6 @@ func (e *NotificationEngine) SendBroadcast(ctx context.Context, tenantID int64, 
 	if err != nil {
 		return gerror.Wrapf(err, "create broadcast message")
 	}
-	go e.pushNotificationToWs(ctx, tenantID, 0, result, category, subject, body, true)
 
 	// 4. Send email to all tenant members (async, best-effort)
 	go e.broadcastEmails(ctx, tenantID, subject, body, templateCode, variables)
@@ -180,7 +175,7 @@ func (e *NotificationEngine) SendToAllTenants(ctx context.Context, templateCode 
 
 // SendMessage creates a direct in-app message without a template.
 func (e *NotificationEngine) SendMessage(ctx context.Context, tenantID, userID int64, msgType, title, content string) error {
-	result, err := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
+	_, err := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
 		TenantId:    tenantID,
 		UserId:      userID,
 		Type:        msgType,
@@ -191,9 +186,6 @@ func (e *NotificationEngine) SendMessage(ctx context.Context, tenantID, userID i
 		IsBroadcast: 0,
 		Metadata:    nil,
 	})
-	if err == nil {
-		go e.pushNotificationToWs(ctx, tenantID, userID, result, msgType, title, content, false)
-	}
 	return err
 }
 
@@ -207,7 +199,7 @@ func (e *NotificationEngine) SendBroadcastMessage(ctx context.Context, tenantID 
 		targetRolesVal = targetRoles
 	}
 
-	result, err := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
+	_, err := dao.NtfMessages.Ctx(ctx).Insert(do.NtfMessages{
 		TenantId:    tenantID,
 		UserId:      nil,
 		Type:        msgType,
@@ -219,9 +211,6 @@ func (e *NotificationEngine) SendBroadcastMessage(ctx context.Context, tenantID 
 		Metadata:    nil,
 		TargetRoles: targetRolesVal,
 	})
-	if err == nil {
-		go e.pushNotificationToWs(ctx, tenantID, 0, result, msgType, title, content, true)
-	}
 	return err
 }
 
@@ -442,25 +431,6 @@ func (e *NotificationEngine) logNotification(ctx context.Context, tenantID, user
 	})
 	if err != nil {
 		g.Log().Warningf(ctx, "notification engine: log notification failed: %v", err)
-	}
-}
-
-// pushNotificationToWs ͨ�� WebSocket ����֪ͨ��Ϣ�������û���
-// isBroadcast=true ʱ���͸��⻧���г�Ա���������͸��ض��û���
-func (e *NotificationEngine) pushNotificationToWs(ctx context.Context, tenantID, userID int64, result sql.Result, nType, title, body string, isBroadcast bool) {
-	id, _ := result.LastInsertId()
-	payload := ws.NotificationPayload{
-		ID:          id,
-		Type:        nType,
-		Title:       title,
-		Content:     body,
-		IsBroadcast: isBroadcast,
-		CreatedAt:   time.Now().Format(time.RFC3339),
-	}
-	if isBroadcast {
-		ws.PublishToTenantAll(ctx, tenantID, ws.ChannelNotification, ws.ActionCreated, payload)
-	} else {
-		ws.PublishToTenantUser(ctx, tenantID, userID, ws.ChannelNotification, ws.ActionCreated, payload)
 	}
 }
 

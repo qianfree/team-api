@@ -2,8 +2,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
-import { useWebSocket } from '@/utils/websocket'
-import type { WsMessage } from '@/utils/websocket'
 
 const loading = ref(false)
 const timeRange = ref(5) // minutes
@@ -36,21 +34,18 @@ function colorThreshold(v: any, warnAt: number, critAt: number): string {
   return '#00b42a'
 }
 
-const { on: wsOn, off: wsOff } = useWebSocket()
-
-function handleMonitorMessage(msg: WsMessage) {
-  if (msg.action === 'dashboard' && msg.payload) {
-    dashboardData.value = msg.payload
-  }
-}
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
-  fetchDashboard() // initial load via HTTP
-  wsOn('monitor', handleMonitorMessage)
+  fetchDashboard()
+  pollTimer = setInterval(fetchDashboard, 30000)
 })
 
 onUnmounted(() => {
-  wsOff('monitor', handleMonitorMessage)
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
 

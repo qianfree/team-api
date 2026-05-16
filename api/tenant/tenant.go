@@ -78,6 +78,7 @@ type ITenantV1 interface {
 	TenantUnreadCount(ctx context.Context, req *v1.TenantUnreadCountReq) (res *v1.TenantUnreadCountRes, err error)
 	TenantMarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (res *v1.TenantMarkReadRes, err error)
 	TenantMarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq) (res *v1.TenantMarkAllReadRes, err error)
+	TenantNotificationDelete(ctx context.Context, req *v1.TenantNotificationDeleteReq) (res *v1.TenantNotificationDeleteRes, err error)
 	TenantNotificationPreferencesGet(ctx context.Context, req *v1.TenantNotificationPreferencesGetReq) (res *v1.TenantNotificationPreferencesGetRes, err error)
 	TenantNotificationPreferencesUpdate(ctx context.Context, req *v1.TenantNotificationPreferencesUpdateReq) (res *v1.TenantNotificationPreferencesUpdateRes, err error)
 	TenantAnnouncements(ctx context.Context, req *v1.TenantAnnouncementsReq) (res *v1.TenantAnnouncementsRes, err error)

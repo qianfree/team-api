@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
-import { useWebSocket } from '@/utils/websocket'
-import type { WsMessage } from '@/utils/websocket'
 import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -146,22 +144,12 @@ function handlePageChange(page: number) {
   fetchData()
 }
 
-const { on: wsOn, off: wsOff } = useWebSocket()
-
-function handleAlertMessage(msg: WsMessage) {
-  // Refresh list on any alert event
-  if (msg.action === 'created' || msg.action === 'updated') {
-    fetchData()
-  }
-}
 
 onMounted(() => {
   fetchData()
-  wsOn('alert', handleAlertMessage)
 })
 
 onUnmounted(() => {
-  wsOff('alert', handleAlertMessage)
 })
 </script>
 
