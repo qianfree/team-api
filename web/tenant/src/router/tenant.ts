@@ -196,6 +196,12 @@ const tenantRoutes: RouteRecordRaw[] = [
 				meta: { title: '审计设置', roles: ['owner', 'admin'] },
 			},
 			{
+				path: 'login-history',
+				name: 'TenantLoginHistory',
+				component: () => import('@/views/settings/LoginHistoryPage.vue'),
+				meta: { title: '登录历史', roles: ['owner', 'admin', 'member'] },
+			},
+			{
 				path: 'profile',
 				name: 'TenantProfile',
 				component: () => import('@/views/settings/ProfilePage.vue'),

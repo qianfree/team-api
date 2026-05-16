@@ -329,6 +329,8 @@ type (
 		ConfirmHighRisk(ctx context.Context, req *v1.Admin2FAConfirmReq) (*v1.Admin2FAConfirmRes, error)
 		// LoginHistory returns the login history for all admin users with search filters.
 		LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq) (*v1.AdminLoginHistoryRes, error)
+		// TenantLoginHistory returns login history for tenant users (admin view).
+		TenantLoginHistory(ctx context.Context, req *v1.AdminTenantLoginHistoryReq) (*v1.AdminTenantLoginHistoryRes, error)
 		// GetSettingsCategories returns all available setting categories.
 		GetSettingsCategories(ctx context.Context, _ *v1.AdminSettingsCategoriesReq) (*v1.AdminSettingsCategoriesRes, error)
 		// GetSettings retrieves settings with schema for a given category.

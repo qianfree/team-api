@@ -120,3 +120,44 @@ type LoginHistoryItem struct {
 	FailReason  string `json:"fail_reason"`
 	CreatedAt   string `json:"created_at"`
 }
+
+// ============================================================
+// 租户用户登录历史（管理后台查看）
+// ============================================================
+
+// AdminTenantLoginHistoryReq 租户用户登录历史（管理后台查看）
+type AdminTenantLoginHistoryReq struct {
+	g.Meta      `path:"/security/tenant-login-history" method:"get" tags:"管理后台-安全" summary:"租户用户登录历史"`
+	Page        int    `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize    int    `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+	TenantID    int64  `json:"tenant_id" in:"query" dc:"租户ID筛选"`
+	Username    string `json:"username" in:"query" dc:"用户名（模糊搜索）"`
+	IpAddress   string `json:"ip_address" in:"query" dc:"IP地址（模糊搜索）"`
+	Success     *bool  `json:"success" in:"query" dc:"登录状态：true成功/false失败"`
+	LoginMethod string `json:"login_method" in:"query" dc:"登录方式：password/totp/sso/backup_code"`
+	StartTime   string `json:"start_time" in:"query" dc:"开始时间（格式：2006-01-02）"`
+	EndTime     string `json:"end_time" in:"query" dc:"结束时间（格式：2006-01-02）"`
+}
+
+type AdminTenantLoginHistoryRes struct {
+	List     []AdminTenantLoginHistoryItem `json:"list"`
+	Total    int                           `json:"total"`
+	Page     int                           `json:"page"`
+	PageSize int                           `json:"page_size"`
+}
+
+type AdminTenantLoginHistoryItem struct {
+	ID          int64  `json:"id"`
+	UserId      int64  `json:"user_id"`
+	TenantId    int64  `json:"tenant_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	LoginMethod string `json:"login_method"`
+	IpAddress   string `json:"ip_address"`
+	UserAgent   string `json:"user_agent"`
+	Location    string `json:"location"`
+	IsNewDevice bool   `json:"is_new_device"`
+	Success     bool   `json:"success"`
+	FailReason  string `json:"fail_reason"`
+	CreatedAt   string `json:"created_at"`
+}
