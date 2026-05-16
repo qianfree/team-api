@@ -95,8 +95,10 @@ func WriteGeminiRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
-	g.Log().Errorf(context.Background(), "[GeminiRelayError] statusCode=%d status=%s message=%s originalError=%v",
-		statusCode, errStatus, errMsg, err)
+	if statusCode >= 500 {
+		g.Log().Errorf(context.Background(), "[GeminiRelayError] statusCode=%d status=%s message=%s originalError=%v",
+			statusCode, errStatus, errMsg, err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
