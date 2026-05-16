@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -20,6 +21,7 @@ const passwordForm = reactive({
 const passwordErrors = reactive<Record<string, string>>({})
 const passwordSaving = ref(false)
 const passwordSuccess = ref(false)
+const showPasswordModal = ref(false)
 
 const roleLabel: Record<string, string> = {
 	owner: '所有者',
@@ -87,6 +89,13 @@ function validatePassword(): boolean {
 	return Object.keys(passwordErrors).length === 0
 }
 
+function openPasswordModal() {
+	passwordForm.old_password = ''
+	passwordForm.new_password = ''
+	Object.keys(passwordErrors).forEach((k) => delete passwordErrors[k])
+	showPasswordModal.value = true
+}
+
 async function handleChangePassword() {
 	if (!validatePassword()) return
 
@@ -99,6 +108,7 @@ async function handleChangePassword() {
 		})
 		passwordForm.old_password = ''
 		passwordForm.new_password = ''
+		showPasswordModal.value = false
 		passwordSuccess.value = true
 		setTimeout(() => {
 			passwordSuccess.value = false
@@ -135,9 +145,30 @@ onMounted(() => {
 <template>
 	<div class="space-y-6">
 		<!-- Page Header -->
-		<div class="page-header">
-			<h1 class="page-title">个人设置</h1>
-			<p class="page-description">管理您的个人信息和安全设置</p>
+		<div class="flex items-start justify-between">
+			<div>
+				<h1 class="page-title">个人设置</h1>
+				<p class="page-description">管理您的个人信息和安全设置</p>
+			</div>
+			<div class="flex items-center gap-2">
+				<router-link to="/tenant/login-history" class="btn btn-secondary btn-sm">
+					<Icon name="clock" size="sm" />
+					登录历史
+				</router-link>
+				<button class="btn btn-secondary btn-sm" @click="openPasswordModal">
+					<Icon name="shield" size="sm" />
+					修改密码
+				</button>
+			</div>
+		</div>
+
+		<!-- Success message -->
+		<div
+			v-if="passwordSuccess"
+			class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2"
+		>
+			<Icon name="checkCircle" size="md" class="text-emerald-500 flex-shrink-0" />
+			<span class="text-sm text-emerald-700 font-medium">密码修改成功</span>
 		</div>
 
 		<!-- Skeleton -->
@@ -228,57 +259,6 @@ onMounted(() => {
 			</div>
 		</div>
 
-		<!-- Change Password Card -->
-		<div class="card">
-			<div class="card-header">
-				<h2 class="font-semibold text-gray-900">修改密码</h2>
-			</div>
-			<div class="card-body">
-				<!-- Success message -->
-				<div
-					v-if="passwordSuccess"
-					class="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2"
-				>
-					<Icon name="checkCircle" size="md" class="text-emerald-500 flex-shrink-0" />
-					<span class="text-sm text-emerald-700 font-medium">密码修改成功</span>
-				</div>
-
-				<form @submit.prevent="handleChangePassword" class="space-y-4 max-w-md">
-					<div>
-						<label class="input-label">当前密码</label>
-						<input
-							v-model="passwordForm.old_password"
-							type="password"
-							placeholder="请输入当前密码"
-							class="input"
-							:class="{ 'input-error': passwordErrors.old_password }"
-						/>
-						<p v-if="passwordErrors.old_password" class="input-error-text">{{ passwordErrors.old_password }}</p>
-					</div>
-
-					<div>
-						<label class="input-label">新密码</label>
-						<input
-							v-model="passwordForm.new_password"
-							type="password"
-							placeholder="至少 8 位字符"
-							class="input"
-							:class="{ 'input-error': passwordErrors.new_password }"
-						/>
-						<p v-if="passwordErrors.new_password" class="input-error-text">{{ passwordErrors.new_password }}</p>
-					</div>
-
-					<button
-						type="submit"
-						:disabled="passwordSaving"
-						class="btn btn-primary"
-					>
-						{{ passwordSaving ? '修改中...' : '修改密码' }}
-					</button>
-				</form>
-			</div>
-		</div>
-
 		<!-- Active Sessions Card -->
 		<div class="card">
 			<div class="card-header">
@@ -334,22 +314,46 @@ onMounted(() => {
 					暂无会话
 				</div>
 			</div>
-
-			<!-- Login History Link Card -->
-			<router-link to="/tenant/login-history" class="card card-hover block">
-				<div class="card-body flex items-center justify-between">
-					<div class="flex items-center gap-4">
-						<div class="h-10 w-10 rounded-xl bg-primary-100 flex items-center justify-center">
-							<Icon name="shield" size="md" class="text-primary-500" />
-						</div>
-						<div>
-							<p class="text-sm font-medium text-gray-900">登录历史</p>
-							<p class="text-sm text-gray-500">查看登录记录，包括成功和失败的登录尝试</p>
-						</div>
-					</div>
-					<Icon name="chevronRight" size="md" class="text-gray-400" />
-				</div>
-			</router-link>
 		</div>
+
+		<!-- Change Password Modal -->
+		<BaseModal :show="showPasswordModal" title="修改密码" width="narrow" @close="showPasswordModal = false">
+			<form @submit.prevent="handleChangePassword" class="space-y-4">
+				<div>
+					<label class="input-label">当前密码</label>
+					<input
+						v-model="passwordForm.old_password"
+						type="password"
+						placeholder="请输入当前密码"
+						class="input"
+						:class="{ 'input-error': passwordErrors.old_password }"
+					/>
+					<p v-if="passwordErrors.old_password" class="input-error-text">{{ passwordErrors.old_password }}</p>
+				</div>
+
+				<div>
+					<label class="input-label">新密码</label>
+					<input
+						v-model="passwordForm.new_password"
+						type="password"
+						placeholder="至少 8 位字符"
+						class="input"
+						:class="{ 'input-error': passwordErrors.new_password }"
+					/>
+					<p v-if="passwordErrors.new_password" class="input-error-text">{{ passwordErrors.new_password }}</p>
+				</div>
+			</form>
+
+			<template #footer>
+				<button class="btn btn-secondary" @click="showPasswordModal = false">取消</button>
+				<button
+					class="btn btn-primary"
+					:disabled="passwordSaving"
+					@click="handleChangePassword"
+				>
+					{{ passwordSaving ? '修改中...' : '确认修改' }}
+				</button>
+			</template>
+		</BaseModal>
 	</div>
 </template>
