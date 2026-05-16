@@ -23,6 +23,7 @@ type TenantAvailableModelItem struct {
 	MaxOutput       int      `json:"max_output_tokens"`
 	Description     string   `json:"description"`
 	Tags            string   `json:"tags"`
+	Capabilities    string   `json:"capabilities"`
 	BillingMode     *string  `json:"billing_mode"`
 	PerRequestPrice *float64 `json:"per_request_price"`
 	DiscountRatio   *float64 `json:"discount_ratio"`

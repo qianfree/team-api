@@ -33,6 +33,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		MaxOutputTokens  int      `json:"max_output_tokens"`
 		Description      string   `json:"description"`
 		Tags             string   `json:"tags"`
+		Capabilities     string   `json:"capabilities"`
 		BillingMode      *string  `json:"billing_mode"`
 		PerRequestPrice  *float64 `json:"per_request_price"`
 		DiscountRatio    *float64 `json:"discount_ratio"`
@@ -40,7 +41,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	}
 
 	err := query.
-		Fields("mdl_tenant_models.id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency").
+		Fields("mdl_tenant_models.id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency").
 		OrderAsc("m.category").
 		OrderAsc("m.model_id").
 		Scan(&results)
@@ -59,6 +60,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			MaxOutput:       r.MaxOutputTokens,
 			Description:     r.Description,
 			Tags:            r.Tags,
+			Capabilities:    r.Capabilities,
 			BillingMode:     r.BillingMode,
 			PerRequestPrice: r.PerRequestPrice,
 			DiscountRatio:   r.DiscountRatio,
