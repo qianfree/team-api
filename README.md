@@ -33,7 +33,7 @@
 > 
 > 管理端：https://team-api.net/admin/, 为做好数据安全措施，暂不公开登录方式
 > 
-> 用户端：https://tem-api.net, 用户名：liu@163.com, 密码：Demo123456
+> 用户端：https://team-api.net, 用户名：liu@163.com, 密码：Demo123456
 
 ---
 
