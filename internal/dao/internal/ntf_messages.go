@@ -31,8 +31,8 @@ type NtfMessagesColumns struct {
 	IsRead      string // 是否已读：0=未读, 1=已读
 	IsBroadcast string // 是否广播消息：0=个人消息, 1=广播消息
 	Metadata    string // 附加元数据（JSONB，如关联资源ID、跳转链接等）
-	CreatedAt   string // 创建时间
 	TargetRoles string // 目标角色（NULL=全部角色，逗号分隔如 owner,admin 表示仅限这些角色）
+	CreatedAt   string // 创建时间
 }
 
 // ntfMessagesColumns holds the columns for the table ntf_messages.
@@ -47,8 +47,8 @@ var ntfMessagesColumns = NtfMessagesColumns{
 	IsRead:      "is_read",
 	IsBroadcast: "is_broadcast",
 	Metadata:    "metadata",
-	CreatedAt:   "created_at",
 	TargetRoles: "target_roles",
+	CreatedAt:   "created_at",
 }
 
 // NewNtfMessagesDao creates and returns a new DAO object for table data access.

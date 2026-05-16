@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -45,6 +46,9 @@ type PricingResult struct {
 	// Cache 直接定价
 	CacheReadPrice     float64 // 缓存读取每 1M token 价格
 	CacheCreationPrice float64 // 缓存创建每 1M token 价格
+
+	// 租户自定义阶梯定价（JSONB 解析后的原始数据，供 CalculateCost 使用）
+	CustomTiers []pricingTierRow
 }
 
 // ClearTenantPriceCache 清除租户的所有模型价格缓存
@@ -139,20 +143,23 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 
 	// 3. 查租户独立价格（mdl_tenant_models）
 	type tenantModelRow struct {
-		CustomInputPrice  *float64 `json:"custom_input_price"`
-		CustomOutputPrice *float64 `json:"custom_output_price"`
-		Multiplier        *float64 `json:"multiplier"`
-		DiscountRatio     *float64 `json:"discount_ratio"`
-		BillingMode       *string  `json:"billing_mode"`
-		PerRequestPrice   *float64 `json:"per_request_price"`
-		Enabled           bool     `json:"enabled"`
+		CustomInputPrice         *float64 `json:"custom_input_price"`
+		CustomOutputPrice        *float64 `json:"custom_output_price"`
+		CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
+		CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
+		CustomPricingTiers       string   `json:"custom_pricing_tiers"`
+		Multiplier               *float64 `json:"multiplier"`
+		DiscountRatio            *float64 `json:"discount_ratio"`
+		BillingMode              *string  `json:"billing_mode"`
+		PerRequestPrice          *float64 `json:"per_request_price"`
+		Enabled                  bool     `json:"enabled"`
 	}
 
 	var tm *tenantModelRow
 	err = dao.MdlTenantModels.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("model_id", model.ID).
-		Fields("custom_input_price, custom_output_price, multiplier, discount_ratio, billing_mode, per_request_price, enabled").
+		Fields("custom_input_price, custom_output_price, custom_cache_read_price, custom_cache_creation_price, custom_pricing_tiers, multiplier, discount_ratio, billing_mode, per_request_price, enabled").
 		Scan(&tm)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query tenant model price")
@@ -161,6 +168,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	tenantMultiplier := 1.0
 	discountRatio := 1.0
 	billingSource := "base"
+	var customTiers []pricingTierRow
 
 	if tm != nil && tm.Enabled {
 		billingSource = "tenant_custom"
@@ -174,6 +182,19 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		}
 		if tm.CustomOutputPrice != nil && *tm.CustomOutputPrice > 0 {
 			outputPrice = *tm.CustomOutputPrice
+		}
+
+		// 租户覆盖缓存定价
+		if tm.CustomCacheReadPrice != nil && *tm.CustomCacheReadPrice > 0 {
+			cacheReadPrice = *tm.CustomCacheReadPrice
+		}
+		if tm.CustomCacheCreationPrice != nil && *tm.CustomCacheCreationPrice > 0 {
+			cacheCreationPrice = *tm.CustomCacheCreationPrice
+		}
+
+		// 租户自定义阶梯定价
+		if tm.CustomPricingTiers != "" && tm.CustomPricingTiers != "null" && tm.CustomPricingTiers != "[]" {
+			_ = json.Unmarshal([]byte(tm.CustomPricingTiers), &customTiers)
 		}
 
 		// discount_ratio 优先于 multiplier
@@ -211,6 +232,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		Currency:           "USD",
 		CacheReadPrice:     cacheReadPrice,
 		CacheCreationPrice: cacheCreationPrice,
+		CustomTiers:        customTiers,
 	}
 
 	modelPriceCache.Set(ctx, cacheKey, result)
@@ -245,8 +267,13 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 	// Token / Tiered 计费
 	var inputCost, outputCost float64
 	if pricing.BillingMode == "tiered" {
-		inputCost, _ = calculateTieredCostFromPricing(ctx, modelName, inputTokens, true)
-		outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+		if len(pricing.CustomTiers) > 0 {
+			inputCost = calculateTieredCostFromTiers(pricing.CustomTiers, inputTokens, true)
+			outputCost = calculateTieredCostFromTiers(pricing.CustomTiers, outputTokens, false)
+		} else {
+			inputCost, _ = calculateTieredCostFromPricing(ctx, modelName, inputTokens, true)
+			outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+		}
 	} else {
 		// 统一单价模式
 		inputCost = float64(inputTokens) / 1_000_000.0 * pricing.InputPrice
@@ -326,7 +353,11 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 	// 基础输入费用
 	var baseInputCost float64
 	if pricing.BillingMode == "tiered" {
-		baseInputCost, _ = calculateTieredCostFromPricing(ctx, modelName, baseInputTokens, true)
+		if len(pricing.CustomTiers) > 0 {
+			baseInputCost = calculateTieredCostFromTiers(pricing.CustomTiers, baseInputTokens, true)
+		} else {
+			baseInputCost, _ = calculateTieredCostFromPricing(ctx, modelName, baseInputTokens, true)
+		}
 	} else {
 		baseInputCost = float64(baseInputTokens) / 1_000_000.0 * pricing.InputPrice
 	}
@@ -334,7 +365,11 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 	// 输出费用
 	var outputCost float64
 	if pricing.BillingMode == "tiered" {
-		outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+		if len(pricing.CustomTiers) > 0 {
+			outputCost = calculateTieredCostFromTiers(pricing.CustomTiers, outputTokens, false)
+		} else {
+			outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
+		}
 	} else {
 		outputCost = float64(outputTokens) / 1_000_000.0 * pricing.OutputPrice
 	}
@@ -486,6 +521,15 @@ func calculateTieredCostFromPricing(ctx context.Context, modelName string, token
 		return 0, 1.0
 	}
 
+	return calculateTieredCostFromTiers(tiers, tokens, isInput), 1.0
+}
+
+// calculateTieredCostFromTiers 从给定的阶梯数组计算费用（租户自定义阶梯或基础阶梯共用）
+func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bool) float64 {
+	if tokens <= 0 || len(tiers) == 0 {
+		return 0
+	}
+
 	var totalCost float64
 	remaining := int64(tokens)
 
@@ -500,7 +544,6 @@ func calculateTieredCostFromPricing(ctx context.Context, modelName string, token
 		}
 
 		if tier.MaxTokens == nil {
-			// 最后一段无上限
 			totalCost += float64(remaining) / 1_000_000.0 * price
 			remaining = 0
 		} else {
@@ -517,5 +560,5 @@ func calculateTieredCostFromPricing(ctx context.Context, modelName string, token
 		}
 	}
 
-	return totalCost, 1.0
+	return totalCost
 }
