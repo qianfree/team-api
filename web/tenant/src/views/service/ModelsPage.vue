@@ -3,6 +3,13 @@ import { ref, computed, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 
+interface PricingTierItem {
+	min_tokens: number
+	max_tokens: number | null
+	input_price: number
+	output_price: number
+}
+
 interface ModelItem {
 	id: number
 	model_id: string
@@ -17,6 +24,11 @@ interface ModelItem {
 	per_request_price: number | null
 	discount_ratio: number | null
 	max_concurrency: number | null
+	input_price: number | null
+	output_price: number | null
+	cache_read_price: number | null
+	cache_creation_price: number | null
+	pricing_tiers: PricingTierItem[]
 }
 
 const capabilityLabel: Record<string, string> = {
@@ -71,6 +83,11 @@ const models = ref<ModelItem[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const activeCategory = ref('')
+const expandedPricingId = ref<number | null>(null)
+
+function togglePricingExpand(id: number) {
+	expandedPricingId.value = expandedPricingId.value === id ? null : id
+}
 
 const categories = [
 	{ value: '', label: '全部' },
@@ -89,12 +106,12 @@ const categoryLabel: Record<string, string> = {
 	rerank: '重排',
 }
 
-const categoryColor: Record<string, string> = {
-	chat: '#14b8a6',
-	embedding: '#8b5cf6',
-	image: '#f59e0b',
-	audio: '#10b981',
-	rerank: '#6b7280',
+const categoryBadgeStyle: Record<string, string> = {
+	chat: 'background:rgba(20,184,166,0.1);color:#0d9488',
+	embedding: 'background:rgba(139,92,246,0.1);color:#7c3aed',
+	image: 'background:rgba(245,158,11,0.1);color:#d97706',
+	audio: 'background:rgba(16,185,129,0.1);color:#059669',
+	rerank: 'background:rgba(107,114,128,0.1);color:#4b5563',
 }
 
 const filteredModels = computed(() => {
@@ -127,6 +144,36 @@ function formatTokens(n: number): string {
 	if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
 	if (n >= 1000) return (n / 1000).toFixed(0) + 'K'
 	return String(n)
+}
+
+function formatPrice(n: number | null): string {
+	if (n == null || n === 0) return '-'
+	if (n >= 1) return '$' + n.toFixed(2)
+	if (n >= 0.01) return '$' + n.toFixed(3)
+	return '$' + n.toFixed(4)
+}
+
+function formatTokenRange(min: number, max: number | null): string {
+	const fmtMin = formatTokens(min)
+	if (max == null) return fmtMin + '+'
+	return fmtMin + ' ~ ' + formatTokens(max)
+}
+
+function hasPricing(m: ModelItem): boolean {
+	if (m.billing_mode === 'per_request' && m.per_request_price != null) return true
+	if (m.billing_mode === 'token' && (m.input_price != null || m.output_price != null)) return true
+	if (m.billing_mode === 'tiered' && m.pricing_tiers?.length > 0) return true
+	return false
+}
+
+function getTieredStartPrice(m: ModelItem): string {
+	if (!m.pricing_tiers?.length) return '-'
+	const first = m.pricing_tiers[0]
+	if (first.input_price > 0 && first.output_price > 0) {
+		return formatPrice(Math.min(first.input_price, first.output_price))
+	}
+	if (first.input_price > 0) return formatPrice(first.input_price)
+	return formatPrice(first.output_price)
 }
 
 async function fetchModels() {
@@ -225,74 +272,117 @@ onMounted(fetchModels)
 							</span>
 						</div>
 
-						<!-- Section 1: Category + Name -->
-						<div class="mb-3" :class="{ 'pr-14': m.discount_ratio && m.discount_ratio < 1 }">
-							<div class="flex items-center gap-2">
-								<span
-									class="shrink-0 px-2.5 py-0.5 text-[10px] font-medium text-white rounded-full"
-									:style="{ background: categoryColor[m.category] || '#6b7280' }"
-								>
-									{{ categoryLabel[m.category] || m.category }}
-								</span>
-								<h3 class="text-sm font-semibold text-gray-900 truncate">{{ m.model_name || m.model_id }}</h3>
-							</div>
-							<div class="flex items-center gap-1 mt-0.5">
-								<p class="text-xs text-gray-400 font-mono truncate">{{ m.model_id }}</p>
-								<button
-									class="shrink-0 p-0.5 rounded text-gray-300 hover:text-primary-500 transition-colors duration-150"
-									title="复制模型编码"
-									@click="copyModelId(m.model_id)"
-								>
-									<Icon v-if="copiedId !== m.model_id" name="copy" size="xs" />
-									<Icon v-else name="check" size="xs" class="text-emerald-500" />
-								</button>
-							</div>
+						<!-- Header: Category badge + Model name -->
+						<div class="flex items-center gap-2" :class="{ 'pr-14': m.discount_ratio && m.discount_ratio < 1 }">
+							<span
+								class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded"
+								:style="categoryBadgeStyle[m.category] || categoryBadgeStyle.rerank"
+							>
+								{{ categoryLabel[m.category] || m.category }}
+							</span>
+							<h3 class="text-sm font-semibold text-gray-900 truncate">{{ m.model_name || m.model_id }}</h3>
 						</div>
 
-						<!-- Section 2: Description (fixed height, always reserved) -->
-						<div class="mb-3 h-8">
-							<p v-if="m.description" class="text-xs text-gray-500 line-clamp-2">{{ m.description }}</p>
-							<span v-else class="text-xs text-gray-300">暂无描述</span>
+						<!-- Model ID + Copy -->
+						<div class="flex items-center gap-1 mt-1">
+							<span class="text-xs text-gray-400 font-mono truncate">{{ m.model_id }}</span>
+							<button
+								class="shrink-0 p-0.5 rounded text-gray-300 hover:text-primary-500 transition-colors duration-150"
+								title="复制模型编码"
+								@click="copyModelId(m.model_id)"
+							>
+								<Icon v-if="copiedId !== m.model_id" name="copy" size="xs" />
+								<Icon v-else name="check" size="xs" class="text-emerald-500" />
+							</button>
 						</div>
 
-						<!-- Section 3: Token info + Tags -->
-						<div class="flex items-center justify-between gap-2 text-xs text-gray-500 flex-1">
-							<div class="flex flex-wrap gap-3">
-								<span class="flex items-center gap-1">
-									<Icon name="document" size="xs" class="text-gray-300" />
-									{{ m.max_context_tokens ? formatTokens(m.max_context_tokens) : '-' }}
-								</span>
-								<span class="flex items-center gap-1">
-									<Icon name="arrowUp" size="xs" class="text-gray-300" />
-									{{ m.max_output_tokens ? formatTokens(m.max_output_tokens) : '-' }}
-								</span>
-								<span class="flex items-center gap-1">
-									<Icon name="chart" size="xs" class="text-gray-300" />
-									{{ m.max_concurrency ?? '-' }}
-								</span>
-							</div>
-							<div v-if="parseTags(m.tags).length" class="flex flex-wrap gap-1 justify-end">
-								<span
-									v-for="tag in parseTags(m.tags)"
-									:key="tag"
-									class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500"
-								>
-									{{ tag }}
-								</span>
-							</div>
+						<!-- Description (only if exists) -->
+						<p v-if="m.description" class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed">
+							{{ m.description }}
+						</p>
+
+						<!-- Key specs (dot-separated) -->
+						<div class="mt-2.5 flex items-center gap-1.5 text-[11px] text-gray-400">
+							<span v-if="m.max_context_tokens">{{ formatTokens(m.max_context_tokens) }} 上下文</span>
+							<span v-if="m.max_context_tokens && m.max_output_tokens" class="text-gray-200">·</span>
+							<span v-if="m.max_output_tokens">{{ formatTokens(m.max_output_tokens) }} 输出</span>
+							<template v-if="m.max_concurrency">
+								<span class="text-gray-200">·</span>
+								<span>并发 {{ m.max_concurrency }}</span>
+							</template>
 						</div>
 
-						<!-- Section 4: Capabilities (bottom, fixed height) -->
-						<div class="mt-3 pt-3 border-t border-gray-100 min-h-[28px]">
-							<div v-if="parseCapabilities(m.capabilities).length" class="flex flex-wrap gap-1">
-								<span
-									v-for="cap in parseCapabilities(m.capabilities)"
-									:key="cap"
-									class="inline-flex items-center rounded-md bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600"
-								>
-									{{ capabilityLabel[cap] || cap }}
-								</span>
-							</div>
+						<!-- Capabilities (max 4 visible) -->
+						<div v-if="parseCapabilities(m.capabilities).length" class="mt-2.5 flex flex-wrap gap-1">
+							<span
+								v-for="cap in parseCapabilities(m.capabilities).slice(0, 4)"
+								:key="cap"
+								class="inline-flex items-center rounded-md bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600"
+							>
+								{{ capabilityLabel[cap] || cap }}
+							</span>
+							<span
+								v-if="parseCapabilities(m.capabilities).length > 4"
+								class="inline-flex items-center rounded-md bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400"
+							>
+								+{{ parseCapabilities(m.capabilities).length - 4 }}
+							</span>
+						</div>
+
+						<!-- Pricing (pushed to bottom) -->
+						<div v-if="hasPricing(m)" class="mt-auto pt-3 border-t border-gray-100">
+							<template v-if="m.billing_mode === 'token'">
+								<div class="flex items-baseline gap-3 text-xs">
+									<span>
+										<span class="text-gray-400">输入</span>
+										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(m.input_price) }}</span>
+									</span>
+									<span>
+										<span class="text-gray-400">输出</span>
+										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(m.output_price) }}</span>
+									</span>
+									<span class="text-gray-300">/1M tokens</span>
+								</div>
+							</template>
+
+							<template v-else-if="m.billing_mode === 'per_request'">
+								<div class="text-xs">
+									<span class="font-semibold text-gray-800">{{ formatPrice(m.per_request_price) }}</span>
+									<span class="text-gray-400"> /次</span>
+								</div>
+							</template>
+
+							<template v-else-if="m.billing_mode === 'tiered'">
+								<div class="flex items-center justify-between">
+									<div class="text-xs">
+										<span class="font-semibold text-gray-800">{{ getTieredStartPrice(m) }}</span>
+										<span class="text-gray-400"> 起 /1M tokens</span>
+									</div>
+									<button
+										class="flex items-center gap-0.5 text-xs text-primary-500 hover:text-primary-600 transition-colors"
+										@click.stop="togglePricingExpand(m.id)"
+									>
+										{{ expandedPricingId === m.id ? '收起' : '阶梯详情' }}
+										<Icon :name="expandedPricingId === m.id ? 'chevronUp' : 'chevronDown'" size="xs" />
+									</button>
+								</div>
+								<div v-if="expandedPricingId === m.id && m.pricing_tiers?.length" class="mt-2 bg-gray-50 rounded-lg p-2.5 space-y-1.5">
+									<div
+										v-for="(tier, idx) in m.pricing_tiers"
+										:key="idx"
+										class="flex items-center justify-between text-xs"
+									>
+										<span class="text-gray-500 font-mono">{{ formatTokenRange(tier.min_tokens, tier.max_tokens) }}</span>
+										<span>
+											<span class="text-gray-400">输入</span>
+											<span class="font-medium text-gray-700 ml-0.5">{{ formatPrice(tier.input_price) }}</span>
+											<span class="text-gray-300 mx-1">|</span>
+											<span class="text-gray-400">输出</span>
+											<span class="font-medium text-gray-700 ml-0.5">{{ formatPrice(tier.output_price) }}</span>
+										</span>
+									</div>
+								</div>
+							</template>
 						</div>
 					</div>
 				</div>

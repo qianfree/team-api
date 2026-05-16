@@ -13,19 +13,32 @@ type TenantAvailableModelsRes struct {
 	List []TenantAvailableModelItem `json:"list"`
 }
 
+// PricingTierItem 阶梯定价项
+type PricingTierItem struct {
+	MinTokens   int64   `json:"min_tokens"`
+	MaxTokens   *int64  `json:"max_tokens"`
+	InputPrice  float64 `json:"input_price"`
+	OutputPrice float64 `json:"output_price"`
+}
+
 // TenantAvailableModelItem 租户可用模型信息
 type TenantAvailableModelItem struct {
-	ID              int64    `json:"id"`
-	ModelId         string   `json:"model_id"`
-	ModelName       string   `json:"model_name"`
-	Category        string   `json:"category"`
-	MaxContext      int      `json:"max_context_tokens"`
-	MaxOutput       int      `json:"max_output_tokens"`
-	Description     string   `json:"description"`
-	Tags            string   `json:"tags"`
-	Capabilities    string   `json:"capabilities"`
-	BillingMode     *string  `json:"billing_mode"`
-	PerRequestPrice *float64 `json:"per_request_price"`
-	DiscountRatio   *float64 `json:"discount_ratio"`
-	MaxConcurrency  *int     `json:"max_concurrency"`
+	ID                 int64             `json:"id"`
+	ModelId            string            `json:"model_id"`
+	ModelName          string            `json:"model_name"`
+	Category           string            `json:"category"`
+	MaxContext         int               `json:"max_context_tokens"`
+	MaxOutput          int               `json:"max_output_tokens"`
+	Description        string            `json:"description"`
+	Tags               string            `json:"tags"`
+	Capabilities       string            `json:"capabilities"`
+	BillingMode        *string           `json:"billing_mode"`
+	PerRequestPrice    *float64          `json:"per_request_price"`
+	DiscountRatio      *float64          `json:"discount_ratio"`
+	MaxConcurrency     *int              `json:"max_concurrency"`
+	InputPrice         *float64          `json:"input_price"`
+	OutputPrice        *float64          `json:"output_price"`
+	CacheReadPrice     *float64          `json:"cache_read_price"`
+	CacheCreationPrice *float64          `json:"cache_creation_price"`
+	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
 }

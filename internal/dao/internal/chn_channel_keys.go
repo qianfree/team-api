@@ -29,9 +29,9 @@ type ChnChannelKeysColumns struct {
 	LastUsedAt     string // 最后使用时间
 	LastError      string // 最后一次错误信息
 	CreatedAt      string // 创建时间
-	UpdatedAt      string // 更新时间
 	KeyType        string // Key 类型：apikey（传统静态密钥）/ oauth（OAuth 令牌）
 	TokenExpiresAt string // OAuth access_token 过期时间（仅 key_type=oauth 时有值）
+	UpdatedAt      string // 更新时间
 }
 
 // chnChannelKeysColumns holds the columns for the table chn_channel_keys.
@@ -44,9 +44,9 @@ var chnChannelKeysColumns = ChnChannelKeysColumns{
 	LastUsedAt:     "last_used_at",
 	LastError:      "last_error",
 	CreatedAt:      "created_at",
-	UpdatedAt:      "updated_at",
 	KeyType:        "key_type",
 	TokenExpiresAt: "token_expires_at",
+	UpdatedAt:      "updated_at",
 }
 
 // NewChnChannelKeysDao creates and returns a new DAO object for table data access.
