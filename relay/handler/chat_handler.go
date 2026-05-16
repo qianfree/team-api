@@ -170,9 +170,10 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
-	// 记录错误日志
-	g.Log().Errorf(context.Background(), "[RelayError] statusCode=%d type=%s message=%s originalError=%v",
-		statusCode, errType, errMsg, err)
+	if statusCode >= 500 {
+		g.Log().Errorf(context.Background(), "[RelayError] statusCode=%d type=%s message=%s originalError=%v",
+			statusCode, errType, errMsg, err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
