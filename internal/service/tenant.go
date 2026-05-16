@@ -277,7 +277,8 @@ type (
 		RegenerateBackupCodes(ctx context.Context, req *v1.Tenant2FARegenerateBackupCodesReq) (*v1.Tenant2FARegenerateBackupCodesRes, error)
 		// ConfirmHighRisk generates a confirm token for high-risk operations.
 		ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmReq) (*v1.Tenant2FAConfirmRes, error)
-		// LoginHistory returns the login history for the current tenant user.
+		// LoginHistory returns the login history for tenant users.
+		// owner/admin see all members in the tenant; member sees only own records.
 		LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryReq) (*v1.TenantLoginHistoryRes, error)
 		// GetIPWhitelist returns the tenant's IP whitelist configuration.
 		GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error)

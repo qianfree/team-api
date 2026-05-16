@@ -189,6 +189,7 @@ type IAdminV1 interface {
 	Admin2FAVerify(ctx context.Context, req *v1.Admin2FAVerifyReq) (res *v1.Admin2FAVerifyRes, err error)
 	Admin2FAConfirm(ctx context.Context, req *v1.Admin2FAConfirmReq) (res *v1.Admin2FAConfirmRes, err error)
 	AdminLoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq) (res *v1.AdminLoginHistoryRes, err error)
+	AdminTenantLoginHistory(ctx context.Context, req *v1.AdminTenantLoginHistoryReq) (res *v1.AdminTenantLoginHistoryRes, err error)
 	AdminSettingsCategories(ctx context.Context, req *v1.AdminSettingsCategoriesReq) (res *v1.AdminSettingsCategoriesRes, err error)
 	AdminSettingsGet(ctx context.Context, req *v1.AdminSettingsGetReq) (res *v1.AdminSettingsGetRes, err error)
 	AdminSettingsUpdate(ctx context.Context, req *v1.AdminSettingsUpdateReq) (res *v1.AdminSettingsUpdateRes, err error)

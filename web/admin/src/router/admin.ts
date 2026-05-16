@@ -121,6 +121,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '登录历史' },
       },
       {
+        path: 'tenant-login-history',
+        name: 'AdminTenantLoginHistory',
+        component: () => import('@/views/security/TenantLoginHistoryPage.vue'),
+        meta: { title: '租户登录历史' },
+      },
+      {
         path: 'task-logs',
         name: 'AdminTaskLogs',
         component: () => import('@/views/ai/TaskLogsPage.vue'),

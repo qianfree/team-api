@@ -183,6 +183,11 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 		return nil, err
 	}
 
+	// Get client info early for login history recording
+	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
+	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
+	deviceFP := common.DeviceFingerprint(ua, ipAddress)
+
 	var tenant entity.TntTenants
 	var user entity.TntUsers
 
@@ -197,6 +202,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			return nil, err
 		}
 		if user.Id == 0 {
+			_ = common.RecordLoginHistory(ctx, "tenant", 0, 0, "password", ipAddress, ua, deviceFP, false, "用户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
 
@@ -207,12 +213,14 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			return nil, err
 		}
 		if tenant.Id == 0 {
+			_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "password", ipAddress, ua, deviceFP, false, "租户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
 	} else {
 		// RAM login: account is username@tenant_code
 		parts := strings.SplitN(account, "@", 2)
 		if len(parts) != 2 {
+			_ = common.RecordLoginHistory(ctx, "tenant", 0, 0, "password", ipAddress, ua, deviceFP, false, "账号格式错误")
 			return nil, common.NewBadRequestError("账号格式错误，应为 用户名@组织代码")
 		}
 		username := parts[0]
@@ -225,6 +233,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			return nil, err
 		}
 		if tenant.Id == 0 {
+			_ = common.RecordLoginHistory(ctx, "tenant", 0, 0, "password", ipAddress, ua, deviceFP, false, "租户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
 
@@ -237,34 +246,40 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			return nil, err
 		}
 		if user.Id == 0 {
+			_ = common.RecordLoginHistory(ctx, "tenant", 0, tenant.Id, "password", ipAddress, ua, deviceFP, false, "用户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
 	}
 
 	if tenant.Status != "active" {
+		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "租户已停用")
 		return nil, common.NewBusinessError(consts.CodeTenantSuspended, consts.MsgTenantSuspended)
 	}
 
 	// Check account lockout
 	if user.LockedUntil != nil && time.Now().Before(user.LockedUntil.Time) {
 		remaining := time.Until(user.LockedUntil.Time).Minutes()
+		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
 		return nil, common.NewBusinessError(consts.CodeAccountLocked,
 			fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
 	}
 
 	// Check status
 	if user.Status != "active" {
+		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已禁用")
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 
 	// Check IP whitelist
-	ipAddr := g.RequestFromCtx(ctx).GetClientIp()
-	if !CheckIPWhitelist(ctx, tenant.Id, ipAddr) {
+	if !CheckIPWhitelist(ctx, tenant.Id, ipAddress) {
+		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "IP不在白名单")
 		return nil, common.NewBusinessError(consts.CodeIpRestricted, consts.MsgIpRestricted)
 	}
 
 	// Verify password
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
+		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "密码错误")
+
 		// Increment failed attempts
 		failedAttempts := user.FailedAttempts + 1
 		updateData := do.TntUsers{FailedAttempts: failedAttempts}
@@ -295,10 +310,6 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 				LockedUntil:    nil,
 			}).Update()
 	}
-	// Get client info
-	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
-	deviceFP := common.DeviceFingerprint(ua, ipAddress)
 
 	// Check if 2FA is enabled → return provisional token
 	if user.TotpEnabled {
@@ -348,6 +359,8 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			LastLoginAt: gtime.Now(),
 			LastLoginIp: ipAddress,
 		}).Update()
+
+	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, true, "")
 
 	res := &v1.TenantLoginRes{
 		AccessToken:  tokenPair.AccessToken,

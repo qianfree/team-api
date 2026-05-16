@@ -334,6 +334,22 @@ onMounted(() => {
 					暂无会话
 				</div>
 			</div>
+
+			<!-- Login History Link Card -->
+			<router-link to="/tenant/login-history" class="card card-hover block">
+				<div class="card-body flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="h-10 w-10 rounded-xl bg-primary-100 flex items-center justify-center">
+							<Icon name="shield" size="md" class="text-primary-500" />
+						</div>
+						<div>
+							<p class="text-sm font-medium text-gray-900">登录历史</p>
+							<p class="text-sm text-gray-500">查看登录记录，包括成功和失败的登录尝试</p>
+						</div>
+					</div>
+					<Icon name="chevronRight" size="md" class="text-gray-400" />
+				</div>
+			</router-link>
 		</div>
 	</div>
 </template>
