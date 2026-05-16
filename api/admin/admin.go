@@ -196,7 +196,6 @@ type IAdminV1 interface {
 	TaskList(ctx context.Context, req *v1.TaskListReq) (res *v1.TaskListRes, err error)
 	TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (res *v1.TaskDetailRes, err error)
 	TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (res *v1.TaskCancelRes, err error)
-	TaskRetry(ctx context.Context, req *v1.TaskRetryReq) (res *v1.TaskRetryRes, err error)
 	TenantCreate(ctx context.Context, req *v1.TenantCreateReq) (res *v1.TenantCreateRes, err error)
 	TenantList(ctx context.Context, req *v1.TenantListReq) (res *v1.TenantListRes, err error)
 	TenantGet(ctx context.Context, req *v1.TenantGetReq) (res *v1.TenantGetRes, err error)

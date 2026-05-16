@@ -20,6 +20,6 @@ type NtfMessages struct {
 	IsRead      int         `json:"is_read"      orm:"is_read"      description:"是否已读：0=未读, 1=已读"`                                                              // 是否已读：0=未读, 1=已读
 	IsBroadcast int         `json:"is_broadcast" orm:"is_broadcast" description:"是否广播消息：0=个人消息, 1=广播消息"`                                                        // 是否广播消息：0=个人消息, 1=广播消息
 	Metadata    string      `json:"metadata"     orm:"metadata"     description:"附加元数据（JSONB，如关联资源ID、跳转链接等）"`                                                   // 附加元数据（JSONB，如关联资源ID、跳转链接等）
-	TargetRoles string      `json:"target_roles" orm:"target_roles" description:"目标角色（NULL=全部角色，逗号分隔如 owner,admin 表示仅限这些角色）"`                                   // 目标角色（NULL=全部角色，逗号分隔如 owner,admin 表示仅限这些角色）
 	CreatedAt   *gtime.Time `json:"created_at"   orm:"created_at"   description:"创建时间"`                                                                         // 创建时间
+	TargetRoles string      `json:"target_roles" orm:"target_roles" description:"目标角色（NULL=全部角色，逗号分隔如 owner,admin 表示仅限这些角色）"`                                   // 目标角色（NULL=全部角色，逗号分隔如 owner,admin 表示仅限这些角色）
 }

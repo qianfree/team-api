@@ -30,12 +30,12 @@ type MdlModelsColumns struct {
 	MaxOutputTokens  string // 最大输出 token 数
 	Description      string // 模型描述
 	Tags             string // 标签（如 reasoning、vision、function_calling）
-	Capabilities     string // 模型能力特性（如 vision、function_calling、reasoning 等）
 	CreatedAt        string // 创建时间
 	UpdatedAt        string // 更新时间
 	DeprecatedAt     string // 标记弃用的时间（NULL表示未弃用）
 	SunsetDate       string // 计划下线日期（到达后返回410 Gone，NULL表示未设置）
 	ReplacementModel string // 推荐替代模型名（NULL表示无替代）
+	Capabilities     string // 模型能力特性（如 vision、function_calling、reasoning 等）
 }
 
 // mdlModelsColumns holds the columns for the table mdl_models.
@@ -49,12 +49,12 @@ var mdlModelsColumns = MdlModelsColumns{
 	MaxOutputTokens:  "max_output_tokens",
 	Description:      "description",
 	Tags:             "tags",
-	Capabilities:     "capabilities",
 	CreatedAt:        "created_at",
 	UpdatedAt:        "updated_at",
 	DeprecatedAt:     "deprecated_at",
 	SunsetDate:       "sunset_date",
 	ReplacementModel: "replacement_model",
+	Capabilities:     "capabilities",
 }
 
 // NewMdlModelsDao creates and returns a new DAO object for table data access.

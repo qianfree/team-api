@@ -18,7 +18,7 @@ type ChnChannelKeys struct {
 	LastUsedAt     *gtime.Time `json:"last_used_at"     orm:"last_used_at"     description:"最后使用时间"`                                        // 最后使用时间
 	LastError      string      `json:"last_error"       orm:"last_error"       description:"最后一次错误信息"`                                      // 最后一次错误信息
 	CreatedAt      *gtime.Time `json:"created_at"       orm:"created_at"       description:"创建时间"`                                          // 创建时间
+	UpdatedAt      *gtime.Time `json:"updated_at"       orm:"updated_at"       description:"更新时间"`                                          // 更新时间
 	KeyType        string      `json:"key_type"         orm:"key_type"         description:"Key 类型：apikey（传统静态密钥）/ oauth（OAuth 令牌）"`        // Key 类型：apikey（传统静态密钥）/ oauth（OAuth 令牌）
 	TokenExpiresAt *gtime.Time `json:"token_expires_at" orm:"token_expires_at" description:"OAuth access_token 过期时间（仅 key_type=oauth 时有值）"` // OAuth access_token 过期时间（仅 key_type=oauth 时有值）
-	UpdatedAt      *gtime.Time `json:"updated_at"       orm:"updated_at"       description:"更新时间"`                                          // 更新时间
 }
