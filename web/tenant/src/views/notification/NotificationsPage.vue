@@ -11,6 +11,7 @@ interface Notification {
 	content: string
 	type: string
 	is_read: boolean
+	is_broadcast: number
 	created_at: string
 }
 
@@ -88,6 +89,19 @@ async function markAllRead() {
 		await request.post('/tenant/notifications/read-all')
 		notifications.value.forEach((n) => { n.is_read = true })
 		resetUnread()
+	} catch {
+	}
+}
+
+const confirmDeleteId = ref<number | null>(null)
+
+async function deleteNotification(n: Notification) {
+	try {
+		await request.delete(`/tenant/notifications/${n.id}`)
+		notifications.value = notifications.value.filter((item) => item.id !== n.id)
+		total.value--
+		expandedId.value = null
+		confirmDeleteId.value = null
 	} catch {
 	}
 }
@@ -219,6 +233,18 @@ onMounted(() => {
 					<!-- Expanded content -->
 					<div v-if="expandedId === n.id" class="mt-3 pt-3 border-t border-gray-100">
 						<p class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{{ n.content }}</p>
+						<!-- Delete button for read personal messages -->
+						<div v-if="n.is_read && !n.is_broadcast" class="mt-3 flex items-center justify-end gap-2">
+							<template v-if="confirmDeleteId === n.id">
+								<span class="text-xs text-gray-500">确认删除？</span>
+								<button class="btn btn-danger btn-sm" @click.stop="deleteNotification(n)">删除</button>
+								<button class="btn btn-secondary btn-sm" @click.stop="confirmDeleteId = null">取消</button>
+							</template>
+							<button v-else class="btn btn-ghost btn-sm text-red-500 hover:bg-red-50" @click.stop="confirmDeleteId = n.id">
+								<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+								删除
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>

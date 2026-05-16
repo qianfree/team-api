@@ -55,6 +55,13 @@ type TenantMarkAllReadReq struct {
 
 type TenantMarkAllReadRes struct{}
 
+type TenantNotificationDeleteReq struct {
+	g.Meta `path:"/notifications/{id}" method:"delete" mime:"json" tags:"租户控制台-通知" summary:"删除消息"`
+	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+}
+
+type TenantNotificationDeleteRes struct{}
+
 type TenantNotificationPreferencesGetReq struct {
 	g.Meta `path:"/notification-preferences" method:"get" mime:"json" tags:"租户控制台-通知" summary:"通知偏好"`
 }

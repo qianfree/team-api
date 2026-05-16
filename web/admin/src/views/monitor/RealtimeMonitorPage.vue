@@ -7,8 +7,6 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import VChart from 'vue-echarts'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
-import { useWebSocket } from '@/utils/websocket'
-import type { WsMessage } from '@/utils/websocket'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -165,25 +163,19 @@ const heapUsagePercent = computed(() => {
   return Math.min(100, (inuse / sys) * 100)
 })
 
-const { on: wsOn, off: wsOff, connected } = useWebSocket()
-
-function handleMonitorMessage(msg: WsMessage) {
-  if (msg.action === 'realtime' && msg.payload) {
-    data.value = msg.payload
-    lastUpdated.value = new Date()
-    updateCharts()
-  }
-}
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   fetchRealtime()
-  wsOn('monitor', handleMonitorMessage)
-  // Update elapsed time every second
+  pollTimer = setInterval(fetchRealtime, 10000)
   elapsedTimer = setInterval(() => { now.value = Date.now() }, 1000)
 })
 
 onUnmounted(() => {
-  wsOff('monitor', handleMonitorMessage)
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
   if (elapsedTimer) {
     clearInterval(elapsedTimer)
     elapsedTimer = null
@@ -196,8 +188,8 @@ onUnmounted(() => {
     <PageHeader title="实时监控面板" description="并发请求、网络流量与运行时状态实时监控">
       <template #actions>
         <div class="header-status">
-          <a-tag :color="connected ? 'green' : 'red'" size="small">
-            {{ connected ? 'WS 已连接' : 'WS 断开' }}
+          <a-tag color="green" size="small">
+            自动刷新 10s
           </a-tag>
           <span v-if="lastUpdated" class="last-updated">最后更新 {{ fmtLastUpdated() }}</span>
         </div>

@@ -118,12 +118,82 @@ function openTenantDropdown() {
   }
 }
 
+// === User selector (for send modal, depends on tenant) ===
+const userOptions = ref<{ value: number; label: string }[]>([])
+const userLoading = ref(false)
+const userKeyword = ref('')
+const userPage = ref(1)
+const userHasMore = ref(false)
+
+let userSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+async function fetchUserOptions(tenantId: number, reset = true) {
+  userLoading.value = true
+  try {
+    const params: any = { page: userPage.value, page_size: 20, tenant_id: tenantId }
+    if (userKeyword.value) params.keyword = userKeyword.value
+    const res = await request.get('/admin/members', { params })
+    const d = res.data?.data
+    const list: { id: number; username: string; display_name: string; email: string }[] = d?.list || []
+    const items = list.map(u => ({ value: u.id, label: u.display_name ? `${u.display_name} (${u.username})` : u.username }))
+    if (reset) {
+      userOptions.value = items
+    } else {
+      userOptions.value = [...userOptions.value, ...items]
+    }
+    const total: number = d?.total || 0
+    userHasMore.value = userOptions.value.length < total
+  } catch {
+    // ignore
+  } finally {
+    userLoading.value = false
+  }
+}
+
+function handleUserSearch(val: string) {
+  if (!sendForm.tenant_id) return
+  if (userSearchTimer) clearTimeout(userSearchTimer)
+  userSearchTimer = setTimeout(() => {
+    userKeyword.value = val
+    userPage.value = 1
+    fetchUserOptions(sendForm.tenant_id!, true)
+  }, 300)
+}
+
+function handleUserScrollReachEdge(e: Event) {
+  if (!sendForm.tenant_id || !userHasMore.value || userLoading.value) return
+  const el = e.target as HTMLElement
+  const bottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (bottom < 30) {
+    userPage.value++
+    fetchUserOptions(sendForm.tenant_id, false)
+  }
+}
+
+function handleSendTenantChange(val: number | undefined) {
+  sendForm.user_id = undefined
+  userOptions.value = []
+  userKeyword.value = ''
+  userPage.value = 1
+  if (val) {
+    fetchUserOptions(val, true)
+  }
+}
+
+function openUserDropdown() {
+  if (sendForm.tenant_id && userOptions.value.length === 0) {
+    userKeyword.value = ''
+    userPage.value = 1
+    fetchUserOptions(sendForm.tenant_id, true)
+  }
+}
+
 // Send message modal
 const showSendModal = ref(false)
 const sendLoading = ref(false)
 const sendForm = reactive({
   tenant_id: undefined as number | undefined,
-  user_id: '' as string | number,
+  user_id: undefined as number | undefined,
   title: '',
   content: '',
   channel: 'in_app',
@@ -136,10 +206,13 @@ const channelOptions = [
 ]
 
 function openSendModal() {
-  Object.assign(sendForm, { tenant_id: undefined, user_id: '', title: '', content: '', channel: 'in_app' })
+  Object.assign(sendForm, { tenant_id: undefined, user_id: undefined, title: '', content: '', channel: 'in_app' })
   tenantKeyword.value = ''
   tenantPage.value = 1
   tenantOptions.value = []
+  userOptions.value = []
+  userKeyword.value = ''
+  userPage.value = 1
   showSendModal.value = true
 }
 
@@ -164,7 +237,7 @@ async function handleSendSubmit(done: () => void) {
       content: sendForm.content,
       channel: sendForm.channel,
     }
-    if (sendForm.user_id) payload.user_id = Number(sendForm.user_id)
+    if (sendForm.user_id) payload.user_id = sendForm.user_id
     await request.post('/admin/notification/messages/send', payload)
     Message.success('发送成功')
     done()
@@ -271,13 +344,27 @@ onMounted(fetchList)
             allow-clear
             :filter-option="false"
             :fallback-option="true"
+            @change="handleSendTenantChange"
             @search="handleTenantSearch"
             @popup-visible-change="(visible: boolean) => { if (visible) openTenantDropdown() }"
             @scroll-reach-edge="handleTenantScrollReachEdge"
           />
         </AFormItem>
-        <AFormItem label="用户ID">
-          <AInputNumber v-model="sendForm.user_id" :min="1" class="w-full" placeholder="留空则发送给租户所有人" />
+        <AFormItem label="用户" extra="不选则发送给租户所有人">
+          <ASelect
+            v-model="sendForm.user_id"
+            :options="userOptions"
+            :loading="userLoading"
+            :disabled="!sendForm.tenant_id"
+            placeholder="请先选择租户"
+            allow-search
+            allow-clear
+            :filter-option="false"
+            :fallback-option="true"
+            @search="handleUserSearch"
+            @popup-visible-change="(visible: boolean) => { if (visible) openUserDropdown() }"
+            @scroll-reach-edge="handleUserScrollReachEdge"
+          />
         </AFormItem>
         <AFormItem label="标题" required>
           <AInput v-model="sendForm.title" placeholder="消息标题" />

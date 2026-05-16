@@ -26,11 +26,36 @@ const props = defineProps<{
 
 const currentIndex = ref(0)
 const showDetail = ref(false)
-const dismissedIds = ref<Set<number>>(new Set())
+const STORAGE_KEY = 'tenant_dismissed_announcements'
+
+function loadDismissedIds(): Set<number> {
+	try {
+		const raw = localStorage.getItem(STORAGE_KEY)
+		if (raw) return new Set(JSON.parse(raw))
+	} catch { /* ignore */ }
+	return new Set()
+}
+
+function saveDismissedIds(ids: Set<number>) {
+	try {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]))
+	} catch { /* ignore */ }
+}
+
+const dismissedIds = ref<Set<number>>(loadDismissedIds())
 
 let autoTimer: ReturnType<typeof setInterval> | null = null
 
 const visibleItems = computed(() => {
+	const activeIds = new Set(props.announcements.map(a => a.id))
+	// 清理已不存在的 dismissed ID
+	const changed = [...dismissedIds.value].some(id => !activeIds.has(id))
+	if (changed) {
+		for (const id of [...dismissedIds.value]) {
+			if (!activeIds.has(id)) dismissedIds.value.delete(id)
+		}
+		saveDismissedIds(dismissedIds.value)
+	}
 	return props.announcements.filter(a => !dismissedIds.value.has(a.id))
 })
 
@@ -54,6 +79,7 @@ function dismissCurrent() {
 	if (!currentItem.value) return
 	if (currentItem.value.type === 'important') return
 	dismissedIds.value.add(currentItem.value.id)
+	saveDismissedIds(dismissedIds.value)
 	if (currentIndex.value >= visibleItems.value.length) {
 		currentIndex.value = 0
 	}

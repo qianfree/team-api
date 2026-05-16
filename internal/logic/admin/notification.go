@@ -325,6 +325,7 @@ func (s *sAdmin) UpdateAnnouncement(ctx context.Context, req *v1.AnnouncementUpd
 	if err != nil {
 		return nil, err
 	}
+
 	return nil, nil
 }
 
@@ -365,6 +366,7 @@ func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPu
 	if err != nil {
 		return nil, err
 	}
+
 	return nil, nil
 }
 
@@ -378,6 +380,7 @@ func (s *sAdmin) ArchiveAnnouncement(ctx context.Context, req *v1.AnnouncementAr
 	if err != nil {
 		return nil, err
 	}
+
 	return nil, nil
 }
 

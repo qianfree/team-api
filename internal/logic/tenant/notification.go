@@ -231,6 +231,48 @@ func (s *sTenant) MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq)
 	return &v1.TenantMarkAllReadRes{}, nil
 }
 
+// DeleteNotification 删除已读的个人消息（广播消息不允许用户删除）
+func (s *sTenant) DeleteNotification(ctx context.Context, req *v1.TenantNotificationDeleteReq) (*v1.TenantNotificationDeleteRes, error) {
+	tenantID := ctxTenantID(ctx)
+	userID := ctxUserID(ctx)
+
+	var msg struct {
+		ID          int64  `json:"id"`
+		IsBroadcast int    `json:"is_broadcast"`
+		UserID      *int64 `json:"user_id"`
+		IsRead      int    `json:"is_read"`
+	}
+	err := dao.NtfMessages.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Scan(&msg)
+	if err != nil {
+		return nil, err
+	}
+	if msg.ID == 0 {
+		return nil, common.NewNotFoundError("消息")
+	}
+	if msg.IsBroadcast == 1 {
+		return nil, common.NewBadRequestError("广播消息不支持删除")
+	}
+	if msg.UserID == nil || *msg.UserID != userID {
+		return nil, common.NewForbiddenError("无权删除该消息")
+	}
+	if msg.IsRead == 0 {
+		return nil, common.NewBadRequestError("只能删除已读消息")
+	}
+
+	_, err = dao.NtfMessages.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Delete()
+	if err != nil {
+		return nil, err
+	}
+
+	return &v1.TenantNotificationDeleteRes{}, nil
+}
+
 // NotificationPreferencesGet 获取合并后的通知偏好（组织 + 用户）
 func (s *sTenant) NotificationPreferencesGet(ctx context.Context, req *v1.TenantNotificationPreferencesGetReq) (*v1.TenantNotificationPreferencesGetRes, error) {
 	tenantID := ctxTenantID(ctx)
