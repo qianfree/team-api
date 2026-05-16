@@ -65,7 +65,11 @@ const navItems = computed<NavItem[]>(() => {
 })
 
 const activePath = computed(() => route.path)
-const pageTitle = computed(() => navItems.value.find((i) => isActive(i.path))?.label || '仪表盘')
+const pageTitle = computed(() => {
+		const matched = route.matched
+		const leaf = matched[matched.length - 1]
+		return (leaf?.meta?.title as string) || navItems.value.find((i) => isActive(i.path))?.label || '仪表盘'
+	})
 
 function isActive(path: string): boolean {
 	return activePath.value === path || activePath.value.startsWith(path + '/')
