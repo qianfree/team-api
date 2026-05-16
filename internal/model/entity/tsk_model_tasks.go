@@ -8,8 +8,8 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// TskAsyncTasks is the golang structure for table tsk_async_tasks.
-type TskAsyncTasks struct {
+// TskModelTasks is the golang structure for table tsk_model_tasks.
+type TskModelTasks struct {
 	Id              int64       `json:"id"                orm:"id"                description:""` //
 	PublicTaskId    string      `json:"public_task_id"    orm:"public_task_id"    description:""` //
 	Platform        string      `json:"platform"          orm:"platform"          description:""` //

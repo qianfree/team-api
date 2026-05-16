@@ -21,10 +21,10 @@ type MdlModels struct {
 	MaxOutputTokens  any         // 最大输出 token 数
 	Description      any         // 模型描述
 	Tags             []string    // 标签（如 reasoning、vision、function_calling）
-	Capabilities     any         // 模型能力特性（如 vision、function_calling、reasoning 等）
 	CreatedAt        *gtime.Time // 创建时间
 	UpdatedAt        *gtime.Time // 更新时间
 	DeprecatedAt     *gtime.Time // 标记弃用的时间（NULL表示未弃用）
 	SunsetDate       *gtime.Time // 计划下线日期（到达后返回410 Gone，NULL表示未设置）
 	ReplacementModel any         // 推荐替代模型名（NULL表示无替代）
+	Capabilities     any         // 模型能力特性（如 vision、function_calling、reasoning 等）
 }

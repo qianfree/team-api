@@ -337,14 +337,12 @@ type (
 		GetSettings(ctx context.Context, req *v1.AdminSettingsGetReq) (*v1.AdminSettingsGetRes, error)
 		// UpdateSettings batch-updates settings for a given category.
 		UpdateSettings(ctx context.Context, req *v1.AdminSettingsUpdateReq) (*v1.AdminSettingsUpdateRes, error)
-		// TaskList 任务列表
+		// TaskList 大模型异步任务列表
 		TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error)
-		// TaskDetail 任务详情
+		// TaskDetail 大模型异步任务详情
 		TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.TaskDetailRes, error)
-		// TaskCancel 取消任务
+		// TaskCancel 取消大模型异步任务
 		TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (*v1.TaskCancelRes, error)
-		// TaskRetry 重试失败任务
-		TaskRetry(ctx context.Context, req *v1.TaskRetryReq) (*v1.TaskRetryRes, error)
 		// TenantSelect returns a lightweight paginated tenant list for dropdown selectors.
 		TenantSelect(ctx context.Context, req *v1.TenantSelectReq) (*v1.TenantSelectRes, error)
 		// CreateTenant creates a new tenant with its owner user and wallet.

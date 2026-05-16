@@ -14,28 +14,34 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
-// TaskList 任务列表
+// TaskList 大模型异步任务列表
 func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error) {
-	m := dao.TskTasks.Ctx(ctx).OrderDesc("id")
+	m := dao.TskModelTasks.Ctx(ctx).OrderDesc("id")
 	if req.Status != "" {
 		m = m.Where("status", req.Status)
 	}
-	if req.Handler != "" {
-		m = m.Where("handler", req.Handler)
+	if req.Platform != "" {
+		m = m.Where("platform", req.Platform)
 	}
 
 	var tasks []struct {
-		Id           int64       `json:"id"`
-		Name         string      `json:"name"`
-		Handler      string      `json:"handler"`
-		Status       string      `json:"status"`
-		MaxRetries   int         `json:"max_retries"`
-		RetryCount   int         `json:"retry_count"`
-		ErrorMessage string      `json:"error_message"`
-		StartedAt    *gtime.Time `json:"started_at"`
-		FinishedAt   *gtime.Time `json:"finished_at"`
-		ScheduledAt  *gtime.Time `json:"scheduled_at"`
-		CreatedAt    *gtime.Time `json:"created_at"`
+		Id              int64       `json:"id"`
+		PublicTaskId    string      `json:"public_task_id"`
+		Platform        string      `json:"platform"`
+		Action          string      `json:"action"`
+		Status          string      `json:"status"`
+		Progress        string      `json:"progress"`
+		ModelName       string      `json:"model_name"`
+		FailReason      string      `json:"fail_reason"`
+		PreDeductAmount float64     `json:"pre_deduct_amount"`
+		ActualCost      float64     `json:"actual_cost"`
+		BillingSettled  bool        `json:"billing_settled"`
+		ResultUrl       string      `json:"result_url"`
+		TenantId        int64       `json:"tenant_id"`
+		UserId          int64       `json:"user_id"`
+		SubmitTime      *gtime.Time `json:"submit_time"`
+		FinishTime      *gtime.Time `json:"finish_time"`
+		CreatedAt       *gtime.Time `json:"created_at"`
 	}
 
 	var total int
@@ -44,26 +50,30 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 		return nil, err
 	}
 
-	list := make([]v1.TaskItem, 0, len(tasks))
+	list := make([]v1.ModelTaskItem, 0, len(tasks))
 	for _, t := range tasks {
-		item := v1.TaskItem{
-			ID:           t.Id,
-			Name:         t.Name,
-			Handler:      t.Handler,
-			Status:       t.Status,
-			MaxRetries:   t.MaxRetries,
-			RetryCount:   t.RetryCount,
-			ErrorMessage: t.ErrorMessage,
-			CreatedAt:    t.CreatedAt.Format("Y-m-d H:i:s"),
+		item := v1.ModelTaskItem{
+			ID:              t.Id,
+			PublicTaskID:    t.PublicTaskId,
+			Platform:        t.Platform,
+			Action:          t.Action,
+			Status:          t.Status,
+			Progress:        t.Progress,
+			ModelName:       t.ModelName,
+			FailReason:      t.FailReason,
+			PreDeductAmount: t.PreDeductAmount,
+			ActualCost:      t.ActualCost,
+			BillingSettled:  t.BillingSettled,
+			ResultURL:       t.ResultUrl,
+			TenantID:        t.TenantId,
+			UserID:          t.UserId,
+			CreatedAt:       t.CreatedAt.Format("Y-m-d H:i:s"),
 		}
-		if t.StartedAt != nil {
-			item.StartedAt = t.StartedAt.Format("Y-m-d H:i:s")
+		if t.SubmitTime != nil {
+			item.SubmitTime = t.SubmitTime.Format("Y-m-d H:i:s")
 		}
-		if t.FinishedAt != nil {
-			item.FinishedAt = t.FinishedAt.Format("Y-m-d H:i:s")
-		}
-		if t.ScheduledAt != nil {
-			item.ScheduledAt = t.ScheduledAt.Format("Y-m-d H:i:s")
+		if t.FinishTime != nil {
+			item.FinishTime = t.FinishTime.Format("Y-m-d H:i:s")
 		}
 		list = append(list, item)
 	}
@@ -76,22 +86,30 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 	}, nil
 }
 
-// TaskDetail 任务详情
+// TaskDetail 大模型异步任务详情
 func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.TaskDetailRes, error) {
 	var task *struct {
-		Id           int64       `json:"id"`
-		Name         string      `json:"name"`
-		Handler      string      `json:"handler"`
-		Status       string      `json:"status"`
-		MaxRetries   int         `json:"max_retries"`
-		RetryCount   int         `json:"retry_count"`
-		ErrorMessage string      `json:"error_message"`
-		StartedAt    *gtime.Time `json:"started_at"`
-		FinishedAt   *gtime.Time `json:"finished_at"`
-		ScheduledAt  *gtime.Time `json:"scheduled_at"`
-		CreatedAt    *gtime.Time `json:"created_at"`
+		Id              int64       `json:"id"`
+		PublicTaskId    string      `json:"public_task_id"`
+		Platform        string      `json:"platform"`
+		Action          string      `json:"action"`
+		Status          string      `json:"status"`
+		Progress        string      `json:"progress"`
+		ModelName       string      `json:"model_name"`
+		UpstreamModel   string      `json:"upstream_model"`
+		FailReason      string      `json:"fail_reason"`
+		PreDeductAmount float64     `json:"pre_deduct_amount"`
+		ActualCost      float64     `json:"actual_cost"`
+		BillingSettled  bool        `json:"billing_settled"`
+		ResultUrl       string      `json:"result_url"`
+		TenantId        int64       `json:"tenant_id"`
+		UserId          int64       `json:"user_id"`
+		SubmitTime      *gtime.Time `json:"submit_time"`
+		StartTime       *gtime.Time `json:"start_time"`
+		FinishTime      *gtime.Time `json:"finish_time"`
+		CreatedAt       *gtime.Time `json:"created_at"`
 	}
-	err := dao.TskTasks.Ctx(ctx).Where("id", req.ID).Scan(&task)
+	err := dao.TskModelTasks.Ctx(ctx).Where("id", req.ID).Scan(&task)
 	if err != nil {
 		return nil, err
 	}
@@ -99,106 +117,56 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 		return nil, gerror.NewCode(gcode.New(consts.CodeNotFound, consts.MsgNotFound, nil), consts.MsgNotFound)
 	}
 
-	taskItem := v1.TaskItem{
-		ID:           task.Id,
-		Name:         task.Name,
-		Handler:      task.Handler,
-		Status:       task.Status,
-		MaxRetries:   task.MaxRetries,
-		RetryCount:   task.RetryCount,
-		ErrorMessage: task.ErrorMessage,
-		CreatedAt:    task.CreatedAt.Format("Y-m-d H:i:s"),
+	item := v1.ModelTaskItem{
+		ID:              task.Id,
+		PublicTaskID:    task.PublicTaskId,
+		Platform:        task.Platform,
+		Action:          task.Action,
+		Status:          task.Status,
+		Progress:        task.Progress,
+		ModelName:       task.ModelName,
+		FailReason:      task.FailReason,
+		PreDeductAmount: task.PreDeductAmount,
+		ActualCost:      task.ActualCost,
+		BillingSettled:  task.BillingSettled,
+		ResultURL:       task.ResultUrl,
+		TenantID:        task.TenantId,
+		UserID:          task.UserId,
+		CreatedAt:       task.CreatedAt.Format("Y-m-d H:i:s"),
 	}
-	if task.StartedAt != nil {
-		taskItem.StartedAt = task.StartedAt.Format("Y-m-d H:i:s")
+	if task.SubmitTime != nil {
+		item.SubmitTime = task.SubmitTime.Format("Y-m-d H:i:s")
 	}
-	if task.FinishedAt != nil {
-		taskItem.FinishedAt = task.FinishedAt.Format("Y-m-d H:i:s")
-	}
-	if task.ScheduledAt != nil {
-		taskItem.ScheduledAt = task.ScheduledAt.Format("Y-m-d H:i:s")
-	}
-
-	// 查询最近日志
-	var logs []struct {
-		Level     string      `json:"level"`
-		Message   string      `json:"message"`
-		CreatedAt *gtime.Time `json:"created_at"`
-	}
-	_ = dao.TskTaskLogs.Ctx(ctx).
-		Where("task_id", req.ID).
-		OrderDesc("id").
-		Limit(50).
-		Scan(&logs)
-
-	logList := make([]v1.TaskLogItem, 0, len(logs))
-	for _, l := range logs {
-		logList = append(logList, v1.TaskLogItem{
-			Level:     l.Level,
-			Message:   l.Message,
-			CreatedAt: l.CreatedAt.Format("Y-m-d H:i:s"),
-		})
+	if task.FinishTime != nil {
+		item.FinishTime = task.FinishTime.Format("Y-m-d H:i:s")
 	}
 
 	return &v1.TaskDetailRes{
-		Task:       taskItem,
-		RecentLogs: logList,
+		Task: item,
 	}, nil
 }
 
-// TaskCancel 取消任务
+// TaskCancel 取消大模型异步任务
 func (s *sAdmin) TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (*v1.TaskCancelRes, error) {
-	result, err := dao.TskTasks.Ctx(ctx).
+	result, err := dao.TskModelTasks.Ctx(ctx).
 		Where("id", req.ID).
-		WhereIn("status", []string{"pending", "running"}).
-		Data(do.TskTasks{
-			Status:     "cancelled",
-			FinishedAt: gtime.Now(),
+		WhereIn("status", []string{"NOT_START", "SUBMITTED", "IN_PROGRESS"}).
+		Data(do.TskModelTasks{
+			Status:     "FAILURE",
+			FailReason: "管理员手动取消",
+			FinishTime: gtime.Now(),
 		}).Update()
 	if err != nil {
 		return nil, err
 	}
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return nil, gerror.New("任务无法取消（可能已完成或已取消）")
+		return nil, gerror.New("任务无法取消（可能已完成或已失败）")
 	}
 	return &v1.TaskCancelRes{}, nil
 }
 
-// TaskRetry 重试失败任务
-func (s *sAdmin) TaskRetry(ctx context.Context, req *v1.TaskRetryReq) (*v1.TaskRetryRes, error) {
-	var task *struct {
-		Id         int64  `json:"id"`
-		Status     string `json:"status"`
-		RetryCount int    `json:"retry_count"`
-		MaxRetries int    `json:"max_retries"`
-	}
-	err := dao.TskTasks.Ctx(ctx).Where("id", req.ID).Scan(&task)
-	if err != nil {
-		return nil, err
-	}
-	if task == nil {
-		return nil, gerror.NewCode(gcode.New(consts.CodeNotFound, consts.MsgNotFound, nil), consts.MsgNotFound)
-	}
-	if task.Status != "failed" {
-		return nil, gerror.NewCode(gcode.New(consts.CodeTaskNotRetryable, consts.MsgTaskNotRetryable, nil),
-			consts.MsgTaskNotRetryable)
-	}
-
-	_, err = dao.TskTasks.Ctx(ctx).Where("id", req.ID).Data(do.TskTasks{
-		Status:       "pending",
-		RetryCount:   task.RetryCount + 1,
-		ErrorMessage: "",
-		StartedAt:    nil,
-		FinishedAt:   nil,
-	}).Update()
-	if err != nil {
-		return nil, err
-	}
-	return &v1.TaskRetryRes{TaskID: task.Id}, nil
-}
-
-// MarkStuckTasksFailed 标记卡住的任务为失败（定时任务）
+// MarkStuckTasksFailed 标记卡住的系统任务为失败（定时任务，操作 tsk_tasks 表）
 func MarkStuckTasksFailed(ctx context.Context) error {
 	threshold := time.Now().Add(-30 * time.Minute)
 	_, err := dao.TskTasks.Ctx(ctx).

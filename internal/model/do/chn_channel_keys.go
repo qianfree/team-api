@@ -20,7 +20,7 @@ type ChnChannelKeys struct {
 	LastUsedAt     *gtime.Time // 最后使用时间
 	LastError      any         // 最后一次错误信息
 	CreatedAt      *gtime.Time // 创建时间
+	UpdatedAt      *gtime.Time // 更新时间
 	KeyType        any         // Key 类型：apikey（传统静态密钥）/ oauth（OAuth 令牌）
 	TokenExpiresAt *gtime.Time // OAuth access_token 过期时间（仅 key_type=oauth 时有值）
-	UpdatedAt      *gtime.Time // 更新时间
 }

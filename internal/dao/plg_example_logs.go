@@ -8,20 +8,15 @@ import (
 	"github.com/qianfree/team-api/internal/dao/internal"
 )
 
-// internalTskAsyncTasksDao is an internal type for wrapping the internal DAO implementation.
-type internalTskAsyncTasksDao = *internal.TskAsyncTasksDao
-
-// tskAsyncTasksDao is the data access object for the table tsk_async_tasks.
+// plgExampleLogsDao is the data access object for the table plg_example_logs.
 // You can define custom methods on it to extend its functionality as needed.
-type tskAsyncTasksDao struct {
-	internalTskAsyncTasksDao
+type plgExampleLogsDao struct {
+	*internal.PlgExampleLogsDao
 }
 
 var (
-	// TskAsyncTasks is a globally accessible object for table tsk_async_tasks operations.
-	TskAsyncTasks = tskAsyncTasksDao{
-		internal.NewTskAsyncTasksDao(),
-	}
+	// PlgExampleLogs is a globally accessible object for table plg_example_logs operations.
+	PlgExampleLogs = plgExampleLogsDao{internal.NewPlgExampleLogsDao()}
 )
 
 // Add your custom methods and functionality below.
