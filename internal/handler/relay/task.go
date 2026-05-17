@@ -154,6 +154,40 @@ func HandleMjSubmit(r *ghttp.Request) {
 	)
 }
 
+// HandleAliImageSubmit 处理异步图片生成任务提交（POST /v1/images/generations/async）
+func HandleAliImageSubmit(r *ghttp.Request) {
+	body := r.GetBody()
+	if len(body) == 0 {
+		r.Response.WriteStatus(400, g.Map{
+			"error": g.Map{"type": "invalid_request_error", "message": "request body is empty"},
+		})
+		return
+	}
+
+	rc := &relay_handler.TaskRelayContext{
+		TenantID:  middleware.GetTenantID(r.Context()),
+		UserID:    middleware.GetUserID(r.Context()),
+		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		RequestID: r.GetCtxVar("RequestId").String(),
+		Writer:    r.Response.Writer,
+		Scope:     r.GetCtxVar("ApiKeyScope").String(),
+		ClientIP:  r.GetClientIp(),
+	}
+
+	channelMeta, err := selectTaskChannel(r, body)
+	if err != nil {
+		r.Response.WriteStatus(503, g.Map{
+			"error": g.Map{"type": "server_error", "message": err.Error()},
+		})
+		return
+	}
+
+	relay_handler.HandleTaskSubmit(
+		r.Context(), body, r.URL.Path, r.Header,
+		rc, taskDataProvider, taskBillingProvider, channelMeta,
+	)
+}
+
 // HandleMjFetch 处理 Midjourney 任务查询（GET /mj/task/:id/fetch）
 func HandleMjFetch(r *ghttp.Request) {
 	taskID := r.Get("task_id").String()
