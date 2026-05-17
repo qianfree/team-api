@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted } from 'vue'
+import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
@@ -207,8 +207,31 @@ async function fetchAll() {
   }
 }
 
+const cpuChart = ref()
+const memChart = ref()
+const qpsChart = ref()
+const tpmChart = ref()
+
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
+function onWindowResize() {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    cpuChart.value?.resize?.()
+    memChart.value?.resize?.()
+    qpsChart.value?.resize?.()
+    tpmChart.value?.resize?.()
+  }, 200)
+}
+
 onMounted(() => {
   fetchAll()
+  window.addEventListener('resize', onWindowResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (resizeTimer) clearTimeout(resizeTimer)
 })
 </script>
 
@@ -237,7 +260,7 @@ onMounted(() => {
               </a-tag>
             </div>
           </template>
-          <v-chart v-if="systemHistory.length > 1" :option="cpuChartOption" style="height: 220px" autoresize />
+          <v-chart ref="cpuChart" v-if="systemHistory.length > 1" :option="cpuChartOption" style="height: 220px" autoresize />
           <a-empty v-else description="暂无数据" style="padding: 60px 0" />
         </a-card>
         <a-card :bordered="false">
@@ -250,7 +273,7 @@ onMounted(() => {
               </a-tag>
             </div>
           </template>
-          <v-chart v-if="systemHistory.length > 1" :option="memChartOption" style="height: 220px" autoresize />
+          <v-chart ref="memChart" v-if="systemHistory.length > 1" :option="memChartOption" style="height: 220px" autoresize />
           <a-empty v-else description="暂无数据" style="padding: 60px 0" />
         </a-card>
       </div>
@@ -264,7 +287,7 @@ onMounted(() => {
               <a-tag color="arcoblue" size="small">{{ num(dashboardData.api?.qps).toFixed(2) }}</a-tag>
             </div>
           </template>
-          <v-chart v-if="trafficData.length > 1" :option="qpsChartOption" style="height: 220px" autoresize />
+          <v-chart ref="qpsChart" v-if="trafficData.length > 1" :option="qpsChartOption" style="height: 220px" autoresize />
           <a-empty v-else description="暂无数据" style="padding: 60px 0" />
         </a-card>
         <a-card :bordered="false">
@@ -274,7 +297,7 @@ onMounted(() => {
               <a-tag color="orangered" size="small">{{ num(dashboardData.api?.tpm).toFixed(0) }}</a-tag>
             </div>
           </template>
-          <v-chart v-if="trafficData.length > 1" :option="tpmChartOption" style="height: 220px" autoresize />
+          <v-chart ref="tpmChart" v-if="trafficData.length > 1" :option="tpmChartOption" style="height: 220px" autoresize />
           <a-empty v-else description="暂无数据" style="padding: 60px 0" />
         </a-card>
       </div>

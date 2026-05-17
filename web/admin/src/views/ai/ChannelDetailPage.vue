@@ -272,6 +272,14 @@ const trendLoading = ref(false)
 const trendData = ref<any[]>([])
 const trendHours = ref(24)
 let trendChart: echarts.ECharts | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
+function onWindowResize() {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    trendChart?.resize()
+  }, 200)
+}
 
 async function fetchHealthTrend() {
   trendLoading.value = true
@@ -328,6 +336,8 @@ function handleTrendHoursChange(val: string | number | boolean) {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (resizeTimer) clearTimeout(resizeTimer)
   if (trendChart) { trendChart.dispose(); trendChart = null }
 })
 
@@ -379,6 +389,7 @@ async function handleClone(done: () => void) {
 
 onMounted(() => {
   fetchDetail()
+  window.addEventListener('resize', onWindowResize)
 })
 
 function formatJson(str: string): string {
