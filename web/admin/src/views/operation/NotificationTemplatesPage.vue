@@ -176,7 +176,7 @@ onMounted(fetchTemplates)
 
     <!-- Test Modal -->
     <AModal v-model:visible="showTestModal" title="模板测试" :width="650" :footer="false">
-      <AForm layout="vertical">
+      <AForm :model="{ code: testingCode, variables: testVariables }" layout="vertical">
         <AFormItem label="模板编码">
           <AInput :model-value="testingCode" disabled />
         </AFormItem>

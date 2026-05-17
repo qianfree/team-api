@@ -327,7 +327,7 @@ const { exporting, exportFile } = useExport({
     <AModal v-model:visible="showOAuthDialog" title="官方渠道 OAuth 授权" :width="560" :footer="false" :mask-closable="false">
       <!-- Step 1: Choose platform & mode -->
       <div v-if="!oauthStep2">
-        <AForm layout="vertical">
+        <AForm :model="oauthForm" layout="vertical">
           <AFormItem label="选择平台" required>
             <ARadioGroup v-model="oauthForm.platform">
               <Radio value="claude">Claude</Radio>
@@ -358,7 +358,7 @@ const { exporting, exportFile } = useExport({
       <!-- Step 2: Enter code -->
       <div v-else>
         <AAlert type="info" class="mb-4">请在弹出窗口中完成授权，将回调 URL 中的 code 参数粘贴到下方。</AAlert>
-        <AForm layout="vertical">
+        <AForm :model="oauthForm" layout="vertical">
           <AFormItem label="Authorization Code" required>
             <AInput v-model="oauthForm.code" placeholder="粘贴 code 参数值" />
           </AFormItem>

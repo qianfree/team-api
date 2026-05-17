@@ -181,7 +181,7 @@ onUnmounted(() => {
     </a-card>
 
     <a-modal v-model:visible="showResolveModal" title="解决告警" :on-before-ok="handleResolve" :ok-loading="resolveLoading">
-      <a-form layout="vertical">
+      <a-form :model="{ notes: resolveNotes }" layout="vertical">
         <a-form-item label="处理备注">
           <a-textarea v-model="resolveNotes" placeholder="请输入处理说明..." :auto-size="{ minRows: 3, maxRows: 6 }" />
         </a-form-item>

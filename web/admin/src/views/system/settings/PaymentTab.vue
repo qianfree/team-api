@@ -1,16 +1,17 @@
 <script setup lang="ts">
-const values = defineModel<Record<string, any>>({ required: true })
+import { useFormValues } from './useSettings'
+const values = useFormValues()
 
 function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 	if (direction === 'cny_to_usd') {
-		const usdToCny = parseFloat(values.value['payment_exchange_rate_usd_to_cny'])
+		const usdToCny = parseFloat(values['payment_exchange_rate_usd_to_cny'])
 		if (usdToCny > 0) {
-			values.value['payment_exchange_rate_cny_to_usd'] = String(Math.round((1 / usdToCny) * 10000) / 10000)
+			values['payment_exchange_rate_cny_to_usd'] = String(Math.round((1 / usdToCny) * 10000) / 10000)
 		}
 	} else {
-		const cnyToUsd = parseFloat(values.value['payment_exchange_rate_cny_to_usd'])
+		const cnyToUsd = parseFloat(values['payment_exchange_rate_cny_to_usd'])
 		if (cnyToUsd > 0) {
-			values.value['payment_exchange_rate_usd_to_cny'] = String(Math.round((1 / cnyToUsd) * 10000) / 10000)
+			values['payment_exchange_rate_usd_to_cny'] = String(Math.round((1 / cnyToUsd) * 10000) / 10000)
 		}
 	}
 }
