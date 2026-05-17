@@ -4,6 +4,7 @@ import {
   Tag, Button, Space, Popconfirm, Message, Modal,
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
+import { IconSync } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -23,6 +24,11 @@ const modalTitle = ref('创建用户')
 const formRef = ref<FormInstance | null>(null)
 const formLoading = ref(false)
 const editingId = ref<number | null>(null)
+
+const showResetModal = ref(false)
+const resetTarget = ref<any>(null)
+const resetPasswordValue = ref('')
+const resetLoading = ref(false)
 
 const form = reactive({
   username: '',
@@ -79,10 +85,7 @@ const columns: TableColumnData[] = [
           content: `确定${record.status === 1 ? '禁用' : '启用'}该用户？`,
           onOk: () => toggleStatus(record),
         }, () => h(Button, { size: 'small' }, () => record.status === 1 ? '禁用' : '启用')),
-        h(Popconfirm, {
-          content: '确定重置该用户的密码？',
-          onOk: () => resetPassword(record),
-        }, () => h(Button, { size: 'small' }, () => '重置密码')),
+        h(Button, { size: 'small', onClick: () => openResetPassword(record) }, () => '重置密码'),
         h(Popconfirm, {
           content: '确定删除该用户？此操作不可撤销。',
           onOk: () => deleteUser(record),
@@ -166,16 +169,50 @@ async function toggleStatus(row: any) {
   }
 }
 
-async function resetPassword(row: any) {
+function generateRandomPassword(length = 16) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%'
+  let password = ''
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return password
+}
+
+function openResetPassword(row: any) {
+  resetTarget.value = row
+  resetPasswordValue.value = ''
+  showResetModal.value = true
+}
+
+function fillRandomPassword() {
+  resetPasswordValue.value = generateRandomPassword()
+}
+
+async function handleResetPassword(done: () => void) {
+  if (!resetPasswordValue.value || resetPasswordValue.value.length < 8) {
+    Message.warning('请输入新密码（至少8位）')
+    return false
+  }
+  resetLoading.value = true
   try {
-    const res: any = await request.put(`/admin/users/${row.id}/reset-password`)
-    Modal.info({
-      title: '密码已重置',
-      content: `新密码：${res.data?.password || '请查看邮箱'}`,
-      okText: '确定',
+    await request.put(`/admin/users/${resetTarget.value.id}/reset-password`, {
+      new_password: resetPasswordValue.value,
+    })
+    const pwd = resetPasswordValue.value
+    done()
+    Modal.success({
+      title: '密码重置成功',
+      content: `用户 ${resetTarget.value.username} 的新密码：${pwd}`,
+      okText: '复制并关闭',
+      async onOk() {
+        await navigator.clipboard.writeText(pwd)
+        Message.success('已复制到剪贴板')
+      },
     })
   } catch {
-    // error handled by interceptor
+    return false
+  } finally {
+    resetLoading.value = false
   }
 }
 
@@ -265,6 +302,33 @@ const { exporting, exportFile } = useExport({
         </AFormItem>
         <AFormItem label="状态">
           <ASelect v-model="form.status" :options="statusOptions" placeholder="请选择状态" />
+        </AFormItem>
+      </AForm>
+    </AModal>
+
+    <!-- Reset Password Modal -->
+    <AModal
+      v-model:visible="showResetModal"
+      title="重置密码"
+      :mask-closable="false"
+      :width="460"
+      :on-before-ok="handleResetPassword"
+      :ok-loading="resetLoading"
+      ok-text="确认重置"
+    >
+      <AForm :auto-label-width="true" layout="vertical">
+        <AFormItem field="new_password" label="新密码">
+          <AInput
+            v-model="resetPasswordValue"
+            placeholder="请输入新密码（至少8位），或点击随机生成"
+          >
+            <template #append>
+              <AButton type="text" @click="fillRandomPassword">
+                <template #icon><IconSync /></template>
+                随机
+              </AButton>
+            </template>
+          </AInput>
         </AFormItem>
       </AForm>
     </AModal>
