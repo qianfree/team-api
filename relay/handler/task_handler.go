@@ -144,6 +144,23 @@ func HandleTaskSubmit(
 		preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
 	}
 
+	// 9.5 合并最终 ratios 用于结算时还原
+	finalRatios := ratios
+	if adjustedRatios != nil {
+		if finalRatios == nil {
+			finalRatios = adjustedRatios
+		} else {
+			merged := make(map[string]float64, len(finalRatios)+len(adjustedRatios))
+			for k, v := range finalRatios {
+				merged[k] = v
+			}
+			for k, v := range adjustedRatios {
+				merged[k] = v
+			}
+			finalRatios = merged
+		}
+	}
+
 	// 10. 生成公开任务 ID 并创建记录
 	publicTaskID := generatePublicTaskID()
 	now := time.Now()
@@ -151,6 +168,11 @@ func HandleTaskSubmit(
 	privateData, _ := json.Marshal(map[string]any{
 		"upstream_task_id": upstreamTaskID,
 		"task_type":        platform,
+		"billing_context": map[string]any{
+			"ratios":     finalRatios,
+			"model_name": modelName,
+			"pre_deduct": preDeductAmount,
+		},
 	})
 
 	task := &common.AsyncTask{

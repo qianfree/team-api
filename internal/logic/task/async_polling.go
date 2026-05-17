@@ -114,12 +114,12 @@ func processPlatformTasks(ctx context.Context, platform string, tasks []*common.
 	}
 
 	for channelID, channelTasks := range channelGroups {
-		processChannelTasks(ctx, platform, channelID, channelTasks)
+		processChannelTasks(ctx, channelID, channelTasks)
 	}
 }
 
 // processChannelTasks 处理同一渠道的任务
-func processChannelTasks(ctx context.Context, platform string, channelID int64, tasks []*common.AsyncTask) {
+func processChannelTasks(ctx context.Context, channelID int64, tasks []*common.AsyncTask) {
 	// 获取渠道信息
 	channel, err := DefaultAsyncProvider.GetChannelByID(ctx, channelID)
 	if err != nil || channel == nil {
@@ -139,20 +139,29 @@ func processChannelTasks(ctx context.Context, platform string, channelID int64, 
 	}
 }
 
+// privateData PrivateData 反序列化结构
+type privateData struct {
+	UpstreamTaskID string `json:"upstream_task_id"`
+	TaskType       string `json:"task_type"`
+	BillingContext struct {
+		Ratios    map[string]float64 `json:"ratios"`
+		ModelName string             `json:"model_name"`
+		PreDeduct float64            `json:"pre_deduct"`
+	} `json:"billing_context"`
+}
+
 // pollSingleTask 轮询单个任务
 func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *common.ChannelBasicInfo, task *common.AsyncTask) {
-	// 从 PrivateData 提取上游任务 ID
-	var private struct {
-		UpstreamTaskID string `json:"upstream_task_id"`
-	}
-	if err := json.Unmarshal(task.PrivateData, &private); err != nil || private.UpstreamTaskID == "" {
+	// 从 PrivateData 提取上游任务 ID 和计费上下文
+	var pd privateData
+	if err := json.Unmarshal(task.PrivateData, &pd); err != nil || pd.UpstreamTaskID == "" {
 		g.Log().Warningf(ctx, "poll: invalid private data for task %s", task.PublicTaskID)
 		return
 	}
 
 	// 查询上游状态
 	taskData, _ := json.Marshal(map[string]any{
-		"task_id": private.UpstreamTaskID,
+		"task_id": pd.UpstreamTaskID,
 	})
 
 	resp, err := adaptor.FetchTask(channel.BaseURL, channel.ApiKey, taskData)
@@ -214,9 +223,17 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		if task.PreDeductAmount > 0 && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
 			actualCost := task.PreDeductAmount
+
+			// 优先用上游返回的 ActualCost
 			if taskInfo.ActualCost > 0 {
 				actualCost = taskInfo.ActualCost
+			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
+				// 用上游 total_tokens + 保存的 ratios 重算
+				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios); err == nil && tokenCost > 0 {
+					actualCost = tokenCost
+				}
 			}
+
 			task.ActualCost = actualCost
 			if err := taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.PublicTaskID, actualCost, task.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)

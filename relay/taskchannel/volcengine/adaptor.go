@@ -61,10 +61,16 @@ type taskResponse struct {
 	Content struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Seed     int    `json:"seed"`
-	Duration int    `json:"duration"`
-	Ratio    string `json:"ratio"`
-	Error    struct {
+	Seed            int    `json:"seed"`
+	Duration        int    `json:"duration"`
+	Ratio           string `json:"ratio"`
+	Resolution      string `json:"resolution"`
+	FramesPerSecond int    `json:"framespersecond"`
+	Usage           struct {
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+	Error struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -94,18 +100,31 @@ func (a *VolcengineVideoAdaptor) ValidateRequest(_ context.Context, _ *common.Re
 }
 
 func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
-
-	// 检测是否含视频输入，应用折扣比率
 	var req map[string]any
 	if json.Unmarshal(body, &req) != nil {
-		return ratios
+		return nil
 	}
+
+	ratios := make(map[string]float64)
+
+	// 提取 duration 用于 token 预估（默认 5s）
+	duration := extractDuration(req)
+	if duration > 0 {
+		ratios["duration"] = float64(duration)
+	}
+
+	// 提取 resolution 用于 token 预估
+	if resolution := extractResolution(req); resolution != "" {
+		ratios["resolution"] = resolutionMultiplier(resolution)
+	}
+
+	// 检测是否含视频输入，应用折扣比率
 	if hasVideoInput(req) {
 		if ratio, ok := getVideoInputRatio(info.ChannelMeta.UpstreamModelName); ok {
 			ratios["video_input"] = ratio
 		}
 	}
+
 	return ratios
 }
 
@@ -335,6 +354,9 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 		info.Status = common.TaskStatusSuccess
 		info.Progress = "100%"
 		info.ResultURL = resp.Content.VideoURL
+		// 提取上游 usage 用于按 token 计费
+		info.CompletionTokens = resp.Usage.CompletionTokens
+		info.TotalTokens = resp.Usage.TotalTokens
 	case "failed":
 		info.Status = common.TaskStatusFailure
 		info.FailReason = resp.Error.Message
@@ -381,4 +403,43 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+// extractDuration 从请求中提取 duration 秒数
+func extractDuration(req map[string]any) int {
+	if metadata, ok := req["metadata"].(map[string]any); ok {
+		if d, ok := metadata["duration"].(float64); ok && d > 0 {
+			return int(d)
+		}
+	}
+	if s, ok := req["seconds"].(string); ok {
+		if d, err := parseInt(s); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 5
+}
+
+// extractResolution 从请求中提取 resolution
+func extractResolution(req map[string]any) string {
+	if metadata, ok := req["metadata"].(map[string]any); ok {
+		if r, ok := metadata["resolution"].(string); ok && r != "" {
+			return r
+		}
+	}
+	return "720p"
+}
+
+// resolutionMultiplier 分辨率乘数（相对于 480p）
+func resolutionMultiplier(resolution string) float64 {
+	switch resolution {
+	case "480p":
+		return 1.0
+	case "720p":
+		return 2.25
+	case "1080p":
+		return 5.06
+	default:
+		return 2.25
+	}
 }

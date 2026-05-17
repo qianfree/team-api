@@ -19,4 +19,9 @@ type TaskBillingProvider interface {
 
 	// AdjustTaskBilling 调整预扣金额（提交后上游确认了新参数）
 	AdjustTaskBilling(ctx context.Context, tenantID int64, requestID string, preDeductAmount, newEstimatedCost float64) (float64, error)
+
+	// RecalculateByTokens 根据上游返回的 total_tokens 重算费用
+	// totalTokens: 上游返回的 token 计费单位
+	// ratios: 提交时保存的计费比率（如 video_input 折扣）
+	RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (float64, error)
 }
