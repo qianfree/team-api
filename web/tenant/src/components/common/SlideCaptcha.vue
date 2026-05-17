@@ -118,6 +118,7 @@ onBeforeUnmount(() => {
 	window.removeEventListener('scroll', onScroll, true)
 	window.removeEventListener('resize', onResize)
 	document.removeEventListener('mousedown', onClickOutside)
+	releaseDrag()
 })
 
 watch(activated, (val) => {
@@ -191,6 +192,12 @@ function emitValue() {
 	})
 }
 
+function releaseDrag() {
+	document.removeEventListener('pointermove', onPointerMove)
+	document.removeEventListener('pointerup', onPointerUp)
+	document.removeEventListener('pointercancel', onPointerCancel)
+}
+
 function onPointerDown(e: PointerEvent) {
 	if (!canInteract.value) return
 	e.preventDefault()
@@ -198,7 +205,9 @@ function onPointerDown(e: PointerEvent) {
 	isReturning.value = false
 	startX.value = e.clientX
 	startLeft.value = sliderLeft.value
-	thumbRef.value?.setPointerCapture(e.pointerId)
+	document.addEventListener('pointermove', onPointerMove)
+	document.addEventListener('pointerup', onPointerUp)
+	document.addEventListener('pointercancel', onPointerCancel)
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -207,9 +216,15 @@ function onPointerMove(e: PointerEvent) {
 	sliderLeft.value = Math.max(0, Math.min(maxSliderLeft.value, startLeft.value + delta))
 }
 
+function onPointerCancel() {
+	isDragging.value = false
+	releaseDrag()
+}
+
 async function onPointerUp() {
 	if (!isDragging.value) return
 	isDragging.value = false
+	releaseDrag()
 	if (!captchaData.value || sliderLeft.value < 5) {
 		springBack()
 		return
@@ -289,9 +304,6 @@ function delay(ms: number) {
 					<div class="sc-image relative leading-none bg-gray-100">
 						<img ref="imageRef" :src="captchaData.master_image" class="w-full block" draggable="false" @load="onImageLoad" />
 						<img ref="tileImgRef" :src="captchaData.tile_image" class="sc-tile absolute left-0 pointer-events-none" :style="tileStyle" draggable="false" @load="onTileLoad" />
-						<button v-if="status !== 'success'" type="button" class="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/20 hover:bg-black/40 backdrop-blur-sm text-white/90 flex items-center justify-center transition-all duration-200 z-20 hover:rotate-90 cursor-pointer border-none" title="换一张" @click="resetCaptcha">
-							<Icon name="refresh" size="xs" />
-						</button>
 						<div v-if="status === 'verifying'" class="absolute inset-0 flex items-center justify-center bg-white/75 backdrop-blur-[2px] z-10">
 							<div class="sc-spinner" />
 						</div>
@@ -306,7 +318,7 @@ function delay(ms: number) {
 							</div>
 						</div>
 					</div>
-					<div class="sc-slider relative h-12 bg-gray-50/80 border-t border-gray-100" :class="{ 'sc-shake': status === 'failed', 'sc-ret': isReturning, 'bg-emerald-50/80 !border-emerald-100': status === 'success' }">
+					<div class="sc-slider relative h-12 bg-gray-50/80 border-t border-gray-100 touch-none" :class="{ 'sc-shake': status === 'failed', 'sc-ret': isReturning, 'bg-emerald-50/80 !border-emerald-100': status === 'success' }">
 						<div class="absolute top-[5px] bottom-[5px] left-0 right-0 bg-gray-200 rounded-full overflow-hidden">
 							<div class="sc-fill absolute top-0 left-0 bottom-0 rounded-full" :class="status === 'success' ? 'bg-gradient-to-r from-emerald-500/15 to-emerald-500/8' : 'bg-gradient-to-r from-primary-500/12 to-primary-500/5'" :style="{ width: fillWidth }" />
 							<span class="absolute inset-0 flex items-center justify-center text-xs pointer-events-none select-none transition-opacity duration-200" :class="[sliderLeft > 10 ? 'opacity-0' : '', status === 'success' ? 'text-emerald-500' : 'text-gray-400']">
@@ -318,13 +330,11 @@ function delay(ms: number) {
 							class="sc-thumb absolute top-[2px] w-11 h-11 rounded-xl flex items-center justify-center z-[2] transition-[box-shadow,border-color,color,background] duration-200"
 							:class="{
 								'bg-white border border-gray-200 text-gray-400 shadow-sm cursor-grab hover:shadow-md hover:text-gray-500': !isDragging && status !== 'success',
-								'!cursor-grabbing shadow-lg border-primary-300 text-primary-500 scale-[1.03]': isDragging,
+								'bg-white border border-primary-300 text-primary-500 shadow-lg !cursor-grabbing': isDragging,
 								'bg-emerald-500 border-emerald-500 text-white shadow-md shadow-emerald-500/30 !cursor-default': status === 'success',
 							}"
 							:style="{ left: sliderLeft + 'px' }"
 							@pointerdown="onPointerDown"
-							@pointermove="onPointerMove"
-							@pointerup="onPointerUp"
 						>
 							<Icon :name="status === 'success' ? 'check' : 'arrowRight'" size="sm" />
 						</div>
@@ -371,6 +381,7 @@ function delay(ms: number) {
 	z-index: 9999;
 	background: #fff;
 	border-radius: 16px;
+	touch-action: none;
 	border: 1px solid #e5e7eb;
 	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.05);
 	overflow: hidden;

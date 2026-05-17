@@ -106,6 +106,7 @@ onBeforeUnmount(() => {
 	window.removeEventListener('scroll', onScroll, true)
 	window.removeEventListener('resize', onResize)
 	document.removeEventListener('mousedown', onClickOutside)
+	releaseDrag()
 })
 
 watch(activated, (val) => {
@@ -179,6 +180,12 @@ function emitValue() {
 	})
 }
 
+function releaseDrag() {
+	document.removeEventListener('pointermove', onPointerMove)
+	document.removeEventListener('pointerup', onPointerUp)
+	document.removeEventListener('pointercancel', onPointerCancel)
+}
+
 function onPointerDown(e: PointerEvent) {
 	if (!canInteract.value) return
 	e.preventDefault()
@@ -186,7 +193,9 @@ function onPointerDown(e: PointerEvent) {
 	isReturning.value = false
 	startX.value = e.clientX
 	startLeft.value = sliderLeft.value
-	thumbRef.value?.setPointerCapture(e.pointerId)
+	document.addEventListener('pointermove', onPointerMove)
+	document.addEventListener('pointerup', onPointerUp)
+	document.addEventListener('pointercancel', onPointerCancel)
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -195,9 +204,15 @@ function onPointerMove(e: PointerEvent) {
 	sliderLeft.value = Math.max(0, Math.min(maxSliderLeft.value, startLeft.value + delta))
 }
 
+function onPointerCancel() {
+	isDragging.value = false
+	releaseDrag()
+}
+
 async function onPointerUp() {
 	if (!isDragging.value) return
 	isDragging.value = false
+	releaseDrag()
 	if (!captchaData.value || sliderLeft.value < 5) {
 		springBack()
 		return
@@ -292,8 +307,6 @@ function delay(ms: number) {
 							:class="{ 'sc-thumb--on': isDragging, 'sc-thumb--ok': status === 'success' }"
 							:style="{ left: sliderLeft + 'px' }"
 							@pointerdown="onPointerDown"
-							@pointermove="onPointerMove"
-							@pointerup="onPointerUp"
 						>
 							<svg v-if="status !== 'success'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 							<svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
@@ -346,6 +359,7 @@ function delay(ms: number) {
 	z-index: 9999;
 	background: #fff;
 	border-radius: 12px;
+	touch-action: none;
 	border: 1px solid #e5e7eb;
 	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
 	overflow: hidden;
@@ -490,6 +504,7 @@ function delay(ms: number) {
 	position: relative;
 	height: 48px;
 	background: #fafbfc;
+	touch-action: none;
 	border-top: 1px solid #f3f4f6;
 }
 
