@@ -1,9 +1,11 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudflare/ahocorasick"
@@ -17,15 +19,20 @@ type FilterResult struct {
 	FilteredText string
 }
 
-// ContentFilterEngine manages the Aho-Corasick automaton for multi-pattern matching.
-// It is safe for concurrent use via sync.RWMutex.
-type ContentFilterEngine struct {
-	mu              sync.RWMutex
+// filterSnapshot is an immutable snapshot of the filter engine state.
+// Stored in atomic.Value for lock-free reads in the hot path.
+type filterSnapshot struct {
+	mode            string
+	repl            string
 	matcher         *ahocorasick.Matcher
-	literalPatterns []string // patterns fed into the AC matcher (no wildcards)
-	words           []string // original word list (including wildcard patterns)
-	mode            string   // off/log/replace/block
-	repl            string   // replacement string for "replace" mode
+	literalPatterns []string
+	wildcardInners  []string // precomputed inner literals from wildcard patterns
+}
+
+// ContentFilterEngine manages the Aho-Corasick automaton for multi-pattern matching.
+type ContentFilterEngine struct {
+	snapshot atomic.Value // stores *filterSnapshot
+	mu       sync.Mutex   // protects Rebuild
 }
 
 var (
@@ -36,17 +43,15 @@ var (
 // ContentFilter returns the global ContentFilterEngine singleton.
 func ContentFilter() *ContentFilterEngine {
 	contentFilterEngineOnce.Do(func() {
-		contentFilterEngine = &ContentFilterEngine{
-			mode: "off",
-			repl: "***",
-		}
+		eng := &ContentFilterEngine{}
+		eng.snapshot.Store(&filterSnapshot{mode: "off", repl: "***"})
+		contentFilterEngine = eng
 	})
 	return contentFilterEngine
 }
 
 // InitContentFilter initializes the content filter engine and starts the
 // Redis Pub/Sub subscriber for auto-rebuild on settings changes.
-// Call this once at startup.
 func InitContentFilter(ctx context.Context) {
 	engine := ContentFilter()
 	engine.Rebuild(ctx)
@@ -64,20 +69,23 @@ func (e *ContentFilterEngine) Rebuild(ctx context.Context) {
 		repl = "***"
 	}
 
-	var rawWords []string
-	if err := cfg.GetOptionJSON(ctx, "content_filter_words", &rawWords); err != nil {
+	var words []string
+	if err := cfg.GetOptionJSON(ctx, "content_filter_words", &words); err != nil {
 		g.Log().Warningf(ctx, "[ContentFilter] failed to parse content_filter_words: %v", err)
-		rawWords = nil
+		words = nil
 	}
 
-	// Wildcard patterns like "*赌博*" cannot be matched directly by AC,
-	// so we separate them and handle via strings.Contains in Check().
 	var literalPatterns []string
-	for _, w := range rawWords {
+	var wildcardInners []string
+	for _, w := range words {
 		if w == "" {
 			continue
 		}
 		if strings.Contains(w, "*") {
+			inner := strings.TrimLeft(strings.TrimRight(w, "*"), "*")
+			if inner != "" {
+				wildcardInners = append(wildcardInners, inner)
+			}
 			continue
 		}
 		literalPatterns = append(literalPatterns, w)
@@ -89,66 +97,62 @@ func (e *ContentFilterEngine) Rebuild(ctx context.Context) {
 	}
 
 	e.mu.Lock()
-	e.matcher = matcher
-	e.literalPatterns = literalPatterns
-	e.words = rawWords
-	e.mode = mode
-	e.repl = repl
+	e.snapshot.Store(&filterSnapshot{
+		mode:            mode,
+		repl:            repl,
+		matcher:         matcher,
+		literalPatterns: literalPatterns,
+		wildcardInners:  wildcardInners,
+	})
 	e.mu.Unlock()
 
-	g.Log().Infof(ctx, "[ContentFilter] rebuilt: mode=%s, words=%d, literals=%d", mode, len(rawWords), len(literalPatterns))
+	g.Log().Infof(ctx, "[ContentFilter] rebuilt: mode=%s, words=%d, literals=%d, wildcards=%d", mode, len(words), len(literalPatterns), len(wildcardInners))
 }
 
-// Check scans the given text for sensitive words and returns a FilterResult.
-func (e *ContentFilterEngine) Check(text string) *FilterResult {
-	e.mu.RLock()
-	mode := e.mode
-	matcher := e.matcher
-	literalPatterns := e.literalPatterns
-	words := e.words
-	repl := e.repl
-	e.mu.RUnlock()
+// Check scans the given body for sensitive words and returns a FilterResult.
+// Accepts []byte to avoid string conversion on the hot path.
+func (e *ContentFilterEngine) Check(body []byte) *FilterResult {
+	snap := e.snapshot.Load().(*filterSnapshot)
 
-	if mode == "off" || text == "" {
-		return &FilterResult{
-			Matched:      false,
-			MatchedWords: nil,
-			FilteredText: text,
-		}
-	}
-
-	result := &FilterResult{
-		Matched:      false,
-		MatchedWords: nil,
-		FilteredText: text,
+	if snap.mode == "off" || len(body) == 0 {
+		return &FilterResult{FilteredText: string(body)}
 	}
 
 	matchedSet := make(map[string]bool)
 
 	// Phase 1: Aho-Corasick multi-pattern matching for literal words.
-	// MatchThreadSafe returns indices into the original dictionary (literalPatterns).
-	if matcher != nil {
-		hits := matcher.MatchThreadSafe([]byte(text))
+	if snap.matcher != nil {
+		hits := snap.matcher.MatchThreadSafe(body)
 		for _, idx := range hits {
-			if idx >= 0 && idx < len(literalPatterns) {
-				matchedSet[literalPatterns[idx]] = true
+			if idx >= 0 && idx < len(snap.literalPatterns) {
+				matchedSet[snap.literalPatterns[idx]] = true
 			}
 		}
 	}
 
-	// Phase 2: Wildcard pattern matching via strings.Contains.
-	// Patterns like "*赌博*" mean "contains 赌博".
-	for _, w := range words {
-		if !strings.Contains(w, "*") {
-			continue
+	// Phase 2: Wildcard pattern matching via bytes.Contains.
+	// For non-replace modes, skip if already matched; early-exit on first hit.
+	if snap.mode != "replace" {
+		if len(matchedSet) > 0 {
+			// Already have a match, no need for wildcard phase
+		} else {
+			for _, inner := range snap.wildcardInners {
+				if bytes.Contains(body, []byte(inner)) {
+					matchedSet[inner] = true
+					break // one hit is enough for log/block
+				}
+			}
 		}
-		// Strip leading/trailing wildcards to get the inner literal.
-		inner := strings.TrimLeft(strings.TrimRight(w, "*"), "*")
-		if inner != "" && strings.Contains(text, inner) {
-			matchedSet[inner] = true
+	} else {
+		// Replace mode: must find ALL matches for complete replacement
+		for _, inner := range snap.wildcardInners {
+			if bytes.Contains(body, []byte(inner)) {
+				matchedSet[inner] = true
+			}
 		}
 	}
 
+	result := &FilterResult{FilteredText: string(body)}
 	if len(matchedSet) == 0 {
 		return result
 	}
@@ -158,21 +162,19 @@ func (e *ContentFilterEngine) Check(text string) *FilterResult {
 		result.MatchedWords = append(result.MatchedWords, w)
 	}
 
-	// Build filtered text by replacing all matched words.
-	filtered := text
+	// Build filtered text (only needed for replace mode, but compute for completeness)
+	filtered := string(body)
 	for w := range matchedSet {
-		filtered = strings.ReplaceAll(filtered, w, repl)
+		filtered = strings.ReplaceAll(filtered, w, snap.repl)
 	}
 	result.FilteredText = filtered
 
 	return result
 }
 
-// GetMode returns the current filter mode thread-safely.
+// GetMode returns the current filter mode (lock-free via atomic).
 func (e *ContentFilterEngine) GetMode() string {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.mode
+	return e.snapshot.Load().(*filterSnapshot).mode
 }
 
 // startSubscriber subscribes to Redis Pub/Sub "settings:changed" channel

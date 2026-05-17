@@ -253,6 +253,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '系统错误日志' },
       },
       {
+        path: 'content-filter-logs',
+        name: 'AdminContentFilterLogs',
+        component: () => import('@/views/monitor/ContentFilterLogsPage.vue'),
+        meta: { title: '拦截日志' },
+      },
+      {
         path: 'cron-jobs',
         name: 'AdminCronJobs',
         component: () => import('@/views/monitor/CronJobsPage.vue'),

@@ -25,6 +25,7 @@ type IAdminV1 interface {
 	RequestAuditLogList(ctx context.Context, req *v1.RequestAuditLogListReq) (res *v1.RequestAuditLogListRes, err error)
 	RequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (res *v1.RequestAuditLogDetailRes, err error)
 	OperationLogExport(ctx context.Context, req *v1.OperationLogExportReq) (res *v1.OperationLogExportRes, err error)
+	ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (res *v1.ContentFilterLogListRes, err error)
 	AdminLogin(ctx context.Context, req *v1.AdminLoginReq) (res *v1.AdminLoginRes, err error)
 	AdminLogout(ctx context.Context, req *v1.AdminLogoutReq) (res *v1.AdminLogoutRes, err error)
 	AdminRefresh(ctx context.Context, req *v1.AdminRefreshReq) (res *v1.AdminRefreshRes, err error)

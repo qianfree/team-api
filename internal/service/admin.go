@@ -41,6 +41,8 @@ type (
 		GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error)
 		// ExportOperationLogs exports operation logs to CSV or Excel.
 		ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error)
+		// ContentFilterLogList returns a paginated list of content filter interception logs.
+		ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error)
 		// Login handles admin login.
 		Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error)
 		// Logout handles admin logout.

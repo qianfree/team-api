@@ -1,5 +1,5 @@
 -- +goose Up
--- 租户模型自定义定价 + 异步任务表重命名
+-- 租户模型自定义定价 + 异步任务表重命名 + 内容过滤日志表
 
 -- 1. 租户模型分配增加自定义缓存定价覆盖字段和阶梯定价支持
 ALTER TABLE mdl_tenant_models
@@ -50,8 +50,49 @@ COMMENT ON COLUMN tsk_model_tasks.finish_time IS '任务完成（成功或失败
 COMMENT ON COLUMN tsk_model_tasks.created_at IS '记录创建时间';
 COMMENT ON COLUMN tsk_model_tasks.updated_at IS '记录更新时间';
 
+-- 3. 创建内容过滤拦截日志表
+CREATE TABLE aud_content_filter_logs (
+    id                 BIGSERIAL PRIMARY KEY,
+    tenant_id          BIGINT,
+    user_id            BIGINT,
+    api_key_id         BIGINT,
+    project_id         BIGINT,
+    request_id         VARCHAR(64),
+    method             VARCHAR(10),
+    path               VARCHAR(500),
+    client_ip          VARCHAR(45),
+    filter_mode        VARCHAR(20) NOT NULL,
+    matched_words      JSONB NOT NULL,
+    original_snippet   TEXT,
+    blocked            BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at         TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+CREATE INDEX idx_aud_content_filter_logs_created_brin ON aud_content_filter_logs USING brin (created_at);
+CREATE INDEX idx_aud_content_filter_logs_tenant ON aud_content_filter_logs USING btree (tenant_id, created_at);
+CREATE INDEX idx_aud_content_filter_logs_mode ON aud_content_filter_logs (filter_mode);
+
+COMMENT ON TABLE aud_content_filter_logs IS '内容过滤拦截日志，记录所有命中敏感词的请求';
+COMMENT ON COLUMN aud_content_filter_logs.id IS '主键ID';
+COMMENT ON COLUMN aud_content_filter_logs.tenant_id IS '租户ID';
+COMMENT ON COLUMN aud_content_filter_logs.user_id IS '用户ID';
+COMMENT ON COLUMN aud_content_filter_logs.api_key_id IS 'API Key ID';
+COMMENT ON COLUMN aud_content_filter_logs.project_id IS '项目ID';
+COMMENT ON COLUMN aud_content_filter_logs.request_id IS '请求唯一ID';
+COMMENT ON COLUMN aud_content_filter_logs.method IS 'HTTP 方法';
+COMMENT ON COLUMN aud_content_filter_logs.path IS '请求路径';
+COMMENT ON COLUMN aud_content_filter_logs.client_ip IS '客户端 IP';
+COMMENT ON COLUMN aud_content_filter_logs.filter_mode IS '过滤模式：log / replace / block';
+COMMENT ON COLUMN aud_content_filter_logs.matched_words IS '命中的敏感词列表（JSONB 数组）';
+COMMENT ON COLUMN aud_content_filter_logs.original_snippet IS '原始请求体片段（截断存储，仅 replace 模式）';
+COMMENT ON COLUMN aud_content_filter_logs.blocked IS '是否被拦截（mode=block 时为 true）';
+COMMENT ON COLUMN aud_content_filter_logs.created_at IS '创建时间';
+
 -- +goose Down
--- 移除注释
+-- 3. 删除内容过滤日志表
+DROP TABLE IF EXISTS aud_content_filter_logs;
+
+-- 2. 移除注释
 COMMENT ON TABLE tsk_model_tasks IS NULL;
 COMMENT ON COLUMN tsk_model_tasks.id IS NULL;
 COMMENT ON COLUMN tsk_model_tasks.public_task_id IS NULL;
@@ -90,7 +131,7 @@ ALTER TABLE tsk_model_tasks RENAME CONSTRAINT uk_tsk_model_tasks_public_id TO uk
 -- 恢复表名
 ALTER TABLE tsk_model_tasks RENAME TO tsk_async_tasks;
 
--- 移除定价字段
+-- 1. 移除定价字段
 ALTER TABLE mdl_tenant_models
     DROP COLUMN IF EXISTS custom_cache_read_price,
     DROP COLUMN IF EXISTS custom_cache_creation_price,

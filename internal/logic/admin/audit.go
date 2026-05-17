@@ -457,3 +457,87 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 		}
 	})
 }
+
+// ContentFilterLogList returns a paginated list of content filter interception logs.
+func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error) {
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+
+	var conditions []string
+	var args []any
+
+	if req.TenantID > 0 {
+		conditions = append(conditions, "l.tenant_id = ?")
+		args = append(args, int64(req.TenantID))
+	}
+	if req.Mode != "" {
+		conditions = append(conditions, "l.filter_mode = ?")
+		args = append(args, req.Mode)
+	}
+	if req.Blocked == "true" {
+		conditions = append(conditions, "l.blocked = true")
+	} else if req.Blocked == "false" {
+		conditions = append(conditions, "l.blocked = false")
+	}
+	if req.StartDate != "" {
+		conditions = append(conditions, "l.created_at >= ?")
+		args = append(args, req.StartDate+" 00:00:00")
+	}
+	if req.EndDate != "" {
+		conditions = append(conditions, "l.created_at <= ?")
+		args = append(args, req.EndDate+" 23:59:59")
+	}
+	if req.Keyword != "" {
+		conditions = append(conditions, "(l.matched_words::text ILIKE ? OR l.path ILIKE ?)")
+		kw := "%" + req.Keyword + "%"
+		args = append(args, kw, kw)
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	fields := `l.id, l.tenant_id, l.user_id, l.api_key_id, l.project_id, l.request_id, l.method, l.path, l.client_ip,
+		l.filter_mode, l.matched_words, l.original_snippet, l.blocked, l.created_at,
+		t.name AS tenant_name, u.username AS user_name, k.name AS api_key_name, p.name AS project_name`
+
+	// Count
+	countSQL := "SELECT COUNT(*) AS total FROM aud_content_filter_logs l" + where
+	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	total := 0
+	if len(countResult) > 0 {
+		total = countResult[0]["total"].Int()
+	}
+
+	// Query with JOINs
+	dataSQL := fmt.Sprintf(`SELECT %s FROM aud_content_filter_logs l
+		LEFT JOIN tnt_tenants t ON l.tenant_id = t.id
+		LEFT JOIN tnt_users u ON l.user_id = u.id
+		LEFT JOIN api_keys k ON l.api_key_id = k.id
+		LEFT JOIN tnt_projects p ON l.project_id = p.id
+		%s ORDER BY l.created_at DESC LIMIT %d OFFSET %d`, fields, where, pageSize, (page-1)*pageSize)
+
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]map[string]any, 0, len(result))
+	for _, row := range result {
+		m := make(map[string]any, len(row))
+		for k, v := range row {
+			m[k] = v.Val()
+		}
+		items = append(items, m)
+	}
+
+	return &v1.ContentFilterLogListRes{
+		List:     items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
