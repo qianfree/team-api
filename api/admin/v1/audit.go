@@ -95,3 +95,24 @@ type OperationLogExportReq struct {
 }
 
 type OperationLogExportRes struct{}
+
+// === 内容过滤拦截日志 ===
+
+type ContentFilterLogListReq struct {
+	g.Meta    `path:"/audit/content-filter-logs" method:"get" mime:"json" tags:"管理后台-审计" summary:"内容过滤拦截日志"`
+	Page      int    `json:"page" d:"1"`
+	PageSize  int    `json:"page_size" d:"20"`
+	TenantID  int    `json:"tenant_id" dc:"租户ID"`
+	Mode      string `json:"mode" dc:"过滤模式：log/replace/block"`
+	Blocked   string `json:"blocked" dc:"是否被拦截：true/false"`
+	StartDate string `json:"start_date" dc:"开始日期"`
+	EndDate   string `json:"end_date" dc:"结束日期"`
+	Keyword   string `json:"keyword" dc:"关键词搜索（敏感词/路径）"`
+}
+
+type ContentFilterLogListRes struct {
+	List     []map[string]any `json:"list"`
+	Total    int              `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"page_size"`
+}

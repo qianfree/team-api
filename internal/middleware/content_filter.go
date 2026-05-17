@@ -40,7 +40,7 @@ func ContentFilter(r *ghttp.Request) {
 		return
 	}
 
-	result := common.ContentFilter().Check(string(body))
+	result := common.ContentFilter().Check(body)
 	if !result.Matched {
 		r.Middleware.Next()
 		return
@@ -49,6 +49,9 @@ func ContentFilter(r *ghttp.Request) {
 	// Set context variables for downstream logging/audit
 	r.SetCtxVar(CtxKeyContentFilterMatched, true)
 	r.SetCtxVar(CtxKeyContentFilterWords, result.MatchedWords)
+
+	// Asynchronously persist the interception log
+	insertContentFilterLog(r, mode, result.MatchedWords, string(body))
 
 	switch mode {
 	case "log":
@@ -70,6 +73,46 @@ func ContentFilter(r *ghttp.Request) {
 		}
 		writeContentFilterError(r, http.StatusBadRequest, "content_filter_error", responseMsg)
 	}
+}
+
+// insertContentFilterLog persists a content filter interception record asynchronously.
+func insertContentFilterLog(r *ghttp.Request, mode string, matchedWords []string, body string) {
+	tenantId := r.GetCtxVar(CtxKeyTenantID).Int64()
+	userId := r.GetCtxVar(CtxKeyUserID).Int64()
+	apiKeyId := r.GetCtxVar(CtxKeyApiKeyID).Int64()
+	projectId := r.GetCtxVar(CtxKeyProjectID).Int64()
+	requestId := r.GetCtxVar("RequestId").String()
+	method := r.Method
+	path := r.URL.Path
+	clientIp := r.GetClientIp()
+
+	// Truncate body snippet for replace mode only
+	snippet := ""
+	if mode == "replace" && len(body) > 0 {
+		const maxSnippet = 500
+		if len(body) > maxSnippet {
+			snippet = body[:maxSnippet]
+		} else {
+			snippet = body
+		}
+	}
+
+	blocked := mode == "block"
+	wordsJSON, _ := json.Marshal(matchedWords)
+
+	go func() {
+		_, err := g.DB().Exec(context.Background(),
+			`INSERT INTO aud_content_filter_logs
+			 (tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip,
+			  filter_mode, matched_words, original_snippet, blocked, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())`,
+			tenantId, userId, apiKeyId, projectId, requestId, method, path, clientIp,
+			mode, string(wordsJSON), snippet, blocked)
+		if err != nil {
+			g.Log().Warningf(context.Background(),
+				"[ContentFilter] failed to insert filter log: %v", err)
+		}
+	}()
 }
 
 // writeContentFilterError writes an error response in the relay-native format.
