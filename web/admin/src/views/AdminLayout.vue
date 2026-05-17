@@ -186,6 +186,7 @@ const menuGroups = [
     icon: IconSafe,
     items: [
       { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle },
+      { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
       { name: 'AdminPermissions', label: '权限管理', icon: IconSafe },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile },
@@ -213,6 +214,7 @@ const menuGroups = [
       { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
       { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
       { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },
+      { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile },
       { name: 'AdminCronJobs', label: '定时任务', icon: IconFile },
     ],
   },

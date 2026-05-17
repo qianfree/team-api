@@ -88,7 +88,11 @@ async function fetchOfficialInfo() {
     const res: any = await request.get('/admin/models/official-info', { params: { model_name: modelName } })
     const info = res.data?.data || res.data
     if (!info?.found) {
-      Message.warning('未找到该模型的官方数据')
+      if (info?.error) {
+        Message.warning(`获取远程数据失败: ${info.error}`)
+      } else {
+        Message.warning('未找到该模型的官方数据')
+      }
       return
     }
     if (info.max_context_tokens) form.max_context_tokens = info.max_context_tokens

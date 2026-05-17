@@ -457,6 +457,7 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	data, err := common.FetchLiteLLMPricing(ctx)
 	if err != nil {
 		g.Log().Warningf(ctx, "[FetchOfficialPricing] litellm fetch failed for %s: %v", modelName, err)
+		source.Error = err.Error()
 		return source
 	}
 
@@ -498,6 +499,7 @@ func fetchModelsDevSource(ctx context.Context, modelName string) *v1.OfficialPri
 	data, err := common.FetchModelsDevPricing(ctx)
 	if err != nil {
 		g.Log().Warningf(ctx, "[FetchOfficialPricing] models.dev fetch failed for %s: %v", modelName, err)
+		source.Error = err.Error()
 		return source
 	}
 
@@ -538,7 +540,7 @@ func (s *sAdmin) FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchO
 	data, err := common.FetchLiteLLMPricing(ctx)
 	if err != nil {
 		g.Log().Warningf(ctx, "[FetchOfficialModelInfo] litellm fetch failed for %s: %v", req.ModelName, err)
-		return &v1.ModelFetchOfficialInfoRes{Found: false}, nil
+		return &v1.ModelFetchOfficialInfoRes{Found: false, Error: err.Error()}, nil
 	}
 
 	_, entry := common.FindLiteLLMModel(data, req.ModelName)

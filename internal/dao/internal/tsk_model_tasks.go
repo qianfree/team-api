@@ -11,16 +11,16 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// TskAsyncTasksDao is the data access object for the table tsk_async_tasks.
-type TskAsyncTasksDao struct {
+// TskModelTasksDao is the data access object for the table tsk_model_tasks.
+type TskModelTasksDao struct {
 	table    string               // table is the underlying table name of the DAO.
 	group    string               // group is the database configuration group name of the current DAO.
-	columns  TskAsyncTasksColumns // columns contains all the column names of Table for convenient usage.
+	columns  TskModelTasksColumns // columns contains all the column names of Table for convenient usage.
 	handlers []gdb.ModelHandler   // handlers for customized model modification.
 }
 
-// TskAsyncTasksColumns defines and stores column names for the table tsk_async_tasks.
-type TskAsyncTasksColumns struct {
+// TskModelTasksColumns defines and stores column names for the table tsk_model_tasks.
+type TskModelTasksColumns struct {
 	Id              string //
 	PublicTaskId    string //
 	Platform        string //
@@ -47,8 +47,8 @@ type TskAsyncTasksColumns struct {
 	UpdatedAt       string //
 }
 
-// tskAsyncTasksColumns holds the columns for the table tsk_async_tasks.
-var tskAsyncTasksColumns = TskAsyncTasksColumns{
+// tskModelTasksColumns holds the columns for the table tsk_model_tasks.
+var tskModelTasksColumns = TskModelTasksColumns{
 	Id:              "id",
 	PublicTaskId:    "public_task_id",
 	Platform:        "platform",
@@ -75,38 +75,38 @@ var tskAsyncTasksColumns = TskAsyncTasksColumns{
 	UpdatedAt:       "updated_at",
 }
 
-// NewTskAsyncTasksDao creates and returns a new DAO object for table data access.
-func NewTskAsyncTasksDao(handlers ...gdb.ModelHandler) *TskAsyncTasksDao {
-	return &TskAsyncTasksDao{
+// NewTskModelTasksDao creates and returns a new DAO object for table data access.
+func NewTskModelTasksDao(handlers ...gdb.ModelHandler) *TskModelTasksDao {
+	return &TskModelTasksDao{
 		group:    "default",
-		table:    "tsk_async_tasks",
-		columns:  tskAsyncTasksColumns,
+		table:    "tsk_model_tasks",
+		columns:  tskModelTasksColumns,
 		handlers: handlers,
 	}
 }
 
 // DB retrieves and returns the underlying raw database management object of the current DAO.
-func (dao *TskAsyncTasksDao) DB() gdb.DB {
+func (dao *TskModelTasksDao) DB() gdb.DB {
 	return g.DB(dao.group)
 }
 
 // Table returns the table name of the current DAO.
-func (dao *TskAsyncTasksDao) Table() string {
+func (dao *TskModelTasksDao) Table() string {
 	return dao.table
 }
 
 // Columns returns all column names of the current DAO.
-func (dao *TskAsyncTasksDao) Columns() TskAsyncTasksColumns {
+func (dao *TskModelTasksDao) Columns() TskModelTasksColumns {
 	return dao.columns
 }
 
 // Group returns the database configuration group name of the current DAO.
-func (dao *TskAsyncTasksDao) Group() string {
+func (dao *TskModelTasksDao) Group() string {
 	return dao.group
 }
 
 // Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
-func (dao *TskAsyncTasksDao) Ctx(ctx context.Context) *gdb.Model {
+func (dao *TskModelTasksDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
 		model = handler(model)
@@ -120,6 +120,6 @@ func (dao *TskAsyncTasksDao) Ctx(ctx context.Context) *gdb.Model {
 //
 // Note: Do not commit or roll back the transaction in function f,
 // as it is automatically handled by this function.
-func (dao *TskAsyncTasksDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
+func (dao *TskModelTasksDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

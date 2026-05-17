@@ -10,7 +10,6 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 
 	"github.com/qianfree/team-api/internal/dao"
-	ws "github.com/qianfree/team-api/internal/handler/ws"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
@@ -59,18 +58,6 @@ func dispatchAlertNotifications(ctx context.Context, rule map[string]any, eventI
 			Update()
 	}
 
-	// Push alert via WebSocket to all admin connections
-	go ws.PublishToAllAdmins(ctx, ws.ChannelAlert, ws.ActionCreated, ws.AlertPayload{
-		ID:             eventID,
-		RuleName:       ruleName,
-		MetricType:     metricType,
-		Level:          level,
-		Status:         "firing",
-		TriggerValue:   triggerValue,
-		Threshold:      threshold,
-		TriggerMessage: message,
-		Timestamp:      time.Now().Format(time.RFC3339),
-	})
 }
 
 // sendAlertEmailToAdmins sends alert email to specified admin users.

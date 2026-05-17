@@ -19,7 +19,7 @@ var DefaultAsyncProvider = &AsyncProvider{}
 
 // CreateTask 创建异步任务记录
 func (p *AsyncProvider) CreateTask(ctx context.Context, task *common.AsyncTask) error {
-	_, err := dao.TskAsyncTasks.Ctx(ctx).Insert(map[string]any{
+	_, err := dao.TskModelTasks.Ctx(ctx).Insert(map[string]any{
 		"public_task_id":    task.PublicTaskID,
 		"platform":          task.Platform,
 		"action":            task.Action,
@@ -49,7 +49,7 @@ func (p *AsyncProvider) CreateTask(ctx context.Context, task *common.AsyncTask) 
 
 // UpdateTask 更新任务记录
 func (p *AsyncProvider) UpdateTask(ctx context.Context, task *common.AsyncTask) error {
-	_, err := dao.TskAsyncTasks.Ctx(ctx).
+	_, err := dao.TskModelTasks.Ctx(ctx).
 		Where("id", task.ID).
 		Update(map[string]any{
 			"status":          task.Status,
@@ -71,7 +71,7 @@ func (p *AsyncProvider) UpdateTask(ctx context.Context, task *common.AsyncTask) 
 
 // UpdateTaskCAS CAS 状态更新
 func (p *AsyncProvider) UpdateTaskCAS(ctx context.Context, task *common.AsyncTask, oldStatus string) error {
-	result, err := dao.TskAsyncTasks.Ctx(ctx).
+	result, err := dao.TskModelTasks.Ctx(ctx).
 		Where("id", task.ID).
 		Where("status", oldStatus).
 		Update(map[string]any{
@@ -124,7 +124,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 		CreatedAt       time.Time       `json:"created_at"`
 		UpdatedAt       time.Time       `json:"updated_at"`
 	}
-	err := dao.TskAsyncTasks.Ctx(ctx).
+	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Scan(&row)
 	if err != nil {
@@ -188,7 +188,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 		CreatedAt       time.Time       `json:"created_at"`
 		UpdatedAt       time.Time       `json:"updated_at"`
 	}
-	err := dao.TskAsyncTasks.Ctx(ctx).
+	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Where("user_id", userID).
 		Scan(&row)
@@ -248,7 +248,7 @@ func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*
 		SubmitTime      *time.Time      `json:"submit_time"`
 		CreatedAt       time.Time       `json:"created_at"`
 	}
-	err := dao.TskAsyncTasks.Ctx(ctx).
+	err := dao.TskModelTasks.Ctx(ctx).
 		Where("status NOT IN (?, ?)", "SUCCESS", "FAILURE").
 		Order("submit_time ASC").
 		Limit(limit).
@@ -301,7 +301,7 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 		PrivateData     json.RawMessage `json:"private_data"`
 		SubmitTime      *time.Time      `json:"submit_time"`
 	}
-	err := dao.TskAsyncTasks.Ctx(ctx).
+	err := dao.TskModelTasks.Ctx(ctx).
 		Where("status NOT IN (?, ?)", "SUCCESS", "FAILURE").
 		Where("submit_time < ?", cutoffTime).
 		Order("submit_time ASC").

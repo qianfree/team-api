@@ -1,11 +1,12 @@
 <script setup lang="ts">
-const values = defineModel<Record<string, any>>({ required: true })
+import { useFormValues } from './useSettings'
+const values = useFormValues()
 
 function num(key: string) {
-	return Number(values.value[key]) || 0
+	return Number(values[key]) || 0
 }
 function set(key: string, v: number | undefined): void {
-	values.value[key] = String(v ?? 0)
+	values[key] = String(v ?? 0)
 }
 </script>
 

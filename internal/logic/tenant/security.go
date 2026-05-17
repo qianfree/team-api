@@ -190,41 +190,71 @@ func (s *sTenant) ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmR
 	return &v1.Tenant2FAConfirmRes{ConfirmToken: token}, nil
 }
 
-// LoginHistory returns the login history for the current tenant user.
+// LoginHistory returns the login history for tenant users.
+// owner/admin see all members in the tenant; member sees only own records.
 func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryReq) (*v1.TenantLoginHistoryRes, error) {
 	userID := ctxUserID(ctx)
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
+	tenantID := ctxTenantID(ctx)
+	role := ctxUserRole(ctx)
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+
+	q := dao.AudLoginHistory.Ctx(ctx).
+		Where("user_type", "tenant").
+		Where("tenant_id", tenantID)
+
+	// Role-based access: member only sees own records
+	if role == "member" {
+		q = q.Where("user_id", userID)
+	} else if req.Username != "" {
+		// owner/admin can filter by username
+		userIds, err := tenantUserIdsByUsernameLocal(ctx, tenantID, req.Username)
+		if err != nil {
+			return nil, err
+		}
+		if len(userIds) == 0 {
+			return &v1.TenantLoginHistoryRes{
+				List: []v1.TenantLoginHistoryItem{}, Total: 0, Page: page, PageSize: pageSize,
+			}, nil
+		}
+		q = q.WhereIn("user_id", userIds)
 	}
 
-	total, err := dao.AudLoginHistory.Ctx(ctx).
-		Where("user_type", "tenant").
-		Where("user_id", userID).
-		Count()
+	if req.IpAddress != "" {
+		q = q.WhereLike("ip_address", "%"+req.IpAddress+"%")
+	}
+	if req.Success != nil {
+		q = q.Where("success", *req.Success)
+	}
+	if req.LoginMethod != "" {
+		q = q.Where("login_method", req.LoginMethod)
+	}
+	if req.StartTime != "" {
+		q = q.WhereGTE("created_at", req.StartTime+" 00:00:00")
+	}
+	if req.EndTime != "" {
+		q = q.WhereLTE("created_at", req.EndTime+" 23:59:59")
+	}
+
+	total, err := q.Count()
 	if err != nil {
 		return nil, err
 	}
 
 	var records []entity.AudLoginHistory
-	err = dao.AudLoginHistory.Ctx(ctx).
-		Where("user_type", "tenant").
-		Where("user_id", userID).
-		OrderDesc("created_at").
-		Page(page, pageSize).
-		Scan(&records)
+	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&records)
 	if err != nil {
 		return nil, err
 	}
+
+	userMap := buildTenantUserMapLocal(ctx, records)
 
 	items := make([]v1.TenantLoginHistoryItem, len(records))
 	for i, r := range records {
 		items[i] = v1.TenantLoginHistoryItem{
 			ID:          r.Id,
+			UserId:      r.UserId,
+			Username:    userMap[r.UserId].Username,
+			DisplayName: userMap[r.UserId].DisplayName,
 			LoginMethod: r.LoginMethod,
 			IpAddress:   r.IpAddress,
 			UserAgent:   r.UserAgent,
@@ -244,6 +274,54 @@ func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryRe
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+type tenantUserBriefLocal struct {
+	Username    string
+	DisplayName string
+}
+
+func tenantUserIdsByUsernameLocal(ctx context.Context, tenantID int64, keyword string) ([]int64, error) {
+	var users []entity.TntUsers
+	err := dao.TntUsers.Ctx(ctx).
+		Fields("id").
+		Where("tenant_id", tenantID).
+		Where("username LIKE ? OR display_name LIKE ?", "%"+keyword+"%", "%"+keyword+"%").
+		Scan(&users)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(users))
+	for i, u := range users {
+		ids[i] = u.Id
+	}
+	return ids, nil
+}
+
+func buildTenantUserMapLocal(ctx context.Context, records []entity.AudLoginHistory) map[int64]tenantUserBriefLocal {
+	m := make(map[int64]tenantUserBriefLocal)
+	idSet := make(map[int64]struct{})
+	for _, r := range records {
+		if r.UserId > 0 {
+			idSet[r.UserId] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return m
+	}
+	ids := make([]int64, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	var users []entity.TntUsers
+	_ = dao.TntUsers.Ctx(ctx).
+		Fields("id, username, display_name").
+		WhereIn("id", ids).
+		Scan(&users)
+	for _, u := range users {
+		m[u.Id] = tenantUserBriefLocal{Username: u.Username, DisplayName: u.DisplayName}
+	}
+	return m
 }
 
 func getPendingTOTPSecret(ctx context.Context, userID int64) (string, error) {

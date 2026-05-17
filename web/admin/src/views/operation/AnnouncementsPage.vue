@@ -227,7 +227,7 @@ onMounted(fetchList)
           <ASelect v-model="form.type" :options="typeOptions" />
         </AFormItem>
         <AFormItem label="内容" required>
-          <ATextarea v-model="form.content" :auto-size="{ minRows: 4, maxRows: 12 }" placeholder="公告正文内容" />
+          <ATextarea v-model="form.content" :auto-size="{ minRows: 6, maxRows: 16 }" placeholder="支持 Markdown 格式，可直接粘贴 HTML 代码" />
         </AFormItem>
         <AFormItem v-if="!editingId" label="状态">
           <ASelect v-model="form.status" :options="[{ label: '草稿', value: 'draft' }, { label: '发布', value: 'published' }]" />

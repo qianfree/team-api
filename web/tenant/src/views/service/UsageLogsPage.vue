@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
@@ -246,33 +246,29 @@ onMounted(() => {
 		</div>
 
 		<!-- Filters -->
-		<div class="card">
-			<div class="card-body">
-				<div class="flex flex-wrap items-end justify-between gap-4">
-					<div class="flex flex-1 flex-wrap items-end gap-4">
-						<div class="w-full sm:w-auto sm:min-w-[120px]">
-							<label class="input-label">用户名</label>
-							<input
-								v-model="filterUsername"
-								type="text"
-								placeholder="搜索用户"
-								class="input"
-								@keyup.enter="applyFilters"
-							/>
+			<!-- Filters -->
+			<div class="card">
+				<div class="card-body">
+					<div class="flex flex-wrap items-center gap-4">
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
+							<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
 						</div>
-						<div class="w-full sm:w-auto sm:min-w-[180px]">
-							<label class="input-label">模型名称</label>
-							<input
-								v-model="filterModel"
-								type="text"
-								placeholder="例如：gpt-4o"
-								class="input"
-								@keyup.enter="applyFilters"
-							/>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
+							<input v-model="filterEndDate" type="date" class="input" style="width:140px" />
 						</div>
-						<div class="w-full sm:w-auto sm:min-w-[120px]">
-							<label class="input-label">状态</label>
-							<select v-model="filterStatus" class="input bg-white">
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+							<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">模型名称</label>
+							<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:160px" @keyup.enter="applyFilters" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
+							<select v-model="filterStatus" class="input bg-white" style="width:100px">
 								<option value="">全部</option>
 								<option value="success">成功</option>
 								<option value="error">失败</option>
@@ -280,33 +276,21 @@ onMounted(() => {
 								<option value="timeout">超时</option>
 							</select>
 						</div>
-						<div class="w-full sm:w-auto sm:min-w-[120px]">
-							<label class="input-label">请求类型</label>
-							<select v-model="filterRequestType" class="input bg-white">
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
+							<select v-model="filterRequestType" class="input bg-white" style="width:100px">
 								<option value="">全部</option>
 								<option value="1">同步</option>
 								<option value="2">流式</option>
 							</select>
 						</div>
-						<div class="w-full sm:w-auto sm:min-w-[140px]">
-							<label class="input-label">开始日期</label>
-							<input v-model="filterStartDate" type="date" class="input" />
+						<div class="ml-auto flex items-center gap-2">
+							<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
+							<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
 						</div>
-						<div class="w-full sm:w-auto sm:min-w-[140px]">
-							<label class="input-label">结束日期</label>
-							<input v-model="filterEndDate" type="date" class="input" />
-						</div>
-					</div>
-					<div class="flex items-center gap-2">
-						<button class="btn btn-secondary" @click="fetchLogs">
-							<Icon name="refresh" size="sm" />
-						</button>
-						<button class="btn btn-secondary" @click="resetFilters">重置</button>
 					</div>
 				</div>
 			</div>
-		</div>
-
 		<!-- Logs Table -->
 		<div class="card overflow-hidden">
 			<div v-if="loading" class="p-8 flex justify-center">
@@ -317,16 +301,16 @@ onMounted(() => {
 				<table class="table">
 					<thead>
 						<tr>
-							<th>用户/项目</th>
-							<th>API Key</th>
-							<th>模型</th>
-							<th>渠道</th>
-							<th>类型</th>
-							<th>Token</th>
-							<th>费用</th>
-							<th>延迟</th>
-							<th>状态</th>
-							<th>时间</th>
+							<th class="min-w-50">用户/项目</th>
+							<th class="min-w-40">API Key</th>
+							<th class="min-w-45">模型</th>
+							<th class="min-w-40">渠道</th>
+							<th class="min-w-30">类型</th>
+							<th class="min-w-30">Token</th>
+							<th class="min-w-20">费用</th>
+							<th class="min-w-30">用时</th>
+							<th class="min-w-25">状态</th>
+							<th class="min-w-35">时间</th>
 							<th class="w-16"></th>
 						</tr>
 					</thead>

@@ -8,20 +8,15 @@ import (
 	"github.com/qianfree/team-api/internal/dao/internal"
 )
 
-// internalTskAsyncTasksDao is an internal type for wrapping the internal DAO implementation.
-type internalTskAsyncTasksDao = *internal.TskAsyncTasksDao
-
-// tskAsyncTasksDao is the data access object for the table tsk_async_tasks.
+// sysPluginsDao is the data access object for the table sys_plugins.
 // You can define custom methods on it to extend its functionality as needed.
-type tskAsyncTasksDao struct {
-	internalTskAsyncTasksDao
+type sysPluginsDao struct {
+	*internal.SysPluginsDao
 }
 
 var (
-	// TskAsyncTasks is a globally accessible object for table tsk_async_tasks operations.
-	TskAsyncTasks = tskAsyncTasksDao{
-		internal.NewTskAsyncTasksDao(),
-	}
+	// SysPlugins is a globally accessible object for table sys_plugins operations.
+	SysPlugins = sysPluginsDao{internal.NewSysPluginsDao()}
 )
 
 // Add your custom methods and functionality below.

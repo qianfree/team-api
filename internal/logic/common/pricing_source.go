@@ -65,22 +65,22 @@ func FetchLiteLLMPricing(ctx context.Context) (map[string]*LiteLLMModelEntry, er
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, litellmPricingURL)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+		return nil, fmt.Errorf("获取远程数据失败: %w", err)
 	}
 	defer resp.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("remote returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("获取远程数据失败: HTTP %d", resp.StatusCode)
 	}
 
 	body := resp.ReadAll()
 	if len(body) == 0 {
-		return nil, fmt.Errorf("empty response body")
+		return nil, fmt.Errorf("获取远程数据失败: 响应为空")
 	}
 
 	var rawEntries map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rawEntries); err != nil {
-		return nil, fmt.Errorf("JSON parse failed: %w", err)
+		return nil, fmt.Errorf("获取远程数据失败: JSON 解析失败: %w", err)
 	}
 
 	delete(rawEntries, "sample_spec")
@@ -182,22 +182,22 @@ func FetchModelsDevPricing(ctx context.Context) (map[string]*ModelsDevModelEntry
 		"User-Agent": "github.com/qianfree/team-api/1.0",
 	}).Get(ctx, modelsDevURL)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+		return nil, fmt.Errorf("获取远程数据失败: %w", err)
 	}
 	defer resp.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("remote returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("获取远程数据失败: HTTP %d", resp.StatusCode)
 	}
 
 	body := resp.ReadAll()
 	if len(body) == 0 {
-		return nil, fmt.Errorf("empty response body")
+		return nil, fmt.Errorf("获取远程数据失败: 响应为空")
 	}
 
 	var rawProviders map[string]ModelsDevProvider
 	if err := json.Unmarshal(body, &rawProviders); err != nil {
-		return nil, fmt.Errorf("JSON parse failed: %w", err)
+		return nil, fmt.Errorf("获取远程数据失败: JSON 解析失败: %w", err)
 	}
 
 	// Build map: model_name → cheapest ModelsDevModelEntry across providers
