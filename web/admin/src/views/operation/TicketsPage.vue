@@ -358,7 +358,7 @@ onMounted(fetchTickets)
 
     <!-- Reply Modal -->
     <AModal v-model:visible="showReplyModal" title="回复工单" :width="500" :mask-closable="false" :on-before-ok="handleReply" :ok-loading="replyLoading">
-      <AForm layout="vertical">
+      <AForm :model="replyForm" layout="vertical">
         <AFormItem label="回复内容" required>
           <ATextarea v-model="replyForm.content" placeholder="请输入回复内容" :auto-size="{ minRows: 4, maxRows: 8 }" />
         </AFormItem>

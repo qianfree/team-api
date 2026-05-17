@@ -81,7 +81,7 @@ onMounted(() => {
 			<div class="settings-content">
 				<ACard :bordered="false">
 					<ASpin :loading="loading">
-						<component :is="categoryMap[activeTab]" v-if="categoryMap[activeTab]" v-model="formValues" />
+						<component :is="categoryMap[activeTab]" v-if="categoryMap[activeTab]" />
 
 						<div class="settings-footer">
 							<AButton type="primary" :loading="saving" @click="save">保存设置</AButton>

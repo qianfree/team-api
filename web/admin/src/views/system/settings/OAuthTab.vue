@@ -1,5 +1,6 @@
 <script setup lang="ts">
-const values = defineModel<Record<string, any>>({ required: true })
+import { useFormValues } from './useSettings'
+const values = useFormValues()
 </script>
 
 <template>

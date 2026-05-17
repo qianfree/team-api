@@ -672,7 +672,7 @@ function formatHeaders(headers: Record<string, string>): string {
 
     <!-- Update Key Modal -->
     <AModal v-model:visible="showUpdateKeyModal" title="更新 API Key" :width="450" :on-before-ok="handleUpdateKey" :ok-loading="updateKeyLoading">
-      <AForm layout="vertical">
+      <AForm :model="{ key: newApiKey }" layout="vertical">
         <AFormItem label="新 API Key" required>
           <AInput v-model="newApiKey" type="textarea" :auto-size="{ minRows: 3, maxRows: 5 }" placeholder="输入新的 API Key" />
         </AFormItem>
@@ -681,7 +681,7 @@ function formatHeaders(headers: Record<string, string>): string {
 
     <!-- Clone Channel Modal -->
     <AModal v-model:visible="showCloneModal" title="克隆渠道" :width="500" :on-before-ok="handleClone" :ok-loading="cloneLoading">
-      <AForm layout="vertical">
+      <AForm :model="cloneForm" layout="vertical">
         <AFormItem label="新渠道名称">
           <AInput v-model="cloneForm.name" :placeholder="(detail?.name || '') + ' (副本)'" />
         </AFormItem>
