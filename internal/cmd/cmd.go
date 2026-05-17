@@ -358,6 +358,13 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.GET("/video/generations/{task_id}", relay.HandleTaskFetch)
 	})
 
+	// 异步图片生成端点（阿里云 DashScope 等）
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.POST("/images/generations/async", relay.HandleAliImageSubmit)
+		group.GET("/images/generations/async/{task_id}", relay.HandleTaskFetch)
+	})
+
 	// Suno 端点
 	server.Group("/suno", func(group *ghttp.RouterGroup) {
 		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
