@@ -11,7 +11,7 @@ const total = ref(0)
 const pagination = reactive({ current: 1, pageSize: 20 })
 
 const filterSource = ref('')
-const filterErrorCode = ref('')
+const filterErrorCode = ref<number | undefined>(undefined)
 const filterResolved = ref('')
 const filterDateRange = ref<string[]>([])
 const filterKeyword = ref('')
@@ -118,7 +118,7 @@ async function fetchData() {
       page_size: pagination.pageSize,
     }
     if (filterSource.value) params.source = filterSource.value
-    if (filterErrorCode.value) params.error_code = parseInt(filterErrorCode.value)
+    if (filterErrorCode.value) params.error_code = filterErrorCode.value
     if (filterResolved.value) params.resolved = filterResolved.value
     if (filterKeyword.value) params.keyword = filterKeyword.value
     if (filterDateRange.value?.length === 2) {
@@ -194,7 +194,7 @@ function handleFilter() {
 
 function resetFilter() {
   filterSource.value = ''
-  filterErrorCode.value = ''
+  filterErrorCode.value = undefined
   filterResolved.value = ''
   filterDateRange.value = []
   filterKeyword.value = ''

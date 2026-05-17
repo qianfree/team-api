@@ -17,6 +17,7 @@ database:
   default:
     type:     "pgsql"
     link:     "pgsql:<user>:<password>@tcp(<host>:<port>)/<database>?sslmode=disable"
+    timezone: "Asia/Shanghai"
     debug:    false
     dryRun:   false
     maxIdle:  10

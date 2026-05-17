@@ -18,38 +18,66 @@ const pagination = reactive({
 })
 
 const filterStatus = ref<string | null>(null)
-const filterHandler = ref('')
-const filterDateRange = ref<string[]>([])
+const filterPlatform = ref<string | null>(null)
 
 const statusOptions = [
   { label: '全部状态', value: '' },
-  { label: '待执行', value: 'pending' },
-  { label: '执行中', value: 'running' },
-  { label: '成功', value: 'succeeded' },
-  { label: '失败', value: 'failed' },
-  { label: '已取消', value: 'cancelled' },
+  { label: '未开始', value: 'NOT_START' },
+  { label: '已提交', value: 'SUBMITTED' },
+  { label: '进行中', value: 'IN_PROGRESS' },
+  { label: '成功', value: 'SUCCESS' },
+  { label: '失败', value: 'FAILURE' },
+]
+
+const platformOptions = [
+  { label: '全部平台', value: '' },
+  { label: 'Sora', value: 'sora' },
+  { label: 'Kling', value: 'kling' },
+  { label: 'Midjourney', value: 'midjourney' },
+  { label: 'Suno', value: 'suno' },
 ]
 
 const statusTagColor: Record<string, string | undefined> = {
-  pending: 'gray',
-  running: 'arcoblue',
-  succeeded: 'green',
-  failed: 'red',
-  cancelled: 'orangered',
+  NOT_START: 'gray',
+  SUBMITTED: 'arcoblue',
+  IN_PROGRESS: 'arcoblue',
+  SUCCESS: 'green',
+  FAILURE: 'red',
 }
 
 const statusTagLabel: Record<string, string> = {
-  pending: '待执行',
-  running: '执行中',
-  succeeded: '成功',
-  failed: '失败',
-  cancelled: '已取消',
+  NOT_START: '未开始',
+  SUBMITTED: '已提交',
+  IN_PROGRESS: '进行中',
+  SUCCESS: '成功',
+  FAILURE: '失败',
+}
+
+const platformLabel: Record<string, string> = {
+  sora: 'Sora',
+  kling: 'Kling',
+  midjourney: 'Midjourney',
+  suno: 'Suno',
 }
 
 const columns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
-  { title: '任务名称', dataIndex: 'name', width: 180, ellipsis: true },
-  { title: 'Handler', dataIndex: 'handler', width: 220, ellipsis: true },
+  { title: '任务ID', dataIndex: 'public_task_id', width: 160, ellipsis: true, tooltip: true },
+  {
+    title: '平台',
+    dataIndex: 'platform',
+    width: 110,
+    render({ record }) {
+      return platformLabel[record.platform] || record.platform
+    },
+  },
+  {
+    title: '动作',
+    dataIndex: 'action',
+    width: 120,
+    ellipsis: true,
+    tooltip: true,
+  },
   {
     title: '状态',
     dataIndex: 'status',
@@ -62,39 +90,48 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '重试',
-    dataIndex: 'retry_count',
+    title: '进度',
+    dataIndex: 'progress',
     width: 80,
+  },
+  {
+    title: '模型',
+    dataIndex: 'model_name',
+    width: 150,
+    ellipsis: true,
+    tooltip: true,
+  },
+  {
+    title: '费用',
+    dataIndex: 'actual_cost',
+    width: 100,
     render({ record }) {
-      return `${record.retry_count}/${record.max_retries}`
+      if (record.billing_settled && record.actual_cost > 0) {
+        return `$${record.actual_cost.toFixed(4)}`
+      }
+      if (record.pre_deduct_amount > 0) {
+        return `$${record.pre_deduct_amount.toFixed(4)} (预扣)`
+      }
+      return '-'
     },
   },
-  { title: '开始时间', dataIndex: 'started_at', width: 170 },
-  { title: '完成时间', dataIndex: 'finished_at', width: 170 },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },
+  { title: '提交时间', dataIndex: 'submit_time', width: 170 },
+  { title: '完成时间', dataIndex: 'finish_time', width: 170 },
   {
     title: '操作',
     dataIndex: 'actions',
-    width: 160,
+    width: 120,
     fixed: 'right',
     render({ record }) {
       const buttons: any[] = [
         h(Button, { size: 'small', type: 'text', onClick: () => openDetail(record) }, () => '详情'),
       ]
-      if (record.status === 'pending' || record.status === 'running') {
+      if (record.status === 'NOT_START' || record.status === 'SUBMITTED' || record.status === 'IN_PROGRESS') {
         buttons.push(
           h(Popconfirm, {
             content: '确定取消该任务？',
             onOk: () => cancelTask(record),
           }, () => h(Button, { size: 'small', type: 'text', status: 'warning' }, () => '取消')),
-        )
-      }
-      if (record.status === 'failed') {
-        buttons.push(
-          h(Popconfirm, {
-            content: '确定重试该任务？',
-            onOk: () => retryTask(record),
-          }, () => h(Button, { size: 'small', type: 'text', status: 'success' }, () => '重试')),
         )
       }
       return h(Space, { size: 0 }, () => buttons)
@@ -110,11 +147,7 @@ async function fetchData() {
       page_size: pagination.pageSize,
     }
     if (filterStatus.value) params.status = filterStatus.value
-    if (filterHandler.value) params.handler = filterHandler.value
-    if (filterDateRange.value.length === 2) {
-      params.start_date = filterDateRange.value[0]
-      params.end_date = filterDateRange.value[1]
-    }
+    if (filterPlatform.value) params.platform = filterPlatform.value
     const res: any = await request.get('/admin/tasks', { params })
     const raw = res.data?.data
     data.value = (raw?.list || []).filter(Boolean)
@@ -134,8 +167,7 @@ function handleFilter() {
 
 function resetFilter() {
   filterStatus.value = null
-  filterHandler.value = ''
-  filterDateRange.value = []
+  filterPlatform.value = null
   pagination.current = 1
   fetchData()
 }
@@ -150,36 +182,20 @@ async function cancelTask(row: any) {
   }
 }
 
-async function retryTask(row: any) {
-  try {
-    await request.post(`/admin/tasks/${row.id}/retry`)
-    Message.success('任务已重新排队')
-    fetchData()
-  } catch {
-    // error handled by interceptor
-  }
-}
-
 // === Detail Drawer ===
 const showDetail = ref(false)
 const detailLoading = ref(false)
 const detailData = ref<any>(null)
-const detailExecutions = ref<any[]>([])
-const detailLogs = ref<any[]>([])
 
 async function openDetail(row: any) {
   detailData.value = row
-  detailExecutions.value = []
-  detailLogs.value = []
   showDetail.value = true
   detailLoading.value = true
   try {
     const res: any = await request.get(`/admin/tasks/${row.id}`)
     const raw = res.data?.data
-    if (raw) {
-      detailData.value = raw.task || row
-      detailExecutions.value = (raw.executions || []).filter(Boolean)
-      detailLogs.value = (raw.recent_logs || []).filter(Boolean)
+    if (raw?.task) {
+      detailData.value = raw.task
     }
   } catch {
     // error handled by interceptor
@@ -188,40 +204,6 @@ async function openDetail(row: any) {
   }
 }
 
-const logLevelColor: Record<string, string | undefined> = {
-  info: 'arcoblue',
-  warn: 'orangered',
-  error: 'red',
-}
-
-const execColumns: TableColumnData[] = [
-  { title: '#', dataIndex: 'execution_order', width: 50 },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    width: 80,
-    render({ record }) {
-      return h(Tag, {
-        color: statusTagColor[record.status],
-        size: 'small',
-      }, () => record.status)
-    },
-  },
-  { title: '开始时间', dataIndex: 'started_at', width: 170 },
-  { title: '完成时间', dataIndex: 'finished_at', width: 170 },
-  {
-    title: '耗时',
-    dataIndex: 'duration_ms',
-    width: 100,
-    render({ record }) {
-      if (!record.duration_ms) return '-'
-      if (record.duration_ms < 1000) return `${record.duration_ms}ms`
-      return `${(record.duration_ms / 1000).toFixed(1)}s`
-    },
-  },
-  { title: '错误信息', dataIndex: 'error_message', ellipsis: true },
-]
-
 onMounted(() => {
   fetchData()
 })
@@ -229,7 +211,7 @@ onMounted(() => {
 
 <template>
   <div class="page-table">
-    <PageHeader title="任务日志" description="系统异步任务的执行记录与管理" />
+    <PageHeader title="任务日志" description="大模型异步生成任务（视频/图片/音乐）的执行记录与管理" />
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
@@ -242,18 +224,12 @@ onMounted(() => {
           style="width: 130px"
           @change="handleFilter"
         />
-        <AInput
-          v-model="filterHandler"
-          placeholder="搜索 Handler..."
+        <ASelect
+          v-model="filterPlatform"
+          :options="platformOptions"
+          placeholder="平台"
           allow-clear
-          style="width: 220px"
-          @keydown.enter="handleFilter"
-          @clear="handleFilter"
-        />
-        <ARangePicker
-          v-model="filterDateRange"
-          style="width: 260px"
-          format="YYYY-MM-DD"
+          style="width: 130px"
           @change="handleFilter"
         />
         <AButton type="primary" @click="handleFilter">搜索</AButton>
@@ -267,7 +243,7 @@ onMounted(() => {
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1300 }"
+        :scroll="{ x: 1400 }"
         :bordered="false"
         :stripe="true"
         :pagination="false"
@@ -290,51 +266,51 @@ onMounted(() => {
     <ADrawer v-model:visible="showDetail" :width="620" title="任务详情">
       <ASpin :loading="detailLoading">
         <template v-if="detailData">
-          <!-- Basic Info -->
           <h3 class="detail-section-title">基本信息</h3>
           <ADescriptions :column="2" bordered size="small">
-            <ADescriptionsItem label="任务名称">{{ detailData.name }}</ADescriptionsItem>
+            <ADescriptionsItem label="任务ID">{{ detailData.public_task_id }}</ADescriptionsItem>
             <ADescriptionsItem label="状态">
               <Tag :color="statusTagColor[detailData.status]" size="small">
                 {{ statusTagLabel[detailData.status] || detailData.status }}
               </Tag>
             </ADescriptionsItem>
-            <ADescriptionsItem label="Handler" :span="2">{{ detailData.handler }}</ADescriptionsItem>
-            <ADescriptionsItem label="重试次数">{{ detailData.retry_count }} / {{ detailData.max_retries }}</ADescriptionsItem>
-            <ADescriptionsItem label="计划时间">{{ detailData.scheduled_at || '-' }}</ADescriptionsItem>
-            <ADescriptionsItem label="开始时间">{{ detailData.started_at || '-' }}</ADescriptionsItem>
-            <ADescriptionsItem label="完成时间">{{ detailData.finished_at || '-' }}</ADescriptionsItem>
+            <ADescriptionsItem label="平台">{{ platformLabel[detailData.platform] || detailData.platform }}</ADescriptionsItem>
+            <ADescriptionsItem label="动作">{{ detailData.action }}</ADescriptionsItem>
+            <ADescriptionsItem label="模型">{{ detailData.model_name }}</ADescriptionsItem>
+            <ADescriptionsItem label="进度">{{ detailData.progress }}</ADescriptionsItem>
+            <ADescriptionsItem label="预扣金额">
+              <span v-if="detailData.pre_deduct_amount > 0">${{ detailData.pre_deduct_amount.toFixed(4) }}</span>
+              <span v-else>-</span>
+            </ADescriptionsItem>
+            <ADescriptionsItem label="实际费用">
+              <span v-if="detailData.billing_settled">${{ detailData.actual_cost.toFixed(4) }}</span>
+              <span v-else>未结算</span>
+            </ADescriptionsItem>
+            <ADescriptionsItem label="提交时间">{{ detailData.submit_time || '-' }}</ADescriptionsItem>
+            <ADescriptionsItem label="完成时间">{{ detailData.finish_time || '-' }}</ADescriptionsItem>
             <ADescriptionsItem label="创建时间">{{ detailData.created_at }}</ADescriptionsItem>
-            <ADescriptionsItem label="错误信息" :span="2">
-              <span v-if="detailData.error_message" style="color: var(--color-danger-6)">{{ detailData.error_message }}</span>
-              <span v-else style="color: var(--color-text-4)">-</span>
+            <ADescriptionsItem label="租户ID">{{ detailData.tenant_id }}</ADescriptionsItem>
+            <ADescriptionsItem label="用户ID">{{ detailData.user_id }}</ADescriptionsItem>
+            <ADescriptionsItem v-if="detailData.fail_reason" label="失败原因" :span="2">
+              <span style="color: var(--color-danger-6)">{{ detailData.fail_reason }}</span>
             </ADescriptionsItem>
           </ADescriptions>
 
-          <!-- Executions -->
-          <h3 class="detail-section-title">执行记录</h3>
-          <ATable
-            v-if="detailExecutions.length > 0"
-            :columns="execColumns"
-            :data="detailExecutions"
-            :bordered="false"
-            :stripe="true"
-            :pagination="false"
-            size="small"
-            row-key="execution_order"
-          />
-          <p v-else style="color: var(--color-text-4); font-size: 13px;">暂无执行记录</p>
-
-          <!-- Logs -->
-          <h3 class="detail-section-title">最近日志</h3>
-          <div v-if="detailLogs.length > 0" class="log-list">
-            <div v-for="log in detailLogs" :key="log.created_at + log.message" class="log-item">
-              <Tag :color="logLevelColor[log.level]" size="small" class="log-level-tag">{{ log.level }}</Tag>
-              <span class="log-message">{{ log.message }}</span>
-              <span class="log-time">{{ log.created_at }}</span>
+          <!-- Result -->
+          <template v-if="detailData.result_url">
+            <h3 class="detail-section-title">结果</h3>
+            <div class="result-preview">
+              <img
+                v-if="detailData.result_url && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(detailData.result_url)"
+                :src="detailData.result_url"
+                alt="任务结果"
+                style="max-width: 100%; border-radius: 6px;"
+              />
+              <a v-else :href="detailData.result_url" target="_blank" class="result-link">
+                {{ detailData.result_url }}
+              </a>
             </div>
-          </div>
-          <p v-else style="color: var(--color-text-4); font-size: 13px;">暂无日志</p>
+          </template>
         </template>
       </ASpin>
     </ADrawer>
@@ -361,42 +337,14 @@ onMounted(() => {
   margin-top: 0;
 }
 
-.log-list {
+.result-preview {
   background: var(--color-fill-1);
   border-radius: 6px;
-  padding: 8px;
-  max-height: 300px;
-  overflow-y: auto;
+  padding: 12px;
 }
 
-.log-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--color-fill-3);
-  font-size: 13px;
-}
-
-.log-item:last-child {
-  border-bottom: none;
-}
-
-.log-level-tag {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.log-message {
-  flex: 1;
-  color: var(--ta-text-primary);
+.result-link {
+  color: rgb(var(--arcoblue-6));
   word-break: break-all;
-}
-
-.log-time {
-  flex-shrink: 0;
-  color: var(--color-text-4);
-  font-size: 12px;
-  white-space: nowrap;
 }
 </style>

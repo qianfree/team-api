@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/internal/dao"
-	ws "github.com/qianfree/team-api/internal/handler/ws"
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -104,7 +103,6 @@ func AcknowledgeAlert(ctx context.Context, eventID, adminID int64) error {
 		return lcommon.NewBusinessError(404, "事件不存在或状态不是 firing")
 	}
 
-	go ws.PublishToAllAdmins(ctx, ws.ChannelAlert, ws.ActionUpdated, map[string]any{"id": eventID, "status": "acknowledged"})
 	return nil
 }
 
@@ -127,8 +125,6 @@ func ResolveAlert(ctx context.Context, eventID, adminID int64, notes string) err
 	if rows == 0 {
 		return lcommon.NewBusinessError(404, "事件不存在或已解决")
 	}
-
-	go ws.PublishToAllAdmins(ctx, ws.ChannelAlert, ws.ActionUpdated, map[string]any{"id": eventID, "status": "resolved"})
 
 	// Clear the firing state in Redis for this rule
 	type eventRow struct {

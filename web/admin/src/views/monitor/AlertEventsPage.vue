@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
-import { useWebSocket } from '@/utils/websocket'
-import type { WsMessage } from '@/utils/websocket'
 import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -146,22 +144,12 @@ function handlePageChange(page: number) {
   fetchData()
 }
 
-const { on: wsOn, off: wsOff } = useWebSocket()
-
-function handleAlertMessage(msg: WsMessage) {
-  // Refresh list on any alert event
-  if (msg.action === 'created' || msg.action === 'updated') {
-    fetchData()
-  }
-}
 
 onMounted(() => {
   fetchData()
-  wsOn('alert', handleAlertMessage)
 })
 
 onUnmounted(() => {
-  wsOff('alert', handleAlertMessage)
 })
 </script>
 
@@ -193,7 +181,7 @@ onUnmounted(() => {
     </a-card>
 
     <a-modal v-model:visible="showResolveModal" title="解决告警" :on-before-ok="handleResolve" :ok-loading="resolveLoading">
-      <a-form layout="vertical">
+      <a-form :model="{ notes: resolveNotes }" layout="vertical">
         <a-form-item label="处理备注">
           <a-textarea v-model="resolveNotes" placeholder="请输入处理说明..." :auto-size="{ minRows: 3, maxRows: 6 }" />
         </a-form-item>

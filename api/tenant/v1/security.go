@@ -90,11 +90,17 @@ type Tenant2FAConfirmRes struct {
 // 登录历史
 // ============================================================
 
-// TenantLoginHistoryReq 登录历史列表
+// TenantLoginHistoryReq 登录历史列表（owner/admin 查看所有成员，member 仅查看自己）
 type TenantLoginHistoryReq struct {
-	g.Meta   `path:"/security/login-history" method:"get" tags:"租户控制台-安全" summary:"登录历史"`
-	Page     int `json:"page" in:"query" d:"1" dc:"页码"`
-	PageSize int `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+	g.Meta      `path:"/security/login-history" method:"get" tags:"租户控制台-安全" summary:"登录历史"`
+	Page        int    `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize    int    `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+	Username    string `json:"username" in:"query" dc:"用户名（模糊搜索，仅owner/admin有效）"`
+	IpAddress   string `json:"ip_address" in:"query" dc:"IP地址（模糊搜索）"`
+	Success     *bool  `json:"success" in:"query" dc:"登录状态：true成功/false失败"`
+	LoginMethod string `json:"login_method" in:"query" dc:"登录方式：password/totp/sso"`
+	StartTime   string `json:"start_time" in:"query" dc:"开始时间（格式：2006-01-02）"`
+	EndTime     string `json:"end_time" in:"query" dc:"结束时间（格式：2006-01-02）"`
 }
 
 type TenantLoginHistoryRes struct {
@@ -106,6 +112,9 @@ type TenantLoginHistoryRes struct {
 
 type TenantLoginHistoryItem struct {
 	ID          int64  `json:"id"`
+	UserId      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
 	LoginMethod string `json:"login_method"`
 	IpAddress   string `json:"ip_address"`
 	UserAgent   string `json:"user_agent"`

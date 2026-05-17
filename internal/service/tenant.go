@@ -157,6 +157,8 @@ type (
 		MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.TenantMarkReadRes, error)
 		// MarkAllRead 标记所有未读消息为已读
 		MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq) (*v1.TenantMarkAllReadRes, error)
+		// DeleteNotification 删除已读的个人消息（广播消息不允许用户删除）
+		DeleteNotification(ctx context.Context, req *v1.TenantNotificationDeleteReq) (*v1.TenantNotificationDeleteRes, error)
 		// NotificationPreferencesGet 获取合并后的通知偏好（组织 + 用户）
 		NotificationPreferencesGet(ctx context.Context, req *v1.TenantNotificationPreferencesGetReq) (*v1.TenantNotificationPreferencesGetRes, error)
 		// NotificationPreferencesUpdate 更新通知偏好
@@ -277,7 +279,8 @@ type (
 		RegenerateBackupCodes(ctx context.Context, req *v1.Tenant2FARegenerateBackupCodesReq) (*v1.Tenant2FARegenerateBackupCodesRes, error)
 		// ConfirmHighRisk generates a confirm token for high-risk operations.
 		ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmReq) (*v1.Tenant2FAConfirmRes, error)
-		// LoginHistory returns the login history for the current tenant user.
+		// LoginHistory returns the login history for tenant users.
+		// owner/admin see all members in the tenant; member sees only own records.
 		LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryReq) (*v1.TenantLoginHistoryRes, error)
 		// GetIPWhitelist returns the tenant's IP whitelist configuration.
 		GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error)

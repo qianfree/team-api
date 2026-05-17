@@ -60,6 +60,10 @@ RUN apk add --no-cache \
     curl \
     && rm -rf /var/cache/apk/*
 
+ENV TZ=Asia/Shanghai
+RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone
+
 RUN addgroup -g 1000 team-api && \
     adduser -D -u 1000 -G team-api team-api
 

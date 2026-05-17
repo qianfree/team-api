@@ -48,8 +48,10 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
-	g.Log().Errorf(context.Background(), "[ClaudeRelayError] statusCode=%d type=%s message=%s originalError=%v",
-		statusCode, errType, errMsg, err)
+	if statusCode >= 500 {
+		g.Log().Errorf(context.Background(), "[ClaudeRelayError] statusCode=%d type=%s message=%s originalError=%v",
+			statusCode, errType, errMsg, err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

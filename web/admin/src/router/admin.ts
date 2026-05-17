@@ -121,6 +121,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '登录历史' },
       },
       {
+        path: 'tenant-login-history',
+        name: 'AdminTenantLoginHistory',
+        component: () => import('@/views/security/TenantLoginHistoryPage.vue'),
+        meta: { title: '租户登录历史' },
+      },
+      {
         path: 'task-logs',
         name: 'AdminTaskLogs',
         component: () => import('@/views/ai/TaskLogsPage.vue'),
@@ -245,6 +251,12 @@ const adminRoutes: RouteRecordRaw[] = [
         name: 'AdminErrorLogs',
         component: () => import('@/views/monitor/ErrorLogsPage.vue'),
         meta: { title: '系统错误日志' },
+      },
+      {
+        path: 'content-filter-logs',
+        name: 'AdminContentFilterLogs',
+        component: () => import('@/views/monitor/ContentFilterLogsPage.vue'),
+        meta: { title: '拦截日志' },
       },
       {
         path: 'cron-jobs',

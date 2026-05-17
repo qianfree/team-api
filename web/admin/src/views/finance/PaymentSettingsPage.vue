@@ -388,8 +388,8 @@ onMounted(() => {
 		<PageHeader title="支付设置" description="管理支付渠道和全局支付配置" />
 
 		<ATabs v-model:active-key="activeTab" type="rounded" class="mb-4">
-			<ATab key="channels" title="支付渠道" />
-			<ATab key="settings" title="全局设置" />
+			<ATabPane key="channels" title="支付渠道" />
+			<ATabPane key="settings" title="全局设置" />
 		</ATabs>
 
 		<!-- 支付渠道管理 -->

@@ -30,7 +30,7 @@ func HasActiveTasks() bool {
 
 // InitActiveCount initializes the counter from the database at startup.
 func InitActiveCount(ctx context.Context) {
-	count, err := dao.TskAsyncTasks.Ctx(ctx).
+	count, err := dao.TskModelTasks.Ctx(ctx).
 		Where("status NOT IN (?, ?)", "SUCCESS", "FAILURE").
 		Count()
 	if err != nil {

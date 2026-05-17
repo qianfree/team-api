@@ -65,7 +65,11 @@ const navItems = computed<NavItem[]>(() => {
 })
 
 const activePath = computed(() => route.path)
-const pageTitle = computed(() => navItems.value.find((i) => isActive(i.path))?.label || '仪表盘')
+const pageTitle = computed(() => {
+		const matched = route.matched
+		const leaf = matched[matched.length - 1]
+		return (leaf?.meta?.title as string) || navItems.value.find((i) => isActive(i.path))?.label || '仪表盘'
+	})
 
 function isActive(path: string): boolean {
 	return activePath.value === path || activePath.value.startsWith(path + '/')
@@ -92,6 +96,11 @@ function closeUserMenu() {
 }
 
 async function handleLogout() {
+	stopNotificationPolling()
+	if (announcementTimer) {
+		clearInterval(announcementTimer)
+		announcementTimer = null
+	}
 	await authStore.logout()
 	router.push('/tenant/login')
 }
@@ -124,8 +133,8 @@ onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
-	announcementTimer = setInterval(fetchAnnouncements, 60_000)
-	startNotificationPolling(30_000)
+	announcementTimer = setInterval(fetchAnnouncements, 10 * 60 * 1000)
+	startNotificationPolling()
 
 	await fetchPublicSettings()
 	if (publicSettings.demo_mode) {
@@ -136,8 +145,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	document.removeEventListener('click', handleClickOutside)
-	if (announcementTimer) clearInterval(announcementTimer)
 	stopNotificationPolling()
+	if (announcementTimer) {
+		clearInterval(announcementTimer)
+		announcementTimer = null
+	}
 	unmountWatermark()
 })
 </script>

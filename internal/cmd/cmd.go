@@ -29,7 +29,6 @@ import (
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
-	wsHandler "github.com/qianfree/team-api/internal/handler/ws"
 	"github.com/qianfree/team-api/internal/plugin"
 	"github.com/qianfree/team-api/web"
 )
@@ -74,15 +73,9 @@ var (
 			// Initialize content filter engine
 			common.InitContentFilter(ctx)
 
-			// Initialize WebSocket hub and broker
-			wsHub := wsHandler.InitHub(ctx)
-			go wsHub.Run(ctx)
-			wsHandler.InitWsBroker(ctx)
-
 			// Initialize monitoring collector
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
-			go monitor.StartMonitorPusher(ctx)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {
@@ -227,16 +220,6 @@ var (
 				})
 			})
 
-			// WebSocket endpoints — 独立于 MiddlewareHandlerResponse，避免升级后中间件干扰
-			s.Group("/api/admin", func(g *ghttp.RouterGroup) {
-				g.Middleware(middleware.AdminAuth)
-				g.GET("/ws", wsHandler.HandleAdminWS)
-			})
-			s.Group("/api/tenant", func(g *ghttp.RouterGroup) {
-				g.Middleware(middleware.MaintenanceMode, middleware.TenantAuth)
-				g.GET("/ws", wsHandler.HandleTenantWS)
-			})
-
 			// Register route groups
 			s.Group("/api", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.MiddlewareHandlerResponse)
@@ -299,7 +282,6 @@ var (
 			defer plugin.Shutdown(ctx)
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()
-			defer wsHandler.Shutdown()
 
 			s.Run()
 			return nil

@@ -9,9 +9,9 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// TskAsyncTasks is the golang structure of table tsk_async_tasks for DAO operations like Where/Data.
-type TskAsyncTasks struct {
-	g.Meta          `orm:"table:tsk_async_tasks, do:true"`
+// TskModelTasks is the golang structure of table tsk_model_tasks for DAO operations like Where/Data.
+type TskModelTasks struct {
+	g.Meta          `orm:"table:tsk_model_tasks, do:true"`
 	Id              any         //
 	PublicTaskId    any         //
 	Platform        any         //

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
@@ -58,6 +58,30 @@ function formatJson(str: string): string {
 	} catch {
 		return str
 	}
+}
+
+function parseUA(ua: string): string {
+	if (!ua) return '-'
+	let browser = ''
+	let os = ''
+	// Browser detection (order matters — Edg/OPR contain Chrome)
+	if (ua.includes('OPR/') || ua.includes('Opera')) browser = 'Opera'
+	else if (ua.includes('Edg/')) browser = 'Edge'
+	else if (ua.includes('Firefox/')) browser = 'Firefox'
+	else if (ua.includes('Chrome/')) browser = 'Chrome'
+	else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari'
+	// Extract version
+	const bv = ua.match(/(?:Chrome|Firefox|Edg|OPR|Safari)\/(\d+)/)
+	if (bv) browser += ' ' + bv[1]
+	// OS detection
+	if (/iPhone|iPad/.test(ua)) { const m = ua.match(/(iPhone )?OS ([\d_]+)/); os = m ? 'iOS ' + m[2].replace(/_/g, '.') : 'iOS' }
+	else if (ua.includes('Android')) { const m = ua.match(/Android ([\d.]+)/); os = m ? 'Android ' + m[1] : 'Android' }
+	else if (ua.includes('Mac OS X')) { const m = ua.match(/Mac OS X ([\d_.]+)/); os = m ? 'macOS ' + m[1].replace(/_/g, '.') : 'macOS' }
+	else if (ua.includes('Windows')) { const m = ua.match(/Windows NT ([\d.]+)/); os = m ? 'Win ' + ({ '10.0': '10/11', '6.3': '8.1', '6.2': '8', '6.1': '7' }[m[1]] || m[1]) : 'Windows' }
+	else if (ua.includes('Linux')) os = 'Linux'
+	if (!browser && !os) return ua.length > 30 ? ua.slice(0, 30) + '...' : ua
+	if (browser && os) return browser + ' / ' + os
+	return browser || os
 }
 
 function statusBadgeClass(code: number): string {
@@ -147,56 +171,41 @@ onMounted(() => {
 		</div>
 
 		<!-- Filter -->
-		<div class="card">
-			<div class="card-body">
-				<div class="flex flex-wrap items-center gap-3">
-					<input
-						v-model="logFilter.username"
-						class="input"
-						placeholder="用户名"
-						style="width: 120px"
-						@keydown.enter="handleFilter"
-					/>
-					<input
-						v-model="logFilter.request_id"
-						class="input"
-						placeholder="Request ID"
-						style="width: 200px"
-						@keydown.enter="handleFilter"
-					/>
-					<input
-						v-model="logFilter.path"
-						class="input"
-						placeholder="请求路径"
-						style="width: 180px"
-						@keydown.enter="handleFilter"
-					/>
-					<input
-						v-model="logFilter.status_code"
-						class="input"
-						placeholder="状态码"
-						style="width: 100px"
-						@keydown.enter="handleFilter"
-					/>
-					<input
-						v-model="logFilter.start_date"
-						type="date"
-						class="input"
-						style="width: 150px"
-					/>
-					<span class="text-gray-400 text-sm">至</span>
-					<input
-						v-model="logFilter.end_date"
-						type="date"
-						class="input"
-						style="width: 150px"
-					/>
-					<button class="btn btn-primary btn-sm" @click="handleFilter">搜索</button>
-					<button class="btn btn-secondary btn-sm" @click="handleReset">重置</button>
+			<!-- Filter -->
+			<div class="card">
+				<div class="card-body">
+					<div class="flex flex-wrap items-center gap-4">
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
+							<input v-model="logFilter.start_date" type="date" class="input" style="width:140px" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
+							<input v-model="logFilter.end_date" type="date" class="input" style="width:140px" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+							<input v-model="logFilter.username" class="input" placeholder="搜索用户" style="width:120px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">Request ID</label>
+							<input v-model="logFilter.request_id" class="input" placeholder="请求 ID" style="width:180px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">请求路径</label>
+							<input v-model="logFilter.path" class="input" placeholder="例如：/v1/chat" style="width:160px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">状态码</label>
+							<input v-model="logFilter.status_code" class="input" placeholder="200" style="width:80px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="ml-auto flex items-center gap-2">
+							<button class="btn btn-primary btn-sm" @click="handleFilter">搜索</button>
+							<button class="btn btn-secondary btn-sm" @click="handleReset">重置</button>
+						</div>
+					</div>
 				</div>
 			</div>
-		</div>
-
 		<!-- Table -->
 		<div class="card p-0 overflow-hidden">
 			<div class="card-header">
@@ -222,22 +231,23 @@ onMounted(() => {
 					<table class="table">
 						<thead>
 							<tr>
-								<th>Request ID</th>
-								<th>用户/项目</th>
-								<th>方法</th>
-								<th>路径</th>
-								<th>状态码</th>
-								<th>延迟</th>
-							<th>首Token</th>
-								<th>审计级别</th>
-								<th>时间</th>
-								<th></th>
+								<th class="min-w-60">Request ID</th>
+								<th class="min-w-55">用户/项目</th>
+								<th class="min-w-10">方法</th>
+								<th class="min-w-40">路径</th>
+								<th class="min-w-20">状态码</th>
+                <th class="min-w-40">客户端</th>
+                <th class="min-w-20">延迟</th>
+							  <th class="min-w-25">首Token</th>
+								<th class="min-w-30">审计级别</th>
+								<th class="min-w-30">时间</th>
+								<th class="min-w-20"></th>
 							</tr>
 						</thead>
 						<tbody>
 							<tr v-for="log in logs" :key="log.id">
 								<td>
-									<span class="font-mono text-xs text-gray-500 truncate max-w-[120px] inline-block">{{ log.request_id }}</span>
+									<span class="font-mono text-xs text-gray-500 truncate max-w-60 inline-block">{{ log.request_id }}</span>
 								</td>
 								<td>
 									<span v-if="log.project_name" class="text-sm text-primary-600 font-medium">{{ log.project_name }}</span>
@@ -252,13 +262,16 @@ onMounted(() => {
 								<td>
 									<span class="badge text-xs" :class="statusBadgeClass(log.status_code)">{{ log.status_code }}</span>
 								</td>
+                <td :title="log.user_agent">
+                  <span class="text-xs text-gray-500">{{ parseUA(log.user_agent) }}</span>
+                </td>
 								<td>
 									<span class="text-xs text-gray-500">{{ formatMs(log.latency_ms) }}</span>
 								</td>
-							<td>
-								<span v-if="log.first_token_ms" class="text-xs" :class="log.first_token_ms < 500 ? 'text-emerald-600' : log.first_token_ms < 1500 ? 'text-amber-600' : 'text-red-500'">{{ formatMs(log.first_token_ms) }}</span>
-								<span v-else class="text-xs text-gray-300">-</span>
-							</td>
+                <td>
+                  <span v-if="log.first_token_ms" class="text-xs" :class="log.first_token_ms < 500 ? 'text-emerald-600' : log.first_token_ms < 1500 ? 'text-amber-600' : 'text-red-500'">{{ formatMs(log.first_token_ms) }}</span>
+                  <span v-else class="text-xs text-gray-300">-</span>
+                </td>
 								<td>
 									<span class="text-xs text-gray-500">{{ auditLevelLabel[log.audit_level] || log.audit_level }}</span>
 								</td>
@@ -356,7 +369,7 @@ onMounted(() => {
 										</div>
 										<div>
 											<span class="text-gray-500">User-Agent</span>
-											<p class="text-xs text-gray-700 mt-0.5 truncate">{{ detailRecord.user_agent }}</p>
+											<p class="text-xs text-gray-700 mt-0.5 break-all">{{ detailRecord.user_agent || '-' }}</p>
 										</div>
 									</div>
 								</div>

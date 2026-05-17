@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, h, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
@@ -199,9 +199,15 @@ const editModelForm = reactive({
   max_concurrency: 5 as number | null,
   custom_input_price: null as number | null,
   custom_output_price: null as number | null,
+  custom_cache_read_price: null as number | null,
+  custom_cache_creation_price: null as number | null,
+  custom_pricing_tiers: [] as any[],
 })
 
+let suppressBillingWatch = false
+
 function openEditModel(record: any) {
+  suppressBillingWatch = true
   editingModel.value = record
   editModelForm.enabled = record.enabled
   editModelForm.billing_mode = record.billing_mode || null
@@ -210,10 +216,48 @@ function openEditModel(record: any) {
   editModelForm.max_concurrency = record.max_concurrency ?? 5
   editModelForm.custom_input_price = record.custom_input_price || null
   editModelForm.custom_output_price = record.custom_output_price || null
+  editModelForm.custom_cache_read_price = record.custom_cache_read_price || null
+  editModelForm.custom_cache_creation_price = record.custom_cache_creation_price || null
+  editModelForm.custom_pricing_tiers = record.custom_pricing_tiers?.length > 0 ? [...record.custom_pricing_tiers] : []
   showEditModelModal.value = true
+  suppressBillingWatch = false
 }
 
-async function handleEditModel(done: () => void) {
+function addTenantTier() {
+  const tiers = editModelForm.custom_pricing_tiers
+  const last = tiers[tiers.length - 1]
+  const newMin = last?.max_tokens ?? 0
+  tiers.push({
+    min_tokens: newMin,
+    max_tokens: null,
+    input_price: 0,
+    output_price: 0,
+    cache_read_price: 0,
+    cache_creation_price: 0,
+  })
+  if (last && last.max_tokens === null) {
+    last.max_tokens = newMin
+  }
+}
+
+// 计费模式切换时清理互斥字段
+watch(() => editModelForm.billing_mode, (mode) => {
+  if (suppressBillingWatch) return
+  if (!mode) {
+    // 默认模式：清空自定义价格，保留折扣
+    editModelForm.custom_input_price = null
+    editModelForm.custom_output_price = null
+    editModelForm.custom_cache_read_price = null
+    editModelForm.custom_cache_creation_price = null
+    editModelForm.per_request_price = null
+    editModelForm.custom_pricing_tiers = []
+  } else {
+    // 自定义价格模式：清空折扣比例
+    editModelForm.discount_ratio = null
+  }
+})
+
+async function handleEditModel() {
   if (!editingModel.value) return
   editModelLoading.value = true
   try {
@@ -223,10 +267,10 @@ async function handleEditModel(done: () => void) {
     }
     await request.put(`/admin/tenants/${tenantId}/models/${editingModel.value.model_id}`, payload)
     Message.success('更新成功')
-    done()
+    showEditModelModal.value = false
     fetchTenantModels()
   } catch {
-    return false
+    // error handled by interceptor
   } finally {
     editModelLoading.value = false
   }
@@ -548,49 +592,132 @@ onMounted(() => {
       />
     </AModal>
 
-    <!-- Edit Model Config Modal -->
-    <AModal
+    <!-- Edit Model Config Drawer -->
+    <ADrawer
       v-model:visible="showEditModelModal"
       :title="`编辑模型 - ${editingModel?.model_name || ''}`"
-      :width="550"
-      :on-before-ok="handleEditModel"
-      :ok-loading="editModelLoading"
+      :width="640"
+      :mask-closable="false"
+      :footer="true"
     >
       <AForm :model="editModelForm" :auto-label-width="true" layout="vertical">
         <AFormItem label="启用">
           <ASwitch v-model="editModelForm.enabled" />
         </AFormItem>
-        <AFormItem label="计费模式">
-          <ASelect
-            v-model="editModelForm.billing_mode"
-            :options="[{ label: '默认（跟随模型）', value: '' }, { label: 'Token 计费', value: 'token' }, { label: '按次计费', value: 'per_request' }]"
-            allow-clear
-            placeholder="默认"
-          />
-        </AFormItem>
-        <AFormItem label="折扣比例">
-          <AInputNumber v-model="editModelForm.discount_ratio" :min="0" :max="1" :step="0.05" :precision="2" placeholder="如 0.8 = 8折" class="w-full" />
-        </AFormItem>
-        <AFormItem label="自定义输入价格">
-          <AInputNumber v-model="editModelForm.custom_input_price" :min="0" :precision="4" placeholder="留空则使用默认价格" class="w-full">
-            <template #suffix>$ / 1M</template>
-          </AInputNumber>
-        </AFormItem>
-        <AFormItem label="自定义输出价格">
-          <AInputNumber v-model="editModelForm.custom_output_price" :min="0" :precision="4" placeholder="留空则使用默认价格" class="w-full">
-            <template #suffix>$ / 1M</template>
-          </AInputNumber>
-        </AFormItem>
-        <AFormItem label="按次单价">
-          <AInputNumber v-model="editModelForm.per_request_price" :min="0" :precision="4" placeholder="仅按次计费模式有效" class="w-full">
-            <template #suffix>$ / 次</template>
-          </AInputNumber>
-        </AFormItem>
         <AFormItem label="单模型并发上限">
           <AInputNumber v-model="editModelForm.max_concurrency" :min="0" placeholder="默认5" class="w-full" />
         </AFormItem>
+
+        <AFormItem label="计费模式">
+          <ARadioGroup v-model="editModelForm.billing_mode" type="button">
+            <ARadio value="">默认</ARadio>
+            <ARadio value="token">Token</ARadio>
+            <ARadio value="per_request">按次</ARadio>
+            <ARadio value="tiered">阶梯</ARadio>
+          </ARadioGroup>
+        </AFormItem>
+
+        <!-- 默认模式：仅折扣比例 -->
+        <template v-if="!editModelForm.billing_mode">
+          <ADivider margin="8px">折扣</ADivider>
+          <div style="color: var(--ta-text-tertiary); font-size: 12px; margin-bottom: 12px">使用模型基础定价 × 折扣比例</div>
+          <AFormItem label="折扣比例">
+            <AInputNumber v-model="editModelForm.discount_ratio" :min="0" :max="1" :step="0.05" :precision="2" placeholder="如 0.8 = 8折" class="w-full" />
+          </AFormItem>
+        </template>
+
+        <!-- Token 模式：自定义价格 -->
+        <template v-if="editModelForm.billing_mode === 'token'">
+          <ADivider margin="8px">自定义价格</ADivider>
+          <div style="color: var(--ta-text-tertiary); font-size: 12px; margin-bottom: 12px">留空则使用模型基础定价</div>
+          <div class="grid grid-cols-2 gap-x-3">
+            <AFormItem label="输入价格">
+              <AInputNumber v-model="editModelForm.custom_input_price" :min="0" :precision="4" placeholder="默认" class="w-full">
+                <template #suffix>$ / 1M</template>
+              </AInputNumber>
+            </AFormItem>
+            <AFormItem label="输出价格">
+              <AInputNumber v-model="editModelForm.custom_output_price" :min="0" :precision="4" placeholder="默认" class="w-full">
+                <template #suffix>$ / 1M</template>
+              </AInputNumber>
+            </AFormItem>
+            <AFormItem label="缓存读取价格">
+              <AInputNumber v-model="editModelForm.custom_cache_read_price" :min="0" :precision="4" placeholder="默认" class="w-full">
+                <template #suffix>$ / 1M</template>
+              </AInputNumber>
+            </AFormItem>
+            <AFormItem label="缓存创建价格">
+              <AInputNumber v-model="editModelForm.custom_cache_creation_price" :min="0" :precision="4" placeholder="默认" class="w-full">
+                <template #suffix>$ / 1M</template>
+              </AInputNumber>
+            </AFormItem>
+          </div>
+        </template>
+
+        <!-- 按次计费 -->
+        <template v-if="editModelForm.billing_mode === 'per_request'">
+          <ADivider margin="8px">按次定价</ADivider>
+          <AFormItem label="按次单价">
+            <AInputNumber v-model="editModelForm.per_request_price" :min="0" :precision="4" placeholder="每次调用价格" class="w-full">
+              <template #suffix>$ / 次</template>
+            </AInputNumber>
+          </AFormItem>
+        </template>
+
+        <!-- 阶梯计费 -->
+        <template v-if="editModelForm.billing_mode === 'tiered'">
+          <ADivider margin="8px">阶梯定价</ADivider>
+          <div style="color: var(--ta-text-tertiary); font-size: 12px; margin-bottom: 12px">按 Token 用量分段设置不同价格，留空则使用模型基础阶梯定价</div>
+          <div v-for="(tier, index) in editModelForm.custom_pricing_tiers" :key="index" class="tier-card">
+            <div class="tier-header">
+              <span class="tier-label">第 {{ index + 1 }} 梯</span>
+              <AButton v-if="editModelForm.custom_pricing_tiers.length > 1" size="mini" status="danger" @click="editModelForm.custom_pricing_tiers.splice(index, 1)">删除</AButton>
+            </div>
+            <div class="grid grid-cols-2 gap-x-3">
+              <AFormItem label="起始 Token">
+                <AInputNumber v-model="tier.min_tokens" :min="0" :step="1000" placeholder="0" class="w-full" />
+              </AFormItem>
+              <AFormItem label="结束 Token">
+                <AInputNumber v-if="index < editModelForm.custom_pricing_tiers.length - 1" v-model="tier.max_tokens" :min="0" :step="1000" placeholder="上限" class="w-full" />
+                <AInput v-else model-value="无上限" disabled class="w-full" />
+              </AFormItem>
+            </div>
+            <div class="grid grid-cols-2 gap-x-3 mt-2">
+              <AFormItem label="输入价格">
+                <AInputNumber v-model="tier.input_price" :min="0" :precision="4" class="w-full">
+                  <template #suffix>$/1M</template>
+                </AInputNumber>
+              </AFormItem>
+              <AFormItem label="输出价格">
+                <AInputNumber v-model="tier.output_price" :min="0" :precision="4" class="w-full">
+                  <template #suffix>$/1M</template>
+                </AInputNumber>
+              </AFormItem>
+            </div>
+            <div class="grid grid-cols-2 gap-x-3 mt-2">
+              <AFormItem label="缓存读取价格">
+                <AInputNumber v-model="tier.cache_read_price" :min="0" :precision="4" class="w-full">
+                  <template #suffix>$/1M</template>
+                </AInputNumber>
+              </AFormItem>
+              <AFormItem label="缓存创建价格">
+                <AInputNumber v-model="tier.cache_creation_price" :min="0" :precision="4" class="w-full">
+                  <template #suffix>$/1M</template>
+                </AInputNumber>
+              </AFormItem>
+            </div>
+          </div>
+          <AButton type="dashed" long @click="addTenantTier" class="mt-2">+ 添加梯度</AButton>
+        </template>
+
       </AForm>
-    </AModal>
+      <template #footer>
+        <ASpace>
+          <AButton @click="showEditModelModal = false">取消</AButton>
+          <AButton type="primary" :loading="editModelLoading" @click="handleEditModel">保存</AButton>
+        </ASpace>
+      </template>
+    </ADrawer>
 
     <!-- Recharge / Adjust Balance Modal -->
     <AModal v-model:visible="showRechargeModal" title="充值 / 调整余额" :width="420" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
@@ -639,5 +766,22 @@ onMounted(() => {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+.tier-card {
+  padding: 12px 16px;
+  background: var(--color-fill-1);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.tier-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.tier-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ta-text-secondary);
 }
 </style>

@@ -332,9 +332,21 @@ const resizeObserver = new ResizeObserver(() => {
   modelChart?.resize()
 })
 
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
+function onWindowResize() {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    trendChart?.resize()
+    tenantTrendChart?.resize()
+    modelChart?.resize()
+  }, 200)
+}
+
 // === Lifecycle ===
 onMounted(() => {
   fetchAll()
+  window.addEventListener('resize', onWindowResize)
   nextTick(() => {
     const trendEl = document.getElementById('trend-chart')
     const tenantEl = document.getElementById('tenant-trend-chart')
@@ -346,6 +358,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (resizeTimer) clearTimeout(resizeTimer)
   resizeObserver.disconnect()
   if (trendChart) { trendChart.dispose(); trendChart = null }
   if (tenantTrendChart) { tenantTrendChart.dispose(); tenantTrendChart = null }

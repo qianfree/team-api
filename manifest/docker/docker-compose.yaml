@@ -26,6 +26,7 @@ services:
     container_name: team-api-postgres
     restart: unless-stopped
     environment:
+      TZ: Asia/Shanghai
       POSTGRES_USER: team_api
       POSTGRES_PASSWORD: team_api_secret  # 请修改为强密码
       POSTGRES_DB: team_api
@@ -47,6 +48,8 @@ services:
     image: redis:7-alpine
     container_name: team-api-redis
     restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
     command: redis-server --appendonly yes --requirepass redis_secret  # 请修改为强密码
     volumes:
       - redis_data:/data

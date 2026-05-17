@@ -314,6 +314,130 @@ func buildAdminUserMap(ctx context.Context, records []entity.AudLoginHistory) ma
 	return m
 }
 
+// TenantLoginHistory returns login history for tenant users (admin view).
+func (s *sAdmin) TenantLoginHistory(ctx context.Context, req *v1.AdminTenantLoginHistoryReq) (*v1.AdminTenantLoginHistoryRes, error) {
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+
+	q := dao.AudLoginHistory.Ctx(ctx).Where("user_type", "tenant")
+
+	if req.TenantID > 0 {
+		q = q.Where("tenant_id", req.TenantID)
+	}
+	if req.Username != "" {
+		userIds, err := tenantUserIdsByKeyword(ctx, req.TenantID, req.Username)
+		if err != nil {
+			return nil, err
+		}
+		if len(userIds) == 0 {
+			return &v1.AdminTenantLoginHistoryRes{
+				List: []v1.AdminTenantLoginHistoryItem{}, Total: 0, Page: page, PageSize: pageSize,
+			}, nil
+		}
+		q = q.WhereIn("user_id", userIds)
+	}
+	if req.IpAddress != "" {
+		q = q.WhereLike("ip_address", "%"+req.IpAddress+"%")
+	}
+	if req.Success != nil {
+		q = q.Where("success", *req.Success)
+	}
+	if req.LoginMethod != "" {
+		q = q.Where("login_method", req.LoginMethod)
+	}
+	if req.StartTime != "" {
+		q = q.WhereGTE("created_at", req.StartTime+" 00:00:00")
+	}
+	if req.EndTime != "" {
+		q = q.WhereLTE("created_at", req.EndTime+" 23:59:59")
+	}
+
+	total, err := q.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	var records []entity.AudLoginHistory
+	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&records)
+	if err != nil {
+		return nil, err
+	}
+
+	userMap := buildTenantUserMap(ctx, records)
+	items := make([]v1.AdminTenantLoginHistoryItem, len(records))
+	for i, r := range records {
+		items[i] = v1.AdminTenantLoginHistoryItem{
+			ID:          r.Id,
+			UserId:      r.UserId,
+			TenantId:    r.TenantId,
+			Username:    userMap[r.UserId].Username,
+			DisplayName: userMap[r.UserId].DisplayName,
+			LoginMethod: r.LoginMethod,
+			IpAddress:   r.IpAddress,
+			UserAgent:   r.UserAgent,
+			Location:    r.Location,
+			IsNewDevice: r.IsNewDevice,
+			Success:     r.Success,
+			FailReason:  r.FailReason,
+		}
+		if r.CreatedAt != nil {
+			items[i].CreatedAt = r.CreatedAt.Format("Y-m-d H:i:s")
+		}
+	}
+
+	return &v1.AdminTenantLoginHistoryRes{
+		List: items, Total: total, Page: page, PageSize: pageSize,
+	}, nil
+}
+
+type tenantUserBrief struct {
+	Username    string
+	DisplayName string
+}
+
+func tenantUserIdsByKeyword(ctx context.Context, tenantID int64, keyword string) ([]int64, error) {
+	q := dao.TntUsers.Ctx(ctx).Fields("id")
+	q = q.Where("username LIKE ? OR display_name LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+	if tenantID > 0 {
+		q = q.Where("tenant_id", tenantID)
+	}
+	var users []entity.TntUsers
+	err := q.Scan(&users)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(users))
+	for i, u := range users {
+		ids[i] = u.Id
+	}
+	return ids, nil
+}
+
+func buildTenantUserMap(ctx context.Context, records []entity.AudLoginHistory) map[int64]tenantUserBrief {
+	m := make(map[int64]tenantUserBrief)
+	idSet := make(map[int64]struct{})
+	for _, r := range records {
+		if r.UserId > 0 {
+			idSet[r.UserId] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return m
+	}
+	ids := make([]int64, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	var users []entity.TntUsers
+	_ = dao.TntUsers.Ctx(ctx).
+		Fields("id, username, display_name").
+		WhereIn("id", ids).
+		Scan(&users)
+	for _, u := range users {
+		m[u.Id] = tenantUserBrief{Username: u.Username, DisplayName: u.DisplayName}
+	}
+	return m
+}
+
 // Pending TOTP secret is stored in Redis temporarily during setup flow.
 func getPendingTOTPSecret(ctx context.Context, userID int64) (string, error) {
 	key := fmt.Sprintf("2fa:pending:admin:%d", userID)

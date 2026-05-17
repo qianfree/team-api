@@ -448,7 +448,8 @@ onMounted(() => {
                   <AButton type="primary" size="small" class="mt-2" @click="applyOfficialPricing(src.pricing)">应用此价格</AButton>
                 </template>
                 <template v-else>
-                  <div class="official-not-found">未找到定价数据</div>
+                  <div v-if="src.error" class="official-not-found" style="color: rgb(var(--danger-6))">获取远程数据失败: {{ src.error }}</div>
+                  <div v-else class="official-not-found">未找到定价数据</div>
                 </template>
               </div>
             </div>
