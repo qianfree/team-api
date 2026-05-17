@@ -146,7 +146,11 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	default:
 		converted = bytes.NewReader(requestBody)
 	}
-	result := injectStreamOptions(replaceModelIfNeeded(converted, info), info)
+	result := replaceModelIfNeeded(converted, info)
+	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数
+	if info.IsStream && mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
+		result = injectStreamOptions(result, info)
+	}
 
 	// Thinking 后缀路由：注入 reasoning_effort
 	if info.ReasoningEffort != "" {

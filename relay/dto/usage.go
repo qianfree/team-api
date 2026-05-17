@@ -128,12 +128,19 @@ type ImageRequest struct {
 	Background        string `json:"background,omitempty"`
 	Moderation        string `json:"moderation,omitempty"`
 	InputImageMask    any    `json:"input_image_mask,omitempty"`
+	PartialImages     *int   `json:"partial_images,omitempty"`
+	Stream            *bool  `json:"stream,omitempty"`
 }
 
 // ImageResponse 图像生成响应
 type ImageResponse struct {
-	Created int64       `json:"created"`
-	Data    []ImageData `json:"data"`
+	Created      int64       `json:"created"`
+	Data         []ImageData `json:"data"`
+	Background   string      `json:"background,omitempty"`
+	OutputFormat string      `json:"output_format,omitempty"`
+	Size         string      `json:"size,omitempty"`
+	Quality      string      `json:"quality,omitempty"`
+	Usage        *ImageUsage `json:"usage,omitempty"`
 }
 
 // ImageData 单个图像数据
@@ -142,4 +149,18 @@ type ImageData struct {
 	B64JSON       string `json:"b64_json,omitempty"`
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
 	ContentType   string `json:"content_type,omitempty"`
+}
+
+// ImageUsage GPT Image token 用量（gpt-image-1, gpt-image-2）
+type ImageUsage struct {
+	TotalTokens        int                `json:"total_tokens"`
+	InputTokens        int                `json:"input_tokens"`
+	OutputTokens       int                `json:"output_tokens"`
+	InputTokensDetails *ImageTokenDetails `json:"input_tokens_details,omitempty"`
+}
+
+// ImageTokenDetails GPT Image 输入 token 细分
+type ImageTokenDetails struct {
+	TextTokens  int `json:"text_tokens"`
+	ImageTokens int `json:"image_tokens"`
 }
