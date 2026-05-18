@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/taskchannel"
@@ -227,6 +228,9 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		}
 		g.Log().Infof(ctx, "poll: task %s completed", task.PublicTaskID)
 
+		// 记录用量日志
+		recordTaskUsage(task, true, "")
+
 	} else if taskInfo.Status == common.TaskStatusFailure {
 		// 退还预扣费用
 		if task.PreDeductAmount > 0 && !task.BillingSettled {
@@ -239,5 +243,36 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			}
 		}
 		g.Log().Infof(ctx, "poll: task %s failed: %s", task.PublicTaskID, task.FailReason)
+
+		// 记录用量日志
+		recordTaskUsage(task, false, task.FailReason)
 	}
+}
+
+// recordTaskUsage 异步记录视频/音乐等异步任务的用量日志
+func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string) {
+	latencyMs := 0
+	if task.SubmitTime != nil && task.FinishTime != nil {
+		latencyMs = int(task.FinishTime.Sub(*task.SubmitTime).Milliseconds())
+	}
+
+	status := "success"
+	if !success {
+		status = "error"
+	}
+
+	relay.NewDataProvider().RecordUsage(context.Background(), &common.UsageRecord{
+		TenantID:     task.TenantID,
+		UserID:       task.UserID,
+		ApiKeyID:     task.ApiKeyID,
+		ChannelID:    task.ChannelID,
+		ModelName:    task.ModelName,
+		RelayMode:    int(constant.RelayModeVideoGenerations),
+		LatencyMs:    float64(latencyMs),
+		IsStream:     false,
+		Success:      success,
+		RequestID:    task.PublicTaskID,
+		Status:       status,
+		ErrorMessage: errMsg,
+	})
 }
