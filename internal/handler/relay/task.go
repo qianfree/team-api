@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -64,10 +65,40 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		return
 	}
 
+	// 记录任务提交审计日志（使用 capture 模式以支持异步写入）
+	capture := NewResponseCaptureWriter(r.Response.Writer)
+	rc.Writer = capture
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	// 异步记录审计日志
+	tenantID := rc.TenantID
+	userID := rc.UserID
+	apiKeyID := rc.ApiKeyID
+	requestID := rc.RequestID
+	path := r.URL.Path
+	clientIP := rc.ClientIP
+	userAgent := r.Header.Get("User-Agent")
+	statusCode := capture.StatusCode()
+	responseBody := capture.Body()
+	go func() {
+		relayDataProvider.RecordAudit(context.Background(), &common.AuditRecord{
+			TenantID:     tenantID,
+			UserID:       userID,
+			ApiKeyID:     apiKeyID,
+			RequestID:    requestID,
+			Method:       "POST",
+			Path:         path,
+			StatusCode:   statusCode,
+			ClientIP:     clientIP,
+			UserAgent:    userAgent,
+			RequestBody:  string(body),
+			ResponseBody: responseBody,
+		})
+	}()
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
