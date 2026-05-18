@@ -115,6 +115,8 @@ func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []
 
 func (a *VolcengineVideoAdaptor) BuildRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimRight(info.ChannelMeta.BaseURL, "/")
+	// 兼容 base URL 带 /api 后缀的情况
+	baseURL = strings.TrimSuffix(baseURL, "/api")
 	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", baseURL), nil
 }
 
@@ -277,9 +279,13 @@ func (a *VolcengineVideoAdaptor) DoResponse(_ context.Context, resp *http.Respon
 
 	// 非成功状态码
 	if resp.StatusCode != http.StatusOK {
+		msg := string(body)
+		if msg == "" {
+			msg = fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+		}
 		return "", body, &common.TaskError{
 			StatusCode: resp.StatusCode,
-			Message:    string(body),
+			Message:    msg,
 		}
 	}
 
@@ -301,7 +307,7 @@ func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []by
 		return nil, fmt.Errorf("volcengine: invalid task data: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
+	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/api"), data.TaskID)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

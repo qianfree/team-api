@@ -7,8 +7,12 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/relay"
+	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -331,19 +335,18 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 	return tasks, nil
 }
 
-// GetChannelByID 获取渠道基本信息
+// GetChannelByID 获取渠道基本信息（含从 chn_channel_keys 解密的 API Key）
 func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*common.ChannelBasicInfo, error) {
 	var row struct {
 		ID       int64           `json:"id"`
 		Type     int             `json:"type"`
 		Name     string          `json:"name"`
 		BaseURL  string          `json:"base_url"`
-		ApiKey   string          `json:"api_key"`
 		Settings json.RawMessage `json:"settings"`
 	}
 	err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
-		Fields("id, type, name, base_url, api_key, settings").
+		Fields("id, type, name, base_url, settings").
 		Scan(&row)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query channel failed: id=%d", channelID)
@@ -351,12 +354,50 @@ func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*c
 	if row.ID == 0 {
 		return nil, nil
 	}
+
+	// 从 chn_channel_keys 获取解密后的 API Key
+	apiKey, keyErr := getChannelApiKey(ctx, channelID)
+	if keyErr != nil {
+		return nil, gerror.Wrapf(keyErr, "get channel key failed: channelID=%d", channelID)
+	}
+
 	return &common.ChannelBasicInfo{
 		ID:       row.ID,
 		Type:     row.Type,
 		Name:     row.Name,
 		BaseURL:  row.BaseURL,
-		ApiKey:   row.ApiKey,
+		ApiKey:   apiKey,
 		Settings: row.Settings,
 	}, nil
+}
+
+// getChannelApiKey 从 chn_channel_keys 获取并解密渠道 API Key
+func getChannelApiKey(ctx context.Context, channelID int64) (string, error) {
+	type keyRow struct {
+		ID           int64  `json:"id"`
+		EncryptedKey string `json:"encrypted_key"`
+	}
+
+	var key *keyRow
+	err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("channel_id", channelID).
+		Where("status", "active").
+		Fields("id, encrypted_key").
+		Scan(&key)
+	if err != nil || key == nil {
+		return "", fmt.Errorf("no active key found for channel %d", channelID)
+	}
+
+	// 更新最后使用时间
+	dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", key.ID).
+		Data(do.ChnChannelKeys{LastUsedAt: gtime.Now()}).
+		Update()
+
+	encKey := relay.GetEncryptionKey()
+	decrypted, err := crypto.DecryptString(encKey, key.EncryptedKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt key failed: %w", err)
+	}
+	return decrypted, nil
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/taskchannel"
@@ -65,6 +66,7 @@ func HandleTaskSubmit(
 	providerType := constant.ProviderType(channelMeta.ChannelType)
 	platform, ok := constant.ProviderTypeToTaskPlatform(providerType)
 	if !ok {
+		g.Log().Warningf(ctx, "HandleTaskSubmit: unsupported task platform, channelType=%d, modelName=%s", channelMeta.ChannelType, modelName)
 		writeTaskError(rc.Writer, http.StatusBadRequest, "unsupported task platform", "")
 		return
 	}
@@ -75,6 +77,8 @@ func HandleTaskSubmit(
 		writeTaskError(rc.Writer, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
+
+	g.Log().Debugf(ctx, "HandleTaskSubmit: modelName=%s, platform=%s, channelID=%d, channelType=%d, baseURL=%s, upstreamModel=%s", modelName, platform, channelMeta.ChannelID, channelMeta.ChannelType, channelMeta.BaseURL, channelMeta.UpstreamModelName)
 
 	// 4. 构建 RelayInfo
 	info := &common.RelayInfo{
@@ -94,6 +98,7 @@ func HandleTaskSubmit(
 
 	// 5. 校验请求
 	if taskErr := adaptor.ValidateRequest(ctx, info, body); taskErr != nil {
+		g.Log().Warningf(ctx, "HandleTaskSubmit: validate failed, model=%s, err=%s", modelName, taskErr.Message)
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
 	}
@@ -102,12 +107,15 @@ func HandleTaskSubmit(
 	ratios := adaptor.EstimateBilling(ctx, info, body)
 	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios)
 	if err != nil {
+		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
 		return
 	}
+	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost)
 
 	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost)
 	if err != nil {
+		g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")
 		return
 	}
@@ -116,6 +124,7 @@ func HandleTaskSubmit(
 	requestBody, err := adaptor.BuildRequestBody(ctx, info, body)
 	if err != nil {
 		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		g.Log().Errorf(ctx, "HandleTaskSubmit: build request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
 		return
 	}
@@ -123,15 +132,19 @@ func HandleTaskSubmit(
 	resp, err := adaptor.DoRequest(ctx, info, requestBody)
 	if err != nil {
 		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		g.Log().Errorf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+err.Error(), "")
 		return
 	}
 	defer resp.Body.Close()
 
+	g.Log().Debugf(ctx, "HandleTaskSubmit: upstream responded status=%d", resp.StatusCode)
+
 	// 8. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(ctx, resp, info)
 	if taskErr != nil {
 		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
 	}
