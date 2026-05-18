@@ -53,6 +53,10 @@ async function fetchCategories() {
   try {
     const res = await request.get('/admin/help-categories', { params: { page: 1, page_size: 100, parent_id: -1 } })
     categories.value = res.data?.data?.list || []
+    if (categories.value.length > 0 && !categoryFilter.value) {
+      categoryFilter.value = categories.value[0].id
+      fetchList()
+    }
   } catch {}
 }
 
@@ -61,7 +65,7 @@ async function fetchList() {
   try {
     const params: any = { page: pagination.current, page_size: pagination.pageSize }
     if (statusFilter.value) params.status = statusFilter.value
-    if (categoryFilter.value) params.category_id = categoryFilter.value
+    if (categoryFilter.value != null) params.category_id = categoryFilter.value
     const res = await request.get('/admin/help-articles', { params })
     const data = res.data?.data
     articles.value = data?.list || []
@@ -75,7 +79,7 @@ const editingId = ref<number | null>(null)
 const formLoading = ref(false)
 const detailLoading = ref(false)
 const form = reactive({
-  category_id: 0,
+  category_id: undefined as number | undefined,
   title: '',
   slug: '',
   content: '',
@@ -86,7 +90,7 @@ const form = reactive({
 })
 const keywordInput = ref('')
 
-function resetForm() { Object.assign(form, { category_id: 0, title: '', slug: '', content: '', summary: '', status: 'draft', sort_order: 0, keywords: [] }); keywordInput.value = '' }
+function resetForm() { Object.assign(form, { category_id: undefined, title: '', slug: '', content: '', summary: '', status: 'draft', sort_order: 0, keywords: [] }); keywordInput.value = '' }
 
 function openCreate() { editingId.value = null; resetForm(); showDrawer.value = true }
 
@@ -133,7 +137,7 @@ async function deleteArticle(row: any) {
   }})
 }
 
-onMounted(() => { fetchCategories(); fetchList() })
+onMounted(() => { fetchCategories() })
 </script>
 
 <template>
@@ -166,8 +170,8 @@ onMounted(() => { fetchCategories(); fetchList() })
           <AFormItem label="标题" required><AInput v-model="form.title" placeholder="文章标题" /></AFormItem>
           <AFormItem label="Slug" required><AInput v-model="form.slug" placeholder="url-friendly-identifier" /></AFormItem>
           <div class="flex gap-4">
-            <AFormItem label="分类" required class="flex-1">
-              <ASelect v-model="form.category_id" :options="categories.map((c: any) => ({ value: c.id, label: c.name }))" placeholder="选择分类" />
+            <AFormItem label="分类" required class="flex-1 min-w-[160px]">
+              <ASelect v-model="form.category_id" :options="categories.map((c: any) => ({ value: c.id, label: c.name }))" placeholder="选择分类" allow-clear />
             </AFormItem>
             <AFormItem label="状态" class="w-40">
               <ASelect v-model="form.status" :options="[{ label: '草稿', value: 'draft' }, { label: '已发布', value: 'published' }]" />
