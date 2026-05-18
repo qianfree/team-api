@@ -45,7 +45,7 @@ func buildOpenAPISpec() map[string]any {
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Team API",
-			"description": "多租户 AI API 网关，兼容 OpenAI API 格式",
+			"description": "多租户 大模型 API 网关，兼容 OpenAI API 格式",
 			"version":     "1.0.0",
 		},
 		"servers": []map[string]any{
