@@ -25,14 +25,14 @@
 		</div>
 
 		<!-- Content Container -->
-		<div class="relative z-10 w-full max-w-md">
+		<div class="relative z-10 w-full max-w-md -mt-6">
 			<!-- Logo/Brand -->
 			<div class="mb-8 text-center">
-				<div class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-glow">
-					<Icon name="building" size="xl" class="text-primary-600" />
+				<div class="flex items-center gap-3 justify-center">
+					<img src="/favicon.png" alt="Team-API" class="h-10 w-10 rounded-lg object-contain" />
+					<h1 class="text-gradient text-2xl font-bold leading-tight">Team API</h1>
 				</div>
-				<h1 class="text-gradient mb-2 text-3xl font-bold">Team API</h1>
-				<p class="text-sm text-gray-500">多租户 AI API 网关平台</p>
+				<p class="mt-3 text-sm text-gray-500">开源自托管的多租户 大模型 API 网关平台</p>
 			</div>
 
 			<!-- Card Container -->
@@ -44,6 +44,12 @@
 			<div class="mt-6 text-center text-sm">
 				<slot name="footer" />
 			</div>
+			</div>
+
+		<!-- Copyright -->
+		<div class="auth-footer absolute bottom-6 left-0 right-0 z-10 flex items-center justify-between px-8 text-xs text-gray-400">
+			<span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
+			<a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer" class="text-gray-400 hover:text-gray-600 transition-colors">Powered by Team-API</a>
 		</div>
 	</div>
 </template>
@@ -82,5 +88,19 @@ onBeforeUnmount(() => {
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
 	background-clip: text;
+}
+
+@media (max-width: 640px) {
+	.auth-footer {
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		text-align: center;
+	}
+
+		.auth-footer a {
+			order: -1;
+		}
 }
 </style>

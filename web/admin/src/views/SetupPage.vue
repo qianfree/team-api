@@ -74,7 +74,7 @@ async function handleSetup() {
       <div class="login-brand__content">
         <div class="login-brand__logo">T</div>
         <h1 class="login-brand__title">Team-API</h1>
-        <p class="login-brand__desc">多租户 AI API 网关管理平台</p>
+        <p class="login-brand__desc">多租户 大模型 API 网关管理平台</p>
 
         <div class="login-brand__features">
           <div class="login-brand__feature">

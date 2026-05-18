@@ -94,9 +94,9 @@ async function handle2FAVerify() {
       <div class="login-orb login-orb--3" />
 
       <div class="login-brand__content">
-        <div class="login-brand__logo">T</div>
+        <img src="/favicon.png" alt="Team-API" class="login-brand__logo" />
         <h1 class="login-brand__title">Team-API</h1>
-        <p class="login-brand__desc">多租户 AI API 网关管理平台</p>
+        <p class="login-brand__desc">多租户 大模型 API 网关管理平台</p>
 
         <div class="login-brand__features">
           <div class="login-brand__feature">
@@ -124,12 +124,18 @@ async function handle2FAVerify() {
       </div>
 
       <div class="login-brand__footer">
-        <span>Team-API &copy; {{ new Date().getFullYear() }}</span>
+        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
       </div>
     </div>
 
     <!-- Right: Login Form -->
     <div class="login-form-wrapper">
+      <!-- Mobile Brand (hidden on desktop) -->
+      <div class="login-mobile-brand">
+        <img src="/favicon.png" alt="Team-API" class="login-brand__logo" />
+        <span class="login-mobile-brand__name">Team-API</span>
+      </div>
+
       <div class="login-form glass animate-slideUp">
         <div class="login-form__header">
           <h2 class="login-form__title">欢迎回来</h2>
@@ -217,6 +223,12 @@ async function handle2FAVerify() {
           </AButton>
         </div>
       </div>
+
+      <!-- Mobile Footer (hidden on desktop) -->
+      <div class="login-mobile-footer">
+        <a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer" class="login-mobile-footer__link">Powered by Team-API</a>
+        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
+      </div>
     </div>
   </div>
 </template>
@@ -282,17 +294,11 @@ async function handle2FAVerify() {
 }
 
 .login-brand__logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, #14b8a6, #0d9488);
   border-radius: 12px;
-  font-size: 24px;
-  font-weight: 700;
   margin-bottom: 24px;
-  box-shadow: 0 4px 16px rgba(13, 148, 136, 0.4);
+  object-fit: contain;
 }
 
 .login-brand__title {
@@ -353,6 +359,7 @@ async function handle2FAVerify() {
 .login-form-wrapper {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 40px;
@@ -386,6 +393,44 @@ async function handle2FAVerify() {
   color: #94a3b8;
 }
 
+/* Mobile brand & footer — hidden on desktop */
+.login-mobile-brand {
+  display: none;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.login-mobile-brand__name {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.login-mobile-footer {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.login-mobile-footer__link {
+  color: #64748b;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.login-mobile-footer__link:hover {
+  color: #0f172a;
+}
+
 /* ===== Responsive: hide branding on mobile ===== */
 @media (max-width: 768px) {
   .login-page {
@@ -397,7 +442,28 @@ async function handle2FAVerify() {
   }
 
   .login-form-wrapper {
+    position: relative;
     min-height: 100vh;
+    background: linear-gradient(to bottom, #f0fdfa, #f8fafc, #f0fdf4);
+  }
+
+  .login-mobile-brand {
+    display: flex;
+  }
+
+  .login-mobile-brand .login-brand__logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    margin-bottom: 0;
+  }
+
+  .login-mobile-brand__name {
+    font-size: 32px;
+  }
+
+  .login-mobile-footer {
+    display: flex;
   }
 }
 

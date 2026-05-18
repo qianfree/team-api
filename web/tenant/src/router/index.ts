@@ -9,7 +9,7 @@ const routes: RouteRecordRaw[] = [
 		path: '/',
 		name: 'TenantHome',
 		component: () => import('@/views/landing/LandingPage.vue'),
-		meta: { requiresAuth: false, title: 'Team-API — 开源自托管 AI API 网关' },
+		meta: { requiresAuth: false, title: 'Team-API — 开源自托管 大模型 API 网关' },
 	},
 	...tenantRoutes,
 	{

@@ -2,7 +2,7 @@
 
 # Team-API
 
-**多租户 AI API 网关 SaaS 平台**
+**多租户 大模型 API 网关 SaaS 平台**
 
 统一接入 OpenAI、Claude、Gemini 等 25+ 大模型供应商，提供计费、限流、监控和多租户管理能力。
 
@@ -110,7 +110,7 @@
 | 数据库迁移 | [Goose](https://github.com/pressly/goose) |
 | 管理后台前端 | Vue 3 + Vite + [Naive UI](https://www.naiveui.com/) + TailwindCSS |
 | 租户控制台前端 | Vue 3 + Vite + TailwindCSS |
-| 对象存储 | S3 / 阿里云 OSS / 腾讯云 COS / MinIO |
+| 对象存储 | S3 / 阿里云 OSS / 腾讯云 COS |
 | 前端包管理 | bun |
 
 ## 快速开始
@@ -133,7 +133,7 @@ cd team-api
 
 ### 2. 启动基础设施
 
-使用 Docker Compose 启动 PostgreSQL、Redis 和 MinIO：
+使用 Docker Compose 启动 PostgreSQL 和 Redis：
 
 ```bash
 docker compose -f manifest/docker/docker-compose.yaml up -d
@@ -376,7 +376,7 @@ make migrate-status  # 查看迁移状态
 
 ## 许可证
 
-本项目采用 [GNU Affero General Public License v3.0](LICENSE) 许可证。
+Copyright (C) 2026 qianfree. 本项目采用 [GNU Affero General Public License v3.0](LICENSE) 许可证。
 
 ### 核心要求
 
@@ -384,9 +384,9 @@ make migrate-status  # 查看迁移状态
 - **网络条款**：通过网络向用户提供基于本项目的服务（如 SaaS），也必须向用户开放修改后的源代码
 - **自由使用**：个人学习、研究、内部使用、商业运营均可，前提是遵守上述开源义务
 
-### 不适用场景
+### 商业授权
 
-如果你想将本项目代码用于闭源商业产品，需要单独获取商业授权。请联系：**406615373@qq.com**
+如果你想将本项目代码用于闭源商业产品，AGPL-3.0 许可证不适用。需要单独获取商业授权，请联系：**406615373@qq.com**
 
 ## 致谢
 
