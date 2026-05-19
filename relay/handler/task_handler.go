@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/taskchannel"
+	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
 	_ "github.com/qianfree/team-api/relay/taskchannel/sora"

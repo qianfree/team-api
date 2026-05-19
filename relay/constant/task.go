@@ -9,6 +9,7 @@ const (
 	TaskPlatformSuno       TaskPlatform = "suno"
 	TaskPlatformMidjourney TaskPlatform = "midjourney"
 	TaskPlatformVolcengine TaskPlatform = "volcengine"
+	TaskPlatformAli        TaskPlatform = "ali"
 )
 
 // TaskAction 异步任务动作类型
@@ -81,6 +82,8 @@ func ProviderTypeToTaskPlatform(p ProviderType) (TaskPlatform, bool) {
 		return TaskPlatformMidjourney, true
 	case ProviderVolcengine:
 		return TaskPlatformVolcengine, true
+	case ProviderAli:
+		return TaskPlatformAli, true
 	default:
 		return "", false
 	}
