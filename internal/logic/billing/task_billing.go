@@ -16,28 +16,47 @@ func NewTaskBillingProvider() common.TaskBillingProvider {
 }
 
 // EstimateTaskCost 估算任务费用
-// ratios 包含计费比率（如 duration_ratio, resolution_ratio）
+// ratios 包含计费比率（如 video_input 折扣）和预估参数（如 duration 秒数、resolution 乘数）
 func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]float64) (float64, error) {
-	// 基础价格从模型定价表获取
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return 0.01, nil
 	}
-	baseCost := pricing.PerRequestPrice
-	if err != nil {
-		return 0, fmt.Errorf("estimate task cost: %w", err)
+
+	var cost float64
+
+	// 如果配了 token 单价且有 duration 预估，用 token 模式估算
+	if pricing.OutputPrice > 0 {
+		duration := 5.0 // 默认 5 秒
+		if d, ok := ratios["duration"]; ok && d > 0 {
+			duration = d
+		}
+		resolutionMul := 2.25 // 默认 720p
+		if r, ok := ratios["resolution"]; ok && r > 0 {
+			resolutionMul = r
+		}
+
+		// 预估 tokens ≈ base_tokens_per_second × duration × resolution_multiplier
+		// base_tokens_per_second 根据模型定价反推：
+		// 火山方舟 completion_tokens 约 100 tokens/s (480p)，用于预扣估算
+		estimatedTokens := 100.0 * duration * resolutionMul
+		cost = estimatedTokens / 1_000_000.0 * pricing.OutputPrice * pricing.TenantMultiplier
+	} else {
+		cost = pricing.PerRequestPrice
 	}
 
-	// 应用比率乘数
-	for _, ratio := range ratios {
-		baseCost *= ratio
+	// 应用附加比率（video_input 折扣等）
+	for k, ratio := range ratios {
+		if k == "duration" || k == "resolution" {
+			continue
+		}
+		cost *= ratio
 	}
 
-	// 最低消费保障
-	if baseCost < 0.01 {
-		baseCost = 0.01
+	if cost < 0.01 {
+		cost = 0.01
 	}
-	return baseCost, nil
+	return cost, nil
 }
 
 // PreDeductTask 预扣任务费用
@@ -101,4 +120,41 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 		return preDeductAmount, fmt.Errorf("adjust task billing refund: %w", err)
 	}
 	return newEstimatedCost, nil
+}
+
+// RecalculateByTokens 根据上游返回的 total_tokens 重算费用。
+// 公式：totalTokens / 1M × output_price × ratios_product
+// 如果模型没有配置 token 单价（纯按次计费），返回 0 表示不做 token 重算。
+func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (float64, error) {
+	if totalTokens <= 0 {
+		return 0, nil
+	}
+
+	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		return 0, nil
+	}
+
+	// 需要 output_price > 0 才能做 token 重算
+	if pricing.OutputPrice <= 0 {
+		return 0, nil
+	}
+
+	// 基础费用 = tokens × 单价
+	cost := float64(totalTokens) / 1_000_000.0 * pricing.OutputPrice
+
+	// 应用租户倍率
+	cost *= pricing.TenantMultiplier
+
+	// 应用附加比率（视频输入折扣等）
+	for _, ratio := range ratios {
+		cost *= ratio
+	}
+
+	// 最低消费
+	if cost < 0.01 {
+		cost = 0.01
+	}
+
+	return cost, nil
 }
