@@ -35,7 +35,7 @@ const form = reactive({
   email: '',
   password: '',
   role: 'admin',
-  status: 1,
+  status: 'active',
 })
 
 const roleOptions = [
@@ -44,8 +44,8 @@ const roleOptions = [
 ]
 
 const statusOptions = [
-  { label: '启用', value: 1 },
-  { label: '禁用', value: 0 },
+  { label: '启用', value: 'active' },
+  { label: '禁用', value: 'disabled' },
 ]
 
 const columns: TableColumnData[] = [
@@ -67,8 +67,8 @@ const columns: TableColumnData[] = [
     dataIndex: 'status',
     width: 80,
     render({ record }) {
-      const color = record.status === 1 ? 'green' : undefined
-      const label = record.status === 1 ? '启用' : '禁用'
+      const color = record.status === 'active' ? 'green' : undefined
+      const label = record.status === 'active' ? '启用' : '禁用'
       return h(Tag, { color, size: 'small' }, () => label)
     },
   },
@@ -82,9 +82,9 @@ const columns: TableColumnData[] = [
       return h(Space, { size: 4 }, () => [
         h(Button, { size: 'small', type: 'primary', onClick: () => openEdit(record) }, () => '编辑'),
         h(Popconfirm, {
-          content: `确定${record.status === 1 ? '禁用' : '启用'}该用户？`,
+          content: `确定${record.status === 'active' ? '禁用' : '启用'}该用户？`,
           onOk: () => toggleStatus(record),
-        }, () => h(Button, { size: 'small' }, () => record.status === 1 ? '禁用' : '启用')),
+        }, () => h(Button, { size: 'small' }, () => record.status === 'active' ? '禁用' : '启用')),
         h(Button, { size: 'small', onClick: () => openResetPassword(record) }, () => '重置密码'),
         h(Popconfirm, {
           content: '确定删除该用户？此操作不可撤销。',
@@ -118,7 +118,7 @@ function openCreate() {
   form.email = ''
   form.password = ''
   form.role = 'admin'
-  form.status = 1
+  form.status = 'active'
   showModal.value = true
 }
 
@@ -161,7 +161,7 @@ async function handleSubmit(done: () => void) {
 
 async function toggleStatus(row: any) {
   try {
-    await request.put(`/admin/users/${row.id}/status`, { status: row.status === 1 ? 0 : 1 })
+    await request.put(`/admin/users/${row.id}/status`, { status: row.status === 'active' ? 'disabled' : 'active' })
     Message.success('状态更新成功')
     fetchData()
   } catch {
