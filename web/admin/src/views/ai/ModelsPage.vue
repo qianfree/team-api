@@ -28,6 +28,7 @@ const categoryOptions = [
   { label: '向量', value: 'embedding' },
   { label: '图像', value: 'image' },
   { label: '音频', value: 'audio' },
+  { label: '视频', value: 'video' },
   { label: '重排', value: 'rerank' },
 ]
 
@@ -111,6 +112,7 @@ const categoryTagColor: Record<string, string> = {
   embedding: 'green',
   image: 'orangered',
   audio: 'red',
+  video: 'purple',
   rerank: 'arcoblue',
 }
 
@@ -125,6 +127,7 @@ const categoryTagLabel: Record<string, string> = {
   embedding: '向量',
   image: '图像',
   audio: '音频',
+  video: '视频',
   rerank: '重排',
 }
 

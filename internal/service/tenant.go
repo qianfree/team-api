@@ -286,6 +286,12 @@ type (
 		GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error)
 		// UpdateIPWhitelist updates the tenant's IP whitelist configuration.
 		UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhitelistUpdateReq) (*v1.TenantIPWhitelistUpdateRes, error)
+		// TenantTaskList 租户异步任务列表
+		// owner/admin 可查看租户所有任务，member 只能查看自己的任务
+		TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq) (*v1.TenantTaskListRes, error)
+		// TenantTaskDetail 租户异步任务详情
+		// owner/admin 可查看租户所有任务，member 只能查看自己的任务
+		TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetailReq) (*v1.TenantTaskDetailRes, error)
 		// TicketCreate 创建工单
 		TicketCreate(ctx context.Context, req *v1.TenantTicketCreateReq) (*v1.TenantTicketCreateRes, error)
 		// TicketList 获取租户工单列表

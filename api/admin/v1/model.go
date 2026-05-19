@@ -7,7 +7,7 @@ type ModelListReq struct {
 	g.Meta   `path:"/models" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型列表"`
 	Page     int    `json:"page" d:"1" v:"min:1" dc:"页码"`
 	PageSize int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
-	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank"`
+	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
 	Status   string `json:"status" dc:"状态筛选：active/deprecated/offline"`
 	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 }
@@ -44,7 +44,7 @@ type ModelCreateReq struct {
 	g.Meta       `path:"/models" method:"post" mime:"json" tags:"管理后台-模型" summary:"创建模型"`
 	ModelId      string          `json:"model_id" v:"required|length:1,100#请输入模型标识|模型标识长度1-100" dc:"模型唯一标识"`
 	ModelName    string          `json:"model_name" dc:"模型显示名称"`
-	Category     string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank#请选择分类|分类必须是 chat/embedding/image/audio/rerank" dc:"模型分类"`
+	Category     string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类必须是 chat/embedding/image/audio/rerank/video" dc:"模型分类"`
 	MaxContext   int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
 	MaxOutput    int             `json:"max_output_tokens" dc:"最大输出 token 数"`
 	Capabilities map[string]bool `json:"capabilities" dc:"模型能力特性"`
@@ -62,7 +62,7 @@ type ModelUpdateReq struct {
 	g.Meta           `path:"/models/{id}" method:"put" mime:"json" tags:"管理后台-模型" summary:"更新模型"`
 	ID               int64           `json:"id" in:"path" v:"required" dc:"模型ID"`
 	ModelName        string          `json:"model_name" dc:"模型显示名称"`
-	Category         string          `json:"category" v:"in:chat,embedding,image,audio,rerank" dc:"模型分类"`
+	Category         string          `json:"category" v:"in:chat,embedding,image,audio,rerank,video" dc:"模型分类"`
 	MaxContext       int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
 	MaxOutput        int             `json:"max_output_tokens" dc:"最大输出 token 数"`
 	Capabilities     map[string]bool `json:"capabilities" dc:"模型能力特性"`

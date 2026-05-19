@@ -15,6 +15,9 @@ interface RequestLog {
 	latency_ms: number
 	first_token_ms: number
 	audit_level: string
+	task_id?: string
+	task_status?: string
+	task_completed_at?: string
 	created_at: string
 }
 
@@ -28,6 +31,7 @@ const logTotalPages = computed(() => Math.ceil(logTotal.value / logPageSize))
 const logFilter = reactive({
 	username: '',
 	request_id: '',
+	task_id: '',
 	path: '',
 	status_code: '',
 	start_date: '',
@@ -43,6 +47,24 @@ const auditLevelLabel: Record<string, string> = {
 	masked: '脱敏',
 	question_only: '仅提问',
 	none: '关闭',
+}
+
+const taskStatusLabel: Record<string, string> = {
+	SUBMITTED: '已提交',
+	QUEUED: '排队中',
+	IN_PROGRESS: '处理中',
+	SUCCESS: '成功',
+	FAILURE: '失败',
+	TIMEOUT: '超时',
+}
+
+const taskStatusBadge: Record<string, string> = {
+	SUBMITTED: 'bg-blue-100 text-blue-800',
+	QUEUED: 'bg-cyan-100 text-cyan-800',
+	IN_PROGRESS: 'bg-amber-100 text-amber-800',
+	SUCCESS: 'bg-emerald-100 text-emerald-800',
+	FAILURE: 'bg-red-100 text-red-800',
+	TIMEOUT: 'bg-orange-100 text-orange-800',
 }
 
 function formatMs(ms: number): string {
@@ -99,6 +121,7 @@ async function fetchRequestLogs() {
 		}
 		if (logFilter.username) params.username = logFilter.username
 		if (logFilter.request_id) params.request_id = logFilter.request_id
+		if (logFilter.task_id) params.task_id = logFilter.task_id
 		if (logFilter.path) params.path = logFilter.path
 		if (logFilter.status_code) params.status_code = parseInt(logFilter.status_code)
 		if (logFilter.start_date) params.start_date = logFilter.start_date
@@ -143,6 +166,7 @@ function handleFilter() {
 function handleReset() {
 	logFilter.username = ''
 	logFilter.request_id = ''
+	logFilter.task_id = ''
 	logFilter.path = ''
 	logFilter.status_code = ''
 	logFilter.start_date = ''
@@ -155,6 +179,9 @@ onMounted(() => {
 	const route = useRoute()
 	if (route.query.request_id) {
 		logFilter.request_id = String(route.query.request_id)
+	}
+	if (route.query.task_id) {
+		logFilter.task_id = String(route.query.task_id)
 	}
 	fetchRequestLogs()
 })
@@ -190,6 +217,10 @@ onMounted(() => {
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">Request ID</label>
 							<input v-model="logFilter.request_id" class="input" placeholder="请求 ID" style="width:180px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">Task ID</label>
+							<input v-model="logFilter.task_id" class="input" placeholder="任务 ID" style="width:180px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">请求路径</label>
@@ -240,6 +271,7 @@ onMounted(() => {
                 <th class="min-w-20">延迟</th>
 							  <th class="min-w-25">首Token</th>
 								<th class="min-w-30">审计级别</th>
+								<th class="min-w-25">任务</th>
 								<th class="min-w-30">时间</th>
 								<th class="min-w-20"></th>
 							</tr>
@@ -274,6 +306,10 @@ onMounted(() => {
                 </td>
 								<td>
 									<span class="text-xs text-gray-500">{{ auditLevelLabel[log.audit_level] || log.audit_level }}</span>
+								</td>
+								<td>
+									<span v-if="log.task_id" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="taskStatusBadge[log.task_status] || 'bg-gray-100 text-gray-800'">{{ taskStatusLabel[log.task_status] || log.task_status || '-' }}</span>
+									<span v-else class="text-xs text-gray-300">-</span>
 								</td>
 								<td>
 									<span class="text-xs text-gray-500">{{ log.created_at ? new Date(log.created_at).toLocaleString() : '-' }}</span>
@@ -371,6 +407,32 @@ onMounted(() => {
 											<span class="text-gray-500">User-Agent</span>
 											<p class="text-xs text-gray-700 mt-0.5 break-all">{{ detailRecord.user_agent || '-' }}</p>
 										</div>
+									</div>
+								</div>
+
+								<!-- Async Task Info -->
+								<div v-if="detailRecord.task_id" class="mb-6">
+									<h4 class="text-sm font-medium text-gray-700 mb-3 flex items-center gap-1.5">
+										<svg class="h-4 w-4 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+										异步任务
+									</h4>
+									<div class="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+										<div class="flex items-center justify-between">
+											<span class="text-gray-500">任务 ID</span>
+											<span class="font-mono text-xs">{{ detailRecord.task_id }}</span>
+										</div>
+										<div class="flex items-center justify-between">
+											<span class="text-gray-500">任务状态</span>
+											<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="taskStatusBadge[detailRecord.task_status] || 'bg-gray-100 text-gray-800'">{{ taskStatusLabel[detailRecord.task_status] || detailRecord.task_status || '-' }}</span>
+										</div>
+										<div v-if="detailRecord.task_completed_at" class="flex items-center justify-between">
+											<span class="text-gray-500">完成时间</span>
+											<span class="text-xs text-gray-700">{{ detailRecord.task_completed_at }}</span>
+										</div>
+									</div>
+									<div v-if="detailRecord.task_result" class="mt-3">
+										<h5 class="text-xs font-medium text-gray-500 mb-1">上游响应</h5>
+										<pre class="code-block text-xs max-h-[300px] overflow-auto whitespace-pre-wrap break-all">{{ formatJson(detailRecord.task_result) }}</pre>
 									</div>
 								</div>
 

@@ -48,7 +48,7 @@ type BilUsageLogsColumns struct {
 	ActualCost            string // 实际扣除费用（含折扣后）
 	RequestedModel        string // 用户请求的模型名
 	UpstreamModel         string // 上游实际模型名（模型映射后）
-	RequestType           string // 请求类型: 1=sync, 2=stream, 3=websocket
+	RequestType           string // 请求类型: 1=sync, 2=stream, 3=async, 4=websocket
 	UserAgent             string // 客户端 User-Agent
 	FirstTokenMs          string // 首 token 延迟（毫秒）
 	ServiceTier           string // 服务等级 (default/flex等)
@@ -77,6 +77,7 @@ type BilUsageLogsColumns struct {
 	UpstreamEndpoint      string // 上游实际请求路径
 	BillingSnapshot       string // 完整计费计算过程快照（JSONB）
 	ProjectId             string // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
+	TaskId                string // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
 }
 
 // bilUsageLogsColumns holds the columns for the table bil_usage_logs.
@@ -137,6 +138,7 @@ var bilUsageLogsColumns = BilUsageLogsColumns{
 	UpstreamEndpoint:      "upstream_endpoint",
 	BillingSnapshot:       "billing_snapshot",
 	ProjectId:             "project_id",
+	TaskId:                "task_id",
 }
 
 // NewBilUsageLogsDao creates and returns a new DAO object for table data access.

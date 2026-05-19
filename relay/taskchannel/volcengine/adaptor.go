@@ -134,6 +134,8 @@ func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []
 
 func (a *VolcengineVideoAdaptor) BuildRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimRight(info.ChannelMeta.BaseURL, "/")
+	// 兼容 base URL 带 /api 后缀的情况
+	baseURL = strings.TrimSuffix(baseURL, "/api")
 	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", baseURL), nil
 }
 
@@ -296,9 +298,13 @@ func (a *VolcengineVideoAdaptor) DoResponse(_ context.Context, resp *http.Respon
 
 	// 非成功状态码
 	if resp.StatusCode != http.StatusOK {
+		msg := string(body)
+		if msg == "" {
+			msg = fmt.Sprintf("upstream returned status %d", resp.StatusCode)
+		}
 		return "", body, &common.TaskError{
 			StatusCode: resp.StatusCode,
-			Message:    string(body),
+			Message:    msg,
 		}
 	}
 
@@ -320,7 +326,7 @@ func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []by
 		return nil, fmt.Errorf("volcengine: invalid task data: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
+	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/api"), data.TaskID)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -343,6 +349,13 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 
 	info := &common.TaskInfo{Data: body}
 
+	// 提取 token 用量
+	if resp.Usage.TotalTokens > 0 {
+		info.CompletionTokens = resp.Usage.CompletionTokens
+		info.TotalTokens = resp.Usage.TotalTokens
+		info.PromptTokens = resp.Usage.TotalTokens - resp.Usage.CompletionTokens
+	}
+
 	switch resp.Status {
 	case "pending", "queued":
 		info.Status = common.TaskStatusQueued
@@ -354,9 +367,6 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 		info.Status = common.TaskStatusSuccess
 		info.Progress = "100%"
 		info.ResultURL = resp.Content.VideoURL
-		// 提取上游 usage 用于按 token 计费
-		info.CompletionTokens = resp.Usage.CompletionTokens
-		info.TotalTokens = resp.Usage.TotalTokens
 	case "failed":
 		info.Status = common.TaskStatusFailure
 		info.FailReason = resp.Error.Message

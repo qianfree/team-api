@@ -54,6 +54,7 @@ const categoryLabel: Record<string, string> = {
 	embedding: '嵌入',
 	image: '图像',
 	audio: '语音',
+	video: '视频',
 	rerank: '重排',
 }
 const categoryBadgeClass: Record<string, string> = {
@@ -61,6 +62,7 @@ const categoryBadgeClass: Record<string, string> = {
 	embedding: 'badge-purple',
 	image: 'badge-warning',
 	audio: 'badge-success',
+	video: 'badge-purple',
 	rerank: 'badge-gray',
 }
 

@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrChannelUnavailable 没有可用渠道
@@ -46,6 +47,10 @@ type DataProvider interface {
 
 	// RecordAudit 异步记录请求审计日志。
 	RecordAudit(ctx context.Context, record *AuditRecord)
+
+	// UpdateTaskAudit 更新异步任务的审计记录（任务完成时调用）。
+	// 通过 task_id 查找提交阶段写入的审计记录，补充最终结果。
+	UpdateTaskAudit(ctx context.Context, record *AuditRecord)
 
 	// UpdateChannelHealth 更新渠道健康度（请求成功/失败后调用）。
 	UpdateChannelHealth(ctx context.Context, channelID int64, success bool, latencyMs float64)
@@ -145,7 +150,7 @@ type UsageRecord struct {
 	// 请求元数据
 	RequestedModel   string // 用户请求的模型名
 	UpstreamModel    string // 上游实际模型名
-	RequestType      int    // 1=sync, 2=stream, 3=websocket
+	RequestType      int    // 1=sync, 2=stream, 3=async, 4=websocket
 	UserAgent        string
 	ClientIP         string
 	FirstTokenMs     int
@@ -186,6 +191,9 @@ type UsageRecord struct {
 	// 计费快照
 	BillingSnapshot string // JSON 字符串
 	BillingSummary  string // 人类可读中文文本
+
+	// 异步任务关联
+	TaskID string // 异步任务公开ID（task_xxxxx），普通请求为空
 }
 
 // AuditRecord 请求审计日志记录
@@ -209,6 +217,13 @@ type AuditRecord struct {
 	RequestHeaders  map[string]string // 请求头（仅审计级别为 all 时记录）
 	ResponseHeaders map[string]string // 响应头（仅审计级别为 all 时记录）
 	ForwardingTrace *ForwardingTrace  // 转发路径追踪（仅管理员可见）
+
+	// 异步任务完成字段（仅 UpdateTaskAudit 时填充）
+	TaskID              string            // 异步任务公开ID，关联 tsk_model_tasks.public_task_id
+	TaskStatus          string            // SUCCESS / FAILURE
+	TaskResult          string            // 上游最终响应体
+	TaskUpstreamHeaders map[string]string // 上游最终轮询的响应头
+	TaskCompletedAt     *time.Time        // 任务到达终态的时间
 }
 
 // ModelInfo 模型信息（用于 /v1/models 端点）

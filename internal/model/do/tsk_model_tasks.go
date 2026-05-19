@@ -14,6 +14,7 @@ type TskModelTasks struct {
 	g.Meta          `orm:"table:tsk_model_tasks, do:true"`
 	Id              any         //
 	PublicTaskId    any         //
+	RequestId       any         // 任务提交时的原始请求 ID
 	Platform        any         //
 	Action          any         //
 	Status          any         //

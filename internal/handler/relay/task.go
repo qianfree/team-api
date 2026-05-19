@@ -1,21 +1,25 @@
 package relay
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/middleware"
-	"github.com/qianfree/team-api/relay/common"
+	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
 )
 
 var (
 	taskDataProvider    = task.DefaultAsyncProvider
 	taskBillingProvider = billing.NewTaskBillingProvider()
+	relayDataProvider   = relay.NewDataProvider()
 )
 
 // HandleTaskSubmit 处理异步任务提交（POST /v1/video/generations, POST /suno/submit/:action）
@@ -32,6 +36,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 		Scope:     r.GetCtxVar("ApiKeyScope").String(),
@@ -41,16 +46,37 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	// 选择渠道
 	channelMeta, err := selectTaskChannel(r, body)
 	if err != nil {
-		r.Response.WriteStatus(503, g.Map{
-			"error": g.Map{"type": "server_error", "message": err.Error()},
+		statusCode := 503
+		errType := "server_error"
+		errMsg := err.Error()
+
+		if err == relay_common.ErrTenantModelNotEnabled {
+			statusCode = 403
+			errType = "permission_denied"
+			errMsg = "当前租户未启用该模型，请联系管理员"
+		} else if err == relay_common.ErrChannelUnavailable {
+			statusCode = 503
+			errType = "server_error"
+			errMsg = "该模型暂无可用的渠道，请稍后重试或联系管理员"
+		}
+
+		r.Response.WriteStatus(statusCode, g.Map{
+			"error": g.Map{"type": errType, "message": errMsg},
 		})
 		return
 	}
+
+	// 记录任务提交审计日志（使用 capture 模式以支持异步写入）
+	capture := NewResponseCaptureWriter(r.Response.Writer)
+	rc.Writer = capture
 
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	// 异步记录审计日志
+	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
@@ -67,6 +93,7 @@ func HandleTaskFetch(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -84,6 +111,7 @@ func HandleSunoFetchBatch(r *ghttp.Request) {
 			TenantID:  middleware.GetTenantID(r.Context()),
 			UserID:    middleware.GetUserID(r.Context()),
 			ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+			ProjectID: middleware.GetProjectID(r.Context()),
 			RequestID: r.GetCtxVar("RequestId").String(),
 			Writer:    r.Response.Writer,
 		}
@@ -109,14 +137,34 @@ func extractTaskID(r *ghttp.Request) string {
 	return r.Get("task_id").String()
 }
 
-// selectTaskChannel 为异步任务选择渠道
-func selectTaskChannel(r *ghttp.Request, body []byte) (*common.ChannelMeta, error) {
-	// 复用现有的渠道调度逻辑
-	// 暂时返回一个占位符，后续集成到 scheduler
-	return &common.ChannelMeta{
-		ChannelID: 1,
-		BaseURL:   "https://api.openai.com",
-		ApiKey:    "",
+// selectTaskChannel 为异步任务选择渠道（复用实时请求的渠道调度逻辑）
+func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
+	// 从请求体提取模型名
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
+		return nil, relay_common.ErrChannelUnavailable
+	}
+
+	ctx := r.Context()
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+
+	selection, err := relayDataProvider.GetChannelForModel(ctx, tenantID, userID, req.Model, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &relay_common.ChannelMeta{
+		ChannelID:         selection.ChannelID,
+		ChannelType:       selection.ChannelType,
+		ChannelName:       selection.ChannelName,
+		BaseURL:           selection.BaseURL,
+		ApiKey:            selection.ApiKey,
+		UpstreamModelName: selection.UpstreamModelName,
+		IsModelMapped:     selection.IsModelMapped,
+		Settings:          selection.Settings,
 	}, nil
 }
 
@@ -134,6 +182,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 		Scope:     r.GetCtxVar("ApiKeyScope").String(),
@@ -148,10 +197,15 @@ func HandleMjSubmit(r *ghttp.Request) {
 		return
 	}
 
+	capture := NewResponseCaptureWriter(r.Response.Writer)
+	rc.Writer = capture
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleAliImageSubmit 处理异步图片生成任务提交（POST /v1/images/generations/async）
@@ -205,6 +259,7 @@ func HandleMjFetch(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -229,6 +284,7 @@ func HandleMjImage(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -246,4 +302,28 @@ func extractMjTaskID(r *ghttp.Request) string {
 		}
 	}
 	return ""
+}
+
+// recordTaskSubmitAudit 记录异步任务提交的审计日志
+func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
+	relayDataProvider.RecordAudit(context.Background(), &relay_common.AuditRecord{
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		Method:          "POST",
+		Path:            r.URL.Path,
+		QueryParams:     r.URL.RawQuery,
+		StatusCode:      capture.StatusCode(),
+		ClientIP:        rc.ClientIP,
+		UserAgent:       r.Header.Get("User-Agent"),
+		RequestBody:     string(body),
+		ResponseBody:    capture.Body(),
+		IsStream:        false,
+		RequestHeaders:  captureRequestHeaders(r),
+		ResponseHeaders: capture.ResponseHeaders(),
+		TaskID:          rc.TaskID,
+		TaskStatus:      "SUBMITTED",
+	})
 }

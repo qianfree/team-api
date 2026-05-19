@@ -66,13 +66,15 @@ const statusLabel: Record<string, string> = {
 const requestTypeBadge: Record<number, string> = {
 	1: 'bg-gray-100 text-gray-800',
 	2: 'bg-blue-100 text-blue-800',
-	3: 'bg-violet-100 text-violet-800',
+	3: 'bg-orange-100 text-orange-800',
+		4: 'bg-violet-100 text-violet-800',
 }
 
 const requestTypeLabel: Record<number, string> = {
 	1: '同步',
 	2: '流式',
-	3: 'WebSocket',
+	3: '异步',
+		4: 'WebSocket',
 }
 
 const billingModeBadge: Record<string, string> = {
@@ -93,6 +95,7 @@ const billingSourceLabel: Record<string, string> = {
 	tenant: '租户定价',
 	custom: '自定义',
 	plan: '套餐价',
+	task: '异步任务',
 }
 
 async function fetchLogs() {
@@ -167,8 +170,11 @@ function copyText(text: string) {
 	navigator.clipboard.writeText(text).then(() => {}).catch(() => {})
 }
 
-function viewAuditLog(requestId: string) {
-	router.push({ name: 'TenantRequestAuditLogs', query: { request_id: requestId } })
+function viewAuditLog(requestId: string, taskId?: string) {
+	const query: Record<string, string> = {}
+	if (taskId) query.task_id = taskId
+	else query.request_id = requestId
+	router.push({ name: 'TenantRequestAuditLogs', query })
 }
 
 function hasCacheTokens(log: any): boolean {
@@ -282,6 +288,7 @@ onMounted(() => {
 								<option value="">全部</option>
 								<option value="1">同步</option>
 								<option value="2">流式</option>
+								<option value="3">异步</option>
 							</select>
 						</div>
 						<div class="ml-auto flex items-center gap-2">
@@ -592,9 +599,16 @@ onMounted(() => {
 								<button class="text-gray-400 hover:text-primary-500" @click.stop="copyText(detailLog.request_id)">
 									<Icon name="copy" size="xs" />
 								</button>
-								<button class="text-xs text-primary-500 hover:text-primary-700 ml-1" @click.stop="viewAuditLog(detailLog.request_id)">
+								<button class="text-xs text-primary-500 hover:text-primary-700 ml-1" @click.stop="viewAuditLog(detailLog.request_id, detailLog.task_id || undefined)">
 									查看审计日志
 								</button>
+							</span>
+						</div>
+						<div v-if="detailLog.task_id" class="flex justify-between">
+							<span class="text-gray-500">关联任务</span>
+							<span class="font-mono text-xs flex items-center gap-1">
+								{{ detailLog.task_id }}
+								<button class="text-xs text-primary-500 hover:text-primary-700 ml-1" @click.stop="$router.push({ path: '/tenant/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</button>
 							</span>
 						</div>
 						<div class="flex justify-between">

@@ -60,9 +60,10 @@ type TaskInfo struct {
 	SubTasks   []SubTask // 子任务结果（如多图/多视频场景）
 	ActualCost float64   // 上游返回的实际费用（0 表示未提供，使用预扣金额）
 
-	// 上游 usage 信息，用于按 token 重算费用
-	CompletionTokens int // 上游返回的 completion tokens
-	TotalTokens      int // 上游返回的 total tokens
+	// Token 用量（部分异步任务上游会返回，如火山引擎视频模型）
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
 }
 
 // TaskStatusEnum 任务状态枚举
