@@ -21,60 +21,70 @@ type AudRequestLogsDao struct {
 
 // AudRequestLogsColumns defines and stores column names for the table aud_request_logs.
 type AudRequestLogsColumns struct {
-	Id                 string // 主键ID
-	TenantId           string // 租户ID
-	UserId             string // 用户ID
-	ApiKeyId           string // 使用的 API Key ID
-	RequestId          string // 请求唯一ID（关联全链路追踪）
-	Method             string // HTTP 方法（GET/POST/PUT/DELETE）
-	Path               string // 请求路径
-	QueryParams        string // 查询参数（URL Query String）
-	StatusCode         string // HTTP 响应状态码
-	ClientIp           string // 客户端 IP
-	UserAgent          string // 客户端 User-Agent
-	RequestBody        string // 请求体（敏感字段脱敏后存储）
-	ResponseBody       string // 响应体（截断后存储）
-	LatencyMs          string // 请求延迟（毫秒）
-	AuditLevel         string // 审计级别：full（完整记录）/ masked（脱敏记录）/ question_only（仅记录提问）/ none（不记录）
-	CreatedAt          string // 创建时间
-	UpdatedAt          string // 更新时间
-	TenantRequestBody  string // 租户级请求体（按租户审计级别处理）
-	TenantResponseBody string // 租户级响应体（按租户审计级别处理）
-	TenantAuditLevel   string // 租户审计级别：full/full_text/masked/question_only/none
-	ProjectId          string // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
-	FirstTokenMs       string // 首个 Token 出现的用时（毫秒），仅流式请求有值
-	RequestHeaders     string // 请求头信息（仅审计级别为 all 时记录，管理后台调试用）
-	ResponseHeaders    string // 响应头信息（仅审计级别为 all 时记录，管理后台调试用）
-	ForwardingTrace    string // 请求转发路径追踪（仅管理员可见）
+	Id                  string // 主键ID
+	TenantId            string // 租户ID
+	UserId              string // 用户ID
+	ApiKeyId            string // 使用的 API Key ID
+	RequestId           string // 请求唯一ID（关联全链路追踪）
+	Method              string // HTTP 方法（GET/POST/PUT/DELETE）
+	Path                string // 请求路径
+	QueryParams         string // 查询参数（URL Query String）
+	StatusCode          string // HTTP 响应状态码
+	ClientIp            string // 客户端 IP
+	UserAgent           string // 客户端 User-Agent
+	RequestBody         string // 请求体（敏感字段脱敏后存储）
+	ResponseBody        string // 响应体（截断后存储）
+	LatencyMs           string // 请求延迟（毫秒）
+	AuditLevel          string // 审计级别：full（完整记录）/ masked（脱敏记录）/ question_only（仅记录提问）/ none（不记录）
+	CreatedAt           string // 创建时间
+	UpdatedAt           string // 更新时间
+	TenantRequestBody   string // 租户级请求体（按租户审计级别处理）
+	TenantResponseBody  string // 租户级响应体（按租户审计级别处理）
+	TenantAuditLevel    string // 租户审计级别：full/full_text/masked/question_only/none
+	ProjectId           string // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
+	FirstTokenMs        string // 首个 Token 出现的用时（毫秒），仅流式请求有值
+	RequestHeaders      string // 请求头信息（仅审计级别为 all 时记录，管理后台调试用）
+	ResponseHeaders     string // 响应头信息（仅审计级别为 all 时记录，管理后台调试用）
+	ForwardingTrace     string // 请求转发路径追踪（仅管理员可见）
+	TaskId              string // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id
+	TaskStatus          string // 异步任务终态：SUCCESS / FAILURE
+	TaskResult          string // 异步任务完成时上游返回的原始响应体
+	TaskUpstreamHeaders string // 异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）
+	TaskCompletedAt     string // 异步任务达到终态的时间
 }
 
 // audRequestLogsColumns holds the columns for the table aud_request_logs.
 var audRequestLogsColumns = AudRequestLogsColumns{
-	Id:                 "id",
-	TenantId:           "tenant_id",
-	UserId:             "user_id",
-	ApiKeyId:           "api_key_id",
-	RequestId:          "request_id",
-	Method:             "method",
-	Path:               "path",
-	QueryParams:        "query_params",
-	StatusCode:         "status_code",
-	ClientIp:           "client_ip",
-	UserAgent:          "user_agent",
-	RequestBody:        "request_body",
-	ResponseBody:       "response_body",
-	LatencyMs:          "latency_ms",
-	AuditLevel:         "audit_level",
-	CreatedAt:          "created_at",
-	UpdatedAt:          "updated_at",
-	TenantRequestBody:  "tenant_request_body",
-	TenantResponseBody: "tenant_response_body",
-	TenantAuditLevel:   "tenant_audit_level",
-	ProjectId:          "project_id",
-	FirstTokenMs:       "first_token_ms",
-	RequestHeaders:     "request_headers",
-	ResponseHeaders:    "response_headers",
-	ForwardingTrace:    "forwarding_trace",
+	Id:                  "id",
+	TenantId:            "tenant_id",
+	UserId:              "user_id",
+	ApiKeyId:            "api_key_id",
+	RequestId:           "request_id",
+	Method:              "method",
+	Path:                "path",
+	QueryParams:         "query_params",
+	StatusCode:          "status_code",
+	ClientIp:            "client_ip",
+	UserAgent:           "user_agent",
+	RequestBody:         "request_body",
+	ResponseBody:        "response_body",
+	LatencyMs:           "latency_ms",
+	AuditLevel:          "audit_level",
+	CreatedAt:           "created_at",
+	UpdatedAt:           "updated_at",
+	TenantRequestBody:   "tenant_request_body",
+	TenantResponseBody:  "tenant_response_body",
+	TenantAuditLevel:    "tenant_audit_level",
+	ProjectId:           "project_id",
+	FirstTokenMs:        "first_token_ms",
+	RequestHeaders:      "request_headers",
+	ResponseHeaders:     "response_headers",
+	ForwardingTrace:     "forwarding_trace",
+	TaskId:              "task_id",
+	TaskStatus:          "task_status",
+	TaskResult:          "task_result",
+	TaskUpstreamHeaders: "task_upstream_headers",
+	TaskCompletedAt:     "task_completed_at",
 }
 
 // NewAudRequestLogsDao creates and returns a new DAO object for table data access.

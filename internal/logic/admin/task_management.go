@@ -23,6 +23,9 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 	if req.Platform != "" {
 		m = m.Where("platform", req.Platform)
 	}
+	if req.PublicTaskID != "" {
+		m = m.Where("public_task_id", req.PublicTaskID)
+	}
 
 	var tasks []struct {
 		Id              int64       `json:"id"`

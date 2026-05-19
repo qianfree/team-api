@@ -76,8 +76,8 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 
 	errorRate := v1.PersonalErrorRate{}
 	reqTypeItems := []v1.PersonalReqTypeItem{}
-	reqTypeLabels := map[int]string{1: "同步", 2: "流式", 3: "WebSocket"}
-	reqTypeNames := map[int]string{1: "sync", 2: "stream", 3: "websocket"}
+	reqTypeLabels := map[int]string{1: "同步", 2: "流式", 3: "异步", 4: "WebSocket"}
+	reqTypeNames := map[int]string{1: "sync", 2: "stream", 3: "async", 4: "websocket"}
 	totalReqs := 0
 	for _, r := range reqTypeRows {
 		errorRate.Total += r.Total

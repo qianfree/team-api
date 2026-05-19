@@ -53,6 +53,12 @@ type submitResponse struct {
 	ID string `json:"id"`
 }
 
+// taskUsage 火山引擎任务 usage
+type taskUsage struct {
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // taskResponse 查询任务响应
 type taskResponse struct {
 	ID      string `json:"id"`
@@ -61,9 +67,10 @@ type taskResponse struct {
 	Content struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Seed     int    `json:"seed"`
-	Duration int    `json:"duration"`
-	Ratio    string `json:"ratio"`
+	Usage    taskUsage `json:"usage"`
+	Seed     int       `json:"seed"`
+	Duration int       `json:"duration"`
+	Ratio    string    `json:"ratio"`
 	Error    struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
@@ -329,6 +336,13 @@ func (a *VolcengineVideoAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo,
 	}
 
 	info := &common.TaskInfo{Data: body}
+
+	// 提取 token 用量
+	if resp.Usage.TotalTokens > 0 {
+		info.CompletionTokens = resp.Usage.CompletionTokens
+		info.TotalTokens = resp.Usage.TotalTokens
+		info.PromptTokens = resp.Usage.TotalTokens - resp.Usage.CompletionTokens
+	}
 
 	switch resp.Status {
 	case "pending", "queued":

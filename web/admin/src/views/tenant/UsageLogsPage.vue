@@ -37,7 +37,8 @@ const requestTypeOptions = [
 	{ label: '全部类型', value: '' },
 	{ label: '同步', value: '1' },
 	{ label: '流式', value: '2' },
-	{ label: 'WebSocket', value: '3' },
+	{ label: '异步', value: '3' },
+	{ label: 'WebSocket', value: '4' },
 ]
 
 const statusTagColor: Record<string, string> = {
@@ -61,13 +62,15 @@ const statusLabel: Record<string, string> = {
 const requestTypeLabel: Record<string, string> = {
 	'1': '同步',
 	'2': '流式',
-	'3': 'WebSocket',
+	'3': '异步',
+	'4': 'WebSocket',
 }
 
 const requestTypeColor: Record<string, string> = {
 	'1': 'gray',
 	'2': 'blue',
-	'3': 'purple',
+	'3': 'orange',
+	'4': 'purple',
 }
 
 const billingModeLabel: Record<string, string> = {
@@ -136,8 +139,11 @@ function copyText(text: string) {
 	}).catch(() => {})
 }
 
-function viewAuditLog(requestId: string) {
-	router.push({ name: 'AdminRequestAuditLogs', query: { request_id: requestId } })
+function viewAuditLog(requestId: string, taskId?: string) {
+	const query: Record<string, string> = {}
+	if (taskId) query.task_id = taskId
+	else query.request_id = requestId
+	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
 function openDetail(record: any) {
@@ -443,7 +449,14 @@ const { exporting, exportFile } = useExport({
 							<span class="detail-value mono-text">
 								{{ detailLog.request_id }}
 								<a-link class="copy-btn" @click="copyText(detailLog.request_id)">复制</a-link>
-								<a-link class="copy-btn" @click="viewAuditLog(detailLog.request_id)">查看审计日志</a-link>
+								<a-link class="copy-btn" @click="viewAuditLog(detailLog.request_id, detailLog.task_id || undefined)">查看审计日志</a-link>
+							</span>
+						</div>
+						<div v-if="detailLog.task_id" class="detail-item">
+							<span class="detail-label">关联任务</span>
+							<span class="detail-value mono-text">
+								{{ detailLog.task_id }}
+								<a-link class="copy-btn" @click="$router.push({ path: '/admin/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</a-link>
 							</span>
 						</div>
 						<div class="detail-item">

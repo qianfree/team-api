@@ -120,6 +120,12 @@ const tenantRoutes: RouteRecordRaw[] = [
 				component: () => import('@/views/service/RequestAuditLogsPage.vue'),
 				meta: { title: '请求审计日志', icon: 'clipboard', sort: 34, roles: ['owner', 'admin'] },
 			},
+			{
+				path: 'task-logs',
+				name: 'TenantTaskLogs',
+				component: () => import('@/views/service/TaskLogsPage.vue'),
+				meta: { title: '任务日志', icon: 'clock', sort: 35, roles: ['owner', 'admin', 'member'] },
+			},
 			// 财务 (40-49)
 			{
 				path: 'wallet',
