@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   Tag, Button, Space, Popconfirm, Message,
 } from '@arco-design/web-vue'
@@ -19,6 +20,7 @@ const pagination = reactive({
 
 const filterStatus = ref<string | null>(null)
 const filterPlatform = ref<string | null>(null)
+const filterTaskId = ref('')
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -148,6 +150,7 @@ async function fetchData() {
     }
     if (filterStatus.value) params.status = filterStatus.value
     if (filterPlatform.value) params.platform = filterPlatform.value
+    if (filterTaskId.value) params.public_task_id = filterTaskId.value
     const res: any = await request.get('/admin/tasks', { params })
     const raw = res.data?.data
     data.value = (raw?.list || []).filter(Boolean)
@@ -168,6 +171,7 @@ function handleFilter() {
 function resetFilter() {
   filterStatus.value = null
   filterPlatform.value = null
+  filterTaskId.value = ''
   pagination.current = 1
   fetchData()
 }
@@ -205,6 +209,10 @@ async function openDetail(row: any) {
 }
 
 onMounted(() => {
+  const route = useRoute()
+  if (route.query.public_task_id) {
+    filterTaskId.value = String(route.query.public_task_id)
+  }
   fetchData()
 })
 </script>
@@ -216,6 +224,13 @@ onMounted(() => {
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
       <ASpace wrap>
+        <AInput
+          v-model="filterTaskId"
+          placeholder="任务ID"
+          allow-clear
+          style="width: 200px"
+          @keydown.enter="handleFilter"
+        />
         <ASelect
           v-model="filterStatus"
           :options="statusOptions"

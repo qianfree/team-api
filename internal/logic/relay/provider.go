@@ -366,6 +366,7 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 
 		BillingSnapshot: jsonNullIfEmpty(record.BillingSnapshot),
 		BillingSummary:  record.BillingSummary,
+		TaskId:          record.TaskID,
 	}
 }
 
@@ -448,11 +449,77 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			"response_headers":     responseHeadersJSON,
 			"forwarding_trace":     forwardingTraceJSON,
 		}
+
+		// 异步任务字段
+		if record.TaskID != "" {
+			insertData["task_id"] = record.TaskID
+		}
+		if record.TaskStatus != "" {
+			insertData["task_status"] = record.TaskStatus
+		}
+
 		_, insertErr := dao.AudRequestLogs.Ctx(bgCtx).Data(insertData).Insert()
 		if insertErr != nil {
 			g.Log().Errorf(bgCtx,
 				"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
 				record.RequestID, record.TenantID, record.ApiKeyID, record.Path, record.StatusCode, insertErr)
+		}
+	}()
+}
+
+// UpdateTaskAudit implements DataProvider.UpdateTaskAudit
+// 异步任务完成时更新提交阶段写入的审计记录
+func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.AuditRecord) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.Log().Errorf(context.Background(),
+					"update task audit panic: task_id=%s panic=%v",
+					record.TaskID, r)
+			}
+		}()
+
+		if record.TaskID == "" {
+			return
+		}
+
+		bgCtx := context.Background()
+		globalLevel, tenantLevel := lcommon.GetAuditLevels(bgCtx, record.TenantID)
+
+		// 按审计级别处理任务结果
+		taskResult := record.TaskResult
+		if globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone {
+			taskResult = ""
+		} else if globalLevel == lcommon.AuditLevelMasked {
+			taskResult = lcommon.MaskSensitiveData(taskResult)
+		}
+		taskResult = truncateBody(taskResult, 65536)
+
+		// 上游响应头仅在 full 级别记录
+		upstreamHeadersJSON := "null"
+		if globalLevel == lcommon.AuditLevelFull && record.TaskUpstreamHeaders != nil {
+			b, _ := json.Marshal(record.TaskUpstreamHeaders)
+			upstreamHeadersJSON = string(b)
+		}
+
+		updateData := g.Map{
+			"task_status":           record.TaskStatus,
+			"task_result":           taskResult,
+			"task_upstream_headers": upstreamHeadersJSON,
+			"updated_at":            time.Now(),
+		}
+		if record.TaskCompletedAt != nil {
+			updateData["task_completed_at"] = record.TaskCompletedAt
+		}
+
+		_, err := dao.AudRequestLogs.Ctx(bgCtx).
+			Where("task_id", record.TaskID).
+			Data(updateData).
+			Update()
+		if err != nil {
+			g.Log().Errorf(bgCtx,
+				"update task audit failed: task_id=%s err=%v",
+				record.TaskID, err)
 		}
 	}()
 }

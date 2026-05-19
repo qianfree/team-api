@@ -25,6 +25,7 @@ var DefaultAsyncProvider = &AsyncProvider{}
 func (p *AsyncProvider) CreateTask(ctx context.Context, task *common.AsyncTask) error {
 	_, err := dao.TskModelTasks.Ctx(ctx).Insert(map[string]any{
 		"public_task_id":    task.PublicTaskID,
+		"request_id":        task.RequestID,
 		"platform":          task.Platform,
 		"action":            task.Action,
 		"status":            task.Status,
@@ -105,6 +106,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 	var row struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
+		RequestId       string          `json:"request_id"`
 		Platform        string          `json:"platform"`
 		Action          string          `json:"action"`
 		Status          string          `json:"status"`
@@ -140,6 +142,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 	return &common.AsyncTask{
 		ID:              row.ID,
 		PublicTaskID:    row.PublicTaskID,
+		RequestID:       row.RequestId,
 		Platform:        row.Platform,
 		Action:          row.Action,
 		Status:          row.Status,
@@ -170,6 +173,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 	var row struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
+		RequestId       string          `json:"request_id"`
 		Platform        string          `json:"platform"`
 		Action          string          `json:"action"`
 		Status          string          `json:"status"`
@@ -205,6 +209,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 	return &common.AsyncTask{
 		ID:              row.ID,
 		PublicTaskID:    row.PublicTaskID,
+		RequestID:       row.RequestId,
 		Platform:        row.Platform,
 		Action:          row.Action,
 		Status:          row.Status,
@@ -234,6 +239,7 @@ func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*
 	var rows []struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
+		RequestId       string          `json:"request_id"`
 		Platform        string          `json:"platform"`
 		Action          string          `json:"action"`
 		Status          string          `json:"status"`
@@ -266,6 +272,7 @@ func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*
 		tasks = append(tasks, &common.AsyncTask{
 			ID:              r.ID,
 			PublicTaskID:    r.PublicTaskID,
+			RequestID:       r.RequestId,
 			Platform:        r.Platform,
 			Action:          r.Action,
 			Status:          r.Status,
@@ -294,6 +301,7 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 	var rows []struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
+		RequestId       string          `json:"request_id"`
 		Platform        string          `json:"platform"`
 		Status          string          `json:"status"`
 		TenantID        int64           `json:"tenant_id"`
@@ -320,6 +328,7 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 		tasks = append(tasks, &common.AsyncTask{
 			ID:              r.ID,
 			PublicTaskID:    r.PublicTaskID,
+			RequestID:       r.RequestId,
 			Platform:        r.Platform,
 			Status:          r.Status,
 			TenantID:        r.TenantID,

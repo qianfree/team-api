@@ -37,6 +37,7 @@ type TaskDataProvider interface {
 type AsyncTask struct {
 	ID           int64  `json:"id"`
 	PublicTaskID string `json:"public_task_id"` // task_xxxxx
+	RequestID    string `json:"request_id"`     // 原始请求 ID（req_xxxxx）
 	Platform     string `json:"platform"`       // sora, kling, suno
 	Action       string `json:"action"`         // generate, music, lyrics
 	Status       string `json:"status"`
@@ -54,6 +55,10 @@ type AsyncTask struct {
 	PreDeductAmount float64 `json:"pre_deduct_amount"`
 	ActualCost      float64 `json:"actual_cost"`
 	BillingSettled  bool    `json:"billing_settled"`
+
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 
 	ResultURL   string          `json:"result_url,omitempty"`
 	Data        json.RawMessage `json:"data,omitempty"`         // 上游原始响应

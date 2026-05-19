@@ -12,7 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/middleware"
-	"github.com/qianfree/team-api/relay/common"
+	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
 )
 
@@ -36,6 +36,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 		Scope:     r.GetCtxVar("ApiKeyScope").String(),
@@ -49,11 +50,11 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		errType := "server_error"
 		errMsg := err.Error()
 
-		if err == common.ErrTenantModelNotEnabled {
+		if err == relay_common.ErrTenantModelNotEnabled {
 			statusCode = 403
 			errType = "permission_denied"
 			errMsg = "当前租户未启用该模型，请联系管理员"
-		} else if err == common.ErrChannelUnavailable {
+		} else if err == relay_common.ErrChannelUnavailable {
 			statusCode = 503
 			errType = "server_error"
 			errMsg = "该模型暂无可用的渠道，请稍后重试或联系管理员"
@@ -75,30 +76,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	)
 
 	// 异步记录审计日志
-	tenantID := rc.TenantID
-	userID := rc.UserID
-	apiKeyID := rc.ApiKeyID
-	requestID := rc.RequestID
-	path := r.URL.Path
-	clientIP := rc.ClientIP
-	userAgent := r.Header.Get("User-Agent")
-	statusCode := capture.StatusCode()
-	responseBody := capture.Body()
-	go func() {
-		relayDataProvider.RecordAudit(context.Background(), &common.AuditRecord{
-			TenantID:     tenantID,
-			UserID:       userID,
-			ApiKeyID:     apiKeyID,
-			RequestID:    requestID,
-			Method:       "POST",
-			Path:         path,
-			StatusCode:   statusCode,
-			ClientIP:     clientIP,
-			UserAgent:    userAgent,
-			RequestBody:  string(body),
-			ResponseBody: responseBody,
-		})
-	}()
+	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleTaskFetch 处理异步任务查询（GET /v1/video/generations/:id, GET /suno/fetch/:id）
@@ -115,6 +93,7 @@ func HandleTaskFetch(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -132,6 +111,7 @@ func HandleSunoFetchBatch(r *ghttp.Request) {
 			TenantID:  middleware.GetTenantID(r.Context()),
 			UserID:    middleware.GetUserID(r.Context()),
 			ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+			ProjectID: middleware.GetProjectID(r.Context()),
 			RequestID: r.GetCtxVar("RequestId").String(),
 			Writer:    r.Response.Writer,
 		}
@@ -158,13 +138,13 @@ func extractTaskID(r *ghttp.Request) string {
 }
 
 // selectTaskChannel 为异步任务选择渠道（复用实时请求的渠道调度逻辑）
-func selectTaskChannel(r *ghttp.Request, body []byte) (*common.ChannelMeta, error) {
+func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
 	// 从请求体提取模型名
 	var req struct {
 		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
-		return nil, common.ErrChannelUnavailable
+		return nil, relay_common.ErrChannelUnavailable
 	}
 
 	ctx := r.Context()
@@ -176,7 +156,7 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*common.ChannelMeta, erro
 		return nil, err
 	}
 
-	return &common.ChannelMeta{
+	return &relay_common.ChannelMeta{
 		ChannelID:         selection.ChannelID,
 		ChannelType:       selection.ChannelType,
 		ChannelName:       selection.ChannelName,
@@ -202,6 +182,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 		Scope:     r.GetCtxVar("ApiKeyScope").String(),
@@ -216,10 +197,15 @@ func HandleMjSubmit(r *ghttp.Request) {
 		return
 	}
 
+	capture := NewResponseCaptureWriter(r.Response.Writer)
+	rc.Writer = capture
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // HandleMjFetch 处理 Midjourney 任务查询（GET /mj/task/:id/fetch）
@@ -239,6 +225,7 @@ func HandleMjFetch(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -263,6 +250,7 @@ func HandleMjImage(r *ghttp.Request) {
 		TenantID:  middleware.GetTenantID(r.Context()),
 		UserID:    middleware.GetUserID(r.Context()),
 		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
+		ProjectID: middleware.GetProjectID(r.Context()),
 		RequestID: r.GetCtxVar("RequestId").String(),
 		Writer:    r.Response.Writer,
 	}
@@ -280,4 +268,28 @@ func extractMjTaskID(r *ghttp.Request) string {
 		}
 	}
 	return ""
+}
+
+// recordTaskSubmitAudit 记录异步任务提交的审计日志
+func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext, capture *ResponseCaptureWriter, body []byte) {
+	relayDataProvider.RecordAudit(context.Background(), &relay_common.AuditRecord{
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		Method:          "POST",
+		Path:            r.URL.Path,
+		QueryParams:     r.URL.RawQuery,
+		StatusCode:      capture.StatusCode(),
+		ClientIP:        rc.ClientIP,
+		UserAgent:       r.Header.Get("User-Agent"),
+		RequestBody:     string(body),
+		ResponseBody:    capture.Body(),
+		IsStream:        false,
+		RequestHeaders:  captureRequestHeaders(r),
+		ResponseHeaders: capture.ResponseHeaders(),
+		TaskID:          rc.TaskID,
+		TaskStatus:      "SUBMITTED",
+	})
 }

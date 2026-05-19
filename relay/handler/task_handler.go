@@ -26,6 +26,8 @@ type TaskRelayContext struct {
 	TenantID  int64
 	UserID    int64
 	ApiKeyID  int64
+	ProjectID int64
+	TaskID    string // 由 HandleTaskSubmit 在创建任务后设置
 	RequestID string
 	Writer    http.ResponseWriter
 	Scope     string
@@ -167,6 +169,7 @@ func HandleTaskSubmit(
 
 	task := &common.AsyncTask{
 		PublicTaskID:    publicTaskID,
+		RequestID:       rc.RequestID,
 		Platform:        string(platform),
 		Action:          "generate",
 		Status:          "SUBMITTED",
@@ -188,6 +191,9 @@ func HandleTaskSubmit(
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "create task record failed: "+err.Error(), "")
 		return
 	}
+
+	// 设置 TaskID 供外层审计使用
+	rc.TaskID = publicTaskID
 
 	// 11. 返回响应
 	respBody := map[string]any{

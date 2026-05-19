@@ -23,6 +23,7 @@ type TskModelTasksDao struct {
 type TskModelTasksColumns struct {
 	Id              string //
 	PublicTaskId    string //
+	RequestId       string //
 	Platform        string //
 	Action          string //
 	Status          string //
@@ -51,6 +52,7 @@ type TskModelTasksColumns struct {
 var tskModelTasksColumns = TskModelTasksColumns{
 	Id:              "id",
 	PublicTaskId:    "public_task_id",
+	RequestId:       "request_id",
 	Platform:        "platform",
 	Action:          "action",
 	Status:          "status",

@@ -251,6 +251,10 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		conditions = append(conditions, "a.request_id = ?")
 		args = append(args, req.RequestId)
 	}
+	if req.TaskId != "" {
+		conditions = append(conditions, "a.task_id = ?")
+		args = append(args, req.TaskId)
+	}
 	if req.Method != "" {
 		conditions = append(conditions, "a.method = ?")
 		args = append(args, req.Method)

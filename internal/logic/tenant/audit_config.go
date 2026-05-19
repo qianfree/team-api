@@ -173,6 +173,10 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 		conditions = append(conditions, "a.request_id = ?")
 		args = append(args, req.RequestId)
 	}
+	if req.TaskId != "" {
+		conditions = append(conditions, "a.task_id = ?")
+		args = append(args, req.TaskId)
+	}
 	if req.Path != "" {
 		conditions = append(conditions, "a.path LIKE ?")
 		args = append(args, "%"+req.Path+"%")
@@ -204,7 +208,7 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 	}
 
 	dataSQL := fmt.Sprintf(
-		`SELECT a.id, a.request_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.user_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.tenant_audit_level AS audit_level, a.created_at
+		`SELECT a.id, a.request_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.user_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.tenant_audit_level AS audit_level, a.task_id, a.task_status, a.task_completed_at, a.created_at
 		 FROM %s WHERE %s ORDER BY a.created_at DESC LIMIT %d OFFSET %d`,
 		fromClause, where, pageSize, (page-1)*pageSize,
 	)
@@ -263,5 +267,7 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 	// 请求头/响应头仅管理后台可见，租户不可见
 	delete(detail, "request_headers")
 	delete(detail, "response_headers")
+	// 异步任务上游响应头仅管理后台可见
+	delete(detail, "task_upstream_headers")
 	return &v1.TenantRequestAuditLogDetailRes{Data: detail}, nil
 }

@@ -39,7 +39,7 @@ type BilUsageLogs struct {
 	ActualCost            any         // 实际扣除费用（含折扣后）
 	RequestedModel        any         // 用户请求的模型名
 	UpstreamModel         any         // 上游实际模型名（模型映射后）
-	RequestType           any         // 请求类型: 1=sync, 2=stream, 3=websocket
+	RequestType           any         // 请求类型: 1=sync, 2=stream, 3=async, 4=websocket
 	UserAgent             any         // 客户端 User-Agent
 	FirstTokenMs          any         // 首 token 延迟（毫秒）
 	ServiceTier           any         // 服务等级 (default/flex等)
@@ -68,4 +68,5 @@ type BilUsageLogs struct {
 	UpstreamEndpoint      any         // 上游实际请求路径
 	BillingSnapshot       any         // 完整计费计算过程快照（JSONB）
 	ProjectId             any         // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
+	TaskId                any         // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
 }

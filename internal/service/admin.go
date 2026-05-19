@@ -202,7 +202,7 @@ type (
 		CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.ModelCreateRes, error)
 		// UpdateModel 更新模型（含弃用状态管理）
 		UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error)
-		// DeleteModel 删除模型（同时删除定价记录）
+		// DeleteModel 删除模型（同时删除定价记录和租户分配记录）
 		DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error)
 		// ListModelPricing 模型定价列表（模型定价页面专用）
 		ListModelPricing(ctx context.Context, req *v1.PricingListReq) (*v1.PricingListRes, error)
