@@ -252,9 +252,10 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 	return nil, nil
 }
 
-// DeleteModel 删除模型（同时删除定价记录）
+// DeleteModel 删除模型（同时删除定价记录和租户分配记录）
 func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error) {
 	_, _ = dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete()
+	_, _ = dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete()
 	_, err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err

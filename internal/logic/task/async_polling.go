@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/taskchannel"
@@ -102,6 +104,9 @@ func handleTimedOutTasks(ctx context.Context) {
 			}
 		}
 		g.Log().Infof(ctx, "poll: task %s timed out", t.PublicTaskID)
+
+		// 更新审计记录
+		recordTaskCompletionAudit(t, "TIMEOUT", "", nil)
 	}
 }
 
@@ -203,6 +208,12 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		if task.StartTime == nil {
 			task.StartTime = &now
 		}
+		// 保留上游返回的 token 用量
+		if taskInfo.TotalTokens > 0 {
+			task.CompletionTokens = taskInfo.CompletionTokens
+			task.PromptTokens = taskInfo.PromptTokens
+			task.TotalTokens = taskInfo.TotalTokens
+		}
 	}
 
 	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, task, oldStatus); err != nil {
@@ -244,6 +255,12 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		}
 		g.Log().Infof(ctx, "poll: task %s completed", task.PublicTaskID)
 
+		// 记录用量日志
+		recordTaskUsage(task, true, "")
+
+		// 更新审计记录
+		recordTaskCompletionAudit(task, "SUCCESS", string(body), upstreamRespHeaders(resp))
+
 	} else if taskInfo.Status == common.TaskStatusFailure {
 		// 退还预扣费用
 		if task.PreDeductAmount > 0 && !task.BillingSettled {
@@ -256,5 +273,76 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			}
 		}
 		g.Log().Infof(ctx, "poll: task %s failed: %s", task.PublicTaskID, task.FailReason)
+
+		// 记录用量日志
+		recordTaskUsage(task, false, task.FailReason)
+
+		// 更新审计记录
+		recordTaskCompletionAudit(task, "FAILURE", string(body), upstreamRespHeaders(resp))
 	}
+}
+
+// recordTaskUsage 异步记录视频/音乐等异步任务的用量日志
+func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string) {
+	latencyMs := 0
+	if task.SubmitTime != nil && task.FinishTime != nil {
+		latencyMs = int(task.FinishTime.Sub(*task.SubmitTime).Milliseconds())
+	}
+
+	status := "success"
+	if !success {
+		status = "error"
+	}
+
+	relay.NewDataProvider().RecordUsage(context.Background(), &common.UsageRecord{
+		TenantID:         task.TenantID,
+		UserID:           task.UserID,
+		ApiKeyID:         task.ApiKeyID,
+		ChannelID:        task.ChannelID,
+		ModelName:        task.ModelName,
+		RelayMode:        int(constant.RelayModeVideoGenerations),
+		RequestType:      3, // async
+		LatencyMs:        float64(latencyMs),
+		IsStream:         false,
+		Success:          success,
+		RequestID:        task.RequestID,
+		Status:           status,
+		ErrorMessage:     errMsg,
+		PromptTokens:     task.PromptTokens,
+		CompletionTokens: task.CompletionTokens,
+		TotalTokens:      task.TotalTokens,
+		TotalCost:        task.ActualCost,
+		ActualCost:       task.ActualCost,
+		PreDeductAmount:  task.PreDeductAmount,
+		BillingMode:      "per_request",
+		BillingSource:    "task",
+		TaskID:           task.PublicTaskID,
+	})
+}
+
+// recordTaskCompletionAudit 更新提交阶段写入的审计记录，补充异步任务最终结果
+func recordTaskCompletionAudit(task *common.AsyncTask, status string, resultBody string, upstreamHeaders map[string]string) {
+	now := time.Now()
+	relay.NewDataProvider().UpdateTaskAudit(context.Background(), &common.AuditRecord{
+		TenantID:            task.TenantID,
+		TaskID:              task.PublicTaskID,
+		TaskStatus:          status,
+		TaskResult:          resultBody,
+		TaskUpstreamHeaders: upstreamHeaders,
+		TaskCompletedAt:     &now,
+	})
+}
+
+// upstreamRespHeaders 从上游 HTTP 响应中提取响应头
+func upstreamRespHeaders(resp *http.Response) map[string]string {
+	if resp == nil || resp.Header == nil {
+		return nil
+	}
+	headers := make(map[string]string)
+	for k, vals := range resp.Header {
+		if len(vals) > 0 {
+			headers[k] = vals[0]
+		}
+	}
+	return headers
 }

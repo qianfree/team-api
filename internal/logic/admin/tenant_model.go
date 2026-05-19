@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
@@ -83,22 +84,28 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 	assigned := 0
 
 	for _, a := range req.Assignments {
-		var model *struct {
+		g.Log().Debugf(ctx, "BatchAssignModels: tenant_id=%d, model_id=%d, enabled=%v", req.TenantID, a.ModelID, a.Enabled)
+
+		var model struct {
 			ID     int64  `json:"id"`
 			Status string `json:"status"`
 		}
 		err := dao.MdlModels.Ctx(ctx).
 			Where("id", a.ModelID).
 			Scan(&model)
-		if err != nil || model == nil || model.Status != "active" {
+		g.Log().Debugf(ctx, "BatchAssignModels: model scan result id=%d, status=%q, err=%v", model.ID, model.Status, err)
+		if err != nil || model.ID == 0 || model.Status != "active" {
+			g.Log().Warningf(ctx, "BatchAssignModels: skip model_id=%d, err=%v, id=%d, status=%q", a.ModelID, err, model.ID, model.Status)
 			continue
 		}
 
-		count, _ := dao.MdlTenantModels.Ctx(ctx).
+		count, countErr := dao.MdlTenantModels.Ctx(ctx).
 			Where("tenant_id", req.TenantID).
 			Where("model_id", a.ModelID).
 			Count()
+		g.Log().Debugf(ctx, "BatchAssignModels: existing count=%d, countErr=%v", count, countErr)
 		if count > 0 {
+			g.Log().Debugf(ctx, "BatchAssignModels: skip already assigned, model_id=%d", a.ModelID)
 			continue
 		}
 
@@ -108,13 +115,13 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 			maxConc = &concurrency
 		}
 
-		var tiersJSON string
+		var tiersJSON any
 		if len(a.CustomPricingTiers) > 0 {
 			b, _ := json.Marshal(a.CustomPricingTiers)
 			tiersJSON = string(b)
 		}
 
-		_, err = dao.MdlTenantModels.Ctx(ctx).Insert(do.MdlTenantModels{
+		insertData := do.MdlTenantModels{
 			TenantId:                 req.TenantID,
 			ModelId:                  a.ModelID,
 			Enabled:                  a.Enabled,
@@ -129,9 +136,14 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 			CustomCacheCreationPrice: a.CustomCacheCreationPrice,
 			CustomPricingTiers:       tiersJSON,
 			Multiplier:               1.0,
-		})
-		if err == nil {
+		}
+		g.Log().Debugf(ctx, "BatchAssignModels: inserting data tenant_id=%v, model_id=%v, enabled=%v, max_concurrency=%v", insertData.TenantId, insertData.ModelId, insertData.Enabled, insertData.MaxConcurrency)
+		_, err = dao.MdlTenantModels.Ctx(ctx).Insert(insertData)
+		if err != nil {
+			g.Log().Errorf(ctx, "BatchAssignModels: insert failed, model_id=%d, err=%v", a.ModelID, err)
+		} else {
 			assigned++
+			g.Log().Debugf(ctx, "BatchAssignModels: insert success, model_id=%d, assigned=%d", a.ModelID, assigned)
 		}
 	}
 

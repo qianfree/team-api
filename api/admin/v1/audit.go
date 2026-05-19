@@ -60,6 +60,7 @@ type RequestAuditLogListReq struct {
 	ApiKeyID   int    `json:"api_key_id" dc:"API Key ID"`
 	Username   string `json:"username" dc:"用户名（模糊匹配）"`
 	RequestId  string `json:"request_id" dc:"Request ID（精确匹配）"`
+	TaskId     string `json:"task_id" dc:"异步任务ID（精确匹配）"`
 	Method     string `json:"method" dc:"HTTP 方法"`
 	Path       string `json:"path" dc:"请求路径"`
 	StatusCode int    `json:"status_code" dc:"状态码"`

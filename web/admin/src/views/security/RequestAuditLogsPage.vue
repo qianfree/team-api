@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
 	Tag, Button,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+
+const router = useRouter()
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -22,6 +24,7 @@ const filter = reactive({
 	api_key_id: '',
 	username: '',
 	request_id: '',
+	task_id: '',
 	method: '',
 	status_code: '',
 	date_range: [] as string[],
@@ -59,6 +62,24 @@ const auditLevelLabel: Record<string, string> = {
 	none: '关闭',
 }
 
+const taskStatusLabel: Record<string, string> = {
+	SUBMITTED: '已提交',
+	QUEUED: '排队中',
+	IN_PROGRESS: '处理中',
+	SUCCESS: '成功',
+	FAILURE: '失败',
+	TIMEOUT: '超时',
+}
+
+const taskStatusColor: Record<string, string> = {
+	SUBMITTED: 'arcoblue',
+	QUEUED: 'cyan',
+	IN_PROGRESS: 'orange',
+	SUCCESS: 'green',
+	FAILURE: 'red',
+	TIMEOUT: 'orangered',
+}
+
 function formatJson(str: string): string {
 	if (!str) return ''
 	try {
@@ -80,6 +101,11 @@ function parseJson(str: string): any {
 function formatMs(ms: number): string {
 	if (ms < 1000) return `${ms}ms`
 	return `${(ms / 1000).toFixed(2)}s`
+}
+
+function goToTask(taskId: string) {
+	showDetail.value = false
+	router.push({ path: '/admin/task-logs', query: { public_task_id: taskId } })
 }
 
 const columns: TableColumnData[] = [
@@ -159,6 +185,7 @@ async function fetchData() {
 		if (filter.username) params.username = filter.username
 		if (filter.method) params.method = filter.method
 		if (filter.request_id) params.request_id = filter.request_id
+		if (filter.task_id) params.task_id = filter.task_id
 		if (filter.status_code) params.status_code = parseInt(filter.status_code)
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
@@ -181,11 +208,14 @@ async function fetchDetail(id: number) {
 	showDetail.value = true
 	try {
 		const res: any = await request.get(`/admin/audit/request-logs/${id}`)
-		const data = res.data?.data?.data || null
-		if (data?.forwarding_trace) {
-			data.forwarding_trace = parseJson(data.forwarding_trace)
+		const detail = res.data?.data?.data || null
+		if (detail?.forwarding_trace) {
+			detail.forwarding_trace = parseJson(detail.forwarding_trace)
 		}
-		detailRecord.value = data
+		if (detail?.task_upstream_headers) {
+			detail.task_upstream_headers = parseJson(detail.task_upstream_headers)
+		}
+		detailRecord.value = detail
 	} catch {
 		detailRecord.value = null
 	} finally {
@@ -203,6 +233,7 @@ function handleReset() {
 	filter.api_key_id = ''
 	filter.username = ''
 	filter.request_id = ''
+	filter.task_id = ''
 	filter.method = ''
 	filter.status_code = ''
 	filter.date_range = []
@@ -214,6 +245,9 @@ onMounted(() => {
 	const route = useRoute()
 	if (route.query.request_id) {
 		filter.request_id = String(route.query.request_id)
+	}
+	if (route.query.task_id) {
+		filter.task_id = String(route.query.task_id)
 	}
 	fetchData()
 })
@@ -249,6 +283,13 @@ onMounted(() => {
 				<a-input
 					v-model="filter.request_id"
 					placeholder="Request ID"
+					allow-clear
+					style="width: 200px"
+					@keydown.enter="handleFilter"
+				/>
+				<a-input
+					v-model="filter.task_id"
+					placeholder="Task ID"
 					allow-clear
 					style="width: 200px"
 					@keydown.enter="handleFilter"
@@ -306,9 +347,10 @@ onMounted(() => {
 			</div>
 		</a-card>
 
-		<a-drawer v-model:visible="showDetail" :width="600" title="请求详情">
+		<a-drawer v-model:visible="showDetail" :width="640" title="请求详情">
 			<a-spin :loading="detailLoading" class="w-full">
 				<template v-if="detailRecord">
+					<!-- 基础信息 -->
 					<a-descriptions :column="1" bordered size="medium">
 						<a-descriptions-item label="Request ID">{{ detailRecord.request_id }}</a-descriptions-item>
 						<a-descriptions-item label="租户/用户/Key">{{ detailRecord.tenant_id }} / {{ detailRecord.user_id }} / {{ detailRecord.api_key_id }}</a-descriptions-item>
@@ -319,10 +361,40 @@ onMounted(() => {
 						<a-descriptions-item label="客户端IP">{{ detailRecord.client_ip }}</a-descriptions-item>
 						<a-descriptions-item label="User-Agent">{{ detailRecord.user_agent }}</a-descriptions-item>
 						<a-descriptions-item label="延迟">{{ formatMs(detailRecord.latency_ms) }}</a-descriptions-item>
-					<a-descriptions-item label="首Token用时">{{ detailRecord.first_token_ms ? formatMs(detailRecord.first_token_ms) : '-' }}</a-descriptions-item>
+						<a-descriptions-item label="首Token用时">{{ detailRecord.first_token_ms ? formatMs(detailRecord.first_token_ms) : '-' }}</a-descriptions-item>
 						<a-descriptions-item label="审计级别">{{ auditLevelLabel[detailRecord.audit_level] || detailRecord.audit_level }}</a-descriptions-item>
 						<a-descriptions-item label="时间">{{ detailRecord.created_at }}</a-descriptions-item>
 					</a-descriptions>
+
+					<!-- 异步任务信息（紧跟基础信息） -->
+					<div v-if="detailRecord.task_id" class="mt-4">
+						<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">异步任务</h4>
+						<a-descriptions :column="1" bordered size="medium">
+							<a-descriptions-item label="任务ID">
+								<div style="display:flex;align-items:center;gap:8px">
+									<span>{{ detailRecord.task_id }}</span>
+									<a-button size="mini" type="text" @click="goToTask(detailRecord.task_id)">
+										<template #icon><icon-external-link /></template>
+										查看任务
+									</a-button>
+								</div>
+							</a-descriptions-item>
+							<a-descriptions-item label="任务状态">
+								<Tag :color="taskStatusColor[detailRecord.task_status] || 'gray'" size="small">{{ taskStatusLabel[detailRecord.task_status] || detailRecord.task_status }}</Tag>
+							</a-descriptions-item>
+							<a-descriptions-item v-if="detailRecord.task_completed_at" label="完成时间">{{ detailRecord.task_completed_at }}</a-descriptions-item>
+						</a-descriptions>
+						<div v-if="detailRecord.task_result" style="margin-top:12px">
+							<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">上游响应体</h4>
+							<pre class="audit-body">{{ formatJson(detailRecord.task_result) }}</pre>
+						</div>
+						<div v-if="detailRecord.task_upstream_headers" style="margin-top:12px">
+							<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">上游响应头</h4>
+							<pre class="audit-body">{{ formatJson(detailRecord.task_upstream_headers) }}</pre>
+						</div>
+					</div>
+
+					<!-- 转发路径追踪 -->
 					<div v-if="detailRecord.forwarding_trace" class="mt-4">
 						<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">转发路径追踪</h4>
 						<a-descriptions :column="1" bordered size="medium">
@@ -369,6 +441,8 @@ onMounted(() => {
 							</a-table>
 						</div>
 					</div>
+
+					<!-- 请求/响应内容 -->
 					<div v-if="detailRecord.request_body" class="mt-4">
 						<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">请求体</h4>
 						<pre class="audit-body">{{ formatJson(detailRecord.request_body) }}</pre>
