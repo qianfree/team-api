@@ -188,8 +188,8 @@ return 1
 		return false, gerror.New("insufficient balance")
 	}
 
-	// 异步同步到 DB
-	go preDeductSyncDB(tenantID, amount, requestID)
+	// 同步同步到 DB（确保 DB frozen_balance 在返回前已更新）
+	preDeductSyncDB(ctx, tenantID, amount)
 
 	return true, nil
 }
@@ -223,37 +223,31 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 	// 清除缓存
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 
-	// 记录预扣流水
-	recordTransaction(ctx, w.ID, tenantID, "freeze", amount, "pre-deduct: "+requestID)
-
 	return true, nil
 }
 
-// preDeductSyncDB async sync pre-deduct to DB
-func preDeductSyncDB(tenantID int64, amount float64, requestID string) {
-	bgCtx := context.Background()
-
+// preDeductSyncDB sync pre-deduct to DB（同步调用，确保 DB frozen_balance 在返回前已更新）
+func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
 	type walletRow struct {
 		ID int64
 	}
 	var w *walletRow
-	err := dao.BilWallets.Ctx(bgCtx).
+	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id").
 		Scan(&w)
 	if err != nil || w == nil {
-		g.Log().Errorf(bgCtx, "pre-deduct sync: wallet not found for tenant %d", tenantID)
+		g.Log().Errorf(ctx, "pre-deduct sync: wallet not found for tenant %d", tenantID)
 		return
 	}
 
-	_, err = g.DB().Exec(bgCtx,
+	_, err = g.DB().Exec(ctx,
 		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE id = ? ",
 		amount, time.Now(), w.ID)
 	if err != nil {
-		g.Log().Errorf(bgCtx, "pre-deduct sync: %v", err)
+		g.Log().Errorf(ctx, "pre-deduct sync: %v", err)
 	}
 
-	recordTransaction(bgCtx, w.ID, tenantID, "freeze", amount, "pre-deduct: "+requestID)
 }
 
 // UnfreezePreDeduct 解冻预扣金额（请求失败时调用）
@@ -270,20 +264,20 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, am
 	if err == nil {
 		// 解冻
 		g.Redis().Do(ctx, "HINCRBYFLOAT", walletRedisKey, "frozen_balance", -amount)
-		go unfreezeSyncDB(tenantID, amount, requestID)
+		go unfreezeSyncDB(tenantID, amount)
 		return
 	}
 
 	// Redis 失败，直接 DB 解冻
-	unfreezeDB(ctx, tenantID, amount, requestID)
+	unfreezeDB(ctx, tenantID, amount)
 }
 
-func unfreezeSyncDB(tenantID int64, amount float64, requestID string) {
+func unfreezeSyncDB(tenantID int64, amount float64) {
 	bgCtx := context.Background()
-	unfreezeDB(bgCtx, tenantID, amount, requestID)
+	unfreezeDB(bgCtx, tenantID, amount)
 }
 
-func unfreezeDB(ctx context.Context, tenantID int64, amount float64, requestID string) {
+func unfreezeDB(ctx context.Context, tenantID int64, amount float64) {
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
@@ -300,7 +294,6 @@ func unfreezeDB(ctx context.Context, tenantID int64, amount float64, requestID s
 		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), updated_at = ? WHERE id = ? ",
 		amount, time.Now(), w.ID)
 
-	recordTransaction(ctx, w.ID, tenantID, "unfreeze", amount, "unfreeze: "+requestID)
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 }
 

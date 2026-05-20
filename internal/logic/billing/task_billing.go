@@ -187,17 +187,9 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		}
 	}
 
-	// 6. 记录流水
-	recordTransaction(ctx, wallet.ID, tenantID, "settle", -actualCost,
-		fmt.Sprintf("settle: %s model=%s", requestID, modelName))
-	if result.RefundAmount > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "refund", result.RefundAmount,
-			fmt.Sprintf("refund: %s", requestID))
-	}
-	if result.SupplementAmount > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "pre_deduct", -result.SupplementAmount,
-			fmt.Sprintf("supplement: %s", requestID))
-	}
+	// 6. 记录消费流水（一条汇总）
+	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
+		fmt.Sprintf("consume: %s model=%s pre_deduct=%.4f actual=%.4f", requestID, modelName, preDeductAmount, actualCost))
 
 	return result, nil
 }

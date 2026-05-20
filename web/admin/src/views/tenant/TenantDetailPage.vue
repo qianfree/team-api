@@ -312,11 +312,11 @@ const thresholdForm = reactive({ threshold: 0 })
 const thresholdLoading = ref(false)
 
 const txTypeLabel: Record<string, string> = {
-  recharge: '充值', pre_deduct: '预扣', settle: '结算',
+  recharge: '充值', consume: '消费', pre_deduct: '预扣', settle: '结算',
   refund: '退款', adjust: '调整', freeze: '冻结', unfreeze: '解冻',
 }
 const txTypeColor: Record<string, string> = {
-  recharge: 'green', adjust: 'arcoblue', refund: 'cyan',
+  recharge: 'green', consume: 'orangered', adjust: 'arcoblue', refund: 'cyan',
   pre_deduct: 'orangered', settle: 'orange', freeze: 'red', unfreeze: 'purple',
 }
 
@@ -555,6 +555,7 @@ onMounted(() => {
                     <ASpace>
                       <ASelect v-model="txFilterType" placeholder="全部类型" allow-clear style="width: 140px" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
                         <AOption value="recharge">充值</AOption>
+                        <AOption value="consume">消费</AOption>
                         <AOption value="adjust">调整</AOption>
                         <AOption value="pre_deduct">预扣</AOption>
                         <AOption value="settle">结算</AOption>
