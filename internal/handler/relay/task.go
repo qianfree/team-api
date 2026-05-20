@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -71,10 +73,20 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	capture := NewResponseCaptureWriter(r.Response.Writer)
 	rc.Writer = capture
 
+	modelName := extractModelName(body)
+	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	// 提交成功后切换为任务 ID 跟踪（任务生命周期远超 HTTP 请求）
+	if rc.TaskID != "" {
+		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
+	} else {
+		monitor.UnregisterRequest(rc.RequestID)
+	}
 
 	// 构建转发路径追踪（任务提交阶段只有一次渠道选择）
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
@@ -204,10 +216,19 @@ func HandleMjSubmit(r *ghttp.Request) {
 	capture := NewResponseCaptureWriter(r.Response.Writer)
 	rc.Writer = capture
 
+	modelName := extractModelName(body)
+	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	if rc.TaskID != "" {
+		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
+	} else {
+		monitor.UnregisterRequest(rc.RequestID)
+	}
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 	go recordTaskSubmitAudit(r, rc, capture, body)
@@ -241,10 +262,36 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		return
 	}
 
+	modelName := extractModelName(body)
+	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
+
 	relay_handler.HandleTaskSubmit(
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	if rc.TaskID != "" {
+		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
+	} else {
+		monitor.UnregisterRequest(rc.RequestID)
+	}
+}
+
+// registerAsyncTask 注册异步任务到实时监控
+func registerAsyncTask(requestID string, tenantID, userID, projectID int64, modelName string, channelMeta *relay_common.ChannelMeta, path string) {
+	monitor.RegisterRequest(&monitor.TrackedRequest{
+		RequestID:   requestID,
+		TenantID:    tenantID,
+		UserID:      userID,
+		ProjectID:   projectID,
+		ModelName:   modelName,
+		ChannelID:   channelMeta.ChannelID,
+		ChannelName: channelMeta.ChannelName,
+		IsStream:    false,
+		StartTime:   time.Now(),
+		Path:        path,
+		IsAsyncTask: true,
+	})
 }
 
 // HandleMjFetch 处理 Midjourney 任务查询（GET /mj/task/:id/fetch）
@@ -370,4 +417,15 @@ func buildTaskForwardingTrace(path string, body []byte, channelMeta *relay_commo
 			},
 		},
 	}
+}
+
+// extractModelName 从请求体中提取模型名称
+func extractModelName(body []byte) string {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &req) == nil {
+		return req.Model
+	}
+	return ""
 }

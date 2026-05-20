@@ -23,6 +23,8 @@ type TrackedRequest struct {
 	IsStream    bool      `json:"is_stream"`
 	StartTime   time.Time `json:"start_time"`
 	Path        string    `json:"path"`
+	IsAsyncTask bool      `json:"is_async_task"` // 异步任务（视频/音乐/图像生成）
+	TaskID      string    `json:"task_id,omitempty"`
 }
 
 // ConcurrencySnapshot is a point-in-time concurrency view.
@@ -161,6 +163,34 @@ func GetTrackedRequest(requestID string) *TrackedRequest {
 	tracker.mu.RLock()
 	defer tracker.mu.RUnlock()
 	return tracker.activeRequests[requestID]
+}
+
+// SwitchToTaskID replaces the request ID key with a task ID for long-lived async tasks.
+// The tracked request keeps its position in the active list but is now keyed by taskID.
+func SwitchToTaskID(requestID, taskID string) {
+	if tracker == nil {
+		return
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if req, ok := tracker.activeRequests[requestID]; ok {
+		delete(tracker.activeRequests, requestID)
+		req.TaskID = taskID
+		tracker.activeRequests[taskID] = req
+	}
+}
+
+// UnregisterRequestByTaskID removes a completed async task by its task ID.
+func UnregisterRequestByTaskID(taskID string) {
+	if tracker == nil {
+		return
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if _, ok := tracker.activeRequests[taskID]; ok {
+		delete(tracker.activeRequests, taskID)
+		tracker.totalActive.Add(-1)
+	}
 }
 
 // RecordBytesIn atomically accumulates inbound bytes.
