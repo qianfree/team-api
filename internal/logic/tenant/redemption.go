@@ -7,6 +7,7 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -133,18 +134,43 @@ func creditWalletForRedemption(ctx context.Context, tenantID int64, amount float
 		return 0
 	}
 
-	g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE id = ?",
-		amount, time.Now(), w.ID)
+	var txID int64
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
+			amount, w.ID)
+		if err != nil {
+			return err
+		}
 
-	txID, err := dao.BilTransactions.Ctx(ctx).InsertAndGetId(do.BilTransactions{
-		TenantId:    tenantID,
-		WalletId:    w.ID,
-		Type:        "recharge",
-		Amount:      amount,
-		RelatedId:   redemptionID,
-		RelatedType: "redemption",
-		Description: fmt.Sprintf("兑换码充值"),
+		var balance struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("id", w.ID).
+			Fields("balance, frozen_balance").
+			Scan(&balance)
+		if err != nil {
+			return err
+		}
+
+		id, err := tx.Model("bil_transactions").Ctx(ctx).InsertAndGetId(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     w.ID,
+			Type:         "recharge",
+			Amount:       amount,
+			BalanceAfter: balance.Balance,
+			FrozenAfter:  balance.FrozenBalance,
+			RelatedId:    redemptionID,
+			RelatedType:  "redemption",
+			Description:  "兑换码充值",
+		})
+		if err != nil {
+			return err
+		}
+		txID = id
+		return nil
 	})
 	if err != nil {
 		return 0

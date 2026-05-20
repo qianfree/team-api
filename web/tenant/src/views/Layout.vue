@@ -20,6 +20,8 @@ const mobileOpen = ref(false)
 const userMenuOpen = ref(false)
 const consoleAnnouncements = ref<any[]>([])
 let announcementTimer: ReturnType<typeof setInterval> | null = null
+const walletBalance = ref<string>('')
+let walletTimer: ReturnType<typeof setInterval> | null = null
 const { unreadCount, startPolling: startNotificationPolling, stopPolling: stopNotificationPolling, setOnNewNotification } = useNotificationCount()
 setOnNewNotification((newCount: number) => {
 	if (newCount > 0) {
@@ -129,12 +131,27 @@ async function fetchAnnouncements() {
 	}
 }
 
+async function fetchWalletBalance() {
+	try {
+		const res = await request.get('/tenant/wallet')
+		const w = res.data?.data
+		if (w) {
+			const bal = w.available_balance ?? w.balance ?? 0
+			walletBalance.value = bal >= 1 ? '$' + bal.toFixed(0) : bal > 0 ? '$' + bal.toFixed(2) : '$0'
+		}
+	} catch {
+		// silently ignore
+	}
+}
+
 onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
 	announcementTimer = setInterval(fetchAnnouncements, 10 * 60 * 1000)
 	startNotificationPolling()
+	fetchWalletBalance()
+	walletTimer = setInterval(fetchWalletBalance, 60000)
 
 	await fetchPublicSettings()
 	if (publicSettings.demo_mode) {
@@ -149,6 +166,10 @@ onBeforeUnmount(() => {
 	if (announcementTimer) {
 		clearInterval(announcementTimer)
 		announcementTimer = null
+	}
+	if (walletTimer) {
+		clearInterval(walletTimer)
+		walletTimer = null
 	}
 	unmountWatermark()
 })
@@ -274,6 +295,15 @@ onBeforeUnmount(() => {
 							</span>
 						</router-link>
 
+					<!-- Wallet -->
+						<router-link
+							to="/tenant/wallet"
+							class="relative flex h-9 items-center justify-center rounded-xl px-2.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+							title="钱包"
+						>
+							<Icon name="wallet" size="md" />
+							<span v-if="walletBalance" class="hidden sm:inline text-xs font-medium text-gray-500 ml-1.5">{{ walletBalance }}</span>
+						</router-link>
 						<!-- User Menu -->
 						<div class="relative" data-user-menu>
 							<button

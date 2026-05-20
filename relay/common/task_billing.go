@@ -9,7 +9,7 @@ type TaskBillingProvider interface {
 	EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]float64) (float64, error)
 
 	// PreDeductTask 预扣任务费用
-	PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64) (float64, error)
+	PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64, modelName string) (float64, error)
 
 	// SettleTaskSuccess 任务成功结算（含计费快照）
 	SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount float64, totalTokens, completionTokens int, ratios map[string]float64) (*SettlementResult, error)

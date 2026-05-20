@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/middleware"
 	relay_common "github.com/qianfree/team-api/relay/common"
+	relay_constant "github.com/qianfree/team-api/relay/constant"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
 )
 
@@ -74,6 +75,9 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+
+	// 构建转发路径追踪（任务提交阶段只有一次渠道选择）
+	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 
 	// 异步记录审计日志
 	go recordTaskSubmitAudit(r, rc, capture, body)
@@ -205,6 +209,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
 
+	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
@@ -325,5 +330,44 @@ func recordTaskSubmitAudit(r *ghttp.Request, rc *relay_handler.TaskRelayContext,
 		ResponseHeaders: capture.ResponseHeaders(),
 		TaskID:          rc.TaskID,
 		TaskStatus:      "SUBMITTED",
+		ForwardingTrace: rc.ForwardingTrace,
 	})
+}
+
+// buildTaskForwardingTrace 从渠道选择结果构建转发路径追踪
+func buildTaskForwardingTrace(path string, body []byte, channelMeta *relay_common.ChannelMeta, statusCode int) *relay_common.ForwardingTrace {
+	var modelName string
+	var req struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &req) == nil {
+		modelName = req.Model
+	}
+
+	providerName := ""
+	if pt := relay_constant.ProviderType(channelMeta.ChannelType); pt > 0 {
+		providerName = pt.String()
+	}
+
+	return &relay_common.ForwardingTrace{
+		EntryPath:      path,
+		EntryFormat:    "openai",
+		RequestedModel: modelName,
+		UpstreamModel:  channelMeta.UpstreamModelName,
+		ModelMapped:    channelMeta.IsModelMapped,
+		TotalAttempts:  1,
+		Hops: []relay_common.ForwardingHop{
+			{
+				Attempt:       1,
+				ChannelID:     channelMeta.ChannelID,
+				ChannelName:   channelMeta.ChannelName,
+				ChannelType:   channelMeta.ChannelType,
+				Provider:      providerName,
+				BaseURL:       channelMeta.BaseURL,
+				UpstreamModel: channelMeta.UpstreamModelName,
+				ModelMapped:   channelMeta.IsModelMapped,
+				Success:       statusCode == 200,
+			},
+		},
+	}
 }

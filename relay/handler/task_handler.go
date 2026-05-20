@@ -24,15 +24,16 @@ import (
 
 // TaskRelayContext 异步任务 relay 上下文
 type TaskRelayContext struct {
-	TenantID  int64
-	UserID    int64
-	ApiKeyID  int64
-	ProjectID int64
-	TaskID    string // 由 HandleTaskSubmit 在创建任务后设置
-	RequestID string
-	Writer    http.ResponseWriter
-	Scope     string
-	ClientIP  string
+	TenantID        int64
+	UserID          int64
+	ApiKeyID        int64
+	ProjectID       int64
+	TaskID          string // 由 HandleTaskSubmit 在创建任务后设置
+	RequestID       string
+	Writer          http.ResponseWriter
+	Scope           string
+	ClientIP        string
+	ForwardingTrace *common.ForwardingTrace
 }
 
 // HandleTaskSubmit 异步任务提交管线
@@ -116,7 +117,7 @@ func HandleTaskSubmit(
 	}
 	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost)
 
-	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost)
+	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {
 		g.Log().Warningf(ctx, "HandleTaskSubmit: pre-deduct failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusPaymentRequired, "insufficient balance", "")

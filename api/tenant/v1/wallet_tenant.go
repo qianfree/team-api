@@ -36,3 +36,22 @@ type TenantWalletTransactionsExportReq struct {
 }
 
 type TenantWalletTransactionsExportRes struct{}
+
+// TenantWalletFrozenItemsReq 冻结明细请求
+type TenantWalletFrozenItemsReq struct {
+	g.Meta `path:"/wallet/frozen-items" method:"get" mime:"json" tags:"租户控制台-钱包" summary:"冻结明细"`
+}
+
+// TenantWalletFrozenItemsRes 冻结明细响应
+type TenantWalletFrozenItemsRes struct {
+	Items []FrozenItemDetail `json:"items"`
+}
+
+// FrozenItemDetail 单个冻结项
+type FrozenItemDetail struct {
+	RequestID string  `json:"request_id"`
+	ModelName string  `json:"model_name"`
+	Amount    float64 `json:"amount"`
+	CreatedAt int64   `json:"created_at"`
+	Remaining int64   `json:"remaining"`
+}

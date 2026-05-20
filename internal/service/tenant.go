@@ -65,6 +65,8 @@ type (
 		ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error)
 		// ExportWalletTransactions exports the tenant wallet transactions as CSV or Excel.
 		ExportWalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsExportReq) (*v1.TenantWalletTransactionsExportRes, error)
+		// WalletFrozenItems 获取冻结明细
+		WalletFrozenItems(ctx context.Context, req *v1.TenantWalletFrozenItemsReq) (*v1.TenantWalletFrozenItemsRes, error)
 		// Dashboard returns the tenant dashboard statistics.
 		Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v1.TenantDashboardRes, error)
 		// TokenTrends returns daily token usage for the past N days.

@@ -67,8 +67,8 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 }
 
 // PreDeductTask 预扣任务费用
-func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64) (float64, error) {
-	ok, err := PreDeduct(ctx, tenantID, estimatedCost, requestID)
+func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64, modelName string) (float64, error) {
+	ok, err := PreDeduct(ctx, tenantID, estimatedCost, requestID, modelName)
 	if !ok {
 		return 0, fmt.Errorf("pre-deduct task failed: %w", err)
 	}
@@ -97,6 +97,8 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
+	CleanupPreDeduct(ctx, tenantID, requestID)
+	CleanupPreDeduct(ctx, tenantID, requestID+"_adjust")
 
 	// 2. 获取定价 + 构建 CostBreakdown
 	pricing, _ := GetModelPrice(ctx, tenantID, modelName)
@@ -176,12 +178,8 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		result.RateMultiplier = pricing.DiscountRatio
 	}
 
-	// 5. 差额处理
-	if diff > 0.001 {
-		if ok, err := PreDeduct(ctx, tenantID, diff, requestID+"_adjust"); !ok {
-			return result, fmt.Errorf("settle task adjust pre-deduct: %w", err)
-		}
-	} else if diff < -0.001 {
+	// 5. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 1 扣完，无需额外操作）
+	if diff < -0.001 {
 		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
 			return result, fmt.Errorf("settle task adjust refund: %w", err)
 		}
@@ -247,7 +245,7 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 
 	if diff > 0 {
 		// 需要补扣
-		ok, err := PreDeduct(ctx, tenantID, diff, requestID+"_adjust")
+		ok, err := PreDeduct(ctx, tenantID, diff, requestID+"_adjust", "")
 		if !ok {
 			return preDeductAmount, fmt.Errorf("adjust task billing: %w", err)
 		}

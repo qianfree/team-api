@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strconv"
@@ -536,4 +537,31 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 			offset += 1000
 		}
 	})
+}
+
+// WalletFrozenItems 获取冻结明细
+func (s *sTenant) WalletFrozenItems(ctx context.Context, req *v1.TenantWalletFrozenItemsReq) (*v1.TenantWalletFrozenItemsRes, error) {
+	role := ctxUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	tenantID := ctxTenantID(ctx)
+
+	items, err := billing.GetFrozenItems(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	details := make([]v1.FrozenItemDetail, 0, len(items))
+	for _, item := range items {
+		details = append(details, v1.FrozenItemDetail{
+			RequestID: item.RequestID,
+			ModelName: item.ModelName,
+			Amount:    item.Amount,
+			CreatedAt: item.CreatedAt,
+			Remaining: item.Remaining,
+		})
+	}
+
+	return &v1.TenantWalletFrozenItemsRes{Items: details}, nil
 }

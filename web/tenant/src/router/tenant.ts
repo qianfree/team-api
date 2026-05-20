@@ -134,22 +134,22 @@ const tenantRoutes: RouteRecordRaw[] = [
 				meta: { title: '钱包', icon: 'creditCard', sort: 40, roles: ['owner', 'admin'] },
 			},
 			{
-				path: 'plans',
-				name: 'TenantPlans',
-				component: () => import('@/views/finance/PlansPage.vue'),
-				meta: { title: '套餐方案', icon: 'gift', sort: 41, roles: ['owner', 'admin'] },
+				path: 'transactions',
+				name: 'TenantTransactions',
+				component: () => import('@/views/finance/TransactionsPage.vue'),
+				meta: { title: '交易记录', icon: 'document', sort: 41, roles: ['owner', 'admin'] },
 			},
 			{
 				path: 'orders',
 				name: 'TenantOrders',
 				component: () => import('@/views/finance/OrdersPage.vue'),
-				meta: { title: '订单记录', icon: 'document', sort: 42, roles: ['owner', 'admin'] },
+				meta: { title: '订单记录', icon: 'receipt', sort: 42, roles: ['owner', 'admin'] },
 			},
 			{
 				path: 'redeem',
 				name: 'TenantRedeem',
 				component: () => import('@/views/finance/RedeemPage.vue'),
-				meta: { title: '兑换码', icon: 'receipt', sort: 43, roles: ['owner', 'admin'] },
+				meta: { title: '兑换码', icon: 'gift', sort: 43, roles: ['owner', 'admin'] },
 			},
 			// 沟通 (50-59)
 			{

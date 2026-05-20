@@ -71,6 +71,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	// 清除钱包缓存（内存 + Redis）
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
+	CleanupPreDeduct(ctx, tenantID, requestID)
 
 	// 5. 创建计费记录（获取定价快照）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
@@ -146,6 +147,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
+	CleanupPreDeduct(ctx, tenantID, requestID)
 
 	// 5. 获取定价信息
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
