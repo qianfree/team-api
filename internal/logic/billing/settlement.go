@@ -94,18 +94,9 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		g.Log().Errorf(ctx, "settle: create billing record failed: %v", err)
 	}
 
-	// 6. 记录流水
-	recordTransaction(ctx, wallet.ID, tenantID, "settle", -actualCost,
-		fmt.Sprintf("settle: %s model=%s input=%d output=%d", requestID, modelName, inputTokens, outputTokens))
-
-	if refundAmt > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "refund", refundAmt,
-			fmt.Sprintf("refund: %s", requestID))
-	}
-	if supplementAmt > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "pre_deduct", -supplementAmt,
-			fmt.Sprintf("supplement: %s", requestID))
-	}
+	// 6. 记录消费流水（一条汇总）
+	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
+		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost))
 
 	return &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
@@ -206,19 +197,9 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	settlementResult.BillingSnapshot = snapshotJSON
 	settlementResult.BillingSummary = summaryText
 
-	// 8. 记录流水
-	// 9. 记录流水
-	recordTransaction(ctx, wallet.ID, tenantID, "settle", -actualCost,
-		fmt.Sprintf("settle: %s model=%s input=%d output=%d", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens))
-
-	if refundAmt > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "refund", refundAmt,
-			fmt.Sprintf("refund: %s", requestID))
-	}
-	if supplementAmt > 0 {
-		recordTransaction(ctx, wallet.ID, tenantID, "pre_deduct", -supplementAmt,
-			fmt.Sprintf("supplement: %s", requestID))
-	}
+	// 8. 记录消费流水（一条汇总）
+	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
+		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost))
 
 	return settlementResult, nil
 }

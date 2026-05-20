@@ -46,13 +46,13 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 	result.TotalSettled = settled.TotalCost
 	result.RecordCount = settled.Count
 
-	// 2. 统计 bil_transactions 中昨日结算流水总额（负数，取绝对值）
+	// 2. 统计 bil_transactions 中昨日消费流水总额（负数，取绝对值）
 	type txnRow struct {
 		TotalDeduct float64 `json:"total_deduct"`
 	}
 	var txn txnRow
 	err = dao.BilTransactions.Ctx(ctx).
-		Where("type", "settle").
+		Where("type", "consume").
 		Where("created_at >= ?", yesterday+" 00:00:00").
 		Where("created_at < ?", yesterday+" 23:59:59").
 		Fields("COALESCE(SUM(ABS(amount)), 0) as total_deduct").

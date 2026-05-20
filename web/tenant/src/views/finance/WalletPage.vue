@@ -24,9 +24,9 @@ const presetAmounts = [10, 50, 100, 500]
 
 const txTypeLabel: Record<string, string> = {
 	recharge: '充值',
+	consume: '消费',
 	pre_deduct: '预扣',
 	settle: '结算',
-	consumption: '消费',
 	refund: '退款',
 	adjust: '调整',
 	freeze: '冻结',
@@ -36,9 +36,9 @@ const txTypeLabel: Record<string, string> = {
 const txTypeBadgeClass: Record<string, string> = {
 	recharge: 'badge-success',
 	refund: 'badge-success',
+	consume: 'badge-danger',
 	pre_deduct: 'badge-danger',
 	settle: 'badge-danger',
-	consumption: 'badge-danger',
 	adjust: 'badge-warning',
 	freeze: 'badge-gray',
 	unfreeze: 'badge-gray',
