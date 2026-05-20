@@ -5,6 +5,7 @@ import (
 	"fmt"
 	do "github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -131,21 +132,40 @@ func creditWallet(ctx context.Context, tenantID int64, amount float64, descripti
 		return gerror.Newf("wallet not found for tenant %d", tenantID)
 	}
 
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
-		amount, w.ID)
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
+			amount, w.ID)
+		if err != nil {
+			return err
+		}
+
+		var balance struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("id", w.ID).
+			Fields("balance, frozen_balance").
+			Scan(&balance)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Model("bil_transactions").Ctx(ctx).Insert(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     w.ID,
+			Type:         "recharge",
+			Amount:       amount,
+			BalanceAfter: balance.Balance,
+			FrozenAfter:  balance.FrozenBalance,
+			Description:  description,
+		})
+		return err
+	})
 	if err != nil {
 		return err
 	}
-
-	// 记录流水
-	dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-		TenantId:    tenantID,
-		WalletId:    w.ID,
-		Type:        "recharge",
-		Amount:      amount,
-		Description: description,
-	})
 
 	// 清除 Redis 钱包缓存，下次预扣时从 DB 重新同步
 	billing.InvalidateWalletRedis(ctx, tenantID)

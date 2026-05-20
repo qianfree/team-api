@@ -8,6 +8,7 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/util/gconv"
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -123,7 +124,7 @@ func CheckBalance(ctx context.Context, tenantID int64, amount float64) error {
 
 // PreDeduct 预扣费用（Redis Lua 原子操作）
 // 冻结指定金额，返回预扣记录 ID 用于后续结算
-func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string) (bool, error) {
+func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string, modelName string) (bool, error) {
 	if amount <= 0 {
 		return true, nil
 	}
@@ -140,6 +141,9 @@ func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID st
 	// ARGV[1] = amount
 	// ARGV[2] = request_id
 	// ARGV[3] = ttl (PreDeductMaxAge)
+	// ARGV[4] = tenant_id
+	// ARGV[5] = model_name
+	// ARGV[6] = created_at (unix timestamp)
 	luaScript := `
 local wallet_key = KEYS[1]
 local prededuct_key = KEYS[2]
@@ -167,6 +171,9 @@ end
 redis.call("HINCRBYFLOAT", wallet_key, "frozen_balance", amount)
 redis.call("HSET", prededuct_key, "amount", amount)
 redis.call("HSET", prededuct_key, "tenant_id", ARGV[4])
+redis.call("HSET", prededuct_key, "model_name", ARGV[5])
+redis.call("HSET", prededuct_key, "created_at", ARGV[6])
+redis.call("SADD", "prededuct_active:" .. ARGV[4], request_id)
 redis.call("EXPIRE", prededuct_key, ttl)
 return 1
 `
@@ -176,7 +183,7 @@ return 1
 
 	result, err := g.Redis().Do(ctx, "EVAL", luaScript, 2,
 		walletRedisKey, predeductRedisKey,
-		amount, requestID, PreDeductMaxAge, tenantID)
+		amount, requestID, PreDeductMaxAge, tenantID, modelName, time.Now().Unix())
 	if err != nil {
 		// Redis 不可用，降级到 DB 直接扣减
 		return preDeductDB(ctx, tenantID, amount, requestID)
@@ -258,12 +265,14 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, am
 
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
 	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
+	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
 
 	// 先尝试 Redis 解冻
 	_, err := g.Redis().Do(ctx, "DEL", predeductRedisKey)
 	if err == nil {
 		// 解冻
 		g.Redis().Do(ctx, "HINCRBYFLOAT", walletRedisKey, "frozen_balance", -amount)
+		g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
 		go unfreezeSyncDB(tenantID, amount)
 		return
 	}
@@ -391,4 +400,94 @@ func syncWalletToRedis(ctx context.Context, tenantID int64) error {
 func InvalidateWalletRedis(ctx context.Context, tenantID int64) {
 	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
 	g.Redis().Do(ctx, "DEL", walletRedisKey)
+}
+
+// CleanupPreDeduct 清理预扣记录（结算成功后调用）
+func CleanupPreDeduct(ctx context.Context, tenantID int64, requestID string) {
+	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
+	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
+	g.Redis().Do(ctx, "DEL", predeductRedisKey)
+	g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
+}
+
+// FrozenItem 单个冻结项
+type FrozenItem struct {
+	RequestID string  `json:"request_id"`
+	ModelName string  `json:"model_name"`
+	Amount    float64 `json:"amount"`
+	CreatedAt int64   `json:"created_at"`
+	Remaining int64   `json:"remaining"`
+}
+
+// GetFrozenItems 获取租户当前所有冻结项
+func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
+	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
+
+	members, err := g.Redis().Do(ctx, "SMEMBERS", activeSetKey)
+	if err != nil || members.IsNil() {
+		return []FrozenItem{}, nil
+	}
+
+	requestIDs := members.Strings()
+	var items []FrozenItem
+	var staleIDs []string
+
+	for _, reqID := range requestIDs {
+		predeductKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, reqID)
+
+		exists, _ := g.Redis().Do(ctx, "EXISTS", predeductKey)
+		if exists.Int64() == 0 {
+			staleIDs = append(staleIDs, reqID)
+			continue
+		}
+
+		data, err := g.Redis().Do(ctx, "HGETALL", predeductKey)
+		if err != nil || data.IsNil() {
+			staleIDs = append(staleIDs, reqID)
+			continue
+		}
+
+		m := data.Map()
+
+		ttl, _ := g.Redis().Do(ctx, "TTL", predeductKey)
+		remaining := ttl.Int64()
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		var amount float64
+		if v, ok := m["amount"]; ok {
+			amount = gconv.Float64(v)
+		}
+
+		var modelName string
+		if v, ok := m["model_name"]; ok {
+			modelName = gconv.String(v)
+		}
+
+		var createdAt int64
+		if v, ok := m["created_at"]; ok {
+			createdAt = gconv.Int64(v)
+		}
+
+		items = append(items, FrozenItem{
+			RequestID: reqID,
+			ModelName: modelName,
+			Amount:    amount,
+			CreatedAt: createdAt,
+			Remaining: remaining,
+		})
+	}
+
+	// 清理过期条目（TTL 已过但仍在 set 中的残留）
+	if len(staleIDs) > 0 {
+		args := make([]any, 0, len(staleIDs)+1)
+		args = append(args, activeSetKey)
+		for _, id := range staleIDs {
+			args = append(args, id)
+		}
+		g.Redis().Do(ctx, "SREM", args...)
+	}
+
+	return items, nil
 }

@@ -20,7 +20,7 @@ func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, mod
 		return 0, err
 	}
 
-	ok, err := PreDeduct(ctx, tenantID, amount, requestID)
+	ok, err := PreDeduct(ctx, tenantID, amount, requestID, modelName)
 	if !ok {
 		return 0, err
 	}

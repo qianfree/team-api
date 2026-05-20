@@ -102,9 +102,10 @@ func handleTimedOutTasks(ctx context.Context) {
 		// 退还预扣费用
 		if t.PreDeductAmount > 0 {
 			taskBilling := billing.NewTaskBillingProvider()
-			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.PublicTaskID, t.PreDeductAmount); err != nil {
+			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.RequestID, t.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: refund timed-out task %s: %v", t.PublicTaskID, err)
 			}
+			billing.CleanupPreDeduct(ctx, t.TenantID, t.RequestID+"_adjust")
 		}
 		g.Log().Infof(ctx, "poll: task %s timed out", t.PublicTaskID)
 
@@ -127,12 +128,13 @@ func handleUnsettledTasks(ctx context.Context) {
 			// 无法恢复，直接退还预扣
 			g.Log().Warningf(ctx, "poll: unsettled task %s has invalid private_data, refunding", t.PublicTaskID)
 			taskBilling := billing.NewTaskBillingProvider()
-			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.PublicTaskID, t.PreDeductAmount); err != nil {
+			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.RequestID, t.PreDeductAmount); err != nil {
 				g.Log().Errorf(ctx, "poll: refund unsettled task %s: %v", t.PublicTaskID, err)
 			} else {
 				t.BillingSettled = true
 				DefaultAsyncProvider.UpdateTask(ctx, t)
 			}
+			billing.CleanupPreDeduct(ctx, t.TenantID, t.RequestID+"_adjust")
 			continue
 		}
 
@@ -144,7 +146,7 @@ func handleUnsettledTasks(ctx context.Context) {
 			}
 			taskBilling := billing.NewTaskBillingProvider()
 			_, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
-				t.ModelName, t.PublicTaskID, actualCost, t.PreDeductAmount,
+				t.ModelName, t.RequestID, actualCost, t.PreDeductAmount,
 				0, 0, pd.BillingContext.Ratios)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: retry settle task %s: %v", t.PublicTaskID, err)
@@ -157,13 +159,14 @@ func handleUnsettledTasks(ctx context.Context) {
 		} else {
 			// 失败任务：退还预扣
 			taskBilling := billing.NewTaskBillingProvider()
-			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.PublicTaskID, t.PreDeductAmount); err != nil {
+			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.RequestID, t.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: retry refund task %s: %v", t.PublicTaskID, err)
 			} else {
 				t.BillingSettled = true
 				DefaultAsyncProvider.UpdateTask(ctx, t)
 				g.Log().Infof(ctx, "poll: retried refund for task %s", t.PublicTaskID)
 			}
+			billing.CleanupPreDeduct(ctx, t.TenantID, t.RequestID+"_adjust")
 		}
 	}
 }
@@ -305,13 +308,14 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			}
 
 			task.ActualCost = actualCost
-			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.PublicTaskID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios)
+			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {
 				task.BillingSettled = true
 				DefaultAsyncProvider.UpdateTask(ctx, task)
 			}
+			billing.CleanupPreDeduct(ctx, task.TenantID, task.RequestID+"_adjust")
 		}
 		g.Log().Infof(ctx, "poll: task %s completed", task.PublicTaskID)
 
@@ -325,12 +329,13 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		// 退还预扣费用
 		if task.PreDeductAmount > 0 && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
-			if err := taskBilling.SettleTaskFailed(ctx, task.TenantID, task.PublicTaskID, task.PreDeductAmount); err != nil {
+			if err := taskBilling.SettleTaskFailed(ctx, task.TenantID, task.RequestID, task.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: refund failed task %s: %v", task.PublicTaskID, err)
 			} else {
 				task.BillingSettled = true
 				DefaultAsyncProvider.UpdateTask(ctx, task)
 			}
+			billing.CleanupPreDeduct(ctx, task.TenantID, task.RequestID+"_adjust")
 		}
 		g.Log().Infof(ctx, "poll: task %s failed: %s", task.PublicTaskID, task.FailReason)
 
