@@ -51,7 +51,10 @@ func pollOnce(ctx context.Context) {
 	// 1. 处理超时任务
 	handleTimedOutTasks(ctx)
 
-	// 2. 轮询非终态任务
+	// 2. 重试未结算的终态任务
+	handleUnsettledTasks(ctx)
+
+	// 3. 轮询非终态任务
 	tasks, err := DefaultAsyncProvider.GetNonTerminalTasks(ctx, pollBatchSize)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: get non-terminal tasks: %v", err)
@@ -107,6 +110,61 @@ func handleTimedOutTasks(ctx context.Context) {
 
 		// 更新审计记录
 		recordTaskCompletionAudit(t, "TIMEOUT", "", nil)
+	}
+}
+
+// handleUnsettledTasks 重试终态但未结算的任务
+func handleUnsettledTasks(ctx context.Context) {
+	tasks, err := DefaultAsyncProvider.GetUnsettledTasks(ctx, timeoutBatchSize)
+	if err != nil {
+		g.Log().Warningf(ctx, "poll: get unsettled tasks: %v", err)
+		return
+	}
+
+	for _, t := range tasks {
+		var pd privateData
+		if err := json.Unmarshal(t.PrivateData, &pd); err != nil || pd.UpstreamTaskID == "" {
+			// 无法恢复，直接退还预扣
+			g.Log().Warningf(ctx, "poll: unsettled task %s has invalid private_data, refunding", t.PublicTaskID)
+			taskBilling := billing.NewTaskBillingProvider()
+			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.PublicTaskID, t.PreDeductAmount); err != nil {
+				g.Log().Errorf(ctx, "poll: refund unsettled task %s: %v", t.PublicTaskID, err)
+			} else {
+				t.BillingSettled = true
+				DefaultAsyncProvider.UpdateTask(ctx, t)
+			}
+			continue
+		}
+
+		if t.Status == "SUCCESS" {
+			// 成功任务：用 ActualCost（已在上次轮询中计算）结算
+			actualCost := t.ActualCost
+			if actualCost <= 0 {
+				actualCost = t.PreDeductAmount
+			}
+			taskBilling := billing.NewTaskBillingProvider()
+			_, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
+				t.ModelName, t.PublicTaskID, actualCost, t.PreDeductAmount,
+				0, 0, pd.BillingContext.Ratios)
+			if err != nil {
+				g.Log().Warningf(ctx, "poll: retry settle task %s: %v", t.PublicTaskID, err)
+			} else {
+				t.BillingSettled = true
+				t.ActualCost = actualCost
+				DefaultAsyncProvider.UpdateTask(ctx, t)
+				g.Log().Infof(ctx, "poll: retried settlement for task %s", t.PublicTaskID)
+			}
+		} else {
+			// 失败任务：退还预扣
+			taskBilling := billing.NewTaskBillingProvider()
+			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.PublicTaskID, t.PreDeductAmount); err != nil {
+				g.Log().Warningf(ctx, "poll: retry refund task %s: %v", t.PublicTaskID, err)
+			} else {
+				t.BillingSettled = true
+				DefaultAsyncProvider.UpdateTask(ctx, t)
+				g.Log().Infof(ctx, "poll: retried refund for task %s", t.PublicTaskID)
+			}
+		}
 	}
 }
 
@@ -231,6 +289,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		DefaultAsyncProvider.UpdateTask(ctx, task) // 更新 result_url
 
 		// 结算计费
+		var settleResult *common.SettlementResult
 		if task.PreDeductAmount > 0 && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
 			actualCost := task.PreDeductAmount
@@ -246,7 +305,8 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			}
 
 			task.ActualCost = actualCost
-			if err := taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.PublicTaskID, actualCost, task.PreDeductAmount); err != nil {
+			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.PublicTaskID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios)
+			if err != nil {
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {
 				task.BillingSettled = true
@@ -256,7 +316,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		g.Log().Infof(ctx, "poll: task %s completed", task.PublicTaskID)
 
 		// 记录用量日志
-		recordTaskUsage(task, true, "")
+		recordTaskUsage(task, true, "", settleResult)
 
 		// 更新审计记录
 		recordTaskCompletionAudit(task, "SUCCESS", string(body), upstreamRespHeaders(resp))
@@ -275,7 +335,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		g.Log().Infof(ctx, "poll: task %s failed: %s", task.PublicTaskID, task.FailReason)
 
 		// 记录用量日志
-		recordTaskUsage(task, false, task.FailReason)
+		recordTaskUsage(task, false, task.FailReason, nil)
 
 		// 更新审计记录
 		recordTaskCompletionAudit(task, "FAILURE", string(body), upstreamRespHeaders(resp))
@@ -283,7 +343,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 }
 
 // recordTaskUsage 异步记录视频/音乐等异步任务的用量日志
-func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string) {
+func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string, settleResult *common.SettlementResult) {
 	latencyMs := 0
 	if task.SubmitTime != nil && task.FinishTime != nil {
 		latencyMs = int(task.FinishTime.Sub(*task.SubmitTime).Milliseconds())
@@ -294,7 +354,7 @@ func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string) {
 		status = "error"
 	}
 
-	relay.NewDataProvider().RecordUsage(context.Background(), &common.UsageRecord{
+	record := &common.UsageRecord{
 		TenantID:         task.TenantID,
 		UserID:           task.UserID,
 		ApiKeyID:         task.ApiKeyID,
@@ -314,10 +374,34 @@ func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string) {
 		TotalCost:        task.ActualCost,
 		ActualCost:       task.ActualCost,
 		PreDeductAmount:  task.PreDeductAmount,
-		BillingMode:      "per_request",
 		BillingSource:    "task",
 		TaskID:           task.PublicTaskID,
-	})
+	}
+
+	// 从结算结果填充计费快照
+	if settleResult != nil {
+		record.BillingSnapshot = settleResult.BillingSnapshot
+		record.BillingSummary = settleResult.BillingSummary
+		record.BillingMode = settleResult.BillingMode
+		record.BillingSource = settleResult.BillingSource
+		record.RateMultiplier = settleResult.RateMultiplier
+		record.InputCost = settleResult.InputCost
+		record.OutputCost = settleResult.OutputCost
+		record.RefundAmount = settleResult.RefundAmount
+		record.SupplementAmount = settleResult.SupplementAmount
+		record.Currency = "USD"
+	} else {
+		// 失败/超时任务：从定价中获取计费模式
+		billingMode := "per_request"
+		if pricing, err := billing.GetModelPrice(context.Background(), task.TenantID, task.ModelName); err == nil {
+			if pricing.BillingMode != "" {
+				billingMode = pricing.BillingMode
+			}
+		}
+		record.BillingMode = billingMode
+	}
+
+	relay.NewDataProvider().RecordUsage(context.Background(), record)
 }
 
 // recordTaskCompletionAudit 更新提交阶段写入的审计记录，补充异步任务最终结果
