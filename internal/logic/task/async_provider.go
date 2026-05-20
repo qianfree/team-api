@@ -344,6 +344,63 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 	return tasks, nil
 }
 
+// GetUnsettledTasks 获取终态但未结算的任务（用于结算重试）
+func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*common.AsyncTask, error) {
+	var rows []struct {
+		ID              int64           `json:"id"`
+		PublicTaskID    string          `json:"public_task_id"`
+		RequestId       string          `json:"request_id"`
+		Platform        string          `json:"platform"`
+		Status          string          `json:"status"`
+		TenantID        int64           `json:"tenant_id"`
+		UserID          int64           `json:"user_id"`
+		ApiKeyID        int64           `json:"api_key_id"`
+		ChannelID       int64           `json:"channel_id"`
+		ModelName       string          `json:"model_name"`
+		PreDeductAmount float64         `json:"pre_deduct_amount"`
+		ActualCost      float64         `json:"actual_cost"`
+		BillingSettled  bool            `json:"billing_settled"`
+		Data            json.RawMessage `json:"data"`
+		PrivateData     json.RawMessage `json:"private_data"`
+		SubmitTime      *time.Time      `json:"submit_time"`
+		CreatedAt       time.Time       `json:"created_at"`
+	}
+	err := dao.TskModelTasks.Ctx(ctx).
+		Where("status IN (?, ?)", "SUCCESS", "FAILURE").
+		Where("billing_settled = ?", false).
+		Where("pre_deduct_amount > 0").
+		Order("submit_time ASC").
+		Limit(limit).
+		Scan(&rows)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "query unsettled tasks failed")
+	}
+
+	tasks := make([]*common.AsyncTask, 0, len(rows))
+	for _, r := range rows {
+		tasks = append(tasks, &common.AsyncTask{
+			ID:              r.ID,
+			PublicTaskID:    r.PublicTaskID,
+			RequestID:       r.RequestId,
+			Platform:        r.Platform,
+			Status:          r.Status,
+			TenantID:        r.TenantID,
+			UserID:          r.UserID,
+			ApiKeyID:        r.ApiKeyID,
+			ChannelID:       r.ChannelID,
+			ModelName:       r.ModelName,
+			PreDeductAmount: r.PreDeductAmount,
+			ActualCost:      r.ActualCost,
+			BillingSettled:  r.BillingSettled,
+			Data:            r.Data,
+			PrivateData:     r.PrivateData,
+			SubmitTime:      r.SubmitTime,
+			CreatedAt:       r.CreatedAt,
+		})
+	}
+	return tasks, nil
+}
+
 // GetChannelByID 获取渠道基本信息（含从 chn_channel_keys 解密的 API Key）
 func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*common.ChannelBasicInfo, error) {
 	var row struct {

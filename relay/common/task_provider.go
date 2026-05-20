@@ -29,6 +29,9 @@ type TaskDataProvider interface {
 	// GetTimedOutTasks 获取超时未完成任务
 	GetTimedOutTasks(ctx context.Context, cutoffUnix int64, limit int) ([]*AsyncTask, error)
 
+	// GetUnsettledTasks 获取终态但未结算的任务（结算重试）
+	GetUnsettledTasks(ctx context.Context, limit int) ([]*AsyncTask, error)
+
 	// GetChannelByID 获取渠道基本信息
 	GetChannelByID(ctx context.Context, channelID int64) (*ChannelBasicInfo, error)
 }
