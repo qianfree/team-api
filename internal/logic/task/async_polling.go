@@ -10,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -98,6 +99,7 @@ func handleTimedOutTasks(ctx context.Context) {
 			continue
 		}
 		DecrActiveTask()
+		monitor.UnregisterRequestByTaskID(t.PublicTaskID)
 
 		// 退还预扣费用
 		if t.PreDeductAmount > 0 {
@@ -284,6 +286,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	if taskInfo.Status.IsTerminal() {
 		DecrActiveTask()
+		monitor.UnregisterRequestByTaskID(task.PublicTaskID)
 	}
 
 	// 处理终态

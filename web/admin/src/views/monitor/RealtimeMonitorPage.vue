@@ -393,9 +393,9 @@ onUnmounted(() => {
       <div class="table-scroll-wrapper">
         <a-table :data="activeRequests" :pagination="{ pageSize: 20 }" size="small" :bordered="false" :scroll="{ x: 800 }">
         <template #columns>
-          <a-table-column title="Request ID" data-index="request_id" :width="200" ellipsis>
+          <a-table-column title="ID" :width="200" ellipsis>
             <template #cell="{ record }">
-              <span class="mono">{{ record.request_id }}</span>
+              <span class="mono">{{ record.task_id || record.request_id }}</span>
             </template>
           </a-table-column>
           <a-table-column title="租户 ID" data-index="tenant_id" :width="90" />
@@ -405,9 +405,10 @@ onUnmounted(() => {
               {{ record.channel_name || '-' }}
             </template>
           </a-table-column>
-          <a-table-column title="类型" :width="80" align="center">
+          <a-table-column title="类型" :width="90" align="center">
             <template #cell="{ record }">
-              <a-tag :color="record.is_stream ? 'green' : 'orangered'" size="small">
+              <a-tag v-if="record.is_async_task" color="arcoblue" size="small">异步任务</a-tag>
+              <a-tag v-else :color="record.is_stream ? 'green' : 'orangered'" size="small">
                 {{ record.is_stream ? '流式' : '非流式' }}
               </a-tag>
             </template>
