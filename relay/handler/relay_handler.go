@@ -427,7 +427,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				}
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						modelName, rc.RequestID, relayModeStr, streamUsage, preDeductAmount)
+						modelName, rc.RequestID, relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
 				}
 				recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
 				hop.Success = false

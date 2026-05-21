@@ -152,10 +152,10 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 				streamUsage = &common.Usage{}
 			}
 			_ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount)
+				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID)
 		} else if usage != nil {
 			_ = billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", usage, preDeductAmount)
+				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID)
 		}
 	}
 

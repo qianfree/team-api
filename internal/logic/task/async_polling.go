@@ -156,7 +156,7 @@ func handleUnsettledTasks(ctx context.Context) {
 			taskBilling := billing.NewTaskBillingProvider()
 			_, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
 				t.ModelName, t.RequestID, actualCost, t.PreDeductAmount,
-				0, 0, pd.BillingContext.Ratios)
+				0, 0, pd.BillingContext.Ratios, t.PublicTaskID)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: retry settle task %s: %v", t.PublicTaskID, err)
 			} else {
@@ -318,7 +318,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			}
 
 			task.ActualCost = actualCost
-			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios)
+			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios, task.PublicTaskID)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {

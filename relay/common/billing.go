@@ -10,7 +10,7 @@ type BillingProvider interface {
 	PreDeduct(ctx context.Context, tenantID int64, modelName string, inputTokens, maxTokens int, isStream bool, requestID string) (preDeductAmount float64, err error)
 
 	// Settle 结算费用（成功请求）
-	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64) error
+	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) error
 
 	// SettleWithUsage 完整 Usage 结算（含 cache token + 计费快照）
 	SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
@@ -21,7 +21,7 @@ type BillingProvider interface {
 	SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error
 
 	// SettleStreamInterrupted 流式中断结算
-	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64) error
+	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) error
 
 	// CheckRateLimit QPS 限流检查
 	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64) (allowed bool, limitLevel string, remaining int, resetAt int64)

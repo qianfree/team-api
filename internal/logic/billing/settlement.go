@@ -6,6 +6,7 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -35,7 +36,7 @@ type SettlementResult struct {
 func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	inputTokens, outputTokens int,
-	preDeductAmount float64) (*SettlementResult, error) {
+	preDeductAmount float64, projectID int64) (*SettlementResult, error) {
 
 	// 1. 计算实际费用
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, outputTokens)
@@ -59,46 +60,73 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		return nil, gerror.Wrapf(err, "settle: get wallet")
 	}
 
-	// 4. 执行结算 DB 操作
-	now := time.Now()
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-		preDeductAmount, actualCost, now, wallet.ID)
+	// 4. 获取定价信息（事务外只读）
+	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
+
+	// 5. 事务内执行结算（钱包扣款 + 计费记录）
+	var balanceAfter, frozenAfter float64
+	var billingID int64
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 5a. 更新钱包
+		now := time.Now()
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			preDeductAmount, actualCost, now, wallet.ID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle: update wallet")
+		}
+
+		// 5b. 事务内读取准确余额
+		type balRow struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		var br *balRow
+		err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("id", wallet.ID).
+			Fields("balance, frozen_balance").
+			Scan(&br)
+		if err == nil && br != nil {
+			balanceAfter = br.Balance
+			frozenAfter = br.FrozenBalance
+		}
+
+		// 5c. 创建计费记录
+		var inputSnapPrice, outputSnapPrice float64
+		var billingMode string
+		var discountRatio, billingInputMult, billingOutputMult float64
+		if pricingResult != nil {
+			inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+			outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+			billingMode = pricingResult.BillingMode
+			discountRatio = pricingResult.DiscountRatio
+			billingInputMult = breakdown.InputMultiplier
+			billingOutputMult = breakdown.OutputMultiplier
+		}
+
+		billingID, err = createBillingRecord(ctx, tx, tenantID, userID, apiKeyID, channelID,
+			modelName, requestID, relayMode, inputTokens, outputTokens,
+			inputSnapPrice, outputSnapPrice, actualCost,
+			billingMode, discountRatio, billingInputMult, billingOutputMult)
+		if err != nil {
+			return gerror.Wrapf(err, "settle: create billing record")
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, gerror.Wrapf(err, "settle: update wallet")
+		return nil, err
 	}
 
-	// 清除钱包缓存（内存 + Redis）
+	// 6. 清除缓存（事务提交后）
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
 
-	// 5. 创建计费记录（获取定价快照）
-	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
-	var inputSnapPrice, outputSnapPrice float64
-	var billingMode string
-	var discountRatio, billingInputMult, billingOutputMult float64
-	if pricingResult != nil {
-		inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-		outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-		billingMode = pricingResult.BillingMode
-		discountRatio = pricingResult.DiscountRatio
-		billingInputMult = breakdown.InputMultiplier
-		billingOutputMult = breakdown.OutputMultiplier
-	}
-
-	billingID, err := createBillingRecord(ctx, tenantID, userID, apiKeyID, channelID,
-		modelName, requestID, relayMode, inputTokens, outputTokens,
-		inputSnapPrice, outputSnapPrice, actualCost,
-		billingMode, discountRatio, billingInputMult, billingOutputMult)
-	if err != nil {
-		g.Log().Errorf(ctx, "settle: create billing record failed: %v", err)
-	}
-
-	// 6. 记录消费流水（一条汇总）
+	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
 		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
-		userID, requestID, modelName)
+		userID, requestID, modelName, billingID, "billing_record", projectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
@@ -137,42 +165,68 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		return nil, gerror.Wrapf(err, "settle_with_usage: get wallet")
 	}
 
-	// 4. 执行结算 DB 操作
-	now := time.Now()
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-		preDeductAmount, actualCost, now, wallet.ID)
+	// 4. 获取定价信息（事务外只读）
+	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
+
+	// 5. 事务内执行结算（钱包扣款 + 计费记录）
+	var balanceAfter, frozenAfter float64
+	var billingID int64
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 5a. 更新钱包
+		now := time.Now()
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			preDeductAmount, actualCost, now, wallet.ID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle_with_usage: update wallet")
+		}
+
+		// 5b. 事务内读取准确余额
+		type balRow struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		var br *balRow
+		err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("id", wallet.ID).
+			Fields("balance, frozen_balance").
+			Scan(&br)
+		if err == nil && br != nil {
+			balanceAfter = br.Balance
+			frozenAfter = br.FrozenBalance
+		}
+
+		// 5c. 创建计费记录（含快照）
+		var inputSnapPrice, outputSnapPrice float64
+		var billingMode string
+		var discountRatio, billingInputMult, billingOutputMult float64
+		if pricingResult != nil {
+			inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+			outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+			billingMode = pricingResult.BillingMode
+			discountRatio = pricingResult.DiscountRatio
+			billingInputMult = breakdown.InputMultiplier
+			billingOutputMult = breakdown.OutputMultiplier
+		}
+
+		billingID, err = createBillingRecordWithSnapshot(ctx, tx, tenantID, userID, apiKeyID, channelID,
+			modelName, requestID, relayMode, breakdown,
+			inputSnapPrice, outputSnapPrice, actualCost,
+			billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
+		if err != nil {
+			return gerror.Wrapf(err, "settle_with_usage: create billing record")
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, gerror.Wrapf(err, "settle_with_usage: update wallet")
+		return nil, err
 	}
 
+	// 6. 清除缓存（事务提交后）
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
-
-	// 5. 获取定价信息
-	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
-
-	// 6. 创建计费记录（含快照）
-	var inputSnapPrice, outputSnapPrice float64
-	var billingMode string
-	var discountRatio, billingInputMult, billingOutputMult float64
-	if pricingResult != nil {
-		inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-		outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-		billingMode = pricingResult.BillingMode
-		discountRatio = pricingResult.DiscountRatio
-		billingInputMult = breakdown.InputMultiplier
-		billingOutputMult = breakdown.OutputMultiplier
-	}
-
-	billingID, err := createBillingRecordWithSnapshot(ctx, tenantID, userID, apiKeyID, channelID,
-		modelName, requestID, relayMode, breakdown,
-		inputSnapPrice, outputSnapPrice, actualCost,
-		billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
-	if err != nil {
-		g.Log().Errorf(ctx, "settle_with_usage: create billing record failed: %v", err)
-	}
 
 	// 7. 生成计费快照和摘要文本
 	settlementResult := &SettlementResult{
@@ -200,10 +254,16 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	settlementResult.BillingSnapshot = snapshotJSON
 	settlementResult.BillingSummary = summaryText
 
-	// 8. 记录消费流水（一条汇总）
+	// 8. 从 relayInfo 提取 projectID
+	var txProjectID int64
+	if relayInfo != nil {
+		txProjectID = relayInfo.ProjectID
+	}
+
+	// 9. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
 		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
-		userID, requestID, modelName)
+		userID, requestID, modelName, billingID, "billing_record", txProjectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return settlementResult, nil
 }
@@ -221,17 +281,17 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	confirmedInput, confirmedOutput int,
-	preDeductAmount float64) (*SettlementResult, error) {
+	preDeductAmount float64, projectID int64) (*SettlementResult, error) {
 
 	// 流式中断：按已确认的 token 计费
 	return Settle(ctx, tenantID, userID, apiKeyID, channelID,
 		modelName, requestID, relayMode,
 		confirmedInput, confirmedOutput,
-		preDeductAmount)
+		preDeductAmount, projectID)
 }
 
 // createBillingRecord 创建计费记录（含快照字段）
-func createBillingRecord(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
+func createBillingRecord(ctx context.Context, tx gdb.TX, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	inputTokens, outputTokens int,
 	inputPrice, outputPrice, totalCost float64,
@@ -269,7 +329,7 @@ func createBillingRecord(ctx context.Context, tenantID, userID, apiKeyID, channe
 	data.BillingInputMultiplier = billingInputMult
 	data.BillingOutputMultiplier = billingOutputMult
 
-	result, err := dao.BilRecords.Ctx(ctx).Insert(data)
+	result, err := tx.Model("bil_records").Ctx(ctx).Data(data).Insert()
 	if err != nil {
 		return 0, err
 	}
@@ -316,7 +376,7 @@ func UpdateUsageLogCostWithSnapshot(ctx context.Context, requestID string, break
 }
 
 // createBillingRecordWithSnapshot 创建计费记录（含 cache token 和完整快照）
-func createBillingRecordWithSnapshot(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
+func createBillingRecordWithSnapshot(ctx context.Context, tx gdb.TX, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	breakdown *CostBreakdown,
 	inputPrice, outputPrice, totalCost float64,
@@ -368,7 +428,7 @@ func createBillingRecordWithSnapshot(ctx context.Context, tenantID, userID, apiK
 		data.BaseOutputPrice = pricing.BaseOutputPrice
 	}
 
-	result, err := dao.BilRecords.Ctx(ctx).Insert(data)
+	result, err := tx.Model("bil_records").Ctx(ctx).Data(data).Insert()
 	if err != nil {
 		return 0, err
 	}
