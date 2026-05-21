@@ -112,14 +112,14 @@ onMounted(fetchTransactions)
 				<table class="table">
 					<thead>
 						<tr>
-							<th>类型</th>
-							<th>金额</th>
-							<th>余额</th>
-							<th>用户</th>
-							<th>请求ID</th>
-							<th>模型</th>
-							<th>时间</th>
-							<th>描述</th>
+							<th class="min-w-20">类型</th>
+							<th class="min-w-30">金额</th>
+							<th class="min-w-30">余额</th>
+							<th class="min-w-35">用户</th>
+							<th class="min-w-50">请求ID</th>
+							<th class="min-w-40">模型</th>
+							<th class="min-w-40">时间</th>
+							<th class="min-w-200">描述</th>
 						</tr>
 					</thead>
 					<tbody>
