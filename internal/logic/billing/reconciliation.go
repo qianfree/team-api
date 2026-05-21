@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -86,14 +87,106 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 			result.Difference, result.RecordCount)
 	}
 
+	// 5. 冻结余额一致性校验
+	reconcileFrozenBalance(ctx)
+
 	return result, nil
+}
+
+// reconcileFrozenBalance 校验所有租户的 frozen_balance 与追踪记录是否一致
+func reconcileFrozenBalance(ctx context.Context) {
+	type frozenRow struct {
+		TenantID      int64   `json:"tenant_id"`
+		FrozenBalance float64 `json:"frozen_balance"`
+	}
+	var wallets []frozenRow
+	dao.BilWallets.Ctx(ctx).
+		Where("frozen_balance > 0").
+		Fields("tenant_id, frozen_balance").
+		Scan(&wallets)
+
+	for _, w := range wallets {
+		type sumRow struct {
+			Total float64 `json:"total"`
+		}
+		var tracked sumRow
+		g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+			Where("tenant_id", w.TenantID).
+			Where("status", "frozen").
+			Fields("COALESCE(SUM(amount), 0) as total").
+			Scan(&tracked)
+
+		diff := w.FrozenBalance - tracked.Total
+		if diff > 0.000001 || diff < -0.000001 {
+			g.Log().Warningf(ctx,
+				"[RECONCILIATION WARNING] tenant=%d frozen_balance=%.6f tracked=%.6f diff=%.6f",
+				w.TenantID, w.FrozenBalance, tracked.Total, diff)
+		}
+	}
 }
 
 // CleanExpiredPreDeducts 清理过期的预扣记录（防止异常占用余额）
 // 超过 PreDeductMaxAge 未结算的预扣应被清理
 func CleanExpiredPreDeducts(ctx context.Context) {
-	// 清理超过 5 分钟未结算的预扣 Redis key
-	// 在实际运行中，这应该由 Redis TTL 自动清理
-	// 这里作为额外的安全网，扫描并记录异常
-	g.Log().Info(ctx, "[PRE-DEDUCT] expired pre-deduct cleanup check passed (relying on Redis TTL)")
+	// 1. 查询所有超过 PreDeductMaxAge 仍未结算的冻结记录
+	type trackRow struct {
+		RequestID string  `json:"request_id"`
+		TenantID  int64   `json:"tenant_id"`
+		Amount    float64 `json:"amount"`
+	}
+	var tracks []trackRow
+
+	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
+	err := g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+		Where("status", "frozen").
+		Where("created_at < ?", cutoff).
+		Fields("request_id, tenant_id, amount").
+		Scan(&tracks)
+	if err != nil {
+		g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: query failed: %v", err)
+		return
+	}
+
+	if len(tracks) == 0 {
+		return
+	}
+
+	g.Log().Warningf(ctx, "[PRE-DEDUCT] found %d orphaned pre-deducts to clean", len(tracks))
+
+	// 2. 按 tenant_id 分组聚合
+	tenantAmounts := make(map[int64]float64)
+	tenantRequests := make(map[int64][]string)
+	for _, t := range tracks {
+		tenantAmounts[t.TenantID] += t.Amount
+		tenantRequests[t.TenantID] = append(tenantRequests[t.TenantID], t.RequestID)
+	}
+
+	// 3. 逐租户释放冻结金额
+	for tenantID, totalAmount := range tenantAmounts {
+		requestIDs := tenantRequests[tenantID]
+
+		// 释放 DB frozen_balance
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - $1, 0), updated_at = $2 WHERE tenant_id = $3",
+			totalAmount, time.Now(), tenantID)
+		if err != nil {
+			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: unfreeze failed: tenant=%d err=%v", tenantID, err)
+			continue
+		}
+
+		// 标记 tracks 为 expired
+		for _, reqID := range requestIDs {
+			g.DB().Ctx(ctx).Exec(ctx,
+				"UPDATE bil_prededuct_tracks SET status = 'expired', expired_at = $1 WHERE tenant_id = $2 AND request_id = $3 AND status = 'frozen'",
+				time.Now(), tenantID, reqID)
+		}
+
+		// 清除缓存
+		walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+		InvalidateWalletRedis(ctx, tenantID)
+
+		g.Log().Infof(ctx,
+			"[PRE-DEDUCT] cleaned orphaned: tenant=%d amount=%.6f count=%d",
+			tenantID, totalAmount, len(requestIDs))
+	}
 }
