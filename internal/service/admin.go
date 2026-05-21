@@ -248,18 +248,10 @@ type (
 		RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error)
 		// OrderComplete 手动完成订单
 		OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error)
-		// GetPaymentChannels 获取支付渠道配置
+		// GetPaymentChannels 获取所有渠道配置（单例模式，从 sys_options 读取）
 		GetPaymentChannels(ctx context.Context, _ *v1.PaymentChannelListReq) (*v1.PaymentChannelListRes, error)
-		// CreatePaymentChannel 创建支付渠道（默认禁用）。
-		CreatePaymentChannel(ctx context.Context, req *v1.PaymentChannelCreateReq) (*v1.PaymentChannelCreateRes, error)
-		// GetPaymentChannel 获取单个支付渠道详情。
-		GetPaymentChannel(ctx context.Context, req *v1.PaymentChannelDetailReq) (*v1.PaymentChannelDetailRes, error)
-		// UpdatePaymentChannel 更新支付渠道配置
-		UpdatePaymentChannel(ctx context.Context, req *v1.PaymentChannelUpdateReq) (*v1.PaymentChannelUpdateRes, error)
-		// DeletePaymentChannel 删除支付渠道。
-		DeletePaymentChannel(ctx context.Context, req *v1.PaymentChannelDeleteReq) (*v1.PaymentChannelDeleteRes, error)
-		// TogglePaymentChannel 切换支付渠道启用/禁用状态。
-		TogglePaymentChannel(ctx context.Context, req *v1.PaymentChannelToggleReq) (*v1.PaymentChannelToggleRes, error)
+		// SavePaymentChannel 保存指定渠道的配置（整体覆盖）
+		SavePaymentChannel(ctx context.Context, req *v1.PaymentChannelSaveReq) (*v1.PaymentChannelSaveRes, error)
 		// GetPaymentSettings 获取全局支付设置。
 		GetPaymentSettings(ctx context.Context, _ *v1.PaymentSettingsGetReq) (*v1.PaymentSettingsGetRes, error)
 		// UpdatePaymentSettings 更新全局支付设置。

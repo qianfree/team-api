@@ -29,7 +29,7 @@ type PaymentOrder struct {
 	Currency      string  // 货币代码
 	OrderType     string  // 订单类型（new_plan/renew/upgrade/recharge）
 	Description   string  // 订单描述（用于支付页面展示）
-	PaymentMethod string  // 子支付方式（alipay/wxpay/stripe 等）
+	PaymentMethod string  // 子支付方式（alipay/wxpay 等）
 	NotifyURL     string  // 异步回调地址
 	ReturnURL     string  // 支付完成前端跳转地址
 }
@@ -74,10 +74,6 @@ func GetProvider(channelType string) PaymentProvider {
 	switch channelType {
 	case "epay":
 		return &EpayProvider{}
-	case "stripe":
-		return &StripeProvider{}
-	case "mock":
-		return &MockProvider{}
 	default:
 		return nil
 	}

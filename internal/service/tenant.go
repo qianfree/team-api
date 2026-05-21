@@ -203,6 +203,8 @@ type (
 		OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.TenantOrderPayRes, error)
 		// PaymentInfo 获取租户可用的支付信息（渠道列表、金额选项、折扣）
 		PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq) (*v1.TenantPaymentInfoRes, error)
+		// RechargeCreate 创建充值订单并发起支付（一步完成）
+		RechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (*v1.TenantRechargeCreateRes, error)
 		// ExportOrders exports the tenant order list as CSV or Excel.
 		ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq) (*v1.TenantOrderExportRes, error)
 		// GetOrgInfo returns tenant organization info.

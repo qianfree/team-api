@@ -277,6 +277,10 @@ type AdminWalletTransactionItem struct {
 	BalanceAfter float64 `json:"balance_after"`
 	FrozenAfter  float64 `json:"frozen_after"`
 	Description  string  `json:"description"`
+	UserId       int64   `json:"user_id"`
+	Username     string  `json:"username"`
+	RequestId    string  `json:"request_id"`
+	ModelName    string  `json:"model_name"`
 	CreatedAt    string  `json:"created_at"`
 }
 

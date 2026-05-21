@@ -3,16 +3,15 @@ package admin
 import (
 	"context"
 	"fmt"
-	"github.com/qianfree/team-api/internal/dao"
-	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
-	"github.com/gogf/gf/v2/util/gconv"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
+
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/payment"
-	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
@@ -129,98 +128,22 @@ func (s *sAdmin) OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*
 	return &v1.OrderCompleteRes{}, nil
 }
 
-// GetPaymentChannels 获取支付渠道配置
+// GetPaymentChannels 获取所有渠道配置（单例模式，从 sys_options 读取）
 func (s *sAdmin) GetPaymentChannels(ctx context.Context, _ *v1.PaymentChannelListReq) (*v1.PaymentChannelListRes, error) {
-	channels := make([]map[string]any, 0)
-	err := dao.OrdPaymentChannels.Ctx(ctx).
-		OrderAsc("sort_order").
-		Scan(&channels)
-	if err != nil {
-		return nil, err
-	}
-	return &v1.PaymentChannelListRes{List: channels}, nil
+	return &v1.PaymentChannelListRes{List: payment.ListAllChannels(ctx)}, nil
 }
 
-// CreatePaymentChannel 创建支付渠道（默认禁用）。
-func (s *sAdmin) CreatePaymentChannel(ctx context.Context, req *v1.PaymentChannelCreateReq) (*v1.PaymentChannelCreateRes, error) {
-	result, err := dao.OrdPaymentChannels.Ctx(ctx).Insert(do.OrdPaymentChannels{
-		Channel:   req.Channel,
-		Name:      req.Name,
-		Config:    req.Config,
-		IsEnabled: false,
-		SortOrder: req.SortOrder,
-	})
+// SavePaymentChannel 保存指定渠道的配置（整体覆盖）
+func (s *sAdmin) SavePaymentChannel(ctx context.Context, req *v1.PaymentChannelSaveReq) (*v1.PaymentChannelSaveRes, error) {
+	// 校验 config JSON 是否合法
+	_, err := payment.ParseChannelConfig(req.Channel, req.Config)
 	if err != nil {
+		return nil, common.NewBadRequestError("配置 JSON 格式无效: " + err.Error())
+	}
+	if err := payment.SaveChannelConfig(ctx, req.Channel, req.Config); err != nil {
 		return nil, err
 	}
-	id, _ := result.LastInsertId()
-	return &v1.PaymentChannelCreateRes{ID: id}, nil
-}
-
-// GetPaymentChannel 获取单个支付渠道详情。
-func (s *sAdmin) GetPaymentChannel(ctx context.Context, req *v1.PaymentChannelDetailReq) (*v1.PaymentChannelDetailRes, error) {
-	var ch entity.OrdPaymentChannels
-	err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.Id).Scan(&ch)
-	if err != nil {
-		return nil, err
-	}
-	if ch.Id == 0 {
-		return nil, common.NewNotFoundError("支付渠道")
-	}
-	return &v1.PaymentChannelDetailRes{Data: gconv.Map(ch)}, nil
-}
-
-// UpdatePaymentChannel 更新支付渠道配置
-func (s *sAdmin) UpdatePaymentChannel(ctx context.Context, req *v1.PaymentChannelUpdateReq) (*v1.PaymentChannelUpdateRes, error) {
-	result, err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.Id).
-		Data(req.Update).
-		Update()
-	if err != nil {
-		return nil, err
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return nil, common.NewNotFoundError("支付渠道")
-	}
-	return &v1.PaymentChannelUpdateRes{}, nil
-}
-
-// DeletePaymentChannel 删除支付渠道。
-func (s *sAdmin) DeletePaymentChannel(ctx context.Context, req *v1.PaymentChannelDeleteReq) (*v1.PaymentChannelDeleteRes, error) {
-	result, err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.Id).Delete()
-	if err != nil {
-		return nil, err
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return nil, common.NewNotFoundError("支付渠道")
-	}
-	return &v1.PaymentChannelDeleteRes{}, nil
-}
-
-// TogglePaymentChannel 切换支付渠道启用/禁用状态。
-func (s *sAdmin) TogglePaymentChannel(ctx context.Context, req *v1.PaymentChannelToggleReq) (*v1.PaymentChannelToggleRes, error) {
-	var ch struct {
-		IsEnabled bool `json:"is_enabled"`
-	}
-	err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.Id).Scan(&ch)
-	if err != nil {
-		return nil, err
-	}
-	newState := !ch.IsEnabled
-	_, err = dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.Id).
-		Data(do.OrdPaymentChannels{
-			IsEnabled: newState,
-		}).Update()
-	if err != nil {
-		return nil, err
-	}
-	return &v1.PaymentChannelToggleRes{IsEnabled: newState}, nil
+	return &v1.PaymentChannelSaveRes{}, nil
 }
 
 // GetPaymentSettings 获取全局支付设置。

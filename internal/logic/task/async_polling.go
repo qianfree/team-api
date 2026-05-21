@@ -111,6 +111,13 @@ func handleTimedOutTasks(ctx context.Context) {
 		}
 		g.Log().Infof(ctx, "poll: task %s timed out", t.PublicTaskID)
 
+		// 查询渠道信息并记录用量日志
+		var ch *common.ChannelBasicInfo
+		if t.ChannelID > 0 {
+			ch, _ = DefaultAsyncProvider.GetChannelByID(ctx, t.ChannelID)
+		}
+		recordTaskUsage(t, ch, false, "task timed out", nil)
+
 		// 更新审计记录
 		recordTaskCompletionAudit(t, "TIMEOUT", "", nil)
 	}
@@ -323,7 +330,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		g.Log().Infof(ctx, "poll: task %s completed", task.PublicTaskID)
 
 		// 记录用量日志
-		recordTaskUsage(task, true, "", settleResult)
+		recordTaskUsage(task, channel, true, "", settleResult)
 
 		// 更新审计记录
 		recordTaskCompletionAudit(task, "SUCCESS", string(body), upstreamRespHeaders(resp))
@@ -343,7 +350,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		g.Log().Infof(ctx, "poll: task %s failed: %s", task.PublicTaskID, task.FailReason)
 
 		// 记录用量日志
-		recordTaskUsage(task, false, task.FailReason, nil)
+		recordTaskUsage(task, channel, false, task.FailReason, nil)
 
 		// 更新审计记录
 		recordTaskCompletionAudit(task, "FAILURE", string(body), upstreamRespHeaders(resp))
@@ -351,10 +358,18 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 }
 
 // recordTaskUsage 异步记录视频/音乐等异步任务的用量日志
-func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string, settleResult *common.SettlementResult) {
+func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, success bool, errMsg string, settleResult *common.SettlementResult) {
 	latencyMs := 0
 	if task.SubmitTime != nil && task.FinishTime != nil {
 		latencyMs = int(task.FinishTime.Sub(*task.SubmitTime).Milliseconds())
+	}
+
+	// 提取渠道名称和类型
+	var channelName string
+	var channelType int
+	if channel != nil {
+		channelName = channel.Name
+		channelType = channel.Type
 	}
 
 	status := "success"
@@ -367,6 +382,8 @@ func recordTaskUsage(task *common.AsyncTask, success bool, errMsg string, settle
 		UserID:           task.UserID,
 		ApiKeyID:         task.ApiKeyID,
 		ChannelID:        task.ChannelID,
+		ChannelName:      channelName,
+		ChannelType:      channelType,
 		ModelName:        task.ModelName,
 		RelayMode:        int(constant.RelayModeVideoGenerations),
 		RequestType:      3, // async

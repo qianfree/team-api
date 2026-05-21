@@ -91,14 +91,19 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 		FrozenAfter  float64     `json:"frozen_after"`
 		RelatedType  string      `json:"related_type"`
 		Description  string      `json:"description"`
+		UserId       int64       `json:"user_id"`
+		Username     string      `json:"username"`
+		RequestId    string      `json:"request_id"`
+		ModelName    string      `json:"model_name"`
 		CreatedAt    *gtime.Time `json:"created_at"`
 	}
 
 	var records []transactionRow
 	var err error
 	var total int
-	err = query.Fields("id, type, amount, balance_after, frozen_after, related_type, description, created_at").
-		OrderDesc("created_at").
+	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.created_at").
+		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
+		OrderDesc("bil_transactions.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&records, &total, false)
 	if err != nil {
@@ -118,6 +123,10 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 			"frozen_after":  r.FrozenAfter,
 			"related_type":  r.RelatedType,
 			"description":   r.Description,
+			"user_id":       r.UserId,
+			"username":      r.Username,
+			"request_id":    r.RequestId,
+			"model_name":    r.ModelName,
 			"created_at":    r.CreatedAt,
 		})
 	}
@@ -505,6 +514,9 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 				Type         string      `json:"type"`
 				Amount       float64     `json:"amount"`
 				BalanceAfter float64     `json:"balance_after"`
+				UserId       int64       `json:"user_id"`
+				RequestId    string      `json:"request_id"`
+				ModelName    string      `json:"model_name"`
 				Description  string      `json:"description"`
 				CreatedAt    *gtime.Time `json:"created_at"`
 			}
@@ -512,7 +524,7 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 			var records []transactionRow
 			err := dao.BilTransactions.Ctx(ctx).
 				Where("tenant_id", tenantID).
-				Fields("id, type, amount, balance_after, description, created_at").
+				Fields("id, type, amount, balance_after, user_id, request_id, model_name, description, created_at").
 				OrderDesc("created_at").
 				Limit(1000).Offset(offset).
 				Scan(&records)

@@ -105,6 +105,7 @@ type ITenantV1 interface {
 	TenantOrderList(ctx context.Context, req *v1.TenantOrderListReq) (res *v1.TenantOrderListRes, err error)
 	TenantOrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq) (res *v1.TenantOrderDetailRes, err error)
 	TenantOrderCancel(ctx context.Context, req *v1.TenantOrderCancelReq) (res *v1.TenantOrderCancelRes, err error)
+	TenantRechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (res *v1.TenantRechargeCreateRes, err error)
 	TenantPaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq) (res *v1.TenantPaymentInfoRes, err error)
 	TenantOrderExport(ctx context.Context, req *v1.TenantOrderExportReq) (res *v1.TenantOrderExportRes, err error)
 	TenantOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (res *v1.TenantOrgInfoRes, err error)
