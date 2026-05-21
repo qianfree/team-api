@@ -36,6 +36,9 @@ type BilTransactionsColumns struct {
 	UserId       string // 关联用户ID（consume 类型为实际消费用户，recharge 类型为操作用户，adjust 类型为空）
 	RequestId    string // 关联请求ID（consume 类型对应 API 调用的 request_id，其他类型为空）
 	ModelName    string // 关联模型名（consume 类型为调用的模型名，其他类型为空）
+	ProjectId    string // 关联项目ID（consume 类型为 API Key 所属项目，个人密钥为空）
+	ApiKeyId     string // 关联API密钥ID（consume 类型为发起请求的密钥）
+	TaskId       string // 关联异步任务公开ID（consume+relay_mode=task 时关联 tsk_model_tasks.public_task_id）
 }
 
 // bilTransactionsColumns holds the columns for the table bil_transactions.
@@ -55,6 +58,9 @@ var bilTransactionsColumns = BilTransactionsColumns{
 	UserId:       "user_id",
 	RequestId:    "request_id",
 	ModelName:    "model_name",
+	ProjectId:    "project_id",
+	ApiKeyId:     "api_key_id",
+	TaskId:       "task_id",
 }
 
 // NewBilTransactionsDao creates and returns a new DAO object for table data access.

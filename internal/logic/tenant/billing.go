@@ -81,7 +81,7 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.BilTransactions.Ctx(ctx).
-		Where("tenant_id", tenantID)
+		Where("bil_transactions.tenant_id", tenantID)
 
 	type transactionRow struct {
 		Id           int64       `json:"id"`
@@ -89,19 +89,23 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 		Amount       float64     `json:"amount"`
 		BalanceAfter float64     `json:"balance_after"`
 		FrozenAfter  float64     `json:"frozen_after"`
+		RelatedId    int64       `json:"related_id"`
 		RelatedType  string      `json:"related_type"`
 		Description  string      `json:"description"`
 		UserId       int64       `json:"user_id"`
 		Username     string      `json:"username"`
 		RequestId    string      `json:"request_id"`
 		ModelName    string      `json:"model_name"`
+		ProjectId    int64       `json:"project_id"`
+		ApiKeyId     int64       `json:"api_key_id"`
+		TaskId       string      `json:"task_id"`
 		CreatedAt    *gtime.Time `json:"created_at"`
 	}
 
 	var records []transactionRow
 	var err error
 	var total int
-	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.created_at").
+	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_id, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.project_id, bil_transactions.api_key_id, bil_transactions.task_id, bil_transactions.created_at").
 		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
 		OrderDesc("bil_transactions.created_at").
 		Page(page, pageSize).
@@ -121,12 +125,16 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 			"amount":        r.Amount,
 			"balance_after": r.BalanceAfter,
 			"frozen_after":  r.FrozenAfter,
+			"related_id":    r.RelatedId,
 			"related_type":  r.RelatedType,
 			"description":   r.Description,
 			"user_id":       r.UserId,
 			"username":      r.Username,
 			"request_id":    r.RequestId,
 			"model_name":    r.ModelName,
+			"project_id":    r.ProjectId,
+			"api_key_id":    r.ApiKeyId,
+			"task_id":       r.TaskId,
 			"created_at":    r.CreatedAt,
 		})
 	}
@@ -147,11 +155,11 @@ func (s *sTenant) BillingRecords(ctx context.Context, req *v1.TenantBillingRecor
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.BilRecords.Ctx(ctx).
-		Where("tenant_id", tenantID)
+		Where("bil_records.tenant_id", tenantID)
 
 	// member 角色只能查看自己的账单记录
 	if role == "member" {
-		query = query.Where("user_id", userID)
+		query = query.Where("bil_records.user_id", userID)
 	}
 
 	type billingRecordRow struct {
@@ -167,13 +175,22 @@ func (s *sTenant) BillingRecords(ctx context.Context, req *v1.TenantBillingRecor
 		Status       string      `json:"status"`
 		SettledAt    *gtime.Time `json:"settled_at"`
 		CreatedAt    *gtime.Time `json:"created_at"`
+		RequestId    string      `json:"request_id"`
+		UserId       int64       `json:"user_id"`
+		Username     string      `json:"username"`
+		ProjectId    int64       `json:"project_id"`
+		ProjectName  string      `json:"project_name"`
+		ApiKeyId     int64       `json:"api_key_id"`
+		ApiKeyName   string      `json:"api_key_name"`
 	}
 
 	var records []billingRecordRow
 	var err error
 	var total int
-	err = query.Fields("id, model_name, relay_mode, input_tokens, output_tokens, input_price, output_price, total_cost, currency, status, settled_at, created_at").
-		OrderDesc("created_at").
+	err = query.Fields("bil_records.id, bil_records.model_name, bil_records.relay_mode, bil_records.input_tokens, bil_records.output_tokens, bil_records.input_price, bil_records.output_price, bil_records.total_cost, bil_records.currency, bil_records.status, bil_records.settled_at, bil_records.created_at, bil_records.request_id, bil_records.user_id, COALESCE(tu.username, '') AS username, bil_records.api_key_id, COALESCE(ak.name, '') AS api_key_name").
+		LeftJoin("tnt_users tu", "bil_records.user_id = tu.id AND bil_records.tenant_id = tu.tenant_id").
+		LeftJoin("api_keys ak", "bil_records.api_key_id = ak.id AND bil_records.tenant_id = ak.tenant_id").
+		OrderDesc("bil_records.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&records, &total, false)
 	if err != nil {
@@ -198,6 +215,11 @@ func (s *sTenant) BillingRecords(ctx context.Context, req *v1.TenantBillingRecor
 			"status":        r.Status,
 			"settled_at":    r.SettledAt,
 			"created_at":    r.CreatedAt,
+			"request_id":    r.RequestId,
+			"user_id":       r.UserId,
+			"username":      r.Username,
+			"api_key_id":    r.ApiKeyId,
+			"api_key_name":  r.ApiKeyName,
 		})
 	}
 

@@ -27,4 +27,7 @@ type BilTransactions struct {
 	UserId       any         // 关联用户ID（consume 类型为实际消费用户，recharge 类型为操作用户，adjust 类型为空）
 	RequestId    any         // 关联请求ID（consume 类型对应 API 调用的 request_id，其他类型为空）
 	ModelName    any         // 关联模型名（consume 类型为调用的模型名，其他类型为空）
+	ProjectId    any         // 关联项目ID（consume 类型为 API Key 所属项目，个人密钥为空）
+	ApiKeyId     any         // 关联API密钥ID（consume 类型为发起请求的密钥）
+	TaskId       any         // 关联异步任务公开ID（consume+relay_mode=task 时关联 tsk_model_tasks.public_task_id）
 }

@@ -2,13 +2,14 @@ package billing
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
-	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/relay/common"
 )
@@ -78,33 +79,19 @@ func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID in
 // SettleTaskSuccess 任务成功结算（含计费快照）
 // totalTokens/completionTokens: 上游返回的 token 用量
 // ratios: 提交时保存的计费比率（如 video_input 折扣）
-func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount float64, totalTokens, completionTokens int, ratios map[string]float64) (*common.SettlementResult, error) {
+func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount float64, totalTokens, completionTokens int, ratios map[string]float64, taskID string) (*common.SettlementResult, error) {
 	diff := actualCost - preDeductAmount
 
-	// 1. 钱包操作
+	// 1. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("settle task: get wallet: %w", err)
 	}
 
-	now := time.Now()
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-		preDeductAmount, actualCost, now, wallet.ID)
-	if err != nil {
-		return nil, fmt.Errorf("settle task: update wallet: %w", err)
-	}
-
-	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
-	InvalidateWalletRedis(ctx, tenantID)
-	CleanupPreDeduct(ctx, tenantID, requestID)
-	CleanupPreDeduct(ctx, tenantID, requestID+"_adjust")
-
-	// 2. 获取定价 + 构建 CostBreakdown
+	// 2. 获取定价（事务外只读）
 	pricing, _ := GetModelPrice(ctx, tenantID, modelName)
 	breakdown := buildTaskCostBreakdown(pricing, actualCost, totalTokens, completionTokens)
 
-	// 3. 创建计费记录（含快照字段）
 	var billingMode string
 	var discountRatio, effectiveOutputPrice float64
 	if pricing != nil {
@@ -113,40 +100,95 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		effectiveOutputPrice = pricing.OutputPrice
 	}
 
-	_, _ = dao.BilRecords.Ctx(ctx).Insert(do.BilRecords{
-		TenantId:     tenantID,
-		UserId:       userID,
-		ApiKeyId:     apiKeyID,
-		ChannelId:    channelID,
-		ModelName:    modelName,
-		RequestId:    requestID,
-		RelayMode:    "task",
-		InputTokens:  0,
-		OutputTokens: totalTokens,
-		InputPrice:   0,
-		OutputPrice:  effectiveOutputPrice,
-		TotalCost:    actualCost,
-		Currency:     "USD",
-		Status:       "settled",
-		SettledAt:    gtime.NewFromTime(now),
-		BillingMode:  billingMode,
-		DiscountRatio: func() float64 {
-			if discountRatio > 0 {
-				return discountRatio
-			}
-			return 0
-		}(),
-		EffectiveInputPrice:     0,
-		EffectiveOutputPrice:    effectiveOutputPrice,
-		BillingInputMultiplier:  0,
-		BillingOutputMultiplier: 0,
-		CacheCreationTokens:     0,
-		CacheReadTokens:         0,
-		CacheCreationCost:       0,
-		CacheReadCost:           0,
-	})
+	// 3. 事务内执行结算（钱包扣款 + 计费记录）
+	var balanceAfter, frozenAfter float64
+	var taskBillingID int64
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 3a. 更新钱包
+		now := time.Now()
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			preDeductAmount, actualCost, now, wallet.ID)
+		if err != nil {
+			return fmt.Errorf("settle task: update wallet: %w", err)
+		}
 
-	// 4. 生成计费快照 + 摘要
+		// 3b. 事务内读取准确余额
+		type balRow struct {
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		var br *balRow
+		err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("id", wallet.ID).
+			Fields("balance, frozen_balance").
+			Scan(&br)
+		if err == nil && br != nil {
+			balanceAfter = br.Balance
+			frozenAfter = br.FrozenBalance
+		}
+
+		// 3c. 创建计费记录
+		var billingResult sql.Result
+		billingResult, err = tx.Model("bil_records").Ctx(ctx).Data(do.BilRecords{
+			TenantId:     tenantID,
+			UserId:       userID,
+			ApiKeyId:     apiKeyID,
+			ChannelId:    channelID,
+			ModelName:    modelName,
+			RequestId:    requestID,
+			RelayMode:    "task",
+			InputTokens:  0,
+			OutputTokens: totalTokens,
+			InputPrice:   0,
+			OutputPrice:  effectiveOutputPrice,
+			TotalCost:    actualCost,
+			Currency:     "USD",
+			Status:       "settled",
+			SettledAt:    gtime.NewFromTime(now),
+			BillingMode:  billingMode,
+			DiscountRatio: func() float64 {
+				if discountRatio > 0 {
+					return discountRatio
+				}
+				return 0
+			}(),
+			EffectiveInputPrice:     0,
+			EffectiveOutputPrice:    effectiveOutputPrice,
+			BillingInputMultiplier:  0,
+			BillingOutputMultiplier: 0,
+			CacheCreationTokens:     0,
+			CacheReadTokens:         0,
+			CacheCreationCost:       0,
+			CacheReadCost:           0,
+		}).Insert()
+		if err != nil {
+			return fmt.Errorf("settle task: create billing record: %w", err)
+		}
+		if billingResult != nil {
+			taskBillingID, _ = billingResult.LastInsertId()
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. 清除缓存（事务提交后）
+	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+	InvalidateWalletRedis(ctx, tenantID)
+	CleanupPreDeduct(ctx, tenantID, requestID)
+	CleanupPreDeduct(ctx, tenantID, requestID+"_adjust")
+
+	// 5. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 3 扣完，无需额外操作）
+	if diff < -0.001 {
+		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
+			g.Log().Warningf(ctx, "settle task adjust refund failed for %s: %v", requestID, err)
+		}
+	}
+
+	// 6. 生成计费快照 + 摘要
 	result := &common.SettlementResult{
 		PreDeductAmount: preDeductAmount,
 		ActualCost:      actualCost,
@@ -178,17 +220,10 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		result.RateMultiplier = pricing.DiscountRatio
 	}
 
-	// 5. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 1 扣完，无需额外操作）
-	if diff < -0.001 {
-		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
-			return result, fmt.Errorf("settle task adjust refund: %w", err)
-		}
-	}
-
-	// 6. 记录消费流水（一条汇总）
+	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
 		fmt.Sprintf("consume: %s model=%s pre_deduct=%.4f actual=%.4f", requestID, modelName, preDeductAmount, actualCost),
-		userID, requestID, modelName)
+		userID, requestID, modelName, taskBillingID, "billing_record", 0, apiKeyID, taskID, balanceAfter, frozenAfter)
 
 	return result, nil
 }

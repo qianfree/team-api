@@ -28,13 +28,13 @@ func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, mod
 	return amount, nil
 }
 
-func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64) error {
+func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) error {
 	inputTokens, outputTokens := 0, 0
 	if usage != nil {
 		inputTokens = usage.PromptTokens
 		outputTokens = usage.CompletionTokens
 	}
-	_, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount)
+	_, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount, projectID)
 	return err
 }
 
@@ -77,13 +77,13 @@ func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, 
 	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
 }
 
-func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64) error {
+func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) error {
 	confirmedInput, confirmedOutput := 0, 0
 	if usage != nil {
 		confirmedInput = usage.PromptTokens
 		confirmedOutput = usage.CompletionTokens
 	}
-	_, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, confirmedInput, confirmedOutput, preDeductAmount)
+	_, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, confirmedInput, confirmedOutput, preDeductAmount, projectID)
 	return err
 }
 
