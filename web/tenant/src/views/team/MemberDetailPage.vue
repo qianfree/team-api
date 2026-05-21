@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 
@@ -415,15 +416,11 @@ onMounted(() => {
 					<!-- Action buttons (only for non-owner) -->
 					<div v-if="canManage" class="flex items-center gap-2 flex-shrink-0">
 						<div class="relative">
-							<select
-								:value="member.role"
-								@change="changeRole(($event.target as HTMLSelectElement).value as 'admin' | 'member')"
+							<BaseSelect
+								:model-value="member.role"
+								@change="changeRole"
 								:disabled="roleLoading"
-								class="input bg-white pr-8 py-2 text-sm"
-							>
-								<option value="admin">管理员</option>
-								<option value="member">成员</option>
-							</select>
+								:options="[{value:'admin',label:'管理员'},{value:'member',label:'成员'}]" />
 						</div>
 						<button
 							@click="showResetModal = true"
@@ -783,11 +780,7 @@ onMounted(() => {
 				<!-- Period -->
 				<div v-if="quotaForm.quota_type === 'periodic'">
 					<label class="input-label">重置周期</label>
-					<select v-model="quotaForm.period" class="input bg-white">
-						<option value="day">按天</option>
-						<option value="week">按周</option>
-						<option value="month">按月</option>
-					</select>
+					<BaseSelect v-model="quotaForm.period" :options="[{value:'day',label:'按天'},{value:'week',label:'按周'},{value:'month',label:'按月'}]" />
 					<p class="input-hint">额度在每个周期开始时自动重置为 0</p>
 				</div>
 			</div>

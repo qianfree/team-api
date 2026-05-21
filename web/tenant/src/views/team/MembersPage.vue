@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
@@ -348,33 +349,17 @@ onMounted(() => {
 				<div class="space-y-4">
 					<div>
 						<label class="input-label">角色</label>
-						<select v-model="inviteForm.role" class="input bg-white">
-							<option value="member">成员</option>
-							<option value="admin">管理员</option>
-						</select>
+						<BaseSelect v-model="inviteForm.role" :options="[{value:'member',label:'成员'},{value:'admin',label:'管理员'}]" />
 					</div>
 
 					<div>
 						<label class="input-label">有效期</label>
-						<select v-model="inviteForm.expires_days" class="input bg-white">
-							<option :value="1">1 天</option>
-							<option :value="3">3 天</option>
-							<option :value="7">7 天</option>
-							<option :value="14">14 天</option>
-							<option :value="30">30 天</option>
-						</select>
+						<BaseSelect v-model="inviteForm.expires_days" :options="[{value:1,label:'1 天'},{value:3,label:'3 天'},{value:7,label:'7 天'},{value:14,label:'14 天'},{value:30,label:'30 天'}]" />
 					</div>
 
 					<div>
 						<label class="input-label">使用次数</label>
-						<select v-model="inviteForm.max_uses" class="input bg-white">
-							<option :value="0">不限次数</option>
-							<option :value="1">1 次</option>
-							<option :value="5">5 次</option>
-							<option :value="10">10 次</option>
-							<option :value="20">20 次</option>
-							<option :value="50">50 次</option>
-						</select>
+						<BaseSelect v-model="inviteForm.max_uses" :options="[{value:0,label:'不限次数'},{value:1,label:'1 次'},{value:5,label:'5 次'},{value:10,label:'10 次'},{value:20,label:'20 次'},{value:50,label:'50 次'}]" />
 					</div>
 
 					<button
@@ -468,10 +453,7 @@ onMounted(() => {
 
 				<div>
 					<label class="input-label">角色</label>
-					<select v-model="createForm.role" class="input bg-white">
-						<option value="member">成员</option>
-						<option value="admin">管理员</option>
-					</select>
+					<BaseSelect v-model="createForm.role" :options="[{value:'member',label:'成员'},{value:'admin',label:'管理员'}]" />
 				</div>
 			</div>
 			<template #footer>

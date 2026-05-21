@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 
 const list = ref<any[]>([])
 const loading = ref(false)
@@ -108,20 +109,11 @@ const methodLabel: Record<string, string> = {
 						</div>
 						<div class="w-full sm:w-auto sm:min-w-[100px]">
 							<label class="input-label">状态</label>
-							<select v-model="filterSuccess" class="input bg-white">
-								<option value="">全部</option>
-								<option value="true">成功</option>
-								<option value="false">失败</option>
-							</select>
+							<BaseSelect v-model="filterSuccess" :options="[{value:'',label:'全部'},{value:'true',label:'成功'},{value:'false',label:'失败'}]" />
 						</div>
 						<div class="w-full sm:w-auto sm:min-w-[100px]">
 							<label class="input-label">登录方式</label>
-							<select v-model="filterMethod" class="input bg-white">
-								<option value="">全部</option>
-								<option value="password">密码</option>
-								<option value="totp">双因素</option>
-								<option value="sso">单点登录</option>
-							</select>
+							<BaseSelect v-model="filterMethod" :options="[{value:'',label:'全部'},{value:'password',label:'密码'},{value:'totp',label:'双因素'},{value:'sso',label:'单点登录'}]" />
 						</div>
 						<div class="w-full sm:w-auto sm:min-w-[140px]">
 							<label class="input-label">开始日期</label>

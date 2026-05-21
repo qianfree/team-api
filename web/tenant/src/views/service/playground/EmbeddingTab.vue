@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../../components/common/BaseSelect.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 const props = defineProps<{ models: ModelItem[] }>()
@@ -10,6 +11,7 @@ const sending = ref(false)
 const selectedModel = ref(props.models[0]?.model_id || '')
 const inputText = ref('')
 const dimensions = ref<number | undefined>(undefined)
+const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
 interface EmbeddingResult { index: number; embedding: number[] }
 const embeddings = ref<EmbeddingResult[]>([])
@@ -58,9 +60,7 @@ function formatEmbedding(values: number[], full: boolean) {
 				<div class="card-body space-y-4">
 					<div>
 						<label class="input-label">模型</label>
-						<select v-model="selectedModel" class="input">
-							<option v-for="m in models" :key="m.model_id" :value="m.model_id">{{ m.model_name || m.model_id }}</option>
-						</select>
+						<BaseSelect v-model="selectedModel" :options="modelOptions" />
 					</div>
 					<div>
 						<label class="input-label">输入文本</label>

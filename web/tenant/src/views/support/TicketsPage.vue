@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -343,9 +344,7 @@ onMounted(() => {
 			<div class="space-y-4">
 				<div>
 					<label class="input-label">分类</label>
-					<select v-model="createForm.category" class="input bg-white">
-						<option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-					</select>
+					<BaseSelect v-model="createForm.category" :options="categoryOptions" />
 				</div>
 				<div>
 					<label class="input-label">标题 <span class="text-red-500">*</span></label>
@@ -353,9 +352,7 @@ onMounted(() => {
 				</div>
 				<div>
 					<label class="input-label">优先级</label>
-					<select v-model="createForm.urgency" class="input bg-white">
-						<option v-for="opt in urgencyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-					</select>
+					<BaseSelect v-model="createForm.urgency" :options="urgencyOptions" />
 				</div>
 				<div>
 					<label class="input-label">详细描述 <span class="text-red-500">*</span></label>

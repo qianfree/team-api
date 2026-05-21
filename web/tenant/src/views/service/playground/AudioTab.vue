@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../../components/common/BaseSelect.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 const props = defineProps<{ models: ModelItem[] }>()
@@ -14,6 +15,9 @@ const responseFormat = ref('mp3')
 
 const voiceOptions = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
 const formatOptions = ['mp3', 'wav', 'opus', 'aac', 'flac']
+const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
+const voiceSelectOptions = computed(() => voiceOptions.map(v => ({ value: v, label: v })))
+const formatSelectOptions = computed(() => formatOptions.map(f => ({ value: f, label: f.toUpperCase() })))
 
 const audioBase64 = ref('')
 const contentType = ref('')
@@ -58,9 +62,7 @@ async function synthesize() {
 				<div class="card-body space-y-4">
 					<div>
 						<label class="input-label">模型</label>
-						<select v-model="selectedModel" class="input">
-							<option v-for="m in models" :key="m.model_id" :value="m.model_id">{{ m.model_name || m.model_id }}</option>
-						</select>
+						<BaseSelect v-model="selectedModel" :options="modelOptions" />
 					</div>
 					<div>
 						<label class="input-label">文本内容</label>
@@ -68,15 +70,11 @@ async function synthesize() {
 					</div>
 					<div>
 						<label class="input-label">语音</label>
-						<select v-model="voice" class="input">
-							<option v-for="v in voiceOptions" :key="v" :value="v">{{ v }}</option>
-						</select>
+						<BaseSelect v-model="voice" :options="voiceSelectOptions" />
 					</div>
 					<div>
 						<label class="input-label">格式</label>
-						<select v-model="responseFormat" class="input">
-							<option v-for="f in formatOptions" :key="f" :value="f">{{ f.toUpperCase() }}</option>
-						</select>
+						<BaseSelect v-model="responseFormat" :options="formatSelectOptions" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="sending || !inputText.trim()" @click="synthesize">
 						{{ sending ? '合成中...' : '合成语音' }}
