@@ -2,12 +2,13 @@ package payment
 
 import (
 	"context"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"net/http"
 	"sync"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/os/gtime"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -57,33 +58,18 @@ func UnlockOrder(orderNo string) {
 }
 
 // ProcessCallback 统一回调处理流程。
-func ProcessCallback(ctx context.Context, r *http.Request, channelID int64) error {
-	// 1. 加载支付渠道配置
-	var channel *struct {
-		Channel   string `json:"channel"`
-		Config    string `json:"config"`
-		IsEnabled bool   `json:"is_enabled"`
-	}
-	err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", channelID).Scan(&channel)
+// channelType 为渠道类型字符串（如 "epay"）。
+func ProcessCallback(ctx context.Context, r *http.Request, channelType string) error {
+	// 1. 从 sys_options 加载渠道配置
+	cfg, err := GetChannelConfigAndProvider(ctx, channelType)
 	if err != nil {
-		return gerror.Wrapf(err, "加载支付渠道失败")
-	}
-	if channel == nil {
-		return common.NewNotFoundError("支付渠道")
-	}
-	if !channel.IsEnabled {
-		return common.NewBadRequestError("支付渠道已禁用")
+		return gerror.Wrapf(err, "加载支付渠道配置失败")
 	}
 
-	// 2. 解析配置并获取 Provider
-	cfg, err := ParseChannelConfig(channel.Channel, channel.Config)
-	if err != nil {
-		return gerror.Wrapf(err, "解析渠道配置失败")
-	}
-	provider := GetProvider(channel.Channel)
+	// 2. 获取 Provider
+	provider := GetProvider(channelType)
 	if provider == nil {
-		return gerror.Newf("不支持的支付渠道: %s", channel.Channel)
+		return gerror.Newf("不支持的支付渠道: %s", channelType)
 	}
 
 	// 3. 调用 Provider 验签并解析回调

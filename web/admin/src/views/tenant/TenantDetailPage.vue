@@ -341,6 +341,9 @@ const txColumns: TableColumnData[] = [
     title: '变动后余额', dataIndex: 'balance_after', width: 120,
     render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(2)}` },
   },
+  { title: '用户', dataIndex: 'username', width: 120 },
+  { title: '请求ID', dataIndex: 'request_id', width: 140, ellipsis: true },
+  { title: '模型', dataIndex: 'model_name', width: 130 },
   { title: '描述', dataIndex: 'description', ellipsis: true },
   { title: '时间', dataIndex: 'created_at', width: 170 },
 ]

@@ -14,7 +14,6 @@ type TskModelTasks struct {
 	g.Meta          `orm:"table:tsk_model_tasks, do:true"`
 	Id              any         //
 	PublicTaskId    any         //
-	RequestId       any         // 任务提交时的原始请求 ID
 	Platform        any         //
 	Action          any         //
 	Status          any         //
@@ -37,4 +36,5 @@ type TskModelTasks struct {
 	FinishTime      *gtime.Time //
 	CreatedAt       *gtime.Time //
 	UpdatedAt       *gtime.Time //
+	RequestId       any         // 任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id
 }

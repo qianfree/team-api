@@ -23,7 +23,6 @@ type TskModelTasksDao struct {
 type TskModelTasksColumns struct {
 	Id              string //
 	PublicTaskId    string //
-	RequestId       string //
 	Platform        string //
 	Action          string //
 	Status          string //
@@ -46,13 +45,13 @@ type TskModelTasksColumns struct {
 	FinishTime      string //
 	CreatedAt       string //
 	UpdatedAt       string //
+	RequestId       string // 任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id
 }
 
 // tskModelTasksColumns holds the columns for the table tsk_model_tasks.
 var tskModelTasksColumns = TskModelTasksColumns{
 	Id:              "id",
 	PublicTaskId:    "public_task_id",
-	RequestId:       "request_id",
 	Platform:        "platform",
 	Action:          "action",
 	Status:          "status",
@@ -75,6 +74,7 @@ var tskModelTasksColumns = TskModelTasksColumns{
 	FinishTime:      "finish_time",
 	CreatedAt:       "created_at",
 	UpdatedAt:       "updated_at",
+	RequestId:       "request_id",
 }
 
 // NewTskModelTasksDao creates and returns a new DAO object for table data access.

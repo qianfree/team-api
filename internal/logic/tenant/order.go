@@ -3,15 +3,15 @@ package tenant
 import (
 	"context"
 	"fmt"
-	"github.com/gogf/gf/v2/util/gconv"
-	"github.com/qianfree/team-api/internal/dao"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"time"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+
+	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/payment"
@@ -109,7 +109,6 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		amount = plan.MonthlyPrice * float64(months)
 	}
 
-	// 生成订单号
 	orderNo := fmt.Sprintf("ORD%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
 
 	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
@@ -122,7 +121,7 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		DiscountAmount: 0,
 		FinalAmount:    amount,
 		Currency:       "CNY",
-		PaymentChannel: "mock",
+		PaymentChannel: "",
 		Status:         "pending",
 		ExpiredAt:      gtime.Now().Add(30 * time.Minute),
 		Description:    fmt.Sprintf("Order for new_plan"),
@@ -174,56 +173,36 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 	tenantID := ctxTenantID(ctx)
 	orderID := req.Id
 
-	// channelID=0 走 mock 支付（向后兼容）
-	if req.PaymentChannelID == 0 {
-		if err := payment.MockPay(ctx, orderID); err != nil {
-			return nil, err
-		}
-		return &v1.TenantOrderPayRes{Data: g.Map{"status": "paid"}}, nil
+	// 支付渠道
+	if req.PaymentChannel == "" {
+		return nil, lcommon.NewBusinessError(422, "请选择支付渠道")
 	}
 
-	// 真实支付渠道
+	//
 	orderNo, finalAmount, currency, orderType, description, err := getOrderForPay(ctx, tenantID, orderID)
 	if err != nil {
 		return nil, err
 	}
 
-	var channel *struct {
-		Channel   string `json:"channel"`
-		Config    string `json:"config"`
-		IsEnabled bool   `json:"is_enabled"`
-	}
-	err = dao.OrdPaymentChannels.Ctx(ctx).
-		Where("id", req.PaymentChannelID).Scan(&channel)
+	cfg, err := payment.GetChannelConfigAndProvider(ctx, req.PaymentChannel)
 	if err != nil {
-		return nil, err
-	}
-	if channel == nil {
-		return nil, lcommon.NewBusinessError(422, "支付渠道不存在")
-	}
-	if !channel.IsEnabled {
-		return nil, lcommon.NewBusinessError(422, "支付渠道已禁用")
+		return nil, lcommon.NewBusinessError(422, err.Error())
 	}
 
-	updateOrderPaymentChannel(ctx, orderID, channel.Channel, req.PaymentMethod)
-
-	provider := payment.GetProvider(channel.Channel)
+	provider := payment.GetProvider(req.PaymentChannel)
 	if provider == nil {
 		return nil, lcommon.NewBusinessError(422, "不支持的支付渠道")
 	}
 
-	cfg, err := payment.ParseChannelConfig(channel.Channel, channel.Config)
-	if err != nil {
-		return nil, err
-	}
+	updateOrderPaymentChannel(ctx, orderID, req.PaymentChannel, req.PaymentMethod)
 
 	settings, _ := payment.GetGlobalPaymentSettings(ctx)
-	baseURL := settings.CallbackBaseURL
-	notifyURL := baseURL + "/api/payment/callback/" + gconv.String(req.PaymentChannelID)
-	if channel.Channel == "stripe" {
-		notifyURL = baseURL + "/api/payment/stripe/webhook/" + gconv.String(req.PaymentChannelID)
+	baseURL := ""
+	if settings != nil {
+		baseURL = settings.CallbackBaseURL
 	}
-
+	notifyURL := baseURL + "/api/payment/callback/" + req.PaymentChannel
+	returnURL := baseURL + "/api/payment/epay/return"
 	payOrder := &payment.PaymentOrder{
 		OrderID:       orderID,
 		OrderNo:       orderNo,
@@ -234,6 +213,7 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		Description:   description,
 		PaymentMethod: req.PaymentMethod,
 		NotifyURL:     notifyURL,
+		ReturnURL:     returnURL,
 	}
 
 	result, err := provider.CreatePayment(ctx, payOrder, cfg)
@@ -255,19 +235,20 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	channels := make([]map[string]any, 0)
-	err := dao.OrdPaymentChannels.Ctx(ctx).
-		Where("is_enabled", true).
-		OrderAsc("sort_order").
-		Fields("id, channel, name, payment_type").
-		Scan(&channels)
-	if err != nil {
-		return nil, err
+
+	res := &v1.TenantPaymentInfoRes{
+		Channels: payment.GetEnabledChannels(ctx),
 	}
 
-	return &v1.TenantPaymentInfoRes{Data: g.Map{
-		"channels": channels,
-	}}, nil
+	settings, _ := payment.GetGlobalPaymentSettings(ctx)
+	if settings != nil {
+		res.AmountOptions = settings.AmountOptions
+		res.AmountDiscount = settings.AmountDiscount
+		res.MinTopUp = settings.MinTopUp
+		res.Currency = settings.Currency
+	}
+
+	return res, nil
 }
 
 // getOrderForPay 获取待支付订单信息（供 OrderPay 内部调用）
@@ -304,6 +285,105 @@ func updateOrderPaymentChannel(ctx context.Context, orderID int64, channel, paym
 			PaymentChannel: channel,
 			PaymentMethod:  paymentMethod,
 		}).Update()
+}
+
+// RechargeCreate 创建充值订单并发起支付（一步完成）
+func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (*v1.TenantRechargeCreateRes, error) {
+	role := ctxUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	tenantID := ctxTenantID(ctx)
+	userID := ctxUserID(ctx)
+
+	// 1. 校验金额
+	settings, _ := payment.GetGlobalPaymentSettings(ctx)
+	minTopup := 1
+	if settings != nil && settings.MinTopUp > 0 {
+		minTopup = settings.MinTopUp
+	}
+	if req.Amount < float64(minTopup) {
+		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("充值金额不能小于 %d", minTopup))
+	}
+
+	// 2. 从 sys_options 加载渠道配置
+	cfg, err := payment.GetChannelConfigAndProvider(ctx, req.PaymentChannel)
+	if err != nil {
+		return nil, lcommon.NewBusinessError(422, err.Error())
+	}
+
+	provider := payment.GetProvider(req.PaymentChannel)
+	if provider == nil {
+		return nil, lcommon.NewBusinessError(422, "不支持的支付渠道")
+	}
+
+	// 3. 计算折扣后金额
+	finalAmount := req.Amount
+	if settings != nil {
+		if discount, ok := settings.AmountDiscount[int(req.Amount)]; ok && discount > 0 {
+			finalAmount = req.Amount * discount
+		}
+	}
+
+	// 4. 生成订单号并创建订单
+	orderNo := fmt.Sprintf("RCH%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
+	description := fmt.Sprintf("钱包充值 ¥%.2f", req.Amount)
+
+	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
+		OrderNo:        orderNo,
+		TenantId:       tenantID,
+		UserId:         userID,
+		OrderType:      "recharge",
+		Amount:         req.Amount,
+		DiscountAmount: req.Amount - finalAmount,
+		FinalAmount:    finalAmount,
+		Currency:       "CNY",
+		PaymentChannel: req.PaymentChannel,
+		PaymentMethod:  req.PaymentMethod,
+		Status:         "pending",
+		ExpiredAt:      gtime.Now().Add(30 * time.Minute),
+		Description:    description,
+	})
+	if err != nil {
+		return nil, err
+	}
+	orderID, _ := result.LastInsertId()
+
+	// 5. 构建回调 URL 和 ReturnURL
+	baseURL := ""
+	if settings != nil {
+		baseURL = settings.CallbackBaseURL
+	}
+	notifyURL := baseURL + "/api/payment/callback/" + req.PaymentChannel
+	returnURL := baseURL + "/api/payment/epay/return"
+	// 6. 调用 Provider 生成支付链接
+	payResult, err := provider.CreatePayment(ctx, &payment.PaymentOrder{
+		OrderID:       orderID,
+		OrderNo:       orderNo,
+		TenantID:      tenantID,
+		Amount:        finalAmount,
+		Currency:      "CNY",
+		OrderType:     "recharge",
+		Description:   description,
+		PaymentMethod: req.PaymentMethod,
+		NotifyURL:     notifyURL,
+		ReturnURL:     returnURL,
+	}, cfg)
+	if err != nil {
+		dao.OrdOrders.Ctx(ctx).Where("id", orderID).
+			Data(do.OrdOrders{Status: "cancelled"}).Update()
+		return nil, err
+	}
+
+	return &v1.TenantRechargeCreateRes{Data: g.Map{
+		"order_id":     orderID,
+		"order_no":     orderNo,
+		"payment_url":  payResult.PaymentURL,
+		"payment_no":   payResult.PaymentNo,
+		"params":       payResult.Params,
+		"is_redirect":  payResult.IsRedirect,
+		"final_amount": finalAmount,
+	}}, nil
 }
 
 // ExportOrders exports the tenant order list as CSV or Excel.

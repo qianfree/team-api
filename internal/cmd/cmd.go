@@ -313,10 +313,9 @@ func printBanner() {
 // registerPaymentCallbacks registers payment callback routes.
 func registerPaymentCallbacks(group *ghttp.RouterGroup) {
 	group.Group("/payment", func(g *ghttp.RouterGroup) {
-		g.POST("/callback/{channel_id}", public.HandlePaymentCallback)
-		g.GET("/callback/{channel_id}", public.HandlePaymentCallback)
-		g.GET("/epay/return/{channel_id}", public.HandlePaymentEpayReturn)
-		g.POST("/stripe/webhook/{channel_id}", public.HandlePaymentStripeWebhook)
+		g.POST("/callback/{channel}", public.HandlePaymentCallback)
+		g.GET("/callback/{channel}", public.HandlePaymentCallback)
+		g.GET("/epay/return", public.HandlePaymentEpayReturn)
 	})
 }
 

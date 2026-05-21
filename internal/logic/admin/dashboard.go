@@ -467,7 +467,7 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 	var total int
 	records := make([]*v1.AdminWalletTransactionItem, 0)
 	err = query.OrderDesc("created_at").
-		Fields("id, type, amount, balance_after, frozen_after, description, created_at").
+		Fields("id, type, amount, balance_after, frozen_after, description, user_id, request_id, model_name, created_at").
 		Page(page, pageSize).
 		ScanAndCount(&records, &total, false)
 	if err != nil {

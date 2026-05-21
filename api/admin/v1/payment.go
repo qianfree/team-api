@@ -41,61 +41,25 @@ type AdminMemberResetPasswordRes struct {
 	NewPassword string `json:"new_password"`
 }
 
-// === 支付渠道管理 ===
+// === 支付渠道管理（单例配置模式：每种渠道类型只有一个配置） ===
 
+// PaymentChannelListReq 获取所有渠道配置
 type PaymentChannelListReq struct {
-	g.Meta `path:"/payment-channels" method:"get" mime:"json" tags:"管理后台-支付" summary:"支付渠道列表"`
+	g.Meta `path:"/payment-channels" method:"get" mime:"json" tags:"管理后台-支付" summary:"获取所有渠道配置"`
 }
 
 type PaymentChannelListRes struct {
 	List []map[string]any `json:"list"`
 }
 
-type PaymentChannelCreateReq struct {
-	g.Meta      `path:"/payment-channels" method:"post" mime:"json" tags:"管理后台-支付" summary:"创建支付渠道"`
-	Channel     string `json:"channel" v:"required#请输入渠道类型" dc:"渠道类型"`
-	Name        string `json:"name" v:"required#请输入渠道名称" dc:"渠道名称"`
-	PaymentType string `json:"payment_type" dc:"支付类型"`
-	Config      string `json:"config" dc:"配置(JSON)"`
-	SortOrder   int    `json:"sort_order" dc:"排序"`
+// PaymentChannelSaveReq 保存指定渠道的配置（整体覆盖）
+type PaymentChannelSaveReq struct {
+	g.Meta  `path:"/payment-channels/{channel}" method:"put" mime:"json" tags:"管理后台-支付" summary:"保存渠道配置"`
+	Channel string `json:"channel" in:"path" v:"required|in:epay#请指定渠道类型|不支持的渠道类型" dc:"渠道类型"`
+	Config  string `json:"config" v:"required#请提供配置" dc:"完整的 JSON 配置（含 is_enabled）"`
 }
 
-type PaymentChannelCreateRes struct {
-	ID int64 `json:"id"`
-}
-
-type PaymentChannelDetailReq struct {
-	g.Meta `path:"/payment-channels/{id}" method:"get" mime:"json" tags:"管理后台-支付" summary:"支付渠道详情"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"渠道ID"`
-}
-
-type PaymentChannelDetailRes struct {
-	Data map[string]any `json:"data"`
-}
-
-type PaymentChannelUpdateReq struct {
-	g.Meta `path:"/payment-channels/{id}" method:"put" mime:"json" tags:"管理后台-支付" summary:"更新支付渠道"`
-	Id     int64                  `json:"id" in:"path" v:"required|min:1" dc:"渠道ID"`
-	Update map[string]interface{} `json:"update" dc:"更新字段"`
-}
-
-type PaymentChannelUpdateRes struct{}
-
-type PaymentChannelDeleteReq struct {
-	g.Meta `path:"/payment-channels/{id}" method:"delete" mime:"json" tags:"管理后台-支付" summary:"删除支付渠道"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"渠道ID"`
-}
-
-type PaymentChannelDeleteRes struct{}
-
-type PaymentChannelToggleReq struct {
-	g.Meta `path:"/payment-channels/{id}/toggle" method:"put" mime:"json" tags:"管理后台-支付" summary:"切换支付渠道状态"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"渠道ID"`
-}
-
-type PaymentChannelToggleRes struct {
-	IsEnabled bool `json:"is_enabled"`
-}
+type PaymentChannelSaveRes struct{}
 
 // === 支付设置 ===
 

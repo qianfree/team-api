@@ -19,10 +19,10 @@ type TenantOrderCreateRes struct {
 }
 
 type TenantOrderPayReq struct {
-	g.Meta           `path:"/orders/{id}/pay" method:"post" mime:"json" tags:"租户控制台-订单" summary:"支付订单"`
-	Id               int64  `json:"id" in:"path" v:"required|min:1"`
-	PaymentChannelID int64  `json:"payment_channel_id"`
-	PaymentMethod    string `json:"payment_method"`
+	g.Meta         `path:"/orders/{id}/pay" method:"post" mime:"json" tags:"租户控制台-订单" summary:"支付订单"`
+	Id             int64  `json:"id" in:"path" v:"required|min:1"`
+	PaymentChannel string `json:"payment_channel" dc:"支付渠道类型（epay/stripe/mock）"`
+	PaymentMethod  string `json:"payment_method"`
 }
 
 type TenantOrderPayRes struct {
@@ -84,12 +84,27 @@ type TenantOrderCancelReq struct {
 
 type TenantOrderCancelRes struct{}
 
+type TenantRechargeCreateReq struct {
+	g.Meta         `path:"/recharge/create" method:"post" mime:"json" tags:"租户控制台-订单" summary:"创建充值订单"`
+	Amount         float64 `json:"amount" v:"required|min:0.01#请输入充值金额|充值金额不能小于 0.01"`
+	PaymentChannel string  `json:"payment_channel" v:"required|in:epay#请选择支付渠道|不支持的支付渠道"`
+	PaymentMethod  string  `json:"payment_method" v:"required#请选择支付方式"`
+}
+
+type TenantRechargeCreateRes struct {
+	Data map[string]any `json:"data"`
+}
+
 type TenantPaymentInfoReq struct {
 	g.Meta `path:"/payment-info" method:"get" mime:"json" tags:"租户控制台-订单" summary:"支付信息"`
 }
 
 type TenantPaymentInfoRes struct {
-	Data map[string]any `json:"data"`
+	Channels       []map[string]any `json:"channels"`
+	AmountOptions  []int            `json:"amount_options,omitempty"`
+	AmountDiscount map[int]float64  `json:"amount_discount,omitempty"`
+	MinTopUp       int              `json:"min_topup,omitempty"`
+	Currency       string           `json:"currency,omitempty"`
 }
 
 // TenantOrderExportReq 导出订单列表请求

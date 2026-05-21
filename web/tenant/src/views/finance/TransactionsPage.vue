@@ -115,8 +115,11 @@ onMounted(fetchTransactions)
 							<th>类型</th>
 							<th>金额</th>
 							<th>余额</th>
-							<th>描述</th>
+							<th>用户</th>
+							<th>请求ID</th>
+							<th>模型</th>
 							<th>时间</th>
+							<th>描述</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -130,8 +133,11 @@ onMounted(fetchTransactions)
 								{{ formatAmount(tx.amount) }}
 							</td>
 							<td class="text-gray-700">${{ tx.balance_after?.toFixed(2) ?? '--' }}</td>
-							<td class="text-gray-500 text-sm">{{ tx.description || '--' }}</td>
+							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>
+							<td class="text-gray-500 text-xs font-mono">{{ tx.request_id || '--' }}</td>
+							<td class="text-gray-700 text-sm">{{ tx.model_name || '--' }}</td>
 							<td class="text-gray-500 text-xs">{{ (tx.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
+							<td class="text-gray-500 text-sm">{{ tx.description || '--' }}</td>
 						</tr>
 					</tbody>
 				</table>

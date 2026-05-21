@@ -317,7 +317,7 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 }
 
 // recordTransaction 记录钱包流水
-func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType string, amount float64, description string) {
+func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType string, amount float64, description string, userID int64, requestID string, modelName string) {
 	type walletRow struct {
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
@@ -342,6 +342,9 @@ func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType st
 		BalanceAfter: balanceAfter,
 		FrozenAfter:  frozenAfter,
 		Description:  description,
+		UserId:       userID,
+		RequestId:    requestID,
+		ModelName:    modelName,
 	})
 	if err != nil {
 		g.Log().Errorf(ctx, "record transaction failed: %v", err)

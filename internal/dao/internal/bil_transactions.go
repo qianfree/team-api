@@ -24,7 +24,7 @@ type BilTransactionsColumns struct {
 	Id           string // 主键ID
 	TenantId     string // 租户ID
 	WalletId     string // 关联钱包ID
-	Type         string // 类型：recharge（充值）/ pre_deduct（预扣）/ settle（结算）/ refund（退款）/ adjust（调整）/ freeze（冻结）/ unfreeze（解冻）
+	Type         string // 类型：consume（消费）/ recharge（充值）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ refund（退款，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）
 	Amount       string // 变动金额（正数=收入，负数=支出）
 	BalanceAfter string // 变动后总余额
 	FrozenAfter  string // 变动后冻结余额
@@ -33,6 +33,9 @@ type BilTransactionsColumns struct {
 	Description  string // 交易描述
 	CreatedAt    string // 创建时间
 	UpdatedAt    string // 更新时间
+	UserId       string // 关联用户ID（consume 类型为实际消费用户，recharge 类型为操作用户，adjust 类型为空）
+	RequestId    string // 关联请求ID（consume 类型对应 API 调用的 request_id，其他类型为空）
+	ModelName    string // 关联模型名（consume 类型为调用的模型名，其他类型为空）
 }
 
 // bilTransactionsColumns holds the columns for the table bil_transactions.
@@ -49,6 +52,9 @@ var bilTransactionsColumns = BilTransactionsColumns{
 	Description:  "description",
 	CreatedAt:    "created_at",
 	UpdatedAt:    "updated_at",
+	UserId:       "user_id",
+	RequestId:    "request_id",
+	ModelName:    "model_name",
 }
 
 // NewBilTransactionsDao creates and returns a new DAO object for table data access.
