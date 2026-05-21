@@ -19,6 +19,7 @@ import (
 	settingsController "github.com/qianfree/team-api/internal/controller/settings"
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/task"
@@ -149,6 +150,10 @@ var (
 					retentionDays,
 				)
 				return err
+			})
+			cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
+				billing.CleanExpiredPreDeducts(ctx)
+				return nil
 			})
 			cs.StartBackground(ctx)
 

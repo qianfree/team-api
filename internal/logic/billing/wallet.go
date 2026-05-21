@@ -18,7 +18,7 @@ const (
 	// PreDeductRedisKeyPrefix 预扣 Redis key 前缀
 	PreDeductRedisKeyPrefix = "prededuct:"
 	// PreDeductMaxAge 预扣记录最大存活时间（秒），防止异常未结算的预扣占用余额
-	PreDeductMaxAge = 300 // 5 分钟
+	PreDeductMaxAge = 1800 // 30 分钟
 )
 
 // walletCache 钱包缓存（TTL 300s）
@@ -198,6 +198,9 @@ return 1
 	// 同步同步到 DB（确保 DB frozen_balance 在返回前已更新）
 	preDeductSyncDB(ctx, tenantID, amount)
 
+	// 异步写入预扣追踪记录（用于孤儿清理和 Redis 重建）
+	go trackPreDeduct(context.Background(), tenantID, amount, requestID, modelName)
+
 	return true, nil
 }
 
@@ -229,6 +232,9 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 
 	// 清除缓存
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+
+	// 异步写入预扣追踪记录
+	go trackPreDeduct(context.Background(), tenantID, amount, requestID, "")
 
 	return true, nil
 }
@@ -373,6 +379,12 @@ func syncWalletToRedis(ctx context.Context, tenantID int64) error {
 			"balance", w.Balance,
 			"frozen_balance", w.FrozenBalance,
 		)
+		if err != nil {
+			return gerror.Wrapf(err, "sync wallet to redis")
+		}
+
+		// 从 DB 恢复活跃预扣明细到 Redis
+		rebuildPredeductFromDB(ctx, tenantID)
 	} else {
 		// key 已存在：只更新 balance（frozen_balance 由 Lua 脚本管理，不覆盖）
 		_, err = g.Redis().Do(ctx, "HSET", walletRedisKey,
@@ -483,4 +495,59 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 	}
 
 	return items, nil
+}
+
+// trackPreDeduct 异步写入预扣追踪记录到 DB（用于孤儿清理和 Redis 重建）
+func trackPreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string, modelName string) {
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		`INSERT INTO bil_prededuct_tracks (tenant_id, request_id, amount, model_name, status)
+		 VALUES ($1, $2, $3, $4, 'frozen')
+		 ON CONFLICT (request_id) DO NOTHING`,
+		tenantID, requestID, amount, modelName)
+	if err != nil {
+		g.Log().Warningf(ctx, "[PRE-DEDUCT] track prededuct failed: request=%s err=%v", requestID, err)
+	}
+}
+
+// rebuildPredeductFromDB 从 DB 恢复活跃预扣明细到 Redis（Redis 重启后调用）
+func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
+	type trackRow struct {
+		RequestID string  `json:"request_id"`
+		Amount    float64 `json:"amount"`
+		ModelName string  `json:"model_name"`
+		CreatedAt int64   `json:"created_at"`
+	}
+
+	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
+	var tracks []trackRow
+	err := g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+		Where("tenant_id", tenantID).
+		Where("status", "frozen").
+		Where("created_at > ?", cutoff).
+		Fields("request_id, amount, model_name, EXTRACT(EPOCH FROM created_at)::bigint as created_at").
+		Scan(&tracks)
+	if err != nil || len(tracks) == 0 {
+		return
+	}
+
+	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
+	for _, t := range tracks {
+		age := time.Now().Unix() - t.CreatedAt
+		remainingTTL := int64(PreDeductMaxAge) - age
+		if remainingTTL <= 0 {
+			continue
+		}
+
+		predeductKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, t.RequestID)
+		g.Redis().Do(ctx, "HMSET", predeductKey,
+			"amount", t.Amount,
+			"tenant_id", tenantID,
+			"model_name", t.ModelName,
+			"created_at", t.CreatedAt,
+		)
+		g.Redis().Do(ctx, "EXPIRE", predeductKey, remainingTTL)
+		g.Redis().Do(ctx, "SADD", activeSetKey, t.RequestID)
+	}
+
+	g.Log().Infof(ctx, "[PRE-DEDUCT] rebuilt %d active tracks from DB for tenant=%d", len(tracks), tenantID)
 }

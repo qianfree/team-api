@@ -122,6 +122,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
+	markPredeductSettled(ctx, requestID)
 
 	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
@@ -227,8 +228,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
-
-	// 7. 生成计费快照和摘要文本
+	markPredeductSettled(ctx, requestID)
 	settlementResult := &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
 		ActualCost:       actualCost,
@@ -272,6 +272,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
 	// 解冻预扣金额
 	UnfreezePreDeduct(ctx, tenantID, requestID, preDeductAmount)
+	markPredeductReleased(ctx, requestID)
 
 	// 无需额外操作，预扣金额原路退回
 	return nil
@@ -438,4 +439,24 @@ func createBillingRecordWithSnapshot(ctx context.Context, tx gdb.TX, tenantID, u
 		return 0, err
 	}
 	return id, nil
+}
+
+// markPredeductSettled 标记预扣追踪记录为已结算
+func markPredeductSettled(ctx context.Context, requestID string) {
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
+		requestID)
+	if err != nil {
+		g.Log().Warningf(ctx, "[PRE-DEDUCT] mark settled failed: request=%s err=%v", requestID, err)
+	}
+}
+
+// markPredeductReleased 标记预扣追踪记录为已释放
+func markPredeductReleased(ctx context.Context, requestID string) {
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		"UPDATE bil_prededuct_tracks SET status = 'released' WHERE request_id = $1 AND status = 'frozen'",
+		requestID)
+	if err != nil {
+		g.Log().Warningf(ctx, "[PRE-DEDUCT] mark released failed: request=%s err=%v", requestID, err)
+	}
 }
