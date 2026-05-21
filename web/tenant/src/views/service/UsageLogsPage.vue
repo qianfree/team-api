@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -274,22 +275,11 @@ onMounted(() => {
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
-							<select v-model="filterStatus" class="input bg-white" style="width:100px">
-								<option value="">全部</option>
-								<option value="success">成功</option>
-								<option value="error">失败</option>
-								<option value="interrupted">中断</option>
-								<option value="timeout">超时</option>
-							</select>
+							<BaseSelect v-model="filterStatus" :options="[{value:'',label:'全部'},{value:'success',label:'成功'},{value:'error',label:'失败'},{value:'interrupted',label:'中断'},{value:'timeout',label:'超时'}]" container-class="w-[100px]" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
-							<select v-model="filterRequestType" class="input bg-white" style="width:100px">
-								<option value="">全部</option>
-								<option value="1">同步</option>
-								<option value="2">流式</option>
-								<option value="3">异步</option>
-							</select>
+							<BaseSelect v-model="filterRequestType" :options="[{value:'',label:'全部'},{value:'1',label:'同步'},{value:'2',label:'流式'},{value:'3',label:'异步'}]" container-class="w-[100px]" />
 						</div>
 						<div class="ml-auto flex items-center gap-2">
 							<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>

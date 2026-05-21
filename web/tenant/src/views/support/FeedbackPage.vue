@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 
@@ -85,6 +86,9 @@ const categoryIcon: Record<string, string> = {
 }
 
 const totalPages = computed(() => Math.ceil(total.value / pageSize))
+
+const filterStatusOptions = computed(() => [{value:'',label:'全部状态'}, ...statusOptions])
+const filterCategoryOptions = computed(() => [{value:'',label:'全部类型'}, ...categoryOptions])
 
 async function fetchFeedbacks() {
 	loading.value = true
@@ -177,22 +181,8 @@ onMounted(() => {
 		<!-- Filters -->
 		<div class="card p-4">
 			<div class="flex flex-wrap items-center gap-3">
-				<select
-					v-model="filterStatus"
-					class="input w-auto bg-white"
-					@change="handleFilter"
-				>
-					<option value="">全部状态</option>
-					<option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-				</select>
-				<select
-					v-model="filterCategory"
-					class="input w-auto bg-white"
-					@change="handleFilter"
-				>
-					<option value="">全部类型</option>
-					<option v-for="opt in categoryOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-				</select>
+				<BaseSelect v-model="filterStatus" :options="filterStatusOptions" @change="handleFilter" />
+				<BaseSelect v-model="filterCategory" :options="filterCategoryOptions" @change="handleFilter" />
 				<button
 					v-if="filterStatus || filterCategory"
 					class="btn btn-ghost btn-sm"

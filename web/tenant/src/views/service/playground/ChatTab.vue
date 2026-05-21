@@ -3,6 +3,7 @@ import { ref, reactive, computed, nextTick } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
+import BaseSelect from '../../../components/common/BaseSelect.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 const props = defineProps<{
@@ -35,6 +36,9 @@ const imageConfig = reactive({
 })
 const aspectRatioOptions = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '4:5', '5:4', '21:9']
 const imageSizeOptions = ['512', '1K', '2K', '4K']
+const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
+const aspectRatioSelectOptions = computed(() => aspectRatioOptions.map(r => ({ value: r, label: r })))
+const imageSizeSelectOptions = computed(() => imageSizeOptions.map(s => ({ value: s, label: s })))
 
 interface ChatMessage { role: string; content: string }
 const messages = ref<ChatMessage[]>([])
@@ -128,11 +132,7 @@ function clearChat() {
 					<div class="card-body space-y-4">
 						<div>
 							<label class="input-label">模型</label>
-							<select v-model="selectedModel" class="input">
-								<option v-for="m in models" :key="m.model_id" :value="m.model_id">
-									{{ m.model_name || m.model_id }}
-								</option>
-							</select>
+							<BaseSelect v-model="selectedModel" :options="modelOptions" />
 							<div v-if="isImageModel" class="mt-1.5 flex items-center gap-1.5">
 								<span class="badge badge-primary">图片模型</span>
 								<span class="text-xs text-gray-500">支持生成图片</span>
@@ -156,15 +156,11 @@ function clearChat() {
 							</div>
 							<div>
 								<label class="input-label">宽高比</label>
-								<select v-model="imageConfig.aspectRatio" class="input">
-									<option v-for="ratio in aspectRatioOptions" :key="ratio" :value="ratio">{{ ratio }}</option>
-								</select>
+								<BaseSelect v-model="imageConfig.aspectRatio" :options="aspectRatioSelectOptions" />
 							</div>
 							<div>
 								<label class="input-label">分辨率</label>
-								<select v-model="imageConfig.imageSize" class="input">
-									<option v-for="size in imageSizeOptions" :key="size" :value="size">{{ size }}</option>
-								</select>
+								<BaseSelect v-model="imageConfig.imageSize" :options="imageSizeSelectOptions" />
 							</div>
 						</template>
 					</div>

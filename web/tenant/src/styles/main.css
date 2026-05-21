@@ -207,11 +207,12 @@ body.modal-open {
 	@apply bg-white border border-gray-200;
 	@apply text-gray-900 placeholder:text-gray-400;
 	@apply transition-all duration-200;
-	@apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
-	@apply disabled:cursor-not-allowed disabled:bg-gray-100;
+	@apply hover:border-gray-300;
+	@apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:bg-white;
+	@apply disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400;
 }
 .input-error {
-	@apply border-red-500 focus:border-red-500 focus:ring-red-500/30;
+	@apply border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/20;
 }
 .input-label {
 	@apply mb-1.5 block text-sm font-medium text-gray-700;

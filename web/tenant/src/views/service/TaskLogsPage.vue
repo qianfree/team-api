@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 
 interface TaskItem {
@@ -169,24 +170,11 @@ onMounted(() => {
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
-						<select v-model="filterStatus" class="input bg-white" style="width:120px">
-							<option value="">全部</option>
-							<option value="NOT_START">未开始</option>
-							<option value="SUBMITTED">已提交</option>
-							<option value="IN_PROGRESS">进行中</option>
-							<option value="SUCCESS">成功</option>
-							<option value="FAILURE">失败</option>
-						</select>
+						<BaseSelect v-model="filterStatus" :options="[{value:'',label:'全部'},{value:'NOT_START',label:'未开始'},{value:'SUBMITTED',label:'已提交'},{value:'IN_PROGRESS',label:'进行中'},{value:'SUCCESS',label:'成功'},{value:'FAILURE',label:'失败'}]" container-class="w-[120px]" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">平台</label>
-						<select v-model="filterPlatform" class="input bg-white" style="width:120px">
-							<option value="">全部</option>
-							<option value="sora">Sora</option>
-							<option value="kling">Kling</option>
-							<option value="midjourney">Midjourney</option>
-							<option value="suno">Suno</option>
-						</select>
+						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>

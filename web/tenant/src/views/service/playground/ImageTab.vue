@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '../../../components/common/BaseSelect.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 const props = defineProps<{ models: ModelItem[] }>()
@@ -12,6 +13,7 @@ const prompt = ref('')
 const n = ref(1)
 const size = ref('1024x1024')
 const quality = ref('standard')
+const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
 interface ImageResult { b64_json?: string; url?: string; revised_prompt?: string }
 const images = ref<ImageResult[]>([])
@@ -55,9 +57,7 @@ async function generate() {
 				<div class="card-body space-y-4">
 					<div>
 						<label class="input-label">模型</label>
-						<select v-model="selectedModel" class="input">
-							<option v-for="m in models" :key="m.model_id" :value="m.model_id">{{ m.model_name || m.model_id }}</option>
-						</select>
+						<BaseSelect v-model="selectedModel" :options="modelOptions" />
 					</div>
 					<div>
 						<label class="input-label">提示词</label>
@@ -69,19 +69,11 @@ async function generate() {
 					</div>
 					<div>
 						<label class="input-label">尺寸</label>
-						<select v-model="size" class="input">
-							<option value="1024x1024">1024×1024</option>
-							<option value="1792x1024">1792×1024</option>
-							<option value="1024x1792">1024×1792</option>
-							<option value="512x512">512×512</option>
-						</select>
+						<BaseSelect v-model="size" :options="[{value:'1024x1024',label:'1024×1024'},{value:'1792x1024',label:'1792×1024'},{value:'1024x1792',label:'1024×1792'},{value:'512x512',label:'512×512'}]" />
 					</div>
 					<div>
 						<label class="input-label">质量</label>
-						<select v-model="quality" class="input">
-							<option value="standard">标准</option>
-							<option value="hd">高清</option>
-						</select>
+						<BaseSelect v-model="quality" :options="[{value:'standard',label:'标准'},{value:'hd',label:'高清'}]" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="sending || !prompt.trim()" @click="generate">
 						{{ sending ? '生成中...' : '生成图片' }}
