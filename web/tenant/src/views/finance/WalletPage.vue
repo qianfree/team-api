@@ -33,6 +33,16 @@ const frozenItems = ref<any[]>([])
 const frozenLoading = ref(false)
 let frozenTimer: ReturnType<typeof setInterval> | null = null
 
+// Redeem
+const showRedeemModal = ref(false)
+const redeemCode = ref('')
+const redeemLoading = ref(false)
+const redeemResult = ref<any>(null)
+const redeemHistory = ref<any[]>([])
+const redeemHistoryLoading = ref(false)
+const redeemTypeLabels: Record<string, string> = { quota: '额度', plan: '套餐', duration: '时长' }
+const redeemTypeBadgeClasses: Record<string, string> = { quota: 'badge-success', plan: 'badge-primary', duration: 'badge-warning' }
+
 const monthsOptions = [
 	{ label: '1 个月', value: 1 },
 	{ label: '3 个月', value: 3 },
@@ -217,6 +227,49 @@ function closeFrozenModal() {
 	}
 }
 
+// Redeem
+async function openRedeemModal() {
+	showRedeemModal.value = true
+	redeemCode.value = ''
+	redeemResult.value = null
+	await fetchRedeemHistory()
+}
+
+function closeRedeemModal() {
+	showRedeemModal.value = false
+}
+
+async function handleRedeem() {
+	if (!redeemCode.value.trim()) return
+	redeemLoading.value = true
+	redeemResult.value = null
+	try {
+		const res: any = await request.post('/tenant/redemptions/redeem', { code: redeemCode.value.trim() })
+		redeemResult.value = res.data?.data
+		redeemCode.value = ''
+		await fetchRedeemHistory()
+		fetchWallet()
+	} catch {
+		// interceptor handles error toast
+	} finally {
+		redeemLoading.value = false
+	}
+}
+
+async function fetchRedeemHistory() {
+	redeemHistoryLoading.value = true
+	try {
+		const res: any = await request.get('/tenant/redemptions/usages', {
+			params: { page: 1, page_size: 10 }
+		})
+		redeemHistory.value = res.data?.data?.list || []
+	} catch {
+		redeemHistory.value = []
+	} finally {
+		redeemHistoryLoading.value = false
+	}
+}
+
 function formatTime(unix: number): string {
 	if (!unix) return '-'
 	return new Date(unix * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -255,9 +308,15 @@ onBeforeUnmount(() => {
 <template>
 	<div class="wallet-page space-y-8">
 		<!-- Page Header -->
-		<div class="page-header">
-			<h1 class="page-title">钱包</h1>
-			<p class="page-description">管理余额、充值和套餐方案</p>
+		<div class="page-header flex items-start justify-between">
+			<div>
+				<h1 class="page-title">钱包</h1>
+				<p class="page-description">管理余额、充值和套餐方案</p>
+			</div>
+			<button class="btn btn-secondary btn-sm" @click="openRedeemModal">
+				<Icon name="gift" size="sm" />
+				兑换码
+			</button>
 		</div>
 
 		<!-- Pay Result Banner -->
@@ -741,6 +800,124 @@ onBeforeUnmount(() => {
 								自动刷新中 · 每 10 秒更新
 							</p>
 							<button @click="closeFrozenModal" class="btn btn-secondary btn-sm">关闭</button>
+						</div>
+					</div>
+				</div>
+			</transition>
+		</Teleport>
+
+		<!-- ============================================ -->
+		<!-- Redeem Code Modal -->
+		<!-- ============================================ -->
+		<Teleport to="body">
+			<transition name="modal">
+				<div v-if="showRedeemModal" class="modal-overlay" @click.self="closeRedeemModal">
+					<div class="modal-content w-full max-w-lg">
+						<div class="modal-header">
+							<h3 class="modal-title">兑换码</h3>
+							<button @click="closeRedeemModal" class="btn-ghost btn-icon">
+								<Icon name="x" size="md" />
+							</button>
+						</div>
+						<div class="modal-body space-y-5">
+							<!-- Redeem input -->
+							<div>
+								<p class="text-sm text-gray-500 mb-3">输入兑换码领取额度、套餐时长等福利</p>
+								<div class="flex gap-3">
+									<div class="flex-1">
+										<input
+											v-model="redeemCode"
+											type="text"
+											class="input font-mono"
+											placeholder="请输入兑换码"
+											maxlength="32"
+											@keyup.enter="handleRedeem"
+										/>
+									</div>
+									<button
+										class="btn btn-primary"
+										:disabled="redeemLoading || !redeemCode.trim()"
+										@click="handleRedeem"
+									>
+										<Icon v-if="redeemLoading" name="refresh" size="sm" class="animate-spin" />
+										<Icon v-else name="check" size="sm" />
+										{{ redeemLoading ? '兑换中...' : '兑换' }}
+									</button>
+								</div>
+
+								<!-- Success -->
+								<div v-if="redeemResult" class="mt-3 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">
+									<Icon name="checkCircle" size="sm" />
+									兑换成功！
+									<span v-if="redeemResult.type === 'quota'" class="font-medium">
+										获得 {{ redeemResult.credited?.toLocaleString() }} 额度
+									</span>
+									<span v-else-if="redeemResult.type === 'plan'" class="font-medium">
+										获得 {{ redeemResult.months }} 个月套餐
+									</span>
+									<span v-else-if="redeemResult.type === 'duration'" class="font-medium">
+										账户有效期延长 {{ redeemResult.extended_days }} 天
+									</span>
+								</div>
+							</div>
+
+							<!-- Divider -->
+							<div class="border-t border-gray-100"></div>
+
+							<!-- Redeem history -->
+							<div>
+								<h4 class="text-sm font-semibold text-gray-900 mb-3">兑换记录</h4>
+
+								<!-- Loading -->
+								<div v-if="redeemHistoryLoading" class="flex items-center justify-center py-8">
+									<div class="spinner"></div>
+									<span class="ml-2 text-sm text-gray-400">加载中...</span>
+								</div>
+
+								<!-- Empty -->
+								<div v-else-if="redeemHistory.length === 0" class="flex flex-col items-center justify-center py-8 text-center">
+									<div class="mb-3 text-gray-300">
+										<Icon name="document" size="lg" />
+									</div>
+									<p class="text-sm text-gray-500">暂无兑换记录</p>
+								</div>
+
+								<!-- History table -->
+								<div v-else class="table-container">
+									<table class="table">
+										<thead>
+											<tr>
+												<th>兑换码</th>
+												<th>兑换类型</th>
+												<th>面值</th>
+												<th>时间</th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr v-for="item in redeemHistory" :key="item.id">
+												<td class="font-mono text-xs">{{ item.code || '-' }}</td>
+												<td>
+													<span class="badge" :class="redeemTypeBadgeClasses[item.type] || 'badge-gray'">
+														{{ redeemTypeLabels[item.type] || item.type }}
+													</span>
+												</td>
+												<td class="font-mono">
+													<template v-if="item.type === 'quota'">
+														+{{ Number(item.value).toFixed(6) }}
+													</template>
+													<template v-else>
+														-
+													</template>
+												</td>
+												<td class="text-gray-400 text-xs">{{ item.created_at?.substring(0, 16) }}</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							</div>
+						</div>
+						<div class="modal-footer">
+							<button @click="closeRedeemModal" class="btn btn-secondary btn-sm">关闭</button>
 						</div>
 					</div>
 				</div>
