@@ -603,7 +603,7 @@ onMounted(() => {
 									<template v-if="quota.quota_type === 'periodic'"> · {{ periodLabel[quota.period] }}</template>
 								</span>
 								<span class="text-sm text-gray-500">
-									${{ quota.quota_used.toFixed(4) }} / ${{ quota.quota_limit.toFixed(2) }}
+									${{ quota.quota_used.toFixed(6) }} / ${{ quota.quota_limit.toFixed(6) }}
 								</span>
 							</div>
 							<div class="h-2 bg-gray-100 rounded-full overflow-hidden">

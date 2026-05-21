@@ -222,7 +222,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s pre_deduct=%.4f actual=%.4f", requestID, modelName, preDeductAmount, actualCost),
+		fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
 		userID, requestID, modelName, taskBillingID, "billing_record", 0, apiKeyID, taskID, balanceAfter, frozenAfter)
 
 	return result, nil

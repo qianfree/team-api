@@ -146,7 +146,7 @@ onMounted(fetchHistory)
 							</td>
 							<td class="font-mono">
 								<template v-if="item.type === 'quota'">
-									+{{ Number(item.value).toFixed(2) }}
+									+{{ Number(item.value).toFixed(6) }}
 								</template>
 								<template v-else>
 									-

@@ -109,10 +109,10 @@ const columns: TableColumnData[] = [
     width: 100,
     render({ record }) {
       if (record.billing_settled && record.actual_cost > 0) {
-        return `$${record.actual_cost.toFixed(4)}`
+        return `$${record.actual_cost.toFixed(6)}`
       }
       if (record.pre_deduct_amount > 0) {
-        return `$${record.pre_deduct_amount.toFixed(4)} (预扣)`
+        return `$${record.pre_deduct_amount.toFixed(6)} (预扣)`
       }
       return '-'
     },

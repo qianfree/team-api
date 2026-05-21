@@ -49,7 +49,7 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 	case "recharge":
 		// 充值金额为 CNY，转换为 USD 后入账钱包
 		usdAmount := billing.ConvertCNYToUSD(ctx, order.FinalAmount)
-		err = creditWallet(ctx, order.TenantID, usdAmount, fmt.Sprintf("Recharge: order #%d (CNY %.2f → USD %.4f)", orderID, order.FinalAmount, usdAmount))
+		err = creditWallet(ctx, order.TenantID, usdAmount, fmt.Sprintf("Recharge: order #%d (CNY %.2f → USD %.6f)", orderID, order.FinalAmount, usdAmount))
 		if err != nil {
 			return gerror.Wrapf(err, "credit wallet failed")
 		}

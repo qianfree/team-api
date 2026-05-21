@@ -65,8 +65,8 @@ const platformLabel: Record<string, string> = {
 }
 
 function formatCost(n: number | undefined): string {
-	if (!n) return '$0.0000'
-	return '$' + n.toFixed(4)
+	if (!n) return '$0.000000'
+	return '$' + n.toFixed(6)
 }
 
 function formatTime(s: string | undefined): string {

@@ -125,7 +125,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 
 	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
+		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
 		userID, requestID, modelName, billingID, "billing_record", projectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return &SettlementResult{
@@ -262,7 +262,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 	// 9. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.4f actual=%.4f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
+		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
 		userID, requestID, modelName, billingID, "billing_record", txProjectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return settlementResult, nil

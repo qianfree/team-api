@@ -132,7 +132,7 @@ onMounted(fetchTransactions)
 							<td :class="tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
 								{{ formatAmount(tx.amount) }}
 							</td>
-							<td class="text-gray-700">${{ tx.balance_after?.toFixed(2) ?? '--' }}</td>
+							<td class="text-gray-700">${{ tx.balance_after?.toFixed(6) ?? '--' }}</td>
 							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>
 							<td class="text-gray-500 text-xs font-mono">{{ tx.request_id || '--' }}</td>
 							<td class="text-gray-700 text-sm">{{ tx.model_name || '--' }}</td>
