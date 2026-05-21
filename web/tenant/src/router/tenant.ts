@@ -149,7 +149,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'redeem',
 				name: 'TenantRedeem',
 				component: () => import('@/views/finance/RedeemPage.vue'),
-				meta: { title: '兑换码', icon: 'gift', sort: 43, roles: ['owner', 'admin'] },
+				meta: { title: '兑换码', roles: ['owner', 'admin'] },
 			},
 			// 沟通 (50-59)
 			{
