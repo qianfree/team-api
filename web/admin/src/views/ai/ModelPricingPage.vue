@@ -430,19 +430,19 @@ onMounted(() => {
                   <div class="official-prices mt-2">
                     <div class="official-price-row">
                       <span class="official-price-label">输入价格</span>
-                      <span class="official-price-value">${{ src.pricing.input_price.toFixed(4) }} / 1M</span>
+                      <span class="official-price-value">${{ src.pricing.input_price.toFixed(2) }} / 1M</span>
                     </div>
                     <div class="official-price-row">
                       <span class="official-price-label">输出价格</span>
-                      <span class="official-price-value">${{ src.pricing.output_price.toFixed(4) }} / 1M</span>
+                      <span class="official-price-value">${{ src.pricing.output_price.toFixed(2) }} / 1M</span>
                     </div>
                     <div class="official-price-row">
                       <span class="official-price-label">缓存读取</span>
-                      <span class="official-price-value">{{ src.pricing.cache_read_price ? '$' + src.pricing.cache_read_price.toFixed(4) + ' / 1M' : '—' }}</span>
+                      <span class="official-price-value">{{ src.pricing.cache_read_price ? '$' + src.pricing.cache_read_price.toFixed(2) + ' / 1M' : '—' }}</span>
                     </div>
                     <div class="official-price-row">
                       <span class="official-price-label">缓存创建</span>
-                      <span class="official-price-value">{{ src.pricing.cache_creation_price ? '$' + src.pricing.cache_creation_price.toFixed(4) + ' / 1M' : '—' }}</span>
+                      <span class="official-price-value">{{ src.pricing.cache_creation_price ? '$' + src.pricing.cache_creation_price.toFixed(2) + ' / 1M' : '—' }}</span>
                     </div>
                   </div>
                   <AButton type="primary" size="small" class="mt-2" @click="applyOfficialPricing(src.pricing)">应用此价格</AButton>

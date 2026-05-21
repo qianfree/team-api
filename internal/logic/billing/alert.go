@@ -20,7 +20,7 @@ func CheckBalanceWarning(ctx context.Context, tenantID int64) (bool, float64, fl
 
 	available := AvailableBalance(wallet)
 	if wallet.WarningThreshold > 0 && available <= wallet.WarningThreshold {
-		g.Log().Warningf(ctx, "[BALANCE WARNING] tenant=%d available=%.4f threshold=%.4f",
+		g.Log().Warningf(ctx, "[BALANCE WARNING] tenant=%d available=%.6f threshold=%.6f",
 			tenantID, available, wallet.WarningThreshold)
 
 		// 发送余额预警通知（异步，失败不影响主流程）
@@ -28,8 +28,8 @@ func CheckBalanceWarning(ctx context.Context, tenantID int64) (bool, float64, fl
 			bgCtx := context.Background()
 			engine := common.NewNotificationEngine()
 			variables := map[string]any{
-				"available": fmt.Sprintf("%.4f", available),
-				"threshold": fmt.Sprintf("%.4f", wallet.WarningThreshold),
+				"available": fmt.Sprintf("%.6f", available),
+				"threshold": fmt.Sprintf("%.6f", wallet.WarningThreshold),
 			}
 			if notifyErr := engine.SendBroadcast(bgCtx, tenantID, "balance_warning", variables, "owner,admin"); notifyErr != nil {
 				g.Log().Errorf(bgCtx, "[BALANCE WARNING] send notification failed: tenant=%d err=%v", tenantID, notifyErr)

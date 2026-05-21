@@ -114,8 +114,8 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 			SuccessRate:       math.Round(successRate*100) / 100,
 			AvgLatencyMs:      math.Round(row.AvgLatency*100) / 100,
 			P95LatencyMs:      math.Round(row.P95Latency*100) / 100,
-			TotalCost:         math.Round(row.TotalCost*100000000) / 100000000,
-			AvgCostPerRequest: math.Round(avgCost*100000000) / 100000000,
+			TotalCost:         math.Round(row.TotalCost*1000000) / 1000000,
+			AvgCostPerRequest: math.Round(avgCost*1000000) / 1000000,
 			InputTokens:       row.InputTokens,
 			OutputTokens:      row.OutputTokens,
 		})
@@ -137,7 +137,7 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 	return &v1.ModelComparisonRes{
 		Summary: v1.ModelComparisonSummary{
 			TotalRequests: totalRequests,
-			TotalCost:     math.Round(totalCost*100000000) / 100000000,
+			TotalCost:     math.Round(totalCost*1000000) / 1000000,
 			Recommended:   recommended,
 			Reason:        reason,
 		},
@@ -234,7 +234,7 @@ func fetchTrends(ctx context.Context, tenantID int64, since string, models []str
 		dayMap[day] = append(dayMap[day], v1.ModelTrendDayItem{
 			ModelName: r["model_name"].String(),
 			Requests:  r["requests"].Int64(),
-			Cost:      math.Round(r["cost"].Float64()*100000000) / 100000000,
+			Cost:      math.Round(r["cost"].Float64()*1000000) / 1000000,
 			LatencyMs: math.Round(r["latency"].Float64()*100) / 100,
 		})
 	}

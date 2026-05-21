@@ -34,7 +34,7 @@ const billColumns: TableColumnData[] = [
   { title: '输出Token', dataIndex: 'output_tokens', width: 100 },
   {
     title: '总费用', dataIndex: 'total_cost', width: 100,
-    render({ record }) { return `$${(record.total_cost || 0).toFixed(4)}` },
+    render({ record }) { return `$${(record.total_cost || 0).toFixed(6)}` },
   },
   {
     title: '状态', dataIndex: 'status', width: 80,

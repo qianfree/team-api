@@ -148,9 +148,7 @@ function formatTokens(n: number): string {
 
 function formatPrice(n: number | null): string {
 	if (n == null || n === 0) return '-'
-	if (n >= 1) return '$' + n.toFixed(2)
-	if (n >= 0.01) return '$' + n.toFixed(3)
-	return '$' + n.toFixed(4)
+	return '$' + n.toFixed(2)
 }
 
 function formatTokenRange(min: number, max: number | null): string {

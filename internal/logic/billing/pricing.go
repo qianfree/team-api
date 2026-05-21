@@ -479,7 +479,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return 0.001, nil
 	}
 
-	return math.Ceil(breakdown.TotalCost*10000) / 10000, nil
+	return math.Ceil(breakdown.TotalCost*1000000) / 1000000, nil
 }
 
 // pricingTierRow 定价阶梯行（绝对价格）

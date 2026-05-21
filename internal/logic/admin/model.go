@@ -483,10 +483,10 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	source.MaxContext = entry.MaxInputTokens
 	source.MaxOutput = entry.MaxOutputTokens
 	source.Pricing = &v1.OfficialPricingItem{
-		InputPrice:         roundTo4(inputPrice),
-		OutputPrice:        roundTo4(outputPrice),
-		CacheReadPrice:     roundTo4(cacheReadPrice),
-		CacheCreationPrice: roundTo4(cacheCreationPrice),
+		InputPrice:         roundTo2(inputPrice),
+		OutputPrice:        roundTo2(outputPrice),
+		CacheReadPrice:     roundTo2(cacheReadPrice),
+		CacheCreationPrice: roundTo2(cacheCreationPrice),
 		BillingMode:        billingMode,
 	}
 
@@ -517,14 +517,14 @@ func fetchModelsDevSource(ctx context.Context, modelName string) *v1.OfficialPri
 	source.Found = true
 	source.Provider = entry.Provider
 	source.Pricing = &v1.OfficialPricingItem{
-		InputPrice: roundTo4(entry.Input),
-		OutputPrice: roundTo4(func() float64 {
+		InputPrice: roundTo2(entry.Input),
+		OutputPrice: roundTo2(func() float64 {
 			if entry.Output != nil {
 				return *entry.Output
 			}
 			return 0
 		}()),
-		CacheReadPrice: roundTo4(cacheReadPrice),
+		CacheReadPrice: roundTo2(cacheReadPrice),
 		BillingMode:    "token",
 	}
 
@@ -532,8 +532,8 @@ func fetchModelsDevSource(ctx context.Context, modelName string) *v1.OfficialPri
 	return source
 }
 
-func roundTo4(v float64) float64 {
-	return float64(int(v*10000+0.5)) / 10000
+func roundTo2(v float64) float64 {
+	return float64(int(v*100+0.5)) / 100
 }
 
 // FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
