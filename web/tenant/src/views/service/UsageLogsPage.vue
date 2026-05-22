@@ -772,7 +772,7 @@ onMounted(() => {
 				</div>
 
 				<!-- 结算明细 -->
-				<div v-if="detailLog.pre_deduct_amount > 0 || detailLog.refund_amount > 0 || detailLog.supplement_amount > 0">
+				<div v-if="detailLog.pre_deduct_amount > 0 || detailLog.refund_amount > 0 || detailLog.supplement_amount > 0 || detailLog.settled_at">
 					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
 						<Icon name="refresh" size="sm" class="text-primary-500" />
 						结算明细
@@ -789,6 +789,10 @@ onMounted(() => {
 						<div v-if="detailLog.supplement_amount > 0" class="flex items-center justify-between">
 							<span class="text-gray-500">补扣金额</span>
 							<span class="text-amber-600">{{ formatCost(detailLog.supplement_amount) }}</span>
+						</div>
+						<div v-if="detailLog.settled_at" class="flex items-center justify-between">
+							<span class="text-gray-500">结算时间</span>
+							<span>{{ formatTime(detailLog.settled_at) }}</span>
 						</div>
 					</div>
 				</div>

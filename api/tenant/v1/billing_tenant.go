@@ -23,19 +23,6 @@ type TenantUsageLogsRes struct {
 	PageSize int              `json:"page_size"`
 }
 
-type TenantBillingRecordsReq struct {
-	g.Meta   `path:"/billing-records" method:"get" mime:"json" tags:"租户控制台-用量" summary:"账单记录"`
-	Page     int `json:"page" in:"query" d:"1"`
-	PageSize int `json:"page_size" in:"query" d:"20"`
-}
-
-type TenantBillingRecordsRes struct {
-	List     []map[string]any `json:"list"`
-	Total    int              `json:"total"`
-	Page     int              `json:"page"`
-	PageSize int              `json:"page_size"`
-}
-
 // TenantUsageLogsExportReq 导出用量日志请求
 type TenantUsageLogsExportReq struct {
 	g.Meta      `path:"/usage-logs/export" method:"get" mime:"json" tags:"租户控制台-用量" summary:"导出用量日志"`

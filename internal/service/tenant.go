@@ -57,8 +57,6 @@ type (
 		Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.TenantWalletRes, error)
 		// WalletTransactions 获取租户钱包流水
 		WalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsReq) (*v1.TenantWalletTransactionsRes, error)
-		// BillingRecords 获取租户计费记录
-		BillingRecords(ctx context.Context, req *v1.TenantBillingRecordsReq) (*v1.TenantBillingRecordsRes, error)
 		// UsageLogs 获取租户用量日志
 		UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error)
 		// ExportUsageLogs exports the tenant usage logs as CSV or Excel.
