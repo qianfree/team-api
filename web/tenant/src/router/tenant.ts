@@ -139,8 +139,8 @@ const tenantRoutes: RouteRecordRaw[] = [
 				component: () => import('@/views/finance/TransactionsPage.vue'),
 				meta: { title: '交易记录', icon: 'document', sort: 41, roles: ['owner', 'admin'] },
 			},
-			{
-				path: 'orders',
+					{
+					path: 'orders',
 				name: 'TenantOrders',
 				component: () => import('@/views/finance/OrdersPage.vue'),
 				meta: { title: '订单记录', icon: 'receipt', sort: 42, roles: ['owner', 'admin'] },
