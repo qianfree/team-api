@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -200,7 +201,8 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 10. 带重试的请求调度
 	excludeChannelIDs := make([]int64, 0)
 	maxRetries := 3
-	originalBody := body // 保存原始请求体，避免重试时重复转换
+	originalBody := body               // 保存原始请求体，避免重试时重复转换
+	channelErrors := make([]string, 0) // 记录每次尝试的失败原因，用于最终汇总
 
 	// 初始化转发路径追踪
 	trace := &common.ForwardingTrace{
@@ -219,15 +221,22 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					if billing != nil && preDeductAmount > 0 {
 						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 					}
-					return nil, billingResult, constant.NewChannelError(
+					g.Log().Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
+						len(excludeChannelIDs), modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
+					allFailedErr := constant.NewChannelError(
 						fmt.Sprintf("all %d channels failed for model: %s", len(excludeChannelIDs), modelName),
 						constant.ErrAllChannelsFailed,
 					)
+					recordFailedUsage(provider, rc, 0, modelName, relayMode, isStream, allFailedErr)
+					return nil, billingResult, allFailedErr
 				}
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
-				return nil, billingResult, constant.NewChannelError("no available channel for model: "+modelName, err)
+				g.Log().Errorf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", modelName, rc.TenantID, rc.UserID)
+				noChErr := constant.NewChannelError("no available channel for model: "+modelName, err)
+				recordFailedUsage(provider, rc, 0, modelName, relayMode, isStream, noChErr)
+				return nil, billingResult, noChErr
 			}
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
@@ -378,6 +387,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 
+			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms retryable=%v",
+				attempt, selection.ChannelID, selection.ChannelName, modelName, selection.UpstreamModelName, err, info.LatencyMs(), constant.IsRetryable(err))
+			channelErrors = append(channelErrors, failReason)
+			g.Log().Warningf(ctx, "[RelayHandler] Upstream request failed: %s", failReason)
+
 			// 亲和性渠道失败，清除亲和性
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, modelName)
 
@@ -446,11 +460,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			// 非中断类错误：记录 ERROR 并更新渠道健康度
-			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, error=%v",
-				adaptor.GetChannelName(), info.InboundFormat, err)
+			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms",
+				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, modelName, attempt, err, info.LatencyMs())
 			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
+			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
+				attempt, selection.ChannelID, selection.ChannelName, modelName, err, info.LatencyMs())
+			channelErrors = append(channelErrors, failReason)
 
 			// 亲和性渠道失败，清除亲和性
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, modelName)
