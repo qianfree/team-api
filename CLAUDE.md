@@ -168,6 +168,12 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 
 如果先执行 `gf gen ctrl` 再执行 `gf gen service`，控制器会是桩代码（返回 501 Not Implemented），需要手动修改。始终遵循 "logic → gen service → gen ctrl" 的顺序可避免此问题。
 
+**重要：`gf gen ctrl` 执行后必须验证**。即使顺序正确，`withService: true` 的自动接线对新方法也可能失败，生成 `CodeNotImplemented` 桩代码。执行后务必检查：
+```bash
+grep -r "CodeNotImplemented" internal/controller/
+```
+如果有匹配，手动将桩代码替换为 `return service.Xxx().Method(ctx, req)` 调用。切勿假设 `gf gen ctrl` 的输出一定正确。
+
 ### GoFrame 请求处理链路
 
 ```

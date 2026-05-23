@@ -271,3 +271,17 @@ r := g.RequestFromCtx(ctx)
 - `internal/logic/billing/wallet.go`（GetWallet、syncWalletToRedis、preDeductDB、preDeductSyncDB、unfreezeDB、recordTransaction）
 
 **正确做法**：查询单行记录时，始终使用指针类型接收 Scan 结果，通过 `nil` 检查判断无数据。
+
+### 2026-05-23：gf gen ctrl withService:true 对新方法生成桩代码（Not Implemented）
+
+**问题**：按正确顺序执行 `logic → gf gen service → gf gen ctrl` 后，`gf gen ctrl` 生成的控制器文件中方法体是 `return nil, gerror.NewCode(gcode.CodeNotImplemented)`，调用 API 返回 501 Not Implemented。
+
+**原因**：`gf gen ctrl` 的 `withService: true` 自动接线机制对新方法不可靠。即使 service 接口文件已包含正确的方法签名，ctrl 生成器仍可能无法匹配并生成桩代码。且一旦首次生成桩代码，后续重跑 `gf gen ctrl` 会跳过已存在的文件，不会覆盖修复。
+
+**修复**：手动将控制器文件改为 `return service.Admin().MethodName(ctx, req)` 调用。
+
+**正确做法**：每次执行 `gf gen ctrl` 后，必须检查生成的控制器文件是否包含 `CodeNotImplemented`：
+```bash
+grep -r "CodeNotImplemented" internal/controller/
+```
+如果有匹配，手动将桩代码替换为 `return service.Admin().MethodName(ctx, req)`。或者先删除对应控制器文件再重新执行 `gf gen ctrl`。
