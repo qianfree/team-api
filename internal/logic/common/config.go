@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
 )
@@ -309,26 +310,37 @@ func (s *ConfigService) Warmup(ctx context.Context) {
 // Called once at startup in cmd.go.
 func (s *ConfigService) StartSubscriber(ctx context.Context) {
 	go func() {
-		conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")
-		if err != nil {
-			g.Log().Errorf(ctx, "settings subscriber failed: %v", err)
-			return
-		}
-		defer conn.Close(ctx)
-		g.Log().Info(ctx, "settings Pub/Sub subscriber started")
-
 		for {
-			msg, err := conn.ReceiveMessage(ctx)
+			conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")
 			if err != nil {
-				g.Log().Warningf(ctx, "settings subscriber recv error: %v", err)
+				g.Log().Errorf(ctx, "settings subscriber connect failed: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
-			key := msg.Payload
-			s.cache.Delete(ctx, key)
-			s.cache.Delete(ctx, "public_options")
-			s.cache.Delete(ctx, "category:"+getCategoryForKey(key))
-			g.Log().Debugf(ctx, "settings invalidated via Pub/Sub: %s", key)
+
+			g.Log().Info(ctx, "settings Pub/Sub subscriber started")
+
+			for {
+				v, err := conn.Receive(ctx)
+				if err != nil {
+					g.Log().Warningf(ctx, "settings subscriber recv error: %v", err)
+					time.Sleep(5 * time.Second)
+					break // reconnect
+				}
+
+				msg, ok := v.Val().(*gredis.Message)
+				if !ok {
+					continue // skip Subscription/Pong etc.
+				}
+
+				key := msg.Payload
+				s.cache.Delete(ctx, key)
+				s.cache.Delete(ctx, "public_options")
+				s.cache.Delete(ctx, "category:"+getCategoryForKey(key))
+				g.Log().Debugf(ctx, "settings invalidated via Pub/Sub: %s", key)
+			}
+
+			conn.Close(ctx)
 		}
 	}()
 }
