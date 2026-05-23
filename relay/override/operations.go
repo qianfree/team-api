@@ -10,241 +10,237 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-func opSet(jsonStr, path string, value any, keepOrigin bool) (string, error) {
+func opSet(data []byte, path string, value any, keepOrigin bool) ([]byte, error) {
 	if keepOrigin {
-		if gjson.Get(jsonStr, path).Exists() {
-			return jsonStr, nil
+		if gjson.GetBytes(data, path).Exists() {
+			return data, nil
 		}
 	}
 	valJSON := valueToJSON(value)
-	result, err := sjson.SetRaw(jsonStr, path, string(valJSON))
+	result, err := sjson.SetRawBytes(data, path, valJSON)
 	if err != nil {
-		return jsonStr, nil // 路径不存在时静默忽略
+		return data, nil // 路径不存在时静默忽略
 	}
 	return result, nil
 }
 
-func opDelete(jsonStr, path string) (string, error) {
-	result, err := sjson.Delete(jsonStr, path)
+func opDelete(data []byte, path string) ([]byte, error) {
+	result, err := sjson.DeleteBytes(data, path)
 	if err != nil {
-		return jsonStr, nil
+		return data, nil
 	}
 	return result, nil
 }
 
-func opMove(jsonStr, from, to string) (string, error) {
-	val := gjson.Get(jsonStr, from)
+func opMove(data []byte, from, to string) ([]byte, error) {
+	val := gjson.GetBytes(data, from)
 	if !val.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
-	result, err := sjson.Delete(jsonStr, from)
+	result, err := sjson.DeleteBytes(data, from)
 	if err != nil {
-		return jsonStr, nil
+		return data, nil
 	}
-	result, err = sjson.SetRaw(result, to, val.Raw)
+	result, err = sjson.SetRawBytes(result, to, []byte(val.Raw))
 	if err != nil {
-		return jsonStr, nil
+		return data, nil
 	}
 	return result, nil
 }
 
-func opCopy(jsonStr, from, to string) (string, error) {
-	val := gjson.Get(jsonStr, from)
+func opCopy(data []byte, from, to string) ([]byte, error) {
+	val := gjson.GetBytes(data, from)
 	if !val.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
-	result, err := sjson.SetRaw(jsonStr, to, val.Raw)
+	result, err := sjson.SetRawBytes(data, to, []byte(val.Raw))
 	if err != nil {
-		return jsonStr, nil
+		return data, nil
 	}
 	return result, nil
 }
 
-func opAppend(jsonStr, path string, value any, keepOrigin bool) (string, error) {
+func opAppend(data []byte, path string, value any, keepOrigin bool) ([]byte, error) {
 	if keepOrigin {
-		if gjson.Get(jsonStr, path).Exists() {
-			return jsonStr, nil
+		if gjson.GetBytes(data, path).Exists() {
+			return data, nil
 		}
 	}
 
-	existing := gjson.Get(jsonStr, path)
+	existing := gjson.GetBytes(data, path)
 	if !existing.Exists() {
-		return opSet(jsonStr, path, value, false)
+		return opSet(data, path, value, false)
 	}
 
-	// 如果目标不存在，直接设置
 	switch existing.Type {
 	case gjson.String:
 		newVal := existing.Str + fmt.Sprintf("%v", value)
-		return sjson.Set(jsonStr, path, newVal)
+		return sjson.SetBytes(data, path, newVal)
 	case gjson.JSON:
 		var arr []any
 		if err := json.Unmarshal([]byte(existing.Raw), &arr); err == nil {
 			arr = append(arr, value)
 			arrJSON, _ := json.Marshal(arr)
-			return sjson.SetRaw(jsonStr, path, string(arrJSON))
+			return sjson.SetRawBytes(data, path, arrJSON)
 		}
 	case gjson.Number:
-		// 数字追加无意义，跳过
-		return jsonStr, nil
+		return data, nil
 	default:
-		// 其他类型，设置为数组 [existing, value]
 		arrJSON, _ := json.Marshal([]any{existing.Value(), value})
-		return sjson.SetRaw(jsonStr, path, string(arrJSON))
+		return sjson.SetRawBytes(data, path, arrJSON)
 	}
 
-	return jsonStr, nil
+	return data, nil
 }
 
-func opPrepend(jsonStr, path string, value any, keepOrigin bool) (string, error) {
+func opPrepend(data []byte, path string, value any, keepOrigin bool) ([]byte, error) {
 	if keepOrigin {
-		if gjson.Get(jsonStr, path).Exists() {
-			return jsonStr, nil
+		if gjson.GetBytes(data, path).Exists() {
+			return data, nil
 		}
-
 	}
 
-	existing := gjson.Get(jsonStr, path)
+	existing := gjson.GetBytes(data, path)
 	if !existing.Exists() {
-		return opSet(jsonStr, path, value, false)
+		return opSet(data, path, value, false)
 	}
 
 	switch existing.Type {
 	case gjson.String:
 		newVal := fmt.Sprintf("%v", value) + existing.Str
-		return sjson.Set(jsonStr, path, newVal)
+		return sjson.SetBytes(data, path, newVal)
 	case gjson.JSON:
 		var arr []any
 		if err := json.Unmarshal([]byte(existing.Raw), &arr); err == nil {
 			arr = append([]any{value}, arr...)
 			arrJSON, _ := json.Marshal(arr)
-			return sjson.SetRaw(jsonStr, path, string(arrJSON))
+			return sjson.SetRawBytes(data, path, arrJSON)
 		}
 	default:
 		arrJSON, _ := json.Marshal([]any{value, existing.Value()})
-		return sjson.SetRaw(jsonStr, path, string(arrJSON))
+		return sjson.SetRawBytes(data, path, arrJSON)
 	}
 
-	return jsonStr, nil
+	return data, nil
 }
 
-func opReplace(jsonStr, path string, value any) (string, error) {
+func opReplace(data []byte, path string, value any) ([]byte, error) {
 	m, ok := value.(map[string]any)
 	if !ok {
-		return jsonStr, nil
+		return data, nil
 	}
 	oldStr := toString(m["old"])
 	newStr := toString(m["new"])
 	if oldStr == "" {
-		return jsonStr, nil
+		return data, nil
 	}
 
-	target := gjson.Get(jsonStr, path)
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
 
 	replaced := replaceAllStr(target.Str, oldStr, newStr)
-	return sjson.Set(jsonStr, path, replaced)
+	return sjson.SetBytes(data, path, replaced)
 }
 
-func opRegexReplace(jsonStr, path string, value any) (string, error) {
+func opRegexReplace(data []byte, path string, value any) ([]byte, error) {
 	m, ok := value.(map[string]any)
 	if !ok {
-		return jsonStr, nil
+		return data, nil
 	}
 	pattern := toString(m["pattern"])
 	replacement := toString(m["replacement"])
 	if pattern == "" {
-		return jsonStr, nil
+		return data, nil
 	}
 
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return jsonStr, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
+		return data, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
 	}
 
-	target := gjson.Get(jsonStr, path)
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
 
 	replaced := re.ReplaceAllString(target.Str, replacement)
-	return sjson.Set(jsonStr, path, replaced)
+	return sjson.SetBytes(data, path, replaced)
 }
 
-func opToLower(jsonStr, path string) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opToLower(data []byte, path string) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
 	if target.Type == gjson.String {
-		return sjson.Set(jsonStr, path, strings.ToLower(target.Str))
+		return sjson.SetBytes(data, path, strings.ToLower(target.Str))
 	}
-	return jsonStr, nil
+	return data, nil
 }
 
-func opToUpper(jsonStr, path string) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opToUpper(data []byte, path string) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() {
-		return jsonStr, nil
+		return data, nil
 	}
 	if target.Type == gjson.String {
-		return sjson.Set(jsonStr, path, strings.ToUpper(target.Str))
+		return sjson.SetBytes(data, path, strings.ToUpper(target.Str))
 	}
-	return jsonStr, nil
+	return data, nil
 }
 
-func opTrimPrefix(jsonStr, path string, value any) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opTrimPrefix(data []byte, path string, value any) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() || target.Type != gjson.String {
-		return jsonStr, nil
+		return data, nil
 	}
 	prefix := fmt.Sprintf("%v", value)
 	result := strings.TrimPrefix(target.Str, prefix)
-	return sjson.Set(jsonStr, path, result)
+	return sjson.SetBytes(data, path, result)
 }
 
-func opTrimSuffix(jsonStr, path string, value any) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opTrimSuffix(data []byte, path string, value any) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() || target.Type != gjson.String {
-		return jsonStr, nil
+		return data, nil
 	}
 	suffix := fmt.Sprintf("%v", value)
 	result := strings.TrimSuffix(target.Str, suffix)
-	return sjson.Set(jsonStr, path, result)
+	return sjson.SetBytes(data, path, result)
 }
 
-func opEnsurePrefix(jsonStr, path string, value any) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opEnsurePrefix(data []byte, path string, value any) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() || target.Type != gjson.String {
-		return jsonStr, nil
+		return data, nil
 	}
 	prefix := fmt.Sprintf("%v", value)
 	result := target.Str
 	if !strings.HasPrefix(result, prefix) {
 		result = prefix + result
 	}
-	return sjson.Set(jsonStr, path, result)
+	return sjson.SetBytes(data, path, result)
 }
 
-func opEnsureSuffix(jsonStr, path string, value any) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opEnsureSuffix(data []byte, path string, value any) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() || target.Type != gjson.String {
-		return jsonStr, nil
+		return data, nil
 	}
 	suffix := fmt.Sprintf("%v", value)
 	result := target.Str
 	if !strings.HasSuffix(result, suffix) {
 		result = result + suffix
 	}
-	return sjson.Set(jsonStr, path, result)
+	return sjson.SetBytes(data, path, result)
 }
 
-func opTrimSpace(jsonStr, path string) (string, error) {
-	target := gjson.Get(jsonStr, path)
+func opTrimSpace(data []byte, path string) ([]byte, error) {
+	target := gjson.GetBytes(data, path)
 	if !target.Exists() || target.Type != gjson.String {
-		return jsonStr, nil
+		return data, nil
 	}
-	return sjson.Set(jsonStr, path, strings.TrimSpace(target.Str))
+	return sjson.SetBytes(data, path, strings.TrimSpace(target.Str))
 }

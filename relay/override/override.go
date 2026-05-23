@@ -61,7 +61,7 @@ func ApplyParamOverride(body []byte, info *common.RelayInfo) ([]byte, error) {
 	var err error
 	// 尝试解析为 operations 数组格式
 	if operations, ok := tryParseOperations(paramOverride); ok {
-		result, err = applyOperations(string(body), operations, ctx)
+		result, err = applyOperations(body, operations, ctx)
 	} else {
 		// 兼容旧版 key-value 格式（直接设置/删除字段）
 		result, err = applyLegacy(body, paramOverride, ctx)
@@ -168,23 +168,23 @@ func tryParseOperations(paramOverride map[string]any) ([]Operation, bool) {
 }
 
 // applyOperations 执行 operations 数组
-func applyOperations(jsonStr string, operations []Operation, ctx map[string]any) ([]byte, error) {
+func applyOperations(data []byte, operations []Operation, ctx map[string]any) ([]byte, error) {
 	for _, op := range operations {
-		if !checkConditions(jsonStr, ctx, op.Conditions, op.Logic) {
+		if !checkConditions(data, ctx, op.Conditions, op.Logic) {
 			continue
 		}
 
-		result, err := applySingleOperation(jsonStr, op, ctx)
+		result, err := applySingleOperation(data, op, ctx)
 		if err != nil {
 			return nil, err
 		}
-		jsonStr = result
+		data = result
 	}
-	return []byte(jsonStr), nil
+	return data, nil
 }
 
 // applyLegacy 兼容旧版 key-value 格式
-func applyLegacy(body []byte, paramOverride map[string]any, ctx map[string]any) ([]byte, error) {
+func applyLegacy(data []byte, paramOverride map[string]any, ctx map[string]any) ([]byte, error) {
 	// 分离 operations 和 legacy key-value
 	legacy := make(map[string]any)
 	for k, v := range paramOverride {
@@ -195,23 +195,22 @@ func applyLegacy(body []byte, paramOverride map[string]any, ctx map[string]any) 
 	}
 
 	if len(legacy) == 0 {
-		return body, nil
+		return data, nil
 	}
 
-	jsonStr := string(body)
 	for path, value := range legacy {
-		result, err := sjson.SetRaw(jsonStr, path, string(valueToJSON(value)))
+		result, err := sjson.SetRawBytes(data, path, valueToJSON(value))
 		if err != nil {
 			// 路径不存在时忽略
 			continue
 		}
-		jsonStr = result
+		data = result
 	}
-	return []byte(jsonStr), nil
+	return data, nil
 }
 
 // applySingleOperation 执行单个操作
-func applySingleOperation(jsonStr string, op Operation, ctx map[string]any) (string, error) {
+func applySingleOperation(data []byte, op Operation, ctx map[string]any) ([]byte, error) {
 	// 解析上下文变量占位符
 	path := resolveContextPath(op.Path, ctx)
 	from := resolveContextPath(op.From, ctx)
@@ -219,59 +218,59 @@ func applySingleOperation(jsonStr string, op Operation, ctx map[string]any) (str
 
 	switch op.Mode {
 	case "set":
-		return opSet(jsonStr, path, op.Value, op.KeepOrigin)
+		return opSet(data, path, op.Value, op.KeepOrigin)
 	case "delete":
-		return opDelete(jsonStr, path)
+		return opDelete(data, path)
 	case "move":
-		return opMove(jsonStr, from, to)
+		return opMove(data, from, to)
 	case "copy":
-		return opCopy(jsonStr, from, to)
+		return opCopy(data, from, to)
 	case "append":
-		return opAppend(jsonStr, path, op.Value, op.KeepOrigin)
+		return opAppend(data, path, op.Value, op.KeepOrigin)
 	case "prepend":
-		return opPrepend(jsonStr, path, op.Value, op.KeepOrigin)
+		return opPrepend(data, path, op.Value, op.KeepOrigin)
 	case "replace":
-		return opReplace(jsonStr, path, op.Value)
+		return opReplace(data, path, op.Value)
 	case "regex_replace":
-		return opRegexReplace(jsonStr, path, op.Value)
+		return opRegexReplace(data, path, op.Value)
 	case "to_lower":
-		return opToLower(jsonStr, path)
+		return opToLower(data, path)
 	case "to_upper":
-		return opToUpper(jsonStr, path)
+		return opToUpper(data, path)
 	case "trim_prefix":
-		return opTrimPrefix(jsonStr, path, op.Value)
+		return opTrimPrefix(data, path, op.Value)
 	case "trim_suffix":
-		return opTrimSuffix(jsonStr, path, op.Value)
+		return opTrimSuffix(data, path, op.Value)
 	case "ensure_prefix":
-		return opEnsurePrefix(jsonStr, path, op.Value)
+		return opEnsurePrefix(data, path, op.Value)
 	case "ensure_suffix":
-		return opEnsureSuffix(jsonStr, path, op.Value)
+		return opEnsureSuffix(data, path, op.Value)
 	case "trim_space":
-		return opTrimSpace(jsonStr, path)
+		return opTrimSpace(data, path)
 	case "return_error":
-		return "", opReturnError(op.Value)
+		return nil, opReturnError(op.Value)
 	case "set_header":
 		opSetHeader(op.Path, op.Value, ctx)
-		return jsonStr, nil
+		return data, nil
 	case "delete_header":
 		opDeleteHeader(op.Path, ctx)
-		return jsonStr, nil
+		return data, nil
 	case "copy_header":
 		opCopyHeader(op.From, op.To, ctx)
-		return jsonStr, nil
+		return data, nil
 	case "move_header":
 		opMoveHeader(op.From, op.To, ctx)
-		return jsonStr, nil
+		return data, nil
 	case "pass_headers":
 		opPassHeaders(op.Value, ctx)
-		return jsonStr, nil
+		return data, nil
 	default:
-		return jsonStr, fmt.Errorf("unknown override mode: %s", op.Mode)
+		return data, fmt.Errorf("unknown override mode: %s", op.Mode)
 	}
 }
 
 // checkConditions 检查所有条件是否满足
-func checkConditions(jsonStr string, ctx map[string]any, conditions []Condition, logic string) bool {
+func checkConditions(data []byte, ctx map[string]any, conditions []Condition, logic string) bool {
 	if len(conditions) == 0 {
 		return true
 	}
@@ -293,7 +292,7 @@ func checkConditions(jsonStr string, ctx map[string]any, conditions []Condition,
 		}
 		if !found {
 			// 再查请求体 JSON
-			res := gjson.Get(jsonStr, condPath)
+			res := gjson.GetBytes(data, condPath)
 			if res.Exists() {
 				target = res.Value()
 				found = true
