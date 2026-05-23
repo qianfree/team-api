@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cloudflare/ahocorasick"
+	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
 )
 
@@ -191,11 +192,16 @@ func (e *ContentFilterEngine) startSubscriber(ctx context.Context) {
 		g.Log().Info(ctx, "[ContentFilter] Pub/Sub subscriber started")
 
 		for {
-			msg, err := conn.ReceiveMessage(ctx)
+			v, err := conn.Receive(ctx)
 			if err != nil {
 				g.Log().Warningf(ctx, "[ContentFilter] subscriber recv error: %v", err)
 				time.Sleep(5 * time.Second)
 				break // reconnect
+			}
+
+			msg, ok := v.Val().(*gredis.Message)
+			if !ok {
+				continue // skip Subscription/Pong etc.
 			}
 
 			key := msg.Payload
