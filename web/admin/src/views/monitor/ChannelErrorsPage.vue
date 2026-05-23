@@ -14,7 +14,7 @@ const pagination = reactive({ current: 1, pageSize: 20 })
 const filterChannelId = ref<number | undefined>(undefined)
 const filterCategory = ref('')
 const filterStatusCode = ref<number | undefined>(undefined)
-const filterDateRange = ref<string[]>([])
+const filterDateRange = ref<string[] | undefined>(undefined)
 const filterKeyword = ref('')
 
 // Stats
@@ -156,7 +156,7 @@ async function fetchData() {
     if (filterCategory.value) params.error_category = filterCategory.value
     if (filterStatusCode.value) params.status_code = filterStatusCode.value
     if (filterKeyword.value) params.keyword = filterKeyword.value
-    if (filterDateRange.value?.length === 2) {
+    if (filterDateRange.value && filterDateRange.value.length === 2) {
       params.start_date = filterDateRange.value[0]
       params.end_date = filterDateRange.value[1]
     }
@@ -182,7 +182,7 @@ function handleReset() {
   filterChannelId.value = undefined
   filterCategory.value = ''
   filterStatusCode.value = undefined
-  filterDateRange.value = []
+  filterDateRange.value = undefined
   filterKeyword.value = ''
   pagination.current = 1
   fetchData()
@@ -269,11 +269,11 @@ onMounted(() => {
           @input="(val: string) => filterStatusCode = val ? Number(val) : undefined"
         />
         <DatePicker
-          :model-value="filterDateRange as any"
+          :model-value="filterDateRange"
           range
           style="width: 240px"
           format="YYYY-MM-DD"
-          @change="(val: any) => filterDateRange = val || []"
+          @change="(val: any) => filterDateRange = val"
         />
         <Button type="primary" @click="handleSearch">搜索</Button>
         <Button @click="handleReset">重置</Button>

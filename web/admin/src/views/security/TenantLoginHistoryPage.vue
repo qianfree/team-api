@@ -36,7 +36,23 @@ const methodOptions = [
   { label: '恢复码', value: 'backup_code' },
 ]
 
+const tenantOptions = ref<{ label: string; value: number }[]>([])
+
+async function fetchTenantOptions(keyword: string) {
+  try {
+    const res: any = await request.get('/admin/tenants', {
+      params: { page: 1, page_size: 20, keyword, status: 'active' },
+    })
+    const list = res.data?.data?.list || res.data?.list || []
+    tenantOptions.value = list.map((t: any) => ({
+      label: `${t.name}（${t.code}）`,
+      value: t.id,
+    }))
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
+  fetchTenantOptions('')
   fetchData()
 })
 
@@ -122,8 +138,17 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
 
     <ACard :bordered="false" style="margin-bottom: 16px">
       <AForm :model="searchForm" layout="inline" @submit="onSearch">
-        <AFormItem label="租户ID">
-          <AInputNumber v-model="searchForm.tenant_id" placeholder="租户ID" allow-clear style="width: 120px" />
+        <AFormItem label="租户">
+          <ASelect
+            v-model="searchForm.tenant_id"
+            :options="tenantOptions"
+            placeholder="选择租户"
+            allow-clear
+            allow-search
+            :filter-option="false"
+            style="width: 220px"
+            @search="fetchTenantOptions"
+          />
         </AFormItem>
         <AFormItem label="用户名">
           <AInput v-model="searchForm.username" placeholder="搜索用户名" allow-clear style="width: 140px" />

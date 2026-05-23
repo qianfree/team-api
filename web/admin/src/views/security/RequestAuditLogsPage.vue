@@ -20,7 +20,7 @@ const pagination = reactive({
 	pageSizeOptions: [10, 20, 50],
 })
 const filter = reactive({
-	tenant_id: '',
+	tenant_id: null as number | null,
 	api_key_id: '',
 	username: '',
 	request_id: '',
@@ -29,6 +29,21 @@ const filter = reactive({
 	status_code: '',
 	date_range: [] as string[],
 })
+
+const tenantOptions = ref<{ label: string; value: number }[]>([])
+
+async function fetchTenantOptions(keyword: string) {
+	try {
+		const res: any = await request.get('/admin/tenants', {
+			params: { page: 1, page_size: 20, keyword, status: 'active' },
+		})
+		const list = res.data?.data?.list || res.data?.list || []
+		tenantOptions.value = list.map((t: any) => ({
+			label: `${t.name}（${t.code}）`,
+			value: t.id,
+		}))
+	} catch { /* ignore */ }
+}
 
 const detailLoading = ref(false)
 const showDetail = ref(false)
@@ -180,7 +195,7 @@ async function fetchData() {
 			page: pagination.current,
 			page_size: pagination.pageSize,
 		}
-		if (filter.tenant_id) params.tenant_id = parseInt(filter.tenant_id)
+		if (filter.tenant_id) params.tenant_id = filter.tenant_id
 		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
 		if (filter.username) params.username = filter.username
 		if (filter.method) params.method = filter.method
@@ -229,7 +244,7 @@ function handleFilter() {
 }
 
 function handleReset() {
-	filter.tenant_id = ''
+	filter.tenant_id = null
 	filter.api_key_id = ''
 	filter.username = ''
 	filter.request_id = ''
@@ -242,6 +257,7 @@ function handleReset() {
 }
 
 onMounted(() => {
+	fetchTenantOptions('')
 	const route = useRoute()
 	if (route.query.request_id) {
 		filter.request_id = String(route.query.request_id)
@@ -259,12 +275,17 @@ onMounted(() => {
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>
-				<a-input
+				<a-select
 					v-model="filter.tenant_id"
-					placeholder="租户ID"
+					:options="tenantOptions"
+					placeholder="选择租户"
 					allow-clear
-					style="width: 100px"
-					@keydown.enter="handleFilter"
+					allow-search
+					:filter-option="false"
+					style="width: 220px"
+					@search="fetchTenantOptions"
+					@change="handleFilter"
+					@clear="handleFilter"
 				/>
 				<a-input
 					v-model="filter.api_key_id"
@@ -373,10 +394,7 @@ onMounted(() => {
 							<a-descriptions-item label="任务ID">
 								<div style="display:flex;align-items:center;gap:8px">
 									<span>{{ detailRecord.task_id }}</span>
-									<a-button size="mini" type="text" @click="goToTask(detailRecord.task_id)">
-										<template #icon><icon-external-link /></template>
-										查看任务
-									</a-button>
+									<a-button size="mini" type="text" @click="goToTask(detailRecord.task_id)">查看任务</a-button>
 								</div>
 							</a-descriptions-item>
 							<a-descriptions-item label="任务状态">

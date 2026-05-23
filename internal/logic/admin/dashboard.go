@@ -218,6 +218,10 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		conditions = append(conditions, "u.status = ?")
 		args = append(args, req.Status)
 	}
+	if req.RequestType > 0 {
+		conditions = append(conditions, "u.request_type = ?")
+		args = append(args, req.RequestType)
+	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
 		args = append(args, req.StartDate+" 00:00:00")
@@ -591,6 +595,10 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		if req.Status != "" {
 			conditions = append(conditions, "u.status = ?")
 			args = append(args, req.Status)
+		}
+		if req.RequestType > 0 {
+			conditions = append(conditions, "u.request_type = ?")
+			args = append(args, req.RequestType)
 		}
 		if req.StartDate != "" {
 			conditions = append(conditions, "u.created_at >= ?")
