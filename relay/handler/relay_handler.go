@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	commonlogic "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
@@ -380,6 +382,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, modelName)
 
 			if constant.IsRetryable(err) && attempt < maxRetries {
+				recordChannelError(rc, selection, modelName, attempt, false, err, info.LatencyMs())
 				hop.Success = false
 				hop.Error = err.Error()
 				hop.LatencyMs = info.LatencyMs()
@@ -393,6 +396,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
+			recordChannelError(rc, selection, modelName, attempt, true, err, info.LatencyMs())
 
 			hop.Success = false
 			hop.Error = err.Error()
@@ -458,6 +462,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
 				recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
+				recordChannelError(rc, selection, modelName, attempt, true, err, info.LatencyMs())
 				hop.Success = false
 				hop.Error = err.Error()
 				hop.LatencyMs = info.LatencyMs()
@@ -469,6 +474,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 				return nil, billingResult, err
 			}
+			recordChannelError(rc, selection, modelName, attempt, false, err, info.LatencyMs())
 			hop.Success = false
 			hop.Error = err.Error()
 			hop.LatencyMs = info.LatencyMs()
@@ -640,6 +646,48 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, channelID
 		Status:       "error",
 		ErrorMessage: err.Error(),
 	})
+}
+
+// recordChannelError 记录渠道错误事件到 chn_error_events（异步，不阻塞请求）
+func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, modelName string, attempt int, isFinal bool, err error, latencyMs float64) {
+	if commonlogic.DefaultChannelErrorWriter == nil {
+		return
+	}
+
+	errMsg := err.Error()
+	if len(errMsg) > 500 {
+		errMsg = errMsg[:500]
+	}
+
+	statusCode := 0
+	errType := "unknown"
+	var relayErr *constant.RelayError
+	if errors.As(err, &relayErr) {
+		statusCode = relayErr.StatusCode
+		errType = relayErr.Type
+	}
+
+	event := map[string]any{
+		"channel_id":     selection.ChannelID,
+		"channel_name":   selection.ChannelName,
+		"channel_type":   selection.ChannelType,
+		"provider":       constant.ProviderType(selection.ChannelType).String(),
+		"model_name":     modelName,
+		"request_id":     rc.RequestID,
+		"tenant_id":      rc.TenantID,
+		"error_category": constant.ClassifyError(err),
+		"status_code":    statusCode,
+		"error_type":     errType,
+		"error_message":  errMsg,
+		"is_retryable":   constant.IsRetryable(err),
+		"attempt":        attempt,
+		"is_final":       isFinal,
+		"latency_ms":     latencyMs,
+	}
+	if selection.UpstreamModelName != "" {
+		event["upstream_model"] = selection.UpstreamModelName
+	}
+	commonlogic.DefaultChannelErrorWriter.Submit(event)
 }
 
 // estimateInputTokens 粗略估算输入 token 数（按字符数 / 4）

@@ -95,6 +95,16 @@ type (
 		GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error)
 		// ExportChannels exports channel list to CSV or Excel.
 		ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error)
+		// ChannelErrorEventList 渠道错误事件列表
+		ChannelErrorEventList(ctx context.Context, req *v1.ChannelErrorEventListReq) (*v1.ChannelErrorEventListRes, error)
+		// ChannelErrorStats 渠道错误统计
+		ChannelErrorStats(ctx context.Context, req *v1.ChannelErrorStatsReq) (*v1.ChannelErrorStatsRes, error)
+		// ChannelErrorTrend 渠道错误趋势
+		ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTrendReq) (*v1.ChannelErrorTrendRes, error)
+		// ChannelErrorTopChannels 错误最多的渠道
+		ChannelErrorTopChannels(ctx context.Context, req *v1.ChannelErrorTopChannelsReq) (*v1.ChannelErrorTopChannelsRes, error)
+		// ChannelErrorCategories 错误分类选项
+		ChannelErrorCategories(ctx context.Context, req *v1.ChannelErrorCategoriesReq) (*v1.ChannelErrorCategoriesRes, error)
 		// ChannelOAuthAuthURL 生成 OAuth 授权链接
 		ChannelOAuthAuthURL(ctx context.Context, req *v1.ChannelOAuthAuthURLReq) (*v1.ChannelOAuthAuthURLRes, error)
 		// ChannelOAuthExchange OAuth 授权码换取令牌

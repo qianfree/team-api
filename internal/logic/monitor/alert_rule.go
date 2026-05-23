@@ -17,15 +17,17 @@ import (
 )
 
 var validMetricTypes = map[string]string{
-	"api.error_rate":        "API错误率(%)",
-	"api.p95_latency":       "API P95延迟(ms)",
-	"api.p99_latency":       "API P99延迟(ms)",
-	"api.qps":               "API QPS(请求/秒)",
-	"system.cpu_percent":    "CPU使用率(%)",
-	"system.memory_percent": "内存使用率(%)",
-	"system.disk_percent":   "磁盘使用率(%)",
-	"db.active_connections": "DB活跃连接数",
-	"redis.used_memory_mb":  "Redis内存使用(MB)",
+	"api.error_rate":           "API错误率(%)",
+	"api.p95_latency":          "API P95延迟(ms)",
+	"api.p99_latency":          "API P99延迟(ms)",
+	"api.qps":                  "API QPS(请求/秒)",
+	"system.cpu_percent":       "CPU使用率(%)",
+	"system.memory_percent":    "内存使用率(%)",
+	"system.disk_percent":      "磁盘使用率(%)",
+	"db.active_connections":    "DB活跃连接数",
+	"redis.used_memory_mb":     "Redis内存使用(MB)",
+	"channel.error_count":      "渠道错误数(5min)",
+	"channel.rate_limit_count": "渠道限速错误数(5min)",
 }
 
 // Alert rule conditions

@@ -253,6 +253,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '系统错误日志' },
       },
       {
+        path: 'channel-errors',
+        name: 'AdminChannelErrors',
+        component: () => import('@/views/monitor/ChannelErrorsPage.vue'),
+        meta: { title: '渠道错误监控' },
+      },
+      {
         path: 'content-filter-logs',
         name: 'AdminContentFilterLogs',
         component: () => import('@/views/monitor/ContentFilterLogsPage.vue'),

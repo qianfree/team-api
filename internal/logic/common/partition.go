@@ -26,6 +26,10 @@ var partitionedTables = []partitionedTable{
 		table:           "ops_system_metrics",
 		partitionColumn: "collected_at",
 	},
+	{
+		table:           "chn_error_events",
+		partitionColumn: "created_at",
+	},
 }
 
 // EnsurePartitions 检查并补齐所有分区表的当前月+未来 3 个月分区

@@ -168,6 +168,10 @@ func getMetricValue(ctx context.Context, metricType string) (float64, error) {
 		return GetDBActiveConnections(ctx)
 	case "redis.used_memory_mb":
 		return GetRedisUsedMemoryMB(ctx)
+	case "channel.error_count":
+		return GetChannelErrorCount(ctx)
+	case "channel.rate_limit_count":
+		return GetChannelRateLimitCount(ctx)
 	default:
 		return 0, gerror.Newf("unsupported metric type: %s", metricType)
 	}

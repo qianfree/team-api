@@ -214,6 +214,7 @@ const menuGroups = [
       { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
       { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
       { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },
+      { name: 'AdminChannelErrors', label: '渠道错误监控', icon: IconFile },
       { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile },
       { name: 'AdminCronJobs', label: '定时任务', icon: IconFile },
     ],

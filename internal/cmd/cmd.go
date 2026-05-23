@@ -86,6 +86,9 @@ var (
 			// Initialize async usage log writer
 			common.InitUsageLogWriter()
 
+			// Initialize async channel error writer
+			common.InitChannelErrorWriter()
+
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
 
@@ -285,6 +288,7 @@ var (
 
 			// Flush usage log writer on shutdown (s.Run blocks until server stops)
 			defer plugin.Shutdown(ctx)
+			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()
 
