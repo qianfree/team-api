@@ -49,6 +49,12 @@ var (
 				return err
 			}
 
+			// Health check: Redis
+			if err := checkRedis(ctx); err != nil {
+				g.Log().Fatalf(ctx, "Redis 连接检查失败，程序退出: %v", err)
+			}
+			g.Log().Info(ctx, "Redis 连接正常")
+
 			// Initialize JWT secret
 			common.InitJWTSecret(ctx)
 
