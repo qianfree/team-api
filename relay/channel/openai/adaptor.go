@@ -82,8 +82,19 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	}
 
 	// Audio STT/翻译使用 multipart form，不强制 JSON Content-Type
+	// ImagesEdits 支持 JSON 和 multipart 两种格式，需要透传客户端原始 Content-Type
 	mode := constant.RelayMode(info.RelayMode)
-	if mode != constant.RelayModeAudioTranscription && mode != constant.RelayModeAudioTranslation && mode != constant.RelayModeImagesEdits {
+	switch mode {
+	case constant.RelayModeAudioTranscription, constant.RelayModeAudioTranslation:
+		// multipart form：由 DoRequest 从客户端原始头复制 Content-Type
+	case constant.RelayModeImagesEdits:
+		// 透传客户端原始 Content-Type（JSON 或 multipart 均支持）
+		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {
+			header.Set("Content-Type", ct)
+		} else {
+			header.Set("Content-Type", "application/json")
+		}
+	default:
 		// 透传客户端 Content-Type，无则回退 application/json
 		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {
 			header.Set("Content-Type", ct)
@@ -187,7 +198,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 
-	// Multipart form: 保留客户端原始 Content-Type（含 boundary）
+	// Audio multipart form: 由 SetupRequestHeader 跳过，这里补上客户端原始 Content-Type（含 boundary）
 	if (mode == constant.RelayModeAudioTranscription || mode == constant.RelayModeAudioTranslation) &&
 		info.RequestHeaders != nil {
 		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {

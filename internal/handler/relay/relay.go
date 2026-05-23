@@ -679,7 +679,7 @@ func HandleModerations(r *ghttp.Request) {
 	recordAudit(r, rc, capture, body, "/moderations", latencyMs, firstTokenMs(billingResult))
 }
 
-// HandleImagesEdits 处理 /v1/images/edits（multipart）
+// HandleImagesEdits 处理 /v1/images/edits（支持 JSON 和 multipart 两种请求格式）
 func HandleImagesEdits(r *ghttp.Request) {
 	body := r.GetBody()
 	if len(body) == 0 {

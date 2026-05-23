@@ -1,5 +1,7 @@
 package dto
 
+import "encoding/json"
+
 // Usage Token 使用量
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -113,23 +115,27 @@ type Embedding struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-// ImageRequest 图像生成请求
+// ImageRequest 图像生成/编辑请求（兼容 OpenAI /v1/images/generations 和 /v1/images/edits）
 type ImageRequest struct {
-	Model             string `json:"model"`
-	Prompt            string `json:"prompt"`
-	N                 *int   `json:"n,omitempty"`
-	Size              string `json:"size,omitempty"`
-	Quality           string `json:"quality,omitempty"`
-	ResponseFormat    string `json:"response_format,omitempty"`
-	Style             string `json:"style,omitempty"`
-	User              string `json:"user,omitempty"`
-	OutputFormat      string `json:"output_format,omitempty"`
-	OutputCompression *int   `json:"output_compression,omitempty"`
-	Background        string `json:"background,omitempty"`
-	Moderation        string `json:"moderation,omitempty"`
-	InputImageMask    any    `json:"input_image_mask,omitempty"`
-	PartialImages     *int   `json:"partial_images,omitempty"`
-	Stream            *bool  `json:"stream,omitempty"`
+	Model             string          `json:"model"`
+	Prompt            string          `json:"prompt"`
+	N                 *int            `json:"n,omitempty"`
+	Size              string          `json:"size,omitempty"`
+	Quality           string          `json:"quality,omitempty"`
+	ResponseFormat    string          `json:"response_format,omitempty"`
+	Style             string          `json:"style,omitempty"`
+	User              string          `json:"user,omitempty"`
+	OutputFormat      string          `json:"output_format,omitempty"`
+	OutputCompression *int            `json:"output_compression,omitempty"`
+	Background        string          `json:"background,omitempty"`
+	Moderation        string          `json:"moderation,omitempty"`
+	PartialImages     *int            `json:"partial_images,omitempty"`
+	Stream            *bool           `json:"stream,omitempty"`
+	Image             json.RawMessage `json:"image,omitempty"`          // 单张图片（multipart 文件或 JSON base64）
+	Images            json.RawMessage `json:"images,omitempty"`         // 多张参考图片（JSON base64 数组）
+	Mask              json.RawMessage `json:"mask,omitempty"`           // 编辑遮罩（multipart 文件或 JSON base64）
+	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"` // 输入保真度控制
+	Watermark         *bool           `json:"watermark,omitempty"`      // 水印控制
 }
 
 // ImageResponse 图像生成响应
