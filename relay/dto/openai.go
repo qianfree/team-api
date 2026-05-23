@@ -115,6 +115,34 @@ type FunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
+// UnmarshalJSON 自定义反序列化：当上游返回 arguments 为 JSON object 而非 string 时，自动转为 JSON string
+func (f *FunctionCall) UnmarshalJSON(data []byte) error {
+	type Alias FunctionCall
+	aux := &struct {
+		Arguments json.RawMessage `json:"arguments"`
+		*Alias
+	}{
+		Alias: (*Alias)(f),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if len(aux.Arguments) == 0 {
+		return nil
+	}
+	// 如果是 string 类型（标准格式："arguments": "{...}"），去掉引号
+	if aux.Arguments[0] == '"' {
+		var s string
+		if err := json.Unmarshal(aux.Arguments, &s); err == nil {
+			f.Arguments = s
+		}
+		return nil
+	}
+	// 如果是 JSON object/array（非标准格式："arguments": {...}），序列化为 string
+	f.Arguments = string(aux.Arguments)
+	return nil
+}
+
 // StreamOptions 流式选项
 type StreamOptions struct {
 	IncludeUsage       bool `json:"include_usage"`
