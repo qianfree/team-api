@@ -81,3 +81,13 @@ func runAutoMigrate(ctx context.Context) error {
 	g.Log().Info(ctx, "数据库迁移完成")
 	return nil
 }
+
+// checkRedis verifies Redis connectivity at startup with a PING command.
+// Returns error if Redis is unreachable, causing the program to exit (FATA).
+func checkRedis(ctx context.Context) error {
+	_, err := g.Redis().Do(ctx, "PING")
+	if err != nil {
+		return fmt.Errorf("Redis PING 失败: %w", err)
+	}
+	return nil
+}

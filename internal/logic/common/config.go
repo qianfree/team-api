@@ -310,20 +310,28 @@ func (s *ConfigService) Warmup(ctx context.Context) {
 // Called once at startup in cmd.go.
 func (s *ConfigService) StartSubscriber(ctx context.Context) {
 	go func() {
+		var reconnectCount int
 		for {
 			conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")
 			if err != nil {
-				g.Log().Errorf(ctx, "settings subscriber connect failed: %v", err)
+				reconnectCount++
+				g.Log().Warningf(ctx, "[PubSub:settings] 连接失败 (第%d次): %v", reconnectCount, err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			g.Log().Info(ctx, "settings Pub/Sub subscriber started")
+			if reconnectCount > 0 {
+				g.Log().Infof(ctx, "[PubSub:settings] 重连成功 (此前失败%d次)", reconnectCount)
+				reconnectCount = 0
+			} else {
+				g.Log().Info(ctx, "[PubSub:settings] 订阅已启动")
+			}
 
 			for {
 				v, err := conn.Receive(ctx)
 				if err != nil {
-					g.Log().Warningf(ctx, "settings subscriber recv error: %v", err)
+					reconnectCount++
+					g.Log().Warningf(ctx, "[PubSub:settings] 接收错误 (第%d次): %v", reconnectCount, err)
 					time.Sleep(5 * time.Second)
 					break // reconnect
 				}
@@ -337,7 +345,7 @@ func (s *ConfigService) StartSubscriber(ctx context.Context) {
 				s.cache.Delete(ctx, key)
 				s.cache.Delete(ctx, "public_options")
 				s.cache.Delete(ctx, "category:"+getCategoryForKey(key))
-				g.Log().Debugf(ctx, "settings invalidated via Pub/Sub: %s", key)
+				g.Log().Debugf(ctx, "[PubSub:settings] 缓存已失效: %s", key)
 			}
 
 			conn.Close(ctx)

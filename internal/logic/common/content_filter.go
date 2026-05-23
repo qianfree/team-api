@@ -181,20 +181,28 @@ func (e *ContentFilterEngine) GetMode() string {
 // startSubscriber subscribes to Redis Pub/Sub "settings:changed" channel
 // and rebuilds the matcher when content filter settings change.
 func (e *ContentFilterEngine) startSubscriber(ctx context.Context) {
+	var reconnectCount int
 	for {
 		conn, _, err := g.Redis().Subscribe(ctx, "settings:changed")
 		if err != nil {
-			g.Log().Errorf(ctx, "[ContentFilter] subscriber connect failed: %v", err)
+			reconnectCount++
+			g.Log().Warningf(ctx, "[PubSub:content_filter] 连接失败 (第%d次): %v", reconnectCount, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		g.Log().Info(ctx, "[ContentFilter] Pub/Sub subscriber started")
+		if reconnectCount > 0 {
+			g.Log().Infof(ctx, "[PubSub:content_filter] 重连成功 (此前失败%d次)", reconnectCount)
+			reconnectCount = 0
+		} else {
+			g.Log().Info(ctx, "[PubSub:content_filter] 订阅已启动")
+		}
 
 		for {
 			v, err := conn.Receive(ctx)
 			if err != nil {
-				g.Log().Warningf(ctx, "[ContentFilter] subscriber recv error: %v", err)
+				reconnectCount++
+				g.Log().Warningf(ctx, "[PubSub:content_filter] 接收错误 (第%d次): %v", reconnectCount, err)
 				time.Sleep(5 * time.Second)
 				break // reconnect
 			}
@@ -208,7 +216,7 @@ func (e *ContentFilterEngine) startSubscriber(ctx context.Context) {
 			switch key {
 			case "content_filter_words", "content_filter_mode", "content_filter_replacement":
 				e.Rebuild(ctx)
-				g.Log().Infof(ctx, "[ContentFilter] rebuilt via Pub/Sub for key: %s", key)
+				g.Log().Infof(ctx, "[PubSub:content_filter] 已重建过滤器: %s", key)
 			}
 		}
 
