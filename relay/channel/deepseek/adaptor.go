@@ -147,6 +147,9 @@ func injectThinkingParams(rawMap map[string]json.RawMessage, info *common.RelayI
 }
 
 // injectReasoningEffort 注入 reasoning_effort 参数，映射到 DeepSeek 支持的值
+//
+// DeepSeek V3/R1: 支持 high 和 max，映射 low/medium→high, xhigh→max
+// DeepSeek V4: 仅支持 max，所有非空 effort 统一映射为 max
 func injectReasoningEffort(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
 	if info.ReasoningEffort == "" {
 		return rawMap
@@ -156,8 +159,13 @@ func injectReasoningEffort(rawMap map[string]json.RawMessage, info *common.Relay
 		return rawMap
 	}
 
-	// DeepSeek 只支持 high 和 max，做兼容映射
-	// low/medium → high, xhigh/max → max
+	// V4 模型仅支持 max
+	if isDeepSeekV4Model(info.ChannelMeta.UpstreamModelName) {
+		rawMap["reasoning_effort"] = json.RawMessage(`"max"`)
+		return rawMap
+	}
+
+	// V3/R1: 支持 high 和 max，做兼容映射
 	effort := info.ReasoningEffort
 	switch effort {
 	case "low", "medium", "minimal":
@@ -169,6 +177,12 @@ func injectReasoningEffort(rawMap map[string]json.RawMessage, info *common.Relay
 	}
 	rawMap["reasoning_effort"], _ = json.Marshal(effort)
 	return rawMap
+}
+
+// isDeepSeekV4Model 判断是否为 DeepSeek V4 系列模型
+func isDeepSeekV4Model(modelName string) bool {
+	return strings.HasPrefix(modelName, "deepseek-v4") ||
+		strings.HasPrefix(modelName, "deepseek_v4")
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
