@@ -21,7 +21,21 @@ const pagination = reactive({
 const filterStatus = ref<string | null>(null)
 const filterRole = ref<string | null>(null)
 const filterSearch = ref('')
-const filterTenantId = ref<string>('')
+const filterTenantId = ref<string | null>(null)
+const filterTenantOptions = ref<{ label: string; value: number }[]>([])
+
+async function fetchFilterTenantOptions(keyword: string) {
+  try {
+    const res: any = await request.get('/admin/tenants', {
+      params: { page: 1, page_size: 20, keyword, status: 'active' },
+    })
+    const list = res.data?.data?.list || res.data?.list || []
+    filterTenantOptions.value = list.map((t: any) => ({
+      label: `${t.name}（${t.code}）`,
+      value: t.id,
+    }))
+  } catch { /* ignore */ }
+}
 
 // Create member
 const showCreateModal = ref(false)
@@ -255,6 +269,7 @@ function handleFilter() {
 }
 
 onMounted(() => {
+  fetchFilterTenantOptions('')
   fetchData()
 })
 
@@ -288,6 +303,18 @@ const { exporting, exportFile } = useExport({
     <ACard :bordered="false" class="mb-4">
       <ASpace>
         <ASelect
+          v-model="filterTenantId"
+          :options="filterTenantOptions"
+          placeholder="选择租户"
+          allow-clear
+          allow-search
+          :filter-option="false"
+          style="width: 220px"
+          @search="fetchFilterTenantOptions"
+          @change="handleFilter"
+          @clear="handleFilter"
+        />
+        <ASelect
           v-model="filterStatus"
           :options="statusOptions"
           placeholder="状态"
@@ -308,14 +335,6 @@ const { exporting, exportFile } = useExport({
           placeholder="搜索用户名/邮箱..."
           allow-clear
           style="width: 200px"
-          @keydown.enter="handleFilter"
-          @clear="handleFilter"
-        />
-        <AInput
-          v-model="filterTenantId"
-          placeholder="租户ID"
-          allow-clear
-          style="width: 100px"
           @keydown.enter="handleFilter"
           @clear="handleFilter"
         />

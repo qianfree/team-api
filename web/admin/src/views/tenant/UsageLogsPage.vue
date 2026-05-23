@@ -18,28 +18,72 @@ const pagination = reactive({
 	pageSizeOptions: [10, 20, 50, 100],
 })
 
-const filterTenantId = ref('')
+const filterTenantId = ref<number | undefined>(undefined)
 const filterUsername = ref('')
-const filterModel = ref('')
+const filterModel = ref<string | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>([])
 
+const tenantOptions = ref<{ label: string; value: number }[]>([])
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
 const statusOptions = [
-	{ label: '全部状态', value: '' },
 	{ label: '成功', value: 'success' },
-	{ label: '失败', value: 'failed' },
-	{ label: '中断', value: 'interrupted' },
+	{ label: '失败', value: 'error' },
 	{ label: '超时', value: 'timeout' },
+	{ label: '已取消', value: 'cancelled' },
 ]
 
 const requestTypeOptions = [
-	{ label: '全部类型', value: '' },
 	{ label: '同步', value: '1' },
 	{ label: '流式', value: '2' },
 	{ label: '异步', value: '3' },
 	{ label: 'WebSocket', value: '4' },
 ]
+
+let tenantSearchTimer: ReturnType<typeof setTimeout> | null = null
+let modelSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+async function fetchTenantOptions(keyword = '') {
+	try {
+		const res: any = await request.get('/admin/tenants/select', {
+			params: { page: 1, page_size: 50, keyword }
+		})
+		const list = res.data?.data?.list || []
+		tenantOptions.value = list.map((t: any) => ({
+			label: `${t.name}（${t.code}）`,
+			value: t.id,
+		}))
+	} catch {
+		tenantOptions.value = []
+	}
+}
+
+function handleTenantSearch(value: string) {
+	if (tenantSearchTimer) clearTimeout(tenantSearchTimer)
+	tenantSearchTimer = setTimeout(() => fetchTenantOptions(value), 300)
+}
+
+async function fetchModelOptions(search = '') {
+	try {
+		const res: any = await request.get('/admin/models', {
+			params: { page: 1, page_size: 50, status: 'active', search }
+		})
+		const list = res.data?.data?.list || []
+		modelOptions.value = list.map((m: any) => ({
+			label: m.model_name,
+			value: m.model_name,
+		}))
+	} catch {
+		modelOptions.value = []
+	}
+}
+
+function handleModelSearch(value: string) {
+	if (modelSearchTimer) clearTimeout(modelSearchTimer)
+	modelSearchTimer = setTimeout(() => fetchModelOptions(value), 300)
+}
 
 const statusTagColor: Record<string, string> = {
 	success: 'green',
@@ -158,7 +202,7 @@ async function fetchData() {
 			page: pagination.current,
 			page_size: pagination.pageSize,
 		}
-		if (filterTenantId.value) params.tenant_id = parseInt(filterTenantId.value)
+		if (filterTenantId.value) params.tenant_id = filterTenantId.value
 		if (filterUsername.value) params.username = filterUsername.value
 		if (filterModel.value) params.model = filterModel.value
 		if (filterStatus.value) params.status = filterStatus.value
@@ -186,9 +230,9 @@ function handleFilter() {
 }
 
 function handleReset() {
-	filterTenantId.value = ''
+	filterTenantId.value = undefined
 	filterUsername.value = ''
-	filterModel.value = ''
+	filterModel.value = undefined
 	filterStatus.value = undefined
 	filterRequestType.value = undefined
 	filterDateRange.value = []
@@ -197,6 +241,8 @@ function handleReset() {
 }
 
 onMounted(() => {
+	fetchTenantOptions()
+	fetchModelOptions()
 	fetchData()
 })
 
@@ -231,13 +277,18 @@ const { exporting, exportFile } = useExport({
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>
-				<a-input
-					v-model="filterTenantId"
-					placeholder="租户ID"
-					allow-clear
-					style="width: 120px"
-					@keydown.enter="handleFilter"
-				/>
+				<a-select
+						v-model="filterTenantId"
+						:options="tenantOptions"
+						placeholder="搜索租户"
+						allow-search
+						allow-clear
+						:filter-option="false"
+						style="width: 200px"
+						@search="handleTenantSearch"
+						@change="handleFilter"
+						@clear="handleFilter"
+					/>
 				<a-input
 					v-model="filterUsername"
 					placeholder="用户名"
@@ -245,13 +296,18 @@ const { exporting, exportFile } = useExport({
 					style="width: 120px"
 					@keydown.enter="handleFilter"
 				/>
-				<a-input
-					v-model="filterModel"
-					placeholder="模型名"
-					allow-clear
-					style="width: 160px"
-					@keydown.enter="handleFilter"
-				/>
+				<a-select
+						v-model="filterModel"
+						:options="modelOptions"
+						placeholder="搜索模型"
+						allow-search
+						allow-clear
+						:filter-option="false"
+						style="width: 200px"
+						@search="handleModelSearch"
+						@change="handleFilter"
+						@clear="handleFilter"
+					/>
 				<a-select
 					v-model="filterStatus"
 					:options="statusOptions"

@@ -30,6 +30,8 @@ const jobNameMap: Record<string, string> = {
   usage_log_cleanup: '用量日志清理',
   oauth_token_refresh: 'OAuth 令牌刷新',
   cron_execution_cleanup: '执行记录清理',
+  prededuct_orphan_cleanup: '预扣孤儿清理',
+  plugin_example_daily_cleanup: '插件示例数据清理',
 }
 
 function formatDuration(ms: number): string {
