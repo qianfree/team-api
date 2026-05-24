@@ -88,9 +88,8 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 
 	// 查套餐价格
 	var plan struct {
-		MonthlyPrice float64 `json:"monthly_price"`
-		YearlyPrice  float64 `json:"yearly_price"`
-		Status       string  `json:"status"`
+		Price  float64 `json:"price"`
+		Status string  `json:"status"`
 	}
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
@@ -102,12 +101,7 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		return nil, lcommon.NewBusinessError(422, "套餐不可用")
 	}
 
-	var amount float64
-	if months >= 12 {
-		amount = plan.YearlyPrice
-	} else {
-		amount = plan.MonthlyPrice * float64(months)
-	}
+	amount := plan.Price
 
 	orderNo := fmt.Sprintf("ORD%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
 
@@ -375,15 +369,15 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, err
 	}
 
-	return &v1.TenantRechargeCreateRes{Data: g.Map{
-		"order_id":     orderID,
-		"order_no":     orderNo,
-		"payment_url":  payResult.PaymentURL,
-		"payment_no":   payResult.PaymentNo,
-		"params":       payResult.Params,
-		"is_redirect":  payResult.IsRedirect,
-		"final_amount": finalAmount,
-	}}, nil
+	return &v1.TenantRechargeCreateRes{
+		OrderId:     orderID,
+		OrderNo:     orderNo,
+		PaymentUrl:  payResult.PaymentURL,
+		PaymentNo:   payResult.PaymentNo,
+		Params:      payResult.Params,
+		IsRedirect:  payResult.IsRedirect,
+		FinalAmount: finalAmount,
+	}, nil
 }
 
 // ExportOrders exports the tenant order list as CSV or Excel.

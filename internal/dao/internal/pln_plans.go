@@ -21,36 +21,46 @@ type PlnPlansDao struct {
 
 // PlnPlansColumns defines and stores column names for the table pln_plans.
 type PlnPlansColumns struct {
-	Id                 string // 主键ID
-	Name               string // 套餐显示名称
-	Identifier         string // 套餐唯一标识（free/basic/pro/enterprise）
-	Description        string // 套餐描述（面向用户的营销文案）
-	MonthlyPrice       string // 月度价格（CNY）
-	YearlyPrice        string // 年度价格（CNY，通常为月价×10）
-	Status             string // 状态：active（上架）/ archived（下架）
-	MonthlyQuotaTokens string // 每月 Token 配额（0=不限）
-	AllowedModels      string // 允许使用的模型列表（NULL=全部，空数组=无）
-	IsRecommended      string // 是否推荐
-	SortOrder          string // 排序权重（数字越小越靠前）
-	CreatedAt          string // 创建时间
-	UpdatedAt          string // 更新时间
+	Id                  string // 主键ID
+	Name                string // 套餐显示名称
+	Identifier          string // 套餐唯一标识（free/basic/pro/enterprise）
+	Description         string // 套餐描述（面向用户的营销文案）
+	Price               string // 套餐价格（CNY）
+	Status              string // 状态：active（上架）/ archived（下架）
+	IsRecommended       string // 是否推荐
+	SortOrder           string // 排序权重（数字越小越靠前）
+	CreatedAt           string // 创建时间
+	UpdatedAt           string // 更新时间
+	CreditAmount        string // 套餐包含的额度（USD）
+	BonusAmount         string // 赠送额度（USD）
+	ValidityDays        string // 有效天数，从激活时起算
+	PurchaseLimit       string // 限购数量，0=不限购
+	PurchaseLimitPeriod string // 限购周期：lifetime/monthly/yearly
+	Stock               string // 库存数量，NULL=不限
+	TotalPurchased      string // 累计购买次数
+	AllowedModels       string // 允许使用的模型列表，空数组=全部模型
 }
 
 // plnPlansColumns holds the columns for the table pln_plans.
 var plnPlansColumns = PlnPlansColumns{
-	Id:                 "id",
-	Name:               "name",
-	Identifier:         "identifier",
-	Description:        "description",
-	MonthlyPrice:       "monthly_price",
-	YearlyPrice:        "yearly_price",
-	Status:             "status",
-	MonthlyQuotaTokens: "monthly_quota_tokens",
-	AllowedModels:      "allowed_models",
-	IsRecommended:      "is_recommended",
-	SortOrder:          "sort_order",
-	CreatedAt:          "created_at",
-	UpdatedAt:          "updated_at",
+	Id:                  "id",
+	Name:                "name",
+	Identifier:          "identifier",
+	Description:         "description",
+	Price:               "price",
+	Status:              "status",
+	IsRecommended:       "is_recommended",
+	SortOrder:           "sort_order",
+	CreatedAt:           "created_at",
+	UpdatedAt:           "updated_at",
+	CreditAmount:        "credit_amount",
+	BonusAmount:         "bonus_amount",
+	ValidityDays:        "validity_days",
+	PurchaseLimit:       "purchase_limit",
+	PurchaseLimitPeriod: "purchase_limit_period",
+	Stock:               "stock",
+	TotalPurchased:      "total_purchased",
+	AllowedModels:       "allowed_models",
 }
 
 // NewPlnPlansDao creates and returns a new DAO object for table data access.

@@ -144,6 +144,7 @@ type IAdminV1 interface {
 	OrderList(ctx context.Context, req *v1.OrderListReq) (res *v1.OrderListRes, err error)
 	OrderDetail(ctx context.Context, req *v1.OrderDetailReq) (res *v1.OrderDetailRes, err error)
 	OrderRefund(ctx context.Context, req *v1.OrderRefundReq) (res *v1.OrderRefundRes, err error)
+	OrderRefundPreview(ctx context.Context, req *v1.OrderRefundPreviewReq) (res *v1.OrderRefundPreviewRes, err error)
 	OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (res *v1.OrderCompleteRes, err error)
 	OrderExport(ctx context.Context, req *v1.OrderExportReq) (res *v1.OrderExportRes, err error)
 	AdminMemberCreate(ctx context.Context, req *v1.AdminMemberCreateReq) (res *v1.AdminMemberCreateRes, err error)

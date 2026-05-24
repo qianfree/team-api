@@ -164,6 +164,9 @@ var (
 				billing.CleanExpiredPreDeducts(ctx)
 				return nil
 			})
+			cs.Register("plan_expiration_check", "0 * * * *", func(ctx context.Context) error {
+				return task.CheckPlanExpirations(ctx)
+			})
 			cs.StartBackground(ctx)
 
 			// Initialize plugin system (must be after CronScheduler init)
@@ -331,6 +334,7 @@ func registerPaymentCallbacks(group *ghttp.RouterGroup) {
 		g.POST("/callback/{channel}", public.HandlePaymentCallback)
 		g.GET("/callback/{channel}", public.HandlePaymentCallback)
 		g.GET("/epay/return", public.HandlePaymentEpayReturn)
+		g.POST("/epay/return", public.HandlePaymentEpayReturn)
 	})
 }
 

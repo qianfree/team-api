@@ -78,6 +78,9 @@ type BilUsageLogsColumns struct {
 	BillingSnapshot       string // 完整计费计算过程快照（JSONB）
 	ProjectId             string // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
 	TaskId                string // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
+	TenantPlanId          string //
+	PlanDeduction         string //
+	WalletDeduction       string //
 }
 
 // bilUsageLogsColumns holds the columns for the table bil_usage_logs.
@@ -139,6 +142,9 @@ var bilUsageLogsColumns = BilUsageLogsColumns{
 	BillingSnapshot:       "billing_snapshot",
 	ProjectId:             "project_id",
 	TaskId:                "task_id",
+	TenantPlanId:          "tenant_plan_id",
+	PlanDeduction:         "plan_deduction",
+	WalletDeduction:       "wallet_deduction",
 }
 
 // NewBilUsageLogsDao creates and returns a new DAO object for table data access.

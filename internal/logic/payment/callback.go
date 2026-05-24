@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -84,8 +85,9 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 
 	// 5. 幂等检查：仅处理 pending 状态
 	var order *struct {
-		ID     int64  `json:"id"`
-		Status string `json:"status"`
+		ID          int64   `json:"id"`
+		Status      string  `json:"status"`
+		FinalAmount float64 `json:"final_amount"`
 	}
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("order_no", result.OrderNo).Scan(&order)
@@ -99,8 +101,21 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 		return nil // 已处理，幂等返回
 	}
 
+	// 6. 金额校验：回调金额与订单金额必须一致（容差 0.01 元）
+	if result.Success && result.PaidAmount > 0 && order.FinalAmount > 0 {
+		diff := result.PaidAmount - order.FinalAmount
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > 0.01 {
+			g.Log().Warningf(ctx, "[Payment] amount mismatch: order=%s expected=%.2f received=%.2f",
+				result.OrderNo, order.FinalAmount, result.PaidAmount)
+			return gerror.Newf("支付金额不一致: 期望 %.2f 实付 %.2f", order.FinalAmount, result.PaidAmount)
+		}
+	}
+
 	if result.Success {
-		// 6. 更新订单为已支付
+		// 7. 更新订单为已支付
 		_, err = dao.OrdOrders.Ctx(ctx).
 			Where("id", order.ID).
 			Where("status", "pending").
@@ -113,7 +128,7 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 			return gerror.Wrapf(err, "更新订单状态失败")
 		}
 
-		// 7. 履约
+		// 8. 履约
 		return FulfillOrder(ctx, order.ID)
 	}
 

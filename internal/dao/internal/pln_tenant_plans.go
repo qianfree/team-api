@@ -21,36 +21,36 @@ type PlnTenantPlansDao struct {
 
 // PlnTenantPlansColumns defines and stores column names for the table pln_tenant_plans.
 type PlnTenantPlansColumns struct {
-	Id                 string // 主键ID
-	TenantId           string // 租户ID
-	PlanId             string // 套餐ID
-	Status             string // 状态：pending（待生效）/ active（生效中）/ expired（已过期）/ cancelled（已取消）
-	StartAt            string // 生效起始时间
-	EndAt              string // 到期时间
-	AutoRenew          string // 是否自动续费
-	MonthlyQuotaTokens string // 月度 Token 配额快照
-	UsedTokens         string // 本月已使用 Token
-	LastResetAt        string // 上次配额重置时间
-	CancelledAt        string // 取消时间
-	CreatedAt          string // 创建时间
-	UpdatedAt          string // 更新时间
+	Id               string // 主键ID
+	TenantId         string // 租户ID
+	PlanId           string // 套餐ID
+	Status           string // 状态：pending（待生效）/ active（生效中）/ expired（已过期）/ cancelled（已取消）
+	StartAt          string // 生效起始时间
+	EndAt            string // 到期时间
+	CreatedAt        string // 创建时间
+	UpdatedAt        string // 更新时间
+	TotalCredits     string // 总额度（USD）= credit_amount + bonus_amount
+	RemainingCredits string // 剩余额度（USD）
+	PaidCny          string // 实付金额（CNY）
+	RefundedAt       string // 退款时间
+	OrderId          string // 关联订单ID
 }
 
 // plnTenantPlansColumns holds the columns for the table pln_tenant_plans.
 var plnTenantPlansColumns = PlnTenantPlansColumns{
-	Id:                 "id",
-	TenantId:           "tenant_id",
-	PlanId:             "plan_id",
-	Status:             "status",
-	StartAt:            "start_at",
-	EndAt:              "end_at",
-	AutoRenew:          "auto_renew",
-	MonthlyQuotaTokens: "monthly_quota_tokens",
-	UsedTokens:         "used_tokens",
-	LastResetAt:        "last_reset_at",
-	CancelledAt:        "cancelled_at",
-	CreatedAt:          "created_at",
-	UpdatedAt:          "updated_at",
+	Id:               "id",
+	TenantId:         "tenant_id",
+	PlanId:           "plan_id",
+	Status:           "status",
+	StartAt:          "start_at",
+	EndAt:            "end_at",
+	CreatedAt:        "created_at",
+	UpdatedAt:        "updated_at",
+	TotalCredits:     "total_credits",
+	RemainingCredits: "remaining_credits",
+	PaidCny:          "paid_cny",
+	RefundedAt:       "refunded_at",
+	OrderId:          "order_id",
 }
 
 // NewPlnTenantPlansDao creates and returns a new DAO object for table data access.

@@ -3,7 +3,6 @@ package payment
 import (
 	"context"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // FulfillOrder 履约订单
@@ -35,15 +35,10 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 	}
 
 	switch order.OrderType {
-	case "new_plan", "renew", "upgrade":
-		months := 1
-		if order.OrderType == "renew" {
-			// 默认续费 1 个月，可根据需求从订单描述中解析
-			months = 1
-		}
-		err = SubscribePlan(ctx, order.TenantID, order.PlanID, months, true)
+	case "new_plan":
+		err = fulfillNewPlan(ctx, order.TenantID, orderID, order.PlanID, order.FinalAmount)
 		if err != nil {
-			return gerror.Wrapf(err, "subscribe plan failed")
+			return gerror.Wrapf(err, "fulfill new plan failed")
 		}
 
 	case "recharge":
@@ -68,54 +63,70 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 	return err
 }
 
-// SubscribePlan 订阅套餐（内部函数，被订单履约、自动续费调用）
-func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int, autoRenew bool) error {
+// fulfillNewPlan 购买套餐履约
+func fulfillNewPlan(ctx context.Context, tenantID int64, orderID int64, planID int64, paidCNY float64) error {
 	// 查套餐信息
 	var plan struct {
-		MonthlyPrice       float64 `json:"monthly_price"`
-		YearlyPrice        float64 `json:"yearly_price"`
-		MonthlyQuotaTokens int64   `json:"monthly_quota_tokens"`
+		Id           int64   `json:"id"`
+		Status       string  `json:"status"`
+		CreditAmount float64 `json:"credit_amount"`
+		BonusAmount  float64 `json:"bonus_amount"`
+		ValidityDays int     `json:"validity_days"`
+		Stock        int     `json:"stock"`
 	}
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
-		Where("status", "active").
 		Scan(&plan)
 	if err != nil {
 		return err
 	}
-
-	if months <= 0 {
-		months = 1
+	if plan.Status != "active" {
+		return gerror.New("plan is not active")
 	}
 
-	now := gtime.Now()
-	endAt := now.AddDate(0, months, 0)
+	totalCredits := plan.CreditAmount + plan.BonusAmount
 
-	// 先取消当前活跃订阅
-	_, _ = dao.PlnTenantPlans.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("status", "active").
-		Data(do.PlnTenantPlans{
-			Status:      "expired",
-			CancelledAt: gtime.Now(),
-		}).Update()
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		now := gtime.Now()
+		endAt := now.AddDate(0, 0, plan.ValidityDays)
 
-	_, err = dao.PlnTenantPlans.Ctx(ctx).Insert(do.PlnTenantPlans{
-		TenantId:           tenantID,
-		PlanId:             planID,
-		Status:             "active",
-		StartAt:            now,
-		EndAt:              endAt,
-		AutoRenew:          autoRenew,
-		MonthlyQuotaTokens: plan.MonthlyQuotaTokens,
-		UsedTokens:         0,
-		LastResetAt:        now,
-	})
-	if err != nil {
+		// 扣减库存、累加已购次数
+		if plan.Stock > 0 {
+			result, err := tx.Ctx(ctx).Exec(
+				"UPDATE pln_plans SET stock = stock - 1, total_purchased = total_purchased + 1, updated_at = NOW() WHERE id = ? AND stock > 0",
+				plan.Id)
+			if err != nil {
+				return err
+			}
+			rows, _ := result.RowsAffected()
+			if rows == 0 {
+				return gerror.New("plan sold out")
+			}
+		} else {
+			_, err := tx.Ctx(ctx).Exec(
+				"UPDATE pln_plans SET total_purchased = total_purchased + 1, updated_at = NOW() WHERE id = ?",
+				plan.Id)
+			if err != nil {
+				return err
+			}
+		}
+
+		// 插入租户套餐记录
+		_, err = tx.Ctx(ctx).Model("pln_tenant_plans").Insert(do.PlnTenantPlans{
+			TenantId:         tenantID,
+			PlanId:           planID,
+			Status:           "active",
+			StartAt:          now,
+			EndAt:            endAt,
+			TotalCredits:     totalCredits,
+			RemainingCredits: totalCredits,
+			PaidCny:          paidCNY,
+			OrderId:          orderID,
+		})
 		return err
-	}
+	})
 
-	return nil
+	return err
 }
 
 // creditWallet 钱包入账

@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gogf/gf/v2/util/gconv"
-
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 )
 
@@ -36,7 +34,8 @@ func (p *EpayProvider) CreatePayment(ctx context.Context, order *PaymentOrder, c
 		"notify_url":   order.NotifyURL,
 		"return_url":   order.ReturnURL,
 		"name":         order.Description,
-		"money":        gconv.String(fmt.Sprintf("%.2f", order.Amount)),
+		"money":        fmt.Sprintf("%.2f", order.Amount),
+		"device":       "pc",
 	}
 
 	sign := epaySign(params, cfg.MerchantKey)
@@ -74,7 +73,8 @@ func (p *EpayProvider) HandleCallback(ctx context.Context, r *http.Request, conf
 	}
 
 	tradeStatus := r.FormValue("trade_status")
-	money := gconv.Float64(r.FormValue("money"))
+	var money float64
+	fmt.Sscanf(r.FormValue("money"), "%f", &money)
 
 	return &CallbackResult{
 		OrderNo:     r.FormValue("out_trade_no"),
@@ -147,4 +147,37 @@ func buildQuery(params map[string]string) string {
 func ReadBody(r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
 	return io.ReadAll(r.Body)
+}
+
+// VerifyEpayReturn 验证 EPay 浏览器同步跳转的签名，防止伪造成功跳转。
+func VerifyEpayReturn(ctx context.Context, r *http.Request) error {
+	cfg, err := GetChannelConfigAndProvider(ctx, "epay")
+	if err != nil {
+		return fmt.Errorf("易支付配置加载失败: %w", err)
+	}
+	epayCfg, ok := cfg.(*EpayConfig)
+	if !ok {
+		return fmt.Errorf("易支付配置类型错误")
+	}
+
+	r.ParseForm()
+	params := make(map[string]string)
+	for k, v := range r.Form {
+		if len(v) > 0 && k != "sign" && k != "sign_type" && v[0] != "" {
+			params[k] = v[0]
+		}
+	}
+
+	receivedSign := r.FormValue("sign")
+	expectedSign := epaySign(params, epayCfg.MerchantKey)
+	if receivedSign != expectedSign {
+		return fmt.Errorf("易支付签名验证失败")
+	}
+
+	tradeStatus := r.FormValue("trade_status")
+	if tradeStatus != "TRADE_SUCCESS" {
+		return fmt.Errorf("交易状态非成功: %s", tradeStatus)
+	}
+
+	return nil
 }
