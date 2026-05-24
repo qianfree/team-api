@@ -30,5 +30,4 @@ type BilTransactions struct {
 	ProjectId    any         // 关联项目ID（consume 类型为 API Key 所属项目，个人密钥为空）
 	ApiKeyId     any         // 关联API密钥ID（consume 类型为发起请求的密钥）
 	TaskId       any         // 关联异步任务公开ID（consume+relay_mode=task 时关联 tsk_model_tasks.public_task_id）
-	TenantPlanId any         //
 }

@@ -114,6 +114,7 @@ onMounted(fetchTransactions)
 						<tr>
 							<th class="min-w-20">类型</th>
 							<th class="min-w-30">金额</th>
+							<th class="min-w-30">扣费来源</th>
 							<th class="min-w-30">余额</th>
 							<th class="min-w-35">用户</th>
 							<th class="min-w-50">请求ID</th>
@@ -131,6 +132,13 @@ onMounted(fetchTransactions)
 							</td>
 							<td :class="tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
 								{{ formatAmount(tx.amount) }}
+							</td>
+							<td class="text-gray-700">
+								<template v-if="tx.type === 'consume' || tx.type === 'settle'">
+									<span v-if="tx.plan_deduction > 0" class="badge badge-primary text-xs mr-1">套餐抵扣</span>
+									<span v-if="tx.wallet_deduction > 0" class="badge badge-gray text-xs">钱包</span>
+								</template>
+								<template v-else>--</template>
 							</td>
 							<td class="text-gray-700">${{ tx.balance_after?.toFixed(6) ?? '--' }}</td>
 							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>

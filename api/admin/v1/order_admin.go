@@ -62,23 +62,7 @@ type OrderRefundReq struct {
 	Reason string `json:"reason"`
 }
 
-type OrderRefundRes struct {
-	RefundAmount float64 `json:"refund_amount"`
-}
-
-// OrderRefundPreviewReq 退款预览（计算可退金额）
-type OrderRefundPreviewReq struct {
-	g.Meta `path:"/orders/{id}/refund-preview" method:"get" mime:"json" tags:"管理后台-订单" summary:"退款预览"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
-}
-
-type OrderRefundPreviewRes struct {
-	CanRefund    bool    `json:"can_refund"`
-	RefundAmount float64 `json:"refund_amount"`
-	OrderType    string  `json:"order_type"`
-	OrderStatus  string  `json:"order_status"`
-	Message      string  `json:"message,omitempty"`
-}
+type OrderRefundRes struct{}
 
 type OrderCompleteReq struct {
 	g.Meta `path:"/orders/{id}/complete" method:"post" mime:"json" tags:"管理后台-订单" summary:"手动完成订单"`

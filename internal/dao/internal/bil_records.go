@@ -54,9 +54,6 @@ type BilRecordsColumns struct {
 	BaseInputPrice          string // 基础模型输入单价（快照，应用倍率前）
 	BaseOutputPrice         string // 基础模型输出单价（快照，应用倍率前）
 	BillingSnapshot         string // 完整计费计算过程快照（JSONB）
-	TenantPlanId            string //
-	PlanDeduction           string //
-	WalletDeduction         string //
 }
 
 // bilRecordsColumns holds the columns for the table bil_records.
@@ -94,9 +91,6 @@ var bilRecordsColumns = BilRecordsColumns{
 	BaseInputPrice:          "base_input_price",
 	BaseOutputPrice:         "base_output_price",
 	BillingSnapshot:         "billing_snapshot",
-	TenantPlanId:            "tenant_plan_id",
-	PlanDeduction:           "plan_deduction",
-	WalletDeduction:         "wallet_deduction",
 }
 
 // NewBilRecordsDao creates and returns a new DAO object for table data access.

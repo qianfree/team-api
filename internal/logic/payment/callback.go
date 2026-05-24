@@ -85,9 +85,10 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 
 	// 5. 幂等检查：仅处理 pending 状态
 	var order *struct {
-		ID          int64   `json:"id"`
-		Status      string  `json:"status"`
-		FinalAmount float64 `json:"final_amount"`
+		ID          int64       `json:"id"`
+		Status      string      `json:"status"`
+		FinalAmount float64     `json:"final_amount"`
+		ExpiredAt   *gtime.Time `json:"expired_at"`
 	}
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("order_no", result.OrderNo).Scan(&order)
@@ -99,6 +100,9 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 	}
 	if order.Status != "pending" {
 		return nil // 已处理，幂等返回
+	}
+	if order.ExpiredAt != nil && !order.ExpiredAt.IsZero() && order.ExpiredAt.Before(gtime.Now()) {
+		return gerror.Newf("订单已过期: %s", result.OrderNo)
 	}
 
 	// 6. 金额校验：回调金额与订单金额必须一致（容差 0.01 元）

@@ -45,7 +45,4 @@ type BilRecords struct {
 	BaseInputPrice          any         // 基础模型输入单价（快照，应用倍率前）
 	BaseOutputPrice         any         // 基础模型输出单价（快照，应用倍率前）
 	BillingSnapshot         any         // 完整计费计算过程快照（JSONB）
-	TenantPlanId            any         //
-	PlanDeduction           any         //
-	WalletDeduction         any         //
 }

@@ -69,7 +69,4 @@ type BilUsageLogs struct {
 	BillingSnapshot       any         // 完整计费计算过程快照（JSONB）
 	ProjectId             any         // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
 	TaskId                any         // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
-	TenantPlanId          any         //
-	PlanDeduction         any         //
-	WalletDeduction       any         //
 }

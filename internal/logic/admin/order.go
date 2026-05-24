@@ -64,8 +64,10 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 	adminUserID := ctxUserID(ctx)
 
 	var order struct {
-		OrderType string `json:"order_type"`
-		Status    string `json:"status"`
+		TenantID       int64   `json:"tenant_id"`
+		FinalAmount    float64 `json:"final_amount"`
+		Status         string  `json:"status"`
+		PaymentChannel string  `json:"payment_channel"`
 	}
 	err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
@@ -77,107 +79,30 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		return nil, common.NewBadRequestError("订单状态不支持退款")
 	}
 
-	var refundAmount float64
-
-	switch order.OrderType {
-	case "new_plan":
-		err = payment.RefundPlanOrder(ctx, req.Id, adminUserID, req.Reason)
-		if err != nil {
-			return nil, err
-		}
-		refundAmount, _, _ = payment.CalculateRefundAmount(ctx, req.Id)
-
-	default:
-		var orderFull struct {
-			TenantID       int64   `json:"tenant_id"`
-			FinalAmount    float64 `json:"final_amount"`
-			PaymentChannel string  `json:"payment_channel"`
-		}
-		err := dao.OrdOrders.Ctx(ctx).
-			Where("id", req.Id).
-			Scan(&orderFull)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = dao.OrdOrders.Ctx(ctx).
-			Where("id", req.Id).
-			Data(do.OrdOrders{Status: "refunding"}).
-			Update()
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = dao.OrdRefunds.Ctx(ctx).Insert(do.OrdRefunds{
-			OrderId:        req.Id,
-			TenantId:       orderFull.TenantID,
-			Amount:         orderFull.FinalAmount,
-			Reason:         req.Reason,
-			Status:         "approved",
-			PaymentChannel: orderFull.PaymentChannel,
-			ApprovedBy:     adminUserID,
-			ApprovedAt:     gtime.Now(),
-		})
-		if err != nil {
-			return nil, err
-		}
-		refundAmount = orderFull.FinalAmount
-	}
-
-	return &v1.OrderRefundRes{RefundAmount: refundAmount}, nil
-}
-
-// OrderRefundPreview 退款预览
-func (s *sAdmin) OrderRefundPreview(ctx context.Context, req *v1.OrderRefundPreviewReq) (*v1.OrderRefundPreviewRes, error) {
-	var order struct {
-		OrderType string `json:"order_type"`
-		Status    string `json:"status"`
-	}
-	err := dao.OrdOrders.Ctx(ctx).
+	_, err = dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
-		Scan(&order)
+		Data(do.OrdOrders{
+			Status: "refunding",
+		}).Update()
 	if err != nil {
 		return nil, err
 	}
-	if order.Status == "" {
-		return nil, common.NewNotFoundError("order")
+
+	_, err = dao.OrdRefunds.Ctx(ctx).Insert(do.OrdRefunds{
+		OrderId:        req.Id,
+		TenantId:       order.TenantID,
+		Amount:         order.FinalAmount,
+		Reason:         req.Reason,
+		Status:         "approved",
+		PaymentChannel: order.PaymentChannel,
+		ApprovedBy:     adminUserID,
+		ApprovedAt:     gtime.Now(),
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	res := &v1.OrderRefundPreviewRes{
-		OrderType:   order.OrderType,
-		OrderStatus: order.Status,
-	}
-
-	if order.Status != "paid" && order.Status != "fulfilled" {
-		res.Message = "订单状态不支持退款"
-		return res, nil
-	}
-
-	switch order.OrderType {
-	case "new_plan":
-		refundCNY, canRefund, err := payment.CalculateRefundAmount(ctx, req.Id)
-		if err != nil {
-			return nil, err
-		}
-		res.CanRefund = canRefund
-		res.RefundAmount = refundCNY
-		if !canRefund {
-			res.Message = "未找到有效的套餐"
-		}
-
-	case "recharge":
-		var orderFull struct {
-			FinalAmount float64 `json:"final_amount"`
-		}
-		dao.OrdOrders.Ctx(ctx).Where("id", req.Id).Scan(&orderFull)
-		res.CanRefund = true
-		res.RefundAmount = orderFull.FinalAmount
-
-	default:
-		res.Message = "该订单类型暂不支持在线退款"
-	}
-
-	return res, nil
+	return &v1.OrderRefundRes{}, nil
 }
 
 // OrderComplete 手动完成订单

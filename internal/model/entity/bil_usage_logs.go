@@ -67,7 +67,4 @@ type BilUsageLogs struct {
 	BillingSnapshot       string      `json:"billing_snapshot"         orm:"billing_snapshot"         description:"完整计费计算过程快照（JSONB）"`                                             // 完整计费计算过程快照（JSONB）
 	ProjectId             int64       `json:"project_id"               orm:"project_id"               description:"关联项目ID（通过API Key关联，NULL表示个人密钥无项目）"`                             // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
 	TaskId                string      `json:"task_id"                  orm:"task_id"                  description:"异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空"` // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
-	TenantPlanId          int64       `json:"tenant_plan_id"           orm:"tenant_plan_id"           description:""`                                                              //
-	PlanDeduction         float64     `json:"plan_deduction"           orm:"plan_deduction"           description:""`                                                              //
-	WalletDeduction       float64     `json:"wallet_deduction"         orm:"wallet_deduction"         description:""`                                                              //
 }

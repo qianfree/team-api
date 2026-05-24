@@ -756,6 +756,13 @@ onMounted(() => {
 							<span class="text-gray-700">实际费用</span>
 							<span class="text-emerald-600">{{ formatCost(detailLog.actual_cost || 0) }}</span>
 						</div>
+						<div v-if="detailLog.plan_deduction > 0 || detailLog.wallet_deduction > 0" class="flex items-center justify-between">
+							<span class="text-gray-500">扣费来源</span>
+							<span class="flex items-center gap-1.5">
+								<span v-if="detailLog.plan_deduction > 0" class="inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700">套餐 ${{ formatCost(detailLog.plan_deduction) }}</span>
+								<span v-if="detailLog.wallet_deduction > 0" class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">余额 ${{ formatCost(detailLog.wallet_deduction) }}</span>
+							</span>
+						</div>
 						<div v-if="detailLog.rate_multiplier && detailLog.rate_multiplier !== 1" class="flex items-center justify-between">
 							<span class="text-gray-500">费率倍率</span>
 							<span class="font-medium" :class="Number(detailLog.rate_multiplier) < 1 ? 'text-emerald-600' : 'text-amber-600'">{{ Number(detailLog.rate_multiplier).toFixed(4) }}x</span>

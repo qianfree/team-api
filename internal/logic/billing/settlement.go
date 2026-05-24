@@ -29,9 +29,6 @@ type SettlementResult struct {
 	BillingMode      string         // 计费模式
 	BillingSource    string         // 定价来源
 	RateMultiplier   float64        // 费率倍率
-	PlanID           int64          // 扣费套餐 ID
-	PlanDeduction    float64        // 套餐扣费金额
-	WalletDeduction  float64        // 钱套餐扣费金额
 }
 
 // Settle 结算请求费用
@@ -49,26 +46,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	}
 	actualCost := breakdown.TotalCost
 
-	// 2. 读取预扣拆分（包/钱包）
-	pkgPreDeducted, walletPreDeducted, packageID := GetPreDeductSplit(ctx, requestID)
-	// 兼容旧流程（无包扣费时，全走钱包）
-	if pkgPreDeducted == 0 && walletPreDeducted == 0 {
-		walletPreDeducted = preDeductAmount
-	}
-
-	// 3. 计算包/钱包各自的实际扣费
-	var pkgActual, walletActual float64
-	if pkgPreDeducted > 0 {
-		pkgActual = actualCost
-		if pkgActual > pkgPreDeducted {
-			pkgActual = pkgPreDeducted
-		}
-		walletActual = actualCost - pkgActual
-	} else {
-		walletActual = actualCost
-	}
-
-	// 4. 计算差额
+	// 2. 计算差额
 	var refundAmt, supplementAmt float64
 	if preDeductAmount > actualCost {
 		refundAmt = preDeductAmount - actualCost
@@ -76,36 +54,29 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		supplementAmt = actualCost - preDeductAmount
 	}
 
-	// 5. 获取钱包
+	// 3. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "settle: get wallet")
 	}
 
-	// 6. 获取定价信息（事务外只读）
+	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 7. 事务内执行结算
+	// 5. 事务内执行结算（钱包扣款 + 计费记录）
 	var balanceAfter, frozenAfter float64
 	var billingID int64
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 7a. 结算包扣费（退还差额到 remaining_credits）
-		if pkgPreDeducted > 0 && packageID > 0 {
-			SettlePlanDeduction(ctx, tx, packageID, pkgPreDeducted, pkgActual)
+		// 5a. 更新钱包
+		now := time.Now()
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			preDeductAmount, actualCost, now, wallet.ID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle: update wallet")
 		}
 
-		// 7b. 更新钱包（仅 wallet 部分）
-		if walletPreDeducted > 0 {
-			now := time.Now()
-			_, err := tx.Ctx(ctx).Exec(
-				"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-				walletPreDeducted, walletActual, now, wallet.ID)
-			if err != nil {
-				return gerror.Wrapf(err, "settle: update wallet")
-			}
-		}
-
-		// 7c. 事务内读取准确余额
+		// 5b. 事务内读取准确余额
 		type balRow struct {
 			Balance       float64 `json:"balance"`
 			FrozenBalance float64 `json:"frozen_balance"`
@@ -120,7 +91,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			frozenAfter = br.FrozenBalance
 		}
 
-		// 7d. 创建计费记录
+		// 5c. 创建计费记录
 		var inputSnapPrice, outputSnapPrice float64
 		var billingMode string
 		var discountRatio, billingInputMult, billingOutputMult float64
@@ -141,32 +112,19 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			return gerror.Wrapf(err, "settle: create billing record")
 		}
 
-		// 更新计费记录的包扣费字段
-		if packageID > 0 || pkgActual > 0 || walletActual > 0 {
-			_, err = tx.Ctx(ctx).Exec(
-				"UPDATE bil_records SET tenant_plan_id = ?, plan_deduction = ?, wallet_deduction = ? WHERE id = ?",
-				packageID, pkgActual, walletActual, billingID)
-			if err != nil {
-				g.Log().Warningf(ctx, "settle: update billing record plan fields failed: %v", err)
-			}
-		}
-
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 8. 清除缓存（事务提交后）
+	// 6. 清除缓存（事务提交后）
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
 	markPredeductSettled(ctx, requestID)
-	if packageID > 0 {
-		InvalidatePlanCache(ctx, tenantID)
-	}
 
-	// 9. 记录消费流水（事务外，best-effort）
+	// 7. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
 		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
 		userID, requestID, modelName, billingID, "billing_record", projectID, apiKeyID, "", balanceAfter, frozenAfter)
@@ -178,9 +136,6 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		RefundAmount:     refundAmt,
 		SupplementAmount: supplementAmt,
 		BillingRecordID:  billingID,
-		PlanID:           packageID,
-		PlanDeduction:    pkgActual,
-		WalletDeduction:  walletActual,
 	}, nil
 }
 
@@ -197,25 +152,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	}
 	actualCost := breakdown.TotalCost
 
-	// 2. 读取预扣拆分（包/钱包）
-	pkgPreDeducted, walletPreDeducted, packageID := GetPreDeductSplit(ctx, requestID)
-	if pkgPreDeducted == 0 && walletPreDeducted == 0 {
-		walletPreDeducted = preDeductAmount
-	}
-
-	// 3. 计算包/钱包各自的实际扣费
-	var pkgActual, walletActual float64
-	if pkgPreDeducted > 0 {
-		pkgActual = actualCost
-		if pkgActual > pkgPreDeducted {
-			pkgActual = pkgPreDeducted
-		}
-		walletActual = actualCost - pkgActual
-	} else {
-		walletActual = actualCost
-	}
-
-	// 4. 计算差额
+	// 2. 计算差额
 	var refundAmt, supplementAmt float64
 	if preDeductAmount > actualCost {
 		refundAmt = preDeductAmount - actualCost
@@ -223,36 +160,29 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		supplementAmt = actualCost - preDeductAmount
 	}
 
-	// 5. 获取钱包
+	// 3. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "settle_with_usage: get wallet")
 	}
 
-	// 6. 获取定价信息（事务外只读）
+	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 7. 事务内执行结算
+	// 5. 事务内执行结算（钱包扣款 + 计费记录）
 	var balanceAfter, frozenAfter float64
 	var billingID int64
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 7a. 结算包扣费
-		if pkgPreDeducted > 0 && packageID > 0 {
-			SettlePlanDeduction(ctx, tx, packageID, pkgPreDeducted, pkgActual)
+		// 5a. 更新钱包
+		now := time.Now()
+		_, err := tx.Ctx(ctx).Exec(
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			preDeductAmount, actualCost, now, wallet.ID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle_with_usage: update wallet")
 		}
 
-		// 7b. 更新钱包（仅 wallet 部分）
-		if walletPreDeducted > 0 {
-			now := time.Now()
-			_, err := tx.Ctx(ctx).Exec(
-				"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-				walletPreDeducted, walletActual, now, wallet.ID)
-			if err != nil {
-				return gerror.Wrapf(err, "settle_with_usage: update wallet")
-			}
-		}
-
-		// 7c. 事务内读取准确余额
+		// 5b. 事务内读取准确余额
 		type balRow struct {
 			Balance       float64 `json:"balance"`
 			FrozenBalance float64 `json:"frozen_balance"`
@@ -267,7 +197,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			frozenAfter = br.FrozenBalance
 		}
 
-		// 7d. 创建计费记录（含快照）
+		// 5c. 创建计费记录（含快照）
 		var inputSnapPrice, outputSnapPrice float64
 		var billingMode string
 		var discountRatio, billingInputMult, billingOutputMult float64
@@ -288,31 +218,17 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			return gerror.Wrapf(err, "settle_with_usage: create billing record")
 		}
 
-		// 更新计费记录的包扣费字段
-		if packageID > 0 || pkgActual > 0 || walletActual > 0 {
-			_, err = tx.Ctx(ctx).Exec(
-				"UPDATE bil_records SET tenant_plan_id = ?, plan_deduction = ?, wallet_deduction = ? WHERE id = ?",
-				packageID, pkgActual, walletActual, billingID)
-			if err != nil {
-				g.Log().Warningf(ctx, "settle_with_usage: update billing record plan fields failed: %v", err)
-			}
-		}
-
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 8. 清除缓存（事务提交后）
+	// 6. 清除缓存（事务提交后）
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
 	markPredeductSettled(ctx, requestID)
-	if packageID > 0 {
-		InvalidatePlanCache(ctx, tenantID)
-	}
-
 	settlementResult := &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
 		ActualCost:       actualCost,
@@ -321,9 +237,6 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		SupplementAmount: supplementAmt,
 		BillingRecordID:  billingID,
 		CostBreakdown:    breakdown,
-		PlanID:           packageID,
-		PlanDeduction:    pkgActual,
-		WalletDeduction:  walletActual,
 	}
 
 	var snapshotJSON, summaryText string
@@ -341,13 +254,13 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	settlementResult.BillingSnapshot = snapshotJSON
 	settlementResult.BillingSummary = summaryText
 
-	// 9. 从 relayInfo 提取 projectID
+	// 8. 从 relayInfo 提取 projectID
 	var txProjectID int64
 	if relayInfo != nil {
 		txProjectID = relayInfo.ProjectID
 	}
 
-	// 10. 记录消费流水（事务外，best-effort）
+	// 9. 记录消费流水（事务外，best-effort）
 	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
 		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
 		userID, requestID, modelName, billingID, "billing_record", txProjectID, apiKeyID, "", balanceAfter, frozenAfter)
@@ -357,27 +270,11 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 // SettleFailed 失败请求结算：退还预扣金额
 func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
-	// 读取预扣拆分（包/钱包）
-	pkgPreDeducted, walletPreDeducted, packageID := GetPreDeductSplit(ctx, requestID)
-	if pkgPreDeducted == 0 && walletPreDeducted == 0 {
-		walletPreDeducted = preDeductAmount
-	}
-
-	// 回滚包扣费
-	if pkgPreDeducted > 0 && packageID > 0 {
-		RollbackPlanPreDeduct(ctx, tenantID, packageID, pkgPreDeducted)
-		InvalidatePlanCache(ctx, tenantID)
-	}
-
-	// 解冻钱包预扣金额
-	if walletPreDeducted > 0 {
-		UnfreezePreDeduct(ctx, tenantID, requestID, walletPreDeducted)
-	} else {
-		// 兼容旧流程：无拆分记录时解冻全额
-		UnfreezePreDeduct(ctx, tenantID, requestID, preDeductAmount)
-	}
+	// 解冻预扣金额
+	UnfreezePreDeduct(ctx, tenantID, requestID, preDeductAmount)
 	markPredeductReleased(ctx, requestID)
 
+	// 无需额外操作，预扣金额原路退回
 	return nil
 }
 

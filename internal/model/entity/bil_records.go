@@ -43,7 +43,4 @@ type BilRecords struct {
 	BaseInputPrice          float64     `json:"base_input_price"          orm:"base_input_price"          description:"基础模型输入单价（快照，应用倍率前）"`                                        // 基础模型输入单价（快照，应用倍率前）
 	BaseOutputPrice         float64     `json:"base_output_price"         orm:"base_output_price"         description:"基础模型输出单价（快照，应用倍率前）"`                                        // 基础模型输出单价（快照，应用倍率前）
 	BillingSnapshot         string      `json:"billing_snapshot"          orm:"billing_snapshot"          description:"完整计费计算过程快照（JSONB）"`                                         // 完整计费计算过程快照（JSONB）
-	TenantPlanId            int64       `json:"tenant_plan_id"            orm:"tenant_plan_id"            description:""`                                                          //
-	PlanDeduction           float64     `json:"plan_deduction"            orm:"plan_deduction"            description:""`                                                          //
-	WalletDeduction         float64     `json:"wallet_deduction"          orm:"wallet_deduction"          description:""`                                                          //
 }

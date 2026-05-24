@@ -28,5 +28,4 @@ type BilTransactions struct {
 	ProjectId    int64       `json:"project_id"     orm:"project_id"     description:"关联项目ID（consume 类型为 API Key 所属项目，个人密钥为空）"`                                                                                        // 关联项目ID（consume 类型为 API Key 所属项目，个人密钥为空）
 	ApiKeyId     int64       `json:"api_key_id"     orm:"api_key_id"     description:"关联API密钥ID（consume 类型为发起请求的密钥）"`                                                                                                  // 关联API密钥ID（consume 类型为发起请求的密钥）
 	TaskId       string      `json:"task_id"        orm:"task_id"        description:"关联异步任务公开ID（consume+relay_mode=task 时关联 tsk_model_tasks.public_task_id）"`                                                         // 关联异步任务公开ID（consume+relay_mode=task 时关联 tsk_model_tasks.public_task_id）
-	TenantPlanId int64       `json:"tenant_plan_id" orm:"tenant_plan_id" description:""`                                                                                                                               //
 }
