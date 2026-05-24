@@ -3,6 +3,8 @@ package billing
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -20,9 +22,28 @@ func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, mod
 		return 0, err
 	}
 
-	ok, err := PreDeduct(ctx, tenantID, amount, requestID, modelName)
-	if !ok {
-		return 0, err
+	// 尝试从套餐预扣（FIFO，优先快过期的）
+	planDeducted, walletNeeded, planID, planErr := TryPreDeductFromPlan(ctx, tenantID, amount, requestID, modelName)
+	if planErr != nil {
+		g.Log().Warningf(ctx, "[PLAN] plan pre-deduct failed, fallback to wallet: %v", planErr)
+		walletNeeded = amount
+	}
+
+	// 套餐扣了部分或全部，但还需要钱包补足
+	if walletNeeded > 0 {
+		ok, walletErr := PreDeduct(ctx, tenantID, walletNeeded, requestID, modelName)
+		if !ok {
+			// 钱包不足，回滚套餐扣费
+			if planDeducted > 0 && planID > 0 {
+				RollbackPlanPreDeduct(ctx, tenantID, planID, planDeducted)
+			}
+			return 0, walletErr
+		}
+	}
+
+	// 失效套餐缓存
+	if planDeducted > 0 {
+		InvalidatePlanCache(ctx, tenantID)
 	}
 
 	return amount, nil
@@ -70,6 +91,9 @@ func (b *BillingProviderImpl) SettleWithUsage(ctx context.Context, tenantID, use
 		BillingMode:       result.BillingMode,
 		BillingSource:     result.BillingSource,
 		RateMultiplier:    result.RateMultiplier,
+		PlanID:            result.PlanID,
+		PlanDeduction:     result.PlanDeduction,
+		WalletDeduction:   result.WalletDeduction,
 	}
 }
 

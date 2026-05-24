@@ -70,4 +70,7 @@ type SettlementResult struct {
 	BillingMode       string
 	BillingSource     string
 	RateMultiplier    float64
+	PlanID            int64
+	PlanDeduction     float64
+	WalletDeduction   float64
 }

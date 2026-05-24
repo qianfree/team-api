@@ -14,7 +14,6 @@ import (
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
-	"github.com/qianfree/team-api/internal/logic/payment"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	lcommon2 "github.com/qianfree/team-api/internal/logic/common"
@@ -78,19 +77,31 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		if redemption.PlanID == 0 {
 			return nil, lcommon.NewBusinessError(422, "套餐兑换码缺少plan_id")
 		}
-		months := 1
-		if redemption.DurationDays > 0 {
-			months = (redemption.DurationDays + 29) / 30
-			if months < 1 {
-				months = 1
-			}
+		planEntity, planErr := dao.PlnPlans.Ctx(ctx).Where("id", redemption.PlanID).Where("status", "active").One()
+		if planErr != nil || planEntity == nil {
+			return nil, lcommon.NewBusinessError(422, "套餐不存在或已下架")
 		}
-		err = payment.SubscribePlan(ctx, tenantID, redemption.PlanID, months, false)
+		totalCredits := planEntity["credit_amount"].Float64() + planEntity["bonus_amount"].Float64()
+		validityDays := planEntity["validity_days"].Int()
+		if validityDays <= 0 {
+			validityDays = 30
+		}
+		now := gtime.Now()
+		endAt := now.AddDate(0, 0, validityDays)
+		_, err = dao.PlnTenantPlans.Ctx(ctx).Insert(do.PlnTenantPlans{
+			TenantId:         tenantID,
+			PlanId:           redemption.PlanID,
+			Status:           "active",
+			StartAt:          now,
+			EndAt:            endAt,
+			TotalCredits:     totalCredits,
+			RemainingCredits: totalCredits,
+			PaidCny:          0,
+		})
 		if err != nil {
 			return nil, gerror.Wrapf(err, "激活套餐失败")
 		}
 		result["plan_id"] = redemption.PlanID
-		result["months"] = months
 
 	case "duration":
 		if redemption.DurationDays <= 0 {

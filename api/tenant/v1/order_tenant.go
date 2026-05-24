@@ -92,7 +92,13 @@ type TenantRechargeCreateReq struct {
 }
 
 type TenantRechargeCreateRes struct {
-	Data map[string]any `json:"data"`
+	OrderId     int64             `json:"order_id"`
+	OrderNo     string            `json:"order_no"`
+	PaymentUrl  string            `json:"payment_url"`
+	PaymentNo   string            `json:"payment_no"`
+	Params      map[string]string `json:"params,omitempty"`
+	IsRedirect  bool              `json:"is_redirect"`
+	FinalAmount float64           `json:"final_amount"`
 }
 
 type TenantPaymentInfoReq struct {

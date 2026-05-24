@@ -256,6 +256,8 @@ type (
 		GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.OrderDetailRes, error)
 		// RefundOrder 发起退款
 		RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error)
+		// OrderRefundPreview 退款预览
+		OrderRefundPreview(ctx context.Context, req *v1.OrderRefundPreviewReq) (*v1.OrderRefundPreviewRes, error)
 		// OrderComplete 手动完成订单
 		OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error)
 		// GetPaymentChannels 获取所有渠道配置（单例模式，从 sys_options 读取）

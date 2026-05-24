@@ -30,7 +30,7 @@ const statusLabel: Record<string, string> = {
   cancelled: '已取消', refunding: '退款中', refunded: '已退款', refund_failed: '退款失败',
 }
 const orderTypeLabel: Record<string, string> = {
-  new_plan: '新购', renew: '续费', upgrade: '升级', downgrade: '降级', recharge: '充值',
+  new_plan: '套餐购买', renew: '续费', upgrade: '升级', downgrade: '降级', recharge: '充值',
 }
 
 const columns: TableColumnData[] = [
@@ -85,12 +85,29 @@ const refundOrderId = ref<number | null>(null)
 const refundAmount = ref(0)
 const refundForm = reactive({ reason: '' })
 const refundLoading = ref(false)
+const refundPreview = ref<any>(null)
+const refundPreviewLoading = ref(false)
 
-function openRefundModal(row: any) {
+async function openRefundModal(row: any) {
   refundOrderId.value = row.id
-  refundAmount.value = Number(row.final_amount)
   refundForm.reason = ''
+  refundAmount.value = Number(row.final_amount)
+  refundPreview.value = null
   showRefundModal.value = true
+
+  // Fetch refund preview
+  refundPreviewLoading.value = true
+  try {
+    const res = await request.get(`/admin/orders/${row.id}/refund-preview`)
+    refundPreview.value = res.data?.data
+    if (refundPreview.value?.can_refund && refundPreview.value?.refund_amount >= 0) {
+      refundAmount.value = refundPreview.value.refund_amount
+    }
+  } catch {
+    // Fallback to order final_amount
+  } finally {
+    refundPreviewLoading.value = false
+  }
 }
 
 async function handleRefund(done: () => void) {
@@ -148,7 +165,16 @@ const { exporting, exportFile } = useExport({
     <AModal v-model:visible="showRefundModal" title="发起退款" :width="450" :mask-closable="false" :on-before-ok="handleRefund" :ok-loading="refundLoading">
       <AForm :model="refundForm" :auto-label-width="true" layout="vertical">
         <AFormItem label="退款金额">
-          <span class="text-red-500 font-medium">¥{{ refundAmount.toFixed(2) }}</span>
+          <div v-if="refundPreviewLoading" class="text-gray-400 text-sm">计算中...</div>
+          <template v-else-if="refundPreview && !refundPreview.can_refund">
+            <span class="text-gray-400">{{ refundPreview.message || '不可退款' }}</span>
+          </template>
+          <template v-else>
+            <span class="text-red-500 font-medium">¥{{ refundAmount.toFixed(2) }}</span>
+            <span v-if="refundPreview?.order_type === 'new_plan'" class="text-xs text-gray-400 ml-2">
+              (套餐按比例退款)
+            </span>
+          </template>
         </AFormItem>
         <AFormItem label="退款原因" required>
           <AInput v-model="refundForm.reason" type="textarea" :auto-size="{ minRows: 3, maxRows: 5 }" placeholder="请填写退款原因" />

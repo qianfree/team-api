@@ -27,14 +27,20 @@ func HandlePaymentCallback(r *ghttp.Request) {
 	r.Response.Write("success")
 }
 
-// HandlePaymentEpayReturn 处理 Epay 支付完成后的浏览器同步跳转。
+// HandlePaymentEpayReturn 处理 EPay 支付完成后的浏览器同步跳转（支持 GET/POST）。
+// 验签成功后尝试完成订单，然后重定向到前端页面。
 func HandlePaymentEpayReturn(r *ghttp.Request) {
-	err := payment.ProcessCallback(r.Context(), r.Request, "epay")
+	// 先验签，确保跳转来源可信
+	err := payment.VerifyEpayReturn(r.Context(), r.Request)
 	if err != nil {
 		r.Response.WriteStatus(302)
 		r.Response.Header().Set("Location", "/console/wallet?pay=fail")
 		return
 	}
+
+	// 验签通过，尝试完成订单（幂等，已处理过的不会重复处理）
+	_ = payment.ProcessCallback(r.Context(), r.Request, "epay")
+
 	r.Response.WriteStatus(302)
 	r.Response.Header().Set("Location", "/console/wallet?pay=success")
 }
