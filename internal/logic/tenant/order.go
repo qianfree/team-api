@@ -292,12 +292,12 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 
 	// 1. 校验金额
 	settings, _ := payment.GetGlobalPaymentSettings(ctx)
-	minTopup := 1
+	minTopup := 1.0
 	if settings != nil && settings.MinTopUp > 0 {
 		minTopup = settings.MinTopUp
 	}
-	if req.Amount < float64(minTopup) {
-		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("充值金额不能小于 %d", minTopup))
+	if req.Amount < minTopup {
+		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("充值金额不能小于 %.2f", minTopup))
 	}
 
 	// 2. 从 sys_options 加载渠道配置

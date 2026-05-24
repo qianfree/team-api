@@ -23,7 +23,7 @@ func GetGlobalPaymentSettings(ctx context.Context) (*GlobalPaymentSettings, erro
 	if val := cfg.GetString(ctx, "payment_amount_discount"); val != "" {
 		json.Unmarshal([]byte(val), &settings.AmountDiscount)
 	}
-	if n := cfg.GetInt(ctx, "payment_min_topup"); n > 0 {
+	if n := cfg.GetFloat(ctx, "payment_min_topup"); n > 0 {
 		settings.MinTopUp = n
 	}
 	if val := cfg.GetString(ctx, "payment_currency"); val != "" {

@@ -387,14 +387,14 @@ func validateSettingValue(def *SettingDef, value string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("值必须是 %s 之一", strings.Join(allowed, "/"))
+		return NewBadRequestError(fmt.Sprintf("值必须是 %s 之一", strings.Join(allowed, "/")))
 	}
 
 	// Range validation: "min:1,max:100"
 	if strings.Contains(def.Validation, "min:") || strings.Contains(def.Validation, "max:") {
 		numVal, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			return fmt.Errorf("必须是数字")
+			return NewBadRequestError("必须是数字")
 		}
 		parts := strings.Split(def.Validation, ",")
 		for _, p := range parts {
@@ -402,13 +402,13 @@ func validateSettingValue(def *SettingDef, value string) error {
 			if strings.HasPrefix(p, "min:") {
 				minVal, _ := strconv.ParseFloat(strings.TrimPrefix(p, "min:"), 64)
 				if numVal < minVal {
-					return fmt.Errorf("不能小于 %v", minVal)
+					return NewBadRequestError(fmt.Sprintf("不能小于 %v", minVal))
 				}
 			}
 			if strings.HasPrefix(p, "max:") {
 				maxVal, _ := strconv.ParseFloat(strings.TrimPrefix(p, "max:"), 64)
 				if numVal > maxVal {
-					return fmt.Errorf("不能大于 %v", maxVal)
+					return NewBadRequestError(fmt.Sprintf("不能大于 %v", maxVal))
 				}
 			}
 		}
