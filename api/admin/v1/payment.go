@@ -70,7 +70,7 @@ type PaymentSettingsGetReq struct {
 type PaymentSettingsGetRes struct {
 	AmountOptions   []int           `json:"amount_options"`
 	AmountDiscount  map[int]float64 `json:"amount_discount"`
-	MinTopUp        int             `json:"min_topup"`
+	MinTopUp        float64         `json:"min_topup"`
 	Currency        string          `json:"currency"`
 	CallbackBaseURL string          `json:"callback_base_url"`
 }
@@ -79,7 +79,7 @@ type PaymentSettingsUpdateReq struct {
 	g.Meta          `path:"/payment-settings" method:"put" mime:"json" tags:"管理后台-支付" summary:"更新支付设置"`
 	AmountOptions   []int           `json:"amount_options" dc:"充值金额选项"`
 	AmountDiscount  map[int]float64 `json:"amount_discount" dc:"充值折扣"`
-	MinTopUp        int             `json:"min_topup" dc:"最低充值金额"`
+	MinTopUp        float64         `json:"min_topup" dc:"最低充值金额"`
 	Currency        string          `json:"currency" dc:"货币"`
 	CallbackBaseURL string          `json:"callback_base_url" dc:"回调基础URL"`
 }

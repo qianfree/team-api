@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -33,7 +34,7 @@ type EpayPayMethod struct {
 type GlobalPaymentSettings struct {
 	AmountOptions   []int           `json:"amount_options"`
 	AmountDiscount  map[int]float64 `json:"amount_discount"`
-	MinTopUp        int             `json:"min_topup"`
+	MinTopUp        float64         `json:"min_topup"`
 	Currency        string          `json:"currency"`
 	CallbackBaseURL string          `json:"callback_base_url"`
 }
@@ -141,6 +142,16 @@ func GetChannelConfigAndProvider(ctx context.Context, channelType string) (inter
 	if !isEnabled {
 		return nil, fmt.Errorf("支付渠道 %s 未启用", channelType)
 	}
+
+	// 校验关键配置完整性，防止空密钥导致签名可被伪造
+	if c, ok := cfg.(*EpayConfig); ok {
+		if strings.TrimSpace(c.PayAddress) == "" ||
+			strings.TrimSpace(c.MerchantID) == "" ||
+			strings.TrimSpace(c.MerchantKey) == "" {
+			return nil, fmt.Errorf("支付渠道 %s 配置不完整", channelType)
+		}
+	}
+
 	return cfg, nil
 }
 

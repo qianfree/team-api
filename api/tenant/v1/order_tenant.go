@@ -109,7 +109,7 @@ type TenantPaymentInfoRes struct {
 	Channels       []map[string]any `json:"channels"`
 	AmountOptions  []int            `json:"amount_options,omitempty"`
 	AmountDiscount map[int]float64  `json:"amount_discount,omitempty"`
-	MinTopUp       int              `json:"min_topup,omitempty"`
+	MinTopUp       float64          `json:"min_topup,omitempty"`
 	Currency       string           `json:"currency,omitempty"`
 }
 

@@ -57,6 +57,10 @@ func (p *EpayProvider) HandleCallback(ctx context.Context, r *http.Request, conf
 		return nil, lcommon.NewBadRequestError("无效的易支付配置")
 	}
 
+	if cfg.MerchantKey == "" {
+		return nil, lcommon.NewBusinessError(422, "易支付商户密钥未配置，回调已拒绝")
+	}
+
 	// 同时支持 GET 和 POST 回调
 	r.ParseForm()
 	params := make(map[string]string)
@@ -158,6 +162,10 @@ func VerifyEpayReturn(ctx context.Context, r *http.Request) error {
 	epayCfg, ok := cfg.(*EpayConfig)
 	if !ok {
 		return fmt.Errorf("易支付配置类型错误")
+	}
+
+	if epayCfg.MerchantKey == "" {
+		return fmt.Errorf("易支付商户密钥未配置")
 	}
 
 	r.ParseForm()
