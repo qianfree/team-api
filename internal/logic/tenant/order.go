@@ -88,8 +88,9 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 
 	// 查套餐价格
 	var plan struct {
-		Price  float64 `json:"price"`
-		Status string  `json:"status"`
+		MonthlyPrice float64 `json:"monthly_price"`
+		YearlyPrice  float64 `json:"yearly_price"`
+		Status       string  `json:"status"`
 	}
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
@@ -101,7 +102,12 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		return nil, lcommon.NewBusinessError(422, "套餐不可用")
 	}
 
-	amount := plan.Price
+	var amount float64
+	if months >= 12 {
+		amount = plan.YearlyPrice
+	} else {
+		amount = plan.MonthlyPrice * float64(months)
+	}
 
 	orderNo := fmt.Sprintf("ORD%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
 
@@ -238,7 +244,7 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 	if settings != nil {
 		res.AmountOptions = settings.AmountOptions
 		res.AmountDiscount = settings.AmountDiscount
-		res.MinTopUp = settings.MinTopUp
+		res.MinTopUp = int(settings.MinTopUp)
 		res.Currency = settings.Currency
 	}
 
@@ -248,12 +254,13 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 // getOrderForPay 获取待支付订单信息（供 OrderPay 内部调用）
 func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo string, finalAmount float64, currency string, orderType string, description string, err error) {
 	var order *struct {
-		OrderNo     string  `json:"order_no"`
-		FinalAmount float64 `json:"final_amount"`
-		Currency    string  `json:"currency"`
-		OrderType   string  `json:"order_type"`
-		Description string  `json:"description"`
-		Status      string  `json:"status"`
+		OrderNo     string      `json:"order_no"`
+		FinalAmount float64     `json:"final_amount"`
+		Currency    string      `json:"currency"`
+		OrderType   string      `json:"order_type"`
+		Description string      `json:"description"`
+		Status      string      `json:"status"`
+		ExpiredAt   *gtime.Time `json:"expired_at"`
 	}
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).Where("tenant_id", tenantID).Scan(&order)
@@ -266,6 +273,10 @@ func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo
 	}
 	if order.Status != "pending" {
 		err = lcommon.NewBusinessError(422, "订单状态不是待支付")
+		return
+	}
+	if order.ExpiredAt != nil && !order.ExpiredAt.IsZero() && order.ExpiredAt.Before(gtime.Now()) {
+		err = lcommon.NewBusinessError(422, "è®¢åå·²è¿æï¼è¯·éæ°ä¸å")
 		return
 	}
 	return order.OrderNo, order.FinalAmount, order.Currency, order.OrderType, order.Description, nil
@@ -369,15 +380,15 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, err
 	}
 
-	return &v1.TenantRechargeCreateRes{
-		OrderId:     orderID,
-		OrderNo:     orderNo,
-		PaymentUrl:  payResult.PaymentURL,
-		PaymentNo:   payResult.PaymentNo,
-		Params:      payResult.Params,
-		IsRedirect:  payResult.IsRedirect,
-		FinalAmount: finalAmount,
-	}, nil
+	return &v1.TenantRechargeCreateRes{Data: g.Map{
+		"order_id":     orderID,
+		"order_no":     orderNo,
+		"payment_url":  payResult.PaymentURL,
+		"payment_no":   payResult.PaymentNo,
+		"params":       payResult.Params,
+		"is_redirect":  payResult.IsRedirect,
+		"final_amount": finalAmount,
+	}}, nil
 }
 
 // ExportOrders exports the tenant order list as CSV or Excel.

@@ -54,9 +54,6 @@ type BillingSnapshotSettlement struct {
 	ActualCost       float64 `json:"actual_cost"`
 	RefundAmount     float64 `json:"refund_amount"`
 	SupplementAmount float64 `json:"supplement_amount"`
-	PlanID           int64   `json:"plan_id,omitempty"`
-	PlanDeduction    float64 `json:"plan_deduction,omitempty"`
-	WalletDeduction  float64 `json:"wallet_deduction,omitempty"`
 }
 
 // BillingSnapshotRequestMeta 请求元信息
@@ -113,9 +110,6 @@ func GenerateBillingSnapshot(
 			ActualCost:       settlement.ActualCost,
 			RefundAmount:     settlement.RefundAmount,
 			SupplementAmount: settlement.SupplementAmount,
-			PlanID:           settlement.PlanID,
-			PlanDeduction:    settlement.PlanDeduction,
-			WalletDeduction:  settlement.WalletDeduction,
 		}
 	}
 

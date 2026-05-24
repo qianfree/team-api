@@ -37,6 +37,15 @@ const billColumns: TableColumnData[] = [
     render({ record }) { return `$${(record.total_cost || 0).toFixed(6)}` },
   },
   {
+    title: '扣费来源', dataIndex: 'deduction_source', width: 120,
+    render({ record }) {
+      const tags = []
+      if (record.plan_deduction > 0) tags.push(h(Tag, { size: 'small', type: 'info' }, () => '套餐抵扣'))
+      if (record.wallet_deduction > 0) tags.push(h(Tag, { size: 'small' }, () => '钱包'))
+      return tags.length > 0 ? h('div', { class: 'flex gap-1' }, tags) : '-'
+    },
+  },
+  {
     title: '状态', dataIndex: 'status', width: 80,
     render({ record }) {
       return h(Tag, { color: billStatusTagColor[record.status], size: 'small' }, () => billStatusLabel[record.status] || record.status)

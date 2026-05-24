@@ -107,6 +107,7 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 	var total int
 	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_id, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.project_id, bil_transactions.api_key_id, bil_transactions.task_id, bil_transactions.created_at").
 		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
+		LeftJoin("bil_records br", "bil_transactions.related_id = br.id AND bil_transactions.related_type = 'billing_record'").
 		OrderDesc("bil_transactions.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&records, &total, false)

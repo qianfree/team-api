@@ -88,6 +88,10 @@ func convertRelayError(err error) error {
 	}
 	switch relayErr.StatusCode {
 	case 402:
+		// 区分余额不足和成员额度超限
+		if relayErr.Message == "member quota exceeded" {
+			return common.NewBusinessError(10001, "成员额度已用完，请联系管理员调整")
+		}
 		return common.NewBusinessError(10001, "余额不足，请充值后重试")
 	case 429:
 		return common.NewBusinessError(10014, "请求过于频繁，请稍后重试")

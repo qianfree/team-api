@@ -8,15 +8,15 @@ import (
 	"github.com/qianfree/team-api/internal/dao/internal"
 )
 
-// mdlModelGroupItemsDao is the data access object for the table mdl_model_group_items.
+// plnFeatureFlagsDao is the data access object for the table pln_feature_flags.
 // You can define custom methods on it to extend its functionality as needed.
-type mdlModelGroupItemsDao struct {
-	*internal.MdlModelGroupItemsDao
+type plnFeatureFlagsDao struct {
+	*internal.PlnFeatureFlagsDao
 }
 
 var (
-	// MdlModelGroupItems is a globally accessible object for table mdl_model_group_items operations.
-	MdlModelGroupItems = mdlModelGroupItemsDao{internal.NewMdlModelGroupItemsDao()}
+	// PlnFeatureFlags is a globally accessible object for table pln_feature_flags operations.
+	PlnFeatureFlags = plnFeatureFlagsDao{internal.NewPlnFeatureFlagsDao()}
 )
 
 // Add your custom methods and functionality below.

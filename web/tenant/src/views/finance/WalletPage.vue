@@ -24,6 +24,7 @@ const plans = ref<any[]>([])
 const currentPlan = ref<any>(null)
 const showConfirm = ref(false)
 const selectedPlan = ref<any>(null)
+const selectedMonths = ref(1)
 const confirmLoading = ref(false)
 
 // Frozen items
@@ -41,6 +42,13 @@ const redeemHistory = ref<any[]>([])
 const redeemHistoryLoading = ref(false)
 const redeemTypeLabels: Record<string, string> = { quota: '额度', plan: '套餐', duration: '时长' }
 const redeemTypeBadgeClasses: Record<string, string> = { quota: 'badge-success', plan: 'badge-primary', duration: 'badge-warning' }
+
+const monthsOptions = [
+	{ label: '1 个月', value: 1 },
+	{ label: '3 个月', value: 3 },
+	{ label: '6 个月', value: 6 },
+	{ label: '12 个月（优惠）', value: 12 },
+]
 
 const currentPlanId = computed(() => currentPlan.value?.plan_id)
 
@@ -104,18 +112,13 @@ async function fetchPaymentInfo() {
 async function fetchPlans() {
 	loading.value = true
 	try {
-		const [plansRes, mineRes] = await Promise.all([
+		const [plansRes, currentRes] = await Promise.all([
 			request.get('/tenant/plans'),
-			request.get('/tenant/plans/mine'),
+			request.get('/tenant/plan/current').catch(() => ({ data: { data: null } })),
 		])
 		const raw = plansRes.data?.data
-		plans.value = Array.isArray(raw) ? raw : (raw?.list || [])
-		const mineData = mineRes.data?.data
-		if (mineData?.list?.length) {
-			currentPlan.value = mineData.list.find((p: any) => p.status === 'active') || null
-		} else {
-			currentPlan.value = null
-		}
+		plans.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
+		currentPlan.value = currentRes.data?.data || null
 	} catch {
 		// interceptor handles error toast
 	} finally {
@@ -161,33 +164,31 @@ async function handleRecharge() {
 	}
 }
 
-function getPlanPrice(plan: any) {
-	return Number(plan.price || 0)
+function calcPrice(plan: any, months: number) {
+	if (months >= 12) return Number(plan.yearly_price || 0)
+	return Number(plan.monthly_price || 0) * months
 }
 
 function openConfirm(plan: any) {
 	selectedPlan.value = plan
-	selectedChannel.value = ''
-	selectedPaymentMethod.value = ''
+	selectedMonths.value = 1
 	showConfirm.value = true
 }
 
 async function handleSubscribe() {
 	confirmLoading.value = true
 	try {
-		const res: any = await request.post('/tenant/plans/orders', {
+		const res = await request.post('/tenant/orders/create', {
+			order_type: 'new_plan',
 			plan_id: selectedPlan.value.id,
-			payment_channel: selectedChannel.value,
-			payment_method: selectedPaymentMethod.value,
+			months: selectedMonths.value,
 		})
-		const data = res.data?.data
-		if (data?.payment_url) {
-			window.location.href = data.payment_url
-			return
+		const order = res.data?.data
+		if (order?.id) {
+			await request.post(`/tenant/orders/${order.id}/pay`)
 		}
 		showConfirm.value = false
 		await fetchPlans()
-		fetchWallet()
 	} catch {
 		// interceptor handles error toast
 	} finally {
@@ -519,12 +520,12 @@ onBeforeUnmount(() => {
 						<div class="space-y-3 flex-1">
 							<div class="plan-detail-row">
 								<span class="text-gray-500">月费</span>
-								<span class="font-semibold text-gray-900">¥{{ Number(currentPlanDetail.price).toFixed(2) }}</span>
+								<span class="font-semibold text-gray-900">¥{{ Number(currentPlanDetail.monthly_price).toFixed(0) }}<span class="text-gray-400 font-normal text-xs">/月</span></span>
 							</div>
 							<div class="plan-detail-row">
-								<span class="text-gray-500">额度</span>
-								<span v-if="currentPlanDetail.credit_amount > 0" class="font-medium text-gray-700">
-									${{ Number(currentPlanDetail.credit_amount).toFixed(2) }}
+								<span class="text-gray-500">Token 额度</span>
+								<span v-if="currentPlanDetail.monthly_quota_tokens > 0" class="font-medium text-gray-700">
+									{{ currentPlanDetail.monthly_quota_tokens.toLocaleString() }}/月
 								</span>
 								<span v-else class="font-medium text-primary-600">不限</span>
 							</div>
@@ -631,10 +632,13 @@ onBeforeUnmount(() => {
 								<div class="flex items-baseline gap-1">
 									<span class="text-xs text-gray-400">¥</span>
 									<span class="text-3xl font-bold text-gray-900 tracking-tight">
-										{{ Number(plan.price).toFixed(2) }}
+										{{ Number(plan.monthly_price) === 0 ? '免费' : Number(plan.monthly_price).toFixed(0) }}
 									</span>
-									
+									<span v-if="Number(plan.monthly_price) > 0" class="text-sm text-gray-400">/月</span>
 								</div>
+								<p v-if="Number(plan.yearly_price) > 0" class="text-xs text-primary-600 mt-1.5 font-medium">
+									年付 ¥{{ Number(plan.yearly_price).toFixed(0) }}，省 ¥{{ (Number(plan.monthly_price) * 12 - Number(plan.yearly_price)).toFixed(0) }}
+								</p>
 							</div>
 
 							<!-- Features -->
@@ -644,7 +648,7 @@ onBeforeUnmount(() => {
 										<Icon name="check" size="xs" />
 									</div>
 									<span class="text-sm text-gray-600">
-										额度 ${{ Number(plan.credit_amount).toFixed(2) }}
+										{{ plan.monthly_quota_tokens > 0 ? plan.monthly_quota_tokens.toLocaleString() + ' Tokens/月' : '不限 Token 用量' }}
 									</span>
 								</div>
 								<div v-if="plan.description" class="flex items-center gap-2.5">
@@ -669,7 +673,7 @@ onBeforeUnmount(() => {
 								:class="plan.is_recommended ? 'btn-primary' : 'btn-secondary hover:!border-primary-300 hover:!text-primary-600'"
 								@click="openConfirm(plan)"
 							>
-								立即购买
+								{{ Number(plan.monthly_price) === 0 ? '免费开通' : '立即购买' }}
 							</button>
 						</div>
 					</div>
@@ -677,16 +681,15 @@ onBeforeUnmount(() => {
 			</div>
 		</div>
 
-		
 		<!-- ============================================ -->
-		<!-- Confirm Purchase Modal -->
+		<!-- Confirm Subscribe Modal -->
 		<!-- ============================================ -->
 		<Teleport to="body">
 			<transition name="modal">
-				<div v-if="showConfirm" class="modal-overlay">
+				<div v-if="showConfirm" class="modal-overlay" @click.self="showConfirm = false">
 					<div class="modal-content w-full max-w-md">
 						<div class="modal-header">
-							<h3 class="modal-title">确认购买</h3>
+							<h3 class="modal-title">确认订阅</h3>
 							<button @click="showConfirm = false" class="btn-ghost btn-icon">
 								<Icon name="x" size="md" />
 							</button>
@@ -702,45 +705,30 @@ onBeforeUnmount(() => {
 									<span class="badge badge-primary">{{ selectedPlan.identifier }}</span>
 								</div>
 
+								<!-- Duration selection -->
+								<div>
+									<label class="input-label">订阅时长</label>
+									<div class="grid grid-cols-2 gap-2 mt-2">
+										<button
+											v-for="opt in monthsOptions"
+											:key="opt.value"
+											class="rounded-xl px-3 py-2.5 text-sm font-medium border-2 transition-all"
+											:class="selectedMonths === opt.value
+												? 'border-primary-500 bg-primary-50 text-primary-700'
+												: 'border-gray-200 text-gray-600 hover:border-gray-300'"
+											@click="selectedMonths = opt.value"
+										>
+											{{ opt.label }}
+										</button>
+									</div>
+								</div>
+
 								<!-- Price summary -->
 								<div class="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-primary-50 to-primary-100/50 border border-primary-200/50">
 									<span class="text-sm text-gray-600">应付金额</span>
 									<span class="text-xl font-bold text-primary-600">
-										¥{{ getPlanPrice(selectedPlan).toFixed(2) }}
+										¥{{ calcPrice(selectedPlan, selectedMonths).toFixed(2) }}
 									</span>
-								</div>
-
-								<!-- Payment Method Selection -->
-								<div v-if="payMethods.length > 0">
-									<label class="input-label">支付方式</label>
-									<div class="grid grid-cols-2 gap-2 mt-2">
-										<button
-											v-for="method in payMethods"
-											:key="method.channel + '-' + method.type"
-											class="pay-method-card"
-											:class="selectedChannel === method.channel && selectedPaymentMethod === method.type
-												? 'pay-method-card-active'
-												: ''"
-											@click="selectPayMethod(method)"
-										>
-											<span
-												class="pay-method-icon"
-												:class="{
-													'pay-method-icon-alipay': method.type === 'alipay',
-													'pay-method-icon-wxpay': method.type === 'wxpay',
-													'pay-method-icon-default': method.type !== 'alipay' && method.type !== 'wxpay',
-												}"
-											>
-												<template v-if="method.type === 'alipay'">支</template>
-												<template v-else-if="method.type === 'wxpay'">微</template>
-												<template v-else>{{ method.name.substring(0, 1) }}</template>
-											</span>
-											<span class="text-sm font-medium text-gray-700">{{ method.name }}</span>
-										</button>
-									</div>
-								</div>
-								<div v-else class="py-4 text-center">
-									<p class="text-sm text-gray-400">暂无可用的支付渠道</p>
 								</div>
 							</div>
 						</div>
@@ -748,14 +736,14 @@ onBeforeUnmount(() => {
 							<button @click="showConfirm = false" class="btn btn-secondary">取消</button>
 							<button
 								class="btn btn-primary"
-								:disabled="confirmLoading || !selectedChannel || !selectedPaymentMethod"
+								:disabled="confirmLoading"
 								@click="handleSubscribe"
 							>
 								<template v-if="confirmLoading">
 									<span class="spinner"></span>
 									处理中...
 								</template>
-								<template v-else>确认购买</template>
+								<template v-else>确认订阅</template>
 							</button>
 						</div>
 					</div>
@@ -764,7 +752,7 @@ onBeforeUnmount(() => {
 		</Teleport>
 
 		<!-- ============================================ -->
-<!-- Frozen Items Modal -->
+		<!-- Frozen Items Modal -->
 		<!-- ============================================ -->
 		<Teleport to="body">
 			<transition name="modal">

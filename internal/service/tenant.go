@@ -225,10 +225,10 @@ type (
 		PersonalApiKeyUsage(ctx context.Context, req *v1.PersonalApiKeyUsageReq) (*v1.PersonalApiKeyUsageRes, error)
 		// PlanList 获取可购买的套餐列表（仅 active）
 		PlanList(ctx context.Context, req *v1.TenantPlanListReq) (*v1.TenantPlanListRes, error)
-		// PlanMine 获取当前租户已购买的套餐
-		PlanMine(ctx context.Context, req *v1.TenantPlanMineReq) (*v1.TenantPlanMineRes, error)
-		// PlanOrderCreate 创建套餐购买订单
-		PlanOrderCreate(ctx context.Context, req *v1.TenantPlanOrderCreateReq) (*v1.TenantPlanOrderCreateRes, error)
+		// PlanCurrent 获取租户当前套餐
+		PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (*v1.TenantPlanCurrentRes, error)
+		// PlanCancelAutoRenew 取消自动续费
+		PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (*v1.TenantPlanCancelAutoRenewRes, error)
 		PlaygroundChat(ctx context.Context, req *v1.PlaygroundChatReq) (*v1.PlaygroundChatRes, error)
 		PlaygroundImage(ctx context.Context, req *v1.PlaygroundImageReq) (*v1.PlaygroundImageRes, error)
 		PlaygroundAudioTTS(ctx context.Context, req *v1.PlaygroundAudioTTSReq) (*v1.PlaygroundAudioTTSRes, error)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
 // Cache provides a two-level caching mechanism:
@@ -153,9 +154,38 @@ func (c *Cache) Delete(ctx context.Context, key string) {
 }
 
 // DeleteByPattern removes all cache entries matching the pattern.
+// Uses SCAN + DEL to properly handle wildcard patterns (Redis DEL does not support wildcards).
 func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 	fullPattern := c.fullKey(pattern)
-	_, _ = g.Redis().Do(ctx, "DEL", fullPattern)
+
+	// L2: Redis — SCAN matching keys and DEL them
+	cursor := int64(0)
+	for {
+		result, err := g.Redis().Do(ctx, "SCAN", cursor, "MATCH", fullPattern, "COUNT", 100)
+		if err != nil {
+			g.Log().Warningf(ctx, "[Cache] SCAN failed pattern=%s: %v", fullPattern, err)
+			break
+		}
+		slice := result.Slice()
+		if len(slice) < 2 {
+			break
+		}
+		cursor = gconv.Int64(slice[0])
+		keys := gconv.Strings(slice[1])
+		if len(keys) > 0 {
+			delArgs := make([]any, len(keys))
+			for i, k := range keys {
+				delArgs[i] = k
+			}
+			_, _ = g.Redis().Do(ctx, "DEL", delArgs...)
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+
+	// L1: memory cache — gcache doesn't support pattern delete,
+	// but entries will expire via TTL anyway
 }
 
 // PublishInvalidation publishes a cache invalidation message via Redis Pub/Sub.

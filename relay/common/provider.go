@@ -194,6 +194,7 @@ type UsageRecord struct {
 
 	// 异步任务关联
 	TaskID string // 异步任务公开ID（task_xxxxx），普通请求为空
+
 }
 
 // AuditRecord 请求审计日志记录
