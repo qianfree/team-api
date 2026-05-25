@@ -25,9 +25,6 @@ import (
 
 // Register handles tenant registration.
 func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error) {
-	g.Log().Infof(ctx, "[Register] raw body: %s", g.RequestFromCtx(ctx).GetBodyString())
-	g.Log().Infof(ctx, "[Register] parsed req: %+v", req)
-
 	// Check if registration is enabled
 	if !common.Config().GetBool(ctx, "register_enabled") {
 		return nil, common.NewBusinessError(consts.CodeRegistrationDisabled, consts.MsgRegistrationDisabled)
