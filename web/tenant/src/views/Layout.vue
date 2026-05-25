@@ -137,7 +137,7 @@ async function fetchWalletBalance() {
 		const w = res.data?.data
 		if (w) {
 			const bal = w.available_balance ?? w.balance ?? 0
-			walletBalance.value = bal >= 1 ? '$' + bal.toFixed(0) : bal > 0 ? '$' + bal.toFixed(2) : '$0'
+			walletBalance.value = bal >= 100 ? '$' + bal.toFixed(0) : '$' + bal.toFixed(2)
 		}
 	} catch {
 		// silently ignore
@@ -295,14 +295,14 @@ onBeforeUnmount(() => {
 							</span>
 						</router-link>
 
-					<!-- Wallet -->
+					<!-- Wallet Capsule -->
 						<router-link
 							to="/tenant/wallet"
-							class="relative flex h-9 items-center justify-center rounded-xl px-2.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+							class="flex h-9 items-center gap-1.5 rounded-full bg-primary-50 border border-primary-200/60 px-3 text-primary-600 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm hover:shadow-primary-500/10 transition-all duration-200"
 							title="钱包"
 						>
-							<Icon name="wallet" size="md" />
-							<span v-if="walletBalance" class="hidden sm:inline text-xs font-medium text-gray-500 ml-1.5">{{ walletBalance }}</span>
+							<Icon name="currencyDollar" size="sm" />
+							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || '$0' }}</span>
 						</router-link>
 						<!-- User Menu -->
 						<div class="relative" data-user-menu>
