@@ -47,7 +47,8 @@ COPY --from=frontend /build/web/admin/dist ./web/admin/dist
 COPY --from=frontend /build/web/tenant/dist ./web/tenant/dist
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -tags embedweb -ldflags="-s -w -X github.com/qianfree/team-api/internal/consts.Version=${VERSION}" \
     -o /app/team-api main.go
 
