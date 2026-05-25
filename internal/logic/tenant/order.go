@@ -131,12 +131,12 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	}
 
 	id, _ := result.LastInsertId()
-	return &v1.TenantOrderCreateRes{Data: g.Map{
-		"id":           id,
-		"order_no":     orderNo,
-		"final_amount": amount,
-		"status":       "pending",
-	}}, nil
+	return &v1.TenantOrderCreateRes{
+		ID:          id,
+		OrderNo:     orderNo,
+		FinalAmount: amount,
+		Status:      "pending",
+	}, nil
 }
 
 // OrderCancel 取消订单
@@ -221,12 +221,12 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		return nil, err
 	}
 
-	return &v1.TenantOrderPayRes{Data: g.Map{
-		"payment_url": result.PaymentURL,
-		"payment_no":  result.PaymentNo,
-		"params":      result.Params,
-		"is_redirect": result.IsRedirect,
-	}}, nil
+	return &v1.TenantOrderPayRes{
+		PaymentURL: result.PaymentURL,
+		PaymentNo:  result.PaymentNo,
+		Params:     result.Params,
+		IsRedirect: result.IsRedirect,
+	}, nil
 }
 
 // PaymentInfo 获取租户可用的支付信息（渠道列表、金额选项、折扣）
@@ -380,15 +380,15 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, err
 	}
 
-	return &v1.TenantRechargeCreateRes{Data: g.Map{
-		"order_id":     orderID,
-		"order_no":     orderNo,
-		"payment_url":  payResult.PaymentURL,
-		"payment_no":   payResult.PaymentNo,
-		"params":       payResult.Params,
-		"is_redirect":  payResult.IsRedirect,
-		"final_amount": finalAmount,
-	}}, nil
+	return &v1.TenantRechargeCreateRes{
+		OrderID:     orderID,
+		OrderNo:     orderNo,
+		PaymentURL:  payResult.PaymentURL,
+		PaymentNo:   payResult.PaymentNo,
+		Params:      payResult.Params,
+		IsRedirect:  payResult.IsRedirect,
+		FinalAmount: finalAmount,
+	}, nil
 }
 
 // ExportOrders exports the tenant order list as CSV or Excel.

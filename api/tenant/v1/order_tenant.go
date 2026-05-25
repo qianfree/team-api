@@ -15,7 +15,10 @@ type TenantOrderCreateReq struct {
 }
 
 type TenantOrderCreateRes struct {
-	Data map[string]any `json:"data"`
+	ID          int64   `json:"id"`
+	OrderNo     string  `json:"order_no"`
+	FinalAmount float64 `json:"final_amount"`
+	Status      string  `json:"status"`
 }
 
 type TenantOrderPayReq struct {
@@ -26,7 +29,10 @@ type TenantOrderPayReq struct {
 }
 
 type TenantOrderPayRes struct {
-	Data map[string]any `json:"data"`
+	PaymentURL string            `json:"payment_url"`
+	PaymentNo  string            `json:"payment_no"`
+	Params     map[string]string `json:"params"`
+	IsRedirect bool              `json:"is_redirect"`
 }
 
 type TenantOrderListReq struct {
@@ -92,7 +98,13 @@ type TenantRechargeCreateReq struct {
 }
 
 type TenantRechargeCreateRes struct {
-	Data map[string]any `json:"data"`
+	OrderID     int64             `json:"order_id"`
+	OrderNo     string            `json:"order_no"`
+	PaymentURL  string            `json:"payment_url"`
+	PaymentNo   string            `json:"payment_no"`
+	Params      map[string]string `json:"params"`
+	IsRedirect  bool              `json:"is_redirect"`
+	FinalAmount float64           `json:"final_amount"`
 }
 
 type TenantPaymentInfoReq struct {
