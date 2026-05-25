@@ -77,7 +77,7 @@ migrate-reset:
 
 # Docker commands
 docker-build:
-	cd manifest/docker && docker compose build
+	cd manifest/docker && VERSION=$(VERSION) docker compose build
 
 docker-up:
 	cd manifest/docker && docker compose up -d
@@ -89,7 +89,7 @@ docker-logs:
 	cd manifest/docker && docker compose logs -f
 
 docker-rebuild: docker-down
-	cd manifest/docker && docker compose build --no-cache && docker compose up -d
+	cd manifest/docker && VERSION=$(VERSION) docker compose build --no-cache && VERSION=$(VERSION) docker compose up -d
 
 docker-clean:
 	cd manifest/docker && docker compose down -v
