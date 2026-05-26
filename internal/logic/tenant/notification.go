@@ -524,12 +524,6 @@ func splitString(s, sep string) []string {
 
 // ExportNotifications exports the tenant notification list as CSV or Excel.
 func (s *sTenant) ExportNotifications(ctx context.Context, req *v1.TenantNotificationsExportReq) (*v1.TenantNotificationsExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 	role := ctxUserRole(ctx)
@@ -544,49 +538,12 @@ func (s *sTenant) ExportNotifications(ctx context.Context, req *v1.TenantNotific
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "通知列表_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
-	if format == "xlsx" {
-		items := make([]*v1.TenantNotificationItem, 0)
-		err := dao.NtfMessages.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Where("(user_id = ? OR (user_id IS NULL AND is_broadcast = 1 AND (target_roles IS NULL OR ? = ANY(string_to_array(target_roles, ',')))))", userID, role).
-			OrderDesc("created_at").
-			Scan(&items)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			isRead := 0
-			if item.IsBroadcast == 1 {
-				readCount, _ := dao.NtfReadStatus.Ctx(ctx).
-					Where("message_id", item.Id).
-					Where("user_id", userID).
-					Count()
-				if readCount > 0 {
-					isRead = 1
-				}
-			} else {
-				isRead = item.IsRead
-			}
-			data = append(data, map[string]any{
-				"id":         item.Id,
-				"type":       item.Type,
-				"title":      item.Title,
-				"channel":    item.Channel,
-				"is_read":    isRead,
-				"created_at": item.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			items := make([]*v1.TenantNotificationItem, 0)

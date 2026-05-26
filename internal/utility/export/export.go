@@ -1,5 +1,11 @@
 package export
 
+import (
+	"context"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
+
 // Column defines one column in the exported file.
 type Column struct {
 	Field     string           // Key in the data map
@@ -21,4 +27,24 @@ func (c Config) GetMaxRows() int {
 		return 100000
 	}
 	return c.MaxRows
+}
+
+// GenericExport handles format normalization and xlsx/csv branching.
+// queryFn yields data rows — same callback as StreamCSV's queryFn.
+// For xlsx: collects all rows from queryFn, then calls WriteExcel.
+// For csv: passes queryFn directly to StreamCSV for streaming.
+func GenericExport(ctx context.Context, config Config, queryFn func(yield func(map[string]any) bool)) error {
+	r := g.RequestFromCtx(ctx)
+	config.Format = detectFormat(config.Format)
+
+	if config.Format == "xlsx" {
+		var data []map[string]any
+		queryFn(func(row map[string]any) bool {
+			data = append(data, row)
+			return true
+		})
+		return WriteExcel(r, config, data)
+	}
+
+	return StreamCSV(r, config, queryFn)
 }

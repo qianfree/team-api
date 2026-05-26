@@ -576,75 +576,24 @@ func (s *sAdmin) FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchO
 
 // ExportModels exports model list to CSV or Excel.
 func (s *sAdmin) ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.ModelExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "model_id", Header: "模型标识"},
-		{Field: "model_name", Header: "显示名称"},
-		{Field: "category", Header: "分类"},
-		{Field: "status", Header: "状态"},
-		{Field: "max_context_tokens", Header: "最大上下文"},
-		{Field: "max_output_tokens", Header: "最大输出"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
-	config := export.Config{
-		Format:   format,
-		Filename: "模型_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
-	}
-
 	modelFields := "id, model_id, model_name, category, status, max_context_tokens, max_output_tokens, created_at"
 
-	if format == "xlsx" {
-		query := dao.MdlModels.Ctx(ctx)
-		if req.Category != "" {
-			query = query.Where("category", req.Category)
-		}
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		if req.Search != "" {
-			query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
-		}
-		var models []struct {
-			ID               int64       `json:"id"`
-			ModelId          string      `json:"model_id"`
-			ModelName        string      `json:"model_name"`
-			Category         string      `json:"category"`
-			Status           string      `json:"status"`
-			MaxContextTokens int         `json:"max_context_tokens"`
-			MaxOutputTokens  int         `json:"max_output_tokens"`
-			CreatedAt        *gtime.Time `json:"created_at"`
-		}
-		if err := query.Fields(modelFields).OrderDesc("id").Scan(&models); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(models))
-		for i, m := range models {
-			data[i] = map[string]any{
-				"id":                 m.ID,
-				"model_id":           m.ModelId,
-				"model_name":         m.ModelName,
-				"category":           m.Category,
-				"status":             m.Status,
-				"max_context_tokens": m.MaxContextTokens,
-				"max_output_tokens":  m.MaxOutputTokens,
-				"created_at":         m.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
+	config := export.Config{
+		Format:   req.Format,
+		Filename: "模型_" + gtime.Now().Format("Ymd_His"),
+		Columns: []export.Column{
+			{Field: "id", Header: "ID"},
+			{Field: "model_id", Header: "模型标识"},
+			{Field: "model_name", Header: "显示名称"},
+			{Field: "category", Header: "分类"},
+			{Field: "status", Header: "状态"},
+			{Field: "max_context_tokens", Header: "最大上下文"},
+			{Field: "max_output_tokens", Header: "最大输出"},
+			{Field: "created_at", Header: "创建时间"},
+		},
 	}
 
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			query := dao.MdlModels.Ctx(ctx)

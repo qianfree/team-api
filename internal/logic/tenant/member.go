@@ -843,12 +843,6 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 
 // ExportMembers exports the tenant member list as CSV or Excel.
 func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 
 	columns := []export.Column{
@@ -862,52 +856,12 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "成员列表_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
-	if format == "xlsx" {
-		model := dao.TntUsers.Ctx(ctx).
-			Where("tenant_id", tenantID)
-		if req.Keyword != "" {
-			keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-			model = model.Where("username LIKE ? OR email LIKE ?", keyword, keyword)
-		}
-		if req.Role != "" {
-			model = model.Where("role", req.Role)
-		}
-
-		var users []struct {
-			Id          int64  `json:"id"`
-			Username    string `json:"username"`
-			Email       string `json:"email"`
-			DisplayName string `json:"display_name"`
-			Role        string `json:"role"`
-			Status      string `json:"status"`
-			CreatedAt   string `json:"created_at"`
-		}
-		err := model.OrderDesc("id").Scan(&users)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(users))
-		for _, u := range users {
-			data = append(data, map[string]any{
-				"id":           u.Id,
-				"username":     u.Username,
-				"email":        u.Email,
-				"display_name": u.DisplayName,
-				"role":         u.Role,
-				"status":       u.Status,
-				"created_at":   u.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			model := dao.TntUsers.Ctx(ctx).

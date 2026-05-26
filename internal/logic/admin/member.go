@@ -8,7 +8,6 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -351,76 +350,25 @@ func buildMemberFilters(m *gdb.Model, keyword, status, role string, tenantID int
 
 // ExportMembers exports member list to CSV or Excel.
 func (s *sAdmin) ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq) (*v1.AdminMemberExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "tenant_name", Header: "租户名称"},
-		{Field: "username", Header: "用户名"},
-		{Field: "email", Header: "邮箱"},
-		{Field: "display_name", Header: "显示名称"},
-		{Field: "role", Header: "角色"},
-		{Field: "status", Header: "状态"},
-		{Field: "last_login_at", Header: "最后登录时间"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
-	config := export.Config{
-		Format:   format,
-		Filename: "成员_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
-	}
-
 	memberFields := "tnt_users.id, tnt_users.tenant_id, t.name as tenant_name, t.code as tenant_code, tnt_users.username, tnt_users.email, tnt_users.display_name, tnt_users.role, tnt_users.status, tnt_users.last_login_at, tnt_users.last_login_ip, tnt_users.failed_attempts, tnt_users.created_at"
 
-	if format == "xlsx" {
-		m := buildMemberFilters(
-			dao.TntUsers.Ctx(ctx).LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id"),
-			req.Keyword, req.Status, req.Role, req.TenantID,
-		)
-		var members []struct {
-			Id             int64       `json:"id"`
-			TenantId       int64       `json:"tenant_id"`
-			TenantName     string      `json:"tenant_name"`
-			TenantCode     string      `json:"tenant_code"`
-			Username       string      `json:"username"`
-			Email          string      `json:"email"`
-			DisplayName    string      `json:"display_name"`
-			Role           string      `json:"role"`
-			Status         string      `json:"status"`
-			LastLoginAt    *gtime.Time `json:"last_login_at"`
-			LastLoginIp    string      `json:"last_login_ip"`
-			FailedAttempts int         `json:"failed_attempts"`
-			CreatedAt      *gtime.Time `json:"created_at"`
-		}
-		if err := m.Fields(memberFields).OrderDesc("tnt_users.id").Scan(&members); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(members))
-		for i, m := range members {
-			data[i] = map[string]any{
-				"id":            m.Id,
-				"tenant_name":   m.TenantName,
-				"username":      m.Username,
-				"email":         m.Email,
-				"display_name":  m.DisplayName,
-				"role":          m.Role,
-				"status":        m.Status,
-				"last_login_at": m.LastLoginAt.String(),
-				"created_at":    m.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
+	config := export.Config{
+		Format:   req.Format,
+		Filename: "成员_" + gtime.Now().Format("Ymd_His"),
+		Columns: []export.Column{
+			{Field: "id", Header: "ID"},
+			{Field: "tenant_name", Header: "租户名称"},
+			{Field: "username", Header: "用户名"},
+			{Field: "email", Header: "邮箱"},
+			{Field: "display_name", Header: "显示名称"},
+			{Field: "role", Header: "角色"},
+			{Field: "status", Header: "状态"},
+			{Field: "last_login_at", Header: "最后登录时间"},
+			{Field: "created_at", Header: "创建时间"},
+		},
 	}
 
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			m := buildMemberFilters(
@@ -428,19 +376,15 @@ func (s *sAdmin) ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq
 				req.Keyword, req.Status, req.Role, req.TenantID,
 			)
 			var batch []struct {
-				Id             int64       `json:"id"`
-				TenantId       int64       `json:"tenant_id"`
-				TenantName     string      `json:"tenant_name"`
-				TenantCode     string      `json:"tenant_code"`
-				Username       string      `json:"username"`
-				Email          string      `json:"email"`
-				DisplayName    string      `json:"display_name"`
-				Role           string      `json:"role"`
-				Status         string      `json:"status"`
-				LastLoginAt    *gtime.Time `json:"last_login_at"`
-				LastLoginIp    string      `json:"last_login_ip"`
-				FailedAttempts int         `json:"failed_attempts"`
-				CreatedAt      *gtime.Time `json:"created_at"`
+				Id          int64       `json:"id"`
+				TenantName  string      `json:"tenant_name"`
+				Username    string      `json:"username"`
+				Email       string      `json:"email"`
+				DisplayName string      `json:"display_name"`
+				Role        string      `json:"role"`
+				Status      string      `json:"status"`
+				LastLoginAt *gtime.Time `json:"last_login_at"`
+				CreatedAt   *gtime.Time `json:"created_at"`
 			}
 			if err := m.Fields(memberFields).OrderDesc("tnt_users.id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return

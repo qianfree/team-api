@@ -5,7 +5,6 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -136,15 +135,6 @@ func (s *sAdmin) ToggleRecommend(ctx context.Context, req *v1.PlanToggleRecommen
 
 // ExportPlans exports plan list to CSV or Excel.
 func (s *sAdmin) ExportPlans(ctx context.Context, req *v1.PlanExportReq) (*v1.PlanExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "name", Header: "名称"},
@@ -158,54 +148,14 @@ func (s *sAdmin) ExportPlans(ctx context.Context, req *v1.PlanExportReq) (*v1.Pl
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "套餐_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
 	planFields := "id, name, identifier, monthly_price, yearly_price, status, monthly_quota_tokens, is_recommended, created_at"
 
-	if format == "xlsx" {
-		query := dao.PlnPlans.Ctx(ctx)
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		var plans []struct {
-			Id                 int64       `json:"id"`
-			Name               string      `json:"name"`
-			Identifier         string      `json:"identifier"`
-			MonthlyPrice       float64     `json:"monthly_price"`
-			YearlyPrice        float64     `json:"yearly_price"`
-			Status             string      `json:"status"`
-			MonthlyQuotaTokens int64       `json:"monthly_quota_tokens"`
-			IsRecommended      bool        `json:"is_recommended"`
-			CreatedAt          *gtime.Time `json:"created_at"`
-		}
-		if err := query.Fields(planFields).OrderAsc("sort_order").Scan(&plans); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(plans))
-		for i, p := range plans {
-			isRec := "否"
-			if p.IsRecommended {
-				isRec = "是"
-			}
-			data[i] = map[string]any{
-				"id":                   p.Id,
-				"name":                 p.Name,
-				"identifier":           p.Identifier,
-				"monthly_price":        p.MonthlyPrice,
-				"yearly_price":         p.YearlyPrice,
-				"status":               p.Status,
-				"monthly_quota_tokens": p.MonthlyQuotaTokens,
-				"is_recommended":       isRec,
-				"created_at":           p.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			query := dao.PlnPlans.Ctx(ctx)
