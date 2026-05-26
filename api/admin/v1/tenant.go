@@ -47,6 +47,8 @@ type TenantItem struct {
 	DefaultChannelScope string `json:"default_channel_scope"`
 	MemberCount         int    `json:"member_count"`
 	WalletBalance       string `json:"wallet_balance"`
+	Level               int    `json:"level"`
+	LevelName           string `json:"level_name"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
 }
@@ -85,6 +87,7 @@ type TenantUpdateReq struct {
 	Name           string `json:"name" dc:"租户名称"`
 	MaxMembers     *int   `json:"max_members" dc:"最大成员数"`
 	MaxConcurrency *int   `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
+	Level          *int   `json:"level" dc:"租户等级（调整等级会同步更新成员数和并发数为该等级的配置值）"`
 }
 
 type TenantUpdateRes struct{}

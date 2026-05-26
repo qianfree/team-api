@@ -151,6 +151,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '租户详情' },
       },
       {
+        path: 'tenant-levels',
+        name: 'AdminTenantLevels',
+        component: () => import('@/views/tenant/TenantLevelsPage.vue'),
+        meta: { title: '租户级别' },
+      },
+      {
         path: 'members',
         name: 'AdminMembers',
         component: () => import('@/views/tenant/MembersPage.vue'),

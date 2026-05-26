@@ -9,11 +9,16 @@ type TenantWalletReq struct {
 }
 
 type TenantWalletRes struct {
-	Balance          float64 `json:"balance"`
-	FrozenBalance    float64 `json:"frozen_balance"`
-	AvailableBalance float64 `json:"available_balance"`
-	WarningThreshold float64 `json:"warning_threshold"`
-	Currency         string  `json:"currency"`
+	Balance            float64 `json:"balance"`
+	FrozenBalance      float64 `json:"frozen_balance"`
+	AvailableBalance   float64 `json:"available_balance"`
+	WarningThreshold   float64 `json:"warning_threshold"`
+	Currency           string  `json:"currency"`
+	Level              int     `json:"level"`
+	LevelName          string  `json:"level_name"`
+	CumulativeRecharge float64 `json:"cumulative_recharge"`
+	NextLevelThreshold float64 `json:"next_level_threshold"`
+	NextLevelName      string  `json:"next_level_name"`
 }
 
 type TenantWalletTransactionsReq struct {

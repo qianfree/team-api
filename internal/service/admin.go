@@ -363,6 +363,10 @@ type (
 		UpdateTenantChannelScope(ctx context.Context, req *v1.TenantChannelScopeUpdateReq) (*v1.TenantChannelScopeUpdateRes, error)
 		// ExportTenants exports tenant list to CSV or Excel.
 		ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v1.TenantExportRes, error)
+		ListTenantLevelConfigs(ctx context.Context, _ *v1.TenantLevelConfigListReq) (*v1.TenantLevelConfigListRes, error)
+		CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigCreateReq) (*v1.TenantLevelConfigCreateRes, error)
+		UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigUpdateReq) (*v1.TenantLevelConfigUpdateRes, error)
+		DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigDeleteReq) (*v1.TenantLevelConfigDeleteRes, error)
 		// ListTenantModels 列出租户已分配的模型
 		ListTenantModels(ctx context.Context, req *v1.TenantModelListReq) (*v1.TenantModelListRes, error)
 		// BatchAssignModels 批量分配模型给租户

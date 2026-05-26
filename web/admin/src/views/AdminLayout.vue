@@ -163,6 +163,7 @@ const menuGroups = [
     icon: IconUserGroup,
     items: [
       { name: 'AdminTenants', label: '租户列表', icon: IconHome },
+      { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers },
       { name: 'AdminMembers', label: '成员列表', icon: IconUser },
       { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
     ],

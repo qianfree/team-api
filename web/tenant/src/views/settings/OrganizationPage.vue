@@ -214,6 +214,14 @@ onMounted(() => {
 						</span>
 					</div>
 
+					<!-- Level -->
+					<div>
+						<p class="input-label">等级</p>
+						<span class="badge badge-primary">
+							{{ orgInfo.level_name || 'LV' + orgInfo.level }}
+						</span>
+					</div>
+
 					<!-- Member Count -->
 					<div>
 						<p class="input-label">成员数</p>

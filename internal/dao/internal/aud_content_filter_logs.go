@@ -25,6 +25,7 @@ type AudContentFilterLogsColumns struct {
 	TenantId        string // 租户ID
 	UserId          string // 用户ID
 	ApiKeyId        string // API Key ID
+	ProjectId       string // 项目ID
 	RequestId       string // 请求唯一ID
 	Method          string // HTTP 方法
 	Path            string // 请求路径
@@ -34,7 +35,6 @@ type AudContentFilterLogsColumns struct {
 	OriginalSnippet string // 原始请求体片段（截断存储，仅 replace 模式）
 	Blocked         string // 是否被拦截（mode=block 时为 true）
 	CreatedAt       string // 创建时间
-	ProjectId       string // 项目ID
 }
 
 // audContentFilterLogsColumns holds the columns for the table aud_content_filter_logs.
@@ -43,6 +43,7 @@ var audContentFilterLogsColumns = AudContentFilterLogsColumns{
 	TenantId:        "tenant_id",
 	UserId:          "user_id",
 	ApiKeyId:        "api_key_id",
+	ProjectId:       "project_id",
 	RequestId:       "request_id",
 	Method:          "method",
 	Path:            "path",
@@ -52,7 +53,6 @@ var audContentFilterLogsColumns = AudContentFilterLogsColumns{
 	OriginalSnippet: "original_snippet",
 	Blocked:         "blocked",
 	CreatedAt:       "created_at",
-	ProjectId:       "project_id",
 }
 
 // NewAudContentFilterLogsDao creates and returns a new DAO object for table data access.

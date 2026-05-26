@@ -30,6 +30,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		Code       string `json:"code"`
 		LogoUrl    string `json:"logo_url"`
 		Status     string `json:"status"`
+		Level      int    `json:"level"`
 		MaxMembers int    `json:"max_members"`
 		CreatedAt  string `json:"created_at"`
 	}
@@ -50,12 +51,23 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		return nil, err
 	}
 
+	// Look up level name
+	var levelName string
+	if tenant.Level > 0 {
+		_ = dao.TntTenantLevelConfigs.Ctx(ctx).
+			Where("level", tenant.Level).
+			Fields("name").
+			Scan(&levelName)
+	}
+
 	return &v1.TenantOrgInfoRes{
 		ID:          tenant.Id,
 		Name:        tenant.Name,
 		Code:        tenant.Code,
 		LogoURL:     tenant.LogoUrl,
 		Status:      tenant.Status,
+		Level:       tenant.Level,
+		LevelName:   levelName,
 		MaxMembers:  tenant.MaxMembers,
 		MemberCount: int(memberCount),
 		CreatedAt:   tenant.CreatedAt,

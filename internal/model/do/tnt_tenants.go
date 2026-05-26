@@ -29,4 +29,5 @@ type TntTenants struct {
 	DataRemovalAt       *gtime.Time // 数据清除时间（冻结 30 天后）
 	MaxConcurrency      any         // 租户总并发上限（0表示不限制）
 	DefaultChannelScope any         // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
+	Level               any         // 当前等级（对应 tnt_tenant_level_configs.level）
 }
