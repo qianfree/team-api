@@ -6,6 +6,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // pricingTierRow 阶梯定价行（与 billing.pricingTierRow 结构一致）
@@ -18,7 +19,7 @@ type pricingTierRow struct {
 
 // ListAvailableModels 获取租户可用的模型列表
 func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsReq) (*v1.TenantAvailableModelsRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	query := dao.MdlTenantModels.Ctx(ctx).
 		LeftJoin("mdl_models m ON mdl_tenant_models.model_id = m.id").

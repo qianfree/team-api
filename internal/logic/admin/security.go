@@ -99,7 +99,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 
 // Setup2FA starts the 2FA setup process for the current admin user.
 func (s *sAdmin) Setup2FA(ctx context.Context, _ *v1.Admin2FASetupReq) (*v1.Admin2FASetupRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 	secret, uri, err := common.Setup2FA(ctx, "admin", userID)
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func (s *sAdmin) Setup2FA(ctx context.Context, _ *v1.Admin2FASetupReq) (*v1.Admi
 
 // Enable2FA confirms and enables 2FA after verifying the code.
 func (s *sAdmin) Enable2FA(ctx context.Context, req *v1.Admin2FAEnableReq) (*v1.Admin2FAEnableRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 
 	// Get pending secret from session/cache (stored temporarily during setup)
 	secret, err := getPendingTOTPSecret(ctx, userID)
@@ -143,7 +143,7 @@ func (s *sAdmin) Enable2FA(ctx context.Context, req *v1.Admin2FAEnableReq) (*v1.
 
 // Disable2FA disables 2FA for the current admin user.
 func (s *sAdmin) Disable2FA(ctx context.Context, req *v1.Admin2FADisableReq) (*v1.Admin2FADisableRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 	err := common.Disable2FA(ctx, "admin", userID, req.Code)
 	if err != nil {
 		return nil, err
@@ -153,7 +153,7 @@ func (s *sAdmin) Disable2FA(ctx context.Context, req *v1.Admin2FADisableReq) (*v
 
 // RegenerateBackupCodes generates new backup codes.
 func (s *sAdmin) RegenerateBackupCodes(ctx context.Context, req *v1.Admin2FARegenerateBackupCodesReq) (*v1.Admin2FARegenerateBackupCodesRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 	codes, err := common.RegenerateBackupCodes(ctx, "admin", userID, req.Code)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (s *sAdmin) RegenerateBackupCodes(ctx context.Context, req *v1.Admin2FARege
 
 // ConfirmHighRisk generates a confirm token for high-risk operations.
 func (s *sAdmin) ConfirmHighRisk(ctx context.Context, req *v1.Admin2FAConfirmReq) (*v1.Admin2FAConfirmRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 
 	enabled, err := common.Is2FAEnabled(ctx, "admin", userID)
 	if err != nil {

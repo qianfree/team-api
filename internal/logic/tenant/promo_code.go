@@ -10,13 +10,14 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 )
 
 // ValidatePromoCode 校验优惠码并返回折扣金额
 func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var promo *struct {
 		ID            int64     `json:"id"`

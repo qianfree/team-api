@@ -60,7 +60,7 @@ func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.Orde
 
 // RefundOrder 发起退款
 func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error) {
-	adminUserID := ctxUserID(ctx)
+	adminUserID := common.GetCtxUserID(ctx)
 
 	var order struct {
 		TenantID       int64   `json:"tenant_id"`
@@ -106,7 +106,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 
 // OrderComplete 手动完成订单
 func (s *sAdmin) OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error) {
-	adminUserID := ctxUserID(ctx)
+	adminUserID := common.GetCtxUserID(ctx)
 
 	orderNo, err := getOrderForComplete(ctx, req.Id)
 	if err != nil {

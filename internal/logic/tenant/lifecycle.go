@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // 合法状态转换映射
@@ -72,7 +73,7 @@ func TransitionTenantStatus(ctx context.Context, tenantID int64, newStatus strin
 
 // RequestClosure 申请关户
 func (s *sTenant) RequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (*v1.TenantRequestClosureRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	if err := TransitionTenantStatus(ctx, tenantID, "closing"); err != nil {
 		return nil, err
 	}
@@ -81,7 +82,7 @@ func (s *sTenant) RequestClosure(ctx context.Context, req *v1.TenantRequestClosu
 
 // CancelClosure 取消关户
 func (s *sTenant) CancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (*v1.TenantCancelClosureRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	if err := TransitionTenantStatus(ctx, tenantID, "active"); err != nil {
 		return nil, err
 	}

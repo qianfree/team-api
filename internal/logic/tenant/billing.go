@@ -14,16 +14,17 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // Wallet 获取租户钱包余额
 func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.TenantWalletRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	type walletRow struct {
 		Balance          float64 `json:"balance"`
@@ -73,11 +74,11 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 
 // WalletTransactions 获取租户钱包流水
 func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsReq) (*v1.TenantWalletTransactionsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.BilTransactions.Ctx(ctx).
@@ -150,9 +151,9 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 
 // UsageLogs 获取租户用量日志
 func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string
@@ -242,9 +243,9 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 
 // ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
@@ -344,12 +345,12 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 
 // ExportWalletTransactions exports the tenant wallet transactions as CSV or Excel.
 func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsExportReq) (*v1.TenantWalletTransactionsExportRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
@@ -413,11 +414,11 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 
 // WalletFrozenItems 获取冻结明细
 func (s *sTenant) WalletFrozenItems(ctx context.Context, req *v1.TenantWalletFrozenItemsReq) (*v1.TenantWalletFrozenItemsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	items, err := billing.GetFrozenItems(ctx, tenantID)
 	if err != nil {

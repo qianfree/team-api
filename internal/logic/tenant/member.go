@@ -18,13 +18,14 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // ListMembers returns a paginated list of tenant members.
 func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) (*v1.TenantMemberListRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -83,8 +84,8 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 
 // InviteMember generates an invitation link.
 func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteReq) (*v1.TenantMemberInviteRes, error) {
-	tenantID := ctxTenantID(ctx)
-	creatorID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	creatorID := middleware.GetUserID(ctx)
 
 	// Check member limit
 	memberCount, err := dao.TntUsers.Ctx(ctx).
@@ -358,7 +359,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 
 // CreateMember directly creates a member account within the tenant.
 func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateReq) (*v1.TenantMemberCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Validate role
 	if err := common.ValidateTenantRole(req.Role); err != nil {
@@ -464,8 +465,8 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 // RemoveMember removes a member from the tenant.
 // Revokes all API keys, anonymizes personal data, releases member model scopes.
 func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveReq) (*v1.TenantMemberRemoveRes, error) {
-	tenantID := ctxTenantID(ctx)
-	currentUserID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
 
 	if memberID == currentUserID {
@@ -596,8 +597,8 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 
 // UpdateMemberRole updates a member's role.
 func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (*v1.TenantMemberUpdateRoleRes, error) {
-	tenantID := ctxTenantID(ctx)
-	currentUserID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
 
 	if memberID == currentUserID {
@@ -637,8 +638,8 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 
 // ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
 func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error) {
-	tenantID := ctxTenantID(ctx)
-	currentUserID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
 
 	if memberID == currentUserID {
@@ -686,7 +687,7 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 
 // GetMember returns a single member's detail.
 func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var user struct {
 		Id          int64  `json:"id"`
@@ -723,7 +724,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 
 // GetMemberUsage returns usage statistics for a single member.
 func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageReq) (*v1.TenantMemberUsageRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Verify member exists in tenant
 	var user struct {
@@ -776,7 +777,7 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 
 // ListMemberApiKeys returns a paginated list of API keys belonging to a specific member.
 func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApiKeysReq) (*v1.TenantMemberApiKeysRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -843,7 +844,7 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 
 // ExportMembers exports the tenant member list as CSV or Excel.
 func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},

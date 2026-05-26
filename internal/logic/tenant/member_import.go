@@ -16,6 +16,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
@@ -31,8 +32,8 @@ type ImportResult struct {
 
 // MemberImport parses CSV content, validates, creates an import record.
 func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error) {
-	tenantID := ctxTenantID(ctx)
-	creatorID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	creatorID := middleware.GetUserID(ctx)
 
 	// Get CSV from multipart form file
 	file := g.RequestFromCtx(ctx).GetUploadFile("file")
@@ -60,7 +61,7 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 
 // ImportRecords returns a paginated list of import records.
 func (s *sTenant) ImportRecords(ctx context.Context, req *v1.TenantImportRecordsReq) (*v1.TenantImportRecordsRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -117,7 +118,7 @@ func (s *sTenant) ImportRecords(ctx context.Context, req *v1.TenantImportRecords
 
 // ImportRecordGet returns the status of a member import.
 func (s *sTenant) ImportRecordGet(ctx context.Context, req *v1.TenantImportRecordGetReq) (*v1.TenantImportRecordGetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var record struct {
 		ID           int64  `json:"id"`

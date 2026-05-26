@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/model/entity"
 
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 )
@@ -48,11 +49,11 @@ func saveTenantSettings(ctx context.Context, tenantID int64, settings map[string
 // AuditConfigGet returns the tenant's own audit level.
 // 租户审计级别与全局级别完全独立，未设置时默认 masked。
 func (s *sTenant) AuditConfigGet(ctx context.Context, req *v1.TenantAuditConfigGetReq) (*v1.TenantAuditConfigGetRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	tenantLevel := common.GetTenantAuditLevel(ctx, tenantID)
 	if tenantLevel == "" {
@@ -70,7 +71,7 @@ func (s *sTenant) AuditConfigUpdate(ctx context.Context, req *v1.TenantAuditConf
 	if err := ownerOnly(ctx); err != nil {
 		return nil, err
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	level := req.AuditLevel
 
@@ -94,11 +95,11 @@ func (s *sTenant) AuditConfigUpdate(ctx context.Context, req *v1.TenantAuditConf
 
 // AuditLogs returns a paginated list of audit logs for the tenant.
 func (s *sTenant) AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v1.TenantAuditLogsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -152,11 +153,11 @@ func isValidAuditLevel(level string) bool {
 
 // TenantRequestAuditLogs 分页查询租户的请求审计日志（不含 body，性能优先）
 func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (*v1.TenantRequestAuditLogsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string
@@ -236,11 +237,11 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 
 // TenantRequestAuditLogDetail 查询单条请求审计日志详情（含 request_body 和 response_body）
 func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (*v1.TenantRequestAuditLogDetailRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var record *entity.AudRequestLogs
 	err := dao.AudRequestLogs.Ctx(ctx).
