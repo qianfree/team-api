@@ -556,12 +556,6 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 
 // ExportApiKeys exports the tenant API key list as CSV or Excel.
 func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 
@@ -577,7 +571,7 @@ func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportR
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "API密钥_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -595,44 +589,7 @@ func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportR
 		return query
 	}
 
-	if format == "xlsx" {
-		type keyRow struct {
-			Id        int64      `json:"id"`
-			Name      string     `json:"name"`
-			KeyPrefix string     `json:"key_prefix"`
-			KeyType   string     `json:"key_type"`
-			Scope     string     `json:"scope"`
-			Status    string     `json:"status"`
-			ExpiresAt *time.Time `json:"expires_at"`
-			CreatedAt *time.Time `json:"created_at"`
-		}
-
-		var keys []keyRow
-		err := buildQuery().
-			Fields("id, name, key_prefix, key_type, scope, status, expires_at, created_at").
-			OrderDesc("created_at").
-			Scan(&keys)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(keys))
-		for _, k := range keys {
-			data = append(data, map[string]any{
-				"id":         k.Id,
-				"name":       k.Name,
-				"key_prefix": k.KeyPrefix,
-				"key_type":   k.KeyType,
-				"scope":      k.Scope,
-				"status":     k.Status,
-				"expires_at": k.ExpiresAt,
-				"created_at": k.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			type keyRow struct {

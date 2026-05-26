@@ -7,7 +7,6 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -398,12 +397,6 @@ func (s *sTenant) ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 
 	columns := []export.Column{
@@ -418,39 +411,12 @@ func (s *sTenant) ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "订单列表_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
-	if format == "xlsx" {
-		orders := make([]*v1.TenantOrderItem, 0)
-		query := dao.OrdOrders.Ctx(ctx).Where("tenant_id", tenantID)
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		err := query.OrderDesc("created_at").Scan(&orders)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(orders))
-		for _, o := range orders {
-			data = append(data, map[string]any{
-				"id":              o.Id,
-				"order_no":        o.OrderNo,
-				"order_type":      o.OrderType,
-				"amount":          o.Amount,
-				"final_amount":    o.FinalAmount,
-				"payment_channel": o.PaymentChannel,
-				"status":          o.Status,
-				"created_at":      o.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			orders := make([]*v1.TenantOrderItem, 0)

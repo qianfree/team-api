@@ -9,7 +9,6 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
@@ -218,12 +217,6 @@ func (s *sTenant) TicketReopen(ctx context.Context, req *v1.TenantTicketReopenRe
 
 // ExportTickets exports the tenant ticket list as CSV or Excel.
 func (s *sTenant) ExportTickets(ctx context.Context, req *v1.TenantTicketExportReq) (*v1.TenantTicketExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 
@@ -238,7 +231,7 @@ func (s *sTenant) ExportTickets(ctx context.Context, req *v1.TenantTicketExportR
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "工单列表_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -255,29 +248,7 @@ func (s *sTenant) ExportTickets(ctx context.Context, req *v1.TenantTicketExportR
 		return query
 	}
 
-	if format == "xlsx" {
-		var items []*v1.TenantTicketItem
-		err := buildQuery().OrderDesc("spt_tickets.created_at").Scan(&items)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			data = append(data, map[string]any{
-				"id":                  item.Id,
-				"category":            item.Category,
-				"title":               item.Title,
-				"urgency":             item.Urgency,
-				"status":              item.Status,
-				"assigned_admin_name": item.AssignedAdminName,
-				"created_at":          item.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			var items []*v1.TenantTicketItem

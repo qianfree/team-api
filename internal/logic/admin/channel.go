@@ -618,84 +618,24 @@ func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealt
 
 // ExportChannels exports channel list to CSV or Excel.
 func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "name", Header: "名称"},
-		{Field: "type_name", Header: "供应商类型"},
-		{Field: "status", Header: "状态"},
-		{Field: "priority", Header: "优先级"},
-		{Field: "weight", Header: "权重"},
-		{Field: "health_score", Header: "健康分数"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
-	config := export.Config{
-		Format:   format,
-		Filename: "渠道_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
-	}
-
 	channelFields := "chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.created_at, h.health_score"
 
-	if format == "xlsx" {
-		query := dao.ChnChannels.Ctx(ctx).
-			LeftJoin("chn_health_scores h ON chn_channels.id = h.channel_id")
-		if req.Type > 0 {
-			query = query.Where("chn_channels.type", req.Type)
-		}
-		if req.Status != "" {
-			query = query.Where("chn_channels.status", req.Status)
-		}
-		if req.Search != "" {
-			query = query.Where("chn_channels.name LIKE ? OR chn_channels.remark LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
-		}
-		var channels []struct {
-			ID          int64       `json:"id"`
-			Name        string      `json:"name"`
-			Type        int         `json:"type"`
-			Status      string      `json:"status"`
-			Priority    int         `json:"priority"`
-			Weight      int         `json:"weight"`
-			CreatedAt   *gtime.Time `json:"created_at"`
-			HealthScore *float64    `json:"health_score"`
-		}
-		if err := query.Fields(channelFields).OrderDesc("chn_channels.priority").Scan(&channels); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(channels))
-		for i, ch := range channels {
-			typeName := providerTypeNames[ch.Type]
-			if typeName == "" {
-				typeName = fmt.Sprintf("Unknown(%d)", ch.Type)
-			}
-			healthScore := ""
-			if ch.HealthScore != nil {
-				healthScore = fmt.Sprintf("%.2f", *ch.HealthScore)
-			}
-			data[i] = map[string]any{
-				"id":           ch.ID,
-				"name":         ch.Name,
-				"type_name":    typeName,
-				"status":       ch.Status,
-				"priority":     ch.Priority,
-				"weight":       ch.Weight,
-				"health_score": healthScore,
-				"created_at":   ch.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
+	config := export.Config{
+		Format:   req.Format,
+		Filename: "渠道_" + gtime.Now().Format("Ymd_His"),
+		Columns: []export.Column{
+			{Field: "id", Header: "ID"},
+			{Field: "name", Header: "名称"},
+			{Field: "type_name", Header: "供应商类型"},
+			{Field: "status", Header: "状态"},
+			{Field: "priority", Header: "优先级"},
+			{Field: "weight", Header: "权重"},
+			{Field: "health_score", Header: "健康分数"},
+			{Field: "created_at", Header: "创建时间"},
+		},
 	}
 
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			query := dao.ChnChannels.Ctx(ctx).

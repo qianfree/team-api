@@ -242,12 +242,6 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 
 // ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 	userID := ctxUserID(ctx)
 	role := ctxUserRole(ctx)
@@ -265,7 +259,7 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "用量日志_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -308,40 +302,7 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	where := strings.Join(conditions, " AND ")
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
-	if format == "xlsx" {
-		dataSQL := fmt.Sprintf(
-			`SELECT u.id, COALESCE(t.username, '') AS username, u.model_name, u.request_type,
-			        u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at
-			 FROM %s WHERE %s ORDER BY u.created_at DESC`,
-			fromClause, where,
-		)
-		result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(result))
-		for _, row := range result {
-			m := make(map[string]any, len(row))
-			for k, v := range row {
-				switch raw := v.Val().(type) {
-				case []byte:
-					s := string(raw)
-					if f, err := strconv.ParseFloat(s, 64); err == nil {
-						m[k] = f
-					} else {
-						m[k] = s
-					}
-				default:
-					m[k] = raw
-				}
-			}
-			data = append(data, m)
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			dataSQL := fmt.Sprintf(
@@ -388,12 +349,6 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
 	tenantID := ctxTenantID(ctx)
 
 	columns := []export.Column{
@@ -406,46 +361,12 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "交易记录_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
-	if format == "xlsx" {
-		type transactionRow struct {
-			Id           int64       `json:"id"`
-			Type         string      `json:"type"`
-			Amount       float64     `json:"amount"`
-			BalanceAfter float64     `json:"balance_after"`
-			Description  string      `json:"description"`
-			CreatedAt    *gtime.Time `json:"created_at"`
-		}
-
-		var records []transactionRow
-		err := dao.BilTransactions.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Fields("id, type, amount, balance_after, description, created_at").
-			OrderDesc("created_at").
-			Scan(&records)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(records))
-		for _, r := range records {
-			data = append(data, map[string]any{
-				"id":            r.Id,
-				"type":          r.Type,
-				"amount":        r.Amount,
-				"balance_after": r.BalanceAfter,
-				"description":   r.Description,
-				"created_at":    r.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			type transactionRow struct {

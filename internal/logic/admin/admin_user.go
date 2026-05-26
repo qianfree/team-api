@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -309,67 +308,23 @@ func buildUserFilters(m *gdb.Model, keyword, role, status string) *gdb.Model {
 
 // ExportUsers exports admin users to CSV or Excel.
 func (s *sAdmin) ExportUsers(ctx context.Context, req *v1.AdminUserExportReq) (*v1.AdminUserExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "username", Header: "用户名"},
-		{Field: "email", Header: "邮箱"},
-		{Field: "display_name", Header: "显示名称"},
-		{Field: "role", Header: "角色"},
-		{Field: "status", Header: "状态"},
-		{Field: "last_login_at", Header: "最后登录时间"},
-		{Field: "last_login_ip", Header: "最后登录IP"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "管理员_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
+		Columns: []export.Column{
+			{Field: "id", Header: "ID"},
+			{Field: "username", Header: "用户名"},
+			{Field: "email", Header: "邮箱"},
+			{Field: "display_name", Header: "显示名称"},
+			{Field: "role", Header: "角色"},
+			{Field: "status", Header: "状态"},
+			{Field: "last_login_at", Header: "最后登录时间"},
+			{Field: "last_login_ip", Header: "最后登录IP"},
+			{Field: "created_at", Header: "创建时间"},
+		},
 	}
 
-	if format == "xlsx" {
-		m := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status)
-		var users []struct {
-			Id          int64       `json:"id"`
-			Username    string      `json:"username"`
-			Email       string      `json:"email"`
-			DisplayName string      `json:"display_name"`
-			Role        string      `json:"role"`
-			Status      string      `json:"status"`
-			LastLoginAt *gtime.Time `json:"last_login_at"`
-			LastLoginIp string      `json:"last_login_ip"`
-			CreatedAt   *gtime.Time `json:"created_at"`
-		}
-		if err := m.OrderDesc("id").Scan(&users); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(users))
-		for i, u := range users {
-			data[i] = map[string]any{
-				"id":            u.Id,
-				"username":      u.Username,
-				"email":         u.Email,
-				"display_name":  u.DisplayName,
-				"role":          u.Role,
-				"status":        u.Status,
-				"last_login_at": u.LastLoginAt.String(),
-				"last_login_ip": u.LastLoginIp,
-				"created_at":    u.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			m := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status)
