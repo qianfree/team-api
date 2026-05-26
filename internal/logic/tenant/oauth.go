@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	"github.com/gogf/gf/v2/frame/g"
 )
@@ -278,8 +279,8 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 		return nil, common.NewBusinessError(10059, "该 OAuth 供应商未启用")
 	}
 
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	oauthToken, err := provider.ExchangeToken(ctx, req.Code)
 	if err != nil {
@@ -336,8 +337,8 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 
 // UnlinkOAuth 解绑 OAuth 账号
 func (s *sTenant) UnlinkOAuth(ctx context.Context, req *v1.OAuthUnlinkReq) (*v1.OAuthUnlinkRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	_, err := g.DB().Model("tnt_oauth_identities").Ctx(ctx).
 		Where("tenant_id", tenantID).
@@ -353,8 +354,8 @@ func (s *sTenant) UnlinkOAuth(ctx context.Context, req *v1.OAuthUnlinkReq) (*v1.
 
 // ListOAuthProviders 获取已绑定的 OAuth 供应商列表
 func (s *sTenant) ListOAuthProviders(ctx context.Context, req *v1.OAuthListProvidersReq) (*v1.OAuthListProvidersRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	type row struct {
 		Provider         string `json:"provider" orm:"provider"`

@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
@@ -102,8 +103,8 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 
 // ChangeEmail handles email change for a tenant user.
 func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq) (*v1.TenantChangeEmailRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
 
 	// Verify code for new email

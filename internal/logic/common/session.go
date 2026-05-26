@@ -232,3 +232,29 @@ func CleanExpiredSessions(ctx context.Context) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+// GetCtxUserID extracts user ID from context.
+// The key "userId" is set by admin_auth or tenant_auth middleware.
+func GetCtxUserID(ctx context.Context) int64 {
+	val := ctx.Value("userId")
+	if val == nil {
+		return 0
+	}
+	if id, ok := val.(int64); ok {
+		return id
+	}
+	return 0
+}
+
+// GetCtxSessionID extracts session ID from context.
+// The key "sessionId" is set by admin_auth or tenant_auth middleware.
+func GetCtxSessionID(ctx context.Context) int64 {
+	val := ctx.Value("sessionId")
+	if val == nil {
+		return 0
+	}
+	if id, ok := val.(int64); ok {
+		return id
+	}
+	return 0
+}

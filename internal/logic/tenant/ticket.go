@@ -7,6 +7,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -15,8 +16,8 @@ import (
 
 // TicketCreate 创建工单
 func (s *sTenant) TicketCreate(ctx context.Context, req *v1.TenantTicketCreateReq) (*v1.TenantTicketCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	result, err := dao.SptTickets.Ctx(ctx).Insert(do.SptTickets{
 		TenantId:    tenantID,
@@ -37,8 +38,8 @@ func (s *sTenant) TicketCreate(ctx context.Context, req *v1.TenantTicketCreateRe
 
 // TicketList 获取租户工单列表
 func (s *sTenant) TicketList(ctx context.Context, req *v1.TenantTicketListReq) (*v1.TenantTicketListRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -70,8 +71,8 @@ func (s *sTenant) TicketList(ctx context.Context, req *v1.TenantTicketListReq) (
 
 // TicketGet 获取工单详情（含回复）
 func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v1.TenantTicketGetRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var ticket map[string]any
 	err := dao.SptTickets.Ctx(ctx).
@@ -113,8 +114,8 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 
 // TicketReply 租户用户回复工单
 func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq) (*v1.TenantTicketReplyRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	if req.Content == "" {
 		return nil, common.NewBadRequestError("回复内容不能为空")
@@ -171,8 +172,8 @@ func (s *sTenant) TicketReply(ctx context.Context, req *v1.TenantTicketReplyReq)
 
 // TicketClose 租户用户关闭工单
 func (s *sTenant) TicketClose(ctx context.Context, req *v1.TenantTicketCloseReq) (*v1.TenantTicketCloseRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	result, err := dao.SptTickets.Ctx(ctx).
 		Where("id", req.Id).
@@ -194,8 +195,8 @@ func (s *sTenant) TicketClose(ctx context.Context, req *v1.TenantTicketCloseReq)
 
 // TicketReopen 租户用户重新打开工单
 func (s *sTenant) TicketReopen(ctx context.Context, req *v1.TenantTicketReopenReq) (*v1.TenantTicketReopenRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	result, err := dao.SptTickets.Ctx(ctx).
 		Where("id", req.Id).
@@ -217,8 +218,8 @@ func (s *sTenant) TicketReopen(ctx context.Context, req *v1.TenantTicketReopenRe
 
 // ExportTickets exports the tenant ticket list as CSV or Excel.
 func (s *sTenant) ExportTickets(ctx context.Context, req *v1.TenantTicketExportReq) (*v1.TenantTicketExportRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},

@@ -198,7 +198,7 @@ func (s *sAdmin) ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq)
 		return nil, common.NewBadRequestError("回复内容不能为空")
 	}
 
-	adminID := getCtxUserID(ctx)
+	adminID := common.GetCtxUserID(ctx)
 
 	var ticket *struct {
 		Status          string `json:"status"`

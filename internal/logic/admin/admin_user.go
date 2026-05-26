@@ -190,7 +190,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 
 // DeleteUser deletes an admin user.
 func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v1.AdminUserDeleteRes, error) {
-	currentUserID := ctxUserID(ctx)
+	currentUserID := common.GetCtxUserID(ctx)
 
 	if req.Id == currentUserID {
 		return nil, common.NewBadRequestError("不能删除当前登录的用户")
@@ -226,7 +226,7 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 
 // UpdateUserStatus enables or disables an admin user.
 func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateStatusReq) (*v1.AdminUserUpdateStatusRes, error) {
-	currentUserID := ctxUserID(ctx)
+	currentUserID := common.GetCtxUserID(ctx)
 
 	if req.Id == currentUserID {
 		return nil, common.NewBadRequestError("不能修改当前登录用户的状态")

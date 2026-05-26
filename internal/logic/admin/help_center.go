@@ -197,7 +197,7 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 		"content":     req.Content,
 		"summary":     req.Summary,
 		"status":      req.Status,
-		"author_id":   getCtxUserID(ctx),
+		"author_id":   common.GetCtxUserID(ctx),
 		"sort_order":  req.SortOrder,
 		"keywords":    req.Keywords,
 	}

@@ -6,14 +6,15 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	"github.com/gogf/gf/v2/frame/g"
 )
 
 // CreateFeedback 提交反馈
 func (s *sTenant) CreateFeedback(ctx context.Context, req *v1.FeedbackCreateReq) (*v1.FeedbackCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	metadata := "{}"
 	if req.Metadata != nil {
@@ -40,8 +41,8 @@ func (s *sTenant) CreateFeedback(ctx context.Context, req *v1.FeedbackCreateReq)
 
 // ListFeedbacks 我的反馈列表
 func (s *sTenant) ListFeedbacks(ctx context.Context, req *v1.FeedbackListReq) (*v1.FeedbackListRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 	page, pageSize := normalizePagination(req.Page, req.PageSize)
 
 	query := g.DB().Model("spt_feedbacks").Ctx(ctx).
@@ -73,8 +74,8 @@ func (s *sTenant) ListFeedbacks(ctx context.Context, req *v1.FeedbackListReq) (*
 
 // GetFeedback 反馈详情
 func (s *sTenant) GetFeedback(ctx context.Context, req *v1.FeedbackGetReq) (*v1.FeedbackGetRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var row v1.FeedbackGetRes
 	err := g.DB().Model("spt_feedbacks").Ctx(ctx).

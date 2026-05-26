@@ -255,7 +255,7 @@ func (s *sAdmin) CreateAnnouncement(ctx context.Context, req *v1.AnnouncementCre
 	}
 
 	// Get admin user ID from context
-	adminUserID := getCtxUserID(ctx)
+	adminUserID := common.GetCtxUserID(ctx)
 
 	data := do.NtfAnnouncements{
 		Title:           req.Title,

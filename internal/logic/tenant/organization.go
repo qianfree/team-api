@@ -9,12 +9,13 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
 // ownerOnly checks if the current user is the tenant owner.
 func ownerOnly(ctx context.Context) error {
-	if ctxUserRole(ctx) != "owner" {
+	if middleware.GetUserRole(ctx) != "owner" {
 		return common.NewForbiddenError("仅组织所有者可执行此操作")
 	}
 	return nil
@@ -22,7 +23,7 @@ func ownerOnly(ctx context.Context) error {
 
 // GetOrgInfo returns tenant organization info.
 func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1.TenantOrgInfoRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var tenant *struct {
 		Id         int64  `json:"id"`
@@ -67,7 +68,7 @@ func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq)
 	if err := ownerOnly(ctx); err != nil {
 		return nil, err
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	data := do.TntTenants{}
 	if req.Name != nil {
@@ -89,8 +90,8 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 	if err := ownerOnly(ctx); err != nil {
 		return nil, err
 	}
-	tenantID := ctxTenantID(ctx)
-	currentOwnerID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	currentOwnerID := middleware.GetUserID(ctx)
 
 	if req.NewOwnerID == currentOwnerID {
 		return nil, common.NewBadRequestError("不能转让给自己")
@@ -171,7 +172,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 
 // GetProfile returns current user's profile.
 func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1.TenantProfileRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var user *struct {
 		Id          int64  `json:"id"`
@@ -204,7 +205,7 @@ func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1
 
 // UpdateProfile updates current user's profile.
 func (s *sTenant) UpdateProfile(ctx context.Context, req *v1.TenantProfileUpdateReq) (*v1.TenantProfileUpdateRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	data := do.TntUsers{}
 	if req.DisplayName != nil {

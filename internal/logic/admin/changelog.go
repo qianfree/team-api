@@ -18,7 +18,7 @@ func (s *sAdmin) CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq
 		"content":    req.Content,
 		"type":       req.Type,
 		"status":     "draft",
-		"created_by": getCtxUserID(ctx),
+		"created_by": common.GetCtxUserID(ctx),
 	}).Insert()
 	if err != nil {
 		return nil, err

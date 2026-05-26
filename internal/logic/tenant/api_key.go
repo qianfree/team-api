@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
@@ -20,9 +21,9 @@ import (
 
 // ApiKeyList 列出 API Keys，支持按类型过滤
 func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (*v1.TenantApiKeyListRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	page, pageSize := lcommon.NormalizePagination(req.Page, req.PageSize)
 
 	// member 只能查看个人密钥
@@ -111,9 +112,9 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 
 // ApiKeyCreate 创建新的 API Key
 func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateReq) (*v1.TenantApiKeyCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	keyType := req.KeyType
 	if keyType == "" {
@@ -204,9 +205,9 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 
 // ApiKeyDelete 禁用 API Key
 func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteReq) (*v1.TenantApiKeyDeleteRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 先查询密钥信息以判断类型
@@ -262,9 +263,9 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 
 // ApiKeyUpdate 更新 API Key 的可编辑字段
 func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateReq) (*v1.TenantApiKeyUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 查询密钥信息
@@ -388,9 +389,9 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 
 // ApiKeyUpdateScopes 更新 API Key 的模型 scope
 func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUpdateScopesReq) (*v1.TenantApiKeyUpdateScopesRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 先查询密钥信息以判断类型
@@ -448,7 +449,7 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 
 // ApiKeyModelScopes 查询 API Key 的模型范围
 func (s *sTenant) ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (*v1.TenantApiKeyModelScopesRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// 验证 key 属于该租户
 	count, err := dao.ApiKeys.Ctx(ctx).
@@ -556,8 +557,8 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 
 // ExportApiKeys exports the tenant API key list as CSV or Excel.
 func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},

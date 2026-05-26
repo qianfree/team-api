@@ -15,14 +15,15 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // Notifications 获取用户的通知列表（个人消息 + 广播消息）
 func (s *sTenant) Notifications(ctx context.Context, req *v1.TenantNotificationsReq) (*v1.TenantNotificationsRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
@@ -69,9 +70,9 @@ func (s *sTenant) Notifications(ctx context.Context, req *v1.TenantNotifications
 
 // UnreadCount 获取未读消息数量
 func (s *sTenant) UnreadCount(ctx context.Context, req *v1.TenantUnreadCountReq) (*v1.TenantUnreadCountRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	// Count personal unread messages
 	personalUnread, err := dao.NtfMessages.Ctx(ctx).
@@ -108,8 +109,8 @@ func (s *sTenant) UnreadCount(ctx context.Context, req *v1.TenantUnreadCountReq)
 
 // MarkRead 标记消息为已读
 func (s *sTenant) MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.TenantMarkReadRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	// Verify the message belongs to this tenant
 	var msg *struct {
@@ -132,7 +133,7 @@ func (s *sTenant) MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.
 
 	// Check role access for broadcast messages
 	if msg.IsBroadcast == 1 && msg.TargetRoles != "" {
-		role := ctxUserRole(ctx)
+		role := middleware.GetUserRole(ctx)
 		if !containsRole(msg.TargetRoles, role) {
 			return nil, common.NewForbiddenError("无权访问该消息")
 		}
@@ -174,9 +175,9 @@ func (s *sTenant) MarkRead(ctx context.Context, req *v1.TenantMarkReadReq) (*v1.
 
 // MarkAllRead 标记所有未读消息为已读
 func (s *sTenant) MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq) (*v1.TenantMarkAllReadRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	// Mark all personal unread messages as read
 	_, err := dao.NtfMessages.Ctx(ctx).
@@ -233,8 +234,8 @@ func (s *sTenant) MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq)
 
 // DeleteNotification 删除已读的个人消息（广播消息不允许用户删除）
 func (s *sTenant) DeleteNotification(ctx context.Context, req *v1.TenantNotificationDeleteReq) (*v1.TenantNotificationDeleteRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var msg struct {
 		ID          int64  `json:"id"`
@@ -275,8 +276,8 @@ func (s *sTenant) DeleteNotification(ctx context.Context, req *v1.TenantNotifica
 
 // NotificationPreferencesGet 获取合并后的通知偏好（组织 + 用户）
 func (s *sTenant) NotificationPreferencesGet(ctx context.Context, req *v1.TenantNotificationPreferencesGetReq) (*v1.TenantNotificationPreferencesGetRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	orgPrefs := loadPreferences(ctx, tenantID, 0, "org")
 	userPrefs := loadPreferences(ctx, tenantID, userID, "user")
@@ -291,15 +292,15 @@ func (s *sTenant) NotificationPreferencesGet(ctx context.Context, req *v1.Tenant
 
 // NotificationPreferencesUpdate 更新通知偏好
 func (s *sTenant) NotificationPreferencesUpdate(ctx context.Context, req *v1.TenantNotificationPreferencesUpdateReq) (*v1.TenantNotificationPreferencesUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	if req.Scope != "user" && req.Scope != "org" {
 		return nil, common.NewBadRequestError("scope 必须是 'user' 或 'org'")
 	}
 
 	// Safety categories cannot be fully disabled
-	if req.Scope == "org" && ctxUserRole(ctx) != "owner" {
+	if req.Scope == "org" && middleware.GetUserRole(ctx) != "owner" {
 		return nil, common.NewForbiddenError("仅组织所有者可修改组织级通知偏好")
 	}
 	validateSafetyCategories(req.Preferences)
@@ -524,9 +525,9 @@ func splitString(s, sep string) []string {
 
 // ExportNotifications exports the tenant notification list as CSV or Excel.
 func (s *sTenant) ExportNotifications(ctx context.Context, req *v1.TenantNotificationsExportReq) (*v1.TenantNotificationsExportRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},

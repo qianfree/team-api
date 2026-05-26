@@ -6,14 +6,15 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // TenantTaskList 租户异步任务列表
 // owner/admin 可查看租户所有任务，member 只能查看自己的任务
 func (s *sTenant) TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq) (*v1.TenantTaskListRes, error) {
-	tenantID := ctxTenantID(ctx)
-	role := ctxUserRole(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	role := middleware.GetUserRole(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	m := dao.TskModelTasks.Ctx(ctx).
 		LeftJoin("tnt_users u", "u.id = tsk_model_tasks.user_id AND u.tenant_id = tsk_model_tasks.tenant_id").
@@ -101,9 +102,9 @@ func (s *sTenant) TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq)
 // TenantTaskDetail 租户异步任务详情
 // owner/admin 可查看租户所有任务，member 只能查看自己的任务
 func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetailReq) (*v1.TenantTaskDetailRes, error) {
-	tenantID := ctxTenantID(ctx)
-	role := ctxUserRole(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	role := middleware.GetUserRole(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var task struct {
 		Id              int64   `json:"id"`

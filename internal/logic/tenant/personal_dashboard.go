@@ -8,12 +8,13 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // PersonalDashboard returns the personal dashboard overview for the current user.
 func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboardReq) (*v1.PersonalDashboardRes, error) {
-	userID := ctxUserID(ctx)
-	tenantID := ctxTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	now := time.Now()
 	todayStart := now.Format("2006-01-02") + " 00:00:00"
@@ -206,8 +207,8 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 
 // PersonalTokenTrends returns daily token usage trends for the current user.
 func (s *sTenant) PersonalTokenTrends(ctx context.Context, req *v1.PersonalTokenTrendsReq) (*v1.PersonalTokenTrendsRes, error) {
-	userID := ctxUserID(ctx)
-	tenantID := ctxTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30
@@ -240,8 +241,8 @@ func (s *sTenant) PersonalTokenTrends(ctx context.Context, req *v1.PersonalToken
 
 // PersonalModelDistribution returns model usage distribution for the current user.
 func (s *sTenant) PersonalModelDistribution(ctx context.Context, req *v1.PersonalModelDistReq) (*v1.PersonalModelDistRes, error) {
-	userID := ctxUserID(ctx)
-	tenantID := ctxTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30
@@ -275,8 +276,8 @@ func (s *sTenant) PersonalModelDistribution(ctx context.Context, req *v1.Persona
 
 // PersonalApiKeyUsage returns per-API-key usage breakdown for the current user.
 func (s *sTenant) PersonalApiKeyUsage(ctx context.Context, req *v1.PersonalApiKeyUsageReq) (*v1.PersonalApiKeyUsageRes, error) {
-	userID := ctxUserID(ctx)
-	tenantID := ctxTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30
