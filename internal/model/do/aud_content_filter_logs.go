@@ -16,6 +16,7 @@ type AudContentFilterLogs struct {
 	TenantId        any         // 租户ID
 	UserId          any         // 用户ID
 	ApiKeyId        any         // API Key ID
+	ProjectId       any         // 项目ID
 	RequestId       any         // 请求唯一ID
 	Method          any         // HTTP 方法
 	Path            any         // 请求路径
@@ -25,5 +26,4 @@ type AudContentFilterLogs struct {
 	OriginalSnippet any         // 原始请求体片段（截断存储，仅 replace 模式）
 	Blocked         any         // 是否被拦截（mode=block 时为 true）
 	CreatedAt       *gtime.Time // 创建时间
-	ProjectId       any         // 项目ID
 }

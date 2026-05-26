@@ -26,16 +26,17 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	tenantID := ctxTenantID(ctx)
 
 	type walletRow struct {
-		Balance          float64 `json:"balance"`
-		FrozenBalance    float64 `json:"frozen_balance"`
-		WarningThreshold float64 `json:"warning_threshold"`
-		Currency         string  `json:"currency"`
+		Balance            float64 `json:"balance"`
+		FrozenBalance      float64 `json:"frozen_balance"`
+		WarningThreshold   float64 `json:"warning_threshold"`
+		Currency           string  `json:"currency"`
+		CumulativeRecharge float64 `json:"cumulative_recharge"`
 	}
 
 	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		Fields("balance, frozen_balance, warning_threshold, currency").
+		Fields("balance, frozen_balance, warning_threshold, currency, cumulative_recharge").
 		Scan(&w)
 	if err != nil {
 		return nil, err

@@ -21,26 +21,28 @@ type BilWalletsDao struct {
 
 // BilWalletsColumns defines and stores column names for the table bil_wallets.
 type BilWalletsColumns struct {
-	Id               string // 主键ID
-	TenantId         string // 租户ID（每个租户一个钱包）
-	Balance          string // 总余额
-	FrozenBalance    string // 冻结余额（支付中/退款中，可用余额 = balance - frozen_balance）
-	WarningThreshold string // 余额预警线（低于此值触发通知）
-	Currency         string // 货币（USD）
-	CreatedAt        string // 创建时间
-	UpdatedAt        string // 更新时间
+	Id                 string // 主键ID
+	TenantId           string // 租户ID（每个租户一个钱包）
+	Balance            string // 总余额
+	FrozenBalance      string // 冻结余额（支付中/退款中，可用余额 = balance - frozen_balance）
+	WarningThreshold   string // 余额预警线（低于此值触发通知）
+	Currency           string // 货币（USD）
+	CreatedAt          string // 创建时间
+	UpdatedAt          string // 更新时间
+	CumulativeRecharge string // 累计充值总额（USD）
 }
 
 // bilWalletsColumns holds the columns for the table bil_wallets.
 var bilWalletsColumns = BilWalletsColumns{
-	Id:               "id",
-	TenantId:         "tenant_id",
-	Balance:          "balance",
-	FrozenBalance:    "frozen_balance",
-	WarningThreshold: "warning_threshold",
-	Currency:         "currency",
-	CreatedAt:        "created_at",
-	UpdatedAt:        "updated_at",
+	Id:                 "id",
+	TenantId:           "tenant_id",
+	Balance:            "balance",
+	FrozenBalance:      "frozen_balance",
+	WarningThreshold:   "warning_threshold",
+	Currency:           "currency",
+	CreatedAt:          "created_at",
+	UpdatedAt:          "updated_at",
+	CumulativeRecharge: "cumulative_recharge",
 }
 
 // NewBilWalletsDao creates and returns a new DAO object for table data access.

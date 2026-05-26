@@ -63,6 +63,7 @@ function startEdit() {
   editForm.name = detail.value.name || ''
   editForm.max_members = detail.value.max_members || null
   editForm.max_concurrency = detail.value.max_concurrency || null
+	  editForm.level = detail.value.level || null
 }
 
 async function saveEdit() {
@@ -496,6 +497,9 @@ onMounted(() => {
                 </AFormItem>
                 <AFormItem label="并发上限">
                   <AInputNumber v-model="editForm.max_concurrency" :min="0" placeholder="0=不限" style="width: 120px" />
+                </AFormItem>
+                <AFormItem label="等级">
+                  <AInputNumber v-model="editForm.level" :min="1" :max="99" placeholder="等级号" style="width: 120px" />
                 </AFormItem>
                 <AFormItem>
                   <AButton type="primary" :loading="editLoading" @click="saveEdit">保存</AButton>

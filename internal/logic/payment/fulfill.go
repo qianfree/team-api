@@ -53,6 +53,8 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 		if err != nil {
 			return gerror.Wrapf(err, "credit wallet failed")
 		}
+		// 检查并升级租户等级
+		_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
 
 	default:
 		return gerror.Newf("unsupported order type for fulfillment: %s", order.OrderType)
@@ -134,8 +136,8 @@ func creditWallet(ctx context.Context, tenantID int64, amount float64, descripti
 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		_, err := tx.Ctx(ctx).Exec(
-			"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
-			amount, w.ID)
+			"UPDATE bil_wallets SET balance = balance + ?, cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
+			amount, amount, w.ID)
 		if err != nil {
 			return err
 		}

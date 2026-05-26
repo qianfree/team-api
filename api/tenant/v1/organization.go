@@ -13,6 +13,8 @@ type TenantOrgInfoRes struct {
 	Code        string `json:"code"`
 	LogoURL     string `json:"logo_url"`
 	Status      string `json:"status"`
+	Level       int    `json:"level"`
+	LevelName   string `json:"level_name"`
 	MaxMembers  int    `json:"max_members"`
 	MemberCount int    `json:"member_count"`
 	CreatedAt   string `json:"created_at"`

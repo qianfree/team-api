@@ -38,6 +38,7 @@ type TntTenantsColumns struct {
 	DataRemovalAt       string // 数据清除时间（冻结 30 天后）
 	MaxConcurrency      string // 租户总并发上限（0表示不限制）
 	DefaultChannelScope string // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
+	Level               string // 当前等级（对应 tnt_tenant_level_configs.level）
 }
 
 // tntTenantsColumns holds the columns for the table tnt_tenants.
@@ -59,6 +60,7 @@ var tntTenantsColumns = TntTenantsColumns{
 	DataRemovalAt:       "data_removal_at",
 	MaxConcurrency:      "max_concurrency",
 	DefaultChannelScope: "default_channel_scope",
+	Level:               "level",
 }
 
 // NewTntTenantsDao creates and returns a new DAO object for table data access.

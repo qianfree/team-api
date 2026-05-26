@@ -27,4 +27,5 @@ type TntTenants struct {
 	DataRemovalAt       *gtime.Time `json:"data_removal_at"       orm:"data_removal_at"       description:"数据清除时间（冻结 30 天后）"`                                                                                          // 数据清除时间（冻结 30 天后）
 	MaxConcurrency      int         `json:"max_concurrency"       orm:"max_concurrency"       description:"租户总并发上限（0表示不限制）"`                                                                                           // 租户总并发上限（0表示不限制）
 	DefaultChannelScope string      `json:"default_channel_scope" orm:"default_channel_scope" description:"默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）"`                                                                     // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
+	Level               int         `json:"level"                 orm:"level"                 description:"当前等级（对应 tnt_tenant_level_configs.level）"`                                                                   // 当前等级（对应 tnt_tenant_level_configs.level）
 }

@@ -14,6 +14,7 @@ type AudContentFilterLogs struct {
 	TenantId        int64       `json:"tenant_id"        orm:"tenant_id"        description:"租户ID"`                       // 租户ID
 	UserId          int64       `json:"user_id"          orm:"user_id"          description:"用户ID"`                       // 用户ID
 	ApiKeyId        int64       `json:"api_key_id"       orm:"api_key_id"       description:"API Key ID"`                 // API Key ID
+	ProjectId       int64       `json:"project_id"       orm:"project_id"       description:"项目ID"`                       // 项目ID
 	RequestId       string      `json:"request_id"       orm:"request_id"       description:"请求唯一ID"`                     // 请求唯一ID
 	Method          string      `json:"method"           orm:"method"           description:"HTTP 方法"`                    // HTTP 方法
 	Path            string      `json:"path"             orm:"path"             description:"请求路径"`                       // 请求路径
@@ -23,5 +24,4 @@ type AudContentFilterLogs struct {
 	OriginalSnippet string      `json:"original_snippet" orm:"original_snippet" description:"原始请求体片段（截断存储，仅 replace 模式）"` // 原始请求体片段（截断存储，仅 replace 模式）
 	Blocked         bool        `json:"blocked"          orm:"blocked"          description:"是否被拦截（mode=block 时为 true）"`  // 是否被拦截（mode=block 时为 true）
 	CreatedAt       *gtime.Time `json:"created_at"       orm:"created_at"       description:"创建时间"`                       // 创建时间
-	ProjectId       int64       `json:"project_id"       orm:"project_id"       description:"项目ID"`                       // 项目ID
 }

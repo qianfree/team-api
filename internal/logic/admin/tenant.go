@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
@@ -118,6 +119,7 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 			Code:           tenantCode,
 			MaxMembers:     maxMembers,
 			MaxConcurrency: maxConcurrency,
+			Level:          1,
 			Settings:       "{}",
 		}).Insert()
 		if err != nil {
@@ -289,6 +291,7 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		MaxConcurrency      int         `json:"max_concurrency"`
 		DefaultChannelScope string      `json:"default_channel_scope"`
 		Settings            string      `json:"settings"`
+		Level               int         `json:"level"`
 		CreatedAt           *gtime.Time `json:"created_at"`
 		UpdatedAt           *gtime.Time `json:"updated_at"`
 	}
@@ -327,6 +330,15 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	if owner != nil {
 		ownerName = owner.DisplayName
 	}
+
+	// Get level name
+	levelName := ""
+	var levelConfig entity.TntTenantLevelConfigs
+	_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&levelConfig)
+	if levelConfig.Id > 0 {
+		levelName = levelConfig.Name
+	}
+
 	return &v1.TenantGetRes{
 		TenantItem: v1.TenantItem{
 			ID:                  tenant.Id,
@@ -341,6 +353,8 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 			DefaultChannelScope: tenant.DefaultChannelScope,
 			MemberCount:         memberCount,
 			WalletBalance:       walletBalance,
+			Level:               tenant.Level,
+			LevelName:           levelName,
 			CreatedAt:           tenant.CreatedAt.String(),
 			UpdatedAt:           tenant.UpdatedAt.String(),
 		},
@@ -392,6 +406,20 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 	}
 	if req.MaxConcurrency != nil {
 		data.MaxConcurrency = *req.MaxConcurrency
+	}
+
+	// 管理员手动调整等级：同步更新 max_members 和 max_concurrency
+	if req.Level != nil {
+		data.Level = *req.Level
+		var config entity.TntTenantLevelConfigs
+		err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", *req.Level).Scan(&config)
+		if err != nil {
+			return nil, common.NewBadRequestError("等级配置不存在")
+		}
+		if config.Id > 0 {
+			data.MaxMembers = config.MaxMembers
+			data.MaxConcurrency = config.MaxConcurrency
+		}
 	}
 
 	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(data)
