@@ -18,6 +18,46 @@ import (
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
+// ListModelOptions 获取模型选项列表（不分页，用于下拉选择）
+func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) (*v1.ModelOptionsRes, error) {
+	query := dao.MdlModels.Ctx(ctx)
+
+	if req.Status != "" {
+		query = query.Where("status", req.Status)
+	} else {
+		query = query.Where("status", "active")
+	}
+	if req.Category != "" {
+		query = query.Where("category", req.Category)
+	}
+
+	var models []struct {
+		ID        int64  `json:"id"`
+		ModelId   string `json:"model_id"`
+		ModelName string `json:"model_name"`
+		Category  string `json:"category"`
+	}
+
+	err := query.Fields("id, model_id, model_name, category").
+		OrderAsc("category").OrderAsc("model_id").
+		Scan(&models)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]v1.ModelOptionItem, 0, len(models))
+	for _, m := range models {
+		list = append(list, v1.ModelOptionItem{
+			ID:        m.ID,
+			ModelId:   m.ModelId,
+			ModelName: m.ModelName,
+			Category:  m.Category,
+		})
+	}
+
+	return &v1.ModelOptionsRes{List: list}, nil
+}
+
 // ListModels 获取模型列表
 func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.ModelListRes, error) {
 	query := dao.MdlModels.Ctx(ctx)
@@ -252,10 +292,21 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 	return nil, nil
 }
 
-// DeleteModel 删除模型（同时删除定价记录和租户分配记录）
+// DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error) {
 	_, _ = dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete()
 	_, _ = dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete()
+
+	// 级联删除：从所有分组中移除该模型，并清除受影响租户的缓存
+	var affectedGroups []struct {
+		GroupId int64 `json:"group_id"`
+	}
+	dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Fields("group_id").Scan(&affectedGroups)
+	_, _ = dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete()
+	for _, ag := range affectedGroups {
+		invalidateTenantsInGroup(ctx, ag.GroupId)
+	}
+
 	_, err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err

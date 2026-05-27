@@ -286,11 +286,82 @@ async function removeModel(record: any) {
   }
 }
 
+// === Tab 2b: Group Assignment ===
+const groupsLoading = ref(false)
+const tenantGroups = ref<any[]>([])
+const allGroups = ref<any[]>([])
+const showGroupModal = ref(false)
+const groupAssignLoading = ref(false)
+const selectedGroupIds = ref<number[]>([])
+
+const groupColumns: TableColumnData[] = [
+  { title: '分组名称', dataIndex: 'name', width: 160, ellipsis: true },
+  { title: '标识', dataIndex: 'code', width: 140, ellipsis: true },
+  { title: '状态', dataIndex: 'status', width: 80,
+    render({ record }) {
+      const color = record.status === 'active' ? 'green' : undefined
+      const label = record.status === 'active' ? '启用' : '禁用'
+      return h(Tag, { color, size: 'small' }, () => label)
+    },
+  },
+  { title: '模型数', dataIndex: 'model_count', width: 80 },
+]
+
+async function fetchTenantGroups() {
+  groupsLoading.value = true
+  try {
+    const res: any = await request.get(`/admin/tenants/${tenantId}/groups`)
+    tenantGroups.value = res.data?.data?.list || res.data?.list || []
+  } catch {
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+async function fetchAllGroups() {
+  try {
+    const res: any = await request.get('/admin/model-groups/options')
+    allGroups.value = res.data?.data?.list || res.data?.list || []
+  } catch {
+  }
+}
+
+const groupTransferOptions = computed(() => {
+  return allGroups.value.map((g: any) => ({
+    value: g.id,
+    label: `${g.name}（${g.code}）${g.model_count ? ` - ${g.model_count}个模型` : ''}`,
+  }))
+})
+
+function openGroupModal() {
+  selectedGroupIds.value = tenantGroups.value.map((g: any) => g.group_id)
+  showGroupModal.value = true
+  if (allGroups.value.length === 0) {
+    fetchAllGroups()
+  }
+}
+
+async function handleSaveGroups(done: () => void) {
+  groupAssignLoading.value = true
+  try {
+    await request.put(`/admin/tenants/${tenantId}/groups`, { group_ids: selectedGroupIds.value })
+    Message.success('分组更新成功')
+    done()
+    fetchTenantGroups()
+    fetchTenantModels()
+  } catch {
+    return false
+  } finally {
+    groupAssignLoading.value = false
+  }
+}
+
 // Load data when switching to models tab
 function onTabChange(key: string) {
   if (key === 'models') {
     fetchTenantModels()
     fetchAllModels()
+    fetchTenantGroups()
   }
   if (key === 'wallet') {
     fetchWalletDetail()
@@ -510,12 +581,35 @@ onMounted(() => {
 
           <!-- Tab 2: Model Assignment -->
           <ATabPane key="models" title="模型分配">
-            <ACard :bordered="false">
-              <div class="flex items-center justify-between mb-4">
-                <span style="color: var(--ta-text-tertiary)">已分配 {{ modelsData.length }} 个模型</span>
-                <AButton type="primary" @click="openAssignModal">分配模型</AButton>
+            <ACard :bordered="false" class="mb-4" title="模型分组">
+              <template #extra>
+                <AButton type="primary" size="small" @click="openGroupModal">分配分组</AButton>
+              </template>
+              <div v-if="tenantGroups.length === 0" style="color: var(--ta-text-tertiary)">
+                暂未分配模型分组，租户可通过分组获取可用模型
               </div>
               <ATable
+                v-else
+                :columns="groupColumns"
+                :data="tenantGroups"
+                :loading="groupsLoading"
+                :bordered="false"
+                :stripe="true"
+                :pagination="false"
+                row-key="group_id"
+                size="small"
+              />
+            </ACard>
+
+            <ACard :bordered="false" title="独立模型">
+              <template #extra>
+                <AButton type="primary" size="small" @click="openAssignModal">分配模型</AButton>
+              </template>
+              <div v-if="modelsData.length === 0" style="color: var(--ta-text-tertiary)">
+                暂无独立分配的模型
+              </div>
+              <ATable
+                v-else
                 :columns="modelColumns"
                 :data="modelsData"
                 :loading="modelsLoading"
@@ -583,6 +677,25 @@ onMounted(() => {
         </ATabs>
       </template>
     </ASpin>
+
+    <!-- Assign Groups Modal -->
+    <AModal
+      v-model:visible="showGroupModal"
+      title="分配模型分组"
+      :width="700"
+      :on-before-ok="handleSaveGroups"
+      :ok-loading="groupAssignLoading"
+    >
+      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
+        选择分组后，分组内的所有模型自动对该租户可用
+      </div>
+      <ATransfer
+        v-model="selectedGroupIds"
+        :data="groupTransferOptions"
+        :title="['可选分组', '已选分组']"
+        searchable
+      />
+    </AModal>
 
     <!-- Assign Models Modal -->
     <AModal

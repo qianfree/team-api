@@ -24,6 +24,9 @@ import (
 // modelCache 模型信息缓存（TTL 600s）
 var modelCache = lcommon.NewCache("model", 600*time.Second)
 
+// tenantGroupModelCache 租户分组模型集合缓存（通过 lcommon.TenantGroupModelCache 共享）
+// 实际缓存实例在 lcommon 包中，admin 和 relay 共用
+
 // DataProviderImpl DataProvider 接口的 GoFrame ORM 实现
 type DataProviderImpl struct{}
 
@@ -230,9 +233,9 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		return false, nil, err
 	}
 
-	// 如果没有分配记录，默认允许（向后兼容：未分配模型时所有活跃模型可用）
+	// 如果没有分配记录，检查分组访问权限
 	if row == nil {
-		return true, nil, nil
+		return checkGroupModelAccess(ctx, tenantID, modelName)
 	}
 	if !row.Enabled && row.ChannelScope == "" {
 		return false, nil, nil
@@ -245,6 +248,110 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 	}
 
 	return row.Enabled, scope, nil
+}
+
+// checkGroupModelAccess 检查租户是否通过分组获得模型访问权限
+func checkGroupModelAccess(ctx context.Context, tenantID int64, modelName string) (bool, []int64, error) {
+	cacheKey := fmt.Sprintf("%d", tenantID)
+
+	// 尝试从缓存获取
+	cachedSet, found := lcommon.TenantGroupModelCache.Get(ctx, cacheKey)
+	if found {
+		if cachedSet == nil {
+			// nil 表示无分组 → 向后兼容，允许所有模型
+			return true, nil, nil
+		}
+		if modelSet, ok := cachedSet.(map[string]bool); ok {
+			_, inGroup := modelSet[modelName]
+			return inGroup, nil, nil
+		}
+	}
+
+	// 缓存未命中：查询数据库
+	groupCount, _ := dao.MdlTenantGroups.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Count()
+
+	if groupCount == 0 {
+		// 无分组 → 向后兼容，允许所有模型
+		lcommon.TenantGroupModelCache.Set(ctx, cacheKey, nil)
+		return true, nil, nil
+	}
+
+	// 查询租户所有活跃分组中的可用模型
+	modelSet, err := queryTenantGroupModels(ctx, tenantID)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// 缓存结果
+	lcommon.TenantGroupModelCache.Set(ctx, cacheKey, modelSet)
+
+	_, inGroup := modelSet[modelName]
+	return inGroup, nil, nil
+}
+
+// queryTenantGroupModels 查询租户通过分组可访问的所有模型
+func queryTenantGroupModels(ctx context.Context, tenantID int64) (map[string]bool, error) {
+	var models []struct {
+		ModelId string `json:"model_id"`
+	}
+	err := g.DB().Model("mdl_group_models gm").Ctx(ctx).
+		InnerJoin("mdl_model_groups g ON gm.group_id = g.id").
+		InnerJoin("mdl_models m ON gm.model_id = m.id").
+		InnerJoin("mdl_tenant_groups tg ON tg.group_id = g.id").
+		Where("tg.tenant_id", tenantID).
+		Where("g.status", "active").
+		Where("m.status", "active").
+		Fields("m.model_id").
+		Scan(&models)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]bool, len(models))
+	for _, m := range models {
+		result[m.ModelId] = true
+	}
+	return result, nil
+}
+
+// GetTenantGroupModelIDs 获取租户通过分组可访问的模型内部ID集合（用于 GetAvailableModels）
+func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) map[int64]bool {
+	cacheKey := fmt.Sprintf("%d", tenantID)
+
+	// 尝试从缓存获取 model_id string 集合
+	cachedSet, found := lcommon.TenantGroupModelCache.Get(ctx, cacheKey)
+	if found {
+		if cachedSet == nil {
+			return nil
+		}
+		// 缓存中存的是 map[string]bool，需要转换为 map[int64]bool
+		// 这里直接查数据库获取 int64 版本
+	}
+
+	// 查询模型内部 ID
+	var models []struct {
+		Id int64 `json:"id"`
+	}
+	err := g.DB().Model("mdl_group_models gm").Ctx(ctx).
+		InnerJoin("mdl_model_groups g ON gm.group_id = g.id").
+		InnerJoin("mdl_models m ON gm.model_id = m.id").
+		InnerJoin("mdl_tenant_groups tg ON tg.group_id = g.id").
+		Where("tg.tenant_id", tenantID).
+		Where("g.status", "active").
+		Where("m.status", "active").
+		Fields("m.id").
+		Scan(&models)
+	if err != nil || len(models) == 0 {
+		return nil
+	}
+
+	result := make(map[int64]bool, len(models))
+	for _, m := range models {
+		result[m.Id] = true
+	}
+	return result
 }
 
 // GetModelMapping 实现 DataProvider.GetModelMapping
@@ -623,34 +730,57 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID int6
 	var models []modelRow
 	var err error
 
-	fields := "m.model_id, m.model_name, m.category, m.status, m.max_context_tokens, m.max_output_tokens, m.capabilities"
 	fieldsNoAlias := "model_id, model_name, category, status, max_context_tokens, max_output_tokens, capabilities"
 
 	if tenantID > 0 {
-		// 检查租户是否有模型分配记录
-		count, _ := dao.MdlTenantModels.Ctx(ctx).
+		// 获取显式分配的模型
+		tenantModelCount, _ := dao.MdlTenantModels.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Count()
 
-		if count > 0 {
-			// 有分配记录：只返回租户启用的模型
-			err = g.DB().Model("mdl_models m").Ctx(ctx).
-				InnerJoin("mdl_tenant_models tm ON tm.model_id = m.id").
-				Where("tm.tenant_id", tenantID).
-				Where("tm.enabled", true).
-				Where("m.status", "active").
-				Fields(fields).
-				OrderAsc("m.category").
-				OrderAsc("m.model_id").
-				Scan(&models)
-		} else {
-			// 无分配记录：返回所有活跃模型（向后兼容）
+		// 获取分组分配的模型
+		groupModelIDs := GetTenantGroupModelIDs(ctx, tenantID)
+
+		hasExplicit := tenantModelCount > 0
+		hasGroup := len(groupModelIDs) > 0
+
+		if !hasExplicit && !hasGroup {
+			// 无分配记录且无分组：返回所有活跃模型（向后兼容）
 			err = dao.MdlModels.Ctx(ctx).
 				Where("status", "active").
 				Fields(fieldsNoAlias).
 				OrderAsc("category").
 				OrderAsc("model_id").
 				Scan(&models)
+		} else {
+			// 构建合并的模型 ID 集合
+			allModelIDs := make([]int64, 0)
+
+			if hasExplicit {
+				var explicitIDs []struct {
+					ModelID int64 `json:"model_id"`
+				}
+				dao.MdlTenantModels.Ctx(ctx).
+					Where("tenant_id", tenantID).Where("enabled", true).
+					Fields("model_id").Scan(&explicitIDs)
+				for _, id := range explicitIDs {
+					allModelIDs = append(allModelIDs, id.ModelID)
+				}
+			}
+
+			for id := range groupModelIDs {
+				allModelIDs = append(allModelIDs, id)
+			}
+
+			if len(allModelIDs) > 0 {
+				err = dao.MdlModels.Ctx(ctx).
+					WhereIn("id", allModelIDs).
+					Where("status", "active").
+					Fields(fieldsNoAlias).
+					OrderAsc("category").
+					OrderAsc("model_id").
+					Scan(&models)
+			}
 		}
 	} else {
 		// tenantID == 0：返回所有活跃模型（公开端点场景）

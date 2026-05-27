@@ -49,6 +49,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '模型管理' },
       },
       {
+        path: 'model-groups',
+        name: 'AdminModelGroups',
+        component: () => import('@/views/ai/ModelGroupsPage.vue'),
+        meta: { title: '模型分组' },
+      },
+      {
         path: 'channels',
         name: 'AdminChannels',
         component: () => import('@/views/ai/ChannelsPage.vue'),
