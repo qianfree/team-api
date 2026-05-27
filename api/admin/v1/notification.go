@@ -107,7 +107,7 @@ type MessageSendRes struct{}
 
 type MessageBroadcastReq struct {
 	g.Meta      `path:"/notification/messages/broadcast" method:"post" mime:"json" tags:"管理后台-通知" summary:"广播消息"`
-	TenantID    int64  `json:"tenant_id" v:"required|min:1"`
+	TenantID    *int64 `json:"tenant_id" dc:"目标租户ID，不传或为空表示广播到所有租户"`
 	Title       string `json:"title" v:"required"`
 	Content     string `json:"content" v:"required"`
 	TargetRoles string `json:"target_roles" d:"" dc:"目标角色，逗号分隔如 owner,admin；留空表示全部角色"`

@@ -112,15 +112,14 @@ func (s *sAdmin) ArchivePlan(ctx context.Context, req *v1.PlanArchiveReq) (*v1.P
 
 // ToggleRecommend 切换推荐标记
 func (s *sAdmin) ToggleRecommend(ctx context.Context, req *v1.PlanToggleRecommendReq) (*v1.PlanToggleRecommendRes, error) {
-	// 先查当前值
-	var isRecommended bool
-	err := dao.PlnPlans.Ctx(ctx).
+	val, err := dao.PlnPlans.Ctx(ctx).
 		Where("id", req.Id).
 		Fields("is_recommended").
-		Scan(&isRecommended)
+		Value()
 	if err != nil {
 		return nil, err
 	}
+	isRecommended := val.Bool()
 
 	_, err = dao.PlnPlans.Ctx(ctx).
 		Where("id", req.Id).

@@ -152,8 +152,12 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		"max_context_tokens": req.MaxContext,
 		"max_output_tokens":  req.MaxOutput,
 		"description":        req.Description,
-		"tags":               req.Tags,
 		"status":             "active",
+	}
+	if req.Tags != nil {
+		insertData["tags"] = req.Tags
+	} else {
+		insertData["tags"] = []string{}
 	}
 	if req.Capabilities != nil {
 		capJson, _ := json.Marshal(req.Capabilities)

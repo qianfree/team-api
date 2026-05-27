@@ -137,7 +137,7 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 			CustomPricingTiers:       tiersJSON,
 			Multiplier:               1.0,
 		}
-		g.Log().Debugf(ctx, "BatchAssignModels: inserting data tenant_id=%v, model_id=%v, enabled=%v, max_concurrency=%v", insertData.TenantId, insertData.ModelId, insertData.Enabled, insertData.MaxConcurrency)
+		g.Log().Debugf(ctx, "BatchAssignModels: inserting data tenant_id=%v, model_id=%v, enabled=%v, max_concurrency=%v", insertData.TenantId, insertData.ModelId, insertData.Enabled, *maxConc)
 		_, err = dao.MdlTenantModels.Ctx(ctx).Insert(insertData)
 		if err != nil {
 			g.Log().Errorf(ctx, "BatchAssignModels: insert failed, model_id=%d, err=%v", a.ModelID, err)
