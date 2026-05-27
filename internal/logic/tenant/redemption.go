@@ -18,16 +18,17 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	lcommon2 "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // RedeemCode 租户兑换码
 func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (*v1.TenantRedeemCodeRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var redemption *struct {
 		ID           int64     `json:"id"`
@@ -190,11 +191,11 @@ func extendPlanDuration(ctx context.Context, tenantID int64, days int) {
 
 // ListRedemptionUsages 获取当前租户的兑换历史
 func (s *sTenant) ListRedemptionUsages(ctx context.Context, req *v1.TenantRedemptionUsagesReq) (*v1.TenantRedemptionUsagesRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := lcommon2.NormalizePagination(req.Page, req.PageSize)
 
 	fromClause := "ord_redemption_usages ru LEFT JOIN ord_redemptions r ON ru.redemption_id = r.id"

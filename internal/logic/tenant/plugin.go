@@ -4,6 +4,7 @@ import (
 	"context"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/plugin"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -11,7 +12,7 @@ import (
 )
 
 func (s *sTenant) TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (*v1.TenantPluginListRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	entries := plugin.AllPlugins()
 	items := make([]v1.TenantPluginItem, 0, len(entries))
 
@@ -44,7 +45,7 @@ func (s *sTenant) TenantPluginList(ctx context.Context, req *v1.TenantPluginList
 }
 
 func (s *sTenant) TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDetailReq) (*v1.TenantPluginDetailRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	entry := plugin.GetPlugin(req.Name)
 	if entry == nil {
 		return nil, gerror.New("插件不存在")
@@ -76,7 +77,7 @@ func (s *sTenant) TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDe
 }
 
 func (s *sTenant) TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPluginConfigUpdateReq) (*v1.TenantPluginConfigUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.UpdatePluginConfigForTenant(ctx, req.Name, tenantID, req.Config); err != nil {
 		return nil, err
 	}
@@ -84,7 +85,7 @@ func (s *sTenant) TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPl
 }
 
 func (s *sTenant) TenantPluginEnable(ctx context.Context, req *v1.TenantPluginEnableReq) (*v1.TenantPluginEnableRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.EnableForTenant(ctx, req.Name, tenantID); err != nil {
 		return nil, err
 	}
@@ -92,7 +93,7 @@ func (s *sTenant) TenantPluginEnable(ctx context.Context, req *v1.TenantPluginEn
 }
 
 func (s *sTenant) TenantPluginDisable(ctx context.Context, req *v1.TenantPluginDisableReq) (*v1.TenantPluginDisableRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.DisableForTenant(ctx, req.Name, tenantID); err != nil {
 		return nil, err
 	}

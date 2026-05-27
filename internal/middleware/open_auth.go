@@ -147,3 +147,25 @@ func getEncKey(ctx context.Context) []byte {
 	}
 	return crypto.MustGetEncryptionKey(hexKey)
 }
+
+// GetOpenTenantID extracts the tenant ID injected by OpenPlatformAuth middleware.
+func GetOpenTenantID(ctx context.Context) int64 {
+	val := ctx.Value("openTenantId")
+	if val != nil {
+		if id, ok := val.(int64); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+// GetOpenAppID extracts the app ID injected by OpenPlatformAuth middleware.
+func GetOpenAppID(ctx context.Context) int64 {
+	val := ctx.Value("openAppId")
+	if val != nil {
+		if id, ok := val.(int64); ok {
+			return id
+		}
+	}
+	return 0
+}

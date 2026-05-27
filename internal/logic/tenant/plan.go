@@ -11,11 +11,12 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // PlanList 获取可购买的套餐列表（仅 active）
 func (s *sTenant) PlanList(ctx context.Context, req *v1.TenantPlanListReq) (*v1.TenantPlanListRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
@@ -47,11 +48,11 @@ func (s *sTenant) PlanList(ctx context.Context, req *v1.TenantPlanListReq) (*v1.
 
 // PlanCurrent 获取租户当前套餐
 func (s *sTenant) PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (*v1.TenantPlanCurrentRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	var plan v1.TenantPlanCurrentRes
 	err := dao.PlnTenantPlans.Ctx(ctx).As("tp").
 		Fields("tp.id, tp.tenant_id, tp.plan_id, tp.status, tp.start_at, tp.end_at, tp.auto_renew, tp.monthly_quota_tokens, tp.used_tokens, tp.last_reset_at, p.name, p.identifier, p.description, p.monthly_price, p.yearly_price").
@@ -74,11 +75,11 @@ func (s *sTenant) PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq)
 
 // PlanCancelAutoRenew 取消自动续费
 func (s *sTenant) PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (*v1.TenantPlanCancelAutoRenewRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	_, err := dao.PlnTenantPlans.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("status", "active").

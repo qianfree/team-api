@@ -11,15 +11,16 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // Dashboard returns the tenant dashboard statistics.
 func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v1.TenantDashboardRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	today := time.Now().Format("2006-01-02")
 	monthStart := time.Now().Format("2006-01") + "-01"
 
@@ -102,11 +103,11 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 
 // TokenTrends returns daily token usage for the past N days.
 func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq) (*v1.TenantTokenTrendsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30
@@ -160,11 +161,11 @@ func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq)
 
 // ModelDistribution returns the distribution of model usage.
 func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDistributionReq) (*v1.TenantModelDistributionRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30
@@ -219,11 +220,11 @@ func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDist
 
 // BalancePrediction predicts when the balance will be exhausted.
 func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePredictionReq) (*v1.TenantBalancePredictionRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 
@@ -282,7 +283,7 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 
 // BudgetAlerts checks member and project budget usage and returns those above 80%.
 func (s *sTenant) BudgetAlerts(ctx context.Context, req *v1.TenantBudgetAlertsReq) (*v1.TenantBudgetAlertsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
@@ -294,11 +295,11 @@ func (s *sTenant) BudgetAlerts(ctx context.Context, req *v1.TenantBudgetAlertsRe
 
 // GetMemberUsageRanking returns top members by usage cost in a given date range.
 func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMemberUsageRankingReq) (*v1.TenantMemberUsageRankingRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	days := req.Days
 	if days <= 0 || days > 90 {
 		days = 30

@@ -104,7 +104,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 
 	updateData := g.Map{
 		"admin_reply":    req.Reply,
-		"admin_reply_by": getCtxUserID(ctx),
+		"admin_reply_by": common.GetCtxUserID(ctx),
 		"admin_reply_at": gtime.Now(),
 	}
 	if req.Status != "" {

@@ -549,15 +549,6 @@ func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDash
 
 // ExportUsageLogs exports usage logs to CSV or Excel.
 func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExportReq) (*v1.AdminUsageLogExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "tenant_name", Header: "租户名称"},
@@ -572,7 +563,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "用量日志_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -618,36 +609,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id"
 	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at"
 
-	if format == "xlsx" {
-		where, args := buildUsageWhere()
-		sql := fmt.Sprintf("SELECT %s FROM %s%s ORDER BY u.created_at DESC", selectFields, fromClause, where)
-		result, err := g.DB().Ctx(ctx).Query(ctx, sql, args...)
-		if err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(result))
-		for i, row := range result {
-			createdAt := ""
-			if t, ok := row["created_at"]; ok {
-				createdAt = fmt.Sprintf("%v", t.Val())
-			}
-			data[i] = map[string]any{
-				"id":            row["id"].Val(),
-				"tenant_name":   row["tenant_name"].Val(),
-				"username":      row["username"].Val(),
-				"model_name":    row["model_name"].Val(),
-				"request_type":  row["request_type"].Val(),
-				"input_tokens":  row["input_tokens"].Val(),
-				"output_tokens": row["output_tokens"].Val(),
-				"total_cost":    row["total_cost"].Val(),
-				"status":        row["status"].Val(),
-				"created_at":    createdAt,
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			where, args := buildUsageWhere()
@@ -686,15 +648,6 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 
 // ExportBillingRecords exports billing records to CSV or Excel.
 func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingRecordExportReq) (*v1.AdminBillingRecordExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "tenant_name", Header: "租户名称"},
@@ -709,7 +662,7 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "计费记录_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -801,15 +754,7 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 		return data, nil
 	}
 
-	if format == "xlsx" {
-		data, err := fetchRecords(0, 100000)
-		if err != nil {
-			return nil, err
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			batch, err := fetchRecords(offset, 1000)

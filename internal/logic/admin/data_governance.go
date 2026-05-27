@@ -59,7 +59,7 @@ func (s *sAdmin) DataGovernanceExport(ctx context.Context, req *v1.DataGovernanc
 	payload, _ := json.Marshal(map[string]any{
 		"tenant_id":    req.TenantID,
 		"scopes":       req.Scopes,
-		"requested_by": getCtxUserID(ctx),
+		"requested_by": common.GetCtxUserID(ctx),
 	})
 	result, err := dao.TskTasks.Ctx(ctx).Data(do.TskTasks{
 		Name:       fmt.Sprintf("数据导出 [租户%d]", req.TenantID),
@@ -93,7 +93,7 @@ func (s *sAdmin) DataGovernanceDeletion(ctx context.Context, req *v1.DataGoverna
 	payload, _ := json.Marshal(map[string]any{
 		"tenant_id":    req.TenantID,
 		"reason":       req.Reason,
-		"requested_by": getCtxUserID(ctx),
+		"requested_by": common.GetCtxUserID(ctx),
 	})
 	result, err := dao.TskTasks.Ctx(ctx).Data(do.TskTasks{
 		Name:       fmt.Sprintf("数据删除 [租户%d]", req.TenantID),

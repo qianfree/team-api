@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 )
 
 // ErrorLogList returns a paginated list of system error logs.
@@ -83,7 +84,7 @@ func (s *sAdmin) ErrorLogDetail(ctx context.Context, req *v1.ErrorLogDetailReq) 
 
 // ErrorLogResolve marks an error log as resolved.
 func (s *sAdmin) ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq) (*v1.ErrorLogResolveRes, error) {
-	userID := getCtxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 	_, err := dao.SysErrorLogs.Ctx(ctx).
 		Where("id", req.Id).
 		Data(g.Map{
@@ -99,7 +100,7 @@ func (s *sAdmin) ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq
 
 // ErrorLogBatchResolve marks multiple error logs as resolved.
 func (s *sAdmin) ErrorLogBatchResolve(ctx context.Context, req *v1.ErrorLogBatchResolveReq) (*v1.ErrorLogBatchResolveRes, error) {
-	userID := getCtxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 	_, err := dao.SysErrorLogs.Ctx(ctx).
 		WhereIn("id", req.Ids).
 		Data(g.Map{

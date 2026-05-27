@@ -19,29 +19,8 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
-// ctxUserID extracts user ID from context.
-func ctxUserID(ctx context.Context) int64 {
-	val := ctx.Value("userId")
-	if val == nil {
-		return 0
-	}
-	if id, ok := val.(int64); ok {
-		return id
-	}
-	return 0
-}
-
-// ctxSessionID extracts session ID from context.
-func ctxSessionID(ctx context.Context) int64 {
-	val := ctx.Value("sessionId")
-	if val == nil {
-		return 0
-	}
-	if id, ok := val.(int64); ok {
-		return id
-	}
-	return 0
-}
+// NOTE: ctxUserID and ctxSessionID have been removed.
+// Use common.GetCtxUserID(ctx) and common.GetCtxSessionID(ctx) instead.
 
 // Login handles admin login.
 func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error) {
@@ -159,7 +138,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 
 // Logout handles admin logout.
 func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLogoutRes, error) {
-	sessionID := ctxSessionID(ctx)
+	sessionID := common.GetCtxSessionID(ctx)
 
 	// Mark session as revoked in Redis for instant effect
 	common.MarkSessionRevoked(ctx, sessionID)
@@ -235,7 +214,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 
 // ListSessions returns active sessions for the current admin user.
 func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) (*v1.AdminSessionListRes, error) {
-	currentSessionID := ctxSessionID(ctx)
+	currentSessionID := common.GetCtxSessionID(ctx)
 	page := req.Page
 	pageSize := req.PageSize
 	if page < 1 {
@@ -346,7 +325,7 @@ func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (
 
 // ChangePassword handles admin password change.
 func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePasswordReq) (*v1.AdminChangePasswordRes, error) {
-	userID := ctxUserID(ctx)
+	userID := common.GetCtxUserID(ctx)
 
 	var user *entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).

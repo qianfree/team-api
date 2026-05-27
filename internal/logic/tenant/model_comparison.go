@@ -10,10 +10,11 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonReq) (*v1.ModelComparisonRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	if req.Days <= 0 {
 		req.Days = 7

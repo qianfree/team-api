@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/middleware"
 	relaycommon "github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/handler"
@@ -32,8 +33,8 @@ type playgroundApiKey struct {
 }
 
 func findActiveApiKey(ctx context.Context) (*playgroundApiKey, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var key *playgroundApiKey
 	err := dao.ApiKeys.Ctx(ctx).
@@ -57,8 +58,8 @@ func buildPlaygroundRelayContext(ctx context.Context, key *playgroundApiKey, rec
 		requestID = v.(string)
 	}
 	return &handler.RelayContext{
-		TenantID:  ctxTenantID(ctx),
-		UserID:    ctxUserID(ctx),
+		TenantID:  middleware.GetTenantID(ctx),
+		UserID:    middleware.GetUserID(ctx),
 		ApiKeyID:  key.Id,
 		RequestID: requestID,
 		Writer:    recorder,
@@ -439,7 +440,7 @@ func (s *sTenant) PlaygroundRerank(ctx context.Context, req *v1.PlaygroundRerank
 // ============================================================
 
 func (s *sTenant) SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (*v1.SandboxChatRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	now := time.Now()
 	quotaKey := fmt.Sprintf("sandbox:quota:%d:%s", tenantID, now.Format("200601"))
@@ -480,7 +481,7 @@ func (s *sTenant) SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (*v1.
 }
 
 func (s *sTenant) SandboxQuota(ctx context.Context, req *v1.SandboxQuotaReq) (*v1.SandboxQuotaRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	defaultQuota := g.Cfg().MustGet(ctx, "sandbox.sandbox_default_quota").Int()
 	if defaultQuota <= 0 {

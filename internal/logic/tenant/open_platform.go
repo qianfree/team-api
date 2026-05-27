@@ -15,6 +15,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -25,11 +26,11 @@ import (
 // ============================================================
 
 func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.OpenAppListRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page := req.Page
 	pageSize := req.PageSize
 	if page < 1 {
@@ -81,11 +82,11 @@ func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.
 }
 
 func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (*v1.OpenAppCreateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Generate app_id (opn_xxxxxxxx)
 	appIDBytes := make([]byte, 12)
@@ -152,11 +153,11 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 }
 
 func (s *sTenant) OpenAppUpdate(ctx context.Context, req *v1.OpenAppUpdateReq) (*v1.OpenAppUpdateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	data := g.Map{}
 
 	if req.Name != nil {
@@ -186,11 +187,11 @@ func (s *sTenant) OpenAppUpdate(ctx context.Context, req *v1.OpenAppUpdateReq) (
 }
 
 func (s *sTenant) OpenAppDelete(ctx context.Context, req *v1.OpenAppDeleteReq) (*v1.OpenAppDeleteRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
 	if err != nil {
 		return nil, err
@@ -201,11 +202,11 @@ func (s *sTenant) OpenAppDelete(ctx context.Context, req *v1.OpenAppDeleteReq) (
 }
 
 func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSecretReq) (*v1.OpenAppResetSecretRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Generate new secret
 	secretBytes := make([]byte, 24)
@@ -241,11 +242,11 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 }
 
 func (s *sTenant) OpenAppToggleStatus(ctx context.Context, req *v1.OpenAppToggleStatusReq) (*v1.OpenAppToggleStatusRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(g.Map{
 		"status": req.Status,
 	}).Update()
@@ -257,11 +258,11 @@ func (s *sTenant) OpenAppToggleStatus(ctx context.Context, req *v1.OpenAppToggle
 // ============================================================
 
 func (s *sTenant) WebhookConfigList(ctx context.Context, _ *v1.WebhookConfigListReq) (*v1.WebhookConfigListRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	var configs []entity.OpnWebhookConfigs
 	err := dao.OpnWebhookConfigs.Ctx(ctx).Where("tenant_id", tenantID).OrderDesc("created_at").Scan(&configs)
 	if err != nil {
@@ -293,11 +294,11 @@ func (s *sTenant) WebhookConfigList(ctx context.Context, _ *v1.WebhookConfigList
 }
 
 func (s *sTenant) WebhookConfigCreate(ctx context.Context, req *v1.WebhookConfigCreateReq) (*v1.WebhookConfigCreateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Generate signing key
 	keyBytes := make([]byte, 24)
@@ -330,11 +331,11 @@ func (s *sTenant) WebhookConfigCreate(ctx context.Context, req *v1.WebhookConfig
 }
 
 func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfigUpdateReq) (*v1.WebhookConfigUpdateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	data := g.Map{}
 
 	if req.Name != nil {
@@ -363,21 +364,21 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 }
 
 func (s *sTenant) WebhookConfigDelete(ctx context.Context, req *v1.WebhookConfigDeleteReq) (*v1.WebhookConfigDeleteRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	_, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
 	return nil, err
 }
 
 func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDeliveryLogsReq) (*v1.WebhookDeliveryLogsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page := req.Page
 	pageSize := req.PageSize
 	if page < 1 {
@@ -423,11 +424,11 @@ func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDelive
 }
 
 func (s *sTenant) WebhookRetry(ctx context.Context, req *v1.WebhookRetryReq) (*v1.WebhookRetryRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	result, err := dao.OpnWebhookEvents.Ctx(ctx).
 		Where("id", req.EventId).
