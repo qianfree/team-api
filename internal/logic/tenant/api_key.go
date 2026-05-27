@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
@@ -20,9 +21,9 @@ import (
 
 // ApiKeyList 列出 API Keys，支持按类型过滤
 func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (*v1.TenantApiKeyListRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	page, pageSize := lcommon.NormalizePagination(req.Page, req.PageSize)
 
 	// member 只能查看个人密钥
@@ -111,9 +112,9 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 
 // ApiKeyCreate 创建新的 API Key
 func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateReq) (*v1.TenantApiKeyCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 
 	keyType := req.KeyType
 	if keyType == "" {
@@ -204,9 +205,9 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 
 // ApiKeyDelete 禁用 API Key
 func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteReq) (*v1.TenantApiKeyDeleteRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 先查询密钥信息以判断类型
@@ -262,9 +263,9 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 
 // ApiKeyUpdate 更新 API Key 的可编辑字段
 func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateReq) (*v1.TenantApiKeyUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 查询密钥信息
@@ -388,9 +389,9 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 
 // ApiKeyUpdateScopes 更新 API Key 的模型 scope
 func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUpdateScopesReq) (*v1.TenantApiKeyUpdateScopesRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
-	role := ctxUserRole(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
 	keyID := req.Id
 
 	// 先查询密钥信息以判断类型
@@ -448,7 +449,7 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 
 // ApiKeyModelScopes 查询 API Key 的模型范围
 func (s *sTenant) ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (*v1.TenantApiKeyModelScopesRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// 验证 key 属于该租户
 	count, err := dao.ApiKeys.Ctx(ctx).
@@ -556,14 +557,8 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 
 // ExportApiKeys exports the tenant API key list as CSV or Excel.
 func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
@@ -577,7 +572,7 @@ func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportR
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "API密钥_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
@@ -595,44 +590,7 @@ func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportR
 		return query
 	}
 
-	if format == "xlsx" {
-		type keyRow struct {
-			Id        int64      `json:"id"`
-			Name      string     `json:"name"`
-			KeyPrefix string     `json:"key_prefix"`
-			KeyType   string     `json:"key_type"`
-			Scope     string     `json:"scope"`
-			Status    string     `json:"status"`
-			ExpiresAt *time.Time `json:"expires_at"`
-			CreatedAt *time.Time `json:"created_at"`
-		}
-
-		var keys []keyRow
-		err := buildQuery().
-			Fields("id, name, key_prefix, key_type, scope, status, expires_at, created_at").
-			OrderDesc("created_at").
-			Scan(&keys)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(keys))
-		for _, k := range keys {
-			data = append(data, map[string]any{
-				"id":         k.Id,
-				"name":       k.Name,
-				"key_prefix": k.KeyPrefix,
-				"key_type":   k.KeyType,
-				"scope":      k.Scope,
-				"status":     k.Status,
-				"expires_at": k.ExpiresAt,
-				"created_at": k.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			type keyRow struct {

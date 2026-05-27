@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 type projectRow struct {
@@ -49,7 +50,7 @@ type usageLogRow struct {
 
 // ProjectList returns a paginated list of projects for a tenant.
 func (s *sTenant) ProjectList(ctx context.Context, req *v1.TenantProjectListReq) (*v1.TenantProjectListRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var projects []projectRow
@@ -78,8 +79,8 @@ func (s *sTenant) ProjectList(ctx context.Context, req *v1.TenantProjectListReq)
 
 // ProjectCreate creates a new project for a tenant.
 func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreateReq) (*v1.TenantProjectCreateRes, error) {
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	name := req.Name
 	if name == "" {
@@ -112,7 +113,7 @@ func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreate
 
 // ProjectUpdate updates a project.
 func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdateReq) (*v1.TenantProjectUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
 		ID     int64  `json:"id"`
@@ -161,7 +162,7 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 
 // ProjectArchive archives a project and revokes all its keys.
 func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchiveReq) (*v1.TenantProjectArchiveRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
 		ID     int64  `json:"id"`
@@ -203,7 +204,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 
 // ProjectUnarchive restores an archived project. Keys are NOT auto-restored.
 func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUnarchiveReq) (*v1.TenantProjectUnarchiveRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
 		ID     int64  `json:"id"`
@@ -287,7 +288,7 @@ func CheckBudgetExhausted(ctx context.Context) error {
 
 // ProjectGet 根据 ID 获取单个项目详情（含统计摘要）
 func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (*v1.TenantProjectGetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var p *projectRow
 	err := dao.TntProjects.Ctx(ctx).
@@ -350,12 +351,12 @@ func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (
 
 // ProjectApiKeyList 获取项目密钥列表（owner/admin 权限）
 func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectApiKeyListReq) (*v1.TenantProjectApiKeyListRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var keys []apiKeyRow
@@ -385,13 +386,13 @@ func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectAp
 
 // ProjectApiKeyCreate 创建项目密钥（owner/admin 权限）
 func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProjectApiKeyCreateReq) (*v1.TenantProjectApiKeyCreateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	// Verify project exists and belongs to tenant
 	var project *struct {
@@ -457,12 +458,12 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 
 // ProjectApiKeyDelete 删除项目密钥（owner/admin 权限）
 func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProjectApiKeyDeleteReq) (*v1.TenantProjectApiKeyDeleteRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	// Verify the key belongs to the project and tenant
 	var key *struct {
@@ -495,12 +496,12 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 
 // ProjectUsageStats 获取项目用量统计（按日汇总，近30天）（owner/admin 权限）
 func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUsageStatsReq) (*v1.TenantProjectUsageStatsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var project struct {
 		ID int64 `json:"id"`
@@ -603,12 +604,12 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 
 // ProjectUsageLogs 获取项目用量日志（分页）（owner/admin 权限）
 func (s *sTenant) ProjectUsageLogs(ctx context.Context, req *v1.TenantProjectUsageLogsReq) (*v1.TenantProjectUsageLogsRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	// 获取项目关联的 API Key ID 列表

@@ -15,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -105,7 +106,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 
 // Setup2FA starts the 2FA setup process for the current tenant user.
 func (s *sTenant) Setup2FA(ctx context.Context, _ *v1.Tenant2FASetupReq) (*v1.Tenant2FASetupRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 	secret, uri, err := common.Setup2FA(ctx, "tenant", userID)
 	if err != nil {
 		return nil, err
@@ -127,7 +128,7 @@ func (s *sTenant) Setup2FA(ctx context.Context, _ *v1.Tenant2FASetupReq) (*v1.Te
 
 // Enable2FA confirms and enables 2FA.
 func (s *sTenant) Enable2FA(ctx context.Context, req *v1.Tenant2FAEnableReq) (*v1.Tenant2FAEnableRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 	secret, err := getPendingTOTPSecret(ctx, userID)
 	if err != nil || secret == "" {
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "请先执行2FA设置")
@@ -144,7 +145,7 @@ func (s *sTenant) Enable2FA(ctx context.Context, req *v1.Tenant2FAEnableReq) (*v
 
 // Disable2FA disables 2FA for the current tenant user.
 func (s *sTenant) Disable2FA(ctx context.Context, req *v1.Tenant2FADisableReq) (*v1.Tenant2FADisableRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 	err := common.Disable2FA(ctx, "tenant", userID, req.Code)
 	if err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func (s *sTenant) Disable2FA(ctx context.Context, req *v1.Tenant2FADisableReq) (
 
 // RegenerateBackupCodes generates new backup codes.
 func (s *sTenant) RegenerateBackupCodes(ctx context.Context, req *v1.Tenant2FARegenerateBackupCodesReq) (*v1.Tenant2FARegenerateBackupCodesRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 	codes, err := common.RegenerateBackupCodes(ctx, "tenant", userID, req.Code)
 	if err != nil {
 		return nil, err
@@ -164,7 +165,7 @@ func (s *sTenant) RegenerateBackupCodes(ctx context.Context, req *v1.Tenant2FARe
 
 // ConfirmHighRisk generates a confirm token for high-risk operations.
 func (s *sTenant) ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmReq) (*v1.Tenant2FAConfirmRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	enabled, err := common.Is2FAEnabled(ctx, "tenant", userID)
 	if err != nil {
@@ -193,9 +194,9 @@ func (s *sTenant) ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmR
 // LoginHistory returns the login history for tenant users.
 // owner/admin see all members in the tenant; member sees only own records.
 func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryReq) (*v1.TenantLoginHistoryRes, error) {
-	userID := ctxUserID(ctx)
-	tenantID := ctxTenantID(ctx)
-	role := ctxUserRole(ctx)
+	userID := middleware.GetUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	role := middleware.GetUserRole(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	q := dao.AudLoginHistory.Ctx(ctx).
@@ -352,7 +353,7 @@ func getEncKey(ctx context.Context) []byte {
 
 // GetIPWhitelist returns the tenant's IP whitelist configuration.
 func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
@@ -385,7 +386,7 @@ func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGet
 
 // UpdateIPWhitelist updates the tenant's IP whitelist configuration.
 func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhitelistUpdateReq) (*v1.TenantIPWhitelistUpdateRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {

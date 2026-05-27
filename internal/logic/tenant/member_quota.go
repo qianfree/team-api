@@ -10,10 +10,11 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq) (*v1.TenantMemberQuotaRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var row struct {
 		QuotaType    string     `json:"quota_type"`
@@ -49,7 +50,7 @@ func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq)
 }
 
 func (s *sTenant) MemberQuotaSet(ctx context.Context, req *v1.TenantMemberQuotaSetReq) (*v1.TenantMemberQuotaSetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	if req.QuotaType == "periodic" && req.Period == "" {
 		return nil, fmt.Errorf("周期类型不能为空")

@@ -7,13 +7,14 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
 // InvitationList returns a paginated list of invitation records for the tenant.
 func (s *sTenant) InvitationList(ctx context.Context, req *v1.TenantInvitationListReq) (*v1.TenantInvitationListRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	type row struct {
@@ -102,7 +103,7 @@ func (s *sTenant) InvitationList(ctx context.Context, req *v1.TenantInvitationLi
 
 // RevokeInvitation revokes a pending invitation by setting used_by_user_id = -1.
 func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitationRevokeReq) (*v1.TenantInvitationRevokeRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var inv struct {
 		ID           int64 `json:"id"`

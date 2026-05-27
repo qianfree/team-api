@@ -1,8 +1,6 @@
 package admin
 
 import (
-	"context"
-
 	"github.com/qianfree/team-api/internal/service"
 )
 
@@ -16,17 +14,4 @@ func New() *sAdmin {
 
 func init() {
 	service.RegisterAdmin(New())
-}
-
-// getCtxUserID extracts the admin user ID from context.
-// The key "userId" is set by admin_auth middleware.
-func getCtxUserID(ctx context.Context) int64 {
-	val := ctx.Value("userId")
-	if val == nil {
-		return 0
-	}
-	if id, ok := val.(int64); ok {
-		return id
-	}
-	return 0
 }

@@ -7,7 +7,6 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -15,16 +14,17 @@ import (
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/payment"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // OrderList 获取租户订单列表
 func (s *sTenant) OrderList(ctx context.Context, req *v1.TenantOrderListReq) (*v1.TenantOrderListRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := lcommon.NormalizePagination(req.Page, req.PageSize)
 	status := req.Status
 
@@ -52,11 +52,11 @@ func (s *sTenant) OrderList(ctx context.Context, req *v1.TenantOrderListReq) (*v
 
 // OrderDetail 获取订单详情
 func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq) (*v1.TenantOrderDetailRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	var order map[string]any
 	err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
@@ -73,12 +73,12 @@ func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq)
 
 // OrderCreate 创建订单
 func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq) (*v1.TenantOrderCreateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 	planID := req.PlanID
 	months := req.Months
 
@@ -141,11 +141,11 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 
 // OrderCancel 取消订单
 func (s *sTenant) OrderCancel(ctx context.Context, req *v1.TenantOrderCancelReq) (*v1.TenantOrderCancelRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	result, err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
@@ -166,11 +166,11 @@ func (s *sTenant) OrderCancel(ctx context.Context, req *v1.TenantOrderCancelReq)
 
 // OrderPay 支付订单
 func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.TenantOrderPayRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 	orderID := req.Id
 
 	// 支付渠道
@@ -231,7 +231,7 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 
 // PaymentInfo 获取租户可用的支付信息（渠道列表、金额选项、折扣）
 func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq) (*v1.TenantPaymentInfoRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
@@ -294,12 +294,12 @@ func updateOrderPaymentChannel(ctx context.Context, orderID int64, channel, paym
 
 // RechargeCreate 创建充值订单并发起支付（一步完成）
 func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCreateReq) (*v1.TenantRechargeCreateRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	tenantID := ctxTenantID(ctx)
-	userID := ctxUserID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	// 1. 校验金额
 	settings, _ := payment.GetGlobalPaymentSettings(ctx)
@@ -393,18 +393,12 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 
 // ExportOrders exports the tenant order list as CSV or Excel.
 func (s *sTenant) ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq) (*v1.TenantOrderExportRes, error) {
-	role := ctxUserRole(ctx)
+	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
@@ -418,39 +412,12 @@ func (s *sTenant) ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "订单列表_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
-	if format == "xlsx" {
-		orders := make([]*v1.TenantOrderItem, 0)
-		query := dao.OrdOrders.Ctx(ctx).Where("tenant_id", tenantID)
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		err := query.OrderDesc("created_at").Scan(&orders)
-		if err != nil {
-			return nil, err
-		}
-
-		data := make([]map[string]any, 0, len(orders))
-		for _, o := range orders {
-			data = append(data, map[string]any{
-				"id":              o.Id,
-				"order_no":        o.OrderNo,
-				"order_type":      o.OrderType,
-				"amount":          o.Amount,
-				"final_amount":    o.FinalAmount,
-				"payment_channel": o.PaymentChannel,
-				"status":          o.Status,
-				"created_at":      o.CreatedAt,
-			})
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			orders := make([]*v1.TenantOrderItem, 0)

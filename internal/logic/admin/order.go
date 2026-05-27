@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -61,7 +60,7 @@ func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.Orde
 
 // RefundOrder 发起退款
 func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error) {
-	adminUserID := ctxUserID(ctx)
+	adminUserID := common.GetCtxUserID(ctx)
 
 	var order struct {
 		TenantID       int64   `json:"tenant_id"`
@@ -107,7 +106,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 
 // OrderComplete 手动完成订单
 func (s *sAdmin) OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error) {
-	adminUserID := ctxUserID(ctx)
+	adminUserID := common.GetCtxUserID(ctx)
 
 	orderNo, err := getOrderForComplete(ctx, req.Id)
 	if err != nil {
@@ -208,15 +207,6 @@ func markOrderPaidByAdmin(ctx context.Context, orderID int64, adminUserID int64)
 
 // ExportOrders exports order list to CSV or Excel.
 func (s *sAdmin) ExportOrders(ctx context.Context, req *v1.OrderExportReq) (*v1.OrderExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "order_no", Header: "订单号"},
@@ -229,51 +219,14 @@ func (s *sAdmin) ExportOrders(ctx context.Context, req *v1.OrderExportReq) (*v1.
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "订单_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
 	orderFields := "id, order_no, tenant_id, order_type, final_amount, payment_channel, status, created_at"
 
-	if format == "xlsx" {
-		query := dao.OrdOrders.Ctx(ctx)
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		if req.TenantID != "" {
-			query = query.Where("tenant_id", req.TenantID)
-		}
-		var orders []struct {
-			Id             int64       `json:"id"`
-			OrderNo        string      `json:"order_no"`
-			TenantId       int64       `json:"tenant_id"`
-			OrderType      string      `json:"order_type"`
-			FinalAmount    float64     `json:"final_amount"`
-			PaymentChannel string      `json:"payment_channel"`
-			Status         string      `json:"status"`
-			CreatedAt      *gtime.Time `json:"created_at"`
-		}
-		if err := query.Fields(orderFields).OrderDesc("created_at").Scan(&orders); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(orders))
-		for i, o := range orders {
-			data[i] = map[string]any{
-				"id":              o.Id,
-				"order_no":        o.OrderNo,
-				"tenant_id":       o.TenantId,
-				"order_type":      o.OrderType,
-				"final_amount":    o.FinalAmount,
-				"payment_channel": o.PaymentChannel,
-				"status":          o.Status,
-				"created_at":      o.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			query := dao.OrdOrders.Ctx(ctx)

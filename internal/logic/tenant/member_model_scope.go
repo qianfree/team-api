@@ -9,11 +9,12 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/middleware"
 )
 
 // MemberModelScopes returns the model IDs available for a member.
 func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberModelScopesReq) (*v1.TenantMemberModelScopesRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	var rows []struct {
 		ModelID int64 `json:"model_id"`
@@ -35,7 +36,7 @@ func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberMod
 
 // MemberModelScopesSet sets the available models for a member (full replace).
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
-	tenantID := ctxTenantID(ctx)
+	tenantID := middleware.GetTenantID(ctx)
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing scopes

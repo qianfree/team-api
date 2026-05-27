@@ -5,7 +5,6 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -81,15 +80,6 @@ func (s *sAdmin) GetPromoCodeUsages(ctx context.Context, req *v1.PromoCodeUsages
 
 // ExportPromoCodes exports promo code list to CSV or Excel.
 func (s *sAdmin) ExportPromoCodes(ctx context.Context, req *v1.PromoCodeExportReq) (*v1.PromoCodeExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "code", Header: "优惠码"},
@@ -104,48 +94,14 @@ func (s *sAdmin) ExportPromoCodes(ctx context.Context, req *v1.PromoCodeExportRe
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "优惠码_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
 	promoFields := "id, code, name, type, discount_value, min_amount, total_count, used_count, status, created_at"
 
-	if format == "xlsx" {
-		var items []struct {
-			Id            int64       `json:"id"`
-			Code          string      `json:"code"`
-			Name          string      `json:"name"`
-			Type          string      `json:"type"`
-			DiscountValue float64     `json:"discount_value"`
-			MinAmount     float64     `json:"min_amount"`
-			TotalCount    int         `json:"total_count"`
-			UsedCount     int         `json:"used_count"`
-			Status        string      `json:"status"`
-			CreatedAt     *gtime.Time `json:"created_at"`
-		}
-		if err := dao.OrdPromoCodes.Ctx(ctx).Fields(promoFields).OrderDesc("created_at").Scan(&items); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(items))
-		for i, item := range items {
-			data[i] = map[string]any{
-				"id":             item.Id,
-				"code":           item.Code,
-				"name":           item.Name,
-				"type":           item.Type,
-				"discount_value": item.DiscountValue,
-				"min_amount":     item.MinAmount,
-				"total_count":    item.TotalCount,
-				"used_count":     item.UsedCount,
-				"status":         item.Status,
-				"created_at":     item.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			var batch []struct {

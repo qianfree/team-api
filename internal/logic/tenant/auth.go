@@ -19,6 +19,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
@@ -388,7 +389,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 
 // Logout handles tenant user logout.
 func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.TenantLogoutRes, error) {
-	sessionID := ctxSessionID(ctx)
+	sessionID := middleware.GetSessionID(ctx)
 	common.MarkSessionRevoked(ctx, sessionID)
 	err := common.RevokeSession(ctx, sessionID)
 	if err != nil {
@@ -452,7 +453,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 
 // ChangePassword handles tenant user password change.
 func (s *sTenant) ChangePassword(ctx context.Context, req *v1.TenantChangePasswordReq) (*v1.TenantChangePasswordRes, error) {
-	userID := ctxUserID(ctx)
+	userID := middleware.GetUserID(ctx)
 
 	var user *entity.TntUsers
 	err := dao.TntUsers.Ctx(ctx).
@@ -492,8 +493,8 @@ func (s *sTenant) ChangePassword(ctx context.Context, req *v1.TenantChangePasswo
 
 // ListSessions returns active sessions for the current tenant user.
 func (s *sTenant) ListSessions(ctx context.Context, req *v1.TenantSessionListReq) (*v1.TenantSessionListRes, error) {
-	userID := ctxUserID(ctx)
-	currentSessionID := ctxSessionID(ctx)
+	userID := middleware.GetUserID(ctx)
+	currentSessionID := middleware.GetSessionID(ctx)
 
 	sessions, err := common.ListSessions(ctx, "tenant", userID)
 	if err != nil {

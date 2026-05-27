@@ -340,33 +340,6 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 
 // ExportOperationLogs exports operation logs to CSV or Excel.
 func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "user_id", Header: "用户ID"},
-		{Field: "user_type", Header: "用户类型"},
-		{Field: "action", Header: "操作"},
-		{Field: "resource_type", Header: "目标类型"},
-		{Field: "resource_id", Header: "目标ID"},
-		{Field: "ip_address", Header: "IP地址"},
-		{Field: "detail", Header: "详情"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
-	config := export.Config{
-		Format:   format,
-		Filename: "操作日志_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
-	}
-
 	buildOpLogWhere := func() (string, []any) {
 		var conditions []string
 		var args []any
@@ -399,35 +372,23 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 
 	selectFields := "id, user_id, user_type, action, resource_type, resource_id, ip_address, detail, created_at"
 
-	if format == "xlsx" {
-		where, args := buildOpLogWhere()
-		items, _, err := queryPage(ctx, "aud_operation_logs", selectFields, where, "created_at DESC", 1, 100000, args...)
-		if err != nil {
-			return nil, err
-		}
-		// Ensure time fields are formatted as strings
-		data := make([]map[string]any, len(items))
-		for i, item := range items {
-			createdAt := ""
-			if v, ok := item["created_at"]; ok {
-				createdAt = fmt.Sprintf("%v", v)
-			}
-			data[i] = map[string]any{
-				"id":            item["id"],
-				"user_id":       item["user_id"],
-				"user_type":     item["user_type"],
-				"action":        item["action"],
-				"resource_type": item["resource_type"],
-				"resource_id":   item["resource_id"],
-				"ip_address":    item["ip_address"],
-				"detail":        item["detail"],
-				"created_at":    createdAt,
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
+	config := export.Config{
+		Format:   req.Format,
+		Filename: "操作日志_" + gtime.Now().Format("Ymd_His"),
+		Columns: []export.Column{
+			{Field: "id", Header: "ID"},
+			{Field: "user_id", Header: "用户ID"},
+			{Field: "user_type", Header: "用户类型"},
+			{Field: "action", Header: "操作"},
+			{Field: "resource_type", Header: "目标类型"},
+			{Field: "resource_id", Header: "目标ID"},
+			{Field: "ip_address", Header: "IP地址"},
+			{Field: "detail", Header: "详情"},
+			{Field: "created_at", Header: "创建时间"},
+		},
 	}
 
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			where, args := buildOpLogWhere()

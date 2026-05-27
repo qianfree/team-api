@@ -6,7 +6,6 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -444,15 +443,6 @@ func (s *sAdmin) UpdateTenantChannelScope(ctx context.Context, req *v1.TenantCha
 
 // ExportTenants exports tenant list to CSV or Excel.
 func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v1.TenantExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "name", Header: "名称"},
@@ -465,20 +455,18 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "租户_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
 	fetchTenantRow := func(t struct {
-		Id             int64       `json:"id"`
-		Name           string      `json:"name"`
-		Code           string      `json:"code"`
-		OwnerUserID    int64       `json:"owner_user_id"`
-		Status         string      `json:"status"`
-		MaxMembers     int         `json:"max_members"`
-		MaxConcurrency int         `json:"max_concurrency"`
-		CreatedAt      *gtime.Time `json:"created_at"`
+		Id          int64       `json:"id"`
+		Name        string      `json:"name"`
+		Code        string      `json:"code"`
+		OwnerUserID int64       `json:"owner_user_id"`
+		Status      string      `json:"status"`
+		CreatedAt   *gtime.Time `json:"created_at"`
 	}) map[string]any {
 		var owner *struct {
 			DisplayName string `json:"display_name"`
@@ -513,36 +501,7 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 		}
 	}
 
-	if format == "xlsx" {
-		m := dao.TntTenants.Ctx(ctx)
-		if req.Keyword != "" {
-			keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-			m = m.Where("name LIKE ? OR code LIKE ?", keyword, keyword)
-		}
-		if req.Status != "" {
-			m = m.Where("status", req.Status)
-		}
-		var tenants []struct {
-			Id             int64       `json:"id"`
-			Name           string      `json:"name"`
-			Code           string      `json:"code"`
-			OwnerUserID    int64       `json:"owner_user_id"`
-			Status         string      `json:"status"`
-			MaxMembers     int         `json:"max_members"`
-			MaxConcurrency int         `json:"max_concurrency"`
-			CreatedAt      *gtime.Time `json:"created_at"`
-		}
-		if err := m.OrderDesc("id").Scan(&tenants); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(tenants))
-		for i, t := range tenants {
-			data[i] = fetchTenantRow(t)
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			m := dao.TntTenants.Ctx(ctx)
@@ -554,16 +513,14 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 				m = m.Where("status", req.Status)
 			}
 			var batch []struct {
-				Id             int64       `json:"id"`
-				Name           string      `json:"name"`
-				Code           string      `json:"code"`
-				OwnerUserID    int64       `json:"owner_user_id"`
-				Status         string      `json:"status"`
-				MaxMembers     int         `json:"max_members"`
-				MaxConcurrency int         `json:"max_concurrency"`
-				CreatedAt      *gtime.Time `json:"created_at"`
+				Id          int64       `json:"id"`
+				Name        string      `json:"name"`
+				Code        string      `json:"code"`
+				OwnerUserID int64       `json:"owner_user_id"`
+				Status      string      `json:"status"`
+				CreatedAt   *gtime.Time `json:"created_at"`
 			}
-			if err := m.OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+			if err := m.Fields("id, name, code, owner_user_id, status, created_at").OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return
 			}
 			for _, t := range batch {

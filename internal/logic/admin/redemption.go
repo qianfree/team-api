@@ -183,15 +183,6 @@ func (s *sAdmin) ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsa
 
 // ExportRedemptions exports redemption list to CSV or Excel.
 func (s *sAdmin) ExportRedemptions(ctx context.Context, req *v1.RedemptionExportReq) (*v1.RedemptionExportRes, error) {
-	r := g.RequestFromCtx(ctx)
-	format := req.Format
-	if format == "" {
-		format = "csv"
-	}
-	if format == "excel" {
-		format = "xlsx"
-	}
-
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "code", Header: "兑换码"},
@@ -204,48 +195,14 @@ func (s *sAdmin) ExportRedemptions(ctx context.Context, req *v1.RedemptionExport
 	}
 
 	config := export.Config{
-		Format:   format,
+		Format:   req.Format,
 		Filename: "兑换码_" + gtime.Now().Format("Ymd_His"),
 		Columns:  columns,
 	}
 
 	redemptionFields := "id, code, type, value, used_count, status, batch_no, created_at"
 
-	if format == "xlsx" {
-		query := dao.OrdRedemptions.Ctx(ctx)
-		if req.Status != "" {
-			query = query.Where("status", req.Status)
-		}
-		var items []struct {
-			Id        int64       `json:"id"`
-			Code      string      `json:"code"`
-			Type      string      `json:"type"`
-			Value     float64     `json:"value"`
-			UsedCount int         `json:"used_count"`
-			Status    string      `json:"status"`
-			BatchNo   string      `json:"batch_no"`
-			CreatedAt *gtime.Time `json:"created_at"`
-		}
-		if err := query.Fields(redemptionFields).OrderDesc("created_at").Scan(&items); err != nil {
-			return nil, err
-		}
-		data := make([]map[string]any, len(items))
-		for i, item := range items {
-			data[i] = map[string]any{
-				"id":         item.Id,
-				"code":       item.Code,
-				"type":       item.Type,
-				"value":      item.Value,
-				"used_count": item.UsedCount,
-				"status":     item.Status,
-				"batch_no":   item.BatchNo,
-				"created_at": item.CreatedAt.String(),
-			}
-		}
-		return nil, export.WriteExcel(r, config, data)
-	}
-
-	return nil, export.StreamCSV(r, config, func(yield func(map[string]any) bool) {
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			query := dao.OrdRedemptions.Ctx(ctx)

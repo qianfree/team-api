@@ -11,6 +11,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/open/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/service"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -26,34 +27,12 @@ func init() {
 	service.RegisterOpen(New())
 }
 
-// ctxOpenTenantID extracts tenant_id from context (injected by OpenPlatformAuth middleware).
-func ctxOpenTenantID(ctx context.Context) int64 {
-	val := ctx.Value("openTenantId")
-	if val != nil {
-		if id, ok := val.(int64); ok {
-			return id
-		}
-	}
-	return 0
-}
-
-// ctxOpenAppID extracts app id from context.
-func ctxOpenAppID(ctx context.Context) int64 {
-	val := ctx.Value("openAppId")
-	if val != nil {
-		if id, ok := val.(int64); ok {
-			return id
-		}
-	}
-	return 0
-}
-
 // ============================================================
 // 成员管理
 // ============================================================
 
 func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (*v1.OpenMemberListRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -113,7 +92,7 @@ func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (
 }
 
 func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateReq) (*v1.OpenMemberCreateRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -147,7 +126,7 @@ func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateRe
 }
 
 func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateReq) (*v1.OpenMemberUpdateRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -172,7 +151,7 @@ func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateRe
 }
 
 func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteReq) (*v1.OpenMemberDeleteRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -201,7 +180,7 @@ func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteRe
 // ============================================================
 
 func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq) (*v1.OpenMemberQuotaRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -230,7 +209,7 @@ func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq)
 }
 
 func (s *sOpen) OpenMemberQuotaUpdate(ctx context.Context, req *v1.OpenMemberQuotaUpdateReq) (*v1.OpenMemberQuotaUpdateRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -263,7 +242,7 @@ func (s *sOpen) OpenMemberQuotaUpdate(ctx context.Context, req *v1.OpenMemberQuo
 }
 
 func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsReq) (*v1.OpenMemberModelsRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -288,7 +267,7 @@ func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsRe
 }
 
 func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberModelsUpdateReq) (*v1.OpenMemberModelsUpdateRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -325,7 +304,7 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 // ============================================================
 
 func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.OpenKeyListRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -378,7 +357,7 @@ func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.Op
 }
 
 func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v1.OpenKeyCreateRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -424,7 +403,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 }
 
 func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v1.OpenKeyDeleteRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -438,7 +417,7 @@ func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v
 // ============================================================
 
 func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (*v1.OpenUsageQueryRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
@@ -516,7 +495,7 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 // ============================================================
 
 func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryReq) (*v1.OpenBillingQueryRes, error) {
-	tenantID := ctxOpenTenantID(ctx)
+	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
 	}
