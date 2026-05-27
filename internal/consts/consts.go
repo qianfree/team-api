@@ -160,6 +160,11 @@ const (
 	// Model errors
 	CodeModelNameExists = 10083
 
+	// Model group errors
+	CodeModelGroupNotFound   = 10084
+	CodeModelGroupCodeExists = 10085
+	CodeModelGroupHasTenants = 10086
+
 	// Demo mode
 	CodeDemoModeRestricted = 10403
 
@@ -272,6 +277,11 @@ const (
 
 	// Model errors
 	MsgModelNameExists = "模型名称已存在"
+
+	// Model group errors
+	MsgModelGroupNotFound   = "模型分组不存在"
+	MsgModelGroupCodeExists = "模型分组标识已存在"
+	MsgModelGroupHasTenants = "该分组下存在关联租户，无法删除"
 )
 
 // Demo mode messages

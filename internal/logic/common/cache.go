@@ -192,3 +192,6 @@ func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 func PublishInvalidation(ctx context.Context, fullKey string) {
 	_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", fullKey)
 }
+
+// TenantGroupModelCache 缓存租户通过分组可访问的模型集合，TTL 300s
+var TenantGroupModelCache = NewCache("tenant_group_models", 300*time.Second)

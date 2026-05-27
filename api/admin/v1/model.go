@@ -145,6 +145,26 @@ type ModelUpdateRes struct{}
 // ModelDeleteRes 删除模型响应
 type ModelDeleteRes struct{}
 
+// ModelOptionsReq 模型选项列表请求（下拉选择专用，不分页）
+type ModelOptionsReq struct {
+	g.Meta   `path:"/models/options" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型选项列表（不分页）"`
+	Status   string `json:"status" in:"query" dc:"状态筛选：active/deprecated/offline"`
+	Category string `json:"category" in:"query" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
+}
+
+// ModelOptionsRes 模型选项列表响应
+type ModelOptionsRes struct {
+	List []ModelOptionItem `json:"list"`
+}
+
+// ModelOptionItem 模型选项项（精简字段）
+type ModelOptionItem struct {
+	ID        int64  `json:"id"`
+	ModelId   string `json:"model_id"`
+	ModelName string `json:"model_name"`
+	Category  string `json:"category"`
+}
+
 // ModelExportReq 导出模型列表请求
 type ModelExportReq struct {
 	g.Meta   `path:"/models/export" method:"get" mime:"json" tags:"管理后台-模型" summary:"导出模型列表"`

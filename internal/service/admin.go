@@ -206,13 +206,15 @@ type (
 		ResetMemberPassword(ctx context.Context, req *v1.AdminMemberResetPasswordReq) (*v1.AdminMemberResetPasswordRes, error)
 		// ExportMembers exports member list to CSV or Excel.
 		ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq) (*v1.AdminMemberExportRes, error)
+		// ListModelOptions 获取模型选项列表（不分页，用于下拉选择）
+		ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) (*v1.ModelOptionsRes, error)
 		// ListModels 获取模型列表
 		ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.ModelListRes, error)
 		// CreateModel 创建模型（自动创建默认 token 定价记录）
 		CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.ModelCreateRes, error)
 		// UpdateModel 更新模型（含弃用状态管理）
 		UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error)
-		// DeleteModel 删除模型（同时删除定价记录和租户分配记录）
+		// DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 		DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error)
 		// ListModelPricing 模型定价列表（模型定价页面专用）
 		ListModelPricing(ctx context.Context, req *v1.PricingListReq) (*v1.PricingListRes, error)
@@ -226,6 +228,24 @@ type (
 		FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchOfficialInfoReq) (*v1.ModelFetchOfficialInfoRes, error)
 		// ExportModels exports model list to CSV or Excel.
 		ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.ModelExportRes, error)
+		// ListModelGroups 模型分组列表
+		ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq) (*v1.ModelGroupListRes, error)
+		// CreateModelGroup 创建模型分组
+		CreateModelGroup(ctx context.Context, req *v1.ModelGroupCreateReq) (*v1.ModelGroupCreateRes, error)
+		// UpdateModelGroup 更新模型分组
+		UpdateModelGroup(ctx context.Context, req *v1.ModelGroupUpdateReq) (*v1.ModelGroupUpdateRes, error)
+		// DeleteModelGroup 删除模型分组
+		DeleteModelGroup(ctx context.Context, req *v1.ModelGroupDeleteReq) (*v1.ModelGroupDeleteRes, error)
+		// ListModelGroupOptions 分组选项列表（不分页，用于下拉选择）
+		ListModelGroupOptions(ctx context.Context, req *v1.ModelGroupOptionsReq) (*v1.ModelGroupOptionsRes, error)
+		// ListGroupModels 查看分组内模型列表
+		ListGroupModels(ctx context.Context, req *v1.GroupModelsListReq) (*v1.GroupModelsListRes, error)
+		// SetGroupModels 设置分组内模型（全量替换）
+		SetGroupModels(ctx context.Context, req *v1.GroupModelsSetReq) (*v1.GroupModelsSetRes, error)
+		// ListTenantGroups 查看租户关联的分组列表
+		ListTenantGroups(ctx context.Context, req *v1.TenantGroupsListReq) (*v1.TenantGroupsListRes, error)
+		// SetTenantGroups 设置租户关联的分组（全量替换）
+		SetTenantGroups(ctx context.Context, req *v1.TenantGroupsSetReq) (*v1.TenantGroupsSetRes, error)
 		// ListTemplates 获取通知模板列表（分页）
 		ListTemplates(ctx context.Context, req *v1.TemplateListReq) (*v1.TemplateListRes, error)
 		// GetTemplate 获取单个通知模板

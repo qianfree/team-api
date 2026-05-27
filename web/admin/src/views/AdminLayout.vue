@@ -152,6 +152,7 @@ const menuGroups = [
     icon: IconApps,
     items: [
       { name: 'AdminModels', label: '模型列表', icon: IconApps },
+      { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage },
       { name: 'AdminChannels', label: '渠道管理', icon: IconBranch },
       { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar },
       { name: 'AdminModelPricing', label: '模型定价', icon: IconLayers },

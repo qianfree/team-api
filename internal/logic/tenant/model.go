@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 )
@@ -181,6 +182,78 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			item.PricingTiers = tiers
 		}
 
+		list = append(list, item)
+	}
+	// 追加分组来源的模型（不在显式分配中的模型）
+	explicitModelIDs := make(map[int64]bool, len(results))
+	for _, r := range results {
+		explicitModelIDs[r.ModelDBID] = true
+	}
+
+	var groupModels []struct {
+		ModelDBID        int64   `json:"model_db_id"`
+		ModelId          string  `json:"model_id"`
+		ModelName        string  `json:"model_name"`
+		Category         string  `json:"category"`
+		MaxContextTokens int     `json:"max_context_tokens"`
+		MaxOutputTokens  int     `json:"max_output_tokens"`
+		Description      string  `json:"description"`
+		Tags             string  `json:"tags"`
+		Capabilities     string  `json:"capabilities"`
+		BaseBillingMode  string  `json:"base_billing_mode"`
+		BaseInputPrice   float64 `json:"base_input_price"`
+		BaseOutputPrice  float64 `json:"base_output_price"`
+	}
+
+	groupQuery := g.DB().Model("mdl_group_models gm").Ctx(ctx).
+		InnerJoin("mdl_model_groups g ON gm.group_id = g.id").
+		InnerJoin("mdl_models m ON gm.model_id = m.id").
+		InnerJoin("mdl_tenant_groups tg ON tg.group_id = g.id").
+		LeftJoin("mdl_pricing p ON p.model_id = m.id AND p.min_tokens = 0").
+		Where("tg.tenant_id", tenantID).
+		Where("g.status", "active").
+		Where("m.status", "active")
+
+	if len(explicitModelIDs) > 0 {
+		ids := make([]int64, 0, len(explicitModelIDs))
+		for id := range explicitModelIDs {
+			ids = append(ids, id)
+		}
+		groupQuery = groupQuery.WhereNotIn("m.id", ids)
+	}
+
+	if req.Category != "" {
+		groupQuery = groupQuery.Where("m.category", req.Category)
+	}
+	if req.Search != "" {
+		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+	}
+
+	_ = groupQuery.
+		Fields("DISTINCT m.id AS model_db_id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities, p.billing_mode AS base_billing_mode, p.input_price AS base_input_price, p.output_price AS base_output_price").
+		OrderAsc("m.category").
+		OrderAsc("m.model_id").
+		Scan(&groupModels)
+
+	for _, gm := range groupModels {
+		billingMode := gm.BaseBillingMode
+		if billingMode == "" {
+			billingMode = "token"
+		}
+
+		item := v1.TenantAvailableModelItem{
+			ModelId:      gm.ModelId,
+			ModelName:    gm.ModelName,
+			Category:     gm.Category,
+			MaxContext:   gm.MaxContextTokens,
+			MaxOutput:    gm.MaxOutputTokens,
+			Description:  gm.Description,
+			Tags:         gm.Tags,
+			Capabilities: gm.Capabilities,
+			BillingMode:  &billingMode,
+			InputPrice:   &gm.BaseInputPrice,
+			OutputPrice:  &gm.BaseOutputPrice,
+		}
 		list = append(list, item)
 	}
 
