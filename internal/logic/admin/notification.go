@@ -7,6 +7,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -39,17 +40,16 @@ func (s *sAdmin) ListTemplates(ctx context.Context, req *v1.TemplateListReq) (*v
 
 // GetTemplate 获取单个通知模板
 func (s *sAdmin) GetTemplate(ctx context.Context, req *v1.TemplateGetReq) (*v1.TemplateGetRes, error) {
-	var tpl map[string]any
-	err := dao.NtfTemplates.Ctx(ctx).
+	record, err := dao.NtfTemplates.Ctx(ctx).
 		Where("code", req.Code).
-		Scan(&tpl)
+		One()
 	if err != nil {
 		return nil, err
 	}
-	if tpl == nil {
+	if record == nil {
 		return nil, common.NewNotFoundError("template")
 	}
-	return &v1.TemplateGetRes{Data: tpl}, nil
+	return &v1.TemplateGetRes{Data: record.Map()}, nil
 }
 
 // UpdateTemplate 更新通知模板
@@ -150,7 +150,25 @@ func (s *sAdmin) SendBroadcast(ctx context.Context, req *v1.MessageBroadcastReq)
 	}
 
 	engine := common.NewNotificationEngine()
-	return nil, engine.SendBroadcastMessage(ctx, req.TenantID, "system", req.Title, req.Content, req.TargetRoles)
+
+	if req.TenantID != nil && *req.TenantID > 0 {
+		return nil, engine.SendBroadcastMessage(ctx, *req.TenantID, "system", req.Title, req.Content, req.TargetRoles)
+	}
+
+	// 广播到所有活跃租户
+	var tenants []struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.TntTenants.Ctx(ctx).Where("status", "active").Fields("id").Scan(&tenants)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tenants {
+		if e := engine.SendBroadcastMessage(ctx, t.Id, "system", req.Title, req.Content, req.TargetRoles); e != nil {
+			g.Log().Warningf(ctx, "SendBroadcast to tenant %d failed: %v", t.Id, e)
+		}
+	}
+	return nil, nil
 }
 
 // ListMessages 获取所有消息列表（管理后台，支持过滤）

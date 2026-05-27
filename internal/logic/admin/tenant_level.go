@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -64,9 +65,33 @@ func (s *sAdmin) CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 }
 
 func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigUpdateReq) (*v1.TenantLevelConfigUpdateRes, error) {
+	data := g.Map{}
+	if req.Name != nil {
+		data["name"] = *req.Name
+	}
+	if req.CumulativeRechargeThreshold != nil {
+		data["cumulative_recharge_threshold"] = *req.CumulativeRechargeThreshold
+	}
+	if req.MaxMembers != nil {
+		data["max_members"] = *req.MaxMembers
+	}
+	if req.MaxConcurrency != nil {
+		data["max_concurrency"] = *req.MaxConcurrency
+	}
+	if req.PriceMultiplier != nil {
+		data["price_multiplier"] = *req.PriceMultiplier
+	}
+	if req.SortOrder != nil {
+		data["sort_order"] = *req.SortOrder
+	}
+
+	if len(data) == 0 {
+		return &v1.TenantLevelConfigUpdateRes{}, nil
+	}
+
 	_, err := dao.TntTenantLevelConfigs.Ctx(ctx).
 		Where("id", req.Id).
-		Data(req.Update).
+		Data(data).
 		Update()
 	if err != nil {
 		return nil, err
@@ -75,20 +100,16 @@ func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 }
 
 func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigDeleteReq) (*v1.TenantLevelConfigDeleteRes, error) {
-	// 不允许删除 level=1（默认等级）
 	var config entity.TntTenantLevelConfigs
-	err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
-	if err != nil {
-		return nil, err
-	}
+	dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
 	if config.Id == 0 {
-		return nil, gerror.New("等级配置不存在")
+		return &v1.TenantLevelConfigDeleteRes{}, nil
 	}
 	if config.Level == 1 {
 		return nil, gerror.New("不允许删除默认等级 LV1")
 	}
 
-	_, err = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
 	if err != nil {
 		return nil, err
 	}

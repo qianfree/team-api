@@ -81,6 +81,11 @@ func CreateAlertRule(ctx context.Context, data do.OpsAlertRules) (int64, error) 
 		return 0, common.NewBadRequestError("规则名称不能为空")
 	}
 	metricType := gconv.String(data.MetricType)
+	// Auto-prefix: if no namespace (dot) found, try prepending "api."
+	if !strings.Contains(metricType, ".") {
+		metricType = "api." + metricType
+		data.MetricType = metricType
+	}
 	if _, ok := validMetricTypes[metricType]; !ok {
 		return 0, gerror.Newf("不支持的指标类型: %s", metricType)
 	}
@@ -116,6 +121,10 @@ func UpdateAlertRule(ctx context.Context, id int64, updates do.OpsAlertRules) er
 	// Validate metric_type if provided
 	if updates.MetricType != nil {
 		metricType := gconv.String(updates.MetricType)
+		if !strings.Contains(metricType, ".") {
+			metricType = "api." + metricType
+			updates.MetricType = metricType
+		}
 		if _, valid := validMetricTypes[metricType]; !valid {
 			return gerror.Newf("不支持的指标类型: %s", metricType)
 		}

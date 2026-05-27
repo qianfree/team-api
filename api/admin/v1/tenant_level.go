@@ -44,9 +44,14 @@ type TenantLevelConfigCreateRes struct {
 }
 
 type TenantLevelConfigUpdateReq struct {
-	g.Meta `path:"/tenant-level-configs/{id}" method:"put" mime:"json" tags:"管理后台-租户等级" summary:"更新等级配置"`
-	Id     int64                  `json:"id" in:"path" v:"required|min:1"`
-	Update map[string]interface{} `json:"update" v:"required"`
+	g.Meta                      `path:"/tenant-level-configs/{id}" method:"put" mime:"json" tags:"管理后台-租户等级" summary:"更新等级配置"`
+	Id                          int64    `json:"id" in:"path" v:"required|min:1"`
+	Name                        *string  `json:"name" dc:"等级名称"`
+	CumulativeRechargeThreshold *float64 `json:"cumulative_recharge_threshold" dc:"累计充值阈值"`
+	MaxMembers                  *int     `json:"max_members" dc:"最大成员数"`
+	MaxConcurrency              *int     `json:"max_concurrency" dc:"最大并发数"`
+	PriceMultiplier             *float64 `json:"price_multiplier" dc:"价格乘数"`
+	SortOrder                   *int     `json:"sort_order" dc:"排序权重"`
 }
 
 type TenantLevelConfigUpdateRes struct{}

@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -431,9 +433,18 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 
 // UpdateTenantChannelScope 更新租户默认渠道范围
 func (s *sAdmin) UpdateTenantChannelScope(ctx context.Context, req *v1.TenantChannelScopeUpdateReq) (*v1.TenantChannelScopeUpdateRes, error) {
-	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(do.TntTenants{
-		DefaultChannelScope: req.DefaultChannelScope,
-	})
+	var scopeValue any
+	if req.DefaultChannelScope == nil || *req.DefaultChannelScope == "" || *req.DefaultChannelScope == "all" {
+		scopeValue = nil
+	} else if json.Valid([]byte(*req.DefaultChannelScope)) {
+		scopeValue = *req.DefaultChannelScope
+	} else {
+		return nil, gerror.New("default_channel_scope 必须是有效的 JSON（如 [1,5,12]）或 null")
+	}
+
+	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Data(g.Map{
+		"default_channel_scope": scopeValue,
+	}).Update()
 	if err != nil {
 		return nil, err
 	}

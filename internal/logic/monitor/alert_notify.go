@@ -116,7 +116,7 @@ func sendAlertInAppToAdmins(ctx context.Context, adminIDs []int64, title, conten
 			Type:     "alert",
 			Title:    title,
 			Content:  content,
-			IsRead:   false,
+			IsRead:   0,
 		})
 		if err != nil {
 			g.Log().Warningf(ctx, "create in-app alert for admin %d: %v", adminID, err)
