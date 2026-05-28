@@ -246,6 +246,12 @@ type (
 		ListTenantGroups(ctx context.Context, req *v1.TenantGroupsListReq) (*v1.TenantGroupsListRes, error)
 		// SetTenantGroups 设置租户关联的分组（全量替换）
 		SetTenantGroups(ctx context.Context, req *v1.TenantGroupsSetReq) (*v1.TenantGroupsSetRes, error)
+		// ExportModelsJson 导出模型配置为 JSON 文件（含定价数据，用于跨环境迁移）
+		ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonReq) (*v1.ModelExportJsonRes, error)
+		// ImportModelsPreview 导入模型预览（解析上传文件，检测冲突）
+		ImportModelsPreview(ctx context.Context, req *v1.ModelImportPreviewReq) (*v1.ModelImportPreviewRes, error)
+		// ImportModels 确认导入模型（事务内执行）
+		ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.ModelImportRes, error)
 		// ListTemplates 获取通知模板列表（分页）
 		ListTemplates(ctx context.Context, req *v1.TemplateListReq) (*v1.TemplateListRes, error)
 		// GetTemplate 获取单个通知模板
