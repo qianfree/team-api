@@ -36,7 +36,7 @@ func ApiMaintenance(r *ghttp.Request) {
 	}
 
 	durationStr := common.Config().GetString(ctx, "maintenance_duration")
-	retryAfter := parseMaintenanceDuration(durationStr)
+	retryAfter := parseMaintenanceDuration(ctx, durationStr)
 
 	message := common.Config().GetString(ctx, "maintenance_message")
 	if message == "" {
@@ -70,14 +70,14 @@ func ApiMaintenance(r *ghttp.Request) {
 // parseMaintenanceDuration parses a duration string like "2h", "30m", "1h30m"
 // and returns the total number of seconds. Returns 300 (5 minutes) as default
 // if parsing fails or the string is empty.
-func parseMaintenanceDuration(s string) int {
+func parseMaintenanceDuration(ctx context.Context, s string) int {
 	if s == "" {
 		return 300
 	}
 
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		g.Log().Warningf(context.TODO(), "failed to parse maintenance duration %q: %v, using default 300s", s, err)
+		g.Log().Warningf(ctx, "failed to parse maintenance duration %q: %v, using default 300s", s, err)
 		return 300
 	}
 
