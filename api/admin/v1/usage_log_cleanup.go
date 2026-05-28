@@ -6,8 +6,8 @@ import "github.com/gogf/gf/v2/frame/g"
 
 type UsageLogCleanupCreateReq struct {
 	g.Meta    `path:"/usage-logs/cleanup" method:"post" mime:"json" tags:"管理后台-日志清理" summary:"创建清理任务"`
-	StartTime string `json:"start_time" v:"required|datetime" dc:"起始时间（RFC3339）"`
-	EndTime   string `json:"end_time" v:"required|datetime" dc:"截止时间（RFC3339）"`
+	StartTime string `json:"start_time" v:"required" dc:"起始时间（RFC3339）"`
+	EndTime   string `json:"end_time" v:"required" dc:"截止时间（RFC3339）"`
 	TenantID  *int64 `json:"tenant_id,omitempty" dc:"指定租户（可选）"`
 	ModelName string `json:"model_name,omitempty" dc:"指定模型（可选）"`
 	Status    string `json:"status,omitempty" dc:"指定状态（可选）"`

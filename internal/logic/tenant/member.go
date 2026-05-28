@@ -84,6 +84,10 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 
 // InviteMember generates an invitation link.
 func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteReq) (*v1.TenantMemberInviteRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	creatorID := middleware.GetUserID(ctx)
 
@@ -359,6 +363,10 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 
 // CreateMember directly creates a member account within the tenant.
 func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateReq) (*v1.TenantMemberCreateRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Validate role
@@ -465,6 +473,10 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 // RemoveMember removes a member from the tenant.
 // Revokes all API keys, anonymizes personal data, releases member model scopes.
 func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveReq) (*v1.TenantMemberRemoveRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
@@ -597,6 +609,10 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 
 // UpdateMemberRole updates a member's role.
 func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (*v1.TenantMemberUpdateRoleRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
@@ -844,6 +860,10 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 
 // ExportMembers exports the tenant member list as CSV or Excel.
 func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	columns := []export.Column{

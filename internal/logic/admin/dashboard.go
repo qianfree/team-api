@@ -388,43 +388,45 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	amount := req.Amount
 	description := req.Description
 
-	type walletRow struct {
+	// 原子更新余额，避免并发竞态
+	db := g.DB()
+	updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
+	args := []interface{}{amount, gtime.Now(), tenantID}
+	if amount < 0 {
+		updateQuery += " AND balance >= ?"
+		args = append(args, -amount)
+	}
+	result, err := db.Exec(ctx, updateQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return nil, gerror.New("钱包不存在或余额不足")
+	}
+
+	// 查询更新后的余额，用于记录流水
+	var wallet struct {
 		ID            int64   `json:"id"`
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	var w *walletRow
-	err := dao.BilWallets.Ctx(ctx).
+	err = dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id, balance, frozen_balance").
-		Scan(&w)
-	if err != nil || w == nil {
-		return nil, gerror.Newf("wallet not found for tenant %d", tenantID)
-	}
-
-	// 检查扣减后余额是否为负
-	if amount < 0 && w.Balance+amount < 0 {
-		return nil, gerror.Newf("余额不足，当前余额 %.2f，无法扣减 %.2f", w.Balance, -amount)
-	}
-
-	_, err = dao.BilWallets.Ctx(ctx).
-		Where("id", w.ID).
-		Data(do.BilWallets{
-			Balance: w.Balance + amount,
-		}).Update()
+		Scan(&wallet)
 	if err != nil {
 		return nil, err
 	}
 
-	// 记录流水（含变动后余额）
-	balanceAfter := w.Balance + amount
+	// 记录流水
 	dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 		TenantId:     tenantID,
-		WalletId:     w.ID,
+		WalletId:     wallet.ID,
 		Type:         "adjust",
 		Amount:       amount,
-		BalanceAfter: balanceAfter,
-		FrozenAfter:  w.FrozenBalance,
+		BalanceAfter: wallet.Balance,
+		FrozenAfter:  wallet.FrozenBalance,
 		Description:  description,
 	})
 

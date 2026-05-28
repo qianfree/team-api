@@ -91,8 +91,15 @@ func (s *sAdmin) ErrorLogDetail(ctx context.Context, req *v1.ErrorLogDetailReq) 
 
 // ErrorLogResolve marks an error log as resolved.
 func (s *sAdmin) ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq) (*v1.ErrorLogResolveRes, error) {
+	count, err := dao.SysErrorLogs.Ctx(ctx).Where("id", req.Id).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("错误日志")
+	}
 	userID := common.GetCtxUserID(ctx)
-	_, err := dao.SysErrorLogs.Ctx(ctx).
+	_, err = dao.SysErrorLogs.Ctx(ctx).
 		Where("id", req.Id).
 		Data(g.Map{
 			"resolved":    true,

@@ -376,7 +376,14 @@ func (s *sAdmin) ListAnnouncements(ctx context.Context, req *v1.AnnouncementList
 
 // PublishAnnouncement 发布公告
 func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPublishReq) (*v1.AnnouncementPublishRes, error) {
-	_, err := dao.NtfAnnouncements.Ctx(ctx).
+	count, err := dao.NtfAnnouncements.Ctx(ctx).Where("id", req.Id).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("公告")
+	}
+	_, err = dao.NtfAnnouncements.Ctx(ctx).
 		Where("id", req.Id).
 		Data(do.NtfAnnouncements{
 			Status: "published",

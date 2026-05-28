@@ -45,17 +45,16 @@ func (s *sAdmin) ListOrders(ctx context.Context, req *v1.OrderListReq) (*v1.Orde
 
 // GetOrder 获取订单详情
 func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.OrderDetailRes, error) {
-	var order map[string]any
-	err := dao.OrdOrders.Ctx(ctx).
+	record, err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
-		Scan(&order)
-	if err = common.IgnoreScanNoRows(err); err != nil {
+		One()
+	if err != nil {
 		return nil, err
 	}
-	if order == nil {
+	if record == nil {
 		return nil, common.NewNotFoundError("订单")
 	}
-	return &v1.OrderDetailRes{Data: order}, nil
+	return &v1.OrderDetailRes{Data: record.Map()}, nil
 }
 
 // RefundOrder 发起退款

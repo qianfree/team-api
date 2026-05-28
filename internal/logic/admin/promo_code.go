@@ -45,7 +45,14 @@ func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq
 
 // UpdatePromoCode 更新优惠码
 func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq) (*v1.PromoCodeUpdateRes, error) {
-	_, err := dao.OrdPromoCodes.Ctx(ctx).
+	count, err := dao.OrdPromoCodes.Ctx(ctx).Where("id", req.Id).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("优惠码")
+	}
+	_, err = dao.OrdPromoCodes.Ctx(ctx).
 		Where("id", req.Id).
 		Data(req.Update).
 		Update()

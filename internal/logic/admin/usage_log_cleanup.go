@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -21,6 +22,9 @@ func (s *sAdmin) UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogClea
 	endTime, err := time.Parse(time.RFC3339, req.EndTime)
 	if err != nil {
 		return nil, err
+	}
+	if startTime.After(endTime) {
+		return nil, common.NewBadRequestError("起始时间不能晚于截止时间")
 	}
 
 	batchSize := req.BatchSize
@@ -125,7 +129,14 @@ func (s *sAdmin) UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanu
 }
 
 func (s *sAdmin) UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error) {
-	_, err := dao.TskTasks.Ctx(ctx).
+	count, err := dao.TskTasks.Ctx(ctx).Where("id", req.ID).Where("handler", "usage_log_cleanup").Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("清理任务")
+	}
+	_, err = dao.TskTasks.Ctx(ctx).
 		Where("id", req.ID).
 		Where("handler", "usage_log_cleanup").
 		Where("status", "pending").
