@@ -17,6 +17,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 )
@@ -39,7 +40,7 @@ var retryIntervals = []time.Duration{
 func deliverEventByID(ctx context.Context, eventID int64) {
 	var evt *entity.OpnWebhookEvents
 	err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", eventID).Scan(&evt)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		g.Log().Errorf(ctx, "webhook: load event %d failed: %v", eventID, err)
 		return
 	}
@@ -62,7 +63,7 @@ func deliverEventByID(ctx context.Context, eventID int64) {
 func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	var config *entity.OpnWebhookConfigs
 	err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", evt.WebhookConfigId).Scan(&config)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		g.Log().Errorf(ctx, "webhook: load config %d failed: %v", evt.WebhookConfigId, err)
 		return
 	}

@@ -49,7 +49,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		}
 		err := tx.Model("tnt_tenants").Ctx(ctx).
 			Where("id", req.TenantID).Scan(&tenant)
-		if err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
 			return err
 		}
 		if tenant == nil {
@@ -182,7 +182,7 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 		OrderDesc("tnt_users.id").
 		Page(page, pageSize).
 		Scan(&members)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +222,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -260,7 +260,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -297,7 +297,7 @@ func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberRes
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

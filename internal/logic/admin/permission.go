@@ -117,7 +117,7 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 	err := dao.SysAdminRolePerms.Ctx(ctx).
 		Where("admin_user_id", req.Id).
 		Scan(&perms)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -135,7 +135,7 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 	err = dao.SysAdminDataScopes.Ctx(ctx).
 		Where("admin_user_id", req.Id).
 		Scan(&scopes)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -162,7 +162,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Role == "super_admin" {
@@ -210,7 +210,7 @@ func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScop
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Role == "super_admin" {
@@ -291,7 +291,7 @@ func GetDataScopes(ctx context.Context, userID int64, role string) ([]v1.DataSco
 	err := dao.SysAdminDataScopes.Ctx(ctx).
 		Where("admin_user_id", userID).
 		Scan(&scopes)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 

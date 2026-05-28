@@ -11,6 +11,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -113,7 +114,7 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 		CreatedAt       *gtime.Time `json:"created_at"`
 	}
 	err := dao.TskModelTasks.Ctx(ctx).Where("id", req.ID).Scan(&task)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if task == nil {

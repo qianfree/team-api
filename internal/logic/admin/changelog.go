@@ -63,7 +63,7 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cl == nil {
@@ -93,7 +93,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cl == nil {
@@ -115,7 +115,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 		Status string `json:"status"`
 	}
 	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cl == nil {

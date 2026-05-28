@@ -39,7 +39,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("username", strings.TrimSpace(req.Username)).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -192,7 +192,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 	// Fetch current role from user table
 	var adminUser *entity.SysAdminUsers
 	err = dao.SysAdminUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&adminUser)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if adminUser == nil {
@@ -249,7 +249,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 
 	var sessions []entity.SysSessions
 	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&sessions)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -331,7 +331,7 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", userID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

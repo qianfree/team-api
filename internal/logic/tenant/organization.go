@@ -37,7 +37,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 	}
 	err := dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -117,7 +117,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		Where("id", currentOwnerID).
 		Where("tenant_id", tenantID).
 		Scan(&currentUser)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -135,7 +135,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		Where("tenant_id", tenantID).
 		Where("status", "active").
 		Scan(&newOwner)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if newOwner.ID == 0 {
@@ -197,7 +197,7 @@ func (s *sTenant) GetProfile(ctx context.Context, req *v1.TenantProfileReq) (*v1
 	}
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", userID).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

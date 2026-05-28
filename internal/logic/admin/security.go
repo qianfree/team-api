@@ -42,7 +42,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	// Get user info for response
 	var user *entity.SysAdminUsers
 	err = dao.SysAdminUsers.Ctx(ctx).Where("id", claims.UserID).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -235,7 +235,7 @@ func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq)
 
 	var records []entity.AudLoginHistory
 	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&records)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -280,7 +280,7 @@ func adminUserIdsByUsername(ctx context.Context, keyword string) ([]int64, error
 		WhereLike("username", "%"+keyword+"%").
 		WhereOrLike("display_name", "%"+keyword+"%").
 		Scan(&users)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	ids := make([]int64, len(users))
@@ -358,7 +358,7 @@ func (s *sAdmin) TenantLoginHistory(ctx context.Context, req *v1.AdminTenantLogi
 
 	var records []entity.AudLoginHistory
 	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&records)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -402,7 +402,7 @@ func tenantUserIdsByKeyword(ctx context.Context, tenantID int64, keyword string)
 	}
 	var users []entity.TntUsers
 	err := q.Scan(&users)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	ids := make([]int64, len(users))
