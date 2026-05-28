@@ -42,7 +42,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 
 	// Step 2: Read captcha answer from Redis
 	rdb := redis.NewClient(&redis.Options{
-		Addr:         testinfra.DefaultRedisAddr,
+		Addr:         testinfra.GetRedisAddr(),
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
