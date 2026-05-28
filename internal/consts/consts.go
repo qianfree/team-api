@@ -165,6 +165,10 @@ const (
 	CodeModelGroupCodeExists = 10085
 	CodeModelGroupHasTenants = 10086
 
+	// Model import errors
+	CodeModelImportInvalidFile = 10087
+	CodeModelImportBadVersion  = 10088
+
 	// Demo mode
 	CodeDemoModeRestricted = 10403
 
@@ -282,6 +286,9 @@ const (
 	MsgModelGroupNotFound   = "模型分组不存在"
 	MsgModelGroupCodeExists = "模型分组标识已存在"
 	MsgModelGroupHasTenants = "该分组下存在关联租户，无法删除"
+	// Model import errors
+	MsgModelImportInvalidFile = "导入文件格式无效"
+	MsgModelImportBadVersion  = "导入文件版本不兼容"
 )
 
 // Demo mode messages

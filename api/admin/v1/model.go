@@ -224,3 +224,69 @@ type ModelFetchOfficialInfoRes struct {
 	MaxOutputTokens  int             `json:"max_output_tokens,omitempty"`
 	Capabilities     map[string]bool `json:"capabilities,omitempty"`
 }
+
+// ModelExportJsonReq 导出模型配置（JSON，用于跨环境迁移）
+type ModelExportJsonReq struct {
+	g.Meta   `path:"/models/export-json" method:"post" mime:"json" tags:"管理后台-模型" summary:"导出模型配置JSON"`
+	ModelIds []string `json:"model_ids" v:"required|min:1#请选择模型|至少选择一个模型" dc:"要导出的model_id列表"`
+}
+
+// ModelExportJsonRes 导出模型配置JSON响应（直接写入响应流）
+type ModelExportJsonRes struct{}
+
+// ModelImportPreviewReq 导入模型预览请求
+type ModelImportPreviewReq struct {
+	g.Meta `path:"/models/import-preview" method:"post" mime:"json" tags:"管理后台-模型" summary:"导入模型预览"`
+}
+
+// ModelImportPreviewRes 导入模型预览响应
+type ModelImportPreviewRes struct {
+	Models []ModelImportPreviewItem `json:"models"`
+}
+
+// ModelImportPreviewItem 导入预览项（模型信息 + 冲突标记）
+type ModelImportPreviewItem struct {
+	ModelId          string          `json:"model_id"`
+	ModelName        string          `json:"model_name"`
+	Category         string          `json:"category"`
+	Status           string          `json:"status"`
+	MaxContextTokens int             `json:"max_context_tokens"`
+	MaxOutputTokens  int             `json:"max_output_tokens"`
+	Capabilities     map[string]bool `json:"capabilities"`
+	Description      string          `json:"description"`
+	Tags             []string        `json:"tags"`
+	SunsetDate       string          `json:"sunset_date"`
+	ReplacementModel string          `json:"replacement_model"`
+	Pricing          []PricingItem   `json:"pricing"`
+	Conflict         string          `json:"conflict"` // "" 或 "exists"
+}
+
+// ModelImportReq 确认导入模型请求
+type ModelImportReq struct {
+	g.Meta `path:"/models/import" method:"post" mime:"json" tags:"管理后台-模型" summary:"确认导入模型"`
+	Models []ModelImportItem `json:"models" v:"required|min:1#无数据|至少导入一个模型"`
+}
+
+// ModelImportItem 导入模型项
+type ModelImportItem struct {
+	ModelId          string          `json:"model_id" v:"required" dc:"模型唯一标识"`
+	ModelName        string          `json:"model_name" dc:"模型显示名称"`
+	Category         string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
+	Status           string          `json:"status" dc:"状态"`
+	MaxContextTokens int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
+	MaxOutputTokens  int             `json:"max_output_tokens" dc:"最大输出 token 数"`
+	Capabilities     map[string]bool `json:"capabilities" dc:"模型能力特性"`
+	Description      string          `json:"description" dc:"模型描述"`
+	Tags             []string        `json:"tags" dc:"标签列表"`
+	SunsetDate       string          `json:"sunset_date" dc:"下线日期"`
+	ReplacementModel string          `json:"replacement_model" dc:"推荐替代模型名"`
+	Pricing          []PricingItem   `json:"pricing" dc:"定价列表"`
+	ConflictAction   string          `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
+}
+
+// ModelImportRes 导入结果响应
+type ModelImportRes struct {
+	Imported int      `json:"imported"`
+	Skipped  int      `json:"skipped"`
+	Errors   []string `json:"errors,omitempty"`
+}
