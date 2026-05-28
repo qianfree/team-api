@@ -132,7 +132,7 @@ func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetail
 	}
 
 	err := m.Scan(&task)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if task.Id == 0 {

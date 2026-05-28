@@ -49,7 +49,7 @@ func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.Orde
 	err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&order)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if order == nil {
@@ -71,7 +71,7 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 	err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&order)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if order.Status != "paid" && order.Status != "fulfilled" {
@@ -183,7 +183,7 @@ func getOrderForComplete(ctx context.Context, orderID int64) (orderNo string, er
 	}
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).Scan(&order)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return "", err
 	}
 	if order.Status != "pending" {

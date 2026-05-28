@@ -432,7 +432,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 	// Fetch current role from user table
 	var tntUser *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&tntUser)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tntUser == nil {
@@ -458,7 +458,7 @@ func (s *sTenant) ChangePassword(ctx context.Context, req *v1.TenantChangePasswo
 	var user *entity.TntUsers
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", userID).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

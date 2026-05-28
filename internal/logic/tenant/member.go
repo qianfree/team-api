@@ -57,7 +57,7 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 	err = model.OrderDesc("id").
 		Page(page, pageSize).
 		Scan(&users)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -103,7 +103,7 @@ func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteRe
 		Where("id", tenantID).
 		Fields("max_members").
 		Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, gerror.Wrapf(err, "查询租户信息失败")
 	}
 
@@ -190,7 +190,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	err := dao.TntInvitations.Ctx(ctx).
 		Where("code", req.Code).
 		Scan(&invitation)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if invitation.ID == 0 {
@@ -246,7 +246,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			Where("id", tenantID).
 			Fields("max_members").
 			Scan(&tenant)
-		if err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
 			return err
 		}
 		if int(memberCount) >= tenant.MaxMembers {
@@ -402,7 +402,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 			Where("id", tenantID).
 			Fields("max_members").
 			Scan(&tenant)
-		if err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
 			return gerror.Wrapf(err, "查询租户信息失败")
 		}
 		if int(memberCount) >= tenant.MaxMembers {
@@ -481,7 +481,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		Where("id", memberID).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Role == "owner" {
@@ -532,7 +532,7 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 		Where("id", userID).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return err
 	}
 	if user.Role == "owner" {
@@ -570,7 +570,7 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 		Where("id", userID).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return err
 	}
 	if user.Status != "disabled" {
@@ -616,7 +616,7 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 		Where("id", memberID).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Role == "owner" {
@@ -653,7 +653,7 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 		Where("id", memberID).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Role == "owner" {
@@ -703,7 +703,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Id == 0 {
@@ -734,7 +734,7 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Id == 0 {
@@ -789,7 +789,7 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user.Id == 0 {
@@ -885,7 +885,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 				CreatedAt   string `json:"created_at"`
 			}
 			err := model.OrderDesc("id").Limit(1000).Offset(offset).Scan(&users)
-			if err != nil {
+			if err = common.IgnoreScanNoRows(err); err != nil {
 				return
 			}
 			for _, u := range users {

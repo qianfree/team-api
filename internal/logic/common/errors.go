@@ -1,6 +1,9 @@
 package common
 
 import (
+	"database/sql"
+	"errors"
+
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 
@@ -42,4 +45,14 @@ func NewUnauthorizedError(message string) error {
 		gcode.New(consts.CodeUnauthorized, message, nil),
 		message,
 	)
+}
+
+// IgnoreScanNoRows normalizes sql.ErrNoRows to nil.
+// GoFrame's Scan(&struct) returns sql.ErrNoRows when no record is found,
+// but callers typically check the zero-value result afterwards.
+func IgnoreScanNoRows(err error) error {
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
 }

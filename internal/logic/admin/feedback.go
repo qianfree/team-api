@@ -95,7 +95,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 		Title    string `json:"title"`
 	}
 	err := g.DB().Model("spt_feedbacks").Ctx(ctx).Where("id", req.Id).Scan(&fb)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if fb == nil {
@@ -144,7 +144,7 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_feedbacks").Ctx(ctx).Where("id", req.Id).Scan(&fb)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if fb == nil {
@@ -179,7 +179,7 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		Fields("status, COUNT(*) as count").
 		Group("status").
 		Scan(&statusCounts)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 

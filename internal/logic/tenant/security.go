@@ -42,7 +42,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 
 	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).Where("id", claims.UserID).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -83,7 +83,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	// Get tenant info
 	var tenant *entity.TntTenants
 	err = dao.TntTenants.Ctx(ctx).Where("id", user.TenantId).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -243,7 +243,7 @@ func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryRe
 
 	var records []entity.AudLoginHistory
 	err = q.OrderDesc("created_at").Page(page, pageSize).Scan(&records)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -289,7 +289,7 @@ func tenantUserIdsByUsernameLocal(ctx context.Context, tenantID int64, keyword s
 		Where("tenant_id", tenantID).
 		Where("username LIKE ? OR display_name LIKE ?", "%"+keyword+"%", "%"+keyword+"%").
 		Scan(&users)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	ids := make([]int64, len(users))
@@ -356,7 +356,7 @@ func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGet
 	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -389,7 +389,7 @@ func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhiteli
 	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -428,7 +428,7 @@ func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhiteli
 func CheckIPWhitelist(ctx context.Context, tenantID int64, ip string) bool {
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return true
 	}
 	if tenant == nil {

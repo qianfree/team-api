@@ -41,7 +41,7 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 	err := query.Fields("id, model_id, model_name, category").
 		OrderAsc("category").OrderAsc("model_id").
 		Scan(&models)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -381,7 +381,7 @@ func (s *sAdmin) ListModelPricing(ctx context.Context, req *v1.PricingListReq) (
 			Fields("model_id, billing_mode, input_price, output_price, per_request_price").
 			Where("model_id IN (?) AND min_tokens = 0", modelIDs).
 			Scan(&pricingRows)
-		if err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
 			return nil, err
 		}
 	}
@@ -434,7 +434,7 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		Where("model_id", req.ModelID).
 		OrderAsc("min_tokens").
 		Scan(&rows)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 

@@ -21,7 +21,7 @@ import (
 func getTenantSettings(ctx context.Context, tenantID int64) (map[string]any, error) {
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Fields("settings").Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -255,7 +255,7 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&record)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if record == nil {

@@ -62,7 +62,7 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 	err = dao.TntUsers.Ctx(ctx).
 		Where("email", email).
 		Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -130,7 +130,7 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
 		Where("id", userID).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

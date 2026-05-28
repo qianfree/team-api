@@ -49,7 +49,7 @@ func (s *sAdmin) TenantSelect(ctx context.Context, req *v1.TenantSelectReq) (*v1
 	err = m.Fields("id, name, code").OrderAsc("id").
 		Page(page, pageSize).
 		Scan(&tenants)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -221,7 +221,7 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 	err = m.OrderDesc("id").
 		Page(page, pageSize).
 		Scan(&tenants)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -298,7 +298,7 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	}
 	err := dao.TntTenants.Ctx(ctx).
 		Where("id", req.Id).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -375,7 +375,7 @@ func (s *sAdmin) UpdateTenantStatus(ctx context.Context, req *v1.TenantUpdateSta
 	}
 	err := dao.TntTenants.Ctx(ctx).
 		Where("id", req.Id).Scan(&tenant)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tenant == nil {
@@ -414,7 +414,7 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 		data.Level = *req.Level
 		var config entity.TntTenantLevelConfigs
 		err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", *req.Level).Scan(&config)
-		if err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
 			return nil, common.NewBadRequestError("等级配置不存在")
 		}
 		if config.Id > 0 {

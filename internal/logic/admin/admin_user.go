@@ -65,7 +65,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 	err = m.OrderDesc("id").
 		Page(page, pageSize).
 		Scan(&users)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
@@ -202,7 +202,7 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
@@ -242,7 +242,7 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {

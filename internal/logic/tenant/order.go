@@ -62,7 +62,7 @@ func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq)
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&order)
-	if err != nil {
+	if err = lcommon.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if order == nil {
@@ -95,7 +95,7 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
 		Scan(&plan)
-	if err != nil {
+	if err = lcommon.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if plan.Status != "active" {
@@ -264,7 +264,7 @@ func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo
 	}
 	err = dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).Where("tenant_id", tenantID).Scan(&order)
-	if err != nil {
+	if err = lcommon.IgnoreScanNoRows(err); err != nil {
 		return
 	}
 	if order == nil {
@@ -426,7 +426,7 @@ func (s *sTenant) ExportOrders(ctx context.Context, req *v1.TenantOrderExportReq
 				query = query.Where("status", req.Status)
 			}
 			err := query.OrderDesc("created_at").Limit(1000).Offset(offset).Scan(&orders)
-			if err != nil {
+			if err = lcommon.IgnoreScanNoRows(err); err != nil {
 				return
 			}
 			for _, o := range orders {

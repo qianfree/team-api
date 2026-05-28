@@ -54,7 +54,7 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.Id).Scan(&cat)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cat == nil {
@@ -104,7 +104,7 @@ func (s *sAdmin) DeleteHelpCategory(ctx context.Context, req *v1.HelpCategoryDel
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.Id).Scan(&cat)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cat == nil {
@@ -174,7 +174,7 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 		Id int64 `json:"id"`
 	}
 	err := g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cat == nil {
@@ -226,7 +226,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 		Status     string `json:"status"`
 	}
 	err := g.DB().Model("spt_articles").Ctx(ctx).Where("id", req.Id).Scan(&article)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if article == nil {
@@ -247,7 +247,7 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 		Id int64 `json:"id"`
 	}
 	err = g.DB().Model("spt_categories").Ctx(ctx).Where("id", req.CategoryId).Scan(&cat)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if cat.Id == 0 {
@@ -296,7 +296,7 @@ func (s *sAdmin) DeleteHelpArticle(ctx context.Context, req *v1.HelpArticleDelet
 		CategoryId int64 `json:"category_id"`
 	}
 	err := g.DB().Model("spt_articles").Ctx(ctx).Where("id", req.Id).Scan(&article)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if article == nil {
@@ -347,7 +347,7 @@ func (s *sAdmin) ListHelpArticles(ctx context.Context, req *v1.HelpArticleListRe
 func (s *sAdmin) GetHelpArticle(ctx context.Context, req *v1.HelpArticleGetReq) (*v1.HelpArticleGetRes, error) {
 	var article *v1.HelpArticleGetRes
 	err := g.DB().Model("spt_articles").Ctx(ctx).Where("id", req.Id).Scan(&article)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if article == nil {
