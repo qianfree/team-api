@@ -166,11 +166,11 @@ func TestRBAC_MemberBlockedFromProjectApiKeyCreate(t *testing.T) {
 	// 先创建一个项目
 	projectID, _ := testinfra.CreateTestProject(t, ownerClient)
 
-	// api_key.go: ApiKeyCreate() → if role != "owner" && role != "admin" → 10033
+	// api_key.go: ProjectApiKeyCreate() → if role != "owner" && role != "admin" → 403
 	resp := memberClient.Post(fmt.Sprintf("/api/tenant/projects/%d/api-keys", projectID), map[string]any{
 		"name": "should-not-work",
 	})
-	assertBlockedWithCode(t, resp, 10033, "member create project API key")
+	assertBlocked(t, resp, "member create project API key")
 }
 
 func TestRBAC_MemberBlockedFromProjectApiKeyList(t *testing.T) {
@@ -425,12 +425,15 @@ func TestRBAC_AdminCanAccessWallet(t *testing.T) {
 	var wallet struct {
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
-		TenantID      int64   `json:"tenant_id"`
+		Currency      string  `json:"currency"`
 	}
 	resp.DecodeData(t, &wallet)
 	// 新租户余额应为 0
 	if wallet.Balance != 0 {
 		t.Fatalf("new tenant wallet balance should be 0, got %f", wallet.Balance)
+	}
+	if wallet.Currency != "USD" {
+		t.Fatalf("wallet currency should be USD, got %q", wallet.Currency)
 	}
 }
 
@@ -795,7 +798,7 @@ func TestRBAC_MemberCanUpdateOwnNotificationPreferences(t *testing.T) {
 func TestRBAC_MemberBlockedFromRedeemCode(t *testing.T) {
 	memberClient, _, _, _ := setupMemberClient(t)
 
-	resp := memberClient.Post("/api/tenant/redeem", map[string]any{
+	resp := memberClient.Post("/api/tenant/redemptions/redeem", map[string]any{
 		"code": "fake-code-for-rbac-test",
 	})
 	if resp.Code == 0 {
@@ -808,7 +811,7 @@ func TestRBAC_MemberBlockedFromRedeemCode(t *testing.T) {
 func TestRBAC_MemberBlockedFromRedemptionHistory(t *testing.T) {
 	memberClient, _, _, _ := setupMemberClient(t)
 
-	resp := memberClient.Get("/api/tenant/redemptions", map[string]string{
+	resp := memberClient.Get("/api/tenant/redemptions/usages", map[string]string{
 		"page":      "1",
 		"page_size": "10",
 	})

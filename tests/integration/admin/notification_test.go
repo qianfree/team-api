@@ -3,6 +3,7 @@
 package admin_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -31,13 +32,23 @@ func TestTemplateGetAndUpdate(t *testing.T) {
 	getResp := client.Get(fmt.Sprintf("/api/admin/notification/templates/%s", templateCode), nil)
 	getResp.AssertSuccess(t)
 
+	// Response has nested data: {"data": {...}}
+	var outerMap map[string]json.RawMessage
+	getResp.DecodeData(t, &outerMap)
+
 	var template struct {
 		Code         string `json:"code"`
 		Subject      string `json:"subject"`
 		BodyTemplate string `json:"body_template"`
 		Channel      string `json:"channel"`
 	}
-	getResp.DecodeData(t, &template)
+	if innerData, ok := outerMap["data"]; ok {
+		json.Unmarshal(innerData, &template)
+	} else {
+		var raw json.RawMessage
+		raw, _ = json.Marshal(outerMap)
+		json.Unmarshal(raw, &template)
+	}
 
 	if template.Code != templateCode {
 		t.Fatalf("expected code=%q, got %q", templateCode, template.Code)
@@ -56,10 +67,19 @@ func TestTemplateGetAndUpdate(t *testing.T) {
 	verifyResp := client.Get(fmt.Sprintf("/api/admin/notification/templates/%s", templateCode), nil)
 	verifyResp.AssertSuccess(t)
 
+	var verifyOuter map[string]json.RawMessage
+	verifyResp.DecodeData(t, &verifyOuter)
+
 	var verifyData struct {
 		Subject string `json:"subject"`
 	}
-	verifyResp.DecodeData(t, &verifyData)
+	if innerData, ok := verifyOuter["data"]; ok {
+		json.Unmarshal(innerData, &verifyData)
+	} else {
+		var raw json.RawMessage
+		raw, _ = json.Marshal(verifyOuter)
+		json.Unmarshal(raw, &verifyData)
+	}
 
 	if verifyData.Subject != testSubject {
 		t.Fatalf("expected subject=%q after update, got %q", testSubject, verifyData.Subject)

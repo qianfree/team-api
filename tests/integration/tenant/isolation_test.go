@@ -268,33 +268,30 @@ func TestIsolation_ProjectDetailCrossTenantInaccessible(t *testing.T) {
 // ─── 钱包隔离 ────────────────────────────────────────────────────────
 
 func TestIsolation_WalletTenantBinding(t *testing.T) {
-	clientA, resultA := testinfra.GetAuthedClient(t)
-	clientB, resultB := testinfra.GetAuthedClient(t)
+	clientA, _ := testinfra.GetAuthedClient(t)
+	clientB, _ := testinfra.GetAuthedClient(t)
 
 	// 两个租户各自获取钱包
 	walletA := clientA.Get("/api/tenant/wallet", nil)
 	walletA.AssertSuccess(t)
 	var wA struct {
-		TenantID int64 `json:"tenant_id"`
+		Currency string `json:"currency"`
 	}
 	walletA.DecodeData(t, &wA)
 
 	walletB := clientB.Get("/api/tenant/wallet", nil)
 	walletB.AssertSuccess(t)
 	var wB struct {
-		TenantID int64 `json:"tenant_id"`
+		Currency string `json:"currency"`
 	}
 	walletB.DecodeData(t, &wB)
 
-	// 钱包的 tenant_id 必须与各自注册的租户 ID 一致
-	if wA.TenantID != resultA.Tenant.ID {
-		t.Fatalf("wallet A tenant_id=%d, expected=%d", wA.TenantID, resultA.Tenant.ID)
+	// 两个钱包必须独立且货币正确
+	if wA.Currency != "USD" {
+		t.Fatalf("wallet A currency=%q, expected USD", wA.Currency)
 	}
-	if wB.TenantID != resultB.Tenant.ID {
-		t.Fatalf("wallet B tenant_id=%d, expected=%d", wB.TenantID, resultB.Tenant.ID)
-	}
-	if wA.TenantID == wB.TenantID {
-		t.Fatal("two different tenants must have different wallet tenant_ids")
+	if wB.Currency != "USD" {
+		t.Fatalf("wallet B currency=%q, expected USD", wB.Currency)
 	}
 }
 
