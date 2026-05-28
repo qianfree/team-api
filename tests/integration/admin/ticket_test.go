@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/qianfree/team-api/tests/integration/admin/testinfra"
+	admintest "github.com/qianfree/team-api/tests/integration/admin/testinfra"
+	tenanttest "github.com/qianfree/team-api/tests/integration/tenant/testinfra"
 )
 
 func TestTicketList(t *testing.T) {
@@ -39,7 +41,7 @@ func TestTicketListWithFilters(t *testing.T) {
 	resp.AssertSuccess(t)
 
 	// Filter by tenant_id
-	tenantID, cleanup := testinfra.CreateTestTenant(t, client)
+	tenantID, cleanup := createTestTenantWithTicket(t, client)
 	defer cleanup()
 
 	resp = client.Get("/api/admin/tickets", map[string]string{
@@ -59,34 +61,12 @@ func TestTicketListWithFilters(t *testing.T) {
 	resp.AssertSuccess(t)
 }
 
-// Note: Ticket creation happens through the tenant console, not the admin console.
-// The admin can only view, reply, assign, and update ticket status.
-// These tests verify the admin-side operations assuming tickets exist in the system.
-
 func TestTicketDetail(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// List tickets first to find one
-	listResp := client.Get("/api/admin/tickets", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id     int64  `json:"id"`
-			Status string `json:"status"`
-		} `json:"list"`
-		Total int `json:"total"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No tickets found, skipping detail test")
-	}
-
-	ticketID := listData.List[0].Id
+	// Create test ticket via tenant
+	ticketID, cleanup := createTestTicketViaTenant(t, client)
+	defer cleanup()
 
 	// Get ticket detail
 	detailResp := client.Get(fmt.Sprintf("/api/admin/tickets/%d", ticketID), nil)
@@ -114,25 +94,9 @@ func TestTicketDetail(t *testing.T) {
 func TestTicketReply(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// Find a ticket to reply to
-	listResp := client.Get("/api/admin/tickets", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id int64 `json:"id"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No tickets found, skipping reply test")
-	}
-
-	ticketID := listData.List[0].Id
+	// Create test ticket via tenant
+	ticketID, cleanup := createTestTicketViaTenant(t, client)
+	defer cleanup()
 
 	// Reply to the ticket
 	replyContent := fmt.Sprintf("管理员回复（集成测试）%s", randomSuffix())
@@ -147,25 +111,9 @@ func TestTicketReply(t *testing.T) {
 func TestTicketAssign(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// Find a ticket to assign
-	listResp := client.Get("/api/admin/tickets", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id int64 `json:"id"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No tickets found, skipping assign test")
-	}
-
-	ticketID := listData.List[0].Id
+	// Create test ticket via tenant
+	ticketID, cleanup := createTestTicketViaTenant(t, client)
+	defer cleanup()
 
 	// Get current admin user list to find an admin ID
 	adminListResp := client.Get("/api/admin/users", map[string]string{
@@ -212,27 +160,9 @@ func TestTicketAssign(t *testing.T) {
 func TestTicketStatusUpdate(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// Find a ticket
-	listResp := client.Get("/api/admin/tickets", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-		"status":    "pending",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id     int64  `json:"id"`
-			Status string `json:"status"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No pending tickets found, skipping status update test")
-	}
-
-	ticketID := listData.List[0].Id
+	// Create test ticket via tenant
+	ticketID, cleanup := createTestTicketViaTenant(t, client)
+	defer cleanup()
 
 	// Update status to processing
 	updateResp := client.Put(fmt.Sprintf("/api/admin/tickets/%d/status", ticketID), map[string]any{
@@ -292,36 +222,70 @@ func TestTicketNegative(t *testing.T) {
 		t.Fatal("expected error when replying to non-existent ticket, got success")
 	}
 
-	// Reply with empty content
-	listResp := client.Get("/api/admin/tickets", map[string]string{
-		"page":      "1",
-		"page_size": "1",
+	// Reply with empty content — test against a real ticket
+	ticketID, cleanup := createTestTicketViaTenant(t, client)
+	defer cleanup()
+
+	emptyReplyResp := client.Post(fmt.Sprintf("/api/admin/tickets/%d/reply", ticketID), map[string]any{
+		"content": "",
 	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id int64 `json:"id"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) > 0 {
-		emptyReplyResp := client.Post(fmt.Sprintf("/api/admin/tickets/%d/reply", listData.List[0].Id), map[string]any{
-			"content": "",
-		})
-		if emptyReplyResp.Code == 0 {
-			t.Fatal("expected error for empty reply content, got success")
-		}
+	if emptyReplyResp.Code == 0 {
+		t.Fatal("expected error for empty reply content, got success")
 	}
 
 	// Invalid status value
-	if len(listData.List) > 0 {
-		invalidStatusResp := client.Put(fmt.Sprintf("/api/admin/tickets/%d/status", listData.List[0].Id), map[string]any{
-			"status": "invalid_status",
-		})
-		if invalidStatusResp.Code == 0 {
-			t.Fatal("expected error for invalid ticket status, got success")
-		}
+	invalidStatusResp := client.Put(fmt.Sprintf("/api/admin/tickets/%d/status", ticketID), map[string]any{
+		"status": "invalid_status",
+	})
+	if invalidStatusResp.Code == 0 {
+		t.Fatal("expected error for invalid ticket status, got success")
+	}
+}
+
+// createTestTicketViaTenant creates a test tenant, creates a ticket via the tenant API,
+// and returns the ticket ID and cleanup.
+func createTestTicketViaTenant(t *testing.T, adminClient *admintest.APIClient) (ticketID int64, cleanup func()) {
+	t.Helper()
+
+	result := tenanttest.RegisterTestTenant(t)
+	tenantClient := admintest.NewAPIClient(tenanttest.DefaultBaseURL).WithToken(result.AccessToken)
+
+	suffix := tenanttest.RandomSuffix()
+	resp := tenantClient.Post("/api/tenant/tickets", map[string]any{
+		"category":    "technical",
+		"title":       fmt.Sprintf("测试工单 %s", suffix),
+		"description": "集成测试自动创建的工单",
+		"urgency":     "normal",
+	})
+	resp.AssertSuccess(t)
+
+	var data struct {
+		ID int64 `json:"id"`
+	}
+	resp.DecodeData(t, &data)
+
+	return data.ID, func() {
+		// Tenant cleanup is handled by t.Cleanup in RegisterTestTenant
+	}
+}
+
+// createTestTenantWithTicket creates a test tenant with a ticket for filter tests.
+func createTestTenantWithTicket(t *testing.T, adminClient *admintest.APIClient) (tenantID int64, cleanup func()) {
+	t.Helper()
+
+	result := tenanttest.RegisterTestTenant(t)
+	tenantClient := admintest.NewAPIClient(tenanttest.DefaultBaseURL).WithToken(result.AccessToken)
+
+	suffix := tenanttest.RandomSuffix()
+	resp := tenantClient.Post("/api/tenant/tickets", map[string]any{
+		"category":    "billing",
+		"title":       fmt.Sprintf("过滤测试工单 %s", suffix),
+		"description": "过滤测试自动创建的工单",
+		"urgency":     "normal",
+	})
+	resp.AssertSuccess(t)
+
+	return result.Tenant.ID, func() {
+		// Tenant cleanup is handled by t.Cleanup in RegisterTestTenant
 	}
 }

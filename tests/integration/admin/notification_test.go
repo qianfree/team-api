@@ -169,12 +169,16 @@ func TestMessageSendAndVerify(t *testing.T) {
 func TestMessageBroadcast(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
+	msgTitle := fmt.Sprintf("[集成测试] 广播消息 %s", randomSuffix())
 	resp := client.Post("/api/admin/notification/messages/broadcast", map[string]any{
-		"title":        fmt.Sprintf("测试广播消息 %s", randomSuffix()),
+		"title":        msgTitle,
 		"content":      "这是一条集成测试广播消息",
 		"target_roles": []string{"owner", "admin"},
 	})
 	resp.AssertSuccess(t)
+
+	// Hard-delete broadcast messages from database
+	defer testinfra.HardDeleteMessagesByTitle(t, "[集成测试]")
 }
 
 func TestAnnouncementCRUD(t *testing.T) {
@@ -195,7 +199,7 @@ func TestAnnouncementCRUD(t *testing.T) {
 	createResp.AssertSuccess(t)
 	announcementID := createResp.GetID(t)
 	defer func() {
-		client.Delete(fmt.Sprintf("/api/admin/announcements/%d", announcementID))
+		testinfra.HardDeleteAnnouncement(t, announcementID)
 	}()
 
 	// --- Verify creation via list ---

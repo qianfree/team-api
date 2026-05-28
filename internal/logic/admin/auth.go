@@ -24,6 +24,8 @@ import (
 
 // Login handles admin login.
 func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error) {
+	req.Username = strings.TrimSpace(req.Username)
+
 	// Check captcha if required
 	if err := common.CheckCaptchaRequired(ctx, "admin_login", req.CaptchaKey, req.CaptchaX); err != nil {
 		return nil, err
@@ -37,7 +39,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	// Find admin user by username
 	var user *entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("username", strings.TrimSpace(req.Username)).
+		Where("username", req.Username).
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err

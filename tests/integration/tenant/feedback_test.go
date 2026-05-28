@@ -60,7 +60,7 @@ func TestFeedbackListWithFilters(t *testing.T) {
 	suffix := testinfra.RandomSuffix()
 	createResp := client.Post("/api/tenant/feedbacks", map[string]any{
 		"category":    "feature_request",
-		"title":       fmt.Sprintf("功能请求过滤测试 %s", suffix),
+		"title":       fmt.Sprintf("[集成测试] 功能请求过滤测试 %s", suffix),
 		"description": "测试按分类过滤",
 	})
 	createResp.AssertSuccess(t)
@@ -83,7 +83,7 @@ func TestFeedbackGet(t *testing.T) {
 	suffix := testinfra.RandomSuffix()
 	createResp := client.Post("/api/tenant/feedbacks", map[string]any{
 		"category":    "complaint",
-		"title":       fmt.Sprintf("详情测试反馈 %s", suffix),
+		"title":       fmt.Sprintf("[集成测试] 详情测试反馈 %s", suffix),
 		"description": "测试获取反馈详情",
 	})
 	createResp.AssertSuccess(t)
