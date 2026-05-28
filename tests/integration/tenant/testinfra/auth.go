@@ -24,7 +24,7 @@ func RandomSuffix() string {
 
 func getRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:         DefaultRedisAddr,
+		Addr:         GetRedisAddr(),
 		DB:           0,
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
