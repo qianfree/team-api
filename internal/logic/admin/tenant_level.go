@@ -3,11 +3,11 @@ package admin
 import (
 	"context"
 
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 )
@@ -44,7 +44,7 @@ func (s *sAdmin) CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 	// 检查 level 是否已存在
 	count, _ := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", req.Level).Count()
 	if count > 0 {
-		return nil, gerror.New("等级号已存在")
+		return nil, common.NewBadRequestError("等级号已存在")
 	}
 
 	result, err := dao.TntTenantLevelConfigs.Ctx(ctx).Insert(do.TntTenantLevelConfigs{
@@ -106,7 +106,7 @@ func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 		return &v1.TenantLevelConfigDeleteRes{}, nil
 	}
 	if config.Level == 1 {
-		return nil, gerror.New("不允许删除默认等级 LV1")
+		return nil, common.NewBadRequestError("不允许删除默认等级 LV1")
 	}
 
 	_, err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
