@@ -285,3 +285,35 @@ r := g.RequestFromCtx(ctx)
 grep -r "CodeNotImplemented" internal/controller/
 ```
 如果有匹配，手动将桩代码替换为 `return service.Admin().MethodName(ctx, req)`。或者先删除对应控制器文件再重新执行 `gf gen ctrl`。
+
+### 2026-05-28：Data(g.Map{}) 做部分更新导致更新无效
+
+**问题**：租户等级配置的 `UpdateTenantLevelConfig` 使用 `g.Map{}` 收集待更新字段，再调用 `Data(data).Update()`。接口返回成功但数据库数据不变。
+
+**原因**：GoFrame 规范要求数据库操作必须使用 DO 对象，禁止使用 `g.Map`。DO 结构体字段类型为 `interface{}`（`any`），未赋值的字段保持 `nil`，ORM 内置 OmitNil 行为会自动跳过；而已赋值的字段（包括零值 `0`、`""`）会被正常写入。使用 `g.Map` 则可能遇到：键名与列名不匹配被静默忽略、框架行为不一致等问题。
+
+**修复**：将 `g.Map{}` 替换为 `do.TntTenantLevelConfigs{}`，通过指针 nil 检查决定是否赋值 DO 字段，用 `hasUpdate` 标记是否有更新。
+
+**正确做法**：
+```go
+// 正确 — 使用 DO 对象做部分更新
+data := do.XxxTable{}
+hasUpdate := false
+if req.Name != nil {
+    data.Name = *req.Name
+    hasUpdate = true
+}
+if req.Count != nil {
+    data.Count = *req.Count  // 即使 *req.Count == 0 也会写入
+    hasUpdate = true
+}
+if !hasUpdate {
+    return res, nil
+}
+dao.XxxTable.Ctx(ctx).Where("id", req.Id).Data(data).Update()
+
+// 错误 — 使用 g.Map
+data := g.Map{}
+if req.Name != nil { data["name"] = *req.Name }
+dao.XxxTable.Ctx(ctx).Where("id", req.Id).Data(data).Update()
+```
