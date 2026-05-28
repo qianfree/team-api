@@ -101,8 +101,8 @@ func (a *VolcengineVideoAdaptor) ValidateRequest(_ context.Context, _ *common.Re
 
 func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common.RelayInfo, body []byte) map[string]float64 {
 	var req map[string]any
-	if json.Unmarshal(body, &req) != nil {
-		return nil
+	if err := json.Unmarshal(body, &req); err != nil {
+		return map[string]float64{}
 	}
 
 	ratios := make(map[string]float64)

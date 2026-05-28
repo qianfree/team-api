@@ -87,8 +87,21 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 	return nil, nil
 }
 
-// queryPage 使用原生 SQL 分页查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug
+// allowedQueryTables 白名单：仅允许 queryPage 查询这些表
+var allowedQueryTables = map[string]bool{
+	"aud_operation_logs":        true,
+	"aud_sensitive_access_logs": true,
+	"aud_request_logs":          true,
+	"aud_content_filter_logs":   true,
+}
+
+// queryPage 使用原生 SQL 分页查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug。
+// table 和 fields 仅接受白名单中的表名和预定义字段，防止 SQL 注入。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
+	if !allowedQueryTables[table] {
+		return nil, 0, fmt.Errorf("不允许查询的表: %s", table)
+	}
+
 	countSQL := fmt.Sprintf("SELECT COUNT(*) AS total FROM %s", table)
 	if where != "" {
 		countSQL += " WHERE " + where

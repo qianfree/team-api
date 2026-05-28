@@ -121,7 +121,7 @@ func (s *sAdmin) CronJobExecutions(ctx context.Context, req *v1.CronJobExecution
 func (s *sAdmin) CronJobTrigger(ctx context.Context, req *v1.CronJobTriggerReq) (*v1.CronJobTriggerRes, error) {
 	err := common.GetCronScheduler().TriggerJob(ctx, req.Name)
 	if err != nil {
-		return nil, fmt.Errorf("触发任务失败: %v", err)
+		return nil, fmt.Errorf("触发任务失败: %w", err)
 	}
 	return &v1.CronJobTriggerRes{Message: "任务已触发"}, nil
 }
