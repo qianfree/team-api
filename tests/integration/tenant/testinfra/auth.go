@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,6 +90,93 @@ type TenantRegisterResult struct {
 	Email      string
 }
 
+// adminTokenOnce caches an admin API token for tenant cleanup.
+// Solved once per process to avoid repeated captcha/login overhead.
+var (
+	adminTokenOnce sync.Once
+	adminTokenVal  string
+)
+
+// getAdminTokenForCleanup returns a cached admin access token.
+// Uses sync.Once so authentication happens only once per test process.
+func getAdminTokenForCleanup() string {
+	adminTokenOnce.Do(func() {
+		client := admintest.NewAPIClient(DefaultBaseURL)
+
+		captchaResp := client.Get("/api/captcha/", nil)
+		if captchaResp.Code != 0 {
+			return
+		}
+
+		var captchaData struct {
+			CaptchaKey string `json:"captcha_key"`
+		}
+		if err := json.Unmarshal(captchaResp.Data, &captchaData); err != nil {
+			return
+		}
+
+		rdb := getRedisClient()
+		defer rdb.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		redisKey := fmt.Sprintf("captcha:state:%s", captchaData.CaptchaKey)
+		val, err := rdb.Get(ctx, redisKey).Result()
+		if err != nil {
+			return
+		}
+
+		var answer struct {
+			X int `json:"x"`
+			Y int `json:"y"`
+		}
+		if err := json.Unmarshal([]byte(val), &answer); err != nil {
+			return
+		}
+
+		loginResp := client.Post("/api/admin/auth/login", map[string]any{
+			"username":    admintest.DefaultUsername,
+			"password":    admintest.DefaultPassword,
+			"captcha_key": captchaData.CaptchaKey,
+			"captcha_x":   answer.X,
+		})
+		if loginResp.Code != 0 {
+			return
+		}
+
+		var loginResult struct {
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.Unmarshal(loginResp.Data, &loginResult); err != nil {
+			return
+		}
+
+		adminTokenVal = loginResult.AccessToken
+	})
+	return adminTokenVal
+}
+
+// closeTenantViaAdmin closes a tenant via the admin API (best-effort).
+// Used as t.Cleanup callback — logs errors instead of failing the test.
+func closeTenantViaAdmin(t *testing.T, tenantID int64) {
+	token := getAdminTokenForCleanup()
+	if token == "" {
+		t.Logf("cleanup: skip closing tenant %d — admin token unavailable", tenantID)
+		return
+	}
+
+	client := admintest.NewAPIClient(DefaultBaseURL).WithToken(token)
+	resp := client.Put(fmt.Sprintf("/api/admin/tenants/%d/status", tenantID), map[string]any{
+		"status": "closed",
+	})
+	if resp.Code != 0 {
+		t.Logf("cleanup: failed to close tenant %d: code=%d msg=%s", tenantID, resp.Code, resp.Message)
+	} else {
+		t.Logf("cleanup: closed tenant %d", tenantID)
+	}
+}
+
 func RegisterTestTenant(t *testing.T) *TenantRegisterResult {
 	t.Helper()
 
@@ -117,6 +205,11 @@ func RegisterTestTenant(t *testing.T) *TenantRegisterResult {
 	result.Username = username
 	result.Password = TestPassword
 	result.Email = email
+
+	// Automatically close the tenant when the test completes
+	t.Cleanup(func() {
+		closeTenantViaAdmin(t, result.Tenant.ID)
+	})
 
 	return &result
 }

@@ -79,3 +79,18 @@ func CreateTestProject(t *testing.T, client *admintest.APIClient) (id int64, cle
 		client.Post(fmt.Sprintf("/api/tenant/projects/%d/archive", id), nil)
 	}
 }
+
+func CreateTestFeedback(t *testing.T, client *admintest.APIClient) (id int64, cleanup func()) {
+	t.Helper()
+	suffix := RandomSuffix()
+	resp := client.Post("/api/tenant/feedbacks", map[string]any{
+		"category":    "bug_report",
+		"title":       fmt.Sprintf("测试反馈 %s", suffix),
+		"description": "集成测试自动创建的反馈",
+	})
+	resp.AssertSuccess(t)
+	id = resp.GetID(t)
+	return id, func() {
+		// Feedbacks are tied to the tenant — closing the tenant is sufficient cleanup
+	}
+}

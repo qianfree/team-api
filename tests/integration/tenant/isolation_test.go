@@ -45,7 +45,6 @@ func TestIsolation_MemberListIsolated(t *testing.T) {
 
 	// 租户 A 创建成员
 	memberIDA, _ := testinfra.CreateTestTenantMember(t, clientA)
-	// 不 cleanup，测试结束后无关紧要
 
 	// 验证 A 能看到自己创建的成员
 	listA := clientA.Get("/api/tenant/members", map[string]string{"page": "1", "page_size": "100"})

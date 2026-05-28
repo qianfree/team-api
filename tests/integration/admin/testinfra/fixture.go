@@ -20,7 +20,7 @@ func CreateTestAdminUser(t *testing.T, client *APIClient) (id int64, cleanup fun
 	username := fmt.Sprintf("testuser%s", randomSuffix())
 	resp := client.Post("/api/admin/users", map[string]any{
 		"username": username,
-		"password": "TestPass123!",
+		"password": DefaultPassword,
 		"email":    fmt.Sprintf("%s@test.com", username),
 		"role":     "admin",
 	})
@@ -39,7 +39,7 @@ func CreateTestTenant(t *testing.T, client *APIClient) (id int64, cleanup func()
 		"tenant_code": code,
 		"username":    fmt.Sprintf("owner%s", randomSuffix()),
 		"email":       fmt.Sprintf("owner-%s@test.com", code),
-		"password":    "OwnerPass123!",
+		"password":    DefaultPassword,
 	})
 	resp.AssertSuccess(t)
 	id = resp.GetID(t)

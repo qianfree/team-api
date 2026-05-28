@@ -12,18 +12,10 @@ import (
 func TestFeedbackCreate(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
-	resp := client.Post("/api/tenant/feedbacks", map[string]any{
-		"category":    "bug_report",
-		"title":       fmt.Sprintf("测试反馈 %s", testinfra.RandomSuffix()),
-		"description": "这是一个集成测试创建的反馈",
-	})
-	resp.AssertSuccess(t)
+	feedbackID, cleanup := testinfra.CreateTestFeedback(t, client)
+	defer cleanup()
 
-	var data struct {
-		ID int64 `json:"id"`
-	}
-	resp.DecodeData(t, &data)
-	if data.ID == 0 {
+	if feedbackID == 0 {
 		t.Fatal("expected non-zero feedback id")
 	}
 }
@@ -32,12 +24,8 @@ func TestFeedbackList(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
 	// Create a feedback first
-	createResp := client.Post("/api/tenant/feedbacks", map[string]any{
-		"category":    "suggestion",
-		"title":       fmt.Sprintf("列表测试反馈 %s", testinfra.RandomSuffix()),
-		"description": "测试反馈列表功能",
-	})
-	createResp.AssertSuccess(t)
+	_, cleanup := testinfra.CreateTestFeedback(t, client)
+	defer cleanup()
 
 	// List feedbacks
 	resp := client.Get("/api/tenant/feedbacks", map[string]string{
@@ -65,16 +53,19 @@ func TestFeedbackListWithFilters(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
 	// Create feedbacks with different categories
-	client.Post("/api/tenant/feedbacks", map[string]any{
-		"category":    "bug_report",
-		"title":       "Bug反馈过滤测试",
-		"description": "测试按分类过滤",
-	})
-	client.Post("/api/tenant/feedbacks", map[string]any{
+	_, cleanup1 := testinfra.CreateTestFeedback(t, client)
+	defer cleanup1()
+
+	// Create a feature_request feedback inline
+	suffix := testinfra.RandomSuffix()
+	createResp := client.Post("/api/tenant/feedbacks", map[string]any{
 		"category":    "feature_request",
-		"title":       "功能请求过滤测试",
+		"title":       fmt.Sprintf("功能请求过滤测试 %s", suffix),
 		"description": "测试按分类过滤",
 	})
+	createResp.AssertSuccess(t)
+	featureID := createResp.GetID(t)
+	_ = featureID // feedback cleanup handled by tenant closure
 
 	// Filter by category
 	resp := client.Get("/api/tenant/feedbacks", map[string]string{
@@ -88,10 +79,11 @@ func TestFeedbackListWithFilters(t *testing.T) {
 func TestFeedbackGet(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
-	// Create a feedback
+	// Create a feedback with specific category for detail verification
+	suffix := testinfra.RandomSuffix()
 	createResp := client.Post("/api/tenant/feedbacks", map[string]any{
 		"category":    "complaint",
-		"title":       "详情测试反馈",
+		"title":       fmt.Sprintf("详情测试反馈 %s", suffix),
 		"description": "测试获取反馈详情",
 	})
 	createResp.AssertSuccess(t)
