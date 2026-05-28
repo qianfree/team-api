@@ -129,6 +129,13 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 
 // ListOperationLogs retrieves a paginated list of operation logs with optional filters.
 func (s *sAdmin) ListOperationLogs(ctx context.Context, req *v1.OperationLogListReq) (*v1.OperationLogListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string
@@ -230,6 +237,13 @@ func MaskSensitiveData(data string) string {
 
 // ListRequestAuditLogs 分页查询请求审计日志（不返回 request_body/response_body 以优化性能）
 func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string
@@ -340,6 +354,13 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 
 // ExportOperationLogs exports operation logs to CSV or Excel.
 func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	buildOpLogWhere := func() (string, []any) {
 		var conditions []string
 		var args []any
@@ -425,6 +446,13 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 
 // ContentFilterLogList returns a paginated list of content filter interception logs.
 func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string

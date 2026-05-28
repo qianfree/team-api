@@ -152,6 +152,13 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 
 // UsageLogs 获取租户用量日志
 func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 	role := middleware.GetUserRole(ctx)
@@ -244,6 +251,13 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 
 // ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 	role := middleware.GetUserRole(ctx)

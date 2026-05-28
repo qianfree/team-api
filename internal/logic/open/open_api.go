@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/open/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -417,6 +418,12 @@ func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v
 // ============================================================
 
 func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (*v1.OpenUsageQueryRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")
@@ -495,6 +502,13 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 // ============================================================
 
 func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryReq) (*v1.OpenBillingQueryRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, fmt.Errorf("unauthorized")

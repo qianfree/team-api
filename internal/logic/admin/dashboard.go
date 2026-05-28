@@ -197,6 +197,13 @@ func (s *sAdmin) GetModelDistribution(ctx context.Context, req *v1.AdminDashboar
 
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	var conditions []string
@@ -549,6 +556,13 @@ func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDash
 
 // ExportUsageLogs exports usage logs to CSV or Excel.
 func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExportReq) (*v1.AdminUsageLogExportRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "tenant_name", Header: "租户名称"},

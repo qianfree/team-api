@@ -15,6 +15,13 @@ import (
 
 // ErrorLogList returns a paginated list of system error logs.
 func (s *sAdmin) ErrorLogList(ctx context.Context, req *v1.ErrorLogListReq) (*v1.ErrorLogListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	var conditions []string
 	var args []any
 

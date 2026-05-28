@@ -9,10 +9,18 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/logic/common"
 )
 
 // ChannelErrorEventList 渠道错误事件列表
 func (s *sAdmin) ChannelErrorEventList(ctx context.Context, req *v1.ChannelErrorEventListReq) (*v1.ChannelErrorEventListRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	var conditions []string
 	var args []any
 
