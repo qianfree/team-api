@@ -258,6 +258,41 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		list = append(list, item)
 	}
 
+	// 按成员模型范围过滤
+	userID := middleware.GetUserID(ctx)
+	if userID > 0 {
+		var memberScopes []struct {
+			ModelID   int64  `json:"model_id"`
+			ModelName string `json:"model_name"`
+		}
+		_ = g.DB().Model("tnt_member_model_scopes ms").Ctx(ctx).
+			LeftJoin("mdl_models m ON ms.model_id = m.id").
+			Where("ms.tenant_id", tenantID).
+			Where("ms.user_id", userID).
+			Fields("ms.model_id, m.model_id as model_name").
+			Scan(&memberScopes)
+
+		if len(memberScopes) > 0 {
+			allowed := make(map[string]bool, len(memberScopes))
+			for _, s := range memberScopes {
+				if s.ModelID == -1 {
+					// 哨兵：禁止所有模型
+					return &v1.TenantAvailableModelsRes{List: nil}, nil
+				}
+				if s.ModelName != "" {
+					allowed[s.ModelName] = true
+				}
+			}
+			filtered := make([]v1.TenantAvailableModelItem, 0, len(list))
+			for _, item := range list {
+				if allowed[item.ModelId] {
+					filtered = append(filtered, item)
+				}
+			}
+			list = filtered
+		}
+	}
+
 	return &v1.TenantAvailableModelsRes{List: list}, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -19,6 +20,9 @@ import (
 )
 
 type sOpen struct{}
+
+// openMemberModelCache 成员模型范围缓存（与 relay provider 中的缓存 key 相同）
+var openMemberModelCache = common.NewCache("member_model", 60*time.Second)
 
 func New() *sOpen {
 	return &sOpen{}
@@ -283,19 +287,35 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 	}
 
 	// Insert new scopes
-	for _, modelID := range req.ModelIDs {
-		if modelID == 0 {
-			continue
+	if len(req.ModelIDs) > 0 {
+		for _, modelID := range req.ModelIDs {
+			if modelID == 0 {
+				continue
+			}
+			_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
+				TenantId: tenantID,
+				UserId:   req.Id,
+				ModelId:  modelID,
+			}).Insert()
+			if err != nil {
+				return nil, err
+			}
 		}
+	} else {
+		// 空列表表示禁止所有模型，插入哨兵记录（model_id = -1）
 		_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
 			TenantId: tenantID,
 			UserId:   req.Id,
-			ModelId:  modelID,
+			ModelId:  -1,
 		}).Insert()
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	// 清除该成员的模型范围缓存，使下次请求时重新从数据库读取
+	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
+	openMemberModelCache.Delete(ctx, cacheKey)
 
 	return nil, nil
 }
