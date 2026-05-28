@@ -220,3 +220,189 @@ func TestTenantGroupAssignment(t *testing.T) {
 		t.Fatalf("expected group_id=%d, got %d", group1ID, verifyResult.List[0].GroupID)
 	}
 }
+
+// ==================== 边界 / 错误场景 ====================
+
+func TestModelGroupDuplicateCode(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	groupID, cleanup := testinfra.CreateTestModelGroup(t, client)
+	defer cleanup()
+
+	// 获取已创建分组的 code
+	listResp := client.Get("/api/admin/model-groups", map[string]string{
+		"page": "1", "page_size": "200",
+	})
+	listResp.AssertSuccess(t)
+
+	var listResult struct {
+		List []struct {
+			ID   int64  `json:"id"`
+			Code string `json:"code"`
+		} `json:"list"`
+	}
+	listResp.DecodeData(t, &listResult)
+
+	var existingCode string
+	for _, g := range listResult.List {
+		if g.ID == groupID {
+			existingCode = g.Code
+			break
+		}
+	}
+	if existingCode == "" {
+		t.Fatal("could not find the created group's code")
+	}
+
+	// 用相同 code 创建，应返回 10085
+	dupResp := client.Post("/api/admin/model-groups", map[string]any{
+		"name": "Duplicate Code Test",
+		"code": existingCode,
+	})
+	dupResp.AssertError(t, 10085)
+}
+
+func TestModelGroupDeleteWithTenants(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	groupID, groupCleanup := testinfra.CreateTestModelGroup(t, client)
+	defer groupCleanup()
+
+	tenantID, tenantCleanup := testinfra.CreateTestTenant(t, client)
+	defer tenantCleanup()
+
+	// 将分组关联到租户
+	client.Put(fmt.Sprintf("/api/admin/tenants/%d/groups", tenantID), map[string]any{
+		"group_ids": []int64{groupID},
+	}).AssertSuccess(t)
+	defer func() {
+		// 清理关联以便分组能被 fixture cleanup 删除
+		client.Put(fmt.Sprintf("/api/admin/tenants/%d/groups", tenantID), map[string]any{
+			"group_ids": []int64{},
+		})
+	}()
+
+	// 删除有租户关联的分组，应返回 10086
+	delResp := client.Delete(fmt.Sprintf("/api/admin/model-groups/%d", groupID))
+	delResp.AssertError(t, 10086)
+}
+
+func TestModelGroupUpdateNotFound(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	resp := client.Put("/api/admin/model-groups/999999999", map[string]any{
+		"name": "ghost",
+	})
+	resp.AssertError(t, 10084)
+}
+
+func TestModelGroupDeleteNotFound(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	resp := client.Delete("/api/admin/model-groups/999999999")
+	resp.AssertError(t, 10084)
+}
+
+func TestModelGroupCreateWithModels(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	model1ID, model1Cleanup := testinfra.CreateTestModel(t, client)
+	defer model1Cleanup()
+
+	model2ID, model2Cleanup := testinfra.CreateTestModel(t, client)
+	defer model2Cleanup()
+
+	suffix := randomSuffix()
+	createResp := client.Post("/api/admin/model-groups", map[string]any{
+		"name":      fmt.Sprintf("InitModels %s", suffix),
+		"code":      fmt.Sprintf("init-models-%s", suffix),
+		"model_ids": []int64{model1ID, model2ID},
+	})
+	createResp.AssertSuccess(t)
+	groupID := createResp.GetID(t)
+	defer func() {
+		client.Delete(fmt.Sprintf("/api/admin/model-groups/%d", groupID))
+	}()
+
+	// 验证分组内包含 2 个模型
+	modelsResp := client.Get(fmt.Sprintf("/api/admin/model-groups/%d/models", groupID), nil)
+	modelsResp.AssertSuccess(t)
+
+	var result struct {
+		List []struct {
+			ModelId string `json:"model_id"`
+		} `json:"list"`
+	}
+	modelsResp.DecodeData(t, &result)
+	if len(result.List) != 2 {
+		t.Fatalf("expected 2 models after create-with-models, got %d", len(result.List))
+	}
+}
+
+func TestModelGroupSetEmptyModels(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	groupID, groupCleanup := testinfra.CreateTestModelGroup(t, client)
+	defer groupCleanup()
+
+	modelID, modelCleanup := testinfra.CreateTestModel(t, client)
+	defer modelCleanup()
+
+	// 先添加一个模型
+	client.Put(fmt.Sprintf("/api/admin/model-groups/%d/models", groupID), map[string]any{
+		"model_ids": []int64{modelID},
+	}).AssertSuccess(t)
+
+	// 设置为空数组
+	client.Put(fmt.Sprintf("/api/admin/model-groups/%d/models", groupID), map[string]any{
+		"model_ids": []int64{},
+	}).AssertSuccess(t)
+
+	// 验证已清空
+	resp := client.Get(fmt.Sprintf("/api/admin/model-groups/%d/models", groupID), nil)
+	resp.AssertSuccess(t)
+
+	var result struct {
+		List []struct {
+			ModelId string `json:"model_id"`
+		} `json:"list"`
+	}
+	resp.DecodeData(t, &result)
+	if len(result.List) != 0 {
+		t.Fatalf("expected 0 models after clearing, got %d", len(result.List))
+	}
+}
+
+func TestTenantGroupSetEmpty(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	tenantID, tenantCleanup := testinfra.CreateTestTenant(t, client)
+	defer tenantCleanup()
+
+	groupID, groupCleanup := testinfra.CreateTestModelGroup(t, client)
+	defer groupCleanup()
+
+	// 先关联一个分组
+	client.Put(fmt.Sprintf("/api/admin/tenants/%d/groups", tenantID), map[string]any{
+		"group_ids": []int64{groupID},
+	}).AssertSuccess(t)
+
+	// 设置为空数组
+	client.Put(fmt.Sprintf("/api/admin/tenants/%d/groups", tenantID), map[string]any{
+		"group_ids": []int64{},
+	}).AssertSuccess(t)
+
+	// 验证已清空
+	resp := client.Get(fmt.Sprintf("/api/admin/tenants/%d/groups", tenantID), nil)
+	resp.AssertSuccess(t)
+
+	var result struct {
+		List []struct {
+			GroupID int64 `json:"group_id"`
+		} `json:"list"`
+	}
+	resp.DecodeData(t, &result)
+	if len(result.List) != 0 {
+		t.Fatalf("expected 0 groups after clearing, got %d", len(result.List))
+	}
+}
