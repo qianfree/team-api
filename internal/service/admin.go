@@ -395,6 +395,8 @@ type (
 		UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdateReq) (*v1.TenantModelUpdateRes, error)
 		// DeleteTenantModel 移除租户模型分配
 		DeleteTenantModel(ctx context.Context, req *v1.TenantModelDeleteReq) (*v1.TenantModelDeleteRes, error)
+		// ListTenantAvailableModels 预览租户实际可用的所有模型（显式分配 + 分组来源，去重）
+		ListTenantAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsPreviewReq) (*v1.TenantAvailableModelsPreviewRes, error)
 		// ListAllTickets 获取全部工单列表（管理后台）
 		ListAllTickets(ctx context.Context, req *v1.TicketListReq) (*v1.TicketListRes, error)
 		// GetTicketAdmin 获取工单详情（管理后台，含回复）
