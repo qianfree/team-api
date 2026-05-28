@@ -41,8 +41,9 @@ func HandleResponses(ctx context.Context, body []byte, path string, headers http
 
 // HandleModels 处理 /v1/models 请求（列出可用模型）
 // tenantID 用于过滤该租户有权使用的模型，apiKeyID 用于进一步按 Key 的模型范围过滤
-func HandleModels(ctx context.Context, tenantID int64, apiKeyID int64, provider common.DataProvider) (*dto.ModelsResponse, error) {
-	models, err := provider.GetAvailableModels(ctx, tenantID, apiKeyID)
+// userID 用于进一步按成员的模型范围过滤
+func HandleModels(ctx context.Context, tenantID, apiKeyID, userID int64, provider common.DataProvider) (*dto.ModelsResponse, error) {
+	models, err := provider.GetAvailableModels(ctx, tenantID, apiKeyID, userID)
 	if err != nil {
 		return nil, err
 	}

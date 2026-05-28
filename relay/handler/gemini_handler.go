@@ -20,8 +20,8 @@ func HandleGeminiGenerateContent(ctx context.Context, body []byte, path string, 
 }
 
 // HandleGeminiModels 处理 GET /v1beta/models 请求（Gemini 原生格式模型列表）
-func HandleGeminiModels(ctx context.Context, tenantID int64, apiKeyID int64, provider common.DataProvider) (*dto.GeminiModelsResponse, error) {
-	models, err := provider.GetAvailableModels(ctx, tenantID, apiKeyID)
+func HandleGeminiModels(ctx context.Context, tenantID, apiKeyID, userID int64, provider common.DataProvider) (*dto.GeminiModelsResponse, error) {
+	models, err := provider.GetAvailableModels(ctx, tenantID, apiKeyID, userID)
 	if err != nil {
 		return nil, err
 	}

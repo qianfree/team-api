@@ -317,7 +317,7 @@ func HandleGeminiGenerateContent(r *ghttp.Request) {
 func HandleModels(r *ghttp.Request) {
 	rc := buildRelayContext(r) // 获取 TenantID
 
-	resp, err := handler.HandleModels(r.Context(), rc.TenantID, rc.ApiKeyID, dataProvider)
+	resp, err := handler.HandleModels(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, dataProvider)
 	if err != nil {
 		r.Response.WriteJsonExit(g.Map{
 			"error": g.Map{"type": "internal_error", "message": err.Error()},
@@ -371,7 +371,7 @@ func HandleModelDetail(r *ghttp.Request) {
 func HandleGeminiModels(r *ghttp.Request) {
 	rc := buildRelayContext(r)
 
-	resp, err := handler.HandleGeminiModels(r.Context(), rc.TenantID, rc.ApiKeyID, dataProvider)
+	resp, err := handler.HandleGeminiModels(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, dataProvider)
 	if err != nil {
 		handler.WriteGeminiRelayError(r.Response.Writer, err)
 		return

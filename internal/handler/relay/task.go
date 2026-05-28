@@ -57,6 +57,10 @@ func HandleTaskSubmit(r *ghttp.Request) {
 			statusCode = 403
 			errType = "permission_denied"
 			errMsg = "当前租户未启用该模型，请联系管理员"
+		} else if err == relay_common.ErrMemberModelNotAllowed {
+			statusCode = 403
+			errType = "permission_denied"
+			errMsg = "当前成员无权使用该模型"
 		} else if err == relay_common.ErrChannelUnavailable {
 			statusCode = 503
 			errType = "server_error"
@@ -170,6 +174,13 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 	selection, err := relayDataProvider.GetChannelForModel(ctx, tenantID, userID, req.Model, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// 检查成员模型范围
+	if allowed, err := relayDataProvider.CheckMemberModelAccess(ctx, tenantID, userID, req.Model); err != nil {
+		return nil, err
+	} else if !allowed {
+		return nil, relay_common.ErrMemberModelNotAllowed
 	}
 
 	return &relay_common.ChannelMeta{
