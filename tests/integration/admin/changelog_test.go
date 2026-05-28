@@ -276,7 +276,7 @@ func TestChangelogNegative(t *testing.T) {
 	}
 
 	// Publish non-existent changelog should fail
-	publishNonExistResp := client.Post("/api/admin/announcements/999999999/publish", nil)
+	publishNonExistResp := client.Post("/api/admin/changelogs/999999999/publish", nil)
 	if publishNonExistResp.Code == 0 {
 		t.Fatal("expected error when publishing non-existent changelog, got success")
 	}

@@ -28,7 +28,7 @@ func TestModelGroupCRUD(t *testing.T) {
 	// --- List ---
 	listResp := client.Get("/api/admin/model-groups", map[string]string{
 		"page":      "1",
-		"page_size": "10",
+		"page_size": "100",
 	})
 	testinfra.AssertPaginatedList(t, listResp, 1)
 

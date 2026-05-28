@@ -110,8 +110,14 @@ func TestOrderDetail(t *testing.T) {
 	detailResp := client.Get(fmt.Sprintf("/api/admin/orders/%d", orderID), nil)
 	detailResp.AssertSuccess(t)
 
-	var detail map[string]any
-	detailResp.DecodeData(t, &detail)
+	var outer map[string]any
+	detailResp.DecodeData(t, &outer)
+
+	// Response has nested data: {"data": {...}}
+	detail, ok := outer["data"].(map[string]any)
+	if !ok {
+		detail = outer
+	}
 
 	// Verify essential fields
 	requiredFields := []string{"id", "order_no", "status", "amount", "tenant_id"}
