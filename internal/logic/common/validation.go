@@ -1,6 +1,7 @@
 package common
 
 import (
+	"time"
 	"unicode"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -40,6 +41,18 @@ func ValidateTenantRole(role string) error {
 func ValidateAdminRole(role string) error {
 	if role != "admin" && role != "super_admin" {
 		return gerror.New("角色无效")
+	}
+	return nil
+}
+
+// ValidateDateParam 校验日期参数格式是否为 YYYY-MM-DD
+func ValidateDateParam(date string, fieldName string) error {
+	if date == "" {
+		return nil
+	}
+	_, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return gerror.Newf("%s格式无效，应为 YYYY-MM-DD", fieldName)
 	}
 	return nil
 }

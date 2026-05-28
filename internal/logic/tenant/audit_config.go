@@ -153,6 +153,13 @@ func isValidAuditLevel(level string) bool {
 
 // TenantRequestAuditLogs 分页查询租户的请求审计日志（不含 body，性能优先）
 func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (*v1.TenantRequestAuditLogsRes, error) {
+	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+		return nil, err
+	}
+
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
