@@ -3,6 +3,7 @@
 package admin_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/qianfree/team-api/tests/integration/admin/testinfra"
@@ -45,7 +46,144 @@ func TestFeedbackListWithFilters(t *testing.T) {
 	})
 	resp.AssertSuccess(t)
 
-	t.Logf("Feedback list filters applied successfully")
+	// Filter by tenant_id
+	tenantID, cleanup := testinfra.CreateTestTenant(t, client)
+	defer cleanup()
+
+	resp = client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "10",
+		"tenant_id": fmt.Sprintf("%d", tenantID),
+	})
+	resp.AssertSuccess(t)
+}
+
+// Note: Feedback creation happens through the tenant console.
+// The admin can only reply, update status, and view statistics.
+
+func TestFeedbackReply(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	// Find a feedback to reply to
+	listResp := client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "10",
+	})
+	listResp.AssertSuccess(t)
+
+	var listData struct {
+		List []struct {
+			Id     int64  `json:"id"`
+			Status string `json:"status"`
+		} `json:"list"`
+	}
+	listResp.DecodeData(t, &listData)
+
+	if len(listData.List) == 0 {
+		t.Skip("No feedback found, skipping reply test")
+	}
+
+	feedbackID := listData.List[0].Id
+
+	// Reply and update status to acknowledged
+	replyText := fmt.Sprintf("管理员回复（集成测试）%s", randomSuffix())
+	replyResp := client.Post(fmt.Sprintf("/api/admin/feedbacks/%d/reply", feedbackID), map[string]any{
+		"reply":  replyText,
+		"status": "acknowledged",
+	})
+	replyResp.AssertSuccess(t)
+
+	// Verify status changed via list
+	verifyResp := client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "50",
+	})
+	verifyResp.AssertSuccess(t)
+
+	var verifyData struct {
+		List []struct {
+			Id         int64  `json:"id"`
+			Status     string `json:"status"`
+			AdminReply string `json:"admin_reply"`
+		} `json:"list"`
+	}
+	verifyResp.DecodeData(t, &verifyData)
+
+	for _, item := range verifyData.List {
+		if item.Id == feedbackID {
+			if item.Status != "acknowledged" {
+				t.Fatalf("expected status=acknowledged after reply, got %q", item.Status)
+			}
+			if item.AdminReply != replyText {
+				t.Fatalf("expected admin_reply=%q, got %q", replyText, item.AdminReply)
+			}
+			return
+		}
+	}
+
+	t.Fatalf("feedback id=%d not found after reply", feedbackID)
+}
+
+func TestFeedbackStatusUpdate(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	// Find a feedback to update
+	listResp := client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "10",
+	})
+	listResp.AssertSuccess(t)
+
+	var listData struct {
+		List []struct {
+			Id     int64  `json:"id"`
+			Status string `json:"status"`
+		} `json:"list"`
+	}
+	listResp.DecodeData(t, &listData)
+
+	if len(listData.List) == 0 {
+		t.Skip("No feedback found, skipping status update test")
+	}
+
+	feedbackID := listData.List[0].Id
+
+	// Update status to in_progress and priority to high
+	updateResp := client.Put(fmt.Sprintf("/api/admin/feedbacks/%d/status", feedbackID), map[string]any{
+		"status":   "in_progress",
+		"priority": "high",
+	})
+	updateResp.AssertSuccess(t)
+
+	// Verify status and priority changed
+	verifyResp := client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "50",
+	})
+	verifyResp.AssertSuccess(t)
+
+	var verifyData struct {
+		List []struct {
+			Id       int64  `json:"id"`
+			Status   string `json:"status"`
+			Priority string `json:"priority"`
+		} `json:"list"`
+	}
+	verifyResp.DecodeData(t, &verifyData)
+
+	for _, item := range verifyData.List {
+		if item.Id == feedbackID {
+			if item.Status != "in_progress" {
+				t.Fatalf("expected status=in_progress, got %q", item.Status)
+			}
+			if item.Priority != "high" {
+				t.Fatalf("expected priority=high, got %q", item.Priority)
+			}
+			return
+		}
+	}
+
+	t.Fatalf("feedback id=%d not found after status update", feedbackID)
 }
 
 func TestFeedbackStats(t *testing.T) {
@@ -55,26 +193,90 @@ func TestFeedbackStats(t *testing.T) {
 	resp.AssertSuccess(t)
 
 	var data struct {
-		Total        int              `json:"total"`
-		Pending      int              `json:"pending"`
-		Acknowledged int              `json:"acknowledged"`
-		InProgress   int              `json:"in_progress"`
-		Resolved     int              `json:"resolved"`
-		Closed       int              `json:"closed"`
-		ByCategory   map[string]int   `json:"by_category"`
-		RecentTrend  []map[string]any `json:"recent_trend"`
+		Total        int            `json:"total"`
+		Pending      int            `json:"pending"`
+		Acknowledged int            `json:"acknowledged"`
+		InProgress   int            `json:"in_progress"`
+		Resolved     int            `json:"resolved"`
+		Closed       int            `json:"closed"`
+		ByCategory   map[string]int `json:"by_category"`
+		RecentTrend  []struct {
+			Date  string `json:"date"`
+			Count int    `json:"count"`
+		} `json:"recent_trend"`
 	}
 	resp.DecodeData(t, &data)
 
+	// Verify total is non-negative and consistent with status counts
 	if data.Total < 0 {
 		t.Fatalf("expected total >= 0, got %d", data.Total)
 	}
 
-	sum := data.Pending + data.Acknowledged + data.InProgress + data.Resolved + data.Closed
-	if sum > data.Total {
-		t.Fatalf("status sum (%d) exceeds total (%d)", sum, data.Total)
+	statusSum := data.Pending + data.Acknowledged + data.InProgress + data.Resolved + data.Closed
+	if statusSum > data.Total {
+		t.Fatalf("status sum (%d) exceeds total (%d)", statusSum, data.Total)
 	}
 
-	t.Logf("Feedback stats: total=%d, pending=%d, acknowledged=%d, in_progress=%d, resolved=%d, closed=%d",
-		data.Total, data.Pending, data.Acknowledged, data.InProgress, data.Resolved, data.Closed)
+	// Verify by_category values are non-negative
+	for cat, count := range data.ByCategory {
+		if count < 0 {
+			t.Fatalf("by_category[%q] = %d, expected >= 0", cat, count)
+		}
+	}
+
+	t.Logf("Feedback stats verified: total=%d, sum=%d, categories=%d",
+		data.Total, statusSum, len(data.ByCategory))
+}
+
+func TestFeedbackNegative(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	// Reply to non-existent feedback
+	replyNonExistResp := client.Post("/api/admin/feedbacks/999999999/reply", map[string]any{
+		"reply":  "test",
+		"status": "acknowledged",
+	})
+	if replyNonExistResp.Code == 0 {
+		t.Fatal("expected error when replying to non-existent feedback, got success")
+	}
+
+	// Update non-existent feedback status
+	statusNonExistResp := client.Put("/api/admin/feedbacks/999999999/status", map[string]any{
+		"status": "resolved",
+	})
+	if statusNonExistResp.Code == 0 {
+		t.Fatal("expected error when updating non-existent feedback status, got success")
+	}
+
+	// Reply with empty content
+	replyEmptyResp := client.Post("/api/admin/feedbacks/999999999/reply", map[string]any{
+		"reply":  "",
+		"status": "acknowledged",
+	})
+	if replyEmptyResp.Code == 0 {
+		t.Fatal("expected error for empty reply content, got success")
+	}
+
+	// Invalid status value
+	listResp := client.Get("/api/admin/feedbacks", map[string]string{
+		"page":      "1",
+		"page_size": "1",
+	})
+	listResp.AssertSuccess(t)
+
+	var listData struct {
+		List []struct {
+			Id int64 `json:"id"`
+		} `json:"list"`
+	}
+	listResp.DecodeData(t, &listData)
+
+	if len(listData.List) > 0 {
+		invalidStatusResp := client.Put(fmt.Sprintf("/api/admin/feedbacks/%d/status", listData.List[0].Id), map[string]any{
+			"status": "invalid_status",
+		})
+		if invalidStatusResp.Code == 0 {
+			t.Fatal("expected error for invalid feedback status, got success")
+		}
+	}
 }

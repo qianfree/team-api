@@ -201,3 +201,119 @@ func TestTenantAuth_Unauthorized(t *testing.T) {
 	})
 	resp.AssertHTTPStatus(t, 401)
 }
+
+// ─── 边界值测试 ────────────────────────────────────────────────────
+
+// TestTenantRegister_EmptyRequiredFields 验证缺失必填字段时注册被拒绝
+// Business rule: 注册时 username/password/tenant_name 不能为空
+func TestTenantRegister_EmptyRequiredFields(t *testing.T) {
+	captchaKey, captchaX := testinfra.SolveCaptcha(t)
+	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+
+	// 空用户名
+	resp := client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       "empty-user@test.com",
+		"password":    testinfra.TestPassword,
+		"tenant_name": "空用户名租户",
+		"tenant_code": "t" + testinfra.RandomSuffix(),
+		"username":    "",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("empty username should be rejected")
+	}
+	t.Logf("empty username: code=%d msg=%q", resp.Code, resp.Message)
+
+	// 空密码
+	captchaKey, captchaX = testinfra.SolveCaptcha(t)
+	resp = client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       "empty-pwd@test.com",
+		"password":    "",
+		"tenant_name": "空密码租户",
+		"tenant_code": "t" + testinfra.RandomSuffix(),
+		"username":    "emptypwduser",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("empty password should be rejected")
+	}
+	t.Logf("empty password: code=%d msg=%q", resp.Code, resp.Message)
+
+	// 空租户名称
+	captchaKey, captchaX = testinfra.SolveCaptcha(t)
+	resp = client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       "empty-name@test.com",
+		"password":    testinfra.TestPassword,
+		"tenant_name": "",
+		"tenant_code": "t" + testinfra.RandomSuffix(),
+		"username":    "emptynameuser",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("empty tenant_name should be rejected")
+	}
+	t.Logf("empty tenant_name: code=%d msg=%q", resp.Code, resp.Message)
+}
+
+// TestTenantRegister_ShortPassword 验证短密码被拒绝
+// Business rule: 密码长度最少 8 位
+func TestTenantRegister_ShortPassword(t *testing.T) {
+	captchaKey, captchaX := testinfra.SolveCaptcha(t)
+	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+
+	resp := client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       "short-pwd@test.com",
+		"password":    "abc123",
+		"tenant_name": "短密码租户",
+		"tenant_code": "t" + testinfra.RandomSuffix(),
+		"username":    "shortpwduser",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("short password should be rejected (min 8 chars)")
+	}
+	t.Logf("short password: code=%d msg=%q", resp.Code, resp.Message)
+}
+
+// TestTenantRegister_InvalidEmail 验证无效邮箱格式被拒绝
+// Business rule: email 必须是合法邮箱格式
+func TestTenantRegister_InvalidEmail(t *testing.T) {
+	captchaKey, captchaX := testinfra.SolveCaptcha(t)
+	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+
+	resp := client.Post("/api/tenant/auth/register", map[string]any{
+		"email":       "not-an-email",
+		"password":    testinfra.TestPassword,
+		"tenant_name": "无效邮箱租户",
+		"tenant_code": "t" + testinfra.RandomSuffix(),
+		"username":    "bademailuser",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("invalid email should be rejected")
+	}
+	t.Logf("invalid email: code=%d msg=%q", resp.Code, resp.Message)
+}
+
+// TestTenantLogin_EmptyFields 验证空字段登录被拒绝
+func TestTenantLogin_EmptyFields(t *testing.T) {
+	captchaKey, captchaX := testinfra.SolveCaptcha(t)
+	client := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+
+	resp := client.Post("/api/tenant/auth/login", map[string]any{
+		"account":     "",
+		"password":    "",
+		"type":        "ram",
+		"captcha_key": captchaKey,
+		"captcha_x":   captchaX,
+	})
+	if resp.Code == 0 {
+		t.Fatal("empty login fields should be rejected")
+	}
+	t.Logf("empty login fields: code=%d msg=%q", resp.Code, resp.Message)
+}

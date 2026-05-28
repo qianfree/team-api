@@ -247,80 +247,13 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 		return nil, err
 	}
 
-	// 按次计费：直接返回单价
-	if pricing.BillingMode == "per_request" {
-		return &CostBreakdown{
-			BaseCost:         pricing.PerRequestPrice,
-			InputCost:        0,
-			OutputCost:       0,
-			TotalCost:        pricing.PerRequestPrice,
-			InputTokens:      inputTokens,
-			OutputTokens:     outputTokens,
-			BillingMode:      pricing.BillingMode,
-			PerRequestPrice:  pricing.PerRequestPrice,
-			DiscountRatio:    pricing.DiscountRatio,
-			TenantMultiplier: pricing.TenantMultiplier,
-			Currency:         pricing.Currency,
-		}, nil
-	}
-
-	// Token / Tiered 计费
-	var inputCost, outputCost float64
-	if pricing.BillingMode == "tiered" {
-		if len(pricing.CustomTiers) > 0 {
-			inputCost = calculateTieredCostFromTiers(pricing.CustomTiers, inputTokens, true)
-			outputCost = calculateTieredCostFromTiers(pricing.CustomTiers, outputTokens, false)
-		} else {
-			inputCost, _ = calculateTieredCostFromPricing(ctx, modelName, inputTokens, true)
-			outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
-		}
-	} else {
-		// 统一单价模式
-		inputCost = float64(inputTokens) / 1_000_000.0 * pricing.InputPrice
-		outputCost = float64(outputTokens) / 1_000_000.0 * pricing.OutputPrice
-	}
-
-	// 基础费用（应用租户折扣前）
-	baseCost := inputCost + outputCost
-	// 最终费用 = 基础费用 × 租户倍率
-	totalCost := baseCost * pricing.TenantMultiplier
-
-	return &CostBreakdown{
-		BaseCost:         baseCost,
-		InputCost:        inputCost * pricing.TenantMultiplier,
-		OutputCost:       outputCost * pricing.TenantMultiplier,
-		TotalCost:        totalCost,
-		InputTokens:      inputTokens,
-		OutputTokens:     outputTokens,
-		BillingMode:      pricing.BillingMode,
-		PerRequestPrice:  pricing.PerRequestPrice,
-		DiscountRatio:    pricing.DiscountRatio,
-		TenantMultiplier: pricing.TenantMultiplier,
-		Currency:         pricing.Currency,
-	}, nil
+	return computeCost(pricing, inputTokens, outputTokens, nil), nil
 }
 
-// CalculateCostWithUsage 计算实际费用（含 cache token 计费）
-// 传入完整的 Usage 结构，支持 cache_creation / cache_read 等 token 的费用计算
-func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName string, usage *rcommon.Usage) (*CostBreakdown, error) {
-	if usage == nil {
-		return nil, gerror.New("usage is nil")
-	}
-
-	pricing, err := GetModelPrice(ctx, tenantID, modelName)
-	if err != nil {
-		return nil, err
-	}
-
-	inputTokens := usage.PromptTokens
-	outputTokens := usage.CompletionTokens
-
-	// 提取 cache token 数量
-	var cacheReadTokens, cacheCreationTokens int
-	if usage.PromptTokensDetails != nil {
-		cacheReadTokens = usage.PromptTokensDetails.CachedTokens
-		cacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
-	}
+// computeCost 纯计算：根据定价结果和 token 用量计算费用明细。
+// 提取为独立函数以便单元测试，不依赖数据库或缓存。
+func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) *CostBreakdown {
+	inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 
 	// 按次计费：直接返回单价
 	if pricing.BillingMode == "per_request" {
@@ -336,45 +269,16 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 			Currency:            pricing.Currency,
 			CacheCreationTokens: cacheCreationTokens,
 			CacheReadTokens:     cacheReadTokens,
-		}, nil
-	}
-
-	// 基础 token = 总 input - cache 部分（避免重复计费）
-	// 仅当 PromptTokens 包含 cache tokens 时才扣减（如 OpenAI 格式）。
-	// Claude API 和大部分第三方兼容 API 的 input_tokens 不含 cache，无需扣减。
-	baseInputTokens := inputTokens
-	if usage.CacheIncludedInPrompt {
-		baseInputTokens = inputTokens - cacheReadTokens - cacheCreationTokens
-		if baseInputTokens < 0 {
-			baseInputTokens = 0
 		}
 	}
 
 	// 基础输入费用
-	var baseInputCost float64
-	if pricing.BillingMode == "tiered" {
-		if len(pricing.CustomTiers) > 0 {
-			baseInputCost = calculateTieredCostFromTiers(pricing.CustomTiers, baseInputTokens, true)
-		} else {
-			baseInputCost, _ = calculateTieredCostFromPricing(ctx, modelName, baseInputTokens, true)
-		}
-	} else {
-		baseInputCost = float64(baseInputTokens) / 1_000_000.0 * pricing.InputPrice
-	}
+	baseInputCost := computeInputCost(pricing, inputTokens)
 
 	// 输出费用
-	var outputCost float64
-	if pricing.BillingMode == "tiered" {
-		if len(pricing.CustomTiers) > 0 {
-			outputCost = calculateTieredCostFromTiers(pricing.CustomTiers, outputTokens, false)
-		} else {
-			outputCost, _ = calculateTieredCostFromPricing(ctx, modelName, outputTokens, false)
-		}
-	} else {
-		outputCost = float64(outputTokens) / 1_000_000.0 * pricing.OutputPrice
-	}
+	outputCost := computeOutputCost(pricing, outputTokens)
 
-	// Cache 费用计算（直接定价）
+	// Cache 费用
 	cacheReadCost := float64(cacheReadTokens) / 1_000_000.0 * pricing.CacheReadPrice
 	cacheCreationCost := float64(cacheCreationTokens) / 1_000_000.0 * pricing.CacheCreationPrice
 
@@ -387,7 +291,7 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 		InputCost:           baseInputCost * pricing.TenantMultiplier,
 		OutputCost:          outputCost * pricing.TenantMultiplier,
 		TotalCost:           totalCost,
-		InputTokens:         baseInputTokens,
+		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
 		BillingMode:         pricing.BillingMode,
 		PerRequestPrice:     pricing.PerRequestPrice,
@@ -398,7 +302,59 @@ func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName strin
 		CacheReadTokens:     cacheReadTokens,
 		CacheCreationCost:   cacheCreationCost * pricing.TenantMultiplier,
 		CacheReadCost:       cacheReadCost * pricing.TenantMultiplier,
-	}, nil
+	}
+}
+
+// resolveTokenCounts 根据 usage 信息解析最终的 token 计数。
+// 处理 cacheIncludedInPrompt 逻辑：如果 PromptTokens 包含 cache tokens，则扣减以避免重复计费。
+func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) (baseInput, output, cacheRead, cacheCreation int) {
+	baseInput = inputTokens
+	output = outputTokens
+
+	if usage != nil {
+		if usage.PromptTokensDetails != nil {
+			cacheRead = usage.PromptTokensDetails.CachedTokens
+			cacheCreation = usage.PromptTokensDetails.CachedCreationTokens
+		}
+		if usage.CacheIncludedInPrompt {
+			baseInput = inputTokens - cacheRead - cacheCreation
+			if baseInput < 0 {
+				baseInput = 0
+			}
+		}
+	}
+	return
+}
+
+// computeInputCost 计算输入费用（token 或 tiered 模式）
+func computeInputCost(pricing *PricingResult, tokens int) float64 {
+	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
+		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true)
+	}
+	return float64(tokens) / 1_000_000.0 * pricing.InputPrice
+}
+
+// computeOutputCost 计算输出费用（token 或 tiered 模式）
+func computeOutputCost(pricing *PricingResult, tokens int) float64 {
+	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
+		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false)
+	}
+	return float64(tokens) / 1_000_000.0 * pricing.OutputPrice
+}
+
+// CalculateCostWithUsage 计算实际费用（含 cache token 计费）
+// 传入完整的 Usage 结构，支持 cache_creation / cache_read 等 token 的费用计算
+func CalculateCostWithUsage(ctx context.Context, tenantID int64, modelName string, usage *rcommon.Usage) (*CostBreakdown, error) {
+	if usage == nil {
+		return nil, gerror.New("usage is nil")
+	}
+
+	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	if err != nil {
+		return nil, err
+	}
+
+	return computeCost(pricing, usage.PromptTokens, usage.CompletionTokens, usage), nil
 }
 
 // CostBreakdown 费用明细
