@@ -270,6 +270,10 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 // SettleFailed 失败请求结算：退还预扣金额
 func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
+	if preDeductAmount <= 0 {
+		return nil
+	}
+
 	// 解冻预扣金额
 	UnfreezePreDeduct(ctx, tenantID, requestID, preDeductAmount)
 	markPredeductReleased(ctx, requestID)
