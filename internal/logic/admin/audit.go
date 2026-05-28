@@ -87,44 +87,35 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 	return nil, nil
 }
 
-// allowedQueryTables 白名单：仅允许 queryPage 查询这些表
-var allowedQueryTables = map[string]bool{
-	"aud_operation_logs":        true,
-	"aud_sensitive_access_logs": true,
-	"aud_request_logs":          true,
-	"aud_content_filter_logs":   true,
-}
-
-// queryPage 使用原生 SQL 分页查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug。
-// table 和 fields 仅接受白名单中的表名和预定义字段，防止 SQL 注入。
+// queryPage 使用 GoFrame ORM 分页查询，返回 []map[string]any。
+// 分开调用 Count 和 All 避免 ScanAndCount 对 map[string]any 的 bug。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
-	if !allowedQueryTables[table] {
-		return nil, 0, fmt.Errorf("不允许查询的表: %s", table)
+	m := g.DB().Ctx(ctx).Model(table).Safe()
+	if where != "" {
+		m = m.Where(where, args...)
 	}
 
-	countSQL := fmt.Sprintf("SELECT COUNT(*) AS total FROM %s", table)
-	if where != "" {
-		countSQL += " WHERE " + where
-	}
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	total, err := m.Count()
 	if err != nil {
 		return nil, 0, err
 	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
+	if total == 0 {
+		return []map[string]any{}, 0, nil
 	}
 
-	dataSQL := fmt.Sprintf("SELECT %s FROM %s", fields, table)
+	// 重新构建查询（Count 会消耗 Model 状态）
+	q := g.DB().Ctx(ctx).Model(table).Safe()
+	if fields != "" {
+		q = q.Fields(fields)
+	}
 	if where != "" {
-		dataSQL += " WHERE " + where
+		q = q.Where(where, args...)
 	}
 	if orderBy != "" {
-		dataSQL += " ORDER BY " + orderBy
+		q = q.Order(orderBy)
 	}
-	dataSQL += fmt.Sprintf(" LIMIT %d OFFSET %d", pageSize, (page-1)*pageSize)
 
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	result, err := q.Page(page, pageSize).All()
 	if err != nil {
 		return nil, 0, err
 	}
