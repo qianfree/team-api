@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -50,6 +51,10 @@ func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq)
 }
 
 func (s *sTenant) MemberQuotaSet(ctx context.Context, req *v1.TenantMemberQuotaSetReq) (*v1.TenantMemberQuotaSetRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	if req.QuotaType == "periodic" && req.Period == "" {

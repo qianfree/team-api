@@ -129,7 +129,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			TenantId:      tenantID,
 			Balance:       0,
 			FrozenBalance: 0,
-			Currency:      "CNY",
+			Currency:      "USD",
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create wallet")

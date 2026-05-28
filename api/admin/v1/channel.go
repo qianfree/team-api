@@ -49,7 +49,7 @@ type ChannelCreateReq struct {
 	BaseURL                  string  `json:"base_url" dc:"API 基础地址（留空使用供应商默认地址）"`
 	ApiKey                   string  `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
 	Priority                 int     `json:"priority" d:"0" dc:"优先级"`
-	Weight                   int     `json:"weight" d:"100" v:"between:1,100" dc:"权重"`
+	Weight                   int     `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
 	TestModel                string  `json:"test_model" dc:"测试模型名"`
 	Remark                   string  `json:"remark" dc:"备注"`
 	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`

@@ -85,7 +85,14 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 
 // DisableRedemption 禁用兑换码
 func (s *sAdmin) DisableRedemption(ctx context.Context, req *v1.RedemptionDisableReq) (*v1.RedemptionDisableRes, error) {
-	_, err := dao.OrdRedemptions.Ctx(ctx).
+	count, err := dao.OrdRedemptions.Ctx(ctx).Where("id", req.Id).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("兑换码")
+	}
+	_, err = dao.OrdRedemptions.Ctx(ctx).
 		Where("id", req.Id).
 		Where("status", "active").
 		Data(do.OrdRedemptions{

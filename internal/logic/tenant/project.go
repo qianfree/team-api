@@ -79,6 +79,10 @@ func (s *sTenant) ProjectList(ctx context.Context, req *v1.TenantProjectListReq)
 
 // ProjectCreate creates a new project for a tenant.
 func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreateReq) (*v1.TenantProjectCreateRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
@@ -113,6 +117,10 @@ func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreate
 
 // ProjectUpdate updates a project.
 func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdateReq) (*v1.TenantProjectUpdateRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
@@ -162,6 +170,10 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 
 // ProjectArchive archives a project and revokes all its keys.
 func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchiveReq) (*v1.TenantProjectArchiveRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
@@ -447,12 +459,10 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 	}
 
 	return &v1.TenantProjectApiKeyCreateRes{
-		Data: map[string]any{
-			"id":         id,
-			"name":       req.Name,
-			"key":        rawKey,
-			"key_prefix": prefix,
-		},
+		ID:        id,
+		Name:      req.Name,
+		Key:       rawKey,
+		KeyPrefix: prefix,
 	}, nil
 }
 

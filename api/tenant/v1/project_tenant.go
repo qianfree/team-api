@@ -90,7 +90,10 @@ type TenantProjectApiKeyCreateReq struct {
 }
 
 type TenantProjectApiKeyCreateRes struct {
-	Data map[string]any `json:"data"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Key       string `json:"key"`
+	KeyPrefix string `json:"key_prefix"`
 }
 
 type TenantProjectApiKeyDeleteReq struct {
