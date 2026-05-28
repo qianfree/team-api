@@ -84,3 +84,17 @@ func TestWalletInfo_WarningThresholdZero(t *testing.T) {
 	available := AvailableBalance(w)
 	assertFloat(t, available, 50.0, "available balance")
 }
+
+func TestAvailableBalance_NegativeFrozen(t *testing.T) {
+	w := &WalletInfo{Balance: 100.0, FrozenBalance: -10.0}
+	got := AvailableBalance(w)
+	assertFloat(t, got, 110.0, "negative frozen produces inflated balance")
+}
+
+func TestAvailableBalance_LargePrecision(t *testing.T) {
+	w := &WalletInfo{Balance: 0.0000000001, FrozenBalance: 0}
+	got := AvailableBalance(w)
+	if got <= 0 {
+		t.Fatalf("expected positive available balance for tiny balance, got %e", got)
+	}
+}
