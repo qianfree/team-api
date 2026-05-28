@@ -3,8 +3,6 @@ package admin
 import (
 	"context"
 
-	"github.com/gogf/gf/v2/frame/g"
-
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -65,27 +63,34 @@ func (s *sAdmin) CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 }
 
 func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigUpdateReq) (*v1.TenantLevelConfigUpdateRes, error) {
-	data := g.Map{}
+	data := do.TntTenantLevelConfigs{}
+	hasUpdate := false
 	if req.Name != nil {
-		data["name"] = *req.Name
+		data.Name = *req.Name
+		hasUpdate = true
 	}
 	if req.CumulativeRechargeThreshold != nil {
-		data["cumulative_recharge_threshold"] = *req.CumulativeRechargeThreshold
+		data.CumulativeRechargeThreshold = *req.CumulativeRechargeThreshold
+		hasUpdate = true
 	}
 	if req.MaxMembers != nil {
-		data["max_members"] = *req.MaxMembers
+		data.MaxMembers = *req.MaxMembers
+		hasUpdate = true
 	}
 	if req.MaxConcurrency != nil {
-		data["max_concurrency"] = *req.MaxConcurrency
+		data.MaxConcurrency = *req.MaxConcurrency
+		hasUpdate = true
 	}
 	if req.PriceMultiplier != nil {
-		data["price_multiplier"] = *req.PriceMultiplier
+		data.PriceMultiplier = *req.PriceMultiplier
+		hasUpdate = true
 	}
 	if req.SortOrder != nil {
-		data["sort_order"] = *req.SortOrder
+		data.SortOrder = *req.SortOrder
+		hasUpdate = true
 	}
 
-	if len(data) == 0 {
+	if !hasUpdate {
 		return &v1.TenantLevelConfigUpdateRes{}, nil
 	}
 
