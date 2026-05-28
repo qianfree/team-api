@@ -25,6 +25,31 @@ func GetTenantLevelConfig(ctx context.Context, level int) (*entity.TntTenantLeve
 	return &config, nil
 }
 
+// GetLevelPriceMultiplier 获取租户级别的价格乘数
+// 查询失败时静默返回 1.0，不阻断计费
+func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) float64 {
+	var tenant entity.TntTenants
+	if err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant); err != nil || tenant.Id == 0 {
+		g.Log().Warningf(ctx, "[Billing] failed to read tenant level for multiplier: tenantID=%d, err=%v", tenantID, err)
+		return 1.0
+	}
+
+	if tenant.Level <= 1 {
+		return 1.0
+	}
+
+	var config entity.TntTenantLevelConfigs
+	if err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); err != nil || config.Id == 0 {
+		g.Log().Warningf(ctx, "[Billing] failed to read level config for multiplier: level=%d, err=%v", tenant.Level, err)
+		return 1.0
+	}
+
+	if config.PriceMultiplier > 0 && config.PriceMultiplier != 1.0 {
+		return config.PriceMultiplier
+	}
+	return 1.0
+}
+
 // CheckAndUpgradeLevel 检查并升级租户等级（充值后调用）
 // 升级策略：仅升不降 — max_members/max_concurrency 仅在新值 > 当前值时才更新
 func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
@@ -96,6 +121,9 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 
 	// 7. 清除并发限制缓存
 	_, _ = g.Redis().Do(ctx, "DEL", fmt.Sprintf("tenant:conc_limit:%d", tenantID))
+
+	// 8. 清除该租户的价格缓存（级别变化可能影响折扣）
+	modelPriceCache.DeleteByPattern(ctx, fmt.Sprintf("%d:*", tenantID))
 
 	return nil
 }
