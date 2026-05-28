@@ -50,6 +50,7 @@ func HandleTaskSubmit(
 	// 1. 解析模型名
 	var req map[string]json.RawMessage
 	if err := json.Unmarshal(body, &req); err != nil {
+		g.Log().Debugf(ctx, "HandleTaskSubmit: invalid request body, err=%v", err)
 		writeTaskError(rc.Writer, http.StatusBadRequest, "invalid request body", "")
 		return
 	}
@@ -57,6 +58,7 @@ func HandleTaskSubmit(
 	modelName := ""
 	if v, ok := req["model"]; ok {
 		if err := json.Unmarshal(v, &modelName); err != nil {
+			g.Log().Debugf(ctx, "HandleTaskSubmit: invalid model field, err=%v", err)
 			writeTaskError(rc.Writer, http.StatusBadRequest, "invalid model field", "")
 			return
 		}
@@ -78,6 +80,7 @@ func HandleTaskSubmit(
 	// 3. 获取 TaskAdaptor
 	adaptor, err := taskchannel.GetAdaptor(providerType)
 	if err != nil {
+		g.Log().Errorf(ctx, "HandleTaskSubmit: adaptor not found, providerType=%d, err=%v", providerType, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
@@ -212,6 +215,7 @@ func HandleTaskSubmit(
 
 	if err := dataProvider.CreateTask(ctx, task); err != nil {
 		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		g.Log().Errorf(ctx, "HandleTaskSubmit: create task record failed, publicTaskID=%s, model=%s, err=%v", publicTaskID, modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "create task record failed: "+err.Error(), "")
 		return
 	}
@@ -238,6 +242,7 @@ func HandleTaskFetch(
 ) {
 	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID)
 	if err != nil {
+		g.Log().Errorf(ctx, "HandleTaskFetch: query task failed, publicTaskID=%s, err=%v", publicTaskID, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "query task failed", "")
 		return
 	}
@@ -310,6 +315,7 @@ func HandleMjImageProxy(
 ) {
 	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID)
 	if err != nil {
+		g.Log().Errorf(ctx, "HandleMjImageProxy: query task failed, publicTaskID=%s, err=%v", publicTaskID, err)
 		writeTaskError(writer, http.StatusInternalServerError, "query task failed", "")
 		return
 	}
@@ -323,6 +329,7 @@ func HandleMjImageProxy(
 		UpstreamTaskID string `json:"upstream_task_id"`
 	}
 	if err := json.Unmarshal(task.PrivateData, &private); err != nil || private.UpstreamTaskID == "" {
+		g.Log().Warningf(ctx, "HandleMjImageProxy: invalid task data, publicTaskID=%s, err=%v", publicTaskID, err)
 		writeTaskError(writer, http.StatusInternalServerError, "invalid task data", "")
 		return
 	}
@@ -330,6 +337,7 @@ func HandleMjImageProxy(
 	// 获取渠道信息
 	channel, err := dataProvider.GetChannelByID(ctx, task.ChannelID)
 	if err != nil || channel == nil {
+		g.Log().Errorf(ctx, "HandleMjImageProxy: channel not found, channelID=%d, err=%v", task.ChannelID, err)
 		writeTaskError(writer, http.StatusInternalServerError, "channel not found", "")
 		return
 	}

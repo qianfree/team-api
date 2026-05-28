@@ -45,13 +45,35 @@ type BillingResult struct {
 	FirstTokenMs    int
 }
 
-// RelayHandler 共享的 relay 请求编排逻辑（带重试 + 计费）
-func RelayHandler(ctx context.Context, body []byte, path string, headers http.Header, rc *RelayContext, provider common.DataProvider, billing common.BillingProvider) (*common.Usage, *BillingResult, error) {
+// relayValidation 请求校验结果，供重试循环使用
+type relayValidation struct {
+	relayMode       constant.RelayMode
+	relayModeStr    string
+	modelName       string
+	lookupModel     string
+	thinkingInfo    *helper.ThinkingInfo
+	isStream        bool
+	estimatedTokens int
+	maxTokens       int
+	depInfo         *common.DeprecationInfo
+	billingResult   *BillingResult
+}
+
+// validateRelayRequest 校验请求合法性：relay mode、模型存在性、弃用状态、成员/API Key 模型范围、QPS 限流。
+// 纯校验逻辑，无 defer 副作用。
+func validateRelayRequest(
+	ctx context.Context,
+	body []byte,
+	path string,
+	rc *RelayContext,
+	provider common.DataProvider,
+	billing common.BillingProvider,
+) (*relayValidation, error) {
 	// 1. 确定 relay mode
 	relayMode := constant.Path2RelayMode(path)
 	if relayMode == constant.RelayModeUnknown {
 		g.Log().Errorf(ctx, "[RelayHandler] Unknown relay mode for path: %s", path)
-		return nil, nil, constant.NewRequestError("unsupported endpoint: "+path, nil)
+		return nil, constant.NewRequestError("unsupported endpoint: "+path, nil)
 	}
 
 	relayModeStr := relayModeString(relayMode)
@@ -59,7 +81,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 2. 解析请求体获取模型名
 	var rawRequest map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rawRequest); err != nil {
-		return nil, nil, constant.NewRequestError("invalid request body", err)
+		return nil, constant.NewRequestError("invalid request body", err)
 	}
 
 	modelName := ""
@@ -70,11 +92,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 	}
 	if modelName == "" {
-		return nil, nil, constant.NewRequestError("model is required", nil)
+		return nil, constant.NewRequestError("model is required", nil)
 	}
 
 	// 2.5 解析 thinking/effort 后缀
-	thinkingInfo := helper.ParseThinkingSuffix(modelName)
+	parsed := helper.ParseThinkingSuffix(modelName)
+	thinkingInfo := &parsed
 	lookupModel := modelName
 	if thinkingInfo.BaseModel != modelName {
 		lookupModel = thinkingInfo.BaseModel
@@ -91,9 +114,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	}
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
-			return nil, nil, constant.NewRequestError("model not found: "+modelName, modelErr)
+			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
 		}
-		return nil, nil, modelErr
+		return nil, modelErr
 	}
 
 	// 3.5 检查模型弃用状态
@@ -101,22 +124,22 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	if depInfo != nil && depInfo.Deprecated && depInfo.SunsetDate != "" {
 		sunsetTime, _ := time.Parse("2006-01-02", depInfo.SunsetDate)
 		if !sunsetTime.IsZero() && time.Now().After(sunsetTime) {
-			return nil, nil, constant.NewModelGoneError(lookupModel, depInfo.SunsetDate)
+			return nil, constant.NewModelGoneError(lookupModel, depInfo.SunsetDate)
 		}
 	}
 
 	// 3.7 检查成员模型范围
 	if allowed, err := provider.CheckMemberModelAccess(ctx, rc.TenantID, rc.UserID, lookupModel); err != nil {
-		return nil, nil, err
+		return nil, err
 	} else if !allowed {
-		return nil, nil, constant.NewAuthError("model not allowed for this member")
+		return nil, constant.NewAuthError("model not allowed for this member")
 	}
 
 	// 4. API Key 模型范围校验
 	if allowed, err := provider.CheckApiKeyModelAccess(ctx, rc.ApiKeyID, lookupModel); err != nil {
-		return nil, nil, err
+		return nil, err
 	} else if !allowed {
-		return nil, nil, constant.NewAuthError("model not allowed for this API key")
+		return nil, constant.NewAuthError("model not allowed for this API key")
 	}
 
 	// 5. QPS 限流检查
@@ -124,7 +147,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	if billing != nil {
 		allowed, limitLevel, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID)
 		if !allowed {
-			return nil, nil, &RelayErrorWithRateLimit{
+			return nil, &RelayErrorWithRateLimit{
 				StatusCode: 429,
 				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
 				LimitLevel: limitLevel,
@@ -139,35 +162,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 	}
 
-	// 6. 并发限制（含模型级并发控制）
-	if billing != nil {
-		if !billing.AcquireConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName) {
-			return nil, nil, constant.NewRateLimitError("concurrent request limit exceeded")
-		}
-		defer billing.ReleaseConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName)
-	}
+	// 7. 估算输入 token 数
+	estimatedInputTokens := estimateInputTokens(body)
 
-	// 6.5 实时监控注册
 	var isStream bool
 	if streamVal, ok := rawRequest["stream"]; ok {
 		_ = json.Unmarshal(streamVal, &isStream)
 	}
-	monitor.RegisterRequest(&monitor.TrackedRequest{
-		RequestID: rc.RequestID,
-		TenantID:  rc.TenantID,
-		UserID:    rc.UserID,
-		ProjectID: rc.ProjectID,
-		ModelName: modelName,
-		IsStream:  isStream,
-		StartTime: time.Now(),
-		Path:      path,
-	})
-	defer monitor.UnregisterRequest(rc.RequestID)
 
-	// 7. 估算输入 token 数（粗略：按字符数 / 4）
-	estimatedInputTokens := estimateInputTokens(body)
-
-	// 获取 max_tokens
 	var maxTokens int
 	if mtVal, ok := rawRequest["max_tokens"]; ok {
 		_ = json.Unmarshal(mtVal, &maxTokens)
@@ -180,457 +182,504 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 	}
 
-	// 7.5 成员额度预检查
+	return &relayValidation{
+		relayMode:       relayMode,
+		relayModeStr:    relayModeStr,
+		modelName:       modelName,
+		lookupModel:     lookupModel,
+		thinkingInfo:    thinkingInfo,
+		isStream:        isStream,
+		estimatedTokens: estimatedInputTokens,
+		maxTokens:       maxTokens,
+		depInfo:         depInfo,
+		billingResult:   billingResult,
+	}, nil
+}
+
+// settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
+func settleSuccessfulRequest(
+	rc *RelayContext,
+	v *relayValidation,
+	usage *common.Usage,
+	info *common.RelayInfo,
+	selection *common.ChannelSelection,
+	preDeductAmount float64,
+	provider common.DataProvider,
+	billing common.BillingProvider,
+	headers http.Header,
+	path string,
+) *BillingResult {
+	// 16. 结算费用（使用完整 Usage 含 cache token）
+	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）
+	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer postCancel()
+
+	var settleResult *common.SettlementResult
+	if billing != nil && preDeductAmount > 0 {
+		settleResult = billing.SettleWithUsage(postCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			v.modelName, rc.RequestID, v.relayModeStr,
+			usage, preDeductAmount, info)
+		if settleResult != nil {
+			v.billingResult.ActualCost = settleResult.ActualCost
+		} else {
+			g.Log().Warningf(postCtx, "[RelayHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
+				rc.RequestID, v.modelName, preDeductAmount)
+			_ = billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+		}
+	}
+
+	// 16.5 累加成员已用额度
+	if billing != nil && settleResult != nil && settleResult.ActualCost > 0 {
+		billing.IncrMemberQuotaUsed(postCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+	}
+
+	// 17. 更新健康度 + 记录用量 + 更新亲和性
+	provider.UpdateChannelHealth(postCtx, selection.ChannelID, true, info.LatencyMs())
+	provider.ResetConsecutiveFailure(postCtx, selection.ChannelID)
+	scheduler.GetGlobalAffinity().Set(rc.TenantID, rc.UserID, v.modelName, selection.ChannelID)
+
+	firstTokenMs := 0
+	if !info.FirstResponseTime.IsZero() {
+		firstTokenMs = int(info.FirstResponseTime.Sub(info.StartTime).Milliseconds())
+	}
+
+	// 构建用量记录
+	usageRecord := &common.UsageRecord{
+		TenantID:         rc.TenantID,
+		UserID:           rc.UserID,
+		ApiKeyID:         rc.ApiKeyID,
+		ProjectID:        rc.ProjectID,
+		ChannelID:        selection.ChannelID,
+		ModelName:        v.modelName,
+		RelayMode:        int(v.relayMode),
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+		CachedTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
+		AudioTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }) +
+			tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
+		ImageTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
+		ReasoningTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ReasoningTokens }),
+		LatencyMs:       info.TotalLatencyMs(),
+		IsStream:        v.isStream,
+		Success:         true,
+		RequestID:       rc.RequestID,
+		Status:          "success",
+
+		// Cache token 明细
+		CacheCreationTokens:   usage.CacheCreationTokens,
+		CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),
+		CacheCreation1hTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation1hTokens }),
+		CacheReadTokens:       tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
+
+		// 音频 token 分离
+		AudioInputTokens:  tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
+		AudioOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
+
+		// 其他 token
+		ImageOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
+
+		// 请求元数据
+		RequestedModel:  v.modelName,
+		UpstreamModel:   selection.UpstreamModelName,
+		RequestType:     requestType(v.isStream),
+		UserAgent:       headers.Get("User-Agent"),
+		ClientIP:        rc.ClientIP,
+		FirstTokenMs:    firstTokenMs,
+		ReasoningEffort: info.ReasoningEffort,
+		InboundEndpoint: path,
+
+		// 渠道详情
+		ChannelName: selection.ChannelName,
+		ChannelType: selection.ChannelType,
+
+		// 重试
+		RetryIndex: info.RetryIndex,
+	}
+
+	// 填充结算费用数据
+	if settleResult != nil {
+		usageRecord.TotalCost = settleResult.BaseCost
+		usageRecord.ActualCost = settleResult.ActualCost
+		usageRecord.Currency = "USD"
+		usageRecord.PreDeductAmount = settleResult.PreDeductAmount
+		usageRecord.RefundAmount = settleResult.RefundAmount
+		usageRecord.SupplementAmount = settleResult.SupplementAmount
+		usageRecord.BillingSnapshot = settleResult.BillingSnapshot
+		usageRecord.BillingSummary = settleResult.BillingSummary
+		usageRecord.BillingMode = settleResult.BillingMode
+		usageRecord.BillingSource = settleResult.BillingSource
+		usageRecord.RateMultiplier = settleResult.RateMultiplier
+		usageRecord.InputCost = settleResult.InputCost
+		usageRecord.OutputCost = settleResult.OutputCost
+		usageRecord.CacheCreationCost = settleResult.CacheCreationCost
+		usageRecord.CacheReadCost = settleResult.CacheReadCost
+	}
+
+	v.billingResult.FirstTokenMs = firstTokenMs
+	provider.RecordUsage(postCtx, usageRecord)
+
+	return v.billingResult
+}
+
+// RelayHandler 共享的 relay 请求编排逻辑（带重试 + 计费）
+func RelayHandler(ctx context.Context, body []byte, path string, headers http.Header, rc *RelayContext, provider common.DataProvider, billing common.BillingProvider) (*common.Usage, *BillingResult, error) {
+	// Phase 1: 校验请求（relay mode、模型、权限、限流）
+	v, err := validateRelayRequest(ctx, body, path, rc, provider, billing)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Phase 2: 资源准备（并发控制 + 监控注册 + 预扣）
+	if billing != nil {
+		if !billing.AcquireConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.modelName) {
+			return nil, nil, constant.NewRateLimitError("concurrent request limit exceeded")
+		}
+		defer billing.ReleaseConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.modelName)
+	}
+
+	monitor.RegisterRequest(&monitor.TrackedRequest{
+		RequestID: rc.RequestID,
+		TenantID:  rc.TenantID,
+		UserID:    rc.UserID,
+		ProjectID: rc.ProjectID,
+		ModelName: v.modelName,
+		IsStream:  v.isStream,
+		StartTime: time.Now(),
+		Path:      path,
+	})
+	defer monitor.UnregisterRequest(rc.RequestID)
+
 	if billing != nil {
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, 0); err != nil {
 			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
 
-	// 8. 预扣费用
 	var preDeductAmount float64
 	if billing != nil {
-		amt, err := billing.PreDeduct(ctx, rc.TenantID, modelName, estimatedInputTokens, maxTokens, isStream, rc.RequestID)
+		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
 		if err != nil {
 			return nil, nil, constant.NewQuotaError("insufficient balance", err)
 		}
 		preDeductAmount = amt
-		billingResult.PreDeductAmount = amt
+		v.billingResult.PreDeductAmount = amt
 	}
 
-	// 10. 带重试的请求调度
+	// Phase 3: 带重试的渠道调度与请求执行
 	excludeChannelIDs := make([]int64, 0)
 	maxRetries := 3
-	originalBody := body               // 保存原始请求体，避免重试时重复转换
-	channelErrors := make([]string, 0) // 记录每次尝试的失败原因，用于最终汇总
+	channelErrors := make([]string, 0)
 
-	// 初始化转发路径追踪
 	trace := &common.ForwardingTrace{
 		EntryPath:      path,
-		EntryFormat:    string(relayModeToInboundFormat(relayMode)),
-		RequestedModel: modelName,
+		EntryFormat:    string(relayModeToInboundFormat(v.relayMode)),
+		RequestedModel: v.modelName,
 	}
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// 选择渠道（排除已失败的）
-		selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, lookupModel, excludeChannelIDs)
+		selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, v.lookupModel, excludeChannelIDs)
 		if err != nil {
-			if err == common.ErrChannelUnavailable {
-				if len(excludeChannelIDs) > 0 {
-					// 所有渠道失败，退还预扣
-					if billing != nil && preDeductAmount > 0 {
-						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-					}
-					g.Log().Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
-						len(excludeChannelIDs), modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
-					allFailedErr := constant.NewChannelError(
-						fmt.Sprintf("all %d channels failed for model: %s", len(excludeChannelIDs), modelName),
-						constant.ErrAllChannelsFailed,
-					)
-					recordFailedUsage(provider, rc, 0, modelName, relayMode, isStream, allFailedErr)
-					return nil, billingResult, allFailedErr
-				}
-				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-				}
-				g.Log().Errorf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", modelName, rc.TenantID, rc.UserID)
-				noChErr := constant.NewChannelError("no available channel for model: "+modelName, err)
-				recordFailedUsage(provider, rc, 0, modelName, relayMode, isStream, noChErr)
-				return nil, billingResult, noChErr
-			}
-			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-			}
-			return nil, billingResult, err
+			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err)
+			return result.usage, result.billingResult, result.err
 		}
 
-		// 11. 构建 RelayInfo
-		info := &common.RelayInfo{
-			Context:          ctx,
-			TenantID:         rc.TenantID,
-			UserID:           rc.UserID,
-			ApiKeyID:         rc.ApiKeyID,
-			ProjectID:        rc.ProjectID,
-			RequestID:        rc.RequestID,
-			RelayMode:        int(relayMode),
-			IsStream:         isStream,
-			OriginModelName:  modelName,
-			BaseModelName:    lookupModel,
-			ThinkingEnabled:  thinkingInfo.IsThinking,
-			ThinkingDisabled: thinkingInfo.IsNoThinking,
-			ReasoningEffort:  thinkingInfo.EffortLevel,
-			RequestURLPath:   path,
-			RequestHeaders:   headers,
-			StartTime:        time.Now(),
-			StreamStatus:     common.NewStreamStatus(),
-			InboundFormat:    relayModeToInboundFormat(relayMode),
-			ChannelMeta: &common.ChannelMeta{
-				ChannelID:         selection.ChannelID,
-				ChannelType:       selection.ChannelType,
-				ChannelName:       selection.ChannelName,
-				BaseURL:           selection.BaseURL,
-				ApiKey:            selection.ApiKey,
-				UpstreamModelName: selection.UpstreamModelName,
-				IsModelMapped:     selection.IsModelMapped,
-				Settings:          selection.Settings,
-			},
-		}
+		info := buildRelayInfo(ctx, rc, v, selection, path, headers)
 
-		// 11.5 更新实时监控中的渠道信息
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
 			tr.ChannelID = selection.ChannelID
 			tr.ChannelName = selection.ChannelName
 		}
 
-		// 12. 获取适配器
 		adaptor := channel.GetAdaptor(selection.ChannelType)
 		if adaptor == nil {
 			g.Log().Errorf(ctx, "[RelayHandler] No adaptor found for channelType: %d", selection.ChannelType)
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			return nil, billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
+			return nil, v.billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
 		}
 		adaptor.Init(info)
 
-		// 捕获上游 URL 用于转发追踪
-		var upstreamURL string
-		if u, err := adaptor.GetRequestURL(info); err == nil {
-			upstreamURL = u
-		}
-		hop := common.ForwardingHop{
-			Attempt:       attempt,
-			ChannelID:     selection.ChannelID,
-			ChannelName:   selection.ChannelName,
-			ChannelType:   selection.ChannelType,
-			Provider:      constant.ProviderType(selection.ChannelType).String(),
-			BaseURL:       selection.BaseURL,
-			UpstreamURL:   upstreamURL,
-			UpstreamModel: selection.UpstreamModelName,
-			ModelMapped:   selection.IsModelMapped,
-		}
+		hop := buildTraceHop(attempt, selection, adaptor, info)
 
-		// 12.5 保存客户端原始格式（用于响应方向转换）
-		// 每次重试从原始请求体开始转换，避免重复转换
-		workingBody := originalBody
 		if info.ClientFormat == "" {
 			info.ClientFormat = info.InboundFormat
 		}
 
-		// 13. 转换请求（直连模式跳过协议转换和参数改写）
-		var convertedBody io.Reader
-		if canPassThrough(info) {
-			// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
-			if info.InboundFormat == constant.RelayFormatGemini {
-				workingBody = helper.StripStreamField(workingBody)
+		// 转换请求（直连模式跳过协议转换和参数改写）
+		convertedBody, err := convertRequestBody(ctx, info, body, adaptor)
+		if err != nil {
+			if billing != nil && preDeductAmount > 0 {
+				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			convertedBody = bytes.NewReader(workingBody)
-		} else {
-			var err error
-			convertedBody, err = adaptor.ConvertRequest(ctx, info, workingBody)
-			if err != nil {
-				g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
-					adaptor.GetChannelName(), info.InboundFormat, err)
-				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-				}
-				return nil, billingResult, err
-			}
-
-			// 13.3 注入渠道系统提示词
-			if info.ChannelMeta.Settings.SystemPrompt != "" {
-				bodyBytes, _ := io.ReadAll(convertedBody)
-				bodyBytes = helper.InjectSystemPrompt(bodyBytes, info)
-				convertedBody = bytes.NewReader(bodyBytes)
-			}
-
-			// 13.5 应用请求体改写（ParamOverride）
-			if info.ChannelMeta.Settings.ParamOverride != nil {
-				bodyBytes, err := io.ReadAll(convertedBody)
-				if err != nil {
-					g.Log().Errorf(ctx, "[RelayHandler] Read converted body for param override failed: %v", err)
-					if billing != nil && preDeductAmount > 0 {
-						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-					}
-					return nil, billingResult, err
-				}
-				bodyBytes, err = override.ApplyParamOverride(bodyBytes, info)
-				if err != nil {
-					if retErr, ok := override.AsReturnError(err); ok {
-						return nil, billingResult, constant.NewUpstreamError(retErr.StatusCode, retErr.Message, retErr)
-					}
-					return nil, billingResult, err
-				}
-				convertedBody = bytes.NewReader(bodyBytes)
-			}
-
-			// 13.7 字段清理
-			{
-				sanitized, _ := io.ReadAll(convertedBody)
-				sanitized = helper.SanitizeFields(sanitized, info.ChannelMeta.Settings)
-				convertedBody = bytes.NewReader(sanitized)
-			}
+			return nil, v.billingResult, err
 		}
 
-		// 13.9 上游请求 context 解耦：客户端断开不应中断上游请求，
-		// 参考 new-api/sub2api：上游请求用 WithoutCancel 解耦，超时由 HTTP Client 和 StreamScanner 控制。
 		upstreamCtx := context.WithoutCancel(ctx)
-
-		// 独立结算 context（加超时保护，防止结算操作无限阻塞）
 		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer settleCancel()
 
-		// 14. 发送请求到上游
+		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
-			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
-			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
-			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
-
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms retryable=%v",
-				attempt, selection.ChannelID, selection.ChannelName, modelName, selection.UpstreamModelName, err, info.LatencyMs(), constant.IsRetryable(err))
+				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), constant.IsRetryable(err))
 			channelErrors = append(channelErrors, failReason)
 			g.Log().Warningf(ctx, "[RelayHandler] Upstream request failed: %s", failReason)
 
-			// 亲和性渠道失败，清除亲和性
-			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, modelName)
+			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
+			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
+			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
+			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
 			if constant.IsRetryable(err) && attempt < maxRetries {
-				recordChannelError(rc, selection, modelName, attempt, false, err, info.LatencyMs())
-				hop.Success = false
-				hop.Error = err.Error()
-				hop.LatencyMs = info.LatencyMs()
-				trace.Hops = append(trace.Hops, hop)
+				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
+				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 				continue
 			}
 
-			// 不可重试或达到上限：退还预扣
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-
-			recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
-			recordChannelError(rc, selection, modelName, attempt, true, err, info.LatencyMs())
-
-			hop.Success = false
-			hop.Error = err.Error()
-			hop.LatencyMs = info.LatencyMs()
-			trace.Hops = append(trace.Hops, hop)
-			trace.TotalAttempts = attempt + 1
-			trace.UpstreamModel = selection.UpstreamModelName
-			trace.ModelMapped = selection.IsModelMapped
-			rc.ForwardingTrace = trace
-
-			return nil, billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "upstream request failed", err), info.ChannelMeta.Settings.StatusCodeMapping)
+			recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
+			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "upstream request failed", err), info.ChannelMeta.Settings.StatusCodeMapping)
 		}
 
-		// 非流式：DoRequest 返回即表示收到上游首响应，设置首Token时间
-		if !isStream {
+		if !v.isStream {
 			info.SetFirstResponseTime()
 		}
 
-		// 15. 处理响应
+		// 处理上游响应
 		usage, err := adaptor.DoResponse(ctx, resp, info, rc.Writer)
 		if err != nil {
 			err = helper.RemapStatusCode(err, info.ChannelMeta.Settings.StatusCodeMapping)
 
-			// 流式中断（客户端断开、上游超时等）：降级为 WARN，不影响渠道健康度
 			if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
 				g.Log().Warningf(ctx, "[RelayHandler] Stream interrupted: adaptor=%s, model=%s, reason=%s",
-					adaptor.GetChannelName(), modelName, info.StreamStatus.Summary())
-
+					adaptor.GetChannelName(), v.modelName, info.StreamStatus.Summary())
 				streamUsage := usage
 				if streamUsage == nil {
 					streamUsage = &common.Usage{}
 				}
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						modelName, rc.RequestID, relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
 				}
-				recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
-				hop.Success = false
-				hop.Error = err.Error()
-				hop.LatencyMs = info.LatencyMs()
-				trace.Hops = append(trace.Hops, hop)
-				trace.TotalAttempts = attempt + 1
-				trace.UpstreamModel = selection.UpstreamModelName
-				trace.ModelMapped = selection.IsModelMapped
-				rc.ForwardingTrace = trace
-				return usage, billingResult, err
+				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+				return usage, v.billingResult, err
 			}
 
-			// 非中断类错误：记录 ERROR 并更新渠道健康度
 			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms",
-				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, modelName, attempt, err, info.LatencyMs())
+				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs())
 			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
-				attempt, selection.ChannelID, selection.ChannelName, modelName, err, info.LatencyMs())
+				attempt, selection.ChannelID, selection.ChannelName, v.modelName, err, info.LatencyMs())
 			channelErrors = append(channelErrors, failReason)
+			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
-			// 亲和性渠道失败，清除亲和性
-			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, modelName)
-
-			// 其他失败
-			if isStream || !constant.IsRetryable(err) || attempt >= maxRetries {
-				// 退还预扣
+			if v.isStream || !constant.IsRetryable(err) || attempt >= maxRetries {
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
-				recordFailedUsage(provider, rc, selection.ChannelID, modelName, relayMode, isStream, err)
-				recordChannelError(rc, selection, modelName, attempt, true, err, info.LatencyMs())
-				hop.Success = false
-				hop.Error = err.Error()
-				hop.LatencyMs = info.LatencyMs()
-				trace.Hops = append(trace.Hops, hop)
-				trace.TotalAttempts = attempt + 1
-				trace.UpstreamModel = selection.UpstreamModelName
-				trace.ModelMapped = selection.IsModelMapped
-				rc.ForwardingTrace = trace
-
-				return nil, billingResult, err
+				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+				recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
+				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+				return nil, v.billingResult, err
 			}
-			recordChannelError(rc, selection, modelName, attempt, false, err, info.LatencyMs())
-			hop.Success = false
-			hop.Error = err.Error()
-			hop.LatencyMs = info.LatencyMs()
-			trace.Hops = append(trace.Hops, hop)
+			recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
+			appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 			continue
 		}
 
-		hop.Success = true
-		hop.LatencyMs = info.LatencyMs()
-		trace.Hops = append(trace.Hops, hop)
+		// 成功路径
+		appendHop(trace, hop, true, "", info.LatencyMs())
 		trace.TotalAttempts = attempt + 1
 		trace.UpstreamModel = selection.UpstreamModelName
 		trace.ModelMapped = selection.IsModelMapped
 		rc.ForwardingTrace = trace
 
-		// 16. 成功：结算费用（使用完整 Usage 含 cache token）
-		// 流式响应完成后客户端可能已断开，ctx 已取消，
-		// 结算/健康度/用量记录等后置操作必须使用独立 context，不受请求生命周期影响。
-		// 重要：此处重新创建 context，因为上游 DoResponse 可能耗时很长（长文本流式输出），
-		// 循环开头创建的 settleCtx 此时可能已经过期。
-		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer postCancel()
-
-		var settleResult *common.SettlementResult
-		if billing != nil && preDeductAmount > 0 {
-			settleResult = billing.SettleWithUsage(postCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, relayModeStr,
-				usage, preDeductAmount, info)
-			if settleResult != nil {
-				billingResult.ActualCost = settleResult.ActualCost
-			} else {
-				// 结算失败，退还预扣冻结金额
-				g.Log().Warningf(postCtx, "[RelayHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
-					rc.RequestID, modelName, preDeductAmount)
-				_ = billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount)
-			}
-		}
-
-		// 16.5 累加成员已用额度
-		if billing != nil && settleResult != nil && settleResult.ActualCost > 0 {
-			billing.IncrMemberQuotaUsed(postCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
-		}
-
-		// 17. 更新健康度 + 记录用量 + 更新亲和性
-		provider.UpdateChannelHealth(postCtx, selection.ChannelID, true, info.LatencyMs())
-		provider.ResetConsecutiveFailure(postCtx, selection.ChannelID)
-
-		scheduler.GetGlobalAffinity().Set(rc.TenantID, rc.UserID, modelName, selection.ChannelID)
-
-		firstTokenMs := 0
-		if !info.FirstResponseTime.IsZero() {
-			firstTokenMs = int(info.FirstResponseTime.Sub(info.StartTime).Milliseconds())
-		}
-
-		// 构建用量记录
-		usageRecord := &common.UsageRecord{
-			TenantID:         rc.TenantID,
-			UserID:           rc.UserID,
-			ApiKeyID:         rc.ApiKeyID,
-			ProjectID:        rc.ProjectID,
-			ChannelID:        selection.ChannelID,
-			ModelName:        modelName,
-			RelayMode:        int(relayMode),
-			PromptTokens:     usage.PromptTokens,
-			CompletionTokens: usage.CompletionTokens,
-			TotalTokens:      usage.TotalTokens,
-			CachedTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
-			AudioTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }) +
-				tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
-			ImageTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
-			ReasoningTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ReasoningTokens }),
-			LatencyMs:       info.TotalLatencyMs(),
-			IsStream:        isStream,
-			Success:         true,
-			RequestID:       rc.RequestID,
-			Status:          "success",
-
-			// Cache token 明细
-			CacheCreationTokens:   usage.CacheCreationTokens,
-			CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),
-			CacheCreation1hTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation1hTokens }),
-			CacheReadTokens:       tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
-
-			// 音频 token 分离
-			AudioInputTokens:  tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
-			AudioOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
-
-			// 其他 token
-			ImageOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
-
-			// 请求元数据
-			RequestedModel:  modelName,
-			UpstreamModel:   selection.UpstreamModelName,
-			RequestType:     requestType(isStream),
-			UserAgent:       headers.Get("User-Agent"),
-			ClientIP:        rc.ClientIP,
-			FirstTokenMs:    firstTokenMs,
-			ReasoningEffort: info.ReasoningEffort,
-			InboundEndpoint: path,
-
-			// 渠道详情
-			ChannelName: selection.ChannelName,
-			ChannelType: selection.ChannelType,
-
-			// 重试
-			RetryIndex: info.RetryIndex,
-		}
-
-		// 填充结算费用数据
-		if settleResult != nil {
-			usageRecord.TotalCost = settleResult.BaseCost
-			usageRecord.ActualCost = settleResult.ActualCost
-			usageRecord.Currency = "USD"
-			usageRecord.PreDeductAmount = settleResult.PreDeductAmount
-			usageRecord.RefundAmount = settleResult.RefundAmount
-			usageRecord.SupplementAmount = settleResult.SupplementAmount
-			usageRecord.BillingSnapshot = settleResult.BillingSnapshot
-			usageRecord.BillingSummary = settleResult.BillingSummary
-			usageRecord.BillingMode = settleResult.BillingMode
-			usageRecord.BillingSource = settleResult.BillingSource
-			usageRecord.RateMultiplier = settleResult.RateMultiplier
-			usageRecord.InputCost = settleResult.InputCost
-			usageRecord.OutputCost = settleResult.OutputCost
-			usageRecord.CacheCreationCost = settleResult.CacheCreationCost
-			usageRecord.CacheReadCost = settleResult.CacheReadCost
-		}
-
-		billingResult.FirstTokenMs = firstTokenMs
-
-		provider.RecordUsage(postCtx, usageRecord)
-
-		return usage, billingResult, nil
+		result := settleSuccessfulRequest(rc, v, usage, info, selection, preDeductAmount, provider, billing, headers, path)
+		return usage, result, nil
 	}
 
 	// 不应到达此处
 	if billing != nil && preDeductAmount > 0 {
 		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
-	return nil, billingResult, constant.ErrAllChannelsFailed
+	return nil, v.billingResult, constant.ErrAllChannelsFailed
+}
+
+// buildRelayInfo 从渠道选择结果构建 RelayInfo
+func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header) *common.RelayInfo {
+	return &common.RelayInfo{
+		Context:          ctx,
+		TenantID:         rc.TenantID,
+		UserID:           rc.UserID,
+		ApiKeyID:         rc.ApiKeyID,
+		ProjectID:        rc.ProjectID,
+		RequestID:        rc.RequestID,
+		RelayMode:        int(v.relayMode),
+		IsStream:         v.isStream,
+		OriginModelName:  v.modelName,
+		BaseModelName:    v.lookupModel,
+		ThinkingEnabled:  v.thinkingInfo.IsThinking,
+		ThinkingDisabled: v.thinkingInfo.IsNoThinking,
+		ReasoningEffort:  v.thinkingInfo.EffortLevel,
+		RequestURLPath:   path,
+		RequestHeaders:   headers,
+		StartTime:        time.Now(),
+		StreamStatus:     common.NewStreamStatus(),
+		InboundFormat:    relayModeToInboundFormat(v.relayMode),
+		ChannelMeta: &common.ChannelMeta{
+			ChannelID:         selection.ChannelID,
+			ChannelType:       selection.ChannelType,
+			ChannelName:       selection.ChannelName,
+			BaseURL:           selection.BaseURL,
+			ApiKey:            selection.ApiKey,
+			UpstreamModelName: selection.UpstreamModelName,
+			IsModelMapped:     selection.IsModelMapped,
+			Settings:          selection.Settings,
+		},
+	}
+}
+
+// convertRequestBody 根据是否直连模式转换请求体
+func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte, adaptor common.Adaptor) (io.Reader, error) {
+	if canPassThrough(info) {
+		if info.InboundFormat == constant.RelayFormatGemini {
+			body = helper.StripStreamField(body)
+		}
+		return bytes.NewReader(body), nil
+	}
+
+	convertedBody, err := adaptor.ConvertRequest(ctx, info, body)
+	if err != nil {
+		g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
+			adaptor.GetChannelName(), info.InboundFormat, err)
+		return nil, err
+	}
+
+	// 注入渠道系统提示词
+	if info.ChannelMeta.Settings.SystemPrompt != "" {
+		bodyBytes, _ := io.ReadAll(convertedBody)
+		bodyBytes = helper.InjectSystemPrompt(bodyBytes, info)
+		convertedBody = bytes.NewReader(bodyBytes)
+	}
+
+	// 应用请求体改写（ParamOverride）
+	if info.ChannelMeta.Settings.ParamOverride != nil {
+		bodyBytes, err := io.ReadAll(convertedBody)
+		if err != nil {
+			g.Log().Errorf(ctx, "[RelayHandler] Read converted body for param override failed: %v", err)
+			return nil, err
+		}
+		bodyBytes, err = override.ApplyParamOverride(bodyBytes, info)
+		if err != nil {
+			if retErr, ok := override.AsReturnError(err); ok {
+				return nil, constant.NewUpstreamError(retErr.StatusCode, retErr.Message, retErr)
+			}
+			return nil, err
+		}
+		convertedBody = bytes.NewReader(bodyBytes)
+	}
+
+	// 字段清理
+	sanitized, _ := io.ReadAll(convertedBody)
+	sanitized = helper.SanitizeFields(sanitized, info.ChannelMeta.Settings)
+	return bytes.NewReader(sanitized), nil
+}
+
+// channelUnavailableResult 渠道不可用时的返回值
+type channelUnavailableResult struct {
+	usage         *common.Usage
+	billingResult *BillingResult
+	err           error
+}
+
+// handleChannelUnavailable 处理渠道选择失败：退还预扣、记录错误
+func handleChannelUnavailable(
+	ctx context.Context,
+	billing common.BillingProvider,
+	provider common.DataProvider,
+	rc *RelayContext,
+	v *relayValidation,
+	preDeductAmount float64,
+	channelErrors []string,
+	err error,
+) *channelUnavailableResult {
+	if err != common.ErrChannelUnavailable {
+		if billing != nil && preDeductAmount > 0 {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		}
+		return &channelUnavailableResult{nil, v.billingResult, err}
+	}
+
+	if len(channelErrors) > 0 {
+		if billing != nil && preDeductAmount > 0 {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		}
+		g.Log().Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
+			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
+		allFailedErr := constant.NewChannelError(
+			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
+			constant.ErrAllChannelsFailed,
+		)
+		recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, allFailedErr)
+		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
+	}
+
+	if billing != nil && preDeductAmount > 0 {
+		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+	}
+	g.Log().Errorf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
+	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
+	recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, noChErr)
+	return &channelUnavailableResult{nil, v.billingResult, noChErr}
+}
+
+// buildTraceHop 构建转发追踪的单跳记录
+func buildTraceHop(attempt int, selection *common.ChannelSelection, adaptor common.Adaptor, info *common.RelayInfo) common.ForwardingHop {
+	var upstreamURL string
+	if u, err := adaptor.GetRequestURL(info); err == nil {
+		upstreamURL = u
+	}
+	return common.ForwardingHop{
+		Attempt:       attempt,
+		ChannelID:     selection.ChannelID,
+		ChannelName:   selection.ChannelName,
+		ChannelType:   selection.ChannelType,
+		Provider:      constant.ProviderType(selection.ChannelType).String(),
+		BaseURL:       selection.BaseURL,
+		UpstreamURL:   upstreamURL,
+		UpstreamModel: selection.UpstreamModelName,
+		ModelMapped:   selection.IsModelMapped,
+	}
+}
+
+// appendHop 追加一条 hop 到 trace
+func appendHop(trace *common.ForwardingTrace, hop common.ForwardingHop, success bool, errMsg string, latencyMs float64) {
+	hop.Success = success
+	hop.Error = errMsg
+	hop.LatencyMs = latencyMs
+	trace.Hops = append(trace.Hops, hop)
+}
+
+// finalizeTrace 设置 trace 的最终状态并写入 rc
+func finalizeTrace(trace *common.ForwardingTrace, rc *RelayContext, hop common.ForwardingHop, success bool, attempt int, selection *common.ChannelSelection, errMsg string, latencyMs float64) {
+	hop.Success = success
+	hop.Error = errMsg
+	hop.LatencyMs = latencyMs
+	trace.Hops = append(trace.Hops, hop)
+	trace.TotalAttempts = attempt + 1
+	trace.UpstreamModel = selection.UpstreamModelName
+	trace.ModelMapped = selection.IsModelMapped
+	rc.ForwardingTrace = trace
 }
 
 // RelayErrorWithRateLimit 带 429 限流信息的错误
