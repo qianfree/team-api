@@ -6,13 +6,8 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// Relay 层错误定义（使用 gerror 保留完整堆栈信息）
-var (
-	ErrChannelUnavailable = gerror.New("no available channel")
-	ErrModelNotFound      = gerror.New("model not found")
-	ErrStreamInterrupted  = gerror.New("stream interrupted by client disconnect")
-	ErrAllChannelsFailed  = gerror.New("all channels failed")
-)
+// Relay 层哨兵错误
+var ErrAllChannelsFailed = gerror.New("all channels failed")
 
 // RelayError 包装 relay 层错误，携带上游返回的状态码和信息
 type RelayError struct {
