@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
+	tenantLogic "github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -227,4 +228,27 @@ func (s *sAdmin) DeleteTenantModel(ctx context.Context, req *v1.TenantModelDelet
 	billing.ClearTenantPriceCache(ctx, req.TenantID)
 
 	return nil, nil
+}
+
+// ListTenantAvailableModels 预览租户实际可用的所有模型（显式分配 + 分组来源，去重）
+func (s *sAdmin) ListTenantAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsPreviewReq) (*v1.TenantAvailableModelsPreviewRes, error) {
+	models, err := tenantLogic.GetTenantAvailableModels(ctx, req.TenantID, "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]v1.TenantAvailableModelPreview, 0, len(models))
+	for _, m := range models {
+		list = append(list, v1.TenantAvailableModelPreview{
+			ModelId:          m.ModelId,
+			ModelName:        m.ModelName,
+			Category:         m.Category,
+			MaxContextTokens: m.MaxContextTokens,
+			MaxOutputTokens:  m.MaxOutputTokens,
+			Description:      m.Description,
+			Source:           m.Source,
+		})
+	}
+
+	return &v1.TenantAvailableModelsPreviewRes{List: list}, nil
 }

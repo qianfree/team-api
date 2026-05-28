@@ -7,6 +7,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -22,31 +23,19 @@ type pricingTierRow struct {
 func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsReq) (*v1.TenantAvailableModelsRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	query := dao.MdlTenantModels.Ctx(ctx).
-		LeftJoin("mdl_models m ON mdl_tenant_models.model_id = m.id").
-		LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id AND p.min_tokens = 0").
-		Where("mdl_tenant_models.tenant_id", tenantID).
-		Where("mdl_tenant_models.enabled", true).
-		Where("m.status", "active")
-
-	if req.Category != "" {
-		query = query.Where("m.category", req.Category)
-	}
-	if req.Search != "" {
-		query = query.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+	models, err := lcommon.GetTenantAvailableModels(ctx, tenantID, req.Category, req.Search)
+	if err != nil {
+		return nil, err
 	}
 
-	var results []struct {
-		ID                       int64    `json:"id"`
+	if len(models) == 0 {
+		return &v1.TenantAvailableModelsRes{List: nil}, nil
+	}
+
+	// 查询显式分配模型的完整价格信息
+	var priceResults []struct {
 		ModelDBID                int64    `json:"model_db_id"`
-		ModelId                  string   `json:"model_id"`
-		ModelName                string   `json:"model_name"`
-		Category                 string   `json:"category"`
-		MaxContextTokens         int      `json:"max_context_tokens"`
-		MaxOutputTokens          int      `json:"max_output_tokens"`
-		Description              string   `json:"description"`
-		Tags                     string   `json:"tags"`
-		Capabilities             string   `json:"capabilities"`
+		ID                       int64    `json:"id"`
 		BillingMode              *string  `json:"billing_mode"`
 		PerRequestPrice          *float64 `json:"per_request_price"`
 		DiscountRatio            *float64 `json:"discount_ratio"`
@@ -63,25 +52,110 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		CustomPricingTiers       string   `json:"custom_pricing_tiers"`
 	}
 
-	err := query.
-		Fields("mdl_tenant_models.id, mdl_tenant_models.model_id AS model_db_id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
-		OrderAsc("m.category").
-		OrderAsc("m.model_id").
-		Scan(&results)
-	if err != nil {
-		return nil, err
-	}
-
-	// 收集需要查询 base 阶梯定价的 model 内部 ID（mdl_models.id）
-	tieredModelDBIDs := make([]int64, 0)
-	for _, r := range results {
-		effectiveBillingMode := resolveBillingMode(r.BillingMode, r.BaseBillingMode)
-		if effectiveBillingMode == "tiered" && r.CustomPricingTiers == "" {
-			tieredModelDBIDs = append(tieredModelDBIDs, r.ModelDBID)
+	explicitDBIDs := make([]int64, 0)
+	for _, m := range models {
+		if m.Source == "explicit" {
+			explicitDBIDs = append(explicitDBIDs, m.ModelDBID)
 		}
 	}
 
-	// 批量查询 base 阶梯定价（min_tokens > 0 的阶梯）
+	if len(explicitDBIDs) > 0 {
+		_ = dao.MdlTenantModels.Ctx(ctx).
+			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id AND p.min_tokens = 0").
+			Where("mdl_tenant_models.tenant_id", tenantID).
+			WhereIn("mdl_tenant_models.model_id", explicitDBIDs).
+			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
+			Scan(&priceResults)
+	}
+
+	// 构建显式模型价格映射
+	type priceInfo struct {
+		ID                       int64
+		BillingMode              *string
+		PerRequestPrice          *float64
+		DiscountRatio            *float64
+		MaxConcurrency           *int
+		BaseInputPrice           float64
+		BaseOutputPrice          float64
+		BaseCacheReadPrice       float64
+		BaseCacheCreationPrice   float64
+		BaseBillingMode          string
+		CustomInputPrice         *float64
+		CustomOutputPrice        *float64
+		CustomCacheReadPrice     *float64
+		CustomCacheCreationPrice *float64
+		CustomPricingTiers       string
+	}
+	priceMap := make(map[int64]*priceInfo, len(priceResults))
+	for _, r := range priceResults {
+		priceMap[r.ModelDBID] = &priceInfo{
+			ID:                       r.ID,
+			BillingMode:              r.BillingMode,
+			PerRequestPrice:          r.PerRequestPrice,
+			DiscountRatio:            r.DiscountRatio,
+			MaxConcurrency:           r.MaxConcurrency,
+			BaseInputPrice:           r.BaseInputPrice,
+			BaseOutputPrice:          r.BaseOutputPrice,
+			BaseCacheReadPrice:       r.BaseCacheReadPrice,
+			BaseCacheCreationPrice:   r.BaseCacheCreationPrice,
+			BaseBillingMode:          r.BaseBillingMode,
+			CustomInputPrice:         r.CustomInputPrice,
+			CustomOutputPrice:        r.CustomOutputPrice,
+			CustomCacheReadPrice:     r.CustomCacheReadPrice,
+			CustomCacheCreationPrice: r.CustomCacheCreationPrice,
+			CustomPricingTiers:       r.CustomPricingTiers,
+		}
+	}
+
+	// 批量查询分组模型的 base 价格
+	groupDBIDs := make([]int64, 0)
+	for _, m := range models {
+		if m.Source == "group" {
+			groupDBIDs = append(groupDBIDs, m.ModelDBID)
+		}
+	}
+
+	type groupPriceInfo struct {
+		BaseBillingMode string  `json:"base_billing_mode"`
+		BaseInputPrice  float64 `json:"base_input_price"`
+		BaseOutputPrice float64 `json:"base_output_price"`
+	}
+	groupPriceMap := make(map[int64]*groupPriceInfo)
+	if len(groupDBIDs) > 0 {
+		var groupPrices []struct {
+			ModelID         int64   `json:"model_id"`
+			BaseBillingMode string  `json:"base_billing_mode"`
+			BaseInputPrice  float64 `json:"base_input_price"`
+			BaseOutputPrice float64 `json:"base_output_price"`
+		}
+		_ = dao.MdlPricing.Ctx(ctx).
+			WhereIn("model_id", groupDBIDs).
+			Where("min_tokens", 0).
+			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price").
+			Scan(&groupPrices)
+
+		for _, gp := range groupPrices {
+			groupPriceMap[gp.ModelID] = &groupPriceInfo{
+				BaseBillingMode: gp.BaseBillingMode,
+				BaseInputPrice:  gp.BaseInputPrice,
+				BaseOutputPrice: gp.BaseOutputPrice,
+			}
+		}
+	}
+
+	// 收集需要查询阶梯定价的模型
+	tieredModelDBIDs := make([]int64, 0)
+	for _, m := range models {
+		if m.Source == "explicit" {
+			if pi, ok := priceMap[m.ModelDBID]; ok {
+				effectiveBillingMode := resolveBillingMode(pi.BillingMode, pi.BaseBillingMode)
+				if effectiveBillingMode == "tiered" && pi.CustomPricingTiers == "" {
+					tieredModelDBIDs = append(tieredModelDBIDs, m.ModelDBID)
+				}
+			}
+		}
+	}
+
 	baseTiersMap := make(map[int64][]v1.PricingTierItem)
 	if len(tieredModelDBIDs) > 0 {
 		var baseTiers []struct {
@@ -91,7 +165,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			InputPrice  float64 `json:"input_price"`
 			OutputPrice float64 `json:"output_price"`
 		}
-		err = dao.MdlPricing.Ctx(ctx).
+		_ = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", tieredModelDBIDs).
 			Where("billing_mode", "tiered").
 			Where("min_tokens > 0").
@@ -99,163 +173,115 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			OrderAsc("model_id").
 			OrderAsc("min_tokens").
 			Scan(&baseTiers)
-		if err == nil {
-			for _, t := range baseTiers {
-				baseTiersMap[t.ModelId] = append(baseTiersMap[t.ModelId], v1.PricingTierItem{
-					MinTokens:   t.MinTokens,
-					MaxTokens:   t.MaxTokens,
-					InputPrice:  t.InputPrice,
-					OutputPrice: t.OutputPrice,
-				})
-			}
+
+		for _, t := range baseTiers {
+			baseTiersMap[t.ModelId] = append(baseTiersMap[t.ModelId], v1.PricingTierItem{
+				MinTokens:   t.MinTokens,
+				MaxTokens:   t.MaxTokens,
+				InputPrice:  t.InputPrice,
+				OutputPrice: t.OutputPrice,
+			})
 		}
 	}
 
-	list := make([]v1.TenantAvailableModelItem, 0, len(results))
-	for _, r := range results {
-		effectiveBillingMode := resolveBillingMode(r.BillingMode, r.BaseBillingMode)
+	// 组装最终列表
+	list := make([]v1.TenantAvailableModelItem, 0, len(models))
+	for _, m := range models {
+		if m.Source == "explicit" {
+			pi, ok := priceMap[m.ModelDBID]
+			if !ok {
+				continue
+			}
 
-		inputPrice := effectivePrice(r.CustomInputPrice, r.BaseInputPrice)
-		outputPrice := effectivePrice(r.CustomOutputPrice, r.BaseOutputPrice)
-		cacheReadPrice := effectivePrice(r.CustomCacheReadPrice, r.BaseCacheReadPrice)
-		cacheCreationPrice := effectivePrice(r.CustomCacheCreationPrice, r.BaseCacheCreationPrice)
+			effectiveBillingMode := resolveBillingMode(pi.BillingMode, pi.BaseBillingMode)
+			inputPrice := effectivePrice(pi.CustomInputPrice, pi.BaseInputPrice)
+			outputPrice := effectivePrice(pi.CustomOutputPrice, pi.BaseOutputPrice)
+			cacheReadPrice := effectivePrice(pi.CustomCacheReadPrice, pi.BaseCacheReadPrice)
+			cacheCreationPrice := effectivePrice(pi.CustomCacheCreationPrice, pi.BaseCacheCreationPrice)
 
-		item := v1.TenantAvailableModelItem{
-			ID:                 r.ID,
-			ModelId:            r.ModelId,
-			ModelName:          r.ModelName,
-			Category:           r.Category,
-			MaxContext:         r.MaxContextTokens,
-			MaxOutput:          r.MaxOutputTokens,
-			Description:        r.Description,
-			Tags:               r.Tags,
-			Capabilities:       r.Capabilities,
-			BillingMode:        &effectiveBillingMode,
-			PerRequestPrice:    r.PerRequestPrice,
-			DiscountRatio:      r.DiscountRatio,
-			MaxConcurrency:     r.MaxConcurrency,
-			InputPrice:         inputPrice,
-			OutputPrice:        outputPrice,
-			CacheReadPrice:     cacheReadPrice,
-			CacheCreationPrice: cacheCreationPrice,
-		}
+			item := v1.TenantAvailableModelItem{
+				ID:                 pi.ID,
+				ModelId:            m.ModelId,
+				ModelName:          m.ModelName,
+				Category:           m.Category,
+				MaxContext:         m.MaxContextTokens,
+				MaxOutput:          m.MaxOutputTokens,
+				Description:        m.Description,
+				Tags:               m.Tags,
+				Capabilities:       m.Capabilities,
+				BillingMode:        &effectiveBillingMode,
+				PerRequestPrice:    pi.PerRequestPrice,
+				DiscountRatio:      pi.DiscountRatio,
+				MaxConcurrency:     pi.MaxConcurrency,
+				InputPrice:         inputPrice,
+				OutputPrice:        outputPrice,
+				CacheReadPrice:     cacheReadPrice,
+				CacheCreationPrice: cacheCreationPrice,
+			}
 
-		// 阶梯定价处理
-		if effectiveBillingMode == "tiered" {
-			var tiers []v1.PricingTierItem
-
-			// 优先使用租户自定义阶梯
-			if r.CustomPricingTiers != "" && r.CustomPricingTiers != "null" && r.CustomPricingTiers != "[]" {
-				var raw []pricingTierRow
-				if json.Unmarshal([]byte(r.CustomPricingTiers), &raw) == nil && len(raw) > 0 {
-					for _, t := range raw {
+			if effectiveBillingMode == "tiered" {
+				var tiers []v1.PricingTierItem
+				if pi.CustomPricingTiers != "" && pi.CustomPricingTiers != "null" && pi.CustomPricingTiers != "[]" {
+					var raw []pricingTierRow
+					if json.Unmarshal([]byte(pi.CustomPricingTiers), &raw) == nil && len(raw) > 0 {
+						for _, t := range raw {
+							tiers = append(tiers, v1.PricingTierItem{
+								MinTokens:   t.MinTokens,
+								MaxTokens:   t.MaxTokens,
+								InputPrice:  t.InputPrice,
+								OutputPrice: t.OutputPrice,
+							})
+						}
+					}
+				}
+				if len(tiers) == 0 {
+					if pi.BaseInputPrice > 0 || pi.BaseOutputPrice > 0 {
 						tiers = append(tiers, v1.PricingTierItem{
-							MinTokens:   t.MinTokens,
-							MaxTokens:   t.MaxTokens,
-							InputPrice:  t.InputPrice,
-							OutputPrice: t.OutputPrice,
+							MinTokens:   0,
+							MaxTokens:   nil,
+							InputPrice:  pi.BaseInputPrice,
+							OutputPrice: pi.BaseOutputPrice,
 						})
 					}
-				}
-			}
-
-			// 使用 base 阶梯定价
-			if len(tiers) == 0 {
-				// 第一阶梯（min_tokens=0，来自主查询的 base_input/output_price）
-				if r.BaseInputPrice > 0 || r.BaseOutputPrice > 0 {
-					tiers = append(tiers, v1.PricingTierItem{
-						MinTokens:   0,
-						MaxTokens:   nil,
-						InputPrice:  r.BaseInputPrice,
-						OutputPrice: r.BaseOutputPrice,
-					})
-				}
-				// 后续阶梯
-				if rest, ok := baseTiersMap[r.ModelDBID]; ok {
-					// 设置第一阶梯的 max_tokens
-					if len(tiers) > 0 && len(rest) > 0 {
-						tiers[0].MaxTokens = &rest[0].MinTokens
+					if rest, ok := baseTiersMap[m.ModelDBID]; ok {
+						if len(tiers) > 0 && len(rest) > 0 {
+							tiers[0].MaxTokens = &rest[0].MinTokens
+						}
+						tiers = append(tiers, rest...)
 					}
-					tiers = append(tiers, rest...)
 				}
+				item.PricingTiers = tiers
 			}
 
-			item.PricingTiers = tiers
+			list = append(list, item)
+		} else {
+			// group 来源的模型：使用 base 价格
+			billingMode := "token"
+			var inputPrice, outputPrice *float64
+			if gp, ok := groupPriceMap[m.ModelDBID]; ok {
+				billingMode = gp.BaseBillingMode
+				if billingMode == "" {
+					billingMode = "token"
+				}
+				inputPrice = effectivePrice(nil, gp.BaseInputPrice)
+				outputPrice = effectivePrice(nil, gp.BaseOutputPrice)
+			}
+
+			item := v1.TenantAvailableModelItem{
+				ModelId:      m.ModelId,
+				ModelName:    m.ModelName,
+				Category:     m.Category,
+				MaxContext:   m.MaxContextTokens,
+				MaxOutput:    m.MaxOutputTokens,
+				Description:  m.Description,
+				Tags:         m.Tags,
+				Capabilities: m.Capabilities,
+				BillingMode:  &billingMode,
+				InputPrice:   inputPrice,
+				OutputPrice:  outputPrice,
+			}
+			list = append(list, item)
 		}
-
-		list = append(list, item)
-	}
-	// 追加分组来源的模型（不在显式分配中的模型）
-	explicitModelIDs := make(map[int64]bool, len(results))
-	for _, r := range results {
-		explicitModelIDs[r.ModelDBID] = true
-	}
-
-	var groupModels []struct {
-		ModelDBID        int64   `json:"model_db_id"`
-		ModelId          string  `json:"model_id"`
-		ModelName        string  `json:"model_name"`
-		Category         string  `json:"category"`
-		MaxContextTokens int     `json:"max_context_tokens"`
-		MaxOutputTokens  int     `json:"max_output_tokens"`
-		Description      string  `json:"description"`
-		Tags             string  `json:"tags"`
-		Capabilities     string  `json:"capabilities"`
-		BaseBillingMode  string  `json:"base_billing_mode"`
-		BaseInputPrice   float64 `json:"base_input_price"`
-		BaseOutputPrice  float64 `json:"base_output_price"`
-	}
-
-	groupQuery := g.DB().Model("mdl_group_models gm").Ctx(ctx).
-		InnerJoin("mdl_model_groups g ON gm.group_id = g.id").
-		InnerJoin("mdl_models m ON gm.model_id = m.id").
-		InnerJoin("mdl_tenant_groups tg ON tg.group_id = g.id").
-		LeftJoin("mdl_pricing p ON p.model_id = m.id AND p.min_tokens = 0").
-		Where("tg.tenant_id", tenantID).
-		Where("g.status", "active").
-		Where("m.status", "active")
-
-	if len(explicitModelIDs) > 0 {
-		ids := make([]int64, 0, len(explicitModelIDs))
-		for id := range explicitModelIDs {
-			ids = append(ids, id)
-		}
-		groupQuery = groupQuery.WhereNotIn("m.id", ids)
-	}
-
-	if req.Category != "" {
-		groupQuery = groupQuery.Where("m.category", req.Category)
-	}
-	if req.Search != "" {
-		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
-	}
-
-	_ = groupQuery.
-		Fields("DISTINCT m.id AS model_db_id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities, p.billing_mode AS base_billing_mode, p.input_price AS base_input_price, p.output_price AS base_output_price").
-		OrderAsc("m.category").
-		OrderAsc("m.model_id").
-		Scan(&groupModels)
-
-	for _, gm := range groupModels {
-		billingMode := gm.BaseBillingMode
-		if billingMode == "" {
-			billingMode = "token"
-		}
-
-		item := v1.TenantAvailableModelItem{
-			ModelId:      gm.ModelId,
-			ModelName:    gm.ModelName,
-			Category:     gm.Category,
-			MaxContext:   gm.MaxContextTokens,
-			MaxOutput:    gm.MaxOutputTokens,
-			Description:  gm.Description,
-			Tags:         gm.Tags,
-			Capabilities: gm.Capabilities,
-			BillingMode:  &billingMode,
-			InputPrice:   &gm.BaseInputPrice,
-			OutputPrice:  &gm.BaseOutputPrice,
-		}
-		list = append(list, item)
 	}
 
 	// 按成员模型范围过滤
@@ -276,7 +302,6 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			allowed := make(map[string]bool, len(memberScopes))
 			for _, s := range memberScopes {
 				if s.ModelID == -1 {
-					// 哨兵：禁止所有模型
 					return &v1.TenantAvailableModelsRes{List: nil}, nil
 				}
 				if s.ModelName != "" {

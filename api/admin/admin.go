@@ -226,6 +226,7 @@ type IAdminV1 interface {
 	TenantModelBatchAssign(ctx context.Context, req *v1.TenantModelBatchAssignReq) (res *v1.TenantModelBatchAssignRes, err error)
 	TenantModelUpdate(ctx context.Context, req *v1.TenantModelUpdateReq) (res *v1.TenantModelUpdateRes, err error)
 	TenantModelDelete(ctx context.Context, req *v1.TenantModelDeleteReq) (res *v1.TenantModelDeleteRes, err error)
+	TenantAvailableModelsPreview(ctx context.Context, req *v1.TenantAvailableModelsPreviewReq) (res *v1.TenantAvailableModelsPreviewRes, err error)
 	TicketList(ctx context.Context, req *v1.TicketListReq) (res *v1.TicketListRes, err error)
 	TicketGet(ctx context.Context, req *v1.TicketGetReq) (res *v1.TicketGetRes, err error)
 	TicketAssign(ctx context.Context, req *v1.TicketAssignReq) (res *v1.TicketAssignRes, err error)
