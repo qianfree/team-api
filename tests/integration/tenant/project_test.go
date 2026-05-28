@@ -74,7 +74,8 @@ func TestProjectCRUD(t *testing.T) {
 func TestProjectArchiveUnarchive(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
-	projectID, _ := testinfra.CreateTestProject(t, client)
+	projectID, cleanup := testinfra.CreateTestProject(t, client)
+	defer cleanup()
 
 	// Archive
 	archiveResp := client.Post(fmt.Sprintf("/api/tenant/projects/%d/archive", projectID), nil)
@@ -205,7 +206,8 @@ func TestProjectCreate_NegativeBudget(t *testing.T) {
 func TestProjectUpdate_ArchivedProject(t *testing.T) {
 	client, _ := testinfra.GetAuthedClient(t)
 
-	projectID, _ := testinfra.CreateTestProject(t, client)
+	projectID, cleanup := testinfra.CreateTestProject(t, client)
+	defer cleanup()
 
 	// 先归档
 	archiveResp := client.Post(fmt.Sprintf("/api/tenant/projects/%d/archive", projectID), nil)

@@ -216,7 +216,7 @@ func createTestRedemptions(t *testing.T, client *testinfra.APIClient, count int,
 
 	return data.Created, func() {
 		for _, id := range ids {
-			client.Put(fmt.Sprintf("/api/admin/redemptions/%d/disable", id), nil)
+			testinfra.HardDeleteRedemption(t, id)
 		}
 	}
 }

@@ -25,7 +25,9 @@ func setupMemberClient(t *testing.T) (memberClient, ownerClient *admintest.APICl
 	t.Helper()
 	ownerClient, tenantResult = testinfra.GetAuthedClient(t)
 
-	memberID, _ = testinfra.CreateTestTenantMember(t, ownerClient)
+	var memberCleanup func()
+	memberID, memberCleanup = testinfra.CreateTestTenantMember(t, ownerClient)
+	t.Cleanup(memberCleanup)
 
 	// 获取 member 用户名
 	detailResp := ownerClient.Get(fmt.Sprintf("/api/tenant/members/%d", memberID), nil)
@@ -46,7 +48,9 @@ func setupAdminClient(t *testing.T) (adminClient, ownerClient *admintest.APIClie
 	t.Helper()
 	ownerClient, tenantResult = testinfra.GetAuthedClient(t)
 
-	memberID, _ := testinfra.CreateTestTenantMember(t, ownerClient)
+	var memberCleanup func()
+	memberID, memberCleanup := testinfra.CreateTestTenantMember(t, ownerClient)
+	t.Cleanup(memberCleanup)
 
 	// 升级为 admin
 	ownerClient.Put(fmt.Sprintf("/api/tenant/members/%d/role", memberID), map[string]any{"role": "admin"}).

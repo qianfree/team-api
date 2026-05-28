@@ -44,9 +44,7 @@ func CreateTestTenant(t *testing.T, client *APIClient) (id int64, cleanup func()
 	resp.AssertSuccess(t)
 	id = resp.GetID(t)
 	return id, func() {
-		client.Put(fmt.Sprintf("/api/admin/tenants/%d/status", id), map[string]any{
-			"status": "closed",
-		})
+		HardDeleteTenant(t, id)
 	}
 }
 
