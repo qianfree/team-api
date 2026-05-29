@@ -121,7 +121,60 @@ CREATE INDEX idx_pln_tenant_plans_plan ON pln_tenant_plans (plan_id);
 CREATE INDEX idx_spt_feedbacks_user ON spt_feedbacks (tenant_id, user_id);
 CREATE INDEX idx_spt_replies_user ON spt_replies (user_id);
 
+-- ============================================================
+-- 四、租户 max_members 和 max_concurrency 改为可 NULL
+-- NULL 表示跟随等级配置（tnt_tenant_level_configs），非 NULL 表示自定义覆盖
+-- ============================================================
+
+ALTER TABLE tnt_tenants ALTER COLUMN max_members DROP NOT NULL;
+ALTER TABLE tnt_tenants ALTER COLUMN max_members SET DEFAULT NULL;
+ALTER TABLE tnt_tenants ALTER COLUMN max_concurrency DROP NOT NULL;
+ALTER TABLE tnt_tenants ALTER COLUMN max_concurrency SET DEFAULT NULL;
+
+COMMENT ON COLUMN tnt_tenants.max_members IS '最大成员数上限（NULL表示跟随等级配置）';
+COMMENT ON COLUMN tnt_tenants.max_concurrency IS '租户总并发上限（NULL表示跟随等级配置，0表示不限制）';
+
+-- ============================================================
+-- 五、sys_sessions 添加 jti 列（JWT ID，用于会话吊销）
+-- ============================================================
+
+ALTER TABLE sys_sessions ADD COLUMN jti VARCHAR(36) NOT NULL DEFAULT '';
+
+UPDATE sys_sessions SET jti = 'legacy-' || id WHERE jti = '';
+
+ALTER TABLE sys_sessions ADD CONSTRAINT uk_sys_sessions_jti UNIQUE (jti);
+
+COMMENT ON COLUMN sys_sessions.jti IS 'JWT ID (jti)，会话唯一标识符（UUID），用于 Redis 吊销缓存';
+
 -- +goose Down
+-- 五、撤销 jti
+ALTER TABLE sys_sessions DROP CONSTRAINT IF EXISTS uk_sys_sessions_jti;
+ALTER TABLE sys_sessions DROP COLUMN IF EXISTS jti;
+
+-- 四、恢复 max_members / max_concurrency 为 NOT NULL
+UPDATE tnt_tenants t
+SET max_members = COALESCE(
+    (SELECT lc.max_members FROM tnt_tenant_level_configs lc WHERE lc.level = t.level),
+    10
+)
+WHERE t.max_members IS NULL;
+
+UPDATE tnt_tenants t
+SET max_concurrency = COALESCE(
+    (SELECT lc.max_concurrency FROM tnt_tenant_level_configs lc WHERE lc.level = t.level),
+    0
+)
+WHERE t.max_concurrency IS NULL;
+
+ALTER TABLE tnt_tenants ALTER COLUMN max_members SET DEFAULT 10;
+ALTER TABLE tnt_tenants ALTER COLUMN max_members SET NOT NULL;
+ALTER TABLE tnt_tenants ALTER COLUMN max_concurrency SET DEFAULT 0;
+ALTER TABLE tnt_tenants ALTER COLUMN max_concurrency SET NOT NULL;
+
+COMMENT ON COLUMN tnt_tenants.max_members IS '最大成员数上限';
+COMMENT ON COLUMN tnt_tenants.max_concurrency IS '租户总并发上限（0表示不限制）';
+
+-- 三、删除索引
 DROP INDEX IF EXISTS idx_spt_replies_user;
 DROP INDEX IF EXISTS idx_spt_feedbacks_user;
 DROP INDEX IF EXISTS idx_pln_tenant_plans_plan;
@@ -131,10 +184,12 @@ DROP INDEX IF EXISTS idx_fil_files_user;
 DROP INDEX IF EXISTS idx_bil_records_channel;
 DROP INDEX IF EXISTS idx_api_keys_user;
 
+-- 二、删除模型分组
 DROP TABLE IF EXISTS mdl_tenant_groups;
 DROP TABLE IF EXISTS mdl_group_models;
 DROP TABLE IF EXISTS mdl_model_groups;
 
+-- 一、删除租户等级
 ALTER TABLE tnt_tenants DROP COLUMN IF EXISTS level;
 ALTER TABLE bil_wallets DROP COLUMN IF EXISTS cumulative_recharge;
 DROP TABLE IF EXISTS tnt_tenant_level_configs;

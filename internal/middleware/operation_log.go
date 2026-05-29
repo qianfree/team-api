@@ -70,8 +70,12 @@ func OperationLog(r *ghttp.Request) {
 		return
 	}
 
-	// Capture request body (before Next() reads it)
-	body := r.GetBodyString()
+	// Skip body capture for multipart/form-data (file uploads)
+	// r.GetBodyString() consumes the body stream and breaks multipart parsing
+	var body string
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		body = r.GetBodyString()
+	}
 
 	r.Middleware.Next()
 
