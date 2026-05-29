@@ -165,7 +165,7 @@ func (s *sAdmin) TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (*v1.Tas
 	}
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return nil, gerror.New("任务无法取消（可能已完成或已失败）")
+		return nil, common.NewBadRequestError("任务无法取消（可能已完成或已失败）")
 	}
 	return &v1.TaskCancelRes{}, nil
 }

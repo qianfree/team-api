@@ -2,8 +2,31 @@
 
 package testinfra
 
-const (
-	DefaultBaseURL   = "http://127.0.0.1:18888"
-	DefaultRedisAddr = "192.168.50.22:16380"
-	TestPassword     = "TestPass123!"
+import (
+	"os"
+
+	"github.com/gogf/gf/v2/frame/g"
 )
+
+var (
+	DefaultBaseURL = getEnvOrDefault("TEST_BASE_URL", "http://127.0.0.1:18888")
+	TestPassword   = getEnvOrDefault("TEST_TENANT_PASSWORD", "TestPass123!")
+)
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// GetRedisAddr returns the Redis address from system config, or falls back to env/empty.
+func GetRedisAddr() string {
+	if v := os.Getenv("TEST_REDIS_ADDR"); v != "" {
+		return v
+	}
+	if v, err := g.Cfg().Get(nil, "redis.default.address"); err == nil && !v.IsNil() {
+		return v.String()
+	}
+	return ""
+}

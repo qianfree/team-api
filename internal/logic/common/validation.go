@@ -4,7 +4,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
+
+	"github.com/qianfree/team-api/internal/consts"
 )
 
 // ValidatePassword 校验密码强度：至少8位，包含大写、小写、数字
@@ -52,7 +55,7 @@ func ValidateDateParam(date string, fieldName string) error {
 	}
 	_, err := time.Parse("2006-01-02", date)
 	if err != nil {
-		return gerror.Newf("%s格式无效，应为 YYYY-MM-DD", fieldName)
+		return gerror.NewCode(gcode.New(consts.CodeBadRequest, "", nil), "%s格式无效，应为 YYYY-MM-DD", fieldName)
 	}
 	return nil
 }

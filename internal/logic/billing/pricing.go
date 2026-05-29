@@ -212,6 +212,15 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		}
 	}
 
+	// 3.5 级别折扣 fallback：当租户×模型维度未设置倍率时，使用租户级别的 price_multiplier
+	if tenantMultiplier == 1.0 {
+		levelMultiplier := GetLevelPriceMultiplier(ctx, tenantID)
+		if levelMultiplier > 0 && levelMultiplier < 1.0 {
+			tenantMultiplier = levelMultiplier
+			discountRatio = levelMultiplier
+		}
+	}
+
 	// 4. 套餐价（待实现）
 	// 前置条件：需新增 pln_plan_model_pricing 表存储每个套餐的每个模型定价，
 	// 或为 pln_plans 增加 billing_discount_ratio 全局折扣字段。

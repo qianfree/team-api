@@ -100,14 +100,12 @@ async function handleSubmit() {
   try {
     if (editingId.value) {
       await request.put(`/admin/tenant-level-configs/${editingId.value}`, {
-        update: {
-          name: formData.name,
-          cumulative_recharge_threshold: formData.cumulative_recharge_threshold,
-          max_members: formData.max_members,
-          max_concurrency: formData.max_concurrency,
-          price_multiplier: formData.price_multiplier,
-          sort_order: formData.sort_order,
-        },
+        name: formData.name,
+        cumulative_recharge_threshold: formData.cumulative_recharge_threshold,
+        max_members: formData.max_members,
+        max_concurrency: formData.max_concurrency,
+        price_multiplier: formData.price_multiplier,
+        sort_order: formData.sort_order,
       })
       Message.success('更新成功')
     } else {

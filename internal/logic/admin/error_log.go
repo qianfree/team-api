@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -79,7 +78,7 @@ func (s *sAdmin) ErrorLogDetail(ctx context.Context, req *v1.ErrorLogDetailReq) 
 		return nil, err
 	}
 	if len(result) == 0 {
-		return nil, gerror.New("错误日志不存在")
+		return nil, common.NewNotFoundError("错误日志")
 	}
 	row := result[0]
 	data := make(map[string]any, len(row))

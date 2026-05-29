@@ -24,7 +24,7 @@ func RandomSuffix() string {
 
 func getRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:         DefaultRedisAddr,
+		Addr:         GetRedisAddr(),
 		DB:           0,
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
@@ -89,6 +89,12 @@ type TenantRegisterResult struct {
 	Email      string
 }
 
+// deleteTenantViaDB hard-deletes a tenant and all associated data from the database.
+// Used as t.Cleanup callback — logs errors instead of failing the test.
+func deleteTenantViaDB(t *testing.T, tenantID int64) {
+	HardDeleteTenant(t, tenantID)
+}
+
 func RegisterTestTenant(t *testing.T) *TenantRegisterResult {
 	t.Helper()
 
@@ -117,6 +123,11 @@ func RegisterTestTenant(t *testing.T) *TenantRegisterResult {
 	result.Username = username
 	result.Password = TestPassword
 	result.Email = email
+
+	// Automatically hard-delete the tenant when the test completes
+	t.Cleanup(func() {
+		deleteTenantViaDB(t, result.Tenant.ID)
+	})
 
 	return &result
 }

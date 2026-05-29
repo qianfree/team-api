@@ -97,3 +97,24 @@ type TenantModelDeleteReq struct {
 }
 
 type TenantModelDeleteRes struct{}
+
+// TenantAvailableModelsPreviewReq 预览租户实际可用的所有模型（显式分配 + 分组来源，去重）
+type TenantAvailableModelsPreviewReq struct {
+	g.Meta   `path:"/tenants/{tenant_id}/available-models" method:"get" mime:"json" tags:"管理后台-租户模型" summary:"预览租户可用模型"`
+	TenantID int64 `json:"tenant_id" in:"path" v:"required" dc:"租户ID"`
+}
+
+type TenantAvailableModelsPreviewRes struct {
+	List []TenantAvailableModelPreview `json:"list"`
+}
+
+// TenantAvailableModelPreview 租户可用模型预览项
+type TenantAvailableModelPreview struct {
+	ModelId          string `json:"model_id"`
+	ModelName        string `json:"model_name"`
+	Category         string `json:"category"`
+	MaxContextTokens int    `json:"max_context_tokens"`
+	MaxOutputTokens  int    `json:"max_output_tokens"`
+	Description      string `json:"description"`
+	Source           string `json:"source"` // "explicit" 或 "group"
+}

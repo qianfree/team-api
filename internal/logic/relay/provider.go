@@ -716,7 +716,7 @@ func (p *DataProviderImpl) ResetConsecutiveFailure(ctx context.Context, channelI
 // GetAvailableModels 实现 DataProvider.GetAvailableModels
 // 如果 tenantID > 0，返回该租户有权使用的模型列表
 // 如果 apiKeyID > 0，进一步按 API Key 的模型范围过滤
-func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID int64, apiKeyID int64) ([]common.ModelInfo, error) {
+func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, apiKeyID, userID int64) ([]common.ModelInfo, error) {
 	type modelRow struct {
 		ModelId          string `json:"model_id"`
 		ModelName        string `json:"model_name"`
@@ -818,6 +818,31 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID int6
 				}
 			}
 			models = filtered
+		}
+	}
+
+	// 按成员模型范围过滤
+	if userID > 0 {
+		allowedNames, err := GetMemberAllowedModelNames(ctx, tenantID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if allowedNames != nil {
+			if len(allowedNames) == 0 {
+				models = nil
+			} else {
+				allowed := make(map[string]bool, len(allowedNames))
+				for _, n := range allowedNames {
+					allowed[n] = true
+				}
+				filtered := make([]modelRow, 0, len(models))
+				for _, m := range models {
+					if allowed[m.ModelId] {
+						filtered = append(filtered, m)
+					}
+				}
+				models = filtered
+			}
 		}
 	}
 
@@ -1100,8 +1125,57 @@ func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
 // memberModelCache 成员模型范围缓存（TTL 60s）
 var memberModelCache = lcommon.NewCache("member_model", 60*time.Second)
 
+// GetMemberAllowedModelNames 获取成员允许使用的 model_id 列表。
+// 返回 nil 表示不限制（向后兼容），返回空切片表示禁止所有模型（哨兵），返回非空切片表示允许的模型集合。
+func GetMemberAllowedModelNames(ctx context.Context, tenantID, userID int64) ([]string, error) {
+	if userID <= 0 || tenantID <= 0 {
+		return nil, nil
+	}
+
+	cacheKey := fmt.Sprintf("%d:%d", tenantID, userID)
+
+	var cachedNames []string
+	if memberModelCache.GetJSON(ctx, cacheKey, &cachedNames) {
+		return cachedNames, nil
+	}
+
+	type scopeRow struct {
+		ModelID   int64  `json:"model_id"`
+		ModelName string `json:"model_name"`
+	}
+	var rows []scopeRow
+	err := g.DB().Model("tnt_member_model_scopes ms").Ctx(ctx).
+		LeftJoin("mdl_models m ON ms.model_id = m.id").
+		Where("ms.tenant_id", tenantID).
+		Where("ms.user_id", userID).
+		Fields("ms.model_id, m.model_id as model_name").
+		Scan(&rows)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.ModelID == -1 {
+			memberModelCache.Set(ctx, cacheKey, []string{})
+			return []string{}, nil
+		}
+		if r.ModelName != "" {
+			names = append(names, r.ModelName)
+		}
+	}
+
+	memberModelCache.Set(ctx, cacheKey, names)
+	return names, nil
+}
+
 // CheckMemberModelAccess 检查成员是否有权使用指定模型。
 // 无 scope 记录表示不限制（向后兼容）。
+// 哨兵 model_id=-1 表示该成员被限制使用所有模型。
 func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID, userID int64, modelName string) (bool, error) {
 	cacheKey := fmt.Sprintf("%d:%d", tenantID, userID)
 
@@ -1109,6 +1183,12 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	if memberModelCache.GetJSON(ctx, cacheKey, &cachedModelNames) {
 		if len(cachedModelNames) == 0 {
 			return true, nil
+		}
+		// 哨兵值：表示该成员被限制使用所有模型
+		for _, name := range cachedModelNames {
+			if name == "__none__" {
+				return false, nil
+			}
 		}
 		for _, name := range cachedModelNames {
 			if name == modelName {
@@ -1119,6 +1199,7 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	}
 
 	type scopeRow struct {
+		ModelID   int64  `json:"model_id"`
 		ModelName string `json:"model_name"`
 	}
 	var rows []scopeRow
@@ -1126,7 +1207,7 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 		LeftJoin("mdl_models m ON ms.model_id = m.id").
 		Where("ms.tenant_id", tenantID).
 		Where("ms.user_id", userID).
-		Fields("m.model_id as model_name").
+		Fields("ms.model_id, m.model_id as model_name").
 		Scan(&rows)
 	if err != nil {
 		return false, err
@@ -1134,7 +1215,11 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 
 	names := make([]string, 0, len(rows))
 	for _, r := range rows {
-		names = append(names, r.ModelName)
+		if r.ModelID == -1 {
+			names = append(names, "__none__")
+		} else if r.ModelName != "" {
+			names = append(names, r.ModelName)
+		}
 	}
 
 	memberModelCache.Set(ctx, cacheKey, names)
@@ -1142,12 +1227,24 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	if len(names) == 0 {
 		return true, nil
 	}
+	// 哨兵值：表示该成员被限制使用所有模型
+	for _, name := range names {
+		if name == "__none__" {
+			return false, nil
+		}
+	}
 	for _, name := range names {
 		if name == modelName {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// InvalidateMemberModelCache 实现 DataProvider.InvalidateMemberModelCache
+func (p *DataProviderImpl) InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64) {
+	cacheKey := fmt.Sprintf("%d:%d", tenantID, userID)
+	memberModelCache.Delete(ctx, cacheKey)
 }
 
 // apiKeyModelCache API Key 模型范围缓存（TTL 60s）

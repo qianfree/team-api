@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/qianfree/team-api/tests/integration/admin/testinfra"
+	admintest "github.com/qianfree/team-api/tests/integration/admin/testinfra"
+	tenanttest "github.com/qianfree/team-api/tests/integration/tenant/testinfra"
 )
 
 func TestFeedbackList(t *testing.T) {
@@ -47,7 +49,7 @@ func TestFeedbackListWithFilters(t *testing.T) {
 	resp.AssertSuccess(t)
 
 	// Filter by tenant_id
-	tenantID, cleanup := testinfra.CreateTestTenant(t, client)
+	tenantID, cleanup := createTestTenantWithFeedback(t, client)
 	defer cleanup()
 
 	resp = client.Get("/api/admin/feedbacks", map[string]string{
@@ -58,32 +60,12 @@ func TestFeedbackListWithFilters(t *testing.T) {
 	resp.AssertSuccess(t)
 }
 
-// Note: Feedback creation happens through the tenant console.
-// The admin can only reply, update status, and view statistics.
-
 func TestFeedbackReply(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// Find a feedback to reply to
-	listResp := client.Get("/api/admin/feedbacks", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id     int64  `json:"id"`
-			Status string `json:"status"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No feedback found, skipping reply test")
-	}
-
-	feedbackID := listData.List[0].Id
+	// Create test tenant with feedback
+	feedbackID, cleanup := createTestFeedbackViaTenant(t, client)
+	defer cleanup()
 
 	// Reply and update status to acknowledged
 	replyText := fmt.Sprintf("管理员回复（集成测试）%s", randomSuffix())
@@ -127,26 +109,9 @@ func TestFeedbackReply(t *testing.T) {
 func TestFeedbackStatusUpdate(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
-	// Find a feedback to update
-	listResp := client.Get("/api/admin/feedbacks", map[string]string{
-		"page":      "1",
-		"page_size": "10",
-	})
-	listResp.AssertSuccess(t)
-
-	var listData struct {
-		List []struct {
-			Id     int64  `json:"id"`
-			Status string `json:"status"`
-		} `json:"list"`
-	}
-	listResp.DecodeData(t, &listData)
-
-	if len(listData.List) == 0 {
-		t.Skip("No feedback found, skipping status update test")
-	}
-
-	feedbackID := listData.List[0].Id
+	// Create test tenant with feedback
+	feedbackID, cleanup := createTestFeedbackViaTenant(t, client)
+	defer cleanup()
 
 	// Update status to in_progress and priority to high
 	updateResp := client.Put(fmt.Sprintf("/api/admin/feedbacks/%d/status", feedbackID), map[string]any{
@@ -278,5 +243,53 @@ func TestFeedbackNegative(t *testing.T) {
 		if invalidStatusResp.Code == 0 {
 			t.Fatal("expected error for invalid feedback status, got success")
 		}
+	}
+}
+
+// createTestFeedbackViaTenant creates a test tenant, registers a tenant user,
+// creates a feedback via the tenant API, and returns the feedback ID and cleanup.
+func createTestFeedbackViaTenant(t *testing.T, adminClient *admintest.APIClient) (feedbackID int64, cleanup func()) {
+	t.Helper()
+
+	result := tenanttest.RegisterTestTenant(t)
+	tenantClient := admintest.NewAPIClient(tenanttest.DefaultBaseURL).WithToken(result.AccessToken)
+
+	suffix := tenanttest.RandomSuffix()
+	resp := tenantClient.Post("/api/tenant/feedbacks", map[string]any{
+		"category":    "bug_report",
+		"title":       fmt.Sprintf("管理员测试反馈 %s", suffix),
+		"description": "管理员集成测试自动创建的反馈",
+	})
+	resp.AssertSuccess(t)
+
+	var data struct {
+		ID int64 `json:"id"`
+	}
+	resp.DecodeData(t, &data)
+
+	return data.ID, func() {
+		// Feedback and tenant cleaned up by hardDeleteTenant in RegisterTestTenant
+	}
+}
+
+// createTestTenantWithFeedback creates a test tenant with a feedback for filter tests.
+func createTestTenantWithFeedback(t *testing.T, adminClient *admintest.APIClient) (tenantID int64, cleanup func()) {
+	t.Helper()
+
+	// Register a test tenant
+	result := tenanttest.RegisterTestTenant(t)
+	tenantClient := admintest.NewAPIClient(tenanttest.DefaultBaseURL).WithToken(result.AccessToken)
+
+	// Create feedback via tenant API
+	suffix := tenanttest.RandomSuffix()
+	resp := tenantClient.Post("/api/tenant/feedbacks", map[string]any{
+		"category":    "bug_report",
+		"title":       fmt.Sprintf("过滤测试反馈 %s", suffix),
+		"description": "过滤测试自动创建的反馈",
+	})
+	resp.AssertSuccess(t)
+
+	return result.Tenant.ID, func() {
+		// Tenant cleanup is handled by t.Cleanup in RegisterTestTenant
 	}
 }

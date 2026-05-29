@@ -51,36 +51,22 @@ func TestRedemptionBatchCreate(t *testing.T) {
 
 	// Batch create quota-type redemption codes
 	count := 5
-	createResp := client.Post("/api/admin/redemptions", map[string]any{
-		"count": count,
-		"type":  "quota",
-		"value": 10.0,
-	})
-	createResp.AssertSuccess(t)
+	created, cleanup := createTestRedemptions(t, client, count, "quota")
+	defer cleanup()
 
-	// Verify created count
-	var createData struct {
-		Created int `json:"created"`
-	}
-	createResp.DecodeData(t, &createData)
-
-	if createData.Created != count {
-		t.Fatalf("expected %d created, got %d", count, createData.Created)
+	if created != count {
+		t.Fatalf("expected %d created, got %d", count, created)
 	}
 
-	t.Logf("Batch created %d redemption codes", createData.Created)
+	t.Logf("Batch created %d redemption codes", created)
 }
 
 func TestRedemptionDisable(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 
 	// Create redemptions and find one to disable
-	createResp := client.Post("/api/admin/redemptions", map[string]any{
-		"count": 1,
-		"type":  "quota",
-		"value": 5.0,
-	})
-	createResp.AssertSuccess(t)
+	_, cleanup := createTestRedemptions(t, client, 1, "quota")
+	defer cleanup()
 
 	// Find the created code in the list
 	listResp := client.Get("/api/admin/redemptions", map[string]string{
@@ -188,6 +174,7 @@ func TestRedemptionNegative(t *testing.T) {
 }
 
 // createTestRedemptions is a test helper that batch-creates redemption codes and returns count and cleanup.
+// The cleanup disables the created codes after the test.
 func createTestRedemptions(t *testing.T, client *testinfra.APIClient, count int, redemptionType string) (int, func()) {
 	t.Helper()
 	resp := client.Post("/api/admin/redemptions", map[string]any{
@@ -202,7 +189,34 @@ func createTestRedemptions(t *testing.T, client *testinfra.APIClient, count int,
 	}
 	resp.DecodeData(t, &data)
 
+	// Find the newly created codes by listing active codes (most recent = highest IDs)
+	var ids []int64
+	listResp := client.Get("/api/admin/redemptions", map[string]string{
+		"page":      "1",
+		"page_size": "50",
+		"status":    "active",
+	})
+	if listResp.Code == 0 {
+		var listData struct {
+			List []struct {
+				Id int64 `json:"id"`
+			} `json:"list"`
+		}
+		listResp.DecodeData(t, &listData)
+
+		// Take the last `count` items (most recently created)
+		start := len(listData.List) - data.Created
+		if start < 0 {
+			start = 0
+		}
+		for i := start; i < len(listData.List); i++ {
+			ids = append(ids, listData.List[i].Id)
+		}
+	}
+
 	return data.Created, func() {
-		// No individual cleanup needed — redemption codes are consumed or disabled
+		for _, id := range ids {
+			testinfra.HardDeleteRedemption(t, id)
+		}
 	}
 }
