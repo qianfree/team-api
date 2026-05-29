@@ -27,7 +27,7 @@ type TntTenantsColumns struct {
 	LogoUrl             string // 租户 Logo URL
 	OwnerUserId         string // 所有者用户ID（关联 tnt_users.id）
 	Status              string // 状态：trial（试用）/ active（活跃）/ past_due（逾期）/ frozen（冻结）/ terminated（已终止）/ free（免费版）/ suspended（暂停）/ closed（关闭）
-	MaxMembers          string // 最大成员数上限
+	MaxMembers          string // 最大成员数上限（NULL表示跟随等级配置）
 	Settings            string // 租户配置（JSONB）：通知偏好、安全策略、IP 白名单等
 	CreatedAt           string // 创建时间
 	UpdatedAt           string // 更新时间
@@ -36,7 +36,7 @@ type TntTenantsColumns struct {
 	FrozenAt            string // 冻结时间
 	ClosingRequestedAt  string // 主动申请注销时间（7 天冷静期）
 	DataRemovalAt       string // 数据清除时间（冻结 30 天后）
-	MaxConcurrency      string // 租户总并发上限（0表示不限制）
+	MaxConcurrency      string // 租户总并发上限（NULL表示跟随等级配置，0表示不限制）
 	DefaultChannelScope string // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               string // 当前等级（对应 tnt_tenant_level_configs.level）
 }
