@@ -18,7 +18,7 @@ type TntTenants struct {
 	LogoUrl             any         // 租户 Logo URL
 	OwnerUserId         any         // 所有者用户ID（关联 tnt_users.id）
 	Status              any         // 状态：trial（试用）/ active（活跃）/ past_due（逾期）/ frozen（冻结）/ terminated（已终止）/ free（免费版）/ suspended（暂停）/ closed（关闭）
-	MaxMembers          any         // 最大成员数上限
+	MaxMembers          any         // 最大成员数上限（NULL表示跟随等级配置）
 	Settings            any         // 租户配置（JSONB）：通知偏好、安全策略、IP 白名单等
 	CreatedAt           *gtime.Time // 创建时间
 	UpdatedAt           *gtime.Time // 更新时间
@@ -27,7 +27,7 @@ type TntTenants struct {
 	FrozenAt            *gtime.Time // 冻结时间
 	ClosingRequestedAt  *gtime.Time // 主动申请注销时间（7 天冷静期）
 	DataRemovalAt       *gtime.Time // 数据清除时间（冻结 30 天后）
-	MaxConcurrency      any         // 租户总并发上限（0表示不限制）
+	MaxConcurrency      any         // 租户总并发上限（NULL表示跟随等级配置，0表示不限制）
 	DefaultChannelScope any         // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               any         // 当前等级（对应 tnt_tenant_level_configs.level）
 }
