@@ -54,16 +54,44 @@ function goBack() {
 const editLoading = ref(false)
 const editForm = reactive({
   name: '',
+  level: null as number | null,
   max_members: null as number | null,
   max_concurrency: null as number | null,
 })
 
+// Level options from backend
+const levelOptions = ref<any[]>([])
+
+async function fetchLevelOptions() {
+  try {
+    const res: any = await request.get('/admin/tenant-level-configs')
+    levelOptions.value = res.data?.data?.list || res.data?.list || []
+  } catch {
+  }
+}
+
+// Find the effective max_members (custom or from level config)
+function getEffectiveMaxMembers() {
+  if (detail.value?.max_members != null) return detail.value.max_members
+  if (detail.value?.level_config?.max_members != null) return detail.value.level_config.max_members
+  const cfg = levelOptions.value.find((l: any) => l.level === detail.value?.level)
+  return cfg?.max_members ?? null
+}
+
+// Find the effective max_concurrency (custom or from level config)
+function getEffectiveMaxConcurrency() {
+  if (detail.value?.max_concurrency != null) return detail.value.max_concurrency
+  if (detail.value?.level_config?.max_concurrency != null) return detail.value.level_config.max_concurrency
+  const cfg = levelOptions.value.find((l: any) => l.level === detail.value?.level)
+  return cfg?.max_concurrency ?? null
+}
+
 function startEdit() {
   if (!detail.value) return
   editForm.name = detail.value.name || ''
-  editForm.max_members = detail.value.max_members || null
-  editForm.max_concurrency = detail.value.max_concurrency || null
-	  editForm.level = detail.value.level || null
+  editForm.level = detail.value.level ?? null
+  editForm.max_members = detail.value.max_members ?? null
+  editForm.max_concurrency = detail.value.max_concurrency ?? null
 }
 
 async function saveEdit() {
@@ -493,6 +521,7 @@ async function handleThreshold(done: (closed: boolean) => void) {
 
 onMounted(() => {
   fetchDetail()
+  fetchLevelOptions()
   startEdit()
 })
 </script>
@@ -548,11 +577,29 @@ onMounted(() => {
                   </ATag>
                 </ADescriptionsItem>
                 <ADescriptionsItem label="所有者">{{ detail.owner_name || '-' }}</ADescriptionsItem>
-                <ADescriptionsItem label="成员数">{{ detail.member_count || 0 }} / {{ detail.max_members }}</ADescriptionsItem>
+                <ADescriptionsItem label="成员数">
+                  {{ detail.member_count || 0 }} / {{ getEffectiveMaxMembers() ?? '不限' }}
+                  <ATag v-if="detail.max_members != null" size="small" color="arcoblue" style="margin-left: 4px">自定义</ATag>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="钱包余额">
                   <span class="money">${{ parseFloat(detail.wallet_balance || '0').toFixed(2) }}</span>
                 </ADescriptionsItem>
-                <ADescriptionsItem label="并发上限">{{ detail.max_concurrency || '不限' }}</ADescriptionsItem>
+                <ADescriptionsItem label="并发上限">
+                  {{ getEffectiveMaxConcurrency() ?? '不限' }}
+                  <ATag v-if="detail.max_concurrency != null" size="small" color="arcoblue" style="margin-left: 4px">自定义</ATag>
+                </ADescriptionsItem>
+                <ADescriptionsItem label="等级">
+                  <template v-if="detail.level_config">
+                    {{ detail.level_config.name }}
+                    <ATag v-if="detail.level_config.price_multiplier" size="small" color="green" style="margin-left: 4px">
+                      {{ (detail.level_config.price_multiplier * 100).toFixed(0) }}%
+                    </ATag>
+                  </template>
+                  <template v-else-if="detail.level">
+                    Lv.{{ detail.level }}
+                  </template>
+                  <template v-else>-</template>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="创建时间">{{ detail.created_at }}</ADescriptionsItem>
                 <ADescriptionsItem label="更新时间">{{ detail.updated_at }}</ADescriptionsItem>
               </ADescriptions>
@@ -564,13 +611,17 @@ onMounted(() => {
                   <AInput v-model="editForm.name" style="width: 200px" />
                 </AFormItem>
                 <AFormItem label="最大成员数">
-                  <AInputNumber v-model="editForm.max_members" :min="1" style="width: 120px" />
+                  <AInputNumber v-model="editForm.max_members" :min="1" allow-clear placeholder="跟随等级" style="width: 140px" />
                 </AFormItem>
                 <AFormItem label="并发上限">
-                  <AInputNumber v-model="editForm.max_concurrency" :min="0" placeholder="0=不限" style="width: 120px" />
+                  <AInputNumber v-model="editForm.max_concurrency" :min="0" allow-clear placeholder="跟随等级" style="width: 140px" />
                 </AFormItem>
                 <AFormItem label="等级">
-                  <AInputNumber v-model="editForm.level" :min="1" :max="99" placeholder="等级号" style="width: 120px" />
+                  <ASelect v-model="editForm.level" allow-clear placeholder="选择等级" style="width: 200px">
+                    <AOption v-for="opt in levelOptions" :key="opt.level" :value="opt.level">
+                      {{ opt.name }}（{{ (opt.price_multiplier * 100).toFixed(0) }}%）
+                    </AOption>
+                  </ASelect>
                 </AFormItem>
                 <AFormItem>
                   <AButton type="primary" :loading="editLoading" @click="saveEdit">保存</AButton>

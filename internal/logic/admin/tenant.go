@@ -103,13 +103,14 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		return nil, err
 	}
 
-	maxMembers := 10
+	// max_members 和 max_concurrency 默认为 nil（跟随等级配置）
+	var maxMembersVal *int
 	if req.MaxMembers != nil && *req.MaxMembers >= 1 {
-		maxMembers = *req.MaxMembers
+		maxMembersVal = req.MaxMembers
 	}
-	maxConcurrency := 0
+	var maxConcurrencyVal *int
 	if req.MaxConcurrency != nil {
-		maxConcurrency = *req.MaxConcurrency
+		maxConcurrencyVal = req.MaxConcurrency
 	}
 
 	var tenantID int64
@@ -118,8 +119,8 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		tenantResult, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{
 			Name:           strings.TrimSpace(req.TenantName),
 			Code:           tenantCode,
-			MaxMembers:     maxMembers,
-			MaxConcurrency: maxConcurrency,
+			MaxMembers:     maxMembersVal,
+			MaxConcurrency: maxConcurrencyVal,
 			Level:          1,
 			Settings:       "{}",
 		}).Insert()
@@ -211,10 +212,11 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		LogoURL             string      `json:"logo_url"`
 		OwnerUserID         int64       `json:"owner_user_id"`
 		Status              string      `json:"status"`
-		MaxMembers          int         `json:"max_members"`
-		MaxConcurrency      int         `json:"max_concurrency"`
+		MaxMembers          *int        `json:"max_members"`
+		MaxConcurrency      *int        `json:"max_concurrency"`
 		DefaultChannelScope string      `json:"default_channel_scope"`
 		Settings            string      `json:"settings"`
+		Level               int         `json:"level"`
 		CreatedAt           *gtime.Time `json:"created_at"`
 		UpdatedAt           *gtime.Time `json:"updated_at"`
 	}
@@ -223,6 +225,18 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		Scan(&tenants)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+
+	// 批量获取等级配置（避免 N+1）
+	var levelConfigs []*entity.TntTenantLevelConfigs
+	dao.TntTenantLevelConfigs.Ctx(ctx).OrderAsc("level").Scan(&levelConfigs)
+	levelNameMap := make(map[int]string, len(levelConfigs))
+	levelMaxMembersMap := make(map[int]int, len(levelConfigs))
+	levelMaxConcMap := make(map[int]int, len(levelConfigs))
+	for _, lc := range levelConfigs {
+		levelNameMap[lc.Level] = lc.Name
+		levelMaxMembersMap[lc.Level] = lc.MaxMembers
+		levelMaxConcMap[lc.Level] = lc.MaxConcurrency
 	}
 
 	items := make([]v1.TenantItem, len(tenants))
@@ -237,8 +251,26 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 			MaxMembers:          t.MaxMembers,
 			MaxConcurrency:      t.MaxConcurrency,
 			DefaultChannelScope: t.DefaultChannelScope,
+			Level:               t.Level,
+			LevelName:           levelNameMap[t.Level],
 			CreatedAt:           t.CreatedAt.String(),
 			UpdatedAt:           t.UpdatedAt.String(),
+		}
+
+		// 计算实际生效值
+		if t.MaxMembers != nil {
+			item.EffectiveMaxMembers = *t.MaxMembers
+		} else if v, ok := levelMaxMembersMap[t.Level]; ok {
+			item.EffectiveMaxMembers = v
+		} else {
+			item.EffectiveMaxMembers = 10
+		}
+		if t.MaxConcurrency != nil {
+			item.EffectiveMaxConcurrency = *t.MaxConcurrency
+		} else if v, ok := levelMaxConcMap[t.Level]; ok {
+			item.EffectiveMaxConcurrency = v
+		} else {
+			item.EffectiveMaxConcurrency = 0
 		}
 
 		// Get owner name
@@ -288,8 +320,8 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		LogoURL             string      `json:"logo_url"`
 		OwnerUserID         int64       `json:"owner_user_id"`
 		Status              string      `json:"status"`
-		MaxMembers          int         `json:"max_members"`
-		MaxConcurrency      int         `json:"max_concurrency"`
+		MaxMembers          *int        `json:"max_members"`
+		MaxConcurrency      *int        `json:"max_concurrency"`
 		DefaultChannelScope string      `json:"default_channel_scope"`
 		Settings            string      `json:"settings"`
 		Level               int         `json:"level"`
@@ -340,24 +372,40 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		levelName = levelConfig.Name
 	}
 
+	// 计算实际生效值
+	effectiveMaxMembers := 10
+	effectiveMaxConc := 0
+	if tenant.MaxMembers != nil {
+		effectiveMaxMembers = *tenant.MaxMembers
+	} else if levelConfig.Id > 0 {
+		effectiveMaxMembers = levelConfig.MaxMembers
+	}
+	if tenant.MaxConcurrency != nil {
+		effectiveMaxConc = *tenant.MaxConcurrency
+	} else if levelConfig.Id > 0 {
+		effectiveMaxConc = levelConfig.MaxConcurrency
+	}
+
 	return &v1.TenantGetRes{
 		TenantItem: v1.TenantItem{
-			ID:                  tenant.Id,
-			Name:                tenant.Name,
-			Code:                tenant.Code,
-			LogoURL:             tenant.LogoURL,
-			OwnerUserID:         tenant.OwnerUserID,
-			OwnerName:           ownerName,
-			Status:              tenant.Status,
-			MaxMembers:          tenant.MaxMembers,
-			MaxConcurrency:      tenant.MaxConcurrency,
-			DefaultChannelScope: tenant.DefaultChannelScope,
-			MemberCount:         memberCount,
-			WalletBalance:       walletBalance,
-			Level:               tenant.Level,
-			LevelName:           levelName,
-			CreatedAt:           tenant.CreatedAt.String(),
-			UpdatedAt:           tenant.UpdatedAt.String(),
+			ID:                      tenant.Id,
+			Name:                    tenant.Name,
+			Code:                    tenant.Code,
+			LogoURL:                 tenant.LogoURL,
+			OwnerUserID:             tenant.OwnerUserID,
+			OwnerName:               ownerName,
+			Status:                  tenant.Status,
+			MaxMembers:              tenant.MaxMembers,
+			MaxConcurrency:          tenant.MaxConcurrency,
+			EffectiveMaxMembers:     effectiveMaxMembers,
+			EffectiveMaxConcurrency: effectiveMaxConc,
+			DefaultChannelScope:     tenant.DefaultChannelScope,
+			MemberCount:             memberCount,
+			WalletBalance:           walletBalance,
+			Level:                   tenant.Level,
+			LevelName:               levelName,
+			CreatedAt:               tenant.CreatedAt.String(),
+			UpdatedAt:               tenant.UpdatedAt.String(),
 		},
 		Settings: tenant.Settings,
 	}, nil
@@ -409,18 +457,15 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 		data.MaxConcurrency = *req.MaxConcurrency
 	}
 
-	// 管理员手动调整等级：同步更新 max_members 和 max_concurrency
+	// 管理员手动调整等级：仅更新等级，不自动填充成员数和并发数
+	// 成员数和并发数为 NULL 时自动跟随等级配置
 	if req.Level != nil {
-		data.Level = *req.Level
 		var config entity.TntTenantLevelConfigs
 		err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", *req.Level).Scan(&config)
-		if err = common.IgnoreScanNoRows(err); err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil || config.Id == 0 {
 			return nil, common.NewBadRequestError("等级配置不存在")
 		}
-		if config.Id > 0 {
-			data.MaxMembers = config.MaxMembers
-			data.MaxConcurrency = config.MaxConcurrency
-		}
+		data.Level = *req.Level
 	}
 
 	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(data)

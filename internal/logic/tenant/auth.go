@@ -81,12 +81,12 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Create tenant
 		tenantResult, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{
-			Name:           strings.TrimSpace(req.TenantName),
-			Code:           tenantCode,
-			MaxMembers:     10,
-			MaxConcurrency: 10,
-			Level:          1,
-			Settings:       "{}",
+			Name: strings.TrimSpace(req.TenantName),
+			Code: tenantCode,
+			// MaxMembers/MaxConcurrency: nil = 跟随等级配置
+			// Level 1 defaults will apply
+			Level:    1,
+			Settings: "{}",
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create tenant")

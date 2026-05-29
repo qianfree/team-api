@@ -17,6 +17,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -100,18 +101,13 @@ func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteRe
 		return nil, err
 	}
 
-	var tenant struct {
-		MaxMembers int `json:"max_members"`
-	}
-	err = dao.TntTenants.Ctx(ctx).
-		Where("id", tenantID).
-		Fields("max_members").
-		Scan(&tenant)
-	if err = common.IgnoreScanNoRows(err); err != nil {
-		return nil, gerror.Wrapf(err, "查询租户信息失败")
+	// 获取实际生效的成员数上限（NULL时取等级配置）
+	effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenantID)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "查询租户限制信息失败")
 	}
 
-	if int(memberCount) >= tenant.MaxMembers {
+	if int(memberCount) >= effectiveMaxMembers {
 		return nil, common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 	}
 
@@ -243,17 +239,12 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			return err
 		}
 
-		var tenant struct {
-			MaxMembers int `json:"max_members"`
-		}
-		err = tx.Model("tnt_tenants").Ctx(ctx).
-			Where("id", tenantID).
-			Fields("max_members").
-			Scan(&tenant)
-		if err = common.IgnoreScanNoRows(err); err != nil {
+		// 获取实际生效的成员数上限（NULL时取等级配置）
+		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenantID)
+		if err != nil {
 			return err
 		}
-		if int(memberCount) >= tenant.MaxMembers {
+		if int(memberCount) >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 
@@ -403,17 +394,12 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 			return err
 		}
 
-		var tenant struct {
-			MaxMembers int `json:"max_members"`
+		// 获取实际生效的成员数上限（NULL时取等级配置）
+		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenantID)
+		if err != nil {
+			return gerror.Wrapf(err, "查询租户限制信息失败")
 		}
-		err = tx.Model("tnt_tenants").Ctx(ctx).
-			Where("id", tenantID).
-			Fields("max_members").
-			Scan(&tenant)
-		if err = common.IgnoreScanNoRows(err); err != nil {
-			return gerror.Wrapf(err, "查询租户信息失败")
-		}
-		if int(memberCount) >= tenant.MaxMembers {
+		if int(memberCount) >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 

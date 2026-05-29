@@ -10,6 +10,87 @@ import (
 	"github.com/qianfree/team-api/internal/model/entity"
 )
 
+// GetTenantEffectiveLimits 获取租户实际生效的成员数上限和并发上限。
+// max_members/max_concurrency 非 NULL 时返回租户自定义值；
+// NULL 时返回等级配置值；等级配置也查不到时回退到默认值。
+func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers int, maxConcurrency int, err error) {
+	var tenant entity.TntTenants
+	err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
+	if err != nil {
+		return 10, 0, err
+	}
+	if tenant.Id == 0 {
+		return 10, 0, nil
+	}
+
+	// 租户自定义值优先
+	if tenant.MaxMembers != nil {
+		maxMembers = *tenant.MaxMembers
+	}
+	if tenant.MaxConcurrency != nil {
+		maxConcurrency = *tenant.MaxConcurrency
+	}
+
+	// 未自定义的字段从等级配置取
+	if tenant.MaxMembers == nil || tenant.MaxConcurrency == nil {
+		var config entity.TntTenantLevelConfigs
+		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
+		if tenant.MaxMembers == nil {
+			if config.Id > 0 {
+				maxMembers = config.MaxMembers
+			} else {
+				maxMembers = 10
+			}
+		}
+		if tenant.MaxConcurrency == nil {
+			if config.Id > 0 {
+				maxConcurrency = config.MaxConcurrency
+			} else {
+				maxConcurrency = 0
+			}
+		}
+	}
+
+	return maxMembers, maxConcurrency, nil
+}
+
+// GetTenantEffectiveLimitsByEntity 通过已查询的租户实体获取实际生效限制（避免重复查询租户）
+func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTenants) (maxMembers int, maxConcurrency int) {
+	if tenant == nil {
+		return 10, 0
+	}
+
+	// 租户自定义值优先
+	if tenant.MaxMembers != nil {
+		maxMembers = *tenant.MaxMembers
+	}
+	if tenant.MaxConcurrency != nil {
+		maxConcurrency = *tenant.MaxConcurrency
+	}
+
+	// 未自定义的字段从等级配置取
+	if tenant.MaxMembers == nil || tenant.MaxConcurrency == nil {
+		var config entity.TntTenantLevelConfigs
+		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
+		if tenant.MaxMembers == nil {
+			if config.Id > 0 {
+				maxMembers = config.MaxMembers
+			} else {
+				maxMembers = 10
+			}
+		}
+		if tenant.MaxConcurrency == nil {
+			if config.Id > 0 {
+				maxConcurrency = config.MaxConcurrency
+			} else {
+				maxConcurrency = 0
+			}
+		}
+	}
+
+	return maxMembers, maxConcurrency
+}
+
 // GetTenantLevelConfig 获取指定等级的配置
 func GetTenantLevelConfig(ctx context.Context, level int) (*entity.TntTenantLevelConfigs, error) {
 	var config entity.TntTenantLevelConfigs
@@ -71,19 +152,23 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 		"updated_at": "NOW()",
 	}
 
-	// max_members：新值 > 当前值才更新（0=无限，视为最大）
-	if config.MaxMembers == 0 {
-		// 新等级允许无限成员，直接更新
-		updateData["max_members"] = 0
-	} else if config.MaxMembers > tenant.MaxMembers {
-		updateData["max_members"] = config.MaxMembers
+	// max_members：NULL 时跟随等级配置（不更新），非 NULL 时仅升不降
+	if tenant.MaxMembers != nil {
+		if config.MaxMembers == 0 {
+			// 新等级允许无限成员，直接更新
+			updateData["max_members"] = 0
+		} else if config.MaxMembers > *tenant.MaxMembers {
+			updateData["max_members"] = config.MaxMembers
+		}
 	}
 
-	// max_concurrency：新值 > 当前值才更新（0=无限，视为最大）
-	if config.MaxConcurrency == 0 {
-		updateData["max_concurrency"] = 0
-	} else if config.MaxConcurrency > tenant.MaxConcurrency {
-		updateData["max_concurrency"] = config.MaxConcurrency
+	// max_concurrency：NULL 时跟随等级配置（不更新），非 NULL 时仅升不降
+	if tenant.MaxConcurrency != nil {
+		if config.MaxConcurrency == 0 {
+			updateData["max_concurrency"] = 0
+		} else if config.MaxConcurrency > *tenant.MaxConcurrency {
+			updateData["max_concurrency"] = config.MaxConcurrency
+		}
 	}
 
 	_, err = dao.TntTenants.Ctx(ctx).

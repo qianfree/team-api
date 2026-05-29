@@ -283,7 +283,8 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 	}
 
 	// 缓存未命中，查数据库
-	var maxConc int
+	// 缓存未命中，查数据库
+	var maxConc *int
 	err = g.DB().Model("tnt_tenants").
 		Where("id", tenantID).
 		Fields("max_concurrency").
@@ -293,15 +294,31 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 		return defaultLimit
 	}
 
-	if maxConc > 0 {
+	// NULL 表示跟随等级配置
+	if maxConc == nil {
+		_, effectiveConc, err := GetTenantEffectiveLimits(ctx, tenantID)
+		if err != nil {
+			return defaultLimit
+		}
+		if effectiveConc > 0 {
+			g.Redis().Do(ctx, "SET", cacheKey, effectiveConc, "EX", 300)
+			return effectiveConc
+		}
+		// 等级配置也是 0（不限），缓存 -1 标记，回退到全局默认
+		g.Redis().Do(ctx, "SET", cacheKey, -1, "EX", 300)
+		return defaultLimit
+	}
+
+	if *maxConc > 0 {
 		// 有自定义限制，缓存为实际值
-		g.Redis().Do(ctx, "SET", cacheKey, maxConc, "EX", 300)
-		return maxConc
+		g.Redis().Do(ctx, "SET", cacheKey, *maxConc, "EX", 300)
+		return *maxConc
 	}
 
 	// 数据库中为 0（不限），缓存 -1 标记，回退到全局默认
 	g.Redis().Do(ctx, "SET", cacheKey, -1, "EX", 300)
 	return defaultLimit
+
 }
 
 // getModelConcurrencyLimit 获取租户模型级并发上限。
