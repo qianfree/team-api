@@ -47,7 +47,7 @@ func TestPromoCodeCRUD(t *testing.T) {
 	createResp.AssertSuccess(t)
 	promoID := createResp.GetID(t)
 	defer func() {
-		client.Delete(fmt.Sprintf("/api/admin/promo-codes/%d", promoID))
+		testinfra.HardDeletePromoCode(t, promoID)
 	}()
 
 	// --- Verify creation via list ---
@@ -221,6 +221,6 @@ func createTestPromoCode(t *testing.T, client *testinfra.APIClient) (int64, func
 	resp.AssertSuccess(t)
 	id := resp.GetID(t)
 	return id, func() {
-		client.Delete(fmt.Sprintf("/api/admin/promo-codes/%d", id))
+		testinfra.HardDeletePromoCode(t, id)
 	}
 }

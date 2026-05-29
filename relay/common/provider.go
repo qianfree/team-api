@@ -18,6 +18,9 @@ var ErrStreamInterrupted = errors.New("stream interrupted by client disconnect")
 // ErrTenantModelNotEnabled 租户未启用该模型
 var ErrTenantModelNotEnabled = errors.New("model not enabled for this tenant")
 
+// ErrMemberModelNotAllowed 成员无权使用该模型
+var ErrMemberModelNotAllowed = errors.New("model not allowed for this member")
+
 // DeprecationInfo 模型弃用信息
 type DeprecationInfo struct {
 	Deprecated       bool
@@ -63,7 +66,8 @@ type DataProvider interface {
 
 	// GetAvailableModels 获取指定租户可用的模型列表。
 	// apiKeyID > 0 时进一步按 API Key 的模型范围过滤。
-	GetAvailableModels(ctx context.Context, tenantID int64, apiKeyID int64) ([]ModelInfo, error)
+	// userID > 0 时进一步按成员的模型范围过滤。
+	GetAvailableModels(ctx context.Context, tenantID, apiKeyID, userID int64) ([]ModelInfo, error)
 
 	// GetModelDetail 获取单个模型的详细信息。
 	// tenantID 用于权限校验（检查租户是否有权使用该模型）。
@@ -87,6 +91,9 @@ type DataProvider interface {
 	// CheckApiKeyModelAccess 检查 API Key 是否有权使用指定模型。
 	// 无 scope 记录表示不限制（向后兼容）。
 	CheckApiKeyModelAccess(ctx context.Context, apiKeyID int64, modelName string) (bool, error)
+
+	// InvalidateMemberModelCache 清除指定成员的模型范围缓存。
+	InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64)
 }
 
 // ApiKeyInfo API Key 验证结果

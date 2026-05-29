@@ -14,7 +14,7 @@ import (
 
 func getRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:         DefaultRedisAddr,
+		Addr:         GetRedisAddr(),
 		DB:           0,
 		DialTimeout:  3 * time.Second,
 		ReadTimeout:  3 * time.Second,
@@ -31,6 +31,9 @@ type LoginResult struct {
 
 func Authenticate(t *testing.T) *LoginResult {
 	t.Helper()
+	if DefaultUsername == "" || DefaultPassword == "" {
+		t.Fatal("TEST_ADMIN_USERNAME and TEST_ADMIN_PASSWORD environment variables must be set")
+	}
 	return AuthenticateWithCreds(t, DefaultUsername, DefaultPassword)
 }
 

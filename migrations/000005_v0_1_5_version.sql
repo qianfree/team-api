@@ -32,10 +32,10 @@ COMMENT ON COLUMN tnt_tenant_level_configs.sort_order IS '排序权重';
 -- 2. 插入默认等级数据
 INSERT INTO tnt_tenant_level_configs (level, name, cumulative_recharge_threshold, max_members, max_concurrency, price_multiplier, sort_order) VALUES
 (1, 'LV1', 0, 5, 10, 1.0000, 1),
-(2, 'LV2', 100, 10, 20, 0.9500, 2),
-(3, 'LV3', 500, 20, 50, 0.9000, 3),
-(4, 'LV4', 2000, 50, 100, 0.8500, 4),
-(5, 'LV5', 10000, 0, 0, 0.8000, 5);
+(2, 'LV2', 1000, 10, 20, 0.9500, 2),
+(3, 'LV3', 10000, 20, 50, 0.9000, 3),
+(4, 'LV4', 100000, 50, 100, 0.8500, 4),
+(5, 'LV5', 500000, 0, 0, 0.8000, 5);
 
 -- 3. bil_wallets 添加累计充值字段
 ALTER TABLE bil_wallets ADD COLUMN cumulative_recharge NUMERIC(20,10) DEFAULT 0 NOT NULL;

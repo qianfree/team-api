@@ -2,13 +2,16 @@ package tenant
 
 import (
 	"context"
-	"github.com/qianfree/team-api/internal/dao"
+	"fmt"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -29,10 +32,15 @@ func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberMod
 
 	ids := make([]int64, 0, len(rows))
 	for _, r := range rows {
-		ids = append(ids, r.ModelID)
+		if r.ModelID > 0 {
+			ids = append(ids, r.ModelID)
+		}
 	}
 	return &v1.TenantMemberModelScopesRes{ModelIDs: ids}, nil
 }
+
+// memberModelScopeCache 成员模型范围缓存（与 relay provider 中的缓存 key 相同）
+var memberModelScopeCache = lcommon.NewCache("member_model", 60*time.Second)
 
 // MemberModelScopesSet sets the available models for a member (full replace).
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
@@ -48,8 +56,8 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 			return err
 		}
 
-		// Insert new scopes
 		if len(req.ModelIDs) > 0 {
+			// Insert new scopes
 			data := make([]do.TntMemberModelScopes, len(req.ModelIDs))
 			for i, mID := range req.ModelIDs {
 				data[i] = do.TntMemberModelScopes{
@@ -62,6 +70,16 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 			if err != nil {
 				return err
 			}
+		} else {
+			// 空列表表示禁止所有模型，插入哨兵记录（model_id = -1）
+			_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+				TenantId: tenantID,
+				UserId:   req.Id,
+				ModelId:  -1,
+			}).Insert()
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -70,47 +88,9 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 		return nil, err
 	}
 
+	// 清除该成员的模型范围缓存，使下次请求时重新从数据库读取
+	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
+	memberModelScopeCache.Delete(ctx, cacheKey)
+
 	return &v1.TenantMemberModelScopesSetRes{}, nil
-}
-
-// revokeMemberModels removes specified models from a member and cascades to their API keys.
-func revokeMemberModels(ctx context.Context, tenantID, userID int64, modelIDs []int64) error {
-	if len(modelIDs) == 0 {
-		return nil
-	}
-
-	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// Remove from member model scopes
-		_, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Where("user_id", userID).
-			WhereIn("model_id", modelIDs).
-			Delete()
-		if err != nil {
-			return err
-		}
-
-		// Cascade: remove model bindings from all keys owned by this user
-		keyIDs, err := tx.Model("api_keys").Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Where("user_id", userID).
-			Where("status", "active").
-			Fields("id").
-			Array()
-		if err != nil {
-			return err
-		}
-
-		if len(keyIDs) > 0 {
-			_, err = tx.Model("api_key_model_scopes").Ctx(ctx).
-				WhereIn("api_key_id", keyIDs).
-				WhereIn("model_id", modelIDs).
-				Delete()
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
 }

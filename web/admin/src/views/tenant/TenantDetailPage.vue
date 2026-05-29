@@ -384,6 +384,46 @@ async function handleSaveGroups(done: () => void) {
   }
 }
 
+// === Available Models Preview ===
+const showPreviewModal = ref(false)
+const previewLoading = ref(false)
+const previewData = ref<any[]>([])
+
+const previewColumns: TableColumnData[] = [
+  { title: '模型标识', dataIndex: 'model_id', width: 180, ellipsis: true },
+  { title: '显示名', dataIndex: 'model_name', width: 150, ellipsis: true },
+  { title: '分类', dataIndex: 'category', width: 80 },
+  { title: '上下文', dataIndex: 'max_context_tokens', width: 100,
+    render({ record }) { return record.max_context_tokens ? record.max_context_tokens.toLocaleString() : '-' },
+  },
+  { title: '最大输出', dataIndex: 'max_output_tokens', width: 100,
+    render({ record }) { return record.max_output_tokens ? record.max_output_tokens.toLocaleString() : '-' },
+  },
+  { title: '来源', dataIndex: 'source', width: 80,
+    render({ record }) {
+      const color = record.source === 'explicit' ? 'arcoblue' : 'green'
+      const label = record.source === 'explicit' ? '独立分配' : '分组'
+      return h(Tag, { color, size: 'small' }, () => label)
+    },
+  },
+]
+
+async function fetchAvailableModels() {
+  previewLoading.value = true
+  try {
+    const res: any = await request.get(`/admin/tenants/${tenantId}/available-models`)
+    previewData.value = res.data?.data?.list || res.data?.list || []
+  } catch {
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function openPreviewModal() {
+  showPreviewModal.value = true
+  fetchAvailableModels()
+}
+
 // Load data when switching to models tab
 function onTabChange(key: string) {
   if (key === 'models') {
@@ -562,6 +602,9 @@ onMounted(() => {
     <ASpin :loading="loading" class="w-full">
       <template v-if="detail">
         <ATabs v-model:active-key="activeTab" @change="onTabChange">
+          <template #extra>
+            <AButton v-if="activeTab === 'models'" type="outline" size="small" @click="openPreviewModal">查看可用模型</AButton>
+          </template>
           <!-- Tab 1: Basic Info -->
           <ATabPane key="info" title="基本信息">
             <ACard :bordered="false" class="mb-4" title="租户信息">
@@ -761,6 +804,23 @@ onMounted(() => {
         :data="transferOptions"
         :title="['可分配模型', '已选模型']"
         searchable
+      />
+    </AModal>
+
+    <!-- Available Models Preview Modal -->
+    <AModal v-model:visible="showPreviewModal" title="租户可用模型" :width="800" :footer="false">
+      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
+        共 {{ previewData.length }} 个模型
+      </div>
+      <ATable
+        :columns="previewColumns"
+        :data="previewData"
+        :loading="previewLoading"
+        :bordered="false"
+        :stripe="true"
+        :pagination="false"
+        row-key="model_id"
+        size="small"
       />
     </AModal>
 

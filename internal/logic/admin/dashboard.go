@@ -3,17 +3,16 @@ package admin
 import (
 	"context"
 	"fmt"
-	"github.com/qianfree/team-api/internal/dao"
-	"github.com/qianfree/team-api/internal/logic/common"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
@@ -402,7 +401,7 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	}
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
-		return nil, gerror.New("钱包不存在或余额不足")
+		return nil, common.NewBadRequestError("钱包不存在或余额不足")
 	}
 
 	// 查询更新后的余额，用于记录流水
@@ -447,7 +446,7 @@ func (s *sAdmin) GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) 
 		Fields("id, balance, frozen_balance, warning_threshold").
 		Scan(&w)
 	if err != nil || w == nil {
-		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
+		return nil, common.NewNotFoundError("钱包")
 	}
 
 	return &v1.AdminWalletInfoRes{
@@ -470,7 +469,7 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 		Fields("id").
 		Scan(&w)
 	if err != nil || w == nil {
-		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
+		return nil, common.NewNotFoundError("钱包")
 	}
 
 	query := dao.BilTransactions.Ctx(ctx).Where("wallet_id", w.ID)
@@ -506,7 +505,7 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 		Fields("id").
 		Scan(&w)
 	if err != nil || w == nil {
-		return nil, gerror.Newf("wallet not found for tenant %d", req.TenantID)
+		return nil, common.NewNotFoundError("钱包")
 	}
 
 	_, err = dao.BilWallets.Ctx(ctx).

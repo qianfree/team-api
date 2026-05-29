@@ -71,6 +71,13 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		return nil, nil, fmt.Errorf("model not found: %s", modelName)
 	}
 
+	// 3.1 检查成员模型范围
+	if allowed, err := provider.CheckMemberModelAccess(ctx, rc.TenantID, rc.UserID, modelName); err != nil {
+		return nil, nil, err
+	} else if !allowed {
+		return nil, nil, constant.NewAuthError("model not allowed for this member")
+	}
+
 	// 4. 渠道选择
 	selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, modelName, nil)
 	if err != nil {
