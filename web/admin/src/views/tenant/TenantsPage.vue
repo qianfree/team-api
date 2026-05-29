@@ -353,7 +353,6 @@ const { exporting, exportFile } = useExport({
       :width="480"
       :on-before-ok="handleSubmit"
       :ok-loading="formLoading"
-      modal-class="modal-scroll"
     >
       <AForm ref="formRef" :model="form" :auto-label-width="true" layout="vertical">
         <AFormItem field="name" label="租户名称" :rules="[{ required: true, message: '请输入租户名称' }]">
@@ -390,7 +389,6 @@ const { exporting, exportFile } = useExport({
       :width="560"
       :on-before-ok="handleCreateSubmit"
       :ok-loading="createFormLoading"
-      modal-class="modal-scroll"
     >
       <AForm ref="createFormRef" :model="createForm" :auto-label-width="true" layout="vertical">
         <AFormItem field="tenant_name" label="租户名称" :rules="[{ required: true, message: '请输入租户名称' }, { minLength: 2, maxLength: 100, message: '租户名称长度为2-100位' }]">
@@ -428,18 +426,5 @@ const { exporting, exportFile } = useExport({
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
-}
-</style>
-
-<style>
-.modal-scroll {
-  max-height: calc(100vh - 100px);
-  display: flex;
-  flex-direction: column;
-}
-.modal-scroll > .arco-modal-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 </style>
