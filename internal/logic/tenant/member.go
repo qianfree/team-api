@@ -321,12 +321,13 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := extractTenantDeviceInfo(ctx)
-	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo)
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "创建会话失败")
 	}
 
-	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", invitation.Role, tenantID, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", invitation.Role, tenantID, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +510,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		Where("tenant_id", tenantID).
 		Data(do.TntUsers{
 			Status:      "removed",
-			Email:       fmt.Sprintf("[deleted]@removed.local"),
+			Email:       fmt.Sprintf("deleted_%d@removed.local", memberID),
 			DisplayName: "[已移除成员]",
 			Username:    fmt.Sprintf("deleted_%d", memberID),
 		}).Update()

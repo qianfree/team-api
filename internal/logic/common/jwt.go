@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // JWTClaims defines the payload of the access token.
@@ -81,7 +82,8 @@ func getIssuer(ctx context.Context) string {
 }
 
 // GenerateTokenPair creates an access token and a refresh token.
-func GenerateTokenPair(ctx context.Context, userID int64, userType, role string, tenantID, sessionID int64) (*TokenPair, error) {
+// jti is a UUID that uniquely identifies the session for revocation tracking.
+func GenerateTokenPair(ctx context.Context, userID int64, userType, role string, tenantID, sessionID int64, jti string) (*TokenPair, error) {
 	now := time.Now()
 	accessExpire := getAccessExpire(ctx)
 	issuer := getIssuer(ctx)
@@ -94,6 +96,7 @@ func GenerateTokenPair(ctx context.Context, userID int64, userType, role string,
 		TenantID:  tenantID,
 		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			Issuer:    issuer,
 			Subject:   fmt.Sprintf("%d", userID),
 			ExpiresAt: jwt.NewNumericDate(now.Add(accessExpire)),
@@ -154,6 +157,11 @@ func GenerateRefreshToken() (string, error) {
 		return "", gerror.Wrapf(err, "generate refresh token")
 	}
 	return hex.EncodeToString(bytes), nil
+}
+
+// GenerateJti generates a new UUID-based JWT ID for session revocation tracking.
+func GenerateJti() string {
+	return uuid.New().String()
 }
 
 // GetMaxSessions returns the max concurrent sessions for a user type.

@@ -61,12 +61,13 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := extractTenantDeviceInfo(ctx)
 
-	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, user.TenantId, refreshTokenHash, ipAddress, deviceInfo)
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, user.TenantId, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
 
-	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, user.TenantId, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, user.TenantId, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}
