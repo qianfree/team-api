@@ -149,12 +149,13 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	deviceInfo := extractTenantDeviceInfo(ctx)
-	sessionID, err := common.CreateSession(ctx, "tenant", ownerUserID, tenantID, refreshTokenHash, ipAddress, deviceInfo)
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "tenant", ownerUserID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
 
-	tokenPair, err := common.GenerateTokenPair(ctx, ownerUserID, "tenant", "owner", tenantID, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, ownerUserID, "tenant", "owner", tenantID, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}
@@ -342,12 +343,13 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 
 	// ipAddress already declared above for 2FA check
 	deviceInfo := extractTenantDeviceInfo(ctx)
-	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, tenant.Id, refreshTokenHash, ipAddress, deviceInfo)
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, tenant.Id, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
 
-	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, tenant.Id, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, tenant.Id, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}
@@ -389,8 +391,9 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 
 // Logout handles tenant user logout.
 func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.TenantLogoutRes, error) {
+	jti := middleware.GetJti(ctx)
 	sessionID := middleware.GetSessionID(ctx)
-	common.MarkSessionRevoked(ctx, sessionID)
+	common.MarkSessionRevoked(ctx, jti)
 	err := common.RevokeSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -412,7 +415,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 	if session.UserType != "tenant" {
 		return nil, common.NewUnauthorizedError("令牌类型不匹配")
 	}
-	if common.IsSessionRevoked(ctx, session.Id) {
+	if common.IsSessionRevoked(ctx, session.Jti) {
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
@@ -439,7 +442,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, common.NewUnauthorizedError("用户不存在")
 	}
 
-	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", tntUser.Role, session.TenantId, session.Id)
+	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", tntUser.Role, session.TenantId, session.Id, session.Jti)
 	if err != nil {
 		return nil, err
 	}
@@ -522,8 +525,15 @@ func (s *sTenant) ListSessions(ctx context.Context, req *v1.TenantSessionListReq
 
 // RevokeSession revokes a specific session.
 func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSessionReq) (*v1.TenantRevokeSessionRes, error) {
-	common.MarkSessionRevoked(ctx, req.Id)
-	err := common.RevokeSession(ctx, req.Id)
+	// Look up session to get jti for Redis revocation
+	sess, err := common.GetSessionByID(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if sess != nil {
+		common.MarkSessionRevoked(ctx, sess.Jti)
+	}
+	err = common.RevokeSession(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}

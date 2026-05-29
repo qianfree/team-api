@@ -242,7 +242,8 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		deviceInfo = fmt.Sprintf(`{"user_agent":"%s"}`, ua)
 	}
 
-	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo)
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +257,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	}
 
 	// 生成 JWT token pair
-	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", user.Role, tenantID, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", user.Role, tenantID, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}

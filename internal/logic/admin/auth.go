@@ -91,14 +91,15 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 
 	deviceInfo := extractDeviceInfo(ctx)
 
-	// Create session
-	sessionID, err := common.CreateSession(ctx, "admin", user.Id, 0, refreshTokenHash, ipAddress, deviceInfo)
+	// Create session with jti
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "admin", user.Id, 0, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
 
 	// Generate token pair
-	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}
@@ -140,10 +141,11 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 
 // Logout handles admin logout.
 func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLogoutRes, error) {
+	jti := common.GetCtxJti(ctx)
 	sessionID := common.GetCtxSessionID(ctx)
 
 	// Mark session as revoked in Redis for instant effect
-	common.MarkSessionRevoked(ctx, sessionID)
+	common.MarkSessionRevoked(ctx, jti)
 
 	// Delete session from database
 	err := common.RevokeSession(ctx, sessionID)
@@ -172,7 +174,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 	}
 
 	// Check if session is revoked
-	if common.IsSessionRevoked(ctx, session.Id) {
+	if common.IsSessionRevoked(ctx, session.Jti) {
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
@@ -201,8 +203,8 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 		return nil, common.NewUnauthorizedError("用户不存在")
 	}
 
-	// Generate new token pair with same session ID
-	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, session.UserType, adminUser.Role, 0, session.Id)
+	// Generate new token pair with same session ID and jti
+	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, session.UserType, adminUser.Role, 0, session.Id, session.Jti)
 	if err != nil {
 		return nil, err
 	}
@@ -301,8 +303,15 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
-	common.MarkSessionRevoked(ctx, req.Id)
-	err := common.RevokeSession(ctx, req.Id)
+	// Look up session to get jti for Redis revocation
+	sess, err := common.GetSessionByID(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if sess != nil {
+		common.MarkSessionRevoked(ctx, sess.Jti)
+	}
+	err = common.RevokeSession(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -311,14 +320,7 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 
 // ForceLogout revokes all sessions for a specific user.
 func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error) {
-	sessions, err := common.ListSessions(ctx, "admin", req.Id)
-	if err != nil {
-		return nil, err
-	}
-	for _, sess := range sessions {
-		common.MarkSessionRevoked(ctx, sess.ID)
-	}
-	err = common.RevokeAllSessions(ctx, "admin", req.Id)
+	err := common.RevokeAllSessions(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
 	}

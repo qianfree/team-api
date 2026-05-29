@@ -18,6 +18,7 @@ import (
 // SessionInfo represents a user session for API responses.
 type SessionInfo struct {
 	ID         int64       `json:"id"`
+	Jti        string      `json:"jti"`
 	UserType   string      `json:"user_type"`
 	UserID     int64       `json:"user_id"`
 	TenantID   int64       `json:"tenant_id,omitempty"`
@@ -28,7 +29,7 @@ type SessionInfo struct {
 }
 
 // CreateSession creates a new session in the database and enforces max session limit.
-func CreateSession(ctx context.Context, userType string, userID, tenantID int64, refreshTokenHash, ipAddress, deviceInfo string) (sessionID int64, err error) {
+func CreateSession(ctx context.Context, userType string, userID, tenantID int64, refreshTokenHash, ipAddress, deviceInfo, jti string) (sessionID int64, err error) {
 	maxSessions := GetMaxSessions(ctx, userType)
 	refreshExpire := getRefreshExpire(ctx)
 	expiresAt := gtime.New(time.Now().Add(refreshExpire))
@@ -79,6 +80,7 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 			RefreshTokenHash: refreshTokenHash,
 			IpAddress:        ipAddress,
 			DeviceInfo:       deviceInfo,
+			Jti:              jti,
 			ExpiresAt:        expiresAt,
 		}).Insert()
 		if err != nil {
@@ -126,7 +128,7 @@ func RefreshSession(ctx context.Context, sessionID int64, oldRefreshTokenHash, n
 	return nil
 }
 
-// RevokeSession revokes a single session by ID.
+// RevokeSession revokes a single session by ID (DB only; use MarkSessionRevoked for Redis).
 func RevokeSession(ctx context.Context, sessionID int64) error {
 	_, err := dao.SysSessions.Ctx(ctx).
 		Where("id", sessionID).
@@ -134,9 +136,19 @@ func RevokeSession(ctx context.Context, sessionID int64) error {
 	return err
 }
 
-// RevokeAllSessions revokes all active sessions for a user.
+// RevokeAllSessions revokes all active sessions for a user (DB + Redis).
 func RevokeAllSessions(ctx context.Context, userType string, userID int64) error {
-	_, err := dao.SysSessions.Ctx(ctx).
+	// Mark all active sessions as revoked in Redis first
+	sessions, err := ListSessions(ctx, userType, userID)
+	if err != nil {
+		return err
+	}
+	for _, sess := range sessions {
+		MarkSessionRevoked(ctx, sess.Jti)
+	}
+
+	// Delete from DB
+	_, err = dao.SysSessions.Ctx(ctx).
 		Where("user_type", userType).
 		Where("user_id", userID).
 		Where("expires_at > NOW()").
@@ -161,6 +173,7 @@ func ListSessions(ctx context.Context, userType string, userID int64) ([]Session
 	for i, s := range sessions {
 		result[i] = SessionInfo{
 			ID:         s.Id,
+			Jti:        s.Jti,
 			UserType:   s.UserType,
 			UserID:     s.UserId,
 			TenantID:   s.TenantId,
@@ -174,8 +187,9 @@ func ListSessions(ctx context.Context, userType string, userID int64) ([]Session
 }
 
 // IsSessionRevoked checks if a session has been revoked (via Redis blacklist).
-func IsSessionRevoked(ctx context.Context, sessionID int64) bool {
-	key := fmt.Sprintf("session:revoked:%d", sessionID)
+// Uses the JWT ID (jti) as the cache key — unique per session, independent of DB sequences.
+func IsSessionRevoked(ctx context.Context, jti string) bool {
+	key := fmt.Sprintf("session:revoked:%s", jti)
 	val, err := g.Redis().Do(ctx, "GET", key)
 	if err != nil || val.IsNil() {
 		return false
@@ -184,8 +198,8 @@ func IsSessionRevoked(ctx context.Context, sessionID int64) bool {
 }
 
 // MarkSessionRevoked adds a session to the Redis blacklist for instant revocation.
-func MarkSessionRevoked(ctx context.Context, sessionID int64) {
-	key := fmt.Sprintf("session:revoked:%d", sessionID)
+func MarkSessionRevoked(ctx context.Context, jti string) {
+	key := fmt.Sprintf("session:revoked:%s", jti)
 	// Set TTL to refresh token expiry (7 days) to auto-cleanup
 	_, _ = g.Redis().Do(ctx, "SETEX", key, 7*24*3600, "1")
 }
@@ -234,7 +248,6 @@ func CleanExpiredSessions(ctx context.Context) (int64, error) {
 }
 
 // GetCtxUserID extracts user ID from context.
-// The key "userId" is set by admin_auth or tenant_auth middleware.
 func GetCtxUserID(ctx context.Context) int64 {
 	val := ctx.Value("userId")
 	if val == nil {
@@ -247,7 +260,6 @@ func GetCtxUserID(ctx context.Context) int64 {
 }
 
 // GetCtxSessionID extracts session ID from context.
-// The key "sessionId" is set by admin_auth or tenant_auth middleware.
 func GetCtxSessionID(ctx context.Context) int64 {
 	val := ctx.Value("sessionId")
 	if val == nil {
@@ -257,4 +269,16 @@ func GetCtxSessionID(ctx context.Context) int64 {
 		return id
 	}
 	return 0
+}
+
+// GetCtxJti extracts the JWT ID (jti) from context.
+func GetCtxJti(ctx context.Context) string {
+	val := ctx.Value("jti")
+	if val == nil {
+		return ""
+	}
+	if jti, ok := val.(string); ok {
+		return jti
+	}
+	return ""
 }

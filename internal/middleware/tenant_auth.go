@@ -48,8 +48,8 @@ func TenantAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Check if session is revoked
-	if common.IsSessionRevoked(r.Context(), claims.SessionID) {
+	// Check if session is revoked by jti (JWT ID)
+	if claims.ID != "" && common.IsSessionRevoked(r.Context(), claims.ID) {
 		response.ErrorWithCode(r, consts.CodeUnauthorized, consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 		return
 	}
@@ -73,6 +73,7 @@ func TenantAuth(r *ghttp.Request) {
 	r.SetCtxVar(CtxKeyRole, claims.Role)
 	r.SetCtxVar(CtxKeyTenantID, claims.TenantID)
 	r.SetCtxVar(CtxKeySessionID, claims.SessionID)
+	r.SetCtxVar(CtxKeyJti, claims.ID)
 
 	r.Middleware.Next()
 }

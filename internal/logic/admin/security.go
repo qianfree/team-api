@@ -62,14 +62,15 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := extractDeviceInfo(ctx)
 
-	// Create session
-	sessionID, err := common.CreateSession(ctx, "admin", user.Id, 0, refreshTokenHash, ipAddress, deviceInfo)
+	// Create session with jti
+	jti := common.GenerateJti()
+	sessionID, err := common.CreateSession(ctx, "admin", user.Id, 0, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
 
 	// Generate token pair
-	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID)
+	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)
 	if err != nil {
 		return nil, err
 	}

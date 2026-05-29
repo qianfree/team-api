@@ -19,6 +19,7 @@ const (
 	CtxKeyRole      = "role"
 	CtxKeyTenantID  = "tenantId"
 	CtxKeySessionID = "sessionId"
+	CtxKeyJti       = "jti"
 	CtxKeyApiKeyID  = "apiKeyId"
 	CtxKeyProjectID = "projectId"
 )
@@ -57,8 +58,8 @@ func AdminAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Check if session is revoked
-	if common.IsSessionRevoked(r.Context(), claims.SessionID) {
+	// Check if session is revoked by jti (JWT ID)
+	if claims.ID != "" && common.IsSessionRevoked(r.Context(), claims.ID) {
 		response.ErrorWithCode(r, consts.CodeUnauthorized, consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 		return
 	}
@@ -81,6 +82,7 @@ func AdminAuth(r *ghttp.Request) {
 	r.SetCtxVar(CtxKeyUserType, claims.UserType)
 	r.SetCtxVar(CtxKeyRole, claims.Role)
 	r.SetCtxVar(CtxKeySessionID, claims.SessionID)
+	r.SetCtxVar(CtxKeyJti, claims.ID)
 
 	r.Middleware.Next()
 }
@@ -131,6 +133,18 @@ func GetSessionID(ctx context.Context) int64 {
 		return id
 	}
 	return 0
+}
+
+// GetJti extracts the JWT ID (jti) from context.
+func GetJti(ctx context.Context) string {
+	val := ctx.Value(CtxKeyJti)
+	if val == nil {
+		return ""
+	}
+	if jti, ok := val.(string); ok {
+		return jti
+	}
+	return ""
 }
 
 // GetTenantID extracts tenant ID from context.
