@@ -13,7 +13,12 @@ type TenantRedeemCodeReq struct {
 }
 
 type TenantRedeemCodeRes struct {
-	Data map[string]any `json:"data"`
+	Code         string  `json:"code"`
+	Type         string  `json:"type"`
+	Credited     float64 `json:"credited,omitempty"`
+	PlanId       int64   `json:"plan_id,omitempty"`
+	Months       int     `json:"months,omitempty"`
+	ExtendedDays int     `json:"extended_days,omitempty"`
 }
 
 type TenantValidatePromoCodeReq struct {
@@ -23,7 +28,10 @@ type TenantValidatePromoCodeReq struct {
 }
 
 type TenantValidatePromoCodeRes struct {
-	Data map[string]any `json:"data"`
+	PromoCodeId int64   `json:"promo_code_id"`
+	Type        string  `json:"type"`
+	Discount    float64 `json:"discount"`
+	FinalAmount float64 `json:"final_amount"`
 }
 
 type TenantRedemptionUsagesReq struct {

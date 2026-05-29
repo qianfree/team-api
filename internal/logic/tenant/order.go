@@ -57,7 +57,7 @@ func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq)
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	var order map[string]any
+	var order *v1.TenantOrderItem
 	err := dao.OrdOrders.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
@@ -68,7 +68,7 @@ func (s *sTenant) OrderDetail(ctx context.Context, req *v1.TenantOrderDetailReq)
 	if order == nil {
 		return nil, lcommon.NewNotFoundError("订单")
 	}
-	return &v1.TenantOrderDetailRes{Data: order}, nil
+	return &v1.TenantOrderDetailRes{TenantOrderItem: order}, nil
 }
 
 // OrderCreate 创建订单

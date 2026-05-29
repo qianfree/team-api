@@ -55,9 +55,7 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 		return nil, err
 	}
 
-	return &v1.TenantMemberImportRes{Data: map[string]any{
-		"id": importID,
-	}}, nil
+	return &v1.TenantMemberImportRes{ID: importID}, nil
 }
 
 // ImportRecords returns a paginated list of import records.
@@ -144,24 +142,24 @@ func (s *sTenant) ImportRecordGet(ctx context.Context, req *v1.TenantImportRecor
 		return nil, common.NewNotFoundError("导入记录")
 	}
 
-	result := map[string]any{
-		"id":            record.ID,
-		"filename":      record.Filename,
-		"total_count":   record.TotalCount,
-		"success_count": record.SuccessCount,
-		"fail_count":    record.FailCount,
-		"skip_count":    record.SkipCount,
-		"status":        record.Status,
-		"error_message": record.ErrorMessage,
+	res := &v1.TenantImportRecordGetRes{
+		Id:           record.ID,
+		Filename:     record.Filename,
+		TotalCount:   record.TotalCount,
+		SuccessCount: record.SuccessCount,
+		FailCount:    record.FailCount,
+		SkipCount:    record.SkipCount,
+		Status:       record.Status,
+		ErrorMessage: record.ErrorMessage,
 	}
 
 	if record.ResultJSON != "" {
 		var details []ImportResult
 		json.Unmarshal([]byte(record.ResultJSON), &details)
-		result["details"] = details
+		res.Details = details
 	}
 
-	return &v1.TenantImportRecordGetRes{Data: result}, nil
+	return res, nil
 }
 
 // -- internal helpers --

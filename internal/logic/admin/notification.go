@@ -40,16 +40,17 @@ func (s *sAdmin) ListTemplates(ctx context.Context, req *v1.TemplateListReq) (*v
 
 // GetTemplate 获取单个通知模板
 func (s *sAdmin) GetTemplate(ctx context.Context, req *v1.TemplateGetReq) (*v1.TemplateGetRes, error) {
-	record, err := dao.NtfTemplates.Ctx(ctx).
+	var tpl *v1.TemplateGetRes
+	err := dao.NtfTemplates.Ctx(ctx).
 		Where("code", req.Code).
-		One()
+		Scan(&tpl)
 	if err != nil {
 		return nil, err
 	}
-	if record == nil {
+	if tpl == nil {
 		return nil, common.NewNotFoundError("template")
 	}
-	return &v1.TemplateGetRes{Data: record.Map()}, nil
+	return tpl, nil
 }
 
 // UpdateTemplate 更新通知模板
@@ -92,41 +93,32 @@ func (s *sAdmin) TestTemplate(ctx context.Context, req *v1.TemplateTestReq) (*v1
 		return nil, common.NewNotFoundError("template")
 	}
 
-	type renderResult struct {
-		Original string `json:"original"`
-		Rendered string `json:"rendered"`
-		Error    string `json:"error,omitempty"`
-	}
-
 	subjectRendered, subjectErr := renderGoTemplate(tpl.Subject, req.Variables)
 	bodyRendered, bodyErr := renderGoTemplate(tpl.BodyTemplate, req.Variables)
 
-	result := map[string]any{
-		"subject": renderResult{
-			Original: tpl.Subject,
-			Rendered: subjectRendered,
-		},
-		"body": renderResult{
-			Original: tpl.BodyTemplate,
-			Rendered: bodyRendered,
-		},
-		"channel": tpl.Channel,
+	subjectResult := v1.TemplateRenderResult{
+		Original: tpl.Subject,
+	}
+	if subjectErr != nil {
+		subjectResult.Error = subjectErr.Error()
+	} else {
+		subjectResult.Rendered = subjectRendered
 	}
 
-	if subjectErr != nil {
-		result["subject"] = renderResult{
-			Original: tpl.Subject,
-			Error:    subjectErr.Error(),
-		}
+	bodyResult := v1.TemplateRenderResult{
+		Original: tpl.BodyTemplate,
 	}
 	if bodyErr != nil {
-		result["body"] = renderResult{
-			Original: tpl.BodyTemplate,
-			Error:    bodyErr.Error(),
-		}
+		bodyResult.Error = bodyErr.Error()
+	} else {
+		bodyResult.Rendered = bodyRendered
 	}
 
-	return &v1.TemplateTestRes{Data: result}, nil
+	return &v1.TemplateTestRes{
+		Subject: subjectResult,
+		Body:    bodyResult,
+		Channel: tpl.Channel,
+	}, nil
 }
 
 // SendMessage 创建手动站内消息并推送 WebSocket 通知

@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 租户审计 ===
 
@@ -60,5 +64,9 @@ type TenantRequestAuditLogDetailReq struct {
 }
 
 type TenantRequestAuditLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *TenantRequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }

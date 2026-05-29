@@ -94,7 +94,7 @@ type GroupModelItem struct {
 type GroupModelsSetReq struct {
 	g.Meta   `path:"/model-groups/{id}/models" method:"put" mime:"json" tags:"管理后台-模型分组" summary:"设置分组内模型"`
 	ID       int64   `json:"id" in:"path" v:"required" dc:"分组ID"`
-	ModelIds []int64 `json:"model_ids" v:"required#请选择模型" dc:"模型ID列表"`
+	ModelIds []int64 `json:"model_ids" dc:"模型ID列表（空数组表示清空）"`
 }
 
 // GroupModelsSetRes 设置分组内模型响应
@@ -126,7 +126,7 @@ type TenantGroupItem struct {
 type TenantGroupsSetReq struct {
 	g.Meta   `path:"/tenants/{tenant_id}/groups" method:"put" mime:"json" tags:"管理后台-模型分组" summary:"设置租户关联分组"`
 	TenantID int64   `json:"tenant_id" in:"path" v:"required" dc:"租户ID"`
-	GroupIds []int64 `json:"group_ids" v:"required#请选择分组" dc:"分组ID列表"`
+	GroupIds []int64 `json:"group_ids" dc:"分组ID列表（空数组表示清空）"`
 }
 
 // TenantGroupsSetRes 设置租户关联分组响应

@@ -61,7 +61,16 @@ type TenantProjectGetReq struct {
 }
 
 type TenantProjectGetRes struct {
-	Data map[string]any `json:"data"`
+	Id            int64   `json:"id"`
+	Name          string  `json:"name"`
+	Description   string  `json:"description"`
+	Status        string  `json:"status"`
+	Budget        *string `json:"budget"`
+	CreatedBy     int64   `json:"created_by"`
+	ActiveKeys    int     `json:"active_keys"`
+	TotalKeys     int     `json:"total_keys"`
+	MonthCost     float64 `json:"month_cost"`
+	MonthRequests int64   `json:"month_requests"`
 }
 
 // === 项目子资源（owner/admin 权限） ===

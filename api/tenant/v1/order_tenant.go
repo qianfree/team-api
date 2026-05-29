@@ -80,7 +80,7 @@ type TenantOrderDetailReq struct {
 }
 
 type TenantOrderDetailRes struct {
-	Data map[string]any `json:"data"`
+	*TenantOrderItem
 }
 
 type TenantOrderCancelReq struct {

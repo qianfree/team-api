@@ -23,7 +23,15 @@ type TenantImportRecordGetReq struct {
 }
 
 type TenantImportRecordGetRes struct {
-	Data map[string]any `json:"data"`
+	Id           int64  `json:"id"`
+	Filename     string `json:"filename"`
+	TotalCount   int    `json:"total_count"`
+	SuccessCount int    `json:"success_count"`
+	FailCount    int    `json:"fail_count"`
+	SkipCount    int    `json:"skip_count"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message"`
+	Details      any    `json:"details,omitempty"`
 }
 
 type TenantMemberImportReq struct {
@@ -31,5 +39,5 @@ type TenantMemberImportReq struct {
 }
 
 type TenantMemberImportRes struct {
-	Data map[string]any `json:"data"`
+	ID int64 `json:"id"`
 }

@@ -45,7 +45,11 @@ type MonitorDBPoolReq struct {
 }
 
 type MonitorDBPoolRes struct {
-	Data map[string]any `json:"data"`
+	ActiveConnections int `json:"active_connections"`
+	IdleConnections   int `json:"idle_connections"`
+	TotalConnections  int `json:"total_connections"`
+	MaxConnections    int `json:"max_connections"`
+	WaitingQueries    int `json:"waiting_queries"`
 }
 
 type MonitorRedisPoolReq struct {
@@ -53,7 +57,15 @@ type MonitorRedisPoolReq struct {
 }
 
 type MonitorRedisPoolRes struct {
-	Data map[string]any `json:"data"`
+	ConnectedClients  int     `json:"connected_clients"`
+	UsedMemoryMB      float64 `json:"used_memory_mb"`
+	MaxMemoryMB       float64 `json:"max_memory_mb"`
+	UsedMemoryPercent float64 `json:"used_memory_percent"`
+	TotalCommands     int64   `json:"total_commands"`
+	InstantaneousOps  int64   `json:"instantaneous_ops"`
+	KeyspaceHits      int64   `json:"keyspace_hits"`
+	KeyspaceMisses    int64   `json:"keyspace_misses"`
+	HitRate           float64 `json:"hit_rate"`
 }
 
 // === 实时监控 ===

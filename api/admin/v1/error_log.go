@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 系统错误日志 ===
 
@@ -29,7 +33,11 @@ type ErrorLogDetailReq struct {
 }
 
 type ErrorLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *ErrorLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type ErrorLogResolveReq struct {

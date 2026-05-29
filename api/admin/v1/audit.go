@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 审计管理 ===
 
@@ -81,7 +85,11 @@ type RequestAuditLogDetailReq struct {
 }
 
 type RequestAuditLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *RequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // OperationLogExportReq 导出操作日志请求
