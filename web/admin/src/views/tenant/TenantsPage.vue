@@ -42,6 +42,9 @@ const statusTagLabel: Record<string, string> = {
   closed: '已关闭',
 }
 
+// Level config options
+const levelOptions = ref<any[]>([])
+
 // Edit modal
 const showModal = ref(false)
 const modalTitle = ref('编辑租户')
@@ -52,7 +55,9 @@ const editingVersion = ref(0)
 
 const form = reactive({
   name: '',
-  max_members: 10 as number | null,
+  max_members: null as number | null,
+  max_concurrency: null as number | null,
+  level: null as number | null,
 })
 
 // Create modal
@@ -76,8 +81,8 @@ function openCreate() {
   createForm.username = ''
   createForm.email = ''
   createForm.password = ''
-  createForm.max_members = 10
-  createForm.max_concurrency = 0
+  createForm.max_members = null
+  createForm.max_concurrency = null
   showCreateModal.value = true
 }
 
@@ -91,7 +96,16 @@ async function handleCreateSubmit(done: () => void) {
 
   createFormLoading.value = true
   try {
-    await request.post('/admin/tenants', createForm)
+    const payload: Record<string, any> = {
+      tenant_name: createForm.tenant_name,
+      tenant_code: createForm.tenant_code,
+      username: createForm.username,
+      email: createForm.email,
+      password: createForm.password,
+    }
+    if (createForm.max_members != null) payload.max_members = createForm.max_members
+    if (createForm.max_concurrency != null) payload.max_concurrency = createForm.max_concurrency
+    await request.post('/admin/tenants', payload)
     Message.success('租户创建成功')
     done()
     fetchData()
@@ -116,12 +130,43 @@ const columns: TableColumnData[] = [
   },
   { title: '所有者', dataIndex: 'owner_name', width: 100, ellipsis: true },
   { title: '成员', dataIndex: 'member_count', width: 70 },
-  { title: '成员上限', dataIndex: 'max_members', width: 80 },
+  {
+    title: '成员上限',
+    dataIndex: 'effective_max_members',
+    width: 100,
+    render({ record }) {
+      const val = record.effective_max_members ?? record.max_members
+      const custom = record.max_members != null ? ' (自定义)' : ''
+      return `${val}${custom}`
+    },
+  },
   {
     title: '并发上限',
-    dataIndex: 'max_concurrency',
-    width: 80,
-    render({ record }) { return record.max_concurrency || '不限' },
+    dataIndex: 'effective_max_concurrency',
+    width: 100,
+    render({ record }) {
+      const val = record.effective_max_concurrency ?? record.max_concurrency
+      const custom = record.max_concurrency != null ? ' (自定义)' : ''
+      return val ? `${val}${custom}` : `不限${custom}`
+    },
+  },
+  {
+    title: '等级',
+    dataIndex: 'level',
+    width: 130,
+    render({ record }) {
+      const lv = record.level
+      const lvConfig = levelOptions.value.find((o: any) => o.level === lv)
+      const name = lvConfig?.name || (lv != null ? `LV${lv}` : '-')
+      const tags = [
+        h(Tag, { color: 'blue', size: 'small' }, () => name),
+      ]
+      if (lvConfig && lvConfig.price_multiplier != null && lvConfig.price_multiplier < 1) {
+        const discount = Math.round((1 - lvConfig.price_multiplier) * 100)
+        tags.push(h(Tag, { color: 'green', size: 'small' }, () => `${discount}%折扣`))
+      }
+      return h(Space, { size: 4 }, () => tags)
+    },
   },
   {
     title: '钱包余额',
@@ -178,7 +223,9 @@ function openEdit(row: any) {
   editingId.value = row.id
   editingVersion.value = row.version || 0
   form.name = row.name
-  form.max_members = row.max_members
+  form.max_members = row.max_members ?? null
+  form.max_concurrency = row.max_concurrency ?? null
+  form.level = row.level ?? null
   showModal.value = true
 }
 
@@ -195,6 +242,8 @@ async function handleSubmit(done: () => void) {
     await request.put(`/admin/tenants/${editingId.value}`, {
       name: form.name,
       max_members: form.max_members,
+      max_concurrency: form.max_concurrency,
+      level: form.level,
     })
     Message.success('更新成功')
     done()
@@ -212,7 +261,17 @@ function openDetail(row: any) {
 
 onMounted(() => {
   fetchData()
+  fetchLevelConfigs()
 })
+
+async function fetchLevelConfigs() {
+  try {
+    const res: any = await request.get('/admin/tenant-level-configs')
+    levelOptions.value = res.data?.data?.list || res.data?.list || res.data?.data || []
+  } catch {
+    levelOptions.value = []
+  }
+}
 
 const { exporting, exportFile } = useExport({
   url: '/admin/tenants/export',
@@ -294,14 +353,32 @@ const { exporting, exportFile } = useExport({
       :width="480"
       :on-before-ok="handleSubmit"
       :ok-loading="formLoading"
+      modal-class="modal-scroll"
     >
       <AForm ref="formRef" :model="form" :auto-label-width="true" layout="vertical">
         <AFormItem field="name" label="租户名称" :rules="[{ required: true, message: '请输入租户名称' }]">
           <AInput v-model="form.name" placeholder="请输入租户名称" />
         </AFormItem>
-        <AFormItem field="max_members" label="最大成员数" :rules="[{ required: true, message: '请输入最大成员数' }]">
-          <AInputNumber v-model="form.max_members" :min="1" :max="10000" placeholder="最大成员数" class="w-full" />
+        <AFormItem field="level" label="租户等级">
+          <ASelect
+            v-model="form.level"
+            placeholder="请选择等级"
+            allow-clear
+            class="w-full"
+          >
+            <AOption v-for="opt in levelOptions" :key="opt.level" :value="opt.level">
+              {{ opt.name }}（{{ opt.price_multiplier != null ? Math.round((1 - opt.price_multiplier) * 100) : 0 }}%）
+            </AOption>
+          </ASelect>
         </AFormItem>
+        <ASpace :size="16" class="w-full">
+          <AFormItem field="max_members" label="最大成员数" extra="留空跟随等级" class="flex-1">
+            <AInputNumber v-model="form.max_members" :min="1" :max="10000" placeholder="最大成员数" allow-clear class="w-full" />
+          </AFormItem>
+          <AFormItem field="max_concurrency" label="并发上限" extra="留空跟随等级" class="flex-1">
+            <AInputNumber v-model="form.max_concurrency" :min="0" placeholder="并发上限" allow-clear class="w-full" />
+          </AFormItem>
+        </ASpace>
       </AForm>
     </AModal>
 
@@ -313,6 +390,7 @@ const { exporting, exportFile } = useExport({
       :width="560"
       :on-before-ok="handleCreateSubmit"
       :ok-loading="createFormLoading"
+      modal-class="modal-scroll"
     >
       <AForm ref="createFormRef" :model="createForm" :auto-label-width="true" layout="vertical">
         <AFormItem field="tenant_name" label="租户名称" :rules="[{ required: true, message: '请输入租户名称' }, { minLength: 2, maxLength: 100, message: '租户名称长度为2-100位' }]">
@@ -330,12 +408,14 @@ const { exporting, exportFile } = useExport({
         <AFormItem field="password" label="管理员密码" :rules="[{ required: true, message: '请输入密码' }, { minLength: 8, maxLength: 64, message: '密码长度为8-64位' }]">
           <AInput v-model="createForm.password" type="password" placeholder="需包含大小写字母和数字，至少8位" />
         </AFormItem>
-        <AFormItem field="max_members" label="最大成员数">
-          <AInputNumber v-model="createForm.max_members" :min="1" :max="10000" placeholder="默认10" class="w-full" />
-        </AFormItem>
-        <AFormItem field="max_concurrency" label="并发上限" extra="0 表示不限制">
-          <AInputNumber v-model="createForm.max_concurrency" :min="0" placeholder="默认0（不限）" class="w-full" />
-        </AFormItem>
+        <ASpace :size="16" class="w-full">
+          <AFormItem field="max_members" label="最大成员数" extra="留空跟随等级" class="flex-1">
+            <AInputNumber v-model="createForm.max_members" :min="1" :max="10000" placeholder="留空跟随等级" allow-clear class="w-full" />
+          </AFormItem>
+          <AFormItem field="max_concurrency" label="并发上限" extra="留空跟随等级" class="flex-1">
+            <AInputNumber v-model="createForm.max_concurrency" :min="0" placeholder="留空跟随等级" allow-clear class="w-full" />
+          </AFormItem>
+        </ASpace>
       </AForm>
     </AModal>
   </div>
@@ -348,5 +428,18 @@ const { exporting, exportFile } = useExport({
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+</style>
+
+<style>
+.modal-scroll {
+  max-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+}
+.modal-scroll > .arco-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 </style>

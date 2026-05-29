@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -32,7 +33,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		LogoUrl    string `json:"logo_url"`
 		Status     string `json:"status"`
 		Level      int    `json:"level"`
-		MaxMembers int    `json:"max_members"`
+		MaxMembers *int   `json:"max_members"`
 		CreatedAt  string `json:"created_at"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
@@ -61,6 +62,14 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 			Scan(&levelName)
 	}
 
+	// 计算实际生效的成员数上限（NULL时取等级配置）
+	effectiveMaxMembers := 10
+	if tenant.MaxMembers != nil {
+		effectiveMaxMembers = *tenant.MaxMembers
+	} else {
+		effectiveMaxMembers, _, _ = billing.GetTenantEffectiveLimits(ctx, tenantID)
+	}
+
 	return &v1.TenantOrgInfoRes{
 		ID:          tenant.Id,
 		Name:        tenant.Name,
@@ -69,7 +78,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		Status:      tenant.Status,
 		Level:       tenant.Level,
 		LevelName:   levelName,
-		MaxMembers:  tenant.MaxMembers,
+		MaxMembers:  effectiveMaxMembers,
 		MemberCount: int(memberCount),
 		CreatedAt:   tenant.CreatedAt,
 	}, nil

@@ -35,22 +35,24 @@ type TenantListRes struct {
 }
 
 type TenantItem struct {
-	ID                  int64  `json:"id"`
-	Name                string `json:"name"`
-	Code                string `json:"code"`
-	LogoURL             string `json:"logo_url"`
-	OwnerUserID         int64  `json:"owner_user_id"`
-	OwnerName           string `json:"owner_name"`
-	Status              string `json:"status"`
-	MaxMembers          int    `json:"max_members"`
-	MaxConcurrency      int    `json:"max_concurrency"`
-	DefaultChannelScope string `json:"default_channel_scope"`
-	MemberCount         int    `json:"member_count"`
-	WalletBalance       string `json:"wallet_balance"`
-	Level               int    `json:"level"`
-	LevelName           string `json:"level_name"`
-	CreatedAt           string `json:"created_at"`
-	UpdatedAt           string `json:"updated_at"`
+	ID                      int64  `json:"id"`
+	Name                    string `json:"name"`
+	Code                    string `json:"code"`
+	LogoURL                 string `json:"logo_url"`
+	OwnerUserID             int64  `json:"owner_user_id"`
+	OwnerName               string `json:"owner_name"`
+	Status                  string `json:"status"`
+	MaxMembers              *int   `json:"max_members" dc:"最大成员数上限，NULL表示跟随等级配置"`
+	MaxConcurrency          *int   `json:"max_concurrency" dc:"并发上限，NULL表示跟随等级配置"`
+	EffectiveMaxMembers     int    `json:"effective_max_members" dc:"实际生效的成员数上限"`
+	EffectiveMaxConcurrency int    `json:"effective_max_concurrency" dc:"实际生效的并发上限"`
+	DefaultChannelScope     string `json:"default_channel_scope"`
+	MemberCount             int    `json:"member_count"`
+	WalletBalance           string `json:"wallet_balance"`
+	Level                   int    `json:"level"`
+	LevelName               string `json:"level_name"`
+	CreatedAt               string `json:"created_at"`
+	UpdatedAt               string `json:"updated_at"`
 }
 
 // TenantGetReq 获取租户详情

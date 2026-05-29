@@ -13,6 +13,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -41,11 +42,10 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 	var userID int64
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// Check tenant exists and get max_members
+		// Check tenant exists and status
 		var tenant *struct {
-			Id         int64  `json:"id"`
-			MaxMembers int    `json:"max_members"`
-			Status     string `json:"status"`
+			Id     int64  `json:"id"`
+			Status string `json:"status"`
 		}
 		err := tx.Model("tnt_tenants").Ctx(ctx).
 			Where("id", req.TenantID).Scan(&tenant)
@@ -59,7 +59,11 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 			return common.NewBadRequestError("租户状态异常，无法添加成员")
 		}
 
-		// Check member limit
+		// Check member limit（NULL时取等级配置）
+		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, req.TenantID)
+		if err != nil {
+			return err
+		}
 		memberCount, err := tx.Model("tnt_users").Ctx(ctx).
 			Where("tenant_id", req.TenantID).
 			Where("status", "active").
@@ -67,7 +71,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		if err != nil {
 			return err
 		}
-		if memberCount >= tenant.MaxMembers {
+		if memberCount >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
@@ -311,22 +312,19 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 			Where("status", "active").
 			Count()
 
-		var tenant *struct {
-			MaxMembers int `json:"max_members"`
-		}
-		dao.TntTenants.Ctx(ctx).
-			Where("id", tenantID).Scan(&tenant)
-		if tenant == nil {
-			return 0, gerror.Newf("租户不存在")
+		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenantID)
+		if err != nil {
+			return 0, gerror.Newf("查询租户限制信息失败: %v", err)
 		}
 
-		if int(currentCount)+pendingCount > tenant.MaxMembers {
+		if int(currentCount)+pendingCount > effectiveMaxMembers {
 			return 0, gerror.Newf("导入%d条后将超出成员上限%d（当前%d，上限%d）",
-				pendingCount, tenant.MaxMembers, currentCount, tenant.MaxMembers)
+				pendingCount, effectiveMaxMembers, currentCount, effectiveMaxMembers)
 		}
 	}
 
 	// Create import record
+
 	resultJSON, _ := json.Marshal(results)
 	importResult, err := dao.TntMemberImports.Ctx(ctx).Data(do.TntMemberImports{
 		TenantId:   tenantID,
