@@ -53,7 +53,7 @@ type OrderDetailReq struct {
 }
 
 type OrderDetailRes struct {
-	Data map[string]any `json:"data"`
+	*OrderItem
 }
 
 type OrderRefundReq struct {

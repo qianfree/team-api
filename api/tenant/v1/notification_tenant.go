@@ -67,7 +67,9 @@ type TenantNotificationPreferencesGetReq struct {
 }
 
 type TenantNotificationPreferencesGetRes struct {
-	Data map[string]any `json:"data"`
+	OrgPreferences  map[string]any `json:"org_preferences"`
+	UserPreferences map[string]any `json:"user_preferences"`
+	Merged          map[string]any `json:"merged"`
 }
 
 type TenantNotificationPreferencesUpdateReq struct {

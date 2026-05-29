@@ -231,7 +231,7 @@ func TestModelGroupDuplicateCode(t *testing.T) {
 
 	// 获取已创建分组的 code
 	listResp := client.Get("/api/admin/model-groups", map[string]string{
-		"page": "1", "page_size": "200",
+		"page": "1", "page_size": "100",
 	})
 	listResp.AssertSuccess(t)
 

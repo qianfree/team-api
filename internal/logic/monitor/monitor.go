@@ -71,13 +71,13 @@ func (s *sMonitor) DBPool(ctx context.Context, _ *v1.MonitorDBPoolReq) (*v1.Moni
 	if err != nil {
 		return nil, err
 	}
-	return &v1.MonitorDBPoolRes{Data: g.Map{
-		"active_connections": data.ActiveConnections,
-		"idle_connections":   data.IdleConnections,
-		"total_connections":  data.TotalConnections,
-		"max_connections":    data.MaxConnections,
-		"waiting_queries":    data.WaitingQueries,
-	}}, nil
+	return &v1.MonitorDBPoolRes{
+		ActiveConnections: data.ActiveConnections,
+		IdleConnections:   data.IdleConnections,
+		TotalConnections:  data.TotalConnections,
+		MaxConnections:    data.MaxConnections,
+		WaitingQueries:    data.WaitingQueries,
+	}, nil
 }
 
 func (s *sMonitor) RedisPool(ctx context.Context, _ *v1.MonitorRedisPoolReq) (*v1.MonitorRedisPoolRes, error) {
@@ -85,17 +85,17 @@ func (s *sMonitor) RedisPool(ctx context.Context, _ *v1.MonitorRedisPoolReq) (*v
 	if err != nil {
 		return nil, err
 	}
-	return &v1.MonitorRedisPoolRes{Data: g.Map{
-		"connected_clients":   data.ConnectedClients,
-		"used_memory_mb":      data.UsedMemoryMB,
-		"max_memory_mb":       data.MaxMemoryMB,
-		"used_memory_percent": data.UsedMemoryPercent,
-		"total_commands":      data.TotalCommands,
-		"instantaneous_ops":   data.InstantaneousOps,
-		"keyspace_hits":       data.KeyspaceHits,
-		"keyspace_misses":     data.KeyspaceMisses,
-		"hit_rate":            data.HitRate,
-	}}, nil
+	return &v1.MonitorRedisPoolRes{
+		ConnectedClients:  data.ConnectedClients,
+		UsedMemoryMB:      data.UsedMemoryMB,
+		MaxMemoryMB:       data.MaxMemoryMB,
+		UsedMemoryPercent: data.UsedMemoryPercent,
+		TotalCommands:     data.TotalCommands,
+		InstantaneousOps:  int64(data.InstantaneousOps),
+		KeyspaceHits:      data.KeyspaceHits,
+		KeyspaceMisses:    data.KeyspaceMisses,
+		HitRate:           data.HitRate,
+	}, nil
 }
 
 func (s *sMonitor) Realtime(ctx context.Context, _ *v1.MonitorRealtimeReq) (*v1.MonitorRealtimeRes, error) {

@@ -46,8 +46,44 @@ type TicketGetReq struct {
 	Id     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
+type TicketReplyItem struct {
+	Id        int64       `json:"id"`
+	TicketId  int64       `json:"ticket_id"`
+	UserId    int64       `json:"user_id"`
+	UserType  string      `json:"user_type"`
+	UserName  string      `json:"user_name"`
+	Content   string      `json:"content"`
+	CreatedAt *gtime.Time `json:"created_at"`
+}
+
+type TicketAttachmentItem struct {
+	Id          int64       `json:"id"`
+	TicketId    int64       `json:"ticket_id"`
+	ReplyId     int64       `json:"reply_id"`
+	FileName    string      `json:"file_name"`
+	FileUrl     string      `json:"file_url"`
+	FileSize    int         `json:"file_size"`
+	ContentType string      `json:"content_type"`
+	CreatedAt   *gtime.Time `json:"created_at"`
+}
+
 type TicketGetRes struct {
-	Data map[string]any `json:"data"`
+	Id                int64                   `json:"id"`
+	TenantId          int64                   `json:"tenant_id"`
+	UserId            int64                   `json:"user_id"`
+	Category          string                  `json:"category"`
+	Title             string                  `json:"title"`
+	Description       string                  `json:"description"`
+	Urgency           string                  `json:"urgency"`
+	Status            string                  `json:"status"`
+	AssignedAdminId   int64                   `json:"assigned_admin_id"`
+	TenantName        string                  `json:"tenant_name"`
+	UserDisplayName   string                  `json:"user_display_name"`
+	AssignedAdminName string                  `json:"assigned_admin_name"`
+	CreatedAt         *gtime.Time             `json:"created_at"`
+	UpdatedAt         *gtime.Time             `json:"updated_at"`
+	Replies           []*TicketReplyItem      `json:"replies"`
+	Attachments       []*TicketAttachmentItem `json:"attachments"`
 }
 
 type TicketAssignReq struct {

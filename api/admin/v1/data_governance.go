@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 数据治理设置 ===
 
@@ -9,7 +13,11 @@ type DataGovernanceSettingsGetReq struct {
 }
 
 type DataGovernanceSettingsGetRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *DataGovernanceSettingsGetRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type DataGovernanceSettingsUpdateReq struct {

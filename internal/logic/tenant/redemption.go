@@ -65,7 +65,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		return nil, lcommon.NewBusinessError(422, "兑换码已全部使用")
 	}
 
-	result := g.Map{"code": req.Code, "type": redemption.Type}
+	res := &v1.TenantRedeemCodeRes{Code: req.Code, Type: redemption.Type}
 	var txID int64
 	usageValue := float64(0)
 
@@ -73,7 +73,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	case "quota":
 		txID = creditWalletForRedemption(ctx, tenantID, redemption.Value, redemption.ID)
 		usageValue = redemption.Value
-		result["credited"] = redemption.Value
+		res.Credited = redemption.Value
 
 	case "plan":
 		if redemption.PlanID == 0 {
@@ -90,15 +90,15 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		if err != nil {
 			return nil, gerror.Wrapf(err, "激活套餐失败")
 		}
-		result["plan_id"] = redemption.PlanID
-		result["months"] = months
+		res.PlanId = redemption.PlanID
+		res.Months = months
 
 	case "duration":
 		if redemption.DurationDays <= 0 {
 			return nil, lcommon.NewBusinessError(422, "时长兑换码缺少duration_days")
 		}
 		extendPlanDuration(ctx, tenantID, redemption.DurationDays)
-		result["extended_days"] = redemption.DurationDays
+		res.ExtendedDays = redemption.DurationDays
 
 	default:
 		return nil, gerror.Newf("未知的兑换类型: %s", redemption.Type)
@@ -119,7 +119,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		"UPDATE ord_redemptions SET used_count = used_count + 1, redeemed_by = ?, redeemed_at = ?, updated_at = ? WHERE id = ?",
 		tenantID, time.Now(), time.Now(), redemption.ID)
 
-	return &v1.TenantRedeemCodeRes{Data: result}, nil
+	return res, nil
 }
 
 func creditWalletForRedemption(ctx context.Context, tenantID int64, amount float64, redemptionID int64) int64 {

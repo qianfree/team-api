@@ -346,18 +346,16 @@ func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (
 		Scan(&monthUsage)
 
 	return &v1.TenantProjectGetRes{
-		Data: map[string]any{
-			"id":             p.Id,
-			"name":           p.Name,
-			"description":    p.Description,
-			"status":         p.Status,
-			"budget":         p.Budget,
-			"created_by":     p.CreatedBy,
-			"active_keys":    keyStats.Active,
-			"total_keys":     keyStats.Total,
-			"month_cost":     monthUsage.TotalCost,
-			"month_requests": monthUsage.RequestCount,
-		},
+		Id:            p.Id,
+		Name:          p.Name,
+		Description:   p.Description,
+		Status:        p.Status,
+		Budget:        p.Budget,
+		CreatedBy:     p.CreatedBy,
+		ActiveKeys:    keyStats.Active,
+		TotalKeys:     keyStats.Total,
+		MonthCost:     monthUsage.TotalCost,
+		MonthRequests: int64(monthUsage.RequestCount),
 	}, nil
 }
 

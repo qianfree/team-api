@@ -44,18 +44,16 @@ func TestProjectCRUD(t *testing.T) {
 	detailResp.AssertSuccess(t)
 
 	var detail struct {
-		Data struct {
-			ID          int64  `json:"id"`
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Budget      string `json:"budget"`
-			Status      string `json:"status"`
-		} `json:"data"`
+		ID          int64   `json:"id"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		Budget      *string `json:"budget"`
+		Status      string  `json:"status"`
 	}
 	detailResp.DecodeData(t, &detail)
 
-	if detail.Data.ID != projectID {
-		t.Fatalf("expected id=%d, got %d", projectID, detail.Data.ID)
+	if detail.ID != projectID {
+		t.Fatalf("expected id=%d, got %d", projectID, detail.ID)
 	}
 
 	// --- Update ---

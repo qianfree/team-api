@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -113,50 +112,76 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 		return nil, common.NewNotFoundError("工单")
 	}
 
-	type replyItem struct {
+	type replyRow struct {
 		entity.SptReplies
-		UserName string `json:"user_name"`
+		UserName string `json:"user_name" orm:"user_name"`
 	}
-	var replies []*replyItem
+	var replyRows []*replyRow
 	err = dao.SptReplies.Ctx(ctx).
 		LeftJoin("sys_admin_users sa", "spt_replies.user_type = 'admin' AND spt_replies.user_id = sa.id").
 		LeftJoin("tnt_users tu", "spt_replies.user_type = 'tenant' AND spt_replies.user_id = tu.id").
 		Fields("spt_replies.*, CASE WHEN spt_replies.user_type = 'admin' THEN COALESCE(sa.username, '') ELSE COALESCE(tu.display_name, '') END as user_name").
 		Where("spt_replies.ticket_id", req.Id).
 		OrderAsc("spt_replies.created_at").
-		Scan(&replies)
+		Scan(&replyRows)
 	if err != nil {
 		return nil, err
 	}
 
-	var attachments []*entity.SptAttachments
+	replies := make([]*v1.TicketReplyItem, 0, len(replyRows))
+	for _, r := range replyRows {
+		replies = append(replies, &v1.TicketReplyItem{
+			Id:        r.Id,
+			TicketId:  r.TicketId,
+			UserId:    r.UserId,
+			UserType:  r.UserType,
+			UserName:  r.UserName,
+			Content:   r.Content,
+			CreatedAt: r.CreatedAt,
+		})
+	}
+
+	var attachRows []*entity.SptAttachments
 	err = dao.SptAttachments.Ctx(ctx).
 		Where("ticket_id", req.Id).
 		OrderAsc("created_at").
-		Scan(&attachments)
+		Scan(&attachRows)
 	if err != nil {
 		return nil, err
 	}
 
-	data := g.Map{
-		"id":                  ticket.Id,
-		"tenant_id":           ticket.TenantId,
-		"user_id":             ticket.UserId,
-		"category":            ticket.Category,
-		"title":               ticket.Title,
-		"description":         ticket.Description,
-		"urgency":             ticket.Urgency,
-		"status":              ticket.Status,
-		"assigned_admin_id":   ticket.AssignedAdminId,
-		"tenant_name":         ticket.TenantName,
-		"user_display_name":   ticket.UserDisplayName,
-		"assigned_admin_name": ticket.AssignedAdminName,
-		"created_at":          ticket.CreatedAt,
-		"updated_at":          ticket.UpdatedAt,
-		"replies":             replies,
-		"attachments":         attachments,
+	attachments := make([]*v1.TicketAttachmentItem, 0, len(attachRows))
+	for _, a := range attachRows {
+		attachments = append(attachments, &v1.TicketAttachmentItem{
+			Id:          a.Id,
+			TicketId:    a.TicketId,
+			ReplyId:     a.ReplyId,
+			FileName:    a.FileName,
+			FileUrl:     a.FileUrl,
+			FileSize:    a.FileSize,
+			ContentType: a.ContentType,
+			CreatedAt:   a.CreatedAt,
+		})
 	}
-	return &v1.TicketGetRes{Data: data}, nil
+
+	return &v1.TicketGetRes{
+		Id:                ticket.Id,
+		TenantId:          ticket.TenantId,
+		UserId:            ticket.UserId,
+		Category:          ticket.Category,
+		Title:             ticket.Title,
+		Description:       ticket.Description,
+		Urgency:           ticket.Urgency,
+		Status:            ticket.Status,
+		AssignedAdminId:   ticket.AssignedAdminId,
+		TenantName:        ticket.TenantName,
+		UserDisplayName:   ticket.UserDisplayName,
+		AssignedAdminName: ticket.AssignedAdminName,
+		CreatedAt:         ticket.CreatedAt,
+		UpdatedAt:         ticket.UpdatedAt,
+		Replies:           replies,
+		Attachments:       attachments,
+	}, nil
 }
 
 // AssignTicket 分配工单给管理员

@@ -38,7 +38,15 @@ type TemplateGetReq struct {
 }
 
 type TemplateGetRes struct {
-	Data map[string]any `json:"data"`
+	Id           int64       `json:"id"`
+	Code         string      `json:"code"`
+	Channel      string      `json:"channel"`
+	Subject      string      `json:"subject"`
+	BodyTemplate string      `json:"body_template"`
+	Variables    string      `json:"variables"`
+	Status       string      `json:"status"`
+	CreatedAt    *gtime.Time `json:"created_at"`
+	UpdatedAt    *gtime.Time `json:"updated_at"`
 }
 
 type TemplateUpdateReq struct {
@@ -57,8 +65,16 @@ type TemplateTestReq struct {
 	Variables map[string]any `json:"variables"`
 }
 
+type TemplateRenderResult struct {
+	Original string `json:"original"`
+	Rendered string `json:"rendered,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 type TemplateTestRes struct {
-	Data map[string]any `json:"data"`
+	Subject TemplateRenderResult `json:"subject"`
+	Body    TemplateRenderResult `json:"body"`
+	Channel string               `json:"channel"`
 }
 
 // === 站内消息管理 ===

@@ -474,7 +474,9 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 
 	// Check if target is owner
 	var user struct {
-		Role string `json:"role"`
+		Role        string `json:"role"`
+		DisplayName string `json:"display_name"`
+		Username    string `json:"username"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
 		Where("id", memberID).
@@ -485,6 +487,16 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 	}
 	if user.Role == "owner" {
 		return nil, common.NewBadRequestError("不能移除组织所有者")
+	}
+
+	removedDisplayName := user.DisplayName
+	if removedDisplayName == "" {
+		removedDisplayName = user.Username
+	}
+	if removedDisplayName != "" {
+		removedDisplayName = fmt.Sprintf("[已移除] %s", removedDisplayName)
+	} else {
+		removedDisplayName = "[已移除成员]"
 	}
 
 	// Revoke all sessions
@@ -511,7 +523,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		Data(do.TntUsers{
 			Status:      "removed",
 			Email:       fmt.Sprintf("deleted_%d@removed.local", memberID),
-			DisplayName: "[已移除成员]",
+			DisplayName: removedDisplayName,
 			Username:    fmt.Sprintf("deleted_%d", memberID),
 		}).Update()
 	if err != nil {

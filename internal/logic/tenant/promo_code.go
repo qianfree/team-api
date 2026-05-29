@@ -86,12 +86,12 @@ func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidateP
 		return nil, lcommon.NewBusinessError(500, fmt.Sprintf("未知的优惠码类型: %s", promo.Type))
 	}
 
-	return &v1.TenantValidatePromoCodeRes{Data: map[string]any{
-		"promo_code_id": promo.ID,
-		"type":          promo.Type,
-		"discount":      discount,
-		"final_amount":  req.Amount - discount,
-	}}, nil
+	return &v1.TenantValidatePromoCodeRes{
+		PromoCodeId: promo.ID,
+		Type:        promo.Type,
+		Discount:    discount,
+		FinalAmount: req.Amount - discount,
+	}, nil
 }
 
 // applyPromoCode 应用优惠码到订单

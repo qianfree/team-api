@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/model/entity"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -74,7 +75,21 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	var ticket map[string]any
+	type ticketRow struct {
+		Id                int64       `json:"id" orm:"id"`
+		TenantId          int64       `json:"tenant_id" orm:"tenant_id"`
+		UserId            int64       `json:"user_id" orm:"user_id"`
+		Category          string      `json:"category" orm:"category"`
+		Title             string      `json:"title" orm:"title"`
+		Description       string      `json:"description" orm:"description"`
+		Urgency           string      `json:"urgency" orm:"urgency"`
+		Status            string      `json:"status" orm:"status"`
+		AssignedAdminId   int64       `json:"assigned_admin_id" orm:"assigned_admin_id"`
+		AssignedAdminName string      `json:"assigned_admin_name" orm:"assigned_admin_name"`
+		CreatedAt         *gtime.Time `json:"created_at" orm:"created_at"`
+		UpdatedAt         *gtime.Time `json:"updated_at" orm:"updated_at"`
+	}
+	var ticket *ticketRow
 	err := dao.SptTickets.Ctx(ctx).
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
 		Fields("spt_tickets.*, COALESCE(sa.username, '') as assigned_admin_name").
@@ -89,27 +104,54 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 		return nil, common.NewNotFoundError("工单")
 	}
 
-	replies := make([]map[string]any, 0)
+	var replyRows []*v1.TenantTicketReplyItem
 	err = dao.SptReplies.Ctx(ctx).
 		Where("ticket_id", req.Id).
 		OrderAsc("created_at").
-		Scan(&replies)
+		Scan(&replyRows)
 	if err != nil {
 		return nil, err
 	}
 
-	attachments := make([]map[string]any, 0)
+	var attachRows []*entity.SptAttachments
 	err = dao.SptAttachments.Ctx(ctx).
 		Where("ticket_id", req.Id).
 		OrderAsc("created_at").
-		Scan(&attachments)
+		Scan(&attachRows)
 	if err != nil {
 		return nil, err
 	}
 
-	ticket["replies"] = replies
-	ticket["attachments"] = attachments
-	return &v1.TenantTicketGetRes{Data: ticket}, nil
+	attachments := make([]*v1.TenantTicketAttachmentItem, 0, len(attachRows))
+	for _, a := range attachRows {
+		attachments = append(attachments, &v1.TenantTicketAttachmentItem{
+			Id:          a.Id,
+			TicketId:    a.TicketId,
+			ReplyId:     a.ReplyId,
+			FileName:    a.FileName,
+			FileUrl:     a.FileUrl,
+			FileSize:    a.FileSize,
+			ContentType: a.ContentType,
+			CreatedAt:   a.CreatedAt,
+		})
+	}
+
+	return &v1.TenantTicketGetRes{
+		Id:                ticket.Id,
+		TenantId:          ticket.TenantId,
+		UserId:            ticket.UserId,
+		Category:          ticket.Category,
+		Title:             ticket.Title,
+		Description:       ticket.Description,
+		Urgency:           ticket.Urgency,
+		Status:            ticket.Status,
+		AssignedAdminId:   ticket.AssignedAdminId,
+		AssignedAdminName: ticket.AssignedAdminName,
+		CreatedAt:         ticket.CreatedAt,
+		UpdatedAt:         ticket.UpdatedAt,
+		Replies:           replyRows,
+		Attachments:       attachments,
+	}, nil
 }
 
 // TicketReply 租户用户回复工单

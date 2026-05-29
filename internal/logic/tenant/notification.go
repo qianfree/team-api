@@ -282,12 +282,11 @@ func (s *sTenant) NotificationPreferencesGet(ctx context.Context, req *v1.Tenant
 	orgPrefs := loadPreferences(ctx, tenantID, 0, "org")
 	userPrefs := loadPreferences(ctx, tenantID, userID, "user")
 
-	result := map[string]any{
-		"org_preferences":  orgPrefs,
-		"user_preferences": userPrefs,
-		"merged":           mergePreferences(orgPrefs, userPrefs),
-	}
-	return &v1.TenantNotificationPreferencesGetRes{Data: result}, nil
+	return &v1.TenantNotificationPreferencesGetRes{
+		OrgPreferences:  orgPrefs,
+		UserPreferences: userPrefs,
+		Merged:          mergePreferences(orgPrefs, userPrefs),
+	}, nil
 }
 
 // NotificationPreferencesUpdate 更新通知偏好
