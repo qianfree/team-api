@@ -433,8 +433,10 @@ function openImportModal() {
   showImportModal.value = true
 }
 
-async function handleImportUpload(fileItem: any) {
-  const file = fileItem.fileItem?.file || fileItem
+async function handleImportUpload(data: { file: any; fileList: any[] }) {
+  // Naive UI @change 回调参数: { file: UploadFileInfo, fileList: UploadFileInfo[] }
+  // UploadFileInfo.file 才是浏览器原生 File 对象
+  const file = data.file?.file
   if (!file) return
 
   importPreviewing.value = true
@@ -667,7 +669,7 @@ function resetImport() {
           draggable
           accept=".json"
           :auto-upload="false"
-          :limit="1"
+          :show-file-list="false"
           @change="handleImportUpload"
         >
           <template #upload-button>

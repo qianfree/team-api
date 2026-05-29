@@ -147,19 +147,37 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 
 // ImportModelsPreview 导入模型预览（解析上传文件，检测冲突）
 func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPreviewReq) (*v1.ModelImportPreviewRes, error) {
+	var data []byte
+
+	// 优先通过标准文件上传读取
 	file := g.RequestFromCtx(ctx).GetUploadFile("file")
-	if file == nil {
-		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
+	if file != nil {
+		f, err := file.Open()
+		if err != nil {
+			return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
+		}
+		defer f.Close()
+		data, err = io.ReadAll(f)
+		if err != nil {
+			return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
+		}
 	}
 
-	f, err := file.Open()
-	if err != nil {
-		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
+	// 兜底：从已解析的 MultipartForm.File 中读取（文件在 File 而非 Value 中）
+	if len(data) == 0 {
+		mf := g.RequestFromCtx(ctx).GetMultipartForm()
+		if mf != nil {
+			if files := mf.File["file"]; len(files) > 0 {
+				f, err := files[0].Open()
+				if err == nil {
+					defer f.Close()
+					data, _ = io.ReadAll(f)
+				}
+			}
+		}
 	}
-	defer f.Close()
 
-	data, err := io.ReadAll(f)
-	if err != nil {
+	if len(data) == 0 {
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
 	}
 

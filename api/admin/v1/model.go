@@ -228,7 +228,7 @@ type ModelFetchOfficialInfoRes struct {
 // ModelExportJsonReq 导出模型配置（JSON，用于跨环境迁移）
 type ModelExportJsonReq struct {
 	g.Meta   `path:"/models/export-json" method:"post" mime:"json" tags:"管理后台-模型" summary:"导出模型配置JSON"`
-	ModelIds []string `json:"model_ids" v:"required|min:1#请选择模型|至少选择一个模型" dc:"要导出的model_id列表"`
+	ModelIds []string `json:"model_ids" v:"required#请至少选择一个模型" dc:"要导出的model_id列表"`
 }
 
 // ModelExportJsonRes 导出模型配置JSON响应（直接写入响应流）
@@ -236,7 +236,7 @@ type ModelExportJsonRes struct{}
 
 // ModelImportPreviewReq 导入模型预览请求
 type ModelImportPreviewReq struct {
-	g.Meta `path:"/models/import-preview" method:"post" mime:"json" tags:"管理后台-模型" summary:"导入模型预览"`
+	g.Meta `path:"/models/import-preview" method:"post" tags:"管理后台-模型" summary:"导入模型预览"`
 }
 
 // ModelImportPreviewRes 导入模型预览响应
@@ -264,7 +264,7 @@ type ModelImportPreviewItem struct {
 // ModelImportReq 确认导入模型请求
 type ModelImportReq struct {
 	g.Meta `path:"/models/import" method:"post" mime:"json" tags:"管理后台-模型" summary:"确认导入模型"`
-	Models []ModelImportItem `json:"models" v:"required|min:1#无数据|至少导入一个模型"`
+	Models []ModelImportItem `json:"models" v:"required#请至少导入一个模型"`
 }
 
 // ModelImportItem 导入模型项
