@@ -139,12 +139,6 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '任务日志' },
       },
       {
-        path: 'model-pricing',
-        name: 'AdminModelPricing',
-        component: () => import('@/views/ai/ModelPricingPage.vue'),
-        meta: { title: '模型定价' },
-      },
-      {
         path: 'tenants',
         name: 'AdminTenants',
         component: () => import('@/views/tenant/TenantsPage.vue'),
