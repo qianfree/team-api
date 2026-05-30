@@ -97,7 +97,7 @@ func CreateTask(ctx context.Context, task *Task) (int64, error) {
 // It loads the task from DB, updates status, calls the handler, and records the result.
 func ExecuteTask(ctx context.Context, taskID int64) error {
 	// Load task
-	var task struct {
+	var task *struct {
 		ID         int64           `json:"id"`
 		Name       string          `json:"name"`
 		Handler    string          `json:"handler"`
@@ -114,7 +114,7 @@ func ExecuteTask(ctx context.Context, taskID int64) error {
 		return gerror.Wrapf(err, "load task")
 	}
 
-	if task.ID == 0 {
+	if task == nil {
 		return gerror.Newf("task %d not found or not pending", taskID)
 	}
 

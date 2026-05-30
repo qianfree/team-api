@@ -255,8 +255,8 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 	}
 
 	if capUpdate != nil {
-		_, err = dao.MdlModels.Ctx(ctx).Where("id", req.ID).Data(g.Map{
-			"capabilities": *capUpdate,
+		_, err = dao.MdlModels.Ctx(ctx).Where("id", req.ID).Data(do.MdlModels{
+			Capabilities: *capUpdate,
 		}).Update()
 		if err != nil {
 			return nil, err
@@ -298,15 +298,21 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 
 // DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error) {
-	_, _ = dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete()
-	_, _ = dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete()
+	if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		return nil, gerror.Wrapf(err, "delete pricing tiers for model %d", req.ID)
+	}
+	if _, err := dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		return nil, gerror.Wrapf(err, "delete tenant models for model %d", req.ID)
+	}
 
 	// 级联删除：从所有分组中移除该模型，并清除受影响租户的缓存
 	var affectedGroups []struct {
 		GroupId int64 `json:"group_id"`
 	}
 	dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Fields("group_id").Scan(&affectedGroups)
-	_, _ = dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete()
+	if _, err := dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		return nil, gerror.Wrapf(err, "delete group models for model %d", req.ID)
+	}
 	for _, ag := range affectedGroups {
 		invalidateTenantsInGroup(ctx, ag.GroupId)
 	}
@@ -487,7 +493,7 @@ func (s *sAdmin) FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchO
 		ModelId string `json:"model_id"`
 	}
 	err := dao.MdlModels.Ctx(ctx).Where("id", req.ModelID).Fields("model_id").Scan(&model)
-	if err != nil || model.ModelId == "" {
+	if err != nil || model == nil || model.ModelId == "" {
 		return nil, common.NewBusinessError(404, "模型不存在")
 	}
 

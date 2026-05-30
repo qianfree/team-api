@@ -133,7 +133,7 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "项目密钥必须指定关联项目")
 		}
 		// 验证项目存在且活跃
-		var project struct {
+		var project *struct {
 			Id     int64  `json:"id"`
 			Status string `json:"status"`
 		}
@@ -144,7 +144,7 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 		if err != nil {
 			return nil, err
 		}
-		if project.Id == 0 {
+		if project == nil {
 			return nil, lcommon.NewBusinessError(consts.CodeProjectNotFound, consts.MsgProjectNotFound)
 		}
 		if project.Status != "active" {

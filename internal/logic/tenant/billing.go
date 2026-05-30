@@ -214,9 +214,10 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 
 	dataSQL := fmt.Sprintf(
 		`SELECT u.*, COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
-		 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT %d OFFSET %d`,
-		fromClause, where, pageSize, (page-1)*pageSize,
+		 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
+		fromClause, where,
 	)
+	args = append(args, pageSize, (page-1)*pageSize)
 	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
 	if err != nil {
 		return nil, err
@@ -324,10 +325,11 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 			dataSQL := fmt.Sprintf(
 				`SELECT u.id, COALESCE(t.username, '') AS username, u.model_name, u.request_type,
 				        u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at
-				 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT 1000 OFFSET %d`,
-				fromClause, where, offset,
+				 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT 1000 OFFSET ?`,
+				fromClause, where,
 			)
-			result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+			exportArgs := append(args, offset)
+			result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, exportArgs...)
 			if err != nil {
 				return
 			}

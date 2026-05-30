@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -140,7 +139,7 @@ func (s *sAdmin) UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogClea
 		Where("id", req.ID).
 		Where("handler", "usage_log_cleanup").
 		Where("status", "pending").
-		Data(g.Map{"status": "cancelled"}).
+		Data(do.TskTasks{Status: "cancelled"}).
 		Update()
 	if err != nil {
 		return nil, err

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
@@ -91,7 +90,7 @@ func (s *sTenant) UnreadCount(ctx context.Context, req *v1.TenantUnreadCountReq)
 		Where("is_broadcast", 1).
 		Where("(target_roles IS NULL OR ? = ANY(string_to_array(target_roles, ',')))", role).
 		Where("id NOT IN (?)",
-			g.DB().Model("ntf_read_status").Ctx(ctx).
+			dao.NtfReadStatus.Ctx(ctx).
 				Where("user_id", userID).
 				Fields("message_id"),
 		).
@@ -202,7 +201,7 @@ func (s *sTenant) MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq)
 		Where("is_broadcast", 1).
 		Where("(target_roles IS NULL OR ? = ANY(string_to_array(target_roles, ',')))", role).
 		Where("id NOT IN (?)",
-			g.DB().Model("ntf_read_status").Ctx(ctx).
+			dao.NtfReadStatus.Ctx(ctx).
 				Where("user_id", userID).
 				Fields("message_id"),
 		).
@@ -237,7 +236,7 @@ func (s *sTenant) DeleteNotification(ctx context.Context, req *v1.TenantNotifica
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	var msg struct {
+	var msg *struct {
 		ID          int64  `json:"id"`
 		IsBroadcast int    `json:"is_broadcast"`
 		UserID      *int64 `json:"user_id"`

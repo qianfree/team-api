@@ -22,7 +22,7 @@ func UpsertAffinity(ctx context.Context, tenantID, userID int64, modelName strin
 
 // GetAffinity 获取亲和性渠道
 func GetAffinity(ctx context.Context, tenantID, userID int64, modelName string) (int64, bool) {
-	var result struct {
+	var result *struct {
 		ChannelID int64 `json:"channel_id"`
 	}
 	err := dao.ChnChannelAffinities.Ctx(ctx).
@@ -32,7 +32,7 @@ func GetAffinity(ctx context.Context, tenantID, userID int64, modelName string) 
 		Where("expires_at > ?", time.Now()).
 		Fields("channel_id").
 		Scan(&result)
-	if err != nil || result.ChannelID == 0 {
+	if err != nil || result == nil {
 		return 0, false
 	}
 	return result.ChannelID, true

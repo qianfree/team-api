@@ -3,8 +3,8 @@ package common
 import (
 	"context"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/qianfree/team-api/internal/dao"
 )
 
 // ============================================================
@@ -37,7 +37,7 @@ func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error
 	}
 
 	var rows []categoryRow
-	err := g.DB().Model("spt_categories").Ctx(ctx).
+	err := dao.SptCategories.Ctx(ctx).
 		Where("is_visible", true).
 		OrderAsc("sort_order").
 		Scan(&rows)
@@ -89,23 +89,23 @@ func ListPublicArticles(ctx context.Context, categorySlug string, page, pageSize
 	page, pageSize = NormalizePagination(page, pageSize)
 
 	// 查找分类
-	var cat struct {
+	var cat *struct {
 		Id int64 `json:"id" orm:"id"`
 	}
-	err := g.DB().Model("spt_categories").Ctx(ctx).
+	err := dao.SptCategories.Ctx(ctx).
 		Where("slug", categorySlug).
 		Where("is_visible", true).
 		Scan(&cat)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
-	if cat.Id == 0 {
+	if cat == nil {
 		return nil, 0, 0, 0, NewBusinessError(10073, "帮助分类不存在")
 	}
 
 	var total int
 	rows := make([]*HelpPublicArticleItem, 0)
-	err = g.DB().Model("spt_articles").Ctx(ctx).
+	err = dao.SptArticles.Ctx(ctx).
 		Where("category_id", cat.Id).
 		Where("status", "published").
 		Where("published_at IS NOT NULL").
@@ -150,7 +150,7 @@ func GetPublicArticle(ctx context.Context, slug string) (*HelpPublicArticleDetai
 	}
 
 	var row articleRow
-	err := g.DB().Model("spt_articles").Ctx(ctx).
+	err := dao.SptArticles.Ctx(ctx).
 		Where("slug", slug).
 		Scan(&row)
 	if err != nil {
@@ -164,7 +164,7 @@ func GetPublicArticle(ctx context.Context, slug string) (*HelpPublicArticleDetai
 	}
 
 	// 增加浏览计数
-	g.DB().Model("spt_articles").Ctx(ctx).
+	dao.SptArticles.Ctx(ctx).
 		Where("id", row.Id).
 		Increment("view_count", 1)
 
@@ -187,7 +187,7 @@ func SearchPublicArticles(ctx context.Context, query string, page, pageSize int)
 
 	var total int
 	rows := make([]*HelpPublicArticleItem, 0)
-	err := g.DB().Model("spt_articles").Ctx(ctx).
+	err := dao.SptArticles.Ctx(ctx).
 		Where("status", "published").
 		Where("published_at IS NOT NULL").
 		Where("published_at <=", gtime.Now()).

@@ -2,7 +2,6 @@ package tenant
 
 import (
 	"context"
-	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"math"
@@ -124,7 +123,7 @@ func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq)
 	}
 
 	var records []tokenTrendRow
-	err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			DATE(created_at) as date,
 			COALESCE(SUM(input_tokens), 0) as input_tokens,
@@ -132,10 +131,10 @@ func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq)
 			COUNT(*) as requests,
 			COALESCE(SUM(total_cost), 0) as total_cost
 		FROM bil_usage_logs
-		WHERE tenant_id = %d AND created_at >= '%s 00:00:00'
+		WHERE tenant_id = ? AND created_at >= ?
 		GROUP BY DATE(created_at)
 		ORDER BY date ASC
-	`, tenantID, startDate)).Scan(&records)
+	`, tenantID, startDate+" 00:00:00").Scan(&records)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +181,7 @@ func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDist
 	}
 
 	var records []modelDistRow
-	err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			model_name,
 			COUNT(*) as requests,
@@ -190,11 +189,11 @@ func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDist
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(total_cost), 0) as total_cost
 		FROM bil_usage_logs
-		WHERE tenant_id = %d AND created_at >= '%s 00:00:00'
+		WHERE tenant_id = ? AND created_at >= ?
 		GROUP BY model_name
 		ORDER BY total_cost DESC
 		LIMIT 20
-	`, tenantID, startDate)).Scan(&records)
+	`, tenantID, startDate+" 00:00:00").Scan(&records)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +321,7 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 	}
 
 	var records []memberUsageRow
-	err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			u.id as user_id,
 			u.username,
@@ -333,11 +332,11 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 			COALESCE(SUM(ul.total_cost), 0) as total_cost
 		FROM bil_usage_logs ul
 		JOIN tnt_users u ON u.id = ul.user_id
-		WHERE ul.tenant_id = %d AND ul.created_at >= '%s 00:00:00'
+		WHERE ul.tenant_id = ? AND ul.created_at >= ?
 		GROUP BY u.id, u.username, u.display_name
 		ORDER BY total_cost DESC
-		LIMIT %d
-	`, tenantID, startDate, limit)).Scan(&records)
+		LIMIT ?
+	`, tenantID, startDate+" 00:00:00", limit).Scan(&records)
 	if err != nil {
 		return nil, err
 	}

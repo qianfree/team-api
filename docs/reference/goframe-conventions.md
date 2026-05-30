@@ -112,10 +112,18 @@ g.Log().Infof(ctx, "API key %d disabled, cache invalidation for prefix %s", keyI
 
 ### DAO 模式（优先）
 
+使用生成的 `dao.Xxx.Ctx(ctx)` 操作数据库，禁止直接使用 `g.DB().Model("table_name")`：
+
 ```go
-// 查询
-var user entity.TntUsers
+// 查询（指针类型，用 nil 判断无数据）
+var user *entity.TntUsers
 err := dao.TntUsers.Ctx(ctx).Where("id", id).Where("tenant_id", tenantID).Scan(&user)
+if err != nil {
+    return nil, err
+}
+if user == nil {
+    return nil, common.NewNotFoundError("用户")
+}
 
 // 插入（使用 DO 结构体）
 id, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
@@ -123,7 +131,7 @@ id, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
     Provider: req.Provider,
 })
 
-// 更新（使用 DO 结构体）
+// 更新（使用 DO 结构体，框架自动维护 updated_at）
 _, err := dao.TntUsers.Ctx(ctx).Where("id", id).Data(do.TntUsers{
     Status: "disabled",
 }).Update()
@@ -138,20 +146,100 @@ var list []entity.TntUsers
 err := m.Page(page, pageSize).OrderDesc("id").Scan(&list)
 ```
 
+### 禁止模式
+
+```go
+// 禁止 — 绕过 DAO 直接操作表
+g.DB().Model("tnt_users").Ctx(ctx).Where("id", id).Scan(&user)
+
+// 正确 — 使用 DAO 对象
+dao.TntUsers.Ctx(ctx).Where("id", id).Scan(&user)
+```
+
+DAO 优势：链安全、列名映射、Handler 链（自动注入 tenant_id 等）。仅在以下场景允许 `g.DB().Model()`：
+- 动态表名（如泛型 batch writer）
+- 表别名 JOIN 查询（如 `Model("mdl_model_groups mg").LeftJoin(...)`）
+
 ### 原生 SQL（仅用于复杂查询和批量操作）
 
 ```go
 // 聚合查询、分析报表等无法用 ORM 表达的场景
+// 注意：始终使用 ? 占位符，禁止 fmt.Sprintf 拼接值
 result, err := g.DB().Ctx(ctx).Raw(`
     SELECT date_trunc('hour', created_at) AS hour, count(*)
-    FROM aud_request_logs WHERE ...
-`, args...).All()
+    FROM aud_request_logs WHERE created_at >= ?
+`, sinceTime).All()
 
 // 原子更新（如余额操作）
 _, err = g.DB().Exec(ctx,
-    `UPDATE bil_wallets SET balance = balance - $1 WHERE id = $2 AND balance >= $1`,
-    amount, walletID,
+    `UPDATE bil_wallets SET balance = balance - ? WHERE id = ? AND balance >= ?`,
+    amount, walletID, amount,
 )
+```
+
+**SQL 参数化规则**：GoFrame 统一使用 `?` 占位符，驱动层自动转换为 PostgreSQL 的 `$1, $2...`。开发者永远写 `?`，禁止 `fmt.Sprintf` 拼接 SQL 值。
+
+### Scan 指针类型规则
+
+查询单行记录时，**始终使用指针类型**接收 Scan 结果：
+
+```go
+// 正确 — nil 指针
+var wallet *entity.BilWallets
+err := dao.BilWallets.Ctx(ctx).Where("tenant_id", tenantID).Scan(&wallet)
+if err != nil {
+    return nil, err
+}
+if wallet == nil {
+    return nil, common.NewNotFoundError("钱包")
+}
+
+// 错误 — 值类型，无行时返回 sql.ErrNoRows
+var wallet entity.BilWallets
+err := dao.BilWallets.Ctx(ctx).Where("tenant_id", tenantID).Scan(&wallet)
+```
+
+指针类型 Scan 无行时返回 `nil` 错误 + `nil` 指针，用 `if x == nil` 判断。值类型 Scan 无行时返回 `sql.ErrNoRows`，容易漏处理导致暴露技术细节给用户。
+
+### 写操作错误处理
+
+所有数据库写操作（Insert/Update/Delete）的错误**必须处理**：
+
+```go
+// 关键操作 — 必须 return err
+if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{...}); err != nil {
+    return nil, gerror.Wrapf(err, "record transaction")
+}
+
+// 级联操作 — 必须逐一检查
+if _, err := dao.MdlPricingTiers.Ctx(ctx).Where("model_id", id).Delete(); err != nil {
+    return nil, gerror.Wrapf(err, "delete pricing")
+}
+
+// 非关键操作 — 至少记录日志
+if _, err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", id).Data(do.OpnWebhookEvents{...}).Update(); err != nil {
+    g.Log().Errorf(ctx, "webhook: update event %d failed: %v", id, err)
+}
+
+// 禁止 — 静默丢弃错误
+_, _ = dao.ApiKeys.Ctx(ctx).Where("id", id).Delete()
+```
+
+### 自动时间维护
+
+当表包含 `created_at`、`updated_at` 字段时，GoFrame ORM **自动处理**，禁止手动设置：
+
+```go
+// 正确 — 框架自动写入 updated_at
+dao.TntUsers.Ctx(ctx).Where("id", id).Data(do.TntUsers{
+    Status: "disabled",
+}).Update()
+
+// 错误 — 手动设置 updated_at（多余且违反规范）
+dao.TntUsers.Ctx(ctx).Where("id", id).Data(do.TntUsers{
+    Status:    "disabled",
+    UpdatedAt: gtime.Now(),  // 多余！框架自动处理
+}).Update()
 ```
 
 ### 事务
@@ -170,9 +258,26 @@ err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 
 ### g.Map vs DO 结构体
 
-- **新增/全量更新**：优先使用 `do.XxxTable{}` 结构体，类型安全
-- **部分更新**：可使用 `g.Map{"field": value}`，灵活但需注意字段名拼写
-- **混用场景**：changelog 等直接操作表名的场景可用 `g.DB().Model("table").Data(g.Map{...})`
+- **禁止使用 `g.Map` 做数据库操作**：所有 `Data()` 调用必须使用 `do.XxxTable{}` 结构体
+- DO 结构体字段类型为 `interface{}`，未赋值的字段保持 `nil`，ORM 内置 OmitNil 自动跳过
+- 已赋值的字段（包括零值 `0`、`""`）会被正常写入
+
+```go
+// 正确 — 使用 DO 对象
+dao.Users.Ctx(ctx).Data(do.Users{
+    Name:     req.Name,
+    Password: hash,
+}).Where("id", id).Update()
+
+// 正确 — 条件更新，未赋值字段自动跳过
+data := do.Users{}
+if req.Name != nil { data.Name = *req.Name }
+if req.Count != nil { data.Count = *req.Count } // 即使 *req.Count == 0 也会写入
+dao.Users.Ctx(ctx).Where("id", id).Data(data).Update()
+
+// 错误 — 禁止使用 g.Map
+dao.Users.Ctx(ctx).Data(g.Map{"name": req.Name}).Where("id", id).Update()
+```
 
 ## 配置读取
 
@@ -317,3 +422,15 @@ data := g.Map{}
 if req.Name != nil { data["name"] = *req.Name }
 dao.XxxTable.Ctx(ctx).Where("id", req.Id).Data(data).Update()
 ```
+
+### 2026-05-30：全项目数据库查询代码批量修复（130+ 处）
+
+**修复内容**：6 类问题，规则已整合到上方 ORM 操作章节：
+1. SQL 注入 — `fmt.Sprintf` 拼接 SQL → `?` 参数化（见"SQL 参数化规则"）
+2. `Data(g.Map{})` → `Data(do.Xxx{})`（见"g.Map vs DO 结构体"）
+3. 写操作错误静默丢弃 `_, _ =`（见"写操作错误处理"）
+4. Scan 值类型 → 指针类型（见"Scan 指针类型规则"）
+5. `g.DB().Model("table")` → `dao.Xxx.Ctx(ctx)`（见"DAO 模式"）
+6. 冗余 `updated_at` 手动设置（见"自动时间维护"）
+
+额外修复：16 处 Scan 改指针后遗漏 `nil` 检查导致 panic（member.go、organization.go、order.go、notification.go、permission.go、channel.go、help_center.go、feature_flag.go）。

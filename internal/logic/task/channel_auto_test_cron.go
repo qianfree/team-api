@@ -104,7 +104,7 @@ func testAndRecoverDisabledChannels(ctx context.Context) int {
 		// 重置连续失败计数
 		dao.ChnHealthScores.Ctx(ctx).
 			Where("channel_id", ch.ID).
-			Data(g.Map{"consecutive_failures": 0}).
+			Data(do.ChnHealthScores{ConsecutiveFailures: 0}).
 			Update()
 
 		recovered++

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
@@ -101,10 +102,12 @@ func (s *sAdmin) CreateModelGroup(ctx context.Context, req *v1.ModelGroupCreateR
 
 	if len(req.ModelIds) > 0 {
 		for _, modelID := range req.ModelIds {
-			_, _ = dao.MdlGroupModels.Ctx(ctx).Insert(do.MdlGroupModels{
+			if _, err := dao.MdlGroupModels.Ctx(ctx).Insert(do.MdlGroupModels{
 				GroupId: id,
 				ModelId: modelID,
-			})
+			}); err != nil {
+				return nil, gerror.Wrapf(err, "insert group model association for model %d", modelID)
+			}
 		}
 	}
 
@@ -153,7 +156,9 @@ func (s *sAdmin) DeleteModelGroup(ctx context.Context, req *v1.ModelGroupDeleteR
 		return nil, common.NewBusinessError(consts.CodeModelGroupHasTenants, consts.MsgModelGroupHasTenants)
 	}
 
-	_, _ = dao.MdlGroupModels.Ctx(ctx).Where("group_id", req.ID).Delete()
+	if _, err := dao.MdlGroupModels.Ctx(ctx).Where("group_id", req.ID).Delete(); err != nil {
+		return nil, gerror.Wrapf(err, "delete group models for group %d", req.ID)
+	}
 	_, err := dao.MdlModelGroups.Ctx(ctx).Where("id", req.ID).Delete()
 	if err != nil {
 		return nil, err

@@ -7,8 +7,10 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 const (
@@ -95,7 +97,7 @@ func loadMemberQuota(ctx context.Context, tenantID, userID int64) (*memberQuotaI
 		}
 	}
 
-	var row struct {
+	var row *struct {
 		QuotaType    string     `json:"quota_type"`
 		QuotaLimit   float64    `json:"quota_limit"`
 		QuotaUsed    float64    `json:"quota_used"`
@@ -184,9 +186,9 @@ func resetMemberQuota(ctx context.Context, tenantID, userID int64) {
 		_, err := dao.TntUsers.Ctx(bgCtx).
 			Where("id", userID).
 			Where("tenant_id", tenantID).
-			Data(g.Map{
-				"quota_used":     0,
-				"quota_reset_at": now,
+			Data(do.TntUsers{
+				QuotaUsed:    0,
+				QuotaResetAt: gtime.New(now),
 			}).
 			Update()
 		if err != nil {

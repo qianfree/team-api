@@ -101,7 +101,7 @@ func CheckClosingCooldown(ctx context.Context) {
 // EnsureTenantHasWallet 确保租户有钱包（用于解冻时检查）
 func EnsureTenantActive(ctx context.Context, tenantID int64) {
 	// Check if tenant has an active subscription
-	var activePlan struct {
+	var activePlan *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.PlnTenantPlans.Ctx(ctx).
@@ -110,7 +110,7 @@ func EnsureTenantActive(ctx context.Context, tenantID int64) {
 		Where("end_at > ?", time.Now()).
 		Limit(1).
 		Scan(&activePlan)
-	if err == nil && activePlan.ID > 0 {
+	if err == nil && activePlan != nil {
 		// Has active plan, can unfreeze
 		tenant.TransitionTenantStatus(ctx, tenantID, "active")
 	}

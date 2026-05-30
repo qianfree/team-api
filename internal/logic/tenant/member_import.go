@@ -119,7 +119,7 @@ func (s *sTenant) ImportRecords(ctx context.Context, req *v1.TenantImportRecords
 func (s *sTenant) ImportRecordGet(ctx context.Context, req *v1.TenantImportRecordGetReq) (*v1.TenantImportRecordGetRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	var record struct {
+	var record *struct {
 		ID           int64  `json:"id"`
 		Filename     string `json:"filename"`
 		TotalCount   int    `json:"total_count"`
@@ -138,7 +138,7 @@ func (s *sTenant) ImportRecordGet(ctx context.Context, req *v1.TenantImportRecor
 	if err != nil {
 		return nil, err
 	}
-	if record.ID == 0 {
+	if record == nil {
 		return nil, common.NewNotFoundError("导入记录")
 	}
 
@@ -342,7 +342,7 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 
 // processImport executes the actual import for pending rows.
 func processImport(ctx context.Context, importID int64) error {
-	var record struct {
+	var record *struct {
 		ID         int64  `json:"id"`
 		TenantID   int64  `json:"tenant_id"`
 		ResultJSON string `json:"result_json"`

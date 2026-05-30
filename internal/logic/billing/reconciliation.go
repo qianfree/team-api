@@ -110,7 +110,7 @@ func reconcileFrozenBalance(ctx context.Context) {
 			Total float64 `json:"total"`
 		}
 		var tracked sumRow
-		g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+		dao.BilPredeductTracks.Ctx(ctx).
 			Where("tenant_id", w.TenantID).
 			Where("status", "frozen").
 			Fields("COALESCE(SUM(amount), 0) as total").
@@ -137,7 +137,7 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 	var tracks []trackRow
 
 	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
-	err := g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+	err := dao.BilPredeductTracks.Ctx(ctx).
 		Where("status", "frozen").
 		Where("created_at < ?", cutoff).
 		Fields("request_id, tenant_id, amount").

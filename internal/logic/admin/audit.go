@@ -313,10 +313,10 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 
 	dataSQL := fmt.Sprintf(
 		`SELECT a.id, a.tenant_id, COALESCE(tn.name, '') AS tenant_name, a.user_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.api_key_id, COALESCE(ak.name, '') AS api_key_name, a.request_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.created_at, a.updated_at, a.audit_level
-		 FROM %s%s ORDER BY a.created_at DESC LIMIT %d OFFSET %d`,
-		fromClause, whereClause, pageSize, (page-1)*pageSize,
+		 FROM %s%s ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
+		fromClause, whereClause,
 	)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		return nil, err
 	}
@@ -515,9 +515,9 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 		LEFT JOIN tnt_users u ON l.user_id = u.id
 		LEFT JOIN api_keys k ON l.api_key_id = k.id
 		LEFT JOIN tnt_projects p ON l.project_id = p.id
-		%s ORDER BY l.created_at DESC LIMIT %d OFFSET %d`, fields, where, pageSize, (page-1)*pageSize)
+		%s ORDER BY l.created_at DESC LIMIT ? OFFSET ?`, fields, where)
 
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		return nil, err
 	}

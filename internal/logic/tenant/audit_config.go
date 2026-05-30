@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -40,8 +41,8 @@ func saveTenantSettings(ctx context.Context, tenantID int64, settings map[string
 	if err != nil {
 		return err
 	}
-	_, err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(g.Map{
-		"settings": string(settingsJSON),
+	_, err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(do.TntTenants{
+		Settings: string(settingsJSON),
 	}).Update()
 	return err
 }

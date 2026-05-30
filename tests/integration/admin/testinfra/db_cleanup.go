@@ -155,6 +155,16 @@ func HardDeleteFeedback(t *testing.T, id int64) {
 	g.DB().Exec(context.Background(), "DELETE FROM spt_feedbacks WHERE id = $1", id)
 }
 
+// HardDeletePlan deletes a plan and its associations from the database.
+func HardDeletePlan(t *testing.T, id int64) {
+	t.Helper()
+	ctx := context.Background()
+	db := g.DB()
+	db.Exec(ctx, "DELETE FROM pln_tenant_plans WHERE plan_id = $1", id)
+	db.Exec(ctx, "DELETE FROM pln_feature_flags WHERE plan_id = $1", id)
+	db.Exec(ctx, "DELETE FROM pln_plans WHERE id = $1", id)
+}
+
 // HardDeleteTicket deletes a ticket, its replies and attachments from the database.
 func HardDeleteTicket(t *testing.T, id int64) {
 	t.Helper()

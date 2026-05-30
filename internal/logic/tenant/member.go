@@ -178,7 +178,7 @@ func buildInviteURL(ctx context.Context, code string) string {
 // JoinByInvite handles a user joining a tenant via invitation link.
 func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq) (*v1.TenantMemberJoinRes, error) {
 	// Find invitation
-	var invitation struct {
+	var invitation *struct {
 		ID           int64       `json:"id"`
 		TenantID     int64       `json:"tenant_id"`
 		Role         string      `json:"role"`
@@ -193,7 +193,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if invitation.ID == 0 {
+	if invitation == nil {
 		return nil, common.NewBusinessError(consts.CodeInvitationExpired, consts.MsgInvitationExpired)
 	}
 
@@ -298,9 +298,9 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		// Increment invitation use count
 		_, err = tx.Model("tnt_invitations").Ctx(ctx).
 			Where("id", invitation.ID).
-			Data(g.Map{
-				"use_count": gdb.Raw("use_count + 1"),
-				"used_at":   gtime.Now(),
+			Data(do.TntInvitations{
+				UseCount: gdb.Raw("use_count + 1"),
+				UsedAt:   gtime.Now(),
 			}).Update()
 		if err != nil {
 			return gerror.Wrapf(err, "标记邀请已使用失败")
@@ -333,7 +333,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	}
 
 	// Query tenant info for response
-	var tenantInfo struct {
+	var tenantInfo *struct {
 		Name string `json:"name"`
 		Code string `json:"code"`
 	}
@@ -473,7 +473,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 	}
 
 	// Check if target is owner
-	var user struct {
+	var user *struct {
 		Role        string `json:"role"`
 		DisplayName string `json:"display_name"`
 		Username    string `json:"username"`
@@ -484,6 +484,9 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("成员")
 	}
 	if user.Role == "owner" {
 		return nil, common.NewBadRequestError("不能移除组织所有者")
@@ -535,7 +538,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 
 // DisableMember disables a member and revokes all their API keys.
 func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) error {
-	var user struct {
+	var user *struct {
 		Role   string `json:"role"`
 		Status string `json:"status"`
 	}
@@ -545,6 +548,9 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return err
+	}
+	if user == nil {
+		return common.NewNotFoundError("成员")
 	}
 	if user.Role == "owner" {
 		return common.NewBadRequestError("不能禁用组织所有者")
@@ -573,7 +579,7 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 
 // EnableMember re-enables a member and restores their API keys.
 func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) error {
-	var user struct {
+	var user *struct {
 		Role   string `json:"role"`
 		Status string `json:"status"`
 	}
@@ -583,6 +589,9 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return err
+	}
+	if user == nil {
+		return nil
 	}
 	if user.Status != "disabled" {
 		return nil // already active or removed
@@ -624,7 +633,7 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 		return nil, common.NewBadRequestError(err.Error())
 	}
 
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -633,6 +642,9 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("成员")
 	}
 	if user.Role == "owner" {
 		return nil, common.NewBadRequestError("不能修改所有者的角色")
@@ -661,7 +673,7 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 		return nil, common.NewBadRequestError("不能重置自己的密码，请使用修改密码功能")
 	}
 
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -670,6 +682,9 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("成员")
 	}
 	if user.Role == "owner" {
 		return nil, common.NewBadRequestError("不能重置组织所有者的密码")
@@ -704,7 +719,7 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	var user struct {
+	var user *struct {
 		Id          int64  `json:"id"`
 		Username    string `json:"username"`
 		Email       string `json:"email"`
@@ -721,7 +736,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if user.Id == 0 {
+	if user == nil {
 		return nil, common.NewBadRequestError("成员不存在")
 	}
 
@@ -742,7 +757,7 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Verify member exists in tenant
-	var user struct {
+	var user *struct {
 		Id int64 `json:"id"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -752,7 +767,7 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if user.Id == 0 {
+	if user == nil {
 		return nil, common.NewBadRequestError("成员不存在")
 	}
 
@@ -797,7 +812,7 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	// Verify member exists in tenant
-	var user struct {
+	var user *struct {
 		Id int64 `json:"id"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -807,7 +822,7 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if user.Id == 0 {
+	if user == nil {
 		return nil, common.NewBadRequestError("成员不存在")
 	}
 

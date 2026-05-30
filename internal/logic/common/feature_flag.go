@@ -10,7 +10,7 @@ import (
 func IsFeatureEnabled(ctx context.Context, tenantID int64, featureKey string) bool {
 	// 1. 租户级覆盖
 	if tenantID > 0 {
-		var flag struct {
+		var flag *struct {
 			Enabled bool `json:"enabled"`
 		}
 		err := dao.PlnFeatureFlags.Ctx(ctx).
@@ -18,7 +18,7 @@ func IsFeatureEnabled(ctx context.Context, tenantID int64, featureKey string) bo
 			Where("feature_key", featureKey).
 			Where("source", "tenant").
 			Scan(&flag)
-		if err == nil && flag.Enabled {
+		if err == nil && flag != nil && flag.Enabled {
 			return true
 		}
 	}
@@ -33,21 +33,21 @@ func IsFeatureEnabled(ctx context.Context, tenantID int64, featureKey string) bo
 			Limit(1).
 			Scan(&planID)
 		if err == nil && planID > 0 {
-			var flag struct {
+			var flag *struct {
 				Enabled bool `json:"enabled"`
 			}
 			err = dao.PlnFeatureFlags.Ctx(ctx).
 				Where("plan_id", planID).
 				Where("feature_key", featureKey).
 				Scan(&flag)
-			if err == nil && flag.Enabled {
+			if err == nil && flag != nil && flag.Enabled {
 				return true
 			}
 		}
 	}
 
 	// 3. 默认值
-	var flag struct {
+	var flag *struct {
 		DefaultEnabled bool `json:"default_enabled"`
 	}
 	err := dao.PlnFeatureFlags.Ctx(ctx).
@@ -56,6 +56,9 @@ func IsFeatureEnabled(ctx context.Context, tenantID int64, featureKey string) bo
 		Limit(1).
 		Scan(&flag)
 	if err != nil {
+		return false
+	}
+	if flag == nil {
 		return false
 	}
 	return flag.DefaultEnabled

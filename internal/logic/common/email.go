@@ -77,7 +77,7 @@ func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
 // SendTemplate sends an email using a template from ntf_templates.
 func (s *BasicEmailSender) SendTemplate(ctx context.Context, to, templateCode string, variables map[string]any) error {
 	// Load template
-	var tpl struct {
+	var tpl *struct {
 		Subject      string `json:"subject"`
 		BodyTemplate string `json:"body_template"`
 		Channel      string `json:"channel"`

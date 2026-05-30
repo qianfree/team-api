@@ -12,10 +12,13 @@ import (
 	"time"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
 )
 
 const (
@@ -125,7 +128,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		TenantId int64 `json:"tenant_id"`
 		UserId   int64 `json:"user_id"`
 	}
-	err = g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+	err = dao.TntOauthIdentities.Ctx(ctx).
 		Where("provider", req.Provider).
 		Where("provider_user_id", userInfo.ProviderUserID).
 		Scan(&identity)
@@ -142,13 +145,13 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		userID = identity.UserId
 
 		// 更新 token 信息
-		g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+		dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", identity.Id).
-			Data(g.Map{
-				"access_token":     oauthToken.AccessToken,
-				"refresh_token":    oauthToken.RefreshToken,
-				"token_expires_at": time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second),
-				"updated_at":       time.Now(),
+			Data(do.TntOauthIdentities{
+				AccessToken:      oauthToken.AccessToken,
+				RefreshToken:     oauthToken.RefreshToken,
+				TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
+				ProviderUsername: userInfo.Username,
 			}).Update()
 	} else {
 		// 尝试自动注册
@@ -162,10 +165,10 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			return nil, common.NewBusinessError(10060, "OAuth 自动注册未配置")
 		}
 
-		var tenant struct {
+		var tenant *struct {
 			Id int64 `json:"id"`
 		}
-		err = g.DB().Model("tnt_tenants").Ctx(ctx).
+		err = dao.TntTenants.Ctx(ctx).
 			Where("code", tenantCode).
 			Where("status", "active").
 			Scan(&tenant)
@@ -177,23 +180,23 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		if username == "" {
 			username = fmt.Sprintf("%s_%s", req.Provider, userInfo.ProviderUserID)
 		}
-		result, err := g.DB().Model("tnt_users").Ctx(ctx).Data(g.Map{
-			"tenant_id":    tenant.Id,
-			"username":     username,
-			"display_name": userInfo.DisplayName,
-			"email":        userInfo.Email,
-			"role":         "member",
-			"status":       "active",
+		result, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
+			TenantId:    tenant.Id,
+			Username:    username,
+			DisplayName: userInfo.DisplayName,
+			Email:       userInfo.Email,
+			Role:        "member",
+			Status:      "active",
 		}).Insert()
 		if err != nil {
 			username = fmt.Sprintf("%s_%s", username, randomHex(4))
-			result, err = g.DB().Model("tnt_users").Ctx(ctx).Data(g.Map{
-				"tenant_id":    tenant.Id,
-				"username":     username,
-				"display_name": userInfo.DisplayName,
-				"email":        userInfo.Email,
-				"role":         "member",
-				"status":       "active",
+			result, err = dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
+				TenantId:    tenant.Id,
+				Username:    username,
+				DisplayName: userInfo.DisplayName,
+				Email:       userInfo.Email,
+				Role:        "member",
+				Status:      "active",
 			}).Insert()
 			if err != nil {
 				return nil, err
@@ -206,18 +209,18 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 
 		// 创建 OAuth 身份绑定
 		rawData, _ := json.Marshal(userInfo.RawData)
-		g.DB().Model("tnt_oauth_identities").Ctx(ctx).Data(g.Map{
-			"tenant_id":         tenantID,
-			"user_id":           userID,
-			"provider":          req.Provider,
-			"provider_user_id":  userInfo.ProviderUserID,
-			"provider_username": userInfo.Username,
-			"email":             userInfo.Email,
-			"avatar_url":        userInfo.AvatarURL,
-			"access_token":      oauthToken.AccessToken,
-			"refresh_token":     oauthToken.RefreshToken,
-			"token_expires_at":  time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second),
-			"raw_data":          string(rawData),
+		dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
+			TenantId:         tenantID,
+			UserId:           userID,
+			Provider:         req.Provider,
+			ProviderUserId:   userInfo.ProviderUserID,
+			ProviderUsername: userInfo.Username,
+			Email:            userInfo.Email,
+			AvatarUrl:        userInfo.AvatarURL,
+			AccessToken:      oauthToken.AccessToken,
+			RefreshToken:     oauthToken.RefreshToken,
+			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
+			RawData:          string(rawData),
 		}).Insert()
 	}
 
@@ -225,7 +228,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	var user *struct {
 		Role string `json:"role"`
 	}
-	g.DB().Model("tnt_users").Ctx(ctx).Where("id", userID).Scan(&user)
+	dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
 
 	// 创建 session
 	refreshToken, err := common.GenerateRefreshToken()
@@ -294,42 +297,41 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 	}
 
 	// 检查是否已被其他用户绑定
-	var existing struct {
+	var existing *struct {
 		Id     int64 `json:"id"`
 		UserId int64 `json:"user_id"`
 	}
-	g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+	dao.TntOauthIdentities.Ctx(ctx).
 		Where("provider", req.Provider).
 		Where("provider_user_id", userInfo.ProviderUserID).
 		Scan(&existing)
-	if existing.Id > 0 && existing.UserId != userID {
+	if existing != nil && existing.UserId != userID {
 		return nil, common.NewBusinessError(10062, "该 OAuth 账号已绑定其他用户")
 	}
 
 	rawData, _ := json.Marshal(userInfo.RawData)
-	if existing.Id > 0 {
-		g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+	if existing != nil && existing.Id > 0 {
+		dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", existing.Id).
-			Data(g.Map{
-				"access_token":     oauthToken.AccessToken,
-				"refresh_token":    oauthToken.RefreshToken,
-				"token_expires_at": time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second),
-				"raw_data":         string(rawData),
-				"updated_at":       time.Now(),
+			Data(do.TntOauthIdentities{
+				AccessToken:    oauthToken.AccessToken,
+				RefreshToken:   oauthToken.RefreshToken,
+				TokenExpiresAt: gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
+				RawData:        string(rawData),
 			}).Update()
 	} else {
-		g.DB().Model("tnt_oauth_identities").Ctx(ctx).Data(g.Map{
-			"tenant_id":         tenantID,
-			"user_id":           userID,
-			"provider":          req.Provider,
-			"provider_user_id":  userInfo.ProviderUserID,
-			"provider_username": userInfo.Username,
-			"email":             userInfo.Email,
-			"avatar_url":        userInfo.AvatarURL,
-			"access_token":      oauthToken.AccessToken,
-			"refresh_token":     oauthToken.RefreshToken,
-			"token_expires_at":  time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second),
-			"raw_data":          string(rawData),
+		dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
+			TenantId:         tenantID,
+			UserId:           userID,
+			Provider:         req.Provider,
+			ProviderUserId:   userInfo.ProviderUserID,
+			ProviderUsername: userInfo.Username,
+			Email:            userInfo.Email,
+			AvatarUrl:        userInfo.AvatarURL,
+			AccessToken:      oauthToken.AccessToken,
+			RefreshToken:     oauthToken.RefreshToken,
+			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
+			RawData:          string(rawData),
 		}).Insert()
 	}
 
@@ -341,7 +343,7 @@ func (s *sTenant) UnlinkOAuth(ctx context.Context, req *v1.OAuthUnlinkReq) (*v1.
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	_, err := g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+	_, err := dao.TntOauthIdentities.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
 		Where("provider", req.Provider).
@@ -366,7 +368,7 @@ func (s *sTenant) ListOAuthProviders(ctx context.Context, req *v1.OAuthListProvi
 	}
 
 	rows := make([]row, 0)
-	err := g.DB().Model("tnt_oauth_identities").Ctx(ctx).
+	err := dao.TntOauthIdentities.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
 		Scan(&rows)

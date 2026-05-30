@@ -220,8 +220,8 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 		return nil, err
 	}
 
-	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(g.Map{
-		"app_secret_hash": secretHash,
+	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
+		AppSecretHash: secretHash,
 	}).Update()
 	if err != nil {
 		return nil, err
@@ -247,8 +247,8 @@ func (s *sTenant) OpenAppToggleStatus(ctx context.Context, req *v1.OpenAppToggle
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(g.Map{
-		"status": req.Status,
+	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
+		Status: req.Status,
 	}).Update()
 	return nil, err
 }
@@ -434,10 +434,10 @@ func (s *sTenant) WebhookRetry(ctx context.Context, req *v1.WebhookRetryReq) (*v
 		Where("id", req.EventId).
 		Where("tenant_id", tenantID).
 		Where("status IN (?)", g.Slice{"failed", "pending"}).
-		Data(g.Map{
-			"status":        "pending",
-			"next_retry_at": gtime.Now(),
-			"attempts":      0,
+		Data(do.OpnWebhookEvents{
+			Status:      "pending",
+			NextRetryAt: gtime.Now(),
+			Attempts:    0,
 		}).Update()
 	if err != nil {
 		return nil, err

@@ -21,7 +21,7 @@ func UpdateHealthScoreDirect(ctx context.Context, channelID int64, success bool,
 // UpdateHealthScore 计算并更新渠道健康度
 // 公式: 健康度 = 成功率×0.40 + 延迟分×0.25 + 稳定性×0.20 + 连续失败分×0.15
 func UpdateHealthScore(ctx context.Context, channelID int64, success bool, latencyMs float64) {
-	var row struct {
+	var row *struct {
 		SuccessRate         float64 `json:"success_rate"`
 		LatencyMs           float64 `json:"latency_ms"`
 		StabilityScore      float64 `json:"stability_score"`
@@ -184,9 +184,9 @@ func checkAutoDisable(ctx context.Context, channelID int64, consecutiveFailures 
 	result, err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
 		Where("status", "active").
-		Data(g.Map{
-			"status":        "disabled",
-			"auto_disabled": 1,
+		Data(do.ChnChannels{
+			Status:       "disabled",
+			AutoDisabled: 1,
 		}).Update()
 	if err != nil {
 		g.Log().Errorf(ctx, "[AutoDisable] update channel %d failed: %v", channelID, err)
@@ -239,9 +239,9 @@ func checkAutoRecover(ctx context.Context, channelID int64) {
 	// 成功请求 → 自动恢复
 	_, err = dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
-		Data(g.Map{
-			"status":        "active",
-			"auto_disabled": 0,
+		Data(do.ChnChannels{
+			Status:       "active",
+			AutoDisabled: 0,
 		}).Update()
 	if err != nil {
 		g.Log().Errorf(ctx, "[AutoRecover] re-enable channel %d failed: %v", channelID, err)

@@ -414,8 +414,8 @@ func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhiteli
 		return nil, err
 	}
 
-	_, err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(g.Map{
-		"settings": string(settingsJSON),
+	_, err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(do.TntTenants{
+		Settings: string(settingsJSON),
 	}).Update()
 	if err != nil {
 		return nil, err

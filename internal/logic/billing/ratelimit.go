@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
 
@@ -285,7 +286,7 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 	// 缓存未命中，查数据库
 	// 缓存未命中，查数据库
 	var maxConc *int
-	err = g.DB().Model("tnt_tenants").
+	err = dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
 		Fields("max_concurrency").
 		Scan(&maxConc)
@@ -340,7 +341,7 @@ func getModelConcurrencyLimit(ctx context.Context, tenantID int64, modelName str
 
 	// 缓存未命中，查数据库：先获取 model_id，再查 tenant_models
 	var modelID int64
-	err = g.DB().Model("mdl_models").
+	err = dao.MdlModels.Ctx(ctx).
 		Where("model_name", modelName).
 		Fields("id").
 		Scan(&modelID)
@@ -351,7 +352,7 @@ func getModelConcurrencyLimit(ctx context.Context, tenantID int64, modelName str
 	}
 
 	var maxConc *int
-	err = g.DB().Model("mdl_tenant_models").
+	err = dao.MdlTenantModels.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("model_id", modelID).
 		Fields("max_concurrency").

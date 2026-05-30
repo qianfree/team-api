@@ -78,7 +78,7 @@ func (s *sAdmin) UpdateTemplate(ctx context.Context, req *v1.TemplateUpdateReq) 
 
 // TestTemplate 用测试变量渲染模板，返回渲染结果（不发送）
 func (s *sAdmin) TestTemplate(ctx context.Context, req *v1.TemplateTestReq) (*v1.TemplateTestRes, error) {
-	var tpl struct {
+	var tpl *struct {
 		Subject      string `json:"subject"`
 		BodyTemplate string `json:"body_template"`
 		Channel      string `json:"channel"`
@@ -88,6 +88,9 @@ func (s *sAdmin) TestTemplate(ctx context.Context, req *v1.TemplateTestReq) (*v1
 		Scan(&tpl)
 	if err != nil {
 		return nil, err
+	}
+	if tpl == nil {
+		return nil, common.NewNotFoundError("模板")
 	}
 	if tpl.BodyTemplate == "" {
 		return nil, common.NewNotFoundError("template")
@@ -197,7 +200,7 @@ func (s *sAdmin) ListMessages(ctx context.Context, req *v1.MessageListReq) (*v1.
 
 // GetMessageReadStats 获取广播消息的已读统计
 func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, error) {
-	var msg struct {
+	var msg *struct {
 		IsBroadcast int   `json:"is_broadcast"`
 		TenantID    int64 `json:"tenant_id"`
 	}
@@ -207,6 +210,9 @@ func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, 
 		Scan(&msg)
 	if err != nil {
 		return nil, err
+	}
+	if msg == nil {
+		return nil, common.NewNotFoundError("消息")
 	}
 	if msg.IsBroadcast != 1 {
 		return nil, common.NewBadRequestError("message is not a broadcast")

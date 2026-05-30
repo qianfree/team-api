@@ -119,7 +119,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 	}
 
 	// Verify current owner password
-	var currentUser struct {
+	var currentUser *struct {
 		PasswordHash string `json:"password_hash"`
 	}
 	err := dao.TntUsers.Ctx(ctx).
@@ -129,13 +129,16 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
+	if currentUser == nil {
+		return nil, common.NewNotFoundError("用户")
+	}
 
 	if !crypto.VerifyPassword(req.Password, currentUser.PasswordHash) {
 		return nil, common.NewBusinessError(10023, "密码错误")
 	}
 
 	// Check new owner exists and is an active member
-	var newOwner struct {
+	var newOwner *struct {
 		ID   int64  `json:"id"`
 		Role string `json:"role"`
 	}
@@ -146,6 +149,9 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		Scan(&newOwner)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if newOwner == nil {
+		return nil, common.NewNotFoundError("用户")
 	}
 	if newOwner.ID == 0 {
 		return nil, common.NewBadRequestError("目标用户不存在")

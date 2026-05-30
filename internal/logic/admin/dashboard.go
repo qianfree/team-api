@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -114,17 +115,17 @@ func (s *sAdmin) GetDashboardTrends(ctx context.Context, req *v1.AdminDashboardT
 
 	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			DATE(created_at) as date,
 			COUNT(*) as requests,
 			COUNT(DISTINCT tenant_id) as active_tenants,
 			COALESCE(SUM(total_cost), 0) as revenue
 		FROM bil_usage_logs
-		WHERE created_at >= '%s 00:00:00'
+		WHERE created_at >= ?
 		GROUP BY DATE(created_at)
 		ORDER BY date ASC
-	`, startDate)).All()
+	`, startDate+" 00:00:00").All()
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +143,7 @@ func (s *sAdmin) GetTopTenants(ctx context.Context, req *v1.AdminDashboardTopTen
 
 	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			t.id as tenant_id,
 			t.name as tenant_name,
@@ -151,11 +152,11 @@ func (s *sAdmin) GetTopTenants(ctx context.Context, req *v1.AdminDashboardTopTen
 			COUNT(DISTINCT ul.user_id) as active_members
 		FROM bil_usage_logs ul
 		JOIN tnt_tenants t ON t.id = ul.tenant_id
-		WHERE ul.created_at >= '%s 00:00:00'
+		WHERE ul.created_at >= ?
 		GROUP BY t.id, t.name
 		ORDER BY total_cost DESC
 		LIMIT 10
-	`, startDate)).All()
+	`, startDate+" 00:00:00").All()
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +174,7 @@ func (s *sAdmin) GetModelDistribution(ctx context.Context, req *v1.AdminDashboar
 
 	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			model_name,
 			COUNT(*) as requests,
@@ -181,11 +182,11 @@ func (s *sAdmin) GetModelDistribution(ctx context.Context, req *v1.AdminDashboar
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(total_cost), 0) as total_cost
 		FROM bil_usage_logs
-		WHERE created_at >= '%s 00:00:00'
+		WHERE created_at >= ?
 		GROUP BY model_name
 		ORDER BY total_cost DESC
 		LIMIT 20
-	`, startDate)).All()
+	`, startDate+" 00:00:00").All()
 	if err != nil {
 		return nil, err
 	}
@@ -254,11 +255,9 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		total = countResult[0]["total"].Int()
 	}
 
-	dataSQL := fmt.Sprintf(
-		`SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.created_at
-		 FROM %s%s ORDER BY u.created_at DESC LIMIT %d OFFSET %d`,
-		fromClause, where, pageSize, (page-1)*pageSize,
-	)
+	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.created_at
+		 FROM ` + fromClause + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
 	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
 	if err != nil {
 		return nil, err
@@ -405,7 +404,7 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	}
 
 	// 查询更新后的余额，用于记录流水
-	var wallet struct {
+	var wallet *struct {
 		ID            int64   `json:"id"`
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
@@ -417,9 +416,12 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	if err != nil {
 		return nil, err
 	}
+	if wallet == nil {
+		return nil, common.NewBadRequestError("钱包不存在")
+	}
 
 	// 记录流水
-	dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
+	if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 		TenantId:     tenantID,
 		WalletId:     wallet.ID,
 		Type:         "adjust",
@@ -427,7 +429,9 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 		BalanceAfter: wallet.Balance,
 		FrozenAfter:  wallet.FrozenBalance,
 		Description:  description,
-	})
+	}); err != nil {
+		return nil, gerror.Wrapf(err, "record balance adjust transaction")
+	}
 
 	return &v1.AdminWalletAdjustRes{}, nil
 }
@@ -543,7 +547,7 @@ func (s *sAdmin) GetDashboardChannelHealth(ctx context.Context, req *v1.AdminDas
 // GetDashboardRecentAlerts 获取最近5条告警
 func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDashboardRecentAlertsReq) (*v1.AdminDashboardRecentAlertsRes, error) {
 	var alerts []v1.RecentAlertItem
-	err := g.DB().Ctx(ctx).Model("ops_alert_events").
+	err := dao.OpsAlertEvents.Ctx(ctx).
 		Fields("id, rule_name, level, status, trigger_message, created_at").
 		OrderDesc("created_at").
 		Limit(5).
@@ -628,8 +632,9 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		offset := 0
 		for {
 			where, args := buildUsageWhere()
-			sql := fmt.Sprintf("SELECT %s FROM %s%s ORDER BY u.created_at DESC LIMIT 1000 OFFSET %d", selectFields, fromClause, where, offset)
-			result, err := g.DB().Ctx(ctx).Query(ctx, sql, args...)
+			sql := "SELECT " + selectFields + " FROM " + fromClause + where + " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
+			batchArgs := append(args, 1000, offset)
+			result, err := g.DB().Ctx(ctx).Query(ctx, sql, batchArgs...)
 			if err != nil {
 				return
 			}

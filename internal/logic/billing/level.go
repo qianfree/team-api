@@ -14,12 +14,12 @@ import (
 // max_members/max_concurrency 非 NULL 时返回租户自定义值；
 // NULL 时返回等级配置值；等级配置也查不到时回退到默认值。
 func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers int, maxConcurrency int, err error) {
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
 		return 10, 0, err
 	}
-	if tenant.Id == 0 {
+	if tenant == nil {
 		return 10, 0, nil
 	}
 
@@ -33,17 +33,17 @@ func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers i
 
 	// 未自定义的字段从等级配置取
 	if tenant.MaxMembers == nil || tenant.MaxConcurrency == nil {
-		var config entity.TntTenantLevelConfigs
+		var config *entity.TntTenantLevelConfigs
 		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
 		if tenant.MaxMembers == nil {
-			if config.Id > 0 {
+			if config != nil {
 				maxMembers = config.MaxMembers
 			} else {
 				maxMembers = 10
 			}
 		}
 		if tenant.MaxConcurrency == nil {
-			if config.Id > 0 {
+			if config != nil {
 				maxConcurrency = config.MaxConcurrency
 			} else {
 				maxConcurrency = 0
@@ -70,17 +70,17 @@ func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTen
 
 	// 未自定义的字段从等级配置取
 	if tenant.MaxMembers == nil || tenant.MaxConcurrency == nil {
-		var config entity.TntTenantLevelConfigs
+		var config *entity.TntTenantLevelConfigs
 		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
 		if tenant.MaxMembers == nil {
-			if config.Id > 0 {
+			if config != nil {
 				maxMembers = config.MaxMembers
 			} else {
 				maxMembers = 10
 			}
 		}
 		if tenant.MaxConcurrency == nil {
-			if config.Id > 0 {
+			if config != nil {
 				maxConcurrency = config.MaxConcurrency
 			} else {
 				maxConcurrency = 0
@@ -93,24 +93,24 @@ func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTen
 
 // GetTenantLevelConfig 获取指定等级的配置
 func GetTenantLevelConfig(ctx context.Context, level int) (*entity.TntTenantLevelConfigs, error) {
-	var config entity.TntTenantLevelConfigs
+	var config *entity.TntTenantLevelConfigs
 	err := dao.TntTenantLevelConfigs.Ctx(ctx).
 		Where("level", level).
 		Scan(&config)
 	if err != nil {
 		return nil, err
 	}
-	if config.Id == 0 {
+	if config == nil {
 		return nil, fmt.Errorf("level config not found for level %d", level)
 	}
-	return &config, nil
+	return config, nil
 }
 
 // GetLevelPriceMultiplier 获取租户级别的价格乘数
 // 查询失败时静默返回 1.0，不阻断计费
 func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) float64 {
-	var tenant entity.TntTenants
-	if err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant); err != nil || tenant.Id == 0 {
+	var tenant *entity.TntTenants
+	if err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant); err != nil || tenant == nil {
 		g.Log().Warningf(ctx, "[Billing] failed to read tenant level for multiplier: tenantID=%d, err=%v", tenantID, err)
 		return 1.0
 	}
@@ -119,8 +119,8 @@ func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) float64 {
 		return 1.0
 	}
 
-	var config entity.TntTenantLevelConfigs
-	if err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); err != nil || config.Id == 0 {
+	var config *entity.TntTenantLevelConfigs
+	if err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); err != nil || config == nil {
 		g.Log().Warningf(ctx, "[Billing] failed to read level config for multiplier: level=%d, err=%v", tenant.Level, err)
 		return 1.0
 	}
@@ -135,22 +135,22 @@ func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) float64 {
 // 升级策略：仅升不降 — max_members/max_concurrency 仅在新值 > 当前值时才更新
 func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 	// 1. 读取租户当前等级
-	var tenant entity.TntTenants
+	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
 		return err
 	}
-	if tenant.Id == 0 {
+	if tenant == nil {
 		return nil
 	}
 
 	// 2. 读取累计充值
-	var wallet entity.BilWallets
+	var wallet *entity.BilWallets
 	err = dao.BilWallets.Ctx(ctx).Where("tenant_id", tenantID).Scan(&wallet)
 	if err != nil {
 		return err
 	}
-	if wallet.Id == 0 {
+	if wallet == nil {
 		return nil
 	}
 
@@ -215,7 +215,7 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 
 // RecalculateLevel 根据累计充值金额重新计算等级
 func RecalculateLevel(ctx context.Context, cumulativeRecharge float64) (int, error) {
-	var config entity.TntTenantLevelConfigs
+	var config *entity.TntTenantLevelConfigs
 	err := dao.TntTenantLevelConfigs.Ctx(ctx).
 		Where("cumulative_recharge_threshold <= ?", cumulativeRecharge).
 		OrderDesc("level").
@@ -224,7 +224,7 @@ func RecalculateLevel(ctx context.Context, cumulativeRecharge float64) (int, err
 	if err != nil {
 		return 1, err
 	}
-	if config.Id == 0 {
+	if config == nil {
 		return 1, nil
 	}
 	return config.Level, nil

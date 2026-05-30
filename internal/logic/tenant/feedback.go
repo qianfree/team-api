@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 
-	"github.com/gogf/gf/v2/frame/g"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // CreateFeedback 提交反馈
@@ -23,13 +24,13 @@ func (s *sTenant) CreateFeedback(ctx context.Context, req *v1.FeedbackCreateReq)
 		}
 	}
 
-	result, err := g.DB().Model("spt_feedbacks").Ctx(ctx).Data(g.Map{
-		"tenant_id":   tenantID,
-		"user_id":     userID,
-		"category":    req.Category,
-		"title":       req.Title,
-		"description": req.Description,
-		"metadata":    metadata,
+	result, err := dao.SptFeedbacks.Ctx(ctx).Data(do.SptFeedbacks{
+		TenantId:    tenantID,
+		UserId:      userID,
+		Category:    req.Category,
+		Title:       req.Title,
+		Description: req.Description,
+		Metadata:    metadata,
 	}).Insert()
 	if err != nil {
 		return nil, err
@@ -45,7 +46,7 @@ func (s *sTenant) ListFeedbacks(ctx context.Context, req *v1.FeedbackListReq) (*
 	userID := middleware.GetUserID(ctx)
 	page, pageSize := normalizePagination(req.Page, req.PageSize)
 
-	query := g.DB().Model("spt_feedbacks").Ctx(ctx).
+	query := dao.SptFeedbacks.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID)
 	if req.Status != "" {
@@ -78,7 +79,7 @@ func (s *sTenant) GetFeedback(ctx context.Context, req *v1.FeedbackGetReq) (*v1.
 	userID := middleware.GetUserID(ctx)
 
 	var row v1.FeedbackGetRes
-	err := g.DB().Model("spt_feedbacks").Ctx(ctx).
+	err := dao.SptFeedbacks.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).

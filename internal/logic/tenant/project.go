@@ -511,7 +511,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 
 	tenantID := middleware.GetTenantID(ctx)
 
-	var project struct {
+	var project *struct {
 		ID int64 `json:"id"`
 	}
 	err := dao.TntProjects.Ctx(ctx).
@@ -522,7 +522,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 	if err != nil {
 		return nil, err
 	}
-	if project.ID == 0 {
+	if project == nil {
 		return nil, common.NewNotFoundError("项目")
 	}
 

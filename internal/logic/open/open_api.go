@@ -190,7 +190,7 @@ func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq)
 		return nil, fmt.Errorf("unauthorized")
 	}
 
-	var user struct {
+	var user *struct {
 		QuotaType   string  `json:"quota_type"`
 		QuotaLimit  float64 `json:"quota_limit"`
 		QuotaUsed   float64 `json:"quota_used"`

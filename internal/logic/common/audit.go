@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/dao"
 )
 
 // Audit levels
@@ -52,7 +52,7 @@ func GetAuditLevels(ctx context.Context, tenantID int64) (globalLevel, tenantLev
 // 未设置时返回空字符串，不回退到全局级别。
 func GetTenantAuditLevel(ctx context.Context, tenantID int64) string {
 	var settingsJSON string
-	err := g.DB().Model("tnt_tenants").Ctx(ctx).
+	err := dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
 		Fields("settings").
 		Scan(&settingsJSON)

@@ -4,21 +4,22 @@ import (
 	"context"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
 // CreateChangelog 创建更新日志
 func (s *sAdmin) CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq) (*v1.ChangelogCreateRes, error) {
-	result, err := g.DB().Model("clg_changelogs").Ctx(ctx).Data(g.Map{
-		"version":    req.Version,
-		"title":      req.Title,
-		"content":    req.Content,
-		"type":       req.Type,
-		"status":     "draft",
-		"created_by": common.GetCtxUserID(ctx),
+	result, err := dao.ClgChangelogs.Ctx(ctx).Data(do.ClgChangelogs{
+		Version:   req.Version,
+		Title:     req.Title,
+		Content:   req.Content,
+		Type:      req.Type,
+		Status:    "draft",
+		CreatedBy: common.GetCtxUserID(ctx),
 	}).Insert()
 	if err != nil {
 		return nil, err
@@ -32,7 +33,7 @@ func (s *sAdmin) CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq
 func (s *sAdmin) ListChangelogs(ctx context.Context, req *v1.ChangelogListReq) (*v1.ChangelogListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	query := g.DB().Model("clg_changelogs").Ctx(ctx)
+	query := dao.ClgChangelogs.Ctx(ctx)
 	if req.Status != "" {
 		query = query.Where("status", req.Status)
 	}
@@ -62,7 +63,7 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 	var cl *struct {
 		Id int64 `json:"id"`
 	}
-	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -70,14 +71,14 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 		return nil, common.NewBusinessError(10064, "更新日志不存在")
 	}
 
-	_, err = g.DB().Model("clg_changelogs").Ctx(ctx).
+	_, err = dao.ClgChangelogs.Ctx(ctx).
 		Where("id", req.Id).
-		Data(g.Map{
-			"version": req.Version,
-			"title":   req.Title,
-			"content": req.Content,
-			"type":    req.Type,
-			"status":  req.Status,
+		Data(do.ClgChangelogs{
+			Version: req.Version,
+			Title:   req.Title,
+			Content: req.Content,
+			Type:    req.Type,
+			Status:  req.Status,
 		}).
 		Update()
 	if err != nil {
@@ -92,7 +93,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 	var cl *struct {
 		Id int64 `json:"id"`
 	}
-	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -100,7 +101,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 		return nil, common.NewBusinessError(10064, "更新日志不存在")
 	}
 
-	_, err = g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Delete()
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +115,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 		Id     int64  `json:"id"`
 		Status string `json:"status"`
 	}
-	err := g.DB().Model("clg_changelogs").Ctx(ctx).Where("id", req.Id).Scan(&cl)
+	err := dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Scan(&cl)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -125,11 +126,11 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 		return &v1.ChangelogPublishRes{}, nil
 	}
 
-	_, err = g.DB().Model("clg_changelogs").Ctx(ctx).
+	_, err = dao.ClgChangelogs.Ctx(ctx).
 		Where("id", req.Id).
-		Data(g.Map{
-			"status":       "published",
-			"published_at": gtime.Now(),
+		Data(do.ClgChangelogs{
+			Status:      "published",
+			PublishedAt: gtime.Now(),
 		}).
 		Update()
 	if err != nil {

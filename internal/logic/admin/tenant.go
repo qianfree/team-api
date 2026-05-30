@@ -7,7 +7,6 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -366,9 +365,9 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 
 	// Get level name
 	levelName := ""
-	var levelConfig entity.TntTenantLevelConfigs
+	var levelConfig *entity.TntTenantLevelConfigs
 	_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&levelConfig)
-	if levelConfig.Id > 0 {
+	if levelConfig != nil {
 		levelName = levelConfig.Name
 	}
 
@@ -377,12 +376,12 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	effectiveMaxConc := 0
 	if tenant.MaxMembers != nil {
 		effectiveMaxMembers = *tenant.MaxMembers
-	} else if levelConfig.Id > 0 {
+	} else if levelConfig != nil {
 		effectiveMaxMembers = levelConfig.MaxMembers
 	}
 	if tenant.MaxConcurrency != nil {
 		effectiveMaxConc = *tenant.MaxConcurrency
-	} else if levelConfig.Id > 0 {
+	} else if levelConfig != nil {
 		effectiveMaxConc = levelConfig.MaxConcurrency
 	}
 
@@ -460,9 +459,9 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 	// 管理员手动调整等级：仅更新等级，不自动填充成员数和并发数
 	// 成员数和并发数为 NULL 时自动跟随等级配置
 	if req.Level != nil {
-		var config entity.TntTenantLevelConfigs
+		var config *entity.TntTenantLevelConfigs
 		err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", *req.Level).Scan(&config)
-		if err = common.IgnoreScanNoRows(err); err != nil || config.Id == 0 {
+		if err = common.IgnoreScanNoRows(err); err != nil || config == nil {
 			return nil, common.NewBadRequestError("等级配置不存在")
 		}
 		data.Level = *req.Level
@@ -487,8 +486,8 @@ func (s *sAdmin) UpdateTenantChannelScope(ctx context.Context, req *v1.TenantCha
 		return nil, gerror.New("default_channel_scope 必须是有效的 JSON（如 [1,5,12]）或 null")
 	}
 
-	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Data(g.Map{
-		"default_channel_scope": scopeValue,
+	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Data(do.TntTenants{
+		DefaultChannelScope: scopeValue,
 	}).Update()
 	if err != nil {
 		return nil, err

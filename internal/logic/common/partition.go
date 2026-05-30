@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -32,6 +33,9 @@ var partitionedTables = []partitionedTable{
 	},
 }
 
+// safeNameRe validates partition and table names contain only safe characters.
+var safeNameRe = regexp.MustCompile(`^[a-z_0-9]+$`)
+
 // EnsurePartitions 检查并补齐所有分区表的当前月+未来 3 个月分区
 func EnsurePartitions(ctx context.Context) error {
 	now := time.Now()
@@ -58,6 +62,11 @@ func EnsurePartitions(ctx context.Context) error {
 			nextMonth := time.Date(m.Year(), m.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 			from := m.Format("2006-01-02")
 			to := nextMonth.Format("2006-01-02")
+
+			if !safeNameRe.MatchString(partitionName) || !safeNameRe.MatchString(pt.table) {
+				g.Log().Warningf(ctx, "partition: invalid name %s or table %s", partitionName, pt.table)
+				continue
+			}
 
 			sql := fmt.Sprintf(
 				`CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')`,
