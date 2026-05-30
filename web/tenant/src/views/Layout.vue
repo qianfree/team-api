@@ -22,6 +22,7 @@ const consoleAnnouncements = ref<any[]>([])
 let announcementTimer: ReturnType<typeof setInterval> | null = null
 const walletBalance = ref<string>('')
 let walletTimer: ReturnType<typeof setInterval> | null = null
+const memberQuota = ref<{ used: number; limit: number } | null>(null)
 const { unreadCount, startPolling: startNotificationPolling, stopPolling: stopNotificationPolling, setOnNewNotification } = useNotificationCount()
 setOnNewNotification((newCount: number) => {
 	if (newCount > 0) {
@@ -66,6 +67,10 @@ const navItems = computed<NavItem[]>(() => {
 		}))
 })
 
+const canViewWallet = computed(() => {
+	const role = authStore.user?.role
+	return role === 'owner' || role === 'admin'
+})
 const activePath = computed(() => route.path)
 const pageTitle = computed(() => {
 		const matched = route.matched
@@ -144,14 +149,32 @@ async function fetchWalletBalance() {
 	}
 }
 
+async function fetchMemberQuota() {
+	try {
+		const res = await request.get('/tenant/personal-dashboard')
+		const q = res.data?.data?.quota
+		if (q && q.quota_type !== 'none') {
+			memberQuota.value = { used: q.quota_used ?? 0, limit: q.quota_limit ?? 0 }
+		} else {
+			memberQuota.value = null
+		}
+	} catch {
+		// silently ignore
+	}
+}
+
 onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
 	announcementTimer = setInterval(fetchAnnouncements, 10 * 60 * 1000)
 	startNotificationPolling()
-	fetchWalletBalance()
-	walletTimer = setInterval(fetchWalletBalance, 60000)
+	if (canViewWallet.value) {
+		fetchWalletBalance()
+		walletTimer = setInterval(fetchWalletBalance, 60000)
+	} else {
+		fetchMemberQuota()
+	}
 
 	await fetchPublicSettings()
 	if (publicSettings.demo_mode) {
@@ -297,12 +320,23 @@ onBeforeUnmount(() => {
 
 					<!-- Wallet Capsule -->
 						<router-link
+							v-if="canViewWallet"
 							to="/tenant/wallet"
 							class="flex h-9 items-center gap-1.5 rounded-full bg-primary-50 border border-primary-200/60 px-3 text-primary-600 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm hover:shadow-primary-500/10 transition-all duration-200"
 							title="钱包"
 						>
 							<Icon name="currencyDollar" size="sm" />
 							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || '$0' }}</span>
+						</router-link>
+						<!-- Member Quota Capsule -->
+						<router-link
+							v-if="!canViewWallet && memberQuota"
+							to="/tenant/personal-dashboard"
+							class="flex h-9 items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/60 px-3 text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
+							title="额度"
+						>
+							<Icon name="chart" size="sm" />
+							<span class="text-xs font-semibold tracking-tight">${{ memberQuota.limit > 0 ? (memberQuota.used / memberQuota.limit * 100).toFixed(0) : 0 }}%</span>
 						</router-link>
 						<!-- User Menu -->
 						<div class="relative" data-user-menu>
