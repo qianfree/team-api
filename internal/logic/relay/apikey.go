@@ -120,14 +120,14 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 		}
 
 		// 检查租户状态
-		var tenant struct {
+		var tenant *struct {
 			Status string `json:"status"`
 		}
 		err = dao.TntTenants.Ctx(ctx).
 			Where("id", k.TenantID).
 			Fields("status").
 			Scan(&tenant)
-		if err != nil || tenant.Status != "active" {
+		if err != nil || tenant == nil || tenant.Status != "active" {
 			return nil, consts.ErrTenantSuspended
 		}
 

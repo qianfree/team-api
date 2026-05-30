@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"time"
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
@@ -418,6 +418,9 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Where("channel_id", req.ID).
 		Fields("key_type, status, name, token_expires_at").
 		Scan(&keyInfo)
+	if keyInfo == nil {
+		return nil, common.NewNotFoundError("密钥")
+	}
 
 	settings := relay.ParseChannelSettings(ch.Settings)
 
@@ -602,7 +605,7 @@ func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealt
 		Model("chn_health_snapshots").
 		Fields("snapshot_at, health_score, success_rate, latency_ms, stability_score, consecutive_failures").
 		Where("channel_id", req.ID).
-		Where("snapshot_at >= NOW() - INTERVAL '" + strconv.Itoa(req.Hours) + " hours'").
+		Where("snapshot_at >= ?", gtime.Now().Add(-time.Duration(req.Hours)*time.Hour)).
 		OrderAsc("snapshot_at").
 		Scan(&points)
 	if err != nil {

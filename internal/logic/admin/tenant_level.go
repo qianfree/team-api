@@ -105,9 +105,9 @@ func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 }
 
 func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigDeleteReq) (*v1.TenantLevelConfigDeleteRes, error) {
-	var config entity.TntTenantLevelConfigs
+	var config *entity.TntTenantLevelConfigs
 	dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
-	if config.Id == 0 {
+	if config == nil {
 		return &v1.TenantLevelConfigDeleteRes{}, nil
 	}
 	if config.Level == 1 {

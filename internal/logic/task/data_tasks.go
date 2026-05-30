@@ -117,15 +117,21 @@ func handleDeletionRequest(ctx context.Context, payload json.RawMessage) (any, e
 		return nil, fmt.Errorf("anonymize users: %w", err)
 	}
 
-	_, _ = dao.ApiKeys.Ctx(ctx).
+	if _, err := dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", p.TenantID).
-		Data(do.ApiKeys{Status: "disabled"}).Update()
+		Data(do.ApiKeys{Status: "disabled"}).Update(); err != nil {
+		return nil, fmt.Errorf("disable api keys: %w", err)
+	}
 
-	_, _ = dao.AudSensitiveAccessLogs.Ctx(ctx).Where("tenant_id", p.TenantID).Delete()
+	if _, err := dao.AudSensitiveAccessLogs.Ctx(ctx).Where("tenant_id", p.TenantID).Delete(); err != nil {
+		return nil, fmt.Errorf("delete sensitive access logs: %w", err)
+	}
 
-	_, _ = dao.TntTenants.Ctx(ctx).
+	if _, err := dao.TntTenants.Ctx(ctx).
 		Where("id", p.TenantID).
-		Data(do.TntTenants{Status: "terminated"}).Update()
+		Data(do.TntTenants{Status: "terminated"}).Update(); err != nil {
+		return nil, fmt.Errorf("terminate tenant: %w", err)
+	}
 
 	proof := map[string]any{
 		"tenant_id":    p.TenantID,
@@ -146,7 +152,9 @@ func handleExportCleanup(ctx context.Context, payload json.RawMessage) (any, err
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return nil, err
 	}
-	_, _ = dao.FilFiles.Ctx(ctx).Where("id", p.FileID).Delete()
+	if _, err := dao.FilFiles.Ctx(ctx).Where("id", p.FileID).Delete(); err != nil {
+		return nil, fmt.Errorf("delete export file %d: %w", p.FileID, err)
+	}
 	g.Log().Infof(ctx, "cleaned up export file %d for tenant %d", p.FileID, p.TenantID)
 	return map[string]any{"file_id": p.FileID, "deleted": true}, nil
 }

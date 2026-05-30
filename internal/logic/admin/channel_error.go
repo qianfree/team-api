@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -73,8 +75,10 @@ func (s *sAdmin) ChannelErrorEventList(ctx context.Context, req *v1.ChannelError
 
 // ChannelErrorStats 渠道错误统计
 func (s *sAdmin) ChannelErrorStats(ctx context.Context, req *v1.ChannelErrorStatsReq) (*v1.ChannelErrorStatsRes, error) {
-	timeCondition := fmt.Sprintf("created_at >= NOW() - INTERVAL '%d hours'", req.Hours)
+	cutoff := gtime.Now().Add(-time.Duration(req.Hours) * time.Hour)
 	var args []any
+	timeCondition := "created_at >= ?"
+	args = append(args, cutoff)
 	if req.ChannelID > 0 {
 		timeCondition += " AND channel_id = ?"
 		args = append(args, req.ChannelID)
@@ -134,8 +138,10 @@ func (s *sAdmin) ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTren
 		interval = "6 hours"
 	}
 
-	timeCondition := fmt.Sprintf("created_at >= NOW() - INTERVAL '%d hours'", req.Hours)
+	cutoff := gtime.Now().Add(-time.Duration(req.Hours) * time.Hour)
 	var args []any
+	timeCondition := "created_at >= ?"
+	args = append(args, cutoff)
 	if req.ChannelID > 0 {
 		timeCondition += " AND channel_id = ?"
 		args = append(args, req.ChannelID)
@@ -160,15 +166,15 @@ func (s *sAdmin) ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTren
 
 // ChannelErrorTopChannels 错误最多的渠道
 func (s *sAdmin) ChannelErrorTopChannels(ctx context.Context, req *v1.ChannelErrorTopChannelsReq) (*v1.ChannelErrorTopChannelsRes, error) {
-	timeFilter := fmt.Sprintf("created_at >= NOW() - INTERVAL '%d hours'", req.Hours)
+	cutoff := gtime.Now().Add(-time.Duration(req.Hours) * time.Hour)
 	result, err := g.DB().Ctx(ctx).Query(ctx,
 		"SELECT channel_id, channel_name, provider, COUNT(*) as error_count, "+
 			"COUNT(*) FILTER (WHERE error_category = 'rate_limit') as rate_limit_count, "+
 			"COUNT(*) FILTER (WHERE error_category = 'server_error') as server_error_count, "+
 			"COUNT(*) FILTER (WHERE error_category = 'timeout') as timeout_count "+
-			"FROM chn_error_events WHERE "+timeFilter+
-			" GROUP BY channel_id, channel_name, provider ORDER BY error_count DESC LIMIT ?",
-		req.Limit)
+			"FROM chn_error_events WHERE created_at >= ? "+
+			"GROUP BY channel_id, channel_name, provider ORDER BY error_count DESC LIMIT ?",
+		cutoff, req.Limit)
 	if err != nil {
 		return nil, err
 	}

@@ -4,11 +4,11 @@ import (
 	"context"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/plugin"
 
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 )
 
 func (s *sTenant) TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (*v1.TenantPluginListRes, error) {
@@ -17,7 +17,7 @@ func (s *sTenant) TenantPluginList(ctx context.Context, req *v1.TenantPluginList
 	items := make([]v1.TenantPluginItem, 0, len(entries))
 
 	// 查询租户已启用的插件
-	tenantPlugins, _ := g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
+	tenantPlugins, _ := dao.TntTenantPlugins.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		All()
 	tenantEnabled := make(map[string]bool)
@@ -58,7 +58,7 @@ func (s *sTenant) TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDe
 
 	// 检查租户是否启用
 	enabled := false
-	record, _ := g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
+	record, _ := dao.TntTenantPlugins.Ctx(ctx).
 		Where("tenant_id = ? AND plugin_name = ?", tenantID, req.Name).
 		One()
 	if record != nil {

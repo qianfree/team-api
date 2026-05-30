@@ -103,7 +103,7 @@ func (p *AsyncProvider) UpdateTaskCAS(ctx context.Context, task *common.AsyncTas
 
 // GetTaskByPublicID 根据公开任务 ID 查询
 func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID string) (*common.AsyncTask, error) {
-	var row struct {
+	var row *struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
 		RequestId       string          `json:"request_id"`
@@ -136,7 +136,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s", publicTaskID)
 	}
-	if row.ID == 0 {
+	if row == nil {
 		return nil, nil
 	}
 	return &common.AsyncTask{
@@ -170,7 +170,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 
 // GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询
 func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64) (*common.AsyncTask, error) {
-	var row struct {
+	var row *struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
 		RequestId       string          `json:"request_id"`
@@ -203,7 +203,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s user_id=%d", publicTaskID, userID)
 	}
-	if row.ID == 0 {
+	if row == nil {
 		return nil, nil
 	}
 	return &common.AsyncTask{
@@ -403,7 +403,7 @@ func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*co
 
 // GetChannelByID 获取渠道基本信息（含从 chn_channel_keys 解密的 API Key）
 func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*common.ChannelBasicInfo, error) {
-	var row struct {
+	var row *struct {
 		ID       int64           `json:"id"`
 		Type     int             `json:"type"`
 		Name     string          `json:"name"`
@@ -417,7 +417,7 @@ func (p *AsyncProvider) GetChannelByID(ctx context.Context, channelID int64) (*c
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query channel failed: id=%d", channelID)
 	}
-	if row.ID == 0 {
+	if row == nil {
 		return nil, nil
 	}
 

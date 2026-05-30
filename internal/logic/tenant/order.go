@@ -87,7 +87,7 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	}
 
 	// 查套餐价格
-	var plan struct {
+	var plan *struct {
 		MonthlyPrice float64 `json:"monthly_price"`
 		YearlyPrice  float64 `json:"yearly_price"`
 		Status       string  `json:"status"`
@@ -97,6 +97,9 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		Scan(&plan)
 	if err = lcommon.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if plan == nil {
+		return nil, lcommon.NewNotFoundError("套餐")
 	}
 	if plan.Status != "active" {
 		return nil, lcommon.NewBusinessError(422, "套餐不可用")

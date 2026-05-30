@@ -4,6 +4,7 @@ import (
 	"context"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -94,7 +95,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 		UserId   int64  `json:"user_id"`
 		Title    string `json:"title"`
 	}
-	err := g.DB().Model("spt_feedbacks").Ctx(ctx).Where("id", req.Id).Scan(&fb)
+	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.Id).Scan(&fb)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -114,7 +115,7 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 		updateData["resolution"] = req.Resolution
 	}
 
-	_, err = g.DB().Model("spt_feedbacks").Ctx(ctx).
+	_, err = dao.SptFeedbacks.Ctx(ctx).
 		Where("id", req.Id).
 		Data(updateData).
 		Update()
@@ -143,7 +144,7 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 	var fb *struct {
 		Id int64 `json:"id"`
 	}
-	err := g.DB().Model("spt_feedbacks").Ctx(ctx).Where("id", req.Id).Scan(&fb)
+	err := dao.SptFeedbacks.Ctx(ctx).Where("id", req.Id).Scan(&fb)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
@@ -156,7 +157,7 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 		updateData["priority"] = req.Priority
 	}
 
-	_, err = g.DB().Model("spt_feedbacks").Ctx(ctx).
+	_, err = dao.SptFeedbacks.Ctx(ctx).
 		Where("id", req.Id).
 		Data(updateData).
 		Update()
@@ -175,7 +176,7 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 	}
 
 	var statusCounts []countRow
-	err := g.DB().Model("spt_feedbacks").Ctx(ctx).
+	err := dao.SptFeedbacks.Ctx(ctx).
 		Fields("status, COUNT(*) as count").
 		Group("status").
 		Scan(&statusCounts)
@@ -205,7 +206,7 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		Count    int    `json:"count" orm:"count"`
 	}
 	var catCounts []catRow
-	g.DB().Model("spt_feedbacks").Ctx(ctx).
+	dao.SptFeedbacks.Ctx(ctx).
 		Fields("category, COUNT(*) as count").
 		Group("category").
 		Scan(&catCounts)
@@ -217,7 +218,7 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		Date  string `json:"date" orm:"date"`
 		Count int    `json:"count" orm:"count"`
 	}
-	g.DB().Model("spt_feedbacks").Ctx(ctx).
+	dao.SptFeedbacks.Ctx(ctx).
 		Fields("DATE(created_at) as date, COUNT(*) as count").
 		Where("created_at >= NOW() - INTERVAL '30 days'").
 		Group("DATE(created_at)").

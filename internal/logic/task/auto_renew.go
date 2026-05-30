@@ -82,13 +82,17 @@ func processAutoRenew(ctx context.Context, subscriptionID, tenantID, planID int6
 	orderID, _ := result.LastInsertId()
 
 	// 查套餐价格并更新订单金额
-	var plan struct {
+	var plan *struct {
 		MonthlyPrice float64 `json:"monthly_price"`
 	}
 	dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
 		Fields("monthly_price").
 		Scan(&plan)
+	if plan == nil {
+		g.Log().Warningf(ctx, "[AutoRenew] plan %d not found", planID)
+		return
+	}
 
 	dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).

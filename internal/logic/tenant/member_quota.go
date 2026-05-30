@@ -17,7 +17,7 @@ import (
 func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq) (*v1.TenantMemberQuotaRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	var row struct {
+	var row *struct {
 		QuotaType    string     `json:"quota_type"`
 		QuotaLimit   float64    `json:"quota_limit"`
 		QuotaUsed    float64    `json:"quota_used"`
@@ -32,7 +32,9 @@ func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq)
 	if err != nil {
 		return nil, err
 	}
-
+	if row == nil {
+		return nil, common.NewNotFoundError("成员")
+	}
 	res := &v1.TenantMemberQuotaRes{
 		QuotaType:  row.QuotaType,
 		QuotaLimit: row.QuotaLimit,

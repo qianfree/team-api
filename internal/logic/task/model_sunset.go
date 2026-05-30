@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // CheckModelSunset 检查并处理已过 sunset 日期的弃用模型
@@ -45,11 +46,11 @@ func CheckModelSunset(ctx context.Context) error {
 		// 设置为 offline 并清除弃用字段
 		_, err := dao.MdlModels.Ctx(ctx).
 			Where("id", m.ID).
-			Data(g.Map{
-				"status":            "offline",
-				"deprecated_at":     nil,
-				"sunset_date":       nil,
-				"replacement_model": "",
+			Data(do.MdlModels{
+				Status:           "offline",
+				DeprecatedAt:     nil,
+				SunsetDate:       nil,
+				ReplacementModel: "",
 			}).Update()
 		if err != nil {
 			g.Log().Errorf(ctx, "[Cron] sunset model %s (%d) failed: %v", m.ModelId, m.ID, err)

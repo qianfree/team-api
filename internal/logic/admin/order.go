@@ -62,7 +62,7 @@ func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.Orde
 func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error) {
 	adminUserID := common.GetCtxUserID(ctx)
 
-	var order struct {
+	var order *struct {
 		TenantID       int64   `json:"tenant_id"`
 		FinalAmount    float64 `json:"final_amount"`
 		Status         string  `json:"status"`
@@ -73,6 +73,9 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		Scan(&order)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if order == nil {
+		return nil, common.NewNotFoundError("订单")
 	}
 	if order.Status != "paid" && order.Status != "fulfilled" {
 		return nil, common.NewBadRequestError("订单状态不支持退款")
@@ -177,7 +180,7 @@ func (s *sAdmin) UpdatePaymentSettings(ctx context.Context, req *v1.PaymentSetti
 
 // getOrderForComplete 获取待完成的订单信息（供 OrderComplete 方法内部调用）。
 func getOrderForComplete(ctx context.Context, orderID int64) (orderNo string, err error) {
-	var order struct {
+	var order *struct {
 		OrderNo string `json:"order_no"`
 		Status  string `json:"status"`
 	}
@@ -185,6 +188,9 @@ func getOrderForComplete(ctx context.Context, orderID int64) (orderNo string, er
 		Where("id", orderID).Scan(&order)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return "", err
+	}
+	if order == nil {
+		return "", common.NewNotFoundError("订单")
 	}
 	if order.Status != "pending" {
 		return "", common.NewBadRequestError("订单状态不是待支付，无法完成")

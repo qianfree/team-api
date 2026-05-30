@@ -165,7 +165,9 @@ func CleanupExpiredExportFiles(ctx context.Context) error {
 		return err
 	}
 	for _, f := range expiredFiles {
-		_, _ = dao.FilFiles.Ctx(ctx).Where("id", f.ID).Delete()
+		if _, err := dao.FilFiles.Ctx(ctx).Where("id", f.ID).Delete(); err != nil {
+			g.Log().Warningf(ctx, "cleanup file %d failed: %v", f.ID, err)
+		}
 	}
 	return nil
 }
@@ -179,6 +181,16 @@ func CheckFileRetention(ctx context.Context) error {
 }
 
 func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int) error {
+	allowedCleanupTables := map[string]map[string]bool{
+		"aud_request_logs":          {"created_at": true},
+		"aud_operation_logs":        {"created_at": true},
+		"aud_sensitive_access_logs": {"created_at": true},
+	}
+	cols, ok := allowedCleanupTables[table]
+	if !ok || !cols[dateColumn] {
+		return fmt.Errorf("invalid table/column for cleanup: %s.%s", table, dateColumn)
+	}
+
 	cutoff := time.Now().AddDate(0, 0, -days)
 	batchSize := 5000
 	for {
@@ -212,11 +224,17 @@ func cleanupDeactivatedTenants(ctx context.Context) error {
 	}
 	for _, t := range tenants {
 		g.Log().Infof(ctx, "cleaning data for deactivated tenant %d (status=%s)", t.ID, t.StatusCode)
-		_, _ = dao.TntUsers.Ctx(ctx).Where("tenant_id", t.ID).
-			Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", t.ID)}).Update()
-		_, _ = dao.ApiKeys.Ctx(ctx).Where("tenant_id", t.ID).Delete()
-		_, _ = dao.TntTenants.Ctx(ctx).Where("id", t.ID).
-			Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update()
+		if _, err := dao.TntUsers.Ctx(ctx).Where("tenant_id", t.ID).
+			Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", t.ID)}).Update(); err != nil {
+			return gerror.Wrapf(err, "anonymize users for tenant %d", t.ID)
+		}
+		if _, err := dao.ApiKeys.Ctx(ctx).Where("tenant_id", t.ID).Delete(); err != nil {
+			return gerror.Wrapf(err, "delete api keys for tenant %d", t.ID)
+		}
+		if _, err := dao.TntTenants.Ctx(ctx).Where("id", t.ID).
+			Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update(); err != nil {
+			return gerror.Wrapf(err, "update data removal for tenant %d", t.ID)
+		}
 	}
 	return nil
 }

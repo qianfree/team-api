@@ -520,7 +520,7 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 
 	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
 	var tracks []trackRow
-	err := g.DB().Ctx(ctx).Model("bil_prededuct_tracks").
+	err := dao.BilPredeductTracks.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("status", "frozen").
 		Where("created_at > ?", cutoff).

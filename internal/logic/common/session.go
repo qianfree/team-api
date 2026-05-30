@@ -206,7 +206,7 @@ func MarkSessionRevoked(ctx context.Context, jti string) {
 
 // GetSessionByID retrieves a session by its ID.
 func GetSessionByID(ctx context.Context, sessionID int64) (*entity.SysSessions, error) {
-	var session entity.SysSessions
+	var session *entity.SysSessions
 	err := dao.SysSessions.Ctx(ctx).
 		Where("id", sessionID).
 		Where("expires_at > NOW()").
@@ -214,15 +214,15 @@ func GetSessionByID(ctx context.Context, sessionID int64) (*entity.SysSessions, 
 	if err != nil {
 		return nil, err
 	}
-	if session.Id == 0 {
+	if session == nil {
 		return nil, nil
 	}
-	return &session, nil
+	return session, nil
 }
 
 // GetSessionByRefreshHash retrieves an active session by refresh token hash.
 func GetSessionByRefreshHash(ctx context.Context, refreshTokenHash string) (*entity.SysSessions, error) {
-	var session entity.SysSessions
+	var session *entity.SysSessions
 	err := dao.SysSessions.Ctx(ctx).
 		Where("refresh_token_hash", refreshTokenHash).
 		Where("expires_at > NOW()").
@@ -230,10 +230,10 @@ func GetSessionByRefreshHash(ctx context.Context, refreshTokenHash string) (*ent
 	if err != nil {
 		return nil, err
 	}
-	if session.Id == 0 {
+	if session == nil {
 		return nil, nil
 	}
-	return &session, nil
+	return session, nil
 }
 
 // CleanExpiredSessions removes expired sessions from the database.

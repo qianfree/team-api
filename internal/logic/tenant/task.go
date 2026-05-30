@@ -106,7 +106,7 @@ func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetail
 	role := middleware.GetUserRole(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	var task struct {
+	var task *struct {
 		Id              int64   `json:"id"`
 		PublicTaskId    string  `json:"public_task_id"`
 		Platform        string  `json:"platform"`
@@ -135,7 +135,7 @@ func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetail
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if task.Id == 0 {
+	if task == nil {
 		return nil, common.NewNotFoundError("任务")
 	}
 

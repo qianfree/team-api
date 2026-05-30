@@ -87,7 +87,7 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 	for _, a := range req.Assignments {
 		g.Log().Debugf(ctx, "BatchAssignModels: tenant_id=%d, model_id=%d, enabled=%v", req.TenantID, a.ModelID, a.Enabled)
 
-		var model struct {
+		var model *struct {
 			ID     int64  `json:"id"`
 			Status string `json:"status"`
 		}

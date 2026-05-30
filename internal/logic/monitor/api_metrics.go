@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"context"
-	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
 	"time"
 
@@ -75,15 +74,15 @@ func GetAPIMetrics(ctx context.Context, minutes int) (*APIMetricsResult, error) 
 		Avg float64 `json:"avg"`
 	}
 	var lat latencyRow
-	err = g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err = g.DB().Ctx(ctx).Raw(`
 		SELECT
 			COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms), 0) as p50,
 			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) as p95,
 			COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), 0) as p99,
 			COALESCE(AVG(latency_ms), 0) as avg
 		FROM bil_usage_logs
-		WHERE created_at >= '%s' AND latency_ms IS NOT NULL
-	`, sinceStr)).Scan(&lat)
+		WHERE created_at >= ? AND latency_ms IS NOT NULL
+	`, sinceStr).Scan(&lat)
 	if err != nil {
 		g.Log().Warningf(ctx, "get latency metrics: %v", err)
 	}
@@ -114,17 +113,17 @@ func GetTrafficCurve(ctx context.Context, minutes int) ([]map[string]any, error)
 
 	since := time.Now().Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02 15:04:05")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			DATE_TRUNC('minute', created_at) as time,
 			COUNT(*) as requests,
 			COALESCE(SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)), 0) as tokens,
 			COALESCE(AVG(latency_ms), 0) as avg_latency
 		FROM bil_usage_logs
-		WHERE created_at >= '%s'
+		WHERE created_at >= ?
 		GROUP BY DATE_TRUNC('minute', created_at)
 		ORDER BY time ASC
-	`, since)).All()
+	`, since).All()
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +153,7 @@ func GetLatencyHistogram(ctx context.Context, minutes int) (map[string]any, erro
 		Min float64 `json:"min"`
 	}
 	var lat latRow
-	err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms), 0) as p50,
 			COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) as p95,
@@ -163,8 +162,8 @@ func GetLatencyHistogram(ctx context.Context, minutes int) (map[string]any, erro
 			COALESCE(MAX(latency_ms), 0) as max,
 			COALESCE(MIN(latency_ms), 0) as min
 		FROM bil_usage_logs
-		WHERE created_at >= '%s' AND latency_ms IS NOT NULL
-	`, since)).Scan(&lat)
+		WHERE created_at >= ? AND latency_ms IS NOT NULL
+	`, since).Scan(&lat)
 	if err != nil {
 		return nil, err
 	}
@@ -187,18 +186,18 @@ func GetModelDistribution(ctx context.Context, minutes int) ([]map[string]any, e
 
 	since := time.Now().Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02 15:04:05")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			model_name,
 			COUNT(*) as requests,
 			COALESCE(SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)), 0) as tokens,
 			COALESCE(SUM(total_cost), 0) as total_cost
 		FROM bil_usage_logs
-		WHERE created_at >= '%s'
+		WHERE created_at >= ?
 		GROUP BY model_name
 		ORDER BY requests DESC
 		LIMIT 20
-	`, since)).All()
+	`, since).All()
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +215,7 @@ func GetTenantRanking(ctx context.Context, minutes int) ([]map[string]any, error
 
 	since := time.Now().Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02 15:04:05")
 
-	result, err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	result, err := g.DB().Ctx(ctx).Raw(`
 		SELECT
 			t.id as tenant_id,
 			t.name as tenant_name,
@@ -224,11 +223,11 @@ func GetTenantRanking(ctx context.Context, minutes int) ([]map[string]any, error
 			COALESCE(SUM(ul.total_cost), 0) as total_cost
 		FROM bil_usage_logs ul
 		JOIN tnt_tenants t ON t.id = ul.tenant_id
-		WHERE ul.created_at >= '%s'
+		WHERE ul.created_at >= ?
 		GROUP BY t.id, t.name
 		ORDER BY requests DESC
 		LIMIT 10
-	`, since)).All()
+	`, since).All()
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +267,11 @@ func GetP99Latency(ctx context.Context) (float64, error) {
 		P99 float64 `json:"p99"`
 	}
 	var row p99Row
-	err := g.DB().Ctx(ctx).Raw(fmt.Sprintf(`
+	err := g.DB().Ctx(ctx).Raw(`
 		SELECT COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), 0) as p99
 		FROM bil_usage_logs
-		WHERE created_at >= '%s' AND latency_ms IS NOT NULL
-	`, since)).Scan(&row)
+		WHERE created_at >= ? AND latency_ms IS NOT NULL
+	`, since).Scan(&row)
 	if err != nil {
 		return 0, err
 	}

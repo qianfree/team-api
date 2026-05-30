@@ -2,9 +2,7 @@ package tenant
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
@@ -189,8 +187,8 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
 	deviceFP := common.DeviceFingerprint(ua, ipAddress)
 
-	var tenant entity.TntTenants
-	var user entity.TntUsers
+	var tenant *entity.TntTenants
+	var user *entity.TntUsers
 
 	if req.Type == "admin" {
 		// Admin login: account is email, find owner user by email
@@ -199,10 +197,10 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			Where("email", email).
 			Where("role", "owner").
 			Scan(&user)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
 			return nil, err
 		}
-		if user.Id == 0 {
+		if user == nil {
 			_ = common.RecordLoginHistory(ctx, "tenant", 0, 0, "password", ipAddress, ua, deviceFP, false, "用户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
@@ -210,10 +208,10 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 		// Find tenant
 		err = dao.TntTenants.Ctx(ctx).
 			Where("id", user.TenantId).Scan(&tenant)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
 			return nil, err
 		}
-		if tenant.Id == 0 {
+		if tenant == nil {
 			_ = common.RecordLoginHistory(ctx, "tenant", user.Id, user.TenantId, "password", ipAddress, ua, deviceFP, false, "租户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
@@ -230,10 +228,10 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 		// Find tenant
 		err := dao.TntTenants.Ctx(ctx).
 			Where("code", tenantCode).Scan(&tenant)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
 			return nil, err
 		}
-		if tenant.Id == 0 {
+		if tenant == nil {
 			_ = common.RecordLoginHistory(ctx, "tenant", 0, 0, "password", ipAddress, ua, deviceFP, false, "租户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}
@@ -243,10 +241,10 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			Where("tenant_id", tenant.Id).
 			Where("username", username).
 			Scan(&user)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
 			return nil, err
 		}
-		if user.Id == 0 {
+		if user == nil {
 			_ = common.RecordLoginHistory(ctx, "tenant", 0, tenant.Id, "password", ipAddress, ua, deviceFP, false, "用户不存在")
 			return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 		}

@@ -88,7 +88,7 @@ func CreateTestPlan(t *testing.T, client *APIClient) (id int64, cleanup func()) 
 	resp.AssertSuccess(t)
 	id = resp.GetID(t)
 	return id, func() {
-		client.Delete(fmt.Sprintf("/api/admin/plans/%d", id))
+		HardDeletePlan(t, id)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 
 // FulfillOrder 履约订单
 func FulfillOrder(ctx context.Context, orderID int64) error {
-	var order struct {
+	var order *struct {
 		TenantID    int64   `json:"tenant_id"`
 		UserID      int64   `json:"user_id"`
 		OrderType   string  `json:"order_type"`
@@ -29,6 +29,9 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 		Scan(&order)
 	if err != nil {
 		return err
+	}
+	if order == nil {
+		return gerror.Newf("order %d not found", orderID)
 	}
 	if order.Status != "paid" {
 		return gerror.New("order status must be paid to fulfill")
@@ -73,7 +76,7 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 // SubscribePlan 订阅套餐（内部函数，被订单履约、自动续费调用）
 func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int, autoRenew bool) error {
 	// 查套餐信息
-	var plan struct {
+	var plan *struct {
 		MonthlyPrice       float64 `json:"monthly_price"`
 		YearlyPrice        float64 `json:"yearly_price"`
 		MonthlyQuotaTokens int64   `json:"monthly_quota_tokens"`
@@ -84,6 +87,9 @@ func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int
 		Scan(&plan)
 	if err != nil {
 		return err
+	}
+	if plan == nil {
+		return gerror.Newf("plan %d not found or inactive", planID)
 	}
 
 	if months <= 0 {
@@ -142,7 +148,7 @@ func creditWallet(ctx context.Context, tenantID int64, amount float64, descripti
 			return err
 		}
 
-		var balance struct {
+		var balance *struct {
 			Balance       float64 `json:"balance"`
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
@@ -152,6 +158,9 @@ func creditWallet(ctx context.Context, tenantID int64, amount float64, descripti
 			Scan(&balance)
 		if err != nil {
 			return err
+		}
+		if balance == nil {
+			return gerror.New("wallet not found after update")
 		}
 
 		_, err = tx.Model("bil_transactions").Ctx(ctx).Insert(do.BilTransactions{

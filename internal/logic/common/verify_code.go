@@ -115,7 +115,7 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 		return NewBadRequestError("参数不完整")
 	}
 
-	var record struct {
+	var record *struct {
 		ID        int64      `json:"id"`
 		Code      string     `json:"code"`
 		ExpiresAt *time.Time `json:"expires_at"`

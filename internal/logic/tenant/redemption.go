@@ -144,7 +144,7 @@ func creditWalletForRedemption(ctx context.Context, tenantID int64, amount float
 			return err
 		}
 
-		var balance struct {
+		var balance *struct {
 			Balance       float64 `json:"balance"`
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
@@ -154,6 +154,9 @@ func creditWalletForRedemption(ctx context.Context, tenantID int64, amount float
 			Scan(&balance)
 		if err != nil {
 			return err
+		}
+		if balance == nil {
+			return gerror.New("wallet not found after update")
 		}
 
 		id, err := tx.Model("bil_transactions").Ctx(ctx).InsertAndGetId(do.BilTransactions{

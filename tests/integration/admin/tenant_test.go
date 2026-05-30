@@ -71,9 +71,7 @@ func TestTenantCRUD(t *testing.T) {
 	createResp.AssertSuccess(t)
 	tenantID := createResp.GetID(t)
 	defer func() {
-		client.Put(fmt.Sprintf("/api/admin/tenants/%d/status", tenantID), map[string]any{
-			"status": "closed",
-		})
+		testinfra.HardDeleteTenant(t, tenantID)
 	}()
 
 	// --- Get detail ---

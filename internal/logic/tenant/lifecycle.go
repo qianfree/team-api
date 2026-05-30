@@ -26,7 +26,7 @@ var validTransitions = map[string][]string{
 
 // TransitionTenantStatus 租户状态转换（内部函数，被定时任务调用）
 func TransitionTenantStatus(ctx context.Context, tenantID int64, newStatus string) error {
-	var current struct {
+	var current *struct {
 		Status string `json:"status"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
@@ -35,6 +35,9 @@ func TransitionTenantStatus(ctx context.Context, tenantID int64, newStatus strin
 		Scan(&current)
 	if err != nil {
 		return err
+	}
+	if current == nil {
+		return gerror.Newf("tenant %d not found", tenantID)
 	}
 
 	allowed, ok := validTransitions[current.Status]

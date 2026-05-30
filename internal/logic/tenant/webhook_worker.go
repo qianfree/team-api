@@ -73,10 +73,11 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	}
 
 	if !config.IsActive {
-		_, _ = dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(g.Map{
-			"status":     "failed",
-			"updated_at": gtime.Now(),
-		}).Update()
+		if _, err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(do.OpnWebhookEvents{
+			Status: "failed",
+		}).Update(); err != nil {
+			g.Log().Errorf(ctx, "webhook: mark event %d failed: %v", evt.Id, err)
+		}
 		return
 	}
 
@@ -117,31 +118,37 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	recordDeliveryLog(ctx, evt, *config, newAttempts, elapsed, respBodyStr, "")
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_, _ = dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(g.Map{
-			"status":     "delivered",
-			"attempts":   newAttempts,
-			"updated_at": gtime.Now(),
-		}).Update()
+		if _, err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(do.OpnWebhookEvents{
+			Status:   "delivered",
+			Attempts: newAttempts,
+		}).Update(); err != nil {
+			g.Log().Errorf(ctx, "webhook: mark event %d delivered failed: %v", evt.Id, err)
+		}
 
 		if config.ConsecutiveFailures > 0 {
-			_, _ = dao.OpnWebhookConfigs.Ctx(ctx).Where("id", config.Id).Data(g.Map{
-				"consecutive_failures": 0,
-				"last_delivery_at":     gtime.Now(),
-			}).Update()
+			if _, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", config.Id).Data(do.OpnWebhookConfigs{
+				ConsecutiveFailures: 0,
+				LastDeliveryAt:      gtime.Now(),
+			}).Update(); err != nil {
+				g.Log().Errorf(ctx, "webhook: reset config %d failures failed: %v", config.Id, err)
+			}
 		}
 	} else {
 		markEventFailed(ctx, evt.Id, newAttempts)
 
 		newFailures := config.ConsecutiveFailures + 1
-		updateData := g.Map{
-			"consecutive_failures": newFailures,
-			"last_delivery_at":     gtime.Now(),
+		updateData := do.OpnWebhookConfigs{
+			ConsecutiveFailures: newFailures,
+			LastDeliveryAt:      gtime.Now(),
 		}
 		if newFailures >= config.MaxConsecutiveFailures {
-			updateData["is_active"] = false
+			isActive := false
+			updateData.IsActive = isActive
 			g.Log().Warningf(ctx, "webhook: config %d auto-disabled after %d consecutive failures", config.Id, newFailures)
 		}
-		_, _ = dao.OpnWebhookConfigs.Ctx(ctx).Where("id", config.Id).Data(updateData).Update()
+		if _, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", config.Id).Data(updateData).Update(); err != nil {
+			g.Log().Errorf(ctx, "webhook: update config %d on failure: %v", config.Id, err)
+		}
 	}
 }
 
@@ -155,12 +162,13 @@ func markEventFailed(ctx context.Context, eventID int64, attempts int) {
 	}
 	nextRetry := time.Now().Add(delay)
 
-	_, _ = dao.OpnWebhookEvents.Ctx(ctx).Where("id", eventID).Data(g.Map{
-		"status":        "failed",
-		"attempts":      attempts,
-		"next_retry_at": gtime.NewFromTime(nextRetry),
-		"updated_at":    gtime.Now(),
-	}).Update()
+	if _, err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", eventID).Data(do.OpnWebhookEvents{
+		Status:      "failed",
+		Attempts:    attempts,
+		NextRetryAt: gtime.NewFromTime(nextRetry),
+	}).Update(); err != nil {
+		g.Log().Errorf(ctx, "webhook: mark event %d failed for retry: %v", eventID, err)
+	}
 
 	if attempts < webhookMaxRetries {
 		scheduleRetry(eventID, delay)
@@ -182,7 +190,7 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 		statusCode = 200
 	}
 
-	_, _ = dao.OpnWebhookDeliveryLogs.Ctx(ctx).Data(do.OpnWebhookDeliveryLogs{
+	if _, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Data(do.OpnWebhookDeliveryLogs{
 		TenantId:        evt.TenantId,
 		WebhookConfigId: config.Id,
 		EventId:         evt.Id,
@@ -193,7 +201,9 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 		ResponseBody:    truncateString(respBody, 2000),
 		ResponseTimeMs:  int(responseTimeMs),
 		ErrorMessage:    truncateString(errMsg, 500),
-	}).Insert()
+	}).Insert(); err != nil {
+		g.Log().Errorf(ctx, "webhook: record delivery log for event %d failed: %v", evt.Id, err)
+	}
 }
 
 func computeDeliverySignature(secret, timestamp string, body []byte) string {

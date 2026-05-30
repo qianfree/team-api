@@ -105,7 +105,7 @@ func (s *sTenant) InvitationList(ctx context.Context, req *v1.TenantInvitationLi
 func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitationRevokeReq) (*v1.TenantInvitationRevokeRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	var inv struct {
+	var inv *struct {
 		ID           int64 `json:"id"`
 		UsedByUserID int64 `json:"used_by_user_id"`
 	}
@@ -116,7 +116,7 @@ func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitation
 	if err != nil {
 		return nil, err
 	}
-	if inv.ID == 0 {
+	if inv == nil {
 		return nil, common.NewBadRequestError("邀请记录不存在")
 	}
 	if inv.UsedByUserID == -1 {
@@ -137,7 +137,7 @@ func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitation
 
 // InviteInfo returns public information about an invitation (no auth required).
 func (s *sTenant) InviteInfo(ctx context.Context, req *v1.TenantInviteInfoReq) (*v1.TenantInviteInfoRes, error) {
-	var inv struct {
+	var inv *struct {
 		ID           int64       `json:"id"`
 		TenantID     int64       `json:"tenant_id"`
 		Role         string      `json:"role"`
@@ -152,12 +152,12 @@ func (s *sTenant) InviteInfo(ctx context.Context, req *v1.TenantInviteInfoReq) (
 	if err != nil {
 		return nil, err
 	}
-	if inv.ID == 0 {
+	if inv == nil {
 		return &v1.TenantInviteInfoRes{Valid: false}, nil
 	}
 
 	// Get tenant name
-	var tenant struct {
+	var tenant *struct {
 		Name string `json:"name"`
 	}
 	err = dao.TntTenants.Ctx(ctx).
@@ -166,6 +166,9 @@ func (s *sTenant) InviteInfo(ctx context.Context, req *v1.TenantInviteInfoReq) (
 		Scan(&tenant)
 	if err != nil {
 		return nil, err
+	}
+	if tenant == nil {
+		return nil, common.NewNotFoundError("租户")
 	}
 
 	valid := inv.UsedByUserID != -1

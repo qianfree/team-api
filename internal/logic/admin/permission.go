@@ -157,13 +157,16 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 // UpdateUserPermissions updates permission points for an admin user.
 func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermissionUpdateReq) (*v1.AdminPermissionUpdateRes, error) {
 	// Check if target is super_admin
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
 	}
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("超级管理员无需配置权限")
@@ -205,13 +208,16 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 // UpdateUserDataScopes updates data scopes for an admin user.
 func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (*v1.AdminDataScopeUpdateRes, error) {
 	// Check if target is super_admin
-	var user struct {
+	var user *struct {
 		Role string `json:"role"`
 	}
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", req.Id).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
 	}
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("超级管理员无需配置数据范围")
