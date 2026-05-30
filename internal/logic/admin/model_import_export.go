@@ -12,7 +12,6 @@ import (
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/os/glog"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/api/admin/v1"
@@ -152,57 +151,38 @@ func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPre
 	var data []byte
 
 	r := g.RequestFromCtx(ctx)
-	glog.Info(ctx, "[ModelImport] 收到预览请求, Method:", r.Method, "Content-Type:", r.Header.Get("Content-Type"))
 
 	// 优先通过标准文件上传读取
 	file := r.GetUploadFile("file")
 	if file != nil {
-		glog.Info(ctx, "[ModelImport] GetUploadFile 获取成功, Filename:", file.Filename, "Size:", file.Size)
 		f, err := file.Open()
 		if err != nil {
-			glog.Error(ctx, "[ModelImport] file.Open 失败:", err)
 			return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
 		}
 		defer f.Close()
 		data, err = io.ReadAll(f)
 		if err != nil {
-			glog.Error(ctx, "[ModelImport] io.ReadAll 失败:", err)
 			return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
 		}
-		glog.Info(ctx, "[ModelImport] 读取文件内容长度:", len(data))
-	} else {
-		glog.Warning(ctx, "[ModelImport] GetUploadFile 返回 nil，尝试兜底方式")
 	}
 
 	// 兜底：从已解析的 MultipartForm.File 中读取（文件在 File 而非 Value 中）
 	if len(data) == 0 {
 		mf := r.GetMultipartForm()
 		if mf != nil {
-			glog.Info(ctx, "[ModelImport] MultipartForm 获取成功, File字段数:", len(mf.File), "Value字段数:", len(mf.Value))
 			if files := mf.File["file"]; len(files) > 0 {
-				glog.Info(ctx, "[ModelImport] MultipartForm.File[file] 找到, 文件数:", len(files), "文件名:", files[0].Filename)
 				f, err := files[0].Open()
 				if err == nil {
 					defer f.Close()
 					data, _ = io.ReadAll(f)
 				}
-			} else {
-				glog.Warning(ctx, "[ModelImport] MultipartForm.File 中无 file 字段，可用字段:")
-				for k := range mf.File {
-					glog.Info(ctx, "  - File field:", k)
-				}
 			}
-		} else {
-			glog.Warning(ctx, "[ModelImport] GetMultipartForm 返回 nil")
 		}
 	}
 
 	if len(data) == 0 {
-		glog.Error(ctx, "[ModelImport] 文件内容为空，无法解析")
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
 	}
-
-	glog.Info(ctx, "[ModelImport] 文件内容长度:", len(data), "前100字节:", string(data[:min(100, len(data))]))
 
 	var exportData struct {
 		Version string                      `json:"version"`
@@ -211,14 +191,10 @@ func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPre
 	// 使用 json.Decoder 而非 json.Unmarshal，只解析第一个完整 JSON 值，
 	// 兼容旧版本导出文件末尾可能被中间件追加的标准响应体。
 	if err := json.NewDecoder(bytes.NewReader(data)).Decode(&exportData); err != nil {
-		glog.Error(ctx, "[ModelImport] JSON 解析失败:", err)
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportInvalidFile, consts.MsgModelImportInvalidFile, nil), consts.MsgModelImportInvalidFile)
 	}
 
-	glog.Info(ctx, "[ModelImport] JSON 解析成功, Version:", exportData.Version, "模型数:", len(exportData.Models))
-
 	if exportData.Version != "1.0" {
-		glog.Error(ctx, "[ModelImport] 版本不兼容:", exportData.Version)
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelImportBadVersion, consts.MsgModelImportBadVersion, nil), consts.MsgModelImportBadVersion)
 	}
 
@@ -229,7 +205,6 @@ func (s *sAdmin) ImportModelsPreview(ctx context.Context, req *v1.ModelImportPre
 		}
 	}
 
-	glog.Info(ctx, "[ModelImport] 预览完成, 模型数:", len(exportData.Models))
 	return &v1.ModelImportPreviewRes{Models: exportData.Models}, nil
 }
 
