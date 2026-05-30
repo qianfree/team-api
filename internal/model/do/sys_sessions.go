@@ -22,4 +22,5 @@ type SysSessions struct {
 	ExpiresAt        *gtime.Time // Token 过期时间
 	CreatedAt        *gtime.Time // 创建时间
 	UpdatedAt        *gtime.Time // 更新时间
+	Jti              any         // JWT ID (jti)，会话唯一标识符（UUID），用于 Redis 吊销缓存
 }

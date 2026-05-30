@@ -31,6 +31,7 @@ type SysSessionsColumns struct {
 	ExpiresAt        string // Token 过期时间
 	CreatedAt        string // 创建时间
 	UpdatedAt        string // 更新时间
+	Jti              string // JWT ID (jti)，会话唯一标识符（UUID），用于 Redis 吊销缓存
 }
 
 // sysSessionsColumns holds the columns for the table sys_sessions.
@@ -45,6 +46,7 @@ var sysSessionsColumns = SysSessionsColumns{
 	ExpiresAt:        "expires_at",
 	CreatedAt:        "created_at",
 	UpdatedAt:        "updated_at",
+	Jti:              "jti",
 }
 
 // NewSysSessionsDao creates and returns a new DAO object for table data access.
