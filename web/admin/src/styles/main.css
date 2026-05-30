@@ -300,11 +300,24 @@ body {
   font-size: 12px;
 }
 
-/* Modal */
+/* Modal — flexbox centering, no wrapper scroll */
+.arco-modal-wrapper {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  padding: 32px !important;
+}
+/* Disable Arco's inline-block vertical-centering hack */
+.arco-modal-wrapper.arco-modal-wrapper-align-center::after {
+  display: none !important;
+}
 .arco-modal-wrapper .arco-modal {
   border-radius: var(--ta-radius-xl);
   max-height: calc(100vh - 64px);
-  margin: 32px auto;
+  margin: 0;
+  top: 0;
+  vertical-align: baseline;
   display: flex;
   flex-direction: column;
 }
