@@ -410,7 +410,7 @@ const importColumns: TableColumnData[] = [
     title: '冲突处理',
     dataIndex: 'conflict_action',
     width: 120,
-    render({ record }, { emit }: any) {
+    render({ record }: any) {
       if (record.conflict !== 'exists') return null
       return h('select', {
         value: importConflictActions.value[record.model_id] || 'skip',
@@ -433,12 +433,22 @@ function openImportModal() {
   showImportModal.value = true
 }
 
-async function handleImportUpload(data: { file: any; fileList: any[] }) {
-  // Naive UI @change 回调参数: { file: UploadFileInfo, fileList: UploadFileInfo[] }
-  // UploadFileInfo.file 才是浏览器原生 File 对象
-  const file = data.file?.file
-  if (!file) return
+async function handleImportUpload(fileItemList: any[], fileItem: any) {
+  // Arco Design Vue @change 回调参数: (fileItemList: FileItem[], fileItem: FileItem)
+  // fileItem.file 才是浏览器原生 File 对象
+  console.log('[ModelImport] @change triggered', {
+    fileListLen: fileItemList?.length,
+    fileItem,
+    rawFile: fileItem?.file,
+  })
 
+  const file = fileItem?.file
+  if (!file) {
+    console.warn('[ModelImport] 未获取到原生 File 对象，fileItem =', fileItem)
+    return
+  }
+
+  console.log('[ModelImport] 开始上传预览，文件:', file.name, file.size, 'bytes')
   importPreviewing.value = true
   try {
     const formData = new FormData()
@@ -447,7 +457,9 @@ async function handleImportUpload(data: { file: any; fileList: any[] }) {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 30000,
     })
+    console.log('[ModelImport] 预览响应:', res)
     const models = res.data?.data?.models || res.data?.models || []
+    console.log('[ModelImport] 解析到模型数:', models.length)
     importPreviewData.value = models
     // 默认全选
     importSelectedKeys.value = models.map((m: any) => m.model_id)
@@ -457,7 +469,8 @@ async function handleImportUpload(data: { file: any; fileList: any[] }) {
         importConflictActions.value[m.model_id] = 'skip'
       }
     }
-  } catch {
+  } catch (err) {
+    console.error('[ModelImport] 预览失败:', err)
     // error handled by interceptor
   } finally {
     importPreviewing.value = false
@@ -474,6 +487,8 @@ async function confirmImport() {
         : 'skip',
     }))
 
+  console.log('[ModelImport] 确认导入, 已选模型数:', selectedModels.length, selectedModels.map((m: any) => m.model_id))
+
   if (selectedModels.length === 0) {
     Message.warning('请至少选择一个模型')
     return
@@ -482,6 +497,7 @@ async function confirmImport() {
   importing.value = true
   try {
     const res: any = await request.post('/admin/models/import', { models: selectedModels })
+    console.log('[ModelImport] 导入响应:', res)
     const result = res.data?.data || res.data
     Message.success(`导入完成：成功 ${result.imported} 个，跳过 ${result.skipped} 个`)
     if (result.errors?.length) {
@@ -489,7 +505,8 @@ async function confirmImport() {
     }
     showImportModal.value = false
     fetchData()
-  } catch {
+  } catch (err) {
+    console.error('[ModelImport] 导入失败:', err)
     // error handled by interceptor
   } finally {
     importing.value = false
