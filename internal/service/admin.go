@@ -208,7 +208,7 @@ type (
 		ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq) (*v1.AdminMemberExportRes, error)
 		// ListModelOptions 获取模型选项列表（不分页，用于下拉选择）
 		ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) (*v1.ModelOptionsRes, error)
-		// ListModels 获取模型列表
+		// ListModels 获取模型列表（含定价摘要）
 		ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.ModelListRes, error)
 		// CreateModel 创建模型（自动创建默认 token 定价记录）
 		CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.ModelCreateRes, error)
@@ -216,8 +216,6 @@ type (
 		UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error)
 		// DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 		DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error)
-		// ListModelPricing 模型定价列表（模型定价页面专用）
-		ListModelPricing(ctx context.Context, req *v1.PricingListReq) (*v1.PricingListRes, error)
 		// GetModelPricing 获取模型定价
 		GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error)
 		// SetModelPricing 设置模型定价（全量替换）

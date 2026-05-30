@@ -106,7 +106,6 @@ type IAdminV1 interface {
 	ModelCreate(ctx context.Context, req *v1.ModelCreateReq) (res *v1.ModelCreateRes, err error)
 	ModelUpdate(ctx context.Context, req *v1.ModelUpdateReq) (res *v1.ModelUpdateRes, err error)
 	ModelDelete(ctx context.Context, req *v1.ModelDeleteReq) (res *v1.ModelDeleteRes, err error)
-	PricingList(ctx context.Context, req *v1.PricingListReq) (res *v1.PricingListRes, err error)
 	PricingGet(ctx context.Context, req *v1.PricingGetReq) (res *v1.PricingGetRes, err error)
 	PricingSet(ctx context.Context, req *v1.PricingSetReq) (res *v1.PricingSetRes, err error)
 	ModelOptions(ctx context.Context, req *v1.ModelOptionsReq) (res *v1.ModelOptionsRes, err error)

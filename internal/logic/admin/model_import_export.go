@@ -40,7 +40,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 	}
 
 	err := dao.MdlModels.Ctx(ctx).
-		Where("model_id IN(?)", req.ModelIds).
+		WhereIn("model_id", req.ModelIds).
 		Scan(&models)
 	if err != nil {
 		return nil, err

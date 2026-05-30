@@ -4,12 +4,13 @@ import "github.com/gogf/gf/v2/frame/g"
 
 // ModelListReq 模型列表请求
 type ModelListReq struct {
-	g.Meta   `path:"/models" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型列表"`
-	Page     int    `json:"page" d:"1" v:"min:1" dc:"页码"`
-	PageSize int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
-	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
-	Status   string `json:"status" dc:"状态筛选：active/deprecated/offline"`
-	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
+	g.Meta        `path:"/models" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型列表"`
+	Page          int    `json:"page" d:"1" v:"min:1" dc:"页码"`
+	PageSize      int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
+	Category      string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
+	Status        string `json:"status" dc:"状态筛选：active/deprecated/offline"`
+	Search        string `json:"search" dc:"搜索关键词（模型名或显示名）"`
+	PricingStatus string `json:"pricing_status" dc:"定价状态筛选：priced/unpriced"`
 }
 
 // ModelListRes 模型列表响应
@@ -37,6 +38,11 @@ type ModelItem struct {
 	DeprecatedAt     *string         `json:"deprecated_at"`
 	SunsetDate       *string         `json:"sunset_date"`
 	ReplacementModel string          `json:"replacement_model"`
+	// 定价摘要（来自 mdl_pricing，min_tokens=0 的基准行）
+	PricingMode     string  `json:"pricing_mode"`      // "" | "token" | "per_request" | "tiered"
+	InputPrice      float64 `json:"input_price"`       // $/1M tokens
+	OutputPrice     float64 `json:"output_price"`      // $/1M tokens
+	PerRequestPrice float64 `json:"per_request_price"` // $/request（按次计费模式）
 }
 
 // ModelCreateReq 创建模型请求
@@ -89,35 +95,6 @@ type PricingItem struct {
 	PerRequestPrice    *float64 `json:"per_request_price" dc:"按次单价（仅 per_request）"`
 	CacheReadPrice     float64  `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
 	CacheCreationPrice float64  `json:"cache_creation_price" dc:"缓存创建每 1M token 价格"`
-}
-
-// PricingListReq 定价列表请求（模型定价页面专用）
-type PricingListReq struct {
-	g.Meta   `path:"/models/pricing" method:"get" mime:"json" tags:"管理后台-模型" summary:"模型定价列表"`
-	Page     int    `json:"page" d:"1" v:"min:1" dc:"页码"`
-	PageSize int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
-	Category string `json:"category" dc:"模型分类筛选"`
-	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
-}
-
-// PricingListRes 定价列表响应
-type PricingListRes struct {
-	List     []PricingListItem `json:"list"`
-	Total    int               `json:"total"`
-	Page     int               `json:"page"`
-	PageSize int               `json:"page_size"`
-}
-
-// PricingListItem 定价列表项（模型基础信息 + 定价摘要）
-type PricingListItem struct {
-	ID              int64   `json:"id"`
-	ModelId         string  `json:"model_id"`
-	ModelName       string  `json:"model_name"`
-	Category        string  `json:"category"`
-	PricingMode     string  `json:"pricing_mode"`
-	InputPrice      float64 `json:"input_price"`
-	OutputPrice     float64 `json:"output_price"`
-	PerRequestPrice float64 `json:"per_request_price"`
 }
 
 // PricingGetReq 获取模型定价

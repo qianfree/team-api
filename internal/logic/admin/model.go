@@ -58,7 +58,7 @@ func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) 
 	return &v1.ModelOptionsRes{List: list}, nil
 }
 
-// ListModels 获取模型列表
+// ListModels 获取模型列表（含定价摘要）
 func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.ModelListRes, error) {
 	query := dao.MdlModels.Ctx(ctx)
 
@@ -70,6 +70,12 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	}
 	if req.Search != "" {
 		query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+	}
+	// 定价状态筛选
+	if req.PricingStatus == "priced" {
+		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0)")
+	} else if req.PricingStatus == "unpriced" {
+		query = query.Where("NOT EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0)")
 	}
 
 	var total int
@@ -99,6 +105,33 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		return nil, err
 	}
 
+	// 批量查询定价摘要（min_tokens=0 的基准行）
+	modelIDs := make([]int64, 0, len(models))
+	for _, m := range models {
+		modelIDs = append(modelIDs, m.ID)
+	}
+	type pricingRow struct {
+		ModelId         int64    `json:"model_id"`
+		BillingMode     string   `json:"billing_mode"`
+		InputPrice      float64  `json:"input_price"`
+		OutputPrice     float64  `json:"output_price"`
+		PerRequestPrice *float64 `json:"per_request_price"`
+	}
+	var pricingRows []pricingRow
+	if len(modelIDs) > 0 {
+		err = dao.MdlPricing.Ctx(ctx).
+			Fields("model_id, billing_mode, input_price, output_price, per_request_price").
+			Where("model_id IN (?) AND min_tokens = 0", modelIDs).
+			Scan(&pricingRows)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+	}
+	pricingMap := make(map[int64]pricingRow, len(pricingRows))
+	for _, p := range pricingRows {
+		pricingMap[p.ModelId] = p
+	}
+
 	list := make([]v1.ModelItem, 0, len(models))
 	for _, m := range models {
 		item := v1.ModelItem{
@@ -124,6 +157,15 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			item.SunsetDate = &s
 		}
 		item.ReplacementModel = m.ReplacementModel
+		// 填充定价摘要
+		if p, ok := pricingMap[m.ID]; ok {
+			item.PricingMode = p.BillingMode
+			item.InputPrice = p.InputPrice
+			item.OutputPrice = p.OutputPrice
+			if p.PerRequestPrice != nil {
+				item.PerRequestPrice = *p.PerRequestPrice
+			}
+		}
 		list = append(list, item)
 	}
 
@@ -340,87 +382,6 @@ func parseCapabilities(raw string) map[string]bool {
 		return nil
 	}
 	return caps
-}
-
-// ListModelPricing 模型定价列表（模型定价页面专用）
-func (s *sAdmin) ListModelPricing(ctx context.Context, req *v1.PricingListReq) (*v1.PricingListRes, error) {
-	query := dao.MdlModels.Ctx(ctx).Where("status", "active")
-
-	if req.Category != "" {
-		query = query.Where("category", req.Category)
-	}
-	if req.Search != "" {
-		query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
-	}
-
-	var total int
-	var models []struct {
-		ID        int64  `json:"id"`
-		ModelId   string `json:"model_id"`
-		ModelName string `json:"model_name"`
-		Category  string `json:"category"`
-	}
-
-	err := query.Fields("id, model_id, model_name, category").
-		OrderAsc("category").OrderAsc("model_id").
-		Page(req.Page, req.PageSize).
-		ScanAndCount(&models, &total, false)
-	if err != nil {
-		return nil, err
-	}
-
-	modelIDs := make([]int64, 0, len(models))
-	for _, m := range models {
-		modelIDs = append(modelIDs, m.ID)
-	}
-
-	type pricingRow struct {
-		ModelId         int64    `json:"model_id"`
-		BillingMode     string   `json:"billing_mode"`
-		InputPrice      float64  `json:"input_price"`
-		OutputPrice     float64  `json:"output_price"`
-		PerRequestPrice *float64 `json:"per_request_price"`
-	}
-	var pricingRows []pricingRow
-	if len(modelIDs) > 0 {
-		err = dao.MdlPricing.Ctx(ctx).
-			Fields("model_id, billing_mode, input_price, output_price, per_request_price").
-			Where("model_id IN (?) AND min_tokens = 0", modelIDs).
-			Scan(&pricingRows)
-		if err = common.IgnoreScanNoRows(err); err != nil {
-			return nil, err
-		}
-	}
-	pricingMap := make(map[int64]pricingRow, len(pricingRows))
-	for _, p := range pricingRows {
-		pricingMap[p.ModelId] = p
-	}
-
-	list := make([]v1.PricingListItem, 0, len(models))
-	for _, m := range models {
-		item := v1.PricingListItem{
-			ID:        m.ID,
-			ModelId:   m.ModelId,
-			ModelName: m.ModelName,
-			Category:  m.Category,
-		}
-		if p, ok := pricingMap[m.ID]; ok {
-			item.PricingMode = p.BillingMode
-			item.InputPrice = p.InputPrice
-			item.OutputPrice = p.OutputPrice
-			if p.PerRequestPrice != nil {
-				item.PerRequestPrice = *p.PerRequestPrice
-			}
-		}
-		list = append(list, item)
-	}
-
-	return &v1.PricingListRes{
-		List:     list,
-		Total:    total,
-		Page:     req.Page,
-		PageSize: req.PageSize,
-	}, nil
 }
 
 // GetModelPricing 获取模型定价

@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import ModelPricingDrawer from '@/components/ModelPricingDrawer.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -21,6 +22,18 @@ const pagination = reactive({
 const filterCategory = ref<string | null>(null)
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
+const filterPricingStatus = ref<string | null>(null)
+
+const pricingStatusOptions = [
+  { label: '全部定价', value: '' },
+  { label: '已定价', value: 'priced' },
+  { label: '未定价', value: 'unpriced' },
+]
+
+// 定价抽屉
+const pricingDrawerVisible = ref(false)
+const pricingDrawerModelId = ref<number | null>(null)
+const pricingDrawerModelIdStr = ref('')
 
 const categoryOptions = [
   { label: '全部分类', value: '' },
@@ -149,16 +162,26 @@ const columns: TableColumnData[] = [
       return h(Tag, { color: categoryTagColor[record.category], size: 'small' }, () => categoryTagLabel[record.category] || record.category)
     },
   },
+  { title: '上下文', dataIndex: 'max_context_tokens', width: 100 },
+  { title: '输出上限', dataIndex: 'max_output_tokens', width: 100 },
   {
-    title: '状态',
-    dataIndex: 'status',
-    width: 160,
+    title: '定价',
+    dataIndex: 'pricing',
+    width: 180,
     render({ record }) {
+      if (!record.pricing_mode) {
+        return h(Tag, { color: 'orangered', size: 'small' }, () => '未定价')
+      }
+      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
       const tags = [
-        h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusTagLabel[record.status] || record.status),
+        h(Tag, { color: 'green', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
-      if (record.status === 'deprecated' && record.sunset_date) {
-        tags.push(h(Tag, { color: 'red', size: 'small' }, () => `下线: ${record.sunset_date}`))
+      if (record.pricing_mode === 'per_request') {
+        tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
+          `$${record.per_request_price?.toFixed(4) ?? '0'}/次`))
+      } else {
+        tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
+          `$${record.input_price?.toFixed(2) ?? '0'}/$${record.output_price?.toFixed(2) ?? '0'}`))
       }
       return h('span', { style: 'display: inline-flex; gap: 4px; align-items: center;' }, tags)
     },
@@ -176,17 +199,31 @@ const columns: TableColumnData[] = [
       return h('span', { style: 'font-size: 12px; color: var(--color-text-3); line-height: 1.4;' }, parts.join('\n'))
     },
   },
-  { title: '上下文', dataIndex: 'max_context_tokens', width: 100 },
-  { title: '输出上限', dataIndex: 'max_output_tokens', width: 100 },
+  {
+    title: '状态',
+    dataIndex: 'status',
+    width: 100,
+    render({ record }) {
+      const tags = [
+        h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusTagLabel[record.status] || record.status),
+      ]
+      if (record.status === 'deprecated' && record.sunset_date) {
+        tags.push(h(Tag, { color: 'red', size: 'small' }, () => `下线: ${record.sunset_date}`))
+      }
+      return h('span', { style: 'display: inline-flex; gap: 4px; align-items: center;' }, tags)
+    },
+  },
+
   { title: '更新时间', dataIndex: 'updated_at', width: 170 },
   {
     title: '操作',
     dataIndex: 'actions',
-    width: 140,
+    width: 200,
     fixed: 'right',
     render({ record }) {
       return h(Space, { size: 4 }, () => [
         h(Button, { size: 'small', onClick: () => openEdit(record) }, () => '编辑'),
+        h(Button, { size: 'small', type: 'outline', onClick: () => openPricingDrawer(record) }, () => '定价'),
         h(Popconfirm, {
           content: '确定删除该模型？',
           onOk: () => deleteModel(record),
@@ -206,6 +243,7 @@ async function fetchData() {
     if (filterCategory.value) params.category = filterCategory.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
+    if (filterPricingStatus.value) params.pricing_status = filterPricingStatus.value
 
     const res: any = await request.get('/admin/models', { params })
     data.value = res.data?.data?.list || res.data?.list || []
@@ -297,6 +335,17 @@ async function deleteModel(row: any) {
   } catch {
     // error handled by interceptor
   }
+}
+
+function openPricingDrawer(record: any) {
+  pricingDrawerModelId.value = record.id
+  pricingDrawerModelIdStr.value = record.model_id
+  pricingDrawerVisible.value = true
+}
+
+function onPricingSaved() {
+  pricingDrawerVisible.value = false
+  fetchData()
 }
 
 onMounted(() => {
@@ -563,6 +612,14 @@ function resetImport() {
           style="width: 120px"
           @change="handleFilter"
         />
+        <ASelect
+          v-model="filterPricingStatus"
+          :options="pricingStatusOptions"
+          placeholder="定价状态"
+          allow-clear
+          style="width: 120px"
+          @change="handleFilter"
+        />
         <AInput
           v-model="filterSearch"
           placeholder="搜索模型名..."
@@ -581,7 +638,7 @@ function resetImport() {
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1200 }"
+        :scroll="{ x: 1500 }"
         :bordered="false"
         :stripe="true"
         :pagination="false"
@@ -739,6 +796,14 @@ function resetImport() {
         </div>
       </div>
     </AModal>
+
+    <!-- Pricing Drawer -->
+    <ModelPricingDrawer
+      v-model:visible="pricingDrawerVisible"
+      :model-id="pricingDrawerModelId"
+      :model-id-str="pricingDrawerModelIdStr"
+      @saved="onPricingSaved"
+    />
   </div>
 </template>
 
