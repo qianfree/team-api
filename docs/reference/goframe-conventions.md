@@ -434,3 +434,15 @@ dao.XxxTable.Ctx(ctx).Where("id", req.Id).Data(data).Update()
 6. 冗余 `updated_at` 手动设置（见"自动时间维护"）
 
 额外修复：16 处 Scan 改指针后遗漏 `nil` 检查导致 panic（member.go、organization.go、order.go、notification.go、permission.go、channel.go、help_center.go、feature_flag.go）。
+
+### 2026-05-30：MiddlewareHandlerResponse 追加标准响应到文件导出
+
+**问题描述**：模型导出功能下载的 JSON 文件末尾被追加了 `{"code":0,"message":"ok","data":null}`，导致重新导入时报错 `invalid character '{' after top-level value`。
+
+**原因**：Go 的 nil interface 陷阱。`ExportModelsJson` 返回 `(nil, nil)`，但 Controller 将 `(*ModelExportJsonRes)(nil)` 存入 `interface{}` 后，GoFrame 的 `r.GetHandlerResponse()` 判断 `res != nil` 为 true（typed nil pointer ≠ nil），中间件误调用 `response.Success()` 追加了标准响应体。
+
+**修复方式**：
+1. **中间件**（`handler_response.go`）：在检查 `GetHandlerResponse()` 前增加两道防线：
+   - 检测 `Content-Disposition` 头（handler 直接写入下载文件时设置）
+   - 检测 `BufferLength() > 0 && GetHandlerResponse() == nil`（handler 已写响应体且返回值确实为 nil）
+2. **导入端**（`model_import_export.go`）：`json.Unmarshal` 改为 `json.NewDecoder(...).Decode()`，只解析第一个完整 JSON 值，兼容已有的脏导出文件。

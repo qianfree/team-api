@@ -45,6 +45,21 @@ func MiddlewareHandlerResponse(r *ghttp.Request) {
 		}
 	}
 
+	// Skip JSON wrapping when handler has already written directly to the response
+	// (e.g., model export sets Content-Disposition: attachment).
+	// This also works around Go's nil-interface trap: a typed nil pointer (*T)(nil)
+	// stored in interface{} is != nil, causing GetHandlerResponse() to appear non-nil
+	// even though the handler returned nil.
+	if r.Response.Header().Get("Content-Disposition") != "" {
+		return
+	}
+
+	// If the handler already wrote body content and returned a nil-ish result,
+	// don't append standard response wrapper on top of it.
+	if r.Response.BufferLength() > 0 && r.GetHandlerResponse() == nil {
+		return
+	}
+
 	// The controller method returns (res, error); GoFrame stores the first
 	// return value in r.handlerResponse, accessible via GetHandlerResponse().
 	res := r.GetHandlerResponse()
