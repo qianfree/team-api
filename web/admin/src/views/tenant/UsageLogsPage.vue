@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-	Message,
+	Message, Tag, Tooltip, Space, Button,
 } from '@arco-design/web-vue'
+import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -72,8 +73,8 @@ async function fetchModelOptions(search = '') {
 		})
 		const list = res.data?.data?.list || []
 		modelOptions.value = list.map((m: any) => ({
-			label: m.model_name,
-			value: m.model_name,
+			label: m.model_name || m.model_id,
+			value: m.model_id,
 		}))
 	} catch {
 		modelOptions.value = []
@@ -194,6 +195,167 @@ function openDetail(record: any) {
 	detailLog.value = record
 	detailVisible.value = true
 }
+
+function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
+	return h('div', { class: 'dark-tooltip-row' }, [
+		h('span', { class: 'dark-tooltip-label' }, label),
+		h('span', { class: valueClass }, value),
+	])
+}
+
+const columns: TableColumnData[] = [
+	{ title: 'ID', dataIndex: 'id', width: 70 },
+	{
+		title: '租户', dataIndex: 'tenant_name', width: 120, ellipsis: true,
+		render({ record }) { return record.tenant_name || record.tenant_id },
+	},
+	{
+		title: '用户/项目', dataIndex: 'username', minWidth: 120, ellipsis: true,
+		render({ record }) {
+			if (record.project_name) return h('span', { style: 'color: #165dff' }, record.project_name)
+			return record.username || '-'
+		},
+	},
+	{
+		title: 'API Key', dataIndex: 'api_key_name', minWidth: 120, ellipsis: true,
+		render({ record }) { return record.api_key_name || record.api_key_id || '-' },
+	},
+	{
+		title: '模型', dataIndex: 'model_name', minWidth: 150,
+		render({ record }) {
+			if (hasUpstreamModel(record)) {
+				return h('div', [
+					h('div', { style: 'font-weight: 500' }, record.model_name),
+					h('div', { class: 'upstream-model' }, `↳ ${record.upstream_model}`),
+				])
+			}
+			return h('span', { style: 'font-weight: 500' }, record.model_name)
+		},
+	},
+	{ title: '渠道', dataIndex: 'channel_name', minWidth: 120, ellipsis: true },
+	{
+		title: '类型', dataIndex: 'request_type', width: 130,
+		render({ record }) {
+			const tags = [
+				h(Tag, { color: requestTypeColor[record.request_type], size: 'small' }, () => requestTypeLabel[record.request_type] || '-'),
+			]
+			if (record.billing_mode) {
+				tags.push(h(Tag, { color: billingModeColor[record.billing_mode], size: 'small' }, () => billingModeLabel[record.billing_mode]))
+			}
+			return h(Space, { size: 4 }, () => tags)
+		},
+	},
+	{
+		title: 'Token', width: 250,
+		render({ record }) {
+			const tooltipContent = [
+				h('div', { class: 'dark-tooltip-title' }, 'Token 详情'),
+				tooltipRow('输入 Token', (record.input_tokens || 0).toLocaleString()),
+				tooltipRow('输出 Token', (record.output_tokens || 0).toLocaleString()),
+				tooltipRow('缓存创建', (record.cache_creation_tokens || 0).toLocaleString()),
+				tooltipRow('缓存读取', (record.cache_read_tokens || 0).toLocaleString()),
+				tooltipRow('缓存创建(5分钟)', (record.cache_creation_5m_tokens || 0).toLocaleString()),
+				tooltipRow('缓存创建(1小时)', (record.cache_creation_1h_tokens || 0).toLocaleString()),
+				record.reasoning_tokens > 0 ? tooltipRow('推理 Token', record.reasoning_tokens.toLocaleString()) : null,
+				record.audio_input_tokens > 0 ? tooltipRow('音频输入', record.audio_input_tokens.toLocaleString()) : null,
+				record.audio_output_tokens > 0 ? tooltipRow('音频输出', record.audio_output_tokens.toLocaleString()) : null,
+				record.image_output_tokens > 0 ? tooltipRow('图像输出', record.image_output_tokens.toLocaleString()) : null,
+				h('div', { class: 'dark-tooltip-divider' }),
+				h('div', { class: 'dark-tooltip-row' }, [
+					h('span', { class: 'dark-tooltip-label' }, '合计'),
+					h('span', { class: 'dark-tooltip-total' }, totalTokens(record).toLocaleString()),
+				]),
+			].filter(Boolean)
+
+			return h(Tooltip, {
+				backgroundColor: '#1e293b',
+				popupStyle: { padding: 0, borderRadius: '8px' },
+				position: 'right',
+			}, {
+				default: () => h('div', { class: 'token-cell' }, [
+						h('div', { class: 'token-row' }, [
+							h('span', { class: 'token-item', style: 'color: #18a058' }, `↑${(record.input_tokens || 0).toLocaleString()}`),
+							h('span', { class: 'token-item', style: 'color: #722ed1' }, `↓${(record.output_tokens || 0).toLocaleString()}`),
+							h('span', { class: 'token-item', style: 'color: #ff7d00' }, `✎${(record.cache_creation_tokens || 0).toLocaleString()}`),
+							h('span', { class: 'token-item', style: 'color: #0fc6c2' }, `⚡${(record.cache_read_tokens || 0).toLocaleString()}`),
+						]),
+				]),
+				content: () => h('div', { class: 'dark-tooltip' }, tooltipContent),
+			})
+		},
+	},
+	{
+		title: '费用', width: 120,
+		render({ record }) {
+			const tooltipContent = [
+				h('div', { class: 'dark-tooltip-title' }, '费用明细'),
+				tooltipRow('输入费用', formatCost(record.input_cost || 0)),
+				tooltipRow('输出费用', formatCost(record.output_cost || 0)),
+				record.cache_creation_cost > 0 ? tooltipRow('缓存创建费用', formatCost(record.cache_creation_cost)) : null,
+				record.cache_read_cost > 0 ? tooltipRow('缓存读取费用', formatCost(record.cache_read_cost)) : null,
+				record.rate_multiplier && record.rate_multiplier !== 1
+					? h('div', { class: 'dark-tooltip-row' }, [
+						h('span', { class: 'dark-tooltip-label' }, '费率倍率'),
+						h('span', { class: 'dark-tooltip-highlight' }, `${record.rate_multiplier.toFixed(4)}x`),
+					])
+					: null,
+				h('div', { class: 'dark-tooltip-divider' }),
+				tooltipRow('基础费用', formatCost(record.total_cost || 0)),
+				h('div', { class: 'dark-tooltip-row' }, [
+					h('span', { class: 'dark-tooltip-label' }, '实际费用'),
+					h('span', { class: 'dark-tooltip-success' }, formatCost(record.actual_cost || 0)),
+				]),
+			].filter(Boolean)
+
+			return h(Tooltip, {
+				backgroundColor: '#1e293b',
+				popupStyle: { padding: 0, borderRadius: '8px' },
+				position: 'right',
+			}, {
+				default: () => h('div', { class: 'cost-cell' }, [
+					h('span', { class: 'cost-value' }, formatCost(record.actual_cost || record.total_cost)),
+				]),
+				content: () => h('div', { class: 'dark-tooltip' }, tooltipContent),
+			})
+		},
+	},
+	{
+		title: '延迟', dataIndex: 'latency_ms', width: 100,
+		render({ record }) {
+			const items: any[] = [
+				h('div', { class: 'time-text' }, formatMs(record.latency_ms)),
+			]
+			if (record.first_token_ms > 0) {
+				items.push(h('div', { class: 'sub-text', style: 'font-size: 11px' }, `TTFT ${formatMs(record.first_token_ms)}`))
+			}
+			return h('div', { style: 'line-height: 1.4' }, items)
+		},
+	},
+	{
+		title: '状态', dataIndex: 'status', width: 90,
+		render({ record }) {
+			const items: any[] = [
+				h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status),
+			]
+			if (record.retry_index > 0) {
+				items.push(h('span', { class: 'retry-badge' }, `R${record.retry_index}`))
+			}
+			return h(Space, { size: 4 }, () => items)
+		},
+	},
+	{
+		title: '时间', dataIndex: 'created_at', width: 140,
+		render({ record }) {
+			return h('span', { class: 'time-text' }, formatTime(record.created_at))
+		},
+	},
+	{
+		title: '操作', dataIndex: 'actions', width: 80, fixed: 'right',
+		render({ record }) {
+			return h(Button, { type: 'text', size: 'mini', onClick: () => openDetail(record) }, () => '详情')
+		},
+	},
+]
 
 async function fetchData() {
 	loading.value = true
@@ -335,6 +497,7 @@ const { exporting, exportFile } = useExport({
 
 		<a-card :bordered="false">
 			<a-table
+				:columns="columns"
 				:data="data"
 				:loading="loading"
 				:scroll="{ x: 1400 }"
@@ -343,136 +506,7 @@ const { exporting, exportFile } = useExport({
 				size="small"
 				:pagination="false"
 				row-key="id"
-			>
-				<template #columns>
-					<a-table-column title="ID" data-index="id" :width="70" />
-					<a-table-column title="租户" :width="120" :ellipsis="true">
-						<template #cell="{ record }">
-							{{ record.tenant_name || record.tenant_id }}
-						</template>
-					</a-table-column>
-					<a-table-column title="用户/项目" :width="120" :ellipsis="true">
-							<template #cell="{ record }">
-								<span v-if="record.project_name" style="color: #165dff">
-									{{ record.project_name }}
-								</span>
-								<span v-else>{{ record.username || '-' }}</span>
-							</template>
-						</a-table-column>
-					<a-table-column title="API Key" :width="120" :ellipsis="true">
-						<template #cell="{ record }">
-							{{ record.api_key_name || record.api_key_id || '-' }}
-						</template>
-					</a-table-column>
-					<a-table-column title="模型" data-index="model_name" :width="150">
-						<template #cell="{ record }">
-							<div v-if="hasUpstreamModel(record)">
-								<div style="font-weight: 500">{{ record.model_name }}</div>
-								<div class="upstream-model">↳ {{ record.upstream_model }}</div>
-							</div>
-							<span v-else style="font-weight: 500">{{ record.model_name }}</span>
-						</template>
-					</a-table-column>
-					<a-table-column title="渠道" data-index="channel_name" :width="100" :ellipsis="true" />
-					<a-table-column title="类型" data-index="request_type" :width="130">
-						<template #cell="{ record }">
-							<a-space :size="4">
-								<a-tag :color="requestTypeColor[record.request_type]" size="small">
-									{{ requestTypeLabel[record.request_type] || '-' }}
-								</a-tag>
-								<a-tag v-if="record.billing_mode" :color="billingModeColor[record.billing_mode]" size="small">
-									{{ billingModeLabel[record.billing_mode] }}
-								</a-tag>
-							</a-space>
-						</template>
-					</a-table-column>
-					<a-table-column title="Token" :width="200">
-						<template #cell="{ record }">
-							<a-tooltip background-color="#1e293b" :popup-style="{ padding: 0, borderRadius: '8px' }" position="right">
-								<div class="token-cell">
-									<div class="token-content">
-										<div class="token-row">
-											<span class="token-item token-in">↑{{ (record.input_tokens || 0).toLocaleString() }}</span>
-											<span class="token-item token-out">↓{{ (record.output_tokens || 0).toLocaleString() }}</span>
-											<span class="token-item token-cache-create">✎{{ (record.cache_creation_tokens || 0).toLocaleString() }}</span>
-											<span class="token-item token-cache-read">⚡{{ (record.cache_read_tokens || 0).toLocaleString() }}</span>
-										</div>
-									</div>
-									<span class="info-icon">i</span>
-								</div>
-								<template #content>
-									<div class="dark-tooltip">
-										<div class="dark-tooltip-title">Token 详情</div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">输入 Token</span><span class="dark-tooltip-value">{{ (record.input_tokens || 0).toLocaleString() }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">输出 Token</span><span class="dark-tooltip-value">{{ (record.output_tokens || 0).toLocaleString() }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">缓存创建</span><span class="dark-tooltip-value">{{ (record.cache_creation_tokens || 0).toLocaleString() }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">缓存读取</span><span class="dark-tooltip-value">{{ (record.cache_read_tokens || 0).toLocaleString() }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">缓存创建(5分钟)</span><span class="dark-tooltip-value">{{ (record.cache_creation_5m_tokens || 0).toLocaleString() }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">缓存创建(1小时)</span><span class="dark-tooltip-value">{{ (record.cache_creation_1h_tokens || 0).toLocaleString() }}</span></div>
-										<div v-if="record.reasoning_tokens > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">推理 Token</span><span class="dark-tooltip-value">{{ record.reasoning_tokens.toLocaleString() }}</span></div>
-										<div v-if="record.audio_input_tokens > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">音频输入</span><span class="dark-tooltip-value">{{ record.audio_input_tokens.toLocaleString() }}</span></div>
-										<div v-if="record.audio_output_tokens > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">音频输出</span><span class="dark-tooltip-value">{{ record.audio_output_tokens.toLocaleString() }}</span></div>
-										<div v-if="record.image_output_tokens > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">图像输出</span><span class="dark-tooltip-value">{{ record.image_output_tokens.toLocaleString() }}</span></div>
-										<div class="dark-tooltip-divider" />
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">合计</span><span class="dark-tooltip-total">{{ totalTokens(record).toLocaleString() }}</span></div>
-									</div>
-								</template>
-							</a-tooltip>
-						</template>
-					</a-table-column>
-					<a-table-column title="费用" :width="140">
-						<template #cell="{ record }">
-							<a-tooltip background-color="#1e293b" :popup-style="{ padding: 0, borderRadius: '8px' }" position="right">
-								<div class="cost-cell">
-									<span class="cost-value">{{ formatCost(record.actual_cost || record.total_cost) }}</span>
-									<span class="info-icon">i</span>
-								</div>
-								<template #content>
-									<div class="dark-tooltip">
-										<div class="dark-tooltip-title">费用明细</div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">输入费用</span><span class="dark-tooltip-value">{{ formatCost(record.input_cost || 0) }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">输出费用</span><span class="dark-tooltip-value">{{ formatCost(record.output_cost || 0) }}</span></div>
-										<div v-if="record.cache_creation_cost > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">缓存创建费用</span><span class="dark-tooltip-value">{{ formatCost(record.cache_creation_cost) }}</span></div>
-										<div v-if="record.cache_read_cost > 0" class="dark-tooltip-row"><span class="dark-tooltip-label">缓存读取费用</span><span class="dark-tooltip-value">{{ formatCost(record.cache_read_cost) }}</span></div>
-										<div v-if="record.rate_multiplier && record.rate_multiplier !== 1" class="dark-tooltip-row"><span class="dark-tooltip-label">费率倍率</span><span class="dark-tooltip-highlight">{{ record.rate_multiplier.toFixed(4) }}x</span></div>
-										<div class="dark-tooltip-divider" />
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">基础费用</span><span class="dark-tooltip-value">{{ formatCost(record.total_cost || 0) }}</span></div>
-										<div class="dark-tooltip-row"><span class="dark-tooltip-label">实际费用</span><span class="dark-tooltip-success">{{ formatCost(record.actual_cost || 0) }}</span></div>
-									</div>
-								</template>
-							</a-tooltip>
-						</template>
-					</a-table-column>
-					<a-table-column title="延迟" data-index="latency_ms" :width="100">
-						<template #cell="{ record }">
-							<div style="line-height: 1.4">
-								<div class="time-text">{{ formatMs(record.latency_ms) }}</div>
-								<div v-if="record.first_token_ms > 0" class="sub-text" style="font-size: 11px">TTFT {{ formatMs(record.first_token_ms) }}</div>
-							</div>
-						</template>
-					</a-table-column>
-					<a-table-column title="状态" data-index="status" :width="90">
-						<template #cell="{ record }">
-							<a-space :size="4">
-								<a-tag :color="statusTagColor[record.status]" size="small">
-									{{ statusLabel[record.status] || record.status }}
-								</a-tag>
-								<span v-if="record.retry_index > 0" class="retry-badge">R{{ record.retry_index }}</span>
-							</a-space>
-						</template>
-					</a-table-column>
-					<a-table-column title="时间" data-index="created_at" :width="160">
-						<template #cell="{ record }">
-							<span class="time-text">{{ formatTime(record.created_at) }}</span>
-						</template>
-					</a-table-column>
-					<a-table-column title="" :width="50">
-						<template #cell="{ record }">
-							<a-button type="text" size="mini" @click="openDetail(record)">详情</a-button>
-						</template>
-					</a-table-column>
-				</template>
-			</a-table>
+			/>
 			<div class="table-footer">
 				<a-pagination
 					v-model:current="pagination.current"
@@ -895,25 +929,26 @@ const { exporting, exportFile } = useExport({
 	</div>
 </template>
 
-<style scoped>
+<style>
 /* Token 单元格 */
 .token-cell {
-	display: flex;
-	align-items: center;
-	gap: 6px;
+	cursor: pointer;
+	border-radius: 4px;
+	padding: 2px 4px;
+	margin: -2px -4px;
+	transition: background 0.15s;
 }
-.token-content {
-	min-width: 0;
+.token-cell:hover {
+	background: rgba(22, 93, 255, 0.06);
 }
 .token-row {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	justify-content: space-between;
+  justify-content: flex-start;
 	line-height: 1.8;
-	padding: 4px 0;
 }
 .token-item {
+  min-width: 50px;
 	font-size: 12px;
 	font-weight: 600;
 	white-space: nowrap;
@@ -949,30 +984,22 @@ const { exporting, exportFile } = useExport({
 .token-dot-audio { background: #3491fa; }
 .token-dot-image { background: #f53f3f; }
 
-/* Tooltip 触发图标 */
-.info-icon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	min-width: 16px;
-	border-radius: 50%;
-	background: #f2f3f5;
-	color: #86909c;
-	font-size: 11px;
-	font-style: italic;
+/* 费用单元格 */
+.cost-cell {
+	cursor: pointer;
+	border-radius: 4px;
+	padding: 2px 4px;
+	margin: -2px -4px;
+	transition: background 0.15s;
+}
+.cost-cell:hover {
+	background: rgba(22, 93, 255, 0.06);
+}
+.cost-value {
 	font-weight: 600;
-	cursor: help;
-	flex-shrink: 0;
-	transition: all 0.15s;
+	color: #00b42a;
+	font-size: 13px;
 }
-.info-icon:hover {
-	background: #e8f3ff;
-	color: #165dff;
-}
-
-/* 深色 Tooltip */
 .dark-tooltip {
 	min-width: 180px;
 	font-size: 12px;
@@ -1022,18 +1049,6 @@ const { exporting, exportFile } = useExport({
 	font-weight: 700;
 }
 
-/* 费用单元格 */
-.cost-cell {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-}
-.cost-value {
-	font-weight: 600;
-	color: #00b42a;
-	font-size: 13px;
-}
-
 /* 模型上游 */
 .upstream-model {
 	font-size: 11px;
@@ -1060,6 +1075,9 @@ const { exporting, exportFile } = useExport({
 	white-space: nowrap;
 }
 
+</style>
+
+<style scoped>
 /* 详情弹窗 */
 .detail-section {
 	margin-top: 16px;
