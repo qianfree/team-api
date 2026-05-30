@@ -178,7 +178,7 @@ const columns: TableColumnData[] = [
 	},
 	{ title: '时间', dataIndex: 'created_at', width: 170 },
 	{
-		title: '', dataIndex: 'actions', width: 60, fixed: 'right',
+		title: '操作', dataIndex: 'actions', width: 80, fixed: 'right',
 		render({ record }) {
 			return h(Button, {
 				size: 'mini', type: 'text',
@@ -223,7 +223,7 @@ async function fetchDetail(id: number) {
 	showDetail.value = true
 	try {
 		const res: any = await request.get(`/admin/audit/request-logs/${id}`)
-		const detail = res.data?.data?.data || null
+		const detail = res.data?.data || null
 		if (detail?.forwarding_trace) {
 			detail.forwarding_trace = parseJson(detail.forwarding_trace)
 		}
