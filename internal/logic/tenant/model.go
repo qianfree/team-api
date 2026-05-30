@@ -200,7 +200,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			cacheCreationPrice := effectivePrice(pi.CustomCacheCreationPrice, pi.BaseCacheCreationPrice)
 
 			item := v1.TenantAvailableModelItem{
-				ID:                 pi.ID,
+				ID:                 m.ModelDBID,
 				ModelId:            m.ModelId,
 				ModelName:          m.ModelName,
 				Category:           m.Category,
@@ -268,6 +268,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			}
 
 			item := v1.TenantAvailableModelItem{
+				ID:           m.ModelDBID,
 				ModelId:      m.ModelId,
 				ModelName:    m.ModelName,
 				Category:     m.Category,
@@ -308,13 +309,16 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 					allowed[s.ModelName] = true
 				}
 			}
-			filtered := make([]v1.TenantAvailableModelItem, 0, len(list))
-			for _, item := range list {
-				if allowed[item.ModelId] {
-					filtered = append(filtered, item)
+			// allowed 为空说明没有有效的范围约束，不进行过滤，返回租户全部可用模型
+			if len(allowed) > 0 {
+				filtered := make([]v1.TenantAvailableModelItem, 0, len(list))
+				for _, item := range list {
+					if allowed[item.ModelId] {
+						filtered = append(filtered, item)
+					}
 				}
+				list = filtered
 			}
-			list = filtered
 		}
 	}
 
