@@ -1,8 +1,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { createHead } from '@unhead/vue'
 import App from './App.vue'
 import router from './router'
 import './styles/main.css'
+
+const head = createHead()
 
 declare const __APP_VERSION__: string
 
@@ -26,6 +29,7 @@ console.log(
 )
 
 const app = createApp(App)
+app.use(head)
 app.use(createPinia())
 app.use(router)
 app.mount('#app')
