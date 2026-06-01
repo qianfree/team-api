@@ -1,0 +1,8 @@
+# Team-API robots.txt
+# https://github.com/qianfree/team-api
+
+User-agent: *
+Allow: /
+Disallow: /tenant/
+
+Sitemap: https://team-api.net/sitemap.xml

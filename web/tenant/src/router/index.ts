@@ -9,7 +9,12 @@ const routes: RouteRecordRaw[] = [
 		path: '/',
 		name: 'TenantHome',
 		component: () => import('@/views/landing/LandingPage.vue'),
-		meta: { requiresAuth: false, title: 'Team-API — 开源自托管 大模型 API 网关' },
+		meta: {
+				requiresAuth: false,
+				title: 'Team-API — 企业级多租户大模型 API 网关平台 | 开源自托管',
+				description: '开源自托管的企业级多租户大模型 API 网关平台，聚合 40+ 供应商，内置计费引擎、团队管理与渠道调度。',
+				keywords: 'Team-API, 大模型网关, API Gateway, 多租户, OpenAI, Claude, 开源',
+			},
 	},
 	...tenantRoutes,
 	{

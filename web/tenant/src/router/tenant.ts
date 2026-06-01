@@ -8,6 +8,8 @@ declare module 'vue-router' {
 		icon?: string
 		sort?: number
 		roles?: string[]
+		description?: string
+		keywords?: string
 	}
 }
 
