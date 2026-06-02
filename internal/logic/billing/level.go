@@ -7,6 +7,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 )
 
@@ -172,36 +173,41 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 	}
 
 	// 6. 构建更新数据：仅升不降策略
-	updateData := g.Map{
-		"level":      newLevel,
-		"updated_at": "NOW()",
-	}
+	zero := 0
+	updateData := do.TntTenants{Level: newLevel}
+	hasUpdate := true
 
 	// max_members：NULL 时跟随等级配置（不更新），非 NULL 时仅升不降
 	if tenant.MaxMembers != nil {
 		if config.MaxMembers == 0 {
 			// 新等级允许无限成员，直接更新
-			updateData["max_members"] = 0
+			updateData.MaxMembers = &zero
+			hasUpdate = true
 		} else if config.MaxMembers > *tenant.MaxMembers {
-			updateData["max_members"] = config.MaxMembers
+			updateData.MaxMembers = &config.MaxMembers
+			hasUpdate = true
 		}
 	}
 
 	// max_concurrency：NULL 时跟随等级配置（不更新），非 NULL 时仅升不降
 	if tenant.MaxConcurrency != nil {
 		if config.MaxConcurrency == 0 {
-			updateData["max_concurrency"] = 0
+			updateData.MaxConcurrency = &zero
+			hasUpdate = true
 		} else if config.MaxConcurrency > *tenant.MaxConcurrency {
-			updateData["max_concurrency"] = config.MaxConcurrency
+			updateData.MaxConcurrency = &config.MaxConcurrency
+			hasUpdate = true
 		}
 	}
 
-	_, err = dao.TntTenants.Ctx(ctx).
-		Where("id", tenantID).
-		Data(updateData).
-		Update()
-	if err != nil {
-		return err
+	if hasUpdate {
+		_, err = dao.TntTenants.Ctx(ctx).
+			Where("id", tenantID).
+			Data(updateData).
+			Update()
+		if err != nil {
+			return err
+		}
 	}
 
 	// 7. 清除并发限制缓存
