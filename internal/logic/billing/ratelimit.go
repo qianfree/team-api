@@ -284,7 +284,6 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 	}
 
 	// 缓存未命中，查数据库
-	// 缓存未命中，查数据库
 	var maxConc *int
 	err = dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
@@ -342,7 +341,7 @@ func getModelConcurrencyLimit(ctx context.Context, tenantID int64, modelName str
 	// 缓存未命中，查数据库：先获取 model_id，再查 tenant_models
 	var modelID int64
 	err = dao.MdlModels.Ctx(ctx).
-		Where("model_name", modelName).
+		Where("model_id", modelName).
 		Fields("id").
 		Scan(&modelID)
 	if err != nil || modelID == 0 {

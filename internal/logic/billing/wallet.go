@@ -3,7 +3,6 @@ package billing
 import (
 	"context"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -77,28 +76,16 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 }
 
 // EnsureWallet 确保租户有钱包，没有则创建
+// 使用 INSERT ... ON CONFLICT 保证并发安全
 func EnsureWallet(ctx context.Context, tenantID int64) error {
-	count, err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Count()
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		`INSERT INTO bil_wallets (tenant_id, balance, frozen_balance, warning_threshold, currency)
+		 VALUES ($1, 0, 0, 1.00, 'USD')
+		 ON CONFLICT (tenant_id) DO NOTHING`,
+		tenantID)
 	if err != nil {
-		return err
+		return gerror.Wrapf(err, "ensure wallet")
 	}
-	if count > 0 {
-		return nil
-	}
-
-	_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
-		TenantId:         tenantID,
-		Balance:          0,
-		FrozenBalance:    0,
-		WarningThreshold: 1.00,
-		Currency:         "USD",
-	})
-	if err != nil {
-		return gerror.Wrapf(err, "create wallet")
-	}
-
 	return nil
 }
 
@@ -320,31 +307,6 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 		return result.Float64(), true
 	}
 	return 0, false
-}
-
-// recordTransaction 记录钱包流水
-// balanceAfter/frozenAfter 由调用方在事务内读取后传入，确保并发场景下流水记录准确
-func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType string, amount float64, description string, userID int64, requestID string, modelName string, relatedID int64, relatedType string, projectID int64, apiKeyID int64, taskID string, balanceAfter, frozenAfter float64) {
-	_, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-		TenantId:     tenantID,
-		WalletId:     walletID,
-		Type:         txnType,
-		Amount:       amount,
-		BalanceAfter: balanceAfter,
-		FrozenAfter:  frozenAfter,
-		RelatedId:    relatedID,
-		RelatedType:  relatedType,
-		Description:  description,
-		UserId:       userID,
-		RequestId:    requestID,
-		ModelName:    modelName,
-		ProjectId:    projectID,
-		ApiKeyId:     apiKeyID,
-		TaskId:       taskID,
-	})
-	if err != nil {
-		g.Log().Errorf(ctx, "record transaction failed: %v", err)
-	}
 }
 
 // syncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash

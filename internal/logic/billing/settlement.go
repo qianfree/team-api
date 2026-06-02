@@ -63,7 +63,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 5. 事务内执行结算（钱包扣款 + 计费记录）
+	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	var balanceAfter, frozenAfter float64
 	var billingID int64
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -112,6 +112,35 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			return gerror.Wrapf(err, "settle: create billing record")
 		}
 
+		// 5d. 记录消费流水（事务内）
+		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     wallet.ID,
+			Type:         "consume",
+			Amount:       -actualCost,
+			BalanceAfter: balanceAfter,
+			FrozenAfter:  frozenAfter,
+			RelatedId:    billingID,
+			RelatedType:  "billing_record",
+			Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
+			UserId:       userID,
+			RequestId:    requestID,
+			ModelName:    modelName,
+			ProjectId:    projectID,
+			ApiKeyId:     apiKeyID,
+		}).Insert()
+		if err != nil {
+			return gerror.Wrapf(err, "settle: record transaction")
+		}
+
+		// 5e. 标记预扣追踪记录为已结算（事务内）
+		_, err = tx.Ctx(ctx).Exec(
+			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
+			requestID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle: mark prededuct settled")
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -122,12 +151,6 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
-	markPredeductSettled(ctx, requestID)
-
-	// 7. 记录消费流水（事务外，best-effort）
-	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
-		userID, requestID, modelName, billingID, "billing_record", projectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
@@ -169,7 +192,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 5. 事务内执行结算（钱包扣款 + 计费记录）
+	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	var balanceAfter, frozenAfter float64
 	var billingID int64
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -218,6 +241,39 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			return gerror.Wrapf(err, "settle_with_usage: create billing record")
 		}
 
+		// 5d. 记录消费流水（事务内）
+		var txProjectID int64
+		if relayInfo != nil {
+			txProjectID = relayInfo.ProjectID
+		}
+		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     wallet.ID,
+			Type:         "consume",
+			Amount:       -actualCost,
+			BalanceAfter: balanceAfter,
+			FrozenAfter:  frozenAfter,
+			RelatedId:    billingID,
+			RelatedType:  "billing_record",
+			Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
+			UserId:       userID,
+			RequestId:    requestID,
+			ModelName:    modelName,
+			ProjectId:    txProjectID,
+			ApiKeyId:     apiKeyID,
+		}).Insert()
+		if err != nil {
+			return gerror.Wrapf(err, "settle_with_usage: record transaction")
+		}
+
+		// 5e. 标记预扣追踪记录为已结算（事务内）
+		_, err = tx.Ctx(ctx).Exec(
+			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
+			requestID)
+		if err != nil {
+			return gerror.Wrapf(err, "settle_with_usage: mark prededuct settled")
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -228,7 +284,6 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
-	markPredeductSettled(ctx, requestID)
 	settlementResult := &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
 		ActualCost:       actualCost,
@@ -253,17 +308,6 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	}
 	settlementResult.BillingSnapshot = snapshotJSON
 	settlementResult.BillingSummary = summaryText
-
-	// 8. 从 relayInfo 提取 projectID
-	var txProjectID int64
-	if relayInfo != nil {
-		txProjectID = relayInfo.ProjectID
-	}
-
-	// 9. 记录消费流水（事务外，best-effort）
-	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
-		userID, requestID, modelName, billingID, "billing_record", txProjectID, apiKeyID, "", balanceAfter, frozenAfter)
 
 	return settlementResult, nil
 }
@@ -443,16 +487,6 @@ func createBillingRecordWithSnapshot(ctx context.Context, tx gdb.TX, tenantID, u
 		return 0, err
 	}
 	return id, nil
-}
-
-// markPredeductSettled 标记预扣追踪记录为已结算
-func markPredeductSettled(ctx context.Context, requestID string) {
-	_, err := g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
-		requestID)
-	if err != nil {
-		g.Log().Warningf(ctx, "[PRE-DEDUCT] mark settled failed: request=%s err=%v", requestID, err)
-	}
 }
 
 // markPredeductReleased 标记预扣追踪记录为已释放

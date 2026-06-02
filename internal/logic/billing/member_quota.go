@@ -113,6 +113,10 @@ func loadMemberQuota(ctx context.Context, tenantID, userID int64) (*memberQuotaI
 		return nil, err
 	}
 
+	if row == nil {
+		return &memberQuotaInfo{QuotaType: "none"}, nil
+	}
+
 	info := &memberQuotaInfo{
 		QuotaType:   row.QuotaType,
 		QuotaLimit:  row.QuotaLimit,
