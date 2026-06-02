@@ -12,6 +12,8 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq) (*v1.TenantMemberQuotaRes, error) {
@@ -60,23 +62,22 @@ func (s *sTenant) MemberQuotaSet(ctx context.Context, req *v1.TenantMemberQuotaS
 	tenantID := middleware.GetTenantID(ctx)
 
 	if req.QuotaType == "periodic" && req.Period == "" {
-		return nil, fmt.Errorf("周期类型不能为空")
+		return nil, common.NewBadRequestError("周期类型不能为空")
 	}
 
-	data := g.Map{
-		"quota_type":     req.QuotaType,
-		"quota_limit":    req.QuotaLimit,
-		"quota_used":     0,
-		"quota_period":   nil,
-		"quota_reset_at": nil,
+	data := do.TntUsers{
+		QuotaType:   req.QuotaType,
+		QuotaLimit:  req.QuotaLimit,
+		QuotaPeriod: nil,
 	}
 
 	if req.QuotaType == "periodic" {
-		data["quota_period"] = req.Period
-		data["quota_reset_at"] = gtime.Now()
+		data.QuotaPeriod = req.Period
+		now := gtime.Now()
+		data.QuotaResetAt = now
 	}
 	if req.QuotaType == "none" {
-		data["quota_limit"] = 0
+		data.QuotaLimit = 0
 	}
 
 	_, err := dao.TntUsers.Ctx(ctx).
@@ -133,5 +134,5 @@ func calcNextReset(resetAt *time.Time, period string) *time.Time {
 
 func invalidateMemberQuotaCache(ctx context.Context, tenantID, userID int64) {
 	key := fmt.Sprintf("member_quota:%d:%d", tenantID, userID)
-	_, _ = g.Redis().Do(ctx, "DEL", key)
+	_, _ = g.Redis().Del(ctx, key)
 }

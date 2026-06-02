@@ -6,8 +6,6 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/qianfree/team-api/internal/dao"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"io"
 	"strings"
 
@@ -15,18 +13,22 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // ImportResult represents the result of a single row import.
 type ImportResult struct {
 	Row      int    `json:"row"`
 	Username string `json:"username"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
 	Status   string `json:"status"` // success, fail, skip
 	Error    string `json:"error,omitempty"`
 }
@@ -263,36 +265,69 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 
 		result.Status = "pending"
 		result.Username = username
+		result.Email = email
+		result.Role = role
 		results = append(results, result)
 	}
 
-	// Check against existing members
+	// Batch check existing members (avoid N+1)
+	pendingUsernames := make([]string, 0)
+	pendingEmails := make([]string, 0)
+	for _, r := range results {
+		if r.Status == "pending" {
+			pendingUsernames = append(pendingUsernames, r.Username)
+			if r.Email != "" {
+				pendingEmails = append(pendingEmails, strings.ToLower(r.Email))
+			}
+		}
+	}
+
+	existingUsernames := make(map[string]bool)
+	if len(pendingUsernames) > 0 {
+		var existing []struct {
+			Username string `json:"username"`
+		}
+		err := dao.TntUsers.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			WhereIn("username", pendingUsernames).
+			Fields("username").
+			Scan(&existing)
+		if err == nil {
+			for _, e := range existing {
+				existingUsernames[strings.ToLower(e.Username)] = true
+			}
+		}
+	}
+
+	existingEmails := make(map[string]bool)
+	if len(pendingEmails) > 0 {
+		var existing []struct {
+			Email string `json:"email"`
+		}
+		err := dao.TntUsers.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			WhereIn("email", pendingEmails).
+			Fields("email").
+			Scan(&existing)
+		if err == nil {
+			for _, e := range existing {
+				existingEmails[strings.ToLower(e.Email)] = true
+			}
+		}
+	}
+
 	for i := range results {
 		if results[i].Status != "pending" {
 			continue
 		}
-		username := results[i].Username
-		email := getCSVField(rows[results[i].Row-1], headerMap, "email")
-
-		count, _ := dao.TntUsers.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Where("username", username).
-			Count()
-		if count > 0 {
+		if existingUsernames[strings.ToLower(results[i].Username)] {
 			results[i].Status = "skip"
 			results[i].Error = "用户名已存在"
 			continue
 		}
-
-		if email != "" {
-			count, _ = dao.TntUsers.Ctx(ctx).
-				Where("tenant_id", tenantID).
-				Where("email", strings.ToLower(email)).
-				Count()
-			if count > 0 {
-				results[i].Status = "skip"
-				results[i].Error = "邮箱已存在"
-			}
+		if results[i].Email != "" && existingEmails[strings.ToLower(results[i].Email)] {
+			results[i].Status = "skip"
+			results[i].Error = "邮箱已存在"
 		}
 	}
 
@@ -341,7 +376,7 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 }
 
 // processImport executes the actual import for pending rows.
-func processImport(ctx context.Context, importID int64) error {
+func processImport(ctx context.Context, tenantID, importID int64) error {
 	var record *struct {
 		ID         int64  `json:"id"`
 		TenantID   int64  `json:"tenant_id"`
@@ -351,8 +386,9 @@ func processImport(ctx context.Context, importID int64) error {
 	}
 	err := dao.TntMemberImports.Ctx(ctx).
 		Where("id", importID).
+		Where("tenant_id", tenantID).
 		Scan(&record)
-	if err != nil || record.ID == 0 {
+	if err != nil || record == nil {
 		return common.NewNotFoundError("导入记录")
 	}
 	if record.Status != "pending" {
@@ -360,11 +396,14 @@ func processImport(ctx context.Context, importID int64) error {
 	}
 
 	// Mark as processing
-	dao.TntMemberImports.Ctx(ctx).
+	_, err = dao.TntMemberImports.Ctx(ctx).
 		Where("id", importID).
 		Data(do.TntMemberImports{
 			Status: "processing",
 		}).Update()
+	if err != nil {
+		return gerror.Wrapf(err, "标记导入记录状态失败")
+	}
 
 	var results []ImportResult
 	if err := json.Unmarshal([]byte(record.ResultJSON), &results); err != nil {
@@ -396,14 +435,18 @@ func processImport(ctx context.Context, importID int64) error {
 		}
 
 		displayName := results[i].Username
+		role := results[i].Role
+		if role == "" {
+			role = "member"
+		}
 
 		_, err = dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:     record.TenantID,
 			Username:     results[i].Username,
-			Email:        "",
+			Email:        results[i].Email,
 			PasswordHash: passwordHash,
 			DisplayName:  displayName,
-			Role:         "member",
+			Role:         role,
 			Status:       "active",
 		}).Insert()
 		if err != nil {
@@ -419,7 +462,7 @@ func processImport(ctx context.Context, importID int64) error {
 
 	// Update import record
 	updatedJSON, _ := json.Marshal(results)
-	dao.TntMemberImports.Ctx(ctx).
+	_, err = dao.TntMemberImports.Ctx(ctx).
 		Where("id", importID).
 		Data(do.TntMemberImports{
 			SuccessCount: successCount,
@@ -428,6 +471,9 @@ func processImport(ctx context.Context, importID int64) error {
 			Status:       "completed",
 			ResultJson:   string(updatedJSON),
 		}).Update()
+	if err != nil {
+		g.Log().Errorf(ctx, "更新导入记录最终结果失败: %v", err)
+	}
 
 	return nil
 }

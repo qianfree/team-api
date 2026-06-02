@@ -2,7 +2,6 @@ package tenant
 
 import (
 	"context"
-	"github.com/qianfree/team-api/internal/dao"
 	"time"
 
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -11,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -74,8 +74,11 @@ func TransitionTenantStatus(ctx context.Context, tenantID int64, newStatus strin
 	return err
 }
 
-// RequestClosure 申请关户
+// RequestClosure 申请关户（仅 owner）
 func (s *sTenant) RequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (*v1.TenantRequestClosureRes, error) {
+	if err := ownerOnly(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	if err := TransitionTenantStatus(ctx, tenantID, "closing"); err != nil {
 		return nil, err
@@ -83,8 +86,11 @@ func (s *sTenant) RequestClosure(ctx context.Context, req *v1.TenantRequestClosu
 	return &v1.TenantRequestClosureRes{}, nil
 }
 
-// CancelClosure 取消关户
+// CancelClosure 取消关户（仅 owner）
 func (s *sTenant) CancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (*v1.TenantCancelClosureRes, error) {
+	if err := ownerOnly(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	if err := TransitionTenantStatus(ctx, tenantID, "active"); err != nil {
 		return nil, err

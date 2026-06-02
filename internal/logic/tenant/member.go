@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
@@ -22,6 +21,8 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // ListMembers returns a paginated list of tenant members.
@@ -506,18 +507,24 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 	common.RevokeAllSessions(ctx, "tenant", memberID)
 
 	// Revoke all API keys for this user
-	dao.ApiKeys.Ctx(ctx).
+	_, err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", memberID).
 		Data(do.ApiKeys{
 			Status: "revoked",
 		}).Update()
+	if err != nil {
+		return nil, err
+	}
 
 	// Remove member model scopes
-	dao.TntMemberModelScopes.Ctx(ctx).
+	_, err = dao.TntMemberModelScopes.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", memberID).
 		Delete()
+	if err != nil {
+		return nil, err
+	}
 
 	// Anonymize personal data
 	_, err = dao.TntUsers.Ctx(ctx).
@@ -560,13 +567,16 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 	}
 
 	// Revoke all active API keys
-	dao.ApiKeys.Ctx(ctx).
+	_, err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
 		Where("status", "active").
 		Data(do.ApiKeys{
 			Status: "disabled",
 		}).Update()
+	if err != nil {
+		return err
+	}
 
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", userID).
@@ -598,13 +608,16 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 	}
 
 	// Restore disabled API keys
-	dao.ApiKeys.Ctx(ctx).
+	_, err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
 		Where("status", "disabled").
 		Data(do.ApiKeys{
 			Status: "active",
 		}).Update()
+	if err != nil {
+		return err
+	}
 
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", userID).
