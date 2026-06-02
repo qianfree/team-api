@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
@@ -254,9 +255,6 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 	if cat == nil {
 		return nil, common.NewNotFoundError("分类")
 	}
-	if cat.Id == 0 {
-		return nil, common.NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
-	}
 
 	data := do.SptArticles{
 		CategoryId: req.CategoryId,
@@ -368,10 +366,14 @@ func (s *sAdmin) refreshCategoryArticleCount(ctx context.Context, categoryId int
 		Where("status", "published").
 		Count()
 	if err != nil {
+		g.Log().Warningf(ctx, "refreshCategoryArticleCount count failed for category %d: %v", categoryId, err)
 		return
 	}
-	dao.SptCategories.Ctx(ctx).
+	_, err = dao.SptCategories.Ctx(ctx).
 		Where("id", categoryId).
 		Data(do.SptCategories{ArticleCount: count}).
 		Update()
+	if err != nil {
+		g.Log().Warningf(ctx, "refreshCategoryArticleCount update failed for category %d: %v", categoryId, err)
+	}
 }
