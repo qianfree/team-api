@@ -44,7 +44,6 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	}
 	if w == nil {
 		// 钱包不存在，初始化
-		// 钱包不存在，初始化
 		_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
 			TenantId:         tenantID,
 			Balance:          0,
@@ -109,7 +108,6 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 	var total int
 	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_id, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.project_id, bil_transactions.api_key_id, bil_transactions.task_id, bil_transactions.created_at").
 		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
-		LeftJoin("bil_records br", "bil_transactions.related_id = br.id AND bil_transactions.related_type = 'billing_record'").
 		OrderDesc("bil_transactions.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&records, &total, false)
@@ -328,7 +326,9 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 				 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT 1000 OFFSET ?`,
 				fromClause, where,
 			)
-			exportArgs := append(args, offset)
+			exportArgs := make([]any, len(args)+1)
+			copy(exportArgs, args)
+			exportArgs[len(args)] = offset
 			result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, exportArgs...)
 			if err != nil {
 				return

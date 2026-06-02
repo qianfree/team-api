@@ -2,7 +2,9 @@ package tenant
 
 import (
 	"context"
-	"database/sql"
+
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -10,7 +12,6 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -25,7 +26,7 @@ func (s *sTenant) PlanList(ctx context.Context, req *v1.TenantPlanListReq) (*v1.
 		Where("status", "active").
 		OrderAsc("sort_order").
 		Scan(&entities)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		return nil, err
 	}
 	list := make([]*v1.TenantPlanItem, 0, len(entities))
@@ -53,24 +54,24 @@ func (s *sTenant) PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq)
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	var plan v1.TenantPlanCurrentRes
+	var plan *v1.TenantPlanCurrentRes
 	err := dao.PlnTenantPlans.Ctx(ctx).As("tp").
 		Fields("tp.id, tp.tenant_id, tp.plan_id, tp.status, tp.start_at, tp.end_at, tp.auto_renew, tp.monthly_quota_tokens, tp.used_tokens, tp.last_reset_at, p.name, p.identifier, p.description, p.monthly_price, p.yearly_price").
 		Where("tp.tenant_id", tenantID).
 		Where("tp.status", "active").
-		WhereIn("tp.plan_id", g.DB().Model("pln_plans").Where("status", "active").Fields("id")).
+		WhereIn("tp.plan_id", g.Model("pln_plans").Safe().Where("status", "active").Fields("id")).
 		LeftJoin("pln_plans p", "p.id = tp.plan_id").
 		OrderDesc("tp.start_at").
 		Limit(1).
 		Safe().
 		Scan(&plan)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		return nil, err
 	}
-	if plan.Id == 0 {
+	if plan == nil {
 		return nil, nil
 	}
-	return &plan, nil
+	return plan, nil
 }
 
 // PlanCancelAutoRenew 取消自动续费
@@ -86,7 +87,7 @@ func (s *sTenant) PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCan
 		Data(do.PlnTenantPlans{
 			AutoRenew: false,
 		}).Update()
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		return nil, err
 	}
 	return &v1.TenantPlanCancelAutoRenewRes{}, nil
