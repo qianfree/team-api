@@ -20,36 +20,12 @@ import (
 func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.AdminUserListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	m := dao.SysAdminUsers.Ctx(ctx)
-
-	if req.Keyword != "" {
-		keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-		m = m.Where("username LIKE ? OR email LIKE ?", keyword, keyword)
-	}
-	if req.Role != "" {
-		m = m.Where("role", req.Role)
-	}
-	if req.Status != "" {
-		m = m.Where("status", req.Status)
-	}
-
-	total, err := m.Count()
+	total, err := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status).Count()
 	if err != nil {
 		return nil, err
 	}
 
-	// Rebuild model for data query (Count() modifies internal state)
-	m = dao.SysAdminUsers.Ctx(ctx)
-	if req.Keyword != "" {
-		keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-		m = m.Where("username LIKE ? OR email LIKE ?", keyword, keyword)
-	}
-	if req.Role != "" {
-		m = m.Where("role", req.Role)
-	}
-	if req.Status != "" {
-		m = m.Where("status", req.Status)
-	}
+	m := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status)
 
 	var users []struct {
 		Id          int64       `json:"id"`
@@ -156,6 +132,22 @@ func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v
 
 // UpdateUser updates an admin user.
 func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v1.AdminUserUpdateRes, error) {
+	// Prevent modification of super_admin accounts
+	var targetUser *struct {
+		Role string `json:"role"`
+	}
+	err := dao.SysAdminUsers.Ctx(ctx).
+		Where("id", req.Id).Scan(&targetUser)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if targetUser == nil {
+		return nil, common.NewNotFoundError("管理员")
+	}
+	if targetUser.Role == "super_admin" {
+		return nil, common.NewBadRequestError("不能修改超级管理员信息")
+	}
+
 	data := do.SysAdminUsers{}
 	if req.DisplayName != nil {
 		data.DisplayName = *req.DisplayName
@@ -180,7 +172,7 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 		data.Role = *req.Role
 	}
 
-	_, err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(data)
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(data)
 	if err != nil {
 		return nil, err
 	}
@@ -212,14 +204,15 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 		return nil, common.NewBadRequestError("不能删除超级管理员")
 	}
 
-	// Revoke all sessions
-	common.RevokeAllSessions(ctx, "admin", req.Id)
-
-	// Delete user
+	// Delete user first, then revoke sessions to avoid leaving the user
+	// in a state where sessions are gone but the user still exists.
 	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Delete()
 	if err != nil {
 		return nil, err
 	}
+
+	// Revoke all sessions
+	common.RevokeAllSessions(ctx, "admin", req.Id)
 
 	return nil, nil
 }

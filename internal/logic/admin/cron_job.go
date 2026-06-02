@@ -2,14 +2,14 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/util/gconv"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
-
-	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/util/gconv"
 )
 
 // CronJobList returns all registered cron jobs with their last execution status.
@@ -121,7 +121,7 @@ func (s *sAdmin) CronJobExecutions(ctx context.Context, req *v1.CronJobExecution
 func (s *sAdmin) CronJobTrigger(ctx context.Context, req *v1.CronJobTriggerReq) (*v1.CronJobTriggerRes, error) {
 	err := common.GetCronScheduler().TriggerJob(ctx, req.Name)
 	if err != nil {
-		return nil, fmt.Errorf("触发任务失败: %w", err)
+		return nil, gerror.Wrapf(err, "触发定时任务失败")
 	}
 	return &v1.CronJobTriggerRes{Message: "任务已触发"}, nil
 }
