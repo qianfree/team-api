@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -75,11 +76,13 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 		return nil, err
 	}
 
-	// Update last login
-	dao.SysAdminUsers.Ctx(ctx).Where("id", user.Id).Data(do.SysAdminUsers{
+	// Update last login (non-critical, log errors only)
+	if _, err := dao.SysAdminUsers.Ctx(ctx).Where("id", user.Id).Data(do.SysAdminUsers{
 		LastLoginAt: gtime.Now(),
 		LastLoginIp: ipAddress,
-	}).Update()
+	}).Update(); err != nil {
+		g.Log().Warningf(ctx, "update last_login for user %d: %v", user.Id, err)
+	}
 
 	// Record login history
 	ua := g.RequestFromCtx(ctx).Header.Get("User-Agent")
@@ -107,7 +110,10 @@ func (s *sAdmin) Setup2FA(ctx context.Context, _ *v1.Admin2FASetupReq) (*v1.Admi
 	}
 
 	// Store secret in Redis temporarily (5 min TTL) for the enable step
-	encKey := getEncKey(ctx)
+	encKey, err := getEncKey(ctx)
+	if err != nil {
+		return nil, err
+	}
 	encrypted, err := crypto.EncryptString(encKey, secret)
 	if err != nil {
 		return nil, err
@@ -305,10 +311,12 @@ func buildAdminUserMap(ctx context.Context, records []entity.AudLoginHistory) ma
 		ids = append(ids, id)
 	}
 	var users []entity.SysAdminUsers
-	_ = dao.SysAdminUsers.Ctx(ctx).
+	if err := dao.SysAdminUsers.Ctx(ctx).
 		Fields("id, username, display_name").
 		WhereIn("id", ids).
-		Scan(&users)
+		Scan(&users); err != nil {
+		g.Log().Warningf(ctx, "load admin users for session list: %v", err)
+	}
 	for _, u := range users {
 		m[u.Id] = adminUserBrief{Username: u.Username, DisplayName: u.DisplayName}
 	}
@@ -429,10 +437,12 @@ func buildTenantUserMap(ctx context.Context, records []entity.AudLoginHistory) m
 		ids = append(ids, id)
 	}
 	var users []entity.TntUsers
-	_ = dao.TntUsers.Ctx(ctx).
+	if err := dao.TntUsers.Ctx(ctx).
 		Fields("id, username, display_name").
 		WhereIn("id", ids).
-		Scan(&users)
+		Scan(&users); err != nil {
+		g.Log().Warningf(ctx, "load tenant users for session list: %v", err)
+	}
 	for _, u := range users {
 		m[u.Id] = tenantUserBrief{Username: u.Username, DisplayName: u.DisplayName}
 	}
@@ -450,7 +460,10 @@ func getPendingTOTPSecret(ctx context.Context, userID int64) (string, error) {
 		return "", nil
 	}
 	// The secret is stored encrypted, decrypt it
-	encKey := getEncKey(ctx)
+	encKey, err := getEncKey(ctx)
+	if err != nil {
+		return "", err
+	}
 	return crypto.DecryptString(encKey, val.String())
 }
 
@@ -459,10 +472,17 @@ func clearPendingTOTPSecret(ctx context.Context, userID int64) {
 	_, _ = g.Redis().Do(ctx, "DEL", key)
 }
 
-func getEncKey(ctx context.Context) []byte {
+func getEncKey(ctx context.Context) ([]byte, error) {
 	hexKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String()
 	if hexKey == "" {
-		hexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		return nil, gerror.New("crypto.encryptionKey is not configured")
 	}
-	return crypto.MustGetEncryptionKey(hexKey)
+	key, err := hex.DecodeString(hexKey)
+	if err != nil {
+		return nil, gerror.Wrapf(err, "invalid crypto.encryptionKey")
+	}
+	if len(key) != 32 {
+		return nil, gerror.Newf("crypto.encryptionKey must be 32 bytes, got %d", len(key))
+	}
+	return key, nil
 }

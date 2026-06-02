@@ -36,9 +36,9 @@ var validAuditLevels = map[string]bool{
 	AuditLevelNone:         true,
 }
 
-// GetAuditConfig retrieves the global audit level from sys_options.
+// GetGlobalAuditConfig retrieves the global audit level from sys_options.
 // Package-level wrapper for use by tenant package.
-func GetAuditConfig(ctx context.Context) (string, error) {
+func GetGlobalAuditConfig(ctx context.Context) (string, error) {
 	return common.GetAuditLevel(ctx), nil
 }
 
@@ -88,6 +88,8 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 }
 
 // queryPage 使用 GoFrame ORM 分页查询，返回 []map[string]any。
+// 注意：该函数使用 g.DB().Model(table) 直接操作动态表名而非 DAO，
+// 适用于通用分页工具场景（多表共用）。固定表查询应优先使用对应的 DAO。
 // 分开调用 Count 和 All 避免 ScanAndCount 对 map[string]any 的 bug。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
 	m := g.DB().Ctx(ctx).Model(table).Safe()
@@ -197,6 +199,14 @@ func (s *sAdmin) ListSensitiveAccessLogs(ctx context.Context, req *v1.SensitiveL
 	if req.ResourceType != "" {
 		conditions = append(conditions, "resource_type = ?")
 		args = append(args, req.ResourceType)
+	}
+	if req.StartDate != "" {
+		conditions = append(conditions, "created_at >= ?")
+		args = append(args, req.StartDate+" 00:00:00")
+	}
+	if req.EndDate != "" {
+		conditions = append(conditions, "created_at <= ?")
+		args = append(args, req.EndDate+" 23:59:59")
 	}
 
 	where := strings.Join(conditions, " AND ")
@@ -311,6 +321,9 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		total = countResult[0]["total"].Int()
 	}
 
+	// NOTE: fromClause and whereClause are constructed from hardcoded strings
+	// and parameterized conditions (using ? placeholders). No user input is
+	// directly interpolated into the SQL template.
 	dataSQL := fmt.Sprintf(
 		`SELECT a.id, a.tenant_id, COALESCE(tn.name, '') AS tenant_name, a.user_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.api_key_id, COALESCE(ak.name, '') AS api_key_name, a.request_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.created_at, a.updated_at, a.audit_level
 		 FROM %s%s ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
@@ -417,7 +430,22 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 		offset := 0
 		for {
 			where, args := buildOpLogWhere()
-			items, _, err := queryPage(ctx, "aud_operation_logs", selectFields, where, "created_at DESC", offset/1000+1, 1000, args...)
+			q := g.DB().Ctx(ctx).Model("aud_operation_logs").Fields(selectFields).OrderDesc("created_at").Offset(offset).Limit(1000)
+			if where != "" {
+				q = q.Where(where, args...)
+			}
+			result, err := q.All()
+			if err != nil {
+				return
+			}
+			items := make([]map[string]any, 0, len(result))
+			for _, row := range result {
+				m := make(map[string]any, len(row))
+				for k, v := range row {
+					m[k] = v.Val()
+				}
+				items = append(items, m)
+			}
 			if err != nil {
 				return
 			}

@@ -6,6 +6,7 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	do "github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -181,6 +182,14 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 			return err
 		}
 
+		// Validate permission points against predefined set
+		validPerms := buildValidPermissionSet()
+		for _, p := range req.Permissions {
+			if !validPerms[p] {
+				return gerror.Newf("无效的权限点: %s", p)
+			}
+		}
+
 		// Insert new permissions
 		if len(req.Permissions) > 0 {
 			data := make([]do.SysAdminRolePerms, len(req.Permissions))
@@ -310,4 +319,15 @@ func GetDataScopes(ctx context.Context, userID int64, role string) ([]v1.DataSco
 		}
 	}
 	return result, nil
+}
+
+// buildValidPermissionSet returns a set of all valid permission points.
+func buildValidPermissionSet() map[string]bool {
+	set := make(map[string]bool)
+	for _, g := range predefinedPermissionGroups {
+		for _, p := range g.Permissions {
+			set[p] = true
+		}
+	}
+	return set
 }

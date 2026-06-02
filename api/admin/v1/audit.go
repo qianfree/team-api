@@ -47,6 +47,8 @@ type SensitiveLogListReq struct {
 	PageSize     int    `json:"page_size" d:"20"`
 	UserID       int    `json:"user_id" dc:"用户ID"`
 	ResourceType string `json:"resource_type" dc:"资源类型"`
+	StartDate    string `json:"start_date" dc:"开始日期 YYYY-MM-DD"`
+	EndDate      string `json:"end_date" dc:"结束日期 YYYY-MM-DD"`
 }
 
 type SensitiveLogListRes struct {
