@@ -94,9 +94,8 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 		err := dao.MdlModels.Ctx(ctx).
 			Where("id", a.ModelID).
 			Scan(&model)
-		g.Log().Debugf(ctx, "BatchAssignModels: model scan result id=%d, status=%q, err=%v", model.ID, model.Status, err)
-		if err != nil || model.ID == 0 || model.Status != "active" {
-			g.Log().Warningf(ctx, "BatchAssignModels: skip model_id=%d, err=%v, id=%d, status=%q", a.ModelID, err, model.ID, model.Status)
+		if err != nil || model == nil || model.Status != "active" {
+			g.Log().Warningf(ctx, "BatchAssignModels: skip model_id=%d, err=%v, nil=%v", a.ModelID, err, model == nil)
 			continue
 		}
 

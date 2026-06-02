@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -129,13 +128,13 @@ func (s *sAdmin) ChannelErrorStats(ctx context.Context, req *v1.ChannelErrorStat
 
 // ChannelErrorTrend 渠道错误趋势
 func (s *sAdmin) ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTrendReq) (*v1.ChannelErrorTrendRes, error) {
-	interval := "1 hour"
+	var bucketExpr string
 	if req.Hours <= 6 {
-		interval = "30 minutes"
+		bucketExpr = "date_bin(INTERVAL '30 minutes', created_at, TIMESTAMP '2000-01-01') AS bucket"
 	} else if req.Hours <= 24 {
-		interval = "1 hour"
+		bucketExpr = "date_trunc('hour', created_at) AS bucket"
 	} else {
-		interval = "6 hours"
+		bucketExpr = "date_bin(INTERVAL '6 hours', created_at, TIMESTAMP '2000-01-01') AS bucket"
 	}
 
 	cutoff := gtime.Now().Add(-time.Duration(req.Hours) * time.Hour)
@@ -151,7 +150,6 @@ func (s *sAdmin) ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTren
 		args = append(args, req.Category)
 	}
 
-	bucketExpr := fmt.Sprintf("date_trunc('%s', created_at) AS bucket", interval)
 	result, err := g.DB().Ctx(ctx).Query(ctx,
 		"SELECT "+bucketExpr+", error_category, COUNT(*) as count FROM chn_error_events WHERE "+timeCondition+
 			" GROUP BY bucket, error_category ORDER BY bucket", args...)

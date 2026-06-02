@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -46,35 +47,43 @@ func (s *sAdmin) GetDashboardStats(ctx context.Context, req *v1.AdminDashboardRe
 		SuccessRate   float64 `json:"success_rate"`
 	}
 	var todayRow dayStatsRow
-	dao.BilUsageLogs.Ctx(ctx).
+	if err := dao.BilUsageLogs.Ctx(ctx).
 		Where("created_at >= ?", today+" 00:00:00").
 		Fields("COUNT(*) as requests, COUNT(DISTINCT tenant_id) as active_tenants, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COALESCE(SUM(total_cost), 0) as total_cost, ROUND(COUNT(CASE WHEN status = 'success' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as success_rate").
-		Scan(&todayRow)
+		Scan(&todayRow); err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query today stats failed: %v", err)
+	}
 
 	// 昨日统计
 	var yesterdayRow dayStatsRow
-	dao.BilUsageLogs.Ctx(ctx).
+	if err := dao.BilUsageLogs.Ctx(ctx).
 		Where("created_at >= ?", yesterday+" 00:00:00").
 		Where("created_at < ?", today+" 00:00:00").
 		Fields("COUNT(*) as requests, COUNT(DISTINCT tenant_id) as active_tenants, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COALESCE(SUM(total_cost), 0) as total_cost, ROUND(COUNT(CASE WHEN status = 'success' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as success_rate").
-		Scan(&yesterdayRow)
+		Scan(&yesterdayRow); err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query yesterday stats failed: %v", err)
+	}
 
 	// 本月统计
 	var monthRow dayStatsRow
-	dao.BilUsageLogs.Ctx(ctx).
+	if err := dao.BilUsageLogs.Ctx(ctx).
 		Where("created_at >= ?", monthStart+" 00:00:00").
 		Fields("COUNT(*) as requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COALESCE(SUM(total_cost), 0) as total_cost").
-		Scan(&monthRow)
+		Scan(&monthRow); err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query month stats failed: %v", err)
+	}
 
 	// 本月收入（已结算金额）
 	var revenue struct {
 		Total float64 `json:"total"`
 	}
-	dao.BilRecords.Ctx(ctx).
+	if err := dao.BilRecords.Ctx(ctx).
 		Where("status", "settled").
 		Where("settled_at >= ?", monthStart+" 00:00:00").
 		Fields("COALESCE(SUM(total_cost), 0) as total").
-		Scan(&revenue)
+		Scan(&revenue); err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query revenue stats failed: %v", err)
+	}
 
 	return &v1.AdminDashboardRes{
 		Tenants:        tenantCount,
@@ -386,51 +395,55 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	amount := req.Amount
 	description := req.Description
 
-	// 原子更新余额，避免并发竞态
-	db := g.DB()
-	updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
-	args := []interface{}{amount, gtime.Now(), tenantID}
-	if amount < 0 {
-		updateQuery += " AND balance >= ?"
-		args = append(args, -amount)
-	}
-	result, err := db.Exec(ctx, updateQuery, args...)
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 原子更新余额，避免并发竞态
+		updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
+		args := []any{amount, gtime.Now(), tenantID}
+		if amount < 0 {
+			updateQuery += " AND balance >= ?"
+			args = append(args, -amount)
+		}
+		result, err := tx.Ctx(ctx).Exec(updateQuery, args...)
+		if err != nil {
+			return err
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return common.NewBadRequestError("钱包不存在或余额不足")
+		}
+
+		// 查询更新后的余额，用于记录流水
+		var wallet *struct {
+			ID            int64   `json:"id"`
+			Balance       float64 `json:"balance"`
+			FrozenBalance float64 `json:"frozen_balance"`
+		}
+		if err = tx.Model("bil_wallets").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Fields("id, balance, frozen_balance").
+			Scan(&wallet); err != nil {
+			return err
+		}
+		if wallet == nil {
+			return common.NewBadRequestError("钱包不存在")
+		}
+
+		// 记录流水
+		if _, err = tx.Model("bil_transactions").Ctx(ctx).Insert(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     wallet.ID,
+			Type:         "adjust",
+			Amount:       amount,
+			BalanceAfter: wallet.Balance,
+			FrozenAfter:  wallet.FrozenBalance,
+			Description:  description,
+		}); err != nil {
+			return gerror.Wrapf(err, "record balance adjust transaction")
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, common.NewBadRequestError("钱包不存在或余额不足")
-	}
-
-	// 查询更新后的余额，用于记录流水
-	var wallet *struct {
-		ID            int64   `json:"id"`
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
-	}
-	err = dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Fields("id, balance, frozen_balance").
-		Scan(&wallet)
-	if err != nil {
-		return nil, err
-	}
-	if wallet == nil {
-		return nil, common.NewBadRequestError("钱包不存在")
-	}
-
-	// 记录流水
-	if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-		TenantId:     tenantID,
-		WalletId:     wallet.ID,
-		Type:         "adjust",
-		Amount:       amount,
-		BalanceAfter: wallet.Balance,
-		FrozenAfter:  wallet.FrozenBalance,
-		Description:  description,
-	}); err != nil {
-		return nil, gerror.Wrapf(err, "record balance adjust transaction")
 	}
 
 	return &v1.AdminWalletAdjustRes{}, nil
@@ -636,6 +649,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 			batchArgs := append(args, 1000, offset)
 			result, err := g.DB().Ctx(ctx).Query(ctx, sql, batchArgs...)
 			if err != nil {
+				g.Log().Errorf(ctx, "ExportUsageLogs: query batch at offset %d failed: %v", offset, err)
 				return
 			}
 			for _, row := range result {
@@ -779,6 +793,7 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 		for {
 			batch, err := fetchRecords(offset, 1000)
 			if err != nil {
+				g.Log().Errorf(ctx, "ExportBillingRecords: query batch at offset %d failed: %v", offset, err)
 				return
 			}
 			for _, row := range batch {
