@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
@@ -20,6 +19,8 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // Register handles tenant registration.
@@ -279,35 +280,44 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
 		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "密码错误")
 
-		// Increment failed attempts
+		// 原子递增失败次数
+		updateData := do.TntUsers{FailedAttempts: gdb.Raw("failed_attempts + 1")}
 		failedAttempts := user.FailedAttempts + 1
-		updateData := do.TntUsers{FailedAttempts: failedAttempts}
 
 		if failedAttempts >= 5 {
 			lockedUntil := time.Now().Add(30 * time.Minute)
 			updateData.LockedUntil = gtime.NewFromTime(lockedUntil)
-			dao.TntUsers.Ctx(ctx).
+			_, err := dao.TntUsers.Ctx(ctx).
 				Where("id", user.Id).
 				Data(updateData).Update()
+			if err != nil {
+				g.Log().Errorf(ctx, "更新账号锁定状态失败: %v", err)
+			}
 			return nil, common.NewBusinessError(consts.CodeAccountLocked,
 				"连续 5 次密码错误，账号已锁定 30 分钟")
 		}
 
-		dao.TntUsers.Ctx(ctx).
+		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", user.Id).
 			Data(updateData).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "更新登录失败次数失败: %v", err)
+		}
 
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 
 	// Reset failed attempts on successful login
 	if user.FailedAttempts > 0 {
-		dao.TntUsers.Ctx(ctx).
+		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", user.Id).
 			Data(do.TntUsers{
 				FailedAttempts: 0,
 				LockedUntil:    nil,
 			}).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "重置登录失败次数失败: %v", err)
+		}
 	}
 
 	// Check if 2FA is enabled → return provisional token
@@ -353,12 +363,15 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	}
 
 	// Update last login
-	dao.TntUsers.Ctx(ctx).
+	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", user.Id).
 		Data(do.TntUsers{
 			LastLoginAt: gtime.Now(),
 			LastLoginIp: ipAddress,
 		}).Update()
+	if err != nil {
+		g.Log().Errorf(ctx, "更新最后登录时间失败: %v", err)
+	}
 
 	_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, true, "")
 
@@ -521,16 +534,23 @@ func (s *sTenant) ListSessions(ctx context.Context, req *v1.TenantSessionListReq
 	return &v1.TenantSessionListRes{List: items}, nil
 }
 
-// RevokeSession revokes a specific session.
+// RevokeSession revokes a specific session (only own sessions).
 func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSessionReq) (*v1.TenantRevokeSessionRes, error) {
-	// Look up session to get jti for Redis revocation
+	userID := middleware.GetUserID(ctx)
+
+	// 查找 session 并验证归属
 	sess, err := common.GetSessionByID(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	if sess != nil {
-		common.MarkSessionRevoked(ctx, sess.Jti)
+	if sess == nil {
+		return nil, common.NewNotFoundError("会话")
 	}
+	if sess.UserId != userID {
+		return nil, common.NewForbiddenError("只能撤销自己的会话")
+	}
+
+	common.MarkSessionRevoked(ctx, sess.Jti)
 	err = common.RevokeSession(ctx, req.Id)
 	if err != nil {
 		return nil, err

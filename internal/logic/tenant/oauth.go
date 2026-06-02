@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -103,12 +105,18 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		return nil, common.NewBusinessError(10059, "该 OAuth 供应商未启用")
 	}
 
-	// 验证 state
-	val, err := g.Redis().Get(ctx, oauthStatePrefix+req.State)
+	// 原子验证并消费 state（Lua 脚本防止 TOCTOU 重放）
+	val, err := g.Redis().Do(ctx, "EVAL", `
+		local v = redis.call("GET", KEYS[1])
+		if v then
+			redis.call("DEL", KEYS[1])
+			return v
+		end
+		return nil
+	`, 1, oauthStatePrefix+req.State)
 	if err != nil || val.IsNil() || val.String() != req.Provider {
 		return nil, common.NewBusinessError(10060, "OAuth 授权码无效")
 	}
-	g.Redis().Del(ctx, oauthStatePrefix+req.State)
 
 	// 换取 token
 	oauthToken, err := provider.ExchangeToken(ctx, req.Code)
@@ -145,7 +153,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		userID = identity.UserId
 
 		// 更新 token 信息
-		dao.TntOauthIdentities.Ctx(ctx).
+		_, err = dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", identity.Id).
 			Data(do.TntOauthIdentities{
 				AccessToken:      oauthToken.AccessToken,
@@ -153,6 +161,9 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 				TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 				ProviderUsername: userInfo.Username,
 			}).Update()
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		// 尝试自动注册
 		autoRegister := getOAuthSetting(ctx, "oauth_auto_register")
@@ -172,8 +183,21 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			Where("code", tenantCode).
 			Where("status", "active").
 			Scan(&tenant)
-		if err != nil || tenant.Id == 0 {
+		if err != nil || tenant == nil {
 			return nil, common.NewBusinessError(10060, "OAuth 自动注册未配置")
+		}
+
+		// 校验成员上限
+		memberCount, _ := dao.TntUsers.Ctx(ctx).
+			Where("tenant_id", tenant.Id).
+			Where("status", "active").
+			Count()
+		effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenant.Id)
+		if err != nil {
+			return nil, common.NewBusinessError(10060, "查询租户限制信息失败")
+		}
+		if memberCount >= effectiveMaxMembers {
+			return nil, common.NewBusinessError(10060, "租户成员数已达上限")
 		}
 
 		username := userInfo.Username
@@ -209,7 +233,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 
 		// 创建 OAuth 身份绑定
 		rawData, _ := json.Marshal(userInfo.RawData)
-		dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
+		_, err = dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
 			TenantId:         tenantID,
 			UserId:           userID,
 			Provider:         req.Provider,
@@ -222,13 +246,22 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 			RawData:          string(rawData),
 		}).Insert()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// 查找用户角色
+	// 查找用户角色（先校验再创建 session）
 	var user *struct {
 		Role string `json:"role"`
 	}
-	dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
+	err = dao.TntUsers.Ctx(ctx).Where("id", userID).Scan(&user)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
+	}
 
 	// 创建 session
 	refreshToken, err := common.GenerateRefreshToken()
@@ -249,14 +282,6 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
 		return nil, err
-	}
-
-	if user == nil {
-		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
-	}
-
-	if user == nil {
-		return nil, common.NewBusinessError(10060, "OAuth 登录失败：用户不存在")
 	}
 
 	// 生成 JWT token pair
@@ -301,17 +326,20 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 		Id     int64 `json:"id"`
 		UserId int64 `json:"user_id"`
 	}
-	dao.TntOauthIdentities.Ctx(ctx).
+	err = dao.TntOauthIdentities.Ctx(ctx).
 		Where("provider", req.Provider).
 		Where("provider_user_id", userInfo.ProviderUserID).
 		Scan(&existing)
+	if err != nil {
+		return nil, err
+	}
 	if existing != nil && existing.UserId != userID {
 		return nil, common.NewBusinessError(10062, "该 OAuth 账号已绑定其他用户")
 	}
 
 	rawData, _ := json.Marshal(userInfo.RawData)
 	if existing != nil && existing.Id > 0 {
-		dao.TntOauthIdentities.Ctx(ctx).
+		_, err = dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", existing.Id).
 			Data(do.TntOauthIdentities{
 				AccessToken:    oauthToken.AccessToken,
@@ -319,8 +347,11 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 				TokenExpiresAt: gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 				RawData:        string(rawData),
 			}).Update()
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
+		_, err = dao.TntOauthIdentities.Ctx(ctx).Data(do.TntOauthIdentities{
 			TenantId:         tenantID,
 			UserId:           userID,
 			Provider:         req.Provider,
@@ -333,6 +364,9 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 			RawData:          string(rawData),
 		}).Insert()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &v1.OAuthLinkRes{}, nil
@@ -413,12 +447,17 @@ func (p *GitHubProvider) GetAuthorizeURL(clientID, redirectURI, state string) st
 }
 
 func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string) (*OAuthToken, error) {
-	body := fmt.Sprintf(`{"client_id":"%s","client_secret":"%s","code":"%s"}`,
-		getOAuthSetting(ctx, "oauth_github_client_id"),
-		getOAuthSetting(ctx, "oauth_github_client_secret"),
-		code)
+	bodyMap := map[string]string{
+		"client_id":     getOAuthSetting(ctx, "oauth_github_client_id"),
+		"client_secret": getOAuthSetting(ctx, "oauth_github_client_secret"),
+		"code":          code,
+	}
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
 
-	resp, err := http.Post("https://github.com/login/oauth/access_token", "application/json", strings.NewReader(body))
+	resp, err := http.Post("https://github.com/login/oauth/access_token", "application/json", strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return nil, err
 	}
@@ -481,13 +520,14 @@ func (p *GoogleProvider) GetAuthorizeURL(clientID, redirectURI, state string) st
 }
 
 func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string) (*OAuthToken, error) {
-	body := fmt.Sprintf("code=%s&client_id=%s&client_secret=%s&redirect_uri=%s&grant_type=authorization_code",
-		code,
-		getOAuthSetting(ctx, "oauth_google_client_id"),
-		getOAuthSetting(ctx, "oauth_google_client_secret"),
-		getOAuthSetting(ctx, "site_url"))
+	v := url.Values{}
+	v.Set("code", code)
+	v.Set("client_id", getOAuthSetting(ctx, "oauth_google_client_id"))
+	v.Set("client_secret", getOAuthSetting(ctx, "oauth_google_client_secret"))
+	v.Set("redirect_uri", getOAuthSetting(ctx, "site_url"))
+	v.Set("grant_type", "authorization_code")
 
-	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(body))
+	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(v.Encode()))
 	if err != nil {
 		return nil, err
 	}
