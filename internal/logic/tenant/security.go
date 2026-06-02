@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -347,7 +348,7 @@ func clearPendingTOTPSecret(ctx context.Context, userID int64) {
 func getEncKey(ctx context.Context) []byte {
 	hexKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String()
 	if hexKey == "" {
-		hexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		panic("crypto.encryptionKey is not configured")
 	}
 	return crypto.MustGetEncryptionKey(hexKey)
 }
@@ -464,12 +465,19 @@ func CheckIPWhitelist(ctx context.Context, tenantID int64, ip string) bool {
 		if ip == cidr {
 			return true
 		}
-		// Simple CIDR / prefix match for common cases
+		// 支持 .* 通配符格式（如 192.168.1.*）
 		if strings.HasSuffix(cidr, ".*") {
 			prefix := strings.TrimSuffix(cidr, ".*")
-			if strings.HasPrefix(ip, prefix) {
+			_, ipNet, err := net.ParseCIDR(prefix + ".0/24")
+			if err == nil && ipNet.Contains(net.ParseIP(ip)) {
 				return true
 			}
+			continue
+		}
+		// 支持标准 CIDR 格式（如 192.168.1.0/24）
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil && network.Contains(net.ParseIP(ip)) {
+			return true
 		}
 	}
 	return false

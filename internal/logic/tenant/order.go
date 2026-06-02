@@ -2,11 +2,13 @@ package tenant
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"time"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -112,7 +114,12 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		amount = plan.MonthlyPrice * float64(months)
 	}
 
-	orderNo := fmt.Sprintf("ORD%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
+	// 使用 crypto/rand 生成随机部分，避免碰撞
+	randBytes := make([]byte, 4)
+	if _, err := rand.Read(randBytes); err != nil {
+		return nil, err
+	}
+	orderNo := fmt.Sprintf("ORD%s%08x", time.Now().Format("20060102150405"), randBytes)
 
 	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
 		OrderNo:        orderNo,
@@ -197,7 +204,9 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		return nil, lcommon.NewBusinessError(422, "不支持的支付渠道")
 	}
 
-	updateOrderPaymentChannel(ctx, orderID, req.PaymentChannel, req.PaymentMethod)
+	if err := updateOrderPaymentChannel(ctx, orderID, req.PaymentChannel, req.PaymentMethod); err != nil {
+		g.Log().Warningf(ctx, "update order %d payment channel failed: %v", orderID, err)
+	}
 
 	settings, _ := payment.GetGlobalPaymentSettings(ctx)
 	baseURL := ""
@@ -279,20 +288,22 @@ func getOrderForPay(ctx context.Context, tenantID int64, orderID int64) (orderNo
 		return
 	}
 	if order.ExpiredAt != nil && !order.ExpiredAt.IsZero() && order.ExpiredAt.Before(gtime.Now()) {
-		err = lcommon.NewBusinessError(422, "è®¢åå·²è¿æï¼è¯·éæ°ä¸å")
+		err = lcommon.NewBusinessError(422, "订单已过期，请重新下单")
+
 		return
 	}
 	return order.OrderNo, order.FinalAmount, order.Currency, order.OrderType, order.Description, nil
 }
 
 // updateOrderPaymentChannel 更新订单的支付渠道信息（供 OrderPay 内部调用）
-func updateOrderPaymentChannel(ctx context.Context, orderID int64, channel, paymentMethod string) {
-	dao.OrdOrders.Ctx(ctx).
+func updateOrderPaymentChannel(ctx context.Context, orderID int64, channel, paymentMethod string) error {
+	_, err := dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).
 		Data(do.OrdOrders{
 			PaymentChannel: channel,
 			PaymentMethod:  paymentMethod,
 		}).Update()
+	return err
 }
 
 // RechargeCreate 创建充值订单并发起支付（一步完成）
@@ -334,7 +345,11 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	}
 
 	// 4. 生成订单号并创建订单
-	orderNo := fmt.Sprintf("RCH%s%04d", time.Now().Format("20060102150405"), time.Now().UnixNano()%10000)
+	randBytes := make([]byte, 4)
+	if _, err := rand.Read(randBytes); err != nil {
+		return nil, err
+	}
+	orderNo := fmt.Sprintf("RCH%s%08x", time.Now().Format("20060102150405"), randBytes)
 	description := fmt.Sprintf("钱包充值 ¥%.2f", req.Amount)
 
 	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{

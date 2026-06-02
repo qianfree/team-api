@@ -89,7 +89,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.Url, bytes.NewReader(body))
 	if err != nil {
-		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, "", fmt.Sprintf("build request failed: %v", err))
+		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, 0, "", fmt.Sprintf("build request failed: %v", err))
 		markEventFailed(ctx, evt.Id, newAttempts)
 		return
 	}
@@ -106,7 +106,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	elapsed := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, "", err.Error())
+		recordDeliveryLog(ctx, evt, *config, newAttempts, 0, 0, "", err.Error())
 		markEventFailed(ctx, evt.Id, newAttempts)
 		return
 	}
@@ -115,7 +115,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, webhookMaxResponseSize))
 	respBodyStr := string(respBody)
 
-	recordDeliveryLog(ctx, evt, *config, newAttempts, elapsed, respBodyStr, "")
+	recordDeliveryLog(ctx, evt, *config, newAttempts, resp.StatusCode, elapsed, respBodyStr, "")
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if _, err := dao.OpnWebhookEvents.Ctx(ctx).Where("id", evt.Id).Data(do.OpnWebhookEvents{
@@ -176,7 +176,7 @@ func markEventFailed(ctx context.Context, eventID int64, attempts int) {
 }
 
 // recordDeliveryLog records a delivery attempt in opn_webhook_delivery_logs.
-func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config entity.OpnWebhookConfigs, attempt int, responseTimeMs int64, respBody string, errMsg string) {
+func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config entity.OpnWebhookConfigs, attempt int, responseStatus int, responseTimeMs int64, respBody string, errMsg string) {
 	reqHeaders := map[string]string{
 		"Content-Type":        "application/json",
 		"X-Webhook-Signature": "***",
@@ -185,11 +185,6 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 	}
 	headersJSON, _ := json.Marshal(reqHeaders)
 
-	statusCode := 0
-	if respBody != "" {
-		statusCode = 200
-	}
-
 	if _, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Data(do.OpnWebhookDeliveryLogs{
 		TenantId:        evt.TenantId,
 		WebhookConfigId: config.Id,
@@ -197,7 +192,7 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 		Attempt:         attempt,
 		RequestUrl:      config.Url,
 		RequestHeaders:  string(headersJSON),
-		ResponseStatus:  statusCode,
+		ResponseStatus:  responseStatus,
 		ResponseBody:    truncateString(respBody, 2000),
 		ResponseTimeMs:  int(responseTimeMs),
 		ErrorMessage:    truncateString(errMsg, 500),

@@ -2,7 +2,7 @@ package tenant
 
 import (
 	"context"
-	"github.com/qianfree/team-api/internal/dao"
+	"fmt"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -16,6 +16,7 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
@@ -39,13 +40,11 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 	query := dao.ApiKeys.Ctx(ctx).Where("tenant_id", tenantID)
 
 	if req.KeyType == "project" {
-		// 项目密钥：owner/admin 可看租户内所有项目密钥
 		query = query.Where("key_type", "project")
 		if req.ProjectID > 0 {
 			query = query.Where("project_id", req.ProjectID)
 		}
 	} else {
-		// 个人密钥（默认）：只看自己的
 		query = query.Where("user_id", userID).Where("key_type", "personal")
 	}
 
@@ -80,15 +79,38 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		keys = []keyRow{}
 	}
 
+	// 批量查询所有 key 的模型数量（修复 N+1）
+	keyIDs := make([]int64, 0, len(keys))
+	for _, k := range keys {
+		keyIDs = append(keyIDs, k.Id)
+	}
+	modelCountMap := make(map[int64]int, len(keys))
+	if len(keyIDs) > 0 {
+		type countRow struct {
+			ApiKeyId int64 `json:"api_key_id"`
+			Cnt      int   `json:"cnt"`
+		}
+		var counts []countRow
+		err = dao.ApiKeyModelScopes.Ctx(ctx).
+			Fields("api_key_id, COUNT(*) AS cnt").
+			WhereIn("api_key_id", keyIDs).
+			Group("api_key_id").
+			Scan(&counts)
+		if err == nil {
+			for _, c := range counts {
+				modelCountMap[c.ApiKeyId] = c.Cnt
+			}
+		}
+	}
+
 	list := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
-		modelCount, _ := dao.ApiKeyModelScopes.Ctx(ctx).Where("api_key_id", k.Id).Count()
 		list = append(list, map[string]any{
 			"id":                     k.Id,
 			"name":                   k.Name,
 			"key_prefix":             k.KeyPrefix,
 			"scope":                  k.Scope,
-			"model_count":            modelCount,
+			"model_count":            modelCountMap[k.Id],
 			"status":                 k.Status,
 			"key_type":               k.KeyType,
 			"project_id":             k.ProjectId,
@@ -184,12 +206,15 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 		return nil, err
 	}
 
+	// 写入模型范围，检查每次插入的错误
 	for _, modelName := range req.ModelNames {
 		if modelName != "" {
-			dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
+			if _, err := dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
 				ApiKeyId:  keyID,
 				ModelName: modelName,
-			})
+			}); err != nil {
+				return nil, lcommon.NewBusinessError(consts.CodeBadRequest, fmt.Sprintf("写入模型范围 %s 失败", modelName))
+			}
 		}
 	}
 
@@ -233,13 +258,10 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 		Where("tenant_id", tenantID)
 
 	if info.KeyType == "project" {
-		// 项目密钥：需要 owner/admin 权限
 		if role != "owner" && role != "admin" {
 			return nil, lcommon.NewBusinessError(consts.CodeProjectKeyForbidden, consts.MsgProjectKeyForbidden)
 		}
-		// 不限 user_id，按租户级操作
 	} else {
-		// 个人密钥：只能禁用自己的
 		query = query.Where("user_id", userID)
 	}
 
@@ -294,7 +316,6 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 			return nil, lcommon.NewBusinessError(consts.CodeProjectKeyForbidden, consts.MsgProjectKeyForbidden)
 		}
 	} else {
-		// 个人密钥：只能更新自己的
 		count, err := dao.ApiKeys.Ctx(ctx).
 			Where("id", keyID).
 			Where("tenant_id", tenantID).
@@ -308,14 +329,17 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		}
 	}
 
-	// 构建更新数据
-	data := g.Map{}
+	// 使用 DO 对象构建更新数据
+	data := do.ApiKeys{}
+	hasUpdate := false
 
 	if req.Name != "" {
-		data["name"] = req.Name
+		data.Name = req.Name
+		hasUpdate = true
 	}
 	if req.Scope != "" {
-		data["scope"] = req.Scope
+		data.Scope = req.Scope
+		hasUpdate = true
 	}
 	if req.Status != "" {
 		if req.Status != "active" && req.Status != "disabled" {
@@ -327,33 +351,41 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 				ExpiresAt *gtime.Time `json:"expires_at"`
 			}
 			var ec *expireCheck
-			dao.ApiKeys.Ctx(ctx).
+			err := dao.ApiKeys.Ctx(ctx).
 				Where("id", keyID).
 				Fields("expires_at").
 				Scan(&ec)
+			if err != nil {
+				return nil, err
+			}
 			if ec != nil && ec.ExpiresAt != nil && ec.ExpiresAt.Before(gtime.Now()) {
 				return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "密钥已过期，无法重新启用")
 			}
 		}
-		data["status"] = req.Status
+		data.Status = req.Status
+		hasUpdate = true
 	}
 	if req.ExpiresAt != nil {
-		data["expires_at"] = req.ExpiresAt
+		data.ExpiresAt = req.ExpiresAt
+		hasUpdate = true
 	}
 	if req.RateLimitQps != nil {
-		data["rate_limit_qps"] = *req.RateLimitQps
+		data.RateLimitQps = *req.RateLimitQps
+		hasUpdate = true
 	}
 	if req.RateLimitConcurrency != nil {
-		data["rate_limit_concurrency"] = *req.RateLimitConcurrency
+		data.RateLimitConcurrency = *req.RateLimitConcurrency
+		hasUpdate = true
 	}
 	if req.TotalQuota != nil {
 		if *req.TotalQuota > 0 && *req.TotalQuota < info.UsedQuota {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于已用额度")
 		}
-		data["total_quota"] = *req.TotalQuota
+		data.TotalQuota = *req.TotalQuota
+		hasUpdate = true
 	}
 
-	if len(data) > 0 {
+	if hasUpdate {
 		_, err = dao.ApiKeys.Ctx(ctx).
 			Where("id", keyID).
 			Where("tenant_id", tenantID).
@@ -364,19 +396,11 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		}
 	}
 
-	// 更新模型范围
+	// 更新模型范围（事务内先删后插）
 	if req.ModelNames != nil {
-		dao.ApiKeyModelScopes.Ctx(ctx).
-			Where("api_key_id", keyID).
-			Delete()
-
-		for _, modelName := range req.ModelNames {
-			if modelName != "" {
-				dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
-					ApiKeyId:  keyID,
-					ModelName: modelName,
-				})
-			}
+		err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -417,7 +441,6 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 			return nil, lcommon.NewBusinessError(consts.CodeProjectKeyForbidden, consts.MsgProjectKeyForbidden)
 		}
 	} else {
-		// 个人密钥：只能更新自己的
 		count, err := dao.ApiKeys.Ctx(ctx).
 			Where("id", keyID).
 			Where("tenant_id", tenantID).
@@ -431,20 +454,36 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 		}
 	}
 
-	dao.ApiKeyModelScopes.Ctx(ctx).
-		Where("api_key_id", keyID).
-		Delete()
-
-	for _, modelName := range req.ModelNames {
-		if modelName != "" {
-			dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
-				ApiKeyId:  keyID,
-				ModelName: modelName,
-			})
-		}
+	err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames)
+	if err != nil {
+		return nil, err
 	}
 
 	return &v1.TenantApiKeyUpdateScopesRes{}, nil
+}
+
+// updateApiKeyModelScopes 在事务内更新模型范围（先删后插）
+func updateApiKeyModelScopes(ctx context.Context, keyID int64, modelNames []string) error {
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Ctx(ctx).Model("api_key_model_scopes").
+			Where("api_key_id", keyID).
+			Delete()
+		if err != nil {
+			return err
+		}
+
+		for _, modelName := range modelNames {
+			if modelName != "" {
+				if _, err := tx.Ctx(ctx).Model("api_key_model_scopes").Insert(do.ApiKeyModelScopes{
+					ApiKeyId:  keyID,
+					ModelName: modelName,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // ApiKeyModelScopes 查询 API Key 的模型范围
@@ -489,7 +528,6 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 	page, pageSize = lcommon.NormalizePagination(page, pageSize)
 
 	// 验证项目存在且属于该租户
-	var count int
 	count, err := dao.TntProjects.Ctx(ctx).
 		Where("id", projectID).
 		Where("tenant_id", tenantID).
