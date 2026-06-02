@@ -48,8 +48,10 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 		CreatedAt       *gtime.Time `json:"created_at"`
 	}
 
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+
 	var total int
-	err := m.Page(req.Page, req.PageSize).ScanAndCount(&tasks, &total, false)
+	err := m.Page(page, pageSize).ScanAndCount(&tasks, &total, false)
 	if err != nil {
 		return nil, err
 	}
@@ -85,8 +87,8 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 	return &v1.TaskListRes{
 		List:     list,
 		Total:    total,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		Page:     page,
+		PageSize: pageSize,
 	}, nil
 }
 
@@ -172,7 +174,7 @@ func (s *sAdmin) TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (*v1.Tas
 
 // MarkStuckTasksFailed 标记卡住的系统任务为失败（定时任务，操作 tsk_tasks 表）
 func MarkStuckTasksFailed(ctx context.Context) error {
-	threshold := time.Now().Add(-30 * time.Minute)
+	threshold := gtime.Now().Add(-30 * time.Minute)
 	_, err := dao.TskTasks.Ctx(ctx).
 		Where("status", "running").
 		Where("started_at < ?", threshold).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/os/gtime"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -81,24 +82,27 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		return nil, common.NewBadRequestError("订单状态不支持退款")
 	}
 
-	_, err = dao.OrdOrders.Ctx(ctx).
-		Where("id", req.Id).
-		Data(do.OrdOrders{
-			Status: "refunding",
-		}).Update()
-	if err != nil {
-		return nil, err
-	}
+	err = dao.OrdOrders.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Model("ord_orders").Ctx(ctx).
+			Where("id", req.Id).
+			Data(do.OrdOrders{
+				Status: "refunding",
+			}).Update()
+		if err != nil {
+			return err
+		}
 
-	_, err = dao.OrdRefunds.Ctx(ctx).Insert(do.OrdRefunds{
-		OrderId:        req.Id,
-		TenantId:       order.TenantID,
-		Amount:         order.FinalAmount,
-		Reason:         req.Reason,
-		Status:         "approved",
-		PaymentChannel: order.PaymentChannel,
-		ApprovedBy:     adminUserID,
-		ApprovedAt:     gtime.Now(),
+		_, err = tx.Model("ord_refunds").Ctx(ctx).Insert(do.OrdRefunds{
+			OrderId:        req.Id,
+			TenantId:       order.TenantID,
+			Amount:         order.FinalAmount,
+			Reason:         req.Reason,
+			Status:         "approved",
+			PaymentChannel: order.PaymentChannel,
+			ApprovedBy:     adminUserID,
+			ApprovedAt:     gtime.Now(),
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err

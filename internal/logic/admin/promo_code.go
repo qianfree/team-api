@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -39,7 +40,10 @@ func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq
 	if err != nil {
 		return nil, err
 	}
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
 	return &v1.PromoCodeCreateRes{ID: id}, nil
 }
 
@@ -52,9 +56,39 @@ func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq
 	if count == 0 {
 		return nil, common.NewNotFoundError("优惠码")
 	}
+
+	data := do.OrdPromoCodes{}
+	allowedFields := map[string]bool{
+		"name": true, "type": true, "discount_value": true,
+		"min_amount": true, "total_count": true,
+		"max_discount": true, "status": true,
+		"starts_at": true, "expires_at": true,
+	}
+	for k, v := range req.Update {
+		if !allowedFields[k] {
+			continue
+		}
+		switch k {
+		case "name":
+			data.Name = v.(string)
+		case "type":
+			data.Type = v.(string)
+		case "discount_value":
+			data.DiscountValue = v
+		case "min_amount":
+			data.MinAmount = v
+		case "total_count":
+			data.TotalCount = v
+		case "max_discount":
+			data.MaxDiscount = v
+		case "status":
+			data.Status = v.(string)
+		}
+	}
+
 	_, err = dao.OrdPromoCodes.Ctx(ctx).
 		Where("id", req.Id).
-		Data(req.Update).
+		Data(data).
 		Update()
 	if err != nil {
 		return nil, err
