@@ -124,7 +124,12 @@ func (bw *BatchWriter) autoFlush() {
 
 	_ = bw.Flush(gctx.New())
 
-	// Reset timer
+	if bw.closed {
+		return
+	}
+
+	// Stop before Reset per Go docs recommendation
+	bw.flushTimer.Stop()
 	bw.flushTimer.Reset(5 * time.Second)
 }
 

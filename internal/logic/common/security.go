@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/golang-jwt/jwt/v5"
 
@@ -188,10 +189,16 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 	// Hash backup codes for storage
 	hashedCodes := make([]string, len(plainCodes))
 	for i, code := range plainCodes {
-		hash, _ := crypto.HashPassword(code)
+		hash, herr := crypto.HashPassword(code)
+		if herr != nil {
+			return nil, gerror.Wrapf(herr, "hash backup code failed")
+		}
 		hashedCodes[i] = hash
 	}
-	codesJSON, _ := json.Marshal(hashedCodes)
+	codesJSON, jerr := json.Marshal(hashedCodes)
+	if jerr != nil {
+		return nil, gerror.Wrapf(jerr, "marshal backup codes failed")
+	}
 
 	// Encrypt TOTP secret
 	encKey := getEncryptionKey(ctx)
@@ -341,10 +348,16 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 
 	hashedCodes := make([]string, len(plainCodes))
 	for i, c := range plainCodes {
-		hash, _ := crypto.HashPassword(c)
+		hash, herr := crypto.HashPassword(c)
+		if herr != nil {
+			return nil, gerror.Wrapf(herr, "hash backup code failed")
+		}
 		hashedCodes[i] = hash
 	}
-	codesJSON, _ := json.Marshal(hashedCodes)
+	codesJSON, jerr := json.Marshal(hashedCodes)
+	if jerr != nil {
+		return nil, gerror.Wrapf(jerr, "marshal backup codes failed")
+	}
 
 	if userType == "admin" {
 		_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Data(do.SysAdminUsers{
@@ -458,7 +471,10 @@ func consumeBackupCode(ctx context.Context, userType string, userID int64, index
 			newCodes = append(newCodes, c)
 		}
 	}
-	codesJSON, _ := json.Marshal(newCodes)
+	codesJSON, merr := json.Marshal(newCodes)
+	if merr != nil {
+		return gerror.Wrapf(merr, "marshal backup codes failed")
+	}
 
 	var err error
 	if userType == "admin" {
@@ -476,7 +492,7 @@ func consumeBackupCode(ctx context.Context, userType string, userID int64, index
 func getEncryptionKey(ctx context.Context) []byte {
 	hexKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String()
 	if hexKey == "" {
-		hexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		panic("crypto.encryptionKey is not configured — refusing to start with weak key")
 	}
 	return crypto.MustGetEncryptionKey(hexKey)
 }

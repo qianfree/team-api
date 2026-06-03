@@ -6,7 +6,6 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
-	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -44,17 +43,36 @@ func (s *sTenant) Notifications(ctx context.Context, req *v1.TenantNotifications
 		return nil, err
 	}
 
-	// Enrich items with read status for broadcasts
-	for i, item := range items {
+	// Enrich items with read status for broadcasts (batch query to avoid N+1)
+	broadcastIDs := make([]int64, 0)
+	for _, item := range items {
 		if item.IsBroadcast == 1 {
-			readCount, _ := dao.NtfReadStatus.Ctx(ctx).
-				Where("message_id", item.Id).
-				Where("user_id", userID).
-				Count()
-			if readCount > 0 {
-				items[i].IsRead = 1
-			} else {
-				items[i].IsRead = 0
+			broadcastIDs = append(broadcastIDs, item.Id)
+		}
+	}
+	if len(broadcastIDs) > 0 {
+		readStatuses := make([]struct {
+			MessageId int64 `json:"message_id"`
+		}, 0)
+		err = dao.NtfReadStatus.Ctx(ctx).
+			Where("user_id", userID).
+			WhereIn("message_id", broadcastIDs).
+			Fields("message_id").
+			Scan(&readStatuses)
+		if err != nil {
+			return nil, err
+		}
+		readMap := make(map[int64]bool, len(readStatuses))
+		for _, rs := range readStatuses {
+			readMap[rs.MessageId] = true
+		}
+		for i, item := range items {
+			if item.IsBroadcast == 1 {
+				if readMap[item.Id] {
+					items[i].IsRead = 1
+				} else {
+					items[i].IsRead = 0
+				}
 			}
 		}
 	}
@@ -96,7 +114,7 @@ func (s *sTenant) UnreadCount(ctx context.Context, req *v1.TenantUnreadCountReq)
 		).
 		Count()
 	if err != nil {
-		broadcastUnread = 0
+		return nil, err
 	}
 
 	totalUnread := personalUnread + broadcastUnread
@@ -213,13 +231,12 @@ func (s *sTenant) MarkAllRead(ctx context.Context, req *v1.TenantMarkAllReadReq)
 
 	// Batch insert read_status records
 	if len(broadcastIDs) > 0 {
-		now := time.Now()
 		batch := make([]do.NtfReadStatus, 0, len(broadcastIDs))
 		for _, b := range broadcastIDs {
 			batch = append(batch, do.NtfReadStatus{
 				MessageId: b.ID,
 				UserId:    userID,
-				ReadAt:    gtime.NewFromTime(now),
+				ReadAt:    gtime.Now(),
 			})
 		}
 		_, err = dao.NtfReadStatus.Ctx(ctx).Batch(len(batch)).Data(batch).Insert()
@@ -320,7 +337,10 @@ func (s *sTenant) NotificationPreferencesUpdate(ctx context.Context, req *v1.Ten
 	} else {
 		query = query.Where("user_id IS NULL")
 	}
-	query.Fields("id").Scan(&existing)
+	err = query.Fields("id").Scan(&existing)
+	if err != nil {
+		return nil, err
+	}
 
 	if existing != nil && existing.ID > 0 {
 		// Update existing
@@ -377,7 +397,7 @@ func loadPreferences(ctx context.Context, tenantID, userID int64, scope string) 
 	type prefRow struct {
 		Preferences string `json:"preferences"`
 	}
-	var row prefRow
+	var row *prefRow
 	query := dao.NtfPreferences.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("scope", scope)
@@ -386,9 +406,11 @@ func loadPreferences(ctx context.Context, tenantID, userID int64, scope string) 
 	} else {
 		query = query.Where("user_id IS NULL")
 	}
-	query.Fields("preferences").Scan(&row)
+	if err := query.Fields("preferences").Scan(&row); err != nil {
+		return getDefaultPreferences()
+	}
 
-	if row.Preferences == "" || row.Preferences == "{}" {
+	if row == nil || row.Preferences == "" || row.Preferences == "{}" {
 		return getDefaultPreferences()
 	}
 
@@ -438,8 +460,8 @@ func mergePreferences(org, user map[string]any) map[string]any {
 				if orgMap, ok := orgVal.(map[string]any); ok {
 					// Merge the nested maps
 					combined := make(map[string]any)
-					for ok, ov := range orgMap {
-						combined[ok] = ov
+					for orgKey, orgValItem := range orgMap {
+						combined[orgKey] = orgValItem
 					}
 					for uk, uv := range userMap {
 						combined[uk] = uv

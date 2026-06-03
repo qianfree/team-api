@@ -44,7 +44,7 @@ func (s *sTenant) CreateFeedback(ctx context.Context, req *v1.FeedbackCreateReq)
 func (s *sTenant) ListFeedbacks(ctx context.Context, req *v1.FeedbackListReq) (*v1.FeedbackListRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
-	page, pageSize := normalizePagination(req.Page, req.PageSize)
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	query := dao.SptFeedbacks.Ctx(ctx).
 		Where("tenant_id", tenantID).
@@ -78,22 +78,18 @@ func (s *sTenant) GetFeedback(ctx context.Context, req *v1.FeedbackGetReq) (*v1.
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	var row v1.FeedbackGetRes
+	var row *v1.FeedbackGetRes
 	err := dao.SptFeedbacks.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Where("user_id", userID).
 		Scan(&row)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if row.Id == 0 {
+	if row == nil {
 		return nil, common.NewBusinessError(10063, "反馈不存在")
 	}
 
-	return &row, nil
-}
-
-func normalizePagination(page, pageSize int) (int, int) {
-	return common.NormalizePagination(page, pageSize)
+	return row, nil
 }

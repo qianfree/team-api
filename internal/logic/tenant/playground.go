@@ -54,8 +54,8 @@ func findActiveApiKey(ctx context.Context) (*playgroundApiKey, error) {
 
 func buildPlaygroundRelayContext(ctx context.Context, key *playgroundApiKey, recorder http.ResponseWriter) *handler.RelayContext {
 	requestID := ""
-	if v := ctx.Value("requestId"); v != nil {
-		requestID = v.(string)
+	if r := g.RequestFromCtx(ctx); r != nil {
+		requestID = r.GetCtxVar("RequestId").String()
 	}
 	return &handler.RelayContext{
 		TenantID:  middleware.GetTenantID(ctx),
@@ -106,8 +106,8 @@ func convertRelayError(err error) error {
 }
 
 func getRequestID(ctx context.Context) string {
-	if v := ctx.Value("requestId"); v != nil {
-		return v.(string)
+	if r := g.RequestFromCtx(ctx); r != nil {
+		return r.GetCtxVar("RequestId").String()
 	}
 	return ""
 }

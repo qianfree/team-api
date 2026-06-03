@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -25,35 +27,33 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 		models[i] = strings.TrimSpace(m)
 	}
 	if len(models) < 2 || len(models) > 4 {
-		return nil, fmt.Errorf("请选择 2-4 个模型进行对比")
+		return nil, common.NewBadRequestError("请选择 2-4 个模型进行对比")
 	}
 
 	since := gtime.Now().AddDate(0, 0, -req.Days).Format("Y-m-d")
 
-	// Build model placeholders
-	placeholders := make([]string, len(models))
+	// Build args for parameterized query
 	args := []any{tenantID, since}
-	for i, m := range models {
-		placeholders[i] = "?"
+	for _, m := range models {
 		args = append(args, m)
 	}
-	modelIn := strings.Join(placeholders, ",")
 
-	// Aggregate per-model stats
-	aggQuery := fmt.Sprintf(`
-		SELECT
-			model_name,
-			COUNT(*) as requests,
-			COUNT(*) FILTER (WHERE status = 'success') as success_count,
-			COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as avg_latency,
-			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE status = 'success'), 0) as p95_latency,
-			COALESCE(SUM(total_cost), 0) as total_cost,
-			COALESCE(SUM(input_tokens), 0) as input_tokens,
-			COALESCE(SUM(output_tokens), 0) as output_tokens
-		FROM bil_usage_logs
-		WHERE tenant_id = ? AND created_at >= ? AND model_name IN (%s)
-		GROUP BY model_name
-	`, modelIn)
+	// Aggregate per-model stats (parameterized IN clause, no fmt.Sprintf)
+	inClause := strings.Repeat("?,", len(models)-1) + "?"
+	aggQuery := `
+			SELECT
+				model_name,
+				COUNT(*) as requests,
+				COUNT(*) FILTER (WHERE status = 'success') as success_count,
+				COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as avg_latency,
+				COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE status = 'success'), 0) as p95_latency,
+				COALESCE(SUM(total_cost), 0) as total_cost,
+				COALESCE(SUM(input_tokens), 0) as input_tokens,
+				COALESCE(SUM(output_tokens), 0) as output_tokens
+			FROM bil_usage_logs
+			WHERE tenant_id = ? AND created_at >= ? AND model_name IN (` + inClause + `)
+			GROUP BY model_name
+		`
 
 	records, err := g.DB().Raw(aggQuery, args...).All()
 	if err != nil {
@@ -133,7 +133,7 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 	}
 
 	// Daily trends
-	trends := fetchTrends(ctx, tenantID, since, models, modelIn, args)
+	trends := fetchTrends(ctx, tenantID, since, models, args)
 
 	return &v1.ModelComparisonRes{
 		Summary: v1.ModelComparisonSummary{
@@ -209,19 +209,20 @@ func recommendBest(items []v1.ModelComparisonItem) (string, string) {
 	return best, fmt.Sprintf("综合评分 %.1f（费用40%% + 延迟30%% + 成功率30%%）", bestScore)
 }
 
-func fetchTrends(ctx context.Context, tenantID int64, since string, models []string, modelIn string, baseArgs []any) []v1.ModelTrendDay {
-	trendQuery := fmt.Sprintf(`
-		SELECT
-			DATE(created_at) as day,
-			model_name,
-			COUNT(*) as requests,
-			COALESCE(SUM(total_cost), 0) as cost,
-			COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as latency
-		FROM bil_usage_logs
-		WHERE tenant_id = ? AND created_at >= ? AND model_name IN (%s)
-		GROUP BY DATE(created_at), model_name
-		ORDER BY day
-	`, modelIn)
+func fetchTrends(ctx context.Context, tenantID int64, since string, models []string, baseArgs []any) []v1.ModelTrendDay {
+	inClause := strings.Repeat("?,", len(models)-1) + "?"
+	trendQuery := `
+			SELECT
+				DATE(created_at) as day,
+				model_name,
+				COUNT(*) as requests,
+				COALESCE(SUM(total_cost), 0) as cost,
+				COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as latency
+			FROM bil_usage_logs
+			WHERE tenant_id = ? AND created_at >= ? AND model_name IN (` + inClause + `)
+			GROUP BY DATE(created_at), model_name
+			ORDER BY day
+		`
 
 	records, err := g.DB().Raw(trendQuery, baseArgs...).All()
 	if err != nil {
@@ -240,11 +241,18 @@ func fetchTrends(ctx context.Context, tenantID int64, since string, models []str
 		})
 	}
 
-	var trends []v1.ModelTrendDay
-	for day, details := range dayMap {
+	// Sort days for deterministic output
+	days := make([]string, 0, len(dayMap))
+	for day := range dayMap {
+		days = append(days, day)
+	}
+	sort.Strings(days)
+
+	trends := make([]v1.ModelTrendDay, 0, len(days))
+	for _, day := range days {
 		trends = append(trends, v1.ModelTrendDay{
 			Date:    day,
-			Details: details,
+			Details: dayMap[day],
 		})
 	}
 	return trends

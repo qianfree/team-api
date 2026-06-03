@@ -3,7 +3,6 @@ package common
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"fmt"
 	"math/big"
 	"strings"
@@ -51,9 +50,9 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	if err == nil && hourlyCount.Int() > 5 {
 		return NewBusinessError(consts.CodeRateLimitExceeded, "每小时最多发送5次验证码")
 	}
-	if hourlyCount.Int() == 1 {
-		// Set expiry on first increment
-		_, _ = g.Redis().Do(ctx, "EXPIRE", hourlyKey, 3600)
+	// Always ensure TTL is set (idempotent: EXPIRE resets existing TTL or sets missing one)
+	if _, err := g.Redis().Do(ctx, "EXPIRE", hourlyKey, 3600); err != nil {
+		g.Log().Warningf(ctx, "failed to set hourly rate limit TTL: %v", err)
 	}
 
 	// Generate 6-digit code
@@ -74,6 +73,11 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	}
 
 	// Send email (fire and forget, log error but don't fail)
+	// Set cooldown before async send (prevents duplicate sends within 60s)
+	if _, err := g.Redis().Do(ctx, "SETEX", cooldownKey, 60, "1"); err != nil {
+		g.Log().Warningf(ctx, "failed to set verify code cooldown: %v", err)
+	}
+
 	go func() {
 		bgCtx := context.Background()
 		emailCfg, err := EmailConfigFromOptions(bgCtx)
@@ -99,9 +103,6 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 			g.Log().Errorf(bgCtx, "send verify code email to %s: %v", email, err)
 		}
 	}()
-
-	// Set cooldown
-	_, _ = g.Redis().Do(ctx, "SETEX", cooldownKey, 60, "1")
 
 	return nil
 }
@@ -129,11 +130,11 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 		OrderDesc("created_at").
 		Limit(1).
 		Scan(&record)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		return gerror.Wrapf(err, "query verify code")
 	}
 
-	if record.ID == 0 {
+	if record == nil {
 		return NewBusinessError(consts.CodeVerifyCodeInvalid, "验证码错误")
 	}
 
