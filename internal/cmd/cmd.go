@@ -150,17 +150,6 @@ var (
 			cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
 				return task.RefreshExpiringOAuthTokens(ctx)
 			})
-			cs.Register("cron_execution_cleanup", "30 3 * * *", func(ctx context.Context) error {
-				retentionDays := common.Config().GetInt(ctx, "cron_execution_retention_days")
-				if retentionDays == 0 {
-					retentionDays = 30
-				}
-				_, err := g.DB().Ctx(ctx).Exec(ctx,
-					"DELETE FROM sys_cron_job_executions WHERE created_at < NOW() - ($1 || ' days')::interval",
-					retentionDays,
-				)
-				return err
-			})
 			cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
 				billing.CleanExpiredPreDeducts(ctx)
 				return nil

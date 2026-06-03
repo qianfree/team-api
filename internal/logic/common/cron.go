@@ -181,14 +181,49 @@ func (cs *CronScheduler) runJobInternal(ctx context.Context, name, triggeredBy s
 }
 
 // recordExecution persists an execution record to the database.
+// Always UPSERT sys_cron_jobs with latest status; no separate execution log table.
 func (cs *CronScheduler) recordExecution(ctx context.Context, jobName, status string, startedAt time.Time, duration time.Duration, errMsg, triggeredBy string) {
-	_, err := g.DB().Ctx(ctx).Exec(ctx,
-		`INSERT INTO sys_cron_job_executions (job_name, status, started_at, finished_at, duration_ms, error_message, triggered_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		jobName, status, startedAt, startedAt.Add(duration), duration.Milliseconds(), errMsg, triggeredBy,
-	)
-	if err != nil {
-		g.Log().Warningf(ctx, "failed to record cron execution for %s: %v", jobName, err)
+	finishedAt := startedAt.Add(duration)
+	durationMs := duration.Milliseconds()
+
+	if status == "succeeded" {
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
+			`INSERT INTO sys_cron_jobs (job_name, last_status, last_started_at, last_finished_at, last_duration_ms, last_triggered_by, total_runs)
+			 VALUES ($1, $2, $3, $4, $5, $6, 1)
+			 ON CONFLICT (job_name) DO UPDATE SET
+			   last_status = $2,
+			   last_started_at = $3,
+			   last_finished_at = $4,
+			   last_duration_ms = $5,
+			   last_triggered_by = $6,
+			   last_error_message = NULL,
+			   total_runs = sys_cron_jobs.total_runs + 1,
+			   updated_at = now()`,
+			jobName, status, startedAt, finishedAt, durationMs, triggeredBy,
+		)
+		if err != nil {
+			g.Log().Warningf(ctx, "failed to upsert cron job %s: %v", jobName, err)
+		}
+	} else {
+		// failed
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
+			`INSERT INTO sys_cron_jobs (job_name, last_status, last_started_at, last_finished_at, last_duration_ms, last_error_message, last_triggered_by, total_runs, total_failures)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 1)
+			 ON CONFLICT (job_name) DO UPDATE SET
+			   last_status = $2,
+			   last_started_at = $3,
+			   last_finished_at = $4,
+			   last_duration_ms = $5,
+			   last_error_message = $6,
+			   last_triggered_by = $7,
+			   total_runs = sys_cron_jobs.total_runs + 1,
+			   total_failures = sys_cron_jobs.total_failures + 1,
+			   updated_at = now()`,
+			jobName, status, startedAt, finishedAt, durationMs, errMsg, triggeredBy,
+		)
+		if err != nil {
+			g.Log().Warningf(ctx, "failed to upsert cron job %s: %v", jobName, err)
+		}
 	}
 }
 
