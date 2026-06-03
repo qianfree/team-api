@@ -3,10 +3,17 @@ package middleware
 import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+
+	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/response"
 )
 
 const (
 	IdempotencyHeader = "Idempotency-Key"
+	// maxCachedBodyLen limits the response body size stored for idempotent replay.
+	// Responses larger than this will still be deduplicated but won't cache the body.
+	maxCachedBodyLen = 64 * 1024 // 64 KB
 )
 
 // Idempotency ensures that requests with the same Idempotency-Key
@@ -28,72 +35,74 @@ func Idempotency(r *ghttp.Request) {
 		ResponseBody string `json:"response_body"`
 	}
 
-	err := g.DB().Model("sys_idempotency_records").Ctx(ctx).
+	err := dao.SysIdempotencyRecords.Ctx(ctx).
 		Where("idempotency_key", idempotencyKey).
 		Where("expires_at > NOW()").
 		Scan(&record)
 	if err != nil {
-		r.Middleware.Next()
+		// DB error: fail-closed to prevent duplicate processing
+		response.ErrorMsg(r, 500, "系统繁忙，请稍后重试")
 		return
 	}
 
 	if record.Id > 0 {
 		if record.Status == "completed" && record.ResponseBody != "" {
-			r.Response.WriteJson(record.ResponseBody)
+			r.Response.WriteStatus(r.Response.Status)
+			r.Response.Write([]byte(record.ResponseBody))
 			r.Exit()
 			return
 		}
 		if record.Status == "processing" {
-			r.Response.WriteStatus(409)
-			r.Response.WriteJson(g.Map{
-				"error": g.Map{
-					"type":    "conflict",
-					"message": "请求正在处理中，请勿重复提交",
-					"code":    "409",
-				},
-			})
-			r.Exit()
+			writeConflictResponse(r)
 			return
 		}
 	}
 
 	// Insert processing record
-	_, err = g.DB().Exec(ctx,
-		"INSERT INTO sys_idempotency_records (idempotency_key, status, expires_at) VALUES (?, ?, NOW() + INTERVAL '24 hours')",
-		idempotencyKey, "processing")
+	_, err = dao.SysIdempotencyRecords.Ctx(ctx).Data(do.SysIdempotencyRecords{
+		IdempotencyKey: idempotencyKey,
+		Status:         "processing",
+	}).Insert()
 
 	if err != nil {
 		// If insert fails (duplicate key), another request is already processing
-		r.Response.WriteStatus(409)
-		r.Response.WriteJson(g.Map{
-			"error": g.Map{
-				"type":    "conflict",
-				"message": "请求正在处理中，请勿重复提交",
-				"code":    "409",
-			},
-		})
-		r.Exit()
+		writeConflictResponse(r)
 		return
 	}
 
 	// Capture the response
 	r.Middleware.Next()
 
-	// After processing, update the record
+	// After processing, update the record with cached body
 	status := "completed"
 	statusCode := r.Response.Status
 	if statusCode >= 400 {
 		status = "failed"
 	}
 
-	// Get response body (best effort)
-	responseBody := ""
+	var responseBody string
+	if buf := r.Response.Buffer(); len(buf) > 0 && len(buf) <= maxCachedBodyLen {
+		responseBody = string(buf)
+	}
 
 	// Update the record
-	g.DB().Model("sys_idempotency_records").Ctx(ctx).
+	dao.SysIdempotencyRecords.Ctx(ctx).
 		Where("idempotency_key", idempotencyKey).
-		Data(g.Map{
-			"status":        status,
-			"response_body": responseBody,
+		Data(do.SysIdempotencyRecords{
+			Status:       status,
+			ResponseBody: responseBody,
 		}).Update()
+}
+
+// writeConflictResponse writes a 409 Conflict response for duplicate idempotency keys.
+func writeConflictResponse(r *ghttp.Request) {
+	r.Response.WriteStatus(409)
+	r.Response.WriteJson(g.Map{
+		"error": g.Map{
+			"type":    "conflict",
+			"message": "请求正在处理中，请勿重复提交",
+			"code":    "409",
+		},
+	})
+	r.Exit()
 }

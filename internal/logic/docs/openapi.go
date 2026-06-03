@@ -7,6 +7,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/docs/v1"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/service"
 )
 
@@ -40,7 +41,10 @@ func (s *sDocs) OpenAPISpec(ctx context.Context, _ *v1.OpenAPISpecReq) (json.Raw
 }
 
 func buildOpenAPISpec() map[string]any {
-	baseURL := "https://api.team-api.example.com"
+	baseURL := common.Config().GetString(nil, "api_base_url")
+	if baseURL == "" {
+		baseURL = "https://api.team-api.example.com"
+	}
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{

@@ -25,14 +25,14 @@ type AdminSettingsGetReq struct {
 }
 
 type AdminSettingItem struct {
-	Key         string      `json:"key"`
-	Value       interface{} `json:"value"`
-	Type        string      `json:"type"`
-	Label       string      `json:"label"`
-	Description string      `json:"description,omitempty"`
-	Sensitive   bool        `json:"sensitive,omitempty"`
-	Validation  string      `json:"validation,omitempty"`
-	Default     interface{} `json:"default"`
+	Key         string `json:"key"`
+	Value       any    `json:"value"`
+	Type        string `json:"type"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Sensitive   bool   `json:"sensitive,omitempty"`
+	Validation  string `json:"validation,omitempty"`
+	Default     any    `json:"default"`
 }
 
 type AdminSettingsGetRes struct {
@@ -42,8 +42,8 @@ type AdminSettingsGetRes struct {
 // AdminSettingsUpdateReq 更新指定分类的设置
 type AdminSettingsUpdateReq struct {
 	g.Meta   `path:"/settings/{category}" method:"put" mime:"json" tags:"管理后台-系统设置" summary:"更新分类设置"`
-	Category string                 `json:"category" in:"path" v:"required" dc:"设置分类"`
-	Settings map[string]interface{} `json:"settings" v:"required" dc:"设置键值对"`
+	Category string         `json:"category" in:"path" v:"required" dc:"设置分类"`
+	Settings map[string]any `json:"settings" v:"required" dc:"设置键值对"`
 }
 
 type AdminSettingsUpdateRes struct{}

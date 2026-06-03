@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -37,11 +38,11 @@ func Verify(ctx context.Context, secretKey, token, clientIP string) (*VerifyResu
 		data.Set("remoteip", clientIP)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, verifyURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, verifyURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create verify request: %w", err)
 	}
-	req.URL.RawQuery = data.Encode()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

@@ -2,9 +2,10 @@ package task
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -42,29 +43,37 @@ func handleDataExport(ctx context.Context, payload json.RawMessage) (any, error)
 		switch scope {
 		case "members":
 			var members []map[string]any
-			_ = dao.TntUsers.Ctx(ctx).Where("tenant_id", p.TenantID).
-				Fields("id, username, display_name, role, status, created_at").Scan(&members)
+			if err := dao.TntUsers.Ctx(ctx).Where("tenant_id", p.TenantID).
+				Fields("id, username, display_name, role, status, created_at").Scan(&members); err != nil {
+				g.Log().Warningf(ctx, "export members for tenant %d: %v", p.TenantID, err)
+			}
 			for _, m := range members {
 				delete(m, "email")
 			}
 			exportData["members"] = members
 		case "usage":
 			var logs []map[string]any
-			_ = dao.BilUsageLogs.Ctx(ctx).Where("tenant_id", p.TenantID).
+			if err := dao.BilUsageLogs.Ctx(ctx).Where("tenant_id", p.TenantID).
 				OrderDesc("created_at").Limit(10000).
-				Fields("id, model_name, prompt_tokens, completion_tokens, total_tokens, cost, created_at").Scan(&logs)
+				Fields("id, model_name, input_tokens, output_tokens, actual_cost, created_at").Scan(&logs); err != nil {
+				g.Log().Warningf(ctx, "export usage for tenant %d: %v", p.TenantID, err)
+			}
 			exportData["usage"] = logs
 		case "billing":
 			var records []map[string]any
-			_ = dao.BilRecords.Ctx(ctx).Where("tenant_id", p.TenantID).
+			if err := dao.BilRecords.Ctx(ctx).Where("tenant_id", p.TenantID).
 				OrderDesc("created_at").Limit(10000).
-				Fields("id, type, amount, balance_before, balance_after, description, created_at").Scan(&records)
+				Fields("id, type, amount, balance_before, balance_after, description, created_at").Scan(&records); err != nil {
+				g.Log().Warningf(ctx, "export billing for tenant %d: %v", p.TenantID, err)
+			}
 			exportData["billing_records"] = records
 		case "logs":
 			var logs []map[string]any
-			_ = dao.AudOperationLogs.Ctx(ctx).Where("tenant_id", p.TenantID).
+			if err := dao.AudOperationLogs.Ctx(ctx).Where("tenant_id", p.TenantID).
 				OrderDesc("created_at").Limit(10000).
-				Fields("id, action, resource_type, resource_id, ip_address, user_agent, created_at").Scan(&logs)
+				Fields("id, action, resource_type, resource_id, ip_address, user_agent, created_at").Scan(&logs); err != nil {
+				g.Log().Warningf(ctx, "export logs for tenant %d: %v", p.TenantID, err)
+			}
 			exportData["operation_logs"] = logs
 		}
 	}
@@ -161,10 +170,15 @@ func handleExportCleanup(ctx context.Context, payload json.RawMessage) (any, err
 
 func generateRandomPassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	b := make([]byte, length)
+	max := big.NewInt(int64(len(charset)))
 	for i := range b {
-		b[i] = charset[r.Intn(len(charset))]
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			b[i] = charset[i%len(charset)]
+			continue
+		}
+		b[i] = charset[n.Int64()]
 	}
 	return string(b)
 }

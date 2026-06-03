@@ -32,7 +32,7 @@ func init() {
 var (
 	ErrUnauthorized       = gerror.NewCode(gcode.New(CodeUnauthorized, MsgUnauthorized, nil), MsgUnauthorized)
 	ErrKeyExpired         = gerror.NewCode(gcode.New(CodeKeyExpired, MsgKeyExpired, nil), MsgKeyExpired)
-	ErrKeyDisabled        = gerror.NewCode(gcode.New(CodeKeyExpired, MsgUnauthorized, nil), MsgUnauthorized)
+	ErrKeyDisabled        = gerror.NewCode(gcode.New(CodeKeyDisabled, "API Key 已禁用", nil), "API Key 已禁用")
 	ErrTenantSuspended    = gerror.NewCode(gcode.New(CodeTenantSuspended, MsgTenantSuspended, nil), MsgTenantSuspended)
 	ErrChannelUnavailable = gerror.NewCode(gcode.New(CodeChannelUnavailable, MsgChannelUnavailable, nil), MsgChannelUnavailable)
 	ErrModelDisabled      = gerror.NewCode(gcode.New(CodeModelDisabled, MsgModelDisabled, nil), MsgModelDisabled)
@@ -136,6 +136,7 @@ const (
 	// Feedback & Changelog errors (10063+)
 	CodeFeedbackNotFound  = 10063
 	CodeChangelogNotFound = 10064
+	CodeKeyDisabled       = 10065
 
 	// Response cache errors (10068+)
 	CodeCacheDisabled = 10068

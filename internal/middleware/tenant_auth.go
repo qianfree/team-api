@@ -1,8 +1,10 @@
 package middleware
 
 import (
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+
+	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/model/entity"
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -48,21 +50,24 @@ func TenantAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Check if session is revoked by jti (JWT ID)
+	// Check if session is revoked by jti (JWT ID).
+	// Note: tokens without jti cannot be revoked — this is by design for backward compat.
 	if claims.ID != "" && common.IsSessionRevoked(r.Context(), claims.ID) {
 		response.ErrorWithCode(r, consts.CodeUnauthorized, consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 		return
 	}
 
 	// Verify user still exists and is active
-	var user struct {
-		Status string `json:"status"`
-	}
-	err = g.DB().Model("tnt_users").Ctx(r.Context()).
+	var user *entity.TntUsers
+	err = dao.TntUsers.Ctx(r.Context()).
 		Where("id", claims.UserID).
 		Fields("status").
 		Scan(&user)
-	if err != nil || user.Status != "active" {
+	if err != nil {
+		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
+		return
+	}
+	if user == nil || user.Status != "active" {
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
 		return
 	}
