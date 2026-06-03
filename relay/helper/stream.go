@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/qianfree/team-api/relay/dto"
 )
 
 // SetEventStreamHeaders 设置 SSE 必要的响应头
@@ -80,9 +83,43 @@ func ExtractSSEData(line string) (string, bool) {
 	return strings.TrimSpace(data), true
 }
 
+// BuildOpenAIStreamChunk 构建 OpenAI 格式的流式响应块
+func BuildOpenAIStreamChunk(id string, created int64, model string, content string, finishReason *string) dto.ChatCompletionStreamResponse {
+	delta := dto.Message{}
+	if content != "" {
+		delta.Content = content
+	}
+	if finishReason == nil {
+		delta.Role = "assistant"
+	}
+
+	return dto.ChatCompletionStreamResponse{
+		ID:      id,
+		Object:  "chat.completion.chunk",
+		Created: created,
+		Model:   model,
+		Choices: []dto.StreamChoice{
+			{
+				Index:        0,
+				Delta:        delta,
+				FinishReason: finishReason,
+			},
+		},
+	}
+}
+
+// EstimateTokens 粗略估算 token 数（每 4 个字符约 1 个 token）
+func EstimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	return (len(text) + 3) / 4
+}
+
 // PingTicker 在后台定期发送 SSE 保活注释
+// mu 用于与主循环的写操作串行化，避免并发写 ResponseWriter
 // 返回一个 stop 函数用于停止 goroutine
-func PingTicker(w http.ResponseWriter, interval time.Duration) (stop func()) {
+func PingTicker(w http.ResponseWriter, interval time.Duration, mu *sync.Mutex) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 
@@ -91,7 +128,10 @@ func PingTicker(w http.ResponseWriter, interval time.Duration) (stop func()) {
 		for {
 			select {
 			case <-ticker.C:
-				if err := WriteSSEPing(w); err != nil {
+				mu.Lock()
+				err := WriteSSEPing(w)
+				mu.Unlock()
+				if err != nil {
 					return
 				}
 			case <-done:

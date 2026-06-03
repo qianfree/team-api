@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/channel/openai"
@@ -130,7 +131,8 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 // handleStreamResponse 流式模式：逐事件读取 Coze SSE，转换为 OpenAI SSE 格式输出
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	helper.SetEventStreamHeaders(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	var writeMu sync.Mutex
+	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
 
 	streamStatus := info.StreamStatus
 	if streamStatus == nil {
@@ -180,9 +182,9 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 			if msg.Type != "answer" {
 				continue
 			}
-			completionTokens += estimateTokens(msg.Content)
+			completionTokens += helper.EstimateTokens(msg.Content)
 
-			chunk := buildOpenAIStreamChunk(chatID, createdAt, modelName, msg.Content, nil)
+			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, msg.Content, nil)
 			chunkJSON, err := json.Marshal(chunk)
 			if err != nil {
 				continue
@@ -195,7 +197,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 		case "conversation.message.completed":
 			// 完成事件，发送带 finish_reason 的最终 chunk
 			finishReason := "stop"
-			chunk := buildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
+			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
 			chunkJSON, _ := json.Marshal(chunk)
 			_ = helper.WriteSSEData(writer, string(chunkJSON))
 
@@ -286,7 +288,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 	}
 
 	content := fullContent.String()
-	completionTokens := estimateTokens(content)
+	completionTokens := helper.EstimateTokens(content)
 
 	// 构建 OpenAI 非流式响应
 	chatResp := dto.ChatCompletionResponse{
@@ -323,41 +325,6 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 		CompletionTokens: completionTokens,
 		TotalTokens:      completionTokens,
 	}, nil
-}
-
-// buildOpenAIStreamChunk 构建 OpenAI 格式的流式响应块
-func buildOpenAIStreamChunk(id string, created int64, model string, content string, finishReason *string) dto.ChatCompletionStreamResponse {
-	delta := dto.Message{}
-	if content != "" {
-		delta.Content = content
-	}
-	if finishReason == nil {
-		delta.Role = "assistant"
-	}
-
-	return dto.ChatCompletionStreamResponse{
-		ID:      id,
-		Object:  "chat.completion.chunk",
-		Created: created,
-		Model:   model,
-		Choices: []dto.StreamChoice{
-			{
-				Index:        0,
-				Delta:        delta,
-				FinishReason: finishReason,
-			},
-		},
-	}
-}
-
-// estimateTokens 粗略估算 token 数（英文按空格分词，中文按字符计数）。
-// 这是一个简化实现，实际 token 计数应由上游返回或使用 tiktoken 等库计算。
-func estimateTokens(text string) int {
-	if text == "" {
-		return 0
-	}
-	// 粗略估算：每 4 个字符约 1 个 token
-	return (len(text) + 3) / 4
 }
 
 func (a *Adaptor) GetChannelName() string {

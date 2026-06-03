@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -204,7 +205,8 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	var writeMu sync.Mutex
+	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
 
 	isCA := a.isCodeAssistActive()
 	scanner := bufio.NewScanner(resp.Body)
@@ -261,6 +263,20 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 		// 检查 promptFeedback.blockReason（流式安全过滤）
 		if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
+			// SSE 头已发送，需先发送结束 chunk 和 [DONE] 避免客户端挂起
+			filterReason := "content_filter"
+			endChunk := dto.ChatCompletionStreamResponse{
+				ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
+				Object: "chat.completion.chunk",
+				Model:  info.OriginModelName,
+				Choices: []dto.StreamChoice{{
+					Index:        0,
+					FinishReason: &filterReason,
+				}},
+			}
+			writeStreamChunk(writer, &endChunk)
+			_ = helper.WriteSSEData(writer, "[DONE]")
+			info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
 			return nil, constant.NewRequestError(
 				fmt.Sprintf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason), nil,
 			)
@@ -464,15 +480,17 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 			TotalTokens:      totalUsage.TotalTokenCount,
 		}
 	}
-	writeStreamChunk(writer, &endChunk)
-
-	helper.WriteSSEData(writer, "[DONE]")
-	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
 
 	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
+		writeStreamChunk(writer, &endChunk)
+		_ = helper.WriteSSEData(writer, "[DONE]")
 		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &common.Usage{}, fmt.Errorf("stream scanner error: %w", err)
+		return geminiUsageToCommon(&totalUsage), fmt.Errorf("stream scanner error: %w", err)
 	}
+
+	writeStreamChunk(writer, &endChunk)
+	_ = helper.WriteSSEData(writer, "[DONE]")
+	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
 
 	return geminiUsageToCommon(&totalUsage), nil
 }

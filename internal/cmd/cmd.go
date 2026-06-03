@@ -31,6 +31,7 @@ import (
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
 	"github.com/qianfree/team-api/internal/plugin"
+	"github.com/qianfree/team-api/relay/scheduler"
 	"github.com/qianfree/team-api/web"
 )
 
@@ -162,6 +163,10 @@ var (
 			})
 			cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
 				billing.CleanExpiredPreDeducts(ctx)
+				return nil
+			})
+			cs.Register("affinity_cache_cleanup", "*/5 * * * *", func(ctx context.Context) error {
+				scheduler.GetGlobalAffinity().CleanExpired()
 				return nil
 			})
 			cs.StartBackground(ctx)

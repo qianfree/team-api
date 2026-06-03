@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -170,7 +171,8 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	var writeMu sync.Mutex
+	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
 
 	scanner := bufio.NewScanner(resp.Body)
 	buf := make([]byte, 0, 64*1024)

@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 
 	"github.com/gogf/gf/v2/frame/g"
 )
@@ -31,7 +32,7 @@ func handleRerankResponse(ctx context.Context, resp *http.Response, info *common
 	}
 
 	if info.ChannelMeta.IsModelMapped {
-		body = replaceModelName(body, info.OriginModelName)
+		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
@@ -39,15 +40,15 @@ func handleRerankResponse(ctx context.Context, resp *http.Response, info *common
 	_, _ = writer.Write(body)
 
 	// 提取 usage
-	usage := extractRerankUsage(body)
+	usage := extractRerankUsage(ctx, body)
 	return usage, nil
 }
 
 // extractRerankUsage 从重排响应中提取 token 使用量
-func extractRerankUsage(body []byte) *common.Usage {
+func extractRerankUsage(ctx context.Context, body []byte) *common.Usage {
 	var rerankResp dto.RerankResponse
 	if err := json.Unmarshal(body, &rerankResp); err != nil {
-		g.Log().Warningf(nil, "[OpenAI.extractRerankUsage] unmarshal rerank response failed: %v", err)
+		g.Log().Warningf(ctx, "[OpenAI.extractRerankUsage] unmarshal rerank response failed: %v", err)
 		return &common.Usage{}
 	}
 

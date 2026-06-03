@@ -68,6 +68,15 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 转换请求体。
 // 如果模型名以 "-search" 结尾，去掉后缀并注入 web_search 配置。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
+	// 非 OpenAI 格式先转换为 OpenAI
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
+		converted, err := openai.ConvertToOpenAI(requestBody, info)
+		if err != nil {
+			return nil, err
+		}
+		requestBody = converted
+	}
+
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
 		return bytes.NewReader(requestBody), nil
@@ -95,7 +104,8 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	}
 
 	// 设置模型名
-	rawMap["model"] = json.RawMessage(`"` + modelName + `"`)
+	modelJSON, _ := json.Marshal(modelName)
+	rawMap["model"] = json.RawMessage(modelJSON)
 
 	converted, err := json.Marshal(rawMap)
 	if err != nil {

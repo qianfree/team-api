@@ -140,7 +140,7 @@ func opReplace(data []byte, path string, value any) ([]byte, error) {
 		return data, nil
 	}
 
-	replaced := replaceAllStr(target.Str, oldStr, newStr)
+	replaced := strings.ReplaceAll(target.Str, oldStr, newStr)
 	return sjson.SetBytes(data, path, replaced)
 }
 
