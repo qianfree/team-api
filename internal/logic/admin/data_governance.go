@@ -210,7 +210,7 @@ func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int)
 	}
 
 	for {
-		result, err := g.DB().Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
+		result, err := common.GetAuditDB().Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
 		if err != nil {
 			return err
 		}

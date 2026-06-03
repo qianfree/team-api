@@ -88,11 +88,11 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 }
 
 // queryPage 使用 GoFrame ORM 分页查询，返回 []map[string]any。
-// 注意：该函数使用 g.DB().Model(table) 直接操作动态表名而非 DAO，
-// 适用于通用分页工具场景（多表共用）。固定表查询应优先使用对应的 DAO。
+// 注意：该函数使用审计数据库连接（common.GetAuditDB()）查询审计表。
 // 分开调用 Count 和 All 避免 ScanAndCount 对 map[string]any 的 bug。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
-	m := g.DB().Ctx(ctx).Model(table).Safe()
+	auditDB := common.GetAuditDB()
+	m := auditDB.Ctx(ctx).Model(table).Safe()
 	if where != "" {
 		m = m.Where(where, args...)
 	}
@@ -106,7 +106,7 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 	}
 
 	// 重新构建查询（Count 会消耗 Model 状态）
-	q := g.DB().Ctx(ctx).Model(table).Safe()
+	q := auditDB.Ctx(ctx).Model(table).Safe()
 	if fields != "" {
 		q = q.Fields(fields)
 	}
@@ -228,7 +228,7 @@ func (s *sAdmin) ListSensitiveAccessLogs(ctx context.Context, req *v1.SensitiveL
 
 // LogSensitiveAccess inserts a sensitive data access log entry.
 func LogSensitiveAccess(ctx context.Context, userID int64, userType, resourceType string, resourceID int64, action, reason, ip, userAgent string) error {
-	_, err := dao.AudSensitiveAccessLogs.Ctx(ctx).Insert(do.AudSensitiveAccessLogs{
+	_, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Data(do.AudSensitiveAccessLogs{
 		UserId:       userID,
 		UserType:     userType,
 		ResourceType: resourceType,
@@ -237,7 +237,7 @@ func LogSensitiveAccess(ctx context.Context, userID int64, userType, resourceTyp
 		Reason:       reason,
 		IpAddress:    ip,
 		UserAgent:    userAgent,
-	})
+	}).Insert()
 	if err != nil {
 		return gerror.Wrapf(err, "记录敏感数据访问日志失败")
 	}
@@ -250,6 +250,7 @@ func MaskSensitiveData(data string) string {
 }
 
 // ListRequestAuditLogs 分页查询请求审计日志（不返回 request_body/response_body 以优化性能）
+// 审计数据从审计库查询，关联信息（用户名、租户名等）从主库批量查询后在应用层合并。
 func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error) {
 	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
 		return nil, err
@@ -264,72 +265,94 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	var args []any
 
 	if req.TenantID > 0 {
-		conditions = append(conditions, "a.tenant_id = ?")
+		conditions = append(conditions, "tenant_id = ?")
 		args = append(args, int64(req.TenantID))
 	}
 	if req.ApiKeyID > 0 {
-		conditions = append(conditions, "a.api_key_id = ?")
+		conditions = append(conditions, "api_key_id = ?")
 		args = append(args, int64(req.ApiKeyID))
 	}
+	// 用户名筛选：先从主库查匹配的 user_id 集合，转为 IN 条件
 	if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
+		type userRow struct {
+			Id       int64 `json:"id"`
+			TenantId int64 `json:"tenant_id"`
+		}
+		var users []userRow
+		err := g.DB().Ctx(ctx).Model("tnt_users").
+			Where("username LIKE ?", "%"+req.Username+"%").
+			Fields("id, tenant_id").
+			Scan(&users)
+		if err != nil {
+			return nil, err
+		}
+		if len(users) == 0 {
+			return &v1.RequestAuditLogListRes{
+				List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
+			}, nil
+		}
+		// 构建 (tenant_id, user_id) IN 条件
+		userConditions := make([]string, 0, len(users))
+		for _, u := range users {
+			userConditions = append(userConditions, fmt.Sprintf("(tenant_id = %d AND user_id = %d)", u.TenantId, u.Id))
+		}
+		conditions = append(conditions, "("+strings.Join(userConditions, " OR ")+")")
 	}
 	if req.RequestId != "" {
-		conditions = append(conditions, "a.request_id = ?")
+		conditions = append(conditions, "request_id = ?")
 		args = append(args, req.RequestId)
 	}
 	if req.TaskId != "" {
-		conditions = append(conditions, "a.task_id = ?")
+		conditions = append(conditions, "task_id = ?")
 		args = append(args, req.TaskId)
 	}
 	if req.Method != "" {
-		conditions = append(conditions, "a.method = ?")
+		conditions = append(conditions, "method = ?")
 		args = append(args, req.Method)
 	}
 	if req.Path != "" {
-		conditions = append(conditions, "a.path LIKE ?")
+		conditions = append(conditions, "path LIKE ?")
 		args = append(args, "%"+req.Path+"%")
 	}
 	if req.StatusCode > 0 {
-		conditions = append(conditions, "a.status_code = ?")
+		conditions = append(conditions, "status_code = ?")
 		args = append(args, req.StatusCode)
 	}
 	if req.StartDate != "" {
-		conditions = append(conditions, "a.created_at >= ?")
+		conditions = append(conditions, "created_at >= ?")
 		args = append(args, req.StartDate+" 00:00:00")
 	}
 	if req.EndDate != "" {
-		conditions = append(conditions, "a.created_at <= ?")
+		conditions = append(conditions, "created_at <= ?")
 		args = append(args, req.EndDate+" 23:59:59")
 	}
 
 	where := strings.Join(conditions, " AND ")
-	fromClause := "aud_request_logs a LEFT JOIN tnt_users t ON a.user_id = t.id AND a.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON a.project_id = p.id LEFT JOIN tnt_tenants tn ON a.tenant_id = tn.id LEFT JOIN api_keys ak ON a.api_key_id = ak.id"
-	whereClause := ""
-	if where != "" {
-		whereClause = " WHERE " + where
-	}
 
-	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + whereClause
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	// Step 1: 从审计库查询审计记录（不带 JOIN）
+	auditDB := common.GetAuditDB()
+	countM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe()
+	if where != "" {
+		countM = countM.Where(where, args...)
+	}
+	total, err := countM.Count()
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
+	if total == 0 {
+		return &v1.RequestAuditLogListRes{
+			List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
+		}, nil
 	}
 
-	// NOTE: fromClause and whereClause are constructed from hardcoded strings
-	// and parameterized conditions (using ? placeholders). No user input is
-	// directly interpolated into the SQL template.
-	dataSQL := fmt.Sprintf(
-		`SELECT a.id, a.tenant_id, COALESCE(tn.name, '') AS tenant_name, a.user_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.api_key_id, COALESCE(ak.name, '') AS api_key_name, a.request_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.created_at, a.updated_at, a.audit_level
-		 FROM %s%s ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
-		fromClause, whereClause,
-	)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, append(args, pageSize, (page-1)*pageSize)...)
+	dataM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe().
+		Fields("id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at").
+		OrderDesc("created_at").
+		Page(page, pageSize)
+	if where != "" {
+		dataM = dataM.Where(where, args...)
+	}
+	result, err := dataM.All()
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +366,9 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		items = append(items, m)
 	}
 
+	// Step 2: 从主库批量查询关联信息并合并
+	common.EnrichAuditRecords(ctx, items)
+
 	return &v1.RequestAuditLogListRes{
 		List:     items,
 		Total:    total,
@@ -354,7 +380,7 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 // GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error) {
 	var record *entity.AudRequestLogs
-	err := dao.AudRequestLogs.Ctx(ctx).
+	err := common.AuditModelCtx(ctx, "aud_request_logs").
 		Where("id", req.Id).
 		Scan(&record)
 	if err != nil {
@@ -430,7 +456,7 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 		offset := 0
 		for {
 			where, args := buildOpLogWhere()
-			q := g.DB().Ctx(ctx).Model("aud_operation_logs").Fields(selectFields).OrderDesc("created_at").Offset(offset).Limit(1000)
+			q := common.GetAuditDB().Ctx(ctx).Model("aud_operation_logs").Fields(selectFields).OrderDesc("created_at").Offset(offset).Limit(1000)
 			if where != "" {
 				q = q.Where(where, args...)
 			}
@@ -477,6 +503,7 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 }
 
 // ContentFilterLogList returns a paginated list of content filter interception logs.
+// 审计数据从审计库查询，关联信息从主库批量查询后在应用层合并。
 func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error) {
 	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
 		return nil, err
@@ -491,61 +518,60 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 	var args []any
 
 	if req.TenantID > 0 {
-		conditions = append(conditions, "l.tenant_id = ?")
+		conditions = append(conditions, "tenant_id = ?")
 		args = append(args, int64(req.TenantID))
 	}
 	if req.Mode != "" {
-		conditions = append(conditions, "l.filter_mode = ?")
+		conditions = append(conditions, "filter_mode = ?")
 		args = append(args, req.Mode)
 	}
 	if req.Blocked == "true" {
-		conditions = append(conditions, "l.blocked = true")
+		conditions = append(conditions, "blocked = true")
 	} else if req.Blocked == "false" {
-		conditions = append(conditions, "l.blocked = false")
+		conditions = append(conditions, "blocked = false")
 	}
 	if req.StartDate != "" {
-		conditions = append(conditions, "l.created_at >= ?")
+		conditions = append(conditions, "created_at >= ?")
 		args = append(args, req.StartDate+" 00:00:00")
 	}
 	if req.EndDate != "" {
-		conditions = append(conditions, "l.created_at <= ?")
+		conditions = append(conditions, "created_at <= ?")
 		args = append(args, req.EndDate+" 23:59:59")
 	}
 	if req.Keyword != "" {
-		conditions = append(conditions, "(l.matched_words::text ILIKE ? OR l.path ILIKE ?)")
+		conditions = append(conditions, "(matched_words::text ILIKE ? OR path ILIKE ?)")
 		kw := "%" + req.Keyword + "%"
 		args = append(args, kw, kw)
 	}
 
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE " + strings.Join(conditions, " AND ")
+	where := strings.Join(conditions, " AND ")
+
+	// Step 1: 从审计库查询审计记录（不带 JOIN）
+	auditDB := common.GetAuditDB()
+	fields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip, filter_mode, matched_words, original_snippet, blocked, created_at"
+
+	countM := auditDB.Ctx(ctx).Model("aud_content_filter_logs").Safe()
+	if where != "" {
+		countM = countM.Where(where, args...)
 	}
-
-	fields := `l.id, l.tenant_id, l.user_id, l.api_key_id, l.project_id, l.request_id, l.method, l.path, l.client_ip,
-		l.filter_mode, l.matched_words, l.original_snippet, l.blocked, l.created_at,
-		t.name AS tenant_name, u.username AS user_name, k.name AS api_key_name, p.name AS project_name`
-
-	// Count
-	countSQL := "SELECT COUNT(*) AS total FROM aud_content_filter_logs l" + where
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	total, err := countM.Count()
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
+	if total == 0 {
+		return &v1.ContentFilterLogListRes{
+			List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
+		}, nil
 	}
 
-	// Query with JOINs
-	dataSQL := fmt.Sprintf(`SELECT %s FROM aud_content_filter_logs l
-		LEFT JOIN tnt_tenants t ON l.tenant_id = t.id
-		LEFT JOIN tnt_users u ON l.user_id = u.id
-		LEFT JOIN api_keys k ON l.api_key_id = k.id
-		LEFT JOIN tnt_projects p ON l.project_id = p.id
-		%s ORDER BY l.created_at DESC LIMIT ? OFFSET ?`, fields, where)
-
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, append(args, pageSize, (page-1)*pageSize)...)
+	dataM := auditDB.Ctx(ctx).Model("aud_content_filter_logs").Safe().
+		Fields(fields).
+		OrderDesc("created_at").
+		Page(page, pageSize)
+	if where != "" {
+		dataM = dataM.Where(where, args...)
+	}
+	result, err := dataM.All()
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +584,9 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 		}
 		items = append(items, m)
 	}
+
+	// Step 2: 从主库批量查询关联信息并合并
+	common.EnrichAuditRecords(ctx, items)
 
 	return &v1.ContentFilterLogListRes{
 		List:     items,

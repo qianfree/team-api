@@ -561,7 +561,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			insertData.TaskStatus = record.TaskStatus
 		}
 
-		_, insertErr := dao.AudRequestLogs.Ctx(bgCtx).Data(insertData).Insert()
+		_, insertErr := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").Data(insertData).Insert()
 		if insertErr != nil {
 			g.Log().Errorf(bgCtx,
 				"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
@@ -614,7 +614,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 			updateData.TaskCompletedAt = gtime.NewFromTime(*record.TaskCompletedAt)
 		}
 
-		_, err := dao.AudRequestLogs.Ctx(bgCtx).
+		_, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
 			Where("task_id", record.TaskID).
 			Data(updateData).
 			Update()

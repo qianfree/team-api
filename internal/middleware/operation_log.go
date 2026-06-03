@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
 
-	"github.com/qianfree/team-api/internal/dao"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -150,7 +150,7 @@ func OperationLog(r *ghttp.Request) {
 
 	go func() {
 		ctx := context.Background()
-		_, err := dao.AudOperationLogs.Ctx(ctx).Data(logData).Insert()
+		_, err := lcommon.AuditModelCtx(ctx, "aud_operation_logs").Data(logData).Insert()
 		if err != nil {
 			g.Log().Errorf(ctx, "write operation log: %v", err)
 		}

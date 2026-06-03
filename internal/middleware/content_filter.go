@@ -8,7 +8,6 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
-	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
@@ -55,7 +54,7 @@ func init() {
 func contentFilterLogWorker() {
 	ctx := context.Background()
 	for entry := range contentFilterLogCh {
-		_, err := dao.AudContentFilterLogs.Ctx(ctx).Data(do.AudContentFilterLogs{
+		_, err := common.AuditModelCtx(ctx, "aud_content_filter_logs").Data(do.AudContentFilterLogs{
 			TenantId:        entry.TenantId,
 			UserId:          entry.UserId,
 			ApiKeyId:        entry.ApiKeyId,

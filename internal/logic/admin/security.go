@@ -207,7 +207,7 @@ func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq)
 		pageSize = 20
 	}
 
-	q := dao.AudLoginHistory.Ctx(ctx).Where("user_type", "admin")
+	q := common.AuditModelCtx(ctx, "aud_login_history").Where("user_type", "admin")
 
 	if req.Username != "" {
 		userIds, err := adminUserIdsByUsername(ctx, req.Username)
@@ -327,7 +327,7 @@ func buildAdminUserMap(ctx context.Context, records []entity.AudLoginHistory) ma
 func (s *sAdmin) TenantLoginHistory(ctx context.Context, req *v1.AdminTenantLoginHistoryReq) (*v1.AdminTenantLoginHistoryRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	q := dao.AudLoginHistory.Ctx(ctx).Where("user_type", "tenant")
+	q := common.AuditModelCtx(ctx, "aud_login_history").Where("user_type", "tenant")
 
 	if req.TenantID > 0 {
 		q = q.Where("tenant_id", req.TenantID)

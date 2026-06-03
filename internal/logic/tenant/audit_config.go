@@ -106,12 +106,12 @@ func (s *sTenant) AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v
 	// 使用原生 SQL 查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug
 	dataSQL := `SELECT id, tenant_id, user_id, user_type, action, resource_type, resource_id, detail, changes_json, ip_address, created_at
 			 FROM aud_operation_logs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
-	result, err := g.DB().Query(ctx, dataSQL, tenantID, pageSize, (page-1)*pageSize)
+	result, err := common.GetAuditDB().Query(ctx, dataSQL, tenantID, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	countResult, err := g.DB().Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
+	countResult, err := common.GetAuditDB().Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -167,55 +167,86 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 	var conditions []string
 	var args []any
 
-	conditions = append(conditions, "a.tenant_id = ?")
+	conditions = append(conditions, "tenant_id = ?")
 	args = append(args, tenantID)
 
+	// 用户名筛选：先从主库查匹配的 user_id 集合，转为 IN 条件
 	if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
+		type userRow struct {
+			Id int64 `json:"id"`
+		}
+		var users []userRow
+		err := g.DB().Ctx(ctx).Model("tnt_users").
+			Where("tenant_id", tenantID).
+			Where("username LIKE ?", "%"+req.Username+"%").
+			Fields("id").
+			Scan(&users)
+		if err != nil {
+			return nil, err
+		}
+		if len(users) == 0 {
+			return &v1.TenantRequestAuditLogsRes{
+				List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
+			}, nil
+		}
+		userIDs := make([]int64, 0, len(users))
+		for _, u := range users {
+			userIDs = append(userIDs, u.Id)
+		}
+		conditions = append(conditions, "user_id IN (?)")
+		args = append(args, userIDs)
 	}
 	if req.RequestId != "" {
-		conditions = append(conditions, "a.request_id = ?")
+		conditions = append(conditions, "request_id = ?")
 		args = append(args, req.RequestId)
 	}
 	if req.TaskId != "" {
-		conditions = append(conditions, "a.task_id = ?")
+		conditions = append(conditions, "task_id = ?")
 		args = append(args, req.TaskId)
 	}
 	if req.Path != "" {
-		conditions = append(conditions, "a.path LIKE ?")
+		conditions = append(conditions, "path LIKE ?")
 		args = append(args, "%"+req.Path+"%")
 	}
 	if req.StatusCode > 0 {
-		conditions = append(conditions, "a.status_code = ?")
+		conditions = append(conditions, "status_code = ?")
 		args = append(args, req.StatusCode)
 	}
 	if req.StartDate != "" {
-		conditions = append(conditions, "a.created_at >= ?")
+		conditions = append(conditions, "created_at >= ?")
 		args = append(args, req.StartDate+" 00:00:00")
 	}
 	if req.EndDate != "" {
-		conditions = append(conditions, "a.created_at <= ?")
+		conditions = append(conditions, "created_at <= ?")
 		args = append(args, req.EndDate+" 23:59:59")
 	}
 
 	where := strings.Join(conditions, " AND ")
-	fromClause := "aud_request_logs a LEFT JOIN tnt_users t ON a.user_id = t.id AND a.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON a.project_id = p.id"
 
-	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + " WHERE " + where
-	countResult, err := g.DB().Query(ctx, countSQL, args...)
+	// Step 1: 从审计库查询审计记录（不带 JOIN）
+	auditDB := common.GetAuditDB()
+	countM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe()
+	if where != "" {
+		countM = countM.Where(where, args...)
+	}
+	total, err := countM.Count()
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
+	if total == 0 {
+		return &v1.TenantRequestAuditLogsRes{
+			List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
+		}, nil
 	}
 
-	dataSQL := `SELECT a.id, a.request_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.user_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.tenant_audit_level AS audit_level, a.task_id, a.task_status, a.task_completed_at, a.created_at
-			 FROM ` + fromClause + ` WHERE ` + where + ` ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
-	dataArgs := append(args, pageSize, (page-1)*pageSize)
-	result, err := g.DB().Query(ctx, dataSQL, dataArgs...)
+	dataM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe().
+		Fields("id, request_id, user_id, project_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, tenant_audit_level as audit_level, task_id, task_status, task_completed_at, created_at").
+		OrderDesc("created_at").
+		Page(page, pageSize)
+	if where != "" {
+		dataM = dataM.Where(where, args...)
+	}
+	result, err := dataM.All()
 	if err != nil {
 		return nil, err
 	}
@@ -229,15 +260,16 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 		items = append(items, m)
 	}
 
+	// Step 2: 从主库批量查询关联信息并合并
+	common.EnrichAuditRecords(ctx, items)
+
 	return &v1.TenantRequestAuditLogsRes{
 		List:     items,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
-}
-
-// TenantRequestAuditLogDetail 查询单条请求审计日志详情（含 request_body 和 response_body）
+} // TenantRequestAuditLogDetail 查询单条请求审计日志详情（含 request_body 和 response_body）
 func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (*v1.TenantRequestAuditLogDetailRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
@@ -246,7 +278,7 @@ func (s *sTenant) TenantRequestAuditLogDetail(ctx context.Context, req *v1.Tenan
 	tenantID := middleware.GetTenantID(ctx)
 
 	var record *entity.AudRequestLogs
-	err := dao.AudRequestLogs.Ctx(ctx).
+	err := common.AuditModelCtx(ctx, "aud_request_logs").
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
 		Scan(&record)
