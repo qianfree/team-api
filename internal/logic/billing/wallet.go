@@ -160,7 +160,9 @@ redis.call("HSET", prededuct_key, "amount", amount)
 redis.call("HSET", prededuct_key, "tenant_id", ARGV[4])
 redis.call("HSET", prededuct_key, "model_name", ARGV[5])
 redis.call("HSET", prededuct_key, "created_at", ARGV[6])
-redis.call("SADD", "prededuct_active:" .. ARGV[4], request_id)
+local active_set = "prededuct_active:" .. ARGV[4]
+redis.call("SADD", active_set, request_id)
+redis.call("EXPIRE", active_set, 30 * 86400)
 redis.call("EXPIRE", prededuct_key, ttl)
 return 1
 `
@@ -510,6 +512,8 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 		g.Redis().Do(ctx, "EXPIRE", predeductKey, remainingTTL)
 		g.Redis().Do(ctx, "SADD", activeSetKey, t.RequestID)
 	}
+	// 确保 active SET 有 TTL（30 天），过期后下次预扣时自动重建
+	g.Redis().Do(ctx, "EXPIRE", activeSetKey, 30*86400)
 
 	g.Log().Infof(ctx, "[PRE-DEDUCT] rebuilt %d active tracks from DB for tenant=%d", len(tracks), tenantID)
 }
