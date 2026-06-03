@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -79,8 +78,8 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	var writeMu sync.Mutex
-	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
+	writer = helper.NewSafeWriter(writer)
+	defer helper.PingTicker(writer, 15*time.Second)()
 
 	scanner := bufio.NewScanner(resp.Body)
 	buf := make([]byte, 0, 64*1024)

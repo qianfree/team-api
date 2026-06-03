@@ -116,10 +116,55 @@ func EstimateTokens(text string) int {
 	return (len(text) + 3) / 4
 }
 
+// SafeWriter 包装 http.ResponseWriter，用互斥锁串行化 Write/WriteHeader/Flush，
+// 使保活 ping goroutine 与主循环可以安全地并发写同一个 ResponseWriter。
+//
+// 注意：fmt.Fprintf 对单个 SSE 帧只产生一次 Write 调用，因此每个 SSE 帧在锁内是原子写入的；
+// Flush 单独加锁，与其他写入交错也不会破坏帧的字节完整性。
+type SafeWriter struct {
+	w  http.ResponseWriter
+	mu sync.Mutex
+}
+
+// NewSafeWriter 创建一个并发安全的 ResponseWriter 包装器。
+func NewSafeWriter(w http.ResponseWriter) *SafeWriter {
+	return &SafeWriter{w: w}
+}
+
+func (s *SafeWriter) Header() http.Header {
+	return s.w.Header()
+}
+
+func (s *SafeWriter) WriteHeader(statusCode int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.w.WriteHeader(statusCode)
+}
+
+func (s *SafeWriter) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(b)
+}
+
+// Flush 实现 http.Flusher，刷新底层 writer（若支持）。
+func (s *SafeWriter) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f, ok := s.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+var (
+	_ http.ResponseWriter = (*SafeWriter)(nil)
+	_ http.Flusher        = (*SafeWriter)(nil)
+)
+
 // PingTicker 在后台定期发送 SSE 保活注释
-// mu 用于与主循环的写操作串行化，避免并发写 ResponseWriter
+// 调用方必须传入并发安全的 writer（如 SafeWriter），以避免与主循环并发写 ResponseWriter
 // 返回一个 stop 函数用于停止 goroutine
-func PingTicker(w http.ResponseWriter, interval time.Duration, mu *sync.Mutex) (stop func()) {
+func PingTicker(w http.ResponseWriter, interval time.Duration) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 
@@ -128,10 +173,7 @@ func PingTicker(w http.ResponseWriter, interval time.Duration, mu *sync.Mutex) (
 		for {
 			select {
 			case <-ticker.C:
-				mu.Lock()
-				err := WriteSSEPing(w)
-				mu.Unlock()
-				if err != nil {
+				if err := WriteSSEPing(w); err != nil {
 					return
 				}
 			case <-done:

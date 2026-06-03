@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -205,8 +204,8 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	var writeMu sync.Mutex
-	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
+	writer = helper.NewSafeWriter(writer)
+	defer helper.PingTicker(writer, 15*time.Second)()
 
 	isCA := a.isCodeAssistActive()
 	scanner := bufio.NewScanner(resp.Body)
