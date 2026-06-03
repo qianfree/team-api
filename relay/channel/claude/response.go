@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -63,7 +64,8 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	var writeMu sync.Mutex
+	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
 
 	scanner := bufio.NewScanner(resp.Body)
 	buf := make([]byte, 0, 64*1024)
@@ -158,8 +160,9 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 				// 脱敏思考，OpenAI 格式无等价物，忽略
 			case "tool_use":
 				toolCall := dto.ToolCall{
-					ID:   event.ContentBlock.ID,
-					Type: "function",
+					Index: toolCallIdx,
+					ID:    event.ContentBlock.ID,
+					Type:  "function",
 					Function: dto.FunctionCall{
 						Name:      event.ContentBlock.Name,
 						Arguments: "",
@@ -348,7 +351,7 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 	}
 
 	if info.ChannelMeta.IsModelMapped {
-		body = replaceModelName(body, info.OriginModelName)
+		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
@@ -379,7 +382,8 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 	}
 
 	helper.SetEventStreamHeaders(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	var writeMu sync.Mutex
+	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
 	var usage dto.ClaudeUsage
@@ -437,7 +441,7 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			}
 
 			if info.ChannelMeta.IsModelMapped {
-				replaced := string(replaceModelName([]byte(data), info.OriginModelName))
+				replaced := string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
 				line = fmt.Sprintf("data: %s\n", replaced)
 			}
 		}
@@ -560,55 +564,6 @@ func claudeToOpenAIResponse(claudeResp *dto.ClaudeResponse, info *common.RelayIn
 func writeStreamChunk(w http.ResponseWriter, chunk *dto.ChatCompletionStreamResponse) {
 	data, _ := json.Marshal(chunk)
 	_ = helper.WriteSSEData(w, string(data))
-}
-
-// replaceModelName 替换 JSON 中 "model" 字段的值
-func replaceModelName(body []byte, modelName string) []byte {
-	fieldPrefix := []byte(`"model":"`)
-	replacement := append([]byte(`"model":"`), modelName...)
-	replacement = append(replacement, '"')
-
-	result := make([]byte, 0, len(body))
-	i := 0
-	for i < len(body) {
-		idx := indexOf(body[i:], fieldPrefix)
-		if idx == -1 {
-			result = append(result, body[i:]...)
-			break
-		}
-		result = append(result, body[i:i+idx+len(fieldPrefix)]...)
-		i += idx + len(fieldPrefix)
-
-		endQuote := indexOf(body[i:], []byte{'"'})
-		if endQuote == -1 {
-			result = append(result, body[i:]...)
-			break
-		}
-		i += endQuote + 1
-		result = append(result, replacement...)
-	}
-	return result
-}
-
-func indexOf(s, sep []byte) int {
-	for i := 0; i <= len(s)-len(sep); i++ {
-		if equal(s[i:i+len(sep)], sep) {
-			return i
-		}
-	}
-	return -1
-}
-
-func equal(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func joinTextPartsResponse(parts []string) any {

@@ -1408,7 +1408,7 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 	if resp.StatusCode != http.StatusOK {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
-		writer.Write(body)
+		_, _ = writer.Write(body)
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 

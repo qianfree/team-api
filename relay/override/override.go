@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -345,7 +347,7 @@ func evaluateCondition(target any, mode string, expected any) bool {
 		}
 		return targetStr[len(targetStr)-len(expectedStr):] == expectedStr
 	case "contains":
-		return containsStr(targetStr, expectedStr)
+		return strings.Contains(targetStr, expectedStr)
 	case "gt":
 		return compareNumeric(targetStr, expectedStr) > 0
 	case "gte":
@@ -372,9 +374,9 @@ func resolveContextPath(path string, ctx map[string]any) string {
 	result := path
 	for k, v := range ctx {
 		placeholder := "{" + k + "}"
-		if containsStr(result, placeholder) {
+		if strings.Contains(result, placeholder) {
 			val := fmt.Sprintf("%v", v)
-			result = replaceAllStr(result, placeholder, val)
+			result = strings.ReplaceAll(result, placeholder, val)
 		}
 	}
 	return result
@@ -461,48 +463,10 @@ func valueToJSON(v any) json.RawMessage {
 	return b
 }
 
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (len(substr) == 0 || containsStrImpl(s, substr))
-}
-
-func containsStrImpl(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-func replaceAllStr(s, old, new string) string {
-	result := make([]byte, 0, len(s))
-	for {
-		idx := indexOfStr(s, old)
-		if idx == -1 {
-			result = append(result, s...)
-			break
-		}
-		result = append(result, s[:idx]...)
-		result = append(result, new...)
-		s = s[idx+len(old):]
-	}
-	return string(result)
-}
-
-func indexOfStr(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
 func compareNumeric(a, b string) int {
-	af, aok := parseFloat(a)
-	bf, bok := parseFloat(b)
-	if !aok || !bok {
-		// 退化为字符串比较
+	af, aErr := strconv.ParseFloat(a, 64)
+	bf, bErr := strconv.ParseFloat(b, 64)
+	if aErr != nil || bErr != nil {
 		if a < b {
 			return -1
 		}
@@ -518,32 +482,6 @@ func compareNumeric(a, b string) int {
 		return 1
 	}
 	return 0
-}
-
-func parseFloat(s string) (float64, bool) {
-	var f float64
-	n := 0
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			f = f*10 + float64(c-'0')
-			n++
-		} else if c == '.' && n > 0 {
-			dec := 1.0
-			for i := indexOfStr(s, ".") + 1; i < len(s); i++ {
-				cc := s[i]
-				if cc >= '0' && cc <= '9' {
-					f += float64(cc-'0') / dec
-					dec *= 10
-				} else {
-					return 0, false
-				}
-			}
-			return f, true
-		} else {
-			return 0, false
-		}
-	}
-	return f, true
 }
 
 func opReturnError(value any) error {

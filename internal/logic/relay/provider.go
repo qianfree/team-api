@@ -368,19 +368,15 @@ func (p *DataProviderImpl) GetModelMapping(ctx context.Context, modelName string
 		Status   string `json:"status"`
 	}
 
-	var model modelRow
+	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Fields("model_id, category, status").
 		Scan(&model)
 	if err != nil {
-		// sql.ErrNoRows 表示模型不存在，转换为业务错误
-		if strings.Contains(err.Error(), "no rows in result set") {
-			return "", "", common.ErrModelNotFound
-		}
 		return "", "", err
 	}
-	if model.ModelId == "" {
+	if model == nil {
 		return "", "", common.ErrModelNotFound
 	}
 	if model.Status == "offline" {
@@ -532,37 +528,37 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			}
 		}
 
-		insertData := g.Map{
-			"tenant_id":            record.TenantID,
-			"user_id":              record.UserID,
-			"api_key_id":           record.ApiKeyID,
-			"project_id":           record.ProjectID,
-			"request_id":           record.RequestID,
-			"method":               record.Method,
-			"path":                 record.Path,
-			"query_params":         record.QueryParams,
-			"status_code":          record.StatusCode,
-			"client_ip":            record.ClientIP,
-			"user_agent":           record.UserAgent,
-			"request_body":         sysReq,
-			"response_body":        sysResp,
-			"tenant_request_body":  tntReq,
-			"tenant_response_body": tntResp,
-			"latency_ms":           record.LatencyMs,
-			"first_token_ms":       record.FirstTokenMs,
-			"audit_level":          globalLevel,
-			"tenant_audit_level":   tenantLevel,
-			"request_headers":      requestHeadersJSON,
-			"response_headers":     responseHeadersJSON,
-			"forwarding_trace":     forwardingTraceJSON,
+		insertData := do.AudRequestLogs{
+			TenantId:           record.TenantID,
+			UserId:             record.UserID,
+			ApiKeyId:           record.ApiKeyID,
+			ProjectId:          record.ProjectID,
+			RequestId:          record.RequestID,
+			Method:             record.Method,
+			Path:               record.Path,
+			QueryParams:        record.QueryParams,
+			StatusCode:         record.StatusCode,
+			ClientIp:           record.ClientIP,
+			UserAgent:          record.UserAgent,
+			RequestBody:        sysReq,
+			ResponseBody:       sysResp,
+			TenantRequestBody:  tntReq,
+			TenantResponseBody: tntResp,
+			LatencyMs:          record.LatencyMs,
+			FirstTokenMs:       record.FirstTokenMs,
+			AuditLevel:         globalLevel,
+			TenantAuditLevel:   tenantLevel,
+			RequestHeaders:     requestHeadersJSON,
+			ResponseHeaders:    responseHeadersJSON,
+			ForwardingTrace:    forwardingTraceJSON,
 		}
 
 		// 异步任务字段
 		if record.TaskID != "" {
-			insertData["task_id"] = record.TaskID
+			insertData.TaskId = record.TaskID
 		}
 		if record.TaskStatus != "" {
-			insertData["task_status"] = record.TaskStatus
+			insertData.TaskStatus = record.TaskStatus
 		}
 
 		_, insertErr := dao.AudRequestLogs.Ctx(bgCtx).Data(insertData).Insert()
@@ -609,14 +605,13 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 			upstreamHeadersJSON = string(b)
 		}
 
-		updateData := g.Map{
-			"task_status":           record.TaskStatus,
-			"task_result":           taskResult,
-			"task_upstream_headers": upstreamHeadersJSON,
-			"updated_at":            time.Now(),
+		updateData := do.AudRequestLogs{
+			TaskStatus:          record.TaskStatus,
+			TaskResult:          taskResult,
+			TaskUpstreamHeaders: upstreamHeadersJSON,
 		}
 		if record.TaskCompletedAt != nil {
-			updateData["task_completed_at"] = record.TaskCompletedAt
+			updateData.TaskCompletedAt = gtime.NewFromTime(*record.TaskCompletedAt)
 		}
 
 		_, err := dao.AudRequestLogs.Ctx(bgCtx).
@@ -706,11 +701,14 @@ func (p *DataProviderImpl) IncrementConsecutiveFailure(ctx context.Context, chan
 
 // ResetConsecutiveFailure 实现 DataProvider.ResetConsecutiveFailure
 func (p *DataProviderImpl) ResetConsecutiveFailure(ctx context.Context, channelID int64) {
-	dao.ChnHealthScores.Ctx(ctx).
+	_, err := dao.ChnHealthScores.Ctx(ctx).
 		Where("channel_id", channelID).
 		Data(do.ChnHealthScores{
 			ConsecutiveFailures: 0,
 		}).Update()
+	if err != nil {
+		g.Log().Warningf(ctx, "[DataProvider] ResetConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
+	}
 }
 
 // GetAvailableModels 实现 DataProvider.GetAvailableModels
@@ -760,9 +758,11 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 				var explicitIDs []struct {
 					ModelID int64 `json:"model_id"`
 				}
-				dao.MdlTenantModels.Ctx(ctx).
+				if err := dao.MdlTenantModels.Ctx(ctx).
 					Where("tenant_id", tenantID).Where("enabled", true).
-					Fields("model_id").Scan(&explicitIDs)
+					Fields("model_id").Scan(&explicitIDs); err != nil {
+					g.Log().Warningf(ctx, "[DataProvider] GetAvailableModels scan tenant models failed: tenantID=%d, err=%v", tenantID, err)
+				}
 				for _, id := range explicitIDs {
 					allModelIDs = append(allModelIDs, id.ModelID)
 				}
@@ -938,9 +938,12 @@ func parseCapabilitiesJSON(raw string) map[string]bool {
 
 // incrementConsecutiveFailure 递增连续失败计数
 func incrementConsecutiveFailure(ctx context.Context, channelID int64) {
-	g.DB().Exec(ctx,
-		"UPDATE chn_health_scores SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE channel_id = ? AND consecutive_failures < 10",
-		time.Now(), channelID)
+	_, err := g.DB().Exec(ctx,
+		"UPDATE chn_health_scores SET consecutive_failures = consecutive_failures + 1, updated_at = NOW() WHERE channel_id = ? AND consecutive_failures < 10",
+		channelID)
+	if err != nil {
+		g.Log().Warningf(ctx, "[DataProvider] incrementConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
+	}
 }
 
 // modelInfoCached 模型信息缓存
@@ -983,10 +986,12 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	}
 
 	// 更新最后使用时间（用于监控）
-	dao.ChnChannelKeys.Ctx(ctx).
+	if _, err := dao.ChnChannelKeys.Ctx(ctx).
 		Where("id", key.ID).
 		Data(do.ChnChannelKeys{LastUsedAt: gtime.Now()}).
-		Update()
+		Update(); err != nil {
+		g.Log().Debugf(ctx, "[DataProvider] update channel key LastUsedAt failed: keyID=%d, err=%v", key.ID, err)
+	}
 
 	encKey := GetEncryptionKey()
 	decrypted, err := uc.DecryptString(encKey, key.EncryptedKey)
@@ -1089,18 +1094,15 @@ func (p *DataProviderImpl) GetModelDeprecationInfo(ctx context.Context, modelNam
 		ReplacementModel string      `json:"replacement_model"`
 	}
 
-	var row depRow
+	var row *depRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Fields("status, sunset_date, replacement_model").
 		Scan(&row)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows in result set") {
-			return nil, common.ErrModelNotFound
-		}
 		return nil, err
 	}
-	if row.Status == "" {
+	if row == nil {
 		return nil, common.ErrModelNotFound
 	}
 	if row.Status != "deprecated" {

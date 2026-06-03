@@ -85,14 +85,7 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	header.Set("X-TC-Action", action)
 	header.Set("X-TC-Version", apiVersion)
 
-	timestamp := time.Now().Unix()
-	header.Set("X-TC-Timestamp", fmt.Sprintf("%d", timestamp))
-
-	// 如果有 secretKey 则计算签名；否则跳过（代理网关场景）
-	if a.secretKey != "" {
-		// 签名需要请求体，此处在 DoRequest 中重新计算
-		// SetupRequestHeader 只设置非签名头，签名在 DoRequest 中补充
-	}
+	// 时间戳和签名统一在 DoRequest 中设置（签名依赖请求体，SetupRequestHeader 阶段无法计算）
 
 	return nil
 }

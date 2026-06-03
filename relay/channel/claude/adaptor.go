@@ -195,7 +195,7 @@ func injectClaudeEffort(r io.Reader, info *common.RelayInfo) io.Reader {
 
 	// 仅在客户端未显式设置 thinking 时注入
 	if _, exists := rawMap["thinking"]; !exists {
-		rawMap["thinking"] = json.RawMessage(fmt.Sprintf(`{"type":"adaptive"}`))
+		rawMap["thinking"] = json.RawMessage(`{"type":"adaptive"}`)
 	}
 
 	result, err := json.Marshal(rawMap)
