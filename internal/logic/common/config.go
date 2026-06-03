@@ -60,11 +60,18 @@ func (s *ConfigService) GetOption(ctx context.Context, key string) string {
 		return gconv.String(val)
 	}
 
-	var option Option
+	var option *Option
 	err := dao.SysOptions.Ctx(ctx).
 		Where("key", key).
 		Scan(&option)
-	if err != nil || option.Key == "" {
+	if err != nil {
+		g.Log().Warningf(ctx, "[Config] DB error reading option %s: %v", key, err)
+		if def := GetSettingDef(key); def != nil {
+			return def.Default
+		}
+		return ""
+	}
+	if option == nil {
 		if def := GetSettingDef(key); def != nil {
 			return def.Default
 		}
@@ -220,7 +227,7 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 	s.cache.Delete(ctx, key)
 	s.cache.Delete(ctx, "public_options")
 	s.cache.Delete(ctx, "category:"+getCategoryForKey(key))
-	s.publishChange(key)
+	s.publishChange(ctx, key)
 	return nil
 }
 
@@ -425,8 +432,8 @@ func getCategoryForKey(key string) string {
 }
 
 // publishChange notifies other instances via Redis Pub/Sub to invalidate their local cache.
-func (s *ConfigService) publishChange(key string) {
-	_, _ = g.Redis().Publish(context.Background(), "settings:changed", key)
+func (s *ConfigService) publishChange(ctx context.Context, key string) {
+	_, _ = g.Redis().Publish(ctx, "settings:changed", key)
 }
 
 // TypedValue converts a string value to its proper Go type based on SettingType.

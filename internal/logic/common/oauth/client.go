@@ -12,16 +12,35 @@ import (
 )
 
 var (
-	proxyClientOnce  sync.Once
+	proxyClientMu    sync.RWMutex
 	proxyClientValue *http.Client
 )
 
 // GetHTTPClient returns an HTTP client configured with proxy if channel_proxy_url is set in system settings.
+// Rebuilds on each call so runtime config changes take effect.
 func GetHTTPClient() *http.Client {
-	proxyClientOnce.Do(func() {
-		proxyClientValue = buildProxyClient()
-	})
+	proxyClientMu.RLock()
+	client := proxyClientValue
+	proxyClientMu.RUnlock()
+	if client != nil {
+		return client
+	}
+
+	proxyClientMu.Lock()
+	defer proxyClientMu.Unlock()
+	// Double-check after acquiring write lock
+	if proxyClientValue != nil {
+		return proxyClientValue
+	}
+	proxyClientValue = buildProxyClient()
 	return proxyClientValue
+}
+
+// ResetHTTPClient forces rebuilding the HTTP client on next GetHTTPClient call.
+func ResetHTTPClient() {
+	proxyClientMu.Lock()
+	defer proxyClientMu.Unlock()
+	proxyClientValue = nil
 }
 
 func buildProxyClient() *http.Client {

@@ -57,7 +57,8 @@ func (s *sTenant) TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq)
 	}
 
 	var total int
-	err := m.Page(req.Page, req.PageSize).ScanAndCount(&tasks, &total, false)
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+	err := m.Page(page, pageSize).ScanAndCount(&tasks, &total, false)
 	if err != nil {
 		return nil, err
 	}

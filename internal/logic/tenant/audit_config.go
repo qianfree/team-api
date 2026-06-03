@@ -3,7 +3,6 @@ package tenant
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -105,17 +104,14 @@ func (s *sTenant) AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	// 使用原生 SQL 查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug
-	dataSQL := fmt.Sprintf(
-		`SELECT id, tenant_id, user_id, user_type, action, resource_type, resource_id, detail, changes_json, ip_address, created_at
-		 FROM aud_operation_logs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT %d OFFSET %d`,
-		pageSize, (page-1)*pageSize,
-	)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, tenantID)
+	dataSQL := `SELECT id, tenant_id, user_id, user_type, action, resource_type, resource_id, detail, changes_json, ip_address, created_at
+			 FROM aud_operation_logs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	result, err := g.DB().Query(ctx, dataSQL, tenantID, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
+	countResult, err := g.DB().Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +203,7 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 	fromClause := "aud_request_logs a LEFT JOIN tnt_users t ON a.user_id = t.id AND a.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON a.project_id = p.id"
 
 	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + " WHERE " + where
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	countResult, err := g.DB().Query(ctx, countSQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,12 +212,10 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 		total = countResult[0]["total"].Int()
 	}
 
-	dataSQL := fmt.Sprintf(
-		`SELECT a.id, a.request_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.user_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.tenant_audit_level AS audit_level, a.task_id, a.task_status, a.task_completed_at, a.created_at
-		 FROM %s WHERE %s ORDER BY a.created_at DESC LIMIT %d OFFSET %d`,
-		fromClause, where, pageSize, (page-1)*pageSize,
-	)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	dataSQL := `SELECT a.id, a.request_id, COALESCE(t.username, '') AS username, a.project_id, COALESCE(p.name, '') AS project_name, a.user_id, a.method, a.path, a.query_params, a.status_code, a.client_ip, a.user_agent, a.latency_ms, a.first_token_ms, a.tenant_audit_level AS audit_level, a.task_id, a.task_status, a.task_completed_at, a.created_at
+			 FROM ` + fromClause + ` WHERE ` + where + ` ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
+	dataArgs := append(args, pageSize, (page-1)*pageSize)
+	result, err := g.DB().Query(ctx, dataSQL, dataArgs...)
 	if err != nil {
 		return nil, err
 	}

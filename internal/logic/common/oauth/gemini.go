@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 )
 
 const (
@@ -163,7 +164,7 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 	if oauthType == "code_assist" {
 		projectID, err = geminiLoadCodeAssist(tokenResp.AccessToken)
 		if err != nil {
-			g.Log().Warningf(nil, "Gemini loadCodeAssist 失败: %v", err)
+			g.Log().Warningf(gctx.New(), "Gemini loadCodeAssist 失败: %v", err)
 			// 不阻断流程，projectID 留空
 		}
 	}
@@ -171,7 +172,7 @@ func GeminiExchangeCode(sessionID, code string) (*OAuthKeyData, error) {
 	// 获取用户邮箱
 	email, err := geminiGetUserInfo(tokenResp.AccessToken)
 	if err != nil {
-		g.Log().Warningf(nil, "Gemini 获取用户信息失败: %v", err)
+		g.Log().Warningf(gctx.New(), "Gemini 获取用户信息失败: %v", err)
 	}
 
 	// 计算过期时间，带安全窗口

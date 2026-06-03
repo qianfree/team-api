@@ -25,19 +25,21 @@ func IsFeatureEnabled(ctx context.Context, tenantID int64, featureKey string) bo
 
 	// 2. 查租户当前套餐
 	if tenantID > 0 {
-		var planID int64
+		var planRow *struct {
+			PlanID int64
+		}
 		err := dao.PlnTenantPlans.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("status", "active").
 			Fields("plan_id").
 			Limit(1).
-			Scan(&planID)
-		if err == nil && planID > 0 {
+			Scan(&planRow)
+		if err == nil && planRow != nil && planRow.PlanID > 0 {
 			var flag *struct {
 				Enabled bool `json:"enabled"`
 			}
 			err = dao.PlnFeatureFlags.Ctx(ctx).
-				Where("plan_id", planID).
+				Where("plan_id", planRow.PlanID).
 				Where("feature_key", featureKey).
 				Scan(&flag)
 			if err == nil && flag != nil && flag.Enabled {

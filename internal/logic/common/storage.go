@@ -111,11 +111,14 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 
 // GetDownloadURL generates a presigned URL for downloading a file.
 func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string, error) {
-	var record FileRecord
+	var record *FileRecord
 	err := dao.FilFiles.Ctx(ctx).
 		Where("id", fileID).
 		Scan(&record)
-	if err != nil || record.ID == 0 {
+	if err != nil {
+		return "", gerror.Wrapf(err, "query file %d", fileID)
+	}
+	if record == nil {
 		return "", gerror.Newf("file not found: %d", fileID)
 	}
 
@@ -124,11 +127,14 @@ func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string,
 
 // Delete deletes a file from storage and marks it as deleted.
 func (s *FileService) Delete(ctx context.Context, fileID int64) error {
-	var record FileRecord
+	var record *FileRecord
 	err := dao.FilFiles.Ctx(ctx).
 		Where("id", fileID).
 		Scan(&record)
-	if err != nil || record.ID == 0 {
+	if err != nil {
+		return gerror.Wrapf(err, "query file %d", fileID)
+	}
+	if record == nil {
 		return gerror.Newf("file not found: %d", fileID)
 	}
 
