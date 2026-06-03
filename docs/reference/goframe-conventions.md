@@ -446,3 +446,21 @@ dao.XxxTable.Ctx(ctx).Where("id", req.Id).Data(data).Update()
    - 检测 `Content-Disposition` 头（handler 直接写入下载文件时设置）
    - 检测 `BufferLength() > 0 && GetHandlerResponse() == nil`（handler 已写响应体且返回值确实为 nil）
 2. **导入端**（`model_import_export.go`）：`json.Unmarshal` 改为 `json.NewDecoder(...).Decode()`，只解析第一个完整 JSON 值，兼容已有的脏导出文件。
+
+### 2026-06-03：DO 插入遗漏 NOT NULL 字段导致 INSERT 必然失败
+
+**问题描述**：幂等中间件（`idempotency.go`）将原生 SQL 重构为 DO 对象插入时，遗漏了 `expires_at` 字段：
+```go
+dao.SysIdempotencyRecords.Ctx(ctx).Data(do.SysIdempotencyRecords{
+    IdempotencyKey: idempotencyKey,
+    Status:         "processing",
+}).Insert()   // 未设置 ExpiresAt
+```
+而 `sys_idempotency_records.expires_at` 为 `TIMESTAMPTZ NOT NULL` 且无 `DEFAULT`。每次插入都因 NOT NULL 约束失败，代码又把"插入失败"一律当作"并发重复请求"返回 409，导致所有带 `Idempotency-Key` 的请求恒返回 409。
+
+**原因**：GoFrame 的 OmitNil/OmitEmpty 行为——DO 中未赋值的字段为 `nil`，ORM 自动从 INSERT 语句中剔除该列。对于**有 DEFAULT 的列**这是期望行为；但对**无 DEFAULT 的 NOT NULL 列**，剔除后数据库无值可填，INSERT 直接失败。原生 SQL 版本显式写了 `expires_at = NOW() + INTERVAL '24 hours'`，重构时丢失。
+
+**修复方式**：DO 插入时显式赋值 `ExpiresAt: gtime.Now().Add(idempotencyTTL)`。
+
+**正确做法**：将原生 SQL 改写为 DO 插入时，逐列核对目标表中**所有 NOT NULL 且无 DEFAULT 的列**是否都在 DO 中赋了值——这类列不能依赖框架的 OmitNil 自动跳过，否则 INSERT 必然失败。框架自动维护的 `created_at`/`updated_at` 不在此列。
+
