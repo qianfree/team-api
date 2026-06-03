@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/qianfree/team-api/relay/channel/openai"
@@ -131,8 +130,8 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 // handleStreamResponse 流式模式：逐事件读取 Coze SSE，转换为 OpenAI SSE 格式输出
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	helper.SetEventStreamHeaders(writer)
-	var writeMu sync.Mutex
-	defer helper.PingTicker(writer, 15*time.Second, &writeMu)()
+	writer = helper.NewSafeWriter(writer)
+	defer helper.PingTicker(writer, 15*time.Second)()
 
 	streamStatus := info.StreamStatus
 	if streamStatus == nil {

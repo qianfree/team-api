@@ -146,14 +146,14 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		override.MergeHeaderOverrides(httpReq.Header, hdrOverrides)
 	}
 
+	// 时间戳始终设置（代理网关场景上游也可能要求该头）；签名仅在持有 secretKey 时计算。
+	timestamp := time.Now().Unix()
+	httpReq.Header.Set("X-TC-Timestamp", fmt.Sprintf("%d", timestamp))
+
 	// 计算 TC3-HMAC-SHA256 签名（需要完整请求体）
 	if a.secretKey != "" {
 		contentType := httpReq.Header.Get("Content-Type")
 		host := httpReq.Header.Get("Host")
-		timestamp := time.Now().Unix()
-
-		// 更新时间戳（确保签名和头一致）
-		httpReq.Header.Set("X-TC-Timestamp", fmt.Sprintf("%d", timestamp))
 
 		authorization := sign(a.secretID, a.secretKey, serviceName, host, contentType, bodyBytes, timestamp)
 		httpReq.Header.Set("Authorization", authorization)

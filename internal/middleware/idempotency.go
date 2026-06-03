@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -14,6 +18,8 @@ const (
 	// maxCachedBodyLen limits the response body size stored for idempotent replay.
 	// Responses larger than this will still be deduplicated but won't cache the body.
 	maxCachedBodyLen = 64 * 1024 // 64 KB
+	// idempotencyTTL is how long an idempotency record is retained before it can be cleaned up.
+	idempotencyTTL = 24 * time.Hour
 )
 
 // Idempotency ensures that requests with the same Idempotency-Key
@@ -47,7 +53,12 @@ func Idempotency(r *ghttp.Request) {
 
 	if record.Id > 0 {
 		if record.Status == "completed" && record.ResponseBody != "" {
-			r.Response.WriteStatus(r.Response.Status)
+			// 重放缓存响应。本中间件只挂载在 /api/* 统一响应端点上：成功响应恒为
+			// HTTP 200 + JSON（response.Success 使用 WriteJson），业务错误为 HTTP 422
+			// 且会被标记为 failed 而不进入此重放分支。因此固定回写 200 + JSON Content-Type，
+			// 避免复用未初始化的 r.Response.Status（默认 0）以及丢失 Content-Type。
+			r.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
+			r.Response.WriteStatus(http.StatusOK)
 			r.Response.Write([]byte(record.ResponseBody))
 			r.Exit()
 			return
@@ -62,6 +73,7 @@ func Idempotency(r *ghttp.Request) {
 	_, err = dao.SysIdempotencyRecords.Ctx(ctx).Data(do.SysIdempotencyRecords{
 		IdempotencyKey: idempotencyKey,
 		Status:         "processing",
+		ExpiresAt:      gtime.Now().Add(idempotencyTTL),
 	}).Insert()
 
 	if err != nil {
