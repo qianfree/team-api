@@ -143,8 +143,8 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 
 	id, _ := result.LastInsertId()
 
-	// Store encrypted secret in Redis — 失败时回滚 DB 记录
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret)
+	// Store encrypted secret in Redis（30 天 TTL，过期后从 DB 重新加载）— 失败时回滚 DB 记录
+	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret, "EX", 30*86400)
 	if err != nil {
 		// 回滚：删除已插入的 DB 记录
 		_, _ = dao.OpnApps.Ctx(ctx).Where("id", id).Delete()
@@ -235,8 +235,8 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 		return nil, err
 	}
 
-	// 先写 Redis，成功后再更新 DB
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret)
+	// 先写 Redis（30 天 TTL），成功后再更新 DB
+	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret, "EX", 30*86400)
 	if err != nil {
 		return nil, fmt.Errorf("update app secret in Redis failed: %w", err)
 	}

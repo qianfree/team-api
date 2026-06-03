@@ -85,11 +85,10 @@ func (s *sTenant) GetOAuthAuthorizeURL(ctx context.Context, req *v1.OAuthAuthori
 	redirectURI := siteURL + fmt.Sprintf("/api/tenant/oauth/%s/callback", req.Provider)
 
 	state := generateState()
-	_, err := g.Redis().Set(ctx, oauthStatePrefix+state, req.Provider)
+	_, err := g.Redis().Do(ctx, "SET", oauthStatePrefix+state, req.Provider, "EX", int64(oauthStateTTL.Seconds()))
 	if err != nil {
 		return nil, err
 	}
-	_, _ = g.Redis().Expire(ctx, oauthStatePrefix+state, int64(oauthStateTTL.Seconds()))
 
 	authorizeURL := provider.GetAuthorizeURL(clientID, redirectURI, state)
 	return &v1.OAuthAuthorizeRes{

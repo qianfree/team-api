@@ -44,21 +44,18 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 			fmt.Sprintf("请 %d 秒后再试", secs))
 	}
 
-	// Rate limit: max 5 per hour
+	// Rate limit: max 5 per hour (atomic Lua: INCR + first-time EXPIRE)
 	hourlyKey := fmt.Sprintf("verify:hourly:%s:%s", email, purpose)
-	hourlyCount, err := g.Redis().Do(ctx, "INCR", hourlyKey)
+	hourlyCount, err := g.Redis().Do(ctx, "EVAL",
+		`local count = redis.call("INCR", KEYS[1])
+		if count == 1 then
+			redis.call("EXPIRE", KEYS[1], ARGV[1])
+		end
+		return count`,
+		1, hourlyKey, 3600)
 	if err == nil && hourlyCount.Int() > 5 {
 		return NewBusinessError(consts.CodeRateLimitExceeded, "每小时最多发送5次验证码")
 	}
-	// Set the 1-hour window TTL only when it is missing. This keeps a fixed
-	// window (not a sliding one) while still repairing an orphaned key left by
-	// a crash between INCR and EXPIRE (TTL < 0 means no expiry or key absent).
-	if ttl, err := g.Redis().Do(ctx, "TTL", hourlyKey); err == nil && ttl.Int() < 0 {
-		if _, err := g.Redis().Do(ctx, "EXPIRE", hourlyKey, 3600); err != nil {
-			g.Log().Warningf(ctx, "failed to set hourly rate limit TTL: %v", err)
-		}
-	}
-
 	// Generate 6-digit code
 	code, err := generateCode(6)
 	if err != nil {

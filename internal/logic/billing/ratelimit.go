@@ -201,6 +201,7 @@ local function tryAcquire(i)
             local v = redis.call("DECR", acquired[j])
             if v < 0 then
                 redis.call("SET", acquired[j], 0)
+                redis.call("EXPIRE", acquired[j], expire)
             end
         end
         return false
@@ -217,11 +218,14 @@ return 1
 `
 
 // releaseConcurrentLua 一次 EVAL 释放 4 级并发许可。
+// ARGV[1] = expire 秒数（用于 SET 后恢复 TTL）
 var releaseConcurrentLua = `
+local expire = tonumber(ARGV[1])
 for i = 1, 4 do
     local v = redis.call("DECR", KEYS[i])
     if v < 0 then
         redis.call("SET", KEYS[i], 0)
+        redis.call("EXPIRE", KEYS[i], expire)
     end
 end
 return 1
@@ -261,7 +265,8 @@ func ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, mo
 	keyKey := fmt.Sprintf("conc:key:%d", apiKeyID)
 
 	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 4,
-		tenantKey, modelKey, userKey, keyKey)
+		tenantKey, modelKey, userKey, keyKey,
+		300) // EXPIRE 秒数
 }
 
 // getTenantConcurrencyLimit 获取租户并发上限。
