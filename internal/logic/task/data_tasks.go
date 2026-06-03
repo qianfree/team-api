@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -69,7 +70,7 @@ func handleDataExport(ctx context.Context, payload json.RawMessage) (any, error)
 			exportData["billing_records"] = records
 		case "logs":
 			var logs []map[string]any
-			if err := dao.AudOperationLogs.Ctx(ctx).Where("tenant_id", p.TenantID).
+			if err := common.AuditModelCtx(ctx, "aud_operation_logs").Where("tenant_id", p.TenantID).
 				OrderDesc("created_at").Limit(10000).
 				Fields("id, action, resource_type, resource_id, ip_address, user_agent, created_at").Scan(&logs); err != nil {
 				g.Log().Warningf(ctx, "export logs for tenant %d: %v", p.TenantID, err)
@@ -132,7 +133,7 @@ func handleDeletionRequest(ctx context.Context, payload json.RawMessage) (any, e
 		return nil, fmt.Errorf("disable api keys: %w", err)
 	}
 
-	if _, err := dao.AudSensitiveAccessLogs.Ctx(ctx).Where("tenant_id", p.TenantID).Delete(); err != nil {
+	if _, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Where("tenant_id", p.TenantID).Delete(); err != nil {
 		return nil, fmt.Errorf("delete sensitive access logs: %w", err)
 	}
 

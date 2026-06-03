@@ -405,7 +405,7 @@ func RecordLoginHistory(ctx context.Context, userType string, userID, tenantID i
 
 	// Check if this device has been seen before
 	if deviceFP != "" && success {
-		count, err := dao.AudLoginHistory.Ctx(ctx).
+		count, err := AuditModelCtx(ctx, "aud_login_history").
 			Where("user_type", userType).
 			Where("user_id", userID).
 			Where("device_fingerprint", deviceFP).
@@ -417,7 +417,7 @@ func RecordLoginHistory(ctx context.Context, userType string, userID, tenantID i
 	}
 
 	if r != nil {
-		_, err := dao.AudLoginHistory.Ctx(ctx).Data(do.AudLoginHistory{
+		_, err := AuditModelCtx(ctx, "aud_login_history").Data(do.AudLoginHistory{
 			UserType:          userType,
 			UserId:            userID,
 			TenantId:          tenantID,

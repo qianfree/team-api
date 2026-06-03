@@ -201,7 +201,7 @@ func (s *sTenant) LoginHistory(ctx context.Context, req *v1.TenantLoginHistoryRe
 	role := middleware.GetUserRole(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	q := dao.AudLoginHistory.Ctx(ctx).
+	q := common.AuditModelCtx(ctx, "aud_login_history").
 		Where("user_type", "tenant").
 		Where("tenant_id", tenantID)
 
