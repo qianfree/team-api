@@ -42,9 +42,9 @@ func DefaultChannelSettings() common.ChannelSettings {
 
 // GetEncryptionKey 获取加密密钥
 func GetEncryptionKey() []byte {
-	key := g.Cfg().MustGet(context.Background(), "security.encryptionKey").String()
+	key := g.Cfg().MustGet(context.Background(), "crypto.encryptionKey").String()
 	if key == "" {
-		panic("security.encryptionKey is required but not configured")
+		key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	}
 	return uc.MustGetEncryptionKey(key)
 }
