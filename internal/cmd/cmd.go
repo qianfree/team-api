@@ -165,6 +165,10 @@ var (
 				billing.CleanExpiredPreDeducts(ctx)
 				return nil
 			})
+			cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
+				billing.CleanSettledPreDeductTracks(ctx)
+				return nil
+			})
 			cs.Register("affinity_cache_cleanup", "*/5 * * * *", func(ctx context.Context) error {
 				scheduler.GetGlobalAffinity().CleanExpired()
 				return nil
