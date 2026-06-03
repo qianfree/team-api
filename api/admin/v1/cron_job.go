@@ -24,21 +24,6 @@ type CronJobListRes struct {
 	List []CronJobItem `json:"list"`
 }
 
-type CronJobExecutionsReq struct {
-	g.Meta   `path:"/cron-jobs/{name}/executions" method:"get" mime:"json" tags:"管理后台-定时任务" summary:"任务执行历史"`
-	Name     string `json:"name" in:"path" v:"required"`
-	Page     int    `json:"page" in:"query" d:"1"`
-	PageSize int    `json:"page_size" in:"query" d:"20"`
-	Status   string `json:"status" in:"query" dc:"过滤状态：succeeded/failed"`
-}
-
-type CronJobExecutionsRes struct {
-	List     []map[string]any `json:"list"`
-	Total    int              `json:"total"`
-	Page     int              `json:"page"`
-	PageSize int              `json:"page_size"`
-}
-
 type CronJobTriggerReq struct {
 	g.Meta `path:"/cron-jobs/{name}/trigger" method:"post" mime:"json" tags:"管理后台-定时任务" summary:"手动触发任务"`
 	Name   string `json:"name" in:"path" v:"required"`
