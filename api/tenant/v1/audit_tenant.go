@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"encoding/json"
-
 	"github.com/gogf/gf/v2/frame/g"
 )
 
@@ -64,9 +62,5 @@ type TenantRequestAuditLogDetailReq struct {
 }
 
 type TenantRequestAuditLogDetailRes struct {
-	Data map[string]any `json:"-"`
-}
-
-func (r *TenantRequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
-	return json.Marshal(r.Data)
+	Data map[string]any `json:"data"`
 }

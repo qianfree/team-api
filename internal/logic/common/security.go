@@ -135,12 +135,11 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 		accountName = fmt.Sprintf("%s@%d", user.Username, user.TenantId)
 	}
 
-	secret, err = totp.GenerateSecret(accountName)
+	secret, uri, err = totp.GenerateSecret(accountName)
 	if err != nil {
 		return "", "", err
 	}
 
-	uri = totp.GenerateURI(accountName, secret)
 	return secret, uri, nil
 }
 

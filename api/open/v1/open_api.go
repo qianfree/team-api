@@ -37,7 +37,7 @@ type OpenMemberCreateReq struct {
 	g.Meta      `path:"/v1/members" method:"post" mime:"json" tags:"开放平台API" summary:"创建成员"`
 	Username    string `json:"username" v:"required|length:2,50#请输入用户名|用户名长度2-50" dc:"用户名"`
 	Email       string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
-	Password    string `json:"password" v:"required|length:6,50#请输入密码|密码长度6-50" dc:"密码"`
+	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度6-50" dc:"密码"`
 	Role        string `json:"role" v:"required|in:admin,member#请选择角色|角色无效" dc:"角色"`
 	DisplayName string `json:"display_name" dc:"显示名称"`
 }
@@ -140,7 +140,7 @@ type OpenKeyCreateReq struct {
 	g.Meta      `path:"/v1/keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建API Key"`
 	Name        string   `json:"name" v:"required|length:2,100#请输入Key名称|名称长度2-100" dc:"Key名称"`
 	ModelScopes []string `json:"model_scopes" dc:"可用模型列表（为空则不限）"`
-	QuotaLimit  string   `json:"quota_limit" d:"0" dc:"额度上限（0=不限）"`
+	QuotaLimit  float64  `json:"quota_limit" d:"0" dc:"额度上限（0=不限）"`
 }
 
 type OpenKeyCreateRes struct {

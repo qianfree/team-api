@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"encoding/json"
-
 	"github.com/gogf/gf/v2/frame/g"
 )
 
@@ -87,11 +85,7 @@ type RequestAuditLogDetailReq struct {
 }
 
 type RequestAuditLogDetailRes struct {
-	Data map[string]any `json:"-"`
-}
-
-func (r *RequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
-	return json.Marshal(r.Data)
+	Data map[string]any `json:"data"`
 }
 
 // OperationLogExportReq 导出操作日志请求

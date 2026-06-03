@@ -74,12 +74,17 @@ func CreateTask(ctx context.Context, task *Task) (int64, error) {
 	}
 
 	result, err := dao.TskTasks.Ctx(ctx).Data(do.TskTasks{
-		Name:        task.Name,
-		Handler:     task.Handler,
-		Payload:     payload,
-		Status:      StatusPending,
-		MaxRetries:  task.MaxRetries,
-		ScheduledAt: gtime.NewFromTime(*task.ScheduledAt),
+		Name:       task.Name,
+		Handler:    task.Handler,
+		Payload:    payload,
+		Status:     StatusPending,
+		MaxRetries: task.MaxRetries,
+		ScheduledAt: func() *gtime.Time {
+			if task.ScheduledAt != nil {
+				return gtime.NewFromTime(*task.ScheduledAt)
+			}
+			return nil
+		}(),
 	}).Insert()
 	if err != nil {
 		return 0, err

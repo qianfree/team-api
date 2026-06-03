@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -56,14 +57,15 @@ func MiddlewareHandlerResponse(r *ghttp.Request) {
 
 	// If the handler already wrote body content and returned a nil-ish result,
 	// don't append standard response wrapper on top of it.
-	if r.Response.BufferLength() > 0 && r.GetHandlerResponse() == nil {
+	// Uses isNilInterface to catch typed-nil pointers (*T)(nil).
+	if r.Response.BufferLength() > 0 && isNilInterface(r.GetHandlerResponse()) {
 		return
 	}
 
 	// The controller method returns (res, error); GoFrame stores the first
 	// return value in r.handlerResponse, accessible via GetHandlerResponse().
 	res := r.GetHandlerResponse()
-	if res != nil {
+	if !isNilInterface(res) {
 		response.Success(r, res)
 		return
 	}
@@ -93,4 +95,18 @@ func isSystemError(err error) bool {
 		return false
 	}
 	return true
+}
+
+// isNilInterface checks if an interface value is nil or contains a typed nil pointer.
+func isNilInterface(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }

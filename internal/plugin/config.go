@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 
 	"github.com/gogf/gf/v2/frame/g"
+
+	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // GetPluginConfig 获取插件全局配置。
 func GetPluginConfig(ctx context.Context, pluginName string) (g.Map, error) {
-	record, err := g.DB().Model("sys_plugins").Ctx(ctx).
+	record, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", pluginName).
 		Fields("config").
 		One()
@@ -33,8 +36,7 @@ func GetPluginConfig(ctx context.Context, pluginName string) (g.Map, error) {
 
 // GetPluginConfigForTenant 获取租户级插件配置（优先使用租户覆盖，否则使用全局配置）。
 func GetPluginConfigForTenant(ctx context.Context, pluginName string, tenantID int64) (g.Map, error) {
-	// 先查租户级配置
-	record, err := g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
+	record, err := dao.TntTenantPlugins.Ctx(ctx).
 		Where("tenant_id = ? AND plugin_name = ?", tenantID, pluginName).
 		Fields("config").
 		One()
@@ -53,7 +55,6 @@ func GetPluginConfigForTenant(ctx context.Context, pluginName string, tenantID i
 		}
 	}
 
-	// 回退到全局配置
 	return GetPluginConfig(ctx, pluginName)
 }
 
@@ -63,9 +64,9 @@ func UpdatePluginConfig(ctx context.Context, pluginName string, config g.Map) er
 	if err != nil {
 		return err
 	}
-	_, err = g.DB().Model("sys_plugins").Ctx(ctx).
+	_, err = dao.SysPlugins.Ctx(ctx).
 		Where("name", pluginName).
-		Data(g.Map{"config": string(configJSON)}).
+		Data(do.SysPlugins{Config: string(configJSON)}).
 		Update()
 	return err
 }
@@ -76,11 +77,11 @@ func UpdatePluginConfigForTenant(ctx context.Context, pluginName string, tenantI
 	if err != nil {
 		return err
 	}
-	_, err = g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
-		Data(g.Map{
-			"tenant_id":   tenantID,
-			"plugin_name": pluginName,
-			"config":      string(configJSON),
+	_, err = dao.TntTenantPlugins.Ctx(ctx).
+		Data(do.TntTenantPlugins{
+			TenantId:   tenantID,
+			PluginName: pluginName,
+			Config:     string(configJSON),
 		}).
 		OnConflict("tenant_id,plugin_name").
 		Save()

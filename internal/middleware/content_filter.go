@@ -8,7 +8,16 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
+)
+
+const (
+	// contentFilterLogWorkers controls the concurrency for async log writes.
+	contentFilterLogWorkers = 4
+	// contentFilterLogQueueSize is the buffer size for the log write channel.
+	contentFilterLogQueueSize = 256
 )
 
 // Context variable keys for content filter results.
@@ -19,6 +28,52 @@ const (
 	CtxKeyContentFilterOriginal = "ContentFilterOriginalBody"
 	CtxKeyContentFilterFiltered = "ContentFilterReplacedBody"
 )
+
+var contentFilterLogCh = make(chan *contentFilterLogEntry, contentFilterLogQueueSize)
+
+type contentFilterLogEntry struct {
+	TenantId     int64
+	UserId       int64
+	ApiKeyId     int64
+	ProjectId    int64
+	RequestId    string
+	Method       string
+	Path         string
+	ClientIp     string
+	FilterMode   string
+	MatchedWords string
+	Snippet      string
+	Blocked      bool
+}
+
+func init() {
+	for i := 0; i < contentFilterLogWorkers; i++ {
+		go contentFilterLogWorker()
+	}
+}
+
+func contentFilterLogWorker() {
+	ctx := context.Background()
+	for entry := range contentFilterLogCh {
+		_, err := dao.AudContentFilterLogs.Ctx(ctx).Data(do.AudContentFilterLogs{
+			TenantId:        entry.TenantId,
+			UserId:          entry.UserId,
+			ApiKeyId:        entry.ApiKeyId,
+			ProjectId:       entry.ProjectId,
+			RequestId:       entry.RequestId,
+			Method:          entry.Method,
+			Path:            entry.Path,
+			ClientIp:        entry.ClientIp,
+			FilterMode:      entry.FilterMode,
+			MatchedWords:    entry.MatchedWords,
+			OriginalSnippet: entry.Snippet,
+			Blocked:         entry.Blocked,
+		}).Insert()
+		if err != nil {
+			g.Log().Warningf(ctx, "[ContentFilter] failed to insert filter log: %v", err)
+		}
+	}
+}
 
 // ContentFilter is middleware that checks request body for sensitive content.
 // Behavior depends on the content_filter_mode setting:
@@ -50,8 +105,8 @@ func ContentFilter(r *ghttp.Request) {
 	r.SetCtxVar(CtxKeyContentFilterMatched, true)
 	r.SetCtxVar(CtxKeyContentFilterWords, result.MatchedWords)
 
-	// Asynchronously persist the interception log
-	insertContentFilterLog(r, mode, result.MatchedWords, string(body))
+	// Queue async log write
+	queueContentFilterLog(r, mode, result.MatchedWords, string(body))
 
 	switch mode {
 	case "log":
@@ -75,18 +130,9 @@ func ContentFilter(r *ghttp.Request) {
 	}
 }
 
-// insertContentFilterLog persists a content filter interception record asynchronously.
-func insertContentFilterLog(r *ghttp.Request, mode string, matchedWords []string, body string) {
-	tenantId := r.GetCtxVar(CtxKeyTenantID).Int64()
-	userId := r.GetCtxVar(CtxKeyUserID).Int64()
-	apiKeyId := r.GetCtxVar(CtxKeyApiKeyID).Int64()
-	projectId := r.GetCtxVar(CtxKeyProjectID).Int64()
-	requestId := r.GetCtxVar("RequestId").String()
-	method := r.Method
-	path := r.URL.Path
-	clientIp := r.GetClientIp()
-
-	// Truncate body snippet for replace mode only
+// queueContentFilterLog queues a content filter log entry for async writing.
+// If the queue is full, the log is dropped with a warning to avoid blocking the request.
+func queueContentFilterLog(r *ghttp.Request, mode string, matchedWords []string, body string) {
 	snippet := ""
 	if mode == "replace" && len(body) > 0 {
 		const maxSnippet = 500
@@ -97,22 +143,28 @@ func insertContentFilterLog(r *ghttp.Request, mode string, matchedWords []string
 		}
 	}
 
-	blocked := mode == "block"
 	wordsJSON, _ := json.Marshal(matchedWords)
 
-	go func() {
-		_, err := g.DB().Exec(context.Background(),
-			`INSERT INTO aud_content_filter_logs
-			 (tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip,
-			  filter_mode, matched_words, original_snippet, blocked, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())`,
-			tenantId, userId, apiKeyId, projectId, requestId, method, path, clientIp,
-			mode, string(wordsJSON), snippet, blocked)
-		if err != nil {
-			g.Log().Warningf(context.Background(),
-				"[ContentFilter] failed to insert filter log: %v", err)
-		}
-	}()
+	entry := &contentFilterLogEntry{
+		TenantId:     r.GetCtxVar(CtxKeyTenantID).Int64(),
+		UserId:       r.GetCtxVar(CtxKeyUserID).Int64(),
+		ApiKeyId:     r.GetCtxVar(CtxKeyApiKeyID).Int64(),
+		ProjectId:    r.GetCtxVar(CtxKeyProjectID).Int64(),
+		RequestId:    r.GetCtxVar("RequestId").String(),
+		Method:       r.Method,
+		Path:         r.URL.Path,
+		ClientIp:     r.GetClientIp(),
+		FilterMode:   mode,
+		MatchedWords: string(wordsJSON),
+		Snippet:      snippet,
+		Blocked:      mode == "block",
+	}
+
+	select {
+	case contentFilterLogCh <- entry:
+	default:
+		g.Log().Warningf(r.Context(), "[ContentFilter] log queue full, dropping entry for %s", r.URL.Path)
+	}
 }
 
 // writeContentFilterError writes an error response in the relay-native format.
