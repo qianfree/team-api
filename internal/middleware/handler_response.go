@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -12,24 +13,24 @@ import (
 	"github.com/qianfree/team-api/internal/response"
 )
 
-// downloadContentTypes lists Content-Type prefixes that indicate a file download.
-// When matched, the middleware skips JSON wrapping to avoid appending {"code":0,...} to the file.
+// downloadContentTypes 列举表示文件下载的 Content-Type 前缀。
+// 匹配时跳过 JSON 包装，避免在文件内容后追加 {"code":0,...}。
 var downloadContentTypes = []string{
 	"text/csv",
 	"application/vnd.openxmlformats",
 	"application/octet-stream",
 }
 
-// MiddlewareHandlerResponse is the GoFrame standard response handler.
-// It reads the controller method's return value via r.GetHandlerResponse()
-// and wraps it in the project's custom response format (code/message/data/request_id).
+// MiddlewareHandlerResponse 是 GoFrame 标准响应处理中间件。
+// 通过 r.GetHandlerResponse() 读取控制器方法的返回值，
+// 并包装为项目统一响应格式（code/message/data/request_id）。
 func MiddlewareHandlerResponse(r *ghttp.Request) {
 	r.Middleware.Next()
 
-	// If there's an error set by the controller
+	// 如果控制器设置了错误
 	if err := r.GetError(); err != nil {
-		// Only log system-level errors (5xx / unknown); skip business & client errors
-		// to avoid polluting logs with normal validation failures, auth errors, etc.
+		// 仅记录系统级错误（5xx / 未知）；跳过业务错误和客户端错误，
+		// 避免正常的参数校验失败、认证错误等污染日志。
 		if isSystemError(err) {
 			g.Log().Warningf(r.Context(), "[HandlerResponse] path=%s, body=%s, error=%+v, type=%T", r.URL.Path, r.GetBodyString(), err, err)
 		}
@@ -37,8 +38,8 @@ func MiddlewareHandlerResponse(r *ghttp.Request) {
 		return
 	}
 
-	// Skip JSON wrapping for file downloads (CSV, Excel, etc.)
-	// Export functions write directly to the raw writer and set Content-Type before writing.
+	// 跳过文件下载的 JSON 包装（CSV、Excel 等）。
+	// 导出函数直接写入原始 ResponseWriter 并在写入前设置 Content-Type。
 	ct := r.Response.Header().Get("Content-Type")
 	for _, prefix := range downloadContentTypes {
 		if strings.HasPrefix(ct, prefix) {
@@ -46,65 +47,66 @@ func MiddlewareHandlerResponse(r *ghttp.Request) {
 		}
 	}
 
-	// Skip JSON wrapping when handler has already written directly to the response
-	// (e.g., model export sets Content-Disposition: attachment).
-	// This also works around Go's nil-interface trap: a typed nil pointer (*T)(nil)
-	// stored in interface{} is != nil, causing GetHandlerResponse() to appear non-nil
-	// even though the handler returned nil.
+	// 当 handler 已经直接写入响应时跳过 JSON 包装（如模型导出设置 Content-Disposition: attachment）。
+	// 同时规避 Go 的 nil-interface 陷阱：类型化的 nil 指针 (*T)(nil) 存入 interface{} 后 != nil，
+	// 导致 GetHandlerResponse() 看起来非 nil，但 handler 实际返回了 nil。
 	if r.Response.Header().Get("Content-Disposition") != "" {
 		return
 	}
 
-	// If the handler already wrote body content and returned a nil-ish result,
-	// don't append standard response wrapper on top of it.
-	// Uses isNilInterface to catch typed-nil pointers (*T)(nil).
+	// 如果 handler 已经写入了响应体且返回了 nil 结果，
+	// 不在其上追加标准响应包装。使用 isNilInterface 捕获类型化 nil 指针 (*T)(nil)。
 	if r.Response.BufferLength() > 0 && isNilInterface(r.GetHandlerResponse()) {
 		return
 	}
 
-	// The controller method returns (res, error); GoFrame stores the first
-	// return value in r.handlerResponse, accessible via GetHandlerResponse().
+	// 控制器方法返回 (res, error)；GoFrame 将第一个返回值
+	// 存入 r.handlerResponse，可通过 GetHandlerResponse() 获取。
 	res := r.GetHandlerResponse()
 	if !isNilInterface(res) {
 		response.Success(r, res)
 		return
 	}
 
-	// Void response (e.g., delete/update operations returning nil pointer)
+	// 空响应（如删除/更新操作返回 nil 指针）
 	if r.Response.BufferLength() == 0 {
 		response.Success(r, nil)
 	}
 }
 
-// isSystemError returns true if the error is a system-level error (5xx / unknown)
-// that should be logged. Business errors (4xx, >= 10000) and client errors are
-// considered normal flow and should NOT pollute logs.
+// isSystemError 判断错误是否为需要记录日志的系统级错误（5xx / 未知）。
+// 业务错误（4xx、>= 10000）和客户端错误属于正常流程，不应污染日志。
 func isSystemError(err error) bool {
+	// 客户端主动断开连接属于正常现象，不作为系统错误记录
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
 	var gerr *gerror.Error
 	if !errors.As(err, &gerr) {
-		// Raw Go error (no gerror code) — treat as system error
+		// 原始 Go 错误（无 gerror code）——视为系统错误
 		return true
 	}
 	code := gerr.Code().Code()
-	// Client errors (400-499): validation, auth, not found, etc.
+	// 客户端错误（400-499）：参数校验、认证、未找到等
 	if code >= 400 && code < 500 {
 		return false
 	}
-	// Business rule errors (>= 10000): insufficient balance, quota exceeded, etc.
+	// 业务规则错误（>= 10000）：余额不足、配额超限等
 	if code >= 10000 {
 		return false
 	}
 	return true
 }
 
-// isNilInterface checks if an interface value is nil or contains a typed nil pointer.
-func isNilInterface(v interface{}) bool {
+// isNilInterface 检查接口值是否为 nil 或包含类型化 nil 指针。
+func isNilInterface(v any) bool {
 	if v == nil {
 		return true
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
 		return rv.IsNil()
 	default:
 		return false
