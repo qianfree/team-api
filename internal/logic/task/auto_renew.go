@@ -70,7 +70,7 @@ func processAutoRenew(ctx context.Context, subscriptionID, tenantID, planID int6
 		PlanId:         planID,
 		Amount:         0, // will be filled from plan price,
 		FinalAmount:    0,
-		Currency:       "USD",
+		Currency:       "CNY", // 套餐价为 CNY，订单层一律 CNY（见 CLAUDE.md 三层币种固定规则）
 		PaymentChannel: "auto_renew",
 		Status:         "pending",
 		Description:    fmt.Sprintf("Auto-renewal for subscription #%d", subscriptionID),

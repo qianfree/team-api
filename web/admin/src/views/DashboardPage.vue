@@ -43,8 +43,8 @@ function calcGrowth(current: number, previous: number): { value: number; positiv
 
 function formatMoney(val: any) {
   const n = Number(val)
-  if (!n && n !== 0) return '¥0.00'
-  return '¥' + n.toFixed(2)
+  if (!n && n !== 0) return '$0.00'
+  return '$' + n.toFixed(2)
 }
 
 function formatNumber(val: any) {
@@ -234,16 +234,16 @@ function renderTrendChart() {
 
   trendChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    legend: { data: ['收入 (¥)', '请求数'], bottom: 0 },
+    legend: { data: ['收入 ($)', '请求数'], bottom: 0 },
     grid: { left: 60, right: 60, top: 15, bottom: 36 },
     xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 11 } },
     yAxis: [
-      { type: 'value', name: '收入 (¥)', axisLabel: { formatter: (v: number) => '¥' + v } },
+      { type: 'value', name: '收入 ($)', axisLabel: { formatter: (v: number) => '$' + v } },
       { type: 'value', name: '请求数', splitLine: { show: false } },
     ],
     series: [
       {
-        name: '收入 (¥)',
+        name: '收入 ($)',
         type: 'bar',
         data: revenues,
         barWidth: 12,
@@ -310,7 +310,7 @@ function renderModelChart() {
   modelChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     grid: { left: 130, right: 50, top: 10, bottom: 20 },
-    xAxis: { type: 'value', name: '费用 (¥)' },
+    xAxis: { type: 'value', name: '费用 ($)' },
     yAxis: {
       type: 'category',
       data: names,
