@@ -3,11 +3,13 @@ package billing
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -22,6 +24,9 @@ const (
 
 // walletCache 钱包缓存（TTL 300s）
 var walletCache = lcommon.NewCache("wallet", 300*time.Second)
+
+// walletSyncGroup 合并同一租户的并发 syncWalletToRedis DB 读取
+var walletSyncGroup singleflight.Group
 
 // WalletInfo 钱包信息
 type WalletInfo struct {
@@ -230,26 +235,12 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 
 // preDeductSyncDB sync pre-deduct to DB（同步调用，确保 DB frozen_balance 在返回前已更新）
 func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
-	type walletRow struct {
-		ID int64
-	}
-	var w *walletRow
-	err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Scan(&w)
-	if err != nil || w == nil {
-		g.Log().Errorf(ctx, "pre-deduct sync: wallet not found for tenant %d", tenantID)
-		return
-	}
-
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE id = ? ",
-		amount, time.Now(), w.ID)
+	_, err := g.DB().Exec(ctx,
+		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE tenant_id = ?",
+		amount, time.Now(), tenantID)
 	if err != nil {
 		g.Log().Errorf(ctx, "pre-deduct sync: %v", err)
 	}
-
 }
 
 // UnfreezePreDeduct 解冻预扣金额（请求失败时调用）
@@ -312,9 +303,18 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 }
 
 // syncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash
+// 使用 singleflight 合并同一租户的并发请求，避免 N 个并发预扣打出 N 次相同的 DB 读
+func syncWalletToRedis(ctx context.Context, tenantID int64) error {
+	_, err, _ := walletSyncGroup.Do(strconv.FormatInt(tenantID, 10), func() (interface{}, error) {
+		return nil, doSyncWalletToRedis(context.Background(), tenantID)
+	})
+	return err
+}
+
+// doSyncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash
 // 每次预扣前调用，确保 Redis 中的 balance 与 DB 一致
 // frozen_balance 由 Redis Lua 脚本管理，仅在 key 首次创建时从 DB 初始化
-func syncWalletToRedis(ctx context.Context, tenantID int64) error {
+func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
 
 	// 从 DB 读取钱包数据（跳过内存缓存，直接查库确保最新）
