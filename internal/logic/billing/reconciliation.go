@@ -125,6 +125,42 @@ func reconcileFrozenBalance(ctx context.Context) {
 	}
 }
 
+// CleanSettledPreDeductTracks 清理已终态的预扣追踪记录
+// 删除 2 天前状态为 settled / released / expired 的记录，防止表无限增长
+func CleanSettledPreDeductTracks(ctx context.Context) {
+	const (
+		retentionDays = 2
+		batchSize     = 5000
+	)
+
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+
+	var totalDeleted int64
+	for {
+		result, err := g.DB().Ctx(ctx).Exec(ctx,
+			`DELETE FROM bil_prededuct_tracks WHERE id IN (
+				SELECT id FROM bil_prededuct_tracks
+				WHERE status IN ('settled', 'released', 'expired')
+				  AND created_at < ?
+				LIMIT ?
+			)`, cutoff, batchSize)
+		if err != nil {
+			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean settled tracks: delete failed: %v", err)
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			break
+		}
+		totalDeleted += rows
+	}
+
+	if totalDeleted > 0 {
+		g.Log().Infof(ctx, "[PRE-DEDUCT] cleaned %d settled/released/expired tracks older than %d days",
+			totalDeleted, retentionDays)
+	}
+}
+
 // CleanExpiredPreDeducts 清理过期的预扣记录（防止异常占用余额）
 // 超过 PreDeductMaxAge 未结算的预扣应被清理
 func CleanExpiredPreDeducts(ctx context.Context) {

@@ -231,28 +231,28 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					continue
 				}
 				// overwrite: 更新模型 + 替换定价
-				updateData := g.Map{
-					"model_name":         item.ModelName,
-					"category":           item.Category,
-					"max_context_tokens": item.MaxContextTokens,
-					"max_output_tokens":  item.MaxOutputTokens,
-					"description":        item.Description,
+				updateData := do.MdlModels{
+					ModelName:        item.ModelName,
+					Category:         item.Category,
+					MaxContextTokens: item.MaxContextTokens,
+					MaxOutputTokens:  item.MaxOutputTokens,
+					Description:      item.Description,
 				}
 				if item.Tags != nil {
-					updateData["tags"] = item.Tags
+					updateData.Tags = item.Tags
 				}
 				if item.Capabilities != nil {
 					capJson, _ := json.Marshal(item.Capabilities)
-					updateData["capabilities"] = string(capJson)
+					updateData.Capabilities = string(capJson)
 				}
 				if item.SunsetDate != "" {
-					updateData["sunset_date"] = item.SunsetDate
+					updateData.SunsetDate = gtime.NewFromStr(item.SunsetDate)
 				}
 				if item.ReplacementModel != "" {
-					updateData["replacement_model"] = item.ReplacementModel
+					updateData.ReplacementModel = item.ReplacementModel
 				}
 				if item.Status != "" {
-					updateData["status"] = item.Status
+					updateData.Status = item.Status
 				}
 
 				_, err = tx.Model("mdl_models").Ctx(ctx).Where("id", existing.ID).Data(updateData).Update()
@@ -285,23 +285,23 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				res.Imported++
 			} else {
 				// 新建模型
-				insertData := g.Map{
-					"model_id":           item.ModelId,
-					"model_name":         item.ModelName,
-					"category":           item.Category,
-					"status":             "active",
-					"max_context_tokens": item.MaxContextTokens,
-					"max_output_tokens":  item.MaxOutputTokens,
-					"description":        item.Description,
+				insertData := do.MdlModels{
+					ModelId:          item.ModelId,
+					ModelName:        item.ModelName,
+					Category:         item.Category,
+					Status:           "active",
+					MaxContextTokens: item.MaxContextTokens,
+					MaxOutputTokens:  item.MaxOutputTokens,
+					Description:      item.Description,
 				}
 				if item.Tags != nil {
-					insertData["tags"] = item.Tags
+					insertData.Tags = item.Tags
 				} else {
-					insertData["tags"] = []string{}
+					insertData.Tags = []string{}
 				}
 				if item.Capabilities != nil {
 					capJson, _ := json.Marshal(item.Capabilities)
-					insertData["capabilities"] = string(capJson)
+					insertData.Capabilities = string(capJson)
 				}
 
 				id, err := tx.Model("mdl_models").Ctx(ctx).InsertAndGetId(insertData)

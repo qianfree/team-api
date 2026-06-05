@@ -2,16 +2,22 @@ package tenant
 
 import (
 	"context"
-	"github.com/qianfree/team-api/internal/dao"
-	"github.com/qianfree/team-api/internal/logic/common"
 	"math"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
+	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
+
+// roundUSD 精确到小数点后 6 位，符合 CLAUDE.md 资金精度规范
+func roundUSD(v float64) float64 {
+	return math.Round(v*1000000) / 1000000
+}
 
 // Dashboard returns the tenant dashboard statistics.
 func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v1.TenantDashboardRes, error) {
@@ -20,8 +26,9 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	today := time.Now().Format("2006-01-02")
-	monthStart := time.Now().Format("2006-01") + "-01"
+	now := gtime.Now()
+	today := now.Format("Y-m-d")
+	monthStart := now.Format("Y-m") + "-01"
 
 	// 今日统计
 	type dayStats struct {
@@ -31,19 +38,25 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		TotalCost    float64 `json:"total_cost"`
 	}
 	var todayRow dayStats
-	dao.BilUsageLogs.Ctx(ctx).
+	err := dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("created_at >= ?", today+" 00:00:00").
 		Fields("COUNT(*) as requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COALESCE(SUM(total_cost), 0) as total_cost").
 		Scan(&todayRow)
+	if err != nil {
+		return nil, err
+	}
 
 	// 本月统计
 	var monthRow dayStats
-	dao.BilUsageLogs.Ctx(ctx).
+	err = dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("created_at >= ?", monthStart+" 00:00:00").
 		Fields("COUNT(*) as requests, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens, COALESCE(SUM(total_cost), 0) as total_cost").
 		Scan(&monthRow)
+	if err != nil {
+		return nil, err
+	}
 
 	// 钱包余额
 	var wallet *struct {
@@ -51,10 +64,13 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		FrozenBalance    float64 `json:"frozen_balance"`
 		WarningThreshold float64 `json:"warning_threshold"`
 	}
-	dao.BilWallets.Ctx(ctx).
+	err = dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance, warning_threshold").
 		Scan(&wallet)
+	if err != nil {
+		return nil, err
+	}
 
 	if wallet == nil {
 		wallet = &struct {
@@ -65,35 +81,41 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 	}
 
 	// 活跃Key数
-	activeKeys, _ := dao.ApiKeys.Ctx(ctx).
+	activeKeys, err := dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		return nil, err
+	}
 
 	// 成员数
-	memberCount, _ := dao.TntUsers.Ctx(ctx).
+	memberCount, err := dao.TntUsers.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		return nil, err
+	}
 
 	return &v1.TenantDashboardRes{
 		Today: map[string]any{
 			"requests":      todayRow.Requests,
 			"input_tokens":  todayRow.InputTokens,
 			"output_tokens": todayRow.OutputTokens,
-			"total_cost":    todayRow.TotalCost,
+			"total_cost":    roundUSD(todayRow.TotalCost),
 		},
 		Month: map[string]any{
 			"requests":      monthRow.Requests,
 			"input_tokens":  monthRow.InputTokens,
 			"output_tokens": monthRow.OutputTokens,
-			"total_cost":    monthRow.TotalCost,
+			"total_cost":    roundUSD(monthRow.TotalCost),
 		},
 		Wallet: map[string]any{
-			"balance":           wallet.Balance,
-			"frozen_balance":    wallet.FrozenBalance,
-			"available":         wallet.Balance - wallet.FrozenBalance,
-			"warning_threshold": wallet.WarningThreshold,
+			"balance":           roundUSD(wallet.Balance),
+			"frozen_balance":    roundUSD(wallet.FrozenBalance),
+			"available":         roundUSD(wallet.Balance - wallet.FrozenBalance),
+			"warning_threshold": roundUSD(wallet.WarningThreshold),
 		},
 		ActiveKeys:  activeKeys,
 		MemberCount: memberCount,
@@ -112,7 +134,7 @@ func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq)
 		days = 30
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	startDate := gtime.Now().AddDate(0, 0, -days).Format("Y-m-d")
 
 	type tokenTrendRow struct {
 		Date         string  `json:"date"`
@@ -149,7 +171,7 @@ func (s *sTenant) TokenTrends(ctx context.Context, req *v1.TenantTokenTrendsReq)
 			"input_tokens":  r.InputTokens,
 			"output_tokens": r.OutputTokens,
 			"requests":      r.Requests,
-			"total_cost":    r.TotalCost,
+			"total_cost":    roundUSD(r.TotalCost),
 		})
 	}
 
@@ -170,7 +192,7 @@ func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDist
 		days = 30
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	startDate := gtime.Now().AddDate(0, 0, -days).Format("Y-m-d")
 
 	type modelDistRow struct {
 		ModelName    string  `json:"model_name"`
@@ -208,7 +230,7 @@ func (s *sTenant) ModelDistribution(ctx context.Context, req *v1.TenantModelDist
 			"requests":      r.Requests,
 			"input_tokens":  r.InputTokens,
 			"output_tokens": r.OutputTokens,
-			"total_cost":    r.TotalCost,
+			"total_cost":    roundUSD(r.TotalCost),
 		})
 	}
 
@@ -225,27 +247,33 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
-	sevenDaysAgo := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	sevenDaysAgo := gtime.Now().AddDate(0, 0, -7).Format("Y-m-d")
 
 	var stats struct {
 		TotalCost float64 `json:"total_cost"`
 	}
-	dao.BilUsageLogs.Ctx(ctx).
+	err := dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("created_at >= ?", sevenDaysAgo+" 00:00:00").
 		Fields("COALESCE(SUM(total_cost), 0) as total_cost").
 		Scan(&stats)
+	if err != nil {
+		return nil, err
+	}
 
-	dailyAvg := stats.TotalCost / 7.0
+	dailyAvg := roundUSD(stats.TotalCost / 7.0)
 
 	var wallet *struct {
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	dao.BilWallets.Ctx(ctx).
+	err = dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("balance, frozen_balance").
 		Scan(&wallet)
+	if err != nil {
+		return nil, err
+	}
 	if wallet == nil {
 		wallet = &struct {
 			Balance       float64 `json:"balance"`
@@ -253,7 +281,7 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 		}{Balance: 0, FrozenBalance: 0}
 	}
 
-	available := wallet.Balance - wallet.FrozenBalance
+	available := roundUSD(wallet.Balance - wallet.FrozenBalance)
 	res := &v1.TenantBalancePredictionRes{
 		DailyAvgCost:     dailyAvg,
 		AvailableBalance: available,
@@ -308,7 +336,7 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 		limit = 10
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	startDate := gtime.Now().AddDate(0, 0, -days).Format("Y-m-d")
 
 	type memberUsageRow struct {
 		UserId       int64   `json:"user_id"`
@@ -353,7 +381,7 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 			"requests":      r.Requests,
 			"input_tokens":  r.InputTokens,
 			"output_tokens": r.OutputTokens,
-			"total_cost":    r.TotalCost,
+			"total_cost":    roundUSD(r.TotalCost),
 		})
 	}
 

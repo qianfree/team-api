@@ -25,7 +25,7 @@ var (
 // handleRelayChatCompletions 处理 /v1/chat/completions
 func HandleChatCompletions(r *ghttp.Request) {
 	// DEBUG: 记录请求入口
-	g.Log().Infof(r.Context(), "[HandleChatCompletions] Entry: method=%s, path=%s, uri=%s",
+	g.Log().Debugf(r.Context(), "[HandleChatCompletions] Entry: method=%s, path=%s, uri=%s",
 		r.Method, r.URL.Path, r.RequestURI)
 
 	body := r.GetBody()
@@ -166,7 +166,7 @@ func HandleCompletions(r *ghttp.Request) {
 // HandleResponses 处理 /v1/responses（OpenAI Responses API）
 func HandleResponses(r *ghttp.Request) {
 	// DEBUG: 记录请求入口
-	g.Log().Infof(r.Context(), "[HandleResponses] Entry: method=%s, path=%s, uri=%s",
+	g.Log().Debugf(r.Context(), "[HandleResponses] Entry: method=%s, path=%s, uri=%s",
 		r.Method, r.URL.Path, r.RequestURI)
 
 	body := r.GetBody()
@@ -235,7 +235,7 @@ func HandleMessages(r *ghttp.Request) {
 
 // HandleGeminiGenerateContent 处理 /v1beta/models/{model}:generateContent（Gemini 原生格式）
 func HandleGeminiGenerateContent(r *ghttp.Request) {
-	g.Log().Infof(r.Context(), "[HandleGeminiGenerateContent] Entry: method=%s, path=%s, uri=%s",
+	g.Log().Debugf(r.Context(), "[HandleGeminiGenerateContent] Entry: method=%s, path=%s, uri=%s",
 		r.Method, r.URL.Path, r.RequestURI)
 
 	body := r.GetBody()
@@ -287,7 +287,13 @@ func HandleGeminiGenerateContent(r *ghttp.Request) {
 	rawBody["model"] = modelJSON
 	streamJSON, _ := json.Marshal(isStream)
 	rawBody["stream"] = streamJSON
-	modifiedBody, _ := json.Marshal(rawBody)
+	modifiedBody, err := json.Marshal(rawBody)
+	if err != nil {
+		r.Response.WriteJsonExit(g.Map{
+			"error": g.Map{"code": 400, "message": "failed to encode request body", "status": "INVALID_ARGUMENT"},
+		})
+		return
+	}
 
 	// 构造路径（使 Path2RelayMode 能识别为 Gemini 模式）
 	path := "/models/" + modelAction

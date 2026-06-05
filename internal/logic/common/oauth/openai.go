@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 )
 
 const (
@@ -128,7 +129,7 @@ func OpenAIExchangeCode(sessionID, code, state string) (*OAuthKeyData, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		g.Log().Warningf(nil, "OpenAI token 交换失败, status=%d, body=%s", resp.StatusCode, string(body))
+		g.Log().Warningf(gctx.New(), "OpenAI token 交换失败, status=%d, body=%s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("token 交换失败 (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -140,7 +141,7 @@ func OpenAIExchangeCode(sessionID, code, state string) (*OAuthKeyData, error) {
 	// 解析 ID token JWT payload 提取用户信息
 	claims, err := parseOpenAIIDToken(tokenResp.IDToken)
 	if err != nil {
-		g.Log().Warningf(nil, "解析 OpenAI ID token 失败: %v", err)
+		g.Log().Warningf(gctx.New(), "解析 OpenAI ID token 失败: %v", err)
 		// ID token 解析失败不阻断流程，继续返回基本 token 数据
 	}
 
@@ -191,7 +192,7 @@ func OpenAIRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		g.Log().Warningf(nil, "OpenAI token 刷新失败, status=%d, body=%s", resp.StatusCode, string(body))
+		g.Log().Warningf(gctx.New(), "OpenAI token 刷新失败, status=%d, body=%s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("token 刷新失败 (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -203,7 +204,7 @@ func OpenAIRefreshToken(refreshToken string) (*OAuthKeyData, error) {
 	// 刷新响应中可能包含新的 ID token
 	claims, err := parseOpenAIIDToken(tokenResp.IDToken)
 	if err != nil {
-		g.Log().Warningf(nil, "解析 OpenAI ID token (refresh) 失败: %v", err)
+		g.Log().Warningf(gctx.New(), "解析 OpenAI ID token (refresh) 失败: %v", err)
 	}
 
 	keyData := &OAuthKeyData{

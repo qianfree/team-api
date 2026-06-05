@@ -24,6 +24,8 @@ func sendTestRequest(ctx context.Context, channelType int, baseURL, apiKey, mode
 		return testClaude(ctx, baseURL, apiKey, modelName)
 	case constant.ProviderGemini:
 		return testGemini(ctx, baseURL, apiKey, modelName)
+	case constant.ProviderZhipu:
+		return testZhipu(ctx, baseURL, apiKey, modelName)
 	default:
 		// 尝试 OpenAI 兼容格式
 		return testOpenAI(ctx, baseURL, apiKey, modelName)
@@ -154,6 +156,47 @@ func testGemini(ctx context.Context, baseURL, apiKey, modelName string) testResu
 		Success:  true,
 		Response: truncateStr(respBody, 500),
 		Request:  buildReqDetail("POST", reqURL, map[string]string{"x-goog-api-key": maskKey(apiKey), "Content-Type": "application/json"}, string(bodyJSON)),
+	}
+}
+
+func testZhipu(ctx context.Context, baseURL, apiKey, modelName string) testResult {
+	reqBody := map[string]any{
+		"model":      modelName,
+		"max_tokens": 5,
+		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+	}
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	reqURL := baseURL + "/api/paas/v4/chat/completions"
+
+	client := g.Client().SetTimeout(30 * time.Second)
+	client.SetHeader("Authorization", "Bearer "+apiKey)
+	client.SetHeader("Content-Type", "application/json")
+
+	resp, err := client.DoRequest(ctx, "POST", reqURL, reqBody)
+	if err != nil {
+		return testResult{
+			Error:   fmt.Sprintf("请求失败: %v", err),
+			Request: buildReqDetail("POST", reqURL, map[string]string{"Authorization": maskKey(apiKey), "Content-Type": "application/json"}, string(bodyJSON)),
+		}
+	}
+	defer resp.Close()
+
+	respBody := string(resp.ReadAll())
+
+	if resp.StatusCode != 200 {
+		return testResult{
+			Success:  false,
+			Error:    fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateStr(respBody, 500)),
+			Response: truncateStr(respBody, 500),
+			Request:  buildReqDetail("POST", reqURL, map[string]string{"Authorization": maskKey(apiKey), "Content-Type": "application/json"}, string(bodyJSON)),
+		}
+	}
+
+	return testResult{
+		Success:  true,
+		Response: truncateStr(respBody, 500),
+		Request:  buildReqDetail("POST", reqURL, map[string]string{"Authorization": maskKey(apiKey), "Content-Type": "application/json"}, string(bodyJSON)),
 	}
 }
 

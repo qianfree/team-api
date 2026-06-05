@@ -6,10 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/open/v1"
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
@@ -21,7 +25,6 @@ import (
 
 type sOpen struct{}
 
-// openMemberModelCache 成员模型范围缓存（与 relay provider 中的缓存 key 相同）
 var openMemberModelCache = common.NewCache("member_model", 60*time.Second)
 
 func New() *sOpen {
@@ -39,7 +42,7 @@ func init() {
 func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (*v1.OpenMemberListRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	page := req.Page
@@ -99,13 +102,12 @@ func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (
 func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateReq) (*v1.OpenMemberCreateRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
-	// Check duplicate email
 	count, _ := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID).Where("email", req.Email).Count()
 	if count > 0 {
-		return nil, fmt.Errorf("邮箱已存在")
+		return nil, errOpen(consts.CodeUsernameExists, "邮箱已存在")
 	}
 
 	passwordHash, err := crypto.HashPassword(req.Password)
@@ -133,35 +135,38 @@ func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateRe
 func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateReq) (*v1.OpenMemberUpdateRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
-	data := g.Map{}
+	data := do.TntUsers{}
+	hasUpdate := false
 	if req.Role != nil {
-		data["role"] = *req.Role
+		data.Role = *req.Role
+		hasUpdate = true
 	}
 	if req.DisplayName != nil {
-		data["display_name"] = *req.DisplayName
+		data.DisplayName = *req.DisplayName
+		hasUpdate = true
 	}
 	if req.Status != nil {
-		data["status"] = *req.Status
+		data.Status = *req.Status
+		hasUpdate = true
 	}
 
-	if len(data) == 0 {
+	if !hasUpdate {
 		return nil, nil
 	}
 
-	_, err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
+	_, err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).OmitNil().Data(data).Update()
 	return nil, err
 }
 
 func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteReq) (*v1.OpenMemberDeleteRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
-	// Prevent deleting owner
 	var user *struct {
 		Role string `json:"role"`
 	}
@@ -170,10 +175,10 @@ func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteRe
 		return nil, err
 	}
 	if user == nil {
-		return nil, fmt.Errorf("用户不存在")
+		return nil, errOpen(consts.CodeNotFound, "用户不存在")
 	}
 	if user.Role == "owner" {
-		return nil, fmt.Errorf("不能删除所有者")
+		return nil, errOpen(consts.CodeForbidden, "不能删除所有者")
 	}
 
 	_, err = dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
@@ -187,7 +192,7 @@ func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteRe
 func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq) (*v1.OpenMemberQuotaRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	var user *struct {
@@ -204,6 +209,9 @@ func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq)
 	if err != nil {
 		return nil, err
 	}
+	if user == nil {
+		return nil, errOpen(consts.CodeNotFound, "用户不存在")
+	}
 
 	return &v1.OpenMemberQuotaRes{
 		QuotaType:  user.QuotaType,
@@ -216,26 +224,25 @@ func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq)
 func (s *sOpen) OpenMemberQuotaUpdate(ctx context.Context, req *v1.OpenMemberQuotaUpdateReq) (*v1.OpenMemberQuotaUpdateRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	if req.QuotaType == "periodic" && req.Period == "" {
-		return nil, fmt.Errorf("period is required for periodic quota")
+		return nil, errOpen(consts.CodeBadRequest, "periodic 类型额度必须指定周期")
 	}
 
-	data := g.Map{
-		"quota_type":     req.QuotaType,
-		"quota_limit":    req.QuotaLimit,
-		"quota_used":     0,
-		"quota_period":   nil,
-		"quota_reset_at": nil,
+	data := do.TntUsers{
+		QuotaType: req.QuotaType,
+		QuotaUsed: 0,
+	}
+	if req.QuotaType != "none" {
+		data.QuotaLimit = req.QuotaLimit
+	} else {
+		data.QuotaLimit = 0
 	}
 	if req.QuotaType == "periodic" {
-		data["quota_period"] = req.Period
-		data["quota_reset_at"] = gtime.Now()
-	}
-	if req.QuotaType == "none" {
-		data["quota_limit"] = 0
+		data.QuotaPeriod = req.Period
+		data.QuotaResetAt = gtime.Now()
 	}
 
 	_, err := dao.TntUsers.Ctx(ctx).
@@ -249,7 +256,7 @@ func (s *sOpen) OpenMemberQuotaUpdate(ctx context.Context, req *v1.OpenMemberQuo
 func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsReq) (*v1.OpenMemberModelsRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	var scopes []struct {
@@ -274,46 +281,48 @@ func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsRe
 func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberModelsUpdateReq) (*v1.OpenMemberModelsUpdateRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
-	// Delete existing scopes
-	_, err := dao.TntMemberModelScopes.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", req.Id).
-		Delete()
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", req.Id).
+			Delete()
+		if err != nil {
+			return err
+		}
+
+		if len(req.ModelIDs) > 0 {
+			for _, modelID := range req.ModelIDs {
+				if modelID == 0 {
+					continue
+				}
+				_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+					TenantId: tenantID,
+					UserId:   req.Id,
+					ModelId:  modelID,
+				}).Insert()
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+				TenantId: tenantID,
+				UserId:   req.Id,
+				ModelId:  -1,
+			}).Insert()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Insert new scopes
-	if len(req.ModelIDs) > 0 {
-		for _, modelID := range req.ModelIDs {
-			if modelID == 0 {
-				continue
-			}
-			_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
-				TenantId: tenantID,
-				UserId:   req.Id,
-				ModelId:  modelID,
-			}).Insert()
-			if err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		// 空列表表示禁止所有模型，插入哨兵记录（model_id = -1）
-		_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
-			TenantId: tenantID,
-			UserId:   req.Id,
-			ModelId:  -1,
-		}).Insert()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// 清除该成员的模型范围缓存，使下次请求时重新从数据库读取
 	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
 	openMemberModelCache.Delete(ctx, cacheKey)
 
@@ -327,7 +336,7 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.OpenKeyListRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	page := req.Page
@@ -380,18 +389,17 @@ func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.Op
 func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v1.OpenKeyCreateRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
-	// Generate API key
 	rawKey, prefix, encryptedKey, err := relay.GenerateApiKey(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	quotaLimit := req.QuotaLimit
-	if quotaLimit == "" {
-		quotaLimit = "0"
+	if quotaLimit < 0 {
+		quotaLimit = 0
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(do.ApiKeys{
@@ -410,13 +418,14 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 
 	id, _ := result.LastInsertId()
 
-	// Set model scopes if provided
 	for _, modelName := range req.ModelScopes {
 		if modelName != "" {
-			dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
+			if _, err = dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
 				ApiKeyId:  id,
 				ModelName: modelName,
-			})
+			}); err != nil {
+				return nil, gerror.Wrapf(err, "设置模型范围失败")
+			}
 		}
 	}
 
@@ -426,7 +435,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v1.OpenKeyDeleteRes, error) {
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	_, err := dao.ApiKeys.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
@@ -446,7 +455,7 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 	}
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	page := req.Page
@@ -462,18 +471,17 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 	m = m.Where("created_at >= ?", req.StartDate+" 00:00:00")
 	m = m.Where("created_at <= ?", req.EndDate+" 23:59:59")
 
-	// Group by
 	selectFields := ""
 	groupBy := ""
 	switch req.GroupBy {
 	case "model":
-		selectFields = "model_name, SUM(request_count) as request_count, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(cost) as cost"
+		selectFields = "model_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
 		groupBy = "model_name"
 	case "key":
-		selectFields = "key_prefix as key_name, SUM(request_count) as request_count, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(cost) as cost"
+		selectFields = "key_prefix as key_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
 		groupBy = "key_prefix"
 	default:
-		selectFields = "DATE(created_at) as date, SUM(request_count) as request_count, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, SUM(cost) as cost"
+		selectFields = "DATE(created_at) as date, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
 		groupBy = "DATE(created_at)"
 	}
 
@@ -531,7 +539,7 @@ func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryRe
 
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
-		return nil, fmt.Errorf("unauthorized")
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
 
 	page := req.Page
@@ -585,4 +593,9 @@ func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryRe
 	}
 
 	return &v1.OpenBillingQueryRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// errOpen is a helper to create open platform errors with proper gerror codes.
+func errOpen(code int, message string) error {
+	return gerror.NewCode(gcode.New(code, message, nil), message)
 }

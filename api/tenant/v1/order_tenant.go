@@ -10,7 +10,7 @@ import (
 type TenantOrderCreateReq struct {
 	g.Meta    `path:"/orders/create" method:"post" mime:"json" tags:"租户控制台-订单" summary:"创建订单"`
 	PlanID    int64 `json:"plan_id" v:"required|min:1"`
-	Months    int   `json:"months"`
+	Months    int   `json:"months" v:"min:1|max:36#购买月数无效|购买月数不能超过36个月"`
 	AutoRenew bool  `json:"auto_renew"`
 }
 

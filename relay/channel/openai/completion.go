@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // handleCompletionNonStreamResponse 处理 Completions 非流式响应
@@ -29,7 +30,7 @@ func (a *Adaptor) handleCompletionNonStreamResponse(ctx context.Context, resp *h
 	}
 
 	if info.ChannelMeta.IsModelMapped {
-		body = replaceModelName(body, info.OriginModelName)
+		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
 
 	writer.Header().Set("Content-Type", "application/json")

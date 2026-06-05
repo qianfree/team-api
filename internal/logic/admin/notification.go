@@ -48,7 +48,7 @@ func (s *sAdmin) GetTemplate(ctx context.Context, req *v1.TemplateGetReq) (*v1.T
 		return nil, err
 	}
 	if tpl == nil {
-		return nil, common.NewNotFoundError("template")
+		return nil, common.NewNotFoundError("通知模板")
 	}
 	return tpl, nil
 }
@@ -73,7 +73,7 @@ func (s *sAdmin) UpdateTemplate(ctx context.Context, req *v1.TemplateUpdateReq) 
 	if err != nil {
 		return nil, err
 	}
-	return nil, nil
+	return &v1.TemplateUpdateRes{}, nil
 }
 
 // TestTemplate 用测试变量渲染模板，返回渲染结果（不发送）
@@ -93,7 +93,7 @@ func (s *sAdmin) TestTemplate(ctx context.Context, req *v1.TemplateTestReq) (*v1
 		return nil, common.NewNotFoundError("模板")
 	}
 	if tpl.BodyTemplate == "" {
-		return nil, common.NewNotFoundError("template")
+		return nil, common.NewNotFoundError("通知模板")
 	}
 
 	subjectRendered, subjectErr := renderGoTemplate(tpl.Subject, req.Variables)
@@ -126,10 +126,6 @@ func (s *sAdmin) TestTemplate(ctx context.Context, req *v1.TemplateTestReq) (*v1
 
 // SendMessage 创建手动站内消息并推送 WebSocket 通知
 func (s *sAdmin) SendMessage(ctx context.Context, req *v1.MessageSendReq) (*v1.MessageSendRes, error) {
-	if req.Title == "" || req.Content == "" {
-		return nil, common.NewBadRequestError("title and content are required")
-	}
-
 	engine := common.NewNotificationEngine()
 	if req.UserID > 0 {
 		return nil, engine.SendMessage(ctx, req.TenantID, req.UserID, "system", req.Title, req.Content)
@@ -141,7 +137,7 @@ func (s *sAdmin) SendMessage(ctx context.Context, req *v1.MessageSendReq) (*v1.M
 // SendBroadcast 创建广播消息并推送 WebSocket 通知
 func (s *sAdmin) SendBroadcast(ctx context.Context, req *v1.MessageBroadcastReq) (*v1.MessageBroadcastRes, error) {
 	if req.Title == "" || req.Content == "" {
-		return nil, common.NewBadRequestError("title and content are required")
+		return nil, common.NewBadRequestError("标题和内容不能为空")
 	}
 
 	engine := common.NewNotificationEngine()
@@ -215,7 +211,7 @@ func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, 
 		return nil, common.NewNotFoundError("消息")
 	}
 	if msg.IsBroadcast != 1 {
-		return nil, common.NewBadRequestError("message is not a broadcast")
+		return nil, common.NewBadRequestError("该消息不是广播消息")
 	}
 
 	totalMembers, err := dao.TntUsers.Ctx(ctx).
@@ -254,9 +250,6 @@ func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, 
 
 // CreateAnnouncement 创建公告
 func (s *sAdmin) CreateAnnouncement(ctx context.Context, req *v1.AnnouncementCreateReq) (*v1.AnnouncementCreateRes, error) {
-	if req.Title == "" || req.Content == "" {
-		return nil, common.NewBadRequestError("title and content are required")
-	}
 	annType := req.Type
 	if annType == "" {
 		annType = "info"
@@ -342,7 +335,7 @@ func (s *sAdmin) UpdateAnnouncement(ctx context.Context, req *v1.AnnouncementUpd
 		return nil, err
 	}
 
-	return nil, nil
+	return &v1.AnnouncementUpdateRes{}, nil
 }
 
 // ListAnnouncements 获取公告列表（分页）
@@ -390,7 +383,7 @@ func (s *sAdmin) PublishAnnouncement(ctx context.Context, req *v1.AnnouncementPu
 		return nil, err
 	}
 
-	return nil, nil
+	return &v1.AnnouncementPublishRes{}, nil
 }
 
 // ArchiveAnnouncement 归档公告
@@ -404,7 +397,7 @@ func (s *sAdmin) ArchiveAnnouncement(ctx context.Context, req *v1.AnnouncementAr
 		return nil, err
 	}
 
-	return nil, nil
+	return &v1.AnnouncementArchiveRes{}, nil
 }
 
 // renderGoTemplate renders a Go template string with variables.

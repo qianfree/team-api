@@ -82,7 +82,7 @@ func resolveHeaderPlaceholder(template string, info *common.RelayInfo) string {
 	result := template
 
 	// {api_key} → 渠道 API Key
-	result = replaceAllStr(result, "{api_key}", info.ChannelMeta.ApiKey)
+	result = strings.ReplaceAll(result, "{api_key}", info.ChannelMeta.ApiKey)
 
 	// {client_header:xxx} → 客户端原始请求 header
 	for {

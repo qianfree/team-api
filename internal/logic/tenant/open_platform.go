@@ -143,10 +143,12 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 
 	id, _ := result.LastInsertId()
 
-	// Store encrypted secret in Redis
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret)
+	// Store encrypted secret in Redis（30 天 TTL，过期后从 DB 重新加载）— 失败时回滚 DB 记录
+	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret, "EX", 30*86400)
 	if err != nil {
-		return nil, err
+		// 回滚：删除已插入的 DB 记录
+		_, _ = dao.OpnApps.Ctx(ctx).Where("id", id).Delete()
+		return nil, fmt.Errorf("store app secret in Redis failed: %w", err)
 	}
 
 	return &v1.OpenAppCreateRes{ID: id, AppID: appID, AppSecret: appSecret}, nil
@@ -158,27 +160,33 @@ func (s *sTenant) OpenAppUpdate(ctx context.Context, req *v1.OpenAppUpdateReq) (
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	data := g.Map{}
+	data := do.OpnApps{}
+	hasUpdate := false
 
 	if req.Name != nil {
-		data["name"] = *req.Name
+		data.Name = *req.Name
+		hasUpdate = true
 	}
 	if req.Description != nil {
-		data["description"] = *req.Description
+		data.Description = *req.Description
+		hasUpdate = true
 	}
 	if req.Permissions != nil {
 		permsJSON, _ := json.Marshal(req.Permissions)
-		data["permissions"] = string(permsJSON)
+		data.Permissions = string(permsJSON)
+		hasUpdate = true
 	}
 	if req.IPWhitelist != nil {
 		ipJSON, _ := json.Marshal(req.IPWhitelist)
-		data["ip_whitelist"] = string(ipJSON)
+		data.IpWhitelist = string(ipJSON)
+		hasUpdate = true
 	}
 	if req.RateLimit != nil {
-		data["rate_limit"] = *req.RateLimit
+		data.RateLimit = *req.RateLimit
+		hasUpdate = true
 	}
 
-	if len(data) == 0 {
+	if !hasUpdate {
 		return nil, nil
 	}
 
@@ -220,21 +228,25 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 		return nil, err
 	}
 
-	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
-		AppSecretHash: secretHash,
-	}).Update()
-	if err != nil {
-		return nil, err
-	}
-
-	// Update Redis
+	// 先加密新 secret 准备写入 Redis
 	encKey := getEncKey(ctx)
 	encryptedSecret, err := crypto.EncryptString(encKey, appSecret)
 	if err != nil {
 		return nil, err
 	}
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret)
+
+	// 先写 Redis（30 天 TTL），成功后再更新 DB
+	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret, "EX", 30*86400)
 	if err != nil {
+		return nil, fmt.Errorf("update app secret in Redis failed: %w", err)
+	}
+
+	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
+		AppSecretHash: secretHash,
+	}).Update()
+	if err != nil {
+		// DB 更新失败，尝试回滚 Redis
+		_, _ = g.Redis().Do(ctx, "DEL", fmt.Sprintf("open:secret:%d", req.Id))
 		return nil, err
 	}
 
@@ -336,26 +348,32 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	data := g.Map{}
+	data := do.OpnWebhookConfigs{}
+	hasUpdate := false
 
 	if req.Name != nil {
-		data["name"] = *req.Name
+		data.Name = *req.Name
+		hasUpdate = true
 	}
 	if req.URL != nil {
-		data["url"] = *req.URL
+		data.Url = *req.URL
+		hasUpdate = true
 	}
 	if req.Events != nil {
 		eventsJSON, _ := json.Marshal(req.Events)
-		data["events"] = string(eventsJSON)
+		data.Events = string(eventsJSON)
+		hasUpdate = true
 	}
 	if req.IsActive != nil {
-		data["is_active"] = *req.IsActive
+		data.IsActive = *req.IsActive
+		hasUpdate = true
 	}
 	if req.MaxConsecutiveFailures != nil {
-		data["max_consecutive_failures"] = *req.MaxConsecutiveFailures
+		data.MaxConsecutiveFailures = *req.MaxConsecutiveFailures
+		hasUpdate = true
 	}
 
-	if len(data) == 0 {
+	if !hasUpdate {
 		return nil, nil
 	}
 
@@ -388,19 +406,52 @@ func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDelive
 		pageSize = 20
 	}
 
-	m := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("tenant_id", tenantID).Where("webhook_config_id", req.Id)
+	baseQuery := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("tenant_id", tenantID).Where("webhook_config_id", req.Id)
+
+	// 分离计数查询和数据查询，避免 JOIN 影响 Count
 	if req.Status != "" {
-		// Filter by event status through join
-		m = m.LeftJoin("opn_webhook_events e", "e.id = opn_webhook_delivery_logs.event_id").Where("e.status", req.Status)
+		// 用子查询过滤 status
+		total, err := baseQuery.
+			Where("event_id IN (SELECT id FROM opn_webhook_events WHERE status = ?)", req.Status).
+			Count()
+		if err != nil {
+			return nil, err
+		}
+
+		var logs []entity.OpnWebhookDeliveryLogs
+		err = baseQuery.
+			Where("event_id IN (SELECT id FROM opn_webhook_events WHERE status = ?)", req.Status).
+			OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
+		if err != nil {
+			return nil, err
+		}
+
+		items := make([]v1.WebhookDeliveryLogItem, len(logs))
+		for i, l := range logs {
+			items[i] = v1.WebhookDeliveryLogItem{
+				ID:             l.Id,
+				EventID:        l.EventId,
+				Attempt:        l.Attempt,
+				ResponseStatus: l.ResponseStatus,
+				ResponseTimeMs: l.ResponseTimeMs,
+				ErrorMessage:   l.ErrorMessage,
+			}
+			if l.CreatedAt != nil {
+				items[i].CreatedAt = l.CreatedAt.Format("Y-m-d H:i:s")
+			}
+		}
+
+		return &v1.WebhookDeliveryLogsRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
 	}
 
-	total, err := m.Count()
+	// 无 status 过滤时，直接查询
+	total, err := baseQuery.Count()
 	if err != nil {
 		return nil, err
 	}
 
 	var logs []entity.OpnWebhookDeliveryLogs
-	err = m.OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
+	err = baseQuery.OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
 	if err != nil {
 		return nil, err
 	}
@@ -461,12 +512,18 @@ func PublishWebhookEvent(ctx context.Context, tenantID int64, eventType string, 
 		return err
 	}
 
+	// 使用 json.Marshal 安全构建 JSONB 查询参数，防止注入
+	eventFilter, err := json.Marshal([]string{eventType})
+	if err != nil {
+		return err
+	}
+
 	// Find all active webhook configs that subscribe to this event type
 	var configs []entity.OpnWebhookConfigs
 	err = dao.OpnWebhookConfigs.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("is_active", true).
-		Where("events::jsonb @> ?", fmt.Sprintf(`["%s"]`, eventType)).
+		Where("events::jsonb @> ?", string(eventFilter)).
 		Scan(&configs)
 	if err != nil {
 		return err

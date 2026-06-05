@@ -71,6 +71,9 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64, modelName string) (float64, error) {
 	ok, err := PreDeduct(ctx, tenantID, estimatedCost, requestID, modelName)
 	if !ok {
+		if err == nil {
+			return 0, fmt.Errorf("pre-deduct task failed: insufficient balance")
+		}
 		return 0, fmt.Errorf("pre-deduct task failed: %w", err)
 	}
 	return estimatedCost, nil
@@ -100,7 +103,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		effectiveOutputPrice = pricing.OutputPrice
 	}
 
-	// 3. 事务内执行结算（钱包扣款 + 计费记录）
+	// 3. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	var balanceAfter, frozenAfter float64
 	var taskBillingID int64
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -169,6 +172,36 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			taskBillingID, _ = billingResult.LastInsertId()
 		}
 
+		// 3d. 记录消费流水（事务内）
+		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     wallet.ID,
+			Type:         "consume",
+			Amount:       -actualCost,
+			BalanceAfter: balanceAfter,
+			FrozenAfter:  frozenAfter,
+			RelatedId:    taskBillingID,
+			RelatedType:  "billing_record",
+			Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
+			UserId:       userID,
+			RequestId:    requestID,
+			ModelName:    modelName,
+			ProjectId:    0,
+			ApiKeyId:     apiKeyID,
+			TaskId:       taskID,
+		}).Insert()
+		if err != nil {
+			return fmt.Errorf("settle task: record transaction: %w", err)
+		}
+
+		// 3e. 标记预扣追踪记录为已结算（事务内）
+		_, err = tx.Ctx(ctx).Exec(
+			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
+			requestID)
+		if err != nil {
+			return fmt.Errorf("settle task: mark prededuct settled: %w", err)
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -219,11 +252,6 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		result.BillingSource = pricing.BillingSource
 		result.RateMultiplier = pricing.DiscountRatio
 	}
-
-	// 7. 记录消费流水（事务外，best-effort）
-	recordTransaction(ctx, wallet.ID, tenantID, "consume", -actualCost,
-		fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
-		userID, requestID, modelName, taskBillingID, "billing_record", 0, apiKeyID, taskID, balanceAfter, frozenAfter)
 
 	return result, nil
 }

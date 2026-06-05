@@ -19,10 +19,25 @@ import (
 func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberModelScopesReq) (*v1.TenantMemberModelScopesRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
+	// 验证用户属于当前租户
+	var targetUser *struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Scan(&targetUser)
+	if err != nil {
+		return nil, err
+	}
+	if targetUser == nil {
+		return nil, lcommon.NewNotFoundError("成员")
+	}
+
 	var rows []struct {
 		ModelID int64 `json:"model_id"`
 	}
-	err := dao.TntMemberModelScopes.Ctx(ctx).
+	err = dao.TntMemberModelScopes.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("user_id", req.Id).
 		Scan(&rows)
@@ -46,7 +61,22 @@ var memberModelScopeCache = lcommon.NewCache("member_model", 60*time.Second)
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	// 验证用户属于当前租户
+	var targetUser *struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Scan(&targetUser)
+	if err != nil {
+		return nil, err
+	}
+	if targetUser == nil {
+		return nil, lcommon.NewNotFoundError("成员")
+	}
+
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing scopes
 		_, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
 			Where("tenant_id", tenantID).

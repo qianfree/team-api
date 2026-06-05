@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -26,7 +25,7 @@ func (s *sAdmin) GetSettingsCategories(ctx context.Context, _ *v1.AdminSettingsC
 // GetSettings retrieves settings with schema for a given category.
 func (s *sAdmin) GetSettings(ctx context.Context, req *v1.AdminSettingsGetReq) (*v1.AdminSettingsGetRes, error) {
 	if !isValidCategory(req.Category) {
-		return nil, fmt.Errorf("未知的设置分类: %s", req.Category)
+		return nil, common.NewBadRequestError("无效的设置分类")
 	}
 
 	items := common.Config().GetCategoryWithValues(ctx, req.Category)
@@ -49,7 +48,7 @@ func (s *sAdmin) GetSettings(ctx context.Context, req *v1.AdminSettingsGetReq) (
 // UpdateSettings batch-updates settings for a given category.
 func (s *sAdmin) UpdateSettings(ctx context.Context, req *v1.AdminSettingsUpdateReq) (*v1.AdminSettingsUpdateRes, error) {
 	if !isValidCategory(req.Category) {
-		return nil, fmt.Errorf("未知的设置分类: %s", req.Category)
+		return nil, common.NewBadRequestError("无效的设置分类")
 	}
 
 	// Normalize interface{} values to strings for storage

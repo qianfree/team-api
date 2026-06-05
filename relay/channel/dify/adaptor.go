@@ -162,7 +162,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 
 	// 如果 Dify 未返回用量信息，使用粗略估算
 	if chatResp.Usage.TotalTokens == 0 {
-		chatResp.Usage.CompletionTokens = estimateTokens(difyResp.Answer)
+		chatResp.Usage.CompletionTokens = helper.EstimateTokens(difyResp.Answer)
 		chatResp.Usage.TotalTokens = chatResp.Usage.CompletionTokens
 	}
 
@@ -185,6 +185,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 // handleStreamResponse 处理 Dify streaming 模式 SSE 响应
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
 	streamStatus := info.StreamStatus
@@ -233,7 +234,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 				continue
 			}
 
-			chunk := buildOpenAIStreamChunk(chatID, createdAt, modelName, event.Answer, nil)
+			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, event.Answer, nil)
 			chunkJSON, err := json.Marshal(chunk)
 			if err != nil {
 				continue
@@ -251,7 +252,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 
 			// 发送带 finish_reason 的最终 chunk
 			finishReason := "stop"
-			chunk := buildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
+			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
 			chunkJSON, _ := json.Marshal(chunk)
 			_ = helper.WriteSSEData(writer, string(chunkJSON))
 
@@ -271,41 +272,17 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 		return &usage, fmt.Errorf("read dify stream failed: %w", err)
 	}
 
-	streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
+	// 流异常结束（未收到 message_end），补充兜底的结束 chunk 和 [DONE]
+	if streamStatus.GetEndReason() == "" {
+		finishReason := "stop"
+		chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
+		chunkJSON, _ := json.Marshal(chunk)
+		_ = helper.WriteSSEData(writer, string(chunkJSON))
+		_ = helper.WriteSSEData(writer, "[DONE]")
+		streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
+	}
+
 	return &usage, nil
-}
-
-// buildOpenAIStreamChunk 构建 OpenAI 格式的流式响应块
-func buildOpenAIStreamChunk(id string, created int64, model string, content string, finishReason *string) dto.ChatCompletionStreamResponse {
-	delta := dto.Message{}
-	if content != "" {
-		delta.Content = content
-	}
-	if finishReason == nil {
-		delta.Role = "assistant"
-	}
-
-	return dto.ChatCompletionStreamResponse{
-		ID:      id,
-		Object:  "chat.completion.chunk",
-		Created: created,
-		Model:   model,
-		Choices: []dto.StreamChoice{
-			{
-				Index:        0,
-				Delta:        delta,
-				FinishReason: finishReason,
-			},
-		},
-	}
-}
-
-// estimateTokens 粗略估算 token 数（每 4 个字符约 1 个 token）
-func estimateTokens(text string) int {
-	if text == "" {
-		return 0
-	}
-	return (len(text) + 3) / 4
 }
 
 func (a *Adaptor) GetChannelName() string {

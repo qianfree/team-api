@@ -31,6 +31,7 @@ import (
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
 	"github.com/qianfree/team-api/internal/plugin"
+	"github.com/qianfree/team-api/relay/scheduler"
 	"github.com/qianfree/team-api/web"
 )
 
@@ -117,7 +118,9 @@ var (
 				return task.SnapshotHealthScores(ctx)
 			})
 			cs.Register("channel_auto_test", "*/5 * * * *", func(ctx context.Context) error {
-				task.AutoTestChannels(ctx)
+				if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
+					task.AutoTestChannels(ctx)
+				}
 				return nil
 			})
 			cs.Register("model_sunset_check", "0 0 * * *", func(ctx context.Context) error {
@@ -149,19 +152,16 @@ var (
 			cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
 				return task.RefreshExpiringOAuthTokens(ctx)
 			})
-			cs.Register("cron_execution_cleanup", "30 3 * * *", func(ctx context.Context) error {
-				retentionDays := common.Config().GetInt(ctx, "cron_execution_retention_days")
-				if retentionDays == 0 {
-					retentionDays = 30
-				}
-				_, err := g.DB().Ctx(ctx).Exec(ctx,
-					"DELETE FROM sys_cron_job_executions WHERE created_at < NOW() - ($1 || ' days')::interval",
-					retentionDays,
-				)
-				return err
-			})
 			cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
 				billing.CleanExpiredPreDeducts(ctx)
+				return nil
+			})
+			cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
+				billing.CleanSettledPreDeductTracks(ctx)
+				return nil
+			})
+			cs.Register("affinity_cache_cleanup", "*/5 * * * *", func(ctx context.Context) error {
+				scheduler.GetGlobalAffinity().CleanExpired()
 				return nil
 			})
 			cs.StartBackground(ctx)

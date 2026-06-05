@@ -3,12 +3,14 @@ package setup
 import (
 	"encoding/json"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/packed"
 	"github.com/qianfree/team-api/internal/response"
 )
@@ -58,14 +60,36 @@ func HandleSetupInitialize(r *ghttp.Request) {
 		response.ErrorMsg(r, consts.CodeBadRequest, "请求格式错误")
 		return
 	}
+
+	// Validate required fields
 	if req.Username == "" || req.Password == "" {
 		response.ErrorMsg(r, consts.CodeBadRequest, "用户名和密码不能为空")
 		return
 	}
+
+	// Validate username format
+	if utf8.RuneCountInString(req.Username) < 3 || utf8.RuneCountInString(req.Username) > 20 {
+		response.ErrorMsg(r, consts.CodeSetupInvalidUsername, consts.MsgSetupInvalidUsername)
+		return
+	}
+
+	// Validate password strength
+	if err := common.ValidatePassword(req.Password); err != nil {
+		response.ErrorMsg(r, consts.CodePasswordTooWeak, err.Error())
+		return
+	}
+
+	// Validate password confirmation
 	if req.Password != req.ConfirmPassword {
 		response.ErrorMsg(r, consts.CodeSetupPasswordMismatch, consts.MsgSetupPasswordMismatch)
 		return
 	}
+
+	// Truncate display name
+	if utf8.RuneCountInString(req.DisplayName) > 50 {
+		req.DisplayName = string([]rune(req.DisplayName)[:50])
+	}
+
 	if err := admin.CreateAdmin(r.Context(), req.Username, req.Password, req.DisplayName); err != nil {
 		response.Error(r, err)
 		return

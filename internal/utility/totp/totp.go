@@ -15,7 +15,8 @@ const (
 )
 
 // GenerateSecret generates a new TOTP secret for a user.
-func GenerateSecret(accountName string) (secret string, err error) {
+// Returns the secret string and the otpauth:// URI for QR code scanning.
+func GenerateSecret(accountName string) (secret string, uri string, err error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      issuerName,
 		AccountName: accountName,
@@ -24,9 +25,9 @@ func GenerateSecret(accountName string) (secret string, err error) {
 		Algorithm:   otp.AlgorithmSHA1,
 	})
 	if err != nil {
-		return "", fmt.Errorf("generate totp key: %w", err)
+		return "", "", fmt.Errorf("generate totp key: %w", err)
 	}
-	return key.Secret(), nil
+	return key.Secret(), key.URL(), nil
 }
 
 // ValidateCode validates a TOTP code against a secret.
@@ -34,18 +35,12 @@ func ValidateCode(code, secret string) bool {
 	return totp.Validate(code, secret)
 }
 
-// GenerateURI generates the otpauth:// URI for QR code scanning.
-func GenerateURI(accountName, secret string) string {
-	return fmt.Sprintf("otpauth://totp/%s:%s?issuer=%s&secret=%s&algorithm=SHA1&digits=6&period=30",
-		issuerName, accountName, issuerName, secret)
-}
-
 // GenerateBackupCodes generates a set of one-time backup recovery codes.
 // Returns plain text codes (to show to user once) and their SHA256 hashes (to store).
 func GenerateBackupCodes(count int) (plainCodes []string, err error) {
 	plainCodes = make([]string, count)
 	for i := 0; i < count; i++ {
-		bytes := make([]byte, 4)
+		bytes := make([]byte, 6) // 48-bit entropy → 12 hex chars
 		if _, err = rand.Read(bytes); err != nil {
 			return nil, fmt.Errorf("generate backup code: %w", err)
 		}

@@ -19,7 +19,7 @@ func StreamHandler(ctx context.Context, resp *http.Response, info *common.RelayI
 
 	helper.StreamScannerHandler(ctx, resp, info, writer, func(data string, sr *helper.StreamResult) {
 		if info.ChannelMeta.IsModelMapped {
-			data = string(replaceModelName([]byte(data), info.OriginModelName))
+			data = string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
 		}
 
 		var streamResp dto.ChatCompletionStreamResponse
@@ -91,7 +91,7 @@ func StreamHandlerForCompletions(ctx context.Context, resp *http.Response, info 
 
 	helper.StreamScannerHandler(ctx, resp, info, writer, func(data string, sr *helper.StreamResult) {
 		if info.ChannelMeta.IsModelMapped {
-			data = string(replaceModelName([]byte(data), info.OriginModelName))
+			data = string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
 		}
 
 		var streamResp dto.CompletionsStreamResponse

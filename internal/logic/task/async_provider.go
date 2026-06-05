@@ -169,7 +169,7 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 }
 
 // GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询
-func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64) (*common.AsyncTask, error) {
+func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64, tenantID int64) (*common.AsyncTask, error) {
 	var row *struct {
 		ID              int64           `json:"id"`
 		PublicTaskID    string          `json:"public_task_id"`
@@ -199,6 +199,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Where("user_id", userID).
+		Where("tenant_id", tenantID).
 		Scan(&row)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s user_id=%d", publicTaskID, userID)

@@ -3,12 +3,13 @@ package billing
 import (
 	"context"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
+	"strconv"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -23,6 +24,9 @@ const (
 
 // walletCache 钱包缓存（TTL 300s）
 var walletCache = lcommon.NewCache("wallet", 300*time.Second)
+
+// walletSyncGroup 合并同一租户的并发 syncWalletToRedis DB 读取
+var walletSyncGroup singleflight.Group
 
 // WalletInfo 钱包信息
 type WalletInfo struct {
@@ -77,28 +81,16 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 }
 
 // EnsureWallet 确保租户有钱包，没有则创建
+// 使用 INSERT ... ON CONFLICT 保证并发安全
 func EnsureWallet(ctx context.Context, tenantID int64) error {
-	count, err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Count()
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		`INSERT INTO bil_wallets (tenant_id, balance, frozen_balance, warning_threshold, currency)
+		 VALUES ($1, 0, 0, 1.00, 'USD')
+		 ON CONFLICT (tenant_id) DO NOTHING`,
+		tenantID)
 	if err != nil {
-		return err
+		return gerror.Wrapf(err, "ensure wallet")
 	}
-	if count > 0 {
-		return nil
-	}
-
-	_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
-		TenantId:         tenantID,
-		Balance:          0,
-		FrozenBalance:    0,
-		WarningThreshold: 1.00,
-		Currency:         "USD",
-	})
-	if err != nil {
-		return gerror.Wrapf(err, "create wallet")
-	}
-
 	return nil
 }
 
@@ -173,7 +165,9 @@ redis.call("HSET", prededuct_key, "amount", amount)
 redis.call("HSET", prededuct_key, "tenant_id", ARGV[4])
 redis.call("HSET", prededuct_key, "model_name", ARGV[5])
 redis.call("HSET", prededuct_key, "created_at", ARGV[6])
-redis.call("SADD", "prededuct_active:" .. ARGV[4], request_id)
+local active_set = "prededuct_active:" .. ARGV[4]
+redis.call("SADD", active_set, request_id)
+redis.call("EXPIRE", active_set, 30 * 86400)
 redis.call("EXPIRE", prededuct_key, ttl)
 return 1
 `
@@ -241,26 +235,12 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 
 // preDeductSyncDB sync pre-deduct to DB（同步调用，确保 DB frozen_balance 在返回前已更新）
 func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
-	type walletRow struct {
-		ID int64
-	}
-	var w *walletRow
-	err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Scan(&w)
-	if err != nil || w == nil {
-		g.Log().Errorf(ctx, "pre-deduct sync: wallet not found for tenant %d", tenantID)
-		return
-	}
-
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE id = ? ",
-		amount, time.Now(), w.ID)
+	_, err := g.DB().Exec(ctx,
+		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE tenant_id = ?",
+		amount, time.Now(), tenantID)
 	if err != nil {
 		g.Log().Errorf(ctx, "pre-deduct sync: %v", err)
 	}
-
 }
 
 // UnfreezePreDeduct 解冻预扣金额（请求失败时调用）
@@ -322,35 +302,19 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 	return 0, false
 }
 
-// recordTransaction 记录钱包流水
-// balanceAfter/frozenAfter 由调用方在事务内读取后传入，确保并发场景下流水记录准确
-func recordTransaction(ctx context.Context, walletID, tenantID int64, txnType string, amount float64, description string, userID int64, requestID string, modelName string, relatedID int64, relatedType string, projectID int64, apiKeyID int64, taskID string, balanceAfter, frozenAfter float64) {
-	_, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-		TenantId:     tenantID,
-		WalletId:     walletID,
-		Type:         txnType,
-		Amount:       amount,
-		BalanceAfter: balanceAfter,
-		FrozenAfter:  frozenAfter,
-		RelatedId:    relatedID,
-		RelatedType:  relatedType,
-		Description:  description,
-		UserId:       userID,
-		RequestId:    requestID,
-		ModelName:    modelName,
-		ProjectId:    projectID,
-		ApiKeyId:     apiKeyID,
-		TaskId:       taskID,
+// syncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash
+// 使用 singleflight 合并同一租户的并发请求，避免 N 个并发预扣打出 N 次相同的 DB 读
+func syncWalletToRedis(ctx context.Context, tenantID int64) error {
+	_, err, _ := walletSyncGroup.Do(strconv.FormatInt(tenantID, 10), func() (interface{}, error) {
+		return nil, doSyncWalletToRedis(context.Background(), tenantID)
 	})
-	if err != nil {
-		g.Log().Errorf(ctx, "record transaction failed: %v", err)
-	}
+	return err
 }
 
-// syncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash
+// doSyncWalletToRedis 将钱包余额从 DB 同步到 Redis Hash
 // 每次预扣前调用，确保 Redis 中的 balance 与 DB 一致
 // frozen_balance 由 Redis Lua 脚本管理，仅在 key 首次创建时从 DB 初始化
-func syncWalletToRedis(ctx context.Context, tenantID int64) error {
+func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
 
 	// 从 DB 读取钱包数据（跳过内存缓存，直接查库确保最新）
@@ -548,6 +512,8 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 		g.Redis().Do(ctx, "EXPIRE", predeductKey, remainingTTL)
 		g.Redis().Do(ctx, "SADD", activeSetKey, t.RequestID)
 	}
+	// 确保 active SET 有 TTL（30 天），过期后下次预扣时自动重建
+	g.Redis().Do(ctx, "EXPIRE", activeSetKey, 30*86400)
 
 	g.Log().Infof(ctx, "[PRE-DEDUCT] rebuilt %d active tracks from DB for tenant=%d", len(tracks), tenantID)
 }

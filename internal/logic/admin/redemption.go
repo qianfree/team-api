@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"math/big"
-	"strings"
 	"time"
 
-	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/os/gtime"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
@@ -54,30 +53,37 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 		return nil, common.NewBadRequestError("type must be quota, plan, or duration")
 	}
 
-	batchNo := fmt.Sprintf("BATCH%s%04d", gtime.Now().Format("YmdHis"), gtime.Now().UnixNano()%10000)
+	now := gtime.Now()
+	batchNo := fmt.Sprintf("BATCH%s%04d", now.Format("YmdHis"), now.UnixNano()%10000)
 	created := 0
 
-	for i := 0; i < count; i++ {
-		code, err := generateCode(12)
-		if err != nil {
-			return &v1.RedemptionCreateRes{Created: created}, nil
-		}
+	err := dao.OrdRedemptions.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		for i := 0; i < count; i++ {
+			code, err := generateCode(12)
+			if err != nil {
+				return err
+			}
 
-		_, err = dao.OrdRedemptions.Ctx(ctx).Insert(do.OrdRedemptions{
-			Code:         code,
-			Type:         codeType,
-			Value:        req.Value,
-			PlanId:       req.PlanID,
-			DurationDays: req.DurationDays,
-			MaxUses:      1,
-			BatchNo:      batchNo,
-			Status:       "active",
-			ExpiresAt:    gtime.Now().Add(90 * 24 * time.Hour),
-		})
-		if err != nil {
-			return &v1.RedemptionCreateRes{Created: created}, nil
+			_, err = tx.Model("ord_redemptions").Ctx(ctx).Insert(do.OrdRedemptions{
+				Code:         code,
+				Type:         codeType,
+				Value:        req.Value,
+				PlanId:       req.PlanID,
+				DurationDays: req.DurationDays,
+				MaxUses:      1,
+				BatchNo:      batchNo,
+				Status:       "active",
+				ExpiresAt:    gtime.Now().Add(90 * 24 * time.Hour),
+			})
+			if err != nil {
+				return err
+			}
+			created++
 		}
-		created++
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &v1.RedemptionCreateRes{Created: created}, nil
@@ -121,62 +127,56 @@ func generateCode(length int) (string, error) {
 func (s *sAdmin) ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsagesReq) (*v1.RedemptionUsagesRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	var conditions []string
-	var args []any
+	type usageRow struct {
+		Id            int64       `json:"id" orm:"id"`
+		RedemptionId  int64       `json:"redemption_id" orm:"redemption_id"`
+		TenantId      int64       `json:"tenant_id" orm:"tenant_id"`
+		UserId        int64       `json:"user_id" orm:"user_id"`
+		Type          string      `json:"type" orm:"type"`
+		Value         float64     `json:"value" orm:"value"`
+		TransactionId int64       `json:"transaction_id" orm:"transaction_id"`
+		CreatedAt     *gtime.Time `json:"created_at" orm:"created_at"`
+		Code          string      `json:"code" orm:"code"`
+		TenantName    string      `json:"tenant_name" orm:"tenant_name"`
+		Username      string      `json:"username" orm:"username"`
+	}
+
+	m := dao.OrdRedemptionUsages.Ctx(ctx).
+		LeftJoin("ord_redemptions r", "ord_redemption_usages.redemption_id = r.id").
+		LeftJoin("tnt_tenants t", "ord_redemption_usages.tenant_id = t.id").
+		LeftJoin("tnt_users u", "ord_redemption_usages.user_id = u.id AND ord_redemption_usages.tenant_id = u.tenant_id").
+		Fields("ord_redemption_usages.*, COALESCE(r.code, '') as code, COALESCE(t.name, '') as tenant_name, COALESCE(u.username, '') as username")
 
 	if req.RedemptionId > 0 {
-		conditions = append(conditions, "ru.redemption_id = ?")
-		args = append(args, req.RedemptionId)
+		m = m.Where("ord_redemption_usages.redemption_id", req.RedemptionId)
 	}
 	if req.TenantId > 0 {
-		conditions = append(conditions, "ru.tenant_id = ?")
-		args = append(args, req.TenantId)
+		m = m.Where("ord_redemption_usages.tenant_id", req.TenantId)
 	}
 
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	fromClause := "ord_redemption_usages ru LEFT JOIN ord_redemptions r ON ru.redemption_id = r.id LEFT JOIN tnt_tenants t ON ru.tenant_id = t.id LEFT JOIN tnt_users u ON ru.user_id = u.id AND ru.tenant_id = u.tenant_id"
-
-	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + where
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
-	if err != nil {
-		return nil, err
-	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
-	}
-
-	dataSQL := fmt.Sprintf(
-		`SELECT ru.id, ru.redemption_id, ru.tenant_id, ru.user_id, ru.type, ru.value, ru.transaction_id, ru.created_at,
-			COALESCE(r.code, '') AS code,
-			COALESCE(t.name, '') AS tenant_name,
-			COALESCE(u.username, '') AS username
-		 FROM %s%s ORDER BY ru.created_at DESC LIMIT %d OFFSET %d`,
-		fromClause, where, pageSize, (page-1)*pageSize,
-	)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	var total int
+	rows := make([]usageRow, 0)
+	err := m.OrderDesc("ord_redemption_usages.created_at").
+		Page(page, pageSize).
+		ScanAndCount(&rows, &total, false)
 	if err != nil {
 		return nil, err
 	}
 
-	list := make([]*v1.RedemptionUsageItem, 0, len(result))
-	for _, row := range result {
+	list := make([]*v1.RedemptionUsageItem, 0, len(rows))
+	for _, r := range rows {
 		list = append(list, &v1.RedemptionUsageItem{
-			Id:            row["id"].Int64(),
-			RedemptionId:  row["redemption_id"].Int64(),
-			Code:          row["code"].String(),
-			TenantId:      row["tenant_id"].Int64(),
-			TenantName:    row["tenant_name"].String(),
-			UserId:        row["user_id"].Int64(),
-			Username:      row["username"].String(),
-			Type:          row["type"].String(),
-			Value:         row["value"].Float64(),
-			TransactionId: row["transaction_id"].Int64(),
-			CreatedAt:     gtime.NewFromTime(row["created_at"].Time()),
+			Id:            r.Id,
+			RedemptionId:  r.RedemptionId,
+			Code:          r.Code,
+			TenantId:      r.TenantId,
+			TenantName:    r.TenantName,
+			UserId:        r.UserId,
+			Username:      r.Username,
+			Type:          r.Type,
+			Value:         r.Value,
+			TransactionId: r.TransactionId,
+			CreatedAt:     r.CreatedAt,
 		})
 	}
 

@@ -95,7 +95,7 @@ func FetchLiteLLMPricing(ctx context.Context) (map[string]*LiteLLMModelEntry, er
 	}
 
 	if err := litellmCache.Set(ctx, litellmCacheKey, raw, litellmCacheTTL); err != nil {
-		g.Log().Warning(ctx, "[PricingSource] failed to cache pricing data: %v", err)
+		g.Log().Warningf(ctx, "[PricingSource] failed to cache pricing data: %v", err)
 	}
 
 	g.Log().Infof(ctx, "[PricingSource] loaded %d models from LiteLLM", len(raw))
@@ -242,7 +242,7 @@ func FetchModelsDevPricing(ctx context.Context) (map[string]*ModelsDevModelEntry
 	}
 
 	if err := modelsDevCache.Set(ctx, modelsDevCacheKey, result, modelsDevCacheTTL); err != nil {
-		g.Log().Warning(ctx, "[PricingSource] failed to cache models.dev data: %v", err)
+		g.Log().Warningf(ctx, "[PricingSource] failed to cache models.dev data: %v", err)
 	}
 
 	g.Log().Infof(ctx, "[PricingSource] loaded %d models from models.dev", len(result))

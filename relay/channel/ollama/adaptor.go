@@ -213,6 +213,7 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	}
 
 	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -360,6 +361,7 @@ func (a *Adaptor) handleGenerateStreamResponse(ctx context.Context, resp *http.R
 	}
 
 	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
 	scanner := bufio.NewScanner(resp.Body)

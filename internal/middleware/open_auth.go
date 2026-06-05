@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -21,12 +22,20 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
+// openContextKey is a private type for context keys to prevent collisions.
+type openContextKey string
+
 const (
 	openPlatformHeaderSignature = "X-Signature"
 	openPlatformHeaderTimestamp = "X-Timestamp"
 	openPlatformHeaderNonce     = "X-Nonce"
 	openPlatformHeaderAppID     = "X-App-Id"
 	openPlatformMaxSkew         = 5 * time.Minute
+
+	ctxKeyOpenAppID       openContextKey = "openAppId"
+	ctxKeyOpenTenantID    openContextKey = "openTenantId"
+	ctxKeyOpenPermissions openContextKey = "openPermissions"
+	ctxKeyOpenIsSandbox   openContextKey = "openIsSandbox"
 )
 
 // OpenPlatformAuth is the HMAC-SHA256 authentication middleware for /open/* endpoints.
@@ -78,26 +87,34 @@ func OpenPlatformAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Verify HMAC signature
-	expectedSig := computeHMACSignature(secret, timestampStr, nonce, r.Method, r.URL.Path)
+	// Read request body for signature verification
+	var bodyBytes []byte
+	if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
+		bodyBytes, _ = io.ReadAll(r.Body)
+	}
+
+	// Verify HMAC signature (includes body hash for request integrity)
+	expectedSig := computeHMACSignature(secret, timestampStr, nonce, r.Method, r.URL.Path, bodyBytes)
 	if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
 		response.Error(r, consts.ErrUnauthorized)
 		return
 	}
 
-	// Inject context variables
+	// Inject context variables using typed keys
 	ctx := r.Context()
-	ctx = context.WithValue(ctx, "openAppId", app.Id)
-	ctx = context.WithValue(ctx, "openTenantId", app.TenantId)
-	ctx = context.WithValue(ctx, "openPermissions", app.Permissions)
-	ctx = context.WithValue(ctx, "openIsSandbox", app.IsSandbox)
+	ctx = context.WithValue(ctx, ctxKeyOpenAppID, app.Id)
+	ctx = context.WithValue(ctx, ctxKeyOpenTenantID, app.TenantId)
+	ctx = context.WithValue(ctx, ctxKeyOpenPermissions, app.Permissions)
+	ctx = context.WithValue(ctx, ctxKeyOpenIsSandbox, app.IsSandbox)
 	r.SetCtx(ctx)
 
 	r.Middleware.Next()
 }
 
-func computeHMACSignature(secret, timestamp, nonce, method, path string) string {
-	message := fmt.Sprintf("%s\n%s\n%s\n%s", timestamp, nonce, method, path)
+func computeHMACSignature(secret, timestamp, nonce, method, path string, body []byte) string {
+	bodyHash := sha256.Sum256(body)
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	message := fmt.Sprintf("%s\n%s\n%s\n%s\n%s", timestamp, nonce, method, path, bodyHashHex)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(message))
 	return hex.EncodeToString(mac.Sum(nil))
@@ -143,14 +160,14 @@ func getOpenAppSecret(ctx context.Context, appID int64) (string, error) {
 func getEncKey(ctx context.Context) []byte {
 	hexKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String()
 	if hexKey == "" {
-		hexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		panic("crypto.encryptionKey is not configured — refusing to start with weak key")
 	}
 	return crypto.MustGetEncryptionKey(hexKey)
 }
 
 // GetOpenTenantID extracts the tenant ID injected by OpenPlatformAuth middleware.
 func GetOpenTenantID(ctx context.Context) int64 {
-	val := ctx.Value("openTenantId")
+	val := ctx.Value(ctxKeyOpenTenantID)
 	if val != nil {
 		if id, ok := val.(int64); ok {
 			return id
@@ -161,7 +178,7 @@ func GetOpenTenantID(ctx context.Context) int64 {
 
 // GetOpenAppID extracts the app ID injected by OpenPlatformAuth middleware.
 func GetOpenAppID(ctx context.Context) int64 {
-	val := ctx.Value("openAppId")
+	val := ctx.Value(ctxKeyOpenAppID)
 	if val != nil {
 		if id, ok := val.(int64); ok {
 			return id

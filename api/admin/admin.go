@@ -62,7 +62,6 @@ type IAdminV1 interface {
 	ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRefreshReq) (res *v1.ChannelOAuthRefreshRes, err error)
 	ChannelTest(ctx context.Context, req *v1.ChannelTestReq) (res *v1.ChannelTestRes, err error)
 	CronJobList(ctx context.Context, req *v1.CronJobListReq) (res *v1.CronJobListRes, err error)
-	CronJobExecutions(ctx context.Context, req *v1.CronJobExecutionsReq) (res *v1.CronJobExecutionsRes, err error)
 	CronJobTrigger(ctx context.Context, req *v1.CronJobTriggerReq) (res *v1.CronJobTriggerRes, err error)
 	AdminDashboard(ctx context.Context, req *v1.AdminDashboardReq) (res *v1.AdminDashboardRes, err error)
 	AdminDashboardTrends(ctx context.Context, req *v1.AdminDashboardTrendsReq) (res *v1.AdminDashboardTrendsRes, err error)

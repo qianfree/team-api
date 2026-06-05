@@ -8,6 +8,7 @@ import (
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -198,10 +199,13 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 		UpstreamModel string `json:"upstream_model"`
 		Enabled       bool   `json:"enabled"`
 	}
-	dao.ChnAbilities.Ctx(ctx).
+	err = dao.ChnAbilities.Ctx(ctx).
 		Fields("model_name, upstream_model, enabled").
 		Where("channel_id", req.ID).
 		Scan(&abilities)
+	if err != nil {
+		return nil, err
+	}
 	for _, ab := range abilities {
 		_, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
 			ChannelId:     newID,
@@ -355,12 +359,21 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 
 // DeleteChannel 删除渠道
 func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*v1.ChannelDeleteRes, error) {
-	// 先删除关联的能力和 Key
-	dao.ChnAbilities.Ctx(ctx).Where("channel_id", req.ID).Delete()
-	dao.ChnChannelKeys.Ctx(ctx).Where("channel_id", req.ID).Delete()
-	dao.ChnHealthScores.Ctx(ctx).Where("channel_id", req.ID).Delete()
-
-	_, err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Delete()
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Model("chn_abilities").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+			return err
+		}
+		if _, err := tx.Model("chn_channel_keys").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+			return err
+		}
+		if _, err := tx.Model("chn_health_scores").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+			return err
+		}
+		if _, err := tx.Model("chn_channels").Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -414,10 +427,13 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Name           string      `json:"name"`
 		TokenExpiresAt *gtime.Time `json:"token_expires_at"`
 	}
-	dao.ChnChannelKeys.Ctx(ctx).
+	err = dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", req.ID).
 		Fields("key_type, status, name, token_expires_at").
 		Scan(&keyInfo)
+	if err != nil {
+		return nil, err
+	}
 	if keyInfo == nil {
 		return nil, common.NewNotFoundError("密钥")
 	}
@@ -476,20 +492,24 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 
 // SetChannelAbilities 设置渠道模型能力
 func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbilityBatchReq) (*v1.ChannelAbilityBatchRes, error) {
-	// 先删除旧的能力
-	dao.ChnAbilities.Ctx(ctx).Where("channel_id", req.ChannelID).Delete()
-
-	// 批量插入新能力
-	for _, ab := range req.Abilities {
-		_, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
-			ChannelId:     req.ChannelID,
-			ModelName:     ab.ModelName,
-			UpstreamModel: ab.UpstreamModel,
-			Enabled:       ab.Enabled,
-		})
-		if err != nil {
-			return nil, err
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Model("chn_abilities").Ctx(ctx).Where("channel_id", req.ChannelID).Delete(); err != nil {
+			return err
 		}
+		for _, ab := range req.Abilities {
+			if _, err := tx.Model("chn_abilities").Ctx(ctx).Insert(do.ChnAbilities{
+				ChannelId:     req.ChannelID,
+				ModelName:     ab.ModelName,
+				UpstreamModel: ab.UpstreamModel,
+				Enabled:       ab.Enabled,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return nil, nil
@@ -601,8 +621,7 @@ func defaultProviderURL(t int) string {
 // GetChannelHealthTrend 获取渠道健康趋势数据
 func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error) {
 	var points []v1.HealthTrendPoint
-	err := g.DB().Ctx(ctx).
-		Model("chn_health_snapshots").
+	err := dao.ChnHealthSnapshots.Ctx(ctx).
 		Fields("snapshot_at, health_score, success_rate, latency_ms, stability_score, consecutive_failures").
 		Where("channel_id", req.ID).
 		Where("snapshot_at >= ?", gtime.Now().Add(-time.Duration(req.Hours)*time.Hour)).
@@ -663,6 +682,7 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 				HealthScore *float64    `json:"health_score"`
 			}
 			if err := query.Fields(channelFields).OrderDesc("chn_channels.priority").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+				g.Log().Errorf(ctx, "ExportChannels: query batch at offset %d failed: %v", offset, err)
 				return
 			}
 			for _, ch := range batch {

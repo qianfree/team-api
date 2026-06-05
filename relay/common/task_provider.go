@@ -21,7 +21,7 @@ type TaskDataProvider interface {
 	GetTaskByPublicID(ctx context.Context, publicTaskID string) (*AsyncTask, error)
 
 	// GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询（客户端查询）
-	GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64) (*AsyncTask, error)
+	GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64, tenantID int64) (*AsyncTask, error)
 
 	// GetNonTerminalTasks 获取所有非终态任务（轮询用）
 	GetNonTerminalTasks(ctx context.Context, limit int) ([]*AsyncTask, error)

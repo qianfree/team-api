@@ -10,6 +10,8 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 
 	"github.com/gogf/gf/v2/os/gtime"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // InvitationList returns a paginated list of invitation records for the tenant.
@@ -103,6 +105,11 @@ func (s *sTenant) InvitationList(ctx context.Context, req *v1.TenantInvitationLi
 
 // RevokeInvitation revokes a pending invitation by setting used_by_user_id = -1.
 func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitationRevokeReq) (*v1.TenantInvitationRevokeRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	var inv *struct {
@@ -126,7 +133,9 @@ func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitation
 	_, err = dao.TntInvitations.Ctx(ctx).
 		Where("id", req.Id).
 		Where("tenant_id", tenantID).
-		Data("used_by_user_id", -1).
+		Data(do.TntInvitations{
+			UsedByUserId: -1,
+		}).
 		Update()
 	if err != nil {
 		return nil, err

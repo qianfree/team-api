@@ -129,7 +129,7 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	// Get old email for notification
 	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
-		Where("id", userID).Scan(&user)
+		Where("id", userID).Where("tenant_id", tenantID).Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}

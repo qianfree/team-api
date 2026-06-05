@@ -57,7 +57,9 @@ func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Dura
 	if ttlSeconds > 0 {
 		_, _ = g.Redis().Do(ctx, "SETEX", fullKey, ttlSeconds, string(jsonBytes))
 	} else {
-		_, _ = g.Redis().Do(ctx, "SET", fullKey, string(jsonBytes))
+		// 兜底：ttl ≤ 0 时使用 24h 兜底 TTL，避免产生永久 key
+		g.Log().Warningf(ctx, "[Cache] TTL <= 0 for key=%s, using fallback 24h TTL", fullKey)
+		_, _ = g.Redis().Do(ctx, "SETEX", fullKey, 86400, string(jsonBytes))
 	}
 }
 

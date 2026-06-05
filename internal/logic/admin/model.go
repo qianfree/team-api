@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -187,23 +188,23 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		return nil, gerror.NewCode(gcode.New(consts.CodeModelNameExists, consts.MsgModelNameExists, nil), consts.MsgModelNameExists)
 	}
 
-	insertData := g.Map{
-		"model_id":           req.ModelId,
-		"model_name":         req.ModelName,
-		"category":           req.Category,
-		"max_context_tokens": req.MaxContext,
-		"max_output_tokens":  req.MaxOutput,
-		"description":        req.Description,
-		"status":             "active",
+	insertData := do.MdlModels{
+		ModelId:          req.ModelId,
+		ModelName:        req.ModelName,
+		Category:         req.Category,
+		Status:           "active",
+		MaxContextTokens: req.MaxContext,
+		MaxOutputTokens:  req.MaxOutput,
+		Description:      req.Description,
 	}
 	if req.Tags != nil {
-		insertData["tags"] = req.Tags
+		insertData.Tags = req.Tags
 	} else {
-		insertData["tags"] = []string{}
+		insertData.Tags = []string{}
 	}
 	if req.Capabilities != nil {
 		capJson, _ := json.Marshal(req.Capabilities)
-		insertData["capabilities"] = string(capJson)
+		insertData.Capabilities = string(capJson)
 	}
 
 	id, err := dao.MdlModels.Ctx(ctx).InsertAndGetId(insertData)
@@ -297,12 +298,7 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 	}
 
 	if capUpdate != nil {
-		_, err = dao.MdlModels.Ctx(ctx).Where("id", req.ID).Data(do.MdlModels{
-			Capabilities: *capUpdate,
-		}).Update()
-		if err != nil {
-			return nil, err
-		}
+		data.Capabilities = *capUpdate
 	}
 
 	_, err = dao.MdlModels.Ctx(ctx).Where("id", req.ID).Data(data).Update()
@@ -367,10 +363,7 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 }
 
 func parseTagsArray(tags string) []string {
-	if tags == "" {
-		return nil
-	}
-	return nil
+	return parsePgArray(tags)
 }
 
 func parseCapabilities(raw string) map[string]bool {
@@ -555,7 +548,7 @@ func fetchModelsDevSource(ctx context.Context, modelName string) *v1.OfficialPri
 }
 
 func roundTo2(v float64) float64 {
-	return float64(int(v*100+0.5)) / 100
+	return math.Round(v*100) / 100
 }
 
 // FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
@@ -639,6 +632,7 @@ func (s *sAdmin) ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.
 				CreatedAt        *gtime.Time `json:"created_at"`
 			}
 			if err := query.Fields(modelFields).OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+				g.Log().Errorf(ctx, "ExportModels: query batch at offset %d failed: %v", offset, err)
 				return
 			}
 			for _, m := range batch {

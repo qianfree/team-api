@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/qianfree/team-api/internal/dao"
 	"time"
@@ -24,6 +26,7 @@ type ApiKeyInfo struct {
 	Status    string
 	KeyType   string // personal 或 project
 	ProjectID int64  // 项目密钥关联的项目 ID，个人密钥为 0
+	KeyHash   string // SHA-256(rawKey)，缓存命中时用于全键校验
 }
 
 // apiKeyCache API Key 缓存实例（TTL 60s）
@@ -39,11 +42,17 @@ func DefaultChannelSettings() common.ChannelSettings {
 
 // GetEncryptionKey 获取加密密钥
 func GetEncryptionKey() []byte {
-	key := g.Cfg().MustGet(context.Background(), "security.encryptionKey").String()
+	key := g.Cfg().MustGet(context.Background(), "crypto.encryptionKey").String()
 	if key == "" {
 		key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	}
 	return uc.MustGetEncryptionKey(key)
+}
+
+// apiKeyHash 计算 API Key 的 SHA-256 哈希
+func apiKeyHash(rawKey string) string {
+	h := sha256.Sum256([]byte(rawKey))
+	return hex.EncodeToString(h[:])
 }
 
 // ValidateApiKey 验证 API Key 并返回认证信息
@@ -54,10 +63,11 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 	}
 
 	prefix := rawKey[:12]
+	keyHash := apiKeyHash(rawKey)
 
-	// 尝试从缓存获取
+	// 尝试从缓存获取（需校验完整 key 哈希，防止前缀碰撞）
 	var cached ApiKeyInfo
-	if apiKeyCache.GetJSON(ctx, prefix, &cached) {
+	if apiKeyCache.GetJSON(ctx, prefix, &cached) && cached.KeyHash == keyHash {
 		if cached.Status == "active" {
 			return &cached, nil
 		}
@@ -114,6 +124,7 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 				Status:    "expired",
 				KeyType:   k.KeyType,
 				ProjectID: k.ProjectID,
+				KeyHash:   keyHash,
 			}
 			apiKeyCache.Set(ctx, prefix, info)
 			return nil, consts.ErrKeyExpired
@@ -139,6 +150,7 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 			Status:    "active",
 			KeyType:   k.KeyType,
 			ProjectID: k.ProjectID,
+			KeyHash:   keyHash,
 		}
 
 		apiKeyCache.Set(ctx, prefix, info)
