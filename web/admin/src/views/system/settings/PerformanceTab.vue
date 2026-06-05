@@ -17,19 +17,19 @@ function set(key: string, v: number | undefined): void {
 			<div class="group-title">QPS 限制</div>
 			<div class="compact-row">
 				<label>系统级</label>
-				<AInputNumber :model-value="num('global_qps_limit')" @change="(v: number | undefined) => set('global_qps_limit', v)" :min="100" :max="1000000" />
+				<AInputNumber :model-value="num('global_qps_limit')" @change="(v: number | undefined) => set('global_qps_limit', v)" :min="0" />
 			</div>
 			<div class="compact-row">
 				<label>租户级</label>
-				<AInputNumber :model-value="num('tenant_qps_limit')" @change="(v: number | undefined) => set('tenant_qps_limit', v)" :min="10" :max="100000" />
+				<AInputNumber :model-value="num('tenant_qps_limit')" @change="(v: number | undefined) => set('tenant_qps_limit', v)" :min="0" />
 			</div>
 			<div class="compact-row">
 				<label>用户级</label>
-				<AInputNumber :model-value="num('user_qps_limit')" @change="(v: number | undefined) => set('user_qps_limit', v)" :min="1" :max="10000" />
+				<AInputNumber :model-value="num('user_qps_limit')" @change="(v: number | undefined) => set('user_qps_limit', v)" :min="0" />
 			</div>
 			<div class="compact-row">
 				<label>Key 级</label>
-				<AInputNumber :model-value="num('key_qps_limit')" @change="(v: number | undefined) => set('key_qps_limit', v)" :min="1" :max="10000" />
+				<AInputNumber :model-value="num('key_qps_limit')" @change="(v: number | undefined) => set('key_qps_limit', v)" :min="0" />
 			</div>
 		</div>
 
@@ -38,11 +38,11 @@ function set(key: string, v: number | undefined): void {
 			<div class="group-title">并发限制</div>
 			<div class="compact-row">
 				<label>系统级上限</label>
-				<AInputNumber :model-value="num('global_concurrency_limit')" @change="(v: number | undefined) => set('global_concurrency_limit', v)" :min="10" :max="100000" />
+				<AInputNumber :model-value="num('global_concurrency_limit')" @change="(v: number | undefined) => set('global_concurrency_limit', v)" :min="0" />
 			</div>
 			<div class="compact-row">
 				<label>租户级上限</label>
-				<AInputNumber :model-value="num('tenant_concurrency_limit')" @change="(v: number | undefined) => set('tenant_concurrency_limit', v)" :min="1" :max="10000" />
+				<AInputNumber :model-value="num('tenant_concurrency_limit')" @change="(v: number | undefined) => set('tenant_concurrency_limit', v)" :min="0" />
 			</div>
 		</div>
 

@@ -9,6 +9,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/admin"
+	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -58,8 +59,10 @@ func AutoTestChannels(ctx context.Context) {
 		}
 	}
 
-	// 2. 尝试恢复自动禁用的渠道
-	testAndRecoverDisabledChannels(ctx)
+	// 2. 尝试恢复自动禁用的渠道（受独立开关控制）
+	if common.Config().GetBool(ctx, "channel_auto_test_recovery_enabled") {
+		testAndRecoverDisabledChannels(ctx)
+	}
 }
 
 // testAndRecoverDisabledChannels 测试自动禁用的渠道，测试通过则恢复

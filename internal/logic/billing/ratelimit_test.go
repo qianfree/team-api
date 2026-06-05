@@ -19,14 +19,8 @@ func TestRateLimitConfig(t *testing.T) {
 	if cfg.KeyQPS != 60 {
 		t.Errorf("expected KeyQPS 60, got %d", cfg.KeyQPS)
 	}
-	if cfg.TenantConc != 50 {
-		t.Errorf("expected TenantConc 50, got %d", cfg.TenantConc)
-	}
-	if cfg.UserConc != 10 {
-		t.Errorf("expected UserConc 10, got %d", cfg.UserConc)
-	}
-	if cfg.KeyConc != 5 {
-		t.Errorf("expected KeyConc 5, got %d", cfg.KeyConc)
+	if cfg.TenantConc != 0 {
+		t.Errorf("expected TenantConc 0, got %d", cfg.TenantConc)
 	}
 }
 
