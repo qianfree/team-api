@@ -118,7 +118,9 @@ var (
 				return task.SnapshotHealthScores(ctx)
 			})
 			cs.Register("channel_auto_test", "*/5 * * * *", func(ctx context.Context) error {
-				task.AutoTestChannels(ctx)
+				if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
+					task.AutoTestChannels(ctx)
+				}
 				return nil
 			})
 			cs.Register("model_sunset_check", "0 0 * * *", func(ctx context.Context) error {

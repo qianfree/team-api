@@ -243,7 +243,8 @@ func (s *ConfigService) UpdateCategory(ctx context.Context, category string, val
 	for key, value := range values {
 		def, ok := defMap[key]
 		if !ok {
-			return fmt.Errorf("配置项 %s 不属于分类 %s", key, category)
+			// 注册表中已移除的配置项，跳过（数据库中可能残留旧行）
+			continue
 		}
 		if def.Sensitive && value == "******" {
 			continue
