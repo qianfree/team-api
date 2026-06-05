@@ -6,6 +6,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -15,18 +16,20 @@ import (
 func (s *sAdmin) ListAllFeedbacks(ctx context.Context, req *v1.FeedbackListAllReq) (*v1.FeedbackListAllRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	query := g.DB().Model("spt_feedbacks f").Ctx(ctx)
+	query := dao.SptFeedbacks.Ctx(ctx).
+		LeftJoin("tnt_tenants tt", "spt_feedbacks.tenant_id = tt.id").
+		LeftJoin("tnt_users tu", "spt_feedbacks.user_id = tu.id")
 	if req.Status != "" {
-		query = query.Where("f.status", req.Status)
+		query = query.Where("spt_feedbacks.status", req.Status)
 	}
 	if req.Category != "" {
-		query = query.Where("f.category", req.Category)
+		query = query.Where("spt_feedbacks.category", req.Category)
 	}
 	if req.TenantID > 0 {
-		query = query.Where("f.tenant_id", req.TenantID)
+		query = query.Where("spt_feedbacks.tenant_id", req.TenantID)
 	}
 	if req.Priority != "" {
-		query = query.Where("f.priority", req.Priority)
+		query = query.Where("spt_feedbacks.priority", req.Priority)
 	}
 
 	type feedbackRow struct {
@@ -49,10 +52,8 @@ func (s *sAdmin) ListAllFeedbacks(ctx context.Context, req *v1.FeedbackListAllRe
 	var total int
 	rows := make([]feedbackRow, 0)
 	err := query.
-		LeftJoin("tnt_tenants tt", "f.tenant_id = tt.id").
-		LeftJoin("tnt_users tu", "f.user_id = tu.id").
-		Fields("f.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name").
-		OrderDesc("f.created_at").
+		Fields("spt_feedbacks.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name").
+		OrderDesc("spt_feedbacks.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&rows, &total, false)
 	if err != nil {
@@ -103,16 +104,16 @@ func (s *sAdmin) ReplyToFeedback(ctx context.Context, req *v1.FeedbackReplyReq) 
 		return nil, common.NewBusinessError(10063, "反馈不存在")
 	}
 
-	updateData := g.Map{
-		"admin_reply":    req.Reply,
-		"admin_reply_by": common.GetCtxUserID(ctx),
-		"admin_reply_at": gtime.Now(),
+	updateData := do.SptFeedbacks{
+		AdminReply:   req.Reply,
+		AdminReplyBy: common.GetCtxUserID(ctx),
+		AdminReplyAt: gtime.Now(),
 	}
 	if req.Status != "" {
-		updateData["status"] = req.Status
+		updateData.Status = req.Status
 	}
 	if req.Resolution != "" {
-		updateData["resolution"] = req.Resolution
+		updateData.Resolution = req.Resolution
 	}
 
 	_, err = dao.SptFeedbacks.Ctx(ctx).
@@ -152,9 +153,9 @@ func (s *sAdmin) UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdat
 		return nil, common.NewBusinessError(10063, "反馈不存在")
 	}
 
-	updateData := g.Map{"status": req.Status}
+	updateData := do.SptFeedbacks{Status: req.Status}
 	if req.Priority != "" {
-		updateData["priority"] = req.Priority
+		updateData.Priority = req.Priority
 	}
 
 	_, err = dao.SptFeedbacks.Ctx(ctx).
@@ -206,10 +207,13 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		Count    int    `json:"count" orm:"count"`
 	}
 	var catCounts []catRow
-	dao.SptFeedbacks.Ctx(ctx).
+	err = dao.SptFeedbacks.Ctx(ctx).
 		Fields("category, COUNT(*) as count").
 		Group("category").
 		Scan(&catCounts)
+	if err != nil {
+		g.Log().Warningf(ctx, "GetFeedbackStats category query failed: %v", err)
+	}
 	for _, r := range catCounts {
 		stats.ByCategory[r.Category] = r.Count
 	}
@@ -218,12 +222,15 @@ func (s *sAdmin) GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq)
 		Date  string `json:"date" orm:"date"`
 		Count int    `json:"count" orm:"count"`
 	}
-	dao.SptFeedbacks.Ctx(ctx).
+	err = dao.SptFeedbacks.Ctx(ctx).
 		Fields("DATE(created_at) as date, COUNT(*) as count").
 		Where("created_at >= NOW() - INTERVAL '30 days'").
 		Group("DATE(created_at)").
 		OrderAsc("date").
 		Scan(&stats.RecentTrend)
+	if err != nil {
+		g.Log().Warningf(ctx, "GetFeedbackStats trend query failed: %v", err)
+	}
 
 	return stats, nil
 }

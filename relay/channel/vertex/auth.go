@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // serviceAccountKey Google 服务账号 JSON 密钥结构
@@ -41,9 +43,12 @@ type tokenEntry struct {
 // tokenCache 全局令牌缓存（key 为 client_email）
 var tokenCache sync.Map
 
+// sfGroup 合并并发令牌刷新请求
+var sfGroup singleflight.Group
+
 // getVertexAccessToken 获取 Vertex AI 访问令牌。
 // 通过服务账号 JSON 密钥签发 JWT，然后通过 Google OAuth2 端点交换访问令牌。
-// 令牌缓存在 sync.Map 中，未过期时复用。
+// 令牌缓存在 sync.Map 中，未过期时复用。并发刷新通过 singleflight 合并。
 func getVertexAccessToken(serviceAccountJSON string) (string, error) {
 	var key serviceAccountKey
 	if err := json.Unmarshal([]byte(serviceAccountJSON), &key); err != nil {
@@ -58,32 +63,44 @@ func getVertexAccessToken(serviceAccountJSON string) (string, error) {
 		}
 	}
 
-	// 解析 RSA 私钥
-	rsaKey, err := parseRSAPrivateKey(key.PrivateKey)
-	if err != nil {
-		return "", fmt.Errorf("parse private key failed: %w", err)
-	}
+	// 使用 singleflight 合并并发刷新
+	val, err, _ := sfGroup.Do(key.ClientEmail, func() (any, error) {
+		// 双重检查：进入 singleflight 后再次检查缓存
+		if cached, ok := tokenCache.Load(key.ClientEmail); ok {
+			entry := cached.(*tokenEntry)
+			if time.Now().Before(entry.expiry.Add(-60 * time.Second)) {
+				return entry.accessToken, nil
+			}
+		}
 
-	// 创建 JWT
-	now := time.Now()
-	jwtToken, err := createSignedJWT(key.ClientEmail, rsaKey, now)
-	if err != nil {
-		return "", fmt.Errorf("create JWT failed: %w", err)
-	}
+		rsaKey, err := parseRSAPrivateKey(key.PrivateKey)
+		if err != nil {
+			return "", fmt.Errorf("parse private key failed: %w", err)
+		}
 
-	// 交换访问令牌
-	accessToken, expiresIn, err := exchangeJWTForToken(jwtToken)
-	if err != nil {
-		return "", fmt.Errorf("exchange token failed: %w", err)
-	}
+		now := time.Now()
+		jwtToken, err := createSignedJWT(key.ClientEmail, rsaKey, now)
+		if err != nil {
+			return "", fmt.Errorf("create JWT failed: %w", err)
+		}
 
-	// 缓存令牌
-	tokenCache.Store(key.ClientEmail, &tokenEntry{
-		accessToken: accessToken,
-		expiry:      now.Add(time.Duration(expiresIn) * time.Second),
+		accessToken, expiresIn, err := exchangeJWTForToken(jwtToken)
+		if err != nil {
+			return "", fmt.Errorf("exchange token failed: %w", err)
+		}
+
+		tokenCache.Store(key.ClientEmail, &tokenEntry{
+			accessToken: accessToken,
+			expiry:      now.Add(time.Duration(expiresIn) * time.Second),
+		})
+
+		return accessToken, nil
 	})
+	if err != nil {
+		return "", err
+	}
 
-	return accessToken, nil
+	return val.(string), nil
 }
 
 // parseServiceAccountProjectID 从服务账号 JSON 中提取 project_id

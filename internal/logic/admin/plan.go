@@ -40,17 +40,17 @@ func (s *sAdmin) ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanLi
 
 // GetPlan 获取套餐详情
 func (s *sAdmin) GetPlan(ctx context.Context, req *v1.PlanDetailReq) (*v1.PlanDetailRes, error) {
-	var plan v1.PlanItem
+	var plan *v1.PlanItem
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", req.Id).
 		Scan(&plan)
-	if err != nil {
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if plan.Id == 0 {
-		return nil, common.NewNotFoundError("plan")
+	if plan == nil {
+		return nil, common.NewNotFoundError("套餐")
 	}
-	return &v1.PlanDetailRes{Data: &plan}, nil
+	return &v1.PlanDetailRes{Data: plan}, nil
 }
 
 // CreatePlan 创建套餐
@@ -78,16 +78,62 @@ func (s *sAdmin) CreatePlan(ctx context.Context, req *v1.PlanCreateReq) (*v1.Pla
 
 // UpdatePlan 更新套餐
 func (s *sAdmin) UpdatePlan(ctx context.Context, req *v1.PlanUpdateReq) (*v1.PlanUpdateRes, error) {
+	data := do.PlnPlans{}
+	allowedFields := map[string]bool{
+		"name": true, "identifier": true, "description": true,
+		"monthly_price": true, "yearly_price": true,
+		"monthly_quota_tokens": true, "allowed_models": true,
+		"is_recommended": true, "sort_order": true, "status": true,
+	}
+	for k, v := range req.Update {
+		if !allowedFields[k] {
+			continue
+		}
+		switch k {
+		case "name":
+			data.Name = v.(string)
+		case "identifier":
+			data.Identifier = v.(string)
+		case "description":
+			data.Description = v.(string)
+		case "monthly_price":
+			data.MonthlyPrice = v
+		case "yearly_price":
+			data.YearlyPrice = v
+		case "monthly_quota_tokens":
+			data.MonthlyQuotaTokens = v
+		case "allowed_models":
+			if models, ok := v.([]string); ok {
+				data.AllowedModels = models
+			} else if models, ok := v.([]interface{}); ok {
+				result := make([]string, len(models))
+				for i, m := range models {
+					result[i] = m.(string)
+				}
+				data.AllowedModels = result
+			}
+		case "is_recommended":
+			data.IsRecommended = v
+		case "sort_order":
+			data.SortOrder = v
+		case "status":
+			data.Status = v.(string)
+		}
+	}
+
 	result, err := dao.PlnPlans.Ctx(ctx).
 		Where("id", req.Id).
-		Data(req.Update).
+		Data(data).
 		Update()
 	if err != nil {
 		return nil, err
 	}
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
 	if rows == 0 {
-		return nil, common.NewNotFoundError("plan")
+		return nil, common.NewNotFoundError("套餐")
 	}
 	return &v1.PlanUpdateRes{}, nil
 }

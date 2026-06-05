@@ -102,6 +102,13 @@ func AutoInitAdmin(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// isDuplicateKeyError checks if the error is a PostgreSQL unique constraint violation.
+// PostgreSQL error code 23505 = unique_violation.
+// NOTE: Uses string matching on the error message. Consider switching to
+// pq.Error type assertion if github.com/lib/pq becomes a direct dependency.
 func isDuplicateKeyError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "23505")
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate key")
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -46,7 +47,7 @@ func (s *sAdmin) DataGovernanceExport(ctx context.Context, req *v1.DataGovernanc
 	count, err := dao.TskTasks.Ctx(ctx).
 		Where("handler", "data_export").
 		Where("status", "pending").
-		Where("payload->>'tenant_id'", fmt.Sprintf("%d", req.TenantID)).
+		Where("(payload->>'tenant_id')::bigint = ?", req.TenantID).
 		Count()
 	if err != nil {
 		return nil, err
@@ -80,7 +81,7 @@ func (s *sAdmin) DataGovernanceDeletion(ctx context.Context, req *v1.DataGoverna
 	count, err := dao.TskTasks.Ctx(ctx).
 		Where("handler", "data_deletion_request").
 		Where("status IN (?)", []string{"pending", "running"}).
-		Where("payload->>'tenant_id'", fmt.Sprintf("%d", req.TenantID)).
+		Where("(payload->>'tenant_id')::bigint = ?", req.TenantID).
 		Count()
 	if err != nil {
 		return nil, err
@@ -193,13 +194,30 @@ func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int)
 
 	cutoff := time.Now().AddDate(0, 0, -days)
 	batchSize := 5000
+
+	// Build safe DELETE SQL via switch/case to avoid fmt.Sprintf on table/column names.
+	// The whitelist above guarantees table and dateColumn are from a trusted set.
+	var deleteSQL string
+	switch table {
+	case "aud_request_logs":
+		deleteSQL = "DELETE FROM aud_request_logs WHERE id IN (SELECT id FROM aud_request_logs WHERE created_at < ? LIMIT ?)"
+	case "aud_operation_logs":
+		deleteSQL = "DELETE FROM aud_operation_logs WHERE id IN (SELECT id FROM aud_operation_logs WHERE created_at < ? LIMIT ?)"
+	case "aud_sensitive_access_logs":
+		deleteSQL = "DELETE FROM aud_sensitive_access_logs WHERE id IN (SELECT id FROM aud_sensitive_access_logs WHERE created_at < ? LIMIT ?)"
+	default:
+		return fmt.Errorf("invalid table for cleanup: %s", table)
+	}
+
 	for {
-		result, err := g.DB().Ctx(ctx).Exec(ctx,
-			fmt.Sprintf("DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE %s < $1 LIMIT %d)", table, table, dateColumn, batchSize), cutoff)
+		result, err := common.GetAuditDB().Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
 		if err != nil {
 			return err
 		}
-		rowsAffected, _ := result.RowsAffected()
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
 		if rowsAffected == 0 {
 			break
 		}
@@ -224,16 +242,26 @@ func cleanupDeactivatedTenants(ctx context.Context) error {
 	}
 	for _, t := range tenants {
 		g.Log().Infof(ctx, "cleaning data for deactivated tenant %d (status=%s)", t.ID, t.StatusCode)
-		if _, err := dao.TntUsers.Ctx(ctx).Where("tenant_id", t.ID).
-			Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", t.ID)}).Update(); err != nil {
-			return gerror.Wrapf(err, "anonymize users for tenant %d", t.ID)
-		}
-		if _, err := dao.ApiKeys.Ctx(ctx).Where("tenant_id", t.ID).Delete(); err != nil {
-			return gerror.Wrapf(err, "delete api keys for tenant %d", t.ID)
-		}
-		if _, err := dao.TntTenants.Ctx(ctx).Where("id", t.ID).
-			Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update(); err != nil {
-			return gerror.Wrapf(err, "update data removal for tenant %d", t.ID)
+
+		// Use transaction to ensure atomicity: if any step fails, the tenant's data
+		// remains consistent (no partial anonymization/deletion).
+		err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+			tenantID := t.ID
+			if _, err := tx.Model("tnt_users").Ctx(ctx).Where("tenant_id", tenantID).
+				Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", tenantID)}).Update(); err != nil {
+				return gerror.Wrapf(err, "anonymize users for tenant %d", tenantID)
+			}
+			if _, err := tx.Model("api_keys").Ctx(ctx).Where("tenant_id", tenantID).Delete(); err != nil {
+				return gerror.Wrapf(err, "delete api keys for tenant %d", tenantID)
+			}
+			if _, err := tx.Model("tnt_tenants").Ctx(ctx).Where("id", tenantID).
+				Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update(); err != nil {
+				return gerror.Wrapf(err, "update data removal for tenant %d", tenantID)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil

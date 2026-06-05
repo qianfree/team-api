@@ -130,7 +130,9 @@ func HandleTaskSubmit(
 	// 7. 构建并发送请求
 	requestBody, err := adaptor.BuildRequestBody(ctx, info, body)
 	if err != nil {
-		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: build request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
 		return
@@ -138,7 +140,9 @@ func HandleTaskSubmit(
 
 	resp, err := adaptor.DoRequest(ctx, info, requestBody)
 	if err != nil {
-		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+err.Error(), "")
 		return
@@ -150,7 +154,9 @@ func HandleTaskSubmit(
 	// 8. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(ctx, resp, info)
 	if taskErr != nil {
-		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+		}
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
@@ -214,7 +220,9 @@ func HandleTaskSubmit(
 	}
 
 	if err := dataProvider.CreateTask(ctx, task); err != nil {
-		billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: create task record failed, publicTaskID=%s, model=%s, err=%v", publicTaskID, modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "create task record failed: "+err.Error(), "")
 		return
@@ -240,7 +248,7 @@ func HandleTaskFetch(
 	rc *TaskRelayContext,
 	dataProvider common.TaskDataProvider,
 ) {
-	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID)
+	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID, rc.TenantID)
 	if err != nil {
 		g.Log().Errorf(ctx, "HandleTaskFetch: query task failed, publicTaskID=%s, err=%v", publicTaskID, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "query task failed", "")
@@ -300,8 +308,10 @@ func generatePublicTaskID() string {
 }
 
 func randomHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
+	b := make([]byte, (n+1)/2)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)[:n]
 }
 
@@ -313,7 +323,7 @@ func HandleMjImageProxy(
 	dataProvider common.TaskDataProvider,
 	writer http.ResponseWriter,
 ) {
-	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID)
+	task, err := dataProvider.GetTaskByPublicIDAndUser(ctx, publicTaskID, rc.UserID, rc.TenantID)
 	if err != nil {
 		g.Log().Errorf(ctx, "HandleMjImageProxy: query task failed, publicTaskID=%s, err=%v", publicTaskID, err)
 		writeTaskError(writer, http.StatusInternalServerError, "query task failed", "")

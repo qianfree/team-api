@@ -53,9 +53,10 @@ func (s *sAdmin) ErrorLogList(ctx context.Context, req *v1.ErrorLogListReq) (*v1
 	}
 
 	where := strings.Join(conditions, " AND ")
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 	items, total, err := queryPage(ctx,
 		"sys_error_logs", "*", where, "id DESC",
-		req.Page, req.PageSize, args...)
+		page, pageSize, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +67,8 @@ func (s *sAdmin) ErrorLogList(ctx context.Context, req *v1.ErrorLogListReq) (*v1
 	return &v1.ErrorLogListRes{
 		List:     items,
 		Total:    total,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		Page:     page,
+		PageSize: pageSize,
 	}, nil
 }
 

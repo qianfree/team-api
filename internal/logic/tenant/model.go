@@ -19,6 +19,78 @@ type pricingTierRow struct {
 	OutputPrice float64 `json:"output_price"`
 }
 
+// memberModelScopeNoAccess 表示成员无权访问任何模型的哨兵值
+const memberModelScopeNoAccess = -1
+
+// tenantModelPriceRow 显式分配模型的价格查询结果
+type tenantModelPriceRow struct {
+	ModelDBID                int64    `json:"model_db_id"`
+	ID                       int64    `json:"id"`
+	BillingMode              *string  `json:"billing_mode"`
+	PerRequestPrice          *float64 `json:"per_request_price"`
+	DiscountRatio            *float64 `json:"discount_ratio"`
+	MaxConcurrency           *int     `json:"max_concurrency"`
+	BaseInputPrice           float64  `json:"base_input_price"`
+	BaseOutputPrice          float64  `json:"base_output_price"`
+	BaseCacheReadPrice       float64  `json:"base_cache_read_price"`
+	BaseCacheCreationPrice   float64  `json:"base_cache_creation_price"`
+	BaseBillingMode          string   `json:"base_billing_mode"`
+	CustomInputPrice         *float64 `json:"custom_input_price"`
+	CustomOutputPrice        *float64 `json:"custom_output_price"`
+	CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
+	CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
+	CustomPricingTiers       string   `json:"custom_pricing_tiers"`
+}
+
+// groupPriceRow 分组模型的 base 价格查询结果
+type groupPriceRow struct {
+	ModelID         int64   `json:"model_id"`
+	BaseBillingMode string  `json:"base_billing_mode"`
+	BaseInputPrice  float64 `json:"base_input_price"`
+	BaseOutputPrice float64 `json:"base_output_price"`
+}
+
+// baseTierRow 阶梯定价查询结果
+type baseTierRow struct {
+	ModelId     int64   `json:"model_id"`
+	MinTokens   int64   `json:"min_tokens"`
+	MaxTokens   *int64  `json:"max_tokens"`
+	InputPrice  float64 `json:"input_price"`
+	OutputPrice float64 `json:"output_price"`
+}
+
+// memberScopeRow 成员模型范围查询结果
+type memberScopeRow struct {
+	ModelID   int64  `json:"model_id"`
+	ModelName string `json:"model_name"`
+}
+
+// priceInfo 显式模型的完整价格信息
+type priceInfo struct {
+	ID                       int64
+	BillingMode              *string
+	PerRequestPrice          *float64
+	DiscountRatio            *float64
+	MaxConcurrency           *int
+	BaseInputPrice           float64
+	BaseOutputPrice          float64
+	BaseCacheReadPrice       float64
+	BaseCacheCreationPrice   float64
+	BaseBillingMode          string
+	CustomInputPrice         *float64
+	CustomOutputPrice        *float64
+	CustomCacheReadPrice     *float64
+	CustomCacheCreationPrice *float64
+	CustomPricingTiers       string
+}
+
+// groupPriceInfo 分组模型的价格信息
+type groupPriceInfo struct {
+	BaseBillingMode string
+	BaseInputPrice  float64
+	BaseOutputPrice float64
+}
+
 // ListAvailableModels 获取租户可用的模型列表
 func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsReq) (*v1.TenantAvailableModelsRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
@@ -33,24 +105,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	}
 
 	// 查询显式分配模型的完整价格信息
-	var priceResults []struct {
-		ModelDBID                int64    `json:"model_db_id"`
-		ID                       int64    `json:"id"`
-		BillingMode              *string  `json:"billing_mode"`
-		PerRequestPrice          *float64 `json:"per_request_price"`
-		DiscountRatio            *float64 `json:"discount_ratio"`
-		MaxConcurrency           *int     `json:"max_concurrency"`
-		BaseInputPrice           float64  `json:"base_input_price"`
-		BaseOutputPrice          float64  `json:"base_output_price"`
-		BaseCacheReadPrice       float64  `json:"base_cache_read_price"`
-		BaseCacheCreationPrice   float64  `json:"base_cache_creation_price"`
-		BaseBillingMode          string   `json:"base_billing_mode"`
-		CustomInputPrice         *float64 `json:"custom_input_price"`
-		CustomOutputPrice        *float64 `json:"custom_output_price"`
-		CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
-		CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
-		CustomPricingTiers       string   `json:"custom_pricing_tiers"`
-	}
+	var priceResults []tenantModelPriceRow
 
 	explicitDBIDs := make([]int64, 0)
 	for _, m := range models {
@@ -60,32 +115,18 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	}
 
 	if len(explicitDBIDs) > 0 {
-		_ = dao.MdlTenantModels.Ctx(ctx).
+		err = dao.MdlTenantModels.Ctx(ctx).
 			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id AND p.min_tokens = 0").
 			Where("mdl_tenant_models.tenant_id", tenantID).
 			WhereIn("mdl_tenant_models.model_id", explicitDBIDs).
 			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
 			Scan(&priceResults)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 构建显式模型价格映射
-	type priceInfo struct {
-		ID                       int64
-		BillingMode              *string
-		PerRequestPrice          *float64
-		DiscountRatio            *float64
-		MaxConcurrency           *int
-		BaseInputPrice           float64
-		BaseOutputPrice          float64
-		BaseCacheReadPrice       float64
-		BaseCacheCreationPrice   float64
-		BaseBillingMode          string
-		CustomInputPrice         *float64
-		CustomOutputPrice        *float64
-		CustomCacheReadPrice     *float64
-		CustomCacheCreationPrice *float64
-		CustomPricingTiers       string
-	}
 	priceMap := make(map[int64]*priceInfo, len(priceResults))
 	for _, r := range priceResults {
 		priceMap[r.ModelDBID] = &priceInfo{
@@ -115,24 +156,17 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		}
 	}
 
-	type groupPriceInfo struct {
-		BaseBillingMode string  `json:"base_billing_mode"`
-		BaseInputPrice  float64 `json:"base_input_price"`
-		BaseOutputPrice float64 `json:"base_output_price"`
-	}
 	groupPriceMap := make(map[int64]*groupPriceInfo)
 	if len(groupDBIDs) > 0 {
-		var groupPrices []struct {
-			ModelID         int64   `json:"model_id"`
-			BaseBillingMode string  `json:"base_billing_mode"`
-			BaseInputPrice  float64 `json:"base_input_price"`
-			BaseOutputPrice float64 `json:"base_output_price"`
-		}
-		_ = dao.MdlPricing.Ctx(ctx).
+		var groupPrices []groupPriceRow
+		err = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", groupDBIDs).
 			Where("min_tokens", 0).
 			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price").
 			Scan(&groupPrices)
+		if err != nil {
+			return nil, err
+		}
 
 		for _, gp := range groupPrices {
 			groupPriceMap[gp.ModelID] = &groupPriceInfo{
@@ -158,14 +192,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 
 	baseTiersMap := make(map[int64][]v1.PricingTierItem)
 	if len(tieredModelDBIDs) > 0 {
-		var baseTiers []struct {
-			ModelId     int64   `json:"model_id"`
-			MinTokens   int64   `json:"min_tokens"`
-			MaxTokens   *int64  `json:"max_tokens"`
-			InputPrice  float64 `json:"input_price"`
-			OutputPrice float64 `json:"output_price"`
-		}
-		_ = dao.MdlPricing.Ctx(ctx).
+		var baseTiers []baseTierRow
+		err = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", tieredModelDBIDs).
 			Where("billing_mode", "tiered").
 			Where("min_tokens > 0").
@@ -173,6 +201,9 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			OrderAsc("model_id").
 			OrderAsc("min_tokens").
 			Scan(&baseTiers)
+		if err != nil {
+			return nil, err
+		}
 
 		for _, t := range baseTiers {
 			baseTiersMap[t.ModelId] = append(baseTiersMap[t.ModelId], v1.PricingTierItem{
@@ -288,23 +319,32 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	// 按成员模型范围过滤
 	userID := middleware.GetUserID(ctx)
 	if userID > 0 {
-		var memberScopes []struct {
-			ModelID   int64  `json:"model_id"`
-			ModelName string `json:"model_name"`
-		}
-		_ = g.DB().Model("tnt_member_model_scopes ms").Ctx(ctx).
+		var memberScopes []memberScopeRow
+		err = g.DB().Model("tnt_member_model_scopes ms").Ctx(ctx).
 			LeftJoin("mdl_models m ON ms.model_id = m.id").
 			Where("ms.tenant_id", tenantID).
 			Where("ms.user_id", userID).
 			Fields("ms.model_id, m.model_id as model_name").
 			Scan(&memberScopes)
+		if err != nil {
+			return nil, err
+		}
 
 		if len(memberScopes) > 0 {
+			// 检查是否存在"无权访问任何模型"的哨兵值
+			hasNoAccess := false
+			for _, s := range memberScopes {
+				if s.ModelID == memberModelScopeNoAccess {
+					hasNoAccess = true
+					break
+				}
+			}
+			if hasNoAccess {
+				return &v1.TenantAvailableModelsRes{List: nil}, nil
+			}
+
 			allowed := make(map[string]bool, len(memberScopes))
 			for _, s := range memberScopes {
-				if s.ModelID == -1 {
-					return &v1.TenantAvailableModelsRes{List: nil}, nil
-				}
 				if s.ModelName != "" {
 					allowed[s.ModelName] = true
 				}

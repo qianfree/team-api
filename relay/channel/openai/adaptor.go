@@ -15,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
 )
 
@@ -229,7 +230,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 // DoResponse 处理上游响应，按客户端格式和 RelayMode 分发
 func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	clientFormat := info.GetOriginalClientFormat()
-	g.Log().Infof(ctx, "[OpenAI.Adaptor.DoResponse] Entry: clientFormat=%s, relayMode=%d, isStream=%v, statusCode=%d",
+	g.Log().Debugf(ctx, "[OpenAI.Adaptor.DoResponse] Entry: clientFormat=%s, relayMode=%d, isStream=%v, statusCode=%d",
 		clientFormat, info.RelayMode, info.IsStream, resp.StatusCode)
 
 	// 根据客户端格式转换响应
@@ -312,7 +313,7 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 	}
 
 	if info.ChannelMeta.IsModelMapped {
-		body = replaceModelName(body, info.OriginModelName)
+		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
@@ -361,39 +362,6 @@ func (a *Adaptor) handleCompletionStreamResponse(ctx context.Context, resp *http
 	}
 
 	return StreamHandlerForCompletions(ctx, resp, info, writer)
-}
-
-// replaceModelName 替换响应 JSON 中 "model":"xxx" 的值为指定模型名
-func replaceModelName(body []byte, modelName string) []byte {
-	target := []byte(`"model":"`)
-	replacement := append(target, modelName...)
-	replacement = append(replacement, '"')
-	return replaceModelNameInJSON(body, target, replacement)
-}
-
-// replaceModelNameInJSON 替换 JSON 中 "model" 字段的值
-func replaceModelNameInJSON(body, fieldPrefix, replacement []byte) []byte {
-	result := make([]byte, 0, len(body))
-	i := 0
-	for i < len(body) {
-		idx := bytes.Index(body[i:], fieldPrefix)
-		if idx == -1 {
-			result = append(result, body[i:]...)
-			break
-		}
-		result = append(result, body[i:i+idx+len(fieldPrefix)]...)
-		i += idx + len(fieldPrefix)
-
-		// 跳到引号结束
-		endQuote := bytes.IndexByte(body[i:], '"')
-		if endQuote == -1 {
-			result = append(result, body[i:]...)
-			break
-		}
-		i += endQuote + 1
-		result = append(result, replacement...)
-	}
-	return result
 }
 
 // GetChannelName 返回渠道名称

@@ -25,9 +25,7 @@ type RateLimitConfig struct {
 	TenantQPS  int // 租户级 QPS 限制（默认 1000）
 	UserQPS    int // 用户级 QPS 限制（默认 100）
 	KeyQPS     int // Key 级 QPS 限制（默认 60）
-	TenantConc int // 租户级并发限制（默认 50）
-	UserConc   int // 用户级并发限制（默认 10）
-	KeyConc    int // Key 级并发限制（默认 5）
+	TenantConc int // 租户级并发限制（默认 0，不限制）
 }
 
 // DefaultRateLimitConfig 默认限流配置
@@ -36,9 +34,7 @@ var DefaultRateLimitConfig = RateLimitConfig{
 	TenantQPS:  1000,
 	UserQPS:    100,
 	KeyQPS:     60,
-	TenantConc: 50,
-	UserConc:   10,
-	KeyConc:    5,
+	TenantConc: 0,
 }
 
 // LoadRateLimitConfig loads rate limit config from ConfigService, falling back to defaults.
@@ -174,20 +170,20 @@ func CheckRateLimit(ctx context.Context, config RateLimitConfig, tenantID, userI
 }
 
 // ---------------------------------------------------------------------------
-// 并发限流：单个 Lua 脚本完成 4 级获取 + 失败回滚
+// 并发限流：单个 Lua 脚本完成 2 级获取 + 失败回滚（租户 + 模型）
 // ---------------------------------------------------------------------------
 
-// acquireConcurrentLua 一次 EVAL 完成 4 级并发许可获取。
-// KEYS[1..4]: tenant/model/user/key 的 Redis key
-// ARGV[1..4]: 各级并发限制（0 表示不检查该级）
-// ARGV[5]: EXPIRE 秒数
+// acquireConcurrentLua 一次 EVAL 完成 2 级并发许可获取（租户 + 模型）。
+// KEYS[1..2]: tenant/model 的 Redis key
+// ARGV[1..2]: 各级并发限制（0 表示不检查该级）
+// ARGV[3]: EXPIRE 秒数
 //
 // 逐级尝试获取，任一级失败则回滚已获取的许可。
 // 返回 1=成功, 0=失败。
 var acquireConcurrentLua = `
-local keys = {KEYS[1], KEYS[2], KEYS[3], KEYS[4]}
-local limits = {tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])}
-local expire = tonumber(ARGV[5])
+local keys = {KEYS[1], KEYS[2]}
+local limits = {tonumber(ARGV[1]), tonumber(ARGV[2])}
+local expire = tonumber(ARGV[3])
 local acquired = {}
 
 local function tryAcquire(i)
@@ -201,6 +197,7 @@ local function tryAcquire(i)
             local v = redis.call("DECR", acquired[j])
             if v < 0 then
                 redis.call("SET", acquired[j], 0)
+                redis.call("EXPIRE", acquired[j], expire)
             end
         end
         return false
@@ -211,39 +208,38 @@ end
 
 if not tryAcquire(1) then return 0 end
 if not tryAcquire(2) then return 0 end
-if not tryAcquire(3) then return 0 end
-if not tryAcquire(4) then return 0 end
 return 1
 `
 
-// releaseConcurrentLua 一次 EVAL 释放 4 级并发许可。
+// releaseConcurrentLua 一次 EVAL 释放 2 级并发许可（租户 + 模型）。
+// ARGV[1] = expire 秒数（用于 SET 后恢复 TTL）
 var releaseConcurrentLua = `
-for i = 1, 4 do
+local expire = tonumber(ARGV[1])
+for i = 1, 2 do
     local v = redis.call("DECR", KEYS[i])
     if v < 0 then
         redis.call("SET", KEYS[i], 0)
+        redis.call("EXPIRE", KEYS[i], expire)
     end
 end
 return 1
 `
 
-// AcquireConcurrent 获取并发许可（四级：租户→模型→用户→Key）
+// AcquireConcurrent 获取并发许可（两级：租户→模型）
 // 租户级并发限制优先使用 tnt_tenants.max_concurrency，0 表示不限；
 // 模型级并发限制使用 mdl_tenant_models.max_concurrency，NULL 表示不限；
 // 若未设置则回退到全局配置 tenant_concurrency_limit。
 func AcquireConcurrent(ctx context.Context, config RateLimitConfig, tenantID, userID, apiKeyID int64, modelName string) bool {
 	tenantKey := fmt.Sprintf("conc:tenant:%d", tenantID)
 	modelKey := fmt.Sprintf("conc:tenant:%d:model:%s", tenantID, modelName)
-	userKey := fmt.Sprintf("conc:user:%d", userID)
-	keyKey := fmt.Sprintf("conc:key:%d", apiKeyID)
 
 	// 获取租户级和模型级并发限制（含缓存，可能查 DB）
-	tenantLimit := getTenantConcurrencyLimit(ctx, tenantID, config.TenantConc)
+	tenantLimit := getTenantConcurrencyLimit(ctx, tenantID)
 	modelLimit := getModelConcurrencyLimit(ctx, tenantID, modelName)
 
-	result, err := g.Redis().Do(ctx, "EVAL", acquireConcurrentLua, 4,
-		tenantKey, modelKey, userKey, keyKey,
-		tenantLimit, modelLimit, config.UserConc, config.KeyConc,
+	result, err := g.Redis().Do(ctx, "EVAL", acquireConcurrentLua, 2,
+		tenantKey, modelKey,
+		tenantLimit, modelLimit,
 		300) // EXPIRE 秒数
 	if err != nil {
 		return true // Redis 不可用，允许通过
@@ -252,22 +248,21 @@ func AcquireConcurrent(ctx context.Context, config RateLimitConfig, tenantID, us
 	return result.Int() == 1
 }
 
-// ReleaseConcurrent 释放并发许可（含模型级）
-// 单次 EVAL 释放所有 4 个 key，替代原来的 4 次 DECR。
+// ReleaseConcurrent 释放并发许可（租户 + 模型两级）
+// 单次 EVAL 释放所有 2 个 key。
 func ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
 	tenantKey := fmt.Sprintf("conc:tenant:%d", tenantID)
 	modelKey := fmt.Sprintf("conc:tenant:%d:model:%s", tenantID, modelName)
-	userKey := fmt.Sprintf("conc:user:%d", userID)
-	keyKey := fmt.Sprintf("conc:key:%d", apiKeyID)
 
-	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 4,
-		tenantKey, modelKey, userKey, keyKey)
+	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 2,
+		tenantKey, modelKey,
+		300) // EXPIRE 秒数
 }
 
 // getTenantConcurrencyLimit 获取租户并发上限。
 // 优先从 Redis 缓存读取 tnt_tenants.max_concurrency，缓存 300 秒；
-// 缓存未命中则查询数据库并回填。0 表示不限，回退到全局默认值。
-func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit int) int {
+// 缓存未命中则查询数据库并回填。0 表示不限。
+func getTenantConcurrencyLimit(ctx context.Context, tenantID int64) int {
 	cacheKey := fmt.Sprintf("tenant:conc_limit:%d", tenantID)
 
 	// 尝试从 Redis 缓存读取
@@ -284,30 +279,29 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 	}
 
 	// 缓存未命中，查数据库
-	// 缓存未命中，查数据库
 	var maxConc *int
 	err = dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
 		Fields("max_concurrency").
 		Scan(&maxConc)
 	if err != nil {
-		// 查询失败，使用全局默认值
-		return defaultLimit
+		// 查询失败，不限制
+		return 0
 	}
 
 	// NULL 表示跟随等级配置
 	if maxConc == nil {
 		_, effectiveConc, err := GetTenantEffectiveLimits(ctx, tenantID)
 		if err != nil {
-			return defaultLimit
+			return 0
 		}
 		if effectiveConc > 0 {
 			g.Redis().Do(ctx, "SET", cacheKey, effectiveConc, "EX", 300)
 			return effectiveConc
 		}
-		// 等级配置也是 0（不限），缓存 -1 标记，回退到全局默认
+		// 等级配置也是 0（不限），缓存 -1 标记
 		g.Redis().Do(ctx, "SET", cacheKey, -1, "EX", 300)
-		return defaultLimit
+		return 0
 	}
 
 	if *maxConc > 0 {
@@ -316,10 +310,9 @@ func getTenantConcurrencyLimit(ctx context.Context, tenantID int64, defaultLimit
 		return *maxConc
 	}
 
-	// 数据库中为 0（不限），缓存 -1 标记，回退到全局默认
+	// 数据库中为 0（不限），缓存 -1 标记
 	g.Redis().Do(ctx, "SET", cacheKey, -1, "EX", 300)
-	return defaultLimit
-
+	return 0
 }
 
 // getModelConcurrencyLimit 获取租户模型级并发上限。
@@ -342,7 +335,7 @@ func getModelConcurrencyLimit(ctx context.Context, tenantID int64, modelName str
 	// 缓存未命中，查数据库：先获取 model_id，再查 tenant_models
 	var modelID int64
 	err = dao.MdlModels.Ctx(ctx).
-		Where("model_name", modelName).
+		Where("model_id", modelName).
 		Fields("id").
 		Scan(&modelID)
 	if err != nil || modelID == 0 {

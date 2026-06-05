@@ -78,6 +78,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 	}
 
 	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
 	scanner := bufio.NewScanner(resp.Body)

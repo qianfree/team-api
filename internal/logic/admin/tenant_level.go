@@ -106,7 +106,10 @@ func (s *sAdmin) UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 
 func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigDeleteReq) (*v1.TenantLevelConfigDeleteRes, error) {
 	var config *entity.TntTenantLevelConfigs
-	dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
+	err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Scan(&config)
+	if err != nil {
+		return nil, err
+	}
 	if config == nil {
 		return &v1.TenantLevelConfigDeleteRes{}, nil
 	}
@@ -114,7 +117,7 @@ func (s *sAdmin) DeleteTenantLevelConfig(ctx context.Context, req *v1.TenantLeve
 		return nil, common.NewBadRequestError("不允许删除默认等级 LV1")
 	}
 
-	_, err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
+	_, err = dao.TntTenantLevelConfigs.Ctx(ctx).Where("id", req.Id).Delete()
 	if err != nil {
 		return nil, err
 	}

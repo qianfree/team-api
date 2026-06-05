@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // handleEmbeddingResponse 处理 Embeddings 非流式响应
@@ -25,8 +26,12 @@ func (a *Adaptor) handleEmbeddingResponse(ctx context.Context, resp *http.Respon
 	}
 
 	if info.ChannelMeta.IsModelMapped {
-		body = replaceModelName(body, info.OriginModelName)
+		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(body)
 
 	var embedResp dto.EmbeddingResponse
 	if err := json.Unmarshal(body, &embedResp); err == nil {
@@ -38,11 +43,6 @@ func (a *Adaptor) handleEmbeddingResponse(ctx context.Context, resp *http.Respon
 			CompletionTokenDetails: common.DtoTokenDetailsToCommon(embedResp.Usage.CompletionTokenDetails),
 		}, nil
 	}
-
-	// 解析失败也透传 body
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(resp.StatusCode)
-	_, _ = writer.Write(body)
 
 	return &common.Usage{}, nil
 }

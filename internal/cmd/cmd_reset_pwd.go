@@ -9,6 +9,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
@@ -57,12 +58,11 @@ var resetPwdCmd = gcmd.Command{
 		}
 
 		// Update password and reactivate account in case it was disabled
-		// 用 g.Map 直接写列名，避免 DO struct 的 any 类型字段被误处理
 		_, err = dao.SysAdminUsers.Ctx(ctx).
 			Where("id", user.Id).
-			Data(g.Map{
-				"password_hash": passwordHash,
-				"status":        "active",
+			Data(do.SysAdminUsers{
+				PasswordHash: passwordHash,
+				Status:       "active",
 			}).
 			Update()
 		if err != nil {

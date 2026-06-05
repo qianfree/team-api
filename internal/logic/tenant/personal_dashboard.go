@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/dao"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -164,12 +165,10 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 		QuotaResetAt string  `json:"quota_reset_at"`
 	}
 	var qRow *quotaRow
-	err = g.DB().Ctx(ctx).Raw(`
-		SELECT quota_type, COALESCE(quota_limit, 0) as quota_limit,
-			COALESCE(quota_used, 0) as quota_used, quota_period,
-			COALESCE(TO_CHAR(quota_reset_at, 'YYYY-MM-DD HH24:MI:SS'), '') as quota_reset_at
-		FROM tnt_users WHERE id = ? AND tenant_id = ?
-	`, userID, tenantID).Scan(&qRow)
+	err = dao.TntUsers.Ctx(ctx).
+		Where("id", userID).Where("tenant_id", tenantID).
+		Fields("quota_type, COALESCE(quota_limit, 0) as quota_limit, COALESCE(quota_used, 0) as quota_used, quota_period, COALESCE(TO_CHAR(quota_reset_at, 'YYYY-MM-DD HH24:MI:SS'), '') as quota_reset_at").
+		Scan(&qRow)
 	if err == nil && qRow != nil && qRow.QuotaType != "" && qRow.QuotaType != "none" {
 		q := &v1.PersonalQuotaStatus{
 			QuotaType:   qRow.QuotaType,

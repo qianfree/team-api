@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"io"
 	"regexp"
 	"strings"
 
@@ -314,6 +313,3 @@ func extractClaudeNonStreamText(respBody string) string {
 	b, _ := json.Marshal(result)
 	return string(b)
 }
-
-// init 确保 bufio 和 bytes 被 import 使用
-var _ = io.EOF

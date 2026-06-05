@@ -5,8 +5,10 @@ import (
 	"fmt"
 
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/glog"
+
+	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // Install 安装插件（管理后台 API 调用触发）。
@@ -33,14 +35,14 @@ func Install(ctx context.Context, name string) error {
 		}
 	}
 
-	_, err := g.DB().Model("sys_plugins").Ctx(ctx).Insert(g.Map{
-		"name":     name,
-		"label":    entry.Info.Label,
-		"version":  entry.Info.Version,
-		"status":   StatusInstalled,
-		"category": entry.Info.Category,
-		"config":   "{}",
-	})
+	_, err := dao.SysPlugins.Ctx(ctx).Data(do.SysPlugins{
+		Name:     name,
+		Label:    entry.Info.Label,
+		Version:  entry.Info.Version,
+		Status:   StatusInstalled,
+		Category: entry.Info.Category,
+		Config:   "{}",
+	}).Insert()
 	if err != nil {
 		return gerror.Wrap(err, "写入安装记录失败")
 	}
@@ -61,16 +63,16 @@ func Enable(ctx context.Context, name string) error {
 	}
 
 	if err := startPlugin(ctx, entry); err != nil {
-		_, _ = g.DB().Model("sys_plugins").Ctx(ctx).
+		_, _ = dao.SysPlugins.Ctx(ctx).
 			Where("name", name).
-			Data(g.Map{"status": StatusError, "error_msg": err.Error()}).
+			Data(do.SysPlugins{Status: StatusError, ErrorMsg: err.Error()}).
 			Update()
 		return err
 	}
 
-	_, err := g.DB().Model("sys_plugins").Ctx(ctx).
+	_, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", name).
-		Data(g.Map{"status": StatusEnabled, "error_msg": ""}).
+		Data(do.SysPlugins{Status: StatusEnabled, ErrorMsg: ""}).
 		Update()
 	return err
 }
@@ -92,9 +94,9 @@ func Disable(ctx context.Context, name string) error {
 	app.Hook.RemoveHooks(name)
 
 	entry.Status = StatusDisabled
-	_, err := g.DB().Model("sys_plugins").Ctx(ctx).
+	_, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", name).
-		Data(g.Map{"status": StatusDisabled}).
+		Data(do.SysPlugins{Status: StatusDisabled}).
 		Update()
 	return err
 }
@@ -115,12 +117,12 @@ func Uninstall(ctx context.Context, name string, keepData bool) error {
 		}
 	}
 
-	_, err := g.DB().Model("sys_plugins").Ctx(ctx).Where("name", name).Delete()
+	_, err := dao.SysPlugins.Ctx(ctx).Where("name", name).Delete()
 	if err != nil {
 		return err
 	}
 
-	_, err = g.DB().Model("tnt_tenant_plugins").Ctx(ctx).Where("plugin_name", name).Delete()
+	_, err = dao.TntTenantPlugins.Ctx(ctx).Where("plugin_name", name).Delete()
 	if err != nil {
 		return err
 	}
@@ -141,9 +143,9 @@ func Upgrade(ctx context.Context, name string) error {
 		return gerror.Wrap(err, "插件升级失败")
 	}
 
-	_, err := g.DB().Model("sys_plugins").Ctx(ctx).
+	_, err := dao.SysPlugins.Ctx(ctx).
 		Where("name", name).
-		Data(g.Map{"version": entry.Info.Version}).
+		Data(do.SysPlugins{Version: entry.Info.Version}).
 		Update()
 	return err
 }
@@ -164,11 +166,11 @@ func EnableForTenant(ctx context.Context, pluginName string, tenantID int64) err
 		}
 	}
 
-	_, err := g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
-		Data(g.Map{
-			"tenant_id":   tenantID,
-			"plugin_name": pluginName,
-			"enabled":     true,
+	_, err := dao.TntTenantPlugins.Ctx(ctx).
+		Data(do.TntTenantPlugins{
+			TenantId:   tenantID,
+			PluginName: pluginName,
+			Enabled:    true,
 		}).
 		OnConflict("tenant_id,plugin_name").
 		Save()
@@ -188,8 +190,8 @@ func DisableForTenant(ctx context.Context, pluginName string, tenantID int64) er
 		}
 	}
 
-	_, err := g.DB().Model("tnt_tenant_plugins").Ctx(ctx).
-		Data(g.Map{"enabled": false}).
+	_, err := dao.TntTenantPlugins.Ctx(ctx).
+		Data(do.TntTenantPlugins{Enabled: false}).
 		Where("tenant_id = ? AND plugin_name = ?", tenantID, pluginName).
 		Update()
 	return err
@@ -213,11 +215,11 @@ func checkDependencies(entry *PluginEntry) error {
 func registerConfigSchema(ctx context.Context, pluginName string, fields []ConfigFieldDef) error {
 	for _, field := range fields {
 		key := fmt.Sprintf("plugin.%s.%s", pluginName, field.Key)
-		_, err := g.DB().Model("sys_options").Ctx(ctx).
-			Data(g.Map{
-				"key":         key,
-				"value":       fmt.Sprintf("%v", field.Default),
-				"description": field.Description,
+		_, err := dao.SysOptions.Ctx(ctx).
+			Data(do.SysOptions{
+				Key:         key,
+				Value:       fmt.Sprintf("%v", field.Default),
+				Description: field.Description,
 			}).
 			OnConflict("key").
 			Save()

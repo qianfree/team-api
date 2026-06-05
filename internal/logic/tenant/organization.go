@@ -2,16 +2,20 @@ package tenant
 
 import (
 	"context"
-	do "github.com/qianfree/team-api/internal/model/do"
 
-	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/frame/g"
 
-	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+
+	do "github.com/qianfree/team-api/internal/model/do"
+
+	"github.com/gogf/gf/v2/database/gdb"
+
+	v1 "github.com/qianfree/team-api/api/tenant/v1"
 )
 
 // ownerOnly checks if the current user is the tenant owner.
@@ -54,12 +58,15 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 	}
 
 	// Look up level name
-	var levelName string
+	var levelName *string
 	if tenant.Level > 0 {
-		_ = dao.TntTenantLevelConfigs.Ctx(ctx).
+		err = dao.TntTenantLevelConfigs.Ctx(ctx).
 			Where("level", tenant.Level).
 			Fields("name").
 			Scan(&levelName)
+		if err != nil {
+			g.Log().Warningf(ctx, "查询租户等级名称失败: %v", err)
+		}
 	}
 
 	// 计算实际生效的成员数上限（NULL时取等级配置）
@@ -71,13 +78,18 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 	}
 
 	return &v1.TenantOrgInfoRes{
-		ID:          tenant.Id,
-		Name:        tenant.Name,
-		Code:        tenant.Code,
-		LogoURL:     tenant.LogoUrl,
-		Status:      tenant.Status,
-		Level:       tenant.Level,
-		LevelName:   levelName,
+		ID:      tenant.Id,
+		Name:    tenant.Name,
+		Code:    tenant.Code,
+		LogoURL: tenant.LogoUrl,
+		Status:  tenant.Status,
+		Level:   tenant.Level,
+		LevelName: func() string {
+			if levelName != nil {
+				return *levelName
+			}
+			return ""
+		}(),
 		MaxMembers:  effectiveMaxMembers,
 		MemberCount: int(memberCount),
 		CreatedAt:   tenant.CreatedAt,
@@ -152,9 +164,6 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 	}
 	if newOwner == nil {
 		return nil, common.NewNotFoundError("用户")
-	}
-	if newOwner.ID == 0 {
-		return nil, common.NewBadRequestError("目标用户不存在")
 	}
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -138,8 +139,8 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 		return nil, common.NewNotFoundError("项目")
 	}
 
-	if project.Status == "archived" || project.Status == "budget_exhausted" {
-		return nil, common.NewBadRequestError("归档或预算耗尽的项目不能直接编辑，请先恢复状态")
+	if project.Status == "archived" {
+		return nil, common.NewBadRequestError("归档的项目不能直接编辑，请先取消归档")
 	}
 
 	updateData := do.TntProjects{}
@@ -195,13 +196,16 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 	}
 
 	// Revoke all keys belonging to this project
-	dao.ApiKeys.Ctx(ctx).
+	_, err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
 		Where("status", "active").
 		Data(do.ApiKeys{
 			Status: "revoked",
 		}).Update()
+	if err != nil {
+		return nil, err
+	}
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
@@ -449,10 +453,13 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 
 	for _, modelName := range req.ModelNames {
 		if modelName != "" {
-			dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
+			_, err = dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
 				ApiKeyId:  id,
 				ModelName: modelName,
 			})
+			if err != nil {
+				g.Log().Warningf(ctx, "创建密钥模型范围失败: %v", err)
+			}
 		}
 	}
 
@@ -686,14 +693,37 @@ func convertApiKeyRowsToMaps(ctx context.Context, rows any) []map[string]any {
 	result := make([]map[string]any, 0)
 	switch v := rows.(type) {
 	case []apiKeyRow:
+		// Batch query model counts
+		keyIDs := make([]int64, len(v))
+		for i, r := range v {
+			keyIDs[i] = r.Id
+		}
+		modelCountMap := make(map[int64]int)
+		if len(keyIDs) > 0 {
+			type countRow struct {
+				ApiKeyId int64 `json:"api_key_id"`
+				Cnt      int   `json:"cnt"`
+			}
+			var countRows []countRow
+			err := dao.ApiKeyModelScopes.Ctx(ctx).
+				WhereIn("api_key_id", keyIDs).
+				Fields("api_key_id, COUNT(*) as cnt").
+				Group("api_key_id").
+				Scan(&countRows)
+			if err == nil {
+				for _, cr := range countRows {
+					modelCountMap[cr.ApiKeyId] = cr.Cnt
+				}
+			}
+		}
+
 		for _, r := range v {
-			modelCount, _ := dao.ApiKeyModelScopes.Ctx(ctx).Where("api_key_id", r.Id).Count()
 			m := map[string]any{
 				"id":          r.Id,
 				"name":        r.Name,
 				"key_prefix":  r.KeyPrefix,
 				"status":      r.Status,
-				"model_count": modelCount,
+				"model_count": modelCountMap[r.Id],
 			}
 			if r.CreatedAt != nil {
 				m["created_at"] = r.CreatedAt.String()
@@ -731,13 +761,4 @@ func convertUsageLogRowsToMaps(rows any) []map[string]any {
 		}
 	}
 	return result
-}
-
-// generateApiKey generates a random API key string using the relay package.
-func generateApiKey() string {
-	rawKey, _, _, err := relay.GenerateApiKey(context.Background())
-	if err != nil {
-		return "sk-err-" + gtime.Now().TimestampMilliStr()
-	}
-	return rawKey
 }

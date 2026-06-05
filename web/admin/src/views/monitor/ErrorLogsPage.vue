@@ -152,7 +152,7 @@ async function openDetail(id: number) {
   detailLoading.value = true
   try {
     const res = await request.get(`/admin/error-logs/${id}`)
-    detailData.value = res.data?.data?.data
+    detailData.value = res.data?.data
   } catch {
     // error auto-shown
   } finally {

@@ -8,6 +8,9 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
+
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // sensitiveFields are field names that should be masked in operation logs.
@@ -114,28 +117,25 @@ func OperationLog(r *ghttp.Request) {
 	}
 	detailJSON, _ := json.Marshal(detail)
 
-	// Build log data matching actual table columns
-	logData := g.Map{
-		"user_id":       userID,
-		"user_type":     userType,
-		"action":        action,
-		"resource_type": resourceType,
-		"ip_address":    r.GetClientIp(),
-		"detail":        string(detailJSON),
+	// Build log data using DO struct
+	logData := do.AudOperationLogs{
+		UserId:       userID,
+		UserType:     userType,
+		Action:       action,
+		ResourceType: resourceType,
+		IpAddress:    r.GetClientIp(),
+		Detail:       string(detailJSON),
 	}
 
-	// Set resource_id if available
 	if resourceID > 0 {
-		logData["resource_id"] = resourceID
+		logData.ResourceId = resourceID
 	}
 
-	// Set tenant_id for tenant operations
 	tenantID := GetTenantID(r.Context())
 	if tenantID > 0 {
-		logData["tenant_id"] = tenantID
+		logData.TenantId = tenantID
 	}
 
-	// Build changes_json with structured request data
 	if maskedBody != "" {
 		var changesJSON map[string]any
 		if err := json.Unmarshal([]byte(maskedBody), &changesJSON); err == nil {
@@ -143,15 +143,14 @@ func OperationLog(r *ghttp.Request) {
 				"updated_fields": changesJSON,
 			}
 			if wrapped, err := json.Marshal(wrapper); err == nil {
-				logData["changes_json"] = string(wrapped)
+				logData.ChangesJson = string(wrapped)
 			}
 		}
 	}
 
-	// Async write to audit log
 	go func() {
 		ctx := context.Background()
-		_, err := g.DB().Model("aud_operation_logs").Ctx(ctx).Data(logData).Insert()
+		_, err := lcommon.AuditModelCtx(ctx, "aud_operation_logs").Data(logData).Insert()
 		if err != nil {
 			g.Log().Errorf(ctx, "write operation log: %v", err)
 		}
@@ -252,17 +251,26 @@ func maskSensitiveFields(body string) string {
 		return body // Not JSON, return as-is
 	}
 
-	for key := range data {
-		if isSensitive(key) {
-			data[key] = "******"
-		}
-	}
+	maskSensitiveMap(data)
 
 	masked, err := json.Marshal(data)
 	if err != nil {
 		return body
 	}
 	return string(masked)
+}
+
+// maskSensitiveMap recursively masks sensitive fields in a map.
+func maskSensitiveMap(data map[string]any) {
+	for key, val := range data {
+		if isSensitive(key) {
+			data[key] = "******"
+			continue
+		}
+		if nested, ok := val.(map[string]any); ok {
+			maskSensitiveMap(nested)
+		}
+	}
 }
 
 // isSensitive checks if a field name is sensitive.

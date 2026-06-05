@@ -145,8 +145,11 @@ type ResponsesOutput struct {
 	CallID    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments string                   `json:"arguments,omitempty"`
-	// web_search_call
-	Action *ResponsesWebSearchAction `json:"action,omitempty"`
+	// action 字段为多态：web_search_call / shell_call / local_shell_call / apply_patch_call
+	// 各类型的 action 结构不同（见 ResponsesWebSearchAction / ResponsesShellAction /
+	// ResponsesPatchAction）。此处用 RawMessage 原样透传，避免多个字段共用同一 json tag
+	// 导致 encoding/json 在序列化和反序列化时静默丢弃全部 action 字段。
+	Action json.RawMessage `json:"action,omitempty"`
 	// file_search_call
 	Queries []string                    `json:"queries,omitempty"`
 	Results []ResponsesFileSearchResult `json:"results,omitempty"`
@@ -161,10 +164,6 @@ type ResponsesOutput struct {
 	Code        string                           `json:"code,omitempty"`
 	ContainerID string                           `json:"container_id,omitempty"`
 	Outputs     []ResponsesCodeInterpreterOutput `json:"outputs,omitempty"`
-	// shell_call / local_shell_call
-	ShellAction *ResponsesShellAction `json:"action,omitempty"`
-	// apply_patch_call
-	PatchAction *ResponsesPatchAction `json:"action,omitempty"`
 	// mcp_call
 	ServerLabel       string `json:"server_label,omitempty"`
 	Output            string `json:"output,omitempty"`

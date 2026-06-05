@@ -37,7 +37,7 @@ var jwtSecret []byte
 func InitJWTSecret(ctx context.Context) {
 	secret := g.Cfg().MustGet(ctx, "jwt.secret").String()
 	if secret == "" {
-		secret = "team-api-default-jwt-secret-change-me-in-production"
+		panic("jwt.secret is not configured — refusing to start with weak key")
 	}
 	jwtSecret = []byte(secret)
 }
@@ -45,7 +45,7 @@ func InitJWTSecret(ctx context.Context) {
 // GetJWTSecret returns the cached JWT signing secret.
 func GetJWTSecret() []byte {
 	if jwtSecret == nil {
-		jwtSecret = []byte("team-api-default-jwt-secret-change-me-in-production")
+		panic("JWT secret not initialized — call InitJWTSecret first")
 	}
 	return jwtSecret
 }

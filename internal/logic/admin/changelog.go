@@ -9,6 +9,8 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/os/gtime"
+
+	"github.com/qianfree/team-api/internal/consts"
 )
 
 // CreateChangelog 创建更新日志
@@ -68,7 +70,7 @@ func (s *sAdmin) UpdateChangelog(ctx context.Context, req *v1.ChangelogUpdateReq
 		return nil, err
 	}
 	if cl == nil {
-		return nil, common.NewBusinessError(10064, "更新日志不存在")
+		return nil, common.NewBusinessError(consts.CodeChangelogNotFound, consts.MsgChangelogNotFound)
 	}
 
 	_, err = dao.ClgChangelogs.Ctx(ctx).
@@ -98,7 +100,7 @@ func (s *sAdmin) DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq
 		return nil, err
 	}
 	if cl == nil {
-		return nil, common.NewBusinessError(10064, "更新日志不存在")
+		return nil, common.NewBusinessError(consts.CodeChangelogNotFound, consts.MsgChangelogNotFound)
 	}
 
 	_, err = dao.ClgChangelogs.Ctx(ctx).Where("id", req.Id).Delete()
@@ -120,7 +122,7 @@ func (s *sAdmin) PublishChangelog(ctx context.Context, req *v1.ChangelogPublishR
 		return nil, err
 	}
 	if cl == nil {
-		return nil, common.NewBusinessError(10064, "更新日志不存在")
+		return nil, common.NewBusinessError(consts.CodeChangelogNotFound, consts.MsgChangelogNotFound)
 	}
 	if cl.Status == "published" {
 		return &v1.ChangelogPublishRes{}, nil

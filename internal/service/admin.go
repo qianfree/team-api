@@ -115,8 +115,6 @@ type (
 		TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error)
 		// CronJobList returns all registered cron jobs with their last execution status.
 		CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.CronJobListRes, error)
-		// CronJobExecutions returns paginated execution history for a specific job.
-		CronJobExecutions(ctx context.Context, req *v1.CronJobExecutionsReq) (*v1.CronJobExecutionsRes, error)
 		// CronJobTrigger manually triggers a cron job.
 		CronJobTrigger(ctx context.Context, req *v1.CronJobTriggerReq) (*v1.CronJobTriggerRes, error)
 		// GetDashboardStats 获取管理后台仪表盘统计

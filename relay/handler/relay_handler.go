@@ -330,6 +330,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		return nil, nil, err
 	}
 
+	// 在写入任何响应体之前设置限流/弃用 header（流式响应中 WriteHeader 后无法追加）
+	setPreResponseHeaders(rc.Writer, v.billingResult)
+
 	// Phase 2: 资源准备（并发控制 + 监控注册 + 预扣）
 	if billing != nil {
 		if !billing.AcquireConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.modelName) {
@@ -436,6 +439,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if constant.IsRetryable(err) && attempt < maxRetries {
 				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
+				settleCancel()
 				continue
 			}
 
@@ -494,6 +498,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 			recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
 			appendHop(trace, hop, false, err.Error(), info.LatencyMs())
+			settleCancel()
 			continue
 		}
 
@@ -767,6 +772,27 @@ func tokenDetailField(details *common.TokenDetails, getter func(*common.TokenDet
 		return 0
 	}
 	return getter(details)
+}
+
+// setPreResponseHeaders 在写入响应体之前设置限流和弃用 header
+func setPreResponseHeaders(w http.ResponseWriter, br *BillingResult) {
+	if br == nil {
+		return
+	}
+	if info := br.RateLimitInfo; info != nil {
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", info.Limit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", info.Remaining))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", info.ResetAt))
+	}
+	if dep := br.Deprecation; dep != nil {
+		w.Header().Set("Deprecation", "true")
+		if dep.SunsetDate != "" {
+			w.Header().Set("Sunset", dep.SunsetDate)
+		}
+		if dep.ReplacementModel != "" {
+			w.Header().Set("Link", fmt.Sprintf("</v1/models/%s>; rel=\"successor-version\"", dep.ReplacementModel))
+		}
+	}
 }
 
 // requestType 根据 isStream 返回请求类型

@@ -35,6 +35,7 @@ func Recovery(r *ghttp.Request) {
 				"request_id": requestID,
 			})
 			r.SetError(nil)
+			r.ExitAll()
 		}
 	}()
 	r.Middleware.Next()

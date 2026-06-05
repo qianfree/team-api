@@ -130,20 +130,7 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 
 	m := dao.TntUsers.Ctx(ctx).
 		LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id")
-
-	if req.Keyword != "" {
-		keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-		m = m.Where("tnt_users.username LIKE ? OR tnt_users.email LIKE ? OR tnt_users.display_name LIKE ?", keyword, keyword, keyword)
-	}
-	if req.Status != "" {
-		m = m.Where("tnt_users.status", req.Status)
-	}
-	if req.Role != "" {
-		m = m.Where("tnt_users.role", req.Role)
-	}
-	if req.TenantID > 0 {
-		m = m.Where("tnt_users.tenant_id", req.TenantID)
-	}
+	m = buildMemberFilters(m, req.Keyword, req.Status, req.Role, req.TenantID)
 
 	total, err := m.Count()
 	if err != nil {
@@ -153,19 +140,7 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 	// Rebuild model for data query (Count() modifies internal state)
 	m = dao.TntUsers.Ctx(ctx).
 		LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id")
-	if req.Keyword != "" {
-		keyword := "%" + strings.TrimSpace(req.Keyword) + "%"
-		m = m.Where("tnt_users.username LIKE ? OR tnt_users.email LIKE ? OR tnt_users.display_name LIKE ?", keyword, keyword, keyword)
-	}
-	if req.Status != "" {
-		m = m.Where("tnt_users.status", req.Status)
-	}
-	if req.Role != "" {
-		m = m.Where("tnt_users.role", req.Role)
-	}
-	if req.TenantID > 0 {
-		m = m.Where("tnt_users.tenant_id", req.TenantID)
-	}
+	m = buildMemberFilters(m, req.Keyword, req.Status, req.Role, req.TenantID)
 
 	var members []struct {
 		Id             int64       `json:"id"`
@@ -236,19 +211,25 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "该成员已是禁用状态")
 	}
 
-	// Revoke all active API keys
-	dao.ApiKeys.Ctx(ctx).
-		Where("user_id", req.Id).
-		Where("status", "active").
-		Data(do.ApiKeys{
-			Status: "disabled",
-		}).Update()
+	// Revoke all active API keys and disable user in transaction
+	err = dao.TntUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Model("api_keys").Ctx(ctx).
+			Where("user_id", req.Id).
+			Where("status", "active").
+			Data(do.ApiKeys{
+				Status: "disabled",
+			}).Update()
+		if err != nil {
+			return err
+		}
 
-	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
-		Data(do.TntUsers{
-			Status: "disabled",
-		}).Update()
+		_, err = tx.Model("tnt_users").Ctx(ctx).
+			Where("id", req.Id).
+			Data(do.TntUsers{
+				Status: "disabled",
+			}).Update()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -274,19 +255,25 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "该成员不是禁用状态")
 	}
 
-	// Restore disabled API keys
-	dao.ApiKeys.Ctx(ctx).
-		Where("user_id", req.Id).
-		Where("status", "disabled").
-		Data(do.ApiKeys{
-			Status: "active",
-		}).Update()
+	// Restore disabled API keys and enable user in transaction
+	err = dao.TntUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Model("api_keys").Ctx(ctx).
+			Where("user_id", req.Id).
+			Where("status", "disabled").
+			Data(do.ApiKeys{
+				Status: "active",
+			}).Update()
+		if err != nil {
+			return err
+		}
 
-	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", req.Id).
-		Data(do.TntUsers{
-			Status: "active",
-		}).Update()
+		_, err = tx.Model("tnt_users").Ctx(ctx).
+			Where("id", req.Id).
+			Data(do.TntUsers{
+				Status: "active",
+			}).Update()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -104,13 +104,15 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 		return nil, err
 	}
 
-	// Update last login
-	dao.SysAdminUsers.Ctx(ctx).
+	// Update last login (non-critical, log errors only)
+	if _, err := dao.SysAdminUsers.Ctx(ctx).
 		Where("id", user.Id).
 		Data(do.SysAdminUsers{
 			LastLoginAt: gtime.Now(),
 			LastLoginIp: ipAddress,
-		}).Update()
+		}).Update(); err != nil {
+		g.Log().Warningf(ctx, "update last_login for user %d: %v", user.Id, err)
+	}
 
 	// Record login history
 	_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, true, "")
@@ -195,12 +197,12 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 
 	// Fetch current role from user table
 	var adminUser *entity.SysAdminUsers
-	err = dao.SysAdminUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&adminUser)
+	err = dao.SysAdminUsers.Ctx(ctx).Where("id", session.UserId).Fields("role, status").Scan(&adminUser)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
-	if adminUser == nil {
-		return nil, common.NewUnauthorizedError("用户不存在")
+	if adminUser == nil || adminUser.Status != "active" {
+		return nil, common.NewUnauthorizedError("账号已被禁用或不存在")
 	}
 
 	// Generate new token pair with same session ID and jti
@@ -339,7 +341,7 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewUnauthorizedError("用户不存在")
+		return nil, common.NewUnauthorizedError("账号已被禁用或不存在")
 	}
 
 	// Verify old password

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -320,6 +319,3 @@ func platformTitle(platform string) string {
 		return platform
 	}
 }
-
-// Ensure imports compile - use time for potential future use
-var _ = time.Time{}

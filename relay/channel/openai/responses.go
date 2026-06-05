@@ -170,6 +170,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	}
 
 	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
 
 	scanner := bufio.NewScanner(resp.Body)
