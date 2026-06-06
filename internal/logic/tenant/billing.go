@@ -84,6 +84,28 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 	query := dao.BilTransactions.Ctx(ctx).
 		Where("bil_transactions.tenant_id", tenantID)
 
+	if req.Type != "" {
+		query = query.Where("bil_transactions.type", req.Type)
+	}
+	if req.StartDate != "" {
+		query = query.Where("bil_transactions.created_at >= ?", req.StartDate+" 00:00:00")
+	}
+	if req.EndDate != "" {
+		query = query.Where("bil_transactions.created_at <= ?", req.EndDate+" 23:59:59")
+	}
+	if req.AmountMin != 0 {
+		query = query.Where("bil_transactions.amount >= ?", req.AmountMin)
+	}
+	if req.AmountMax != 0 {
+		query = query.Where("bil_transactions.amount <= ?", req.AmountMax)
+	}
+	if req.Username != "" {
+		query = query.Where("tu.username LIKE ?", "%"+req.Username+"%")
+	}
+	if req.ModelName != "" {
+		query = query.Where("bil_transactions.model_name LIKE ?", "%"+req.ModelName+"%")
+	}
+
 	type transactionRow struct {
 		Id           int64       `json:"id"`
 		Type         string      `json:"type"`
@@ -410,10 +432,30 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 				CreatedAt    *gtime.Time `json:"created_at"`
 			}
 
+			q := dao.BilTransactions.Ctx(ctx).
+				Where("tenant_id", tenantID)
+
+			if req.Type != "" {
+				q = q.Where("type", req.Type)
+			}
+			if req.StartDate != "" {
+				q = q.Where("created_at >= ?", req.StartDate+" 00:00:00")
+			}
+			if req.EndDate != "" {
+				q = q.Where("created_at <= ?", req.EndDate+" 23:59:59")
+			}
+			if req.AmountMin != 0 {
+				q = q.Where("amount >= ?", req.AmountMin)
+			}
+			if req.AmountMax != 0 {
+				q = q.Where("amount <= ?", req.AmountMax)
+			}
+			if req.ModelName != "" {
+				q = q.Where("model_name LIKE ?", "%"+req.ModelName+"%")
+			}
+
 			var records []transactionRow
-			err := dao.BilTransactions.Ctx(ctx).
-				Where("tenant_id", tenantID).
-				Fields("id, type, amount, balance_after, user_id, request_id, model_name, description, created_at").
+			err := q.Fields("id, type, amount, balance_after, user_id, request_id, model_name, description, created_at").
 				OrderDesc("created_at").
 				Limit(1000).Offset(offset).
 				Scan(&records)
