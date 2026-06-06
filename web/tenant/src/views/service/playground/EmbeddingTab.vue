@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
-import request from '@/utils/request'
+import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
-interface ModelItem { model_id: string; model_name: string; category: string }
-const props = defineProps<{ models: ModelItem[] }>()
+interface ModelItem {
+	model_id: string
+	model_name: string
+	category: string
+	billing_mode?: string | null
+	per_request_price?: number | null
+	input_price?: number | null
+	output_price?: number | null
+}
+const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
 const selectedModel = ref(props.models[0]?.model_id || '')
+const selectedModelItem = computed(() =>
+	props.models.find(m => m.model_id === selectedModel.value),
+)
 const inputText = ref('')
 const dimensions = ref<number | undefined>(undefined)
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
@@ -24,18 +36,23 @@ async function embed() {
 	embeddings.value = []
 
 	try {
-		const res = await request.post('/tenant/playground/embedding', {
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.post('/v1/embeddings', {
 			model: selectedModel.value,
 			input: inputText.value,
 			dimensions: dimensions.value || undefined,
 		})
-		if (res.data?.code === 0) {
-			const data = res.data.data
-			embeddings.value = data.embeddings || []
-			tokenUsage.promptTokens = data.prompt_tokens || 0
-			tokenUsage.totalTokens = data.total_tokens || 0
-			tokenUsage.cost = data.estimated_cost || ''
-		}
+
+		const data = res.data
+		// 标准 OpenAI 格式: data.data[].embedding
+		embeddings.value = (data.data || []).map((d: any) => ({
+			index: d.index,
+			embedding: d.embedding,
+		}))
+		const usage = data.usage || {}
+		tokenUsage.promptTokens = usage.prompt_tokens || 0
+		tokenUsage.totalTokens = usage.total_tokens || 0
+		tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
 	} catch (e) {
 		console.error(e)
 	} finally {

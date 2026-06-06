@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
-import request from '@/utils/request'
+import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
-interface ModelItem { model_id: string; model_name: string; category: string }
-const props = defineProps<{ models: ModelItem[] }>()
+interface ModelItem {
+	model_id: string
+	model_name: string
+	category: string
+	billing_mode?: string | null
+	per_request_price?: number | null
+	input_price?: number | null
+	output_price?: number | null
+}
+const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
 const selectedModel = ref(props.models[0]?.model_id || '')
+const selectedModelItem = computed(() =>
+	props.models.find(m => m.model_id === selectedModel.value),
+)
 const query = ref('')
 const documentsText = ref('')
 const topN = ref<number | undefined>(undefined)
@@ -27,19 +39,20 @@ async function rerank() {
 	results.value = []
 
 	try {
-		const res = await request.post('/tenant/playground/rerank', {
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.post('/v1/rerank', {
 			model: selectedModel.value,
 			query: query.value,
 			documents: docs,
 			top_n: topN.value || undefined,
 		})
-		if (res.data?.code === 0) {
-			const data = res.data.data
-			results.value = data.results || []
-			tokenUsage.promptTokens = data.prompt_tokens || 0
-			tokenUsage.totalTokens = data.total_tokens || 0
-			tokenUsage.cost = data.estimated_cost || ''
-		}
+
+		const data = res.data
+		results.value = data.results || []
+		const usage = data.usage || {}
+		tokenUsage.promptTokens = usage.prompt_tokens || 0
+		tokenUsage.totalTokens = usage.total_tokens || 0
+		tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
 	} catch (e) {
 		console.error(e)
 	} finally {

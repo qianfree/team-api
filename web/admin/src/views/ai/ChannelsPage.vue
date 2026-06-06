@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message, Radio } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
+import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -131,6 +132,13 @@ function handleFilter() { pagination.current = 1; fetchData() }
 // === Create/Edit Modal ===
 const showModal = ref(false)
 const formLoading = ref(false)
+const formRef = ref<FormInstance>()
+
+const formRules = {
+  name: [{ required: true, message: '请输入渠道名称' }],
+  type: [{ required: true, message: '请选择供应商类型' }],
+  api_key: [{ required: true, message: '请输入 API Key' }],
+}
 
 const providerDefaultURLs: Record<number, string> = {
   1: 'https://api.openai.com',
@@ -172,6 +180,8 @@ function openCreate() {
 }
 
 async function handleSubmit(done: () => void) {
+  const errors = await formRef.value?.validate()
+  if (errors) { return false }
   formLoading.value = true
   try {
     await request.post('/admin/channels', form)
@@ -293,9 +303,9 @@ const { exporting, exportFile } = useExport({
 
     <!-- Create Channel Modal -->
     <AModal v-model:visible="showModal" title="创建渠道" :width="550" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
-      <AForm :model="form" :auto-label-width="true" layout="vertical">
-        <AFormItem label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
-        <AFormItem label="供应商类型" required><ASelect v-model="form.type" :options="providerTypeOptions" placeholder="输入关键词搜索或选择" allow-search :filter-option="filterProviderOption" /></AFormItem>
+      <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
+        <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
+        <AFormItem field="type" label="供应商类型" required><ASelect v-model="form.type" :options="providerTypeOptions" placeholder="输入关键词搜索或选择" allow-search :filter-option="filterProviderOption" /></AFormItem>
         <AFormItem label="Base URL">
           <AInput v-model="form.base_url" :placeholder="providerDefaultURLs[form.type] || 'https://api.openai.com'" />
           <template #extra>
@@ -304,7 +314,7 @@ const { exporting, exportFile } = useExport({
             </span>
           </template>
         </AFormItem>
-        <AFormItem label="API Key" required>
+        <AFormItem field="api_key" label="API Key" required>
           <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="sk-xxxx..." />
         </AFormItem>
         <AFormItem label="优先级"><AInputNumber v-model="form.priority" :min="0" placeholder="数字越大优先级越高" class="w-full" /></AFormItem>

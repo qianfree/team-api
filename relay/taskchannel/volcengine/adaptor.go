@@ -246,6 +246,26 @@ func (a *VolcengineVideoAdaptor) BuildRequestBody(_ context.Context, info *commo
 		}
 	}
 
+	// 从根层级提取 resolution（支持 input.resolution 格式）
+	if v, ok := req["resolution"].(string); ok && v != "" && volcReq.Resolution == "" {
+		volcReq.Resolution = v
+	}
+
+	// 从根层级提取 duration（支持 input.duration 格式，兼容 string 和 number 类型）
+	if volcReq.Duration == nil {
+		switch d := req["duration"].(type) {
+		case float64:
+			if d > 0 {
+				di := int(d)
+				volcReq.Duration = &di
+			}
+		case string:
+			if parsed, err := parseInt(d); err == nil && parsed > 0 {
+				volcReq.Duration = &parsed
+			}
+		}
+	}
+
 	// seconds 字段映射到 duration
 	if seconds, ok := req["seconds"].(string); ok {
 		if s, err := parseInt(seconds); err == nil && s > 0 {
@@ -417,6 +437,18 @@ func parseInt(s string) (int, error) {
 
 // extractDuration 从请求中提取 duration 秒数
 func extractDuration(req map[string]any) int {
+	// 从根层级提取（支持 input.duration 展平后的 string 和 number 类型）
+	switch d := req["duration"].(type) {
+	case float64:
+		if d > 0 {
+			return int(d)
+		}
+	case string:
+		if parsed, err := parseInt(d); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	// 从 metadata 提取
 	if metadata, ok := req["metadata"].(map[string]any); ok {
 		if d, ok := metadata["duration"].(float64); ok && d > 0 {
 			return int(d)
@@ -432,6 +464,11 @@ func extractDuration(req map[string]any) int {
 
 // extractResolution 从请求中提取 resolution
 func extractResolution(req map[string]any) string {
+	// 从根层级提取（支持 input.resolution 展平后的值）
+	if r, ok := req["resolution"].(string); ok && r != "" {
+		return r
+	}
+	// 从 metadata 提取
 	if metadata, ok := req["metadata"].(map[string]any); ok {
 		if r, ok := metadata["resolution"].(string); ok && r != "" {
 			return r

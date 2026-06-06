@@ -304,7 +304,7 @@ func writeJSON(w http.ResponseWriter, statusCode int, data any) {
 
 // generatePublicTaskID 生成公开任务 ID
 func generatePublicTaskID() string {
-	return fmt.Sprintf("task_%s", randomHex(12))
+	return fmt.Sprintf("task_%s", randomHex(32))
 }
 
 func randomHex(n int) string {

@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gogf/gf/v2/util/gvalid"
 
 	"github.com/qianfree/team-api/internal/response"
 )
@@ -79,6 +80,12 @@ func MiddlewareHandlerResponse(r *ghttp.Request) {
 func isSystemError(err error) bool {
 	// 客户端主动断开连接属于正常现象，不作为系统错误记录
 	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	// GoFrame 校验错误（gvalid.Error）属于客户端错误，不是系统错误
+	var validErr gvalid.Error
+	if errors.As(err, &validErr) {
 		return false
 	}
 

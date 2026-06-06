@@ -27,6 +27,8 @@ type (
 		ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (*v1.TenantApiKeyModelScopesRes, error)
 		// ExportApiKeys exports the tenant API key list as CSV or Excel.
 		ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error)
+		// ApiKeyReveal 获取 API Key 明文值（用于 Playground 等场景）
+		ApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealReq) (*v1.TenantApiKeyRevealRes, error)
 		// AuditConfigGet returns the tenant's own audit level.
 		// 租户审计级别与全局级别完全独立，未设置时默认 masked。
 		AuditConfigGet(ctx context.Context, req *v1.TenantAuditConfigGetReq) (*v1.TenantAuditConfigGetRes, error)
@@ -37,7 +39,6 @@ type (
 		AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v1.TenantAuditLogsRes, error)
 		// TenantRequestAuditLogs 分页查询租户的请求审计日志（不含 body，性能优先）
 		TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (*v1.TenantRequestAuditLogsRes, error)
-		// TenantRequestAuditLogDetail 查询单条请求审计日志详情（含 request_body 和 response_body）
 		TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (*v1.TenantRequestAuditLogDetailRes, error)
 		// Register handles tenant registration.
 		Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error)
@@ -51,7 +52,7 @@ type (
 		ChangePassword(ctx context.Context, req *v1.TenantChangePasswordReq) (*v1.TenantChangePasswordRes, error)
 		// ListSessions returns active sessions for the current tenant user.
 		ListSessions(ctx context.Context, req *v1.TenantSessionListReq) (*v1.TenantSessionListRes, error)
-		// RevokeSession revokes a specific session.
+		// RevokeSession revokes a specific session (only own sessions).
 		RevokeSession(ctx context.Context, req *v1.TenantRevokeSessionReq) (*v1.TenantRevokeSessionRes, error)
 		// Wallet 获取租户钱包余额
 		Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.TenantWalletRes, error)
@@ -103,9 +104,9 @@ type (
 		RevokeInvitation(ctx context.Context, req *v1.TenantInvitationRevokeReq) (*v1.TenantInvitationRevokeRes, error)
 		// InviteInfo returns public information about an invitation (no auth required).
 		InviteInfo(ctx context.Context, req *v1.TenantInviteInfoReq) (*v1.TenantInviteInfoRes, error)
-		// RequestClosure 申请关户
+		// RequestClosure 申请关户（仅 owner）
 		RequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (*v1.TenantRequestClosureRes, error)
-		// CancelClosure 取消关户
+		// CancelClosure 取消关户（仅 owner）
 		CancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (*v1.TenantCancelClosureRes, error)
 		// ListMembers returns a paginated list of tenant members.
 		ListMembers(ctx context.Context, req *v1.TenantMemberListReq) (*v1.TenantMemberListRes, error)
@@ -229,11 +230,6 @@ type (
 		PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (*v1.TenantPlanCurrentRes, error)
 		// PlanCancelAutoRenew 取消自动续费
 		PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (*v1.TenantPlanCancelAutoRenewRes, error)
-		PlaygroundChat(ctx context.Context, req *v1.PlaygroundChatReq) (*v1.PlaygroundChatRes, error)
-		PlaygroundImage(ctx context.Context, req *v1.PlaygroundImageReq) (*v1.PlaygroundImageRes, error)
-		PlaygroundAudioTTS(ctx context.Context, req *v1.PlaygroundAudioTTSReq) (*v1.PlaygroundAudioTTSRes, error)
-		PlaygroundEmbedding(ctx context.Context, req *v1.PlaygroundEmbeddingReq) (*v1.PlaygroundEmbeddingRes, error)
-		PlaygroundRerank(ctx context.Context, req *v1.PlaygroundRerankReq) (*v1.PlaygroundRerankRes, error)
 		SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (*v1.SandboxChatRes, error)
 		SandboxQuota(ctx context.Context, req *v1.SandboxQuotaReq) (*v1.SandboxQuotaRes, error)
 		TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (*v1.TenantPluginListRes, error)

@@ -36,12 +36,14 @@ type (
 		// ListSensitiveAccessLogs retrieves a paginated list of sensitive data access logs.
 		ListSensitiveAccessLogs(ctx context.Context, req *v1.SensitiveLogListReq) (*v1.SensitiveLogListRes, error)
 		// ListRequestAuditLogs 分页查询请求审计日志（不返回 request_body/response_body 以优化性能）
+		// 审计数据从审计库查询，关联信息（用户名、租户名等）从主库批量查询后在应用层合并。
 		ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error)
 		// GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 		GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error)
 		// ExportOperationLogs exports operation logs to CSV or Excel.
 		ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error)
 		// ContentFilterLogList returns a paginated list of content filter interception logs.
+		// 审计数据从审计库查询，关联信息从主库批量查询后在应用层合并。
 		ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error)
 		// Login handles admin login.
 		Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error)

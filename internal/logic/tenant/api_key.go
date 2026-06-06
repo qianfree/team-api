@@ -17,6 +17,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
@@ -671,4 +672,56 @@ func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportR
 			offset += 1000
 		}
 	})
+}
+
+// ApiKeyReveal 获取 API Key 明文值（用于 Playground 等场景）
+func (s *sTenant) ApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealReq) (*v1.TenantApiKeyRevealRes, error) {
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
+
+	type keyInfo struct {
+		KeyType      string `json:"key_type"`
+		KeyPrefix    string `json:"key_prefix"`
+		Status       string `json:"status"`
+		EncryptedKey string `json:"encrypted_key"`
+		UserId       int64  `json:"user_id"`
+	}
+	var info *keyInfo
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Fields("key_type, key_prefix, status, encrypted_key, user_id").
+		Scan(&info)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, lcommon.NewNotFoundError("API key")
+	}
+
+	// 权限校验
+	if info.KeyType == "project" {
+		if role != "owner" && role != "admin" {
+			return nil, lcommon.NewBusinessError(consts.CodeProjectKeyForbidden, consts.MsgProjectKeyForbidden)
+		}
+	} else {
+		// 个人密钥：只有本人可以查看
+		if info.UserId != userID {
+			return nil, lcommon.NewNotFoundError("API key")
+		}
+	}
+
+	// 解密
+	encKey := relay.GetEncryptionKey()
+	plainKey, err := uc.DecryptString(encKey, info.EncryptedKey)
+	if err != nil {
+		return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "密钥解密失败")
+	}
+
+	return &v1.TenantApiKeyRevealRes{
+		Key:       plainKey,
+		KeyPrefix: info.KeyPrefix,
+		Status:    info.Status,
+	}, nil
 }
