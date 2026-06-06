@@ -29,9 +29,11 @@ type PlaygroundChatReq struct {
 type PlaygroundChatRes struct {
 	Model            string `json:"model"`
 	Content          string `json:"content" dc:"响应内容（非流式时返回）"`
+	ReasoningContent string `json:"reasoning_content,omitempty" dc:"推理/思考内容（思考模型返回）"`
 	PromptTokens     int    `json:"prompt_tokens" dc:"输入 Token 数"`
 	CompletionTokens int    `json:"completion_tokens" dc:"输出 Token 数"`
-	TotalTokens      int    `json:"total_tokens" dc:"总 Token 数"`
+	ReasoningTokens  int    `json:"reasoning_tokens" dc:"推理/思考 Token 数"`
+	TotalTokens      int    `json:"total_tokens" dc:"总 Token 数（含推理）"`
 	EstimatedCost    string `json:"estimated_cost" dc:"预估费用"`
 }
 

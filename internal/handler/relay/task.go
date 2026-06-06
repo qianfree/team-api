@@ -273,6 +273,9 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		return
 	}
 
+	capture := NewResponseCaptureWriter(r.Response.Writer)
+	rc.Writer = capture
+
 	modelName := extractModelName(body)
 	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
 
@@ -286,6 +289,9 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	} else {
 		monitor.UnregisterRequest(rc.RequestID)
 	}
+
+	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
+	go recordTaskSubmitAudit(r, rc, capture, body)
 }
 
 // registerAsyncTask 注册异步任务到实时监控
