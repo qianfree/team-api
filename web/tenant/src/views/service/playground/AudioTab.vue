@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
-import request from '@/utils/request'
+import { ref, computed } from 'vue'
+import { createPlaygroundApi } from '@/utils/playgroundApi'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
-interface ModelItem { model_id: string; model_name: string; category: string }
-const props = defineProps<{ models: ModelItem[] }>()
+interface ModelItem {
+	model_id: string
+	model_name: string
+	category: string
+}
+const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
 const selectedModel = ref(props.models[0]?.model_id || '')
@@ -21,7 +25,17 @@ const formatSelectOptions = computed(() => formatOptions.map(f => ({ value: f, l
 
 const audioBase64 = ref('')
 const contentType = ref('')
-const tokenUsage = reactive({ promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: '' })
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer)
+	const chunkSize = 8192
+	let binary = ''
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length))
+		binary += String.fromCharCode.apply(null, Array.from(chunk))
+	}
+	return btoa(binary)
+}
 
 async function synthesize() {
 	if (!inputText.value.trim() || !selectedModel.value) return
@@ -29,21 +43,18 @@ async function synthesize() {
 	audioBase64.value = ''
 
 	try {
-		const res = await request.post('/tenant/playground/audio/tts', {
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.post('/v1/audio/speech', {
 			model: selectedModel.value,
 			input: inputText.value,
 			voice: voice.value,
 			response_format: responseFormat.value,
-		})
-		if (res.data?.code === 0) {
-			const data = res.data.data
-			audioBase64.value = data.audio_base64 || ''
-			contentType.value = data.content_type || 'audio/mpeg'
-			tokenUsage.promptTokens = data.prompt_tokens || 0
-			tokenUsage.completionTokens = data.completion_tokens || 0
-			tokenUsage.totalTokens = data.total_tokens || 0
-			tokenUsage.cost = data.estimated_cost || ''
-		}
+		}, { responseType: 'arraybuffer' })
+
+		// /v1/audio/speech 返回原始二进制音频数据
+		const buffer = res.data as ArrayBuffer
+		audioBase64.value = arrayBufferToBase64(buffer)
+		contentType.value = String(res.headers['content-type'] || 'audio/mpeg')
 	} catch (e) {
 		console.error(e)
 	} finally {
@@ -100,10 +111,6 @@ async function synthesize() {
 					</div>
 					<div v-if="audioBase64" class="space-y-4">
 						<audio controls class="w-full" :src="'data:' + contentType + ';base64,' + audioBase64" />
-						<div class="text-xs text-gray-500 flex items-center justify-between">
-							<span>Tokens: {{ tokenUsage.promptTokens }} / {{ tokenUsage.totalTokens }}</span>
-							<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
-						</div>
 					</div>
 				</div>
 			</div>

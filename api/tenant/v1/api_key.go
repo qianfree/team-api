@@ -80,6 +80,18 @@ type TenantApiKeyModelScopesRes struct {
 	ModelNames []string `json:"model_names"`
 }
 
+// TenantApiKeyRevealReq 获取API Key明文值（用于Playground等场景）
+type TenantApiKeyRevealReq struct {
+	g.Meta `path:"/api-keys/{id}/value" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"获取API Key明文值"`
+	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+}
+
+type TenantApiKeyRevealRes struct {
+	Key       string `json:"key"`
+	KeyPrefix string `json:"key_prefix"`
+	Status    string `json:"status"`
+}
+
 // TenantApiKeyExportReq 导出API Key列表请求
 type TenantApiKeyExportReq struct {
 	g.Meta    `path:"/api-keys/export" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"导出API Key列表"`

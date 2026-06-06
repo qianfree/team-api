@@ -1,13 +1,23 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick } from 'vue'
-import request from '@/utils/request'
+import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
-interface ModelItem { model_id: string; model_name: string; category: string }
+interface ModelItem {
+	model_id: string
+	model_name: string
+	category: string
+	billing_mode?: string | null
+	per_request_price?: number | null
+	input_price?: number | null
+	output_price?: number | null
+}
 const props = defineProps<{
 	models: ModelItem[]
+	apiKey: string
 }>()
 
 const sending = ref(false)
@@ -96,19 +106,29 @@ async function sendMessage() {
 	}
 
 	try {
-		const res = await request.post('/tenant/playground/chat', requestBody, { _suppressErrorMsg: true } as any)
-		if (res.data?.code === 0) {
-			const data = res.data.data
-			messages.value.push({
-				role: 'assistant',
-				content: data.content || '(无响应内容)',
-				reasoningContent: data.reasoning_content || undefined,
-			})
-			tokenUsage.prompt = data.prompt_tokens || 0
-			tokenUsage.completion = data.completion_tokens || 0
-			tokenUsage.reasoning = data.reasoning_tokens || 0
-			tokenUsage.total = data.total_tokens || 0
-			tokenUsage.cost = data.estimated_cost || ''
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.post('/v1/chat/completions', requestBody)
+
+		const data = res.data
+		// 解析标准 OpenAI 格式响应
+		const choice = data.choices?.[0]?.message
+		messages.value.push({
+			role: 'assistant',
+			content: choice?.content || '(无响应内容)',
+			reasoningContent: choice?.reasoning_content || undefined,
+		})
+
+		// 解析 usage
+		const usage = data.usage || {}
+		tokenUsage.prompt = usage.prompt_tokens || 0
+		tokenUsage.completion = usage.completion_tokens || 0
+		tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
+		tokenUsage.total = usage.total_tokens || 0
+
+		// 计算费用
+		const model = selectedModelItem.value
+		if (model) {
+			tokenUsage.cost = calculateCost(model, usage) || ''
 		}
 	} catch (e: any) {
 		const errMsg = e?.message || '请求失败，请重试'
