@@ -125,9 +125,65 @@ async function saveAuditConfig() {
 	}
 }
 
+// 等级权益
+const levelBenefitsLoading = ref(false)
+const levelBenefits = ref<any>(null)
+
+function formatMembers(val: number) {
+	return val === 0 ? '无限制' : String(val)
+}
+
+function formatConcurrency(val: number) {
+	return val === 0 ? '无限制' : String(val)
+}
+
+function formatDiscount(multiplier: number) {
+	if (multiplier >= 1) return '无折扣'
+	const discount = Math.round((1 - multiplier) * 100)
+	return `${discount === 0 ? '无折扣' : discount + '% 折扣'}`
+}
+
+function formatThreshold(val: number) {
+	if (val === 0) return '—'
+	return '$' + val.toFixed(2)
+}
+
+function getNextLevelThreshold() {
+	if (!levelBenefits.value) return null
+	const { current_level: cur, list } = levelBenefits.value
+	const next = list.find((item: any) => item.level === cur + 1)
+	return next ? next.cumulative_recharge_threshold : null
+}
+
+function getUpgradePercent() {
+	if (!levelBenefits.value) return 0
+	const curThreshold = levelBenefits.value.list.find(
+		(item: any) => item.level === levelBenefits.value.current_level
+	)?.cumulative_recharge_threshold || 0
+	const nextThreshold = getNextLevelThreshold()
+	if (!nextThreshold) return 100
+	const range = nextThreshold - curThreshold
+	if (range <= 0) return 100
+	const progress = levelBenefits.value.cumulative_recharge - curThreshold
+	return Math.min(Math.round((progress / range) * 100), 100)
+}
+
+async function fetchLevelBenefits() {
+	levelBenefitsLoading.value = true
+	try {
+		const res: any = await request.get('/tenant/level-benefits')
+		levelBenefits.value = res.data?.data || null
+	} catch {
+		// silent
+	} finally {
+		levelBenefitsLoading.value = false
+	}
+}
+
 onMounted(() => {
 	fetchOrgInfo()
 	fetchAuditConfig()
+	fetchLevelBenefits()
 })
 </script>
 
@@ -287,6 +343,116 @@ onMounted(() => {
 						>
 							{{ auditSaving ? '保存中...' : '保存配置' }}
 						</button>
+					</div>
+				</template>
+			</div>
+		</div>
+
+		<!-- Level Benefits -->
+		<div class="card">
+			<div class="card-header">
+				<h2 class="text-lg font-semibold text-gray-900">等级权益</h2>
+				<p class="text-sm text-gray-500 mt-0.5">各等级权益对比与升级进度</p>
+			</div>
+			<div class="card-body space-y-5">
+				<!-- Loading -->
+				<div v-if="levelBenefitsLoading" class="space-y-3">
+					<div class="skeleton h-10 w-full rounded-xl"></div>
+					<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+						<div v-for="i in 5" :key="i" class="skeleton h-40 rounded-xl"></div>
+					</div>
+				</div>
+
+				<template v-else-if="levelBenefits">
+					<!-- Summary Bar -->
+					<div class="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl bg-primary-50/60 border border-primary-100">
+						<div class="flex items-center gap-2">
+							<Icon name="shield" size="md" class="text-primary-600" />
+							<span class="badge badge-primary text-sm font-semibold">
+								{{ levelBenefits.current_level_name || 'LV' + levelBenefits.current_level }}
+							</span>
+						</div>
+						<div class="flex items-center gap-2 text-sm text-gray-600">
+							<Icon name="currencyDollar" size="sm" class="text-gray-400" />
+							<span>累计充值 <strong class="text-gray-900">${{ levelBenefits.cumulative_recharge.toFixed(2) }}</strong></span>
+						</div>
+						<div v-if="getNextLevelThreshold() !== null" class="flex-1 w-full sm:w-auto">
+							<div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+								<span>升级进度</span>
+								<span>{{ getUpgradePercent() }}%</span>
+							</div>
+							<div class="h-2 bg-primary-100 rounded-full overflow-hidden">
+								<div
+									class="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full transition-all duration-500"
+									:style="{ width: getUpgradePercent() + '%' }"
+								></div>
+							</div>
+							<p class="text-xs text-gray-400 mt-1">
+								再充值 ${{ (getNextLevelThreshold()! - levelBenefits.cumulative_recharge).toFixed(2) }} 即可升级
+							</p>
+						</div>
+						<div v-else class="text-xs text-primary-600 font-medium">
+							已达最高等级
+						</div>
+					</div>
+
+					<!-- Level Grid -->
+					<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+						<div
+							v-for="item in levelBenefits.list"
+							:key="item.level"
+							class="p-4 rounded-xl border-2 transition-all duration-200"
+							:class="[
+								item.level === levelBenefits.current_level
+									? 'border-primary-500 bg-primary-50/50 shadow-glow'
+									: 'border-gray-200 hover:border-gray-300',
+							]"
+						>
+							<!-- Level Header -->
+							<div class="flex items-center justify-between mb-3">
+								<span class="text-sm font-semibold" :class="item.level === levelBenefits.current_level ? 'text-primary-700' : 'text-gray-900'">
+									{{ item.name }}
+								</span>
+								<span
+									v-if="item.level === levelBenefits.current_level"
+									class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary-500 text-white"
+								>
+									当前
+								</span>
+							</div>
+
+							<!-- Benefits -->
+							<div class="space-y-2.5">
+								<div class="flex items-center gap-2">
+									<Icon name="currencyDollar" size="xs" class="text-gray-400 flex-shrink-0" />
+									<div>
+										<p class="text-[10px] text-gray-400">升级门槛</p>
+										<p class="text-xs font-medium text-gray-700">{{ formatThreshold(item.cumulative_recharge_threshold) }}</p>
+									</div>
+								</div>
+								<div class="flex items-center gap-2">
+									<Icon name="users" size="xs" class="text-gray-400 flex-shrink-0" />
+									<div>
+										<p class="text-[10px] text-gray-400">成员上限</p>
+										<p class="text-xs font-medium text-gray-700">{{ formatMembers(item.max_members) }}</p>
+									</div>
+								</div>
+								<div class="flex items-center gap-2">
+									<Icon name="bolt" size="xs" class="text-gray-400 flex-shrink-0" />
+									<div>
+										<p class="text-[10px] text-gray-400">并发上限</p>
+										<p class="text-xs font-medium text-gray-700">{{ formatConcurrency(item.max_concurrency) }}</p>
+									</div>
+								</div>
+								<div class="flex items-center gap-2">
+									<Icon name="shield" size="xs" class="text-gray-400 flex-shrink-0" />
+									<div>
+										<p class="text-[10px] text-gray-400">价格折扣</p>
+										<p class="text-xs font-medium text-gray-700">{{ formatDiscount(item.price_multiplier) }}</p>
+									</div>
+								</div>
+							</div>
+						</div>
 					</div>
 				</template>
 			</div>

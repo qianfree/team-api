@@ -104,6 +104,8 @@ type (
 		RevokeInvitation(ctx context.Context, req *v1.TenantInvitationRevokeReq) (*v1.TenantInvitationRevokeRes, error)
 		// InviteInfo returns public information about an invitation (no auth required).
 		InviteInfo(ctx context.Context, req *v1.TenantInviteInfoReq) (*v1.TenantInviteInfoRes, error)
+		// GetLevelBenefits returns all level configurations and the tenant's current level info.
+		GetLevelBenefits(ctx context.Context, req *v1.TenantLevelBenefitsReq) (*v1.TenantLevelBenefitsRes, error)
 		// RequestClosure 申请关户（仅 owner）
 		RequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (*v1.TenantRequestClosureRes, error)
 		// CancelClosure 取消关户（仅 owner）
