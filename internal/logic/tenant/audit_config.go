@@ -240,7 +240,7 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 	}
 
 	dataM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe().
-		Fields("id, request_id, user_id, project_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, tenant_audit_level as audit_level, task_id, task_status, task_completed_at, created_at").
+		Fields("id, request_id, tenant_id, user_id, project_id, api_key_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, tenant_audit_level as audit_level, task_id, task_status, task_completed_at, created_at").
 		OrderDesc("created_at").
 		Page(page, pageSize)
 	if where != "" {

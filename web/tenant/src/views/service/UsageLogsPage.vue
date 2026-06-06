@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
@@ -301,7 +301,7 @@ onMounted(() => {
 							<th class="min-w-50">用户/项目</th>
 							<th class="min-w-40">API Key</th>
 							<th class="min-w-45">模型</th>
-							<th class="min-w-40">渠道</th>
+							<th class="min-w-40">模型显示名称</th>
 							<th class="min-w-30">类型</th>
 							<th class="min-w-30">Token</th>
 							<th class="min-w-20">费用</th>
@@ -332,9 +332,9 @@ onMounted(() => {
 								</div>
 								<span v-else class="font-medium text-gray-900">{{ log.model_name }}</span>
 							</td>
-							<!-- 渠道 -->
+							<!-- 模型显示名称 -->
 							<td>
-								<span class="text-sm text-gray-700">{{ log.channel_name || '-' }}</span>
+								<span class="text-sm text-gray-700">{{ log.model_display_name || '-' }}</span>
 							</td>
 
 							<!-- 请求类型 -->
@@ -600,10 +600,6 @@ onMounted(() => {
 								{{ detailLog.task_id }}
 								<button class="text-xs text-primary-500 hover:text-primary-700 ml-1" @click.stop="$router.push({ path: '/tenant/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</button>
 							</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">渠道</span>
-							<span>{{ detailLog.channel_name || '-' }} <span v-if="detailLog.channel_type" class="text-xs text-gray-400">(类型: {{ detailLog.channel_type }})</span></span>
 						</div>
 						<div class="flex justify-between">
 							<span class="text-gray-500">代理模式</span>
