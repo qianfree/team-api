@@ -68,15 +68,18 @@ func buildPlaygroundRelayContext(ctx context.Context, key *playgroundApiKey, rec
 	}
 }
 
-func callRelayAndParseUsage(relayFunc func() (*relaycommon.Usage, *handler.BillingResult, error)) (promptTokens, completionTokens, totalTokens int, err error) {
+func callRelayAndParseUsage(relayFunc func() (*relaycommon.Usage, *handler.BillingResult, error)) (promptTokens, completionTokens, reasoningTokens, totalTokens int, err error) {
 	usage, _, relayErr := relayFunc()
 	if relayErr != nil {
-		return 0, 0, 0, convertRelayError(relayErr)
+		return 0, 0, 0, 0, convertRelayError(relayErr)
 	}
 	if usage != nil {
 		promptTokens = usage.PromptTokens
 		completionTokens = usage.CompletionTokens
 		totalTokens = usage.TotalTokens
+		if usage.CompletionTokenDetails != nil {
+			reasoningTokens = usage.CompletionTokenDetails.ReasoningTokens
+		}
 	}
 	return
 }
@@ -105,11 +108,50 @@ func convertRelayError(err error) error {
 	}
 }
 
-func getRequestID(ctx context.Context) string {
-	if r := g.RequestFromCtx(ctx); r != nil {
-		return r.GetCtxVar("RequestId").String()
+// ============================================================
+// 共享审计记录
+// ============================================================
+
+// recordPlaygroundAudit 为 Playground 调用记录审计日志
+// Playground 通过内部调用 relay handler（绕过 handler/relay/relay.go），
+// 需要在此处手动记录审计，使 Playground 请求也能出现在请求审计日志中。
+func recordPlaygroundAudit(ctx context.Context, rc *handler.RelayContext, recorder *httptest.ResponseRecorder, body []byte, path string, latencyMs int) {
+	provider := relay.NewDataProvider()
+
+	statusCode := recorder.Code
+	if statusCode == 0 {
+		statusCode = 200
 	}
-	return ""
+
+	requestBody := string(body)
+	responseBody := recorder.Body.String()
+
+	// 截断过长内容
+	maxLen := 65536
+	if len(requestBody) > maxLen {
+		requestBody = requestBody[:maxLen]
+	}
+	if len(responseBody) > maxLen {
+		responseBody = responseBody[:maxLen]
+	}
+
+	provider.RecordAudit(ctx, &relaycommon.AuditRecord{
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		Method:          "POST",
+		Path:            path,
+		StatusCode:      statusCode,
+		ClientIP:        rc.ClientIP,
+		UserAgent:       "",
+		RequestBody:     requestBody,
+		ResponseBody:    responseBody,
+		LatencyMs:       latencyMs,
+		IsStream:        false,
+		ForwardingTrace: rc.ForwardingTrace,
+	})
 }
 
 // ============================================================
@@ -159,9 +201,14 @@ func (s *sTenant) PlaygroundChat(ctx context.Context, req *v1.PlaygroundChatReq)
 	provider := relay.NewDataProvider()
 	billingProvider := billing.NewBillingProvider()
 
-	promptTokens, completionTokens, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
+	start := time.Now()
+	promptTokens, completionTokens, reasoningTokens, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
 		return handler.HandleChatCompletions(ctx, body, "/v1/chat/completions", http.Header{}, rc, provider, billingProvider)
 	})
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	recordPlaygroundAudit(ctx, rc, recorder, body, "/chat/completions", latencyMs)
+
 	if relayErr != nil {
 		return nil, relayErr
 	}
@@ -169,18 +216,23 @@ func (s *sTenant) PlaygroundChat(ctx context.Context, req *v1.PlaygroundChatReq)
 	res := &v1.PlaygroundChatRes{Model: req.Model}
 	res.PromptTokens = promptTokens
 	res.CompletionTokens = completionTokens
+	res.ReasoningTokens = reasoningTokens
 	res.TotalTokens = totalTokens
 
 	if recorder.Body.Len() > 0 {
 		var relayResp struct {
 			Choices []struct {
 				Message struct {
-					Content string `json:"content"`
+					Content          string  `json:"content"`
+					ReasoningContent *string `json:"reasoning_content"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &relayResp); err == nil && len(relayResp.Choices) > 0 {
 			res.Content = relayResp.Choices[0].Message.Content
+			if rc := relayResp.Choices[0].Message.ReasoningContent; rc != nil && *rc != "" {
+				res.ReasoningContent = *rc
+			}
 		}
 	}
 
@@ -219,9 +271,14 @@ func (s *sTenant) PlaygroundImage(ctx context.Context, req *v1.PlaygroundImageRe
 	recorder := httptest.NewRecorder()
 	rc := buildPlaygroundRelayContext(ctx, key, recorder)
 
-	promptTokens, completionTokens, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
+	start := time.Now()
+	promptTokens, completionTokens, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
 		return handler.HandleImagesGenerations(ctx, body, "/v1/images/generations", http.Header{}, rc, relay.NewDataProvider(), billing.NewBillingProvider())
 	})
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	recordPlaygroundAudit(ctx, rc, recorder, body, "/images/generations", latencyMs)
+
 	if relayErr != nil {
 		return nil, relayErr
 	}
@@ -283,9 +340,14 @@ func (s *sTenant) PlaygroundAudioTTS(ctx context.Context, req *v1.PlaygroundAudi
 	provider := relay.NewDataProvider()
 	billingProvider := billing.NewBillingProvider()
 
-	promptTokens, completionTokens, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
+	start := time.Now()
+	promptTokens, completionTokens, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
 		return handler.HandleAudioSpeech(ctx, body, "/v1/audio/speech", http.Header{}, rc, provider, billingProvider)
 	})
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	recordPlaygroundAudit(ctx, rc, recorder, body, "/audio/speech", latencyMs)
+
 	if relayErr != nil {
 		return nil, relayErr
 	}
@@ -335,9 +397,14 @@ func (s *sTenant) PlaygroundEmbedding(ctx context.Context, req *v1.PlaygroundEmb
 	provider := relay.NewDataProvider()
 	billingProvider := billing.NewBillingProvider()
 
-	promptTokens, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
+	start := time.Now()
+	promptTokens, _, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
 		return handler.HandleEmbeddings(ctx, body, "/v1/embeddings", http.Header{}, rc, provider, billingProvider)
 	})
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	recordPlaygroundAudit(ctx, rc, recorder, body, "/embeddings", latencyMs)
+
 	if relayErr != nil {
 		return nil, relayErr
 	}
@@ -396,9 +463,14 @@ func (s *sTenant) PlaygroundRerank(ctx context.Context, req *v1.PlaygroundRerank
 	provider := relay.NewDataProvider()
 	billingProvider := billing.NewBillingProvider()
 
-	promptTokens, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
+	start := time.Now()
+	promptTokens, _, _, totalTokens, relayErr := callRelayAndParseUsage(func() (*relaycommon.Usage, *handler.BillingResult, error) {
 		return handler.HandleRerank(ctx, body, "/v1/rerank", http.Header{}, rc, provider, billingProvider)
 	})
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	recordPlaygroundAudit(ctx, rc, recorder, body, "/rerank", latencyMs)
+
 	if relayErr != nil {
 		return nil, relayErr
 	}

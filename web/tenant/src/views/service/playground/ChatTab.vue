@@ -40,10 +40,21 @@ const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, 
 const aspectRatioSelectOptions = computed(() => aspectRatioOptions.map(r => ({ value: r, label: r })))
 const imageSizeSelectOptions = computed(() => imageSizeOptions.map(s => ({ value: s, label: s })))
 
-interface ChatMessage { role: string; content: string }
+interface ChatMessage {
+	role: string
+	content: string
+	reasoningContent?: string
+}
 const messages = ref<ChatMessage[]>([])
 const inputMessage = ref('')
-const tokenUsage = reactive({ prompt: 0, completion: 0, total: 0, cost: '' })
+const tokenUsage = reactive({ prompt: 0, completion: 0, reasoning: 0, total: 0, cost: '' })
+
+// 记录每条 assistant 消息的思考内容折叠状态（用 message index 作为 key）
+const expandedThinking = ref<Record<number, boolean>>({})
+
+function toggleThinking(idx: number) {
+	expandedThinking.value[idx] = !expandedThinking.value[idx]
+}
 
 const messagesRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -88,9 +99,14 @@ async function sendMessage() {
 		const res = await request.post('/tenant/playground/chat', requestBody, { _suppressErrorMsg: true } as any)
 		if (res.data?.code === 0) {
 			const data = res.data.data
-			messages.value.push({ role: 'assistant', content: data.content || '(无响应内容)' })
+			messages.value.push({
+				role: 'assistant',
+				content: data.content || '(无响应内容)',
+				reasoningContent: data.reasoning_content || undefined,
+			})
 			tokenUsage.prompt = data.prompt_tokens || 0
 			tokenUsage.completion = data.completion_tokens || 0
+			tokenUsage.reasoning = data.reasoning_tokens || 0
 			tokenUsage.total = data.total_tokens || 0
 			tokenUsage.cost = data.estimated_cost || ''
 		}
@@ -108,8 +124,10 @@ function clearChat() {
 	messages.value = []
 	tokenUsage.prompt = 0
 	tokenUsage.completion = 0
+	tokenUsage.reasoning = 0
 	tokenUsage.total = 0
 	tokenUsage.cost = ''
+	expandedThinking.value = {}
 }
 </script>
 
@@ -180,23 +198,52 @@ function clearChat() {
 							<p class="empty-state-description">选择模型，输入消息，开始测试</p>
 						</div>
 						<div v-for="(msg, idx) in messages" :key="idx" class="flex gap-3 animate-slide-up" :class="{ 'justify-end': msg.role === 'user' }">
-							<div v-if="msg.role === 'assistant'" class="flex gap-3 max-w-[80%]">
+							<!-- Assistant message -->
+							<div v-if="msg.role === 'assistant'" class="flex gap-3 max-w-[85%]">
 								<div class="h-8 w-8 rounded-xl bg-primary-100 flex items-center justify-center flex-shrink-0">
 									<Icon name="cog" size="sm" class="text-primary-600" />
 								</div>
-								<div class="rounded-2xl rounded-tl-sm bg-gray-100 px-4 py-3">
-									<MarkdownRenderer :content="msg.content" />
+								<div class="min-w-0 flex-1 space-y-2">
+									<!-- Thinking / Reasoning section -->
+									<div v-if="msg.reasoningContent" class="rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
+										<button
+											class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-amber-100/60 transition-colors duration-150"
+											@click="toggleThinking(idx)"
+										>
+											<svg
+												class="h-3.5 w-3.5 text-amber-500 transition-transform duration-200 flex-shrink-0"
+												:class="{ 'rotate-90': expandedThinking[idx] }"
+												fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+											>
+												<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+											</svg>
+											<span class="text-xs font-medium text-amber-700">思考过程</span>
+											<span class="text-xs text-amber-500">· 消耗 Reasoning Tokens</span>
+										</button>
+										<div v-if="expandedThinking[idx]" class="px-3 pb-3">
+											<div class="rounded-lg bg-white/70 border border-amber-100 px-3 py-2 text-sm text-gray-600 whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto">
+												{{ msg.reasoningContent }}
+											</div>
+										</div>
+									</div>
+									<!-- Main content -->
+									<div class="rounded-2xl rounded-tl-sm bg-gray-100 px-4 py-3">
+										<MarkdownRenderer :content="msg.content" />
+									</div>
 								</div>
 							</div>
+							<!-- User message -->
 							<div v-else-if="msg.role === 'user'" class="max-w-[80%]">
 								<div class="rounded-2xl rounded-tr-sm bg-primary-500 text-white px-4 py-3">
 									<p class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
 								</div>
 							</div>
+							<!-- System message -->
 							<div v-else-if="msg.role === 'system' && idx === 0" class="text-xs text-gray-400 italic">
 								System: {{ msg.content.substring(0, 50) }}{{ msg.content.length > 50 ? '...' : '' }}
 							</div>
 						</div>
+						<!-- Sending indicator -->
 						<div v-if="sending" class="flex gap-3">
 							<div class="h-8 w-8 rounded-xl bg-primary-100 flex items-center justify-center">
 								<div class="spinner h-4 w-4 text-primary-600"></div>
@@ -206,14 +253,17 @@ function clearChat() {
 							</div>
 						</div>
 					</div>
+					<!-- Token usage bar -->
 					<div v-if="tokenUsage.total > 0 || tokenUsage.cost" class="px-6 py-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
 						<div class="flex items-center gap-4">
 							<span>Prompt: {{ tokenUsage.prompt }}</span>
 							<span>Completion: {{ tokenUsage.completion }}</span>
+							<span v-if="tokenUsage.reasoning > 0" class="text-amber-600">Reasoning: {{ tokenUsage.reasoning }}</span>
 							<span>Total: {{ tokenUsage.total }}</span>
 						</div>
 						<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
 					</div>
+					<!-- Input area -->
 					<div class="p-4 border-t border-gray-200">
 						<div class="flex gap-3">
 							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." :disabled="sending" @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
