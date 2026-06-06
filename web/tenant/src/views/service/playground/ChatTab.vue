@@ -153,13 +153,6 @@ function clearChat() {
 
 <template>
 	<div>
-		<div class="flex items-center justify-end mb-4">
-			<button class="btn btn-secondary btn-sm" @click="clearChat">
-				<Icon name="refresh" size="sm" />
-				清空对话
-			</button>
-		</div>
-
 		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
 			<!-- Left: Parameters -->
 			<div class="lg:col-span-1">
@@ -290,6 +283,10 @@ function clearChat() {
 							<button class="btn btn-primary self-end" :disabled="sending || !inputMessage.trim()" @click="sendMessage">
 								<Icon name="edit" size="sm" />
 								发送
+							</button>
+							<button class="btn btn-secondary self-end" :disabled="sending" @click="clearChat">
+								<Icon name="refresh" size="sm" />
+								清空
 							</button>
 						</div>
 					</div>
