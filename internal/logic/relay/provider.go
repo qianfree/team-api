@@ -613,6 +613,9 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		if record.TaskCompletedAt != nil {
 			updateData.TaskCompletedAt = gtime.NewFromTime(*record.TaskCompletedAt)
 		}
+		if record.LatencyMs > 0 {
+			updateData.LatencyMs = record.LatencyMs
+		}
 
 		_, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
 			Where("task_id", record.TaskID).

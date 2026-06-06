@@ -432,6 +432,13 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 // recordTaskCompletionAudit 更新提交阶段写入的审计记录，补充异步任务最终结果
 func recordTaskCompletionAudit(task *common.AsyncTask, status string, resultBody string, upstreamHeaders map[string]string) {
 	now := time.Now()
+
+	// 计算从任务提交到完成的端到端延迟
+	latencyMs := 0
+	if task.SubmitTime != nil {
+		latencyMs = int(now.Sub(*task.SubmitTime).Milliseconds())
+	}
+
 	relay.NewDataProvider().UpdateTaskAudit(context.Background(), &common.AuditRecord{
 		TenantID:            task.TenantID,
 		TaskID:              task.PublicTaskID,
@@ -439,6 +446,7 @@ func recordTaskCompletionAudit(task *common.AsyncTask, status string, resultBody
 		TaskResult:          resultBody,
 		TaskUpstreamHeaders: upstreamHeaders,
 		TaskCompletedAt:     &now,
+		LatencyMs:           latencyMs,
 	})
 }
 

@@ -204,7 +204,7 @@ function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-val
 }
 
 const columns: TableColumnData[] = [
-	{ title: 'ID', dataIndex: 'id', width: 70 },
+	{ title: 'ID', dataIndex: 'id', width: 100 },
 	{
 		title: '租户', dataIndex: 'tenant_name', width: 120, ellipsis: true,
 		render({ record }) { return record.tenant_name || record.tenant_id },
@@ -221,7 +221,7 @@ const columns: TableColumnData[] = [
 		render({ record }) { return record.api_key_name || record.api_key_id || '-' },
 	},
 	{
-		title: '模型', dataIndex: 'model_name', minWidth: 150,
+		title: '模型', dataIndex: 'model_name', width: 160,
 		render({ record }) {
 			if (hasUpstreamModel(record)) {
 				return h('div', [
@@ -232,7 +232,7 @@ const columns: TableColumnData[] = [
 			return h('span', { style: 'font-weight: 500' }, record.model_name)
 		},
 	},
-	{ title: '渠道', dataIndex: 'channel_name', minWidth: 120, ellipsis: true },
+	{ title: '渠道', dataIndex: 'channel_name', minWidth: 160, ellipsis: true },
 	{
 		title: '类型', dataIndex: 'request_type', width: 130,
 		render({ record }) {
@@ -344,7 +344,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: '时间', dataIndex: 'created_at', width: 140,
+		title: '时间', dataIndex: 'created_at', width: 180,
 		render({ record }) {
 			return h('span', { class: 'time-text' }, formatTime(record.created_at))
 		},
