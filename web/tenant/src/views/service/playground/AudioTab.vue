@@ -49,7 +49,7 @@ async function synthesize() {
 			input: inputText.value,
 			voice: voice.value,
 			response_format: responseFormat.value,
-		}, { responseType: 'arraybuffer' })
+		}, { responseType: 'arraybuffer', timeout: 180_000 })
 
 		// /v1/audio/speech 返回原始二进制音频数据
 		const buffer = res.data as ArrayBuffer

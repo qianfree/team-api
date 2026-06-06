@@ -198,7 +198,7 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	}
 
 	where := strings.Join(conditions, " AND ")
-	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
+	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id LEFT JOIN mdl_models mdl ON u.model_name = mdl.model_id"
 
 	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + " WHERE " + where
 	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
@@ -211,7 +211,7 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	}
 
 	dataSQL := fmt.Sprintf(
-		`SELECT u.*, COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
+		`SELECT u.*, COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name, COALESCE(mdl.model_name, '') AS model_display_name
 		 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
 		fromClause, where,
 	)
@@ -221,10 +221,20 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 		return nil, err
 	}
 
+	// 需要从响应中移除的渠道相关字段
+	channelFields := map[string]bool{
+		"channel_name": true,
+		"channel_type": true,
+		"channel_id":   true,
+	}
+
 	list := make([]map[string]any, 0, len(result))
 	for _, row := range result {
 		m := make(map[string]any, len(row))
 		for k, v := range row {
+			if channelFields[k] {
+				continue
+			}
 			switch raw := v.Val().(type) {
 			case []byte:
 				s := string(raw)
@@ -264,7 +274,8 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
 		{Field: "username", Header: "用户名"},
-		{Field: "model_name", Header: "模型"},
+		{Field: "model_display_name", Header: "模型显示名称"},
+		{Field: "model_name", Header: "模型标识"},
 		{Field: "request_type", Header: "请求类型"},
 		{Field: "input_tokens", Header: "输入Token"},
 		{Field: "output_tokens", Header: "输出Token"},
@@ -315,13 +326,13 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	}
 
 	where := strings.Join(conditions, " AND ")
-	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
+	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id LEFT JOIN mdl_models mdl ON u.model_name = mdl.model_id"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
 			dataSQL := fmt.Sprintf(
-				`SELECT u.id, COALESCE(t.username, '') AS username, u.model_name, u.request_type,
+				`SELECT u.id, COALESCE(t.username, '') AS username, COALESCE(mdl.model_name, '') AS model_display_name, u.model_name, u.request_type,
 				        u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at
 				 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT 1000 OFFSET ?`,
 				fromClause, where,

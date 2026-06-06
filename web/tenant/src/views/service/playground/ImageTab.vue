@@ -53,7 +53,7 @@ async function generate() {
 			prompt: prompt.value,
 			size: size.value,
 			quality: quality.value,
-		}, { timeout: 180_000 })
+		}, { timeout: 300_000 })
 
 		const data = res.data
 		images.value = data.data || []
