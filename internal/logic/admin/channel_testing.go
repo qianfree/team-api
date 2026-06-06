@@ -2,7 +2,10 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"time"
+
+	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -22,12 +25,13 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		BaseURL   string `json:"base_url"`
 		TestModel string `json:"test_model"`
 		Status    string `json:"status"`
+		Settings  string `json:"settings"`
 	}
 
 	var ch *channelRow
 	err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
-		Fields("id, name, type, base_url, test_model, status").
+		Fields("id, name, type, base_url, test_model, status, settings").
 		Scan(&ch)
 	if err != nil {
 		return nil, err
@@ -69,9 +73,20 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		return nil, common.NewBadRequestError("解密 API Key 失败")
 	}
 
+	// 解析渠道设置中的 use_proxy
+	useProxy := false
+	if ch.Settings != "" {
+		var settings struct {
+			UseProxy bool `json:"use_proxy"`
+		}
+		if json.Unmarshal([]byte(ch.Settings), &settings) == nil {
+			useProxy = settings.UseProxy
+		}
+	}
+
 	// 发送最小测试请求
 	startTime := time.Now()
-	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, testModel)
+	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, testModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	// 更新健康度
@@ -79,6 +94,15 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		relay.UpdateHealthScoreDirect(ctx, channelID, true, float64(latencyMs))
 	} else {
 		relay.UpdateHealthScoreDirect(ctx, channelID, false, float64(latencyMs))
+	}
+
+	// 记录测试结果日志
+	if result.Success {
+		g.Log().Infof(ctx, "[ChannelTest] 渠道 %s (%d) 测试成功 | 模型: %s | 延迟: %dms | 代理: %v",
+			ch.Name, channelID, testModel, latencyMs, useProxy)
+	} else {
+		g.Log().Warningf(ctx, "[ChannelTest] 渠道 %s (%d) 测试失败 | 模型: %s | 延迟: %dms | 代理: %v | 错误: %s",
+			ch.Name, channelID, testModel, latencyMs, useProxy, result.Error)
 	}
 
 	return &v1.ChannelTestRes{
