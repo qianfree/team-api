@@ -119,7 +119,7 @@ const sensFilter = reactive({
 })
 
 const sensColumns: TableColumnData[] = [
-  { title: 'ID', dataIndex: 'id', width: 70 },
+  { title: 'ID', dataIndex: 'id', width: 100 },
   { title: '用户ID', dataIndex: 'user_id', width: 90 },
   {
     title: '用户类型', dataIndex: 'user_type', width: 100,
@@ -133,7 +133,7 @@ const sensColumns: TableColumnData[] = [
   { title: '操作', dataIndex: 'action', width: 140, ellipsis: true },
   { title: '访问原因', dataIndex: 'reason', width: 180, ellipsis: true },
   { title: 'IP 地址', dataIndex: 'ip_address', width: 140 },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },
+  { title: '创建时间', dataIndex: 'created_at', width: 180 },
 ]
 
 async function fetchSensitiveLogs() {
