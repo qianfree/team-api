@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BaseSelect from '@/components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -10,9 +11,27 @@ const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 
+// Filter state
+const filterType = ref('')
+const filterStartDate = ref('')
+const filterEndDate = ref('')
+const filterAmountMin = ref('')
+const filterAmountMax = ref('')
+const filterUsername = ref('')
+const filterModel = ref('')
+
 const showExportDropdown = ref(false)
 const { exporting, exportFile } = useExport({
 	url: '/tenant/wallet/transactions/export',
+	getFilters: () => ({
+		type: filterType.value,
+		start_date: filterStartDate.value,
+		end_date: filterEndDate.value,
+		amount_min: filterAmountMin.value || undefined,
+		amount_max: filterAmountMax.value || undefined,
+		username: filterUsername.value,
+		model_name: filterModel.value,
+	}),
 })
 
 const txTypeLabel: Record<string, string> = {
@@ -37,6 +56,18 @@ const txTypeBadgeClass: Record<string, string> = {
 	unfreeze: 'badge-gray',
 }
 
+const typeOptions = [
+	{ value: '', label: '全部' },
+	{ value: 'recharge', label: '充值' },
+	{ value: 'consume', label: '消费' },
+	{ value: 'pre_deduct', label: '预扣' },
+	{ value: 'settle', label: '结算' },
+	{ value: 'refund', label: '退款' },
+	{ value: 'adjust', label: '调整' },
+	{ value: 'freeze', label: '冻结' },
+	{ value: 'unfreeze', label: '解冻' },
+]
+
 function formatAmount(amount: number): string {
 	if (amount >= 0) return '+$' + amount.toFixed(6)
 	return '-$' + Math.abs(amount).toFixed(6)
@@ -45,8 +76,17 @@ function formatAmount(amount: number): string {
 async function fetchTransactions() {
 	loading.value = true
 	try {
+		const params: any = { page: page.value, page_size: pageSize }
+		if (filterType.value) params.type = filterType.value
+		if (filterStartDate.value) params.start_date = filterStartDate.value
+		if (filterEndDate.value) params.end_date = filterEndDate.value
+		if (filterAmountMin.value) params.amount_min = filterAmountMin.value
+		if (filterAmountMax.value) params.amount_max = filterAmountMax.value
+		if (filterUsername.value) params.username = filterUsername.value
+		if (filterModel.value) params.model_name = filterModel.value
+
 		const res: any = await request.get('/tenant/wallet/transactions', {
-			params: { page: page.value, page_size: pageSize },
+			params,
 		})
 		const raw = res.data?.data
 		transactions.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -56,6 +96,23 @@ async function fetchTransactions() {
 	} finally {
 		loading.value = false
 	}
+}
+
+function applyFilters() {
+	page.value = 1
+	fetchTransactions()
+}
+
+function resetFilters() {
+	filterType.value = ''
+	filterStartDate.value = ''
+	filterEndDate.value = ''
+	filterAmountMin.value = ''
+	filterAmountMax.value = ''
+	filterUsername.value = ''
+	filterModel.value = ''
+	page.value = 1
+	fetchTransactions()
 }
 
 function prevPage() {
@@ -102,6 +159,44 @@ onMounted(fetchTransactions)
 			</div>
 		</div>
 
+		<!-- Filters -->
+		<div class="card">
+			<div class="card-body">
+				<div class="flex flex-wrap items-center gap-4">
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
+						<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
+						<input v-model="filterEndDate" type="date" class="input" style="width:140px" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">类型</label>
+						<BaseSelect v-model="filterType" :options="typeOptions" container-class="w-[100px]" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">金额范围</label>
+						<input v-model="filterAmountMin" type="number" step="0.01" placeholder="最小" class="input" style="width:100px" @keyup.enter="applyFilters" />
+						<span class="text-gray-400">~</span>
+						<input v-model="filterAmountMax" type="number" step="0.01" placeholder="最大" class="input" style="width:100px" @keyup.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+						<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">模型</label>
+						<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:150px" @keyup.enter="applyFilters" />
+					</div>
+					<div class="ml-auto flex items-center gap-2">
+						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
+						<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
 		<!-- Transactions -->
 		<div class="card">
 			<div v-if="loading" class="p-8 flex justify-center">
@@ -114,7 +209,6 @@ onMounted(fetchTransactions)
 						<tr>
 							<th class="min-w-20">类型</th>
 							<th class="min-w-30">金额</th>
-							<th class="min-w-30">扣费来源</th>
 							<th class="min-w-30">余额</th>
 							<th class="min-w-35">用户</th>
 							<th class="min-w-50">请求ID</th>
@@ -132,13 +226,6 @@ onMounted(fetchTransactions)
 							</td>
 							<td :class="tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
 								{{ formatAmount(tx.amount) }}
-							</td>
-							<td class="text-gray-700">
-								<template v-if="tx.type === 'consume' || tx.type === 'settle'">
-									<span v-if="tx.plan_deduction > 0" class="badge badge-primary text-xs mr-1">套餐抵扣</span>
-									<span v-if="tx.wallet_deduction > 0" class="badge badge-gray text-xs">钱包</span>
-								</template>
-								<template v-else>--</template>
 							</td>
 							<td class="text-gray-700">${{ tx.balance_after?.toFixed(6) ?? '--' }}</td>
 							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>
