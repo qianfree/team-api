@@ -71,7 +71,8 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		if err != nil {
 			return err
 		}
-		if memberCount >= effectiveMaxMembers {
+		// effectiveMaxMembers == 0 表示无限制
+		if effectiveMaxMembers > 0 && memberCount >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 

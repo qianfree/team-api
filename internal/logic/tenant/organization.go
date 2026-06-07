@@ -69,13 +69,8 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		}
 	}
 
-	// 计算实际生效的成员数上限（NULL时取等级配置）
-	effectiveMaxMembers := 10
-	if tenant.MaxMembers != nil {
-		effectiveMaxMembers = *tenant.MaxMembers
-	} else {
-		effectiveMaxMembers, _, _ = billing.GetTenantEffectiveLimits(ctx, tenantID)
-	}
+	// 计算实际生效的成员数上限（NULL时取等级配置，0表示无限制）
+	effectiveMaxMembers, _, _ := billing.GetTenantEffectiveLimits(ctx, tenantID)
 
 	return &v1.TenantOrgInfoRes{
 		ID:      tenant.Id,
