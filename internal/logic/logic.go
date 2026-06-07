@@ -16,4 +16,5 @@ import (
 	_ "github.com/qianfree/team-api/internal/logic/settings"
 	_ "github.com/qianfree/team-api/internal/logic/task"
 	_ "github.com/qianfree/team-api/internal/logic/tenant"
+	_ "github.com/qianfree/team-api/internal/logic/update"
 )

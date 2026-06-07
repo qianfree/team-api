@@ -65,7 +65,7 @@ services:
   # Team-API 应用
   # -----------------------------------------------------------------------------
   app:
-    image: team-api:${VERSION:-v0.1.0}
+    image: team-api:${VERSION:-latest}
     build:
       context: ../..
       dockerfile: manifest/docker/Dockerfile

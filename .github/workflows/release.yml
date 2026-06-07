@@ -72,9 +72,14 @@ jobs:
             tar -czf ${ARTIFACT}.tar.gz $ARTIFACT
           fi
 
+      - name: Generate checksums
+        run: |
+          sha256sum team-api-*.tar.gz team-api-*.zip > checksums-sha256.txt
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
           files: |
             team-api-*.zip
             team-api-*.tar.gz
+            checksums-sha256.txt

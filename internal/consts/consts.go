@@ -184,6 +184,15 @@ const (
 	CodePluginAlreadyEnabled    = 10408
 	CodePluginDependencyMissing = 10409
 	CodePluginInstallFailed     = 10410
+
+	// Update errors (10411+)
+	CodeUpdateAlreadyRunning = 10411
+	CodeUpdateNotAvailable   = 10412
+	CodeUpdateDownloadFailed = 10413
+	CodeUpdateVerifyFailed   = 10414
+	CodeUpdateReplaceFailed  = 10415
+	CodeUpdateRollbackFailed = 10416
+	CodeUpdateNotSupported   = 10417
 )
 
 // Common error messages
@@ -309,4 +318,12 @@ const (
 	MsgPluginAlreadyEnabled    = "插件已启用"
 	MsgPluginDependencyMissing = "插件依赖未满足"
 	MsgPluginInstallFailed     = "插件安装失败"
+	// Update errors
+	MsgUpdateAlreadyRunning = "系统更新正在进行中"
+	MsgUpdateNotAvailable   = "当前已是最新版本"
+	MsgUpdateDownloadFailed = "下载更新文件失败"
+	MsgUpdateVerifyFailed   = "更新文件校验失败"
+	MsgUpdateReplaceFailed  = "替换二进制文件失败"
+	MsgUpdateRollbackFailed = "回滚失败"
+	MsgUpdateNotSupported   = "当前部署模式不支持自动更新"
 )

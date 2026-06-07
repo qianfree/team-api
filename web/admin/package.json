@@ -19,6 +19,7 @@
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.15.0",
     "echarts": "^5.6.0",
+    "marked": "^18.0.5",
     "pinia": "^3.0.4",
     "tailwindcss": "^4.2.2",
     "vue": "^3.5.32",

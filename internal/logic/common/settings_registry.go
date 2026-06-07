@@ -45,6 +45,7 @@ var Categories = []SettingCategory{
 	{Key: "channel", Label: "渠道配置", Icon: "channel", Order: 9},
 	{Key: "storage", Label: "存储配置", Icon: "cloud", Order: 10},
 	{Key: "data_governance", Label: "数据治理", Icon: "database", Order: 11},
+	{Key: "update", Label: "系统更新", Icon: "sync", Order: 12},
 }
 
 // Registry is the central definition of all configuration items.
@@ -252,6 +253,14 @@ var Registry = []SettingDef{
 		Label: "GDPR删除请求完成天数", Validation: "min:7,max:90"},
 	{Key: "file_retention_enabled", Type: SettingTypeBool, Default: "true", Category: "data_governance",
 		Label: "启用文件保留期检查"},
+
+	// Update settings
+	{Key: "update_auto_check_enabled", Type: SettingTypeBool, Default: "true", Category: "update",
+		Label: "自动检查更新", Description: "启用后系统会定期检查是否有新版本"},
+	{Key: "update_check_interval_hours", Type: SettingTypeInt, Default: "24", Category: "update",
+		Label: "检查间隔（小时）", Description: "自动检查更新的时间间隔", Validation: "min:1,max:168"},
+	{Key: "update_channel", Type: SettingTypeString, Default: "stable", Category: "update",
+		Label: "更新通道", Description: "选择更新通道", Validation: "enum:stable,beta"},
 }
 
 // registryMap is a lookup index for fast access by key.
