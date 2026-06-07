@@ -411,6 +411,14 @@ type (
 		ReplyToTicketAdmin(ctx context.Context, req *v1.TicketReplyReq) (*v1.TicketReplyRes, error)
 		// UpdateTicketStatus 更新工单状态
 		UpdateTicketStatus(ctx context.Context, req *v1.TicketStatusUpdateReq) (*v1.TicketStatusUpdateRes, error)
+		// CheckUpdate checks GitHub Releases for a newer version
+		UpdateCheck(ctx context.Context, req *v1.UpdateCheckReq) (*v1.UpdateCheckRes, error)
+		// GetUpdateStatus returns the current update status
+		UpdateStatus(ctx context.Context, req *v1.UpdateStatusReq) (*v1.UpdateStatusRes, error)
+		// ExecuteUpdate triggers the system update
+		UpdateExecute(ctx context.Context, req *v1.UpdateExecuteReq) (*v1.UpdateExecuteRes, error)
+		// RollbackUpdate rolls back to the previous version
+		UpdateRollback(ctx context.Context, req *v1.UpdateRollbackReq) (*v1.UpdateRollbackRes, error)
 		UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogCleanupCreateReq) (*v1.UsageLogCleanupCreateRes, error)
 		UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanupListReq) (*v1.UsageLogCleanupListRes, error)
 		UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error)

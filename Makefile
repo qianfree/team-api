@@ -1,7 +1,7 @@
 ROOT_DIR    = $(CURDIR)
 DEPLOY_NAME = "team-api"
 DOCKER_NAME = "team-api"
-VERSION     ?= $(strip $(file < VERSION))
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
 LDFLAGS     = -X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)
 
 # Mirror acceleration (override for non-China regions)
@@ -77,7 +77,7 @@ migrate-reset:
 
 # Docker commands
 docker-build:
-	cd manifest/docker && VERSION=$(VERSION) docker compose build
+	cd manifest/docker && VERSION=$(VERSION) docker compose build --build-arg VERSION=$(VERSION)
 
 docker-up:
 	cd manifest/docker && docker compose up -d
