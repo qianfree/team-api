@@ -195,7 +195,8 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		if err != nil {
 			return nil, common.NewBusinessError(10060, "查询租户限制信息失败")
 		}
-		if memberCount >= effectiveMaxMembers {
+		// effectiveMaxMembers == 0 表示无限制
+		if effectiveMaxMembers > 0 && memberCount >= effectiveMaxMembers {
 			return nil, common.NewBusinessError(10060, "租户成员数已达上限")
 		}
 

@@ -350,7 +350,8 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 			return 0, gerror.Newf("查询租户限制信息失败: %v", err)
 		}
 
-		if int(currentCount)+pendingCount > effectiveMaxMembers {
+		// effectiveMaxMembers == 0 表示无限制
+		if effectiveMaxMembers > 0 && int(currentCount)+pendingCount > effectiveMaxMembers {
 			return 0, gerror.Newf("导入%d条后将超出成员上限%d（当前%d，上限%d）",
 				pendingCount, effectiveMaxMembers, currentCount, effectiveMaxMembers)
 		}

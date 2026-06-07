@@ -12,19 +12,19 @@ import (
 )
 
 // GetTenantEffectiveLimits 获取租户实际生效的成员数上限和并发上限。
-// max_members/max_concurrency > 0 时返回租户自定义值；
-// 0 时返回等级配置值；等级配置也查不到时回退到默认值。
+// max_members 为 0/NULL 时从等级配置取值；等级配置也为 0 表示无限制。
+// 返回值 0 表示无限制。调用方需用 memberCount < maxMembers || maxMembers == 0 判断。
 func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers int, maxConcurrency int, err error) {
 	var tenant *entity.TntTenants
 	err = dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
 	if err != nil {
-		return 10, 0, err
+		return 0, 0, err
 	}
 	if tenant == nil {
-		return 10, 0, nil
+		return 0, 0, nil
 	}
 
-	// 租户自定义值优先（> 0 表示已自定义）
+	// 租户自定义值优先（> 0 表示已自定义，0/NULL 表示跟随等级配置）
 	if tenant.MaxMembers > 0 {
 		maxMembers = tenant.MaxMembers
 	}
@@ -38,14 +38,14 @@ func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers i
 		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
 		if tenant.MaxMembers <= 0 {
 			if config != nil {
-				maxMembers = config.MaxMembers
+				maxMembers = config.MaxMembers // 0 表示无限制
 			} else {
 				maxMembers = 10
 			}
 		}
 		if tenant.MaxConcurrency <= 0 {
 			if config != nil {
-				maxConcurrency = config.MaxConcurrency
+				maxConcurrency = config.MaxConcurrency // 0 表示无限制
 			} else {
 				maxConcurrency = 0
 			}
@@ -56,12 +56,13 @@ func GetTenantEffectiveLimits(ctx context.Context, tenantID int64) (maxMembers i
 }
 
 // GetTenantEffectiveLimitsByEntity 通过已查询的租户实体获取实际生效限制（避免重复查询租户）
+// 返回值 0 表示无限制。
 func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTenants) (maxMembers int, maxConcurrency int) {
 	if tenant == nil {
-		return 10, 0
+		return 0, 0
 	}
 
-	// 租户自定义值优先（> 0 表示已自定义）
+	// 租户自定义值优先（> 0 表示已自定义，0/NULL 表示跟随等级配置）
 	if tenant.MaxMembers > 0 {
 		maxMembers = tenant.MaxMembers
 	}
@@ -75,14 +76,14 @@ func GetTenantEffectiveLimitsByEntity(ctx context.Context, tenant *entity.TntTen
 		_ = dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config)
 		if tenant.MaxMembers <= 0 {
 			if config != nil {
-				maxMembers = config.MaxMembers
+				maxMembers = config.MaxMembers // 0 表示无限制
 			} else {
 				maxMembers = 10
 			}
 		}
 		if tenant.MaxConcurrency <= 0 {
 			if config != nil {
-				maxConcurrency = config.MaxConcurrency
+				maxConcurrency = config.MaxConcurrency // 0 表示无限制
 			} else {
 				maxConcurrency = 0
 			}

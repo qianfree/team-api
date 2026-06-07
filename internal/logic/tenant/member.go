@@ -108,7 +108,8 @@ func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteRe
 		return nil, gerror.Wrapf(err, "查询租户限制信息失败")
 	}
 
-	if int(memberCount) >= effectiveMaxMembers {
+	// effectiveMaxMembers == 0 表示无限制
+	if effectiveMaxMembers > 0 && int(memberCount) >= effectiveMaxMembers {
 		return nil, common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 	}
 
@@ -245,7 +246,8 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		if err != nil {
 			return err
 		}
-		if int(memberCount) >= effectiveMaxMembers {
+		// effectiveMaxMembers == 0 表示无限制
+		if effectiveMaxMembers > 0 && int(memberCount) >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 
@@ -401,7 +403,8 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 		if err != nil {
 			return gerror.Wrapf(err, "查询租户限制信息失败")
 		}
-		if int(memberCount) >= effectiveMaxMembers {
+		// effectiveMaxMembers == 0 表示无限制
+		if effectiveMaxMembers > 0 && int(memberCount) >= effectiveMaxMembers {
 			return common.NewBusinessError(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
 		}
 
