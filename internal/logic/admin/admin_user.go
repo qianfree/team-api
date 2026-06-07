@@ -72,6 +72,11 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v1.AdminUserCreateRes, error) {
 	username := strings.TrimSpace(req.Username)
 
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
+	}
+
 	// Check username uniqueness
 	count, err := dao.SysAdminUsers.Ctx(ctx).
 		Where("username", username).Count()

@@ -35,6 +35,11 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	tenantCode := strings.TrimSpace(strings.ToLower(req.TenantCode))
 	username := strings.TrimSpace(req.Username)
 
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
+	}
+
 	// 根据配置选择验证方式
 	emailVerificationEnabled := common.Config().GetBool(ctx, "register_email_verification")
 	if emailVerificationEnabled {

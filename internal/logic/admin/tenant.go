@@ -75,6 +75,11 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 	username := strings.TrimSpace(req.Username)
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
+	}
+
 	count, err := dao.TntTenants.Ctx(ctx).
 		Where("code", tenantCode).Count()
 	if err != nil {

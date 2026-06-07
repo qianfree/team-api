@@ -229,6 +229,11 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	username := strings.TrimSpace(req.Username)
 	tenantID := invitation.TenantID
 
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
+	}
+
 	var userID int64
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -381,6 +386,12 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 
 	username := strings.TrimSpace(req.Username)
 	email := strings.TrimSpace(strings.ToLower(req.Email))
+
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
+	}
+
 	displayName := req.DisplayName
 	if displayName == "" {
 		displayName = username

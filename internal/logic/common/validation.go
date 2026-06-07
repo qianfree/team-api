@@ -10,6 +10,27 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 )
 
+// ValidateUsername 校验用户名格式：仅允许英文字母和数字，不能为纯数字，长度3-50
+func ValidateUsername(username string) error {
+	if len(username) < 3 || len(username) > 50 {
+		return gerror.New("用户名长度为3-50位")
+	}
+	allDigit := true
+	for _, c := range username {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+			allDigit = false
+		} else if c >= '0' && c <= '9' {
+			// digits are ok
+		} else {
+			return gerror.New("用户名仅支持英文字母和数字，不能包含特殊字符或中文")
+		}
+	}
+	if allDigit {
+		return gerror.New("用户名不能为纯数字")
+	}
+	return nil
+}
+
 // ValidatePassword 校验密码强度：至少8位，包含大写、小写、数字
 func ValidatePassword(password string) error {
 	if len(password) < 8 {

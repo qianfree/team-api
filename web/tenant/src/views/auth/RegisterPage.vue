@@ -89,11 +89,32 @@ function validateUser(): boolean {
 
 	if (!userForm.username.trim()) {
 		userErrors.username = '请输入用户名'
+	} else if (/[^a-zA-Z0-9]/.test(userForm.username)) {
+		userErrors.username = '用户名仅支持英文字母和数字'
+	} else if (/^\d+$/.test(userForm.username)) {
+		userErrors.username = '用户名不能为纯数字'
 	} else if (userForm.username.length < 3) {
 		userErrors.username = '用户名长度至少 3 位'
 	}
 
 	return Object.keys(userErrors).length === 0
+}
+
+function validateUsernameRealtime() {
+	const val = userForm.username
+	if (!val) {
+		delete userErrors.username
+		return
+	}
+	if (/[^a-zA-Z0-9]/.test(val)) {
+		userErrors.username = '用户名仅支持英文字母和数字'
+	} else if (/^\d+$/.test(val)) {
+		userErrors.username = '用户名不能为纯数字'
+	} else if (val.length < 3) {
+		userErrors.username = '用户名长度至少 3 位'
+	} else {
+		delete userErrors.username
+	}
 }
 
 function goNext() {
@@ -292,10 +313,11 @@ async function handleRegister() {
 						<input
 							v-model="userForm.username"
 							type="text"
-							placeholder="请输入用户名"
+							placeholder="仅支持英文字母和数字，不能为纯数字"
 							class="input pl-11"
 							:class="{ 'input-error': userErrors.username }"
-						/>
+						@input="validateUsernameRealtime"
+					/>
 					</div>
 					<p v-if="userErrors.username" class="input-error-text">{{ userErrors.username }}</p>
 				</div>

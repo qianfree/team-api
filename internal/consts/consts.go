@@ -170,6 +170,9 @@ const (
 	CodeModelImportInvalidFile = 10087
 	CodeModelImportBadVersion  = 10088
 
+	// Username validation
+	CodeInvalidUsername = 10089
+
 	// Demo mode
 	CodeDemoModeRestricted = 10403
 
@@ -276,7 +279,7 @@ const (
 
 	// Setup errors
 	MsgSetupCompleted        = "系统已完成初始化"
-	MsgSetupInvalidUsername  = "用户名格式无效，仅支持字母、数字和下划线，长度3-20"
+	MsgSetupInvalidUsername  = "用户名格式无效，仅支持字母和数字，长度3-20"
 	MsgSetupPasswordMismatch = "两次输入的密码不一致"
 	MsgSetupNotInitialized   = "系统未初始化，请先完成设置"
 
@@ -290,6 +293,9 @@ const (
 	// Model import errors
 	MsgModelImportInvalidFile = "导入文件格式无效"
 	MsgModelImportBadVersion  = "导入文件版本不兼容"
+
+	// Username validation
+	MsgInvalidUsername = "用户名仅支持英文字母和数字，不能为纯数字"
 )
 
 // Demo mode messages
