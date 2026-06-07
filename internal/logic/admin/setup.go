@@ -15,7 +15,7 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
-var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{3,20}$`)
+var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9]{3,20}$`)
 
 // AdminExists checks whether any admin user exists in the database.
 func AdminExists(ctx context.Context) (bool, error) {
@@ -30,6 +30,17 @@ func AdminExists(ctx context.Context) (bool, error) {
 func ValidateSetupUsername(username string) error {
 	if !usernameRegex.MatchString(username) {
 		return common.NewBusinessError(consts.CodeSetupInvalidUsername, consts.MsgSetupInvalidUsername)
+	}
+	// Disallow pure numeric usernames
+	allDigit := true
+	for _, c := range username {
+		if c < '0' || c > '9' {
+			allDigit = false
+			break
+		}
+	}
+	if allDigit {
+		return common.NewBusinessError(consts.CodeSetupInvalidUsername, "用户名不能为纯数字")
 	}
 	return nil
 }

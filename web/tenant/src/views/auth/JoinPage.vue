@@ -41,10 +41,13 @@
 							v-model="form.username"
 							type="text"
 							required
-							placeholder="请输入用户名"
+							placeholder="仅支持英文字母和数字，不能为纯数字"
 							class="input pl-11"
+							:class="{ 'input-error': usernameError }"
+							@input="validateUsername"
 						/>
 					</div>
+					<p v-if="usernameError" class="input-error-text">{{ usernameError }}</p>
 				</div>
 
 				<div>
@@ -193,6 +196,25 @@ const form = ref({
 	password: '',
 })
 
+const usernameError = ref('')
+
+function validateUsername() {
+	const val = form.value.username
+	if (!val) {
+		usernameError.value = ''
+		return
+	}
+	if (/[^a-zA-Z0-9]/.test(val)) {
+		usernameError.value = '用户名仅支持英文字母和数字'
+	} else if (/^\d+$/.test(val)) {
+		usernameError.value = '用户名不能为纯数字'
+	} else if (val.length < 3) {
+		usernameError.value = '用户名长度至少 3 位'
+	} else {
+		usernameError.value = ''
+	}
+}
+
 onMounted(async () => {
 	const code = route.query.code as string
 	if (!code) {
@@ -218,6 +240,9 @@ onMounted(async () => {
 })
 
 async function handleJoin() {
+	validateUsername()
+	if (usernameError.value) return
+
 	loading.value = true
 	try {
 		const res = await fetch('/api/tenant/members/join', {
