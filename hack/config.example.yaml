@@ -24,6 +24,7 @@ gfcli:
         outPath:       "./internal/controller"
         withService:   true
         withModel:     false
+        merge:         true
 
   docker:
     build: "-a amd64 -s linux -p temp -ew"
