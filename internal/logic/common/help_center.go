@@ -26,14 +26,13 @@ type HelpPublicCategoryItem struct {
 // ListPublicCategories 返回可见分类的树结构
 func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error) {
 	type categoryRow struct {
-		Id           int64  `json:"id" orm:"id"`
-		ParentId     int64  `json:"parent_id" orm:"parent_id"`
-		Name         string `json:"name" orm:"name"`
-		Slug         string `json:"slug" orm:"slug"`
-		Description  string `json:"description" orm:"description"`
-		Icon         string `json:"icon" orm:"icon"`
-		IsVisible    bool   `json:"is_visible" orm:"is_visible"`
-		ArticleCount int    `json:"article_count" orm:"article_count"`
+		Id          int64  `json:"id" orm:"id"`
+		ParentId    int64  `json:"parent_id" orm:"parent_id"`
+		Name        string `json:"name" orm:"name"`
+		Slug        string `json:"slug" orm:"slug"`
+		Description string `json:"description" orm:"description"`
+		Icon        string `json:"icon" orm:"icon"`
+		IsVisible   bool   `json:"is_visible" orm:"is_visible"`
 	}
 
 	var rows []categoryRow
@@ -43,6 +42,27 @@ func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error
 		Scan(&rows)
 	if err != nil {
 		return nil, err
+	}
+
+	// 实时统计每个分类的已发布文章数（不依赖冗余字段 article_count）
+	type countRow struct {
+		CategoryId   int64 `json:"category_id" orm:"category_id"`
+		ArticleCount int   `json:"count" orm:"count"`
+	}
+	var countRows []countRow
+	err = dao.SptArticles.Ctx(ctx).
+		Where("status", "published").
+		Where("published_at IS NOT NULL").
+		Where("published_at <=", gtime.Now()).
+		Fields("category_id, COUNT(*) as count").
+		Group("category_id").
+		Scan(&countRows)
+	if err != nil {
+		return nil, err
+	}
+	countMap := make(map[int64]int, len(countRows))
+	for _, cr := range countRows {
+		countMap[cr.CategoryId] = cr.ArticleCount
 	}
 
 	// 构建所有节点
@@ -55,7 +75,7 @@ func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error
 			Slug:         r.Slug,
 			Description:  r.Description,
 			Icon:         r.Icon,
-			ArticleCount: r.ArticleCount,
+			ArticleCount: countMap[r.Id],
 			Children:     make([]*HelpPublicCategoryItem, 0),
 		}
 	}
