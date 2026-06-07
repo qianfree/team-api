@@ -30,6 +30,7 @@ type BilWalletsColumns struct {
 	CreatedAt          string // 创建时间
 	UpdatedAt          string // 更新时间
 	CumulativeRecharge string // 累计充值总额（USD）
+	LowBalanceNotified string // 低余额预警是否已推送（充值恢复后重置为 false）
 }
 
 // bilWalletsColumns holds the columns for the table bil_wallets.
@@ -43,6 +44,7 @@ var bilWalletsColumns = BilWalletsColumns{
 	CreatedAt:          "created_at",
 	UpdatedAt:          "updated_at",
 	CumulativeRecharge: "cumulative_recharge",
+	LowBalanceNotified: "low_balance_notified",
 }
 
 // NewBilWalletsDao creates and returns a new DAO object for table data access.

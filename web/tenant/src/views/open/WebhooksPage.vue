@@ -61,6 +61,8 @@ const availableEvents = [
   'wallet.low_balance',
 ]
 
+const showPayloadGuide = ref(false)
+
 onMounted(() => loadConfigs())
 
 async function loadConfigs() {
@@ -276,6 +278,94 @@ function formatStatus(status: number) {
         </div>
         <h3 class="empty-state-title">暂无 Webhook</h3>
         <p class="empty-state-description">创建 Webhook 配置以接收实时事件通知</p>
+      </div>
+    </div>
+
+    <!-- Payload Format Guide -->
+    <div class="card mt-6">
+      <div class="card-body">
+        <div class="flex items-center justify-between cursor-pointer select-none" @click="showPayloadGuide = !showPayloadGuide">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900">推送格式说明</h3>
+            <p class="text-sm text-gray-500 mt-0.5">了解 Webhook 请求的 Headers 和 Body 格式</p>
+          </div>
+          <Icon :name="showPayloadGuide ? 'chevronDown' : 'chevronRight'" size="md" class="text-gray-400 transition-transform duration-200" />
+        </div>
+
+        <div v-if="showPayloadGuide" class="mt-5 space-y-5 animate-fade-in">
+          <!-- HTTP Request -->
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-2">HTTP 请求</h4>
+            <div class="code-block text-xs leading-relaxed">
+              <span class="text-emerald-400">POST</span> <span class="text-amber-300">{your_webhook_url}</span>
+            </div>
+          </div>
+
+          <!-- Headers -->
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-2">请求 Headers</h4>
+            <div class="code-block text-xs leading-relaxed">
+<pre class="whitespace-pre-wrap"><span class="text-gray-400">Content-Type:</span> <span class="text-amber-300">application/json</span>
+<span class="text-gray-400">X-Webhook-ID:</span>      <span class="text-amber-300">evt_1a2b3c4d5e6f...</span>        <span class="text-gray-600">  // 事件唯一 ID</span>
+<span class="text-gray-400">X-Webhook-Event:</span>   <span class="text-amber-300">wallet.low_balance</span>          <span class="text-gray-600">  // 事件类型</span>
+<span class="text-gray-400">X-Webhook-Timestamp:</span> <span class="text-amber-300">1717740600</span>                 <span class="text-gray-600">  // Unix 时间戳</span>
+<span class="text-gray-400">X-Webhook-Signature:</span> <span class="text-amber-300">a3f8b2c1d4e5...</span>            <span class="text-gray-600">  // HMAC-SHA256 签名</span></pre>
+            </div>
+          </div>
+
+          <!-- Signature Verification -->
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-2">签名验证</h4>
+            <p class="text-xs text-gray-600 mb-2">使用创建 Webhook 时返回的 Secret Key 验证请求真实性，防止伪造。</p>
+            <div class="code-block text-xs leading-relaxed">
+<pre class="whitespace-pre-wrap"><span class="text-gray-400">// 签名算法</span>
+<span class="text-sky-400">signature</span> = <span class="text-emerald-400">HMAC-SHA256</span>(<span class="text-sky-400">secret_key</span>, <span class="text-sky-400">timestamp</span> + <span class="text-amber-300">"."</span> + <span class="text-sky-400">request_body</span>)
+
+<span class="text-gray-400">// 验证方式</span>
+<span class="text-violet-400">if</span> (<span class="text-sky-400">your_signature</span> === <span class="text-sky-400">header['X-Webhook-Signature']</span>) → <span class="text-emerald-400">✓ 合法</span></pre>
+            </div>
+          </div>
+
+          <!-- Response Handling -->
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-2">响应处理</h4>
+            <div class="text-xs text-gray-600 space-y-1">
+              <p>• 返回 HTTP <span class="font-mono text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">2xx</span> 视为投递成功</p>
+              <p>• 非 2xx 响应将触发自动重试（最多 5 次，间隔递增：1min → 5min → 15min → 1h → 6h）</p>
+              <p>• 连续失败达到上限后自动禁用此 Webhook，需手动启用</p>
+            </div>
+          </div>
+
+          <!-- Event Payloads -->
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-3">事件 Payload 示例</h4>
+
+            <div class="space-y-4">
+              <!-- wallet.low_balance -->
+              <div>
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="badge badge-primary text-xs">wallet.low_balance</span>
+                  <span class="text-xs text-gray-500">余额低于预警线时触发</span>
+                </div>
+                <div class="code-block text-xs leading-relaxed">
+<pre class="whitespace-pre-wrap">{
+  <span class="text-gray-400">"event_id"</span>:   <span class="text-amber-300">"evt_1a2b3c4d5e6f..."</span>,
+  <span class="text-gray-400">"event_type"</span>: <span class="text-amber-300">"wallet.low_balance"</span>,
+  <span class="text-gray-400">"tenant_id"</span>:  <span class="text-violet-400">213</span>,
+  <span class="text-gray-400">"timestamp"</span>:  <span class="text-amber-300">"2025-01-15T10:30:00Z"</span>,
+  <span class="text-gray-400">"data"</span>: {
+    <span class="text-gray-400">"tenant_code"</span>:       <span class="text-amber-300">"acme"</span>,
+    <span class="text-gray-400">"tenant_name"</span>:      <span class="text-amber-300">"ACME Corp"</span>,
+    <span class="text-gray-400">"available_balance"</span>: <span class="text-violet-400">87.116193</span>,
+    <span class="text-gray-400">"warning_threshold"</span>: <span class="text-violet-400">87.180000</span>,
+    <span class="text-gray-400">"wallet_id"</span>:         <span class="text-violet-400">456</span>
+  }
+}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

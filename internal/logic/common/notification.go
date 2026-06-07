@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -418,11 +419,17 @@ func (e *NotificationEngine) buildMetadata(templateCode string, variables map[st
 
 // logNotification records the notification dispatch in ntf_send_log.
 func (e *NotificationEngine) logNotification(ctx context.Context, tenantID, userID int64, templateCode, subject, body string) {
+	recipient := fmt.Sprintf("in_app:tenant:%d", tenantID)
+	if userID > 0 {
+		recipient = fmt.Sprintf("in_app:tenant:%d:user:%d", tenantID, userID)
+	}
+
 	_, err := dao.NtfSendLog.Ctx(ctx).Insert(do.NtfSendLog{
 		TenantId:     tenantID,
 		UserId:       userID,
 		TemplateCode: templateCode,
 		Channel:      "in_app",
+		Recipient:    recipient,
 		Subject:      subject,
 		Body:         body,
 		Status:       "sent",

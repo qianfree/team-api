@@ -21,4 +21,5 @@ type BilWallets struct {
 	CreatedAt          *gtime.Time // 创建时间
 	UpdatedAt          *gtime.Time // 更新时间
 	CumulativeRecharge any         // 累计充值总额（USD）
+	LowBalanceNotified any         // 低余额预警是否已推送（充值恢复后重置为 false）
 }

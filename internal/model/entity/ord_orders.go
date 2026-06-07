@@ -19,7 +19,7 @@ type OrdOrders struct {
 	Amount         float64     `json:"amount"           orm:"amount"           description:"原始金额"`                                                                   // 原始金额
 	DiscountAmount float64     `json:"discount_amount"  orm:"discount_amount"  description:"优惠金额"`                                                                   // 优惠金额
 	FinalAmount    float64     `json:"final_amount"     orm:"final_amount"     description:"最终金额"`                                                                   // 最终金额
-	Currency       string      `json:"currency"         orm:"currency"         description:"货币"`                                                                     // 货币
+	Currency       string      `json:"currency"         orm:"currency"         description:"货币（订单层一律 CNY）"`                                                          // 货币（订单层一律 CNY）
 	PaymentChannel string      `json:"payment_channel"  orm:"payment_channel"  description:"支付渠道"`                                                                   // 支付渠道
 	PaymentMethod  string      `json:"payment_method"   orm:"payment_method"   description:"支付方式描述"`                                                                 // 支付方式描述
 	PaymentNo      string      `json:"payment_no"       orm:"payment_no"       description:"第三方支付流水号"`                                                               // 第三方支付流水号

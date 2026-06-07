@@ -30,12 +30,13 @@ var walletSyncGroup singleflight.Group
 
 // WalletInfo 钱包信息
 type WalletInfo struct {
-	ID               int64
-	TenantID         int64
-	Balance          float64
-	FrozenBalance    float64
-	WarningThreshold float64
-	Currency         string
+	ID                 int64
+	TenantID           int64
+	Balance            float64
+	FrozenBalance      float64
+	WarningThreshold   float64
+	Currency           string
+	LowBalanceNotified bool
 }
 
 // GetWallet 获取租户钱包
@@ -47,18 +48,19 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 	}
 
 	type walletRow struct {
-		ID               int64   `json:"id"`
-		TenantId         int64   `json:"tenant_id"`
-		Balance          float64 `json:"balance"`
-		FrozenBalance    float64 `json:"frozen_balance"`
-		WarningThreshold float64 `json:"warning_threshold"`
-		Currency         string  `json:"currency"`
+		ID                 int64   `json:"id"`
+		TenantId           int64   `json:"tenant_id"`
+		Balance            float64 `json:"balance"`
+		FrozenBalance      float64 `json:"frozen_balance"`
+		WarningThreshold   float64 `json:"warning_threshold"`
+		Currency           string  `json:"currency"`
+		LowBalanceNotified bool    `json:"low_balance_notified"`
 	}
 
 	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		Fields("id, tenant_id, balance, frozen_balance, warning_threshold, currency").
+		Fields("id, tenant_id, balance, frozen_balance, warning_threshold, currency, low_balance_notified").
 		Scan(&w)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query wallet")
@@ -68,12 +70,13 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 	}
 
 	info := &WalletInfo{
-		ID:               w.ID,
-		TenantID:         w.TenantId,
-		Balance:          w.Balance,
-		FrozenBalance:    w.FrozenBalance,
-		WarningThreshold: w.WarningThreshold,
-		Currency:         w.Currency,
+		ID:                 w.ID,
+		TenantID:           w.TenantId,
+		Balance:            w.Balance,
+		FrozenBalance:      w.FrozenBalance,
+		WarningThreshold:   w.WarningThreshold,
+		Currency:           w.Currency,
+		LowBalanceNotified: w.LowBalanceNotified,
 	}
 
 	walletCache.Set(ctx, cacheKey, info)

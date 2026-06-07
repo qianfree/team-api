@@ -151,6 +151,9 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	// 事务提交后清除 Redis 钱包缓存
 	billing.InvalidateWalletRedis(ctx, tenantID)
 
+	// 兑换码充值后，重置低余额预警标记（余额可能已恢复到阈值以上）
+	billing.ResetLowBalanceNotified(ctx, tenantID)
+
 	return res, nil
 }
 

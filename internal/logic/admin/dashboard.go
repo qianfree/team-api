@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/utility/export"
@@ -446,6 +447,9 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 		return nil, err
 	}
 
+	// 管理员调整余额后，重置低余额预警标记（可能余额已恢复到阈值以上）
+	billing.ResetLowBalanceNotified(ctx, tenantID)
+
 	return &v1.AdminWalletAdjustRes{}, nil
 }
 
@@ -530,7 +534,14 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 		Data(do.BilWallets{
 			WarningThreshold: req.Threshold,
 		}).Update()
-	return &v1.AdminWalletSetWarningThresholdRes{}, err
+	if err != nil {
+		return nil, err
+	}
+
+	// 阈值变更后重置预警标记，使新阈值能触发新的预警
+	billing.ResetLowBalanceNotified(ctx, req.TenantID)
+
+	return &v1.AdminWalletSetWarningThresholdRes{}, nil
 }
 
 // GetDashboardChannelHealth 获取渠道健康概览（最不健康的5个活跃渠道）

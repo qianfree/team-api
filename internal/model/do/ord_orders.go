@@ -21,7 +21,7 @@ type OrdOrders struct {
 	Amount         any         // 原始金额
 	DiscountAmount any         // 优惠金额
 	FinalAmount    any         // 最终金额
-	Currency       any         // 货币
+	Currency       any         // 货币（订单层一律 CNY）
 	PaymentChannel any         // 支付渠道
 	PaymentMethod  any         // 支付方式描述
 	PaymentNo      any         // 第三方支付流水号

@@ -214,7 +214,10 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	CleanupPreDeduct(ctx, tenantID, requestID)
 	CleanupPreDeduct(ctx, tenantID, requestID+"_adjust")
 
-	// 5. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 3 扣完，无需额外操作）
+	// 5. 异步检查余额预警
+	go CheckBalanceWarning(context.Background(), tenantID)
+
+	// 6. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 3 扣完，无需额外操作）
 	if diff < -0.001 {
 		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
 			g.Log().Warningf(ctx, "settle task adjust refund failed for %s: %v", requestID, err)
