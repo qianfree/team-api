@@ -74,3 +74,11 @@ type FrozenItemDetail struct {
 	CreatedAt int64   `json:"created_at"`
 	Remaining int64   `json:"remaining"`
 }
+
+// TenantWalletUpdateWarningThresholdReq 修改预警阈值
+type TenantWalletUpdateWarningThresholdReq struct {
+	g.Meta    `path:"/wallet/warning-threshold" method:"put" mime:"json" tags:"租户控制台-钱包" summary:"修改预警阈值"`
+	Threshold float64 `json:"threshold" v:"min:0#阈值不能为负数" dc:"预警阈值（USD），0 表示关闭预警"`
+}
+
+type TenantWalletUpdateWarningThresholdRes struct{}

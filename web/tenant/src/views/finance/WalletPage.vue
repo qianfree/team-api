@@ -67,6 +67,33 @@ const isLowBalance = computed(() => {
 	return wallet.value.available_balance <= (wallet.value.warning_threshold || 0)
 })
 
+// Warning threshold setting
+const showThresholdModal = ref(false)
+const thresholdInput = ref('')
+const thresholdSaving = ref(false)
+
+function openThresholdModal() {
+	thresholdInput.value = wallet.value?.warning_threshold?.toFixed(2) ?? '1.00'
+	showThresholdModal.value = true
+}
+
+async function saveThreshold() {
+	const val = parseFloat(thresholdInput.value)
+	if (isNaN(val) || val < 0) return
+	thresholdSaving.value = true
+	try {
+		const res: any = await request.put('/tenant/wallet/warning-threshold', { threshold: val })
+		if (res.data?.code === 0) {
+			showThresholdModal.value = false
+			await fetchWallet()
+		}
+	} catch (e) {
+		console.error(e)
+	} finally {
+		thresholdSaving.value = false
+	}
+}
+
 async function fetchWallet() {
 	try {
 		const res: any = await request.get('/tenant/wallet')
@@ -307,6 +334,15 @@ onBeforeUnmount(() => {
 						<div v-if="isLowBalance && wallet" class="balance-warning">
 							<Icon name="exclamationTriangle" size="xs" />
 							<span>余额低于预警线 ${{ wallet.warning_threshold?.toFixed(2) }}</span>
+							<button class="ml-2 underline underline-offset-2 opacity-70 hover:opacity-100" @click="openThresholdModal">修改</button>
+						</div>
+
+						<!-- Threshold setting (when not low balance) -->
+						<div v-else-if="wallet" class="mt-3">
+							<button class="balance-threshold-btn" @click="openThresholdModal">
+								<Icon name="cog" size="xs" />
+								<span>预警线: ${{ wallet.warning_threshold?.toFixed(2) || '0.00' }}</span>
+							</button>
 						</div>
 
 						<!-- Secondary balances -->
@@ -599,6 +635,47 @@ onBeforeUnmount(() => {
 				</div>
 			</transition>
 		</Teleport>
+
+		<!-- Warning Threshold Modal -->
+		<Teleport to="body">
+			<div v-if="showThresholdModal" class="modal-overlay" @click.self="showThresholdModal = false">
+				<div class="modal-content bg-white w-full max-w-md">
+					<div class="modal-header">
+						<h3 class="modal-title">余额预警设置</h3>
+						<button class="btn btn-ghost btn-icon" @click="showThresholdModal = false">
+							<Icon name="x" size="sm" />
+						</button>
+					</div>
+					<div class="modal-body space-y-4">
+						<div class="rounded-xl bg-gray-50 border border-gray-200 p-4">
+							<p class="text-sm text-gray-600">当可用余额低于设定的阈值时，系统将通过站内通知和 Webhook 推送预警消息。</p>
+						</div>
+						<div>
+							<label class="input-label">预警阈值（USD）</label>
+							<div class="relative mt-1">
+								<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+								<input
+									v-model="thresholdInput"
+									type="number"
+									step="0.01"
+									min="0"
+									class="input pl-7"
+									placeholder="0.00"
+								/>
+							</div>
+							<p class="input-hint">设为 0 表示关闭余额预警</p>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-secondary" @click="showThresholdModal = false">取消</button>
+						<button class="btn btn-primary" :disabled="thresholdSaving" @click="saveThreshold">
+							<div v-if="thresholdSaving" class="spinner h-4 w-4 border-white"></div>
+							{{ thresholdSaving ? '保存中...' : '保存' }}
+						</button>
+					</div>
+				</div>
+			</div>
+		</Teleport>
 	</div>
 </template>
 
@@ -696,6 +773,12 @@ onBeforeUnmount(() => {
 	background: rgba(251, 191, 36, 0.15);
 	border: 1px solid rgba(251, 191, 36, 0.2);
 }
+.balance-threshold-btn {
+	display: inline-flex; align-items: center; gap: 0.375rem;
+	font-size: 0.75rem; font-weight: 500; color: rgba(255,255,255,0.5);
+	transition: color 0.15s;
+}
+.balance-threshold-btn:hover { color: rgba(255,255,255,0.75); }
 .balance-chip {
 	display: flex; align-items: center; justify-content: space-between;
 	border-radius: 0.75rem; padding: 0.625rem 0.875rem;

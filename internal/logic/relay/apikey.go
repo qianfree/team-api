@@ -40,13 +40,81 @@ func DefaultChannelSettings() common.ChannelSettings {
 	}
 }
 
+// legacyEncryptionKey 硬编码的旧默认密钥（仅迁移时使用）
+const legacyEncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 // GetEncryptionKey 获取加密密钥
 func GetEncryptionKey() []byte {
 	key := g.Cfg().MustGet(context.Background(), "crypto.encryptionKey").String()
 	if key == "" {
-		key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		panic("crypto.encryptionKey is not configured")
 	}
 	return uc.MustGetEncryptionKey(key)
+}
+
+// MigrateEncryptionKey 检测并迁移旧默认密钥加密的数据到新配置密钥。
+// 启动时调用一次，将 chn_channel_keys 和 api_keys 中用旧密钥加密的数据重新加密。
+func MigrateEncryptionKey(ctx context.Context) {
+	configKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String()
+	if configKey == "" || configKey == legacyEncryptionKey {
+		// 未配置新密钥或新密钥与旧密钥相同，无需迁移
+		return
+	}
+
+	newKey := uc.MustGetEncryptionKey(configKey)
+	oldKey := uc.MustGetEncryptionKey(legacyEncryptionKey)
+
+	migrateTable(ctx, "chn_channel_keys", oldKey, newKey)
+	migrateTable(ctx, "api_keys", oldKey, newKey)
+}
+
+// migrateTable 迁移单张表的 encrypted_key 字段
+func migrateTable(ctx context.Context, table string, oldKey, newKey []byte) {
+	type row struct {
+		Id           int64  `json:"id"`
+		EncryptedKey string `json:"encrypted_key"`
+	}
+
+	var rows []row
+	err := g.DB().Model(table).Ctx(ctx).
+		Fields("id, encrypted_key").
+		Scan(&rows)
+	if err != nil {
+		g.Log().Warningf(ctx, "[KeyMigration] query %s failed: %v", table, err)
+		return
+	}
+
+	migrated := 0
+	for _, r := range rows {
+		if r.EncryptedKey == "" {
+			continue
+		}
+		// 尝试用旧密钥解密
+		plaintext, err := uc.DecryptString(oldKey, r.EncryptedKey)
+		if err != nil {
+			// 解密失败说明可能是已经用新密钥加密过的，跳过
+			continue
+		}
+		// 用新密钥重新加密
+		newEncrypted, err := uc.EncryptString(newKey, plaintext)
+		if err != nil {
+			g.Log().Warningf(ctx, "[KeyMigration] re-encrypt %s id=%d failed: %v", table, r.Id, err)
+			continue
+		}
+		_, err = g.DB().Model(table).Ctx(ctx).
+			Where("id", r.Id).
+			Data(g.Map{"encrypted_key": newEncrypted}).
+			Update()
+		if err != nil {
+			g.Log().Warningf(ctx, "[KeyMigration] update %s id=%d failed: %v", table, r.Id, err)
+			continue
+		}
+		migrated++
+	}
+
+	if migrated > 0 {
+		g.Log().Infof(ctx, "[KeyMigration] migrated %d rows in %s from legacy key to config key", migrated, table)
+	}
 }
 
 // apiKeyHash 计算 API Key 的 SHA-256 哈希

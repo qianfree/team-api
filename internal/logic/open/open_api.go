@@ -44,6 +44,9 @@ func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:read"); err != nil {
+		return nil, err
+	}
 
 	page := req.Page
 	pageSize := req.PageSize
@@ -104,6 +107,9 @@ func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateRe
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:write"); err != nil {
+		return nil, err
+	}
 
 	count, _ := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID).Where("email", req.Email).Count()
 	if count > 0 {
@@ -137,6 +143,9 @@ func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateRe
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:write"); err != nil {
+		return nil, err
+	}
 
 	data := do.TntUsers{}
 	hasUpdate := false
@@ -166,6 +175,9 @@ func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteRe
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:write"); err != nil {
+		return nil, err
+	}
 
 	var user *struct {
 		Role string `json:"role"`
@@ -193,6 +205,9 @@ func (s *sOpen) OpenMemberQuota(ctx context.Context, req *v1.OpenMemberQuotaReq)
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "members:read"); err != nil {
+		return nil, err
 	}
 
 	var user *struct {
@@ -226,6 +241,9 @@ func (s *sOpen) OpenMemberQuotaUpdate(ctx context.Context, req *v1.OpenMemberQuo
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:write"); err != nil {
+		return nil, err
+	}
 
 	if req.QuotaType == "periodic" && req.Period == "" {
 		return nil, errOpen(consts.CodeBadRequest, "periodic 类型额度必须指定周期")
@@ -258,6 +276,9 @@ func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsRe
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "members:read"); err != nil {
+		return nil, err
+	}
 
 	var scopes []struct {
 		ModelID string `json:"model_id"`
@@ -282,6 +303,9 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "members:write"); err != nil {
+		return nil, err
 	}
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -338,6 +362,9 @@ func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.Op
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "keys:read"); err != nil {
+		return nil, err
+	}
 
 	page := req.Page
 	pageSize := req.PageSize
@@ -391,6 +418,9 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "keys:write"); err != nil {
+		return nil, err
+	}
 
 	rawKey, prefix, encryptedKey, err := relay.GenerateApiKey(ctx)
 	if err != nil {
@@ -437,6 +467,9 @@ func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "keys:write"); err != nil {
+		return nil, err
+	}
 
 	_, err := dao.ApiKeys.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
 	return nil, err
@@ -456,6 +489,9 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 	tenantID := middleware.GetOpenTenantID(ctx)
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "usage:read"); err != nil {
+		return nil, err
 	}
 
 	page := req.Page
@@ -541,6 +577,9 @@ func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryRe
 	if tenantID == 0 {
 		return nil, errOpen(consts.CodeUnauthorized, "未认证")
 	}
+	if err := middleware.CheckOpenPermission(ctx, "billing:read"); err != nil {
+		return nil, err
+	}
 
 	page := req.Page
 	pageSize := req.PageSize
@@ -598,4 +637,659 @@ func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryRe
 // errOpen is a helper to create open platform errors with proper gerror codes.
 func errOpen(code int, message string) error {
 	return gerror.NewCode(gcode.New(code, message, nil), message)
+}
+
+// ============================================================
+// 项目管理
+// ============================================================
+
+func (s *sOpen) OpenProjectList(ctx context.Context, req *v1.OpenProjectListReq) (*v1.OpenProjectListRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:read"); err != nil {
+		return nil, err
+	}
+
+	page := req.Page
+	pageSize := req.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	m := dao.TntProjects.Ctx(ctx).Where("tenant_id", tenantID)
+	if req.Status != "" {
+		m = m.Where("status", req.Status)
+	}
+	if req.Keyword != "" {
+		kw := "%" + strings.TrimSpace(req.Keyword) + "%"
+		m = m.Where("name LIKE ?", kw)
+	}
+
+	total, err := m.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	type projectRow struct {
+		Id          int64       `json:"id"`
+		Name        string      `json:"name"`
+		Description string      `json:"description"`
+		Status      string      `json:"status"`
+		Budget      *float64    `json:"budget"`
+		CreatedAt   *gtime.Time `json:"created_at"`
+		UpdatedAt   *gtime.Time `json:"updated_at"`
+	}
+
+	var projects []projectRow
+	err = m.Fields("id, name, description, status, budget, created_at, updated_at").
+		OrderDesc("id").Page(page, pageSize).Scan(&projects)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]v1.OpenProjectItem, 0, len(projects))
+	for _, p := range projects {
+		item := v1.OpenProjectItem{
+			ID:          p.Id,
+			Name:        p.Name,
+			Description: p.Description,
+			Status:      p.Status,
+		}
+		if p.Budget != nil {
+			item.Budget = fmt.Sprintf("%.6f", *p.Budget)
+		} else {
+			item.Budget = "unlimited"
+		}
+		if p.CreatedAt != nil {
+			item.CreatedAt = p.CreatedAt.Format("Y-m-d H:i:s")
+		}
+		if p.UpdatedAt != nil {
+			item.UpdatedAt = p.UpdatedAt.Format("Y-m-d H:i:s")
+		}
+		items = append(items, item)
+	}
+
+	return &v1.OpenProjectListRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *sOpen) OpenProjectCreate(ctx context.Context, req *v1.OpenProjectCreateReq) (*v1.OpenProjectCreateRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	insertData := do.TntProjects{
+		TenantId:    tenantID,
+		Name:        req.Name,
+		Description: req.Description,
+		Status:      "active",
+	}
+
+	if req.Budget > 0 {
+		insertData.Budget = req.Budget
+	}
+
+	result, err := dao.TntProjects.Ctx(ctx).Data(insertData).Insert()
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := result.LastInsertId()
+	return &v1.OpenProjectCreateRes{ID: id}, nil
+}
+
+func (s *sOpen) OpenProjectGet(ctx context.Context, req *v1.OpenProjectGetReq) (*v1.OpenProjectGetRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:read"); err != nil {
+		return nil, err
+	}
+
+	type projectRow struct {
+		Id          int64       `json:"id"`
+		Name        string      `json:"name"`
+		Description string      `json:"description"`
+		Status      string      `json:"status"`
+		Budget      *float64    `json:"budget"`
+		CreatedAt   *gtime.Time `json:"created_at"`
+		UpdatedAt   *gtime.Time `json:"updated_at"`
+	}
+
+	var p *projectRow
+	err := dao.TntProjects.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Fields("id, name, description, status, budget, created_at, updated_at").
+		Scan(&p)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errOpen(consts.CodeNotFound, "项目不存在")
+	}
+
+	// Key 统计
+	type keyStatsRow struct {
+		Total  int `json:"total"`
+		Active int `json:"active"`
+	}
+	var keyStats keyStatsRow
+	dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Fields("COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'active') as active").
+		Scan(&keyStats)
+
+	// 月度用量
+	type monthUsageRow struct {
+		TotalCost    float64 `json:"total_cost"`
+		RequestCount int     `json:"request_count"`
+	}
+	var monthUsage monthUsageRow
+	dao.BilUsageLogs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Where("created_at >= date_trunc('month', NOW())").
+		Fields("COALESCE(SUM(actual_cost), 0) as total_cost, COUNT(*) as request_count").
+		Scan(&monthUsage)
+
+	res := &v1.OpenProjectGetRes{
+		ID:            p.Id,
+		Name:          p.Name,
+		Description:   p.Description,
+		Status:        p.Status,
+		ActiveKeys:    keyStats.Active,
+		TotalKeys:     keyStats.Total,
+		MonthCost:     fmt.Sprintf("%.6f", monthUsage.TotalCost),
+		MonthRequests: int64(monthUsage.RequestCount),
+	}
+	if p.Budget != nil {
+		res.Budget = fmt.Sprintf("%.6f", *p.Budget)
+	} else {
+		res.Budget = "unlimited"
+	}
+	if p.CreatedAt != nil {
+		res.CreatedAt = p.CreatedAt.Format("Y-m-d H:i:s")
+	}
+	if p.UpdatedAt != nil {
+		res.UpdatedAt = p.UpdatedAt.Format("Y-m-d H:i:s")
+	}
+
+	return res, nil
+}
+
+func (s *sOpen) OpenProjectUpdate(ctx context.Context, req *v1.OpenProjectUpdateReq) (*v1.OpenProjectUpdateRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	project, err := s.getProjectOrError(ctx, req.Id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if project.Status == "archived" {
+		return nil, errOpen(consts.CodeBadRequest, "归档的项目不能直接编辑，请先取消归档")
+	}
+
+	data := do.TntProjects{}
+	hasUpdate := false
+	if req.Name != nil {
+		data.Name = *req.Name
+		hasUpdate = true
+	}
+	if req.Description != nil {
+		data.Description = *req.Description
+		hasUpdate = true
+	}
+	if req.Budget != nil {
+		if *req.Budget > 0 {
+			data.Budget = *req.Budget
+		}
+		hasUpdate = true
+	}
+	// 预算耗尽状态的项目，更新预算后自动恢复为 active
+	if project.Status == "budget_exhausted" && req.Budget != nil && *req.Budget > 0 {
+		data.Status = "active"
+		hasUpdate = true
+	}
+
+	if !hasUpdate {
+		return nil, nil
+	}
+
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).Data(data).Update()
+	return nil, err
+}
+
+func (s *sOpen) OpenProjectArchive(ctx context.Context, req *v1.OpenProjectArchiveReq) (*v1.OpenProjectArchiveRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	project, err := s.getProjectOrError(ctx, req.Id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if project.Status == "archived" {
+		return nil, errOpen(consts.CodeBadRequest, "项目已归档")
+	}
+
+	// 吊销项目下所有 active Key
+	_, err = dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Where("status", "active").
+		Data(do.ApiKeys{Status: "revoked"}).Update()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).
+		Data(do.TntProjects{Status: "archived"}).Update()
+	return nil, err
+}
+
+func (s *sOpen) OpenProjectUnarchive(ctx context.Context, req *v1.OpenProjectUnarchiveReq) (*v1.OpenProjectUnarchiveRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	project, err := s.getProjectOrError(ctx, req.Id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if project.Status != "archived" {
+		return nil, errOpen(consts.CodeBadRequest, "只有归档状态的项目可以取消归档")
+	}
+
+	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).
+		Data(do.TntProjects{Status: "active"}).Update()
+	return nil, err
+}
+
+// ============================================================
+// 项目 API Key 管理
+// ============================================================
+
+func (s *sOpen) OpenProjectKeyList(ctx context.Context, req *v1.OpenProjectKeyListReq) (*v1.OpenProjectKeyListRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:read"); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.getProjectOrError(ctx, req.Id, tenantID); err != nil {
+		return nil, err
+	}
+
+	page := req.Page
+	pageSize := req.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	m := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id)
+
+	total, err := m.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	type keyRow struct {
+		Id        int64       `json:"id"`
+		Name      string      `json:"name"`
+		KeyPrefix string      `json:"key_prefix"`
+		Status    string      `json:"status"`
+		CreatedAt *gtime.Time `json:"created_at"`
+		ExpiresAt *gtime.Time `json:"expires_at"`
+	}
+
+	var keys []keyRow
+	err = m.Fields("id, name, key_prefix, status, created_at, expires_at").
+		OrderDesc("id").Page(page, pageSize).Scan(&keys)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]v1.OpenProjectKeyItem, 0, len(keys))
+	for _, k := range keys {
+		item := v1.OpenProjectKeyItem{
+			ID:        k.Id,
+			Name:      k.Name,
+			KeyPrefix: k.KeyPrefix,
+			Status:    k.Status,
+		}
+		if k.CreatedAt != nil {
+			item.CreatedAt = k.CreatedAt.Format("Y-m-d H:i:s")
+		}
+		if k.ExpiresAt != nil {
+			item.ExpiresAt = k.ExpiresAt.Format("Y-m-d H:i:s")
+		}
+		items = append(items, item)
+	}
+
+	return &v1.OpenProjectKeyListRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *sOpen) OpenProjectKeyCreate(ctx context.Context, req *v1.OpenProjectKeyCreateReq) (*v1.OpenProjectKeyCreateRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	project, err := s.getProjectOrError(ctx, req.Id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if project.Status != "active" {
+		return nil, errOpen(consts.CodeProjectNotActive, "项目状态不可用")
+	}
+
+	rawKey, prefix, encryptedKey, err := relay.GenerateApiKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	insertData := do.ApiKeys{
+		TenantId:     tenantID,
+		ProjectId:    req.Id,
+		Name:         req.Name,
+		EncryptedKey: encryptedKey,
+		KeyPrefix:    prefix,
+		Scope:        req.Scope,
+		Status:       "active",
+		KeyType:      "project",
+	}
+
+	if req.ExpiresAt != nil {
+		insertData.ExpiresAt = req.ExpiresAt
+	}
+
+	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()
+	if err != nil {
+		return nil, err
+	}
+	id, _ := result.LastInsertId()
+
+	for _, modelName := range req.ModelNames {
+		if modelName != "" {
+			if _, err = dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
+				ApiKeyId:  id,
+				ModelName: modelName,
+			}); err != nil {
+				g.Log().Warningf(ctx, "创建密钥模型范围失败: %v", err)
+			}
+		}
+	}
+
+	return &v1.OpenProjectKeyCreateRes{
+		ID:        id,
+		Name:      req.Name,
+		Key:       rawKey,
+		KeyPrefix: prefix,
+	}, nil
+}
+
+func (s *sOpen) OpenProjectKeyDelete(ctx context.Context, req *v1.OpenProjectKeyDeleteReq) (*v1.OpenProjectKeyDeleteRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:write"); err != nil {
+		return nil, err
+	}
+
+	// 验证密钥属于该项目和租户
+	count, err := dao.ApiKeys.Ctx(ctx).
+		Where("id", req.KeyId).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, errOpen(consts.CodeNotFound, "密钥不存在")
+	}
+
+	_, err = dao.ApiKeys.Ctx(ctx).
+		Where("id", req.KeyId).
+		Where("tenant_id", tenantID).
+		Data(do.ApiKeys{Status: "revoked"}).Update()
+	return nil, err
+}
+
+// ============================================================
+// 项目用量查询
+// ============================================================
+
+func (s *sOpen) OpenProjectUsageStats(ctx context.Context, req *v1.OpenProjectUsageStatsReq) (*v1.OpenProjectUsageStatsRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:read"); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.getProjectOrError(ctx, req.Id, tenantID); err != nil {
+		return nil, err
+	}
+
+	// 构建日期条件
+	useCustomRange := req.StartDate != "" && req.EndDate != ""
+	if useCustomRange {
+		if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+			return nil, err
+		}
+		if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+			return nil, err
+		}
+	}
+
+	dateCondition := func(m *gdb.Model) *gdb.Model {
+		if useCustomRange {
+			return m.Where("created_at >= ?", req.StartDate+" 00:00:00").
+				Where("created_at <= ?", req.EndDate+" 23:59:59")
+		}
+		return m.Where("created_at >= NOW() - INTERVAL '30 days'")
+	}
+
+	// 汇总
+	type totalRow struct {
+		TotalCost    float64 `json:"total_cost"`
+		RequestCount int     `json:"request_count"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+	}
+	var totalStats totalRow
+	dateCondition(dao.BilUsageLogs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Fields("COALESCE(SUM(actual_cost), 0) as total_cost, COUNT(*) as request_count, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens")).
+		Scan(&totalStats)
+
+	// 每日趋势
+	type dailyRow struct {
+		Date         string  `json:"date"`
+		RequestCount int     `json:"request_count"`
+		TotalCost    float64 `json:"total_cost"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+	}
+	var dailyStats []dailyRow
+	dateCondition(dao.BilUsageLogs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Fields("DATE(created_at) as date, COUNT(*) as request_count, COALESCE(SUM(actual_cost), 0) as total_cost, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens")).
+		Group("DATE(created_at)").OrderAsc("date").Scan(&dailyStats)
+
+	// 模型分布（Top 10）
+	type modelRow struct {
+		ModelName    string  `json:"model_name"`
+		RequestCount int     `json:"request_count"`
+		TotalCost    float64 `json:"total_cost"`
+	}
+	var modelStats []modelRow
+	dateCondition(dao.BilUsageLogs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id).
+		Fields("model_name, COUNT(*) as request_count, COALESCE(SUM(actual_cost), 0) as total_cost")).
+		Group("model_name").OrderDesc("total_cost").Limit(10).Scan(&modelStats)
+
+	daily := make([]v1.OpenProjectDailyStat, 0, len(dailyStats))
+	for _, d := range dailyStats {
+		daily = append(daily, v1.OpenProjectDailyStat{
+			Date:         d.Date,
+			RequestCount: int64(d.RequestCount),
+			TotalCost:    fmt.Sprintf("%.6f", d.TotalCost),
+			InputTokens:  d.InputTokens,
+			OutputTokens: d.OutputTokens,
+		})
+	}
+
+	models := make([]v1.OpenProjectModelStat, 0, len(modelStats))
+	for _, m := range modelStats {
+		models = append(models, v1.OpenProjectModelStat{
+			ModelName:    m.ModelName,
+			RequestCount: int64(m.RequestCount),
+			TotalCost:    fmt.Sprintf("%.6f", m.TotalCost),
+		})
+	}
+
+	return &v1.OpenProjectUsageStatsRes{
+		TotalCost:         fmt.Sprintf("%.6f", totalStats.TotalCost),
+		TotalRequests:     int64(totalStats.RequestCount),
+		TotalInputTokens:  totalStats.InputTokens,
+		TotalOutputTokens: totalStats.OutputTokens,
+		Daily:             daily,
+		Models:            models,
+	}, nil
+}
+
+func (s *sOpen) OpenProjectUsageLogs(ctx context.Context, req *v1.OpenProjectUsageLogsReq) (*v1.OpenProjectUsageLogsRes, error) {
+	tenantID := middleware.GetOpenTenantID(ctx)
+	if tenantID == 0 {
+		return nil, errOpen(consts.CodeUnauthorized, "未认证")
+	}
+	if err := middleware.CheckOpenPermission(ctx, "projects:read"); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.getProjectOrError(ctx, req.Id, tenantID); err != nil {
+		return nil, err
+	}
+
+	page := req.Page
+	pageSize := req.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	m := dao.BilUsageLogs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", req.Id)
+
+	total, err := m.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	type logRow struct {
+		Id           int64       `json:"id"`
+		ModelName    string      `json:"model_name"`
+		RelayMode    string      `json:"relay_mode"`
+		InputTokens  int         `json:"input_tokens"`
+		OutputTokens int         `json:"output_tokens"`
+		TotalCost    float64     `json:"total_cost"`
+		LatencyMs    int         `json:"latency_ms"`
+		Status       string      `json:"status"`
+		ErrorMessage string      `json:"error_message"`
+		CreatedAt    *gtime.Time `json:"created_at"`
+	}
+
+	var logs []logRow
+	err = m.Fields("id, model_name, relay_mode, input_tokens, output_tokens, actual_cost as total_cost, latency_ms, status, error_message, created_at").
+		OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]v1.OpenProjectUsageLogItem, 0, len(logs))
+	for _, l := range logs {
+		item := v1.OpenProjectUsageLogItem{
+			ID:           l.Id,
+			ModelName:    l.ModelName,
+			RelayMode:    l.RelayMode,
+			InputTokens:  l.InputTokens,
+			OutputTokens: l.OutputTokens,
+			TotalCost:    fmt.Sprintf("%.6f", l.TotalCost),
+			LatencyMs:    l.LatencyMs,
+			Status:       l.Status,
+			ErrorMessage: l.ErrorMessage,
+		}
+		if l.CreatedAt != nil {
+			item.CreatedAt = l.CreatedAt.Format("Y-m-d H:i:s")
+		}
+		items = append(items, item)
+	}
+
+	return &v1.OpenProjectUsageLogsRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// getProjectOrError 验证项目归属并返回基本信息
+func (s *sOpen) getProjectOrError(ctx context.Context, projectID, tenantID int64) (*struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+}, error) {
+	var project *struct {
+		ID     int64  `json:"id"`
+		Status string `json:"status"`
+	}
+	err := dao.TntProjects.Ctx(ctx).
+		Where("id", projectID).
+		Where("tenant_id", tenantID).
+		Scan(&project)
+	if err != nil {
+		return nil, err
+	}
+	if project == nil {
+		return nil, errOpen(consts.CodeNotFound, "项目不存在")
+	}
+	return project, nil
 }

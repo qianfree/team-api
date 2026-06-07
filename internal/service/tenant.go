@@ -66,6 +66,8 @@ type (
 		ExportWalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsExportReq) (*v1.TenantWalletTransactionsExportRes, error)
 		// WalletFrozenItems 获取冻结明细
 		WalletFrozenItems(ctx context.Context, req *v1.TenantWalletFrozenItemsReq) (*v1.TenantWalletFrozenItemsRes, error)
+		// UpdateWarningThreshold 修改钱包预警阈值
+		UpdateWarningThreshold(ctx context.Context, req *v1.TenantWalletUpdateWarningThresholdReq) (*v1.TenantWalletUpdateWarningThresholdRes, error)
 		// Dashboard returns the tenant dashboard statistics.
 		Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v1.TenantDashboardRes, error)
 		// TokenTrends returns daily token usage for the past N days.

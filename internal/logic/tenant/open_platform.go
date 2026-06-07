@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -356,6 +357,9 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 		hasUpdate = true
 	}
 	if req.URL != nil {
+		if !strings.HasPrefix(*req.URL, "https://") {
+			return nil, common.NewBadRequestError("回调 URL 必须以 https:// 开头")
+		}
 		data.Url = *req.URL
 		hasUpdate = true
 	}
@@ -387,8 +391,31 @@ func (s *sTenant) WebhookConfigDelete(ctx context.Context, req *v1.WebhookConfig
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	_, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
-	return nil, err
+
+	// 先校验配置存在且属于当前租户
+	count, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewNotFoundError("Webhook 配置不存在")
+	}
+
+	// 级联删除：投递日志 → 事件 → 配置
+	_, err = dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("webhook_config_id", req.Id).Where("tenant_id", tenantID).Delete()
+	if err != nil {
+		return nil, err
+	}
+	_, err = dao.OpnWebhookEvents.Ctx(ctx).Where("webhook_config_id", req.Id).Where("tenant_id", tenantID).Delete()
+	if err != nil {
+		return nil, err
+	}
+	_, err = dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
+	if err != nil {
+		return nil, err
+	}
+
+	return nil, nil
 }
 
 func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDeliveryLogsReq) (*v1.WebhookDeliveryLogsRes, error) {
@@ -406,52 +433,35 @@ func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDelive
 		pageSize = 20
 	}
 
-	baseQuery := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("tenant_id", tenantID).Where("webhook_config_id", req.Id)
-
-	// 分离计数查询和数据查询，避免 JOIN 影响 Count
+	// 计数查询（不 JOIN）
+	countQuery := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("tenant_id", tenantID).Where("webhook_config_id", req.Id)
 	if req.Status != "" {
-		// 用子查询过滤 status
-		total, err := baseQuery.
-			Where("event_id IN (SELECT id FROM opn_webhook_events WHERE status = ?)", req.Status).
-			Count()
-		if err != nil {
-			return nil, err
-		}
-
-		var logs []entity.OpnWebhookDeliveryLogs
-		err = baseQuery.
-			Where("event_id IN (SELECT id FROM opn_webhook_events WHERE status = ?)", req.Status).
-			OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
-		if err != nil {
-			return nil, err
-		}
-
-		items := make([]v1.WebhookDeliveryLogItem, len(logs))
-		for i, l := range logs {
-			items[i] = v1.WebhookDeliveryLogItem{
-				ID:             l.Id,
-				EventID:        l.EventId,
-				Attempt:        l.Attempt,
-				ResponseStatus: l.ResponseStatus,
-				ResponseTimeMs: l.ResponseTimeMs,
-				ErrorMessage:   l.ErrorMessage,
-			}
-			if l.CreatedAt != nil {
-				items[i].CreatedAt = l.CreatedAt.Format("Y-m-d H:i:s")
-			}
-		}
-
-		return &v1.WebhookDeliveryLogsRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+		countQuery = countQuery.Where("event_id IN (SELECT id FROM opn_webhook_events WHERE status = ?)", req.Status)
 	}
-
-	// 无 status 过滤时，直接查询
-	total, err := baseQuery.Count()
+	total, err := countQuery.Count()
 	if err != nil {
 		return nil, err
 	}
 
-	var logs []entity.OpnWebhookDeliveryLogs
-	err = baseQuery.OrderDesc("created_at").Page(page, pageSize).Scan(&logs)
+	// 数据查询：LEFT JOIN opn_webhook_events 获取 event_type
+	db := g.DB()
+	query := db.Ctx(ctx).Raw(
+		"SELECT dl.*, e.event_type FROM opn_webhook_delivery_logs dl LEFT JOIN opn_webhook_events e ON dl.event_id = e.id WHERE dl.tenant_id = ? AND dl.webhook_config_id = ?",
+		tenantID, req.Id,
+	)
+	if req.Status != "" {
+		query = db.Ctx(ctx).Raw(
+			"SELECT dl.*, e.event_type FROM opn_webhook_delivery_logs dl LEFT JOIN opn_webhook_events e ON dl.event_id = e.id WHERE dl.tenant_id = ? AND dl.webhook_config_id = ? AND e.status = ?",
+			tenantID, req.Id, req.Status,
+		)
+	}
+
+	type deliveryLogWithEventType struct {
+		entity.OpnWebhookDeliveryLogs
+		EventType string `json:"event_type"`
+	}
+	var logs []deliveryLogWithEventType
+	err = query.OrderDesc("dl.created_at").Page(page, pageSize).Scan(&logs)
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +471,7 @@ func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDelive
 		items[i] = v1.WebhookDeliveryLogItem{
 			ID:             l.Id,
 			EventID:        l.EventId,
+			EventType:      l.EventType,
 			Attempt:        l.Attempt,
 			ResponseStatus: l.ResponseStatus,
 			ResponseTimeMs: l.ResponseTimeMs,

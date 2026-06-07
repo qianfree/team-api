@@ -21,6 +21,17 @@ type (
 		OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v1.OpenKeyDeleteRes, error)
 		OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (*v1.OpenUsageQueryRes, error)
 		OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryReq) (*v1.OpenBillingQueryRes, error)
+		OpenProjectList(ctx context.Context, req *v1.OpenProjectListReq) (*v1.OpenProjectListRes, error)
+		OpenProjectCreate(ctx context.Context, req *v1.OpenProjectCreateReq) (*v1.OpenProjectCreateRes, error)
+		OpenProjectGet(ctx context.Context, req *v1.OpenProjectGetReq) (*v1.OpenProjectGetRes, error)
+		OpenProjectUpdate(ctx context.Context, req *v1.OpenProjectUpdateReq) (*v1.OpenProjectUpdateRes, error)
+		OpenProjectArchive(ctx context.Context, req *v1.OpenProjectArchiveReq) (*v1.OpenProjectArchiveRes, error)
+		OpenProjectUnarchive(ctx context.Context, req *v1.OpenProjectUnarchiveReq) (*v1.OpenProjectUnarchiveRes, error)
+		OpenProjectKeyList(ctx context.Context, req *v1.OpenProjectKeyListReq) (*v1.OpenProjectKeyListRes, error)
+		OpenProjectKeyCreate(ctx context.Context, req *v1.OpenProjectKeyCreateReq) (*v1.OpenProjectKeyCreateRes, error)
+		OpenProjectKeyDelete(ctx context.Context, req *v1.OpenProjectKeyDeleteReq) (*v1.OpenProjectKeyDeleteRes, error)
+		OpenProjectUsageStats(ctx context.Context, req *v1.OpenProjectUsageStatsReq) (*v1.OpenProjectUsageStatsRes, error)
+		OpenProjectUsageLogs(ctx context.Context, req *v1.OpenProjectUsageLogsReq) (*v1.OpenProjectUsageLogsRes, error)
 	}
 )
 

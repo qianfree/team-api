@@ -15,6 +15,13 @@ const (
 	dispatcherChannelSize   = 1000
 	dispatcherWorkerCount   = 5
 	dispatcherSweepInterval = 2 * time.Minute
+
+	// 清理策略
+	cleanupInterval       = 6 * time.Hour       // 每 6 小时执行一次清理
+	cleanupDeliveredAge   = 7 * 24 * time.Hour  // 已投递事件保留 7 天
+	cleanupFailedAge      = 30 * 24 * time.Hour // 已放弃事件保留 30 天
+	cleanupDeliveryLogAge = 30 * 24 * time.Hour // 投递日志保留 30 天
+	cleanupBatchSize      = 500                 // 每批删除条数
 )
 
 type WebhookDispatcher struct {
@@ -36,11 +43,12 @@ func InitWebhookDispatcher(ctx context.Context) {
 		go d.worker()
 	}
 	go d.sweepLoop()
+	go d.cleanupLoop()
 
 	// Recover any pending events left from a previous crash
 	go d.recoverPending()
 
-	g.Log().Infof(ctx, "webhook dispatcher started: %d workers, sweep every %v", dispatcherWorkerCount, dispatcherSweepInterval)
+	g.Log().Infof(ctx, "webhook dispatcher started: %d workers, sweep every %v, cleanup every %v", dispatcherWorkerCount, dispatcherSweepInterval, cleanupInterval)
 }
 
 // NotifyNewEvent pushes an event ID to the dispatcher channel (non-blocking).
@@ -108,8 +116,96 @@ func (d *WebhookDispatcher) recoverPending() {
 }
 
 // scheduleRetry schedules a delayed re-delivery for a failed event.
+// The retry is skipped if the dispatcher context has been cancelled (e.g. during shutdown).
 func scheduleRetry(eventID int64, delay time.Duration) {
 	time.AfterFunc(delay, func() {
+		if defaultDispatcher == nil {
+			return
+		}
+		select {
+		case <-defaultDispatcher.ctx.Done():
+			return
+		default:
+		}
 		NotifyNewEvent(eventID)
 	})
+}
+
+// cleanupLoop periodically removes old delivered events, exhausted failed events, and delivery logs.
+func (d *WebhookDispatcher) cleanupLoop() {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-ticker.C:
+			d.cleanup()
+		}
+	}
+}
+
+// cleanup removes old webhook data in batches to prevent table bloat.
+// Order: delivery_logs → events (delivery_logs reference events via event_id).
+func (d *WebhookDispatcher) cleanup() {
+	ctx := d.ctx
+	now := gtime.Now()
+
+	// 1. 清理投递日志（保留 30 天）
+	logCutoff := now.Add(-cleanupDeliveryLogAge)
+	for {
+		result, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).
+			Where("created_at < ?", logCutoff).
+			Limit(cleanupBatchSize).
+			Delete()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: delete delivery logs failed: %v", err)
+			break
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			break
+		}
+		g.Log().Infof(ctx, "webhook cleanup: deleted %d delivery logs older than %v", rows, logCutoff.Format("Y-m-d"))
+	}
+
+	// 2. 清理已投递事件（保留 7 天）
+	deliveredCutoff := now.Add(-cleanupDeliveredAge)
+	for {
+		result, err := dao.OpnWebhookEvents.Ctx(ctx).
+			Where("status", "delivered").
+			Where("updated_at < ?", deliveredCutoff).
+			Limit(cleanupBatchSize).
+			Delete()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: delete delivered events failed: %v", err)
+			break
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			break
+		}
+		g.Log().Infof(ctx, "webhook cleanup: deleted %d delivered events older than %v", rows, deliveredCutoff.Format("Y-m-d"))
+	}
+
+	// 3. 清理已放弃的重试事件（attempts >= max，保留 30 天）
+	failedCutoff := now.Add(-cleanupFailedAge)
+	for {
+		result, err := dao.OpnWebhookEvents.Ctx(ctx).
+			Where("status", "failed").
+			Where("attempts >= ?", webhookMaxRetries).
+			Where("updated_at < ?", failedCutoff).
+			Limit(cleanupBatchSize).
+			Delete()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: delete exhausted events failed: %v", err)
+			break
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			break
+		}
+		g.Log().Infof(ctx, "webhook cleanup: deleted %d exhausted events older than %v", rows, failedCutoff.Format("Y-m-d"))
+	}
 }
