@@ -25,6 +25,7 @@ import (
 	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/logic/tenant"
+	"github.com/qianfree/team-api/internal/logic/updat
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/response"
 
@@ -165,7 +166,17 @@ var (
 				scheduler.GetGlobalAffinity().CleanExpired()
 				return nil
 			})
+			cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
+				if common.Config().GetBool(ctx, "update_auto_check_enabled") {
+					return update.BackgroundCheck(ctx)
+				}
+				return nil
+			})
 			cs.StartBackground(ctx)
+
+			// Initialize update manager
+			update.InitManager(ctx)
+			update.CheckPendingVerification(ctx)
 
 			// Initialize plugin system (must be after CronScheduler init)
 			pluginApp := &plugin.App{

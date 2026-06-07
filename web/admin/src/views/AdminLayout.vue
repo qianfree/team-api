@@ -3,6 +3,8 @@ import { ref, reactive, computed, onMounted, onUnmounted, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import axios from 'axios'
+import { marked } from 'marked'
+import request from '@/utils/request'
 import { useWatermark } from '@/composables/useWatermark'
 import {
   IconDashboard,
@@ -42,6 +44,127 @@ const collapsedGroups = reactive<Record<string, boolean>>({})
 const isMobile = ref(false)
 const demoMode = ref(false)
 const demoMessage = ref('')
+
+// --- Version & Update ---
+const appVersion = ref(__APP_VERSION__ || 'dev')
+const hasUpdate = ref(false)
+const latestVersion = ref('')
+const updateModalVisible = ref(false)
+const updateLoading = ref(false)
+const executing = ref(false)
+const rollingBack = ref(false)
+const updateStatus = ref<any>(null)
+const releaseNotes = ref('')
+const releaseUrl = ref('')
+const updatePollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+
+const releaseNotesHtml = computed(() => {
+  if (!releaseNotes.value) return ''
+  return marked(releaseNotes.value) as string
+})
+
+const isUpdating = computed(() => updateStatus.value?.updating === true)
+const isFailed = computed(() => updateStatus.value?.update_progress?.phase === 'failed')
+const isComplete = computed(() => updateStatus.value?.update_progress?.phase === 'complete')
+const isDocker = computed(() => updateStatus.value?.deployment_mode === 'docker')
+const progress = computed(() => updateStatus.value?.update_progress)
+const rollbackAvailable = computed(() => updateStatus.value?.rollback_available === true)
+const backupVersion = computed(() => updateStatus.value?.backup_version || '')
+
+async function checkUpdate(force = false) {
+  try {
+    const res = await request.get('/admin/update/check', { params: { force } })
+    const data = res.data?.data
+    if (data) {
+      hasUpdate.value = data.has_update
+      latestVersion.value = data.latest_version || ''
+      releaseNotes.value = data.release_notes || ''
+      releaseUrl.value = data.release_url || ''
+    }
+  } catch {
+    // silent
+  }
+}
+
+async function fetchUpdateStatus() {
+  try {
+    const res = await request.get('/admin/update/status')
+    updateStatus.value = res.data?.data
+  } catch {
+    // silent
+  }
+}
+
+function openUpdateModal() {
+  updateModalVisible.value = true
+  fetchUpdateStatus()
+}
+
+function closeUpdateModal() {
+  updateModalVisible.value = false
+  stopPolling()
+}
+
+function startPolling() {
+  stopPolling()
+  updatePollTimer.value = setInterval(fetchUpdateStatus, 2000)
+}
+
+function stopPolling() {
+  if (updatePollTimer.value) {
+    clearInterval(updatePollTimer.value)
+    updatePollTimer.value = null
+  }
+}
+
+async function executeUpdate() {
+  if (!latestVersion.value) return
+  executing.value = true
+  try {
+    await request.post('/admin/update/execute', { version: latestVersion.value })
+    Message.success('系统更新已启动')
+    startPolling()
+  } catch (e: any) {
+    Message.error(e.response?.data?.message || '启动更新失败')
+  } finally {
+    executing.value = false
+  }
+}
+
+async function doRollback() {
+  rollingBack.value = true
+  try {
+    await request.post('/admin/update/rollback')
+    Message.success('回滚已启动，系统将重启...')
+    startPolling()
+  } catch (e: any) {
+    Message.error(e.response?.data?.message || '回滚失败')
+  } finally {
+    rollingBack.value = false
+  }
+}
+
+function getPhaseLabel(phase: string): string {
+  const map: Record<string, string> = {
+    downloading: '下载中', verifying: '校验中', backing_up: '备份中',
+    replacing: '替换中', restarting: '重启中', complete: '完成', failed: '失败',
+  }
+  return map[phase] || phase
+}
+
+function getStepStatus(phase: string): string {
+  if (!progress.value) return 'wait'
+  const phases = ['downloading', 'verifying', 'backing_up', 'replacing', 'restarting']
+  const currentIdx = phases.indexOf(progress.value.phase)
+  const stepIdx = phases.indexOf(phase)
+  if (isFailed.value) return stepIdx < currentIdx ? 'finish' : stepIdx === currentIdx ? 'error' : 'wait'
+  if (isComplete.value) return 'finish'
+  if (stepIdx < currentIdx) return 'finish'
+  if (stepIdx === currentIdx) return 'process'
+  return 'wait'
+}
+
+// --- End Version & Update ---
 
 provide('demoMode', demoMode)
 
@@ -293,6 +416,9 @@ onMounted(() => {
   updateMobile()
   window.addEventListener('resize', updateMobile)
 
+  // Check for updates on mount
+  checkUpdate()
+
   axios.get('/api/settings/public').then((res) => {
     const settings = res.data?.data?.settings
     if (settings) {
@@ -309,6 +435,7 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateMobile)
   clearTimeout(popupHideTimer!)
+  stopPolling()
   unmountWatermark()
 })
 </script>
@@ -317,10 +444,16 @@ onUnmounted(() => {
   <div class="admin-layout">
     <!-- Desktop Sidebar -->
     <div class="admin-sidebar" :class="{ 'admin-sidebar--collapsed': collapsed }">
-      <div class="admin-sidebar__logo">
+      <div class="admin-sidebar__logo" @click="openUpdateModal" style="cursor: pointer;">
         <div class="admin-sidebar__logo-icon">T</div>
         <Transition name="fade">
-          <span v-if="!collapsed" class="admin-sidebar__logo-text">Team-API</span>
+          <span v-if="!collapsed" class="admin-sidebar__logo-text">
+            Team-API
+            <span class="admin-sidebar__version">
+              {{ appVersion === 'dev' ? 'dev' : 'v' + appVersion }}
+              <span v-if="hasUpdate" class="admin-sidebar__update-dot" title="有新版本可用"></span>
+            </span>
+          </span>
         </Transition>
       </div>
 
@@ -478,6 +611,123 @@ onUnmounted(() => {
         </router-view>
       </main>
     </div>
+
+    <!-- Update Modal -->
+    <a-modal
+      v-model:visible="updateModalVisible"
+      :footer="false"
+      :closable="true"
+      :mask-closable="true"
+      title-align="start"
+      width="520px"
+      @cancel="closeUpdateModal"
+    >
+      <template #title>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span>系统更新</span>
+          <a-tag v-if="isDocker" color="blue" size="small">Docker</a-tag>
+          <a-tag v-else color="green" size="small">二进制</a-tag>
+        </div>
+      </template>
+
+      <!-- Version info -->
+      <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+        <a-card :bordered="false" class="update-modal-stat" size="small">
+          <div class="update-modal-stat__title">当前版本</div>
+          <div class="update-modal-stat__value">v{{ appVersion }}</div>
+        </a-card>
+        <a-card :bordered="false" class="update-modal-stat" size="small">
+          <div class="update-modal-stat__title">最新版本</div>
+          <div class="update-modal-stat__value" :style="hasUpdate ? { color: '#00b42a' } : {}">
+            {{ latestVersion ? 'v' + latestVersion : '--' }}
+          </div>
+        </a-card>
+      </div>
+
+      <!-- Docker mode hint -->
+      <template v-if="isDocker">
+        <a-alert type="info" style="margin-bottom: 16px;">
+          Docker 部署模式不支持在线自动更新，请手动执行：
+        </a-alert>
+        <a-input
+          model-value="docker compose pull && docker compose up -d"
+          read-only
+          style="font-family: monospace; margin-bottom: 16px;"
+        >
+          <template #append>
+            <a-button type="text" size="mini" @click="() => { navigator.clipboard.writeText('docker compose pull && docker compose up -d'); Message.success('已复制') }">复制</a-button>
+          </template>
+        </a-input>
+      </template>
+
+      <!-- Update available -->
+      <template v-if="hasUpdate && !isUpdating && !isFailed && !isComplete && !isDocker">
+        <a-divider style="margin: 16px 0;" />
+        <div style="margin-bottom: 12px;">
+          <a-typography-text bold>更新说明</a-typography-text>
+        </div>
+        <div class="update-modal-notes" v-html="releaseNotesHtml"></div>
+        <a-divider style="margin: 16px 0;" />
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <a-typography-text type="secondary" style="font-size: 12px;">⚠️ 更新过程中服务将短暂中断</a-typography-text>
+          <a-button type="primary" :loading="executing" @click="executeUpdate">
+            {{ executing ? '启动中...' : '立即更新' }}
+          </a-button>
+        </div>
+      </template>
+
+      <!-- No update -->
+      <template v-if="!hasUpdate && !isUpdating">
+        <a-result>
+          <template #icon><icon-check-circle-fill style="color: #00b42a; font-size: 32px;" /></template>
+          <template #title><span style="color: #00b42a; font-size: 14px;">当前已是最新版本</span></template>
+        </a-result>
+      </template>
+
+      <!-- Update progress -->
+      <template v-if="isUpdating">
+        <a-divider style="margin: 16px 0;" />
+        <a-steps :current="1" size="small" style="margin-bottom: 16px;">
+          <a-step title="下载" :status="getStepStatus('downloading')" />
+          <a-step title="校验" :status="getStepStatus('verifying')" />
+          <a-step title="备份" :status="getStepStatus('backing_up')" />
+          <a-step title="替换" :status="getStepStatus('replacing')" />
+          <a-step title="重启" :status="getStepStatus('restarting')" />
+        </a-steps>
+        <a-progress
+          :percent="(progress?.percentage || 0) / 100"
+          :status="isFailed ? 'danger' : isComplete ? 'success' : 'normal'"
+        />
+        <a-typography-text :type="isFailed ? 'danger' : 'secondary'" style="font-size: 13px;">
+          {{ progress?.message }}
+        </a-typography-text>
+      </template>
+
+      <!-- Failed with rollback -->
+      <template v-if="isFailed">
+        <a-divider style="margin: 16px 0;" />
+        <a-alert type="error" style="margin-bottom: 12px;">更新失败：{{ progress?.error || '未知错误' }}</a-alert>
+        <div v-if="rollbackAvailable" style="text-align: right;">
+          <a-button status="danger" :loading="rollingBack" @click="doRollback">回滚到 v{{ backupVersion }}</a-button>
+        </div>
+      </template>
+
+      <!-- Complete with rollback option -->
+      <template v-if="isComplete && rollbackAvailable">
+        <a-divider style="margin: 16px 0;" />
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <a-typography-text type="secondary" style="font-size: 12px;">如遇问题可回滚到 v{{ backupVersion }}</a-typography-text>
+          <a-button status="warning" :loading="rollingBack" @click="doRollback">回滚</a-button>
+        </div>
+      </template>
+
+      <template v-if="releaseUrl && hasUpdate">
+        <a-divider style="margin: 8px 0 0;" />
+        <div style="text-align: center; padding-top: 8px;">
+          <a-link :href="releaseUrl" target="_blank" style="font-size: 12px;">在 GitHub 上查看完整发布说明</a-link>
+        </div>
+      </template>
+    </a-modal>
   </div>
 </template>
 
@@ -929,5 +1179,84 @@ onUnmounted(() => {
   .admin-sidebar--mobile {
     display: flex;
   }
+}
+
+/* ===== Version Badge & Update Dot ===== */
+.admin-sidebar__version {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+}
+
+.admin-sidebar__update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00b42a;
+  margin-left: 4px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 180, 42, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(0, 180, 42, 0); }
+}
+
+/* ===== Update Modal ===== */
+.update-modal-stat {
+  flex: 1;
+  background: var(--ta-bg-secondary);
+}
+
+.update-modal-stat__title {
+  font-size: 12px;
+  color: var(--ta-text-tertiary);
+  margin-bottom: 4px;
+}
+
+.update-modal-stat__value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ta-text-primary);
+}
+
+.update-modal-notes {
+  max-height: 260px;
+  overflow-y: auto;
+  line-height: 1.8;
+  font-size: 13px;
+  color: var(--ta-text-secondary);
+}
+
+.update-modal-notes :deep(h1),
+.update-modal-notes :deep(h2),
+.update-modal-notes :deep(h3) {
+  margin-top: 12px;
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.update-modal-notes :deep(ul),
+.update-modal-notes :deep(ol) {
+  padding-left: 20px;
+}
+
+.update-modal-notes :deep(code) {
+  background: var(--ta-fill-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
 }
 </style>
