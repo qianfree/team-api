@@ -74,7 +74,7 @@ jobs:
 
       - name: Generate checksums
         run: |
-          sha256sum team-api-*.tar.gz team-api-*.zip > checksums-sha256.txt
+          sha256sum team-api-* > checksums-sha256.txt
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
