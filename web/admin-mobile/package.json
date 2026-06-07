@@ -1,0 +1,29 @@
+{
+  "name": "admin-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@vant/auto-import-resolver": "^1.2.1",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "typescript": "~6.0.2",
+    "unplugin-vue-components": "^28.4.1",
+    "vite": "^8.0.4",
+    "@tailwindcss/vite": "^4.2.2"
+  },
+  "dependencies": {
+    "@vant/use": "^1.1.1",
+    "axios": "^1.15.0",
+    "pinia": "^3.0.4",
+    "tailwindcss": "^4.2.2",
+    "vant": "^4.9.0",
+    "vue": "^3.5.32",
+    "vue-router": "^4.6.4"
+  }
+}

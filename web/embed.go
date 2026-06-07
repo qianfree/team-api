@@ -7,6 +7,9 @@ import "embed"
 //go:embed all:admin/dist
 var AdminFS embed.FS
 
+//go:embed all:admin-mobile/dist
+var AdminMobileFS embed.FS
+
 //go:embed all:tenant/dist
 var TenantFS embed.FS
 

@@ -1,0 +1,188 @@
+@import "tailwindcss";
+@import "vant/lib/index.css";
+
+/* ===== Design System CSS Variables ===== */
+:root {
+  /* Primary — Teal */
+  --ta-primary: #0d9488;
+  --ta-primary-hover: #0f766e;
+  --ta-primary-light: #f0fdfa;
+  --ta-primary-gradient: linear-gradient(135deg, #14b8a6, #0d9488);
+
+  /* Semantic */
+  --ta-success: #10b981;
+  --ta-warning: #f59e0b;
+  --ta-danger: #ef4444;
+  --ta-info: #06b6d4;
+
+  /* Text */
+  --ta-text-primary: #1e293b;
+  --ta-text-secondary: #475569;
+  --ta-text-tertiary: #94a3b8;
+  --ta-text-weakest: #cbd5e1;
+
+  /* Background */
+  --ta-bg-page: #f8fafc;
+  --ta-bg-card: #ffffff;
+  --ta-bg-secondary: #f1f5f9;
+
+  /* Border */
+  --ta-border: #e2e8f0;
+  --ta-border-light: #f1f5f9;
+
+  /* Radius */
+  --ta-radius: 10px;
+  --ta-radius-lg: 14px;
+
+  /* Shadow */
+  --ta-shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+
+  /* Transition */
+  --ta-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ta-duration-fast: 0.15s;
+  --ta-duration-normal: 0.2s;
+
+  /* ===== Vant Theme Override ===== */
+  --van-primary-color: #0d9488;
+  --van-primary-color-light: #f0fdfa;
+  --van-primary-color-dark: #0f766e;
+  --van-primary-color-deep: #115e59;
+  --van-tabbar-item-active-color: #0d9488;
+  --van-tabbar-height: 56px;
+  --van-tabbar-item-font-size: 10px;
+  --van-tabbar-item-icon-size: 22px;
+  --van-nav-bar-height: 48px;
+  --van-nav-bar-icon-color: #1e293b;
+  --van-nav-bar-text-color: #1e293b;
+  --van-nav-bar-title-text-color: #1e293b;
+  --van-background: #f8fafc;
+  --van-background-2: #ffffff;
+  --van-cell-background: #ffffff;
+  --van-cell-font-size: 14px;
+  --van-cell-line-height: 24px;
+  --van-cell-vertical-padding: 12px;
+  --van-border-color: #e2e8f0;
+  --van-tabbar-z-index: 9999;
+  --van-radius-lg: 12px;
+  --van-radius-max: 16px;
+  --van-font-size-md: 14px;
+  --van-font-size-lg: 16px;
+}
+
+/* ===== Global Styles ===== */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--ta-bg-page);
+  color: var(--ta-text-primary);
+  margin: 0;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Safe area insets for iPhone notch/home indicator */
+body {
+  padding-top: constant(safe-area-inset-top);
+  padding-bottom: constant(safe-area-inset-bottom);
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Disable text selection on interactive elements */
+.van-tabbar,
+.van-nav-bar,
+.van-cell {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Tab bar — solid background, no transparency, always on top */
+.van-tabbar {
+  background: #ffffff !important;
+  border-top: 1px solid var(--ta-border, #e2e8f0);
+  z-index: 9999 !important;
+}
+
+.van-tabbar--fixed {
+  position: fixed !important;
+  z-index: 9999 !important;
+}
+
+.van-tabbar--unfit {
+  z-index: 9999 !important;
+}
+
+/* Top nav bar — solid background */
+.van-nav-bar {
+  background: #ffffff;
+  border-bottom: 1px solid var(--ta-border, #e2e8f0);
+}
+
+/* Hide scrollbar on mobile */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Selection */
+::selection {
+  background: rgba(13, 148, 136, 0.15);
+  color: #042f2e;
+}
+
+/* ===== Animations ===== */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn { animation: fadeIn var(--ta-duration-normal) var(--ta-ease); }
+.animate-slideUp { animation: slideUp 0.5s var(--ta-ease); }
+
+/* ===== Page Transition ===== */
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: transform 0.3s var(--ta-ease), opacity 0.3s var(--ta-ease);
+}
+.slide-right-enter-from {
+  transform: translateX(30px);
+  opacity: 0;
+}
+.slide-right-leave-to {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+
+/* ===== Vant Component Overrides ===== */
+
+/* SwipeCell action buttons */
+.van-swipe-cell__action button {
+  height: 100%;
+}
+
+/* Card radius */
+.van-cell-group--inset {
+  border-radius: var(--ta-radius-lg);
+}
+
+/* PullRefresh — use auto height, let content determine size */
+.van-pull-refresh {
+  min-height: auto;
+}
+
+/* Skeleton */
+.van-skeleton {
+  padding: 16px;
+}

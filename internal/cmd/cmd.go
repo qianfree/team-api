@@ -397,7 +397,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 }
 
 // registerFrontendRoutes serves embedded frontend SPA assets.
-// Admin console at /admin, tenant console at / (catch-all).
+// Admin console at /admin (desktop) or /admin-mobile (mobile), tenant console at / (catch-all).
 // Existing API routes take priority over these wildcard routes.
 // When built without the "embedweb" tag, this is a no-op.
 func registerFrontendRoutes(s *ghttp.Server) {
@@ -406,17 +406,53 @@ func registerFrontendRoutes(s *ghttp.Server) {
 	}
 
 	adminSub, _ := fs.Sub(web.AdminFS, "admin/dist")
+	adminMobileSub, _ := fs.Sub(web.AdminMobileFS, "admin-mobile/dist")
 	tenantSub, _ := fs.Sub(web.TenantFS, "tenant/dist")
 
+	// Mobile admin SPA: /admin-mobile/* → web/admin-mobile/dist/
+	s.Group("/admin-mobile", func(group *ghttp.RouterGroup) {
+		group.ALL("/*any", ghttp.WrapF(spaHandler(adminMobileSub, "/admin-mobile")))
+	})
+
 	// Admin SPA: /admin/* → web/admin/dist/
+	// Mobile detection: redirect to /admin-mobile/ for mobile UAs.
+	// Append ?desktop=1 to force desktop version on mobile devices.
 	s.Group("/admin", func(group *ghttp.RouterGroup) {
-		group.ALL("/*any", ghttp.WrapF(spaHandler(adminSub, "/admin")))
+		group.ALL("/*any", func(r *ghttp.Request) {
+			// Allow explicit desktop override
+			if r.GetQuery("desktop").String() != "" {
+				handler := ghttp.WrapF(spaHandler(adminSub, "/admin"))
+				handler(r)
+				return
+			}
+			ua := strings.ToLower(r.Header.Get("User-Agent"))
+			if isMobileUA(ua) {
+				r.Response.RedirectTo("/admin-mobile/")
+				r.Exit()
+				return
+			}
+			handler := ghttp.WrapF(spaHandler(adminSub, "/admin"))
+			handler(r)
+		})
 	})
 
 	// Tenant SPA: /* → web/tenant/dist/ (lowest priority catch-all)
 	s.Group("/", func(group *ghttp.RouterGroup) {
 		group.ALL("/*any", ghttp.WrapF(spaHandler(tenantSub, "")))
 	})
+}
+
+// isMobileUA detects mobile browsers by User-Agent keyword matching.
+func isMobileUA(ua string) bool {
+	mobileKeywords := []string{
+		"android", "iphone", "ipad", "ipod", "mobile", "phone",
+	}
+	for _, kw := range mobileKeywords {
+		if strings.Contains(ua, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // spaHandler returns an http.HandlerFunc that serves static files from the

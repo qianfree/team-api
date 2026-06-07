@@ -42,6 +42,7 @@ build:
 # Build frontend assets
 build-web:
 	cd web/admin && bun install && bun run build
+	cd web/admin-mobile && bun install && bun run build
 	cd web/tenant && bun install && bun run build
 
 # Build all (frontend embedded into backend binary)

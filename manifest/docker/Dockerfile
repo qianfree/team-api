@@ -15,16 +15,20 @@ ENV BUN_CONFIG_REGISTRY=${BUN_CONFIG_REGISTRY}
 WORKDIR /build/web
 
 COPY web/admin/package.json web/admin/bun.lock* ./admin/
+COPY web/admin-mobile/package.json web/admin-mobile/bun.lock* ./admin-mobile/
 COPY web/tenant/package.json web/tenant/bun.lock* ./tenant/
 
 RUN cd admin && bun install --frozen-lockfile && \
+    cd ../admin-mobile && bun install --frozen-lockfile && \
     cd ../tenant && bun install --frozen-lockfile
 
 COPY VERSION /build/VERSION
 COPY web/admin ./admin
+COPY web/admin-mobile ./admin-mobile
 COPY web/tenant ./tenant
 
 RUN cd admin && bun run build && \
+    cd ../admin-mobile && bun run build && \
     cd ../tenant && bun run build
 
 # Stage 2: Go build
@@ -44,6 +48,7 @@ COPY . .
 
 # Copy frontend dist from previous stage
 COPY --from=frontend /build/web/admin/dist ./web/admin/dist
+COPY --from=frontend /build/web/admin-mobile/dist ./web/admin-mobile/dist
 COPY --from=frontend /build/web/tenant/dist ./web/tenant/dist
 
 ARG VERSION=dev

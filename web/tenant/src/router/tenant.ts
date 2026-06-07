@@ -172,24 +172,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				component: () => import('@/views/service/PlaygroundPage.vue'),
 				meta: { title: '在线体验', icon: 'terminal', sort: 50, roles: ['owner', 'admin', 'member'] },
 			},
-			{
-				path: 'tickets',
-				name: 'TenantTickets',
-				component: () => import('@/views/support/TicketsPage.vue'),
-				meta: { title: '工单中心', icon: 'ticket', sort: 51, roles: ['owner', 'admin', 'member'] },
-			},
-			{
-				path: 'feedback',
-				name: 'TenantFeedback',
-				component: () => import('@/views/support/FeedbackPage.vue'),
-				meta: { title: '意见反馈', icon: 'chat', sort: 52, roles: ['owner', 'admin', 'member'] },
-			},
-			{
-				path: 'help',
-				name: 'TenantHelpCenter',
-				component: () => import('@/views/help/HelpCenterPage.vue'),
-				meta: { title: '帮助中心', icon: 'bookOpen', sort: 53, roles: ['owner', 'admin', 'member'] },
-			},
+
 			// 设置 (60-69)
 			{
 				path: 'organization',
@@ -227,6 +210,24 @@ const tenantRoutes: RouteRecordRaw[] = [
 				name: 'TenantWebhooks',
 				component: () => import('@/views/open/WebhooksPage.vue'),
 				meta: { title: 'Webhook', icon: 'link', sort: 71, roles: ['owner', 'admin'] },
+			},
+			{
+				path: 'tickets',
+				name: 'TenantTickets',
+				component: () => import('@/views/support/TicketsPage.vue'),
+				meta: { title: '工单中心', icon: 'ticket', sort: 81, roles: ['owner', 'admin', 'member'] },
+			},
+			{
+				path: 'feedback',
+				name: 'TenantFeedback',
+				component: () => import('@/views/support/FeedbackPage.vue'),
+				meta: { title: '意见反馈', icon: 'chat', sort: 82, roles: ['owner', 'admin', 'member'] },
+			},
+			{
+				path: 'help',
+				name: 'TenantHelpCenter',
+				component: () => import('@/views/help/HelpCenterPage.vue'),
+				meta: { title: '帮助中心', icon: 'bookOpen', sort: 83, roles: ['owner', 'admin', 'member'] },
 			},
 			// API 文档 (90+)
 			{
