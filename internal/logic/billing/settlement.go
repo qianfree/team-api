@@ -152,6 +152,9 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
 
+	// 7. 异步检查余额预警
+	go CheckBalanceWarning(context.Background(), tenantID)
+
 	return &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
 		BaseCost:         breakdown.BaseCost,
@@ -284,6 +287,10 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 	InvalidateWalletRedis(ctx, tenantID)
 	CleanupPreDeduct(ctx, tenantID, requestID)
+
+	// 7. 异步检查余额预警
+	go CheckBalanceWarning(context.Background(), tenantID)
+
 	settlementResult := &SettlementResult{
 		PreDeductAmount:  preDeductAmount,
 		ActualCost:       actualCost,

@@ -52,6 +52,8 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 				return gerror.Wrapf(err, "credit wallet failed")
 			}
 			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
+			// 充值后检查是否需要重置低余额预警标记
+			billing.ResetLowBalanceNotified(ctx, order.TenantID)
 
 		default:
 			return gerror.Newf("unsupported order type for fulfillment: %s", order.OrderType)

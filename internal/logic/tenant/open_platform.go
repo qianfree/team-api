@@ -357,8 +357,8 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 		hasUpdate = true
 	}
 	if req.URL != nil {
-		if !strings.HasPrefix(*req.URL, "https://") {
-			return nil, common.NewBadRequestError("回调 URL 必须以 https:// 开头")
+		if !strings.HasPrefix(*req.URL, "https://") && !strings.HasPrefix(*req.URL, "http://") {
+			return nil, common.NewBadRequestError("回调 URL 必须以 http:// 或 https:// 开头")
 		}
 		data.Url = *req.URL
 		hasUpdate = true
@@ -523,21 +523,28 @@ func PublishWebhookEvent(ctx context.Context, tenantID int64, eventType string, 
 		return err
 	}
 
-	// 使用 json.Marshal 安全构建 JSONB 查询参数，防止注入
-	eventFilter, err := json.Marshal([]string{eventType})
+	// Find all active webhook configs for this tenant, then filter by subscribed events in Go
+	var allConfigs []entity.OpnWebhookConfigs
+	err = dao.OpnWebhookConfigs.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("is_active", true).
+		Scan(&allConfigs)
 	if err != nil {
 		return err
 	}
 
-	// Find all active webhook configs that subscribe to this event type
 	var configs []entity.OpnWebhookConfigs
-	err = dao.OpnWebhookConfigs.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("is_active", true).
-		Where("events::jsonb @> ?", string(eventFilter)).
-		Scan(&configs)
-	if err != nil {
-		return err
+	for _, c := range allConfigs {
+		var events []string
+		if err := json.Unmarshal([]byte(c.Events), &events); err != nil {
+			continue
+		}
+		for _, e := range events {
+			if e == eventType {
+				configs = append(configs, c)
+				break
+			}
+		}
 	}
 
 	for _, config := range configs {

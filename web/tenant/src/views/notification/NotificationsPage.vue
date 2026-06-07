@@ -21,7 +21,6 @@ const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 const activeTab = ref<'all' | 'unread'>('all')
-const expandedId = ref<number | null>(null)
 
 const showExportDropdown = ref(false)
 const { exporting, exportFile } = useExport({
@@ -100,20 +99,8 @@ async function deleteNotification(n: Notification) {
 		await request.delete(`/tenant/notifications/${n.id}`)
 		notifications.value = notifications.value.filter((item) => item.id !== n.id)
 		total.value--
-		expandedId.value = null
 		confirmDeleteId.value = null
 	} catch {
-	}
-}
-
-function toggleNotification(n: Notification) {
-	if (expandedId.value === n.id) {
-		expandedId.value = null
-	} else {
-		expandedId.value = n.id
-		if (!n.is_read) {
-			markAsRead(n.id)
-		}
 	}
 }
 
@@ -201,13 +188,12 @@ onMounted(() => {
 			<div
 				v-for="n in notifications"
 				:key="n.id"
-				class="card transition-all duration-200 cursor-pointer"
+				class="card transition-all duration-200"
 				:class="{ 'border-l-4 border-l-primary-500': !n.is_read, 'opacity-70': n.is_read }"
-				@click="toggleNotification(n)"
 			>
 				<div class="px-6 py-4">
 					<div class="flex items-start justify-between gap-3">
-						<div class="flex items-start gap-3 flex-1 min-w-0">
+						<div class="flex items-start gap-3 flex-1 min-w-0" @click="!n.is_read && markAsRead(n.id)">
 							<!-- Unread dot -->
 							<div class="mt-1.5 flex-shrink-0">
 								<div v-if="!n.is_read" class="h-2.5 w-2.5 rounded-full bg-primary-500"></div>
@@ -221,29 +207,25 @@ onMounted(() => {
 										{{ typeLabel[n.type] || n.type }}
 									</span>
 								</div>
-								<p class="text-xs text-gray-500 truncate">{{ n.content }}</p>
+								<div class="text-sm text-gray-600 notification-content" v-html="n.content"></div>
 							</div>
 						</div>
 
-						<span class="text-xs text-gray-400 flex-shrink-0 mt-0.5">
-							{{ n.created_at ? new Date(n.created_at).toLocaleString() : '' }}
-						</span>
-					</div>
-
-					<!-- Expanded content -->
-					<div v-if="expandedId === n.id" class="mt-3 pt-3 border-t border-gray-100">
-						<p class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{{ n.content }}</p>
-						<!-- Delete button for read personal messages -->
-						<div v-if="n.is_read && !n.is_broadcast" class="mt-3 flex items-center justify-end gap-2">
-							<template v-if="confirmDeleteId === n.id">
-								<span class="text-xs text-gray-500">确认删除？</span>
-								<button class="btn btn-danger btn-sm" @click.stop="deleteNotification(n)">删除</button>
-								<button class="btn btn-secondary btn-sm" @click.stop="confirmDeleteId = null">取消</button>
+						<div class="flex items-center gap-2 flex-shrink-0 mt-0.5">
+							<!-- Delete button for read personal messages -->
+							<template v-if="n.is_read && !n.is_broadcast">
+								<button v-if="confirmDeleteId !== n.id" class="btn btn-ghost btn-sm text-red-400 hover:text-red-500 hover:bg-red-50" @click.stop="confirmDeleteId = n.id">
+									<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+								</button>
+								<template v-else>
+									<span class="text-xs text-gray-400">删除？</span>
+									<button class="btn btn-danger btn-sm text-xs" @click.stop="deleteNotification(n)">确认</button>
+									<button class="btn btn-secondary btn-sm text-xs" @click.stop="confirmDeleteId = null">取消</button>
+								</template>
 							</template>
-							<button v-else class="btn btn-ghost btn-sm text-red-500 hover:bg-red-50" @click.stop="confirmDeleteId = n.id">
-								<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
-								删除
-							</button>
+							<span class="text-xs text-gray-400">
+								{{ n.created_at ? new Date(n.created_at).toLocaleString() : '' }}
+							</span>
 						</div>
 					</div>
 				</div>
@@ -297,5 +279,15 @@ onMounted(() => {
 	background: white;
 	color: #111827;
 	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.notification-content :deep(p) {
+	margin-bottom: 0.5rem;
+}
+.notification-content :deep(p:last-child) {
+	margin-bottom: 0;
+}
+.notification-content :deep(strong) {
+	font-weight: 600;
+	color: #111827;
 }
 </style>

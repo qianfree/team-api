@@ -30,7 +30,7 @@ type OrdOrdersColumns struct {
 	Amount         string // 原始金额
 	DiscountAmount string // 优惠金额
 	FinalAmount    string // 最终金额
-	Currency       string // 货币
+	Currency       string // 货币（订单层一律 CNY）
 	PaymentChannel string // 支付渠道
 	PaymentMethod  string // 支付方式描述
 	PaymentNo      string // 第三方支付流水号
