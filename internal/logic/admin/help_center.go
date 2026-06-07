@@ -288,6 +288,11 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 		s.refreshCategoryArticleCount(ctx, req.CategoryId)
 	}
 
+	// 状态变更（草稿↔已发布）也需要刷新计数
+	if article.Status != req.Status {
+		s.refreshCategoryArticleCount(ctx, req.CategoryId)
+	}
+
 	return &v1.HelpArticleUpdateRes{}, nil
 }
 
@@ -364,6 +369,8 @@ func (s *sAdmin) refreshCategoryArticleCount(ctx context.Context, categoryId int
 	count, err := dao.SptArticles.Ctx(ctx).
 		Where("category_id", categoryId).
 		Where("status", "published").
+		Where("published_at IS NOT NULL").
+		Where("published_at <=", gtime.Now()).
 		Count()
 	if err != nil {
 		g.Log().Warningf(ctx, "refreshCategoryArticleCount count failed for category %d: %v", categoryId, err)
