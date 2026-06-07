@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+)
 
 // ============================================================
 // 开放平台业务 API（第三方应用调用）
@@ -215,4 +218,210 @@ type OpenBillingItem struct {
 	Balance     string `json:"balance,omitempty"`
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at"`
+}
+
+// ============================================================
+// 项目管理
+// ============================================================
+
+// OpenProjectList 项目列表
+type OpenProjectListReq struct {
+	g.Meta   `path:"/v1/projects" method:"get" tags:"开放平台API" summary:"项目列表"`
+	Page     int    `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize int    `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+	Status   string `json:"status" in:"query" dc:"按状态筛选：active/archived/budget_exhausted"`
+	Keyword  string `json:"keyword" in:"query" dc:"搜索关键词"`
+}
+
+type OpenProjectListRes struct {
+	List     []OpenProjectItem `json:"list"`
+	Total    int               `json:"total"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"page_size"`
+}
+
+type OpenProjectItem struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Budget      string `json:"budget"` // USD 6位小数，"unlimited" 表示不限
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// OpenProjectCreate 创建项目
+type OpenProjectCreateReq struct {
+	g.Meta      `path:"/v1/projects" method:"post" mime:"json" tags:"开放平台API" summary:"创建项目"`
+	Name        string  `json:"name" v:"required|length:1,100#请输入项目名称|项目名称长度1-100" dc:"项目名称"`
+	Description string  `json:"description" dc:"项目描述"`
+	Budget      float64 `json:"budget" dc:"项目预算上限(USD，0=不限)"`
+}
+
+type OpenProjectCreateRes struct {
+	ID int64 `json:"id"`
+}
+
+// OpenProjectGet 项目详情
+type OpenProjectGetReq struct {
+	g.Meta `path:"/v1/projects/{id}" method:"get" tags:"开放平台API" summary:"项目详情"`
+	Id     int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+}
+
+type OpenProjectGetRes struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Status        string `json:"status"`
+	Budget        string `json:"budget"`
+	ActiveKeys    int    `json:"active_keys"`
+	TotalKeys     int    `json:"total_keys"`
+	MonthCost     string `json:"month_cost"`
+	MonthRequests int64  `json:"month_requests"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+// OpenProjectUpdate 更新项目
+type OpenProjectUpdateReq struct {
+	g.Meta      `path:"/v1/projects/{id}" method:"put" mime:"json" tags:"开放平台API" summary:"更新项目"`
+	Id          int64    `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	Name        *string  `json:"name" dc:"项目名称"`
+	Description *string  `json:"description" dc:"项目描述"`
+	Budget      *float64 `json:"budget" dc:"项目预算上限(USD，0=不限)"`
+}
+
+type OpenProjectUpdateRes struct{}
+
+// OpenProjectArchive 归档项目
+type OpenProjectArchiveReq struct {
+	g.Meta `path:"/v1/projects/{id}/archive" method:"post" mime:"json" tags:"开放平台API" summary:"归档项目"`
+	Id     int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+}
+
+type OpenProjectArchiveRes struct{}
+
+// OpenProjectUnarchive 取消归档
+type OpenProjectUnarchiveReq struct {
+	g.Meta `path:"/v1/projects/{id}/unarchive" method:"post" mime:"json" tags:"开放平台API" summary:"取消归档"`
+	Id     int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+}
+
+type OpenProjectUnarchiveRes struct{}
+
+// ============================================================
+// 项目 API Key 管理
+// ============================================================
+
+// OpenProjectKeyList 项目密钥列表
+type OpenProjectKeyListReq struct {
+	g.Meta   `path:"/v1/projects/{id}/api-keys" method:"get" tags:"开放平台API" summary:"项目密钥列表"`
+	Id       int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	Page     int   `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize int   `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+}
+
+type OpenProjectKeyListRes struct {
+	List     []OpenProjectKeyItem `json:"list"`
+	Total    int                  `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
+}
+
+type OpenProjectKeyItem struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	KeyPrefix string `json:"key_prefix"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// OpenProjectKeyCreate 创建项目密钥
+type OpenProjectKeyCreateReq struct {
+	g.Meta     `path:"/v1/projects/{id}/api-keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建项目密钥"`
+	Id         int64       `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	Name       string      `json:"name" v:"required|length:1,100#请输入Key名称|名称长度1-100" dc:"Key名称"`
+	Scope      string      `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,images_only,read_only#权限范围无效" dc:"权限范围"`
+	ExpiresAt  *gtime.Time `json:"expires_at" dc:"过期时间"`
+	ModelNames []string    `json:"model_names" dc:"可用模型列表"`
+}
+
+type OpenProjectKeyCreateRes struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Key       string `json:"key"`
+	KeyPrefix string `json:"key_prefix"`
+}
+
+// OpenProjectKeyDelete 删除项目密钥
+type OpenProjectKeyDeleteReq struct {
+	g.Meta `path:"/v1/projects/{id}/api-keys/{keyId}" method:"delete" tags:"开放平台API" summary:"删除项目密钥"`
+	Id     int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	KeyId  int64 `json:"keyId" in:"path" v:"required#请指定密钥ID" dc:"密钥ID"`
+}
+
+type OpenProjectKeyDeleteRes struct{}
+
+// ============================================================
+// 项目用量查询
+// ============================================================
+
+// OpenProjectUsageStats 项目用量统计
+type OpenProjectUsageStatsReq struct {
+	g.Meta    `path:"/v1/projects/{id}/usage-stats" method:"get" tags:"开放平台API" summary:"项目用量统计"`
+	Id        int64  `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	StartDate string `json:"start_date" in:"query" dc:"开始日期 (YYYY-MM-DD)，默认近30天"`
+	EndDate   string `json:"end_date" in:"query" dc:"结束日期 (YYYY-MM-DD)"`
+}
+
+type OpenProjectUsageStatsRes struct {
+	TotalCost         string                 `json:"total_cost"`
+	TotalRequests     int64                  `json:"total_requests"`
+	TotalInputTokens  int64                  `json:"total_input_tokens"`
+	TotalOutputTokens int64                  `json:"total_output_tokens"`
+	Daily             []OpenProjectDailyStat `json:"daily"`
+	Models            []OpenProjectModelStat `json:"models"`
+}
+
+type OpenProjectDailyStat struct {
+	Date         string `json:"date"`
+	RequestCount int64  `json:"request_count"`
+	TotalCost    string `json:"total_cost"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+}
+
+type OpenProjectModelStat struct {
+	ModelName    string `json:"model_name"`
+	RequestCount int64  `json:"request_count"`
+	TotalCost    string `json:"total_cost"`
+}
+
+// OpenProjectUsageLogs 项目用量日志
+type OpenProjectUsageLogsReq struct {
+	g.Meta   `path:"/v1/projects/{id}/usage-logs" method:"get" tags:"开放平台API" summary:"项目用量日志"`
+	Id       int64 `json:"id" in:"path" v:"required#请指定项目ID" dc:"项目ID"`
+	Page     int   `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize int   `json:"page_size" in:"query" d:"20" dc:"每页数量"`
+}
+
+type OpenProjectUsageLogsRes struct {
+	List     []OpenProjectUsageLogItem `json:"list"`
+	Total    int                       `json:"total"`
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
+}
+
+type OpenProjectUsageLogItem struct {
+	ID           int64  `json:"id"`
+	ModelName    string `json:"model_name"`
+	RelayMode    string `json:"relay_mode"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	TotalCost    string `json:"total_cost"`
+	LatencyMs    int    `json:"latency_ms"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	CreatedAt    string `json:"created_at"`
 }

@@ -464,3 +464,24 @@ dao.SysIdempotencyRecords.Ctx(ctx).Data(do.SysIdempotencyRecords{
 
 **正确做法**：将原生 SQL 改写为 DO 插入时，逐列核对目标表中**所有 NOT NULL 且无 DEFAULT 的列**是否都在 DO 中赋了值——这类列不能依赖框架的 OmitNil 自动跳过，否则 INSERT 必然失败。框架自动维护的 `created_at`/`updated_at` 不在此列。
 
+### 2026-06-07：`length` 校验规则对 `[]string` 校验的是 JSON 字符串长度，不是元素个数
+
+**问题描述**：Webhook 创建接口的 Events 字段使用 `v:"required|length:1,50#请选择事件|事件数量不正确"`，用户选了 3-4 个事件后提交报错"事件数量不正确"。
+
+**原因**：GoFrame v2 的 `length:min,max` 校验规则对 `[]string` 类型不是检查 slice 元素个数，而是先将整个 slice 通过 `json.Marshal` 转成 JSON 字符串，再检查该字符串的字符长度。例如 `["member.created","key.deleted"]` 的 JSON 字符串长度约 33 个字符。用户选了 3-4 个事件后 JSON 字符串就可能超过 50 字符，导致校验失败。
+
+**修复方式**：去掉 `length:1,50`，只保留 `required`（事件从固定列表中选择，无需额外长度校验）。
+
+**正确做法**：
+```go
+// 错误 — length 对 []string 校验的是 JSON 字符串长度，不是元素个数
+Events []string `json:"events" v:"required|length:1,50#请选择事件|事件数量不正确"`
+
+// 正确 — 只用 required 保证至少选了一个事件
+Events []string `json:"events" v:"required#请选择事件"`
+
+// 如果需要校验每个元素字符串长度，用 foreach|length
+Events []string `json:"events" v:"required|foreach|length:1,100#请选择事件|事件名长度不正确"`
+```
+**注意**：GoFrame v2 没有内置规则直接校验 slice 的元素个数。如需限制元素数量，需自定义校验规则或在 logic 层手动检查。
+

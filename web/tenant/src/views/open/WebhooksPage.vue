@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -21,6 +21,7 @@ interface WebhookConfig {
 interface DeliveryLog {
   id: number
   event_id: number
+  event_type: string
   attempt: number
   response_status: number
   response_time_ms: number
@@ -49,13 +50,15 @@ const showLogsModal = ref(false)
 const logs = ref<DeliveryLog[]>([])
 const logsLoading = ref(false)
 const logsConfigId = ref(0)
+const logsPage = ref(1)
+const logsPageSize = 20
+const logsTotal = ref(0)
+const logsStatusFilter = ref('')
+
+const logsTotalPages = computed(() => Math.max(1, Math.ceil(logsTotal.value / logsPageSize)))
 
 const availableEvents = [
-  'member.created', 'member.updated', 'member.deleted',
-  'key.created', 'key.deleted',
-  'order.paid', 'order.refunded',
-  'plan.subscribed', 'plan.expired',
-  'wallet.topup', 'wallet.low_balance',
+  'wallet.low_balance',
 ]
 
 onMounted(() => loadConfigs())
@@ -79,7 +82,7 @@ function openCreateModal() {
   form.id = 0
   form.name = ''
   form.url = ''
-  form.events = []
+  form.events = ['wallet.low_balance']
   form.max_consecutive_failures = 10
   showModal.value = true
 }
@@ -153,12 +156,26 @@ async function handleToggle(cfg: WebhookConfig) {
 
 async function loadLogs(configId: number) {
   logsConfigId.value = configId
+  logsPage.value = 1
+  logsStatusFilter.value = ''
   showLogsModal.value = true
+  await fetchLogs()
+}
+
+async function fetchLogs() {
   logsLoading.value = true
   try {
-    const res = await request.get(`/tenant/open/webhooks/${configId}/logs`)
+    const params: Record<string, string | number> = {
+      page: logsPage.value,
+      page_size: logsPageSize,
+    }
+    if (logsStatusFilter.value) {
+      params.status = logsStatusFilter.value
+    }
+    const res = await request.get(`/tenant/open/webhooks/${logsConfigId.value}/logs`, { params })
     if (res.data?.code === 0) {
       logs.value = res.data.data.list || []
+      logsTotal.value = res.data.data.total || 0
     }
   } catch (e) {
     console.error(e)
@@ -167,23 +184,38 @@ async function loadLogs(configId: number) {
   }
 }
 
+function setLogsFilter(status: string) {
+  logsStatusFilter.value = status
+  logsPage.value = 1
+  fetchLogs()
+}
+
+function goToLogsPage(page: number) {
+  if (page < 1 || page > logsTotalPages.value) return
+  logsPage.value = page
+  fetchLogs()
+}
+
 async function handleRetry(eventId: number) {
   try {
     const res = await request.post(`/tenant/open/webhooks/events/${eventId}/retry`)
-    if (res.data?.code === 0) await loadLogs(logsConfigId.value)
+    if (res.data?.code === 0) await fetchLogs()
   } catch (e) {
     console.error(e)
   }
 }
 
-function toggleEvent(evt: string) {
-  const idx = form.events.indexOf(evt)
-  if (idx >= 0) form.events.splice(idx, 1)
-  else form.events.push(evt)
-}
-
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text)
+}
+
+function isLogSuccess(log: DeliveryLog) {
+  return log.response_status >= 200 && log.response_status < 300
+}
+
+function formatStatus(status: number) {
+  if (!status) return '---'
+  return String(status)
 }
 </script>
 
@@ -226,7 +258,7 @@ function copyToClipboard(text: string) {
               </div>
             </div>
             <div class="flex items-center gap-2 ml-4">
-              <button class="btn btn-ghost btn-sm" @click="loadLogs(cfg.id)">日志</button>
+              <button class="btn btn-ghost btn-sm" @click="loadLogs(cfg.id)">投递记录</button>
               <button class="btn btn-ghost btn-sm" @click="handleToggle(cfg)">
                 {{ cfg.is_active ? '禁用' : '启用' }}
               </button>
@@ -268,11 +300,9 @@ function copyToClipboard(text: string) {
             </div>
             <div>
               <label class="input-label">订阅事件</label>
-              <div class="grid grid-cols-2 gap-2">
-                <label v-for="evt in availableEvents" :key="evt" class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" :checked="form.events.includes(evt)" @change="toggleEvent(evt)" class="rounded border-gray-300" />
-                  <span class="text-sm">{{ evt }}</span>
-                </label>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="badge badge-primary">wallet.low_balance</span>
+                <span class="text-xs text-gray-400">余额低于预警线时触发</span>
               </div>
             </div>
             <div>
@@ -326,37 +356,113 @@ function copyToClipboard(text: string) {
     <!-- Delivery Logs Modal -->
     <Teleport to="body">
       <div v-if="showLogsModal" class="modal-overlay" @click.self="showLogsModal = false">
-        <div class="modal-content bg-white w-full max-w-2xl max-h-[80vh]">
+        <div class="modal-content bg-white w-full max-w-3xl max-h-[85vh]">
           <div class="modal-header">
-            <h3 class="modal-title">投递日志</h3>
+            <h3 class="modal-title">投递记录</h3>
             <button class="btn btn-ghost btn-icon" @click="showLogsModal = false">
               <Icon name="x" size="sm" />
             </button>
           </div>
+
+          <!-- Filter tabs -->
+          <div class="px-4 sm:px-6 pt-4">
+            <div class="tabs">
+              <button
+                class="tab"
+                :class="{ 'tab-active': logsStatusFilter === '' }"
+                @click="setLogsFilter('')"
+              >全部</button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': logsStatusFilter === 'delivered' }"
+                @click="setLogsFilter('delivered')"
+              >已送达</button>
+              <button
+                class="tab"
+                :class="{ 'tab-active': logsStatusFilter === 'failed' }"
+                @click="setLogsFilter('failed')"
+              >失败</button>
+            </div>
+          </div>
+
           <div class="modal-body overflow-y-auto">
-            <div v-if="logsLoading" class="text-center py-8">
+            <!-- Loading -->
+            <div v-if="logsLoading" class="text-center py-12">
               <div class="spinner h-6 w-6 mx-auto"></div>
             </div>
-            <div v-else-if="logs.length === 0" class="text-center py-8 text-gray-500">
-              暂无投递日志
+
+            <!-- Empty -->
+            <div v-else-if="logs.length === 0" class="text-center py-12 text-gray-500">
+              <p>暂无投递记录</p>
+              <p class="text-xs mt-1 text-gray-400">事件触发后将在此显示投递详情</p>
             </div>
-            <div v-else class="space-y-3">
-              <div v-for="log in logs" :key="log.id" class="rounded-xl border border-gray-200 p-3">
-                <div class="flex items-center justify-between mb-1">
+
+            <!-- Log list -->
+            <div v-else class="space-y-2">
+              <div
+                v-for="log in logs"
+                :key="log.id"
+                class="rounded-xl border p-3 transition-colors"
+                :class="isLogSuccess(log) ? 'border-gray-200 hover:bg-gray-50' : 'border-red-200 bg-red-50/30 hover:bg-red-50/50'"
+              >
+                <!-- Row 1: event type + status badge + time -->
+                <div class="flex items-center justify-between mb-2">
                   <div class="flex items-center gap-2">
-                    <span :class="log.response_status >= 200 && log.response_status < 300 ? 'text-emerald-600' : 'text-red-600'" class="text-sm font-medium">
-                      {{ log.response_status || '---' }}
+                    <span class="badge text-xs" :class="isLogSuccess(log) ? 'badge-success' : 'badge-danger'">
+                      {{ isLogSuccess(log) ? '成功' : '失败' }}
                     </span>
-                    <span class="text-xs text-gray-400">第 {{ log.attempt }} 次</span>
+                    <span class="badge badge-primary text-xs">{{ log.event_type || '未知事件' }}</span>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-xs text-gray-400">{{ log.response_time_ms }}ms</span>
-                    <span class="text-xs text-gray-400">{{ log.created_at }}</span>
-                    <button class="btn btn-ghost btn-sm text-xs" @click="handleRetry(log.event_id)">重试</button>
+                  <span class="text-xs text-gray-400">{{ log.created_at }}</span>
+                </div>
+
+                <!-- Row 2: details -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-4 text-xs text-gray-500">
+                    <span>
+                      HTTP
+                      <span class="font-mono font-medium" :class="isLogSuccess(log) ? 'text-emerald-600' : 'text-red-600'">
+                        {{ formatStatus(log.response_status) }}
+                      </span>
+                    </span>
+                    <span>第 {{ log.attempt }} 次尝试</span>
+                    <span v-if="log.response_time_ms">
+                      <span :class="log.response_time_ms > 3000 ? 'text-amber-600 font-medium' : ''">{{ log.response_time_ms }}ms</span>
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <button
+                      v-if="!isLogSuccess(log)"
+                      class="btn btn-ghost btn-sm text-xs"
+                      @click="handleRetry(log.event_id)"
+                    >重试</button>
                   </div>
                 </div>
-                <p v-if="log.error_message" class="text-xs text-red-500">{{ log.error_message }}</p>
+
+                <!-- Row 3: error message -->
+                <p v-if="log.error_message" class="mt-2 text-xs text-red-600 bg-red-100/60 rounded-lg px-2 py-1 break-all">
+                  {{ log.error_message }}
+                </p>
               </div>
+            </div>
+          </div>
+
+          <!-- Pagination -->
+          <div v-if="logsTotal > logsPageSize" class="modal-footer justify-between">
+            <span class="text-xs text-gray-400">
+              共 {{ logsTotal }} 条记录，第 {{ logsPage }} / {{ logsTotalPages }} 页
+            </span>
+            <div class="flex items-center gap-2">
+              <button
+                class="btn btn-ghost btn-sm"
+                :disabled="logsPage <= 1"
+                @click="goToLogsPage(logsPage - 1)"
+              >上一页</button>
+              <button
+                class="btn btn-ghost btn-sm"
+                :disabled="logsPage >= logsTotalPages"
+                @click="goToLogsPage(logsPage + 1)"
+              >下一页</button>
             </div>
           </div>
         </div>

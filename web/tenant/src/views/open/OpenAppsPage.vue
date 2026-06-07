@@ -45,6 +45,7 @@ const newAppId = ref('')
 const availablePermissions = [
   'members:read', 'members:write',
   'keys:read', 'keys:write',
+  'projects:read', 'projects:write',
   'models:read',
   'usage:read',
   'billing:read',

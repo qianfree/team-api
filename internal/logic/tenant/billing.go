@@ -508,3 +508,26 @@ func (s *sTenant) WalletFrozenItems(ctx context.Context, req *v1.TenantWalletFro
 
 	return &v1.TenantWalletFrozenItemsRes{Items: details}, nil
 }
+
+// UpdateWarningThreshold 修改钱包预警阈值
+func (s *sTenant) UpdateWarningThreshold(ctx context.Context, req *v1.TenantWalletUpdateWarningThresholdReq) (*v1.TenantWalletUpdateWarningThresholdRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	tenantID := middleware.GetTenantID(ctx)
+
+	_, err := dao.BilWallets.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Data(do.BilWallets{
+			WarningThreshold: req.Threshold,
+		}).Update()
+	if err != nil {
+		return nil, err
+	}
+
+	// 清除钱包缓存
+	billing.InvalidateWalletRedis(ctx, tenantID)
+
+	return &v1.TenantWalletUpdateWarningThresholdRes{}, nil
+}

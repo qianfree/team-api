@@ -7,11 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
@@ -20,6 +21,8 @@ import (
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/response"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 )
 
 // openContextKey is a private type for context keys to prevent collisions.
@@ -37,6 +40,8 @@ const (
 	ctxKeyOpenPermissions openContextKey = "openPermissions"
 	ctxKeyOpenIsSandbox   openContextKey = "openIsSandbox"
 )
+
+var openAppCache = lcommon.NewCache("open_app", 60*time.Second)
 
 // OpenPlatformAuth is the HMAC-SHA256 authentication middleware for /open/* endpoints.
 func OpenPlatformAuth(r *ghttp.Request) {
@@ -61,12 +66,16 @@ func OpenPlatformAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Lookup app by app_id
+	// Lookup app by app_id (cache-first)
 	var app entity.OpnApps
-	err = dao.OpnApps.Ctx(r.Context()).Where("app_id", appID).Scan(&app)
-	if err != nil || app.Id == 0 {
-		response.Error(r, consts.ErrUnauthorized)
-		return
+	cacheKey := appID
+	if !openAppCache.GetJSON(r.Context(), cacheKey, &app) || app.Id == 0 {
+		err = dao.OpnApps.Ctx(r.Context()).Where("app_id", appID).Scan(&app)
+		if err != nil || app.Id == 0 {
+			response.Error(r, consts.ErrUnauthorized)
+			return
+		}
+		openAppCache.Set(r.Context(), cacheKey, &app)
 	}
 
 	if app.Status != "active" {
@@ -80,6 +89,13 @@ func OpenPlatformAuth(r *ghttp.Request) {
 		return
 	}
 
+	// Per-app rate limiting (fixed window, 1 minute)
+	if app.RateLimit > 0 {
+		if !checkOpenAppRateLimit(r, app.Id, app.RateLimit) {
+			return
+		}
+	}
+
 	// Get app secret from Redis
 	secret, err := getOpenAppSecret(r.Context(), app.Id)
 	if err != nil || secret == "" {
@@ -88,10 +104,8 @@ func OpenPlatformAuth(r *ghttp.Request) {
 	}
 
 	// Read request body for signature verification
-	var bodyBytes []byte
-	if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
-		bodyBytes, _ = io.ReadAll(r.Body)
-	}
+	// Use r.GetBody() instead of io.ReadAll(r.Body) to preserve body for downstream handlers
+	bodyBytes := r.GetBody()
 
 	// Verify HMAC signature (includes body hash for request integrity)
 	expectedSig := computeHMACSignature(secret, timestampStr, nonce, r.Method, r.URL.Path, bodyBytes)
@@ -185,4 +199,70 @@ func GetOpenAppID(ctx context.Context) int64 {
 		}
 	}
 	return 0
+}
+
+// checkOpenAppRateLimit enforces per-app rate limiting using a Redis fixed-window counter.
+// Returns true if the request is allowed, false if rate limited (429 response already written).
+func checkOpenAppRateLimit(r *ghttp.Request, appDBID int64, rateLimit int) bool {
+	ctx := r.Context()
+	now := time.Now()
+	minuteTimestamp := now.Unix() / 60
+	key := fmt.Sprintf("ratelimit:open:%d:%d", appDBID, minuteTimestamp)
+
+	count, err := g.Redis().Do(ctx, "INCR", key)
+	if err != nil {
+		g.Log().Warningf(ctx, "[OpenRateLimit] INCR failed app=%d: %v", appDBID, err)
+		// Fail open on Redis error
+		return true
+	}
+
+	currentCount := count.Int64()
+	if currentCount == 1 {
+		// First request in this window, set TTL
+		_, _ = g.Redis().Do(ctx, "EXPIRE", key, 60)
+	}
+
+	remaining := rateLimit - int(currentCount)
+	if remaining < 0 {
+		remaining = 0
+	}
+	r.Response.Header().Set("X-RateLimit-Limit", strconv.Itoa(rateLimit))
+	r.Response.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+
+	if int(currentCount) > rateLimit {
+		response.ErrorWithCode(r, 429, consts.CodeRateLimitExceeded, consts.MsgRateLimitExceeded)
+		return false
+	}
+
+	return true
+}
+
+// GetOpenPermissions extracts the permissions string (JSON) injected by OpenPlatformAuth.
+func GetOpenPermissions(ctx context.Context) string {
+	val := ctx.Value(ctxKeyOpenPermissions)
+	if val != nil {
+		if s, ok := val.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// CheckOpenPermission checks if the authenticated app has the given permission.
+// Returns error if permission is missing.
+func CheckOpenPermission(ctx context.Context, permission string) error {
+	perms := GetOpenPermissions(ctx)
+	if perms == "" {
+		return gerror.NewCode(gcode.New(consts.CodeForbidden, "无权限", nil), "应用无此操作权限")
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(perms), &list); err != nil {
+		return gerror.NewCode(gcode.New(consts.CodeForbidden, "无权限", nil), "应用无此操作权限")
+	}
+	for _, p := range list {
+		if p == permission {
+			return nil
+		}
+	}
+	return gerror.NewCode(gcode.New(consts.CodeForbidden, "无权限", nil), "应用无此操作权限")
 }

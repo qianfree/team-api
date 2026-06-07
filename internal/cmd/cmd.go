@@ -22,6 +22,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -285,12 +286,18 @@ var (
 			// Embedded frontend SPA serving
 			registerFrontendRoutes(s)
 
+			// Migrate encryption key (legacy default → configured key)
+			relayLogic.MigrateEncryptionKey(ctx)
+
 			// Initialize active task count and start polling
 			task.InitActiveCount(ctx)
 			go task.StartAsyncPolling(ctx)
 
 			// Start webhook dispatcher (event-driven delivery)
 			tenant.InitWebhookDispatcher(ctx)
+
+			// 注入 webhook 发布函数到 billing 包（解耦循环依赖）
+			billing.SetPublishWebhookEventFn(tenant.PublishWebhookEvent)
 
 			// Flush usage log writer on shutdown (s.Run blocks until server stops)
 			defer plugin.Shutdown(ctx)

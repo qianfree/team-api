@@ -3,9 +3,6 @@ package tenant
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +24,9 @@ const (
 	webhookTimeout         = 30 * time.Second
 	webhookMaxRetries      = 5
 )
+
+// webhookHTTPClient 全局复用的 HTTP 客户端，共享连接池，避免每次投递创建新实例。
+var webhookHTTPClient = &http.Client{Timeout: webhookTimeout}
 
 var retryIntervals = []time.Duration{
 	1 * time.Minute,
@@ -85,7 +85,7 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	body := []byte(evt.Payload)
-	signature := computeDeliverySignature(config.SecretKey, timestamp, body)
+	signature := ComputeWebhookSignature(config.SecretKey, timestamp, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.Url, bytes.NewReader(body))
 	if err != nil {
@@ -100,9 +100,8 @@ func deliverEvent(ctx context.Context, evt entity.OpnWebhookEvents) {
 	req.Header.Set("X-Webhook-Event", evt.EventType)
 	req.Header.Set("X-Webhook-ID", evt.EventId)
 
-	client := &http.Client{Timeout: webhookTimeout}
 	startTime := time.Now()
-	resp, err := client.Do(req)
+	resp, err := webhookHTTPClient.Do(req)
 	elapsed := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -199,12 +198,6 @@ func recordDeliveryLog(ctx context.Context, evt entity.OpnWebhookEvents, config 
 	}).Insert(); err != nil {
 		g.Log().Errorf(ctx, "webhook: record delivery log for event %d failed: %v", evt.Id, err)
 	}
-}
-
-func computeDeliverySignature(secret, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp + "." + string(body)))
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func truncateString(s string, maxLen int) string {

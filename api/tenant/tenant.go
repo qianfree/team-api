@@ -164,4 +164,5 @@ type ITenantV1 interface {
 	TenantWalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsReq) (res *v1.TenantWalletTransactionsRes, err error)
 	TenantWalletTransactionsExport(ctx context.Context, req *v1.TenantWalletTransactionsExportReq) (res *v1.TenantWalletTransactionsExportRes, err error)
 	TenantWalletFrozenItems(ctx context.Context, req *v1.TenantWalletFrozenItemsReq) (res *v1.TenantWalletFrozenItemsRes, err error)
+	TenantWalletUpdateWarningThreshold(ctx context.Context, req *v1.TenantWalletUpdateWarningThresholdReq) (res *v1.TenantWalletUpdateWarningThresholdRes, err error)
 }
