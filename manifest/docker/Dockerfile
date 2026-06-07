@@ -10,6 +10,7 @@
 FROM oven/bun:1-alpine AS frontend
 
 ARG BUN_CONFIG_REGISTRY=https://registry.npmmirror.com
+ARG VERSION=dev
 ENV BUN_CONFIG_REGISTRY=${BUN_CONFIG_REGISTRY}
 
 WORKDIR /build/web
@@ -20,11 +21,12 @@ COPY web/tenant/package.json web/tenant/bun.lock* ./tenant/
 RUN cd admin && bun install --frozen-lockfile && \
     cd ../tenant && bun install --frozen-lockfile
 
-COPY VERSION /build/VERSION
-COPY web/admin ./admin
-COPY web/tenant ./tenant
-
-RUN cd admin && bun run build && \
+# Resolve version: build arg → VERSION file → dev
+RUN if [ "$VERSION" = "dev" ]; then \
+      VERSION=$(cat /build/VERSION 2>/dev/null || echo "dev"); \
+    fi && \
+    echo "Building frontend with version: ${VERSION}" && \
+    cd admin && VITE_APP_VERSION=$VERSION bun run build && \
     cd ../tenant && bun run build
 
 # Stage 2: Go build
@@ -48,7 +50,11 @@ COPY --from=frontend /build/web/tenant/dist ./web/tenant/dist
 
 ARG VERSION=dev
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+RUN if [ "$VERSION" = "dev" ]; then \
+      VERSION=$(cat /build/VERSION 2>/dev/null || echo "dev"); \
+    fi && \
+    echo "Building Go binary with version: ${VERSION}" && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -tags embedweb -ldflags="-s -w -X github.com/qianfree/team-api/internal/consts.Version=${VERSION}" \
     -o /app/team-api main.go
 
