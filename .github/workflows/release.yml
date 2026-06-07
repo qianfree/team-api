@@ -72,14 +72,34 @@ jobs:
             tar -czf ${ARTIFACT}.tar.gz $ARTIFACT
           fi
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.artifact }}
+          path: |
+            team-api-*.tar.gz
+            team-api-*.zip
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
       - name: Generate checksums
         run: |
-          sha256sum team-api-*.tar.gz team-api-*.zip 2>/dev/null > checksums-sha256.txt
+          cd artifacts
+          sha256sum team-api-*.tar.gz team-api-*.zip > checksums-sha256.txt
 
-      - name: Upload release asset
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            team-api-*.zip
-            team-api-*.tar.gz
-            checksums-sha256.txt
+            artifacts/team-api-*.zip
+            artifacts/team-api-*.tar.gz
+            artifacts/checksums-sha256.txt
