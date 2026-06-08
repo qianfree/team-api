@@ -21,6 +21,10 @@ COPY web/tenant/package.json web/tenant/bun.lock* ./tenant/
 RUN cd admin && bun install --frozen-lockfile && \
     cd ../tenant && bun install --frozen-lockfile
 
+# Copy source files after dependency install (keeps install layer cached when only source changes)
+COPY web/admin/ ./admin/
+COPY web/tenant/ ./tenant/
+
 # Resolve version: build arg → VERSION file → dev
 RUN if [ "$VERSION" = "dev" ]; then \
       VERSION=$(cat /build/VERSION 2>/dev/null || echo "dev"); \
