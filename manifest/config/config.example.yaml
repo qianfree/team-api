@@ -65,5 +65,11 @@ email:
     password: ""
     from:     ""
 
+# Demo mode (read-only mode, configured here — not in admin UI)
+# Set enabled: true to block all write operations and show a watermark
+demo:
+  enabled: false
+  message: "演示环境，数据不可修改"
+
 # Channel proxy (for accessing Google/Anthropic etc. from China)
 channel_proxy_url: ""

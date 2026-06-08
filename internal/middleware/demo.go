@@ -3,10 +3,10 @@ package middleware
 import (
 	"strings"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/consts"
-	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/response"
 )
 
@@ -21,10 +21,11 @@ var demoWhitelistPaths = map[string]bool{
 }
 
 // DemoMode blocks all write operations when demo mode is enabled.
+// Controlled via config file: demo.enabled = true.
 // Read-only requests (GET/HEAD/OPTIONS) and whitelisted paths are allowed.
 func DemoMode(r *ghttp.Request) {
 	ctx := r.Context()
-	if !common.Config().GetBool(ctx, "demo_mode") {
+	if !g.Cfg().MustGet(ctx, "demo.enabled").Bool() {
 		r.Middleware.Next()
 		return
 	}
@@ -50,7 +51,7 @@ func DemoMode(r *ghttp.Request) {
 		return
 	}
 
-	message := common.Config().GetString(ctx, "demo_message")
+	message := g.Cfg().MustGet(ctx, "demo.message").String()
 	if message == "" {
 		message = consts.MsgDemoModeRestricted
 	}

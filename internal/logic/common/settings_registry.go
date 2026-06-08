@@ -67,10 +67,6 @@ var Registry = []SettingDef{
 		Label: "预计维护时长", Description: "维护模式预计持续时间，展示给用户", IsPublic: true},
 	{Key: "api_maintenance_enabled", Type: SettingTypeBool, Default: "false", Category: "general",
 		Label: "全局 API 维护", Description: "开启后 API 代理返回 503，叠加维护模式使用", IsPublic: true},
-	{Key: "demo_mode", Type: SettingTypeBool, Default: "false", Category: "general",
-		Label: "演示模式", Description: "开启后所有写操作被拦截，仅允许只读访问", IsPublic: true},
-	{Key: "demo_message", Type: SettingTypeString, Default: "演示环境，数据不可修改", Category: "general",
-		Label: "演示模式提示", Description: "演示模式下返回给用户的提示信息", IsPublic: true},
 	{Key: "tenant_console_url", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "租户控制台地址", Description: "租户控制台的完整 URL，如 https://console.example.com，用于生成邀请链接等"},
 
