@@ -687,6 +687,11 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 		return nil, err
 	}
 
+	// 角色变更后强制下线该成员，使其重新登录以获取新角色的 JWT
+	if revokeErr := common.RevokeAllSessions(ctx, "tenant", memberID); revokeErr != nil {
+		g.Log().Warningf(ctx, "撤销成员 %d 会话失败: %v", memberID, revokeErr)
+	}
+
 	return nil, nil
 }
 
