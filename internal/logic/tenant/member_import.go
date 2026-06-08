@@ -59,7 +59,7 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 
 	go func() {
 		bgCtx := context.Background()
-		if err := processImport(bgCtx, importID); err != nil {
+		if err := processImport(bgCtx, tenantID, importID); err != nil {
 			g.Log().Errorf(bgCtx, "批量导入处理失败 importID=%d: %v", importID, err)
 		}
 	}()
@@ -258,7 +258,7 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 		result.Status = "pending"
 		result.Username = username
 		result.Email = email
-		result.Role = role
+		result.Role = "member"
 		results = append(results, result)
 	}
 
