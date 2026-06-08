@@ -57,6 +57,13 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 		return nil, err
 	}
 
+	go func() {
+		bgCtx := context.Background()
+		if err := processImport(bgCtx, importID); err != nil {
+			g.Log().Errorf(bgCtx, "批量导入处理失败 importID=%d: %v", importID, err)
+		}
+	}()
+
 	return &v1.TenantMemberImportRes{ID: importID}, nil
 }
 
@@ -185,9 +192,6 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 	if _, ok := headerMap["username"]; !ok {
 		return 0, common.NewBadRequestError("CSV缺少username列")
 	}
-	if _, ok := headerMap["role"]; !ok {
-		return 0, common.NewBadRequestError("CSV缺少role列")
-	}
 
 	// Read all rows
 	var rows [][]string
@@ -219,7 +223,6 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 
 		username := getCSVField(row, headerMap, "username")
 		email := getCSVField(row, headerMap, "email")
-		role := getCSVField(row, headerMap, "role")
 
 		if username == "" {
 			result.Status = "fail"
@@ -227,17 +230,6 @@ func startImport(ctx context.Context, tenantID, creatorID int64, filename string
 			result.Username = username
 			results = append(results, result)
 			continue
-		}
-
-		if role != "" && role != "admin" && role != "member" {
-			result.Status = "fail"
-			result.Error = "角色只能是admin或member"
-			result.Username = username
-			results = append(results, result)
-			continue
-		}
-		if role == "" {
-			role = "member"
 		}
 
 		// Check duplicate within CSV
@@ -481,7 +473,7 @@ func processImport(ctx context.Context, tenantID, importID int64) error {
 
 // GenerateImportTemplate returns the CSV template content.
 func GenerateImportTemplate() string {
-	return "username,display_name,email,role,models\nalice,Alice Chen,alice@example.com,member,\nbob,Bob Wang,bob@example.com,admin,gpt-4;claude-3"
+	return "username,display_name,email\nalice,Alice Chen,alice@example.com\nbob,Bob Wang,bob@example.com"
 }
 
 // getCSVField extracts a field from a CSV row by header map.
