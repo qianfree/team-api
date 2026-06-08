@@ -1,7 +1,7 @@
 ROOT_DIR    = $(CURDIR)
 DEPLOY_NAME = "team-api"
 DOCKER_NAME = "team-api"
-VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || cat VERSION 2>/dev/null || echo "dev")
+VERSION     ?= $(shell git describe --tags --long 2>/dev/null | sed -E 's/-0-g[0-9a-f]+$$//; s/-([0-9]+)-g[0-9a-f]+$$/_\1/' || cat VERSION 2>/dev/null || echo "dev")
 LDFLAGS     = -X github.com/qianfree/team-api/internal/consts.Version=$(VERSION)
 
 # Mirror acceleration (override for non-China regions)
