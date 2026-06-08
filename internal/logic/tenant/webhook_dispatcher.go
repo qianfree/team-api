@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -27,6 +28,7 @@ const (
 type WebhookDispatcher struct {
 	eventCh chan int64
 	ctx     context.Context
+	wg      sync.WaitGroup
 }
 
 var defaultDispatcher *WebhookDispatcher
@@ -40,6 +42,7 @@ func InitWebhookDispatcher(ctx context.Context) {
 	defaultDispatcher = d
 
 	for i := 0; i < dispatcherWorkerCount; i++ {
+		d.wg.Add(1)
 		go d.worker()
 	}
 	go d.sweepLoop()
@@ -65,6 +68,7 @@ func NotifyNewEvent(eventID int64) {
 
 // worker consumes event IDs from the channel and delivers them.
 func (d *WebhookDispatcher) worker() {
+	defer d.wg.Done()
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -207,5 +211,18 @@ func (d *WebhookDispatcher) cleanup() {
 			break
 		}
 		g.Log().Infof(ctx, "webhook cleanup: deleted %d exhausted events older than %v", rows, failedCutoff.Format("Y-m-d"))
+	}
+}
+
+// Shutdown waits for all in-flight deliveries to complete.
+func (d *WebhookDispatcher) Shutdown() {
+	d.wg.Wait()
+}
+
+// ShutdownWebhookDispatcher waits for all in-flight webhook deliveries to complete.
+// Call this via defer after s.Run() returns.
+func ShutdownWebhookDispatcher() {
+	if defaultDispatcher != nil {
+		defaultDispatcher.Shutdown()
 	}
 }
