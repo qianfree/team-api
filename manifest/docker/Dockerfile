@@ -87,6 +87,7 @@ COPY --from=builder /build/manifest/i18n /app/i18n
 COPY --from=builder /build/migrations /app/migrations
 
 RUN mkdir -p /app/config /app/logs && \
+    touch /app/config/config.yaml && \
     chown -R team-api:team-api /app
 
 USER team-api
