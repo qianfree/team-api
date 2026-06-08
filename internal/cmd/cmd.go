@@ -302,7 +302,7 @@ var (
 
 			// Initialize active task count and start polling
 			task.InitActiveCount(ctx)
-			go task.StartAsyncPolling(ctx)
+			task.StartAsyncPolling(ctx)
 
 			// Start webhook dispatcher (event-driven delivery)
 			tenant.InitWebhookDispatcher(ctx)
@@ -312,6 +312,8 @@ var (
 
 			// Flush usage log writer on shutdown (s.Run blocks until server stops)
 			defer plugin.Shutdown(ctx)
+			defer tenant.ShutdownWebhookDispatcher()
+			defer task.StopAsyncPolling()
 			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()

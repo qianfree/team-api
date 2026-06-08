@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -24,10 +25,14 @@ const (
 	timeoutBatchSize = 100
 )
 
+var pollingWg sync.WaitGroup
+
 // StartAsyncPolling 启动异步任务轮询 goroutine
 func StartAsyncPolling(ctx context.Context) {
 	g.Log().Info(ctx, "Starting async task polling...")
+	pollingWg.Add(1)
 	go func() {
+		defer pollingWg.Done()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 
@@ -41,6 +46,11 @@ func StartAsyncPolling(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// StopAsyncPolling 等待轮询 goroutine 完全退出，在服务停机时调用。
+func StopAsyncPolling() {
+	pollingWg.Wait()
 }
 
 // pollOnce 执行一次轮询
