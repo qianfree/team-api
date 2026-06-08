@@ -33,17 +33,6 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 		}
 	}
 
-	// Dev builds skip update check
-	if consts.Version == "dev" {
-		return &CheckResult{
-			CurrentVersion: consts.Version,
-			LatestVersion:  consts.Version,
-			HasUpdate:      false,
-			CheckedAt:      gtime.Now(),
-			DeploymentMode: GetDeploymentMode(),
-		}, nil
-	}
-
 	// Call GitHub API
 	release, etag, err := fetchLatestRelease(ctx)
 	if err != nil {
@@ -65,16 +54,23 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 		}, nil
 	}
 
-	// Parse versions
-	currentVer, err := semver.NewVersion(strings.TrimPrefix(consts.Version, "v"))
-	if err != nil {
-		return nil, fmt.Errorf("invalid current version %q: %w", consts.Version, err)
-	}
-
 	latestStr := strings.TrimPrefix(release.TagName, "v")
-	latestVer, err := semver.NewVersion(latestStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
+
+	// Determine if update is available
+	var hasUpdate bool
+	if consts.Version == "dev" {
+		// Dev builds: always report an update if a remote release exists
+		hasUpdate = true
+	} else {
+		currentVer, err := semver.NewVersion(strings.TrimPrefix(consts.Version, "v"))
+		if err != nil {
+			return nil, fmt.Errorf("invalid current version %q: %w", consts.Version, err)
+		}
+		latestVer, err := semver.NewVersion(latestStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
+		}
+		hasUpdate = latestVer.GreaterThan(currentVer)
 	}
 
 	// Find matching asset for current platform
@@ -95,7 +91,7 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	result := &CheckResult{
 		CurrentVersion: consts.Version,
 		LatestVersion:  latestStr,
-		HasUpdate:      latestVer.GreaterThan(currentVer),
+		HasUpdate:      hasUpdate,
 		ReleaseNotes:   release.Body,
 		ReleaseURL:     release.HTMLURL,
 		PublishedAt:    release.PublishedAt,
