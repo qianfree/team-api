@@ -42,24 +42,6 @@ const values = useFormValues()
 			</div>
 		</div>
 
-		<!-- 演示模式 -->
-		<div class="section">
-			<div class="section-title">演示模式</div>
-			<div class="switch-row">
-				<span class="switch-label">启用演示模式</span>
-				<span class="switch-desc">开启后所有写操作被拦截，仅允许只读访问</span>
-				<ASwitch
-					:model-value="values['demo_mode'] === 'true' || values['demo_mode'] === '1'"
-					@change="(v: string | number | boolean) => values['demo_mode'] = String(v)"
-				/>
-			</div>
-			<div class="section-grid" style="margin-top: 12px">
-				<AFormItem label="演示模式提示">
-					<AInput v-model="values['demo_message']" placeholder="演示环境，数据不可修改" />
-				</AFormItem>
-			</div>
-		</div>
-
 		<!-- 维护模式 -->
 		<div class="section">
 			<div class="section-title">维护模式</div>
