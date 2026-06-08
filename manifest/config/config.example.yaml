@@ -5,12 +5,20 @@ server:
   address:     ":18888"
   serverAgent: "team-api"
   dumpRouterMap: false
+  gracefulShutdownTimeout: 30
 
 # Logger
 logger:
   level:  "all"
   stdout: true
   ctxKeys: ["RequestId"]
+  # path: "./logs"             # 取消注释并设置路径即可落盘，Docker 建议用 /app/logs
+  # file: "{Y-m-d}.log"
+  # rotateSize: "100MB"
+  # rotateExpire: "1d"
+  # rotateBackupLimit: 30
+  # rotateBackupExpire: "30d"
+  # rotateBackupCompress: 9
 
 # Database (PostgreSQL)
 database:
