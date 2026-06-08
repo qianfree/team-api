@@ -31,7 +31,7 @@ RUN if [ "$VERSION" = "dev" ]; then \
     fi && \
     echo "Building frontend with version: ${VERSION}" && \
     cd admin && VITE_APP_VERSION=$VERSION bun run build && \
-    cd ../tenant && bun run build
+    cd ../tenant && VITE_APP_VERSION=$VERSION bun run build
 
 # Stage 2: Go build
 FROM golang:1.25-alpine AS builder

@@ -3,9 +3,24 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 import { readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
-const version = readFileSync(resolve(__dirname, '../../VERSION'), 'utf-8').trim()
+function getVersion(): string {
+  if (process.env.NODE_ENV === 'development') return 'dev'
+  if (process.env.VITE_APP_VERSION) return process.env.VITE_APP_VERSION
+  try {
+    return execSync('git describe --tags --always', { encoding: 'utf-8' }).trim()
+  } catch {
+    try {
+      return readFileSync(resolve(__dirname, '../../VERSION'), 'utf-8').trim()
+    } catch {
+      return 'dev'
+    }
+  }
+}
+
+const version = getVersion()
 
 export default defineConfig({
   base: '/',
