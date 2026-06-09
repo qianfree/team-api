@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import tenantRoutes from './tenant'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { shouldRefresh, getRefreshToken } from '@/utils/request'
+import { usePublicSettings } from '@/composables/usePublicSettings'
 
 const routes: RouteRecordRaw[] = [
 	{
@@ -33,7 +34,9 @@ router.beforeEach((to) => {
 	tenantAuthStore.loadFromStorage()
 
 	if (to.meta.title) {
-		document.title = to.name === 'TenantHome' ? to.meta.title : `${to.meta.title} — Team-API`
+		const { settings: publicSettings } = usePublicSettings()
+		const siteName = publicSettings.value.site_name || 'Team-API'
+		document.title = to.name === 'TenantHome' ? `${siteName} — 企业级多租户大模型 API 网关平台 | 开源自托管` : `${to.meta.title} — ${siteName}`
 	}
 
 	// Auth pages — always allow

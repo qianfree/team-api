@@ -5,8 +5,8 @@
 			<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 				<div class="flex items-center justify-between h-16">
 					<div class="flex items-center gap-2.5">
-						<img src="/favicon.png" alt="Team-API" class="h-8 w-8 rounded-lg" />
-						<span class="text-lg font-bold tracking-tight" :class="isScrolled ? 'text-gray-900' : 'text-white'">Team-API</span>
+						<img src="/favicon.png" :alt="siteName" class="h-8 w-8 rounded-lg" />
+						<span class="text-lg font-bold tracking-tight" :class="isScrolled ? 'text-gray-900' : 'text-white'">{{ siteName }}</span>
 					</div>
 					<div class="flex items-center gap-2">
 						<a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer"
@@ -240,7 +240,7 @@
 			<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 				<div class="flex flex-col sm:flex-row items-center justify-between gap-4">
 					<div class="flex items-center gap-2">
-						<img src="/favicon.png" alt="Team-API" class="h-5 w-5 rounded" />
+						<img src="/favicon.png" :alt="siteName" class="h-5 w-5 rounded" />
 						<span class="text-xs text-gray-600">&copy; 2026 qianfree. Released under AGPL-3.0.</span>
 					</div>
 					<a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer"
@@ -257,6 +257,10 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSeo } from '@/composables/useSeo'
 import { useHead } from '@unhead/vue'
+import { usePublicSettings } from '@/composables/usePublicSettings'
+
+const { settings: publicSettings } = usePublicSettings()
+const siteName = publicSettings.value.site_name || 'Team-API'
 
 // Nav scroll state
 const isScrolled = ref(false)
@@ -275,8 +279,9 @@ const activeScenario = ref(0)
 
 // SEO
 useSeo({
-	title: 'Team-API — 一个 API 接入所有大模型 | 企业级多租户 AI 网关',
-	description: 'Team-API 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。',
+	title: `${siteName} — 一个 API 接入所有大模型 | 企业级多租户 AI 网关`,
+	description: publicSettings.value.site_description || `${siteName} 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。`,
+	siteName,
 	keywords: 'Team-API, 大模型网关, API Gateway, 多租户, OpenAI, Claude, Gemini, DeepSeek, 阿里云百炼, 百度文心, 腾讯混元, 智谱AI, AI代理, LLM Gateway, 开源, 自托管, 计费引擎, 团队管理, API管理, SSE流式, 渠道调度',
 	canonicalUrl: 'https://team-api.net/',
 })
@@ -288,8 +293,8 @@ useHead({
 			innerHTML: JSON.stringify({
 				'@context': 'https://schema.org',
 				'@type': 'SoftwareApplication',
-				name: 'Team-API',
-				description: '企业级多租户大模型 API 网关平台，聚合 40+ 大模型供应商，内置计费引擎、团队管理、用量审计与渠道调度。',
+				name: siteName,
+				description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台，聚合 40+ 大模型供应商，内置计费引擎、团队管理、用量审计与渠道调度。',
 				url: 'https://github.com/qianfree/team-api',
 				applicationCategory: 'DeveloperApplication',
 				operatingSystem: 'Linux, macOS, Windows',
@@ -311,7 +316,7 @@ useHead({
 			innerHTML: JSON.stringify({
 				'@context': 'https://schema.org',
 				'@type': 'Organization',
-				name: 'Team-API',
+				name: siteName,
 				url: 'https://github.com/qianfree/team-api',
 				logo: 'https://team-api.net/favicon.png',
 				sameAs: ['https://github.com/qianfree/team-api'],
@@ -322,9 +327,9 @@ useHead({
 			innerHTML: JSON.stringify({
 				'@context': 'https://schema.org',
 				'@type': 'WebSite',
-				name: 'Team-API',
+				name: siteName,
 				url: 'https://team-api.net/',
-				description: '企业级多租户大模型 API 网关平台',
+				description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台',
 				potentialAction: {
 					'@type': 'SearchAction',
 					target: 'https://github.com/qianfree/team-api/search?q={search_term_string}',

@@ -29,10 +29,10 @@
 			<!-- Logo/Brand -->
 			<div class="mb-8 text-center">
 				<div class="flex items-center gap-3 justify-center">
-					<img src="/favicon.png" alt="Team-API" class="h-10 w-10 rounded-lg object-contain" />
-					<h1 class="text-gradient text-2xl font-bold leading-tight">Team API</h1>
+					<img src="/favicon.png" :alt="siteName" class="h-10 w-10 rounded-lg object-contain" />
+					<h1 class="text-gradient text-2xl font-bold leading-tight">{{ siteName }}</h1>
 				</div>
-				<p class="mt-3 text-sm text-gray-500">开源自托管的多租户 大模型 API 网关平台</p>
+				<p class="mt-3 text-sm text-gray-500">{{ publicSettings.site_description || '开源自托管的多租户 大模型 API 网关平台' }}</p>
 			</div>
 
 			<!-- Card Container -->
@@ -59,7 +59,10 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import Icon from '../common/Icon.vue'
 import AnnouncementBanner from '../common/AnnouncementBanner.vue'
 import request from '@/utils/request'
+import { usePublicSettings } from '@/composables/usePublicSettings'
 
+const { settings: publicSettings } = usePublicSettings()
+const siteName = publicSettings.value.site_name || 'Team-API'
 const announcements = ref<any[]>([])
 let timer: ReturnType<typeof setInterval> | null = null
 
