@@ -300,7 +300,7 @@ const menuGroups = [
     items: [
       { name: 'AdminPlans', label: '套餐管理', icon: IconIdcard },
       { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
-      { name: 'AdminBilling', label: '计费管理', icon: IconCommand },
+      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
       { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
       { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
       { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag },
