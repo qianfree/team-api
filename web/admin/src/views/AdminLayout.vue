@@ -32,6 +32,7 @@ import {
   IconLayers,
   IconHome,
   IconUser,
+  IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
 
