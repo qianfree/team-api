@@ -221,7 +221,7 @@ const columns: TableColumnData[] = [
 		render({ record }) { return record.api_key_name || record.api_key_id || '-' },
 	},
 	{
-		title: '模型', dataIndex: 'model_name', width: 160,
+		title: '模型', dataIndex: 'model_name', width: 200,
 		render({ record }) {
 			if (hasUpstreamModel(record)) {
 				return h('div', [
