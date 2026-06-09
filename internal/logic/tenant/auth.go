@@ -58,7 +58,12 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			return nil, err
 		}
 	} else {
-		// 滑块验证模式
+		// 人机验证：优先 Turnstile，否则滑块验证
+		if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
+			return nil, err
+		}
+
+		// Turnstile 未启用时，使用滑块验证
 		if err := common.CheckCaptchaRequired(ctx, "tenant_register", req.CaptchaKey, req.CaptchaX); err != nil {
 			return nil, err
 		}
@@ -188,6 +193,10 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	account := strings.TrimSpace(req.Account)
 
 	// Check captcha if required
+	if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
+		return nil, err
+	}
+
 	if err := common.CheckCaptchaRequired(ctx, "tenant_login", req.CaptchaKey, req.CaptchaX); err != nil {
 		return nil, err
 	}

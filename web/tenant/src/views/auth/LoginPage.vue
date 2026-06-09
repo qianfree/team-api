@@ -8,6 +8,7 @@ import request from '@/utils/request'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
+import Turnstile from '@/components/common/Turnstile.vue
 
 const router = useRouter()
 const route = useRoute()
@@ -35,6 +36,7 @@ const totpLoading = ref(false)
 
 // Captcha state — always required
 const captcha = reactive({ captchaKey: '', captchaX: 0 })
+	const turnstileToken = ref('')
 const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
 
 const emailInput = ref<HTMLInputElement | null>(null)

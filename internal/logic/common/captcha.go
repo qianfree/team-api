@@ -15,6 +15,7 @@ import (
 	"github.com/wenlng/go-captcha/v2/slide"
 
 	"github.com/qianfree/team-api/internal/consts"
+	"github.com/qianfree/team-api/internal/utility/turnstile"
 )
 
 const (
@@ -210,4 +211,47 @@ func getCaptchaExpireSeconds(ctx context.Context) time.Duration {
 		secs = 300
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// CheckTurnstileRequired checks Cloudflare Turnstile verification when enabled.
+// If Turnstile is disabled, passes through (allows fallback to captcha).
+func CheckTurnstileRequired(ctx context.Context, token string) error {
+	// Check if Turnstile is enabled
+	enabled := Config().GetBool(ctx, "turnstile_enabled")
+	if !enabled {
+		// Turnstile not enabled, allow pass-through to captcha
+		return nil
+	}
+
+	// Turnstile is enabled, token is required
+	if token == "" {
+		return NewBusinessError(consts.CodeCaptchaRequired, consts.MsgCaptchaRequired)
+	}
+
+	// Verify token with Cloudflare
+	secretKey := Config().GetString(ctx, "turnstile_secret_key")
+	if secretKey == "" {
+		g.Log().Errorf(ctx, "[Turnstile] secret_key not configured")
+		return NewBusinessError(consts.CodeInternalServerError, "验证服务配置错误")
+	}
+
+	// Get client IP for verification
+	ipAddress := ""
+	if r := g.RequestFromCtx(ctx); r != nil {
+		ipAddress = r.GetClientIp()
+	}
+
+	result, err := turnstile.Verify(ctx, secretKey, token, ipAddress)
+	if err != nil {
+		g.Log().Errorf(ctx, "[Turnstile] verification failed: %v", err)
+		return NewBusinessError(consts.CodeCaptchaFailed, "人机验证失败")
+	}
+
+	if !result.Success {
+		g.Log().Warningf(ctx, "[Turnstile] verification failed: error codes=%v", result.ErrorCodes)
+		return NewBusinessError(consts.CodeCaptchaFailed, "人机验证失败")
+	}
+
+	// Verification successful
+	return nil
 }
