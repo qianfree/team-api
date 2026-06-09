@@ -93,6 +93,9 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 	if timeout <= 0 {
 		timeout = 120 // Dify 应用可能包含复杂工作流，给更长超时
 	}
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesGenerations && timeout < 600 {
+		timeout = 600
+	}
 
 	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)
 

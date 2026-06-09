@@ -108,10 +108,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		override.MergeHeaderOverrides(httpReq.Header, hdrOverrides)
 	}
 
-	timeout := info.ChannelMeta.Settings.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 60
-	}
+	timeout := info.ChannelMeta.Settings.GetTimeoutSeconds(info.RelayMode)
 
 	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)
 

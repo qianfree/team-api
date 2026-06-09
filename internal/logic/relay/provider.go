@@ -540,6 +540,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			StatusCode:         record.StatusCode,
 			ClientIp:           record.ClientIP,
 			UserAgent:          record.UserAgent,
+			Model:              record.Model,
 			RequestBody:        sysReq,
 			ResponseBody:       sysResp,
 			TenantRequestBody:  tntReq,
