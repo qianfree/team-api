@@ -2,6 +2,7 @@ package consts
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -9,23 +10,45 @@ import (
 )
 
 // Version can be set at build time via -ldflags "-X github.com/qianfree/team-api/internal/consts.Version=x.y.z".
-// Falls back to reading the VERSION file in the project root, or "dev" if unavailable.
+// Falls back to reading the VERSION file, or "dev" if unavailable.
 var Version = ""
 
 func init() {
 	if Version != "" {
 		return
 	}
-	data, err := os.ReadFile("VERSION")
-	if err != nil {
-		Version = "dev"
-		return
-	}
-	if v := strings.TrimSpace(string(data)); v != "" {
+	v := readVersionFile()
+	if v != "" {
 		Version = v
 	} else {
 		Version = "dev"
 	}
+}
+
+// readVersionFile tries multiple locations to find the VERSION file:
+//  1. Current working directory (development mode)
+//  2. Same directory as the running binary (deployment mode)
+func readVersionFile() string {
+	// Candidate paths to search
+	candidates := []string{"VERSION"}
+
+	// Add binary's directory
+	if exe, err := os.Executable(); err == nil {
+		if exe, err = filepath.EvalSymlinks(exe); err == nil {
+			candidates = append(candidates, filepath.Join(filepath.Dir(exe), "VERSION"))
+		}
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // Business error variables (using gerror for full stack traces)
