@@ -197,10 +197,13 @@ func (d *WebhookDispatcher) cleanup() {
 	failedCutoff := now.Add(-cleanupFailedAge)
 	for {
 		result, err := dao.OpnWebhookEvents.Ctx(ctx).
-			Where("status", "failed").
-			Where("attempts >= ?", webhookMaxRetries).
-			Where("updated_at < ?", failedCutoff).
-			Limit(cleanupBatchSize).
+			Where("id IN (?)", dao.OpnWebhookEvents.Ctx(ctx).
+				Where("status", "failed").
+				Where("attempts >= ?", webhookMaxRetries).
+				Where("updated_at < ?", failedCutoff).
+				Limit(cleanupBatchSize).
+				Fields("id"),
+			).
 			Delete()
 		if err != nil {
 			g.Log().Errorf(ctx, "webhook cleanup: delete exhausted events failed: %v", err)
