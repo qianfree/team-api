@@ -24,6 +24,8 @@ const settings = ref<PublicSettings>({
 	site_description: '',
 	demo_mode: false,
 	demo_message: '',
+	turnstile_enabled: false,
+	turnstile_site_key: '',
 })
 
 let fetchPromise: Promise<void> | null = null

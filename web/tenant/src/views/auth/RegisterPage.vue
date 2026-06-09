@@ -5,6 +5,7 @@ import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
+import Turnstile from '@/components/common/Turnstile.vue
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { extractApiError } from '@/utils/request'
@@ -19,6 +20,7 @@ const codeSending = ref(false)
 const countdown = ref(0)
 const emailVerification = ref(true)
 const captcha = ref<{ captchaKey: string; captchaX: number }>({ captchaKey: '', captchaX: 0 })
+	const turnstileToken = ref('')
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const orgForm = reactive({ orgName: '', orgCode: '' })
