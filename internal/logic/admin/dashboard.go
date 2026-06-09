@@ -544,6 +544,87 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 	return &v1.AdminWalletSetWarningThresholdRes{}, nil
 }
 
+// GetAllTransactions 获取所有租户交易流水（管理后台）
+func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error) {
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
+
+	query := dao.BilTransactions.Ctx(ctx)
+
+	if req.TenantID > 0 {
+		query = query.Where("bil_transactions.tenant_id", req.TenantID)
+	}
+	if req.Type != "" {
+		query = query.Where("bil_transactions.type", req.Type)
+	}
+	if req.Username != "" {
+		query = query.Where("tu.username LIKE ?", "%"+req.Username+"%")
+	}
+	if req.ModelName != "" {
+		query = query.Where("bil_transactions.model_name LIKE ?", "%"+req.ModelName+"%")
+	}
+	if req.StartDate != "" {
+		query = query.Where("bil_transactions.created_at >= ?", req.StartDate+" 00:00:00")
+	}
+	if req.EndDate != "" {
+		query = query.Where("bil_transactions.created_at <= ?", req.EndDate+" 23:59:59")
+	}
+
+	type transactionRow struct {
+		Id           int64       `json:"id"`
+		TenantId     int64       `json:"tenant_id"`
+		TenantName   string      `json:"tenant_name"`
+		Type         string      `json:"type"`
+		Amount       float64     `json:"amount"`
+		BalanceAfter float64     `json:"balance_after"`
+		Description  string      `json:"description"`
+		UserId       int64       `json:"user_id"`
+		Username     string      `json:"username"`
+		RequestId    string      `json:"request_id"`
+		ModelName    string      `json:"model_name"`
+		CreatedAt    *gtime.Time `json:"created_at"`
+	}
+
+	var records []*transactionRow
+	var total int
+	err := query.Fields("bil_transactions.id, bil_transactions.tenant_id, COALESCE(tn.name, '') AS tenant_name, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.created_at").
+		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
+		LeftJoin("tnt_tenants tn", "bil_transactions.tenant_id = tn.id").
+		OrderDesc("bil_transactions.created_at").
+		Page(page, pageSize).
+		ScanAndCount(&records, &total, false)
+	if err != nil {
+		return nil, err
+	}
+	if records == nil {
+		records = make([]*transactionRow, 0)
+	}
+
+	list := make([]*v1.AdminTransactionItem, 0, len(records))
+	for _, r := range records {
+		list = append(list, &v1.AdminTransactionItem{
+			Id:           r.Id,
+			TenantId:     r.TenantId,
+			TenantName:   r.TenantName,
+			Type:         r.Type,
+			Amount:       r.Amount,
+			BalanceAfter: r.BalanceAfter,
+			Description:  r.Description,
+			UserId:       r.UserId,
+			Username:     r.Username,
+			RequestId:    r.RequestId,
+			ModelName:    r.ModelName,
+			CreatedAt:    r.CreatedAt.String(),
+		})
+	}
+
+	return &v1.AdminTransactionListRes{
+		List:     list,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
 // GetDashboardChannelHealth 获取渠道健康概览（最不健康的5个活跃渠道）
 func (s *sAdmin) GetDashboardChannelHealth(ctx context.Context, req *v1.AdminDashboardChannelHealthReq) (*v1.AdminDashboardChannelHealthRes, error) {
 	var items []v1.ChannelHealthItem

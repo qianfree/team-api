@@ -73,10 +73,10 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '用量日志' },
       },
       {
-        path: 'billing',
-        name: 'AdminBilling',
-        component: () => import('@/views/finance/BillingPage.vue'),
-        meta: { title: '计费管理' },
+        path: 'transactions',
+        name: 'AdminTransactions',
+        component: () => import('@/views/finance/TransactionsPage.vue'),
+        meta: { title: '交易流水' },
       },
       {
         path: 'plans',

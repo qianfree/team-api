@@ -141,6 +141,8 @@ type (
 		GetWalletTransactions(ctx context.Context, req *v1.AdminWalletTransactionListReq) (*v1.AdminWalletTransactionListRes, error)
 		// SetWarningThreshold 设置租户钱包预警阈值（管理后台）
 		SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSetWarningThresholdReq) (*v1.AdminWalletSetWarningThresholdRes, error)
+		// GetAllTransactions 获取所有租户交易流水（管理后台）
+		GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error)
 		// GetDashboardChannelHealth 获取渠道健康概览（最不健康的5个活跃渠道）
 		GetDashboardChannelHealth(ctx context.Context, req *v1.AdminDashboardChannelHealthReq) (*v1.AdminDashboardChannelHealthRes, error)
 		// GetDashboardRecentAlerts 获取最近5条告警
