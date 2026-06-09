@@ -12,7 +12,7 @@ const values = useFormValues()
 				<AFormItem label="站点名称">
 					<AInput v-model="values['site_name']" placeholder="Team-API" />
 				</AFormItem>
-				<AFormItem label="站点描述">
+				<AFormItem label="站点描述" class="field-full">
 					<AInput v-model="values['site_description']" placeholder="简短描述平台用途" />
 				</AFormItem>
 				<AFormItem label="租户控制台地址" help="用于生成邀请链接等，如 https://console.example.com" class="field-full">
