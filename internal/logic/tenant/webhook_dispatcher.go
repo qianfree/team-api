@@ -29,6 +29,7 @@ type WebhookDispatcher struct {
 	eventCh chan int64
 	ctx     context.Context
 	wg      sync.WaitGroup
+	stopCh  chan struct{}
 }
 
 var defaultDispatcher *WebhookDispatcher
@@ -38,6 +39,7 @@ func InitWebhookDispatcher(ctx context.Context) {
 	d := &WebhookDispatcher{
 		eventCh: make(chan int64, dispatcherChannelSize),
 		ctx:     ctx,
+		stopCh:  make(chan struct{}),
 	}
 	defaultDispatcher = d
 
@@ -71,7 +73,7 @@ func (d *WebhookDispatcher) worker() {
 	defer d.wg.Done()
 	for {
 		select {
-		case <-d.ctx.Done():
+		case <-d.stopCh:
 			return
 		case eventID := <-d.eventCh:
 			deliverEventByID(d.ctx, eventID)
@@ -86,7 +88,7 @@ func (d *WebhookDispatcher) sweepLoop() {
 
 	for {
 		select {
-		case <-d.ctx.Done():
+		case <-d.stopCh:
 			return
 		case <-ticker.C:
 			d.sweep()
@@ -142,7 +144,7 @@ func (d *WebhookDispatcher) cleanupLoop() {
 
 	for {
 		select {
-		case <-d.ctx.Done():
+		case <-d.stopCh:
 			return
 		case <-ticker.C:
 			d.cleanup()
@@ -217,8 +219,9 @@ func (d *WebhookDispatcher) cleanup() {
 	}
 }
 
-// Shutdown waits for all in-flight deliveries to complete.
+// Shutdown signals all goroutines to stop and waits for workers to complete.
 func (d *WebhookDispatcher) Shutdown() {
+	close(d.stopCh)
 	d.wg.Wait()
 }
 
