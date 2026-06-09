@@ -19,12 +19,7 @@ export function useSettings(category: () => string) {
 			const items = res.data?.data?.list || []
 			const vals: Record<string, any> = {}
 			for (const item of items) {
-				let val = item.value ?? item.default ?? ''
-				// Normalize bool values to strings for consistent switch handling
-				if (item.type === 'bool') {
-					val = String(val)
-				}
-				vals[item.key] = val
+				vals[item.key] = item.value ?? item.default ?? ''
 			}
 			Object.keys(formValues).forEach(k => delete formValues[k])
 			Object.assign(formValues, vals)

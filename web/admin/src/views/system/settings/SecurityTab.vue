@@ -89,7 +89,7 @@ const values = useFormValues()
 				</AFormItem>
 				<AFormItem label="新设备登录通知">
 					<ASwitch
-						:model-value="values['new_device_notification'] !== false"
+						:model-value="!!values['new_device_notification']"
 						@change="(v: string | number | boolean) => values['new_device_notification'] = v"
 					/>
 				</AFormItem>

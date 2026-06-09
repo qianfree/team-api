@@ -47,8 +47,8 @@ function set(key: string, v: number | undefined): void {
 			<div class="switch-row">
 				<span class="switch-label">启用文件保留期检查</span>
 				<ASwitch
-					:model-value="values['file_retention_enabled'] === 'true' || values['file_retention_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['file_retention_enabled'] = String(v)"
+					:model-value="!!values['file_retention_enabled']"
+					@change="(v: string | number | boolean) => values['file_retention_enabled'] = v"
 				/>
 			</div>
 		</div>
