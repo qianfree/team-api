@@ -165,6 +165,9 @@ redis:
 
 jwt:
   secret: "your-secret-key-change-in-production"
+
+crypto:
+  encryptionKey: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
 ```
 
 ### 4. 执行数据库迁移
@@ -267,31 +270,47 @@ curl http://localhost:18888/v1/chat/completions \
 
 ## Docker 部署
 
-项目提供多阶段 Dockerfile（前端构建 → Go 编译 → 精简运行镜像）和完整的 Docker Compose 编排，包含 PostgreSQL、Redis 和应用服务。
+### 快速部署（推荐）
 
-### 快速启动（推荐）
+只需两个文件，无需克隆整个仓库：
 
 ```bash
-# 1. 复制示例配置文件并重命名
-cp manifest/docker/config.example.yaml manifest/docker/config.yaml
+# 1. 创建部署目录
+mkdir team-api && cd team-api
 
-# 2. 编辑配置文件（修改数据库密码、Redis 密码、JWT 密钥等）
-vim manifest/docker/config.yaml
+# 2. 下载 docker-compose.yaml 和示例配置
+curl -O https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/docker-compose.yaml
+curl -o config.yaml https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/config.example.yaml
 
-# 3. 修改 docker-compose.yaml 中的密码（与 config.yaml 保持一致）
+# 3. 编辑配置文件（修改数据库密码、Redis 密码、JWT 密钥、加密密钥等）
+vim config.yaml
+
+# 4. 修改 docker-compose.yaml 中的密码（与 config.yaml 保持一致）
 #    - POSTGRES_PASSWORD
 #    - Redis --requirepass
+vim docker-compose.yaml
 
-# 4. 一键启动所有服务
-docker compose -f manifest/docker/docker-compose.yaml up -d
+# 5. 一键启动所有服务
+docker compose up -d
 ```
 
 服务启动后访问 `http://localhost:18888`，首次部署会进入系统初始化向导（`/api/setup`）。
 
-### 仅构建镜像
+### 从源码构建
 
 ```bash
-# 构建镜像（多阶段构建，自动编译前端和后端）
+# 克隆仓库
+git clone https://github.com/qianfree/team-api.git
+cd team-api
+
+# 构建并启动（多阶段构建：前端编译 → Go 编译 → 精简运行镜像）
+docker compose --profile build up -d --build
+```
+
+也可以单独构建镜像推送到自己的 Registry：
+
+```bash
+# 构建镜像
 docker build -t team-api:latest -f manifest/docker/Dockerfile .
 
 # 指定版本号

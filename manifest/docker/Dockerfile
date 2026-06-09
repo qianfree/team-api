@@ -7,7 +7,7 @@
 # Override example: docker compose build --build-arg GOPROXY=https://proxy.golang.org,direct
 
 # Stage 1: Frontend build
-FROM oven/bun:1-alpine AS frontend
+FROM --platform=$BUILDPLATFORM oven/bun:1-alpine AS frontend
 
 ARG BUN_CONFIG_REGISTRY=https://registry.npmmirror.com
 ARG VERSION=dev
@@ -34,7 +34,7 @@ RUN if [ "$VERSION" = "dev" ]; then \
     cd ../tenant && VITE_APP_VERSION=$VERSION bun run build
 
 # Stage 2: Go build
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY}
@@ -87,6 +87,7 @@ COPY --from=builder /build/manifest/i18n /app/i18n
 COPY --from=builder /build/migrations /app/migrations
 
 RUN mkdir -p /app/config /app/logs && \
+    touch /app/config/config.yaml && \
     chown -R team-api:team-api /app
 
 USER team-api
