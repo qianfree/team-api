@@ -40,6 +40,12 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
+	// Check register rate limit (IP + global)
+	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
+	if err := common.CheckRegisterRateLimit(ctx, ipAddress); err != nil {
+		return nil, err
+	}
+
 	// 根据配置选择验证方式
 	emailVerificationEnabled := common.Config().GetBool(ctx, "register_email_verification")
 	if emailVerificationEnabled {
@@ -79,8 +85,6 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	}
 
 	var tenantID, ownerUserID int64
-
-	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Create tenant
