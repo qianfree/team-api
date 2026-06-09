@@ -25,11 +25,15 @@ const (
 	timeoutBatchSize = 100
 )
 
-var pollingWg sync.WaitGroup
+var (
+	pollingWg sync.WaitGroup
+	pollStop  chan struct{}
+)
 
 // StartAsyncPolling 启动异步任务轮询 goroutine
 func StartAsyncPolling(ctx context.Context) {
 	g.Log().Info(ctx, "Starting async task polling...")
+	pollStop = make(chan struct{})
 	pollingWg.Add(1)
 	go func() {
 		defer pollingWg.Done()
@@ -38,7 +42,7 @@ func StartAsyncPolling(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-pollStop:
 				g.Log().Info(ctx, "Async task polling stopped")
 				return
 			case <-ticker.C:
@@ -48,8 +52,9 @@ func StartAsyncPolling(ctx context.Context) {
 	}()
 }
 
-// StopAsyncPolling 等待轮询 goroutine 完全退出，在服务停机时调用。
+// StopAsyncPolling 通知轮询 goroutine 停止并等待其退出，在服务停机时调用。
 func StopAsyncPolling() {
+	close(pollStop)
 	pollingWg.Wait()
 }
 
