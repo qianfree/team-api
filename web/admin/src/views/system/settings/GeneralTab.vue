@@ -28,16 +28,16 @@ const values = useFormValues()
 				<span class="switch-label">开放注册</span>
 				<span class="switch-desc">是否允许新用户注册</span>
 				<ASwitch
-					:model-value="values['register_enabled'] === 'true' || values['register_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['register_enabled'] = String(v)"
+					:model-value="!!values['register_enabled']"
+					@change="(v: string | number | boolean) => values['register_enabled'] = v"
 				/>
 			</div>
 			<div class="switch-row">
 				<span class="switch-label">注册邮箱验证</span>
 				<span class="switch-desc">注册时是否需要邮箱验证码，关闭时使用滑块验证</span>
 				<ASwitch
-					:model-value="values['register_email_verification'] === 'true' || values['register_email_verification'] === '1'"
-					@change="(v: string | number | boolean) => values['register_email_verification'] = String(v)"
+					:model-value="!!values['register_email_verification']"
+					@change="(v: string | number | boolean) => values['register_email_verification'] = v"
 				/>
 			</div>
 		</div>
@@ -49,8 +49,8 @@ const values = useFormValues()
 				<span class="switch-label">启用维护模式</span>
 				<span class="switch-desc">开启后控制台显示维护提示</span>
 				<ASwitch
-					:model-value="values['maintenance_mode'] === 'true' || values['maintenance_mode'] === '1'"
-					@change="(v: string | number | boolean) => values['maintenance_mode'] = String(v)"
+					:model-value="!!values['maintenance_mode']"
+					@change="(v: string | number | boolean) => values['maintenance_mode'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">
@@ -65,8 +65,8 @@ const values = useFormValues()
 				<span class="switch-label">全局 API 维护</span>
 				<span class="switch-desc">开启后 API 代理返回 503</span>
 				<ASwitch
-					:model-value="values['api_maintenance_enabled'] === 'true' || values['api_maintenance_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['api_maintenance_enabled'] = String(v)"
+					:model-value="!!values['api_maintenance_enabled']"
+					@change="(v: string | number | boolean) => values['api_maintenance_enabled'] = v"
 				/>
 			</div>
 		</div>

@@ -12,8 +12,8 @@ const values = useFormValues()
 				<span class="switch-label">OAuth 自动注册</span>
 				<span class="switch-desc">首次 OAuth 登录自动创建租户账号</span>
 				<ASwitch
-					:model-value="values['oauth_auto_register'] === 'true' || values['oauth_auto_register'] === '1'"
-					@change="(v: string | number | boolean) => values['oauth_auto_register'] = String(v)"
+					:model-value="!!values['oauth_auto_register']"
+					@change="(v: string | number | boolean) => values['oauth_auto_register'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">
@@ -30,8 +30,8 @@ const values = useFormValues()
 				<span class="switch-label">启用 GitHub 登录</span>
 				<span class="switch-desc"></span>
 				<ASwitch
-					:model-value="values['oauth_github_enabled'] === 'true' || values['oauth_github_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['oauth_github_enabled'] = String(v)"
+					:model-value="!!values['oauth_github_enabled']"
+					@change="(v: string | number | boolean) => values['oauth_github_enabled'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">
@@ -51,8 +51,8 @@ const values = useFormValues()
 				<span class="switch-label">启用 Google 登录</span>
 				<span class="switch-desc"></span>
 				<ASwitch
-					:model-value="values['oauth_google_enabled'] === 'true' || values['oauth_google_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['oauth_google_enabled'] = String(v)"
+					:model-value="!!values['oauth_google_enabled']"
+					@change="(v: string | number | boolean) => values['oauth_google_enabled'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">

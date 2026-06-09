@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -56,10 +57,44 @@ func (s *sAdmin) UpdateSettings(ctx context.Context, req *v1.AdminSettingsUpdate
 	for key, val := range req.Settings {
 		strValues[key] = common.NormalizeSettingValue(val)
 	}
+
+	if err := s.validateCrossFieldSettings(ctx, req.Category, strValues); err != nil {
+		return nil, err
+	}
+
 	if err := common.Config().UpdateCategory(ctx, req.Category, strValues); err != nil {
 		return nil, err
 	}
 	return nil, nil
+}
+
+// validateCrossFieldSettings validates interdependent settings within a category.
+func (s *sAdmin) validateCrossFieldSettings(ctx context.Context, category string, values map[string]string) error {
+	if category != "security" {
+		return nil
+	}
+
+	enabled, ok := values["turnstile_enabled"]
+	if !ok || (enabled != "true" && enabled != "1") {
+		return nil
+	}
+
+	siteKey := values["turnstile_site_key"]
+	secretKey := values["turnstile_secret_key"]
+
+	// If keys not in the current request, read existing values from DB
+	if siteKey == "" {
+		siteKey = common.Config().GetString(ctx, "turnstile_site_key")
+	}
+	if secretKey == "" || secretKey == "******" {
+		secretKey = common.Config().GetString(ctx, "turnstile_secret_key")
+	}
+
+	if strings.TrimSpace(siteKey) == "" || strings.TrimSpace(secretKey) == "" {
+		return common.NewBadRequestError("启用 Turnstile 前必须先配置 Site Key 和 Secret Key")
+	}
+
+	return nil
 }
 
 func isValidCategory(category string) bool {

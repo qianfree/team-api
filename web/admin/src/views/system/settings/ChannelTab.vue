@@ -12,16 +12,16 @@ const values = useFormValues()
 				<span class="switch-label">渠道自动探测</span>
 				<span class="switch-desc">定期向活跃渠道发送测试请求，检测连通性并更新健康度（会消耗少量 Token）</span>
 				<ASwitch
-					:model-value="values['channel_auto_test_enabled'] === 'true' || values['channel_auto_test_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['channel_auto_test_enabled'] = String(v)"
+					:model-value="!!values['channel_auto_test_enabled']"
+					@change="(v: string | number | boolean) => values['channel_auto_test_enabled'] = v"
 				/>
 			</div>
 			<div class="switch-row" style="margin-top: 12px">
 				<span class="switch-label">自动恢复探测</span>
 				<span class="switch-desc">定期测试已自动禁用的渠道，测试通过则恢复启用（依赖自动探测开启）</span>
 				<ASwitch
-					:model-value="values['channel_auto_test_recovery_enabled'] === 'true' || values['channel_auto_test_recovery_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['channel_auto_test_recovery_enabled'] = String(v)"
+					:model-value="!!values['channel_auto_test_recovery_enabled']"
+					@change="(v: string | number | boolean) => values['channel_auto_test_recovery_enabled'] = v"
 				/>
 			</div>
 		</div>
@@ -33,8 +33,8 @@ const values = useFormValues()
 				<span class="switch-label">渠道自动禁用</span>
 				<span class="switch-desc">连续失败达到阈值时自动禁用渠道</span>
 				<ASwitch
-					:model-value="values['channel_auto_disable_enabled'] === 'true' || values['channel_auto_disable_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['channel_auto_disable_enabled'] = String(v)"
+					:model-value="!!values['channel_auto_disable_enabled']"
+					@change="(v: string | number | boolean) => values['channel_auto_disable_enabled'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">

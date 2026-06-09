@@ -40,8 +40,8 @@ const values = useFormValues()
 					<span class="switch-label">启用 TLS</span>
 					<span class="switch-desc">587/465 端口建议开启</span>
 					<ASwitch
-						:model-value="values['email_smtp_tls'] === 'true' || values['email_smtp_tls'] === '1'"
-						@change="(v: string | number | boolean) => values['email_smtp_tls'] = String(v)"
+						:model-value="!!values['email_smtp_tls']"
+						@change="(v: string | number | boolean) => values['email_smtp_tls'] = v"
 					/>
 				</div>
 			</div>

@@ -65,8 +65,8 @@ function set(key: string, v: number | undefined): void {
 			<div class="compact-row">
 				<label>启用缓存</label>
 				<ASwitch
-					:model-value="values['cache_enabled'] === 'true' || values['cache_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['cache_enabled'] = String(v)"
+					:model-value="!!values['cache_enabled']"
+					@change="(v: string | number | boolean) => values['cache_enabled'] = v"
 				/>
 			</div>
 			<div class="compact-row">
@@ -107,8 +107,8 @@ function set(key: string, v: number | undefined): void {
 			<div class="compact-row">
 				<label>启用沙箱</label>
 				<ASwitch
-					:model-value="values['sandbox_enabled'] === 'true' || values['sandbox_enabled'] === '1'"
-					@change="(v: string | number | boolean) => values['sandbox_enabled'] = String(v)"
+					:model-value="!!values['sandbox_enabled']"
+					@change="(v: string | number | boolean) => values['sandbox_enabled'] = v"
 				/>
 			</div>
 			<div class="compact-row">
