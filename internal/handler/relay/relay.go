@@ -453,10 +453,14 @@ func captureRequestHeaders(r *ghttp.Request) map[string]string {
 func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCaptureWriter, body []byte, path string, latencyMs int, ttft int) {
 	// 解析 stream 标志
 	var isStream bool
+	var modelName string
 	var rawRequest map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rawRequest); err == nil {
 		if streamVal, ok := rawRequest["stream"]; ok {
 			_ = json.Unmarshal(streamVal, &isStream)
+		}
+		if modelVal, ok := rawRequest["model"]; ok {
+			_ = json.Unmarshal(modelVal, &modelName)
 		}
 	}
 
@@ -476,6 +480,7 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		StatusCode:      capture.StatusCode(),
 		ClientIP:        rc.ClientIP,
 		UserAgent:       r.Header.Get("User-Agent"),
+		Model:           modelName,
 		RequestBody:     string(body),
 		ResponseBody:    responseBody,
 		LatencyMs:       latencyMs,

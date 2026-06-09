@@ -208,6 +208,9 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 	if timeout <= 0 {
 		timeout = 300
 	}
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesGenerations && timeout < 600 {
+		timeout = 600
+	}
 
 	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)
 
