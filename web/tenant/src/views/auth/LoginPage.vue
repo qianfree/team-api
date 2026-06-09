@@ -8,7 +8,7 @@ import request from '@/utils/request'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
-import Turnstile from '@/components/common/Turnstile.vue
+import Turnstile from '@/components/common/Turnstile.vue'
 
 const router = useRouter()
 const route = useRoute()
