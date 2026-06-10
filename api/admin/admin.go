@@ -78,6 +78,7 @@ type IAdminV1 interface {
 	AdminWalletSetWarningThreshold(ctx context.Context, req *v1.AdminWalletSetWarningThresholdReq) (res *v1.AdminWalletSetWarningThresholdRes, err error)
 	AdminUsageLogExport(ctx context.Context, req *v1.AdminUsageLogExportReq) (res *v1.AdminUsageLogExportRes, err error)
 	AdminBillingRecordExport(ctx context.Context, req *v1.AdminBillingRecordExportReq) (res *v1.AdminBillingRecordExportRes, err error)
+	AdminTransactionList(ctx context.Context, req *v1.AdminTransactionListReq) (res *v1.AdminTransactionListRes, err error)
 	DataGovernanceSettingsGet(ctx context.Context, req *v1.DataGovernanceSettingsGetReq) (res *v1.DataGovernanceSettingsGetRes, err error)
 	DataGovernanceSettingsUpdate(ctx context.Context, req *v1.DataGovernanceSettingsUpdateReq) (res *v1.DataGovernanceSettingsUpdateRes, err error)
 	DataGovernanceExport(ctx context.Context, req *v1.DataGovernanceExportReq) (res *v1.DataGovernanceExportRes, err error)

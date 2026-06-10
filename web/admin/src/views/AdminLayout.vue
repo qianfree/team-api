@@ -301,8 +301,7 @@ const menuGroups = [
     items: [
       { name: 'AdminPlans', label: '套餐管理', icon: IconIdcard },
       { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
-      { name: 'AdminBilling', label: '计费管理', icon: IconCommand },
-      { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
+      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
       { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
       { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag },
     ],
@@ -354,6 +353,7 @@ const menuGroups = [
       { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup },
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
+      { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
       { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
       { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
       { name: 'AdminChangelogs', label: '更新日志', icon: IconFile },

@@ -302,10 +302,17 @@ const { exporting, exportFile } = useExport({
     </ACard>
 
     <!-- Create Channel Modal -->
-    <AModal v-model:visible="showModal" title="创建渠道" :width="550" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
+    <AModal v-model:visible="showModal" title="创建渠道" :width="640" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
       <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
-        <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
-        <AFormItem field="type" label="供应商类型" required><ASelect v-model="form.type" :options="providerTypeOptions" placeholder="输入关键词搜索或选择" allow-search :filter-option="filterProviderOption" /></AFormItem>
+        <!-- 基本信息 -->
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem field="type" label="供应商类型" required><ASelect v-model="form.type" :options="providerTypeOptions" placeholder="搜索或选择" allow-search :filter-option="filterProviderOption" /></AFormItem>
+          </ACol>
+        </ARow>
         <AFormItem label="Base URL">
           <AInput v-model="form.base_url" :placeholder="providerDefaultURLs[form.type] || 'https://api.openai.com'" />
           <template #extra>
@@ -317,17 +324,51 @@ const { exporting, exportFile } = useExport({
         <AFormItem field="api_key" label="API Key" required>
           <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="sk-xxxx..." />
         </AFormItem>
-        <AFormItem label="优先级"><AInputNumber v-model="form.priority" :min="0" placeholder="数字越大优先级越高" class="w-full" /></AFormItem>
-        <AFormItem label="权重"><AInputNumber v-model="form.weight" :min="1" :max="100" class="w-full" /></AFormItem>
-        <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
+        <!-- 调度 & 状态 -->
+        <ARow :gutter="16">
+          <ACol :span="8">
+            <AFormItem label="优先级"><AInputNumber v-model="form.priority" :min="0" placeholder="越高越优先" class="w-full" /></AFormItem>
+          </ACol>
+          <ACol :span="8">
+            <AFormItem label="权重"><AInputNumber v-model="form.weight" :min="1" :max="100" class="w-full" /></AFormItem>
+          </ACol>
+          <ACol :span="8">
+            <AFormItem label="状态">
+              <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
+            </AFormItem>
+          </ACol>
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="8">
+            <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
+          </ACol>
+          <ACol :span="8">
+            <AFormItem label="使用代理">
+              <ASwitch v-model="form.use_proxy" />
+              <template #extra><span style="color:var(--color-text-3);font-size:12px">需先在系统设置中配置代理</span></template>
+            </AFormItem>
+          </ACol>
+        </ARow>
         <AFormItem label="备注"><AInput v-model="form.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="备注（选填）" /></AFormItem>
-        <AFormItem label="使用代理"><ASwitch v-model="form.use_proxy" /><template #extra><span style="color:var(--color-text-3);font-size:12px">启用后该渠道的请求通过系统代理转发（需先在系统设置中配置代理地址）</span></template></AFormItem>
+        <!-- VIP 设置 -->
         <ACollapse :bordered="false" :default-active-key="form.is_vip ? ['vip'] : []">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
-            <AFormItem label="VIP 渠道"><ASwitch v-model="form.is_vip" /></AFormItem>
-            <AFormItem v-if="form.is_vip" label="共享阈值"><AInputNumber v-model="form.sharing_threshold" :min="0" :max="100" placeholder="允许共享给非VIP的健康分数阈值" class="w-full" /></AFormItem>
-            <AFormItem v-if="form.is_vip" label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占共享渠道时的优先级阈值" class="w-full" /></AFormItem>
-            <AFormItem v-if="form.is_vip" label="借用冷却(秒)"><AInputNumber v-model="form.borrowing_cooldown_seconds" :min="0" placeholder="非VIP借用后冷却时间" class="w-full" /></AFormItem>
+            <ARow :gutter="16">
+              <ACol :span="8">
+                <AFormItem label="VIP 渠道"><ASwitch v-model="form.is_vip" /></AFormItem>
+              </ACol>
+              <ACol v-if="form.is_vip" :span="8">
+                <AFormItem label="共享阈值"><AInputNumber v-model="form.sharing_threshold" :min="0" :max="100" placeholder="共享健康分阈值" class="w-full" /></AFormItem>
+              </ACol>
+              <ACol v-if="form.is_vip" :span="8">
+                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
+              </ACol>
+            </ARow>
+            <ARow v-if="form.is_vip" :gutter="16">
+              <ACol :span="8">
+                <AFormItem label="借用冷却(秒)"><AInputNumber v-model="form.borrowing_cooldown_seconds" :min="0" placeholder="非VIP冷却时间" class="w-full" /></AFormItem>
+              </ACol>
+            </ARow>
           </ACollapseItem>
         </ACollapse>
       </AForm>

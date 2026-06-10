@@ -161,9 +161,9 @@ const columns: TableColumnData[] = [
   },
   { title: '所属租户', dataIndex: 'tenant_name', width: 130, ellipsis: true },
   { title: '租户代码', dataIndex: 'tenant_code', width: 100 },
-  { title: '最后登录', dataIndex: 'last_login_at', width: 170 },
+  { title: '最后登录', dataIndex: 'last_login_at', width: 180 },
   { title: '登录IP', dataIndex: 'last_login_ip', width: 130 },
-  { title: '创建时间', dataIndex: 'created_at', width: 170 },
+  { title: '创建时间', dataIndex: 'created_at', width: 180 },
   {
     title: '操作',
     dataIndex: 'actions',
