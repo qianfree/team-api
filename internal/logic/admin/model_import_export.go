@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
-	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -32,7 +31,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		MaxContextTokens int         `orm:"max_context_tokens" json:"max_context_tokens"`
 		MaxOutputTokens  int         `orm:"max_output_tokens" json:"max_output_tokens"`
 		Description      string      `orm:"description" json:"description"`
-		Tags             string      `orm:"tags" json:"tags"`
+		Tags             []string    `orm:"tags" json:"tags"`
 		Capabilities     string      `orm:"capabilities" json:"capabilities"`
 		SunsetDate       *gtime.Time `orm:"sunset_date" json:"sunset_date"`
 		ReplacementModel string      `orm:"replacement_model" json:"replacement_model"`
@@ -120,9 +119,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		if m.SunsetDate != nil {
 			em.SunsetDate = m.SunsetDate.Format("Y-m-d")
 		}
-		if m.Tags != "" {
-			em.Tags = parsePgArray(m.Tags)
-		}
+		em.Tags = m.Tags
 		result = append(result, em)
 	}
 
@@ -333,16 +330,4 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 	})
 
 	return res, err
-}
-
-// parsePgArray 解析 PostgreSQL 数组格式的字符串，如 {tag1,tag2}
-func parsePgArray(raw string) []string {
-	if raw == "" || raw == "{}" || raw == "NULL" {
-		return nil
-	}
-	s := strings.Trim(raw, "{}")
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, ",")
 }
