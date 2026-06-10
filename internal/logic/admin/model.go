@@ -306,29 +306,29 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 		return nil, err
 	}
 
-	// 状态从 active → deprecated 时发送通知并清除缓存
-	if statusChanged && req.Status == "deprecated" && oldModel.Status == "active" {
-		go func() {
-			bgCtx := context.Background()
-			variables := g.Map{
-				"model_name":        oldModel.ModelId,
-				"sunset_date":       "",
-				"replacement_model": req.ReplacementModel,
-			}
-			if req.SunsetDate != nil {
-				variables["sunset_date"] = *req.SunsetDate
-			}
-			engine := common.NewNotificationEngine()
-			if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
-				g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
-			}
-		}()
+	if statusChanged {
+		// 状态变更时清除模型缓存和租户分组缓存
 		relay.NewDataProvider().InvalidateModelCache(oldModel.ModelId)
-	}
+		invalidateTenantsForModel(ctx, req.ID)
 
-	// 状态从 deprecated → active 时清除缓存
-	if statusChanged && req.Status == "active" && oldModel.Status == "deprecated" {
-		relay.NewDataProvider().InvalidateModelCache(oldModel.ModelId)
+		// 状态从 active → deprecated 时额外发送通知
+		if req.Status == "deprecated" && oldModel.Status == "active" {
+			go func() {
+				bgCtx := context.Background()
+				variables := g.Map{
+					"model_name":        oldModel.ModelId,
+					"sunset_date":       "",
+					"replacement_model": req.ReplacementModel,
+				}
+				if req.SunsetDate != nil {
+					variables["sunset_date"] = *req.SunsetDate
+				}
+				engine := common.NewNotificationEngine()
+				if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
+					g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
+				}
+			}()
+		}
 	}
 
 	return nil, nil

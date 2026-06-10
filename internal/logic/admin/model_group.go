@@ -346,6 +346,33 @@ func invalidateTenantGroupCache(ctx context.Context, tenantID int64) {
 	common.TenantGroupModelCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 }
 
+func invalidateTenantsForModel(ctx context.Context, modelID int64) {
+	var groupIDs []struct {
+		GroupId int64 `json:"group_id"`
+	}
+	dao.MdlGroupModels.Ctx(ctx).
+		Where("model_id", modelID).
+		Fields("group_id").
+		Scan(&groupIDs)
+
+	for _, g := range groupIDs {
+		invalidateTenantsInGroup(ctx, g.GroupId)
+	}
+
+	// 同时清除直接分配了该模型的租户缓存（mdl_tenant_models）
+	var tenantIDs []struct {
+		TenantId int64 `json:"tenant_id"`
+	}
+	dao.MdlTenantModels.Ctx(ctx).
+		Where("model_id", modelID).
+		Fields("tenant_id").
+		Scan(&tenantIDs)
+
+	for _, t := range tenantIDs {
+		invalidateTenantGroupCache(ctx, t.TenantId)
+	}
+}
+
 func invalidateTenantsInGroup(ctx context.Context, groupID int64) {
 	var tenants []struct {
 		TenantId int64 `json:"tenant_id"`
