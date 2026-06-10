@@ -153,6 +153,7 @@ type ITenantV1 interface {
 	TenantLoginHistory(ctx context.Context, req *v1.TenantLoginHistoryReq) (res *v1.TenantLoginHistoryRes, err error)
 	TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq) (res *v1.TenantTaskListRes, err error)
 	TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetailReq) (res *v1.TenantTaskDetailRes, err error)
+	TenantTaskExport(ctx context.Context, req *v1.TenantTaskExportReq) (res *v1.TenantTaskExportRes, err error)
 	TenantTicketCreate(ctx context.Context, req *v1.TenantTicketCreateReq) (res *v1.TenantTicketCreateRes, err error)
 	TenantTicketList(ctx context.Context, req *v1.TenantTicketListReq) (res *v1.TenantTicketListRes, err error)
 	TenantTicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (res *v1.TenantTicketGetRes, err error)

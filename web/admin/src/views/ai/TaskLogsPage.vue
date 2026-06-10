@@ -37,6 +37,8 @@ const platformOptions = [
   { label: 'Kling', value: 'kling' },
   { label: 'Midjourney', value: 'midjourney' },
   { label: 'Suno', value: 'suno' },
+  { label: '火山引擎', value: 'volcengine' },
+  { label: '阿里', value: 'ali' },
 ]
 
 const statusTagColor: Record<string, string | undefined> = {
@@ -60,6 +62,8 @@ const platformLabel: Record<string, string> = {
   kling: 'Kling',
   midjourney: 'Midjourney',
   suno: 'Suno',
+  volcengine: '火山引擎',
+  ali: '阿里',
 }
 
 const columns: TableColumnData[] = [

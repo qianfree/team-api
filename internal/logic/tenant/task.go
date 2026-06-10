@@ -2,11 +2,17 @@ package tenant
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
+	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // TenantTaskList 租户异步任务列表
@@ -167,4 +173,145 @@ func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetail
 	return &v1.TenantTaskDetailRes{
 		Task: item,
 	}, nil
+}
+
+// ExportTasks 导出异步任务日志
+// owner/admin 可导出租户所有任务，member 只能导出自己的任务
+func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) (*v1.TenantTaskExportRes, error) {
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
+
+	statusLabel := map[string]string{
+		"NOT_START":   "未开始",
+		"SUBMITTED":   "已提交",
+		"IN_PROGRESS": "进行中",
+		"SUCCESS":     "成功",
+		"FAILURE":     "失败",
+		"TIMEOUT":     "超时",
+	}
+
+	platformLabel := map[string]string{
+		"sora":       "Sora",
+		"kling":      "Kling",
+		"midjourney": "Midjourney",
+		"suno":       "Suno",
+	}
+
+	columns := []export.Column{
+		{Field: "public_task_id", Header: "任务ID"},
+		{Field: "platform_name", Header: "平台"},
+		{Field: "status_name", Header: "状态"},
+		{Field: "action", Header: "动作"},
+		{Field: "model_name", Header: "模型"},
+		{Field: "progress", Header: "进度"},
+		{Field: "username", Header: "用户"},
+		{Field: "pre_deduct_amount", Header: "预扣金额(USD)"},
+		{Field: "actual_cost", Header: "实际费用(USD)"},
+		{Field: "billing_settled", Header: "是否已结算"},
+		{Field: "fail_reason", Header: "失败原因"},
+		{Field: "submit_time", Header: "提交时间"},
+		{Field: "finish_time", Header: "完成时间"},
+		{Field: "created_at", Header: "创建时间"},
+	}
+
+	config := export.Config{
+		Format:   req.Format,
+		Filename: "任务日志_" + gtime.Now().Format("Ymd_His"),
+		Columns:  columns,
+	}
+
+	var conditions []string
+	var args []any
+
+	conditions = append(conditions, "t.tenant_id = ?")
+	args = append(args, tenantID)
+
+	// member 只能导出自己的任务
+	if role == "member" {
+		conditions = append(conditions, "t.user_id = ?")
+		args = append(args, userID)
+	}
+	if req.Status != "" {
+		conditions = append(conditions, "t.status = ?")
+		args = append(args, req.Status)
+	}
+	if req.Platform != "" {
+		conditions = append(conditions, "t.platform = ?")
+		args = append(args, req.Platform)
+	}
+	if req.PublicTaskID != "" {
+		conditions = append(conditions, "t.public_task_id = ?")
+		args = append(args, req.PublicTaskID)
+	}
+
+	where := ""
+	for i, c := range conditions {
+		if i > 0 {
+			where += " AND "
+		}
+		where += c
+	}
+
+	fromClause := "tsk_model_tasks t LEFT JOIN tnt_users u ON t.user_id = u.id AND t.tenant_id = u.tenant_id"
+
+	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
+		offset := 0
+		for {
+			dataSQL := fmt.Sprintf(
+				`SELECT t.public_task_id, t.platform, t.status, t.action, t.model_name, t.progress,
+				        COALESCE(u.username, '') AS username,
+				        t.pre_deduct_amount, t.actual_cost, t.billing_settled,
+				        COALESCE(t.fail_reason, '') AS fail_reason,
+				        t.submit_time, t.finish_time, t.created_at
+				 FROM %s WHERE %s ORDER BY t.id DESC LIMIT 1000 OFFSET ?`,
+				fromClause, where,
+			)
+			exportArgs := make([]any, len(args)+1)
+			copy(exportArgs, args)
+			exportArgs[len(args)] = offset
+			result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, exportArgs...)
+			if err != nil {
+				return
+			}
+			for _, row := range result {
+				m := make(map[string]any, len(row))
+				for k, v := range row {
+					switch raw := v.Val().(type) {
+					case []byte:
+						s := string(raw)
+						if f, err := strconv.ParseFloat(s, 64); err == nil {
+							m[k] = f
+						} else {
+							m[k] = s
+						}
+					default:
+						m[k] = raw
+					}
+				}
+				// 翻译平台和状态为中文
+				if platform, ok := m["platform"].(string); ok {
+					if label, exists := platformLabel[platform]; exists {
+						m["platform_name"] = label
+					} else {
+						m["platform_name"] = platform
+					}
+				}
+				if status, ok := m["status"].(string); ok {
+					if label, exists := statusLabel[status]; exists {
+						m["status_name"] = label
+					} else {
+						m["status_name"] = status
+					}
+				}
+				if !yield(m) {
+					return
+				}
+			}
+			if len(result) < 1000 {
+				break
+			}
+			offset += 1000
+		}
+	})
 }
