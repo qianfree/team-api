@@ -207,10 +207,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		}
 	}
 
-	timeout := info.ChannelMeta.Settings.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 60
-	}
+	timeout := info.ChannelMeta.Settings.GetTimeoutSeconds(info.RelayMode)
 
 	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)
 

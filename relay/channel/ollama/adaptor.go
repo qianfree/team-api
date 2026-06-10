@@ -110,9 +110,13 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 	}
 
 	// Ollama 默认 300s 超时（大模型推理可能很慢）
+	// Ollama 默认 300s 超时（大模型推理可能很慢）
 	timeout := info.ChannelMeta.Settings.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 300
+	}
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesGenerations && timeout < 600 {
+		timeout = 600
 	}
 
 	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)

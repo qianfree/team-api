@@ -52,3 +52,6 @@ func (c *ControllerV1) AdminUsageLogExport(ctx context.Context, req *v1.AdminUsa
 func (c *ControllerV1) AdminBillingRecordExport(ctx context.Context, req *v1.AdminBillingRecordExportReq) (res *v1.AdminBillingRecordExportRes, err error) {
 	return service.Admin().ExportBillingRecords(ctx, req)
 }
+func (c *ControllerV1) AdminTransactionList(ctx context.Context, req *v1.AdminTransactionListReq) (res *v1.AdminTransactionListRes, err error) {
+	return service.Admin().GetAllTransactions(ctx, req)
+}

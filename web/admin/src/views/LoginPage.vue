@@ -7,12 +7,14 @@ import { useAuthStore } from '@/stores/auth'
 import { extractApiError } from '@/utils/request'
 import request from '@/utils/request'
 import SlideCaptcha from '@/components/SlideCaptcha.vue'
+import { useSiteName } from '@/composables/useSiteName'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const formRef = ref<FormInstance | null>(null)
 const loading = ref(false)
+const { siteName } = useSiteName()
 
 const form = reactive({
   username: '',
@@ -94,8 +96,8 @@ async function handle2FAVerify() {
       <div class="login-orb login-orb--3" />
 
       <div class="login-brand__content">
-        <img src="/favicon.png" alt="Team-API" class="login-brand__logo" />
-        <h1 class="login-brand__title">Team-API</h1>
+        <img src="/favicon.png" :alt="siteName" class="login-brand__logo" />
+        <h1 class="login-brand__title">{{ siteName }}</h1>
         <p class="login-brand__desc">多租户 大模型 API 网关管理平台</p>
 
         <div class="login-brand__features">
@@ -132,8 +134,8 @@ async function handle2FAVerify() {
     <div class="login-form-wrapper">
       <!-- Mobile Brand (hidden on desktop) -->
       <div class="login-mobile-brand">
-        <img src="/favicon.png" alt="Team-API" class="login-brand__logo" />
-        <span class="login-mobile-brand__name">Team-API</span>
+        <img src="/favicon.png" :alt="siteName" class="login-brand__logo" />
+        <span class="login-mobile-brand__name">{{ siteName }}</span>
       </div>
 
       <div class="login-form glass animate-slideUp">

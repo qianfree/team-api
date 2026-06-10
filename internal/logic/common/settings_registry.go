@@ -45,7 +45,6 @@ var Categories = []SettingCategory{
 	{Key: "channel", Label: "渠道配置", Icon: "channel", Order: 9},
 	{Key: "storage", Label: "存储配置", Icon: "cloud", Order: 10},
 	{Key: "data_governance", Label: "数据治理", Icon: "database", Order: 11},
-	{Key: "update", Label: "系统更新", Icon: "sync", Order: 12},
 }
 
 // Registry is the central definition of all configuration items.
@@ -59,6 +58,12 @@ var Registry = []SettingDef{
 		Label: "开放注册", Description: "是否允许新用户注册", IsPublic: true},
 	{Key: "register_email_verification", Type: SettingTypeBool, Default: "false", Category: "general",
 		Label: "注册邮箱验证", Description: "注册时是否需要邮箱验证码，关闭时使用滑块验证", IsPublic: true},
+	{Key: "register_ip_limit_per_hour", Type: SettingTypeInt, Default: "3", Category: "general",
+		Label: "IP每小时注册限制", Description: "同一IP每小时最多注册次数（0表示不限制）", Validation: "min:0,max:20"},
+	{Key: "register_ip_limit_per_day", Type: SettingTypeInt, Default: "10", Category: "general",
+		Label: "IP每天注册限制", Description: "同一IP每天最多注册次数（0表示不限制）", Validation: "min:0,max:100"},
+	{Key: "register_global_limit_per_minute", Type: SettingTypeInt, Default: "10", Category: "general",
+		Label: "全局每分钟注册限制", Description: "全系统每分钟最多注册次数（0表示不限制）", Validation: "min:0,max:100"},
 	{Key: "maintenance_mode", Type: SettingTypeBool, Default: "false", Category: "general",
 		Label: "维护模式", Description: "开启后控制台显示维护提示"},
 	{Key: "maintenance_message", Type: SettingTypeString, Default: "", Category: "general",
@@ -67,10 +72,6 @@ var Registry = []SettingDef{
 		Label: "预计维护时长", Description: "维护模式预计持续时间，展示给用户", IsPublic: true},
 	{Key: "api_maintenance_enabled", Type: SettingTypeBool, Default: "false", Category: "general",
 		Label: "全局 API 维护", Description: "开启后 API 代理返回 503，叠加维护模式使用", IsPublic: true},
-	{Key: "demo_mode", Type: SettingTypeBool, Default: "false", Category: "general",
-		Label: "演示模式", Description: "开启后所有写操作被拦截，仅允许只读访问", IsPublic: true},
-	{Key: "demo_message", Type: SettingTypeString, Default: "演示环境，数据不可修改", Category: "general",
-		Label: "演示模式提示", Description: "演示模式下返回给用户的提示信息", IsPublic: true},
 	{Key: "tenant_console_url", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "租户控制台地址", Description: "租户控制台的完整 URL，如 https://console.example.com，用于生成邀请链接等"},
 
@@ -253,14 +254,6 @@ var Registry = []SettingDef{
 		Label: "GDPR删除请求完成天数", Validation: "min:7,max:90"},
 	{Key: "file_retention_enabled", Type: SettingTypeBool, Default: "true", Category: "data_governance",
 		Label: "启用文件保留期检查"},
-
-	// Update settings
-	{Key: "update_auto_check_enabled", Type: SettingTypeBool, Default: "true", Category: "update",
-		Label: "自动检查更新", Description: "启用后系统会定期检查是否有新版本"},
-	{Key: "update_check_interval_hours", Type: SettingTypeInt, Default: "24", Category: "update",
-		Label: "检查间隔（小时）", Description: "自动检查更新的时间间隔", Validation: "min:1,max:168"},
-	{Key: "update_channel", Type: SettingTypeString, Default: "stable", Category: "update",
-		Label: "更新通道", Description: "选择更新通道", Validation: "enum:stable,beta"},
 }
 
 // registryMap is a lookup index for fast access by key.

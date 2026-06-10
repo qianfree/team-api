@@ -18,6 +18,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -59,6 +60,34 @@ var providers = map[string]OAuthProvider{
 
 func getOAuthSetting(ctx context.Context, key string) string {
 	return common.Config().GetOption(ctx, key)
+}
+
+// encryptOAuthToken encrypts a token string for secure storage.
+func encryptOAuthToken(ctx context.Context, token string) string {
+	if token == "" {
+		return ""
+	}
+	encKey := getEncKey(ctx)
+	encrypted, err := crypto.EncryptString(encKey, token)
+	if err != nil {
+		g.Log().Warningf(ctx, "[OAuth] encrypt token failed: %v", err)
+		return token
+	}
+	return encrypted
+}
+
+// decryptOAuthToken decrypts a stored token string.
+func decryptOAuthToken(ctx context.Context, encrypted string) string {
+	if encrypted == "" {
+		return ""
+	}
+	encKey := getEncKey(ctx)
+	decrypted, err := crypto.DecryptString(encKey, encrypted)
+	if err != nil {
+		// 可能是未加密的历史数据，直接返回原值
+		return encrypted
+	}
+	return decrypted
 }
 
 // GetOAuthAuthorizeURL 获取 OAuth 授权跳转 URL
@@ -155,8 +184,8 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 		_, err = dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", identity.Id).
 			Data(do.TntOauthIdentities{
-				AccessToken:      oauthToken.AccessToken,
-				RefreshToken:     oauthToken.RefreshToken,
+				AccessToken:      encryptOAuthToken(ctx, oauthToken.AccessToken),
+				RefreshToken:     encryptOAuthToken(ctx, oauthToken.RefreshToken),
 				TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 				ProviderUsername: userInfo.Username,
 			}).Update()
@@ -241,8 +270,8 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 			ProviderUsername: userInfo.Username,
 			Email:            userInfo.Email,
 			AvatarUrl:        userInfo.AvatarURL,
-			AccessToken:      oauthToken.AccessToken,
-			RefreshToken:     oauthToken.RefreshToken,
+			AccessToken:      encryptOAuthToken(ctx, oauthToken.AccessToken),
+			RefreshToken:     encryptOAuthToken(ctx, oauthToken.RefreshToken),
 			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 			RawData:          string(rawData),
 		}).Insert()
@@ -308,6 +337,11 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 		return nil, common.NewBusinessError(10059, "该 OAuth 供应商未启用")
 	}
 
+	enabled := getOAuthSetting(ctx, fmt.Sprintf("oauth_%s_enabled", req.Provider))
+	if enabled != "true" {
+		return nil, common.NewBusinessError(10059, "该 OAuth 供应商未启用")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
@@ -342,8 +376,8 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 		_, err = dao.TntOauthIdentities.Ctx(ctx).
 			Where("id", existing.Id).
 			Data(do.TntOauthIdentities{
-				AccessToken:    oauthToken.AccessToken,
-				RefreshToken:   oauthToken.RefreshToken,
+				AccessToken:    encryptOAuthToken(ctx, oauthToken.AccessToken),
+				RefreshToken:   encryptOAuthToken(ctx, oauthToken.RefreshToken),
 				TokenExpiresAt: gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 				RawData:        string(rawData),
 			}).Update()
@@ -359,8 +393,8 @@ func (s *sTenant) LinkOAuth(ctx context.Context, req *v1.OAuthLinkReq) (*v1.OAut
 			ProviderUsername: userInfo.Username,
 			Email:            userInfo.Email,
 			AvatarUrl:        userInfo.AvatarURL,
-			AccessToken:      oauthToken.AccessToken,
-			RefreshToken:     oauthToken.RefreshToken,
+			AccessToken:      encryptOAuthToken(ctx, oauthToken.AccessToken),
+			RefreshToken:     encryptOAuthToken(ctx, oauthToken.RefreshToken),
 			TokenExpiresAt:   gtime.NewFromTime(time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)),
 			RawData:          string(rawData),
 		}).Insert()
@@ -498,6 +532,11 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 		name = login
 	}
 
+	// GitHub 用户邮箱私密时 /user 返回空邮箱，需要调用 /user/emails 获取主邮箱
+	if email == "" {
+		email = githubFetchPrimaryEmail(token)
+	}
+
 	return &OAuthUserInfo{
 		ProviderUserID: id,
 		Username:       login,
@@ -506,6 +545,36 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 		AvatarURL:      avatar,
 		RawData:        raw,
 	}, nil
+}
+
+// githubFetchPrimaryEmail fetches the primary verified email from GitHub /user/emails API.
+func githubFetchPrimaryEmail(token string) string {
+	req, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var emails []struct {
+		Email   string `json:"email"`
+		Primary bool   `json:"primary"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+		return ""
+	}
+	for _, e := range emails {
+		if e.Primary {
+			return e.Email
+		}
+	}
+	if len(emails) > 0 {
+		return emails[0].Email
+	}
+	return ""
 }
 
 // === Google OAuth Provider ===
@@ -524,7 +593,11 @@ func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 	v.Set("code", code)
 	v.Set("client_id", getOAuthSetting(ctx, "oauth_google_client_id"))
 	v.Set("client_secret", getOAuthSetting(ctx, "oauth_google_client_secret"))
-	v.Set("redirect_uri", getOAuthSetting(ctx, "site_url"))
+	siteURL := getOAuthSetting(ctx, "site_url")
+	if siteURL == "" {
+		siteURL = "http://localhost:3000"
+	}
+	v.Set("redirect_uri", siteURL+"/api/tenant/oauth/google/callback")
 	v.Set("grant_type", "authorization_code")
 
 	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(v.Encode()))

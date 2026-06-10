@@ -211,12 +211,18 @@ watch(() => props.visible, (val) => {
 <template>
 	<ADrawer
 		:visible="visible"
-		:width="720"
+		:width="580"
 		:title="modelId ? `定价设置 - ${modelIdStr}` : '定价设置'"
 		:mask-closable="false"
+		:footer="true"
 		@cancel="emit('update:visible', false)"
 	>
+		<template #footer>
+			<AButton @click="emit('update:visible', false)">取消</AButton>
+			<AButton type="primary" :loading="editorSaving" @click="savePricing">保存定价</AButton>
+		</template>
 		<ASpin :loading="editorLoading" style="width: 100%">
+		<AForm :model="{}" layout="vertical">
 			<div class="pricing-editor">
 				<!-- Official Pricing Reference -->
 				<div class="editor-section">
@@ -449,13 +455,8 @@ watch(() => props.visible, (val) => {
 						<AButton type="dashed" long @click="addTier" class="mt-3">+ 添加梯度</AButton>
 					</div>
 				</template>
-
-				<!-- Save -->
-				<div class="editor-actions">
-					<AButton @click="emit('update:visible', false)">取消</AButton>
-					<AButton type="primary" :loading="editorSaving" @click="savePricing">保存定价</AButton>
-				</div>
 			</div>
+		</AForm>
 		</ASpin>
 	</ADrawer>
 </template>
@@ -511,14 +512,6 @@ watch(() => props.visible, (val) => {
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--ta-text-secondary);
-}
-
-.editor-actions {
-	display: flex;
-	justify-content: flex-end;
-	gap: 8px;
-	padding-top: 20px;
-	border-top: 1px solid var(--ta-border-light);
 }
 
 .official-pricing-card {

@@ -217,6 +217,7 @@ type AuditRecord struct {
 	StatusCode      int
 	ClientIP        string
 	UserAgent       string
+	Model           string // 请求使用的模型名称
 	RequestBody     string
 	ResponseBody    string
 	LatencyMs       int

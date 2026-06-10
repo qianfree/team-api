@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import adminRoutes from './admin'
 import { useAuthStore } from '@/stores/auth'
 import { shouldRefresh, getRefreshToken } from '@/utils/request'
+import { useSiteName } from '@/composables/useSiteName'
 import axios from 'axios'
 
 const routes: RouteRecordRaw[] = [
@@ -42,12 +43,16 @@ async function checkSetupStatus(): Promise<boolean> {
   return systemInitialized === true
 }
 
+const { siteName, fetchSiteName } = useSiteName()
+
 router.beforeEach(async (to) => {
   const authStore = useAuthStore()
   authStore.loadFromStorage()
 
   if (to.meta.title) {
-    document.title = `${to.meta.title as string} — Team-API`
+    fetchSiteName()
+    const name = siteName.value || 'Team-API'
+    document.title = `${to.meta.title as string} — ${name}`
   }
 
   if (to.name === 'AdminSetup') {

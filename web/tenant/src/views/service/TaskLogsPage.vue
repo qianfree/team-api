@@ -5,6 +5,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
+import { useExport } from '@/composables/useExport'
 
 interface TaskItem {
 	id: number
@@ -40,6 +41,15 @@ const showDetail = ref(false)
 const detailLoading = ref(false)
 const detailTask = ref<TaskItem | null>(null)
 
+const { exporting, exportFile } = useExport({
+	url: '/tenant/tasks/export',
+	getFilters: () => ({
+		status: filterStatus.value || undefined,
+		platform: filterPlatform.value || undefined,
+		public_task_id: filterTaskId.value || undefined,
+	}),
+})
+
 const statusBadge: Record<string, string> = {
 	NOT_START: 'bg-gray-100 text-gray-800',
 	SUBMITTED: 'bg-blue-100 text-blue-800',
@@ -63,6 +73,8 @@ const platformLabel: Record<string, string> = {
 	kling: 'Kling',
 	midjourney: 'Midjourney',
 	suno: 'Suno',
+	volcengine: '火山引擎',
+	ali: '阿里',
 }
 
 function formatCost(n: number | undefined): string {
@@ -153,10 +165,19 @@ onMounted(() => {
 <template>
 	<div class="space-y-6">
 		<!-- Page Header -->
-		<div class="page-header">
+		<div class="page-header flex items-center justify-between">
 			<div>
 				<h1 class="page-title">任务日志</h1>
 				<p class="page-description">查看异步生成任务（视频/图片/音乐）的执行记录</p>
+			</div>
+			<div class="flex items-center gap-2">
+				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('csv')">
+					<Icon v-if="exporting" name="refresh" size="xs" class="animate-spin" />
+					{{ exporting ? '导出中...' : '导出 CSV' }}
+				</button>
+				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('xlsx')">
+					{{ exporting ? '导出中...' : '导出 Excel' }}
+				</button>
 			</div>
 		</div>
 
@@ -174,7 +195,7 @@ onMounted(() => {
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">平台</label>
-						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'}]" container-class="w-[120px]" />
+						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
@@ -199,25 +220,25 @@ onMounted(() => {
 
 			<div v-else>
 				<div class="table-container">
-					<table class="table">
+					<table class="table table-fixed w-full">
 						<thead>
 							<tr>
-								<th>任务 ID</th>
-								<th>平台</th>
-								<th>状态</th>
-								<th>模型</th>
-								<th>费用</th>
-								<th>提交时间</th>
-								<th>完成时间</th>
-								<th></th>
+								<th class="w-52">任务 ID</th>
+								<th class="w-24">平台</th>
+								<th class="w-20">状态</th>
+								<th class="w-44">模型</th>
+								<th class="w-25">费用</th>
+								<th class="w-38">提交时间</th>
+								<th class="w-38">完成时间</th>
+								<th class="w-15">操作</th>
 							</tr>
 						</thead>
 						<tbody>
 							<tr v-for="task in tasks" :key="task.id">
-								<td>
+								<td class="truncate" :title="task.public_task_id">
 									<span class="font-mono text-xs text-gray-600">{{ task.public_task_id }}</span>
 								</td>
-								<td>
+								<td class="truncate">
 									<span class="text-sm font-medium text-gray-700">{{ platformLabel[task.platform] || task.platform }}</span>
 								</td>
 								<td>
@@ -225,19 +246,19 @@ onMounted(() => {
 										{{ statusLabel[task.status] || task.status }}
 									</span>
 								</td>
-								<td>
+								<td class="truncate" :title="task.model_name">
 									<span class="text-sm text-gray-700">{{ task.model_name || '-' }}</span>
 								</td>
-								<td>
+								<td class="truncate">
 									<span v-if="task.billing_settled && task.actual_cost > 0" class="text-sm font-medium text-emerald-600">{{ formatCost(task.actual_cost) }}</span>
 									<span v-else-if="task.pre_deduct_amount > 0" class="text-sm text-gray-500">{{ formatCost(task.pre_deduct_amount) }} <span class="text-xs text-gray-400">(预扣)</span></span>
 									<span v-else class="text-sm text-gray-400">-</span>
 								</td>
-								<td>
-									<span class="text-xs text-gray-500 whitespace-nowrap">{{ formatTime(task.submit_time) }}</span>
+								<td class="truncate">
+									<span class="text-xs text-gray-500">{{ formatTime(task.submit_time) }}</span>
 								</td>
-								<td>
-									<span class="text-xs text-gray-500 whitespace-nowrap">{{ formatTime(task.finish_time) }}</span>
+								<td class="truncate">
+									<span class="text-xs text-gray-500">{{ formatTime(task.finish_time) }}</span>
 								</td>
 								<td>
 									<button class="btn btn-ghost btn-sm p-1.5" title="查看详情" @click="openDetail(task)">

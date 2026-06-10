@@ -117,12 +117,11 @@ onMounted(() => {
 .settings-content {
 	flex: 1;
 	min-width: 0;
+	max-width: 800px;
 }
 .settings-footer {
 	display: flex;
 	justify-content: flex-end;
-	margin-top: 24px;
-	padding-top: 16px;
-	border-top: 1px solid var(--color-border);
+	margin-top: 16px;
 }
 </style>

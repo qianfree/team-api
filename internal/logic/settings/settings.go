@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/service"
@@ -41,6 +42,14 @@ func (s *sSettings) PublicSettingsGet(ctx context.Context, _ *v1.PublicSettingsG
 			}
 		}
 	}
+
+	// Inject demo mode from config file (not database — avoids the self-lock bug)
+	settings["demo_mode"] = g.Cfg().MustGet(ctx, "demo.enabled").Bool()
+	demoMsg := g.Cfg().MustGet(ctx, "demo.message").String()
+	if demoMsg == "" {
+		demoMsg = "演示环境，数据不可修改"
+	}
+	settings["demo_message"] = demoMsg
 
 	return &v1.PublicSettingsGetRes{Settings: settings}, nil
 }

@@ -3,13 +3,14 @@ import { useSeoMeta, useHead } from '@unhead/vue'
 interface SeoOptions {
 	title: string
 	description: string
+	siteName?: string
 	keywords?: string
 	canonicalUrl?: string
 	ogImage?: string
 	ogType?: 'website' | 'article' | 'profile' | 'book'
 }
 
-const SITE_NAME = 'Team-API'
+const DEFAULT_SITE_NAME = 'Team-API'
 const DEFAULT_OG_IMAGE = '/og-image.png'
 
 /**
@@ -20,6 +21,7 @@ export function useSeo(options: SeoOptions) {
 	const {
 		title,
 		description,
+		siteName = DEFAULT_SITE_NAME,
 		keywords,
 		canonicalUrl,
 		ogImage = DEFAULT_OG_IMAGE,
@@ -33,7 +35,7 @@ export function useSeo(options: SeoOptions) {
 		ogDescription: description,
 		keywords,
 		ogType,
-		ogSiteName: SITE_NAME,
+		ogSiteName: siteName,
 		ogLocale: 'zh_CN',
 		ogImage,
 		twitterCard: 'summary_large_image',

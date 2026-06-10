@@ -47,8 +47,8 @@ const values = useFormValues()
 			<div class="switch-row" style="margin-top: 8px">
 				<span class="switch-label">启用 SSL</span>
 				<ASwitch
-					:model-value="values['storage_use_ssl'] === 'true' || values['storage_use_ssl'] === '1'"
-					@change="(v: string | number | boolean) => values['storage_use_ssl'] = String(v)"
+					:model-value="!!values['storage_use_ssl']"
+					@change="(v: string | number | boolean) => values['storage_use_ssl'] = v"
 				/>
 			</div>
 		</div>

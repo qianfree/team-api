@@ -323,3 +323,39 @@ type AdminBillingRecordExportReq struct {
 }
 
 type AdminBillingRecordExportRes struct{}
+
+// === 交易流水 ===
+
+type AdminTransactionListReq struct {
+	g.Meta    `path:"/transactions" method:"get" mime:"json" tags:"管理后台-交易" summary:"交易流水列表"`
+	Page      int    `json:"page" d:"1" dc:"页码"`
+	PageSize  int    `json:"page_size" d:"20" v:"between:1,100" dc:"每页数量"`
+	TenantID  int64  `json:"tenant_id" dc:"租户ID"`
+	Type      string `json:"type" dc:"交易类型：consume/recharge/adjust"`
+	Username  string `json:"username" dc:"用户名（模糊匹配）"`
+	ModelName string `json:"model_name" dc:"模型名称（模糊匹配）"`
+	StartDate string `json:"start_date" dc:"开始日期"`
+	EndDate   string `json:"end_date" dc:"结束日期"`
+}
+
+type AdminTransactionItem struct {
+	Id           int64   `json:"id"`
+	TenantId     int64   `json:"tenant_id"`
+	TenantName   string  `json:"tenant_name"`
+	Type         string  `json:"type"`
+	Amount       float64 `json:"amount"`
+	BalanceAfter float64 `json:"balance_after"`
+	Description  string  `json:"description"`
+	UserId       int64   `json:"user_id"`
+	Username     string  `json:"username"`
+	RequestId    string  `json:"request_id"`
+	ModelName    string  `json:"model_name"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+type AdminTransactionListRes struct {
+	List     []*AdminTransactionItem `json:"list"`
+	Total    int                     `json:"total"`
+	Page     int                     `json:"page"`
+	PageSize int                     `json:"page_size"`
+}
