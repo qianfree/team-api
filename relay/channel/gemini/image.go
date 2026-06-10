@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -50,10 +51,7 @@ func handleBananaImageResponse(_ context.Context, resp *http.Response, writer ht
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, fmt.Errorf("banana API error: %d, body: %s", resp.StatusCode, string(body))
+		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
 	var geminiResp dto.GeminiChatResponse
@@ -80,16 +78,7 @@ func handleBananaImageResponse(_ context.Context, resp *http.Response, writer ht
 	}
 
 	if len(openaiResp.Data) == 0 {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusBadRequest)
-		errBody, _ := json.Marshal(map[string]any{
-			"error": map[string]any{
-				"type":    "banana_no_image",
-				"message": "model did not return any image data",
-			},
-		})
-		_, _ = writer.Write(errBody)
-		return &common.Usage{}, fmt.Errorf("banana response contained no image data")
+		return &common.Usage{}, constant.NewRequestError("model did not return any image data", nil)
 	}
 
 	usage := &common.Usage{}
@@ -150,10 +139,7 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, fmt.Errorf("imagen API error: %d", resp.StatusCode)
+		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
 	var geminiResp dto.GeminiImageResponse
@@ -176,16 +162,7 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	}
 
 	if len(openaiResp.Data) == 0 {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusBadRequest)
-		errBody, _ := json.Marshal(map[string]any{
-			"error": map[string]any{
-				"type":    "imagen_filtered",
-				"message": "all images were filtered by safety filters",
-			},
-		})
-		_, _ = writer.Write(errBody)
-		return &common.Usage{}, fmt.Errorf("all images filtered by safety")
+		return &common.Usage{}, constant.NewRequestError("all images were filtered by safety filters", nil)
 	}
 
 	respBody, err := json.Marshal(openaiResp)
