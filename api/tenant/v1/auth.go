@@ -4,15 +4,16 @@ import "github.com/gogf/gf/v2/frame/g"
 
 // TenantRegisterReq 租户注册请求
 type TenantRegisterReq struct {
-	g.Meta     `path:"/auth/register" method:"post" mime:"json" tags:"租户控制台-认证" summary:"租户注册" group:"public" middleware:"-"`
-	Email      string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
-	Code       string `json:"code" dc:"邮箱验证码（邮箱验证开启时必填）"`
-	Password   string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
-	TenantName string `json:"tenant_name" v:"required|length:2,100#请输入组织名称|组织名称长度为2-100位" dc:"组织名称"`
-	TenantCode string `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入组织代码|组织代码为3-30位小写字母数字|组织代码格式不正确" dc:"组织代码"`
-	Username   string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
-	CaptchaKey string `json:"captcha_key" dc:"滑块验证码key（邮箱验证关闭时必填）"`
-	CaptchaX   int    `json:"captcha_x" dc:"滑块X坐标（邮箱验证关闭时必填）"`
+	g.Meta         `path:"/auth/register" method:"post" mime:"json" tags:"租户控制台-认证" summary:"租户注册" group:"public" middleware:"-"`
+	Email          string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
+	Code           string `json:"code" dc:"邮箱验证码（邮箱验证开启时必填）"`
+	Password       string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
+	TenantName     string `json:"tenant_name" v:"required|length:2,100#请输入组织名称|组织名称长度为2-100位" dc:"组织名称"`
+	TenantCode     string `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入组织代码|组织代码为3-30位小写字母数字|组织代码格式不正确" dc:"组织代码"`
+	Username       string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
+	CaptchaKey     string `json:"captcha_key" dc:"滑块验证码key（Turnstile关闭时必填）"`
+	CaptchaX       int    `json:"captcha_x" dc:"滑块X坐标（Turnstile关闭时必填）"`
+	TurnstileToken string `json:"turnstile_token" dc:"Cloudflare Turnstile验证token（Turnstile启用时必填）"`
 }
 
 type TenantRegisterRes struct {
@@ -33,12 +34,13 @@ type TenantRegisterRes struct {
 
 // TenantLoginReq 租户登录请求
 type TenantLoginReq struct {
-	g.Meta     `path:"/auth/login" method:"post" mime:"json" tags:"租户控制台-认证" summary:"租户登录" group:"public" middleware:"-"`
-	Account    string `json:"account" v:"required#请输入账号" dc:"账号（username@tenant_code 或邮箱）"`
-	Password   string `json:"password" v:"required#请输入密码" dc:"密码"`
-	Type       string `json:"type" v:"required|in:ram,admin#请选择登录方式|登录方式无效" dc:"登录方式：ram（RAM账号）/ admin（管理员邮箱）"`
-	CaptchaKey string `json:"captcha_key" dc:"验证码key（验证码启用时必填）"`
-	CaptchaX   int    `json:"captcha_x" dc:"滑块X坐标（验证码启用时必填）"`
+	g.Meta         `path:"/auth/login" method:"post" mime:"json" tags:"租户控制台-认证" summary:"租户登录" group:"public" middleware:"-"`
+	Account        string `json:"account" v:"required#请输入账号" dc:"账号（username@tenant_code 或邮箱）"`
+	Password       string `json:"password" v:"required#请输入密码" dc:"密码"`
+	Type           string `json:"type" v:"required|in:ram,admin#请选择登录方式|登录方式无效" dc:"登录方式：ram（RAM账号）/ admin（管理员邮箱）"`
+	CaptchaKey     string `json:"captcha_key" dc:"验证码key（Turnstile关闭时必填）"`
+	CaptchaX       int    `json:"captcha_x" dc:"滑块X坐标（Turnstile关闭时必填）"`
+	TurnstileToken string `json:"turnstile_token" dc:"Cloudflare Turnstile验证token（Turnstile启用时必填）"`
 }
 
 type TenantLoginRes struct {

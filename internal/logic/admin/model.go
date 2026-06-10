@@ -90,7 +90,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		MaxOutputTokens  int         `json:"max_output_tokens"`
 		Capabilities     string      `json:"capabilities"`
 		Description      string      `json:"description"`
-		Tags             string      `json:"tags"`
+		Tags             []string    `json:"tags"`
 		CreatedAt        *gtime.Time `json:"created_at"`
 		UpdatedAt        *gtime.Time `json:"updated_at"`
 		DeprecatedAt     *gtime.Time `json:"deprecated_at"`
@@ -145,7 +145,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			MaxOutput:    m.MaxOutputTokens,
 			Capabilities: parseCapabilities(m.Capabilities),
 			Description:  m.Description,
-			Tags:         parseTagsArray(m.Tags),
+			Tags:         m.Tags,
 			CreatedAt:    m.CreatedAt.String(),
 			UpdatedAt:    m.UpdatedAt.String(),
 		}
@@ -360,10 +360,6 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 		return nil, err
 	}
 	return nil, nil
-}
-
-func parseTagsArray(tags string) []string {
-	return parsePgArray(tags)
 }
 
 func parseCapabilities(raw string) map[string]bool {

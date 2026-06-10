@@ -20,6 +20,23 @@ type ChannelMeta struct {
 	Settings          ChannelSettings
 }
 
+const (
+	DefaultTimeoutSeconds       = 60
+	ImagesGenerationTimeoutSecs = 600
+)
+
+// GetTimeoutSeconds 返回请求超时秒数。
+// 渠道自定义优先，未配置时根据请求模式返回默认值（图片生成 600s，其余 60s）。
+func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
+	if s.TimeoutSeconds > 0 {
+		return s.TimeoutSeconds
+	}
+	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
+		return ImagesGenerationTimeoutSecs
+	}
+	return DefaultTimeoutSeconds
+}
+
 // ChannelSettings 渠道配置（来自 chn_channels.settings JSONB）
 type ChannelSettings struct {
 	TimeoutSeconds              int            `json:"timeout_seconds"`                          // 请求超时秒数，默认 60

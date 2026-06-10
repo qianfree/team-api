@@ -174,6 +174,8 @@ const (
 	// Registration errors
 	CodeRegistrationDisabled      = 10077
 	CodeEmailVerificationDisabled = 10082
+	CodeIpRateLimitExceeded       = 10090 // IP级别限流
+	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -308,6 +310,8 @@ const (
 	// Registration errors
 	MsgRegistrationDisabled      = "注册功能已关闭"
 	MsgEmailVerificationDisabled = "注册邮箱验证未启用"
+	MsgIpRateLimitExceeded       = "该IP注册频率过高，请稍后再试"
+	MsgGlobalRateLimitExceeded   = "系统注册繁忙，请稍后再试"
 
 	// Setup errors
 	MsgSetupCompleted        = "系统已完成初始化"

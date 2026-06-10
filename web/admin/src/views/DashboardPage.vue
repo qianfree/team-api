@@ -309,8 +309,8 @@ function renderModelChart() {
 
   modelChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: 130, right: 50, top: 10, bottom: 20 },
-    xAxis: { type: 'value', name: '费用 ($)' },
+    grid: { left: 130, right: 50, top: 10, bottom: 36 },
+    xAxis: { type: 'value', name: '费用 ($)', nameLocation: 'middle', nameGap: 22 },
     yAxis: {
       type: 'category',
       data: names,

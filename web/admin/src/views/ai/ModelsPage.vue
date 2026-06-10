@@ -214,7 +214,7 @@ const columns: TableColumnData[] = [
     },
   },
 
-  { title: '更新时间', dataIndex: 'updated_at', width: 170 },
+  { title: '更新时间', dataIndex: 'updated_at', width: 180 },
   {
     title: '操作',
     dataIndex: 'actions',

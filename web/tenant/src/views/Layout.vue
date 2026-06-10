@@ -177,6 +177,9 @@ onMounted(async () => {
 	}
 
 	await fetchPublicSettings()
+	if (publicSettings.site_name && route.meta.title) {
+		document.title = `${pageTitle.value} — ${publicSettings.site_name}`
+	}
 	if (publicSettings.demo_mode) {
 		demoMessage.value = publicSettings.demo_message || '演示环境，数据不可修改'
 		mountWatermark(document.body)

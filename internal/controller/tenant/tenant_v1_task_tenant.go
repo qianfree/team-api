@@ -13,3 +13,6 @@ func (c *ControllerV1) TenantTaskList(ctx context.Context, req *v1.TenantTaskLis
 func (c *ControllerV1) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetailReq) (res *v1.TenantTaskDetailRes, err error) {
 	return service.Tenant().TenantTaskDetail(ctx, req)
 }
+func (c *ControllerV1) TenantTaskExport(ctx context.Context, req *v1.TenantTaskExportReq) (res *v1.TenantTaskExportRes, err error) {
+	return service.Tenant().ExportTasks(ctx, req)
+}

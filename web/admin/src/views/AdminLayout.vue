@@ -6,6 +6,7 @@ import axios from 'axios'
 import { marked } from 'marked'
 import request from '@/utils/request'
 import { useWatermark } from '@/composables/useWatermark'
+import { useSiteName } from '@/composables/useSiteName'
 import {
   IconDashboard,
   IconUserGroup,
@@ -31,12 +32,14 @@ import {
   IconLayers,
   IconHome,
   IconUser,
+  IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const { siteName } = useSiteName()
 
 const collapsed = ref(false)
 const mobileMenuOpen = ref(false)
@@ -298,8 +301,7 @@ const menuGroups = [
     items: [
       { name: 'AdminPlans', label: '套餐管理', icon: IconIdcard },
       { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
-      { name: 'AdminBilling', label: '计费管理', icon: IconCommand },
-      { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
+      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
       { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
       { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag },
     ],
@@ -351,6 +353,7 @@ const menuGroups = [
       { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup },
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
+      { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
       { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
       { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
       { name: 'AdminChangelogs', label: '更新日志', icon: IconFile },
@@ -445,10 +448,10 @@ onUnmounted(() => {
     <!-- Desktop Sidebar -->
     <div class="admin-sidebar" :class="{ 'admin-sidebar--collapsed': collapsed }">
       <div class="admin-sidebar__logo" @click="openUpdateModal" style="cursor: pointer;">
-        <div class="admin-sidebar__logo-icon">T</div>
+        <img src="/favicon.png" alt="Logo" class="admin-sidebar__logo-icon" />
         <Transition name="fade">
           <span v-if="!collapsed" class="admin-sidebar__logo-text">
-            Team-API
+            {{ siteName || 'Team-API' }}
             <span class="admin-sidebar__version">
               {{ appVersion === 'dev' ? 'dev' : 'v' + appVersion }}
               <span v-if="hasUpdate" class="admin-sidebar__update-dot" title="有新版本可用"></span>
@@ -526,8 +529,8 @@ onUnmounted(() => {
       <Transition name="slide">
         <div v-if="mobileMenuOpen" class="admin-sidebar admin-sidebar--mobile">
           <div class="admin-sidebar__logo">
-            <div class="admin-sidebar__logo-icon">T</div>
-            <span class="admin-sidebar__logo-text">Team-API</span>
+            <img src="/favicon.png" alt="Logo" class="admin-sidebar__logo-icon" />
+            <span class="admin-sidebar__logo-text">{{ siteName || 'Team-API' }}</span>
           </div>
           <div class="admin-sidebar__menu">
             <div v-for="group in menuGroups" :key="group.key">
@@ -775,17 +778,10 @@ onUnmounted(() => {
 
 .admin-sidebar__logo-icon {
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 32px;
   height: 32px;
-  background: var(--ta-primary-gradient);
   border-radius: 8px;
-  color: #fff;
-  font-size: 16px;
-  font-weight: 700;
-  box-shadow: 0 4px 16px rgba(13, 148, 136, 0.4);
+  object-fit: contain;
 }
 
 .admin-sidebar__logo-text {

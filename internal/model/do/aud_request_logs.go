@@ -43,4 +43,5 @@ type AudRequestLogs struct {
 	TaskUpstreamHeaders any         // 异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）
 	TaskCompletedAt     *gtime.Time // 异步任务达到终态的时间
 	AttachmentIds       any         // 提取的媒体附件 fil_files ID 数组（JSONB: [1,2,3]）
+	Model               any         // 请求使用的模型名称（从请求体或 URL 中提取）
 }

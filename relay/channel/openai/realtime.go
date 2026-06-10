@@ -66,10 +66,7 @@ func (p *RealtimeProxy) DialUpstream() error {
 	targetURL := buildRealtimeURL(p.info.ChannelMeta.BaseURL)
 	header := buildRealtimeHeaders(p.info)
 
-	timeout := p.info.ChannelMeta.Settings.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 60
-	}
+	timeout := p.info.ChannelMeta.Settings.GetTimeoutSeconds(p.info.RelayMode)
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: time.Duration(timeout) * time.Second,
