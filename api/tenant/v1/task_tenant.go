@@ -47,3 +47,14 @@ type TenantTaskDetailReq struct {
 type TenantTaskDetailRes struct {
 	Task TenantTaskItem `json:"task"`
 }
+
+// TenantTaskExportReq 导出异步任务日志请求
+type TenantTaskExportReq struct {
+	g.Meta       `path:"/tasks/export" method:"get" mime:"json" tags:"租户控制台-任务管理" summary:"导出异步任务日志"`
+	Format       string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	Status       string `json:"status" in:"query" dc:"筛选状态"`
+	Platform     string `json:"platform" in:"query" dc:"筛选平台(sora/kling/midjourney/suno)"`
+	PublicTaskID string `json:"public_task_id" in:"query" dc:"任务ID（精确匹配）"`
+}
+
+type TenantTaskExportRes struct{}
