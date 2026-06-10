@@ -108,9 +108,13 @@ func injectStreamOptions(rawMap map[string]json.RawMessage, info *common.RelayIn
 
 // injectThinkingParams 根据 RelayInfo 中的思考后缀注入 DeepSeek 思考模式参数。
 //
-// DeepSeek 思考模式参数说明：
-//   - thinking.type: "enabled"(默认) / "disabled"
-//   - reasoning_effort: "high"(默认) / "max"，兼容映射：low/medium→high, xhigh→max
+// DeepSeek 两类模型的参数差异：
+//   - V3 思考版（deepseek-chat）：通过 thinking.type: "enabled"/"disabled" 控制；启用时需要 budget_tokens
+//   - R1 系列（deepseek-reasoner）：不识别 thinking 参数，通过 reasoning_effort: "none"/"low"/"high"/"max" 控制
+//
+// 关闭思考时同时注入两个参数，兼容两类模型：
+//   - thinking.type: "disabled"（V3 识别）
+//   - reasoning_effort: "none"（R1 识别）
 //
 // 注入优先级：客户端已显式设置 > 后缀路由注入 > 不干预（保留 DeepSeek 默认行为）
 func injectThinkingParams(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
@@ -120,16 +124,18 @@ func injectThinkingParams(rawMap map[string]json.RawMessage, info *common.RelayI
 	}
 
 	// -nothinking 后缀：显式关闭思考
+	// V3 模型：thinking.type: "disabled" 生效
+	// R1 模型：thinking 参数被忽略，需 reasoning_effort: "none" 才能关闭思考
 	if info.ThinkingDisabled {
 		rawMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
-		// 关闭思考时清理 reasoning_effort
-		delete(rawMap, "reasoning_effort")
+		rawMap["reasoning_effort"] = json.RawMessage(`"none"`)
 		return rawMap
 	}
 
 	// -thinking 后缀：显式开启思考 + 可选 effort
+	// budget_tokens 为 V3 思考版必需字段，R1 模型忽略此参数
 	if info.ThinkingEnabled {
-		rawMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
+		rawMap["thinking"] = json.RawMessage(`{"type":"enabled","budget_tokens":16000}`)
 		rawMap = injectReasoningEffort(rawMap, info)
 		return rawMap
 	}
