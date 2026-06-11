@@ -14,6 +14,7 @@ import ContentFilterTab from './settings/ContentFilterTab.vue'
 import ChannelTab from './settings/ChannelTab.vue'
 import StorageTab from './settings/StorageTab.vue'
 import DataGovernanceTab from './settings/DataGovernanceTab.vue'
+import AgreementTab from './settings/AgreementTab.vue'
 
 interface SettingCategory {
 	key: string
@@ -34,6 +35,7 @@ const categoryMap: Record<string, Component> = {
 	channel: ChannelTab,
 	storage: StorageTab,
 	data_governance: DataGovernanceTab,
+	agreement: AgreementTab,
 }
 
 const categories = ref<SettingCategory[]>([])

@@ -10,6 +10,7 @@ import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
 import AgreementAcceptModal from '@/components/common/AgreementAcceptModal.vue'
+import AgreementViewModal from '@/components/common/AgreementViewModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -45,6 +46,15 @@ const accountInput = ref<HTMLInputElement | null>(null)
 
 // Pending agreements
 const showAgreements = ref(false)
+
+// Agreement view modal
+const showAgreementModal = ref(false)
+const agreementModalCode = ref('')
+
+function openAgreement(code: string) {
+	agreementModalCode.value = code
+	showAgreementModal.value = true
+}
 
 function proceedAfterLogin() {
 	const pending = authStore.pendingAgreements
@@ -360,6 +370,11 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<p class="mt-4 text-center text-xs text-gray-400">
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
+					<span class="mx-1">·</span>
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('privacy')">隐私政策</button>
+				</p>
 			</form>
 
 			<!-- RAM Login Form -->
@@ -452,6 +467,11 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<p class="mt-4 text-center text-xs text-gray-400">
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
+					<span class="mx-1">·</span>
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('privacy')">隐私政策</button>
+				</p>
 			</form>
 
 			<!-- OAuth Login -->
@@ -494,11 +514,6 @@ async function handleOAuthLogin(provider: string) {
 					立即创建
 				</router-link>
 			</p>
-			<p class="mt-2 text-xs text-gray-400">
-				<router-link to="/tenant/agreement/terms" target="_blank" class="hover:text-gray-500 transition-colors">服务条款</router-link>
-				<span class="mx-1">·</span>
-				<router-link to="/tenant/agreement/privacy" target="_blank" class="hover:text-gray-500 transition-colors">隐私政策</router-link>
-			</p>
 		</template>
 	</AuthLayout>
 
@@ -506,6 +521,12 @@ async function handleOAuthLogin(provider: string) {
 		:show="showAgreements"
 		:agreements="authStore.pendingAgreements"
 		@accepted="onAgreementsAccepted"
+	/>
+
+	<AgreementViewModal
+		:show="showAgreementModal"
+		:code="agreementModalCode"
+		@close="showAgreementModal = false"
 	/>
 </template>
 

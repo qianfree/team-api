@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"strings"
+
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -21,6 +23,12 @@ var tenantPublicPaths = map[string]bool{
 	"/api/tenant/email/reset-password": true,
 	"/api/tenant/members/join":         true,
 	"/api/tenant/members/invite-info":  true,
+	"/api/tenant/agreements/current":   true,
+}
+
+// tenantPublicPrefixes lists path prefixes that skip JWT auth (for dynamic routes like /current/{code}).
+var tenantPublicPrefixes = []string{
+	"/api/tenant/agreements/current/",
 }
 
 // TenantAuth is JWT authentication middleware for tenant console.
@@ -30,6 +38,12 @@ func TenantAuth(r *ghttp.Request) {
 	if tenantPublicPaths[r.URL.Path] {
 		r.Middleware.Next()
 		return
+	}
+	for _, prefix := range tenantPublicPrefixes {
+		if strings.HasPrefix(r.URL.Path, prefix) {
+			r.Middleware.Next()
+			return
+		}
 	}
 
 	tokenStr := extractBearerToken(r)
