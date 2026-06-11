@@ -27,6 +27,24 @@ type (
 		ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPasswordReq) (*v1.AdminUserResetPasswordRes, error)
 		// ExportUsers exports admin users to CSV or Excel.
 		ExportUsers(ctx context.Context, req *v1.AdminUserExportReq) (*v1.AdminUserExportRes, error)
+		// CreateAgreement 创建协议版本
+		CreateAgreement(ctx context.Context, req *v1.AgreementCreateReq) (*v1.AgreementCreateRes, error)
+		// ListAgreements 协议版本列表
+		ListAgreements(ctx context.Context, req *v1.AgreementListReq) (*v1.AgreementListRes, error)
+		// GetAgreement 协议版本详情
+		GetAgreement(ctx context.Context, req *v1.AgreementGetReq) (*v1.AgreementGetRes, error)
+		// UpdateAgreement 更新协议版本（仅 draft）
+		UpdateAgreement(ctx context.Context, req *v1.AgreementUpdateReq) (*v1.AgreementUpdateRes, error)
+		// DeleteAgreement 删除协议版本（仅 draft）
+		DeleteAgreement(ctx context.Context, req *v1.AgreementDeleteReq) (*v1.AgreementDeleteRes, error)
+		// PublishAgreement 发布协议版本
+		PublishAgreement(ctx context.Context, req *v1.AgreementPublishReq) (*v1.AgreementPublishRes, error)
+		// ListAgreementAcceptances 协议接受记录列表
+		ListAgreementAcceptances(ctx context.Context, req *v1.AgreementAcceptanceListReq) (*v1.AgreementAcceptanceListRes, error)
+		// ListAdminPendingAgreements 当前管理员待接受的协议
+		ListAdminPendingAgreements(ctx context.Context, req *v1.AdminAgreementPendingReq) (*v1.AdminAgreementPendingRes, error)
+		// AcceptAdminAgreements 管理员接受协议
+		AcceptAdminAgreements(ctx context.Context, req *v1.AdminAgreementAcceptReq) (*v1.AdminAgreementAcceptRes, error)
 		// GetAuditConfig retrieves the global audit level from sys_options.
 		GetAuditConfig(ctx context.Context, _ *v1.AuditConfigGetReq) (*v1.AuditConfigGetRes, error)
 		// UpdateAuditConfig updates the global audit level.
@@ -225,6 +243,7 @@ type (
 		// FetchOfficialPricing 拉取模型官方定价（来自 LiteLLM + models.dev 双数据源）
 		FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchOfficialReq) (*v1.PricingFetchOfficialRes, error)
 		// FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
+		// 按优先级尝试 LiteLLM → OpenRouter → BaseLLM，返回第一个匹配的结果
 		FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchOfficialInfoReq) (*v1.ModelFetchOfficialInfoRes, error)
 		// ExportModels exports model list to CSV or Excel.
 		ExportModels(ctx context.Context, req *v1.ModelExportReq) (*v1.ModelExportRes, error)

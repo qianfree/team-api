@@ -30,6 +30,7 @@ type TenantRegisterRes struct {
 		Username string `json:"username"`
 		Role     string `json:"role"`
 	} `json:"user"`
+	PendingAgreements []*TenantLoginPendingAgreement `json:"pending_agreements,omitempty"` // 待接受协议列表
 }
 
 // TenantLoginReq 租户登录请求
@@ -59,7 +60,16 @@ type TenantLoginRes struct {
 		Username string `json:"username"`
 		Role     string `json:"role"`
 	} `json:"user"`
-	MaintenanceInfo *LoginMaintenanceInfo `json:"maintenance_info,omitempty"`
+	MaintenanceInfo   *LoginMaintenanceInfo          `json:"maintenance_info,omitempty"`
+	PendingAgreements []*TenantLoginPendingAgreement `json:"pending_agreements,omitempty"` // 待接受协议列表
+}
+
+// TenantLoginPendingAgreement 登录时返回的待接受协议信息
+type TenantLoginPendingAgreement struct {
+	Id      int64  `json:"id"`
+	Code    string `json:"code"`
+	Title   string `json:"title"`
+	Version string `json:"version"`
 }
 
 // LoginMaintenanceInfo 维护模式信息

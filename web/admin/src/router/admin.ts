@@ -229,6 +229,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '更新日志' },
       },
       {
+        path: 'agreements',
+        name: 'AdminAgreements',
+        component: () => import('@/views/operation/AgreementsPage.vue'),
+        meta: { title: '用户协议' },
+      },
+      {
         path: 'realtime',
         name: 'AdminRealtimeMonitor',
         component: () => import('@/views/monitor/RealtimeMonitorPage.vue'),

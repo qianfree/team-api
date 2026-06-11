@@ -205,6 +205,22 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	res.User.Username = username
 	res.User.Role = "owner"
 
+	// 检查待接受协议
+	if common.Config().GetBool(ctx, "agreement_enabled") {
+		if pending, err := common.GetPendingAgreements(ctx, "tenant", ownerUserID); err == nil && len(pending) > 0 {
+			items := make([]*v1.TenantLoginPendingAgreement, 0, len(pending))
+			for _, a := range pending {
+				items = append(items, &v1.TenantLoginPendingAgreement{
+					Id:      a.Id,
+					Code:    a.Code,
+					Title:   a.Title,
+					Version: a.Version,
+				})
+			}
+			res.PendingAgreements = items
+		}
+	}
+
 	return res, nil
 }
 
@@ -432,6 +448,22 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			Enabled:  true,
 			Message:  common.Config().GetString(ctx, "maintenance_message"),
 			Duration: common.Config().GetString(ctx, "maintenance_duration"),
+		}
+	}
+
+	// 检查待接受协议
+	if common.Config().GetBool(ctx, "agreement_enabled") {
+		if pending, err := common.GetPendingAgreements(ctx, "tenant", user.Id); err == nil && len(pending) > 0 {
+			items := make([]*v1.TenantLoginPendingAgreement, 0, len(pending))
+			for _, a := range pending {
+				items = append(items, &v1.TenantLoginPendingAgreement{
+					Id:      a.Id,
+					Code:    a.Code,
+					Title:   a.Title,
+					Version: a.Version,
+				})
+			}
+			res.PendingAgreements = items
 		}
 	}
 

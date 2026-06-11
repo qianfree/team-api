@@ -9,6 +9,7 @@ import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
+import AgreementAcceptModal from '@/components/common/AgreementAcceptModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -41,6 +42,26 @@ const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
 
 const emailInput = ref<HTMLInputElement | null>(null)
 const accountInput = ref<HTMLInputElement | null>(null)
+
+// Pending agreements
+const showAgreements = ref(false)
+
+function proceedAfterLogin() {
+	const pending = authStore.pendingAgreements
+	if (pending.length > 0) {
+		showAgreements.value = true
+		return
+	}
+	const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+	router.push(redirect)
+}
+
+function onAgreementsAccepted() {
+	authStore.clearPendingAgreements()
+	showAgreements.value = false
+	const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+	router.push(redirect)
+}
 
 onMounted(async () => {
 	nextTick(() => emailInput.value?.focus())
@@ -108,8 +129,7 @@ async function handleAdminLogin() {
 			show2FA.value = true
 			return
 		}
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
 		if (apiErr?.code === 10058) {
@@ -140,8 +160,7 @@ async function handleRamLogin() {
 			show2FA.value = true
 			return
 		}
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
 		if (apiErr?.code === 10058) {
@@ -164,8 +183,7 @@ async function handle2FAVerify() {
 			code: totpCode.value,
 		}, { _suppressErrorMsg: true } as any)
 		authStore.applyTokensFrom2FA(res.data.data)
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (e: any) {
 		const apiErr = extractApiError(e)
 		errorMsg.value = apiErr?.message || '验证失败'
@@ -476,8 +494,19 @@ async function handleOAuthLogin(provider: string) {
 					立即创建
 				</router-link>
 			</p>
+			<p class="mt-2 text-xs text-gray-400">
+				<router-link to="/tenant/agreement/terms" target="_blank" class="hover:text-gray-500 transition-colors">服务条款</router-link>
+				<span class="mx-1">·</span>
+				<router-link to="/tenant/agreement/privacy" target="_blank" class="hover:text-gray-500 transition-colors">隐私政策</router-link>
+			</p>
 		</template>
 	</AuthLayout>
+
+	<AgreementAcceptModal
+		:show="showAgreements"
+		:agreements="authStore.pendingAgreements"
+		@accepted="onAgreementsAccepted"
+	/>
 </template>
 
 <style scoped>
