@@ -119,7 +119,7 @@ onMounted(() => {
 .settings-content {
 	flex: 1;
 	min-width: 0;
-	max-width: 800px;
+	max-width: 1200px;
 }
 .settings-footer {
 	display: flex;

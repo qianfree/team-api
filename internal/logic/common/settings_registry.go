@@ -129,6 +129,8 @@ var Registry = []SettingDef{
 		Label: "验证码有效期(秒)", Validation: "min:60,max:600"},
 	{Key: "new_device_notification", Type: SettingTypeBool, Default: "true", Category: "security",
 		Label: "新设备登录通知"},
+	{Key: "register_forbidden_words", Type: SettingTypeString, Default: "admin,system,root,api,test,administrator,管理员,系统", Category: "security",
+		Label: "注册禁用词", Description: "组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔"},
 	{Key: "sandbox_enabled", Type: SettingTypeBool, Default: "true", Category: "performance",
 		Label: "启用沙箱模式"},
 	{Key: "sandbox_default_quota", Type: SettingTypeInt, Default: "100", Category: "performance",
