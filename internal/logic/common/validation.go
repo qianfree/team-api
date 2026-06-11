@@ -1,6 +1,8 @@
 package common
 
 import (
+	"context"
+	"strings"
 	"time"
 	"unicode"
 
@@ -77,6 +79,27 @@ func ValidateDateParam(date string, fieldName string) error {
 	_, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return gerror.NewCode(gcode.New(consts.CodeBadRequest, "", nil), "%s格式无效，应为 YYYY-MM-DD", fieldName)
+	}
+	return nil
+}
+
+// ValidateForbiddenWords 校验名称是否包含系统禁用词
+// 从系统配置 register_forbidden_words 读取逗号分隔的禁用词列表，对 value 做大小写不敏感的包含检查
+func ValidateForbiddenWords(ctx context.Context, value, fieldName string) error {
+	raw := Config().GetString(ctx, "register_forbidden_words")
+	if raw == "" {
+		return nil
+	}
+	lowerVal := strings.ToLower(value)
+	for _, word := range strings.Split(raw, ",") {
+		word = strings.TrimSpace(word)
+		if word == "" {
+			continue
+		}
+		if strings.Contains(lowerVal, strings.ToLower(word)) {
+			return gerror.NewCode(gcode.New(consts.CodeForbiddenWord, consts.MsgForbiddenWord, nil),
+				"%s包含禁用词「%s」，请修改后重试", fieldName, word)
+		}
 	}
 	return nil
 }

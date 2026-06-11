@@ -40,6 +40,18 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
+	// Validate forbidden words in username, tenant name, tenant code
+	tenantName := strings.TrimSpace(req.TenantName)
+	if err := common.ValidateForbiddenWords(ctx, username, "用户名"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+	if err := common.ValidateForbiddenWords(ctx, tenantName, "组织名称"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+	if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+
 	// Check register rate limit (IP + global)
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	if err := common.CheckRegisterRateLimit(ctx, ipAddress); err != nil {

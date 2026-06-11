@@ -176,6 +176,7 @@ const (
 	CodeEmailVerificationDisabled = 10082
 	CodeIpRateLimitExceeded       = 10090 // IP级别限流
 	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
+	CodeForbiddenWord             = 10096 // 名称包含禁用词
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -338,6 +339,9 @@ const (
 
 	// Username validation
 	MsgInvalidUsername = "用户名仅支持英文字母和数字，不能为纯数字"
+
+	// Forbidden word
+	MsgForbiddenWord = "名称包含禁用词，请修改后重试"
 
 	// Agreement errors
 	MsgAgreementNotFound      = "协议版本不存在"
