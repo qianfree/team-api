@@ -7,6 +7,7 @@ import AuthLayout from '@/components/layout/AuthLayout.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
 import Icon from '@/components/common/Icon.vue'
+import AgreementAcceptModal from '@/components/common/AgreementAcceptModal.vue'
 import request from '@/utils/request'
 import { extractApiError } from '@/utils/request'
 
@@ -34,6 +35,24 @@ const userForm = reactive({
 
 const orgErrors = reactive<Record<string, string>>({})
 const userErrors = reactive<Record<string, string>>({})
+
+// Pending agreements
+const showAgreements = ref(false)
+
+function proceedAfterRegister() {
+	const pending = authStore.pendingAgreements
+	if (pending.length > 0) {
+		showAgreements.value = true
+		return
+	}
+	router.push('/tenant/dashboard')
+}
+
+function onAgreementsAccepted() {
+	authStore.clearPendingAgreements()
+	showAgreements.value = false
+	router.push('/tenant/dashboard')
+}
 
 const stepTitles = ['组织信息', '管理员信息']
 
@@ -179,7 +198,7 @@ async function handleRegister() {
 		}
 
 		await authStore.register(payload)
-		router.push('/tenant/dashboard')
+		proceedAfterRegister()
 	} catch (err: any) {
 		const apiErr = extractApiError(err)
 		const msg = apiErr?.message || '注册失败'
@@ -400,6 +419,14 @@ async function handleRegister() {
 					<p v-if="userErrors.confirmPassword" class="input-error-text">{{ userErrors.confirmPassword }}</p>
 				</div>
 
+				<!-- Agreement Notice -->
+				<p class="text-xs text-gray-400 text-center">
+					注册即表示您同意我们的
+					<router-link to="/tenant/agreement/terms" target="_blank" class="text-primary-600 hover:text-primary-700 underline underline-offset-2">服务条款</router-link>
+					和
+					<router-link to="/tenant/agreement/privacy" target="_blank" class="text-primary-600 hover:text-primary-700 underline underline-offset-2">隐私政策</router-link>
+				</p>
+
 				<!-- Submit -->
 				<button type="submit" :disabled="loading" class="btn btn-primary btn-lg w-full">
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
@@ -417,4 +444,10 @@ async function handleRegister() {
 			</p>
 		</template>
 	</AuthLayout>
+
+	<AgreementAcceptModal
+		:show="showAgreements"
+		:agreements="authStore.pendingAgreements"
+		@accepted="onAgreementsAccepted"
+	/>
 </template>

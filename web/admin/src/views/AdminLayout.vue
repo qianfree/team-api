@@ -329,6 +329,7 @@ const menuGroups = [
       { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage },
       { name: 'AdminTickets', label: '工单管理', icon: IconCommand },
       { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage },
+      { name: 'AdminAgreements', label: '用户协议', icon: IconFile },
     ],
   },
   {

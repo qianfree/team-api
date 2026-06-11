@@ -138,6 +138,22 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
 
+	// 检查待接受协议
+	if common.Config().GetBool(ctx, "agreement_enabled") {
+		if pending, err := common.GetPendingAgreements(ctx, "admin", user.Id); err == nil && len(pending) > 0 {
+			items := make([]*v1.LoginPendingAgreement, 0, len(pending))
+			for _, a := range pending {
+				items = append(items, &v1.LoginPendingAgreement{
+					Id:      a.Id,
+					Code:    a.Code,
+					Title:   a.Title,
+					Version: a.Version,
+				})
+			}
+			res.PendingAgreements = items
+		}
+	}
+
 	return res, nil
 }
 

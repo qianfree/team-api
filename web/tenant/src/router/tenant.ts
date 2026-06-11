@@ -33,6 +33,12 @@ const tenantRoutes: RouteRecordRaw[] = [
 		meta: { requiresAuth: false, title: '找回密码' },
 	},
 	{
+		path: '/tenant/agreement/:code',
+		name: 'TenantAgreement',
+		component: () => import('@/views/auth/AgreementPage.vue'),
+		meta: { requiresAuth: false, title: '协议详情' },
+	},
+	{
 		path: '/tenant/join',
 		name: 'TenantJoin',
 		component: () => import('@/views/auth/JoinPage.vue'),

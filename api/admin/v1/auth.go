@@ -23,6 +23,15 @@ type AdminLoginRes struct {
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 	} `json:"user"`
+	PendingAgreements []*LoginPendingAgreement `json:"pending_agreements,omitempty"` // 待接受协议列表
+}
+
+// LoginPendingAgreement 登录时返回的待接受协议信息
+type LoginPendingAgreement struct {
+	Id      int64  `json:"id"`
+	Code    string `json:"code"`
+	Title   string `json:"title"`
+	Version string `json:"version"`
 }
 
 // AdminLogoutReq 管理后台登出请求
