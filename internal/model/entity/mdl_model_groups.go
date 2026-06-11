@@ -15,6 +15,7 @@ type MdlModelGroups struct {
 	Code        string      `json:"code"        orm:"code"        description:"分组唯一标识（如 full_access、basic_chat）"` // 分组唯一标识（如 full_access、basic_chat）
 	Description string      `json:"description" orm:"description" description:"分组描述"`                             // 分组描述
 	Status      string      `json:"status"      orm:"status"      description:"状态：active（启用）/ disabled（禁用）"`      // 状态：active（启用）/ disabled（禁用）
+	IsDefault   bool        `json:"is_default"  orm:"is_default"  description:"是否为新租户默认模型组，注册时自动关联"`              // 是否为新租户默认模型组，注册时自动关联
 	CreatedAt   *gtime.Time `json:"created_at"  orm:"created_at"  description:"创建时间"`                             // 创建时间
 	UpdatedAt   *gtime.Time `json:"updated_at"  orm:"updated_at"  description:"更新时间"`                             // 更新时间
 }

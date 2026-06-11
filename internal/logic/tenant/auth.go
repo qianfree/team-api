@@ -148,6 +148,26 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			return gerror.Wrapf(err, "create wallet")
 		}
 
+		// Assign default model groups
+		var defaultGroups []struct {
+			Id int64
+		}
+		if err := tx.Model("mdl_model_groups").Ctx(ctx).
+			Where("is_default", true).Where("status", "active").
+			Fields("id").Scan(&defaultGroups); err == nil && len(defaultGroups) > 0 {
+			insertData := make([]do.MdlTenantGroups, 0, len(defaultGroups))
+			for _, dg := range defaultGroups {
+				insertData = append(insertData, do.MdlTenantGroups{
+					TenantId: tenantID,
+					GroupId:  dg.Id,
+				})
+			}
+			if _, err := tx.Model("mdl_tenant_groups").Ctx(ctx).
+				Batch(len(insertData)).Insert(insertData); err != nil {
+				g.Log().Warningf(ctx, "assign default model groups failed: %v", err)
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
