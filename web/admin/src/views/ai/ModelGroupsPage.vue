@@ -18,6 +18,10 @@ const pagination = reactive({
 const filterSearch = ref('')
 const filterStatus = ref<string | null>(null)
 
+const hasDefaultGroup = computed(() => {
+  return data.value.some((item: any) => item.is_default && item.status === 'active')
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -67,6 +71,12 @@ const columns: TableColumnData[] = [
       return h(Tag, { color, size: 'small' }, () => label)
     },
   },
+  {
+    title: '默认', dataIndex: 'is_default', width: 70,
+    render({ record }) {
+      return record.is_default ? h(Tag, { color: 'blue', size: 'small' }, () => '默认') : '-'
+    },
+  },
   { title: '模型数', dataIndex: 'model_count', width: 80 },
   { title: '租户数', dataIndex: 'tenant_count', width: 80 },
   {
@@ -100,12 +110,14 @@ const form = reactive({
   name: '',
   code: '',
   description: '',
+  is_default: false,
 })
 
 function resetForm() {
   form.name = ''
   form.code = ''
   form.description = ''
+  form.is_default = false
 }
 
 function openCreate() {
@@ -119,6 +131,7 @@ function openEdit(row: any) {
   form.name = row.name || ''
   form.code = row.code || ''
   form.description = row.description || ''
+  form.is_default = !!row.is_default
   editingId.value = row.id
   modalTitle.value = '编辑分组'
   showModal.value = true
@@ -131,7 +144,7 @@ async function handleSubmit(done: () => void) {
   }
   formLoading.value = true
   try {
-    const payload = { name: form.name, code: form.code, description: form.description }
+    const payload: any = { name: form.name, description: form.description, is_default: form.is_default }
     if (editingId.value) {
       await request.put(`/admin/model-groups/${editingId.value}`, payload)
       Message.success('更新成功')
@@ -141,6 +154,7 @@ async function handleSubmit(done: () => void) {
         formLoading.value = false
         return
       }
+      payload.code = form.code
       await request.post('/admin/model-groups', payload)
       Message.success('创建成功')
     }
@@ -232,6 +246,10 @@ onMounted(() => {
     <PageHeader title="模型分组" description="通过分组批量管理租户可用的模型，新增模型加入分组后自动对组内租户生效">
     </PageHeader>
 
+    <AAlert v-if="!loading && !hasDefaultGroup" type="warning" class="mb-4" closable>
+      当前未设置默认模型组，新注册租户将无法使用任何模型。请创建一个分组并标记为「默认」。
+    </AAlert>
+
     <ACard :bordered="false" class="mb-4">
       <ARow :gutter="16" align="center">
         <ACol :span="8">
@@ -293,6 +311,10 @@ onMounted(() => {
         </AFormItem>
         <AFormItem label="描述">
           <ATextarea v-model="form.description" placeholder="可选，描述分组用途" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        </AFormItem>
+        <AFormItem label="设为新租户默认分组">
+          <ASwitch v-model="form.is_default" />
+          <span style="margin-left: 8px; color: var(--color-text-3); font-size: 12px">开启后，新注册的租户将自动关联此分组</span>
         </AFormItem>
       </AForm>
     </AModal>
