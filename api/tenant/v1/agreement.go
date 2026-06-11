@@ -35,7 +35,7 @@ type TenantAgreementAcceptRes struct{}
 // --- 公开端点（登录/注册页面使用，无需认证） ---
 
 type AgreementCurrentListReq struct {
-	g.Meta `path:"/agreements/current" method:"get" mime:"json" tags:"公开-用户协议" summary:"所有当前生效的协议列表" group:"public" middleware:"-"`
+	g.Meta `path:"/agreements/current" method:"get" mime:"json" tags:"公开-用户协议" summary:"所有当前生效的协议列表" middleware:"-"`
 }
 
 type PublicAgreementItem struct {
@@ -52,7 +52,7 @@ type AgreementCurrentListRes struct {
 }
 
 type AgreementCurrentGetReq struct {
-	g.Meta `path:"/agreements/current/{code}" method:"get" mime:"json" tags:"公开-用户协议" summary:"按标识码获取当前协议详情" group:"public" middleware:"-"`
+	g.Meta `path:"/agreements/current/{code}" method:"get" mime:"json" tags:"公开-用户协议" summary:"按标识码获取当前协议详情" middleware:"-"`
 	Code   string `json:"code" in:"path" v:"required|length:1,50"`
 }
 
