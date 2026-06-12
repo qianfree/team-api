@@ -154,6 +154,9 @@ func (d *WebhookDispatcher) cleanupLoop() {
 
 // cleanup removes old webhook data in batches to prevent table bloat.
 // Order: delivery_logs → events (delivery_logs reference events via event_id).
+//
+// PostgreSQL 不支持 DELETE ... LIMIT（MySQL 语法），因此每批清理改为：
+// 先用 SELECT + LIMIT 取出目标 ID，再用 WHERE IN 批量删除。
 func (d *WebhookDispatcher) cleanup() {
 	ctx := d.ctx
 	now := gtime.Now()
@@ -161,60 +164,81 @@ func (d *WebhookDispatcher) cleanup() {
 	// 1. 清理投递日志（保留 30 天）
 	logCutoff := now.Add(-cleanupDeliveryLogAge)
 	for {
-		result, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).
+		ids, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).
 			Where("created_at < ?", logCutoff).
 			Limit(cleanupBatchSize).
+			Fields("id").
+			Array()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: query delivery log ids failed: %v", err)
+			break
+		}
+		if len(ids) == 0 {
+			break
+		}
+		result, err := dao.OpnWebhookDeliveryLogs.Ctx(ctx).
+			WhereIn("id", ids).
 			Delete()
 		if err != nil {
 			g.Log().Errorf(ctx, "webhook cleanup: delete delivery logs failed: %v", err)
 			break
 		}
 		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			break
-		}
 		g.Log().Infof(ctx, "webhook cleanup: deleted %d delivery logs older than %v", rows, logCutoff.Format("Y-m-d"))
 	}
 
 	// 2. 清理已投递事件（保留 7 天）
 	deliveredCutoff := now.Add(-cleanupDeliveredAge)
 	for {
-		result, err := dao.OpnWebhookEvents.Ctx(ctx).
+		ids, err := dao.OpnWebhookEvents.Ctx(ctx).
 			Where("status", "delivered").
 			Where("updated_at < ?", deliveredCutoff).
 			Limit(cleanupBatchSize).
+			Fields("id").
+			Array()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: query delivered event ids failed: %v", err)
+			break
+		}
+		if len(ids) == 0 {
+			break
+		}
+		result, err := dao.OpnWebhookEvents.Ctx(ctx).
+			WhereIn("id", ids).
 			Delete()
 		if err != nil {
 			g.Log().Errorf(ctx, "webhook cleanup: delete delivered events failed: %v", err)
 			break
 		}
 		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			break
-		}
 		g.Log().Infof(ctx, "webhook cleanup: deleted %d delivered events older than %v", rows, deliveredCutoff.Format("Y-m-d"))
 	}
 
 	// 3. 清理已放弃的重试事件（attempts >= max，保留 30 天）
 	failedCutoff := now.Add(-cleanupFailedAge)
 	for {
+		ids, err := dao.OpnWebhookEvents.Ctx(ctx).
+			Where("status", "failed").
+			Where("attempts >= ?", webhookMaxRetries).
+			Where("updated_at < ?", failedCutoff).
+			Limit(cleanupBatchSize).
+			Fields("id").
+			Array()
+		if err != nil {
+			g.Log().Errorf(ctx, "webhook cleanup: query exhausted event ids failed: %v", err)
+			break
+		}
+		if len(ids) == 0 {
+			break
+		}
 		result, err := dao.OpnWebhookEvents.Ctx(ctx).
-			Where("id IN (?)", dao.OpnWebhookEvents.Ctx(ctx).
-				Where("status", "failed").
-				Where("attempts >= ?", webhookMaxRetries).
-				Where("updated_at < ?", failedCutoff).
-				Limit(cleanupBatchSize).
-				Fields("id"),
-			).
+			WhereIn("id", ids).
 			Delete()
 		if err != nil {
 			g.Log().Errorf(ctx, "webhook cleanup: delete exhausted events failed: %v", err)
 			break
 		}
 		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			break
-		}
 		g.Log().Infof(ctx, "webhook cleanup: deleted %d exhausted events older than %v", rows, failedCutoff.Format("Y-m-d"))
 	}
 }
