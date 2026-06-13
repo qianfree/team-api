@@ -122,7 +122,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
       captcha_key: captcha?.captchaKey,
       captcha_x: captcha?.captchaX,
       turnstile_token: captcha?.turnstileToken,
-    })
+    }, { _suppressErrorMsg: true } as any)
     if (data.data?.totp_required) {
       return data.data
     }

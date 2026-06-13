@@ -367,16 +367,6 @@ async function handleOAuthLogin(provider: string) {
 				<Turnstile v-if="useTurnstile" ref="turnstileRef" v-model="turnstileToken" :site-key="settings['turnstile_site_key']" />
 				<SlideCaptcha v-else ref="captchaRef" v-model="captcha" />
 
-				<!-- Error Message -->
-				<transition name="slide-fade">
-					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-						<div class="flex items-start gap-2">
-							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
-							<p class="text-sm text-red-600">{{ errorMsg }}</p>
-						</div>
-					</div>
-				</transition>
-
 				<!-- Remember & Forgot -->
 				<div class="flex items-center justify-between">
 					<label class="flex items-center gap-2 cursor-pointer select-none">
@@ -400,6 +390,16 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<!-- Error Message -->
+				<transition name="slide-fade">
+					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+						<div class="flex items-start gap-2">
+							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
+							<p class="text-sm text-red-600">{{ errorMsg }}</p>
+						</div>
+					</div>
+				</transition>
+
 				<p class="mt-4 text-center text-xs text-gray-400">
 					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
 					<span class="mx-1">·</span>
@@ -465,16 +465,6 @@ async function handleOAuthLogin(provider: string) {
 				<Turnstile v-if="useTurnstile" ref="turnstileRef" v-model="turnstileToken" :site-key="settings['turnstile_site_key']" />
 				<SlideCaptcha v-else ref="captchaRef" v-model="captcha" />
 
-				<!-- Error Message -->
-				<transition name="slide-fade">
-					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-						<div class="flex items-start gap-2">
-							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
-							<p class="text-sm text-red-600">{{ errorMsg }}</p>
-						</div>
-					</div>
-				</transition>
-
 				<!-- Remember & Forgot -->
 				<div class="flex items-center justify-between">
 					<label class="flex items-center gap-2 cursor-pointer select-none">
@@ -498,6 +488,16 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<!-- Error Message -->
+				<transition name="slide-fade">
+					<div v-if="errorMsg" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+						<div class="flex items-start gap-2">
+							<Icon name="exclamationCircle" size="sm" class="mt-0.5 text-red-500 flex-shrink-0" />
+							<p class="text-sm text-red-600">{{ errorMsg }}</p>
+						</div>
+					</div>
+				</transition>
+
 				<p class="mt-4 text-center text-xs text-gray-400">
 					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
 					<span class="mx-1">·</span>
