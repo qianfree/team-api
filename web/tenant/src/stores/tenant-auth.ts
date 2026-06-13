@@ -114,13 +114,14 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     persist()
   }
 
-  async function login(account: string, password: string, type: 'ram' | 'admin', captcha?: { captchaKey: string; captchaX: number }): Promise<any> {
+  async function login(account: string, password: string, type: 'ram' | 'admin', captcha?: { captchaKey: string; captchaX: number; turnstileToken?: string }): Promise<any> {
     const { data } = await request.post('/tenant/auth/login', {
       account,
       password,
       type,
       captcha_key: captcha?.captchaKey,
       captcha_x: captcha?.captchaX,
+      turnstile_token: captcha?.turnstileToken,
     })
     if (data.data?.totp_required) {
       return data.data
