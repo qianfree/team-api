@@ -104,7 +104,7 @@ async function doRefresh(): Promise<TokenPair> {
   return newTokens
 }
 
-const PUBLIC_PATHS = ['/settings/', '/captcha', '/captcha/', '/auth/login', '/auth/register']
+const PUBLIC_PATHS = ['/settings/', '/captcha', '/captcha/', '/auth/login', '/auth/register', '/agreements/']
 
 function isPublicPath(url?: string): boolean {
   if (!url) return false

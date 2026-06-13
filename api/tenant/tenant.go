@@ -11,6 +11,10 @@ import (
 )
 
 type ITenantV1 interface {
+	TenantAgreementPending(ctx context.Context, req *v1.TenantAgreementPendingReq) (res *v1.TenantAgreementPendingRes, err error)
+	TenantAgreementAccept(ctx context.Context, req *v1.TenantAgreementAcceptReq) (res *v1.TenantAgreementAcceptRes, err error)
+	AgreementCurrentList(ctx context.Context, req *v1.AgreementCurrentListReq) (res *v1.AgreementCurrentListRes, err error)
+	AgreementCurrentGet(ctx context.Context, req *v1.AgreementCurrentGetReq) (res *v1.AgreementCurrentGetRes, err error)
 	TenantApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (res *v1.TenantApiKeyListRes, err error)
 	TenantApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateReq) (res *v1.TenantApiKeyCreateRes, err error)
 	TenantApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteReq) (res *v1.TenantApiKeyDeleteRes, err error)

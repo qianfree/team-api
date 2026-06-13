@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
+import { marked } from 'marked'
 import { useAuthStore } from '@/stores/auth'
+import type { PendingAgreement } from '@/stores/auth'
 import { extractApiError } from '@/utils/request'
 import request from '@/utils/request'
 import SlideCaptcha from '@/components/SlideCaptcha.vue'
@@ -31,6 +33,70 @@ const totpLoading = ref(false)
 const captcha = reactive({ captchaKey: '', captchaX: 0 })
 const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
 
+// Pending agreements state
+const showAgreements = ref(false)
+const agreements = ref<PendingAgreement[]>([])
+const selectedAgreement = ref<PendingAgreement | null>(null)
+const agreementContent = ref('')
+const agreementLoading = ref(false)
+const acceptLoading = ref(false)
+const allChecked = ref(false)
+
+const agreementContentHtml = computed(() => {
+  if (!agreementContent.value) return ''
+  return marked(agreementContent.value) as string
+})
+
+function proceedAfterLogin() {
+  const pending = authStore.pendingAgreements
+  if (pending.length > 0) {
+    agreements.value = pending
+    selectedAgreement.value = pending[0]
+    loadAgreementContent(pending[0])
+    showAgreements.value = true
+    return
+  }
+  Message.success('登录成功')
+  const redirect = (route.query.redirect as string) || '/admin'
+  router.push(redirect)
+}
+
+async function loadAgreementContent(item: PendingAgreement) {
+  selectedAgreement.value = item
+  agreementContent.value = ''
+  agreementLoading.value = true
+  try {
+    const res = await request.get(`/admin/agreements/${item.id}`)
+    agreementContent.value = res.data?.data?.content || ''
+  } catch {
+    agreementContent.value = '加载失败，请重试'
+  } finally {
+    agreementLoading.value = false
+  }
+}
+
+async function acceptAgreements() {
+  if (!allChecked.value) {
+    Message.warning('请先阅读并勾选同意所有协议')
+    return
+  }
+  acceptLoading.value = true
+  try {
+    await request.post('/admin/agreements/accept', {
+      agreement_ids: agreements.value.map(a => a.id),
+    })
+    authStore.clearPendingAgreements()
+    showAgreements.value = false
+    Message.success('登录成功')
+    const redirect = (route.query.redirect as string) || '/admin'
+    router.push(redirect)
+  } catch {
+    // error auto-displayed
+  } finally {
+    acceptLoading.value = false
+  }
+}
+
 async function handleLogin() {
   try {
     const errors = await formRef.value?.validate()
@@ -48,9 +114,7 @@ async function handleLogin() {
       show2FA.value = true
       return
     }
-    Message.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/admin'
-    router.push(redirect)
+    proceedAfterLogin()
   } catch (err: any) {
     const apiErr = extractApiError(err)
     if (apiErr?.code === 10058) {
@@ -73,11 +137,8 @@ async function handle2FAVerify() {
       provisional_token: provisionalToken.value,
       code: totpCode.value,
     })
-    // If we get here, code === 0 (interceptor rejects otherwise)
     authStore.applyTokensFrom2FA(res.data.data)
-    Message.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/admin'
-    router.push(redirect)
+    proceedAfterLogin()
   } catch {
     // error toast already shown by interceptor
   } finally {
@@ -232,6 +293,60 @@ async function handle2FAVerify() {
         <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
       </div>
     </div>
+
+    <!-- Pending Agreements Modal -->
+    <AModal
+      v-model:visible="showAgreements"
+      :closable="false"
+      :mask-closable="false"
+      :footer="false"
+      :width="680"
+      title-align="start"
+    >
+      <template #title>
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span>请阅读并同意以下协议</span>
+        </div>
+      </template>
+
+      <!-- Agreement tabs -->
+      <div v-if="agreements.length > 1" class="agreement-tabs">
+        <div
+          v-for="item in agreements"
+          :key="item.id"
+          class="agreement-tab"
+          :class="{ 'agreement-tab--active': selectedAgreement?.id === item.id }"
+          @click="loadAgreementContent(item)"
+        >
+          {{ item.title }} ({{ item.version }})
+        </div>
+      </div>
+
+      <!-- Agreement content -->
+      <div class="agreement-modal-content">
+        <ASpin :loading="agreementLoading" style="width: 100%">
+          <div class="agreement-body" v-html="agreementContentHtml" />
+        </ASpin>
+      </div>
+
+      <!-- Accept checkbox + button -->
+      <div class="agreement-footer">
+        <ACheckbox v-model="allChecked">
+          我已阅读并同意以上{{ agreements.length > 1 ? '所有' : '' }}协议
+        </ACheckbox>
+        <AButton
+          type="primary"
+          :loading="acceptLoading"
+          :disabled="!allChecked"
+          @click="acceptAgreements"
+        >
+          同意并继续
+        </AButton>
+      </div>
+    </AModal>
   </div>
 </template>
 
@@ -475,5 +590,80 @@ async function handle2FAVerify() {
 
 .mt-2 {
   margin-top: 8px;
+}
+
+/* ===== Agreements Modal ===== */
+.agreement-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 8px;
+}
+
+.agreement-tab {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.agreement-tab:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.agreement-tab--active {
+  background: #0d9488;
+  color: #fff;
+}
+
+.agreement-tab--active:hover {
+  background: #0d9488;
+  color: #fff;
+}
+
+.agreement-modal-content {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #f8fafc;
+  line-height: 1.8;
+  font-size: 14px;
+  color: #334155;
+}
+
+.agreement-body :deep(h1),
+.agreement-body :deep(h2),
+.agreement-body :deep(h3) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  color: #0f172a;
+}
+
+.agreement-body :deep(h1) { font-size: 20px; }
+.agreement-body :deep(h2) { font-size: 17px; }
+.agreement-body :deep(h3) { font-size: 15px; }
+
+.agreement-body :deep(ul),
+.agreement-body :deep(ol) {
+  padding-left: 20px;
+}
+
+.agreement-body :deep(p) {
+  margin-bottom: 8px;
+}
+
+.agreement-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
 }
 </style>

@@ -26,13 +26,16 @@ const (
 )
 
 // GetTimeoutSeconds 返回请求超时秒数。
-// 渠道自定义优先，未配置时根据请求模式返回默认值（图片生成 600s，其余 60s）。
+// 图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时），其余模式渠道自定义优先。
 func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
+	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
+		if s.TimeoutSeconds > ImagesGenerationTimeoutSecs {
+			return s.TimeoutSeconds
+		}
+		return ImagesGenerationTimeoutSecs
+	}
 	if s.TimeoutSeconds > 0 {
 		return s.TimeoutSeconds
-	}
-	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
-		return ImagesGenerationTimeoutSecs
 	}
 	return DefaultTimeoutSeconds
 }

@@ -40,6 +40,18 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
+	// Validate forbidden words in username, tenant name, tenant code
+	tenantName := strings.TrimSpace(req.TenantName)
+	if err := common.ValidateForbiddenWords(ctx, username, "用户名"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+	if err := common.ValidateForbiddenWords(ctx, tenantName, "组织名称"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+	if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
+		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+
 	// Check register rate limit (IP + global)
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	if err := common.CheckRegisterRateLimit(ctx, ipAddress); err != nil {
@@ -148,6 +160,26 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			return gerror.Wrapf(err, "create wallet")
 		}
 
+		// Assign default model groups
+		var defaultGroups []struct {
+			Id int64
+		}
+		if err := tx.Model("mdl_model_groups").Ctx(ctx).
+			Where("is_default", true).Where("status", "active").
+			Fields("id").Scan(&defaultGroups); err == nil && len(defaultGroups) > 0 {
+			insertData := make([]do.MdlTenantGroups, 0, len(defaultGroups))
+			for _, dg := range defaultGroups {
+				insertData = append(insertData, do.MdlTenantGroups{
+					TenantId: tenantID,
+					GroupId:  dg.Id,
+				})
+			}
+			if _, err := tx.Model("mdl_tenant_groups").Ctx(ctx).
+				Batch(len(insertData)).Insert(insertData); err != nil {
+				g.Log().Warningf(ctx, "assign default model groups failed: %v", err)
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -184,6 +216,22 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	res.User.ID = ownerUserID
 	res.User.Username = username
 	res.User.Role = "owner"
+
+	// 检查待接受协议
+	if common.Config().GetBool(ctx, "agreement_enabled") {
+		if pending, err := common.GetPendingAgreements(ctx, "tenant", ownerUserID); err == nil && len(pending) > 0 {
+			items := make([]*v1.TenantLoginPendingAgreement, 0, len(pending))
+			for _, a := range pending {
+				items = append(items, &v1.TenantLoginPendingAgreement{
+					Id:      a.Id,
+					Code:    a.Code,
+					Title:   a.Title,
+					Version: a.Version,
+				})
+			}
+			res.PendingAgreements = items
+		}
+	}
 
 	return res, nil
 }
@@ -412,6 +460,22 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			Enabled:  true,
 			Message:  common.Config().GetString(ctx, "maintenance_message"),
 			Duration: common.Config().GetString(ctx, "maintenance_duration"),
+		}
+	}
+
+	// 检查待接受协议
+	if common.Config().GetBool(ctx, "agreement_enabled") {
+		if pending, err := common.GetPendingAgreements(ctx, "tenant", user.Id); err == nil && len(pending) > 0 {
+			items := make([]*v1.TenantLoginPendingAgreement, 0, len(pending))
+			for _, a := range pending {
+				items = append(items, &v1.TenantLoginPendingAgreement{
+					Id:      a.Id,
+					Code:    a.Code,
+					Title:   a.Title,
+					Version: a.Version,
+				})
+			}
+			res.PendingAgreements = items
 		}
 	}
 

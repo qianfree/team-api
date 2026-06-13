@@ -15,6 +15,13 @@ export interface TenantUser {
   role: string
 }
 
+export interface PendingAgreement {
+  id: number
+  code: string
+  title: string
+  version: string
+}
+
 interface AuthResponse {
   access_token: string
   refresh_token: string
@@ -22,6 +29,7 @@ interface AuthResponse {
   tenant: TenantInfo
   user: TenantUser
   permissions?: string[]
+  pending_agreements?: PendingAgreement[]
 }
 
 export interface RegisterPayload {
@@ -44,6 +52,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
   const tenant = ref<TenantInfo | null>(null)
   const user = ref<TenantUser | null>(null)
   const permissions = ref<string[]>([])
+  const pendingAgreements = ref<PendingAgreement[]>([])
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -116,17 +125,21 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     if (data.data?.totp_required) {
       return data.data
     }
+    pendingAgreements.value = data.data?.pending_agreements || []
     applySession(data.data)
     return data.data
   }
 
   function applyTokensFrom2FA(loginData: any): void {
+    pendingAgreements.value = loginData?.pending_agreements || []
     applySession(loginData)
   }
 
-  async function register(payload: RegisterPayload): Promise<void> {
+  async function register(payload: RegisterPayload): Promise<any> {
     const { data } = await request.post<{ data: AuthResponse }>('/tenant/auth/register', payload)
+    pendingAgreements.value = data.data?.pending_agreements || []
     applySession(data.data)
+    return data.data
   }
 
   async function logout(): Promise<void> {
@@ -166,6 +179,10 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     persist()
   })
 
+  function clearPendingAgreements(): void {
+    pendingAgreements.value = []
+  }
+
   return {
     token,
     refreshToken,
@@ -173,6 +190,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     tenant,
     user,
     permissions,
+    pendingAgreements,
     isLoggedIn,
     isOwner,
     login,
@@ -181,5 +199,6 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     logout,
     refreshTokens,
     loadFromStorage,
+    clearPendingAgreements,
   }
 })

@@ -44,6 +44,7 @@ func (s *sAdmin) ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq)
 		Code        string `json:"code"`
 		Description string `json:"description"`
 		Status      string `json:"status"`
+		IsDefault   bool   `json:"is_default"`
 		ModelCount  int    `json:"model_count"`
 		TenantCount int    `json:"tenant_count"`
 		CreatedAt   string `json:"created_at"`
@@ -51,7 +52,7 @@ func (s *sAdmin) ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq)
 	}
 
 	err := query.
-		Fields("mg.id, mg.name, mg.code, mg.description, mg.status, COALESCE(mc.model_count, 0) AS model_count, COALESCE(tc.tenant_count, 0) AS tenant_count, mg.created_at, mg.updated_at").
+		Fields("mg.id, mg.name, mg.code, mg.description, mg.status, mg.is_default, COALESCE(mc.model_count, 0) AS model_count, COALESCE(tc.tenant_count, 0) AS tenant_count, mg.created_at, mg.updated_at").
 		OrderAsc("mg.id").
 		Page(req.Page, req.PageSize).
 		Scan(&results)
@@ -67,6 +68,7 @@ func (s *sAdmin) ListModelGroups(ctx context.Context, req *v1.ModelGroupListReq)
 			Code:        r.Code,
 			Description: r.Description,
 			Status:      r.Status,
+			IsDefault:   r.IsDefault,
 			ModelCount:  r.ModelCount,
 			TenantCount: r.TenantCount,
 			CreatedAt:   r.CreatedAt,
@@ -93,6 +95,7 @@ func (s *sAdmin) CreateModelGroup(ctx context.Context, req *v1.ModelGroupCreateR
 		Name:        req.Name,
 		Code:        req.Code,
 		Description: req.Description,
+		IsDefault:   req.IsDefault,
 	})
 	if err != nil {
 		return nil, err
@@ -130,6 +133,9 @@ func (s *sAdmin) UpdateModelGroup(ctx context.Context, req *v1.ModelGroupUpdateR
 	}
 	if req.Status != "" {
 		data.Status = req.Status
+	}
+	if req.IsDefault != nil {
+		data.IsDefault = *req.IsDefault
 	}
 
 	_, err := dao.MdlModelGroups.Ctx(ctx).Where("id", req.ID).Data(data).Update()
@@ -182,11 +188,12 @@ func (s *sAdmin) ListModelGroupOptions(ctx context.Context, req *v1.ModelGroupOp
 		ID         int64  `json:"id"`
 		Name       string `json:"name"`
 		Code       string `json:"code"`
+		IsDefault  bool   `json:"is_default"`
 		ModelCount int    `json:"model_count"`
 	}
 
 	err := query.
-		Fields("mg.id, mg.name, mg.code, COALESCE(mc.model_count, 0) AS model_count").
+		Fields("mg.id, mg.name, mg.code, mg.is_default, COALESCE(mc.model_count, 0) AS model_count").
 		OrderAsc("mg.id").
 		Scan(&results)
 	if err != nil {
@@ -199,6 +206,7 @@ func (s *sAdmin) ListModelGroupOptions(ctx context.Context, req *v1.ModelGroupOp
 			ID:         r.ID,
 			Name:       r.Name,
 			Code:       r.Code,
+			IsDefault:  r.IsDefault,
 			ModelCount: r.ModelCount,
 		})
 	}
@@ -344,6 +352,33 @@ func (s *sAdmin) SetTenantGroups(ctx context.Context, req *v1.TenantGroupsSetReq
 
 func invalidateTenantGroupCache(ctx context.Context, tenantID int64) {
 	common.TenantGroupModelCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+}
+
+func invalidateTenantsForModel(ctx context.Context, modelID int64) {
+	var groupIDs []struct {
+		GroupId int64 `json:"group_id"`
+	}
+	dao.MdlGroupModels.Ctx(ctx).
+		Where("model_id", modelID).
+		Fields("group_id").
+		Scan(&groupIDs)
+
+	for _, g := range groupIDs {
+		invalidateTenantsInGroup(ctx, g.GroupId)
+	}
+
+	// 同时清除直接分配了该模型的租户缓存（mdl_tenant_models）
+	var tenantIDs []struct {
+		TenantId int64 `json:"tenant_id"`
+	}
+	dao.MdlTenantModels.Ctx(ctx).
+		Where("model_id", modelID).
+		Fields("tenant_id").
+		Scan(&tenantIDs)
+
+	for _, t := range tenantIDs {
+		invalidateTenantGroupCache(ctx, t.TenantId)
+	}
 }
 
 func invalidateTenantsInGroup(ctx context.Context, groupID int64) {

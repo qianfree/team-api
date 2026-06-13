@@ -28,6 +28,7 @@ type ModelGroupItem struct {
 	Code        string `json:"code"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
+	IsDefault   bool   `json:"is_default"`
 	ModelCount  int    `json:"model_count"`
 	TenantCount int    `json:"tenant_count"`
 	CreatedAt   string `json:"created_at"`
@@ -40,6 +41,7 @@ type ModelGroupCreateReq struct {
 	Name        string  `json:"name" v:"required|length:1,100#请输入分组名称|分组名称长度1-100" dc:"分组名称"`
 	Code        string  `json:"code" v:"required|length:1,50#请输入分组标识|分组标识长度1-50" dc:"分组唯一标识"`
 	Description string  `json:"description" dc:"分组描述"`
+	IsDefault   *bool   `json:"is_default" dc:"是否为新租户默认模型组"`
 	ModelIds    []int64 `json:"model_ids" dc:"初始包含的模型ID列表"`
 }
 
@@ -55,6 +57,7 @@ type ModelGroupUpdateReq struct {
 	Name        string `json:"name" dc:"分组名称"`
 	Description string `json:"description" dc:"分组描述"`
 	Status      string `json:"status" v:"in:active,disabled" dc:"状态：active/disabled"`
+	IsDefault   *bool  `json:"is_default" dc:"是否为新租户默认模型组"`
 }
 
 // ModelGroupUpdateRes 更新模型分组响应
@@ -150,5 +153,6 @@ type ModelGroupOptionItem struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
 	Code       string `json:"code"`
+	IsDefault  bool   `json:"is_default"`
 	ModelCount int    `json:"model_count"`
 }

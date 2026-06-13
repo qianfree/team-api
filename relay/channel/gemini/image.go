@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -17,6 +18,23 @@ func convertImageRequestToChat(requestBody []byte, info *common.RelayInfo) (io.R
 	var imgReq dto.ImageRequest
 	if err := json.Unmarshal(requestBody, &imgReq); err != nil {
 		return nil, fmt.Errorf("parse image request: %w", err)
+	}
+
+	// Banana 内生图模式不支持 N>1，每次请求只生成一张图
+	if imgReq.N != nil && *imgReq.N > 1 {
+		return nil, constant.NewRequestError("Gemini native image generation (Banana mode) does not support n > 1; use Imagen models (e.g. imagen-3.0-generate-002) or call the endpoint multiple times", nil)
+	}
+
+	generationConfig := &dto.GeminiGenerationConfig{
+		ResponseModalities: []string{"TEXT", "IMAGE"},
+	}
+
+	// 将 OpenAI 的 size 参数映射为 Gemini 的 imageConfig（宽高比 + 分辨率）
+	if imgReq.Size != "" || imgReq.Quality != "" {
+		generationConfig.ImageConfig = &dto.GeminiImageConfig{
+			AspectRatio: imageSizeToAspectRatio(imgReq.Size),
+			ImageSize:   qualityToImageSize(imgReq.Quality),
+		}
 	}
 
 	chatReq := dto.GeminiChatRequest{
@@ -28,9 +46,7 @@ func convertImageRequestToChat(requestBody []byte, info *common.RelayInfo) (io.R
 				},
 			},
 		},
-		GenerationConfig: &dto.GeminiGenerationConfig{
-			ResponseModalities: []string{"TEXT", "IMAGE"},
-		},
+		GenerationConfig: generationConfig,
 	}
 
 	result, err := json.Marshal(chatReq)
@@ -50,10 +66,7 @@ func handleBananaImageResponse(_ context.Context, resp *http.Response, writer ht
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, fmt.Errorf("banana API error: %d, body: %s", resp.StatusCode, string(body))
+		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
 	var geminiResp dto.GeminiChatResponse
@@ -80,16 +93,7 @@ func handleBananaImageResponse(_ context.Context, resp *http.Response, writer ht
 	}
 
 	if len(openaiResp.Data) == 0 {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusBadRequest)
-		errBody, _ := json.Marshal(map[string]any{
-			"error": map[string]any{
-				"type":    "banana_no_image",
-				"message": "model did not return any image data",
-			},
-		})
-		_, _ = writer.Write(errBody)
-		return &common.Usage{}, fmt.Errorf("banana response contained no image data")
+		return &common.Usage{}, constant.NewRequestError("model did not return any image data", nil)
 	}
 
 	usage := &common.Usage{}
@@ -150,10 +154,7 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, fmt.Errorf("imagen API error: %d", resp.StatusCode)
+		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
 	var geminiResp dto.GeminiImageResponse
@@ -176,16 +177,7 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	}
 
 	if len(openaiResp.Data) == 0 {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusBadRequest)
-		errBody, _ := json.Marshal(map[string]any{
-			"error": map[string]any{
-				"type":    "imagen_filtered",
-				"message": "all images were filtered by safety filters",
-			},
-		})
-		_, _ = writer.Write(errBody)
-		return &common.Usage{}, fmt.Errorf("all images filtered by safety")
+		return &common.Usage{}, constant.NewRequestError("all images were filtered by safety filters", nil)
 	}
 
 	respBody, err := json.Marshal(openaiResp)
@@ -200,8 +192,13 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	return &common.Usage{}, nil
 }
 
-// imageSizeToAspectRatio 将 OpenAI 图片尺寸映射为 Imagen 宽高比
+// imageSizeToAspectRatio 将图片尺寸映射为 Gemini 宽高比
+// 支持 OpenAI 格式（1024x1024）和 Gemini 原生比例格式（1:1/16:9 等）直接透传
 func imageSizeToAspectRatio(size string) string {
+	if size == "" {
+		return ""
+	}
+	// OpenAI 格式映射
 	switch size {
 	case "1024x1024":
 		return "1:1"
@@ -221,7 +218,7 @@ func imageSizeToAspectRatio(size string) string {
 		return "21:9"
 	}
 
-	// 支持原生比例格式（如 "1:1"、"16:9"）
+	// Gemini 原生比例格式（如 "1:1"、"16:9"、"3:4"）直接透传
 	if strings.Contains(size, ":") {
 		return size
 	}
@@ -229,9 +226,20 @@ func imageSizeToAspectRatio(size string) string {
 	return "1:1"
 }
 
-// qualityToImageSize 将 OpenAI quality 映射为 Imagen imageSize
+// qualityToImageSize 将 OpenAI quality 映射为 Gemini imageSize
+// 支持 OpenAI 格式（hd/standard）和 Gemini 原生格式（256/512/1K/2K/4K）直接透传
 func qualityToImageSize(quality string) string {
-	switch strings.ToLower(quality) {
+	if quality == "" {
+		return ""
+	}
+	// Gemini 原生格式直接透传（256/512/1K/2K/4K）
+	lower := strings.ToLower(quality)
+	switch lower {
+	case "256", "512", "1k", "2k", "4k":
+		return quality // 保持用户原始大小写
+	}
+	// OpenAI 兼容格式映射
+	switch lower {
 	case "hd", "high":
 		return "2K"
 	default:

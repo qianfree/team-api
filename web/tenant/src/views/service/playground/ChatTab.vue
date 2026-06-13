@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick } from 'vue'
-import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
@@ -38,6 +37,7 @@ const params = reactive({
 	maxTokens: 2048,
 	systemPrompt: '',
 	topP: 1.0,
+	stream: true,
 })
 
 const imageConfig = reactive({
@@ -76,6 +76,166 @@ function autoResize() {
 	el.style.height = Math.min(el.scrollHeight, 160) + 'px'
 }
 
+// 判断用户是否在消息区域底部（允许 40px 容差）
+function isNearBottom(): boolean {
+	const el = messagesRef.value
+	if (!el) return true
+	return el.scrollHeight - el.scrollTop - el.clientHeight < 40
+}
+
+function scrollToBottom(force = false) {
+	nextTick(() => {
+		if (messagesRef.value && (force || isNearBottom())) {
+			messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+		}
+	})
+}
+
+function buildRequestBody(apiMessages: { role: string; content: string }[]) {
+	const body: Record<string, any> = {
+		model: selectedModel.value,
+		messages: apiMessages,
+		temperature: params.temperature,
+		max_tokens: params.maxTokens,
+		stream: params.stream,
+	}
+	if (params.stream) {
+		body.stream_options = { include_usage: true }
+	}
+	if (isImageModel.value) {
+		body.image_config = {
+			aspect_ratio: imageConfig.aspectRatio,
+			image_size: imageConfig.imageSize,
+		}
+	}
+	return body
+}
+
+async function sendNonStream(requestBody: Record<string, any>, assistantIdx: number) {
+	const response = await fetch('/v1/chat/completions', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${props.apiKey}`,
+		},
+		body: JSON.stringify(requestBody),
+	})
+
+	if (!response.ok) {
+		let errMsg = `请求失败 (${response.status})`
+		try {
+			const errData = await response.json()
+			if (errData?.error?.message) errMsg = errData.error.message
+		} catch {}
+		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
+		return
+	}
+
+	const data = await response.json()
+	const choice = data.choices?.[0]?.message
+	messages.value[assistantIdx] = {
+		role: 'assistant',
+		content: choice?.content || '(无响应内容)',
+		reasoningContent: choice?.reasoning_content || undefined,
+	}
+
+	const usage = data.usage || {}
+	tokenUsage.prompt = usage.prompt_tokens || 0
+	tokenUsage.completion = usage.completion_tokens || 0
+	tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
+	tokenUsage.total = usage.total_tokens || 0
+
+	const model = selectedModelItem.value
+	if (model) {
+		tokenUsage.cost = calculateCost(model, usage) || ''
+	}
+}
+
+async function sendStream(requestBody: Record<string, any>, assistantIdx: number) {
+	const response = await fetch('/v1/chat/completions', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${props.apiKey}`,
+		},
+		body: JSON.stringify(requestBody),
+	})
+
+	if (!response.ok) {
+		let errMsg = `请求失败 (${response.status})`
+		try {
+			const errData = await response.json()
+			if (errData?.error?.message) errMsg = errData.error.message
+		} catch {}
+		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
+		return
+	}
+
+	const reader = response.body?.getReader()
+	if (!reader) {
+		messages.value[assistantIdx] = { role: 'assistant', content: '浏览器不支持流式响应' }
+		return
+	}
+
+	const decoder = new TextDecoder()
+	let sseBuf = ''
+	let contentBuf = ''
+	let reasoningBuf = ''
+
+	while (true) {
+		const { done, value } = await reader.read()
+		if (done) break
+
+		sseBuf += decoder.decode(value, { stream: true })
+		const lines = sseBuf.split('\n')
+		sseBuf = lines.pop() || ''
+
+		for (const line of lines) {
+			const trimmed = line.trim()
+			if (!trimmed || trimmed.startsWith(':')) continue
+			if (trimmed === 'data: [DONE]') continue
+
+			if (trimmed.startsWith('data: ')) {
+				const jsonStr = trimmed.slice(6)
+				try {
+					const chunk = JSON.parse(jsonStr)
+					const delta = chunk.choices?.[0]?.delta
+					if (delta) {
+						if (delta.content) {
+							contentBuf += delta.content
+							messages.value[assistantIdx].content = contentBuf
+							scrollToBottom()
+						}
+						if (delta.reasoning_content) {
+							reasoningBuf += delta.reasoning_content
+							messages.value[assistantIdx].reasoningContent = reasoningBuf
+						}
+					}
+					if (chunk.usage) {
+						const usage = chunk.usage
+						tokenUsage.prompt = usage.prompt_tokens || 0
+						tokenUsage.completion = usage.completion_tokens || 0
+						tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
+						tokenUsage.total = usage.total_tokens || 0
+
+						const model = selectedModelItem.value
+						if (model) {
+							tokenUsage.cost = calculateCost(model, usage) || ''
+						}
+					}
+				} catch {}
+			}
+		}
+	}
+
+	if (!contentBuf) {
+		messages.value[assistantIdx].content = '(无响应内容)'
+	}
+	if (!reasoningBuf) {
+		messages.value[assistantIdx].reasoningContent = undefined
+	}
+}
+
 async function sendMessage() {
 	const content = inputMessage.value.trim()
 	if (!content || !selectedModel.value) return
@@ -89,54 +249,25 @@ async function sendMessage() {
 	sending.value = true
 	if (inputRef.value) inputRef.value.style.height = 'auto'
 
-	const apiMessages = messages.value.map(m => ({ role: m.role, content: m.content }))
-	const requestBody: Record<string, any> = {
-		model: selectedModel.value,
-		messages: apiMessages,
-		temperature: params.temperature,
-		max_tokens: params.maxTokens,
-		stream: false,
-	}
+	const assistantIdx = messages.value.length
+	messages.value.push({ role: 'assistant', content: '', reasoningContent: '' })
+	scrollToBottom()
 
-	if (isImageModel.value) {
-		requestBody.image_config = {
-			aspect_ratio: imageConfig.aspectRatio,
-			image_size: imageConfig.imageSize,
-		}
-	}
+	const apiMessages = messages.value.slice(0, assistantIdx).map(m => ({ role: m.role, content: m.content }))
+	const requestBody = buildRequestBody(apiMessages)
 
 	try {
-		const api = createPlaygroundApi(props.apiKey)
-		const res = await api.post('/v1/chat/completions', requestBody)
-
-		const data = res.data
-		// 解析标准 OpenAI 格式响应
-		const choice = data.choices?.[0]?.message
-		messages.value.push({
-			role: 'assistant',
-			content: choice?.content || '(无响应内容)',
-			reasoningContent: choice?.reasoning_content || undefined,
-		})
-
-		// 解析 usage
-		const usage = data.usage || {}
-		tokenUsage.prompt = usage.prompt_tokens || 0
-		tokenUsage.completion = usage.completion_tokens || 0
-		tokenUsage.reasoning = usage.completion_tokens_details?.reasoning_tokens || 0
-		tokenUsage.total = usage.total_tokens || 0
-
-		// 计算费用
-		const model = selectedModelItem.value
-		if (model) {
-			tokenUsage.cost = calculateCost(model, usage) || ''
+		if (params.stream) {
+			await sendStream(requestBody, assistantIdx)
+		} else {
+			await sendNonStream(requestBody, assistantIdx)
 		}
 	} catch (e: any) {
 		const errMsg = e?.message || '请求失败，请重试'
-		messages.value.push({ role: 'assistant', content: errMsg })
+		messages.value[assistantIdx] = { role: 'assistant', content: errMsg }
 	} finally {
 		sending.value = false
-		await nextTick()
-		if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+		scrollToBottom()
 	}
 }
 
@@ -152,8 +283,8 @@ function clearChat() {
 </script>
 
 <template>
-	<div>
-		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+	<div class="h-[calc(100vh-20rem)] flex flex-col overflow-hidden">
+		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0 flex-1">
 			<!-- Left: Parameters -->
 			<div class="lg:col-span-1">
 				<div class="card sticky top-6">
@@ -181,6 +312,22 @@ function clearChat() {
 							<label class="input-label">System Prompt</label>
 							<textarea v-model="params.systemPrompt" class="input" rows="3" placeholder="设置系统提示词..."></textarea>
 						</div>
+						<div class="flex items-center justify-between">
+							<label class="input-label mb-0">流式响应</label>
+							<button
+								type="button"
+								role="switch"
+								:aria-checked="params.stream"
+								class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+								:class="params.stream ? 'bg-primary-500' : 'bg-gray-200'"
+								@click="params.stream = !params.stream"
+							>
+								<span
+									class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+									:class="params.stream ? 'translate-x-5' : 'translate-x-0'"
+								/>
+							</button>
+						</div>
 						<template v-if="isImageModel">
 							<div class="border-t border-gray-100 pt-4">
 								<h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">图片参数</h4>
@@ -199,12 +346,12 @@ function clearChat() {
 			</div>
 
 			<!-- Right: Chat -->
-			<div class="lg:col-span-3">
-				<div class="card flex flex-col" style="min-height: 500px">
+			<div class="lg:col-span-3 min-h-0">
+				<div class="card flex flex-col h-full overflow-hidden">
 					<div class="px-6 py-2 bg-amber-50 border-b border-amber-200 text-center">
 						<span class="text-xs text-amber-700 font-medium">Playground 模式 — 使用真实 API Key 调用，产生实际费用</span>
 					</div>
-					<div ref="messagesRef" class="flex-1 overflow-y-auto p-6 space-y-4">
+					<div ref="messagesRef" class="flex-1 overflow-y-auto min-h-0 p-6 space-y-4">
 						<div v-if="messages.length === 0" class="empty-state">
 							<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
 							<h3 class="empty-state-title">开始对话</h3>
@@ -257,7 +404,7 @@ function clearChat() {
 							</div>
 						</div>
 						<!-- Sending indicator -->
-						<div v-if="sending" class="flex gap-3">
+						<div v-if="sending && (params.stream ? (messages.length > 0 && messages[messages.length - 1].role === 'user') : true)" class="flex gap-3">
 							<div class="h-8 w-8 rounded-xl bg-primary-100 flex items-center justify-center">
 								<div class="spinner h-4 w-4 text-primary-600"></div>
 							</div>

@@ -111,11 +111,26 @@ const values = useFormValues()
 				</AFormItem>
 			</div>
 		</div>
+		<!-- 注册禁用词 -->
+		<div class="section">
+			<div class="section-title">注册禁用词</div>
+			<div class="section-desc">组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔</div>
+			<div class="section-grid" style="grid-template-columns: 1fr">
+				<AFormItem label="禁用词列表">
+					<ATextarea
+						:model-value="values['register_forbidden_words'] ?? ''"
+						@update:model-value="(v: string) => values['register_forbidden_words'] = v"
+						placeholder="admin,system,root,api,test,administrator,管理员,系统"
+						:auto-size="{ minRows: 3, maxRows: 6 }"
+					/>
+				</AFormItem>
+			</div>
+		</div>
 	</div>
 </template>
 
 <style scoped>
-@import './common.css';
+@import "./common.css";
 .section-desc {
 	font-size: 12px;
 	color: var(--color-text-3);
