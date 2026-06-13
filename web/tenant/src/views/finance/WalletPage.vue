@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+import { dispatchPayment } from '@/utils/payment'
 
 const route = useRoute()
 const wallet = ref<any>(null)
@@ -16,7 +17,7 @@ const selectedPaymentMethod = ref('')
 const paymentInfo = ref<any>(null)
 
 // Pay result notification
-const payResult = ref<'success' | 'fail' | ''>('')
+const payResult = ref<'success' | 'fail' | 'processing' | ''>('')
 
 // Frozen items
 const showFrozenModal = ref(false)
@@ -140,7 +141,7 @@ async function handleRecharge() {
 		})
 		const data = res.data?.data
 		if (data?.payment_url) {
-			window.location.href = data.payment_url
+			dispatchPayment(data)
 			return
 		}
 	} catch {
@@ -238,11 +239,19 @@ onMounted(() => {
 
 	// Handle pay result from return URL
 	const pay = route.query.pay as string
-	if (pay === 'success' || pay === 'fail') {
+	if (pay === 'success' || pay === 'fail' || pay === 'processing') {
 		payResult.value = pay
-		setTimeout(() => { payResult.value = '' }, 5000)
 		if (pay === 'success') {
+			setTimeout(() => { payResult.value = '' }, 5000)
 			fetchWallet()
+		} else if (pay === 'processing') {
+			// 异步回调可能仍在途：延迟刷新余额，到账后自动更新；超时后提示联系客服
+			fetchWallet()
+			setTimeout(fetchWallet, 3000)
+			setTimeout(fetchWallet, 8000)
+			setTimeout(() => { payResult.value = '' }, 12000)
+		} else {
+			setTimeout(() => { payResult.value = '' }, 5000)
 		}
 	}
 })
@@ -289,6 +298,18 @@ onBeforeUnmount(() => {
 				<div class="flex-1">
 					<p class="text-sm font-semibold">支付未完成</p>
 					<p class="text-xs opacity-80 mt-0.5">如果已扣款请联系客服处理</p>
+				</div>
+				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" @click="payResult = ''">
+					<Icon name="x" size="sm" />
+				</button>
+			</div>
+			<div v-else-if="payResult === 'processing'" class="pay-banner pay-banner-processing">
+				<div class="pay-banner-icon">
+					<Icon name="infoCircle" size="sm" />
+				</div>
+				<div class="flex-1">
+					<p class="text-sm font-semibold">支付结果确认中</p>
+					<p class="text-xs opacity-80 mt-0.5">正在等待到账，余额会在确认后自动更新</p>
 				</div>
 				<button class="opacity-60 hover:opacity-100 transition-opacity p-1" @click="payResult = ''">
 					<Icon name="x" size="sm" />
@@ -711,6 +732,17 @@ onBeforeUnmount(() => {
 	background-color: #fee2e2;
 	display: flex; align-items: center; justify-content: center;
 	flex-shrink: 0; color: #dc2626;
+}
+.pay-banner-processing {
+	background-color: #fffbeb;
+	border: 1px solid rgba(252, 211, 77, 0.6);
+	color: #92400e;
+}
+.pay-banner-processing .pay-banner-icon {
+	height: 2rem; width: 2rem; border-radius: 9999px;
+	background-color: #fef3c7;
+	display: flex; align-items: center; justify-content: center;
+	flex-shrink: 0; color: #d97706;
 }
 
 /* ==========================================

@@ -34,14 +34,10 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 
 	tenantCode := strings.TrimSpace(strings.ToLower(req.TenantCode))
 	username := strings.TrimSpace(req.Username)
-
-	// Validate username format
-	if err := common.ValidateUsername(username); err != nil {
-		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
-	}
-
-	// Validate forbidden words in username, tenant name, tenant code
 	tenantName := strings.TrimSpace(req.TenantName)
+
+	// 先校验禁用词：命中禁用词时优先返回更准确的提示，
+	// 避免被用户名格式校验的「不能包含特殊字符或中文」遮盖真实原因
 	if err := common.ValidateForbiddenWords(ctx, username, "用户名"); err != nil {
 		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
 	}
@@ -50,6 +46,11 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	}
 	if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
 		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
 	// Check register rate limit (IP + global)
@@ -70,14 +71,16 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 			return nil, err
 		}
 	} else {
-		// 人机验证：优先 Turnstile，否则滑块验证
-		if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
-			return nil, err
-		}
-
-		// Turnstile 未启用时，使用滑块验证
-		if err := common.CheckCaptchaRequired(ctx, "tenant_register", req.CaptchaKey, req.CaptchaX); err != nil {
-			return nil, err
+		// 人机验证：Turnstile 启用时只验 Turnstile，否则用滑块验证
+		turnstileEnabled := common.Config().GetBool(ctx, "turnstile_enabled")
+		if turnstileEnabled {
+			if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := common.CheckCaptchaRequired(ctx, "tenant_register", req.CaptchaKey, req.CaptchaX); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -240,13 +243,16 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.TenantLoginRes, error) {
 	account := strings.TrimSpace(req.Account)
 
-	// Check captcha if required
-	if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
-		return nil, err
-	}
-
-	if err := common.CheckCaptchaRequired(ctx, "tenant_login", req.CaptchaKey, req.CaptchaX); err != nil {
-		return nil, err
+	// Check captcha: Turnstile takes priority; slider captcha is fallback
+	turnstileEnabled := common.Config().GetBool(ctx, "turnstile_enabled")
+	if turnstileEnabled {
+		if err := common.CheckTurnstileRequired(ctx, req.TurnstileToken); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := common.CheckCaptchaRequired(ctx, "tenant_login", req.CaptchaKey, req.CaptchaX); err != nil {
+			return nil, err
+		}
 	}
 
 	// Get client info early for login history recording
