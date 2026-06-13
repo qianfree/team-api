@@ -251,7 +251,8 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	// 查询上游状态
 	taskData, _ := json.Marshal(map[string]any{
-		"task_id": pd.UpstreamTaskID,
+		"task_id":   pd.UpstreamTaskID,
+		"use_proxy": parseChannelUseProxy(channel.Settings),
 	})
 
 	resp, err := adaptor.FetchTask(channel.BaseURL, channel.ApiKey, taskData)
@@ -477,4 +478,15 @@ func upstreamRespHeaders(resp *http.Response) map[string]string {
 		}
 	}
 	return headers
+}
+
+// parseChannelUseProxy 从渠道 Settings JSONB 中提取 use_proxy 字段
+func parseChannelUseProxy(settings json.RawMessage) bool {
+	var s struct {
+		UseProxy bool `json:"use_proxy"`
+	}
+	if len(settings) > 0 {
+		json.Unmarshal(settings, &s)
+	}
+	return s.UseProxy
 }
