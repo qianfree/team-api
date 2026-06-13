@@ -51,6 +51,19 @@ type klingRequest struct {
 	CameraControl  map[string]any `json:"camera_control,omitempty"`
 }
 
+// klingMetadata 可灵 metadata 参数结构体（用于 UnmarshalMetadata 映射）
+type klingMetadata struct {
+	NegativePrompt string         `json:"negative_prompt,omitempty"`
+	Mode           string         `json:"mode,omitempty"`
+	Duration       any            `json:"duration,omitempty"` // string 或 number
+	AspectRatio    string         `json:"aspect_ratio,omitempty"`
+	CfgScale       *float64       `json:"cfg_scale,omitempty"`
+	Image          string         `json:"image,omitempty"`
+	ImageTail      string         `json:"image_tail,omitempty"`
+	Sound          string         `json:"sound,omitempty"`
+	CameraControl  map[string]any `json:"camera_control,omitempty"`
+}
+
 // klingSubmitResponse 可灵任务提交响应
 type klingSubmitResponse struct {
 	Code    int    `json:"code"`
@@ -116,10 +129,12 @@ func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, b
 	}
 
 	// 时长加价：10s = 2x
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if v, ok := metadata["duration"].(float64); ok && v >= 10 {
-			ratios["duration_multiplier"] = 2.0
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta struct {
+		Duration float64 `json:"duration"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration >= 10 {
+		ratios["duration_multiplier"] = 2.0
 	}
 	if seconds, ok := req["seconds"].(string); ok {
 		if d, err := parseInt(seconds); err == nil && d >= 10 {
@@ -143,10 +158,9 @@ func determineTaskType(req map[string]any) string {
 		}
 	}
 	// 有图片输入则 image2video
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if _, hasImg := metadata["image"]; hasImg {
-			return "image2video"
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	if _, hasImg := metadata["image"]; hasImg {
+		return "image2video"
 	}
 	if _, hasImg := req["images"].([]any); hasImg {
 		return "image2video"
@@ -204,36 +218,25 @@ func (a *KlingAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInf
 	}
 
 	// 从 metadata 提取参数
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if v, ok := metadata["negative_prompt"].(string); ok {
-			kReq.NegativePrompt = v
-		}
-		if v, ok := metadata["mode"].(string); ok {
-			kReq.Mode = v
-		}
-		if v, ok := metadata["duration"].(string); ok {
-			kReq.Duration = v
-		} else if v, ok := metadata["duration"].(float64); ok {
-			kReq.Duration = fmt.Sprintf("%d", int(v))
-		}
-		if v, ok := metadata["aspect_ratio"].(string); ok {
-			kReq.AspectRatio = v
-		}
-		if v, ok := metadata["cfg_scale"].(float64); ok {
-			kReq.CfgScale = &v
-		}
-		if v, ok := metadata["image"].(string); ok {
-			kReq.Image = v
-		}
-		if v, ok := metadata["image_tail"].(string); ok {
-			kReq.ImageTail = v
-		}
-		if v, ok := metadata["sound"].(string); ok {
-			kReq.Sound = v
-		}
-		if v, ok := metadata["camera_control"].(map[string]any); ok {
-			kReq.CameraControl = v
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta klingMetadata
+	if err := taskchannel.UnmarshalMetadata(metadata, &meta); err != nil {
+		return nil, fmt.Errorf("parse kling metadata: %w", err)
+	}
+	kReq.NegativePrompt = meta.NegativePrompt
+	kReq.Mode = meta.Mode
+	kReq.AspectRatio = meta.AspectRatio
+	kReq.CfgScale = meta.CfgScale
+	kReq.Image = meta.Image
+	kReq.ImageTail = meta.ImageTail
+	kReq.Sound = meta.Sound
+	kReq.CameraControl = meta.CameraControl
+	// duration 支持 string 或 number 两种类型
+	switch v := meta.Duration.(type) {
+	case string:
+		kReq.Duration = v
+	case float64:
+		kReq.Duration = fmt.Sprintf("%d", int(v))
 	}
 
 	// seconds 字段映射到 duration

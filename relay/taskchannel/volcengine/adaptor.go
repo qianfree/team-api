@@ -48,6 +48,18 @@ type submitRequest struct {
 	ReturnLastFrame *bool         `json:"return_last_frame,omitempty"`
 }
 
+// volcengineMetadata 火山引擎 metadata 参数结构体（用于 UnmarshalMetadata 映射）
+type volcengineMetadata struct {
+	Content         []contentItem `json:"content,omitempty"`
+	Resolution      string        `json:"resolution,omitempty"`
+	Ratio           string        `json:"ratio,omitempty"`
+	Duration        *int          `json:"duration,omitempty"`
+	Seed            *int          `json:"seed,omitempty"`
+	Watermark       *bool         `json:"watermark,omitempty"`
+	GenerateAudio   *bool         `json:"generate_audio,omitempty"`
+	ReturnLastFrame *bool         `json:"return_last_frame,omitempty"`
+}
+
 // submitResponse 提交任务响应
 type submitResponse struct {
 	ID string `json:"id"`
@@ -186,65 +198,20 @@ func (a *VolcengineVideoAdaptor) BuildRequestBody(_ context.Context, info *commo
 	}
 
 	// 从 metadata 中提取额外参数
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		// content 数组中的额外项（如 video_url、audio_url）
-		if contentRaw, ok := metadata["content"].([]any); ok {
-			for _, item := range contentRaw {
-				if itemMap, ok := item.(map[string]any); ok {
-					ci := contentItem{}
-					if t, ok := itemMap["type"].(string); ok {
-						ci.Type = t
-					}
-					if t, ok := itemMap["text"].(string); ok {
-						ci.Text = t
-					}
-					if imgURL, ok := itemMap["image_url"].(map[string]any); ok {
-						if u, ok := imgURL["url"].(string); ok {
-							ci.ImageURL = &mediaURL{URL: u}
-						}
-					}
-					if vidURL, ok := itemMap["video_url"].(map[string]any); ok {
-						if u, ok := vidURL["url"].(string); ok {
-							ci.VideoURL = &mediaURL{URL: u}
-						}
-					}
-					if audURL, ok := itemMap["audio_url"].(map[string]any); ok {
-						if u, ok := audURL["url"].(string); ok {
-							ci.AudioURL = &mediaURL{URL: u}
-						}
-					}
-					if ci.Type != "" || ci.Text != "" {
-						volcReq.Content = append(volcReq.Content, ci)
-					}
-				}
-			}
-		}
-
-		// 其他参数
-		if v, ok := metadata["resolution"].(string); ok {
-			volcReq.Resolution = v
-		}
-		if v, ok := metadata["ratio"].(string); ok {
-			volcReq.Ratio = v
-		}
-		if v, ok := metadata["duration"].(float64); ok && v > 0 {
-			d := int(v)
-			volcReq.Duration = &d
-		}
-		if v, ok := metadata["seed"].(float64); ok {
-			s := int(v)
-			volcReq.Seed = &s
-		}
-		if v, ok := metadata["watermark"].(bool); ok {
-			volcReq.Watermark = &v
-		}
-		if v, ok := metadata["generate_audio"].(bool); ok {
-			volcReq.GenerateAudio = &v
-		}
-		if v, ok := metadata["return_last_frame"].(bool); ok {
-			volcReq.ReturnLastFrame = &v
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta volcengineMetadata
+	if err := taskchannel.UnmarshalMetadata(metadata, &meta); err != nil {
+		return nil, fmt.Errorf("parse volcengine metadata: %w", err)
 	}
+	// content 数组中的额外项（如 video_url、audio_url）
+	volcReq.Content = append(volcReq.Content, meta.Content...)
+	volcReq.Resolution = meta.Resolution
+	volcReq.Ratio = meta.Ratio
+	volcReq.Duration = meta.Duration
+	volcReq.Seed = meta.Seed
+	volcReq.Watermark = meta.Watermark
+	volcReq.GenerateAudio = meta.GenerateAudio
+	volcReq.ReturnLastFrame = meta.ReturnLastFrame
 
 	// 从根层级提取 resolution（支持 input.resolution 格式）
 	if v, ok := req["resolution"].(string); ok && v != "" && volcReq.Resolution == "" {
@@ -410,20 +377,19 @@ func (a *VolcengineVideoAdaptor) GetChannelName() string {
 
 // hasVideoInput 检测请求是否包含视频输入
 func hasVideoInput(req map[string]any) bool {
-	// 检查 metadata.content 中是否有 video_url 类型
-	metadata, _ := req["metadata"].(map[string]any)
-	if metadata == nil {
+	metadata := taskchannel.ExtractMetadata(req)
+	if len(metadata) == 0 {
 		return false
 	}
-	content, _ := metadata["content"].([]any)
-	for _, item := range content {
-		if m, ok := item.(map[string]any); ok {
-			if m["type"] == "video_url" {
-				return true
-			}
-			if _, has := m["video_url"]; has {
-				return true
-			}
+	var meta struct {
+		Content []contentItem `json:"content"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) != nil {
+		return false
+	}
+	for _, c := range meta.Content {
+		if c.Type == "video_url" || c.VideoURL != nil {
+			return true
 		}
 	}
 	return false
@@ -449,10 +415,12 @@ func extractDuration(req map[string]any) int {
 		}
 	}
 	// 从 metadata 提取
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if d, ok := metadata["duration"].(float64); ok && d > 0 {
-			return int(d)
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta struct {
+		Duration *int `json:"duration"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration != nil && *meta.Duration > 0 {
+		return *meta.Duration
 	}
 	if s, ok := req["seconds"].(string); ok {
 		if d, err := parseInt(s); err == nil && d > 0 {
@@ -469,10 +437,12 @@ func extractResolution(req map[string]any) string {
 		return r
 	}
 	// 从 metadata 提取
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if r, ok := metadata["resolution"].(string); ok && r != "" {
-			return r
-		}
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta struct {
+		Resolution string `json:"resolution"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Resolution != "" {
+		return meta.Resolution
 	}
 	return "720p"
 }
