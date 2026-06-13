@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -306,29 +307,29 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 		return nil, err
 	}
 
-	// 状态从 active → deprecated 时发送通知并清除缓存
-	if statusChanged && req.Status == "deprecated" && oldModel.Status == "active" {
-		go func() {
-			bgCtx := context.Background()
-			variables := g.Map{
-				"model_name":        oldModel.ModelId,
-				"sunset_date":       "",
-				"replacement_model": req.ReplacementModel,
-			}
-			if req.SunsetDate != nil {
-				variables["sunset_date"] = *req.SunsetDate
-			}
-			engine := common.NewNotificationEngine()
-			if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
-				g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
-			}
-		}()
+	if statusChanged {
+		// 状态变更时清除模型缓存和租户分组缓存
 		relay.NewDataProvider().InvalidateModelCache(oldModel.ModelId)
-	}
+		invalidateTenantsForModel(ctx, req.ID)
 
-	// 状态从 deprecated → active 时清除缓存
-	if statusChanged && req.Status == "active" && oldModel.Status == "deprecated" {
-		relay.NewDataProvider().InvalidateModelCache(oldModel.ModelId)
+		// 状态从 active → deprecated 时额外发送通知
+		if req.Status == "deprecated" && oldModel.Status == "active" {
+			go func() {
+				bgCtx := context.Background()
+				variables := g.Map{
+					"model_name":        oldModel.ModelId,
+					"sunset_date":       "",
+					"replacement_model": req.ReplacementModel,
+				}
+				if req.SunsetDate != nil {
+					variables["sunset_date"] = *req.SunsetDate
+				}
+				engine := common.NewNotificationEngine()
+				if err := engine.SendToAllTenants(bgCtx, "model_deprecated", variables, ""); err != nil {
+					g.Log().Errorf(bgCtx, "[ModelDeprecation] send notification for %s failed: %v", oldModel.ModelId, err)
+				}
+			}()
+		}
 	}
 
 	return nil, nil
@@ -447,7 +448,7 @@ func (s *sAdmin) FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchO
 		return nil, common.NewBusinessError(404, "模型不存在")
 	}
 
-	sources := make([]*v1.OfficialPricingSource, 0, 2)
+	sources := make([]*v1.OfficialPricingSource, 0, 4)
 
 	// Source 1: LiteLLM
 	litellmSource := fetchLiteLLMSource(ctx, model.ModelId)
@@ -456,6 +457,14 @@ func (s *sAdmin) FetchOfficialPricing(ctx context.Context, req *v1.PricingFetchO
 	// Source 2: models.dev
 	modelsDevSource := fetchModelsDevSource(ctx, model.ModelId)
 	sources = append(sources, modelsDevSource)
+
+	// Source 3: BaseLLM
+	baseLLMSource := fetchBaseLLMSource(ctx, model.ModelId)
+	sources = append(sources, baseLLMSource)
+
+	// Source 4: OpenRouter
+	openRouterSource := fetchOpenRouterSource(ctx, model.ModelId)
+	sources = append(sources, openRouterSource)
 
 	return &v1.PricingFetchOfficialRes{
 		ModelName: model.ModelId,
@@ -543,46 +552,162 @@ func fetchModelsDevSource(ctx context.Context, modelName string) *v1.OfficialPri
 	return source
 }
 
+func fetchBaseLLMSource(ctx context.Context, modelName string) *v1.OfficialPricingSource {
+	source := &v1.OfficialPricingSource{Source: "basellm"}
+
+	data, err := common.FetchBaseLLMPricing(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "[FetchOfficialPricing] basellm fetch failed for %s: %v", modelName, err)
+		source.Error = err.Error()
+		return source
+	}
+
+	matchedName, entry := common.FindBaseLLMModel(data, modelName)
+	if entry == nil {
+		return source
+	}
+
+	cacheReadPrice := 0.0
+	if entry.PricePerMCacheRead != nil {
+		cacheReadPrice = *entry.PricePerMCacheRead
+	}
+	cacheWritePrice := 0.0
+	if entry.PricePerMCacheWrite != nil {
+		cacheWritePrice = *entry.PricePerMCacheWrite
+	}
+
+	source.Found = true
+	source.Provider = entry.VendorName
+	source.MaxContext = common.ParseBaseLLMContext(entry.Tags)
+	source.Pricing = &v1.OfficialPricingItem{
+		InputPrice:         roundTo2(entry.PricePerMInput),
+		OutputPrice:        roundTo2(entry.PricePerMOutput),
+		CacheReadPrice:     roundTo2(cacheReadPrice),
+		CacheCreationPrice: roundTo2(cacheWritePrice),
+		BillingMode:        "token",
+	}
+
+	g.Log().Debugf(ctx, "[FetchOfficialPricing] basellm matched %s -> %s", modelName, matchedName)
+	return source
+}
+
+func fetchOpenRouterSource(ctx context.Context, modelName string) *v1.OfficialPricingSource {
+	source := &v1.OfficialPricingSource{Source: "openrouter"}
+
+	data, err := common.FetchOpenRouterModels(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "[FetchOfficialPricing] openrouter fetch failed for %s: %v", modelName, err)
+		source.Error = err.Error()
+		return source
+	}
+
+	matchedName, entry := common.FindOpenRouterModel(data, modelName)
+	if entry == nil || entry.Pricing == nil {
+		return source
+	}
+
+	inputPrice := common.OpenRouterPricePerM(entry.Pricing.Prompt)
+	outputPrice := common.OpenRouterPricePerM(entry.Pricing.Completion)
+	cacheReadPrice := common.OpenRouterPricePerM(entry.Pricing.InputCacheRead)
+	cacheWritePrice := common.OpenRouterPricePerM(entry.Pricing.InputCacheWrite)
+
+	source.Found = true
+	if idx := strings.Index(entry.ID, "/"); idx >= 0 {
+		source.Provider = entry.ID[:idx]
+	}
+	source.MaxContext = entry.ContextLength
+	if entry.TopProvider != nil && entry.TopProvider.MaxCompletionTokens > 0 {
+		source.MaxOutput = entry.TopProvider.MaxCompletionTokens
+	}
+	source.Pricing = &v1.OfficialPricingItem{
+		InputPrice:         roundTo2(inputPrice),
+		OutputPrice:        roundTo2(outputPrice),
+		CacheReadPrice:     roundTo2(cacheReadPrice),
+		CacheCreationPrice: roundTo2(cacheWritePrice),
+		BillingMode:        "token",
+	}
+
+	g.Log().Debugf(ctx, "[FetchOfficialPricing] openrouter matched %s -> %s", modelName, matchedName)
+	return source
+}
+
 func roundTo2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
 // FetchOfficialModelInfo 按模型名称拉取官方模型信息（上下文长度+能力特性）
+// 按优先级尝试 LiteLLM → OpenRouter → BaseLLM，返回第一个匹配的结果
 func (s *sAdmin) FetchOfficialModelInfo(ctx context.Context, req *v1.ModelFetchOfficialInfoReq) (*v1.ModelFetchOfficialInfoRes, error) {
-	data, err := common.FetchLiteLLMPricing(ctx)
-	if err != nil {
+	var lastError string
+
+	// Source 1: LiteLLM
+	if data, err := common.FetchLiteLLMPricing(ctx); err != nil {
 		g.Log().Warningf(ctx, "[FetchOfficialModelInfo] litellm fetch failed for %s: %v", req.ModelName, err)
-		return &v1.ModelFetchOfficialInfoRes{Found: false, Error: err.Error()}, nil
+		lastError = err.Error()
+	} else if _, entry := common.FindLiteLLMModel(data, req.ModelName); entry != nil {
+		return &v1.ModelFetchOfficialInfoRes{
+			Found:            true,
+			Provider:         entry.LitellmProvider,
+			MaxContextTokens: entry.MaxInputTokens,
+			MaxOutputTokens:  entry.MaxOutputTokens,
+			Capabilities: map[string]bool{
+				"vision":                    entry.SupportsVision,
+				"function_calling":          entry.SupportsFunctionCalling,
+				"parallel_function_calling": entry.SupportsParallelFuncCalling,
+				"tool_choice":               entry.SupportsToolChoice,
+				"response_schema":           entry.SupportsResponseSchema,
+				"system_messages":           entry.SupportsSystemMessages,
+				"prompt_caching":            entry.SupportsPromptCaching,
+				"audio_input":               entry.SupportsAudioInput,
+				"audio_output":              entry.SupportsAudioOutput,
+				"pdf_input":                 entry.SupportsPdfInput,
+				"embedding_image":           entry.SupportsEmbeddingImage,
+				"reasoning":                 entry.SupportsReasoning,
+				"web_search":                entry.SupportsWebSearch,
+			},
+		}, nil
 	}
 
-	_, entry := common.FindLiteLLMModel(data, req.ModelName)
-	if entry == nil {
-		return &v1.ModelFetchOfficialInfoRes{Found: false}, nil
+	// Source 2: OpenRouter
+	if data, err := common.FetchOpenRouterModels(ctx); err != nil {
+		g.Log().Warningf(ctx, "[FetchOfficialModelInfo] openrouter fetch failed for %s: %v", req.ModelName, err)
+		lastError = err.Error()
+	} else if _, entry := common.FindOpenRouterModel(data, req.ModelName); entry != nil {
+		maxOutput := 0
+		if entry.TopProvider != nil {
+			maxOutput = entry.TopProvider.MaxCompletionTokens
+		}
+		provider := ""
+		if idx := strings.Index(entry.ID, "/"); idx >= 0 {
+			provider = entry.ID[:idx]
+		}
+		return &v1.ModelFetchOfficialInfoRes{
+			Found:            true,
+			Provider:         provider,
+			MaxContextTokens: entry.ContextLength,
+			MaxOutputTokens:  maxOutput,
+			Capabilities:     common.ParseOpenRouterCapabilities(entry),
+		}, nil
 	}
 
-	capabilities := map[string]bool{
-		"vision":                    entry.SupportsVision,
-		"function_calling":          entry.SupportsFunctionCalling,
-		"parallel_function_calling": entry.SupportsParallelFuncCalling,
-		"tool_choice":               entry.SupportsToolChoice,
-		"response_schema":           entry.SupportsResponseSchema,
-		"system_messages":           entry.SupportsSystemMessages,
-		"prompt_caching":            entry.SupportsPromptCaching,
-		"audio_input":               entry.SupportsAudioInput,
-		"audio_output":              entry.SupportsAudioOutput,
-		"pdf_input":                 entry.SupportsPdfInput,
-		"embedding_image":           entry.SupportsEmbeddingImage,
-		"reasoning":                 entry.SupportsReasoning,
-		"web_search":                entry.SupportsWebSearch,
+	// Source 3: BaseLLM
+	if data, err := common.FetchBaseLLMPricing(ctx); err != nil {
+		g.Log().Warningf(ctx, "[FetchOfficialModelInfo] basellm fetch failed for %s: %v", req.ModelName, err)
+		lastError = err.Error()
+	} else if _, entry := common.FindBaseLLMModel(data, req.ModelName); entry != nil {
+		return &v1.ModelFetchOfficialInfoRes{
+			Found:            true,
+			Provider:         entry.VendorName,
+			MaxContextTokens: common.ParseBaseLLMContext(entry.Tags),
+			Capabilities:     common.ParseBaseLLMCapabilities(entry.Tags),
+		}, nil
 	}
 
-	return &v1.ModelFetchOfficialInfoRes{
-		Found:            true,
-		Provider:         entry.LitellmProvider,
-		MaxContextTokens: entry.MaxInputTokens,
-		MaxOutputTokens:  entry.MaxOutputTokens,
-		Capabilities:     capabilities,
-	}, nil
+	res := &v1.ModelFetchOfficialInfoRes{Found: false}
+	if lastError != "" {
+		res.Error = lastError
+	}
+	return res, nil
 }
 
 // ExportModels exports model list to CSV or Excel.

@@ -17,6 +17,7 @@ type MdlModelGroups struct {
 	Code        any         // 分组唯一标识（如 full_access、basic_chat）
 	Description any         // 分组描述
 	Status      any         // 状态：active（启用）/ disabled（禁用）
+	IsDefault   any         // 是否为新租户默认模型组，注册时自动关联
 	CreatedAt   *gtime.Time // 创建时间
 	UpdatedAt   *gtime.Time // 更新时间
 }

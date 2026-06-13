@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { calculateCost } from './calculateCost'
+import ParamRefModal from './ParamRefModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -22,20 +23,120 @@ const selectedModelItem = computed(() =>
 	props.models.find(m => m.model_id === selectedModel.value),
 )
 const prompt = ref('')
-const size = ref('1920x1080')
-const quality = ref('standard')
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
-const sizePresets = [
-	{ value: '1280x720', label: '720p' },
-	{ value: '1920x1080', label: '1080p' },
-	{ value: '2560x1440', label: '2K' },
-	{ value: '3840x2160', label: '4K' },
+// ── 自定义参数系统 ──
+
+interface CustomParam {
+	id: number
+	key: string
+	value: string
+}
+
+const customParams = ref<CustomParam[]>([])
+let nextParamId = 1
+const showParamRef = ref(false)
+
+// 模型预设模板
+const MODEL_PRESETS: Record<string, Record<string, string>> = {
+	'gpt-image-1': {
+		size: '1024x1024',
+		quality: 'auto',
+		response_format: 'b64_json',
+		output_format: 'png',
+	},
+	'dall-e-3': {
+		size: '1024x1024',
+		quality: 'standard',
+		style: 'vivid',
+		response_format: 'url',
+	},
+	'dall-e-2': {
+		size: '1024x1024',
+		response_format: 'url',
+	},
+}
+
+// 当前模型的预设（支持子串匹配，如 openai/gpt-image-1）
+const currentPreset = computed(() => {
+	const id = selectedModel.value
+	if (MODEL_PRESETS[id]) return MODEL_PRESETS[id]
+	for (const key of Object.keys(MODEL_PRESETS)) {
+		if (id.includes(key)) return MODEL_PRESETS[key]
+	}
+	return null
+})
+
+// 预设标签名（用于按钮显示）
+const currentPresetLabel = computed(() => {
+	const id = selectedModel.value
+	for (const key of Object.keys(MODEL_PRESETS)) {
+		if (id === key || id.includes(key)) {
+			// 美化显示：gpt-image-1 → GPT Image 1
+			return key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+		}
+	}
+	return ''
+})
+
+// 有效参数数量
+const validParamsCount = computed(() =>
+	customParams.value.filter(p => p.key.trim() && p.value.trim()).length,
+)
+
+function addParam(key = '', value = '') {
+	customParams.value.push({ id: nextParamId++, key, value })
+}
+
+function removeParam(id: number) {
+	const idx = customParams.value.findIndex(p => p.id === id)
+	if (idx !== -1) customParams.value.splice(idx, 1)
+}
+
+function applyPreset() {
+	const preset = currentPreset.value
+	if (!preset) return
+	customParams.value = []
+	for (const [key, value] of Object.entries(preset)) {
+		addParam(key, value)
+	}
+}
+
+// 智能类型推断：字符串 → boolean / number / string
+function parseValue(raw: string): string | number | boolean {
+	if (raw.toLowerCase() === 'true') return true
+	if (raw.toLowerCase() === 'false') return false
+	if (/^-?\d+(\.\d+)?$/.test(raw)) {
+		const num = Number(raw)
+		if (!isNaN(num) && isFinite(num)) return num
+	}
+	return raw
+}
+
+// 默认参数项（无预设时显示，用户自行填写值）
+const DEFAULT_PARAMS = [
+	{ key: 'size', value: '' },
+	{ key: 'quality', value: '' },
 ]
 
-function applySizePreset(val: string) {
-	size.value = val
+function applyDefaults() {
+	customParams.value = []
+	for (const { key, value } of DEFAULT_PARAMS) {
+		addParam(key, value)
+	}
 }
+
+// 切换模型时自动应用预设，无预设则显示默认参数项
+watch(selectedModel, () => {
+	const preset = currentPreset.value
+	if (preset) {
+		applyPreset()
+	} else {
+		applyDefaults()
+	}
+}, { immediate: true })
+
+// ── 图片生成 ──
 
 interface ImageResult { b64_json?: string; url?: string; revised_prompt?: string }
 const images = ref<ImageResult[]>([])
@@ -48,12 +149,21 @@ async function generate() {
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const res = await api.post('/v1/images/generations', {
+
+		// 组装请求体：固定字段 + 自定义参数
+		const body: Record<string, any> = {
 			model: selectedModel.value,
 			prompt: prompt.value,
-			size: size.value,
-			quality: quality.value,
-		}, { timeout: 300_000 })
+		}
+		for (const param of customParams.value) {
+			const key = param.key.trim()
+			const val = param.value.trim()
+			if (key && val) {
+				body[key] = parseValue(val)
+			}
+		}
+
+		const res = await api.post('/v1/images/generations', body, { timeout: 300_000 })
 
 		const data = res.data
 		images.value = data.data || []
@@ -96,35 +206,88 @@ function downloadImage(img: ImageResult, idx: number) {
 					<h3 class="text-sm font-semibold text-gray-900">图片生成参数</h3>
 				</div>
 				<div class="card-body space-y-4">
+					<!-- 模型 -->
 					<div>
 						<label class="input-label">模型</label>
 						<BaseSelect v-model="selectedModel" :options="modelOptions" />
 					</div>
+
+					<!-- 提示词 -->
 					<div>
 						<label class="input-label">提示词</label>
 						<textarea v-model="prompt" class="input" rows="4" placeholder="描述你想生成的图片..." />
 					</div>
-					<div>
-						<label class="input-label">尺寸</label>
-						<input v-model="size" class="input" placeholder="如 1920x1080" />
-						<div class="flex flex-wrap gap-1.5 mt-2">
-							<button
-								v-for="p in sizePresets"
-								:key="p.value"
-								class="text-xs px-2 py-1 rounded-lg border transition-colors duration-150 cursor-pointer"
-								:class="size === p.value
-									? 'bg-primary-50 border-primary-300 text-primary-700'
-									: 'bg-white border-gray-200 text-gray-600 hover:border-primary-200 hover:text-primary-600'"
-								@click="applySizePreset(p.value)"
+
+					<!-- 自定义参数 -->
+					<div class="border-t border-gray-100 pt-4">
+						<div class="flex items-center justify-between mb-3">
+							<div class="flex items-center gap-2">
+								<h4 class="text-sm font-semibold text-gray-900">自定义参数</h4>
+								<span v-if="validParamsCount > 0" class="badge badge-primary">{{ validParamsCount }}</span>
+							</div>
+							<div class="flex items-center gap-1.5">
+								<button
+									class="text-xs px-2.5 py-1.5 rounded-lg text-gray-600 hover:border-primary-300 hover:text-primary-600 transition-colors duration-150 cursor-pointer flex items-center gap-1.5 border border-gray-200"
+									@click="showParamRef = true"
+								>
+									<Icon name="bookOpen" size="xs" />
+									参数参考
+								</button>
+								<button
+									v-if="currentPreset && customParams.length > 0"
+									class="text-xs px-2 py-1 rounded-lg text-primary-600 hover:bg-primary-50 transition-colors duration-150 cursor-pointer"
+									@click="applyPreset"
+								>
+									重置预设
+								</button>
+							</div>
+						</div>
+
+						<!-- 空状态 -->
+						<div
+							v-if="customParams.length === 0"
+							class="rounded-xl border-2 border-dashed border-gray-200 py-6 text-center cursor-pointer hover:border-primary-300 hover:bg-primary-50/30 transition-colors duration-200"
+							@click="currentPreset ? applyPreset() : applyDefaults()"
+						>
+							<Icon name="plus" size="sm" class="text-gray-300 mx-auto mb-2" />
+							<p class="text-xs text-gray-400">
+								{{ currentPreset ? '点击应用 ' + currentPresetLabel + ' 预设' : '点击添加自定义参数' }}
+							</p>
+						</div>
+
+						<!-- 参数行 -->
+						<div v-else class="space-y-2">
+							<div
+								v-for="param in customParams"
+								:key="param.id"
+								class="flex items-center gap-2 group"
 							>
-								{{ p.label }}
+								<input
+									v-model="param.key"
+									class="input flex-1"
+									placeholder="参数名"
+								/>
+								<input
+									v-model="param.value"
+									class="input flex-1"
+									placeholder="值"
+								/>
+								<button
+									class="h-9 w-9 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors duration-150 flex-shrink-0 cursor-pointer"
+									@click="removeParam(param.id)"
+								>
+									<Icon name="x" size="sm" />
+								</button>
+							</div>
+							<button
+								class="w-full text-xs py-1.5 rounded-lg border border-dashed border-gray-200 text-gray-400 hover:border-primary-300 hover:text-primary-600 transition-colors duration-150 cursor-pointer"
+								@click="addParam()"
+							>
+								+ 添加参数
 							</button>
 						</div>
 					</div>
-					<div>
-						<label class="input-label">质量</label>
-						<BaseSelect v-model="quality" :options="[{value:'standard',label:'标准'},{value:'hd',label:'高清'}]" />
-					</div>
+
 					<button class="btn btn-primary w-full" :disabled="sending || !prompt.trim()" @click="generate">
 						{{ sending ? '生成中...' : '生成图片' }}
 					</button>
@@ -169,4 +332,7 @@ function downloadImage(img: ImageResult, idx: number) {
 			</div>
 		</div>
 	</div>
+
+	<!-- 参数参考弹窗 -->
+	<ParamRefModal :show="showParamRef" mode="image" @close="showParamRef = false" />
 </template>

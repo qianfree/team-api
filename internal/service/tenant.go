@@ -13,6 +13,14 @@ import (
 
 type (
 	ITenant interface {
+		// ListTenantPendingAgreements 当前租户用户待接受的协议
+		ListTenantPendingAgreements(ctx context.Context, req *v1.TenantAgreementPendingReq) (*v1.TenantAgreementPendingRes, error)
+		// AcceptTenantAgreements 租户用户接受协议
+		AcceptTenantAgreements(ctx context.Context, req *v1.TenantAgreementAcceptReq) (*v1.TenantAgreementAcceptRes, error)
+		// ListCurrentAgreements 获取所有当前生效的协议列表（公开）
+		ListCurrentAgreements(ctx context.Context, req *v1.AgreementCurrentListReq) (*v1.AgreementCurrentListRes, error)
+		// GetCurrentAgreementByCode 按标识码获取当前协议详情（公开）
+		GetCurrentAgreementByCode(ctx context.Context, req *v1.AgreementCurrentGetReq) (*v1.AgreementCurrentGetRes, error)
 		// ApiKeyList 列出 API Keys，支持按类型过滤
 		ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (*v1.TenantApiKeyListRes, error)
 		// ApiKeyCreate 创建新的 API Key

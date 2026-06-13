@@ -258,8 +258,7 @@ func checkGroupModelAccess(ctx context.Context, tenantID int64, modelName string
 	cachedSet, found := lcommon.TenantGroupModelCache.Get(ctx, cacheKey)
 	if found {
 		if cachedSet == nil {
-			// nil 表示无分组 → 向后兼容，允许所有模型
-			return true, nil, nil
+			return false, nil, nil
 		}
 		if modelSet, ok := cachedSet.(map[string]bool); ok {
 			_, inGroup := modelSet[modelName]
@@ -273,9 +272,8 @@ func checkGroupModelAccess(ctx context.Context, tenantID int64, modelName string
 		Count()
 
 	if groupCount == 0 {
-		// 无分组 → 向后兼容，允许所有模型
 		lcommon.TenantGroupModelCache.Set(ctx, cacheKey, nil)
-		return true, nil, nil
+		return false, nil, nil
 	}
 
 	// 查询租户所有活跃分组中的可用模型
@@ -747,13 +745,8 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 		hasGroup := len(groupModelIDs) > 0
 
 		if !hasExplicit && !hasGroup {
-			// 无分配记录且无分组：返回所有活跃模型（向后兼容）
-			err = dao.MdlModels.Ctx(ctx).
-				Where("status", "active").
-				Fields(fieldsNoAlias).
-				OrderAsc("category").
-				OrderAsc("model_id").
-				Scan(&models)
+			// 无分配记录且无分组：返回空列表
+			models = make([]modelRow, 0)
 		} else {
 			// 构建合并的模型 ID 集合
 			allModelIDs := make([]int64, 0)

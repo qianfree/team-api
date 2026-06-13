@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"crypto/md5"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -72,7 +73,7 @@ func (p *EpayProvider) HandleCallback(ctx context.Context, r *http.Request, conf
 
 	receivedSign := r.FormValue("sign")
 	expectedSign := epaySign(params, cfg.MerchantKey)
-	if receivedSign != expectedSign {
+	if subtle.ConstantTimeCompare([]byte(receivedSign), []byte(expectedSign)) != 1 {
 		return nil, lcommon.NewBusinessError(422, "易支付签名验证失败")
 	}
 

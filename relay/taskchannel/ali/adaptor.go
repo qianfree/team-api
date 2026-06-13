@@ -44,6 +44,19 @@ type dashScopeVideoParams struct {
 	Seed         *int   `json:"seed,omitempty"`
 }
 
+// aliMetadata Ali DashScope metadata 参数结构体（用于 UnmarshalMetadata 映射）
+type aliMetadata struct {
+	NegativePrompt string `json:"negative_prompt,omitempty"`
+	AudioURL       string `json:"audio_url,omitempty"`
+	Resolution     string `json:"resolution,omitempty"`
+	Ratio          string `json:"ratio,omitempty"`
+	Size           string `json:"size,omitempty"`
+	Duration       *int   `json:"duration,omitempty"`
+	PromptExtend   *bool  `json:"prompt_extend,omitempty"`
+	Watermark      *bool  `json:"watermark,omitempty"`
+	Seed           *int   `json:"seed,omitempty"`
+}
+
 // dashScopeImageRequest DashScope 图片生成请求
 type dashScopeImageRequest struct {
 	Model      string              `json:"model"`
@@ -130,10 +143,12 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 
 	if a.isVideo {
 		// duration 影响计费
-		if metadata, ok := req["metadata"].(map[string]any); ok {
-			if v, ok := metadata["duration"].(float64); ok && v > 0 {
-				ratios["duration"] = v
-			}
+		metadata := taskchannel.ExtractMetadata(req)
+		var meta struct {
+			Duration *int `json:"duration"`
+		}
+		if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration != nil && *meta.Duration > 0 {
+			ratios["duration"] = float64(*meta.Duration)
 		}
 		if seconds, ok := req["seconds"].(string); ok {
 			if d, err := parseInt(seconds); err == nil && d > 0 {
@@ -202,55 +217,33 @@ func (a *AliAdaptor) buildVideoRequest(info *common.RelayInfo, req map[string]an
 	}
 
 	params := &dashScopeVideoParams{}
-	hasParams := false
 
-	if metadata, ok := req["metadata"].(map[string]any); ok {
-		if v, ok := metadata["negative_prompt"].(string); ok {
-			dsReq.Input.NegativePrompt = v
-		}
-		if v, ok := metadata["audio_url"].(string); ok {
-			dsReq.Input.AudioURL = v
-		}
-		if v, ok := metadata["resolution"].(string); ok {
-			params.Resolution = v
-			hasParams = true
-		}
-		if v, ok := metadata["ratio"].(string); ok {
-			params.Ratio = v
-			hasParams = true
-		}
-		if v, ok := metadata["size"].(string); ok {
-			params.Size = strings.ReplaceAll(v, "x", "*")
-			hasParams = true
-		}
-		if v, ok := metadata["duration"].(float64); ok && v > 0 {
-			d := int(v)
-			params.Duration = &d
-			hasParams = true
-		}
-		if v, ok := metadata["prompt_extend"].(bool); ok {
-			params.PromptExtend = &v
-			hasParams = true
-		}
-		if v, ok := metadata["watermark"].(bool); ok {
-			params.Watermark = &v
-			hasParams = true
-		}
-		if v, ok := metadata["seed"].(float64); ok {
-			s := int(v)
-			params.Seed = &s
-			hasParams = true
-		}
+	// 从 metadata 提取参数
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta aliMetadata
+	if err := taskchannel.UnmarshalMetadata(metadata, &meta); err != nil {
+		return nil, fmt.Errorf("parse ali metadata: %w", err)
 	}
+	dsReq.Input.NegativePrompt = meta.NegativePrompt
+	dsReq.Input.AudioURL = meta.AudioURL
+	params.Resolution = meta.Resolution
+	params.Ratio = meta.Ratio
+	if meta.Size != "" {
+		params.Size = strings.ReplaceAll(meta.Size, "x", "*")
+	}
+	params.Duration = meta.Duration
+	params.PromptExtend = meta.PromptExtend
+	params.Watermark = meta.Watermark
+	params.Seed = meta.Seed
 
 	if seconds, ok := req["seconds"].(string); ok {
 		if d, err := parseInt(seconds); err == nil && d > 0 {
 			params.Duration = &d
-			hasParams = true
 		}
 	}
 
-	if hasParams {
+	if params.Resolution != "" || params.Ratio != "" || params.Size != "" ||
+		params.Duration != nil || params.PromptExtend != nil || params.Watermark != nil || params.Seed != nil {
 		dsReq.Parameters = params
 	}
 

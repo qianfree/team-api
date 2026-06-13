@@ -7,6 +7,7 @@ import AuthLayout from '@/components/layout/AuthLayout.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
 import Icon from '@/components/common/Icon.vue'
+import AgreementViewModal from '@/components/common/AgreementViewModal.vue'
 import request from '@/utils/request'
 import { extractApiError } from '@/utils/request'
 
@@ -20,6 +21,7 @@ const codeSending = ref(false)
 const countdown = ref(0)
 const emailVerification = ref(true)
 const captcha = ref<{ captchaKey: string; captchaX: number }>({ captchaKey: '', captchaX: 0 })
+const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
 	const turnstileToken = ref('')
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -30,10 +32,26 @@ const userForm = reactive({
 	password: '',
 	confirmPassword: '',
 	username: '',
+	agreed: false,
 })
 
 const orgErrors = reactive<Record<string, string>>({})
 const userErrors = reactive<Record<string, string>>({})
+
+// Pending agreements
+
+// Agreement view modal
+const showAgreementModal = ref(false)
+const agreementModalCode = ref('')
+
+function openAgreement(code: string) {
+	agreementModalCode.value = code
+	showAgreementModal.value = true
+}
+
+function proceedAfterRegister() {
+	router.push('/tenant/dashboard')
+}
 
 const stepTitles = ['组织信息', '管理员信息']
 
@@ -179,8 +197,9 @@ async function handleRegister() {
 		}
 
 		await authStore.register(payload)
-		router.push('/tenant/dashboard')
+		proceedAfterRegister()
 	} catch (err: any) {
+			captchaRef.value?.resetCaptcha()
 		const apiErr = extractApiError(err)
 		const msg = apiErr?.message || '注册失败'
 		if (msg.includes('邮箱') || msg.includes('email')) {
@@ -370,7 +389,7 @@ async function handleRegister() {
 
 				<!-- Slide Captcha (shown when email verification is disabled) -->
 				<template v-else>
-					<SlideCaptcha v-model="captcha" />
+					<SlideCaptcha ref="captchaRef" v-model="captcha" />
 					<p v-if="userErrors.code" class="input-error-text">{{ userErrors.code }}</p>
 				</template>
 
@@ -400,8 +419,25 @@ async function handleRegister() {
 					<p v-if="userErrors.confirmPassword" class="input-error-text">{{ userErrors.confirmPassword }}</p>
 				</div>
 
+				<!-- Agreement Checkbox -->
+				<div class="flex items-start gap-2.5">
+					<label class="mt-0.5 cursor-pointer">
+						<input
+							v-model="userForm.agreed"
+							type="checkbox"
+							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
+						/>
+					</label>
+					<span class="text-xs text-gray-500 leading-relaxed">
+						我已阅读并同意
+						<button type="button" class="text-primary-600 hover:text-primary-700 underline underline-offset-2" @click.prevent="openAgreement('terms')">服务条款</button>
+						和
+						<button type="button" class="text-primary-600 hover:text-primary-700 underline underline-offset-2" @click.prevent="openAgreement('privacy')">隐私政策</button>
+					</span>
+				</div>
+
 				<!-- Submit -->
-				<button type="submit" :disabled="loading" class="btn btn-primary btn-lg w-full">
+				<button type="submit" :disabled="loading || !userForm.agreed" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '创建中...' : '创建组织' }}
 				</button>
@@ -417,4 +453,10 @@ async function handleRegister() {
 			</p>
 		</template>
 	</AuthLayout>
+
+	<AgreementViewModal
+		:show="showAgreementModal"
+		:code="agreementModalCode"
+		@close="showAgreementModal = false"
+	/>
 </template>

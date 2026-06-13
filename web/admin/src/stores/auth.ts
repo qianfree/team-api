@@ -10,12 +10,20 @@ export interface AdminUser {
   role: string
 }
 
+export interface PendingAgreement {
+  id: number
+  code: string
+  title: string
+  version: string
+}
+
 interface LoginResponse {
   access_token: string
   refresh_token: string
   expires_at: number
   user: AdminUser
   permissions: string[]
+  pending_agreements?: PendingAgreement[]
 }
 
 const STORE_KEY = 'admin_auth'
@@ -26,6 +34,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
   const expiresAt = ref<number | null>(null)
   const user = ref<AdminUser | null>(null)
   const permissions = ref<string[]>([])
+  const pendingAgreements = ref<PendingAgreement[]>([])
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -89,11 +98,13 @@ export const useAuthStore = defineStore('admin-auth', () => {
     if (data.data?.totp_required) {
       return data.data
     }
+    pendingAgreements.value = data.data?.pending_agreements || []
     applySession(data.data)
     return data.data
   }
 
   function applyTokensFrom2FA(loginData: any): void {
+    pendingAgreements.value = loginData?.pending_agreements || []
     applySession(loginData)
   }
 
@@ -133,12 +144,17 @@ export const useAuthStore = defineStore('admin-auth', () => {
     persist()
   })
 
+  function clearPendingAgreements(): void {
+    pendingAgreements.value = []
+  }
+
   return {
     token,
     refreshToken,
     expiresAt,
     user,
     permissions,
+    pendingAgreements,
     isLoggedIn,
     isSuperAdmin,
     login,
@@ -146,5 +162,6 @@ export const useAuthStore = defineStore('admin-auth', () => {
     logout,
     refreshTokens,
     loadFromStorage,
+    clearPendingAgreements,
   }
 })

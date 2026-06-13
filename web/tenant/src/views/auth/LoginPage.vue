@@ -9,6 +9,8 @@ import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
+import AgreementAcceptModal from '@/components/common/AgreementAcceptModal.vue'
+import AgreementViewModal from '@/components/common/AgreementViewModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -41,6 +43,35 @@ const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
 
 const emailInput = ref<HTMLInputElement | null>(null)
 const accountInput = ref<HTMLInputElement | null>(null)
+
+// Pending agreements
+const showAgreements = ref(false)
+
+// Agreement view modal
+const showAgreementModal = ref(false)
+const agreementModalCode = ref('')
+
+function openAgreement(code: string) {
+	agreementModalCode.value = code
+	showAgreementModal.value = true
+}
+
+function proceedAfterLogin() {
+	const pending = authStore.pendingAgreements
+	if (pending.length > 0) {
+		showAgreements.value = true
+		return
+	}
+	const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+	router.push(redirect)
+}
+
+function onAgreementsAccepted() {
+	authStore.clearPendingAgreements()
+	showAgreements.value = false
+	const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+	router.push(redirect)
+}
 
 onMounted(async () => {
 	nextTick(() => emailInput.value?.focus())
@@ -108,8 +139,7 @@ async function handleAdminLogin() {
 			show2FA.value = true
 			return
 		}
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
 		if (apiErr?.code === 10058) {
@@ -140,8 +170,7 @@ async function handleRamLogin() {
 			show2FA.value = true
 			return
 		}
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
 		if (apiErr?.code === 10058) {
@@ -164,8 +193,7 @@ async function handle2FAVerify() {
 			code: totpCode.value,
 		}, { _suppressErrorMsg: true } as any)
 		authStore.applyTokensFrom2FA(res.data.data)
-		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
-		await router.push(redirect)
+		proceedAfterLogin()
 	} catch (e: any) {
 		const apiErr = extractApiError(e)
 		errorMsg.value = apiErr?.message || '验证失败'
@@ -342,6 +370,11 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<p class="mt-4 text-center text-xs text-gray-400">
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
+					<span class="mx-1">·</span>
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('privacy')">隐私政策</button>
+				</p>
 			</form>
 
 			<!-- RAM Login Form -->
@@ -434,6 +467,11 @@ async function handleOAuthLogin(provider: string) {
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '登录中...' : '登录' }}
 				</button>
+				<p class="mt-4 text-center text-xs text-gray-400">
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('terms')">服务条款</button>
+					<span class="mx-1">·</span>
+					<button type="button" class="hover:text-gray-500 transition-colors" @click="openAgreement('privacy')">隐私政策</button>
+				</p>
 			</form>
 
 			<!-- OAuth Login -->
@@ -478,6 +516,18 @@ async function handleOAuthLogin(provider: string) {
 			</p>
 		</template>
 	</AuthLayout>
+
+	<AgreementAcceptModal
+		:show="showAgreements"
+		:agreements="authStore.pendingAgreements"
+		@accepted="onAgreementsAccepted"
+	/>
+
+	<AgreementViewModal
+		:show="showAgreementModal"
+		:code="agreementModalCode"
+		@close="showAgreementModal = false"
+	/>
 </template>
 
 <style scoped>

@@ -138,3 +138,17 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 
 	return nil
 }
+
+// QueryOrderPaid 查询订单是否已完成支付（paid 或 fulfilled）。
+// 用于浏览器同步回跳时展示结果，不参与履约处理。
+func QueryOrderPaid(ctx context.Context, orderNo string) bool {
+	if orderNo == "" {
+		return false
+	}
+	var status string
+	_ = dao.OrdOrders.Ctx(ctx).
+		Where("order_no", orderNo).
+		Fields("status").
+		Scan(&status)
+	return status == "paid" || status == "fulfilled"
+}

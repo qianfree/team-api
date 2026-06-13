@@ -176,6 +176,7 @@ const (
 	CodeEmailVerificationDisabled = 10082
 	CodeIpRateLimitExceeded       = 10090 // IP级别限流
 	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
+	CodeForbiddenWord             = 10096 // 名称包含禁用词
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -197,6 +198,12 @@ const (
 
 	// Username validation
 	CodeInvalidUsername = 10089
+
+	// Agreement errors
+	CodeAgreementNotFound      = 10092
+	CodeAgreementNotDraft      = 10093
+	CodeAgreementVersionExists = 10094
+	CodeAgreementCodeInvalid   = 10095
 
 	// Demo mode
 	CodeDemoModeRestricted = 10403
@@ -332,6 +339,15 @@ const (
 
 	// Username validation
 	MsgInvalidUsername = "用户名仅支持英文字母和数字，不能为纯数字"
+
+	// Forbidden word
+	MsgForbiddenWord = "名称包含禁用词，请修改后重试"
+
+	// Agreement errors
+	MsgAgreementNotFound      = "协议版本不存在"
+	MsgAgreementNotDraft      = "仅草稿状态的协议可修改或删除"
+	MsgAgreementVersionExists = "该协议类型的此版本号已存在"
+	MsgAgreementCodeInvalid   = "协议标识码无效"
 )
 
 // Demo mode messages
@@ -354,3 +370,15 @@ const (
 	MsgUpdateRollbackFailed = "回滚失败"
 	MsgUpdateNotSupported   = "当前部署模式不支持自动更新"
 )
+
+// Agreement code constants
+const (
+	AgreementCodeTerms   = "terms"   // 用户协议/服务条款
+	AgreementCodePrivacy = "privacy" // 隐私政策
+)
+
+// ValidAgreementCodes 有效协议标识码集合（创建时校验）
+var ValidAgreementCodes = map[string]string{
+	AgreementCodeTerms:   "用户协议",
+	AgreementCodePrivacy: "隐私政策",
+}
