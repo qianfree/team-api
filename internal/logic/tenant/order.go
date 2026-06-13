@@ -189,7 +189,7 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 	}
 
 	//
-	orderNo, finalAmount, currency, orderType, description, err := getOrderForPay(ctx, tenantID, orderID)
+	orderNo, finalAmount, currency, orderType, _, err := getOrderForPay(ctx, tenantID, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 		Amount:        finalAmount,
 		Currency:      currency,
 		OrderType:     orderType,
-		Description:   description,
+		Description:   gatewayProductName(orderType),
 		PaymentMethod: req.PaymentMethod,
 		NotifyURL:     notifyURL,
 		ReturnURL:     returnURL,
@@ -261,6 +261,22 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 	}
 
 	return res, nil
+}
+
+// gatewayProductName 返回发送给支付网关（易支付）的商品名称。
+//
+// 易支付上游（支付宝/微信商户）的风控会扫描 name 参数中的关键词，
+// 出现"充值/代充/代付/钱包/余额/额度/API/套现"等字样时会直接拦截，
+// 网关返回"该商品禁止出售"。因此传给网关的 name 必须使用中性、安全的名称。
+// 数据库 ord_orders.description 仍保留可读文案供租户订单列表展示，
+// 二者解耦：此处只决定网关看到的商品名（参考 new-api 使用 "TUC{id}" 的做法）。
+func gatewayProductName(orderType string) string {
+	switch orderType {
+	case "new_plan", "renew", "upgrade":
+		return "会员订阅"
+	default: // recharge 等其他类型
+		return "会员服务"
+	}
 }
 
 // getOrderForPay 获取待支付订单信息（供 OrderPay 内部调用）
@@ -387,7 +403,7 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		Amount:        finalAmount,
 		Currency:      "CNY",
 		OrderType:     "recharge",
-		Description:   description,
+		Description:   gatewayProductName("recharge"),
 		PaymentMethod: req.PaymentMethod,
 		NotifyURL:     notifyURL,
 		ReturnURL:     returnURL,
