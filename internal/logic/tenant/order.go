@@ -187,6 +187,9 @@ func (s *sTenant) OrderPay(ctx context.Context, req *v1.TenantOrderPayReq) (*v1.
 	if req.PaymentChannel == "" {
 		return nil, lcommon.NewBusinessError(422, "请选择支付渠道")
 	}
+	if err := payment.RequireCallbackBaseURL(ctx); err != nil {
+		return nil, err
+	}
 
 	//
 	orderNo, finalAmount, currency, orderType, _, err := getOrderForPay(ctx, tenantID, orderID)
@@ -342,6 +345,9 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	}
 
 	// 2. 从 sys_options 加载渠道配置
+	if err := payment.RequireCallbackBaseURL(ctx); err != nil {
+		return nil, err
+	}
 	cfg, err := payment.GetChannelConfigAndProvider(ctx, req.PaymentChannel)
 	if err != nil {
 		return nil, lcommon.NewBusinessError(422, err.Error())
