@@ -34,14 +34,10 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 
 	tenantCode := strings.TrimSpace(strings.ToLower(req.TenantCode))
 	username := strings.TrimSpace(req.Username)
-
-	// Validate username format
-	if err := common.ValidateUsername(username); err != nil {
-		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
-	}
-
-	// Validate forbidden words in username, tenant name, tenant code
 	tenantName := strings.TrimSpace(req.TenantName)
+
+	// 先校验禁用词：命中禁用词时优先返回更准确的提示，
+	// 避免被用户名格式校验的「不能包含特殊字符或中文」遮盖真实原因
 	if err := common.ValidateForbiddenWords(ctx, username, "用户名"); err != nil {
 		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
 	}
@@ -50,6 +46,11 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	}
 	if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
 		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+	}
+
+	// Validate username format
+	if err := common.ValidateUsername(username); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
 	// Check register rate limit (IP + global)
