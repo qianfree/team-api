@@ -66,7 +66,7 @@ var Registry = []SettingDef{
 	{Key: "register_global_limit_per_minute", Type: SettingTypeInt, Default: "10", Category: "general",
 		Label: "全局每分钟注册限制", Description: "全系统每分钟最多注册次数（0表示不限制）", Validation: "min:0,max:100"},
 	{Key: "maintenance_mode", Type: SettingTypeBool, Default: "false", Category: "general",
-		Label: "维护模式", Description: "开启后控制台显示维护提示"},
+		Label: "维护模式", Description: "开启后控制台显示维护提示", IsPublic: true},
 	{Key: "maintenance_message", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "维护提示信息", Description: "维护模式下显示的提示文字", IsPublic: true},
 	{Key: "maintenance_duration", Type: SettingTypeString, Default: "", Category: "general",
