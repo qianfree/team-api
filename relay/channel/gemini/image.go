@@ -20,6 +20,18 @@ func convertImageRequestToChat(requestBody []byte, info *common.RelayInfo) (io.R
 		return nil, fmt.Errorf("parse image request: %w", err)
 	}
 
+	generationConfig := &dto.GeminiGenerationConfig{
+		ResponseModalities: []string{"TEXT", "IMAGE"},
+	}
+
+	// 将 OpenAI 的 size 参数映射为 Gemini 的 imageConfig（宽高比 + 分辨率）
+	if imgReq.Size != "" || imgReq.Quality != "" {
+		generationConfig.ImageConfig = &dto.GeminiImageConfig{
+			AspectRatio: imageSizeToAspectRatio(imgReq.Size),
+			ImageSize:   qualityToImageSize(imgReq.Quality),
+		}
+	}
+
 	chatReq := dto.GeminiChatRequest{
 		Contents: []dto.GeminiContent{
 			{
@@ -29,9 +41,7 @@ func convertImageRequestToChat(requestBody []byte, info *common.RelayInfo) (io.R
 				},
 			},
 		},
-		GenerationConfig: &dto.GeminiGenerationConfig{
-			ResponseModalities: []string{"TEXT", "IMAGE"},
-		},
+		GenerationConfig: generationConfig,
 	}
 
 	result, err := json.Marshal(chatReq)
@@ -177,8 +187,13 @@ func handleImagenResponse(_ context.Context, resp *http.Response, info *common.R
 	return &common.Usage{}, nil
 }
 
-// imageSizeToAspectRatio 将 OpenAI 图片尺寸映射为 Imagen 宽高比
+// imageSizeToAspectRatio 将图片尺寸映射为 Gemini 宽高比
+// 支持 OpenAI 格式（1024x1024）和 Gemini 原生比例格式（1:1/16:9 等）直接透传
 func imageSizeToAspectRatio(size string) string {
+	if size == "" {
+		return ""
+	}
+	// OpenAI 格式映射
 	switch size {
 	case "1024x1024":
 		return "1:1"
@@ -198,7 +213,7 @@ func imageSizeToAspectRatio(size string) string {
 		return "21:9"
 	}
 
-	// 支持原生比例格式（如 "1:1"、"16:9"）
+	// Gemini 原生比例格式（如 "1:1"、"16:9"、"3:4"）直接透传
 	if strings.Contains(size, ":") {
 		return size
 	}
@@ -206,9 +221,20 @@ func imageSizeToAspectRatio(size string) string {
 	return "1:1"
 }
 
-// qualityToImageSize 将 OpenAI quality 映射为 Imagen imageSize
+// qualityToImageSize 将 OpenAI quality 映射为 Gemini imageSize
+// 支持 OpenAI 格式（hd/standard）和 Gemini 原生格式（256/512/1K/2K/4K）直接透传
 func qualityToImageSize(quality string) string {
-	switch strings.ToLower(quality) {
+	if quality == "" {
+		return ""
+	}
+	// Gemini 原生格式直接透传（256/512/1K/2K/4K）
+	lower := strings.ToLower(quality)
+	switch lower {
+	case "256", "512", "1k", "2k", "4k":
+		return quality // 保持用户原始大小写
+	}
+	// OpenAI 兼容格式映射
+	switch lower {
 	case "hd", "high":
 		return "2K"
 	default:
