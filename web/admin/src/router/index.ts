@@ -4,6 +4,7 @@ import adminRoutes from './admin'
 import { useAuthStore } from '@/stores/auth'
 import { shouldRefresh, getRefreshToken } from '@/utils/request'
 import { useSiteName } from '@/composables/useSiteName'
+import { useTopProgress } from '@/composables/useTopProgress'
 import axios from 'axios'
 
 const routes: RouteRecordRaw[] = [
@@ -44,8 +45,11 @@ async function checkSetupStatus(): Promise<boolean> {
 }
 
 const { siteName, fetchSiteName } = useSiteName()
+const { start, done } = useTopProgress()
 
 router.beforeEach(async (to) => {
+  start()
+
   const authStore = useAuthStore()
   authStore.loadFromStorage()
 
@@ -80,6 +84,14 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+router.afterEach(() => {
+  done()
+})
+
+router.onError(() => {
+  done()
 })
 
 export default router

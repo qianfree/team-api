@@ -4,6 +4,7 @@ import tenantRoutes from './tenant'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { shouldRefresh, getRefreshToken } from '@/utils/request'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import { useTopProgress } from '@/composables/useTopProgress'
 
 const routes: RouteRecordRaw[] = [
 	{
@@ -29,7 +30,11 @@ const router = createRouter({
 	routes,
 })
 
+const { start, done } = useTopProgress()
+
 router.beforeEach((to) => {
+	start()
+
 	const tenantAuthStore = useTenantAuthStore()
 	tenantAuthStore.loadFromStorage()
 
@@ -70,6 +75,14 @@ router.beforeEach((to) => {
 	}
 
 	return true
+})
+
+router.afterEach(() => {
+	done()
+})
+
+router.onError(() => {
+	done()
 })
 
 export default router

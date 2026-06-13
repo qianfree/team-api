@@ -197,9 +197,18 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 	}
 
 	if count > 0 {
+		data := do.SysOptions{Value: value}
+		// Sync metadata from registry so that changes to IsPublic/Category/Description
+		// are reflected in the DB row on the next write (e.g. a setting newly marked
+		// as IsPublic will become visible to GetPublicOptions).
+		if def := GetSettingDef(key); def != nil {
+			data.Category = def.Category
+			data.Description = def.Label
+			data.IsPublic = def.IsPublic
+		}
 		_, err = dao.SysOptions.Ctx(ctx).
 			Where("key", key).
-			Data(do.SysOptions{Value: value}).
+			Data(data).
 			Update()
 	} else {
 		def := GetSettingDef(key)
