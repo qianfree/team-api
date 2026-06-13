@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
+import ParamRefModal from './ParamRefModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -14,6 +15,7 @@ const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 const submitting = ref(false)
 const selectedModel = ref(props.models[0]?.model_id || '')
 const prompt = ref('')
+const showParamRef = ref(false)
 const resolution = ref('1280x720')
 const duration = ref(5)
 
@@ -212,6 +214,15 @@ function downloadVideo() {
 						<label class="input-label">时长（{{ duration }} 秒）</label>
 						<input v-model.number="duration" type="number" class="input" min="5" max="15" step="1" />
 					</div>
+					<div class="flex justify-end">
+						<button
+							class="text-xs px-2.5 py-1.5 rounded-lg text-gray-600 hover:border-primary-300 hover:text-primary-600 transition-colors duration-150 cursor-pointer flex items-center gap-1.5 border border-gray-200"
+							@click="showParamRef = true"
+						>
+							<Icon name="bookOpen" size="xs" />
+							参数参考
+						</button>
+					</div>
 					<button class="btn btn-primary w-full" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
 						{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}
 					</button>
@@ -292,4 +303,7 @@ function downloadVideo() {
 			</div>
 		</div>
 	</div>
+
+	<!-- 参数参考弹窗 -->
+	<ParamRefModal :show="showParamRef" mode="video" @close="showParamRef = false" />
 </template>
