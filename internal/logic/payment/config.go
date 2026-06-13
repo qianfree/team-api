@@ -57,7 +57,40 @@ func LoadChannelConfig(ctx context.Context, channelType string) (jsonStr string,
 
 // SaveChannelConfig 将渠道配置 JSON 保存到 sys_options。
 func SaveChannelConfig(ctx context.Context, channelType string, configJSON string) error {
+	// 启用线上支付渠道前，必须先配置全局回调地址，否则网关异步通知无法回传，
+	// 支付成功也无法入账（发起支付时还有 RequireCallbackBaseURL 二次校验）。
+	if err := validateChannelEnable(ctx, channelType, configJSON); err != nil {
+		return err
+	}
 	return lcommon.Config().SetOption(ctx, channelConfigKey(channelType), configJSON)
+}
+
+// validateChannelEnable 校验"启用渠道"的前置条件：启用易支付要求回调地址已配置。
+func validateChannelEnable(ctx context.Context, channelType string, configJSON string) error {
+	if channelType != "epay" {
+		return nil
+	}
+	cfg, err := ParseChannelConfig(channelType, configJSON)
+	if err != nil || cfg == nil {
+		return nil // JSON 合法性由调用方校验；此处只关心启用前置条件
+	}
+	ec, ok := cfg.(*EpayConfig)
+	if !ok || !ec.IsEnabled {
+		return nil
+	}
+	if strings.TrimSpace(GetCallbackBaseURL(ctx)) == "" {
+		return lcommon.NewBadRequestError("请先在「支付设置」中配置回调基础URL，再启用支付渠道；否则支付成功后无法回调入账")
+	}
+	return nil
+}
+
+// RequireCallbackBaseURL 发起支付前的二次防护：回调地址未配置则拒绝发起。
+// 渠道启用时已拦截一次，这里防止"启用后被清空回调地址"等场景下仍能发起支付。
+func RequireCallbackBaseURL(ctx context.Context) error {
+	if strings.TrimSpace(GetCallbackBaseURL(ctx)) == "" {
+		return lcommon.NewBusinessError(422, "支付回调地址未配置，请联系管理员在「支付设置」中配置回调基础URL")
+	}
+	return nil
 }
 
 // ListAllChannels 返回所有已注册渠道的配置（含未配置的，返回默认值）。

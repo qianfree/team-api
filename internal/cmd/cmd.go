@@ -172,6 +172,9 @@ var (
 				}
 				return nil
 			})
+			cs.Register("order_expiration", "*/5 * * * *", func(ctx context.Context) error {
+				return task.ExpirePendingOrders(ctx)
+			})
 			cs.StartBackground(ctx)
 
 			// Initialize update manager

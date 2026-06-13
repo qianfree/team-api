@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -43,10 +42,14 @@ func (p *EpayProvider) CreatePayment(ctx context.Context, order *PaymentOrder, c
 	params["sign"] = sign
 	params["sign_type"] = "MD5"
 
-	redirectURL := fmt.Sprintf("%s/submit.php?%s", strings.TrimRight(cfg.PayAddress, "/"), buildQuery(params))
+	// 采用 POST 表单提交：这里只返回 submit.php 的 action 地址，签名后的全部
+	// 参数放入 Params，由前端构造 <form method="POST"> 隐藏域提交。
+	// 相比拼 GET 查询串更安全：sign 与订单参数不进入 URL（不落浏览器历史/服务器
+	// 日志），也规避 URL 长度限制和中文/特殊字符的编码边界问题。
+	actionURL := fmt.Sprintf("%s/submit.php", strings.TrimRight(cfg.PayAddress, "/"))
 
 	return &PaymentResult{
-		PaymentURL: redirectURL,
+		PaymentURL: actionURL,
 		Params:     params,
 		IsRedirect: true,
 	}, nil
@@ -126,26 +129,6 @@ func epaySign(params map[string]string, key string) string {
 
 	hash := md5.Sum([]byte(buf.String()))
 	return hex.EncodeToString(hash[:])
-}
-
-// buildQuery 构建 URL 查询字符串。
-func buildQuery(params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var buf strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			buf.WriteByte('&')
-		}
-		buf.WriteString(url.QueryEscape(k))
-		buf.WriteByte('=')
-		buf.WriteString(url.QueryEscape(params[k]))
-	}
-	return buf.String()
 }
 
 // ReadBody 读取 HTTP 请求体并返回内容（用于 Stripe Webhook 等需要 raw body 的场景）。
