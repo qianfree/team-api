@@ -1,4 +1,13 @@
 /**
+ * 是否为 Safari 浏览器。
+ * Safari 下"axios 异步请求完成后再提交 target=_blank 表单"常被静默拦截
+ * （新标签页打不开，用户卡住），故 Safari 上沿用当前页提交，其它浏览器在新标签页打开。
+ */
+function isSafariBrowser(): boolean {
+	return /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+}
+
+/**
  * 以 POST 表单方式把支付参数提交到支付网关。
  *
  * 易支付 submit.php 的「页面跳转支付」标准做法：后端只返回 submit.php 的 action
@@ -14,6 +23,11 @@ export function submitPaymentForm(url: string, params: Record<string, string>): 
 	const form = document.createElement('form')
 	form.action = url
 	form.method = 'POST'
+	// 在新标签页打开支付页，保留当前控制台不被覆盖；支付完成后由 return_url
+	// 在新标签页回到 /console/wallet 展示结果。Safari 例外（见 isSafariBrowser）。
+	if (!isSafariBrowser()) {
+		form.target = '_blank'
+	}
 	Object.entries(params || {}).forEach(([key, value]) => {
 		const input = document.createElement('input')
 		input.type = 'hidden'
