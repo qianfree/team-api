@@ -283,6 +283,7 @@ curl -O https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker
 curl -o config.yaml https://raw.githubusercontent.com/qianfree/team-api/main/manifest/docker/config.example.yaml
 
 # 3. 编辑配置文件（修改数据库密码、Redis 密码、JWT 密钥、加密密钥等）
+cp config.example.yaml config.yaml
 vim config.yaml
 
 # 4. 修改 docker-compose.yaml 中的密码（与 config.yaml 保持一致）
@@ -292,6 +293,10 @@ vim docker-compose.yaml
 
 # 5. 一键启动所有服务
 docker compose up -d
+
+# 6. 更新版本，建议只更新主程序，避免数据库版本更新后有新特性不兼容
+docker compose pull app
+docker compose up -d 
 ```
 
 服务启动后访问 `http://localhost:18888`，首次部署会进入系统初始化向导（`/api/setup`）。
