@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+import { dispatchPayment } from '@/utils/payment'
 
 const route = useRoute()
 const wallet = ref<any>(null)
@@ -140,7 +141,7 @@ async function handleRecharge() {
 		})
 		const data = res.data?.data
 		if (data?.payment_url) {
-			window.location.href = data.payment_url
+			dispatchPayment(data)
 			return
 		}
 	} catch {
