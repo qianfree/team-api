@@ -36,10 +36,13 @@ const provisionalToken = ref('')
 const totpCode = ref('')
 const totpLoading = ref(false)
 
-// Captcha state — always required
+// Captcha state
 const captcha = reactive({ captchaKey: '', captchaX: 0 })
-	const turnstileToken = ref('')
+const turnstileToken = ref('')
 const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
+const turnstileRef = ref<InstanceType<typeof Turnstile> | null>(null)
+
+const useTurnstile = computed(() => settings.value['turnstile_enabled'] === true)
 
 const emailInput = ref<HTMLInputElement | null>(null)
 const accountInput = ref<HTMLInputElement | null>(null)
@@ -124,15 +127,24 @@ function validateRam(): boolean {
 
 async function handleAdminLogin() {
 	if (!validateAdmin()) return
-	if (!captcha.captchaKey || !captcha.captchaX) {
-		errorMsg.value = '请先完成滑块验证'
-		return
+	if (useTurnstile.value) {
+		if (!turnstileToken.value) {
+			errorMsg.value = '请先完成人机验证'
+			return
+		}
+	} else {
+		if (!captcha.captchaKey || !captcha.captchaX) {
+			errorMsg.value = '请先完成滑块验证'
+			return
+		}
 	}
 
 	loading.value = true
 	errorMsg.value = ''
 	try {
-		const captchaPayload = { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
+		const captchaPayload = useTurnstile.value
+			? { captchaKey: '', captchaX: 0, turnstileToken: turnstileToken.value }
+			: { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
 		const res = await authStore.login(adminForm.email, adminForm.password, 'admin', captchaPayload)
 		if (res?.totp_required) {
 			provisionalToken.value = res.provisional_token
@@ -142,12 +154,16 @@ async function handleAdminLogin() {
 		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
-		if (apiErr?.code === 10058) {
+		if (useTurnstile.value) {
+			turnstileRef.value?.reset()
+			errorMsg.value = apiErr?.message || '登录失败，请检查邮箱和密码'
+		} else if (apiErr?.code === 10058) {
 			errorMsg.value = '滑块验证失败，请重新拖动'
+			captchaRef.value?.resetCaptcha()
 		} else {
 			errorMsg.value = apiErr?.message || '登录失败，请检查邮箱和密码'
+			captchaRef.value?.resetCaptcha()
 		}
-		captchaRef.value?.resetCaptcha()
 	} finally {
 		loading.value = false
 	}
@@ -155,15 +171,24 @@ async function handleAdminLogin() {
 
 async function handleRamLogin() {
 	if (!validateRam()) return
-	if (!captcha.captchaKey || !captcha.captchaX) {
-		errorMsg.value = '请先完成滑块验证'
-		return
+	if (useTurnstile.value) {
+		if (!turnstileToken.value) {
+			errorMsg.value = '请先完成人机验证'
+			return
+		}
+	} else {
+		if (!captcha.captchaKey || !captcha.captchaX) {
+			errorMsg.value = '请先完成滑块验证'
+			return
+		}
 	}
 
 	loading.value = true
 	errorMsg.value = ''
 	try {
-		const captchaPayload = { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
+		const captchaPayload = useTurnstile.value
+			? { captchaKey: '', captchaX: 0, turnstileToken: turnstileToken.value }
+			: { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
 		const res = await authStore.login(ramForm.account, ramForm.password, 'ram', captchaPayload)
 		if (res?.totp_required) {
 			provisionalToken.value = res.provisional_token
@@ -173,12 +198,16 @@ async function handleRamLogin() {
 		proceedAfterLogin()
 	} catch (err) {
 		const apiErr = extractApiError(err)
-		if (apiErr?.code === 10058) {
+		if (useTurnstile.value) {
+			turnstileRef.value?.reset()
+			errorMsg.value = apiErr?.message || '登录失败，请检查用户名和密码'
+		} else if (apiErr?.code === 10058) {
 			errorMsg.value = '滑块验证失败，请重新拖动'
+			captchaRef.value?.resetCaptcha()
 		} else {
 			errorMsg.value = apiErr?.message || '登录失败，请检查用户名和密码'
+			captchaRef.value?.resetCaptcha()
 		}
-		captchaRef.value?.resetCaptcha()
 	} finally {
 		loading.value = false
 	}
@@ -335,7 +364,8 @@ async function handleOAuthLogin(provider: string) {
 				</div>
 
 				<!-- Captcha -->
-				<SlideCaptcha ref="captchaRef" v-model="captcha" />
+				<Turnstile v-if="useTurnstile" ref="turnstileRef" v-model="turnstileToken" :site-key="settings['turnstile_site_key']" />
+				<SlideCaptcha v-else ref="captchaRef" v-model="captcha" />
 
 				<!-- Error Message -->
 				<transition name="slide-fade">
@@ -432,7 +462,8 @@ async function handleOAuthLogin(provider: string) {
 				</div>
 
 				<!-- Captcha -->
-				<SlideCaptcha ref="captchaRef" v-model="captcha" />
+				<Turnstile v-if="useTurnstile" ref="turnstileRef" v-model="turnstileToken" :site-key="settings['turnstile_site_key']" />
+				<SlideCaptcha v-else ref="captchaRef" v-model="captcha" />
 
 				<!-- Error Message -->
 				<transition name="slide-fade">
