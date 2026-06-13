@@ -20,6 +20,11 @@ func convertImageRequestToChat(requestBody []byte, info *common.RelayInfo) (io.R
 		return nil, fmt.Errorf("parse image request: %w", err)
 	}
 
+	// Banana 内生图模式不支持 N>1，每次请求只生成一张图
+	if imgReq.N != nil && *imgReq.N > 1 {
+		return nil, constant.NewRequestError("Gemini native image generation (Banana mode) does not support n > 1; use Imagen models (e.g. imagen-3.0-generate-002) or call the endpoint multiple times", nil)
+	}
+
 	generationConfig := &dto.GeminiGenerationConfig{
 		ResponseModalities: []string{"TEXT", "IMAGE"},
 	}

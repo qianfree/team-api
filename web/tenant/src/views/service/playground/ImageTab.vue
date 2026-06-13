@@ -113,11 +113,26 @@ function parseValue(raw: string): string | number | boolean {
 	return raw
 }
 
-// 切换模型时自动应用预设
+// 默认参数项（无预设时显示，用户自行填写值）
+const DEFAULT_PARAMS = [
+	{ key: 'size', value: '' },
+	{ key: 'quality', value: '' },
+]
+
+function applyDefaults() {
+	customParams.value = []
+	for (const { key, value } of DEFAULT_PARAMS) {
+		addParam(key, value)
+	}
+}
+
+// 切换模型时自动应用预设，无预设则显示默认参数项
 watch(selectedModel, () => {
 	const preset = currentPreset.value
 	if (preset) {
 		applyPreset()
+	} else {
+		applyDefaults()
 	}
 }, { immediate: true })
 
@@ -225,13 +240,6 @@ function downloadImage(img: ImageResult, idx: number) {
 								>
 									重置预设
 								</button>
-								<button
-									class="btn btn-sm btn-secondary"
-									@click="addParam()"
-								>
-									<Icon name="plus" size="xs" />
-									添加
-								</button>
 							</div>
 						</div>
 
@@ -239,7 +247,7 @@ function downloadImage(img: ImageResult, idx: number) {
 						<div
 							v-if="customParams.length === 0"
 							class="rounded-xl border-2 border-dashed border-gray-200 py-6 text-center cursor-pointer hover:border-primary-300 hover:bg-primary-50/30 transition-colors duration-200"
-							@click="currentPreset ? applyPreset() : addParam()"
+							@click="currentPreset ? applyPreset() : applyDefaults()"
 						>
 							<Icon name="plus" size="sm" class="text-gray-300 mx-auto mb-2" />
 							<p class="text-xs text-gray-400">

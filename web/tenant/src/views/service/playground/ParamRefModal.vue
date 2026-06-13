@@ -15,6 +15,7 @@ export interface ParamDef {
 export interface ModelParamGroup {
 	key: string
 	label: string
+	docUrl?: string
 	params: ParamDef[]
 }
 
@@ -35,11 +36,13 @@ const imageGroups: ModelParamGroup[] = [
 	{
 		key: 'gemini-image',
 		label: 'Gemini',
+		docUrl: 'https://ai.google.dev/gemini-api/docs/image-generation?hl=zh-cn',
 		params: [
 			{ name: 'prompt', type: 'string', required: true, description: '图像描述文本，支持中英文，可描述画面内容、风格、构图等' },
-			{ name: 'model', type: 'string', required: true, description: '模型 ID，如 gemini-2.5-flash-image、gemini-3-pro-image-preview' },
-			{ name: 'n', type: 'integer', required: false, default: '1', values: ['1'], description: '生成图像数量，目前仅支持 1' },
-			{ name: 'size', type: 'string', required: false, default: '1024x1024', values: ['1024x1024', '1536x1024', '1024x1536'], description: '图像尺寸（宽x高）。支持正方形和横/纵向' },
+			{ name: 'model', type: 'string', required: true, description: '模型 ID。Banana 内生图：gemini-2.5-flash-image、gemini-3-pro-image-preview 等；Imagen：imagen-3.0-generate-002 等' },
+			{ name: 'n', type: 'integer', required: false, default: '1', values: ['1', '2', '3', '4'], description: '生成图像数量。Banana 模式（gemini-*-image）仅支持 1，传 N>1 会报错；Imagen 模式（imagen-*）支持 1-4' },
+			{ name: 'size', type: 'string', required: false, default: '1024x1024', values: ['1024x1024', '1536x1024', '1024x1536', '1280x720', '720x1280', '1152x864', '864x1152', '1344x576', '1:1', '16:9', '9:16', '3:2', '2:3', '4:3', '3:4', '21:9'], description: '图像尺寸。支持 OpenAI 格式（宽x高）和 Gemini 原生比例格式（如 1:1、16:9）' },
+			{ name: 'quality', type: 'string', required: false, default: '1K', values: ['hd', 'high', 'standard', 'medium', 'low', '256', '512', '1K', '2K', '4K'], description: '图像分辨率/质量。OpenAI 格式 hd/high → 2K；Gemini 原生格式 256/512/1K/2K/4K 直接控制输出分辨率' },
 			{ name: 'response_format', type: 'string', required: false, default: 'b64_json', values: ['b64_json', 'url'], description: '返回格式。b64_json 返回 Base64 编码；url 返回临时下载链接' },
 		],
 	},
@@ -163,6 +166,22 @@ const currentGroup = computed(() => groups.value.find(g => g.key === activeGroup
 					</tr>
 				</tbody>
 			</table>
+		</div>
+
+		<!-- 官方文档链接 -->
+		<div v-if="currentGroup?.docUrl" class="mt-3 rounded-xl border border-primary-200 bg-primary-50/60 px-4 py-3">
+			<div class="flex items-start gap-2">
+				<Icon name="document" size="sm" class="text-primary-500 mt-0.5 flex-shrink-0" />
+				<div class="text-xs text-primary-700">
+					官方文档：
+					<a
+						:href="currentGroup.docUrl"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="font-medium text-primary-600 hover:text-primary-700 underline underline-offset-2 break-all"
+					>{{ currentGroup.docUrl }}</a>
+				</div>
+			</div>
 		</div>
 
 		<!-- 提示信息 -->
