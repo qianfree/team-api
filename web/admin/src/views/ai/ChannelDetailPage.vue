@@ -199,8 +199,10 @@ const availableModelOptions = computed(() => {
 })
 
 const allModelOptions = computed(() => {
-  return modelsList.value
-    .map(m => ({ label: m.model_name ? `${m.model_name} (${m.model_id})` : m.model_id, value: m.model_id }))
+  // 测试模型下拉列表只显示该渠道已配置的能力模型
+  return abilitiesData.value
+    .filter(a => a.enabled)
+    .map(a => ({ label: a.model_name, value: a.model_name }))
 })
 
 function openAddAbilityModal() {
@@ -343,7 +345,7 @@ onBeforeUnmount(() => {
 
 function onTabChange(key: string) {
   if (key === 'abilities' && abilitiesData.value.length === 0) fetchAbilities()
-  if (key === 'test' && modelsList.value.length === 0) fetchModels()
+  if (key === 'test' && abilitiesData.value.length === 0) fetchAbilities()
   if (key === 'health_trend' && trendData.value.length === 0) fetchHealthTrend()
 }
 
@@ -517,13 +519,11 @@ function formatHeaders(headers: Record<string, string>): string {
                   <ASelect
                     v-model="testModelName"
                     :options="allModelOptions"
-                    :loading="modelsLoading"
+                    :loading="abilitiesLoading"
                     allow-search
                     allow-clear
-                    :filter-option="false"
-                    placeholder="输入关键词搜索模型"
+                    placeholder="选择渠道支持的模型"
                     :disabled="testLoading"
-                    @search="handleModelSearch"
                     @keydown.enter="handleTest"
                   />
                 </AFormItem>
@@ -698,13 +698,12 @@ function formatHeaders(headers: Record<string, string>): string {
           <ASelect
             v-model="addAbilityForm.model_name"
             :options="availableModelOptions"
-            :loading="modelsLoading"
+            :loading="abilitiesLoading"
             allow-search
             allow-clear
-            :filter-option="false"
-            placeholder="输入关键词搜索模型"
+            
+            placeholder="选择渠道支持的模型"
             :fallback-option="false"
-            @search="handleModelSearch"
           />
         </AFormItem>
         <AFormItem label="上游模型名"><AInput v-model="addAbilityForm.upstream_model" placeholder="留空则与平台模型名相同" /></AFormItem>
