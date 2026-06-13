@@ -3,12 +3,14 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { useNotificationCount } from '@/composables/useNotificationCount'
+import { useAnnouncementRead } from '@/composables/useAnnouncementRead'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useWatermark } from '@/composables/useWatermark'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
 import MaintenanceBanner from '@/components/common/MaintenanceBanner.vue'
 import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
+import { marked } from 'marked'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -18,7 +20,10 @@ const authStore = useTenantAuthStore()
 const sidebarCollapsed = ref(false)
 const mobileOpen = ref(false)
 const userMenuOpen = ref(false)
+const announcePanelOpen = ref(false)
+const announceDetailItem = ref<any>(null)
 const consoleAnnouncements = ref<any[]>([])
+const { unreadCount: announceUnreadCount, markAsRead: markAnnouncementRead, markAllRead: markAllAnnouncementsRead, isRead: isAnnouncementRead } = useAnnouncementRead(consoleAnnouncements)
 let announcementTimer: ReturnType<typeof setInterval> | null = null
 const walletBalance = ref<string>('')
 let walletTimer: ReturnType<typeof setInterval> | null = null
@@ -102,6 +107,25 @@ function closeUserMenu() {
 	userMenuOpen.value = false
 }
 
+function toggleAnnouncePanel() {
+	announcePanelOpen.value = !announcePanelOpen.value
+}
+
+
+function openAnnouncementDetail(item: any) {
+	markAnnouncementRead(item.id)
+	announceDetailItem.value = item
+	announcePanelOpen.value = false
+}
+
+function closeAnnouncementDetail() {
+	announceDetailItem.value = null
+}
+
+function renderMarkdown(text: string): string {
+	return marked.parse(text) as string
+}
+
 async function handleLogout() {
 	stopNotificationPolling()
 	if (announcementTimer) {
@@ -123,6 +147,9 @@ function handleClickOutside(e: MouseEvent) {
 	const target = e.target as HTMLElement
 	if (!target.closest('[data-user-menu]')) {
 		userMenuOpen.value = false
+	}
+	if (!target.closest('[data-announce-panel]')) {
+		announcePanelOpen.value = false
 	}
 }
 
@@ -306,6 +333,75 @@ onBeforeUnmount(() => {
 
 					<!-- Right: Actions -->
 					<div class="flex items-center gap-3">
+						<!-- Announcements -->
+						<div class="relative" data-announce-panel>
+							<button
+								@click="toggleAnnouncePanel"
+								class="relative flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+								title="平台公告"
+							>
+								<Icon name="megaphone" size="md" />
+								<span
+									v-if="announceUnreadCount > 0"
+									class="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"
+								></span>
+							</button>
+							<!-- Pulse animation layer -->
+							<div
+								v-if="announceUnreadCount > 0"
+								class="absolute inset-0 rounded-xl animate-pulse-soft  pointer-events-none"
+							></div>
+
+							<!-- Announcement Dropdown Panel -->
+							<transition name="fade">
+								<div
+									v-if="announcePanelOpen"
+									class="absolute right-0 mt-2 w-80 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden z-50 animate-scale-in"
+								>
+									<!-- Panel Header -->
+									<div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+										<h3 class="text-sm font-semibold text-gray-900">平台公告</h3>
+										<button
+											v-if="announceUnreadCount > 0"
+											@click="markAllAnnouncementsRead"
+											class="text-xs text-primary-600 hover:text-primary-700 font-medium"
+										>
+											全部已读
+										</button>
+									</div>
+									<!-- Panel Body -->
+									<div class="max-h-72 overflow-y-auto">
+										<div v-if="consoleAnnouncements.length === 0" class="px-4 py-8 text-center text-sm text-gray-400">
+											暂无公告
+										</div>
+										<div
+											v-for="item in consoleAnnouncements"
+											:key="item.id"
+											@click="openAnnouncementDetail(item)"
+											class="px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors hover:bg-gray-50 border-b border-gray-50 last:border-b-0"
+										>
+											<!-- Unread dot -->
+											<div
+												v-if="!isAnnouncementRead(item.id)"
+												class="flex-shrink-0 mt-1.5 h-2 w-2 rounded-full bg-primary-500"
+											></div>
+											<div v-else class="flex-shrink-0 mt-1.5 h-2 w-2"></div>
+											<!-- Content -->
+											<div class="flex-1 min-w-0">
+												<p
+													class="text-sm truncate"
+													:class="isAnnouncementRead(item.id) ? 'text-gray-500' : 'text-gray-900 font-medium'"
+												>
+													{{ item.title }}
+												</p>
+												<p class="text-xs text-gray-400 mt-0.5">{{ item.created_at }}</p>
+											</div>
+										</div>
+									</div>
+								</div>
+							</transition>
+						</div>
+
 						<!-- Notifications -->
 						<router-link
 							to="/tenant/notifications"
@@ -405,6 +501,32 @@ onBeforeUnmount(() => {
 			</main>
 		</div>
 	</div>
+
+	<!-- Announcement Detail Modal -->
+	<Teleport to="body">
+		<Transition name="fade">
+			<div v-if="announceDetailItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click.self="closeAnnouncementDetail">
+				<div class="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-gray-200 animate-scale-in" @click.stop>
+					<div class="flex items-start gap-3 px-6 py-4 border-b border-gray-100">
+						<div class="flex-1 min-w-0">
+							<h3 class="text-lg font-semibold text-gray-900">{{ announceDetailItem.title }}</h3>
+							<p class="text-xs text-gray-500 mt-0.5">{{ announceDetailItem.created_at }}</p>
+						</div>
+						<button @click="closeAnnouncementDetail" class="flex-shrink-0 rounded-lg p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+							<Icon name="x" size="md" />
+						</button>
+					</div>
+					<div class="px-6 py-5 max-h-[60vh] overflow-y-auto">
+						<div class="announcement-content prose prose-sm max-w-none text-gray-700" v-html="renderMarkdown(announceDetailItem.content)"></div>
+					</div>
+					<div class="px-6 py-3 border-t border-gray-100 flex justify-end">
+						<button @click="closeAnnouncementDetail" class="btn btn-secondary btn-sm">关闭</button>
+					</div>
+				</div>
+			</div>
+		</Transition>
+	</Teleport>
+
 </template>
 
 <style scoped>
