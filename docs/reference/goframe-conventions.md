@@ -485,3 +485,23 @@ Events []string `json:"events" v:"required|foreach|length:1,100#请选择事件|
 ```
 **注意**：GoFrame v2 没有内置规则直接校验 slice 的元素个数。如需限制元素数量，需自定义校验规则或在 logic 层手动检查。
 
+### 2026-06-16：gerror.NewCode 误用为格式化构造，错误消息占位符未替换
+
+**问题描述**：注册时命中禁用词，返回的错误消息未格式化，用户看到 `%s包含禁用词「%s」，请修改后重试, 用户名, test`——`%s` 原样输出，参数被用 `, ` 拼接在末尾。
+
+**原因**：`gerror.NewCode(code gcode.Code, text ...string)` 的第二及后续参数是**字面文本**（`...string`），不是 `format + args`。代码误把含 `%s` 占位符的模板连同 `fieldName`、`word` 一起传入，GoFrame 把它们当作多段 text 用 `, ` 拼接，模板原样保留、占位符不替换。带格式化的对应方法是 `gerror.NewCodef(code, format, args...)`。
+
+```go
+// 错误 — NewCode 的参数是字面 text（...string），%s 不会被替换，多余参数被拼到末尾
+return gerror.NewCode(gcode.New(...), "%s包含禁用词「%s」，请修改后重试", fieldName, word)
+// 输出：%s包含禁用词「%s」，请修改后重试, 用户名, test
+
+// 正确 — 用 NewCodef 做格式化
+return gerror.NewCodef(gcode.New(...), "%s包含禁用词「%s」，请修改后重试", fieldName, word)
+// 输出：用户名包含禁用词「test」，请修改后重试
+```
+
+**修复方式**：`internal/logic/common/validation.go` 中 `ValidateForbiddenWords` 的 `gerror.NewCode` 改为 `gerror.NewCodef`。
+
+**正确做法**：构造错误时区分 `NewXxx`（字面文本）与 `NewXxxf`（格式化）两个系列。凡消息含 `%s`/`%v`/`%d` 等占位符且需填入变量，必须用 `f` 变体（`gerror.Newf`、`gerror.NewCodef`、`gerror.NewWrapf`、`gerror.NewSkipf`）；把格式串当字面文本传入 `NewXxx` 系列，占位符不会替换，多余实参还会被拼接到消息末尾。
+
