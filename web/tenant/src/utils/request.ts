@@ -184,6 +184,7 @@ request.interceptors.response.use(
         }
         const err = new Error(msg)
         ;(err as any).apiError = error.response.data as ApiError
+        ;(err as any).isBusinessError = true
         ;(err as any).isDemoModeError = error.response.data.code === DEMO_MODE_CODE
         return Promise.reject(err)
       }
