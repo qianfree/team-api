@@ -77,7 +77,7 @@ async function fetchAnnouncements() {
 
 onMounted(() => {
 	fetchAnnouncements()
-	timer = setInterval(fetchAnnouncements, 60_000)
+	timer = setInterval(fetchAnnouncements, 30 * 60 * 1000)
 })
 
 onBeforeUnmount(() => {

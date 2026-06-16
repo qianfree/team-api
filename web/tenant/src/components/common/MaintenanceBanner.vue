@@ -9,7 +9,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
 	await fetchSettings()
-	timer = setInterval(() => fetchSettings(), 60_000)
+	timer = setInterval(() => fetchSettings(), 30 * 60 * 1000)
 })
 
 onBeforeUnmount(() => {
