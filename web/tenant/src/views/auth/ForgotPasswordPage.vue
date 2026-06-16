@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
+import PasswordStrengthMeter from '@/components/common/PasswordStrengthMeter.vue'
 import request, { extractApiError } from '@/utils/request'
 
 const router = useRouter()
@@ -243,6 +244,7 @@ function goBack() {
 					class="input"
 					:class="{ 'input-error': errors.newPassword }"
 				/>
+				<PasswordStrengthMeter :password="form.newPassword" />
 				<p v-if="errors.newPassword" class="input-error-text">{{ errors.newPassword }}</p>
 			</div>
 
