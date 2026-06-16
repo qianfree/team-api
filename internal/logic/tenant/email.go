@@ -25,9 +25,28 @@ func (s *sTenant) SendCode(ctx context.Context, req *v1.TenantSendCodeReq) (*v1.
 			return nil, common.NewBusinessError(consts.CodeEmailVerificationDisabled, consts.MsgEmailVerificationDisabled)
 		}
 	case common.VerifyPurposeResetPwd:
-		// Check if user exists with this email
-		// For tenant reset, we need to know which tenant - user provides email
-		// We'll verify the email exists during the actual reset
+		// Require slider captcha before sending a reset code. Non-consuming:
+		// the verified flag is left intact for the consuming check at
+		// ResetPassword. (register/change_email intentionally not gated here.)
+		if err := common.IsCaptchaVerified(ctx, req.CaptchaKey, req.CaptchaX); err != nil {
+			return nil, err
+		}
+		// 仅主用户（owner）可通过邮箱重置密码；校验邮箱是否属于某个 owner 账号。
+		// 放在滑块验证之后，避免未通过人机验证就枚举哪些邮箱是主账号。
+		var owner *entity.TntUsers
+		err := dao.TntUsers.Ctx(ctx).
+			Where("email", email).
+			Where("role", "owner").
+			Scan(&owner)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+		if owner == nil {
+			return nil, common.NewBadRequestError("该邮箱未注册或非主账号，无法通过邮箱重置密码")
+		}
+		if owner.Status != "active" {
+			return nil, common.NewBadRequestError("账号状态异常，请联系管理员")
+		}
 	case common.VerifyPurposeChangeEmail:
 		// Check if new email is already taken by another user in same tenant
 		// Tenant context should be available
@@ -57,16 +76,18 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 		return nil, err
 	}
 
-	// Find user by email (search across all tenants)
+	// Find owner (主用户) by email — only owners may reset by email.
+	// Members are managed by the owner/admin and do not self-reset via email.
 	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
 		Where("email", email).
+		Where("role", "owner").
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewBadRequestError("该邮箱未注册")
+		return nil, common.NewBadRequestError("该邮箱未注册或非主账号，无法重置密码")
 	}
 
 	if user.Status != "active" {

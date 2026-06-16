@@ -104,7 +104,17 @@ async function doRefresh(): Promise<TokenPair> {
   return newTokens
 }
 
-const PUBLIC_PATHS = ['/settings/', '/captcha', '/captcha/', '/auth/login', '/auth/register', '/agreements/']
+const PUBLIC_PATHS = [
+	'/settings/',
+	'/captcha',
+	'/captcha/',
+	'/auth/login',
+	'/auth/register',
+	'/agreements/',
+	// 找回密码流程无需登录态：发送验证码 / 重置密码
+	'/email/send-code',
+	'/email/reset-password',
+]
 
 function isPublicPath(url?: string): boolean {
   if (!url) return false
