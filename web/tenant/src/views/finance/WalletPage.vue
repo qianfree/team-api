@@ -479,6 +479,14 @@ onBeforeUnmount(() => {
 								充值 ¥{{ rechargeAmount || '—' }}
 							</template>
 						</button>
+
+						<!-- Conversion note -->
+						<div class="recharge-note">
+							<div class="recharge-note-icon">
+								<Icon name="infoCircle" size="xs" />
+							</div>
+							<p>充值金额为人民币（¥），支付成功后将按平台汇率换算为美元（$）入账到您的钱包余额。</p>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -871,6 +879,24 @@ onBeforeUnmount(() => {
 .pay-method-icon-alipay { background: linear-gradient(135deg, #1677ff, #0958d9); }
 .pay-method-icon-wxpay { background: linear-gradient(135deg, #07c160, #06ad56); }
 .pay-method-icon-default { background: linear-gradient(135deg, #6b7280, #4b5563); }
+
+/* ==========================================
+   Recharge Conversion Note
+   ========================================== */
+.recharge-note {
+	display: flex; align-items: flex-start; gap: 0.5rem;
+	padding: 0.75rem 0.875rem;
+	border-radius: 0.75rem;
+	background-color: #f0fdfa;
+	border: 1px solid #ccfbf1;
+}
+.recharge-note-icon {
+	flex-shrink: 0; margin-top: 0.0625rem;
+	color: #14b8a6;
+}
+.recharge-note p {
+	font-size: 0.75rem; line-height: 1.5; color: #0f766e;
+}
 
 /* ==========================================
    Transitions
