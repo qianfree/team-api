@@ -31,8 +31,8 @@ function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 				</AFormItem>
 				<AFormItem label="最低充值金额">
 					<AInputNumber
-						:model-value="values['payment_min_topup'] as number"
-						@change="(v: number | undefined) => values['payment_min_topup'] = String(v ?? 1)"
+						:model-value="Number(values['payment_min_topup']) || undefined"
+						@change="(v: number | undefined) => values['payment_min_topup'] = v"
 						:min="1" style="width: 100%"
 					/>
 				</AFormItem>
