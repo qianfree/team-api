@@ -187,6 +187,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '消息管理' },
       },
       {
+        path: 'email-logs',
+        name: 'AdminEmailLogs',
+        component: () => import('@/views/operation/EmailLogsPage.vue'),
+        meta: { title: '邮件发送记录' },
+      },
+      {
         path: 'announcements',
         name: 'AdminAnnouncements',
         component: () => import('@/views/operation/AnnouncementsPage.vue'),

@@ -30,7 +30,9 @@ const (
 // Rate limits: 60s cooldown between sends, max 5 per hour.
 func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) error {
 	email = strings.TrimSpace(strings.ToLower(email))
+	g.Log().Infof(ctx, "[verify-code] 收到发送验证码请求: email=%s purpose=%s", email, purpose)
 	if !IsValidEmail(email) {
+		g.Log().Warningf(ctx, "[verify-code] 邮箱格式无效: %s", email)
 		return NewBadRequestError("邮箱格式无效")
 	}
 
@@ -72,6 +74,7 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	if err != nil {
 		return gerror.Wrapf(err, "save verify code")
 	}
+	g.Log().Infof(ctx, "[verify-code] 验证码已生成并入库(仅调试): email=%s code=%s", email, code)
 
 	// Send email (fire and forget, log error but don't fail)
 	// Set cooldown before async send (prevents duplicate sends within 60s)
@@ -80,12 +83,19 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.Log().Errorf(context.Background(), "[verify-code] 发送邮件 goroutine panic: %v", r)
+			}
+		}()
 		bgCtx := context.Background()
 		emailCfg, err := EmailConfigFromOptions(bgCtx)
 		if err != nil {
-			g.Log().Errorf(bgCtx, "load email config: %v", err)
+			g.Log().Errorf(bgCtx, "[verify-code] 加载邮件配置失败: %v", err)
 			return
 		}
+		g.Log().Infof(bgCtx, "[verify-code] 邮件配置已加载: host=%s port=%d from=%s username=%s tls=%v",
+			emailCfg.Host, emailCfg.Port, emailCfg.From, emailCfg.Username, emailCfg.UseTLS)
 		sender := NewEmailSender(emailCfg)
 		subject := fmt.Sprintf("验证码：%s", code)
 		body := fmt.Sprintf(
@@ -93,6 +103,7 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 			<p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`,
 			code,
 		)
+		g.Log().Infof(bgCtx, "[verify-code] 准备调用 SMTP 发送邮件: to=%s subject=%q", email, subject)
 		err = sender.Send(bgCtx, &EmailMessage{
 			To:       email,
 			Subject:  subject,
@@ -101,7 +112,9 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 			UserID:   0,
 		})
 		if err != nil {
-			g.Log().Errorf(bgCtx, "send verify code email to %s: %v", email, err)
+			g.Log().Errorf(bgCtx, "[verify-code] 发送验证码邮件失败: to=%s err=%v", email, err)
+		} else {
+			g.Log().Infof(bgCtx, "[verify-code] 验证码邮件发送流程完成(无错误返回): to=%s", email)
 		}
 	}()
 
