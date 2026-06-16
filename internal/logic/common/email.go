@@ -54,30 +54,21 @@ type EmailMessage struct {
 
 // Send sends an email message with retry logic.
 func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
-	g.Log().Infof(ctx, "[email] 开始发送邮件: to=%s subject=%q template=%q", msg.To, msg.Subject, msg.TemplateCode)
-	if s.config != nil {
-		g.Log().Infof(ctx, "[email] SMTP 配置: host=%s port=%d from=%s username=%s tls=%v",
-			s.config.Host, s.config.Port, s.config.From, s.config.Username, s.config.UseTLS)
-	}
-
 	var lastErr error
 
 	for attempt := 0; attempt < 3; attempt++ {
 		lastErr = s.sendWithRetry(ctx, msg, attempt)
 		if lastErr == nil {
-			g.Log().Infof(ctx, "[email] 邮件发送成功: to=%s (第 %d 次尝试)", msg.To, attempt+1)
 			// Log success
 			s.logSend(ctx, msg, "sent", nil, attempt)
 			return nil
 		}
 
-		g.Log().Warningf(ctx, "[email] 第 %d 次发送失败: to=%s err=%v", attempt+1, msg.To, lastErr)
 		if attempt < 2 {
 			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
 		}
 	}
 
-	g.Log().Errorf(ctx, "[email] 邮件发送最终失败(已重试 3 次): to=%s err=%v", msg.To, lastErr)
 	// Log failure
 	s.logSend(ctx, msg, "failed", lastErr, 2)
 	return lastErr
@@ -154,12 +145,7 @@ func (s *BasicEmailSender) sendWithRetry(ctx context.Context, msg *EmailMessage,
 		dialer.TLSConfig = &tls.Config{ServerName: s.config.Host}
 	}
 
-	g.Log().Infof(ctx, "[email] 正在连接 SMTP 服务器: %s:%d (第 %d 次尝试)", s.config.Host, s.config.Port, attempt+1)
-	if err := dialer.DialAndSend(m); err != nil {
-		g.Log().Errorf(ctx, "[email] SMTP DialAndSend 失败: %s:%d err=%v", s.config.Host, s.config.Port, err)
-		return err
-	}
-	return nil
+	return dialer.DialAndSend(m)
 }
 
 // logSend records the send attempt in ntf_send_log.
