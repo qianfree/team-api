@@ -97,7 +97,7 @@ func ValidateForbiddenWords(ctx context.Context, value, fieldName string) error 
 			continue
 		}
 		if strings.Contains(lowerVal, strings.ToLower(word)) {
-			return gerror.NewCode(gcode.New(consts.CodeForbiddenWord, consts.MsgForbiddenWord, nil),
+			return gerror.NewCodef(gcode.New(consts.CodeForbiddenWord, consts.MsgForbiddenWord, nil),
 				"%s包含禁用词「%s」，请修改后重试", fieldName, word)
 		}
 	}
