@@ -3,6 +3,7 @@ package common
 import (
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -55,4 +56,17 @@ func IgnoreScanNoRows(err error) error {
 		return nil
 	}
 	return err
+}
+
+// IsDuplicateKeyError reports whether err is a PostgreSQL unique-constraint
+// violation (SQLSTATE 23505). Used to convert race-condition insert failures
+// into friendly business errors at the data layer's last line of defense.
+//
+// Uses string matching on the driver error message. Switch to a typed assertion
+// (pq.Error / pgconn.PgError) if a Postgres driver becomes a direct dependency.
+func IsDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate key")
 }

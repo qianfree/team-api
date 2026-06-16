@@ -79,7 +79,7 @@ func CreateAdmin(ctx context.Context, username, password, displayName string) er
 		Status:       "active",
 	}).Insert()
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if common.IsDuplicateKeyError(err) {
 			return common.NewBusinessError(consts.CodeSetupCompleted, consts.MsgSetupCompleted)
 		}
 		return err
@@ -111,15 +111,4 @@ func AutoInitAdmin(ctx context.Context) (bool, error) {
 	}
 	g.Log().Info(ctx, "通过环境变量自动初始化管理员完成")
 	return true, nil
-}
-
-// isDuplicateKeyError checks if the error is a PostgreSQL unique constraint violation.
-// PostgreSQL error code 23505 = unique_violation.
-// NOTE: Uses string matching on the error message. Consider switching to
-// pq.Error type assertion if github.com/lib/pq becomes a direct dependency.
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate key")
 }

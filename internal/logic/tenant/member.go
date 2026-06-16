@@ -277,7 +277,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			return err
 		}
 		if count > 0 {
-			return common.NewBadRequestError("该邮箱已被使用")
+			return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
 		}
 
 		// Create user
@@ -296,6 +296,11 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			Status:       "active",
 		}).Insert()
 		if err != nil {
+			// Race condition: another request inserted a colliding
+			// username/email between our pre-check and this insert.
+			if common.IsDuplicateKeyError(err) {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
 			return gerror.Wrapf(err, "创建用户失败")
 		}
 		userID, err = userResult.LastInsertId()
@@ -441,7 +446,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 				return err
 			}
 			if count > 0 {
-				return common.NewBadRequestError("该邮箱已被使用")
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
 			}
 		}
 
@@ -456,6 +461,11 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 			Status:       "active",
 		}).Insert()
 		if err != nil {
+			// Race condition: another request inserted a colliding
+			// username/email between our pre-check and this insert.
+			if common.IsDuplicateKeyError(err) {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
 			return gerror.Wrapf(err, "创建用户失败")
 		}
 		userID, err = userResult.LastInsertId()

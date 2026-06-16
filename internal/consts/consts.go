@@ -177,6 +177,7 @@ const (
 	CodeIpRateLimitExceeded       = 10090 // IP级别限流
 	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
 	CodeForbiddenWord             = 10096 // 名称包含禁用词
+	CodeEmailExists               = 10097 // 邮箱已被使用
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -253,6 +254,7 @@ const (
 	MsgRateLimitExceeded   = "请求频率超限"
 	MsgPasswordTooWeak     = "密码不符合策略"
 	MsgUsernameExists      = "用户名已存在"
+	MsgEmailExists         = "该邮箱已被使用"
 	MsgTenantCodeExists    = "租户代码已存在"
 	MsgSessionExpired      = "会话已过期"
 	MsgTokenExpired        = "Token 已过期"
