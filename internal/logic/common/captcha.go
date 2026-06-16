@@ -205,6 +205,26 @@ func CheckCaptchaRequired(ctx context.Context, _ string, captchaKey string, capt
 	return nil
 }
 
+// IsCaptchaVerified checks whether the slider captcha has been completed
+// (the verified flag is set by VerifyCaptcha during the slide). Unlike
+// CheckCaptchaRequired it does NOT consume the flag, so a subsequent
+// consuming check (e.g. at password reset) still passes. Used to gate
+// low-sensitivity actions like sending a reset code without burning the
+// one-shot verification before the final sensitive operation.
+func IsCaptchaVerified(ctx context.Context, captchaKey string, _ int) error {
+	if captchaKey == "" {
+		return NewBusinessError(consts.CodeCaptchaRequired, consts.MsgCaptchaRequired)
+	}
+
+	verifiedKey := fmt.Sprintf("%s:%s", captchaVerifiedPrefix, captchaKey)
+	result, err := g.Redis().Do(ctx, "GET", verifiedKey)
+	if err != nil || result.IsNil() {
+		// No verified flag → user never completed the slide (or it expired)
+		return NewBusinessError(consts.CodeCaptchaRequired, consts.MsgCaptchaRequired)
+	}
+	return nil
+}
+
 func getCaptchaExpireSeconds(ctx context.Context) time.Duration {
 	secs := Config().GetInt(ctx, "captcha_expire_seconds")
 	if secs < 60 {

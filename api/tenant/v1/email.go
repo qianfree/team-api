@@ -4,9 +4,11 @@ import "github.com/gogf/gf/v2/frame/g"
 
 // TenantSendCodeReq 发送验证码请求
 type TenantSendCodeReq struct {
-	g.Meta  `path:"/email/send-code" method:"post" mime:"json" tags:"租户控制台-邮箱" summary:"发送验证码" group:"public" middleware:"-"`
-	Email   string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
-	Purpose string `json:"purpose" v:"required|in:register,reset_password,change_email#请选择用途|用途无效" dc:"用途：register / reset_password / change_email"`
+	g.Meta     `path:"/email/send-code" method:"post" mime:"json" tags:"租户控制台-邮箱" summary:"发送验证码" group:"public" middleware:"-"`
+	Email      string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
+	Purpose    string `json:"purpose" v:"required|in:register,reset_password,change_email#请选择用途|用途无效" dc:"用途：register / reset_password / change_email"`
+	CaptchaKey string `json:"captcha_key" dc:"滑块验证码key（找回密码用途必填）"`
+	CaptchaX   int    `json:"captcha_x" dc:"滑块X坐标（找回密码用途必填）"`
 }
 
 type TenantSendCodeRes struct{}

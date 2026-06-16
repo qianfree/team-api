@@ -24,8 +24,19 @@ const form = reactive({
 
 const errors = reactive<Record<string, string>>({})
 
-// Captcha state
-const captcha = reactive({ captchaKey: '', captchaX: 0 })
+// Captcha state. Must be a ref: <SlideCaptcha v-model="captcha"> compiles to
+// `captcha = $event`, which would reassign a const reactive and silently drop
+// the value. With a ref Vue writes to captcha.value instead.
+const captcha = ref<{ captchaKey: string; captchaX: number }>({ captchaKey: '', captchaX: 0 })
+const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
+// Reactive verification flag (driven by SlideCaptcha's `verified` emit) so the
+// send button can be disabled until the slide is completed.
+const captchaVerified = ref(false)
+
+// 10057 = 请完成滑块验证 (not completed), 10058 = 滑块验证失败 (failed/expired)
+function isCaptchaError(apiErr: any): boolean {
+	return apiErr?.code === 10057 || apiErr?.code === 10058
+}
 
 function clearErrors() {
 	Object.keys(errors).forEach((k) => delete errors[k])
@@ -42,17 +53,18 @@ async function sendCode() {
 		await request.post('/tenant/email/send-code', {
 			email: form.email,
 			purpose: 'reset_password',
-			captcha_key: captcha.captchaKey,
-			captcha_x: captcha.captchaX,
+			captcha_key: captcha.value.captchaKey,
+			captcha_x: captcha.value.captchaX,
 		})
 		startCountdown()
 	} catch (err: any) {
 		const apiErr = extractApiError(err)
-		if (apiErr?.code === 10058) {
-			errors.email = '滑块验证失败，请重新拖动'
+		if (isCaptchaError(apiErr)) {
+			// 滑块验证已过期：引导用户返回第一步重新验证
+			errors.code = apiErr?.message || '滑块验证已过期，请返回重新验证'
 			return
 		}
-		errors.email = apiErr?.message || '发送验证码失败'
+		errors.code = apiErr?.message || '发送验证码失败'
 	} finally {
 		codeSending.value = false
 	}
@@ -100,24 +112,31 @@ function validateStep2(): boolean {
 
 async function goToStep2() {
 	if (!validateStep1()) return
+	// 必须先完成滑块验证才允许发送验证码（captchaKey 在图片加载后即非空，
+	// 无法据此判断是否真的拖动过，改用 captchaVerified 判断服务端验证通过状态）
+	if (!captchaVerified.value) {
+		errors.captcha = '请先完成滑块验证'
+		return
+	}
 
 	codeSending.value = true
 	try {
 		await request.post('/tenant/email/send-code', {
 			email: form.email,
 			purpose: 'reset_password',
-			captcha_key: captcha.captchaKey,
-			captcha_x: captcha.captchaX,
+			captcha_key: captcha.value.captchaKey,
+			captcha_x: captcha.value.captchaX,
 		})
 		step.value = 2
 		startCountdown()
 	} catch (err: any) {
 		const apiErr = extractApiError(err)
-		if (apiErr?.code === 10058) {
-			errors.email = '滑块验证失败，请重新拖动'
+		if (isCaptchaError(apiErr)) {
+			errors.captcha = apiErr?.message || '请重新完成滑块验证'
+			captchaRef.value?.resetCaptcha()
 			return
 		}
-		errors.email = apiErr?.message || '发送验证码失败'
+		errors.captcha = apiErr?.message || '发送验证码失败'
 	} finally {
 		codeSending.value = false
 	}
@@ -132,14 +151,14 @@ async function handleReset() {
 			email: form.email,
 			code: form.code,
 			password: form.newPassword,
-			captcha_key: captcha.captchaKey,
-			captcha_x: captcha.captchaX,
+			captcha_key: captcha.value.captchaKey,
+			captcha_x: captcha.value.captchaX,
 		})
 		router.push('/tenant/login')
 	} catch (err: any) {
 		const apiErr = extractApiError(err)
-		if (apiErr?.code === 10058) {
-			errors.code = '滑块验证失败，请重新拖动'
+		if (isCaptchaError(apiErr)) {
+			errors.code = apiErr?.message || '滑块验证已过期，请返回重新验证'
 			return
 		}
 		errors.code = apiErr?.message || '重置密码失败'
@@ -199,15 +218,18 @@ function goBack() {
 				<p v-if="errors.email" class="input-error-text">{{ errors.email }}</p>
 			</div>
 
-			<SlideCaptcha v-model="captcha" class="mb-4" />
-			<button
-				type="submit"
-				:disabled="codeSending"
-				class="btn btn-primary btn-lg w-full"
-			>
-				<div v-if="codeSending" class="spinner h-4 w-4 border-white"></div>
-				{{ codeSending ? '发送中...' : '发送重置验证码' }}
-			</button>
+			<SlideCaptcha ref="captchaRef" v-model="captcha" @verified="captchaVerified = $event" class="mb-4" />
+			<div>
+				<button
+					type="submit"
+					:disabled="codeSending || !captchaVerified"
+					class="btn btn-primary btn-lg w-full"
+				>
+					<div v-if="codeSending" class="spinner h-4 w-4 border-white"></div>
+					{{ codeSending ? '发送中...' : '发送重置验证码' }}
+				</button>
+				<p v-if="errors.captcha" class="input-error-text mt-2 text-center">{{ errors.captcha }}</p>
+			</div>
 		</form>
 
 		<!-- Step 2: Code + New Password -->
