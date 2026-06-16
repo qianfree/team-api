@@ -178,6 +178,13 @@ type (
 		DataGovernanceDeletion(ctx context.Context, req *v1.DataGovernanceDeletionReq) (*v1.DataGovernanceDeletionRes, error)
 		// TriggerDataCleanup 手动触发数据清理
 		DataGovernanceCleanup(ctx context.Context, _ *v1.DataGovernanceCleanupReq) (*v1.DataGovernanceCleanupRes, error)
+		// ListEmailSendLogs 分页查询邮件发送记录（ntf_send_log，主库）。
+		// 列表不返回 body（HTML 正文较大），由详情接口返回完整记录。
+		ListEmailSendLogs(ctx context.Context, req *v1.EmailSendLogListReq) (*v1.EmailSendLogListRes, error)
+		// GetEmailSendLogDetail 查询单条邮件发送记录详情（含 body 正文）。
+		GetEmailSendLogDetail(ctx context.Context, req *v1.EmailSendLogDetailReq) (*v1.EmailSendLogDetailRes, error)
+		// ListEmailVerifyCodes 分页查询验证码申请记录（sys_email_verify_codes，主库）。
+		ListEmailVerifyCodes(ctx context.Context, req *v1.EmailVerifyCodeListReq) (*v1.EmailVerifyCodeListRes, error)
 		// ErrorLogList returns a paginated list of system error logs.
 		ErrorLogList(ctx context.Context, req *v1.ErrorLogListReq) (*v1.ErrorLogListRes, error)
 		// ErrorLogDetail returns the detail of a single error log.
