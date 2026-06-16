@@ -8,6 +8,7 @@ import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
 import Turnstile from '@/components/common/Turnstile.vue'
 import Icon from '@/components/common/Icon.vue'
 import AgreementViewModal from '@/components/common/AgreementViewModal.vue'
+import PasswordStrengthMeter from '@/components/common/PasswordStrengthMeter.vue'
 import request from '@/utils/request'
 import { extractApiError } from '@/utils/request'
 
@@ -403,6 +404,7 @@ async function handleRegister() {
 						class="input"
 						:class="{ 'input-error': userErrors.password }"
 					/>
+					<PasswordStrengthMeter :password="userForm.password" />
 					<p v-if="userErrors.password" class="input-error-text">{{ userErrors.password }}</p>
 				</div>
 
