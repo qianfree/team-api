@@ -199,3 +199,31 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 
 	return nil, nil
 }
+
+// SendChangeEmailCode sends a verification code for setting/changing email.
+// Authenticated (unlike the public send-code): pre-checks that newEmail is not
+// already taken by another member in the same tenant before sending, so we don't
+// waste a code (and an email) on an address the user can't actually use.
+func (s *sTenant) SendChangeEmailCode(ctx context.Context, req *v1.TenantSendChangeEmailCodeReq) (*v1.TenantSendChangeEmailCodeRes, error) {
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
+
+	// Pre-check: reject early if the email is already used by another member in this tenant.
+	count, err := dao.TntUsers.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("email", newEmail).
+		Where("id <> ?", userID).
+		Count()
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, common.NewBadRequestError("该邮箱已被其他成员使用")
+	}
+
+	if err := common.SendVerifyCode(ctx, newEmail, common.VerifyPurposeChangeEmail); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}

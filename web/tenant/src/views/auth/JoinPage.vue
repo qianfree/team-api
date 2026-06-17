@@ -66,22 +66,6 @@
 				</div>
 
 				<div>
-					<label class="input-label">邮箱 <span class="text-red-500">*</span></label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="mail" size="sm" />
-						</div>
-						<input
-							v-model="form.email"
-							type="email"
-							required
-							placeholder="请输入邮箱"
-							class="input pl-11"
-						/>
-					</div>
-				</div>
-
-				<div>
 					<label class="input-label">密码 <span class="text-red-500">*</span></label>
 					<div class="relative">
 						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
@@ -192,7 +176,6 @@ const joinResult = ref({
 const form = ref({
 	username: '',
 	display_name: '',
-	email: '',
 	password: '',
 })
 
@@ -252,7 +235,6 @@ async function handleJoin() {
 				code: route.query.code as string,
 				username: form.value.username,
 				display_name: form.value.display_name || undefined,
-				email: form.value.email,
 				password: form.value.password,
 			}),
 		})

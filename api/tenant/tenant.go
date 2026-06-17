@@ -48,6 +48,7 @@ type ITenantV1 interface {
 	TenantSendCode(ctx context.Context, req *v1.TenantSendCodeReq) (res *v1.TenantSendCodeRes, err error)
 	TenantResetPassword(ctx context.Context, req *v1.TenantResetPasswordReq) (res *v1.TenantResetPasswordRes, err error)
 	TenantChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq) (res *v1.TenantChangeEmailRes, err error)
+	TenantSendChangeEmailCode(ctx context.Context, req *v1.TenantSendChangeEmailCodeReq) (res *v1.TenantSendChangeEmailCodeRes, err error)
 	FeedbackCreate(ctx context.Context, req *v1.FeedbackCreateReq) (res *v1.FeedbackCreateRes, err error)
 	FeedbackList(ctx context.Context, req *v1.FeedbackListReq) (res *v1.FeedbackListRes, err error)
 	FeedbackGet(ctx context.Context, req *v1.FeedbackGetReq) (res *v1.FeedbackGetRes, err error)

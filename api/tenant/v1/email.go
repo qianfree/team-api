@@ -33,3 +33,11 @@ type TenantChangeEmailReq struct {
 }
 
 type TenantChangeEmailRes struct{}
+
+// TenantSendChangeEmailCodeReq 设置/修改邮箱时发送验证码（需登录，发送前校验租户内邮箱唯一性）
+type TenantSendChangeEmailCodeReq struct {
+	g.Meta   `path:"/email/send-change-email-code" method:"post" mime:"json" tags:"租户控制台-邮箱" summary:"发送设置邮箱验证码"`
+	NewEmail string `json:"new_email" v:"required|email#请输入新邮箱|邮箱格式不正确" dc:"新邮箱"`
+}
+
+type TenantSendChangeEmailCodeRes struct{}

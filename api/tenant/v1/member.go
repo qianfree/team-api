@@ -98,7 +98,7 @@ type TenantMemberJoinReq struct {
 	Code        string `json:"code" v:"required#请提供邀请码" dc:"邀请码"`
 	Username    string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
 	Password    string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
-	Email       string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
+	Email       string `json:"email" v:"email#邮箱格式不正确" dc:"邮箱"`
 	DisplayName string `json:"display_name" dc:"显示名称"`
 }
 

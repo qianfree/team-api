@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
@@ -13,8 +13,6 @@ const { settings } = usePublicSettings()
 // OAuth state
 const oauthProviders = ref<any[]>([])
 const oauthLoading = ref(false)
-const linkProvider = ref('')
-const linkCode = ref('')
 const linkLoading = ref(false)
 const linkError = ref('')
 
@@ -32,6 +30,18 @@ const passwordErrors = reactive<Record<string, string>>({})
 const passwordSaving = ref(false)
 const passwordSuccess = ref(false)
 const showPasswordModal = ref(false)
+
+// Email (set / change) modal state
+const showEmailModal = ref(false)
+const emailForm = reactive({
+	new_email: '',
+	code: '',
+})
+const emailSending = ref(false)
+const emailSaving = ref(false)
+const emailCooldown = ref(0)
+const emailError = ref('')
+let emailCooldownTimer: ReturnType<typeof setInterval> | null = null
 
 const roleLabel: Record<string, string> = {
 	owner: '所有者',
@@ -129,6 +139,75 @@ async function handleChangePassword() {
 	}
 }
 
+function openEmailModal() {
+	emailForm.new_email = userInfo.value?.email || ''
+	emailForm.code = ''
+	emailError.value = ''
+	emailCooldown.value = 0
+	if (emailCooldownTimer) {
+		clearInterval(emailCooldownTimer)
+		emailCooldownTimer = null
+	}
+	showEmailModal.value = true
+}
+
+async function sendEmailCode() {
+	emailError.value = ''
+	if (!emailForm.new_email.trim()) {
+		emailError.value = '请输入邮箱'
+		return
+	}
+	emailSending.value = true
+	try {
+		await request.post('/tenant/email/send-change-email-code', {
+			new_email: emailForm.new_email,
+		})
+		emailCooldown.value = 60
+		emailCooldownTimer = setInterval(() => {
+			emailCooldown.value--
+			if (emailCooldown.value <= 0 && emailCooldownTimer) {
+				clearInterval(emailCooldownTimer)
+				emailCooldownTimer = null
+			}
+		}, 1000)
+	} catch (e: any) {
+		emailError.value = e?.response?.data?.message || '验证码发送失败'
+	} finally {
+		emailSending.value = false
+	}
+}
+
+async function handleChangeEmail() {
+	emailError.value = ''
+	if (!emailForm.new_email.trim()) {
+		emailError.value = '请输入邮箱'
+		return
+	}
+	if (!emailForm.code.trim()) {
+		emailError.value = '请输入验证码'
+		return
+	}
+	emailSaving.value = true
+	try {
+		await request.post('/tenant/email/change-email', {
+			new_email: emailForm.new_email,
+			code: emailForm.code,
+		})
+		if (userInfo.value) {
+			userInfo.value.email = emailForm.new_email
+		}
+		showEmailModal.value = false
+		if (emailCooldownTimer) {
+			clearInterval(emailCooldownTimer)
+			emailCooldownTimer = null
+		}
+	} catch (e: any) {
+		emailError.value = e?.response?.data?.message || '设置失败'
+	} finally {
+		emailSaving.value = false
+	}
+}
+
 async function revokeSession(sessionId: number) {
 	try {
 		await request.delete(`/tenant/auth/sessions/${sessionId}`)
@@ -150,6 +229,13 @@ onMounted(() => {
 	fetchProfile()
 	fetchSessions()
 	fetchOAuthProviders()
+})
+
+onUnmounted(() => {
+	if (emailCooldownTimer) {
+		clearInterval(emailCooldownTimer)
+		emailCooldownTimer = null
+	}
 })
 
 async function fetchOAuthProviders() {
@@ -181,7 +267,7 @@ async function handleOAuthLink(provider: string) {
 	linkError.value = ''
 	try {
 		const res: any = await request.get('/tenant/oauth/authorize', { params: { provider } })
-		const { authorize_url, state } = res.data?.data || {}
+		const { authorize_url } = res.data?.data || {}
 		if (authorize_url) {
 			// Open OAuth in popup window
 			const width = 600
@@ -324,7 +410,16 @@ async function handleOAuthUnlink(provider: string) {
 					<!-- Email -->
 					<div>
 						<p class="input-label">邮箱</p>
-						<span class="text-gray-900 font-medium">{{ userInfo.email || '--' }}</span>
+						<div class="flex items-center gap-2">
+							<span class="text-gray-900 font-medium">{{ userInfo.email || '未设置' }}</span>
+							<button
+								@click="openEmailModal"
+								class="text-primary-600 hover:text-primary-500 transition-colors"
+								title="设置/修改邮箱"
+							>
+								<Icon name="edit" size="sm" />
+							</button>
+						</div>
 					</div>
 
 					<!-- Role -->
@@ -485,5 +580,54 @@ async function handleOAuthUnlink(provider: string) {
 				</button>
 			</template>
 		</BaseModal>
+
+	<!-- Email Modal -->
+	<BaseModal :show="showEmailModal" :title="userInfo?.email ? '修改邮箱' : '设置邮箱'" width="narrow" @close="showEmailModal = false">
+		<form @submit.prevent="handleChangeEmail" class="space-y-4">
+			<div>
+				<label class="input-label">新邮箱</label>
+				<div class="flex gap-2">
+					<input
+						v-model="emailForm.new_email"
+						type="email"
+						placeholder="请输入邮箱"
+						class="input flex-1"
+					/>
+					<button
+						type="button"
+						class="btn btn-secondary whitespace-nowrap"
+						:disabled="emailSending || emailCooldown > 0"
+						@click="sendEmailCode"
+					>
+						{{ emailCooldown > 0 ? `${emailCooldown}s` : (emailSending ? '发送中...' : '发送验证码') }}
+					</button>
+				</div>
+			</div>
+
+			<div>
+				<label class="input-label">验证码</label>
+				<input
+					v-model="emailForm.code"
+					type="text"
+					maxlength="6"
+					placeholder="请输入6位验证码"
+					class="input"
+				/>
+			</div>
+
+			<p v-if="emailError" class="input-error-text">{{ emailError }}</p>
+		</form>
+
+		<template #footer>
+			<button class="btn btn-secondary" @click="showEmailModal = false">取消</button>
+			<button
+				class="btn btn-primary"
+				:disabled="emailSaving"
+				@click="handleChangeEmail"
+			>
+				{{ emailSaving ? '设置中...' : '确认' }}
+			</button>
+		</template>
+	</BaseModal>
 	</div>
 </template>
