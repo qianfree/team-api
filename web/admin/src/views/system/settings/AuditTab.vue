@@ -27,15 +27,15 @@ const values = useFormValues()
 			<div class="section-grid">
 				<AFormItem label="审计日志保留天数" class="field-full">
 					<AInputNumber
-						:model-value="values['audit_retention_days'] as number"
-						@change="(v: number | undefined) => values['audit_retention_days'] = String(v ?? 90)"
+						:model-value="Number(values['audit_retention_days']) || undefined"
+						@change="(v: number | undefined) => values['audit_retention_days'] = v"
 						:min="7" :max="3650" style="width: 100%"
 					/>
 				</AFormItem>
 				<AFormItem label="操作日志保留天数" class="field-full">
 					<AInputNumber
-						:model-value="values['operation_log_retention_days'] as number"
-						@change="(v: number | undefined) => values['operation_log_retention_days'] = String(v ?? 365)"
+						:model-value="Number(values['operation_log_retention_days']) || undefined"
+						@change="(v: number | undefined) => values['operation_log_retention_days'] = v"
 						:min="30" :max="3650" style="width: 100%"
 					/>
 				</AFormItem>

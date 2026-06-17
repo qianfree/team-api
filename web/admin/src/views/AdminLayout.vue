@@ -326,6 +326,7 @@ const menuGroups = [
     items: [
       { name: 'AdminNotificationTemplates', label: '通知模板', icon: IconNotification },
       { name: 'AdminMessages', label: '消息管理', icon: IconSend },
+      { name: 'AdminEmailLogs', label: '邮件发送记录', icon: IconFile },
       { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage },
       { name: 'AdminTickets', label: '工单管理', icon: IconCommand },
       { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage },

@@ -177,6 +177,16 @@ func buildInviteURL(ctx context.Context, code string) string {
 	return fmt.Sprintf("%s/#/tenant/join?code=%s", base, code)
 }
 
+// nullableEmail converts an empty email to nil so an optional email is stored as
+// SQL NULL (tnt_users.email is nullable) rather than "" — the latter would occupy
+// the UNIQUE(tenant_id, email) slot and block other email-less members in the tenant.
+func nullableEmail(email string) any {
+	if email == "" {
+		return nil
+	}
+	return email
+}
+
 // JoinByInvite handles a user joining a tenant via invitation link.
 func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq) (*v1.TenantMemberJoinRes, error) {
 	// Find invitation
@@ -268,16 +278,18 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			return common.NewBusinessError(consts.CodeUsernameExists, consts.MsgUsernameExists)
 		}
 
-		// Check email uniqueness within tenant
-		count, err = tx.Model("tnt_users").Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Where("email", email).
-			Count()
-		if err != nil {
-			return err
-		}
-		if count > 0 {
-			return common.NewBadRequestError("该邮箱已被使用")
+		// Check email uniqueness within tenant (email is optional — skip when empty)
+		if email != "" {
+			count, err = tx.Model("tnt_users").Ctx(ctx).
+				Where("tenant_id", tenantID).
+				Where("email", email).
+				Count()
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
 		}
 
 		// Create user
@@ -289,13 +301,18 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
 			TenantId:     tenantID,
 			Username:     username,
-			Email:        email,
+			Email:        nullableEmail(email),
 			PasswordHash: passwordHash,
 			DisplayName:  displayName,
 			Role:         invitation.Role,
 			Status:       "active",
 		}).Insert()
 		if err != nil {
+			// Race condition: another request inserted a colliding
+			// username/email between our pre-check and this insert.
+			if common.IsDuplicateKeyError(err) {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
 			return gerror.Wrapf(err, "创建用户失败")
 		}
 		userID, err = userResult.LastInsertId()
@@ -441,7 +458,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 				return err
 			}
 			if count > 0 {
-				return common.NewBadRequestError("该邮箱已被使用")
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
 			}
 		}
 
@@ -449,13 +466,18 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
 			TenantId:     tenantID,
 			Username:     username,
-			Email:        email,
+			Email:        nullableEmail(email),
 			PasswordHash: passwordHash,
 			DisplayName:  displayName,
 			Role:         req.Role,
 			Status:       "active",
 		}).Insert()
 		if err != nil {
+			// Race condition: another request inserted a colliding
+			// username/email between our pre-check and this insert.
+			if common.IsDuplicateKeyError(err) {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
 			return gerror.Wrapf(err, "创建用户失败")
 		}
 		userID, err = userResult.LastInsertId()

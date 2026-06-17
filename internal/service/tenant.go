@@ -94,6 +94,11 @@ type (
 		ResetPassword(ctx context.Context, req *v1.TenantResetPasswordReq) (*v1.TenantResetPasswordRes, error)
 		// ChangeEmail handles email change for a tenant user.
 		ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq) (*v1.TenantChangeEmailRes, error)
+		// SendChangeEmailCode sends a verification code for setting/changing email.
+		// Authenticated (unlike the public send-code): pre-checks that newEmail is not
+		// already taken by another member in the same tenant before sending, so we don't
+		// waste a code (and an email) on an address the user can't actually use.
+		SendChangeEmailCode(ctx context.Context, req *v1.TenantSendChangeEmailCodeReq) (*v1.TenantSendChangeEmailCodeRes, error)
 		// CreateFeedback 提交反馈
 		CreateFeedback(ctx context.Context, req *v1.FeedbackCreateReq) (*v1.FeedbackCreateRes, error)
 		// ListFeedbacks 我的反馈列表

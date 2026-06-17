@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+
+const router = useRouter()
+
+function goToPlayground() {
+	router.push({ name: 'TenantPlayground' })
+}
 
 interface PricingTierItem {
 	min_tokens: number
@@ -193,7 +200,14 @@ onMounted(fetchModels)
 	<div>
 		<div class="page-header">
 			<h1 class="page-title">可用模型</h1>
-			<p class="page-description">查看当前组织可使用的 AI 模型及其配置信息</p>
+			<p class="page-description">
+				查看当前组织可使用的 AI 模型及其配置信息。如果需要体验模型，请前往
+				<a
+					class="font-medium text-primary-600 hover:text-primary-700 underline underline-offset-2 transition-colors cursor-pointer"
+					@click="goToPlayground"
+				>在线体验</a>
+				功能
+			</p>
 		</div>
 
 		<!-- Filters -->

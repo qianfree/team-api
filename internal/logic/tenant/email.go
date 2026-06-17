@@ -25,9 +25,28 @@ func (s *sTenant) SendCode(ctx context.Context, req *v1.TenantSendCodeReq) (*v1.
 			return nil, common.NewBusinessError(consts.CodeEmailVerificationDisabled, consts.MsgEmailVerificationDisabled)
 		}
 	case common.VerifyPurposeResetPwd:
-		// Check if user exists with this email
-		// For tenant reset, we need to know which tenant - user provides email
-		// We'll verify the email exists during the actual reset
+		// Require slider captcha before sending a reset code. Non-consuming:
+		// the verified flag is left intact for the consuming check at
+		// ResetPassword. (register/change_email intentionally not gated here.)
+		if err := common.IsCaptchaVerified(ctx, req.CaptchaKey, req.CaptchaX); err != nil {
+			return nil, err
+		}
+		// 仅主用户（owner）可通过邮箱重置密码；校验邮箱是否属于某个 owner 账号。
+		// 放在滑块验证之后，避免未通过人机验证就枚举哪些邮箱是主账号。
+		var owner *entity.TntUsers
+		err := dao.TntUsers.Ctx(ctx).
+			Where("email", email).
+			Where("role", "owner").
+			Scan(&owner)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+		if owner == nil {
+			return nil, common.NewBadRequestError("该邮箱未注册或非主账号，无法通过邮箱重置密码")
+		}
+		if owner.Status != "active" {
+			return nil, common.NewBadRequestError("账号状态异常，请联系管理员")
+		}
 	case common.VerifyPurposeChangeEmail:
 		// Check if new email is already taken by another user in same tenant
 		// Tenant context should be available
@@ -57,16 +76,18 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 		return nil, err
 	}
 
-	// Find user by email (search across all tenants)
+	// Find owner (主用户) by email — only owners may reset by email.
+	// Members are managed by the owner/admin and do not self-reset via email.
 	var user *entity.TntUsers
 	err = dao.TntUsers.Ctx(ctx).
 		Where("email", email).
+		Where("role", "owner").
 		Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewBadRequestError("该邮箱未注册")
+		return nil, common.NewBadRequestError("该邮箱未注册或非主账号，无法重置密码")
 	}
 
 	if user.Status != "active" {
@@ -106,6 +127,11 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
+
+	// Reject no-op: block if the new email equals the user's current email.
+	if err := rejectSameEmail(ctx, userID, newEmail); err != nil {
+		return nil, err
+	}
 
 	// Verify code for new email
 	err := common.VerifyCode(ctx, newEmail, req.Code, "change_email")
@@ -177,4 +203,59 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	}()
 
 	return nil, nil
+}
+
+// SendChangeEmailCode sends a verification code for setting/changing email.
+// Authenticated (unlike the public send-code): pre-checks that newEmail is not
+// already taken by another member in the same tenant before sending, so we don't
+// waste a code (and an email) on an address the user can't actually use.
+func (s *sTenant) SendChangeEmailCode(ctx context.Context, req *v1.TenantSendChangeEmailCodeReq) (*v1.TenantSendChangeEmailCodeRes, error) {
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
+
+	// Reject no-op: block if the new email equals the user's current email.
+	if err := rejectSameEmail(ctx, userID, newEmail); err != nil {
+		return nil, err
+	}
+
+	// Pre-check: reject early if the email is already used by another member in this tenant.
+	count, err := dao.TntUsers.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("email", newEmail).
+		Where("id <> ?", userID).
+		Count()
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, common.NewBadRequestError("该邮箱已被其他成员使用")
+	}
+
+	if err := common.SendVerifyCode(ctx, newEmail, common.VerifyPurposeChangeEmail); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// rejectSameEmail blocks a no-op email change: if newEmail equals the user's
+// current email there's nothing to do, so refuse before sending a code (and a
+// pointless notification email) or performing an identical update. A user with
+// no email yet (NULL/empty) may still set any valid address.
+func rejectSameEmail(ctx context.Context, userID int64, newEmail string) error {
+	if newEmail == "" {
+		return nil
+	}
+	var me struct {
+		Email string `json:"email"`
+	}
+	if err := dao.TntUsers.Ctx(ctx).Where("id", userID).Fields("email").Scan(&me); err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return err
+		}
+	}
+	if me.Email != "" && me.Email == newEmail {
+		return common.NewBadRequestError("新邮箱与当前邮箱一致，无需修改")
+	}
+	return nil
 }
