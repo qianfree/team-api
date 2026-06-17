@@ -16,7 +16,7 @@ interface ApiError {
 
 /** Request config extension — set _suppressErrorMsg to skip auto error toast */
 declare module 'axios' {
-  interface InternalAxiosRequestConfig {
+  interface AxiosRequestConfig {
     _suppressErrorMsg?: boolean
   }
 }

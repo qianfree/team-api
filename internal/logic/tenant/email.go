@@ -128,6 +128,11 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	userID := middleware.GetUserID(ctx)
 	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
 
+	// Reject no-op: block if the new email equals the user's current email.
+	if err := rejectSameEmail(ctx, userID, newEmail); err != nil {
+		return nil, err
+	}
+
 	// Verify code for new email
 	err := common.VerifyCode(ctx, newEmail, req.Code, "change_email")
 	if err != nil {
@@ -209,6 +214,11 @@ func (s *sTenant) SendChangeEmailCode(ctx context.Context, req *v1.TenantSendCha
 	userID := middleware.GetUserID(ctx)
 	newEmail := strings.TrimSpace(strings.ToLower(req.NewEmail))
 
+	// Reject no-op: block if the new email equals the user's current email.
+	if err := rejectSameEmail(ctx, userID, newEmail); err != nil {
+		return nil, err
+	}
+
 	// Pre-check: reject early if the email is already used by another member in this tenant.
 	count, err := dao.TntUsers.Ctx(ctx).
 		Where("tenant_id", tenantID).
@@ -226,4 +236,26 @@ func (s *sTenant) SendChangeEmailCode(ctx context.Context, req *v1.TenantSendCha
 		return nil, err
 	}
 	return nil, nil
+}
+
+// rejectSameEmail blocks a no-op email change: if newEmail equals the user's
+// current email there's nothing to do, so refuse before sending a code (and a
+// pointless notification email) or performing an identical update. A user with
+// no email yet (NULL/empty) may still set any valid address.
+func rejectSameEmail(ctx context.Context, userID int64, newEmail string) error {
+	if newEmail == "" {
+		return nil
+	}
+	var me struct {
+		Email string `json:"email"`
+	}
+	if err := dao.TntUsers.Ctx(ctx).Where("id", userID).Fields("email").Scan(&me); err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return err
+		}
+	}
+	if me.Email != "" && me.Email == newEmail {
+		return common.NewBadRequestError("新邮箱与当前邮箱一致，无需修改")
+	}
+	return nil
 }
