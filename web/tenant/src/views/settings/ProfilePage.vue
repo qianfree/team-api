@@ -161,7 +161,7 @@ async function sendEmailCode() {
 	try {
 		await request.post('/tenant/email/send-change-email-code', {
 			new_email: emailForm.new_email,
-		})
+		}, { _suppressErrorMsg: true })
 		emailCooldown.value = 60
 		emailCooldownTimer = setInterval(() => {
 			emailCooldown.value--
@@ -171,7 +171,7 @@ async function sendEmailCode() {
 			}
 		}, 1000)
 	} catch (e: any) {
-		emailError.value = e?.response?.data?.message || '验证码发送失败'
+		emailError.value = e?.message || '验证码发送失败'
 	} finally {
 		emailSending.value = false
 	}
@@ -192,7 +192,7 @@ async function handleChangeEmail() {
 		await request.post('/tenant/email/change-email', {
 			new_email: emailForm.new_email,
 			code: emailForm.code,
-		})
+		}, { _suppressErrorMsg: true })
 		if (userInfo.value) {
 			userInfo.value.email = emailForm.new_email
 		}
@@ -202,7 +202,7 @@ async function handleChangeEmail() {
 			emailCooldownTimer = null
 		}
 	} catch (e: any) {
-		emailError.value = e?.response?.data?.message || '设置失败'
+		emailError.value = e?.message || '设置失败'
 	} finally {
 		emailSaving.value = false
 	}
