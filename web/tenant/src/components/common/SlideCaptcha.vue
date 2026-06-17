@@ -14,6 +14,10 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
 	'update:modelValue': [value: { captchaKey: string; captchaX: number }]
+	// Emits true only after a successful server verify; lets parents
+	// enable/disable submit buttons reactively. (The captcha key is set on
+	// image load, so the key alone cannot signal a completed slide.)
+	'verified': [value: boolean]
 }>()
 
 const { captchaData, loading, error, status, fetchCaptcha, verify, resetCaptcha } = useCaptcha()
@@ -25,6 +29,12 @@ function handleReset() {
 	resetCaptcha()
 }
 defineExpose({ resetCaptcha: handleReset, activate })
+
+// Notify parent of verification state changes so it can reactively enable or
+// disable submit buttons. Also emits on mount/refresh when status resets.
+watch(status, (val) => {
+	emit('verified', val === 'success')
+})
 
 const triggerRef = ref<HTMLDivElement | null>(null)
 const popupRef = ref<HTMLDivElement | null>(null)

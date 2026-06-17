@@ -16,3 +16,6 @@ func (c *ControllerV1) TenantResetPassword(ctx context.Context, req *v1.TenantRe
 func (c *ControllerV1) TenantChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq) (res *v1.TenantChangeEmailRes, err error) {
 	return service.Tenant().ChangeEmail(ctx, req)
 }
+func (c *ControllerV1) TenantSendChangeEmailCode(ctx context.Context, req *v1.TenantSendChangeEmailCodeReq) (res *v1.TenantSendChangeEmailCodeRes, err error) {
+	return service.Tenant().SendChangeEmailCode(ctx, req)
+}

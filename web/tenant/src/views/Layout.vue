@@ -194,11 +194,11 @@ onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
-	announcementTimer = setInterval(fetchAnnouncements, 10 * 60 * 1000)
+	announcementTimer = setInterval(fetchAnnouncements, 30 * 60 * 1000)
 	startNotificationPolling()
 	if (canViewWallet.value) {
 		fetchWalletBalance()
-		walletTimer = setInterval(fetchWalletBalance, 60000)
+		walletTimer = setInterval(fetchWalletBalance, 5 * 60 * 1000)
 	} else {
 		fetchMemberQuota()
 	}

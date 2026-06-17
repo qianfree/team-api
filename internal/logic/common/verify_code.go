@@ -80,6 +80,11 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.Log().Errorf(context.Background(), "send verify code email panic: %v", r)
+			}
+		}()
 		bgCtx := context.Background()
 		emailCfg, err := EmailConfigFromOptions(bgCtx)
 		if err != nil {

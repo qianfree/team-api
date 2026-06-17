@@ -71,6 +71,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 // CreateUser creates a new admin user.
 func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v1.AdminUserCreateRes, error) {
 	username := strings.TrimSpace(req.Username)
+	email := strings.ToLower(strings.TrimSpace(req.Email))
 
 	// Validate username format
 	if err := common.ValidateUsername(username); err != nil {
@@ -87,15 +88,16 @@ func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v
 		return nil, common.NewBusinessError(consts.CodeUsernameExists, consts.MsgUsernameExists)
 	}
 
-	// Check email uniqueness if provided
-	if req.Email != "" {
+	// Check email uniqueness if provided (normalized to lowercase so that
+	// e.g. "User@Example.com" and "user@example.com" collide as the same address).
+	if email != "" {
 		count, err = dao.SysAdminUsers.Ctx(ctx).
-			Where("email", strings.TrimSpace(req.Email)).Count()
+			Where("email", email).Count()
 		if err != nil {
 			return nil, err
 		}
 		if count > 0 {
-			return nil, common.NewBadRequestError("邮箱已被使用")
+			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
 		}
 	}
 
@@ -122,12 +124,18 @@ func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v
 	result, err := dao.SysAdminUsers.Ctx(ctx).Data(do.SysAdminUsers{
 		Username:     username,
 		PasswordHash: passwordHash,
-		Email:        strings.TrimSpace(req.Email),
+		Email:        email,
 		DisplayName:  username,
 		Role:         role,
 		Status:       "active",
 	}).Insert()
 	if err != nil {
+		// Race condition: another request inserted a colliding username/email
+		// between our pre-check and this insert. Translate the DB unique
+		// violation into a friendly business error.
+		if common.IsDuplicateKeyError(err) {
+			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+		}
 		return nil, err
 	}
 
@@ -158,15 +166,15 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 		data.DisplayName = *req.DisplayName
 	}
 	if req.Email != nil {
-		email := strings.TrimSpace(*req.Email)
-		// Check uniqueness
+		email := strings.ToLower(strings.TrimSpace(*req.Email))
+		// Check uniqueness (normalized to lowercase)
 		count, err := dao.SysAdminUsers.Ctx(ctx).
 			Where("email", email).Where("id != ?", req.Id).Count()
 		if err != nil {
 			return nil, err
 		}
 		if count > 0 {
-			return nil, common.NewBadRequestError("邮箱已被使用")
+			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
 		}
 		data.Email = email
 	}
@@ -179,6 +187,9 @@ func (s *sAdmin) UpdateUser(ctx context.Context, req *v1.AdminUserUpdateReq) (*v
 
 	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Update(data)
 	if err != nil {
+		if common.IsDuplicateKeyError(err) {
+			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+		}
 		return nil, err
 	}
 

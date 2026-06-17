@@ -73,14 +73,6 @@ jwt:
 crypto:
   encryptionKey: "请修改：运行 openssl rand -hex 32 生成 64 位十六进制密钥"  # 请修改
 
-# 邮件 SMTP 配置（可选，用于邮箱验证码等功能）
-email:
-  smtp:
-    host: ""
-    port: 587
-    username: ""
-    password: ""
-    from: ""
 
 # 演示模式（通过配置文件控制，不在管理后台设置）
 # 开启后所有写操作被拦截，仅允许只读访问，并在控制台显示水印

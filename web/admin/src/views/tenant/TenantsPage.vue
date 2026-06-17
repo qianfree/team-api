@@ -169,12 +169,12 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '钱包余额',
+    title: '钱包余额(美元)',
     dataIndex: 'wallet_balance',
     width: 120,
     render({ record }) {
       const val = parseFloat(record.wallet_balance || '0')
-      return `¥${val.toFixed(2)}`
+      return `\$${val.toFixed(2)}`
     },
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
