@@ -15,6 +15,7 @@ import (
 
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -231,6 +232,12 @@ func settleSuccessfulRequest(
 	// 16.5 累加成员已用额度
 	if billing != nil && settleResult != nil && settleResult.ActualCost > 0 {
 		billing.IncrMemberQuotaUsed(postCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+	}
+	if settleResult != nil && settleResult.ActualCost > 0 && rc.ProjectID > 0 {
+		if err := tenantlogic.CheckProjectBudget(postCtx, rc.TenantID, rc.ProjectID); err != nil {
+			g.Log().Warningf(postCtx, "[RelayHandler] Check project budget failed: tenant=%d project=%d request=%s err=%v",
+				rc.TenantID, rc.ProjectID, rc.RequestID, err)
+		}
 	}
 
 	// 17. 更新健康度 + 记录用量 + 更新亲和性
@@ -469,8 +476,16 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					streamUsage = &common.Usage{}
 				}
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
+					if err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID); err != nil {
+						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
+							rc.TenantID, rc.ProjectID, rc.RequestID, err)
+					} else if rc.ProjectID > 0 {
+						if err := tenantlogic.CheckProjectBudget(settleCtx, rc.TenantID, rc.ProjectID); err != nil {
+							g.Log().Warningf(settleCtx, "[RelayHandler] Check project budget failed: tenant=%d project=%d request=%s err=%v",
+								rc.TenantID, rc.ProjectID, rc.RequestID, err)
+						}
+					}
 				}
 				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())

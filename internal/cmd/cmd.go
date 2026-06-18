@@ -144,6 +144,9 @@ var (
 				task.RunPendingTasks(ctx)
 				return nil
 			})
+			cs.Register("project_budget_check", "*/5 * * * *", func(ctx context.Context) error {
+				return tenant.CheckBudgetExhausted(ctx)
+			})
 			cs.Register("usage_log_cleanup", "0 3 * * *", func(ctx context.Context) error {
 				retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
 				if retentionDays == 0 {

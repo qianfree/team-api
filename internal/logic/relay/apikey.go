@@ -234,6 +234,21 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 			return nil, consts.ErrTenantSuspended
 		}
 
+		// Project keys are only valid while their project remains active.
+		if k.ProjectID > 0 {
+			var project *struct {
+				Status string `json:"status"`
+			}
+			err = dao.TntProjects.Ctx(ctx).
+				Where("id", k.ProjectID).
+				Where("tenant_id", k.TenantID).
+				Fields("status").
+				Scan(&project)
+			if err != nil || project == nil || project.Status != "active" {
+				return nil, consts.ErrProjectNotActive
+			}
+		}
+
 		info := &ApiKeyInfo{
 			ID:        k.ID,
 			TenantID:  k.TenantID,
