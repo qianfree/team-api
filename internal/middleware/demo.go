@@ -11,13 +11,15 @@ import (
 )
 
 var demoWhitelistPaths = map[string]bool{
-	"/api/admin/auth/login":     true,
-	"/api/admin/auth/refresh":   true,
-	"/api/admin/auth/logout":    true,
-	"/api/tenant/auth/login":    true,
-	"/api/tenant/auth/refresh":  true,
-	"/api/tenant/auth/logout":   true,
-	"/api/tenant/auth/register": true,
+	"/api/admin/auth/login":       true,
+	"/api/admin/auth/refresh":     true,
+	"/api/admin/auth/logout":      true,
+	"/api/admin/auth/2fa/verify":  true,
+	"/api/tenant/auth/login":      true,
+	"/api/tenant/auth/refresh":    true,
+	"/api/tenant/auth/logout":     true,
+	"/api/tenant/auth/register":   true,
+	"/api/tenant/auth/2fa/verify": true,
 }
 
 // DemoMode blocks all write operations when demo mode is enabled.

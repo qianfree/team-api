@@ -29,8 +29,9 @@ const (
 // adminPublicPaths lists admin routes that skip JWT auth.
 // Keep in sync with api/admin/v1/ structs tagged group:"public" middleware:"-".
 var adminPublicPaths = map[string]bool{
-	"/api/admin/auth/login":   true,
-	"/api/admin/auth/refresh": true,
+	"/api/admin/auth/login":      true,
+	"/api/admin/auth/refresh":    true,
+	"/api/admin/auth/2fa/verify": true,
 }
 
 // AdminAuth is JWT authentication middleware for admin backend.

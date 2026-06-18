@@ -255,7 +255,7 @@ var (
 
 				// Admin — public endpoints use g.Meta middleware:"-" to skip auth
 				group.Group("/admin", func(g *ghttp.RouterGroup) {
-					g.Middleware(middleware.DemoMode, middleware.AdminAuth, middleware.OperationLog)
+					g.Middleware(middleware.DemoMode, middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
 					g.Bind(adminController.NewV1())
 				})
 
