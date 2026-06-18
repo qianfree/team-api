@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/model/do"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -108,9 +109,14 @@ func migrateTable(ctx context.Context, table string, oldKey, newKey []byte) {
 			g.Log().Warningf(ctx, "[KeyMigration] re-encrypt %s id=%d failed: %v", table, r.Id, err)
 			continue
 		}
+		data, ok := encryptedKeyUpdateData(table, newEncrypted)
+		if !ok {
+			g.Log().Warningf(ctx, "[KeyMigration] unsupported table %s", table)
+			continue
+		}
 		_, err = g.DB().Model(table).Ctx(ctx).
 			Where("id", r.Id).
-			Data(g.Map{"encrypted_key": newEncrypted}).
+			Data(data).
 			Update()
 		if err != nil {
 			g.Log().Warningf(ctx, "[KeyMigration] update %s id=%d failed: %v", table, r.Id, err)
@@ -121,6 +127,17 @@ func migrateTable(ctx context.Context, table string, oldKey, newKey []byte) {
 
 	if migrated > 0 {
 		g.Log().Infof(ctx, "[KeyMigration] migrated %d rows in %s from legacy key to config key", migrated, table)
+	}
+}
+
+func encryptedKeyUpdateData(table string, encryptedKey string) (any, bool) {
+	switch table {
+	case "chn_channel_keys":
+		return do.ChnChannelKeys{EncryptedKey: encryptedKey}, true
+	case "api_keys":
+		return do.ApiKeys{EncryptedKey: encryptedKey}, true
+	default:
+		return nil, false
 	}
 }
 
