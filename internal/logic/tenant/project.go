@@ -436,6 +436,7 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 		Name:         req.Name,
 		EncryptedKey: encryptedKey,
 		KeyPrefix:    prefix,
+		KeyType:      "project",
 		Status:       "active",
 		UserId:       userID,
 		Scope:        req.Scope,

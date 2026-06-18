@@ -187,6 +187,7 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 		EncryptedKey: encryptedKey,
 		KeyPrefix:    prefix,
 		Scope:        req.Scope,
+		KeyType:      keyType,
 		Status:       "active",
 	}
 
