@@ -49,6 +49,25 @@ type usageLogRow struct {
 	CreatedAt    *gtime.Time `json:"created_at"`
 }
 
+func invalidateApiKeysByProject(ctx context.Context, tenantID, projectID int64) error {
+	type keyRow struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	var keys []keyRow
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", projectID).
+		Fields("key_prefix").
+		Scan(&keys)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		relay.InvalidateApiKey(ctx, key.KeyPrefix)
+	}
+	return nil
+}
+
 // ProjectList returns a paginated list of projects for a tenant.
 func (s *sTenant) ProjectList(ctx context.Context, req *v1.TenantProjectListReq) (*v1.TenantProjectListRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
@@ -206,6 +225,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 	if err != nil {
 		return nil, err
 	}
+	_ = invalidateApiKeysByProject(ctx, tenantID, req.Id)
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
@@ -296,6 +316,7 @@ func CheckBudgetExhausted(ctx context.Context) error {
 				Data(do.ApiKeys{
 					Status: "revoked",
 				}).Update()
+			_ = invalidateApiKeysByProject(ctx, p.TenantID, p.ID)
 		}
 	}
 
@@ -483,13 +504,14 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 
 	// Verify the key belongs to the project and tenant
 	var key *struct {
-		ID int64 `json:"id"`
+		ID        int64  `json:"id"`
+		KeyPrefix string `json:"key_prefix"`
 	}
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", req.KeyId).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
-		Fields("id").
+		Fields("id, key_prefix").
 		Scan(&key)
 	if err != nil {
 		return nil, err
@@ -507,6 +529,7 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 	if err != nil {
 		return nil, gerror.Wrapf(err, "删除密钥")
 	}
+	relay.InvalidateApiKey(ctx, key.KeyPrefix)
 	return nil, nil
 }
 

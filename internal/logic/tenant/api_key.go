@@ -278,9 +278,7 @@ func (s *sTenant) ApiKeyDelete(ctx context.Context, req *v1.TenantApiKeyDeleteRe
 		return nil, lcommon.NewNotFoundError("API key")
 	}
 
-	if info.KeyPrefix != "" {
-		g.Log().Infof(ctx, "API key %d disabled, cache invalidation needed for prefix %s", keyID, info.KeyPrefix)
-	}
+	relay.InvalidateApiKey(ctx, info.KeyPrefix)
 
 	return &v1.TenantApiKeyDeleteRes{}, nil
 }
@@ -406,8 +404,8 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		}
 	}
 
-	if info.KeyPrefix != "" {
-		g.Log().Infof(ctx, "API key %d updated, cache invalidation needed for prefix %s", keyID, info.KeyPrefix)
+	if hasUpdate || req.ModelNames != nil {
+		relay.InvalidateApiKey(ctx, info.KeyPrefix)
 	}
 
 	return &v1.TenantApiKeyUpdateRes{}, nil
@@ -422,13 +420,14 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 
 	// 先查询密钥信息以判断类型
 	type keyInfo struct {
-		KeyType string `json:"key_type"`
+		KeyType   string `json:"key_type"`
+		KeyPrefix string `json:"key_prefix"`
 	}
 	var info *keyInfo
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", keyID).
 		Where("tenant_id", tenantID).
-		Fields("key_type").
+		Fields("key_type, key_prefix").
 		Scan(&info)
 	if err != nil {
 		return nil, err
@@ -460,6 +459,8 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 	if err != nil {
 		return nil, err
 	}
+
+	relay.InvalidateApiKey(ctx, info.KeyPrefix)
 
 	return &v1.TenantApiKeyUpdateScopesRes{}, nil
 }

@@ -32,6 +32,13 @@ type ApiKeyInfo struct {
 // apiKeyCache API Key 缓存实例（TTL 60s）
 var apiKeyCache = lcommon.NewCache("apikey", 60*time.Second)
 
+// InvalidateApiKey removes cached authentication info for an API key prefix.
+func InvalidateApiKey(ctx context.Context, prefix string) {
+	if prefix != "" {
+		apiKeyCache.Delete(ctx, prefix)
+	}
+}
+
 // DefaultChannelSettings 返回默认渠道配置
 func DefaultChannelSettings() common.ChannelSettings {
 	return common.ChannelSettings{
