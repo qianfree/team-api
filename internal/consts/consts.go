@@ -227,6 +227,9 @@ const (
 	CodeUpdateReplaceFailed  = 10415
 	CodeUpdateRollbackFailed = 10416
 	CodeUpdateNotSupported   = 10417
+
+	// Team feature gating
+	CodeTeamNotEnabled = 10418
 )
 
 // Common error messages
@@ -257,6 +260,7 @@ const (
 	MsgUsernameExists      = "用户名已存在"
 	MsgEmailExists         = "该邮箱已被使用"
 	MsgTenantCodeExists    = "租户代码已存在"
+	MsgTeamNotEnabled      = "团队功能未启用，请先设置组织代码"
 	MsgSessionExpired      = "会话已过期"
 	MsgTokenExpired        = "Token 已过期"
 	MsgTokenRevoked        = "Token 已被撤销"

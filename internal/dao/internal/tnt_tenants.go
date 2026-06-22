@@ -39,6 +39,7 @@ type TntTenantsColumns struct {
 	MaxConcurrency      string // 租户总并发上限（NULL表示跟随等级配置，0表示不限制）
 	DefaultChannelScope string // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               string // 当前等级（对应 tnt_tenant_level_configs.level）
+	TeamEnabled         string // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
 }
 
 // tntTenantsColumns holds the columns for the table tnt_tenants.
@@ -61,6 +62,7 @@ var tntTenantsColumns = TntTenantsColumns{
 	MaxConcurrency:      "max_concurrency",
 	DefaultChannelScope: "default_channel_scope",
 	Level:               "level",
+	TeamEnabled:         "team_enabled",
 }
 
 // NewTntTenantsDao creates and returns a new DAO object for table data access.

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
@@ -9,6 +11,8 @@ import { toast } from '@/utils/toast'
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useTenantAuthStore()
+const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
 
 const memberId = computed(() => Number(route.params.id))
 
@@ -365,7 +369,8 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-8">
+	<TeamLockedBanner v-if="!teamEnabled" />
+	<div v-else class="space-y-8">
 		<!-- Back navigation -->
 		<button
 			@click="goBack"

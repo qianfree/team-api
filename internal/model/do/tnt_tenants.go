@@ -30,4 +30,5 @@ type TntTenants struct {
 	MaxConcurrency      any         // 租户总并发上限（NULL表示跟随等级配置，0表示不限制）
 	DefaultChannelScope any         // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               any         // 当前等级（对应 tnt_tenant_level_configs.level）
+	TeamEnabled         any         // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
 }

@@ -59,6 +59,9 @@ func (s *sTenant) MemberQuotaSet(ctx context.Context, req *v1.TenantMemberQuotaS
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	if req.QuotaType == "periodic" && req.Period == "" {
