@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -60,6 +61,7 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		ExpiresAt            *time.Time `json:"expires_at"`
 		RateLimitQps         *int       `json:"rate_limit_qps"`
 		RateLimitConcurrency *int       `json:"rate_limit_concurrency"`
+		IpWhitelist          []string   `json:"ip_whitelist"`
 		TotalQuota           *float64   `json:"total_quota"`
 		UsedQuota            *float64   `json:"used_quota"`
 		CreatedAt            *time.Time `json:"created_at"`
@@ -69,7 +71,7 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 	var keys []keyRow
 	var err error
 	var total int
-	err = query.Fields("id, name, key_prefix, scope, status, key_type, project_id, expires_at, rate_limit_qps, rate_limit_concurrency, total_quota, used_quota, created_at, updated_at").
+	err = query.Fields("id, name, key_prefix, scope, status, key_type, project_id, expires_at, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, updated_at").
 		OrderDesc("created_at").
 		Page(page, pageSize).
 		ScanAndCount(&keys, &total, false)
@@ -118,6 +120,7 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 			"expires_at":             k.ExpiresAt,
 			"rate_limit_qps":         k.RateLimitQps,
 			"rate_limit_concurrency": k.RateLimitConcurrency,
+			"ip_whitelist":           k.IpWhitelist,
 			"total_quota":            k.TotalQuota,
 			"used_quota":             k.UsedQuota,
 			"created_at":             k.CreatedAt,
@@ -131,6 +134,24 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+func normalizeIPWhitelist(items []string) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+
+	result := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+	}
+	return result
 }
 
 // ApiKeyCreate 创建新的 API Key
@@ -197,6 +218,27 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 
 	if req.ExpiresAt != nil {
 		data.ExpiresAt = req.ExpiresAt
+	}
+	if req.RateLimitQps != nil {
+		if *req.RateLimitQps < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "QPS 限制不能小于 0")
+		}
+		data.RateLimitQps = *req.RateLimitQps
+	}
+	if req.RateLimitConcurrency != nil {
+		if *req.RateLimitConcurrency < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "并发限制不能小于 0")
+		}
+		data.RateLimitConcurrency = *req.RateLimitConcurrency
+	}
+	if req.IpWhitelist != nil {
+		data.IpWhitelist = normalizeIPWhitelist(*req.IpWhitelist)
+	}
+	if req.TotalQuota != nil {
+		if *req.TotalQuota < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于 0")
+		}
+		data.TotalQuota = *req.TotalQuota
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Insert(data)
@@ -370,14 +412,27 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		hasUpdate = true
 	}
 	if req.RateLimitQps != nil {
+		if *req.RateLimitQps < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "QPS 限制不能小于 0")
+		}
 		data.RateLimitQps = *req.RateLimitQps
 		hasUpdate = true
 	}
 	if req.RateLimitConcurrency != nil {
+		if *req.RateLimitConcurrency < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "并发限制不能小于 0")
+		}
 		data.RateLimitConcurrency = *req.RateLimitConcurrency
 		hasUpdate = true
 	}
+	if req.IpWhitelist != nil {
+		data.IpWhitelist = normalizeIPWhitelist(*req.IpWhitelist)
+		hasUpdate = true
+	}
 	if req.TotalQuota != nil {
+		if *req.TotalQuota < 0 {
+			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于 0")
+		}
 		if *req.TotalQuota > 0 && *req.TotalQuota < info.UsedQuota {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于已用额度")
 		}
@@ -556,6 +611,7 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 		ExpiresAt            *time.Time `json:"expires_at"`
 		RateLimitQps         *int       `json:"rate_limit_qps"`
 		RateLimitConcurrency *int       `json:"rate_limit_concurrency"`
+		IpWhitelist          []string   `json:"ip_whitelist"`
 		TotalQuota           *float64   `json:"total_quota"`
 		UsedQuota            *float64   `json:"used_quota"`
 		CreatedAt            *time.Time `json:"created_at"`
@@ -564,7 +620,7 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 
 	var keys []keyRow
 	var total int
-	err = query.Fields("id, name, key_prefix, scope, status, expires_at, rate_limit_qps, rate_limit_concurrency, total_quota, used_quota, created_at, updated_at").
+	err = query.Fields("id, name, key_prefix, scope, status, expires_at, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, updated_at").
 		OrderDesc("created_at").
 		Page(page, pageSize).
 		ScanAndCount(&keys, &total, false)
@@ -586,6 +642,7 @@ func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pa
 			"expires_at":             k.ExpiresAt,
 			"rate_limit_qps":         k.RateLimitQps,
 			"rate_limit_concurrency": k.RateLimitConcurrency,
+			"ip_whitelist":           k.IpWhitelist,
 			"total_quota":            k.TotalQuota,
 			"used_quota":             k.UsedQuota,
 			"created_at":             k.CreatedAt,

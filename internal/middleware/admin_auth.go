@@ -16,14 +16,19 @@ import (
 
 // AuthContextKey is the key used to store auth info in context.
 const (
-	CtxKeyUserID    = "userId"
-	CtxKeyUserType  = "userType"
-	CtxKeyRole      = "role"
-	CtxKeyTenantID  = "tenantId"
-	CtxKeySessionID = "sessionId"
-	CtxKeyJti       = "jti"
-	CtxKeyApiKeyID  = "apiKeyId"
-	CtxKeyProjectID = "projectId"
+	CtxKeyUserID                     = "userId"
+	CtxKeyUserType                   = "userType"
+	CtxKeyRole                       = "role"
+	CtxKeyTenantID                   = "tenantId"
+	CtxKeySessionID                  = "sessionId"
+	CtxKeyJti                        = "jti"
+	CtxKeyApiKeyID                   = "apiKeyId"
+	CtxKeyProjectID                  = "projectId"
+	CtxKeyApiKeyRateLimitQps         = "apiKeyRateLimitQps"
+	CtxKeyApiKeyRateLimitConcurrency = "apiKeyRateLimitConcurrency"
+	CtxKeyApiKeyIpWhitelist          = "apiKeyIpWhitelist"
+	CtxKeyApiKeyTotalQuota           = "apiKeyTotalQuota"
+	CtxKeyApiKeyUsedQuota            = "apiKeyUsedQuota"
 )
 
 // adminPublicPaths lists admin routes that skip JWT auth.

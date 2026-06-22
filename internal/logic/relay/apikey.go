@@ -20,14 +20,19 @@ import (
 
 // ApiKeyInfo API Key 验证结果（本地定义，避免导入 relay/common）
 type ApiKeyInfo struct {
-	ID        int64
-	TenantID  int64
-	UserID    int64
-	Scope     string
-	Status    string
-	KeyType   string // personal 或 project
-	ProjectID int64  // 项目密钥关联的项目 ID，个人密钥为 0
-	KeyHash   string // SHA-256(rawKey)，缓存命中时用于全键校验
+	ID                   int64
+	TenantID             int64
+	UserID               int64
+	Scope                string
+	Status               string
+	KeyType              string  // personal 或 project
+	ProjectID            int64   // 项目密钥关联的项目 ID，个人密钥为 0
+	KeyHash              string  // SHA-256(rawKey)，缓存命中时用于全键校验
+	RateLimitQps         int     // 0 表示使用全局默认
+	RateLimitConcurrency int     // 0 表示不限制
+	IpWhitelist          string  // 逗号分隔的 IP/CIDR 白名单
+	TotalQuota           float64 // 0 表示不限制
+	UsedQuota            float64
 }
 
 // apiKeyCache API Key 缓存实例（TTL 60s）
@@ -171,23 +176,28 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 
 	// 查数据库
 	type apiKeyRow struct {
-		ID           int64      `json:"id"`
-		TenantID     int64      `json:"tenant_id"`
-		UserID       int64      `json:"user_id"`
-		EncryptedKey string     `json:"encrypted_key"`
-		KeyPrefix    string     `json:"key_prefix"`
-		Scope        string     `json:"scope"`
-		Status       string     `json:"status"`
-		KeyType      string     `json:"key_type"`
-		ProjectID    int64      `json:"project_id"`
-		ExpiresAt    *time.Time `json:"expires_at"`
+		ID                   int64      `json:"id"`
+		TenantID             int64      `json:"tenant_id"`
+		UserID               int64      `json:"user_id"`
+		EncryptedKey         string     `json:"encrypted_key"`
+		KeyPrefix            string     `json:"key_prefix"`
+		Scope                string     `json:"scope"`
+		Status               string     `json:"status"`
+		KeyType              string     `json:"key_type"`
+		ProjectID            int64      `json:"project_id"`
+		ExpiresAt            *time.Time `json:"expires_at"`
+		RateLimitQps         int        `json:"rate_limit_qps"`
+		RateLimitConcurrency int        `json:"rate_limit_concurrency"`
+		IpWhitelist          string     `json:"ip_whitelist"`
+		TotalQuota           float64    `json:"total_quota"`
+		UsedQuota            float64    `json:"used_quota"`
 	}
 
 	var keys []apiKeyRow
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("key_prefix", prefix).
 		Where("status", "active").
-		Fields("id, tenant_id, user_id, encrypted_key, key_prefix, scope, status, key_type, project_id, expires_at").
+		Fields("id, tenant_id, user_id, encrypted_key, key_prefix, scope, status, key_type, project_id, expires_at, COALESCE(rate_limit_qps, 0) AS rate_limit_qps, COALESCE(rate_limit_concurrency, 0) AS rate_limit_concurrency, COALESCE(array_to_string(ip_whitelist, ','), '') AS ip_whitelist, COALESCE(total_quota, 0) AS total_quota, COALESCE(used_quota, 0) AS used_quota").
 		Scan(&keys)
 	if err != nil {
 		g.Log().Errorf(ctx, "[ApiKeyAuth] DB query failed: prefix=%s, error=%v", prefix, err)
@@ -209,14 +219,19 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 		// 检查过期
 		if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
 			info := &ApiKeyInfo{
-				ID:        k.ID,
-				TenantID:  k.TenantID,
-				UserID:    k.UserID,
-				Scope:     k.Scope,
-				Status:    "expired",
-				KeyType:   k.KeyType,
-				ProjectID: k.ProjectID,
-				KeyHash:   keyHash,
+				ID:                   k.ID,
+				TenantID:             k.TenantID,
+				UserID:               k.UserID,
+				Scope:                k.Scope,
+				Status:               "expired",
+				KeyType:              k.KeyType,
+				ProjectID:            k.ProjectID,
+				KeyHash:              keyHash,
+				RateLimitQps:         k.RateLimitQps,
+				RateLimitConcurrency: k.RateLimitConcurrency,
+				IpWhitelist:          k.IpWhitelist,
+				TotalQuota:           k.TotalQuota,
+				UsedQuota:            k.UsedQuota,
 			}
 			apiKeyCache.Set(ctx, prefix, info)
 			return nil, consts.ErrKeyExpired
@@ -250,14 +265,19 @@ func ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error) {
 		}
 
 		info := &ApiKeyInfo{
-			ID:        k.ID,
-			TenantID:  k.TenantID,
-			UserID:    k.UserID,
-			Scope:     k.Scope,
-			Status:    "active",
-			KeyType:   k.KeyType,
-			ProjectID: k.ProjectID,
-			KeyHash:   keyHash,
+			ID:                   k.ID,
+			TenantID:             k.TenantID,
+			UserID:               k.UserID,
+			Scope:                k.Scope,
+			Status:               "active",
+			KeyType:              k.KeyType,
+			ProjectID:            k.ProjectID,
+			KeyHash:              keyHash,
+			RateLimitQps:         k.RateLimitQps,
+			RateLimitConcurrency: k.RateLimitConcurrency,
+			IpWhitelist:          k.IpWhitelist,
+			TotalQuota:           k.TotalQuota,
+			UsedQuota:            k.UsedQuota,
 		}
 
 		apiKeyCache.Set(ctx, prefix, info)

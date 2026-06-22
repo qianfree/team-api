@@ -73,6 +73,19 @@ func TestRateLimitHeaders_Nil(t *testing.T) {
 	}
 }
 
+func TestRateLimitConfigWithKeyLimit(t *testing.T) {
+	cfg := DefaultRateLimitConfig
+	cfg = withKeyQPS(cfg, 7)
+	if cfg.KeyQPS != 7 {
+		t.Errorf("expected KeyQPS override 7, got %d", cfg.KeyQPS)
+	}
+
+	cfg = withKeyQPS(cfg, 0)
+	if cfg.KeyQPS != 7 {
+		t.Errorf("expected KeyQPS unchanged for zero override, got %d", cfg.KeyQPS)
+	}
+}
+
 func TestBillingProviderImpl_NilPreDeduct(t *testing.T) {
 	// BillingProviderImpl.SettleFailed with 0 amount should not panic
 	provider := &BillingProviderImpl{}
@@ -92,7 +105,11 @@ func TestBillingProviderImpl_ScopeCheck(t *testing.T) {
 	}{
 		{"full", "chat_completions", true},
 		{"chat_only", "embeddings", false},
+		{"chat_only", "responses", true},
+		{"chat_only", "gemini_generate_content", true},
 		{"embeddings_only", "embeddings", true},
+		{"images_only", "images_edits", true},
+		{"audio_only", "audio_speech", true},
 	}
 
 	for _, tt := range tests {
