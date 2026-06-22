@@ -24,7 +24,7 @@ var resetPwdCmd = gcmd.Command{
 		if password == "" {
 			fmt.Println("用法: team-api reset-pwd -u <用户名> -p <新密码>")
 			fmt.Println("  -u  管理员用户名（默认 admin）")
-			fmt.Println("  -p  新密码（必填，至少8位，需含大小写字母和数字）")
+			fmt.Println("  -p  新密码（必填，至少8位，需含字母和数字）")
 			return nil
 		}
 

@@ -159,7 +159,7 @@ async function handleSetup() {
           >
             <AInputPassword
               v-model="form.password"
-              placeholder="至少8位，含大小写字母和数字"
+              placeholder="至少8位，含字母和数字"
               @keydown.enter="handleSetup"
             />
           </AFormItem>
