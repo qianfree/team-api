@@ -307,6 +307,11 @@ type permissionRule struct {
 // AdminPermissionGuard enforces RBAC permission checks for admin routes.
 // Routes without a matching rule are denied by default.
 func AdminPermissionGuard(r *ghttp.Request) {
+	if isAdminPublicPath(r.URL.Path) {
+		r.Middleware.Next()
+		return
+	}
+
 	role := GetUserRole(r.Context())
 	if role == "super_admin" {
 		r.Middleware.Next()

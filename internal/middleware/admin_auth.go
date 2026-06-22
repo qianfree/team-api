@@ -39,11 +39,15 @@ var adminPublicPaths = map[string]bool{
 	"/api/admin/auth/2fa/verify": true,
 }
 
+func isAdminPublicPath(path string) bool {
+	return adminPublicPaths[path]
+}
+
 // AdminAuth is JWT authentication middleware for admin backend.
 func AdminAuth(r *ghttp.Request) {
 	// g.Meta middleware:"-" only skips service middleware, not group middleware.
 	// Public endpoints must be checked explicitly here.
-	if adminPublicPaths[r.URL.Path] {
+	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
 		return
 	}

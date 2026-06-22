@@ -30,12 +30,18 @@ type projectRow struct {
 }
 
 type apiKeyRow struct {
-	Id        int64       `json:"id"`
-	Name      string      `json:"name"`
-	KeyPrefix string      `json:"key_prefix"`
-	Status    string      `json:"status"`
-	CreatedAt *gtime.Time `json:"created_at"`
-	ExpiresAt *gtime.Time `json:"expires_at"`
+	Id                   int64       `json:"id"`
+	Name                 string      `json:"name"`
+	KeyPrefix            string      `json:"key_prefix"`
+	Scope                string      `json:"scope"`
+	Status               string      `json:"status"`
+	RateLimitQps         *int        `json:"rate_limit_qps"`
+	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	IpWhitelist          []string    `json:"ip_whitelist"`
+	TotalQuota           *float64    `json:"total_quota"`
+	UsedQuota            *float64    `json:"used_quota"`
+	CreatedAt            *gtime.Time `json:"created_at"`
+	ExpiresAt            *gtime.Time `json:"expires_at"`
 }
 
 type usageLogRow struct {
@@ -475,7 +481,7 @@ func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectAp
 	err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
-		Fields("id, name, key_prefix, status, created_at, expires_at").
+		Fields("id, name, key_prefix, scope, status, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, expires_at").
 		OrderDesc("id").
 		Page(page, pageSize).
 		ScanAndCount(&keys, &total, false)
@@ -528,6 +534,27 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 
 	if req.ExpiresAt != nil {
 		insertData.ExpiresAt = req.ExpiresAt
+	}
+	if req.RateLimitQps != nil {
+		if *req.RateLimitQps < 0 {
+			return nil, common.NewBadRequestError("QPS 限制不能小于 0")
+		}
+		insertData.RateLimitQps = *req.RateLimitQps
+	}
+	if req.RateLimitConcurrency != nil {
+		if *req.RateLimitConcurrency < 0 {
+			return nil, common.NewBadRequestError("并发限制不能小于 0")
+		}
+		insertData.RateLimitConcurrency = *req.RateLimitConcurrency
+	}
+	if req.IpWhitelist != nil {
+		insertData.IpWhitelist = normalizeIPWhitelist(*req.IpWhitelist)
+	}
+	if req.TotalQuota != nil {
+		if *req.TotalQuota < 0 {
+			return nil, common.NewBadRequestError("总额度不能小于 0")
+		}
+		insertData.TotalQuota = *req.TotalQuota
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()
@@ -806,11 +833,17 @@ func convertApiKeyRowsToMaps(ctx context.Context, rows any) []map[string]any {
 
 		for _, r := range v {
 			m := map[string]any{
-				"id":          r.Id,
-				"name":        r.Name,
-				"key_prefix":  r.KeyPrefix,
-				"status":      r.Status,
-				"model_count": modelCountMap[r.Id],
+				"id":                     r.Id,
+				"name":                   r.Name,
+				"key_prefix":             r.KeyPrefix,
+				"scope":                  r.Scope,
+				"status":                 r.Status,
+				"rate_limit_qps":         r.RateLimitQps,
+				"rate_limit_concurrency": r.RateLimitConcurrency,
+				"ip_whitelist":           r.IpWhitelist,
+				"total_quota":            r.TotalQuota,
+				"used_quota":             r.UsedQuota,
+				"model_count":            modelCountMap[r.Id],
 			}
 			if r.CreatedAt != nil {
 				m["created_at"] = r.CreatedAt.String()
