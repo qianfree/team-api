@@ -305,7 +305,9 @@ type permissionRule struct {
 }
 
 // AdminPermissionGuard enforces RBAC permission checks for admin routes.
-// Routes without a matching rule are denied by default.
+// 当前策略：未匹配到权限规则的接口默认放行（仅对已认证 admin）。
+// 已配置规则的接口仍按权限点鉴权；漏配的接口不至于直接 403，降低上线回归风险。
+// 待 adminPermissionRules 全量补齐后，可将下方 perm=="" 分支改回返回 403 以收紧权限。
 func AdminPermissionGuard(r *ghttp.Request) {
 	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
@@ -320,7 +322,8 @@ func AdminPermissionGuard(r *ghttp.Request) {
 
 	perm := matchPermission(r.Method, r.URL.Path)
 	if perm == "" {
-		response.ErrorMsg(r, consts.CodeForbidden, "未配置接口权限："+r.URL.Path)
+		// 默认放行：未配置权限规则的接口，对已认证 admin 放行
+		r.Middleware.Next()
 		return
 	}
 
