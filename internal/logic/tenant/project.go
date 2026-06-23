@@ -3,10 +3,12 @@ package tenant
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
@@ -28,12 +30,18 @@ type projectRow struct {
 }
 
 type apiKeyRow struct {
-	Id        int64       `json:"id"`
-	Name      string      `json:"name"`
-	KeyPrefix string      `json:"key_prefix"`
-	Status    string      `json:"status"`
-	CreatedAt *gtime.Time `json:"created_at"`
-	ExpiresAt *gtime.Time `json:"expires_at"`
+	Id                   int64       `json:"id"`
+	Name                 string      `json:"name"`
+	KeyPrefix            string      `json:"key_prefix"`
+	Scope                string      `json:"scope"`
+	Status               string      `json:"status"`
+	RateLimitQps         *int        `json:"rate_limit_qps"`
+	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	IpWhitelist          []string    `json:"ip_whitelist"`
+	TotalQuota           *float64    `json:"total_quota"`
+	UsedQuota            *float64    `json:"used_quota"`
+	CreatedAt            *gtime.Time `json:"created_at"`
+	ExpiresAt            *gtime.Time `json:"expires_at"`
 }
 
 type usageLogRow struct {
@@ -47,6 +55,124 @@ type usageLogRow struct {
 	Status       string      `json:"status"`
 	ErrorMessage string      `json:"error_message"`
 	CreatedAt    *gtime.Time `json:"created_at"`
+}
+
+type projectStatusRow struct {
+	ID       int64   `json:"id"`
+	TenantID int64   `json:"tenant_id"`
+	Status   string  `json:"status"`
+	Budget   float64 `json:"budget"`
+}
+
+func invalidateApiKeysByProject(ctx context.Context, tenantID, projectID int64) error {
+	type keyRow struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	var keys []keyRow
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", projectID).
+		Fields("key_prefix").
+		Scan(&keys)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		relay.InvalidateApiKey(ctx, key.KeyPrefix)
+	}
+	return nil
+}
+
+func ensureProjectActiveForKey(ctx context.Context, tenantID, projectID int64) error {
+	project, err := getProjectStatus(ctx, tenantID, projectID)
+	if err != nil {
+		return err
+	}
+	if project == nil {
+		return common.NewNotFoundError("项目")
+	}
+	if project.Status != "active" {
+		return common.NewBusinessError(consts.CodeProjectNotActive, consts.MsgProjectNotActive)
+	}
+	return nil
+}
+
+func getProjectStatus(ctx context.Context, tenantID, projectID int64) (*projectStatusRow, error) {
+	var project *projectStatusRow
+	err := dao.TntProjects.Ctx(ctx).
+		Where("id", projectID).
+		Where("tenant_id", tenantID).
+		Fields("id, tenant_id, status, COALESCE(budget, 0) as budget").
+		Scan(&project)
+	if err != nil {
+		return nil, err
+	}
+	return project, nil
+}
+
+func projectTotalCost(ctx context.Context, tenantID, projectID int64) (float64, error) {
+	var usage struct {
+		TotalCost float64 `json:"total_cost"`
+	}
+	err := dao.BilTransactions.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", projectID).
+		Where("type", "consume").
+		Fields("COALESCE(SUM(-amount), 0) as total_cost").
+		Scan(&usage)
+	if err != nil {
+		return 0, err
+	}
+	return usage.TotalCost, nil
+}
+
+func exhaustProjectBudget(ctx context.Context, tenantID, projectID int64) error {
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := tx.Model("tnt_projects").Ctx(ctx).
+			Where("id", projectID).
+			Where("tenant_id", tenantID).
+			Where("status", "active").
+			Data(do.TntProjects{Status: "budget_exhausted"}).
+			Update()
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Model("api_keys").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("project_id", projectID).
+			Where("status", "active").
+			Data(do.ApiKeys{Status: "revoked"}).
+			Update()
+		return err
+	})
+}
+
+func CheckProjectBudget(ctx context.Context, tenantID, projectID int64) error {
+	if tenantID <= 0 || projectID <= 0 {
+		return nil
+	}
+
+	project, err := getProjectStatus(ctx, tenantID, projectID)
+	if err != nil {
+		return err
+	}
+	if project == nil || project.Status != "active" || project.Budget <= 0 {
+		return nil
+	}
+
+	totalCost, err := projectTotalCost(ctx, tenantID, projectID)
+	if err != nil {
+		return err
+	}
+	if totalCost < project.Budget {
+		return nil
+	}
+
+	if err = exhaustProjectBudget(ctx, tenantID, projectID); err != nil {
+		return err
+	}
+	return invalidateApiKeysByProject(ctx, tenantID, projectID)
 }
 
 // ProjectList returns a paginated list of projects for a tenant.
@@ -206,6 +332,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 	if err != nil {
 		return nil, err
 	}
+	_ = invalidateApiKeysByProject(ctx, tenantID, req.Id)
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
@@ -269,33 +396,8 @@ func CheckBudgetExhausted(ctx context.Context) error {
 	}
 
 	for _, p := range projects {
-		// Sum consumption for this project
-		var usage struct {
-			TotalCost float64 `json:"total_cost"`
-		}
-		dao.BilUsageLogs.Ctx(ctx).
-			Where("tenant_id", p.TenantID).
-			Where("project_id", p.ID).
-			Fields("COALESCE(SUM(total_cost), 0) as total_cost").
-			Scan(&usage)
-
-		if usage.TotalCost >= p.Budget {
-			// Mark as budget_exhausted
-			dao.TntProjects.Ctx(ctx).
-				Where("id", p.ID).
-				Where("status", "active").
-				Data(do.TntProjects{
-					Status: "budget_exhausted",
-				}).Update()
-
-			// Revoke all active keys for this project
-			dao.ApiKeys.Ctx(ctx).
-				Where("tenant_id", p.TenantID).
-				Where("project_id", p.ID).
-				Where("status", "active").
-				Data(do.ApiKeys{
-					Status: "revoked",
-				}).Update()
+		if err = CheckProjectBudget(ctx, p.TenantID, p.ID); err != nil {
+			g.Log().Warningf(ctx, "检查项目预算失败: tenant=%d project=%d err=%v", p.TenantID, p.ID, err)
 		}
 	}
 
@@ -379,7 +481,7 @@ func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectAp
 	err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
-		Fields("id, name, key_prefix, status, created_at, expires_at").
+		Fields("id, name, key_prefix, scope, status, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, expires_at").
 		OrderDesc("id").
 		Page(page, pageSize).
 		ScanAndCount(&keys, &total, false)
@@ -408,20 +510,8 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
 
-	// Verify project exists and belongs to tenant
-	var project *struct {
-		ID int64 `json:"id"`
-	}
-	err := dao.TntProjects.Ctx(ctx).
-		Where("id", req.Id).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Scan(&project)
-	if err != nil {
+	if err := ensureProjectActiveForKey(ctx, tenantID, req.Id); err != nil {
 		return nil, err
-	}
-	if project == nil {
-		return nil, common.NewNotFoundError("项目")
 	}
 
 	// Generate API key
@@ -436,6 +526,7 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 		Name:         req.Name,
 		EncryptedKey: encryptedKey,
 		KeyPrefix:    prefix,
+		KeyType:      "project",
 		Status:       "active",
 		UserId:       userID,
 		Scope:        req.Scope,
@@ -443,6 +534,27 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 
 	if req.ExpiresAt != nil {
 		insertData.ExpiresAt = req.ExpiresAt
+	}
+	if req.RateLimitQps != nil {
+		if *req.RateLimitQps < 0 {
+			return nil, common.NewBadRequestError("QPS 限制不能小于 0")
+		}
+		insertData.RateLimitQps = *req.RateLimitQps
+	}
+	if req.RateLimitConcurrency != nil {
+		if *req.RateLimitConcurrency < 0 {
+			return nil, common.NewBadRequestError("并发限制不能小于 0")
+		}
+		insertData.RateLimitConcurrency = *req.RateLimitConcurrency
+	}
+	if req.IpWhitelist != nil {
+		insertData.IpWhitelist = normalizeIPWhitelist(*req.IpWhitelist)
+	}
+	if req.TotalQuota != nil {
+		if *req.TotalQuota < 0 {
+			return nil, common.NewBadRequestError("总额度不能小于 0")
+		}
+		insertData.TotalQuota = *req.TotalQuota
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()
@@ -482,13 +594,14 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 
 	// Verify the key belongs to the project and tenant
 	var key *struct {
-		ID int64 `json:"id"`
+		ID        int64  `json:"id"`
+		KeyPrefix string `json:"key_prefix"`
 	}
 	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", req.KeyId).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
-		Fields("id").
+		Fields("id, key_prefix").
 		Scan(&key)
 	if err != nil {
 		return nil, err
@@ -506,6 +619,7 @@ func (s *sTenant) ProjectApiKeyDelete(ctx context.Context, req *v1.TenantProject
 	if err != nil {
 		return nil, gerror.Wrapf(err, "删除密钥")
 	}
+	relay.InvalidateApiKey(ctx, key.KeyPrefix)
 	return nil, nil
 }
 
@@ -719,11 +833,17 @@ func convertApiKeyRowsToMaps(ctx context.Context, rows any) []map[string]any {
 
 		for _, r := range v {
 			m := map[string]any{
-				"id":          r.Id,
-				"name":        r.Name,
-				"key_prefix":  r.KeyPrefix,
-				"status":      r.Status,
-				"model_count": modelCountMap[r.Id],
+				"id":                     r.Id,
+				"name":                   r.Name,
+				"key_prefix":             r.KeyPrefix,
+				"scope":                  r.Scope,
+				"status":                 r.Status,
+				"rate_limit_qps":         r.RateLimitQps,
+				"rate_limit_concurrency": r.RateLimitConcurrency,
+				"ip_whitelist":           r.IpWhitelist,
+				"total_quota":            r.TotalQuota,
+				"used_quota":             r.UsedQuota,
+				"model_count":            modelCountMap[r.Id],
 			}
 			if r.CreatedAt != nil {
 				m["created_at"] = r.CreatedAt.String()

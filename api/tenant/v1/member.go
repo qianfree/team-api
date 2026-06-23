@@ -81,7 +81,7 @@ type TenantInvitationRevokeRes struct{}
 
 // TenantInviteInfoReq 查询邀请信息（公开接口，免认证）
 type TenantInviteInfoReq struct {
-	g.Meta `path:"/members/invite-info" method:"get" mime:"json" tags:"租户控制台-成员管理" summary:"查询邀请信息"`
+	g.Meta `path:"/members/invite-info" method:"get" mime:"json" tags:"租户控制台-成员管理" summary:"查询邀请信息" group:"public" middleware:"-"`
 	Code   string `json:"code" in:"query" v:"required#请提供邀请码" dc:"邀请码"`
 }
 

@@ -19,16 +19,22 @@ var tenantPublicPaths = map[string]bool{
 	"/api/tenant/auth/register":        true,
 	"/api/tenant/auth/login":           true,
 	"/api/tenant/auth/refresh":         true,
+	"/api/tenant/auth/2fa/verify":      true,
 	"/api/tenant/email/send-code":      true,
 	"/api/tenant/email/reset-password": true,
 	"/api/tenant/members/join":         true,
 	"/api/tenant/members/invite-info":  true,
 	"/api/tenant/agreements/current":   true,
+	"/api/tenant/oauth/authorize":      true,
+	"/api/tenant/help/categories":      true,
+	"/api/tenant/help/search":          true,
 }
 
 // tenantPublicPrefixes lists path prefixes that skip JWT auth (for dynamic routes like /current/{code}).
 var tenantPublicPrefixes = []string{
 	"/api/tenant/agreements/current/",
+	"/api/tenant/help/categories/",
+	"/api/tenant/help/articles/",
 }
 
 // TenantAuth is JWT authentication middleware for tenant console.
@@ -44,6 +50,11 @@ func TenantAuth(r *ghttp.Request) {
 			r.Middleware.Next()
 			return
 		}
+	}
+	// OAuth callback: /api/tenant/oauth/{provider}/callback
+	if strings.HasPrefix(r.URL.Path, "/api/tenant/oauth/") && strings.HasSuffix(r.URL.Path, "/callback") {
+		r.Middleware.Next()
+		return
 	}
 
 	tokenStr := extractBearerToken(r)

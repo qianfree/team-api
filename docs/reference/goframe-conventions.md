@@ -505,3 +505,29 @@ return gerror.NewCodef(gcode.New(...), "%s包含禁用词「%s」，请修改后
 
 **正确做法**：构造错误时区分 `NewXxx`（字面文本）与 `NewXxxf`（格式化）两个系列。凡消息含 `%s`/`%v`/`%d` 等占位符且需填入变量，必须用 `f` 变体（`gerror.Newf`、`gerror.NewCodef`、`gerror.NewWrapf`、`gerror.NewSkipf`）；把格式串当字面文本传入 `NewXxx` 系列，占位符不会替换，多余实参还会被拼接到消息末尾。
 
+### 2026-06-23：Scan 查询单标量值（`*string`/`*int`）报参数类型错误
+
+**问题描述**：`organization.go` 的 `GetOrgInfo` 查询租户等级名称时，`var levelName *string; dao.Xxx.Scan(&levelName)` 触发 WARN：`element of parameter "pointer" for function Scan should type of struct/*struct/[]struct/[]*struct`，等级名查不到（降级为空）。
+
+**原因**：GoFrame 的 `Scan` **仅支持 struct / *struct / []struct / []*struct**，不支持标量类型（string/int/bool 等）的指针。`levelName` 声明为 `*string`，`&levelName` 是 `**string`，不在支持范围内，直接报参数类型错误。注意这和 2026-05-14 记录的「Scan 值类型 vs 指针类型」是两回事——那个讲的是 struct 查询无行时的行为差异，本次是 **Scan 根本不接受标量**。
+
+**修复方式**：查询单个标量值改用 `Value()`，返回 `*gvar.Var`，再用 `.String()`/`.Int64()`/`.Bool()` 取值：
+```go
+// 错误 — Scan 不支持标量类型指针
+var levelName *string
+dao.Xxx.Ctx(ctx).Where(...).Fields("name").Scan(&levelName)  // 报参数类型错误
+
+// 正确 — 单标量值用 Value()
+v, err := dao.Xxx.Ctx(ctx).Where(...).Fields("name").Value()
+if err != nil {
+    g.Log().Warningf(ctx, "查询失败: %v", err)
+} else {
+    levelName = v.String()  // 无记录时返回 ""，不会报错
+}
+```
+
+**正确做法**：按查询意图选择 API：
+- 查询单行记录 → `Scan(&structPtr)`（指针类型，无行返回 nil，见 2026-05-14 记录）
+- 查询多行记录 → `Scan(&[]struct{})`
+- 查询单个标量值（`COUNT`、`SUM`、单个字段）→ `Value()` 返回 `*gvar.Var`，用 `.String()/.Int64()/.Bool()` 取值，**不要用 `Scan(&scalar)` 或 `Scan(&scalarPtr)`**
+

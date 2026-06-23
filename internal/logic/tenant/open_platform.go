@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -25,6 +26,15 @@ import (
 // ============================================================
 // 开放平台应用管理
 // ============================================================
+
+type opnAppEncryptedSecretData struct {
+	EncryptedSecret any `json:"encrypted_secret"`
+}
+
+type opnAppSecretUpdateData struct {
+	AppSecretHash   any `json:"app_secret_hash"`
+	EncryptedSecret any `json:"encrypted_secret"`
+}
 
 func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.OpenAppListRes, error) {
 	role := middleware.GetUserRole(ctx)
@@ -82,6 +92,25 @@ func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.
 	return &v1.OpenAppListRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
+func getTenantOpenAppID(ctx context.Context, tenantID, id int64) (string, error) {
+	type row struct {
+		AppId string `json:"app_id"`
+	}
+	var app *row
+	err := dao.OpnApps.Ctx(ctx).
+		Where("id", id).
+		Where("tenant_id", tenantID).
+		Fields("app_id").
+		Scan(&app)
+	if err != nil {
+		return "", err
+	}
+	if app == nil {
+		return "", common.NewNotFoundError("开放平台应用")
+	}
+	return app.AppId, nil
+}
+
 func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (*v1.OpenAppCreateRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
@@ -109,7 +138,7 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 		return nil, err
 	}
 
-	// Store raw secret in Redis (encrypted) for HMAC verification
+	// Encrypt the one-time secret for DB persistence and Redis cache.
 	encKey := getEncKey(ctx)
 	encryptedSecret, err := crypto.EncryptString(encKey, appSecret)
 	if err != nil {
@@ -127,30 +156,38 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 		rateLimit = 60
 	}
 
-	result, err := dao.OpnApps.Ctx(ctx).Data(do.OpnApps{
-		TenantId:      tenantID,
-		Name:          req.Name,
-		Description:   req.Description,
-		AppId:         appID,
-		AppSecretHash: secretHash,
-		Permissions:   string(permsJSON),
-		IpWhitelist:   string(ipJSON),
-		RateLimit:     rateLimit,
-		Status:        "active",
-	}).Insert()
+	var id int64
+	err = dao.OpnApps.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := tx.Model("opn_apps").Ctx(ctx).Data(do.OpnApps{
+			TenantId:      tenantID,
+			Name:          req.Name,
+			Description:   req.Description,
+			AppId:         appID,
+			AppSecretHash: secretHash,
+			Permissions:   string(permsJSON),
+			IpWhitelist:   string(ipJSON),
+			RateLimit:     rateLimit,
+			Status:        "active",
+		}).Insert()
+		if err != nil {
+			return err
+		}
+		id, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		_, err = tx.Model("opn_apps").Ctx(ctx).
+			Where("id", id).
+			Data(opnAppEncryptedSecretData{EncryptedSecret: encryptedSecret}).
+			Update()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	id, _ := result.LastInsertId()
-
-	// Store encrypted secret in Redis（30 天 TTL，过期后从 DB 重新加载）— 失败时回滚 DB 记录
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret, "EX", 30*86400)
-	if err != nil {
-		// 回滚：删除已插入的 DB 记录
-		_, _ = dao.OpnApps.Ctx(ctx).Where("id", id).Delete()
-		return nil, fmt.Errorf("store app secret in Redis failed: %w", err)
-	}
+	// Redis is a cache; DB encrypted_secret is the source of truth.
+	_, _ = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", id), encryptedSecret, "EX", 30*86400)
 
 	return &v1.OpenAppCreateRes{ID: id, AppID: appID, AppSecret: appSecret}, nil
 }
@@ -191,7 +228,14 @@ func (s *sTenant) OpenAppUpdate(ctx context.Context, req *v1.OpenAppUpdateReq) (
 		return nil, nil
 	}
 
-	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
+	appID, err := getTenantOpenAppID(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
+	if err == nil {
+		middleware.InvalidateOpenAppCache(ctx, appID)
+	}
 	return nil, err
 }
 
@@ -201,12 +245,17 @@ func (s *sTenant) OpenAppDelete(ctx context.Context, req *v1.OpenAppDeleteReq) (
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
+	appID, err := getTenantOpenAppID(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
 	if err != nil {
 		return nil, err
 	}
 	// Clean up secret from Redis
 	_, _ = g.Redis().Do(ctx, "DEL", fmt.Sprintf("open:secret:%d", req.Id))
+	middleware.InvalidateOpenAppCache(ctx, appID)
 	return nil, nil
 }
 
@@ -216,6 +265,10 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
+	appID, err := getTenantOpenAppID(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
 
 	// Generate new secret
 	secretBytes := make([]byte, 24)
@@ -229,27 +282,26 @@ func (s *sTenant) OpenAppResetSecret(ctx context.Context, req *v1.OpenAppResetSe
 		return nil, err
 	}
 
-	// 先加密新 secret 准备写入 Redis
 	encKey := getEncKey(ctx)
 	encryptedSecret, err := crypto.EncryptString(encKey, appSecret)
 	if err != nil {
 		return nil, err
 	}
 
-	// 先写 Redis（30 天 TTL），成功后再更新 DB
-	_, err = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret, "EX", 30*86400)
+	_, err = dao.OpnApps.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Data(opnAppSecretUpdateData{
+			AppSecretHash:   secretHash,
+			EncryptedSecret: encryptedSecret,
+		}).
+		Update()
 	if err != nil {
-		return nil, fmt.Errorf("update app secret in Redis failed: %w", err)
-	}
-
-	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
-		AppSecretHash: secretHash,
-	}).Update()
-	if err != nil {
-		// DB 更新失败，尝试回滚 Redis
-		_, _ = g.Redis().Do(ctx, "DEL", fmt.Sprintf("open:secret:%d", req.Id))
 		return nil, err
 	}
+
+	_, _ = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", req.Id), encryptedSecret, "EX", 30*86400)
+	middleware.InvalidateOpenAppCache(ctx, appID)
 
 	return &v1.OpenAppResetSecretRes{AppSecret: appSecret}, nil
 }
@@ -260,9 +312,16 @@ func (s *sTenant) OpenAppToggleStatus(ctx context.Context, req *v1.OpenAppToggle
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	_, err := dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
+	appID, err := getTenantOpenAppID(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	_, err = dao.OpnApps.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(do.OpnApps{
 		Status: req.Status,
 	}).Update()
+	if err == nil {
+		middleware.InvalidateOpenAppCache(ctx, appID)
+	}
 	return nil, err
 }
 

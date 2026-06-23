@@ -26,13 +26,23 @@ func CheckScope(scope string, relayMode string) bool {
 		// read_only 仅允许 GET /models
 		return relayMode == ""
 	case ScopeChatOnly, "chat":
-		return relayMode == "chat_completions" || relayMode == "completions" || relayMode == "claude_messages"
+		return relayMode == "chat_completions" ||
+			relayMode == "completions" ||
+			relayMode == "responses" ||
+			relayMode == "claude_messages" ||
+			relayMode == "gemini_generate_content" ||
+			relayMode == "realtime"
 	case ScopeEmbeddingsOnly, "embedding":
 		return relayMode == "embeddings"
 	case ScopeImagesOnly, "image":
-		return relayMode == "images_generations"
+		return relayMode == "images_generations" || relayMode == "images_edits"
 	case ScopeAudioOnly, "audio":
-		return relayMode == "audio" || relayMode == "tts" || relayMode == "stt"
+		return relayMode == "audio" ||
+			relayMode == "tts" ||
+			relayMode == "stt" ||
+			relayMode == "audio_speech" ||
+			relayMode == "audio_transcriptions" ||
+			relayMode == "audio_translations"
 	default:
 		// custom scope: 以逗号分隔的模式列表
 		allowed := strings.Split(scope, ",")

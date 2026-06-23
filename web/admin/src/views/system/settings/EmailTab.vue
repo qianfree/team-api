@@ -14,7 +14,7 @@ const values = useFormValues()
 				</AFormItem>
 				<AFormItem label="SMTP 端口">
 					<AInputNumber
-						:model-value="Number(values['email_smtp_port']) || undefined"
+						:model-value="values['email_smtp_port'] as number"
 						@change="(v: number | undefined) => values['email_smtp_port'] = v"
 						:min="1" :max="65535"
 						placeholder="587"

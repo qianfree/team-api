@@ -251,9 +251,9 @@ onBeforeUnmount(() => {
 					<span class="text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
 				</div>
 				<transition name="fade">
-					<div v-if="!sidebarCollapsed" class="flex flex-col">
-						<span class="text-lg font-bold text-gray-900 truncate">{{ tenantInfo.name }}</span>
-						<span class="text-xs text-gray-400 font-mono">{{ tenantInfo.code }}</span>
+					<div v-if="!sidebarCollapsed" class="flex min-w-0 flex-col overflow-hidden">
+						<span class="text-lg font-bold text-gray-900 truncate" :title="tenantInfo.name">{{ tenantInfo.name }}</span>
+						<span class="text-xs text-gray-400 font-mono truncate">{{ tenantInfo.code }}</span>
 					</div>
 				</transition>
 			</div>

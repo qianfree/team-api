@@ -12,11 +12,11 @@ import (
 // SysAgreementAcceptances is the golang structure of table sys_agreement_acceptances for DAO operations like Where/Data.
 type SysAgreementAcceptances struct {
 	g.Meta      `orm:"table:sys_agreement_acceptances, do:true"`
-	Id          any         //
+	Id          any         // 主键ID
 	AgreementId any         // 关联协议版本ID
-	UserType    any         // 用户类型：admin / tenant
+	UserType    any         // 用户类型：admin(管理员) / tenant(租户用户)
 	UserId      any         // 用户ID
-	IpAddress   any         // IP地址
-	UserAgent   any         // User-Agent
-	CreatedAt   *gtime.Time //
+	IpAddress   any         // 接受时的IP地址
+	UserAgent   any         // 接受时的浏览器User-Agent
+	CreatedAt   *gtime.Time // 接受时间
 }

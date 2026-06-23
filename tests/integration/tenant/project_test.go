@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/qianfree/team-api/internal/consts"
 	admintest "github.com/qianfree/team-api/tests/integration/admin/testinfra"
 	"github.com/qianfree/team-api/tests/integration/tenant/testinfra"
 )
@@ -124,6 +125,41 @@ func TestProjectApiKeys(t *testing.T) {
 	keyID := listData.List[0].ID
 	deleteResp := client.Delete(fmt.Sprintf("/api/tenant/projects/%d/api-keys/%d", projectID, keyID))
 	deleteResp.AssertSuccess(t)
+}
+
+func TestProjectApiKeyCreate_ArchivedProject(t *testing.T) {
+	client, _ := testinfra.GetAuthedClient(t)
+
+	projectID, cleanup := testinfra.CreateTestProject(t, client)
+	defer cleanup()
+
+	archiveResp := client.Post(fmt.Sprintf("/api/tenant/projects/%d/archive", projectID), nil)
+	archiveResp.AssertSuccess(t)
+
+	createKeyResp := client.Post(fmt.Sprintf("/api/tenant/projects/%d/api-keys", projectID), map[string]any{
+		"name": "archived-project-key",
+	})
+	createKeyResp.AssertError(t, consts.CodeProjectNotActive)
+}
+
+func TestProjectApiKeyCreate_BudgetExhaustedProject(t *testing.T) {
+	client, _ := testinfra.GetAuthedClient(t)
+
+	suffix := testinfra.RandomSuffix()
+	createResp := client.Post("/api/tenant/projects", map[string]any{
+		"name":   fmt.Sprintf("exhausted-project-%s", suffix),
+		"budget": 1.0,
+	})
+	createResp.AssertSuccess(t)
+	projectID := createResp.GetID(t)
+	defer client.Post(fmt.Sprintf("/api/tenant/projects/%d/archive", projectID), nil)
+
+	testinfra.MarkProjectBudgetExhausted(t, projectID)
+
+	createKeyResp := client.Post(fmt.Sprintf("/api/tenant/projects/%d/api-keys", projectID), map[string]any{
+		"name": "budget-exhausted-project-key",
+	})
+	createKeyResp.AssertError(t, consts.CodeProjectNotActive)
 }
 
 func TestProjectUsageStats(t *testing.T) {

@@ -404,7 +404,7 @@ const { exporting, exportFile } = useExport({
           <AInput v-model="createForm.email" placeholder="管理员邮箱" />
         </AFormItem>
         <AFormItem field="password" label="管理员密码" :rules="[{ required: true, message: '请输入密码' }, { minLength: 8, maxLength: 64, message: '密码长度为8-64位' }]">
-          <AInput v-model="createForm.password" type="password" placeholder="需包含大小写字母和数字，至少8位" />
+          <AInput v-model="createForm.password" type="password" placeholder="需包含字母和数字，至少8位" />
         </AFormItem>
         <ASpace :size="16" class="w-full">
           <AFormItem field="max_members" label="最大成员数" extra="留空跟随等级" class="flex-1">

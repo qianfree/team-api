@@ -23,13 +23,17 @@ type TenantApiKeyListRes struct {
 }
 
 type TenantApiKeyCreateReq struct {
-	g.Meta     `path:"/api-keys" method:"post" mime:"json" tags:"租户控制台-API Key" summary:"创建API Key"`
-	Name       string      `json:"name" v:"required"`
-	Scope      string      `json:"scope"`
-	KeyType    string      `json:"key_type"`
-	ProjectID  int64       `json:"project_id"`
-	ExpiresAt  *gtime.Time `json:"expires_at"`
-	ModelNames []string    `json:"model_names"`
+	g.Meta               `path:"/api-keys" method:"post" mime:"json" tags:"租户控制台-API Key" summary:"创建API Key"`
+	Name                 string      `json:"name" v:"required"`
+	Scope                string      `json:"scope"`
+	KeyType              string      `json:"key_type"`
+	ProjectID            int64       `json:"project_id"`
+	ExpiresAt            *gtime.Time `json:"expires_at"`
+	RateLimitQps         *int        `json:"rate_limit_qps"`
+	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	IpWhitelist          *[]string   `json:"ip_whitelist"`
+	TotalQuota           *float64    `json:"total_quota"`
+	ModelNames           []string    `json:"model_names"`
 }
 
 type TenantApiKeyCreateRes struct {
@@ -57,6 +61,7 @@ type TenantApiKeyUpdateReq struct {
 	ExpiresAt            *gtime.Time `json:"expires_at"`
 	RateLimitQps         *int        `json:"rate_limit_qps"`
 	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	IpWhitelist          *[]string   `json:"ip_whitelist"`
 	TotalQuota           *float64    `json:"total_quota"`
 	ModelNames           []string    `json:"model_names"`
 }

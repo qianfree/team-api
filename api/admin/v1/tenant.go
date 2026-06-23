@@ -5,7 +5,7 @@ import "github.com/gogf/gf/v2/frame/g"
 // TenantCreateReq 创建租户请求
 type TenantCreateReq struct {
 	g.Meta         `path:"/tenants" method:"post" mime:"json" tags:"管理后台-租户管理" summary:"创建租户"`
-	TenantName     string `json:"tenant_name" v:"required|length:2,100#请输入租户名称|租户名称长度为2-100位" dc:"租户名称"`
+	TenantName     string `json:"tenant_name" v:"required#请输入租户名称" dc:"租户名称（汉字最多8个，字母最多16个）"`
 	TenantCode     string `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入租户代码|租户代码为3-30位|租户代码仅允许小写字母、数字、中划线" dc:"租户代码"`
 	Username       string `json:"username" v:"required|length:3,50#请输入管理员用户名|用户名长度为3-50位" dc:"管理员用户名"`
 	Email          string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"管理员邮箱"`

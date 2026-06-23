@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -34,7 +36,47 @@ type TaskRelayContext struct {
 	Writer          http.ResponseWriter
 	Scope           string
 	ClientIP        string
+	KeyRateLimitQps int
+	KeyConcurrency  int
+	KeyIpWhitelist  string
+	KeyTotalQuota   float64
+	KeyUsedQuota    float64
 	ForwardingTrace *common.ForwardingTrace
+}
+
+func checkTaskIPWhitelist(whitelist string, clientIP string) bool {
+	if whitelist == "" {
+		return true
+	}
+
+	host, _, err := net.SplitHostPort(clientIP)
+	if err != nil {
+		host = clientIP
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+
+	parsedIP := net.ParseIP(host)
+	if parsedIP == nil {
+		return false
+	}
+
+	for _, item := range strings.Split(whitelist, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if item == host {
+			return true
+		}
+		if strings.Contains(item, "/") {
+			_, cidr, err := net.ParseCIDR(item)
+			if err == nil && cidr.Contains(parsedIP) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // HandleTaskSubmit 异步任务提交管线
@@ -68,6 +110,25 @@ func HandleTaskSubmit(
 		writeTaskError(rc.Writer, http.StatusBadRequest, "model is required", "")
 		return
 	}
+
+	if rc.Scope == "read_only" {
+		writeTaskError(rc.Writer, http.StatusForbidden, "API key scope denied", "")
+		return
+	}
+	if rc.KeyIpWhitelist != "" && !checkTaskIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+		writeTaskError(rc.Writer, http.StatusForbidden, "IP address is not allowed", "")
+		return
+	}
+	allowed, limitLevel, _, _, _ := billingProvider.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
+	if !allowed {
+		writeTaskError(rc.Writer, http.StatusTooManyRequests, fmt.Sprintf("rate limit exceeded at %s level", limitLevel), "")
+		return
+	}
+	if !billingProvider.AcquireApiKeyConcurrent(ctx, rc.ApiKeyID, rc.KeyConcurrency) {
+		writeTaskError(rc.Writer, http.StatusTooManyRequests, "API key concurrent request limit exceeded", "")
+		return
+	}
+	defer billingProvider.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
 
 	// 2. 确定任务平台
 	providerType := constant.ProviderType(channelMeta.ChannelType)
@@ -120,6 +181,11 @@ func HandleTaskSubmit(
 		return
 	}
 	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost)
+
+	if err := billingProvider.CheckApiKeyQuota(ctx, rc.ApiKeyID, estimatedCost); err != nil {
+		writeTaskError(rc.Writer, http.StatusPaymentRequired, "API key quota exceeded", "")
+		return
+	}
 
 	preDeductAmount, err := billingProvider.PreDeductTask(ctx, rc.TenantID, rc.RequestID, estimatedCost, modelName)
 	if err != nil {

@@ -16,28 +16,38 @@ import (
 
 // AuthContextKey is the key used to store auth info in context.
 const (
-	CtxKeyUserID    = "userId"
-	CtxKeyUserType  = "userType"
-	CtxKeyRole      = "role"
-	CtxKeyTenantID  = "tenantId"
-	CtxKeySessionID = "sessionId"
-	CtxKeyJti       = "jti"
-	CtxKeyApiKeyID  = "apiKeyId"
-	CtxKeyProjectID = "projectId"
+	CtxKeyUserID                     = "userId"
+	CtxKeyUserType                   = "userType"
+	CtxKeyRole                       = "role"
+	CtxKeyTenantID                   = "tenantId"
+	CtxKeySessionID                  = "sessionId"
+	CtxKeyJti                        = "jti"
+	CtxKeyApiKeyID                   = "apiKeyId"
+	CtxKeyProjectID                  = "projectId"
+	CtxKeyApiKeyRateLimitQps         = "apiKeyRateLimitQps"
+	CtxKeyApiKeyRateLimitConcurrency = "apiKeyRateLimitConcurrency"
+	CtxKeyApiKeyIpWhitelist          = "apiKeyIpWhitelist"
+	CtxKeyApiKeyTotalQuota           = "apiKeyTotalQuota"
+	CtxKeyApiKeyUsedQuota            = "apiKeyUsedQuota"
 )
 
 // adminPublicPaths lists admin routes that skip JWT auth.
 // Keep in sync with api/admin/v1/ structs tagged group:"public" middleware:"-".
 var adminPublicPaths = map[string]bool{
-	"/api/admin/auth/login":   true,
-	"/api/admin/auth/refresh": true,
+	"/api/admin/auth/login":      true,
+	"/api/admin/auth/refresh":    true,
+	"/api/admin/auth/2fa/verify": true,
+}
+
+func isAdminPublicPath(path string) bool {
+	return adminPublicPaths[path]
 }
 
 // AdminAuth is JWT authentication middleware for admin backend.
 func AdminAuth(r *ghttp.Request) {
 	// g.Meta middleware:"-" only skips service middleware, not group middleware.
 	// Public endpoints must be checked explicitly here.
-	if adminPublicPaths[r.URL.Path] {
+	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
 		return
 	}

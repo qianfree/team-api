@@ -57,6 +57,7 @@ var (
 	ErrKeyExpired         = gerror.NewCode(gcode.New(CodeKeyExpired, MsgKeyExpired, nil), MsgKeyExpired)
 	ErrKeyDisabled        = gerror.NewCode(gcode.New(CodeKeyDisabled, "API Key 已禁用", nil), "API Key 已禁用")
 	ErrTenantSuspended    = gerror.NewCode(gcode.New(CodeTenantSuspended, MsgTenantSuspended, nil), MsgTenantSuspended)
+	ErrProjectNotActive   = gerror.NewCode(gcode.New(CodeProjectNotActive, MsgProjectNotActive, nil), MsgProjectNotActive)
 	ErrChannelUnavailable = gerror.NewCode(gcode.New(CodeChannelUnavailable, MsgChannelUnavailable, nil), MsgChannelUnavailable)
 	ErrModelDisabled      = gerror.NewCode(gcode.New(CodeModelDisabled, MsgModelDisabled, nil), MsgModelDisabled)
 	ErrTotpRequired       = gerror.NewCode(gcode.New(CodeTotpRequired, MsgTotpRequired, nil), MsgTotpRequired)
@@ -178,6 +179,7 @@ const (
 	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
 	CodeForbiddenWord             = 10096 // 名称包含禁用词
 	CodeEmailExists               = 10097 // 邮箱已被使用
+	CodeInvalidTenantName         = 10098 // 组织名称长度不合法
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -226,6 +228,9 @@ const (
 	CodeUpdateReplaceFailed  = 10415
 	CodeUpdateRollbackFailed = 10416
 	CodeUpdateNotSupported   = 10417
+
+	// Team feature gating
+	CodeTeamNotEnabled = 10418
 )
 
 // Common error messages
@@ -256,6 +261,7 @@ const (
 	MsgUsernameExists      = "用户名已存在"
 	MsgEmailExists         = "该邮箱已被使用"
 	MsgTenantCodeExists    = "租户代码已存在"
+	MsgTeamNotEnabled      = "团队功能未启用，请先设置组织代码"
 	MsgSessionExpired      = "会话已过期"
 	MsgTokenExpired        = "Token 已过期"
 	MsgTokenRevoked        = "Token 已被撤销"
@@ -344,6 +350,9 @@ const (
 
 	// Forbidden word
 	MsgForbiddenWord = "名称包含禁用词，请修改后重试"
+
+	// Tenant name validation：汉字最多8个、字母最多16个（汉字按2计、其余按1计，总宽度≤16）
+	MsgInvalidTenantName = "组织名称长度超出限制（汉字最多8个，字母最多16个）"
 
 	// Agreement errors
 	MsgAgreementNotFound      = "协议版本不存在"

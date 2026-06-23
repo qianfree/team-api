@@ -10,6 +10,8 @@ export interface ApiKeyData {
 	name: string
 	expires_at: string | null
 	rate_limit_qps: number | null
+	rate_limit_concurrency: number | null
+	ip_whitelist: string[] | null
 	total_quota: number | null
 	used_quota: number | null
 }
@@ -33,6 +35,8 @@ const form = reactive({
 	name: '',
 	expires_at: '',
 	rate_limit_qps: null as number | null,
+	rate_limit_concurrency: null as number | null,
+	ip_whitelist_text: '',
 	total_quota: null as number | null,
 })
 const loading = ref(false)
@@ -133,10 +137,36 @@ function resetForm() {
 	form.name = ''
 	form.expires_at = ''
 	form.rate_limit_qps = null
+	form.rate_limit_concurrency = null
+	form.ip_whitelist_text = ''
 	form.total_quota = null
 	selectedModelNames.value = []
 	modelSearch.value = ''
 	createdKey.value = ''
+}
+
+function parseIPWhitelist(): string[] {
+	return form.ip_whitelist_text
+		.split(/[\n,]/)
+		.map(item => item.trim())
+		.filter(Boolean)
+}
+
+function isNonNegativeNumber(value: number | null): value is number {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function applyLimitFields(body: Record<string, any>) {
+	if (isNonNegativeNumber(form.rate_limit_qps)) {
+		body.rate_limit_qps = form.rate_limit_qps
+	}
+	if (isNonNegativeNumber(form.rate_limit_concurrency)) {
+		body.rate_limit_concurrency = form.rate_limit_concurrency
+	}
+	if (isNonNegativeNumber(form.total_quota)) {
+		body.total_quota = form.total_quota
+	}
+	body.ip_whitelist = parseIPWhitelist()
 }
 
 const modalTitle = computed(() => {
@@ -164,6 +194,8 @@ watch(() => props.show, (val) => {
 		if (props.mode === 'edit' && props.apiKey) {
 			form.name = props.apiKey.name
 			form.rate_limit_qps = props.apiKey.rate_limit_qps
+			form.rate_limit_concurrency = props.apiKey.rate_limit_concurrency
+			form.ip_whitelist_text = (props.apiKey.ip_whitelist || []).join('\n')
 			form.total_quota = props.apiKey.total_quota
 			loadModelScopes(props.apiKey.id)
 		}
@@ -184,6 +216,7 @@ async function handleSubmit() {
 				scope: 'full',
 				model_names: selectedModelNames.value,
 			}
+			applyLimitFields(body)
 			if (form.expires_at) body.expires_at = form.expires_at
 			const url = props.projectId
 				? `/tenant/projects/${props.projectId}/api-keys`
@@ -195,16 +228,7 @@ async function handleSubmit() {
 				name: form.name,
 				model_names: selectedModelNames.value,
 			}
-			if (form.rate_limit_qps !== null && form.rate_limit_qps > 0) {
-				body.rate_limit_qps = form.rate_limit_qps
-			} else if (form.rate_limit_qps === 0) {
-				body.rate_limit_qps = 0
-			}
-			if (form.total_quota !== null && form.total_quota > 0) {
-				body.total_quota = form.total_quota
-			} else if (form.total_quota === 0) {
-				body.total_quota = 0
-			}
+			applyLimitFields(body)
 			if (form.expires_at) body.expires_at = form.expires_at
 			await request.put(`/tenant/api-keys/${props.apiKey!.id}`, body)
 			toast.success('更新成功')
@@ -288,10 +312,14 @@ const isFormMode = computed(() => {
 				</p>
 			</div>
 
-			<div v-if="mode === 'edit'" class="grid grid-cols-2 gap-4">
+			<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
 				<div>
 					<label class="input-label">QPS 限速</label>
-					<input v-model.number="form.rate_limit_qps" type="number" min="0" class="input" placeholder="0 = 不限制" />
+					<input v-model.number="form.rate_limit_qps" type="number" min="0" class="input" placeholder="留空使用默认" />
+				</div>
+				<div>
+					<label class="input-label">并发限制</label>
+					<input v-model.number="form.rate_limit_concurrency" type="number" min="0" class="input" placeholder="0 = 不限制" />
 				</div>
 				<div>
 					<label class="input-label">总额度 (USD)</label>
@@ -300,25 +328,36 @@ const isFormMode = computed(() => {
 				</div>
 			</div>
 
-				<div>
-					<label class="input-label">过期时间</label>
-					<div class="flex items-center gap-2">
-						<input
-							v-model="form.expires_at"
-							type="datetime-local"
-							class="input flex-1"
-							:placeholder="mode === 'create' ? '留空表示永不过期' : '留空表示不修改'"
-						/>
-						<div class="inline-flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
-							<button type="button" @click="quickFillExpires(1)" class="px-3.5 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border-r border-gray-200">1天</button>
-							<button type="button" @click="quickFillExpires(7)" class="px-3.5 py-2 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors border-r border-gray-200">1周</button>
-							<button type="button" @click="quickFillExpires(30)" class="px-3.5 py-2 text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 transition-colors">1月</button>
-						</div>
+			<div>
+				<label class="input-label">IP 白名单</label>
+				<textarea
+					v-model="form.ip_whitelist_text"
+					class="input"
+					rows="3"
+					placeholder="每行一个 IP 或 CIDR，留空表示不限制"
+				></textarea>
+				<p class="input-hint">支持 192.168.1.10 或 10.0.0.0/24，也可用逗号分隔。</p>
+			</div>
+
+			<div>
+				<label class="input-label">过期时间</label>
+				<div class="flex items-center gap-2">
+					<input
+						v-model="form.expires_at"
+						type="datetime-local"
+						class="input flex-1"
+						:placeholder="mode === 'create' ? '留空表示永不过期' : '留空表示不修改'"
+					/>
+					<div class="inline-flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
+						<button type="button" @click="quickFillExpires(1)" class="px-3.5 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border-r border-gray-200">1天</button>
+						<button type="button" @click="quickFillExpires(7)" class="px-3.5 py-2 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors border-r border-gray-200">1周</button>
+						<button type="button" @click="quickFillExpires(30)" class="px-3.5 py-2 text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 transition-colors">1月</button>
 					</div>
-					<p v-if="mode === 'edit' && apiKey && apiKey.expires_at" class="input-hint">当前过期时间：{{ formatDate(apiKey.expires_at) }}</p>
-					<p v-else-if="mode === 'edit'" class="input-hint">当前：永不过期</p>
-					<p v-else class="input-hint">留空表示永不过期</p>
 				</div>
+				<p v-if="mode === 'edit' && apiKey && apiKey.expires_at" class="input-hint">当前过期时间：{{ formatDate(apiKey.expires_at) }}</p>
+				<p v-else-if="mode === 'edit'" class="input-hint">当前：永不过期</p>
+				<p v-else class="input-hint">留空表示永不过期</p>
+			</div>
 		</div>
 
 		<div v-else class="space-y-4">

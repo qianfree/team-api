@@ -10,9 +10,30 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 )
 
+func requireRegisterRateLimitRedis(t *testing.T, ctx context.Context) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Skipf("Redis adapter is not configured: %v", r)
+		}
+	}()
+	if _, err := g.Redis().Do(ctx, "PING"); err != nil {
+		t.Skipf("Redis is not available: %v", err)
+	}
+}
+
+func setRegisterRateLimitConfig(ctx context.Context, t *testing.T, key string, value string) {
+	t.Helper()
+	Config().cache.Set(ctx, key, value)
+	t.Cleanup(func() {
+		Config().cache.Delete(ctx, key)
+	})
+}
+
 // TestCheckRegisterRateLimit 测试注册速率限制
 func TestCheckRegisterRateLimit(t *testing.T) {
 	ctx := context.Background()
+	requireRegisterRateLimitRedis(t, ctx)
 
 	// 测试IP级别限流
 	t.Run("IP hourly limit", func(t *testing.T) {
@@ -23,7 +44,7 @@ func TestCheckRegisterRateLimit(t *testing.T) {
 		g.Redis().Do(ctx, "DEL", hourlyKey)
 
 		// 设置配置为每小时最多3次
-		g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_hour", 60, "3")
+		setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_hour", "3")
 
 		// 前3次应该成功
 		for i := 0; i < 3; i++ {
@@ -52,11 +73,9 @@ func TestCheckRegisterRateLimit(t *testing.T) {
 		dailyKey := "register:ip:daily:" + testIP
 		g.Redis().Do(ctx, "DEL", dailyKey)
 
-		// 设置配置为每天最多5次
-		g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_day", 60, "5")
-
-		// 禁用每小时限制
-		g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_hour", 60, "0")
+		// 设置配置为每天最多5次，并禁用每小时限制
+		setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_day", "5")
+		setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_hour", "0")
 
 		// 前5次应该成功
 		for i := 0; i < 5; i++ {
@@ -82,18 +101,17 @@ func TestCheckRegisterRateLimit(t *testing.T) {
 // TestGlobalRateLimit 测试全局限流
 func TestGlobalRateLimit(t *testing.T) {
 	ctx := context.Background()
+	requireRegisterRateLimitRedis(t, ctx)
 
 	// 清理测试数据
 	now := time.Now()
 	minuteKey := fmt.Sprintf("register:global:%d", now.Unix()/60)
 	g.Redis().Do(ctx, "DEL", minuteKey)
 
-	// 设置配置为每分钟最多2次
-	g.Redis().Do(ctx, "SETEX", "config:register_global_limit_per_minute", 60, "2")
-
-	// 禁用IP限制
-	g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_hour", 60, "0")
-	g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_day", 60, "0")
+	// 设置配置为每分钟最多2次，并禁用IP限制
+	setRegisterRateLimitConfig(ctx, t, "register_global_limit_per_minute", "2")
+	setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_hour", "0")
+	setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_day", "0")
 
 	// 前2次应该成功（使用不同IP）
 	for i := 0; i < 2; i++ {
@@ -119,6 +137,7 @@ func TestGlobalRateLimit(t *testing.T) {
 // TestGetRegisterRateLimitStatus 测试获取限流状态
 func TestGetRegisterRateLimitStatus(t *testing.T) {
 	ctx := context.Background()
+	requireRegisterRateLimitRedis(t, ctx)
 	testIP := "192.168.1.102"
 
 	// 清理测试数据
@@ -128,8 +147,8 @@ func TestGetRegisterRateLimitStatus(t *testing.T) {
 	g.Redis().Do(ctx, "DEL", dailyKey)
 
 	// 设置配置
-	g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_hour", 60, "5")
-	g.Redis().Do(ctx, "SETEX", "config:register_ip_limit_per_day", 60, "20")
+	setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_hour", "5")
+	setRegisterRateLimitConfig(ctx, t, "register_ip_limit_per_day", "20")
 
 	// 注册2次
 	g.Redis().Do(ctx, "SETEX", hourlyKey, 3600, "2")

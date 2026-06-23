@@ -75,7 +75,7 @@
 							v-model="form.password"
 							type="password"
 							required
-							placeholder="至少 8 位，含大小写字母和数字"
+							placeholder="至少 8 位，含字母和数字"
 							class="input pl-11"
 						/>
 					</div>

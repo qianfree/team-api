@@ -10,7 +10,7 @@ type BillingProvider interface {
 	PreDeduct(ctx context.Context, tenantID int64, modelName string, inputTokens, maxTokens int, isStream bool, requestID string) (preDeductAmount float64, err error)
 
 	// Settle 结算费用（成功请求）
-	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) error
+	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error)
 
 	// SettleWithUsage 完整 Usage 结算（含 cache token + 计费快照）
 	SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
@@ -21,16 +21,22 @@ type BillingProvider interface {
 	SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error
 
 	// SettleStreamInterrupted 流式中断结算
-	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) error
+	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error)
 
 	// CheckRateLimit QPS 限流检查
-	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64) (allowed bool, limitLevel string, remaining int, resetAt int64)
+	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (allowed bool, limitLevel string, limit int, remaining int, resetAt int64)
 
 	// AcquireConcurrent 并发限制检查（含租户级 + 模型级）
 	AcquireConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) bool
 
 	// ReleaseConcurrent 释放并发限制（含租户级 + 模型级）
 	ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string)
+
+	// AcquireApiKeyConcurrent 获取 API Key 级并发许可
+	AcquireApiKeyConcurrent(ctx context.Context, apiKeyID int64, limit int) bool
+
+	// ReleaseApiKeyConcurrent 释放 API Key 级并发许可
+	ReleaseApiKeyConcurrent(ctx context.Context, apiKeyID int64)
 
 	// CheckScope 检查 API Key scope
 	CheckScope(scope string, relayMode string) bool
@@ -41,8 +47,14 @@ type BillingProvider interface {
 	// CheckMemberQuota 检查成员额度是否足够
 	CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmount float64) error
 
+	// CheckApiKeyQuota 检查 API Key 额度是否足够
+	CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float64) error
+
 	// IncrMemberQuotaUsed 结算后累加成员已用额度
 	IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount float64)
+
+	// IncrApiKeyQuotaUsed 结算后累加 API Key 已用额度
+	IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount float64)
 }
 
 // RateLimitInfo 限流信息（用于设置响应头）
