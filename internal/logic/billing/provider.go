@@ -28,14 +28,14 @@ func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, mod
 	return amount, nil
 }
 
-func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) error {
+func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) (*common.SettlementResult, error) {
 	inputTokens, outputTokens := 0, 0
 	if usage != nil {
 		inputTokens = usage.PromptTokens
 		outputTokens = usage.CompletionTokens
 	}
-	_, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount, projectID)
-	return err
+	result, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount, projectID)
+	return toCommonSettlementResult(result), err
 }
 
 func (b *BillingProviderImpl) SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
@@ -44,6 +44,72 @@ func (b *BillingProviderImpl) SettleWithUsage(ctx context.Context, tenantID, use
 
 	result, err := SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)
 	if err != nil {
+		return nil
+	}
+	return toCommonSettlementResult(result)
+}
+
+func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
+	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
+}
+
+func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) (*common.SettlementResult, error) {
+	confirmedInput, confirmedOutput := 0, 0
+	if usage != nil {
+		confirmedInput = usage.PromptTokens
+		confirmedOutput = usage.CompletionTokens
+	}
+	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, confirmedInput, confirmedOutput, preDeductAmount, projectID)
+	return toCommonSettlementResult(result), err
+}
+
+func (b *BillingProviderImpl) CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (bool, string, int, int, int64) {
+	result := CheckRateLimitWithKeyLimit(ctx, LoadRateLimitConfig(ctx), tenantID, userID, apiKeyID, keyQPS)
+	return result.Allowed, result.LimitLevel, result.Limit, result.Remaining, result.ResetAt
+}
+
+func (b *BillingProviderImpl) AcquireConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) bool {
+	return AcquireConcurrent(ctx, LoadRateLimitConfig(ctx), tenantID, userID, apiKeyID, modelName)
+}
+
+func (b *BillingProviderImpl) ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
+	ReleaseConcurrent(ctx, tenantID, userID, apiKeyID, modelName)
+}
+
+func (b *BillingProviderImpl) AcquireApiKeyConcurrent(ctx context.Context, apiKeyID int64, limit int) bool {
+	return AcquireApiKeyConcurrent(ctx, apiKeyID, limit)
+}
+
+func (b *BillingProviderImpl) ReleaseApiKeyConcurrent(ctx context.Context, apiKeyID int64) {
+	ReleaseApiKeyConcurrent(ctx, apiKeyID)
+}
+
+func (b *BillingProviderImpl) CheckScope(scope string, relayMode string) bool {
+	return CheckScope(scope, relayMode)
+}
+
+func (b *BillingProviderImpl) CheckIPWhitelist(whitelist string, clientIP string) bool {
+	return CheckIPWhitelist(whitelist, clientIP)
+}
+
+func (b *BillingProviderImpl) CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmount float64) error {
+	return CheckMemberQuota(ctx, tenantID, userID, preDeductAmount)
+}
+
+func (b *BillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float64) error {
+	return CheckApiKeyQuota(ctx, apiKeyID, preDeductAmount)
+}
+
+func (b *BillingProviderImpl) IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount float64) {
+	IncrMemberQuotaUsed(ctx, tenantID, userID, amount)
+}
+
+func (b *BillingProviderImpl) IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount float64) {
+	IncrApiKeyQuotaUsed(ctx, apiKeyID, amount)
+}
+
+func toCommonSettlementResult(result *SettlementResult) *common.SettlementResult {
+	if result == nil {
 		return nil
 	}
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost float64
@@ -71,47 +137,4 @@ func (b *BillingProviderImpl) SettleWithUsage(ctx context.Context, tenantID, use
 		BillingSource:     result.BillingSource,
 		RateMultiplier:    result.RateMultiplier,
 	}
-}
-
-func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
-	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
-}
-
-func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) error {
-	confirmedInput, confirmedOutput := 0, 0
-	if usage != nil {
-		confirmedInput = usage.PromptTokens
-		confirmedOutput = usage.CompletionTokens
-	}
-	_, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, confirmedInput, confirmedOutput, preDeductAmount, projectID)
-	return err
-}
-
-func (b *BillingProviderImpl) CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64) (bool, string, int, int64) {
-	result := CheckRateLimit(ctx, LoadRateLimitConfig(ctx), tenantID, userID, apiKeyID)
-	return result.Allowed, result.LimitLevel, result.Remaining, result.ResetAt
-}
-
-func (b *BillingProviderImpl) AcquireConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) bool {
-	return AcquireConcurrent(ctx, LoadRateLimitConfig(ctx), tenantID, userID, apiKeyID, modelName)
-}
-
-func (b *BillingProviderImpl) ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
-	ReleaseConcurrent(ctx, tenantID, userID, apiKeyID, modelName)
-}
-
-func (b *BillingProviderImpl) CheckScope(scope string, relayMode string) bool {
-	return CheckScope(scope, relayMode)
-}
-
-func (b *BillingProviderImpl) CheckIPWhitelist(whitelist string, clientIP string) bool {
-	return CheckIPWhitelist(whitelist, clientIP)
-}
-
-func (b *BillingProviderImpl) CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmount float64) error {
-	return CheckMemberQuota(ctx, tenantID, userID, preDeductAmount)
-}
-
-func (b *BillingProviderImpl) IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount float64) {
-	IncrMemberQuotaUsed(ctx, tenantID, userID, amount)
 }

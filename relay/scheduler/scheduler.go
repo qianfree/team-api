@@ -107,19 +107,7 @@ func groupByPriority(candidates []ChannelCandidate) [][]ChannelCandidate {
 func weightedRandomSelect(candidates []ChannelCandidate) ChannelCandidate {
 	totalWeight := 0
 	for _, c := range candidates {
-		w := c.Weight
-		if w <= 0 {
-			w = 1
-		}
-
-		// 健康度降权：50-79 权重减半，20-49 权重降到 1/4
-		if c.HealthScore < 80 {
-			if c.HealthScore >= 50 {
-				w = w / 2
-			} else {
-				w = w / 4
-			}
-		}
+		w := effectiveWeight(c)
 		totalWeight += w
 	}
 
@@ -130,17 +118,7 @@ func weightedRandomSelect(candidates []ChannelCandidate) ChannelCandidate {
 	r := rand.IntN(totalWeight)
 	cumWeight := 0
 	for _, c := range candidates {
-		w := c.Weight
-		if w <= 0 {
-			w = 1
-		}
-		if c.HealthScore < 80 {
-			if c.HealthScore >= 50 {
-				w = w / 2
-			} else {
-				w = w / 4
-			}
-		}
+		w := effectiveWeight(c)
 		cumWeight += w
 		if r < cumWeight {
 			return c
@@ -148,6 +126,26 @@ func weightedRandomSelect(candidates []ChannelCandidate) ChannelCandidate {
 	}
 
 	return candidates[len(candidates)-1]
+}
+
+func effectiveWeight(c ChannelCandidate) int {
+	w := c.Weight
+	if w <= 0 {
+		w = 1
+	}
+
+	// 健康度降权：50-79 权重减半，20-49 权重降到 1/4
+	if c.HealthScore < 80 {
+		if c.HealthScore >= 50 {
+			w = w / 2
+		} else {
+			w = w / 4
+		}
+	}
+	if w <= 0 {
+		return 1
+	}
+	return w
 }
 
 func candidateToResult(c ChannelCandidate) *SchedulerResult {

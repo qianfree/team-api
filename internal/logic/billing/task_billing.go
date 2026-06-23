@@ -79,6 +79,23 @@ func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID in
 	return estimatedCost, nil
 }
 
+func (b *TaskBillingProviderImpl) CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (bool, string, int, int, int64) {
+	result := CheckRateLimitWithKeyLimit(ctx, LoadRateLimitConfig(ctx), tenantID, userID, apiKeyID, keyQPS)
+	return result.Allowed, result.LimitLevel, result.Limit, result.Remaining, result.ResetAt
+}
+
+func (b *TaskBillingProviderImpl) AcquireApiKeyConcurrent(ctx context.Context, apiKeyID int64, limit int) bool {
+	return AcquireApiKeyConcurrent(ctx, apiKeyID, limit)
+}
+
+func (b *TaskBillingProviderImpl) ReleaseApiKeyConcurrent(ctx context.Context, apiKeyID int64) {
+	ReleaseApiKeyConcurrent(ctx, apiKeyID)
+}
+
+func (b *TaskBillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float64) error {
+	return CheckApiKeyQuota(ctx, apiKeyID, preDeductAmount)
+}
+
 // SettleTaskSuccess 任务成功结算（含计费快照）
 // totalTokens/completionTokens: 上游返回的 token 用量
 // ratios: 提交时保存的计费比率（如 video_input 折扣）
@@ -301,6 +318,10 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 // SettleTaskFailed 任务失败退还预扣
 func (b *TaskBillingProviderImpl) SettleTaskFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
 	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
+}
+
+func (b *TaskBillingProviderImpl) IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount float64) {
+	IncrApiKeyQuotaUsed(ctx, apiKeyID, amount)
 }
 
 // AdjustTaskBilling 调整预扣金额

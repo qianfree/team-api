@@ -36,14 +36,19 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	}
 
 	rc := &relay_handler.TaskRelayContext{
-		TenantID:  middleware.GetTenantID(r.Context()),
-		UserID:    middleware.GetUserID(r.Context()),
-		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
-		ProjectID: middleware.GetProjectID(r.Context()),
-		RequestID: r.GetCtxVar("RequestId").String(),
-		Writer:    r.Response.Writer,
-		Scope:     r.GetCtxVar("ApiKeyScope").String(),
-		ClientIP:  r.GetClientIp(),
+		TenantID:        middleware.GetTenantID(r.Context()),
+		UserID:          middleware.GetUserID(r.Context()),
+		ApiKeyID:        middleware.GetApiKeyID(r.Context()),
+		ProjectID:       middleware.GetProjectID(r.Context()),
+		RequestID:       r.GetCtxVar("RequestId").String(),
+		Writer:          r.Response.Writer,
+		Scope:           r.GetCtxVar("ApiKeyScope").String(),
+		ClientIP:        r.GetClientIp(),
+		KeyRateLimitQps: r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitQps).Int(),
+		KeyConcurrency:  r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitConcurrency).Int(),
+		KeyIpWhitelist:  r.GetCtxVar(middleware.CtxKeyApiKeyIpWhitelist).String(),
+		KeyTotalQuota:   r.GetCtxVar(middleware.CtxKeyApiKeyTotalQuota).Float64(),
+		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
 	// 选择渠道
@@ -206,14 +211,19 @@ func HandleMjSubmit(r *ghttp.Request) {
 	}
 
 	rc := &relay_handler.TaskRelayContext{
-		TenantID:  middleware.GetTenantID(r.Context()),
-		UserID:    middleware.GetUserID(r.Context()),
-		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
-		ProjectID: middleware.GetProjectID(r.Context()),
-		RequestID: r.GetCtxVar("RequestId").String(),
-		Writer:    r.Response.Writer,
-		Scope:     r.GetCtxVar("ApiKeyScope").String(),
-		ClientIP:  r.GetClientIp(),
+		TenantID:        middleware.GetTenantID(r.Context()),
+		UserID:          middleware.GetUserID(r.Context()),
+		ApiKeyID:        middleware.GetApiKeyID(r.Context()),
+		ProjectID:       middleware.GetProjectID(r.Context()),
+		RequestID:       r.GetCtxVar("RequestId").String(),
+		Writer:          r.Response.Writer,
+		Scope:           r.GetCtxVar("ApiKeyScope").String(),
+		ClientIP:        r.GetClientIp(),
+		KeyRateLimitQps: r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitQps).Int(),
+		KeyConcurrency:  r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitConcurrency).Int(),
+		KeyIpWhitelist:  r.GetCtxVar(middleware.CtxKeyApiKeyIpWhitelist).String(),
+		KeyTotalQuota:   r.GetCtxVar(middleware.CtxKeyApiKeyTotalQuota).Float64(),
+		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
 	channelMeta, err := selectTaskChannel(r, body)
@@ -256,13 +266,19 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	}
 
 	rc := &relay_handler.TaskRelayContext{
-		TenantID:  middleware.GetTenantID(r.Context()),
-		UserID:    middleware.GetUserID(r.Context()),
-		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
-		RequestID: r.GetCtxVar("RequestId").String(),
-		Writer:    r.Response.Writer,
-		Scope:     r.GetCtxVar("ApiKeyScope").String(),
-		ClientIP:  r.GetClientIp(),
+		TenantID:        middleware.GetTenantID(r.Context()),
+		UserID:          middleware.GetUserID(r.Context()),
+		ApiKeyID:        middleware.GetApiKeyID(r.Context()),
+		ProjectID:       middleware.GetProjectID(r.Context()),
+		RequestID:       r.GetCtxVar("RequestId").String(),
+		Writer:          r.Response.Writer,
+		Scope:           r.GetCtxVar("ApiKeyScope").String(),
+		ClientIP:        r.GetClientIp(),
+		KeyRateLimitQps: r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitQps).Int(),
+		KeyConcurrency:  r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitConcurrency).Int(),
+		KeyIpWhitelist:  r.GetCtxVar(middleware.CtxKeyApiKeyIpWhitelist).String(),
+		KeyTotalQuota:   r.GetCtxVar(middleware.CtxKeyApiKeyTotalQuota).Float64(),
+		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
 	channelMeta, err := selectTaskChannel(r, body)

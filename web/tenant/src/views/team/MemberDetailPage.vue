@@ -673,7 +673,7 @@ onMounted(() => {
 					<input
 						v-model="resetPassword"
 						type="password"
-						placeholder="至少 8 位，含大小写字母和数字"
+						placeholder="至少 8 位，含字母和数字"
 						class="input"
 						@keyup.enter="handleResetPassword"
 					/>

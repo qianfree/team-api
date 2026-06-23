@@ -4,14 +4,14 @@ const values = useFormValues()
 
 function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 	if (direction === 'cny_to_usd') {
-		const usdToCny = parseFloat(values['payment_exchange_rate_usd_to_cny'])
+		const usdToCny = Number(values['payment_exchange_rate_usd_to_cny'])
 		if (usdToCny > 0) {
-			values['payment_exchange_rate_cny_to_usd'] = String(Math.round((1 / usdToCny) * 10000) / 10000)
+			values['payment_exchange_rate_cny_to_usd'] = Math.round((1 / usdToCny) * 10000) / 10000
 		}
 	} else {
-		const cnyToUsd = parseFloat(values['payment_exchange_rate_cny_to_usd'])
+		const cnyToUsd = Number(values['payment_exchange_rate_cny_to_usd'])
 		if (cnyToUsd > 0) {
-			values['payment_exchange_rate_usd_to_cny'] = String(Math.round((1 / cnyToUsd) * 10000) / 10000)
+			values['payment_exchange_rate_usd_to_cny'] = Math.round((1 / cnyToUsd) * 10000) / 10000
 		}
 	}
 }
@@ -31,7 +31,7 @@ function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 				</AFormItem>
 				<AFormItem label="最低充值金额">
 					<AInputNumber
-						:model-value="Number(values['payment_min_topup']) || undefined"
+						:model-value="values['payment_min_topup'] as number"
 						@change="(v: number | undefined) => values['payment_min_topup'] = v"
 						:min="1" style="width: 100%"
 					/>
@@ -49,8 +49,8 @@ function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 				<AFormItem label="CNY → USD" help="1 人民币兑换多少美元">
 					<div style="display: flex; align-items: center; gap: 8px; width: 100%">
 						<AInputNumber
-							:model-value="parseFloat(values['payment_exchange_rate_cny_to_usd'] || '0')"
-							@change="(v: number | undefined) => values['payment_exchange_rate_cny_to_usd'] = String(v ?? 0)"
+							:model-value="values['payment_exchange_rate_cny_to_usd'] as number"
+							@change="(v: number | undefined) => values['payment_exchange_rate_cny_to_usd'] = v ?? 0"
 							:min="0.001" :max="100" :step="0.01" :precision="4"
 							style="flex: 1"
 						/>
@@ -60,8 +60,8 @@ function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 				<AFormItem label="USD → CNY" help="1 美元兑换多少人民币">
 					<div style="display: flex; align-items: center; gap: 8px; width: 100%">
 						<AInputNumber
-							:model-value="parseFloat(values['payment_exchange_rate_usd_to_cny'] || '0')"
-							@change="(v: number | undefined) => values['payment_exchange_rate_usd_to_cny'] = String(v ?? 0)"
+							:model-value="values['payment_exchange_rate_usd_to_cny'] as number"
+							@change="(v: number | undefined) => values['payment_exchange_rate_usd_to_cny'] = v ?? 0"
 							:min="0.001" :max="1000" :step="0.01" :precision="4"
 							style="flex: 1"
 						/>
