@@ -561,7 +561,7 @@ async function handleOAuthUnlink(provider: string) {
 					<input
 						v-model="passwordForm.new_password"
 						type="password"
-						placeholder="至少 8 位字符"
+						placeholder="至少 8 位字符，且至少包含数字和字符"
 						class="input"
 						:class="{ 'input-error': passwordErrors.new_password }"
 					/>

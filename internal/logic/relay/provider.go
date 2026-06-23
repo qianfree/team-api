@@ -42,12 +42,17 @@ func (p *DataProviderImpl) ValidateApiKey(ctx context.Context, rawKey string) (*
 		return nil, err
 	}
 	return &common.ApiKeyInfo{
-		ID:        info.ID,
-		TenantID:  info.TenantID,
-		UserID:    info.UserID,
-		ProjectID: info.ProjectID,
-		Scope:     info.Scope,
-		Status:    info.Status,
+		ID:                   info.ID,
+		TenantID:             info.TenantID,
+		UserID:               info.UserID,
+		ProjectID:            info.ProjectID,
+		Scope:                info.Scope,
+		Status:               info.Status,
+		RateLimitQps:         info.RateLimitQps,
+		RateLimitConcurrency: info.RateLimitConcurrency,
+		IpWhitelist:          info.IpWhitelist,
+		TotalQuota:           info.TotalQuota,
+		UsedQuota:            info.UsedQuota,
 	}, nil
 }
 

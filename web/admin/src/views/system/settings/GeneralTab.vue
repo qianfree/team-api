@@ -40,6 +40,29 @@ const values = useFormValues()
 					@change="(v: string | number | boolean) => values['register_email_verification'] = v"
 				/>
 			</div>
+			<div class="section-grid" style="margin-top: 12px">
+				<AFormItem label="IP每小时注册限制" help="同一IP每小时最多注册次数（0表示不限制）">
+					<AInputNumber
+						:model-value="values['register_ip_limit_per_hour'] as number"
+						@change="(v: number | undefined) => values['register_ip_limit_per_hour'] = v ?? 50"
+						:min="0" :max="200" style="width: 100%"
+					/>
+				</AFormItem>
+				<AFormItem label="IP每天注册限制" help="同一IP每天最多注册次数（0表示不限制）">
+					<AInputNumber
+						:model-value="values['register_ip_limit_per_day'] as number"
+						@change="(v: number | undefined) => values['register_ip_limit_per_day'] = v ?? 500"
+						:min="0" :max="1000" style="width: 100%"
+					/>
+				</AFormItem>
+				<AFormItem label="全局每分钟注册限制" help="全系统每分钟最多注册次数（0表示不限制）" class="field-full">
+					<AInputNumber
+						:model-value="values['register_global_limit_per_minute'] as number"
+						@change="(v: number | undefined) => values['register_global_limit_per_minute'] = v ?? 50"
+						:min="0" :max="200" style="width: 100%"
+					/>
+				</AFormItem>
+			</div>
 		</div>
 
 		<!-- 维护模式 -->

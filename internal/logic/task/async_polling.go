@@ -177,6 +177,7 @@ func handleUnsettledTasks(ctx context.Context) {
 			} else {
 				t.BillingSettled = true
 				t.ActualCost = actualCost
+				taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
 				DefaultAsyncProvider.UpdateTask(ctx, t)
 				g.Log().Infof(ctx, "poll: retried settlement for task %s", t.PublicTaskID)
 			}
@@ -339,6 +340,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {
 				task.BillingSettled = true
+				taskBilling.IncrApiKeyQuotaUsed(ctx, task.ApiKeyID, actualCost)
 				DefaultAsyncProvider.UpdateTask(ctx, task)
 			}
 			billing.CleanupPreDeduct(ctx, task.TenantID, task.RequestID+"_adjust")

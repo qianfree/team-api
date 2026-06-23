@@ -57,6 +57,7 @@ var (
 	ErrKeyExpired         = gerror.NewCode(gcode.New(CodeKeyExpired, MsgKeyExpired, nil), MsgKeyExpired)
 	ErrKeyDisabled        = gerror.NewCode(gcode.New(CodeKeyDisabled, "API Key 已禁用", nil), "API Key 已禁用")
 	ErrTenantSuspended    = gerror.NewCode(gcode.New(CodeTenantSuspended, MsgTenantSuspended, nil), MsgTenantSuspended)
+	ErrProjectNotActive   = gerror.NewCode(gcode.New(CodeProjectNotActive, MsgProjectNotActive, nil), MsgProjectNotActive)
 	ErrChannelUnavailable = gerror.NewCode(gcode.New(CodeChannelUnavailable, MsgChannelUnavailable, nil), MsgChannelUnavailable)
 	ErrModelDisabled      = gerror.NewCode(gcode.New(CodeModelDisabled, MsgModelDisabled, nil), MsgModelDisabled)
 	ErrTotpRequired       = gerror.NewCode(gcode.New(CodeTotpRequired, MsgTotpRequired, nil), MsgTotpRequired)

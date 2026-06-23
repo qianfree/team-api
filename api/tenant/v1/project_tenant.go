@@ -90,12 +90,16 @@ type TenantProjectApiKeyListRes struct {
 }
 
 type TenantProjectApiKeyCreateReq struct {
-	g.Meta     `path:"/projects/{id}/api-keys" method:"post" mime:"json" tags:"租户控制台-项目" summary:"项目密钥创建"`
-	Id         int64       `json:"id" in:"path" v:"required|min:1"`
-	Name       string      `json:"name" v:"required"`
-	Scope      string      `json:"scope" d:"full"`
-	ExpiresAt  *gtime.Time `json:"expires_at"`
-	ModelNames []string    `json:"model_names"`
+	g.Meta               `path:"/projects/{id}/api-keys" method:"post" mime:"json" tags:"租户控制台-项目" summary:"项目密钥创建"`
+	Id                   int64       `json:"id" in:"path" v:"required|min:1"`
+	Name                 string      `json:"name" v:"required"`
+	Scope                string      `json:"scope" d:"full"`
+	ExpiresAt            *gtime.Time `json:"expires_at"`
+	RateLimitQps         *int        `json:"rate_limit_qps"`
+	RateLimitConcurrency *int        `json:"rate_limit_concurrency"`
+	IpWhitelist          *[]string   `json:"ip_whitelist"`
+	TotalQuota           *float64    `json:"total_quota"`
+	ModelNames           []string    `json:"model_names"`
 }
 
 type TenantProjectApiKeyCreateRes struct {

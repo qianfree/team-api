@@ -40,15 +40,15 @@ const values = useFormValues()
 			<div class="section-grid" style="margin-top: 12px">
 				<AFormItem label="自动禁用失败阈值">
 					<AInputNumber
-						:model-value="Number(values['channel_auto_disable_threshold']) || undefined"
-						@change="(v: number | undefined) => values['channel_auto_disable_threshold'] = String(v ?? 5)"
+						:model-value="values['channel_auto_disable_threshold'] as number"
+						@change="(v: number | undefined) => values['channel_auto_disable_threshold'] = v ?? 5"
 						:min="2" :max="50" style="width: 100%"
 					/>
 				</AFormItem>
 				<AFormItem label="健康快照保留天数">
 					<AInputNumber
-						:model-value="Number(values['health_snapshot_retention_days']) || undefined"
-						@change="(v: number | undefined) => values['health_snapshot_retention_days'] = String(v ?? 7)"
+						:model-value="values['health_snapshot_retention_days'] as number"
+						@change="(v: number | undefined) => values['health_snapshot_retention_days'] = v ?? 7"
 						:min="1" :max="90" style="width: 100%"
 					/>
 				</AFormItem>

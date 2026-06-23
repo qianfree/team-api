@@ -109,6 +109,13 @@ var levelNames = [5]string{"", "system", "tenant", "user", "key"}
 // CheckRateLimit 检查 QPS 限流（四级：系统→租户→用户→Key）
 // 使用单个 Lua 脚本在一次 EVAL 中完成所有检查，替代原来的 4 次串行 INCR。
 func CheckRateLimit(ctx context.Context, config RateLimitConfig, tenantID, userID, apiKeyID int64) *RateLimitResult {
+	return CheckRateLimitWithKeyLimit(ctx, config, tenantID, userID, apiKeyID, 0)
+}
+
+// CheckRateLimitWithKeyLimit 检查 QPS 限流，可用 keyQPS 覆盖全局 Key 级默认值。
+func CheckRateLimitWithKeyLimit(ctx context.Context, config RateLimitConfig, tenantID, userID, apiKeyID int64, keyQPS int) *RateLimitResult {
+	config = withKeyQPS(config, keyQPS)
+
 	now := time.Now()
 	windowStart := now.Unix()
 
@@ -167,6 +174,13 @@ func CheckRateLimit(ctx context.Context, config RateLimitConfig, tenantID, userI
 		Remaining:  remaining,
 		ResetAt:    resetAt,
 	}
+}
+
+func withKeyQPS(config RateLimitConfig, keyQPS int) RateLimitConfig {
+	if keyQPS > 0 {
+		config.KeyQPS = keyQPS
+	}
+	return config
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +271,56 @@ func ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, mo
 	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 2,
 		tenantKey, modelKey,
 		300) // EXPIRE 秒数
+}
+
+var acquireApiKeyConcurrentLua = `
+local limit = tonumber(ARGV[1])
+local expire = tonumber(ARGV[2])
+if limit <= 0 then return 1 end
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+    redis.call("EXPIRE", KEYS[1], expire)
+end
+if count > limit then
+    local v = redis.call("DECR", KEYS[1])
+    if v < 0 then
+        redis.call("SET", KEYS[1], 0)
+        redis.call("EXPIRE", KEYS[1], expire)
+    end
+    return 0
+end
+return 1
+`
+
+var releaseApiKeyConcurrentLua = `
+local expire = tonumber(ARGV[1])
+local v = redis.call("DECR", KEYS[1])
+if v < 0 then
+    redis.call("SET", KEYS[1], 0)
+    redis.call("EXPIRE", KEYS[1], expire)
+end
+return 1
+`
+
+// AcquireApiKeyConcurrent 获取 API Key 级并发许可。limit <= 0 表示不限制。
+func AcquireApiKeyConcurrent(ctx context.Context, apiKeyID int64, limit int) bool {
+	if limit <= 0 {
+		return true
+	}
+
+	key := fmt.Sprintf("conc:apikey:%d", apiKeyID)
+	result, err := g.Redis().Do(ctx, "EVAL", acquireApiKeyConcurrentLua, 1, key, limit, 300)
+	if err != nil {
+		return true
+	}
+
+	return result.Int() == 1
+}
+
+// ReleaseApiKeyConcurrent 释放 API Key 级并发许可。
+func ReleaseApiKeyConcurrent(ctx context.Context, apiKeyID int64) {
+	key := fmt.Sprintf("conc:apikey:%d", apiKeyID)
+	g.Redis().Do(ctx, "EVAL", releaseApiKeyConcurrentLua, 1, key, 300)
 }
 
 // getTenantConcurrencyLimit 获取租户并发上限。

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/model/do"
@@ -158,10 +157,9 @@ func PublishAgreementTx(ctx context.Context, tx gdb.TX, agreementID int64, code 
 		Where("code", code).
 		Where("is_current", true).
 		Where("id !=", agreementID).
-		Data(g.Map{
-			"is_current": false,
-			"status":     "archived",
-			"updated_at": gtime.Now(),
+		Data(do.SysAgreements{
+			IsCurrent: false,
+			Status:    "archived",
 		}).
 		Update()
 	if err != nil {
@@ -171,11 +169,10 @@ func PublishAgreementTx(ctx context.Context, tx gdb.TX, agreementID int64, code 
 	// 新版本发布
 	_, err = dao.SysAgreements.Ctx(ctx).
 		Where("id", agreementID).
-		Data(g.Map{
-			"status":       "published",
-			"is_current":   true,
-			"published_at": gtime.Now(),
-			"updated_at":   gtime.Now(),
+		Data(do.SysAgreements{
+			Status:      "published",
+			IsCurrent:   true,
+			PublishedAt: gtime.Now(),
 		}).
 		Update()
 	return err

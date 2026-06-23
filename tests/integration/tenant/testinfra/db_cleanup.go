@@ -95,3 +95,12 @@ func HardDeleteFeedback(t *testing.T, id int64) {
 	t.Helper()
 	g.DB().Exec(context.Background(), "DELETE FROM spt_feedbacks WHERE id = $1", id)
 }
+
+func MarkProjectBudgetExhausted(t *testing.T, projectID int64) {
+	t.Helper()
+	if _, err := g.DB().Exec(context.Background(),
+		"UPDATE tnt_projects SET status = 'budget_exhausted' WHERE id = $1",
+		projectID); err != nil {
+		t.Fatalf("mark project budget exhausted: %v", err)
+	}
+}

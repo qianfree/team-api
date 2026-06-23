@@ -98,12 +98,17 @@ type DataProvider interface {
 
 // ApiKeyInfo API Key 验证结果
 type ApiKeyInfo struct {
-	ID        int64
-	TenantID  int64
-	UserID    int64
-	ProjectID int64  // 项目密钥关联的项目 ID，个人密钥为 0
-	Scope     string // full / chat_only / embeddings_only / images_only / read_only / custom
-	Status    string // active / disabled / expired
+	ID                   int64
+	TenantID             int64
+	UserID               int64
+	ProjectID            int64   // 项目密钥关联的项目 ID，个人密钥为 0
+	Scope                string  // full / chat_only / embeddings_only / images_only / read_only / custom
+	Status               string  // active / disabled / expired
+	RateLimitQps         int     // 0 表示使用全局默认
+	RateLimitConcurrency int     // 0 表示不限制
+	IpWhitelist          string  // 逗号分隔 IP/CIDR 白名单
+	TotalQuota           float64 // 0 表示不限制
+	UsedQuota            float64
 }
 
 // ChannelSelection 渠道选择结果

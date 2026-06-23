@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -33,24 +32,22 @@ func ValidateUsername(username string) error {
 	return nil
 }
 
-// ValidatePassword 校验密码强度：至少8位，包含大写、小写、数字
+// ValidatePassword 校验密码强度：至少8位，且同时包含字母（不区分大小写）和数字
 func ValidatePassword(password string) error {
 	if len(password) < 8 {
 		return gerror.New("密码长度不能少于8位")
 	}
-	var hasUpper, hasLower, hasDigit bool
+	var hasLetter, hasDigit bool
 	for _, c := range password {
 		switch {
-		case unicode.IsUpper(c):
-			hasUpper = true
-		case unicode.IsLower(c):
-			hasLower = true
-		case unicode.IsDigit(c):
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			hasLetter = true
+		case c >= '0' && c <= '9':
 			hasDigit = true
 		}
 	}
-	if !hasUpper || !hasLower || !hasDigit {
-		return gerror.New("密码必须包含大写字母、小写字母和数字")
+	if !hasLetter || !hasDigit {
+		return gerror.New("密码必须同时包含字母和数字")
 	}
 	return nil
 }

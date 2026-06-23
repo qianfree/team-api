@@ -95,21 +95,44 @@ func TestSelect_WeightedRandom(t *testing.T) {
 }
 
 func TestSelect_HealthDegradation(t *testing.T) {
-	// Both same priority, but one has lower health (50-79 range → weight halved)
-	candidates := []ChannelCandidate{
-		{ChannelID: 1, Priority: 10, Weight: 100, HealthScore: 80}, // full weight
-		{ChannelID: 2, Priority: 10, Weight: 100, HealthScore: 60}, // weight halved
+	tests := []struct {
+		name   string
+		input  ChannelCandidate
+		expect int
+	}{
+		{
+			name:   "healthy full weight",
+			input:  ChannelCandidate{Weight: 100, HealthScore: 80},
+			expect: 100,
+		},
+		{
+			name:   "degraded half weight",
+			input:  ChannelCandidate{Weight: 100, HealthScore: 60},
+			expect: 50,
+		},
+		{
+			name:   "poor quarter weight",
+			input:  ChannelCandidate{Weight: 100, HealthScore: 40},
+			expect: 25,
+		},
+		{
+			name:   "zero weight defaults to selectable",
+			input:  ChannelCandidate{Weight: 0, HealthScore: 80},
+			expect: 1,
+		},
+		{
+			name:   "degraded low weight remains selectable",
+			input:  ChannelCandidate{Weight: 1, HealthScore: 40},
+			expect: 1,
+		},
 	}
 
-	counts := map[int64]int{}
-	for i := 0; i < 100; i++ {
-		result := Select(candidates)
-		counts[result.ChannelID]++
-	}
-
-	// Channel 1 should be selected more often due to higher effective weight
-	if counts[1] <= counts[2] {
-		t.Errorf("expected healthy channel to be selected more often: ch1=%d, ch2=%d", counts[1], counts[2])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := effectiveWeight(tt.input); got != tt.expect {
+				t.Fatalf("effectiveWeight() = %d, want %d", got, tt.expect)
+			}
+		})
 	}
 }
 
