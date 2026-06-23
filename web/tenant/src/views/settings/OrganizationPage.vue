@@ -23,7 +23,6 @@ const teamForm = reactive({
 	code: '',
 })
 const teamSaving = ref(false)
-const editingTeamCode = ref(false)
 const codeError = ref('')
 
 const showTransferModal = ref(false)
@@ -119,22 +118,6 @@ async function enableTeam() {
 	try {
 		await request.put('/tenant/organization', { name: teamForm.name, code: teamForm.code })
 		toast.success('团队功能已启用')
-		await fetchOrgInfo()
-		await authStore.refreshOrgInfo()
-	} catch {
-	} finally {
-		teamSaving.value = false
-	}
-}
-
-// 已激活后修改组织代码（RAM 登录账号格式同步变化）
-async function saveTeamCode() {
-	if (!validateTeamCode(teamForm.code)) return
-	teamSaving.value = true
-	try {
-		await request.put('/tenant/organization', { code: teamForm.code })
-		toast.success('组织代码已更新，RAM 登录账号格式已同步变化')
-		editingTeamCode.value = false
 		await fetchOrgInfo()
 		await authStore.refreshOrgInfo()
 	} catch {
@@ -317,7 +300,7 @@ onMounted(() => {
 					</div>
 				</template>
 
-				<!-- 团队模式：管理组织代码 -->
+				<!-- 团队模式：组织代码只读（启用后不可修改） -->
 				<template v-else>
 					<div class="rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex items-start gap-3">
 						<Icon name="checkCircle" size="md" class="text-emerald-600 flex-shrink-0 mt-0.5" />
@@ -328,29 +311,9 @@ onMounted(() => {
 
 					<div>
 						<p class="input-label">组织代码</p>
-						<div v-if="!editingTeamCode" class="flex items-center gap-2">
+						<div class="flex items-center gap-2">
 							<span class="badge badge-gray font-mono">{{ orgInfo.code }}</span>
-							<button
-								@click="editingTeamCode = true; teamForm.code = orgInfo.code"
-								class="text-primary-600 hover:text-primary-500 transition-colors"
-							>
-								<Icon name="edit" size="sm" />
-							</button>
-						</div>
-						<div v-else class="space-y-2">
-							<input
-								v-model="teamForm.code"
-								type="text"
-								class="input"
-								:class="{ 'input-error': codeError }"
-								@input="codeError = ''"
-							/>
-							<p v-if="codeError" class="input-error-text">{{ codeError }}</p>
-							<p class="input-hint">修改后 RAM 登录账号格式将同步变化，请通知成员</p>
-							<div class="flex items-center gap-2">
-								<button class="btn btn-primary btn-sm" :disabled="teamSaving" @click="saveTeamCode">保存</button>
-								<button class="btn btn-secondary btn-sm" @click="editingTeamCode = false; codeError = ''">取消</button>
-							</div>
+							<span class="input-hint">启用后不可修改</span>
 						</div>
 					</div>
 				</template>

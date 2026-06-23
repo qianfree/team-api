@@ -60,15 +60,17 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		return nil, err
 	}
 
-	// Look up level name
-	var levelName *string
+	// Look up level name（单值查询用 Value()，Scan 仅支持 struct/*struct）
+	levelName := ""
 	if tenant.Level > 0 {
-		err = dao.TntTenantLevelConfigs.Ctx(ctx).
+		v, err := dao.TntTenantLevelConfigs.Ctx(ctx).
 			Where("level", tenant.Level).
 			Fields("name").
-			Scan(&levelName)
+			Value()
 		if err != nil {
 			g.Log().Warningf(ctx, "查询租户等级名称失败: %v", err)
+		} else {
+			levelName = v.String()
 		}
 	}
 
@@ -83,12 +85,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		LogoURL:     tenant.LogoUrl,
 		Status:      tenant.Status,
 		Level:       tenant.Level,
-		LevelName: func() string {
-			if levelName != nil {
-				return *levelName
-			}
-			return ""
-		}(),
+		LevelName:   levelName,
 		MaxMembers:  effectiveMaxMembers,
 		MemberCount: int(memberCount),
 		CreatedAt:   tenant.CreatedAt,
@@ -96,7 +93,7 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 }
 
 // UpdateOrgInfo updates tenant organization info.
-// 当传入 code 时：校验唯一性（排除自己），并在首次设置（team_enabled=false）时一并激活团队功能。
+// 组织代码仅可在未启用团队功能时设置一次（设置即激活），启用后不可修改。
 func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq) (*v1.TenantOrgUpdateRes, error) {
 	if err := ownerOnly(ctx); err != nil {
 		return nil, err
@@ -121,12 +118,21 @@ func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq)
 		data.LogoUrl = *req.LogoURL
 	}
 
-	// 处理 code 变更 / 首次激活
+	// 处理组织代码设置：启用团队功能后不可修改（只能设置一次）
 	if newCode != nil {
+		// 已启用团队功能 → 拒绝修改 code
+		current, err := dao.TntTenants.Ctx(ctx).
+			Where("id", tenantID).Fields("team_enabled").Value()
+		if err != nil {
+			return nil, err
+		}
+		if current.Bool() {
+			return nil, common.NewBadRequestError("组织代码启用团队功能后不可修改")
+		}
+		// 首次设置：校验禁用词 + 唯一性（排除自己）
 		if err := common.ValidateForbiddenWords(ctx, *newCode, "组织代码"); err != nil {
 			return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
 		}
-		// 唯一性校验：排除当前租户自己
 		count, err := dao.TntTenants.Ctx(ctx).
 			Where("code", *newCode).
 			WhereNot("id", tenantID).
@@ -138,16 +144,7 @@ func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq)
 			return nil, common.NewBusinessError(consts.CodeTenantCodeExists, consts.MsgTenantCodeExists)
 		}
 		data.Code = *newCode
-
-		// 当前 team_enabled=false 表示首次激活 → 置 true（单向，已激活后改 code 不再变动此字段）
-		current, err := dao.TntTenants.Ctx(ctx).
-			Where("id", tenantID).Fields("team_enabled").Value()
-		if err != nil {
-			return nil, err
-		}
-		if !current.Bool() {
-			data.TeamEnabled = true
-		}
+		data.TeamEnabled = true
 	}
 
 	_, err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(data).Update()
