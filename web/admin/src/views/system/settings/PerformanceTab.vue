@@ -6,7 +6,7 @@ function num(key: string) {
 	return Number(values[key]) || 0
 }
 function set(key: string, v: number | undefined): void {
-	values[key] = String(v ?? 0)
+	values[key] = v ?? 0
 }
 </script>
 

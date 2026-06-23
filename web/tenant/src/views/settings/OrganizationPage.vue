@@ -17,6 +17,15 @@ const nameForm = reactive({
 })
 const nameSaving = ref(false)
 
+// 团队功能激活/管理
+const teamForm = reactive({
+	name: '',
+	code: '',
+})
+const teamSaving = ref(false)
+const codeError = ref('')
+const teamNameError = ref('')
+
 const showTransferModal = ref(false)
 const transferForm = reactive({
 	new_owner_id: '',
@@ -54,6 +63,8 @@ async function fetchOrgInfo() {
 		const res: any = await request.get('/tenant/organization')
 		orgInfo.value = res.data.data
 		nameForm.name = res.data?.data?.name || ''
+		teamForm.name = res.data?.data?.name || ''
+		teamForm.code = res.data?.data?.code || ''
 	} catch {
 		// silent
 	} finally {
@@ -62,15 +73,21 @@ async function fetchOrgInfo() {
 }
 
 async function saveName() {
-	if (!nameForm.name.trim()) return
+	const name = nameForm.name.trim()
+	if (!name) return
+	if (calcOrgNameWidth(name) > ORG_NAME_MAX_WIDTH) {
+		toast.error('组织名称长度超出限制（汉字最多 8 个，字母最多 16 个）')
+		return
+	}
 
 	nameSaving.value = true
 	try {
-		await request.put('/tenant/organization', { name: nameForm.name })
+		await request.put('/tenant/organization', { name })
 		if (orgInfo.value) {
-			orgInfo.value.name = nameForm.name
-			authStore.tenant!.name = nameForm.name
+			orgInfo.value.name = name
 		}
+		// 同步 store 并持久化（refreshOrgInfo 内部 persist），否则刷新页面会回退到旧名称
+		await authStore.refreshOrgInfo()
 		editingName.value = false
 	} catch {
 	} finally {
@@ -81,6 +98,55 @@ async function saveName() {
 function cancelEditName() {
 	nameForm.name = orgInfo.value?.name || ''
 	editingName.value = false
+}
+
+// 组织名称显示宽度：汉字算 2、其余算 1，上限 16（与后端一致：汉字最多 8 个，字母最多 16 个）
+const ORG_NAME_MAX_WIDTH = 16
+function calcOrgNameWidth(val: string): number {
+	let w = 0
+	for (const ch of val) {
+		w += /[一-鿿]/.test(ch) ? 2 : 1
+	}
+	return w
+}
+
+// 组织代码格式校验：3-30 位，小写字母/数字/连字符，字母数字开头结尾
+function validateTeamCode(val: string): boolean {
+	if (!val.trim()) {
+		codeError.value = '请输入组织代码'
+		return false
+	}
+	if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(val) || val.length < 3 || val.length > 30) {
+		codeError.value = '3-30 位，小写字母、数字、连字符，字母数字开头结尾'
+		return false
+	}
+	codeError.value = ''
+	return true
+}
+
+// 启用团队功能：同时设置组织名称和组织代码（首次激活，后端置 team_enabled=true）
+async function enableTeam() {
+	const name = teamForm.name.trim()
+	if (!name) {
+		toast.error('请输入组织名称')
+		return
+	}
+	if (calcOrgNameWidth(name) > ORG_NAME_MAX_WIDTH) {
+		teamNameError.value = '汉字最多 8 个，字母最多 16 个'
+		return
+	}
+	teamNameError.value = ''
+	if (!validateTeamCode(teamForm.code)) return
+	teamSaving.value = true
+	try {
+		await request.put('/tenant/organization', { name: teamForm.name, code: teamForm.code })
+		toast.success('团队功能已启用')
+		await fetchOrgInfo()
+		await authStore.refreshOrgInfo()
+	} catch {
+	} finally {
+		teamSaving.value = false
+	}
 }
 
 async function handleTransferOwnership() {
@@ -206,8 +272,88 @@ onMounted(() => {
 			</div>
 		</div>
 
+		<!-- Team Feature Card（团队功能激活/管理）-->
+		<div v-if="orgInfo" class="card">
+			<div class="card-header">
+				<div class="flex items-center justify-between">
+					<div>
+						<h2 class="font-semibold text-gray-900">团队功能</h2>
+						<p class="text-sm text-gray-500 mt-0.5">启用后可邀请成员、创建 RAM 账号、分配成员额度</p>
+					</div>
+					<span class="badge" :class="orgInfo.team_enabled ? 'badge-success' : 'badge-gray'">
+						{{ orgInfo.team_enabled ? '已启用' : '未启用' }}
+					</span>
+				</div>
+			</div>
+			<div class="card-body space-y-4">
+				<!-- 个人模式：激活表单 -->
+				<template v-if="!orgInfo.team_enabled">
+					<div class="rounded-xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
+						<Icon name="exclamationTriangle" size="md" class="text-amber-600 flex-shrink-0 mt-0.5" />
+						<div class="text-sm text-amber-800">
+							当前为个人模式。设置组织名称和组织代码后即可启用团队功能，成员可通过
+							<code class="code">用户名@组织代码</code> 登录。
+						</div>
+					</div>
+
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div>
+							<label class="input-label">组织名称</label>
+							<input
+								v-model="teamForm.name"
+								type="text"
+								placeholder="例如：某某科技"
+								class="input"
+								:class="{ 'input-error': teamNameError }"
+								@input="teamNameError = ''"
+							/>
+							<p class="input-hint">汉字最多 8 个，字母最多 16 个</p>
+							<p v-if="teamNameError" class="input-error-text">{{ teamNameError }}</p>
+						</div>
+						<div>
+							<label class="input-label">组织代码</label>
+							<input
+								v-model="teamForm.code"
+								type="text"
+								placeholder="例如：my-team"
+								class="input"
+								:class="{ 'input-error': codeError }"
+								@input="codeError = ''"
+							/>
+							<p class="input-hint">3-30 位，小写字母、数字、连字符，字母数字开头结尾</p>
+							<p v-if="codeError" class="input-error-text">{{ codeError }}</p>
+						</div>
+					</div>
+
+					<div class="flex justify-end">
+						<button class="btn btn-primary" :disabled="teamSaving" @click="enableTeam">
+							{{ teamSaving ? '启用中...' : '启用团队功能' }}
+						</button>
+					</div>
+				</template>
+
+				<!-- 团队模式：组织代码只读（启用后不可修改） -->
+				<template v-else>
+					<div class="rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex items-start gap-3">
+						<Icon name="checkCircle" size="md" class="text-emerald-600 flex-shrink-0 mt-0.5" />
+						<div class="text-sm text-emerald-800">
+							团队功能已启用。成员通过 <code class="code">用户名@{{ orgInfo.code }}</code> 登录。
+						</div>
+					</div>
+
+					<div>
+						<p class="input-label">组织代码</p>
+						<div class="flex items-center gap-2">
+							<span class="badge badge-gray font-mono">{{ orgInfo.code }}</span>
+							<span class="input-hint">启用后不可修改</span>
+						</div>
+					</div>
+				</template>
+			</div>
+		</div>
+
 		<!-- Organization Info Card -->
-		<div v-else-if="orgInfo" class="card">
+		<div v-if="orgInfo" class="card">
 			<div class="card-header">
 				<h2 class="font-semibold text-gray-900">组织详情</h2>
 			</div>
@@ -252,10 +398,11 @@ onMounted(() => {
 					<div>
 						<p class="input-label">组织代码</p>
 						<div class="flex items-center gap-2">
-							<span class="badge badge-gray font-mono">
-								{{ orgInfo.code }}
-							</span>
-							<span class="input-hint">只读</span>
+							<span v-if="orgInfo.team_enabled" class="badge badge-gray font-mono">{{ orgInfo.code }}</span>
+							<template v-else>
+								<span class="badge badge-gray">未设置</span>
+								<span class="input-hint">个人模式</span>
+							</template>
 						</div>
 					</div>
 

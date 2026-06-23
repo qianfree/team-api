@@ -27,6 +27,34 @@ type sOpen struct{}
 
 var openMemberModelCache = common.NewCache("member_model", 60*time.Second)
 
+func getProjectApiKeyPrefixes(ctx context.Context, tenantID, projectID int64) ([]string, error) {
+	type keyRow struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	var keys []keyRow
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("project_id", projectID).
+		Fields("key_prefix").
+		Scan(&keys)
+	if err != nil {
+		return nil, err
+	}
+	prefixes := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key.KeyPrefix != "" {
+			prefixes = append(prefixes, key.KeyPrefix)
+		}
+	}
+	return prefixes, nil
+}
+
+func invalidateApiKeyPrefixes(ctx context.Context, prefixes []string) {
+	for _, prefix := range prefixes {
+		relay.InvalidateApiKey(ctx, prefix)
+	}
+}
+
 func New() *sOpen {
 	return &sOpen{}
 }
@@ -471,7 +499,25 @@ func (s *sOpen) OpenKeyDelete(ctx context.Context, req *v1.OpenKeyDeleteReq) (*v
 		return nil, err
 	}
 
-	_, err := dao.ApiKeys.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
+	var key *struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	err := dao.ApiKeys.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Fields("key_prefix").
+		Scan(&key)
+	if err != nil {
+		return nil, err
+	}
+	if key == nil {
+		return nil, errOpen(consts.CodeNotFound, "密钥不存在")
+	}
+
+	_, err = dao.ApiKeys.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Delete()
+	if err == nil {
+		relay.InvalidateApiKey(ctx, key.KeyPrefix)
+	}
 	return nil, err
 }
 
@@ -892,6 +938,11 @@ func (s *sOpen) OpenProjectArchive(ctx context.Context, req *v1.OpenProjectArchi
 		return nil, errOpen(consts.CodeBadRequest, "项目已归档")
 	}
 
+	keyPrefixes, err := getProjectApiKeyPrefixes(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+
 	// 吊销项目下所有 active Key
 	_, err = dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
@@ -904,6 +955,9 @@ func (s *sOpen) OpenProjectArchive(ctx context.Context, req *v1.OpenProjectArchi
 
 	_, err = dao.TntProjects.Ctx(ctx).Where("id", req.Id).
 		Data(do.TntProjects{Status: "archived"}).Update()
+	if err == nil {
+		invalidateApiKeyPrefixes(ctx, keyPrefixes)
+	}
 	return nil, err
 }
 
@@ -1072,15 +1126,19 @@ func (s *sOpen) OpenProjectKeyDelete(ctx context.Context, req *v1.OpenProjectKey
 	}
 
 	// 验证密钥属于该项目和租户
-	count, err := dao.ApiKeys.Ctx(ctx).
+	var key *struct {
+		KeyPrefix string `json:"key_prefix"`
+	}
+	err := dao.ApiKeys.Ctx(ctx).
 		Where("id", req.KeyId).
 		Where("tenant_id", tenantID).
 		Where("project_id", req.Id).
-		Count()
+		Fields("key_prefix").
+		Scan(&key)
 	if err != nil {
 		return nil, err
 	}
-	if count == 0 {
+	if key == nil {
 		return nil, errOpen(consts.CodeNotFound, "密钥不存在")
 	}
 
@@ -1088,6 +1146,9 @@ func (s *sOpen) OpenProjectKeyDelete(ctx context.Context, req *v1.OpenProjectKey
 		Where("id", req.KeyId).
 		Where("tenant_id", tenantID).
 		Data(do.ApiKeys{Status: "revoked"}).Update()
+	if err == nil {
+		relay.InvalidateApiKey(ctx, key.KeyPrefix)
+	}
 	return nil, err
 }
 

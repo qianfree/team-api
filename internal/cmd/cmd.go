@@ -144,6 +144,9 @@ var (
 				task.RunPendingTasks(ctx)
 				return nil
 			})
+			cs.Register("project_budget_check", "*/5 * * * *", func(ctx context.Context) error {
+				return tenant.CheckBudgetExhausted(ctx)
+			})
 			cs.Register("usage_log_cleanup", "0 3 * * *", func(ctx context.Context) error {
 				retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
 				if retentionDays == 0 {
@@ -255,7 +258,7 @@ var (
 
 				// Admin — public endpoints use g.Meta middleware:"-" to skip auth
 				group.Group("/admin", func(g *ghttp.RouterGroup) {
-					g.Middleware(middleware.DemoMode, middleware.AdminAuth, middleware.OperationLog)
+					g.Middleware(middleware.DemoMode, middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
 					g.Bind(adminController.NewV1())
 				})
 

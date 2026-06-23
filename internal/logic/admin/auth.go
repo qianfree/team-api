@@ -3,10 +3,12 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -55,10 +57,56 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
 	}
 
+	// Check account lockout
+	if user.LockedUntil != nil && time.Now().Before(user.LockedUntil.Time) {
+		remaining := time.Until(user.LockedUntil.Time).Minutes()
+		_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
+		return nil, common.NewBusinessError(consts.CodeAccountLocked,
+			fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+	}
+
 	// Verify password
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
 		_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "密码错误")
+
+		// 原子递增失败次数
+		updateData := do.SysAdminUsers{FailedAttempts: gdb.Raw("failed_attempts + 1")}
+		failedAttempts := user.FailedAttempts + 1
+
+		if failedAttempts >= 5 {
+			lockedUntil := time.Now().Add(30 * time.Minute)
+			updateData.LockedUntil = gtime.NewFromTime(lockedUntil)
+			_, err := dao.SysAdminUsers.Ctx(ctx).
+				Where("id", user.Id).
+				Data(updateData).Update()
+			if err != nil {
+				g.Log().Errorf(ctx, "更新管理员账号锁定状态失败: %v", err)
+			}
+			return nil, common.NewBusinessError(consts.CodeAccountLocked,
+				"连续 5 次密码错误，账号已锁定 30 分钟")
+		}
+
+		_, err := dao.SysAdminUsers.Ctx(ctx).
+			Where("id", user.Id).
+			Data(updateData).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "更新管理员登录失败次数失败: %v", err)
+		}
+
 		return nil, common.NewBusinessError(consts.CodeInvalidCredentials, consts.MsgInvalidCredentials)
+	}
+
+	// Reset failed attempts on successful login
+	if user.FailedAttempts > 0 {
+		_, err := dao.SysAdminUsers.Ctx(ctx).
+			Where("id", user.Id).
+			Data(do.SysAdminUsers{
+				FailedAttempts: 0,
+				LockedUntil:    nil,
+			}).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "重置管理员登录失败次数失败: %v", err)
+		}
 	}
 
 	// Check if 2FA is enabled

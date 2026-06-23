@@ -55,6 +55,10 @@ func ApiKeyAuth(r *ghttp.Request) {
 			code = http.StatusForbidden
 			errType = "permission_error"
 			msg = "tenant is suspended"
+		case consts.ErrProjectNotActive:
+			code = http.StatusForbidden
+			errType = "permission_error"
+			msg = "project is not active"
 		}
 
 		writeRelayAuthError(r, code, errType, msg)
@@ -67,6 +71,11 @@ func ApiKeyAuth(r *ghttp.Request) {
 	r.SetCtxVar(CtxKeyApiKeyID, apiKeyInfo.ID)
 	r.SetCtxVar(CtxKeyProjectID, apiKeyInfo.ProjectID)
 	r.SetCtxVar("ApiKeyScope", apiKeyInfo.Scope)
+	r.SetCtxVar(CtxKeyApiKeyRateLimitQps, apiKeyInfo.RateLimitQps)
+	r.SetCtxVar(CtxKeyApiKeyRateLimitConcurrency, apiKeyInfo.RateLimitConcurrency)
+	r.SetCtxVar(CtxKeyApiKeyIpWhitelist, apiKeyInfo.IpWhitelist)
+	r.SetCtxVar(CtxKeyApiKeyTotalQuota, apiKeyInfo.TotalQuota)
+	r.SetCtxVar(CtxKeyApiKeyUsedQuota, apiKeyInfo.UsedQuota)
 
 	r.Middleware.Next()
 }

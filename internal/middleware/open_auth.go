@@ -43,6 +43,13 @@ const (
 
 var openAppCache = lcommon.NewCache("open_app", 60*time.Second)
 
+// InvalidateOpenAppCache removes the cached app metadata used by OpenPlatformAuth.
+func InvalidateOpenAppCache(ctx context.Context, appID string) {
+	if appID != "" {
+		openAppCache.Delete(ctx, appID)
+	}
+}
+
 // OpenPlatformAuth is the HMAC-SHA256 authentication middleware for /open/* endpoints.
 func OpenPlatformAuth(r *ghttp.Request) {
 	appID := r.GetHeader(openPlatformHeaderAppID)
@@ -161,14 +168,34 @@ func checkOpenAppIPWhitelist(r *ghttp.Request, app entity.OpnApps) error {
 
 func getOpenAppSecret(ctx context.Context, appID int64) (string, error) {
 	val, err := g.Redis().Do(ctx, "GET", fmt.Sprintf("open:secret:%d", appID))
+	encKey := getEncKey(ctx)
+	if err == nil && !val.IsNil() && !val.IsEmpty() {
+		return crypto.DecryptString(encKey, val.String())
+	}
+	if err != nil {
+		g.Log().Warningf(ctx, "[OpenAuth] Redis secret lookup failed app=%d: %v", appID, err)
+	}
+
+	type secretRow struct {
+		EncryptedSecret string `json:"encrypted_secret"`
+	}
+	var row *secretRow
+	err = dao.OpnApps.Ctx(ctx).
+		Where("id", appID).
+		Fields("encrypted_secret").
+		Scan(&row)
 	if err != nil {
 		return "", err
 	}
-	if val.IsNil() || val.IsEmpty() {
-		return "", fmt.Errorf("secret not found")
+	if row == nil || row.EncryptedSecret == "" {
+		return "", fmt.Errorf("secret not persisted; reset app secret required")
 	}
-	encKey := getEncKey(ctx)
-	return crypto.DecryptString(encKey, val.String())
+	secret, err := crypto.DecryptString(encKey, row.EncryptedSecret)
+	if err != nil {
+		return "", err
+	}
+	_, _ = g.Redis().Do(ctx, "SET", fmt.Sprintf("open:secret:%d", appID), row.EncryptedSecret, "EX", 30*86400)
+	return secret, nil
 }
 
 func getEncKey(ctx context.Context) []byte {

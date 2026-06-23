@@ -24,12 +24,18 @@ var websocketUpgrader = websocket.Upgrader{
 
 // RealtimeContext Realtime 请求上下文
 type RealtimeContext struct {
-	TenantID  int64
-	UserID    int64
-	ApiKeyID  int64
-	ProjectID int64 // 通过 API Key 关联的项目 ID
-	RequestID string
-	ClientIP  string
+	TenantID        int64
+	UserID          int64
+	ApiKeyID        int64
+	ProjectID       int64 // 通过 API Key 关联的项目 ID
+	RequestID       string
+	ClientIP        string
+	Scope           string
+	KeyRateLimitQps int
+	KeyConcurrency  int
+	KeyIpWhitelist  string
+	KeyTotalQuota   float64
+	KeyUsedQuota    float64
 }
 
 // HandleRealtime 处理 /v1/realtime WebSocket 请求
@@ -65,6 +71,31 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		return nil, nil, fmt.Errorf("model not found in first websocket message")
 	}
 
+	billingResult := &BillingResult{}
+	if billing != nil {
+		if !billing.CheckScope(rc.Scope, "realtime") {
+			return nil, billingResult, constant.NewAuthError("API key scope denied")
+		}
+		if !billing.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+			return nil, billingResult, constant.NewAuthError("IP address is not allowed")
+		}
+		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
+		if !allowed {
+			return nil, billingResult, &RelayErrorWithRateLimit{
+				StatusCode: 429,
+				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
+				LimitLevel: limitLevel,
+				Remaining:  remaining,
+				ResetAt:    resetAt,
+			}
+		}
+		billingResult.RateLimitInfo = &common.RateLimitInfo{
+			Limit:     limit,
+			Remaining: remaining,
+			ResetAt:   resetAt,
+		}
+	}
+
 	// 3. 验证模型
 	_, _, err = provider.GetModelMapping(ctx, modelName)
 	if err != nil {
@@ -76,6 +107,11 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		return nil, nil, err
 	} else if !allowed {
 		return nil, nil, constant.NewAuthError("model not allowed for this member")
+	}
+	if allowed, err := provider.CheckApiKeyModelAccess(ctx, rc.ApiKeyID, modelName); err != nil {
+		return nil, nil, err
+	} else if !allowed {
+		return nil, nil, constant.NewAuthError("model not allowed for this API key")
 	}
 
 	// 4. 渠道选择
@@ -121,14 +157,35 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	// 7. 预扣费用（Realtime 使用 0 input tokens 作为初始估算）
 	var preDeductAmount float64
 	if billing != nil {
+		if !billing.AcquireConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName) {
+			return nil, billingResult, constant.NewRateLimitError("concurrent request limit exceeded")
+		}
+		defer billing.ReleaseConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName)
+
+		if !billing.AcquireApiKeyConcurrent(ctx, rc.ApiKeyID, rc.KeyConcurrency) {
+			return nil, billingResult, constant.NewRateLimitError("API key concurrent request limit exceeded")
+		}
+		defer billing.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
+
+		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, 0); err != nil {
+			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
+		}
+		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, 0); err != nil {
+			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+		}
+
 		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 0, 0, false, rc.RequestID)
 		if billErr != nil {
 			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
 		}
 		preDeductAmount = amt
+		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+		}
 	}
 
-	billingResult := &BillingResult{PreDeductAmount: preDeductAmount}
+	billingResult.PreDeductAmount = preDeductAmount
 
 	// 8. 建立 Realtime 代理
 	proxy := openai.NewRealtimeProxy(info)
@@ -158,11 +215,19 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			if streamUsage == nil {
 				streamUsage = &common.Usage{}
 			}
-			_ = billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID)
+			if settleResult != nil && settleResult.ActualCost > 0 {
+				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
+			}
 		} else if usage != nil {
-			_ = billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID)
+			if settleResult != nil && settleResult.ActualCost > 0 {
+				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
+			}
 		}
 	}
 

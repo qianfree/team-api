@@ -22,7 +22,7 @@ const score = computed(() => {
 	if (pw.length >= 8) s++
 	if (pw.length >= 12) s++
 	if (pw.length >= 16) s++
-	if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++
+	if (/[a-zA-Z]/.test(pw)) s++
 	if (/\d/.test(pw)) s++
 	if (/[^a-zA-Z0-9]/.test(pw)) s++
 

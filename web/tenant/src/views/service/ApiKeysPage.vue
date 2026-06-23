@@ -22,6 +22,7 @@ interface ApiKey {
 	expires_at: string | null
 	rate_limit_qps: number | null
 	rate_limit_concurrency: number | null
+	ip_whitelist: string[] | null
 	total_quota: number | null
 	used_quota: number | null
 	created_at: string
@@ -104,10 +105,24 @@ function openEditModal(key: ApiKey) {
 		name: key.name,
 		expires_at: key.expires_at,
 		rate_limit_qps: key.rate_limit_qps,
+		rate_limit_concurrency: key.rate_limit_concurrency,
+		ip_whitelist: key.ip_whitelist || [],
 		total_quota: key.total_quota,
 		used_quota: key.used_quota,
 	}
 	showEditModal.value = true
+}
+
+function formatLimit(value: number | null | undefined, suffix = ''): string {
+	if (value === null || value === undefined) return '默认'
+	if (value <= 0) return '不限'
+	return `${value}${suffix}`
+}
+
+function formatQuota(key: ApiKey): string {
+	const used = key.used_quota || 0
+	if (!key.total_quota || key.total_quota <= 0) return `$${used.toFixed(2)} / 不限`
+	return `$${used.toFixed(2)} / $${key.total_quota.toFixed(2)}`
 }
 
 async function disableKey(keyId: number) {
@@ -171,6 +186,7 @@ onMounted(() => {
 							<th>名称</th>
 							<th>Key 前缀</th>
 							<th>权限</th>
+							<th>限制</th>
 							<th>状态</th>
 							<th>过期时间</th>
 							<th>创建时间</th>
@@ -190,6 +206,14 @@ onMounted(() => {
 									</button>
 								</template>
 								<span v-else class="badge badge-gray">不限模型</span>
+							</td>
+							<td>
+								<div class="space-y-1 text-xs text-gray-500">
+									<div>QPS：{{ formatLimit(key.rate_limit_qps) }}</div>
+									<div>并发：{{ formatLimit(key.rate_limit_concurrency) }}</div>
+									<div>额度：{{ formatQuota(key) }}</div>
+									<div>IP：{{ key.ip_whitelist?.length ? key.ip_whitelist.length + ' 条' : '不限' }}</div>
+								</div>
 							</td>
 							<td>
 								<span class="badge" :class="statusBadgeClass[key.status] || 'badge-gray'">

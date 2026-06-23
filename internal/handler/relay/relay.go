@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 	relay_common "github.com/qianfree/team-api/relay/common"
+	relay_constant "github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/handler"
 )
 
@@ -323,6 +324,15 @@ func HandleGeminiGenerateContent(r *ghttp.Request) {
 func HandleModels(r *ghttp.Request) {
 	rc := buildRelayContext(r) // 获取 TenantID
 
+	if !billingProvider.CheckScope(rc.Scope, "") {
+		handler.WriteRelayError(r.Response.Writer, relay_constant.NewAuthError("API key scope denied"))
+		return
+	}
+	if !billingProvider.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+		handler.WriteRelayError(r.Response.Writer, relay_constant.NewAuthError("IP address is not allowed"))
+		return
+	}
+
 	resp, err := handler.HandleModels(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, dataProvider)
 	if err != nil {
 		r.Response.WriteJsonExit(g.Map{
@@ -338,6 +348,15 @@ func HandleModels(r *ghttp.Request) {
 func HandleModelDetail(r *ghttp.Request) {
 	rc := buildRelayContext(r)
 	modelName := r.Get("model_id").String()
+
+	if !billingProvider.CheckScope(rc.Scope, "") {
+		handler.WriteRelayError(r.Response.Writer, relay_constant.NewAuthError("API key scope denied"))
+		return
+	}
+	if !billingProvider.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+		handler.WriteRelayError(r.Response.Writer, relay_constant.NewAuthError("IP address is not allowed"))
+		return
+	}
 
 	if modelName == "" {
 		r.Response.WriteJsonExit(g.Map{
@@ -377,6 +396,15 @@ func HandleModelDetail(r *ghttp.Request) {
 func HandleGeminiModels(r *ghttp.Request) {
 	rc := buildRelayContext(r)
 
+	if !billingProvider.CheckScope(rc.Scope, "") {
+		handler.WriteGeminiRelayError(r.Response.Writer, relay_constant.NewAuthError("API key scope denied"))
+		return
+	}
+	if !billingProvider.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+		handler.WriteGeminiRelayError(r.Response.Writer, relay_constant.NewAuthError("IP address is not allowed"))
+		return
+	}
+
 	resp, err := handler.HandleGeminiModels(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, dataProvider)
 	if err != nil {
 		handler.WriteGeminiRelayError(r.Response.Writer, err)
@@ -390,6 +418,15 @@ func HandleGeminiModels(r *ghttp.Request) {
 func HandleGeminiModelDetail(r *ghttp.Request) {
 	rc := buildRelayContext(r)
 	modelName := r.Get("model").String()
+
+	if !billingProvider.CheckScope(rc.Scope, "") {
+		handler.WriteGeminiRelayError(r.Response.Writer, relay_constant.NewAuthError("API key scope denied"))
+		return
+	}
+	if !billingProvider.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+		handler.WriteGeminiRelayError(r.Response.Writer, relay_constant.NewAuthError("IP address is not allowed"))
+		return
+	}
 
 	if modelName == "" {
 		r.Response.WriteHeader(400)
@@ -411,14 +448,19 @@ func HandleGeminiModelDetail(r *ghttp.Request) {
 // buildRelayContext 从 GoFrame 请求中构建 relay 上下文
 func buildRelayContext(r *ghttp.Request) *handler.RelayContext {
 	return &handler.RelayContext{
-		TenantID:  middleware.GetTenantID(r.Context()),
-		UserID:    middleware.GetUserID(r.Context()),
-		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
-		ProjectID: middleware.GetProjectID(r.Context()),
-		RequestID: r.GetCtxVar("RequestId").String(),
-		Writer:    r.Response.Writer,
-		Scope:     r.GetCtxVar("ApiKeyScope").String(),
-		ClientIP:  r.GetClientIp(),
+		TenantID:        middleware.GetTenantID(r.Context()),
+		UserID:          middleware.GetUserID(r.Context()),
+		ApiKeyID:        middleware.GetApiKeyID(r.Context()),
+		ProjectID:       middleware.GetProjectID(r.Context()),
+		RequestID:       r.GetCtxVar("RequestId").String(),
+		Writer:          r.Response.Writer,
+		Scope:           r.GetCtxVar("ApiKeyScope").String(),
+		ClientIP:        r.GetClientIp(),
+		KeyRateLimitQps: r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitQps).Int(),
+		KeyConcurrency:  r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitConcurrency).Int(),
+		KeyIpWhitelist:  r.GetCtxVar(middleware.CtxKeyApiKeyIpWhitelist).String(),
+		KeyTotalQuota:   r.GetCtxVar(middleware.CtxKeyApiKeyTotalQuota).Float64(),
+		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 }
 
@@ -645,12 +687,18 @@ func HandleRerank(r *ghttp.Request) {
 // HandleRealtime 处理 /v1/realtime（WebSocket）
 func HandleRealtime(r *ghttp.Request) {
 	rc := &handler.RealtimeContext{
-		TenantID:  middleware.GetTenantID(r.Context()),
-		UserID:    middleware.GetUserID(r.Context()),
-		ApiKeyID:  middleware.GetApiKeyID(r.Context()),
-		ProjectID: middleware.GetProjectID(r.Context()),
-		RequestID: r.GetCtxVar("RequestId").String(),
-		ClientIP:  r.GetClientIp(),
+		TenantID:        middleware.GetTenantID(r.Context()),
+		UserID:          middleware.GetUserID(r.Context()),
+		ApiKeyID:        middleware.GetApiKeyID(r.Context()),
+		ProjectID:       middleware.GetProjectID(r.Context()),
+		RequestID:       r.GetCtxVar("RequestId").String(),
+		ClientIP:        r.GetClientIp(),
+		Scope:           r.GetCtxVar("ApiKeyScope").String(),
+		KeyRateLimitQps: r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitQps).Int(),
+		KeyConcurrency:  r.GetCtxVar(middleware.CtxKeyApiKeyRateLimitConcurrency).Int(),
+		KeyIpWhitelist:  r.GetCtxVar(middleware.CtxKeyApiKeyIpWhitelist).String(),
+		KeyTotalQuota:   r.GetCtxVar(middleware.CtxKeyApiKeyTotalQuota).Float64(),
+		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
 	_, _, err := handler.HandleRealtime(r.Response.Writer, r.Request, rc, dataProvider, billingProvider)

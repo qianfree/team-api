@@ -73,10 +73,45 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		},
 	},
 	{
+		Name:  "operation",
+		Label: "内容运营",
+		Permissions: []string{
+			"operation:view", "operation:edit",
+		},
+	},
+	{
+		Name:  "support",
+		Label: "客户支持",
+		Permissions: []string{
+			"support:view", "support:reply", "support:edit",
+		},
+	},
+	{
+		Name:  "monitor",
+		Label: "监控告警",
+		Permissions: []string{
+			"monitor:view", "monitor:edit",
+		},
+	},
+	{
 		Name:  "system",
 		Label: "系统设置",
 		Permissions: []string{
-			"system:view", "system:edit",
+			"system:view", "system:edit", "system:update", "system:plugin",
+		},
+	},
+	{
+		Name:  "dashboard",
+		Label: "仪表盘",
+		Permissions: []string{
+			"dashboard:view",
+		},
+	},
+	{
+		Name:  "task",
+		Label: "任务管理",
+		Permissions: []string{
+			"task:view", "task:edit",
 		},
 	},
 	{
@@ -104,7 +139,7 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Name:  "redemption",
 		Label: "兑换码管理",
 		Permissions: []string{
-			"redemption:view", "redemption:create",
+			"redemption:view", "redemption:create", "redemption:edit",
 		},
 	},
 }

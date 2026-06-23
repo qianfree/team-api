@@ -15,6 +15,7 @@ import (
 
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -33,6 +34,11 @@ type RelayContext struct {
 	Writer          http.ResponseWriter
 	Scope           string                  // API Key scope
 	ClientIP        string                  // 客户端 IP
+	KeyRateLimitQps int                     // API Key QPS 覆盖值，0 表示使用全局默认
+	KeyConcurrency  int                     // API Key 并发限制，0 表示不限制
+	KeyIpWhitelist  string                  // API Key IP 白名单
+	KeyTotalQuota   float64                 // API Key 总额度，0 表示不限制
+	KeyUsedQuota    float64                 // API Key 已用额度（仅展示/审计，额度检查会鲜读 DB）
 	ForwardingTrace *common.ForwardingTrace // 转发路径追踪（仅管理员可见）
 }
 
@@ -77,6 +83,14 @@ func validateRelayRequest(
 	}
 
 	relayModeStr := relayModeString(relayMode)
+	if billing != nil {
+		if !billing.CheckScope(rc.Scope, relayModeStr) {
+			return nil, constant.NewAuthError("API key scope denied")
+		}
+		if !billing.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+			return nil, constant.NewAuthError("IP address is not allowed")
+		}
+	}
 
 	// 2. 解析请求体获取模型名
 	var rawRequest map[string]json.RawMessage
@@ -145,7 +159,7 @@ func validateRelayRequest(
 	// 5. QPS 限流检查
 	billingResult := &BillingResult{Deprecation: depInfo}
 	if billing != nil {
-		allowed, limitLevel, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID)
+		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
 		if !allowed {
 			return nil, &RelayErrorWithRateLimit{
 				StatusCode: 429,
@@ -156,7 +170,7 @@ func validateRelayRequest(
 			}
 		}
 		billingResult.RateLimitInfo = &common.RateLimitInfo{
-			Limit:     0, // 由 middleware 设置具体值
+			Limit:     limit,
 			Remaining: remaining,
 			ResetAt:   resetAt,
 		}
@@ -231,6 +245,13 @@ func settleSuccessfulRequest(
 	// 16.5 累加成员已用额度
 	if billing != nil && settleResult != nil && settleResult.ActualCost > 0 {
 		billing.IncrMemberQuotaUsed(postCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+		billing.IncrApiKeyQuotaUsed(postCtx, rc.ApiKeyID, settleResult.ActualCost)
+	}
+	if settleResult != nil && settleResult.ActualCost > 0 && rc.ProjectID > 0 {
+		if err := tenantlogic.CheckProjectBudget(postCtx, rc.TenantID, rc.ProjectID); err != nil {
+			g.Log().Warningf(postCtx, "[RelayHandler] Check project budget failed: tenant=%d project=%d request=%s err=%v",
+				rc.TenantID, rc.ProjectID, rc.RequestID, err)
+		}
 	}
 
 	// 17. 更新健康度 + 记录用量 + 更新亲和性
@@ -339,6 +360,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			return nil, nil, constant.NewRateLimitError("concurrent request limit exceeded")
 		}
 		defer billing.ReleaseConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.modelName)
+
+		if !billing.AcquireApiKeyConcurrent(ctx, rc.ApiKeyID, rc.KeyConcurrency) {
+			return nil, nil, constant.NewRateLimitError("API key concurrent request limit exceeded")
+		}
+		defer billing.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
 	}
 
 	monitor.RegisterRequest(&monitor.TrackedRequest{
@@ -357,6 +383,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, 0); err != nil {
 			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
 		}
+		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, 0); err != nil {
+			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
+		}
 	}
 
 	var preDeductAmount float64
@@ -367,6 +396,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 		preDeductAmount = amt
 		v.billingResult.PreDeductAmount = amt
+		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
+		}
 	}
 
 	// Phase 3: 带重试的渠道调度与请求执行
@@ -469,8 +502,21 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					streamUsage = &common.Usage{}
 				}
 				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
+					if err != nil {
+						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
+							rc.TenantID, rc.ProjectID, rc.RequestID, err)
+					} else if rc.ProjectID > 0 {
+						if err := tenantlogic.CheckProjectBudget(settleCtx, rc.TenantID, rc.ProjectID); err != nil {
+							g.Log().Warningf(settleCtx, "[RelayHandler] Check project budget failed: tenant=%d project=%d request=%s err=%v",
+								rc.TenantID, rc.ProjectID, rc.RequestID, err)
+						}
+					}
+					if settleResult != nil && settleResult.ActualCost > 0 {
+						billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
+					}
 				}
 				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
