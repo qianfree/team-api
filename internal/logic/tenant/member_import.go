@@ -35,6 +35,9 @@ type ImportResult struct {
 
 // MemberImport parses CSV content, validates, creates an import record.
 func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error) {
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	creatorID := middleware.GetUserID(ctx)
 

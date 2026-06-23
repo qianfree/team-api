@@ -81,6 +81,11 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		return nil, common.NewBusinessError(consts.CodeInvalidUsername, err.Error())
 	}
 
+	tenantName := strings.TrimSpace(req.TenantName)
+	if err := common.ValidateTenantName(tenantName); err != nil {
+		return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+	}
+
 	count, err := dao.TntTenants.Ctx(ctx).
 		Where("code", tenantCode).Count()
 	if err != nil {
@@ -122,7 +127,7 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		tenantResult, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{
-			Name:           strings.TrimSpace(req.TenantName),
+			Name:           tenantName,
 			Code:           tenantCode,
 			MaxMembers:     maxMembersVal,
 			MaxConcurrency: maxConcurrencyVal,
@@ -470,7 +475,11 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 	data := do.TntTenants{}
 
 	if req.Name != "" {
-		data.Name = req.Name
+		tenantName := strings.TrimSpace(req.Name)
+		if err := common.ValidateTenantName(tenantName); err != nil {
+			return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+		}
+		data.Name = tenantName
 	}
 	if req.MaxMembers != nil {
 		if *req.MaxMembers < 1 {

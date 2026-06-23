@@ -36,16 +36,40 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	username := strings.TrimSpace(req.Username)
 	tenantName := strings.TrimSpace(req.TenantName)
 
-	// 先校验禁用词：命中禁用词时优先返回更准确的提示，
+	// 简化注册：组织信息可选，留空时后端自动生成（个人模式，team_enabled=false）
+	userProvidedCode := tenantCode != ""
+	userProvidedName := tenantName != ""
+
+	// 先校验用户名禁用词：命中禁用词时优先返回更准确的提示，
 	// 避免被用户名格式校验的「不能包含特殊字符或中文」遮盖真实原因
 	if err := common.ValidateForbiddenWords(ctx, username, "用户名"); err != nil {
 		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
 	}
-	if err := common.ValidateForbiddenWords(ctx, tenantName, "组织名称"); err != nil {
-		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+
+	// 组织代码：留空则自动生成（org-<base36>）；用户显式传入才校验禁用词
+	if !userProvidedCode {
+		generated, err := generateUniqueTenantCode(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tenantCode = generated
+	} else {
+		if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
+			return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+		}
 	}
-	if err := common.ValidateForbiddenWords(ctx, tenantCode, "组织代码"); err != nil {
-		return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+
+	// 组织名称：留空则用用户名派生默认值；用户显式传入才校验禁用词
+	if !userProvidedName {
+		// 用户名较长时“xxx 的组织”可能超出组织名称显示宽度上限，按宽度截断兜底
+		tenantName = common.TruncateToDisplayWidth(fmt.Sprintf("%s 的组织", username), common.TenantNameMaxDisplayWidth)
+	} else {
+		if err := common.ValidateTenantName(tenantName); err != nil {
+			return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+		}
+		if err := common.ValidateForbiddenWords(ctx, tenantName, "组织名称"); err != nil {
+			return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+		}
 	}
 
 	// Validate username format
@@ -84,14 +108,16 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		}
 	}
 
-	// Check tenant code uniqueness
-	count, err := dao.TntTenants.Ctx(ctx).
-		Where("code", tenantCode).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count > 0 {
-		return nil, common.NewBusinessError(consts.CodeTenantCodeExists, consts.MsgTenantCodeExists)
+	// Check tenant code uniqueness（仅用户显式传入时；自动生成的已在生成时查重）
+	if userProvidedCode {
+		count, err := dao.TntTenants.Ctx(ctx).
+			Where("code", tenantCode).Count()
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, common.NewBusinessError(consts.CodeTenantCodeExists, consts.MsgTenantCodeExists)
+		}
 	}
 
 	// Validate password policy
@@ -109,12 +135,13 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Create tenant
 		tenantResult, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{
-			Name: strings.TrimSpace(req.TenantName),
+			Name: tenantName,
 			Code: tenantCode,
 			// MaxMembers/MaxConcurrency: nil = 跟随等级配置
 			// Level 1 defaults will apply
-			Level:    1,
-			Settings: "{}",
+			Level:       1,
+			Settings:    "{}",
+			TeamEnabled: false, // 新注册默认个人模式，设置自定义 code 后才激活团队功能
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create tenant")
@@ -214,8 +241,9 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		ExpiresAt:    tokenPair.ExpiresAt.Format(time.RFC3339),
 	}
 	res.Tenant.ID = tenantID
-	res.Tenant.Name = strings.TrimSpace(req.TenantName)
+	res.Tenant.Name = tenantName
 	res.Tenant.Code = tenantCode
+	res.Tenant.TeamEnabled = false
 	res.User.ID = ownerUserID
 	res.User.Username = username
 	res.User.Role = "owner"
@@ -408,6 +436,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 		res.Tenant.ID = tenant.Id
 		res.Tenant.Name = tenant.Name
 		res.Tenant.Code = tenant.Code
+		res.Tenant.TeamEnabled = tenant.TeamEnabled
 		res.User.ID = user.Id
 		res.User.Username = user.Username
 		res.User.Role = user.Role
@@ -455,6 +484,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	res.Tenant.ID = tenant.Id
 	res.Tenant.Name = tenant.Name
 	res.Tenant.Code = tenant.Code
+	res.Tenant.TeamEnabled = tenant.TeamEnabled
 	res.User.ID = user.Id
 	res.User.Username = user.Username
 	res.User.Role = user.Role

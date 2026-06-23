@@ -100,3 +100,54 @@ func ValidateForbiddenWords(ctx context.Context, value, fieldName string) error 
 	}
 	return nil
 }
+
+// TenantNameMaxDisplayWidth 组织名称最大显示宽度。
+// 采用“显示宽度”模型：1 个汉字算 2、其余字符算 1，总宽度上限 16。
+// 等价于“汉字最多 8 个（8×2=16）”或“字母最多 16 个（16×1=16）”，中英文混排按比例折算。
+const TenantNameMaxDisplayWidth = 16
+
+// displayWidth 计算“显示宽度”：CJK 汉字（unicode.Han）每个算 2，其余字符每个算 1。
+// 用于组织名称等中英文混排场景的长度衡量，使 8 个汉字与 16 个字母视觉等宽。
+func displayWidth(s string) int {
+	width := 0
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			width += 2
+		} else {
+			width += 1
+		}
+	}
+	return width
+}
+
+// ValidateTenantName 校验组织名称：显示宽度需在 2~TenantNameMaxDisplayWidth 之间。
+// 配合 API 层使用，规则为“汉字最多 8 个、字母最多 16 个”。
+func ValidateTenantName(name string) error {
+	w := displayWidth(name)
+	if w < 2 {
+		return gerror.New("组织名称长度不能少于 2 个字符")
+	}
+	if w > TenantNameMaxDisplayWidth {
+		return gerror.New(consts.MsgInvalidTenantName)
+	}
+	return nil
+}
+
+// TruncateToDisplayWidth 按显示宽度截断字符串，使结果宽度不超过 max。
+// 用于自动生成的组织名称兜底（如“xxx 的组织”），避免用户名过长导致存入超长数据。
+func TruncateToDisplayWidth(s string, max int) string {
+	width := 0
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		rw := 1
+		if unicode.Is(unicode.Han, r) {
+			rw = 2
+		}
+		if width+rw > max {
+			break
+		}
+		width += rw
+		out = append(out, r)
+	}
+	return string(out)
+}

@@ -7,6 +7,7 @@ export interface TenantInfo {
   id: number
   name: string
   code: string
+  team_enabled: boolean
 }
 
 export interface TenantUser {
@@ -33,14 +34,15 @@ interface AuthResponse {
 }
 
 export interface RegisterPayload {
-  tenant_name: string
-  tenant_code: string
   username: string
   password: string
   email: string
   code?: string
   captcha_key?: string
   captcha_x?: number
+  // 组织信息可选（留空由后端自动生成），保留以兼容显式传入场景
+  tenant_name?: string
+  tenant_code?: string
 }
 
 const STORE_KEY = 'tenant_auth'
@@ -143,6 +145,20 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     return data.data
   }
 
+  // 拉取最新组织信息，更新 store.tenant（激活团队功能后调用，驱动菜单/页面响应）
+  async function refreshOrgInfo(): Promise<void> {
+    const { data } = await request.get<{ data: { id: number; name: string; code: string; team_enabled: boolean } }>('/tenant/organization')
+    if (tenant.value && data.data) {
+      tenant.value = {
+        id: data.data.id,
+        name: data.data.name,
+        code: data.data.code,
+        team_enabled: data.data.team_enabled,
+      }
+      persist()
+    }
+  }
+
   async function logout(): Promise<void> {
     try {
       await request.post('/tenant/auth/logout')
@@ -197,6 +213,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     login,
     applyTokensFrom2FA,
     register,
+    refreshOrgInfo,
     logout,
     refreshTokens,
     loadFromStorage,

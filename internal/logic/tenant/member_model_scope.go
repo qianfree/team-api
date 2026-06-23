@@ -59,6 +59,9 @@ var memberModelScopeCache = lcommon.NewCache("member_model", 60*time.Second)
 
 // MemberModelScopesSet sets the available models for a member (full replace).
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	// 验证用户属于当前租户

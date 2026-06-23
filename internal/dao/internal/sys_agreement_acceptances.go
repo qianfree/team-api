@@ -21,13 +21,13 @@ type SysAgreementAcceptancesDao struct {
 
 // SysAgreementAcceptancesColumns defines and stores column names for the table sys_agreement_acceptances.
 type SysAgreementAcceptancesColumns struct {
-	Id          string //
+	Id          string // 主键ID
 	AgreementId string // 关联协议版本ID
-	UserType    string // 用户类型
+	UserType    string // 用户类型：admin(管理员) / tenant(租户用户)
 	UserId      string // 用户ID
-	IpAddress   string // IP地址
-	UserAgent   string // User-Agent
-	CreatedAt   string //
+	IpAddress   string // 接受时的IP地址
+	UserAgent   string // 接受时的浏览器User-Agent
+	CreatedAt   string // 接受时间
 }
 
 // sysAgreementAcceptancesColumns holds the columns for the table sys_agreement_acceptances.
@@ -71,7 +71,7 @@ func (dao *SysAgreementAcceptancesDao) Group() string {
 	return dao.group
 }
 
-// Ctx creates and returns a Model for the current DAO.
+// Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
 func (dao *SysAgreementAcceptancesDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
@@ -81,6 +81,11 @@ func (dao *SysAgreementAcceptancesDao) Ctx(ctx context.Context) *gdb.Model {
 }
 
 // Transaction wraps the transaction logic using function f.
+// It rolls back the transaction and returns the error if function f returns a non-nil error.
+// It commits the transaction and returns nil if function f returns nil.
+//
+// Note: Do not commit or roll back the transaction in function f,
+// as it is automatically handled by this function.
 func (dao *SysAgreementAcceptancesDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

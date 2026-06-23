@@ -8,8 +8,8 @@ type TenantRegisterReq struct {
 	Email          string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
 	Code           string `json:"code" dc:"邮箱验证码（邮箱验证开启时必填）"`
 	Password       string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
-	TenantName     string `json:"tenant_name" v:"required|length:2,100#请输入组织名称|组织名称长度为2-100位" dc:"组织名称"`
-	TenantCode     string `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入组织代码|组织代码为3-30位小写字母数字|组织代码格式不正确" dc:"组织代码"`
+	TenantName     string `json:"tenant_name" dc:"组织名称（可选，留空自动生成；汉字最多8个，字母最多16个）"`
+	TenantCode     string `json:"tenant_code" v:"length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#组织代码长度为3-30位|组织代码格式不正确" dc:"组织代码（可选，留空自动生成）"`
 	Username       string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
 	CaptchaKey     string `json:"captcha_key" dc:"滑块验证码key（Turnstile关闭时必填）"`
 	CaptchaX       int    `json:"captcha_x" dc:"滑块X坐标（Turnstile关闭时必填）"`
@@ -21,9 +21,10 @@ type TenantRegisterRes struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresAt    string `json:"expires_at"`
 	Tenant       struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
-		Code string `json:"code"`
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Code        string `json:"code"`
+		TeamEnabled bool   `json:"team_enabled"`
 	} `json:"tenant"`
 	User struct {
 		ID       int64  `json:"id"`
@@ -51,9 +52,10 @@ type TenantLoginRes struct {
 	TotpRequired     bool   `json:"totp_required"`               // 是否需要 2FA 验证
 	ProvisionalToken string `json:"provisional_token,omitempty"` // 2FA 临时令牌
 	Tenant           struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
-		Code string `json:"code"`
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Code        string `json:"code"`
+		TeamEnabled bool   `json:"team_enabled"`
 	} `json:"tenant"`
 	User struct {
 		ID       int64  `json:"id"`

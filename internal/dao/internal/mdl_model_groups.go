@@ -26,9 +26,9 @@ type MdlModelGroupsColumns struct {
 	Code        string // 分组唯一标识（如 full_access、basic_chat）
 	Description string // 分组描述
 	Status      string // 状态：active（启用）/ disabled（禁用）
-	IsDefault   string // 是否为新租户默认模型组，注册时自动关联
 	CreatedAt   string // 创建时间
 	UpdatedAt   string // 更新时间
+	IsDefault   string // 是否为新租户默认模型组，注册时自动关联
 }
 
 // mdlModelGroupsColumns holds the columns for the table mdl_model_groups.
@@ -38,9 +38,9 @@ var mdlModelGroupsColumns = MdlModelGroupsColumns{
 	Code:        "code",
 	Description: "description",
 	Status:      "status",
-	IsDefault:   "is_default",
 	CreatedAt:   "created_at",
 	UpdatedAt:   "updated_at",
+	IsDefault:   "is_default",
 }
 
 // NewMdlModelGroupsDao creates and returns a new DAO object for table data access.

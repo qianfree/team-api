@@ -28,4 +28,5 @@ type TntTenants struct {
 	MaxConcurrency      int         `json:"max_concurrency"       orm:"max_concurrency"       description:"租户总并发上限（NULL表示跟随等级配置，0表示不限制）"`                                                                              // 租户总并发上限（NULL表示跟随等级配置，0表示不限制）
 	DefaultChannelScope string      `json:"default_channel_scope" orm:"default_channel_scope" description:"默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）"`                                                                     // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               int         `json:"level"                 orm:"level"                 description:"当前等级（对应 tnt_tenant_level_configs.level）"`                                                                   // 当前等级（对应 tnt_tenant_level_configs.level）
+	TeamEnabled         bool        `json:"team_enabled"          orm:"team_enabled"          description:"团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）"`                                                          // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
 }
