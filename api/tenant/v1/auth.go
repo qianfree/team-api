@@ -8,7 +8,7 @@ type TenantRegisterReq struct {
 	Email          string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"邮箱"`
 	Code           string `json:"code" dc:"邮箱验证码（邮箱验证开启时必填）"`
 	Password       string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
-	TenantName     string `json:"tenant_name" v:"length:2,100#组织名称长度为2-100位" dc:"组织名称（可选，留空自动生成）"`
+	TenantName     string `json:"tenant_name" dc:"组织名称（可选，留空自动生成；汉字最多8个，字母最多16个）"`
 	TenantCode     string `json:"tenant_code" v:"length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#组织代码长度为3-30位|组织代码格式不正确" dc:"组织代码（可选，留空自动生成）"`
 	Username       string `json:"username" v:"required|length:3,50#请输入用户名|用户名长度为3-50位" dc:"用户名"`
 	CaptchaKey     string `json:"captcha_key" dc:"滑块验证码key（Turnstile关闭时必填）"`

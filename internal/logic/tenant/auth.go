@@ -61,8 +61,12 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 
 	// 组织名称：留空则用用户名派生默认值；用户显式传入才校验禁用词
 	if !userProvidedName {
-		tenantName = fmt.Sprintf("%s 的组织", username)
+		// 用户名较长时“xxx 的组织”可能超出组织名称显示宽度上限，按宽度截断兜底
+		tenantName = common.TruncateToDisplayWidth(fmt.Sprintf("%s 的组织", username), common.TenantNameMaxDisplayWidth)
 	} else {
+		if err := common.ValidateTenantName(tenantName); err != nil {
+			return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+		}
 		if err := common.ValidateForbiddenWords(ctx, tenantName, "组织名称"); err != nil {
 			return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
 		}

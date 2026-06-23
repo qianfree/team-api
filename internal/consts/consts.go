@@ -179,6 +179,7 @@ const (
 	CodeGlobalRateLimitExceeded   = 10091 // 全局限流
 	CodeForbiddenWord             = 10096 // 名称包含禁用词
 	CodeEmailExists               = 10097 // 邮箱已被使用
+	CodeInvalidTenantName         = 10098 // 组织名称长度不合法
 
 	// Setup errors
 	CodeSetupCompleted        = 10078
@@ -349,6 +350,9 @@ const (
 
 	// Forbidden word
 	MsgForbiddenWord = "名称包含禁用词，请修改后重试"
+
+	// Tenant name validation：汉字最多8个、字母最多16个（汉字按2计、其余按1计，总宽度≤16）
+	MsgInvalidTenantName = "组织名称长度超出限制（汉字最多8个，字母最多16个）"
 
 	// Agreement errors
 	MsgAgreementNotFound      = "协议版本不存在"

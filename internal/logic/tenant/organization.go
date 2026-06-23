@@ -112,7 +112,11 @@ func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq)
 
 	data := do.TntTenants{}
 	if req.Name != nil {
-		data.Name = *req.Name
+		name := strings.TrimSpace(*req.Name)
+		if err := common.ValidateTenantName(name); err != nil {
+			return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+		}
+		data.Name = name
 	}
 	if req.LogoURL != nil {
 		data.LogoUrl = *req.LogoURL
