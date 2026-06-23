@@ -5,7 +5,6 @@ import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
-import Turnstile from '@/components/common/Turnstile.vue'
 import Icon from '@/components/common/Icon.vue'
 import AgreementViewModal from '@/components/common/AgreementViewModal.vue'
 import PasswordStrengthMeter from '@/components/common/PasswordStrengthMeter.vue'
@@ -16,17 +15,14 @@ const router = useRouter()
 const authStore = useTenantAuthStore()
 const { settings, fetchSettings } = usePublicSettings()
 
-const step = ref(1)
 const loading = ref(false)
 const codeSending = ref(false)
 const countdown = ref(0)
 const emailVerification = ref(true)
 const captcha = ref<{ captchaKey: string; captchaX: number }>({ captchaKey: '', captchaX: 0 })
 const captchaRef = ref<InstanceType<typeof SlideCaptcha> | null>(null)
-	const turnstileToken = ref('')
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
-const orgForm = reactive({ orgName: '', orgCode: '' })
 const userForm = reactive({
 	email: '',
 	code: '',
@@ -36,10 +32,7 @@ const userForm = reactive({
 	agreed: false,
 })
 
-const orgErrors = reactive<Record<string, string>>({})
 const userErrors = reactive<Record<string, string>>({})
-
-// Pending agreements
 
 // Agreement view modal
 const showAgreementModal = ref(false)
@@ -54,28 +47,10 @@ function proceedAfterRegister() {
 	router.push('/tenant/dashboard')
 }
 
-const stepTitles = ['组织信息', '管理员信息']
-
 onMounted(async () => {
 	await fetchSettings()
 	emailVerification.value = settings.value.register_email_verification === true
 })
-
-function validateOrg(): boolean {
-	Object.keys(orgErrors).forEach((k) => delete orgErrors[k])
-
-	if (!orgForm.orgName.trim()) {
-		orgErrors.orgName = '请输入组织名称'
-	}
-
-	if (!orgForm.orgCode.trim()) {
-		orgErrors.orgCode = '请输入组织代码'
-	} else if (!/^[a-z][a-z0-9-]{2,28}[a-z0-9]$/.test(orgForm.orgCode)) {
-		orgErrors.orgCode = '仅支持小写字母、数字和连字符（3-30 位）'
-	}
-
-	return Object.keys(orgErrors).length === 0
-}
 
 function validateUser(): boolean {
 	Object.keys(userErrors).forEach((k) => delete userErrors[k])
@@ -138,15 +113,6 @@ function validateUsernameRealtime() {
 	}
 }
 
-function goNext() {
-	if (!validateOrg()) return
-	step.value = 2
-}
-
-function goBack() {
-	step.value = 1
-}
-
 async function sendCode() {
 	if (!userForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userForm.email)) {
 		userErrors.email = '请先输入有效的邮箱地址'
@@ -186,11 +152,10 @@ async function handleRegister() {
 
 	loading.value = true
 	try {
+		// 简化注册：仅提交账号信息，组织信息由后端自动生成（个人模式，团队功能后续开启）
 		const payload = {
 			email: userForm.email,
 			password: userForm.password,
-			tenant_name: orgForm.orgName,
-			tenant_code: orgForm.orgCode,
 			username: userForm.username,
 			code: emailVerification.value ? userForm.code : undefined,
 			captcha_key: emailVerification.value ? undefined : captcha.value.captchaKey,
@@ -200,7 +165,7 @@ async function handleRegister() {
 		await authStore.register(payload)
 		proceedAfterRegister()
 	} catch (err: any) {
-			captchaRef.value?.resetCaptcha()
+		captchaRef.value?.resetCaptcha()
 		const apiErr = extractApiError(err)
 		const msg = apiErr?.message || '注册失败'
 		if (msg.includes('邮箱') || msg.includes('email')) {
@@ -209,9 +174,6 @@ async function handleRegister() {
 			userErrors.code = msg
 		} else if (msg.includes('密码') || msg.includes('password')) {
 			userErrors.password = msg
-		} else if (msg.includes('组织') || msg.includes('tenant')) {
-			orgErrors.orgName = msg
-			step.value = 1
 		} else if (msg.includes('用户名') || msg.includes('username')) {
 			userErrors.username = msg
 		} else {
@@ -241,90 +203,11 @@ async function handleRegister() {
 		<div v-else class="animate-slide-up">
 			<!-- Header -->
 			<div class="mb-6 text-center">
-				<h2 class="text-xl font-bold text-gray-900">创建您的组织</h2>
-				<p class="mt-1.5 text-sm text-gray-500">几分钟即可开始使用 Team API</p>
+				<h2 class="text-xl font-bold text-gray-900">创建账号</h2>
+				<p class="mt-1.5 text-sm text-gray-500">几分钟即可开始使用，团队功能可后续开启</p>
 			</div>
 
-			<!-- Step Indicator -->
-			<div class="mb-6 flex items-center gap-3">
-				<div
-					v-for="(title, i) in stepTitles"
-					:key="i"
-					class="flex flex-1 items-center gap-2"
-				>
-					<div
-						class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-all duration-300"
-						:class="[
-							step > i + 1
-								? 'bg-primary-500 text-white'
-								: step === i + 1
-									? 'bg-primary-500 text-white'
-									: 'bg-gray-100 text-gray-400',
-						]"
-					>
-						<Icon v-if="step > i + 1" name="check" size="xs" />
-						<span v-else>{{ i + 1 }}</span>
-					</div>
-					<span
-						class="text-xs font-medium transition-colors duration-300"
-						:class="step >= i + 1 ? 'text-gray-900' : 'text-gray-400'"
-					>
-						{{ title }}
-					</span>
-					<div
-						v-if="i < stepTitles.length - 1"
-						class="h-px flex-1 transition-colors duration-300"
-						:class="step > i + 1 ? 'bg-primary-500' : 'bg-gray-200'"
-					/>
-				</div>
-			</div>
-
-			<!-- Step 1: Organization Info -->
-			<form v-if="step === 1" @submit.prevent="goNext" class="space-y-4">
-				<div>
-					<label class="input-label">组织名称</label>
-					<input
-						v-model="orgForm.orgName"
-						type="text"
-						placeholder="例如：某某科技"
-						class="input"
-						:class="{ 'input-error': orgErrors.orgName }"
-					/>
-					<p v-if="orgErrors.orgName" class="input-error-text">{{ orgErrors.orgName }}</p>
-				</div>
-
-				<div>
-					<label class="input-label">组织代码</label>
-					<input
-						v-model="orgForm.orgCode"
-						type="text"
-						placeholder="例如：acme-corp"
-						class="input"
-						:class="{ 'input-error': orgErrors.orgCode }"
-					/>
-					<p class="input-hint">组织的唯一标识符，仅支持小写字母、数字和连字符</p>
-					<p v-if="orgErrors.orgCode" class="input-error-text">{{ orgErrors.orgCode }}</p>
-				</div>
-
-				<button type="submit" class="btn btn-primary btn-lg w-full">
-					下一步
-					<Icon name="arrowRight" size="sm" />
-				</button>
-			</form>
-
-			<!-- Step 2: Personal Info -->
-			<form v-else @submit.prevent="handleRegister" class="space-y-4">
-				<!-- Org Summary -->
-				<div class="rounded-xl bg-gray-50 px-4 py-3 flex items-center justify-between">
-					<div class="min-w-0">
-						<p class="text-sm font-medium text-gray-900 truncate">{{ orgForm.orgName }}</p>
-						<p class="text-xs text-gray-500">{{ orgForm.orgCode }}</p>
-					</div>
-					<button type="button" @click="goBack" class="text-xs text-primary-600 font-medium hover:text-primary-700 transition-colors flex-shrink-0 ml-3">
-						修改
-					</button>
-				</div>
-
+			<form @submit.prevent="handleRegister" class="space-y-4">
 				<!-- Username -->
 				<div>
 					<label class="input-label">用户名</label>
@@ -338,8 +221,8 @@ async function handleRegister() {
 							placeholder="仅支持英文字母和数字，不能为纯数字"
 							class="input pl-11"
 							:class="{ 'input-error': userErrors.username }"
-						@input="validateUsernameRealtime"
-					/>
+							@input="validateUsernameRealtime"
+						/>
 					</div>
 					<p v-if="userErrors.username" class="input-error-text">{{ userErrors.username }}</p>
 				</div>
@@ -441,7 +324,7 @@ async function handleRegister() {
 				<!-- Submit -->
 				<button type="submit" :disabled="loading || !userForm.agreed" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
-					{{ loading ? '创建中...' : '创建组织' }}
+					{{ loading ? '创建中...' : '创建账号' }}
 				</button>
 			</form>
 		</div>

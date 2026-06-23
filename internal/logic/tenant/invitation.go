@@ -109,6 +109,9 @@ func (s *sTenant) RevokeInvitation(ctx context.Context, req *v1.TenantInvitation
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 
 	tenantID := middleware.GetTenantID(ctx)
 

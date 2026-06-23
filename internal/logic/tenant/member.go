@@ -90,6 +90,9 @@ func (s *sTenant) InviteMember(ctx context.Context, req *v1.TenantMemberInviteRe
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	creatorID := middleware.GetUserID(ctx)
 
@@ -222,6 +225,11 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	// Check expiry
 	if invitation.ExpiresAt != nil && time.Now().After(invitation.ExpiresAt.Time) {
 		return nil, common.NewBusinessError(consts.CodeInvitationExpired, consts.MsgInvitationExpired)
+	}
+
+	// 团队功能门控：目标租户必须已启用团队功能（公开接口，ctx 无 tenant_id，用目标租户 ID 校验）
+	if err := requireTeamEnabledForTenant(ctx, invitation.TenantID); err != nil {
+		return nil, err
 	}
 
 	email := strings.TrimSpace(strings.ToLower(req.Email))
@@ -384,6 +392,9 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Validate role
@@ -500,6 +511,9 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
 	}
 	tenantID := middleware.GetTenantID(ctx)
 	currentUserID := middleware.GetUserID(ctx)
@@ -670,6 +684,9 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
@@ -719,6 +736,9 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 
 // ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
 func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error) {
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	currentUserID := middleware.GetUserID(ctx)
 	memberID := req.Id
@@ -931,6 +951,9 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
 	}
 	tenantID := middleware.GetTenantID(ctx)
 

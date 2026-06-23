@@ -2,9 +2,11 @@ package tenant
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -31,14 +33,15 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 	tenantID := middleware.GetTenantID(ctx)
 
 	var tenant *struct {
-		Id         int64  `json:"id"`
-		Name       string `json:"name"`
-		Code       string `json:"code"`
-		LogoUrl    string `json:"logo_url"`
-		Status     string `json:"status"`
-		Level      int    `json:"level"`
-		MaxMembers *int   `json:"max_members"`
-		CreatedAt  string `json:"created_at"`
+		Id          int64  `json:"id"`
+		Name        string `json:"name"`
+		Code        string `json:"code"`
+		TeamEnabled bool   `json:"team_enabled"`
+		LogoUrl     string `json:"logo_url"`
+		Status      string `json:"status"`
+		Level       int    `json:"level"`
+		MaxMembers  *int   `json:"max_members"`
+		CreatedAt   string `json:"created_at"`
 	}
 	err := dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).Scan(&tenant)
@@ -57,15 +60,17 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 		return nil, err
 	}
 
-	// Look up level name
-	var levelName *string
+	// Look up level name（单值查询用 Value()，Scan 仅支持 struct/*struct）
+	levelName := ""
 	if tenant.Level > 0 {
-		err = dao.TntTenantLevelConfigs.Ctx(ctx).
+		v, err := dao.TntTenantLevelConfigs.Ctx(ctx).
 			Where("level", tenant.Level).
 			Fields("name").
-			Scan(&levelName)
+			Value()
 		if err != nil {
 			g.Log().Warningf(ctx, "查询租户等级名称失败: %v", err)
+		} else {
+			levelName = v.String()
 		}
 	}
 
@@ -73,18 +78,14 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 	effectiveMaxMembers, _, _ := billing.GetTenantEffectiveLimits(ctx, tenantID)
 
 	return &v1.TenantOrgInfoRes{
-		ID:      tenant.Id,
-		Name:    tenant.Name,
-		Code:    tenant.Code,
-		LogoURL: tenant.LogoUrl,
-		Status:  tenant.Status,
-		Level:   tenant.Level,
-		LevelName: func() string {
-			if levelName != nil {
-				return *levelName
-			}
-			return ""
-		}(),
+		ID:          tenant.Id,
+		Name:        tenant.Name,
+		Code:        tenant.Code,
+		TeamEnabled: tenant.TeamEnabled,
+		LogoURL:     tenant.LogoUrl,
+		Status:      tenant.Status,
+		Level:       tenant.Level,
+		LevelName:   levelName,
 		MaxMembers:  effectiveMaxMembers,
 		MemberCount: int(memberCount),
 		CreatedAt:   tenant.CreatedAt,
@@ -92,18 +93,62 @@ func (s *sTenant) GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1
 }
 
 // UpdateOrgInfo updates tenant organization info.
+// 组织代码仅可在未启用团队功能时设置一次（设置即激活），启用后不可修改。
 func (s *sTenant) UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq) (*v1.TenantOrgUpdateRes, error) {
 	if err := ownerOnly(ctx); err != nil {
 		return nil, err
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
+	// 规整 code（小写化）；留空表示不修改 code
+	var newCode *string
+	if req.Code != nil {
+		c := strings.TrimSpace(strings.ToLower(*req.Code))
+		if c == "" {
+			return nil, common.NewBadRequestError("组织代码不能为空")
+		}
+		newCode = &c
+	}
+
 	data := do.TntTenants{}
 	if req.Name != nil {
-		data.Name = *req.Name
+		name := strings.TrimSpace(*req.Name)
+		if err := common.ValidateTenantName(name); err != nil {
+			return nil, common.NewBusinessError(consts.CodeInvalidTenantName, err.Error())
+		}
+		data.Name = name
 	}
 	if req.LogoURL != nil {
 		data.LogoUrl = *req.LogoURL
+	}
+
+	// 处理组织代码设置：启用团队功能后不可修改（只能设置一次）
+	if newCode != nil {
+		// 已启用团队功能 → 拒绝修改 code
+		current, err := dao.TntTenants.Ctx(ctx).
+			Where("id", tenantID).Fields("team_enabled").Value()
+		if err != nil {
+			return nil, err
+		}
+		if current.Bool() {
+			return nil, common.NewBadRequestError("组织代码启用团队功能后不可修改")
+		}
+		// 首次设置：校验禁用词 + 唯一性（排除自己）
+		if err := common.ValidateForbiddenWords(ctx, *newCode, "组织代码"); err != nil {
+			return nil, common.NewBusinessError(consts.CodeForbiddenWord, err.Error())
+		}
+		count, err := dao.TntTenants.Ctx(ctx).
+			Where("code", *newCode).
+			WhereNot("id", tenantID).
+			Count()
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, common.NewBusinessError(consts.CodeTenantCodeExists, consts.MsgTenantCodeExists)
+		}
+		data.Code = *newCode
+		data.TeamEnabled = true
 	}
 
 	_, err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Data(data).Update()

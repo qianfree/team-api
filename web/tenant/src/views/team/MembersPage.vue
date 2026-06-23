@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
@@ -9,6 +11,8 @@ import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
 
 const router = useRouter()
+const authStore = useTenantAuthStore()
+const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
 
 const showExportDropdown = ref(false)
 const { exporting, exportFile } = useExport({
@@ -209,7 +213,8 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
+	<TeamLockedBanner v-if="!teamEnabled" />
+	<div v-else class="space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>

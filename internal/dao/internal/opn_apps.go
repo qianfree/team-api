@@ -21,40 +21,42 @@ type OpnAppsDao struct {
 
 // OpnAppsColumns defines and stores column names for the table opn_apps.
 type OpnAppsColumns struct {
-	Id            string // 主键ID
-	TenantId      string // 所属租户ID
-	Name          string // 应用名称
-	Description   string // 应用描述
-	AppId         string // 应用标识（opn_xxx 格式）
-	AppSecretHash string // App Secret 哈希（bcrypt）
-	Permissions   string // 权限范围（JSON 数组）
-	IpWhitelist   string // IP 白名单（JSON 数组，为空则不限制）
-	CallbackUrl   string // OAuth 回调 URL
-	IsSandbox     string // 是否沙箱应用
-	Status        string // 状态：active（启用）/ disabled（禁用）
-	RateLimit     string // 每分钟请求上限
-	LastUsedAt    string // 最后使用时间
-	CreatedAt     string // 创建时间
-	UpdatedAt     string // 更新时间
+	Id              string // 主键ID
+	TenantId        string // 所属租户ID
+	Name            string // 应用名称
+	Description     string // 应用描述
+	AppId           string // 应用标识（opn_xxx 格式）
+	AppSecretHash   string // App Secret 哈希（bcrypt）
+	Permissions     string // 权限范围（JSON 数组）
+	IpWhitelist     string // IP 白名单（JSON 数组，为空则不限制）
+	CallbackUrl     string // OAuth 回调 URL
+	IsSandbox       string // 是否沙箱应用
+	Status          string // 状态：active（启用）/ disabled（禁用）
+	RateLimit       string // 每分钟请求上限
+	LastUsedAt      string // 最后使用时间
+	CreatedAt       string // 创建时间
+	UpdatedAt       string // 更新时间
+	EncryptedSecret string // AES-256 encrypted App Secret for HMAC verification
 }
 
 // opnAppsColumns holds the columns for the table opn_apps.
 var opnAppsColumns = OpnAppsColumns{
-	Id:            "id",
-	TenantId:      "tenant_id",
-	Name:          "name",
-	Description:   "description",
-	AppId:         "app_id",
-	AppSecretHash: "app_secret_hash",
-	Permissions:   "permissions",
-	IpWhitelist:   "ip_whitelist",
-	CallbackUrl:   "callback_url",
-	IsSandbox:     "is_sandbox",
-	Status:        "status",
-	RateLimit:     "rate_limit",
-	LastUsedAt:    "last_used_at",
-	CreatedAt:     "created_at",
-	UpdatedAt:     "updated_at",
+	Id:              "id",
+	TenantId:        "tenant_id",
+	Name:            "name",
+	Description:     "description",
+	AppId:           "app_id",
+	AppSecretHash:   "app_secret_hash",
+	Permissions:     "permissions",
+	IpWhitelist:     "ip_whitelist",
+	CallbackUrl:     "callback_url",
+	IsSandbox:       "is_sandbox",
+	Status:          "status",
+	RateLimit:       "rate_limit",
+	LastUsedAt:      "last_used_at",
+	CreatedAt:       "created_at",
+	UpdatedAt:       "updated_at",
+	EncryptedSecret: "encrypted_secret",
 }
 
 // NewOpnAppsDao creates and returns a new DAO object for table data access.
