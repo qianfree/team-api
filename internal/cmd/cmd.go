@@ -310,6 +310,9 @@ var (
 			task.InitActiveCount(ctx)
 			task.StartAsyncPolling(ctx)
 
+			// Start sync-image async worker pool (wraps synchronous image providers as async tasks)
+			task.StartSyncImageWorkers(ctx)
+
 			// Start webhook dispatcher (event-driven delivery)
 			tenant.InitWebhookDispatcher(ctx)
 
@@ -320,6 +323,7 @@ var (
 			defer plugin.Shutdown(ctx)
 			defer tenant.ShutdownWebhookDispatcher()
 			defer task.StopAsyncPolling()
+			defer task.StopSyncImageWorkers()
 			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()

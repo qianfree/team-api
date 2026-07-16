@@ -10,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
@@ -295,10 +296,20 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	modelName := extractModelName(body)
 	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
 
-	relay_handler.HandleTaskSubmit(
-		r.Context(), body, r.URL.Path, r.Header,
-		rc, taskDataProvider, taskBillingProvider, channelMeta,
-	)
+	// 按 provider 类型 + 总开关分支：异步厂商（命中 ProviderTypeToTaskPlatform）走原 taskchannel 流；
+	// 同步厂商（OpenAI 等未命中）在「同步图片异步化」开启时走 worker 池，关闭时回退原流
+	//（HandleTaskSubmit 会因平台不支持返回 400，即恢复本功能上线前的行为）。
+	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
+	_, isAsync := relay_constant.ProviderTypeToTaskPlatform(providerType)
+	syncImageEnabled := lcommon.Config().GetBool(r.Context(), "sync_image_async_enabled")
+	if isAsync || !syncImageEnabled {
+		relay_handler.HandleTaskSubmit(
+			r.Context(), body, r.URL.Path, r.Header,
+			rc, taskDataProvider, taskBillingProvider, channelMeta,
+		)
+	} else {
+		HandleSyncImageSubmit(r, body, rc, channelMeta)
+	}
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)

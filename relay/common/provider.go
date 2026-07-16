@@ -120,6 +120,7 @@ type ChannelSelection struct {
 	ApiKey            string // 解密后的上游 API Key
 	UpstreamModelName string
 	IsModelMapped     bool
+	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供 sync_image worker 做 per-channel 容量控制
 	Settings          ChannelSettings
 }
 

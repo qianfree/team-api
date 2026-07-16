@@ -104,12 +104,13 @@ func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int6
 	}
 
 	type channelRow struct {
-		ChannelID     int64  `json:"channel_id"`
-		ChannelName   string `json:"channel_name"`
-		ChannelType   int    `json:"channel_type"`
-		BaseURL       string `json:"base_url"`
-		UpstreamModel string `json:"upstream_model"`
-		Settings      string `json:"settings"`
+		ChannelID      int64  `json:"channel_id"`
+		ChannelName    string `json:"channel_name"`
+		ChannelType    int    `json:"channel_type"`
+		BaseURL        string `json:"base_url"`
+		UpstreamModel  string `json:"upstream_model"`
+		MaxConcurrency int    `json:"max_concurrency"`
+		Settings       string `json:"settings"`
 	}
 
 	var ch *channelRow
@@ -119,7 +120,7 @@ func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int6
 		Where("c.status", "active").
 		Where("a.model_name", modelName).
 		Where("a.enabled", true).
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.settings").
+		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.max_concurrency, c.settings").
 		Scan(&ch)
 	if err != nil || ch == nil {
 		return nil, common.ErrChannelUnavailable
@@ -144,6 +145,7 @@ func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int6
 		ApiKey:            key,
 		UpstreamModelName: upstreamModel,
 		IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
+		MaxConcurrency:    ch.MaxConcurrency,
 		Settings:          settings,
 	}, nil
 }
@@ -158,6 +160,7 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		UpstreamModel       string   `json:"upstream_model"`
 		Priority            int      `json:"priority"`
 		Weight              int      `json:"weight"`
+		MaxConcurrency      int      `json:"max_concurrency"`
 		Settings            string   `json:"settings"`
 		HealthScore         *float64 `json:"health_score"`
 		ConsecutiveFailures int      `json:"consecutive_failures"`
@@ -169,7 +172,7 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		Where("a.model_name", modelName).
 		Where("a.enabled", true).
 		Where("c.status", "active").
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.settings, h.health_score, h.consecutive_failures").
+		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures").
 		OrderDesc("c.priority").
 		OrderDesc("c.weight")
 
@@ -211,6 +214,7 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 				ApiKey:            key,
 				UpstreamModelName: upstreamModel,
 				IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
+				MaxConcurrency:    ch.MaxConcurrency,
 				Settings:          settings,
 			}, nil
 		}

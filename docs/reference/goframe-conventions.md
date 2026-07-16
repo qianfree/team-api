@@ -531,3 +531,23 @@ if err != nil {
 - 查询多行记录 → `Scan(&[]struct{})`
 - 查询单个标量值（`COUNT`、`SUM`、单个字段）→ `Value()` 返回 `*gvar.Var`，用 `.String()/.Int64()/.Bool()` 取值，**不要用 `Scan(&scalar)` 或 `Scan(&scalarPtr)`**
 
+### 2026-07-16：CAS 更新用「已改写的目标状态」当 WHERE 谓词导致超时兜底网永久失效
+
+**问题**：异步任务超时兜底 `handleTimedOutTasks`（`internal/logic/task/async_polling.go`）把任务标记失败时，先执行 `t.Status = "FAILURE"`，随后又把 `t.Status` 传给 `UpdateTaskCAS(ctx, t, t.Status)` 作为 CAS 的 oldStatus。`GetTimedOutTasks` 只返回非终态行（`status NOT IN ('SUCCESS','FAILURE')`），于是 CAS 生成的 SQL 是 `WHERE id=? AND status='FAILURE' SET status='FAILURE'`，对任何非终态行匹配 0 行 → `RowsAffected()==0` → 返回 CAS conflict → `continue`。结果：**超时任务从未被真正 FAILURE、预扣永不退款（资损）、active 计数永不递减**，且影响所有异步平台（sora/kling/suno/mj/ali/gemini/sync_image）。
+
+**原因**：GoFrame 的「CAS 更新」惯用法 `Where("id", id).Where("status", oldStatus).Update(...)` + `RowsAffected()` 依赖 oldStatus 是**变更前**的真实值。此处在计算 oldStatus 之前就地改写了同一个 `t.Status` 字段，使谓词退化为「新值 == 旧值」，永不成立。
+
+**修复方式**：把「计算 oldStatus + 改写为 FAILURE」抽成纯函数 `buildTimeoutFailure(t, now) (oldStatus string)`，在覆盖前捕获真实状态返回，供 CAS 使用；并补 DB-free 回归单测 `TestBuildTimeoutFailure_UsesOriginalStatusAsCASPredicate` 锁定「oldStatus 必须是覆盖前状态、绝不为 FAILURE」。
+
+**正确做法**：任何 CAS 式条件更新，**先快照旧值再改写**，用快照做 WHERE 谓词：
+```go
+// 错误 — 先改写再拿改写后的值当谓词，CAS 永不匹配
+t.Status = "FAILURE"
+dao.Xxx.Ctx(ctx).Where("id", t.ID).Where("status", t.Status).Update(...) // WHERE status='FAILURE'
+
+// 正确 — 先快照旧状态
+oldStatus := t.Status
+t.Status = "FAILURE"
+dao.Xxx.Ctx(ctx).Where("id", t.ID).Where("status", oldStatus).Update(...) // WHERE status='IN_PROGRESS'
+```
+
