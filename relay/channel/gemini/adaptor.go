@@ -351,13 +351,16 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		body = unwrapCodeAssistData(body)
 		clientFormat := info.GetOriginalClientFormat()
 		if clientFormat == constant.RelayFormatGemini {
+			// Gemini 原生格式：保留完整上游错误响应，标记以防上层二次写入
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(resp.StatusCode)
 			_, _ = writer.Write(body)
-		} else {
-			writeGeminiErrorAsOpenAI(writer, body, resp.StatusCode)
+			err := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			err.ResponseWritten = true
+			return nil, err
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		// OpenAI 等格式：不写响应，交上层错误写入器统一写入
+		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
 	// 读取所有 SSE chunks 并聚合
