@@ -145,6 +145,12 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// adaptor 已直接写入响应体（如 Gemini 原生格式透传），跳过二次写入
+	var prewritten *constant.RelayError
+	if errors.As(err, &prewritten) && prewritten.ResponseWritten {
+		return
+	}
+
 	var relayErr *constant.RelayError
 	var rateLimitErr *RelayErrorWithRateLimit
 	statusCode := http.StatusInternalServerError

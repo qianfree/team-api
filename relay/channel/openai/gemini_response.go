@@ -27,7 +27,9 @@ func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info
 
 	if resp.StatusCode != http.StatusOK {
 		writeOpenAIErrorAsGemini(writer, body, resp.StatusCode)
-		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr.ResponseWritten = true
+		return &common.Usage{}, upstreamErr
 	}
 
 	var openaiResp dto.ChatCompletionResponse
@@ -59,7 +61,9 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		writeOpenAIErrorAsGemini(writer, body, resp.StatusCode)
-		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr.ResponseWritten = true
+		return &common.Usage{}, upstreamErr
 	}
 
 	helper.SetEventStreamHeaders(writer)

@@ -15,6 +15,10 @@ type RelayError struct {
 	Message    string
 	Type       string // upstream_error / channel_error / auth_error / request_error
 	Cause      error
+	// ResponseWritten 表示 adaptor 已直接向客户端写入响应体，
+	// 上层错误写入器（WriteRelayError / WriteClaudeRelayError / WriteGeminiRelayError）应跳过二次写入。
+	// 字段对重试 / 健康度 / 计费 / 状态码重映射等逻辑透明（仍按 StatusCode 判断）。
+	ResponseWritten bool
 }
 
 func (e *RelayError) Error() string {
