@@ -261,6 +261,8 @@ var Registry = []SettingDef{
 		Label: "GDPR删除请求完成天数", Validation: "min:7,max:90"},
 	{Key: "file_retention_enabled", Type: SettingTypeBool, Default: "true", Category: "data_governance",
 		Label: "启用文件保留期检查"},
+	{Key: "file_image_retention_days", Type: SettingTypeInt, Default: "0", Category: "data_governance",
+		Label: "AI图片保留天数(0=不清理)", Description: "AI re-host 图片超过该天数后自动清理，0 表示不自动删除", Validation: "min:0,max:3650"},
 
 	// ── Agreement (用户协议) ──
 	{Key: "agreement_enabled", Type: SettingTypeBool, Default: "false", Category: "agreement",

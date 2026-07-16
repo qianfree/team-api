@@ -66,12 +66,15 @@ type FileRecord struct {
 
 // Upload uploads a file, stores it via the provider, and records metadata.
 func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileRecord, error) {
-	// Generate storage key
+	// Generate storage key (relative to the provider's configured path prefix).
 	key := fmt.Sprintf("%d/%d/%s", upload.TenantID, time.Now().Unix(), upload.Filename)
 
-	// Upload to storage provider
-	storagePath, err := s.provider.Upload(ctx, upload.Reader, key, upload.ContentType)
-	if err != nil {
+	// Upload to storage provider. The provider applies the configured path
+	// prefix internally, so we persist the RAW key (not the returned full key):
+	// Download/Delete/PresignedURL pass this key back through the provider,
+	// which re-applies the prefix exactly once. Storing the prefixed key here
+	// would cause the prefix to be applied twice on retrieval.
+	if _, err := s.provider.Upload(ctx, upload.Reader, key, upload.ContentType); err != nil {
 		return nil, gerror.Wrapf(err, "upload to storage")
 	}
 
@@ -79,12 +82,12 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 	result, err := dao.FilFiles.Ctx(ctx).Data(do.FilFiles{
 		TenantId:        upload.TenantID,
 		UserId:          upload.UserID,
-		Filename:        storagePath,
+		Filename:        key,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
 		StorageProvider: s.providerName,
-		StoragePath:     storagePath,
+		StoragePath:     key,
 		VirusScanStatus: "pending",
 	}).Insert()
 	if err != nil {
@@ -99,12 +102,12 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 		ID:              id,
 		TenantID:        upload.TenantID,
 		UserID:          upload.UserID,
-		Filename:        storagePath,
+		Filename:        key,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
 		StorageProvider: s.providerName,
-		StoragePath:     storagePath,
+		StoragePath:     key,
 		VirusScanStatus: "pending",
 	}, nil
 }
