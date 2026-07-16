@@ -675,7 +675,8 @@ func handleChannelUnavailable(
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
-		g.Log().Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
+		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
+		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
 			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
 		allFailedErr := constant.NewChannelError(
 			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
@@ -688,7 +689,9 @@ func handleChannelUnavailable(
 	if billing != nil && preDeductAmount > 0 {
 		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
-	g.Log().Errorf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
+	// 无可用渠道属于正常业务条件（用户请求了未配置/未启用渠道的模型），
+	// 降级为 Warning 并禁用堆栈打印，避免污染 ERROR 日志与刷屏无意义的调用栈
+	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
 	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
 	recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, noChErr)
 	return &channelUnavailableResult{nil, v.billingResult, noChErr}
