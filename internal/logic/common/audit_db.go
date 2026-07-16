@@ -38,11 +38,16 @@ func IsAuditDBConfigured() bool {
 	return auditDBConfigured
 }
 
-// AuditModelCtx 返回指定审计表的 Model（带 context，绑定到审计库连接）。
+// AuditModelCtx 返回指定审计表的 Model（带 context）。
+// 仅 aud_request_logs（大模型请求审计）使用独立审计库（配置了 database.audit 时）；
+// 其余审计表（aud_operation_logs、aud_login_history、aud_sensitive_access_logs、
+// aud_content_filter_logs）始终使用主库，数据量小无需分离。
 // 使用示例：
 //
 //	common.AuditModelCtx(ctx, "aud_request_logs").Data(data).Insert()
-//	common.AuditModelCtx(ctx, "aud_operation_logs").Where("id", id).Scan(&record)
 func AuditModelCtx(ctx context.Context, table string) *gdb.Model {
-	return GetAuditDB().Model(table).Safe().Ctx(ctx)
+	if table == "aud_request_logs" {
+		return GetAuditDB().Model(table).Safe().Ctx(ctx)
+	}
+	return g.DB().Model(table).Safe().Ctx(ctx)
 }

@@ -301,8 +301,14 @@ func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int)
 		return fmt.Errorf("invalid table for cleanup: %s", table)
 	}
 
+	// aud_request_logs 走独立库，其余审计表走主库
+	db := g.DB()
+	if table == "aud_request_logs" {
+		db = common.GetAuditDB()
+	}
+
 	for {
-		result, err := common.GetAuditDB().Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
+		result, err := db.Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
 		if err != nil {
 			return err
 		}
