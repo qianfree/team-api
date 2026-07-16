@@ -34,7 +34,9 @@ func handleClaudeInboundNonStream(ctx context.Context, resp *http.Response, info
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr.ResponseWritten = true
+		return &common.Usage{}, upstreamErr
 	}
 
 	var openaiResp dto.ChatCompletionResponse
@@ -74,7 +76,9 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr.ResponseWritten = true
+		return &common.Usage{}, upstreamErr
 	}
 
 	helper.SetEventStreamHeaders(writer)
