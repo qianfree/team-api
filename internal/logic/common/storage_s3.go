@@ -45,9 +45,14 @@ func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 		if cfg.Region != "" {
 			o.Region = cfg.Region
 		}
-		if cfg.Provider == "minio" && cfg.Endpoint != "" {
+		// Cloudflare R2 is S3-compatible but requires an account-level
+		// BaseEndpoint. Unlike MinIO it uses virtual-hosted addressing, so
+		// path-style must NOT be forced.
+		if (cfg.Provider == "minio" || cfg.Provider == "r2") && cfg.Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = true
+			if cfg.Provider == "minio" {
+				o.UsePathStyle = true
+			}
 		}
 	})
 

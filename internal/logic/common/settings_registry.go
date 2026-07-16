@@ -228,13 +228,13 @@ var Registry = []SettingDef{
 
 	// ── Storage ──
 	{Key: "storage_provider", Type: SettingTypeString, Default: "minio", Category: "storage",
-		Label: "存储供应商", Validation: "enum:s3,minio,oss,cos",
+		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos",
 		Description: "对象存储供应商类型"},
 	{Key: "storage_endpoint", Type: SettingTypeString, Default: "", Category: "storage",
 		Label:       "存储端点",
-		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com"},
+		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com, R2: https://<account_id>.r2.cloudflarestorage.com"},
 	{Key: "storage_region", Type: SettingTypeString, Default: "", Category: "storage",
-		Label: "存储区域", Description: "AWS Region / OSS Region / COS Region"},
+		Label: "存储区域", Description: "AWS Region / OSS Region / COS Region（R2 固定填 auto）"},
 	{Key: "storage_bucket", Type: SettingTypeString, Default: "", Category: "storage",
 		Label: "存储桶名称"},
 	{Key: "storage_access_key_id", Type: SettingTypeString, Default: "", Category: "storage",

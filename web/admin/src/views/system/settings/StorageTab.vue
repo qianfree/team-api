@@ -1,6 +1,17 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
+
+// Cloudflare R2 不分区，但 AWS SDK 签名要求非空 region，选中 R2 时自动填 auto
+watch(
+	() => values['storage_provider'],
+	(provider) => {
+		if (provider === 'r2' && !values['storage_region']) {
+			values['storage_region'] = 'auto'
+		}
+	}
+)
 </script>
 
 <template>
@@ -13,6 +24,7 @@ const values = useFormValues()
 					<ASelect v-model="values['storage_provider']">
 						<AOption value="minio" label="MinIO" />
 						<AOption value="s3" label="AWS S3" />
+						<AOption value="r2" label="Cloudflare R2" />
 						<AOption value="oss" label="阿里云 OSS" />
 						<AOption value="cos" label="腾讯云 COS" />
 					</ASelect>
@@ -21,10 +33,10 @@ const values = useFormValues()
 					<AInput v-model="values['storage_bucket']" placeholder="my-bucket" />
 				</AFormItem>
 				<AFormItem label="存储端点" class="field-full"
-					help="S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com">
+					help="S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, R2: https://<account_id>.r2.cloudflarestorage.com">
 					<AInput v-model="values['storage_endpoint']" placeholder="https://s3.amazonaws.com" />
 				</AFormItem>
-				<AFormItem label="存储区域">
+				<AFormItem label="存储区域" help="R2 固定填 auto">
 					<AInput v-model="values['storage_region']" placeholder="us-east-1" />
 				</AFormItem>
 				<AFormItem label="路径前缀" help="存储路径前缀，用于隔离不同环境">
