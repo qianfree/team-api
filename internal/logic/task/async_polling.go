@@ -30,6 +30,22 @@ var (
 	pollStop  chan struct{}
 )
 
+// isSyncImageTask 判断任务是否为 sync_image 类型（通过 private_data.task_type 标识）
+func isSyncImageTask(t *common.AsyncTask) bool {
+	if t.PrivateData == nil {
+		return false
+	}
+	var privateData map[string]any
+	if err := json.Unmarshal(t.PrivateData, &privateData); err != nil {
+		return false
+	}
+	taskType, ok := privateData["task_type"].(string)
+	if !ok {
+		return false
+	}
+	return taskType == string(constant.TaskPlatformSyncImage)
+}
+
 // StartAsyncPolling 启动异步任务轮询 goroutine
 func StartAsyncPolling(ctx context.Context) {
 	g.Log().Info(ctx, "Starting async task polling...")
@@ -86,11 +102,18 @@ func pollOnce(ctx context.Context) {
 	// 3. 按 platform 分组处理
 	platformGroups := make(map[string][]*common.AsyncTask)
 	for _, t := range tasks {
-		// sync_image 无上游任务 ID 可轮询，由 worker 池自行推进；此处跳过，
-		// 避免 processPlatformTasks → taskchannel.GetAdaptor("sync_image") 报错刷日志。
+		// sync_image 任务通过 private_data.task_type 标识，由 worker 池自行推进；此处跳过，
+		// 避免 processPlatformTasks → taskchannel.GetAdaptor 报错刷日志。
 		// 其超时/未结算仍由 handleTimedOutTasks / handleUnsettledTasks 兜底。
-		if t.Platform == string(constant.TaskPlatformSyncImage) {
+		if isSyncImageTask(t) {
+			g.Log().Debugf(ctx, "poll: skipping sync_image task %s (channel_id=%d, platform=%s)",
+				t.PublicTaskID, t.ChannelID, t.Platform)
 			continue
+		}
+		// 记录 channel_id=0 的非 sync_image 任务（这些任务配置有误）
+		if t.ChannelID == 0 {
+			g.Log().Warningf(ctx, "poll: found task with channel_id=0 but not sync_image: public_id=%s, platform=%s, status=%s",
+				t.PublicTaskID, t.Platform, t.Status)
 		}
 		platformGroups[t.Platform] = append(platformGroups[t.Platform], t)
 	}
@@ -167,7 +190,7 @@ func handleUnsettledTasks(ctx context.Context) {
 	for _, t := range tasks {
 		// sync_image 无 upstream_task_id，不能落入下面「UpstreamTaskID=="" → 退款」的分支，
 		// 否则崩溃窗口内的成功任务会被误退款（用户出图却全额退回，资损）。单独处理。
-		if t.Platform == string(constant.TaskPlatformSyncImage) {
+		if isSyncImageTask(t) {
 			handleUnsettledSyncImage(ctx, t)
 			continue
 		}
