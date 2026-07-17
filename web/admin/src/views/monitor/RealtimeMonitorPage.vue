@@ -7,7 +7,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import VChart from 'vue-echarts'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
-import { IconThunderbolt, IconSwap, IconClockCircle, IconCode, IconBarChart, IconLayers, IconApps, IconUserGroup, IconFire } from '@arco-design/web-vue/es/icon'
+import { IconThunderbolt, IconSwap, IconClockCircle, IconCode, IconBarChart, IconLayers, IconApps, IconUserGroup, IconFire, IconStorage } from '@arco-design/web-vue/es/icon'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -161,6 +161,28 @@ const byModel = computed(() => {
 
 const byChannel = computed(() => {
   const m: Record<string, number> = data.value.by_channel || {}
+  const entries = Object.entries(m).sort(([, a], [, b]) => (b as number) - (a as number)).slice(0, 10)
+  const max = entries.length > 0 ? (entries[0][1] as number) : 1
+  return entries.map(([k, v]) => ({ channel: k, count: v as number, pct: ((v as number) / max) * 100 }))
+})
+
+// 同步图片「异步化」Worker 池状态
+const pool = computed(() => data.value.sync_image_pool || {})
+const workerPct = computed(() => {
+  const t = pool.value.worker_total || 0
+  return t > 0 ? Math.min(100, ((pool.value.worker_busy || 0) / t) * 100) : 0
+})
+const queuePct = computed(() => {
+  const c = pool.value.queue_cap || 0
+  return c > 0 ? Math.min(100, ((pool.value.queue_depth || 0) / c) * 100) : 0
+})
+// 队列水位配色：>95% 红（即将背压 429）、>80% 橙、否则蓝
+const queueColor = computed(() => {
+  const p = queuePct.value
+  return p > 95 ? '#F53F3F' : p > 80 ? '#FF7D00' : '#165DFF'
+})
+const poolChannelInflight = computed(() => {
+  const m: Record<string, number> = pool.value.channel_inflight || {}
   const entries = Object.entries(m).sort(([, a], [, b]) => (b as number) - (a as number)).slice(0, 10)
   const max = entries.length > 0 ? (entries[0][1] as number) : 1
   return entries.map(([k, v]) => ({ channel: k, count: v as number, pct: ((v as number) / max) * 100 }))
@@ -353,6 +375,66 @@ onUnmounted(() => {
         <v-chart ref="gcPauseChart" :option="gcPauseOption" style="height: 120px" autoresize />
       </a-card>
     </div>
+
+    <!-- Sync-Image Worker Pool -->
+    <a-card v-if="pool.enabled" :bordered="false" class="mb-16">
+      <template #title><span class="card-title"><IconStorage :size="16" style="color:#722ED1" /> 同步图片 Worker 池</span></template>
+      <template #extra>
+        <a-tag color="arcoblue" size="small">同步转异步</a-tag>
+      </template>
+      <div class="pool-grid">
+        <!-- 利用率 / 水位进度条 -->
+        <div class="pool-bars">
+          <div class="pool-bar-block">
+            <div class="pool-bar-label">
+              <span>Worker 利用率</span>
+              <span class="mono">{{ pool.worker_busy || 0 }} / {{ pool.worker_total || 0 }} 忙碌</span>
+            </div>
+            <a-progress :percent="workerPct / 100" :stroke-width="10" :show-text="false" color="#165DFF" />
+          </div>
+          <div class="pool-bar-block">
+            <div class="pool-bar-label">
+              <span>队列水位</span>
+              <span class="mono">{{ pool.queue_depth || 0 }} / {{ pool.queue_cap || 0 }}</span>
+            </div>
+            <a-progress :percent="queuePct / 100" :stroke-width="10" :show-text="false" :color="queueColor" />
+          </div>
+        </div>
+        <!-- 累计计数 -->
+        <div class="pool-stats">
+          <div class="pool-stat">
+            <span class="pool-stat-value">{{ (pool.enqueued || 0).toLocaleString() }}</span>
+            <span class="pool-stat-label">已入队</span>
+          </div>
+          <div class="pool-stat">
+            <span class="pool-stat-value" style="color:#00B42A">{{ (pool.succeeded || 0).toLocaleString() }}</span>
+            <span class="pool-stat-label">成功</span>
+          </div>
+          <div class="pool-stat">
+            <span class="pool-stat-value" style="color:#F53F3F">{{ (pool.failed || 0).toLocaleString() }}</span>
+            <span class="pool-stat-label">失败</span>
+          </div>
+          <div class="pool-stat">
+            <span class="pool-stat-value" :style="{ color: (pool.rejected || 0) > 0 ? '#F53F3F' : undefined }">{{ (pool.rejected || 0).toLocaleString() }}</span>
+            <span class="pool-stat-label">拒绝 (429)</span>
+          </div>
+        </div>
+      </div>
+      <!-- 按渠道在途 -->
+      <div class="pool-inflight">
+        <div class="pool-inflight-title">按渠道在途（层② per-channel 容量）</div>
+        <div v-if="poolChannelInflight.length === 0" class="empty-hint">暂无在途任务</div>
+        <div v-for="item in poolChannelInflight" :key="item.channel" class="dist-row">
+          <div class="dist-label">
+            <span class="dist-name" :title="'渠道 ' + item.channel">渠道 {{ item.channel }}</span>
+            <span class="dist-count">{{ item.count }}</span>
+          </div>
+          <div class="dist-bar-track">
+            <div class="dist-bar-fill" style="background:#722ED1" :style="{ width: item.pct + '%' }" />
+          </div>
+        </div>
+      </div>
+    </a-card>
 
     <!-- Distribution -->
     <div class="row row-2 mb-16">
@@ -639,6 +721,59 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+/* Sync-image worker pool */
+.pool-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 24px;
+  align-items: center;
+}
+.pool-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pool-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--color-text-2);
+  margin-bottom: 6px;
+}
+.pool-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding-left: 24px;
+  border-left: 1px solid var(--color-border);
+}
+.pool-stat {
+  text-align: center;
+}
+.pool-stat-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text-1);
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+.pool-stat-label {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-3);
+  margin-top: 2px;
+}
+.pool-inflight {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.pool-inflight-title {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-bottom: 10px;
+}
+
 /* Distribution bars */
 .dist-row {
   margin-bottom: 10px;
@@ -698,6 +833,8 @@ onUnmounted(() => {
 }
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }
+  .pool-grid { grid-template-columns: 1fr; }
+  .pool-stats { padding-left: 0; border-left: none; }
 }
 @media (max-width: 480px) {
   .metrics-grid {

@@ -54,6 +54,7 @@ type RealtimeData struct {
 	ByModel          map[string]int        `json:"by_model"`
 	ByChannel        map[string]int        `json:"by_channel"`
 	ByTenant         map[int64]int         `json:"by_tenant"`
+	SyncImagePool    SyncImagePoolSnapshot `json:"sync_image_pool"`
 }
 
 // snapshotRing is a fixed-size circular buffer for arbitrary snapshot types.
@@ -266,6 +267,7 @@ func GetRealtimeData() *RealtimeData {
 		ByModel:          byModel,
 		ByChannel:        byChannel,
 		ByTenant:         byTenant,
+		SyncImagePool:    GetSyncImagePoolSnapshot(),
 	}
 }
 

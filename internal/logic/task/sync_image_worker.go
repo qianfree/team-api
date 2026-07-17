@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -48,6 +49,13 @@ var (
 
 	channelInflightMu sync.Mutex
 	channelInflight   = make(map[int64]int)
+
+	// 池状态计数器（进程内累计，重启归零；供实时监控面板展示）。
+	syncImageBusy      atomic.Int64 // 忙碌 worker 数（瞬时）
+	syncImageEnqueued  atomic.Int64 // 累计入队成功
+	syncImageRejected  atomic.Int64 // 累计拒绝（队列满 → 429 退款）
+	syncImageSucceeded atomic.Int64 // 累计 worker 处理成功
+	syncImageFailed    atomic.Int64 // 累计 worker 处理失败
 
 	syncImageFileSvc   *lcommon.FileService
 	syncImageBilling   common.TaskBillingProvider
@@ -90,6 +98,9 @@ func StartSyncImageWorkers(ctx context.Context) {
 		go syncImageWorkerLoop(i)
 	}
 	g.Log().Infof(ctx, "sync_image: started %d workers (queue=%d)", syncImageWorkerCount, syncImageQueueSize)
+
+	// 注册状态取数函数，供管理后台实时监控面板展示池状态。
+	monitor.RegisterSyncImagePoolProvider(SyncImageWorkerStats)
 }
 
 // StopSyncImageWorkers 停机时优雅关闭；在途任务完成后退出，队列内未开始的任务留 QUEUED，
@@ -104,13 +115,44 @@ func StopSyncImageWorkers() {
 // EnqueueSyncImageJob 非阻塞入队；队列满返回 false，供提交侧退款+429。
 func EnqueueSyncImageJob(job *SyncImageJob) bool {
 	if syncImageQueue == nil {
+		syncImageRejected.Add(1)
 		return false
 	}
 	select {
 	case syncImageQueue <- job:
+		syncImageEnqueued.Add(1)
 		return true
 	default:
+		syncImageRejected.Add(1)
 		return false
+	}
+}
+
+// SyncImageWorkerStats 返回 worker 池当前状态快照，供管理后台实时监控面板展示。
+// 在 StartSyncImageWorkers 中注册进 monitor 包（Provider 注入，避免 monitor → task 导入环）。
+func SyncImageWorkerStats() monitor.SyncImagePoolSnapshot {
+	channelInflightMu.Lock()
+	inflight := make(map[int64]int, len(channelInflight))
+	for k, v := range channelInflight {
+		inflight[k] = v
+	}
+	channelInflightMu.Unlock()
+
+	qLen, qCap := 0, 0
+	if syncImageQueue != nil {
+		qLen, qCap = len(syncImageQueue), cap(syncImageQueue)
+	}
+
+	return monitor.SyncImagePoolSnapshot{
+		WorkerTotal:     syncImageWorkerCount,
+		WorkerBusy:      int(syncImageBusy.Load()),
+		QueueDepth:      qLen,
+		QueueCap:        qCap,
+		Enqueued:        syncImageEnqueued.Load(),
+		Rejected:        syncImageRejected.Load(),
+		Succeeded:       syncImageSucceeded.Load(),
+		Failed:          syncImageFailed.Load(),
+		ChannelInflight: inflight,
 	}
 }
 
@@ -131,7 +173,9 @@ func syncImageWorkerLoop(workerID int) {
 
 // runSyncImageJob 每任务 recover 兜 panic，防单任务崩溃拖垮 worker。
 func runSyncImageJob(workerID int, job *SyncImageJob) {
+	syncImageBusy.Add(1)
 	defer func() {
+		syncImageBusy.Add(-1)
 		if r := recover(); r != nil {
 			g.Log().Errorf(gctx.New(), "sync_image: worker %d panic on task %s: %v", workerID, job.PublicTaskID, r)
 		}
@@ -305,6 +349,7 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	}
 
 	// 4. 收尾
+	syncImageSucceeded.Add(1)
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 	syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, true, 0)
@@ -345,6 +390,7 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 		})
 	}
 
+	syncImageFailed.Add(1)
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 
