@@ -54,8 +54,10 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
-	if statusCode >= 500 {
-		g.Log().Errorf(context.Background(), "[ClaudeRelayError] statusCode=%d type=%s message=%s originalError=%v",
+	// 无可用渠道是正常业务条件，已在 handleChannelUnavailable 中以 Warning 记录，此处跳过避免重复日志；
+	// 其余 5xx 为真实错误，保留 ERROR 但禁用堆栈打印（此处调用栈固定，无调试价值）
+	if statusCode >= 500 && !errors.Is(err, common.ErrChannelUnavailable) {
+		g.Log().Stack(false).Errorf(context.Background(), "[ClaudeRelayError] statusCode=%d type=%s message=%s originalError=%v",
 			statusCode, errType, errMsg, err)
 	}
 

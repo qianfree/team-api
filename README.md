@@ -333,6 +333,42 @@ docker build -t team-api:v1.0.0 --build-arg VERSION=v1.0.0 -f manifest/docker/Do
 | `Dockerfile` | 多阶段构建（bun 前端 → Go 编译 → Alpine 运行） |
 | `docker-compose.yaml` | 服务编排（PostgreSQL + Redis + App） |
 
+### 审计日志独立数据库（可选）
+
+大模型请求审计日志（`aud_request_logs`）体量大、写入频繁，可将其存到独立的 PostgreSQL 实例，与主业务库物理隔离，避免影响主库响应速度。其余审核表（操作日志、登录历史、敏感数据访问、内容过滤）数据量小，留在主库即可。
+
+**1. 在独立库中建表：**
+
+```bash
+# 连接审计数据库执行建表脚本
+psql -h host -p port -U user -d team-api-audit -f docs/audit-db-schema.sql
+```
+
+**2. 配置 `manifest/config/config.yaml`：**
+
+取消 `database.audit` 分组的注释并填写连接信息：
+
+```yaml
+database:
+  audit:
+    type:     "pgsql"
+    link:     "pgsql:user:password@tcp(127.0.0.1:5432)/team-api-audit?sslmode=disable"
+    timezone: "Asia/Shanghai"
+    maxIdle:  10
+    maxOpen:  50
+```
+
+**3. 重启服务：**
+
+```bash
+make run
+```
+
+**工作原理：**
+
+- 仅 `aud_request_logs`（大模型请求审计）走独立库，其余审计表仍在主库
+- 配置了 `database.audit.link` 时，`aud_request_logs` 自动写入独立库；未配置时一切照常写入主库
+
 ## 开发指南
 
 ### 代码生成

@@ -1,7 +1,11 @@
 package constant
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net"
+	"syscall"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 )
@@ -113,5 +117,45 @@ func IsRetryable(err error) bool {
 			return false
 		}
 	}
+	// 非 RelayError：检查是否为连接层 / 网络层瞬时错误（请求未获得任何 HTTP 响应）
+	return isTransientNetworkError(err)
+}
+
+// isTransientNetworkError 判断是否为可重试的连接层 / 网络层瞬时错误。
+// 这类错误发生时请求未获得任何 HTTP 响应（连接被对端提前关闭、重置、超时或拒绝），
+// 重试通常能命中健康渠道或新建连接成功，是中转网关最应重试 / 故障转移的场景。
+// 适配器（如 Gemini DoRequest）把 client.Do 的这类错误包成普通 error（非 *RelayError），
+// 因此需要在这里显式识别，否则会被 IsRetryable 判为不可重试而直接失败。
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 客户端主动断开（context 已取消）：响应无处可回，重试无意义且浪费上游调用
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	// 连接被对端提前关闭（GFW 干扰 / 上游瞬断的典型表现）
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+
+	// 连接被重置 / 拒绝
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+
+	// 请求 / 握手超时（i/o timeout、TLS handshake timeout、Client.Timeout 等）
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	// http.Client 超时也会以 context.DeadlineExceeded 形式冒泡
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
 	return false
 }

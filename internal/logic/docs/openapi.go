@@ -155,6 +155,53 @@ func buildOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/v1/images/generations/async": map[string]any{
+				"post": map[string]any{
+					"summary":     "Image Generations Async (Submit)",
+					"description": "异步图像生成任务提交。阿里云百炼（DashScope）等异步图像上游无法经同步接口一次性返回，需提交任务拿到 task_id 后轮询 /v1/images/generations/async/{task_id} 取图。",
+					"operationId": "createImageAsync",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"type":     "object",
+									"required": []string{"model", "prompt"},
+									"properties": map[string]any{
+										"model":  map[string]any{"type": "string", "example": "wanx2.1-t2i-turbo"},
+										"prompt": map[string]any{"type": "string"},
+										"n":      map[string]any{"type": "integer", "default": 1},
+										"size":   map[string]any{"type": "string", "example": "1024x1024"},
+									},
+								},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "任务已提交，返回 task_id 与初始状态"},
+					},
+				},
+			},
+			"/v1/images/generations/async/{task_id}": map[string]any{
+				"get": map[string]any{
+					"summary":     "Image Generations Async (Fetch)",
+					"description": "查询异步图像生成任务结果。轮询直到 status 为 SUCCESS（含图片 url）或 FAILURE（含 error），建议间隔 2~3 秒。",
+					"operationId": "getImageAsync",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"parameters": []map[string]any{
+						{
+							"name":     "task_id",
+							"in":       "path",
+							"required": true,
+							"schema":   map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "任务状态与结果"},
+					},
+				},
+			},
 			"/v1/messages": map[string]any{
 				"post": map[string]any{
 					"summary":     "Claude Messages",

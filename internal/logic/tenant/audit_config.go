@@ -106,12 +106,12 @@ func (s *sTenant) AuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (*v
 	// 使用原生 SQL 查询，绕过 GoFrame ScanAndCount 对 map[string]any 的 bug
 	dataSQL := `SELECT id, tenant_id, user_id, user_type, action, resource_type, resource_id, detail, changes_json, ip_address, created_at
 			 FROM aud_operation_logs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
-	result, err := common.GetAuditDB().Query(ctx, dataSQL, tenantID, pageSize, (page-1)*pageSize)
+	result, err := g.DB().Query(ctx, dataSQL, tenantID, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	countResult, err := common.GetAuditDB().Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
+	countResult, err := g.DB().Query(ctx, "SELECT COUNT(*) AS total FROM aud_operation_logs WHERE tenant_id = ?", tenantID)
 	if err != nil {
 		return nil, err
 	}

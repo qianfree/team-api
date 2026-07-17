@@ -217,6 +217,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '系统设置' },
       },
       {
+        path: 'files',
+        name: 'AdminFiles',
+        component: () => import('@/views/system/FilesPage.vue'),
+        meta: { title: '文件管理' },
+      },
+      {
         path: 'help-categories',
         name: 'AdminHelpCategories',
         component: () => import('@/views/system/HelpCategoriesPage.vue'),

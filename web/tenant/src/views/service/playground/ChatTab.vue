@@ -283,11 +283,11 @@ function clearChat() {
 </script>
 
 <template>
-	<div class="h-[calc(100vh-20rem)] flex flex-col overflow-hidden">
-		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0 flex-1">
+	<div class="flex flex-col lg:h-[calc(100vh-20rem)] lg:overflow-hidden">
+		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 lg:min-h-0 lg:flex-1">
 			<!-- Left: Parameters -->
 			<div class="lg:col-span-1">
-				<div class="card sticky top-6">
+				<div class="card lg:sticky lg:top-6">
 					<div class="card-header">
 						<h3 class="text-sm font-semibold text-gray-900">参数配置</h3>
 					</div>
@@ -346,7 +346,7 @@ function clearChat() {
 			</div>
 
 			<!-- Right: Chat -->
-			<div class="lg:col-span-3 min-h-0">
+			<div class="lg:col-span-3 min-h-0 h-[65vh] lg:h-auto">
 				<div class="card flex flex-col h-full overflow-hidden">
 					<div class="px-6 py-2 bg-amber-50 border-b border-amber-200 text-center">
 						<span class="text-xs text-amber-700 font-medium">Playground 模式 — 使用真实 API Key 调用，产生实际费用</span>

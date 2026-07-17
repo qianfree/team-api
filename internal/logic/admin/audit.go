@@ -88,11 +88,11 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 }
 
 // queryPage 使用 GoFrame ORM 分页查询，返回 []map[string]any。
-// 注意：该函数使用审计数据库连接（common.GetAuditDB()）查询审计表。
+// 使用主库查询审计表（aud_request_logs 之外的审计表数据量小，无需独立库）。
 // 分开调用 Count 和 All 避免 ScanAndCount 对 map[string]any 的 bug。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
-	auditDB := common.GetAuditDB()
-	m := auditDB.Ctx(ctx).Model(table).Safe()
+	mainDB := g.DB()
+	m := mainDB.Ctx(ctx).Model(table).Safe()
 	if where != "" {
 		m = m.Where(where, args...)
 	}
@@ -106,7 +106,7 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 	}
 
 	// 重新构建查询（Count 会消耗 Model 状态）
-	q := auditDB.Ctx(ctx).Model(table).Safe()
+	q := mainDB.Ctx(ctx).Model(table).Safe()
 	if fields != "" {
 		q = q.Fields(fields)
 	}
@@ -456,7 +456,7 @@ func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogEx
 		offset := 0
 		for {
 			where, args := buildOpLogWhere()
-			q := common.GetAuditDB().Ctx(ctx).Model("aud_operation_logs").Fields(selectFields).OrderDesc("created_at").Offset(offset).Limit(1000)
+			q := g.DB().Ctx(ctx).Model("aud_operation_logs").Fields(selectFields).OrderDesc("created_at").Offset(offset).Limit(1000)
 			if where != "" {
 				q = q.Where(where, args...)
 			}
@@ -546,11 +546,11 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 
 	where := strings.Join(conditions, " AND ")
 
-	// Step 1: 从审计库查询审计记录（不带 JOIN）
-	auditDB := common.GetAuditDB()
+	// Step 1: 从主库查询内容过滤日志（数据量小，无需独立库）
+	mainDB := g.DB()
 	fields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip, filter_mode, matched_words, original_snippet, blocked, created_at"
 
-	countM := auditDB.Ctx(ctx).Model("aud_content_filter_logs").Safe()
+	countM := mainDB.Ctx(ctx).Model("aud_content_filter_logs").Safe()
 	if where != "" {
 		countM = countM.Where(where, args...)
 	}
@@ -564,7 +564,7 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 		}, nil
 	}
 
-	dataM := auditDB.Ctx(ctx).Model("aud_content_filter_logs").Safe().
+	dataM := mainDB.Ctx(ctx).Model("aud_content_filter_logs").Safe().
 		Fields(fields).
 		OrderDesc("created_at").
 		Page(page, pageSize)

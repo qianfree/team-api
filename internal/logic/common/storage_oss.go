@@ -97,3 +97,17 @@ func (s *OSSStorageProvider) PresignedURL(ctx context.Context, key string, expir
 
 	return signedURL, nil
 }
+
+// PresignedThumbnailURL signs a URL with an x-oss-process image/resize op so OSS
+// returns a downscaled thumbnail (width px, height auto, no upscaling).
+func (s *OSSStorageProvider) PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error) {
+	fullKey := s.fullKey(key)
+
+	process := fmt.Sprintf("image/resize,w_%d", width)
+	signedURL, err := s.bucket.SignURL(fullKey, oss.HTTPGet, int64(expires.Seconds()), oss.Process(process))
+	if err != nil {
+		return "", fmt.Errorf("oss sign thumbnail url: %w", err)
+	}
+
+	return signedURL, nil
+}
