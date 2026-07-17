@@ -138,13 +138,15 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 	return result, nil
 }
 
-// GetAsyncImageModelSet 判定给定图片模型（按 model_id 字符串）是否「必须走异步图片端点」。
+// GetAsyncImageModelSet 判定给定图片模型（按 model_id 字符串）是否「走异步图片端点」。
 //
 // 真相源是服务该模型的渠道 provider 类型：桥接 mdl_models.model_id = chn_abilities.model_name
-// → chn_channels.type，用 constant.IsAsyncImageProvider 分类（与同步端点拦截 gate 同源）。
-// 当某模型的全部在役服务渠道都是异步图片 provider（如 DashScope）时才标记 true —— 此时同步
-// /v1/images/generations 必失败，在线体验/客户端必须改用 /v1/images/generations/async 提交+轮询。
-// 混合渠道（既有异步又有同步 provider）判为 false，保持走同步端点的现状。
+// → chn_channels.type，用 constant.IsAsyncImageModel 分类（与同步端点拦截 gate 同源）。
+//   - 当某模型的全部在役服务渠道都是异步图片 provider（如 DashScope wanx/qwen-image）时，同步
+//     /v1/images/generations 必失败，必须走 /v1/images/generations/async 提交+轮询 → true。
+//   - 此外若「同步图片厂商异步化」总开关（sync_image_async_enabled，默认开启）打开，同步阻塞
+//     返回的图片厂商（OpenAI/DALL·E 等）也由 worker 池在异步端点处理，故所有有渠道的图片模型
+//     一并走异步端点 → true。开关关闭时，同步厂商回落同步端点 → false。
 //
 // 一次批量查询（非 N+1）；仅对图片分类模型调用。modelIDs 为空时返回空 map。
 func GetAsyncImageModelSet(ctx context.Context, modelIDs []string) (map[string]bool, error) {
@@ -187,8 +189,13 @@ func GetAsyncImageModelSet(ctx context.Context, modelIDs []string) (map[string]b
 			st.allAsync = false
 		}
 	}
+	// 「同步图片厂商异步化」总开关（默认开启）：开启时，同步阻塞返回的图片厂商（OpenAI/DALL·E
+	// 等）也能走 /v1/images/generations/async 由 worker 池异步处理，因此任何有在役渠道的图片
+	// 模型都应走异步端点（在线体验用提交+轮询）。关闭时，仅「全部在役渠道均为异步图片 provider」
+	// 的模型才异步（此时同步端点必失败）；同步厂商回落同步端点。
+	syncImageEnabled := Config().GetBool(ctx, "sync_image_async_enabled")
 	for name, st := range agg {
-		result[name] = st.hasChannel && st.allAsync
+		result[name] = st.hasChannel && (st.allAsync || syncImageEnabled)
 	}
 	return result, nil
 }
