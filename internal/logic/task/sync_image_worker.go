@@ -40,12 +40,22 @@ const (
 	syncImageQueueSize   = 1000 // 有界队列容量，满则提交侧退款+429
 	syncImageMaxAttempts = 16   // 单任务选渠道最大尝试次数（防全饱和时空转）
 	syncImageDownloadCap = 20 << 20
+
+	// syncImageShutdownWait 停机时等待在途任务收尾的最长时间。超过则强制停止，
+	// 把仍未完成的在途任务标记为超时（TIMEOUT）并退款，不再无限等待上游返回。
+	syncImageShutdownWait = 3 * time.Minute
 )
 
 var (
-	syncImageQueue chan *SyncImageJob
-	syncImageStop  chan struct{}
-	syncImageWg    sync.WaitGroup
+	syncImageQueue    chan *SyncImageJob
+	syncImageStop     chan struct{} // 关闭 → worker 不再领取新任务，处理完在途任务即退出
+	syncImageWg       sync.WaitGroup
+	syncImageShutdown atomic.Bool // 停机中：拒绝新任务入队
+
+	// 本实例在途任务登记表（TaskID -> job）。用于停机超时时，只对**本实例**正在执行的
+	// 任务做超时+退款，避免误伤多实例部署下其他实例的 IN_PROGRESS 任务。
+	syncImageRunningMu sync.Mutex
+	syncImageRunning   = make(map[int64]*SyncImageJob)
 
 	channelInflightMu sync.Mutex
 	channelInflight   = make(map[int64]int)
@@ -82,6 +92,10 @@ type SyncImageJob struct {
 func StartSyncImageWorkers(ctx context.Context) {
 	syncImageQueue = make(chan *SyncImageJob, syncImageQueueSize)
 	syncImageStop = make(chan struct{})
+	syncImageShutdown.Store(false)
+	syncImageRunningMu.Lock()
+	syncImageRunning = make(map[int64]*SyncImageJob)
+	syncImageRunningMu.Unlock()
 	syncImageBilling = billing.NewTaskBillingProvider()
 	syncImageRelayProv = relay.NewDataProvider()
 
@@ -103,18 +117,137 @@ func StartSyncImageWorkers(ctx context.Context) {
 	monitor.RegisterSyncImagePoolProvider(SyncImageWorkerStats)
 }
 
-// StopSyncImageWorkers 停机时优雅关闭；在途任务完成后退出，队列内未开始的任务留 QUEUED，
-// 由超时兜底网最终 FAILURE+退款。
+// StopSyncImageWorkers 停机：
+//  1. 置停机标志，拒绝新任务入队，通知 worker 不再领取新任务；
+//  2. 将队列中未开始的排队任务全部置为 FAILURE 并退款；
+//  3. 有界等待在途任务收尾（最长 syncImageShutdownWait）；超过则强制停止，
+//     把仍未完成的在途任务标记为超时（TIMEOUT）并退款，不再无限等待上游返回。
 func StopSyncImageWorkers() {
-	if syncImageStop != nil {
+	if syncImageQueue == nil {
+		return
+	}
+	ctx := gctx.New()
+
+	// 1. 拒绝新入队，并通知 worker 停止领取新任务。
+	syncImageShutdown.Store(true)
+	// 幂等：避免重复 close panic。
+	select {
+	case <-syncImageStop:
+	default:
 		close(syncImageStop)
 	}
-	syncImageWg.Wait()
+
+	// 2. 将队列中未开始的排队任务全部失败并退款。
+	//    此时 worker 收到 stop 后不再领取新任务；即便有个别 worker 在关闭瞬间抢走一条，
+	//    channel 接收是原子的，该任务转为在途（由步骤 3 处理），不会与本次排干重复。
+	failQueuedOnShutdown(ctx)
+
+	// 3. 有界等待在途任务收尾。
+	done := make(chan struct{})
+	go func() {
+		syncImageWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		g.Log().Info(ctx, "sync_image: 所有在途任务已完成，worker 池已停止")
+	case <-time.After(syncImageShutdownWait):
+		// 超过等待上限：强制停止，未完成的在途任务标记为超时并退款。
+		// 残留 worker goroutine 仍卡在上游，随进程退出而终止；其后续收尾会因 CAS
+		// 谓词失配而 no-op，不会与这里的超时处理重复结算。
+		g.Log().Warningf(ctx, "sync_image: 等待在途任务超过 %v，强制停止；未完成任务标记为超时并退款", syncImageShutdownWait)
+		timeoutRunningOnShutdown(ctx)
+	}
+}
+
+// failQueuedOnShutdown 排干队列，把未开始的排队任务全部置为 FAILURE 并退款。
+func failQueuedOnShutdown(ctx context.Context) {
+	failed := 0
+	for {
+		select {
+		case job := <-syncImageQueue:
+			if job == nil {
+				continue
+			}
+			failQueuedSyncImageJob(ctx, job, "server shutting down")
+			failed++
+		default:
+			if failed > 0 {
+				g.Log().Infof(ctx, "sync_image: 停机将 %d 个未开始的排队任务置为失败并退款", failed)
+			}
+			return
+		}
+	}
+}
+
+// timeoutRunningOnShutdown 停机超时：把本实例所有仍未完成的在途任务标记为超时并退款。
+func timeoutRunningOnShutdown(ctx context.Context) {
+	syncImageRunningMu.Lock()
+	jobs := make([]*SyncImageJob, 0, len(syncImageRunning))
+	for _, j := range syncImageRunning {
+		jobs = append(jobs, j)
+	}
+	syncImageRunningMu.Unlock()
+
+	timedOut := 0
+	for _, job := range jobs {
+		if timeoutRunningSyncImageJob(ctx, job) {
+			timedOut++
+		}
+	}
+	if timedOut > 0 {
+		g.Log().Warningf(ctx, "sync_image: 停机强制将 %d 个在途任务标记为超时并退款", timedOut)
+	}
+}
+
+// timeoutRunningSyncImageJob 把单个在途任务标记为超时并退款（语义对齐 handleTimedOutTasks）：
+// DB status 置 FAILURE(task timed out)、审计 task_status 置 TIMEOUT。CAS 谓词 IN_PROGRESS
+// 保护：若残留 worker 已抢先落终态，这里 no-op，避免重复退款/重复减 active 计数。
+func timeoutRunningSyncImageJob(ctx context.Context, job *SyncImageJob) bool {
+	now := time.Now()
+	const reason = "task timed out"
+
+	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, &common.AsyncTask{
+		ID:         job.TaskID,
+		Status:     "FAILURE",
+		FailReason: reason,
+		FinishTime: &now,
+	}, "IN_PROGRESS"); err != nil {
+		return false // 已被 worker 收尾或其他方抢占
+	}
+
+	settled := true
+	if job.PreDeductAmount > 0 {
+		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
+			g.Log().Warningf(ctx, "sync_image: timeout task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
+			settled = false
+		}
+	}
+	if settled {
+		_ = DefaultAsyncProvider.UpdateTask(ctx, &common.AsyncTask{
+			ID:             job.TaskID,
+			Status:         "FAILURE",
+			FailReason:     reason,
+			FinishTime:     &now,
+			BillingSettled: true,
+		})
+	}
+
+	syncImageFailed.Add(1)
+	DecrActiveTask()
+	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
+
+	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	recordTaskUsage(usageTask, nil, false, reason, nil)
+	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 TIMEOUT（与超时兜底网一致）。
+	recordTaskCompletionAudit(usageTask, "TIMEOUT", reason, nil)
+	return true
 }
 
 // EnqueueSyncImageJob 非阻塞入队；队列满返回 false，供提交侧退款+429。
 func EnqueueSyncImageJob(job *SyncImageJob) bool {
-	if syncImageQueue == nil {
+	if syncImageQueue == nil || syncImageShutdown.Load() {
 		syncImageRejected.Add(1)
 		return false
 	}
@@ -159,6 +292,15 @@ func SyncImageWorkerStats() monitor.SyncImagePoolSnapshot {
 func syncImageWorkerLoop(workerID int) {
 	defer syncImageWg.Done()
 	for {
+		// 优先响应停机：一旦收到停机信号，不再领取新的排队任务。已在执行中的在途任务
+		// 由 runSyncImageJob 同步跑完（syncImageWg 会等待），未开始的排队任务由
+		// StopSyncImageWorkers 在 worker 全部退出后统一置为 FAILURE。
+		select {
+		case <-syncImageStop:
+			return
+		default:
+		}
+
 		select {
 		case <-syncImageStop:
 			return
@@ -171,10 +313,60 @@ func syncImageWorkerLoop(workerID int) {
 	}
 }
 
+// failQueuedSyncImageJob 停机时把仍处于 QUEUED（未开始）的任务置为 FAILURE 并退款。
+// 用 CAS QUEUED->FAILURE 保护：若该任务已被某 worker 抢走（IN_PROGRESS/终态），这里 no-op，
+// 由该 worker 负责结算，避免重复退款。
+func failQueuedSyncImageJob(ctx context.Context, job *SyncImageJob, reason string) {
+	now := time.Now()
+	reason = truncateStr(reason, 500)
+
+	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, &common.AsyncTask{
+		ID:         job.TaskID,
+		Status:     "FAILURE",
+		FailReason: reason,
+		FinishTime: &now,
+	}, "QUEUED"); err != nil {
+		return
+	}
+
+	settled := true
+	if job.PreDeductAmount > 0 {
+		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
+			g.Log().Warningf(ctx, "sync_image: shutdown-fail task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
+			settled = false
+		}
+	}
+	if settled {
+		_ = DefaultAsyncProvider.UpdateTask(ctx, &common.AsyncTask{
+			ID:             job.TaskID,
+			Status:         "FAILURE",
+			FailReason:     reason,
+			FinishTime:     &now,
+			BillingSettled: true,
+		})
+	}
+
+	syncImageFailed.Add(1)
+	DecrActiveTask()
+	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
+
+	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	recordTaskUsage(usageTask, nil, false, reason, nil)
+	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 FAILURE。
+	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
+}
+
 // runSyncImageJob 每任务 recover 兜 panic，防单任务崩溃拖垮 worker。
 func runSyncImageJob(workerID int, job *SyncImageJob) {
 	syncImageBusy.Add(1)
+	// 登记为本实例在途任务，供停机超时时定向处理；defer 保证 panic 也能摘除。
+	syncImageRunningMu.Lock()
+	syncImageRunning[job.TaskID] = job
+	syncImageRunningMu.Unlock()
 	defer func() {
+		syncImageRunningMu.Lock()
+		delete(syncImageRunning, job.TaskID)
+		syncImageRunningMu.Unlock()
 		syncImageBusy.Add(-1)
 		if r := recover(); r != nil {
 			g.Log().Errorf(gctx.New(), "sync_image: worker %d panic on task %s: %v", workerID, job.PublicTaskID, r)

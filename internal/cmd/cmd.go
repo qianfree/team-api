@@ -319,14 +319,19 @@ var (
 			// 注入 webhook 发布函数到 billing 包（解耦循环依赖）
 			billing.SetPublishWebhookEventFn(tenant.PublishWebhookEvent)
 
-			// Flush usage log writer on shutdown (s.Run blocks until server stops)
+			// Graceful shutdown order (defers run LIFO after s.Run returns):
+			// 1) 先排空任务池（StopSyncImageWorkers / StopAsyncPolling）——它们收尾时会写
+			//    用量日志 / 审计 / 结算；此时异步 Writer 必须仍存活。
+			// 2) 再 flush 关闭异步 Writer。
+			// 3) 最后关 webhook / plugin。
+			// 因此把两个 task.Stop* 注册在最后（最先执行），Writer 关闭注册在前（后执行）。
 			defer plugin.Shutdown(ctx)
 			defer tenant.ShutdownWebhookDispatcher()
-			defer task.StopAsyncPolling()
-			defer task.StopSyncImageWorkers()
 			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()
+			defer task.StopAsyncPolling()
+			defer task.StopSyncImageWorkers()
 
 			s.Run()
 			return nil
