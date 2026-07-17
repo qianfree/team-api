@@ -420,6 +420,20 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			return result.usage, result.billingResult, result.err
 		}
 
+		// 阿里云百炼（DashScope）异步图片模型（wanx*、qwen-image-plus 等）上游为异步任务式
+		// （提交拿 task_id → 轮询取图），其 image-synthesis 端点强制异步，无法经同步
+		// /v1/images/generations 一次性返回图片。命中时直接引导客户端改用异步端点。
+		// 判定收敛到 constant.IsAsyncImageModel（按 provider + 模型），qwen-image-2.x 等
+		// 同步 multimodal 模型不在此列，会继续走下方同步转发。租户模型列表 async_image 标记同源。
+		if v.relayMode == constant.RelayModeImagesGenerations &&
+			constant.IsAsyncImageModel(constant.ProviderType(selection.ChannelType), selection.UpstreamModelName) {
+			if billing != nil && preDeductAmount > 0 {
+				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			}
+			return nil, v.billingResult, constant.NewRequestError(
+				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
+		}
+
 		info := buildRelayInfo(ctx, rc, v, selection, path, headers)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {

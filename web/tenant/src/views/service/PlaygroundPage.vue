@@ -18,6 +18,8 @@ interface ModelItem {
 	per_request_price?: number | null
 	input_price?: number | null
 	output_price?: number | null
+	// 图片模型是否必须走异步端点（DashScope 等）
+	async_image?: boolean
 }
 
 const tabs = [

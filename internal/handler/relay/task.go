@@ -296,19 +296,28 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	modelName := extractModelName(body)
 	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
 
-	// 按 provider 类型 + 总开关分支：异步厂商（命中 ProviderTypeToTaskPlatform）走原 taskchannel 流；
-	// 同步厂商（OpenAI 等未命中）在「同步图片异步化」开启时走 worker 池，关闭时回退原流
-	//（HandleTaskSubmit 会因平台不支持返回 400，即恢复本功能上线前的行为）。
+	// 阿里云 qwen-image-2.x 系列为「同步 multimodal」图片模型：DashScope 只有同步
+	// multimodal-generation 端点，没有异步 image-synthesis 端点，不能走 Ali taskchannel 提交
+	//（会因 endpoint 不支持被上游以 "url error" 拒绝）。但它们本质是「同步阻塞返回」的图片
+	// 模型，交给 sync_image worker 池即可——worker 直连同步 ali.Adaptor 的 multimodal 处理，
+	// 客户端提交即拿 task_id、后台持上游连接、轮询取图，与其它异步图片模型体验一致。
 	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
 	_, isAsync := relay_constant.ProviderTypeToTaskPlatform(providerType)
+	isAliSyncMultimodal := providerType == relay_constant.ProviderAli &&
+		relay_constant.IsAliSyncMultimodalImageModel(channelMeta.UpstreamModelName)
+
+	// 分支：异步厂商（命中 ProviderTypeToTaskPlatform）走原 taskchannel 流；同步厂商（OpenAI
+	// 等未命中）在「同步图片异步化」开启时走 worker 池，关闭时回退原流（HandleTaskSubmit 会因
+	// 平台不支持返回 400，即恢复本功能上线前的行为）。阿里 qwen-image-2.x 虽命中 Ali taskchannel，
+	// 但上游不支持异步，强制走 worker 池。
 	syncImageEnabled := lcommon.Config().GetBool(r.Context(), "sync_image_async_enabled")
-	if isAsync || !syncImageEnabled {
+	if isAliSyncMultimodal || (!isAsync && syncImageEnabled) {
+		HandleSyncImageSubmit(r, body, rc, channelMeta)
+	} else {
 		relay_handler.HandleTaskSubmit(
 			r.Context(), body, r.URL.Path, r.Header,
 			rc, taskDataProvider, taskBillingProvider, channelMeta,
 		)
-	} else {
-		HandleSyncImageSubmit(r, body, rc, channelMeta)
 	}
 
 	if rc.TaskID != "" {
