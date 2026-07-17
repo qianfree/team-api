@@ -466,6 +466,52 @@ const categories: Category[] = [
 }`,
 				},
 			},
+			{
+				id: 'images-generations-async-submit',
+				method: 'POST',
+				path: '/v1/images/generations/async',
+				title: 'Image Generations Async (Submit)',
+				desc: '异步图像生成任务提交。阿里云百炼（DashScope，通义万相/qwen-image 等）图像上游为异步任务式，无法经同步 /v1/images/generations 一次性返回，需通过本接口提交任务拿到 task_id，再轮询查询接口取图。请求体与同步接口一致。',
+				params: [
+					{ field: 'model', type: 'string', desc: '模型 ID（如 wanx2.1-t2i-turbo、qwen-image）', required: true },
+					{ field: 'prompt', type: 'string', desc: '图像描述提示词', required: true },
+					{ field: 'size', type: 'string', desc: '图像尺寸（如 1024x1024）' },
+					{ field: 'n', type: 'integer', desc: '生成数量（默认 1）' },
+				],
+				example: {
+					req: `{
+  "model": "wanx2.1-t2i-turbo",
+  "prompt": "A white siamese cat wearing sunglasses",
+  "size": "1024x1024"
+}`,
+					resp: `{
+  "id": "task_abc123",
+  "status": "SUBMITTED",
+  "model": "wanx2.1-t2i-turbo",
+  "created_at": 1717100000
+}`,
+				},
+			},
+			{
+				id: 'images-generations-async-fetch',
+				method: 'GET',
+				path: '/v1/images/generations/async/{task_id}',
+				title: 'Image Generations Async (Fetch)',
+				desc: '查询异步图像生成任务结果。轮询本接口直到 status 为 SUCCESS（含图片 url）或 FAILURE（含 error）。建议轮询间隔 2~3 秒。状态流转：SUBMITTED / QUEUED / IN_PROGRESS → SUCCESS / FAILURE。',
+				params: [
+					{ field: 'task_id', type: 'string', desc: '任务 ID（路径参数）', required: true },
+				],
+				example: {
+					resp: `{
+  "id": "task_abc123",
+  "status": "SUCCESS",
+  "model": "wanx2.1-t2i-turbo",
+  "created_at": 1717100000,
+  "completed_at": 1717100030,
+  "url": "https://cdn.example.com/img/abc123.png"
+}`,
+				},
+			},
 		],
 	},
 	{

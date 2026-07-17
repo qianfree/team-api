@@ -41,4 +41,7 @@ type TenantAvailableModelItem struct {
 	CacheReadPrice     *float64          `json:"cache_read_price"`
 	CacheCreationPrice *float64          `json:"cache_creation_price"`
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
+	// AsyncImage 图片模型是否必须走异步端点（提交 /v1/images/generations/async 后轮询取图）。
+	// 仅图片分类模型有意义；DashScope 等异步图片 provider 为 true。
+	AsyncImage bool `json:"async_image"`
 }

@@ -17,6 +17,7 @@ interface ModelItem {
 const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
+const errorMessage = ref('')
 const selectedModel = ref(props.models[0]?.model_id || '')
 const selectedModelItem = computed(() =>
 	props.models.find(m => m.model_id === selectedModel.value),
@@ -36,6 +37,7 @@ async function rerank() {
 	if (docs.length === 0) return
 
 	sending.value = true
+	errorMessage.value = ''
 	results.value = []
 
 	try {
@@ -55,6 +57,7 @@ async function rerank() {
 		tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
 	} catch (e) {
 		console.error(e)
+		errorMessage.value = (e as any)?.message || '请求失败，请重试'
 	} finally {
 		sending.value = false
 	}
@@ -104,7 +107,19 @@ function scoreColor(score: number) {
 					<h3 class="text-sm font-semibold text-gray-900">排序结果</h3>
 				</div>
 				<div class="card-body">
-					<div v-if="results.length === 0 && !sending" class="empty-state">
+					<!-- 错误提示 -->
+					<div
+						v-if="errorMessage"
+						class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
+					>
+						<div class="flex items-center gap-2 text-red-700">
+							<Icon name="xCircle" size="sm" />
+							<span class="text-sm font-medium">排序失败</span>
+						</div>
+						<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
+					</div>
+
+					<div v-if="results.length === 0 && !sending && !errorMessage" class="empty-state">
 						<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
 						<h3 class="empty-state-title">等待排序</h3>
 						<p class="empty-state-description">输入查询和文档并点击重排序</p>

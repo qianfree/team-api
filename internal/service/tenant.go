@@ -226,6 +226,7 @@ type (
 		// GetOrgInfo returns tenant organization info.
 		GetOrgInfo(ctx context.Context, req *v1.TenantOrgInfoReq) (*v1.TenantOrgInfoRes, error)
 		// UpdateOrgInfo updates tenant organization info.
+		// 组织代码仅可在未启用团队功能时设置一次（设置即激活），启用后不可修改。
 		UpdateOrgInfo(ctx context.Context, req *v1.TenantOrgUpdateReq) (*v1.TenantOrgUpdateRes, error)
 		// TransferOwnership transfers tenant ownership to another member.
 		TransferOwnership(ctx context.Context, req *v1.TenantOrgTransferReq) (*v1.TenantOrgTransferRes, error)

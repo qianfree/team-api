@@ -38,7 +38,7 @@ func GetStorageConfig(ctx context.Context) *StorageConfig {
 // NewStorageProvider creates a StorageProvider based on the given configuration.
 func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	switch cfg.Provider {
-	case "s3", "minio":
+	case "s3", "minio", "r2":
 		return NewS3Provider(cfg)
 	case "oss":
 		return NewOSSProvider(cfg)
