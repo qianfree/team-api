@@ -86,12 +86,31 @@ func pollOnce(ctx context.Context) {
 	// 3. 按 platform 分组处理
 	platformGroups := make(map[string][]*common.AsyncTask)
 	for _, t := range tasks {
+		// sync_image 无上游任务 ID 可轮询，由 worker 池自行推进；此处跳过，
+		// 避免 processPlatformTasks → taskchannel.GetAdaptor("sync_image") 报错刷日志。
+		// 其超时/未结算仍由 handleTimedOutTasks / handleUnsettledTasks 兜底。
+		if t.Platform == string(constant.TaskPlatformSyncImage) {
+			continue
+		}
 		platformGroups[t.Platform] = append(platformGroups[t.Platform], t)
 	}
 
 	for platform, platformTasks := range platformGroups {
 		processPlatformTasks(ctx, platform, platformTasks)
 	}
+}
+
+// buildTimeoutFailure 把超时任务标记为失败，并返回**覆盖前**的真实状态供 CAS 谓词使用。
+//
+// 独立成纯函数以便回归测试。历史 bug：调用方先 `t.Status = "FAILURE"` 再把 `t.Status`
+// 当作 UpdateTaskCAS 的 oldStatus 传入，使 CAS 变成 `WHERE status='FAILURE' SET status='FAILURE'`，
+// 对任何非终态行匹配 0 行 → 超时兜底网从未生效（超时任务不退款、active 计数不减）。
+func buildTimeoutFailure(t *common.AsyncTask, now time.Time) (oldStatus string) {
+	oldStatus = t.Status
+	t.Status = "FAILURE"
+	t.FailReason = "task timed out"
+	t.FinishTime = &now
+	return oldStatus
 }
 
 // handleTimedOutTasks 处理超时任务
@@ -104,12 +123,11 @@ func handleTimedOutTasks(ctx context.Context) {
 	}
 
 	for _, t := range tasks {
-		t.Status = "FAILURE"
-		t.FailReason = "task timed out"
 		now := time.Now()
-		t.FinishTime = &now
+		// 必须用覆盖前的真实状态（IN_PROGRESS/QUEUED/SUBMITTED…）作为 CAS 谓词。
+		oldStatus := buildTimeoutFailure(t, now)
 
-		if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, t, t.Status); err != nil {
+		if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, t, oldStatus); err != nil {
 			g.Log().Warningf(ctx, "poll: mark timeout task %s: %v", t.PublicTaskID, err)
 			continue
 		}
@@ -147,6 +165,13 @@ func handleUnsettledTasks(ctx context.Context) {
 	}
 
 	for _, t := range tasks {
+		// sync_image 无 upstream_task_id，不能落入下面「UpstreamTaskID=="" → 退款」的分支，
+		// 否则崩溃窗口内的成功任务会被误退款（用户出图却全额退回，资损）。单独处理。
+		if t.Platform == string(constant.TaskPlatformSyncImage) {
+			handleUnsettledSyncImage(ctx, t)
+			continue
+		}
+
 		var pd privateData
 		if err := json.Unmarshal(t.PrivateData, &pd); err != nil || pd.UpstreamTaskID == "" {
 			// 无法恢复，直接退还预扣
@@ -194,6 +219,44 @@ func handleUnsettledTasks(ctx context.Context) {
 			billing.CleanupPreDeduct(ctx, t.TenantID, t.RequestID+"_adjust")
 		}
 	}
+}
+
+// handleUnsettledSyncImage 结算重试网中 sync_image 任务的专用处理。
+//
+// sync_image 无 upstream_task_id，通用分支会把它当「不可恢复」直接退款——但对 worker 已判
+// SUCCESS、仅 billing_settled 未落库的崩溃窗口任务而言，退款即资损（用户出图却被全额退回）。
+// 因此这里按终态区分：SUCCESS 用 private_data 的 billing_context 重放结算，FAILURE 才退款。
+func handleUnsettledSyncImage(ctx context.Context, t *common.AsyncTask) {
+	taskBilling := billing.NewTaskBillingProvider()
+
+	if t.Status == "SUCCESS" {
+		var pd privateData
+		_ = json.Unmarshal(t.PrivateData, &pd)
+		actualCost := t.ActualCost
+		if actualCost <= 0 {
+			actualCost = t.PreDeductAmount
+		}
+		if _, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
+			t.ModelName, t.RequestID, actualCost, t.PreDeductAmount, 0, 0, pd.BillingContext.Ratios, t.PublicTaskID); err != nil {
+			g.Log().Warningf(ctx, "poll: retry settle sync_image task %s: %v", t.PublicTaskID, err)
+			return
+		}
+		t.BillingSettled = true
+		t.ActualCost = actualCost
+		taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
+		DefaultAsyncProvider.UpdateTask(ctx, t)
+		g.Log().Infof(ctx, "poll: retried settlement for sync_image task %s", t.PublicTaskID)
+		return
+	}
+
+	// FAILURE：退还预扣
+	if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.RequestID, t.PreDeductAmount); err != nil {
+		g.Log().Warningf(ctx, "poll: retry refund sync_image task %s: %v", t.PublicTaskID, err)
+		return
+	}
+	t.BillingSettled = true
+	DefaultAsyncProvider.UpdateTask(ctx, t)
+	billing.CleanupPreDeduct(ctx, t.TenantID, t.RequestID+"_adjust")
 }
 
 // processPlatformTasks 处理同一平台的任务

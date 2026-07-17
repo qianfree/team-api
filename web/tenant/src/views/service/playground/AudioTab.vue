@@ -12,6 +12,7 @@ interface ModelItem {
 const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
 const sending = ref(false)
+const errorMessage = ref('')
 const selectedModel = ref(props.models[0]?.model_id || '')
 const inputText = ref('')
 const voice = ref('alloy')
@@ -40,6 +41,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 async function synthesize() {
 	if (!inputText.value.trim() || !selectedModel.value) return
 	sending.value = true
+	errorMessage.value = ''
 	audioBase64.value = ''
 
 	try {
@@ -57,6 +59,7 @@ async function synthesize() {
 		contentType.value = String(res.headers['content-type'] || 'audio/mpeg')
 	} catch (e) {
 		console.error(e)
+		errorMessage.value = (e as any)?.message || '请求失败，请重试'
 	} finally {
 		sending.value = false
 	}
@@ -100,7 +103,19 @@ async function synthesize() {
 					<h3 class="text-sm font-semibold text-gray-900">合成结果</h3>
 				</div>
 				<div class="card-body">
-					<div v-if="!audioBase64 && !sending" class="empty-state">
+					<!-- 错误提示 -->
+					<div
+						v-if="errorMessage"
+						class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
+					>
+						<div class="flex items-center gap-2 text-red-700">
+							<Icon name="xCircle" size="sm" />
+							<span class="text-sm font-medium">合成失败</span>
+						</div>
+						<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
+					</div>
+
+					<div v-if="!audioBase64 && !sending && !errorMessage" class="empty-state">
 						<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
 						<h3 class="empty-state-title">等待合成</h3>
 						<p class="empty-state-description">输入文本并点击合成</p>

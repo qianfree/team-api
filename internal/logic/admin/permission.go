@@ -142,6 +142,13 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 			"redemption:view", "redemption:create", "redemption:edit",
 		},
 	},
+	{
+		Name:  "file",
+		Label: "文件管理",
+		Permissions: []string{
+			"file:view", "file:delete", "file:cleanup",
+		},
+	},
 }
 
 // GetUserPermissions returns permission points and data scopes for an admin user.

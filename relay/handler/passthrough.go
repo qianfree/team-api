@@ -9,6 +9,14 @@ import (
 func canPassThrough(info *common.RelayInfo) bool {
 	settings := info.ChannelMeta.Settings
 
+	// 阿里云同步 multimodal 图片（qwen-image-2.x）：入站 OpenAI Images 格式与上游 DashScope
+	// multimodal-generation 的 messages 结构不兼容，必须经 ConvertRequest 转换。即使运营者
+	// 显式开启直连、或未配置模型映射，也不能原样透传，否则上游因请求体格式错误报错。
+	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesGenerations &&
+		constant.IsAliSyncMultimodalImageModel(info.ChannelMeta.UpstreamModelName) {
+		return false
+	}
+
 	// 显式开启：运营者明确配置直连，不做额外检查
 	if settings.PassThroughBodyEnabled {
 		return true

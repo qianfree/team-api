@@ -50,10 +50,13 @@ func (a *Adaptor) handleGeminiNativeNonStream(ctx context.Context, resp *http.Re
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Gemini 原生格式透传：已写入完整上游错误响应，标记以防上层二次写入
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		err := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		err.ResponseWritten = true
+		return nil, err
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
@@ -73,10 +76,13 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		// Gemini 原生格式透传：已写入完整上游错误响应，标记以防上层二次写入
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		err := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		err.ResponseWritten = true
+		return nil, err
 	}
 
 	helper.SetEventStreamHeaders(writer)
@@ -163,8 +169,8 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		writeGeminiErrorAsOpenAI(writer, body, resp.StatusCode)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		// 不写响应：交上层 WriteRelayError 统一写入，避免双重写入与重试时的响应污染
+		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
 	var geminiResp dto.GeminiChatResponse
@@ -199,8 +205,8 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writeGeminiErrorAsOpenAI(writer, body, resp.StatusCode)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		// 不写响应：交上层 WriteRelayError 统一写入，避免双重写入与重试时的响应污染
+		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
 	helper.SetEventStreamHeaders(writer)
@@ -683,8 +689,10 @@ func geminiStatusToOpenAIType(status string) string {
 	}
 }
 
-// writeGeminiErrorAsOpenAI 将 Gemini 上游错误转换为 OpenAI 格式写入响应
-func writeGeminiErrorAsOpenAI(writer http.ResponseWriter, body []byte, defaultStatusCode int) {
+// buildGeminiUpstreamError 解析 Gemini 上游错误，构造携带正确 type 的 RelayError。
+// 用于 OpenAI 出站路径：adaptor 不直接写响应，交上层错误写入器（WriteRelayError）统一写入一次，
+// 既消除双重写入，又避免非流式可重试错误提前 WriteHeader 造成的重试响应污染。
+func buildGeminiUpstreamError(body []byte, defaultStatusCode int) *constant.RelayError {
 	code, status, message := parseGeminiError(body)
 	if code == 0 {
 		code = defaultStatusCode
@@ -692,16 +700,9 @@ func writeGeminiErrorAsOpenAI(writer http.ResponseWriter, body []byte, defaultSt
 	if code < 100 || code > 599 {
 		code = 500
 	}
-
-	openaiErr, _ := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    geminiStatusToOpenAIType(status),
-			"param":   nil,
-			"code":    nil,
-		},
-	})
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(code)
-	_, _ = writer.Write(openaiErr)
+	return &constant.RelayError{
+		StatusCode: code,
+		Message:    message,
+		Type:       geminiStatusToOpenAIType(status),
+	}
 }

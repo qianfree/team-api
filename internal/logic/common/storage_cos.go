@@ -109,3 +109,21 @@ func (s *COSStorageProvider) PresignedURL(ctx context.Context, key string, expir
 
 	return presignedURL.String(), nil
 }
+
+// PresignedThumbnailURL signs a URL with a COS CI imageMogr2/thumbnail op so COS
+// returns a downscaled thumbnail (width px, height auto). The process param is
+// injected into the signed query so the signature covers it.
+func (s *COSStorageProvider) PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error) {
+	fullKey := s.fullKey(key)
+
+	q := &url.Values{}
+	q.Add(fmt.Sprintf("imageMogr2/thumbnail/%dx", width), "")
+	opt := &cos.PresignedURLOptions{Query: q}
+
+	presignedURL, err := s.client.Object.GetPresignedURL(ctx, http.MethodGet, fullKey, s.secretID, s.secretKey, expires, opt)
+	if err != nil {
+		return "", fmt.Errorf("cos presign thumbnail url: %w", err)
+	}
+
+	return presignedURL.String(), nil
+}

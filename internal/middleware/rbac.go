@@ -197,6 +197,13 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/audit/sensitive-logs", perm: "audit:read_sensitive"},
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
 
+	// ── file 文件管理 ──
+	{method: "GET", path: "/api/admin/files", perm: "file:view"},
+	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},
+	{method: "POST", path: "/api/admin/files/cleanup", perm: "file:cleanup"},
+	{method: "GET", prefix: "/api/admin/files/", suffix: "/download", perm: "file:view"},
+	{method: "DELETE", prefix: "/api/admin/files/", perm: "file:delete"},
+
 	// ── monitor 监控告警 ──
 	{method: "GET", prefix: "/api/admin/monitor/", perm: "monitor:view"},
 	{method: "GET", path: "/api/admin/alert/rules", perm: "monitor:view"},

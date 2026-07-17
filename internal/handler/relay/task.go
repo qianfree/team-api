@@ -10,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
@@ -295,10 +296,35 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	modelName := extractModelName(body)
 	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
 
-	relay_handler.HandleTaskSubmit(
-		r.Context(), body, r.URL.Path, r.Header,
-		rc, taskDataProvider, taskBillingProvider, channelMeta,
-	)
+	// 异步图片端点分流。判「是否真有异步图片上游」用 constant.IsAsyncImageModel（唯一真相源，
+	// 与 sync gate / async_image 标记同源）——目前仅阿里 image-synthesis（wanx / qwen-image /
+	// wan2.2-t2i 等）为 true，走 taskchannel 提交拿 task_id。
+	//
+	// 其余图片模型上游都是同步阻塞返回，交 sync_image worker 池包装成可轮询任务（worker 直连各自
+	// 同步 channel.Adaptor）：阿里 multimodal（qwen-image-2.x/z-image/wan2.6-t2i/wan2.7-image）恒走；
+	// OpenAI / Gemini(imagen) / 火山(seedream) 等同步厂商受「同步图片异步化」总开关约束。
+	//
+	// 不能用 ProviderTypeToTaskPlatform 笼统判「异步厂商」——Gemini/火山的 taskchannel 是视频
+	//（veo/seedance）专用，把它们的图片模型送进去会被当视频构造请求而失败。
+	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
+	isAliSyncMultimodal := providerType == relay_constant.ProviderAli &&
+		relay_constant.IsAliSyncMultimodalImageModel(channelMeta.UpstreamModelName)
+	syncImageEnabled := lcommon.Config().GetBool(r.Context(), "sync_image_async_enabled")
+
+	switch {
+	case relay_constant.IsAsyncImageModel(providerType, channelMeta.UpstreamModelName):
+		// 真·异步图片上游（阿里 image-synthesis）：taskchannel 提交 + 轮询
+		relay_handler.HandleTaskSubmit(
+			r.Context(), body, r.URL.Path, r.Header,
+			rc, taskDataProvider, taskBillingProvider, channelMeta,
+		)
+	case isAliSyncMultimodal || syncImageEnabled:
+		// 同步阻塞图片：worker 池异步化（阿里 multimodal 恒走；其余同步厂商受开关约束）
+		HandleSyncImageSubmit(r, body, rc, channelMeta)
+	default:
+		// 同步厂商 + 「同步图片异步化」关闭：异步端点不支持，提示改用同步端点
+		writeSyncImageError(rc.Writer, 400, "async image generation is disabled for this model; call POST /v1/images/generations instead")
+	}
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)

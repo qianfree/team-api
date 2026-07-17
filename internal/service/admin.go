@@ -203,6 +203,16 @@ type (
 		UpdateFeedbackStatus(ctx context.Context, req *v1.FeedbackUpdateStatusReq) (*v1.FeedbackUpdateStatusRes, error)
 		// GetFeedbackStats 反馈统计
 		GetFeedbackStats(ctx context.Context, req *v1.FeedbackStatsReq) (*v1.FeedbackStatsRes, error)
+		// FileList 文件列表（分页 + 筛选）。
+		FileList(ctx context.Context, req *v1.FileListReq) (*v1.FileListRes, error)
+		// FileStats 存储占用统计（KPI）。
+		FileStats(ctx context.Context, req *v1.FileStatsReq) (*v1.FileStatsRes, error)
+		// FileDownload 生成临时预览下载链接。
+		FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1.FileDownloadRes, error)
+		// FileDelete 删除单个文件（存储对象 + 记录）。
+		FileDelete(ctx context.Context, req *v1.FileDeleteReq) (*v1.FileDeleteRes, error)
+		// FileCleanup 手动触发一次保留期清理（导出 + 图片）。
+		FileCleanup(ctx context.Context, req *v1.FileCleanupReq) (*v1.FileCleanupRes, error)
 		// CreateHelpCategory 创建帮助分类
 		CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCreateReq) (*v1.HelpCategoryCreateRes, error)
 		// UpdateHelpCategory 更新帮助分类
