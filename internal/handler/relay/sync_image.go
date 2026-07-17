@@ -81,6 +81,15 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	// 5. 建 QUEUED 任务行（channel_id=0，dispatch 时绑定）
 	publicTaskID := generateSyncImagePublicID()
 	now := time.Now()
+
+	// 从渠道类型推导实际的供应商平台（ali / gemini / volcengine / openai 等）
+	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
+	actualPlatform, ok := relay_constant.ProviderTypeToTaskPlatform(providerType)
+	if !ok {
+		// 如果无法映射（如 openai、claude 等），直接使用供应商类型作为平台名
+		actualPlatform = relay_constant.TaskPlatform(providerType)
+	}
+
 	privateData, _ := json.Marshal(map[string]any{
 		"task_type": string(relay_constant.TaskPlatformSyncImage),
 		"billing_context": map[string]any{
@@ -92,7 +101,7 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	asyncTask := &relay_common.AsyncTask{
 		PublicTaskID:    publicTaskID,
 		RequestID:       rc.RequestID,
-		Platform:        string(relay_constant.TaskPlatformSyncImage),
+		Platform:        string(actualPlatform),
 		Action:          "generate",
 		Status:          "QUEUED",
 		Progress:        "0%",

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -23,31 +24,57 @@ var DefaultAsyncProvider = &AsyncProvider{}
 
 // CreateTask 创建异步任务记录
 func (p *AsyncProvider) CreateTask(ctx context.Context, task *common.AsyncTask) error {
-	_, err := dao.TskModelTasks.Ctx(ctx).Insert(map[string]any{
-		"public_task_id":    task.PublicTaskID,
-		"request_id":        task.RequestID,
-		"platform":          task.Platform,
-		"action":            task.Action,
-		"status":            task.Status,
-		"progress":          task.Progress,
-		"fail_reason":       task.FailReason,
-		"tenant_id":         task.TenantID,
-		"user_id":           task.UserID,
-		"api_key_id":        task.ApiKeyID,
-		"channel_id":        task.ChannelID,
-		"model_name":        task.ModelName,
-		"upstream_model":    task.UpstreamModel,
-		"pre_deduct_amount": task.PreDeductAmount,
-		"actual_cost":       task.ActualCost,
-		"billing_settled":   task.BillingSettled,
-		"result_url":        task.ResultURL,
-		"data":              task.Data,
-		"private_data":      task.PrivateData,
-		"submit_time":       task.SubmitTime,
-	})
+	g.Log().Infof(ctx, "[AsyncProvider] CreateTask start: public_id=%s, tenant=%d, user=%d, model=%s, platform=%s",
+		task.PublicTaskID, task.TenantID, task.UserID, task.ModelName, task.Platform)
+
+	// 转换时间类型
+	var submitTime *gtime.Time
+	if task.SubmitTime != nil {
+		submitTime = gtime.NewFromTime(*task.SubmitTime)
+	}
+
+	result, err := dao.TskModelTasks.Ctx(ctx).Data(do.TskModelTasks{
+		PublicTaskId:    task.PublicTaskID,
+		RequestId:       task.RequestID,
+		Platform:        task.Platform,
+		Action:          task.Action,
+		Status:          task.Status,
+		Progress:        task.Progress,
+		FailReason:      task.FailReason,
+		TenantId:        task.TenantID,
+		UserId:          task.UserID,
+		ApiKeyId:        task.ApiKeyID,
+		ChannelId:       task.ChannelID,
+		ModelName:       task.ModelName,
+		UpstreamModel:   task.UpstreamModel,
+		PreDeductAmount: task.PreDeductAmount,
+		ActualCost:      task.ActualCost,
+		BillingSettled:  task.BillingSettled,
+		ResultUrl:       task.ResultURL,
+		Data:            task.Data,
+		PrivateData:     task.PrivateData,
+		SubmitTime:      submitTime,
+	}).Insert()
 	if err != nil {
+		g.Log().Errorf(ctx, "[AsyncProvider] CreateTask insert error: public_id=%s, err=%v", task.PublicTaskID, err)
 		return gerror.Wrapf(err, "create async task failed: public_id=%s", task.PublicTaskID)
 	}
+
+	// 验证插入是否成功
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		g.Log().Errorf(ctx, "[AsyncProvider] CreateTask get rows affected error: public_id=%s, err=%v", task.PublicTaskID, err)
+		return gerror.Wrapf(err, "get rows affected failed: public_id=%s", task.PublicTaskID)
+	}
+	if rowsAffected == 0 {
+		g.Log().Errorf(ctx, "[AsyncProvider] CreateTask no rows affected: public_id=%s", task.PublicTaskID)
+		return gerror.Newf("insert failed: no rows affected, public_id=%s", task.PublicTaskID)
+	}
+
+	lastInsertId, _ := result.LastInsertId()
+	g.Log().Infof(ctx, "[AsyncProvider] CreateTask success: public_id=%s, id=%d, rows=%d",
+		task.PublicTaskID, lastInsertId, rowsAffected)
+
 	IncrActiveTask()
 	return nil
 }
