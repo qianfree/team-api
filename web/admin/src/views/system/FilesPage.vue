@@ -192,6 +192,7 @@ const previewVisible = ref(false)
 const previewLoading = ref(false)
 const previewRecord = ref<any>(null)
 const previewThumbUrl = ref('')
+const previewError = ref(false)
 
 function isImage(record: any) {
   return record?.category === 'image' || String(record?.mime_type || '').startsWith('image/')
@@ -201,6 +202,7 @@ function isImage(record: any) {
 async function openPreview(record: any) {
   previewRecord.value = record
   previewThumbUrl.value = ''
+  previewError.value = false
   previewVisible.value = true
   previewLoading.value = true
   try {
@@ -395,7 +397,11 @@ onMounted(() => {
     >
       <ASpin :loading="previewLoading" style="display:block">
         <div class="preview-box">
-          <img v-if="previewThumbUrl" :src="previewThumbUrl" class="preview-img" alt="预览" />
+          <img v-if="previewThumbUrl && !previewError" :src="previewThumbUrl" class="preview-img" alt="预览" @error="previewError = true" />
+          <div v-else-if="previewThumbUrl && previewError" class="preview-error">
+            <div class="preview-error__icon">😕</div>
+            <div class="preview-error__text">图片加载失败，可能是过期或者被清理了</div>
+          </div>
           <div v-else class="preview-empty">暂无预览</div>
         </div>
       </ASpin>
@@ -496,6 +502,18 @@ onMounted(() => {
   max-height: 60vh;
   object-fit: contain;
   display: block;
+}
+.preview-error {
+  text-align: center;
+  padding: 40px 16px;
+}
+.preview-error__icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.preview-error__text {
+  color: var(--color-text-3);
+  font-size: 13px;
 }
 .preview-empty {
   color: var(--color-text-3);

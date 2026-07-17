@@ -78,7 +78,7 @@ type FileStatsRes struct {
 type FileDownloadReq struct {
 	g.Meta  `path:"/files/{id}/download" method:"get" mime:"json" tags:"管理后台-文件管理" summary:"生成文件预览/下载链接"`
 	Id      int64  `json:"id" in:"path" v:"required|min:1"`
-	Variant string `json:"variant" in:"query" v:"in:|thumb|original" dc:"thumb=缩略图预览，空/original=原图"`
+	Variant string `json:"variant" in:"query" v:"in:thumb,original" dc:"thumb=缩略图预览，空/original=原图"`
 	Width   int    `json:"width" in:"query" d:"400" v:"min:0|max:2048" dc:"缩略图宽度像素，仅 variant=thumb 生效"`
 }
 

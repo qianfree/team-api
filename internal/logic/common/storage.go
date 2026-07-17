@@ -11,6 +11,7 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/google/uuid"
 )
 
 // StorageProvider defines the interface for file storage backends.
@@ -72,8 +73,13 @@ type FileRecord struct {
 
 // Upload uploads a file, stores it via the provider, and records metadata.
 func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileRecord, error) {
-	// Generate storage key (relative to the provider's configured path prefix).
-	key := fmt.Sprintf("%d/%d/%s", upload.TenantID, time.Now().Unix(), upload.Filename)
+	// Generate storage key (relative to the provider's configured path prefix):
+	// {date}/{uuid}{ext} — date-based dirs for lifecycle policies, UUID for
+	// uniqueness and non-guessability, original extension retained.
+	ext := extFromFilename(upload.Filename)
+	uuidStr := uuid.New().String()
+	key := fmt.Sprintf("%s/%s%s", time.Now().Format("2006-01-02"), uuidStr, ext)
+	fileName := uuidStr + ext
 
 	// Upload to storage provider. The provider applies the configured path
 	// prefix internally, so we persist the RAW key (not the returned full key):
@@ -88,7 +94,7 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 	result, err := dao.FilFiles.Ctx(ctx).Data(do.FilFiles{
 		TenantId:        upload.TenantID,
 		UserId:          upload.UserID,
-		Filename:        key,
+		Filename:        fileName,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
@@ -108,7 +114,7 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 		ID:              id,
 		TenantID:        upload.TenantID,
 		UserID:          upload.UserID,
-		Filename:        key,
+		Filename:        fileName,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
@@ -186,4 +192,13 @@ func (s *FileService) Delete(ctx context.Context, fileID int64) error {
 	}
 
 	return nil
+}
+
+// extFromFilename extracts the file extension (including the leading dot)
+// from a filename. Returns empty string if no extension is found.
+func extFromFilename(name string) string {
+	if idx := strings.LastIndex(name, "."); idx > 0 {
+		return name[idx:]
+	}
+	return ""
 }
