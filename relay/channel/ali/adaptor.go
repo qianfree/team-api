@@ -40,6 +40,11 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	case constant.RelayModeEmbeddings:
 		return baseURL + "/compatible-mode/v1/embeddings", nil
 	case constant.RelayModeImagesGenerations:
+		// qwen-image-2.x 等同步 multimodal 模型走 multimodal-generation 端点；
+		// 其余（wanx*、qwen-image 等异步族）用 image-synthesis（异步族一般已被 gate 引导到异步端点）。
+		if isMultimodalImageMode(info) {
+			return baseURL + "/api/v1/services/aigc/multimodal-generation/generation", nil
+		}
 		return baseURL + "/api/v1/services/aigc/text2image/image-synthesis", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode: %d", info.RelayMode)
@@ -66,6 +71,11 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	// Claude 入站：仅做模型映射，不做 DashScope top_p 裁剪（Claude 格式请求体不含 top_p）
 	if info.InboundFormat == constant.RelayFormatClaude {
 		return convertClaudeRequest(requestBody, info)
+	}
+
+	// 同步 multimodal 图片（qwen-image-2.x）：OpenAI Images 请求体 → DashScope messages 格式
+	if isMultimodalImageMode(info) {
+		return convertMultimodalImageRequest(requestBody, info)
 	}
 
 	// 非 OpenAI 格式先转换为 OpenAI
@@ -129,6 +139,11 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 // DoResponse 处理上游响应。
 // Claude 入站委托 claude.Adaptor 原生直通；其他格式委托 openai.Adaptor。
 func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	// 同步 multimodal 图片（qwen-image-2.x）：DashScope multimodal 响应 → OpenAI Images 响应
+	if isMultimodalImageMode(info) {
+		return handleMultimodalImageResponse(resp, writer)
+	}
+
 	if info.GetOriginalClientFormat() == constant.RelayFormatClaude {
 		delegate := &claude.Adaptor{}
 		delegate.Init(info)

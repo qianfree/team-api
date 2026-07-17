@@ -17,6 +17,10 @@ export interface ModelParamGroup {
 	label: string
 	docUrl?: string
 	params: ParamDef[]
+	// 该组参数发送到的端点（缺省为同步 /v1/images/generations）
+	endpoint?: string
+	// 是否为异步任务式（提交 + 轮询）
+	async?: boolean
 }
 
 const props = defineProps<{
@@ -74,6 +78,19 @@ const imageGroups: ModelParamGroup[] = [
 			{ name: 'quality', type: 'string', required: false, default: 'standard', values: ['standard', 'hd'], description: '仅 dall-e-3 支持。standard 标准，hd 高清' },
 			{ name: 'response_format', type: 'string', required: false, default: 'url', values: ['url', 'b64_json'], description: '返回格式' },
 			{ name: 'style', type: 'string', required: false, default: 'vivid', values: ['vivid', 'natural'], description: '仅 dall-e-3 支持。vivid 生动，natural 自然' },
+		],
+	},
+	{
+		key: 'dashscope-async',
+		label: 'DashScope（异步）',
+		docUrl: 'https://help.aliyun.com/zh/model-studio/text-to-image-v2-api-reference',
+		endpoint: '/v1/images/generations/async',
+		async: true,
+		params: [
+			{ name: 'prompt', type: 'string', required: true, description: '图像描述文本，支持中英文' },
+			{ name: 'model', type: 'string', required: true, description: '模型 ID：wanx2.1-t2i-turbo、wanx2.0-t2i-turbo、qwen-image 等通义万相/千问图像模型' },
+			{ name: 'size', type: 'string', required: false, default: '1024x1024', values: ['1024x1024', '1280x720', '720x1280', '1152x864', '864x1152'], description: '图像尺寸（宽x高）' },
+			{ name: 'n', type: 'integer', required: false, default: '1', values: ['1', '2', '3', '4'], description: '生成数量' },
 		],
 	},
 ]
@@ -189,7 +206,8 @@ const currentGroup = computed(() => groups.value.find(g => g.key === activeGroup
 			<div class="flex items-start gap-2">
 				<Icon name="infoCircle" size="sm" class="text-amber-500 mt-0.5 flex-shrink-0" />
 				<div class="text-xs text-amber-700 space-y-1">
-					<p>以上参数通过 <code class="bg-amber-100 px-1 rounded">/v1/images/generations</code> 端点发送，使用自定义参数区域逐行添加。</p>
+					<p>以上参数通过 <code class="bg-amber-100 px-1 rounded">{{ currentGroup?.endpoint || '/v1/images/generations' }}</code> 端点发送，使用自定义参数区域逐行添加。</p>
+					<p v-if="currentGroup?.async">该厂商图像为<strong>异步任务式</strong>：提交后返回 task_id，需轮询 <code class="bg-amber-100 px-1 rounded">GET /v1/images/generations/async/{task_id}</code> 取图。在线体验会自动完成提交与轮询。</p>
 					<p>参数名为 JSON 键名，值为对应格式的字符串（系统会自动识别布尔值和数字）。</p>
 				</div>
 			</div>

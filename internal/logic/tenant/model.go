@@ -362,6 +362,27 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		}
 	}
 
+	// 标记图片模型是否必须走异步端点（DashScope 等异步图片 provider）。
+	// 判定与同步端点拦截 gate 同源（constant.IsAsyncImageProvider），保证在线体验示例
+	// 与后端实际行为一致。仅对图片分类模型跑一次批量查询。
+	imageModelIDs := make([]string, 0)
+	for _, item := range list {
+		if item.Category == "image" {
+			imageModelIDs = append(imageModelIDs, item.ModelId)
+		}
+	}
+	if len(imageModelIDs) > 0 {
+		asyncSet, err := lcommon.GetAsyncImageModelSet(ctx, imageModelIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			if list[i].Category == "image" && asyncSet[list[i].ModelId] {
+				list[i].AsyncImage = true
+			}
+		}
+	}
+
 	return &v1.TenantAvailableModelsRes{List: list}, nil
 }
 

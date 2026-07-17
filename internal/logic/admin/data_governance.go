@@ -145,40 +145,132 @@ func CleanupExpiredData(ctx context.Context) error {
 	return nil
 }
 
-// CleanupExpiredExportFiles 清理过期导出文件
+// FileCleanupResult 报告一次文件保留期清理删除的文件数量。
+type FileCleanupResult struct {
+	ExportsDeleted int `json:"exports_deleted"`
+	ImagesDeleted  int `json:"images_deleted"`
+}
+
+// deleteExpiredFiles 删除 created_at 早于 cutoff 的 fil_files 行及其存储对象。
+// exports=true 匹配 storage_path LIKE 'exports/%'（导出文件）；exports=false 匹配
+// 其余（AI re-host 图片等 provider 上传的文件）。删除经 FileService.Delete 完成，
+// 会一并删除桶中对象（而非仅删库行，避免存储泄漏）。fileSvc 为 nil 时（对象存储未
+// 配置）退化为仅删库行。分批处理以限制内存与单次事务规模。
+func deleteExpiredFiles(ctx context.Context, fileSvc *common.FileService, cutoff time.Time, exports bool) (int, error) {
+	const batchSize = 500
+	total := 0
+	for {
+		m := dao.FilFiles.Ctx(ctx).Where("created_at < ?", cutoff)
+		if exports {
+			m = m.Where("storage_path LIKE ?", "exports/%")
+		} else {
+			m = m.Where("storage_path NOT LIKE ?", "exports/%")
+		}
+
+		var batch []struct {
+			ID int64 `json:"id"`
+		}
+		if err := m.Fields("id").OrderAsc("id").Limit(batchSize).Scan(&batch); err != nil {
+			return total, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+
+		deletedInBatch := 0
+		for _, f := range batch {
+			if fileSvc != nil {
+				// FileService.Delete 删对象(失败仅告警)后删行；返回硬错误表示行未删。
+				if err := fileSvc.Delete(ctx, f.ID); err != nil {
+					g.Log().Warningf(ctx, "file retention: delete file %d failed: %v", f.ID, err)
+					continue
+				}
+			} else if _, err := dao.FilFiles.Ctx(ctx).Where("id", f.ID).Delete(); err != nil {
+				g.Log().Warningf(ctx, "file retention: delete row %d failed: %v", f.ID, err)
+				continue
+			}
+			total++
+			deletedInBatch++
+		}
+
+		// 整批未能删除任何一行（删除持续失败）——停止，避免同一批被反复重查形成热循环。
+		if deletedInBatch == 0 {
+			g.Log().Warningf(ctx, "file retention: no progress in batch, stopping (check storage/db)")
+			break
+		}
+		if len(batch) < batchSize {
+			break
+		}
+	}
+	if total > 0 {
+		g.Log().Infof(ctx, "file retention: removed %d files (exports=%v, before %s)", total, exports, cutoff.Format("2006-01-02"))
+	}
+	return total, nil
+}
+
+// buildFileService 从数据库配置构造 FileService；对象存储未配置时返回 nil（清理退化为仅删库行）。
+func buildFileService(ctx context.Context) *common.FileService {
+	fileSvc, err := common.NewFileServiceFromConfig(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "file retention: object storage unavailable, pruning db rows only: %v", err)
+		return nil
+	}
+	return fileSvc
+}
+
+// CleanupExpiredExportFiles 清理过期导出文件（含存储对象）。由 export_file_cleanup cron 调用。
 func CleanupExpiredExportFiles(ctx context.Context) error {
 	expiryDays := common.Config().GetInt(ctx, "data_export_expiry_days")
 	if expiryDays <= 0 {
 		return nil
 	}
 	cutoff := time.Now().AddDate(0, 0, -expiryDays)
-
-	var expiredFiles []struct {
-		ID          int64  `json:"id"`
-		StoragePath string `json:"storage_path"`
-	}
-	err := dao.FilFiles.Ctx(ctx).
-		Where("created_at < ?", cutoff).
-		Where("storage_path LIKE ?", "exports/%").
-		Fields("id, storage_path").
-		Scan(&expiredFiles)
-	if err != nil {
-		return err
-	}
-	for _, f := range expiredFiles {
-		if _, err := dao.FilFiles.Ctx(ctx).Where("id", f.ID).Delete(); err != nil {
-			g.Log().Warningf(ctx, "cleanup file %d failed: %v", f.ID, err)
-		}
-	}
-	return nil
+	_, err := deleteExpiredFiles(ctx, buildFileService(ctx), cutoff, true)
+	return err
 }
 
-// CheckFileRetention 检查文件保留期
+// CleanupExpiredImages 清理过期的 AI re-host 图片及其它 provider 上传文件（含存储对象）。
+// file_image_retention_days<=0 表示关闭（默认），直接跳过。
+func CleanupExpiredImages(ctx context.Context) (int, error) {
+	retentionDays := common.Config().GetInt(ctx, "file_image_retention_days")
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	return deleteExpiredFiles(ctx, buildFileService(ctx), cutoff, false)
+}
+
+// CheckFileRetention 由 file_retention_check cron 调用：受 file_retention_enabled 开关控制，
+// 清理过期图片文件（导出文件由独立的 export_file_cleanup cron 负责）。
 func CheckFileRetention(ctx context.Context) error {
 	if !common.Config().GetBool(ctx, "file_retention_enabled") {
 		return nil
 	}
-	return CleanupExpiredExportFiles(ctx)
+	_, err := CleanupExpiredImages(ctx)
+	return err
+}
+
+// RunFileRetentionNow 立即执行一次完整保留期清理（导出 + 图片），返回各自删除数量。
+// 供管理后台「手动触发清理」端点调用；不受 file_retention_enabled 开关限制。
+func RunFileRetentionNow(ctx context.Context) (*FileCleanupResult, error) {
+	res := &FileCleanupResult{}
+	fileSvc := buildFileService(ctx)
+
+	if days := common.Config().GetInt(ctx, "data_export_expiry_days"); days > 0 {
+		n, err := deleteExpiredFiles(ctx, fileSvc, time.Now().AddDate(0, 0, -days), true)
+		if err != nil {
+			return res, err
+		}
+		res.ExportsDeleted = n
+	}
+	if days := common.Config().GetInt(ctx, "file_image_retention_days"); days > 0 {
+		n, err := deleteExpiredFiles(ctx, fileSvc, time.Now().AddDate(0, 0, -days), false)
+		if err != nil {
+			return res, err
+		}
+		res.ImagesDeleted = n
+	}
+	return res, nil
 }
 
 func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int) error {
@@ -209,8 +301,14 @@ func cleanupTableByDate(ctx context.Context, table, dateColumn string, days int)
 		return fmt.Errorf("invalid table for cleanup: %s", table)
 	}
 
+	// aud_request_logs 走独立库，其余审计表走主库
+	db := g.DB()
+	if table == "aud_request_logs" {
+		db = common.GetAuditDB()
+	}
+
 	for {
-		result, err := common.GetAuditDB().Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
+		result, err := db.Ctx(ctx).Exec(ctx, deleteSQL, cutoff, batchSize)
 		if err != nil {
 			return err
 		}

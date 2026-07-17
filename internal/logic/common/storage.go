@@ -6,10 +6,12 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/google/uuid"
 )
 
 // StorageProvider defines the interface for file storage backends.
@@ -22,6 +24,11 @@ type StorageProvider interface {
 	Delete(ctx context.Context, key string) error
 	// PresignedURL generates a temporary URL for downloading.
 	PresignedURL(ctx context.Context, key string, expires time.Duration) (string, error)
+	// PresignedThumbnailURL generates a temporary URL that returns a resized
+	// thumbnail (width in pixels, height auto). Providers with native
+	// server-side image processing (OSS/COS) apply it in the signed URL;
+	// providers without it (S3/MinIO/R2) return the original-object URL.
+	PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error)
 }
 
 // FileService provides file storage operations with metadata tracking.
@@ -66,12 +73,20 @@ type FileRecord struct {
 
 // Upload uploads a file, stores it via the provider, and records metadata.
 func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileRecord, error) {
-	// Generate storage key
-	key := fmt.Sprintf("%d/%d/%s", upload.TenantID, time.Now().Unix(), upload.Filename)
+	// Generate storage key (relative to the provider's configured path prefix):
+	// {date}/{uuid}{ext} — date-based dirs for lifecycle policies, UUID for
+	// uniqueness and non-guessability, original extension retained.
+	ext := extFromFilename(upload.Filename)
+	uuidStr := uuid.New().String()
+	key := fmt.Sprintf("%s/%s%s", time.Now().Format("2006-01-02"), uuidStr, ext)
+	fileName := uuidStr + ext
 
-	// Upload to storage provider
-	storagePath, err := s.provider.Upload(ctx, upload.Reader, key, upload.ContentType)
-	if err != nil {
+	// Upload to storage provider. The provider applies the configured path
+	// prefix internally, so we persist the RAW key (not the returned full key):
+	// Download/Delete/PresignedURL pass this key back through the provider,
+	// which re-applies the prefix exactly once. Storing the prefixed key here
+	// would cause the prefix to be applied twice on retrieval.
+	if _, err := s.provider.Upload(ctx, upload.Reader, key, upload.ContentType); err != nil {
 		return nil, gerror.Wrapf(err, "upload to storage")
 	}
 
@@ -79,12 +94,12 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 	result, err := dao.FilFiles.Ctx(ctx).Data(do.FilFiles{
 		TenantId:        upload.TenantID,
 		UserId:          upload.UserID,
-		Filename:        storagePath,
+		Filename:        fileName,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
 		StorageProvider: s.providerName,
-		StoragePath:     storagePath,
+		StoragePath:     key,
 		VirusScanStatus: "pending",
 	}).Insert()
 	if err != nil {
@@ -99,12 +114,12 @@ func (s *FileService) Upload(ctx context.Context, upload *FileUpload) (*FileReco
 		ID:              id,
 		TenantID:        upload.TenantID,
 		UserID:          upload.UserID,
-		Filename:        storagePath,
+		Filename:        fileName,
 		OriginalName:    upload.Filename,
 		MimeType:        upload.ContentType,
 		Size:            upload.Size,
 		StorageProvider: s.providerName,
-		StoragePath:     storagePath,
+		StoragePath:     key,
 		VirusScanStatus: "pending",
 	}, nil
 }
@@ -123,6 +138,31 @@ func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string,
 	}
 
 	return s.provider.PresignedURL(ctx, record.StoragePath, 24*time.Hour)
+}
+
+// GetThumbnailURL generates a presigned URL for previewing a downscaled
+// thumbnail. Only images get server-side resizing; non-image files (and
+// providers without native image processing) fall back to the original object.
+func (s *FileService) GetThumbnailURL(ctx context.Context, fileID int64, width int) (string, error) {
+	var record *FileRecord
+	err := dao.FilFiles.Ctx(ctx).
+		Where("id", fileID).
+		Scan(&record)
+	if err != nil {
+		return "", gerror.Wrapf(err, "query file %d", fileID)
+	}
+	if record == nil {
+		return "", gerror.Newf("file not found: %d", fileID)
+	}
+
+	if width <= 0 {
+		width = 400
+	}
+	// Non-image objects cannot be resized; return the original presigned URL.
+	if !strings.HasPrefix(record.MimeType, "image/") {
+		return s.provider.PresignedURL(ctx, record.StoragePath, 24*time.Hour)
+	}
+	return s.provider.PresignedThumbnailURL(ctx, record.StoragePath, width, 24*time.Hour)
 }
 
 // Delete deletes a file from storage and marks it as deleted.
@@ -152,4 +192,13 @@ func (s *FileService) Delete(ctx context.Context, fileID int64) error {
 	}
 
 	return nil
+}
+
+// extFromFilename extracts the file extension (including the leading dot)
+// from a filename. Returns empty string if no extension is found.
+func extFromFilename(name string) string {
+	if idx := strings.LastIndex(name, "."); idx > 0 {
+		return name[idx:]
+	}
+	return ""
 }

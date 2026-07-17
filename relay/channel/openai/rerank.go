@@ -26,7 +26,9 @@ func handleRerankResponse(ctx context.Context, resp *http.Response, info *common
 	if resp.StatusCode != http.StatusOK {
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
 		}
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}

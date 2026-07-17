@@ -118,9 +118,15 @@ func (a *AliAdaptor) Init(info *common.RelayInfo) {
 	a.info = info
 }
 
-// detectVideo 根据模型名判断是否为视频生成
+// detectVideo 根据模型名判断是否为视频生成。
+// 注意：万相图片模型（-t2i 文生图、-i2i 图像编辑）即使以 wan2. 开头也不是视频，必须先排除，
+// 否则会被误判为视频而 POST 到 video-synthesis 端点，被上游以 "url error" 拒绝。
 func (a *AliAdaptor) detectVideo(modelName string) bool {
-	return strings.HasPrefix(modelName, "wan2.") || strings.HasPrefix(modelName, "wanx2.1-t2v")
+	m := strings.ToLower(modelName)
+	if strings.Contains(m, "-t2i") || strings.Contains(m, "-i2i") {
+		return false
+	}
+	return strings.HasPrefix(m, "wan2.") || strings.HasPrefix(m, "wanx2.1-t2v")
 }
 
 func (a *AliAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, body []byte) *common.TaskError {

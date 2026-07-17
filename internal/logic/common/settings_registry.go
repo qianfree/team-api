@@ -221,16 +221,20 @@ var Registry = []SettingDef{
 		Label: "健康快照保留天数", Validation: "min:1,max:90"},
 	{Key: "channel_proxy_url", Type: SettingTypeString, Default: "", Category: "channel",
 		Label: "代理地址", Description: "全局代理 URL，支持 http:// 和 socks5://，如 http://127.0.0.1:7890。启用代理的渠道会通过此代理转发请求"},
+	{Key: "sync_image_async_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
+		Label: "同步图片厂商异步化", Description: "开启后，同步阻塞返回的图片厂商（如 OpenAI/DALL·E）走 /v1/images/generations/async 时由后台 worker 池异步处理，客户端提交即拿 task_id 后轮询取图；关闭则该端点对同步厂商返回不支持"},
+	{Key: "sync_image_rehost_url", Type: SettingTypeBool, Default: "false", Category: "channel",
+		Label: "同步图片 URL 转存对象存储", Description: "开启后，上游返回图片 URL 时下载并转存对象存储（返回 24h 稳定链接，需已配置存储）；关闭则直接透传上游 URL（部分厂商约 1h 过期）。b64_json 始终转存"},
 
 	// ── Storage ──
 	{Key: "storage_provider", Type: SettingTypeString, Default: "minio", Category: "storage",
-		Label: "存储供应商", Validation: "enum:s3,minio,oss,cos",
+		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos",
 		Description: "对象存储供应商类型"},
 	{Key: "storage_endpoint", Type: SettingTypeString, Default: "", Category: "storage",
 		Label:       "存储端点",
-		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com"},
+		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com, R2: https://<account_id>.r2.cloudflarestorage.com"},
 	{Key: "storage_region", Type: SettingTypeString, Default: "", Category: "storage",
-		Label: "存储区域", Description: "AWS Region / OSS Region / COS Region"},
+		Label: "存储区域", Description: "AWS Region / OSS Region / COS Region（R2 固定填 auto）"},
 	{Key: "storage_bucket", Type: SettingTypeString, Default: "", Category: "storage",
 		Label: "存储桶名称"},
 	{Key: "storage_access_key_id", Type: SettingTypeString, Default: "", Category: "storage",
@@ -257,6 +261,8 @@ var Registry = []SettingDef{
 		Label: "GDPR删除请求完成天数", Validation: "min:7,max:90"},
 	{Key: "file_retention_enabled", Type: SettingTypeBool, Default: "true", Category: "data_governance",
 		Label: "启用文件保留期检查"},
+	{Key: "file_image_retention_days", Type: SettingTypeInt, Default: "0", Category: "data_governance",
+		Label: "AI图片保留天数(0=不清理)", Description: "AI re-host 图片超过该天数后自动清理，0 表示不自动删除", Validation: "min:0,max:3650"},
 
 	// ── Agreement (用户协议) ──
 	{Key: "agreement_enabled", Type: SettingTypeBool, Default: "false", Category: "agreement",

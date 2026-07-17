@@ -102,9 +102,18 @@ const columns: TableColumnData[] = [
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
   {
-    title: '操作', dataIndex: 'actions', width: 150, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 210, fixed: 'right',
     render({ record }) {
+      const isActive = record.status === 'active'
+      const action = isActive ? '禁用' : '启用'
       return h(Space, { size: 4 }, () => [
+        h(Popconfirm, {
+          content: `确定${action}该渠道？`,
+          onOk: () => toggleStatus(record),
+        }, () => h(Button, {
+          size: 'small',
+          status: isActive ? 'normal' : 'success',
+        }, () => action)),
         h(Button, { size: 'small', type: 'primary', onClick: () => openDetail(record) }, () => '详情'),
         h(Popconfirm, { content: '确定删除该渠道？此操作不可撤销。', onOk: () => deleteChannel(record) }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除')),
       ])
@@ -193,6 +202,30 @@ async function handleSubmit(done: () => void) {
 async function deleteChannel(row: any) {
   try { await request.delete(`/admin/channels/${row.id}`); message.success('删除成功'); fetchData() }
   catch { /* interceptor handles error toast */ }
+}
+
+// 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
+// 后端 UpdateChannel 会无条件写入 priority/weight，故必须带上当前值，否则会被重置为 0。
+// status 为 active → 禁用；其它（disabled/testing）→ 启用为 active。
+async function toggleStatus(record: any) {
+  if (record._toggling) return
+  const isActive = record.status === 'active'
+  const nextStatus = isActive ? 'disabled' : 'active'
+  const prevStatus = record.status
+  record._toggling = true
+  record.status = nextStatus // 乐观更新，状态 Tag 即刻变化
+  try {
+    await request.put(`/admin/channels/${record.id}`, {
+      status: nextStatus,
+      priority: record.priority,
+      weight: record.weight,
+    })
+    message.success(nextStatus === 'active' ? '已启用' : '已禁用')
+  } catch {
+    record.status = prevStatus // 失败回滚，错误提示由 request 拦截器统一处理
+  } finally {
+    record._toggling = false
+  }
 }
 
 onMounted(fetchData)

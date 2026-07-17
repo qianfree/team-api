@@ -420,6 +420,20 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			return result.usage, result.billingResult, result.err
 		}
 
+		// 阿里云百炼（DashScope）异步图片模型（wanx*、qwen-image-plus 等）上游为异步任务式
+		// （提交拿 task_id → 轮询取图），其 image-synthesis 端点强制异步，无法经同步
+		// /v1/images/generations 一次性返回图片。命中时直接引导客户端改用异步端点。
+		// 判定收敛到 constant.IsAsyncImageModel（按 provider + 模型），qwen-image-2.x 等
+		// 同步 multimodal 模型不在此列，会继续走下方同步转发。租户模型列表 async_image 标记同源。
+		if v.relayMode == constant.RelayModeImagesGenerations &&
+			constant.IsAsyncImageModel(constant.ProviderType(selection.ChannelType), selection.UpstreamModelName) {
+			if billing != nil && preDeductAmount > 0 {
+				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+			}
+			return nil, v.billingResult, constant.NewRequestError(
+				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
+		}
+
 		info := buildRelayInfo(ctx, rc, v, selection, path, headers)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
@@ -675,7 +689,8 @@ func handleChannelUnavailable(
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
-		g.Log().Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
+		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
+		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
 			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
 		allFailedErr := constant.NewChannelError(
 			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
@@ -688,7 +703,9 @@ func handleChannelUnavailable(
 	if billing != nil && preDeductAmount > 0 {
 		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
-	g.Log().Errorf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
+	// 无可用渠道属于正常业务条件（用户请求了未配置/未启用渠道的模型），
+	// 降级为 Warning 并禁用堆栈打印，避免污染 ERROR 日志与刷屏无意义的调用栈
+	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
 	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
 	recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, noChErr)
 	return &channelUnavailableResult{nil, v.billingResult, noChErr}

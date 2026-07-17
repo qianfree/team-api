@@ -304,7 +304,9 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		// 尝试解析上游错误格式，如果是标准格式则透传原始响应
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
 		}
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
@@ -341,7 +343,9 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		// 尝试透传上游错误格式
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
 		}
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
@@ -465,7 +469,9 @@ func (a *Adaptor) handleModerationResponse(_ context.Context, resp *http.Respons
 	}
 	if resp.StatusCode != http.StatusOK {
 		writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-		return &common.Usage{}, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr.ResponseWritten = true
+		return &common.Usage{}, upstreamErr
 	}
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)

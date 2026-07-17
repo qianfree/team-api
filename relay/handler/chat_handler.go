@@ -145,6 +145,12 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// adaptor 已直接写入响应体（如 Gemini 原生格式透传），跳过二次写入
+	var prewritten *constant.RelayError
+	if errors.As(err, &prewritten) && prewritten.ResponseWritten {
+		return
+	}
+
 	var relayErr *constant.RelayError
 	var rateLimitErr *RelayErrorWithRateLimit
 	statusCode := http.StatusInternalServerError
@@ -171,8 +177,10 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
-	if statusCode >= 500 {
-		g.Log().Errorf(context.Background(), "[RelayError] statusCode=%d type=%s message=%s originalError=%v",
+	// 无可用渠道是正常业务条件，已在 handleChannelUnavailable 中以 Warning 记录，此处跳过避免重复日志；
+	// 其余 5xx 为真实错误，保留 ERROR 但禁用堆栈打印（此处调用栈固定，无调试价值）
+	if statusCode >= 500 && !errors.Is(err, common.ErrChannelUnavailable) {
+		g.Log().Stack(false).Errorf(context.Background(), "[RelayError] statusCode=%d type=%s message=%s originalError=%v",
 			statusCode, errType, errMsg, err)
 	}
 

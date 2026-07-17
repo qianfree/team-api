@@ -45,9 +45,14 @@ func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 		if cfg.Region != "" {
 			o.Region = cfg.Region
 		}
-		if cfg.Provider == "minio" && cfg.Endpoint != "" {
+		// Cloudflare R2 is S3-compatible but requires an account-level
+		// BaseEndpoint. Unlike MinIO it uses virtual-hosted addressing, so
+		// path-style must NOT be forced.
+		if (cfg.Provider == "minio" || cfg.Provider == "r2") && cfg.Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = true
+			if cfg.Provider == "minio" {
+				o.UsePathStyle = true
+			}
 		}
 	})
 
@@ -127,4 +132,10 @@ func (s *S3StorageProvider) PresignedURL(ctx context.Context, key string, expire
 	}
 
 	return req.URL, nil
+}
+
+// PresignedThumbnailURL falls back to the original object: S3/MinIO/R2 have no
+// native server-side image processing, so a true thumbnail is not available.
+func (s *S3StorageProvider) PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error) {
+	return s.PresignedURL(ctx, key, expires)
 }
