@@ -131,8 +131,11 @@ const columns: TableColumnData[] = [
   {
     title: '操作', dataIndex: 'actions', width: 130, fixed: 'right',
     render({ record }) {
+      const first = isImage(record)
+        ? h(Button, { size: 'mini', type: 'text', onClick: () => openPreview(record) }, () => '预览')
+        : h(Button, { size: 'mini', type: 'text', onClick: () => downloadOriginal(record) }, () => '下载')
       return h('div', { style: 'display:flex;gap:4px' }, [
-        h(Button, { size: 'mini', type: 'text', onClick: () => previewFile(record) }, () => '预览'),
+        first,
         h(Button, { size: 'mini', type: 'text', status: 'danger', onClick: () => deleteFile(record) }, () => '删除'),
       ])
     },
@@ -182,12 +185,45 @@ function resetFilter() {
   search()
 }
 
-async function previewFile(record: any) {
+// ============================================================
+// 预览 / 下载
+// ============================================================
+const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewRecord = ref<any>(null)
+const previewThumbUrl = ref('')
+
+function isImage(record: any) {
+  return record?.category === 'image' || String(record?.mime_type || '').startsWith('image/')
+}
+
+// 预览图片：弹窗内展示服务端缩略图（小图，加载快），原图仅在点「下载原图」时请求。
+async function openPreview(record: any) {
+  previewRecord.value = record
+  previewThumbUrl.value = ''
+  previewVisible.value = true
+  previewLoading.value = true
+  try {
+    const res: any = await request.get(`/admin/files/${record.id}/download`, {
+      params: { variant: 'thumb', width: 600 },
+    })
+    previewThumbUrl.value = res.data?.data?.url || ''
+    if (!previewThumbUrl.value) Message.warning('未获取到预览链接')
+  } catch {
+    // interceptor toasts
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+// 下载/打开原图：请求原图签名链接并在新标签打开。
+async function downloadOriginal(record: any) {
+  if (!record) return
   try {
     const res: any = await request.get(`/admin/files/${record.id}/download`)
     const url = res.data?.data?.url
     if (url) window.open(url, '_blank')
-    else Message.warning('未获取到预览链接')
+    else Message.warning('未获取到下载链接')
   } catch {
     // interceptor toasts
   }
@@ -348,6 +384,30 @@ onMounted(() => {
         />
       </div>
     </ACard>
+
+    <!-- 图片预览弹窗：展示缩略图，下载才取原图 -->
+    <AModal
+      v-model:visible="previewVisible"
+      title="图片预览"
+      :footer="false"
+      :width="720"
+      :body-style="{ padding: '16px' }"
+    >
+      <ASpin :loading="previewLoading" style="display:block">
+        <div class="preview-box">
+          <img v-if="previewThumbUrl" :src="previewThumbUrl" class="preview-img" alt="预览" />
+          <div v-else class="preview-empty">暂无预览</div>
+        </div>
+      </ASpin>
+      <div v-if="previewRecord" class="preview-meta">
+        <div class="preview-name" :title="previewRecord.original_name">{{ previewRecord.original_name }}</div>
+        <div class="preview-sub">{{ formatBytes(previewRecord.size) }} · {{ previewRecord.mime_type }}</div>
+      </div>
+      <div class="preview-actions">
+        <AButton @click="previewVisible = false">关闭</AButton>
+        <AButton type="primary" @click="downloadOriginal(previewRecord)">下载原图</AButton>
+      </div>
+    </AModal>
   </div>
 </template>
 
@@ -420,5 +480,47 @@ onMounted(() => {
   color: var(--color-text-3);
   font-size: 12px;
   margin: 6px 0 14px;
+}
+.preview-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  max-height: 60vh;
+  background: var(--color-fill-2);
+  border-radius: 8px;
+  overflow: auto;
+}
+.preview-img {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  display: block;
+}
+.preview-empty {
+  color: var(--color-text-3);
+  font-size: 13px;
+}
+.preview-meta {
+  margin-top: 12px;
+}
+.preview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-sub {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-top: 2px;
+}
+.preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 </style>

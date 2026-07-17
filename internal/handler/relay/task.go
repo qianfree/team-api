@@ -296,28 +296,34 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 	modelName := extractModelName(body)
 	registerAsyncTask(rc.RequestID, rc.TenantID, rc.UserID, rc.ProjectID, modelName, channelMeta, r.URL.Path)
 
-	// 阿里云 qwen-image-2.x 系列为「同步 multimodal」图片模型：DashScope 只有同步
-	// multimodal-generation 端点，没有异步 image-synthesis 端点，不能走 Ali taskchannel 提交
-	//（会因 endpoint 不支持被上游以 "url error" 拒绝）。但它们本质是「同步阻塞返回」的图片
-	// 模型，交给 sync_image worker 池即可——worker 直连同步 ali.Adaptor 的 multimodal 处理，
-	// 客户端提交即拿 task_id、后台持上游连接、轮询取图，与其它异步图片模型体验一致。
+	// 异步图片端点分流。判「是否真有异步图片上游」用 constant.IsAsyncImageModel（唯一真相源，
+	// 与 sync gate / async_image 标记同源）——目前仅阿里 image-synthesis（wanx / qwen-image /
+	// wan2.2-t2i 等）为 true，走 taskchannel 提交拿 task_id。
+	//
+	// 其余图片模型上游都是同步阻塞返回，交 sync_image worker 池包装成可轮询任务（worker 直连各自
+	// 同步 channel.Adaptor）：阿里 multimodal（qwen-image-2.x/z-image/wan2.6-t2i/wan2.7-image）恒走；
+	// OpenAI / Gemini(imagen) / 火山(seedream) 等同步厂商受「同步图片异步化」总开关约束。
+	//
+	// 不能用 ProviderTypeToTaskPlatform 笼统判「异步厂商」——Gemini/火山的 taskchannel 是视频
+	//（veo/seedance）专用，把它们的图片模型送进去会被当视频构造请求而失败。
 	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
-	_, isAsync := relay_constant.ProviderTypeToTaskPlatform(providerType)
 	isAliSyncMultimodal := providerType == relay_constant.ProviderAli &&
 		relay_constant.IsAliSyncMultimodalImageModel(channelMeta.UpstreamModelName)
-
-	// 分支：异步厂商（命中 ProviderTypeToTaskPlatform）走原 taskchannel 流；同步厂商（OpenAI
-	// 等未命中）在「同步图片异步化」开启时走 worker 池，关闭时回退原流（HandleTaskSubmit 会因
-	// 平台不支持返回 400，即恢复本功能上线前的行为）。阿里 qwen-image-2.x 虽命中 Ali taskchannel，
-	// 但上游不支持异步，强制走 worker 池。
 	syncImageEnabled := lcommon.Config().GetBool(r.Context(), "sync_image_async_enabled")
-	if isAliSyncMultimodal || (!isAsync && syncImageEnabled) {
-		HandleSyncImageSubmit(r, body, rc, channelMeta)
-	} else {
+
+	switch {
+	case relay_constant.IsAsyncImageModel(providerType, channelMeta.UpstreamModelName):
+		// 真·异步图片上游（阿里 image-synthesis）：taskchannel 提交 + 轮询
 		relay_handler.HandleTaskSubmit(
 			r.Context(), body, r.URL.Path, r.Header,
 			rc, taskDataProvider, taskBillingProvider, channelMeta,
 		)
+	case isAliSyncMultimodal || syncImageEnabled:
+		// 同步阻塞图片：worker 池异步化（阿里 multimodal 恒走；其余同步厂商受开关约束）
+		HandleSyncImageSubmit(r, body, rc, channelMeta)
+	default:
+		// 同步厂商 + 「同步图片异步化」关闭：异步端点不支持，提示改用同步端点
+		writeSyncImageError(rc.Writer, 400, "async image generation is disabled for this model; call POST /v1/images/generations instead")
 	}
 
 	if rc.TaskID != "" {

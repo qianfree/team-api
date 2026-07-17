@@ -74,10 +74,12 @@ type FileStatsRes struct {
 	TopTenants []FileTenantStat   `json:"top_tenants"`
 }
 
-// FileDownloadReq 生成临时预览下载链接。
+// FileDownloadReq 生成临时预览/下载链接。variant=thumb 返回缩略图（仅图片，OSS/COS 服务端裁剪，其余供应商回退原图），空/original 返回原图。
 type FileDownloadReq struct {
-	g.Meta `path:"/files/{id}/download" method:"get" mime:"json" tags:"管理后台-文件管理" summary:"生成文件预览链接"`
-	Id     int64 `json:"id" in:"path" v:"required|min:1"`
+	g.Meta  `path:"/files/{id}/download" method:"get" mime:"json" tags:"管理后台-文件管理" summary:"生成文件预览/下载链接"`
+	Id      int64  `json:"id" in:"path" v:"required|min:1"`
+	Variant string `json:"variant" in:"query" v:"in:|thumb|original" dc:"thumb=缩略图预览，空/original=原图"`
+	Width   int    `json:"width" in:"query" d:"400" v:"min:0|max:2048" dc:"缩略图宽度像素，仅 variant=thumb 生效"`
 }
 
 type FileDownloadRes struct {

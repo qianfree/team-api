@@ -6,6 +6,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -22,6 +23,11 @@ type StorageProvider interface {
 	Delete(ctx context.Context, key string) error
 	// PresignedURL generates a temporary URL for downloading.
 	PresignedURL(ctx context.Context, key string, expires time.Duration) (string, error)
+	// PresignedThumbnailURL generates a temporary URL that returns a resized
+	// thumbnail (width in pixels, height auto). Providers with native
+	// server-side image processing (OSS/COS) apply it in the signed URL;
+	// providers without it (S3/MinIO/R2) return the original-object URL.
+	PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error)
 }
 
 // FileService provides file storage operations with metadata tracking.
@@ -126,6 +132,31 @@ func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string,
 	}
 
 	return s.provider.PresignedURL(ctx, record.StoragePath, 24*time.Hour)
+}
+
+// GetThumbnailURL generates a presigned URL for previewing a downscaled
+// thumbnail. Only images get server-side resizing; non-image files (and
+// providers without native image processing) fall back to the original object.
+func (s *FileService) GetThumbnailURL(ctx context.Context, fileID int64, width int) (string, error) {
+	var record *FileRecord
+	err := dao.FilFiles.Ctx(ctx).
+		Where("id", fileID).
+		Scan(&record)
+	if err != nil {
+		return "", gerror.Wrapf(err, "query file %d", fileID)
+	}
+	if record == nil {
+		return "", gerror.Newf("file not found: %d", fileID)
+	}
+
+	if width <= 0 {
+		width = 400
+	}
+	// Non-image objects cannot be resized; return the original presigned URL.
+	if !strings.HasPrefix(record.MimeType, "image/") {
+		return s.provider.PresignedURL(ctx, record.StoragePath, 24*time.Hour)
+	}
+	return s.provider.PresignedThumbnailURL(ctx, record.StoragePath, width, 24*time.Hour)
 }
 
 // Delete deletes a file from storage and marks it as deleted.

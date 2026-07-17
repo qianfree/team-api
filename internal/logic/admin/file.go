@@ -167,7 +167,12 @@ func (s *sAdmin) FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1
 	if err != nil {
 		return nil, err
 	}
-	url, err := svc.GetDownloadURL(ctx, req.Id)
+	var url string
+	if req.Variant == "thumb" {
+		url, err = svc.GetThumbnailURL(ctx, req.Id, req.Width)
+	} else {
+		url, err = svc.GetDownloadURL(ctx, req.Id)
+	}
 	if err != nil {
 		return nil, err
 	}
