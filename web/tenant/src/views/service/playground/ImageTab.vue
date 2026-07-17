@@ -187,7 +187,10 @@ watch(selectedModel, () => {
 	errorMessage.value = ''
 })
 
-onUnmounted(stopPolling)
+onUnmounted(() => {
+	stopPolling()
+	window.removeEventListener('keydown', onZoomKeydown)
+})
 
 // 组装请求体：固定字段 + 自定义参数（同步/异步共用）
 function buildBody(): Record<string, any> {
@@ -298,29 +301,46 @@ async function pollLoop() {
 	}
 }
 
+function imageSrc(img: ImageResult): string {
+	if (img.b64_json) return 'data:image/png;base64,' + img.b64_json
+	if (img.url) return img.url
+	return ''
+}
+
 function downloadImage(img: ImageResult, idx: number) {
-	let src = ''
-	let filename = `image_${idx + 1}.png`
-	if (img.b64_json) {
-		src = 'data:image/png;base64,' + img.b64_json
-	} else if (img.url) {
-		src = img.url
-		filename = `image_${idx + 1}.png`
-	} else {
-		return
-	}
+	const src = imageSrc(img)
+	if (!src) return
 	const a = document.createElement('a')
 	a.href = src
-	a.download = filename
+	a.download = `image_${idx + 1}.png`
 	document.body.appendChild(a)
 	a.click()
 	document.body.removeChild(a)
 }
+
+// ── 图片放大预览 ──
+const zoomedSrc = ref('')
+
+function onZoomKeydown(e: KeyboardEvent) {
+	if (e.key === 'Escape') closeZoom()
+}
+
+function openZoom(img: ImageResult) {
+	const src = imageSrc(img)
+	if (!src) return
+	zoomedSrc.value = src
+	window.addEventListener('keydown', onZoomKeydown)
+}
+
+function closeZoom() {
+	zoomedSrc.value = ''
+	window.removeEventListener('keydown', onZoomKeydown)
+}
 </script>
 
 <template>
-	<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-		<div class="lg:col-span-1">
+	<div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+		<div class="lg:col-span-2">
 			<div class="card sticky top-6">
 				<div class="card-header">
 					<h3 class="text-sm font-semibold text-gray-900">图片生成参数</h3>
@@ -330,6 +350,10 @@ function downloadImage(img: ImageResult, idx: number) {
 					<div>
 						<label class="input-label">模型</label>
 						<BaseSelect v-model="selectedModel" :options="modelOptions" />
+						<div v-if="isAsyncModel" class="mt-1.5 flex items-center gap-1.5">
+							<span class="badge badge-warning">异步</span>
+							<span class="text-xs text-gray-500">提交后轮询取图</span>
+						</div>
 					</div>
 
 					<!-- 提示词 -->
@@ -411,13 +435,6 @@ function downloadImage(img: ImageResult, idx: number) {
 					<button class="btn btn-primary w-full" :disabled="sending || polling || !prompt.trim()" @click="generate">
 						{{ sending ? (isAsyncModel ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
 					</button>
-					<p v-if="isAsyncModel" class="mt-2 text-xs text-gray-400 leading-relaxed">
-						异步任务模型：提交至
-						<code class="code text-[11px]">POST /v1/images/generations/async</code>
-						拿到 task_id 后轮询
-						<code class="code text-[11px]">GET /v1/images/generations/async/{task_id}</code>
-						取图。
-					</p>
 				</div>
 			</div>
 		</div>
@@ -428,6 +445,20 @@ function downloadImage(img: ImageResult, idx: number) {
 					<h3 class="text-sm font-semibold text-gray-900">生成结果</h3>
 				</div>
 				<div class="card-body">
+					<!-- 异步模型说明 -->
+					<div v-if="isAsyncModel" class="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
+						<div class="flex items-start gap-2">
+							<Icon name="infoCircle" size="sm" class="text-primary-500 flex-shrink-0 mt-0.5" />
+							<p class="text-xs text-gray-600 leading-relaxed">
+								<span class="font-medium text-gray-700">异步任务模型</span>：提交至
+								<code class="code text-[11px]">POST /v1/images/generations/async</code>
+								拿到 task_id 后轮询
+								<code class="code text-[11px]">GET /v1/images/generations/async/{task_id}</code>
+								取图。
+							</p>
+						</div>
+					</div>
+
 					<!-- 错误提示 -->
 					<div
 						v-if="errorMessage"
@@ -477,15 +508,25 @@ function downloadImage(img: ImageResult, idx: number) {
 
 					<div v-if="images.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<div v-for="(img, idx) in images" :key="idx" class="rounded-xl overflow-hidden border border-gray-200 relative group">
-							<img v-if="img.b64_json" :src="'data:image/png;base64,' + img.b64_json" class="w-full" alt="Generated image" />
-							<img v-else-if="img.url" :src="img.url" class="w-full" alt="Generated image" />
-							<button
-								class="absolute top-2 right-2 btn btn-sm bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-								@click="downloadImage(img, idx)"
-							>
-								<Icon name="arrowDown" size="sm" />
-								下载
-							</button>
+							<img :src="imageSrc(img)" class="w-full cursor-zoom-in" alt="Generated image" @click="openZoom(img)" />
+							<div class="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+								<button
+									class="btn btn-sm bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm"
+									title="放大查看"
+									@click="openZoom(img)"
+								>
+									<Icon name="expand" size="sm" />
+									放大
+								</button>
+								<button
+									class="btn btn-sm bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm"
+									title="下载图片"
+									@click="downloadImage(img, idx)"
+								>
+									<Icon name="arrowDown" size="sm" />
+									下载
+								</button>
+							</div>
 							<p v-if="img.revised_prompt" class="text-xs text-gray-500 p-3">{{ img.revised_prompt }}</p>
 						</div>
 					</div>
@@ -500,4 +541,22 @@ function downloadImage(img: ImageResult, idx: number) {
 
 	<!-- 参数参考弹窗 -->
 	<ParamRefModal :show="showParamRef" mode="image" @close="showParamRef = false" />
+
+	<!-- 图片放大预览 -->
+	<Teleport to="body">
+		<Transition name="modal">
+			<div v-if="zoomedSrc" class="modal-overlay" @click="closeZoom">
+				<div class="relative max-h-[90vh] max-w-[90vw]" @click.stop>
+					<img :src="zoomedSrc" class="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl" alt="放大预览" />
+					<button
+						class="absolute -top-3 -right-3 flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-lg transition-colors hover:text-gray-900"
+						title="关闭"
+						@click="closeZoom"
+					>
+						<Icon name="x" size="sm" />
+					</button>
+				</div>
+			</div>
+		</Transition>
+	</Teleport>
 </template>

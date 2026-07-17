@@ -176,8 +176,8 @@ function downloadVideo() {
 </script>
 
 <template>
-	<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-		<div class="lg:col-span-1">
+	<div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+		<div class="lg:col-span-2">
 			<div class="card sticky top-6">
 				<div class="card-header">
 					<h3 class="text-sm font-semibold text-gray-900">视频生成参数</h3>
