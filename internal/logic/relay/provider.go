@@ -624,14 +624,37 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 			updateData.LatencyMs = record.LatencyMs
 		}
 
-		_, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
-			Where("task_id", record.TaskID).
-			Data(updateData).
-			Update()
-		if err != nil {
-			g.Log().Errorf(bgCtx,
-				"update task audit failed: task_id=%s err=%v",
-				record.TaskID, err)
+		// 提交阶段的审计 INSERT 是异步的（RecordAudit 内 go func 落库）。对 sync_image 这类
+		// 提交后立即入队、worker 可能极快出终态的任务，完成回调有可能抢在 INSERT 之前到达，
+		// 导致按 task_id 更新命中 0 行、终态（SUCCESS/FAILURE）丢失，审计里的任务状态一直停在
+		// 「已提交」。这里在命中 0 行时短暂重试，兜住这个竞态窗口。
+		// 审计关闭时提交阶段本就不写行，无需重试，直接返回避免空转。
+		auditDisabled := globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone
+		const maxAttempts = 6
+		for attempt := 1; ; attempt++ {
+			res, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
+				Where("task_id", record.TaskID).
+				Data(updateData).
+				Update()
+			if err != nil {
+				g.Log().Errorf(bgCtx,
+					"update task audit failed: task_id=%s attempt=%d err=%v",
+					record.TaskID, attempt, err)
+				return
+			}
+			if affected, _ := res.RowsAffected(); affected > 0 {
+				return
+			}
+			if auditDisabled || attempt >= maxAttempts {
+				if !auditDisabled {
+					g.Log().Warningf(bgCtx,
+						"update task audit affected 0 rows after %d attempts: task_id=%s (submit audit not persisted yet?)",
+						maxAttempts, record.TaskID)
+				}
+				return
+			}
+			// 线性退避：150ms、300ms……最长约 2.25s，足够覆盖异步 INSERT 落库延迟。
+			time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 		}
 	}()
 }

@@ -355,7 +355,11 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, true, 0)
 
 	chBasic := &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
-	recordTaskUsage(buildUsageTask(job, sel, "SUCCESS", actualCost, now), chBasic, true, "", settleResult)
+	usageTask := buildUsageTask(job, sel, "SUCCESS", actualCost, now)
+	recordTaskUsage(usageTask, chBasic, true, "", settleResult)
+	// 闭环审计：把提交阶段写入的 SUBMITTED 审计记录更新为终态（与 pollSingleTask 一致），
+	// 否则请求审计日志里的任务状态会一直停留在「已提交」。
+	recordTaskCompletionAudit(usageTask, "SUCCESS", string(normalized), nil)
 }
 
 // failSyncImageJob 失败收尾：CAS 赢终态 → 退款 → 标记已结算 → 用量/计数。
@@ -398,7 +402,10 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	if sel != nil {
 		chBasic = &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	}
-	recordTaskUsage(buildUsageTask(job, sel, "FAILURE", 0, now), chBasic, false, reason, nil)
+	usageTask := buildUsageTask(job, sel, "FAILURE", 0, now)
+	recordTaskUsage(usageTask, chBasic, false, reason, nil)
+	// 闭环审计：更新提交阶段的 SUBMITTED 审计记录为 FAILURE。
+	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
 }
 
 // buildImageResult 解析上游图片响应，返回结果 URL 与归一化后的响应体（供落库 Data）。
