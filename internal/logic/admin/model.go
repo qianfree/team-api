@@ -75,9 +75,11 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	}
 	// 定价状态筛选
 	if req.PricingStatus == "priced" {
-		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0)")
+		// 已定价：存在 min_tokens=0 的记录，且输入价格或输出价格不为 0
+		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0 AND (mdl_pricing.input_price > 0 OR mdl_pricing.output_price > 0 OR mdl_pricing.per_request_price > 0))")
 	} else if req.PricingStatus == "unpriced" {
-		query = query.Where("NOT EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0)")
+		// 未定价：存在 min_tokens=0 的记录，但所有价格字段都为 0
+		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0 AND mdl_pricing.input_price = 0 AND mdl_pricing.output_price = 0 AND (mdl_pricing.per_request_price IS NULL OR mdl_pricing.per_request_price = 0))")
 	}
 
 	var total int
