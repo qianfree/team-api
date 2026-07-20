@@ -254,9 +254,12 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		}
 
 		// 3e. 标记预扣追踪记录为已结算（事务内）
+		// 同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
+		// 补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；
+		// 否则残留的 _adjust frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
 		_, err = tx.Ctx(ctx).Exec(
-			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
-			requestID)
+			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN ($1, $2) AND status = 'frozen'",
+			requestID, requestID+"_adjust")
 		if err != nil {
 			return fmt.Errorf("settle task: mark prededuct settled: %w", err)
 		}
@@ -276,14 +279,14 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	// 5. 异步检查余额预警
 	go CheckBalanceWarning(context.Background(), tenantID)
 
-	// 6. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 3 扣完，无需额外操作）
-	if diff < -0.001 {
-		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
-			g.Log().Warningf(ctx, "settle task adjust refund failed for %s: %v", requestID, err)
-		}
-	}
+	// 6. 差额已在步骤 3a 一次性结清，此处不得再做任何解冻/退款：
+	//    步骤 3a 已 frozen_balance -= preDeductAmount（释放全部预扣冻结）、balance -= actualCost
+	//    （只扣真实成本），无论 actualCost 大于还是小于预扣，可用余额都已精确调整到位
+	//    （available 变化量恰为 preDeductAmount - actualCost）。
+	//    切勿再对 requestID+"_adjust" 调 UnfreezePreDeduct/SettleFailed——那会在步骤 3a 之外
+	//    二次释放从未单独冻结过的金额，导致 frozen_balance 被过度释放（Redis 侧无下限时甚至为负）。
 
-	// 6. 生成计费快照 + 摘要
+	// 7. 生成计费快照 + 摘要
 	result := &common.SettlementResult{
 		PreDeductAmount: preDeductAmount,
 		ActualCost:      actualCost,

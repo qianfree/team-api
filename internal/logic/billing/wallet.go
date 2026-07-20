@@ -246,6 +246,25 @@ func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
 	}
 }
 
+// unfreezeClampLua 解冻 frozen_balance 并保证不低于 0（对齐 DB 侧 GREATEST(frozen_balance - ?, 0) 下限）。
+// 钱包 hash 不存在（TTL 过期）时直接返回，不凭空创建只含 frozen_balance 的残缺 key——
+// 冻结状态以 DB 为准，下次 PreDeduct 的 doSyncWalletToRedis 会重建。
+// KEYS[1] = wallet:{tenant_id}；ARGV[1] = 解冻金额
+const unfreezeClampLua = `
+local wallet_key = KEYS[1]
+local amount = tonumber(ARGV[1])
+if redis.call("EXISTS", wallet_key) == 0 then
+    return 0
+end
+local frozen = tonumber(redis.call("HGET", wallet_key, "frozen_balance") or "0")
+local newFrozen = frozen - amount
+if newFrozen < 0 then
+    newFrozen = 0
+end
+redis.call("HSET", wallet_key, "frozen_balance", newFrozen)
+return 1
+`
+
 // UnfreezePreDeduct 解冻预扣金额（请求失败时调用）
 func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, amount float64) {
 	if amount <= 0 {
@@ -259,8 +278,10 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, am
 	// 先尝试 Redis 解冻
 	_, err := g.Redis().Do(ctx, "DEL", predeductRedisKey)
 	if err == nil {
-		// 解冻
-		g.Redis().Do(ctx, "HINCRBYFLOAT", walletRedisKey, "frozen_balance", -amount)
+		// 解冻（带 0 下限保护）。HINCRBYFLOAT 无下限：若因重复/多余调用扣减超过已冻结额，
+		// 会把 frozen_balance 打成负数。改用 Lua 读-clamp-写，与 DB 侧
+		// GREATEST(frozen_balance - ?, 0) 保持一致；钱包 hash 不存在时不凭空创建（交由 DB 兜底）。
+		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, amount)
 		g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
 		go unfreezeSyncDB(tenantID, amount)
 		return
