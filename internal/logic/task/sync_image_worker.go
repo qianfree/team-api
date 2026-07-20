@@ -601,8 +601,12 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
 }
 
-// buildImageResult 解析上游图片响应，返回结果 URL 与归一化后的响应体（供落库 Data）。
+// buildImageResult 解析上游图片响应，re-host **全部**图片，返回首图 URL（向后兼容单值
+// ResultURL）与归一化后的多图响应体（供落库 Data；fetch 端点据此吐出 data 数组）。
 // b64_json 无条件 re-host；url 按配置开关（默认透传，开启则下载 re-host）。
+//
+// 采用 all-or-nothing：任一张解码 / re-host 失败即整体返回错误，由调用方走 FAILURE + 全额
+// 退款（与单图行为一致）。计费按次扁平，多图不额外计费，与同步端点口径保持一致。
 func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resultURL string, normalized []byte, err error) {
 	var imgResp dto.ImageResponse
 	if e := json.Unmarshal(body, &imgResp); e != nil {
@@ -611,46 +615,51 @@ func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resu
 	if len(imgResp.Data) == 0 {
 		return "", nil, fmt.Errorf("empty image data")
 	}
-	if len(imgResp.Data) > 1 {
-		g.Log().Warningf(ctx, "sync_image: task %s returned %d images; only the first is surfaced via ResultURL", job.PublicTaskID, len(imgResp.Data))
+
+	outData := make([]dto.ImageData, 0, len(imgResp.Data))
+	for i, img := range imgResp.Data {
+		var url string
+		switch {
+		case img.B64JSON != "":
+			data, e := base64.StdEncoding.DecodeString(img.B64JSON)
+			if e != nil {
+				return "", nil, fmt.Errorf("decode b64_json[%d]: %w", i, e)
+			}
+			if url, e = rehostImage(ctx, job, data, "image/png", ".png", i); e != nil {
+				return "", nil, fmt.Errorf("rehost b64_json[%d]: %w", i, e)
+			}
+		case img.URL != "":
+			if rehostURLEnabled(ctx) {
+				if url, err = rehostFromURL(ctx, job, img.URL, i); err != nil {
+					return "", nil, fmt.Errorf("rehost url[%d]: %w", i, err)
+				}
+			} else {
+				url = img.URL
+			}
+		default:
+			return "", nil, fmt.Errorf("no url or b64_json in image response at index %d", i)
+		}
+		outData = append(outData, dto.ImageData{URL: url, RevisedPrompt: img.RevisedPrompt})
 	}
 
-	first := imgResp.Data[0]
-	switch {
-	case first.B64JSON != "":
-		data, e := base64.StdEncoding.DecodeString(first.B64JSON)
-		if e != nil {
-			return "", nil, fmt.Errorf("decode b64_json: %w", e)
-		}
-		resultURL, err = rehostImage(ctx, job, data, "image/png", ".png")
-	case first.URL != "":
-		if shouldRehostURL(ctx) {
-			resultURL, err = rehostFromURL(ctx, job, first.URL)
-		} else {
-			resultURL = first.URL
-		}
-	default:
-		return "", nil, fmt.Errorf("no url or b64_json in image response")
-	}
-	if err != nil {
-		return "", nil, err
-	}
-
-	// 归一化落库：只存单张结果 URL，避免把大体积 b64 原文写进 data 列。
+	resultURL = outData[0].URL
+	// 归一化落库：存全部结果 URL（不含大体积 b64 原文），供 fetch 吐 data 数组。
 	normalized, _ = json.Marshal(dto.ImageResponse{
 		Created: imgResp.Created,
-		Data:    []dto.ImageData{{URL: resultURL, RevisedPrompt: first.RevisedPrompt}},
+		Data:    outData,
 	})
 	return resultURL, normalized, nil
 }
 
-func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string) (string, error) {
+// rehostImage 把单张图片字节上传对象存储并返回下载 URL。index 用于区分同一任务的多张图片，
+// 避免多图共用同一对象键相互覆盖。
+func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string, index int) (string, error) {
 	if syncImageFileSvc == nil {
 		return "", fmt.Errorf("object storage not configured, cannot re-host image")
 	}
 	rec, err := syncImageFileSvc.Upload(ctx, &lcommon.FileUpload{
 		Reader:      bytes.NewReader(data),
-		Filename:    job.PublicTaskID + ext,
+		Filename:    fmt.Sprintf("%s_%d%s", job.PublicTaskID, index, ext),
 		ContentType: contentType,
 		Size:        int64(len(data)),
 		TenantID:    job.TenantID,
@@ -669,7 +678,7 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 // 生成超时——放宽是为了避免「生成已成功却因下载慢被判失败+退款」的资损。
 var syncImageDownloadClient = &http.Client{Timeout: 120 * time.Second}
 
-func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, error) {
+func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int) (string, error) {
 	if syncImageFileSvc == nil {
 		return "", fmt.Errorf("object storage not configured, cannot re-host image")
 	}
@@ -693,10 +702,12 @@ func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, 
 	if contentType == "" {
 		contentType = "image/png"
 	}
-	return rehostImage(ctx, job, data, contentType, extFromContentType(contentType))
+	return rehostImage(ctx, job, data, contentType, extFromContentType(contentType), index)
 }
 
-func shouldRehostURL(ctx context.Context) bool {
+// rehostURLEnabled 判断上游返回 url 时是否下载 re-host（默认透传）。
+// 声明为包级变量而非普通函数，便于单测覆盖多图 url 透传路径（无需初始化配置中心）。
+var rehostURLEnabled = func(ctx context.Context) bool {
 	return lcommon.Config().GetBool(ctx, "sync_image_rehost_url")
 }
 

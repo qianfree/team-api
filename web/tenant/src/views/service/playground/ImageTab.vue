@@ -302,7 +302,14 @@ async function pollLoop() {
 
 		if (data.status === 'SUCCESS') {
 			polling.value = false
-			if (data.url) images.value = [{ url: data.url }]
+			// 多图：优先用 data 数组渲染全部图片；回退到单 url（向后兼容旧后端）。
+			if (Array.isArray(data.data) && data.data.length > 0) {
+				images.value = data.data
+					.filter((d: any) => d && d.url)
+					.map((d: any) => ({ url: d.url }))
+			} else if (data.url) {
+				images.value = [{ url: data.url }]
+			}
 			return
 		}
 		if (data.status === 'FAILURE') {

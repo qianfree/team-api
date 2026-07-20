@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/qianfree/team-api/relay/dto"
 )
 
 func TestMemResponseWriter(t *testing.T) {
@@ -102,6 +104,78 @@ func TestBuildImageResult_B64WithoutStorageErrors(t *testing.T) {
 	})
 	if _, _, err := buildImageResult(context.Background(), job, raw); err == nil {
 		t.Fatal("b64 without storage should error")
+	}
+}
+
+// TestBuildImageResult_MultiURLPassthrough 多图 url 透传：全部图片进 normalized，首图作 ResultURL。
+func TestBuildImageResult_MultiURLPassthrough(t *testing.T) {
+	orig := rehostURLEnabled
+	rehostURLEnabled = func(context.Context) bool { return false } // 透传，不下载 re-host
+	defer func() { rehostURLEnabled = orig }()
+
+	job := &SyncImageJob{PublicTaskID: "task_multi"}
+	raw, _ := json.Marshal(map[string]any{
+		"created": 123,
+		"data": []any{
+			map[string]any{"url": "https://cdn.example.com/a.png", "revised_prompt": "a"},
+			map[string]any{"url": "https://cdn.example.com/b.png"},
+			map[string]any{"url": "https://cdn.example.com/c.png"},
+		},
+	})
+	resultURL, normalized, err := buildImageResult(context.Background(), job, raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resultURL != "https://cdn.example.com/a.png" {
+		t.Fatalf("resultURL = %q, want first image url", resultURL)
+	}
+	var out dto.ImageResponse
+	if e := json.Unmarshal(normalized, &out); e != nil {
+		t.Fatalf("normalized not a valid ImageResponse: %v", e)
+	}
+	if len(out.Data) != 3 {
+		t.Fatalf("normalized data len = %d, want 3", len(out.Data))
+	}
+	if out.Data[0].URL != "https://cdn.example.com/a.png" || out.Data[2].URL != "https://cdn.example.com/c.png" {
+		t.Fatalf("normalized urls not preserved in order: %+v", out.Data)
+	}
+	if out.Data[0].RevisedPrompt != "a" {
+		t.Fatalf("revised_prompt not preserved on first image")
+	}
+}
+
+// TestBuildImageResult_AllOrNothingOnBadEntry 多图中任一条目无 url/b64 → 整体失败（all-or-nothing）。
+func TestBuildImageResult_AllOrNothingOnBadEntry(t *testing.T) {
+	orig := rehostURLEnabled
+	rehostURLEnabled = func(context.Context) bool { return false }
+	defer func() { rehostURLEnabled = orig }()
+
+	job := &SyncImageJob{PublicTaskID: "task_bad"}
+	raw, _ := json.Marshal(map[string]any{
+		"created": 1,
+		"data": []any{
+			map[string]any{"url": "https://cdn.example.com/a.png"},
+			map[string]any{}, // 无 url 无 b64 → 整单失败
+		},
+	})
+	if _, _, err := buildImageResult(context.Background(), job, raw); err == nil {
+		t.Fatal("entry without url/b64 should fail the whole task (all-or-nothing)")
+	}
+}
+
+// TestBuildImageResult_MultiB64WithoutStorageErrors 多图 b64 无对象存储 → 整体失败。
+func TestBuildImageResult_MultiB64WithoutStorageErrors(t *testing.T) {
+	syncImageFileSvc = nil
+	job := &SyncImageJob{PublicTaskID: "task_b64multi", TenantID: 1, UserID: 2}
+	raw, _ := json.Marshal(map[string]any{
+		"created": 1,
+		"data": []any{
+			map[string]any{"b64_json": base64.StdEncoding.EncodeToString([]byte("PNG1"))},
+			map[string]any{"b64_json": base64.StdEncoding.EncodeToString([]byte("PNG2"))},
+		},
+	})
+	if _, _, err := buildImageResult(context.Background(), job, raw); err == nil {
+		t.Fatal("multi b64 without storage should error")
 	}
 }
 
