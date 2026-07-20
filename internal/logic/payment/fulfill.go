@@ -23,14 +23,22 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			FinalAmount float64 `json:"final_amount"`
 			Status      string  `json:"status"`
 		}
+		// A6 修复：SELECT ... FOR UPDATE 对订单行加锁，串行化并发履约。
+		// 无行锁时两个并发事务（如支付回调与管理后台手动履约）可同时读到 paid 各自履约 → 重复入账/重复发套餐。
+		// 加锁后后到的事务阻塞，待前者提交（状态已改为 fulfilled）后再读到最新状态，据此跳过。
 		err := tx.Model("ord_orders").Ctx(ctx).
 			Where("id", orderID).
+			LockUpdate().
 			Scan(&order)
 		if err != nil {
 			return err
 		}
 		if order == nil {
 			return gerror.Newf("order %d not found", orderID)
+		}
+		// 已履约：幂等空操作（并发后到者 / 回调重放 / 管理后台重复点击都会走到这里）
+		if order.Status == "fulfilled" {
+			return nil
 		}
 		if order.Status != "paid" {
 			return gerror.New("order status must be paid to fulfill")
@@ -59,13 +67,26 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			return gerror.Newf("unsupported order type for fulfillment: %s", order.OrderType)
 		}
 
-		_, err = tx.Ctx(ctx).Model("ord_orders").
+		// A6 修复：末尾状态流转用条件更新 paid → fulfilled 并校验 RowsAffected，作为纵深防御。
+		// 持有行锁时理论上不会出现 0 行；一旦出现说明状态被并发改动，回滚整个履约事务以防重复入账。
+		res, err := tx.Ctx(ctx).Model("ord_orders").
 			Where("id", orderID).
+			Where("status", "paid").
 			Data(do.OrdOrders{
 				Status:      "fulfilled",
 				FulfilledAt: gtime.Now(),
 			}).Update()
-		return err
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return gerror.Newf("order %d fulfill aborted: status changed concurrently", orderID)
+		}
+		return nil
 	})
 }
 
