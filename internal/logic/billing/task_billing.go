@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -225,6 +226,10 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			CacheReadCost:           0,
 		}).Insert()
 		if err != nil {
+			if isDuplicateKeyErr(err) {
+				// 同一 request_id 已结算：整个事务回滚（3a 钱包扣款一并撤销），避免重复扣款/重复账单
+				return errAlreadySettled
+			}
 			return fmt.Errorf("settle task: create billing record: %w", err)
 		}
 		if billingResult != nil {
@@ -267,6 +272,17 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errAlreadySettled) {
+			// 幂等跳过：该任务此前已结算完成，本次为重复调用（轮询/重放），不再扣款/写账单
+			g.Log().Warningf(ctx, "settle task: duplicate settlement skipped for request=%s (idempotent)", requestID)
+			return &common.SettlementResult{
+				PreDeductAmount: preDeductAmount,
+				ActualCost:      actualCost,
+				BaseCost:        breakdown.BaseCost,
+				TotalCost:       actualCost,
+				OutputCost:      breakdown.OutputCost,
+			}, nil
+		}
 		return nil, err
 	}
 

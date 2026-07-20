@@ -2,9 +2,12 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
+	"strings"
 	"time"
+
+	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -14,6 +17,24 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
+
+// errAlreadySettled 结算幂等哨兵：当同一 request_id 的计费记录已存在（bil_records 唯一约束冲突）时，
+// 从结算事务闭包返回该错误使整个事务回滚（钱包扣款一并撤销），调用方据此识别为幂等空操作，
+// 不重复扣款、不重复写账单。必须原样返回（不可 gerror.Wrap），以保证 errors.Is 能识别。
+var errAlreadySettled = errors.New("billing: request already settled (idempotent skip)")
+
+// isDuplicateKeyErr 判断 error 是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
+// 结算时 bil_records.request_id 唯一索引会拒绝同一请求的第二次插入，据此把重复结算识别为
+// 幂等冲突。跨驱动（lib/pq、pgx）统一走错误文案匹配，避免耦合具体驱动的错误类型。
+func isDuplicateKeyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate key value") ||
+		strings.Contains(msg, "23505") ||
+		strings.Contains(msg, "uk_bil_records_request")
+}
 
 // SettlementResult 结算结果
 type SettlementResult struct {
@@ -109,6 +130,10 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			inputSnapPrice, outputSnapPrice, actualCost,
 			billingMode, discountRatio, billingInputMult, billingOutputMult)
 		if err != nil {
+			if isDuplicateKeyErr(err) {
+				// 同一 request_id 已结算：整个事务回滚（5a 钱包扣款一并撤销），避免重复扣款/重复账单
+				return errAlreadySettled
+			}
 			return gerror.Wrapf(err, "settle: create billing record")
 		}
 
@@ -144,6 +169,18 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errAlreadySettled) {
+			// 幂等跳过：该请求此前已结算完成，本次为重复调用，不再扣款/写账单
+			g.Log().Warningf(ctx, "settle: duplicate settlement skipped for request=%s (idempotent)", requestID)
+			return &SettlementResult{
+				PreDeductAmount:  preDeductAmount,
+				ActualCost:       actualCost,
+				BaseCost:         breakdown.BaseCost,
+				RefundAmount:     refundAmt,
+				SupplementAmount: supplementAmt,
+				CostBreakdown:    breakdown,
+			}, nil
+		}
 		return nil, err
 	}
 
@@ -241,6 +278,10 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			inputSnapPrice, outputSnapPrice, actualCost,
 			billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
 		if err != nil {
+			if isDuplicateKeyErr(err) {
+				// 同一 request_id 已结算：整个事务回滚（5a 钱包扣款一并撤销），避免重复扣款/重复账单
+				return errAlreadySettled
+			}
 			return gerror.Wrapf(err, "settle_with_usage: create billing record")
 		}
 
@@ -280,6 +321,18 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errAlreadySettled) {
+			// 幂等跳过：该请求此前已结算完成，本次为重复调用，不再扣款/写账单
+			g.Log().Warningf(ctx, "settle_with_usage: duplicate settlement skipped for request=%s (idempotent)", requestID)
+			return &SettlementResult{
+				PreDeductAmount:  preDeductAmount,
+				ActualCost:       actualCost,
+				BaseCost:         breakdown.BaseCost,
+				RefundAmount:     refundAmt,
+				SupplementAmount: supplementAmt,
+				CostBreakdown:    breakdown,
+			}, nil
+		}
 		return nil, err
 	}
 
