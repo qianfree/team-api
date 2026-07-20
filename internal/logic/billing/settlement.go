@@ -62,8 +62,19 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	// 1. 计算实际费用
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, outputTokens)
 	if err != nil {
-		g.Log().Errorf(ctx, "settle: calculate cost failed for %s: %v", requestID, err)
-		breakdown = &CostBreakdown{TotalCost: 0, Currency: "USD"}
+		// A4 修复：计价失败【不得】按零费用结算——那会把定价异常/模型未配价/短暂 DB 故障
+		// 都变成免费请求。改为 fail-closed 兜底：按已冻结的预扣额计费（预扣是请求受理时的估价，
+		// 当前可得的最佳估值），与 task 结算路径（async_polling / sync_image_worker 默认
+		// actualCost = PreDeductAmount）保持一致。保留 token 数便于账单核对。
+		g.Log().Errorf(ctx, "settle: calculate cost failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %v",
+			requestID, modelName, preDeductAmount, err)
+		breakdown = &CostBreakdown{
+			TotalCost:    preDeductAmount,
+			BaseCost:     preDeductAmount,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			Currency:     "USD",
+		}
 	}
 	actualCost := breakdown.TotalCost
 
@@ -210,8 +221,19 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 1. 使用完整 Usage 计算实际费用（含 cache token）
 	breakdown, err := CalculateCostWithUsage(ctx, tenantID, modelName, usage)
 	if err != nil {
-		g.Log().Errorf(ctx, "settle_with_usage: calculate cost failed for %s: %v", requestID, err)
-		breakdown = &CostBreakdown{TotalCost: 0, Currency: "USD"}
+		// A4 修复：计价失败 fail-closed 兜底按预扣额计费，而非零费用（免费请求）。见 Settle 同段说明。
+		g.Log().Errorf(ctx, "settle_with_usage: calculate cost failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %v",
+			requestID, modelName, preDeductAmount, err)
+		fb := &CostBreakdown{
+			TotalCost: preDeductAmount,
+			BaseCost:  preDeductAmount,
+			Currency:  "USD",
+		}
+		if usage != nil {
+			fb.InputTokens = usage.PromptTokens
+			fb.OutputTokens = usage.CompletionTokens
+		}
+		breakdown = fb
 	}
 	actualCost := breakdown.TotalCost
 
