@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
@@ -661,6 +662,13 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 	return syncImageFileSvc.GetDownloadURL(ctx, rec.ID)
 }
 
+// syncImageDownloadClient 用于从上游返回的图片 URL 下载**已生成好的**图片做 re-host。
+// 注意：这不是图片生成本身——生成走 adaptor 的 nonStreamClient（300s 超时），此处仅下载
+// 成品图片文件。显式设置超时，避免 http.DefaultClient 无超时时慢速/挂起的图片服务器长期
+// 占用 worker（io.LimitReader 只限体积不限时间）。120s 对 ≤20MB 的成品图很充裕，且远低于
+// 生成超时——放宽是为了避免「生成已成功却因下载慢被判失败+退款」的资损。
+var syncImageDownloadClient = &http.Client{Timeout: 120 * time.Second}
+
 func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, error) {
 	if syncImageFileSvc == nil {
 		return "", fmt.Errorf("object storage not configured, cannot re-host image")
@@ -669,7 +677,7 @@ func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, 
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := syncImageDownloadClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -743,11 +751,17 @@ func syncImageJitter() {
 	time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond)
 }
 
+// truncateStr 将字符串截断到不超过 max 字节，且按 rune 边界截断——避免把多字节 UTF-8
+// 字符（如中文）从中间切断，产生非法字节写入 DB 文本列。回退到 max 之内最后一个完整 rune。
 func truncateStr(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max]
+	truncated := s[:max]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated
 }
 
 func extFromContentType(ct string) string {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestMemResponseWriter(t *testing.T) {
@@ -125,5 +126,27 @@ func TestTruncateStr(t *testing.T) {
 	}
 	if got := truncateStr("ab", 5); got != "ab" {
 		t.Fatalf("truncate = %q, want ab", got)
+	}
+
+	// UTF-8 边界：不得把多字节字符（中文每字 3 字节）从中间切断。
+	utf8Cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"中文", 3, "中"},  // 恰好一个完整字
+		{"中文", 4, "中"},  // 第 4 字节落在「文」中间 → 回退到「中」
+		{"中文", 5, "中"},  // 第 5 字节仍在「文」中间 → 回退到「中」
+		{"中文", 6, "中文"}, // 恰好容纳两字
+		{"中", 2, ""},    // 连一个字都放不下 → 空串（而非非法字节）
+	}
+	for _, c := range utf8Cases {
+		got := truncateStr(c.s, c.max)
+		if got != c.want {
+			t.Fatalf("truncateStr(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("truncateStr(%q, %d) = %q is not valid UTF-8", c.s, c.max, got)
+		}
 	}
 }
