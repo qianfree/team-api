@@ -203,28 +203,23 @@ return 1
 
 // preDeductDB DB 降级预扣（Redis 不可用时）
 func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID string) (bool, error) {
-	// 使用条件检查：WHERE balance - frozen_balance >= amount
-	type walletRow struct {
-		ID            int64   `json:"id"`
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
-	}
-	var w *walletRow
-	err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("balance - frozen_balance >= ?", amount).
-		Fields("id, balance, frozen_balance").
-		LockUpdate().
-		Scan(&w)
-	if err != nil || w == nil {
-		return false, gerror.New("insufficient balance")
-	}
-
-	_, err = g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE id = ? ",
-		amount, time.Now(), w.ID)
+	// A9 修复：用单条原子条件更新替代「先 SELECT ... FOR UPDATE，再独立 UPDATE」。
+	// 原实现两条语句在 autocommit 下各自成一个事务，FOR UPDATE 的行锁在 SELECT 语句提交后即释放，
+	// 两个并发降级预扣可都通过 available 检查、再各自 frozen += amount → 超额冻结（可用余额被冻成负）。
+	// 单条 "WHERE tenant_id=? AND balance - frozen_balance >= amount" 的 UPDATE 在语句执行期间持有
+	// 行锁并原子重算谓词：RowsAffected==1 表示冻结成功，==0 表示可用余额不足（或钱包不存在）。
+	res, err := g.DB().Exec(ctx,
+		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE tenant_id = ? AND balance - frozen_balance >= ?",
+		amount, time.Now(), tenantID, amount)
 	if err != nil {
 		return false, gerror.Wrapf(err, "pre-deduct db update")
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, gerror.Wrapf(err, "pre-deduct db update result")
+	}
+	if affected == 0 {
+		return false, gerror.New("insufficient balance")
 	}
 
 	// 清除缓存
@@ -297,21 +292,14 @@ func unfreezeSyncDB(tenantID int64, amount float64) {
 }
 
 func unfreezeDB(ctx context.Context, tenantID int64, amount float64) {
-	type walletRow struct {
-		ID int64 `json:"id"`
+	// A9：单条原子更新即可，无需先 SELECT 再 UPDATE。
+	// GREATEST(frozen_balance - ?, 0) 保证不会扣成负数；WHERE tenant_id 直接定位钱包行。
+	_, err := g.DB().Exec(ctx,
+		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), updated_at = ? WHERE tenant_id = ?",
+		amount, time.Now(), tenantID)
+	if err != nil {
+		g.Log().Errorf(ctx, "unfreeze db: tenant=%d amount=%.6f: %v", tenantID, amount, err)
 	}
-	var w *walletRow
-	err := dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Scan(&w)
-	if err != nil || w == nil {
-		return
-	}
-
-	g.DB().Exec(ctx,
-		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), updated_at = ? WHERE id = ? ",
-		amount, time.Now(), w.ID)
 
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 }
