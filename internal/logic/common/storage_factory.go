@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// StorageConfig holds the configuration for a storage provider.
+// StorageConfig 保存某个存储 provider 的配置。
 type StorageConfig struct {
 	Provider    string
 	Endpoint    string
@@ -17,7 +17,7 @@ type StorageConfig struct {
 	PathPrefix  string
 }
 
-// GetStorageConfig reads storage configuration from the config service.
+// GetStorageConfig 从配置服务读取存储配置。
 func GetStorageConfig(ctx context.Context) *StorageConfig {
 	cfg := &StorageConfig{
 		Provider:    Config().GetString(ctx, "storage_provider"),
@@ -35,7 +35,7 @@ func GetStorageConfig(ctx context.Context) *StorageConfig {
 	return cfg
 }
 
-// NewStorageProvider creates a StorageProvider based on the given configuration.
+// NewStorageProvider 根据给定配置创建对应的 StorageProvider。
 func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	switch cfg.Provider {
 	case "s3", "minio", "r2":
@@ -49,8 +49,7 @@ func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	}
 }
 
-// NewFileServiceFromConfig creates a FileService using the storage configuration
-// from the config service (database settings).
+// NewFileServiceFromConfig 使用配置服务（数据库设置）中的存储配置创建一个 FileService。
 func NewFileServiceFromConfig(ctx context.Context) (*FileService, error) {
 	cfg := GetStorageConfig(ctx)
 	if cfg.Bucket == "" {

@@ -9,14 +9,14 @@ import (
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
-// OSSStorageProvider implements StorageProvider using Aliyun OSS.
+// OSSStorageProvider 基于阿里云 OSS 实现 StorageProvider。
 type OSSStorageProvider struct {
 	client *oss.Client
 	bucket *oss.Bucket
 	prefix string
 }
 
-// NewOSSProvider creates a new Aliyun OSS storage provider.
+// NewOSSProvider 创建一个阿里云 OSS 存储 provider。
 func NewOSSProvider(cfg *StorageConfig) (*OSSStorageProvider, error) {
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("oss endpoint is required")
@@ -39,15 +39,12 @@ func NewOSSProvider(cfg *StorageConfig) (*OSSStorageProvider, error) {
 	}, nil
 }
 
-// fullKey returns the full object key with prefix.
+// fullKey 返回带前缀的完整对象 key（对已带前缀的存量 key 幂等）。
 func (s *OSSStorageProvider) fullKey(key string) string {
-	if s.prefix != "" {
-		return s.prefix + "/" + key
-	}
-	return key
+	return applyStoragePrefix(s.prefix, key)
 }
 
-// Upload uploads a file to Aliyun OSS and returns the storage key.
+// Upload 上传文件到阿里云 OSS 并返回存储 key。
 func (s *OSSStorageProvider) Upload(ctx context.Context, reader io.Reader, key string, contentType string) (string, error) {
 	fullKey := s.fullKey(key)
 
@@ -62,7 +59,7 @@ func (s *OSSStorageProvider) Upload(ctx context.Context, reader io.Reader, key s
 	return fullKey, nil
 }
 
-// Download returns a reader for the file at the given key.
+// Download 返回指定 key 文件的读取器。
 func (s *OSSStorageProvider) Download(ctx context.Context, key string) (io.ReadCloser, error) {
 	fullKey := s.fullKey(key)
 
@@ -74,7 +71,7 @@ func (s *OSSStorageProvider) Download(ctx context.Context, key string) (io.ReadC
 	return resp, nil
 }
 
-// Delete deletes a file from Aliyun OSS.
+// Delete 从阿里云 OSS 删除文件。
 func (s *OSSStorageProvider) Delete(ctx context.Context, key string) error {
 	fullKey := s.fullKey(key)
 
@@ -86,7 +83,7 @@ func (s *OSSStorageProvider) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// PresignedURL generates a temporary signed URL for downloading.
+// PresignedURL 生成用于下载的临时签名 URL。
 func (s *OSSStorageProvider) PresignedURL(ctx context.Context, key string, expires time.Duration) (string, error) {
 	fullKey := s.fullKey(key)
 
@@ -98,8 +95,8 @@ func (s *OSSStorageProvider) PresignedURL(ctx context.Context, key string, expir
 	return signedURL, nil
 }
 
-// PresignedThumbnailURL signs a URL with an x-oss-process image/resize op so OSS
-// returns a downscaled thumbnail (width px, height auto, no upscaling).
+// PresignedThumbnailURL 在签名 URL 中附加 x-oss-process 的 image/resize 处理参数，
+// 让 OSS 返回按比例缩小的缩略图（宽度按像素，高度自适应，不放大）。
 func (s *OSSStorageProvider) PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error) {
 	fullKey := s.fullKey(key)
 
