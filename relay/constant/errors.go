@@ -103,6 +103,20 @@ func NewModelGoneError(modelName, sunsetDate string) *RelayError {
 	}
 }
 
+// IsResponseWritten 判断错误对应的响应体是否已由 adaptor 直接写入客户端。
+// 一旦上游的原生错误体已透传给客户端，重试后再写成功体会造成「错误体+成功体」拼接污染，
+// 因此重试循环命中此情况必须终止重试（即使 StatusCode 本身可重试）。
+func IsResponseWritten(err error) bool {
+	if err == nil {
+		return false
+	}
+	var relayErr *RelayError
+	if errors.As(err, &relayErr) {
+		return relayErr.ResponseWritten
+	}
+	return false
+}
+
 // IsRetryable 判断错误是否可重试
 func IsRetryable(err error) bool {
 	if err == nil {

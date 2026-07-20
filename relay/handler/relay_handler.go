@@ -547,7 +547,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			channelErrors = append(channelErrors, failReason)
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
-			if v.isStream || !constant.IsRetryable(err) || attempt >= maxRetries {
+			// 响应已由 adaptor 直接写入客户端（原生错误透传）时，即使 StatusCode 可重试也必须
+			// 终止重试：否则重试成功会把成功体追加到已写的错误体后，造成响应污染（错误体+成功体拼接）。
+			if v.isStream || !constant.IsRetryable(err) || attempt >= maxRetries || constant.IsResponseWritten(err) {
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
