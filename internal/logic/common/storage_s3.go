@@ -44,6 +44,11 @@ func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.Region != "" {
 			o.Region = cfg.Region
+		} else if cfg.Provider == "r2" {
+			// Cloudflare R2 的 SigV4 签名要求非空 region，官方约定用 "auto"。
+			// 后端在此兜底，避免仅依赖前端 UI 填值——经配置接口/DB 直写或 region 被清空时，
+			// 空 region 会导致签名失败。
+			o.Region = "auto"
 		}
 		// Cloudflare R2 兼容 S3，但需要账号级的 BaseEndpoint。与 MinIO 不同，它使用
 		// 虚拟主机式寻址（virtual-hosted），因此**不能**强制 path-style。

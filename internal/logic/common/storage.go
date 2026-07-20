@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/google/uuid"
 )
 
@@ -190,9 +189,11 @@ func (s *FileService) Delete(ctx context.Context, fileID int64) error {
 		return gerror.Newf("file not found: %d", fileID)
 	}
 
-	// 从存储删除对象
+	// 从存储删除对象。删除失败时**不**继续删库行——否则对象会成为孤儿且失去 DB 索引，
+	// 之后再也无法定位清理。保留库行并返回错误，交由调用方（保留期清理循环）下一轮重试。
+	// S3/OSS/COS 删除不存在的对象均返回成功，故此处的错误代表真实的瞬时/权限问题，值得重试。
 	if err := s.provider.Delete(ctx, record.StoragePath); err != nil {
-		g.Log().Warningf(ctx, "delete file from storage: %v", err)
+		return gerror.Wrapf(err, "delete file %d from storage", fileID)
 	}
 
 	// 删除记录

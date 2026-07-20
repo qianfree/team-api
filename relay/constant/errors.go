@@ -173,3 +173,46 @@ func isTransientNetworkError(err error) bool {
 
 	return false
 }
+
+// isAmbiguousDelivery 判断连接层错误是否属于「请求可能已送达上游」的模糊情形。
+// 这类错误（io.EOF/ErrUnexpectedEOF/ECONNRESET/超时）发生时，上游有可能已收到并开始
+// 处理请求，只是响应在回传途中中断——对非幂等且高成本的生成（图片/视频）重试会造成
+// 上游重复生成 + 重复计费。
+// 反之不属于模糊情形（重试安全）：① 连接被拒绝 / DNS 解析失败——请求确定未送达；
+// ② 状态码类 RelayError——已拿到上游 HTTP 响应，说明上游已明确返回错误、未成功生成。
+func isAmbiguousDelivery(err error) bool {
+	if err == nil {
+		return false
+	}
+	// 拿到了 HTTP 响应（哪怕是错误状态码）→ 非模糊。
+	var relayErr *RelayError
+	if errors.As(err, &relayErr) {
+		return false
+	}
+	// 连接被拒绝：上游从未接受连接，请求确定未送达 → 非模糊。
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	// DNS 解析失败：请求确定未送达 → 非模糊。
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return false
+	}
+	// 其余瞬时网络错误（EOF/RST/i/o timeout/DeadlineExceeded）：可能已送达 → 模糊。
+	return isTransientNetworkError(err)
+}
+
+// IsRetryableForRequest 在 DoRequest（发送请求）阶段判断错误是否可重试。
+// 相比 IsRetryable 多一个 nonIdempotentExpensive 参数：对非幂等且高成本的生成端点
+// （图片/视频），「可能已送达上游」的模糊连接层错误不重试，避免上游重复生成 + 重复计费；
+// 「确定未送达」的错误（连接被拒/DNS 失败）与状态码类错误仍照常重试。其它端点（chat 等）
+// 行为与 IsRetryable 完全一致。
+func IsRetryableForRequest(err error, nonIdempotentExpensive bool) bool {
+	if !IsRetryable(err) {
+		return false
+	}
+	if nonIdempotentExpensive && isAmbiguousDelivery(err) {
+		return false
+	}
+	return true
+}

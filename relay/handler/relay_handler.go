@@ -473,8 +473,15 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
+			// 高成本非幂等生成（图片/视频）：DoRequest 阶段「可能已送达上游」的模糊网络错误
+			// （EOF/RST/超时）不重试，避免上游重复生成 + 重复计费；连接被拒/DNS 失败等确定
+			// 未送达的错误与状态码类错误仍照常重试。chat 等端点行为不变。
+			expensiveGen := v.relayMode == constant.RelayModeImagesGenerations ||
+				v.relayMode == constant.RelayModeImagesEdits ||
+				v.relayMode == constant.RelayModeVideoGenerations
+			retryable := constant.IsRetryableForRequest(err, expensiveGen)
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms retryable=%v",
-				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), constant.IsRetryable(err))
+				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), retryable)
 			channelErrors = append(channelErrors, failReason)
 			g.Log().Warningf(ctx, "[RelayHandler] Upstream request failed: %s", failReason)
 
@@ -483,7 +490,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
-			if constant.IsRetryable(err) && attempt < maxRetries {
+			if retryable && attempt < maxRetries {
 				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 				settleCancel()

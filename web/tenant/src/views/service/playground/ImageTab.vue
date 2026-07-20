@@ -161,6 +161,9 @@ interface AsyncTask {
 const asyncTask = ref<AsyncTask | null>(null)
 const polling = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+// 轮询上限：100 次 × 3s ≈ 5 分钟，超过判定超时，防止无限轮询。
+const MAX_POLL_ATTEMPTS = 100
+let pollAttempts = 0
 
 const statusLabel: Record<string, string> = {
 	SUBMITTED: '已提交',
@@ -257,6 +260,7 @@ async function generate() {
 
 function startPolling() {
 	polling.value = true
+	pollAttempts = 0
 	pollLoop()
 }
 
@@ -270,6 +274,19 @@ function stopPolling() {
 
 async function pollLoop() {
 	if (!polling.value || !asyncTask.value?.id) return
+
+	// 轮询次数上限保护：超过上限（约 5 分钟）判定为超时，停止轮询并提示，
+	// 避免上游卡死 / 后端漏推终态时前端无限轮询。
+	if (pollAttempts >= MAX_POLL_ATTEMPTS) {
+		polling.value = false
+		asyncTask.value = {
+			...asyncTask.value,
+			status: 'FAILURE',
+			error: '生成超时，请稍后重试',
+		}
+		return
+	}
+	pollAttempts++
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)

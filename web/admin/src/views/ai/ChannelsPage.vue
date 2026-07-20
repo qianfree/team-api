@@ -7,6 +7,7 @@ import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { hasPermission } from '@/utils/permission'
 
 const router = useRouter()
 const message = Message
@@ -106,17 +107,23 @@ const columns: TableColumnData[] = [
     render({ record }) {
       const isActive = record.status === 'active'
       const action = isActive ? '禁用' : '启用'
-      return h(Space, { size: 4 }, () => [
-        h(Popconfirm, {
-          content: `确定${action}该渠道？`,
-          onOk: () => toggleStatus(record),
-        }, () => h(Button, {
-          size: 'small',
-          status: isActive ? 'normal' : 'success',
-        }, () => action)),
+      // 破坏性写操作按钮按权限点渲染（super_admin 在 hasPermission 内直接放行）。
+      const nodes = [
+        hasPermission('channel:edit')
+          ? h(Popconfirm, {
+              content: `确定${action}该渠道？`,
+              onOk: () => toggleStatus(record),
+            }, () => h(Button, {
+              size: 'small',
+              status: isActive ? 'normal' : 'success',
+            }, () => action))
+          : null,
         h(Button, { size: 'small', type: 'primary', onClick: () => openDetail(record) }, () => '详情'),
-        h(Popconfirm, { content: '确定删除该渠道？此操作不可撤销。', onOk: () => deleteChannel(record) }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除')),
-      ])
+        hasPermission('channel:delete')
+          ? h(Popconfirm, { content: '确定删除该渠道？', onOk: () => deleteChannel(record) }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除'))
+          : null,
+      ].filter(Boolean)
+      return h(Space, { size: 4 }, () => nodes)
     },
   },
 ]
