@@ -529,9 +529,20 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 		return
 	}
 
+	// 回填上游返回的 token 用量：gpt-image-1/2 等在响应体 usage 里带 input/output/total_tokens，
+	// DALL·E 等则没有。据此重算实际费用（token 计费模型多退少补），并写入计费/用量记录，
+	// 避免「同步转异步后 token 恒为 0、费用只等于预扣」的问题。
+	promptTokens, completionTokens, totalTokens := extractImageUsage(memW.Bytes())
+
 	now := time.Now()
-	// per_request 图片：实际费用 == 预扣（RecalculateByTokens 对 per_request 返回 0，无 token 重算）。
+	// 默认实际费用 == 预扣（按次计费图片，如 DALL·E，无 token 用量）。
 	actualCost := job.PreDeductAmount
+	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
+	if totalTokens > 0 {
+		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost > 0 {
+			actualCost = tokenCost
+		}
+	}
 
 	// 1. 赢得终态（billing_settled=false 先落）
 	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, &common.AsyncTask{
@@ -547,9 +558,9 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 		return
 	}
 
-	// 2. 结算钱包
+	// 2. 结算钱包（传真实 token 用量：驱动 bil_records.output_tokens 与计费快照的 token 明细）
 	settleResult, serr := syncImageBilling.SettleTaskSuccess(ctx, job.TenantID, job.UserID, job.ApiKeyID, sel.ChannelID,
-		job.Model, job.RequestID, actualCost, job.PreDeductAmount, 0, 0, job.Ratios, job.PublicTaskID)
+		job.Model, job.RequestID, actualCost, job.PreDeductAmount, totalTokens, completionTokens, job.Ratios, job.PublicTaskID)
 	if serr != nil {
 		// 保留 billing_settled=false，由未结算兜底网重放结算
 		g.Log().Warningf(ctx, "sync_image: task %s settle success failed (unsettled net will retry): %v", job.PublicTaskID, serr)
@@ -576,6 +587,9 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 
 	chBasic := &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	usageTask := buildUsageTask(job, sel, "SUCCESS", actualCost, now)
+	usageTask.PromptTokens = promptTokens
+	usageTask.CompletionTokens = completionTokens
+	usageTask.TotalTokens = totalTokens
 	recordTaskUsage(usageTask, chBasic, true, "", settleResult)
 	// 闭环审计：把提交阶段写入的 SUBMITTED 审计记录更新为终态（与 pollSingleTask 一致），
 	// 否则请求审计日志里的任务状态会一直停留在「已提交」。
@@ -676,6 +690,25 @@ func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resu
 		Data:    outData,
 	})
 	return resultURL, normalized, nil
+}
+
+// extractImageUsage 从上游图片响应体解析 token 用量。gpt-image-1/2 在 usage 里返回
+// input_tokens / output_tokens / total_tokens；DALL·E 等无 usage 字段，返回全 0。
+// total 缺失时用 input+output 兜底。映射：prompt=input、completion=output。
+func extractImageUsage(body []byte) (prompt, completion, total int) {
+	var resp struct {
+		Usage *dto.ImageUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
+		return 0, 0, 0
+	}
+	prompt = resp.Usage.InputTokens
+	completion = resp.Usage.OutputTokens
+	total = resp.Usage.TotalTokens
+	if total == 0 {
+		total = prompt + completion
+	}
+	return prompt, completion, total
 }
 
 // rehostImage 把单张图片字节上传对象存储并返回下载 URL。index 用于区分同一任务的多张图片，

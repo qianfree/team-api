@@ -98,6 +98,40 @@ func TestBuildImageResult_EmptyData(t *testing.T) {
 	}
 }
 
+// TestExtractImageUsage_GptImage gpt-image 系列返回 usage，应被解析出 token 用量。
+func TestExtractImageUsage_GptImage(t *testing.T) {
+	body := []byte(`{"created":1,"data":[{"b64_json":"x"}],"usage":{"total_tokens":4160,"input_tokens":160,"output_tokens":4000}}`)
+	prompt, completion, total := extractImageUsage(body)
+	if prompt != 160 || completion != 4000 || total != 4160 {
+		t.Fatalf("got prompt=%d completion=%d total=%d, want 160/4000/4160", prompt, completion, total)
+	}
+}
+
+// TestExtractImageUsage_TotalFallback total 缺失时用 input+output 兜底。
+func TestExtractImageUsage_TotalFallback(t *testing.T) {
+	body := []byte(`{"data":[{"b64_json":"x"}],"usage":{"input_tokens":100,"output_tokens":250}}`)
+	_, _, total := extractImageUsage(body)
+	if total != 350 {
+		t.Fatalf("total = %d, want 350 (input+output fallback)", total)
+	}
+}
+
+// TestExtractImageUsage_NoUsage DALL·E 等无 usage 字段，返回全 0（保持按次计费预扣）。
+func TestExtractImageUsage_NoUsage(t *testing.T) {
+	body := []byte(`{"created":1,"data":[{"url":"https://example.com/a.png"}]}`)
+	prompt, completion, total := extractImageUsage(body)
+	if prompt != 0 || completion != 0 || total != 0 {
+		t.Fatalf("got prompt=%d completion=%d total=%d, want all 0", prompt, completion, total)
+	}
+}
+
+// TestExtractImageUsage_Malformed 响应体非法 JSON 时安全返回全 0，不 panic。
+func TestExtractImageUsage_Malformed(t *testing.T) {
+	if p, c, tot := extractImageUsage([]byte("not json")); p != 0 || c != 0 || tot != 0 {
+		t.Fatalf("malformed body should yield 0/0/0, got %d/%d/%d", p, c, tot)
+	}
+}
+
 func TestBuildImageResult_B64WithoutStorageErrors(t *testing.T) {
 	// 对象存储不可用时，b64_json 无法 re-host → 报错。覆盖 accessor 直接返回错误，
 	// 避免在无数据库的单测环境触达 sys_options 查询。

@@ -856,12 +856,14 @@ const { exporting, exportFile } = useExport({
 							<div v-if="parseSnapshot(detailLog).token_costs" class="snapshot-block snapshot-block-full">
 								<div class="snapshot-block-title">Token 费用计算</div>
 								<div class="snapshot-block-body">
-									<div v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key" class="snapshot-row">
-										<span class="snapshot-label">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
-										<span class="snapshot-value">
-											{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ (tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ (tc.cost || 0).toFixed(6) }}</strong>
-										</span>
-									</div>
+									<template v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key">
+										<div v-if="(tc.tokens || 0) > 0" class="snapshot-row">
+											<span class="snapshot-label">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
+											<span class="snapshot-value">
+												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ (tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ (tc.cost || 0).toFixed(6) }}</strong>
+											</span>
+										</div>
+									</template>
 								</div>
 							</div>
 

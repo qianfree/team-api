@@ -29,13 +29,34 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if err != nil {
 		return 0.01, nil
 	}
+	return estimateTaskCost(pricing, ratios), nil
+}
+
+// imagePlaceholderPreDeduct 图片等按次任务**未配置按次单价**时的占位预扣（USD）。
+// 图片提交时拿不到 token 用量、无法精确估价，故先按此小额占位冻结，结算阶段再按上游
+// 返回的真实 token 用量多退少补。仅用于「无有效定价」的兜底，不覆盖已配置的真实按次单价。
+const imagePlaceholderPreDeduct = 0.1
+
+// estimateTaskCost 纯函数：根据定价与计费比率估算任务预扣费用，不依赖数据库/缓存，便于单测。
+//
+// 计费口径按任务类型分流：
+//   - per_request（按次计费，图片/音乐等）：直接取按次单价；
+//   - 时长类任务（视频生成，ratios 携带 duration/resolution 信号）：按
+//     10000 tokens/s × duration × resolution 预估 token 再乘输出单价；
+//   - 其余无时长信号的任务（如未显式配成 per_request 的图片模型）：退回按次单价，
+//     **不再**套用视频 token 估算——图片没有时长/分辨率，套 10000×5×2.25 会凭空估出
+//     11.25 万 token 的天价预扣（$30/1M 输出价即得 $3.375），且与结算的「0 token」自相矛盾。
+func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64 {
+	if pricing == nil {
+		return 0.01
+	}
 
 	var cost float64
-
-	// 按次计费：直接用单价
-	if pricing.BillingMode == "per_request" {
+	switch {
+	case pricing.BillingMode == "per_request":
+		// 按次计费：直接用单价
 		cost = pricing.PerRequestPrice
-	} else if pricing.OutputPrice > 0 {
+	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
 		duration := 5.0 // 默认 5 秒
 		if d, ok := ratios["duration"]; ok && d > 0 {
 			duration = d
@@ -49,8 +70,15 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 		// 火山方舟视频生成约 10000 tokens/s (480p 基准)，用于预扣估算
 		estimatedTokens := 10000.0 * duration * resolutionMul
 		cost = estimatedTokens / 1_000_000.0 * pricing.OutputPrice * pricing.TenantMultiplier
-	} else {
-		cost = pricing.PerRequestPrice
+	default:
+		// 无时长信号（图片等扁平计费任务）：优先按次单价；未配按次价时用占位预扣，
+		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
+		// （见 sync_image_worker.settleSyncImageSuccess）。
+		if pricing.PerRequestPrice > 0 {
+			cost = pricing.PerRequestPrice
+		} else {
+			cost = imagePlaceholderPreDeduct
+		}
 	}
 
 	// 应用附加比率（video_input 折扣等）
@@ -64,7 +92,21 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if cost < 0.01 {
 		cost = 0.01
 	}
-	return cost, nil
+	return cost
+}
+
+// hasDurationSignal 判断计费比率里是否携带时长类任务（视频）的 duration/resolution 信号。
+// 视频提交管线（VolcengineVideoAdaptor.EstimateBilling）必然写入这两个键；图片等同步/异步
+// 任务传 nil ratios，据此区分「该走视频 token 估算」还是「按次计费」。
+func hasDurationSignal(ratios map[string]float64) bool {
+	if ratios == nil {
+		return false
+	}
+	if _, ok := ratios["duration"]; ok {
+		return true
+	}
+	_, ok := ratios["resolution"]
+	return ok
 }
 
 // PreDeductTask 预扣任务费用
@@ -296,6 +338,15 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 
 	if pricing.BillingMode == "per_request" {
 		bd.BaseCost = pricing.PerRequestPrice
+		bd.TotalCost = actualCost
+		return bd
+	}
+
+	// token 模式但没有真实 token 用量（图片等扁平计费任务）：把费用整体记为 BaseCost，
+	// 不摊进 OutputCost。否则快照会生成「0 token 却有 output 费用」的自相矛盾行
+	// （如 0 tokens × $30/1M = $3.375）。真实费用仍由结算的 actual_cost 体现。
+	if totalTokens <= 0 {
+		bd.BaseCost = actualCost
 		bd.TotalCost = actualCost
 		return bd
 	}
