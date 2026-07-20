@@ -273,6 +273,18 @@ func writeSyncImageError(w http.ResponseWriter, statusCode int, message string) 
 	})
 }
 
+// writeSyncImageErrorWithCode 与 writeSyncImageError 相同，但在错误体中附带机器可读的 code，
+// 供前端做条件分支（如在线体验「异步被禁用 → 优雅降级到同步端点」）。
+func writeSyncImageErrorWithCode(w http.ResponseWriter, statusCode int, code, message string) {
+	writeSyncImageJSON(w, statusCode, map[string]any{
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"code":    code,
+			"message": message,
+		},
+	})
+}
+
 func writeSyncImageJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
