@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -95,8 +99,14 @@ func TestBuildImageResult_EmptyData(t *testing.T) {
 }
 
 func TestBuildImageResult_B64WithoutStorageErrors(t *testing.T) {
-	// syncImageFileSvc 默认 nil（未启动 worker），b64_json 无法 re-host → 报错。
-	syncImageFileSvc = nil
+	// 对象存储不可用时，b64_json 无法 re-host → 报错。覆盖 accessor 直接返回错误，
+	// 避免在无数据库的单测环境触达 sys_options 查询。
+	orig := acquireSyncImageFileSvc
+	acquireSyncImageFileSvc = func(context.Context) (*lcommon.FileService, error) {
+		return nil, lcommon.ErrStorageNotConfigured
+	}
+	defer func() { acquireSyncImageFileSvc = orig }()
+
 	job := &SyncImageJob{PublicTaskID: "task_x", TenantID: 1, UserID: 2}
 	raw, _ := json.Marshal(map[string]any{
 		"created": 1,
@@ -165,7 +175,12 @@ func TestBuildImageResult_AllOrNothingOnBadEntry(t *testing.T) {
 
 // TestBuildImageResult_MultiB64WithoutStorageErrors 多图 b64 无对象存储 → 整体失败。
 func TestBuildImageResult_MultiB64WithoutStorageErrors(t *testing.T) {
-	syncImageFileSvc = nil
+	orig := acquireSyncImageFileSvc
+	acquireSyncImageFileSvc = func(context.Context) (*lcommon.FileService, error) {
+		return nil, lcommon.ErrStorageNotConfigured
+	}
+	defer func() { acquireSyncImageFileSvc = orig }()
+
 	job := &SyncImageJob{PublicTaskID: "task_b64multi", TenantID: 1, UserID: 2}
 	raw, _ := json.Marshal(map[string]any{
 		"created": 1,
@@ -176,6 +191,26 @@ func TestBuildImageResult_MultiB64WithoutStorageErrors(t *testing.T) {
 	})
 	if _, _, err := buildImageResult(context.Background(), job, raw); err == nil {
 		t.Fatal("multi b64 without storage should error")
+	}
+}
+
+// TestImageFailReason_StorageNotConfiguredFriendly 存储未配置的错误（穿过多层 %w 包裹）
+// 应映射为中文友好提示；其它错误保留技术细节。
+func TestImageFailReason_StorageNotConfiguredFriendly(t *testing.T) {
+	// 模拟 buildImageResult → rehostImage 的多层包裹，验证 errors.Is 仍能识别哨兵。
+	wrapped := fmt.Errorf("rehost b64_json[0]: %w",
+		fmt.Errorf("object storage not configured, cannot re-host image: %w", lcommon.ErrStorageNotConfigured))
+	msg := imageFailReason(wrapped)
+	if !strings.Contains(msg, "对象存储") {
+		t.Fatalf("storage-not-configured should map to friendly message, got %q", msg)
+	}
+
+	other := imageFailReason(errors.New("upstream returned garbage"))
+	if strings.Contains(other, "对象存储") {
+		t.Fatalf("non-storage error must not map to storage message, got %q", other)
+	}
+	if !strings.Contains(other, "upstream returned garbage") {
+		t.Fatalf("non-storage error should retain technical detail, got %q", other)
 	}
 }
 

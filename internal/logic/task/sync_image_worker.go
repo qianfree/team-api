@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -69,9 +70,33 @@ var (
 	syncImageFailed    atomic.Int64 // 累计 worker 处理失败
 
 	syncImageFileSvc   *lcommon.FileService
+	syncImageFileSvcMu sync.Mutex // 保护 syncImageFileSvc 的惰性重建
 	syncImageBilling   common.TaskBillingProvider
 	syncImageRelayProv common.DataProvider
 )
+
+// acquireSyncImageFileSvc 返回共享的对象存储 FileService，惰性重建。
+//
+// 对象存储配置存于数据库（sys_options），由管理后台**运行时**配置。若进程启动时存储尚未
+// 配置，StartSyncImageWorkers 首次构造会失败、syncImageFileSvc 为 nil。此处按需重建：一旦
+// 存储在管理后台配置好，下一个 b64_json 图片任务即可成功取到 FileService，**无需重启进程**。
+// 这与 admin / data_governance 每次按数据库配置重建 FileService 的行为对齐——只有本 worker
+// 池此前把启动时的构造结果缓存成唯一真相源，才导致「配置后仍报未配置」。
+//
+// 声明为包级变量，便于单测在无数据库环境下覆盖（避免触达 sys_options 查询）。
+var acquireSyncImageFileSvc = func(ctx context.Context) (*lcommon.FileService, error) {
+	syncImageFileSvcMu.Lock()
+	defer syncImageFileSvcMu.Unlock()
+	if syncImageFileSvc != nil {
+		return syncImageFileSvc, nil
+	}
+	fs, err := lcommon.NewFileServiceFromConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	syncImageFileSvc = fs
+	return fs, nil
+}
 
 // SyncImageJob 同步图片任务的内存载荷（请求体只放内存，不落库，无需崩溃重放）。
 type SyncImageJob struct {
@@ -100,12 +125,14 @@ func StartSyncImageWorkers(ctx context.Context) {
 	syncImageBilling = billing.NewTaskBillingProvider()
 	syncImageRelayProv = relay.NewDataProvider()
 
-	// 对象存储在启动时构造一次共享（无状态，可安全共享）。未配置时置 nil，
-	// b64_json 任务在无存储时会走 FAILURE+退款（见 buildImageResult）。
+	// 对象存储配置存于数据库，可能在进程启动后才由管理后台配置。这里尝试预热一次；
+	// 未配置时保持 nil，后续任务运行时由 acquireSyncImageFileSvc 惰性重建（无需重启）。
 	if fs, err := lcommon.NewFileServiceFromConfig(ctx); err != nil {
-		g.Log().Warningf(ctx, "sync_image: object storage not configured (%v); b64_json image tasks will fail until storage is set", err)
+		g.Log().Warningf(ctx, "sync_image: object storage not yet configured (%v); will lazily rebuild when a b64_json image task runs", err)
 	} else {
+		syncImageFileSvcMu.Lock()
 		syncImageFileSvc = fs
+		syncImageFileSvcMu.Unlock()
 	}
 
 	for i := 0; i < syncImageWorkerCount; i++ {
@@ -498,7 +525,7 @@ func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.Channe
 func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection, memW *memResponseWriter) {
 	resultURL, normalized, err := buildImageResult(ctx, job, memW.Bytes())
 	if err != nil {
-		failSyncImageJob(ctx, job, sel, fmt.Sprintf("build result: %v", err))
+		failSyncImageJob(ctx, job, sel, imageFailReason(err))
 		return
 	}
 
@@ -653,11 +680,25 @@ func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resu
 
 // rehostImage 把单张图片字节上传对象存储并返回下载 URL。index 用于区分同一任务的多张图片，
 // 避免多图共用同一对象键相互覆盖。
-func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string, index int) (string, error) {
-	if syncImageFileSvc == nil {
-		return "", fmt.Errorf("object storage not configured, cannot re-host image")
+// imageFailReason 把「结果处理」阶段的内部错误映射为**面向用户**的失败原因（写入 task
+// FailReason → fetch 端点的 error 字段 → 在线体验/客户端可见）。
+//
+// 对象存储未配置是最常见、且用户可操作的错误：图片其实已在上游生成成功，只是网关无处保存
+// （b64_json 必须 re-host 到对象存储）。对这种情况给出中文友好提示，引导去系统设置配置
+// 对象存储；其余错误（上传/下载失败、上游响应异常等）保留技术细节，便于运维排查。
+func imageFailReason(err error) string {
+	if errors.Is(err, lcommon.ErrStorageNotConfigured) {
+		return "图片已生成，但平台尚未配置对象存储（OSS/S3/COS），无法保存图片。请联系管理员在系统设置中配置对象存储后重试。"
 	}
-	rec, err := syncImageFileSvc.Upload(ctx, &lcommon.FileUpload{
+	return "build result: " + err.Error()
+}
+
+func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string, index int) (string, error) {
+	fs, err := acquireSyncImageFileSvc(ctx)
+	if err != nil {
+		return "", fmt.Errorf("object storage not configured, cannot re-host image: %w", err)
+	}
+	rec, err := fs.Upload(ctx, &lcommon.FileUpload{
 		Reader:      bytes.NewReader(data),
 		Filename:    fmt.Sprintf("%s_%d%s", job.PublicTaskID, index, ext),
 		ContentType: contentType,
@@ -668,7 +709,7 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 	if err != nil {
 		return "", err
 	}
-	return syncImageFileSvc.GetDownloadURL(ctx, rec.ID)
+	return fs.GetDownloadURL(ctx, rec.ID)
 }
 
 // syncImageDownloadClient 用于从上游返回的图片 URL 下载**已生成好的**图片做 re-host。
@@ -679,8 +720,9 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 var syncImageDownloadClient = &http.Client{Timeout: 120 * time.Second}
 
 func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int) (string, error) {
-	if syncImageFileSvc == nil {
-		return "", fmt.Errorf("object storage not configured, cannot re-host image")
+	// 先确认存储可用，避免存储未配置时白白下载一遍成品图。
+	if _, err := acquireSyncImageFileSvc(ctx); err != nil {
+		return "", fmt.Errorf("object storage not configured, cannot re-host image: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

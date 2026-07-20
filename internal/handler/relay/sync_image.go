@@ -13,6 +13,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/task"
 	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_constant "github.com/qianfree/team-api/relay/constant"
@@ -56,6 +57,19 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 	// 提交很快即返回，并发槽在提交结束即释放（上游长连接由 worker 持有，不占此槽）。
 	defer taskBillingProvider.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
+
+	// Fast-fail：对象存储未配置、且本请求**必然**需要存储保存结果（b64 结果 / 强制 re-host）时，
+	// 提交阶段即返回友好提示——避免白打一次上游生成（生成成功却因无处保存而失败退款，且用户
+	// 要空等 10–60s 才知道是配置问题）。url 透传类请求（未开启 re-host 且非 b64）不需要存储，
+	// 不在此拦截，仍可正常完成。
+	if !lcommon.IsStorageConfigured(ctx) {
+		rehostOn := lcommon.Config().GetBool(ctx, "sync_image_rehost_url")
+		if rehostOn || requestForcesB64(body, modelName) {
+			writeSyncImageError(w, http.StatusServiceUnavailable,
+				"平台尚未配置对象存储（OSS/S3/COS），无法保存生成的图片，请联系管理员在系统设置中配置对象存储后重试")
+			return
+		}
+	}
 
 	// 2. 强制非流式：剥离 stream 字段，防 DoResponse 走 SSE 分支
 	cleanBody := stripStreamField(body)
@@ -174,6 +188,24 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		"model":      modelName,
 		"created_at": now.Unix(),
 	})
+}
+
+// requestForcesB64 判断该图片请求是否**必然**产生需要 re-host 的 base64 结果，即使
+// 未开启 re-host 开关也一定用到对象存储：
+//   - response_format=b64_json：显式要求 base64；
+//   - gpt-image 系列：上游只返回 b64_json（不支持 url）。
+//
+// 其余情况（默认 / response_format=url）在未开启 re-host 时可 url 透传，不强制需要存储，
+// 因此不在提交阶段 fast-fail，避免误伤纯 url 透传的模型。
+func requestForcesB64(body []byte, model string) bool {
+	var req struct {
+		ResponseFormat string `json:"response_format"`
+	}
+	_ = json.Unmarshal(body, &req)
+	if strings.EqualFold(strings.TrimSpace(req.ResponseFormat), "b64_json") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(model), "gpt-image")
 }
 
 // stripStreamField 移除请求体中的 stream 字段（强制非流式）。
