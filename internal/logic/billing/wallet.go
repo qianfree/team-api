@@ -16,11 +16,19 @@ import (
 )
 
 const (
-	// PreDeductRedisKeyPrefix 预扣 Redis key 前缀
-	PreDeductRedisKeyPrefix = "prededuct:"
+	// PreDeductRedisKeyPrefix 预扣 Redis key 前缀。
+	// v2（Phase 3）：预扣 amount 改为整数微单位(micro-USD)存储，与旧版 float 值不兼容，
+	// 故 bump 版本号；旧 key 自然按 TTL 过期，杜绝新代码把旧 float 值误读成 micro。
+	PreDeductRedisKeyPrefix = "prededuct:v2:"
 	// PreDeductMaxAge 预扣记录最大存活时间（秒），防止异常未结算的预扣占用余额
 	PreDeductMaxAge = 1800 // 30 分钟
 )
+
+// walletHashKey 钱包 Redis hash key。
+// v2（Phase 3）：balance / frozen_balance 以整数 micro-USD 存储；旧版 float key 随 TTL 过期。
+func walletHashKey(tenantID int64) string {
+	return fmt.Sprintf("wallet:v2:%d", tenantID)
+}
 
 // walletCache 钱包缓存（TTL 300s）
 var walletCache = lcommon.NewCache("wallet", 300*time.Second)
@@ -130,10 +138,10 @@ func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID st
 		return preDeductDB(ctx, tenantID, amount, requestID)
 	}
 
-	// Redis Lua 脚本：原子检查+冻结
-	// KEYS[1] = wallet:{tenant_id}  (hash: balance, frozen_balance)
-	// KEYS[2] = prededuct:{request_id}
-	// ARGV[1] = amount
+	// Redis Lua 脚本：原子检查+冻结（v2：金额全部为整数 micro-USD，整数运算无浮点漂移）
+	// KEYS[1] = wallet:v2:{tenant_id}  (hash: balance, frozen_balance —— 均为整数 micro)
+	// KEYS[2] = prededuct:v2:{request_id}
+	// ARGV[1] = amount_micro（整数微单位）
 	// ARGV[2] = request_id
 	// ARGV[3] = ttl (PreDeductMaxAge)
 	// ARGV[4] = tenant_id
@@ -152,7 +160,7 @@ if exists == 1 then
     return 1
 end
 
--- 获取钱包信息
+-- 获取钱包信息（整数 micro）
 local balance = tonumber(redis.call("HGET", wallet_key, "balance") or "0")
 local frozen = tonumber(redis.call("HGET", wallet_key, "frozen_balance") or "0")
 
@@ -162,8 +170,8 @@ if available < amount then
     return 0
 end
 
--- 冻结金额
-redis.call("HINCRBYFLOAT", wallet_key, "frozen_balance", amount)
+-- 冻结金额（整数自增，无浮点漂移）
+redis.call("HINCRBY", wallet_key, "frozen_balance", amount)
 redis.call("HSET", prededuct_key, "amount", amount)
 redis.call("HSET", prededuct_key, "tenant_id", ARGV[4])
 redis.call("HSET", prededuct_key, "model_name", ARGV[5])
@@ -175,12 +183,13 @@ redis.call("EXPIRE", prededuct_key, ttl)
 return 1
 `
 
-	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
+	walletRedisKey := walletHashKey(tenantID)
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
 
+	amountMicro := toMicro(amount)
 	result, err := g.Redis().Do(ctx, "EVAL", luaScript, 2,
 		walletRedisKey, predeductRedisKey,
-		amount, requestID, PreDeductMaxAge, tenantID, modelName, time.Now().Unix())
+		amountMicro, requestID, PreDeductMaxAge, tenantID, modelName, time.Now().Unix())
 	if err != nil {
 		// Redis 不可用，降级到 DB 直接扣减
 		return preDeductDB(ctx, tenantID, amount, requestID)
@@ -242,9 +251,9 @@ func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
 }
 
 // unfreezeClampLua 解冻 frozen_balance 并保证不低于 0（对齐 DB 侧 GREATEST(frozen_balance - ?, 0) 下限）。
-// 钱包 hash 不存在（TTL 过期）时直接返回，不凭空创建只含 frozen_balance 的残缺 key——
-// 冻结状态以 DB 为准，下次 PreDeduct 的 doSyncWalletToRedis 会重建。
-// KEYS[1] = wallet:{tenant_id}；ARGV[1] = 解冻金额
+// v2：金额为整数 micro，整数运算无浮点漂移。钱包 hash 不存在（TTL 过期）时直接返回，
+// 不凭空创建只含 frozen_balance 的残缺 key——冻结状态以 DB 为准，下次 PreDeduct 的 doSyncWalletToRedis 会重建。
+// KEYS[1] = wallet:v2:{tenant_id}；ARGV[1] = 解冻金额（整数 micro）
 const unfreezeClampLua = `
 local wallet_key = KEYS[1]
 local amount = tonumber(ARGV[1])
@@ -267,16 +276,16 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, am
 	}
 
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
-	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
+	walletRedisKey := walletHashKey(tenantID)
 	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
 
 	// 先尝试 Redis 解冻
 	_, err := g.Redis().Do(ctx, "DEL", predeductRedisKey)
 	if err == nil {
-		// 解冻（带 0 下限保护）。HINCRBYFLOAT 无下限：若因重复/多余调用扣减超过已冻结额，
+		// 解冻（带 0 下限保护，整数运算）。HINCRBY 亦无下限：若因重复/多余调用扣减超过已冻结额，
 		// 会把 frozen_balance 打成负数。改用 Lua 读-clamp-写，与 DB 侧
 		// GREATEST(frozen_balance - ?, 0) 保持一致；钱包 hash 不存在时不凭空创建（交由 DB 兜底）。
-		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, amount)
+		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, toMicro(amount))
 		g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
 		go unfreezeSyncDB(tenantID, amount)
 		return
@@ -309,7 +318,8 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
 	result, err := g.Redis().Do(ctx, "HGET", predeductRedisKey, "amount")
 	if err == nil && !result.IsNil() {
-		return result.Float64(), true
+		// v2：amount 以整数 micro 存储，换算回 USD
+		return fromMicro(result.Int64()), true
 	}
 	return 0, false
 }
@@ -327,7 +337,7 @@ func syncWalletToRedis(ctx context.Context, tenantID int64) error {
 // 每次预扣前调用，确保 Redis 中的 balance 与 DB 一致
 // frozen_balance 由 Redis Lua 脚本管理，仅在 key 首次创建时从 DB 初始化
 func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
-	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
+	walletRedisKey := walletHashKey(tenantID)
 
 	// 从 DB 读取钱包数据（跳过内存缓存，直接查库确保最新）
 	type walletRow struct {
@@ -350,10 +360,10 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	exists, _ := g.Redis().Do(ctx, "EXISTS", walletRedisKey)
 
 	if exists.Int64() == 0 {
-		// key 不存在：完整初始化（balance + frozen_balance）
+		// key 不存在：完整初始化（balance + frozen_balance，均为整数 micro）
 		_, err = g.Redis().Do(ctx, "HMSET", walletRedisKey,
-			"balance", w.Balance,
-			"frozen_balance", w.FrozenBalance,
+			"balance", toMicro(w.Balance),
+			"frozen_balance", toMicro(w.FrozenBalance),
 		)
 		if err != nil {
 			return gerror.Wrapf(err, "sync wallet to redis")
@@ -364,7 +374,7 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	} else {
 		// key 已存在：只更新 balance（frozen_balance 由 Lua 脚本管理，不覆盖）
 		_, err = g.Redis().Do(ctx, "HSET", walletRedisKey,
-			"balance", w.Balance,
+			"balance", toMicro(w.Balance),
 		)
 	}
 	if err != nil {
@@ -379,8 +389,7 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 
 // InvalidateWalletRedis 清除 Redis 中的钱包缓存（余额变更后调用）
 func InvalidateWalletRedis(ctx context.Context, tenantID int64) {
-	walletRedisKey := fmt.Sprintf("wallet:%d", tenantID)
-	g.Redis().Do(ctx, "DEL", walletRedisKey)
+	g.Redis().Do(ctx, "DEL", walletHashKey(tenantID))
 }
 
 // CleanupPreDeduct 清理预扣记录（结算成功后调用）
@@ -438,7 +447,8 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 
 		var amount float64
 		if v, ok := m["amount"]; ok {
-			amount = gconv.Float64(v)
+			// v2：amount 以整数 micro 存储，换算回 USD
+			amount = fromMicro(gconv.Int64(v))
 		}
 
 		var modelName string
@@ -516,7 +526,7 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 
 		predeductKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, t.RequestID)
 		g.Redis().Do(ctx, "HMSET", predeductKey,
-			"amount", t.Amount,
+			"amount", toMicro(t.Amount),
 			"tenant_id", tenantID,
 			"model_name", t.ModelName,
 			"created_at", t.CreatedAt,
