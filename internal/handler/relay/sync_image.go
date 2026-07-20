@@ -82,12 +82,15 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	publicTaskID := generateSyncImagePublicID()
 	now := time.Now()
 
-	// 从渠道类型推导实际的供应商平台（ali / gemini / volcengine / openai 等）
+	// 从渠道类型推导实际的供应商平台（ali / gemini / volcengine / openai 等），用于任务日志展示。
 	providerType := relay_constant.ProviderType(channelMeta.ChannelType)
 	actualPlatform, ok := relay_constant.ProviderTypeToTaskPlatform(providerType)
 	if !ok {
-		// 如果无法映射（如 openai、claude 等），直接使用供应商类型作为平台名
-		actualPlatform = relay_constant.TaskPlatform(providerType)
+		// 未命中映射（如 openai、claude 等）：用供应商类型的可读名作平台名。
+		// 注意不能写 TaskPlatform(providerType)——那是 int→string 的 rune 转换，会得到
+		// 不可见控制字符（如 providerType=1 → "\x01"）而非 "openai"。取 String() 并转小写，
+		// 与已映射平台（"ali"/"gemini"）的小写风格保持一致。
+		actualPlatform = relay_constant.TaskPlatform(strings.ToLower(providerType.String()))
 	}
 
 	privateData, _ := json.Marshal(map[string]any{
@@ -120,11 +123,15 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		return
 	}
 
-	// CreateTask 不回填自增 ID，回查取任务行主键供 worker CAS 使用。
+	// CreateTask 不回填自增 ID（Postgres 无 LastInsertId），回查取任务行主键供 worker CAS 使用。
 	created, err := taskDataProvider.GetTaskByPublicID(ctx, publicTaskID)
 	if err != nil || created == nil {
-		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
-		g.Log().Errorf(ctx, "sync_image: load created task %s failed: %v", publicTaskID, err)
+		// 此时任务行已 CreateTask 成功落库（QUEUED、billing_settled=false、active 计数已 +1），
+		// 但缺主键无法在这里安全地 CAS 收尾。**不能**在此直接退款：UnfreezePreDeduct 非幂等，
+		// 与超时兜底网 handleTimedOutTasks 会形成二次退款（侵蚀他人冻结额、可用余额虚高）。
+		// 故此处只返回错误，把「CAS→FAILURE + 退款 + DecrActiveTask」交给超时兜底网做恰好一次结算
+		// （handleTimedOutTasks 无平台过滤，会捕获这类 QUEUED 孤儿行）。
+		g.Log().Errorf(ctx, "sync_image: load created task %s failed, deferring settlement to timeout sweeper: %v", publicTaskID, err)
 		writeSyncImageError(w, http.StatusInternalServerError, "create task record failed")
 		return
 	}
