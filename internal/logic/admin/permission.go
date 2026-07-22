@@ -7,6 +7,7 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -215,9 +216,10 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 		return nil, common.NewBadRequestError("超级管理员无需配置权限")
 	}
 
-	err = dao.SysAdminUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing permissions
-		_, err := tx.Model("sys_admin_role_perms").Ctx(ctx).
+		_, err := dao.SysAdminRolePerms.Ctx(ctx).
 			Where("admin_user_id", req.Id).
 			Delete()
 		if err != nil {
@@ -241,7 +243,7 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 					PermissionPoint: p,
 				}
 			}
-			_, err = tx.Model("sys_admin_role_perms").Ctx(ctx).Data(data).Insert()
+			_, err = dao.SysAdminRolePerms.Ctx(ctx).Data(data).Insert()
 			if err != nil {
 				return err
 			}
@@ -274,9 +276,10 @@ func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScop
 		return nil, common.NewBadRequestError("超级管理员无需配置数据范围")
 	}
 
-	err = dao.SysAdminUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing data scopes
-		_, err := tx.Model("sys_admin_data_scopes").Ctx(ctx).
+		_, err := dao.SysAdminDataScopes.Ctx(ctx).
 			Where("admin_user_id", req.Id).
 			Delete()
 		if err != nil {
@@ -293,7 +296,7 @@ func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScop
 					ScopeValue:  sc.ScopeValue,
 				}
 			}
-			_, err = tx.Model("sys_admin_data_scopes").Ctx(ctx).Data(data).Insert()
+			_, err = dao.SysAdminDataScopes.Ctx(ctx).Data(data).Insert()
 			if err != nil {
 				return err
 			}

@@ -101,7 +101,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 5a. 更新钱包
 		now := time.Now()
-		_, err := tx.Ctx(ctx).Exec(
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
 			preDeductAmount, actualCost, now, wallet.ID)
 		if err != nil {
@@ -114,7 +114,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
 		var br *balRow
-		err = tx.Model("bil_wallets").Ctx(ctx).
+		err = dao.BilWallets.Ctx(ctx).
 			Where("id", wallet.ID).
 			Fields("balance, frozen_balance").
 			Scan(&br)
@@ -136,7 +136,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			billingOutputMult = breakdown.OutputMultiplier
 		}
 
-		billingID, err = createBillingRecord(ctx, tx, tenantID, userID, apiKeyID, channelID,
+		billingID, err = createBillingRecord(ctx, tenantID, userID, apiKeyID, channelID,
 			modelName, requestID, relayMode, inputTokens, outputTokens,
 			inputSnapPrice, outputSnapPrice, actualCost,
 			billingMode, discountRatio, billingInputMult, billingOutputMult)
@@ -149,7 +149,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		}
 
 		// 5d. 记录消费流水（事务内）
-		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
 			TenantId:     tenantID,
 			WalletId:     wallet.ID,
 			Type:         "consume",
@@ -170,7 +170,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		}
 
 		// 5e. 标记预扣追踪记录为已结算（事务内）
-		_, err = tx.Ctx(ctx).Exec(
+		_, err = g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
 			requestID)
 		if err != nil {
@@ -260,7 +260,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 5a. 更新钱包
 		now := time.Now()
-		_, err := tx.Ctx(ctx).Exec(
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
 			preDeductAmount, actualCost, now, wallet.ID)
 		if err != nil {
@@ -273,7 +273,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
 		var br *balRow
-		err = tx.Model("bil_wallets").Ctx(ctx).
+		err = dao.BilWallets.Ctx(ctx).
 			Where("id", wallet.ID).
 			Fields("balance, frozen_balance").
 			Scan(&br)
@@ -295,7 +295,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			billingOutputMult = breakdown.OutputMultiplier
 		}
 
-		billingID, err = createBillingRecordWithSnapshot(ctx, tx, tenantID, userID, apiKeyID, channelID,
+		billingID, err = createBillingRecordWithSnapshot(ctx, tenantID, userID, apiKeyID, channelID,
 			modelName, requestID, relayMode, breakdown,
 			inputSnapPrice, outputSnapPrice, actualCost,
 			billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
@@ -312,7 +312,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		if relayInfo != nil {
 			txProjectID = relayInfo.ProjectID
 		}
-		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
 			TenantId:     tenantID,
 			WalletId:     wallet.ID,
 			Type:         "consume",
@@ -333,7 +333,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		}
 
 		// 5e. 标记预扣追踪记录为已结算（事务内）
-		_, err = tx.Ctx(ctx).Exec(
+		_, err = g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
 			requestID)
 		if err != nil {
@@ -421,8 +421,8 @@ func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, ch
 		preDeductAmount, projectID)
 }
 
-// createBillingRecord 创建计费记录（含快照字段）
-func createBillingRecord(ctx context.Context, tx gdb.TX, tenantID, userID, apiKeyID, channelID int64,
+// createBillingRecord 创建计费记录（含快照字段）。依赖调用方传入携带事务的 ctx，内部用 dao.Xxx.Ctx(ctx) 传播事务
+func createBillingRecord(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	inputTokens, outputTokens int,
 	inputPrice, outputPrice, totalCost float64,
@@ -460,7 +460,7 @@ func createBillingRecord(ctx context.Context, tx gdb.TX, tenantID, userID, apiKe
 	data.BillingInputMultiplier = billingInputMult
 	data.BillingOutputMultiplier = billingOutputMult
 
-	result, err := tx.Model("bil_records").Ctx(ctx).Data(data).Insert()
+	result, err := dao.BilRecords.Ctx(ctx).Data(data).Insert()
 	if err != nil {
 		return 0, err
 	}
@@ -506,8 +506,8 @@ func UpdateUsageLogCostWithSnapshot(ctx context.Context, requestID string, break
 		Data(data).Update()
 }
 
-// createBillingRecordWithSnapshot 创建计费记录（含 cache token 和完整快照）
-func createBillingRecordWithSnapshot(ctx context.Context, tx gdb.TX, tenantID, userID, apiKeyID, channelID int64,
+// createBillingRecordWithSnapshot 创建计费记录（含 cache token 和完整快照）。依赖调用方传入携带事务的 ctx
+func createBillingRecordWithSnapshot(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	breakdown *CostBreakdown,
 	inputPrice, outputPrice, totalCost float64,
@@ -559,7 +559,7 @@ func createBillingRecordWithSnapshot(ctx context.Context, tx gdb.TX, tenantID, u
 		data.BaseOutputPrice = pricing.BaseOutputPrice
 	}
 
-	result, err := tx.Model("bil_records").Ctx(ctx).Data(data).Insert()
+	result, err := dao.BilRecords.Ctx(ctx).Data(data).Insert()
 	if err != nil {
 		return 0, err
 	}

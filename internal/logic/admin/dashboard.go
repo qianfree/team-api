@@ -404,7 +404,7 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 			updateQuery += " AND balance >= ?"
 			args = append(args, -amount)
 		}
-		result, err := tx.Ctx(ctx).Exec(updateQuery, args...)
+		result, err := g.DB().Ctx(ctx).Exec(ctx, updateQuery, args...)
 		if err != nil {
 			return err
 		}
@@ -419,7 +419,7 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 			Balance       float64 `json:"balance"`
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
-		if err = tx.Model("bil_wallets").Ctx(ctx).
+		if err = dao.BilWallets.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Fields("id, balance, frozen_balance").
 			Scan(&wallet); err != nil {
@@ -430,7 +430,7 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 		}
 
 		// 记录流水
-		if _, err = tx.Model("bil_transactions").Ctx(ctx).Insert(do.BilTransactions{
+		if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 			TenantId:     tenantID,
 			WalletId:     wallet.ID,
 			Type:         "adjust",

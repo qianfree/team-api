@@ -254,9 +254,9 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 
 	var userID int64
 
-	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Check member limit
-		memberCount, err := tx.Model("tnt_users").Ctx(ctx).
+		memberCount, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("status", "active").
 			Count()
@@ -275,7 +275,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		}
 
 		// Check username uniqueness within tenant
-		count, err := tx.Model("tnt_users").Ctx(ctx).
+		count, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("username", username).
 			Count()
@@ -288,7 +288,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 
 		// Check email uniqueness within tenant (email is optional — skip when empty)
 		if email != "" {
-			count, err = tx.Model("tnt_users").Ctx(ctx).
+			count, err = dao.TntUsers.Ctx(ctx).
 				Where("tenant_id", tenantID).
 				Where("email", email).
 				Count()
@@ -306,7 +306,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 			displayName = username
 		}
 
-		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
+		userResult, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:     tenantID,
 			Username:     username,
 			Email:        nullableEmail(email),
@@ -329,7 +329,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 		}
 
 		// Increment invitation use count
-		_, err = tx.Model("tnt_invitations").Ctx(ctx).
+		_, err = dao.TntInvitations.Ctx(ctx).
 			Where("id", invitation.ID).
 			Data(do.TntInvitations{
 				UseCount: gdb.Raw("use_count + 1"),
@@ -427,9 +427,9 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 
 	var userID int64
 
-	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Check member limit
-		memberCount, err := tx.Model("tnt_users").Ctx(ctx).
+		memberCount, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("status", "active").
 			Count()
@@ -448,7 +448,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 		}
 
 		// Check username uniqueness within tenant
-		count, err := tx.Model("tnt_users").Ctx(ctx).
+		count, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("username", username).
 			Count()
@@ -461,7 +461,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 
 		// Check email uniqueness within tenant (skip if empty)
 		if email != "" {
-			count, err = tx.Model("tnt_users").Ctx(ctx).
+			count, err = dao.TntUsers.Ctx(ctx).
 				Where("tenant_id", tenantID).
 				Where("email", email).
 				Count()
@@ -474,7 +474,7 @@ func (s *sTenant) CreateMember(ctx context.Context, req *v1.TenantMemberCreateRe
 		}
 
 		// Create user
-		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
+		userResult, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:     tenantID,
 			Username:     username,
 			Email:        nullableEmail(email),
@@ -561,7 +561,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 	// 避免中途失败导致「Key 已撤销但用户未匿名化」等半完成的不一致状态。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Revoke all API keys for this user
-		if _, err := tx.Model("api_keys").Ctx(ctx).
+		if _, err := dao.ApiKeys.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", memberID).
 			Data(do.ApiKeys{
@@ -571,7 +571,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		}
 
 		// Remove member model scopes
-		if _, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
+		if _, err := dao.TntMemberModelScopes.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", memberID).
 			Delete(); err != nil {
@@ -579,7 +579,7 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		}
 
 		// Anonymize personal data
-		if _, err := tx.Model("tnt_users").Ctx(ctx).
+		if _, err := dao.TntUsers.Ctx(ctx).
 			Where("id", memberID).
 			Where("tenant_id", tenantID).
 			Data(do.TntUsers{
@@ -626,7 +626,7 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 	// 撤销 API Key 与更新成员状态放入同一事务，避免「Key 已禁用但成员状态未更新」的不一致。
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Revoke all active API keys
-		if _, err := tx.Model("api_keys").Ctx(ctx).
+		if _, err := dao.ApiKeys.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", userID).
 			Where("status", "active").
@@ -636,7 +636,7 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 			return err
 		}
 
-		_, err := tx.Model("tnt_users").Ctx(ctx).
+		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", userID).
 			Where("tenant_id", tenantID).
 			Data(do.TntUsers{
@@ -669,7 +669,7 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 	// 恢复 API Key 与更新成员状态放入同一事务，避免「Key 已恢复但成员状态未更新」的不一致。
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Restore disabled API keys
-		if _, err := tx.Model("api_keys").Ctx(ctx).
+		if _, err := dao.ApiKeys.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", userID).
 			Where("status", "disabled").
@@ -679,7 +679,7 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 			return err
 		}
 
-		_, err := tx.Model("tnt_users").Ctx(ctx).
+		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", userID).
 			Where("tenant_id", tenantID).
 			Data(do.TntUsers{

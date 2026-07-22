@@ -349,16 +349,16 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 	// 四表删除（定价 / 租户分配 / 分组关联 / 模型本体）放入同一事务，
 	// 避免中途失败留下「模型已删但定价/分配记录残留」的孤儿数据。
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := tx.Model("mdl_pricing").Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
 			return gerror.Wrapf(err, "delete pricing tiers for model %d", req.ID)
 		}
-		if _, err := tx.Model("mdl_tenant_models").Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		if _, err := dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
 			return gerror.Wrapf(err, "delete tenant models for model %d", req.ID)
 		}
-		if _, err := tx.Model("mdl_group_models").Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+		if _, err := dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
 			return gerror.Wrapf(err, "delete group models for model %d", req.ID)
 		}
-		if _, err := tx.Model("mdl_models").Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
+		if _, err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
 			return err
 		}
 		return nil
@@ -428,12 +428,12 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	// 全量替换：先删旧定价再插新定价，放入同一事务。否则若删除后插入中途失败，
 	// 该模型会残留「无定价」状态，导致计费失败或回退到默认价。
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := tx.Model("mdl_pricing").Ctx(ctx).Where("model_id", req.ModelID).Delete(); err != nil {
+		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Delete(); err != nil {
 			return err
 		}
 
 		for _, item := range req.Items {
-			if _, err := tx.Model("mdl_pricing").Ctx(ctx).Insert(do.MdlPricing{
+			if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 				ModelId:            req.ModelID,
 				BillingMode:        item.BillingMode,
 				MinTokens:          item.MinTokens,

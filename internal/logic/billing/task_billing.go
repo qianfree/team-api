@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
+	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/relay/common"
 )
@@ -169,7 +170,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 3a. 更新钱包
 		now := time.Now()
-		_, err := tx.Ctx(ctx).Exec(
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
 			preDeductAmount, actualCost, now, wallet.ID)
 		if err != nil {
@@ -182,7 +183,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			FrozenBalance float64 `json:"frozen_balance"`
 		}
 		var br *balRow
-		err = tx.Model("bil_wallets").Ctx(ctx).
+		err = dao.BilWallets.Ctx(ctx).
 			Where("id", wallet.ID).
 			Fields("balance, frozen_balance").
 			Scan(&br)
@@ -193,7 +194,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 		// 3c. 创建计费记录
 		var billingResult sql.Result
-		billingResult, err = tx.Model("bil_records").Ctx(ctx).Data(do.BilRecords{
+		billingResult, err = dao.BilRecords.Ctx(ctx).Data(do.BilRecords{
 			TenantId:     tenantID,
 			UserId:       userID,
 			ApiKeyId:     apiKeyID,
@@ -237,7 +238,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		}
 
 		// 3d. 记录消费流水（事务内）
-		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
+		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
 			TenantId:     tenantID,
 			WalletId:     wallet.ID,
 			Type:         "consume",
@@ -262,7 +263,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		// 同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
 		// 补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；
 		// 否则残留的 _adjust frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
-		_, err = tx.Ctx(ctx).Exec(
+		_, err = g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN ($1, $2) AND status = 'frozen'",
 			requestID, requestID+"_adjust")
 		if err != nil {

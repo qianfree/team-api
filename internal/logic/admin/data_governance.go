@@ -349,14 +349,14 @@ func cleanupDeactivatedTenants(ctx context.Context) error {
 		// remains consistent (no partial anonymization/deletion).
 		err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 			tenantID := t.ID
-			if _, err := tx.Model("tnt_users").Ctx(ctx).Where("tenant_id", tenantID).
+			if _, err := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID).
 				Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", tenantID)}).Update(); err != nil {
 				return gerror.Wrapf(err, "anonymize users for tenant %d", tenantID)
 			}
-			if _, err := tx.Model("api_keys").Ctx(ctx).Where("tenant_id", tenantID).Delete(); err != nil {
+			if _, err := dao.ApiKeys.Ctx(ctx).Where("tenant_id", tenantID).Delete(); err != nil {
 				return gerror.Wrapf(err, "delete api keys for tenant %d", tenantID)
 			}
-			if _, err := tx.Model("tnt_tenants").Ctx(ctx).Where("id", tenantID).
+			if _, err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).
 				Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update(); err != nil {
 				return gerror.Wrapf(err, "update data removal for tenant %d", tenantID)
 			}

@@ -79,9 +79,10 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 		return nil, lcommon.NewNotFoundError("成员")
 	}
 
+	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Delete existing scopes
-		_, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
+		_, err := dao.TntMemberModelScopes.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", req.Id).
 			Delete()
@@ -99,13 +100,13 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 					ModelId:  mID,
 				}
 			}
-			_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(data).Insert()
+			_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(data).Insert()
 			if err != nil {
 				return err
 			}
 		} else {
 			// 空列表表示禁止所有模型，插入哨兵记录（model_id = -1）
-			_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+			_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
 				TenantId: tenantID,
 				UserId:   req.Id,
 				ModelId:  -1,

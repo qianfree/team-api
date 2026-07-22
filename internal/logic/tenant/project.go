@@ -127,8 +127,10 @@ func projectTotalCost(ctx context.Context, tenantID, projectID int64) (float64, 
 }
 
 func exhaustProjectBudget(ctx context.Context, tenantID, projectID int64) error {
+	// 事务采用 ctx 传播式写法：闭包内所有 dao 操作统一使用 dao.Xxx.Ctx(ctx)，
+	// 由 ctx 自动挂载当前事务（不直接使用 tx 句柄）。务必保证 ctx 逐层传递。
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model("tnt_projects").Ctx(ctx).
+		_, err := dao.TntProjects.Ctx(ctx).
 			Where("id", projectID).
 			Where("tenant_id", tenantID).
 			Where("status", "active").
@@ -138,7 +140,7 @@ func exhaustProjectBudget(ctx context.Context, tenantID, projectID int64) error 
 			return err
 		}
 
-		_, err = tx.Model("api_keys").Ctx(ctx).
+		_, err = dao.ApiKeys.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("project_id", projectID).
 			Where("status", "active").
