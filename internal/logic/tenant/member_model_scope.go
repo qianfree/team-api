@@ -59,6 +59,11 @@ var memberModelScopeCache = lcommon.NewCache("member_model", 60*time.Second)
 
 // MemberModelScopesSet sets the available models for a member (full replace).
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
+	// 仅 owner/admin 可管理成员的模型访问范围，防止普通成员给自己或他人越权开通模型
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	if err := requireTeamEnabled(ctx); err != nil {
 		return nil, err
 	}
