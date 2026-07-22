@@ -2,12 +2,10 @@ package billing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -165,112 +163,76 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 3. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	var balanceAfter, frozenAfter float64
-	var taskBillingID int64
-	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 3a. 更新钱包
-		now := time.Now()
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			preDeductAmount, actualCost, now, wallet.ID)
-		if err != nil {
-			return fmt.Errorf("settle task: update wallet: %w", err)
-		}
-
-		// 3b. 事务内读取准确余额
-		type balRow struct {
-			Balance       float64 `json:"balance"`
-			FrozenBalance float64 `json:"frozen_balance"`
-		}
-		var br *balRow
-		err = dao.BilWallets.Ctx(ctx).
-			Where("id", wallet.ID).
-			Fields("balance, frozen_balance").
-			Scan(&br)
-		if err == nil && br != nil {
-			balanceAfter = br.Balance
-			frozenAfter = br.FrozenBalance
-		}
-
-		// 3c. 创建计费记录
-		var billingResult sql.Result
-		billingResult, err = dao.BilRecords.Ctx(ctx).Data(do.BilRecords{
-			TenantId:     tenantID,
-			UserId:       userID,
-			ApiKeyId:     apiKeyID,
-			ChannelId:    channelID,
-			ModelName:    modelName,
-			RequestId:    requestID,
-			RelayMode:    "task",
-			InputTokens:  0,
-			OutputTokens: totalTokens,
-			InputPrice:   0,
-			OutputPrice:  effectiveOutputPrice,
-			TotalCost:    actualCost,
-			Currency:     "USD",
-			Status:       "settled",
-			SettledAt:    gtime.NewFromTime(time.Now()),
-			BillingMode:  billingMode,
-			DiscountRatio: func() float64 {
-				if discountRatio > 0 {
-					return discountRatio
-				}
-				return 0
-			}(),
-			EffectiveInputPrice:     0,
-			EffectiveOutputPrice:    effectiveOutputPrice,
-			BillingInputMultiplier:  0,
-			BillingOutputMultiplier: 0,
-			CacheCreationTokens:     0,
-			CacheReadTokens:         0,
-			CacheCreationCost:       0,
-			CacheReadCost:           0,
-		}).Insert()
-		if err != nil {
-			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚（3a 钱包扣款一并撤销），避免重复扣款/重复账单
-				return errAlreadySettled
+	//    预扣追踪同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
+	//    补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；否则残留的 _adjust
+	//    frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
+	_, err = executeSettlementTx(ctx, settlementTxParams{
+		walletID:        wallet.ID,
+		preDeductAmount: preDeductAmount,
+		actualCost:      actualCost,
+		logPrefix:       "settle task",
+		createBillingRecord: func(ctx context.Context) (int64, error) {
+			billingResult, err := dao.BilRecords.Ctx(ctx).Data(do.BilRecords{
+				TenantId:     tenantID,
+				UserId:       userID,
+				ApiKeyId:     apiKeyID,
+				ChannelId:    channelID,
+				ModelName:    modelName,
+				RequestId:    requestID,
+				RelayMode:    "task",
+				InputTokens:  0,
+				OutputTokens: totalTokens,
+				InputPrice:   0,
+				OutputPrice:  effectiveOutputPrice,
+				TotalCost:    actualCost,
+				Currency:     "USD",
+				Status:       "settled",
+				SettledAt:    gtime.NewFromTime(time.Now()),
+				BillingMode:  billingMode,
+				DiscountRatio: func() float64 {
+					if discountRatio > 0 {
+						return discountRatio
+					}
+					return 0
+				}(),
+				EffectiveInputPrice:     0,
+				EffectiveOutputPrice:    effectiveOutputPrice,
+				BillingInputMultiplier:  0,
+				BillingOutputMultiplier: 0,
+				CacheCreationTokens:     0,
+				CacheReadTokens:         0,
+				CacheCreationCost:       0,
+				CacheReadCost:           0,
+			}).Insert()
+			if err != nil {
+				return 0, err
 			}
-			return fmt.Errorf("settle task: create billing record: %w", err)
-		}
-		if billingResult != nil {
-			taskBillingID, _ = billingResult.LastInsertId()
-		}
-
-		// 3d. 记录消费流水（事务内）
-		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "consume",
-			Amount:       -actualCost,
-			BalanceAfter: balanceAfter,
-			FrozenAfter:  frozenAfter,
-			RelatedId:    taskBillingID,
-			RelatedType:  "billing_record",
-			Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
-			UserId:       userID,
-			RequestId:    requestID,
-			ModelName:    modelName,
-			ProjectId:    0,
-			ApiKeyId:     apiKeyID,
-			TaskId:       taskID,
-		}).Insert()
-		if err != nil {
-			return fmt.Errorf("settle task: record transaction: %w", err)
-		}
-
-		// 3e. 标记预扣追踪记录为已结算（事务内）
-		// 同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
-		// 补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；
-		// 否则残留的 _adjust frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
-		_, err = g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN ($1, $2) AND status = 'frozen'",
-			requestID, requestID+"_adjust")
-		if err != nil {
-			return fmt.Errorf("settle task: mark prededuct settled: %w", err)
-		}
-
-		return nil
+			var id int64
+			if billingResult != nil {
+				id, _ = billingResult.LastInsertId()
+			}
+			return id, nil
+		},
+		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
+			return do.BilTransactions{
+				TenantId:     tenantID,
+				WalletId:     wallet.ID,
+				Type:         "consume",
+				Amount:       -actualCost,
+				BalanceAfter: balanceAfter,
+				FrozenAfter:  frozenAfter,
+				RelatedId:    billingID,
+				RelatedType:  "billing_record",
+				Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
+				UserId:       userID,
+				RequestId:    requestID,
+				ModelName:    modelName,
+				ProjectId:    0,
+				ApiKeyId:     apiKeyID,
+				TaskId:       taskID,
+			}
+		},
+		predeductRequestIDs: []string{requestID, requestID + "_adjust"},
 	})
 	if err != nil {
 		if errors.Is(err, errAlreadySettled) {

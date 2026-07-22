@@ -52,6 +52,105 @@ type SettlementResult struct {
 	RateMultiplier   float64        // 费率倍率
 }
 
+// settlementTxParams 结算事务参数：三处结算共用的事务骨架的可变部分。
+type settlementTxParams struct {
+	walletID        int64   // 钱包 ID
+	preDeductAmount float64 // 预扣冻结金额（事务内从 frozen_balance 释放）
+	actualCost      float64 // 实际扣款金额（事务内从 balance 扣除）
+	logPrefix       string  // 错误信息前缀（settle / settle_with_usage / settle task）
+	// createBillingRecord 在事务内创建计费记录并返回其 ID；
+	// 唯一冲突（同一 request_id 已结算）时返回的 error 由骨架识别为 errAlreadySettled 并回滚。
+	createBillingRecord func(ctx context.Context) (int64, error)
+	// buildTransaction 根据事务内读到的准确余额与计费记录 ID 构造消费流水。
+	buildTransaction func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions
+	// predeductRequestIDs 本次结算需置为 settled 的预扣追踪 request_id（task 结算含 "_adjust"）。
+	predeductRequestIDs []string
+}
+
+// executeSettlementTx 结算事务公共骨架：钱包扣款 → 事务内读准确余额 → 创建计费记录
+// → 记录消费流水 → 标记预扣追踪已结算，五步在同一事务内原子完成。
+// Settle / SettleWithUsage / SettleTaskSuccess 三处共用，差异部分（计费记录构造、
+// 流水构造、预扣追踪 request_id 集合）由 params 注入。
+//
+// 幂等：计费记录命中 request_id 唯一约束时整个事务回滚（钱包扣款一并撤销），
+// 返回 errAlreadySettled，由调用方按幂等空操作处理。
+func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, error) {
+	var billingID int64
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// a. 更新钱包：释放预扣冻结 + 扣除实际成本
+		now := time.Now()
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+			p.preDeductAmount, p.actualCost, now, p.walletID)
+		if err != nil {
+			return gerror.Wrapf(err, "%s: update wallet", p.logPrefix)
+		}
+
+		// b. 事务内读取准确余额（best-effort，失败则保持 0）
+		balanceAfter, frozenAfter := readWalletBalanceTx(ctx, p.walletID)
+
+		// c. 创建计费记录
+		billingID, err = p.createBillingRecord(ctx)
+		if err != nil {
+			if isDuplicateKeyErr(err) {
+				// 同一 request_id 已结算：整个事务回滚（步骤 a 钱包扣款一并撤销），避免重复扣款/重复账单
+				return errAlreadySettled
+			}
+			return gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
+		}
+
+		// d. 记录消费流水（事务内）
+		if _, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID, balanceAfter, frozenAfter)).Insert(); err != nil {
+			return gerror.Wrapf(err, "%s: record transaction", p.logPrefix)
+		}
+
+		// e. 标记预扣追踪记录为已结算（事务内）
+		if err = markPredeductSettledTx(ctx, p.predeductRequestIDs); err != nil {
+			return gerror.Wrapf(err, "%s: mark prededuct settled", p.logPrefix)
+		}
+
+		return nil
+	})
+	return billingID, err
+}
+
+// readWalletBalanceTx 在结算事务内读取钱包的准确余额与冻结额，供消费流水快照使用。
+// best-effort：读取失败返回 0/0，不影响主结算流程（与重构前逐处内联的行为一致）。
+func readWalletBalanceTx(ctx context.Context, walletID int64) (balanceAfter, frozenAfter float64) {
+	type balRow struct {
+		Balance       float64 `json:"balance"`
+		FrozenBalance float64 `json:"frozen_balance"`
+	}
+	var br *balRow
+	err := dao.BilWallets.Ctx(ctx).
+		Where("id", walletID).
+		Fields("balance, frozen_balance").
+		Scan(&br)
+	if err == nil && br != nil {
+		return br.Balance, br.FrozenBalance
+	}
+	return 0, 0
+}
+
+// markPredeductSettledTx 在结算事务内将指定 request_id 的预扣追踪记录从 frozen 置为 settled。
+// task 结算会传入 requestID 与 requestID+"_adjust" 两条（补扣调整产生），一并置为 settled，
+// 避免残留 _adjust frozen 追踪被日对账判为不一致或被孤儿清理二次释放。
+func markPredeductSettledTx(ctx context.Context, requestIDs []string) error {
+	if len(requestIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(requestIDs))
+	args := make([]any, len(requestIDs))
+	for i, rid := range requestIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = rid
+	}
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
+		fmt.Sprintf("UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN (%s) AND status = 'frozen'", strings.Join(placeholders, ", ")),
+		args...)
+	return err
+}
+
 // Settle 结算请求费用
 // 预扣→调用→结算→退差额/补扣
 func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
@@ -96,88 +195,47 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	var balanceAfter, frozenAfter float64
-	var billingID int64
-	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 5a. 更新钱包
-		now := time.Now()
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			preDeductAmount, actualCost, now, wallet.ID)
-		if err != nil {
-			return gerror.Wrapf(err, "settle: update wallet")
-		}
-
-		// 5b. 事务内读取准确余额
-		type balRow struct {
-			Balance       float64 `json:"balance"`
-			FrozenBalance float64 `json:"frozen_balance"`
-		}
-		var br *balRow
-		err = dao.BilWallets.Ctx(ctx).
-			Where("id", wallet.ID).
-			Fields("balance, frozen_balance").
-			Scan(&br)
-		if err == nil && br != nil {
-			balanceAfter = br.Balance
-			frozenAfter = br.FrozenBalance
-		}
-
-		// 5c. 创建计费记录
-		var inputSnapPrice, outputSnapPrice float64
-		var billingMode string
-		var discountRatio, billingInputMult, billingOutputMult float64
-		if pricingResult != nil {
-			inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-			outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-			billingMode = pricingResult.BillingMode
-			discountRatio = pricingResult.DiscountRatio
-			billingInputMult = breakdown.InputMultiplier
-			billingOutputMult = breakdown.OutputMultiplier
-		}
-
-		billingID, err = createBillingRecord(ctx, tenantID, userID, apiKeyID, channelID,
-			modelName, requestID, relayMode, inputTokens, outputTokens,
-			inputSnapPrice, outputSnapPrice, actualCost,
-			billingMode, discountRatio, billingInputMult, billingOutputMult)
-		if err != nil {
-			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚（5a 钱包扣款一并撤销），避免重复扣款/重复账单
-				return errAlreadySettled
+	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+		walletID:        wallet.ID,
+		preDeductAmount: preDeductAmount,
+		actualCost:      actualCost,
+		logPrefix:       "settle",
+		createBillingRecord: func(ctx context.Context) (int64, error) {
+			var inputSnapPrice, outputSnapPrice float64
+			var billingMode string
+			var discountRatio, billingInputMult, billingOutputMult float64
+			if pricingResult != nil {
+				inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				billingMode = pricingResult.BillingMode
+				discountRatio = pricingResult.DiscountRatio
+				billingInputMult = breakdown.InputMultiplier
+				billingOutputMult = breakdown.OutputMultiplier
 			}
-			return gerror.Wrapf(err, "settle: create billing record")
-		}
-
-		// 5d. 记录消费流水（事务内）
-		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "consume",
-			Amount:       -actualCost,
-			BalanceAfter: balanceAfter,
-			FrozenAfter:  frozenAfter,
-			RelatedId:    billingID,
-			RelatedType:  "billing_record",
-			Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
-			UserId:       userID,
-			RequestId:    requestID,
-			ModelName:    modelName,
-			ProjectId:    projectID,
-			ApiKeyId:     apiKeyID,
-		}).Insert()
-		if err != nil {
-			return gerror.Wrapf(err, "settle: record transaction")
-		}
-
-		// 5e. 标记预扣追踪记录为已结算（事务内）
-		_, err = g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
-			requestID)
-		if err != nil {
-			return gerror.Wrapf(err, "settle: mark prededuct settled")
-		}
-
-		return nil
+			return createBillingRecord(ctx, tenantID, userID, apiKeyID, channelID,
+				modelName, requestID, relayMode, inputTokens, outputTokens,
+				inputSnapPrice, outputSnapPrice, actualCost,
+				billingMode, discountRatio, billingInputMult, billingOutputMult)
+		},
+		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
+			return do.BilTransactions{
+				TenantId:     tenantID,
+				WalletId:     wallet.ID,
+				Type:         "consume",
+				Amount:       -actualCost,
+				BalanceAfter: balanceAfter,
+				FrozenAfter:  frozenAfter,
+				RelatedId:    billingID,
+				RelatedType:  "billing_record",
+				Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, inputTokens, outputTokens, preDeductAmount, actualCost),
+				UserId:       userID,
+				RequestId:    requestID,
+				ModelName:    modelName,
+				ProjectId:    projectID,
+				ApiKeyId:     apiKeyID,
+			}
+		},
+		predeductRequestIDs: []string{requestID},
 	})
 	if err != nil {
 		if errors.Is(err, errAlreadySettled) {
@@ -255,92 +313,51 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	var balanceAfter, frozenAfter float64
-	var billingID int64
-	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 5a. 更新钱包
-		now := time.Now()
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			preDeductAmount, actualCost, now, wallet.ID)
-		if err != nil {
-			return gerror.Wrapf(err, "settle_with_usage: update wallet")
-		}
-
-		// 5b. 事务内读取准确余额
-		type balRow struct {
-			Balance       float64 `json:"balance"`
-			FrozenBalance float64 `json:"frozen_balance"`
-		}
-		var br *balRow
-		err = dao.BilWallets.Ctx(ctx).
-			Where("id", wallet.ID).
-			Fields("balance, frozen_balance").
-			Scan(&br)
-		if err == nil && br != nil {
-			balanceAfter = br.Balance
-			frozenAfter = br.FrozenBalance
-		}
-
-		// 5c. 创建计费记录（含快照）
-		var inputSnapPrice, outputSnapPrice float64
-		var billingMode string
-		var discountRatio, billingInputMult, billingOutputMult float64
-		if pricingResult != nil {
-			inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-			outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-			billingMode = pricingResult.BillingMode
-			discountRatio = pricingResult.DiscountRatio
-			billingInputMult = breakdown.InputMultiplier
-			billingOutputMult = breakdown.OutputMultiplier
-		}
-
-		billingID, err = createBillingRecordWithSnapshot(ctx, tenantID, userID, apiKeyID, channelID,
-			modelName, requestID, relayMode, breakdown,
-			inputSnapPrice, outputSnapPrice, actualCost,
-			billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
-		if err != nil {
-			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚（5a 钱包扣款一并撤销），避免重复扣款/重复账单
-				return errAlreadySettled
+	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+		walletID:        wallet.ID,
+		preDeductAmount: preDeductAmount,
+		actualCost:      actualCost,
+		logPrefix:       "settle_with_usage",
+		createBillingRecord: func(ctx context.Context) (int64, error) {
+			var inputSnapPrice, outputSnapPrice float64
+			var billingMode string
+			var discountRatio, billingInputMult, billingOutputMult float64
+			if pricingResult != nil {
+				inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				billingMode = pricingResult.BillingMode
+				discountRatio = pricingResult.DiscountRatio
+				billingInputMult = breakdown.InputMultiplier
+				billingOutputMult = breakdown.OutputMultiplier
 			}
-			return gerror.Wrapf(err, "settle_with_usage: create billing record")
-		}
-
-		// 5d. 记录消费流水（事务内）
-		var txProjectID int64
-		if relayInfo != nil {
-			txProjectID = relayInfo.ProjectID
-		}
-		_, err = dao.BilTransactions.Ctx(ctx).Data(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "consume",
-			Amount:       -actualCost,
-			BalanceAfter: balanceAfter,
-			FrozenAfter:  frozenAfter,
-			RelatedId:    billingID,
-			RelatedType:  "billing_record",
-			Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
-			UserId:       userID,
-			RequestId:    requestID,
-			ModelName:    modelName,
-			ProjectId:    txProjectID,
-			ApiKeyId:     apiKeyID,
-		}).Insert()
-		if err != nil {
-			return gerror.Wrapf(err, "settle_with_usage: record transaction")
-		}
-
-		// 5e. 标记预扣追踪记录为已结算（事务内）
-		_, err = g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
-			requestID)
-		if err != nil {
-			return gerror.Wrapf(err, "settle_with_usage: mark prededuct settled")
-		}
-
-		return nil
+			return createBillingRecordWithSnapshot(ctx, tenantID, userID, apiKeyID, channelID,
+				modelName, requestID, relayMode, breakdown,
+				inputSnapPrice, outputSnapPrice, actualCost,
+				billingMode, discountRatio, billingInputMult, billingOutputMult, pricingResult)
+		},
+		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
+			var txProjectID int64
+			if relayInfo != nil {
+				txProjectID = relayInfo.ProjectID
+			}
+			return do.BilTransactions{
+				TenantId:     tenantID,
+				WalletId:     wallet.ID,
+				Type:         "consume",
+				Amount:       -actualCost,
+				BalanceAfter: balanceAfter,
+				FrozenAfter:  frozenAfter,
+				RelatedId:    billingID,
+				RelatedType:  "billing_record",
+				Description:  fmt.Sprintf("consume: %s model=%s input=%d output=%d pre_deduct=%.6f actual=%.6f", requestID, modelName, breakdown.InputTokens, breakdown.OutputTokens, preDeductAmount, actualCost),
+				UserId:       userID,
+				RequestId:    requestID,
+				ModelName:    modelName,
+				ProjectId:    txProjectID,
+				ApiKeyId:     apiKeyID,
+			}
+		},
+		predeductRequestIDs: []string{requestID},
 	})
 	if err != nil {
 		if errors.Is(err, errAlreadySettled) {
