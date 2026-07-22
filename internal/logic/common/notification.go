@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -441,15 +442,11 @@ func (e *NotificationEngine) logNotification(ctx context.Context, tenantID, user
 	}
 }
 
-// containsAny checks if the haystack contains any of the given substrings.
+// containsAny checks if the haystack contains any of the given substrings。
 func containsAny(haystack string, needles ...string) bool {
 	for _, n := range needles {
-		if len(n) > 0 && len(haystack) >= len(n) {
-			for i := 0; i <= len(haystack)-len(n); i++ {
-				if haystack[i:i+len(n)] == n {
-					return true
-				}
-			}
+		if n != "" && strings.Contains(haystack, n) {
+			return true
 		}
 	}
 	return false

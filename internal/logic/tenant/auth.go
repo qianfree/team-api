@@ -523,7 +523,7 @@ func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.Tena
 	jti := middleware.GetJti(ctx)
 	sessionID := middleware.GetSessionID(ctx)
 	common.MarkSessionRevoked(ctx, jti)
-	err := common.RevokeSession(ctx, sessionID)
+	err := common.RevokeSession(ctx, "tenant", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +657,7 @@ func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSession
 	userID := middleware.GetUserID(ctx)
 
 	// 查找 session 并验证归属
-	sess, err := common.GetSessionByID(ctx, req.Id)
+	sess, err := common.GetSessionByID(ctx, "tenant", req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +669,7 @@ func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSession
 	}
 
 	common.MarkSessionRevoked(ctx, sess.Jti)
-	err = common.RevokeSession(ctx, req.Id)
+	err = common.RevokeSession(ctx, "tenant", req.Id)
 	if err != nil {
 		return nil, err
 	}

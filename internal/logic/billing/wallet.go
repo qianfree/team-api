@@ -110,21 +110,6 @@ func AvailableBalance(wallet *WalletInfo) float64 {
 	return wallet.Balance - wallet.FrozenBalance
 }
 
-// CheckBalance 检查余额是否足够
-func CheckBalance(ctx context.Context, tenantID int64, amount float64) error {
-	wallet, err := GetWallet(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-
-	available := AvailableBalance(wallet)
-	if available < amount {
-		return gerror.Newf("insufficient balance: available %.6f, required %.6f", available, amount)
-	}
-
-	return nil
-}
-
 // PreDeduct 预扣费用（Redis Lua 原子操作）
 // 冻结指定金额，返回预扣记录 ID 用于后续结算
 func PreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string, modelName string) (bool, error) {
