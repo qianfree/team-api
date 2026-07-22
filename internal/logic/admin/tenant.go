@@ -206,6 +206,57 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 	return &v1.TenantCreateRes{Id: tenantID}, nil
 }
 
+// batchTenantAggregates 批量查询一批租户的 owner 名称、成员数、钱包余额，
+// 用三条聚合查询替代逐行 N+1 查询。
+// 返回：ownerNames(ownerUserID→名称)、memberCounts(tenantID→成员数)、walletBalances(tenantID→余额)。
+func batchTenantAggregates(ctx context.Context, tenantIDs, ownerIDs []int64) (
+	ownerNames map[int64]string,
+	memberCounts map[int64]int,
+	walletBalances map[int64]string,
+) {
+	ownerNames = make(map[int64]string, len(ownerIDs))
+	memberCounts = make(map[int64]int, len(tenantIDs))
+	walletBalances = make(map[int64]string, len(tenantIDs))
+
+	// owner 名称：按 owner_user_id 批量取
+	if len(ownerIDs) > 0 {
+		var owners []struct {
+			Id          int64  `json:"id"`
+			DisplayName string `json:"display_name"`
+		}
+		_ = dao.TntUsers.Ctx(ctx).Fields("id, display_name").WhereIn("id", ownerIDs).Scan(&owners)
+		for _, o := range owners {
+			ownerNames[o.Id] = o.DisplayName
+		}
+	}
+
+	if len(tenantIDs) > 0 {
+		// 成员数：按 tenant_id 分组统计
+		var counts []struct {
+			TenantID int64 `json:"tenant_id"`
+			Count    int   `json:"count"`
+		}
+		_ = dao.TntUsers.Ctx(ctx).Fields("tenant_id, COUNT(*) AS count").
+			WhereIn("tenant_id", tenantIDs).Group("tenant_id").Scan(&counts)
+		for _, c := range counts {
+			memberCounts[c.TenantID] = c.Count
+		}
+
+		// 钱包余额：按 tenant_id 批量取
+		var wallets []struct {
+			TenantID int64  `json:"tenant_id"`
+			Balance  string `json:"balance"`
+		}
+		_ = dao.BilWallets.Ctx(ctx).Fields("tenant_id, balance").
+			WhereIn("tenant_id", tenantIDs).Scan(&wallets)
+		for _, w := range wallets {
+			walletBalances[w.TenantID] = w.Balance
+		}
+	}
+
+	return
+}
+
 // ListTenants returns a paginated list of tenants.
 func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.TenantListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
@@ -270,6 +321,16 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 	}
 
 	items := make([]v1.TenantItem, len(tenants))
+
+	// 批量查询 owner 名称 / 成员数 / 钱包余额（避免逐行 N+1）
+	tenantIDs := make([]int64, len(tenants))
+	ownerIDs := make([]int64, len(tenants))
+	for i, t := range tenants {
+		tenantIDs[i] = t.Id
+		ownerIDs[i] = t.OwnerUserID
+	}
+	ownerNameMap, memberCountMap, walletBalanceMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
+
 	for i, t := range tenants {
 		item := v1.TenantItem{
 			ID:                  t.Id,
@@ -303,29 +364,11 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 			item.EffectiveMaxConcurrency = 0
 		}
 
-		// Get owner name
-		var owner *struct {
-			DisplayName string `json:"display_name"`
-		}
-		_ = dao.TntUsers.Ctx(ctx).
-			Where("id", t.OwnerUserID).Scan(&owner)
-		if owner != nil {
-			item.OwnerName = owner.DisplayName
-		}
-
-		// Get member count
-		memberCount, _ := dao.TntUsers.Ctx(ctx).
-			Where("tenant_id", t.Id).Count()
-		item.MemberCount = memberCount
-
-		// Get wallet balance
-		var wallet *struct {
-			Balance string `json:"balance"`
-		}
-		_ = dao.BilWallets.Ctx(ctx).
-			Where("tenant_id", t.Id).Scan(&wallet)
-		if wallet != nil && wallet.Balance != "" {
-			item.WalletBalance = wallet.Balance
+		// 从批量结果中取 owner 名称 / 成员数 / 钱包余额
+		item.OwnerName = ownerNameMap[t.OwnerUserID]
+		item.MemberCount = memberCountMap[t.Id]
+		if bal, ok := walletBalanceMap[t.Id]; ok && bal != "" {
+			item.WalletBalance = bal
 		} else {
 			item.WalletBalance = "0"
 		}
@@ -550,47 +593,6 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 		Columns:  columns,
 	}
 
-	fetchTenantRow := func(t struct {
-		Id          int64       `json:"id"`
-		Name        string      `json:"name"`
-		Code        string      `json:"code"`
-		OwnerUserID int64       `json:"owner_user_id"`
-		Status      string      `json:"status"`
-		CreatedAt   *gtime.Time `json:"created_at"`
-	}) map[string]any {
-		var owner *struct {
-			DisplayName string `json:"display_name"`
-		}
-		_ = dao.TntUsers.Ctx(ctx).Where("id", t.OwnerUserID).Scan(&owner)
-
-		memberCount, _ := dao.TntUsers.Ctx(ctx).Where("tenant_id", t.Id).Count()
-
-		var wallet *struct {
-			Balance string `json:"balance"`
-		}
-		_ = dao.BilWallets.Ctx(ctx).Where("tenant_id", t.Id).Scan(&wallet)
-		walletBalance := "0"
-		if wallet != nil && wallet.Balance != "" {
-			walletBalance = wallet.Balance
-		}
-
-		ownerName := ""
-		if owner != nil {
-			ownerName = owner.DisplayName
-		}
-
-		return map[string]any{
-			"id":             t.Id,
-			"name":           t.Name,
-			"code":           t.Code,
-			"owner_name":     ownerName,
-			"status":         t.Status,
-			"member_count":   memberCount,
-			"wallet_balance": walletBalance,
-			"created_at":     t.CreatedAt.String(),
-		}
-	}
-
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
@@ -613,8 +615,32 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 			if err := m.Fields("id, name, code, owner_user_id, status, created_at").OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return
 			}
+
+			// 批量查询本页的 owner 名称 / 成员数 / 钱包余额（避免逐行 N+1）
+			tenantIDs := make([]int64, len(batch))
+			ownerIDs := make([]int64, len(batch))
+			for i, t := range batch {
+				tenantIDs[i] = t.Id
+				ownerIDs[i] = t.OwnerUserID
+			}
+			ownerNameMap, memberCountMap, walletBalanceMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
+
 			for _, t := range batch {
-				if !yield(fetchTenantRow(t)) {
+				walletBalance := "0"
+				if bal, ok := walletBalanceMap[t.Id]; ok && bal != "" {
+					walletBalance = bal
+				}
+				row := map[string]any{
+					"id":             t.Id,
+					"name":           t.Name,
+					"code":           t.Code,
+					"owner_name":     ownerNameMap[t.OwnerUserID],
+					"status":         t.Status,
+					"member_count":   memberCountMap[t.Id],
+					"wallet_balance": walletBalance,
+					"created_at":     t.CreatedAt.String(),
+				}
+				if !yield(row) {
 					return
 				}
 			}
