@@ -440,8 +440,14 @@ func (s *sTenant) WebhookConfigUpdate(ctx context.Context, req *v1.WebhookConfig
 		return nil, nil
 	}
 
-	_, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
-	return nil, err
+	result, err := dao.OpnWebhookConfigs.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).Data(data).Update()
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, common.NewNotFoundError("Webhook 配置")
+	}
+	return nil, nil
 }
 
 func (s *sTenant) WebhookConfigDelete(ctx context.Context, req *v1.WebhookConfigDeleteReq) (*v1.WebhookConfigDeleteRes, error) {

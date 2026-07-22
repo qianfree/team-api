@@ -214,7 +214,7 @@ func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLog
 	common.MarkSessionRevoked(ctx, jti)
 
 	// Delete session from database
-	err := common.RevokeSession(ctx, sessionID)
+	err := common.RevokeSession(ctx, "admin", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -370,14 +370,14 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
 	// Look up session to get jti for Redis revocation
-	sess, err := common.GetSessionByID(ctx, req.Id)
+	sess, err := common.GetSessionByID(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
 	}
 	if sess != nil {
 		common.MarkSessionRevoked(ctx, sess.Jti)
 	}
-	err = common.RevokeSession(ctx, req.Id)
+	err = common.RevokeSession(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
 	}
