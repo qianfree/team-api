@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -25,14 +26,24 @@ const (
 // Idempotency ensures that requests with the same Idempotency-Key
 // are processed only once. Subsequent requests with the same key
 // return the cached response.
+//
+// 幂等键按认证主体（userType + tenantID + userID）隔离：不同租户/用户即便复用同一
+// 客户端 Idempotency-Key，也各自独立，避免命中彼此缓存的响应体（跨租户数据泄漏）
+// 或彼此误触 409。因此本中间件必须挂载在认证中间件（如 TenantAuth）之后。
 func Idempotency(r *ghttp.Request) {
-	idempotencyKey := r.GetHeader(IdempotencyHeader)
-	if idempotencyKey == "" {
+	clientKey := r.GetHeader(IdempotencyHeader)
+	if clientKey == "" {
 		r.Middleware.Next()
 		return
 	}
 
 	ctx := r.Context()
+
+	// 组合出按主体隔离的存储键（仍是单一字符串，不改表结构）
+	tenantID := r.GetCtxVar(CtxKeyTenantID).Int64()
+	userID := r.GetCtxVar(CtxKeyUserID).Int64()
+	userType := r.GetCtxVar(CtxKeyUserType).String()
+	idempotencyKey := buildIdempotencyKey(userType, tenantID, userID, clientKey)
 
 	// Check if this key has been processed before
 	var record struct {
@@ -104,6 +115,13 @@ func Idempotency(r *ghttp.Request) {
 			Status:       status,
 			ResponseBody: responseBody,
 		}).Update()
+}
+
+// buildIdempotencyKey 组合出按认证主体隔离的幂等存储键。
+// 加入 userType/tenantID/userID 前缀，使不同主体即便复用同一客户端 key 也互不干扰，
+// 杜绝跨租户命中彼此缓存响应体（数据泄漏）或误触 409。
+func buildIdempotencyKey(userType string, tenantID, userID int64, clientKey string) string {
+	return fmt.Sprintf("%s:%d:%d:%s", userType, tenantID, userID, clientKey)
 }
 
 // writeConflictResponse writes a 409 Conflict response for duplicate idempotency keys.

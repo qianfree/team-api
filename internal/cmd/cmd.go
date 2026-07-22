@@ -267,7 +267,7 @@ var (
 
 				// Tenant — public endpoints use g.Meta middleware:"-" to skip auth
 				group.Group("/tenant", func(g *ghttp.RouterGroup) {
-					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth)
+					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth, middleware.Idempotency)
 					g.Bind(tenantController.NewV1())
 				})
 
