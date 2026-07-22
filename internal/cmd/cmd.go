@@ -80,6 +80,9 @@ var (
 			common.Config().Warmup(ctx)
 			common.Config().StartSubscriber(ctx)
 
+			// C1: 通用 Cache 的跨实例 L1 失效订阅（cache:invalidate）
+			common.StartCacheInvalidationSubscriber(ctx)
+
 			// Initialize content filter engine
 			common.InitContentFilter(ctx)
 

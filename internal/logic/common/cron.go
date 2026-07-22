@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+	"github.com/gogf/gf/v2/util/guid"
 	"github.com/robfig/cron/v3"
 )
 
@@ -161,6 +162,16 @@ func (cs *CronScheduler) runJobInternal(ctx context.Context, name, triggeredBy s
 		return gerror.Newf("job %s not registered", name)
 	}
 
+	// 分布式锁（C2）：多实例部署下，同名 job 只允许一个实例执行，避免日结算/告警检测/任务领取等
+	// 重复触发。进程内 running map 仅单实例互斥，跨实例无效。auto 与 manual 均加锁，防止手动触发与
+	// 另一实例的定时执行重叠。未获取到锁说明别的实例正在执行，本次跳过。
+	lockToken, locked := acquireCronLock(ctx, name)
+	if !locked {
+		g.Log().Infof(ctx, "cron job %s skipped: distributed lock held by another instance", name)
+		return nil
+	}
+	defer releaseCronLock(ctx, name, lockToken)
+
 	// Execute job
 	startTime := time.Now()
 	handlerErr := job.Handler(ctx)
@@ -272,4 +283,40 @@ func (cs *CronScheduler) StartBackground(ctx context.Context) {
 	}()
 
 	g.Log().Info(ctx, "cron scheduler started in background")
+}
+
+// cronLockTTL 分布式锁过期时间：仅用于实例崩溃时的兜底自动释放（正常完成会主动释放）。
+// 取值需大于绝大多数 job 的执行时长；过长则崩溃后会阻塞该 job 至多这么久。
+const cronLockTTL = 10 * time.Minute
+
+// cronLockKey 返回某 job 的分布式锁 Redis key。
+func cronLockKey(name string) string {
+	return "cron:lock:" + name
+}
+
+// acquireCronLock 通过 Redis SET NX EX 原子获取 job 分布式锁。
+// 返回 (token, true) 表示获取成功；("", false) 表示锁被其他实例持有。
+// Redis 不可用时降级为「获取成功但无 token」——退回进程内互斥语义（可能重复执行），
+// 优于因 Redis 抖动导致所有实例都不执行（关键 job 如结算被整体跳过）。
+func acquireCronLock(ctx context.Context, name string) (string, bool) {
+	token := guid.S()
+	res, err := g.Redis().Do(ctx, "SET", cronLockKey(name), token, "NX", "EX", int64(cronLockTTL.Seconds()))
+	if err != nil {
+		g.Log().Warningf(ctx, "cron lock acquire failed for %s, running without distributed lock: %v", name, err)
+		return "", true
+	}
+	if res.IsNil() {
+		return "", false
+	}
+	return token, true
+}
+
+// releaseCronLock 释放分布式锁：仅当锁仍属于本次持有的 token 时才删除（Lua CAS），
+// 避免锁已过期被别的实例重新持有后被误删。token 为空（Redis 降级）时不操作。
+func releaseCronLock(ctx context.Context, name, token string) {
+	if token == "" {
+		return
+	}
+	const lua = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`
+	_, _ = g.Redis().Do(ctx, "EVAL", lua, 1, cronLockKey(name), token)
 }

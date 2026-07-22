@@ -434,7 +434,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
 		}
 
-		info := buildRelayInfo(ctx, rc, v, selection, path, headers)
+		info := buildRelayInfo(ctx, rc, v, selection, path, headers, attempt)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
 			tr.ChannelID = selection.ChannelID
@@ -590,7 +590,8 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 }
 
 // buildRelayInfo 从渠道选择结果构建 RelayInfo
-func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header) *common.RelayInfo {
+// attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
+func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
 	return &common.RelayInfo{
 		Context:          ctx,
 		TenantID:         rc.TenantID,
@@ -598,6 +599,7 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		ApiKeyID:         rc.ApiKeyID,
 		ProjectID:        rc.ProjectID,
 		RequestID:        rc.RequestID,
+		RetryIndex:       attempt,
 		RelayMode:        int(v.relayMode),
 		IsStream:         v.isStream,
 		OriginModelName:  v.modelName,

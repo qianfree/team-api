@@ -39,7 +39,8 @@ func StreamCSV(r *ghttp.Request, config Config, queryFn func(yield func(map[stri
 	queryFn(func(row map[string]any) bool {
 		record := make([]string, len(config.Columns))
 		for i, col := range config.Columns {
-			record[i] = GetCellValue(row, col)
+			// B14：CSV 公式注入防御，中和以 =+-@ 等开头的用户可控字段
+			record[i] = sanitizeCSVField(GetCellValue(row, col))
 		}
 		_ = writer.Write(record)
 		rowCount++

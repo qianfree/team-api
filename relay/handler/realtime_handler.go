@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -19,7 +21,42 @@ import (
 // websocketUpgrader HTTP → WebSocket 升级器
 var websocketUpgrader = websocket.Upgrader{
 	Subprotocols: []string{"realtime"},
-	CheckOrigin:  func(r *http.Request) bool { return true },
+	CheckOrigin:  checkRealtimeOrigin,
+}
+
+// checkRealtimeOrigin 校验 WebSocket 握手来源，防跨站 WebSocket 劫持（CSWSH，B15）。
+// 策略：
+//   - 无 Origin 头：放行。Realtime API 的主要客户端是原生 SDK/CLI/服务端，不发送 Origin；
+//     浏览器才强制带 Origin，据此区分。
+//   - 同源（Origin.host == 请求 Host）：放行。
+//   - 命中 REALTIME_ALLOWED_ORIGINS（逗号分隔的可信来源，如租户控制台/playground 域名）：放行。
+//   - 其余跨源浏览器请求：拒绝。
+func checkRealtimeOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // 非浏览器客户端
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+
+	if strings.EqualFold(u.Host, r.Host) {
+		return true // 同源
+	}
+
+	for _, allowed := range strings.Split(os.Getenv("REALTIME_ALLOWED_ORIGINS"), ",") {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		if strings.EqualFold(origin, allowed) || strings.EqualFold(u.Host, allowed) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // RealtimeContext Realtime 请求上下文
