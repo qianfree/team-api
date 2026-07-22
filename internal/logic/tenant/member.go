@@ -553,39 +553,46 @@ func (s *sTenant) RemoveMember(ctx context.Context, req *v1.TenantMemberRemoveRe
 		removedDisplayName = "[已移除成员]"
 	}
 
-	// Revoke all sessions
+	// Revoke all sessions（Redis + DB 会话表）。会话撤销属于尽力而为的安全动作，
+	// 放在事务外先行执行：即便后续 DB 事务回滚，也已让该成员的活跃会话失效（fail-safe 方向）。
 	common.RevokeAllSessions(ctx, "tenant", memberID)
 
-	// Revoke all API keys for this user
-	_, err = dao.ApiKeys.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", memberID).
-		Data(do.ApiKeys{
-			Status: "revoked",
-		}).Update()
-	if err != nil {
-		return nil, err
-	}
+	// 撤销 API Key → 删除成员模型范围 → 匿名化个人数据，三步写操作放入同一事务，
+	// 避免中途失败导致「Key 已撤销但用户未匿名化」等半完成的不一致状态。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// Revoke all API keys for this user
+		if _, err := tx.Model("api_keys").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", memberID).
+			Data(do.ApiKeys{
+				Status: "revoked",
+			}).Update(); err != nil {
+			return err
+		}
 
-	// Remove member model scopes
-	_, err = dao.TntMemberModelScopes.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", memberID).
-		Delete()
-	if err != nil {
-		return nil, err
-	}
+		// Remove member model scopes
+		if _, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", memberID).
+			Delete(); err != nil {
+			return err
+		}
 
-	// Anonymize personal data
-	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", memberID).
-		Where("tenant_id", tenantID).
-		Data(do.TntUsers{
-			Status:      "removed",
-			Email:       fmt.Sprintf("deleted_%d@removed.local", memberID),
-			DisplayName: removedDisplayName,
-			Username:    fmt.Sprintf("deleted_%d", memberID),
-		}).Update()
+		// Anonymize personal data
+		if _, err := tx.Model("tnt_users").Ctx(ctx).
+			Where("id", memberID).
+			Where("tenant_id", tenantID).
+			Data(do.TntUsers{
+				Status:      "removed",
+				Email:       fmt.Sprintf("deleted_%d@removed.local", memberID),
+				DisplayName: removedDisplayName,
+				Username:    fmt.Sprintf("deleted_%d", memberID),
+			}).Update(); err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -616,25 +623,27 @@ func (s *sTenant) DisableMember(ctx context.Context, tenantID, userID int64) err
 		return nil // already disabled
 	}
 
-	// Revoke all active API keys
-	_, err = dao.ApiKeys.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", userID).
-		Where("status", "active").
-		Data(do.ApiKeys{
-			Status: "disabled",
-		}).Update()
-	if err != nil {
-		return err
-	}
+	// 撤销 API Key 与更新成员状态放入同一事务，避免「Key 已禁用但成员状态未更新」的不一致。
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// Revoke all active API keys
+		if _, err := tx.Model("api_keys").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", userID).
+			Where("status", "active").
+			Data(do.ApiKeys{
+				Status: "disabled",
+			}).Update(); err != nil {
+			return err
+		}
 
-	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", userID).
-		Where("tenant_id", tenantID).
-		Data(do.TntUsers{
-			Status: "disabled",
-		}).Update()
-	return err
+		_, err := tx.Model("tnt_users").Ctx(ctx).
+			Where("id", userID).
+			Where("tenant_id", tenantID).
+			Data(do.TntUsers{
+				Status: "disabled",
+			}).Update()
+		return err
+	})
 }
 
 // EnableMember re-enables a member and restores their API keys.
@@ -657,25 +666,27 @@ func (s *sTenant) EnableMember(ctx context.Context, tenantID, userID int64) erro
 		return nil // already active or removed
 	}
 
-	// Restore disabled API keys
-	_, err = dao.ApiKeys.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", userID).
-		Where("status", "disabled").
-		Data(do.ApiKeys{
-			Status: "active",
-		}).Update()
-	if err != nil {
-		return err
-	}
+	// 恢复 API Key 与更新成员状态放入同一事务，避免「Key 已恢复但成员状态未更新」的不一致。
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// Restore disabled API keys
+		if _, err := tx.Model("api_keys").Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", userID).
+			Where("status", "disabled").
+			Data(do.ApiKeys{
+				Status: "active",
+			}).Update(); err != nil {
+			return err
+		}
 
-	_, err = dao.TntUsers.Ctx(ctx).
-		Where("id", userID).
-		Where("tenant_id", tenantID).
-		Data(do.TntUsers{
-			Status: "active",
-		}).Update()
-	return err
+		_, err := tx.Model("tnt_users").Ctx(ctx).
+			Where("id", userID).
+			Where("tenant_id", tenantID).
+			Data(do.TntUsers{
+				Status: "active",
+			}).Update()
+		return err
+	})
 }
 
 // UpdateMemberRole updates a member's role.
