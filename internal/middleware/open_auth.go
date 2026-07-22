@@ -121,6 +121,12 @@ func OpenPlatformAuth(r *ghttp.Request) {
 		return
 	}
 
+	// 防重放：签名校验通过后，将 nonce 存入 Redis 去重。放在签名校验之后，
+	// 避免未认证攻击者用伪造 nonce 刷爆 Redis。命中已存在的 nonce 即判为重放，拒绝。
+	if !checkOpenAppNonce(r, app.Id, nonce) {
+		return
+	}
+
 	// Inject context variables using typed keys
 	ctx := r.Context()
 	ctx = context.WithValue(ctx, ctxKeyOpenAppID, app.Id)
@@ -130,6 +136,48 @@ func OpenPlatformAuth(r *ghttp.Request) {
 	r.SetCtx(ctx)
 
 	r.Middleware.Next()
+}
+
+// checkOpenAppNonce enforces replay protection by recording each nonce in Redis.
+// 用 SET NX 原子写入 nonce：首次出现返回 OK 放行；已存在说明是重放，写 401 并返回 false。
+// Redis 故障时 fail-open（与限流一致），仅记告警，因为时间戳窗口本身已把可重放时间
+// 限制在数分钟内。
+func checkOpenAppNonce(r *ghttp.Request, appDBID int64, nonce string) bool {
+	ctx := r.Context()
+	isNew, err := recordOpenNonce(ctx, appDBID, nonce)
+	if err != nil {
+		g.Log().Warningf(ctx, "[OpenAuth] nonce SET NX failed app=%d: %v", appDBID, err)
+		// Fail open on Redis error
+		return true
+	}
+	if !isNew {
+		// nonce 已存在 → 重放请求
+		response.Error(r, consts.ErrUnauthorized)
+		return false
+	}
+	return true
+}
+
+// recordOpenNonce 原子记录 nonce，返回 (isNew, err)。
+// isNew==true 表示该 nonce 首次出现（应放行）；false 表示已存在（重放）。
+func recordOpenNonce(ctx context.Context, appDBID int64, nonce string) (bool, error) {
+	res, err := g.Redis().Do(ctx, "SET", openNonceKey(appDBID, nonce), "1", "NX", "EX", openNonceTTLSeconds())
+	if err != nil {
+		return false, err
+	}
+	return !res.IsNil(), nil
+}
+
+// openNonceKey 构造按应用隔离的 nonce 去重键。
+func openNonceKey(appDBID int64, nonce string) string {
+	return fmt.Sprintf("open:nonce:%d:%s", appDBID, nonce)
+}
+
+// openNonceTTLSeconds 返回 nonce 记录的存活秒数。
+// 取 2 倍时间戳偏移窗口——请求在 [ts-skew, ts+skew] 内都可能通过时间戳校验，
+// 记住这么久即可覆盖同一 nonce 的全部可重放区间。
+func openNonceTTLSeconds() int {
+	return int(2 * openPlatformMaxSkew / time.Second)
 }
 
 func computeHMACSignature(secret, timestamp, nonce, method, path string, body []byte) string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -193,6 +194,53 @@ func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 // PublishInvalidation publishes a cache invalidation message via Redis Pub/Sub.
 func PublishInvalidation(ctx context.Context, fullKey string) {
 	_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", fullKey)
+}
+
+// StartCacheInvalidationSubscriber 订阅 Redis "cache:invalidate" 频道，收到失效通知时移除本进程 L1(gcache)中对应 key。
+// C1 修复：此前 Cache.Delete / PublishInvalidation 只向 cache:invalidate 频道 PUBLISH，全仓库无人 SUBSCRIBE，
+// 多实例部署下某实例删除 key 后，其他实例的 L1 gcache 会一直陈旧到自然 TTL。此订阅方补齐跨实例 L1 失效。
+// 在 cmd.go 启动时调用一次；断线自动重连，语义与 ConfigService.StartSubscriber 一致。
+func StartCacheInvalidationSubscriber(ctx context.Context) {
+	go func() {
+		var reconnectCount int
+		for {
+			conn, _, err := g.Redis().Subscribe(ctx, "cache:invalidate")
+			if err != nil {
+				reconnectCount++
+				g.Log().Warningf(ctx, "[PubSub:cache] 连接失败 (第%d次): %v", reconnectCount, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			if reconnectCount > 0 {
+				g.Log().Infof(ctx, "[PubSub:cache] 重连成功 (此前失败%d次)", reconnectCount)
+				reconnectCount = 0
+			} else {
+				g.Log().Info(ctx, "[PubSub:cache] 订阅已启动")
+			}
+
+			for {
+				v, err := conn.Receive(ctx)
+				if err != nil {
+					reconnectCount++
+					g.Log().Warningf(ctx, "[PubSub:cache] 接收错误 (第%d次): %v", reconnectCount, err)
+					time.Sleep(5 * time.Second)
+					break // reconnect
+				}
+
+				msg, ok := v.Val().(*gredis.Message)
+				if !ok {
+					continue // skip Subscription/Pong 等
+				}
+
+				// 仅移除本进程 L1；L2(Redis) 由发布方已 DEL，无需重复处理
+				gcache.Remove(ctx, msg.Payload)
+				g.Log().Debugf(ctx, "[PubSub:cache] L1 已失效: %s", msg.Payload)
+			}
+
+			conn.Close(ctx)
+		}
+	}()
 }
 
 // TenantGroupModelCache 缓存租户通过分组可访问的模型集合，TTL 300s

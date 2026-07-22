@@ -21,6 +21,7 @@ require (
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/shopspring/decimal v1.4.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.73
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5

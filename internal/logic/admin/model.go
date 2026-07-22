@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -339,29 +340,38 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 
 // DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error) {
-	if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
-		return nil, gerror.Wrapf(err, "delete pricing tiers for model %d", req.ID)
-	}
-	if _, err := dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
-		return nil, gerror.Wrapf(err, "delete tenant models for model %d", req.ID)
-	}
-
-	// 级联删除：从所有分组中移除该模型，并清除受影响租户的缓存
+	// 先查出受影响的分组，供事务提交后清理缓存（缓存失效不可回滚，故放在事务外）
 	var affectedGroups []struct {
 		GroupId int64 `json:"group_id"`
 	}
 	dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Fields("group_id").Scan(&affectedGroups)
-	if _, err := dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
-		return nil, gerror.Wrapf(err, "delete group models for model %d", req.ID)
+
+	// 四表删除（定价 / 租户分配 / 分组关联 / 模型本体）放入同一事务，
+	// 避免中途失败留下「模型已删但定价/分配记录残留」的孤儿数据。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+			return gerror.Wrapf(err, "delete pricing tiers for model %d", req.ID)
+		}
+		if _, err := dao.MdlTenantModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+			return gerror.Wrapf(err, "delete tenant models for model %d", req.ID)
+		}
+		if _, err := dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Delete(); err != nil {
+			return gerror.Wrapf(err, "delete group models for model %d", req.ID)
+		}
+		if _, err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	// 事务提交后再清除受影响租户的缓存
 	for _, ag := range affectedGroups {
 		invalidateTenantsInGroup(ctx, ag.GroupId)
 	}
 
-	_, err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Delete()
-	if err != nil {
-		return nil, err
-	}
 	return nil, nil
 }
 
@@ -415,26 +425,33 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 
 // SetModelPricing 设置模型定价（全量替换）
 func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error) {
-	_, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Delete()
+	// 全量替换：先删旧定价再插新定价，放入同一事务。否则若删除后插入中途失败，
+	// 该模型会残留「无定价」状态，导致计费失败或回退到默认价。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Delete(); err != nil {
+			return err
+		}
+
+		for _, item := range req.Items {
+			if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
+				ModelId:            req.ModelID,
+				BillingMode:        item.BillingMode,
+				MinTokens:          item.MinTokens,
+				MaxTokens:          item.MaxTokens,
+				InputPrice:         item.InputPrice,
+				OutputPrice:        item.OutputPrice,
+				PerRequestPrice:    item.PerRequestPrice,
+				CacheReadPrice:     item.CacheReadPrice,
+				CacheCreationPrice: item.CacheCreationPrice,
+			}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	for _, item := range req.Items {
-		_, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-			ModelId:            req.ModelID,
-			BillingMode:        item.BillingMode,
-			MinTokens:          item.MinTokens,
-			MaxTokens:          item.MaxTokens,
-			InputPrice:         item.InputPrice,
-			OutputPrice:        item.OutputPrice,
-			PerRequestPrice:    item.PerRequestPrice,
-			CacheReadPrice:     item.CacheReadPrice,
-			CacheCreationPrice: item.CacheCreationPrice,
-		})
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return nil, nil

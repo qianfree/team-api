@@ -217,6 +217,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 		BillingSettled  bool            `json:"billing_settled"`
 		ResultURL       string          `json:"result_url"`
 		Data            json.RawMessage `json:"data"`
+		PrivateData     json.RawMessage `json:"private_data"`
 		SubmitTime      *time.Time      `json:"submit_time"`
 		StartTime       *time.Time      `json:"start_time"`
 		FinishTime      *time.Time      `json:"finish_time"`
@@ -254,6 +255,7 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 		BillingSettled:  row.BillingSettled,
 		ResultURL:       row.ResultURL,
 		Data:            row.Data,
+		PrivateData:     row.PrivateData,
 		SubmitTime:      row.SubmitTime,
 		StartTime:       row.StartTime,
 		FinishTime:      row.FinishTime,

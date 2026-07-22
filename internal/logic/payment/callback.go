@@ -119,8 +119,13 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 	}
 
 	if result.Success {
-		// 7. 更新订单为已支付
-		_, err = dao.OrdOrders.Ctx(ctx).
+		// 7. 原子领取订单：pending → paid。
+		// 该条件更新的 RowsAffected 是【跨实例】幂等闸门：多实例并发回调时，两个回调都会
+		// 通过上面第 5 步的 pending 检查，但 "WHERE status='pending'" 的原子更新只有一个能命中
+		// （另一个在行锁释放后重读到 status 已是 paid → 0 行）。据此仅让真正把订单从 pending
+		// 翻成 paid 的那次回调去履约，杜绝重复入账/重复发套餐。进程内 orderLocks 仅单实例有效，
+		// 不能作为并发保护依赖。
+		res, err := dao.OrdOrders.Ctx(ctx).
 			Where("id", order.ID).
 			Where("status", "pending").
 			Data(do.OrdOrders{
@@ -131,8 +136,17 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 		if err != nil {
 			return gerror.Wrapf(err, "更新订单状态失败")
 		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return gerror.Wrapf(err, "确认订单状态更新结果失败")
+		}
+		if affected == 0 {
+			// 另一并发回调已抢先领取并负责履约，本次幂等返回，绝不重复履约
+			g.Log().Infof(ctx, "[Payment] order=%s already claimed by a concurrent callback, skip duplicate fulfill", result.OrderNo)
+			return nil
+		}
 
-		// 8. 履约
+		// 8. 履约（仅领取成功者执行）
 		return FulfillOrder(ctx, order.ID)
 	}
 

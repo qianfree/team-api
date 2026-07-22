@@ -337,7 +337,7 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 	}
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model("tnt_member_model_scopes").Ctx(ctx).
+		_, err := dao.TntMemberModelScopes.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Where("user_id", req.Id).
 			Delete()
@@ -350,7 +350,7 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 				if modelID == 0 {
 					continue
 				}
-				_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+				_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
 					TenantId: tenantID,
 					UserId:   req.Id,
 					ModelId:  modelID,
@@ -360,7 +360,7 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 				}
 			}
 		} else {
-			_, err = tx.Model("tnt_member_model_scopes").Ctx(ctx).Data(do.TntMemberModelScopes{
+			_, err = dao.TntMemberModelScopes.Ctx(ctx).Data(do.TntMemberModelScopes{
 				TenantId: tenantID,
 				UserId:   req.Id,
 				ModelId:  -1,

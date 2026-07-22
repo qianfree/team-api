@@ -132,9 +132,9 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 
 	var tenantID, ownerUserID int64
 
-	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Create tenant
-		tenantResult, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{
+		tenantResult, err := dao.TntTenants.Ctx(ctx).Data(do.TntTenants{
 			Name: tenantName,
 			Code: tenantCode,
 			// MaxMembers/MaxConcurrency: nil = 跟随等级配置
@@ -152,7 +152,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		}
 
 		// Create owner user
-		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
+		userResult, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:     tenantID,
 			Username:     username,
 			Email:        email,
@@ -169,7 +169,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		}
 
 		// Update tenant owner
-		_, err = tx.Model("tnt_tenants").Ctx(ctx).
+		_, err = dao.TntTenants.Ctx(ctx).
 			Where("id", tenantID).
 			Data(do.TntTenants{
 				OwnerUserId: ownerUserID,
@@ -180,7 +180,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		}
 
 		// Create wallet for tenant
-		_, err = tx.Model("bil_wallets").Ctx(ctx).Data(do.BilWallets{
+		_, err = dao.BilWallets.Ctx(ctx).Data(do.BilWallets{
 			TenantId:      tenantID,
 			Balance:       0,
 			FrozenBalance: 0,
@@ -194,7 +194,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 		var defaultGroups []struct {
 			Id int64
 		}
-		if err := tx.Model("mdl_model_groups").Ctx(ctx).
+		if err := dao.MdlModelGroups.Ctx(ctx).
 			Where("is_default", true).Where("status", "active").
 			Fields("id").Scan(&defaultGroups); err == nil && len(defaultGroups) > 0 {
 			insertData := make([]do.MdlTenantGroups, 0, len(defaultGroups))
@@ -204,7 +204,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 					GroupId:  dg.Id,
 				})
 			}
-			if _, err := tx.Model("mdl_tenant_groups").Ctx(ctx).
+			if _, err := dao.MdlTenantGroups.Ctx(ctx).
 				Batch(len(insertData)).Insert(insertData); err != nil {
 				g.Log().Warningf(ctx, "assign default model groups failed: %v", err)
 			}

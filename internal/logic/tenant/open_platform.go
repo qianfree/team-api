@@ -157,8 +157,8 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 	}
 
 	var id int64
-	err = dao.OpnApps.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		result, err := tx.Model("opn_apps").Ctx(ctx).Data(do.OpnApps{
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := dao.OpnApps.Ctx(ctx).Data(do.OpnApps{
 			TenantId:      tenantID,
 			Name:          req.Name,
 			Description:   req.Description,
@@ -176,7 +176,7 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 		if err != nil {
 			return err
 		}
-		_, err = tx.Model("opn_apps").Ctx(ctx).
+		_, err = dao.OpnApps.Ctx(ctx).
 			Where("id", id).
 			Data(opnAppEncryptedSecretData{EncryptedSecret: encryptedSecret}).
 			Update()

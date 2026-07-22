@@ -64,6 +64,10 @@ func GenerateProvisionalToken(ctx context.Context, userID int64, userType, role 
 // ParseProvisionalToken parses and validates a provisional 2FA token.
 func ParseProvisionalToken(tokenStr string) (*ProvisionalClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &ProvisionalClaims{}, func(token *jwt.Token) (any, error) {
+		// 校验签名算法，防止 "alg":"none" 或非对称算法伪造令牌
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, gerror.Newf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return GetJWTSecret(), nil
 	})
 	if err != nil {
@@ -97,6 +101,10 @@ func GenerateConfirmToken(ctx context.Context, userID int64, userType string) (s
 // ParseConfirmToken parses and validates a high-risk confirm token.
 func ParseConfirmToken(tokenStr string) (*ConfirmClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &ConfirmClaims{}, func(token *jwt.Token) (any, error) {
+		// 校验签名算法，防止 "alg":"none" 或非对称算法伪造令牌
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, gerror.Newf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return GetJWTSecret(), nil
 	})
 	if err != nil {

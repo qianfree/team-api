@@ -523,7 +523,7 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 // updateApiKeyModelScopes 在事务内更新模型范围（先删后插）
 func updateApiKeyModelScopes(ctx context.Context, keyID int64, modelNames []string) error {
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Ctx(ctx).Model("api_key_model_scopes").
+		_, err := dao.ApiKeyModelScopes.Ctx(ctx).
 			Where("api_key_id", keyID).
 			Delete()
 		if err != nil {
@@ -532,7 +532,7 @@ func updateApiKeyModelScopes(ctx context.Context, keyID int64, modelNames []stri
 
 		for _, modelName := range modelNames {
 			if modelName != "" {
-				if _, err := tx.Ctx(ctx).Model("api_key_model_scopes").Insert(do.ApiKeyModelScopes{
+				if _, err := dao.ApiKeyModelScopes.Ctx(ctx).Insert(do.ApiKeyModelScopes{
 					ApiKeyId:  keyID,
 					ModelName: modelName,
 				}); err != nil {

@@ -12,6 +12,7 @@ import (
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/payment"
@@ -45,7 +46,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			Status       string    `json:"status"`
 			ExpiresAt    time.Time `json:"expires_at"`
 		}
-		err := tx.Ctx(ctx).Model("ord_redemptions").
+		err := dao.OrdRedemptions.Ctx(ctx).
 			Where("code", req.Code).
 			LockUpdate().
 			Scan(&redemption)
@@ -59,7 +60,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			return gerror.Newf("兑换码状态为%s", redemption.Status)
 		}
 		if !redemption.ExpiresAt.IsZero() && redemption.ExpiresAt.Before(time.Now()) {
-			_, updateErr := tx.Ctx(ctx).Model("ord_redemptions").
+			_, updateErr := dao.OrdRedemptions.Ctx(ctx).
 				Where("id", redemption.ID).
 				Data(do.OrdRedemptions{Status: "expired"}).
 				Update()
@@ -78,7 +79,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 
 		switch redemption.Type {
 		case "quota":
-			txID, err = creditWalletForRedemptionTx(ctx, tx, tenantID, redemption.Value, redemption.ID)
+			txID, err = creditWalletForRedemptionTx(ctx, tenantID, redemption.Value, redemption.ID)
 			if err != nil {
 				return err
 			}
@@ -107,7 +108,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			if redemption.DurationDays <= 0 {
 				return lcommon.NewBusinessError(422, "时长兑换码缺少duration_days")
 			}
-			err = extendPlanDurationTx(ctx, tx, tenantID, redemption.DurationDays)
+			err = extendPlanDurationTx(ctx, tenantID, redemption.DurationDays)
 			if err != nil {
 				return gerror.Wrapf(err, "延长套餐时长失败")
 			}
@@ -118,7 +119,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		}
 
 		// 记录兑换使用记录
-		_, err = tx.Ctx(ctx).Model("ord_redemption_usages").Insert(do.OrdRedemptionUsages{
+		_, err = dao.OrdRedemptionUsages.Ctx(ctx).Insert(do.OrdRedemptionUsages{
 			RedemptionId:  redemption.ID,
 			TenantId:      tenantID,
 			UserId:        userID,
@@ -131,7 +132,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		}
 
 		// 原子递增 used_count
-		_, err = tx.Ctx(ctx).Model("ord_redemptions").
+		_, err = dao.OrdRedemptions.Ctx(ctx).
 			Where("id", redemption.ID).
 			Data(do.OrdRedemptions{
 				UsedCount:  gdb.Raw("used_count + 1"),
@@ -157,13 +158,13 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	return res, nil
 }
 
-// creditWalletForRedemptionTx 在事务内为租户钱包充值
-func creditWalletForRedemptionTx(ctx context.Context, tx gdb.TX, tenantID int64, amount float64, redemptionID int64) (int64, error) {
+// creditWalletForRedemptionTx 在事务内为租户钱包充值（依赖调用方传入携带事务的 ctx）
+func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount float64, redemptionID int64) (int64, error) {
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
 	var w *walletRow
-	err := tx.Ctx(ctx).Model("bil_wallets").
+	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Fields("id").
 		Scan(&w)
@@ -174,10 +175,11 @@ func creditWalletForRedemptionTx(ctx context.Context, tx gdb.TX, tenantID int64,
 		return 0, nil
 	}
 
-	_, err = tx.Ctx(ctx).Model("bil_wallets").
-		Where("id", w.ID).
-		Data(do.BilWallets{Balance: gdb.Raw(fmt.Sprintf("balance + %v", amount))}).
-		Update()
+	// 钱包自增用参数化原生 SQL，避免用 fmt.Sprintf 拼 float 带来的精度丢失与注入隐患；
+	// updated_at 手动置为 NOW()，补回原 dao.Update() 自动填充的时间字段。
+	_, err = g.DB().Ctx(ctx).Exec(ctx,
+		"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
+		amount, w.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +188,7 @@ func creditWalletForRedemptionTx(ctx context.Context, tx gdb.TX, tenantID int64,
 		Balance       float64 `json:"balance"`
 		FrozenBalance float64 `json:"frozen_balance"`
 	}
-	err = tx.Ctx(ctx).Model("bil_wallets").
+	err = dao.BilWallets.Ctx(ctx).
 		Where("id", w.ID).
 		Fields("balance, frozen_balance").
 		Scan(&balance)
@@ -197,7 +199,7 @@ func creditWalletForRedemptionTx(ctx context.Context, tx gdb.TX, tenantID int64,
 		return 0, gerror.New("wallet not found after update")
 	}
 
-	id, err := tx.Ctx(ctx).Model("bil_transactions").InsertAndGetId(do.BilTransactions{
+	id, err := dao.BilTransactions.Ctx(ctx).InsertAndGetId(do.BilTransactions{
 		TenantId:     tenantID,
 		WalletId:     w.ID,
 		Type:         "recharge",
@@ -215,9 +217,9 @@ func creditWalletForRedemptionTx(ctx context.Context, tx gdb.TX, tenantID int64,
 	return id, nil
 }
 
-// extendPlanDurationTx 在事务内延长套餐时长
-func extendPlanDurationTx(ctx context.Context, tx gdb.TX, tenantID int64, days int) error {
-	_, err := tx.Ctx(ctx).Exec(
+// extendPlanDurationTx 在事务内延长套餐时长（依赖调用方传入携带事务的 ctx）
+func extendPlanDurationTx(ctx context.Context, tenantID int64, days int) error {
+	_, err := g.DB().Ctx(ctx).Exec(ctx,
 		"UPDATE pln_tenant_plans SET end_at = end_at + ?::integer * INTERVAL '1 day' WHERE tenant_id = ? AND status = ?",
 		days, tenantID, "active")
 	return err

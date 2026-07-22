@@ -199,7 +199,9 @@ func GetProjectID(ctx context.Context) int64 {
 }
 
 // extractBearerToken extracts the Bearer token from the Authorization header.
-// Falls back to "token" query parameter for WebSocket connections.
+// 仅在 WebSocket 握手请求上回退到 "token" query 参数——浏览器无法为 WebSocket 握手
+// 自定义 Authorization 头，只能用 query 传 token（如 /v1/realtime）。普通 REST 请求
+// 不走此回退，避免 token 泄漏进访问日志/代理日志/浏览器历史/Referer。
 func extractBearerToken(r *ghttp.Request) string {
 	authHeader := r.GetHeader("Authorization")
 	if authHeader != "" {
@@ -209,10 +211,19 @@ func extractBearerToken(r *ghttp.Request) string {
 		}
 	}
 
-	// Fallback: check query parameter for WebSocket (browsers can't set headers)
-	if token := r.Get("token").String(); token != "" {
-		return token
+	// 仅 WebSocket 升级握手才允许 query 参数回退（浏览器无法为 WS 握手设置请求头）
+	if isWebSocketUpgrade(r) {
+		if token := r.Get("token").String(); token != "" {
+			return token
+		}
 	}
 
 	return ""
+}
+
+// isWebSocketUpgrade 判断请求是否为 WebSocket 升级握手。
+// 浏览器发起 WebSocket 握手时会自动带上 "Upgrade: websocket" 头（无法禁用），
+// 据此把 query token 回退严格限定在 WS 场景，普通 HTTP 请求一律不生效。
+func isWebSocketUpgrade(r *ghttp.Request) bool {
+	return strings.EqualFold(r.GetHeader("Upgrade"), "websocket")
 }

@@ -212,12 +212,12 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 	}
 
 	res := &v1.ModelImportRes{}
-	err := dao.MdlModels.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		for _, item := range req.Models {
 			var existing *struct {
 				ID int64 `orm:"id"`
 			}
-			err := tx.Model("mdl_models").Ctx(ctx).Where("model_id", item.ModelId).Scan(&existing)
+			err := dao.MdlModels.Ctx(ctx).Where("model_id", item.ModelId).Scan(&existing)
 			if err != nil {
 				return err
 			}
@@ -252,17 +252,17 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					updateData.Status = item.Status
 				}
 
-				_, err = tx.Model("mdl_models").Ctx(ctx).Where("id", existing.ID).Data(updateData).Update()
+				_, err = dao.MdlModels.Ctx(ctx).Where("id", existing.ID).Data(updateData).Update()
 				if err != nil {
 					return err
 				}
 
-				_, err = tx.Model("mdl_pricing").Ctx(ctx).Where("model_id", existing.ID).Delete()
+				_, err = dao.MdlPricing.Ctx(ctx).Where("model_id", existing.ID).Delete()
 				if err != nil {
 					return err
 				}
 				for _, p := range item.Pricing {
-					_, err = tx.Model("mdl_pricing").Ctx(ctx).Insert(do.MdlPricing{
+					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 						ModelId:            existing.ID,
 						BillingMode:        p.BillingMode,
 						MinTokens:          p.MinTokens,
@@ -301,13 +301,13 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					insertData.Capabilities = string(capJson)
 				}
 
-				id, err := tx.Model("mdl_models").Ctx(ctx).InsertAndGetId(insertData)
+				id, err := dao.MdlModels.Ctx(ctx).InsertAndGetId(insertData)
 				if err != nil {
 					return err
 				}
 
 				for _, p := range item.Pricing {
-					_, err = tx.Model("mdl_pricing").Ctx(ctx).Insert(do.MdlPricing{
+					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 						ModelId:            id,
 						BillingMode:        p.BillingMode,
 						MinTokens:          p.MinTokens,

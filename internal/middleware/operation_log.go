@@ -25,6 +25,9 @@ var sensitiveFields = map[string]bool{
 	"secret":        true,
 	"api_key":       true,
 	"encrypted_key": true,
+	// 存储配置凭证（系统设置更新 / 存储连通性测试的请求体中携带）
+	"storage_access_key_id":     true,
+	"storage_access_key_secret": true,
 }
 
 // resourcePluralToSingular maps URL path resource names to singular form.

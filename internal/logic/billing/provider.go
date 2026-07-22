@@ -3,6 +3,8 @@ package billing
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/common"
 )
 
@@ -44,6 +46,11 @@ func (b *BillingProviderImpl) SettleWithUsage(ctx context.Context, tenantID, use
 
 	result, err := SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)
 	if err != nil {
+		// 接口签名无 error 返回值，无法上抛；此处结算失败意味着预扣冻结金可能仍被冻结、
+		// 未完成扣款/退款，必须记 Error 级日志告警，带上对账所需上下文以便人工/定时对账追回。
+		g.Log().Errorf(ctx,
+			"settle_with_usage failed, pre-deduct may be stuck frozen (needs reconciliation): request_id=%s tenant_id=%d model=%s pre_deduct=%.6f: %v",
+			requestID, tenantID, modelName, preDeductAmount, err)
 		return nil
 	}
 	return toCommonSettlementResult(result)

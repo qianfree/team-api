@@ -403,6 +403,13 @@ type (
 		GetSettings(ctx context.Context, req *v1.AdminSettingsGetReq) (*v1.AdminSettingsGetRes, error)
 		// UpdateSettings batch-updates settings for a given category.
 		UpdateSettings(ctx context.Context, req *v1.AdminSettingsUpdateReq) (*v1.AdminSettingsUpdateRes, error)
+		// TestStorageConfig 测试对象存储配置连通性：用生成的测试图片走一次「上传 → 下载校验 → 删除」
+		// 完整往返，验证凭证 / 桶 / 端点 / 读写删权限是否正常。
+		//
+		// access_key_id / secret 为空或掩码（"******"）时回落到已保存的配置值——与 GET 接口对敏感字段
+		// 的掩码逻辑（config.GetCategoryWithValues）以及 Turnstile 校验的 "******" 处理保持一致，
+		// 从而支持管理员在「未点保存」的状态下直接测试表单中新填/改动的配置。
+		TestStorageConfig(ctx context.Context, req *v1.AdminStorageTestReq) (*v1.AdminStorageTestRes, error)
 		// TaskList 大模型异步任务列表
 		TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error)
 		// TaskDetail 大模型异步任务详情

@@ -2,12 +2,10 @@ package common
 
 import "testing"
 
-// TestProviderFullKeyAppliesPrefixOnce guards the invariant behind the
-// storage_path fix: every provider prepends the configured path prefix exactly
-// once to whatever key it is given. FileService therefore MUST persist the RAW
-// key (relative to the prefix) — if it stored the already-prefixed key returned
-// by Upload, Download/Delete/PresignedURL would prefix it a second time and
-// target a non-existent object (e.g. "team-api/team-api/…").
+// TestProviderFullKeyAppliesPrefixOnce 守护 storage_path 前缀不变量：每个 provider 恰好
+// 为 key 加一次配置的路径前缀，且对已带前缀的 key 幂等。新行持久化 raw key（相对前缀），
+// 旧行持久化的是 Upload 返回的已带前缀 key。两者都必须解析到同一个「只加一次前缀」的对象，
+// 从而 Download/Delete/PresignedURL 无需数据迁移即可正常工作。
 func TestProviderFullKeyAppliesPrefixOnce(t *testing.T) {
 	const prefix = "team-api"
 	const rawKey = "42/1700000000/task_abc.png"
@@ -24,21 +22,20 @@ func TestProviderFullKeyAppliesPrefixOnce(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			// Raw key -> single prefix (the correct, fixed behavior).
+			// 新行（raw key）-> 只加一次前缀。
 			if got := c.fullKey(rawKey); got != want {
 				t.Fatalf("fullKey(raw) = %q, want %q", got, want)
 			}
-			// An already-prefixed key would be double-prefixed — this is exactly
-			// the bug we avoid by storing the raw key in fil_files.storage_path.
-			if got := c.fullKey(want); got != prefix+"/"+want {
-				t.Fatalf("fullKey(prefixed) = %q, want double-prefixed %q (documents why raw key must be stored)", got, prefix+"/"+want)
+			// 旧行（已带前缀的 key）-> 原样返回（幂等），不再二次加前缀。
+			// 这正是让旧 fil_files 行仍能正确解析的关键。
+			if got := c.fullKey(want); got != want {
+				t.Fatalf("fullKey(prefixed) = %q, want %q (must be idempotent for legacy rows)", got, want)
 			}
 		})
 	}
 }
 
-// TestProviderFullKeyNoPrefix verifies that with an empty prefix the key is
-// returned unchanged, so keys round-trip identically when no prefix is set.
+// TestProviderFullKeyNoPrefix 验证前缀为空时 key 原样返回，即未配置前缀时 key 往返一致。
 func TestProviderFullKeyNoPrefix(t *testing.T) {
 	const rawKey = "exports/tenant_7/20240101_000000.json"
 	providers := map[string]func(string) string{

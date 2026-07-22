@@ -244,17 +244,32 @@ dao.TntUsers.Ctx(ctx).Where("id", id).Data(do.TntUsers{
 
 ### 事务
 
+**统一写法：`g.DB().Transaction` 入口 + 闭包内 `dao.Xxx.Ctx(ctx)` 传播式**（GoFrame 官方推荐）。
+
+GoFrame 的 `Transaction` 会把事务对象**注入闭包的 `ctx`**，闭包内任何 `dao.Xxx.Ctx(ctx)` / `g.DB().Ctx(ctx)` 只要用的是这个 `ctx`，就自动挂到当前事务，无需手动持有 `tx` 句柄。
+
 ```go
+// 正确 — ctx 传播式：闭包内统一用 dao.Xxx.Ctx(ctx)，不碰 tx 句柄
 err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-    // tx.Model() 替代 dao.Xxx.Ctx()，确保操作在同一事务内
-    _, err := tx.Model("tnt_tenants").Ctx(ctx).Data(do.TntTenants{...}).Insert()
+    _, err := dao.TntTenants.Ctx(ctx).Data(do.TntTenants{...}).Insert()
     if err != nil {
-        return err  // 自动回滚
+        return err // 返回 error 自动回滚；返回 nil 自动提交；panic 也会回滚
     }
-    _, err = tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{...}).Insert()
+    _, err = dao.TntUsers.Ctx(ctx).Data(do.TntUsers{...}).Insert()
     return err
 })
 ```
+
+**强约束（写事务必须遵守）：**
+
+1. **入口统一用 `g.DB().Transaction(ctx, ...)`**，不要用 `dao.Xxx.Transaction(...)`。后者会把事务"挂在某张表"上产生误导（闭包内往往操作的是别的表），且不利于统一。
+2. **闭包内一律用 `dao.Xxx.Ctx(ctx)`**（或原生 `g.DB().Ctx(ctx).Exec(...)`），**不使用 `tx` 句柄**。闭包签名 `func(ctx, tx gdb.TX)` 是框架要求，保留不动，但函数体不引用 `tx`（Go 不会因未使用的参数报错）。
+3. **`ctx` 必须逐层传递**——这是本写法的**承重纪律**。闭包内调用其它函数时，必须把闭包的 `ctx` 传下去，被调函数内部也必须用 `dao.Xxx.Ctx(ctx)`，事务才会贯穿。
+4. **原生 SQL 例外**：钱包自减/`GREATEST` 等 DO 表达不了的算术更新，保留原生 SQL，入口从 `tx.Ctx(ctx).Exec(...)` 换成 `g.DB().Ctx(ctx).Exec(...)`，SQL 与 PostgreSQL 的 `$1/$2` 占位符原样保留。
+
+**⚠️ 头号陷阱——静默脱离事务**：闭包内若漏写 `.Ctx(ctx)`（如 `g.DB().Model("t").Insert()`）或误传了不带事务的 ctx，该语句会**脱离事务被真正提交、无法回滚**，且**没有任何编译/运行时报错**。验证手段：开 SQL 调试日志，事务内每条语句都应带 `[txid:N]`；不带 `txid` 的就是漏挂了。
+
+**嵌套事务/传播行为**：默认传播类型为 `PropagationNested`（用 SavePoint），闭包内再调一个自己开 `Transaction` 的函数会自动成为父事务的嵌套保存点，跟随父事务回滚。若某操作需要"即使主流程回滚也要独立提交"（如审计留痕），必须显式用 `TransactionWithOptions(ctx, gdb.TxOptions{Propagation: gdb.PropagationRequiresNew}, ...)`。
 
 ### g.Map vs DO 结构体
 

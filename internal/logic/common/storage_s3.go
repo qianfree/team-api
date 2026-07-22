@@ -12,14 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3StorageProvider implements StorageProvider using AWS S3 / MinIO.
+// S3StorageProvider 基于 AWS S3 / MinIO 实现 StorageProvider。
 type S3StorageProvider struct {
 	client *s3.Client
 	bucket string
 	prefix string
 }
 
-// NewS3Provider creates a new S3/MinIO storage provider.
+// NewS3Provider 创建一个 S3/MinIO 存储 provider。
 func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 	var opts []func(*awsconfig.LoadOptions) error
 
@@ -44,10 +44,14 @@ func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.Region != "" {
 			o.Region = cfg.Region
+		} else if cfg.Provider == "r2" {
+			// Cloudflare R2 的 SigV4 签名要求非空 region，官方约定用 "auto"。
+			// 后端在此兜底，避免仅依赖前端 UI 填值——经配置接口/DB 直写或 region 被清空时，
+			// 空 region 会导致签名失败。
+			o.Region = "auto"
 		}
-		// Cloudflare R2 is S3-compatible but requires an account-level
-		// BaseEndpoint. Unlike MinIO it uses virtual-hosted addressing, so
-		// path-style must NOT be forced.
+		// Cloudflare R2 兼容 S3，但需要账号级的 BaseEndpoint。与 MinIO 不同，它使用
+		// 虚拟主机式寻址（virtual-hosted），因此**不能**强制 path-style。
 		if (cfg.Provider == "minio" || cfg.Provider == "r2") && cfg.Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 			if cfg.Provider == "minio" {
@@ -63,15 +67,12 @@ func NewS3Provider(cfg *StorageConfig) (*S3StorageProvider, error) {
 	}, nil
 }
 
-// fullKey returns the full object key with prefix.
+// fullKey 返回带前缀的完整对象 key（对已带前缀的存量 key 幂等）。
 func (s *S3StorageProvider) fullKey(key string) string {
-	if s.prefix != "" {
-		return s.prefix + "/" + key
-	}
-	return key
+	return applyStoragePrefix(s.prefix, key)
 }
 
-// Upload uploads a file to S3/MinIO and returns the storage key.
+// Upload 上传文件到 S3/MinIO 并返回存储 key。
 func (s *S3StorageProvider) Upload(ctx context.Context, reader io.Reader, key string, contentType string) (string, error) {
 	fullKey := s.fullKey(key)
 
@@ -88,7 +89,7 @@ func (s *S3StorageProvider) Upload(ctx context.Context, reader io.Reader, key st
 	return fullKey, nil
 }
 
-// Download returns a reader for the file at the given key.
+// Download 返回指定 key 文件的读取器。
 func (s *S3StorageProvider) Download(ctx context.Context, key string) (io.ReadCloser, error) {
 	fullKey := s.fullKey(key)
 
@@ -103,7 +104,7 @@ func (s *S3StorageProvider) Download(ctx context.Context, key string) (io.ReadCl
 	return resp.Body, nil
 }
 
-// Delete deletes a file from S3/MinIO.
+// Delete 从 S3/MinIO 删除文件。
 func (s *S3StorageProvider) Delete(ctx context.Context, key string) error {
 	fullKey := s.fullKey(key)
 
@@ -118,7 +119,7 @@ func (s *S3StorageProvider) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// PresignedURL generates a temporary presigned URL for downloading.
+// PresignedURL 生成用于下载的临时预签名 URL。
 func (s *S3StorageProvider) PresignedURL(ctx context.Context, key string, expires time.Duration) (string, error) {
 	fullKey := s.fullKey(key)
 
@@ -134,8 +135,8 @@ func (s *S3StorageProvider) PresignedURL(ctx context.Context, key string, expire
 	return req.URL, nil
 }
 
-// PresignedThumbnailURL falls back to the original object: S3/MinIO/R2 have no
-// native server-side image processing, so a true thumbnail is not available.
+// PresignedThumbnailURL 回退到原图对象：S3/MinIO/R2 没有原生的服务端图片处理能力，
+// 无法生成真正的缩略图。
 func (s *S3StorageProvider) PresignedThumbnailURL(ctx context.Context, key string, width int, expires time.Duration) (string, error) {
 	return s.PresignedURL(ctx, key, expires)
 }

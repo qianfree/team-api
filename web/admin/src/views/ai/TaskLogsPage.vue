@@ -319,12 +319,20 @@ onMounted(() => {
           <template v-if="detailData.result_url">
             <h3 class="detail-section-title">结果</h3>
             <div class="result-preview">
-              <img
+              <!-- 图片：内联展示缩略图（省流量），点击在新标签打开原图 -->
+              <a
                 v-if="detailData.result_url && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(detailData.result_url)"
-                :src="detailData.result_url"
-                alt="任务结果"
-                style="max-width: 100%; border-radius: 6px;"
-              />
+                :href="detailData.result_url"
+                target="_blank"
+                rel="noopener"
+                title="点击查看原图"
+              >
+                <img
+                  :src="detailData.result_thumb_url || detailData.result_url"
+                  alt="任务结果"
+                  style="max-width: 100%; border-radius: 6px; cursor: zoom-in;"
+                />
+              </a>
               <a v-else :href="detailData.result_url" target="_blank" class="result-link">
                 {{ detailData.result_url }}
               </a>

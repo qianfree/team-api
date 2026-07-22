@@ -206,9 +206,9 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		return nil, common.NewNotFoundError("用户")
 	}
 
-	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Demote current owner to admin
-		_, err := tx.Model("tnt_users").Ctx(ctx).
+		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", currentOwnerID).
 			Data(do.TntUsers{
 				Role: "admin",
@@ -218,7 +218,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		}
 
 		// Promote new owner
-		_, err = tx.Model("tnt_users").Ctx(ctx).
+		_, err = dao.TntUsers.Ctx(ctx).
 			Where("id", req.NewOwnerID).
 			Data(do.TntUsers{
 				Role: "owner",
@@ -228,7 +228,7 @@ func (s *sTenant) TransferOwnership(ctx context.Context, req *v1.TenantOrgTransf
 		}
 
 		// Update tenant owner reference
-		_, err = tx.Model("tnt_tenants").Ctx(ctx).
+		_, err = dao.TntTenants.Ctx(ctx).
 			Where("id", tenantID).
 			Data(do.TntTenants{
 				OwnerUserId: req.NewOwnerID,

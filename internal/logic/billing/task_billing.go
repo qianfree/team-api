@@ -2,14 +2,14 @@ package billing
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
+	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/relay/common"
 )
@@ -29,13 +29,34 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if err != nil {
 		return 0.01, nil
 	}
+	return estimateTaskCost(pricing, ratios), nil
+}
+
+// imagePlaceholderPreDeduct 图片等按次任务**未配置按次单价**时的占位预扣（USD）。
+// 图片提交时拿不到 token 用量、无法精确估价，故先按此小额占位冻结，结算阶段再按上游
+// 返回的真实 token 用量多退少补。仅用于「无有效定价」的兜底，不覆盖已配置的真实按次单价。
+const imagePlaceholderPreDeduct = 0.1
+
+// estimateTaskCost 纯函数：根据定价与计费比率估算任务预扣费用，不依赖数据库/缓存，便于单测。
+//
+// 计费口径按任务类型分流：
+//   - per_request（按次计费，图片/音乐等）：直接取按次单价；
+//   - 时长类任务（视频生成，ratios 携带 duration/resolution 信号）：按
+//     10000 tokens/s × duration × resolution 预估 token 再乘输出单价；
+//   - 其余无时长信号的任务（如未显式配成 per_request 的图片模型）：退回按次单价，
+//     **不再**套用视频 token 估算——图片没有时长/分辨率，套 10000×5×2.25 会凭空估出
+//     11.25 万 token 的天价预扣（$30/1M 输出价即得 $3.375），且与结算的「0 token」自相矛盾。
+func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64 {
+	if pricing == nil {
+		return 0.01
+	}
 
 	var cost float64
-
-	// 按次计费：直接用单价
-	if pricing.BillingMode == "per_request" {
+	switch {
+	case pricing.BillingMode == "per_request":
+		// 按次计费：直接用单价
 		cost = pricing.PerRequestPrice
-	} else if pricing.OutputPrice > 0 {
+	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
 		duration := 5.0 // 默认 5 秒
 		if d, ok := ratios["duration"]; ok && d > 0 {
 			duration = d
@@ -49,8 +70,15 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 		// 火山方舟视频生成约 10000 tokens/s (480p 基准)，用于预扣估算
 		estimatedTokens := 10000.0 * duration * resolutionMul
 		cost = estimatedTokens / 1_000_000.0 * pricing.OutputPrice * pricing.TenantMultiplier
-	} else {
-		cost = pricing.PerRequestPrice
+	default:
+		// 无时长信号（图片等扁平计费任务）：优先按次单价；未配按次价时用占位预扣，
+		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
+		// （见 sync_image_worker.settleSyncImageSuccess）。
+		if pricing.PerRequestPrice > 0 {
+			cost = pricing.PerRequestPrice
+		} else {
+			cost = imagePlaceholderPreDeduct
+		}
 	}
 
 	// 应用附加比率（video_input 折扣等）
@@ -64,7 +92,21 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if cost < 0.01 {
 		cost = 0.01
 	}
-	return cost, nil
+	return cost
+}
+
+// hasDurationSignal 判断计费比率里是否携带时长类任务（视频）的 duration/resolution 信号。
+// 视频提交管线（VolcengineVideoAdaptor.EstimateBilling）必然写入这两个键；图片等同步/异步
+// 任务传 nil ratios，据此区分「该走视频 token 估算」还是「按次计费」。
+func hasDurationSignal(ratios map[string]float64) bool {
+	if ratios == nil {
+		return false
+	}
+	if _, ok := ratios["duration"]; ok {
+		return true
+	}
+	_, ok := ratios["resolution"]
+	return ok
 }
 
 // PreDeductTask 预扣任务费用
@@ -121,107 +163,89 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 3. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	var balanceAfter, frozenAfter float64
-	var taskBillingID int64
-	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 3a. 更新钱包
-		now := time.Now()
-		_, err := tx.Ctx(ctx).Exec(
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			preDeductAmount, actualCost, now, wallet.ID)
-		if err != nil {
-			return fmt.Errorf("settle task: update wallet: %w", err)
-		}
-
-		// 3b. 事务内读取准确余额
-		type balRow struct {
-			Balance       float64 `json:"balance"`
-			FrozenBalance float64 `json:"frozen_balance"`
-		}
-		var br *balRow
-		err = tx.Model("bil_wallets").Ctx(ctx).
-			Where("id", wallet.ID).
-			Fields("balance, frozen_balance").
-			Scan(&br)
-		if err == nil && br != nil {
-			balanceAfter = br.Balance
-			frozenAfter = br.FrozenBalance
-		}
-
-		// 3c. 创建计费记录
-		var billingResult sql.Result
-		billingResult, err = tx.Model("bil_records").Ctx(ctx).Data(do.BilRecords{
-			TenantId:     tenantID,
-			UserId:       userID,
-			ApiKeyId:     apiKeyID,
-			ChannelId:    channelID,
-			ModelName:    modelName,
-			RequestId:    requestID,
-			RelayMode:    "task",
-			InputTokens:  0,
-			OutputTokens: totalTokens,
-			InputPrice:   0,
-			OutputPrice:  effectiveOutputPrice,
-			TotalCost:    actualCost,
-			Currency:     "USD",
-			Status:       "settled",
-			SettledAt:    gtime.NewFromTime(time.Now()),
-			BillingMode:  billingMode,
-			DiscountRatio: func() float64 {
-				if discountRatio > 0 {
-					return discountRatio
-				}
-				return 0
-			}(),
-			EffectiveInputPrice:     0,
-			EffectiveOutputPrice:    effectiveOutputPrice,
-			BillingInputMultiplier:  0,
-			BillingOutputMultiplier: 0,
-			CacheCreationTokens:     0,
-			CacheReadTokens:         0,
-			CacheCreationCost:       0,
-			CacheReadCost:           0,
-		}).Insert()
-		if err != nil {
-			return fmt.Errorf("settle task: create billing record: %w", err)
-		}
-		if billingResult != nil {
-			taskBillingID, _ = billingResult.LastInsertId()
-		}
-
-		// 3d. 记录消费流水（事务内）
-		_, err = tx.Model("bil_transactions").Ctx(ctx).Data(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "consume",
-			Amount:       -actualCost,
-			BalanceAfter: balanceAfter,
-			FrozenAfter:  frozenAfter,
-			RelatedId:    taskBillingID,
-			RelatedType:  "billing_record",
-			Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
-			UserId:       userID,
-			RequestId:    requestID,
-			ModelName:    modelName,
-			ProjectId:    0,
-			ApiKeyId:     apiKeyID,
-			TaskId:       taskID,
-		}).Insert()
-		if err != nil {
-			return fmt.Errorf("settle task: record transaction: %w", err)
-		}
-
-		// 3e. 标记预扣追踪记录为已结算（事务内）
-		_, err = tx.Ctx(ctx).Exec(
-			"UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id = $1 AND status = 'frozen'",
-			requestID)
-		if err != nil {
-			return fmt.Errorf("settle task: mark prededuct settled: %w", err)
-		}
-
-		return nil
+	//    预扣追踪同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
+	//    补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；否则残留的 _adjust
+	//    frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
+	_, err = executeSettlementTx(ctx, settlementTxParams{
+		walletID:        wallet.ID,
+		preDeductAmount: preDeductAmount,
+		actualCost:      actualCost,
+		logPrefix:       "settle task",
+		createBillingRecord: func(ctx context.Context) (int64, error) {
+			billingResult, err := dao.BilRecords.Ctx(ctx).Data(do.BilRecords{
+				TenantId:     tenantID,
+				UserId:       userID,
+				ApiKeyId:     apiKeyID,
+				ChannelId:    channelID,
+				ModelName:    modelName,
+				RequestId:    requestID,
+				RelayMode:    "task",
+				InputTokens:  0,
+				OutputTokens: totalTokens,
+				InputPrice:   0,
+				OutputPrice:  effectiveOutputPrice,
+				TotalCost:    actualCost,
+				Currency:     "USD",
+				Status:       "settled",
+				SettledAt:    gtime.NewFromTime(time.Now()),
+				BillingMode:  billingMode,
+				DiscountRatio: func() float64 {
+					if discountRatio > 0 {
+						return discountRatio
+					}
+					return 0
+				}(),
+				EffectiveInputPrice:     0,
+				EffectiveOutputPrice:    effectiveOutputPrice,
+				BillingInputMultiplier:  0,
+				BillingOutputMultiplier: 0,
+				CacheCreationTokens:     0,
+				CacheReadTokens:         0,
+				CacheCreationCost:       0,
+				CacheReadCost:           0,
+			}).Insert()
+			if err != nil {
+				return 0, err
+			}
+			var id int64
+			if billingResult != nil {
+				id, _ = billingResult.LastInsertId()
+			}
+			return id, nil
+		},
+		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
+			return do.BilTransactions{
+				TenantId:     tenantID,
+				WalletId:     wallet.ID,
+				Type:         "consume",
+				Amount:       -actualCost,
+				BalanceAfter: balanceAfter,
+				FrozenAfter:  frozenAfter,
+				RelatedId:    billingID,
+				RelatedType:  "billing_record",
+				Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
+				UserId:       userID,
+				RequestId:    requestID,
+				ModelName:    modelName,
+				ProjectId:    0,
+				ApiKeyId:     apiKeyID,
+				TaskId:       taskID,
+			}
+		},
+		predeductRequestIDs: []string{requestID, requestID + "_adjust"},
 	})
 	if err != nil {
+		if errors.Is(err, errAlreadySettled) {
+			// 幂等跳过：该任务此前已结算完成，本次为重复调用（轮询/重放），不再扣款/写账单
+			g.Log().Warningf(ctx, "settle task: duplicate settlement skipped for request=%s (idempotent)", requestID)
+			return &common.SettlementResult{
+				PreDeductAmount: preDeductAmount,
+				ActualCost:      actualCost,
+				BaseCost:        breakdown.BaseCost,
+				TotalCost:       actualCost,
+				OutputCost:      breakdown.OutputCost,
+			}, nil
+		}
 		return nil, err
 	}
 
@@ -234,14 +258,14 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	// 5. 异步检查余额预警
 	go CheckBalanceWarning(context.Background(), tenantID)
 
-	// 6. 差额处理：实际 < 预扣时退还差额（实际 > 预扣时已在步骤 3 扣完，无需额外操作）
-	if diff < -0.001 {
-		if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
-			g.Log().Warningf(ctx, "settle task adjust refund failed for %s: %v", requestID, err)
-		}
-	}
+	// 6. 差额已在步骤 3a 一次性结清，此处不得再做任何解冻/退款：
+	//    步骤 3a 已 frozen_balance -= preDeductAmount（释放全部预扣冻结）、balance -= actualCost
+	//    （只扣真实成本），无论 actualCost 大于还是小于预扣，可用余额都已精确调整到位
+	//    （available 变化量恰为 preDeductAmount - actualCost）。
+	//    切勿再对 requestID+"_adjust" 调 UnfreezePreDeduct/SettleFailed——那会在步骤 3a 之外
+	//    二次释放从未单独冻结过的金额，导致 frozen_balance 被过度释放（Redis 侧无下限时甚至为负）。
 
-	// 6. 生成计费快照 + 摘要
+	// 7. 生成计费快照 + 摘要
 	result := &common.SettlementResult{
 		PreDeductAmount: preDeductAmount,
 		ActualCost:      actualCost,
@@ -296,6 +320,15 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 
 	if pricing.BillingMode == "per_request" {
 		bd.BaseCost = pricing.PerRequestPrice
+		bd.TotalCost = actualCost
+		return bd
+	}
+
+	// token 模式但没有真实 token 用量（图片等扁平计费任务）：把费用整体记为 BaseCost，
+	// 不摊进 OutputCost。否则快照会生成「0 token 却有 output 费用」的自相矛盾行
+	// （如 0 tokens × $30/1M = $3.375）。真实费用仍由结算的 actual_cost 体现。
+	if totalTokens <= 0 {
+		bd.BaseCost = actualCost
 		bd.TotalCost = actualCost
 		return bd
 	}

@@ -16,3 +16,6 @@ func (c *ControllerV1) AdminSettingsGet(ctx context.Context, req *v1.AdminSettin
 func (c *ControllerV1) AdminSettingsUpdate(ctx context.Context, req *v1.AdminSettingsUpdateReq) (res *v1.AdminSettingsUpdateRes, err error) {
 	return service.Admin().UpdateSettings(ctx, req)
 }
+func (c *ControllerV1) AdminStorageTest(ctx context.Context, req *v1.AdminStorageTestReq) (res *v1.AdminStorageTestRes, err error) {
+	return service.Admin().TestStorageConfig(ctx, req)
+}

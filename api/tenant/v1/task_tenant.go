@@ -26,6 +26,7 @@ type TenantTaskItem struct {
 	ActualCost      float64 `json:"actual_cost"`
 	BillingSettled  bool    `json:"billing_settled"`
 	ResultURL       string  `json:"result_url,omitempty"`
+	ResultThumbURL  string  `json:"result_thumb_url,omitempty"` // 结果图预览缩略图 URL（仅任务详情、re-host 图片任务返回）
 	Username        string  `json:"username,omitempty"`
 	SubmitTime      string  `json:"submit_time,omitempty"`
 	FinishTime      string  `json:"finish_time,omitempty"`

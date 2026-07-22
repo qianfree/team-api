@@ -20,6 +20,7 @@ interface TaskItem {
 	actual_cost: number
 	billing_settled: boolean
 	result_url?: string
+	result_thumb_url?: string
 	username?: string
 	submit_time?: string
 	finish_time?: string
@@ -368,12 +369,20 @@ onMounted(() => {
 						生成结果
 					</h4>
 					<div class="bg-gray-50 rounded-xl p-4">
-						<img
+						<!-- 图片：内联展示缩略图（省流量），点击在新标签打开原图 -->
+						<a
 							v-if="isImageResult(detailTask.result_url)"
-							:src="detailTask.result_url"
-							alt="任务结果"
-							class="max-w-full rounded-lg"
-						/>
+							:href="detailTask.result_url"
+							target="_blank"
+							rel="noopener"
+							title="点击查看原图"
+						>
+							<img
+								:src="detailTask.result_thumb_url || detailTask.result_url"
+								alt="任务结果"
+								class="max-w-full rounded-lg cursor-zoom-in"
+							/>
+						</a>
 						<a v-else :href="detailTask.result_url" target="_blank" class="text-primary-600 hover:text-primary-700 text-sm break-all">
 							{{ detailTask.result_url }}
 						</a>

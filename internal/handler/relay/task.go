@@ -322,8 +322,10 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		// 同步阻塞图片：worker 池异步化（阿里 multimodal 恒走；其余同步厂商受开关约束）
 		HandleSyncImageSubmit(r, body, rc, channelMeta)
 	default:
-		// 同步厂商 + 「同步图片异步化」关闭：异步端点不支持，提示改用同步端点
-		writeSyncImageError(rc.Writer, 400, "async image generation is disabled for this model; call POST /v1/images/generations instead")
+		// 同步厂商 + 「同步图片异步化」关闭：异步端点不支持。附带 code=image_async_disabled，
+		// 供在线体验前端识别并优雅降级到同步端点 /v1/images/generations。
+		writeSyncImageErrorWithCode(rc.Writer, 400, "image_async_disabled",
+			"async image generation is disabled for this model; call POST /v1/images/generations instead")
 	}
 
 	if rc.TaskID != "" {

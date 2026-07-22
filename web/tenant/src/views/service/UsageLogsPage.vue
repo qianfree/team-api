@@ -890,12 +890,14 @@ onMounted(() => {
 							<div v-if="parseSnapshot(detailLog).token_costs" class="col-span-2 bg-gray-50 rounded-xl p-3">
 								<div class="text-xs font-semibold text-gray-700 mb-2">Token 费用计算</div>
 								<div class="space-y-1 text-xs">
-									<div v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key" class="flex justify-between items-center">
-										<span class="text-gray-500">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
-										<span class="font-mono">
-											{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ Number(tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ Number(tc.cost || 0).toFixed(6) }}</strong>
-										</span>
-									</div>
+									<template v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key">
+										<div v-if="(tc.tokens || 0) > 0" class="flex justify-between items-center">
+											<span class="text-gray-500">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
+											<span class="font-mono">
+												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ Number(tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ Number(tc.cost || 0).toFixed(6) }}</strong>
+											</span>
+										</div>
+									</template>
 								</div>
 							</div>
 

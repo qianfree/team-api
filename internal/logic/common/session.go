@@ -34,9 +34,10 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 	refreshExpire := getRefreshExpire(ctx)
 	expiresAt := gtime.New(time.Now().Add(refreshExpire))
 
+	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Count existing active sessions
-		count, err := tx.Model("sys_sessions").Ctx(ctx).
+		count, err := dao.SysSessions.Ctx(ctx).
 			Where("user_type", userType).
 			Where("user_id", userID).
 			Where("expires_at > NOW()").
@@ -51,7 +52,7 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 			// PostgreSQL does not support DELETE ... ORDER BY ... LIMIT,
 			// so use a subquery to find the oldest session IDs first.
 			var oldIDs []int64
-			err = tx.Model("sys_sessions").Ctx(ctx).
+			err = dao.SysSessions.Ctx(ctx).
 				Fields("id").
 				Where("user_type", userType).
 				Where("user_id", userID).
@@ -63,7 +64,7 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 				return gerror.Wrapf(err, "find old sessions")
 			}
 			if len(oldIDs) > 0 {
-				_, err = tx.Model("sys_sessions").Ctx(ctx).
+				_, err = dao.SysSessions.Ctx(ctx).
 					WhereIn("id", oldIDs).
 					Delete()
 				if err != nil {
@@ -73,7 +74,7 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 		}
 
 		// Insert new session
-		result, err := tx.Model("sys_sessions").Ctx(ctx).Data(do.SysSessions{
+		result, err := dao.SysSessions.Ctx(ctx).Data(do.SysSessions{
 			UserType:         userType,
 			UserId:           userID,
 			TenantId:         tenantID,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -57,14 +58,14 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 	batchNo := fmt.Sprintf("BATCH%s%04d", now.Format("YmdHis"), now.UnixNano()%10000)
 	created := 0
 
-	err := dao.OrdRedemptions.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		for i := 0; i < count; i++ {
 			code, err := generateCode(12)
 			if err != nil {
 				return err
 			}
 
-			_, err = tx.Model("ord_redemptions").Ctx(ctx).Insert(do.OrdRedemptions{
+			_, err = dao.OrdRedemptions.Ctx(ctx).Insert(do.OrdRedemptions{
 				Code:         code,
 				Type:         codeType,
 				Value:        req.Value,

@@ -170,6 +170,15 @@ func (s *sTenant) TenantTaskDetail(ctx context.Context, req *v1.TenantTaskDetail
 		item.CreatedAt = *task.CreatedAt
 	}
 
+	// 对 re-host 到对象存储的结果图，生成新鲜的缩略图 URL 供详情弹窗内联预览，并刷新原图 URL
+	// （规避 result_url 24h 预签名过期）。tenantID 已限定为当前租户，不跨租户。
+	if thumb, orig := common.TaskResultImageURLs(ctx, tenantID, task.PublicTaskId, 600); thumb != "" {
+		item.ResultThumbURL = thumb
+		if orig != "" {
+			item.ResultURL = orig
+		}
+	}
+
 	return &v1.TenantTaskDetailRes{
 		Task: item,
 	}, nil

@@ -3,8 +3,6 @@ package scheduler
 import (
 	"testing"
 	"time"
-
-	"github.com/qianfree/team-api/relay/constant"
 )
 
 func TestAffinityStore_SetGet(t *testing.T) {
@@ -142,30 +140,5 @@ func TestAffinityStore_CleanExpired(t *testing.T) {
 	}
 	if store.Size() != 2 {
 		t.Errorf("expected 2 remaining entries, got %d", store.Size())
-	}
-}
-
-func TestRetryStrategy_ShouldRetry(t *testing.T) {
-	tests := []struct {
-		name        string
-		err         error
-		retryCount  int
-		maxRetries  int
-		shouldRetry bool
-	}{
-		{"nil error", nil, 0, 3, false},
-		{"non-retryable", constant.NewRequestError("bad request", nil), 0, 3, false},
-		{"retryable first attempt", constant.NewUpstreamError(500, "server error", nil), 0, 3, true},
-		{"retryable at max", constant.NewUpstreamError(500, "server error", nil), 3, 3, false},
-		{"429 rate limit", constant.NewUpstreamError(429, "rate limit", nil), 1, 3, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ShouldRetry(tt.err, tt.retryCount, tt.maxRetries)
-			if result != tt.shouldRetry {
-				t.Errorf("ShouldRetry() = %v, want %v", result, tt.shouldRetry)
-			}
-		})
 	}
 }

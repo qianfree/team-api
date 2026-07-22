@@ -7,6 +7,7 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 )
@@ -189,17 +190,19 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 
 	g.Log().Warningf(ctx, "[PRE-DEDUCT] found %d orphaned pre-deducts to clean", len(tracks))
 
-	// 2. 按 tenant_id 分组聚合
-	tenantAmounts := make(map[int64]float64)
+	// 2. 按 tenant_id 分组聚合（A8：金额用 decimal 累加，避免 float64 逐笔求和漂移；
+	//    该总额会喂给 frozen_balance 释放，属金额变更路径，须精确）
+	tenantAmounts := make(map[int64]decimal.Decimal)
 	tenantRequests := make(map[int64][]string)
 	for _, t := range tracks {
-		tenantAmounts[t.TenantID] += t.Amount
+		tenantAmounts[t.TenantID] = tenantAmounts[t.TenantID].Add(dec(t.Amount))
 		tenantRequests[t.TenantID] = append(tenantRequests[t.TenantID], t.RequestID)
 	}
 
 	// 3. 逐租户释放冻结金额
-	for tenantID, totalAmount := range tenantAmounts {
+	for tenantID, totalAmountD := range tenantAmounts {
 		requestIDs := tenantRequests[tenantID]
+		totalAmount := roundMoney(totalAmountD) // decimal 累加结果收敛到 10 位再落库
 
 		// 释放 DB frozen_balance
 		_, err := g.DB().Ctx(ctx).Exec(ctx,

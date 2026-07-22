@@ -7,6 +7,7 @@ import {
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 // ============================================================
 // Helpers
@@ -134,10 +135,14 @@ const columns: TableColumnData[] = [
       const first = isImage(record)
         ? h(Button, { size: 'mini', type: 'text', onClick: () => openPreview(record) }, () => '预览')
         : h(Button, { size: 'mini', type: 'text', onClick: () => downloadOriginal(record) }, () => '下载')
-      return h('div', { style: 'display:flex;gap:4px' }, [
+      const nodes = [
         first,
-        h(Button, { size: 'mini', type: 'text', status: 'danger', onClick: () => deleteFile(record) }, () => '删除'),
-      ])
+        // 删除为破坏性操作，按 file:delete 权限渲染（super_admin 直接放行）。
+        hasPermission('file:delete')
+          ? h(Button, { size: 'mini', type: 'text', status: 'danger', onClick: () => deleteFile(record) }, () => '删除')
+          : null,
+      ].filter(Boolean)
+      return h('div', { style: 'display:flex;gap:4px' }, nodes)
     },
   },
 ]
@@ -319,7 +324,7 @@ onMounted(() => {
   <div>
     <PageHeader title="文件管理" description="对象存储文件观测与清理">
       <template #actions>
-        <APopover trigger="click" position="br">
+        <APopover v-if="hasPermission('system:edit')" trigger="click" position="br">
           <AButton>
             <template #icon><IconSettings /></template>
             保留策略
@@ -337,7 +342,7 @@ onMounted(() => {
             </div>
           </template>
         </APopover>
-        <AButton :loading="cleanupLoading" @click="manualCleanup">手动清理过期文件</AButton>
+        <AButton v-if="hasPermission('file:cleanup')" :loading="cleanupLoading" @click="manualCleanup">手动清理过期文件</AButton>
       </template>
     </PageHeader>
 

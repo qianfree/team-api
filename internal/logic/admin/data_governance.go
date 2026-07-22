@@ -152,10 +152,12 @@ type FileCleanupResult struct {
 }
 
 // deleteExpiredFiles 删除 created_at 早于 cutoff 的 fil_files 行及其存储对象。
-// exports=true 匹配 storage_path LIKE 'exports/%'（导出文件）；exports=false 匹配
-// 其余（AI re-host 图片等 provider 上传的文件）。删除经 FileService.Delete 完成，
-// 会一并删除桶中对象（而非仅删库行，避免存储泄漏）。fileSvc 为 nil 时（对象存储未
-// 配置）退化为仅删库行。分批处理以限制内存与单次事务规模。
+// exports=true 匹配导出文件（storage_path LIKE 'exports/%'）；exports=false 只匹配
+// **图片**文件（mime_type LIKE 'image/%' 且非导出）——file_image_retention_days 的
+// 语义即「图片保留期」，绝不能连带删除非图片的 provider 上传文件（附件/头像等），否则
+// 会误删用户数据。删除经 FileService.Delete 完成，会一并删除桶中对象（而非仅删库行，
+// 避免存储泄漏）。fileSvc 为 nil 时（对象存储未配置）退化为仅删库行。分批处理以限制
+// 内存与单次事务规模。
 func deleteExpiredFiles(ctx context.Context, fileSvc *common.FileService, cutoff time.Time, exports bool) (int, error) {
 	const batchSize = 500
 	total := 0
@@ -164,7 +166,9 @@ func deleteExpiredFiles(ctx context.Context, fileSvc *common.FileService, cutoff
 		if exports {
 			m = m.Where("storage_path LIKE ?", "exports/%")
 		} else {
-			m = m.Where("storage_path NOT LIKE ?", "exports/%")
+			// 只清理图片：按 mime_type 精确限定，不再用「非导出」笼统匹配所有上传文件。
+			m = m.Where("storage_path NOT LIKE ?", "exports/%").
+				Where("mime_type LIKE ?", "image/%")
 		}
 
 		var batch []struct {
@@ -229,8 +233,8 @@ func CleanupExpiredExportFiles(ctx context.Context) error {
 	return err
 }
 
-// CleanupExpiredImages 清理过期的 AI re-host 图片及其它 provider 上传文件（含存储对象）。
-// file_image_retention_days<=0 表示关闭（默认），直接跳过。
+// CleanupExpiredImages 清理过期的图片文件（含存储对象）。仅删除 mime_type 为 image/* 的文件，
+// 不影响导出文件与其它非图片上传。file_image_retention_days<=0 表示关闭（默认），直接跳过。
 func CleanupExpiredImages(ctx context.Context) (int, error) {
 	retentionDays := common.Config().GetInt(ctx, "file_image_retention_days")
 	if retentionDays <= 0 {
@@ -345,14 +349,14 @@ func cleanupDeactivatedTenants(ctx context.Context) error {
 		// remains consistent (no partial anonymization/deletion).
 		err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 			tenantID := t.ID
-			if _, err := tx.Model("tnt_users").Ctx(ctx).Where("tenant_id", tenantID).
+			if _, err := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID).
 				Data(do.TntUsers{DisplayName: "[deleted]", Email: fmt.Sprintf("deleted_%d@deleted.local", tenantID)}).Update(); err != nil {
 				return gerror.Wrapf(err, "anonymize users for tenant %d", tenantID)
 			}
-			if _, err := tx.Model("api_keys").Ctx(ctx).Where("tenant_id", tenantID).Delete(); err != nil {
+			if _, err := dao.ApiKeys.Ctx(ctx).Where("tenant_id", tenantID).Delete(); err != nil {
 				return gerror.Wrapf(err, "delete api keys for tenant %d", tenantID)
 			}
-			if _, err := tx.Model("tnt_tenants").Ctx(ctx).Where("id", tenantID).
+			if _, err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).
 				Data(do.TntTenants{DataRemovalAt: gtime.Now()}).Update(); err != nil {
 				return gerror.Wrapf(err, "update data removal for tenant %d", tenantID)
 			}

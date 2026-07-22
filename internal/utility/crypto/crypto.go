@@ -91,15 +91,26 @@ func DecryptString(key []byte, encoded string) (string, error) {
 	return string(plain), nil
 }
 
-// MustGetEncryptionKey returns the encryption key from a hex-encoded string.
-// Panics if the key is invalid.
-func MustGetEncryptionKey(hexKey string) []byte {
+// GetEncryptionKey decodes and validates a hex-encoded AES-256 key.
+// Returns an error instead of panicking, so callers can validate at startup.
+func GetEncryptionKey(hexKey string) ([]byte, error) {
 	key, err := hex.DecodeString(hexKey)
 	if err != nil {
-		panic(fmt.Sprintf("invalid encryption key hex: %v", err))
+		return nil, fmt.Errorf("invalid encryption key hex: %w", err)
 	}
 	if len(key) != 32 {
-		panic(fmt.Sprintf("encryption key must be 32 bytes, got %d", len(key)))
+		return nil, fmt.Errorf("%w: got %d", ErrInvalidKeyLength, len(key))
+	}
+	return key, nil
+}
+
+// MustGetEncryptionKey returns the encryption key from a hex-encoded string.
+// Panics if the key is invalid. Prefer validating the key at startup (see
+// GetEncryptionKey) so this never panics on a live request path.
+func MustGetEncryptionKey(hexKey string) []byte {
+	key, err := GetEncryptionKey(hexKey)
+	if err != nil {
+		panic(err.Error())
 	}
 	return key
 }

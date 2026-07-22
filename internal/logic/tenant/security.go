@@ -355,6 +355,11 @@ func getEncKey(ctx context.Context) []byte {
 
 // GetIPWhitelist returns the tenant's IP whitelist configuration.
 func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGetReq) (*v1.TenantIPWhitelistGetRes, error) {
+	// IP 白名单是租户级组织安全配置，仅 owner/admin 可查看
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
@@ -388,6 +393,11 @@ func (s *sTenant) GetIPWhitelist(ctx context.Context, _ *v1.TenantIPWhitelistGet
 
 // UpdateIPWhitelist updates the tenant's IP whitelist configuration.
 func (s *sTenant) UpdateIPWhitelist(ctx context.Context, req *v1.TenantIPWhitelistUpdateReq) (*v1.TenantIPWhitelistUpdateRes, error) {
+	// IP 白名单是租户级组织安全配置，仅 owner/admin 可修改，防止普通成员削弱整个组织的访问控制
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	var tenant *entity.TntTenants
 	err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant)
