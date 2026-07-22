@@ -157,37 +157,42 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 		name = src.Name + " (副本)"
 	}
 
-	// 创建新渠道（复制配置）
-	newID, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
-		Name:                     name,
-		Type:                     src.Type,
-		BaseUrl:                  src.BaseURL,
-		Status:                   "active",
-		Priority:                 src.Priority,
-		Weight:                   src.Weight,
-		TestModel:                src.TestModel,
-		Remark:                   src.Remark,
-		Settings:                 src.Settings,
-		IsVip:                    src.IsVIP,
-		SharingThreshold:         src.SharingThreshold,
-		PreemptionThreshold:      src.PreemptionThreshold,
-		BorrowingCooldownSeconds: src.BorrowingCooldownSeconds,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// 创建 Key
+	// 加密 Key（放在事务外，加密失败无需回滚任何写入）
 	encKey := relay.GetEncryptionKey()
 	encrypted, err := uc.EncryptString(encKey, req.ApiKey)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "encrypt api key failed")
 	}
-	_, err = dao.ChnChannelKeys.Ctx(ctx).Insert(do.ChnChannelKeys{
-		ChannelId:    newID,
-		Name:         "default",
-		EncryptedKey: encrypted,
-		Status:       "active",
+
+	// 渠道 + 密钥在同一事务内创建：密钥插入失败则回滚渠道，避免留下没有任何 Key 的孤儿渠道。
+	var newID int64
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		var e error
+		newID, e = dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
+			Name:                     name,
+			Type:                     src.Type,
+			BaseUrl:                  src.BaseURL,
+			Status:                   "active",
+			Priority:                 src.Priority,
+			Weight:                   src.Weight,
+			TestModel:                src.TestModel,
+			Remark:                   src.Remark,
+			Settings:                 src.Settings,
+			IsVip:                    src.IsVIP,
+			SharingThreshold:         src.SharingThreshold,
+			PreemptionThreshold:      src.PreemptionThreshold,
+			BorrowingCooldownSeconds: src.BorrowingCooldownSeconds,
+		})
+		if e != nil {
+			return e
+		}
+		_, e = dao.ChnChannelKeys.Ctx(ctx).Insert(do.ChnChannelKeys{
+			ChannelId:    newID,
+			Name:         "default",
+			EncryptedKey: encrypted,
+			Status:       "active",
+		})
+		return e
 	})
 	if err != nil {
 		return nil, err

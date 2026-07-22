@@ -290,6 +290,7 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
+		Where("tenant_id", tenantID).
 		Data(updateData).Update()
 	if err != nil {
 		return nil, gerror.Wrapf(err, "更新项目")
@@ -338,6 +339,7 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
+		Where("tenant_id", tenantID).
 		Data(do.TntProjects{
 			Status: "archived",
 		}).Update()
@@ -371,6 +373,7 @@ func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUna
 
 	_, err = dao.TntProjects.Ctx(ctx).
 		Where("id", req.Id).
+		Where("tenant_id", tenantID).
 		Data(do.TntProjects{
 			Status: "active",
 		}).Update()

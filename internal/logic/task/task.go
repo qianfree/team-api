@@ -123,15 +123,26 @@ func ExecuteTask(ctx context.Context, taskID int64) error {
 		return gerror.Newf("task %d not found or not pending", taskID)
 	}
 
-	// Mark as running
-	_, err = dao.TskTasks.Ctx(ctx).
+	// Mark as running —— 原子领取：仅当仍为 pending 时才能翻成 running。
+	// 用条件更新 + RowsAffected 做 CAS（对齐 async_provider.UpdateTaskCAS 的做法），
+	// 避免「先 SELECT pending 再无条件 UPDATE」在多副本/并发调度下被两个 worker 同时领取、重复执行同一任务。
+	res, err := dao.TskTasks.Ctx(ctx).
 		Where("id", taskID).
+		Where("status", StatusPending).
 		Data(do.TskTasks{
 			Status:    StatusRunning,
 			StartedAt: gtime.Now(),
 		}).Update()
 	if err != nil {
 		return gerror.Wrapf(err, "update task status to running")
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return gerror.Wrapf(err, "confirm task claim result")
+	}
+	if affected == 0 {
+		// 另一 worker 已抢先领取（status 已非 pending），本次放弃，避免重复执行
+		return nil
 	}
 
 	// Get handler
