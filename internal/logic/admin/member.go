@@ -8,6 +8,7 @@ import (
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -41,13 +42,13 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 
 	var userID int64
 
-	err = dao.TntTenants.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// Check tenant exists and status
 		var tenant *struct {
 			Id     int64  `json:"id"`
 			Status string `json:"status"`
 		}
-		err := tx.Model("tnt_tenants").Ctx(ctx).
+		err := dao.TntTenants.Ctx(ctx).
 			Where("id", req.TenantID).Scan(&tenant)
 		if err = common.IgnoreScanNoRows(err); err != nil {
 			return err
@@ -64,7 +65,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		if err != nil {
 			return err
 		}
-		memberCount, err := tx.Model("tnt_users").Ctx(ctx).
+		memberCount, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", req.TenantID).
 			Where("status", "active").
 			Count()
@@ -77,7 +78,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		}
 
 		// Check username uniqueness within tenant
-		count, err := tx.Model("tnt_users").Ctx(ctx).
+		count, err := dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", req.TenantID).
 			Where("username", username).Count()
 		if err != nil {
@@ -88,7 +89,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		}
 
 		// Check email uniqueness within tenant
-		count, err = tx.Model("tnt_users").Ctx(ctx).
+		count, err = dao.TntUsers.Ctx(ctx).
 			Where("tenant_id", req.TenantID).
 			Where("email", email).Count()
 		if err != nil {
@@ -99,7 +100,7 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 		}
 
 		// Create user
-		userResult, err := tx.Model("tnt_users").Ctx(ctx).Data(do.TntUsers{
+		userResult, err := dao.TntUsers.Ctx(ctx).Data(do.TntUsers{
 			TenantId:     req.TenantID,
 			Username:     username,
 			Email:        email,
@@ -213,8 +214,8 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 	}
 
 	// Revoke all active API keys and disable user in transaction
-	err = dao.TntUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model("api_keys").Ctx(ctx).
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := dao.ApiKeys.Ctx(ctx).
 			Where("user_id", req.Id).
 			Where("status", "active").
 			Data(do.ApiKeys{
@@ -224,7 +225,7 @@ func (s *sAdmin) DisableMember(ctx context.Context, req *v1.AdminMemberDisableRe
 			return err
 		}
 
-		_, err = tx.Model("tnt_users").Ctx(ctx).
+		_, err = dao.TntUsers.Ctx(ctx).
 			Where("id", req.Id).
 			Data(do.TntUsers{
 				Status: "disabled",
@@ -257,8 +258,8 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 	}
 
 	// Restore disabled API keys and enable user in transaction
-	err = dao.TntUsers.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model("api_keys").Ctx(ctx).
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := dao.ApiKeys.Ctx(ctx).
 			Where("user_id", req.Id).
 			Where("status", "disabled").
 			Data(do.ApiKeys{
@@ -268,7 +269,7 @@ func (s *sAdmin) EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq)
 			return err
 		}
 
-		_, err = tx.Model("tnt_users").Ctx(ctx).
+		_, err = dao.TntUsers.Ctx(ctx).
 			Where("id", req.Id).
 			Data(do.TntUsers{
 				Status: "active",

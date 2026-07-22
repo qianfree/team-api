@@ -15,6 +15,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/taskchannel"
 	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
@@ -338,6 +339,15 @@ func HandleTaskFetch(
 	if task.ResultURL != "" {
 		respBody["url"] = task.ResultURL
 	}
+	// sync_image「同步图片异步化」任务支持多图：把归一化的全部图片作为 data 数组吐出，
+	// url 仍保留首图（向后兼容）。仅对 sync_image 任务开启——其 Data 为标准 OpenAI
+	// ImageResponse；视频 / suno / mj 等平台的 Data 结构不同，不能误吐。
+	if isSyncImageResultTask(task) && len(task.Data) > 0 {
+		var img dto.ImageResponse
+		if json.Unmarshal(task.Data, &img) == nil && len(img.Data) > 0 {
+			respBody["data"] = img.Data
+		}
+	}
 	if task.FailReason != "" {
 		respBody["error"] = task.FailReason
 	}
@@ -346,6 +356,22 @@ func HandleTaskFetch(
 	}
 
 	writeJSON(rc.Writer, http.StatusOK, respBody)
+}
+
+// isSyncImageResultTask 判断任务是否为「同步图片异步化」任务（private_data.task_type == sync_image）。
+// 仅这类任务的 Data 为归一化的 OpenAI ImageResponse，可安全地在 fetch 响应里吐 data 数组；
+// 其他平台（视频 / suno / mj）的 Data 结构不同，不在此列，避免误吐内部数据。
+func isSyncImageResultTask(t *common.AsyncTask) bool {
+	if len(t.PrivateData) == 0 {
+		return false
+	}
+	var pd struct {
+		TaskType string `json:"task_type"`
+	}
+	if json.Unmarshal(t.PrivateData, &pd) != nil {
+		return false
+	}
+	return pd.TaskType == string(constant.TaskPlatformSyncImage)
 }
 
 // writeTaskError 写入错误响应

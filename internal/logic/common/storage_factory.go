@@ -2,10 +2,18 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
-// StorageConfig holds the configuration for a storage provider.
+// ErrStorageNotConfigured 表示对象存储尚未配置（缺少 provider / bucket）。
+//
+// 用哨兵错误而非普通 error，便于上层（如 sync_image worker）用 errors.Is 精确识别「未配置」
+// 这一**可操作**场景，给出面向用户的友好提示（引导去系统设置配置 OSS），从而与上传/下载
+// 等技术性失败区分开。
+var ErrStorageNotConfigured = errors.New("object storage not configured")
+
+// StorageConfig 保存某个存储 provider 的配置。
 type StorageConfig struct {
 	Provider    string
 	Endpoint    string
@@ -17,7 +25,7 @@ type StorageConfig struct {
 	PathPrefix  string
 }
 
-// GetStorageConfig reads storage configuration from the config service.
+// GetStorageConfig 从配置服务读取存储配置。
 func GetStorageConfig(ctx context.Context) *StorageConfig {
 	cfg := &StorageConfig{
 		Provider:    Config().GetString(ctx, "storage_provider"),
@@ -35,7 +43,7 @@ func GetStorageConfig(ctx context.Context) *StorageConfig {
 	return cfg
 }
 
-// NewStorageProvider creates a StorageProvider based on the given configuration.
+// NewStorageProvider 根据给定配置创建对应的 StorageProvider。
 func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	switch cfg.Provider {
 	case "s3", "minio", "r2":
@@ -49,12 +57,19 @@ func NewStorageProvider(cfg *StorageConfig) (StorageProvider, error) {
 	}
 }
 
-// NewFileServiceFromConfig creates a FileService using the storage configuration
-// from the config service (database settings).
+// IsStorageConfigured 轻量判断对象存储是否已配置（provider + bucket 齐全）。
+// 只读配置、不构造 provider、不产生网络调用，供提交阶段的 fast-fail 使用。
+func IsStorageConfigured(ctx context.Context) bool {
+	cfg := GetStorageConfig(ctx)
+	return cfg.Provider != "" && cfg.Bucket != ""
+}
+
+// NewFileServiceFromConfig 使用配置服务（数据库设置）中的存储配置创建一个 FileService。
+// 未配置（缺 provider 或 bucket）时返回 ErrStorageNotConfigured 哨兵错误，供上层友好提示。
 func NewFileServiceFromConfig(ctx context.Context) (*FileService, error) {
 	cfg := GetStorageConfig(ctx)
-	if cfg.Bucket == "" {
-		return nil, fmt.Errorf("storage bucket not configured")
+	if cfg.Provider == "" || cfg.Bucket == "" {
+		return nil, ErrStorageNotConfigured
 	}
 
 	provider, err := NewStorageProvider(cfg)

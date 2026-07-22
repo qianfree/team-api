@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
@@ -68,9 +70,33 @@ var (
 	syncImageFailed    atomic.Int64 // 累计 worker 处理失败
 
 	syncImageFileSvc   *lcommon.FileService
+	syncImageFileSvcMu sync.Mutex // 保护 syncImageFileSvc 的惰性重建
 	syncImageBilling   common.TaskBillingProvider
 	syncImageRelayProv common.DataProvider
 )
+
+// acquireSyncImageFileSvc 返回共享的对象存储 FileService，惰性重建。
+//
+// 对象存储配置存于数据库（sys_options），由管理后台**运行时**配置。若进程启动时存储尚未
+// 配置，StartSyncImageWorkers 首次构造会失败、syncImageFileSvc 为 nil。此处按需重建：一旦
+// 存储在管理后台配置好，下一个 b64_json 图片任务即可成功取到 FileService，**无需重启进程**。
+// 这与 admin / data_governance 每次按数据库配置重建 FileService 的行为对齐——只有本 worker
+// 池此前把启动时的构造结果缓存成唯一真相源，才导致「配置后仍报未配置」。
+//
+// 声明为包级变量，便于单测在无数据库环境下覆盖（避免触达 sys_options 查询）。
+var acquireSyncImageFileSvc = func(ctx context.Context) (*lcommon.FileService, error) {
+	syncImageFileSvcMu.Lock()
+	defer syncImageFileSvcMu.Unlock()
+	if syncImageFileSvc != nil {
+		return syncImageFileSvc, nil
+	}
+	fs, err := lcommon.NewFileServiceFromConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	syncImageFileSvc = fs
+	return fs, nil
+}
 
 // SyncImageJob 同步图片任务的内存载荷（请求体只放内存，不落库，无需崩溃重放）。
 type SyncImageJob struct {
@@ -99,12 +125,14 @@ func StartSyncImageWorkers(ctx context.Context) {
 	syncImageBilling = billing.NewTaskBillingProvider()
 	syncImageRelayProv = relay.NewDataProvider()
 
-	// 对象存储在启动时构造一次共享（无状态，可安全共享）。未配置时置 nil，
-	// b64_json 任务在无存储时会走 FAILURE+退款（见 buildImageResult）。
+	// 对象存储配置存于数据库，可能在进程启动后才由管理后台配置。这里尝试预热一次；
+	// 未配置时保持 nil，后续任务运行时由 acquireSyncImageFileSvc 惰性重建（无需重启）。
 	if fs, err := lcommon.NewFileServiceFromConfig(ctx); err != nil {
-		g.Log().Warningf(ctx, "sync_image: object storage not configured (%v); b64_json image tasks will fail until storage is set", err)
+		g.Log().Warningf(ctx, "sync_image: object storage not yet configured (%v); will lazily rebuild when a b64_json image task runs", err)
 	} else {
+		syncImageFileSvcMu.Lock()
 		syncImageFileSvc = fs
+		syncImageFileSvcMu.Unlock()
 	}
 
 	for i := 0; i < syncImageWorkerCount; i++ {
@@ -497,13 +525,24 @@ func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.Channe
 func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection, memW *memResponseWriter) {
 	resultURL, normalized, err := buildImageResult(ctx, job, memW.Bytes())
 	if err != nil {
-		failSyncImageJob(ctx, job, sel, fmt.Sprintf("build result: %v", err))
+		failSyncImageJob(ctx, job, sel, imageFailReason(err))
 		return
 	}
 
+	// 回填上游返回的 token 用量：gpt-image-1/2 等在响应体 usage 里带 input/output/total_tokens，
+	// DALL·E 等则没有。据此重算实际费用（token 计费模型多退少补），并写入计费/用量记录，
+	// 避免「同步转异步后 token 恒为 0、费用只等于预扣」的问题。
+	promptTokens, completionTokens, totalTokens := extractImageUsage(memW.Bytes())
+
 	now := time.Now()
-	// per_request 图片：实际费用 == 预扣（RecalculateByTokens 对 per_request 返回 0，无 token 重算）。
+	// 默认实际费用 == 预扣（按次计费图片，如 DALL·E，无 token 用量）。
 	actualCost := job.PreDeductAmount
+	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
+	if totalTokens > 0 {
+		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost > 0 {
+			actualCost = tokenCost
+		}
+	}
 
 	// 1. 赢得终态（billing_settled=false 先落）
 	if err := DefaultAsyncProvider.UpdateTaskCAS(ctx, &common.AsyncTask{
@@ -519,9 +558,9 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 		return
 	}
 
-	// 2. 结算钱包
+	// 2. 结算钱包（传真实 token 用量：驱动 bil_records.output_tokens 与计费快照的 token 明细）
 	settleResult, serr := syncImageBilling.SettleTaskSuccess(ctx, job.TenantID, job.UserID, job.ApiKeyID, sel.ChannelID,
-		job.Model, job.RequestID, actualCost, job.PreDeductAmount, 0, 0, job.Ratios, job.PublicTaskID)
+		job.Model, job.RequestID, actualCost, job.PreDeductAmount, totalTokens, completionTokens, job.Ratios, job.PublicTaskID)
 	if serr != nil {
 		// 保留 billing_settled=false，由未结算兜底网重放结算
 		g.Log().Warningf(ctx, "sync_image: task %s settle success failed (unsettled net will retry): %v", job.PublicTaskID, serr)
@@ -548,6 +587,9 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 
 	chBasic := &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	usageTask := buildUsageTask(job, sel, "SUCCESS", actualCost, now)
+	usageTask.PromptTokens = promptTokens
+	usageTask.CompletionTokens = completionTokens
+	usageTask.TotalTokens = totalTokens
 	recordTaskUsage(usageTask, chBasic, true, "", settleResult)
 	// 闭环审计：把提交阶段写入的 SUBMITTED 审计记录更新为终态（与 pollSingleTask 一致），
 	// 否则请求审计日志里的任务状态会一直停留在「已提交」。
@@ -600,8 +642,12 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
 }
 
-// buildImageResult 解析上游图片响应，返回结果 URL 与归一化后的响应体（供落库 Data）。
+// buildImageResult 解析上游图片响应，re-host **全部**图片，返回首图 URL（向后兼容单值
+// ResultURL）与归一化后的多图响应体（供落库 Data；fetch 端点据此吐出 data 数组）。
 // b64_json 无条件 re-host；url 按配置开关（默认透传，开启则下载 re-host）。
+//
+// 采用 all-or-nothing：任一张解码 / re-host 失败即整体返回错误，由调用方走 FAILURE + 全额
+// 退款（与单图行为一致）。计费按次扁平，多图不额外计费，与同步端点口径保持一致。
 func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resultURL string, normalized []byte, err error) {
 	var imgResp dto.ImageResponse
 	if e := json.Unmarshal(body, &imgResp); e != nil {
@@ -610,46 +656,84 @@ func buildImageResult(ctx context.Context, job *SyncImageJob, body []byte) (resu
 	if len(imgResp.Data) == 0 {
 		return "", nil, fmt.Errorf("empty image data")
 	}
-	if len(imgResp.Data) > 1 {
-		g.Log().Warningf(ctx, "sync_image: task %s returned %d images; only the first is surfaced via ResultURL", job.PublicTaskID, len(imgResp.Data))
+
+	outData := make([]dto.ImageData, 0, len(imgResp.Data))
+	for i, img := range imgResp.Data {
+		var url string
+		switch {
+		case img.B64JSON != "":
+			data, e := base64.StdEncoding.DecodeString(img.B64JSON)
+			if e != nil {
+				return "", nil, fmt.Errorf("decode b64_json[%d]: %w", i, e)
+			}
+			if url, e = rehostImage(ctx, job, data, "image/png", ".png", i); e != nil {
+				return "", nil, fmt.Errorf("rehost b64_json[%d]: %w", i, e)
+			}
+		case img.URL != "":
+			if rehostURLEnabled(ctx) {
+				if url, err = rehostFromURL(ctx, job, img.URL, i); err != nil {
+					return "", nil, fmt.Errorf("rehost url[%d]: %w", i, err)
+				}
+			} else {
+				url = img.URL
+			}
+		default:
+			return "", nil, fmt.Errorf("no url or b64_json in image response at index %d", i)
+		}
+		outData = append(outData, dto.ImageData{URL: url, RevisedPrompt: img.RevisedPrompt})
 	}
 
-	first := imgResp.Data[0]
-	switch {
-	case first.B64JSON != "":
-		data, e := base64.StdEncoding.DecodeString(first.B64JSON)
-		if e != nil {
-			return "", nil, fmt.Errorf("decode b64_json: %w", e)
-		}
-		resultURL, err = rehostImage(ctx, job, data, "image/png", ".png")
-	case first.URL != "":
-		if shouldRehostURL(ctx) {
-			resultURL, err = rehostFromURL(ctx, job, first.URL)
-		} else {
-			resultURL = first.URL
-		}
-	default:
-		return "", nil, fmt.Errorf("no url or b64_json in image response")
-	}
-	if err != nil {
-		return "", nil, err
-	}
-
-	// 归一化落库：只存单张结果 URL，避免把大体积 b64 原文写进 data 列。
+	resultURL = outData[0].URL
+	// 归一化落库：存全部结果 URL（不含大体积 b64 原文），供 fetch 吐 data 数组。
 	normalized, _ = json.Marshal(dto.ImageResponse{
 		Created: imgResp.Created,
-		Data:    []dto.ImageData{{URL: resultURL, RevisedPrompt: first.RevisedPrompt}},
+		Data:    outData,
 	})
 	return resultURL, normalized, nil
 }
 
-func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string) (string, error) {
-	if syncImageFileSvc == nil {
-		return "", fmt.Errorf("object storage not configured, cannot re-host image")
+// extractImageUsage 从上游图片响应体解析 token 用量。gpt-image-1/2 在 usage 里返回
+// input_tokens / output_tokens / total_tokens；DALL·E 等无 usage 字段，返回全 0。
+// total 缺失时用 input+output 兜底。映射：prompt=input、completion=output。
+func extractImageUsage(body []byte) (prompt, completion, total int) {
+	var resp struct {
+		Usage *dto.ImageUsage `json:"usage"`
 	}
-	rec, err := syncImageFileSvc.Upload(ctx, &lcommon.FileUpload{
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
+		return 0, 0, 0
+	}
+	prompt = resp.Usage.InputTokens
+	completion = resp.Usage.OutputTokens
+	total = resp.Usage.TotalTokens
+	if total == 0 {
+		total = prompt + completion
+	}
+	return prompt, completion, total
+}
+
+// rehostImage 把单张图片字节上传对象存储并返回下载 URL。index 用于区分同一任务的多张图片，
+// 避免多图共用同一对象键相互覆盖。
+// imageFailReason 把「结果处理」阶段的内部错误映射为**面向用户**的失败原因（写入 task
+// FailReason → fetch 端点的 error 字段 → 在线体验/客户端可见）。
+//
+// 对象存储未配置是最常见、且用户可操作的错误：图片其实已在上游生成成功，只是网关无处保存
+// （b64_json 必须 re-host 到对象存储）。对这种情况给出中文友好提示，引导去系统设置配置
+// 对象存储；其余错误（上传/下载失败、上游响应异常等）保留技术细节，便于运维排查。
+func imageFailReason(err error) string {
+	if errors.Is(err, lcommon.ErrStorageNotConfigured) {
+		return "图片已生成，但平台尚未配置对象存储（OSS/S3/COS），无法保存图片。请联系管理员在系统设置中配置对象存储后重试。"
+	}
+	return "build result: " + err.Error()
+}
+
+func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentType, ext string, index int) (string, error) {
+	fs, err := acquireSyncImageFileSvc(ctx)
+	if err != nil {
+		return "", fmt.Errorf("object storage not configured, cannot re-host image: %w", err)
+	}
+	rec, err := fs.Upload(ctx, &lcommon.FileUpload{
 		Reader:      bytes.NewReader(data),
-		Filename:    job.PublicTaskID + ext,
+		Filename:    fmt.Sprintf("%s_%d%s", job.PublicTaskID, index, ext),
 		ContentType: contentType,
 		Size:        int64(len(data)),
 		TenantID:    job.TenantID,
@@ -658,18 +742,26 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 	if err != nil {
 		return "", err
 	}
-	return syncImageFileSvc.GetDownloadURL(ctx, rec.ID)
+	return fs.GetDownloadURL(ctx, rec.ID)
 }
 
-func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, error) {
-	if syncImageFileSvc == nil {
-		return "", fmt.Errorf("object storage not configured, cannot re-host image")
+// syncImageDownloadClient 用于从上游返回的图片 URL 下载**已生成好的**图片做 re-host。
+// 注意：这不是图片生成本身——生成走 adaptor 的 nonStreamClient（300s 超时），此处仅下载
+// 成品图片文件。显式设置超时，避免 http.DefaultClient 无超时时慢速/挂起的图片服务器长期
+// 占用 worker（io.LimitReader 只限体积不限时间）。120s 对 ≤20MB 的成品图很充裕，且远低于
+// 生成超时——放宽是为了避免「生成已成功却因下载慢被判失败+退款」的资损。
+var syncImageDownloadClient = &http.Client{Timeout: 120 * time.Second}
+
+func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int) (string, error) {
+	// 先确认存储可用，避免存储未配置时白白下载一遍成品图。
+	if _, err := acquireSyncImageFileSvc(ctx); err != nil {
+		return "", fmt.Errorf("object storage not configured, cannot re-host image: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := syncImageDownloadClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -685,10 +777,12 @@ func rehostFromURL(ctx context.Context, job *SyncImageJob, url string) (string, 
 	if contentType == "" {
 		contentType = "image/png"
 	}
-	return rehostImage(ctx, job, data, contentType, extFromContentType(contentType))
+	return rehostImage(ctx, job, data, contentType, extFromContentType(contentType), index)
 }
 
-func shouldRehostURL(ctx context.Context) bool {
+// rehostURLEnabled 判断上游返回 url 时是否下载 re-host（默认透传）。
+// 声明为包级变量而非普通函数，便于单测覆盖多图 url 透传路径（无需初始化配置中心）。
+var rehostURLEnabled = func(ctx context.Context) bool {
 	return lcommon.Config().GetBool(ctx, "sync_image_rehost_url")
 }
 
@@ -743,11 +837,17 @@ func syncImageJitter() {
 	time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond)
 }
 
+// truncateStr 将字符串截断到不超过 max 字节，且按 rune 边界截断——避免把多字节 UTF-8
+// 字符（如中文）从中间切断，产生非法字节写入 DB 文本列。回退到 max 之内最后一个完整 rune。
 func truncateStr(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max]
+	truncated := s[:max]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated
 }
 
 func extFromContentType(ct string) string {

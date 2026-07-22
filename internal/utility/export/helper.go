@@ -3,6 +3,7 @@ package export
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,4 +57,24 @@ func GetCellValue(row map[string]any, col Column) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", val)
+}
+
+// sanitizeCSVField 防御 CSV 公式注入（CWE-1236）。
+// Excel/LibreOffice/Google Sheets 打开 CSV 时，会把以 = + - @ 及 TAB(0x09)/CR(0x0D) 开头的
+// 单元格当作公式求值，用户可控字段（租户名/成员名/工单标题等）可借此注入 DDE/命令执行。
+// 处理策略：对以危险字符开头且【整体不是合法数字】的值，前置单引号中和为纯文本；
+// 合法数字（含负号/正号/科学计数法）保持原样，避免破坏数值列的可计算性。
+// 仅用于 CSV 写入；XLSX 经 excelize 以字符串类型单元格存储，Excel 不会将其当公式求值，无需处理。
+func sanitizeCSVField(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		if _, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+			return s // 纯数字，Excel 不会当公式，安全
+		}
+		return "'" + s
+	}
+	return s
 }

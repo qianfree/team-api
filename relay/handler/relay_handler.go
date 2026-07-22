@@ -434,7 +434,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
 		}
 
-		info := buildRelayInfo(ctx, rc, v, selection, path, headers)
+		info := buildRelayInfo(ctx, rc, v, selection, path, headers, attempt)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
 			tr.ChannelID = selection.ChannelID
@@ -473,8 +473,15 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
+			// 高成本非幂等生成（图片/视频）：DoRequest 阶段「可能已送达上游」的模糊网络错误
+			// （EOF/RST/超时）不重试，避免上游重复生成 + 重复计费；连接被拒/DNS 失败等确定
+			// 未送达的错误与状态码类错误仍照常重试。chat 等端点行为不变。
+			expensiveGen := v.relayMode == constant.RelayModeImagesGenerations ||
+				v.relayMode == constant.RelayModeImagesEdits ||
+				v.relayMode == constant.RelayModeVideoGenerations
+			retryable := constant.IsRetryableForRequest(err, expensiveGen)
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms retryable=%v",
-				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), constant.IsRetryable(err))
+				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), retryable)
 			channelErrors = append(channelErrors, failReason)
 			g.Log().Warningf(ctx, "[RelayHandler] Upstream request failed: %s", failReason)
 
@@ -483,7 +490,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
-			if constant.IsRetryable(err) && attempt < maxRetries {
+			if retryable && attempt < maxRetries {
 				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 				settleCancel()
@@ -547,7 +554,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			channelErrors = append(channelErrors, failReason)
 			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
 
-			if v.isStream || !constant.IsRetryable(err) || attempt >= maxRetries {
+			// 响应已由 adaptor 直接写入客户端（原生错误透传）时，即使 StatusCode 可重试也必须
+			// 终止重试：否则重试成功会把成功体追加到已写的错误体后，造成响应污染（错误体+成功体拼接）。
+			if v.isStream || !constant.IsRetryable(err) || attempt >= maxRetries || constant.IsResponseWritten(err) {
 				if billing != nil && preDeductAmount > 0 {
 					_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 				}
@@ -581,7 +590,8 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 }
 
 // buildRelayInfo 从渠道选择结果构建 RelayInfo
-func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header) *common.RelayInfo {
+// attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
+func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
 	return &common.RelayInfo{
 		Context:          ctx,
 		TenantID:         rc.TenantID,
@@ -589,6 +599,7 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		ApiKeyID:         rc.ApiKeyID,
 		ProjectID:        rc.ProjectID,
 		RequestID:        rc.RequestID,
+		RetryIndex:       attempt,
 		RelayMode:        int(v.relayMode),
 		IsStream:         v.isStream,
 		OriginModelName:  v.modelName,

@@ -14,9 +14,12 @@ interface ModelItem {
 	per_request_price?: number | null
 	input_price?: number | null
 	output_price?: number | null
-	// async_image 为 true 时该图片模型必须走异步端点（DashScope 等）：
-	// 提交 /v1/images/generations/async 拿 task_id 后轮询取图。
+	// async_image 为 true 时该图片模型的异步端点可用（真异步厂商如 DashScope，或同步厂商且
+	// 后台「同步图片异步化」开启）：提交 /v1/images/generations/async 拿 task_id 后轮询取图。
 	async_image?: boolean
+	// image_sync_supported 为 true 时该图片模型的同步端点（/v1/images/generations，阻塞一次性
+	// 返回）可用；「仅异步」厂商（阿里 image-synthesis 等）为 false。缺省（旧后端）视为可用。
+	image_sync_supported?: boolean
 }
 const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 
@@ -146,9 +149,23 @@ interface ImageResult { b64_json?: string; url?: string; revised_prompt?: string
 const images = ref<ImageResult[]>([])
 const tokenUsage = reactive({ promptTokens: 0, totalTokens: 0, cost: '' })
 
-// 该模型是否必须走异步端点（DashScope 等）：由 /tenant/models 的 async_image 决定，
-// 与后端同步端点拦截 gate 同源。异步模型走「提交 + 轮询」，同步模型一次性返回。
-const isAsyncModel = computed(() => selectedModelItem.value?.async_image === true)
+// 模型能力：异步端点是否可用 / 同步端点是否可用（同步缺省视为可用，兼容旧后端）。
+// 由 /tenant/models 的 async_image、image_sync_supported 决定，与后端端点 gate 同源。
+const asyncSupported = computed(() => selectedModelItem.value?.async_image === true)
+const syncSupported = computed(() => selectedModelItem.value?.image_sync_supported !== false)
+// 仅当两种模式都可用时才让用户手动切换；否则锁定到唯一可用模式。
+const canToggleMode = computed(() => asyncSupported.value && syncSupported.value)
+
+// 用户选择的图片调用模式，默认异步（保留提交+轮询、不长时间挂连接的体验）。切模型时重置。
+const imageMode = ref<'sync' | 'async'>('async')
+// 生效模式：受能力约束——仅同步则锁同步，仅异步则锁异步，两者可用则听用户选择。
+const effectiveMode = computed<'sync' | 'async'>(() => {
+	if (!asyncSupported.value) return 'sync'
+	if (!syncSupported.value) return 'async'
+	return imageMode.value
+})
+// 优雅降级提示：异步被后台临时关闭时自动改走同步，给用户一条轻提示。
+const fallbackNotice = ref('')
 
 // 异步任务状态（仅异步模型使用）
 interface AsyncTask {
@@ -161,6 +178,9 @@ interface AsyncTask {
 const asyncTask = ref<AsyncTask | null>(null)
 const polling = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+// 轮询上限：100 次 × 3s ≈ 5 分钟，超过判定超时，防止无限轮询。
+const MAX_POLL_ATTEMPTS = 100
+let pollAttempts = 0
 
 const statusLabel: Record<string, string> = {
 	SUBMITTED: '已提交',
@@ -179,12 +199,14 @@ const statusColor: Record<string, string> = {
 	FAILURE: 'badge-danger',
 }
 
-// 切换模型时停止上一模型的轮询并清空结果
+// 切换模型时停止上一模型的轮询并清空结果，重置模式为默认（异步）
 watch(selectedModel, () => {
 	stopPolling()
 	asyncTask.value = null
 	images.value = []
 	errorMessage.value = ''
+	fallbackNotice.value = ''
+	imageMode.value = 'async'
 })
 
 onUnmounted(() => {
@@ -212,6 +234,7 @@ async function generate() {
 	if (!prompt.value.trim() || !selectedModel.value) return
 	sending.value = true
 	errorMessage.value = ''
+	fallbackNotice.value = ''
 	images.value = []
 	asyncTask.value = null
 	stopPolling()
@@ -220,32 +243,22 @@ async function generate() {
 		const api = createPlaygroundApi(props.apiKey)
 		const body = buildBody()
 
-		if (isAsyncModel.value) {
-			// 异步模型：提交任务拿 task_id，随后轮询取图
-			const res = await api.post('/v1/images/generations/async', body, { timeout: 60_000 })
-			const data = res.data
-			asyncTask.value = {
-				id: data.id,
-				status: data.status || 'SUBMITTED',
-				progress: data.progress || '',
-				createdAt: data.created_at || Math.floor(Date.now() / 1000),
-			}
-			if (data.status === 'SUCCESS') {
-				if (data.url) images.value = [{ url: data.url }]
-			} else if (data.status !== 'FAILURE') {
-				startPolling()
-			} else {
-				asyncTask.value.error = data.error || '生成失败'
+		if (effectiveMode.value === 'async') {
+			try {
+				await submitAsync(api, body)
+			} catch (e) {
+				// 优雅降级：后台此刻恰好关闭了「同步图片异步化」（翻转开关的时序窗口），异步端点
+				// 返回 image_async_disabled。若该模型同步端点可用，自动改走同步，用户无感。
+				const code = (e as any)?.relayError?.code
+				if (code === 'image_async_disabled' && syncSupported.value) {
+					fallbackNotice.value = '异步暂不可用，已自动切换为同步模式'
+					await generateSync(api, body)
+				} else {
+					throw e
+				}
 			}
 		} else {
-			// 同步模型：一次性返回
-			const res = await api.post('/v1/images/generations', body, { timeout: 300_000 })
-			const data = res.data
-			images.value = data.data || []
-			const usage = data.usage || {}
-			tokenUsage.promptTokens = usage.prompt_tokens || 0
-			tokenUsage.totalTokens = usage.total_tokens || 0
-			tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
+			await generateSync(api, body)
 		}
 	} catch (e) {
 		console.error(e)
@@ -255,8 +268,39 @@ async function generate() {
 	}
 }
 
+// submitAsync 走异步端点：提交拿 task_id，非终态则启动轮询取图。
+async function submitAsync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>) {
+	const res = await api.post('/v1/images/generations/async', body, { timeout: 60_000 })
+	const data = res.data
+	asyncTask.value = {
+		id: data.id,
+		status: data.status || 'SUBMITTED',
+		progress: data.progress || '',
+		createdAt: data.created_at || Math.floor(Date.now() / 1000),
+	}
+	if (data.status === 'SUCCESS') {
+		if (data.url) images.value = [{ url: data.url }]
+	} else if (data.status !== 'FAILURE') {
+		startPolling()
+	} else {
+		asyncTask.value.error = data.error || '生成失败'
+	}
+}
+
+// generateSync 走同步端点：阻塞一次性返回图片与用量。
+async function generateSync(api: ReturnType<typeof createPlaygroundApi>, body: Record<string, any>) {
+	const res = await api.post('/v1/images/generations', body, { timeout: 300_000 })
+	const data = res.data
+	images.value = data.data || []
+	const usage = data.usage || {}
+	tokenUsage.promptTokens = usage.prompt_tokens || 0
+	tokenUsage.totalTokens = usage.total_tokens || 0
+	tokenUsage.cost = calculateCost(selectedModelItem.value, usage) || ''
+}
+
 function startPolling() {
 	polling.value = true
+	pollAttempts = 0
 	pollLoop()
 }
 
@@ -270,6 +314,19 @@ function stopPolling() {
 
 async function pollLoop() {
 	if (!polling.value || !asyncTask.value?.id) return
+
+	// 轮询次数上限保护：超过上限（约 5 分钟）判定为超时，停止轮询并提示，
+	// 避免上游卡死 / 后端漏推终态时前端无限轮询。
+	if (pollAttempts >= MAX_POLL_ATTEMPTS) {
+		polling.value = false
+		asyncTask.value = {
+			...asyncTask.value,
+			status: 'FAILURE',
+			error: '生成超时，请稍后重试',
+		}
+		return
+	}
+	pollAttempts++
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
@@ -285,7 +342,14 @@ async function pollLoop() {
 
 		if (data.status === 'SUCCESS') {
 			polling.value = false
-			if (data.url) images.value = [{ url: data.url }]
+			// 多图：优先用 data 数组渲染全部图片；回退到单 url（向后兼容旧后端）。
+			if (Array.isArray(data.data) && data.data.length > 0) {
+				images.value = data.data
+					.filter((d: any) => d && d.url)
+					.map((d: any) => ({ url: d.url }))
+			} else if (data.url) {
+				images.value = [{ url: data.url }]
+			}
 			return
 		}
 		if (data.status === 'FAILURE') {
@@ -350,9 +414,33 @@ function closeZoom() {
 					<div>
 						<label class="input-label">模型</label>
 						<BaseSelect v-model="selectedModel" :options="modelOptions" />
-						<div v-if="isAsyncModel" class="mt-1.5 flex items-center gap-1.5">
-							<span class="badge badge-warning">异步</span>
-							<span class="text-xs text-gray-500">提交后轮询取图</span>
+						<!-- 调用模式：两种都可用时让用户切换，否则锁定唯一可用模式 -->
+						<div class="mt-2">
+							<div v-if="canToggleMode" class="flex items-center gap-2">
+								<div class="tabs">
+									<button
+										class="tab"
+										:class="{ 'tab-active': imageMode === 'async' }"
+										@click="imageMode = 'async'"
+									>异步</button>
+									<button
+										class="tab"
+										:class="{ 'tab-active': imageMode === 'sync' }"
+										@click="imageMode = 'sync'"
+									>同步</button>
+								</div>
+								<span class="text-xs text-gray-500">
+									{{ imageMode === 'async' ? '提交后轮询取图' : '一次性返回，等待较久' }}
+								</span>
+							</div>
+							<div v-else class="flex items-center gap-1.5">
+								<span class="badge" :class="effectiveMode === 'async' ? 'badge-warning' : 'badge-gray'">
+									{{ effectiveMode === 'async' ? '异步' : '同步' }}
+								</span>
+								<span class="text-xs text-gray-500">
+									{{ effectiveMode === 'async' ? '该模型仅支持异步（提交后轮询）' : '该模型仅支持同步（一次性返回）' }}
+								</span>
+							</div>
 						</div>
 					</div>
 
@@ -433,7 +521,7 @@ function closeZoom() {
 					</div>
 
 					<button class="btn btn-primary w-full" :disabled="sending || polling || !prompt.trim()" @click="generate">
-						{{ sending ? (isAsyncModel ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
+						{{ sending ? (effectiveMode === 'async' ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
 					</button>
 				</div>
 			</div>
@@ -445,8 +533,8 @@ function closeZoom() {
 					<h3 class="text-sm font-semibold text-gray-900">生成结果</h3>
 				</div>
 				<div class="card-body">
-					<!-- 异步模型说明 -->
-					<div v-if="isAsyncModel" class="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
+					<!-- 异步模式说明 -->
+					<div v-if="effectiveMode === 'async'" class="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
 						<div class="flex items-start gap-2">
 							<Icon name="infoCircle" size="sm" class="text-primary-500 flex-shrink-0 mt-0.5" />
 							<p class="text-xs text-gray-600 leading-relaxed">
@@ -456,6 +544,14 @@ function closeZoom() {
 								<code class="code text-[11px]">GET /v1/images/generations/async/{task_id}</code>
 								取图。
 							</p>
+						</div>
+					</div>
+
+					<!-- 优雅降级提示 -->
+					<div v-if="fallbackNotice" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+						<div class="flex items-center gap-2 text-amber-700">
+							<Icon name="infoCircle" size="sm" class="flex-shrink-0" />
+							<span class="text-xs">{{ fallbackNotice }}</span>
 						</div>
 					</div>
 
@@ -478,7 +574,7 @@ function closeZoom() {
 					</div>
 					<div v-if="sending" class="flex items-center justify-center py-12">
 						<div class="spinner h-8 w-8 text-primary-600"></div>
-						<span class="ml-3 text-sm text-gray-500">{{ isAsyncModel ? '提交图片生成任务中...' : '图片生成中...' }}</span>
+						<span class="ml-3 text-sm text-gray-500">{{ effectiveMode === 'async' ? '提交图片生成任务中...' : '图片生成中...' }}</span>
 					</div>
 
 					<!-- 异步任务状态 -->

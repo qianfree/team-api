@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -287,19 +288,25 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	// 输出费用
 	outputCost := computeOutputCost(pricing, outputTokens)
 
-	// Cache 费用
-	cacheReadCost := float64(cacheReadTokens) / 1_000_000.0 * pricing.CacheReadPrice
-	cacheCreationCost := float64(cacheCreationTokens) / 1_000_000.0 * pricing.CacheCreationPrice
+	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 + 各项求和）改用 decimal 精确运算，
+	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
+	million := decimal.NewFromInt(1_000_000)
+	mul := dec(pricing.TenantMultiplier)
+
+	baseInputCostD := dec(baseInputCost)
+	outputCostD := dec(outputCost)
+	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(dec(pricing.CacheReadPrice))
+	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(dec(pricing.CacheCreationPrice))
 
 	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
-	subtotal := baseInputCost + outputCost + cacheReadCost + cacheCreationCost
-	totalCost := subtotal * pricing.TenantMultiplier
+	subtotalD := baseInputCostD.Add(outputCostD).Add(cacheReadCostD).Add(cacheCreationCostD)
+	totalCostD := subtotalD.Mul(mul)
 
 	return &CostBreakdown{
-		BaseCost:            subtotal,
-		InputCost:           baseInputCost * pricing.TenantMultiplier,
-		OutputCost:          outputCost * pricing.TenantMultiplier,
-		TotalCost:           totalCost,
+		BaseCost:            roundMoney(subtotalD),
+		InputCost:           roundMoney(baseInputCostD.Mul(mul)),
+		OutputCost:          roundMoney(outputCostD.Mul(mul)),
+		TotalCost:           roundMoney(totalCostD),
 		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
 		BillingMode:         pricing.BillingMode,
@@ -309,8 +316,8 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		Currency:            pricing.Currency,
 		CacheCreationTokens: cacheCreationTokens,
 		CacheReadTokens:     cacheReadTokens,
-		CacheCreationCost:   cacheCreationCost * pricing.TenantMultiplier,
-		CacheReadCost:       cacheReadCost * pricing.TenantMultiplier,
+		CacheCreationCost:   roundMoney(cacheCreationCostD.Mul(mul)),
+		CacheReadCost:       roundMoney(cacheReadCostD.Mul(mul)),
 	}
 }
 

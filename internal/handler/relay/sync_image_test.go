@@ -44,6 +44,30 @@ func TestStripStreamField_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestRequestForcesB64(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		model string
+		want  bool
+	}{
+		{"explicit b64_json", `{"response_format":"b64_json"}`, "dall-e-3", true},
+		{"b64_json case-insensitive", `{"response_format":"B64_JSON"}`, "dall-e-3", true},
+		{"gpt-image always b64", `{}`, "gpt-image-1", true},
+		{"gpt-image case-insensitive", `{}`, "GPT-Image-1", true},
+		{"response_format url passthrough", `{"response_format":"url"}`, "dall-e-3", false},
+		{"default dall-e url", `{"prompt":"a cat"}`, "dall-e-3", false},
+		{"invalid json non-b64 model", `not json`, "dall-e-2", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := requestForcesB64([]byte(c.body), c.model); got != c.want {
+				t.Errorf("requestForcesB64(%q, %q) = %v, want %v", c.body, c.model, got, c.want)
+			}
+		})
+	}
+}
+
 func TestCheckSyncImageIPWhitelist(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -18,8 +18,10 @@ interface ModelItem {
 	per_request_price?: number | null
 	input_price?: number | null
 	output_price?: number | null
-	// 图片模型是否必须走异步端点（DashScope 等）
+	// 图片模型异步端点是否可用（真异步厂商，或同步厂商且后台「同步图片异步化」开启）
 	async_image?: boolean
+	// 图片模型同步端点是否可用（「仅异步」厂商为 false）
+	image_sync_supported?: boolean
 }
 
 const tabs = [

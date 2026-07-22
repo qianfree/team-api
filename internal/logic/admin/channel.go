@@ -360,16 +360,16 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 // DeleteChannel 删除渠道
 func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*v1.ChannelDeleteRes, error) {
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := tx.Model("chn_abilities").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+		if _, err := dao.ChnAbilities.Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := tx.Model("chn_channel_keys").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+		if _, err := dao.ChnChannelKeys.Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := tx.Model("chn_health_scores").Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
+		if _, err := dao.ChnHealthScores.Ctx(ctx).Where("channel_id", req.ID).Delete(); err != nil {
 			return err
 		}
-		if _, err := tx.Model("chn_channels").Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
+		if _, err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Delete(); err != nil {
 			return err
 		}
 		return nil
@@ -493,11 +493,11 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 // SetChannelAbilities 设置渠道模型能力
 func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbilityBatchReq) (*v1.ChannelAbilityBatchRes, error) {
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := tx.Model("chn_abilities").Ctx(ctx).Where("channel_id", req.ChannelID).Delete(); err != nil {
+		if _, err := dao.ChnAbilities.Ctx(ctx).Where("channel_id", req.ChannelID).Delete(); err != nil {
 			return err
 		}
 		for _, ab := range req.Abilities {
-			if _, err := tx.Model("chn_abilities").Ctx(ctx).Insert(do.ChnAbilities{
+			if _, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
 				ChannelId:     req.ChannelID,
 				ModelName:     ab.ModelName,
 				UpstreamModel: ab.UpstreamModel,

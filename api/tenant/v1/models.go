@@ -41,7 +41,10 @@ type TenantAvailableModelItem struct {
 	CacheReadPrice     *float64          `json:"cache_read_price"`
 	CacheCreationPrice *float64          `json:"cache_creation_price"`
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
-	// AsyncImage 图片模型是否必须走异步端点（提交 /v1/images/generations/async 后轮询取图）。
-	// 仅图片分类模型有意义；DashScope 等异步图片 provider 为 true。
+	// AsyncImage 图片模型异步端点是否可用（提交 /v1/images/generations/async 后轮询取图）。
+	// 仅图片分类模型有意义；真异步厂商，或同步厂商且「同步图片异步化」开关开启时为 true。
 	AsyncImage bool `json:"async_image"`
+	// ImageSyncSupported 图片模型同步端点（/v1/images/generations，阻塞一次性返回）是否可用。
+	// 仅图片分类模型有意义；「仅异步」厂商（阿里 image-synthesis 等）为 false，其余为 true。
+	ImageSyncSupported bool `json:"image_sync_supported"`
 }

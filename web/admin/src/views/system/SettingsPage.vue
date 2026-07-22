@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, type Component } from 'vue'
+import { Message } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useSettings } from './settings/useSettings'
 
@@ -42,6 +43,22 @@ const categories = ref<SettingCategory[]>([])
 const activeTab = ref('')
 
 const { formValues, loading, saving, refresh, save } = useSettings(() => activeTab.value)
+
+// 存储配置：测试对象存储连通性（上传→下载→删除一张测试图片）
+const testing = ref(false)
+async function testStorage() {
+	testing.value = true
+	try {
+		const { default: request } = await import('@/utils/request')
+		const res: any = await request.post('/admin/settings/storage/test', { ...formValues })
+		const d = res.data?.data || {}
+		Message.success(d.message || '对象存储配置正常')
+	} catch {
+		// 失败提示由响应拦截器统一弹出（后端返回中文错误信息）
+	} finally {
+		testing.value = false
+	}
+}
 
 async function fetchCategories() {
 	try {
@@ -86,6 +103,11 @@ onMounted(() => {
 						<component :is="categoryMap[activeTab]" v-if="categoryMap[activeTab]" />
 
 						<div class="settings-footer">
+							<AButton
+								v-if="activeTab === 'storage'"
+								:loading="testing"
+								@click="testStorage"
+							>测试连接</AButton>
 							<AButton type="primary" :loading="saving" @click="save">保存设置</AButton>
 						</div>
 					</ASpin>
@@ -124,6 +146,7 @@ onMounted(() => {
 .settings-footer {
 	display: flex;
 	justify-content: flex-end;
+	gap: 8px;
 	margin-top: 16px;
 }
 </style>
