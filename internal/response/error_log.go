@@ -2,6 +2,7 @@ package response
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -73,6 +74,65 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// sensitiveBodyKeys 命中这些子串（大小写不敏感）的 JSON 字段值会被脱敏，
+// 防止明文密码/密钥/令牌/验证码等随请求体写入 sys_error_logs。
+var sensitiveBodyKeys = []string{
+	"password", "passwd", "pwd", "secret", "token",
+	"api_key", "apikey", "access_key", "private_key",
+	"credential", "authorization", "otp", "totp", "code",
+}
+
+// isSensitiveKey 判断字段名是否命中敏感词。
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, s := range sensitiveBodyKeys {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactValue 递归脱敏 map/slice 中命中敏感词的字段。
+func redactValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for k, item := range val {
+			if isSensitiveKey(k) {
+				val[k] = "[REDACTED]"
+			} else {
+				val[k] = redactValue(item)
+			}
+		}
+		return val
+	case []interface{}:
+		for i, item := range val {
+			val[i] = redactValue(item)
+		}
+		return val
+	default:
+		return v
+	}
+}
+
+// sanitizeRequestBody 对 JSON 请求体做敏感字段脱敏后返回。
+// 非 JSON 或解析失败时无法可靠定位敏感字段，直接返回占位符而不落原文，
+// 确保任何情况下都不会把明文密码/密钥写入错误日志表。
+func sanitizeRequestBody(body string) string {
+	if body == "" {
+		return ""
+	}
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return "[non-json body omitted]"
+	}
+	out, err := json.Marshal(redactValue(parsed))
+	if err != nil {
+		return "[redaction failed]"
+	}
+	return string(out)
 }
 
 // writeErrorLog submits an error record to the async writer.

@@ -23,6 +23,27 @@ import (
 const provisionalTTL = 5 * time.Minute
 const confirmTokenTTL = 5 * time.Minute
 
+// totpReplayTTL 防重放键的存活时间，需覆盖 TOTP 的接受窗口（±1 周期，约 90 秒）。
+// 键过期时验证码本身也已失效，故 90 秒足以杜绝同码重复使用。
+const totpReplayTTL = 90
+
+// validateTOTPOnce 在基础 TOTP 校验通过后，借助 Redis 做一次性防重放：
+// 同一用户的同一验证码在其有效窗口内只接受一次，杜绝 ±90 秒内的重复使用。
+// Redis 不可用时放行（fail-open），避免依赖故障导致无法登录/验证。
+func validateTOTPOnce(ctx context.Context, userType string, userID int64, code, secret string) bool {
+	if !totp.ValidateCode(code, secret) {
+		return false
+	}
+	key := fmt.Sprintf("totp:used:%s:%d:%s", userType, userID, code)
+	res, err := g.Redis().Do(ctx, "SET", key, "1", "NX", "EX", totpReplayTTL)
+	if err != nil {
+		g.Log().Warningf(ctx, "totp replay guard redis error: %v", err)
+		return true
+	}
+	// res 为 nil 表示键已存在 → 该验证码此前已被使用 → 判定为重放，拒绝
+	return !res.IsNil()
+}
+
 // ProvisionalClaims is a short-lived JWT for 2FA pending state.
 type ProvisionalClaims struct {
 	UserID   int64  `json:"user_id"`
@@ -155,7 +176,7 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 // Stores the encrypted secret and hashed backup codes.
 func Enable2FA(ctx context.Context, userType string, userID int64, secret, code, password string) ([]string, error) {
 	// Verify TOTP code
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
 
@@ -243,7 +264,7 @@ func Disable2FA(ctx context.Context, userType string, userID int64, code string)
 	}
 
 	// Verify TOTP code or backup code
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		matched, err := verifyAndConsumeBackupCode(ctx, userType, userID, code)
 		if err != nil || !matched {
 			return NewBusinessError(10048, "验证码或恢复码错误")
@@ -275,7 +296,7 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 	}
 
 	// Try TOTP code first
-	if totp.ValidateCode(code, secret) {
+	if validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return true, nil
 	}
 
@@ -344,7 +365,7 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 		return nil, err
 	}
 
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
 
