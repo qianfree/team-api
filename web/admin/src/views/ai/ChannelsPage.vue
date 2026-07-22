@@ -297,6 +297,8 @@ async function handleOAuthExchange() {
   finally { oauthLoading.value = false }
 }
 
+const showSchedulingGuide = ref(false)
+
 const { exporting, exportFile } = useExport({
   url: '/admin/channels/export',
   getFilters: () => ({
@@ -322,6 +324,29 @@ const { exporting, exportFile } = useExport({
         </ADropdown>
       </template>
     </PageHeader>
+
+    <!-- 渠道调度说明（点击弹窗） -->
+    <div class="scheduling-hint" @click="showSchedulingGuide = true">
+      <icon-info-circle /> 了解优先级和权重如何影响渠道调度 →
+    </div>
+
+    <!-- 调度说明弹窗 -->
+    <AModal v-model:visible="showSchedulingGuide" title="渠道调度逻辑说明" :width="640" :footer="false">
+      <div style="font-size:14px;line-height:2;color:var(--color-text-1)">
+        <p>请求到达时，调度器按以下规则从启用渠道中<strong>选择一个</strong>处理：</p>
+        <ol style="margin:8px 0 16px 20px;padding:0">
+          <li style="margin-bottom:8px"><strong>排除</strong>健康度 &lt; 20 的渠道（如果全部不健康则降级使用全部）</li>
+          <li style="margin-bottom:8px">按<strong>优先级</strong>分组，<strong>只取最高优先级组</strong>的渠道（数字<strong>越大越优先</strong>）</li>
+          <li style="margin-bottom:8px">组内按<strong>权重加权随机选择</strong>（权重越高被选中的概率越大）</li>
+          <li style="margin-bottom:8px">同时根据<strong>健康度对权重降权</strong>：健康度 50-79 权重减半，20-49 权重降至 1/4</li>
+        </ol>
+        <div style="background:var(--color-fill-2);border-radius:8px;padding:16px;margin-top:8px">
+          <div style="font-weight:600;margin-bottom:8px">💡 配置示例</div>
+          <p style="margin:0 0 4px">两个同供应商渠道分别设 <code>优先级=100</code>（主力）和 <code>优先级=50</code>（备用），调度器始终优先使用主力渠道，仅在主力不可用时切换到备用。</p>
+          <p style="margin:8px 0 0">同一优先级内两个渠道分别设 <code>权重=70</code> 和 <code>权重=30</code>，则流量按 7:3 比例分发。</p>
+        </div>
+      </div>
+    </AModal>
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
@@ -473,5 +498,19 @@ const { exporting, exportFile } = useExport({
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+.scheduling-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.scheduling-hint:hover {
+  color: rgb(var(--arcoblue-6));
 }
 </style>
