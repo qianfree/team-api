@@ -377,6 +377,15 @@ func InvalidateWalletRedis(ctx context.Context, tenantID int64) {
 	g.Redis().Do(ctx, "DEL", walletHashKey(tenantID))
 }
 
+// InvalidateWallet 清除租户钱包的两级缓存（进程内 walletCache + Redis hash）。
+// 供 billing 包外（如充值履约 payment.creditWalletTx）在钱包余额变更后调用：
+// walletCache 是 billing 包私有变量，跨包无法直接 Delete，仅清 Redis 会导致
+// GetWallet 在 300s TTL 内继续命中进程内旧余额。余额变更后应统一调用本函数。
+func InvalidateWallet(ctx context.Context, tenantID int64) {
+	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+	InvalidateWalletRedis(ctx, tenantID)
+}
+
 // CleanupPreDeduct 清理预扣记录（结算成功后调用）
 func CleanupPreDeduct(ctx context.Context, tenantID int64, requestID string) {
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)

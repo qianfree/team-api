@@ -199,7 +199,7 @@ func creditWalletTx(ctx context.Context, tenantID int64, amount float64, descrip
 		return err
 	}
 
-	// 清除 Redis 钱包缓存
-	billing.InvalidateWalletRedis(ctx, tenantID)
+	// 清除钱包两级缓存（进程内 walletCache + Redis），避免充值后 GetWallet 在 300s 内仍返回旧余额
+	billing.InvalidateWallet(ctx, tenantID)
 	return nil
 }
