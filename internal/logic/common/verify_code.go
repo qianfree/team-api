@@ -113,6 +113,10 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 	return nil
 }
 
+// maxVerifyAttempts 单个邮箱+用途在验证码有效期内允许的最大验证失败次数，
+// 超过后需重新获取验证码。用于防止 6 位数字验证码在 10 分钟窗口内被暴力枚举。
+const maxVerifyAttempts = 5
+
 // VerifyCode checks if a verification code is valid.
 func VerifyCode(ctx context.Context, email, code, purpose string) error {
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -120,6 +124,12 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 
 	if email == "" || code == "" || purpose == "" {
 		return NewBadRequestError("参数不完整")
+	}
+
+	// 验证侧防暴力破解：先检查失败次数，超限直接拒绝
+	failKey := fmt.Sprintf("verify:fail:%s:%s", email, purpose)
+	if cnt, err := g.Redis().Do(ctx, "GET", failKey); err == nil && !cnt.IsNil() && cnt.Int() >= maxVerifyAttempts {
+		return NewBusinessError(consts.CodeRateLimitExceeded, "验证码错误次数过多，请重新获取验证码")
 	}
 
 	var record *struct {
@@ -141,6 +151,7 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 	}
 
 	if record == nil {
+		incrVerifyFail(ctx, failKey)
 		return NewBusinessError(consts.CodeVerifyCodeInvalid, "验证码错误")
 	}
 
@@ -151,6 +162,7 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 
 	// Check code match
 	if record.Code != code {
+		incrVerifyFail(ctx, failKey)
 		return NewBusinessError(consts.CodeVerifyCodeInvalid, "验证码错误")
 	}
 
@@ -165,7 +177,26 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 		return gerror.Wrapf(err, "mark code used")
 	}
 
+	// 验证成功，清除失败计数
+	if _, derr := g.Redis().Do(ctx, "DEL", failKey); derr != nil {
+		g.Log().Warningf(ctx, "failed to clear verify fail counter: %v", derr)
+	}
+
 	return nil
+}
+
+// incrVerifyFail 原子递增验证码失败计数，并在首次失败时设置与验证码有效期一致的 TTL（10 分钟）。
+func incrVerifyFail(ctx context.Context, failKey string) {
+	_, err := g.Redis().Do(ctx, "EVAL",
+		`local count = redis.call("INCR", KEYS[1])
+		if count == 1 then
+			redis.call("EXPIRE", KEYS[1], ARGV[1])
+		end
+		return count`,
+		1, failKey, 600)
+	if err != nil {
+		g.Log().Warningf(ctx, "failed to incr verify fail counter: %v", err)
+	}
 }
 
 // generateCode generates a random numeric code of the given length.

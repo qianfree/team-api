@@ -69,7 +69,7 @@ func Error(r *ghttp.Request, err error) {
 					StackTrace:   captureStackTrace(3),
 					HttpMethod:   r.Method,
 					RequestPath:  r.URL.Path,
-					RequestBody:  truncateString(r.GetBodyString(), 2000),
+					RequestBody:  truncateString(sanitizeRequestBody(r.GetBodyString()), 2000),
 					Source:       "api",
 				})
 			}
@@ -87,7 +87,7 @@ func Error(r *ghttp.Request, err error) {
 				StackTrace:   captureStackTrace(3),
 				HttpMethod:   r.Method,
 				RequestPath:  r.URL.Path,
-				RequestBody:  truncateString(r.GetBodyString(), 2000),
+				RequestBody:  truncateString(sanitizeRequestBody(r.GetBodyString()), 2000),
 				Source:       "api",
 			})
 		}
