@@ -175,10 +175,11 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount flo
 		return 0, nil
 	}
 
-	_, err = dao.BilWallets.Ctx(ctx).
-		Where("id", w.ID).
-		Data(do.BilWallets{Balance: gdb.Raw(fmt.Sprintf("balance + %v", amount))}).
-		Update()
+	// 钱包自增用参数化原生 SQL，避免用 fmt.Sprintf 拼 float 带来的精度丢失与注入隐患；
+	// updated_at 手动置为 NOW()，补回原 dao.Update() 自动填充的时间字段。
+	_, err = g.DB().Ctx(ctx).Exec(ctx,
+		"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
+		amount, w.ID)
 	if err != nil {
 		return 0, err
 	}
