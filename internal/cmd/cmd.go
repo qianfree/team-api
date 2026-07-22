@@ -28,6 +28,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/update"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/response"
+	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
@@ -60,6 +61,14 @@ var (
 
 			// Initialize JWT secret
 			common.InitJWTSecret(ctx)
+
+			// 启动阶段校验加密密钥，避免运行时请求路径 panic（#3）
+			if hexKey := g.Cfg().MustGet(ctx, "crypto.encryptionKey").String(); hexKey == "" {
+				g.Log().Fatal(ctx, "crypto.encryptionKey 未配置，程序退出（运行 openssl rand -hex 32 生成）")
+			} else if _, keyErr := crypto.GetEncryptionKey(hexKey); keyErr != nil {
+				g.Log().Fatalf(ctx, "crypto.encryptionKey 配置无效，程序退出: %v", keyErr)
+			}
+			g.Log().Info(ctx, "加密密钥校验通过")
 
 			// System initialization: env auto-init or detect setup mode
 			autoInit, initErr := admin.AutoInitAdmin(ctx)
