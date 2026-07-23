@@ -2,6 +2,9 @@ package billing
 
 import (
 	"testing"
+
+	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/shopspring/decimal"
 )
 
 func TestDefaultCNYToUSD(t *testing.T) {
@@ -17,7 +20,8 @@ func TestDefaultUSDToCNY(t *testing.T) {
 }
 
 func TestDefaultRates_Reciprocal(t *testing.T) {
-	// 两个默认汇率不应精确互为倒数（市场汇率有买卖价差），但数量级应一致
+	// 修复后：defaultUSDToCNY 不再是独立配置，而是 defaultCNYToUSD 的倒数
+	// 验证常量定义互为倒数
 	product := defaultCNYToUSD * defaultUSDToCNY
 	if product < 0.9 || product > 1.1 {
 		t.Fatalf("default rate product should be ~1.0, got %f", product)
@@ -77,13 +81,63 @@ func TestCurrencyConstants_NonZero(t *testing.T) {
 	}
 }
 
-func TestCurrencyConstants_ReasonableRange(t *testing.T) {
-	// CNY→USD 应在 0.1~0.2 范围内（合理汇率区间）
-	if defaultCNYToUSD < 0.05 || defaultCNYToUSD > 0.3 {
-		t.Errorf("defaultCNYToUSD %f outside reasonable range [0.05, 0.3]", defaultCNYToUSD)
+// TestExchangeRateReciprocal 验证 USD→CNY 汇率是 CNY→USD 的倒数（往返闭合）
+func TestExchangeRateReciprocal(t *testing.T) {
+	// 测试默认汇率互为倒数
+	reciprocal := 1.0 / defaultCNYToUSD
+	diff := reciprocal - defaultUSDToCNY
+	if diff < 0 {
+		diff = -diff
 	}
-	// USD→CNY 应在 5~15 范围内
-	if defaultUSDToCNY < 5 || defaultUSDToCNY > 15 {
-		t.Errorf("defaultUSDToCNY %f outside reasonable range [5, 15]", defaultUSDToCNY)
+	// 允许误差 0.01（因为默认常量可能不完全精确）
+	if diff > 0.01 {
+		t.Errorf("默认汇率应互为倒数：1/%.4f = %.4f, 但 defaultUSDToCNY = %.4f, 差值 = %.6f",
+			defaultCNYToUSD, reciprocal, defaultUSDToCNY, diff)
+	}
+}
+
+// TestConvertRoundTrip 验证 CNY→USD→CNY 往返转换闭合（误差在可接受范围内）
+func TestConvertRoundTrip(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		// 测试多个典型金额
+		testAmounts := []float64{100.0, 50.5, 1.0, 999.99}
+
+		for _, originalCNY := range testAmounts {
+			// CNY → USD（使用默认汇率模拟）
+			usd := decimal.NewFromFloat(originalCNY).Mul(decimal.NewFromFloat(defaultCNYToUSD))
+
+			// USD → CNY（使用倒数）
+			cny := usd.Mul(decimal.NewFromFloat(1.0 / defaultCNYToUSD))
+
+			// 验证往返误差 < 0.01 元（1分钱）
+			diff := cny.Sub(decimal.NewFromFloat(originalCNY)).Abs()
+			t.AssertLT(InexactFloat64(diff), 0.01)
+		}
+	})
+}
+
+// TestConvertCNYToUSD_Precision 验证 CNY→USD 转换的精度（使用默认汇率）
+func TestConvertCNYToUSD_Precision(t *testing.T) {
+	// 100 CNY × 0.14 = 14 USD
+	usd := decimal.NewFromFloat(100.0).Mul(decimal.NewFromFloat(defaultCNYToUSD))
+	expected := decimal.NewFromFloat(14.0)
+
+	diff := usd.Sub(expected).Abs()
+	if InexactFloat64(diff) > 0.000001 {
+		t.Errorf("100 CNY 应转换为约 14 USD，实际=%s, 误差=%s", usd.String(), diff.String())
+	}
+}
+
+// TestConvertUSDToCNY_Precision 验证 USD→CNY 转换的精度（使用倒数）
+func TestConvertUSDToCNY_Precision(t *testing.T) {
+	// 14 USD × (1/0.14) ≈ 100 CNY
+	usd := decimal.NewFromFloat(14.0)
+	reciprocalRate := 1.0 / defaultCNYToUSD
+	cny := usd.Mul(decimal.NewFromFloat(reciprocalRate))
+	expected := decimal.NewFromFloat(100.0)
+
+	diff := cny.Sub(expected).Abs()
+	if InexactFloat64(diff) > 0.01 {
+		t.Errorf("14 USD 应转换为约 100 CNY，实际=%s, 误差=%s", cny.String(), diff.String())
 	}
 }

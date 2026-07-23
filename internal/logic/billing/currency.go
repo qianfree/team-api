@@ -3,12 +3,12 @@ package billing
 import (
 	"context"
 
-	"github.com/shopspring/decimal"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/shopspring/decimal"
 )
 
 const defaultCNYToUSD = 0.14
-const defaultUSDToCNY = 7.25
+const defaultUSDToCNY = 7.142857142857143 // 1 / 0.14，确保互为倒数
 
 // ConvertCNYToUSD 将人民币金额转换为美元，向上取整到小数点后 6 位（decimal 原生版）。
 // 用 decimal 精确乘法替代 float64 链式运算，避免 cnyAmount×rate 的浮点误差。
@@ -34,12 +34,11 @@ func GetExchangeRateCNYToUSD(ctx context.Context) float64 {
 	return rate
 }
 
-// GetExchangeRateUSDToCNY 获取 USD→CNY 兑换比例
+// GetExchangeRateUSDToCNY 获取 USD→CNY 兑换比例（取 CNY→USD 的倒数，确保往返闭合）
 func GetExchangeRateUSDToCNY(ctx context.Context) float64 {
-	cfg := lcommon.Config()
-	rate := cfg.GetFloat(ctx, "payment_exchange_rate_usd_to_cny")
+	rate := GetExchangeRateCNYToUSD(ctx)
 	if rate <= 0 {
 		return defaultUSDToCNY
 	}
-	return rate
+	return 1.0 / rate
 }

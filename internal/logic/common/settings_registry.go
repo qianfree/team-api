@@ -157,9 +157,7 @@ var Registry = []SettingDef{
 	{Key: "payment_callback_base_url", Type: SettingTypeString, Default: "", Category: "payment",
 		Label: "支付回调基础URL", Description: "为空则使用请求 Host"},
 	{Key: "payment_exchange_rate_cny_to_usd", Type: SettingTypeFloat, Default: "0.14", Category: "payment",
-		Label: "CNY → USD 兑换比例", Description: "1 人民币兑换多少美元", Validation: "min:0.001,max:100"},
-	{Key: "payment_exchange_rate_usd_to_cny", Type: SettingTypeFloat, Default: "7.25", Category: "payment",
-		Label: "USD → CNY 兑换比例", Description: "1 美元兑换多少人民币", Validation: "min:0.001,max:1000"},
+		Label: "CNY → USD 兑换比例", Description: "1 人民币兑换多少美元（USD → CNY 自动取倒数，确保往返闭合）", Validation: "min:0.001,max:100"},
 
 	// ── Performance ──
 	{Key: "global_qps_limit", Type: SettingTypeInt, Default: "10000", Category: "performance",
