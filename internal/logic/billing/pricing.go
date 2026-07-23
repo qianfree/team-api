@@ -502,7 +502,9 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 		return 0
 	}
 
-	var totalCost float64
+	// 修复阶梯定价循环累加：用 decimal 精确计算避免每次 ÷1M × price 的误差累积
+	million := decimal.NewFromInt(1_000_000)
+	totalCostD := decimal.Zero
 	remaining := int64(tokens)
 
 	for _, tier := range tiers {
@@ -516,7 +518,10 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 		}
 
 		if tier.MaxTokens == nil {
-			totalCost += float64(remaining) / 1_000_000.0 * price
+			// 最后一档：消耗所有剩余 token
+			totalCostD = totalCostD.Add(
+				decimal.NewFromInt(remaining).Div(million).Mul(dec(price)),
+			)
 			remaining = 0
 		} else {
 			available := *tier.MaxTokens - tier.MinTokens
@@ -527,10 +532,12 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 			if useTokens > available {
 				useTokens = available
 			}
-			totalCost += float64(useTokens) / 1_000_000.0 * price
+			totalCostD = totalCostD.Add(
+				decimal.NewFromInt(useTokens).Div(million).Mul(dec(price)),
+			)
 			remaining -= useTokens
 		}
 	}
 
-	return totalCost
+	return roundMoney(totalCostD)
 }

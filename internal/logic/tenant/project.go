@@ -167,7 +167,9 @@ func CheckProjectBudget(ctx context.Context, tenantID, projectID int64) error {
 	if err != nil {
 		return err
 	}
-	if totalCost < project.Budget {
+	// 修复预算超支浮点比较：加 epsilon 容差避免浮点误差导致误触发/漏触发
+	const epsilon = 0.000001 // 1 微美元容差
+	if totalCost < project.Budget-epsilon {
 		return nil
 	}
 

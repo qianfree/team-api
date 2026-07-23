@@ -66,7 +66,7 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	return &v1.TenantWalletRes{
 		Balance:          w.Balance,
 		FrozenBalance:    w.FrozenBalance,
-		AvailableBalance: w.Balance - w.FrozenBalance,
+		AvailableBalance: billing.SubtractMoney(w.Balance, w.FrozenBalance),
 		WarningThreshold: w.WarningThreshold,
 		Currency:         w.Currency,
 	}, nil
