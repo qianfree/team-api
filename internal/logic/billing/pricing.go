@@ -216,9 +216,10 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 3.5 级别折扣 fallback：当租户×模型维度未设置倍率时，使用租户级别的 price_multiplier
 	if tenantMultiplier == 1.0 {
 		levelMultiplier := GetLevelPriceMultiplier(ctx, tenantID)
-		if levelMultiplier > 0 && levelMultiplier < 1.0 {
-			tenantMultiplier = levelMultiplier
-			discountRatio = levelMultiplier
+		levelMultiplierFloat := InexactFloat64(levelMultiplier)
+		if levelMultiplierFloat > 0 && levelMultiplierFloat < 1.0 {
+			tenantMultiplier = levelMultiplierFloat
+			discountRatio = levelMultiplierFloat
 		}
 	}
 
@@ -291,22 +292,22 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 + 各项求和）改用 decimal 精确运算，
 	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
 	million := decimal.NewFromInt(1_000_000)
-	mul := dec(pricing.TenantMultiplier)
+	mul := NewFromFloat(pricing.TenantMultiplier)
 
-	baseInputCostD := dec(baseInputCost)
-	outputCostD := dec(outputCost)
-	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(dec(pricing.CacheReadPrice))
-	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(dec(pricing.CacheCreationPrice))
+	baseInputCostD := NewFromFloat(baseInputCost)
+	outputCostD := NewFromFloat(outputCost)
+	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
+	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreationPrice))
 
 	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
 	subtotalD := baseInputCostD.Add(outputCostD).Add(cacheReadCostD).Add(cacheCreationCostD)
 	totalCostD := subtotalD.Mul(mul)
 
 	return &CostBreakdown{
-		BaseCost:            roundMoney(subtotalD),
-		InputCost:           roundMoney(baseInputCostD.Mul(mul)),
-		OutputCost:          roundMoney(outputCostD.Mul(mul)),
-		TotalCost:           roundMoney(totalCostD),
+		BaseCost:            InexactFloat64(RoundMoney(subtotalD)),
+		InputCost:           InexactFloat64(RoundMoney(baseInputCostD.Mul(mul))),
+		OutputCost:          InexactFloat64(RoundMoney(outputCostD.Mul(mul))),
+		TotalCost:           InexactFloat64(RoundMoney(totalCostD)),
 		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
 		BillingMode:         pricing.BillingMode,
@@ -316,8 +317,8 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		Currency:            pricing.Currency,
 		CacheCreationTokens: cacheCreationTokens,
 		CacheReadTokens:     cacheReadTokens,
-		CacheCreationCost:   roundMoney(cacheCreationCostD.Mul(mul)),
-		CacheReadCost:       roundMoney(cacheReadCostD.Mul(mul)),
+		CacheCreationCost:   InexactFloat64(RoundMoney(cacheCreationCostD.Mul(mul))),
+		CacheReadCost:       InexactFloat64(RoundMoney(cacheReadCostD.Mul(mul))),
 	}
 }
 
@@ -520,7 +521,7 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 		if tier.MaxTokens == nil {
 			// 最后一档：消耗所有剩余 token
 			totalCostD = totalCostD.Add(
-				decimal.NewFromInt(remaining).Div(million).Mul(dec(price)),
+				decimal.NewFromInt(remaining).Div(million).Mul(NewFromFloat(price)),
 			)
 			remaining = 0
 		} else {
@@ -533,11 +534,11 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 				useTokens = available
 			}
 			totalCostD = totalCostD.Add(
-				decimal.NewFromInt(useTokens).Div(million).Mul(dec(price)),
+				decimal.NewFromInt(useTokens).Div(million).Mul(NewFromFloat(price)),
 			)
 			remaining -= useTokens
 		}
 	}
 
-	return roundMoney(totalCostD)
+	return InexactFloat64(RoundMoney(totalCostD))
 }

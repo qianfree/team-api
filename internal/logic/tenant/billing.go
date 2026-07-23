@@ -7,6 +7,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/model/entity"
 	"strconv"
 	"strings"
 
@@ -26,29 +27,21 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
-	type walletRow struct {
-		Balance            float64 `json:"balance"`
-		FrozenBalance      float64 `json:"frozen_balance"`
-		WarningThreshold   float64 `json:"warning_threshold"`
-		Currency           string  `json:"currency"`
-		CumulativeRecharge float64 `json:"cumulative_recharge"`
-	}
-
-	var w *walletRow
+	var w *entity.BilWallets
 	err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		Fields("balance, frozen_balance, warning_threshold, currency, cumulative_recharge").
 		Scan(&w)
 	if err != nil {
 		return nil, err
 	}
 	if w == nil {
 		// 钱包不存在，初始化
+		threshold := billing.NewFromFloat(1.00)
 		_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
 			TenantId:         tenantID,
-			Balance:          0,
-			FrozenBalance:    0,
-			WarningThreshold: 1.00,
+			Balance:          billing.Zero,
+			FrozenBalance:    billing.Zero,
+			WarningThreshold: &threshold,
 			Currency:         "USD",
 		})
 		if err != nil {
@@ -64,10 +57,10 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 	}
 
 	return &v1.TenantWalletRes{
-		Balance:          w.Balance,
-		FrozenBalance:    w.FrozenBalance,
-		AvailableBalance: billing.SubtractMoney(w.Balance, w.FrozenBalance),
-		WarningThreshold: w.WarningThreshold,
+		Balance:          billing.InexactFloat64(w.Balance),
+		FrozenBalance:    billing.InexactFloat64(w.FrozenBalance),
+		AvailableBalance: billing.InexactFloat64(billing.SubtractMoney(w.Balance, w.FrozenBalance)),
+		WarningThreshold: billing.InexactFloat64(*w.WarningThreshold),
 		Currency:         w.Currency,
 	}, nil
 }
@@ -517,10 +510,11 @@ func (s *sTenant) UpdateWarningThreshold(ctx context.Context, req *v1.TenantWall
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
+	threshold := billing.NewFromFloat(req.Threshold)
 	_, err := dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Data(do.BilWallets{
-			WarningThreshold: req.Threshold,
+			WarningThreshold: &threshold,
 		}).Update()
 	if err != nil {
 		return nil, err

@@ -126,7 +126,7 @@ func TestEstimateTaskCost_PerRequest(t *testing.T) {
 		OutputPrice:      30.0, // 即使配了 output_price 也不应走 token 估算
 		TenantMultiplier: 1.0,
 	}
-	assertFloat(t, estimateTaskCost(pricing, nil), 0.04, "per_request cost")
+	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "per_request cost")
 }
 
 // TestEstimateTaskCost_VideoWithDurationSignal 视频任务（ratios 携带 duration/resolution）
@@ -138,7 +138,7 @@ func TestEstimateTaskCost_VideoWithDurationSignal(t *testing.T) {
 		TenantMultiplier: 1.0,
 	}
 	ratios := map[string]float64{"duration": 5, "resolution": 2.25}
-	assertFloat(t, estimateTaskCost(pricing, ratios), 3.375, "video cost")
+	assertDecimal(t, estimateTaskCost(pricing, ratios), 3.375, "video cost")
 }
 
 // TestEstimateTaskCost_ImageNoDurationSignal 图片任务（token 模式、有 output_price、但 ratios 无
@@ -151,7 +151,7 @@ func TestEstimateTaskCost_ImageNoDurationSignal(t *testing.T) {
 		PerRequestPrice:  0, // 未配按次价
 		TenantMultiplier: 1.0,
 	}
-	assertFloat(t, estimateTaskCost(pricing, nil), 0.1, "image placeholder pre-deduct")
+	assertDecimal(t, estimateTaskCost(pricing, nil), 0.1, "image placeholder pre-deduct")
 }
 
 // TestEstimateTaskCost_PerRequestBelowPlaceholder 已配置的真实按次单价（低于占位值）必须被尊重，
@@ -162,7 +162,7 @@ func TestEstimateTaskCost_PerRequestBelowPlaceholder(t *testing.T) {
 		PerRequestPrice:  0.04, // DALL·E 类真实单价，低于 0.1 占位
 		TenantMultiplier: 1.0,
 	}
-	assertFloat(t, estimateTaskCost(pricing, nil), 0.04, "configured per_request price respected")
+	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "configured per_request price respected")
 }
 
 // TestEstimateTaskCost_ImageUsesPerRequestPrice 图片模型即便 billing_mode 仍是 token，只要配了
@@ -174,7 +174,7 @@ func TestEstimateTaskCost_ImageUsesPerRequestPrice(t *testing.T) {
 		PerRequestPrice:  0.05,
 		TenantMultiplier: 1.0,
 	}
-	assertFloat(t, estimateTaskCost(pricing, nil), 0.05, "image per_request cost")
+	assertDecimal(t, estimateTaskCost(pricing, nil), 0.05, "image per_request cost")
 }
 
 // TestEstimateTaskCost_VideoInputDiscount 附加比率（video_input 折扣）在时长估算之上叠加。
@@ -186,12 +186,12 @@ func TestEstimateTaskCost_VideoInputDiscount(t *testing.T) {
 	}
 	ratios := map[string]float64{"duration": 5, "resolution": 2.25, "video_input": 0.5}
 	// 3.375 × 0.5 = 1.6875
-	assertFloat(t, estimateTaskCost(pricing, ratios), 1.6875, "video discounted cost")
+	assertDecimal(t, estimateTaskCost(pricing, ratios), 1.6875, "video discounted cost")
 }
 
 // TestEstimateTaskCost_NilPricing 定价缺失时按最低消费兜底。
 func TestEstimateTaskCost_NilPricing(t *testing.T) {
-	assertFloat(t, estimateTaskCost(nil, nil), 0.01, "nil pricing floor")
+	assertDecimal(t, estimateTaskCost(nil, nil), 0.01, "nil pricing floor")
 }
 
 // TestHasDurationSignal 区分视频（有 duration/resolution）与图片（nil）。

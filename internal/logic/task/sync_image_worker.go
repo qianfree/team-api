@@ -17,6 +17,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -109,7 +110,7 @@ type SyncImageJob struct {
 	ProjectID       int64
 	Model           string
 	RequestBody     []byte
-	PreDeductAmount float64
+	PreDeductAmount decimal.Decimal
 	Ratios          map[string]float64
 	SubmitTime      time.Time
 }
@@ -246,7 +247,7 @@ func timeoutRunningSyncImageJob(ctx context.Context, job *SyncImageJob) bool {
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: timeout task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -266,7 +267,7 @@ func timeoutRunningSyncImageJob(ctx context.Context, job *SyncImageJob) bool {
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 
-	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, nil, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, nil, false, reason, nil)
 	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 TIMEOUT（与超时兜底网一致）。
 	recordTaskCompletionAudit(usageTask, "TIMEOUT", reason, nil)
@@ -358,7 +359,7 @@ func failQueuedSyncImageJob(ctx context.Context, job *SyncImageJob, reason strin
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: shutdown-fail task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -378,7 +379,7 @@ func failQueuedSyncImageJob(ctx context.Context, job *SyncImageJob, reason strin
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 
-	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, nil, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, nil, false, reason, nil)
 	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 FAILURE。
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
@@ -539,7 +540,7 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	actualCost := job.PreDeductAmount
 	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
 	if totalTokens > 0 {
-		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost > 0 {
+		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost.GreaterThan(billing.Zero) {
 			actualCost = tokenCost
 		}
 	}
@@ -612,7 +613,7 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -636,7 +637,7 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	if sel != nil {
 		chBasic = &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	}
-	usageTask := buildUsageTask(job, sel, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, sel, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, chBasic, false, reason, nil)
 	// 闭环审计：更新提交阶段的 SUBMITTED 审计记录为 FAILURE。
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
@@ -787,7 +788,7 @@ var rehostURLEnabled = func(ctx context.Context) bool {
 }
 
 // buildUsageTask 构造供 recordTaskUsage 使用的 AsyncTask（用量日志需要的字段）。
-func buildUsageTask(job *SyncImageJob, sel *common.ChannelSelection, status string, actualCost float64, finish time.Time) *common.AsyncTask {
+func buildUsageTask(job *SyncImageJob, sel *common.ChannelSelection, status string, actualCost decimal.Decimal, finish time.Time) *common.AsyncTask {
 	submit := job.SubmitTime
 	t := &common.AsyncTask{
 		ID:              job.TaskID,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -91,9 +92,9 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 
 	// 查套餐价格
 	var plan *struct {
-		MonthlyPrice float64 `json:"monthly_price"`
-		YearlyPrice  float64 `json:"yearly_price"`
-		Status       string  `json:"status"`
+		MonthlyPrice decimal.Decimal `json:"monthly_price"`
+		YearlyPrice  decimal.Decimal `json:"yearly_price"`
+		Status       string          `json:"status"`
 	}
 	err := dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
@@ -110,10 +111,10 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 
 	var amount float64
 	if months >= 12 {
-		amount = plan.YearlyPrice
+		amount = billing.InexactFloat64(plan.YearlyPrice)
 	} else {
 		// 修复订单金额连乘：用 decimal 避免 price × months 的浮点误差
-		amount = billing.MultiplyMoney(plan.MonthlyPrice, float64(months))
+		amount = billing.InexactFloat64(billing.MultiplyMoney(plan.MonthlyPrice, billing.NewFromFloat(float64(months))))
 	}
 
 	// 使用 crypto/rand 生成随机部分，避免碰撞
@@ -365,7 +366,7 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	if settings != nil {
 		if discount, ok := settings.AmountDiscount[int(req.Amount)]; ok && discount > 0 {
 			// 修复充值折扣连乘：用 decimal 避免 amount × discount 的浮点误差
-			finalAmount = billing.MultiplyMoney(req.Amount, discount)
+			finalAmount = billing.InexactFloat64(billing.MultiplyMoney(billing.NewFromFloat(req.Amount), billing.NewFromFloat(discount)))
 		}
 	}
 

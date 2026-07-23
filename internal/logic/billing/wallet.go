@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/shopspring/decimal"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -171,7 +172,7 @@ return 1
 	walletRedisKey := walletHashKey(tenantID)
 	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
 
-	amountMicro := toMicro(amount)
+	amountMicro := ToMicro(NewFromFloat(amount))
 	result, err := g.Redis().Do(ctx, "EVAL", luaScript, 2,
 		walletRedisKey, predeductRedisKey,
 		amountMicro, requestID, PreDeductMaxAge, tenantID, modelName, time.Now().Unix())
@@ -270,7 +271,7 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, am
 		// 解冻（带 0 下限保护，整数运算）。HINCRBY 亦无下限：若因重复/多余调用扣减超过已冻结额，
 		// 会把 frozen_balance 打成负数。改用 Lua 读-clamp-写，与 DB 侧
 		// GREATEST(frozen_balance - ?, 0) 保持一致；钱包 hash 不存在时不凭空创建（交由 DB 兜底）。
-		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, toMicro(amount))
+		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, ToMicro(NewFromFloat(amount)))
 		g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
 		go unfreezeSyncDB(tenantID, amount)
 		return
@@ -304,7 +305,7 @@ func GetPreDeductAmount(ctx context.Context, requestID string) (float64, bool) {
 	result, err := g.Redis().Do(ctx, "HGET", predeductRedisKey, "amount")
 	if err == nil && !result.IsNil() {
 		// v2：amount 以整数 micro 存储，换算回 USD
-		return fromMicro(result.Int64()), true
+		return InexactFloat64(FromMicro(result.Int64())), true
 	}
 	return 0, false
 }
@@ -326,8 +327,8 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 
 	// 从 DB 读取钱包数据（跳过内存缓存，直接查库确保最新）
 	type walletRow struct {
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
+		Balance       decimal.Decimal `json:"balance"`
+		FrozenBalance decimal.Decimal `json:"frozen_balance"`
 	}
 	var w *walletRow
 	err := dao.BilWallets.Ctx(ctx).
@@ -347,8 +348,8 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	if exists.Int64() == 0 {
 		// key 不存在：完整初始化（balance + frozen_balance，均为整数 micro）
 		_, err = g.Redis().Do(ctx, "HMSET", walletRedisKey,
-			"balance", toMicro(w.Balance),
-			"frozen_balance", toMicro(w.FrozenBalance),
+			"balance", ToMicro(w.Balance),
+			"frozen_balance", ToMicro(w.FrozenBalance),
 		)
 		if err != nil {
 			return gerror.Wrapf(err, "sync wallet to redis")
@@ -359,7 +360,7 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 	} else {
 		// key 已存在：只更新 balance（frozen_balance 由 Lua 脚本管理，不覆盖）
 		_, err = g.Redis().Do(ctx, "HSET", walletRedisKey,
-			"balance", toMicro(w.Balance),
+			"balance", ToMicro(w.Balance),
 		)
 	}
 	if err != nil {
@@ -442,7 +443,7 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 		var amount float64
 		if v, ok := m["amount"]; ok {
 			// v2：amount 以整数 micro 存储，换算回 USD
-			amount = fromMicro(gconv.Int64(v))
+			amount = InexactFloat64(FromMicro(gconv.Int64(v)))
 		}
 
 		var modelName string
@@ -492,10 +493,10 @@ func trackPreDeduct(ctx context.Context, tenantID int64, amount float64, request
 // rebuildPredeductFromDB 从 DB 恢复活跃预扣明细到 Redis（Redis 重启后调用）
 func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 	type trackRow struct {
-		RequestID string  `json:"request_id"`
-		Amount    float64 `json:"amount"`
-		ModelName string  `json:"model_name"`
-		CreatedAt int64   `json:"created_at"`
+		RequestID string          `json:"request_id"`
+		Amount    decimal.Decimal `json:"amount"`
+		ModelName string          `json:"model_name"`
+		CreatedAt int64           `json:"created_at"`
 	}
 
 	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
@@ -520,7 +521,7 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 
 		predeductKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, t.RequestID)
 		g.Redis().Do(ctx, "HMSET", predeductKey,
-			"amount", toMicro(t.Amount),
+			"amount", ToMicro(t.Amount),
 			"tenant_id", tenantID,
 			"model_name", t.ModelName,
 			"created_at", t.CreatedAt,

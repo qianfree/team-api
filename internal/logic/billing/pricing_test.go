@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
@@ -14,6 +16,14 @@ func assertFloat(t *testing.T, got, want float64, label string) {
 	t.Helper()
 	if math.Abs(got-want) > eps {
 		t.Errorf("%s: got %.15f, want %.15f (delta %.15e)", label, got, want, got-want)
+	}
+}
+
+// assertDecimal 比较 decimal 结果与期望的 float 值（decimal 化后计算函数的断言辅助）。
+func assertDecimal(t *testing.T, got decimal.Decimal, want float64, label string) {
+	t.Helper()
+	if math.Abs(got.InexactFloat64()-want) > eps {
+		t.Errorf("%s: got %s, want %.15f", label, got.String(), want)
 	}
 }
 

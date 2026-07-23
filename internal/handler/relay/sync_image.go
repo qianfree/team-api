@@ -112,7 +112,9 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		"billing_context": map[string]any{
 			"ratios":     nil,
 			"model_name": modelName,
-			"pre_deduct": preDeduct,
+			// pre_deduct 快照落 JSONB，读取端为 float64；decimal 默认带引号 MarshalJSON
+			// 会导致读取端反序列化失败，故显式转 float64。
+			"pre_deduct": preDeduct.InexactFloat64(),
 		},
 	})
 	asyncTask := &relay_common.AsyncTask{
