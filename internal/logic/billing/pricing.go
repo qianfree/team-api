@@ -283,19 +283,17 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		}
 	}
 
-	// 基础输入费用
-	baseInputCost := computeInputCost(pricing, inputTokens)
+	// 基础输入费用（已改为 decimal）
+	baseInputCostD := computeInputCost(pricing, inputTokens)
 
-	// 输出费用
-	outputCost := computeOutputCost(pricing, outputTokens)
+	// 输出费用（已改为 decimal）
+	outputCostD := computeOutputCost(pricing, outputTokens)
 
 	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 + 各项求和）改用 decimal 精确运算，
 	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
 	million := decimal.NewFromInt(1_000_000)
 	mul := NewFromFloat(pricing.TenantMultiplier)
 
-	baseInputCostD := NewFromFloat(baseInputCost)
-	outputCostD := NewFromFloat(outputCost)
 	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
 	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreationPrice))
 
@@ -344,19 +342,27 @@ func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, u
 }
 
 // computeInputCost 计算输入费用（token 或 tiered 模式）
-func computeInputCost(pricing *PricingResult, tokens int) float64 {
+// 返回 decimal.Decimal 避免 float64 链式运算误差
+func computeInputCost(pricing *PricingResult, tokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
-		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true)
+		// 阶梯定价仍返回 float64，需要转换
+		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true))
 	}
-	return float64(tokens) / 1_000_000.0 * pricing.InputPrice
+	// token / 1M × 单价，全程 decimal 精确运算
+	million := decimal.NewFromInt(1_000_000)
+	return decimal.NewFromInt(int64(tokens)).Div(million).Mul(NewFromFloat(pricing.InputPrice))
 }
 
 // computeOutputCost 计算输出费用（token 或 tiered 模式）
-func computeOutputCost(pricing *PricingResult, tokens int) float64 {
+// 返回 decimal.Decimal 避免 float64 链式运算误差
+func computeOutputCost(pricing *PricingResult, tokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
-		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false)
+		// 阶梯定价仍返回 float64，需要转换
+		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false))
 	}
-	return float64(tokens) / 1_000_000.0 * pricing.OutputPrice
+	// token / 1M × 单价，全程 decimal 精确运算
+	million := decimal.NewFromInt(1_000_000)
+	return decimal.NewFromInt(int64(tokens)).Div(million).Mul(NewFromFloat(pricing.OutputPrice))
 }
 
 // CalculateCostWithUsage 计算实际费用（含 cache token 计费）

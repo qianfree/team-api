@@ -69,10 +69,14 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) decimal
 
 		// 预估 tokens ≈ base_tokens_per_second × duration × resolution_multiplier
 		// 火山方舟视频生成约 10000 tokens/s (480p 基准)，用于预扣估算
-		estimatedTokens := 10000.0 * duration * resolutionMul
-		// 修复视频预扣三连乘：用 decimal 避免 ÷1M × 单价 × 倍率 的链式误差
+		// 修复视频预扣三连乘：全程 decimal 避免链式误差
+		baseTokensPerSec := decimal.NewFromInt(10000)
+		durationD := NewFromFloat(duration)
+		resolutionMulD := NewFromFloat(resolutionMul)
 		million := decimal.NewFromInt(1_000_000)
-		costD = NewFromFloat(estimatedTokens).Div(million).
+
+		costD = baseTokensPerSec.Mul(durationD).Mul(resolutionMulD).
+			Div(million).
 			Mul(NewFromFloat(pricing.OutputPrice)).
 			Mul(NewFromFloat(pricing.TenantMultiplier))
 	default:
