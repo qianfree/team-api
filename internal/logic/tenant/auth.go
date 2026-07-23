@@ -357,11 +357,27 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	}
 
 	// Check account lockout
-	if user.LockedUntil != nil && time.Now().Before(user.LockedUntil.Time) {
-		remaining := time.Until(user.LockedUntil.Time).Minutes()
-		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
-		return nil, common.NewBusinessError(consts.CodeAccountLocked,
-			fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+	if user.LockedUntil != nil {
+		if time.Now().Before(user.LockedUntil.Time) {
+			// 仍在锁定期内
+			remaining := time.Until(user.LockedUntil.Time).Minutes()
+			_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
+			return nil, common.NewBusinessError(consts.CodeAccountLocked,
+				fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+		}
+		// 锁定已过期：重置失败计数，给用户重新 5 次机会（方案A）
+		_, err := dao.TntUsers.Ctx(ctx).
+			Where("id", user.Id).
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
+			}).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "重置租户账号锁定状态失败: %v", err)
+		}
+		// 同步更新内存对象，避免后续密码校验仍读到旧的失败计数
+		user.FailedAttempts = 0
+		user.LockedUntil = nil
 	}
 
 	// Check status
@@ -411,9 +427,9 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if user.FailedAttempts > 0 {
 		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", user.Id).
-			Data(do.TntUsers{
-				FailedAttempts: 0,
-				LockedUntil:    nil,
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
 			}).Update()
 		if err != nil {
 			g.Log().Errorf(ctx, "重置登录失败次数失败: %v", err)

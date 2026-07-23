@@ -28,3 +28,6 @@ func (c *ControllerV1) AdminUserResetPassword(ctx context.Context, req *v1.Admin
 func (c *ControllerV1) AdminUserExport(ctx context.Context, req *v1.AdminUserExportReq) (res *v1.AdminUserExportRes, err error) {
 	return service.Admin().ExportUsers(ctx, req)
 }
+func (c *ControllerV1) AdminUserUnlock(ctx context.Context, req *v1.AdminUserUnlockReq) (res *v1.AdminUserUnlockRes, err error) {
+	return service.Admin().UnlockUser(ctx, req)
+}

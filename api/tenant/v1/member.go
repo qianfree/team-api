@@ -25,6 +25,7 @@ type TenantMemberItem struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	Status      string `json:"status"`
+	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -152,6 +153,14 @@ type TenantMemberUpdateRoleReq struct {
 
 type TenantMemberUpdateRoleRes struct{}
 
+// TenantMemberUnlockReq 解除成员登录锁定请求
+type TenantMemberUnlockReq struct {
+	g.Meta `path:"/members/{id}/unlock" method:"put" mime:"json" tags:"租户控制台-成员管理" summary:"解除成员登录锁定"`
+	Id     int64 `json:"id" in:"path" v:"required" dc:"成员ID"`
+}
+
+type TenantMemberUnlockRes struct{}
+
 // TenantMemberGetReq 成员详情请求
 type TenantMemberGetReq struct {
 	g.Meta `path:"/members/{id}" method:"get" mime:"json" tags:"租户控制台-成员管理" summary:"成员详情"`
@@ -165,6 +174,7 @@ type TenantMemberGetRes struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	Status      string `json:"status"`
+	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }

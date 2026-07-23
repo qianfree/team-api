@@ -23,6 +23,7 @@ interface MemberInfo {
 	display_name: string
 	role: string
 	status: string
+	locked_until: string
 	created_at: string
 	updated_at: string
 }
@@ -113,6 +114,10 @@ const statusDotClass: Record<string, string> = {
 
 const isOwner = computed(() => member.value?.role === 'owner')
 const canManage = computed(() => !isOwner.value)
+const isLocked = computed(() => {
+	if (!member.value?.locked_until) return false
+	return new Date(member.value.locked_until).getTime() > Date.now()
+})
 
 function formatNumber(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -134,6 +139,16 @@ async function fetchMemberDetail() {
 		member.value = null
 	} finally {
 		loading.value = false
+	}
+}
+
+async function handleUnlock() {
+	try {
+		await request.put(`/tenant/members/${memberId.value}/unlock`)
+		toast.success('成员已解锁')
+		fetchMemberDetail()
+	} catch {
+		// 错误由 request 拦截器统一提示
 	}
 }
 
@@ -433,6 +448,14 @@ onMounted(() => {
 						>
 							<Icon name="key" size="xs" />
 							重置密码
+						</button>
+						<button
+							v-if="isLocked"
+							@click="handleUnlock"
+							class="btn btn-secondary btn-sm"
+						>
+							<Icon name="refresh" size="xs" />
+							解除锁定
 						</button>
 						<button
 							@click="showRemoveModal = true"
