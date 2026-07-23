@@ -15,6 +15,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/open/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -459,6 +460,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 	if quotaLimit < 0 {
 		quotaLimit = 0
 	}
+	quotaLimitDecimal := billing.NewFromFloat(quotaLimit)
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(do.ApiKeys{
 		TenantId:     tenantID,
@@ -467,7 +469,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 		KeyPrefix:    prefix,
 		Scope:        "full",
 		Status:       "active",
-		TotalQuota:   quotaLimit,
+		TotalQuota:   &quotaLimitDecimal,
 		KeyType:      "project",
 	}).Insert()
 	if err != nil {
@@ -780,7 +782,8 @@ func (s *sOpen) OpenProjectCreate(ctx context.Context, req *v1.OpenProjectCreate
 	}
 
 	if req.Budget > 0 {
-		insertData.Budget = req.Budget
+		budgetDecimal := billing.NewFromFloat(req.Budget)
+		insertData.Budget = &budgetDecimal
 	}
 
 	result, err := dao.TntProjects.Ctx(ctx).Data(insertData).Insert()
@@ -903,7 +906,8 @@ func (s *sOpen) OpenProjectUpdate(ctx context.Context, req *v1.OpenProjectUpdate
 	}
 	if req.Budget != nil {
 		if *req.Budget > 0 {
-			data.Budget = *req.Budget
+			budgetDecimal := billing.NewFromFloat(*req.Budget)
+			data.Budget = &budgetDecimal
 		}
 		hasUpdate = true
 	}

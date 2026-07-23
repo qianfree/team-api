@@ -10,6 +10,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/model/do"
@@ -235,7 +236,8 @@ func (s *sTenant) ProjectCreate(ctx context.Context, req *v1.TenantProjectCreate
 		insertData.Description = req.Description
 	}
 	if req.Budget > 0 {
-		insertData.Budget = req.Budget
+		budgetDecimal := billing.NewFromFloat(req.Budget)
+		insertData.Budget = &budgetDecimal
 	}
 
 	result, err := dao.TntProjects.Ctx(ctx).Data(insertData).Insert()
@@ -281,7 +283,8 @@ func (s *sTenant) ProjectUpdate(ctx context.Context, req *v1.TenantProjectUpdate
 		updateData.Description = req.Description
 	}
 	if req.Budget > 0 {
-		updateData.Budget = req.Budget
+		budgetDecimal := billing.NewFromFloat(req.Budget)
+		updateData.Budget = &budgetDecimal
 	} else if req.Budget == 0 {
 		updateData.Budget = nil
 	}
@@ -561,7 +564,8 @@ func (s *sTenant) ProjectApiKeyCreate(ctx context.Context, req *v1.TenantProject
 		if *req.TotalQuota < 0 {
 			return nil, common.NewBadRequestError("总额度不能小于 0")
 		}
-		insertData.TotalQuota = *req.TotalQuota
+		quotaDecimal := billing.NewFromFloat(*req.TotalQuota)
+		insertData.TotalQuota = &quotaDecimal
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()

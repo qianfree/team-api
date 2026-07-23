@@ -435,16 +435,23 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		}
 
 		for _, item := range req.Items {
+			// API 边界 float64 → DO decimal 转换
+			var perRequestPriceDecimal *decimal.Decimal
+			if item.PerRequestPrice != nil {
+				d := billing.NewFromFloat(*item.PerRequestPrice)
+				perRequestPriceDecimal = &d
+			}
+
 			if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 				ModelId:            req.ModelID,
 				BillingMode:        item.BillingMode,
 				MinTokens:          item.MinTokens,
 				MaxTokens:          item.MaxTokens,
-				InputPrice:         item.InputPrice,
-				OutputPrice:        item.OutputPrice,
-				PerRequestPrice:    item.PerRequestPrice,
-				CacheReadPrice:     item.CacheReadPrice,
-				CacheCreationPrice: item.CacheCreationPrice,
+				InputPrice:         billing.NewFromFloat(item.InputPrice),
+				OutputPrice:        billing.NewFromFloat(item.OutputPrice),
+				PerRequestPrice:    perRequestPriceDecimal,
+				CacheReadPrice:     billing.NewFromFloat(item.CacheReadPrice),
+				CacheCreationPrice: billing.NewFromFloat(item.CacheCreationPrice),
 			}); err != nil {
 				return err
 			}
@@ -516,7 +523,7 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	cacheCreationPrice := billing.RoundMoney(decimal.NewFromFloat(entry.CacheCreationInputTokenCost).Mul(million))
 
 	billingMode := "token"
-	if entry.Mode == "image_generation" && entry.OutputCostPerImage > 0 && inputPrice == 0 && outputPrice == 0 {
+	if entry.Mode == "image_generation" && entry.OutputCostPerImage > 0 && inputPrice.IsZero() && outputPrice.IsZero() {
 		billingMode = "per_request"
 	}
 
@@ -526,10 +533,10 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	source.MaxContext = entry.MaxInputTokens
 	source.MaxOutput = entry.MaxOutputTokens
 	source.Pricing = &v1.OfficialPricingItem{
-		InputPrice:         inputPrice,
-		OutputPrice:        outputPrice,
-		CacheReadPrice:     cacheReadPrice,
-		CacheCreationPrice: cacheCreationPrice,
+		InputPrice:         billing.InexactFloat64(inputPrice),
+		OutputPrice:        billing.InexactFloat64(outputPrice),
+		CacheReadPrice:     billing.InexactFloat64(cacheReadPrice),
+		CacheCreationPrice: billing.InexactFloat64(cacheCreationPrice),
 		BillingMode:        billingMode,
 	}
 

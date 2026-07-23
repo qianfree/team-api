@@ -10,6 +10,8 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
+
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 )
@@ -57,7 +59,7 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 
 		case "recharge":
 			usdAmount := billing.ConvertCNYToUSD(ctx, order.FinalAmount)
-			if err = creditWalletTx(ctx, order.TenantID, usdAmount, fmt.Sprintf("Recharge: order #%d (CNY %.2f → USD %.6f)", orderID, order.FinalAmount, usdAmount)); err != nil {
+			if err = creditWalletTx(ctx, order.TenantID, usdAmount, fmt.Sprintf("Recharge: order #%d (CNY %.2f → USD %.6f)", orderID, order.FinalAmount, usdAmount.InexactFloat64())); err != nil {
 				return gerror.Wrapf(err, "credit wallet failed")
 			}
 			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
@@ -149,7 +151,9 @@ func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int
 }
 
 // creditWalletTx 在事务内钱包入账（依赖调用方传入携带事务的 ctx）
-func creditWalletTx(ctx context.Context, tenantID int64, amount float64, description string) error {
+// amount 为 USD（bil_ 层永远 USD）；用 decimal 直传原生 SQL（shopspring decimal 实现
+// driver.Valuer → 精确 NUMERIC 字符串），避免 float64 入账在 balance+? 累加时产生漂移。
+func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal, description string) error {
 	var w *struct {
 		ID int64 `json:"id"`
 	}
@@ -172,8 +176,8 @@ func creditWalletTx(ctx context.Context, tenantID int64, amount float64, descrip
 	}
 
 	var balance *struct {
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
+		Balance       decimal.Decimal `json:"balance"`
+		FrozenBalance decimal.Decimal `json:"frozen_balance"`
 	}
 	err = dao.BilWallets.Ctx(ctx).
 		Where("id", w.ID).

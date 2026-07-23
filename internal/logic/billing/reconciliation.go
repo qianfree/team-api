@@ -167,9 +167,9 @@ func CleanSettledPreDeductTracks(ctx context.Context) {
 func CleanExpiredPreDeducts(ctx context.Context) {
 	// 1. 查询所有超过 PreDeductMaxAge 仍未结算的冻结记录
 	type trackRow struct {
-		RequestID string  `json:"request_id"`
-		TenantID  int64   `json:"tenant_id"`
-		Amount    float64 `json:"amount"`
+		RequestID string          `json:"request_id"`
+		TenantID  int64           `json:"tenant_id"`
+		Amount    decimal.Decimal `json:"amount"`
 	}
 	var tracks []trackRow
 
@@ -195,14 +195,14 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 	tenantAmounts := make(map[int64]decimal.Decimal)
 	tenantRequests := make(map[int64][]string)
 	for _, t := range tracks {
-		tenantAmounts[t.TenantID] = tenantAmounts[t.TenantID].Add(dec(t.Amount))
+		tenantAmounts[t.TenantID] = tenantAmounts[t.TenantID].Add(t.Amount)
 		tenantRequests[t.TenantID] = append(tenantRequests[t.TenantID], t.RequestID)
 	}
 
 	// 3. 逐租户释放冻结金额
 	for tenantID, totalAmountD := range tenantAmounts {
 		requestIDs := tenantRequests[tenantID]
-		totalAmount := roundMoney(totalAmountD) // decimal 累加结果收敛到 10 位再落库
+		totalAmount := totalAmountD // decimal 已是精确类型，直接用于 DB 更新
 
 		// 释放 DB frozen_balance
 		_, err := g.DB().Ctx(ctx).Exec(ctx,
@@ -226,6 +226,6 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 
 		g.Log().Infof(ctx,
 			"[PRE-DEDUCT] cleaned orphaned: tenant=%d amount=%.6f count=%d",
-			tenantID, totalAmount, len(requestIDs))
+			tenantID, totalAmount.InexactFloat64(), len(requestIDs))
 	}
 }

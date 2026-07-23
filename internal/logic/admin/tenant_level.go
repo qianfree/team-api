@@ -5,6 +5,7 @@ import (
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
@@ -25,10 +26,10 @@ func (s *sAdmin) ListTenantLevelConfigs(ctx context.Context, _ *v1.TenantLevelCo
 			Id:                          c.Id,
 			Level:                       c.Level,
 			Name:                        c.Name,
-			CumulativeRechargeThreshold: c.CumulativeRechargeThreshold,
+			CumulativeRechargeThreshold: billing.InexactFloat64(c.CumulativeRechargeThreshold),
 			MaxMembers:                  c.MaxMembers,
 			MaxConcurrency:              c.MaxConcurrency,
-			PriceMultiplier:             c.PriceMultiplier,
+			PriceMultiplier:             billing.InexactFloat64(c.PriceMultiplier),
 			SortOrder:                   c.SortOrder,
 			CreatedAt:                   c.CreatedAt,
 			UpdatedAt:                   c.UpdatedAt,

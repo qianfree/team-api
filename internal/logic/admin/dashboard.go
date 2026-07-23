@@ -529,10 +529,11 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 		return nil, common.NewNotFoundError("钱包")
 	}
 
+	thresholdDecimal := billing.NewFromFloat(req.Threshold)
 	_, err = dao.BilWallets.Ctx(ctx).
 		Where("id", w.ID).
 		Data(do.BilWallets{
-			WarningThreshold: req.Threshold,
+			WarningThreshold: &thresholdDecimal,
 		}).Update()
 	if err != nil {
 		return nil, err

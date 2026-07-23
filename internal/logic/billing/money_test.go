@@ -10,17 +10,18 @@ import (
 func TestRoundMoney(t *testing.T) {
 	cases := []struct {
 		in   string
-		want float64
+		want string
 	}{
-		{"0.30000000000000004", 0.3},
-		{"0.12345678905", 0.1234567891}, // 第 11 位进位
-		{"0.12345678904", 0.123456789},  // 第 11 位舍去
-		{"1", 1},
+		{"0.30000000000000004", "0.3"},
+		{"0.12345678905", "0.1234567891"}, // 第 11 位进位
+		{"0.12345678904", "0.123456789"},  // 第 11 位舍去
+		{"1", "1"},
 	}
 	for _, c := range cases {
 		d, _ := decimal.NewFromString(c.in)
-		if got := roundMoney(d); got != c.want {
-			t.Fatalf("roundMoney(%s) = %v, want %v", c.in, got, c.want)
+		want, _ := decimal.NewFromString(c.want)
+		if got := RoundMoney(d); !got.Equal(want) {
+			t.Fatalf("RoundMoney(%s) = %v, want %v", c.in, got, want)
 		}
 	}
 }
@@ -48,29 +49,30 @@ func TestComputeCostDecimalPrecision(t *testing.T) {
 // TestMicroRoundTrip 验证 USD ↔ 整数微单位换算的正确性与精确取整。
 func TestMicroRoundTrip(t *testing.T) {
 	cases := []struct {
-		usd       float64
+		usd       string
 		wantMicro int64
 	}{
-		{0, 0},
-		{1, 1_000_000},
-		{0.1, 100_000},
-		{0.015, 15_000},
-		{0.000001, 1},
-		{0.0000004, 0}, // 四舍五入到 0
-		{0.0000006, 1}, // 四舍五入到 1 micro
-		{12345.678901, 12_345_678_901},
+		{"0", 0},
+		{"1", 1_000_000},
+		{"0.1", 100_000},
+		{"0.015", 15_000},
+		{"0.000001", 1},
+		{"0.0000004", 0}, // 四舍五入到 0
+		{"0.0000006", 1}, // 四舍五入到 1 micro
+		{"12345.678901", 12_345_678_901},
 	}
 	for _, c := range cases {
-		if got := toMicro(c.usd); got != c.wantMicro {
-			t.Fatalf("toMicro(%v) = %d, want %d", c.usd, got, c.wantMicro)
+		usd, _ := decimal.NewFromString(c.usd)
+		if got := ToMicro(usd); got != c.wantMicro {
+			t.Fatalf("ToMicro(%v) = %d, want %d", c.usd, got, c.wantMicro)
 		}
 	}
-	// fromMicro 反向
-	if got := fromMicro(15_000); got != 0.015 {
-		t.Fatalf("fromMicro(15000) = %v, want 0.015", got)
+	// FromMicro 反向
+	if got := FromMicro(15_000); !got.Equal(decimal.NewFromFloat(0.015)) {
+		t.Fatalf("FromMicro(15000) = %v, want 0.015", got)
 	}
-	if got := fromMicro(1_000_000); got != 1.0 {
-		t.Fatalf("fromMicro(1000000) = %v, want 1.0", got)
+	if got := FromMicro(1_000_000); !got.Equal(decimal.NewFromInt(1)) {
+		t.Fatalf("FromMicro(1000000) = %v, want 1.0", got)
 	}
 }
 

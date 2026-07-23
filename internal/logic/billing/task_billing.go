@@ -25,10 +25,10 @@ func NewTaskBillingProvider() common.TaskBillingProvider {
 
 // EstimateTaskCost 估算任务费用
 // ratios 包含计费比率（如 video_input 折扣）和预估参数（如 duration 秒数、resolution 乘数）
-func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]float64) (float64, error) {
+func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]float64) (decimal.Decimal, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
-		return 0.01, nil
+		return NewFromFloat(0.01), nil
 	}
 	return estimateTaskCost(pricing, ratios), nil
 }
@@ -47,16 +47,16 @@ const imagePlaceholderPreDeduct = 0.1
 //   - 其余无时长信号的任务（如未显式配成 per_request 的图片模型）：退回按次单价，
 //     **不再**套用视频 token 估算——图片没有时长/分辨率，套 10000×5×2.25 会凭空估出
 //     11.25 万 token 的天价预扣（$30/1M 输出价即得 $3.375），且与结算的「0 token」自相矛盾。
-func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64 {
+func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) decimal.Decimal {
 	if pricing == nil {
-		return 0.01
+		return NewFromFloat(0.01)
 	}
 
-	var cost float64
+	var costD decimal.Decimal
 	switch {
 	case pricing.BillingMode == "per_request":
 		// 按次计费：直接用单价
-		cost = pricing.PerRequestPrice
+		costD = NewFromFloat(pricing.PerRequestPrice)
 	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
 		duration := 5.0 // 默认 5 秒
 		if d, ok := ratios["duration"]; ok && d > 0 {
@@ -72,18 +72,17 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64
 		estimatedTokens := 10000.0 * duration * resolutionMul
 		// 修复视频预扣三连乘：用 decimal 避免 ÷1M × 单价 × 倍率 的链式误差
 		million := decimal.NewFromInt(1_000_000)
-		costD := dec(estimatedTokens).Div(million).
-			Mul(dec(pricing.OutputPrice)).
-			Mul(dec(pricing.TenantMultiplier))
-		cost = roundMoney(costD)
+		costD = NewFromFloat(estimatedTokens).Div(million).
+			Mul(NewFromFloat(pricing.OutputPrice)).
+			Mul(NewFromFloat(pricing.TenantMultiplier))
 	default:
 		// 无时长信号（图片等扁平计费任务）：优先按次单价；未配按次价时用占位预扣，
 		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
 		// （见 sync_image_worker.settleSyncImageSuccess）。
 		if pricing.PerRequestPrice > 0 {
-			cost = pricing.PerRequestPrice
+			costD = NewFromFloat(pricing.PerRequestPrice)
 		} else {
-			cost = imagePlaceholderPreDeduct
+			costD = NewFromFloat(imagePlaceholderPreDeduct)
 		}
 	}
 
@@ -92,13 +91,14 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64
 		if k == "duration" || k == "resolution" {
 			continue
 		}
-		cost *= ratio
+		costD = costD.Mul(NewFromFloat(ratio))
 	}
 
-	if cost < 0.01 {
-		cost = 0.01
+	minCost := NewFromFloat(0.01)
+	if costD.LessThan(minCost) {
+		costD = minCost
 	}
-	return cost
+	return RoundMoney(costD)
 }
 
 // hasDurationSignal 判断计费比率里是否携带时长类任务（视频）的 duration/resolution 信号。
@@ -116,13 +116,14 @@ func hasDurationSignal(ratios map[string]float64) bool {
 }
 
 // PreDeductTask 预扣任务费用
-func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost float64, modelName string) (float64, error) {
-	ok, err := PreDeduct(ctx, tenantID, estimatedCost, requestID, modelName)
+func (b *TaskBillingProviderImpl) PreDeductTask(ctx context.Context, tenantID int64, requestID string, estimatedCost decimal.Decimal, modelName string) (decimal.Decimal, error) {
+	estimatedFloat := InexactFloat64(estimatedCost)
+	ok, err := PreDeduct(ctx, tenantID, estimatedFloat, requestID, modelName)
 	if !ok {
 		if err == nil {
-			return 0, fmt.Errorf("pre-deduct task failed: insufficient balance")
+			return Zero, fmt.Errorf("pre-deduct task failed: insufficient balance")
 		}
-		return 0, fmt.Errorf("pre-deduct task failed: %w", err)
+		return Zero, fmt.Errorf("pre-deduct task failed: %w", err)
 	}
 	return estimatedCost, nil
 }
@@ -140,15 +141,16 @@ func (b *TaskBillingProviderImpl) ReleaseApiKeyConcurrent(ctx context.Context, a
 	ReleaseApiKeyConcurrent(ctx, apiKeyID)
 }
 
-func (b *TaskBillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float64) error {
-	return CheckApiKeyQuota(ctx, apiKeyID, preDeductAmount)
+func (b *TaskBillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount decimal.Decimal) error {
+	preDeductFloat := InexactFloat64(preDeductAmount)
+	return CheckApiKeyQuota(ctx, apiKeyID, preDeductFloat)
 }
 
 // SettleTaskSuccess 任务成功结算（含计费快照）
 // totalTokens/completionTokens: 上游返回的 token 用量
 // ratios: 提交时保存的计费比率（如 video_input 折扣）
-func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount float64, totalTokens, completionTokens int, ratios map[string]float64, taskID string) (*common.SettlementResult, error) {
-	diff := actualCost - preDeductAmount
+func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string) (*common.SettlementResult, error) {
+	diff := SubtractMoney(actualCost, preDeductAmount)
 
 	// 1. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
@@ -158,7 +160,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 	// 2. 获取定价（事务外只读）
 	pricing, _ := GetModelPrice(ctx, tenantID, modelName)
-	breakdown := buildTaskCostBreakdown(pricing, actualCost, totalTokens, completionTokens)
+	breakdown := buildTaskCostBreakdown(pricing, InexactFloat64(actualCost), totalTokens, completionTokens)
 
 	var billingMode string
 	var discountRatio, effectiveOutputPrice float64
@@ -174,8 +176,8 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	//    frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
 	_, err = executeSettlementTx(ctx, settlementTxParams{
 		walletID:        wallet.ID,
-		preDeductAmount: preDeductAmount,
-		actualCost:      actualCost,
+		preDeductAmount: InexactFloat64(preDeductAmount),
+		actualCost:      InexactFloat64(actualCost),
 		logPrefix:       "settle task",
 		createBillingRecord: func(ctx context.Context) (int64, error) {
 			billingResult, err := dao.BilRecords.Ctx(ctx).Data(do.BilRecords{
@@ -224,12 +226,12 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 				TenantId:     tenantID,
 				WalletId:     wallet.ID,
 				Type:         "consume",
-				Amount:       -actualCost,
+				Amount:       SubtractMoney(Zero, actualCost),
 				BalanceAfter: balanceAfter,
 				FrozenAfter:  frozenAfter,
 				RelatedId:    billingID,
 				RelatedType:  "billing_record",
-				Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, preDeductAmount, actualCost),
+				Description:  fmt.Sprintf("consume: %s model=%s pre_deduct=%.6f actual=%.6f", requestID, modelName, InexactFloat64(preDeductAmount), InexactFloat64(actualCost)),
 				UserId:       userID,
 				RequestId:    requestID,
 				ModelName:    modelName,
@@ -245,10 +247,10 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 			// 幂等跳过：该任务此前已结算完成，本次为重复调用（轮询/重放），不再扣款/写账单
 			g.Log().Warningf(ctx, "settle task: duplicate settlement skipped for request=%s (idempotent)", requestID)
 			return &common.SettlementResult{
-				PreDeductAmount: preDeductAmount,
-				ActualCost:      actualCost,
+				PreDeductAmount: InexactFloat64(preDeductAmount),
+				ActualCost:      InexactFloat64(actualCost),
 				BaseCost:        breakdown.BaseCost,
-				TotalCost:       actualCost,
+				TotalCost:       InexactFloat64(actualCost),
 				OutputCost:      breakdown.OutputCost,
 			}, nil
 		}
@@ -273,23 +275,24 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 	// 7. 生成计费快照 + 摘要
 	result := &common.SettlementResult{
-		PreDeductAmount: preDeductAmount,
-		ActualCost:      actualCost,
+		PreDeductAmount: InexactFloat64(preDeductAmount),
+		ActualCost:      InexactFloat64(actualCost),
 		BaseCost:        breakdown.BaseCost,
-		TotalCost:       actualCost,
+		TotalCost:       InexactFloat64(actualCost),
 		OutputCost:      breakdown.OutputCost,
 	}
 
-	if diff > 0.001 {
-		result.SupplementAmount = diff
-	} else if diff < -0.001 {
-		result.RefundAmount = -diff
+	threshold := NewFromFloat(0.001)
+	if diff.GreaterThan(threshold) {
+		result.SupplementAmount = InexactFloat64(diff)
+	} else if diff.LessThan(threshold.Neg()) {
+		result.RefundAmount = InexactFloat64(diff.Neg())
 	}
 
 	if pricing != nil {
 		internalSettlement := &SettlementResult{
-			PreDeductAmount:  preDeductAmount,
-			ActualCost:       actualCost,
+			PreDeductAmount:  InexactFloat64(preDeductAmount),
+			ActualCost:       InexactFloat64(actualCost),
 			BaseCost:         breakdown.BaseCost,
 			RefundAmount:     result.RefundAmount,
 			SupplementAmount: result.SupplementAmount,
@@ -355,24 +358,29 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 }
 
 // SettleTaskFailed 任务失败退还预扣
-func (b *TaskBillingProviderImpl) SettleTaskFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error {
-	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
+func (b *TaskBillingProviderImpl) SettleTaskFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount decimal.Decimal) error {
+	preDeductFloat := InexactFloat64(preDeductAmount)
+	return SettleFailed(ctx, tenantID, requestID, preDeductFloat)
 }
 
-func (b *TaskBillingProviderImpl) IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount float64) {
-	IncrApiKeyQuotaUsed(ctx, apiKeyID, amount)
+func (b *TaskBillingProviderImpl) IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount decimal.Decimal) {
+	amountFloat := InexactFloat64(amount)
+	IncrApiKeyQuotaUsed(ctx, apiKeyID, amountFloat)
 }
 
 // AdjustTaskBilling 调整预扣金额
-func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantID int64, requestID string, preDeductAmount, newEstimatedCost float64) (float64, error) {
-	diff := newEstimatedCost - preDeductAmount
-	if diff < 0.001 && diff > -0.001 {
+func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantID int64, requestID string, preDeductAmount, newEstimatedCost decimal.Decimal) (decimal.Decimal, error) {
+	diff := SubtractMoney(newEstimatedCost, preDeductAmount)
+	threshold := NewFromFloat(0.001)
+	negThreshold := threshold.Neg()
+	if diff.LessThan(threshold) && diff.GreaterThan(negThreshold) {
 		return preDeductAmount, nil
 	}
 
-	if diff > 0 {
+	if diff.GreaterThan(Zero) {
 		// 需要补扣
-		ok, err := PreDeduct(ctx, tenantID, diff, requestID+"_adjust", "")
+		diffFloat := InexactFloat64(diff)
+		ok, err := PreDeduct(ctx, tenantID, diffFloat, requestID+"_adjust", "")
 		if !ok {
 			return preDeductAmount, fmt.Errorf("adjust task billing: %w", err)
 		}
@@ -380,7 +388,7 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 	}
 
 	// 需要退还部分
-	if err := SettleFailed(ctx, tenantID, requestID+"_adjust", -diff); err != nil {
+	if err := SettleFailed(ctx, tenantID, requestID+"_adjust", InexactFloat64(diff.Neg())); err != nil {
 		return preDeductAmount, fmt.Errorf("adjust task billing refund: %w", err)
 	}
 	return newEstimatedCost, nil
@@ -389,26 +397,26 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 // RecalculateByTokens 根据上游返回的 total_tokens 重算费用。
 // 公式：totalTokens / 1M × output_price × tenant_multiplier × 附加比率
 // 如果模型没有配置 token 单价（纯按次计费），返回 0 表示不做 token 重算。
-func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (float64, error) {
+func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (decimal.Decimal, error) {
 	if totalTokens <= 0 {
-		return 0, nil
+		return Zero, nil
 	}
 
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
-		return 0, nil
+		return Zero, nil
 	}
 
 	// 需要 output_price > 0 才能做 token 重算
 	if pricing.OutputPrice <= 0 {
-		return 0, nil
+		return Zero, nil
 	}
 
 	// 修复 token 重算循环累乘：用 decimal 避免 ÷1M × 单价 × 倍率 × 循环比率 的链式误差
 	million := decimal.NewFromInt(1_000_000)
 	costD := decimal.NewFromInt(int64(totalTokens)).Div(million).
-		Mul(dec(pricing.OutputPrice)).
-		Mul(dec(pricing.TenantMultiplier))
+		Mul(NewFromFloat(pricing.OutputPrice)).
+		Mul(NewFromFloat(pricing.TenantMultiplier))
 
 	// 应用附加比率（视频输入折扣等）
 	// 注意：跳过 duration/resolution，它们已体现在上游返回的 token 数中，不应再乘
@@ -416,15 +424,16 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		if k == "duration" || k == "resolution" {
 			continue
 		}
-		costD = costD.Mul(dec(ratio))
+		costD = costD.Mul(NewFromFloat(ratio))
 	}
 
-	cost := roundMoney(costD)
+	costD = RoundMoney(costD)
 
 	// 最低消费
-	if cost < 0.01 {
-		cost = 0.01
+	minCost := NewFromFloat(0.01)
+	if costD.LessThan(minCost) {
+		costD = minCost
 	}
 
-	return cost, nil
+	return costD, nil
 }

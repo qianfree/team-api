@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/consts"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -238,7 +239,8 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 		if *req.TotalQuota < 0 {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于 0")
 		}
-		data.TotalQuota = *req.TotalQuota
+		d := billing.NewFromFloat(*req.TotalQuota)
+		data.TotalQuota = &d
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Insert(data)
@@ -436,7 +438,8 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		if *req.TotalQuota > 0 && *req.TotalQuota < info.UsedQuota {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于已用额度")
 		}
-		data.TotalQuota = *req.TotalQuota
+		d := billing.NewFromFloat(*req.TotalQuota)
+		data.TotalQuota = &d
 		hasUpdate = true
 	}
 

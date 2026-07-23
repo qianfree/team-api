@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/relay"
@@ -145,8 +146,8 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 		ChannelID       int64           `json:"channel_id"`
 		ModelName       string          `json:"model_name"`
 		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
+		PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
+		ActualCost      decimal.Decimal `json:"actual_cost"`
 		BillingSettled  bool            `json:"billing_settled"`
 		ResultURL       string          `json:"result_url"`
 		Data            json.RawMessage `json:"data"`
@@ -212,8 +213,8 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 		ChannelID       int64           `json:"channel_id"`
 		ModelName       string          `json:"model_name"`
 		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
+		PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
+		ActualCost      decimal.Decimal `json:"actual_cost"`
 		BillingSettled  bool            `json:"billing_settled"`
 		ResultURL       string          `json:"result_url"`
 		Data            json.RawMessage `json:"data"`
@@ -280,8 +281,8 @@ func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*
 		ChannelID       int64           `json:"channel_id"`
 		ModelName       string          `json:"model_name"`
 		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
+		PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
+		ActualCost      decimal.Decimal `json:"actual_cost"`
 		BillingSettled  bool            `json:"billing_settled"`
 		Data            json.RawMessage `json:"data"`
 		PrivateData     json.RawMessage `json:"private_data"`
@@ -339,7 +340,7 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 		ApiKeyID        int64           `json:"api_key_id"`
 		ChannelID       int64           `json:"channel_id"`
 		ModelName       string          `json:"model_name"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
+		PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
 		PrivateData     json.RawMessage `json:"private_data"`
 		SubmitTime      *time.Time      `json:"submit_time"`
 	}
@@ -387,8 +388,8 @@ func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*co
 		ApiKeyID        int64           `json:"api_key_id"`
 		ChannelID       int64           `json:"channel_id"`
 		ModelName       string          `json:"model_name"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
+		PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
+		ActualCost      decimal.Decimal `json:"actual_cost"`
 		BillingSettled  bool            `json:"billing_settled"`
 		Data            json.RawMessage `json:"data"`
 		PrivateData     json.RawMessage `json:"private_data"`

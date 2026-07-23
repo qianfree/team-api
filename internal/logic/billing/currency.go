@@ -3,24 +3,25 @@ package billing
 import (
 	"context"
 
+	"github.com/shopspring/decimal"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 )
 
 const defaultCNYToUSD = 0.14
 const defaultUSDToCNY = 7.25
 
-// ConvertCNYToUSD 将人民币金额转换为美元，向上取整到小数点后 6 位。
-// A8：用 decimal 精确乘法替代 float64 链式运算，避免 cnyAmount×rate 的浮点误差。
-func ConvertCNYToUSD(ctx context.Context, cnyAmount float64) float64 {
+// ConvertCNYToUSD 将人民币金额转换为美元，向上取整到小数点后 6 位（decimal 原生版）。
+// 用 decimal 精确乘法替代 float64 链式运算，避免 cnyAmount×rate 的浮点误差。
+func ConvertCNYToUSD(ctx context.Context, cnyAmount float64) decimal.Decimal {
 	rate := GetExchangeRateCNYToUSD(ctx)
-	return ceilUSD(dec(cnyAmount).Mul(dec(rate)))
+	return CeilUSD(NewFromFloat(cnyAmount).Mul(NewFromFloat(rate)))
 }
 
-// ConvertUSDToCNY 将美元金额转换为人民币。
-// A8：decimal 精确乘法 + 四舍五入到存储精度（10 位），消除 float64 累计误差。
-func ConvertUSDToCNY(ctx context.Context, usdAmount float64) float64 {
+// ConvertUSDToCNY 将美元金额转换为人民币（decimal 原生版）。
+// decimal 精确乘法 + 四舍五入到存储精度（10 位），消除 float64 累计误差。
+func ConvertUSDToCNY(ctx context.Context, usdAmount decimal.Decimal) decimal.Decimal {
 	rate := GetExchangeRateUSDToCNY(ctx)
-	return roundMoney(dec(usdAmount).Mul(dec(rate)))
+	return RoundMoney(usdAmount.Mul(NewFromFloat(rate)))
 }
 
 // GetExchangeRateCNYToUSD 获取 CNY→USD 兑换比例

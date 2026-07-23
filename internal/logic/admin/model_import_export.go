@@ -12,10 +12,12 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
@@ -262,16 +264,23 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					return err
 				}
 				for _, p := range item.Pricing {
+					// API 边界 float64 → DO decimal 转换
+					var perRequestPriceDecimal *decimal.Decimal
+					if p.PerRequestPrice != nil {
+						d := billing.NewFromFloat(*p.PerRequestPrice)
+						perRequestPriceDecimal = &d
+					}
+
 					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 						ModelId:            existing.ID,
 						BillingMode:        p.BillingMode,
 						MinTokens:          p.MinTokens,
 						MaxTokens:          p.MaxTokens,
-						InputPrice:         p.InputPrice,
-						OutputPrice:        p.OutputPrice,
-						PerRequestPrice:    p.PerRequestPrice,
-						CacheReadPrice:     p.CacheReadPrice,
-						CacheCreationPrice: p.CacheCreationPrice,
+						InputPrice:         billing.NewFromFloat(p.InputPrice),
+						OutputPrice:        billing.NewFromFloat(p.OutputPrice),
+						PerRequestPrice:    perRequestPriceDecimal,
+						CacheReadPrice:     billing.NewFromFloat(p.CacheReadPrice),
+						CacheCreationPrice: billing.NewFromFloat(p.CacheCreationPrice),
 					})
 					if err != nil {
 						return err
@@ -307,16 +316,23 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				}
 
 				for _, p := range item.Pricing {
+					// API 边界 float64 → DO decimal 转换
+					var perRequestPriceDecimal *decimal.Decimal
+					if p.PerRequestPrice != nil {
+						d := billing.NewFromFloat(*p.PerRequestPrice)
+						perRequestPriceDecimal = &d
+					}
+
 					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 						ModelId:            id,
 						BillingMode:        p.BillingMode,
 						MinTokens:          p.MinTokens,
 						MaxTokens:          p.MaxTokens,
-						InputPrice:         p.InputPrice,
-						OutputPrice:        p.OutputPrice,
-						PerRequestPrice:    p.PerRequestPrice,
-						CacheReadPrice:     p.CacheReadPrice,
-						CacheCreationPrice: p.CacheCreationPrice,
+						InputPrice:         billing.NewFromFloat(p.InputPrice),
+						OutputPrice:        billing.NewFromFloat(p.OutputPrice),
+						PerRequestPrice:    perRequestPriceDecimal,
+						CacheReadPrice:     billing.NewFromFloat(p.CacheReadPrice),
+						CacheCreationPrice: billing.NewFromFloat(p.CacheCreationPrice),
 					})
 					if err != nil {
 						return err

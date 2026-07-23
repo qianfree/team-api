@@ -158,7 +158,7 @@ func handleTimedOutTasks(ctx context.Context) {
 		monitor.UnregisterRequestByTaskID(t.PublicTaskID)
 
 		// 退还预扣费用
-		if t.PreDeductAmount > 0 {
+		if t.PreDeductAmount.GreaterThan(billing.Zero) {
 			taskBilling := billing.NewTaskBillingProvider()
 			if err := taskBilling.SettleTaskFailed(ctx, t.TenantID, t.RequestID, t.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: refund timed-out task %s: %v", t.PublicTaskID, err)
@@ -213,7 +213,7 @@ func handleUnsettledTasks(ctx context.Context) {
 		if t.Status == "SUCCESS" {
 			// 成功任务：用 ActualCost（已在上次轮询中计算）结算
 			actualCost := t.ActualCost
-			if actualCost <= 0 {
+			if actualCost.LessThanOrEqual(billing.Zero) {
 				actualCost = t.PreDeductAmount
 			}
 			taskBilling := billing.NewTaskBillingProvider()
@@ -256,7 +256,7 @@ func handleUnsettledSyncImage(ctx context.Context, t *common.AsyncTask) {
 		var pd privateData
 		_ = json.Unmarshal(t.PrivateData, &pd)
 		actualCost := t.ActualCost
-		if actualCost <= 0 {
+		if actualCost.LessThanOrEqual(billing.Zero) {
 			actualCost = t.PreDeductAmount
 		}
 		if _, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
@@ -406,16 +406,16 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 		// 结算计费
 		var settleResult *common.SettlementResult
-		if task.PreDeductAmount > 0 && !task.BillingSettled {
+		if task.PreDeductAmount.GreaterThan(billing.Zero) && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
 			actualCost := task.PreDeductAmount
 
 			// 优先用上游返回的 ActualCost
 			if taskInfo.ActualCost > 0 {
-				actualCost = taskInfo.ActualCost
+				actualCost = billing.NewFromFloat(taskInfo.ActualCost)
 			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
 				// 用上游 total_tokens + 保存的 ratios 重算
-				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios); err == nil && tokenCost > 0 {
+				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios); err == nil && tokenCost.GreaterThan(billing.Zero) {
 					actualCost = tokenCost
 				}
 			}
@@ -441,7 +441,7 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 
 	} else if taskInfo.Status == common.TaskStatusFailure {
 		// 退还预扣费用
-		if task.PreDeductAmount > 0 && !task.BillingSettled {
+		if task.PreDeductAmount.GreaterThan(billing.Zero) && !task.BillingSettled {
 			taskBilling := billing.NewTaskBillingProvider()
 			if err := taskBilling.SettleTaskFailed(ctx, task.TenantID, task.RequestID, task.PreDeductAmount); err != nil {
 				g.Log().Warningf(ctx, "poll: refund failed task %s: %v", task.PublicTaskID, err)
@@ -500,9 +500,9 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		PromptTokens:     task.PromptTokens,
 		CompletionTokens: task.CompletionTokens,
 		TotalTokens:      task.TotalTokens,
-		TotalCost:        task.ActualCost,
-		ActualCost:       task.ActualCost,
-		PreDeductAmount:  task.PreDeductAmount,
+		TotalCost:        billing.InexactFloat64(task.ActualCost),
+		ActualCost:       billing.InexactFloat64(task.ActualCost),
+		PreDeductAmount:  billing.InexactFloat64(task.PreDeductAmount),
 		BillingSource:    "task",
 		TaskID:           task.PublicTaskID,
 	}
