@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 
+	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/payment"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -111,7 +112,8 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	if months >= 12 {
 		amount = plan.YearlyPrice
 	} else {
-		amount = plan.MonthlyPrice * float64(months)
+		// 修复订单金额连乘：用 decimal 避免 price × months 的浮点误差
+		amount = billing.MultiplyMoney(plan.MonthlyPrice, float64(months))
 	}
 
 	// 使用 crypto/rand 生成随机部分，避免碰撞
@@ -362,7 +364,8 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 	finalAmount := req.Amount
 	if settings != nil {
 		if discount, ok := settings.AmountDiscount[int(req.Amount)]; ok && discount > 0 {
-			finalAmount = req.Amount * discount
+			// 修复充值折扣连乘：用 decimal 避免 amount × discount 的浮点误差
+			finalAmount = billing.MultiplyMoney(req.Amount, discount)
 		}
 	}
 

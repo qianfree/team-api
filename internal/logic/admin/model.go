@@ -11,10 +11,12 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -506,10 +508,12 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 		return source
 	}
 
-	inputPrice := entry.InputCostPerToken * 1_000_000
-	outputPrice := entry.OutputCostPerToken * 1_000_000
-	cacheReadPrice := entry.CacheReadInputTokenCost * 1_000_000
-	cacheCreationPrice := entry.CacheCreationInputTokenCost * 1_000_000
+	// 修复定价单位转换：用 decimal 避免裸浮点乘法，将每 token 价格转换为每百万 token 价格
+	million := decimal.NewFromInt(1_000_000)
+	inputPrice := billing.RoundMoney(decimal.NewFromFloat(entry.InputCostPerToken).Mul(million))
+	outputPrice := billing.RoundMoney(decimal.NewFromFloat(entry.OutputCostPerToken).Mul(million))
+	cacheReadPrice := billing.RoundMoney(decimal.NewFromFloat(entry.CacheReadInputTokenCost).Mul(million))
+	cacheCreationPrice := billing.RoundMoney(decimal.NewFromFloat(entry.CacheCreationInputTokenCost).Mul(million))
 
 	billingMode := "token"
 	if entry.Mode == "image_generation" && entry.OutputCostPerImage > 0 && inputPrice == 0 && outputPrice == 0 {
@@ -522,10 +526,10 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	source.MaxContext = entry.MaxInputTokens
 	source.MaxOutput = entry.MaxOutputTokens
 	source.Pricing = &v1.OfficialPricingItem{
-		InputPrice:         roundTo2(inputPrice),
-		OutputPrice:        roundTo2(outputPrice),
-		CacheReadPrice:     roundTo2(cacheReadPrice),
-		CacheCreationPrice: roundTo2(cacheCreationPrice),
+		InputPrice:         inputPrice,
+		OutputPrice:        outputPrice,
+		CacheReadPrice:     cacheReadPrice,
+		CacheCreationPrice: cacheCreationPrice,
 		BillingMode:        billingMode,
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -69,7 +70,12 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) float64
 		// 预估 tokens ≈ base_tokens_per_second × duration × resolution_multiplier
 		// 火山方舟视频生成约 10000 tokens/s (480p 基准)，用于预扣估算
 		estimatedTokens := 10000.0 * duration * resolutionMul
-		cost = estimatedTokens / 1_000_000.0 * pricing.OutputPrice * pricing.TenantMultiplier
+		// 修复视频预扣三连乘：用 decimal 避免 ÷1M × 单价 × 倍率 的链式误差
+		million := decimal.NewFromInt(1_000_000)
+		costD := dec(estimatedTokens).Div(million).
+			Mul(dec(pricing.OutputPrice)).
+			Mul(dec(pricing.TenantMultiplier))
+		cost = roundMoney(costD)
 	default:
 		// 无时长信号（图片等扁平计费任务）：优先按次单价；未配按次价时用占位预扣，
 		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
@@ -398,11 +404,11 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		return 0, nil
 	}
 
-	// 基础费用 = tokens × 单价
-	cost := float64(totalTokens) / 1_000_000.0 * pricing.OutputPrice
-
-	// 应用租户倍率
-	cost *= pricing.TenantMultiplier
+	// 修复 token 重算循环累乘：用 decimal 避免 ÷1M × 单价 × 倍率 × 循环比率 的链式误差
+	million := decimal.NewFromInt(1_000_000)
+	costD := decimal.NewFromInt(int64(totalTokens)).Div(million).
+		Mul(dec(pricing.OutputPrice)).
+		Mul(dec(pricing.TenantMultiplier))
 
 	// 应用附加比率（视频输入折扣等）
 	// 注意：跳过 duration/resolution，它们已体现在上游返回的 token 数中，不应再乘
@@ -410,8 +416,10 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		if k == "duration" || k == "resolution" {
 			continue
 		}
-		cost *= ratio
+		costD = costD.Mul(dec(ratio))
 	}
+
+	cost := roundMoney(costD)
 
 	// 最低消费
 	if cost < 0.01 {

@@ -23,11 +23,17 @@ func dec(f float64) decimal.Decimal {
 	return decimal.NewFromFloat(f)
 }
 
-// roundMoney 将 decimal 金额四舍五入到 10 位小数（与 NUMERIC(20,10) 对齐）后返回 float64。
+// RoundMoney 将 decimal 金额四舍五入到 10 位小数（与 NUMERIC(20,10) 对齐）后返回 float64。
 // 用于把 decimal 精确计算的结果收敛到存储精度，作为 Go 层金额的统一出口。
-func roundMoney(d decimal.Decimal) float64 {
+// 导出给 admin/tenant 层调用（A8 Phase 1 扩展）。
+func RoundMoney(d decimal.Decimal) float64 {
 	f, _ := d.Round(moneyScale).Float64()
 	return f
+}
+
+// roundMoney 内部别名，保持向后兼容
+func roundMoney(d decimal.Decimal) float64 {
+	return RoundMoney(d)
 }
 
 // ceilUSD 将 decimal 金额向上取整到 6 位小数（钱包 USD 精度）后返回 float64。
@@ -51,4 +57,28 @@ func toMicro(usd float64) int64 {
 func fromMicro(micro int64) float64 {
 	f, _ := decimal.New(micro, -6).Float64()
 	return f
+}
+
+// MultiplyMoney 金额精确乘法（A8 Phase 1 扩展）。
+// 用于替代裸浮点乘法，避免链式运算累积误差（如 price × months、amount × discount）。
+func MultiplyMoney(a, b float64) float64 {
+	return roundMoney(dec(a).Mul(dec(b)))
+}
+
+// DivideMoney 金额精确除法（A8 Phase 1 扩展）。
+// 用于替代裸浮点除法（如 totalCost / requests）。
+func DivideMoney(a, b float64) float64 {
+	return roundMoney(dec(a).Div(dec(b)))
+}
+
+// AddMoney 金额精确加法（A8 Phase 1 扩展）。
+// 用于循环累加避免误差放大。
+func AddMoney(a, b float64) float64 {
+	return roundMoney(dec(a).Add(dec(b)))
+}
+
+// SubtractMoney 金额精确减法（A8 Phase 1 扩展）。
+// 用于差额计算（如 available = balance - frozen）。
+func SubtractMoney(a, b float64) float64 {
+	return roundMoney(dec(a).Sub(dec(b)))
 }
