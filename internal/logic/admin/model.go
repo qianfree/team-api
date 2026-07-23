@@ -139,6 +139,39 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		pricingMap[p.ModelId] = p
 	}
 
+	// 批量查询渠道支持情况
+	type channelAbilityRow struct {
+		ModelName   string `json:"model_name"`
+		ChannelID   int64  `json:"channel_id"`
+		ChannelName string `json:"channel_name"`
+		Type        int    `json:"type"`
+	}
+	modelIdStrs := make([]string, 0, len(models))
+	for _, m := range models {
+		modelIdStrs = append(modelIdStrs, m.ModelId)
+	}
+	var channelRows []channelAbilityRow
+	if len(modelIdStrs) > 0 {
+		err = dao.ChnAbilities.Ctx(ctx).
+			LeftJoin("chn_channels", "chn_channels.id = chn_abilities.channel_id").
+			Fields("chn_abilities.model_name, chn_abilities.channel_id, chn_channels.name AS channel_name, chn_channels.type").
+			Where("chn_abilities.model_name IN (?)", modelIdStrs).
+			Where("chn_abilities.enabled", true).
+			Where("chn_channels.status", "active").
+			Scan(&channelRows)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+	}
+	channelMap := make(map[string][]v1.ModelChannelInfo, len(channelRows))
+	for _, r := range channelRows {
+		channelMap[r.ModelName] = append(channelMap[r.ModelName], v1.ModelChannelInfo{
+			ChannelID:   r.ChannelID,
+			ChannelName: r.ChannelName,
+			Type:        r.Type,
+		})
+	}
+
 	list := make([]v1.ModelItem, 0, len(models))
 	for _, m := range models {
 		item := v1.ModelItem{
@@ -172,6 +205,10 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			if p.PerRequestPrice != nil {
 				item.PerRequestPrice = *p.PerRequestPrice
 			}
+		}
+		// 填充可用渠道
+		if chs, ok := channelMap[m.ModelId]; ok {
+			item.Channels = chs
 		}
 		list = append(list, item)
 	}
