@@ -28,6 +28,7 @@ type AdminUserItem struct {
 	Status      string `json:"status"`
 	LastLoginAt string `json:"last_login_at"`
 	LastLoginIp string `json:"last_login_ip"`
+	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -80,6 +81,14 @@ type AdminUserResetPasswordReq struct {
 }
 
 type AdminUserResetPasswordRes struct{}
+
+// AdminUserUnlockReq 解除管理员登录锁定请求
+type AdminUserUnlockReq struct {
+	g.Meta `path:"/users/{id}/unlock" method:"put" mime:"json" tags:"管理后台-用户管理" summary:"解除管理员登录锁定"`
+	Id     int64 `json:"id" in:"path" v:"required" dc:"管理员ID"`
+}
+
+type AdminUserUnlockRes struct{}
 
 // AdminUserExportReq 导出用户列表请求
 type AdminUserExportReq struct {

@@ -54,6 +54,7 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 		Status      string `json:"status"`
+		LockedUntil string `json:"locked_until"`
 		CreatedAt   string `json:"created_at"`
 	}
 	err = model.OrderDesc("id").
@@ -72,6 +73,7 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 			DisplayName: u.DisplayName,
 			Role:        u.Role,
 			Status:      u.Status,
+			LockedUntil: u.LockedUntil,
 			CreatedAt:   u.CreatedAt,
 		}
 	}
@@ -800,6 +802,44 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 	return nil, nil
 }
 
+// UnlockMember 解除成员登录锁定。仅 owner/admin 可操作；租户隔离双键校验。
+func (s *sTenant) UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockReq) (*v1.TenantMemberUnlockRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	if err := requireTeamEnabled(ctx); err != nil {
+		return nil, err
+	}
+	tenantID := middleware.GetTenantID(ctx)
+
+	var user *struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("成员")
+	}
+
+	_, err = dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Data(map[string]interface{}{
+			"failed_attempts": 0,
+			"locked_until":    nil,
+		}).Update()
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 // GetMember returns a single member's detail.
 func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
@@ -811,6 +851,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 		Status      string `json:"status"`
+		LockedUntil string `json:"locked_until"`
 		CreatedAt   string `json:"created_at"`
 		UpdatedAt   string `json:"updated_at"`
 	}
@@ -832,6 +873,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
 		Status:      user.Status,
+		LockedUntil: user.LockedUntil,
 		CreatedAt:   user.CreatedAt,
 		UpdatedAt:   user.UpdatedAt,
 	}, nil

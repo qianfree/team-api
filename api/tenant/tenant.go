@@ -67,6 +67,7 @@ type ITenantV1 interface {
 	TenantMemberResetPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (res *v1.TenantMemberResetPasswordRes, err error)
 	TenantMemberRemove(ctx context.Context, req *v1.TenantMemberRemoveReq) (res *v1.TenantMemberRemoveRes, err error)
 	TenantMemberUpdateRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (res *v1.TenantMemberUpdateRoleRes, err error)
+	TenantMemberUnlock(ctx context.Context, req *v1.TenantMemberUnlockReq) (res *v1.TenantMemberUnlockRes, err error)
 	TenantMemberGet(ctx context.Context, req *v1.TenantMemberGetReq) (res *v1.TenantMemberGetRes, err error)
 	TenantMemberUsage(ctx context.Context, req *v1.TenantMemberUsageReq) (res *v1.TenantMemberUsageRes, err error)
 	TenantMemberApiKeys(ctx context.Context, req *v1.TenantMemberApiKeysReq) (res *v1.TenantMemberApiKeysRes, err error)
