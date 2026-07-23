@@ -13,6 +13,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	rcommon "github.com/qianfree/team-api/relay/common"
@@ -77,11 +78,13 @@ type settlementTxParams struct {
 func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, error) {
 	var billingID int64
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// a. 更新钱包：释放预扣冻结 + 扣除实际成本
+		// a. 更新钱包：释放预扣冻结 + 扣除实际成本（decimal 直传 NUMERIC，避免 float64 精度损失）
 		now := time.Now()
+		preDeductD := NewFromFloat(p.preDeductAmount)
+		actualCostD := NewFromFloat(p.actualCost)
 		_, err := g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			p.preDeductAmount, p.actualCost, now, p.walletID)
+			preDeductD, actualCostD, now, p.walletID)
 		if err != nil {
 			return gerror.Wrapf(err, "%s: update wallet", p.logPrefix)
 		}
@@ -118,8 +121,8 @@ func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, erro
 // best-effort：读取失败返回 0/0，不影响主结算流程（与重构前逐处内联的行为一致）。
 func readWalletBalanceTx(ctx context.Context, walletID int64) (balanceAfter, frozenAfter float64) {
 	type balRow struct {
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
+		Balance       decimal.Decimal `json:"balance"`
+		FrozenBalance decimal.Decimal `json:"frozen_balance"`
 	}
 	var br *balRow
 	err := dao.BilWallets.Ctx(ctx).
@@ -127,7 +130,7 @@ func readWalletBalanceTx(ctx context.Context, walletID int64) (balanceAfter, fro
 		Fields("balance, frozen_balance").
 		Scan(&br)
 	if err == nil && br != nil {
-		return br.Balance, br.FrozenBalance
+		return InexactFloat64(br.Balance), InexactFloat64(br.FrozenBalance)
 	}
 	return 0, 0
 }
