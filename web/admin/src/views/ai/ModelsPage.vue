@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Popconfirm, Message,
+  Tag, Button, Space, Popconfirm, Message, Tooltip,
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -214,6 +214,27 @@ const columns: TableColumnData[] = [
     },
   },
 
+  {
+    title: '可用渠道',
+    dataIndex: 'channels',
+    width: 180,
+    render({ record }) {
+      const channels = record.channels
+      if (!channels || channels.length === 0) {
+        return h('span', { style: 'color:var(--color-text-4);font-size:12px' }, '—')
+      }
+      const display = channels.slice(0, 2).map((c: any) => c.channel_name)
+      if (channels.length > 2) {
+        display.push(`+${channels.length - 2}`)
+      }
+      const trigger = h('span', { style: 'cursor:default;font-size:13px' }, display.join(', '))
+      if (channels.length <= 2) return trigger
+      const tooltip = h('div', { style: 'line-height:2;padding:4px 0' },
+        channels.map((c: any) => h('div', null, c.channel_name)),
+      )
+      return h(Tooltip, null, { default: () => trigger, content: () => tooltip })
+    },
+  },
   { title: '更新时间', dataIndex: 'updated_at', width: 180 },
   {
     title: '操作',
