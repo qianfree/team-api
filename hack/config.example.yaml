@@ -19,6 +19,46 @@ gfcli:
         daoPath: "./internal/dao"
         doPath: "./internal/model/do"
         entityPath: "./internal/model/entity"
+        # 金额 decimal 化：全局 NUMERIC → decimal.Decimal
+        typeMapping:
+          decimal:
+            type: decimal.Decimal
+            import: github.com/shopspring/decimal
+          numeric:
+            type: decimal.Decimal
+            import: github.com/shopspring/decimal
+        # 可空金额列 → *decimal.Decimal
+        fieldMapping:
+          bil_wallets.warning_threshold:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_pricing.per_request_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.custom_input_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.custom_output_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.per_request_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.custom_cache_read_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.custom_cache_creation_price:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          mdl_tenant_models.discount_ratio:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          api_keys.total_quota:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
+          tnt_projects.budget:
+            type: "*decimal.Decimal"
+            import: github.com/shopspring/decimal
     ctrl:
       - apiPath:       "./api"
         outPath:       "./internal/controller"
