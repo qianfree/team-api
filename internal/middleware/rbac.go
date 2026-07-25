@@ -203,6 +203,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},
 	{method: "POST", path: "/api/admin/files/cleanup", perm: "file:cleanup"},
 	{method: "GET", prefix: "/api/admin/files/", suffix: "/download", perm: "file:view"},
+	{method: "GET", prefix: "/api/admin/files/", suffix: "/serve", perm: "file:view"},
 	{method: "DELETE", prefix: "/api/admin/files/", perm: "file:delete"},
 
 	// ── monitor 监控告警 ──

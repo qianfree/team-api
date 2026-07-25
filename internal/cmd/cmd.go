@@ -30,6 +30,7 @@ import (
 	"github.com/qianfree/team-api/internal/response"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 
+	adminHandler "github.com/qianfree/team-api/internal/handler/admin"
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
@@ -297,6 +298,14 @@ var (
 				group.Group("/docs", func(g *ghttp.RouterGroup) {
 					g.Bind(docsController.NewV1())
 				})
+			})
+
+			// File streaming serve — admin auth required, bypasses JSON response wrapper.
+			// 流式返回二进制（local 存储模式 + 未来应用层代理下载），不能走统一 JSON 响应格式，
+			// 故独立注册路由组（不套 MiddlewareHandlerResponse），只套鉴权与审计中间件。
+			s.Group("/api/admin/files", func(group *ghttp.RouterGroup) {
+				group.Middleware(middleware.AdminAuth, middleware.AdminPermissionGuard, middleware.OperationLog)
+				group.GET("/{id}/serve", adminHandler.HandleFileServe)
 			})
 
 			// Open Platform API — HMAC-SHA256 authentication

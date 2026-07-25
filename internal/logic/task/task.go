@@ -301,6 +301,26 @@ func RunTaskAsync(task *Task) {
 	}()
 }
 
+// ExecuteTaskAfterCreate 在后台立即执行刚创建的任务（跳过 cron 周期）。
+//
+// 适用于用户主动创建的交互式任务（如数据导出），用户期望提交后立即开始执行，
+// 而非等待最长 60 秒的 cron 轮询。goroutine 内部使用 gctx.New() 避免被请求上下文
+// 取消。ExecuteTask 有 CAS 保护（WHERE status='pending'），即使 cron 也同时竞争
+// 也不会重复执行——只有一个会成功 claim，另一个的 RowsAffected == 0 静默退出。
+func ExecuteTaskAfterCreate(taskID int64) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				glogError("panic in ExecuteTaskAfterCreate task %d: %v", taskID, r)
+			}
+		}()
+		bgCtx := gctx.New()
+		if err := ExecuteTask(bgCtx, taskID); err != nil {
+			glogError("ExecuteTaskAfterCreate task %d: %v", taskID, err)
+		}
+	}()
+}
+
 func glogError(format string, args ...any) {
 	g.Log().Errorf(gctx.New(), format, args...)
 }

@@ -20,11 +20,16 @@ func deriveFileCategory(storagePath, mimeType string) string {
 	return "other"
 }
 
-// adminFileService 从数据库配置构造 FileService；对象存储未配置时返回业务错误。
+// adminFileService 从数据库配置构造 FileService。
+//
+// 对象存储未配置时，NewFileServiceFromConfig 自动降级到本地磁盘 provider，
+// 因此本函数几乎不返回 error；仅当存储 provider 构造本身失败（如本地目录不可写、
+// OSS 配置畸形）时返回错误。local 模式下 GetDownloadURL 返回应用层 serve URL，
+// FileDownload/FileDelete 自动适配，无需调用方分支。
 func adminFileService(ctx context.Context) (*common.FileService, error) {
 	svc, err := common.NewFileServiceFromConfig(ctx)
 	if err != nil {
-		return nil, common.NewBadRequestError("对象存储未配置，请先在系统设置中配置存储")
+		return nil, common.NewBadRequestError("存储初始化失败，请检查系统设置中的存储配置")
 	}
 	return svc, nil
 }
