@@ -176,11 +176,16 @@ func (s *FileService) serveURL(fileID int64, thumb bool, width int) string {
 //
 // 对象存储走预签名 URL（OSS/S3/COS 直接访问桶）；local provider 不支持预签名，
 // 返回应用层 serve 端点的相对 URL（由 handler 鉴权后流式返回内容）。
-func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string, error) {
+//
+// tenantID 用于跨租户隔离——传入该文件所属租户 ID，查询条件自动追加 tenant_id 过滤。
+// 管理后台等跨租户场景传入 0 表示不做 tenant 过滤（仅按 id 查询）。
+func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64, tenantID int64) (string, error) {
 	var record *FileRecord
-	err := dao.FilFiles.Ctx(ctx).
-		Where("id", fileID).
-		Scan(&record)
+	q := dao.FilFiles.Ctx(ctx).Where("id", fileID)
+	if tenantID > 0 {
+		q = q.Where("tenant_id", tenantID)
+	}
+	err := q.Scan(&record)
 	if err != nil {
 		return "", gerror.Wrapf(err, "query file %d", fileID)
 	}
@@ -198,11 +203,16 @@ func (s *FileService) GetDownloadURL(ctx context.Context, fileID int64) (string,
 // 非图片文件（以及不支持原生图片处理的 provider）回退到原图对象。
 //
 // local provider 无服务端图片处理能力，返回原图的 serve URL（前端 CSS 缩放）。
-func (s *FileService) GetThumbnailURL(ctx context.Context, fileID int64, width int) (string, error) {
+//
+// tenantID 用于跨租户隔离——传入该文件所属租户 ID，查询条件自动追加 tenant_id 过滤。
+// 管理后台等跨租户场景传入 0 表示不做 tenant 过滤（仅按 id 查询）。
+func (s *FileService) GetThumbnailURL(ctx context.Context, fileID int64, width int, tenantID int64) (string, error) {
 	var record *FileRecord
-	err := dao.FilFiles.Ctx(ctx).
-		Where("id", fileID).
-		Scan(&record)
+	q := dao.FilFiles.Ctx(ctx).Where("id", fileID)
+	if tenantID > 0 {
+		q = q.Where("tenant_id", tenantID)
+	}
+	err := q.Scan(&record)
 	if err != nil {
 		return "", gerror.Wrapf(err, "query file %d", fileID)
 	}
@@ -225,11 +235,16 @@ func (s *FileService) GetThumbnailURL(ctx context.Context, fileID int64, width i
 }
 
 // Delete 从存储中删除文件并删除其元数据记录。
-func (s *FileService) Delete(ctx context.Context, fileID int64) error {
+//
+// tenantID 用于跨租户隔离——传入该文件所属租户 ID，查询条件自动追加 tenant_id 过滤。
+// 管理后台的保留期清理等跨租户场景传入 0 表示不做 tenant 过滤（仅按 id 查询）。
+func (s *FileService) Delete(ctx context.Context, fileID int64, tenantID int64) error {
 	var record *FileRecord
-	err := dao.FilFiles.Ctx(ctx).
-		Where("id", fileID).
-		Scan(&record)
+	q := dao.FilFiles.Ctx(ctx).Where("id", fileID)
+	if tenantID > 0 {
+		q = q.Where("tenant_id", tenantID)
+	}
+	err := q.Scan(&record)
 	if err != nil {
 		return gerror.Wrapf(err, "query file %d", fileID)
 	}

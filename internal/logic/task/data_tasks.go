@@ -128,7 +128,7 @@ func handleDataExport(ctx context.Context, payload json.RawMessage) (any, error)
 	}
 
 	// 下载链接：local 返回应用层 serve 相对 URL，OSS 返回预签名 URL（前端按是否 http 分支）。
-	downloadURL, err := svc.GetDownloadURL(ctx, rec.ID)
+	downloadURL, err := svc.GetDownloadURL(ctx, rec.ID, p.TenantID)
 	if err != nil {
 		g.Log().Warningf(ctx, "data export: get download url for tenant %d: %v", p.TenantID, err)
 	}

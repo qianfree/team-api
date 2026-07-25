@@ -185,7 +185,7 @@ func deleteExpiredFiles(ctx context.Context, fileSvc *common.FileService, cutoff
 		for _, f := range batch {
 			if fileSvc != nil {
 				// FileService.Delete 删对象(失败仅告警)后删行；返回硬错误表示行未删。
-				if err := fileSvc.Delete(ctx, f.ID); err != nil {
+				if err := fileSvc.Delete(ctx, f.ID, 0); err != nil {
 					g.Log().Warningf(ctx, "file retention: delete file %d failed: %v", f.ID, err)
 					continue
 				}
