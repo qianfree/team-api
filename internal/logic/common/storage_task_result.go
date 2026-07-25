@@ -51,10 +51,10 @@ func TaskResultImageURLs(ctx context.Context, tenantID int64, publicTaskID strin
 	if thumbWidth <= 0 {
 		thumbWidth = 600
 	}
-	if u, e := svc.GetThumbnailURL(ctx, rec.ID, thumbWidth); e == nil {
+	if u, e := svc.GetThumbnailURL(ctx, rec.ID, thumbWidth, tenantID); e == nil {
 		thumbURL = u
 	}
-	if u, e := svc.GetDownloadURL(ctx, rec.ID); e == nil {
+	if u, e := svc.GetDownloadURL(ctx, rec.ID, tenantID); e == nil {
 		originalURL = u
 	}
 	return thumbURL, originalURL

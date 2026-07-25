@@ -751,7 +751,7 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 	if err != nil {
 		return "", err
 	}
-	return fs.GetDownloadURL(ctx, rec.ID)
+	return fs.GetDownloadURL(ctx, rec.ID, job.TenantID)
 }
 
 // syncImageDownloadClient 用于从上游返回的图片 URL 下载**已生成好的**图片做 re-host。

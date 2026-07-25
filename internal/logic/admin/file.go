@@ -174,9 +174,9 @@ func (s *sAdmin) FileDownload(ctx context.Context, req *v1.FileDownloadReq) (*v1
 	}
 	var url string
 	if req.Variant == "thumb" {
-		url, err = svc.GetThumbnailURL(ctx, req.Id, req.Width)
+		url, err = svc.GetThumbnailURL(ctx, req.Id, req.Width, 0)
 	} else {
-		url, err = svc.GetDownloadURL(ctx, req.Id)
+		url, err = svc.GetDownloadURL(ctx, req.Id, 0)
 	}
 	if err != nil {
 		return nil, err
@@ -198,7 +198,7 @@ func (s *sAdmin) FileDelete(ctx context.Context, req *v1.FileDeleteReq) (*v1.Fil
 	if err != nil {
 		return nil, err
 	}
-	if err := svc.Delete(ctx, req.Id); err != nil {
+	if err := svc.Delete(ctx, req.Id, 0); err != nil {
 		return nil, err
 	}
 	return &v1.FileDeleteRes{}, nil
