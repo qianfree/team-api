@@ -32,6 +32,17 @@ database:
     maxOpen:  100
     maxLifetime: "30s"
 
+  # 审计日志独立数据库（可选）
+  # 启用后 aud_request_logs（大模型请求审计）写入独立库，其余审核表仍在主库。
+  # 建表脚本见 docs/audit-db-schema.sql，需在审计库手动执行。
+  # audit:
+  #   type:     "pgsql"
+  #   link:     "pgsql:user:pass@tcp(host:port)/team-api-audit?sslmode=disable"
+  #   timezone: "Asia/Shanghai"
+  #   maxIdle:  10
+  #   maxOpen:  50
+  #   maxLifetime: "5m"
+
 # Redis
 redis:
   default:
