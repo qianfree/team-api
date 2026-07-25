@@ -152,10 +152,24 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	}
 
 	// 4. 渠道选择
-	selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, modelName, nil)
-	if err != nil {
-		return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, err)
+	var (
+		selection *common.ChannelSelection
+		lease     *channelLease
+		excluded  []int64
+	)
+	for {
+		selection, err = provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, excluded)
+		if err != nil {
+			return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, err)
+		}
+		var acquired bool
+		lease, acquired = acquireChannelLease(ctx, provider, selection, rc.RequestID)
+		if acquired {
+			break
+		}
+		excluded = append(excluded, selection.ChannelID)
 	}
+	defer lease.Release()
 
 	// 5. 构造 RelayInfo
 	info := &common.RelayInfo{
@@ -227,6 +241,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	// 8. 建立 Realtime 代理
 	proxy := openai.NewRealtimeProxy(info)
 	if err := proxy.DialUpstream(); err != nil {
+		provider.DeleteChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName)
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
@@ -244,6 +259,9 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 
 	// 9. 启动双向代理
 	usage, proxyErr := proxy.Proxy(ctx)
+	if proxyErr == nil && !selection.PreserveAffinity {
+		provider.SetChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, selection.ChannelID)
+	}
 
 	// 10. 结算费用
 	if billing != nil && preDeductAmount > 0 {

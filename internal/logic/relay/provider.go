@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -58,7 +59,7 @@ func (p *DataProviderImpl) ValidateApiKey(ctx context.Context, rawKey string) (*
 
 // GetChannelForModel 实现 DataProvider.GetChannelForModel
 // 使用调度引擎：亲和性优先 → 租户模型权限 → 渠道范围过滤 → 优先级+权重选择 → 健康度过滤
-func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
+func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
 	// 检查租户模型权限和渠道范围
 	enabled, channelScope, err := p.CheckTenantModelAccess(ctx, tenantID, modelName)
 	if err != nil {
@@ -68,90 +69,19 @@ func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, use
 		return nil, common.ErrTenantModelNotEnabled
 	}
 
-	// 亲和性查找：优先使用上次成功的渠道，保持会话连续性
-	if preferredChannelID, ok := scheduler.GetGlobalAffinity().Get(tenantID, userID, modelName); ok {
-		if selection, err := p.tryAffinityChannel(ctx, tenantID, modelName, preferredChannelID, channelScope, excludeChannelIDs); err == nil && selection != nil {
-			return selection, nil
-		}
-		// 亲和性渠道不可用，清除记录，继续正常调度
-		scheduler.GetGlobalAffinity().Delete(tenantID, userID, modelName)
-	}
-
-	return p.selectChannelFromDB(ctx, tenantID, modelName, channelScope, excludeChannelIDs)
+	return p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
 }
 
-// tryAffinityChannel 尝试使用亲和性渠道
-func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int64, modelName string, preferredChannelID int64, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	// 检查是否在排除列表中
-	for _, id := range excludeChannelIDs {
-		if id == preferredChannelID {
-			return nil, common.ErrChannelUnavailable
-		}
-	}
+func (p *DataProviderImpl) SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {
+	setAffinity(ctx, tenantID, userID, apiKeyID, modelName, channelID)
+}
 
-	// 检查渠道范围
-	if len(channelScope) > 0 {
-		found := false
-		for _, id := range channelScope {
-			if id == preferredChannelID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, common.ErrChannelUnavailable
-		}
-	}
-
-	type channelRow struct {
-		ChannelID      int64  `json:"channel_id"`
-		ChannelName    string `json:"channel_name"`
-		ChannelType    int    `json:"channel_type"`
-		BaseURL        string `json:"base_url"`
-		UpstreamModel  string `json:"upstream_model"`
-		MaxConcurrency int    `json:"max_concurrency"`
-		Settings       string `json:"settings"`
-	}
-
-	var ch *channelRow
-	err := dao.ChnChannels.Ctx(ctx).As("c").
-		LeftJoin("chn_abilities a ON a.channel_id = c.id").
-		Where("c.id", preferredChannelID).
-		Where("c.status", "active").
-		Where("a.model_name", modelName).
-		Where("a.enabled", true).
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.max_concurrency, c.settings").
-		Scan(&ch)
-	if err != nil || ch == nil {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	key, err := getChannelKey(ctx, ch.ChannelID)
-	if err != nil || key == "" {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	settings := ParseChannelSettings(ch.Settings)
-	upstreamModel := ch.UpstreamModel
-	if upstreamModel == "" {
-		upstreamModel = modelName
-	}
-
-	return &common.ChannelSelection{
-		ChannelID:         ch.ChannelID,
-		ChannelType:       ch.ChannelType,
-		ChannelName:       ch.ChannelName,
-		BaseURL:           ch.BaseURL,
-		ApiKey:            key,
-		UpstreamModelName: upstreamModel,
-		IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-		MaxConcurrency:    ch.MaxConcurrency,
-		Settings:          settings,
-	}, nil
+func (p *DataProviderImpl) DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
+	deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
 }
 
 // selectChannelFromDB 正常渠道调度（优先级+权重+健康度）
-func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
+func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
 	type channelRow struct {
 		ChannelID           int64    `json:"channel_id"`
 		ChannelName         string   `json:"channel_name"`
@@ -172,9 +102,7 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		Where("a.model_name", modelName).
 		Where("a.enabled", true).
 		Where("c.status", "active").
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures").
-		OrderDesc("c.priority").
-		OrderDesc("c.weight")
+		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures")
 
 	// 渠道范围过滤
 	if len(channelScope) > 0 {
@@ -195,17 +123,22 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		return nil, common.ErrChannelUnavailable
 	}
 
-	// 尝试按 last_used_at 选择最早使用的 Key
-	for _, ch := range channels {
-		key, err := getChannelKey(ctx, ch.ChannelID)
-		if err == nil && key != "" {
-			settings := ParseChannelSettings(ch.Settings)
-
+	if !lcommon.Config().GetBool(ctx, "channel_scheduler_v2_enabled") {
+		sort.SliceStable(channels, func(i, j int) bool {
+			if channels[i].Priority == channels[j].Priority {
+				return channels[i].Weight > channels[j].Weight
+			}
+			return channels[i].Priority > channels[j].Priority
+		})
+		for _, ch := range channels {
+			key, keyErr := getChannelKey(ctx, ch.ChannelID)
+			if keyErr != nil || key == "" {
+				continue
+			}
 			upstreamModel := ch.UpstreamModel
 			if upstreamModel == "" {
 				upstreamModel = modelName
 			}
-
 			return &common.ChannelSelection{
 				ChannelID:         ch.ChannelID,
 				ChannelType:       ch.ChannelType,
@@ -215,12 +148,116 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 				UpstreamModelName: upstreamModel,
 				IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
 				MaxConcurrency:    ch.MaxConcurrency,
-				Settings:          settings,
+				Settings:          ParseChannelSettings(ch.Settings),
+				SelectionReason:   "legacy",
+				Priority:          ch.Priority,
+				Weight:            ch.Weight,
+				HealthScore:       100,
 			}, nil
 		}
+		return nil, common.ErrChannelUnavailable
+	}
+
+	candidates := make([]scheduler.ChannelCandidate, 0, len(channels))
+	for _, ch := range channels {
+		healthScore := 100.0
+		if ch.HealthScore != nil {
+			healthScore = *ch.HealthScore
+		}
+		upstreamModel := ch.UpstreamModel
+		if upstreamModel == "" {
+			upstreamModel = modelName
+		}
+		candidates = append(candidates, scheduler.ChannelCandidate{
+			ChannelID:      ch.ChannelID,
+			ChannelType:    ch.ChannelType,
+			ChannelName:    ch.ChannelName,
+			BaseURL:        ch.BaseURL,
+			Priority:       ch.Priority,
+			Weight:         ch.Weight,
+			HealthScore:    healthScore,
+			UpstreamModel:  upstreamModel,
+			IsModelMapped:  ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
+			Settings:       ParseChannelSettings(ch.Settings),
+			MaxConcurrency: ch.MaxConcurrency,
+		})
+	}
+
+	preferredChannelID, _ := getAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+	_, seed := affinityIdentity(tenantID, userID, apiKeyID, modelName)
+	bucketSeconds := int64(affinityTTL(ctx).Seconds())
+	seed += ":" + strconv.FormatInt(time.Now().Unix()/bucketSeconds, 10)
+
+	for len(candidates) > 0 {
+		var result *scheduler.SchedulerResult
+		if affinityEnabled(ctx) {
+			result = scheduler.SelectStable(candidates, preferredChannelID, seed)
+		} else {
+			result = scheduler.Select(candidates)
+		}
+		if result == nil {
+			break
+		}
+		affinityHit := preferredChannelID > 0 && result.ChannelID == preferredChannelID
+		preserveAffinity := false
+		if preferredChannelID > 0 && !affinityHit {
+			if containsChannelID(excludeChannelIDs, preferredChannelID) {
+				preserveAffinity = true
+			} else {
+				deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+				preferredChannelID = 0
+			}
+		}
+
+		key, keyErr := getChannelKey(ctx, result.ChannelID)
+		if keyErr == nil && key != "" {
+			reason := "weighted"
+			if affinityHit {
+				reason = "affinity"
+			}
+			return &common.ChannelSelection{
+				ChannelID:         result.ChannelID,
+				ChannelType:       result.ChannelType,
+				ChannelName:       result.ChannelName,
+				BaseURL:           result.BaseURL,
+				ApiKey:            key,
+				UpstreamModelName: result.UpstreamModelName,
+				IsModelMapped:     result.IsModelMapped,
+				MaxConcurrency:    result.MaxConcurrency,
+				Settings:          result.Settings,
+				SelectionReason:   reason,
+				PreserveAffinity:  preserveAffinity,
+				Priority:          result.Priority,
+				Weight:            result.Weight,
+				HealthScore:       result.HealthScore,
+			}, nil
+		}
+		if affinityHit {
+			deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+			preferredChannelID = 0
+		}
+		candidates = removeChannelCandidate(candidates, result.ChannelID)
 	}
 
 	return nil, common.ErrChannelUnavailable
+}
+
+func containsChannelID(channelIDs []int64, channelID int64) bool {
+	for _, id := range channelIDs {
+		if id == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeChannelCandidate(candidates []scheduler.ChannelCandidate, channelID int64) []scheduler.ChannelCandidate {
+	for i := range candidates {
+		if candidates[i].ChannelID == channelID {
+			return append(candidates[:i], candidates[i+1:]...)
+		}
+	}
+	return candidates
 }
 
 // CheckTenantModelAccess 实现 DataProvider.CheckTenantModelAccess

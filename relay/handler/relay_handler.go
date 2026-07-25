@@ -21,7 +21,6 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
-	"github.com/qianfree/team-api/relay/scheduler"
 )
 
 // RelayContext relay 请求上下文（从 GoFrame handler 传入）
@@ -257,7 +256,9 @@ func settleSuccessfulRequest(
 	// 17. 更新健康度 + 记录用量 + 更新亲和性
 	provider.UpdateChannelHealth(postCtx, selection.ChannelID, true, info.LatencyMs())
 	provider.ResetConsecutiveFailure(postCtx, selection.ChannelID)
-	scheduler.GetGlobalAffinity().Set(rc.TenantID, rc.UserID, v.modelName, selection.ChannelID)
+	if !selection.PreserveAffinity {
+		provider.SetChannelAffinity(postCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel, selection.ChannelID)
+	}
 
 	firstTokenMs := 0
 	if !info.FirstResponseTime.IsZero() {
@@ -414,7 +415,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	}
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, v.lookupModel, excludeChannelIDs)
+		selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel, excludeChannelIDs)
 		if err != nil {
 			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err)
 			return result.usage, result.billingResult, result.err
@@ -466,6 +467,13 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			return nil, v.billingResult, err
 		}
 
+		lease, acquired := acquireChannelLease(ctx, provider, selection, rc.RequestID)
+		if !acquired {
+			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
+			attempt-- // 容量溢出不消耗上游重试次数
+			continue
+		}
+
 		upstreamCtx := context.WithoutCancel(ctx)
 		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer settleCancel()
@@ -473,6 +481,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
+			lease.Release()
 			// 高成本非幂等生成（图片/视频）：DoRequest 阶段「可能已送达上游」的模糊网络错误
 			// （EOF/RST/超时）不重试，避免上游重复生成 + 重复计费；连接被拒/DNS 失败等确定
 			// 未送达的错误与状态码类错误仍照常重试。chat 等端点行为不变。
@@ -488,7 +497,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
-			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
+			provider.DeleteChannelAffinity(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel)
 
 			if retryable && attempt < maxRetries {
 				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
@@ -512,6 +521,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 		// 处理上游响应
 		usage, err := adaptor.DoResponse(ctx, resp, info, rc.Writer)
+		lease.Release()
 		if err != nil {
 			err = helper.RemapStatusCode(err, info.ChannelMeta.Settings.StatusCodeMapping)
 
@@ -552,7 +562,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
 				attempt, selection.ChannelID, selection.ChannelName, v.modelName, err, info.LatencyMs())
 			channelErrors = append(channelErrors, failReason)
-			scheduler.GetGlobalAffinity().Delete(rc.TenantID, rc.UserID, v.modelName)
+			provider.DeleteChannelAffinity(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel)
 
 			// 响应已由 adaptor 直接写入客户端（原生错误透传）时，即使 StatusCode 可重试也必须
 			// 终止重试：否则重试成功会把成功体追加到已写的错误体后，造成响应污染（错误体+成功体拼接）。
@@ -729,15 +739,19 @@ func buildTraceHop(attempt int, selection *common.ChannelSelection, adaptor comm
 		upstreamURL = u
 	}
 	return common.ForwardingHop{
-		Attempt:       attempt,
-		ChannelID:     selection.ChannelID,
-		ChannelName:   selection.ChannelName,
-		ChannelType:   selection.ChannelType,
-		Provider:      constant.ProviderType(selection.ChannelType).String(),
-		BaseURL:       selection.BaseURL,
-		UpstreamURL:   upstreamURL,
-		UpstreamModel: selection.UpstreamModelName,
-		ModelMapped:   selection.IsModelMapped,
+		Attempt:         attempt,
+		ChannelID:       selection.ChannelID,
+		ChannelName:     selection.ChannelName,
+		ChannelType:     selection.ChannelType,
+		Provider:        constant.ProviderType(selection.ChannelType).String(),
+		BaseURL:         selection.BaseURL,
+		UpstreamURL:     upstreamURL,
+		UpstreamModel:   selection.UpstreamModelName,
+		ModelMapped:     selection.IsModelMapped,
+		SelectionReason: selection.SelectionReason,
+		Priority:        selection.Priority,
+		Weight:          selection.Weight,
+		HealthScore:     selection.HealthScore,
 	}
 }
 

@@ -431,7 +431,7 @@ func processSyncImageJob(job *SyncImageJob) {
 	var exclude []int64
 	lastErr := "no available channel"
 	for attempt := 0; attempt < syncImageMaxAttempts; attempt++ {
-		sel, err := syncImageRelayProv.GetChannelForModel(ctx, job.TenantID, job.UserID, job.Model, exclude)
+		sel, err := syncImageRelayProv.GetChannelForModel(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, exclude)
 		if err != nil {
 			lastErr = fmt.Sprintf("select channel: %v", err)
 			break // 无更多候选
@@ -443,9 +443,18 @@ func processSyncImageJob(job *SyncImageJob) {
 			syncImageJitter()
 			continue
 		}
+		if !syncImageRelayProv.AcquireChannelSlot(ctx, sel.ChannelID, sel.MaxConcurrency, job.RequestID) {
+			decInflight(sel.ChannelID)
+			exclude = append(exclude, sel.ChannelID)
+			syncImageJitter()
+			continue
+		}
 
 		ok, memW, perr := runImagePipelineWithRelease(ctx, job, sel)
 		if ok {
+			if !sel.PreserveAffinity {
+				syncImageRelayProv.SetChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, sel.ChannelID)
+			}
 			settleSyncImageSuccess(ctx, job, sel, memW)
 			return
 		}
@@ -453,6 +462,7 @@ func processSyncImageJob(job *SyncImageJob) {
 		// 失败：降健康度 + 排除该渠道 + 抖动退避重选
 		syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, false, 0)
 		syncImageRelayProv.IncrementConsecutiveFailure(ctx, sel.ChannelID)
+		syncImageRelayProv.DeleteChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model)
 		exclude = append(exclude, sel.ChannelID)
 		lastErr = perr
 		syncImageJitter()
@@ -464,8 +474,27 @@ func processSyncImageJob(job *SyncImageJob) {
 
 // runImagePipelineWithRelease 保证无论成功/失败/panic 都释放 per-channel 槽（defer）。
 func runImagePipelineWithRelease(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection) (ok bool, memW *memResponseWriter, failReason string) {
+	stopHeartbeat := make(chan struct{})
+	go refreshSyncImageChannelLease(sel.ChannelID, job.RequestID, stopHeartbeat)
+	defer close(stopHeartbeat)
 	defer decInflight(sel.ChannelID)
+	defer syncImageRelayProv.ReleaseChannelSlot(context.Background(), sel.ChannelID, job.RequestID)
 	return runImagePipeline(ctx, job, sel)
+}
+
+func refreshSyncImageChannelLease(channelID int64, requestID string, stop <-chan struct{}) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			syncImageRelayProv.RefreshChannelSlot(ctx, channelID, requestID)
+			cancel()
+		case <-stop:
+			return
+		}
+	}
 }
 
 // runImagePipeline 复刻 RelayHandler 的最小管线，把上游响应捕获到内存 writer。
