@@ -549,26 +549,14 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	query := dao.BilTransactions.Ctx(ctx)
-
-	if req.TenantID > 0 {
-		query = query.Where("bil_transactions.tenant_id", req.TenantID)
-	}
-	if req.Type != "" {
-		query = query.Where("bil_transactions.type", req.Type)
-	}
-	if req.Username != "" {
-		query = query.Where("tu.username LIKE ?", "%"+req.Username+"%")
-	}
-	if req.ModelName != "" {
-		query = query.Where("bil_transactions.model_name LIKE ?", "%"+req.ModelName+"%")
-	}
-	if req.StartDate != "" {
-		query = query.Where("bil_transactions.created_at >= ?", req.StartDate+" 00:00:00")
-	}
-	if req.EndDate != "" {
-		query = query.Where("bil_transactions.created_at <= ?", req.EndDate+" 23:59:59")
-	}
+	query := billing.BuildTransactionQuery(ctx, billing.TransactionQueryParams{
+		TenantID:  req.TenantID,
+		Type:      req.Type,
+		Username:  req.Username,
+		ModelName: req.ModelName,
+		StartDate: req.StartDate,
+		EndDate:   req.EndDate,
+	})
 
 	type transactionRow struct {
 		Id           int64       `json:"id"`
