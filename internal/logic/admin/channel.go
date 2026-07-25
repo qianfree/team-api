@@ -358,6 +358,7 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 			return nil, err
 		}
 	}
+	relay.InvalidateChannelAffinities(ctx, req.ID)
 
 	return nil, nil
 }
@@ -382,6 +383,7 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 	if err != nil {
 		return nil, err
 	}
+	relay.InvalidateChannelAffinities(ctx, req.ID)
 
 	return nil, nil
 }
@@ -492,6 +494,7 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 	if err != nil {
 		return nil, err
 	}
+	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
 	return nil, nil
 }
 
@@ -516,6 +519,7 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 	if err != nil {
 		return nil, err
 	}
+	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
 
 	return nil, nil
 }

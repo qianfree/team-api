@@ -2,54 +2,89 @@ package relay
 
 import (
 	"context"
-	"github.com/qianfree/team-api/internal/dao"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 )
 
-// UpsertAffinity 更新亲和性记录（成功后调用）
-func UpsertAffinity(ctx context.Context, tenantID, userID int64, modelName string, channelID int64) {
-	now := time.Now()
-	expiresAt := now.Add(1800 * time.Second)
-	g.DB().Exec(ctx,
-		`INSERT INTO chn_channel_affinities (tenant_id, user_id, model_name, channel_id, hit_count, expires_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?)
-		 ON CONFLICT (tenant_id, user_id, model_name)
-		 DO UPDATE SET channel_id = ?, hit_count = chn_channel_affinities.hit_count + 1, expires_at = ?, updated_at = ?`,
-		tenantID, userID, modelName, channelID, expiresAt, now, channelID, expiresAt, now)
+const affinityRedisPrefix = "relay:affinity:v2"
+
+func affinityIdentity(tenantID, userID, apiKeyID int64, modelName string) (redisKey, seed string) {
+	seed = fmt.Sprintf("%d:%d:%d:%s", tenantID, userID, apiKeyID, modelName)
+	digest := sha256.Sum256([]byte(seed))
+	return affinityRedisPrefix + ":key:" + hex.EncodeToString(digest[:]), seed
 }
 
-// GetAffinity 获取亲和性渠道
-func GetAffinity(ctx context.Context, tenantID, userID int64, modelName string) (int64, bool) {
-	var result *struct {
-		ChannelID int64 `json:"channel_id"`
+func affinityTTL(ctx context.Context) time.Duration {
+	seconds := lcommon.Config().GetInt(ctx, "channel_affinity_ttl_seconds")
+	if seconds <= 0 {
+		seconds = 1800
 	}
-	err := dao.ChnChannelAffinities.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", userID).
-		Where("model_name", modelName).
-		Where("expires_at > ?", time.Now()).
-		Fields("channel_id").
-		Scan(&result)
-	if err != nil || result == nil {
+	return time.Duration(seconds) * time.Second
+}
+
+func affinityEnabled(ctx context.Context) bool {
+	return lcommon.Config().GetBool(ctx, "channel_affinity_enabled")
+}
+
+func getAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) (int64, bool) {
+	if !affinityEnabled(ctx) {
 		return 0, false
 	}
-	return result.ChannelID, true
+	key, _ := affinityIdentity(tenantID, userID, apiKeyID, modelName)
+	value, err := g.Redis().Do(ctx, "GET", key)
+	if err != nil || value.IsNil() {
+		return 0, false
+	}
+	channelID, err := strconv.ParseInt(value.String(), 10, 64)
+	return channelID, err == nil && channelID > 0
 }
 
-// DeleteAffinity 删除亲和性记录
-func DeleteAffinity(ctx context.Context, tenantID, userID int64, modelName string) {
-	dao.ChnChannelAffinities.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("user_id", userID).
-		Where("model_name", modelName).
-		Delete()
+func setAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {
+	if !affinityEnabled(ctx) || channelID <= 0 {
+		return
+	}
+	key, _ := affinityIdentity(tenantID, userID, apiKeyID, modelName)
+	ttlSeconds := int64(affinityTTL(ctx).Seconds())
+	reversePrefix := affinityRedisPrefix + ":channel:"
+	const script = `
+local old = redis.call('GET', KEYS[1])
+if old and old ~= ARGV[1] then
+  redis.call('SREM', ARGV[3] .. old, KEYS[1])
+end
+redis.call('SETEX', KEYS[1], ARGV[2], ARGV[1])
+redis.call('SADD', ARGV[3] .. ARGV[1], KEYS[1])
+redis.call('EXPIRE', ARGV[3] .. ARGV[1], ARGV[2] + 60)
+return 1`
+	if _, err := g.Redis().Do(ctx, "EVAL", script, 1, key, channelID, ttlSeconds, reversePrefix); err != nil {
+		g.Log().Warningf(ctx, "[Affinity] set failed: %v", err)
+	}
 }
 
-// DeleteAffinityByChannel 删除某渠道的所有亲和性记录
-func DeleteAffinityByChannel(ctx context.Context, channelID int64) {
-	dao.ChnChannelAffinities.Ctx(ctx).
-		Where("channel_id", channelID).
-		Delete()
+func deleteAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
+	key, _ := affinityIdentity(tenantID, userID, apiKeyID, modelName)
+	reversePrefix := affinityRedisPrefix + ":channel:"
+	const script = `
+local old = redis.call('GET', KEYS[1])
+if old then redis.call('SREM', ARGV[1] .. old, KEYS[1]) end
+return redis.call('DEL', KEYS[1])`
+	_, _ = g.Redis().Do(ctx, "EVAL", script, 1, key, reversePrefix)
+}
+
+// InvalidateChannelAffinities removes all distributed affinity records bound to a channel.
+func InvalidateChannelAffinities(ctx context.Context, channelID int64) {
+	reverseKey := affinityRedisPrefix + ":channel:" + strconv.FormatInt(channelID, 10)
+	const script = `
+local keys = redis.call('SMEMBERS', KEYS[1])
+for _, key in ipairs(keys) do redis.call('DEL', key) end
+redis.call('DEL', KEYS[1])
+return #keys`
+	if _, err := g.Redis().Do(ctx, "EVAL", script, 1, reverseKey); err != nil {
+		g.Log().Warningf(ctx, "[Affinity] invalidate channel %d failed: %v", channelID, err)
+	}
 }

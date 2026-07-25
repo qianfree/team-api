@@ -90,6 +90,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	// 提交成功后切换为任务 ID 跟踪（任务生命周期远超 HTTP 请求）
 	if rc.TaskID != "" {
@@ -176,8 +177,9 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 	ctx := r.Context()
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
+	apiKeyID := middleware.GetApiKeyID(ctx)
 
-	selection, err := relayDataProvider.GetChannelForModel(ctx, tenantID, userID, req.Model, nil)
+	selection, err := relayDataProvider.GetChannelForModel(ctx, tenantID, userID, apiKeyID, req.Model, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +247,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
+	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
@@ -327,6 +330,7 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		writeSyncImageErrorWithCode(rc.Writer, 400, "image_async_disabled",
 			"async image generation is disabled for this model; call POST /v1/images/generations instead")
 	}
+	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
@@ -336,6 +340,12 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 	go recordTaskSubmitAudit(r, rc, capture, body)
+}
+
+func commitTaskAffinity(ctx context.Context, rc *relay_handler.TaskRelayContext, modelName string, channelMeta *relay_common.ChannelMeta, statusCode int) {
+	if statusCode >= 200 && statusCode < 300 {
+		relayDataProvider.SetChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, channelMeta.ChannelID)
+	}
 }
 
 // registerAsyncTask 注册异步任务到实时监控

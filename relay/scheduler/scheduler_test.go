@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -116,9 +117,9 @@ func TestSelect_HealthDegradation(t *testing.T) {
 			expect: 25,
 		},
 		{
-			name:   "zero weight defaults to selectable",
+			name:   "zero weight is disabled",
 			input:  ChannelCandidate{Weight: 0, HealthScore: 80},
-			expect: 1,
+			expect: 0,
 		},
 		{
 			name:   "degraded low weight remains selectable",
@@ -133,6 +134,78 @@ func TestSelect_HealthDegradation(t *testing.T) {
 				t.Fatalf("effectiveWeight() = %d, want %d", got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestSelect_ZeroWeightExcluded(t *testing.T) {
+	candidates := []ChannelCandidate{
+		{ChannelID: 1, Priority: 10, Weight: 0, HealthScore: 100},
+		{ChannelID: 2, Priority: 10, Weight: 10, HealthScore: 100},
+	}
+	for i := 0; i < 20; i++ {
+		if result := Select(candidates); result == nil || result.ChannelID != 2 {
+			t.Fatalf("zero-weight channel selected: %+v", result)
+		}
+	}
+}
+
+func TestSelectStable_AffinityAndDeterminism(t *testing.T) {
+	candidates := []ChannelCandidate{
+		{ChannelID: 1, Priority: 10, Weight: 7, HealthScore: 100},
+		{ChannelID: 2, Priority: 10, Weight: 3, HealthScore: 100},
+	}
+
+	first := SelectStable(candidates, 0, "tenant:user:model:bucket")
+	for i := 0; i < 100; i++ {
+		result := SelectStable(candidates, 0, "tenant:user:model:bucket")
+		if result.ChannelID != first.ChannelID {
+			t.Fatalf("stable selection changed: first=%d current=%d", first.ChannelID, result.ChannelID)
+		}
+	}
+	if result := SelectStable(candidates, 2, "ignored-for-affinity"); result.ChannelID != 2 {
+		t.Fatalf("affinity channel not selected: got %d", result.ChannelID)
+	}
+}
+
+func TestSelectStable_AffinityMustRemainEligible(t *testing.T) {
+	candidates := []ChannelCandidate{
+		{ChannelID: 1, Priority: 1, Weight: 100, HealthScore: 100},
+		{ChannelID: 2, Priority: 10, Weight: 100, HealthScore: 100},
+	}
+	if result := SelectStable(candidates, 1, "subject"); result.ChannelID != 2 {
+		t.Fatalf("lower-priority affinity bypassed priority: got %d", result.ChannelID)
+	}
+
+	candidates[0].Priority = 10
+	candidates[0].HealthScore = 10
+	if result := SelectStable(candidates, 1, "subject"); result.ChannelID != 2 {
+		t.Fatalf("unhealthy affinity bypassed health filter: got %d", result.ChannelID)
+	}
+}
+
+func TestSelect_AllZeroWeightReturnsNil(t *testing.T) {
+	candidates := []ChannelCandidate{
+		{ChannelID: 1, Priority: 10, Weight: 0, HealthScore: 100},
+		{ChannelID: 2, Priority: 10, Weight: 0, HealthScore: 100},
+	}
+	if result := SelectStable(candidates, 1, "subject"); result != nil {
+		t.Fatalf("expected no selectable channel, got %+v", result)
+	}
+}
+
+func TestSelectStable_WeightedDistribution(t *testing.T) {
+	candidates := []ChannelCandidate{
+		{ChannelID: 1, Priority: 10, Weight: 7, HealthScore: 100},
+		{ChannelID: 2, Priority: 10, Weight: 3, HealthScore: 100},
+	}
+	counts := map[int64]int{}
+	for i := 0; i < 10000; i++ {
+		result := SelectStable(candidates, 0, fmt.Sprintf("subject-%d", i))
+		counts[result.ChannelID]++
+	}
+	ratio := float64(counts[1]) / 10000
+	if ratio < 0.67 || ratio > 0.73 {
+		t.Fatalf("7:3 distribution out of tolerance: counts=%v", counts)
 	}
 }
 

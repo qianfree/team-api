@@ -10,7 +10,6 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
-	"github.com/qianfree/team-api/relay/scheduler"
 )
 
 // UpdateHealthScoreDirect 同步更新健康度（供测试使用）
@@ -197,7 +196,7 @@ func checkAutoDisable(ctx context.Context, channelID int64, consecutiveFailures 
 		g.Log().Warningf(ctx, "[AutoDisable] channel %d auto-disabled after %d consecutive failures", channelID, consecutiveFailures)
 
 		// 清除该渠道的所有亲和性记录，避免后续请求继续路由到已禁用渠道
-		scheduler.GetGlobalAffinity().DeleteByChannel(channelID)
+		InvalidateChannelAffinities(ctx, channelID)
 
 		// 查询渠道名称用于通知
 		var chName *string

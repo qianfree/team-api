@@ -37,9 +37,24 @@ type DataProvider interface {
 	ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error)
 
 	// GetChannelForModel 为指定模型选择最佳渠道。
-	// tenantID 和 userID 用于亲和性计算。
+	// tenantID、userID 和 apiKeyID 用于亲和性计算。
 	// excludeChannelIDs 是本次请求已尝试过且失败的渠道，用于重试时排除。
-	GetChannelForModel(ctx context.Context, tenantID, userID int64, modelName string, excludeChannelIDs []int64) (*ChannelSelection, error)
+	GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*ChannelSelection, error)
+
+	// SetChannelAffinity 在请求成功后提交并刷新渠道亲和。
+	SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64)
+
+	// DeleteChannelAffinity 在亲和渠道硬失败后清除绑定。
+	DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string)
+
+	// AcquireChannelSlot 原子占用渠道并发槽；Redis 异常时降级放行。
+	AcquireChannelSlot(ctx context.Context, channelID int64, maxConcurrency int, requestID string) bool
+
+	// RefreshChannelSlot 刷新长请求的渠道容量租约。
+	RefreshChannelSlot(ctx context.Context, channelID int64, requestID string)
+
+	// ReleaseChannelSlot 释放渠道并发槽。
+	ReleaseChannelSlot(ctx context.Context, channelID int64, requestID string)
 
 	// GetModelMapping 获取模型映射信息。
 	// 返回标准模型名和分类（chat/embedding/image 等）。
@@ -120,8 +135,13 @@ type ChannelSelection struct {
 	ApiKey            string // 解密后的上游 API Key
 	UpstreamModelName string
 	IsModelMapped     bool
-	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供 sync_image worker 做 per-channel 容量控制
+	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供各转发入口做容量控制
 	Settings          ChannelSettings
+	SelectionReason   string // affinity / weighted / legacy
+	PreserveAffinity  bool   // 临时容量溢出时不覆盖原亲和
+	Priority          int
+	Weight            int
+	HealthScore       float64
 }
 
 // UsageRecord API 调用用量记录
