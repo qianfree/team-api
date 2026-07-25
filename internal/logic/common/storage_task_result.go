@@ -37,9 +37,15 @@ func TaskResultImageURLs(ctx context.Context, tenantID int64, publicTaskID strin
 		return "", ""
 	}
 
+	// AI re-host 结果图强制要求对象存储：local 降级返回的 admin serve 相对 URL 无法给租户
+	// 控制台 <img> 用（租户侧无对应端点、无 admin 鉴权）。未配对象存储时返回空串，调用方
+	// 回退到任务表存的 result_url。
+	if !IsStorageConfigured(ctx) {
+		return "", ""
+	}
 	svc, err := NewFileServiceFromConfig(ctx)
 	if err != nil {
-		return "", "" // 对象存储未配置 → 无法生成，回退原 result_url
+		return "", ""
 	}
 
 	if thumbWidth <= 0 {

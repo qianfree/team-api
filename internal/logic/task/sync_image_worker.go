@@ -91,6 +91,14 @@ var acquireSyncImageFileSvc = func(ctx context.Context) (*lcommon.FileService, e
 	if syncImageFileSvc != nil {
 		return syncImageFileSvc, nil
 	}
+	// AI 图片 re-host 强制要求对象存储：re-host 产出的 URL 直接喂给租户控制台 <img>，
+	// 而 NewFileServiceFromConfig 在未配对象存储时会降级到 local，返回的 admin 侧 serve 相对
+	// URL（/api/admin/files/{id}/serve）租户侧既无对应端点、也无 admin 鉴权，图片无法展示。
+	// 且 local 仅单实例适用，不适合 AI 图片这类高频读路径。故在此显式拒绝，imageFailReason
+	// 会据此给出「请配置对象存储」的友好提示。
+	if !lcommon.IsStorageConfigured(ctx) {
+		return nil, lcommon.ErrStorageNotConfigured
+	}
 	fs, err := lcommon.NewFileServiceFromConfig(ctx)
 	if err != nil {
 		return nil, err

@@ -226,8 +226,8 @@ var Registry = []SettingDef{
 
 	// ── Storage ──
 	{Key: "storage_provider", Type: SettingTypeString, Default: "minio", Category: "storage",
-		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos",
-		Description: "对象存储供应商类型"},
+		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos,local",
+		Description: "对象存储供应商类型；local 表示本地磁盘存储（仅适合单实例部署）"},
 	{Key: "storage_endpoint", Type: SettingTypeString, Default: "", Category: "storage",
 		Label:       "存储端点",
 		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com, R2: https://<account_id>.r2.cloudflarestorage.com"},
@@ -243,6 +243,8 @@ var Registry = []SettingDef{
 		Label: "启用 SSL"},
 	{Key: "storage_path_prefix", Type: SettingTypeString, Default: "team-api", Category: "storage",
 		Label: "路径前缀", Description: "存储路径前缀，用于隔离不同环境"},
+	{Key: "storage_local_dir", Type: SettingTypeString, Default: "./data/files", Category: "storage",
+		Label: "本地存储目录", Description: "本地磁盘存储根目录，仅 provider=local（或对象存储未配置降级）时生效。相对路径基于可执行文件目录。仅适合单实例部署；多实例需改用对象存储或挂载共享卷（PVC/NFS），否则不同副本间文件不互通"},
 
 	// Data Governance
 	{Key: "data_retention_api_logs_days", Type: SettingTypeInt, Default: "90", Category: "data_governance",
