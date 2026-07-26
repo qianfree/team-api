@@ -75,37 +75,45 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		Pricing          []exportPricing `json:"pricing"`
 	}
 
-	result := make([]exportModel, 0, len(models))
+	// 批量查询所有模型的定价行（避免循环内逐模型查询导致 N+1），与 ListModels 的批量模式对齐。
+	modelIDs := make([]int64, 0, len(models))
 	for _, m := range models {
-		var pricingRows []struct {
-			BillingMode        string   `orm:"billing_mode" json:"billing_mode"`
-			MinTokens          int64    `orm:"min_tokens" json:"min_tokens"`
-			MaxTokens          *int64   `orm:"max_tokens" json:"max_tokens"`
-			InputPrice         float64  `orm:"input_price" json:"input_price"`
-			OutputPrice        float64  `orm:"output_price" json:"output_price"`
-			PerRequestPrice    *float64 `orm:"per_request_price" json:"per_request_price"`
-			CacheReadPrice     float64  `orm:"cache_read_price" json:"cache_read_price"`
-			CacheCreationPrice float64  `orm:"cache_creation_price" json:"cache_creation_price"`
-		}
-		err := dao.MdlPricing.Ctx(ctx).Where("model_id", m.ID).Scan(&pricingRows)
-		if err != nil {
+		modelIDs = append(modelIDs, m.ID)
+	}
+	type pricingRow struct {
+		ModelId            int64    `orm:"model_id" json:"model_id"`
+		BillingMode        string   `orm:"billing_mode" json:"billing_mode"`
+		MinTokens          int64    `orm:"min_tokens" json:"min_tokens"`
+		MaxTokens          *int64   `orm:"max_tokens" json:"max_tokens"`
+		InputPrice         float64  `orm:"input_price" json:"input_price"`
+		OutputPrice        float64  `orm:"output_price" json:"output_price"`
+		PerRequestPrice    *float64 `orm:"per_request_price" json:"per_request_price"`
+		CacheReadPrice     float64  `orm:"cache_read_price" json:"cache_read_price"`
+		CacheCreationPrice float64  `orm:"cache_creation_price" json:"cache_creation_price"`
+	}
+	var allPricingRows []pricingRow
+	if len(modelIDs) > 0 {
+		if err := dao.MdlPricing.Ctx(ctx).WhereIn("model_id", modelIDs).Scan(&allPricingRows); err != nil {
 			return nil, err
 		}
+	}
+	// 按 model_id 分组，供后续组装
+	pricingByModel := make(map[int64][]exportPricing, len(allPricingRows))
+	for _, p := range allPricingRows {
+		pricingByModel[p.ModelId] = append(pricingByModel[p.ModelId], exportPricing{
+			BillingMode:        p.BillingMode,
+			MinTokens:          p.MinTokens,
+			MaxTokens:          p.MaxTokens,
+			InputPrice:         p.InputPrice,
+			OutputPrice:         p.OutputPrice,
+			PerRequestPrice:    p.PerRequestPrice,
+			CacheReadPrice:     p.CacheReadPrice,
+			CacheCreationPrice: p.CacheCreationPrice,
+		})
+	}
 
-		pricing := make([]exportPricing, 0, len(pricingRows))
-		for _, p := range pricingRows {
-			pricing = append(pricing, exportPricing{
-				BillingMode:        p.BillingMode,
-				MinTokens:          p.MinTokens,
-				MaxTokens:          p.MaxTokens,
-				InputPrice:         p.InputPrice,
-				OutputPrice:        p.OutputPrice,
-				PerRequestPrice:    p.PerRequestPrice,
-				CacheReadPrice:     p.CacheReadPrice,
-				CacheCreationPrice: p.CacheCreationPrice,
-			})
-		}
-
+	result := make([]exportModel, 0, len(models))
+	for _, m := range models {
 		em := exportModel{
 			ModelId:          m.ModelId,
 			ModelName:        m.ModelName,
@@ -116,7 +124,10 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			Description:      m.Description,
 			Capabilities:     parseCapabilities(m.Capabilities),
 			ReplacementModel: m.ReplacementModel,
-			Pricing:          pricing,
+			Pricing:          pricingByModel[m.ID],
+		}
+		if em.Pricing == nil {
+			em.Pricing = []exportPricing{}
 		}
 		if m.SunsetDate != nil {
 			em.SunsetDate = m.SunsetDate.Format("Y-m-d")

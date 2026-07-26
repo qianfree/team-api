@@ -2,11 +2,38 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/middleware"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 )
+
+// ⚠️ 平台域查询约定（P2-13）
+//
+// 本文件中的 GetAPIMetrics / GetTrafficCurve / GetLatencyHistogram / GetErrorRate /
+// GetP99Latency / GetQPS 等聚合查询基于 bil_usage_logs 做【跨租户平台级】统计，
+// 查询不带 tenant_id 过滤——这是管理后台（平台运营视角）所需的。
+//
+// 风险：这些函数均为 exported，若被错误地复用到租户控制台接口，会泄露其它租户的用量数据。
+// 防护：除 admin 路由鉴权外，HTTP 入口（sMonitor 仪表盘相关方法）额外调用
+// requireAdminScope 做调用方身份校验，即便有人误把接口接到租户路由也会被拒绝。
+// 内部 cron 上下文（gctx.New，无 userType）放行。
+
+// requireAdminScope 断言调用方为平台运营域（admin 或内部上下文）。
+// 用于保护跨租户聚合的监控查询，防止被租户域误用导致数据泄露（P2-13）。
+func requireAdminScope(ctx context.Context) error {
+	switch middleware.GetUserType(ctx) {
+	case "admin", "":
+		// admin：平台运营后台；""：内部 cron/任务上下文（gctx.New 未设 userType），均放行
+		return nil
+	case "tenant":
+		return fmt.Errorf("监控聚合查询为平台域只读接口，禁止租户域访问")
+	default:
+		return fmt.Errorf("未知调用方域，拒绝访问平台域监控查询: user_type=%s", middleware.GetUserType(ctx))
+	}
+}
 
 // APIMetricsResult holds aggregated API metrics.
 type APIMetricsResult struct {

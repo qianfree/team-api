@@ -8,11 +8,12 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
-
-	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // 订单级互斥锁，防止回调重复处理。
@@ -20,6 +21,10 @@ var (
 	orderLocks sync.Map
 	createLock sync.Mutex
 )
+
+// paymentAmountTolerance 回调金额与订单金额容差（0.01 CNY）。
+// 用 decimal 表达，避免 float64 在 0.01 这种边界值上的二进制表示误差导致误判。
+var paymentAmountTolerance = decimal.NewFromFloat(0.01)
 
 type refCountedMutex struct {
 	mu       sync.Mutex
@@ -105,13 +110,13 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 		return gerror.Newf("订单已过期: %s", result.OrderNo)
 	}
 
-	// 6. 金额校验：回调金额与订单金额必须一致（容差 0.01 元）
+	// 6. 金额校验：回调金额与订单金额必须一致（容差 0.01 元，CNY）
+	//    用 decimal 比较，避免 float64 直接相减在边界值（如 0.01）上的二进制误差误判。
 	if result.Success && result.PaidAmount > 0 && order.FinalAmount > 0 {
-		diff := result.PaidAmount - order.FinalAmount
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff > 0.01 {
+		paid := billing.NewFromFloat(result.PaidAmount)
+		expected := billing.NewFromFloat(order.FinalAmount)
+		diff := paid.Sub(expected).Abs()
+		if diff.GreaterThan(paymentAmountTolerance) {
 			g.Log().Warningf(ctx, "[Payment] amount mismatch: order=%s expected=%.2f received=%.2f",
 				result.OrderNo, order.FinalAmount, result.PaidAmount)
 			return gerror.Newf("支付金额不一致: 期望 %.2f 实付 %.2f", order.FinalAmount, result.PaidAmount)
