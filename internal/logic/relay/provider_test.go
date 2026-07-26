@@ -4,10 +4,37 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/qianfree/team-api/relay/common"
 )
+
+func TestChannelKeyUsageTracker(t *testing.T) {
+	tracker := newChannelKeyUsageTracker()
+	now := time.Now()
+	if !tracker.claim(1, now) {
+		t.Fatal("first claim should update")
+	}
+	if tracker.claim(1, now.Add(channelKeyLastUsedInterval-time.Second)) {
+		t.Fatal("claim inside interval should be throttled")
+	}
+	if !tracker.claim(1, now.Add(channelKeyLastUsedInterval)) {
+		t.Fatal("claim at interval boundary should update")
+	}
+}
+
+func TestChannelKeyUsageTrackerRelease(t *testing.T) {
+	tracker := newChannelKeyUsageTracker()
+	now := time.Now()
+	if !tracker.claim(1, now) {
+		t.Fatal("first claim should update")
+	}
+	tracker.release(1, now)
+	if !tracker.claim(1, now.Add(time.Second)) {
+		t.Fatal("released claim should be immediately retryable")
+	}
+}
 
 func TestSafeUTF8Truncate(t *testing.T) {
 	tests := []struct {

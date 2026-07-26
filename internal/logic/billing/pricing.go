@@ -409,7 +409,7 @@ type CostBreakdown struct {
 func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: get model price")
 	}
 
 	// 按次计费：直接用单价
@@ -430,7 +430,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		Fields("max_output_tokens").
 		Scan(&model)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: query model output limit")
 	}
 
 	maxOutput := 4096
@@ -448,7 +448,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, estimatedOutput)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: calculate cost")
 	}
 
 	if breakdown.TotalCost > 1.0 {
