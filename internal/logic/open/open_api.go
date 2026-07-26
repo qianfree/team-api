@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -25,8 +24,6 @@ import (
 )
 
 type sOpen struct{}
-
-var openMemberModelCache = common.NewCache("member_model", 60*time.Second)
 
 func getProjectApiKeyPrefixes(ctx context.Context, tenantID, projectID int64) ([]string, error) {
 	type keyRow struct {
@@ -376,8 +373,9 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 		return nil, err
 	}
 
-	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
-	openMemberModelCache.Delete(ctx, cacheKey)
+	// 失效该成员的模型范围缓存（生产者在 relay.provider，统一经 relay 入口失效，
+	// 不在此重复声明同前缀缓存，避免「同名前缀」被误判为命名冲突）。
+	relay.InvalidateMemberModelScopeCache(ctx, tenantID, req.Id)
 
 	return nil, nil
 }

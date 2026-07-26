@@ -1313,8 +1313,19 @@ func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
 	modelCache.Delete(context.Background(), modelName)
 }
 
-// memberModelCache 成员模型范围缓存（TTL 60s）
+// memberModelCache 成员模型范围缓存（TTL 60s）。
+// 这是该缓存唯一的生产者（Get/Set），tenant 与 open 业务包通过
+// InvalidateMemberModelScopeCache 显式失效本缓存（写操作后调用），
+// 共享 "member_model" 前缀是故意的跨包失效机制，并非命名冲突——
+// 详见 InvalidateMemberModelScopeCache。
 var memberModelCache = lcommon.NewCache("member_model", 60*time.Second)
+
+// InvalidateMemberModelScopeCache 失效指定成员的模型范围缓存。
+// 供 tenant（管理后台改成员模型范围）与 open（开放平台改成员模型范围）在写库后调用，
+// 是 memberModelCache 唯一的跨包失效入口，避免在三处各自重复 "member_model" 前缀字面量。
+func InvalidateMemberModelScopeCache(ctx context.Context, tenantID, userID int64) {
+	memberModelCache.Delete(ctx, fmt.Sprintf("%d:%d", tenantID, userID))
+}
 
 // GetMemberAllowedModelNames 获取成员允许使用的 model_id 列表。
 // 返回 nil 表示不限制（向后兼容），返回空切片表示禁止所有模型（哨兵），返回非空切片表示允许的模型集合。

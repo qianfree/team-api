@@ -325,7 +325,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 		q = q.WhereIn("user_id", userIds)
 	}
 	if req.IpAddress != "" {
-		q = q.WhereLike("ip_address", "%"+req.IpAddress+"%")
+		q = q.WhereLike("ip_address", "%"+common.EscapeLikePattern(req.IpAddress)+"%")
 	}
 
 	total, err := q.Count()

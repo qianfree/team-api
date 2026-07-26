@@ -116,76 +116,7 @@ var (
 			// Register cron jobs
 			common.InitCronScheduler()
 			cs := common.GetCronScheduler()
-			cs.Register("ops_system_collector", "* * * * *", func(ctx context.Context) error {
-				return monitor.CollectSystemMetrics(ctx)
-			})
-			cs.Register("ops_alert_detector", "* * * * *", func(ctx context.Context) error {
-				return monitor.RunAlertDetection(ctx)
-			})
-			cs.Register("ops_metrics_cleanup", "0 3 * * *", func(ctx context.Context) error {
-				return monitor.CleanupOldMetrics(ctx)
-			})
-			cs.Register("partition_ensure", "0 2 * * *", func(ctx context.Context) error {
-				return common.EnsurePartitions(ctx)
-			})
-			cs.Register("health_snapshot", "*/5 * * * *", func(ctx context.Context) error {
-				return task.SnapshotHealthScores(ctx)
-			})
-			cs.Register("channel_auto_test", "*/5 * * * *", func(ctx context.Context) error {
-				if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
-					task.AutoTestChannels(ctx)
-				}
-				return nil
-			})
-			cs.Register("model_sunset_check", "0 0 * * *", func(ctx context.Context) error {
-				return task.CheckModelSunset(ctx)
-			})
-			cs.Register("data_cleanup", "0 3 * * *", func(ctx context.Context) error {
-				return admin.CleanupExpiredData(ctx)
-			})
-			cs.Register("export_file_cleanup", "0 4 * * *", func(ctx context.Context) error {
-				return admin.CleanupExpiredExportFiles(ctx)
-			})
-			cs.Register("file_retention_check", "0 5 * * *", func(ctx context.Context) error {
-				return admin.CheckFileRetention(ctx)
-			})
-			cs.Register("task_timeout_check", "*/10 * * * *", func(ctx context.Context) error {
-				return admin.MarkStuckTasksFailed(ctx)
-			})
-			cs.Register("task_executor", "*/1 * * * *", func(ctx context.Context) error {
-				task.RunPendingTasks(ctx)
-				return nil
-			})
-			cs.Register("project_budget_check", "*/5 * * * *", func(ctx context.Context) error {
-				return tenant.CheckBudgetExhausted(ctx)
-			})
-			cs.Register("usage_log_cleanup", "0 3 * * *", func(ctx context.Context) error {
-				retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
-				if retentionDays == 0 {
-					retentionDays = 90
-				}
-				return task.ScheduleAutoCleanup(ctx, retentionDays)
-			})
-			cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
-				return task.RefreshExpiringOAuthTokens(ctx)
-			})
-			cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
-				billing.CleanExpiredPreDeducts(ctx)
-				return nil
-			})
-			cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
-				billing.CleanSettledPreDeductTracks(ctx)
-				return nil
-			})
-			cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
-				if common.Config().GetBool(ctx, "update_auto_check_enabled") {
-					return update.BackgroundCheck(ctx)
-				}
-				return nil
-			})
-			cs.Register("order_expiration", "*/5 * * * *", func(ctx context.Context) error {
-				return task.ExpirePendingOrders(ctx)
-			})
+			registerCronJobs(cs)
 			cs.StartBackground(ctx)
 
 			// Initialize update manager
@@ -374,6 +305,81 @@ func printBanner() {
 	fmt.Println()
 	fmt.Printf("  %sAGPL v3.0 开源协议  |  Copyright © 2025-2026 Team-API Contributors%s\n", dim, reset)
 	fmt.Println()
+}
+
+// registerCronJobs 集中注册所有定时任务，避免散落在主启动流程中。
+// 新增 cron 任务时在此追加一项即可；任务名（用于分布式锁 key）需保持唯一且稳定。
+func registerCronJobs(cs *common.CronScheduler) {
+	cs.Register("ops_system_collector", "* * * * *", func(ctx context.Context) error {
+		return monitor.CollectSystemMetrics(ctx)
+	})
+	cs.Register("ops_alert_detector", "* * * * *", func(ctx context.Context) error {
+		return monitor.RunAlertDetection(ctx)
+	})
+	cs.Register("ops_metrics_cleanup", "0 3 * * *", func(ctx context.Context) error {
+		return monitor.CleanupOldMetrics(ctx)
+	})
+	cs.Register("partition_ensure", "0 2 * * *", func(ctx context.Context) error {
+		return common.EnsurePartitions(ctx)
+	})
+	cs.Register("health_snapshot", "*/5 * * * *", func(ctx context.Context) error {
+		return task.SnapshotHealthScores(ctx)
+	})
+	cs.Register("channel_auto_test", "*/5 * * * *", func(ctx context.Context) error {
+		if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
+			task.AutoTestChannels(ctx)
+		}
+		return nil
+	})
+	cs.Register("model_sunset_check", "0 0 * * *", func(ctx context.Context) error {
+		return task.CheckModelSunset(ctx)
+	})
+	cs.Register("data_cleanup", "0 3 * * *", func(ctx context.Context) error {
+		return admin.CleanupExpiredData(ctx)
+	})
+	cs.Register("export_file_cleanup", "0 4 * * *", func(ctx context.Context) error {
+		return admin.CleanupExpiredExportFiles(ctx)
+	})
+	cs.Register("file_retention_check", "0 5 * * *", func(ctx context.Context) error {
+		return admin.CheckFileRetention(ctx)
+	})
+	cs.Register("task_timeout_check", "*/10 * * * *", func(ctx context.Context) error {
+		return admin.MarkStuckTasksFailed(ctx)
+	})
+	cs.Register("task_executor", "*/1 * * * *", func(ctx context.Context) error {
+		task.RunPendingTasks(ctx)
+		return nil
+	})
+	cs.Register("project_budget_check", "*/5 * * * *", func(ctx context.Context) error {
+		return tenant.CheckBudgetExhausted(ctx)
+	})
+	cs.Register("usage_log_cleanup", "0 3 * * *", func(ctx context.Context) error {
+		retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
+		if retentionDays == 0 {
+			retentionDays = 90
+		}
+		return task.ScheduleAutoCleanup(ctx, retentionDays)
+	})
+	cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
+		return task.RefreshExpiringOAuthTokens(ctx)
+	})
+	cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
+		billing.CleanExpiredPreDeducts(ctx)
+		return nil
+	})
+	cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
+		billing.CleanSettledPreDeductTracks(ctx)
+		return nil
+	})
+	cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
+		if common.Config().GetBool(ctx, "update_auto_check_enabled") {
+			return update.BackgroundCheck(ctx)
+		}
+		return nil
+	})
+	cs.Register("order_expiration", "*/5 * * * *", func(ctx context.Context) error {
+		return task.ExpirePendingOrders(ctx)
+	})
 }
 
 // registerPaymentCallbacks registers payment callback routes.

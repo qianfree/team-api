@@ -229,6 +229,13 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 查询链路：pln_tenant_plans → pln_plans → pln_plan_model_pricing
 	// 定价优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
 
+	// 4.5 模型倍率（占位 = 1.0）
+	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，模型乘数用于按模型
+	// 稀有度/成本动态加价。当前未接入数据来源（mdl_models 暂无 multiplier 字段），
+	// 故恒为 1.0；bil_records.model_multiplier 仍按此值快照，结算链路保持乘法结构
+	// 不变，未来在 mdl_models 增设 multiplier 字段后只需在此处读取即可启用。
+	modelMultiplier := 1.0
+
 	result := &PricingResult{
 		InputPrice:         inputPrice,
 		OutputPrice:        outputPrice,
@@ -239,7 +246,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		PerRequestPrice:    perRequestPrice,
 		DiscountRatio:      discountRatio,
 		TenantMultiplier:   tenantMultiplier,
-		ModelMultiplier:    1.0,
+		ModelMultiplier:    modelMultiplier,
 		Currency:           "USD",
 		CacheReadPrice:     cacheReadPrice,
 		CacheCreationPrice: cacheCreationPrice,

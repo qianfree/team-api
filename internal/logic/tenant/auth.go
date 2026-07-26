@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -362,8 +363,9 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 			// 仍在锁定期内
 			remaining := time.Until(user.LockedUntil.Time).Minutes()
 			_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
+			// 向上取整：剩余 0.9 分钟应显示「1 分钟」而非「0 分钟」，避免误导用户立即重试又失败
 			return nil, common.NewBusinessError(consts.CodeAccountLocked,
-				fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+				fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(math.Ceil(remaining))))
 		}
 		// 锁定已过期：重置失败计数，给用户重新 5 次机会（方案A）
 		_, err := dao.TntUsers.Ctx(ctx).

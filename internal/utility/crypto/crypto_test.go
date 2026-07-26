@@ -2,6 +2,9 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -82,17 +85,45 @@ func TestDecrypt_TamperedCiphertextFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := base64.StdEncoding.DecodeString(enc)
+	// 剥离 v1: 版本前缀后取 base64 密文
+	payload := strings.TrimPrefix(enc, "v1:")
+	raw, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 翻转最后一个字节（密文/认证标签部分）
 	raw[len(raw)-1] ^= 0xFF
-	tampered := base64.StdEncoding.EncodeToString(raw)
+	tampered := "v1:" + base64.StdEncoding.EncodeToString(raw)
 
 	if _, err := DecryptString(key, tampered); err == nil {
 		t.Error("tampered ciphertext must fail authentication, got nil error")
 	}
+}
+
+func TestEncrypt_HasVersionPrefix(t *testing.T) {
+	key := key32('A')
+	enc, err := EncryptString(key, "payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(enc, "v1:") {
+		t.Errorf("encrypted value should carry the v1: version prefix, got %q", enc)
+	}
+	// 旧格式（无前缀）密文必须仍能解密（向后兼容存量数据）
+	legacy := base64.StdEncoding.EncodeToString(rawGcmCiphertext(key, []byte("legacy")))
+	got, err := DecryptString(key, legacy)
+	if err != nil || string(got) != "legacy" {
+		t.Errorf("legacy unprefixed ciphertext must still decrypt: got %q err %v", got, err)
+	}
+}
+
+// rawGcmCiphertext 用与 Encrypt 相同的算法生成无前缀的密文，用于模拟历史数据。
+func rawGcmCiphertext(key, plaintext []byte) []byte {
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	_, _ = rand.Read(nonce)
+	return gcm.Seal(nonce, nonce, plaintext, nil)
 }
 
 func TestDecrypt_TooShortAndInvalidBase64(t *testing.T) {

@@ -174,20 +174,18 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 		return err
 	}
 
-	// 6. 构建更新数据：仅升不降策略
+	// 6. 构建更新数据：等级一定更新（newLevel > tenant.Level 已由第 4 步保证），
+	// max_members/max_concurrency 仅在新值更优时附加更新（仅升不降策略）。
 	zero := 0
 	updateData := do.TntTenants{Level: newLevel}
-	hasUpdate := true
 
 	// max_members：0 时跟随等级配置（不更新），> 0 时仅升不降
 	if tenant.MaxMembers > 0 {
 		if config.MaxMembers == 0 {
 			// 新等级允许无限成员，直接更新
 			updateData.MaxMembers = &zero
-			hasUpdate = true
 		} else if config.MaxMembers > tenant.MaxMembers {
 			updateData.MaxMembers = &config.MaxMembers
-			hasUpdate = true
 		}
 	}
 
@@ -195,21 +193,18 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 	if tenant.MaxConcurrency > 0 {
 		if config.MaxConcurrency == 0 {
 			updateData.MaxConcurrency = &zero
-			hasUpdate = true
 		} else if config.MaxConcurrency > tenant.MaxConcurrency {
 			updateData.MaxConcurrency = &config.MaxConcurrency
-			hasUpdate = true
 		}
 	}
 
-	if hasUpdate {
-		_, err = dao.TntTenants.Ctx(ctx).
-			Where("id", tenantID).
-			Data(updateData).
-			Update()
-		if err != nil {
-			return err
-		}
+	// 等级本身已变更，必定需要写库（无需 hasUpdate 标志，原标志恒真属冗余判断）
+	_, err = dao.TntTenants.Ctx(ctx).
+		Where("id", tenantID).
+		Data(updateData).
+		Update()
+	if err != nil {
+		return err
 	}
 
 	// 7. 清除并发限制缓存

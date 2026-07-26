@@ -863,7 +863,7 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewBadRequestError("成员不存在")
+		return nil, common.NewNotFoundError("成员")
 	}
 
 	return &v1.TenantMemberGetRes{
@@ -895,7 +895,7 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewBadRequestError("成员不存在")
+		return nil, common.NewNotFoundError("成员")
 	}
 
 	now := time.Now()
@@ -950,7 +950,7 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 		return nil, err
 	}
 	if user == nil {
-		return nil, common.NewBadRequestError("成员不存在")
+		return nil, common.NewNotFoundError("成员")
 	}
 
 	query := dao.ApiKeys.Ctx(ctx).

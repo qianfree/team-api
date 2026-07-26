@@ -284,8 +284,8 @@ func adminUserIdsByUsername(ctx context.Context, keyword string) ([]int64, error
 	var users []entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Fields("id").
-		WhereLike("username", "%"+keyword+"%").
-		WhereOrLike("display_name", "%"+keyword+"%").
+		WhereLike("username", "%"+common.EscapeLikePattern(keyword)+"%").
+		WhereOrLike("display_name", "%"+common.EscapeLikePattern(keyword)+"%").
 		Scan(&users)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
