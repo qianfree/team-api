@@ -17,50 +17,43 @@ import (
 )
 
 // 订单级互斥锁，防止回调重复处理。
-var (
-	orderLocks sync.Map
-	createLock sync.Mutex
-)
+//
+// 采用 sharded mutex（按 orderNo 哈希到固定数量分片）替代原先 sync.Map + 手工引用计数
+// 的实现：原 UnlockOrder 在 rcm.mu.Unlock() 之后才 refCount--，存在「归零后误 Delete」的
+// 竞态窗口——并发 LockOrder 在 Delete 前后可能拿到不同的 rcm 对象，导致两路回调各自持有
+// 「订单锁」却互不互斥。sharded 方案无动态分配、无引用计数、无 Delete，内存恒定为分片数，
+// 且同一 orderNo 必然命中同一分片 → 互斥语义对同一订单始终正确。跨实例并发由 DB 条件更新
+// （WHERE status='pending'）兜底，进程内锁仅用于降低同实例并发回调时的 DB 竞争。
+const orderLockShardCount = 256
+
+var orderLockShards [orderLockShardCount]sync.Mutex
+
+// orderLockShardIndex 按 orderNo 选定分片。FNV-1a 简单快速、分布均匀，避免不同订单扎堆。
+func orderLockShardIndex(orderNo string) int {
+	const (
+		offset32 = uint32(2166136261)
+		prime32  = uint32(16777619)
+	)
+	h := offset32
+	for i := 0; i < len(orderNo); i++ {
+		h ^= uint32(orderNo[i])
+		h *= prime32
+	}
+	return int(h % orderLockShardCount)
+}
 
 // paymentAmountTolerance 回调金额与订单金额容差（0.01 CNY）。
 // 用 decimal 表达，避免 float64 在 0.01 这种边界值上的二进制表示误差导致误判。
 var paymentAmountTolerance = decimal.NewFromFloat(0.01)
 
-type refCountedMutex struct {
-	mu       sync.Mutex
-	refCount int
-}
-
-// LockOrder 对订单号加锁。
+// LockOrder 对订单号加锁（按 orderNo 哈希到固定分片，同订单始终命中同一分片）。
 func LockOrder(orderNo string) {
-	createLock.Lock()
-	var rcm *refCountedMutex
-	if v, ok := orderLocks.Load(orderNo); ok {
-		rcm = v.(*refCountedMutex)
-	} else {
-		rcm = &refCountedMutex{}
-		orderLocks.Store(orderNo, rcm)
-	}
-	rcm.refCount++
-	createLock.Unlock()
-	rcm.mu.Lock()
+	orderLockShards[orderLockShardIndex(orderNo)].Lock()
 }
 
 // UnlockOrder 释放订单锁。
 func UnlockOrder(orderNo string) {
-	v, ok := orderLocks.Load(orderNo)
-	if !ok {
-		return
-	}
-	rcm := v.(*refCountedMutex)
-	rcm.mu.Unlock()
-
-	createLock.Lock()
-	rcm.refCount--
-	if rcm.refCount == 0 {
-		orderLocks.Delete(orderNo)
-	}
-	createLock.Unlock()
+	orderLockShards[orderLockShardIndex(orderNo)].Unlock()
 }
 
 // ProcessCallback 统一回调处理流程。
@@ -128,7 +121,7 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 		// 该条件更新的 RowsAffected 是【跨实例】幂等闸门：多实例并发回调时，两个回调都会
 		// 通过上面第 5 步的 pending 检查，但 "WHERE status='pending'" 的原子更新只有一个能命中
 		// （另一个在行锁释放后重读到 status 已是 paid → 0 行）。据此仅让真正把订单从 pending
-		// 翻成 paid 的那次回调去履约，杜绝重复入账/重复发套餐。进程内 orderLocks 仅单实例有效，
+		// 翻成 paid 的那次回调去履约，杜绝重复入账/重复发套餐。进程内 orderLockShards 仅单实例有效，
 		// 不能作为并发保护依赖。
 		res, err := dao.OrdOrders.Ctx(ctx).
 			Where("id", order.ID).

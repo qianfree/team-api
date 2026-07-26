@@ -7,12 +7,45 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
+
+const (
+	// alertNotifyMaxConcurrent 限制 dispatchAlertNotifications 的并发派发数。
+	// 告警风暴时一个检测周期可能触发多条规则，每条 spawn 一个 goroutine 发邮件/打
+	// webhook；慢响应（SMTP 卡顿、webhook 不可达）会让挂起 goroutine 累积。容量 16 的
+	// 带缓冲 channel 作为信号量，把并发派发封顶在 16，避免拖垮 DB/SMTP/出站连接。
+	alertNotifyMaxConcurrent = 16
+	// alertNotifyTimeout 单次通知派发（email + in_app + webhook 全流程）的最长时长。
+	// 给原本无超时的 gctx.New() 兜底，确保即使目标不可达，goroutine 也会在 30s 内退出，
+	// 不会因上游挂起而永久泄漏。
+	alertNotifyTimeout = 30 * time.Second
+)
+
+// alertNotifySem 是 dispatchAlertNotifications 的并发信号量。
+// 采用「阻塞获取」语义：拿不到槽位的派发任务会排队等待而非丢弃——告警通知不应丢失，
+// 只需限制并发。等待中的 goroutine 栈很小（~2-4KB），配合 alertNotifyTimeout，
+// 风暴能在有限时间内自然排空。
+var alertNotifySem = make(chan struct{}, alertNotifyMaxConcurrent)
+
+// goDispatchAlertNotifications 异步派发告警通知，带并发上限与超时兜底。
+// 由告警引擎在事件创建后调用；阻塞式信号量保证并发不超 alertNotifyMaxConcurrent，
+// WithTimeout 保证单个派发不会因上游挂起而无限挂起 goroutine。
+func goDispatchAlertNotifications(rule map[string]any, eventID int64, triggerValue, threshold float64) {
+	go func() {
+		alertNotifySem <- struct{}{}
+		defer func() { <-alertNotifySem }()
+		// 用全新的带超时 context，不沿用检测循环的 ctx（检测周期结束后原 ctx 可能被取消）。
+		ctx, cancel := context.WithTimeout(gctx.New(), alertNotifyTimeout)
+		defer cancel()
+		dispatchAlertNotifications(ctx, rule, eventID, triggerValue, threshold)
+	}()
+}
 
 // dispatchAlertNotifications sends notifications for a triggered alert.
 func dispatchAlertNotifications(ctx context.Context, rule map[string]any, eventID int64, triggerValue, threshold float64) {

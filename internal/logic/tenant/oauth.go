@@ -29,6 +29,12 @@ const (
 	oauthStateTTL    = 5 * time.Minute
 )
 
+// oauthHTTPClient 是 OAuth 出站请求专用 HTTP 客户端。
+// 显式设置 10s 超时，避免 http.DefaultClient（无超时）在 GitHub/Google 上游慢响应或
+// 挂起时长期占用 goroutine——登录回调路径上每个未完成的 OAuth 请求都会泄漏一个 goroutine。
+// OAuth token 交换与 userinfo 都是短小 JSON 请求，10s 足够宽裕。
+var oauthHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 // OAuthProvider defines the interface for OAuth providers.
 type OAuthProvider interface {
 	GetName() string
@@ -491,7 +497,7 @@ func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 		return nil, err
 	}
 
-	resp, err := http.Post("https://github.com/login/oauth/access_token", "application/json", strings.NewReader(string(bodyBytes)))
+	resp, err := oauthHTTPClient.Post("https://github.com/login/oauth/access_token", "application/json", strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +519,7 @@ func (p *GitHubProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +559,7 @@ func githubFetchPrimaryEmail(token string) string {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -600,7 +606,7 @@ func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 	v.Set("redirect_uri", siteURL+"/api/tenant/oauth/google/callback")
 	v.Set("grant_type", "authorization_code")
 
-	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(v.Encode()))
+	resp, err := oauthHTTPClient.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(v.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +627,7 @@ func (p *GoogleProvider) GetUserInfo(ctx context.Context, token string) (*OAuthU
 	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

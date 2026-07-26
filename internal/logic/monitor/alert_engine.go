@@ -11,7 +11,6 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
 
@@ -111,8 +110,8 @@ func RunAlertDetection(ctx context.Context) error {
 						}).
 						Update()
 
-					// Dispatch notifications
-					go dispatchAlertNotifications(gctx.New(), rule, eventID, currentValue, threshold)
+					// Dispatch notifications（带并发上限与超时兜底，见 goDispatchAlertNotifications）
+					goDispatchAlertNotifications(rule, eventID, currentValue, threshold)
 				}
 			}
 		} else {
