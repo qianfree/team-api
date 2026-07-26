@@ -179,6 +179,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	//    补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；否则残留的 _adjust
 	//    frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
 	_, err = executeSettlementTx(ctx, settlementTxParams{
+		tenantID:        tenantID,
 		walletID:        wallet.ID,
 		preDeductAmount: InexactFloat64(preDeductAmount),
 		actualCost:      InexactFloat64(actualCost),

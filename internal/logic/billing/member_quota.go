@@ -63,13 +63,27 @@ func IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount flo
 		return
 	}
 
-	key := memberQuotaRedisKey(tenantID, userID)
-	_, err := g.Redis().Do(ctx, "HINCRBYFLOAT", key, "quota_used", amount)
+	result, err := g.DB().Exec(ctx,
+		`UPDATE tnt_users
+		 SET quota_used = COALESCE(quota_used, 0) + $1, updated_at = $2
+		 WHERE id = $3 AND tenant_id = $4
+		   AND (COALESCE(quota_type, 'none') IN ('', 'none')
+		        OR COALESCE(quota_used, 0) + $1 <= COALESCE(quota_limit, 0))`,
+		amount, time.Now(), userID, tenantID)
 	if err != nil {
-		g.Log().Warningf(ctx, "member_quota: redis incr failed tenant=%d user=%d: %v", tenantID, userID, err)
+		g.Log().Errorf(ctx, "member_quota: atomic incr failed tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, err)
+		return
 	}
-
-	go incrMemberQuotaDB(tenantID, userID, amount)
+	affected, err := result.RowsAffected()
+	if err != nil {
+		g.Log().Errorf(ctx, "member_quota: inspect incr result failed tenant=%d user=%d: %v", tenantID, userID, err)
+		return
+	}
+	if affected == 0 {
+		g.Log().Warningf(ctx, "member_quota: settlement increment rejected by quota limit tenant=%d user=%d amount=%f", tenantID, userID, amount)
+		return
+	}
+	InvalidateMemberQuotaCache(ctx, tenantID, userID)
 }
 
 // InvalidateMemberQuotaCache removes the Redis cache for a member's quota.
@@ -199,14 +213,4 @@ func resetMemberQuota(ctx context.Context, tenantID, userID int64) {
 			g.Log().Errorf(bgCtx, "member_quota: reset db failed tenant=%d user=%d: %v", tenantID, userID, err)
 		}
 	}()
-}
-
-func incrMemberQuotaDB(tenantID, userID int64, amount float64) {
-	bgCtx := context.Background()
-	_, err := g.DB().Exec(bgCtx,
-		"UPDATE tnt_users SET quota_used = quota_used + $1, updated_at = $2 WHERE id = $3 AND tenant_id = $4",
-		amount, time.Now(), userID, tenantID)
-	if err != nil {
-		g.Log().Errorf(bgCtx, "member_quota: incr db failed tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, err)
-	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // TaskStatus defines the status of an async task.
@@ -25,6 +26,8 @@ const (
 	StatusSucceeded TaskStatus = "succeeded"
 	StatusFailed    TaskStatus = "failed"
 	StatusCancelled TaskStatus = "cancelled"
+
+	pendingTaskWorkerCount = 8
 )
 
 // Task defines an async task to be executed.
@@ -100,7 +103,14 @@ func CreateTask(ctx context.Context, task *Task) (int64, error) {
 
 // ExecuteTask executes a task by ID.
 // It loads the task from DB, updates status, calls the handler, and records the result.
-func ExecuteTask(ctx context.Context, taskID int64) error {
+func ExecuteTask(ctx context.Context, taskID int64) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			message := fmt.Sprintf("panic: %v\n%s", recovered, debug.Stack())
+			err = failTask(ctx, taskID, message)
+		}
+	}()
+
 	// Load task
 	var task *struct {
 		ID         int64           `json:"id"`
@@ -111,7 +121,7 @@ func ExecuteTask(ctx context.Context, taskID int64) error {
 		RetryCount int             `json:"retry_count"`
 	}
 
-	err := dao.TskTasks.Ctx(ctx).
+	err = dao.TskTasks.Ctx(ctx).
 		Where("id", taskID).
 		Where("status", StatusPending).
 		Scan(&task)
@@ -273,11 +283,29 @@ func RunPendingTasks(ctx context.Context) {
 		return
 	}
 
-	for _, task := range tasks {
-		if err := ExecuteTask(ctx, task.ID); err != nil {
-			g.Log().Errorf(ctx, "execute task %d: %v", task.ID, err)
-		}
+	if len(tasks) == 0 {
+		return
 	}
+
+	workerCount := min(pendingTaskWorkerCount, len(tasks))
+	taskIDs := make(chan int64)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for taskID := range taskIDs {
+				if err := ExecuteTask(ctx, taskID); err != nil {
+					g.Log().Errorf(ctx, "execute task %d: %v", taskID, err)
+				}
+			}
+		}()
+	}
+	for _, task := range tasks {
+		taskIDs <- task.ID
+	}
+	close(taskIDs)
+	workers.Wait()
 }
 
 // RunTaskAsync executes a task in a goroutine.

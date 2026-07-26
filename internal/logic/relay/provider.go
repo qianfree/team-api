@@ -13,8 +13,10 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/google/uuid"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"golang.org/x/sync/singleflight"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
@@ -29,6 +31,8 @@ var modelCache = lcommon.NewCache("model", 600*time.Second)
 const channelKeyLastUsedInterval = time.Minute
 
 var channelKeyUsage = newChannelKeyUsageTracker()
+
+var oauthRefreshGroup singleflight.Group
 
 type channelKeyUsageTracker struct {
 	mu      sync.Mutex
@@ -1094,7 +1098,7 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 		var oauthData loauth.OAuthKeyData
 		if err := json.Unmarshal([]byte(decrypted), &oauthData); err == nil {
 			if oauthData.ExpiresAt > 0 && time.Now().Unix() > oauthData.ExpiresAt-300 {
-				refreshed, refreshErr := refreshOAuthKey(ctx, key.ID, &oauthData, encKey)
+				refreshed, refreshErr := refreshOAuthKey(ctx, key.ID, encKey)
 				if refreshErr != nil {
 					g.Log().Warningf(ctx, "[getChannelKey] OAuth refresh failed for key %d: %v", key.ID, refreshErr)
 				} else if refreshed != "" {
@@ -1126,9 +1130,85 @@ func touchChannelKeyLastUsed(ctx context.Context, keyID int64) {
 }
 
 // refreshOAuthKey 刷新 OAuth 令牌并更新数据库
-func refreshOAuthKey(ctx context.Context, keyID int64, oauthData *loauth.OAuthKeyData, encKey []byte) (string, error) {
+func refreshOAuthKey(ctx context.Context, keyID int64, encKey []byte) (string, error) {
+	value, err, _ := oauthRefreshGroup.Do(strconv.FormatInt(keyID, 10), func() (any, error) {
+		release, lockErr := acquireOAuthRefreshLock(ctx, keyID)
+		if lockErr != nil {
+			return "", lockErr
+		}
+		defer release()
+		return refreshOAuthKeyLocked(ctx, keyID, encKey)
+	})
+	if err != nil {
+		return "", err
+	}
+	return value.(string), nil
+}
+
+func acquireOAuthRefreshLock(ctx context.Context, keyID int64) (func(), error) {
+	lockKey := fmt.Sprintf("oauth:refresh:lock:%d", keyID)
+	lockValue := uuid.NewString()
+	timeout := time.NewTimer(15 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer timeout.Stop()
+	defer ticker.Stop()
+
+	for {
+		result, err := g.Redis().Do(ctx, "SET", lockKey, lockValue, "NX", "EX", 60)
+		if err != nil {
+			// Redis 故障时仍由 singleflight 提供本进程保护，避免刷新功能完全不可用。
+			g.Log().Warningf(ctx, "[OAuthRefresh] redis lock unavailable for key %d: %v", keyID, err)
+			return func() {}, nil
+		}
+		if !result.IsNil() {
+			return func() {
+				const releaseLua = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0`
+				_, _ = g.Redis().Do(context.Background(), "EVAL", releaseLua, 1, lockKey, lockValue)
+			}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout.C:
+			return nil, fmt.Errorf("timed out waiting for OAuth refresh lock for key %d", keyID)
+		case <-ticker.C:
+		}
+	}
+}
+
+func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (string, error) {
+	var row *struct {
+		EncryptedKey string `json:"encrypted_key"`
+	}
+	if err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("status", "active").
+		Fields("encrypted_key").
+		Scan(&row); err != nil {
+		return "", err
+	}
+	if row == nil {
+		return "", common.ErrChannelUnavailable
+	}
+
+	decrypted, err := uc.DecryptString(encKey, row.EncryptedKey)
+	if err != nil {
+		return "", err
+	}
+	var oauthData loauth.OAuthKeyData
+	if err = json.Unmarshal([]byte(decrypted), &oauthData); err != nil {
+		return "", err
+	}
+	if oauthData.ExpiresAt <= 0 || time.Now().Unix() <= oauthData.ExpiresAt-300 {
+		return decrypted, nil
+	}
+
 	var newToken *loauth.OAuthKeyData
-	var err error
 
 	switch oauthData.Platform {
 	case "claude":
@@ -1182,13 +1262,15 @@ func refreshOAuthKey(ctx context.Context, keyID int64, oauthData *loauth.OAuthKe
 	}
 
 	expiresAt := gtime.NewFromTimeStamp(newToken.ExpiresAt)
-	dao.ChnChannelKeys.Ctx(ctx).
+	_, err = dao.ChnChannelKeys.Ctx(ctx).
 		Where("id", keyID).
 		Data(do.ChnChannelKeys{
 			EncryptedKey:   encrypted,
 			TokenExpiresAt: expiresAt,
-		}).
-		Update()
+		}).Update()
+	if err != nil {
+		return "", err
+	}
 
 	return string(jsonData), nil
 }
