@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -153,31 +154,40 @@ func handleDeletionRequest(ctx context.Context, payload json.RawMessage) (any, e
 
 	LogInfo(ctx, 0, fmt.Sprintf("开始处理租户 %d 的数据删除请求", p.TenantID))
 
-	_, err := dao.TntUsers.Ctx(ctx).
-		Where("tenant_id", p.TenantID).
-		Data(do.TntUsers{
-			DisplayName: "[deleted]",
-			Email:       fmt.Sprintf("deleted_%d@deleted.local", p.TenantID),
-		}).Update()
+	// 跨 4 张表（tnt_users / api_keys / aud_sensitive_access_logs / tnt_tenants）的删除与更新必须
+	// 在同一事务内完成，否则中途失败会留下部分应用的中间态（如 API Key 已禁用但租户未标记 terminated）。
+	// 事务采用 ctx 传播式：闭包内统一 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		_, err := dao.TntUsers.Ctx(ctx).
+			Where("tenant_id", p.TenantID).
+			Data(do.TntUsers{
+				DisplayName: "[deleted]",
+				Email:       fmt.Sprintf("deleted_%d@deleted.local", p.TenantID),
+			}).Update()
+		if err != nil {
+			LogError(ctx, 0, fmt.Sprintf("匿名化用户数据失败: %v", err))
+			return fmt.Errorf("anonymize users: %w", err)
+		}
+
+		if _, err := dao.ApiKeys.Ctx(ctx).
+			Where("tenant_id", p.TenantID).
+			Data(do.ApiKeys{Status: "disabled"}).Update(); err != nil {
+			return fmt.Errorf("disable api keys: %w", err)
+		}
+
+		if _, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Where("tenant_id", p.TenantID).Delete(); err != nil {
+			return fmt.Errorf("delete sensitive access logs: %w", err)
+		}
+
+		if _, err := dao.TntTenants.Ctx(ctx).
+			Where("id", p.TenantID).
+			Data(do.TntTenants{Status: "terminated"}).Update(); err != nil {
+			return fmt.Errorf("terminate tenant: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		LogError(ctx, 0, fmt.Sprintf("匿名化用户数据失败: %v", err))
-		return nil, fmt.Errorf("anonymize users: %w", err)
-	}
-
-	if _, err := dao.ApiKeys.Ctx(ctx).
-		Where("tenant_id", p.TenantID).
-		Data(do.ApiKeys{Status: "disabled"}).Update(); err != nil {
-		return nil, fmt.Errorf("disable api keys: %w", err)
-	}
-
-	if _, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Where("tenant_id", p.TenantID).Delete(); err != nil {
-		return nil, fmt.Errorf("delete sensitive access logs: %w", err)
-	}
-
-	if _, err := dao.TntTenants.Ctx(ctx).
-		Where("id", p.TenantID).
-		Data(do.TntTenants{Status: "terminated"}).Update(); err != nil {
-		return nil, fmt.Errorf("terminate tenant: %w", err)
+		return nil, err
 	}
 
 	proof := map[string]any{
