@@ -325,7 +325,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	return &v1.OAuthCallbackRes{
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: refreshToken,
-		ExpiresAt:    tokenPair.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		ExpiresAt:    tokenPair.ExpiresAt.Format(time.RFC3339),
 		IsNewUser:    isNewUser,
 	}, nil
 }

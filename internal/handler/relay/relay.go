@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -493,17 +494,27 @@ func captureRequestHeaders(r *ghttp.Request) map[string]string {
 
 // recordAudit 收集请求元数据并异步记录审计日志
 func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCaptureWriter, body []byte, path string, latencyMs int, ttft int) {
+	// multipart / 二进制请求体（如图片编辑、音频转写）含整段二进制，强行 Unmarshal
+	// 无意义，原样写入会把 base64 图片灌进审计表。这里按 Content-Type 判定后只记元数据。
+	requestBody := string(body)
+	isMultipart := isBinaryContentType(r.Header.Get("Content-Type"))
+
 	// 解析 stream 标志
 	var isStream bool
 	var modelName string
-	var rawRequest map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawRequest); err == nil {
-		if streamVal, ok := rawRequest["stream"]; ok {
-			_ = json.Unmarshal(streamVal, &isStream)
+	if !isMultipart {
+		var rawRequest map[string]json.RawMessage
+		if err := json.Unmarshal(body, &rawRequest); err == nil {
+			if streamVal, ok := rawRequest["stream"]; ok {
+				_ = json.Unmarshal(streamVal, &isStream)
+			}
+			if modelVal, ok := rawRequest["model"]; ok {
+				_ = json.Unmarshal(modelVal, &modelName)
+			}
 		}
-		if modelVal, ok := rawRequest["model"]; ok {
-			_ = json.Unmarshal(modelVal, &modelName)
-		}
+	} else {
+		// 二进制体不落原文，仅标注类型，便于排查又不污染审计表
+		requestBody = "[binary body omitted]"
 	}
 
 	// 捕获响应体（流式请求记录 SSE 原始数据，非流式记录完整响应）
@@ -523,7 +534,7 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		ClientIP:        rc.ClientIP,
 		UserAgent:       r.Header.Get("User-Agent"),
 		Model:           modelName,
-		RequestBody:     string(body),
+		RequestBody:     requestBody,
 		ResponseBody:    responseBody,
 		LatencyMs:       latencyMs,
 		FirstTokenMs:    ttft,
@@ -532,6 +543,28 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		ResponseHeaders: capture.ResponseHeaders(),
 		ForwardingTrace: rc.ForwardingTrace,
 	})
+}
+
+// isBinaryContentType 判断请求是否为 multipart 或其它二进制类型，
+// 用于跳过对请求体的 JSON 解析与原文落库。与 response.isBinaryContentType 语义一致，
+// 此处独立实现避免 handler → response 的反向依赖。
+func isBinaryContentType(contentType string) bool {
+	lower := strings.ToLower(contentType)
+	if lower == "" {
+		return false
+	}
+	if i := strings.IndexByte(lower, ';'); i >= 0 {
+		lower = strings.TrimSpace(lower[:i])
+	}
+	switch {
+	case strings.HasPrefix(lower, "multipart/"),
+		strings.HasPrefix(lower, "image/"),
+		strings.HasPrefix(lower, "audio/"),
+		strings.HasPrefix(lower, "video/"),
+		lower == "application/octet-stream":
+		return true
+	}
+	return false
 }
 
 // setRateLimitHeaders 设置限流响应头
@@ -686,6 +719,20 @@ func HandleRerank(r *ghttp.Request) {
 
 // HandleRealtime 处理 /v1/realtime（WebSocket）
 func HandleRealtime(r *ghttp.Request) {
+	// WebSocket 长连接脱离标准 HTTP 中间件链路，全局 Recovery 中间件无法兜底
+	// 连接升级后的 panic，故在此显式 recover，避免单个连接 panic 导致 goroutine 崩溃。
+	defer func() {
+		if rec := recover(); rec != nil {
+			stack := debugStack()
+			g.Log().Criticalf(r.Context(), "[HandleRealtime] panic recovered: %v\nRequest-ID: %s\nPath: %s\n%s",
+				rec, r.GetCtxVar("RequestId").String(), r.URL.Path, stack)
+		}
+	}()
+
+	start := time.Now()
+	g.Log().Debugf(r.Context(), "[HandleRealtime] connection accepted: request_id=%s, ip=%s",
+		r.GetCtxVar("RequestId").String(), r.GetClientIp())
+
 	rc := &handler.RealtimeContext{
 		TenantID:        middleware.GetTenantID(r.Context()),
 		UserID:          middleware.GetUserID(r.Context()),
@@ -701,10 +748,27 @@ func HandleRealtime(r *ghttp.Request) {
 		KeyUsedQuota:    r.GetCtxVar(middleware.CtxKeyApiKeyUsedQuota).Float64(),
 	}
 
-	_, _, err := handler.HandleRealtime(r.Response.Writer, r.Request, rc, dataProvider, billingProvider)
-	if err != nil {
-		g.Log().Errorf(r.Context(), "[HandleRealtime] error: %v", err)
+	usage, billingResult, err := handler.HandleRealtime(r.Response.Writer, r.Request, rc, dataProvider, billingProvider)
+
+	// 监控埋点：WebSocket 字节流量由会话内部循环统计，此处无法从外部捕获；
+	// 改为按 token 用量记录可观测指标，便于排障与计费对账。
+	totalTokens := 0
+	if usage != nil {
+		totalTokens = usage.TotalTokens
 	}
+
+	if err != nil {
+		g.Log().Errorf(r.Context(), "[HandleRealtime] error: %v (duration=%s, total_tokens=%d)",
+			err, time.Since(start), totalTokens)
+	} else {
+		g.Log().Debugf(r.Context(), "[HandleRealtime] connection closed: duration=%s, total_tokens=%d, billed=%v",
+			time.Since(start), totalTokens, billingResult != nil)
+	}
+}
+
+// debugStack 返回当前 goroutine 的堆栈字符串，供 panic 日志使用。
+func debugStack() string {
+	return string(debug.Stack())
 }
 
 // HandleModerations 处理 /v1/moderations

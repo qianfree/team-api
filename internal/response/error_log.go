@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/common"
 )
@@ -133,6 +134,47 @@ func sanitizeRequestBody(body string) string {
 		return "[redaction failed]"
 	}
 	return string(out)
+}
+
+// safeRequestBodyForLog 按 Content-Type 决定是否读取并记录请求体：
+//   - multipart/二进制：跳过 r.GetBodyString()（避免把整段 base64 图片/二进制读入
+//     内存并落库），直接返回占位符；
+//   - 其它：脱敏 + 截断后返回。
+//
+// 调用方原本无条件 r.GetBodyString()，对大体积 multipart 上传会把整个文件读进内存，
+// 即便后续 sanitize 会丢弃也无法省去这次拷贝。
+func safeRequestBodyForLog(r *ghttp.Request) string {
+	contentType := r.Header.Get("Content-Type")
+	// multipart/form-data、image/*、audio/*、video/*、application/octet-stream 等均视为二进制
+	if isBinaryContentType(contentType) {
+		return "[binary body omitted]"
+	}
+	return truncateString(sanitizeRequestBody(r.GetBodyString()), 2000)
+}
+
+// isBinaryContentType 判断 Content-Type 是否为不应落库的二进制/大体积类型。
+func isBinaryContentType(contentType string) bool {
+	lower := strings.ToLower(contentType)
+	if lower == "" {
+		return false
+	}
+	// 取分号前的主类型，如 "multipart/form-data; boundary=..." → "multipart/form-data"
+	if i := strings.IndexByte(lower, ';'); i >= 0 {
+		lower = strings.TrimSpace(lower[:i])
+	}
+	switch {
+	case strings.HasPrefix(lower, "multipart/"):
+		return true
+	case strings.HasPrefix(lower, "image/"):
+		return true
+	case strings.HasPrefix(lower, "audio/"):
+		return true
+	case strings.HasPrefix(lower, "video/"):
+		return true
+	case lower == "application/octet-stream":
+		return true
+	}
+	return false
 }
 
 // writeErrorLog submits an error record to the async writer.
