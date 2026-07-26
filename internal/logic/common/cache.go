@@ -3,12 +3,15 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"math/rand/v2"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/util/gconv"
+	"golang.org/x/sync/singleflight"
 )
 
 // Cache provides a two-level caching mechanism:
@@ -20,6 +23,19 @@ import (
 type Cache struct {
 	prefix string
 	ttl    time.Duration
+	group  singleflight.Group
+}
+
+func jitterTTL(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		return ttl
+	}
+	spread := ttl / 10
+	if spread <= 0 {
+		return ttl
+	}
+	delta := time.Duration(rand.Int64N(int64(spread)*2+1)) - spread
+	return ttl + delta
 }
 
 // NewCache creates a new Cache instance with the given prefix and default TTL.
@@ -43,13 +59,14 @@ func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Dura
 	if len(ttl) > 0 && ttl[0] > 0 {
 		expire = ttl[0]
 	}
+	expire = jitterTTL(expire)
 	fullKey := c.fullKey(key)
 
 	// L1: memory cache (native Go struct storage)
 	gcache.Set(ctx, fullKey, value, expire)
 
 	// L2: Redis cache (JSON serialized)
-	ttlSeconds := int64(expire.Seconds())
+	ttlSeconds := int64(math.Ceil(expire.Seconds()))
 	jsonBytes, err := json.Marshal(value)
 	if err != nil {
 		g.Log().Warningf(ctx, "[Cache] JSON marshal failed key=%s: %v", fullKey, err)
@@ -83,11 +100,11 @@ func (c *Cache) Get(ctx context.Context, key string) (any, bool) {
 			// Unmarshal JSON to get the original Go value
 			var raw any
 			if unmarshalErr := json.Unmarshal([]byte(jsonStr), &raw); unmarshalErr == nil {
-				gcache.Set(ctx, fullKey, raw, c.ttl)
+				gcache.Set(ctx, fullKey, raw, jitterTTL(c.ttl))
 				return raw, true
 			}
 			// Fallback: treat as plain string (backward compat)
-			gcache.Set(ctx, fullKey, jsonStr, c.ttl)
+			gcache.Set(ctx, fullKey, jsonStr, jitterTTL(c.ttl))
 			return jsonStr, true
 		}
 	}
@@ -119,7 +136,7 @@ func (c *Cache) GetJSON(ctx context.Context, key string, target any) bool {
 				return false
 			}
 			// Backfill L1
-			gcache.Set(ctx, fullKey, target, c.ttl)
+			gcache.Set(ctx, fullKey, target, jitterTTL(c.ttl))
 			return true
 		}
 	}
@@ -133,13 +150,18 @@ func (c *Cache) GetOrSet(ctx context.Context, key string, fn func(ctx context.Co
 		return val, nil
 	}
 
-	val, err := fn(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Set(ctx, key, val)
-	return val, nil
+	val, err, _ := c.group.Do(c.fullKey(key), func() (any, error) {
+		if cached, ok := c.Get(ctx, key); ok {
+			return cached, nil
+		}
+		loaded, loadErr := fn(ctx)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		c.Set(ctx, key, loaded)
+		return loaded, nil
+	})
+	return val, err
 }
 
 // Delete removes a value from both L1 and L2.

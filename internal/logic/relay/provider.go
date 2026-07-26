@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -24,6 +25,37 @@ import (
 
 // modelCache 模型信息缓存（TTL 600s）
 var modelCache = lcommon.NewCache("model", 600*time.Second)
+
+const channelKeyLastUsedInterval = time.Minute
+
+var channelKeyUsage = newChannelKeyUsageTracker()
+
+type channelKeyUsageTracker struct {
+	mu      sync.Mutex
+	touched map[int64]time.Time
+}
+
+func newChannelKeyUsageTracker() *channelKeyUsageTracker {
+	return &channelKeyUsageTracker{touched: make(map[int64]time.Time)}
+}
+
+func (t *channelKeyUsageTracker) claim(keyID int64, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.touched[keyID]; ok && now.Sub(last) < channelKeyLastUsedInterval {
+		return false
+	}
+	t.touched[keyID] = now
+	return true
+}
+
+func (t *channelKeyUsageTracker) release(keyID int64, claimedAt time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.touched[keyID]; ok && last.Equal(claimedAt) {
+		delete(t.touched, keyID)
+	}
+}
 
 // tenantGroupModelCache 租户分组模型集合缓存（通过 lcommon.TenantGroupModelCache 共享）
 // 实际缓存实例在 lcommon 包中，admin 和 relay 共用
@@ -1050,19 +1082,12 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 		return "", common.ErrChannelUnavailable
 	}
 
-	// 更新最后使用时间（用于监控）
-	if _, err := dao.ChnChannelKeys.Ctx(ctx).
-		Where("id", key.ID).
-		Data(do.ChnChannelKeys{LastUsedAt: gtime.Now()}).
-		Update(); err != nil {
-		g.Log().Debugf(ctx, "[DataProvider] update channel key LastUsedAt failed: keyID=%d, err=%v", key.ID, err)
-	}
-
 	encKey := GetEncryptionKey()
 	decrypted, err := uc.DecryptString(encKey, key.EncryptedKey)
 	if err != nil {
 		return "", err
 	}
+	touchChannelKeyLastUsed(ctx, key.ID)
 
 	// OAuth 按需刷新
 	if key.KeyType == "oauth" && loauth.IsOAuthKeyData(decrypted) {
@@ -1081,6 +1106,23 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	}
 
 	return decrypted, nil
+}
+
+func touchChannelKeyLastUsed(ctx context.Context, keyID int64) {
+	now := time.Now()
+	if !channelKeyUsage.claim(keyID, now) {
+		return
+	}
+
+	_, err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("last_used_at IS NULL OR last_used_at < ?", now.Add(-channelKeyLastUsedInterval)).
+		Data(do.ChnChannelKeys{LastUsedAt: gtime.New(now)}).
+		Update()
+	if err != nil {
+		channelKeyUsage.release(keyID, now)
+		g.Log().Debugf(ctx, "[DataProvider] update channel key LastUsedAt failed: keyID=%d, err=%v", keyID, err)
+	}
 }
 
 // refreshOAuthKey 刷新 OAuth 令牌并更新数据库

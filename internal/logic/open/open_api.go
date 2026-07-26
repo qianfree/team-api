@@ -551,22 +551,25 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		pageSize = 20
 	}
 
-	m := dao.BilUsageLogs.Ctx(ctx).Where("tenant_id", tenantID)
-	m = m.Where("created_at >= ?", req.StartDate+" 00:00:00")
-	m = m.Where("created_at <= ?", req.EndDate+" 23:59:59")
+	m := dao.BilUsageLogs.Ctx(ctx).
+		As("u").
+		Where("u.tenant_id", tenantID).
+		Where("u.created_at >= ?", req.StartDate+" 00:00:00").
+		Where("u.created_at <= ?", req.EndDate+" 23:59:59")
 
 	selectFields := ""
 	groupBy := ""
 	switch req.GroupBy {
 	case "model":
-		selectFields = "model_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "model_name"
+		selectFields = "u.model_name, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "u.model_name"
 	case "key":
-		selectFields = "key_prefix as key_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "key_prefix"
+		m = m.LeftJoin("api_keys", "ak", "u.api_key_id = ak.id AND u.tenant_id = ak.tenant_id")
+		selectFields = "COALESCE(ak.key_prefix, '') as key_name, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "COALESCE(ak.key_prefix, '')"
 	default:
-		selectFields = "DATE(created_at) as date, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "DATE(created_at)"
+		selectFields = "DATE(u.created_at) as date, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "DATE(u.created_at)"
 	}
 
 	type usageRow struct {
@@ -580,8 +583,13 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		Cost             float64 `json:"cost"`
 	}
 
+	total, err := m.Group(groupBy).Count()
+	if err != nil {
+		return nil, err
+	}
+
 	var rows []usageRow
-	err := m.Fields(selectFields).Group(groupBy).OrderDesc(groupBy).Page(page, pageSize).Scan(&rows)
+	err = m.Fields(selectFields).Group(groupBy).OrderDesc(groupBy).Page(page, pageSize).Scan(&rows)
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +614,7 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		items = append(items, item)
 	}
 
-	return &v1.OpenUsageQueryRes{List: items, Total: len(items), Page: page, PageSize: pageSize}, nil
+	return &v1.OpenUsageQueryRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 // ============================================================

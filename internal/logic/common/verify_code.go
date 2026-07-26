@@ -139,10 +139,12 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 		UsedAt    *time.Time `json:"used_at"`
 	}
 
-	err := dao.SysEmailVerifyCodes.Ctx(ctx).
+	baseQuery := dao.SysEmailVerifyCodes.Ctx(ctx).
 		Where("email", email).
 		Where("purpose", purpose).
-		Where("used_at IS NULL").
+		Where("used_at IS NULL")
+	err := baseQuery.
+		Where("expires_at > NOW()").
 		OrderDesc("created_at").
 		Limit(1).
 		Scan(&record)
@@ -151,6 +153,13 @@ func VerifyCode(ctx context.Context, email, code, purpose string) error {
 	}
 
 	if record == nil {
+		expiredCount, countErr := baseQuery.Where("expires_at <= NOW()").Count()
+		if countErr != nil {
+			return gerror.Wrapf(countErr, "query expired verify code")
+		}
+		if expiredCount > 0 {
+			return NewBusinessError(consts.CodeEmailVerifyExpired, consts.MsgEmailVerifyExpired)
+		}
 		incrVerifyFail(ctx, failKey)
 		return NewBusinessError(consts.CodeVerifyCodeInvalid, "验证码错误")
 	}
