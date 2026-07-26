@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
@@ -137,6 +138,27 @@ func ParseConfirmToken(tokenStr string) (*ConfirmClaims, error) {
 		return nil, fmt.Errorf("invalid confirm token")
 	}
 	return claims, nil
+}
+
+// ConfirmHighRisk 校验高风险操作的二次验证码并签发短期确认令牌。
+func ConfirmHighRisk(ctx context.Context, userType string, userID int64, code string) (string, error) {
+	enabled, err := Is2FAEnabled(ctx, userType, userID)
+	if err != nil {
+		return "", err
+	}
+	if !enabled {
+		return "", NewBusinessError(consts.CodeTotpNotEnabled, consts.MsgTotpNotEnabled)
+	}
+
+	valid, err := Verify2FACode(ctx, userType, userID, code)
+	if err != nil {
+		return "", err
+	}
+	if !valid {
+		return "", NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
+	}
+
+	return GenerateConfirmToken(ctx, userID, userType)
 }
 
 // Setup2FA generates a new TOTP secret for a user. Returns the secret and otpauth URI.
@@ -466,6 +488,26 @@ func DeviceFingerprint(ua, ip string) string {
 	data := normalized + "|" + ip
 	hash := sha256Sum(data)
 	return hash[:32]
+}
+
+// ExtractDeviceInfo 从请求上下文提取会话设备信息并编码为合法 JSON。
+func ExtractDeviceInfo(ctx context.Context) string {
+	r := g.RequestFromCtx(ctx)
+	if r == nil {
+		return buildDeviceInfo("")
+	}
+	return buildDeviceInfo(r.Header.Get("User-Agent"))
+}
+
+func buildDeviceInfo(userAgent string) string {
+	if len(userAgent) > 500 {
+		userAgent = userAgent[:500]
+	}
+	if userAgent == "" {
+		userAgent = "unknown"
+	}
+	data, _ := json.Marshal(map[string]string{"user_agent": userAgent})
+	return string(data)
 }
 
 // verifyAndConsumeBackupCode checks if code matches any backup code and marks it consumed.

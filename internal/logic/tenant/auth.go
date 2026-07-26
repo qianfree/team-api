@@ -2,7 +2,6 @@ package tenant
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -18,10 +17,9 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
-
-	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // Register handles tenant registration.
@@ -224,7 +222,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	}
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", ownerUserID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
@@ -469,7 +467,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	// ipAddress already declared above for 2FA check
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, tenant.Id, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
@@ -573,7 +571,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
@@ -692,22 +690,4 @@ func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSession
 		return nil, err
 	}
 	return nil, nil
-}
-
-// extractTenantDeviceInfo extracts device information from the request and returns it as a JSON string.
-// The sys_sessions.device_info column is JSONB, so this must be valid JSON.
-func extractTenantDeviceInfo(ctx context.Context) string {
-	r := g.RequestFromCtx(ctx)
-	if r == nil {
-		return `{"user_agent":"unknown"}`
-	}
-	ua := r.Header.Get("User-Agent")
-	if len(ua) > 500 {
-		ua = ua[:500]
-	}
-	if ua == "" {
-		ua = "unknown"
-	}
-	b, _ := json.Marshal(map[string]string{"user_agent": ua})
-	return string(b)
 }

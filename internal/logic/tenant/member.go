@@ -355,7 +355,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", userID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {

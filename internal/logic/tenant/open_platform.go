@@ -42,14 +42,7 @@ func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	m := dao.OpnApps.Ctx(ctx).Where("tenant_id", tenantID)
 	if req.Keyword != "" {
@@ -489,14 +482,7 @@ func (s *sTenant) WebhookDeliveryLogs(ctx context.Context, req *v1.WebhookDelive
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	// 计数查询（不 JOIN）
 	countQuery := dao.OpnWebhookDeliveryLogs.Ctx(ctx).Where("tenant_id", tenantID).Where("webhook_config_id", req.Id)
