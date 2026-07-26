@@ -2,9 +2,7 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
@@ -153,7 +152,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	}
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
-	deviceInfo := extractDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 
 	// Create session with jti
 	jti := common.GenerateJti()
@@ -269,7 +268,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 
 	// Rotate session
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
@@ -301,14 +300,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 // ListSessions returns active sessions for the current admin user.
 func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) (*v1.AdminSessionListRes, error) {
 	currentSessionID := common.GetCtxSessionID(ctx)
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	q := dao.SysSessions.Ctx(ctx).
 		Where("user_type", "admin").
@@ -454,22 +446,4 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 	common.RevokeAllSessions(ctx, "admin", userID)
 
 	return nil, nil
-}
-
-// extractDeviceInfo extracts device information from the request and returns it as a JSON string.
-// The sys_sessions.device_info column is JSONB, so this must be valid JSON.
-func extractDeviceInfo(ctx context.Context) string {
-	r := g.RequestFromCtx(ctx)
-	if r == nil {
-		return `{"user_agent":"unknown"}`
-	}
-	ua := r.Header.Get("User-Agent")
-	if len(ua) > 500 {
-		ua = ua[:500]
-	}
-	if ua == "" {
-		ua = "unknown"
-	}
-	b, _ := json.Marshal(map[string]string{"user_agent": ua})
-	return string(b)
 }
