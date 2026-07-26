@@ -249,6 +249,20 @@ func TestDeviceFingerprint_Empty(t *testing.T) {
 	}
 }
 
+func TestBackupCodeSHA256(t *testing.T) {
+	const code = "ABCD-EFGH"
+	hashed := hashBackupCode(code)
+	if !strings.HasPrefix(hashed, backupCodeSHA256Prefix) {
+		t.Fatalf("backup code hash %q is missing algorithm prefix", hashed)
+	}
+	if !verifyBackupCode(code, hashed) {
+		t.Fatal("correct backup code did not verify")
+	}
+	if verifyBackupCode("wrong-code", hashed) {
+		t.Fatal("incorrect backup code verified")
+	}
+}
+
 // ─── helpers ────────────────────────────────────────────────────────
 
 func generateTestProvisionalToken(userID int64, userType, role string, tenantID int64) (string, error) {

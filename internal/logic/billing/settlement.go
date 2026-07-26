@@ -55,6 +55,7 @@ type SettlementResult struct {
 
 // settlementTxParams 结算事务参数：三处结算共用的事务骨架的可变部分。
 type settlementTxParams struct {
+	tenantID        int64
 	walletID        int64   // 钱包 ID
 	preDeductAmount float64 // 预扣冻结金额（事务内从 frozen_balance 释放）
 	actualCost      float64 // 实际扣款金额（事务内从 balance 扣除）
@@ -114,6 +115,17 @@ func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, erro
 
 		return nil
 	})
+	if err != nil && !errors.Is(err, errAlreadySettled) {
+		// 事务回滚后 DB 钱包仍保留原冻结。立即按预扣追踪记录中的原始金额释放，
+		// 避免等待孤儿清理任务期间持续占用租户可用余额。
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		for _, requestID := range p.predeductRequestIDs {
+			if releaseErr := UnfreezePreDeduct(releaseCtx, p.tenantID, requestID); releaseErr != nil {
+				g.Log().Errorf(ctx, "%s: release prededuct after rollback request=%s: %v", p.logPrefix, requestID, releaseErr)
+			}
+		}
+	}
 	return billingID, err
 }
 
@@ -199,6 +211,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+		tenantID:        tenantID,
 		walletID:        wallet.ID,
 		preDeductAmount: preDeductAmount,
 		actualCost:      actualCost,
@@ -317,6 +330,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+		tenantID:        tenantID,
 		walletID:        wallet.ID,
 		preDeductAmount: preDeductAmount,
 		actualCost:      actualCost,
@@ -420,9 +434,10 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 		return nil
 	}
 
-	// 解冻预扣金额
-	UnfreezePreDeduct(ctx, tenantID, requestID, preDeductAmount)
-	markPredeductReleased(ctx, requestID)
+	// 解冻金额由预扣追踪记录决定，不信任调用方传入的估算值。
+	if err := UnfreezePreDeduct(ctx, tenantID, requestID); err != nil {
+		return err
+	}
 
 	// 无需额外操作，预扣金额原路退回
 	return nil
@@ -589,14 +604,4 @@ func createBillingRecordWithSnapshot(ctx context.Context, tenantID, userID, apiK
 		return 0, err
 	}
 	return id, nil
-}
-
-// markPredeductReleased 标记预扣追踪记录为已释放
-func markPredeductReleased(ctx context.Context, requestID string) {
-	_, err := g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_prededuct_tracks SET status = 'released' WHERE request_id = $1 AND status = 'frozen'",
-		requestID)
-	if err != nil {
-		g.Log().Warningf(ctx, "[PRE-DEDUCT] mark released failed: request=%s err=%v", requestID, err)
-	}
 }

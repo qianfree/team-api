@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 const (
@@ -143,7 +145,7 @@ local ttl = tonumber(ARGV[3])
 -- 检查是否已预扣（幂等）
 local exists = redis.call("EXISTS", prededuct_key)
 if exists == 1 then
-    return 1
+    return 2
 end
 
 -- 获取钱包信息（整数 micro）
@@ -186,12 +188,23 @@ return 1
 	if code == 0 {
 		return false, gerror.New("insufficient balance")
 	}
+	if code == 2 {
+		return true, nil
+	}
 
-	// 同步同步到 DB（确保 DB frozen_balance 在返回前已更新）
-	preDeductSyncDB(ctx, tenantID, amount)
-
-	// 异步写入预扣追踪记录（用于孤儿清理和 Redis 重建）
-	go trackPreDeduct(context.Background(), tenantID, amount, requestID, modelName)
+	// 同步到 DB（确保 DB frozen_balance 在返回前已更新）。任一步失败都不能把
+	// 仅存在于 Redis 的冻结状态暴露给后续请求。
+	if err = preDeductSyncDB(ctx, tenantID, amount); err != nil {
+		rollbackRedisPreDeduct(ctx, tenantID, requestID)
+		return false, err
+	}
+	if err = trackPreDeduct(ctx, tenantID, amount, requestID, modelName); err != nil {
+		if rollbackErr := unfreezeDBAmount(ctx, tenantID, amount); rollbackErr != nil {
+			g.Log().Errorf(ctx, "pre-deduct rollback after track failure: tenant=%d request=%s: %v", tenantID, requestID, rollbackErr)
+		}
+		rollbackRedisPreDeduct(ctx, tenantID, requestID)
+		return false, err
+	}
 
 	return true, nil
 }
@@ -220,83 +233,91 @@ func preDeductDB(ctx context.Context, tenantID int64, amount float64, requestID 
 	// 清除缓存
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
 
-	// 异步写入预扣追踪记录
-	go trackPreDeduct(context.Background(), tenantID, amount, requestID, "")
+	// 追踪记录是后续精确解冻的金额来源，必须在成功返回前落库。
+	if err = trackPreDeduct(ctx, tenantID, amount, requestID, ""); err != nil {
+		if rollbackErr := unfreezeDBAmount(ctx, tenantID, amount); rollbackErr != nil {
+			g.Log().Errorf(ctx, "pre-deduct db rollback after track failure: tenant=%d request=%s: %v", tenantID, requestID, rollbackErr)
+		}
+		return false, err
+	}
 
 	return true, nil
 }
 
 // preDeductSyncDB sync pre-deduct to DB（同步调用，确保 DB frozen_balance 在返回前已更新）
-func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) {
-	_, err := g.DB().Exec(ctx,
+func preDeductSyncDB(ctx context.Context, tenantID int64, amount float64) error {
+	result, err := g.DB().Exec(ctx,
 		"UPDATE bil_wallets SET frozen_balance = frozen_balance + ?, updated_at = ? WHERE tenant_id = ?",
 		amount, time.Now(), tenantID)
 	if err != nil {
-		g.Log().Errorf(ctx, "pre-deduct sync: %v", err)
+		return gerror.Wrapf(err, "pre-deduct sync db")
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return gerror.Wrapf(err, "pre-deduct sync db result")
+	}
+	if affected == 0 {
+		return gerror.Newf("pre-deduct sync db: wallet not found for tenant %d", tenantID)
+	}
+	return nil
 }
-
-// unfreezeClampLua 解冻 frozen_balance 并保证不低于 0（对齐 DB 侧 GREATEST(frozen_balance - ?, 0) 下限）。
-// v2：金额为整数 micro，整数运算无浮点漂移。钱包 hash 不存在（TTL 过期）时直接返回，
-// 不凭空创建只含 frozen_balance 的残缺 key——冻结状态以 DB 为准，下次 PreDeduct 的 doSyncWalletToRedis 会重建。
-// KEYS[1] = wallet:v2:{tenant_id}；ARGV[1] = 解冻金额（整数 micro）
-const unfreezeClampLua = `
-local wallet_key = KEYS[1]
-local amount = tonumber(ARGV[1])
-if redis.call("EXISTS", wallet_key) == 0 then
-    return 0
-end
-local frozen = tonumber(redis.call("HGET", wallet_key, "frozen_balance") or "0")
-local newFrozen = frozen - amount
-if newFrozen < 0 then
-    newFrozen = 0
-end
-redis.call("HSET", wallet_key, "frozen_balance", newFrozen)
-return 1
-`
 
 // UnfreezePreDeduct 解冻预扣金额（请求失败时调用）
-func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string, amount float64) {
-	if amount <= 0 {
-		return
+func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string) error {
+	// 调用方不再提供金额。事务内锁定 frozen 追踪行并读取预扣时保存的金额，
+	// 既避免错误金额解冻，也让重复调用只有一个事务能实际释放冻结。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		var track *struct {
+			Amount decimal.Decimal `json:"amount"`
+		}
+		if err := dao.BilPredeductTracks.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("request_id", requestID).
+			Where("status", "frozen").
+			Fields("amount").
+			LockUpdate().
+			Scan(&track); err != nil {
+			return gerror.Wrapf(err, "load prededuct for unfreeze")
+		}
+		if track == nil || track.Amount.LessThanOrEqual(decimal.Zero) {
+			return nil
+		}
+
+		if _, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), updated_at = ? WHERE tenant_id = ?",
+			track.Amount, time.Now(), tenantID); err != nil {
+			return gerror.Wrapf(err, "unfreeze wallet")
+		}
+		if _, err := dao.BilPredeductTracks.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("request_id", requestID).
+			Where("status", "frozen").
+			Data(do.BilPredeductTracks{Status: "released"}).
+			Update(); err != nil {
+			return gerror.Wrapf(err, "mark prededuct released")
+		}
+		return nil
+	})
+	if err != nil {
+		InvalidateWalletRedis(ctx, tenantID)
+		return err
 	}
 
-	predeductRedisKey := fmt.Sprintf("%s%s", PreDeductRedisKeyPrefix, requestID)
-	walletRedisKey := walletHashKey(tenantID)
-	activeSetKey := fmt.Sprintf("prededuct_active:%d", tenantID)
-
-	// 先尝试 Redis 解冻
-	_, err := g.Redis().Do(ctx, "DEL", predeductRedisKey)
-	if err == nil {
-		// 解冻（带 0 下限保护，整数运算）。HINCRBY 亦无下限：若因重复/多余调用扣减超过已冻结额，
-		// 会把 frozen_balance 打成负数。改用 Lua 读-clamp-写，与 DB 侧
-		// GREATEST(frozen_balance - ?, 0) 保持一致；钱包 hash 不存在时不凭空创建（交由 DB 兜底）。
-		g.Redis().Do(ctx, "EVAL", unfreezeClampLua, 1, walletRedisKey, ToMicro(NewFromFloat(amount)))
-		g.Redis().Do(ctx, "SREM", activeSetKey, requestID)
-		go unfreezeSyncDB(tenantID, amount)
-		return
-	}
-
-	// Redis 失败，直接 DB 解冻
-	unfreezeDB(ctx, tenantID, amount)
+	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+	InvalidateWalletRedis(ctx, tenantID)
+	CleanupPreDeduct(ctx, tenantID, requestID)
+	return nil
 }
 
-func unfreezeSyncDB(tenantID int64, amount float64) {
-	bgCtx := context.Background()
-	unfreezeDB(bgCtx, tenantID, amount)
-}
-
-func unfreezeDB(ctx context.Context, tenantID int64, amount float64) {
-	// A9：单条原子更新即可，无需先 SELECT 再 UPDATE。
-	// GREATEST(frozen_balance - ?, 0) 保证不会扣成负数；WHERE tenant_id 直接定位钱包行。
+func unfreezeDBAmount(ctx context.Context, tenantID int64, amount float64) error {
 	_, err := g.DB().Exec(ctx,
 		"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), updated_at = ? WHERE tenant_id = ?",
 		amount, time.Now(), tenantID)
 	if err != nil {
-		g.Log().Errorf(ctx, "unfreeze db: tenant=%d amount=%.6f: %v", tenantID, amount, err)
+		return gerror.Wrapf(err, "unfreeze db: tenant=%d amount=%.6f", tenantID, amount)
 	}
-
 	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
+	return nil
 }
 
 // GetPreDeductAmount 获取预扣金额
@@ -376,6 +397,15 @@ func doSyncWalletToRedis(ctx context.Context, tenantID int64) error {
 // InvalidateWalletRedis 清除 Redis 中的钱包缓存（余额变更后调用）
 func InvalidateWalletRedis(ctx context.Context, tenantID int64) {
 	g.Redis().Do(ctx, "DEL", walletHashKey(tenantID))
+}
+
+func rollbackRedisPreDeduct(ctx context.Context, tenantID int64, requestID string) {
+	// DB 同步失败后 DB 仍是权威状态。删除钱包 hash 强制下次从 DB 重建，
+	// 同时清理本次尚未持久化成功的 Redis 预扣明细。
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	InvalidateWalletRedis(rollbackCtx, tenantID)
+	CleanupPreDeduct(rollbackCtx, tenantID, requestID)
 }
 
 // InvalidateWallet 清除租户钱包的两级缓存（进程内 walletCache + Redis hash）。
@@ -478,16 +508,17 @@ func GetFrozenItems(ctx context.Context, tenantID int64) ([]FrozenItem, error) {
 	return items, nil
 }
 
-// trackPreDeduct 异步写入预扣追踪记录到 DB（用于孤儿清理和 Redis 重建）
-func trackPreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string, modelName string) {
+// trackPreDeduct 写入预扣追踪记录到 DB（用于精确解冻、孤儿清理和 Redis 重建）。
+func trackPreDeduct(ctx context.Context, tenantID int64, amount float64, requestID string, modelName string) error {
 	_, err := g.DB().Ctx(ctx).Exec(ctx,
 		`INSERT INTO bil_prededuct_tracks (tenant_id, request_id, amount, model_name, status)
 		 VALUES ($1, $2, $3, $4, 'frozen')
 		 ON CONFLICT (request_id) DO NOTHING`,
 		tenantID, requestID, amount, modelName)
 	if err != nil {
-		g.Log().Warningf(ctx, "[PRE-DEDUCT] track prededuct failed: request=%s err=%v", requestID, err)
+		return gerror.Wrapf(err, "track prededuct: request=%s", requestID)
 	}
+	return nil
 }
 
 // rebuildPredeductFromDB 从 DB 恢复活跃预扣明细到 Redis（Redis 重启后调用）

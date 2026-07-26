@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -214,14 +215,10 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		return nil, err
 	}
 
-	// Hash backup codes for storage
+	// 恢复码是高熵、一次性随机值，使用 SHA-256 可避免每次失败尝试触发多轮 bcrypt。
 	hashedCodes := make([]string, len(plainCodes))
 	for i, code := range plainCodes {
-		hash, herr := crypto.HashPassword(code)
-		if herr != nil {
-			return nil, gerror.Wrapf(herr, "hash backup code failed")
-		}
-		hashedCodes[i] = hash
+		hashedCodes[i] = hashBackupCode(code)
 	}
 	codesJSON, jerr := json.Marshal(hashedCodes)
 	if jerr != nil {
@@ -303,7 +300,7 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 	// Try backup codes
 	if backupCodes != nil {
 		for i, hashedCode := range backupCodes {
-			if crypto.VerifyPassword(code, hashedCode) {
+			if verifyBackupCode(code, hashedCode) {
 				// Consume this backup code
 				_ = consumeBackupCode(ctx, userType, userID, i, backupCodes)
 				return true, nil
@@ -376,11 +373,7 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 
 	hashedCodes := make([]string, len(plainCodes))
 	for i, c := range plainCodes {
-		hash, herr := crypto.HashPassword(c)
-		if herr != nil {
-			return nil, gerror.Wrapf(herr, "hash backup code failed")
-		}
-		hashedCodes[i] = hash
+		hashedCodes[i] = hashBackupCode(c)
 	}
 	codesJSON, jerr := json.Marshal(hashedCodes)
 	if jerr != nil {
@@ -483,12 +476,27 @@ func verifyAndConsumeBackupCode(ctx context.Context, userType string, userID int
 	}
 
 	for i, hashedCode := range backupCodes {
-		if crypto.VerifyPassword(code, hashedCode) {
+		if verifyBackupCode(code, hashedCode) {
 			_ = consumeBackupCode(ctx, userType, userID, i, backupCodes)
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+const backupCodeSHA256Prefix = "sha256:"
+
+func hashBackupCode(code string) string {
+	return backupCodeSHA256Prefix + sha256Sum(code)
+}
+
+func verifyBackupCode(code, storedHash string) bool {
+	if strings.HasPrefix(storedHash, backupCodeSHA256Prefix) {
+		expected := hashBackupCode(code)
+		return subtle.ConstantTimeCompare([]byte(expected), []byte(storedHash)) == 1
+	}
+	// 兼容升级前已签发的 bcrypt 恢复码；用户重新生成后会自动切换到 SHA-256。
+	return crypto.VerifyPassword(code, storedHash)
 }
 
 // consumeBackupCode removes a used backup code from the list.
