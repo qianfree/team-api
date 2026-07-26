@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -256,25 +257,33 @@ func (s *sAdmin) SetGroupModels(ctx context.Context, req *v1.GroupModelsSetReq) 
 		return nil, common.NewBusinessError(consts.CodeModelGroupNotFound, consts.MsgModelGroupNotFound)
 	}
 
-	// 删除旧关联
-	_, err := dao.MdlGroupModels.Ctx(ctx).Where("group_id", req.ID).Delete()
+	// 删-插必须在同一事务内：插入失败（DB 抖动/唯一键冲突）若与删除分离，会清空分组关联，
+	// 影响下游按分组计算的租户可用模型与定价。事务采用 ctx 传播式：闭包内统一 dao.Xxx.Ctx(ctx)。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 删除旧关联
+		_, err := dao.MdlGroupModels.Ctx(ctx).Where("group_id", req.ID).Delete()
+		if err != nil {
+			return err
+		}
+
+		// 批量插入新关联
+		if len(req.ModelIds) > 0 {
+			insertData := make([]do.MdlGroupModels, 0, len(req.ModelIds))
+			for _, modelID := range req.ModelIds {
+				insertData = append(insertData, do.MdlGroupModels{
+					GroupId: req.ID,
+					ModelId: modelID,
+				})
+			}
+			_, err = dao.MdlGroupModels.Ctx(ctx).Batch(len(insertData)).Insert(insertData)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	// 批量插入新关联
-	if len(req.ModelIds) > 0 {
-		insertData := make([]do.MdlGroupModels, 0, len(req.ModelIds))
-		for _, modelID := range req.ModelIds {
-			insertData = append(insertData, do.MdlGroupModels{
-				GroupId: req.ID,
-				ModelId: modelID,
-			})
-		}
-		_, err = dao.MdlGroupModels.Ctx(ctx).Batch(len(insertData)).Insert(insertData)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	invalidateTenantsInGroup(ctx, req.ID)
@@ -321,25 +330,34 @@ func (s *sAdmin) ListTenantGroups(ctx context.Context, req *v1.TenantGroupsListR
 
 // SetTenantGroups 设置租户关联的分组（全量替换）
 func (s *sAdmin) SetTenantGroups(ctx context.Context, req *v1.TenantGroupsSetReq) (*v1.TenantGroupsSetRes, error) {
-	// 删除旧关联
-	_, err := dao.MdlTenantGroups.Ctx(ctx).Where("tenant_id", req.TenantID).Delete()
+	// 删-插必须在同一事务内：插入失败（DB 抖动/唯一键冲突）若与删除分离，会清空租户模型分组，
+	// 影响下游按分组计算的租户可用模型与定价。事务采用 ctx 传播式：闭包内统一 dao.Xxx.Ctx(ctx)，
+	// 参照 tenant/member_model_scope.go 的正确写法。
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 删除旧关联
+		_, err := dao.MdlTenantGroups.Ctx(ctx).Where("tenant_id", req.TenantID).Delete()
+		if err != nil {
+			return err
+		}
+
+		// 批量插入新关联
+		if len(req.GroupIds) > 0 {
+			insertData := make([]do.MdlTenantGroups, 0, len(req.GroupIds))
+			for _, groupID := range req.GroupIds {
+				insertData = append(insertData, do.MdlTenantGroups{
+					TenantId: req.TenantID,
+					GroupId:  groupID,
+				})
+			}
+			_, err = dao.MdlTenantGroups.Ctx(ctx).Batch(len(insertData)).Insert(insertData)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	// 批量插入新关联
-	if len(req.GroupIds) > 0 {
-		insertData := make([]do.MdlTenantGroups, 0, len(req.GroupIds))
-		for _, groupID := range req.GroupIds {
-			insertData = append(insertData, do.MdlTenantGroups{
-				TenantId: req.TenantID,
-				GroupId:  groupID,
-			})
-		}
-		_, err = dao.MdlTenantGroups.Ctx(ctx).Batch(len(insertData)).Insert(insertData)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	invalidateTenantGroupCache(ctx, req.TenantID)

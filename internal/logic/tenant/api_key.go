@@ -443,23 +443,31 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		hasUpdate = true
 	}
 
-	if hasUpdate {
-		_, err = dao.ApiKeys.Ctx(ctx).
-			Where("id", keyID).
-			Where("tenant_id", tenantID).
-			Data(data).
-			Update()
-		if err != nil {
-			return nil, err
+	// 主表更新与模型范围更新必须在同一事务内：前者成功后者失败会留下中间态（如 Key 已改名但
+	// scope 仍为旧值）。外层事务包住两步；updateApiKeyModelScopes 在携带事务的 ctx 下会被
+	// GoFrame 视为嵌套事务（savepoint），与主表更新共享同一事务。缓存失效放在事务提交后执行。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if hasUpdate {
+			_, err = dao.ApiKeys.Ctx(ctx).
+				Where("id", keyID).
+				Where("tenant_id", tenantID).
+				Data(data).
+				Update()
+			if err != nil {
+				return err
+			}
 		}
-	}
 
-	// 更新模型范围（事务内先删后插）
-	if req.ModelNames != nil {
-		err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames)
-		if err != nil {
-			return nil, err
+		// 更新模型范围（事务内先删后插，作为外层事务的 savepoint）
+		if req.ModelNames != nil {
+			if err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames); err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if hasUpdate || req.ModelNames != nil {
