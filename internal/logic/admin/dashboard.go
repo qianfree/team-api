@@ -26,17 +26,26 @@ func (s *sAdmin) GetDashboardStats(ctx context.Context, req *v1.AdminDashboardRe
 	monthStart := time.Now().Format("2006-01") + "-01"
 
 	// 租户数
-	tenantCount, _ := dao.TntTenants.Ctx(ctx).
+	tenantCount, err := dao.TntTenants.Ctx(ctx).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query tenant count failed: %v", err)
+	}
 
 	// 成员数
-	memberCount, _ := dao.TntUsers.Ctx(ctx).Count()
+	memberCount, err := dao.TntUsers.Ctx(ctx).Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query member count failed: %v", err)
+	}
 
 	// 活跃渠道
-	activeChannels, _ := dao.ChnChannels.Ctx(ctx).
+	activeChannels, err := dao.ChnChannels.Ctx(ctx).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query active channels failed: %v", err)
+	}
 
 	// 今日统计
 	type dayStatsRow struct {

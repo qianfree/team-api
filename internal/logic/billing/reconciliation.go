@@ -190,34 +190,50 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 
 	g.Log().Warningf(ctx, "[PRE-DEDUCT] found %d orphaned pre-deducts to clean", len(tracks))
 
-	// 2. 按 tenant_id 分组聚合（A8：金额用 decimal 累加，避免 float64 逐笔求和漂移；
-	//    该总额会喂给 frozen_balance 释放，属金额变更路径，须精确）
-	tenantAmounts := make(map[int64]decimal.Decimal)
-	tenantRequests := make(map[int64][]string)
+	// 2. 按 tenant_id 分组：记录每个租户名下待清理的 (request_id, amount) 明细。
+	//    注意：金额累加会推迟到第 3 步「实际认领成功」之后，只对本实例真正认领到的 tracks 求和。
+	tenantTracks := make(map[int64][]trackRow)
 	for _, t := range tracks {
-		tenantAmounts[t.TenantID] = tenantAmounts[t.TenantID].Add(t.Amount)
-		tenantRequests[t.TenantID] = append(tenantRequests[t.TenantID], t.RequestID)
+		tenantTracks[t.TenantID] = append(tenantTracks[t.TenantID], t)
 	}
 
 	// 3. 逐租户释放冻结金额
-	for tenantID, totalAmountD := range tenantAmounts {
-		requestIDs := tenantRequests[tenantID]
-		totalAmount := totalAmountD // decimal 已是精确类型，直接用于 DB 更新
+	// 多实例部署时，N 个实例会同时扫到同一批过期 tracks。为避免重复/超额释放 frozen_balance，
+	// 采用「先 claim 再 release」：先用带 status='frozen' 谓词的条件更新把 track 标记为 expired，
+	// 仅对本实例真正从 frozen 翻成 expired（RowsAffected > 0）的 track 累加金额并释放。
+	// status='frozen' 的条件更新是跨实例的原子闸门——同一 request_id 只有一个实例能命中，
+	// 因此各实例释放的金额之和恒等于实际冻结总额，不会重复或超额。
+	for tenantID, tenantRows := range tenantTracks {
+		// 3a. 逐条 claim，仅累加本实例成功认领的金额
+		claimedAmount := decimal.Zero
+		claimed := 0
+		for _, tr := range tenantRows {
+			res, err := g.DB().Ctx(ctx).Exec(ctx,
+				"UPDATE bil_prededuct_tracks SET status = 'expired', expired_at = $1 WHERE tenant_id = $2 AND request_id = $3 AND status = 'frozen'",
+				time.Now(), tenantID, tr.RequestID)
+			if err != nil {
+				g.Log().Warningf(ctx, "[PRE-DEDUCT] clean expired: mark track expired failed: tenant=%d request=%s err=%v", tenantID, tr.RequestID, err)
+				continue
+			}
+			if rows, _ := res.RowsAffected(); rows > 0 {
+				claimedAmount = claimedAmount.Add(tr.Amount)
+				claimed++
+			}
+		}
 
-		// 释放 DB frozen_balance
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - $1, 0), updated_at = $2 WHERE tenant_id = $3",
-			totalAmount, time.Now(), tenantID)
-		if err != nil {
-			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: unfreeze failed: tenant=%d err=%v", tenantID, err)
+		// 3b. 本实例未认领到任何 track（全部已被其它实例处理）→ 跳过释放，绝不重复入账
+		if claimed == 0 {
+			g.Log().Infof(ctx, "[PRE-DEDUCT] clean expired: tenant=%d all %d tracks already claimed by other instances, skip release", tenantID, len(tenantRows))
 			continue
 		}
 
-		// 标记 tracks 为 expired
-		for _, reqID := range requestIDs {
-			g.DB().Ctx(ctx).Exec(ctx,
-				"UPDATE bil_prededuct_tracks SET status = 'expired', expired_at = $1 WHERE tenant_id = $2 AND request_id = $3 AND status = 'frozen'",
-				time.Now(), tenantID, reqID)
+		// 3c. 释放 DB frozen_balance（金额仅来自本实例实际认领的 tracks，精确无重复）
+		_, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - $1, 0), updated_at = $2 WHERE tenant_id = $3",
+			claimedAmount, time.Now(), tenantID)
+		if err != nil {
+			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: unfreeze failed: tenant=%d err=%v", tenantID, err)
+			continue
 		}
 
 		// 清除缓存
@@ -226,6 +242,6 @@ func CleanExpiredPreDeducts(ctx context.Context) {
 
 		g.Log().Infof(ctx,
 			"[PRE-DEDUCT] cleaned orphaned: tenant=%d amount=%.6f count=%d",
-			tenantID, totalAmount.InexactFloat64(), len(requestIDs))
+			tenantID, claimedAmount.InexactFloat64(), claimed)
 	}
 }

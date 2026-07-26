@@ -194,8 +194,18 @@ func (s *sAdmin) ListMessages(ctx context.Context, req *v1.MessageListReq) (*v1.
 	}, nil
 }
 
+// MessageReadStats 是广播消息已读统计的类型化结果，替代原先 map[string]any +
+// 调用方类型断言的写法（P2-5：消除类型不安全）。
+type MessageReadStats struct {
+	MessageID    int64  `json:"message_id"`
+	TotalMembers int    `json:"total_members"`
+	ReadCount    int    `json:"read_count"`
+	UnreadCount  int    `json:"unread_count"`
+	ReadRate     string `json:"read_rate"` // 形如 "85.7%"
+}
+
 // GetMessageReadStats 获取广播消息的已读统计
-func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, error) {
+func GetMessageReadStats(ctx context.Context, messageID int64) (*MessageReadStats, error) {
 	var msg *struct {
 		IsBroadcast int   `json:"is_broadcast"`
 		TenantID    int64 `json:"tenant_id"`
@@ -239,12 +249,12 @@ func GetMessageReadStats(ctx context.Context, messageID int64) (map[string]any, 
 		readRate = float64(readCount) / float64(totalMembers) * 100
 	}
 
-	return map[string]any{
-		"message_id":    messageID,
-		"total_members": totalMembers,
-		"read_count":    readCount,
-		"unread_count":  unreadCount,
-		"read_rate":     fmt.Sprintf("%.1f%%", readRate),
+	return &MessageReadStats{
+		MessageID:    messageID,
+		TotalMembers: totalMembers,
+		ReadCount:    readCount,
+		UnreadCount:  unreadCount,
+		ReadRate:     fmt.Sprintf("%.1f%%", readRate),
 	}, nil
 }
 
