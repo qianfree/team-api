@@ -564,6 +564,17 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
+	principal, err := common.LoadTenantPrincipal(ctx, session.UserId, session.TenantId)
+	if err != nil {
+		return nil, err
+	}
+	if err = common.ValidateTenantPrincipal(principal); err != nil {
+		if err == consts.ErrTenantSuspended {
+			return nil, common.NewBusinessError(consts.CodeTenantSuspended, consts.MsgTenantSuspended)
+		}
+		return nil, common.NewUnauthorizedError(consts.MsgUnauthorized)
+	}
+
 	newRefreshToken, err := common.GenerateRefreshToken()
 	if err != nil {
 		return nil, err
@@ -577,17 +588,7 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, err
 	}
 
-	// Fetch current role from user table
-	var tntUser *entity.TntUsers
-	err = dao.TntUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&tntUser)
-	if err = common.IgnoreScanNoRows(err); err != nil {
-		return nil, err
-	}
-	if tntUser == nil {
-		return nil, common.NewUnauthorizedError("用户不存在")
-	}
-
-	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", tntUser.Role, session.TenantId, session.Id, session.Jti)
+	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", principal.Role, session.TenantId, session.Id, session.Jti)
 	if err != nil {
 		return nil, err
 	}
