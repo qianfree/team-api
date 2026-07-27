@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -32,7 +33,6 @@ const tasks = ref<TaskItem[]>([])
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
 
 const filterStatus = ref('')
 const filterPlatform = ref('')
@@ -141,14 +141,6 @@ function resetFilters() {
 	fetchTasks()
 }
 
-function prevPage() {
-	if (page.value > 1) { page.value--; fetchTasks() }
-}
-
-function nextPage() {
-	if (page.value * pageSize < total.value) { page.value++; fetchTasks() }
-}
-
 function isImageResult(url: string | undefined): boolean {
 	if (!url) return false
 	return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)
@@ -164,7 +156,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
+	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -207,7 +199,7 @@ onMounted(() => {
 		</div>
 
 		<!-- Table -->
-		<div class="card p-0 overflow-hidden">
+		<div class="viewport-table-panel card p-0 overflow-hidden">
 			<div v-if="loading" class="p-8 text-center">
 				<div class="spinner mx-auto mb-3"></div>
 				<p class="text-sm text-gray-500">加载中...</p>
@@ -219,8 +211,8 @@ onMounted(() => {
 				<p class="empty-state-description">异步生成任务的执行记录将显示在这里</p>
 			</div>
 
-			<div v-else>
-				<div class="table-container">
+			<div v-else class="viewport-table-content">
+				<div class="viewport-table-scroll table-container">
 					<table class="table table-fixed w-full">
 						<thead>
 							<tr>
@@ -271,15 +263,7 @@ onMounted(() => {
 					</table>
 				</div>
 
-				<!-- Pagination -->
-				<div v-if="totalPages > 1" class="table-pagination">
-					<span class="text-xs text-gray-500">共 {{ total }} 条记录</span>
-					<div class="flex items-center gap-2">
-						<button class="btn btn-ghost btn-sm" :disabled="page <= 1" @click="prevPage">上一页</button>
-						<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-						<button class="btn btn-ghost btn-sm" :disabled="page >= totalPages" @click="nextPage">下一页</button>
-					</div>
-				</div>
+				<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTasks" />
 			</div>
 		</div>
 

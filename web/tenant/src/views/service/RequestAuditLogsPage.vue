@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 
 interface RequestLog {
@@ -26,7 +27,6 @@ const logsLoading = ref(false)
 const logPage = ref(1)
 const logPageSize = 20
 const logTotal = ref(0)
-const logTotalPages = computed(() => Math.ceil(logTotal.value / logPageSize))
 
 const logFilter = reactive({
 	username: '',
@@ -153,11 +153,6 @@ async function fetchDetail(id: number) {
 	}
 }
 
-function handleLogPageChange(newPage: number) {
-	logPage.value = newPage
-	fetchRequestLogs()
-}
-
 function handleFilter() {
 	logPage.value = 1
 	fetchRequestLogs()
@@ -188,7 +183,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
+	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header">
 			<div>
@@ -238,7 +233,7 @@ onMounted(() => {
 				</div>
 			</div>
 		<!-- Table -->
-		<div class="card p-0 overflow-hidden">
+		<div class="viewport-table-panel card p-0 overflow-hidden">
 			<!-- Loading -->
 			<div v-if="logsLoading" class="p-8 text-center">
 				<div class="spinner mx-auto mb-3"></div>
@@ -253,8 +248,8 @@ onMounted(() => {
 			</div>
 
 			<!-- Table -->
-			<div v-else>
-				<div class="table-container table-container-flush request-audit-table">
+			<div v-else class="viewport-table-content">
+				<div class="viewport-table-scroll table-container table-container-flush request-audit-table">
 					<table class="table">
 						<thead>
 							<tr>
@@ -318,27 +313,7 @@ onMounted(() => {
 					</table>
 				</div>
 
-				<!-- Pagination -->
-				<div v-if="logTotalPages > 1" class="table-pagination">
-					<span class="text-xs text-gray-500">共 {{ logTotal }} 条记录</span>
-					<div class="flex items-center gap-2">
-						<button
-							class="btn btn-ghost btn-sm"
-							:disabled="logPage <= 1"
-							@click="handleLogPageChange(logPage - 1)"
-						>
-							上一页
-						</button>
-						<span class="text-sm text-gray-600">{{ logPage }} / {{ logTotalPages }}</span>
-						<button
-							class="btn btn-ghost btn-sm"
-							:disabled="logPage >= logTotalPages"
-							@click="handleLogPageChange(logPage + 1)"
-						>
-							下一页
-						</button>
-					</div>
-				</div>
+				<BasePagination v-model="logPage" :page-size="logPageSize" :total="logTotal" @change="fetchRequestLogs" />
 			</div>
 		</div>
 

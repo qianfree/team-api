@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -214,7 +215,7 @@ onMounted(() => {
 
 <template>
 	<TeamLockedBanner v-if="!teamEnabled" />
-	<div v-else class="space-y-6">
+	<div v-else class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -258,12 +259,12 @@ onMounted(() => {
 		</div>
 
 		<!-- Members Table -->
-		<div class="card">
+		<div class="viewport-table-panel card">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="members.length > 0" class="table-container">
+			<div v-else-if="members.length > 0" class="viewport-table-scroll table-container">
 				<table class="table">
 					<thead>
 						<tr>
@@ -339,6 +340,8 @@ onMounted(() => {
 				<p class="empty-state-title">暂无成员</p>
 				<p class="empty-state-description">邀请第一位团队成员吧</p>
 			</div>
+
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchMembers" />
 		</div>
 
 		<!-- Invite Modal -->

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
@@ -105,7 +106,6 @@ const urgencyBadgeClass: Record<string, string> = {
 	urgent: 'badge-danger',
 }
 
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
 
 async function fetchTickets() {
 	loading.value = true
@@ -204,18 +204,13 @@ async function reopenTicket() {
 	}
 }
 
-function handlePageChange(newPage: number) {
-	page.value = newPage
-	fetchTickets()
-}
-
 onMounted(() => {
 	fetchTickets()
 })
 </script>
 
 <template>
-	<div class="space-y-6">
+	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -260,8 +255,8 @@ onMounted(() => {
 		</div>
 
 		<!-- Table -->
-		<div v-else class="card p-0 overflow-hidden">
-			<div class="table-container">
+		<div v-else class="viewport-table-panel card p-0 overflow-hidden">
+			<div class="viewport-table-scroll table-container">
 				<table class="table">
 					<thead>
 						<tr>
@@ -311,27 +306,7 @@ onMounted(() => {
 				</table>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="totalPages > 1" class="table-pagination">
-				<span class="text-xs text-gray-500">共 {{ total }} 条记录</span>
-				<div class="flex items-center gap-2">
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page <= 1"
-						@click="handlePageChange(page - 1)"
-					>
-						上一页
-					</button>
-					<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page >= totalPages"
-						@click="handlePageChange(page + 1)"
-					>
-						下一页
-					</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTickets" />
 		</div>
 
 		<!-- Create Ticket Modal -->

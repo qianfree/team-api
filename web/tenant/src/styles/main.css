@@ -384,6 +384,7 @@ body.modal-open {
 	scrollbar-color: rgba(117, 104, 248, 0.28) transparent;
 }
 .table-container::-webkit-scrollbar {
+	width: 8px;
 	height: 8px;
 }
 .table-container::-webkit-scrollbar-track {
@@ -394,6 +395,65 @@ body.modal-open {
 	border-radius: 9999px;
 	background: linear-gradient(90deg, rgba(65, 168, 244, 0.4), rgba(117, 104, 248, 0.42));
 	background-clip: padding-box;
+}
+
+/* Desktop list pages fill the viewport; only their table rows scroll. */
+@media (min-width: 1024px) {
+	.tenant-layout {
+		display: flex;
+		height: 100dvh;
+		min-height: 0;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.tenant-shell {
+		display: flex;
+		min-height: 0;
+		flex: 1 1 0%;
+		flex-direction: column;
+	}
+	.tenant-main {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+	.tenant-table-main {
+		overflow: hidden;
+	}
+	.tenant-table-main > .viewport-table-page {
+		height: 100%;
+		min-height: 0;
+	}
+	.viewport-table-page,
+	.viewport-table-panel,
+	.viewport-table-content {
+		display: flex;
+		min-height: 0;
+		flex-direction: column;
+	}
+	.viewport-table-panel {
+		flex: 1 1 0%;
+		overflow: hidden;
+	}
+	.viewport-table-content {
+		flex: 1 1 0%;
+	}
+	.viewport-table-scroll {
+		min-height: 0;
+		flex: 1 1 0%;
+		overflow: auto;
+		overscroll-behavior: contain;
+	}
+	.viewport-table-scroll .table thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+	}
+	.viewport-table-panel > .table-pagination,
+	.viewport-table-content > .table-pagination {
+		flex: 0 0 auto;
+	}
 }
 .table-container-flush {
 	border: 0;

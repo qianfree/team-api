@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="min-h-screen overflow-x-hidden">
+	<div class="tenant-layout min-h-screen overflow-x-hidden">
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
 			<AnnouncementBanner v-if="consoleAnnouncements.length" :announcements="consoleAnnouncements" />
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
 
 		<!-- Main Content Area -->
 		<div
-			class="relative min-h-screen transition-all duration-300"
+			class="tenant-shell relative min-h-screen transition-all duration-300"
 			:class="[sidebarCollapsed ? 'lg:ml-[116px]' : 'lg:ml-[296px]']"
 		>
 			<!-- Header -->
@@ -519,7 +519,10 @@ onBeforeUnmount(() => {
 			</header>
 
 			<!-- Page Content -->
-			<main class="px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5">
+			<main
+				class="tenant-main px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5"
+				:class="{ 'tenant-table-main': route.meta.viewportTable }"
+			>
 				<router-view />
 			</main>
 		</div>
