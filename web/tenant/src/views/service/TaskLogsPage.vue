@@ -37,6 +37,7 @@ const total = ref(0)
 const filterStatus = ref('')
 const filterPlatform = ref('')
 const filterTaskId = ref('')
+const showExportDropdown = ref(false)
 
 const showDetail = ref(false)
 const detailLoading = ref(false)
@@ -157,27 +158,10 @@ onMounted(() => {
 
 <template>
 	<div class="viewport-table-page space-y-6">
-		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
-				<h1 class="page-title">任务日志</h1>
-				<p class="page-description">查看异步生成任务（视频/图片/音乐）的执行记录</p>
-			</div>
-			<div class="flex items-center gap-2">
-				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('csv')">
-					<Icon v-if="exporting" name="refresh" size="xs" class="animate-spin" />
-					{{ exporting ? '导出中...' : '导出 CSV' }}
-				</button>
-				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('xlsx')">
-					{{ exporting ? '导出中...' : '导出 Excel' }}
-				</button>
-			</div>
-		</div>
-
 		<!-- Filters -->
-		<div class="card">
-			<div class="card-body">
-				<div class="flex flex-wrap items-center gap-4">
+		<div class="relative z-20 overflow-visible card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
 						<input v-model="filterTaskId" class="input" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />
@@ -191,15 +175,31 @@ onMounted(() => {
 						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
-						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
-						<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
+							</button>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+							</div>
+						</div>
 					</div>
-				</div>
+				</form>
 			</div>
 		</div>
 
 		<!-- Table -->
-		<div class="viewport-table-panel card p-0 overflow-hidden">
+		<div class="viewport-table-panel relative z-0 card p-0 overflow-hidden">
 			<div v-if="loading" class="p-8 text-center">
 				<div class="spinner mx-auto mb-3"></div>
 				<p class="text-sm text-gray-500">加载中...</p>

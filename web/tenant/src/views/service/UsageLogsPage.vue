@@ -227,7 +227,7 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="card">
+		<div class="relative z-20 overflow-visible card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 						<div class="flex items-center gap-2">
@@ -283,7 +283,7 @@ onMounted(() => {
 			</div>
 		</div>
 		<!-- Logs Table -->
-		<div class="viewport-table-panel card overflow-hidden">
+		<div class="viewport-table-panel relative z-0 card overflow-hidden">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
