@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -104,7 +105,7 @@ function goToDetail(item: any) {
 </script>
 
 <template>
-	<div>
+	<div class="viewport-table-page">
 		<div class="page-header flex items-center justify-between">
 			<div>
 				<h1 class="page-title">项目管理</h1>
@@ -116,7 +117,7 @@ function goToDetail(item: any) {
 			</button>
 		</div>
 
-		<div class="card">
+		<div class="viewport-table-panel card">
 			<div v-if="loading" class="flex items-center justify-center py-12">
 				<div class="spinner h-6 w-6 text-primary-500"></div>
 			</div>
@@ -125,7 +126,7 @@ function goToDetail(item: any) {
 				<h3 class="empty-state-title">暂无项目</h3>
 				<p class="empty-state-description">创建项目来组织你的 API Key 和资源</p>
 			</div>
-			<div v-else class="table-container">
+			<div v-else class="viewport-table-scroll table-container">
 				<table class="table">
 					<thead>
 						<tr>
@@ -169,14 +170,7 @@ function goToDetail(item: any) {
 				</table>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="total > pageSize" class="table-pagination card-footer flex justify-end">
-				<div class="flex items-center gap-2">
-					<button class="btn btn-ghost btn-sm" :disabled="page <= 1" @click="page--; fetchProjects()">上一页</button>
-					<span class="text-sm text-gray-500">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
-					<button class="btn btn-ghost btn-sm" :disabled="page * pageSize >= total" @click="page++; fetchProjects()">下一页</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchProjects" />
 		</div>
 
 		<!-- Create/Edit Modal -->

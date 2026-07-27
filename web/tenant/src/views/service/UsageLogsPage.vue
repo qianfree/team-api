@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -137,14 +138,6 @@ function resetFilters() {
 	fetchLogs()
 }
 
-function prevPage() {
-	if (page.value > 1) { page.value--; fetchLogs() }
-}
-
-function nextPage() {
-	if (page.value * pageSize < total.value) { page.value++; fetchLogs() }
-}
-
 function openDetail(log: any) {
 	detailLog.value = log
 	detailModal.value = true
@@ -232,7 +225,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
+	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -289,12 +282,12 @@ onMounted(() => {
 				</div>
 			</div>
 		<!-- Logs Table -->
-		<div class="card overflow-hidden">
+		<div class="viewport-table-panel card overflow-hidden">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="logs.length > 0" class="table-container table-container-flush usage-log-table">
+			<div v-else-if="logs.length > 0" class="viewport-table-scroll table-container table-container-flush usage-log-table">
 				<table class="table">
 					<thead>
 						<tr>
@@ -447,16 +440,7 @@ onMounted(() => {
 				<p class="empty-state-description">日志将在 API 调用后展示</p>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="total > pageSize" class="table-pagination">
-				<p class="text-sm text-gray-500">
-					第 {{ page }} / {{ Math.ceil(total / pageSize) }} 页，共 {{ total }} 条
-				</p>
-				<div class="flex items-center gap-2">
-					<button class="btn btn-secondary btn-sm" :disabled="page <= 1" @click="prevPage">上一页</button>
-					<button class="btn btn-secondary btn-sm" :disabled="page * pageSize >= total" @click="nextPage">下一页</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchLogs" />
 		</div>
 
 		<!-- Token Tooltip -->

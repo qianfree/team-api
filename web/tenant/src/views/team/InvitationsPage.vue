@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
@@ -29,7 +30,6 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
 
 const roleBadgeClass: Record<string, string> = {
 	owner: 'badge-primary',
@@ -97,7 +97,7 @@ onMounted(() => {
 
 <template>
 	<TeamLockedBanner v-if="!teamEnabled" />
-	<div v-else class="space-y-6">
+	<div v-else class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -116,12 +116,12 @@ onMounted(() => {
 		</div>
 
 		<!-- Table -->
-		<div class="card">
+		<div class="viewport-table-panel card">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="invitations.length > 0" class="table-container">
+			<div v-else-if="invitations.length > 0" class="viewport-table-scroll table-container">
 				<table class="table">
 					<thead>
 						<tr>
@@ -183,23 +183,7 @@ onMounted(() => {
 				<p class="empty-state-description">生成邀请链接后，记录会显示在这里</p>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="totalPages > 1" class="table-pagination">
-				<p class="text-xs text-gray-500">共 {{ total }} 条记录</p>
-				<div class="flex items-center gap-2">
-					<button
-						class="btn btn-secondary btn-sm"
-						:disabled="page <= 1"
-						@click="page--; fetchInvitations()"
-					>上一页</button>
-					<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-					<button
-						class="btn btn-secondary btn-sm"
-						:disabled="page >= totalPages"
-						@click="page++; fetchInvitations()"
-					>下一页</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchInvitations" />
 		</div>
 	</div>
 </template>

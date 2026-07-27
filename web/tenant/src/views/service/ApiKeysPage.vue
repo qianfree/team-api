@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
@@ -146,7 +147,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
+	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
 		<div class="page-header flex items-center justify-between">
 			<div>
@@ -174,12 +175,12 @@ onMounted(() => {
 		</div>
 
 		<!-- Keys Table -->
-		<div class="card">
+		<div class="viewport-table-panel card">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="keys.length > 0" class="table-container">
+			<div v-else-if="keys.length > 0" class="viewport-table-scroll table-container">
 				<table class="table">
 					<thead>
 						<tr>
@@ -255,14 +256,7 @@ onMounted(() => {
 				<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="total > pageSize" class="table-pagination card-footer flex justify-end">
-				<div class="flex items-center gap-2">
-					<button class="btn btn-ghost btn-sm" :disabled="page <= 1" @click="page--; fetchKeys()">上一页</button>
-					<span class="text-sm text-gray-500">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
-					<button class="btn btn-ghost btn-sm" :disabled="page * pageSize >= total" @click="page++; fetchKeys()">下一页</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchKeys" />
 		</div>
 
 		<!-- Create Modal -->

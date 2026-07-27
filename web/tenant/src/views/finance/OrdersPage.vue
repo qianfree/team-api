@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -90,24 +91,13 @@ async function handleCancel(order: any) {
   }
 }
 
-function handlePageChange(newPage: number) {
-  page.value = newPage
-  fetchOrders()
-}
-
-const totalPages = ref(0)
-
-function updateTotalPages() {
-  totalPages.value = Math.ceil(total.value / pageSize)
-}
-
 onMounted(() => {
   fetchOrders()
 })
 </script>
 
 <template>
-  <div>
+  <div class="viewport-table-page">
     <div class="page-header">
       <div class="flex items-center justify-between">
         <div>
@@ -156,8 +146,8 @@ onMounted(() => {
     </div>
 
     <!-- Table -->
-    <div v-else class="card p-0 overflow-hidden">
-      <div class="table-container">
+    <div v-else class="viewport-table-panel card p-0 overflow-hidden">
+      <div class="viewport-table-scroll table-container">
         <table class="table">
           <thead>
             <tr>
@@ -209,27 +199,7 @@ onMounted(() => {
         </table>
       </div>
 
-      <!-- Pagination -->
-      <div v-if="totalPages > 1" class="table-pagination">
-        <span class="text-xs text-gray-500">共 {{ total }} 条记录</span>
-        <div class="flex items-center gap-2">
-          <button
-            class="btn btn-ghost btn-sm"
-            :disabled="page <= 1"
-            @click="handlePageChange(page - 1)"
-          >
-            上一页
-          </button>
-          <span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-          <button
-            class="btn btn-ghost btn-sm"
-            :disabled="page >= totalPages"
-            @click="handlePageChange(page + 1)"
-          >
-            下一页
-          </button>
-        </div>
-      </div>
+      <BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchOrders" />
     </div>
   </div>
 </template>
