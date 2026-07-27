@@ -144,40 +144,36 @@ const coreStats = computed(() => {
 			value: formatNumber(today.requests),
 			sub: `输入 ${formatNumber(today.input_tokens)} · 输出 ${formatNumber(today.output_tokens)}`,
 			trend: '实时统计',
-			icon: 'play',
-			color: '#7667f6',
-			soft: 'rgba(118, 103, 246, 0.14)',
-			path: 'M0 36 C16 39, 22 28, 38 30 S58 15, 74 22 S96 40, 114 30 S136 9, 154 20 S176 28, 200 12',
+				icon: 'play',
+				color: '#7667f6',
+				soft: 'rgba(118, 103, 246, 0.14)',
 		},
 		{
 			label: '本月请求',
 			value: formatNumber(month.requests),
 			sub: `日均 ${formatNumber(month.requests / Math.max(new Date().getDate(), 1))} 次`,
 			trend: '本月累计',
-			icon: 'chart',
-			color: '#3b9df8',
-			soft: 'rgba(59, 157, 248, 0.14)',
-			path: 'M0 38 C14 40, 24 34, 36 25 S58 20, 72 32 S92 42, 108 28 S128 7, 144 18 S165 34, 200 13',
+				icon: 'chart',
+				color: '#3b9df8',
+				soft: 'rgba(59, 157, 248, 0.14)',
 		},
 		{
 			label: '本月 Token',
 			value: formatNumber(monthTokens),
 			sub: `输入 ${formatNumber(month.input_tokens)} · 输出 ${formatNumber(month.output_tokens)}`,
 			trend: '调用消耗',
-			icon: 'bolt',
-			color: '#22c7b7',
-			soft: 'rgba(34, 199, 183, 0.14)',
-			path: 'M0 38 C18 40, 22 30, 38 32 S60 15, 78 22 S96 44, 118 27 S140 5, 156 18 S180 31, 200 14',
+				icon: 'bolt',
+				color: '#22c7b7',
+				soft: 'rgba(34, 199, 183, 0.14)',
 		},
 		{
 			label: '本月消费',
 			value: formatCost(month.total_cost),
 			sub: `今日 ${formatCost(today.total_cost)}`,
 			trend: '费用明细',
-			icon: 'creditCard',
-			color: '#9a58ee',
-			soft: 'rgba(154, 88, 238, 0.14)',
-			path: 'M0 39 C18 41, 24 32, 39 29 S58 15, 75 25 S95 42, 112 31 S133 8, 150 20 S174 30, 200 13',
+				icon: 'creditCard',
+				color: '#9a58ee',
+				soft: 'rgba(154, 88, 238, 0.14)',
 		},
 	]
 })
@@ -330,10 +326,13 @@ onMounted(refreshAll)
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-			<div v-for="index in 4" :key="index" class="stat-card h-[190px]">
-				<div class="skeleton h-4 w-20"></div>
-				<div class="skeleton mt-5 h-9 w-32"></div>
-				<div class="skeleton mt-4 h-4 w-44"></div>
+				<div v-for="index in 4" :key="index" class="stat-card h-[152px]">
+					<div class="flex items-center justify-between">
+						<div class="skeleton h-10 w-10 rounded-xl"></div>
+						<div class="skeleton h-5 w-16 rounded-full"></div>
+					</div>
+					<div class="skeleton mt-4 h-8 w-28"></div>
+					<div class="skeleton mt-3 h-3.5 w-40"></div>
 			</div>
 		</section>
 
@@ -344,24 +343,21 @@ onMounted(refreshAll)
 				class="stat-card metric-card group"
 				:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
 			>
-				<div class="relative z-10 flex items-start justify-between gap-4">
-					<div class="min-w-0">
-						<p class="text-sm font-medium text-slate-500">{{ stat.label }}</p>
-						<p class="mt-3 truncate text-[28px] font-bold tracking-tight text-slate-900">{{ stat.value }}</p>
-						<p class="mt-3 flex items-center gap-1.5 text-xs font-medium" :style="{ color: stat.color }">
-							<Icon name="trendingUp" size="xs" />
-							{{ stat.trend }}
-						</p>
+					<div class="metric-accent" aria-hidden="true"></div>
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-3">
+							<div class="metric-icon">
+								<Icon :name="stat.icon" size="md" />
+							</div>
+							<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
+						</div>
+						<span class="metric-badge">{{ stat.trend }}</span>
 					</div>
-					<div class="metric-icon">
-						<Icon :name="stat.icon" size="lg" />
+					<p class="metric-value" :title="stat.value">{{ stat.value }}</p>
+					<div class="metric-detail">
+						<span class="metric-detail-dot" aria-hidden="true"></span>
+						<span class="truncate">{{ stat.sub }}</span>
 					</div>
-				</div>
-				<p class="relative z-10 mt-2 truncate text-xs text-slate-400">{{ stat.sub }}</p>
-				<svg class="metric-wave" viewBox="0 0 200 50" preserveAspectRatio="none" aria-hidden="true">
-					<path :d="`${stat.path} L200 50 L0 50 Z`" :fill="stat.soft" />
-					<path :d="stat.path" fill="none" :stroke="stat.color" stroke-width="2" stroke-linecap="round" />
-				</svg>
 			</article>
 		</section>
 
@@ -503,7 +499,8 @@ onMounted(refreshAll)
 }
 
 .metric-card {
-	min-height: 190px;
+	min-height: 152px;
+	padding: 1.125rem 1.25rem;
 	transition: transform 220ms ease, box-shadow 220ms ease;
 }
 
@@ -512,39 +509,70 @@ onMounted(refreshAll)
 	box-shadow: 0 20px 45px rgba(81, 94, 143, 0.14);
 }
 
-.metric-card::before {
+.metric-accent {
 	position: absolute;
-	top: -35%;
-	right: -18%;
-	width: 9rem;
-	height: 9rem;
-	border-radius: 9999px;
-	background: var(--metric-soft);
-	filter: blur(6px);
-	content: '';
+	top: 0;
+	right: 1.25rem;
+	left: 1.25rem;
+	height: 2px;
+	border-radius: 0 0 9999px 9999px;
+	background: linear-gradient(90deg, transparent, var(--metric-color), transparent);
+	opacity: 0.7;
 }
 
 .metric-icon {
 	display: flex;
-	height: 3.5rem;
-	width: 3.5rem;
+	height: 2.5rem;
+	width: 2.5rem;
 	flex-shrink: 0;
 	align-items: center;
 	justify-content: center;
 	border: 1px solid rgba(255, 255, 255, 0.82);
-	border-radius: 1.125rem;
-	background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), var(--metric-soft));
-	box-shadow: 0 12px 26px var(--metric-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	border-radius: 0.75rem;
+	background: var(--metric-soft);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 	color: var(--metric-color);
 }
 
-.metric-wave {
-	position: absolute;
-	right: 1.25rem;
-	bottom: 0.75rem;
-	left: 1.25rem;
-	height: 3rem;
-	opacity: 0.9;
+.metric-badge {
+	flex-shrink: 0;
+	border: 1px solid color-mix(in srgb, var(--metric-color) 20%, transparent);
+	border-radius: 9999px;
+	background: var(--metric-soft);
+	padding: 0.25rem 0.5rem;
+	color: var(--metric-color);
+	font-size: 0.625rem;
+	font-weight: 700;
+}
+
+.metric-value {
+	margin-top: 0.875rem;
+	overflow: hidden;
+	color: #172033;
+	font-size: 1.75rem;
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.metric-detail {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.75rem;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+}
+
+.metric-detail-dot {
+	height: 0.375rem;
+	width: 0.375rem;
+	flex-shrink: 0;
+	border-radius: 9999px;
+	background: var(--metric-color);
 }
 
 .member-avatar {
