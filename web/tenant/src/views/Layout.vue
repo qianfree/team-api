@@ -20,7 +20,6 @@ const authStore = useTenantAuthStore()
 const sidebarCollapsed = ref(false)
 const mobileOpen = ref(false)
 const userMenuOpen = ref(false)
-const globalSearch = ref('')
 const announcePanelOpen = ref(false)
 const announceDetailItem = ref<any>(null)
 const consoleAnnouncements = ref<any[]>([])
@@ -61,6 +60,7 @@ const navItems = computed<NavItem[]>(() => {
 	const role = authStore.user?.role || 'member'
 	return router.getRoutes()
 		.filter(r => r.meta.sort !== undefined)
+		.filter(r => r.path !== '/tenant/docs')
 		.filter(r => {
 			const roles = r.meta.roles as string[] | undefined
 			return !roles || roles.includes(role)
@@ -106,18 +106,6 @@ function toggleUserMenu() {
 
 function closeUserMenu() {
 	userMenuOpen.value = false
-}
-
-function submitGlobalSearch() {
-	const keyword = globalSearch.value.trim().toLowerCase()
-	if (!keyword) return
-	const match = navItems.value.find((item) => item.label.toLowerCase().includes(keyword))
-	if (!match) {
-		toast.info('未找到匹配的功能入口')
-		return
-	}
-	router.push(match.path)
-	globalSearch.value = ''
 }
 
 function toggleAnnouncePanel() {
@@ -327,7 +315,7 @@ onBeforeUnmount(() => {
 			:class="[sidebarCollapsed ? 'lg:ml-[116px]' : 'lg:ml-[296px]']"
 		>
 			<!-- Header -->
-			<header class="sticky top-0 z-20 px-3 pt-3 md:px-5 md:pt-5">
+			<header class="sticky top-0 z-[25] px-3 pt-3 md:px-5 md:pt-5">
 				<div class="glass flex h-16 items-center justify-between rounded-2xl border border-white/70 px-3 shadow-glass-sm md:px-5">
 					<!-- Left: Mobile Menu + Title -->
 					<div class="flex min-w-0 items-center gap-3">
@@ -342,25 +330,24 @@ onBeforeUnmount(() => {
 						</div>
 					</div>
 
-					<form class="mx-4 hidden max-w-sm flex-1 md:block" @submit.prevent="submitGlobalSearch">
-						<div class="relative">
-							<Icon name="search" size="sm" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-							<input
-								v-model="globalSearch"
-								type="search"
-								placeholder="搜索功能入口..."
-								class="h-10 w-full rounded-full border border-white/80 bg-white/65 pl-10 pr-4 text-sm text-slate-700 outline-none transition-all placeholder:text-slate-400 focus:border-primary-200 focus:bg-white focus:ring-4 focus:ring-primary-100/70"
-							/>
-						</div>
-					</form>
-
 					<!-- Right: Actions -->
-					<div class="flex items-center gap-2">
+					<div class="topbar-actions flex items-center gap-2">
+						<router-link
+							to="/tenant/docs"
+							class="docs-nav-entry"
+							:class="{ 'docs-nav-entry-active': isActive('/tenant/docs') }"
+							title="API 文档"
+						>
+							<Icon name="bookOpen" size="md" />
+							<span class="hidden lg:inline">API 文档</span>
+							<span class="docs-nav-badge hidden xl:inline-flex">DOCS</span>
+						</router-link>
+
 						<!-- Announcements -->
 						<div class="relative" data-announce-panel>
-							<button
-								@click="toggleAnnouncePanel"
-								class="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
+						<button
+							@click="toggleAnnouncePanel"
+							class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 								title="平台公告"
 							>
 								<Icon name="megaphone" size="md" />
@@ -426,9 +413,9 @@ onBeforeUnmount(() => {
 						</div>
 
 						<!-- Notifications -->
-						<router-link
-							to="/tenant/notifications"
-							class="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
+					<router-link
+						to="/tenant/notifications"
+						class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 							title="通知中心"
 						>
 							<Icon name="bell" size="md" />
@@ -441,20 +428,20 @@ onBeforeUnmount(() => {
 						</router-link>
 
 					<!-- Wallet Capsule -->
-						<router-link
-							v-if="canViewWallet"
-							to="/tenant/wallet"
-							class="flex h-10 items-center gap-1.5 rounded-full border border-white/80 bg-white/65 px-3 text-primary-600 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white"
+					<router-link
+						v-if="canViewWallet"
+						to="/tenant/wallet"
+						class="topbar-wallet flex h-10 items-center gap-1.5 rounded-full border border-white/80 bg-white/65 px-3 text-primary-600 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white"
 							title="钱包"
 						>
 							<Icon name="currencyDollar" size="sm" />
 							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || '$0' }}</span>
 						</router-link>
 						<!-- Member Quota Capsule -->
-						<router-link
-							v-if="!canViewWallet && memberQuota"
-							to="/tenant/personal-dashboard"
-							class="flex h-9 items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/60 px-3 text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
+					<router-link
+						v-if="!canViewWallet && memberQuota"
+						to="/tenant/personal-dashboard"
+						class="topbar-wallet flex h-9 items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/60 px-3 text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
 							title="额度"
 						>
 							<Icon name="chart" size="sm" />
@@ -462,11 +449,11 @@ onBeforeUnmount(() => {
 						</router-link>
 						<!-- User Menu -->
 						<div class="relative" data-user-menu>
-							<button
-								@click="toggleUserMenu"
-								class="flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-gray-100"
-							>
-								<div class="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white text-sm font-medium">
+						<button
+							@click="toggleUserMenu"
+							class="topbar-user-button flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-gray-100"
+						>
+							<div class="topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white text-sm font-medium">
 									{{ currentUser.username.charAt(0).toUpperCase() }}
 								</div>
 								<div class="hidden sm:block text-left">
@@ -480,7 +467,7 @@ onBeforeUnmount(() => {
 							<transition name="fade">
 								<div
 									v-if="userMenuOpen"
-									class="dropdown right-0 mt-2 w-56"
+									class="dropdown user-dropdown right-0 mt-2 w-56"
 								>
 									<div class="border-b border-gray-100 px-4 py-3 flex items-center">
 										<div class="flex-1 min-w-0">
@@ -556,6 +543,50 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.docs-nav-entry {
+	display: inline-flex;
+	height: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	border: 1px solid rgba(117, 104, 248, 0.28);
+	border-radius: 9999px;
+	background: rgba(255, 255, 255, 0.82);
+	padding: 0 0.65rem;
+	box-shadow: 0 8px 22px rgba(92, 82, 210, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+	color: #6558d9;
+	font-size: 0.75rem;
+	font-weight: 700;
+	transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.docs-nav-entry:hover,
+.docs-nav-entry-active {
+	transform: translateY(-1px);
+	border-color: rgba(117, 104, 248, 0.5);
+	background: #fff;
+	box-shadow: 0 10px 26px rgba(92, 82, 210, 0.18), inset 0 1px 0 #fff;
+}
+
+.docs-nav-badge {
+	height: 1.25rem;
+	align-items: center;
+	border: 1px solid #fed7aa;
+	border-radius: 9999px;
+	background: #fff7ed;
+	padding: 0 0.4rem;
+	color: #ea580c;
+	font-size: 0.5625rem;
+	font-weight: 800;
+}
+
+.user-dropdown {
+	background: #fff;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
 .fade-enter-active,
 .fade-leave-active {
 	transition: opacity 0.2s ease;
@@ -563,5 +594,57 @@ onBeforeUnmount(() => {
 .fade-enter-from,
 .fade-leave-to {
 	opacity: 0;
+}
+
+@media (max-width: 639px) {
+	.topbar-actions {
+		gap: 0.375rem;
+	}
+
+	.topbar-actions :deep(svg) {
+		height: 1rem;
+		width: 1rem;
+	}
+
+	.docs-nav-entry,
+	.topbar-icon-button {
+		height: 2.25rem;
+		width: 2.25rem;
+	}
+
+	.docs-nav-entry {
+		padding: 0;
+	}
+
+	.topbar-wallet {
+		height: 2.25rem;
+		gap: 0.25rem;
+		padding-right: 0.55rem;
+		padding-left: 0.55rem;
+	}
+
+	.topbar-user-button {
+		gap: 0.25rem;
+		padding: 0.25rem;
+	}
+
+	.topbar-user-avatar {
+		height: 1.75rem;
+		width: 1.75rem;
+		font-size: 0.75rem;
+	}
+}
+
+@media (min-width: 1024px) {
+	.docs-nav-entry {
+		padding-right: 0.85rem;
+		padding-left: 0.85rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.docs-nav-entry {
+		transition: none;
+	}
 }
 </style>

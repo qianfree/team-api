@@ -410,7 +410,7 @@ onMounted(() => {
 		<!-- Member Detail -->
 		<template v-else>
 			<!-- Profile Header -->
-			<div class="card p-6">
+			<div class="card relative z-20 p-6">
 				<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 					<div class="flex items-center gap-4">
 						<div
