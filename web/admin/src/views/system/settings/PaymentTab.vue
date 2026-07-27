@@ -1,19 +1,22 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
-function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
-	if (direction === 'cny_to_usd') {
-		const usdToCny = Number(values['payment_exchange_rate_usd_to_cny'])
-		if (usdToCny > 0) {
-			values['payment_exchange_rate_cny_to_usd'] = Math.round((1 / usdToCny) * 10000) / 10000
-		}
-	} else {
-		const cnyToUsd = Number(values['payment_exchange_rate_cny_to_usd'])
-		if (cnyToUsd > 0) {
-			values['payment_exchange_rate_usd_to_cny'] = Math.round((1 / cnyToUsd) * 10000) / 10000
-		}
+// 计算 CNY→USD（直接读取存储值）
+const computedCnyToUsd = computed(() => {
+	const cnyToUsd = Number(values['payment_exchange_rate_cny_to_usd'])
+	return cnyToUsd > 0 ? cnyToUsd : 0
+})
+
+// 同步 USD→CNY 到底层存储的 CNY→USD
+function updateCnyToUsd(usdToCny: number | undefined) {
+	if (!usdToCny || usdToCny <= 0) {
+		values['payment_exchange_rate_cny_to_usd'] = 0
+		return
 	}
+	// 存储倒数（CNY→USD = 1 / USD→CNY）
+	values['payment_exchange_rate_cny_to_usd'] = 1 / usdToCny
 }
 </script>
 
@@ -46,30 +49,19 @@ function syncRate(direction: 'cny_to_usd' | 'usd_to_cny') {
 		<div class="section">
 			<div class="section-title">货币兑换</div>
 			<div class="section-grid">
-				<AFormItem label="CNY → USD" help="1 人民币兑换多少美元">
-					<div style="display: flex; align-items: center; gap: 8px; width: 100%">
-						<AInputNumber
-							:model-value="values['payment_exchange_rate_cny_to_usd'] as number"
-							@change="(v: number | undefined) => values['payment_exchange_rate_cny_to_usd'] = v ?? 0"
-							:min="0.001" :max="100" :step="0.01" :precision="4"
-							style="flex: 1"
-						/>
-						<AButton type="outline" size="small" @click="syncRate('cny_to_usd')">同步</AButton>
-					</div>
+				<AFormItem label="USD → CNY" help="1 美元兑换多少人民币（常用汇率约 7.0~7.3）" class="field-full">
+					<AInputNumber
+						:model-value="(1 / (values['payment_exchange_rate_cny_to_usd'] as number || 0.14)) as number"
+						@change="updateCnyToUsd"
+						:min="0.01" :max="1000" :step="0.01" :precision="4"
+						style="width: 100%"
+					/>
 				</AFormItem>
-				<AFormItem label="USD → CNY" help="1 美元兑换多少人民币">
-					<div style="display: flex; align-items: center; gap: 8px; width: 100%">
-						<AInputNumber
-							:model-value="values['payment_exchange_rate_usd_to_cny'] as number"
-							@change="(v: number | undefined) => values['payment_exchange_rate_usd_to_cny'] = v ?? 0"
-							:min="0.001" :max="1000" :step="0.01" :precision="4"
-							style="flex: 1"
-						/>
-						<AButton type="outline" size="small" @click="syncRate('usd_to_cny')">同步</AButton>
-					</div>
+				<AFormItem label="CNY → USD（自动计算）" help="取上方汇率的倒数，确保往返闭合" class="field-full">
+					<AInput :model-value="computedCnyToUsd.toFixed(6)" disabled style="width: 100%" />
 				</AFormItem>
 				<div class="field-full" style="font-size: 12px; color: var(--color-text-3); margin-top: -8px">
-					点击「同步」可根据另一方向的汇率自动计算当前值（取倒数）
+					💡 系统以 USD→CNY 为输入（更符合习惯），内部自动取倒数存储，确保往返换算闭合
 				</div>
 			</div>
 		</div>

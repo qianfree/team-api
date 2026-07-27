@@ -24,6 +24,10 @@ func init() {
 // ===================== Monitoring Dashboard =====================
 
 func (s *sMonitor) Dashboard(ctx context.Context, req *v1.MonitorDashboardReq) (*v1.MonitorDashboardRes, error) {
+	// 仪表盘含跨租户 API 用量聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
 	data, err := GetDashboardData(ctx, req.Minutes)
 	if err != nil {
 		return nil, err
@@ -32,6 +36,10 @@ func (s *sMonitor) Dashboard(ctx context.Context, req *v1.MonitorDashboardReq) (
 }
 
 func (s *sMonitor) Traffic(ctx context.Context, req *v1.MonitorTrafficReq) (*v1.MonitorTrafficRes, error) {
+	// 流量曲线为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
 	data, err := GetTrafficCurve(ctx, req.Minutes)
 	if err != nil {
 		return nil, err
@@ -40,6 +48,10 @@ func (s *sMonitor) Traffic(ctx context.Context, req *v1.MonitorTrafficReq) (*v1.
 }
 
 func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error) {
+	// 延迟直方图为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
 	data, err := GetLatencyHistogram(ctx, req.Minutes)
 	if err != nil {
 		return nil, err

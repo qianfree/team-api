@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -32,11 +33,11 @@ const tasks = ref<TaskItem[]>([])
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
 
 const filterStatus = ref('')
 const filterPlatform = ref('')
 const filterTaskId = ref('')
+const showExportDropdown = ref(false)
 
 const showDetail = ref(false)
 const detailLoading = ref(false)
@@ -141,14 +142,6 @@ function resetFilters() {
 	fetchTasks()
 }
 
-function prevPage() {
-	if (page.value > 1) { page.value--; fetchTasks() }
-}
-
-function nextPage() {
-	if (page.value * pageSize < total.value) { page.value++; fetchTasks() }
-}
-
 function isImageResult(url: string | undefined): boolean {
 	if (!url) return false
 	return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)
@@ -164,28 +157,11 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
-		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
-				<h1 class="page-title">任务日志</h1>
-				<p class="page-description">查看异步生成任务（视频/图片/音乐）的执行记录</p>
-			</div>
-			<div class="flex items-center gap-2">
-				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('csv')">
-					<Icon v-if="exporting" name="refresh" size="xs" class="animate-spin" />
-					{{ exporting ? '导出中...' : '导出 CSV' }}
-				</button>
-				<button class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="exportFile('xlsx')">
-					{{ exporting ? '导出中...' : '导出 Excel' }}
-				</button>
-			</div>
-		</div>
-
+	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="card">
-			<div class="card-body">
-				<div class="flex flex-wrap items-center gap-4">
+		<div class="relative z-20 overflow-visible card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
 						<input v-model="filterTaskId" class="input" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />
@@ -199,15 +175,31 @@ onMounted(() => {
 						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
-						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
-						<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
+							</button>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+							</div>
+						</div>
 					</div>
-				</div>
+				</form>
 			</div>
 		</div>
 
 		<!-- Table -->
-		<div class="card p-0 overflow-hidden">
+		<div class="viewport-table-panel relative z-0 card p-0 overflow-hidden">
 			<div v-if="loading" class="p-8 text-center">
 				<div class="spinner mx-auto mb-3"></div>
 				<p class="text-sm text-gray-500">加载中...</p>
@@ -219,8 +211,8 @@ onMounted(() => {
 				<p class="empty-state-description">异步生成任务的执行记录将显示在这里</p>
 			</div>
 
-			<div v-else>
-				<div class="table-container">
+			<div v-else class="viewport-table-content">
+				<div class="viewport-table-scroll table-container">
 					<table class="table table-fixed w-full">
 						<thead>
 							<tr>
@@ -271,15 +263,7 @@ onMounted(() => {
 					</table>
 				</div>
 
-				<!-- Pagination -->
-				<div v-if="totalPages > 1" class="flex items-center justify-between px-6 py-3 border-t border-gray-100">
-					<span class="text-xs text-gray-500">共 {{ total }} 条记录</span>
-					<div class="flex items-center gap-2">
-						<button class="btn btn-ghost btn-sm" :disabled="page <= 1" @click="prevPage">上一页</button>
-						<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-						<button class="btn btn-ghost btn-sm" :disabled="page >= totalPages" @click="nextPage">下一页</button>
-					</div>
-				</div>
+				<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTasks" />
 			</div>
 		</div>
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, h } from 'vue'
-import { Tag, Button, Modal, Message } from '@arco-design/web-vue'
+import { ref, reactive, computed, onMounted, onUnmounted, h } from 'vue'
+import { Tag, Button, Modal, Message, Checkbox, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import {
-  IconFile, IconImage, IconArchive, IconStorage, IconSettings,
+  IconFile, IconImage, IconArchive, IconStorage, IconSettings, IconExport,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -198,6 +198,25 @@ const previewLoading = ref(false)
 const previewRecord = ref<any>(null)
 const previewThumbUrl = ref('')
 const previewError = ref(false)
+// local 存储模式下预览图需转为 ObjectURL（serve 端点走 Auth header，不能直接 <img src>），
+// 该 ObjectURL 需手动释放避免内存泄漏。
+const previewObjectURL = ref('')
+function revokePreviewURL() {
+  if (previewObjectURL.value) {
+    URL.revokeObjectURL(previewObjectURL.value)
+    previewObjectURL.value = ''
+  }
+}
+onUnmounted(revokePreviewURL)
+// 判断下载 URL 是否为可直接访问的 http(s) 链接（OSS 预签名）；否则是 local serve 相对路径，
+// 需用 axios blob 请求（携带 Authorization header）再转 ObjectURL。
+function isDirectURL(url: string) {
+  return /^https?:\/\//i.test(url) || url.startsWith('//')
+}
+async function fetchServeBlob(url: string): Promise<Blob> {
+  const res: any = await request.get(url, { responseType: 'blob', timeout: 300000 })
+  return res.data instanceof Blob ? res.data : new Blob([res.data])
+}
 
 function isImage(record: any) {
   return record?.category === 'image' || String(record?.mime_type || '').startsWith('image/')
@@ -206,6 +225,7 @@ function isImage(record: any) {
 // 预览图片：弹窗内展示服务端缩略图（小图，加载快），原图仅在点「下载原图」时请求。
 async function openPreview(record: any) {
   previewRecord.value = record
+  revokePreviewURL()
   previewThumbUrl.value = ''
   previewError.value = false
   previewVisible.value = true
@@ -214,8 +234,21 @@ async function openPreview(record: any) {
     const res: any = await request.get(`/admin/files/${record.id}/download`, {
       params: { variant: 'thumb', width: 600 },
     })
-    previewThumbUrl.value = res.data?.data?.url || ''
-    if (!previewThumbUrl.value) Message.warning('未获取到预览链接')
+    const url = res.data?.data?.url || ''
+    if (!url) {
+      Message.warning('未获取到预览链接')
+      return
+    }
+    if (isDirectURL(url)) {
+      // OSS 预签名 URL，可直接 <img src>
+      previewThumbUrl.value = url
+    } else {
+      // local serve 相对 URL，取 blob 转 ObjectURL
+      const blob = await fetchServeBlob(url)
+      const objURL = URL.createObjectURL(blob)
+      previewObjectURL.value = objURL
+      previewThumbUrl.value = objURL
+    }
   } catch {
     // interceptor toasts
   } finally {
@@ -223,14 +256,30 @@ async function openPreview(record: any) {
   }
 }
 
-// 下载/打开原图：请求原图签名链接并在新标签打开。
+// 下载/打开原图：OSS 走预签名 URL 新标签打开；local 走 serve 端点 blob 下载（携带 Auth header）。
 async function downloadOriginal(record: any) {
   if (!record) return
   try {
     const res: any = await request.get(`/admin/files/${record.id}/download`)
     const url = res.data?.data?.url
-    if (url) window.open(url, '_blank')
-    else Message.warning('未获取到下载链接')
+    if (!url) {
+      Message.warning('未获取到下载链接')
+      return
+    }
+    if (isDirectURL(url)) {
+      window.open(url, '_blank')
+      return
+    }
+    // local serve 相对 URL：blob 下载
+    const blob = await fetchServeBlob(url)
+    const objURL = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objURL
+    a.download = record.original_name || `file_${record.id}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(objURL)
   } catch {
     // interceptor toasts
   }
@@ -313,6 +362,52 @@ function manualCleanup() {
   })
 }
 
+// ============================================================
+// 数据导出触发
+// ============================================================
+const exportVisible = ref(false)
+const exportLoading = ref(false)
+const exportTenantID = ref<number | undefined>(undefined)
+const exportScopes = ref<string[]>(['members', 'usage', 'billing', 'logs'])
+
+const SCOPE_OPTIONS = [
+  { label: '成员信息', value: 'members' },
+  { label: 'API 用量', value: 'usage' },
+  { label: '计费记录', value: 'billing' },
+  { label: '请求日志', value: 'logs' },
+]
+
+function openExportDialog() {
+  exportTenantID.value = undefined
+  exportScopes.value = ['members', 'usage', 'billing', 'logs']
+  exportVisible.value = true
+}
+
+async function submitExport() {
+  if (!exportTenantID.value || exportTenantID.value <= 0) {
+    Message.warning('请输入租户 ID')
+    return
+  }
+  if (exportScopes.value.length === 0) {
+    Message.warning('请至少选择一项导出范围')
+    return
+  }
+  exportLoading.value = true
+  try {
+    const res: any = await request.post('/admin/data-governance/export', {
+      tenant_id: exportTenantID.value,
+      scopes: exportScopes.value,
+    })
+    const taskID = res.data?.data?.task_id
+    Message.success(`导出任务已创建（任务 #${taskID}），文件生成后将在列表中显示（约 1 分钟内）`)
+    exportVisible.value = false
+  } catch {
+    // interceptor toasts
+  } finally {
+    exportLoading.value = false
+  }
+}
+
 onMounted(() => {
   fetchStats()
   fetchList()
@@ -343,6 +438,10 @@ onMounted(() => {
           </template>
         </APopover>
         <AButton v-if="hasPermission('file:cleanup')" :loading="cleanupLoading" @click="manualCleanup">手动清理过期文件</AButton>
+        <AButton type="primary" @click="openExportDialog">
+          <template #icon><IconExport /></template>
+          触发数据导出
+        </AButton>
       </template>
     </PageHeader>
 
@@ -417,6 +516,40 @@ onMounted(() => {
       <div class="preview-actions">
         <AButton @click="previewVisible = false">关闭</AButton>
         <AButton type="primary" @click="downloadOriginal(previewRecord)">下载原图</AButton>
+      </div>
+    </AModal>
+
+    <!-- 数据导出弹窗 -->
+    <AModal
+      v-model:visible="exportVisible"
+      title="触发数据导出"
+      :ok-text="exportLoading ? '创建中...' : '开始导出'"
+      :ok-loading="exportLoading"
+      @ok="submitExport"
+      @cancel="exportVisible = false"
+    >
+      <AForm layout="vertical">
+        <AFormItem label="租户 ID" required>
+          <AInputNumber
+            v-model="exportTenantID"
+            :min="1"
+            placeholder="输入要导出数据的租户 ID"
+            style="width:100%"
+          />
+        </AFormItem>
+        <AFormItem label="导出范围" required>
+          <Checkbox.Group v-model="exportScopes">
+            <Space direction="vertical">
+              <Checkbox v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </Checkbox>
+            </Space>
+          </Checkbox.Group>
+        </AFormItem>
+      </AForm>
+      <div class="export-hint">
+        导出任务创建后将在后台异步执行，生成的文件会出现在下方文件列表中（通常 1 分钟内）。
+        导出的 JSON 文件包含所选范围的全部数据，每项最多 10,000 条记录。
       </div>
     </AModal>
   </div>
@@ -545,5 +678,14 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+.export-hint {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--color-fill-2);
+  border-radius: 6px;
+  line-height: 1.5;
 }
 </style>

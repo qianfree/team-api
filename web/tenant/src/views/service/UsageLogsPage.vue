@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -137,14 +138,6 @@ function resetFilters() {
 	fetchLogs()
 }
 
-function prevPage() {
-	if (page.value > 1) { page.value--; fetchLogs() }
-}
-
-function nextPage() {
-	if (page.value * pageSize < total.value) { page.value++; fetchLogs() }
-}
-
 function openDetail(log: any) {
 	detailLog.value = log
 	detailModal.value = true
@@ -232,31 +225,11 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="space-y-6">
-		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
-				<h1 class="page-title">用量日志</h1>
-				<p class="page-description">查看 API 调用记录和消费明细</p>
-			</div>
-			<div class="relative inline-block">
-				<button class="btn-secondary btn-sm inline-flex items-center gap-1.5" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-					<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-					<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-					导出
-				</button>
-				<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-					<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-					<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
-				</div>
-			</div>
-		</div>
-
+	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-			<!-- Filters -->
-			<div class="card">
-				<div class="card-body">
-					<div class="flex flex-wrap items-center gap-4">
+		<div class="relative z-20 overflow-visible card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
 							<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
@@ -282,19 +255,40 @@ onMounted(() => {
 							<BaseSelect v-model="filterRequestType" :options="[{value:'',label:'全部'},{value:'1',label:'同步'},{value:'2',label:'流式'},{value:'3',label:'异步'}]" container-class="w-[100px]" />
 						</div>
 						<div class="ml-auto flex items-center gap-2">
-							<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
-							<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+							<button type="submit" class="btn btn-primary btn-sm">
+								<Icon name="search" size="sm" />
+								搜索
+							</button>
+							<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+							<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+							<div class="relative">
+								<button
+									type="button"
+									class="btn btn-secondary btn-sm"
+									:disabled="exporting"
+									@click="showExportDropdown = !showExportDropdown"
+								>
+									<span v-if="exporting" class="spinner h-4 w-4"></span>
+									<Icon v-else name="download" size="sm" />
+									导出
+									<Icon name="chevronDown" size="xs" />
+								</button>
+								<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+								</div>
+							</div>
 						</div>
-					</div>
-				</div>
+					</form>
 			</div>
+		</div>
 		<!-- Logs Table -->
-		<div class="card overflow-hidden">
+		<div class="viewport-table-panel relative z-0 card overflow-hidden">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="logs.length > 0" class="overflow-auto">
+			<div v-else-if="logs.length > 0" class="viewport-table-scroll table-container table-container-flush usage-log-table">
 				<table class="table">
 					<thead>
 						<tr>
@@ -308,7 +302,7 @@ onMounted(() => {
 							<th class="min-w-30">用时</th>
 							<th class="min-w-25">状态</th>
 							<th class="min-w-35">时间</th>
-							<th class="w-16"></th>
+							<th class="usage-action-column">操作</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -427,7 +421,7 @@ onMounted(() => {
 							</td>
 
 							<!-- 详情按钮 -->
-							<td>
+							<td class="usage-action-column">
 								<button
 									class="btn btn-ghost btn-sm p-1.5"
 									title="查看详情"
@@ -447,16 +441,7 @@ onMounted(() => {
 				<p class="empty-state-description">日志将在 API 调用后展示</p>
 			</div>
 
-			<!-- Pagination -->
-			<div v-if="total > pageSize" class="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-				<p class="text-sm text-gray-500">
-					第 {{ page }} / {{ Math.ceil(total / pageSize) }} 页，共 {{ total }} 条
-				</p>
-				<div class="flex items-center gap-2">
-					<button class="btn btn-secondary btn-sm" :disabled="page <= 1" @click="prevPage">上一页</button>
-					<button class="btn btn-secondary btn-sm" :disabled="page * pageSize >= total" @click="nextPage">下一页</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchLogs" />
 		</div>
 
 		<!-- Token Tooltip -->
@@ -997,3 +982,45 @@ onMounted(() => {
 		</BaseModal>
 	</div>
 </template>
+
+<style scoped>
+.usage-log-table {
+	position: relative;
+}
+
+.usage-log-table .usage-action-column {
+	position: sticky;
+	right: 0;
+	z-index: 3;
+	width: 5.5rem;
+	min-width: 5.5rem;
+	text-align: right;
+	box-shadow: -14px 0 24px -20px rgba(55, 65, 105, 0.42);
+}
+
+.usage-log-table .table thead .usage-action-column {
+	z-index: 5;
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
+		linear-gradient(100deg, rgba(6, 182, 212, 0.07), rgba(20, 184, 166, 0.1));
+	backdrop-filter: blur(24px) saturate(1.35);
+	-webkit-backdrop-filter: blur(24px) saturate(1.35);
+}
+
+.usage-log-table .table tbody tr .usage-action-column {
+	background: rgba(251, 252, 255, 0.94);
+	backdrop-filter: blur(22px) saturate(1.25);
+	-webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.usage-log-table .table tbody tr:nth-child(even) .usage-action-column {
+	background: rgba(246, 248, 255, 0.95);
+}
+
+.usage-log-table .table tbody tr:hover .usage-action-column,
+.usage-log-table .table tbody tr:focus-within .usage-action-column {
+	background:
+		linear-gradient(90deg, rgba(235, 247, 255, 0.95), rgba(244, 240, 255, 0.96)),
+		rgba(255, 255, 255, 0.96);
+}
+</style>

@@ -273,7 +273,7 @@ func (a *VolcengineVideoAdaptor) DoRequest(_ context.Context, info *common.Relay
 	if err := a.BuildRequestHeader(req.Header, info); err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 120 * 1e9}
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -307,7 +307,8 @@ func (a *VolcengineVideoAdaptor) DoResponse(_ context.Context, resp *http.Respon
 
 func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
-		TaskID string `json:"task_id"`
+		TaskID   string `json:"task_id"`
+		UseProxy bool   `json:"use_proxy"`
 	}
 	if err := json.Unmarshal(taskData, &data); err != nil {
 		return nil, fmt.Errorf("volcengine: invalid task data: %w", err)
@@ -324,7 +325,7 @@ func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []by
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * 1e9}
+	client := common.NewPooledClient(30, data.UseProxy)
 	return client.Do(req)
 }
 

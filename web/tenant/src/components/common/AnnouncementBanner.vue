@@ -233,10 +233,10 @@ onBeforeUnmount(() => {
 .announcement-content ul, .announcement-content ol { padding-left: 1.5em; margin: 0.5em 0; }
 .announcement-content li { margin: 0.2em 0; }
 .announcement-content blockquote {
-	border-left: 3px solid #14b8a6;
+	border-left: 3px solid #7b8ff5;
 	padding: 0.5em 1em;
 	margin: 0.5em 0;
-	background: #f0fdfa;
+	background: #f2f4ff;
 	border-radius: 0 8px 8px 0;
 }
 .announcement-content code {
@@ -260,7 +260,7 @@ onBeforeUnmount(() => {
 	color: inherit;
 }
 .announcement-content a {
-	color: #14b8a6;
+	color: #6d80f0;
 	text-decoration: underline;
 }
 .announcement-content img {

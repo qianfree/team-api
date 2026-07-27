@@ -83,8 +83,10 @@ func (a *SunoAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, reque
 	if err != nil {
 		return nil, err
 	}
-	a.BuildRequestHeader(req.Header, info)
-	client := &http.Client{Timeout: 120 * 1e9}
+	if err := a.BuildRequestHeader(req.Header, info); err != nil {
+		return nil, err
+	}
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -120,6 +122,11 @@ func (a *SunoAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *comm
 }
 
 func (a *SunoAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+	var meta struct {
+		UseProxy bool `json:"use_proxy"`
+	}
+	_ = json.Unmarshal(taskData, &meta)
+
 	url := fmt.Sprintf("%s/suno/fetch", strings.TrimRight(baseURL, "/"))
 	req, err := http.NewRequest("POST", url, bytes.NewReader(taskData))
 	if err != nil {
@@ -127,7 +134,7 @@ func (a *SunoAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 30 * 1e9}
+	client := common.NewPooledClient(30, meta.UseProxy)
 	return client.Do(req)
 }
 

@@ -67,6 +67,10 @@ const columns: TableColumnData[] = [
     dataIndex: 'status',
     width: 80,
     render({ record }) {
+      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
+      if (locked) {
+        return h(Tag, { color: 'red', size: 'small' }, () => '锁定')
+      }
       const color = record.status === 'active' ? 'green' : undefined
       const label = record.status === 'active' ? '启用' : '禁用'
       return h(Tag, { color, size: 'small' }, () => label)
@@ -79,18 +83,26 @@ const columns: TableColumnData[] = [
     width: 260,
     fixed: 'right',
     render({ record }) {
-      return h(Space, { size: 4 }, () => [
+      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
+      const actions = [
         h(Button, { size: 'small', type: 'primary', onClick: () => openEdit(record) }, () => '编辑'),
         h(Popconfirm, {
           content: `确定${record.status === 'active' ? '禁用' : '启用'}该用户？`,
           onOk: () => toggleStatus(record),
         }, () => h(Button, { size: 'small' }, () => record.status === 'active' ? '禁用' : '启用')),
         h(Button, { size: 'small', onClick: () => openResetPassword(record) }, () => '重置密码'),
-        h(Popconfirm, {
-          content: '确定删除该用户？此操作不可撤销。',
-          onOk: () => deleteUser(record),
-        }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除')),
-      ])
+      ]
+      if (locked) {
+        actions.push(h(Popconfirm, {
+          content: '确定解除该用户的登录锁定？',
+          onOk: () => handleUnlock(record),
+        }, () => h(Button, { size: 'small', status: 'success' }, () => '解锁')))
+      }
+      actions.push(h(Popconfirm, {
+        content: '确定删除该用户？此操作不可撤销。',
+        onOk: () => deleteUser(record),
+      }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除')))
+      return h(Space, { size: 4 }, () => actions)
     },
   },
 ]
@@ -163,6 +175,16 @@ async function toggleStatus(row: any) {
   try {
     await request.put(`/admin/users/${row.id}/status`, { status: row.status === 'active' ? 'disabled' : 'active' })
     Message.success('状态更新成功')
+    fetchData()
+  } catch {
+    // error handled by interceptor
+  }
+}
+
+async function handleUnlock(row: any) {
+  try {
+    await request.put(`/admin/users/${row.id}/unlock`)
+    Message.success('解锁成功')
     fetchData()
   } catch {
     // error handled by interceptor

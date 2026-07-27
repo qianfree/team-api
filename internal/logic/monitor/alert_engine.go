@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"math"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
 
@@ -110,8 +110,8 @@ func RunAlertDetection(ctx context.Context) error {
 						}).
 						Update()
 
-					// Dispatch notifications
-					go dispatchAlertNotifications(gctx.New(), rule, eventID, currentValue, threshold)
+					// Dispatch notifications（带并发上限与超时兜底，见 goDispatchAlertNotifications）
+					goDispatchAlertNotifications(rule, eventID, currentValue, threshold)
 				}
 			}
 		} else {
@@ -143,11 +143,17 @@ func evaluateCondition(condition string, value, threshold float64) bool {
 	case "lte":
 		return value <= threshold
 	case "eq":
-		return value == threshold
+		// 浮点指标直接 == 比较在二进制表示下不可靠（如 0.1+0.2 != 0.3），
+		// 用绝对误差容差判断。指标均为非金额的监控数值（CPU%/延迟/QPS 等），float64 合规。
+		return math.Abs(value-threshold) < alertFloatEpsilon
 	default:
 		return false
 	}
 }
+
+// alertFloatEpsilon 是告警条件浮点比较的绝对容差。
+// 监控指标多为整数或两位小数级别（CPU% 等），1e-9 足以吸收二进制表示误差而不引入误判。
+const alertFloatEpsilon = 1e-9
 
 // getMetricValue returns the current value for a given metric type.
 func getMetricValue(ctx context.Context, metricType string) (float64, error) {

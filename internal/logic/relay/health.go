@@ -10,7 +10,6 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
-	"github.com/qianfree/team-api/relay/scheduler"
 )
 
 // UpdateHealthScoreDirect 同步更新健康度（供测试使用）
@@ -197,7 +196,7 @@ func checkAutoDisable(ctx context.Context, channelID int64, consecutiveFailures 
 		g.Log().Warningf(ctx, "[AutoDisable] channel %d auto-disabled after %d consecutive failures", channelID, consecutiveFailures)
 
 		// 清除该渠道的所有亲和性记录，避免后续请求继续路由到已禁用渠道
-		scheduler.GetGlobalAffinity().DeleteByChannel(channelID)
+		InvalidateChannelAffinities(ctx, channelID)
 
 		// 查询渠道名称用于通知
 		var chName *string
@@ -222,29 +221,26 @@ func checkAutoDisable(ctx context.Context, channelID int64, consecutiveFailures 
 
 // checkAutoRecover 检查自动禁用的渠道是否应该恢复
 func checkAutoRecover(ctx context.Context, channelID int64) {
-	// 查询渠道是否为自动禁用状态
-	type chRow struct {
-		Status       string `json:"status"`
-		AutoDisabled int    `json:"auto_disabled"`
-	}
-	var row chRow
-	err := dao.ChnChannels.Ctx(ctx).
+	// 成功请求触发恢复，但只允许修改仍处于“自动禁用”的行。管理员在并发窗口
+	// 手动禁用后 auto_disabled 已清零，条件更新不会把它覆盖成 active。
+	result, err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
-		Fields("status, auto_disabled").
-		Scan(&row)
-	if err != nil || row.Status != "disabled" || row.AutoDisabled != 1 {
-		return
-	}
-
-	// 成功请求 → 自动恢复
-	_, err = dao.ChnChannels.Ctx(ctx).
-		Where("id", channelID).
+		Where("status", "disabled").
+		Where("auto_disabled", 1).
 		Data(do.ChnChannels{
 			Status:       "active",
 			AutoDisabled: 0,
 		}).Update()
 	if err != nil {
 		g.Log().Errorf(ctx, "[AutoRecover] re-enable channel %d failed: %v", channelID, err)
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		g.Log().Errorf(ctx, "[AutoRecover] inspect channel %d update result failed: %v", channelID, err)
+		return
+	}
+	if affected == 0 {
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
@@ -36,8 +37,8 @@ func (s *sTenant) PlanList(ctx context.Context, req *v1.TenantPlanListReq) (*v1.
 			Name:               e.Name,
 			Identifier:         e.Identifier,
 			Description:        e.Description,
-			MonthlyPrice:       e.MonthlyPrice,
-			YearlyPrice:        e.YearlyPrice,
+			MonthlyPrice:       billing.InexactFloat64(e.MonthlyPrice),
+			YearlyPrice:        billing.InexactFloat64(e.YearlyPrice),
 			MonthlyQuotaTokens: e.MonthlyQuotaTokens,
 			AllowedModels:      e.AllowedModels,
 			IsRecommended:      e.IsRecommended,

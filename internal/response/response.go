@@ -7,6 +7,8 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gvalid"
+
+	"github.com/qianfree/team-api/internal/consts"
 )
 
 // jsonResp is the unified response structure for all API endpoints.
@@ -22,7 +24,7 @@ func Success(r *ghttp.Request, data interface{}) {
 	requestID := getRequestID(r)
 	r.Response.WriteJson(jsonResp{
 		Code:      0,
-		Message:   "ok",
+		Message:   consts.MsgSuccess,
 		Data:      data,
 		RequestID: requestID,
 	})
@@ -69,7 +71,7 @@ func Error(r *ghttp.Request, err error) {
 					StackTrace:   captureStackTrace(3),
 					HttpMethod:   r.Method,
 					RequestPath:  r.URL.Path,
-					RequestBody:  truncateString(r.GetBodyString(), 2000),
+					RequestBody:  safeRequestBodyForLog(r),
 					Source:       "api",
 				})
 			}
@@ -87,7 +89,7 @@ func Error(r *ghttp.Request, err error) {
 				StackTrace:   captureStackTrace(3),
 				HttpMethod:   r.Method,
 				RequestPath:  r.URL.Path,
-				RequestBody:  truncateString(r.GetBodyString(), 2000),
+				RequestBody:  safeRequestBodyForLog(r),
 				Source:       "api",
 			})
 		}

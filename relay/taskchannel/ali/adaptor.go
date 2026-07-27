@@ -317,7 +317,7 @@ func (a *AliAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, reques
 	if err := a.BuildRequestHeader(req.Header, info); err != nil {
 		return nil, fmt.Errorf("setup header: %w", err)
 	}
-	client := &http.Client{Timeout: 120 * 1e9}
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -365,7 +365,8 @@ func (a *AliAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *commo
 
 func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
-		TaskID string `json:"task_id"`
+		TaskID   string `json:"task_id"`
+		UseProxy bool   `json:"use_proxy"`
 	}
 	if err := json.Unmarshal(taskData, &data); err != nil {
 		return nil, fmt.Errorf("ali: invalid task data: %w", err)
@@ -380,7 +381,7 @@ func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.R
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * 1e9}
+	client := common.NewPooledClient(30, data.UseProxy)
 	return client.Do(req)
 }
 

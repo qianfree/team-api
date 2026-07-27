@@ -2,8 +2,6 @@ package tenant
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
@@ -12,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
@@ -54,8 +53,10 @@ func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberMod
 	return &v1.TenantMemberModelScopesRes{ModelIDs: ids}, nil
 }
 
-// memberModelScopeCache 成员模型范围缓存（与 relay provider 中的缓存 key 相同）
-var memberModelScopeCache = lcommon.NewCache("member_model", 60*time.Second)
+// 成员模型范围缓存的「生产者」在 relay.provider（memberModelCache）。
+// 本包只在其写库后做失效，故直接调用 relay.InvalidateMemberModelScopeCache，
+// 不再在此重复声明同前缀缓存（原 memberModelScopeCache 与 relay 同用 "member_model"
+// 前缀，属故意的跨包失效，但字面量重复易被误判为命名冲突）。
 
 // MemberModelScopesSet sets the available models for a member (full replace).
 func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMemberModelScopesSetReq) (*v1.TenantMemberModelScopesSetRes, error) {
@@ -128,8 +129,7 @@ func (s *sTenant) MemberModelScopesSet(ctx context.Context, req *v1.TenantMember
 	}
 
 	// 清除该成员的模型范围缓存，使下次请求时重新从数据库读取
-	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
-	memberModelScopeCache.Delete(ctx, cacheKey)
+	relay.InvalidateMemberModelScopeCache(ctx, tenantID, req.Id)
 
 	return &v1.TenantMemberModelScopesSetRes{}, nil
 }

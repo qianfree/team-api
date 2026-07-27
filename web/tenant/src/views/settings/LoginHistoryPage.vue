@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 
@@ -76,7 +77,7 @@ const methodLabel: Record<string, string> = {
 </script>
 
 <template>
-	<div>
+	<div class="viewport-table-page">
 		<div class="page-header">
 			<h1 class="page-title">登录历史</h1>
 			<p class="page-description">查看组织成员的登录记录，包括成功和失败的登录尝试</p>
@@ -136,13 +137,13 @@ const methodLabel: Record<string, string> = {
 		</div>
 
 		<!-- Table -->
-		<div class="card">
+		<div class="viewport-table-panel card">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="list.length > 0">
-				<div class="table-container">
+			<div v-else-if="list.length > 0" class="viewport-table-content">
+				<div class="viewport-table-scroll table-container">
 					<table class="table">
 						<thead>
 							<tr>
@@ -179,29 +180,7 @@ const methodLabel: Record<string, string> = {
 					</table>
 				</div>
 
-				<!-- Pagination -->
-				<div v-if="total > pageSize" class="card-footer flex justify-between items-center">
-					<span class="text-sm text-gray-500">共 {{ total }} 条记录</span>
-					<div class="flex items-center gap-2">
-						<button
-							class="btn btn-ghost btn-sm"
-							:disabled="page <= 1"
-							@click="page--; fetchData()"
-						>
-							上一页
-						</button>
-						<span class="text-sm text-gray-500">
-							{{ page }} / {{ Math.ceil(total / pageSize) }}
-						</span>
-						<button
-							class="btn btn-ghost btn-sm"
-							:disabled="page * pageSize >= total"
-							@click="page++; fetchData()"
-						>
-							下一页
-						</button>
-					</div>
-				</div>
+				<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchData" />
 			</div>
 
 			<!-- Empty state -->

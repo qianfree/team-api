@@ -23,6 +23,8 @@ type (
 		DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v1.AdminUserDeleteRes, error)
 		// UpdateUserStatus enables or disables an admin user.
 		UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateStatusReq) (*v1.AdminUserUpdateStatusRes, error)
+		// UnlockUser 清除管理员的登录锁定状态（重置失败计数与锁定截止时间）。
+		UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v1.AdminUserUnlockRes, error)
 		// ResetUserPassword resets an admin user's password.
 		ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPasswordReq) (*v1.AdminUserResetPasswordRes, error)
 		// ExportUsers exports admin users to CSV or Excel.
@@ -241,6 +243,8 @@ type (
 		EnableMember(ctx context.Context, req *v1.AdminMemberEnableReq) (*v1.AdminMemberEnableRes, error)
 		// ResetMemberPassword resets a member's password by admin, returns the new random password.
 		ResetMemberPassword(ctx context.Context, req *v1.AdminMemberResetPasswordReq) (*v1.AdminMemberResetPasswordRes, error)
+		// UnlockMember 清除成员的登录锁定状态（平台视角，跨租户）。
+		UnlockMember(ctx context.Context, req *v1.AdminMemberUnlockReq) (*v1.AdminMemberUnlockRes, error)
 		// ExportMembers exports member list to CSV or Excel.
 		ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq) (*v1.AdminMemberExportRes, error)
 		// ListModelOptions 获取模型选项列表（不分页，用于下拉选择）

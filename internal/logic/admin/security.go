@@ -61,7 +61,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 
 	// Create session with jti
 	jti := common.GenerateJti()
@@ -171,24 +171,7 @@ func (s *sAdmin) RegenerateBackupCodes(ctx context.Context, req *v1.Admin2FARege
 // ConfirmHighRisk generates a confirm token for high-risk operations.
 func (s *sAdmin) ConfirmHighRisk(ctx context.Context, req *v1.Admin2FAConfirmReq) (*v1.Admin2FAConfirmRes, error) {
 	userID := common.GetCtxUserID(ctx)
-
-	enabled, err := common.Is2FAEnabled(ctx, "admin", userID)
-	if err != nil {
-		return nil, err
-	}
-	if !enabled {
-		return nil, common.NewBusinessError(consts.CodeTotpNotEnabled, consts.MsgTotpNotEnabled)
-	}
-
-	valid, err := common.Verify2FACode(ctx, "admin", userID, req.Code)
-	if err != nil {
-		return nil, err
-	}
-	if !valid {
-		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
-	}
-
-	token, err := common.GenerateConfirmToken(ctx, userID, "admin")
+	token, err := common.ConfirmHighRisk(ctx, "admin", userID, req.Code)
 	if err != nil {
 		return nil, err
 	}
@@ -198,14 +181,7 @@ func (s *sAdmin) ConfirmHighRisk(ctx context.Context, req *v1.Admin2FAConfirmReq
 
 // LoginHistory returns the login history for all admin users with search filters.
 func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq) (*v1.AdminLoginHistoryRes, error) {
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	q := common.AuditModelCtx(ctx, "aud_login_history").Where("user_type", "admin")
 
@@ -284,8 +260,8 @@ func adminUserIdsByUsername(ctx context.Context, keyword string) ([]int64, error
 	var users []entity.SysAdminUsers
 	err := dao.SysAdminUsers.Ctx(ctx).
 		Fields("id").
-		WhereLike("username", "%"+keyword+"%").
-		WhereOrLike("display_name", "%"+keyword+"%").
+		WhereLike("username", "%"+common.EscapeLikePattern(keyword)+"%").
+		WhereOrLike("display_name", "%"+common.EscapeLikePattern(keyword)+"%").
 		Scan(&users)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err

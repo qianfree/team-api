@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // TaskDataProvider 异步任务数据持久化接口
@@ -55,9 +57,9 @@ type AsyncTask struct {
 	ModelName     string `json:"model_name"`
 	UpstreamModel string `json:"upstream_model,omitempty"`
 
-	PreDeductAmount float64 `json:"pre_deduct_amount"`
-	ActualCost      float64 `json:"actual_cost"`
-	BillingSettled  bool    `json:"billing_settled"`
+	PreDeductAmount decimal.Decimal `json:"pre_deduct_amount"`
+	ActualCost      decimal.Decimal `json:"actual_cost"`
+	BillingSettled  bool            `json:"billing_settled"`
 
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`

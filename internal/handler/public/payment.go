@@ -3,6 +3,7 @@ package public
 import (
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
 	"github.com/qianfree/team-api/internal/logic/payment"
@@ -20,6 +21,10 @@ func HandlePaymentCallback(r *ghttp.Request) {
 
 	err := payment.ProcessCallback(r.Context(), r.Request, channel)
 	if err != nil {
+		// 回调处理失败（验签失败 / 金额不符 / 订单不存在等）必须落日志：
+		// 否则签名伪造/篡改尝试在服务端完全不可追溯。返回 200 fail 供渠道停止重推。
+		g.Log().Warningf(r.Context(), "[Payment] callback failed: channel=%s clientIP=%s err=%v",
+			channel, r.GetClientIp(), err)
 		r.Response.WriteStatus(200)
 		r.Response.Write("fail")
 		return

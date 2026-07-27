@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/consts"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -238,7 +239,8 @@ func (s *sTenant) ApiKeyCreate(ctx context.Context, req *v1.TenantApiKeyCreateRe
 		if *req.TotalQuota < 0 {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于 0")
 		}
-		data.TotalQuota = *req.TotalQuota
+		d := billing.NewFromFloat(*req.TotalQuota)
+		data.TotalQuota = &d
 	}
 
 	result, err := dao.ApiKeys.Ctx(ctx).Insert(data)
@@ -436,27 +438,36 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 		if *req.TotalQuota > 0 && *req.TotalQuota < info.UsedQuota {
 			return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "总额度不能小于已用额度")
 		}
-		data.TotalQuota = *req.TotalQuota
+		d := billing.NewFromFloat(*req.TotalQuota)
+		data.TotalQuota = &d
 		hasUpdate = true
 	}
 
-	if hasUpdate {
-		_, err = dao.ApiKeys.Ctx(ctx).
-			Where("id", keyID).
-			Where("tenant_id", tenantID).
-			Data(data).
-			Update()
-		if err != nil {
-			return nil, err
+	// 主表更新与模型范围更新必须在同一事务内：前者成功后者失败会留下中间态（如 Key 已改名但
+	// scope 仍为旧值）。外层事务包住两步；updateApiKeyModelScopes 在携带事务的 ctx 下会被
+	// GoFrame 视为嵌套事务（savepoint），与主表更新共享同一事务。缓存失效放在事务提交后执行。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if hasUpdate {
+			_, err = dao.ApiKeys.Ctx(ctx).
+				Where("id", keyID).
+				Where("tenant_id", tenantID).
+				Data(data).
+				Update()
+			if err != nil {
+				return err
+			}
 		}
-	}
 
-	// 更新模型范围（事务内先删后插）
-	if req.ModelNames != nil {
-		err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames)
-		if err != nil {
-			return nil, err
+		// 更新模型范围（事务内先删后插，作为外层事务的 savepoint）
+		if req.ModelNames != nil {
+			if err = updateApiKeyModelScopes(ctx, keyID, req.ModelNames); err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if hasUpdate || req.ModelNames != nil {
@@ -579,78 +590,6 @@ func (s *sTenant) ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyMod
 	}
 
 	return &v1.TenantApiKeyModelScopesRes{ModelNames: names}, nil
-}
-
-// listProjectApiKeys 列出指定项目的 API Keys
-func listProjectApiKeys(ctx context.Context, tenantID, projectID int64, page, pageSize int) ([]map[string]any, int, error) {
-	page, pageSize = lcommon.NormalizePagination(page, pageSize)
-
-	// 验证项目存在且属于该租户
-	count, err := dao.TntProjects.Ctx(ctx).
-		Where("id", projectID).
-		Where("tenant_id", tenantID).
-		Count()
-	if err != nil {
-		return nil, 0, err
-	}
-	if count == 0 {
-		return nil, 0, lcommon.NewBusinessError(consts.CodeProjectNotFound, consts.MsgProjectNotFound)
-	}
-
-	query := dao.ApiKeys.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Where("project_id", projectID).
-		Where("key_type", "project")
-
-	type keyRow struct {
-		Id                   int64      `json:"id"`
-		Name                 string     `json:"name"`
-		KeyPrefix            string     `json:"key_prefix"`
-		Scope                string     `json:"scope"`
-		Status               string     `json:"status"`
-		ExpiresAt            *time.Time `json:"expires_at"`
-		RateLimitQps         *int       `json:"rate_limit_qps"`
-		RateLimitConcurrency *int       `json:"rate_limit_concurrency"`
-		IpWhitelist          []string   `json:"ip_whitelist"`
-		TotalQuota           *float64   `json:"total_quota"`
-		UsedQuota            *float64   `json:"used_quota"`
-		CreatedAt            *time.Time `json:"created_at"`
-		UpdatedAt            *time.Time `json:"updated_at"`
-	}
-
-	var keys []keyRow
-	var total int
-	err = query.Fields("id, name, key_prefix, scope, status, expires_at, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, updated_at").
-		OrderDesc("created_at").
-		Page(page, pageSize).
-		ScanAndCount(&keys, &total, false)
-	if err != nil {
-		return nil, 0, err
-	}
-	if keys == nil {
-		keys = []keyRow{}
-	}
-
-	list := make([]map[string]any, 0, len(keys))
-	for _, k := range keys {
-		list = append(list, map[string]any{
-			"id":                     k.Id,
-			"name":                   k.Name,
-			"key_prefix":             k.KeyPrefix,
-			"scope":                  k.Scope,
-			"status":                 k.Status,
-			"expires_at":             k.ExpiresAt,
-			"rate_limit_qps":         k.RateLimitQps,
-			"rate_limit_concurrency": k.RateLimitConcurrency,
-			"ip_whitelist":           k.IpWhitelist,
-			"total_quota":            k.TotalQuota,
-			"used_quota":             k.UsedQuota,
-			"created_at":             k.CreatedAt,
-			"updated_at":             k.UpdatedAt,
-		})
-	}
-
-	return list, total, nil
 }
 
 // ExportApiKeys exports the tenant API key list as CSV or Excel.

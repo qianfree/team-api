@@ -33,6 +33,10 @@ func NewResponseCaptureWriter(w http.ResponseWriter) *ResponseCaptureWriter {
 // WriteHeader 捕获状态码并委托给底层 writer
 func (w *ResponseCaptureWriter) WriteHeader(code int) {
 	w.mu.Lock()
+	if w.status != 0 {
+		w.mu.Unlock()
+		return
+	}
 	w.status = code
 	w.mu.Unlock()
 	w.ResponseWriter.WriteHeader(code)
@@ -40,6 +44,12 @@ func (w *ResponseCaptureWriter) WriteHeader(code int) {
 
 // Write 写入客户端并同时捕获到 buffer（head + tail 环形缓冲区）
 func (w *ResponseCaptureWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.mu.Unlock()
+
 	n, err := w.ResponseWriter.Write(b)
 	w.bytesWritten.Add(int64(n))
 	w.mu.Lock()
@@ -117,6 +127,13 @@ func (w *ResponseCaptureWriter) StatusCode() int {
 // BytesWritten 返回写入客户端的总字节数
 func (w *ResponseCaptureWriter) BytesWritten() int64 {
 	return w.bytesWritten.Load()
+}
+
+// ResponseCommitted reports whether headers or body bytes have already been sent.
+func (w *ResponseCaptureWriter) ResponseCommitted() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.status != 0 || w.bytesWritten.Load() > 0
 }
 
 // ResponseHeaders 返回响应头快照（调用时从底层 ResponseWriter 提取）

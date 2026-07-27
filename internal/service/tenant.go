@@ -144,6 +144,8 @@ type (
 		UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (*v1.TenantMemberUpdateRoleRes, error)
 		// ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
 		ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error)
+		// UnlockMember 解除成员登录锁定。仅 owner/admin 可操作；租户隔离双键校验。
+		UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockReq) (*v1.TenantMemberUnlockRes, error)
 		// GetMember returns a single member's detail.
 		GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error)
 		// GetMemberUsage returns usage statistics for a single member.

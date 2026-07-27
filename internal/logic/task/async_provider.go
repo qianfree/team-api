@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
 )
@@ -21,6 +22,64 @@ import (
 type AsyncProvider struct{}
 
 var DefaultAsyncProvider = &AsyncProvider{}
+
+func asyncTaskFromEntity(row *entity.TskModelTasks) *common.AsyncTask {
+	if row == nil {
+		return nil
+	}
+	return &common.AsyncTask{
+		ID:              row.Id,
+		PublicTaskID:    row.PublicTaskId,
+		RequestID:       row.RequestId,
+		Platform:        row.Platform,
+		Action:          row.Action,
+		Status:          row.Status,
+		Progress:        row.Progress,
+		FailReason:      row.FailReason,
+		TenantID:        row.TenantId,
+		UserID:          row.UserId,
+		ApiKeyID:        row.ApiKeyId,
+		ChannelID:       row.ChannelId,
+		ModelName:       row.ModelName,
+		UpstreamModel:   row.UpstreamModel,
+		PreDeductAmount: row.PreDeductAmount,
+		ActualCost:      row.ActualCost,
+		BillingSettled:  row.BillingSettled,
+		ResultURL:       row.ResultUrl,
+		Data:            json.RawMessage(row.Data),
+		PrivateData:     json.RawMessage(row.PrivateData),
+		SubmitTime:      timePtrFromGTime(row.SubmitTime),
+		StartTime:       timePtrFromGTime(row.StartTime),
+		FinishTime:      timePtrFromGTime(row.FinishTime),
+		CreatedAt:       timeFromGTime(row.CreatedAt),
+		UpdatedAt:       timeFromGTime(row.UpdatedAt),
+	}
+}
+
+func asyncTasksFromEntities(rows []*entity.TskModelTasks) []*common.AsyncTask {
+	tasks := make([]*common.AsyncTask, 0, len(rows))
+	for _, row := range rows {
+		if task := asyncTaskFromEntity(row); task != nil {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
+}
+
+func timePtrFromGTime(value *gtime.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	t := value.Time
+	return &t
+}
+
+func timeFromGTime(value *gtime.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return value.Time
+}
 
 // CreateTask 创建异步任务记录
 func (p *AsyncProvider) CreateTask(ctx context.Context, task *common.AsyncTask) error {
@@ -130,100 +189,19 @@ func (p *AsyncProvider) UpdateTaskCAS(ctx context.Context, task *common.AsyncTas
 
 // GetTaskByPublicID 根据公开任务 ID 查询
 func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID string) (*common.AsyncTask, error) {
-	var row *struct {
-		ID              int64           `json:"id"`
-		PublicTaskID    string          `json:"public_task_id"`
-		RequestId       string          `json:"request_id"`
-		Platform        string          `json:"platform"`
-		Action          string          `json:"action"`
-		Status          string          `json:"status"`
-		Progress        string          `json:"progress"`
-		FailReason      string          `json:"fail_reason"`
-		TenantID        int64           `json:"tenant_id"`
-		UserID          int64           `json:"user_id"`
-		ApiKeyID        int64           `json:"api_key_id"`
-		ChannelID       int64           `json:"channel_id"`
-		ModelName       string          `json:"model_name"`
-		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
-		BillingSettled  bool            `json:"billing_settled"`
-		ResultURL       string          `json:"result_url"`
-		Data            json.RawMessage `json:"data"`
-		PrivateData     json.RawMessage `json:"private_data"`
-		SubmitTime      *time.Time      `json:"submit_time"`
-		StartTime       *time.Time      `json:"start_time"`
-		FinishTime      *time.Time      `json:"finish_time"`
-		CreatedAt       time.Time       `json:"created_at"`
-		UpdatedAt       time.Time       `json:"updated_at"`
-	}
+	var row *entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Scan(&row)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s", publicTaskID)
 	}
-	if row == nil {
-		return nil, nil
-	}
-	return &common.AsyncTask{
-		ID:              row.ID,
-		PublicTaskID:    row.PublicTaskID,
-		RequestID:       row.RequestId,
-		Platform:        row.Platform,
-		Action:          row.Action,
-		Status:          row.Status,
-		Progress:        row.Progress,
-		FailReason:      row.FailReason,
-		TenantID:        row.TenantID,
-		UserID:          row.UserID,
-		ApiKeyID:        row.ApiKeyID,
-		ChannelID:       row.ChannelID,
-		ModelName:       row.ModelName,
-		UpstreamModel:   row.UpstreamModel,
-		PreDeductAmount: row.PreDeductAmount,
-		ActualCost:      row.ActualCost,
-		BillingSettled:  row.BillingSettled,
-		ResultURL:       row.ResultURL,
-		Data:            row.Data,
-		PrivateData:     row.PrivateData,
-		SubmitTime:      row.SubmitTime,
-		StartTime:       row.StartTime,
-		FinishTime:      row.FinishTime,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-	}, nil
+	return asyncTaskFromEntity(row), nil
 }
 
 // GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询
 func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64, tenantID int64) (*common.AsyncTask, error) {
-	var row *struct {
-		ID              int64           `json:"id"`
-		PublicTaskID    string          `json:"public_task_id"`
-		RequestId       string          `json:"request_id"`
-		Platform        string          `json:"platform"`
-		Action          string          `json:"action"`
-		Status          string          `json:"status"`
-		Progress        string          `json:"progress"`
-		FailReason      string          `json:"fail_reason"`
-		TenantID        int64           `json:"tenant_id"`
-		UserID          int64           `json:"user_id"`
-		ApiKeyID        int64           `json:"api_key_id"`
-		ChannelID       int64           `json:"channel_id"`
-		ModelName       string          `json:"model_name"`
-		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
-		BillingSettled  bool            `json:"billing_settled"`
-		ResultURL       string          `json:"result_url"`
-		Data            json.RawMessage `json:"data"`
-		PrivateData     json.RawMessage `json:"private_data"`
-		SubmitTime      *time.Time      `json:"submit_time"`
-		StartTime       *time.Time      `json:"start_time"`
-		FinishTime      *time.Time      `json:"finish_time"`
-		CreatedAt       time.Time       `json:"created_at"`
-		UpdatedAt       time.Time       `json:"updated_at"`
-	}
+	var row *entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Where("user_id", userID).
@@ -232,62 +210,12 @@ func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTask
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s user_id=%d", publicTaskID, userID)
 	}
-	if row == nil {
-		return nil, nil
-	}
-	return &common.AsyncTask{
-		ID:              row.ID,
-		PublicTaskID:    row.PublicTaskID,
-		RequestID:       row.RequestId,
-		Platform:        row.Platform,
-		Action:          row.Action,
-		Status:          row.Status,
-		Progress:        row.Progress,
-		FailReason:      row.FailReason,
-		TenantID:        row.TenantID,
-		UserID:          row.UserID,
-		ApiKeyID:        row.ApiKeyID,
-		ChannelID:       row.ChannelID,
-		ModelName:       row.ModelName,
-		UpstreamModel:   row.UpstreamModel,
-		PreDeductAmount: row.PreDeductAmount,
-		ActualCost:      row.ActualCost,
-		BillingSettled:  row.BillingSettled,
-		ResultURL:       row.ResultURL,
-		Data:            row.Data,
-		PrivateData:     row.PrivateData,
-		SubmitTime:      row.SubmitTime,
-		StartTime:       row.StartTime,
-		FinishTime:      row.FinishTime,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-	}, nil
+	return asyncTaskFromEntity(row), nil
 }
 
 // GetNonTerminalTasks 获取所有非终态任务
 func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*common.AsyncTask, error) {
-	var rows []struct {
-		ID              int64           `json:"id"`
-		PublicTaskID    string          `json:"public_task_id"`
-		RequestId       string          `json:"request_id"`
-		Platform        string          `json:"platform"`
-		Action          string          `json:"action"`
-		Status          string          `json:"status"`
-		Progress        string          `json:"progress"`
-		TenantID        int64           `json:"tenant_id"`
-		UserID          int64           `json:"user_id"`
-		ApiKeyID        int64           `json:"api_key_id"`
-		ChannelID       int64           `json:"channel_id"`
-		ModelName       string          `json:"model_name"`
-		UpstreamModel   string          `json:"upstream_model"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
-		BillingSettled  bool            `json:"billing_settled"`
-		Data            json.RawMessage `json:"data"`
-		PrivateData     json.RawMessage `json:"private_data"`
-		SubmitTime      *time.Time      `json:"submit_time"`
-		CreatedAt       time.Time       `json:"created_at"`
-	}
+	var rows []*entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("status NOT IN (?, ?)", "SUCCESS", "FAILURE").
 		Order("submit_time ASC").
@@ -297,52 +225,13 @@ func (p *AsyncProvider) GetNonTerminalTasks(ctx context.Context, limit int) ([]*
 		return nil, gerror.Wrapf(err, "query non-terminal tasks failed")
 	}
 
-	tasks := make([]*common.AsyncTask, 0, len(rows))
-	for _, r := range rows {
-		tasks = append(tasks, &common.AsyncTask{
-			ID:              r.ID,
-			PublicTaskID:    r.PublicTaskID,
-			RequestID:       r.RequestId,
-			Platform:        r.Platform,
-			Action:          r.Action,
-			Status:          r.Status,
-			Progress:        r.Progress,
-			TenantID:        r.TenantID,
-			UserID:          r.UserID,
-			ApiKeyID:        r.ApiKeyID,
-			ChannelID:       r.ChannelID,
-			ModelName:       r.ModelName,
-			UpstreamModel:   r.UpstreamModel,
-			PreDeductAmount: r.PreDeductAmount,
-			ActualCost:      r.ActualCost,
-			BillingSettled:  r.BillingSettled,
-			Data:            r.Data,
-			PrivateData:     r.PrivateData,
-			SubmitTime:      r.SubmitTime,
-			CreatedAt:       r.CreatedAt,
-		})
-	}
-	return tasks, nil
+	return asyncTasksFromEntities(rows), nil
 }
 
 // GetTimedOutTasks 获取超时未完成任务
 func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, limit int) ([]*common.AsyncTask, error) {
 	cutoffTime := time.Unix(cutoffUnix, 0)
-	var rows []struct {
-		ID              int64           `json:"id"`
-		PublicTaskID    string          `json:"public_task_id"`
-		RequestId       string          `json:"request_id"`
-		Platform        string          `json:"platform"`
-		Status          string          `json:"status"`
-		TenantID        int64           `json:"tenant_id"`
-		UserID          int64           `json:"user_id"`
-		ApiKeyID        int64           `json:"api_key_id"`
-		ChannelID       int64           `json:"channel_id"`
-		ModelName       string          `json:"model_name"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		PrivateData     json.RawMessage `json:"private_data"`
-		SubmitTime      *time.Time      `json:"submit_time"`
-	}
+	var rows []*entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("status NOT IN (?, ?)", "SUCCESS", "FAILURE").
 		Where("submit_time < ?", cutoffTime).
@@ -353,48 +242,12 @@ func (p *AsyncProvider) GetTimedOutTasks(ctx context.Context, cutoffUnix int64, 
 		return nil, gerror.Wrapf(err, "query timed-out tasks failed")
 	}
 
-	tasks := make([]*common.AsyncTask, 0, len(rows))
-	for _, r := range rows {
-		tasks = append(tasks, &common.AsyncTask{
-			ID:              r.ID,
-			PublicTaskID:    r.PublicTaskID,
-			RequestID:       r.RequestId,
-			Platform:        r.Platform,
-			Status:          r.Status,
-			TenantID:        r.TenantID,
-			UserID:          r.UserID,
-			ApiKeyID:        r.ApiKeyID,
-			ChannelID:       r.ChannelID,
-			ModelName:       r.ModelName,
-			PreDeductAmount: r.PreDeductAmount,
-			PrivateData:     r.PrivateData,
-			SubmitTime:      r.SubmitTime,
-		})
-	}
-	return tasks, nil
+	return asyncTasksFromEntities(rows), nil
 }
 
 // GetUnsettledTasks 获取终态但未结算的任务（用于结算重试）
 func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*common.AsyncTask, error) {
-	var rows []struct {
-		ID              int64           `json:"id"`
-		PublicTaskID    string          `json:"public_task_id"`
-		RequestId       string          `json:"request_id"`
-		Platform        string          `json:"platform"`
-		Status          string          `json:"status"`
-		TenantID        int64           `json:"tenant_id"`
-		UserID          int64           `json:"user_id"`
-		ApiKeyID        int64           `json:"api_key_id"`
-		ChannelID       int64           `json:"channel_id"`
-		ModelName       string          `json:"model_name"`
-		PreDeductAmount float64         `json:"pre_deduct_amount"`
-		ActualCost      float64         `json:"actual_cost"`
-		BillingSettled  bool            `json:"billing_settled"`
-		Data            json.RawMessage `json:"data"`
-		PrivateData     json.RawMessage `json:"private_data"`
-		SubmitTime      *time.Time      `json:"submit_time"`
-		CreatedAt       time.Time       `json:"created_at"`
-	}
+	var rows []*entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("status IN (?, ?)", "SUCCESS", "FAILURE").
 		Where("billing_settled = ?", false).
@@ -406,29 +259,7 @@ func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*co
 		return nil, gerror.Wrapf(err, "query unsettled tasks failed")
 	}
 
-	tasks := make([]*common.AsyncTask, 0, len(rows))
-	for _, r := range rows {
-		tasks = append(tasks, &common.AsyncTask{
-			ID:              r.ID,
-			PublicTaskID:    r.PublicTaskID,
-			RequestID:       r.RequestId,
-			Platform:        r.Platform,
-			Status:          r.Status,
-			TenantID:        r.TenantID,
-			UserID:          r.UserID,
-			ApiKeyID:        r.ApiKeyID,
-			ChannelID:       r.ChannelID,
-			ModelName:       r.ModelName,
-			PreDeductAmount: r.PreDeductAmount,
-			ActualCost:      r.ActualCost,
-			BillingSettled:  r.BillingSettled,
-			Data:            r.Data,
-			PrivateData:     r.PrivateData,
-			SubmitTime:      r.SubmitTime,
-			CreatedAt:       r.CreatedAt,
-		})
-	}
-	return tasks, nil
+	return asyncTasksFromEntities(rows), nil
 }
 
 // GetChannelByID 获取渠道基本信息（含从 chn_channel_keys 解密的 API Key）

@@ -156,7 +156,9 @@ const columns: TableColumnData[] = [
     dataIndex: 'status',
     width: 70,
     render({ record }) {
-      return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusTagLabel[record.status] || record.status)
+      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
+      const key = locked ? 'locked' : record.status
+      return h(Tag, { color: statusTagColor[key], size: 'small' }, () => statusTagLabel[key] || record.status)
     },
   },
   { title: '所属租户', dataIndex: 'tenant_name', width: 130, ellipsis: true },
@@ -171,7 +173,8 @@ const columns: TableColumnData[] = [
     fixed: 'right',
     render({ record }) {
       const isDisabled = record.status === 'disabled'
-      return h(Space, { size: 'mini' }, () => [
+      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
+      const actions = [
         h(Button, {
           type: 'text',
           size: 'mini',
@@ -183,7 +186,16 @@ const columns: TableColumnData[] = [
           size: 'mini',
           onClick: () => handleResetPassword(record),
         }, () => '重置密码'),
-      ])
+      ]
+      if (locked) {
+        actions.push(h(Button, {
+          type: 'text',
+          size: 'mini',
+          status: 'success',
+          onClick: () => handleUnlock(record),
+        }, () => '解锁'))
+      }
+      return h(Space, { size: 'mini' }, () => actions)
     },
   },
 ]
@@ -228,6 +240,25 @@ function handleToggleStatus(record: any) {
           : `/admin/members/${record.id}/disable`
         await request.put(endpoint)
         Message.success(`${action}成功`)
+        fetchData()
+      } catch {
+        // error toast already shown by interceptor
+      }
+    },
+  })
+}
+
+function handleUnlock(record: any) {
+  Modal.warning({
+    title: '确认解锁',
+    content: `确定要解除成员「${record.username}」的登录锁定吗？`,
+    hideCancel: false,
+    okText: '确定',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await request.put(`/admin/members/${record.id}/unlock`)
+        Message.success('解锁成功')
         fetchData()
       } catch {
         // error toast already shown by interceptor

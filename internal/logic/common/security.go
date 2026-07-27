@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
@@ -22,6 +24,27 @@ import (
 
 const provisionalTTL = 5 * time.Minute
 const confirmTokenTTL = 5 * time.Minute
+
+// totpReplayTTL 防重放键的存活时间，需覆盖 TOTP 的接受窗口（±1 周期，约 90 秒）。
+// 键过期时验证码本身也已失效，故 90 秒足以杜绝同码重复使用。
+const totpReplayTTL = 90
+
+// validateTOTPOnce 在基础 TOTP 校验通过后，借助 Redis 做一次性防重放：
+// 同一用户的同一验证码在其有效窗口内只接受一次，杜绝 ±90 秒内的重复使用。
+// Redis 不可用时放行（fail-open），避免依赖故障导致无法登录/验证。
+func validateTOTPOnce(ctx context.Context, userType string, userID int64, code, secret string) bool {
+	if !totp.ValidateCode(code, secret) {
+		return false
+	}
+	key := fmt.Sprintf("totp:used:%s:%d:%s", userType, userID, code)
+	res, err := g.Redis().Do(ctx, "SET", key, "1", "NX", "EX", totpReplayTTL)
+	if err != nil {
+		g.Log().Warningf(ctx, "totp replay guard redis error: %v", err)
+		return true
+	}
+	// res 为 nil 表示键已存在 → 该验证码此前已被使用 → 判定为重放，拒绝
+	return !res.IsNil()
+}
 
 // ProvisionalClaims is a short-lived JWT for 2FA pending state.
 type ProvisionalClaims struct {
@@ -117,6 +140,27 @@ func ParseConfirmToken(tokenStr string) (*ConfirmClaims, error) {
 	return claims, nil
 }
 
+// ConfirmHighRisk 校验高风险操作的二次验证码并签发短期确认令牌。
+func ConfirmHighRisk(ctx context.Context, userType string, userID int64, code string) (string, error) {
+	enabled, err := Is2FAEnabled(ctx, userType, userID)
+	if err != nil {
+		return "", err
+	}
+	if !enabled {
+		return "", NewBusinessError(consts.CodeTotpNotEnabled, consts.MsgTotpNotEnabled)
+	}
+
+	valid, err := Verify2FACode(ctx, userType, userID, code)
+	if err != nil {
+		return "", err
+	}
+	if !valid {
+		return "", NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
+	}
+
+	return GenerateConfirmToken(ctx, userID, userType)
+}
+
 // Setup2FA generates a new TOTP secret for a user. Returns the secret and otpauth URI.
 // Callers must still persist the secret after the user confirms with a valid code.
 func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri string, err error) {
@@ -155,7 +199,7 @@ func Setup2FA(ctx context.Context, userType string, userID int64) (secret, uri s
 // Stores the encrypted secret and hashed backup codes.
 func Enable2FA(ctx context.Context, userType string, userID int64, secret, code, password string) ([]string, error) {
 	// Verify TOTP code
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
 
@@ -193,14 +237,10 @@ func Enable2FA(ctx context.Context, userType string, userID int64, secret, code,
 		return nil, err
 	}
 
-	// Hash backup codes for storage
+	// 恢复码是高熵、一次性随机值，使用 SHA-256 可避免每次失败尝试触发多轮 bcrypt。
 	hashedCodes := make([]string, len(plainCodes))
 	for i, code := range plainCodes {
-		hash, herr := crypto.HashPassword(code)
-		if herr != nil {
-			return nil, gerror.Wrapf(herr, "hash backup code failed")
-		}
-		hashedCodes[i] = hash
+		hashedCodes[i] = hashBackupCode(code)
 	}
 	codesJSON, jerr := json.Marshal(hashedCodes)
 	if jerr != nil {
@@ -243,7 +283,7 @@ func Disable2FA(ctx context.Context, userType string, userID int64, code string)
 	}
 
 	// Verify TOTP code or backup code
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		matched, err := verifyAndConsumeBackupCode(ctx, userType, userID, code)
 		if err != nil || !matched {
 			return NewBusinessError(10048, "验证码或恢复码错误")
@@ -275,14 +315,14 @@ func Verify2FACode(ctx context.Context, userType string, userID int64, code stri
 	}
 
 	// Try TOTP code first
-	if totp.ValidateCode(code, secret) {
+	if validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return true, nil
 	}
 
 	// Try backup codes
 	if backupCodes != nil {
 		for i, hashedCode := range backupCodes {
-			if crypto.VerifyPassword(code, hashedCode) {
+			if verifyBackupCode(code, hashedCode) {
 				// Consume this backup code
 				_ = consumeBackupCode(ctx, userType, userID, i, backupCodes)
 				return true, nil
@@ -344,7 +384,7 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 		return nil, err
 	}
 
-	if !totp.ValidateCode(code, secret) {
+	if !validateTOTPOnce(ctx, userType, userID, code, secret) {
 		return nil, NewBusinessError(10048, "验证码错误")
 	}
 
@@ -355,11 +395,7 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 
 	hashedCodes := make([]string, len(plainCodes))
 	for i, c := range plainCodes {
-		hash, herr := crypto.HashPassword(c)
-		if herr != nil {
-			return nil, gerror.Wrapf(herr, "hash backup code failed")
-		}
-		hashedCodes[i] = hash
+		hashedCodes[i] = hashBackupCode(c)
 	}
 	codesJSON, jerr := json.Marshal(hashedCodes)
 	if jerr != nil {
@@ -454,6 +490,26 @@ func DeviceFingerprint(ua, ip string) string {
 	return hash[:32]
 }
 
+// ExtractDeviceInfo 从请求上下文提取会话设备信息并编码为合法 JSON。
+func ExtractDeviceInfo(ctx context.Context) string {
+	r := g.RequestFromCtx(ctx)
+	if r == nil {
+		return buildDeviceInfo("")
+	}
+	return buildDeviceInfo(r.Header.Get("User-Agent"))
+}
+
+func buildDeviceInfo(userAgent string) string {
+	if len(userAgent) > 500 {
+		userAgent = userAgent[:500]
+	}
+	if userAgent == "" {
+		userAgent = "unknown"
+	}
+	data, _ := json.Marshal(map[string]string{"user_agent": userAgent})
+	return string(data)
+}
+
 // verifyAndConsumeBackupCode checks if code matches any backup code and marks it consumed.
 func verifyAndConsumeBackupCode(ctx context.Context, userType string, userID int64, code string) (bool, error) {
 	_, backupCodes, err := GetUserTOTPSecret(ctx, userType, userID)
@@ -462,12 +518,27 @@ func verifyAndConsumeBackupCode(ctx context.Context, userType string, userID int
 	}
 
 	for i, hashedCode := range backupCodes {
-		if crypto.VerifyPassword(code, hashedCode) {
+		if verifyBackupCode(code, hashedCode) {
 			_ = consumeBackupCode(ctx, userType, userID, i, backupCodes)
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+const backupCodeSHA256Prefix = "sha256:"
+
+func hashBackupCode(code string) string {
+	return backupCodeSHA256Prefix + sha256Sum(code)
+}
+
+func verifyBackupCode(code, storedHash string) bool {
+	if strings.HasPrefix(storedHash, backupCodeSHA256Prefix) {
+		expected := hashBackupCode(code)
+		return subtle.ConstantTimeCompare([]byte(expected), []byte(storedHash)) == 1
+	}
+	// 兼容升级前已签发的 bcrypt 恢复码；用户重新生成后会自动切换到 SHA-256。
+	return crypto.VerifyPassword(code, storedHash)
 }
 
 // consumeBackupCode removes a used backup code from the list.

@@ -21,6 +21,13 @@ type ModelListRes struct {
 	PageSize int         `json:"page_size"`
 }
 
+// ModelChannelInfo 模型关联的渠道信息
+type ModelChannelInfo struct {
+	ChannelID   int64  `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	Type        int    `json:"type"`
+}
+
 // ModelItem 模型信息
 type ModelItem struct {
 	ID               int64           `json:"id"`
@@ -43,6 +50,8 @@ type ModelItem struct {
 	InputPrice      float64 `json:"input_price"`       // $/1M tokens
 	OutputPrice     float64 `json:"output_price"`      // $/1M tokens
 	PerRequestPrice float64 `json:"per_request_price"` // $/request（按次计费模式）
+	// 可用渠道列表（来自 chn_abilities + chn_channels）
+	Channels []ModelChannelInfo `json:"channels"`
 }
 
 // ModelCreateReq 创建模型请求

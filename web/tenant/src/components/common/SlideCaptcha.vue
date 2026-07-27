@@ -419,7 +419,7 @@ function delay(ms: number) {
 	height: 28px;
 	border-radius: 50%;
 	border: 3px solid #e5e7eb;
-	border-top-color: #14b8a6;
+	border-top-color: #7b8ff5;
 	animation: sc-spin 0.6s linear infinite;
 	flex-shrink: 0;
 }

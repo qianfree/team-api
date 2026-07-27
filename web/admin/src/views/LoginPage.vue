@@ -21,6 +21,7 @@ const { siteName } = useSiteName()
 const form = reactive({
   username: '',
   password: '',
+  remember: true,
 })
 
 // 2FA state
@@ -107,7 +108,7 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    const res = await authStore.login(form.username, form.password, { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX })
+    const res = await authStore.login(form.username, form.password, { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }, form.remember)
     // Check if 2FA is required
     if (res?.totp_required) {
       provisionalToken.value = res.provisional_token
@@ -238,6 +239,12 @@ async function handle2FAVerify() {
           <div style="margin-bottom: 20px;">
             <SlideCaptcha ref="captchaRef" v-model="captcha" />
           </div>
+          <!-- Remember Me -->
+          <AFormItem>
+            <ACheckbox v-model="form.remember">
+              记住登录状态（7天免登录）
+            </ACheckbox>
+          </AFormItem>
           <AFormItem>
             <AButton
               type="primary"

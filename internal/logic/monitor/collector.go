@@ -133,6 +133,7 @@ func (rb *ringBuffer) History(since time.Time) []SystemMetricsSnapshot {
 var (
 	systemBuffer  *ringBuffer
 	metricsWriter *common.BatchWriter
+	networkMu     sync.Mutex
 	lastNetStats  []psnet.IOCountersStat
 	lastNetTime   time.Time
 	startupTime   time.Time
@@ -279,6 +280,10 @@ func InitCollector(ctx context.Context) {
 	systemBuffer = newRingBuffer(360) // 1 hour at 10s intervals
 	metricsWriter = common.NewBatchWriter("ops_system_metrics", 32, 128)
 	startupTime = time.Now()
+	networkMu.Lock()
+	lastNetStats = nil
+	lastNetTime = time.Time{}
+	networkMu.Unlock()
 	g.Log().Info(ctx, "monitor collector initialized")
 }
 
@@ -326,8 +331,9 @@ func CollectSystemMetrics(ctx context.Context) error {
 
 	// Network (calculate per-second rates)
 	if ioStats, err := psnet.IOCounters(false); err == nil && len(ioStats) > 0 {
+		networkMu.Lock()
 		now := time.Now()
-		if lastNetTime.IsZero() {
+		if lastNetTime.IsZero() || len(lastNetStats) == 0 {
 			snapshot.Network.BytesSentPerSec = 0
 			snapshot.Network.BytesRecvPerSec = 0
 		} else {
@@ -339,6 +345,7 @@ func CollectSystemMetrics(ctx context.Context) error {
 		}
 		lastNetStats = ioStats
 		lastNetTime = now
+		networkMu.Unlock()
 	}
 
 	// Go runtime

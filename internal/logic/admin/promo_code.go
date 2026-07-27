@@ -2,11 +2,13 @@ package admin
 
 import (
 	"context"
+
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/util/gconv"
+
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
-
-	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/utility/export"
@@ -36,7 +38,43 @@ func (s *sAdmin) ListPromoCodes(ctx context.Context, req *v1.PromoCodeListReq) (
 
 // CreatePromoCode 创建优惠码
 func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq) (*v1.PromoCodeCreateRes, error) {
-	result, err := dao.OrdPromoCodes.Ctx(ctx).Insert(req.Data)
+	// 字段白名单：req.Data 是原始 map，直接 Insert 会把 used_count / id / created_at 等
+	// 非预期字段一并写入。此处仅放行显式列出的列（与 UpdatePromoCode 的白名单口径一致），
+	// 杜绝请求体越权注入内部字段。
+	data := do.OrdPromoCodes{}
+	for k, v := range req.Data {
+		switch k {
+		case "code":
+			data.Code = v
+		case "name":
+			data.Name = v
+		case "type":
+			data.Type = v
+		case "discount_value":
+			data.DiscountValue = v
+		case "min_amount":
+			data.MinAmount = v
+		case "max_discount":
+			data.MaxDiscount = v
+		case "total_count":
+			data.TotalCount = v
+		case "per_user_limit":
+			data.PerUserLimit = v
+		case "status":
+			data.Status = v
+		case "valid_from":
+			data.ValidFrom = gconv.GTime(v)
+		case "valid_to":
+			data.ValidTo = gconv.GTime(v)
+		case "plan_ids":
+			data.PlanIds = gconv.Int64s(v)
+		}
+	}
+	if data.Code == nil || gconv.String(data.Code) == "" {
+		return nil, common.NewBadRequestError("优惠码 code 不能为空")
+	}
+
+	result, err := dao.OrdPromoCodes.Ctx(ctx).Insert(data)
 	if err != nil {
 		return nil, err
 	}

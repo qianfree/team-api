@@ -91,7 +91,8 @@ func extractAudioUsage(body []byte) *common.Usage {
 	var verboseResp dto.WhisperVerboseJSONResponse
 	if err := json.Unmarshal(body, &verboseResp); err == nil && verboseResp.Duration > 0 {
 		// 按音频时长估算：1 分钟 ≈ 150 tokens
-		estimatedTokens := int(verboseResp.Duration/60.0) * 150
+		// 修复浮点除法短扣：用整数运算 + 四舍五入避免 int(90/60.0)=1 丢失 0.5 分钟
+		estimatedTokens := (int(verboseResp.Duration)*150 + 30) / 60
 		if estimatedTokens == 0 {
 			estimatedTokens = 1
 		}

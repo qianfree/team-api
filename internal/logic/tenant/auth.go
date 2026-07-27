@@ -2,8 +2,8 @@ package tenant
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -17,10 +17,9 @@ import (
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
-
-	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // Register handles tenant registration.
@@ -223,7 +222,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	}
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", ownerUserID, tenantID, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
@@ -357,11 +356,28 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	}
 
 	// Check account lockout
-	if user.LockedUntil != nil && time.Now().Before(user.LockedUntil.Time) {
-		remaining := time.Until(user.LockedUntil.Time).Minutes()
-		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
-		return nil, common.NewBusinessError(consts.CodeAccountLocked,
-			fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+	if user.LockedUntil != nil {
+		if time.Now().Before(user.LockedUntil.Time) {
+			// 仍在锁定期内
+			remaining := time.Until(user.LockedUntil.Time).Minutes()
+			_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
+			// 向上取整：剩余 0.9 分钟应显示「1 分钟」而非「0 分钟」，避免误导用户立即重试又失败
+			return nil, common.NewBusinessError(consts.CodeAccountLocked,
+				fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(math.Ceil(remaining))))
+		}
+		// 锁定已过期：重置失败计数，给用户重新 5 次机会（方案A）
+		_, err := dao.TntUsers.Ctx(ctx).
+			Where("id", user.Id).
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
+			}).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "重置租户账号锁定状态失败: %v", err)
+		}
+		// 同步更新内存对象，避免后续密码校验仍读到旧的失败计数
+		user.FailedAttempts = 0
+		user.LockedUntil = nil
 	}
 
 	// Check status
@@ -411,9 +427,9 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if user.FailedAttempts > 0 {
 		_, err := dao.TntUsers.Ctx(ctx).
 			Where("id", user.Id).
-			Data(do.TntUsers{
-				FailedAttempts: 0,
-				LockedUntil:    nil,
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
 			}).Update()
 		if err != nil {
 			g.Log().Errorf(ctx, "重置登录失败次数失败: %v", err)
@@ -451,7 +467,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	// ipAddress already declared above for 2FA check
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, tenant.Id, refreshTokenHash, ipAddress, deviceInfo, jti)
 	if err != nil {
@@ -523,7 +539,7 @@ func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.Tena
 	jti := middleware.GetJti(ctx)
 	sessionID := middleware.GetSessionID(ctx)
 	common.MarkSessionRevoked(ctx, jti)
-	err := common.RevokeSession(ctx, sessionID)
+	err := common.RevokeSession(ctx, "tenant", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -548,6 +564,17 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
+	principal, err := common.LoadTenantPrincipal(ctx, session.UserId, session.TenantId)
+	if err != nil {
+		return nil, err
+	}
+	if err = common.ValidateTenantPrincipal(principal); err != nil {
+		if err == consts.ErrTenantSuspended {
+			return nil, common.NewBusinessError(consts.CodeTenantSuspended, consts.MsgTenantSuspended)
+		}
+		return nil, common.NewUnauthorizedError(consts.MsgUnauthorized)
+	}
+
 	newRefreshToken, err := common.GenerateRefreshToken()
 	if err != nil {
 		return nil, err
@@ -555,23 +582,13 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch current role from user table
-	var tntUser *entity.TntUsers
-	err = dao.TntUsers.Ctx(ctx).Where("id", session.UserId).Fields("role").Scan(&tntUser)
-	if err = common.IgnoreScanNoRows(err); err != nil {
-		return nil, err
-	}
-	if tntUser == nil {
-		return nil, common.NewUnauthorizedError("用户不存在")
-	}
-
-	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", tntUser.Role, session.TenantId, session.Id, session.Jti)
+	tokenPair, err := common.GenerateTokenPair(ctx, session.UserId, "tenant", principal.Role, session.TenantId, session.Id, session.Jti)
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +674,7 @@ func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSession
 	userID := middleware.GetUserID(ctx)
 
 	// 查找 session 并验证归属
-	sess, err := common.GetSessionByID(ctx, req.Id)
+	sess, err := common.GetSessionByID(ctx, "tenant", req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -669,27 +686,9 @@ func (s *sTenant) RevokeSession(ctx context.Context, req *v1.TenantRevokeSession
 	}
 
 	common.MarkSessionRevoked(ctx, sess.Jti)
-	err = common.RevokeSession(ctx, req.Id)
+	err = common.RevokeSession(ctx, "tenant", req.Id)
 	if err != nil {
 		return nil, err
 	}
 	return nil, nil
-}
-
-// extractTenantDeviceInfo extracts device information from the request and returns it as a JSON string.
-// The sys_sessions.device_info column is JSONB, so this must be valid JSON.
-func extractTenantDeviceInfo(ctx context.Context) string {
-	r := g.RequestFromCtx(ctx)
-	if r == nil {
-		return `{"user_agent":"unknown"}`
-	}
-	ua := r.Header.Get("User-Agent")
-	if len(ua) > 500 {
-		ua = ua[:500]
-	}
-	if ua == "" {
-		ua = "unknown"
-	}
-	b, _ := json.Marshal(map[string]string{"user_agent": ua})
-	return string(b)
 }

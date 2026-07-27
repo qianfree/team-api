@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +20,7 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -90,6 +94,14 @@ var acquireSyncImageFileSvc = func(ctx context.Context) (*lcommon.FileService, e
 	if syncImageFileSvc != nil {
 		return syncImageFileSvc, nil
 	}
+	// AI 图片 re-host 强制要求对象存储：re-host 产出的 URL 直接喂给租户控制台 <img>，
+	// 而 NewFileServiceFromConfig 在未配对象存储时会降级到 local，返回的 admin 侧 serve 相对
+	// URL（/api/admin/files/{id}/serve）租户侧既无对应端点、也无 admin 鉴权，图片无法展示。
+	// 且 local 仅单实例适用，不适合 AI 图片这类高频读路径。故在此显式拒绝，imageFailReason
+	// 会据此给出「请配置对象存储」的友好提示。
+	if !lcommon.IsStorageConfigured(ctx) {
+		return nil, lcommon.ErrStorageNotConfigured
+	}
 	fs, err := lcommon.NewFileServiceFromConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -109,7 +121,7 @@ type SyncImageJob struct {
 	ProjectID       int64
 	Model           string
 	RequestBody     []byte
-	PreDeductAmount float64
+	PreDeductAmount decimal.Decimal
 	Ratios          map[string]float64
 	SubmitTime      time.Time
 }
@@ -246,7 +258,7 @@ func timeoutRunningSyncImageJob(ctx context.Context, job *SyncImageJob) bool {
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: timeout task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -266,7 +278,7 @@ func timeoutRunningSyncImageJob(ctx context.Context, job *SyncImageJob) bool {
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 
-	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, nil, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, nil, false, reason, nil)
 	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 TIMEOUT（与超时兜底网一致）。
 	recordTaskCompletionAudit(usageTask, "TIMEOUT", reason, nil)
@@ -358,7 +370,7 @@ func failQueuedSyncImageJob(ctx context.Context, job *SyncImageJob, reason strin
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: shutdown-fail task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -378,7 +390,7 @@ func failQueuedSyncImageJob(ctx context.Context, job *SyncImageJob, reason strin
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
 
-	usageTask := buildUsageTask(job, nil, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, nil, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, nil, false, reason, nil)
 	// 闭环审计：把提交阶段的 SUBMITTED 审计记录更新为 FAILURE。
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
@@ -422,7 +434,7 @@ func processSyncImageJob(job *SyncImageJob) {
 	var exclude []int64
 	lastErr := "no available channel"
 	for attempt := 0; attempt < syncImageMaxAttempts; attempt++ {
-		sel, err := syncImageRelayProv.GetChannelForModel(ctx, job.TenantID, job.UserID, job.Model, exclude)
+		sel, err := syncImageRelayProv.GetChannelForModel(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, exclude)
 		if err != nil {
 			lastErr = fmt.Sprintf("select channel: %v", err)
 			break // 无更多候选
@@ -434,9 +446,18 @@ func processSyncImageJob(job *SyncImageJob) {
 			syncImageJitter()
 			continue
 		}
+		if !syncImageRelayProv.AcquireChannelSlot(ctx, sel.ChannelID, sel.MaxConcurrency, job.RequestID) {
+			decInflight(sel.ChannelID)
+			exclude = append(exclude, sel.ChannelID)
+			syncImageJitter()
+			continue
+		}
 
 		ok, memW, perr := runImagePipelineWithRelease(ctx, job, sel)
 		if ok {
+			if !sel.PreserveAffinity {
+				syncImageRelayProv.SetChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, sel.ChannelID)
+			}
 			settleSyncImageSuccess(ctx, job, sel, memW)
 			return
 		}
@@ -444,6 +465,7 @@ func processSyncImageJob(job *SyncImageJob) {
 		// 失败：降健康度 + 排除该渠道 + 抖动退避重选
 		syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, false, 0)
 		syncImageRelayProv.IncrementConsecutiveFailure(ctx, sel.ChannelID)
+		syncImageRelayProv.DeleteChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model)
 		exclude = append(exclude, sel.ChannelID)
 		lastErr = perr
 		syncImageJitter()
@@ -455,8 +477,27 @@ func processSyncImageJob(job *SyncImageJob) {
 
 // runImagePipelineWithRelease 保证无论成功/失败/panic 都释放 per-channel 槽（defer）。
 func runImagePipelineWithRelease(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection) (ok bool, memW *memResponseWriter, failReason string) {
+	stopHeartbeat := make(chan struct{})
+	go refreshSyncImageChannelLease(sel.ChannelID, job.RequestID, stopHeartbeat)
+	defer close(stopHeartbeat)
 	defer decInflight(sel.ChannelID)
+	defer syncImageRelayProv.ReleaseChannelSlot(context.Background(), sel.ChannelID, job.RequestID)
 	return runImagePipeline(ctx, job, sel)
+}
+
+func refreshSyncImageChannelLease(channelID int64, requestID string, stop <-chan struct{}) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			syncImageRelayProv.RefreshChannelSlot(ctx, channelID, requestID)
+			cancel()
+		case <-stop:
+			return
+		}
+	}
 }
 
 // runImagePipeline 复刻 RelayHandler 的最小管线，把上游响应捕获到内存 writer。
@@ -539,7 +580,7 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	actualCost := job.PreDeductAmount
 	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
 	if totalTokens > 0 {
-		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost > 0 {
+		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost.GreaterThan(billing.Zero) {
 			actualCost = tokenCost
 		}
 	}
@@ -612,7 +653,7 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	}
 
 	settled := true
-	if job.PreDeductAmount > 0 {
+	if job.PreDeductAmount.GreaterThan(billing.Zero) {
 		if err := syncImageBilling.SettleTaskFailed(ctx, job.TenantID, job.RequestID, job.PreDeductAmount); err != nil {
 			g.Log().Warningf(ctx, "sync_image: task %s refund failed (unsettled net will retry): %v", job.PublicTaskID, err)
 			settled = false
@@ -636,7 +677,7 @@ func failSyncImageJob(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	if sel != nil {
 		chBasic = &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	}
-	usageTask := buildUsageTask(job, sel, "FAILURE", 0, now)
+	usageTask := buildUsageTask(job, sel, "FAILURE", billing.Zero, now)
 	recordTaskUsage(usageTask, chBasic, false, reason, nil)
 	// 闭环审计：更新提交阶段的 SUBMITTED 审计记录为 FAILURE。
 	recordTaskCompletionAudit(usageTask, "FAILURE", reason, nil)
@@ -742,7 +783,7 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 	if err != nil {
 		return "", err
 	}
-	return fs.GetDownloadURL(ctx, rec.ID)
+	return fs.GetDownloadURL(ctx, rec.ID, job.TenantID)
 }
 
 // syncImageDownloadClient 用于从上游返回的图片 URL 下载**已生成好的**图片做 re-host。
@@ -750,12 +791,103 @@ func rehostImage(ctx context.Context, job *SyncImageJob, data []byte, contentTyp
 // 成品图片文件。显式设置超时，避免 http.DefaultClient 无超时时慢速/挂起的图片服务器长期
 // 占用 worker（io.LimitReader 只限体积不限时间）。120s 对 ≤20MB 的成品图很充裕，且远低于
 // 生成超时——放宽是为了避免「生成已成功却因下载慢被判失败+退款」的资损。
-var syncImageDownloadClient = &http.Client{Timeout: 120 * time.Second}
+//
+// SSRF 加固：Transport 使用 ssrfSafeDialContext，在连接建立阶段拒绝 loopback / link-local
+// （含 169.254.169.254 云元数据）/ RFC1918 私网 / multicast / unspecified 地址。在 dial 时
+// 校验而非仅在请求前校验，可关闭 DNS rebinding 的 TOCTOU 窗口（攻击者 DNS 先返回公网 IP
+// 绕过预检、实际连接时再返回内网 IP）。
+var syncImageDownloadClient = &http.Client{
+	Timeout: 120 * time.Second,
+	Transport: &http.Transport{
+		DialContext:     ssrfSafeDialContext,
+		Proxy:           nil, // 显式禁用代理，避免通过代理绕过 IP 校验访问内网
+		IdleConnTimeout: 30 * time.Second,
+	},
+}
+
+// errSSRFBlocked 表示 URL 解析出的目标地址落在禁止访问的网段。
+var errSSRFBlocked = errors.New("url host resolves to a forbidden (private/link-local/loopback) address")
+
+// isForbiddenIP 判断 ip 是否落在服务端抓取永远不应触达的地址段（SSRF 黑名单）：
+// loopback、link-local（含 169.254.169.254 云元数据）、RFC1918 私网、multicast、unspecified。
+func isForbiddenIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
+}
+
+// validateSSRFURL 对即将下载的 URL 做请求前的快速校验：仅允许 http/https scheme，
+// 并对字面量 IP 主机直接判定网段。域名主机由 ssrfSafeDialContext 在 dial 时再校验。
+func validateSSRFURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q (only http/https allowed)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("url host is empty")
+	}
+	// 字面量 IP 在请求前即可判定；域名留待 dial 时按解析结果判定（防 DNS rebinding）。
+	if ip := net.ParseIP(host); ip != nil && isForbiddenIP(ip) {
+		return errSSRFBlocked
+	}
+	return nil
+}
+
+// ssrfSafeDialContext 在连接阶段解析主机名并拒绝任何指向 loopback / link-local / 私网 /
+// multicast / unspecified 的地址，随后用解析到的 IP 直接建立连接（不再二次解析，杜绝
+// rebinding）。检查放在 dial 而非仅请求前，可关闭「预检解析为公网、连接时解析为内网」的
+// TOCTOU 窗口。
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if isForbiddenIP(ip.IP) {
+			return nil, errSSRFBlocked
+		}
+	}
+	// 直接用已校验的 IP 拨号，避免 Transport 内部再次走 DNS（可能被 rebind 到内网）。
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return conn, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no usable address after SSRF filter")
+	}
+	return nil, lastErr
+}
 
 func rehostFromURL(ctx context.Context, job *SyncImageJob, url string, index int) (string, error) {
 	// 先确认存储可用，避免存储未配置时白白下载一遍成品图。
 	if _, err := acquireSyncImageFileSvc(ctx); err != nil {
 		return "", fmt.Errorf("object storage not configured, cannot re-host image: %w", err)
+	}
+	// SSRF 预检：拒绝 file://、gopher:// 等非 http(s) scheme，以及字面量内网 IP。
+	// 域名主机的网段校验由 syncImageDownloadClient 的 DialContext 在 dial 时兜底。
+	if err := validateSSRFURL(url); err != nil {
+		return "", fmt.Errorf("reject image url: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -787,7 +919,7 @@ var rehostURLEnabled = func(ctx context.Context) bool {
 }
 
 // buildUsageTask 构造供 recordTaskUsage 使用的 AsyncTask（用量日志需要的字段）。
-func buildUsageTask(job *SyncImageJob, sel *common.ChannelSelection, status string, actualCost float64, finish time.Time) *common.AsyncTask {
+func buildUsageTask(job *SyncImageJob, sel *common.ChannelSelection, status string, actualCost decimal.Decimal, finish time.Time) *common.AsyncTask {
 	submit := job.SubmitTime
 	t := &common.AsyncTask{
 		ID:              job.TaskID,

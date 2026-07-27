@@ -631,10 +631,16 @@ function formatHeaders(headers: Record<string, string>): string {
         </ARow>
         <ARow :gutter="16">
           <ACol :span="6">
-            <AFormItem label="优先级"><AInputNumber v-model="editForm.priority" :min="0" class="w-full" /></AFormItem>
+            <AFormItem label="优先级">
+              <AInputNumber v-model="editForm.priority" :min="0" class="w-full" />
+              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+            </AFormItem>
           </ACol>
           <ACol :span="6">
-            <AFormItem label="权重"><AInputNumber v-model="editForm.weight" :min="1" :max="100" class="w-full" /></AFormItem>
+            <AFormItem label="权重">
+              <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
+              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
+            </AFormItem>
           </ACol>
           <ACol :span="6">
             <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
@@ -726,4 +732,5 @@ function formatHeaders(headers: Record<string, string>): string {
 .test-debug-label { font-size: 12px; color: var(--color-text-3); min-width: 60px; flex-shrink: 0; padding-top: 2px; }
 .test-debug-value { font-size: 12px; color: var(--color-text-2); word-break: break-all; background: var(--color-fill-1); padding: 2px 6px; border-radius: 3px; }
 .test-debug-code { font-size: 12px; background: var(--color-fill-1); padding: 6px 8px; border-radius: 4px; max-height: 150px; overflow: auto; color: var(--color-text-3); white-space: pre-wrap; word-break: break-all; margin: 0; flex: 1; }
+.field-help { color: var(--color-text-3); font-size: 12px; }
 </style>

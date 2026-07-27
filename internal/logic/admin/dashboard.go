@@ -26,17 +26,26 @@ func (s *sAdmin) GetDashboardStats(ctx context.Context, req *v1.AdminDashboardRe
 	monthStart := time.Now().Format("2006-01") + "-01"
 
 	// 租户数
-	tenantCount, _ := dao.TntTenants.Ctx(ctx).
+	tenantCount, err := dao.TntTenants.Ctx(ctx).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query tenant count failed: %v", err)
+	}
 
 	// 成员数
-	memberCount, _ := dao.TntUsers.Ctx(ctx).Count()
+	memberCount, err := dao.TntUsers.Ctx(ctx).Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query member count failed: %v", err)
+	}
 
 	// 活跃渠道
-	activeChannels, _ := dao.ChnChannels.Ctx(ctx).
+	activeChannels, err := dao.ChnChannels.Ctx(ctx).
 		Where("status", "active").
 		Count()
+	if err != nil {
+		g.Log().Warningf(ctx, "GetDashboardStats: query active channels failed: %v", err)
+	}
 
 	// 今日统计
 	type dayStatsRow struct {
@@ -529,10 +538,11 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 		return nil, common.NewNotFoundError("钱包")
 	}
 
+	thresholdDecimal := billing.NewFromFloat(req.Threshold)
 	_, err = dao.BilWallets.Ctx(ctx).
 		Where("id", w.ID).
 		Data(do.BilWallets{
-			WarningThreshold: req.Threshold,
+			WarningThreshold: &thresholdDecimal,
 		}).Update()
 	if err != nil {
 		return nil, err
@@ -548,26 +558,14 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	query := dao.BilTransactions.Ctx(ctx)
-
-	if req.TenantID > 0 {
-		query = query.Where("bil_transactions.tenant_id", req.TenantID)
-	}
-	if req.Type != "" {
-		query = query.Where("bil_transactions.type", req.Type)
-	}
-	if req.Username != "" {
-		query = query.Where("tu.username LIKE ?", "%"+req.Username+"%")
-	}
-	if req.ModelName != "" {
-		query = query.Where("bil_transactions.model_name LIKE ?", "%"+req.ModelName+"%")
-	}
-	if req.StartDate != "" {
-		query = query.Where("bil_transactions.created_at >= ?", req.StartDate+" 00:00:00")
-	}
-	if req.EndDate != "" {
-		query = query.Where("bil_transactions.created_at <= ?", req.EndDate+" 23:59:59")
-	}
+	query := billing.BuildTransactionQuery(ctx, billing.TransactionQueryParams{
+		TenantID:  req.TenantID,
+		Type:      req.Type,
+		Username:  req.Username,
+		ModelName: req.ModelName,
+		StartDate: req.StartDate,
+		EndDate:   req.EndDate,
+	})
 
 	type transactionRow struct {
 		Id           int64       `json:"id"`

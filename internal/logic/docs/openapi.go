@@ -28,7 +28,7 @@ func (s *sDocs) OpenAPISpec(ctx context.Context, _ *v1.OpenAPISpecReq) (json.Raw
 		return json.RawMessage(cached.String()), nil
 	}
 
-	spec := buildOpenAPISpec()
+	spec := buildOpenAPISpec(ctx)
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
@@ -40,8 +40,8 @@ func (s *sDocs) OpenAPISpec(ctx context.Context, _ *v1.OpenAPISpecReq) (json.Raw
 	return raw, nil
 }
 
-func buildOpenAPISpec() map[string]any {
-	baseURL := common.Config().GetString(nil, "api_base_url")
+func buildOpenAPISpec(ctx context.Context) map[string]any {
+	baseURL := common.Config().GetString(ctx, "api_base_url")
 	if baseURL == "" {
 		baseURL = "https://api.team-api.example.com"
 	}

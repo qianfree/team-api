@@ -197,7 +197,7 @@ func ListAlertRules(ctx context.Context, page, pageSize int, metricType, level s
 
 	// Post-process: parse array text fields and add display names
 	for i, rule := range rules {
-		parseRuleArrayFields(rules, i, rule)
+		parseRuleArrayFields(rule)
 		addRuleDisplayNames(rules, i, rule)
 	}
 
@@ -208,20 +208,20 @@ func ListAlertRules(ctx context.Context, page, pageSize int, metricType, level s
 	}, nil
 }
 
-// parseRuleArrayFields parses PostgreSQL array text fields into Go slices.
-func parseRuleArrayFields(rules []map[string]any, i int, rule map[string]any) {
+// parseRuleArrayFields parses PostgreSQL array text fields in a rule map into Go slices.
+func parseRuleArrayFields(rule map[string]any) {
 	if nmStr := gconv.String(rule["notification_methods"]); nmStr != "" {
 		nmStr = strings.Trim(nmStr, "{}")
 		if nmStr == "" {
-			rules[i]["notification_methods"] = []string{}
+			rule["notification_methods"] = []string{}
 		} else {
-			rules[i]["notification_methods"] = strings.Split(nmStr, ",")
+			rule["notification_methods"] = strings.Split(nmStr, ",")
 		}
 	}
 	if nuiStr := gconv.String(rule["notify_user_ids"]); nuiStr != "" {
 		nuiStr = strings.Trim(nuiStr, "{}")
 		if nuiStr == "" {
-			rules[i]["notify_user_ids"] = []int64{}
+			rule["notify_user_ids"] = []int64{}
 		} else {
 			parts := strings.Split(nuiStr, ",")
 			ids := make([]int64, 0, len(parts))
@@ -230,7 +230,7 @@ func parseRuleArrayFields(rules []map[string]any, i int, rule map[string]any) {
 					ids = append(ids, idVal)
 				}
 			}
-			rules[i]["notify_user_ids"] = ids
+			rule["notify_user_ids"] = ids
 		}
 	}
 }
@@ -260,32 +260,7 @@ func GetAlertRule(ctx context.Context, id int64) (map[string]any, error) {
 		return nil, common.NewNotFoundError("规则")
 	}
 	rule := record.Map()
-
-	// Parse array text fields
-	if nmStr := gconv.String(rule["notification_methods"]); nmStr != "" {
-		nmStr = strings.Trim(nmStr, "{}")
-		if nmStr == "" {
-			rule["notification_methods"] = []string{}
-		} else {
-			rule["notification_methods"] = strings.Split(nmStr, ",")
-		}
-	}
-	if nuiStr := gconv.String(rule["notify_user_ids"]); nuiStr != "" {
-		nuiStr = strings.Trim(nuiStr, "{}")
-		if nuiStr == "" {
-			rule["notify_user_ids"] = []int64{}
-		} else {
-			parts := strings.Split(nuiStr, ",")
-			ids := make([]int64, 0, len(parts))
-			for _, p := range parts {
-				if idVal, e := strconv.ParseInt(p, 10, 64); e == nil {
-					ids = append(ids, idVal)
-				}
-			}
-			rule["notify_user_ids"] = ids
-		}
-	}
-
+	parseRuleArrayFields(rule)
 	return rule, nil
 }
 

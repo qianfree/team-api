@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/logic/task"
 	"github.com/qianfree/team-api/internal/service"
 )
 
@@ -14,7 +15,13 @@ func (c *ControllerV1) DataGovernanceSettingsUpdate(ctx context.Context, req *v1
 	return service.Admin().DataGovernanceSettingsUpdate(ctx, req)
 }
 func (c *ControllerV1) DataGovernanceExport(ctx context.Context, req *v1.DataGovernanceExportReq) (res *v1.DataGovernanceExportRes, err error) {
-	return service.Admin().DataGovernanceExport(ctx, req)
+	res, err = service.Admin().DataGovernanceExport(ctx, req)
+	if err == nil && res != nil && res.TaskID > 0 {
+		// 创建后立即异步执行，无需等待 cron 周期（最长 60s 的轮询延迟对交互式操作不可接受）。
+		// ExecuteTask 有 CAS 保护（WHERE status='pending'），即使 cron 同时捡起也不会重复执行。
+		task.ExecuteTaskAfterCreate(res.TaskID)
+	}
+	return
 }
 func (c *ControllerV1) DataGovernanceDeletion(ctx context.Context, req *v1.DataGovernanceDeletionReq) (res *v1.DataGovernanceDeletionRes, err error) {
 	return service.Admin().DataGovernanceDeletion(ctx, req)

@@ -157,9 +157,7 @@ var Registry = []SettingDef{
 	{Key: "payment_callback_base_url", Type: SettingTypeString, Default: "", Category: "payment",
 		Label: "支付回调基础URL", Description: "为空则使用请求 Host"},
 	{Key: "payment_exchange_rate_cny_to_usd", Type: SettingTypeFloat, Default: "0.14", Category: "payment",
-		Label: "CNY → USD 兑换比例", Description: "1 人民币兑换多少美元", Validation: "min:0.001,max:100"},
-	{Key: "payment_exchange_rate_usd_to_cny", Type: SettingTypeFloat, Default: "7.25", Category: "payment",
-		Label: "USD → CNY 兑换比例", Description: "1 美元兑换多少人民币", Validation: "min:0.001,max:1000"},
+		Label: "CNY → USD 兑换比例", Description: "1 人民币兑换多少美元（USD → CNY 自动取倒数，确保往返闭合）", Validation: "min:0.001,max:100"},
 
 	// ── Performance ──
 	{Key: "global_qps_limit", Type: SettingTypeInt, Default: "10000", Category: "performance",
@@ -217,6 +215,14 @@ var Registry = []SettingDef{
 		Label: "渠道自动禁用", Description: "连续失败达到阈值时自动禁用渠道"},
 	{Key: "channel_auto_disable_threshold", Type: SettingTypeInt, Default: "5", Category: "channel",
 		Label: "自动禁用失败阈值", Validation: "min:2,max:50"},
+	{Key: "channel_scheduler_v2_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
+		Label: "新版渠道调度", Description: "启用优先级、健康度、权重和渠道亲和统一调度；关闭后回退旧版顺序选择"},
+	{Key: "channel_affinity_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
+		Label: "渠道亲和", Description: "同一调用主体和模型优先复用上一次成功渠道，提高上游缓存命中率"},
+	{Key: "channel_affinity_ttl_seconds", Type: SettingTypeInt, Default: "1800", Category: "channel",
+		Label: "渠道亲和有效期", Validation: "min:60,max:86400", Description: "成功请求刷新亲和有效期，单位秒"},
+	{Key: "channel_capacity_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
+		Label: "渠道并发容量", Description: "使用 Redis 分布式租约限制渠道最大并发，并在饱和时自动溢出到其他渠道"},
 	{Key: "health_snapshot_retention_days", Type: SettingTypeInt, Default: "7", Category: "channel",
 		Label: "健康快照保留天数", Validation: "min:1,max:90"},
 	{Key: "channel_proxy_url", Type: SettingTypeString, Default: "", Category: "channel",
@@ -228,8 +234,8 @@ var Registry = []SettingDef{
 
 	// ── Storage ──
 	{Key: "storage_provider", Type: SettingTypeString, Default: "minio", Category: "storage",
-		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos",
-		Description: "对象存储供应商类型"},
+		Label: "存储供应商", Validation: "enum:s3,minio,r2,oss,cos,local",
+		Description: "对象存储供应商类型；local 表示本地磁盘存储（仅适合单实例部署）"},
 	{Key: "storage_endpoint", Type: SettingTypeString, Default: "", Category: "storage",
 		Label:       "存储端点",
 		Description: "S3/MinIO: https://s3.amazonaws.com, OSS: https://oss-cn-hangzhou.aliyuncs.com, COS: https://cos.ap-guangzhou.myqcloud.com, R2: https://<account_id>.r2.cloudflarestorage.com"},
@@ -245,6 +251,8 @@ var Registry = []SettingDef{
 		Label: "启用 SSL"},
 	{Key: "storage_path_prefix", Type: SettingTypeString, Default: "team-api", Category: "storage",
 		Label: "路径前缀", Description: "存储路径前缀，用于隔离不同环境"},
+	{Key: "storage_local_dir", Type: SettingTypeString, Default: "./data/files", Category: "storage",
+		Label: "本地存储目录", Description: "本地磁盘存储根目录，仅 provider=local（或对象存储未配置降级）时生效。相对路径基于可执行文件目录。仅适合单实例部署；多实例需改用对象存储或挂载共享卷（PVC/NFS），否则不同副本间文件不互通"},
 
 	// Data Governance
 	{Key: "data_retention_api_logs_days", Type: SettingTypeInt, Default: "90", Category: "data_governance",

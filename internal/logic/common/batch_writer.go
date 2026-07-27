@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -32,6 +33,7 @@ type BatchWriter struct {
 	flushTimer *time.Timer
 	closed     bool
 	closeMu    sync.Mutex
+	dropped    int64 // 缓冲区溢出累计丢弃的记录数（原子访问）
 }
 
 // NewBatchWriter creates a new BatchWriter.
@@ -72,8 +74,11 @@ func (bw *BatchWriter) Write(ctx context.Context, record any) {
 	}
 
 	if len(bw.buffer) >= bw.maxSize {
-		// Drop oldest record (best-effort)
+		// 缓冲区已满（下游 flush 跟不上写入速度），丢弃最早记录以让出空间。
+		// 对 bil_usage_logs 等计费高频表意味着数据丢失，必须计数并告警，避免静默丢弃。
 		bw.buffer = bw.buffer[1:]
+		total := atomic.AddInt64(&bw.dropped, 1)
+		g.Log().Warningf(ctx, "batch writer buffer overflow on %s: dropped oldest record (total dropped=%d, maxSize=%d)", bw.table, total, bw.maxSize)
 	}
 
 	bw.buffer = append(bw.buffer, record)
@@ -138,6 +143,11 @@ func (bw *BatchWriter) Len() int {
 	bw.bufferMu.Lock()
 	defer bw.bufferMu.Unlock()
 	return len(bw.buffer)
+}
+
+// DroppedCount 返回因缓冲区溢出累计丢弃的记录数，供监控/告警使用。
+func (bw *BatchWriter) DroppedCount() int64 {
+	return atomic.LoadInt64(&bw.dropped)
 }
 
 // Close flushes all remaining records and stops the auto-flush timer.

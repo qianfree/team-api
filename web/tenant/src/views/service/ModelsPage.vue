@@ -114,7 +114,7 @@ const categoryLabel: Record<string, string> = {
 }
 
 const categoryBadgeStyle: Record<string, string> = {
-	chat: 'background:rgba(20,184,166,0.1);color:#0d9488',
+	chat: 'background:rgba(123,143,245,0.1);color:#6d80f0',
 	embedding: 'background:rgba(139,92,246,0.1);color:#7c3aed',
 	image: 'background:rgba(245,158,11,0.1);color:#d97706',
 	audio: 'background:rgba(16,185,129,0.1);color:#059669',

@@ -36,6 +36,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 		Status      string      `json:"status"`
 		LastLoginAt *gtime.Time `json:"last_login_at"`
 		LastLoginIp string      `json:"last_login_ip"`
+		LockedUntil *gtime.Time `json:"locked_until"`
 		CreatedAt   *gtime.Time `json:"created_at"`
 	}
 	err = m.OrderDesc("id").
@@ -47,6 +48,10 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 
 	items := make([]v1.AdminUserItem, len(users))
 	for i, u := range users {
+		lockedUntil := ""
+		if u.LockedUntil != nil {
+			lockedUntil = u.LockedUntil.String()
+		}
 		items[i] = v1.AdminUserItem{
 			ID:          u.Id,
 			Username:    u.Username,
@@ -56,6 +61,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 			Status:      u.Status,
 			LastLoginAt: u.LastLoginAt.String(),
 			LastLoginIp: u.LastLoginIp,
+			LockedUntil: lockedUntil,
 			CreatedAt:   u.CreatedAt.String(),
 		}
 	}
@@ -273,6 +279,29 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 		common.RevokeAllSessions(ctx, "admin", req.Id)
 	}
 
+	return nil, nil
+}
+
+// UnlockUser 清除管理员的登录锁定状态（重置失败计数与锁定截止时间）。
+func (s *sAdmin) UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v1.AdminUserUnlockRes, error) {
+	var user *struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("管理员")
+	}
+
+	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Data(map[string]interface{}{
+		"failed_attempts": 0,
+		"locked_until":    nil,
+	}).Update()
+	if err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 

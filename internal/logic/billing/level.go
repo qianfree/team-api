@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -108,29 +109,29 @@ func GetTenantLevelConfig(ctx context.Context, level int) (*entity.TntTenantLeve
 	return config, nil
 }
 
-// GetLevelPriceMultiplier 获取租户级别的价格乘数
+// GetLevelPriceMultiplier 获取租户级别的价格乘数（decimal 原生版）
 // 查询失败时静默返回 1.0，不阻断计费
-func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) float64 {
+func GetLevelPriceMultiplier(ctx context.Context, tenantID int64) decimal.Decimal {
 	var tenant *entity.TntTenants
 	if err := dao.TntTenants.Ctx(ctx).Where("id", tenantID).Scan(&tenant); err != nil || tenant == nil {
 		g.Log().Warningf(ctx, "[Billing] failed to read tenant level for multiplier: tenantID=%d, err=%v", tenantID, err)
-		return 1.0
+		return One
 	}
 
 	if tenant.Level <= 1 {
-		return 1.0
+		return One
 	}
 
 	var config *entity.TntTenantLevelConfigs
 	if err := dao.TntTenantLevelConfigs.Ctx(ctx).Where("level", tenant.Level).Scan(&config); err != nil || config == nil {
 		g.Log().Warningf(ctx, "[Billing] failed to read level config for multiplier: level=%d, err=%v", tenant.Level, err)
-		return 1.0
+		return One
 	}
 
-	if config.PriceMultiplier > 0 && config.PriceMultiplier != 1.0 {
+	if config.PriceMultiplier.GreaterThan(Zero) && !config.PriceMultiplier.Equal(One) {
 		return config.PriceMultiplier
 	}
-	return 1.0
+	return One
 }
 
 // CheckAndUpgradeLevel 检查并升级租户等级（充值后调用）
@@ -173,20 +174,18 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 		return err
 	}
 
-	// 6. 构建更新数据：仅升不降策略
+	// 6. 构建更新数据：等级一定更新（newLevel > tenant.Level 已由第 4 步保证），
+	// max_members/max_concurrency 仅在新值更优时附加更新（仅升不降策略）。
 	zero := 0
 	updateData := do.TntTenants{Level: newLevel}
-	hasUpdate := true
 
 	// max_members：0 时跟随等级配置（不更新），> 0 时仅升不降
 	if tenant.MaxMembers > 0 {
 		if config.MaxMembers == 0 {
 			// 新等级允许无限成员，直接更新
 			updateData.MaxMembers = &zero
-			hasUpdate = true
 		} else if config.MaxMembers > tenant.MaxMembers {
 			updateData.MaxMembers = &config.MaxMembers
-			hasUpdate = true
 		}
 	}
 
@@ -194,21 +193,18 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 	if tenant.MaxConcurrency > 0 {
 		if config.MaxConcurrency == 0 {
 			updateData.MaxConcurrency = &zero
-			hasUpdate = true
 		} else if config.MaxConcurrency > tenant.MaxConcurrency {
 			updateData.MaxConcurrency = &config.MaxConcurrency
-			hasUpdate = true
 		}
 	}
 
-	if hasUpdate {
-		_, err = dao.TntTenants.Ctx(ctx).
-			Where("id", tenantID).
-			Data(updateData).
-			Update()
-		if err != nil {
-			return err
-		}
+	// 等级本身已变更，必定需要写库（无需 hasUpdate 标志，原标志恒真属冗余判断）
+	_, err = dao.TntTenants.Ctx(ctx).
+		Where("id", tenantID).
+		Data(updateData).
+		Update()
+	if err != nil {
+		return err
 	}
 
 	// 7. 清除并发限制缓存
@@ -220,8 +216,8 @@ func CheckAndUpgradeLevel(ctx context.Context, tenantID int64) error {
 	return nil
 }
 
-// RecalculateLevel 根据累计充值金额重新计算等级
-func RecalculateLevel(ctx context.Context, cumulativeRecharge float64) (int, error) {
+// RecalculateLevel 根据累计充值金额重新计算等级（decimal 原生版）
+func RecalculateLevel(ctx context.Context, cumulativeRecharge decimal.Decimal) (int, error) {
 	var config *entity.TntTenantLevelConfigs
 	err := dao.TntTenantLevelConfigs.Ctx(ctx).
 		Where("cumulative_recharge_threshold <= ?", cumulativeRecharge).

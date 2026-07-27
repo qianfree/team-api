@@ -61,7 +61,8 @@ func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportRe
 	}
 
 	go func() {
-		bgCtx := context.Background()
+		// 脱离请求取消但保留 ctxvar（request_id 等），使后台导入日志可追踪全链路
+		bgCtx := context.WithoutCancel(ctx)
 		if err := processImport(bgCtx, tenantID, importID); err != nil {
 			g.Log().Errorf(bgCtx, "批量导入处理失败 importID=%d: %v", importID, err)
 		}

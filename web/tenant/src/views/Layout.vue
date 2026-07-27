@@ -60,6 +60,7 @@ const navItems = computed<NavItem[]>(() => {
 	const role = authStore.user?.role || 'member'
 	return router.getRoutes()
 		.filter(r => r.meta.sort !== undefined)
+		.filter(r => r.path !== '/tenant/docs')
 		.filter(r => {
 			const roles = r.meta.roles as string[] | undefined
 			return !roles || roles.includes(role)
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="min-h-screen bg-gray-50">
+	<div class="tenant-layout min-h-screen overflow-x-hidden">
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
 			<AnnouncementBanner v-if="consoleAnnouncements.length" :announcements="consoleAnnouncements" />
@@ -241,14 +242,15 @@ onBeforeUnmount(() => {
 		<aside
 			class="sidebar"
 			:class="[
-				sidebarCollapsed ? 'w-[72px]' : 'w-64',
-				{ '-translate-x-full lg:translate-x-0': !mobileOpen }
+				sidebarCollapsed ? 'w-[76px]' : 'w-64',
+				{ 'sidebar-mobile-hidden': !mobileOpen }
 			]"
 		>
 			<!-- Sidebar Header -->
 			<div class="sidebar-header">
-				<div class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow bg-gradient-to-br from-primary-500 to-primary-600">
-					<span class="text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
+				<div class="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl shadow-glow bg-gradient-to-br from-cyan-400 via-primary-500 to-emerald-500">
+					<span class="absolute h-5 w-8 -rotate-12 rounded-[50%] border border-white/60"></span>
+					<span class="relative text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
 				</div>
 				<transition name="fade">
 					<div v-if="!sidebarCollapsed" class="flex min-w-0 flex-col overflow-hidden">
@@ -283,19 +285,16 @@ onBeforeUnmount(() => {
 			</nav>
 
 			<!-- Sidebar Footer -->
-			<div class="mt-auto border-t border-gray-100 p-3">
+			<div class="mt-auto p-3">
 				<button
 					@click="toggleSidebar"
-					class="sidebar-link w-full"
-					:title="sidebarCollapsed ? '展开' : '收起'"
+					class="sidebar-toggle"
+					:class="sidebarCollapsed ? 'justify-center px-0' : 'justify-start gap-3 px-3.5'"
+					:title="sidebarCollapsed ? '展开菜单' : '收起菜单'"
 				>
-					<Icon
-						:name="sidebarCollapsed ? 'chevronDoubleRight' : 'chevronDoubleLeft'"
-						size="md"
-						class="h-5 w-5 flex-shrink-0"
-					/>
+					<Icon :name="sidebarCollapsed ? 'chevronDoubleRight' : 'chevronDoubleLeft'" size="md" class="flex-shrink-0" />
 					<transition name="fade">
-						<span v-if="!sidebarCollapsed">收起</span>
+						<span v-if="!sidebarCollapsed">收起菜单</span>
 					</transition>
 				</button>
 			</div>
@@ -305,39 +304,50 @@ onBeforeUnmount(() => {
 		<transition name="fade">
 			<div
 				v-if="mobileOpen"
-				class="fixed inset-0 z-30 bg-black/50 lg:hidden"
+				class="fixed inset-0 z-30 bg-black/25 backdrop-blur-[2px] lg:hidden"
 				@click="closeMobile"
 			></div>
 		</transition>
 
 		<!-- Main Content Area -->
 		<div
-			class="relative min-h-screen transition-all duration-300"
-			:class="[sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64']"
+			class="tenant-shell relative min-h-screen transition-all duration-300"
+			:class="[sidebarCollapsed ? 'lg:ml-[116px]' : 'lg:ml-[296px]']"
 		>
 			<!-- Header -->
-			<header class="glass sticky top-0 z-20 border-b border-gray-200/50">
-				<div class="flex h-16 items-center justify-between px-4 md:px-6">
+			<header class="sticky top-0 z-[25] px-3 pt-3 md:px-5 md:pt-5">
+				<div class="glass flex h-16 items-center justify-between rounded-2xl border border-white/70 px-3 shadow-glass-sm md:px-5">
 					<!-- Left: Mobile Menu + Title -->
-					<div class="flex items-center gap-4">
+					<div class="flex min-w-0 items-center gap-3">
 						<button
 							@click="toggleMobile"
 							class="btn-ghost btn-icon lg:hidden"
 						>
 							<Icon name="menu" size="md" />
 						</button>
-						<div class="hidden lg:block">
-							<h1 class="text-lg font-semibold text-gray-900">{{ pageTitle }}</h1>
+						<div class="hidden min-w-0 lg:block">
+							<h1 class="truncate text-base font-semibold text-slate-800">{{ pageTitle }}</h1>
 						</div>
 					</div>
 
 					<!-- Right: Actions -->
-					<div class="flex items-center gap-3">
+					<div class="topbar-actions flex items-center gap-2">
+						<router-link
+							to="/tenant/docs"
+							class="docs-nav-entry"
+							:class="{ 'docs-nav-entry-active': isActive('/tenant/docs') }"
+							title="API 文档"
+						>
+							<Icon name="bookOpen" size="md" />
+							<span class="hidden lg:inline">API 文档</span>
+							<span class="docs-nav-badge hidden xl:inline-flex">DOCS</span>
+						</router-link>
+
 						<!-- Announcements -->
 						<div class="relative" data-announce-panel>
-							<button
-								@click="toggleAnnouncePanel"
-								class="relative flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+						<button
+							@click="toggleAnnouncePanel"
+							class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 								title="平台公告"
 							>
 								<Icon name="megaphone" size="md" />
@@ -403,9 +413,9 @@ onBeforeUnmount(() => {
 						</div>
 
 						<!-- Notifications -->
-						<router-link
-							to="/tenant/notifications"
-							class="relative flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+					<router-link
+						to="/tenant/notifications"
+						class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 							title="通知中心"
 						>
 							<Icon name="bell" size="md" />
@@ -418,20 +428,20 @@ onBeforeUnmount(() => {
 						</router-link>
 
 					<!-- Wallet Capsule -->
-						<router-link
-							v-if="canViewWallet"
-							to="/tenant/wallet"
-							class="flex h-9 items-center gap-1.5 rounded-full bg-primary-50 border border-primary-200/60 px-3 text-primary-600 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm hover:shadow-primary-500/10 transition-all duration-200"
+					<router-link
+						v-if="canViewWallet"
+						to="/tenant/wallet"
+						class="topbar-wallet flex h-10 items-center gap-1.5 rounded-full border border-white/80 bg-white/65 px-3 text-primary-600 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white"
 							title="钱包"
 						>
 							<Icon name="currencyDollar" size="sm" />
 							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || '$0' }}</span>
 						</router-link>
 						<!-- Member Quota Capsule -->
-						<router-link
-							v-if="!canViewWallet && memberQuota"
-							to="/tenant/personal-dashboard"
-							class="flex h-9 items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/60 px-3 text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
+					<router-link
+						v-if="!canViewWallet && memberQuota"
+						to="/tenant/personal-dashboard"
+						class="topbar-wallet flex h-9 items-center gap-1.5 rounded-full bg-gray-50 border border-gray-200/60 px-3 text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
 							title="额度"
 						>
 							<Icon name="chart" size="sm" />
@@ -439,11 +449,11 @@ onBeforeUnmount(() => {
 						</router-link>
 						<!-- User Menu -->
 						<div class="relative" data-user-menu>
-							<button
-								@click="toggleUserMenu"
-								class="flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-gray-100"
-							>
-								<div class="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white text-sm font-medium">
+						<button
+							@click="toggleUserMenu"
+							class="topbar-user-button flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-gray-100"
+						>
+							<div class="topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white text-sm font-medium">
 									{{ currentUser.username.charAt(0).toUpperCase() }}
 								</div>
 								<div class="hidden sm:block text-left">
@@ -457,7 +467,7 @@ onBeforeUnmount(() => {
 							<transition name="fade">
 								<div
 									v-if="userMenuOpen"
-									class="dropdown right-0 mt-2 w-56"
+									class="dropdown user-dropdown right-0 mt-2 w-56"
 								>
 									<div class="border-b border-gray-100 px-4 py-3 flex items-center">
 										<div class="flex-1 min-w-0">
@@ -496,7 +506,10 @@ onBeforeUnmount(() => {
 			</header>
 
 			<!-- Page Content -->
-			<main class="p-4 md:p-6 lg:p-8">
+			<main
+				class="tenant-main px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5"
+				:class="{ 'tenant-table-main': route.meta.viewportTable }"
+			>
 				<router-view />
 			</main>
 		</div>
@@ -530,6 +543,50 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.docs-nav-entry {
+	display: inline-flex;
+	height: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	border: 1px solid rgba(20, 184, 166, 0.28);
+	border-radius: 9999px;
+	background: rgba(255, 255, 255, 0.82);
+	padding: 0 0.65rem;
+	box-shadow: 0 8px 22px rgba(13, 148, 136, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+	color: #0d9488;
+	font-size: 0.75rem;
+	font-weight: 700;
+	transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.docs-nav-entry:hover,
+.docs-nav-entry-active {
+	transform: translateY(-1px);
+	border-color: rgba(20, 184, 166, 0.5);
+	background: #fff;
+	box-shadow: 0 10px 26px rgba(13, 148, 136, 0.18), inset 0 1px 0 #fff;
+}
+
+.docs-nav-badge {
+	height: 1.25rem;
+	align-items: center;
+	border: 1px solid #fed7aa;
+	border-radius: 9999px;
+	background: #fff7ed;
+	padding: 0 0.4rem;
+	color: #ea580c;
+	font-size: 0.5625rem;
+	font-weight: 800;
+}
+
+.user-dropdown {
+	background: #fff;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
 .fade-enter-active,
 .fade-leave-active {
 	transition: opacity 0.2s ease;
@@ -537,5 +594,57 @@ onBeforeUnmount(() => {
 .fade-enter-from,
 .fade-leave-to {
 	opacity: 0;
+}
+
+@media (max-width: 639px) {
+	.topbar-actions {
+		gap: 0.375rem;
+	}
+
+	.topbar-actions :deep(svg) {
+		height: 1rem;
+		width: 1rem;
+	}
+
+	.docs-nav-entry,
+	.topbar-icon-button {
+		height: 2.25rem;
+		width: 2.25rem;
+	}
+
+	.docs-nav-entry {
+		padding: 0;
+	}
+
+	.topbar-wallet {
+		height: 2.25rem;
+		gap: 0.25rem;
+		padding-right: 0.55rem;
+		padding-left: 0.55rem;
+	}
+
+	.topbar-user-button {
+		gap: 0.25rem;
+		padding: 0.25rem;
+	}
+
+	.topbar-user-avatar {
+		height: 1.75rem;
+		width: 1.75rem;
+		font-size: 0.75rem;
+	}
+}
+
+@media (min-width: 1024px) {
+	.docs-nav-entry {
+		padding-right: 0.85rem;
+		padding-left: 0.85rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.docs-nav-entry {
+		transition: none;
+	}
 }
 </style>

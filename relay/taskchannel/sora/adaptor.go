@@ -93,9 +93,11 @@ func (a *SoraAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, reque
 	if err != nil {
 		return nil, err
 	}
-	a.BuildRequestHeader(req.Header, info)
+	if err := a.BuildRequestHeader(req.Header, info); err != nil {
+		return nil, err
+	}
 
-	client := &http.Client{Timeout: 120 * 1e9 /* 120s */}
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -134,7 +136,7 @@ func (a *SoraAdaptor) FetchTaskByID(baseURL, apiKey, taskID string) (*http.Respo
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	client := &http.Client{Timeout: 30 * 1e9}
+	client := common.NewPooledClient(30, false)
 	return client.Do(req)
 }
 

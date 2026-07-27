@@ -41,6 +41,13 @@ type AdminMemberResetPasswordRes struct {
 	NewPassword string `json:"new_password"`
 }
 
+type AdminMemberUnlockReq struct {
+	g.Meta `path:"/members/{id}/unlock" method:"put" mime:"json" tags:"管理后台-成员" summary:"解除成员登录锁定"`
+	Id     int64 `json:"id" in:"path" v:"required|min:1" dc:"成员ID"`
+}
+
+type AdminMemberUnlockRes struct{}
+
 // === 支付渠道管理（单例配置模式：每种渠道类型只有一个配置） ===
 
 // PaymentChannelListReq 获取所有渠道配置

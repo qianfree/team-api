@@ -130,9 +130,11 @@ func RefreshSession(ctx context.Context, sessionID int64, oldRefreshTokenHash, n
 }
 
 // RevokeSession revokes a single session by ID (DB only; use MarkSessionRevoked for Redis).
-func RevokeSession(ctx context.Context, sessionID int64) error {
+// userType 限定会话所属用户体系（admin/tenant），防止跨控制台按 ID 吊销他人会话。
+func RevokeSession(ctx context.Context, userType string, sessionID int64) error {
 	_, err := dao.SysSessions.Ctx(ctx).
 		Where("id", sessionID).
+		Where("user_type", userType).
 		Delete()
 	return err
 }
@@ -206,10 +208,12 @@ func MarkSessionRevoked(ctx context.Context, jti string) {
 }
 
 // GetSessionByID retrieves a session by its ID.
-func GetSessionByID(ctx context.Context, sessionID int64) (*entity.SysSessions, error) {
+// userType 限定会话所属用户体系（admin/tenant），防止跨控制台按 ID 读取他人会话。
+func GetSessionByID(ctx context.Context, userType string, sessionID int64) (*entity.SysSessions, error) {
 	var session *entity.SysSessions
 	err := dao.SysSessions.Ctx(ctx).
 		Where("id", sessionID).
+		Where("user_type", userType).
 		Where("expires_at > NOW()").
 		Scan(&session)
 	if err != nil {

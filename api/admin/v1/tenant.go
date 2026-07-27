@@ -128,6 +128,7 @@ type AdminMemberItem struct {
 	LastLoginAt    string `json:"last_login_at"`
 	LastLoginIP    string `json:"last_login_ip"`
 	FailedAttempts int    `json:"failed_attempts"`
+	LockedUntil    string `json:"locked_until"`
 	CreatedAt      string `json:"created_at"`
 }
 

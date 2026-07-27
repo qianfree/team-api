@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/qianfree/team-api/internal/consts"
 	admintest "github.com/qianfree/team-api/tests/integration/admin/testinfra"
 	"github.com/qianfree/team-api/tests/integration/tenant/testinfra"
 )
@@ -125,6 +126,41 @@ func TestTenantTokenRefresh(t *testing.T) {
 		"page_size": "10",
 	})
 	sessionsResp.AssertSuccess(t)
+}
+
+func TestSuspendedTenantExistingTokensAreRejected(t *testing.T) {
+	regResult := testinfra.RegisterTestTenant(t)
+	adminClient := admintest.GetAuthedClient(t)
+
+	setStatus := func(status string) {
+		t.Helper()
+		resp := adminClient.Put(fmt.Sprintf("/api/admin/tenants/%d/status", regResult.Tenant.ID), map[string]any{
+			"status": status,
+		})
+		resp.AssertSuccess(t)
+	}
+	setStatus("suspended")
+	defer setStatus("active")
+
+	tenantClient := admintest.NewAPIClient(testinfra.DefaultBaseURL).WithToken(regResult.AccessToken)
+	accessResp := tenantClient.Get("/api/tenant/auth/sessions", map[string]string{
+		"page":      "1",
+		"page_size": "10",
+	})
+	accessResp.AssertHTTPStatus(t, 403)
+	accessResp.AssertError(t, consts.CodeTenantSuspended)
+
+	publicClient := admintest.NewAPIClient(testinfra.DefaultBaseURL)
+	refreshResp := publicClient.Post("/api/tenant/auth/refresh", map[string]any{
+		"refresh_token": regResult.RefreshToken,
+	})
+	refreshResp.AssertError(t, consts.CodeTenantSuspended)
+
+	setStatus("active")
+	refreshAfterActivation := publicClient.Post("/api/tenant/auth/refresh", map[string]any{
+		"refresh_token": regResult.RefreshToken,
+	})
+	refreshAfterActivation.AssertSuccess(t)
 }
 
 func TestTenantChangePassword(t *testing.T) {

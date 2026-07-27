@@ -181,7 +181,7 @@ func HandleTaskSubmit(
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
 		return
 	}
-	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost)
+	g.Log().Debugf(ctx, "HandleTaskSubmit: estimatedCost=%.4f", estimatedCost.InexactFloat64())
 
 	if err := billingProvider.CheckApiKeyQuota(ctx, rc.ApiKeyID, estimatedCost); err != nil {
 		writeTaskError(rc.Writer, http.StatusPaymentRequired, "API key quota exceeded", "")
@@ -199,7 +199,7 @@ func HandleTaskSubmit(
 	requestBody, err := adaptor.BuildRequestBody(ctx, info, body)
 	if err != nil {
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
-			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: build request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
@@ -209,7 +209,7 @@ func HandleTaskSubmit(
 	resp, err := adaptor.DoRequest(ctx, info, requestBody)
 	if err != nil {
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
-			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+err.Error(), "")
@@ -223,7 +223,7 @@ func HandleTaskSubmit(
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(ctx, resp, info)
 	if taskErr != nil {
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
-			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
@@ -264,7 +264,10 @@ func HandleTaskSubmit(
 		"billing_context": map[string]any{
 			"ratios":     finalRatios,
 			"model_name": modelName,
-			"pre_deduct": preDeductAmount,
+			// pre_deduct 快照落 JSONB，读取端 privateData.PreDeduct 为 float64。
+			// decimal 默认 MarshalJSON 带引号（"0.1"），会导致读取端反序列化整个 blob 失败，
+			// 进而 Ratios 也读不出、轮询判为「invalid private data」。故此处显式转 float64。
+			"pre_deduct": preDeductAmount.InexactFloat64(),
 		},
 	})
 
@@ -289,7 +292,7 @@ func HandleTaskSubmit(
 
 	if err := dataProvider.CreateTask(ctx, task); err != nil {
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
-			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount, err)
+			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: create task record failed, publicTaskID=%s, model=%s, err=%v", publicTaskID, modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "create task record failed: "+err.Error(), "")

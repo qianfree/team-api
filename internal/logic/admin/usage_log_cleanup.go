@@ -70,14 +70,7 @@ func (s *sAdmin) UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogClea
 }
 
 func (s *sAdmin) UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanupListReq) (*v1.UsageLogCleanupListRes, error) {
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	m := dao.TskTasks.Ctx(ctx).
 		Where("handler", "usage_log_cleanup").

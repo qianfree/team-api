@@ -566,3 +566,53 @@ t.Status = "FAILURE"
 dao.Xxx.Ctx(ctx).Where("id", t.ID).Where("status", oldStatus).Update(...) // WHERE status='IN_PROGRESS'
 ```
 
+### 2026-07-24：DO 更新无法置 NULL，且强类型时间字段连 gdb.Raw 也不可用
+
+**问题**：用户解锁接口返回成功，但数据库 `locked_until` 未被清除（仍是锁定时间），账号依旧登不进。同样的写法潜伏在登录成功重置、锁定过期自愈、重置密码顺带清锁，共 9 处。
+
+**原因（两层）**：
+
+1. **DO 更新对 nil 字段的 omit 行为**：GoFrame DO 对象更新时，值为 nil 的字段会被自动跳过、不进入 SET 子句（"部分更新"设计意图，见 2026-05-28）。`Data(do.SysAdminUsers{..., LockedUntil: nil})` 中 `LockedUntil: nil` 被当作"未设置"而非"写 NULL"，列原值保留。`Update` 不报错、affected rows 可能为 0，接口照常返回成功——极其隐蔽。
+
+2. **本项目 DO 是混合类型**（`internal/model/do/sys_admin_users.go` 实测）：
+   - `FailedAttempts any` —— 标准接口字段，赋 `0`（非 nil）正常写入
+   - `LockedUntil *gtime.Time` —— **强类型时间指针**（非 any），赋 nil 被 omit
+
+**官方推荐与本项目现实的冲突**：
+
+GoFrame 官方（goframe-v2 skill）对"置 NULL"的推荐做法是 DO + `gdb.Raw("NULL")`：
+```go
+dao.Instances.Ctx(ctx).Where(cols.Id, id).Data(do.Instance{IdleSince: gdb.Raw("NULL")}).Update()
+```
+但这要求该 DO 字段是 `any`/`interface{}`（才能接受 `gdb.Raw` 这个字符串类型）。**本项目的 `LockedUntil` 是强类型 `*gtime.Time`**，`gdb.Raw("NULL")` 无法赋值，编译报 `cannot use gdb.Raw("NULL") (of type gdb.Raw) as *gtime.Time`。官方推荐的 `gdb.Raw` 路径在本项目此类强类型字段上**不适用**（已实测编译失败）。
+
+**修复**：本项目对强类型 `*gtime.Time` 字段置 NULL，只能用 `map[string]interface{}`（map 不触发 omit，nil 显式写 NULL）：
+```go
+// 错误 — DO 的 nil 被 omit，locked_until 不会被置 NULL
+dao.Xxx.Ctx(ctx).Where("id", id).Data(do.Xxx{
+    FailedAttempts: 0,
+    LockedUntil:    nil,   // ← 被 omit，列原值保留
+}).Update()
+
+// 错误 — 本项目 LockedUntil 是强类型 *gtime.Time，gdb.Raw 类型不匹配，编译失败
+dao.Xxx.Ctx(ctx).Where("id", id).Data(do.Xxx{
+    LockedUntil: gdb.Raw("NULL"),  // ← cannot use gdb.Raw as *gtime.Time
+}).Update()
+
+// 正确（本项目强类型时间字段置 NULL 的唯一可行途径）— map
+dao.Xxx.Ctx(ctx).Where("id", id).Data(map[string]interface{}{
+    "failed_attempts": 0,
+    "locked_until":    nil,   // ← 写入 NULL
+}).Update()
+```
+> 若 DO 字段是 `any`（如本项目的 `FailedAttempts`），官方 `gdb.Raw("NULL")` 可用、DO 方案更合规。本记录的 map 方案**仅针对强类型字段**（`*gtime.Time` 等）置 NULL 这一本项目特定场景；此处为一致起见，`failed_attempts` 也一并用 map。
+
+**影响范围（9 处，本次全修）**：`admin/admin_user.go`（UnlockUser）、`admin/auth.go`（登录成功重置 + 锁定过期自愈）、`admin/member.go`（ResetMemberPassword + UnlockMember）、`tenant/auth.go`（登录成功重置 + 锁定过期自愈）、`tenant/member.go`（UnlockMember）、`tenant/email.go`（邮箱重置密码）。
+
+**正确做法（按字段类型选择）**：
+- 普通部分更新（非空字段）→ 用 DO struct（见 2026-05-28）
+- 置 NULL/清空**且字段是 `any`/`interface{}`** → DO + `gdb.Raw("NULL")`（GoFrame 官方推荐）
+- 置 NULL/清空**且字段是强类型**（本项目 `*gtime.Time`）→ `map[string]interface{}`（`gdb.Raw` 类型不匹配，map 是唯一途径）
+
+排查信号：接口返回成功但数据库某可空字段没变化，且代码用了 `Data(do.Xxx{Field: nil})`。
+

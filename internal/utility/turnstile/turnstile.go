@@ -50,7 +50,9 @@ func Verify(ctx context.Context, secretKey, token, clientIP string) (*VerifyResu
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// 限制响应体大小（Cloudflare siteverify 响应通常 < 1KB），防止恶意/异常上游
+	// 通过超大响应体导致内存耗尽。64KB 远超正常响应，留足余量。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return nil, fmt.Errorf("read verify response: %w", err)
 	}

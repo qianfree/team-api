@@ -2,13 +2,14 @@
 import { computed } from 'vue'
 import { Doughnut } from 'vue-chartjs'
 import {
-	Chart as ChartJS,
 	ArcElement,
-	Tooltip,
+	Chart as ChartJS,
 	Legend,
+	Tooltip,
+	type ChartData,
 	type ChartOptions,
-	type ChartData
 } from 'chart.js'
+import Icon from '@/components/common/Icon.vue'
 
 ChartJS.register(ArcElement, Tooltip, Legend)
 
@@ -22,118 +23,101 @@ const props = withDefaults(defineProps<{
 	}>
 	loading?: boolean
 }>(), {
-	data: () => []
+	data: () => [],
 })
 
-const COLORS = [
-	'#14b8a6', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444',
-	'#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
-	'#10b981', '#e11d48', '#0ea5e9', '#a855f7', '#eab308',
-	'#d946ef', '#22d3ee', '#4ade80', '#fb923c', '#818cf8'
-]
+const colors = ['#14b8a6', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899', '#3b82f6', '#10b981', '#ef4444']
 
-const formatNumber = (n: number): string => {
-	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-	if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-	return String(n)
+function formatCost(value: number): string {
+	if (value === 0) return '$0.00'
+	if (value >= 1) return `$${value.toFixed(2)}`
+	return `$${value.toFixed(4)}`
 }
 
+const totalCost = computed(() => props.data.reduce((sum, item) => sum + Number(item.total_cost || 0), 0))
+
 const chartData = computed<ChartData<'doughnut'>>(() => ({
-	labels: props.data.map(d => d.model_name),
+	labels: props.data.map((item) => item.model_name),
 	datasets: [{
-		data: props.data.map(d => d.total_cost),
-		backgroundColor: props.data.map((_, i) => COLORS[i % COLORS.length]),
-		borderWidth: 2,
-		borderColor: '#ffffff',
-		hoverOffset: 6
-	}]
+		data: props.data.map((item) => item.total_cost),
+		backgroundColor: props.data.map((_, index) => colors[index % colors.length]),
+		borderWidth: 4,
+		borderColor: 'rgba(255, 255, 255, 0.92)',
+		hoverBorderColor: '#ffffff',
+		hoverOffset: 7,
+		borderRadius: 4,
+	}],
 }))
 
 const chartOptions = computed<ChartOptions<'doughnut'>>(() => ({
 	responsive: true,
 	maintainAspectRatio: true,
-	cutout: '65%',
+	cutout: '70%',
+	animation: { duration: 650, easing: 'easeOutQuart' },
 	plugins: {
 		legend: { display: false },
 		tooltip: {
-			backgroundColor: 'rgba(15, 23, 42, 0.9)',
-			padding: 10,
-			cornerRadius: 8,
+			backgroundColor: 'rgba(30, 36, 61, 0.92)',
+			padding: 12,
+			cornerRadius: 12,
 			callbacks: {
-				label: (ctx) => {
-					const total = ctx.dataset.data.reduce((s, v) => s + (v as number), 0)
-					const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : '0'
-					return ` $${(ctx.parsed as number).toFixed(4)} (${pct}%)`
-				}
-			}
-		}
-	}
+				label: (context) => {
+					const value = Number(context.parsed) || 0
+					const percent = totalCost.value > 0 ? ((value / totalCost.value) * 100).toFixed(1) : '0'
+					return ` ${formatCost(value)} · ${percent}%`
+				},
+			},
+		},
+	},
 }))
 
-const totalCost = computed(() => props.data.reduce((s, d) => s + d.total_cost, 0))
-
 const modelList = computed(() =>
-	props.data.map((d, i) => ({
-		...d,
-		total_tokens: d.input_tokens + d.output_tokens,
-		color: COLORS[i % COLORS.length],
-		percent: totalCost.value > 0 ? ((d.total_cost / totalCost.value) * 100).toFixed(1) : '0'
-	}))
+	props.data.slice(0, 5).map((item, index) => ({
+		...item,
+		color: colors[index % colors.length],
+		percent: totalCost.value > 0 ? ((item.total_cost / totalCost.value) * 100).toFixed(1) : '0',
+	})),
 )
 </script>
 
 <template>
-	<div class="card p-6">
-		<div class="flex items-center justify-between mb-4">
-			<h3 class="text-base font-semibold text-gray-900">模型使用分布</h3>
-			<span class="text-xs text-gray-400">按费用排序</span>
+	<div class="card p-5 sm:p-6">
+		<div class="mb-4 flex items-start justify-between">
+			<div>
+				<h2 class="text-base font-semibold text-slate-900">模型费用占比</h2>
+				<p class="mt-0.5 text-xs text-slate-400">按模型统计调用成本</p>
+			</div>
+			<Icon name="more" size="md" class="text-slate-400" />
 		</div>
-		<div v-if="loading" class="h-64 flex items-center justify-center">
+
+		<div v-if="loading" class="flex h-[300px] items-center justify-center">
 			<div class="spinner h-8 w-8 text-primary-500"></div>
 		</div>
-		<div v-else-if="data.length === 0" class="h-64 flex flex-col items-center justify-center text-gray-400">
-			<svg class="h-12 w-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-			</svg>
-			<p class="text-sm">暂无模型数据</p>
+		<div v-else-if="data.length === 0" class="flex h-[300px] flex-col items-center justify-center text-slate-400">
+			<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-50 text-violet-400">
+				<Icon name="chart" size="lg" />
+			</div>
+			<p class="mt-3 text-sm font-medium text-slate-500">暂无模型数据</p>
+			<p class="mt-1 text-xs">模型产生费用后即可查看占比</p>
 		</div>
-		<template v-else>
-			<div class="flex flex-col lg:flex-row gap-6">
-				<!-- Doughnut Chart -->
-				<div class="flex-shrink-0 w-full lg:w-48 flex items-center justify-center">
-					<div class="w-40 h-40">
-						<Doughnut :data="chartData" :options="chartOptions" />
-					</div>
-				</div>
-				<!-- Model Table -->
-				<div class="flex-1 min-w-0 overflow-x-auto">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class="border-b border-gray-100">
-								<th class="pb-2 text-left font-medium text-gray-500 text-xs">模型</th>
-								<th class="pb-2 text-right font-medium text-gray-500 text-xs">请求</th>
-								<th class="pb-2 text-right font-medium text-gray-500 text-xs">Token</th>
-								<th class="pb-2 text-right font-medium text-gray-500 text-xs">费用</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="item in modelList" :key="item.model_name" class="border-b border-gray-50 last:border-0">
-								<td class="py-2 pr-3">
-									<div class="flex items-center gap-2">
-										<span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="{ backgroundColor: item.color }"></span>
-										<span class="text-gray-700 truncate max-w-[120px]" :title="item.model_name">{{ item.model_name }}</span>
-									</div>
-								</td>
-								<td class="py-2 text-right text-gray-600 tabular-nums">{{ formatNumber(item.requests) }}</td>
-								<td class="py-2 text-right text-gray-600 tabular-nums">{{ formatNumber(item.total_tokens) }}</td>
-								<td class="py-2 text-right">
-									<span class="text-emerald-600 font-medium tabular-nums">${{ item.total_cost.toFixed(4) }}</span>
-								</td>
-							</tr>
-						</tbody>
-					</table>
+		<div v-else class="flex min-h-[300px] flex-col items-center gap-5 sm:flex-row 2xl:flex-col">
+			<div class="relative h-52 w-52 flex-shrink-0">
+				<Doughnut :data="chartData" :options="chartOptions" />
+				<div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+					<span class="text-xs text-slate-400">总费用</span>
+					<strong class="mt-1 max-w-28 truncate text-xl font-bold tracking-tight text-slate-800">{{ formatCost(totalCost) }}</strong>
 				</div>
 			</div>
-		</template>
+			<div class="w-full min-w-0 flex-1 space-y-3">
+				<div v-for="item in modelList" :key="item.model_name" class="flex items-center gap-3">
+					<span class="h-2.5 w-2.5 flex-shrink-0 rounded-full" :style="{ backgroundColor: item.color, boxShadow: `0 0 0 4px ${item.color}18` }"></span>
+					<div class="min-w-0 flex-1">
+						<p class="truncate text-xs font-medium text-slate-600" :title="item.model_name">{{ item.model_name }}</p>
+						<p class="mt-0.5 text-[10px] text-slate-400">{{ formatCost(item.total_cost) }}</p>
+					</div>
+					<span class="text-xs font-semibold tabular-nums text-slate-700">{{ item.percent }}%</span>
+				</div>
+			</div>
+		</div>
 	</div>
 </template>

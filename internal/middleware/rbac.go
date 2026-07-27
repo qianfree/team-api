@@ -67,6 +67,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/users", perm: "user:create"},
 	{method: "PUT", prefix: "/api/admin/users/", suffix: "/status", perm: "user:edit"},
 	{method: "PUT", prefix: "/api/admin/users/", suffix: "/reset-password", perm: "user:edit"},
+	{method: "PUT", prefix: "/api/admin/users/", suffix: "/unlock", perm: "user:edit"},
 	{method: "PUT", prefix: "/api/admin/users/", perm: "user:edit"},
 	{method: "DELETE", prefix: "/api/admin/users/", perm: "user:delete"},
 
@@ -202,6 +203,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/files/stats", perm: "file:view"},
 	{method: "POST", path: "/api/admin/files/cleanup", perm: "file:cleanup"},
 	{method: "GET", prefix: "/api/admin/files/", suffix: "/download", perm: "file:view"},
+	{method: "GET", prefix: "/api/admin/files/", suffix: "/serve", perm: "file:view"},
 	{method: "DELETE", prefix: "/api/admin/files/", perm: "file:delete"},
 
 	// ── monitor 监控告警 ──
@@ -260,6 +262,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/members/", suffix: "/disable", perm: "member:view"},
 	{method: "PUT", prefix: "/api/admin/members/", suffix: "/enable", perm: "member:view"},
 	{method: "PUT", prefix: "/api/admin/members/", suffix: "/reset-password", perm: "member:view"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/unlock", perm: "member:view"},
 
 	// ── redemption 兑换码管理 ──
 	{method: "GET", path: "/api/admin/redemptions", perm: "redemption:view"},
@@ -368,13 +371,10 @@ func matchPermission(method, path string) string {
 		if rule.method != method || rule.prefix == "" || rule.suffix == "" {
 			continue
 		}
-		if strings.HasPrefix(path, rule.prefix) {
-			remainder := path[len(rule.prefix):]
-			if strings.HasSuffix(path, rule.suffix) || strings.Contains(remainder, strings.TrimPrefix(rule.suffix, "/")) {
-				if bestPrefixSuffix == nil || len(rule.prefix)+len(rule.suffix) > len(bestPrefixSuffix.prefix)+len(bestPrefixSuffix.suffix) {
-					r := rule
-					bestPrefixSuffix = &r
-				}
+		if strings.HasPrefix(path, rule.prefix) && suffixMatches(path, rule.suffix) {
+			if bestPrefixSuffix == nil || len(rule.prefix)+len(rule.suffix) > len(bestPrefixSuffix.prefix)+len(bestPrefixSuffix.suffix) {
+				r := rule
+				bestPrefixSuffix = &r
 			}
 		}
 	}
@@ -400,4 +400,18 @@ func matchPermission(method, path string) string {
 	}
 
 	return ""
+}
+
+// suffixMatches 判断 path 是否按【路径分段边界】匹配规则后缀 suffix，避免子串误匹配。
+// 旧实现用 strings.Contains(remainder, "test") 会把 /.../latest 误判为命中 /test 规则
+// （"latest" 里含 "test"），从而套用错误的权限点。
+//   - suffix 以 "/" 结尾（如 "/keys/"，用于匹配 /.../keys/{id} 这类带尾段的路由）：
+//     要求 path 中出现完整的 "/keys/" 片段。
+//   - suffix 不以 "/" 结尾（如 "/status"、"/test"）：要求 path 以该后缀结尾，
+//     或该后缀后紧跟一个 "/"（即作为完整分段出现，如 /.../test/xxx）。
+func suffixMatches(path, suffix string) bool {
+	if strings.HasSuffix(suffix, "/") {
+		return strings.Contains(path, suffix)
+	}
+	return strings.HasSuffix(path, suffix) || strings.Contains(path, suffix+"/")
 }
