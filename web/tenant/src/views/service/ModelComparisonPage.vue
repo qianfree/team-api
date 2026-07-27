@@ -119,7 +119,7 @@ const maxTrendCost = computed(() => {
 	return max || 1
 })
 
-const modelColors = ['#14b8a6', '#f59e0b', '#8b5cf6', '#ef4444']
+const modelColors = ['#7b8ff5', '#f7b955', '#5b9df9', '#f6a5c0']
 function modelColor(idx: number): string {
 	return modelColors[idx % modelColors.length]
 }

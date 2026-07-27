@@ -75,28 +75,28 @@ const coreStats = computed(() => {
 			value: formatNumber(today.requests),
 			sub: `输入 ${formatNumber(today.input_tokens)} / 输出 ${formatNumber(today.output_tokens)}`,
 			icon: 'play',
-			iconClass: 'bg-blue-100 text-blue-600',
+			iconClass: 'icon-tile-blue',
 		},
 		{
 			label: '本月请求',
 			value: formatNumber(month.requests),
 			sub: `日均 ${formatNumber(month.requests / (new Date().getDate() || 1))}`,
 			icon: 'chart',
-			iconClass: 'bg-emerald-100 text-emerald-600',
+			iconClass: 'icon-tile-green',
 		},
 		{
 			label: '本月 Token',
 			value: formatNumber(totalMonthTokens),
 			sub: `输入 ${formatNumber(month.input_tokens)} / 输出 ${formatNumber(month.output_tokens)}`,
 			icon: 'bolt',
-			iconClass: 'bg-amber-100 text-amber-600',
+			iconClass: 'icon-tile-amber',
 		},
 		{
 			label: '本月消费',
 			value: formatCost(month.total_cost),
 			sub: `今日 ${formatCost(today.total_cost)}`,
 			icon: 'creditCard',
-			iconClass: 'bg-rose-100 text-rose-600',
+			iconClass: 'icon-tile-pink',
 		},
 	]
 })
@@ -165,16 +165,16 @@ onMounted(() => {
 		</div>
 
 		<!-- ===== Row 1: Core Stats ===== -->
-		<div v-if="loading" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		<div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
 			<div v-for="i in 4" :key="i" class="stat-card">
-				<div class="skeleton h-12 w-12 rounded-xl"></div>
+				<div class="skeleton h-14 w-14 rounded-2xl"></div>
 				<div class="flex-1">
 					<div class="skeleton h-4 w-16 mb-2"></div>
-					<div class="skeleton h-7 w-24"></div>
+					<div class="skeleton h-8 w-24"></div>
 				</div>
 			</div>
 		</div>
-		<div v-else-if="overviewData" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		<div v-else-if="overviewData" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
 			<div v-for="stat in coreStats" :key="stat.label" class="stat-card">
 				<div class="stat-icon" :class="stat.iconClass">
 					<Icon :name="stat.icon" size="lg" />
@@ -182,13 +182,13 @@ onMounted(() => {
 				<div class="min-w-0 flex-1">
 					<p class="stat-label">{{ stat.label }}</p>
 					<p class="stat-value">{{ stat.value }}</p>
-					<p class="text-xs text-gray-400 mt-0.5 truncate">{{ stat.sub }}</p>
+					<p class="text-xs text-gray-400 mt-1 truncate">{{ stat.sub }}</p>
 				</div>
 			</div>
 		</div>
 
 		<!-- ===== Row 2: Quota Status ===== -->
-		<div v-if="overviewData?.quota" class="card p-5">
+		<div v-if="overviewData?.quota" class="card p-6">
 			<div class="flex items-center justify-between mb-3">
 				<div class="flex items-center gap-2">
 					<Icon name="shield" size="md" class="text-primary-500" />

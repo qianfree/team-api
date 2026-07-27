@@ -180,7 +180,7 @@ const methodLabel: Record<string, string> = {
 				</div>
 
 				<!-- Pagination -->
-				<div v-if="total > pageSize" class="card-footer flex justify-between items-center">
+				<div v-if="total > pageSize" class="table-pagination card-footer">
 					<span class="text-sm text-gray-500">共 {{ total }} 条记录</span>
 					<div class="flex items-center gap-2">
 						<button

@@ -203,7 +203,7 @@ onMounted(fetchTransactions)
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="transactions.length > 0" class="table-container border-0 rounded-none">
+			<div v-else-if="transactions.length > 0" class="table-container table-container-flush">
 				<table class="table">
 					<thead>
 						<tr>
@@ -245,7 +245,7 @@ onMounted(fetchTransactions)
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="total > pageSize" class="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+			<div v-if="total > pageSize" class="table-pagination">
 				<p class="text-sm text-gray-500">
 					第 {{ page }} / {{ Math.ceil(total / pageSize) }} 页
 				</p>
