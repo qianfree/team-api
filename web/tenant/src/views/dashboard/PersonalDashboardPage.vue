@@ -73,30 +73,38 @@ const coreStats = computed(() => {
 		{
 			label: '今日请求',
 			value: formatNumber(today.requests),
-			sub: `输入 ${formatNumber(today.input_tokens)} / 输出 ${formatNumber(today.output_tokens)}`,
-			icon: 'play',
-			iconClass: 'icon-tile-blue',
+				sub: `输入 ${formatNumber(today.input_tokens)} / 输出 ${formatNumber(today.output_tokens)}`,
+				trend: '实时统计',
+				icon: 'play',
+				color: '#7667f6',
+				soft: 'rgba(118, 103, 246, 0.14)',
 		},
 		{
 			label: '本月请求',
 			value: formatNumber(month.requests),
-			sub: `日均 ${formatNumber(month.requests / (new Date().getDate() || 1))}`,
-			icon: 'chart',
-			iconClass: 'icon-tile-green',
+				sub: `日均 ${formatNumber(month.requests / (new Date().getDate() || 1))}`,
+				trend: '本月累计',
+				icon: 'chart',
+				color: '#3b9df8',
+				soft: 'rgba(59, 157, 248, 0.14)',
 		},
 		{
 			label: '本月 Token',
 			value: formatNumber(totalMonthTokens),
-			sub: `输入 ${formatNumber(month.input_tokens)} / 输出 ${formatNumber(month.output_tokens)}`,
-			icon: 'bolt',
-			iconClass: 'icon-tile-amber',
+				sub: `输入 ${formatNumber(month.input_tokens)} / 输出 ${formatNumber(month.output_tokens)}`,
+				trend: '调用消耗',
+				icon: 'bolt',
+				color: '#22c7b7',
+				soft: 'rgba(34, 199, 183, 0.14)',
 		},
 		{
 			label: '本月消费',
 			value: formatCost(month.total_cost),
-			sub: `今日 ${formatCost(today.total_cost)}`,
-			icon: 'creditCard',
-			iconClass: 'icon-tile-pink',
+				sub: `今日 ${formatCost(today.total_cost)}`,
+				trend: '费用明细',
+				icon: 'creditCard',
+				color: '#9a58ee',
+				soft: 'rgba(154, 88, 238, 0.14)',
 		},
 	]
 })
@@ -165,27 +173,40 @@ onMounted(() => {
 		</div>
 
 		<!-- ===== Row 1: Core Stats ===== -->
-		<div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-			<div v-for="i in 4" :key="i" class="stat-card">
-				<div class="skeleton h-14 w-14 rounded-2xl"></div>
-				<div class="flex-1">
-					<div class="skeleton h-4 w-16 mb-2"></div>
-					<div class="skeleton h-8 w-24"></div>
+			<div v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+				<div v-for="i in 4" :key="i" class="stat-card h-[152px]">
+					<div class="flex items-center justify-between">
+						<div class="skeleton h-10 w-10 rounded-xl"></div>
+						<div class="skeleton h-5 w-16 rounded-full"></div>
+					</div>
+					<div class="skeleton mt-4 h-8 w-28"></div>
+					<div class="skeleton mt-3 h-3.5 w-40"></div>
 				</div>
 			</div>
-		</div>
-		<div v-else-if="overviewData" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-			<div v-for="stat in coreStats" :key="stat.label" class="stat-card">
-				<div class="stat-icon" :class="stat.iconClass">
-					<Icon :name="stat.icon" size="lg" />
-				</div>
-				<div class="min-w-0 flex-1">
-					<p class="stat-label">{{ stat.label }}</p>
-					<p class="stat-value">{{ stat.value }}</p>
-					<p class="text-xs text-gray-400 mt-1 truncate">{{ stat.sub }}</p>
-				</div>
+			<div v-else-if="overviewData" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+				<article
+					v-for="stat in coreStats"
+					:key="stat.label"
+					class="stat-card personal-metric-card"
+					:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
+				>
+					<div class="personal-metric-accent" aria-hidden="true"></div>
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-3">
+							<div class="personal-metric-icon">
+								<Icon :name="stat.icon" size="md" />
+							</div>
+							<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
+						</div>
+						<span class="personal-metric-badge">{{ stat.trend }}</span>
+					</div>
+					<p class="personal-metric-value" :title="stat.value">{{ stat.value }}</p>
+					<div class="personal-metric-detail">
+						<span class="personal-metric-detail-dot" aria-hidden="true"></span>
+						<span class="truncate">{{ stat.sub }}</span>
+					</div>
+				</article>
 			</div>
-		</div>
 
 		<!-- ===== Row 2: Quota Status ===== -->
 		<div v-if="overviewData?.quota" class="card p-6">
@@ -421,3 +442,88 @@ onMounted(() => {
 		</div>
 	</div>
 </template>
+
+<style scoped>
+.personal-metric-card {
+	min-height: 152px;
+	padding: 1.125rem 1.25rem;
+	transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.personal-metric-card:hover {
+	transform: translateY(-3px);
+	box-shadow: 0 20px 45px rgba(81, 94, 143, 0.14);
+}
+
+.personal-metric-accent {
+	position: absolute;
+	top: 0;
+	right: 1.25rem;
+	left: 1.25rem;
+	height: 2px;
+	border-radius: 0 0 9999px 9999px;
+	background: linear-gradient(90deg, transparent, var(--metric-color), transparent);
+	opacity: 0.7;
+}
+
+.personal-metric-icon {
+	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
+	background: var(--metric-soft);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	color: var(--metric-color);
+}
+
+.personal-metric-badge {
+	flex-shrink: 0;
+	border: 1px solid color-mix(in srgb, var(--metric-color) 20%, transparent);
+	border-radius: 9999px;
+	background: var(--metric-soft);
+	padding: 0.25rem 0.5rem;
+	color: var(--metric-color);
+	font-size: 0.625rem;
+	font-weight: 700;
+}
+
+.personal-metric-value {
+	margin-top: 0.875rem;
+	overflow: hidden;
+	color: #172033;
+	font-size: 1.75rem;
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.personal-metric-detail {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.75rem;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+}
+
+.personal-metric-detail-dot {
+	height: 0.375rem;
+	width: 0.375rem;
+	flex-shrink: 0;
+	border-radius: 9999px;
+	background: var(--metric-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.personal-metric-card {
+		transition: none;
+	}
+}
+</style>
