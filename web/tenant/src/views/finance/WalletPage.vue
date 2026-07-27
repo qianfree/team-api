@@ -771,12 +771,12 @@ onBeforeUnmount(() => {
 
 .amount-pill small { margin-right: 0.125rem; font-size: 0.6875rem; font-weight: 500; }
 .amount-pill em { margin-top: 0.15rem; color: #059669; font-size: 0.5625rem; font-style: normal; font-weight: 700; }
-.amount-pill:hover { border-color: #c7d2fe; color: #6558d9; }
+.amount-pill:hover { border-color: #99f6e4; color: #0d9488; }
 .amount-pill-active {
-	border-color: #a5b4fc;
-	background: #f5f3ff;
-	box-shadow: 0 0 0 3px rgba(117, 104, 248, 0.08);
-	color: #6558d9;
+	border-color: #5eead4;
+	background: #f0fdfa;
+	box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.08);
+	color: #0d9488;
 }
 
 .pay-method-card {
@@ -792,11 +792,11 @@ onBeforeUnmount(() => {
 	transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
 
-.pay-method-card:hover { border-color: #c7d2fe; }
+.pay-method-card:hover { border-color: #99f6e4; }
 .pay-method-card-active {
-	border-color: #a5b4fc;
-	background: #f5f3ff;
-	box-shadow: 0 0 0 3px rgba(117, 104, 248, 0.08);
+	border-color: #5eead4;
+	background: #f0fdfa;
+	box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.08);
 }
 
 .pay-method-icon {

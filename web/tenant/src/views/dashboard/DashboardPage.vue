@@ -460,7 +460,7 @@ onMounted(refreshAll)
 .refresh-button:hover:not(:disabled) {
 	transform: translateY(-1px);
 	background: white;
-	color: #6558ea;
+	color: #0d9488;
 }
 
 .refresh-button:disabled {
