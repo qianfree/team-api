@@ -1,12 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gogf/gf/v2/net/ghttp"
-
-	"github.com/qianfree/team-api/internal/dao"
-	"github.com/qianfree/team-api/internal/model/entity"
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -37,6 +35,31 @@ var tenantPublicPrefixes = []string{
 	"/api/tenant/help/articles/",
 }
 
+// allowedOAuthProviders 是允许免认证走 OAuth 回调的 provider 白名单。
+// 必须与 internal/logic/tenant/oauth.go 中 providers 注册表的键保持一致。
+// 原先用宽泛的 HasPrefix("/api/tenant/oauth/") + HasSuffix("/callback") 放行任意 provider，
+// 存在被构造形如 /api/tenant/oauth/{任意串}/callback 的路径绕过认证的风险（P2-10）。
+var allowedOAuthProviders = map[string]bool{
+	"github": true,
+	"google": true,
+}
+
+// isOAuthCallbackPath 判断路径是否为已知 provider 的 OAuth 回调（免认证）。
+// 形如 /api/tenant/oauth/{provider}/callback，provider 必须命中白名单。
+func isOAuthCallbackPath(path string) bool {
+	const prefix = "/api/tenant/oauth/"
+	const suffix = "/callback"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	provider := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	// provider 段不含 "/"（单段），且在白名单内
+	if provider == "" || strings.Contains(provider, "/") {
+		return false
+	}
+	return allowedOAuthProviders[provider]
+}
+
 // TenantAuth is JWT authentication middleware for tenant console.
 func TenantAuth(r *ghttp.Request) {
 	// g.Meta middleware:"-" only skips service middleware, not group middleware.
@@ -51,8 +74,8 @@ func TenantAuth(r *ghttp.Request) {
 			return
 		}
 	}
-	// OAuth callback: /api/tenant/oauth/{provider}/callback
-	if strings.HasPrefix(r.URL.Path, "/api/tenant/oauth/") && strings.HasSuffix(r.URL.Path, "/callback") {
+	// OAuth callback: /api/tenant/oauth/{provider}/callback（provider 限定白名单，见 P2-10）
+	if isOAuthCallbackPath(r.URL.Path) {
 		r.Middleware.Next()
 		return
 	}
@@ -82,17 +105,17 @@ func TenantAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Verify user still exists and is active
-	var user *entity.TntUsers
-	err = dao.TntUsers.Ctx(r.Context()).
-		Where("id", claims.UserID).
-		Fields("status").
-		Scan(&user)
+	// Verify the user and tenant are still active using current database state.
+	principal, err := common.LoadTenantPrincipal(r.Context(), claims.UserID, claims.TenantID)
 	if err != nil {
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
 		return
 	}
-	if user == nil || user.Status != "active" {
+	if err = common.ValidateTenantPrincipal(principal); err != nil {
+		if errors.Is(err, consts.ErrTenantSuspended) {
+			response.ErrorWithCode(r, 403, consts.CodeTenantSuspended, consts.MsgTenantSuspended)
+			return
+		}
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
 		return
 	}
@@ -100,7 +123,7 @@ func TenantAuth(r *ghttp.Request) {
 	// Set auth context
 	r.SetCtxVar(CtxKeyUserID, claims.UserID)
 	r.SetCtxVar(CtxKeyUserType, claims.UserType)
-	r.SetCtxVar(CtxKeyRole, claims.Role)
+	r.SetCtxVar(CtxKeyRole, principal.Role)
 	r.SetCtxVar(CtxKeyTenantID, claims.TenantID)
 	r.SetCtxVar(CtxKeySessionID, claims.SessionID)
 	r.SetCtxVar(CtxKeyJti, claims.ID)

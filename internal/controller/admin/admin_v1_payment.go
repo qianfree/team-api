@@ -31,3 +31,6 @@ func (c *ControllerV1) PaymentSettingsGet(ctx context.Context, req *v1.PaymentSe
 func (c *ControllerV1) PaymentSettingsUpdate(ctx context.Context, req *v1.PaymentSettingsUpdateReq) (res *v1.PaymentSettingsUpdateRes, err error) {
 	return service.Admin().UpdatePaymentSettings(ctx, req)
 }
+func (c *ControllerV1) AdminMemberUnlock(ctx context.Context, req *v1.AdminMemberUnlockReq) (res *v1.AdminMemberUnlockRes, err error) {
+	return service.Admin().UnlockMember(ctx, req)
+}

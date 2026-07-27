@@ -1,6 +1,8 @@
 package common
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +248,40 @@ func TestDeviceFingerprint_Empty(t *testing.T) {
 	fp := DeviceFingerprint("", "")
 	if len(fp) != 32 {
 		t.Fatalf("expected length 32 for empty input, got %d", len(fp))
+	}
+}
+
+func TestExtractDeviceInfoWithoutRequest(t *testing.T) {
+	var info map[string]string
+	if err := json.Unmarshal([]byte(ExtractDeviceInfo(context.Background())), &info); err != nil {
+		t.Fatalf("ExtractDeviceInfo returned invalid JSON: %v", err)
+	}
+	if info["user_agent"] != "unknown" {
+		t.Fatalf("user_agent = %q, want unknown", info["user_agent"])
+	}
+}
+
+func TestBuildDeviceInfoTruncatesUserAgent(t *testing.T) {
+	var info map[string]string
+	if err := json.Unmarshal([]byte(buildDeviceInfo(strings.Repeat("a", 501))), &info); err != nil {
+		t.Fatalf("buildDeviceInfo returned invalid JSON: %v", err)
+	}
+	if len(info["user_agent"]) != 500 {
+		t.Fatalf("user_agent length = %d, want 500", len(info["user_agent"]))
+	}
+}
+
+func TestBackupCodeSHA256(t *testing.T) {
+	const code = "ABCD-EFGH"
+	hashed := hashBackupCode(code)
+	if !strings.HasPrefix(hashed, backupCodeSHA256Prefix) {
+		t.Fatalf("backup code hash %q is missing algorithm prefix", hashed)
+	}
+	if !verifyBackupCode(code, hashed) {
+		t.Fatal("correct backup code did not verify")
+	}
+	if verifyBackupCode("wrong-code", hashed) {
+		t.Fatal("incorrect backup code verified")
 	}
 }
 

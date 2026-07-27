@@ -107,6 +107,7 @@ type requestTracker struct {
 
 	bytesIn      atomic.Int64
 	bytesOut     atomic.Int64
+	bandwidthMu  sync.Mutex
 	lastBytesIn  int64
 	lastBytesOut int64
 	lastBwTime   time.Time
@@ -272,17 +273,21 @@ func GetRealtimeData() *RealtimeData {
 }
 
 func (t *requestTracker) snapshotBandwidth(now time.Time) BandwidthSnapshot {
+	t.bandwidthMu.Lock()
+	defer t.bandwidthMu.Unlock()
+
 	currentIn := t.bytesIn.Load()
 	currentOut := t.bytesOut.Load()
 
 	snap := BandwidthSnapshot{Timestamp: now}
 
+	if !t.lastBwTime.IsZero() && !now.After(t.lastBwTime) {
+		return snap
+	}
 	if !t.lastBwTime.IsZero() {
 		elapsed := now.Sub(t.lastBwTime).Seconds()
-		if elapsed > 0 {
-			snap.BytesInPerSec = float64(currentIn-t.lastBytesIn) / elapsed
-			snap.BytesOutPerSec = float64(currentOut-t.lastBytesOut) / elapsed
-		}
+		snap.BytesInPerSec = float64(currentIn-t.lastBytesIn) / elapsed
+		snap.BytesOutPerSec = float64(currentOut-t.lastBytesOut) / elapsed
 	}
 
 	t.lastBytesIn = currentIn

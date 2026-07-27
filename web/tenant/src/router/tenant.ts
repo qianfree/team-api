@@ -8,6 +8,7 @@ declare module 'vue-router' {
 		icon?: string
 		sort?: number
 		roles?: string[]
+		viewportTable?: boolean
 		description?: string
 		keywords?: string
 	}
@@ -65,13 +66,13 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'members',
 				name: 'TenantMembers',
 				component: () => import('@/views/team/MembersPage.vue'),
-				meta: { title: '成员管理', icon: 'users', sort: 20, roles: ['owner', 'admin'] },
+				meta: { title: '成员管理', icon: 'users', sort: 20, roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'members/invitations',
 				name: 'TenantInvitations',
 				component: () => import('@/views/team/InvitationsPage.vue'),
-				meta: { title: '邀请记录', roles: ['owner', 'admin'] },
+				meta: { title: '邀请记录', roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'members/:id',
@@ -83,7 +84,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'projects',
 				name: 'TenantProjects',
 				component: () => import('@/views/team/ProjectsPage.vue'),
-				meta: { title: '项目管理', icon: 'project', sort: 21, roles: ['owner', 'admin'] },
+				meta: { title: '项目管理', icon: 'project', sort: 21, roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'projects/:id',
@@ -108,25 +109,25 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'api-keys',
 				name: 'TenantApiKeys',
 				component: () => import('@/views/service/ApiKeysPage.vue'),
-				meta: { title: 'API 密钥', icon: 'key', sort: 32, roles: ['owner', 'admin', 'member'] },
+				meta: { title: 'API 密钥', icon: 'key', sort: 32, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'usage-logs',
 				name: 'TenantUsageLogs',
 				component: () => import('@/views/service/UsageLogsPage.vue'),
-				meta: { title: '用量日志', icon: 'chart', sort: 33, roles: ['owner', 'admin', 'member'] },
+				meta: { title: '用量日志', icon: 'chart', sort: 33, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'request-audit-logs',
 				name: 'TenantRequestAuditLogs',
 				component: () => import('@/views/service/RequestAuditLogsPage.vue'),
-				meta: { title: '请求审计日志', icon: 'clipboard', sort: 34, roles: ['owner', 'admin'] },
+				meta: { title: '请求审计日志', icon: 'clipboard', sort: 34, roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'task-logs',
 				name: 'TenantTaskLogs',
 				component: () => import('@/views/service/TaskLogsPage.vue'),
-				meta: { title: '任务日志', icon: 'clock', sort: 35, roles: ['owner', 'admin', 'member'] },
+				meta: { title: '任务日志', icon: 'clock', sort: 35, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			// 财务 (40-49)
 			{
@@ -139,13 +140,13 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'transactions',
 				name: 'TenantTransactions',
 				component: () => import('@/views/finance/TransactionsPage.vue'),
-				meta: { title: '交易记录', icon: 'document', sort: 41, roles: ['owner', 'admin'] },
+				meta: { title: '交易记录', icon: 'document', sort: 41, roles: ['owner', 'admin'], viewportTable: true },
 			},
 					{
 					path: 'orders',
 				name: 'TenantOrders',
 				component: () => import('@/views/finance/OrdersPage.vue'),
-				meta: { title: '订单记录', icon: 'receipt', sort: 42, roles: ['owner', 'admin'] },
+				meta: { title: '订单记录', icon: 'receipt', sort: 42, roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'redeem',
@@ -176,7 +177,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'tickets',
 				name: 'TenantTickets',
 				component: () => import('@/views/support/TicketsPage.vue'),
-				meta: { title: '工单中心', icon: 'ticket', sort: 51, roles: ['owner', 'admin', 'member'] },
+				meta: { title: '工单中心', icon: 'ticket', sort: 51, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'feedback',
@@ -207,7 +208,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'login-history',
 				name: 'TenantLoginHistory',
 				component: () => import('@/views/settings/LoginHistoryPage.vue'),
-				meta: { title: '登录历史', roles: ['owner', 'admin', 'member'] },
+				meta: { title: '登录历史', roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'profile',

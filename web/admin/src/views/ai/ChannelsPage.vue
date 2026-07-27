@@ -297,6 +297,8 @@ async function handleOAuthExchange() {
   finally { oauthLoading.value = false }
 }
 
+const showSchedulingGuide = ref(false)
+
 const { exporting, exportFile } = useExport({
   url: '/admin/channels/export',
   getFilters: () => ({
@@ -322,6 +324,44 @@ const { exporting, exportFile } = useExport({
         </ADropdown>
       </template>
     </PageHeader>
+
+    <!-- 渠道调度说明（点击弹窗） -->
+    <div class="scheduling-hint" @click="showSchedulingGuide = true">
+      <icon-info-circle /> 了解优先级、权重、亲和与容量如何共同调度 →
+    </div>
+
+    <!-- 调度说明弹窗 -->
+    <AModal v-model:visible="showSchedulingGuide" title="新版渠道调度说明" :width="680" :footer="false">
+      <div class="scheduling-guide">
+        <p class="guide-intro">新版渠道调度开启时，请求按以下规则选择渠道：</p>
+
+        <section class="guide-section">
+          <div class="guide-title"><span class="guide-index">1</span>候选渠道</div>
+          <p>先筛选已启用、支持当前模型、符合租户范围且存在可用 Key 的渠道。健康度低于 20 的渠道通常会被排除；如果全部低于 20，则保留作为降级候选。</p>
+        </section>
+
+        <section class="guide-section">
+          <div class="guide-title"><span class="guide-index">2</span>优先级与权重</div>
+          <p>数字越大优先级越高，仅最高可用优先级组参与分配。同组通过加权稳定选路建立新亲和，<code>权重=0</code> 的渠道不参与调度；健康度 50-79 时有效权重减半，20-49 时降至 1/4。</p>
+        </section>
+
+        <section class="guide-section">
+          <div class="guide-title"><span class="guide-index">3</span>渠道亲和</div>
+          <p>首次请求或亲和失效后，调度器按权重稳定选择渠道。请求成功后，同一租户、用户、API Key 和模型会尽量复用该渠道，默认有效期为 30 分钟，后续成功会刷新有效期，以提高上游缓存命中率。</p>
+        </section>
+
+        <section class="guide-section">
+          <div class="guide-title"><span class="guide-index">4</span>故障与容量</div>
+          <p>亲和渠道发生硬失败时会清除绑定并重新选择。渠道达到并发上限时，仅当前请求临时溢出到其他可用渠道，不覆盖原亲和；后续请求仍会优先尝试原渠道。</p>
+        </section>
+
+        <div class="guide-example">
+          <div class="guide-example-title">配置示例</div>
+          <p><code>优先级=100</code> 的主力渠道可用时，不会选择 <code>优先级=50</code> 的备用渠道；主力组不可用后才会降级。</p>
+          <p>同一优先级内设置 <code>权重=70</code> 和 <code>权重=30</code>，表示大量新亲和主体约按 7:3 建立绑定。由于后续请求保持亲和，用户请求量不同会使总请求比例偏离 7:3。</p>
+        </div>
+      </div>
+    </AModal>
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
@@ -367,10 +407,16 @@ const { exporting, exportFile } = useExport({
         <!-- 调度 & 状态 -->
         <ARow :gutter="16">
           <ACol :span="8">
-            <AFormItem label="优先级"><AInputNumber v-model="form.priority" :min="0" placeholder="越高越优先" class="w-full" /></AFormItem>
+            <AFormItem label="优先级">
+              <AInputNumber v-model="form.priority" :min="0" placeholder="越高越优先" class="w-full" />
+              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+            </AFormItem>
           </ACol>
           <ACol :span="8">
-            <AFormItem label="权重"><AInputNumber v-model="form.weight" :min="1" :max="100" class="w-full" /></AFormItem>
+            <AFormItem label="权重">
+              <AInputNumber v-model="form.weight" :min="0" :max="100" class="w-full" />
+              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
+            </AFormItem>
           </ACol>
           <ACol :span="8">
             <AFormItem label="状态">
@@ -473,5 +519,76 @@ const { exporting, exportFile } = useExport({
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+.scheduling-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.scheduling-hint:hover {
+  color: rgb(var(--arcoblue-6));
+}
+.scheduling-guide {
+  color: var(--color-text-1);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.guide-intro {
+  margin: 0 0 14px;
+  color: var(--color-text-2);
+}
+.guide-section {
+  margin-bottom: 14px;
+}
+.guide-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.guide-index {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  border-radius: 50%;
+  color: rgb(var(--arcoblue-6));
+  background: var(--color-primary-light-1);
+  font-size: 12px;
+}
+.guide-section p,
+.guide-example p {
+  margin: 0;
+}
+.guide-example {
+  padding: 14px 16px;
+  border-radius: 6px;
+  background: var(--color-fill-2);
+}
+.guide-example-title {
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.guide-example p + p {
+  margin-top: 8px;
+}
+.scheduling-guide code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: rgb(var(--arcoblue-6));
+  background: var(--color-primary-light-1);
+}
+.field-help {
+  color: var(--color-text-3);
+  font-size: 12px;
 }
 </style>

@@ -13,16 +13,20 @@ type ForwardingTrace struct {
 
 // ForwardingHop 单次转发跳转记录
 type ForwardingHop struct {
-	Attempt       int     `json:"attempt"`
-	ChannelID     int64   `json:"channel_id"`
-	ChannelName   string  `json:"channel_name"`
-	ChannelType   int     `json:"channel_type"`
-	Provider      string  `json:"provider"`
-	BaseURL       string  `json:"base_url"`
-	UpstreamURL   string  `json:"upstream_url"`
-	UpstreamModel string  `json:"upstream_model"`
-	ModelMapped   bool    `json:"model_mapped"`
-	Success       bool    `json:"success"`
-	Error         string  `json:"error,omitempty"`
-	LatencyMs     float64 `json:"latency_ms"`
+	Attempt         int     `json:"attempt"`
+	ChannelID       int64   `json:"channel_id"`
+	ChannelName     string  `json:"channel_name"`
+	ChannelType     int     `json:"channel_type"`
+	Provider        string  `json:"provider"`
+	BaseURL         string  `json:"base_url"`
+	UpstreamURL     string  `json:"upstream_url"`
+	UpstreamModel   string  `json:"upstream_model"`
+	ModelMapped     bool    `json:"model_mapped"`
+	SelectionReason string  `json:"selection_reason,omitempty"`
+	Priority        int     `json:"priority"`
+	Weight          int     `json:"weight"`
+	HealthScore     float64 `json:"health_score"`
+	Success         bool    `json:"success"`
+	Error           string  `json:"error,omitempty"`
+	LatencyMs       float64 `json:"latency_ms"`
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -13,6 +14,15 @@ import (
 
 // 已注册的渠道类型列表。
 var channelTypes = []string{"epay"}
+
+// enabledChannelsCache 缓存 GetEnabledChannels 的聚合结果。
+// 底层 GetOption 虽有 10min 缓存，但每次调用仍要遍历所有渠道类型并逐个 JSON 解析、
+// 过滤；租户支付信息页是高频读路径，这里加 60s 结果缓存摊薄开销。
+// 配置变更时由 SaveChannelConfig 主动失效（P2-9）。
+var enabledChannelsCache = lcommon.NewCache("pay_enabled_channels", 60*time.Second)
+
+// enabledChannelsCacheKey 所有租户共享同一份启用渠道快照（渠道配置是平台级，非租户级），故使用固定 key。
+const enabledChannelsCacheKey = "all"
 
 // EpayConfig 易支付渠道配置。
 type EpayConfig struct {
@@ -62,7 +72,12 @@ func SaveChannelConfig(ctx context.Context, channelType string, configJSON strin
 	if err := validateChannelEnable(ctx, channelType, configJSON); err != nil {
 		return err
 	}
-	return lcommon.Config().SetOption(ctx, channelConfigKey(channelType), configJSON)
+	if err := lcommon.Config().SetOption(ctx, channelConfigKey(channelType), configJSON); err != nil {
+		return err
+	}
+	// 渠道启用状态可能变化，失效已启用渠道快照缓存，下次查询重建。
+	enabledChannelsCache.Delete(ctx, enabledChannelsCacheKey)
+	return nil
 }
 
 // validateChannelEnable 校验"启用渠道"的前置条件：启用易支付要求回调地址已配置。
@@ -111,7 +126,22 @@ func ListAllChannels(ctx context.Context) []map[string]interface{} {
 }
 
 // GetEnabledChannels 返回所有已启用的渠道及其支付方式（供租户 PaymentInfo 使用）。
+// 结果在进程内缓存 60s（渠道配置为平台级，非租户级），配置变更时由 SaveChannelConfig 失效。
 func GetEnabledChannels(ctx context.Context) []map[string]interface{} {
+	val, err := enabledChannelsCache.GetOrSet(ctx, enabledChannelsCacheKey, func(ctx context.Context) (any, error) {
+		return loadEnabledChannels(ctx), nil
+	})
+	if err != nil || val == nil {
+		return loadEnabledChannels(ctx)
+	}
+	if list, ok := val.([]map[string]interface{}); ok {
+		return list
+	}
+	return loadEnabledChannels(ctx)
+}
+
+// loadEnabledChannels 遍历所有渠道类型，过滤出已启用者并组装支付方式。
+func loadEnabledChannels(ctx context.Context) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0)
 	for _, ct := range channelTypes {
 		jsonStr, cfg, err := LoadChannelConfig(ctx, ct)

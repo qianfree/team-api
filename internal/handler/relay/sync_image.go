@@ -93,7 +93,15 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	}
 
 	// 5. 建 QUEUED 任务行（channel_id=0，dispatch 时绑定）
-	publicTaskID := generateSyncImagePublicID()
+	// 生成任务 ID 依赖 crypto/rand，失败时此处尚未建任务行、无法交给超时兜底网结算，
+	// 必须就地退掉上一步的预扣，避免冻结额被永久占用。
+	publicTaskID, err := generateSyncImagePublicID()
+	if err != nil {
+		_ = taskBillingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeduct)
+		g.Log().Errorf(ctx, "sync_image: generate task ID failed, refunded pre-deduct: %v", err)
+		writeSyncImageError(w, http.StatusInternalServerError, "generate task ID failed")
+		return
+	}
 	now := time.Now()
 
 	// 从渠道类型推导实际的供应商平台（ali / gemini / volcengine / openai 等），用于任务日志展示。
@@ -112,7 +120,9 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 		"billing_context": map[string]any{
 			"ratios":     nil,
 			"model_name": modelName,
-			"pre_deduct": preDeduct,
+			// pre_deduct 快照落 JSONB，读取端为 float64；decimal 默认带引号 MarshalJSON
+			// 会导致读取端反序列化失败，故显式转 float64。
+			"pre_deduct": preDeduct.InexactFloat64(),
 		},
 	})
 	asyncTask := &relay_common.AsyncTask{
@@ -256,12 +266,12 @@ func checkSyncImageIPWhitelist(whitelist, clientIP string) bool {
 	return false
 }
 
-func generateSyncImagePublicID() string {
+func generateSyncImagePublicID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := crand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", err
 	}
-	return "task_" + hex.EncodeToString(b)
+	return "task_" + hex.EncodeToString(b), nil
 }
 
 func writeSyncImageError(w http.ResponseWriter, statusCode int, message string) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/shopspring/decimal"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
@@ -121,19 +122,46 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 			tiersJSON = string(b)
 		}
 
+		// API 边界 *float64 → *decimal.Decimal 转换
+		var perRequestPriceDecimal, discountRatioDecimal, customInputPriceDecimal, customOutputPriceDecimal, customCacheReadPriceDecimal, customCacheCreationPriceDecimal *decimal.Decimal
+		if a.PerRequestPrice != nil {
+			d := billing.NewFromFloat(*a.PerRequestPrice)
+			perRequestPriceDecimal = &d
+		}
+		if a.DiscountRatio != nil {
+			d := billing.NewFromFloat(*a.DiscountRatio)
+			discountRatioDecimal = &d
+		}
+		if a.CustomInputPrice != nil {
+			d := billing.NewFromFloat(*a.CustomInputPrice)
+			customInputPriceDecimal = &d
+		}
+		if a.CustomOutputPrice != nil {
+			d := billing.NewFromFloat(*a.CustomOutputPrice)
+			customOutputPriceDecimal = &d
+		}
+		if a.CustomCacheReadPrice != nil {
+			d := billing.NewFromFloat(*a.CustomCacheReadPrice)
+			customCacheReadPriceDecimal = &d
+		}
+		if a.CustomCacheCreationPrice != nil {
+			d := billing.NewFromFloat(*a.CustomCacheCreationPrice)
+			customCacheCreationPriceDecimal = &d
+		}
+
 		insertData := do.MdlTenantModels{
 			TenantId:                 req.TenantID,
 			ModelId:                  a.ModelID,
 			Enabled:                  a.Enabled,
 			BillingMode:              a.BillingMode,
-			PerRequestPrice:          a.PerRequestPrice,
-			DiscountRatio:            a.DiscountRatio,
+			PerRequestPrice:          perRequestPriceDecimal,
+			DiscountRatio:            discountRatioDecimal,
 			MaxConcurrency:           maxConc,
 			ChannelScope:             a.ChannelScope,
-			CustomInputPrice:         a.CustomInputPrice,
-			CustomOutputPrice:        a.CustomOutputPrice,
-			CustomCacheReadPrice:     a.CustomCacheReadPrice,
-			CustomCacheCreationPrice: a.CustomCacheCreationPrice,
+			CustomInputPrice:         customInputPriceDecimal,
+			CustomOutputPrice:        customOutputPriceDecimal,
+			CustomCacheReadPrice:     customCacheReadPriceDecimal,
+			CustomCacheCreationPrice: customCacheCreationPriceDecimal,
 			CustomPricingTiers:       tiersJSON,
 			Multiplier:               1.0,
 		}
@@ -163,10 +191,12 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 		data.BillingMode = *req.BillingMode
 	}
 	if req.PerRequestPrice != nil {
-		data.PerRequestPrice = *req.PerRequestPrice
+		d := billing.NewFromFloat(**req.PerRequestPrice)
+		data.PerRequestPrice = &d
 	}
 	if req.DiscountRatio != nil {
-		data.DiscountRatio = *req.DiscountRatio
+		d := billing.NewFromFloat(**req.DiscountRatio)
+		data.DiscountRatio = &d
 	}
 	if req.MaxConcurrency != nil {
 		data.MaxConcurrency = *req.MaxConcurrency
@@ -175,16 +205,20 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 		data.ChannelScope = *req.ChannelScope
 	}
 	if req.CustomInputPrice != nil {
-		data.CustomInputPrice = *req.CustomInputPrice
+		d := billing.NewFromFloat(**req.CustomInputPrice)
+		data.CustomInputPrice = &d
 	}
 	if req.CustomCacheReadPrice != nil {
-		data.CustomCacheReadPrice = *req.CustomCacheReadPrice
+		d := billing.NewFromFloat(**req.CustomCacheReadPrice)
+		data.CustomCacheReadPrice = &d
 	}
 	if req.CustomCacheCreationPrice != nil {
-		data.CustomCacheCreationPrice = *req.CustomCacheCreationPrice
+		d := billing.NewFromFloat(**req.CustomCacheCreationPrice)
+		data.CustomCacheCreationPrice = &d
 	}
 	if req.CustomOutputPrice != nil {
-		data.CustomOutputPrice = *req.CustomOutputPrice
+		d := billing.NewFromFloat(**req.CustomOutputPrice)
+		data.CustomOutputPrice = &d
 	}
 	if req.CustomPricingTiers != nil {
 		if len(*req.CustomPricingTiers) > 0 {

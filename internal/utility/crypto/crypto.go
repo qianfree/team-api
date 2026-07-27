@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 var (
@@ -16,8 +17,12 @@ var (
 	ErrInvalidKeyLength  = errors.New("key must be 32 bytes for AES-256")
 )
 
+// versionPrefix 是当前加密格式的版本前缀。写入密文以便后续密钥/算法轮换：
+// 旧数据（无前缀）按 v1 解密，新数据带 "v1:" 前缀，未来引入 v2 时可平滑迁移。
+const versionPrefix = "v1:"
+
 // Encrypt encrypts plaintext using AES-256-GCM.
-// Returns base64-encoded ciphertext (nonce prepended).
+// Returns "v1:" + base64-encoded ciphertext (nonce prepended).
 func Encrypt(key, plaintext []byte) (string, error) {
 	if len(key) != 32 {
 		return "", ErrInvalidKeyLength
@@ -39,16 +44,23 @@ func Encrypt(key, plaintext []byte) (string, error) {
 	}
 
 	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return versionPrefix + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
 // Decrypt decrypts base64-encoded AES-256-GCM ciphertext.
+// 兼容无前缀的历史密文（按 v1 处理）与带 "v1:" 前缀的新密文。
 func Decrypt(key []byte, encoded string) ([]byte, error) {
 	if len(key) != 32 {
 		return nil, ErrInvalidKeyLength
 	}
 
-	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
+	// 剥离版本前缀（若有）。无前缀的历史密文按 v1 处理，保证存量数据可解。
+	payload := encoded
+	if strings.HasPrefix(encoded, versionPrefix) {
+		payload = strings.TrimPrefix(encoded, versionPrefix)
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
 		return nil, fmt.Errorf("decode base64: %w", err)
 	}

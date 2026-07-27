@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/google/uuid"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"golang.org/x/sync/singleflight"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
@@ -23,6 +27,39 @@ import (
 
 // modelCache 模型信息缓存（TTL 600s）
 var modelCache = lcommon.NewCache("model", 600*time.Second)
+
+const channelKeyLastUsedInterval = time.Minute
+
+var channelKeyUsage = newChannelKeyUsageTracker()
+
+var oauthRefreshGroup singleflight.Group
+
+type channelKeyUsageTracker struct {
+	mu      sync.Mutex
+	touched map[int64]time.Time
+}
+
+func newChannelKeyUsageTracker() *channelKeyUsageTracker {
+	return &channelKeyUsageTracker{touched: make(map[int64]time.Time)}
+}
+
+func (t *channelKeyUsageTracker) claim(keyID int64, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.touched[keyID]; ok && now.Sub(last) < channelKeyLastUsedInterval {
+		return false
+	}
+	t.touched[keyID] = now
+	return true
+}
+
+func (t *channelKeyUsageTracker) release(keyID int64, claimedAt time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.touched[keyID]; ok && last.Equal(claimedAt) {
+		delete(t.touched, keyID)
+	}
+}
 
 // tenantGroupModelCache 租户分组模型集合缓存（通过 lcommon.TenantGroupModelCache 共享）
 // 实际缓存实例在 lcommon 包中，admin 和 relay 共用
@@ -58,7 +95,7 @@ func (p *DataProviderImpl) ValidateApiKey(ctx context.Context, rawKey string) (*
 
 // GetChannelForModel 实现 DataProvider.GetChannelForModel
 // 使用调度引擎：亲和性优先 → 租户模型权限 → 渠道范围过滤 → 优先级+权重选择 → 健康度过滤
-func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
+func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
 	// 检查租户模型权限和渠道范围
 	enabled, channelScope, err := p.CheckTenantModelAccess(ctx, tenantID, modelName)
 	if err != nil {
@@ -68,90 +105,19 @@ func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, use
 		return nil, common.ErrTenantModelNotEnabled
 	}
 
-	// 亲和性查找：优先使用上次成功的渠道，保持会话连续性
-	if preferredChannelID, ok := scheduler.GetGlobalAffinity().Get(tenantID, userID, modelName); ok {
-		if selection, err := p.tryAffinityChannel(ctx, tenantID, modelName, preferredChannelID, channelScope, excludeChannelIDs); err == nil && selection != nil {
-			return selection, nil
-		}
-		// 亲和性渠道不可用，清除记录，继续正常调度
-		scheduler.GetGlobalAffinity().Delete(tenantID, userID, modelName)
-	}
-
-	return p.selectChannelFromDB(ctx, tenantID, modelName, channelScope, excludeChannelIDs)
+	return p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
 }
 
-// tryAffinityChannel 尝试使用亲和性渠道
-func (p *DataProviderImpl) tryAffinityChannel(ctx context.Context, tenantID int64, modelName string, preferredChannelID int64, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	// 检查是否在排除列表中
-	for _, id := range excludeChannelIDs {
-		if id == preferredChannelID {
-			return nil, common.ErrChannelUnavailable
-		}
-	}
+func (p *DataProviderImpl) SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {
+	setAffinity(ctx, tenantID, userID, apiKeyID, modelName, channelID)
+}
 
-	// 检查渠道范围
-	if len(channelScope) > 0 {
-		found := false
-		for _, id := range channelScope {
-			if id == preferredChannelID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, common.ErrChannelUnavailable
-		}
-	}
-
-	type channelRow struct {
-		ChannelID      int64  `json:"channel_id"`
-		ChannelName    string `json:"channel_name"`
-		ChannelType    int    `json:"channel_type"`
-		BaseURL        string `json:"base_url"`
-		UpstreamModel  string `json:"upstream_model"`
-		MaxConcurrency int    `json:"max_concurrency"`
-		Settings       string `json:"settings"`
-	}
-
-	var ch *channelRow
-	err := dao.ChnChannels.Ctx(ctx).As("c").
-		LeftJoin("chn_abilities a ON a.channel_id = c.id").
-		Where("c.id", preferredChannelID).
-		Where("c.status", "active").
-		Where("a.model_name", modelName).
-		Where("a.enabled", true).
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.max_concurrency, c.settings").
-		Scan(&ch)
-	if err != nil || ch == nil {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	key, err := getChannelKey(ctx, ch.ChannelID)
-	if err != nil || key == "" {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	settings := ParseChannelSettings(ch.Settings)
-	upstreamModel := ch.UpstreamModel
-	if upstreamModel == "" {
-		upstreamModel = modelName
-	}
-
-	return &common.ChannelSelection{
-		ChannelID:         ch.ChannelID,
-		ChannelType:       ch.ChannelType,
-		ChannelName:       ch.ChannelName,
-		BaseURL:           ch.BaseURL,
-		ApiKey:            key,
-		UpstreamModelName: upstreamModel,
-		IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-		MaxConcurrency:    ch.MaxConcurrency,
-		Settings:          settings,
-	}, nil
+func (p *DataProviderImpl) DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
+	deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
 }
 
 // selectChannelFromDB 正常渠道调度（优先级+权重+健康度）
-func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
+func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
 	type channelRow struct {
 		ChannelID           int64    `json:"channel_id"`
 		ChannelName         string   `json:"channel_name"`
@@ -172,9 +138,7 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		Where("a.model_name", modelName).
 		Where("a.enabled", true).
 		Where("c.status", "active").
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures").
-		OrderDesc("c.priority").
-		OrderDesc("c.weight")
+		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures")
 
 	// 渠道范围过滤
 	if len(channelScope) > 0 {
@@ -195,17 +159,22 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 		return nil, common.ErrChannelUnavailable
 	}
 
-	// 尝试按 last_used_at 选择最早使用的 Key
-	for _, ch := range channels {
-		key, err := getChannelKey(ctx, ch.ChannelID)
-		if err == nil && key != "" {
-			settings := ParseChannelSettings(ch.Settings)
-
+	if !lcommon.Config().GetBool(ctx, "channel_scheduler_v2_enabled") {
+		sort.SliceStable(channels, func(i, j int) bool {
+			if channels[i].Priority == channels[j].Priority {
+				return channels[i].Weight > channels[j].Weight
+			}
+			return channels[i].Priority > channels[j].Priority
+		})
+		for _, ch := range channels {
+			key, keyErr := getChannelKey(ctx, ch.ChannelID)
+			if keyErr != nil || key == "" {
+				continue
+			}
 			upstreamModel := ch.UpstreamModel
 			if upstreamModel == "" {
 				upstreamModel = modelName
 			}
-
 			return &common.ChannelSelection{
 				ChannelID:         ch.ChannelID,
 				ChannelType:       ch.ChannelType,
@@ -215,12 +184,116 @@ func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID int
 				UpstreamModelName: upstreamModel,
 				IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
 				MaxConcurrency:    ch.MaxConcurrency,
-				Settings:          settings,
+				Settings:          ParseChannelSettings(ch.Settings),
+				SelectionReason:   "legacy",
+				Priority:          ch.Priority,
+				Weight:            ch.Weight,
+				HealthScore:       100,
 			}, nil
 		}
+		return nil, common.ErrChannelUnavailable
+	}
+
+	candidates := make([]scheduler.ChannelCandidate, 0, len(channels))
+	for _, ch := range channels {
+		healthScore := 100.0
+		if ch.HealthScore != nil {
+			healthScore = *ch.HealthScore
+		}
+		upstreamModel := ch.UpstreamModel
+		if upstreamModel == "" {
+			upstreamModel = modelName
+		}
+		candidates = append(candidates, scheduler.ChannelCandidate{
+			ChannelID:      ch.ChannelID,
+			ChannelType:    ch.ChannelType,
+			ChannelName:    ch.ChannelName,
+			BaseURL:        ch.BaseURL,
+			Priority:       ch.Priority,
+			Weight:         ch.Weight,
+			HealthScore:    healthScore,
+			UpstreamModel:  upstreamModel,
+			IsModelMapped:  ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
+			Settings:       ParseChannelSettings(ch.Settings),
+			MaxConcurrency: ch.MaxConcurrency,
+		})
+	}
+
+	preferredChannelID, _ := getAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+	_, seed := affinityIdentity(tenantID, userID, apiKeyID, modelName)
+	bucketSeconds := int64(affinityTTL(ctx).Seconds())
+	seed += ":" + strconv.FormatInt(time.Now().Unix()/bucketSeconds, 10)
+
+	for len(candidates) > 0 {
+		var result *scheduler.SchedulerResult
+		if affinityEnabled(ctx) {
+			result = scheduler.SelectStable(candidates, preferredChannelID, seed)
+		} else {
+			result = scheduler.Select(candidates)
+		}
+		if result == nil {
+			break
+		}
+		affinityHit := preferredChannelID > 0 && result.ChannelID == preferredChannelID
+		preserveAffinity := false
+		if preferredChannelID > 0 && !affinityHit {
+			if containsChannelID(excludeChannelIDs, preferredChannelID) {
+				preserveAffinity = true
+			} else {
+				deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+				preferredChannelID = 0
+			}
+		}
+
+		key, keyErr := getChannelKey(ctx, result.ChannelID)
+		if keyErr == nil && key != "" {
+			reason := "weighted"
+			if affinityHit {
+				reason = "affinity"
+			}
+			return &common.ChannelSelection{
+				ChannelID:         result.ChannelID,
+				ChannelType:       result.ChannelType,
+				ChannelName:       result.ChannelName,
+				BaseURL:           result.BaseURL,
+				ApiKey:            key,
+				UpstreamModelName: result.UpstreamModelName,
+				IsModelMapped:     result.IsModelMapped,
+				MaxConcurrency:    result.MaxConcurrency,
+				Settings:          result.Settings,
+				SelectionReason:   reason,
+				PreserveAffinity:  preserveAffinity,
+				Priority:          result.Priority,
+				Weight:            result.Weight,
+				HealthScore:       result.HealthScore,
+			}, nil
+		}
+		if affinityHit {
+			deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
+			preferredChannelID = 0
+		}
+		candidates = removeChannelCandidate(candidates, result.ChannelID)
 	}
 
 	return nil, common.ErrChannelUnavailable
+}
+
+func containsChannelID(channelIDs []int64, channelID int64) bool {
+	for _, id := range channelIDs {
+		if id == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeChannelCandidate(candidates []scheduler.ChannelCandidate, channelID int64) []scheduler.ChannelCandidate {
+	for i := range candidates {
+		if candidates[i].ChannelID == channelID {
+			return append(candidates[:i], candidates[i+1:]...)
+		}
+	}
+	return candidates
 }
 
 // CheckTenantModelAccess 实现 DataProvider.CheckTenantModelAccess
@@ -1013,26 +1086,19 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 		return "", common.ErrChannelUnavailable
 	}
 
-	// 更新最后使用时间（用于监控）
-	if _, err := dao.ChnChannelKeys.Ctx(ctx).
-		Where("id", key.ID).
-		Data(do.ChnChannelKeys{LastUsedAt: gtime.Now()}).
-		Update(); err != nil {
-		g.Log().Debugf(ctx, "[DataProvider] update channel key LastUsedAt failed: keyID=%d, err=%v", key.ID, err)
-	}
-
 	encKey := GetEncryptionKey()
 	decrypted, err := uc.DecryptString(encKey, key.EncryptedKey)
 	if err != nil {
 		return "", err
 	}
+	touchChannelKeyLastUsed(ctx, key.ID)
 
 	// OAuth 按需刷新
 	if key.KeyType == "oauth" && loauth.IsOAuthKeyData(decrypted) {
 		var oauthData loauth.OAuthKeyData
 		if err := json.Unmarshal([]byte(decrypted), &oauthData); err == nil {
 			if oauthData.ExpiresAt > 0 && time.Now().Unix() > oauthData.ExpiresAt-300 {
-				refreshed, refreshErr := refreshOAuthKey(ctx, key.ID, &oauthData, encKey)
+				refreshed, refreshErr := refreshOAuthKey(ctx, key.ID, encKey)
 				if refreshErr != nil {
 					g.Log().Warningf(ctx, "[getChannelKey] OAuth refresh failed for key %d: %v", key.ID, refreshErr)
 				} else if refreshed != "" {
@@ -1046,10 +1112,103 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	return decrypted, nil
 }
 
+func touchChannelKeyLastUsed(ctx context.Context, keyID int64) {
+	now := time.Now()
+	if !channelKeyUsage.claim(keyID, now) {
+		return
+	}
+
+	_, err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("last_used_at IS NULL OR last_used_at < ?", now.Add(-channelKeyLastUsedInterval)).
+		Data(do.ChnChannelKeys{LastUsedAt: gtime.New(now)}).
+		Update()
+	if err != nil {
+		channelKeyUsage.release(keyID, now)
+		g.Log().Debugf(ctx, "[DataProvider] update channel key LastUsedAt failed: keyID=%d, err=%v", keyID, err)
+	}
+}
+
 // refreshOAuthKey 刷新 OAuth 令牌并更新数据库
-func refreshOAuthKey(ctx context.Context, keyID int64, oauthData *loauth.OAuthKeyData, encKey []byte) (string, error) {
+func refreshOAuthKey(ctx context.Context, keyID int64, encKey []byte) (string, error) {
+	value, err, _ := oauthRefreshGroup.Do(strconv.FormatInt(keyID, 10), func() (any, error) {
+		release, lockErr := acquireOAuthRefreshLock(ctx, keyID)
+		if lockErr != nil {
+			return "", lockErr
+		}
+		defer release()
+		return refreshOAuthKeyLocked(ctx, keyID, encKey)
+	})
+	if err != nil {
+		return "", err
+	}
+	return value.(string), nil
+}
+
+func acquireOAuthRefreshLock(ctx context.Context, keyID int64) (func(), error) {
+	lockKey := fmt.Sprintf("oauth:refresh:lock:%d", keyID)
+	lockValue := uuid.NewString()
+	timeout := time.NewTimer(15 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer timeout.Stop()
+	defer ticker.Stop()
+
+	for {
+		result, err := g.Redis().Do(ctx, "SET", lockKey, lockValue, "NX", "EX", 60)
+		if err != nil {
+			// Redis 故障时仍由 singleflight 提供本进程保护，避免刷新功能完全不可用。
+			g.Log().Warningf(ctx, "[OAuthRefresh] redis lock unavailable for key %d: %v", keyID, err)
+			return func() {}, nil
+		}
+		if !result.IsNil() {
+			return func() {
+				const releaseLua = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0`
+				_, _ = g.Redis().Do(context.Background(), "EVAL", releaseLua, 1, lockKey, lockValue)
+			}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout.C:
+			return nil, fmt.Errorf("timed out waiting for OAuth refresh lock for key %d", keyID)
+		case <-ticker.C:
+		}
+	}
+}
+
+func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (string, error) {
+	var row *struct {
+		EncryptedKey string `json:"encrypted_key"`
+	}
+	if err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("status", "active").
+		Fields("encrypted_key").
+		Scan(&row); err != nil {
+		return "", err
+	}
+	if row == nil {
+		return "", common.ErrChannelUnavailable
+	}
+
+	decrypted, err := uc.DecryptString(encKey, row.EncryptedKey)
+	if err != nil {
+		return "", err
+	}
+	var oauthData loauth.OAuthKeyData
+	if err = json.Unmarshal([]byte(decrypted), &oauthData); err != nil {
+		return "", err
+	}
+	if oauthData.ExpiresAt <= 0 || time.Now().Unix() <= oauthData.ExpiresAt-300 {
+		return decrypted, nil
+	}
+
 	var newToken *loauth.OAuthKeyData
-	var err error
 
 	switch oauthData.Platform {
 	case "claude":
@@ -1103,13 +1262,15 @@ func refreshOAuthKey(ctx context.Context, keyID int64, oauthData *loauth.OAuthKe
 	}
 
 	expiresAt := gtime.NewFromTimeStamp(newToken.ExpiresAt)
-	dao.ChnChannelKeys.Ctx(ctx).
+	_, err = dao.ChnChannelKeys.Ctx(ctx).
 		Where("id", keyID).
 		Data(do.ChnChannelKeys{
 			EncryptedKey:   encrypted,
 			TokenExpiresAt: expiresAt,
-		}).
-		Update()
+		}).Update()
+	if err != nil {
+		return "", err
+	}
 
 	return string(jsonData), nil
 }
@@ -1152,8 +1313,19 @@ func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
 	modelCache.Delete(context.Background(), modelName)
 }
 
-// memberModelCache 成员模型范围缓存（TTL 60s）
+// memberModelCache 成员模型范围缓存（TTL 60s）。
+// 这是该缓存唯一的生产者（Get/Set），tenant 与 open 业务包通过
+// InvalidateMemberModelScopeCache 显式失效本缓存（写操作后调用），
+// 共享 "member_model" 前缀是故意的跨包失效机制，并非命名冲突——
+// 详见 InvalidateMemberModelScopeCache。
 var memberModelCache = lcommon.NewCache("member_model", 60*time.Second)
+
+// InvalidateMemberModelScopeCache 失效指定成员的模型范围缓存。
+// 供 tenant（管理后台改成员模型范围）与 open（开放平台改成员模型范围）在写库后调用，
+// 是 memberModelCache 唯一的跨包失效入口，避免在三处各自重复 "member_model" 前缀字面量。
+func InvalidateMemberModelScopeCache(ctx context.Context, tenantID, userID int64) {
+	memberModelCache.Delete(ctx, fmt.Sprintf("%d:%d", tenantID, userID))
+}
 
 // GetMemberAllowedModelNames 获取成员允许使用的 model_id 列表。
 // 返回 nil 表示不限制（向后兼容），返回空切片表示禁止所有模型（哨兵），返回非空切片表示允许的模型集合。

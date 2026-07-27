@@ -24,36 +24,60 @@ declare module 'axios' {
 const ACCESS_TOKEN_KEY = 'tenant_access_token'
 const REFRESH_TOKEN_KEY = 'tenant_refresh_token'
 const EXPIRES_AT_KEY = 'tenant_token_expires_at'
+const REMEMBER_ME_KEY = 'tenant_remember_me'
 const TOKEN_BUFFER_SECONDS = 60
 
+// Dynamic storage selection based on "remember me" preference
+function getStorage(): Storage {
+  // Check user's "remember me" preference (defaults to true for backward compatibility)
+  const rememberMe = localStorage.getItem(REMEMBER_ME_KEY)
+  return rememberMe === 'false' ? sessionStorage : localStorage
+}
+
+export function setRememberMe(remember: boolean): void {
+  // Store the preference itself in localStorage (so it persists across sessions)
+  localStorage.setItem(REMEMBER_ME_KEY, String(remember))
+}
+
+export function getRememberMe(): boolean {
+  const saved = localStorage.getItem(REMEMBER_ME_KEY)
+  return saved === null ? true : saved === 'true'
+}
+
 export function setTokens(tokens: TokenPair): void {
-  localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
-  localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken)
-  localStorage.setItem(EXPIRES_AT_KEY, String(tokens.expiresAt))
+  const storage = getStorage()
+  storage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
+  storage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken)
+  storage.setItem(EXPIRES_AT_KEY, String(tokens.expiresAt))
 }
 
 export function clearTokens(): void {
+  // Clear from both storages to prevent leftover data
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
   localStorage.removeItem(EXPIRES_AT_KEY)
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(EXPIRES_AT_KEY)
 }
 
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY)
+  // Try localStorage first (persistent), then sessionStorage (temporary)
+  return localStorage.getItem(ACCESS_TOKEN_KEY) || sessionStorage.getItem(ACCESS_TOKEN_KEY)
 }
 
 export function getRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_TOKEN_KEY)
+  return localStorage.getItem(REFRESH_TOKEN_KEY) || sessionStorage.getItem(REFRESH_TOKEN_KEY)
 }
 
 export function getExpiresAt(): number | null {
-  const raw = localStorage.getItem(EXPIRES_AT_KEY)
+  const raw = localStorage.getItem(EXPIRES_AT_KEY) || sessionStorage.getItem(EXPIRES_AT_KEY)
   return raw ? Number(raw) : null
 }
 
 export function shouldRefresh(): boolean {
   const expiresAt = getExpiresAt()
-  if (expiresAt === null) return true
+  if (expiresAt === null) return false  // No token → no need to refresh
   return Date.now() / 1000 + TOKEN_BUFFER_SECONDS >= expiresAt
 }
 

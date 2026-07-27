@@ -25,8 +25,7 @@ func LifecycleCron(ctx context.Context) {
 // CheckTrialExpiry 扫描试用到期
 func CheckTrialExpiry(ctx context.Context) {
 	now := time.Now()
-	var count int
-	_, err := dao.TntTenants.Ctx(ctx).
+	result, err := dao.TntTenants.Ctx(ctx).
 		Where("status", "trial").
 		Where("trial_ends_at IS NOT NULL").
 		Where("trial_ends_at < ?", now).
@@ -39,9 +38,8 @@ func CheckTrialExpiry(ctx context.Context) {
 		g.Log().Errorf(ctx, "[Lifecycle] CheckTrialExpiry: %v", err)
 		return
 	}
-	// Note: RowsAffected not easily available, log generically
-	if count > 0 || true {
-		g.Log().Infof(ctx, "[Lifecycle] CheckTrialExpiry: processed trial expiries")
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		g.Log().Infof(ctx, "[Lifecycle] CheckTrialExpiry: processed %d trial expiries", rows)
 	}
 }
 

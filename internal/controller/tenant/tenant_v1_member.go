@@ -49,3 +49,6 @@ func (c *ControllerV1) TenantMemberApiKeys(ctx context.Context, req *v1.TenantMe
 func (c *ControllerV1) TenantMemberExport(ctx context.Context, req *v1.TenantMemberExportReq) (res *v1.TenantMemberExportRes, err error) {
 	return service.Tenant().ExportMembers(ctx, req)
 }
+func (c *ControllerV1) TenantMemberUnlock(ctx context.Context, req *v1.TenantMemberUnlockReq) (res *v1.TenantMemberUnlockRes, err error) {
+	return service.Tenant().UnlockMember(ctx, req)
+}

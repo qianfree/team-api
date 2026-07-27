@@ -157,9 +157,10 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 		LastLoginAt    *gtime.Time `json:"last_login_at"`
 		LastLoginIp    string      `json:"last_login_ip"`
 		FailedAttempts int         `json:"failed_attempts"`
+		LockedUntil    *gtime.Time `json:"locked_until"`
 		CreatedAt      *gtime.Time `json:"created_at"`
 	}
-	err = m.Fields("tnt_users.id, tnt_users.tenant_id, t.name as tenant_name, t.code as tenant_code, tnt_users.username, tnt_users.email, tnt_users.display_name, tnt_users.role, tnt_users.status, tnt_users.last_login_at, tnt_users.last_login_ip, tnt_users.failed_attempts, tnt_users.created_at").
+	err = m.Fields("tnt_users.id, tnt_users.tenant_id, t.name as tenant_name, t.code as tenant_code, tnt_users.username, tnt_users.email, tnt_users.display_name, tnt_users.role, tnt_users.status, tnt_users.last_login_at, tnt_users.last_login_ip, tnt_users.failed_attempts, tnt_users.locked_until, tnt_users.created_at").
 		OrderDesc("tnt_users.id").
 		Page(page, pageSize).
 		Scan(&members)
@@ -169,6 +170,10 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 
 	items := make([]v1.AdminMemberItem, len(members))
 	for i, m := range members {
+		lockedUntil := ""
+		if m.LockedUntil != nil {
+			lockedUntil = m.LockedUntil.String()
+		}
 		items[i] = v1.AdminMemberItem{
 			ID:             m.Id,
 			TenantID:       m.TenantId,
@@ -182,6 +187,7 @@ func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq)
 			LastLoginAt:    m.LastLoginAt.String(),
 			LastLoginIP:    m.LastLoginIp,
 			FailedAttempts: m.FailedAttempts,
+			LockedUntil:    lockedUntil,
 			CreatedAt:      m.CreatedAt.String(),
 		}
 	}
@@ -311,16 +317,41 @@ func (s *sAdmin) ResetMemberPassword(ctx context.Context, req *v1.AdminMemberRes
 
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", req.Id).
-		Data(do.TntUsers{
-			PasswordHash:   passwordHash,
-			FailedAttempts: 0,
-			LockedUntil:    nil,
+		Data(map[string]interface{}{
+			"password_hash":   passwordHash,
+			"failed_attempts": 0,
+			"locked_until":    nil,
 		}).Update()
 	if err != nil {
 		return nil, err
 	}
 
 	return &v1.AdminMemberResetPasswordRes{NewPassword: newPassword}, nil
+}
+
+// UnlockMember 清除成员的登录锁定状态（平台视角，跨租户）。
+func (s *sAdmin) UnlockMember(ctx context.Context, req *v1.AdminMemberUnlockReq) (*v1.AdminMemberUnlockRes, error) {
+	var user *struct {
+		Id int64 `json:"id"`
+	}
+	err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("成员")
+	}
+
+	_, err = dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Data(map[string]interface{}{
+			"failed_attempts": 0,
+			"locked_until":    nil,
+		}).Update()
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // buildMemberFilters builds the WHERE conditions for member queries.

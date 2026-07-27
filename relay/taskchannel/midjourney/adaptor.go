@@ -99,8 +99,10 @@ func (a *MjAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, request
 	if err != nil {
 		return nil, err
 	}
-	a.BuildRequestHeader(req.Header, info)
-	client := &http.Client{Timeout: 120 * 1e9}
+	if err := a.BuildRequestHeader(req.Header, info); err != nil {
+		return nil, err
+	}
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -148,6 +150,7 @@ func (a *MjAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *common
 func (a *MjAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		UpstreamTaskID string `json:"upstream_task_id"`
+		UseProxy       bool   `json:"use_proxy"`
 	}
 	if err := json.Unmarshal(taskData, &data); err != nil {
 		return nil, fmt.Errorf("mj: invalid task data: %w", err)
@@ -159,7 +162,7 @@ func (a *MjAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Re
 		return nil, err
 	}
 	req.Header.Set("mj-api-secret", apiKey)
-	client := &http.Client{Timeout: 30 * 1e9}
+	client := common.NewPooledClient(30, data.UseProxy)
 	return client.Do(req)
 }
 
@@ -223,7 +226,7 @@ func FetchImage(baseURL, apiKey, upstreamTaskID string) (*http.Response, error) 
 		return nil, err
 	}
 	req.Header.Set("mj-api-secret", apiKey)
-	client := &http.Client{Timeout: 60 * 1e9}
+	client := common.NewPooledClient(60, false)
 	return client.Do(req)
 }
 

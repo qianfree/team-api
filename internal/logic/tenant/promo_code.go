@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -17,6 +16,15 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 )
 
+// promoValidationResult 是优惠码校验的类型化结果，替代原先 map[string]any +
+// 调用方类型断言的写法（P2-5：消除类型不安全）。
+type promoValidationResult struct {
+	PromoCodeID int64   // 优惠码 ID
+	Type        string  // 优惠码类型（percentage / fixed）
+	Discount    float64 // 折扣金额
+	FinalAmount float64 // 折后金额
+}
+
 // ValidatePromoCode 校验优惠码并返回折扣金额
 func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
@@ -25,10 +33,10 @@ func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidateP
 		return nil, err
 	}
 	return &v1.TenantValidatePromoCodeRes{
-		PromoCodeId: result["promo_code_id"].(int64),
-		Type:        result["type"].(string),
-		Discount:    result["discount"].(float64),
-		FinalAmount: result["final_amount"].(float64),
+		PromoCodeId: result.PromoCodeID,
+		Type:        result.Type,
+		Discount:    result.Discount,
+		FinalAmount: result.FinalAmount,
 	}, nil
 }
 
@@ -59,7 +67,7 @@ func applyPromoCode(ctx context.Context, tenantID int64, code string, orderID in
 		TenantId:       tenantID,
 		OrderId:        orderID,
 		UserId:         0,
-		DiscountAmount: result["discount"],
+		DiscountAmount: result.Discount,
 	})
 	if err != nil {
 		return err
@@ -78,7 +86,7 @@ func applyPromoCode(ctx context.Context, tenantID int64, code string, orderID in
 }
 
 // validatePromoCodeInternal 校验优惠码内部方法
-func validatePromoCodeInternal(ctx context.Context, tenantID int64, code string, amount float64) (map[string]any, error) {
+func validatePromoCodeInternal(ctx context.Context, tenantID int64, code string, amount float64) (*promoValidationResult, error) {
 	var promo *struct {
 		ID            int64     `json:"id"`
 		Type          string    `json:"type"`
@@ -146,10 +154,10 @@ func validatePromoCodeInternal(ctx context.Context, tenantID int64, code string,
 		return nil, lcommon.NewBusinessError(500, fmt.Sprintf("未知的优惠码类型: %s", promo.Type))
 	}
 
-	return g.Map{
-		"promo_code_id": promo.ID,
-		"type":          promo.Type,
-		"discount":      discount,
-		"final_amount":  amount - discount,
+	return &promoValidationResult{
+		PromoCodeID: promo.ID,
+		Type:        promo.Type,
+		Discount:    discount,
+		FinalAmount: amount - discount,
 	}, nil
 }

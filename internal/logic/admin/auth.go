@@ -2,9 +2,7 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	do "github.com/qianfree/team-api/internal/model/do"
 	"strings"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
@@ -58,11 +57,27 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	}
 
 	// Check account lockout
-	if user.LockedUntil != nil && time.Now().Before(user.LockedUntil.Time) {
-		remaining := time.Until(user.LockedUntil.Time).Minutes()
-		_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
-		return nil, common.NewBusinessError(consts.CodeAccountLocked,
-			fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+	if user.LockedUntil != nil {
+		if time.Now().Before(user.LockedUntil.Time) {
+			// 仍在锁定期内
+			remaining := time.Until(user.LockedUntil.Time).Minutes()
+			_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "账号已锁定")
+			return nil, common.NewBusinessError(consts.CodeAccountLocked,
+				fmt.Sprintf("账号已被锁定，%d 分钟后重试", int(remaining)))
+		}
+		// 锁定已过期：重置失败计数，给用户重新 5 次机会（方案A）
+		_, err := dao.SysAdminUsers.Ctx(ctx).
+			Where("id", user.Id).
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
+			}).Update()
+		if err != nil {
+			g.Log().Errorf(ctx, "重置管理员锁定状态失败: %v", err)
+		}
+		// 同步更新内存对象，避免后续密码校验仍读到旧的失败计数
+		user.FailedAttempts = 0
+		user.LockedUntil = nil
 	}
 
 	// Verify password
@@ -100,9 +115,9 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	if user.FailedAttempts > 0 {
 		_, err := dao.SysAdminUsers.Ctx(ctx).
 			Where("id", user.Id).
-			Data(do.SysAdminUsers{
-				FailedAttempts: 0,
-				LockedUntil:    nil,
+			Data(map[string]interface{}{
+				"failed_attempts": 0,
+				"locked_until":    nil,
 			}).Update()
 		if err != nil {
 			g.Log().Errorf(ctx, "重置管理员登录失败次数失败: %v", err)
@@ -137,7 +152,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	}
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
-	deviceInfo := extractDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 
 	// Create session with jti
 	jti := common.GenerateJti()
@@ -214,7 +229,7 @@ func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLog
 	common.MarkSessionRevoked(ctx, jti)
 
 	// Delete session from database
-	err := common.RevokeSession(ctx, sessionID)
+	err := common.RevokeSession(ctx, "admin", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +268,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 
 	// Rotate session
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
@@ -285,14 +300,7 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 // ListSessions returns active sessions for the current admin user.
 func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) (*v1.AdminSessionListRes, error) {
 	currentSessionID := common.GetCtxSessionID(ctx)
-	page := req.Page
-	pageSize := req.PageSize
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
 	q := dao.SysSessions.Ctx(ctx).
 		Where("user_type", "admin").
@@ -309,7 +317,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 		q = q.WhereIn("user_id", userIds)
 	}
 	if req.IpAddress != "" {
-		q = q.WhereLike("ip_address", "%"+req.IpAddress+"%")
+		q = q.WhereLike("ip_address", "%"+common.EscapeLikePattern(req.IpAddress)+"%")
 	}
 
 	total, err := q.Count()
@@ -370,14 +378,14 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
 	// Look up session to get jti for Redis revocation
-	sess, err := common.GetSessionByID(ctx, req.Id)
+	sess, err := common.GetSessionByID(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
 	}
 	if sess != nil {
 		common.MarkSessionRevoked(ctx, sess.Jti)
 	}
-	err = common.RevokeSession(ctx, req.Id)
+	err = common.RevokeSession(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -438,22 +446,4 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 	common.RevokeAllSessions(ctx, "admin", userID)
 
 	return nil, nil
-}
-
-// extractDeviceInfo extracts device information from the request and returns it as a JSON string.
-// The sys_sessions.device_info column is JSONB, so this must be valid JSON.
-func extractDeviceInfo(ctx context.Context) string {
-	r := g.RequestFromCtx(ctx)
-	if r == nil {
-		return `{"user_agent":"unknown"}`
-	}
-	ua := r.Header.Get("User-Agent")
-	if len(ua) > 500 {
-		ua = ua[:500]
-	}
-	if ua == "" {
-		ua = "unknown"
-	}
-	b, _ := json.Marshal(map[string]string{"user_agent": ua})
-	return string(b)
 }

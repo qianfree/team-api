@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/shopspring/decimal"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -83,7 +85,7 @@ func processAutoRenew(ctx context.Context, subscriptionID, tenantID, planID int6
 
 	// 查套餐价格并更新订单金额
 	var plan *struct {
-		MonthlyPrice float64 `json:"monthly_price"`
+		MonthlyPrice decimal.Decimal `json:"monthly_price"`
 	}
 	dao.PlnPlans.Ctx(ctx).
 		Where("id", planID).
@@ -94,11 +96,12 @@ func processAutoRenew(ctx context.Context, subscriptionID, tenantID, planID int6
 		return
 	}
 
+	amount := billing.InexactFloat64(plan.MonthlyPrice)
 	dao.OrdOrders.Ctx(ctx).
 		Where("id", orderID).
 		Data(do.OrdOrders{
-			Amount:      plan.MonthlyPrice,
-			FinalAmount: plan.MonthlyPrice,
+			Amount:      amount,
+			FinalAmount: amount,
 		}).Update()
 
 	// 标记为已支付（自动续费默认成功）

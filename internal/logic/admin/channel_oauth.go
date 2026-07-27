@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -259,45 +260,48 @@ func createOAuthChannelAndKey(ctx context.Context, oauthData *oauth.OAuthKeyData
 
 	baseURL := platformDefaultBaseURL[platform]
 
-	// 创建渠道
-	channelID, err = dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
-		Name:     name,
-		Type:     channelType,
-		BaseUrl:  baseURL,
-		Status:   "active",
-		Priority: 10,
-		Weight:   100,
-	})
-	if err != nil {
-		return 0, 0, gerror.Wrap(err, "创建渠道失败")
-	}
-
-	// 序列化 + 加密 OAuth 凭证
+	// 序列化 + 加密 OAuth 凭证（事务外，失败无需回滚任何写入）
 	encKey := relayLogic.GetEncryptionKey()
 	jsonData, err := json.Marshal(oauthData)
 	if err != nil {
 		return 0, 0, gerror.Wrap(err, "序列化 OAuth 凭证失败")
 	}
-
 	encrypted, err := crypto.EncryptString(encKey, string(jsonData))
 	if err != nil {
 		return 0, 0, gerror.Wrap(err, "加密 OAuth 凭证失败")
 	}
-
 	// 计算过期时间
 	expiresAt := gtime.NewFromTimeStamp(oauthData.ExpiresAt)
 
-	// 创建密钥
-	keyID, err = dao.ChnChannelKeys.Ctx(ctx).InsertAndGetId(do.ChnChannelKeys{
-		ChannelId:      channelID,
-		Name:           keyName,
-		EncryptedKey:   encrypted,
-		Status:         "active",
-		KeyType:        "oauth",
-		TokenExpiresAt: expiresAt,
+	// 渠道 + 密钥同事务创建：密钥插入失败回滚渠道，避免留下没有任何 Key 的孤儿 OAuth 渠道。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		var e error
+		channelID, e = dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
+			Name:     name,
+			Type:     channelType,
+			BaseUrl:  baseURL,
+			Status:   "active",
+			Priority: 10,
+			Weight:   100,
+		})
+		if e != nil {
+			return gerror.Wrap(e, "创建渠道失败")
+		}
+		keyID, e = dao.ChnChannelKeys.Ctx(ctx).InsertAndGetId(do.ChnChannelKeys{
+			ChannelId:      channelID,
+			Name:           keyName,
+			EncryptedKey:   encrypted,
+			Status:         "active",
+			KeyType:        "oauth",
+			TokenExpiresAt: expiresAt,
+		})
+		if e != nil {
+			return gerror.Wrap(e, "创建密钥失败")
+		}
+		return nil
 	})
 	if err != nil {
-		return 0, 0, gerror.Wrap(err, "创建密钥失败")
+		return 0, 0, err
 	}
 
 	g.Log().Infof(ctx, "[OAuth] 创建 OAuth 渠道: platform=%s, channel_id=%d, key_id=%d, email=%s",

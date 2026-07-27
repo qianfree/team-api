@@ -66,8 +66,8 @@ func TestGenerateBackupCodes(t *testing.T) {
 
 	seen := make(map[string]bool)
 	for _, c := range codes {
-		if len(c) != 12 { // 6 bytes -> 12 hex chars
-			t.Errorf("code %q length = %d, want 12 hex chars", c, len(c))
+		if len(c) != 16 { // 8 bytes -> 16 hex chars (64-bit entropy)
+			t.Errorf("code %q length = %d, want 16 hex chars", c, len(c))
 		}
 		if _, err := hex.DecodeString(c); err != nil {
 			t.Errorf("code %q is not valid hex: %v", c, err)

@@ -107,10 +107,10 @@ func (s *sTenant) ResetPassword(ctx context.Context, req *v1.TenantResetPassword
 	// Update password
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", user.Id).
-		Data(do.TntUsers{
-			PasswordHash:   passwordHash,
-			FailedAttempts: 0,
-			LockedUntil:    nil,
+		Data(map[string]interface{}{
+			"password_hash":   passwordHash,
+			"failed_attempts": 0,
+			"locked_until":    nil,
 		}).Update()
 	if err != nil {
 		return nil, err

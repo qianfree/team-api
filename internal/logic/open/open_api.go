@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -15,6 +14,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/open/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -24,8 +24,6 @@ import (
 )
 
 type sOpen struct{}
-
-var openMemberModelCache = common.NewCache("member_model", 60*time.Second)
 
 func getProjectApiKeyPrefixes(ctx context.Context, tenantID, projectID int64) ([]string, error) {
 	type keyRow struct {
@@ -375,8 +373,9 @@ func (s *sOpen) OpenMemberModelsUpdate(ctx context.Context, req *v1.OpenMemberMo
 		return nil, err
 	}
 
-	cacheKey := fmt.Sprintf("%d:%d", tenantID, req.Id)
-	openMemberModelCache.Delete(ctx, cacheKey)
+	// 失效该成员的模型范围缓存（生产者在 relay.provider，统一经 relay 入口失效，
+	// 不在此重复声明同前缀缓存，避免「同名前缀」被误判为命名冲突）。
+	relay.InvalidateMemberModelScopeCache(ctx, tenantID, req.Id)
 
 	return nil, nil
 }
@@ -459,6 +458,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 	if quotaLimit < 0 {
 		quotaLimit = 0
 	}
+	quotaLimitDecimal := billing.NewFromFloat(quotaLimit)
 
 	result, err := dao.ApiKeys.Ctx(ctx).Data(do.ApiKeys{
 		TenantId:     tenantID,
@@ -467,7 +467,7 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 		KeyPrefix:    prefix,
 		Scope:        "full",
 		Status:       "active",
-		TotalQuota:   quotaLimit,
+		TotalQuota:   &quotaLimitDecimal,
 		KeyType:      "project",
 	}).Insert()
 	if err != nil {
@@ -549,22 +549,25 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		pageSize = 20
 	}
 
-	m := dao.BilUsageLogs.Ctx(ctx).Where("tenant_id", tenantID)
-	m = m.Where("created_at >= ?", req.StartDate+" 00:00:00")
-	m = m.Where("created_at <= ?", req.EndDate+" 23:59:59")
+	m := dao.BilUsageLogs.Ctx(ctx).
+		As("u").
+		Where("u.tenant_id", tenantID).
+		Where("u.created_at >= ?", req.StartDate+" 00:00:00").
+		Where("u.created_at <= ?", req.EndDate+" 23:59:59")
 
 	selectFields := ""
 	groupBy := ""
 	switch req.GroupBy {
 	case "model":
-		selectFields = "model_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "model_name"
+		selectFields = "u.model_name, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "u.model_name"
 	case "key":
-		selectFields = "key_prefix as key_name, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "key_prefix"
+		m = m.LeftJoin("api_keys", "ak", "u.api_key_id = ak.id AND u.tenant_id = ak.tenant_id")
+		selectFields = "COALESCE(ak.key_prefix, '') as key_name, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "COALESCE(ak.key_prefix, '')"
 	default:
-		selectFields = "DATE(created_at) as date, COUNT(*) as request_count, SUM(input_tokens) as prompt_tokens, SUM(output_tokens) as completion_tokens, SUM(input_tokens+output_tokens) as total_tokens, SUM(actual_cost) as cost"
-		groupBy = "DATE(created_at)"
+		selectFields = "DATE(u.created_at) as date, COUNT(*) as request_count, SUM(u.input_tokens) as prompt_tokens, SUM(u.output_tokens) as completion_tokens, SUM(u.input_tokens+u.output_tokens) as total_tokens, SUM(u.actual_cost) as cost"
+		groupBy = "DATE(u.created_at)"
 	}
 
 	type usageRow struct {
@@ -578,8 +581,13 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		Cost             float64 `json:"cost"`
 	}
 
+	total, err := m.Group(groupBy).Count()
+	if err != nil {
+		return nil, err
+	}
+
 	var rows []usageRow
-	err := m.Fields(selectFields).Group(groupBy).OrderDesc(groupBy).Page(page, pageSize).Scan(&rows)
+	err = m.Fields(selectFields).Group(groupBy).OrderDesc(groupBy).Page(page, pageSize).Scan(&rows)
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +612,7 @@ func (s *sOpen) OpenUsageQuery(ctx context.Context, req *v1.OpenUsageQueryReq) (
 		items = append(items, item)
 	}
 
-	return &v1.OpenUsageQueryRes{List: items, Total: len(items), Page: page, PageSize: pageSize}, nil
+	return &v1.OpenUsageQueryRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 // ============================================================
@@ -780,7 +788,8 @@ func (s *sOpen) OpenProjectCreate(ctx context.Context, req *v1.OpenProjectCreate
 	}
 
 	if req.Budget > 0 {
-		insertData.Budget = req.Budget
+		budgetDecimal := billing.NewFromFloat(req.Budget)
+		insertData.Budget = &budgetDecimal
 	}
 
 	result, err := dao.TntProjects.Ctx(ctx).Data(insertData).Insert()
@@ -903,7 +912,8 @@ func (s *sOpen) OpenProjectUpdate(ctx context.Context, req *v1.OpenProjectUpdate
 	}
 	if req.Budget != nil {
 		if *req.Budget > 0 {
-			data.Budget = *req.Budget
+			budgetDecimal := billing.NewFromFloat(*req.Budget)
+			data.Budget = &budgetDecimal
 		}
 		hasUpdate = true
 	}

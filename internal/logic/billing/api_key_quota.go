@@ -40,18 +40,29 @@ func CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float
 }
 
 // IncrApiKeyQuotaUsed increments an API key's used quota after settlement.
+// The limit check and increment are one statement so concurrent settlements cannot
+// both commit updates that push used_quota beyond total_quota.
 func IncrApiKeyQuotaUsed(ctx context.Context, apiKeyID int64, amount float64) {
 	if apiKeyID <= 0 || amount <= 0 {
 		return
 	}
 
-	go func() {
-		bgCtx := context.Background()
-		_, err := g.DB().Exec(bgCtx,
-			"UPDATE api_keys SET used_quota = COALESCE(used_quota, 0) + $1, updated_at = $2 WHERE id = $3",
-			amount, time.Now(), apiKeyID)
-		if err != nil {
-			g.Log().Errorf(bgCtx, "api_key_quota: incr db failed apiKey=%d amount=%f: %v", apiKeyID, amount, err)
-		}
-	}()
+	result, err := g.DB().Exec(ctx,
+		`UPDATE api_keys
+		 SET used_quota = COALESCE(used_quota, 0) + $1, updated_at = $2
+		 WHERE id = $3
+		   AND (COALESCE(total_quota, 0) <= 0 OR COALESCE(used_quota, 0) + $1 <= total_quota)`,
+		amount, time.Now(), apiKeyID)
+	if err != nil {
+		g.Log().Errorf(ctx, "api_key_quota: atomic incr failed apiKey=%d amount=%f: %v", apiKeyID, amount, err)
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		g.Log().Errorf(ctx, "api_key_quota: inspect incr result failed apiKey=%d: %v", apiKeyID, err)
+		return
+	}
+	if affected == 0 {
+		g.Log().Warningf(ctx, "api_key_quota: settlement increment rejected by quota limit apiKey=%d amount=%f", apiKeyID, amount)
+	}
 }

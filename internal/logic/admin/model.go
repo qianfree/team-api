@@ -11,10 +11,12 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -137,6 +139,39 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		pricingMap[p.ModelId] = p
 	}
 
+	// 批量查询渠道支持情况
+	type channelAbilityRow struct {
+		ModelName   string `json:"model_name"`
+		ChannelID   int64  `json:"channel_id"`
+		ChannelName string `json:"channel_name"`
+		Type        int    `json:"type"`
+	}
+	modelIdStrs := make([]string, 0, len(models))
+	for _, m := range models {
+		modelIdStrs = append(modelIdStrs, m.ModelId)
+	}
+	var channelRows []channelAbilityRow
+	if len(modelIdStrs) > 0 {
+		err = dao.ChnAbilities.Ctx(ctx).
+			LeftJoin("chn_channels", "chn_channels.id = chn_abilities.channel_id").
+			Fields("chn_abilities.model_name, chn_abilities.channel_id, chn_channels.name AS channel_name, chn_channels.type").
+			Where("chn_abilities.model_name IN (?)", modelIdStrs).
+			Where("chn_abilities.enabled", true).
+			Where("chn_channels.status", "active").
+			Scan(&channelRows)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+	}
+	channelMap := make(map[string][]v1.ModelChannelInfo, len(channelRows))
+	for _, r := range channelRows {
+		channelMap[r.ModelName] = append(channelMap[r.ModelName], v1.ModelChannelInfo{
+			ChannelID:   r.ChannelID,
+			ChannelName: r.ChannelName,
+			Type:        r.Type,
+		})
+	}
+
 	list := make([]v1.ModelItem, 0, len(models))
 	for _, m := range models {
 		item := v1.ModelItem{
@@ -170,6 +205,10 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			if p.PerRequestPrice != nil {
 				item.PerRequestPrice = *p.PerRequestPrice
 			}
+		}
+		// 填充可用渠道
+		if chs, ok := channelMap[m.ModelId]; ok {
+			item.Channels = chs
 		}
 		list = append(list, item)
 	}
@@ -433,16 +472,23 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		}
 
 		for _, item := range req.Items {
+			// API 边界 float64 → DO decimal 转换
+			var perRequestPriceDecimal *decimal.Decimal
+			if item.PerRequestPrice != nil {
+				d := billing.NewFromFloat(*item.PerRequestPrice)
+				perRequestPriceDecimal = &d
+			}
+
 			if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 				ModelId:            req.ModelID,
 				BillingMode:        item.BillingMode,
 				MinTokens:          item.MinTokens,
 				MaxTokens:          item.MaxTokens,
-				InputPrice:         item.InputPrice,
-				OutputPrice:        item.OutputPrice,
-				PerRequestPrice:    item.PerRequestPrice,
-				CacheReadPrice:     item.CacheReadPrice,
-				CacheCreationPrice: item.CacheCreationPrice,
+				InputPrice:         billing.NewFromFloat(item.InputPrice),
+				OutputPrice:        billing.NewFromFloat(item.OutputPrice),
+				PerRequestPrice:    perRequestPriceDecimal,
+				CacheReadPrice:     billing.NewFromFloat(item.CacheReadPrice),
+				CacheCreationPrice: billing.NewFromFloat(item.CacheCreationPrice),
 			}); err != nil {
 				return err
 			}
@@ -506,13 +552,15 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 		return source
 	}
 
-	inputPrice := entry.InputCostPerToken * 1_000_000
-	outputPrice := entry.OutputCostPerToken * 1_000_000
-	cacheReadPrice := entry.CacheReadInputTokenCost * 1_000_000
-	cacheCreationPrice := entry.CacheCreationInputTokenCost * 1_000_000
+	// 修复定价单位转换：用 decimal 避免裸浮点乘法，将每 token 价格转换为每百万 token 价格
+	million := decimal.NewFromInt(1_000_000)
+	inputPrice := billing.RoundMoney(decimal.NewFromFloat(entry.InputCostPerToken).Mul(million))
+	outputPrice := billing.RoundMoney(decimal.NewFromFloat(entry.OutputCostPerToken).Mul(million))
+	cacheReadPrice := billing.RoundMoney(decimal.NewFromFloat(entry.CacheReadInputTokenCost).Mul(million))
+	cacheCreationPrice := billing.RoundMoney(decimal.NewFromFloat(entry.CacheCreationInputTokenCost).Mul(million))
 
 	billingMode := "token"
-	if entry.Mode == "image_generation" && entry.OutputCostPerImage > 0 && inputPrice == 0 && outputPrice == 0 {
+	if entry.Mode == "image_generation" && entry.OutputCostPerImage > 0 && inputPrice.IsZero() && outputPrice.IsZero() {
 		billingMode = "per_request"
 	}
 
@@ -522,10 +570,10 @@ func fetchLiteLLMSource(ctx context.Context, modelName string) *v1.OfficialPrici
 	source.MaxContext = entry.MaxInputTokens
 	source.MaxOutput = entry.MaxOutputTokens
 	source.Pricing = &v1.OfficialPricingItem{
-		InputPrice:         roundTo2(inputPrice),
-		OutputPrice:        roundTo2(outputPrice),
-		CacheReadPrice:     roundTo2(cacheReadPrice),
-		CacheCreationPrice: roundTo2(cacheCreationPrice),
+		InputPrice:         billing.InexactFloat64(inputPrice),
+		OutputPrice:        billing.InexactFloat64(outputPrice),
+		CacheReadPrice:     billing.InexactFloat64(cacheReadPrice),
+		CacheCreationPrice: billing.InexactFloat64(cacheCreationPrice),
 		BillingMode:        billingMode,
 	}
 

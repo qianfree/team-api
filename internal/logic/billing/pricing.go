@@ -216,9 +216,10 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 3.5 级别折扣 fallback：当租户×模型维度未设置倍率时，使用租户级别的 price_multiplier
 	if tenantMultiplier == 1.0 {
 		levelMultiplier := GetLevelPriceMultiplier(ctx, tenantID)
-		if levelMultiplier > 0 && levelMultiplier < 1.0 {
-			tenantMultiplier = levelMultiplier
-			discountRatio = levelMultiplier
+		levelMultiplierFloat := InexactFloat64(levelMultiplier)
+		if levelMultiplierFloat > 0 && levelMultiplierFloat < 1.0 {
+			tenantMultiplier = levelMultiplierFloat
+			discountRatio = levelMultiplierFloat
 		}
 	}
 
@@ -227,6 +228,13 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 或为 pln_plans 增加 billing_discount_ratio 全局折扣字段。
 	// 查询链路：pln_tenant_plans → pln_plans → pln_plan_model_pricing
 	// 定价优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
+
+	// 4.5 模型倍率（占位 = 1.0）
+	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，模型乘数用于按模型
+	// 稀有度/成本动态加价。当前未接入数据来源（mdl_models 暂无 multiplier 字段），
+	// 故恒为 1.0；bil_records.model_multiplier 仍按此值快照，结算链路保持乘法结构
+	// 不变，未来在 mdl_models 增设 multiplier 字段后只需在此处读取即可启用。
+	modelMultiplier := 1.0
 
 	result := &PricingResult{
 		InputPrice:         inputPrice,
@@ -238,7 +246,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		PerRequestPrice:    perRequestPrice,
 		DiscountRatio:      discountRatio,
 		TenantMultiplier:   tenantMultiplier,
-		ModelMultiplier:    1.0,
+		ModelMultiplier:    modelMultiplier,
 		Currency:           "USD",
 		CacheReadPrice:     cacheReadPrice,
 		CacheCreationPrice: cacheCreationPrice,
@@ -282,31 +290,29 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		}
 	}
 
-	// 基础输入费用
-	baseInputCost := computeInputCost(pricing, inputTokens)
+	// 基础输入费用（已改为 decimal）
+	baseInputCostD := computeInputCost(pricing, inputTokens)
 
-	// 输出费用
-	outputCost := computeOutputCost(pricing, outputTokens)
+	// 输出费用（已改为 decimal）
+	outputCostD := computeOutputCost(pricing, outputTokens)
 
 	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 + 各项求和）改用 decimal 精确运算，
 	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
 	million := decimal.NewFromInt(1_000_000)
-	mul := dec(pricing.TenantMultiplier)
+	mul := NewFromFloat(pricing.TenantMultiplier)
 
-	baseInputCostD := dec(baseInputCost)
-	outputCostD := dec(outputCost)
-	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(dec(pricing.CacheReadPrice))
-	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(dec(pricing.CacheCreationPrice))
+	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
+	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreationPrice))
 
 	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
 	subtotalD := baseInputCostD.Add(outputCostD).Add(cacheReadCostD).Add(cacheCreationCostD)
 	totalCostD := subtotalD.Mul(mul)
 
 	return &CostBreakdown{
-		BaseCost:            roundMoney(subtotalD),
-		InputCost:           roundMoney(baseInputCostD.Mul(mul)),
-		OutputCost:          roundMoney(outputCostD.Mul(mul)),
-		TotalCost:           roundMoney(totalCostD),
+		BaseCost:            InexactFloat64(RoundMoney(subtotalD)),
+		InputCost:           InexactFloat64(RoundMoney(baseInputCostD.Mul(mul))),
+		OutputCost:          InexactFloat64(RoundMoney(outputCostD.Mul(mul))),
+		TotalCost:           InexactFloat64(RoundMoney(totalCostD)),
 		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
 		BillingMode:         pricing.BillingMode,
@@ -316,8 +322,8 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		Currency:            pricing.Currency,
 		CacheCreationTokens: cacheCreationTokens,
 		CacheReadTokens:     cacheReadTokens,
-		CacheCreationCost:   roundMoney(cacheCreationCostD.Mul(mul)),
-		CacheReadCost:       roundMoney(cacheReadCostD.Mul(mul)),
+		CacheCreationCost:   InexactFloat64(RoundMoney(cacheCreationCostD.Mul(mul))),
+		CacheReadCost:       InexactFloat64(RoundMoney(cacheReadCostD.Mul(mul))),
 	}
 }
 
@@ -343,19 +349,27 @@ func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, u
 }
 
 // computeInputCost 计算输入费用（token 或 tiered 模式）
-func computeInputCost(pricing *PricingResult, tokens int) float64 {
+// 返回 decimal.Decimal 避免 float64 链式运算误差
+func computeInputCost(pricing *PricingResult, tokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
-		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true)
+		// 阶梯定价仍返回 float64，需要转换
+		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true))
 	}
-	return float64(tokens) / 1_000_000.0 * pricing.InputPrice
+	// token / 1M × 单价，全程 decimal 精确运算
+	million := decimal.NewFromInt(1_000_000)
+	return decimal.NewFromInt(int64(tokens)).Div(million).Mul(NewFromFloat(pricing.InputPrice))
 }
 
 // computeOutputCost 计算输出费用（token 或 tiered 模式）
-func computeOutputCost(pricing *PricingResult, tokens int) float64 {
+// 返回 decimal.Decimal 避免 float64 链式运算误差
+func computeOutputCost(pricing *PricingResult, tokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
-		return calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false)
+		// 阶梯定价仍返回 float64，需要转换
+		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false))
 	}
-	return float64(tokens) / 1_000_000.0 * pricing.OutputPrice
+	// token / 1M × 单价，全程 decimal 精确运算
+	million := decimal.NewFromInt(1_000_000)
+	return decimal.NewFromInt(int64(tokens)).Div(million).Mul(NewFromFloat(pricing.OutputPrice))
 }
 
 // CalculateCostWithUsage 计算实际费用（含 cache token 计费）
@@ -402,7 +416,7 @@ type CostBreakdown struct {
 func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: get model price")
 	}
 
 	// 按次计费：直接用单价
@@ -423,7 +437,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		Fields("max_output_tokens").
 		Scan(&model)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: query model output limit")
 	}
 
 	maxOutput := 4096
@@ -441,7 +455,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, estimatedOutput)
 	if err != nil {
-		return 0.01, nil
+		return 0, gerror.Wrapf(err, "estimate pre-deduct: calculate cost")
 	}
 
 	if breakdown.TotalCost > 1.0 {
@@ -502,7 +516,9 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 		return 0
 	}
 
-	var totalCost float64
+	// 修复阶梯定价循环累加：用 decimal 精确计算避免每次 ÷1M × price 的误差累积
+	million := decimal.NewFromInt(1_000_000)
+	totalCostD := decimal.Zero
 	remaining := int64(tokens)
 
 	for _, tier := range tiers {
@@ -516,7 +532,10 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 		}
 
 		if tier.MaxTokens == nil {
-			totalCost += float64(remaining) / 1_000_000.0 * price
+			// 最后一档：消耗所有剩余 token
+			totalCostD = totalCostD.Add(
+				decimal.NewFromInt(remaining).Div(million).Mul(NewFromFloat(price)),
+			)
 			remaining = 0
 		} else {
 			available := *tier.MaxTokens - tier.MinTokens
@@ -527,10 +546,12 @@ func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bo
 			if useTokens > available {
 				useTokens = available
 			}
-			totalCost += float64(useTokens) / 1_000_000.0 * price
+			totalCostD = totalCostD.Add(
+				decimal.NewFromInt(useTokens).Div(million).Mul(NewFromFloat(price)),
+			)
 			remaining -= useTokens
 		}
 	}
 
-	return totalCost
+	return InexactFloat64(RoundMoney(totalCostD))
 }

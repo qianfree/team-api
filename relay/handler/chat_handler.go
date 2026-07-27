@@ -144,6 +144,9 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		g.Log().Infof(context.Background(), "[RelayError] Client disconnected during stream")
 		return
 	}
+	if responseCommitted(w) {
+		return
+	}
 
 	// adaptor 已直接写入响应体（如 Gemini 原生格式透传），跳过二次写入
 	var prewritten *constant.RelayError
@@ -196,4 +199,13 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		},
 	})
 	_, _ = w.Write(errBody)
+}
+
+type responseCommitter interface {
+	ResponseCommitted() bool
+}
+
+func responseCommitted(w http.ResponseWriter) bool {
+	committer, ok := w.(responseCommitter)
+	return ok && committer.ResponseCommitted()
 }

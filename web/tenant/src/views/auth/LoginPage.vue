@@ -145,7 +145,7 @@ async function handleAdminLogin() {
 		const captchaPayload = useTurnstile.value
 			? { captchaKey: '', captchaX: 0, turnstileToken: turnstileToken.value }
 			: { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
-		const res = await authStore.login(adminForm.email, adminForm.password, 'admin', captchaPayload)
+		const res = await authStore.login(adminForm.email, adminForm.password, 'admin', captchaPayload, adminForm.remember)
 		if (res?.totp_required) {
 			provisionalToken.value = res.provisional_token
 			show2FA.value = true
@@ -189,7 +189,7 @@ async function handleRamLogin() {
 		const captchaPayload = useTurnstile.value
 			? { captchaKey: '', captchaX: 0, turnstileToken: turnstileToken.value }
 			: { captchaKey: captcha.captchaKey, captchaX: captcha.captchaX }
-		const res = await authStore.login(ramForm.account, ramForm.password, 'ram', captchaPayload)
+		const res = await authStore.login(ramForm.account, ramForm.password, 'ram', captchaPayload, ramForm.remember)
 		if (res?.totp_required) {
 			provisionalToken.value = res.provisional_token
 			show2FA.value = true
@@ -375,7 +375,7 @@ async function handleOAuthLogin(provider: string) {
 							type="checkbox"
 							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
 						/>
-						<span class="text-sm text-gray-600">记住登录</span>
+						<span class="text-sm text-gray-600">记住登录状态（7天免登录）</span>
 					</label>
 					<router-link
 						to="/tenant/forgot-password"
@@ -473,7 +473,7 @@ async function handleOAuthLogin(provider: string) {
 							type="checkbox"
 							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
 						/>
-						<span class="text-sm text-gray-600">记住登录</span>
+						<span class="text-sm text-gray-600">记住登录状态（7天免登录）</span>
 					</label>
 					<router-link
 						to="/tenant/forgot-password"

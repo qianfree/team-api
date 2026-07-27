@@ -60,7 +60,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	refreshTokenHash := common.HashRefreshToken(refreshToken)
 
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
-	deviceInfo := extractTenantDeviceInfo(ctx)
+	deviceInfo := common.ExtractDeviceInfo(ctx)
 
 	jti := common.GenerateJti()
 	sessionID, err := common.CreateSession(ctx, "tenant", user.Id, user.TenantId, refreshTokenHash, ipAddress, deviceInfo, jti)
@@ -168,24 +168,7 @@ func (s *sTenant) RegenerateBackupCodes(ctx context.Context, req *v1.Tenant2FARe
 // ConfirmHighRisk generates a confirm token for high-risk operations.
 func (s *sTenant) ConfirmHighRisk(ctx context.Context, req *v1.Tenant2FAConfirmReq) (*v1.Tenant2FAConfirmRes, error) {
 	userID := middleware.GetUserID(ctx)
-
-	enabled, err := common.Is2FAEnabled(ctx, "tenant", userID)
-	if err != nil {
-		return nil, err
-	}
-	if !enabled {
-		return nil, common.NewBusinessError(consts.CodeTotpNotEnabled, consts.MsgTotpNotEnabled)
-	}
-
-	valid, err := common.Verify2FACode(ctx, "tenant", userID, req.Code)
-	if err != nil {
-		return nil, err
-	}
-	if !valid {
-		return nil, common.NewBusinessError(consts.CodeTotpInvalid, consts.MsgTotpInvalid)
-	}
-
-	token, err := common.GenerateConfirmToken(ctx, userID, "tenant")
+	token, err := common.ConfirmHighRisk(ctx, "tenant", userID, req.Code)
 	if err != nil {
 		return nil, err
 	}

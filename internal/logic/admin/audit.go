@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -89,15 +90,38 @@ func (s *sAdmin) UpdateAuditConfig(ctx context.Context, req *v1.AuditConfigUpdat
 
 // queryPage 使用 GoFrame ORM 分页查询，返回 []map[string]any。
 // 使用主库查询审计表（aud_request_logs 之外的审计表数据量小，无需独立库）。
-// 分开调用 Count 和 All 避免 ScanAndCount 对 map[string]any 的 bug。
 func queryPage(ctx context.Context, table, fields, where, orderBy string, page, pageSize int, args ...any) ([]map[string]any, int, error) {
-	mainDB := g.DB()
-	m := mainDB.Ctx(ctx).Model(table).Safe()
+	m := g.DB().Ctx(ctx).Model(table).Safe()
 	if where != "" {
 		m = m.Where(where, args...)
 	}
+	if fields != "" {
+		m = m.Fields(fields)
+	}
+	if orderBy != "" {
+		m = m.Order(orderBy)
+	}
 
-	total, err := m.Count()
+	var items []map[string]any
+	var total int
+	err := m.Page(page, pageSize).ScanAndCount(&items, &total, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	if items == nil {
+		items = []map[string]any{}
+	}
+	return items, total, nil
+}
+
+// queryAuditPage 查询审计表分页数据，自动计数、分页、转换并批量填充关联名称。
+// 用于 ListRequestAuditLogs 和 ContentFilterLogList 的公共分页逻辑。
+func queryAuditPage(ctx context.Context, db gdb.DB, table, fields, where string, args []any, page, pageSize int) ([]map[string]any, int, error) {
+	countM := db.Ctx(ctx).Model(table).Safe()
+	if where != "" {
+		countM = countM.Where(where, args...)
+	}
+	total, err := countM.Count()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -105,19 +129,11 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 		return []map[string]any{}, 0, nil
 	}
 
-	// 重新构建查询（Count 会消耗 Model 状态）
-	q := mainDB.Ctx(ctx).Model(table).Safe()
-	if fields != "" {
-		q = q.Fields(fields)
-	}
+	dataM := db.Ctx(ctx).Model(table).Safe().Fields(fields).OrderDesc("created_at").Page(page, pageSize)
 	if where != "" {
-		q = q.Where(where, args...)
+		dataM = dataM.Where(where, args...)
 	}
-	if orderBy != "" {
-		q = q.Order(orderBy)
-	}
-
-	result, err := q.Page(page, pageSize).All()
+	result, err := dataM.All()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -130,6 +146,8 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 		}
 		items = append(items, m)
 	}
+
+	common.EnrichAuditRecords(ctx, items)
 	return items, total, nil
 }
 
@@ -328,46 +346,12 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	}
 
 	where := strings.Join(conditions, " AND ")
+	auditFields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at"
 
-	// Step 1: 从审计库查询审计记录（不带 JOIN）
-	auditDB := common.GetAuditDB()
-	countM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe()
-	if where != "" {
-		countM = countM.Where(where, args...)
-	}
-	total, err := countM.Count()
+	items, total, err := queryAuditPage(ctx, common.GetAuditDB(), "aud_request_logs", auditFields, where, args, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
-	if total == 0 {
-		return &v1.RequestAuditLogListRes{
-			List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
-		}, nil
-	}
-
-	dataM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe().
-		Fields("id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at").
-		OrderDesc("created_at").
-		Page(page, pageSize)
-	if where != "" {
-		dataM = dataM.Where(where, args...)
-	}
-	result, err := dataM.All()
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]map[string]any, 0, len(result))
-	for _, row := range result {
-		m := make(map[string]any, len(row))
-		for k, v := range row {
-			m[k] = v.Val()
-		}
-		items = append(items, m)
-	}
-
-	// Step 2: 从主库批量查询关联信息并合并
-	common.EnrichAuditRecords(ctx, items)
 
 	return &v1.RequestAuditLogListRes{
 		List:     items,
@@ -545,48 +529,12 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 	}
 
 	where := strings.Join(conditions, " AND ")
+	cfFields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip, filter_mode, matched_words, original_snippet, blocked, created_at"
 
-	// Step 1: 从主库查询内容过滤日志（数据量小，无需独立库）
-	mainDB := g.DB()
-	fields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, client_ip, filter_mode, matched_words, original_snippet, blocked, created_at"
-
-	countM := mainDB.Ctx(ctx).Model("aud_content_filter_logs").Safe()
-	if where != "" {
-		countM = countM.Where(where, args...)
-	}
-	total, err := countM.Count()
+	items, total, err := queryAuditPage(ctx, g.DB(), "aud_content_filter_logs", cfFields, where, args, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
-	if total == 0 {
-		return &v1.ContentFilterLogListRes{
-			List: []map[string]any{}, Total: 0, Page: page, PageSize: pageSize,
-		}, nil
-	}
-
-	dataM := mainDB.Ctx(ctx).Model("aud_content_filter_logs").Safe().
-		Fields(fields).
-		OrderDesc("created_at").
-		Page(page, pageSize)
-	if where != "" {
-		dataM = dataM.Where(where, args...)
-	}
-	result, err := dataM.All()
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]map[string]any, 0, len(result))
-	for _, row := range result {
-		m := make(map[string]any, len(row))
-		for k, v := range row {
-			m[k] = v.Val()
-		}
-		items = append(items, m)
-	}
-
-	// Step 2: 从主库批量查询关联信息并合并
-	common.EnrichAuditRecords(ctx, items)
 
 	return &v1.ContentFilterLogListRes{
 		List:     items,
