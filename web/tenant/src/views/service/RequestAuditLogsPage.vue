@@ -239,10 +239,6 @@ onMounted(() => {
 			</div>
 		<!-- Table -->
 		<div class="card p-0 overflow-hidden">
-			<div class="card-header">
-				<h2 class="text-lg font-semibold text-gray-900">请求记录</h2>
-			</div>
-
 			<!-- Loading -->
 			<div v-if="logsLoading" class="p-8 text-center">
 				<div class="spinner mx-auto mb-3"></div>
@@ -258,7 +254,7 @@ onMounted(() => {
 
 			<!-- Table -->
 			<div v-else>
-				<div class="table-container">
+				<div class="table-container table-container-flush request-audit-table">
 					<table class="table">
 						<thead>
 							<tr>
@@ -273,7 +269,7 @@ onMounted(() => {
 								<th class="min-w-30">审计级别</th>
 								<th class="min-w-25">任务</th>
 								<th class="min-w-30">时间</th>
-								<th class="min-w-20"></th>
+								<th class="audit-action-column">操作</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -314,7 +310,7 @@ onMounted(() => {
 								<td>
 									<span class="text-xs text-gray-500">{{ log.created_at ? new Date(log.created_at).toLocaleString() : '-' }}</span>
 								</td>
-								<td>
+								<td class="audit-action-column">
 									<button class="btn btn-ghost btn-sm text-primary-600" @click="fetchDetail(log.id)">详情</button>
 								</td>
 							</tr>
@@ -323,7 +319,7 @@ onMounted(() => {
 				</div>
 
 				<!-- Pagination -->
-				<div v-if="logTotalPages > 1" class="flex items-center justify-between px-6 py-3 border-t border-gray-100">
+				<div v-if="logTotalPages > 1" class="table-pagination">
 					<span class="text-xs text-gray-500">共 {{ logTotal }} 条记录</span>
 					<div class="flex items-center gap-2">
 						<button
@@ -460,3 +456,45 @@ onMounted(() => {
 		</Teleport>
 	</div>
 </template>
+
+<style scoped>
+.request-audit-table {
+	position: relative;
+}
+
+.request-audit-table .audit-action-column {
+	position: sticky;
+	right: 0;
+	z-index: 3;
+	width: 6rem;
+	min-width: 6rem;
+	text-align: right;
+	box-shadow: -14px 0 24px -20px rgba(55, 65, 105, 0.42);
+}
+
+.request-audit-table .table thead .audit-action-column {
+	z-index: 5;
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
+		linear-gradient(100deg, rgba(63, 163, 247, 0.08), rgba(117, 104, 248, 0.1));
+	backdrop-filter: blur(24px) saturate(1.35);
+	-webkit-backdrop-filter: blur(24px) saturate(1.35);
+}
+
+.request-audit-table .table tbody tr .audit-action-column {
+	background: rgba(251, 252, 255, 0.94);
+	backdrop-filter: blur(22px) saturate(1.25);
+	-webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.request-audit-table .table tbody tr:nth-child(even) .audit-action-column {
+	background: rgba(246, 248, 255, 0.95);
+}
+
+.request-audit-table .table tbody tr:hover .audit-action-column,
+.request-audit-table .table tbody tr:focus-within .audit-action-column {
+	background:
+		linear-gradient(90deg, rgba(235, 247, 255, 0.95), rgba(244, 240, 255, 0.96)),
+		rgba(255, 255, 255, 0.96);
+}
+</style>

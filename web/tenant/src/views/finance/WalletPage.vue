@@ -759,7 +759,7 @@ onBeforeUnmount(() => {
 .balance-hero {
 	position: relative; overflow: hidden;
 	border-radius: 1rem;
-	background: linear-gradient(135deg, #0f766e 0%, #115e59 40%, #042f2e 100%);
+	background: linear-gradient(135deg, #5b6ce0 0%, #4b58c0 40%, #262c5e 100%);
 }
 .balance-hero-bg {
 	position: absolute; inset: 0;
@@ -768,11 +768,11 @@ onBeforeUnmount(() => {
 .balance-hero-orb { position: absolute; border-radius: 9999px; }
 .balance-hero-orb-1 {
 	top: -5rem; right: -4rem; height: 18rem; width: 18rem;
-	background: radial-gradient(circle, rgba(45, 212, 191, 0.15) 0%, transparent 70%);
+	background: radial-gradient(circle, rgba(151, 165, 248, 0.22) 0%, transparent 70%);
 }
 .balance-hero-orb-2 {
 	bottom: -3rem; left: -3rem; height: 14rem; width: 14rem;
-	background: radial-gradient(circle, rgba(94, 234, 212, 0.1) 0%, transparent 70%);
+	background: radial-gradient(circle, rgba(178, 189, 250, 0.16) 0%, transparent 70%);
 }
 .balance-hero-grid {
 	position: absolute; inset: 0;
@@ -849,8 +849,8 @@ onBeforeUnmount(() => {
 }
 .amount-pill:hover { border-color: #d1d5db; color: #111827; }
 .amount-pill-active {
-	border-color: #14b8a6; background-color: #f0fdfa; color: #0f766e;
-	box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.1), 0 0 16px rgba(20, 184, 166, 0.12);
+	border-color: #7b8ff5; background-color: #f2f4ff; color: #4b58c0;
+	box-shadow: 0 0 0 1px rgba(123, 143, 245, 0.1), 0 0 16px rgba(123, 143, 245, 0.12);
 }
 .amount-pill-symbol {
 	font-size: 0.75rem; font-weight: 500;
@@ -867,9 +867,9 @@ onBeforeUnmount(() => {
 }
 .pay-method-card:hover { border-color: #d1d5db; }
 .pay-method-card-active {
-	border-color: #14b8a6;
-	background-color: rgba(240, 253, 250, 0.5);
-	box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.1), 0 0 16px rgba(20, 184, 166, 0.08);
+	border-color: #7b8ff5;
+	background-color: rgba(242, 244, 255, 0.5);
+	box-shadow: 0 0 0 1px rgba(123, 143, 245, 0.1), 0 0 16px rgba(123, 143, 245, 0.08);
 }
 .pay-method-icon {
 	height: 2.25rem; width: 2.25rem; border-radius: 0.5rem;
@@ -887,15 +887,15 @@ onBeforeUnmount(() => {
 	display: flex; align-items: flex-start; gap: 0.5rem;
 	padding: 0.75rem 0.875rem;
 	border-radius: 0.75rem;
-	background-color: #f0fdfa;
-	border: 1px solid #ccfbf1;
+	background-color: #f2f4ff;
+	border: 1px solid #e3e7ff;
 }
 .recharge-note-icon {
 	flex-shrink: 0; margin-top: 0.0625rem;
-	color: #14b8a6;
+	color: #7b8ff5;
 }
 .recharge-note p {
-	font-size: 0.75rem; line-height: 1.5; color: #0f766e;
+	font-size: 0.75rem; line-height: 1.5; color: #4b58c0;
 }
 
 /* ==========================================

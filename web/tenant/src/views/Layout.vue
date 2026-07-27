@@ -20,6 +20,7 @@ const authStore = useTenantAuthStore()
 const sidebarCollapsed = ref(false)
 const mobileOpen = ref(false)
 const userMenuOpen = ref(false)
+const globalSearch = ref('')
 const announcePanelOpen = ref(false)
 const announceDetailItem = ref<any>(null)
 const consoleAnnouncements = ref<any[]>([])
@@ -105,6 +106,18 @@ function toggleUserMenu() {
 
 function closeUserMenu() {
 	userMenuOpen.value = false
+}
+
+function submitGlobalSearch() {
+	const keyword = globalSearch.value.trim().toLowerCase()
+	if (!keyword) return
+	const match = navItems.value.find((item) => item.label.toLowerCase().includes(keyword))
+	if (!match) {
+		toast.info('未找到匹配的功能入口')
+		return
+	}
+	router.push(match.path)
+	globalSearch.value = ''
 }
 
 function toggleAnnouncePanel() {
@@ -229,7 +242,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="min-h-screen bg-gray-50">
+	<div class="min-h-screen overflow-x-hidden">
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
 			<AnnouncementBanner v-if="consoleAnnouncements.length" :announcements="consoleAnnouncements" />
@@ -241,14 +254,15 @@ onBeforeUnmount(() => {
 		<aside
 			class="sidebar"
 			:class="[
-				sidebarCollapsed ? 'w-[72px]' : 'w-64',
-				{ '-translate-x-full lg:translate-x-0': !mobileOpen }
+				sidebarCollapsed ? 'w-[76px]' : 'w-64',
+				{ 'sidebar-mobile-hidden': !mobileOpen }
 			]"
 		>
 			<!-- Sidebar Header -->
 			<div class="sidebar-header">
-				<div class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow bg-gradient-to-br from-primary-500 to-primary-600">
-					<span class="text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
+				<div class="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl shadow-glow bg-gradient-to-br from-blue-400 via-primary-500 to-violet-500">
+					<span class="absolute h-5 w-8 -rotate-12 rounded-[50%] border border-white/60"></span>
+					<span class="relative text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
 				</div>
 				<transition name="fade">
 					<div v-if="!sidebarCollapsed" class="flex min-w-0 flex-col overflow-hidden">
@@ -283,19 +297,16 @@ onBeforeUnmount(() => {
 			</nav>
 
 			<!-- Sidebar Footer -->
-			<div class="mt-auto border-t border-gray-100 p-3">
+			<div class="mt-auto p-3">
 				<button
 					@click="toggleSidebar"
-					class="sidebar-link w-full"
-					:title="sidebarCollapsed ? '展开' : '收起'"
+					class="flex h-11 w-full items-center rounded-2xl border border-white/80 bg-white/45 text-sm font-medium text-slate-500 shadow-sm transition-all hover:bg-white/75 hover:text-primary-600 hover:shadow-md"
+					:class="sidebarCollapsed ? 'justify-center px-0' : 'justify-start gap-3 px-3.5'"
+					:title="sidebarCollapsed ? '展开菜单' : '收起菜单'"
 				>
-					<Icon
-						:name="sidebarCollapsed ? 'chevronDoubleRight' : 'chevronDoubleLeft'"
-						size="md"
-						class="h-5 w-5 flex-shrink-0"
-					/>
+					<Icon :name="sidebarCollapsed ? 'chevronDoubleRight' : 'chevronDoubleLeft'" size="md" class="flex-shrink-0" />
 					<transition name="fade">
-						<span v-if="!sidebarCollapsed">收起</span>
+						<span v-if="!sidebarCollapsed">收起菜单</span>
 					</transition>
 				</button>
 			</div>
@@ -313,31 +324,43 @@ onBeforeUnmount(() => {
 		<!-- Main Content Area -->
 		<div
 			class="relative min-h-screen transition-all duration-300"
-			:class="[sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64']"
+			:class="[sidebarCollapsed ? 'lg:ml-[116px]' : 'lg:ml-[296px]']"
 		>
 			<!-- Header -->
-			<header class="glass sticky top-0 z-20 border-b border-gray-200/50">
-				<div class="flex h-16 items-center justify-between px-4 md:px-6">
+			<header class="sticky top-0 z-20 px-3 pt-3 md:px-5 md:pt-5">
+				<div class="glass flex h-16 items-center justify-between rounded-2xl border border-white/70 px-3 shadow-glass-sm md:px-5">
 					<!-- Left: Mobile Menu + Title -->
-					<div class="flex items-center gap-4">
+					<div class="flex min-w-0 items-center gap-3">
 						<button
 							@click="toggleMobile"
 							class="btn-ghost btn-icon lg:hidden"
 						>
 							<Icon name="menu" size="md" />
 						</button>
-						<div class="hidden lg:block">
-							<h1 class="text-lg font-semibold text-gray-900">{{ pageTitle }}</h1>
+						<div class="hidden min-w-0 lg:block">
+							<h1 class="truncate text-base font-semibold text-slate-800">{{ pageTitle }}</h1>
 						</div>
 					</div>
 
+					<form class="mx-4 hidden max-w-sm flex-1 md:block" @submit.prevent="submitGlobalSearch">
+						<div class="relative">
+							<Icon name="search" size="sm" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+							<input
+								v-model="globalSearch"
+								type="search"
+								placeholder="搜索功能入口..."
+								class="h-10 w-full rounded-full border border-white/80 bg-white/65 pl-10 pr-4 text-sm text-slate-700 outline-none transition-all placeholder:text-slate-400 focus:border-primary-200 focus:bg-white focus:ring-4 focus:ring-primary-100/70"
+							/>
+						</div>
+					</form>
+
 					<!-- Right: Actions -->
-					<div class="flex items-center gap-3">
+					<div class="flex items-center gap-2">
 						<!-- Announcements -->
 						<div class="relative" data-announce-panel>
 							<button
 								@click="toggleAnnouncePanel"
-								class="relative flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+								class="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 								title="平台公告"
 							>
 								<Icon name="megaphone" size="md" />
@@ -405,7 +428,7 @@ onBeforeUnmount(() => {
 						<!-- Notifications -->
 						<router-link
 							to="/tenant/notifications"
-							class="relative flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+							class="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 							title="通知中心"
 						>
 							<Icon name="bell" size="md" />
@@ -421,7 +444,7 @@ onBeforeUnmount(() => {
 						<router-link
 							v-if="canViewWallet"
 							to="/tenant/wallet"
-							class="flex h-9 items-center gap-1.5 rounded-full bg-primary-50 border border-primary-200/60 px-3 text-primary-600 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm hover:shadow-primary-500/10 transition-all duration-200"
+							class="flex h-10 items-center gap-1.5 rounded-full border border-white/80 bg-white/65 px-3 text-primary-600 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white"
 							title="钱包"
 						>
 							<Icon name="currencyDollar" size="sm" />
@@ -496,7 +519,7 @@ onBeforeUnmount(() => {
 			</header>
 
 			<!-- Page Content -->
-			<main class="p-4 md:p-6 lg:p-8">
+			<main class="px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5">
 				<router-view />
 			</main>
 		</div>

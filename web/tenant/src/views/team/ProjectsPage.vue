@@ -170,7 +170,7 @@ function goToDetail(item: any) {
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="total > pageSize" class="card-footer flex justify-end">
+			<div v-if="total > pageSize" class="table-pagination card-footer flex justify-end">
 				<div class="flex items-center gap-2">
 					<button class="btn btn-ghost btn-sm" :disabled="page <= 1" @click="page--; fetchProjects()">上一页</button>
 					<span class="text-sm text-gray-500">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>

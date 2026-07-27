@@ -184,7 +184,7 @@ onMounted(() => {
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="totalPages > 1" class="flex items-center justify-between px-6 py-4 border-t border-gray-100">
+			<div v-if="totalPages > 1" class="table-pagination">
 				<p class="text-xs text-gray-500">共 {{ total }} 条记录</p>
 				<div class="flex items-center gap-2">
 					<button

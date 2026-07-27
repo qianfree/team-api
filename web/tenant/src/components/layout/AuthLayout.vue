@@ -20,7 +20,7 @@
 			<!-- Grid Pattern -->
 			<div
 				class="absolute inset-0"
-				style="background-image: linear-gradient(rgba(20,184,166,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(20,184,166,0.03) 1px, transparent 1px); background-size: 64px 64px"
+				style="background-image: linear-gradient(rgba(123,143,245,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(123,143,245,0.04) 1px, transparent 1px); background-size: 64px 64px"
 			></div>
 		</div>
 

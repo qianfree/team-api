@@ -294,7 +294,7 @@ onMounted(() => {
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
 
-			<div v-else-if="logs.length > 0" class="overflow-auto">
+			<div v-else-if="logs.length > 0" class="table-container table-container-flush usage-log-table">
 				<table class="table">
 					<thead>
 						<tr>
@@ -308,7 +308,7 @@ onMounted(() => {
 							<th class="min-w-30">用时</th>
 							<th class="min-w-25">状态</th>
 							<th class="min-w-35">时间</th>
-							<th class="w-16"></th>
+							<th class="usage-action-column">操作</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -427,7 +427,7 @@ onMounted(() => {
 							</td>
 
 							<!-- 详情按钮 -->
-							<td>
+							<td class="usage-action-column">
 								<button
 									class="btn btn-ghost btn-sm p-1.5"
 									title="查看详情"
@@ -448,7 +448,7 @@ onMounted(() => {
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="total > pageSize" class="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+			<div v-if="total > pageSize" class="table-pagination">
 				<p class="text-sm text-gray-500">
 					第 {{ page }} / {{ Math.ceil(total / pageSize) }} 页，共 {{ total }} 条
 				</p>
@@ -997,3 +997,45 @@ onMounted(() => {
 		</BaseModal>
 	</div>
 </template>
+
+<style scoped>
+.usage-log-table {
+	position: relative;
+}
+
+.usage-log-table .usage-action-column {
+	position: sticky;
+	right: 0;
+	z-index: 3;
+	width: 5.5rem;
+	min-width: 5.5rem;
+	text-align: right;
+	box-shadow: -14px 0 24px -20px rgba(55, 65, 105, 0.42);
+}
+
+.usage-log-table .table thead .usage-action-column {
+	z-index: 5;
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
+		linear-gradient(100deg, rgba(63, 163, 247, 0.08), rgba(117, 104, 248, 0.1));
+	backdrop-filter: blur(24px) saturate(1.35);
+	-webkit-backdrop-filter: blur(24px) saturate(1.35);
+}
+
+.usage-log-table .table tbody tr .usage-action-column {
+	background: rgba(251, 252, 255, 0.94);
+	backdrop-filter: blur(22px) saturate(1.25);
+	-webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.usage-log-table .table tbody tr:nth-child(even) .usage-action-column {
+	background: rgba(246, 248, 255, 0.95);
+}
+
+.usage-log-table .table tbody tr:hover .usage-action-column,
+.usage-log-table .table tbody tr:focus-within .usage-action-column {
+	background:
+		linear-gradient(90deg, rgba(235, 247, 255, 0.95), rgba(244, 240, 255, 0.96)),
+		rgba(255, 255, 255, 0.96);
+}
+</style>
