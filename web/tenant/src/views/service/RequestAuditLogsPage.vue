@@ -184,19 +184,10 @@ onMounted(() => {
 
 <template>
 	<div class="viewport-table-page space-y-6">
-		<!-- Page Header -->
-		<div class="page-header">
-			<div>
-				<h1 class="page-title">请求审计日志</h1>
-				<p class="page-description">查看 API 请求的输入输出记录</p>
-			</div>
-		</div>
-
 		<!-- Filter -->
-			<!-- Filter -->
-			<div class="card">
-				<div class="card-body">
-					<div class="flex flex-wrap items-center gap-4">
+		<div class="card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="handleFilter">
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
 							<input v-model="logFilter.start_date" type="date" class="input" style="width:140px" />
@@ -226,12 +217,15 @@ onMounted(() => {
 							<input v-model="logFilter.status_code" class="input" placeholder="200" style="width:80px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="ml-auto flex items-center gap-2">
-							<button class="btn btn-primary btn-sm" @click="handleFilter">搜索</button>
-							<button class="btn btn-secondary btn-sm" @click="handleReset">重置</button>
+							<button type="submit" class="btn btn-primary btn-sm">
+								<Icon name="search" size="sm" />
+								搜索
+							</button>
+							<button type="button" class="btn btn-secondary btn-sm" @click="handleReset">重置</button>
 						</div>
-					</div>
-				</div>
+					</form>
 			</div>
+		</div>
 		<!-- Table -->
 		<div class="viewport-table-panel card p-0 overflow-hidden">
 			<!-- Loading -->

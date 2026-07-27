@@ -121,35 +121,10 @@ onMounted(fetchTransactions)
 
 <template>
 	<div class="viewport-table-page space-y-6">
-		<!-- Page Header -->
-		<div class="flex items-start justify-between">
-			<div>
-				<h1 class="page-title">交易记录</h1>
-				<p class="page-description">查看所有交易流水明细 · 共 {{ total }} 条记录</p>
-			</div>
-			<div class="flex items-center gap-2 flex-shrink-0">
-				<div class="relative inline-block">
-					<button class="btn btn-secondary btn-sm" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-						<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-						<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-						导出
-					</button>
-					<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
-					</div>
-				</div>
-				<button class="btn btn-ghost btn-sm" @click="fetchTransactions">
-					<Icon name="refresh" size="sm" />
-					刷新
-				</button>
-			</div>
-		</div>
-
 		<!-- Filters -->
-		<div class="card">
-			<div class="card-body">
-				<div class="flex flex-wrap items-center gap-4">
+		<div class="relative z-20 overflow-visible card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
 						<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
@@ -177,15 +152,35 @@ onMounted(fetchTransactions)
 						<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:150px" @keyup.enter="applyFilters" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
-						<button class="btn btn-primary btn-sm" @click="applyFilters">搜索</button>
-						<button class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<button type="button" class="btn btn-ghost btn-sm" :disabled="loading" @click="fetchTransactions">
+							<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
+							刷新
+						</button>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
+							</button>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+							</div>
+						</div>
 					</div>
-				</div>
+				</form>
 			</div>
 		</div>
 
 		<!-- Transactions -->
-		<div class="viewport-table-panel card">
+		<div class="viewport-table-panel relative z-0 card">
 			<div v-if="loading" class="p-8 flex justify-center">
 				<div class="spinner h-6 w-6 border-primary-500"></div>
 			</div>
