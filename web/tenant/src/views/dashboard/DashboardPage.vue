@@ -200,15 +200,6 @@ const accountStats = computed(() => {
 	]
 })
 
-const quickActions = [
-	{ label: 'API 密钥', description: '创建和管理密钥', icon: 'key', path: '/tenant/api-keys', tone: 'quick-violet' },
-	{ label: '在线体验', description: '调试模型能力', icon: 'terminal', path: '/tenant/playground', tone: 'quick-blue' },
-	{ label: '成员管理', description: '管理团队成员', icon: 'users', path: '/tenant/members', tone: 'quick-cyan' },
-	{ label: '钱包充值', description: '查看余额与账单', icon: 'wallet', path: '/tenant/wallet', tone: 'quick-amber' },
-	{ label: '可用模型', description: '浏览模型列表', icon: 'cube', path: '/tenant/models', tone: 'quick-pink' },
-	{ label: '用量日志', description: '追踪调用明细', icon: 'chart', path: '/tenant/usage-logs', tone: 'quick-green' },
-]
-
 const alertItems = computed(() => {
 	const members = (alertsData.value?.members || []).map((item) => ({
 		id: `member-${item.id}`,
@@ -363,7 +354,35 @@ onMounted(refreshAll)
 
 		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
 			<TokenTrendChart :data="trendData" :loading="chartsLoading" :days="selectedDays" @change-days="selectedDays = $event" />
-			<ModelDistChart :data="modelData" :loading="chartsLoading" />
+			<div class="card p-5 sm:p-6">
+				<div class="mb-4 flex items-center justify-between">
+					<div>
+						<h2 class="text-base font-semibold text-slate-900">账户概览</h2>
+						<p class="mt-0.5 text-xs text-slate-400">余额、成员与密钥状态</p>
+					</div>
+					<span v-if="!alertsLoading" class="status-dot" :class="alertItems.length ? 'status-warning' : 'status-ok'">{{ alertItems.length ? '需关注' : '运行正常' }}</span>
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<div v-for="item in accountStats" :key="item.label" class="rounded-2xl border border-white/80 bg-white/55 p-3.5">
+						<div class="mb-3 flex h-8 w-8 items-center justify-center rounded-xl" :class="[item.background, item.tone]">
+							<Icon :name="item.icon" size="sm" />
+						</div>
+						<p class="text-xs text-slate-400">{{ item.label }}</p>
+						<p class="mt-1 truncate text-base font-bold" :class="item.tone">{{ item.value }}</p>
+						<p class="mt-1 truncate text-[11px] text-slate-400">{{ item.description }}</p>
+					</div>
+				</div>
+				<div v-if="alertItems.length" class="mt-4 space-y-2 border-t border-slate-100 pt-4">
+					<div v-for="alert in alertItems" :key="alert.id" class="flex items-center gap-3 rounded-xl bg-amber-50/80 px-3 py-2.5">
+						<Icon name="exclamationTriangle" size="sm" class="flex-shrink-0 text-amber-500" />
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-xs font-medium text-slate-700">{{ alert.name }}</p>
+							<p class="text-[10px] text-slate-400">{{ alert.type }}</p>
+						</div>
+						<span class="text-xs font-bold text-amber-600">{{ alert.percent }}%</span>
+					</div>
+				</div>
+			</div>
 		</section>
 
 		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
@@ -401,56 +420,7 @@ onMounted(refreshAll)
 				</div>
 			</div>
 
-			<div class="space-y-5">
-				<div class="card p-5 sm:p-6">
-					<div class="mb-4 flex items-center justify-between">
-						<div>
-							<h2 class="text-base font-semibold text-slate-900">快捷操作</h2>
-							<p class="mt-0.5 text-xs text-slate-400">常用功能快速直达</p>
-						</div>
-						<Icon name="bolt" size="md" class="text-primary-400" />
-					</div>
-					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-2">
-						<router-link v-for="action in quickActions" :key="action.path" :to="action.path" class="quick-action group">
-							<div class="quick-action-icon" :class="action.tone">
-								<Icon :name="action.icon" size="md" />
-							</div>
-							<p class="mt-2 text-sm font-semibold text-slate-700 group-hover:text-primary-600">{{ action.label }}</p>
-							<p class="mt-0.5 line-clamp-1 text-[11px] text-slate-400">{{ action.description }}</p>
-						</router-link>
-					</div>
-				</div>
-
-				<div class="card p-5 sm:p-6">
-					<div class="mb-4 flex items-center justify-between">
-						<div>
-							<h2 class="text-base font-semibold text-slate-900">账户概览</h2>
-							<p class="mt-0.5 text-xs text-slate-400">余额、成员与密钥状态</p>
-						</div>
-						<span v-if="!alertsLoading" class="status-dot" :class="alertItems.length ? 'status-warning' : 'status-ok'">{{ alertItems.length ? '需关注' : '运行正常' }}</span>
-					</div>
-					<div class="grid grid-cols-2 gap-3">
-						<div v-for="item in accountStats" :key="item.label" class="rounded-2xl border border-white/80 bg-white/55 p-3.5">
-							<div class="mb-3 flex h-8 w-8 items-center justify-center rounded-xl" :class="[item.background, item.tone]">
-								<Icon :name="item.icon" size="sm" />
-							</div>
-							<p class="text-xs text-slate-400">{{ item.label }}</p>
-							<p class="mt-1 truncate text-base font-bold" :class="item.tone">{{ item.value }}</p>
-							<p class="mt-1 truncate text-[11px] text-slate-400">{{ item.description }}</p>
-						</div>
-					</div>
-					<div v-if="alertItems.length" class="mt-4 space-y-2 border-t border-slate-100 pt-4">
-						<div v-for="alert in alertItems" :key="alert.id" class="flex items-center gap-3 rounded-xl bg-amber-50/80 px-3 py-2.5">
-							<Icon name="exclamationTriangle" size="sm" class="flex-shrink-0 text-amber-500" />
-							<div class="min-w-0 flex-1">
-								<p class="truncate text-xs font-medium text-slate-700">{{ alert.name }}</p>
-								<p class="text-[10px] text-slate-400">{{ alert.type }}</p>
-							</div>
-							<span class="text-xs font-bold text-amber-600">{{ alert.percent }}%</span>
-						</div>
-					</div>
-				</div>
-			</div>
+			<ModelDistChart :data="modelData" :loading="chartsLoading" />
 		</section>
 
 		<div v-if="!loading && !dashboardData" class="card">
@@ -590,43 +560,6 @@ onMounted(refreshAll)
 	font-weight: 700;
 }
 
-.quick-action {
-	min-width: 0;
-	border: 1px solid rgba(255, 255, 255, 0.88);
-	border-radius: 1.125rem;
-	background: rgba(255, 255, 255, 0.55);
-	padding: 0.875rem;
-	text-align: center;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-	transition: all 200ms ease;
-}
-
-.quick-action:hover {
-	transform: translateY(-2px);
-	border-color: rgba(187, 178, 255, 0.65);
-	background: rgba(255, 255, 255, 0.88);
-	box-shadow: 0 12px 26px rgba(82, 96, 145, 0.1);
-}
-
-.quick-action-icon {
-	display: flex;
-	height: 2.75rem;
-	width: 2.75rem;
-	margin: 0 auto;
-	align-items: center;
-	justify-content: center;
-	border-radius: 0.9rem;
-	color: white;
-	box-shadow: 0 10px 22px rgba(83, 93, 149, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.55);
-}
-
-.quick-violet { background: linear-gradient(145deg, #8e7dff, #6d5ce7); }
-.quick-blue { background: linear-gradient(145deg, #5db9ff, #3889eb); }
-.quick-cyan { background: linear-gradient(145deg, #48d5d5, #22b3bd); }
-.quick-amber { background: linear-gradient(145deg, #ffc861, #f0a335); }
-.quick-pink { background: linear-gradient(145deg, #ff8eb5, #eb6394); }
-.quick-green { background: linear-gradient(145deg, #64dcb0, #2cb887); }
-
 .status-dot {
 	display: inline-flex;
 	align-items: center;
@@ -667,7 +600,6 @@ onMounted(refreshAll)
 
 @media (prefers-reduced-motion: reduce) {
 	.metric-card,
-	.quick-action,
 	.refresh-button,
 	.animate-wave {
 		animation: none;

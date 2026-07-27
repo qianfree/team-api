@@ -7,6 +7,7 @@ import { dispatchPayment } from '@/utils/payment'
 
 const route = useRoute()
 const wallet = ref<any>(null)
+const walletLoading = ref(true)
 
 // Recharge
 const rechargeAmount = ref<number | null>(null)
@@ -15,6 +16,7 @@ const rechargeLoading = ref(false)
 const selectedChannel = ref('')
 const selectedPaymentMethod = ref('')
 const paymentInfo = ref<any>(null)
+const paymentLoading = ref(true)
 
 // Pay result notification
 const payResult = ref<'success' | 'fail' | 'processing' | ''>('')
@@ -62,54 +64,53 @@ const payMethods = computed(() => {
 	return methods
 })
 
-// Balance warning
-const isLowBalance = computed(() => {
-	if (!wallet.value) return false
-	return wallet.value.available_balance <= (wallet.value.warning_threshold || 0)
+const minimumAmount = computed(() => Number(paymentInfo.value?.min_topup) || 1)
+
+const selectedDiscount = computed(() => {
+	if (!rechargeAmount.value) return 1
+	return Number(paymentInfo.value?.amount_discount?.[Math.trunc(rechargeAmount.value)]) || 1
 })
 
-// Warning threshold setting
-const showThresholdModal = ref(false)
-const thresholdInput = ref('')
-const thresholdSaving = ref(false)
+const finalPayAmount = computed(() => (rechargeAmount.value || 0) * selectedDiscount.value)
 
-function openThresholdModal() {
-	thresholdInput.value = wallet.value?.warning_threshold?.toFixed(2) ?? '1.00'
-	showThresholdModal.value = true
-}
+const rechargeValidationMessage = computed(() => {
+	if (!rechargeAmount.value) return ''
+	if (rechargeAmount.value < minimumAmount.value) return `最低充值金额为 ¥${minimumAmount.value.toFixed(2)}`
+	return ''
+})
 
-async function saveThreshold() {
-	const val = parseFloat(thresholdInput.value)
-	if (isNaN(val) || val < 0) return
-	thresholdSaving.value = true
-	try {
-		const res: any = await request.put('/tenant/wallet/warning-threshold', { threshold: val })
-		if (res.data?.code === 0) {
-			showThresholdModal.value = false
-			await fetchWallet()
-		}
-	} catch (e) {
-		console.error(e)
-	} finally {
-		thresholdSaving.value = false
-	}
-}
+const rechargeReady = computed(() =>
+	!!rechargeAmount.value
+	&& rechargeAmount.value >= minimumAmount.value
+	&& !!selectedChannel.value
+	&& !!selectedPaymentMethod.value,
+)
 
 async function fetchWallet() {
+	walletLoading.value = true
 	try {
 		const res: any = await request.get('/tenant/wallet')
 		wallet.value = res.data?.data
 	} catch {
 		wallet.value = null
+	} finally {
+		walletLoading.value = false
 	}
 }
 
 async function fetchPaymentInfo() {
+	paymentLoading.value = true
 	try {
 		const res: any = await request.get('/tenant/payment-info')
 		paymentInfo.value = res.data?.data
 	} catch {
 		paymentInfo.value = null
+	} finally {
+		paymentLoading.value = false
+		const firstMethod = payMethods.value[0]
+		if (firstMethod && !selectedPaymentMethod.value) {
+			selectPayMethod(firstMethod)
+		}
 	}
 }
 
@@ -128,9 +129,13 @@ function selectPayMethod(method: { channel: string; type: string }) {
 	selectedPaymentMethod.value = method.type
 }
 
+function discountText(amount: number): string {
+	const ratio = Number(paymentInfo.value?.amount_discount?.[amount]) || 1
+	return ratio < 1 ? `省 ${Math.round((1 - ratio) * 100)}%` : ''
+}
+
 async function handleRecharge() {
-	if (!rechargeAmount.value || rechargeAmount.value <= 0) return
-	if (!selectedChannel.value || !selectedPaymentMethod.value) return
+	if (!rechargeReady.value || !rechargeAmount.value) return
 
 	rechargeLoading.value = true
 	try {
@@ -178,7 +183,6 @@ function closeFrozenModal() {
 	}
 }
 
-// Redeem
 async function openRedeemModal() {
 	showRedeemModal.value = true
 	redeemCode.value = ''
@@ -211,7 +215,7 @@ async function fetchRedeemHistory() {
 	redeemHistoryLoading.value = true
 	try {
 		const res: any = await request.get('/tenant/redemptions/usages', {
-			params: { page: 1, page_size: 10 }
+			params: { page: 1, page_size: 10 },
 		})
 		redeemHistory.value = res.data?.data?.list || []
 	} catch {
@@ -266,15 +270,11 @@ onBeforeUnmount(() => {
 <template>
 	<div class="wallet-page space-y-6">
 		<!-- Page Header -->
-		<div class="page-header flex items-start justify-between">
+		<div class="page-header">
 			<div>
 				<h1 class="page-title">钱包</h1>
-				<p class="page-description">管理余额与充值</p>
+				<p class="page-description">查看余额并为账户充值</p>
 			</div>
-			<button class="btn btn-secondary btn-sm" @click="openRedeemModal">
-				<Icon name="gift" size="sm" />
-				兑换码
-			</button>
 		</div>
 
 		<!-- Pay Result Banner -->
@@ -317,180 +317,157 @@ onBeforeUnmount(() => {
 			</div>
 		</transition>
 
-		<!-- ============================================ -->
-		<!-- Two-column: Balance + Recharge -->
-		<!-- ============================================ -->
-		<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-			<!-- Balance Hero Card -->
-			<div class="lg:col-span-5">
-				<div class="balance-hero h-full">
-					<!-- Background decorations -->
-					<div class="balance-hero-bg">
-						<div class="balance-hero-orb balance-hero-orb-1"></div>
-						<div class="balance-hero-orb balance-hero-orb-2"></div>
-						<div class="balance-hero-grid"></div>
+		<section class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(280px,.72fr)_minmax(0,1.28fr)]">
+			<div class="card wallet-card balance-card p-5 sm:p-6">
+				<div v-if="walletLoading" class="space-y-5">
+					<div class="flex items-center justify-between">
+						<div class="skeleton h-10 w-36 rounded-xl"></div>
+						<div class="skeleton h-6 w-14 rounded-full"></div>
 					</div>
-
-					<div class="relative z-10 p-6 md:p-8">
-						<!-- Top row -->
-						<div class="flex items-center justify-between mb-5">
-							<div class="flex items-center gap-3">
-								<div class="balance-hero-icon">
-									<Icon name="wallet" size="md" />
-								</div>
-								<p class="text-sm font-medium text-white/60">可用余额</p>
-							</div>
-							<div class="balance-hero-currency">
-								{{ wallet?.currency || 'USD' }}
-							</div>
-						</div>
-
-						<!-- Balance number -->
-						<div class="balance-hero-amount">
-							<span class="balance-hero-dollar">$</span>
-							<span class="balance-hero-value">{{ wallet?.available_balance?.toFixed(2) ?? '0.00' }}</span>
-						</div>
-
-						<!-- Low balance warning -->
-						<div v-if="isLowBalance && wallet" class="balance-warning">
-							<Icon name="exclamationTriangle" size="xs" />
-							<span>余额低于预警线 ${{ wallet.warning_threshold?.toFixed(2) }}</span>
-							<button class="ml-2 underline underline-offset-2 opacity-70 hover:opacity-100" @click="openThresholdModal">修改</button>
-						</div>
-
-						<!-- Threshold setting (when not low balance) -->
-						<div v-else-if="wallet" class="mt-3">
-							<button class="balance-threshold-btn" @click="openThresholdModal">
-								<Icon name="cog" size="xs" />
-								<span>预警线: ${{ wallet.warning_threshold?.toFixed(2) || '0.00' }}</span>
-							</button>
-						</div>
-
-						<!-- Secondary balances -->
-						<div class="flex flex-col gap-3 mt-6">
-							<button class="balance-chip group" @click="openFrozenModal">
-								<div class="flex items-center gap-2.5">
-									<span class="balance-chip-dot bg-amber-400"></span>
-									<span class="text-white/50 text-sm">冻结金额</span>
-								</div>
-								<div class="flex items-center gap-1.5">
-									<span class="text-white font-semibold text-sm">${{ wallet?.frozen_balance?.toFixed(2) ?? '0.00' }}</span>
-									<Icon v-if="wallet?.frozen_balance > 0" name="chevronRight" size="xs"
-										class="text-white/30 group-hover:text-white/50 transition-colors" />
-								</div>
-							</button>
-
-							<div class="balance-chip-static">
-								<div class="flex items-center gap-2.5">
-									<span class="balance-chip-dot bg-white/20"></span>
-									<span class="text-white/50 text-sm">总余额</span>
-								</div>
-								<span class="text-white font-semibold text-sm">${{ wallet?.balance?.toFixed(2) ?? '0.00' }}</span>
-							</div>
-						</div>
-					</div>
+					<div class="skeleton h-12 w-52 rounded-xl"></div>
+					<div class="skeleton h-16 rounded-xl"></div>
 				</div>
-			</div>
 
-			<!-- Recharge Card -->
-			<div class="lg:col-span-7">
-				<div class="card h-full">
-					<div class="card-header">
+				<template v-else>
+					<div class="flex items-start justify-between gap-4">
+						<div class="flex items-center gap-3">
+							<div class="balance-icon"><Icon name="wallet" size="md" /></div>
+							<div>
+								<h2 class="text-base font-semibold text-slate-900">账户余额</h2>
+								<p class="mt-0.5 text-xs text-slate-400">当前可用于模型调用</p>
+							</div>
+						</div>
+						<span class="currency-badge">{{ wallet?.currency || 'USD' }}</span>
+					</div>
+
+					<div class="mt-8">
+						<p class="text-xs font-medium text-slate-400">余额</p>
+						<div class="mt-1 flex items-baseline gap-1.5">
+							<span class="text-xl font-semibold text-slate-400">$</span>
+							<strong class="balance-value">{{ wallet?.balance?.toFixed(2) ?? '0.00' }}</strong>
+						</div>
+					</div>
+
+					<button class="frozen-balance-row mt-8" @click="openFrozenModal">
 						<div class="flex items-center gap-2.5">
-							<div class="h-8 w-8 rounded-lg bg-gradient-to-br from-primary-100 to-primary-50 flex items-center justify-center">
-								<Icon name="plus" size="sm" class="text-primary-600" />
+							<span class="h-2 w-2 rounded-full bg-amber-400"></span>
+							<span class="text-sm text-slate-500">冻结金额</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<strong class="text-sm font-semibold tabular-nums text-slate-700">${{ wallet?.frozen_balance?.toFixed(2) ?? '0.00' }}</strong>
+							<Icon name="chevronRight" size="xs" class="text-slate-300" />
+						</div>
+					</button>
+				</template>
+			</div>
+
+			<div class="card wallet-card overflow-hidden">
+				<div class="border-b border-slate-100/80 px-5 py-4 sm:px-6">
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-3">
+							<div class="recharge-icon"><Icon name="plus" size="md" /></div>
+							<div class="min-w-0">
+								<h2 class="text-base font-semibold text-slate-900">钱包充值</h2>
+								<p class="mt-0.5 text-xs text-slate-400">选择金额和支付方式后前往收银台</p>
 							</div>
-							<h2 class="font-semibold text-gray-900">充值</h2>
+						</div>
+						<button class="btn btn-secondary btn-sm flex-shrink-0" @click="openRedeemModal">
+							<Icon name="gift" size="sm" />
+							<span class="hidden sm:inline">兑换码</span>
+						</button>
+					</div>
+				</div>
+
+				<div v-if="paymentLoading" class="space-y-5 p-5 sm:p-6">
+					<div class="skeleton h-24 rounded-xl"></div>
+					<div class="skeleton h-20 rounded-xl"></div>
+					<div class="skeleton h-12 rounded-xl"></div>
+				</div>
+
+				<div v-else class="p-5 sm:p-6">
+					<div>
+						<div class="flex items-center justify-between">
+							<label class="text-xs font-semibold text-slate-600">充值金额</label>
+							<span class="text-[11px] text-slate-400">最低 ¥{{ minimumAmount.toFixed(2) }}</span>
+						</div>
+						<div class="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+							<button
+								v-for="amount in presetAmounts"
+								:key="amount"
+								class="amount-pill"
+								:class="{ 'amount-pill-active': rechargeAmount === amount && !customAmount }"
+								@click="selectPresetAmount(amount)"
+							>
+								<span><small>¥</small>{{ amount }}</span>
+								<em v-if="discountText(amount)">{{ discountText(amount) }}</em>
+							</button>
+						</div>
+						<div class="relative mt-3">
+							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">¥</span>
+							<input
+								v-model="customAmount"
+								type="number"
+								class="input pl-8"
+								:class="{ 'input-error': rechargeValidationMessage }"
+								placeholder="输入其他金额"
+								:min="minimumAmount"
+								step="0.01"
+								@input="onCustomInput"
+							/>
+						</div>
+						<p v-if="rechargeValidationMessage" class="mt-1.5 text-xs text-red-500">{{ rechargeValidationMessage }}</p>
+					</div>
+
+					<div class="my-5 border-t border-slate-100"></div>
+
+					<div>
+						<label class="text-xs font-semibold text-slate-600">支付方式</label>
+						<div v-if="payMethods.length" class="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+							<button
+								v-for="method in payMethods"
+								:key="`${method.channel}-${method.type}`"
+								class="pay-method-card"
+								:class="{ 'pay-method-card-active': selectedChannel === method.channel && selectedPaymentMethod === method.type }"
+								@click="selectPayMethod(method)"
+							>
+								<span class="pay-method-icon" :class="{
+									'pay-method-icon-alipay': method.type === 'alipay',
+									'pay-method-icon-wxpay': method.type === 'wxpay',
+									'pay-method-icon-default': method.type !== 'alipay' && method.type !== 'wxpay',
+								}">
+									{{ method.type === 'alipay' ? '支' : method.type === 'wxpay' ? '微' : method.name.substring(0, 1) }}
+								</span>
+								<span class="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-700">{{ method.name }}</span>
+								<Icon v-if="selectedChannel === method.channel && selectedPaymentMethod === method.type" name="checkCircle" size="sm" class="text-primary-500" />
+							</button>
+						</div>
+						<div v-else class="mt-3 rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+							暂无可用支付渠道
 						</div>
 					</div>
 
-					<div class="card-body space-y-5">
-						<!-- Amount Selection -->
-						<div>
-							<label class="input-label">充值金额（元）</label>
-							<div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-2">
-								<button
-									v-for="amt in presetAmounts"
-									:key="amt"
-									class="amount-pill"
-									:class="rechargeAmount === amt ? 'amount-pill-active' : ''"
-									@click="selectPresetAmount(amt)"
-								>
-									<span class="amount-pill-symbol">¥</span>{{ amt }}
-								</button>
-							</div>
-							<div class="mt-3">
-								<input
-									v-model="customAmount"
-									type="number"
-									class="input"
-									placeholder="自定义金额"
-									min="1"
-									step="0.01"
-									@input="onCustomInput"
-								/>
+					<div class="recharge-summary mt-5">
+						<div class="min-w-0">
+							<p class="text-[11px] text-slate-400">本次实付</p>
+							<div class="mt-0.5 flex items-baseline gap-2">
+								<strong class="text-xl font-bold tabular-nums text-slate-800">¥{{ finalPayAmount.toFixed(2) }}</strong>
+								<span v-if="selectedDiscount < 1" class="text-xs text-slate-400 line-through">¥{{ rechargeAmount?.toFixed(2) }}</span>
 							</div>
 						</div>
-
-						<!-- Payment Method Selection -->
-						<div v-if="payMethods.length > 0">
-							<label class="input-label">支付方式</label>
-							<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-2">
-								<button
-									v-for="method in payMethods"
-									:key="method.channel + '-' + method.type"
-									class="pay-method-card"
-									:class="selectedChannel === method.channel && selectedPaymentMethod === method.type
-										? 'pay-method-card-active'
-										: ''"
-									@click="selectPayMethod(method)"
-								>
-									<span
-										class="pay-method-icon"
-										:class="{
-											'pay-method-icon-alipay': method.type === 'alipay',
-											'pay-method-icon-wxpay': method.type === 'wxpay',
-											'pay-method-icon-default': method.type !== 'alipay' && method.type !== 'wxpay',
-										}"
-									>
-										<template v-if="method.type === 'alipay'">支</template>
-										<template v-else-if="method.type === 'wxpay'">微</template>
-										<template v-else>{{ method.name.substring(0, 1) }}</template>
-									</span>
-									<span class="text-sm font-medium text-gray-700">{{ method.name }}</span>
-								</button>
-							</div>
-						</div>
-						<div v-else class="py-6 text-center">
-							<p class="text-sm text-gray-400">暂无可用的支付渠道，请联系管理员配置</p>
-						</div>
-
-						<!-- Submit -->
-						<button
-							class="btn btn-primary btn-lg w-full"
-							:disabled="!rechargeAmount || !selectedChannel || !selectedPaymentMethod || rechargeLoading"
-							@click="handleRecharge"
-						>
-							<template v-if="rechargeLoading">
-								<span class="spinner"></span>
-								处理中...
-							</template>
-							<template v-else>
-								充值 ¥{{ rechargeAmount || '—' }}
-							</template>
+						<button class="btn btn-primary min-w-32" :disabled="!rechargeReady || rechargeLoading" @click="handleRecharge">
+							<Icon v-if="rechargeLoading" name="refresh" size="sm" class="animate-spin" />
+							<Icon v-else name="creditCard" size="sm" />
+							{{ rechargeLoading ? '处理中' : '确认充值' }}
 						</button>
+					</div>
 
-						<!-- Conversion note -->
-						<div class="recharge-note">
-							<div class="recharge-note-icon">
-								<Icon name="infoCircle" size="xs" />
-							</div>
-							<p>充值金额为人民币（¥），支付成功后将按平台汇率换算为美元（$）入账到您的钱包余额。</p>
-						</div>
+					<div class="recharge-note mt-3">
+						<Icon name="infoCircle" size="xs" class="mt-0.5 flex-shrink-0" />
+						<p>支付金额为人民币，到账后按平台汇率换算为美元钱包余额。</p>
 					</div>
 				</div>
 			</div>
-		</div>
+		</section>
 
 		<!-- ============================================ -->
 		<!-- Frozen Items Modal -->
@@ -664,47 +641,6 @@ onBeforeUnmount(() => {
 				</div>
 			</transition>
 		</Teleport>
-
-		<!-- Warning Threshold Modal -->
-		<Teleport to="body">
-			<div v-if="showThresholdModal" class="modal-overlay" @click.self="showThresholdModal = false">
-				<div class="modal-content bg-white w-full max-w-md">
-					<div class="modal-header">
-						<h3 class="modal-title">余额预警设置</h3>
-						<button class="btn btn-ghost btn-icon" @click="showThresholdModal = false">
-							<Icon name="x" size="sm" />
-						</button>
-					</div>
-					<div class="modal-body space-y-4">
-						<div class="rounded-xl bg-gray-50 border border-gray-200 p-4">
-							<p class="text-sm text-gray-600">当可用余额低于设定的阈值时，系统将通过站内通知和 Webhook 推送预警消息。</p>
-						</div>
-						<div>
-							<label class="input-label">预警阈值（USD）</label>
-							<div class="relative mt-1">
-								<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-								<input
-									v-model="thresholdInput"
-									type="number"
-									step="0.01"
-									min="0"
-									class="input pl-7"
-									placeholder="0.00"
-								/>
-							</div>
-							<p class="input-hint">设为 0 表示关闭余额预警</p>
-						</div>
-					</div>
-					<div class="modal-footer">
-						<button class="btn btn-secondary" @click="showThresholdModal = false">取消</button>
-						<button class="btn btn-primary" :disabled="thresholdSaving" @click="saveThreshold">
-							<div v-if="thresholdSaving" class="spinner h-4 w-4 border-white"></div>
-							{{ thresholdSaving ? '保存中...' : '保存' }}
-						</button>
-					</div>
-				</div>
-			</div>
-		</Teleport>
 	</div>
 </template>
 
@@ -753,150 +689,153 @@ onBeforeUnmount(() => {
 	flex-shrink: 0; color: #d97706;
 }
 
-/* ==========================================
-   Balance Hero Card
-   ========================================== */
-.balance-hero {
-	position: relative; overflow: hidden;
-	border-radius: 1rem;
-	background: linear-gradient(135deg, #5b6ce0 0%, #4b58c0 40%, #262c5e 100%);
-}
-.balance-hero-bg {
-	position: absolute; inset: 0;
-	pointer-events: none; overflow: hidden;
-}
-.balance-hero-orb { position: absolute; border-radius: 9999px; }
-.balance-hero-orb-1 {
-	top: -5rem; right: -4rem; height: 18rem; width: 18rem;
-	background: radial-gradient(circle, rgba(151, 165, 248, 0.22) 0%, transparent 70%);
-}
-.balance-hero-orb-2 {
-	bottom: -3rem; left: -3rem; height: 14rem; width: 14rem;
-	background: radial-gradient(circle, rgba(178, 189, 250, 0.16) 0%, transparent 70%);
-}
-.balance-hero-grid {
-	position: absolute; inset: 0;
-	background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.04) 1px, transparent 0);
-	background-size: 24px 24px;
-}
-.balance-hero-icon {
-	height: 2.5rem; width: 2.5rem; border-radius: 0.75rem;
-	display: flex; align-items: center; justify-content: center;
-	color: white;
-	background: rgba(255, 255, 255, 0.1);
-	border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.balance-hero-currency {
-	border-radius: 9999px; padding: 0.25rem 0.75rem;
-	font-size: 0.75rem; font-weight: 600; letter-spacing: 0.025em;
-	color: rgba(255, 255, 255, 0.5);
-	background: rgba(255, 255, 255, 0.08);
-	border: 1px solid rgba(255, 255, 255, 0.06);
-}
-.balance-hero-amount { display: flex; align-items: baseline; }
-.balance-hero-dollar {
-	font-size: 1.5rem; font-weight: 600; padding-right: 0.25rem;
-	color: rgba(255, 255, 255, 0.4);
-}
-.balance-hero-value {
-	font-size: 2.25rem; font-weight: 700; color: white;
-	letter-spacing: -0.025em; font-variant-numeric: tabular-nums;
-}
-@media (min-width: 1024px) {
-	.balance-hero-value { font-size: 2.5rem; }
-}
-.balance-warning {
-	margin-top: 0.75rem;
-	display: inline-flex; align-items: center; gap: 0.375rem;
-	padding: 0.375rem 0.75rem; border-radius: 0.5rem;
-	font-size: 0.75rem; font-weight: 500; color: #fcd34d;
-	background: rgba(251, 191, 36, 0.15);
-	border: 1px solid rgba(251, 191, 36, 0.2);
-}
-.balance-threshold-btn {
-	display: inline-flex; align-items: center; gap: 0.375rem;
-	font-size: 0.75rem; font-weight: 500; color: rgba(255,255,255,0.5);
-	transition: color 0.15s;
-}
-.balance-threshold-btn:hover { color: rgba(255,255,255,0.75); }
-.balance-chip {
-	display: flex; align-items: center; justify-content: space-between;
-	border-radius: 0.75rem; padding: 0.625rem 0.875rem;
-	transition: all 0.2s;
-	background: rgba(255, 255, 255, 0.06);
-	border: 1px solid rgba(255, 255, 255, 0.04);
-	width: 100%;
-}
-.balance-chip:hover { background: rgba(255, 255, 255, 0.1); }
-.balance-chip-static {
-	display: flex; align-items: center; justify-content: space-between;
-	padding: 0.625rem 0.875rem;
-}
-.balance-chip-dot {
-	height: 0.375rem; width: 0.375rem;
-	border-radius: 9999px; flex-shrink: 0;
+.wallet-card {
+	background: rgba(255, 255, 255, 0.94);
 }
 
-/* ==========================================
-   Amount Pills
-   ========================================== */
-.amount-pill {
-	position: relative; border-radius: 0.75rem;
-	padding: 0.75rem 1rem; text-align: center;
-	font-weight: 600; font-size: 0.875rem;
-	transition: all 0.2s;
-	border: 2px solid #e5e7eb; color: #374151;
-}
-.amount-pill:hover { border-color: #d1d5db; color: #111827; }
-.amount-pill-active {
-	border-color: #7b8ff5; background-color: #f2f4ff; color: #4b58c0;
-	box-shadow: 0 0 0 1px rgba(123, 143, 245, 0.1), 0 0 16px rgba(123, 143, 245, 0.12);
-}
-.amount-pill-symbol {
-	font-size: 0.75rem; font-weight: 500;
-	margin-right: 0.125rem; opacity: 0.5;
-}
-
-/* ==========================================
-   Payment Method Cards
-   ========================================== */
-.pay-method-card {
-	display: flex; align-items: center; gap: 0.75rem;
-	border-radius: 0.75rem; padding: 0.75rem 1rem;
-	border: 2px solid #e5e7eb; transition: all 0.2s;
-}
-.pay-method-card:hover { border-color: #d1d5db; }
-.pay-method-card-active {
-	border-color: #7b8ff5;
-	background-color: rgba(242, 244, 255, 0.5);
-	box-shadow: 0 0 0 1px rgba(123, 143, 245, 0.1), 0 0 16px rgba(123, 143, 245, 0.08);
-}
-.pay-method-icon {
-	height: 2.25rem; width: 2.25rem; border-radius: 0.5rem;
-	display: flex; align-items: center; justify-content: center;
-	font-size: 0.75rem; font-weight: 700; color: white; flex-shrink: 0;
-}
-.pay-method-icon-alipay { background: linear-gradient(135deg, #1677ff, #0958d9); }
-.pay-method-icon-wxpay { background: linear-gradient(135deg, #07c160, #06ad56); }
-.pay-method-icon-default { background: linear-gradient(135deg, #6b7280, #4b5563); }
-
-/* ==========================================
-   Recharge Conversion Note
-   ========================================== */
-.recharge-note {
-	display: flex; align-items: flex-start; gap: 0.5rem;
-	padding: 0.75rem 0.875rem;
+.balance-icon,
+.recharge-icon {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	height: 2.5rem;
+	width: 2.5rem;
 	border-radius: 0.75rem;
-	background-color: #f2f4ff;
-	border: 1px solid #e3e7ff;
 }
-.recharge-note-icon {
-	flex-shrink: 0; margin-top: 0.0625rem;
-	color: #7b8ff5;
+
+.balance-icon {
+	background: #eef2ff;
+	color: #6558d9;
 }
-.recharge-note p {
-	font-size: 0.75rem; line-height: 1.5; color: #4b58c0;
+
+.recharge-icon {
+	background: #ecfeff;
+	color: #0891b2;
 }
+
+.currency-badge {
+	flex-shrink: 0;
+	border: 1px solid #e2e8f0;
+	border-radius: 9999px;
+	background: #f8fafc;
+	padding: 0.25rem 0.55rem;
+	color: #64748b;
+	font-size: 0.6875rem;
+	font-weight: 700;
+}
+
+.balance-value {
+	max-width: 100%;
+	overflow: hidden;
+	color: #172033;
+	font-size: 2.25rem;
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.frozen-balance-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	border: 1px solid #e2e8f0;
+	border-radius: 0.75rem;
+	background: #f8fafc;
+	padding: 0.875rem 1rem;
+	transition: border-color 180ms ease, background-color 180ms ease;
+}
+
+.frozen-balance-row:hover {
+	border-color: #fde68a;
+	background: #fffbeb;
+}
+
+.amount-pill {
+	display: flex;
+	min-height: 3.75rem;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid #e2e8f0;
+	border-radius: 0.75rem;
+	background: rgba(255, 255, 255, 0.72);
+	color: #475569;
+	font-size: 0.9375rem;
+	font-weight: 700;
+	transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
+}
+
+.amount-pill small { margin-right: 0.125rem; font-size: 0.6875rem; font-weight: 500; }
+.amount-pill em { margin-top: 0.15rem; color: #059669; font-size: 0.5625rem; font-style: normal; font-weight: 700; }
+.amount-pill:hover { border-color: #c7d2fe; color: #6558d9; }
+.amount-pill-active {
+	border-color: #a5b4fc;
+	background: #f5f3ff;
+	box-shadow: 0 0 0 3px rgba(117, 104, 248, 0.08);
+	color: #6558d9;
+}
+
+.pay-method-card {
+	display: flex;
+	min-width: 0;
+	min-height: 3.5rem;
+	align-items: center;
+	gap: 0.625rem;
+	border: 1px solid #e2e8f0;
+	border-radius: 0.75rem;
+	background: rgba(255, 255, 255, 0.72);
+	padding: 0.625rem 0.75rem;
+	transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.pay-method-card:hover { border-color: #c7d2fe; }
+.pay-method-card-active {
+	border-color: #a5b4fc;
+	background: #f5f3ff;
+	box-shadow: 0 0 0 3px rgba(117, 104, 248, 0.08);
+}
+
+.pay-method-icon {
+	display: flex;
+	height: 2rem;
+	width: 2rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.625rem;
+	color: white;
+	font-size: 0.6875rem;
+	font-weight: 700;
+}
+
+.pay-method-icon-alipay { background: #1677ff; }
+.pay-method-icon-wxpay { background: #07c160; }
+.pay-method-icon-default { background: #64748b; }
+
+.recharge-summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	border-top: 1px solid #f1f5f9;
+	padding-top: 1.25rem;
+}
+
+.recharge-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.5rem;
+	border-radius: 0.75rem;
+	background: #f8fafc;
+	padding: 0.65rem 0.75rem;
+	color: #64748b;
+}
+
+.recharge-note p { font-size: 0.6875rem; line-height: 1.5; }
 
 /* ==========================================
    Transitions
