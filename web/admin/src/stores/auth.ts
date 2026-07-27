@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import request, { setTokens, clearTokens, onTokenRefreshed } from '@/utils/request'
+import request, { setTokens, clearTokens, onTokenRefreshed, setRememberMe, getRememberMe } from '@/utils/request'
 import { setAdminSession, clearAdminSession, ADMIN_ROLES } from '@/utils/permission'
 
 export interface AdminUser {
@@ -35,6 +35,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
   const user = ref<AdminUser | null>(null)
   const permissions = ref<string[]>([])
   const pendingAgreements = ref<PendingAgreement[]>([])
+  const rememberMe = ref<boolean>(getRememberMe())
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -88,7 +89,11 @@ export const useAuthStore = defineStore('admin-auth', () => {
     persist()
   }
 
-  async function login(username: string, password: string, captcha?: { captchaKey: string; captchaX: number }): Promise<any> {
+  async function login(username: string, password: string, captcha?: { captchaKey: string; captchaX: number }, remember: boolean = true): Promise<any> {
+    // Save user's "remember me" preference
+    rememberMe.value = remember
+    setRememberMe(remember)
+
     const { data } = await request.post('/admin/auth/login', {
       username,
       password,
@@ -155,6 +160,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     user,
     permissions,
     pendingAgreements,
+    rememberMe,
     isLoggedIn,
     isSuperAdmin,
     login,

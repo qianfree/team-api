@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import request, { setTokens, clearTokens, onTokenRefreshed } from '@/utils/request'
+import request, { setTokens, clearTokens, onTokenRefreshed, setRememberMe, getRememberMe } from '@/utils/request'
 import { setTenantSession, clearTenantSession, TENANT_ROLES } from '@/utils/permission'
 
 export interface TenantInfo {
@@ -55,6 +55,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
   const user = ref<TenantUser | null>(null)
   const permissions = ref<string[]>([])
   const pendingAgreements = ref<PendingAgreement[]>([])
+  const rememberMe = ref<boolean>(getRememberMe())
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -116,7 +117,11 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     persist()
   }
 
-  async function login(account: string, password: string, type: 'ram' | 'admin', captcha?: { captchaKey: string; captchaX: number; turnstileToken?: string }): Promise<any> {
+  async function login(account: string, password: string, type: 'ram' | 'admin', captcha?: { captchaKey: string; captchaX: number; turnstileToken?: string }, remember: boolean = true): Promise<any> {
+    // Save user's "remember me" preference
+    rememberMe.value = remember
+    setRememberMe(remember)
+
     const { data } = await request.post('/tenant/auth/login', {
       account,
       password,
@@ -208,6 +213,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     user,
     permissions,
     pendingAgreements,
+    rememberMe,
     isLoggedIn,
     isOwner,
     login,
