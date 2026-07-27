@@ -94,7 +94,10 @@ func TestCheckSyncImageIPWhitelist(t *testing.T) {
 }
 
 func TestGenerateSyncImagePublicID(t *testing.T) {
-	id := generateSyncImagePublicID()
+	id, err := generateSyncImagePublicID()
+	if err != nil {
+		t.Fatalf("generateSyncImagePublicID() error = %v", err)
+	}
 	if !strings.HasPrefix(id, "task_") {
 		t.Fatalf("id %q should have task_ prefix", id)
 	}
@@ -102,7 +105,11 @@ func TestGenerateSyncImagePublicID(t *testing.T) {
 		t.Fatalf("id %q length = %d, want %d", id, len(id), len("task_")+32)
 	}
 	// 唯一性（极小概率碰撞）
-	if generateSyncImagePublicID() == id {
+	id2, err := generateSyncImagePublicID()
+	if err != nil {
+		t.Fatalf("generateSyncImagePublicID() error = %v", err)
+	}
+	if id2 == id {
 		t.Fatal("two ids should differ")
 	}
 }
