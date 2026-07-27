@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 @theme {
-	/* 主色 - 蓝紫色系 */
-	--color-primary-50: #f4f3ff;
-	--color-primary-100: #ece9ff;
-	--color-primary-200: #d9d4ff;
-	--color-primary-300: #bbb2ff;
-	--color-primary-400: #9588ff;
-	--color-primary-500: #7568f8;
-	--color-primary-600: #6558ea;
-	--color-primary-700: #5547d1;
-	--color-primary-800: #463bab;
-	--color-primary-900: #3c3588;
-	--color-primary-950: #251f5c;
+	/* 主色 - 与落地页一致的青绿色系 */
+	--color-primary-50: #f0fdfa;
+	--color-primary-100: #ccfbf1;
+	--color-primary-200: #99f6e4;
+	--color-primary-300: #5eead4;
+	--color-primary-400: #2dd4bf;
+	--color-primary-500: #14b8a6;
+	--color-primary-600: #0d9488;
+	--color-primary-700: #0f766e;
+	--color-primary-800: #115e59;
+	--color-primary-900: #134e4a;
+	--color-primary-950: #042f2e;
 
 	/* 多彩辅助色（与设计图对齐） */
 	--color-accent-blue: #3B82F6;
@@ -38,16 +38,16 @@
 	/* 阴影 - 轻量精致（对齐设计图） */
 	--shadow-glass: 0 18px 55px rgba(76, 91, 142, 0.11);
 	--shadow-glass-sm: 0 8px 24px rgba(76, 91, 142, 0.08);
-	--shadow-glow: 0 10px 30px rgba(117, 104, 248, 0.28);
-	--shadow-glow-lg: 0 18px 46px rgba(117, 104, 248, 0.34);
+	--shadow-glow: 0 10px 30px rgba(20, 184, 166, 0.26);
+	--shadow-glow-lg: 0 18px 46px rgba(20, 184, 166, 0.32);
 	--shadow-card: 0 10px 34px rgba(91, 104, 151, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 	--shadow-card-hover: 0 18px 48px rgba(91, 104, 151, 0.14);
 	--shadow-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 
 	/* 背景渐变（对齐设计图） */
-	--background-image-gradient-primary: linear-gradient(135deg, #7b72ff, #6457e8);
+	--background-image-gradient-primary: linear-gradient(135deg, #14b8a6, #0d9488);
 	--background-image-gradient-dark: linear-gradient(135deg, #1e293b, #0f172a);
-	--background-image-mesh-gradient: radial-gradient(at 12% 8%, rgba(87, 168, 255, 0.08) 0px, transparent 36%), radial-gradient(at 72% 0%, rgba(137, 117, 255, 0.065) 0px, transparent 40%), radial-gradient(at 95% 70%, rgba(70, 213, 219, 0.055) 0px, transparent 38%), radial-gradient(at 45% 100%, rgba(121, 151, 255, 0.045) 0px, transparent 42%);
+	--background-image-mesh-gradient: radial-gradient(at 12% 8%, rgba(20, 184, 166, 0.09) 0px, transparent 36%), radial-gradient(at 72% 0%, rgba(6, 182, 212, 0.07) 0px, transparent 40%), radial-gradient(at 95% 70%, rgba(20, 184, 166, 0.055) 0px, transparent 38%), radial-gradient(at 45% 100%, rgba(99, 102, 241, 0.035) 0px, transparent 42%);
 
 	/* 动画 */
 	--animate-fade-in: fade-in 0.3s ease-out;
@@ -83,8 +83,8 @@
 		to { background-position: 200% 0; }
 	}
 	@keyframes glow {
-		from { box-shadow: 0 0 20px rgba(123, 143, 245, 0.22); }
-		to { box-shadow: 0 0 30px rgba(123, 143, 245, 0.38); }
+		from { box-shadow: 0 0 20px rgba(20, 184, 166, 0.22); }
+		to { box-shadow: 0 0 30px rgba(20, 184, 166, 0.38); }
 	}
 }
 
@@ -373,7 +373,7 @@ body.modal-open {
 	border-radius: 1.25rem;
 	background:
 		radial-gradient(circle at 0 0, rgba(92, 177, 255, 0.055), transparent 28%),
-		radial-gradient(circle at 100% 100%, rgba(132, 105, 246, 0.045), transparent 30%),
+		radial-gradient(circle at 100% 100%, rgba(20, 184, 166, 0.055), transparent 30%),
 		rgba(255, 255, 255, 0.42);
 	box-shadow:
 		0 10px 30px rgba(75, 91, 137, 0.07),
@@ -381,7 +381,7 @@ body.modal-open {
 	backdrop-filter: blur(22px) saturate(1.2);
 	-webkit-backdrop-filter: blur(22px) saturate(1.2);
 	scrollbar-width: thin;
-	scrollbar-color: rgba(117, 104, 248, 0.28) transparent;
+	scrollbar-color: rgba(20, 184, 166, 0.28) transparent;
 }
 .table-container::-webkit-scrollbar {
 	width: 8px;
@@ -393,7 +393,7 @@ body.modal-open {
 .table-container::-webkit-scrollbar-thumb {
 	border: 2px solid transparent;
 	border-radius: 9999px;
-	background: linear-gradient(90deg, rgba(65, 168, 244, 0.4), rgba(117, 104, 248, 0.42));
+	background: linear-gradient(90deg, rgba(6, 182, 212, 0.4), rgba(20, 184, 166, 0.44));
 	background-clip: padding-box;
 }
 
@@ -480,7 +480,7 @@ body.modal-open {
 	color: #64748b;
 	background:
 		linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(242, 246, 255, 0.72)),
-		linear-gradient(100deg, rgba(63, 163, 247, 0.065), rgba(117, 104, 248, 0.075));
+		linear-gradient(100deg, rgba(6, 182, 212, 0.055), rgba(20, 184, 166, 0.075));
 	border-bottom: 1px solid rgba(191, 203, 225, 0.42);
 	box-shadow:
 		inset 0 1px 0 rgba(255, 255, 255, 0.98),
@@ -528,13 +528,13 @@ body.modal-open {
 .table tbody tr:focus-within td {
 	color: #334155;
 	background:
-		linear-gradient(90deg, rgba(235, 247, 255, 0.76), rgba(244, 240, 255, 0.68)),
+		linear-gradient(90deg, rgba(236, 254, 255, 0.72), rgba(240, 253, 250, 0.76)),
 		rgba(255, 255, 255, 0.74);
 }
 .table tbody tr:hover td:first-child,
 .table tbody tr:focus-within td:first-child {
 	box-shadow:
-		inset 3px 0 0 rgba(117, 104, 248, 0.62),
+		inset 3px 0 0 rgba(20, 184, 166, 0.64),
 		inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 .table tbody tr:hover td:last-child,
@@ -543,11 +543,11 @@ body.modal-open {
 }
 .table tbody a:not(.btn) {
 	font-weight: 550;
-	color: #6558ea;
+	color: #0d9488;
 	transition: color 160ms ease;
 }
 .table tbody a:not(.btn):hover {
-	color: #463bab;
+	color: #0f766e;
 }
 .table tbody .btn-ghost {
 	border: 1px solid transparent;
@@ -602,12 +602,12 @@ body.modal-open {
 	color: #64748b;
 }
 .table-pagination .btn:hover:not(:disabled) {
-	border-color: rgba(217, 212, 255, 0.9);
+	border-color: rgba(153, 246, 228, 0.9);
 	background: rgba(255, 255, 255, 0.86);
 	box-shadow:
 		0 7px 18px rgba(76, 91, 142, 0.1),
 		inset 0 1px 0 rgba(255, 255, 255, 1);
-	color: #6558ea;
+	color: #0d9488;
 }
 .table-pagination .btn:disabled {
 	border-color: rgba(226, 232, 240, 0.58);
@@ -756,7 +756,7 @@ body.modal-open {
 		linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 18%),
 		linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent 20%),
 		radial-gradient(ellipse 105% 34% at 8% 108%, rgba(44, 199, 218, 0.11), transparent 70%),
-		radial-gradient(ellipse 92% 32% at 104% 106%, rgba(117, 104, 248, 0.1), transparent 72%);
+		radial-gradient(ellipse 92% 32% at 104% 106%, rgba(20, 184, 166, 0.11), transparent 72%);
 	content: '';
 	pointer-events: none;
 }
@@ -804,27 +804,27 @@ body.modal-open {
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 .sidebar-link-active {
-	color: #5547d1;
-	background: rgba(117, 104, 248, 0.13);
+	color: #0f766e;
+	background: rgba(20, 184, 166, 0.13);
 	background: color-mix(in srgb, var(--color-primary-500) 14%, rgba(255, 255, 255, 0.24));
 	border-color: transparent;
 	box-shadow:
-		0 2px 8px rgba(85, 71, 209, 0.08),
+		0 2px 8px rgba(13, 148, 136, 0.09),
 		inset 0 1px 0 rgba(255, 255, 255, 0.5),
 		inset 1px 0 0 rgba(255, 255, 255, 0.28),
 		inset -1px 0 0 rgba(255, 255, 255, 0.08),
-		inset 0 -1px 0 rgba(85, 71, 209, 0.05);
+		inset 0 -1px 0 rgba(13, 148, 136, 0.05);
 }
 .sidebar-link-active:hover {
-	color: #463bab;
-	background: rgba(117, 104, 248, 0.17);
+	color: #115e59;
+	background: rgba(20, 184, 166, 0.17);
 	background: color-mix(in srgb, var(--color-primary-500) 18%, rgba(255, 255, 255, 0.28));
 	box-shadow:
-		0 3px 10px rgba(85, 71, 209, 0.1),
+		0 3px 10px rgba(13, 148, 136, 0.11),
 		inset 0 1px 0 rgba(255, 255, 255, 0.56),
 		inset 1px 0 0 rgba(255, 255, 255, 0.32),
 		inset -1px 0 0 rgba(255, 255, 255, 0.1),
-		inset 0 -1px 0 rgba(85, 71, 209, 0.06);
+		inset 0 -1px 0 rgba(13, 148, 136, 0.06);
 }
 .sidebar-link > * {
 	position: relative;
@@ -846,12 +846,12 @@ body.modal-open {
 .sidebar-toggle:hover {
 	border-color: rgba(255, 255, 255, 0.34);
 	background: rgba(255, 255, 255, 0.28);
-	color: #5547d1;
+	color: #0f766e;
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 .sidebar-toggle:focus-visible,
 .sidebar-link:focus-visible {
-	outline: 2px solid rgba(117, 104, 248, 0.62);
+	outline: 2px solid rgba(20, 184, 166, 0.62);
 	outline-offset: 2px;
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -870,8 +870,8 @@ body.modal-open {
 		color: rgba(17, 24, 39, 0.92);
 	}
 	.sidebar-link-active {
-		border-color: rgba(85, 71, 209, 0.38);
-		background: rgba(117, 104, 248, 0.22);
+		border-color: rgba(13, 148, 136, 0.38);
+		background: rgba(20, 184, 166, 0.22);
 	}
 }
 @media (prefers-reduced-motion: reduce) {

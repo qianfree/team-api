@@ -26,7 +26,7 @@ const props = withDefaults(defineProps<{
 	data: () => [],
 })
 
-const colors = ['#7568f8', '#42a4f5', '#2cc5c1', '#ffb552', '#f487a8', '#9f74ee', '#67d49d', '#ff826f']
+const colors = ['#14b8a6', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899', '#3b82f6', '#10b981', '#ef4444']
 
 function formatCost(value: number): string {
 	if (value === 0) return '$0.00'

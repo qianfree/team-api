@@ -556,7 +556,7 @@ onMounted(refreshAll)
 .personal-refresh:hover:not(:disabled) {
 	transform: translateY(-1px);
 	background: white;
-	color: #6558ea;
+	color: #0d9488;
 }
 
 .personal-refresh:disabled {
@@ -649,7 +649,7 @@ onMounted(refreshAll)
 
 .quota-card {
 	background:
-		radial-gradient(circle at 100% 0, rgba(117, 104, 248, 0.11), transparent 34%),
+		radial-gradient(circle at 100% 0, rgba(20, 184, 166, 0.11), transparent 34%),
 		var(--glass-bg-strong);
 }
 
@@ -660,8 +660,8 @@ onMounted(refreshAll)
 }
 
 .quota-icon {
-	background: rgba(117, 104, 248, 0.12);
-	color: #7568f8;
+	background: rgba(20, 184, 166, 0.12);
+	color: #14b8a6;
 }
 
 .quality-icon {
@@ -721,7 +721,7 @@ onMounted(refreshAll)
 	display: block;
 	height: 100%;
 	border-radius: inherit;
-	background: linear-gradient(90deg, #42a4f5, #7568f8);
+	background: linear-gradient(90deg, #06b6d4, #14b8a6);
 }
 
 .cache-strip {
@@ -761,7 +761,7 @@ onMounted(refreshAll)
 	display: block;
 	height: 100%;
 	border-radius: inherit;
-	background: linear-gradient(90deg, #42a4f5, #7568f8);
+	background: linear-gradient(90deg, #06b6d4, #14b8a6);
 }
 
 .model-progress span {

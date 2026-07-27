@@ -1002,7 +1002,7 @@ onMounted(() => {
 	z-index: 5;
 	background:
 		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
-		linear-gradient(100deg, rgba(63, 163, 247, 0.08), rgba(117, 104, 248, 0.1));
+		linear-gradient(100deg, rgba(6, 182, 212, 0.07), rgba(20, 184, 166, 0.1));
 	backdrop-filter: blur(24px) saturate(1.35);
 	-webkit-backdrop-filter: blur(24px) saturate(1.35);
 }

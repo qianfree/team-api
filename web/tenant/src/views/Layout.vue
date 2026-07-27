@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
 		>
 			<!-- Sidebar Header -->
 			<div class="sidebar-header">
-				<div class="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl shadow-glow bg-gradient-to-br from-blue-400 via-primary-500 to-violet-500">
+				<div class="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl shadow-glow bg-gradient-to-br from-cyan-400 via-primary-500 to-emerald-500">
 					<span class="absolute h-5 w-8 -rotate-12 rounded-[50%] border border-white/60"></span>
 					<span class="relative text-white font-bold text-sm">{{ tenantInfo.name.charAt(0) || 'T' }}</span>
 				</div>
@@ -550,12 +550,12 @@ onBeforeUnmount(() => {
 	align-items: center;
 	justify-content: center;
 	gap: 0.5rem;
-	border: 1px solid rgba(117, 104, 248, 0.28);
+	border: 1px solid rgba(20, 184, 166, 0.28);
 	border-radius: 9999px;
 	background: rgba(255, 255, 255, 0.82);
 	padding: 0 0.65rem;
-	box-shadow: 0 8px 22px rgba(92, 82, 210, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94);
-	color: #6558d9;
+	box-shadow: 0 8px 22px rgba(13, 148, 136, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+	color: #0d9488;
 	font-size: 0.75rem;
 	font-weight: 700;
 	transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
@@ -564,9 +564,9 @@ onBeforeUnmount(() => {
 .docs-nav-entry:hover,
 .docs-nav-entry-active {
 	transform: translateY(-1px);
-	border-color: rgba(117, 104, 248, 0.5);
+	border-color: rgba(20, 184, 166, 0.5);
 	background: #fff;
-	box-shadow: 0 10px 26px rgba(92, 82, 210, 0.18), inset 0 1px 0 #fff;
+	box-shadow: 0 10px 26px rgba(13, 148, 136, 0.18), inset 0 1px 0 #fff;
 }
 
 .docs-nav-badge {

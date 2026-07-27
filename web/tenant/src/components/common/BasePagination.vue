@@ -147,19 +147,19 @@ function submitJump() {
 }
 
 .pagination-page:hover {
-	border-color: rgba(117, 104, 248, 0.45);
+	border-color: rgba(20, 184, 166, 0.45);
 	background: rgba(255, 255, 255, 0.9);
-	color: #6558ea;
+	color: #0d9488;
 }
 
 .pagination-page-active {
-	border-color: #7568f8;
-	background: #7568f8;
+	border-color: #14b8a6;
+	background: #14b8a6;
 	color: white;
 }
 
 .pagination-page-active:hover {
-	background: #6558ea;
+	background: #0d9488;
 	color: white;
 }
 
@@ -192,8 +192,8 @@ function submitJump() {
 }
 
 .pagination-jump-input:focus {
-	border-color: #7568f8;
-	box-shadow: 0 0 0 3px rgba(117, 104, 248, 0.12);
+	border-color: #14b8a6;
+	box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
 }
 
 @media (max-width: 900px) {
