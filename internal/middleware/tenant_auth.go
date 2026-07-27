@@ -1,12 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gogf/gf/v2/net/ghttp"
-
-	"github.com/qianfree/team-api/internal/dao"
-	"github.com/qianfree/team-api/internal/model/entity"
 
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -107,17 +105,17 @@ func TenantAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Verify user still exists and is active
-	var user *entity.TntUsers
-	err = dao.TntUsers.Ctx(r.Context()).
-		Where("id", claims.UserID).
-		Fields("status").
-		Scan(&user)
+	// Verify the user and tenant are still active using current database state.
+	principal, err := common.LoadTenantPrincipal(r.Context(), claims.UserID, claims.TenantID)
 	if err != nil {
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
 		return
 	}
-	if user == nil || user.Status != "active" {
+	if err = common.ValidateTenantPrincipal(principal); err != nil {
+		if errors.Is(err, consts.ErrTenantSuspended) {
+			response.ErrorWithCode(r, 403, consts.CodeTenantSuspended, consts.MsgTenantSuspended)
+			return
+		}
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
 		return
 	}
@@ -125,7 +123,7 @@ func TenantAuth(r *ghttp.Request) {
 	// Set auth context
 	r.SetCtxVar(CtxKeyUserID, claims.UserID)
 	r.SetCtxVar(CtxKeyUserType, claims.UserType)
-	r.SetCtxVar(CtxKeyRole, claims.Role)
+	r.SetCtxVar(CtxKeyRole, principal.Role)
 	r.SetCtxVar(CtxKeyTenantID, claims.TenantID)
 	r.SetCtxVar(CtxKeySessionID, claims.SessionID)
 	r.SetCtxVar(CtxKeyJti, claims.ID)
