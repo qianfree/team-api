@@ -300,7 +300,7 @@ onBeforeUnmount(() => {
 			<div class="mt-auto p-3">
 				<button
 					@click="toggleSidebar"
-					class="flex h-11 w-full items-center rounded-2xl border border-white/80 bg-white/45 text-sm font-medium text-slate-500 shadow-sm transition-all hover:bg-white/75 hover:text-primary-600 hover:shadow-md"
+					class="sidebar-toggle"
 					:class="sidebarCollapsed ? 'justify-center px-0' : 'justify-start gap-3 px-3.5'"
 					:title="sidebarCollapsed ? '展开菜单' : '收起菜单'"
 				>
@@ -316,7 +316,7 @@ onBeforeUnmount(() => {
 		<transition name="fade">
 			<div
 				v-if="mobileOpen"
-				class="fixed inset-0 z-30 bg-black/50 lg:hidden"
+				class="fixed inset-0 z-30 bg-black/25 backdrop-blur-[2px] lg:hidden"
 				@click="closeMobile"
 			></div>
 		</transition>
