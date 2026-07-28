@@ -96,12 +96,13 @@ type ResponseStreamState struct {
 }
 
 const (
-	ResponseConverterOAIChatToOAIResponses   = "oai_chat_to_oai_responses_resp"
-	ResponseConverterOAIResponsesToOAIChat   = "oai_responses_to_oai_chat_resp"
-	ResponseConverterOAIChatToClaudeMessages = "oai_chat_to_claude_messages_resp"
-	ResponseConverterOAIChatToGeminiChat     = "oai_chat_to_gemini_chat_resp"
-	ResponseConverterClaudeMessagesToOAIChat = "claude_messages_to_oai_chat_resp"
-	ResponseConverterGeminiChatToOAIChat     = "gemini_chat_to_oai_chat_resp"
+	ResponseConverterOAIChatToOAIResponses          = "oai_chat_to_oai_responses_resp"
+	ResponseConverterOAIResponsesToOAIChat          = "oai_responses_to_oai_chat_resp"
+	ResponseConverterOAIChatToClaudeMessages        = "oai_chat_to_claude_messages_resp"
+	ResponseConverterOAIChatToGeminiChat            = "oai_chat_to_gemini_chat_resp"
+	ResponseConverterClaudeMessagesToOAIChat        = "claude_messages_to_oai_chat_resp"
+	ResponseConverterClaudeMessagesToOAIChatStream  = "claude_messages_to_oai_chat_stream_resp"
+	ResponseConverterGeminiChatToOAIChat            = "gemini_chat_to_oai_chat_resp"
 
 	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
 	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"

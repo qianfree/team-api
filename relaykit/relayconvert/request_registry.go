@@ -74,14 +74,15 @@ const (
 )
 
 const (
-	ConverterNone                        = "none"
-	ConverterClaudeMessagesToOpenAIChat  = "anthropic_messages_to_openai_chat_completions"
-	ConverterOpenAIChatToClaudeMessages  = "openai_chat_completions_to_anthropic_messages"
-	ConverterOpenAIChatToOpenAIResponses = "openai_chat_completions_to_openai_responses"
-	ConverterOpenAIResponsesToOpenAIChat = "openai_responses_to_openai_chat_completions"
-	ConverterOpenAIResponsesToGemini     = "openai_responses_to_gemini_generate_content"
-	ConverterGeminiContentToOpenAIChat   = "gemini_generate_content_to_openai_chat_completions"
-	ConverterOpenAIChatToGeminiContent   = "openai_chat_completions_to_gemini_generate_content"
+	ConverterNone                                   = "none"
+	ConverterClaudeMessagesToOpenAIChat             = "anthropic_messages_to_openai_chat_completions"
+	ConverterClaudeMessagesToOpenAIChatStream       = "anthropic_messages_to_openai_chat_completions_stream"
+	ConverterOpenAIChatToClaudeMessages             = "openai_chat_completions_to_anthropic_messages"
+	ConverterOpenAIChatToOpenAIResponses            = "openai_chat_completions_to_openai_responses"
+	ConverterOpenAIResponsesToOpenAIChat            = "openai_responses_to_openai_chat_completions"
+	ConverterOpenAIResponsesToGemini                = "openai_responses_to_gemini_generate_content"
+	ConverterGeminiContentToOpenAIChat              = "gemini_generate_content_to_openai_chat_completions"
+	ConverterOpenAIChatToGeminiContent              = "openai_chat_completions_to_gemini_generate_content"
 )
 
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。
