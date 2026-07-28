@@ -226,6 +226,11 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
+	// 阶段 4 Task4：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		return usage, nil
+	}
+
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()

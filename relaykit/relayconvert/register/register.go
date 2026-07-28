@@ -48,9 +48,16 @@ func registerOpenAIToClaude() {
 				return result, nil, err
 			},
 			// 流式转换器签名 (io.Reader + callback) 与 ResponseStreamConverterFunc 不兼容，
-			// 由 relay handler 直接调用 ClaudeToOpenAIStreamConverter 处理，不走注册表。
+			// 改由独立的流式注册表登记，宿主桥接层经 LookupStreamConverter 查找调用。
 		},
 	})
+
+	// 流式响应侧：Claude SSE → OpenAI SSE（方向与请求相反）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatClaude, types.RelayFormatOpenAI,
+		relayconvert.ConverterClaudeMessagesToOpenAIChatStream,
+		(&oai_chat.ClaudeToOpenAIStreamConverter{}).ConvertStreamResponse,
+	)
 }
 
 // registerOpenAIToGemini 注册 OpenAI → Gemini 方向转换器。
@@ -74,7 +81,14 @@ func registerOpenAIToGemini() {
 				result, err := respConv.ConvertResponse(ctx, info, response)
 				return result, nil, err
 			},
-			// 流式转换器由 relay handler 直接调用 GeminiToOpenAIStreamConverter 处理。
+			// 流式转换器登记在独立的流式注册表，宿主经 LookupStreamConverter 查找调用。
 		},
 	})
+
+	// 流式响应侧：Gemini SSE → OpenAI SSE（方向与请求相反）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatGemini, types.RelayFormatOpenAI,
+		relayconvert.ResponseConverterGeminiChatToOAIChatStream,
+		(&oai_gemini.GeminiToOpenAIStreamConverter{}).ConvertStreamResponse,
+	)
 }
