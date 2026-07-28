@@ -103,6 +103,7 @@ const (
 	ResponseConverterClaudeMessagesToOAIChat        = "claude_messages_to_oai_chat_resp"
 	ResponseConverterClaudeMessagesToOAIChatStream  = "claude_messages_to_oai_chat_stream_resp"
 	ResponseConverterGeminiChatToOAIChat            = "gemini_chat_to_oai_chat_resp"
+	ResponseConverterGeminiChatToOAIChatStream      = "gemini_chat_to_oai_chat_stream_resp"
 
 	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
 	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
