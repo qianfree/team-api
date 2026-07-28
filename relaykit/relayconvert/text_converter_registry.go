@@ -71,6 +71,13 @@ func LookupTextConverter(converter string) (TextConverterSpec, bool) {
 	return cloneTextConverterSpec(spec), true
 }
 
+// RegisterTextConverter 将一个 TextConverterSpec 拆分为请求侧与响应侧，
+// 分别注册进两张注册表（同 ID），并登记响应侧别名。
+// 阶段 4：导出供内部转换器包的 init() 调用。
+func RegisterTextConverter(spec TextConverterSpec) {
+	registerBuiltinTextConverter(spec)
+}
+
 // registerBuiltinTextConverter 将一个 TextConverterSpec 拆分为请求侧与响应侧，
 // 分别注册进两张注册表（同 ID），并登记响应侧别名。阶段 3 的 init() 调用本函数。
 func registerBuiltinTextConverter(spec TextConverterSpec) {

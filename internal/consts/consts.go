@@ -405,3 +405,17 @@ var ValidAgreementCodes = map[string]string{
 	AgreementCodeTerms:   "用户协议",
 	AgreementCodePrivacy: "隐私政策",
 }
+
+// ============================================================================
+// Relaykit 特性开关（阶段 4：集成到主项目）
+// ============================================================================
+
+// FeatureRelaykitEnabled 控制是否启用 relaykit 转换器
+// 改造期间默认 false，验证通过后改为 true
+// 运行时可通过配置文件 manifest/config/config.yaml 中的 relaykit.enabled 覆盖
+const FeatureRelaykitEnabled = false
+
+// FeatureRelaykitProviders 指定启用 relaykit 的供应商列表
+// 格式: "openai,claude,gemini"，空字符串表示全部使用旧代码
+// 运行时可通过配置文件 manifest/config/config.yaml 中的 relaykit.providers 覆盖
+const FeatureRelaykitProviders = ""

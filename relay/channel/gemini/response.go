@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // codeAssistWrapper Code Assist 响应包装层
@@ -173,6 +174,22 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
+	// 阶段 4：relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+
+		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Gemini 响应提取
+		var geminiResp dto.GeminiChatResponse
+		if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
+			return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+		}
+		// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
+		return &common.Usage{}, nil
+	}
+
+	// 旧代码路径（relaykit 未启用或失败回退）
 	var geminiResp dto.GeminiChatResponse
 	if err := json.Unmarshal(body, &geminiResp); err != nil {
 		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)

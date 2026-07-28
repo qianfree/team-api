@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 // ChannelMeta 渠道元信息，由调度器填充
@@ -120,6 +122,13 @@ type RelayInfo struct {
 	// WebSocket 连接（仅 Realtime 模式使用）
 	ClientConn interface{} // *websocket.Conn — 使用 interface{} 避免 relay 层直接依赖 gorilla/websocket
 	TargetConn interface{} // *websocket.Conn — 上游 WebSocket 连接
+
+	// relaykit Meta 接口所需字段
+	estimatePromptTokens int
+	claudeConvertInfo    *convmeta.ClaudeConvertInfo
+	sendResponseCount    int
+	conversionChain      []types.RelayFormat
+	convOptions          *convmeta.Options
 }
 
 // GetOriginalClientFormat 返回客户端原始请求格式
@@ -148,4 +157,172 @@ func (info *RelayInfo) LatencyMs() float64 {
 // TotalLatencyMs 返回总延迟（毫秒）
 func (info *RelayInfo) TotalLatencyMs() float64 {
 	return float64(time.Since(info.StartTime).Milliseconds())
+}
+
+// ============================================================================
+// convmeta.Meta 接口实现（供 relaykit 转换器使用）
+// ============================================================================
+
+var _ convmeta.Meta = (*RelayInfo)(nil)
+
+func (info *RelayInfo) GetOriginModelName() string {
+	if info == nil {
+		return ""
+	}
+	return info.OriginModelName
+}
+
+func (info *RelayInfo) GetUpstreamModelName() string {
+	if info == nil || info.ChannelMeta == nil {
+		return ""
+	}
+	return info.ChannelMeta.UpstreamModelName
+}
+
+func (info *RelayInfo) HasChannelMeta() bool {
+	return info != nil && info.ChannelMeta != nil
+}
+
+func (info *RelayInfo) GetChannelID() int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return int(info.ChannelMeta.ChannelID)
+}
+
+func (info *RelayInfo) GetChannelType() int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return info.ChannelMeta.ChannelType
+}
+
+func (info *RelayInfo) GetIsStream() bool {
+	if info == nil {
+		return false
+	}
+	return info.IsStream
+}
+
+func (info *RelayInfo) GetReasoningEffort() string {
+	if info == nil {
+		return ""
+	}
+	return info.ReasoningEffort
+}
+
+func (info *RelayInfo) SetReasoningEffort(effort string) {
+	if info == nil {
+		return
+	}
+	info.ReasoningEffort = effort
+}
+
+func (info *RelayInfo) GetEstimatePromptTokens() int {
+	if info == nil {
+		return 0
+	}
+	return info.estimatePromptTokens
+}
+
+func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
+	if info == nil {
+		return &convmeta.ClaudeConvertInfo{LastMessagesType: convmeta.LastMessageTypeNone}
+	}
+	if info.claudeConvertInfo == nil {
+		info.claudeConvertInfo = &convmeta.ClaudeConvertInfo{LastMessagesType: convmeta.LastMessageTypeNone}
+	}
+	return info.claudeConvertInfo
+}
+
+func (info *RelayInfo) GetSendResponseCount() int {
+	if info == nil {
+		return 0
+	}
+	return info.sendResponseCount
+}
+
+func (info *RelayInfo) IncrSendResponseCount() {
+	if info == nil {
+		return
+	}
+	info.sendResponseCount++
+}
+
+func (info *RelayInfo) AppendRequestConversion(format types.RelayFormat) {
+	if info == nil || format == "" {
+		return
+	}
+	if n := len(info.conversionChain); n > 0 && info.conversionChain[n-1] == format {
+		return
+	}
+	info.conversionChain = append(info.conversionChain, format)
+}
+
+func (info *RelayInfo) ConvOptions() *convmeta.Options {
+	if info == nil {
+		return &convmeta.Options{}
+	}
+	if info.convOptions == nil {
+		info.convOptions = info.buildConvOptions()
+	}
+	return info.convOptions
+}
+
+// buildConvOptions 从配置系统构建转换选项快照
+func (info *RelayInfo) buildConvOptions() *convmeta.Options {
+	opts := &convmeta.Options{
+		Claude: convmeta.ClaudeOptions{
+			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
+			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
+			DefaultMaxTokens:                      defaultMaxTokensForClaude,
+		},
+		Gemini: convmeta.GeminiOptions{
+			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
+			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
+			FunctionCallThoughtSignatureEnabled:   true, // TODO: 从配置读取
+			SupportsImagine:                       supportsImagineModel,
+			SafetySetting:                         nil, // TODO: 从配置读取
+		},
+		OpenRouterDialect:      info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
+		PreserveThinkingSuffix: nil, // TODO: 实现黑名单检查
+	}
+	return opts
+}
+
+// defaultMaxTokensForClaude 返回 Claude 模型的默认 max_tokens
+func defaultMaxTokensForClaude(modelName string) int {
+	// 根据模型返回合理的默认值
+	// Claude 3.5 Sonnet 和 Opus 支持更大的输出
+	switch {
+	case contains(modelName, "claude-3-5-sonnet"):
+		return 8192
+	case contains(modelName, "claude-3-opus"):
+		return 4096
+	case contains(modelName, "claude-3-sonnet"):
+		return 4096
+	case contains(modelName, "claude-3-haiku"):
+		return 4096
+	default:
+		return 4096
+	}
+}
+
+// supportsImagineModel 检查 Gemini 模型是否支持图像生成
+func supportsImagineModel(modelName string) bool {
+	return contains(modelName, "imagine")
+}
+
+// contains 检查字符串是否包含子串（简单辅助函数）
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && indexOf(s, substr) >= 0
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }

@@ -79,6 +79,7 @@ require (
 	github.com/richardlehane/mscfb v1.0.6 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/samber/lo v1.53.0 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

@@ -644,11 +644,18 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	convertedBody, err := adaptor.ConvertRequest(ctx, info, body)
-	if err != nil {
-		g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
-			adaptor.GetChannelName(), info.InboundFormat, err)
-		return nil, err
+	// 阶段 4：relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	var convertedBody io.Reader
+	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
+		convertedBody = relaykitBody
+	} else {
+		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)
+		if err != nil {
+			g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
+				adaptor.GetChannelName(), info.InboundFormat, err)
+			return nil, err
+		}
+		convertedBody = legacyBody
 	}
 
 	// 注入渠道系统提示词
