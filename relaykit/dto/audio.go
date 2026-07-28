@@ -13,7 +13,7 @@ type AudioRequest struct {
 	StreamFormat           string          `json:"stream_format,omitempty"`         // 流式音频格式
 	Language               string          `json:"language,omitempty"`              // STT 源语言（可选）
 	Prompt                 string          `json:"prompt,omitempty"`                // STT 提示词（可选）
-	TimestampGranularities []string        `json:"timestamp_grularities,omitempty"` // STT 时间戳粒度（word/segment）
+	TimestampGranularities []string        `json:"timestamp_granities,omitempty"` // STT 时间戳粒度（word/segment）
 	Metadata               json.RawMessage `json:"metadata,omitempty"`              // 自定义元数据
 }
 
@@ -39,7 +39,7 @@ type Segment struct {
 	Seek  int     `json:"seek"`
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
-	Text  string  `json:"text"`
+	Text  string `json:"text"`
 }
 
 // WhisperVerboseJSONResponse STT 详细响应格式（verbose_json）
