@@ -98,6 +98,7 @@ var (
 			// Initialize monitoring collector
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
+			monitor.InitRelaykitTracker()
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {

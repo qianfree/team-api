@@ -76,3 +76,12 @@ demo:
 
 # Channel proxy (for accessing Google/Anthropic etc. from China)
 channel_proxy_url: ""
+
+# Relaykit 转换器（relay 层协议转换模块化改造，分阶段灰度）
+# enabled: 全局开关，false 时所有请求走旧 relay 代码路径（默认）
+# providers: 启用 relaykit 的供应商白名单（为空 = 全部走旧路径）
+#   值对应供应商 key，如 anthropic / openai / gemini；渠道类型→key 的映射在阶段 4 接入
+# 回滚：改 enabled 为 false 并重启服务即可，无需重编译
+relaykit:
+  enabled: false
+  providers: []

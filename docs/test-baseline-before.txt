@@ -1,0 +1,55 @@
+# Relaykit 改造 · 阶段 0 测试基线（改造前）
+#
+# 采集命令：GOTOOLCHAIN=go1.25.8 go test ./relay/... -cover
+#   注：本机默认 GOTOOLCHAIN=auto 在 -cover 下会触发 stdlib 重编译，命中
+#   「go1.25.8 源码 vs go1.25.0 编译器」版本不匹配；显式锁定 go1.25.8 工具链即可。
+#   这是预存在的环境问题，与本次改造无关。
+# 采集时间：2026-07-28
+# 用途：后续阶段回归对比基线（pass/fail + 覆盖率）。
+#
+# 摘要：全部通过（0 失败）；覆盖率区间 0.0%（无测试文件的包）~ 96.6%（scheduler）。
+#       有测试且通过的核心包：relay/channel/{gemini(18.8%),openai(3.6%)}、
+#       relay/constant(14.3%)、relay/handler(9.6%)、relay/helper(33.0%)、
+#       relay/override(63.2%)、relay/scheduler(96.6%)。
+#
+# ---- 原始输出 ----
+	github.com/qianfree/team-api/relay/channel		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/ali		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/aws		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/baidu_v2		coverage: 0.0% of statements
+ok  	github.com/qianfree/team-api/relay/channel/claude	(cached)	coverage: 12.7% of statements
+	github.com/qianfree/team-api/relay/channel/cloudflare		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/codex		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/coze		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/deepseek		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/dify		coverage: 0.0% of statements
+ok  	github.com/qianfree/team-api/relay/channel/gemini	(cached)	coverage: 18.8% of statements
+	github.com/qianfree/team-api/relay/channel/jimeng		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/minimax		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/mistral		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/moonshot		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/ollama		coverage: 0.0% of statements
+ok  	github.com/qianfree/team-api/relay/channel/openai	(cached)	coverage: 3.6% of statements
+	github.com/qianfree/team-api/relay/channel/siliconflow		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/submodel		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/tencent		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/vertex		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/volcengine		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/xai		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/xunfei		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/channel/zhipu		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/common		coverage: 0.0% of statements
+ok  	github.com/qianfree/team-api/relay/constant	(cached)	coverage: 14.3% of statements
+	github.com/qianfree/team-api/relay/dto		coverage: 0.0% of statements
+ok  	github.com/qianfree/team-api/relay/handler	(cached)	coverage: 9.6% of statements
+ok  	github.com/qianfree/team-api/relay/helper	(cached)	coverage: 33.0% of statements
+ok  	github.com/qianfree/team-api/relay/override	(cached)	coverage: 63.2% of statements
+ok  	github.com/qianfree/team-api/relay/scheduler	(cached)	coverage: 96.6% of statements
+	github.com/qianfree/team-api/relay/taskchannel		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/ali		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/gemini		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/kling		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/midjourney		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/sora		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/suno		coverage: 0.0% of statements
+	github.com/qianfree/team-api/relay/taskchannel/volcengine		coverage: 0.0% of statements

@@ -367,6 +367,9 @@ func CollectSystemMetrics(ctx context.Context) error {
 	// Write to batch writer for DB persistence
 	writeMetricsToDB(snapshot)
 
+	// Flush relaykit converter metrics (relaykit 路径无流量时为 no-op，不产生空行)
+	flushRelaykitMetrics(snapshot.Timestamp)
+
 	return nil
 }
 
