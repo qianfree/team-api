@@ -144,6 +144,7 @@ type IAdminV1 interface {
 	ModelGroupOptions(ctx context.Context, req *v1.ModelGroupOptionsReq) (res *v1.ModelGroupOptionsRes, err error)
 	MonitorDashboard(ctx context.Context, req *v1.MonitorDashboardReq) (res *v1.MonitorDashboardRes, err error)
 	MonitorTraffic(ctx context.Context, req *v1.MonitorTrafficReq) (res *v1.MonitorTrafficRes, err error)
+	MonitorTrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (res *v1.MonitorTrafficFlowRes, err error)
 	MonitorLatency(ctx context.Context, req *v1.MonitorLatencyReq) (res *v1.MonitorLatencyRes, err error)
 	MonitorSystem(ctx context.Context, req *v1.MonitorSystemReq) (res *v1.MonitorSystemRes, err error)
 	MonitorDBPool(ctx context.Context, req *v1.MonitorDBPoolReq) (res *v1.MonitorDBPoolRes, err error)

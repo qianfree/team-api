@@ -33,6 +33,28 @@ func TestMonitorTraffic(t *testing.T) {
 	t.Logf("Monitor traffic response received")
 }
 
+func TestMonitorTrafficFlow(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	for _, metric := range []string{"cost", "tokens", "requests"} {
+		resp := client.Get("/api/admin/monitor/traffic-flow", map[string]string{
+			"metric": metric,
+		})
+		resp.AssertSuccess(t)
+
+		var data struct {
+			Metric string `json:"metric"`
+			Nodes  []any  `json:"nodes"`
+			Links  []any  `json:"links"`
+		}
+		resp.DecodeData(t, &data)
+		if data.Metric != metric {
+			t.Fatalf("expected metric=%s, got %s", metric, data.Metric)
+		}
+		t.Logf("Traffic flow metric=%s nodes=%d links=%d", data.Metric, len(data.Nodes), len(data.Links))
+	}
+}
+
 func TestMonitorLatency(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 

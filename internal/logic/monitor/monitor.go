@@ -47,6 +47,23 @@ func (s *sMonitor) Traffic(ctx context.Context, req *v1.MonitorTrafficReq) (*v1.
 	return &v1.MonitorTrafficRes{Data: data}, nil
 }
 
+func (s *sMonitor) TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (*v1.MonitorTrafficFlowRes, error) {
+	// 流量流向桑基图为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
+	startDate, endDate := normalizeTrafficFlowRange(req.StartDate, req.EndDate)
+	metric := req.Metric
+	if metric != "cost" && metric != "tokens" && metric != "requests" {
+		metric = "cost"
+	}
+	data, err := GetTrafficFlow(ctx, startDate, endDate, metric)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MonitorTrafficFlowRes{Data: data}, nil
+}
+
 func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error) {
 	// 延迟直方图为跨租户聚合，限定平台域访问（P2-13）
 	if err := requireAdminScope(ctx); err != nil {

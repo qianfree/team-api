@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -360,6 +361,14 @@ func registerCronJobs(cs *common.CronScheduler) {
 			retentionDays = 90
 		}
 		return task.ScheduleAutoCleanup(ctx, retentionDays)
+	})
+	cs.Register("usage_daily_aggregate", "0 1 * * *", func(ctx context.Context) error {
+		// 用量日维度聚合：将 bil_usage_logs 聚合进 bil_usage_daily，供流量桑基图与趋势分析。
+		// 自愈：每次重算最近 3 个完整天，覆盖短暂宕机；ON CONFLICT 保证幂等。
+		// end 取今天 00:00（开区间），永不聚合当天进行中的数据。
+		end := time.Now().Format("2006-01-02")
+		start := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+		return task.AggregateUsageRange(ctx, start, end)
 	})
 	cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
 		return task.RefreshExpiringOAuthTokens(ctx)

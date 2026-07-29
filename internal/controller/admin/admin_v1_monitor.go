@@ -58,3 +58,6 @@ func (c *ControllerV1) AlertEventAcknowledge(ctx context.Context, req *v1.AlertE
 func (c *ControllerV1) AlertEventResolve(ctx context.Context, req *v1.AlertEventResolveReq) (res *v1.AlertEventResolveRes, err error) {
 	return service.Monitor().ResolveAlert(ctx, req)
 }
+func (c *ControllerV1) MonitorTrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (res *v1.MonitorTrafficFlowRes, err error) {
+	return service.Monitor().TrafficFlow(ctx, req)
+}

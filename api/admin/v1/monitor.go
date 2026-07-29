@@ -22,6 +22,17 @@ type MonitorTrafficRes struct {
 	Data any `json:"data"`
 }
 
+type MonitorTrafficFlowReq struct {
+	g.Meta    `path:"/monitor/traffic-flow" method:"get" mime:"json" tags:"管理后台-监控" summary:"流量流向桑基图"`
+	StartDate string `json:"start_date" in:"query"`           // YYYY-MM-DD，缺省=近30天起点
+	EndDate   string `json:"end_date" in:"query"`             // YYYY-MM-DD，缺省=今天
+	Metric    string `json:"metric" in:"query" d:"cost"`      // cost|tokens|requests，桑基边权重指标
+}
+
+type MonitorTrafficFlowRes struct {
+	Data any `json:"data"`
+}
+
 type MonitorLatencyReq struct {
 	g.Meta  `path:"/monitor/latency" method:"get" mime:"json" tags:"管理后台-监控" summary:"延迟直方图"`
 	Minutes int `json:"minutes" in:"query" d:"5"`
