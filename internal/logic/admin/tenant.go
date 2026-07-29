@@ -13,6 +13,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/model/entity"
@@ -167,11 +168,13 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 			return gerror.Wrapf(err, "set tenant owner")
 		}
 
+		warningThreshold := billing.Zero // 预警阈值默认 0 = 关闭，用户可自行开启
 		_, err = dao.BilWallets.Ctx(ctx).Data(do.BilWallets{
-			TenantId:      tenantID,
-			Balance:       0,
-			FrozenBalance: 0,
-			Currency:      "USD",
+			TenantId:         tenantID,
+			Balance:          0,
+			FrozenBalance:    0,
+			WarningThreshold: &warningThreshold,
+			Currency:         "USD",
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create wallet")
