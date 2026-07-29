@@ -265,6 +265,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '流量流向' },
       },
       {
+        path: 'model-performance',
+        name: 'AdminModelPerformance',
+        component: () => import('@/views/monitor/ModelPerformancePage.vue'),
+        meta: { title: '模型性能' },
+      },
+      {
         path: 'alert-rules',
         name: 'AdminAlertRules',
         component: () => import('@/views/monitor/AlertRulesPage.vue'),

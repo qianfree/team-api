@@ -340,6 +340,7 @@ const menuGroups = [
     items: [
       { name: 'AdminMonitor', label: '系统监控', icon: IconCommand },
       { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand },
+      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand },
       { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
       { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
       { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },

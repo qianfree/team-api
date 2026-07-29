@@ -52,7 +52,7 @@ func (s *sMonitor) TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowRe
 	if err := requireAdminScope(ctx); err != nil {
 		return nil, err
 	}
-	startDate, endDate := normalizeTrafficFlowRange(req.StartDate, req.EndDate)
+	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
 	metric := req.Metric
 	if metric != "cost" && metric != "tokens" && metric != "requests" {
 		metric = "cost"
@@ -62,6 +62,19 @@ func (s *sMonitor) TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowRe
 		return nil, err
 	}
 	return &v1.MonitorTrafficFlowRes{Data: data}, nil
+}
+
+func (s *sMonitor) ModelPerformance(ctx context.Context, req *v1.MonitorModelPerformanceReq) (*v1.MonitorModelPerformanceRes, error) {
+	// 模型性能为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
+	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
+	data, err := GetModelPerformance(ctx, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MonitorModelPerformanceRes{Data: data}, nil
 }
 
 func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error) {

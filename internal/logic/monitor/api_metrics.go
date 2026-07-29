@@ -58,9 +58,9 @@ type trafficFlowRow struct {
 	Cost        float64 `json:"cost"`
 }
 
-// normalizeTrafficFlowRange 规范化桑基图日期范围，返回 YYYY-MM-DD 的 [start, end]（含）。
-// 缺省近 30 天；end 不超过今天；跨度上限 trafficFlowMaxDays。
-func normalizeTrafficFlowRange(startDate, endDate string) (string, string) {
+// normalizeMonitorDateRange 规范化监控类接口的日期范围，返回 YYYY-MM-DD 的 [start, end]（含）。
+// 缺省近 30 天；end 不超过今天；跨度上限 trafficFlowMaxDays。流量桑基图与模型性能共用。
+func normalizeMonitorDateRange(startDate, endDate string) (string, string) {
 	const layout = "2006-01-02"
 	today := time.Now()
 	end, err := time.Parse(layout, endDate)
@@ -105,6 +105,87 @@ func GetTrafficFlow(ctx context.Context, startDate, endDate, metric string) (any
 		return nil, err
 	}
 	return buildTrafficFlowSankey(rows, metric), nil
+}
+
+// ===================== 模型性能指标（bil_usage_daily） =====================
+
+// modelPerfRow 模型性能聚合行（bil_usage_daily 按 model_name 分组）
+type modelPerfRow struct {
+	ModelName       string  `json:"model_name"`
+	RequestCount    int64   `json:"request_count"`
+	SuccessCount    int64   `json:"success_count"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	TotalCost       float64 `json:"total_cost"`
+	SumLatencyMs    int64   `json:"sum_latency_ms"`
+	SumFirstTokenMs int64   `json:"sum_first_token_ms"`
+}
+
+// gradeSuccessRate 按成功率返回分级。阈值：≥99 excellent、≥95 good、≥90 warning、<90 critical。
+func gradeSuccessRate(rate float64) string {
+	switch {
+	case rate >= 99:
+		return "excellent"
+	case rate >= 95:
+		return "good"
+	case rate >= 90:
+		return "warning"
+	default:
+		return "critical"
+	}
+}
+
+// GetModelPerformance 从 bil_usage_daily 按模型聚合性能指标：
+// 成功率/请求数/Token/成本/平均延迟/平均首Token/吞吐(TPS)。
+// 延迟按 SUM 求和、视图以 SUM/COUNT 求均值（分位数不可跨桶加，p95/p99 留后续）。
+func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, error) {
+	const query = `
+		SELECT
+			model_name,
+			SUM(request_count)                                               AS request_count,
+			SUM(CASE WHEN status = 'success' THEN request_count ELSE 0 END)  AS success_count,
+			COALESCE(SUM(input_tokens), 0)                                   AS input_tokens,
+			COALESCE(SUM(output_tokens), 0)                                  AS output_tokens,
+			COALESCE(SUM(total_cost), 0)                                     AS total_cost,
+			COALESCE(SUM(sum_latency_ms), 0)                                 AS sum_latency_ms,
+			COALESCE(SUM(sum_first_token_ms), 0)                             AS sum_first_token_ms
+		FROM bil_usage_daily
+		WHERE stat_date >= $1 AND stat_date <= $2 AND model_name <> 'unknown'
+		GROUP BY model_name
+		ORDER BY request_count DESC
+	`
+	var rows []modelPerfRow
+	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate).Scan(&rows); err != nil {
+		return nil, err
+	}
+
+	list := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var successRate, avgLatency, avgTTFT, tps float64
+		if r.RequestCount > 0 {
+			successRate = float64(r.SuccessCount) * 100 / float64(r.RequestCount)
+			avgLatency = float64(r.SumLatencyMs) / float64(r.RequestCount)
+			avgTTFT = float64(r.SumFirstTokenMs) / float64(r.RequestCount)
+		}
+		if r.SumLatencyMs > 0 {
+			tps = float64(r.OutputTokens) / (float64(r.SumLatencyMs) / 1000)
+		}
+		list = append(list, map[string]any{
+			"model_name":         r.ModelName,
+			"request_count":      r.RequestCount,
+			"success_count":      r.SuccessCount,
+			"success_rate":       math.Round(successRate*100) / 100,
+			"grade":              gradeSuccessRate(successRate),
+			"input_tokens":       r.InputTokens,
+			"output_tokens":      r.OutputTokens,
+			"total_tokens":       r.InputTokens + r.OutputTokens,
+			"total_cost":         r.TotalCost,
+			"avg_latency_ms":     math.Round(avgLatency*100) / 100,
+			"avg_first_token_ms": math.Round(avgTTFT*100) / 100,
+			"tps":                math.Round(tps*100) / 100,
+		})
+	}
+	return map[string]any{"list": list}, nil
 }
 
 // buildTrafficFlowSankey 将聚合行组装为 ECharts Sankey 的 {nodes, links}。

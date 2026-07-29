@@ -55,6 +55,28 @@ func TestMonitorTrafficFlow(t *testing.T) {
 	}
 }
 
+func TestMonitorModelPerformance(t *testing.T) {
+	client := testinfra.GetAuthedClient(t)
+
+	resp := client.Get("/api/admin/monitor/model-performance", map[string]string{
+		"start_date": "2026-01-01",
+		"end_date":   "2026-12-31",
+	})
+	resp.AssertSuccess(t)
+
+	var data struct {
+		List []struct {
+			ModelName    string  `json:"model_name"`
+			RequestCount int64   `json:"request_count"`
+			SuccessRate  float64 `json:"success_rate"`
+			Grade        string  `json:"grade"`
+			AvgLatencyMs float64 `json:"avg_latency_ms"`
+		} `json:"list"`
+	}
+	resp.DecodeData(t, &data)
+	t.Logf("Model performance returned %d models", len(data.List))
+}
+
 func TestMonitorLatency(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 

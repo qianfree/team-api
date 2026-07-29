@@ -16,6 +16,7 @@ type (
 		Dashboard(ctx context.Context, req *v1.MonitorDashboardReq) (*v1.MonitorDashboardRes, error)
 		Traffic(ctx context.Context, req *v1.MonitorTrafficReq) (*v1.MonitorTrafficRes, error)
 		TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (*v1.MonitorTrafficFlowRes, error)
+		ModelPerformance(ctx context.Context, req *v1.MonitorModelPerformanceReq) (*v1.MonitorModelPerformanceRes, error)
 		Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error)
 		System(ctx context.Context, req *v1.MonitorSystemReq) (*v1.MonitorSystemRes, error)
 		DBPool(ctx context.Context, _ *v1.MonitorDBPoolReq) (*v1.MonitorDBPoolRes, error)

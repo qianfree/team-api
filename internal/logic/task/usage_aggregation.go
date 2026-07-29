@@ -12,7 +12,8 @@ import (
 const aggregateUsageSQL = `
 INSERT INTO bil_usage_daily
     (stat_date, tenant_id, project_id, model_name, channel_id, status,
-     request_count, input_tokens, output_tokens, total_cost, account_cost, updated_at)
+     request_count, input_tokens, output_tokens, total_cost, account_cost,
+     sum_latency_ms, sum_first_token_ms, updated_at)
 SELECT
     DATE(created_at)                            AS stat_date,
     tenant_id                                   AS tenant_id,
@@ -25,6 +26,8 @@ SELECT
     COALESCE(SUM(output_tokens), 0)             AS output_tokens,
     COALESCE(SUM(total_cost), 0)                AS total_cost,
     COALESCE(SUM(account_cost), 0)              AS account_cost,
+    COALESCE(SUM(latency_ms), 0)                AS sum_latency_ms,
+    COALESCE(SUM(first_token_ms), 0)            AS sum_first_token_ms,
     now()
 FROM bil_usage_logs
 WHERE created_at >= $1 AND created_at < $2
@@ -36,12 +39,14 @@ GROUP BY
     COALESCE(channel_id, 0),
     COALESCE(NULLIF(status, ''), 'unknown')
 ON CONFLICT (stat_date, tenant_id, project_id, model_name, channel_id, status) DO UPDATE SET
-    request_count = EXCLUDED.request_count,
-    input_tokens  = EXCLUDED.input_tokens,
-    output_tokens = EXCLUDED.output_tokens,
-    total_cost    = EXCLUDED.total_cost,
-    account_cost  = EXCLUDED.account_cost,
-    updated_at    = now()
+    request_count     = EXCLUDED.request_count,
+    input_tokens      = EXCLUDED.input_tokens,
+    output_tokens     = EXCLUDED.output_tokens,
+    total_cost        = EXCLUDED.total_cost,
+    account_cost      = EXCLUDED.account_cost,
+    sum_latency_ms    = EXCLUDED.sum_latency_ms,
+    sum_first_token_ms = EXCLUDED.sum_first_token_ms,
+    updated_at        = now()
 `
 
 // AggregateUsageRange 将 bil_usage_logs 在 [startDate, endDate)（半开区间）的用量
