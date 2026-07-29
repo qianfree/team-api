@@ -99,7 +99,7 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 func EnsureWallet(ctx context.Context, tenantID int64) error {
 	_, err := g.DB().Ctx(ctx).Exec(ctx,
 		`INSERT INTO bil_wallets (tenant_id, balance, frozen_balance, warning_threshold, currency)
-		 VALUES ($1, 0, 0, 1.00, 'USD')
+		 VALUES ($1, 0, 0, 0, 'USD')
 		 ON CONFLICT (tenant_id) DO NOTHING`,
 		tenantID)
 	if err != nil {

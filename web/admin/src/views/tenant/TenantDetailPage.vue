@@ -739,7 +739,7 @@ onMounted(() => {
                       <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(2) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="预警阈值">
-                      {{ walletInfo.warning_threshold != null ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '未设置' }}
+                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '关闭' }}
                     </ADescriptionsItem>
                   </ADescriptions>
                 </ACard>
