@@ -11,6 +11,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 )
 
@@ -24,7 +25,7 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 		return nil, nil, false
 	}
 
-	providerKey := providerKeyForChannelType(info.ChannelMeta.ChannelType)
+	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
 	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
 		return nil, nil, false
 	}
@@ -36,7 +37,7 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 // info 与 info.ChannelMeta 必须非空。
 func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
 	// 响应转换方向：上游格式 → 客户端格式（与请求相反）
-	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	clientFormat := info.GetOriginalClientFormat()
 	converterID := relaykitResponseConverterID(upstream, clientFormat)
 	if converterID == "" {
@@ -140,43 +141,5 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 		return relayconvert.ConverterOpenAIChatToOllama // 响应侧是 Ollama→OpenAI
 	default:
 		return ""
-	}
-}
-
-// providerKeyForChannelType 将渠道 ProviderType 映射为 relaykit 特性开关白名单使用的供应商 key。
-func providerKeyForChannelType(channelType int) string {
-	switch constant.ProviderType(channelType) {
-	case constant.ProviderClaude:
-		return "claude"
-	case constant.ProviderGemini:
-		return "gemini"
-	case constant.ProviderOpenAI:
-		return "openai"
-	case constant.ProviderCoze:
-		return "coze"
-	case constant.ProviderDify:
-		return "dify"
-	case constant.ProviderOllama:
-		return "ollama"
-	default:
-		return ""
-	}
-}
-
-// providerNativeFormat 返回供应商的原生协议格式（passthrough.go 同名函数的桥接版本）
-func providerNativeFormat(providerType int) constant.RelayFormat {
-	switch constant.ProviderType(providerType) {
-	case constant.ProviderClaude:
-		return constant.RelayFormatClaude
-	case constant.ProviderGemini:
-		return constant.RelayFormatGemini
-	case constant.ProviderCoze:
-		return constant.RelayFormatCoze
-	case constant.ProviderDify:
-		return constant.RelayFormatDify
-	case constant.ProviderOllama:
-		return constant.RelayFormatOllama
-	default:
-		return constant.RelayFormatOpenAI
 	}
 }

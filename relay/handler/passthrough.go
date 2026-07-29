@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // canPassThrough 判断当前请求是否可以直连转发（跳过协议转换和参数改写）
@@ -23,7 +24,7 @@ func canPassThrough(info *common.RelayInfo) bool {
 	}
 
 	// 自动检测：入站格式必须匹配上游原生格式
-	if providerNativeFormat(info.ChannelMeta.ChannelType) != info.InboundFormat {
+	if helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) != info.InboundFormat {
 		return false
 	}
 	// 需要模型名映射 → 必须经过转换来替换模型名
@@ -43,22 +44,4 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return false
 	}
 	return true
-}
-
-// providerNativeFormat 根据 ProviderType 返回上游的原生请求格式
-func providerNativeFormat(providerType int) constant.RelayFormat {
-	switch constant.ProviderType(providerType) {
-	case constant.ProviderClaude:
-		return constant.RelayFormatClaude
-	case constant.ProviderGemini:
-		return constant.RelayFormatGemini
-	case constant.ProviderCoze:
-		return constant.RelayFormatCoze
-	case constant.ProviderDify:
-		return constant.RelayFormatDify
-	case constant.ProviderOllama:
-		return constant.RelayFormatOllama
-	default:
-		return constant.RelayFormatOpenAI
-	}
 }

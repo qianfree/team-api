@@ -2227,6 +2227,26 @@ relaykit:
 
 **目标**：删除 relay/ 目录下的旧转换代码，完成迁移。
 
+> ## ⚠️ 实际执行状态（2026-07-29 更新，取代下方理想化描述）
+>
+> 下方 7.1–7.5 的原始描述基于「relaykit 已在生产灰度运行 ≥2 周、且所有供应商已迁移」的前提。**经核实该前提目前未满足**：
+> - relaykit 全程位于运行时特性开关（`relaykit.enabled`，默认 OFF）之后，生产跑 **0% 流量**；阶段 6 仅产出灰度工具+手册（`scripts/relay_stress_test.md`、`docs/relaykit-gray-release-runbook.md`），**未实际放量**。
+> - Ollama 的 `generate`(completions) / `embedding` **无 relaykit 转换器**，永久依赖旧代码 ——「删除所有旧转换代码」从字面上不可行。
+> - 7.1 列出的 `relay/helper/openai_claude.go`、`relay/channel/openai/converter.go` 等文件**大多不存在**；真实架构是 **ALIAS BRIDGE**（`relay/dto.X` 即 `relaykit/dto.X` 类型别名），relaykit 仅替换「格式转换」一步，系统提示词注入 / 参数改写 / 字段清理等后处理仍由旧路径复用。
+>
+> **经评审采用「安全清理」范围执行（零生产风险，保留旧代码为回退路径）：**
+> - **已删除死代码**：`internal/consts/consts.go` 中从未被引用的编译期常量 `FeatureRelaykitEnabled` / `FeatureRelaykitProviders`（实际运行时控制走 `internal/logic/relay/relaykit_config.go` 读取 `manifest/config/config.yaml` 的 `relaykit.enabled`/`providers`，**运行时开关保留**为灰度/回滚控制点）。
+> - **已合并跨包重复函数**：`providerNativeFormat`（原 3 份副本，其中 `helper/system_prompt.go` 的为残缺版仅含 Claude/Gemini）与 `providerKeyForChannelType`（原 2 份副本）统一为 `relay/helper` 导出的 `ProviderNativeFormat` / `ProviderKeyForChannelType` 单一权威实现；`helper` 为叶子工具包（不依赖 handler/relaykit_bridge，无循环）。已验证 `InjectSystemPrompt` 行为不变（其 switch 对非 Claude/Gemini 一律走 `default → injectSystemPromptOpenAI`，Coze/Dify/Ollama 合并前后输出一致）。权威单测集中到 `relay/helper/provider_format_test.go`，并删除了 `handler/passthrough_test.go` 与 `relaykit_bridge/response_test.go` 中的重复表测副本。
+> - 验证：`GOTOOLCHAIN=go1.25.8 go build ./...` + `go vet ./relay/... ./internal/...` 通过；`relay/helper`、`relay/handler`、`relay/relaykit_bridge` 测试全绿；`grep` 确认无 `FeatureRelaykit` 残留、仅 helper 一处映射函数定义。
+>
+> **明确推迟项及原因（需灰度达标后再做）：**
+> 1. **删旧转换代码 + 翻 flag 默认 ON**：前置条件为灰度 ≥2 周稳定、成功率 ≥99.5%（见 `docs/relaykit-gray-release-runbook.md`）。在此之前旧代码必须保留为回退路径，特性开关保持默认 OFF。
+> 2. **DTO 去重**：`relaykit/dto/{coze,dify,ollama}.go` 与 `relay/channel/{coze,dify,ollama}/` 本地 DTO（如 `OllamaChatResponse`、`DifyBlockingResponse`）概念重复，但本地 DTO 仍被各 adaptor 的**旧回退路径**直接使用，**保留旧代码前提下两套类型都在用，不能删**。只能等「删旧代码」时一并清理。
+> 3. **Ollama generate/embedding**：无 relaykit 转换器，永久保留旧路径。
+> 4. **relaykit 已知差异对齐**（固定时间戳 / Coze user 归因 / Claude 流式 cache token）：属灰度 parity 工作。
+>
+> 下方 7.1–7.5 保留为「完整切换」的参考步骤，待灰度验证达标后按此执行。
+
 #### 7.1 删除旧转换函数
 
 确认 relaykit 稳定运行 2 周以上，且所有供应商都已迁移后，删除旧代码：

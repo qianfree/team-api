@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 
 	// blank import 触发内置转换器注册（register.init() 调用 RegisterTextConverter）
@@ -27,27 +28,6 @@ import (
 //   - 任何失败（开关关闭、无匹配转换器、解析失败、转换失败）都返回 ok=false，
 //     调用方回退到 adaptor.ConvertRequest 旧代码路径，保证请求不因 relaykit 中断。
 //   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测灰度效果。
-
-// providerKeyForChannelType 将渠道 ProviderType 映射为 relaykit 特性开关白名单使用的供应商 key。
-// 仅覆盖当前已注册 relaykit 转换器的上游；其余返回空串（等价于「不启用」）。
-func providerKeyForChannelType(channelType int) string {
-	switch constant.ProviderType(channelType) {
-	case constant.ProviderClaude:
-		return "claude"
-	case constant.ProviderGemini:
-		return "gemini"
-	case constant.ProviderOpenAI:
-		return "openai"
-	case constant.ProviderCoze:
-		return "coze"
-	case constant.ProviderDify:
-		return "dify"
-	case constant.ProviderOllama:
-		return "ollama"
-	default:
-		return ""
-	}
-}
 
 // relaykitRequestConverterID 根据 (客户端入站格式, 上游原生格式, RelayMode) 返回已注册的请求转换器 ID。
 // 返回空串表示没有匹配的 relaykit 转换器（调用方回退旧路径）。
@@ -86,7 +66,7 @@ func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, b
 		return nil, false
 	}
 
-	providerKey := providerKeyForChannelType(info.ChannelMeta.ChannelType)
+	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
 	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
 		return nil, false
 	}
@@ -98,7 +78,7 @@ func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, b
 // info 与 info.ChannelMeta 必须非空。
 func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
 	inbound := info.InboundFormat
-	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	converterID := relaykitRequestConverterID(inbound, upstream, info.RelayMode)
 	if converterID == "" {
 		return nil, false

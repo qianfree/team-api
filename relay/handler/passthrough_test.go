@@ -8,32 +8,6 @@ import (
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 )
 
-func TestProviderNativeFormat(t *testing.T) {
-	tests := []struct {
-		providerType int
-		want         constant.RelayFormat
-	}{
-		{int(constant.ProviderClaude), constant.RelayFormatClaude},
-		{int(constant.ProviderGemini), constant.RelayFormatGemini},
-		{int(constant.ProviderOpenAI), constant.RelayFormatOpenAI},
-		{int(constant.ProviderDeepSeek), constant.RelayFormatOpenAI},
-		{int(constant.ProviderAzure), constant.RelayFormatOpenAI},
-		{int(constant.ProviderAWS), constant.RelayFormatOpenAI},
-		{int(constant.ProviderVertex), constant.RelayFormatOpenAI},
-		{int(constant.ProviderAli), constant.RelayFormatOpenAI},
-		// 阶段 5 原生格式供应商
-		{int(constant.ProviderCoze), constant.RelayFormatCoze},
-		{int(constant.ProviderDify), constant.RelayFormatDify},
-		{int(constant.ProviderOllama), constant.RelayFormatOllama},
-	}
-	for _, tt := range tests {
-		got := providerNativeFormat(tt.providerType)
-		if got != tt.want {
-			t.Errorf("providerNativeFormat(%d) = %s, want %s", tt.providerType, got, tt.want)
-		}
-	}
-}
-
 func TestCanPassThrough_ExplicitEnabled(t *testing.T) {
 	info := &common.RelayInfo{
 		InboundFormat: constant.RelayFormatClaude,
@@ -191,27 +165,5 @@ func TestRelaykitRequestConverterID(t *testing.T) {
 				t.Errorf("relaykitRequestConverterID(%s,%s,%d) = %q, want %q", tt.inbound, tt.upstream, tt.relayMode, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestProviderKeyForChannelType 验证阶段 5 新供应商的特性开关 key 映射。
-func TestProviderKeyForChannelType(t *testing.T) {
-	tests := []struct {
-		providerType int
-		want         string
-	}{
-		{int(constant.ProviderClaude), "claude"},
-		{int(constant.ProviderGemini), "gemini"},
-		{int(constant.ProviderOpenAI), "openai"},
-		{int(constant.ProviderCoze), "coze"},
-		{int(constant.ProviderDify), "dify"},
-		{int(constant.ProviderOllama), "ollama"},
-		{int(constant.ProviderDeepSeek), ""}, // OpenAI 兼容供应商，无 relaykit 转换器
-	}
-	for _, tt := range tests {
-		got := providerKeyForChannelType(tt.providerType)
-		if got != tt.want {
-			t.Errorf("providerKeyForChannelType(%d) = %q, want %q", tt.providerType, got, tt.want)
-		}
 	}
 }

@@ -13,46 +13,6 @@ import (
 
 // --- 纯辅助函数表驱动 ---
 
-func TestResponseBridge_ProviderKeyForChannelType(t *testing.T) {
-	cases := []struct {
-		ct   constant.ProviderType
-		want string
-	}{
-		{constant.ProviderClaude, "claude"},
-		{constant.ProviderGemini, "gemini"},
-		{constant.ProviderOpenAI, "openai"},
-		{constant.ProviderCoze, "coze"},
-		{constant.ProviderDify, "dify"},
-		{constant.ProviderOllama, "ollama"},
-		{constant.ProviderDeepSeek, ""}, // 未覆盖的供应商
-	}
-	for _, c := range cases {
-		if got := providerKeyForChannelType(int(c.ct)); got != c.want {
-			t.Errorf("provider=%v: got %q, want %q", c.ct, got, c.want)
-		}
-	}
-}
-
-func TestResponseBridge_ProviderNativeFormat(t *testing.T) {
-	cases := []struct {
-		ct   constant.ProviderType
-		want constant.RelayFormat
-	}{
-		{constant.ProviderClaude, constant.RelayFormatClaude},
-		{constant.ProviderGemini, constant.RelayFormatGemini},
-		{constant.ProviderCoze, constant.RelayFormatCoze},
-		{constant.ProviderDify, constant.RelayFormatDify},
-		{constant.ProviderOllama, constant.RelayFormatOllama},
-		{constant.ProviderOpenAI, constant.RelayFormatOpenAI},
-		{constant.ProviderDeepSeek, constant.RelayFormatOpenAI}, // 默认 OpenAI
-	}
-	for _, c := range cases {
-		if got := providerNativeFormat(int(c.ct)); got != c.want {
-			t.Errorf("provider=%v: got %q, want %q", c.ct, got, c.want)
-		}
-	}
-}
-
 func TestRelaykitResponseConverterID(t *testing.T) {
 	cases := []struct {
 		upstream, client constant.RelayFormat

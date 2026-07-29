@@ -42,7 +42,7 @@ func TryConvertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, up
 		return nil, false
 	}
 
-	providerKey := providerKeyForChannelType(info.ChannelMeta.ChannelType)
+	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
 	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
 		return nil, false
 	}
@@ -53,7 +53,7 @@ func TryConvertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, up
 // convertStreamViaRelaykit 流式转换核心：不读取特性开关配置（由公开入口保证），
 // 抽离出来便于单测（参照 internal/logic/relay 中 isChannelInProviders 的纯函数抽离手法）。
 func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool) {
-	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	clientFormat := info.GetOriginalClientFormat()
 	if upstream == clientFormat {
 		return nil, false // 同格式无需转换
