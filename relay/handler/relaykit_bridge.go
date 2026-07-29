@@ -78,6 +78,9 @@ func relaykitRequestConverterID(inbound, upstream constant.RelayFormat, relayMod
 
 // tryConvertRequestViaRelaykit 尝试用 relaykit 转换器转换请求体。
 // 成功返回 (转换后的 io.Reader, true)；开关关闭 / 无匹配 / 解析或转换失败返回 (nil, false)。
+//
+// 结构与流式桥接（relay/relaykit_bridge/stream.go）对称：nil/特性开关守卫留在公开入口，
+// 真正的转换逻辑抽到 config-free 的 convertRequestViaRelaykit 核心以便单测直接覆盖。
 func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, false
@@ -88,6 +91,12 @@ func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, b
 		return nil, false
 	}
 
+	return convertRequestViaRelaykit(ctx, info, body)
+}
+
+// convertRequestViaRelaykit 是请求转换的 config-free 核心（特性开关已由调用方校验）。
+// info 与 info.ChannelMeta 必须非空。
+func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
 	inbound := info.InboundFormat
 	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
 	converterID := relaykitRequestConverterID(inbound, upstream, info.RelayMode)

@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -116,4 +117,28 @@ func TestFlushRelaykitMetrics_NoActivitySkips(t *testing.T) {
 	// 无活动时应早退，不触碰 metricsWriter（测试环境未初始化 DB writer）
 	resetTracker()
 	flushRelaykitMetrics(time.Now()) // 不应 panic
+}
+
+func TestTrackConverterCall_LongErrorTruncated(t *testing.T) {
+	// 超过 500 字符的错误信息应被截断，避免撑爆 JSONB payload（覆盖 setLastError 截断分支）。
+	resetTracker()
+	longMsg := strings.Repeat("x", 600)
+	TrackConverterCall("c_long", "openai", "coze", time.Millisecond, errors.New(longMsg))
+
+	got := GetRelaykitConverterMetrics()
+	var found bool
+	for _, m := range got {
+		if m.ConverterID == "c_long" {
+			found = true
+			if len(m.LastError) > 500 {
+				t.Errorf("LastError not truncated: len=%d (want <=500)", len(m.LastError))
+			}
+			if m.Failed != 1 {
+				t.Errorf("Failed = %d, want 1", m.Failed)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected c_long converter in metrics, got %+v", got)
+	}
 }

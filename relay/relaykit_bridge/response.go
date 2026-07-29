@@ -16,6 +16,9 @@ import (
 
 // TryConvertResponseViaRelaykit 尝试用 relaykit 转换器转换非流式响应。
 // 成功返回 (转换后的响应体, Usage, true)；开关关闭 / 无匹配 / 转换失败返回 (nil, nil, false)。
+//
+// 结构与流式桥接对称：nil/特性开关守卫留在公开入口，转换逻辑抽到 config-free 的
+// convertResponseViaRelaykit 核心以便单测直接覆盖。
 func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, nil, false
@@ -26,6 +29,12 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 		return nil, nil, false
 	}
 
+	return convertResponseViaRelaykit(ctx, info, upstreamBody)
+}
+
+// convertResponseViaRelaykit 是非流式响应转换的 config-free 核心（特性开关已由调用方校验）。
+// info 与 info.ChannelMeta 必须非空。
+func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
 	// 响应转换方向：上游格式 → 客户端格式（与请求相反）
 	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
 	clientFormat := info.GetOriginalClientFormat()

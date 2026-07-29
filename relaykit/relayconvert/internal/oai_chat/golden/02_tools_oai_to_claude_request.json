@@ -1,0 +1,69 @@
+{
+  "name": "tools_oai_to_claude_request",
+  "from": "openai",
+  "to": "claude",
+  "request": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "What's the weather in Paris?",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4",
+    "tools": [
+      {
+        "function": {
+          "description": "Get current weather for a city",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "description": "City name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "expected_request": {
+    "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What's the weather in Paris?"
+          }
+        ]
+      }
+    ],
+    "max_tokens": 512,
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get current weather for a city",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "description": "City name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "type": "object"
+        }
+      }
+    ]
+  }
+}
