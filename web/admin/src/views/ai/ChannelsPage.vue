@@ -470,6 +470,7 @@ const { exporting, exportFile } = useExport({
             <ARadioGroup v-model="oauthForm.platform">
               <Radio value="claude">Claude</Radio>
               <Radio value="openai">OpenAI</Radio>
+              <Radio value="codex">Codex</Radio>
               <Radio value="gemini">Gemini</Radio>
             </ARadioGroup>
           </AFormItem>

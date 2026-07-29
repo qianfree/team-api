@@ -1213,7 +1213,7 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 	switch oauthData.Platform {
 	case "claude":
 		newToken, err = loauth.ClaudeRefreshToken(oauthData.RefreshToken)
-	case "openai":
+	case "openai", "codex":
 		newToken, err = loauth.OpenAIRefreshToken(oauthData.RefreshToken)
 	case "gemini":
 		newToken, err = loauth.GeminiRefreshToken(oauthData.RefreshToken)
