@@ -29,7 +29,7 @@ import (
 //   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测灰度效果。
 
 // providerKeyForChannelType 将渠道 ProviderType 映射为 relaykit 特性开关白名单使用的供应商 key。
-// 仅覆盖当前已注册 relaykit 转换器的上游（claude/gemini）；其余返回空串（等价于「不启用」）。
+// 仅覆盖当前已注册 relaykit 转换器的上游；其余返回空串（等价于「不启用」）。
 func providerKeyForChannelType(channelType int) string {
 	switch constant.ProviderType(channelType) {
 	case constant.ProviderClaude:
@@ -38,15 +38,21 @@ func providerKeyForChannelType(channelType int) string {
 		return "gemini"
 	case constant.ProviderOpenAI:
 		return "openai"
+	case constant.ProviderCoze:
+		return "coze"
+	case constant.ProviderDify:
+		return "dify"
+	case constant.ProviderOllama:
+		return "ollama"
 	default:
 		return ""
 	}
 }
 
-// relaykitRequestConverterID 根据 (客户端入站格式, 上游原生格式) 返回已注册的请求转换器 ID。
+// relaykitRequestConverterID 根据 (客户端入站格式, 上游原生格式, RelayMode) 返回已注册的请求转换器 ID。
 // 返回空串表示没有匹配的 relaykit 转换器（调用方回退旧路径）。
-// 目前仅注册了 OpenAI→Claude、OpenAI→Gemini 两个方向。
-func relaykitRequestConverterID(inbound, upstream constant.RelayFormat) string {
+// Ollama 仅注册了 chat 路径转换器，其 generate/embedding 模式返回空串以回退旧 adaptor。
+func relaykitRequestConverterID(inbound, upstream constant.RelayFormat, relayMode int) string {
 	if inbound == upstream {
 		return "" // 同格式无需转换（这类请求本就走 passthrough）
 	}
@@ -55,6 +61,16 @@ func relaykitRequestConverterID(inbound, upstream constant.RelayFormat) string {
 		return relayconvert.ConverterOpenAIChatToClaudeMessages
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatGemini:
 		return relayconvert.ConverterOpenAIChatToGeminiContent
+	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatCoze:
+		return relayconvert.ConverterOpenAIChatToCoze
+	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatDify:
+		return relayconvert.ConverterOpenAIChatToDify
+	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatOllama:
+		// 仅 chat 路径迁移；generate（completions）/ embedding 回退旧 adaptor
+		if constant.RelayMode(relayMode) != constant.RelayModeChatCompletions {
+			return ""
+		}
+		return relayconvert.ConverterOpenAIChatToOllama
 	default:
 		return ""
 	}
@@ -74,7 +90,7 @@ func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, b
 
 	inbound := info.InboundFormat
 	upstream := providerNativeFormat(info.ChannelMeta.ChannelType)
-	converterID := relaykitRequestConverterID(inbound, upstream)
+	converterID := relaykitRequestConverterID(inbound, upstream, info.RelayMode)
 	if converterID == "" {
 		return nil, false
 	}

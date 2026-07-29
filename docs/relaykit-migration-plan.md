@@ -1816,17 +1816,35 @@ func TestRelaykitIntegration_Fallback(t *testing.T) {
 
 ### 阶段 5：迁移其他供应商（3-4 周）
 
-**目标**：将剩余 21 个供应商的转换逻辑迁移到 relaykit 架构。
+**目标**：将剩余原生格式供应商的转换逻辑迁移到 relaykit 架构。
 
-#### 5.1 供应商优先级分组
+> **⚠️ 现实核对（2026-07-29，基于实际代码核实，取代本阶段原始假设）**
+>
+> 本阶段原始计划假设「21 个供应商有独立消息格式、需各自迁移转换器」，**与实际代码不符**。核实结论：
+> - **~22 个供应商本就是 OpenAI 兼容透传**（Qwen/Ali、Baidu_v2、Zhipu、Minimax、DeepSeek、Azure、OpenRouter、Mistral、Moonshot、xAI、Volcengine、Tencent、Cloudflare、SiliconFlow、Xunfei、Submodel、AI360、Lingyi、XInference、Codex、Jimeng、OpenAI）。它们在链路上说 OpenAI Chat Completions，`ConvertRequest` 只做 JSON 字段级改写（模型名替换、`top_p` 截断、`-search`/`-thinking` 后缀路由）；`providerNativeFormat()` 已将其归为 `RelayFormatOpenAI`，`inbound==upstream` 无转换路径 —— **relaykit 对它们无需任何工作（N/A）**。
+> - 计划列出的 **Cohere / Groq / Together / Fireworks / Perplexity / Replicate / HuggingFace / Novita / Doubao 在 relay 层不存在**（部分仅在 DB schema / 前端枚举中），无可迁移代码。
+> - 真正的原生格式 Claude / Gemini 已在阶段 3/4 完成；**Vertex 继承 claude/gemini**，已被覆盖。
+> - **唯一仍跑在旧代码上的原生格式供应商只有 3 个：Coze（扣子）、Dify、Ollama。** 本阶段即迁移这 3 个。
+>
+> 因此阶段 5 实际工作远小于原始估算，且性质不同：**迁移 3 个原生格式供应商 + 扩展桥接（chat-completions 中心）以支持任意原生格式 + 记录透传结论。**
 
-**第一批**（高优先级，7 天）：
-- Gemini（Google）：relay/channel/gemini/
-- Qwen（阿里）：relay/channel/qwen/
-- Baidu（百度）：relay/channel/baidu/
-- DeepSeek：relay/channel/deepseek/
+#### 5.1 实际迁移范围
 
-这些供应商有独立的消息格式，需要专门的转换器。
+**迁移（原生格式，需 relaykit 转换器）**：
+
+| 供应商 | ProviderType | 迁移范围 | 说明 |
+|---|---|---|---|
+| **Coze（扣子）** | 32 | 请求 + 流式 + 非流式 | 上游强制流式；非流式由桥接把缓冲 SSE 交给转换器解析 |
+| **Dify** | 33 | 请求 + 非流式(blocking) + 流式 | 最干净，三路径全部贴合现有桥接 |
+| **Ollama** | 22 | **仅 chat**：请求 + 非流式 + 流式 | generate(completions)/embedding 不迁移（桥接未注册对应 converter，自动回退旧 adaptor） |
+
+**不迁移（OpenAI 兼容透传，N/A）**：Qwen/Ali、Baidu_v2、Zhipu、Minimax、DeepSeek、Azure、OpenRouter、Mistral、Moonshot、xAI、Volcengine、Tencent、Cloudflare、SiliconFlow、Xunfei、Submodel、AI360、Lingyi、XInference、Codex、Jimeng、OpenAI。
+
+**已被覆盖**：Claude、Gemini（阶段 3/4）、Vertex（继承 claude/gemini）。
+
+**不存在**：Cohere、Groq、Together、Fireworks、Perplexity、Replicate、HuggingFace、Novita。
+
+> 历史背景：原始 5.1 节按「第一/二/三批 21 个供应商」分组，假定 Qwen/Baidu/DeepSeek 等有独立格式 —— 该假设不成立（见上方现实核对），故此处以实际范围替换。
 
 **第二批**（中优先级，10 天）：
 - Azure OpenAI：relay/channel/azure/
@@ -1998,28 +2016,35 @@ relaykit:
 
 观察监控指标，确认转换成功率 ≥ 99.5%，无功能回归。
 
-#### 5.3 迁移进度跟踪表
+#### 5.3 迁移进度跟踪表（实际状态）
 
-| 供应商 | 转换器实现 | Golden 测试 | Handler 集成 | 灰度验证 | 状态 |
-|--------|-----------|------------|-------------|----------|------|
-| Anthropic (Claude) | ✅ | ✅ | ✅ | ✅ | 已完成 |
-| OpenAI | ✅ | ✅ | ✅ | ✅ | 已完成 |
-| Gemini | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| Qwen | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| Baidu | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| DeepSeek | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| Azure | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| Cohere | ⬜ | ⬜ | ⬜ | ⬜ | 待开始 |
-| ... | | | | | |
+| 供应商 | 类型 | 转换器实现 | 单元测试 | Handler 集成 | 灰度验证 | 状态 |
+|--------|------|-----------|---------|-------------|----------|------|
+| Anthropic (Claude) | 原生格式 | ✅ 阶段3 | ✅ | ✅ 阶段4 | 待灰度 | 已迁移 |
+| Gemini | 原生格式 | ✅ 阶段3 | ✅ | ✅ 阶段4 | 待灰度 | 已迁移 |
+| **Coze（扣子）** | 原生格式 | ✅ 阶段5 | ✅ | ✅ 阶段5 | 待灰度 | 已迁移（chat/流式/非流式） |
+| **Dify** | 原生格式 | ✅ 阶段5 | ✅ | ✅ 阶段5 | 待灰度 | 已迁移（chat/流式/非流式） |
+| **Ollama** | 原生格式 | ✅ 阶段5 | ✅ | ✅ 阶段5 | 待灰度 | **仅 chat**；generate/embedding 保留旧路径 |
+| Vertex | 继承 | — | — | — | — | 继承 claude/gemini，已覆盖 |
+| Qwen/Ali、Baidu_v2、Zhipu、Minimax、DeepSeek、Azure、OpenRouter、Mistral、Moonshot、xAI、Volcengine、Tencent、Cloudflare、SiliconFlow、Xunfei、Submodel、AI360、Lingyi、XInference、Codex、Jimeng、OpenAI | OpenAI 兼容透传 | N/A | N/A | N/A | N/A | 无需转换器，`inbound==upstream` 直通 |
+| Cohere / Groq / Together / Fireworks / Perplexity / Replicate / HuggingFace / Novita / Doubao | — | — | — | — | — | relay 层不存在 |
 
-#### 5.4 验收标准
+> 灰度：在 `manifest/config/config.yaml` 的 `relaykit.providers` 加入 `coze`/`dify`/`ollama`（并 `enabled: true`）逐步放量观察。
 
-- ✅ 所有 24 个供应商的转换逻辑迁移到 relaykit
-- ✅ 每个供应商至少 3 个 Golden 测试用例
-- ✅ 所有供应商通过灰度验证，成功率 ≥ 99.5%
-- ✅ 监控指标显示无性能回退（P95 延迟增加 < 10ms）
+#### 5.4 验收标准（实际）
 
-**预计时间**：24 天（3-4 周）
+- ✅ 3 个剩余原生格式供应商（Coze/Dify/Ollama chat）的转换逻辑迁移到 relaykit，转换器+流式转换器均注册
+- ✅ 桥接扩展支持任意原生格式：新增 RelayFormat 常量、providerNativeFormat/providerKeyForChannelType 成对更新、请求/响应 converter ID 解析、Ollama 仅 chat 的 RelayMode 守卫
+- ✅ 每个新转换器有单元测试（请求/非流式/流式），relaykit 模块与 host 测试全绿、`go vet` 通过
+- ✅ 特性开关默认关闭 → 现网零行为变化（所有新供应商回退旧路径）
+- ⏳ 灰度验证（成功率 ≥ 99.5%、P95 延迟增加 < 10ms）属阶段 6
+
+**已知可接受偏差（特性开关默认 OFF，归阶段 6 灰度对齐）**：
+- 响应 ID/Created 用固定时间戳（与 oai_gemini 一致，测试稳定），非真实时间戳/RequestID。
+- Coze 的 `user` 字段用客户端 User 或通用占位 `relay-user`（relaykit Meta 未暴露 tenant/user 上下文），丢失 Coze 侧 per-用户归因。
+- Ollama generate（completions）/ embedding 未迁移。
+
+**预计时间**：实际 3-5 天（远小于原始 24 天估算）。
 
 ---
 

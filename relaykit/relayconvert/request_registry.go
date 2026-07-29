@@ -83,6 +83,11 @@ const (
 	ConverterOpenAIResponsesToGemini                = "openai_responses_to_gemini_generate_content"
 	ConverterGeminiContentToOpenAIChat              = "gemini_generate_content_to_openai_chat_completions"
 	ConverterOpenAIChatToGeminiContent              = "openai_chat_completions_to_gemini_generate_content"
+
+	// 阶段 5：OpenAI → 原生格式供应商（请求侧）
+	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"
+	ConverterOpenAIChatToDify   = "openai_chat_completions_to_dify_chat_messages"
+	ConverterOpenAIChatToOllama = "openai_chat_completions_to_ollama_chat"
 )
 
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。

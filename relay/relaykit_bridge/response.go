@@ -39,7 +39,9 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 		return nil, nil, false
 	}
 
-	// 解析上游响应体为对应 DTO（Claude → dto.ClaudeResponse；Gemini → dto.GeminiChatResponse）
+	// 解析上游响应体为对应 DTO（Claude → dto.ClaudeResponse；Gemini → dto.GeminiChatResponse；
+	// Dify → dto.DifyBlockingResponse；Ollama → dto.OllamaChatResponse）。
+	// Coze 上游始终为 SSE（非流式客户端也走流式），宿主已缓冲整段 SSE，直接把原始 []byte 交给转换器解析。
 	var upstreamResp any
 	switch upstream {
 	case constant.RelayFormatClaude:
@@ -56,6 +58,23 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 			return nil, nil, false
 		}
 		upstreamResp = &geminiResp
+	case constant.RelayFormatCoze:
+		// 原始缓冲 SSE 体，由 CozeToOpenAIResponseConverter 解析
+		upstreamResp = upstreamBody
+	case constant.RelayFormatDify:
+		var difyResp dto.DifyBlockingResponse
+		if err := json.Unmarshal(upstreamBody, &difyResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse Dify response failed, fallback to legacy: %v", err)
+			return nil, nil, false
+		}
+		upstreamResp = &difyResp
+	case constant.RelayFormatOllama:
+		var ollamaResp dto.OllamaChatResponse
+		if err := json.Unmarshal(upstreamBody, &ollamaResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse Ollama response failed, fallback to legacy: %v", err)
+			return nil, nil, false
+		}
+		upstreamResp = &ollamaResp
 	default:
 		return nil, nil, false
 	}
@@ -78,6 +97,21 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 	return out, usage, true
 }
 
+// UsageFromConvertedChatResponse 从 relaykit 转换后的 OpenAI ChatCompletionResponse 响应体中提取用量。
+// 非流式响应桥接成功后用于构建计费用量（转换器已把用量写入响应体的 Usage 字段）。
+// 解析失败返回 (nil, false)，调用方可回退到从原始上游体提取或返回空用量。
+func UsageFromConvertedChatResponse(body []byte) (*common.Usage, bool) {
+	var resp dto.ChatCompletionResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, false
+	}
+	return &common.Usage{
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		TotalTokens:      resp.Usage.TotalTokens,
+	}, true
+}
+
 // relaykitResponseConverterID 根据 (上游原生格式, 客户端格式) 返回响应转换器 ID。
 // 返回空串表示没有匹配的 relaykit 响应转换器（调用方回退旧路径）。
 func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) string {
@@ -89,6 +123,12 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 		return relayconvert.ConverterOpenAIChatToClaudeMessages // 同一个 spec，响应侧是反向（Claude→OpenAI）
 	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatOpenAI:
 		return relayconvert.ConverterOpenAIChatToGeminiContent // 同理，响应侧是 Gemini→OpenAI
+	case upstream == constant.RelayFormatCoze && clientFormat == constant.RelayFormatOpenAI:
+		return relayconvert.ConverterOpenAIChatToCoze // 响应侧是 Coze→OpenAI
+	case upstream == constant.RelayFormatDify && clientFormat == constant.RelayFormatOpenAI:
+		return relayconvert.ConverterOpenAIChatToDify // 响应侧是 Dify→OpenAI
+	case upstream == constant.RelayFormatOllama && clientFormat == constant.RelayFormatOpenAI:
+		return relayconvert.ConverterOpenAIChatToOllama // 响应侧是 Ollama→OpenAI
 	default:
 		return ""
 	}
@@ -103,6 +143,12 @@ func providerKeyForChannelType(channelType int) string {
 		return "gemini"
 	case constant.ProviderOpenAI:
 		return "openai"
+	case constant.ProviderCoze:
+		return "coze"
+	case constant.ProviderDify:
+		return "dify"
+	case constant.ProviderOllama:
+		return "ollama"
 	default:
 		return ""
 	}
@@ -115,6 +161,12 @@ func providerNativeFormat(providerType int) constant.RelayFormat {
 		return constant.RelayFormatClaude
 	case constant.ProviderGemini:
 		return constant.RelayFormatGemini
+	case constant.ProviderCoze:
+		return constant.RelayFormatCoze
+	case constant.ProviderDify:
+		return constant.RelayFormatDify
+	case constant.ProviderOllama:
+		return constant.RelayFormatOllama
 	default:
 		return constant.RelayFormatOpenAI
 	}

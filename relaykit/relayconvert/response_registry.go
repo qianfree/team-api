@@ -105,6 +105,14 @@ const (
 	ResponseConverterGeminiChatToOAIChat            = "gemini_chat_to_oai_chat_resp"
 	ResponseConverterGeminiChatToOAIChatStream      = "gemini_chat_to_oai_chat_stream_resp"
 
+	// 阶段 5：原生格式供应商 → OpenAI（响应侧，含流式）
+	ResponseConverterCozeChatToOAIChat              = "coze_chat_to_oai_chat_resp"
+	ResponseConverterCozeChatToOAIChatStream        = "coze_chat_to_oai_chat_stream_resp"
+	ResponseConverterDifyChatToOAIChat              = "dify_chat_to_oai_chat_resp"
+	ResponseConverterDifyChatToOAIChatStream        = "dify_chat_to_oai_chat_stream_resp"
+	ResponseConverterOllamaChatToOAIChat            = "ollama_chat_to_oai_chat_resp"
+	ResponseConverterOllamaChatToOAIChatStream      = "ollama_chat_to_oai_chat_stream_resp"
+
 	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
 	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
 	responseConverterGeminiToClaude    = "gemini_chat_to_claude_messages_resp"

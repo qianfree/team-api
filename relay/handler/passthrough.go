@@ -52,6 +52,12 @@ func providerNativeFormat(providerType int) constant.RelayFormat {
 		return constant.RelayFormatClaude
 	case constant.ProviderGemini:
 		return constant.RelayFormatGemini
+	case constant.ProviderCoze:
+		return constant.RelayFormatCoze
+	case constant.ProviderDify:
+		return constant.RelayFormatDify
+	case constant.ProviderOllama:
+		return constant.RelayFormatOllama
 	default:
 		return constant.RelayFormatOpenAI
 	}

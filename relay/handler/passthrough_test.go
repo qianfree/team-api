@@ -5,6 +5,7 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relaykit/relayconvert"
 )
 
 func TestProviderNativeFormat(t *testing.T) {
@@ -20,6 +21,10 @@ func TestProviderNativeFormat(t *testing.T) {
 		{int(constant.ProviderAWS), constant.RelayFormatOpenAI},
 		{int(constant.ProviderVertex), constant.RelayFormatOpenAI},
 		{int(constant.ProviderAli), constant.RelayFormatOpenAI},
+		// 阶段 5 原生格式供应商
+		{int(constant.ProviderCoze), constant.RelayFormatCoze},
+		{int(constant.ProviderDify), constant.RelayFormatDify},
+		{int(constant.ProviderOllama), constant.RelayFormatOllama},
 	}
 	for _, tt := range tests {
 		got := providerNativeFormat(tt.providerType)
@@ -157,5 +162,56 @@ func TestCanPassThrough_DeepSeekIsOpenAI(t *testing.T) {
 	}
 	if !canPassThrough(info) {
 		t.Error("DeepSeek is OpenAI-compatible, should pass through for OpenAI format requests")
+	}
+}
+
+// TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含阶段 5 新供应商
+// 与 Ollama 仅 chat 路径启用的 RelayMode 守卫。
+func TestRelaykitRequestConverterID(t *testing.T) {
+	tests := []struct {
+		name      string
+		inbound   constant.RelayFormat
+		upstream  constant.RelayFormat
+		relayMode int
+		want      string
+	}{
+		{"OpenAI→Claude", constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToClaudeMessages},
+		{"OpenAI→Gemini", constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToGeminiContent},
+		{"OpenAI→Coze", constant.RelayFormatOpenAI, constant.RelayFormatCoze, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToCoze},
+		{"OpenAI→Dify", constant.RelayFormatOpenAI, constant.RelayFormatDify, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToDify},
+		{"OpenAI→Ollama chat", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
+		{"OpenAI→Ollama generate 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
+		{"OpenAI→Ollama embedding 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
+		{"同格式不转换", constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := relaykitRequestConverterID(tt.inbound, tt.upstream, tt.relayMode)
+			if got != tt.want {
+				t.Errorf("relaykitRequestConverterID(%s,%s,%d) = %q, want %q", tt.inbound, tt.upstream, tt.relayMode, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProviderKeyForChannelType 验证阶段 5 新供应商的特性开关 key 映射。
+func TestProviderKeyForChannelType(t *testing.T) {
+	tests := []struct {
+		providerType int
+		want         string
+	}{
+		{int(constant.ProviderClaude), "claude"},
+		{int(constant.ProviderGemini), "gemini"},
+		{int(constant.ProviderOpenAI), "openai"},
+		{int(constant.ProviderCoze), "coze"},
+		{int(constant.ProviderDify), "dify"},
+		{int(constant.ProviderOllama), "ollama"},
+		{int(constant.ProviderDeepSeek), ""}, // OpenAI 兼容供应商，无 relaykit 转换器
+	}
+	for _, tt := range tests {
+		got := providerKeyForChannelType(tt.providerType)
+		if got != tt.want {
+			t.Errorf("providerKeyForChannelType(%d) = %q, want %q", tt.providerType, got, tt.want)
+		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // Adaptor Ollama 供应商适配器
@@ -166,6 +167,17 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
+	// 阶段 5：relaykit 响应转换路径（仅 chat；generate/embedding 不迁移，走旧路径）
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+		if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
+			return usage, nil
+		}
+		return &common.Usage{}, nil
+	}
+
 	var ollamaResp OllamaChatResponse
 	if err := json.Unmarshal(body, &ollamaResp); err != nil {
 		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
@@ -214,6 +226,11 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+	}
+
+	// 阶段 5：relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
+	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		return usage, nil
 	}
 
 	helper.SetEventStreamHeaders(writer)

@@ -16,14 +16,21 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/coze_chat"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/dify_chat"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_chat"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_gemini"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/ollama_chat"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
 func init() {
 	registerOpenAIToClaude()
 	registerOpenAIToGemini()
+	// 阶段 5：剩余原生格式供应商
+	registerOpenAIToCoze()
+	registerOpenAIToDify()
+	registerOpenAIToOllama()
 }
 
 // registerOpenAIToClaude 注册 OpenAI → Claude 方向转换器。
@@ -90,5 +97,103 @@ func registerOpenAIToGemini() {
 		types.RelayFormatGemini, types.RelayFormatOpenAI,
 		relayconvert.ResponseConverterGeminiChatToOAIChatStream,
 		(&oai_gemini.GeminiToOpenAIStreamConverter{}).ConvertStreamResponse,
+	)
+}
+
+// registerOpenAIToCoze 注册 OpenAI → Coze 方向转换器（阶段 5）。
+// 客户端说 OpenAI，上游说 Coze v3：
+//   - 请求侧 OpenAI → Coze
+//   - 响应侧 Coze → OpenAI（非流式：解析缓冲 SSE；流式：SSE→SSE）
+func registerOpenAIToCoze() {
+	reqConv := &coze_chat.OpenAIToCozeRequestConverter{}
+	respConv := &coze_chat.CozeToOpenAIResponseConverter{}
+
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIChatToCoze,
+		From:    types.RelayFormatOpenAI,
+		To:      types.RelayFormatCoze,
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			Convert: reqConv.ConvertRequest,
+		},
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
+		},
+	})
+
+	// 流式响应侧：Coze SSE → OpenAI SSE（方向与请求相反）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatCoze, types.RelayFormatOpenAI,
+		relayconvert.ResponseConverterCozeChatToOAIChatStream,
+		(&coze_chat.CozeToOpenAIStreamConverter{}).ConvertStreamResponse,
+	)
+}
+
+// registerOpenAIToDify 注册 OpenAI → Dify 方向转换器（阶段 5）。
+// 客户端说 OpenAI，上游说 Dify chat-messages：
+//   - 请求侧 OpenAI → Dify
+//   - 响应侧 Dify → OpenAI（非流式 blocking JSON；流式 SSE→SSE）
+func registerOpenAIToDify() {
+	reqConv := &dify_chat.OpenAIToDifyRequestConverter{}
+	respConv := &dify_chat.DifyToOpenAIResponseConverter{}
+
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIChatToDify,
+		From:    types.RelayFormatOpenAI,
+		To:      types.RelayFormatDify,
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			Convert: reqConv.ConvertRequest,
+		},
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
+		},
+	})
+
+	// 流式响应侧：Dify SSE → OpenAI SSE（方向与请求相反）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatDify, types.RelayFormatOpenAI,
+		relayconvert.ResponseConverterDifyChatToOAIChatStream,
+		(&dify_chat.DifyToOpenAIStreamConverter{}).ConvertStreamResponse,
+	)
+}
+
+// registerOpenAIToOllama 注册 OpenAI → Ollama 方向转换器（阶段 5，仅 chat 路径）。
+// 客户端说 OpenAI，上游说 Ollama /api/chat：
+//   - 请求侧 OpenAI → Ollama
+//   - 响应侧 Ollama → OpenAI（非流式 JSON；流式 NDJSON→SSE）
+//
+// 仅覆盖 RelayModeChatCompletions；generate/embedding 不注册 converter，桥接自动回退旧路径。
+func registerOpenAIToOllama() {
+	reqConv := &ollama_chat.OpenAIToOllamaRequestConverter{}
+	respConv := &ollama_chat.OllamaToOpenAIResponseConverter{}
+
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIChatToOllama,
+		From:    types.RelayFormatOpenAI,
+		To:      types.RelayFormatOllama,
+		Quality: relayconvert.TextConverterQualityGood,
+		Req: relayconvert.TextRequestSide{
+			Convert: reqConv.ConvertRequest,
+		},
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
+		},
+	})
+
+	// 流式响应侧：Ollama NDJSON → OpenAI SSE（方向与请求相反）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOllama, types.RelayFormatOpenAI,
+		relayconvert.ResponseConverterOllamaChatToOAIChatStream,
+		(&ollama_chat.OllamaToOpenAIStreamConverter{}).ConvertStreamResponse,
 	)
 }

@@ -9,4 +9,10 @@ const (
 	RelayFormatClaude    RelayFormat = "claude"    // Claude Messages API 格式
 	RelayFormatGemini    RelayFormat = "gemini"    // Google Gemini API 格式
 	RelayFormatResponses RelayFormat = "responses" // OpenAI Responses API 格式
+
+	// 阶段 5：剩余原生格式供应商（非 OpenAI 兼容）。
+	// 字符串值必须与 relaykit/types.RelayFormat 保持一致，桥接处依赖 types.RelayFormat(x) 强转。
+	RelayFormatCoze   RelayFormat = "coze"   // 字节 Coze v3
+	RelayFormatDify   RelayFormat = "dify"   // Dify chat-messages
+	RelayFormatOllama RelayFormat = "ollama" // Ollama /api/chat
 )
