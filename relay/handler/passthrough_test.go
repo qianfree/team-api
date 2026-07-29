@@ -139,6 +139,60 @@ func TestCanPassThrough_DeepSeekIsOpenAI(t *testing.T) {
 	}
 }
 
+// TestCanPassThrough_MultiNative_AllFormats 多协议原生透传渠道（New API / Sub2API）
+// 上游同时支持 OpenAI/Claude/Gemini，三种入站格式在无改写时都应原样直连转发。
+func TestCanPassThrough_MultiNative_AllFormats(t *testing.T) {
+	for _, format := range []constant.RelayFormat{
+		constant.RelayFormatOpenAI,
+		constant.RelayFormatClaude,
+		constant.RelayFormatGemini,
+	} {
+		info := &common.RelayInfo{
+			InboundFormat: format,
+			ChannelMeta: &common.ChannelMeta{
+				ChannelType:   int(constant.ProviderNewAPI),
+				IsModelMapped: false,
+				Settings:      common.ChannelSettings{},
+			},
+		}
+		if !canPassThrough(info) {
+			t.Errorf("New API channel should pass through %s inbound natively", format)
+		}
+	}
+}
+
+// TestCanPassThrough_MultiNative_ModelMappedForcesConversion 多协议原生透传渠道配置了
+// 模型映射时仍需经过 ConvertRequest 替换模型名，不得原样透传。
+func TestCanPassThrough_MultiNative_ModelMappedForcesConversion(t *testing.T) {
+	info := &common.RelayInfo{
+		InboundFormat: constant.RelayFormatClaude,
+		ChannelMeta: &common.ChannelMeta{
+			ChannelType:   int(constant.ProviderSub2API),
+			IsModelMapped: true,
+			Settings:      common.ChannelSettings{},
+		},
+	}
+	if canPassThrough(info) {
+		t.Error("Sub2API channel with model mapping should NOT pass through")
+	}
+}
+
+// TestCanPassThrough_MultiNative_ResponsesNotNative Responses 入站不在原生透传格式集合内，
+// 不得原样直连（需经 ConvertRequest 转为 OpenAI chat）。
+func TestCanPassThrough_MultiNative_ResponsesNotNative(t *testing.T) {
+	info := &common.RelayInfo{
+		InboundFormat: constant.RelayFormatResponses,
+		ChannelMeta: &common.ChannelMeta{
+			ChannelType:   int(constant.ProviderNewAPI),
+			IsModelMapped: false,
+			Settings:      common.ChannelSettings{},
+		},
+	}
+	if canPassThrough(info) {
+		t.Error("New API channel should NOT pass through Responses inbound natively")
+	}
+}
+
 // TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含阶段 5 新供应商
 // 与 Ollama 仅 chat 路径启用的 RelayMode 守卫。
 func TestRelaykitRequestConverterID(t *testing.T) {

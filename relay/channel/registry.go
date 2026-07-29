@@ -15,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/relay/channel/minimax"
 	"github.com/qianfree/team-api/relay/channel/mistral"
 	"github.com/qianfree/team-api/relay/channel/moonshot"
+	"github.com/qianfree/team-api/relay/channel/multinative"
 	"github.com/qianfree/team-api/relay/channel/ollama"
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/channel/siliconflow"
@@ -86,10 +87,12 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderAI360,
 		constant.ProviderLingyi,
 		constant.ProviderOpenRouter,
-		constant.ProviderXInference,
-		constant.ProviderNewAPI,
-		constant.ProviderSub2API:
+		constant.ProviderXInference:
 		return &openai.Adaptor{}
+	// 多协议原生透传：上游同时支持 OpenAI/Claude/Gemini，按入站格式委托对应原生适配器
+	case constant.ProviderNewAPI,
+		constant.ProviderSub2API:
+		return &multinative.Adaptor{}
 	default:
 		return nil
 	}

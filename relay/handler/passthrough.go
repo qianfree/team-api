@@ -23,8 +23,9 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return true
 	}
 
-	// 自动检测：入站格式必须匹配上游原生格式
-	if helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) != info.InboundFormat {
+	// 自动检测：入站格式必须匹配渠道原生格式才可原样直连转发。
+	// 多协议原生透传渠道（New API / Sub2API）的上游同时支持 OpenAI/Claude/Gemini，三者均匹配。
+	if !inboundMatchesChannelNative(info) {
 		return false
 	}
 	// 需要模型名映射 → 必须经过转换来替换模型名
@@ -44,4 +45,18 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return false
 	}
 	return true
+}
+
+// inboundMatchesChannelNative 判断入站格式是否与渠道原生格式匹配（匹配则可原样直连转发）。
+//   - 普通渠道：入站格式须等于该渠道的唯一原生格式（helper.ProviderNativeFormat）。
+//   - 多协议原生透传渠道（New API / Sub2API）：OpenAI/Claude/Gemini 三种格式均视为匹配。
+func inboundMatchesChannelNative(info *common.RelayInfo) bool {
+	if constant.IsMultiNativeProvider(info.ChannelMeta.ChannelType) {
+		switch info.InboundFormat {
+		case constant.RelayFormatOpenAI, constant.RelayFormatClaude, constant.RelayFormatGemini:
+			return true
+		}
+		return false
+	}
+	return helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) == info.InboundFormat
 }

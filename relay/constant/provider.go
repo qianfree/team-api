@@ -118,3 +118,14 @@ func (p ProviderType) String() string {
 		return "Unknown"
 	}
 }
+
+// IsMultiNativeProvider 判断是否为多协议原生透传供应商。
+// 这类供应商（New API / Sub2API）的上游同时原生支持 OpenAI / Claude / Gemini 协议，
+// 入站为这三种格式之一时可原样直连转发，无需格式归一化。
+func IsMultiNativeProvider(providerType int) bool {
+	switch ProviderType(providerType) {
+	case ProviderNewAPI, ProviderSub2API:
+		return true
+	}
+	return false
+}
