@@ -37,6 +37,8 @@ const (
 	ProviderKling       ProviderType = 38
 	ProviderSuno        ProviderType = 39
 	ProviderMidjourney  ProviderType = 40
+	ProviderNewAPI      ProviderType = 41
+	ProviderSub2API     ProviderType = 42
 )
 
 // String 返回供应商类型名称
@@ -108,6 +110,10 @@ func (p ProviderType) String() string {
 		return "Suno"
 	case ProviderMidjourney:
 		return "Midjourney"
+	case ProviderNewAPI:
+		return "New API"
+	case ProviderSub2API:
+		return "Sub2API"
 	default:
 		return "Unknown"
 	}

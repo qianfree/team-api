@@ -31,6 +31,7 @@ const providerTypeOptions = [
   { label: 'Coze (扣子)', value: 32 },
   { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
   { label: 'Codex', value: 35 },
+  { label: 'New API', value: 41 }, { label: 'Sub2API', value: 42 },
 ]
 
 const providerTypeName: Record<number, string> = {}

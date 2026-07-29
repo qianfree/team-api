@@ -39,6 +39,8 @@ var providerTypeNames = map[int]string{
 	14: "Cohere",
 	15: "Mistral",
 	16: "xAI",
+	41: "New API",
+	42: "Sub2API",
 }
 
 // ListChannels 获取渠道列表
@@ -620,6 +622,8 @@ var defaultProviderURLs = map[int]string{
 	14: "https://api.cohere.com",
 	15: "https://api.mistral.ai",
 	16: "https://api.x.ai",
+	41: "", // New API 自引用渠道，需自行填写实例地址
+	42: "", // Sub2API 渠道，需自行填写实例地址
 }
 
 // defaultProviderURL 返回供应商类型的默认 API 地址

@@ -86,7 +86,9 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderAI360,
 		constant.ProviderLingyi,
 		constant.ProviderOpenRouter,
-		constant.ProviderXInference:
+		constant.ProviderXInference,
+		constant.ProviderNewAPI,
+		constant.ProviderSub2API:
 		return &openai.Adaptor{}
 	default:
 		return nil
