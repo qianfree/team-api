@@ -836,9 +836,9 @@ const { exporting, exportFile } = useExport({
 							<div class="snapshot-block">
 								<div class="snapshot-block-title">倍率信息</div>
 								<div class="snapshot-block-body">
-									<div class="snapshot-row">
+									<div v-if="parseSnapshot(detailLog).multipliers.model_multiplier && parseSnapshot(detailLog).multipliers.model_multiplier !== 1" class="snapshot-row">
 										<span class="snapshot-label">模型倍率</span>
-										<span class="snapshot-value">{{ (parseSnapshot(detailLog).multipliers.model_multiplier || 1).toFixed(4) }}x</span>
+										<span class="snapshot-value">{{ (parseSnapshot(detailLog).multipliers.model_multiplier).toFixed(4) }}x</span>
 									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">租户倍率</span>

@@ -221,8 +221,8 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			var billingMode string
 			var discountRatio, billingInputMult, billingOutputMult float64
 			if pricingResult != nil {
-				inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-				outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				inputSnapPrice = pricingResult.InputPrice * pricingResult.TenantMultiplier
+				outputSnapPrice = pricingResult.OutputPrice * pricingResult.TenantMultiplier
 				billingMode = pricingResult.BillingMode
 				discountRatio = pricingResult.DiscountRatio
 				billingInputMult = breakdown.InputMultiplier
@@ -340,8 +340,8 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			var billingMode string
 			var discountRatio, billingInputMult, billingOutputMult float64
 			if pricingResult != nil {
-				inputSnapPrice = pricingResult.InputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
-				outputSnapPrice = pricingResult.OutputPrice * pricingResult.ModelMultiplier * pricingResult.TenantMultiplier
+				inputSnapPrice = pricingResult.InputPrice * pricingResult.TenantMultiplier
+				outputSnapPrice = pricingResult.OutputPrice * pricingResult.TenantMultiplier
 				billingMode = pricingResult.BillingMode
 				discountRatio = pricingResult.DiscountRatio
 				billingInputMult = breakdown.InputMultiplier
