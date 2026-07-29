@@ -1,45 +1,11 @@
 package coze
 
-// CozeCreateRequest Coze v3 创建对话请求
-type CozeCreateRequest struct {
-	ConversationID string `json:"conversation_id,omitempty"`
-	BotID          string `json:"bot_id"`
-	User           string `json:"user"`
-	Query          string `json:"query"`
-	Stream         bool   `json:"stream"`
-}
+import relaykitdto "github.com/qianfree/team-api/relaykit/dto"
 
-// CozeCreateResponse Coze 创建对话响应
-type CozeCreateResponse struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-	Data struct {
-		ID             string `json:"id"`
-		ConversationID string `json:"conversation_id"`
-		Status         string `json:"status"`
-	} `json:"data"`
-}
-
-// CozeRetrieveResponse Coze 查询对话状态响应
-type CozeRetrieveResponse struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-	Data struct {
-		Status string `json:"status"`
-	} `json:"data"`
-}
-
-// CozeMessageListResponse Coze 消息列表响应
-type CozeMessageListResponse struct {
-	Code int           `json:"code"`
-	Msg  string        `json:"msg"`
-	Data []CozeMessage `json:"data"`
-}
-
-// CozeMessage Coze 消息
-type CozeMessage struct {
-	Role        string `json:"role"`
-	Type        string `json:"type"`
-	Content     string `json:"content"`
-	ContentType string `json:"content_type"`
-}
+// CozeCreateRequest / CozeMessage 与 relaykit/dto 中定义字节相同的协议结构，
+// 别名到 relaykit 统一权威定义，消除本地重复。
+//
+// 阶段 7 清理：此前本地还定义了 CozeCreateResponse / CozeRetrieveResponse /
+// CozeMessageListResponse，但全仓无任何引用，已删除。
+type CozeCreateRequest = relaykitdto.CozeCreateRequest
+type CozeMessage = relaykitdto.CozeMessage

@@ -2247,6 +2247,32 @@ relaykit:
 >
 > 下方 7.1–7.5 保留为「完整切换」的参考步骤，待灰度验证达标后按此执行。
 
+---
+
+## 最终执行状态（2026-07-29：cutover 落地，取代上方推迟项 1/2）
+
+经 4 个并行探查 agent 逐函数核实后，阶段 7 已按以下范围执行完成：
+
+**已完成：**
+
+- **特性开关彻底移除（relaykit 常开）**：删除 `internal/logic/relay/relaykit_config.go` 及其单测；`relay/handler/relaykit_bridge.go`、`relay/relaykit_bridge/{stream,response}.go` 三处守卫塌缩为 nil 守卫 → 核心；删除因此变死的 `helper.ProviderKeyForChannelType` 及其测试；删除 `manifest/config/config.example.yaml` 的 `relaykit:` 块。relaykit 在其覆盖的 5 个原生方向上始终优先，旧转换器保留为容错回退（无匹配 converter / parse error 时）与未覆盖方向（跨原生 / Responses / 图像 / Ollama generate·embedding）的承重代码。**不再有运行时一键关闭 relaykit 的开关**——回滚改为 revert 提交。
+- **DTO 去重完成**：`relay/channel/{coze,ollama,dify}` 中与 `relaykit/dto` 字节相同的本地 DTO 改为类型别名（`CozeCreateRequest`/`CozeMessage`、`OllamaChatRequest`/`OllamaMessage`/`OllamaChatResponse`、`DifyRequest`/`DifyBlockingResponse`/`DifyStreamEvent`）；删除 3 个全仓无引用的 Coze 死 DTO（`CozeCreateResponse`/`CozeRetrieveResponse`/`CozeMessageListResponse`）。Ollama generate/embedding 的 4 个本地 DTO（relaykit 无对应物）保留。
+
+**结构性结论：「删旧转换代码」不可行（非仅推迟）。** 旧转换器是承重代码：
+
+- `ConvertOpenAIToClaude`/`ConvertOpenAIToGemini` 是跨原生链路（Claude↔Gemini、Responses→Claude/Gemini）的第二跳，删了编译报错；
+- `convertOpenAIToCoze`/`convertOpenAIToDify`/`convertChatRequest`(ollama) 仍服务非-OpenAI 入站（Claude/Gemini/Responses 客户端打到这些上游）；
+- 即使在覆盖方向上，bridge 刻意保留旧代码作 parse-error 容错回退（relaykit 严格 `json.Unmarshal`，malformed body 回退旧路径），删了 = 硬失败；
+- Responses API、Gemini 图像、Code Assist、Ollama generate/embedding relaykit 完全不覆盖。
+
+**完整旧转换器删除的升级前置条件**：① relaykit 扩展覆盖跨原生入站 / Responses / 图像 / Ollama generate·embedding；② 明确决定 malformed-body 由「回退旧路径」改为「硬失败」并承担相应风险。在此之前旧转换器必须保留。
+
+**验证**：`relaykit` 独立构建 + 主模块 `go build ./...` + `go vet ./relay/... ./internal/...` + relaykit/relay/internal 全量测试均通过；残留符号 grep 确认 `.go` 源码零引用（仅本文档注释命中）。
+
+**残留可选清理（未做，与 relaykit 无关）**：`relay/channel/openai/converter.go` 的 `ConvertOpenAIToResponses` 经 grep 确认零调用方，属 Responses API 遗留死代码，建议作为独立提交清理，未纳入本次 relaykit 收尾。
+
+**已知差异随全量常开生效**：Coze 强制 `Stream=true`、Coze `user` 归因丢失、响应用固定时间戳。用户已线下测试基础功能通过。
+
 #### 7.1 删除旧转换函数
 
 确认 relaykit 稳定运行 2 周以上，且所有供应商都已迁移后，删除旧代码：

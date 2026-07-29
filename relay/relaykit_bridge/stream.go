@@ -10,7 +10,6 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
-	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
@@ -18,35 +17,29 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// 阶段 4 Task4：relaykit 流式响应转换器接入桥接层。
+// relaykit 流式响应转换器接入桥接层。
 //
-// 设计要点（与 Task 2/3 一致）：
-//   - 完全由特性开关控制（relaylogic.IsRelaykitEnabledForChannel），默认关闭 → 零运行时影响。
+// 设计要点：
+//   - 特性开关已于阶段 7 移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；SSE 帧化、保活 ping、[DONE] 收尾、StreamStatus 由本层负责。
-//   - 任何「写入前」的放弃（开关关闭、同格式、无匹配转换器）都返回 ok=false，
+//   - 任何「写入前」的放弃（无 ChannelMeta、同格式、无匹配转换器）都返回 ok=false，
 //     调用方回退到旧 handleStreamToOpenAI 代码路径。
 //   - 一旦 SetEventStreamHeaders 之后（开始写 chunk）即不可回退：
 //     转换中途失败由本层写入结束 chunk + [DONE] + 设置 end reason 后返回 ok=true。
-//   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测灰度效果。
+//   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测。
 
 // TryConvertStreamViaRelaykit 尝试用 relaykit 流式转换器将上游 SSE 流转换为客户端格式。
 //
 // 返回：
 //   - usage：从最后一个带 Usage 的 chunk 提取的用量（无则零值 Usage）
 //   - ok：true 表示已接管响应（成功或优雅失败），调用方应直接返回，不再走旧路径；
-//     false 表示未接管（开关关闭 / 无 ChannelMeta / 同格式 / 无匹配转换器），调用方回退旧路径。
+//     false 表示未接管（无 ChannelMeta / 同格式 / 无匹配转换器），调用方回退旧路径。
 //
-// 注意：开关关闭时在任何 I/O 之前即返回 false，旧路径行为零变化。
+// 注意：未接管时在任何 I/O 之前即返回 false，旧路径行为零变化。
 func TryConvertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, false
 	}
-
-	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
-	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
-		return nil, false
-	}
-
 	return convertStreamViaRelaykit(ctx, info, upstreamBody, writer)
 }
 

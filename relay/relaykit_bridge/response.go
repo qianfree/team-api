@@ -7,7 +7,6 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
-	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -16,20 +15,14 @@ import (
 )
 
 // TryConvertResponseViaRelaykit 尝试用 relaykit 转换器转换非流式响应。
-// 成功返回 (转换后的响应体, Usage, true)；开关关闭 / 无匹配 / 转换失败返回 (nil, nil, false)。
+// 成功返回 (转换后的响应体, Usage, true)；无匹配 / 转换失败返回 (nil, nil, false)。
 //
-// 结构与流式桥接对称：nil/特性开关守卫留在公开入口，转换逻辑抽到 config-free 的
+// 结构与流式桥接对称：nil 守卫留在公开入口，转换逻辑抽到 config-free 的
 // convertResponseViaRelaykit 核心以便单测直接覆盖。
 func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, nil, false
 	}
-
-	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
-	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
-		return nil, nil, false
-	}
-
 	return convertResponseViaRelaykit(ctx, info, upstreamBody)
 }
 

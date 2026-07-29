@@ -9,7 +9,6 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
-	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -20,14 +19,14 @@ import (
 	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
-// 阶段 4：relaykit 请求转换器接入桥接层。
+// relaykit 请求转换器接入桥接层。
 //
 // 设计要点：
-//   - 完全由特性开关控制（relaylogic.IsRelaykitEnabledForChannel），默认关闭 → 零运行时影响。
+//   - 特性开关已于阶段 7 移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；转换后仍复用旧路径的系统提示词注入 / 参数改写 / 字段清理。
-//   - 任何失败（开关关闭、无匹配转换器、解析失败、转换失败）都返回 ok=false，
+//   - 任何失败（无匹配转换器、解析失败、转换失败、同格式、Ollama 非 chat 模式）都返回 ok=false，
 //     调用方回退到 adaptor.ConvertRequest 旧代码路径，保证请求不因 relaykit 中断。
-//   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测灰度效果。
+//   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测。
 
 // relaykitRequestConverterID 根据 (客户端入站格式, 上游原生格式, RelayMode) 返回已注册的请求转换器 ID。
 // 返回空串表示没有匹配的 relaykit 转换器（调用方回退旧路径）。
@@ -57,20 +56,14 @@ func relaykitRequestConverterID(inbound, upstream constant.RelayFormat, relayMod
 }
 
 // tryConvertRequestViaRelaykit 尝试用 relaykit 转换器转换请求体。
-// 成功返回 (转换后的 io.Reader, true)；开关关闭 / 无匹配 / 解析或转换失败返回 (nil, false)。
+// 成功返回 (转换后的 io.Reader, true)；无匹配 / 解析或转换失败返回 (nil, false)。
 //
-// 结构与流式桥接（relay/relaykit_bridge/stream.go）对称：nil/特性开关守卫留在公开入口，
+// 结构与流式桥接（relay/relaykit_bridge/stream.go）对称：nil 守卫留在公开入口，
 // 真正的转换逻辑抽到 config-free 的 convertRequestViaRelaykit 核心以便单测直接覆盖。
 func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, false
 	}
-
-	providerKey := helper.ProviderKeyForChannelType(info.ChannelMeta.ChannelType)
-	if providerKey == "" || !relaylogic.IsRelaykitEnabledForChannel(ctx, providerKey) {
-		return nil, false
-	}
-
 	return convertRequestViaRelaykit(ctx, info, body)
 }
 
