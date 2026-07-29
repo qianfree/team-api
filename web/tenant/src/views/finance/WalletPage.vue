@@ -37,6 +37,11 @@ const redeemHistoryLoading = ref(false)
 const redeemTypeLabels: Record<string, string> = { quota: '额度', plan: '套餐', duration: '时长' }
 const redeemTypeBadgeClasses: Record<string, string> = { quota: 'badge-success', plan: 'badge-primary', duration: 'badge-warning' }
 
+// Warning threshold
+const showThresholdModal = ref(false)
+const thresholdInput = ref('')
+const thresholdSaving = ref(false)
+
 // Computed: preset amounts from payment settings
 const presetAmounts = computed(() => {
 	if (paymentInfo.value?.amount_options?.length) {
@@ -65,6 +70,15 @@ const payMethods = computed(() => {
 })
 
 const minimumAmount = computed(() => Number(paymentInfo.value?.min_topup) || 1)
+
+const thresholdActive = computed(() => Number(wallet.value?.warning_threshold) > 0)
+
+const thresholdValidationError = computed(() => {
+	const val = Number(thresholdInput.value)
+	if (thresholdInput.value === '' || isNaN(val)) return '请输入有效金额'
+	if (val < 0) return '阈值不能为负数'
+	return ''
+})
 
 const selectedDiscount = computed(() => {
 	if (!rechargeAmount.value) return 1
@@ -225,6 +239,32 @@ async function fetchRedeemHistory() {
 	}
 }
 
+// Warning threshold
+function openThresholdModal() {
+	thresholdInput.value = wallet.value?.warning_threshold ? String(wallet.value.warning_threshold) : '0'
+	showThresholdModal.value = true
+}
+
+function closeThresholdModal() {
+	showThresholdModal.value = false
+}
+
+async function saveThreshold() {
+	if (thresholdValidationError.value) return
+	const threshold = Number(thresholdInput.value)
+	thresholdSaving.value = true
+	try {
+		await request.put('/tenant/wallet/warning-threshold', { threshold })
+		// 拦截器在 code !== 0 时已 reject 并提示错误，走到这里即成功；更新本地展示
+		if (wallet.value) wallet.value.warning_threshold = threshold
+		showThresholdModal.value = false
+	} catch {
+		// 拦截器已提示错误
+	} finally {
+		thresholdSaving.value = false
+	}
+}
+
 function formatTime(unix: number): string {
 	if (!unix) return '-'
 	return new Date(unix * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -355,6 +395,18 @@ onBeforeUnmount(() => {
 						</div>
 						<div class="flex items-center gap-2">
 							<strong class="text-sm font-semibold tabular-nums text-slate-700">${{ wallet?.frozen_balance?.toFixed(2) ?? '0.00' }}</strong>
+							<Icon name="chevronRight" size="xs" class="text-slate-300" />
+						</div>
+					</button>
+
+					<button class="threshold-row mt-3" @click="openThresholdModal">
+						<div class="flex items-center gap-2.5">
+							<span class="h-2 w-2 rounded-full" :class="thresholdActive ? 'bg-primary-400' : 'bg-slate-300'"></span>
+							<span class="text-sm text-slate-500">余额预警</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<strong v-if="thresholdActive" class="text-sm font-semibold tabular-nums text-slate-700">${{ Number(wallet?.warning_threshold).toFixed(2) }}</strong>
+							<span v-else class="text-sm text-slate-400">已关闭</span>
 							<Icon name="chevronRight" size="xs" class="text-slate-300" />
 						</div>
 					</button>
@@ -641,6 +693,62 @@ onBeforeUnmount(() => {
 				</div>
 			</transition>
 		</Teleport>
+
+		<!-- ============================================ -->
+		<!-- Warning Threshold Modal -->
+		<!-- ============================================ -->
+		<Teleport to="body">
+			<transition name="modal">
+				<div v-if="showThresholdModal" class="modal-overlay" @click.self="closeThresholdModal">
+					<div class="modal-content w-full max-w-md">
+						<div class="modal-header">
+							<h3 class="modal-title">余额预警</h3>
+							<button @click="closeThresholdModal" class="btn-ghost btn-icon">
+								<Icon name="x" size="md" />
+							</button>
+						</div>
+						<div class="modal-body space-y-4">
+							<div class="threshold-note">
+								<Icon name="infoCircle" size="sm" class="mt-0.5 flex-shrink-0 text-primary-500" />
+								<p>当可用余额低于预警线时，向组织 owner / admin 发送通知。设为 0 可关闭预警。</p>
+							</div>
+							<div>
+								<label class="text-xs font-semibold text-slate-600">预警阈值（USD）</label>
+								<div class="relative mt-3">
+									<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
+									<input
+										v-model="thresholdInput"
+										type="number"
+										class="input pl-8"
+										:class="{ 'input-error': thresholdValidationError }"
+										placeholder="例如 1.00"
+										min="0"
+										step="0.01"
+										@keyup.enter="saveThreshold"
+									/>
+								</div>
+								<p v-if="thresholdValidationError" class="mt-1.5 text-xs text-red-500">{{ thresholdValidationError }}</p>
+								<p v-else class="mt-1.5 text-xs text-slate-400">设为 0 表示关闭预警</p>
+							</div>
+							<div class="flex flex-wrap gap-2">
+								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 0 }" @click="thresholdInput = '0'">关闭</button>
+								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 1 }" @click="thresholdInput = '1'">$1</button>
+								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 5 }" @click="thresholdInput = '5'">$5</button>
+								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 10 }" @click="thresholdInput = '10'">$10</button>
+							</div>
+						</div>
+						<div class="modal-footer">
+							<button @click="closeThresholdModal" class="btn btn-secondary btn-sm">取消</button>
+							<button class="btn btn-primary btn-sm" :disabled="thresholdSaving || !!thresholdValidationError" @click="saveThreshold">
+								<Icon v-if="thresholdSaving" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="check" size="sm" />
+								{{ thresholdSaving ? '保存中...' : '保存' }}
+							</button>
+						</div>
+					</div>
+				</div>
+			</transition>
+		</Teleport>
 	</div>
 </template>
 
@@ -752,6 +860,56 @@ onBeforeUnmount(() => {
 .frozen-balance-row:hover {
 	border-color: #fde68a;
 	background: #fffbeb;
+}
+
+.threshold-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	border: 1px solid #e2e8f0;
+	border-radius: 0.75rem;
+	background: #f8fafc;
+	padding: 0.875rem 1rem;
+	transition: border-color 180ms ease, background-color 180ms ease;
+}
+.threshold-row:hover {
+	border-color: #99f6e4;
+	background: #f0fdfa;
+}
+
+.threshold-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.5rem;
+	border-radius: 0.75rem;
+	background: #f0fdfa;
+	padding: 0.65rem 0.75rem;
+	color: #0f766e;
+}
+.threshold-note p {
+	font-size: 0.75rem;
+	line-height: 1.5;
+}
+
+.threshold-quick {
+	border: 1px solid #e2e8f0;
+	border-radius: 0.5rem;
+	background: rgba(255, 255, 255, 0.72);
+	padding: 0.375rem 0.875rem;
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: #475569;
+	transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+.threshold-quick:hover {
+	border-color: #99f6e4;
+	color: #0d9488;
+}
+.threshold-quick-active {
+	border-color: #5eead4;
+	background: #f0fdfa;
+	color: #0d9488;
 }
 
 .amount-pill {
