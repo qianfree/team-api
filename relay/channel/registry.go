@@ -60,7 +60,7 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderBaiduV2:
 		return &baidu_v2.Adaptor{}
 	case constant.ProviderVolcengine:
-		return &volcengine.Adaptor{}
+		return &volcengine.DispatchAdaptor{}
 	case constant.ProviderMiniMax:
 		return &minimax.Adaptor{}
 	case constant.ProviderOllama:
@@ -72,7 +72,7 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderAzure:
 		return &openai.Adaptor{} // Azure OpenAI 兼容 OpenAI 协议
 	case constant.ProviderTencent:
-		return &tencent.Adaptor{}
+		return &tencent.DispatchAdaptor{}
 	case constant.ProviderXunfei:
 		return &xunfei.Adaptor{}
 	case constant.ProviderCoze:

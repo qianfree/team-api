@@ -161,7 +161,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	result := replaceModelIfNeeded(converted, info)
 	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数
 	if info.IsStream && mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
-		result = injectStreamOptions(result, info)
+		result = InjectStreamOptions(result, info)
 	}
 
 	// Thinking 后缀路由：注入 reasoning_effort
@@ -394,9 +394,10 @@ func replaceModelIfNeeded(r io.Reader, info *common.RelayInfo) io.Reader {
 	return bytes.NewReader(result)
 }
 
-// injectStreamOptions 为流式请求注入 stream_options:{include_usage:true}
-// 确保上游在流式响应的最后一个 chunk 中返回 usage 信息
-func injectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
+// InjectStreamOptions 为流式请求注入 stream_options:{include_usage:true}
+// 确保上游在流式响应的最后一个 chunk 中返回 usage 信息。
+// 导出供其他 OpenAI 兼容适配器（如火山）复用。
+func InjectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
 	if !info.IsStream {
 		return r
 	}
