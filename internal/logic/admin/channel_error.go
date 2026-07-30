@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -195,20 +194,4 @@ func (s *sAdmin) ChannelErrorCategories(ctx context.Context, req *v1.ChannelErro
 			{"value": "unknown", "label": "未知错误"},
 		},
 	}, nil
-}
-
-// toMapList 将 Result 转为 []map[string]any
-func toMapList(result gdb.Result) []map[string]any {
-	if result == nil || len(result) == 0 {
-		return []map[string]any{}
-	}
-	list := make([]map[string]any, len(result))
-	for i, row := range result {
-		data := make(map[string]any, len(row))
-		for k, v := range row {
-			data[k] = v.Val()
-		}
-		list[i] = data
-	}
-	return list
 }
