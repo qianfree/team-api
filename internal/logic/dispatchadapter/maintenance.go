@@ -115,12 +115,13 @@ func snapshotHealthScore(ctx context.Context, channelID int64, succ, latMs, alph
 	}
 }
 
-// autoDisableChannel 熔断长期不恢复 → 落库禁用 + 清绑定 + 跨实例目录失效。
+// autoDisableChannel 熔断长期不恢复 → 落库禁用（标记 auto_disabled 供自动恢复探测识别）
+// + 清绑定 + 跨实例目录失效 + 全租户通知（沿用 channel_auto_disabled 通知模板）。
 func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int64) {
 	affected, err := dao.ChnChannels.Ctx(ctx).
 		Where("id", channelID).
 		Where("status", "active").
-		Data(do.ChnChannels{Status: "disabled"}).
+		Data(do.ChnChannels{Status: "disabled", AutoDisabled: 1}).
 		UpdateAndGetAffected()
 	if err != nil {
 		g.Log().Warningf(ctx, "[Dispatch] 自动禁用渠道失败: channel=%d err=%v", channelID, err)
@@ -132,6 +133,24 @@ func autoDisableChannel(ctx context.Context, channelID int64, openDurationMs int
 	g.Log().Warningf(ctx, "[Dispatch] 渠道 %d 熔断持续 %ds 未恢复，已自动禁用（channel_auto_disable_enabled）",
 		channelID, openDurationMs/1000)
 	InvalidateChannel(ctx, channelID)
+
+	// 全租户通知（异步，失败仅记日志）
+	var chName *string
+	_ = dao.ChnChannels.Ctx(ctx).Where("id", channelID).Fields("name").Scan(&chName)
+	channelName := ""
+	if chName != nil {
+		channelName = *chName
+	}
+	go func() {
+		bgCtx := context.Background()
+		engine := lcommon.NewNotificationEngine()
+		if err := engine.SendToAllTenants(bgCtx, "channel_auto_disabled", g.Map{
+			"channel_name": channelName,
+			"threshold":    0, // 新语义：按熔断持续时长而非连续失败次数
+		}, ""); err != nil {
+			g.Log().Errorf(bgCtx, "[Dispatch] 自动禁用通知发送失败: %v", err)
+		}
+	}()
 }
 
 func clampFloat(v, lo, hi float64) float64 {

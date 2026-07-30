@@ -24,12 +24,15 @@ import (
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relaykit/dispatch"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 // 同步图片厂商「异步化」worker 池。
@@ -38,8 +41,8 @@ import (
 // 端点时，提交阶段立即建 QUEUED 任务并返回 task_id，真正持有上游长连接的动作交给这里的
 // 有界 worker 池（默认 100）在后台执行，客户端轮询 /fetch 取结果。
 //
-// 三层并发控制：① 全局池（worker 数硬上限）② 单渠道（channelInflight vs MaxConcurrency）
-// ③ 渠道间（GetChannelForModel 优先级/权重 + 饱和渠道 exclude 重选）。
+// 并发控制：① 全局池（worker 数硬上限）② 单渠道（调度引擎容量租约 softLimit）
+// ③ 渠道间（调度引擎 HRW 权重选择 + 失败按 FSM 决策换渠道）。
 
 const (
 	syncImageWorkerCount = 100  // 全局 worker 池大小（层①）
@@ -62,9 +65,6 @@ var (
 	// 任务做超时+退款，避免误伤多实例部署下其他实例的 IN_PROGRESS 任务。
 	syncImageRunningMu sync.Mutex
 	syncImageRunning   = make(map[int64]*SyncImageJob)
-
-	channelInflightMu sync.Mutex
-	channelInflight   = make(map[int64]int)
 
 	// 池状态计数器（进程内累计，重启归零；供实时监控面板展示）。
 	syncImageBusy      atomic.Int64 // 忙碌 worker 数（瞬时）
@@ -303,13 +303,9 @@ func EnqueueSyncImageJob(job *SyncImageJob) bool {
 
 // SyncImageWorkerStats 返回 worker 池当前状态快照，供管理后台实时监控面板展示。
 // 在 StartSyncImageWorkers 中注册进 monitor 包（Provider 注入，避免 monitor → task 导入环）。
+// 渠道级并发已由调度引擎容量租约统一承担，per-channel inflight 不再由 worker 维护（恒为空）。
 func SyncImageWorkerStats() monitor.SyncImagePoolSnapshot {
-	channelInflightMu.Lock()
-	inflight := make(map[int64]int, len(channelInflight))
-	for k, v := range channelInflight {
-		inflight[k] = v
-	}
-	channelInflightMu.Unlock()
+	inflight := map[int64]int{}
 
 	qLen, qCap := 0, 0
 	if syncImageQueue != nil {
@@ -430,58 +426,69 @@ func processSyncImageJob(job *SyncImageJob) {
 		return
 	}
 
-	// 2. 选渠道循环 + 复刻管线（失败换渠道重试）
-	var exclude []int64
+	// 2. 渠道调度（新调度引擎 Route/Next/Report/Finish）+ 复刻管线（失败换渠道重试）
+	enabled, channelScope, accessErr := syncImageRelayProv.CheckTenantModelAccess(ctx, job.TenantID, job.Model)
+	if accessErr != nil || !enabled {
+		failSyncImageJob(ctx, job, nil, "select channel: model not enabled for tenant")
+		return
+	}
+	// 异步图片任务有任务级结算补偿，沿用历史「失败换渠道重试」语义；
+	// R2 的 ReplayUnsafe+MaybeSent 保护针对同步端点的自动重放，故此处标 ReplayCostly。
+	sess := dispatchadapter.Coordinator(ctx).Route(ctx, dispatch.RequestProfile{
+		RequestID: job.RequestID,
+		TenantID:  job.TenantID,
+		UserID:    job.UserID,
+		APIKeyID:  job.ApiKeyID,
+		Model:     job.Model,
+		Scope:     channelScope,
+		Replay:    dispatch.ReplayCostly,
+	})
+	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
+
 	lastErr := "no available channel"
 	for attempt := 0; attempt < syncImageMaxAttempts; attempt++ {
-		sel, err := syncImageRelayProv.GetChannelForModel(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, exclude)
-		if err != nil {
-			lastErr = fmt.Sprintf("select channel: %v", err)
-			break // 无更多候选
+		d := sess.Next(ctx)
+		if d == nil {
+			break // 无更多候选 / FSM 已终止
 		}
-
-		// 层②：per-channel 容量。MaxConcurrency<=0 视为不限。
-		if !tryOccupyChannel(sel.ChannelID, sel.MaxConcurrency) {
-			exclude = append(exclude, sel.ChannelID)
-			syncImageJitter()
-			continue
-		}
-		if !syncImageRelayProv.AcquireChannelSlot(ctx, sel.ChannelID, sel.MaxConcurrency, job.RequestID) {
-			decInflight(sel.ChannelID)
-			exclude = append(exclude, sel.ChannelID)
-			syncImageJitter()
+		sel, mErr := syncImageRelayProv.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, job.Model)
+		if mErr != nil {
+			lastErr = fmt.Sprintf("materialize channel %d: %v", d.Channel.ID, mErr)
+			if dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0); dec == dispatch.DecisionAbort {
+				break
+			}
 			continue
 		}
 
 		ok, memW, perr := runImagePipelineWithRelease(ctx, job, sel)
 		if ok {
-			if !sel.PreserveAffinity {
-				syncImageRelayProv.SetChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model, sel.ChannelID)
-			}
+			sess.Finish(context.WithoutCancel(ctx), true, 0)
 			settleSyncImageSuccess(ctx, job, sel, memW)
 			return
 		}
 
-		// 失败：降健康度 + 排除该渠道 + 抖动退避重选
-		syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, false, 0)
-		syncImageRelayProv.IncrementConsecutiveFailure(ctx, sel.ChannelID)
-		syncImageRelayProv.DeleteChannelAffinity(ctx, job.TenantID, job.UserID, job.ApiKeyID, job.Model)
-		exclude = append(exclude, sel.ChannelID)
+		// 失败：上报健康并按 FSM 决策原地重试/换渠道/终止（绑定不删除）
 		lastErr = perr
-		syncImageJitter()
+		dec, backoff := sess.Report(ctx, 0, errors.New(perr), dispatch.DeliveryResponseReceived, 0, 0)
+		if dec == dispatch.DecisionAbort {
+			break
+		}
+		if backoff > 0 {
+			time.Sleep(backoff)
+		} else {
+			syncImageJitter()
+		}
 	}
 
 	// 3. 全饱和/无候选/重试耗尽 → FAILURE + 退款
 	failSyncImageJob(ctx, job, nil, lastErr)
 }
 
-// runImagePipelineWithRelease 保证无论成功/失败/panic 都释放 per-channel 槽（defer）。
+// runImagePipelineWithRelease 管线执行期间保活调度租约（租约获取/释放由调度会话负责）。
 func runImagePipelineWithRelease(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection) (ok bool, memW *memResponseWriter, failReason string) {
 	stopHeartbeat := make(chan struct{})
 	go refreshSyncImageChannelLease(sel.ChannelID, job.RequestID, stopHeartbeat)
 	defer close(stopHeartbeat)
-	defer decInflight(sel.ChannelID)
-	defer syncImageRelayProv.ReleaseChannelSlot(context.Background(), sel.ChannelID, job.RequestID)
 	return runImagePipeline(ctx, job, sel)
 }
 
@@ -492,7 +499,7 @@ func refreshSyncImageChannelLease(channelID int64, requestID string, stop <-chan
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			syncImageRelayProv.RefreshChannelSlot(ctx, channelID, requestID)
+			dispatchadapter.RefreshDispatchLease(ctx, channelID, requestID)
 			cancel()
 		case <-stop:
 			return
@@ -620,11 +627,10 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 		syncImageBilling.IncrApiKeyQuotaUsed(ctx, job.ApiKeyID, actualCost)
 	}
 
-	// 4. 收尾
+	// 4. 收尾（渠道健康上报由调度会话 Finish 完成）
 	syncImageSucceeded.Add(1)
 	DecrActiveTask()
 	monitor.UnregisterRequestByTaskID(job.PublicTaskID)
-	syncImageRelayProv.UpdateChannelHealth(ctx, sel.ChannelID, true, 0)
 
 	chBasic := &common.ChannelBasicInfo{ID: sel.ChannelID, Type: sel.ChannelType, Name: sel.ChannelName}
 	usageTask := buildUsageTask(job, sel, "SUCCESS", actualCost, now)
@@ -943,27 +949,8 @@ func buildUsageTask(job *SyncImageJob, sel *common.ChannelSelection, status stri
 	return t
 }
 
-// tryOccupyChannel 层②：容量未满则占槽并返回 true。MaxConcurrency<=0 视为不限。
-func tryOccupyChannel(channelID int64, maxConcurrency int) bool {
-	channelInflightMu.Lock()
-	defer channelInflightMu.Unlock()
-	if maxConcurrency > 0 && channelInflight[channelID] >= maxConcurrency {
-		return false
-	}
-	channelInflight[channelID]++
-	return true
-}
-
-func decInflight(channelID int64) {
-	channelInflightMu.Lock()
-	defer channelInflightMu.Unlock()
-	if channelInflight[channelID] > 0 {
-		channelInflight[channelID]--
-	}
-	if channelInflight[channelID] <= 0 {
-		delete(channelInflight, channelID)
-	}
-}
+// 注：渠道级并发控制已统一由调度引擎的容量租约（softLimit）承担，
+// 旧的 per-channel 进程内占槽（tryOccupyChannel/decInflight）随迁移移除。
 
 func syncImageJitter() {
 	time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond)

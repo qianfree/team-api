@@ -375,7 +375,6 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 			return nil, err
 		}
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ID)
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
 	if req.Status == "active" {
 		// 手动启用/恢复：复位熔断并开启爬坡窗口，恢复初期小流量验证（rampFactor）
@@ -405,7 +404,6 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ID)
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
 
 	return nil, nil
@@ -521,7 +519,6 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
 	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 	return nil, nil
 }
@@ -552,7 +549,6 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
 	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 
 	return nil, nil

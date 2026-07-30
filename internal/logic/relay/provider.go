@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +22,6 @@ import (
 	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
-	"github.com/qianfree/team-api/relay/scheduler"
 )
 
 // modelCache 模型信息缓存（TTL 600s）
@@ -92,223 +90,6 @@ func (p *DataProviderImpl) ValidateApiKey(ctx context.Context, rawKey string) (*
 		TotalQuota:           info.TotalQuota,
 		UsedQuota:            info.UsedQuota,
 	}, nil
-}
-
-// GetChannelForModel 实现 DataProvider.GetChannelForModel
-// 使用调度引擎：亲和性优先 → 租户模型权限 → 渠道范围过滤 → 优先级+权重选择 → 健康度过滤
-func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	// 检查租户模型权限和渠道范围
-	enabled, channelScope, err := p.CheckTenantModelAccess(ctx, tenantID, modelName)
-	if err != nil {
-		return nil, err
-	}
-	if !enabled {
-		return nil, common.ErrTenantModelNotEnabled
-	}
-
-	selection, err := p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
-
-	// 阶段 2 影子模式：初始选择（无排除渠道）时并行计算新调度器决策并写对比日志，
-	// 只算不用。开关 channel_dispatch_shadow_enabled，切换完成后移除本调用。
-	if err == nil && selection != nil && len(excludeChannelIDs) == 0 {
-		dispatchadapter.ShadowCompare(ctx, tenantID, userID, apiKeyID, modelName, channelScope, dispatchadapter.ShadowLegacy{
-			ChannelID:   selection.ChannelID,
-			ChannelName: selection.ChannelName,
-			Reason:      selection.SelectionReason,
-			Priority:    selection.Priority,
-			Weight:      selection.Weight,
-			HealthScore: selection.HealthScore,
-		})
-	}
-	return selection, err
-}
-
-func (p *DataProviderImpl) SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {
-	setAffinity(ctx, tenantID, userID, apiKeyID, modelName, channelID)
-}
-
-func (p *DataProviderImpl) DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
-	deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-}
-
-// selectChannelFromDB 正常渠道调度（优先级+权重+健康度）
-func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	type channelRow struct {
-		ChannelID           int64    `json:"channel_id"`
-		ChannelName         string   `json:"channel_name"`
-		ChannelType         int      `json:"channel_type"`
-		BaseURL             string   `json:"base_url"`
-		UpstreamModel       string   `json:"upstream_model"`
-		Priority            int      `json:"priority"`
-		Weight              int      `json:"weight"`
-		MaxConcurrency      int      `json:"max_concurrency"`
-		Settings            string   `json:"settings"`
-		HealthScore         *float64 `json:"health_score"`
-		ConsecutiveFailures int      `json:"consecutive_failures"`
-	}
-
-	query := dao.ChnAbilities.Ctx(ctx).As("a").
-		LeftJoin("chn_channels c ON a.channel_id = c.id").
-		LeftJoin("chn_health_scores h ON c.id = h.channel_id").
-		Where("a.model_name", modelName).
-		Where("a.enabled", true).
-		Where("c.status", "active").
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures")
-
-	// 渠道范围过滤
-	if len(channelScope) > 0 {
-		query = query.WhereIn("c.id", channelScope)
-	}
-
-	for _, id := range excludeChannelIDs {
-		query = query.WhereNot("c.id", id)
-	}
-
-	var channels []channelRow
-	err := query.Scan(&channels)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(channels) == 0 {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	if !lcommon.Config().GetBool(ctx, "channel_scheduler_v2_enabled") {
-		sort.SliceStable(channels, func(i, j int) bool {
-			if channels[i].Priority == channels[j].Priority {
-				return channels[i].Weight > channels[j].Weight
-			}
-			return channels[i].Priority > channels[j].Priority
-		})
-		for _, ch := range channels {
-			key, keyErr := getChannelKey(ctx, ch.ChannelID)
-			if keyErr != nil || key == "" {
-				continue
-			}
-			upstreamModel := ch.UpstreamModel
-			if upstreamModel == "" {
-				upstreamModel = modelName
-			}
-			return &common.ChannelSelection{
-				ChannelID:         ch.ChannelID,
-				ChannelType:       ch.ChannelType,
-				ChannelName:       ch.ChannelName,
-				BaseURL:           ch.BaseURL,
-				ApiKey:            key,
-				UpstreamModelName: upstreamModel,
-				IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-				MaxConcurrency:    ch.MaxConcurrency,
-				Settings:          ParseChannelSettings(ch.Settings),
-				SelectionReason:   "legacy",
-				Priority:          ch.Priority,
-				Weight:            ch.Weight,
-				HealthScore:       100,
-			}, nil
-		}
-		return nil, common.ErrChannelUnavailable
-	}
-
-	candidates := make([]scheduler.ChannelCandidate, 0, len(channels))
-	for _, ch := range channels {
-		healthScore := 100.0
-		if ch.HealthScore != nil {
-			healthScore = *ch.HealthScore
-		}
-		upstreamModel := ch.UpstreamModel
-		if upstreamModel == "" {
-			upstreamModel = modelName
-		}
-		candidates = append(candidates, scheduler.ChannelCandidate{
-			ChannelID:      ch.ChannelID,
-			ChannelType:    ch.ChannelType,
-			ChannelName:    ch.ChannelName,
-			BaseURL:        ch.BaseURL,
-			Priority:       ch.Priority,
-			Weight:         ch.Weight,
-			HealthScore:    healthScore,
-			UpstreamModel:  upstreamModel,
-			IsModelMapped:  ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-			Settings:       ParseChannelSettings(ch.Settings),
-			MaxConcurrency: ch.MaxConcurrency,
-		})
-	}
-
-	preferredChannelID, _ := getAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-	_, seed := affinityIdentity(tenantID, userID, apiKeyID, modelName)
-	bucketSeconds := int64(affinityTTL(ctx).Seconds())
-	seed += ":" + strconv.FormatInt(time.Now().Unix()/bucketSeconds, 10)
-
-	for len(candidates) > 0 {
-		var result *scheduler.SchedulerResult
-		if affinityEnabled(ctx) {
-			result = scheduler.SelectStable(candidates, preferredChannelID, seed)
-		} else {
-			result = scheduler.Select(candidates)
-		}
-		if result == nil {
-			break
-		}
-		affinityHit := preferredChannelID > 0 && result.ChannelID == preferredChannelID
-		preserveAffinity := false
-		if preferredChannelID > 0 && !affinityHit {
-			if containsChannelID(excludeChannelIDs, preferredChannelID) {
-				preserveAffinity = true
-			} else {
-				deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-				preferredChannelID = 0
-			}
-		}
-
-		key, keyErr := getChannelKey(ctx, result.ChannelID)
-		if keyErr == nil && key != "" {
-			reason := "weighted"
-			if affinityHit {
-				reason = "affinity"
-			}
-			return &common.ChannelSelection{
-				ChannelID:         result.ChannelID,
-				ChannelType:       result.ChannelType,
-				ChannelName:       result.ChannelName,
-				BaseURL:           result.BaseURL,
-				ApiKey:            key,
-				UpstreamModelName: result.UpstreamModelName,
-				IsModelMapped:     result.IsModelMapped,
-				MaxConcurrency:    result.MaxConcurrency,
-				Settings:          result.Settings,
-				SelectionReason:   reason,
-				PreserveAffinity:  preserveAffinity,
-				Priority:          result.Priority,
-				Weight:            result.Weight,
-				HealthScore:       result.HealthScore,
-			}, nil
-		}
-		if affinityHit {
-			deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-			preferredChannelID = 0
-		}
-		candidates = removeChannelCandidate(candidates, result.ChannelID)
-	}
-
-	return nil, common.ErrChannelUnavailable
-}
-
-func containsChannelID(channelIDs []int64, channelID int64) bool {
-	for _, id := range channelIDs {
-		if id == channelID {
-			return true
-		}
-	}
-	return false
-}
-
-func removeChannelCandidate(candidates []scheduler.ChannelCandidate, channelID int64) []scheduler.ChannelCandidate {
-	for i := range candidates {
-		if candidates[i].ChannelID == channelID {
-			return append(candidates[:i], candidates[i+1:]...)
-		}
-	}
-	return candidates
 }
 
 // CheckTenantModelAccess 实现 DataProvider.CheckTenantModelAccess
@@ -807,31 +588,6 @@ func jsonNullIfEmpty(s string) any {
 	return s
 }
 
-// UpdateChannelHealth 实现 DataProvider.UpdateChannelHealth
-func (p *DataProviderImpl) UpdateChannelHealth(ctx context.Context, channelID int64, success bool, latencyMs float64) {
-	go func() {
-		bgCtx := context.Background()
-		UpdateHealthScore(bgCtx, channelID, success, latencyMs)
-	}()
-}
-
-// IncrementConsecutiveFailure 实现 DataProvider.IncrementConsecutiveFailure
-func (p *DataProviderImpl) IncrementConsecutiveFailure(ctx context.Context, channelID int64) {
-	incrementConsecutiveFailure(ctx, channelID)
-}
-
-// ResetConsecutiveFailure 实现 DataProvider.ResetConsecutiveFailure
-func (p *DataProviderImpl) ResetConsecutiveFailure(ctx context.Context, channelID int64) {
-	_, err := dao.ChnHealthScores.Ctx(ctx).
-		Where("channel_id", channelID).
-		Data(do.ChnHealthScores{
-			ConsecutiveFailures: 0,
-		}).Update()
-	if err != nil {
-		g.Log().Warningf(ctx, "[DataProvider] ResetConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
-	}
-}
-
 // GetAvailableModels 实现 DataProvider.GetAvailableModels
 // 如果 tenantID > 0，返回该租户有权使用的模型列表
 // 如果 apiKeyID > 0，进一步按 API Key 的模型范围过滤
@@ -1053,15 +809,6 @@ func parseCapabilitiesJSON(raw string) map[string]bool {
 }
 
 // incrementConsecutiveFailure 递增连续失败计数
-func incrementConsecutiveFailure(ctx context.Context, channelID int64) {
-	_, err := g.DB().Exec(ctx,
-		"UPDATE chn_health_scores SET consecutive_failures = consecutive_failures + 1, updated_at = NOW() WHERE channel_id = ? AND consecutive_failures < 10",
-		channelID)
-	if err != nil {
-		g.Log().Warningf(ctx, "[DataProvider] incrementConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
-	}
-}
-
 // modelInfoCached 模型信息缓存
 type modelInfoCached struct {
 	StandardName string
@@ -1154,29 +901,6 @@ func getChannelKeyByID(ctx context.Context, keyID int64) (string, error) {
 		return "", common.ErrChannelUnavailable
 	}
 	return decryptChannelKey(ctx, key)
-}
-
-// getChannelKeyExcluding 按 id 升序取渠道第一个未被排除的 active Key（修订 R1）。
-// excludeKeyIDs 为本请求已失败/冷却的 Key；返回选中的 KeyID 与明文。
-func getChannelKeyExcluding(ctx context.Context, channelID int64, excludeKeyIDs []int64) (int64, string, error) {
-	q := dao.ChnChannelKeys.Ctx(ctx).
-		Where("channel_id", channelID).
-		Where("status", "active")
-	if len(excludeKeyIDs) > 0 {
-		q = q.WhereNotIn("id", excludeKeyIDs)
-	}
-	var key *channelKeyRow
-	err := q.Order("id asc").
-		Fields("id, encrypted_key, key_type, token_expires_at").
-		Scan(&key)
-	if err != nil || key == nil {
-		return 0, "", common.ErrChannelUnavailable
-	}
-	plain, err := decryptChannelKey(ctx, key)
-	if err != nil {
-		return 0, "", err
-	}
-	return key.ID, plain, nil
 }
 
 // decryptChannelKey 解密渠道 Key 并做 OAuth 按需刷新（共享逻辑，行为与原 getChannelKey 一致）。
