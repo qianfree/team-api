@@ -20,6 +20,7 @@ import (
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/scheduler"
@@ -105,7 +106,21 @@ func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, use
 		return nil, common.ErrTenantModelNotEnabled
 	}
 
-	return p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
+	selection, err := p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
+
+	// 阶段 2 影子模式：初始选择（无排除渠道）时并行计算新调度器决策并写对比日志，
+	// 只算不用。开关 channel_dispatch_shadow_enabled，切换完成后移除本调用。
+	if err == nil && selection != nil && len(excludeChannelIDs) == 0 {
+		dispatchadapter.ShadowCompare(ctx, tenantID, userID, apiKeyID, modelName, channelScope, dispatchadapter.ShadowLegacy{
+			ChannelID:   selection.ChannelID,
+			ChannelName: selection.ChannelName,
+			Reason:      selection.SelectionReason,
+			Priority:    selection.Priority,
+			Weight:      selection.Weight,
+			HealthScore: selection.HealthScore,
+		})
+	}
+	return selection, err
 }
 
 func (p *DataProviderImpl) SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {

@@ -14,6 +14,7 @@ import (
 var (
 	wireOnce    sync.Once
 	coordinator *dispatch.Coordinator
+	shadowCo    *dispatch.Coordinator // 影子协调器：共享目录与状态，但租约/探测为 dry-run
 	catalog     *Catalog
 	redisState  *RedisState
 	wireStop    chan struct{}
@@ -42,13 +43,33 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 		})
 
 		coordinator = dispatch.NewCoordinator(catalog, redisState, pol, dispatch.SystemClock{}, rand.Float64)
+		// 影子协调器：绑定读写走真实状态（预热粘性数据），租约/探测 dry-run（不产生幻影占用）
+		shadowCo = dispatch.NewCoordinator(catalog, &dryRunState{redisState}, pol, dispatch.SystemClock{}, rand.Float64)
 
 		redisState.Start(ctx)
 		catalog.Start(ctx)
-		StartPolicyRefresher(ctx, coordinator, wireStop)
+		StartPolicyRefresher(ctx, wireStop, coordinator, shadowCo)
 	})
 	return coordinator
 }
+
+// ShadowCoordinator 返回影子协调器（阶段 2 对比用，只算不用）。
+func ShadowCoordinator(ctx context.Context) *dispatch.Coordinator {
+	Coordinator(ctx)
+	return shadowCo
+}
+
+// dryRunState 影子模式的 StatePort 包装：容量租约与探测令牌不产生副作用——
+// 影子决策不真正发请求，占用租约会造成幻影 inflight、消耗探测令牌会挤占真实探测。
+// 绑定读写保持真实（预热会话粘性数据，验证 bind 命中率）。
+type dryRunState struct {
+	*RedisState
+}
+
+func (d *dryRunState) AcquireLease(_ context.Context, _ int64, _ int, _ string) bool { return true }
+func (d *dryRunState) RefreshLease(_ context.Context, _ int64, _ string)             {}
+func (d *dryRunState) ReleaseLease(_ context.Context, _ int64, _ string)             {}
+func (d *dryRunState) TryProbeToken(_ context.Context, _ int64) bool                 { return true }
 
 // CatalogInstance 返回目录单例（handler 取 ForwardMeta 用，需先调用过 Coordinator）。
 func CatalogInstance() *Catalog { return catalog }

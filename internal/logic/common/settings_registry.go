@@ -223,6 +223,8 @@ var Registry = []SettingDef{
 		Label: "渠道亲和有效期", Validation: "min:60,max:86400", Description: "成功请求刷新亲和有效期，单位秒"},
 	{Key: "channel_capacity_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
 		Label: "渠道并发容量", Description: "使用 Redis 分布式租约限制渠道最大并发，并在饱和时自动溢出到其他渠道"},
+	{Key: "channel_dispatch_shadow_enabled", Type: SettingTypeBool, Default: "false", Category: "channel",
+		Label: "新调度引擎影子模式", Description: "并行运行新调度引擎（relaykit/dispatch）计算决策并记录新旧对比日志，不影响实际路由；用于切换前灰度验证，切换完成后移除"},
 	{Key: "health_snapshot_retention_days", Type: SettingTypeInt, Default: "7", Category: "channel",
 		Label: "健康快照保留天数", Validation: "min:1,max:90"},
 	{Key: "channel_proxy_url", Type: SettingTypeString, Default: "", Category: "channel",

@@ -34,9 +34,9 @@ func LoadRoutingPolicy(ctx context.Context) (*dispatch.RoutingPolicy, error) {
 	return pol, nil
 }
 
-// StartPolicyRefresher 周期重载策略并热更新到协调器。
+// StartPolicyRefresher 周期重载策略并热更新到全部协调器（主 + 影子）。
 // 非法配置拒绝生效并告警，继续用上一份有效配置。
-func StartPolicyRefresher(ctx context.Context, co *dispatch.Coordinator, stop <-chan struct{}) {
+func StartPolicyRefresher(ctx context.Context, stop <-chan struct{}, cos ...*dispatch.Coordinator) {
 	go func() {
 		ticker := time.NewTicker(policyRefreshInterval)
 		defer ticker.Stop()
@@ -48,7 +48,9 @@ func StartPolicyRefresher(ctx context.Context, co *dispatch.Coordinator, stop <-
 					g.Log().Warningf(ctx, "[Dispatch] 路由策略非法，沿用上一份有效配置: %v", err)
 					continue
 				}
-				co.UpdatePolicy(pol)
+				for _, co := range cos {
+					co.UpdatePolicy(pol)
+				}
 			case <-stop:
 				return
 			}

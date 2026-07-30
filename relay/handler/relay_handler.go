@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"
@@ -21,6 +22,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
 // RelayContext relay 请求上下文（从 GoFrame handler 传入）
@@ -62,6 +64,7 @@ type relayValidation struct {
 	maxTokens       int
 	depInfo         *common.DeprecationInfo
 	billingResult   *BillingResult
+	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
 }
 
 // validateRelayRequest 校验请求合法性：relay mode、模型存在性、弃用状态、成员/API Key 模型范围、QPS 限流。
@@ -206,7 +209,42 @@ func validateRelayRequest(
 		maxTokens:       maxTokens,
 		depInfo:         depInfo,
 		billingResult:   billingResult,
+		sessionSignals:  extractSessionSignals(rawRequest),
 	}, nil
+}
+
+// extractSessionSignals 从已解析的请求体提取会话信号（基线方案 §3.1 解析链的协议内信号部分）。
+// 复用 rawRequest 的一次解析，不额外反序列化整个 body。
+func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.SessionSignals {
+	var sig dispatch.SessionSignals
+	if v, ok := rawRequest["metadata"]; ok {
+		var meta struct {
+			UserID string `json:"user_id"`
+		}
+		if json.Unmarshal(v, &meta) == nil {
+			sig.AnthropicUserID = meta.UserID
+		}
+	}
+	if v, ok := rawRequest["previous_response_id"]; ok {
+		_ = json.Unmarshal(v, &sig.PreviousResponseID)
+	}
+	if v, ok := rawRequest["conversation_id"]; ok {
+		_ = json.Unmarshal(v, &sig.ConversationID)
+	}
+	return sig
+}
+
+// replayabilityOf 修订 R2：relay mode → 可重放性静态映射。
+// 图片/视频生成重放可能产生重复任务与高额成本；embedding/rerank 可安全重放。
+func replayabilityOf(mode constant.RelayMode) dispatch.Replayability {
+	switch mode {
+	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits, constant.RelayModeVideoGenerations:
+		return dispatch.ReplayUnsafe
+	case constant.RelayModeEmbeddings, constant.RelayModeRerank:
+		return dispatch.ReplaySafe
+	default:
+		return dispatch.ReplayCostly
+	}
 }
 
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
@@ -256,6 +294,7 @@ func settleSuccessfulRequest(
 	// 17. 更新健康度 + 记录用量 + 更新亲和性
 	provider.UpdateChannelHealth(postCtx, selection.ChannelID, true, info.LatencyMs())
 	provider.ResetConsecutiveFailure(postCtx, selection.ChannelID)
+	dispatchadapter.ShadowObserve(postCtx, selection.ChannelID, v.lookupModel, true, info.LatencyMs(), 0, nil)
 	if !selection.PreserveAffinity {
 		provider.SetChannelAffinity(postCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel, selection.ChannelID)
 	}
@@ -414,6 +453,17 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		RequestedModel: v.modelName,
 	}
 
+	// 阶段 2 影子模式：注入会话信号与可重放性，供 provider 内的影子对比点读取。
+	if dispatchadapter.ShadowEnabled(ctx) {
+		sig := v.sessionSignals
+		sig.HeaderSessionID = headers.Get("X-Session-Id")
+		ctx = dispatchadapter.WithShadowContext(ctx, dispatchadapter.ShadowContext{
+			RequestID: rc.RequestID,
+			Signals:   sig,
+			Replay:    replayabilityOf(v.relayMode),
+		})
+	}
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		selection, err := provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel, excludeChannelIDs)
 		if err != nil {
@@ -496,6 +546,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
+			dispatchadapter.ShadowObserve(settleCtx, selection.ChannelID, v.lookupModel, false, info.LatencyMs(), 0, err)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 			provider.DeleteChannelAffinity(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.lookupModel)
 
@@ -550,6 +601,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 				}
 				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+				dispatchadapter.ShadowObserve(settleCtx, selection.ChannelID, v.lookupModel, false, info.LatencyMs(), 0, err)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				return usage, v.billingResult, err
 			}
@@ -558,6 +610,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs())
 			provider.UpdateChannelHealth(settleCtx, selection.ChannelID, false, info.LatencyMs())
 			provider.IncrementConsecutiveFailure(settleCtx, selection.ChannelID)
+			dispatchadapter.ShadowObserve(settleCtx, selection.ChannelID, v.lookupModel, false, info.LatencyMs(), 0, err)
 			excludeChannelIDs = append(excludeChannelIDs, selection.ChannelID)
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
 				attempt, selection.ChannelID, selection.ChannelName, v.modelName, err, info.LatencyMs())
