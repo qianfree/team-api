@@ -27,7 +27,12 @@ type codeAssistWrapper struct {
 // 标准格式：{GeminiChatResponse}
 func unwrapCodeAssistData(data []byte) []byte {
 	var wrapper codeAssistWrapper
-	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Response != nil {
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		// 解析失败：日志记录，返回原数据（可能是标准格式或格式错误）
+		// 不在这里打 Debug 日志，因为标准格式也会走到这个分支（预期行为）
+		return data
+	}
+	if wrapper.Response != nil {
 		return wrapper.Response
 	}
 	return data
@@ -65,7 +70,11 @@ func (a *Adaptor) handleGeminiNativeNonStream(ctx context.Context, resp *http.Re
 	_, _ = writer.Write(body)
 
 	var geminiResp dto.GeminiChatResponse
-	if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
+	if err := json.Unmarshal(body, &geminiResp); err != nil {
+		// Usage 解析失败，返回空 Usage（静默处理，非致命错误）
+		return &common.Usage{}, nil
+	}
+	if geminiResp.UsageMetadata != nil {
 		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
 	}
 	return &common.Usage{}, nil
@@ -131,7 +140,9 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 						rawData = unwrapped
 					}
 					var geminiResp dto.GeminiChatResponse
-					if jsonErr := json.Unmarshal(rawData, &geminiResp); jsonErr == nil {
+					if jsonErr := json.Unmarshal(rawData, &geminiResp); jsonErr != nil {
+						// JSON 解析失败：静默跳过
+					} else {
 						if geminiResp.UsageMetadata != nil {
 							totalUsage = *geminiResp.UsageMetadata
 						}

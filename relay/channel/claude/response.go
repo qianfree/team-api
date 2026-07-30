@@ -38,7 +38,12 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 
 		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
 		var claudeResp dto.ClaudeResponse
-		if err := json.Unmarshal(body, &claudeResp); err == nil && claudeResp.Usage != nil {
+		if err := json.Unmarshal(body, &claudeResp); err != nil {
+			// Usage 解析失败，返回空 Usage（已写响应，不能重试）
+			// 静默处理：非致命错误，响应已正确写入
+			return &common.Usage{}, nil
+		}
+		if claudeResp.Usage != nil {
 			usage := &common.Usage{
 				PromptTokens:        claudeResp.Usage.InputTokens,
 				CompletionTokens:    claudeResp.Usage.OutputTokens,
@@ -48,7 +53,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 			}
 			return usage, nil
 		}
-		// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
+		// Usage 为 nil，返回空 Usage
 		return &common.Usage{}, nil
 	}
 
@@ -153,6 +158,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 		var event dto.ClaudeResponse
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			// JSON 解析失败：静默跳过（允许部分格式异常）
 			continue
 		}
 
@@ -387,7 +393,11 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 	_, _ = writer.Write(body)
 
 	var claudeResp dto.ClaudeResponse
-	if err := json.Unmarshal(body, &claudeResp); err == nil && claudeResp.Usage != nil {
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		// Usage 解析失败，返回空 Usage（静默处理，非致命错误）
+		return &common.Usage{}, nil
+	}
+	if claudeResp.Usage != nil {
 		return &common.Usage{
 			PromptTokens:        claudeResp.Usage.InputTokens,
 			CompletionTokens:    claudeResp.Usage.OutputTokens,
@@ -441,7 +451,9 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			}
 
 			var event dto.ClaudeResponse
-			if json.Unmarshal([]byte(data), &event) == nil {
+			if json.Unmarshal([]byte(data), &event) != nil {
+				// JSON 解析失败：静默跳过
+			} else {
 				switch event.Type {
 				case "message_start":
 					if event.Message != nil && event.Message.Usage != nil {

@@ -128,6 +128,11 @@ var (
 	responseConverterRoutes  = make(map[responseConverterRoute]string)
 )
 
+// registerBuiltinResponseConverter 注册响应侧转换器到注册表。
+// 阶段 3 的 init() 通过 registerBuiltinTextConverter() 调用本函数。
+//
+// 并发安全：持有 responseConverterMu 写锁保护注册过程，防止 data race。
+// 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。
 func registerBuiltinResponseConverter(spec ResponseConverterSpec) {
 	spec.ID = strings.TrimSpace(spec.ID)
 	if spec.ID == "" {
@@ -149,6 +154,10 @@ func registerBuiltinResponseConverter(spec ResponseConverterSpec) {
 		(spec.Convert != nil || spec.ConvertStream != nil || spec.NewStreamState != nil || spec.ConvertStreamChunk != nil || spec.FinalizeStream != nil) {
 		panic(fmt.Sprintf("response converter %q cannot declare direct implementations and step converters together", spec.ID))
 	}
+
+	responseConverterMu.Lock()
+	defer responseConverterMu.Unlock()
+
 	if _, exists := responseConverters[spec.ID]; exists {
 		panic(fmt.Sprintf("response converter %q is already registered", spec.ID))
 	}
@@ -184,6 +193,10 @@ func registerBuiltinResponseConverter(spec ResponseConverterSpec) {
 	responseConverterRoutes[route] = spec.ID
 }
 
+// registerResponseConverterAlias 注册响应转换器别名。
+//
+// 并发安全：持有 responseConverterMu 写锁保护注册过程，防止 data race。
+// 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。
 func registerResponseConverterAlias(alias string, converter string) {
 	alias = strings.TrimSpace(alias)
 	converter = strings.TrimSpace(converter)
@@ -196,6 +209,10 @@ func registerResponseConverterAlias(alias string, converter string) {
 	if alias == converter {
 		return
 	}
+
+	responseConverterMu.Lock()
+	defer responseConverterMu.Unlock()
+
 	if _, exists := responseConverters[alias]; exists {
 		panic(fmt.Sprintf("response converter alias %q conflicts with registered converter", alias))
 	}

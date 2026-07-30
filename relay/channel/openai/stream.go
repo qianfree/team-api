@@ -23,7 +23,10 @@ func StreamHandler(ctx context.Context, resp *http.Response, info *common.RelayI
 		}
 
 		var streamResp dto.ChatCompletionStreamResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err == nil {
+		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			// JSON 解析失败：静默跳过（某些供应商可能发送非标准格式的心跳或元数据）
+			// 不中断流，继续处理下一个 chunk
+		} else {
 			if streamResp.Usage != nil {
 				totalUsage.PromptTokens = streamResp.Usage.PromptTokens
 				totalUsage.CompletionTokens = streamResp.Usage.CompletionTokens
@@ -95,7 +98,9 @@ func StreamHandlerForCompletions(ctx context.Context, resp *http.Response, info 
 		}
 
 		var streamResp dto.CompletionsStreamResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err == nil {
+		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			// JSON 解析失败：静默跳过（某些供应商可能发送非标准格式）
+		} else {
 			if streamResp.Usage != nil {
 				totalUsage.PromptTokens = streamResp.Usage.PromptTokens
 				totalUsage.CompletionTokens = streamResp.Usage.CompletionTokens

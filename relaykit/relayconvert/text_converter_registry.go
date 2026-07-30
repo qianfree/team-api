@@ -80,6 +80,9 @@ func RegisterTextConverter(spec TextConverterSpec) {
 
 // registerBuiltinTextConverter 将一个 TextConverterSpec 拆分为请求侧与响应侧，
 // 分别注册进两张注册表（同 ID），并登记响应侧别名。阶段 3 的 init() 调用本函数。
+//
+// 并发安全：持有 textConverterMu 写锁保护注册过程，防止 data race。
+// 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。
 func registerBuiltinTextConverter(spec TextConverterSpec) {
 	spec.ID = strings.TrimSpace(spec.ID)
 	if spec.ID == "" {
@@ -97,6 +100,10 @@ func registerBuiltinTextConverter(spec TextConverterSpec) {
 	if !textResponseSideConfigured(spec.Resp) {
 		panic(fmt.Sprintf("text converter %q must declare response conversion", spec.ID))
 	}
+
+	textConverterMu.Lock()
+	defer textConverterMu.Unlock()
+
 	if _, exists := textConverters[spec.ID]; exists {
 		panic(fmt.Sprintf("text converter %q is already registered", spec.ID))
 	}

@@ -93,6 +93,9 @@ const (
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。
 // 直接转换器（Convert != nil）会同时进入 directRoutes；步骤转换器（StepConverters 非空）
 // 在注册时即校验 From/To 连续性。阶段 3 的 builtin 列表通过 init() 调用本函数。
+//
+// 并发安全：持有 requestConverterMu 写锁保护注册过程，防止 data race。
+// 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。
 func registerBuiltinRequestConverter(spec RequestConverterSpec) {
 	spec.ID = strings.TrimSpace(spec.ID)
 	if spec.ID == "" {
@@ -110,6 +113,10 @@ func registerBuiltinRequestConverter(spec RequestConverterSpec) {
 	if spec.Convert != nil && len(spec.StepConverters) > 0 {
 		panic(fmt.Sprintf("request converter %q cannot declare convert and step converters together", spec.ID))
 	}
+
+	requestConverterMu.Lock()
+	defer requestConverterMu.Unlock()
+
 	if _, exists := requestConverters[spec.ID]; exists {
 		panic(fmt.Sprintf("request converter %q is already registered", spec.ID))
 	}
