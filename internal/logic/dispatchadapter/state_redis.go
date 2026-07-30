@@ -178,6 +178,7 @@ redis.call('PEXPIRE', KEYS[1], ARGV[5])
 return 1`
 
 // luaBreakerFail 熔断失败转移（与 dispatch/breaker.go 纯函数规则保持一致，改动需同步）。
+// first_opened_ms 记录本轮故障期的起点（探测失败重置 opened_ms 但不重置它），供自动禁用判定。
 // ARGV: nowMs, windowMs, failThreshold, fatal(0/1), cooldownBaseMs, cooldownMaxMs, keyTtlMs
 const luaBreakerFail = `
 local h = KEYS[1]
@@ -203,13 +204,17 @@ if now - ws > tonumber(ARGV[2]) then ws = now; fc = 0 end
 fc = fc + 1
 if ARGV[4] == '1' or fc >= tonumber(ARGV[3]) then
   redis.call('HSET', h, 'state', 1, 'opened_ms', now, 'cooldown_ms', ARGV[5], 'fail_count', 0, 'window_start_ms', ws)
+  if redis.call('HEXISTS', h, 'first_opened_ms') == 0 then
+    redis.call('HSET', h, 'first_opened_ms', now)
+  end
 else
   redis.call('HSET', h, 'fail_count', fc, 'window_start_ms', ws)
 end
 redis.call('PEXPIRE', h, ARGV[7])
 return fc`
 
-// luaBreakerSuccess 熔断成功转移：HALF_OPEN 探测成功 → CLOSED（记录 recovered_ms 供爬坡）。
+// luaBreakerSuccess 熔断成功转移：HALF_OPEN 探测成功 → CLOSED（记录 recovered_ms 供爬坡，
+// 清除 first_opened_ms 结束本轮故障期）。
 // ARGV: nowMs, keyTtlMs
 const luaBreakerSuccess = `
 local h = KEYS[1]
@@ -219,8 +224,10 @@ local cd     = tonumber(redis.call('HGET', h, 'cooldown_ms') or '0')
 local now    = tonumber(ARGV[1])
 if state == 1 and now - opened >= cd then
   redis.call('HSET', h, 'state', 0, 'opened_ms', 0, 'cooldown_ms', 0, 'fail_count', 0, 'recovered_ms', now)
+  redis.call('HDEL', h, 'first_opened_ms')
 elseif state == 0 then
   redis.call('HSET', h, 'fail_count', 0)
+  redis.call('HDEL', h, 'first_opened_ms')
 end
 redis.call('PEXPIRE', h, ARGV[2])
 return 1`
@@ -405,12 +412,13 @@ func (s *RedisState) CoolCredential(ctx context.Context, keyID int64, ttl time.D
 
 // RuntimeReadout 单个渠道×模型的运行时读值。
 type RuntimeReadout struct {
-	SuccEwma     float64
-	LatEwmaMs    float64
-	Inflight     int
-	Breaker      dispatch.BreakerState
-	ModelBreaker dispatch.BreakerState
-	RecoveredMs  int64 // 渠道级熔断最近恢复时间（0 = 无记录）
+	SuccEwma      float64
+	LatEwmaMs     float64
+	Inflight      int
+	Breaker       dispatch.BreakerState
+	ModelBreaker  dispatch.BreakerState
+	RecoveredMs   int64 // 渠道级熔断最近恢复时间（0 = 无记录）
+	FirstOpenedMs int64 // 渠道级本轮故障期起点（0 = 非故障期），供自动禁用判定
 }
 
 // ReadRuntime 读取渠道×模型的运行时状态（目录刷新循环调用，非请求热路径）。
@@ -431,8 +439,8 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 			}
 		}
 	}
-	out.Breaker, out.RecoveredMs = s.readBreaker(ctx, keyBreaker+chStr, now)
-	out.ModelBreaker, _ = s.readBreaker(ctx, keyBreaker+chStr+":"+model, now)
+	out.Breaker, out.RecoveredMs, out.FirstOpenedMs = s.readBreaker(ctx, keyBreaker+chStr, now)
+	out.ModelBreaker, _, _ = s.readBreaker(ctx, keyBreaker+chStr+":"+model, now)
 	if v, err := g.Redis().Do(ctx, "ZCOUNT", keyInflight+chStr, now, "+inf"); err == nil {
 		out.Inflight = v.Int()
 	}
@@ -440,19 +448,19 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 }
 
 // readBreaker 读取熔断快照并做惰性 OPEN→HALF_OPEN 判定。
-func (s *RedisState) readBreaker(ctx context.Context, key string, nowMs int64) (dispatch.BreakerState, int64) {
-	v, err := g.Redis().Do(ctx, "HMGET", key, "state", "opened_ms", "cooldown_ms", "recovered_ms")
+func (s *RedisState) readBreaker(ctx context.Context, key string, nowMs int64) (dispatch.BreakerState, int64, int64) {
+	v, err := g.Redis().Do(ctx, "HMGET", key, "state", "opened_ms", "cooldown_ms", "recovered_ms", "first_opened_ms")
 	if err != nil {
-		return dispatch.BreakerClosed, 0
+		return dispatch.BreakerClosed, 0, 0
 	}
 	vals := v.Vars()
-	if len(vals) != 4 || vals[0].IsNil() {
-		return dispatch.BreakerClosed, 0
+	if len(vals) != 5 || vals[0].IsNil() {
+		return dispatch.BreakerClosed, 0, 0
 	}
 	snap := dispatch.BreakerSnapshot{
 		State:      dispatch.BreakerState(vals[0].Int()),
 		OpenedAtMs: vals[1].Int64(),
 		CooldownMs: vals[2].Int64(),
 	}
-	return dispatch.EffectiveBreakerState(snap, nowMs), vals[3].Int64()
+	return dispatch.EffectiveBreakerState(snap, nowMs), vals[3].Int64(), vals[4].Int64()
 }

@@ -1082,6 +1082,43 @@ func InitHealthScore(ctx context.Context, channelID int64) error {
 	return err
 }
 
+// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection（阶段 3）：
+// 转发元数据来自目录内存快照（零 DB），渠道 Key 按 keyID 解密（keyID=0 回退取首个 active Key）。
+func (p *DataProviderImpl) MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*common.ChannelSelection, error) {
+	catalog := dispatchadapter.CatalogInstance()
+	if catalog == nil {
+		return nil, common.ErrChannelUnavailable
+	}
+	meta, ok := catalog.ForwardMeta(channelID, modelName)
+	if !ok {
+		return nil, common.ErrChannelUnavailable
+	}
+
+	var apiKey string
+	var err error
+	if keyID > 0 {
+		apiKey, err = getChannelKeyByID(ctx, keyID)
+	} else {
+		apiKey, err = getChannelKey(ctx, channelID)
+	}
+	if err != nil || apiKey == "" {
+		return nil, common.ErrChannelUnavailable
+	}
+
+	return &common.ChannelSelection{
+		ChannelID:         meta.ChannelID,
+		ChannelType:       meta.ChannelType,
+		ChannelName:       meta.ChannelName,
+		BaseURL:           meta.BaseURL,
+		ApiKey:            apiKey,
+		KeyID:             keyID,
+		UpstreamModelName: meta.UpstreamModel,
+		IsModelMapped:     meta.IsModelMapped,
+		MaxConcurrency:    meta.MaxConcurrency,
+		Settings:          ParseChannelSettings(meta.Settings),
+	}, nil
+}
+
 // getChannelKey 获取渠道的 API Key（每渠道仅一个 Key）
 func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	var key *channelKeyRow

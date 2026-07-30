@@ -64,9 +64,10 @@ type runtimeReader func(ctx context.Context, channelID int64, model string) Runt
 
 // snapshotIndex 构建完成的只读快照索引。
 type snapshotIndex struct {
-	byModel map[string][]dispatch.Channel
-	meta    map[int64]map[string]ChannelMeta // channelID → model → 转发元数据
-	strict  map[int64]int                    // 严格容量渠道 → max_concurrency（供 R4 降级查询）
+	byModel       map[string][]dispatch.Channel
+	meta          map[int64]map[string]ChannelMeta // channelID → model → 转发元数据
+	strict        map[int64]int                    // 严格容量渠道 → max_concurrency（供 R4 降级查询）
+	channelModels map[int64][]string               // channelID → 服务的模型列表（维护 cron 用）
 }
 
 // Catalog 实现 dispatch.CatalogPort：渠道目录内存快照，定时刷新 + pub/sub 失效。
@@ -93,9 +94,10 @@ func NewCatalog(policy func() *dispatch.RoutingPolicy, load catalogLoader, runti
 		c.load = loadCatalogFromDB
 	}
 	c.current.Store(&snapshotIndex{
-		byModel: map[string][]dispatch.Channel{},
-		meta:    map[int64]map[string]ChannelMeta{},
-		strict:  map[int64]int{},
+		byModel:       map[string][]dispatch.Channel{},
+		meta:          map[int64]map[string]ChannelMeta{},
+		strict:        map[int64]int{},
+		channelModels: map[int64][]string{},
 	})
 	return c
 }
@@ -133,6 +135,16 @@ func (c *Catalog) StrictLookup(channelID int64) (bool, int) {
 	idx := c.current.Load()
 	maxConc, ok := idx.strict[channelID]
 	return ok, maxConc
+}
+
+// ChannelModels 返回渠道 → 服务模型列表的副本（维护 cron 遍历用）。
+func (c *Catalog) ChannelModels() map[int64][]string {
+	idx := c.current.Load()
+	out := make(map[int64][]string, len(idx.channelModels))
+	for id, models := range idx.channelModels {
+		out[id] = append([]string(nil), models...)
+	}
+	return out
 }
 
 // Invalidate 主动触发一次刷新（渠道/能力/Key 管理操作后调用；跨实例走 pub/sub）。
@@ -213,9 +225,10 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 	rampWindowMs := int64(pol.Ramp.WindowSeconds) * 1000
 
 	idx := &snapshotIndex{
-		byModel: make(map[string][]dispatch.Channel),
-		meta:    make(map[int64]map[string]ChannelMeta),
-		strict:  make(map[int64]int),
+		byModel:       make(map[string][]dispatch.Channel),
+		meta:          make(map[int64]map[string]ChannelMeta),
+		strict:        make(map[int64]int),
+		channelModels: make(map[int64][]string),
 	}
 	// 同一渠道的运行时读值按 (channel, model) 缓存，避免同轮重复读
 	type rtKey struct {
@@ -253,6 +266,7 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 			StrictCapacity: row.StrictCapacity,
 		}
 		idx.byModel[row.ModelName] = append(idx.byModel[row.ModelName], ch)
+		idx.channelModels[row.ChannelID] = append(idx.channelModels[row.ChannelID], row.ModelName)
 
 		if _, ok := idx.meta[row.ChannelID]; !ok {
 			idx.meta[row.ChannelID] = make(map[string]ChannelMeta)

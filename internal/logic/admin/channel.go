@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
@@ -359,6 +360,7 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		}
 	}
 	relay.InvalidateChannelAffinities(ctx, req.ID)
+	dispatchadapter.InvalidateChannel(ctx, req.ID)
 
 	return nil, nil
 }
@@ -384,6 +386,7 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 		return nil, err
 	}
 	relay.InvalidateChannelAffinities(ctx, req.ID)
+	dispatchadapter.InvalidateChannel(ctx, req.ID)
 
 	return nil, nil
 }
@@ -495,6 +498,7 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 		return nil, err
 	}
 	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
+	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 	return nil, nil
 }
 
@@ -520,6 +524,7 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 		return nil, err
 	}
 	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
+	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 
 	return nil, nil
 }

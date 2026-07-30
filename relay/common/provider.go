@@ -109,6 +109,10 @@ type DataProvider interface {
 
 	// InvalidateMemberModelCache 清除指定成员的模型范围缓存。
 	InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64)
+
+	// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection（阶段 3）：
+	// 从目录快照取转发元数据，按 keyID 解密渠道 Key（keyID=0 时取渠道首个 active Key）。
+	MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*ChannelSelection, error)
 }
 
 // ApiKeyInfo API Key 验证结果
@@ -133,11 +137,12 @@ type ChannelSelection struct {
 	ChannelName       string
 	BaseURL           string
 	ApiKey            string // 解密后的上游 API Key
+	KeyID             int64  // 渠道 Key 记录 ID（凭证级归因，修订 R1；0=未知）
 	UpstreamModelName string
 	IsModelMapped     bool
 	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供各转发入口做容量控制
 	Settings          ChannelSettings
-	SelectionReason   string // affinity / weighted / legacy
+	SelectionReason   string // bind / hrw / overflow / probe / cred_rotate（旧值 affinity / weighted / legacy）
 	PreserveAffinity  bool   // 临时容量溢出时不覆盖原亲和
 	Priority          int
 	Weight            int

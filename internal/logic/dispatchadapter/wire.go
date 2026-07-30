@@ -49,6 +49,7 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 		redisState.Start(ctx)
 		catalog.Start(ctx)
 		StartPolicyRefresher(ctx, wireStop, coordinator, shadowCo)
+		startMaintenance(ctx, wireStop)
 	})
 	return coordinator
 }
@@ -73,6 +74,14 @@ func (d *dryRunState) TryProbeToken(_ context.Context, _ int64) bool            
 
 // CatalogInstance 返回目录单例（handler 取 ForwardMeta 用，需先调用过 Coordinator）。
 func CatalogInstance() *Catalog { return catalog }
+
+// RefreshDispatchLease 长请求（流式/websocket）续期调度租约。
+// 供 handler 的租约续期器直接调用（RouteSession 非并发安全，不经会话）。
+func RefreshDispatchLease(ctx context.Context, channelID int64, requestID string) {
+	if redisState != nil {
+		redisState.RefreshLease(ctx, channelID, requestID)
+	}
+}
 
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。
 // 管理后台渠道写操作后调用（阶段 3 接线）。
