@@ -1069,14 +1069,7 @@ func InitHealthScore(ctx context.Context, channelID int64) error {
 
 // getChannelKey 获取渠道的 API Key（每渠道仅一个 Key）
 func getChannelKey(ctx context.Context, channelID int64) (string, error) {
-	type keyRow struct {
-		ID             int64       `json:"id"`
-		EncryptedKey   string      `json:"encrypted_key"`
-		KeyType        string      `json:"key_type"`
-		TokenExpiresAt *gtime.Time `json:"token_expires_at"`
-	}
-
-	var key *keyRow
+	var key *channelKeyRow
 	err := dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", channelID).
 		Where("status", "active").
@@ -1085,7 +1078,57 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	if err != nil || key == nil {
 		return "", common.ErrChannelUnavailable
 	}
+	return decryptChannelKey(ctx, key)
+}
 
+// channelKeyRow 渠道 Key 查询行（getChannelKey / getChannelKeyByID / getChannelKeyExcluding 共用）。
+type channelKeyRow struct {
+	ID             int64       `json:"id"`
+	EncryptedKey   string      `json:"encrypted_key"`
+	KeyType        string      `json:"key_type"`
+	TokenExpiresAt *gtime.Time `json:"token_expires_at"`
+}
+
+// getChannelKeyByID 按 KeyID 取渠道 Key 明文（修订 R1 凭证轮换链路：
+// 调度决策已指定 KeyID 时使用），复用解密与 OAuth 按需刷新逻辑。
+func getChannelKeyByID(ctx context.Context, keyID int64) (string, error) {
+	var key *channelKeyRow
+	err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("status", "active").
+		Fields("id, encrypted_key, key_type, token_expires_at").
+		Scan(&key)
+	if err != nil || key == nil {
+		return "", common.ErrChannelUnavailable
+	}
+	return decryptChannelKey(ctx, key)
+}
+
+// getChannelKeyExcluding 按 id 升序取渠道第一个未被排除的 active Key（修订 R1）。
+// excludeKeyIDs 为本请求已失败/冷却的 Key；返回选中的 KeyID 与明文。
+func getChannelKeyExcluding(ctx context.Context, channelID int64, excludeKeyIDs []int64) (int64, string, error) {
+	q := dao.ChnChannelKeys.Ctx(ctx).
+		Where("channel_id", channelID).
+		Where("status", "active")
+	if len(excludeKeyIDs) > 0 {
+		q = q.WhereNotIn("id", excludeKeyIDs)
+	}
+	var key *channelKeyRow
+	err := q.Order("id asc").
+		Fields("id, encrypted_key, key_type, token_expires_at").
+		Scan(&key)
+	if err != nil || key == nil {
+		return 0, "", common.ErrChannelUnavailable
+	}
+	plain, err := decryptChannelKey(ctx, key)
+	if err != nil {
+		return 0, "", err
+	}
+	return key.ID, plain, nil
+}
+
+// decryptChannelKey 解密渠道 Key 并做 OAuth 按需刷新（共享逻辑，行为与原 getChannelKey 一致）。
+func decryptChannelKey(ctx context.Context, key *channelKeyRow) (string, error) {
 	encKey := GetEncryptionKey()
 	decrypted, err := uc.DecryptString(encKey, key.EncryptedKey)
 	if err != nil {
