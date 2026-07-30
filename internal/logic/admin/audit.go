@@ -95,6 +95,15 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 	if where != "" {
 		m = m.Where(where, args...)
 	}
+
+	total, err := m.Count()
+	if err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return []map[string]any{}, 0, nil
+	}
+
 	if fields != "" {
 		m = m.Fields(fields)
 	}
@@ -102,16 +111,23 @@ func queryPage(ctx context.Context, table, fields, where, orderBy string, page, 
 		m = m.Order(orderBy)
 	}
 
-	var items []map[string]any
-	var total int
-	err := m.Page(page, pageSize).ScanAndCount(&items, &total, false)
+	result, err := m.Page(page, pageSize).All()
 	if err != nil {
 		return nil, 0, err
 	}
-	if items == nil {
-		items = []map[string]any{}
+	return toMapList(result), total, nil
+}
+
+// toMapList converts database records to JSON-safe maps.
+func toMapList(result gdb.Result) []map[string]any {
+	if len(result) == 0 {
+		return []map[string]any{}
 	}
-	return items, total, nil
+	list := make([]map[string]any, 0, len(result))
+	for _, row := range result {
+		list = append(list, row.Map())
+	}
+	return list
 }
 
 // queryAuditPage 查询审计表分页数据，自动计数、分页、转换并批量填充关联名称。
