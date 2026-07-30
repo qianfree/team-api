@@ -56,6 +56,7 @@ type IAdminV1 interface {
 	ChannelKeyCreate(ctx context.Context, req *v1.ChannelKeyCreateReq) (res *v1.ChannelKeyCreateRes, err error)
 	ChannelKeyDelete(ctx context.Context, req *v1.ChannelKeyDeleteReq) (res *v1.ChannelKeyDeleteRes, err error)
 	ChannelAbilityBatch(ctx context.Context, req *v1.ChannelAbilityBatchReq) (res *v1.ChannelAbilityBatchRes, err error)
+	ChannelCostRatioImport(ctx context.Context, req *v1.ChannelCostRatioImportReq) (res *v1.ChannelCostRatioImportRes, err error)
 	ProviderDefaultURL(ctx context.Context, req *v1.ProviderDefaultURLReq) (res *v1.ProviderDefaultURLRes, err error)
 	ChannelKeyList(ctx context.Context, req *v1.ChannelKeyListReq) (res *v1.ChannelKeyListRes, err error)
 	ChannelAbilitiesGet(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (res *v1.ChannelAbilitiesGetRes, err error)

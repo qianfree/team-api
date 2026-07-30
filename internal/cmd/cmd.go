@@ -21,6 +21,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/admin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
@@ -99,6 +100,8 @@ var (
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
 			monitor.InitRelaykitTracker()
+			monitor.InitDispatchTracker()
+			dispatchadapter.SetBreakerOpenHook(monitor.TrackDispatchBreakerOpen)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {

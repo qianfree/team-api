@@ -15,6 +15,14 @@ import (
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
+// BreakerOpenHook 熔断打开事件回调（指标计数）。由 cmd 启动时注入
+// monitor.TrackDispatchBreakerOpen，避免 dispatchadapter → monitor 的导入环
+// （monitor → middleware → logic/relay → dispatchadapter）。
+var BreakerOpenHook func()
+
+// SetBreakerOpenHook 注入熔断打开事件回调。
+func SetBreakerOpenHook(hook func()) { BreakerOpenHook = hook }
+
 // Redis key 统一前缀（基线方案 §10.1 + 开发计划 §4.2）。
 const (
 	keyPrefix     = "dispatch:v1:"
@@ -24,6 +32,7 @@ const (
 	keyBreaker    = keyPrefix + "breaker:"  // + <ch> 或 <ch>:<model> → 熔断快照（HASH）
 	keyInflight   = keyPrefix + "inflight:" // + <ch> → 租约（ZSET，member=requestID score=过期时间戳）
 	keyCredCD     = keyPrefix + "credcd:"   // + <keyID> → 冷却标记（STRING，修订 R1）
+	keyLimit429   = keyPrefix + "limit429:" // + <ch> → 429 起始水位 EWMA（HASH，softLimit 自动估计）
 	stateKeyTTLMs = int64(24 * time.Hour / time.Millisecond)
 )
 
@@ -232,8 +241,24 @@ end
 redis.call('PEXPIRE', h, ARGV[2])
 return 1`
 
+// luaLimit429Observe softLimit 自动估计（基线方案 §8.2）：记录收到 429 时的 inflight 水位，
+// onset_ewma = onset×0.8 + 当前水位×0.2（首次直接取当前水位）。
+// KEYS[1]=limit429 key, KEYS[2]=inflight key; ARGV: nowMs, keyTtlMs
+const luaLimit429Observe = `
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+local inflight = redis.call('ZCARD', KEYS[2])
+local onset = tonumber(redis.call('HGET', KEYS[1], 'onset_ewma') or '0')
+if onset <= 0 then
+  onset = inflight
+else
+  onset = onset * 0.8 + inflight * 0.2
+end
+redis.call('HSET', KEYS[1], 'onset_ewma', onset, 'updated_ms', ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1`
+
 // processOutcome 消费一条结果事件：健康 EWMA + 渠道级/模型级熔断转移。
-// 限流类不喂熔断窗口（429 属容量信号而非故障信号）。
+// 限流类不喂熔断窗口（429 属容量信号而非故障信号），改喂 softLimit 估计器。
 func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	pol := s.policy()
 	now := time.Now().UnixMilli()
@@ -248,6 +273,12 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 		success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
 		s.local.observe(o) // 降级：实例本地健康镜像
 		return
+	}
+
+	// 429 → softLimit 自动估计器（基线方案 §8.2）
+	if o.Class == dispatch.ErrClassRateLimit {
+		_, _ = g.Redis().Do(ctx, "EVAL", luaLimit429Observe, 2,
+			keyLimit429+chStr, keyInflight+chStr, now, stateKeyTTLMs)
 	}
 
 	breakerKeys := []string{keyBreaker + chStr}
@@ -268,9 +299,30 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 			fatal = "1"
 		}
 		b := pol.Breaker
-		_, _ = g.Redis().Do(ctx, "EVAL", luaBreakerFail, 1, bk,
+		ret, err := g.Redis().Do(ctx, "EVAL", luaBreakerFail, 1, bk,
 			now, int64(b.WindowSeconds)*1000, b.FailThreshold, fatal,
 			int64(b.CooldownSeconds)*1000, int64(b.CooldownMaxSeconds)*1000, stateKeyTTLMs)
+		// CLOSED→OPEN 转移（返回值为窗口失败数且达到阈值/致命直达）计入熔断打开指标
+		if err == nil && ret.Int() >= 0 && (fatal == "1" || ret.Int() >= b.FailThreshold) && BreakerOpenHook != nil {
+			BreakerOpenHook()
+		}
+	}
+}
+
+// luaBreakerManualReset 手动恢复：熔断复位为 CLOSED 并记录 recovered_ms（触发爬坡因子）。
+// ARGV: nowMs, keyTtlMs
+const luaBreakerManualReset = `
+redis.call('HSET', KEYS[1], 'state', 0, 'opened_ms', 0, 'cooldown_ms', 0, 'fail_count', 0, 'recovered_ms', ARGV[1])
+redis.call('HDEL', KEYS[1], 'first_opened_ms')
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1`
+
+// MarkChannelRecovered 渠道被运营手动启用/恢复时调用：复位熔断并开启爬坡窗口，
+// 避免恢复瞬间被 HRW 一次性灌满流量（基线方案 §4.5 rampFactor）。
+func (s *RedisState) MarkChannelRecovered(ctx context.Context, channelID int64) {
+	if _, err := g.Redis().Do(ctx, "EVAL", luaBreakerManualReset, 1,
+		keyBreaker+strconv.FormatInt(channelID, 10), time.Now().UnixMilli(), stateKeyTTLMs); err != nil {
+		g.Log().Warningf(ctx, "[Dispatch] 手动恢复标记失败: channel=%d err=%v", channelID, err)
 	}
 }
 
@@ -417,8 +469,9 @@ type RuntimeReadout struct {
 	Inflight      int
 	Breaker       dispatch.BreakerState
 	ModelBreaker  dispatch.BreakerState
-	RecoveredMs   int64 // 渠道级熔断最近恢复时间（0 = 无记录）
-	FirstOpenedMs int64 // 渠道级本轮故障期起点（0 = 非故障期），供自动禁用判定
+	RecoveredMs   int64   // 渠道级熔断最近恢复时间（0 = 无记录）
+	FirstOpenedMs int64   // 渠道级本轮故障期起点（0 = 非故障期），供自动禁用判定
+	Onset429Ewma  float64 // 429 起始水位 EWMA（0 = 无 429 历史），供 softLimit 自动估计
 }
 
 // ReadRuntime 读取渠道×模型的运行时状态（目录刷新循环调用，非请求热路径）。
@@ -443,6 +496,9 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 	out.ModelBreaker, _, _ = s.readBreaker(ctx, keyBreaker+chStr+":"+model, now)
 	if v, err := g.Redis().Do(ctx, "ZCOUNT", keyInflight+chStr, now, "+inf"); err == nil {
 		out.Inflight = v.Int()
+	}
+	if v, err := g.Redis().Do(ctx, "HGET", keyLimit429+chStr, "onset_ewma"); err == nil && !v.IsNil() {
+		out.Onset429Ewma = v.Float64()
 	}
 	return out
 }

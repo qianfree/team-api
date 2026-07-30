@@ -258,7 +258,7 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 			SuccEwma:       rt.SuccEwma,
 			LatEwmaMs:      rt.LatEwmaMs,
 			Inflight:       rt.Inflight,
-			SoftLimit:      row.MaxConcurrency,
+			SoftLimit:      effectiveSoftLimit(row.MaxConcurrency, rt.Onset429Ewma),
 			Breaker:        rt.Breaker,
 			ModelBreaker:   rt.ModelBreaker,
 			RampElapsedMs:  rampElapsed(now, rt.RecoveredMs, row.CreatedAtMs, rampWindowMs),
@@ -292,6 +292,19 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		}
 	}
 	c.current.Store(idx)
+}
+
+// effectiveSoftLimit softLimit 双来源（基线方案 §8.2）：
+// 手动 max_concurrency 优先；未配置时用 429 起始水位自动估计
+// softLimit = max(4, floor(onset_ewma × 0.9))；无 429 历史视为无限容量。
+func effectiveSoftLimit(manualMaxConcurrency int, onset429Ewma float64) int {
+	if manualMaxConcurrency > 0 {
+		return manualMaxConcurrency
+	}
+	if onset429Ewma <= 0 {
+		return 0 // 无容量信息，headroomFactor 恒为 1
+	}
+	return max(4, int(onset429Ewma*0.9))
 }
 
 // rampElapsed 计算爬坡状态：熔断恢复或新建渠道在窗口内 → 返回已流逝毫秒；否则 -1。

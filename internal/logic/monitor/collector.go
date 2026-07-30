@@ -370,6 +370,9 @@ func CollectSystemMetrics(ctx context.Context) error {
 	// Flush relaykit converter metrics (relaykit 路径无流量时为 no-op，不产生空行)
 	flushRelaykitMetrics(snapshot.Timestamp)
 
+	// Flush 渠道调度指标（无调度活动时为 no-op）
+	flushDispatchMetrics(snapshot.Timestamp)
+
 	return nil
 }
 

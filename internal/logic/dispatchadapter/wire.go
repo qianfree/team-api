@@ -83,6 +83,13 @@ func RefreshDispatchLease(ctx context.Context, channelID int64, requestID string
 	}
 }
 
+// MarkChannelRecovered 渠道被手动启用/恢复时复位熔断并开启爬坡窗口（管理后台调用）。
+func MarkChannelRecovered(ctx context.Context, channelID int64) {
+	if redisState != nil {
+		redisState.MarkChannelRecovered(ctx, channelID)
+	}
+}
+
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。
 // 管理后台渠道写操作后调用（阶段 3 接线）。
 func InvalidateChannel(ctx context.Context, channelID int64) {

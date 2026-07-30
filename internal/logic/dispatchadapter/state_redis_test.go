@@ -346,3 +346,51 @@ func TestLocal凭证冷却过期(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	assert.False(t, l.isCredCooled(9))
 }
+
+func Test429估计器水位收敛(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	// 预置 30 个在途租约（未过期）
+	for i := range 30 {
+		require.True(t, s.AcquireLease(ctx, 40, 0, fmt.Sprintf("req-%d", i)))
+	}
+
+	// 首次 429：onset 直接取当前水位
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 40, Model: "m", Success: false, Class: dispatch.ErrClassRateLimit})
+	rt := s.ReadRuntime(ctx, 40, "m")
+	assert.InEpsilon(t, 30.0, rt.Onset429Ewma, 1e-9)
+
+	// 释放到 10 个在途后再收 429：onset = 30×0.8 + 10×0.2 = 26
+	for i := 10; i < 30; i++ {
+		s.ReleaseLease(ctx, 40, fmt.Sprintf("req-%d", i))
+	}
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 40, Model: "m", Success: false, Class: dispatch.ErrClassRateLimit})
+	rt = s.ReadRuntime(ctx, 40, "m")
+	assert.InEpsilon(t, 26.0, rt.Onset429Ewma, 1e-9)
+}
+
+func TestEffectiveSoftLimit(t *testing.T) {
+	assert.Equal(t, 50, effectiveSoftLimit(50, 30), "手动上限优先")
+	assert.Equal(t, 0, effectiveSoftLimit(0, 0), "无信息视为无限容量")
+	assert.Equal(t, 27, effectiveSoftLimit(0, 30), "floor(30×0.9)")
+	assert.Equal(t, 4, effectiveSoftLimit(0, 2), "下限保护 max(4, ...)")
+}
+
+func Test手动恢复复位熔断并开启爬坡(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	// 制造熔断 OPEN
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 50, Model: "m", Success: false, Class: dispatch.ErrClassChannelFatal})
+	rt := s.ReadRuntime(ctx, 50, "m")
+	require.Equal(t, dispatch.BreakerOpen, rt.Breaker)
+	require.Greater(t, rt.FirstOpenedMs, int64(0))
+
+	// 手动恢复：CLOSED + recovered_ms（爬坡起点）+ 清故障期
+	s.MarkChannelRecovered(ctx, 50)
+	rt = s.ReadRuntime(ctx, 50, "m")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
+	assert.Greater(t, rt.RecoveredMs, int64(0))
+	assert.Zero(t, rt.FirstOpenedMs)
+}

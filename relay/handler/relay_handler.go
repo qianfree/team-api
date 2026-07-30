@@ -554,6 +554,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 写出后 EOF/RST/读超时 = 可能已送达。ReplayUnsafe+MaybeSent 由 FSM 硬规则终止。
 			delivery := deliveryStateOfRequestErr(err)
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
+			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms decision=%s",
 				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), decision)
@@ -625,6 +626,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				delivery = dispatch.DeliveryResponseStarted
 			}
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
+			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
 			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
 				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)

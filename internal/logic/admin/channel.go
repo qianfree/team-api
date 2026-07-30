@@ -66,6 +66,8 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		Status                   string      `json:"status"`
 		Priority                 int         `json:"priority"`
 		Weight                   int         `json:"weight"`
+		Tier                     string      `json:"tier"`
+		StrictCapacity           bool        `json:"strict_capacity"`
 		TestModel                string      `json:"test_model"`
 		Remark                   string      `json:"remark"`
 		IsVIP                    bool        `json:"is_vip"`
@@ -77,7 +79,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		Settings                 string      `json:"settings"`
 	}
 
-	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
+	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
 		OrderDesc("chn_channels.priority").
 		Page(req.Page, req.PageSize).
 		ScanAndCount(&channels, &total, false)
@@ -103,6 +105,8 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			Status:                   ch.Status,
 			Priority:                 ch.Priority,
 			Weight:                   ch.Weight,
+			Tier:                     ch.Tier,
+			StrictCapacity:           ch.StrictCapacity,
 			TestModel:                ch.TestModel,
 			Remark:                   ch.Remark,
 			IsVIP:                    ch.IsVIP,
@@ -246,6 +250,10 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		settingsJSON = `{"use_proxy":true}`
 	}
 
+	tier := req.Tier
+	if tier == "" {
+		tier = "primary"
+	}
 	id, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
 		Name:                     req.Name,
 		Type:                     req.Type,
@@ -253,6 +261,8 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		Status:                   "active",
 		Priority:                 req.Priority,
 		Weight:                   req.Weight,
+		Tier:                     tier,
+		StrictCapacity:           req.StrictCapacity,
 		TestModel:                req.TestModel,
 		Remark:                   req.Remark,
 		Settings:                 settingsJSON,
@@ -309,6 +319,12 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	if req.Status != "" {
 		data.Status = req.Status
 	}
+	if req.Tier != "" {
+		data.Tier = req.Tier
+	}
+	if req.StrictCapacity != nil {
+		data.StrictCapacity = *req.StrictCapacity
+	}
 	if req.IsVIP != nil {
 		data.IsVip = *req.IsVIP
 	}
@@ -361,6 +377,10 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	}
 	relay.InvalidateChannelAffinities(ctx, req.ID)
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
+	if req.Status == "active" {
+		// 手动启用/恢复：复位熔断并开启爬坡窗口，恢复初期小流量验证（rampFactor）
+		dispatchadapter.MarkChannelRecovered(ctx, req.ID)
+	}
 
 	return nil, nil
 }
@@ -401,6 +421,8 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Status                   string      `json:"status"`
 		Priority                 int         `json:"priority"`
 		Weight                   int         `json:"weight"`
+		Tier                     string      `json:"tier"`
+		StrictCapacity           bool        `json:"strict_capacity"`
 		TestModel                string      `json:"test_model"`
 		Remark                   string      `json:"remark"`
 		IsVIP                    bool        `json:"is_vip"`
@@ -415,7 +437,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 
 	err := dao.ChnChannels.Ctx(ctx).
 		LeftJoin("chn_health_scores h ON chn_channels.id = h.channel_id").
-		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.settings, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, chn_channels.updated_at, h.health_score").
+		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.settings, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, chn_channels.updated_at, h.health_score").
 		Where("chn_channels.id", req.ID).
 		Scan(&ch)
 	if err != nil {
@@ -459,6 +481,8 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Status:                   ch.Status,
 		Priority:                 ch.Priority,
 		Weight:                   ch.Weight,
+		Tier:                     ch.Tier,
+		StrictCapacity:           ch.StrictCapacity,
 		TestModel:                ch.TestModel,
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
@@ -509,11 +533,16 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 			return err
 		}
 		for _, ab := range req.Abilities {
+			costRatio := ab.CostRatio
+			if costRatio <= 0 {
+				costRatio = 1.0
+			}
 			if _, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
 				ChannelId:     req.ChannelID,
 				ModelName:     ab.ModelName,
 				UpstreamModel: ab.UpstreamModel,
 				Enabled:       ab.Enabled,
+				CostRatio:     costRatio,
 			}); err != nil {
 				return err
 			}
@@ -575,10 +604,11 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 // GetChannelAbilities 获取渠道模型能力列表
 func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (*v1.ChannelAbilitiesGetRes, error) {
 	var abilities []struct {
-		ID            int64  `json:"id"`
-		ModelName     string `json:"model_name"`
-		UpstreamModel string `json:"upstream_model"`
-		Enabled       bool   `json:"enabled"`
+		ID            int64   `json:"id"`
+		ModelName     string  `json:"model_name"`
+		UpstreamModel string  `json:"upstream_model"`
+		Enabled       bool    `json:"enabled"`
+		CostRatio     float64 `json:"cost_ratio"`
 	}
 
 	err := dao.ChnAbilities.Ctx(ctx).
@@ -596,10 +626,35 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 			ModelName:     a.ModelName,
 			UpstreamModel: a.UpstreamModel,
 			Enabled:       a.Enabled,
+			CostRatio:     a.CostRatio,
 		}
 	}
 
 	return &v1.ChannelAbilitiesGetRes{List: list}, nil
+}
+
+// ImportChannelCostRatios 批量导入渠道模型成本比例（CSV 由前端解析为条目提交）。
+// 只更新已存在的能力记录，未匹配的条目返回在 skipped 中；成功后触发目录失效。
+func (s *sAdmin) ImportChannelCostRatios(ctx context.Context, req *v1.ChannelCostRatioImportReq) (*v1.ChannelCostRatioImportRes, error) {
+	res := &v1.ChannelCostRatioImportRes{Skipped: make([]string, 0)}
+	for _, item := range req.Items {
+		affected, err := dao.ChnAbilities.Ctx(ctx).
+			Where("channel_id", item.ChannelID).
+			Where("model_name", item.ModelName).
+			Data(do.ChnAbilities{CostRatio: item.CostRatio}).
+			UpdateAndGetAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected == 0 {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%d:%s", item.ChannelID, item.ModelName))
+			continue
+		}
+		res.Updated++
+	}
+	// 成本比例参与调度 costFactor，变更后跨实例目录失效
+	dispatchadapter.PublishInvalidate(ctx)
+	return res, nil
 }
 
 // GetProviderDefaultURLs 获取供应商默认 API 地址

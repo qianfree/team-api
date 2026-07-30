@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
+	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relaykit/dispatch"
@@ -77,9 +78,14 @@ func sleepBackoff(ctx context.Context, d time.Duration) {
 	}
 }
 
-// appendSchedulerDecision 调度决策明细挂 ForwardingTrace（修订 R5）。
+// appendSchedulerDecision 调度决策明细挂 ForwardingTrace（修订 R5）+ 选择指标计数。
 func appendSchedulerDecision(trace *common.ForwardingTrace, d *dispatch.Decision, attempt int) {
-	if trace == nil || d == nil {
+	if d == nil {
+		monitor.TrackDispatchNoCandidate()
+		return
+	}
+	monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
+	if trace == nil {
 		return
 	}
 	trace.Scheduler = append(trace.Scheduler, common.SchedulerDecision{
@@ -103,6 +109,11 @@ func appendSchedulerDecision(trace *common.ForwardingTrace, d *dispatch.Decision
 		ExcludedLease:   d.Excluded.Lease,
 		ExcludedRequest: d.Excluded.Request,
 	})
+}
+
+// trackRetryDecision 重试决策指标计数（dispatch_retry_total{err_class→decision}）。
+func trackRetryDecision(statusCode int, err error, delivery dispatch.DeliveryState, decision dispatch.RetryDecision) {
+	monitor.TrackDispatchRetry(dispatch.Classify(statusCode, err, delivery).String(), decision.String())
 }
 
 // dispatchLeaseRefresher 长请求（流式/websocket）的调度租约续期器。
