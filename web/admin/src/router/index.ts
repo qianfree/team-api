@@ -2,10 +2,9 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import adminRoutes from './admin'
 import { useAuthStore } from '@/stores/auth'
-import { shouldRefresh, getRefreshToken } from '@/utils/request'
+import request, { shouldRefresh, getRefreshToken } from '@/utils/request'
 import { useSiteName } from '@/composables/useSiteName'
 import { useTopProgress } from '@/composables/useTopProgress'
-import axios from 'axios'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -35,10 +34,11 @@ export function markSystemInitialized(): void {
 async function checkSetupStatus(): Promise<boolean> {
   if (setupChecked) return systemInitialized === true
   try {
-    const res = await axios.get('/api/setup/status', { timeout: 5000 })
+    const res = await request.get('/setup/status', { timeout: 5000 })
     systemInitialized = res.data?.data?.initialized === true
   } catch {
-    systemInitialized = true
+    // Allow the current navigation, but retry the setup check next time.
+    return true
   }
   setupChecked = true
   return systemInitialized === true
