@@ -9,9 +9,9 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/logic/task"
@@ -219,7 +219,9 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
 		selection, mErr := relayDataProvider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, req.Model)
 		if mErr != nil {
-			if dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0); dec == dispatch.DecisionAbort {
+			dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0)
+			monitor.TrackDispatchRetry(dispatch.ErrClassChannelFatal.String(), dec.String())
+			if dec == dispatch.DecisionAbort {
 				return nil, relay_common.ErrChannelUnavailable
 			}
 			continue

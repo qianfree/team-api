@@ -120,7 +120,7 @@ func (c *Catalog) Snapshot(_ context.Context, _ int64, model string, scope []int
 	return out
 }
 
-// ForwardMeta 返回渠道×模型的转发元数据（handler 构造 ChannelSelection 用，阶段 3 接线）。
+// ForwardMeta 返回渠道×模型的转发元数据（MaterializeSelection 构造 ChannelSelection 用）。
 func (c *Catalog) ForwardMeta(channelID int64, model string) (ChannelMeta, bool) {
 	idx := c.current.Load()
 	if byModel, ok := idx.meta[channelID]; ok {

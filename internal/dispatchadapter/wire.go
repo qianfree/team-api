@@ -84,7 +84,7 @@ func MarkChannelRecovered(ctx context.Context, channelID int64) {
 }
 
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。
-// 管理后台渠道写操作后调用（阶段 3 接线）。
+// 管理后台渠道写操作（更新/删除/Key 变更/能力变更）后调用。
 func InvalidateChannel(ctx context.Context, channelID int64) {
 	if redisState != nil {
 		redisState.InvalidateChannelBindings(ctx, channelID)

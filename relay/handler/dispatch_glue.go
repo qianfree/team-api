@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -69,9 +69,9 @@ func deliveryStateOfRequestErr(err error) dispatch.DeliveryState {
 // reportMaterializeFailure 选择物化失败（Key 解密失败/目录缺失）时按渠道级致命上报，
 // 让 FSM 决定换渠道或终止。不发起过上游请求，送达状态为 NotSent。
 func reportMaterializeFailure(ctx context.Context, sess *dispatch.RouteSession, mErr error) dispatch.RetryDecision {
-	decision, _ := sess.Report(ctx, 0,
-		types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey),
-		dispatch.DeliveryNotSent, 0, 0)
+	failErr := types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey)
+	decision, _ := sess.Report(ctx, 0, failErr, dispatch.DeliveryNotSent, 0, 0)
+	trackRetryDecision(0, failErr, dispatch.DeliveryNotSent, decision)
 	return decision
 }
 

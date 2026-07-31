@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 )
 
 // GetSettingsCategories returns all available setting categories.

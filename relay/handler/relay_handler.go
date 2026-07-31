@@ -13,8 +13,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"

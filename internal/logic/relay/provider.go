@@ -17,9 +17,9 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
 )

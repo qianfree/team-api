@@ -22,9 +22,9 @@ import (
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/shopspring/decimal"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/channel"
@@ -457,7 +457,9 @@ func processSyncImageJob(job *SyncImageJob) {
 		sel, mErr := syncImageRelayProv.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, job.Model)
 		if mErr != nil {
 			lastErr = fmt.Sprintf("materialize channel %d: %v", d.Channel.ID, mErr)
-			if dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0); dec == dispatch.DecisionAbort {
+			dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0)
+			monitor.TrackDispatchRetry(dispatch.ErrClassChannelFatal.String(), dec.String())
+			if dec == dispatch.DecisionAbort {
 				break
 			}
 			continue
@@ -473,6 +475,7 @@ func processSyncImageJob(job *SyncImageJob) {
 		// 失败：上报健康并按 FSM 决策原地重试/换渠道/终止（绑定不删除）
 		lastErr = perr
 		dec, backoff := sess.Report(ctx, 0, errors.New(perr), dispatch.DeliveryResponseReceived, 0, 0)
+		monitor.TrackDispatchRetry(dispatch.Classify(0, errors.New(perr), dispatch.DeliveryResponseReceived).String(), dec.String())
 		if dec == dispatch.DecisionAbort {
 			break
 		}

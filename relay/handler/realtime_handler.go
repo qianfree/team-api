@@ -13,7 +13,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gorilla/websocket"
 
-	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/channel/openai"
