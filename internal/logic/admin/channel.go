@@ -294,6 +294,9 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	if req.Name != "" {
 		data.Name = req.Name
 	}
+	if req.Type != nil {
+		data.Type = *req.Type
+	}
 	if req.BaseURL != "" {
 		data.BaseUrl = req.BaseURL
 	}

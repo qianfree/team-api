@@ -69,6 +69,7 @@ type ChannelUpdateReq struct {
 	g.Meta                   `path:"/channels/{id}" method:"put" mime:"json" tags:"管理后台-渠道" summary:"更新渠道"`
 	ID                       int64    `json:"id" in:"path" v:"required" dc:"渠道ID"`
 	Name                     string   `json:"name" dc:"渠道名称"`
+	Type                     *int     `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
 	BaseURL                  string   `json:"base_url" dc:"API 基础地址"`
 	ApiKey                   *string  `json:"api_key" dc:"更新 API Key（留空不更新）"`
 	Priority                 int      `json:"priority" dc:"优先级"`

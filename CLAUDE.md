@@ -11,7 +11,7 @@
 - **后端**：Go + GoFrame (v2) + goose（数据库迁移）
 - **数据库**：PostgreSQL（唯一，不用 MySQL/SQLite）
 - **缓存**：Redis + 内存缓存（双层缓存）
-- **前端**：Vue 3 + Vite + TailwindCSS + Naive UI（管理后台）
+- **前端**：Vue 3 + Vite + TailwindCSS + Arco Design Vue（管理后台）
 - **包管理**：bun
 - **对象存储**：S3 / OSS / COS / MinIO（禁止纯本地磁盘作为生产存储）
 
@@ -383,9 +383,9 @@ wallets 表包含 `frozen_balance` 字段，用于支付中/退款中的金额�
 ### 前端
 
 - Vue 3 Composition API + `<script setup>` 语法
-- **管理后台**：使用 **Naive UI** 组件库，快速构建数据密集型页面（表格、表单、图表等），可参考 [Soybean Admin](https://github.com/soybeanjs/soybean-admin) 的架构设计（路由、权限、布局）
+- **管理后台**：使用 **Arco Design Vue** 组件库（`@arco-design/web-vue`），快速构建数据密集型页面（表格、表单、图表等），可参考 [Soybean Admin](https://github.com/soybeanjs/soybean-admin) 的架构设计（路由、权限、布局）
 - **租户控制台**：TailwindCSS 原子类 + 自建组件，面向客户，注重品牌调性和视觉差异化
-- TailwindCSS 作为基础样式层，两个控制台共用（Naive UI 的 CSS-in-JS 方案与 TailwindCSS 无冲突）
+- TailwindCSS 作为基础样式层，两个控制台共用（注意与 Arco 组件内置样式共存，避免全局 reset 冲突）
 - 状态管理用 Pinia
 - HTTP 请求封装 Axios，JWT 自动刷新，统一错误处理
 - 按钮级权限控制：无权限的按钮不渲染（`v-if="hasPermission('xxx')"`）

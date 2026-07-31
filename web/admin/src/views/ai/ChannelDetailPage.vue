@@ -18,6 +18,30 @@ const activeTab = ref('info')
 
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+
+// 供应商类型选项（与渠道列表页保持一致，用于编辑时切换渠道协议类型）
+const providerTypeOptions = [
+  { label: 'OpenAI', value: 1 }, { label: 'Claude (Anthropic)', value: 2 },
+  { label: 'Gemini (Google)', value: 3 }, { label: 'Ali (百炼)', value: 4 },
+  { label: 'Tencent (混元)', value: 6 },
+  { label: 'Zhipu (智谱)', value: 7 }, { label: 'DeepSeek', value: 8 },
+  { label: 'Moonshot', value: 9 }, { label: 'Volcengine (火山)', value: 10 },
+  { label: 'AWS Bedrock', value: 11 }, { label: 'Azure OpenAI', value: 12 },
+  { label: 'Vertex AI', value: 13 },
+  { label: 'Mistral', value: 15 }, { label: 'xAI (Grok)', value: 16 },
+  { label: '360 智脑', value: 17 }, { label: 'Lingyi (零一万物)', value: 18 },
+  { label: 'Baidu V2', value: 19 }, { label: 'Cloudflare Workers AI', value: 20 },
+  { label: 'Ollama', value: 22 },
+  { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },
+  { label: 'OpenRouter', value: 27 }, { label: 'XInference', value: 28 },
+  { label: 'MiniMax', value: 29 }, { label: 'Submodel', value: 30 },
+  { label: 'Coze (扣子)', value: 32 },
+  { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
+  { label: 'Codex', value: 35 },
+]
+function filterProviderOption(inputValue: string, option: { label: string; value: number }) {
+  return option.label.toLowerCase().includes(inputValue.toLowerCase())
+}
 const healthColor = (score: number | null | undefined) => {
   if (score === null || score === undefined) return '#94a3b8'
   if (score >= 80) return '#10b981'
@@ -46,6 +70,7 @@ const showEditModal = ref(false)
 const editLoading = ref(false)
 const editForm = reactive({
   name: '',
+  type: 1,
   base_url: '',
   priority: 0,
   weight: 100,
@@ -63,6 +88,7 @@ function openEditModal() {
   if (!detail.value) return
   Object.assign(editForm, {
     name: detail.value.name || '',
+    type: detail.value.type || 1,
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
     weight: detail.value.weight || 100,
@@ -621,6 +647,12 @@ function formatHeaders(headers: Record<string, string>): string {
     <!-- Edit Channel Modal -->
     <AModal v-model:visible="showEditModal" title="编辑渠道" :width="600" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
       <AForm :model="editForm" :auto-label-width="true" layout="vertical">
+        <AFormItem label="供应商类型" field="type">
+          <ASelect v-model="editForm.type" :options="providerTypeOptions" placeholder="搜索或选择" allow-search :filter-option="filterProviderOption" />
+          <template #extra>
+            <span class="field-help">切换协议类型会改变该渠道的转发适配器；请确认 Base URL 与已配置的模型能力与新类型匹配。</span>
+          </template>
+        </AFormItem>
         <ARow :gutter="16">
           <ACol :span="8">
             <AFormItem label="渠道名称"><AInput v-model="editForm.name" /></AFormItem>
