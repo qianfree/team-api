@@ -442,6 +442,7 @@ func processSyncImageJob(job *SyncImageJob) {
 		Model:     job.Model,
 		Scope:     channelScope,
 		Replay:    dispatch.ReplayCostly,
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, job.TenantID),
 	})
 	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
 
@@ -449,8 +450,10 @@ func processSyncImageJob(job *SyncImageJob) {
 	for attempt := 0; attempt < syncImageMaxAttempts; attempt++ {
 		d := sess.Next(ctx)
 		if d == nil {
+			monitor.TrackDispatchNoCandidate()
 			break // 无更多候选 / FSM 已终止
 		}
+		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
 		sel, mErr := syncImageRelayProv.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, job.Model)
 		if mErr != nil {
 			lastErr = fmt.Sprintf("materialize channel %d: %v", d.Channel.ID, mErr)

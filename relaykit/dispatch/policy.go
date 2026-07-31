@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"fmt"
+	"slices"
 )
 
 // RoutingPolicy 路由策略（基线方案 §12 + 开发计划 §4.3 扩展字段）。
@@ -44,9 +45,31 @@ type RoutingPolicy struct {
 
 	Session SessionPolicy `json:"session"`
 
+	Replay ReplayPolicy `json:"replay"`
+
 	Degrade struct {
 		MaxReplicas int `json:"maxReplicas"` // 修订 R4：实例级保守限额分母，默认 1
 	} `json:"degrade"`
+}
+
+// ReplayPolicy 可重放性策略（修订 R2）。
+type ReplayPolicy struct {
+	// UnsafeModes 归为 ReplayUnsafe 的 relay mode 字符串列表（与 handler 的
+	// relayModeString 取值一致）。重放可能产生重复任务/高额成本的端点应列入。
+	UnsafeModes []string `json:"unsafeModes"`
+	// SafeModes 归为 ReplaySafe 的 relay mode 列表（可安全重放的查询类端点）。
+	SafeModes []string `json:"safeModes"`
+}
+
+// ReplayabilityForMode 按 relay mode 字符串查可重放性：Unsafe 优先，Safe 次之，默认 Costly。
+func (p ReplayPolicy) ReplayabilityForMode(mode string) Replayability {
+	if slices.Contains(p.UnsafeModes, mode) {
+		return ReplayUnsafe
+	}
+	if slices.Contains(p.SafeModes, mode) {
+		return ReplaySafe
+	}
+	return ReplayCostly
 }
 
 // RetryPolicy 重试策略（基线方案 §6.2 + 修订 R1/R2）。
@@ -128,6 +151,10 @@ func DefaultRoutingPolicy() *RoutingPolicy {
 		HeaderName:             "X-Session-Id",
 		ParseAnthropicMetadata: true,
 		ParseOpenAIResponses:   true,
+	}
+	p.Replay = ReplayPolicy{
+		UnsafeModes: []string{"images_generations", "images_edits", "video_generations"},
+		SafeModes:   []string{"embeddings", "rerank"},
 	}
 	p.Degrade.MaxReplicas = 1
 	return p

@@ -147,6 +147,7 @@ type IAdminV1 interface {
 	MonitorTraffic(ctx context.Context, req *v1.MonitorTrafficReq) (res *v1.MonitorTrafficRes, err error)
 	MonitorLatency(ctx context.Context, req *v1.MonitorLatencyReq) (res *v1.MonitorLatencyRes, err error)
 	MonitorSystem(ctx context.Context, req *v1.MonitorSystemReq) (res *v1.MonitorSystemRes, err error)
+	MonitorDispatch(ctx context.Context, req *v1.MonitorDispatchReq) (res *v1.MonitorDispatchRes, err error)
 	MonitorDBPool(ctx context.Context, req *v1.MonitorDBPoolReq) (res *v1.MonitorDBPoolRes, err error)
 	MonitorRedisPool(ctx context.Context, req *v1.MonitorRedisPoolReq) (res *v1.MonitorRedisPoolRes, err error)
 	MonitorRealtime(ctx context.Context, req *v1.MonitorRealtimeReq) (res *v1.MonitorRealtimeRes, err error)

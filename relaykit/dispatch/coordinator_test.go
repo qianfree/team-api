@@ -606,3 +606,32 @@ func TestCoordinator_防抖_headroom抖动(t *testing.T) {
 	}
 	assert.Equal(t, rebinds, state.setBinds, "抖动期间重绑次数必须为 0")
 }
+
+// TestCoordinator_租户级策略覆盖 profile.Policy 非空时本会话使用租户策略而非全局策略。
+func TestCoordinator_租户级策略覆盖(t *testing.T) {
+	ctx := context.Background()
+	state := newFakeState()
+	co, _ := newTestCoordinator(state,
+		healthyChannel(1, TierPrimary, 10),
+		healthyChannel(2, TierPrimary, 10),
+	)
+
+	// 租户覆盖：原地重试预算 0 → 瞬时错误直接 failover（全局默认为 2 → 原地重试）
+	tenantPol := DefaultRoutingPolicy()
+	tenantPol.Retry.InPlaceBudget = 0
+
+	p := testProfile()
+	p.Policy = tenantPol
+	s := co.Route(ctx, p)
+	d := s.Next(ctx)
+	require.NotNil(t, d)
+
+	dec, _ := s.Report(ctx, 502, nil, DeliveryResponseReceived, 50, 0)
+	assert.Equal(t, DecisionFailover, dec, "租户策略原地预算 0 应直接 failover")
+
+	// 对照组：无覆盖走全局策略 → 原地重试
+	s2 := co.Route(ctx, testProfile())
+	require.NotNil(t, s2.Next(ctx))
+	dec2, _ := s2.Report(ctx, 502, nil, DeliveryResponseReceived, 50, 0)
+	assert.Equal(t, DecisionInPlaceRetry, dec2, "无覆盖应使用全局策略原地重试")
+}

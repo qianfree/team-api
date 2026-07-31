@@ -234,19 +234,6 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	return sig
 }
 
-// replayabilityOf 修订 R2：relay mode → 可重放性静态映射。
-// 图片/视频生成重放可能产生重复任务与高额成本；embedding/rerank 可安全重放。
-func replayabilityOf(mode constant.RelayMode) dispatch.Replayability {
-	switch mode {
-	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits, constant.RelayModeVideoGenerations:
-		return dispatch.ReplayUnsafe
-	case constant.RelayModeEmbeddings, constant.RelayModeRerank:
-		return dispatch.ReplaySafe
-	default:
-		return dispatch.ReplayCostly
-	}
-}
-
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
 	rc *RelayContext,
@@ -458,15 +445,17 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 	sig := v.sessionSignals
 	sig.HeaderSessionID = headers.Get("X-Session-Id")
-	sess := dispatchadapter.Coordinator(ctx).Route(ctx, dispatch.RequestProfile{
+	co := dispatchadapter.Coordinator(ctx)
+	sess := co.Route(ctx, dispatch.RequestProfile{
 		RequestID: rc.RequestID,
 		TenantID:  rc.TenantID,
 		UserID:    rc.UserID,
 		APIKeyID:  rc.ApiKeyID,
 		Model:     v.lookupModel,
 		Scope:     channelScope,
-		Replay:    replayabilityOf(v.relayMode),
+		Replay:    co.Policy().Replay.ReplayabilityForMode(v.relayModeStr),
 		Signals:   sig,
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, rc.TenantID),
 	})
 	// 兜底：任何未显式 Finish 的退出路径释放租约（Finish 幂等，成功路径的显式调用优先生效）
 	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
@@ -1013,6 +1002,8 @@ func relayModeString(mode constant.RelayMode) string {
 		return "mj_fetch"
 	case constant.RelayModeMjImage:
 		return "mj_image"
+	case constant.RelayModeVideoGenerations:
+		return "video_generations"
 	default:
 		return ""
 	}

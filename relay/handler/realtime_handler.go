@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
+	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
@@ -171,6 +172,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		Scope:     channelScope,
 		Replay:    dispatch.ReplayCostly,
 		Signals:   dispatch.SessionSignals{HeaderSessionID: r.Header.Get("X-Session-Id")},
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, rc.TenantID),
 	})
 	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
 
@@ -178,8 +180,10 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	for {
 		d := sess.Next(ctx)
 		if d == nil {
+			monitor.TrackDispatchNoCandidate()
 			return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, common.ErrChannelUnavailable)
 		}
+		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
 		sel, mErr := provider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, modelName)
 		if mErr != nil {
 			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {

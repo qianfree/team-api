@@ -206,14 +206,17 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 		Model:     req.Model,
 		Scope:     channelScope,
 		Replay:    dispatch.ReplayUnsafe,
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, tenantID),
 	})
 	defer sess.Finish(context.WithoutCancel(ctx), false, 0) // 立即释放租约：提交动作瞬时完成，不长占并发额度
 
 	for {
 		d := sess.Next(ctx)
 		if d == nil {
+			monitor.TrackDispatchNoCandidate()
 			return nil, relay_common.ErrChannelUnavailable
 		}
+		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
 		selection, mErr := relayDataProvider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, req.Model)
 		if mErr != nil {
 			if dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0); dec == dispatch.DecisionAbort {

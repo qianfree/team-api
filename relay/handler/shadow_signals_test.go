@@ -48,22 +48,31 @@ func TestExtractSessionSignals(t *testing.T) {
 	_ = extractSessionSignals(malformed)
 }
 
-func TestReplayabilityOf(t *testing.T) {
+func TestReplayabilityForMode(t *testing.T) {
+	pol := dispatch.DefaultRoutingPolicy().Replay
 	tests := []struct {
-		mode constant.RelayMode
+		mode string
 		want dispatch.Replayability
 	}{
-		{constant.RelayModeImagesGenerations, dispatch.ReplayUnsafe},
-		{constant.RelayModeImagesEdits, dispatch.ReplayUnsafe},
-		{constant.RelayModeVideoGenerations, dispatch.ReplayUnsafe},
-		{constant.RelayModeEmbeddings, dispatch.ReplaySafe},
-		{constant.RelayModeRerank, dispatch.ReplaySafe},
-		{constant.RelayModeChatCompletions, dispatch.ReplayCostly},
-		{constant.RelayModeClaudeMessages, dispatch.ReplayCostly},
+		{"images_generations", dispatch.ReplayUnsafe},
+		{"images_edits", dispatch.ReplayUnsafe},
+		{"video_generations", dispatch.ReplayUnsafe},
+		{"embeddings", dispatch.ReplaySafe},
+		{"rerank", dispatch.ReplaySafe},
+		{"chat_completions", dispatch.ReplayCostly},
+		{"claude_messages", dispatch.ReplayCostly},
+		{"", dispatch.ReplayCostly},
 	}
 	for _, tt := range tests {
-		if got := replayabilityOf(tt.mode); got != tt.want {
-			t.Errorf("replayabilityOf(%v) = %v, want %v", tt.mode, got, tt.want)
+		if got := pol.ReplayabilityForMode(tt.mode); got != tt.want {
+			t.Errorf("ReplayabilityForMode(%q) = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+
+	// relayModeString 与默认策略取值必须对齐（防止改字符串后 Unsafe 保护静默失效）
+	for _, mode := range []constant.RelayMode{constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits, constant.RelayModeVideoGenerations} {
+		if got := pol.ReplayabilityForMode(relayModeString(mode)); got != dispatch.ReplayUnsafe {
+			t.Errorf("relayModeString(%v)=%q 未命中 UnsafeModes", mode, relayModeString(mode))
 		}
 	}
 }

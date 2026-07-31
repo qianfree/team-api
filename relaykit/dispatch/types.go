@@ -100,6 +100,9 @@ type RequestProfile struct {
 	Scope     []int64 // 租户渠道范围（空 = 不限制），由适配层填充
 	Replay    Replayability
 	Signals   SessionSignals
+	// Policy 请求级策略覆盖（租户级差异化，基线方案 §12「全局默认 + 租户覆盖」）。
+	// nil = 使用协调器全局策略。由适配层解析（全局 + 租户浅合并）后传入。
+	Policy *RoutingPolicy
 }
 
 // DecisionReason 选择原因（对应 SelectionReason，前端渠道日志展示）。

@@ -41,11 +41,16 @@ func (co *Coordinator) Policy() *RoutingPolicy {
 	return co.policy.Load()
 }
 
-// Route 开启一次请求的调度会话。
+// Route 开启一次请求的调度会话。profile.Policy 非空时本会话使用该策略
+//（租户级覆盖），否则捕获协调器当前全局策略（会话内保持一致，不受热更新影响）。
 func (co *Coordinator) Route(ctx context.Context, profile RequestProfile) *RouteSession {
-	pol := co.policy.Load()
+	pol := profile.Policy
+	if pol == nil {
+		pol = co.policy.Load()
+	}
 	return &RouteSession{
 		co:            co,
+		pol:           pol,
 		profile:       profile,
 		sessionKey:    ResolveSessionKey(profile, pol.Session),
 		excludedChans: make(map[int64]struct{}),
@@ -57,6 +62,7 @@ func (co *Coordinator) Route(ctx context.Context, profile RequestProfile) *Route
 // RouteSession 一次请求的调度会话。非并发安全（单请求内串行使用）。
 type RouteSession struct {
 	co         *Coordinator
+	pol        *RoutingPolicy // 本会话生效的策略（全局或租户覆盖，Route 时捕获）
 	profile    RequestProfile
 	sessionKey SessionKey
 
@@ -111,7 +117,7 @@ func (s *RouteSession) Report(ctx context.Context, statusCode int, err error, de
 	if s.finished || s.current == nil {
 		return DecisionAbort, 0
 	}
-	pol := s.co.policy.Load()
+	pol := s.pol
 	class := Classify(statusCode, err, delivery)
 
 	s.attempt.ElapsedMs = s.co.clock.Now().Sub(s.startedAt).Milliseconds()
@@ -169,7 +175,7 @@ func (s *RouteSession) Finish(ctx context.Context, success bool, latencyMs float
 	s.finished = true
 	s.releaseLease(ctx)
 	if success && s.current != nil {
-		pol := s.co.policy.Load()
+		pol := s.pol
 		s.co.state.TouchBinding(ctx, s.sessionKey.Key, time.Duration(pol.Binding.TTLSeconds)*time.Second)
 		s.co.state.ReportOutcome(Outcome{
 			ChannelID: s.current.Channel.ID,
@@ -196,7 +202,7 @@ func (s *RouteSession) RefreshLease(ctx context.Context) {
 // 快照 → 熔断硬排除 → 打分 → 绑定守卫 → HRW → 探测令牌 → 租约。
 // 租约/探测失败只排除重选，不扣预算。
 func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
-	pol := s.co.policy.Load()
+	pol := s.pol
 	snapshot := s.co.catalog.Snapshot(ctx, s.profile.TenantID, s.profile.Model, s.profile.Scope)
 
 	// 本轮选择中被探测令牌 / 租约 / 凭证拒绝的渠道（不进入 excludedChans，不影响绑定守卫语义）

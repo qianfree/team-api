@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -142,4 +144,72 @@ func flushDispatchMetrics(ts time.Time) {
 		MetricData:  string(payload),
 		CollectedAt: gtime.NewFromTime(ts),
 	})
+}
+
+// GetDispatchMetricsRange 从 ops_system_metrics 读取窗口内的调度指标快照序列：
+// 返回最新累计快照与窗口增量（首尾做差，计数器重启回绕时按 0 钳制）。
+// 窗口内不足两条快照时 window 为 nil。
+func GetDispatchMetricsRange(ctx context.Context, minutes int) (latest, window *DispatchMetricsSnapshot, collectedAt string, err error) {
+	if minutes <= 0 {
+		minutes = 60
+	}
+	since := time.Now().Add(-time.Duration(minutes) * time.Minute)
+
+	var rows []struct {
+		MetricData  string      `json:"metric_data"`
+		CollectedAt *gtime.Time `json:"collected_at"`
+	}
+	err = dao.OpsSystemMetrics.Ctx(ctx).
+		Where("metric_type", "channel_dispatch").
+		Where("collected_at >= ?", since).
+		OrderAsc("collected_at").
+		Fields("metric_data, collected_at").
+		Scan(&rows)
+	if err != nil || len(rows) == 0 {
+		return nil, nil, "", err
+	}
+
+	last := rows[len(rows)-1]
+	latest = &DispatchMetricsSnapshot{}
+	if json.Unmarshal([]byte(last.MetricData), latest) != nil {
+		return nil, nil, "", nil
+	}
+	if last.CollectedAt != nil {
+		collectedAt = last.CollectedAt.String()
+	}
+
+	if len(rows) >= 2 {
+		first := &DispatchMetricsSnapshot{}
+		if json.Unmarshal([]byte(rows[0].MetricData), first) == nil {
+			window = diffDispatchSnapshot(latest, first)
+		}
+	}
+	return latest, window, collectedAt, nil
+}
+
+// diffDispatchSnapshot 累计快照做差得窗口增量（进程重启导致计数回绕时钳制为 0）。
+func diffDispatchSnapshot(newer, older *DispatchMetricsSnapshot) *DispatchMetricsSnapshot {
+	return &DispatchMetricsSnapshot{
+		Selections:     diffCounter(newer.Selections, older.Selections),
+		Retries:        diffCounter(newer.Retries, older.Retries),
+		OverflowByTier: diffCounter(newer.OverflowByTier, older.OverflowByTier),
+		SessionSources: diffCounter(newer.SessionSources, older.SessionSources),
+		BreakerOpens:   clampNonNegative(newer.BreakerOpens - older.BreakerOpens),
+		NoCandidate:    clampNonNegative(newer.NoCandidate - older.NoCandidate),
+	}
+}
+
+func diffCounter(newer, older map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(newer))
+	for k, v := range newer {
+		out[k] = clampNonNegative(v - older[k])
+	}
+	return out
+}
+
+func clampNonNegative(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }

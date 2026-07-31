@@ -116,8 +116,7 @@ type ChannelSelection struct {
 	IsModelMapped     bool
 	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供各转发入口做容量控制
 	Settings          ChannelSettings
-	SelectionReason   string // bind / hrw / overflow / probe / cred_rotate（旧值 affinity / weighted / legacy）
-	PreserveAffinity  bool   // 临时容量溢出时不覆盖原亲和
+	SelectionReason   string // bind / hrw / overflow / probe / cred_rotate
 	Priority          int
 	Weight            int
 	HealthScore       float64
