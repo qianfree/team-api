@@ -18,6 +18,8 @@ type (
 		TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (*v1.MonitorTrafficFlowRes, error)
 		ModelPerformance(ctx context.Context, req *v1.MonitorModelPerformanceReq) (*v1.MonitorModelPerformanceRes, error)
 		Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error)
+		// Dispatch 渠道调度引擎指标：最新累计快照 + 窗口增量（供监控页「调度引擎」面板）。
+		Dispatch(ctx context.Context, req *v1.MonitorDispatchReq) (*v1.MonitorDispatchRes, error)
 		System(ctx context.Context, req *v1.MonitorSystemReq) (*v1.MonitorSystemRes, error)
 		DBPool(ctx context.Context, _ *v1.MonitorDBPoolReq) (*v1.MonitorDBPoolRes, error)
 		RedisPool(ctx context.Context, _ *v1.MonitorRedisPoolReq) (*v1.MonitorRedisPoolRes, error)

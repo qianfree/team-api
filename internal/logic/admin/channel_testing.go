@@ -9,6 +9,7 @@ import (
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 )
@@ -89,12 +90,8 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, testModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// 更新健康度
-	if result.Success {
-		relay.UpdateHealthScoreDirect(ctx, channelID, true, float64(latencyMs))
-	} else {
-		relay.UpdateHealthScoreDirect(ctx, channelID, false, float64(latencyMs))
-	}
+	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）
+	dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
 
 	// 记录测试结果日志
 	if result.Success {

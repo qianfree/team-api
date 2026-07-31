@@ -60,6 +60,13 @@ const statusOptions = [
 ]
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
+const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
+const tierOptions = [
+  { label: '首选（承接主要流量）', value: 'primary' },
+  { label: '备用（零星保温流量，主力饱和时溢出承接）', value: 'secondary' },
+  { label: '保底（仅前两层不可用时使用）', value: 'reserve' },
+]
 
 function healthColor(score: number | null | undefined) {
   if (score === null || score === undefined) return '#94a3b8'
@@ -89,6 +96,12 @@ const columns: TableColumnData[] = [
   },
   { title: '优先级', dataIndex: 'priority', width: 70 },
   { title: '权重', dataIndex: 'weight', width: 70 },
+  {
+    title: '层级', dataIndex: 'tier', width: 80,
+    render({ record }) {
+      return h(Tag, { color: tierTagColor[record.tier] || 'gray', size: 'small' }, () => tierLabel[record.tier] || record.tier || '-')
+    },
+  },
   {
     title: '健康度', dataIndex: 'health_score', width: 90,
     render({ record }) {
@@ -189,10 +202,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://api.openai.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
   showModal.value = true
 }
 
@@ -408,15 +421,15 @@ const { exporting, exportFile } = useExport({
         <!-- 调度 & 状态 -->
         <ARow :gutter="16">
           <ACol :span="8">
-            <AFormItem label="优先级">
-              <AInputNumber v-model="form.priority" :min="0" placeholder="越高越优先" class="w-full" />
-              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+            <AFormItem label="调度层级">
+              <ASelect v-model="form.tier" :options="tierOptions" />
+              <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
           <ACol :span="8">
             <AFormItem label="权重">
               <AInputNumber v-model="form.weight" :min="0" :max="100" class="w-full" />
-              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
+              <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
           <ACol :span="8">
@@ -433,6 +446,12 @@ const { exporting, exportFile } = useExport({
             <AFormItem label="使用代理">
               <ASwitch v-model="form.use_proxy" />
               <template #extra><span style="color:var(--color-text-3);font-size:12px">需先在系统设置中配置代理</span></template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="8">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="form.strict_capacity" />
+              <template #extra><span style="color:var(--color-text-3);font-size:12px">Redis 故障时保守限流（高成本渠道）</span></template>
             </AFormItem>
           </ACol>
         </ARow>

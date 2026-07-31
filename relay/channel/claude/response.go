@@ -23,11 +23,11 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	// 阶段 4：relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
@@ -60,7 +60,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 	// 旧代码路径（relaykit 未启用或失败回退）
 	var claudeResp dto.ClaudeResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	// 转换为 OpenAI 格式
@@ -88,7 +88,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	// 阶段 4 Task4：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
@@ -137,7 +137,10 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, responseTextBuf.Len())
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -377,11 +380,11 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if info.ChannelMeta.IsModelMapped {
@@ -416,7 +419,7 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	helper.SetEventStreamHeaders(writer)
@@ -425,12 +428,15 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
 	var usage dto.ClaudeUsage
+	var transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
 
 	for {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -458,6 +464,16 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 				case "message_start":
 					if event.Message != nil && event.Message.Usage != nil {
 						usage = *event.Message.Usage
+					}
+				case "content_block_delta":
+					// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
+					if event.Delta != nil {
+						if event.Delta.Text != nil {
+							transferredTextLen += len(*event.Delta.Text)
+						}
+						if event.Delta.Thinking != nil {
+							transferredTextLen += len(*event.Delta.Thinking)
+						}
 					}
 				case "message_delta":
 					if event.Usage != nil {
@@ -488,7 +504,9 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 
 		if _, err := writer.Write([]byte(line)); err != nil {
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			return interruptedUsage, common.ErrStreamInterrupted
 		}
 
 		if len(line) == 1 && line[0] == '\n' {

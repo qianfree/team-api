@@ -64,3 +64,6 @@ func (c *ControllerV1) MonitorTrafficFlow(ctx context.Context, req *v1.MonitorTr
 func (c *ControllerV1) MonitorModelPerformance(ctx context.Context, req *v1.MonitorModelPerformanceReq) (res *v1.MonitorModelPerformanceRes, err error) {
 	return service.Monitor().ModelPerformance(ctx, req)
 }
+func (c *ControllerV1) MonitorDispatch(ctx context.Context, req *v1.MonitorDispatchReq) (res *v1.MonitorDispatchRes, err error) {
+	return service.Monitor().Dispatch(ctx, req)
+}

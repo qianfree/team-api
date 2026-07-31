@@ -89,6 +89,37 @@ func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.
 	return &v1.MonitorLatencyRes{Data: data}, nil
 }
 
+// Dispatch 渠道调度引擎指标：最新累计快照 + 窗口增量（供监控页「调度引擎」面板）。
+func (s *sMonitor) Dispatch(ctx context.Context, req *v1.MonitorDispatchReq) (*v1.MonitorDispatchRes, error) {
+	latest, window, collectedAt, err := GetDispatchMetricsRange(ctx, req.Minutes)
+	if err != nil {
+		return nil, err
+	}
+	res := &v1.MonitorDispatchRes{WindowMinutes: req.Minutes}
+	if latest == nil {
+		return res, nil
+	}
+	res.Available = true
+	res.CollectedAt = collectedAt
+	res.Latest = dispatchSnapshotToAPI(latest)
+	if window != nil {
+		res.Window = dispatchSnapshotToAPI(window)
+	}
+	return res, nil
+}
+
+// dispatchSnapshotToAPI 内部快照 → API 数据结构。
+func dispatchSnapshotToAPI(s *DispatchMetricsSnapshot) *v1.DispatchMetricsData {
+	return &v1.DispatchMetricsData{
+		Selections:     s.Selections,
+		Retries:        s.Retries,
+		OverflowByTier: s.OverflowByTier,
+		SessionSources: s.SessionSources,
+		BreakerOpens:   s.BreakerOpens,
+		NoCandidate:    s.NoCandidate,
+	}
+}
+
 func (s *sMonitor) System(ctx context.Context, req *v1.MonitorSystemReq) (*v1.MonitorSystemRes, error) {
 	result := make(g.Map)
 

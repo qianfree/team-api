@@ -225,6 +225,15 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
 	return info.estimatePromptTokens
 }
 
+// SetEstimatePromptTokens 记录请求侧估算的输入 token 数（与预扣估价同源），
+// 供流中断结算时在上游 usage 缺失的情况下按估算值对输入正常计费。
+func (info *RelayInfo) SetEstimatePromptTokens(tokens int) {
+	if info == nil {
+		return
+	}
+	info.estimatePromptTokens = tokens
+}
+
 func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
 	if info == nil {
 		return &convmeta.ClaudeConvertInfo{LastMessagesType: convmeta.LastMessageTypeNone}

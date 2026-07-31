@@ -5,7 +5,11 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 )
@@ -23,6 +27,9 @@ type RelayError struct {
 	// 上层错误写入器（WriteRelayError / WriteClaudeRelayError / WriteGeminiRelayError）应跳过二次写入。
 	// 字段对重试 / 健康度 / 计费 / 状态码重映射等逻辑透明（仍按 StatusCode 判断）。
 	ResponseWritten bool
+	// RetryAfter 上游 Retry-After 头解析结果（0 = 未携带）。
+	// 调度重试 FSM 据此决定 429 时「原地等待重试」还是立即 failover。
+	RetryAfter time.Duration
 }
 
 func (e *RelayError) Error() string {
@@ -44,6 +51,35 @@ func NewUpstreamError(statusCode int, message string, cause error) *RelayError {
 		Type:       "upstream_error",
 		Cause:      cause,
 	}
+}
+
+// WithRetryAfter 附着上游 Retry-After 解析结果（链式调用，d<=0 时不生效）。
+func (e *RelayError) WithRetryAfter(d time.Duration) *RelayError {
+	if e != nil && d > 0 {
+		e.RetryAfter = d
+	}
+	return e
+}
+
+// RetryAfterFromHeader 解析响应头中的 Retry-After。
+// 支持两种标准格式：秒数（"30"）与 HTTP-date（RFC 1123）。缺失/非法/过去时间返回 0。
+func RetryAfterFromHeader(h http.Header) time.Duration {
+	v := h.Get("Retry-After")
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // NewChannelError 创建渠道错误

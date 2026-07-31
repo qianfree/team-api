@@ -19,6 +19,7 @@ import (
 	openController "github.com/qianfree/team-api/internal/controller/open"
 	settingsController "github.com/qianfree/team-api/internal/controller/settings"
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -100,6 +101,8 @@ var (
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
 			monitor.InitRelaykitTracker()
+			monitor.InitDispatchTracker()
+			dispatchadapter.SetBreakerOpenHook(monitor.TrackDispatchBreakerOpen)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {

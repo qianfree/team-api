@@ -67,12 +67,14 @@ func StreamHandler(ctx context.Context, resp *http.Response, info *common.RelayI
 		CacheIncludedInPrompt:  true,
 	}
 
-	// 如果上游未返回 usage，用累积的响应文本估算
+	// 如果上游未返回 usage，用累积的响应文本估算（正常结束 4 字符/token，中断 2 字符/token）
 	if usage.TotalTokens == 0 && responseTextBuf.Len() > 0 {
-		estimated := responseTextBuf.Len() / 4
+		estimated := helper.EstimateStreamOutputTokens(info, responseTextBuf.Len())
 		usage.CompletionTokens = estimated
 		usage.TotalTokens = usage.PromptTokens + estimated
 	}
+	// 流中断：输入 token 用请求侧估算值补齐，保证输入正常计费
+	helper.ApplyInterruptedUsageFallback(info, usage, responseTextBuf.Len())
 
 	// 正常结束：发送 [DONE] 通知客户端流结束。
 	// 客户端依赖 data: [DONE] 判断流结束而非连接关闭；
@@ -133,10 +135,12 @@ func StreamHandlerForCompletions(ctx context.Context, resp *http.Response, info 
 	}
 
 	if usage.TotalTokens == 0 && responseTextBuf.Len() > 0 {
-		estimated := responseTextBuf.Len() / 4
+		estimated := helper.EstimateStreamOutputTokens(info, responseTextBuf.Len())
 		usage.CompletionTokens = estimated
 		usage.TotalTokens = usage.PromptTokens + estimated
 	}
+	// 流中断：输入 token 用请求侧估算值补齐，保证输入正常计费
+	helper.ApplyInterruptedUsageFallback(info, usage, responseTextBuf.Len())
 
 	if info.StreamStatus == nil || !info.StreamStatus.IsPartialStreamEnd() {
 		_ = helper.WriteSSEData(writer, "[DONE]")

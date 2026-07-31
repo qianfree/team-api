@@ -297,18 +297,18 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		// 尝试解析上游错误格式，如果是标准格式则透传原始响应
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if info.ChannelMeta.IsModelMapped {
@@ -343,11 +343,11 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		// 尝试透传上游错误格式
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	return StreamHandler(ctx, resp, info, writer)
@@ -359,7 +359,7 @@ func (a *Adaptor) handleCompletionStreamResponse(ctx context.Context, resp *http
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	return StreamHandlerForCompletions(ctx, resp, info, writer)
@@ -466,11 +466,11 @@ func (a *Adaptor) handleModerationResponse(_ context.Context, resp *http.Respons
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 	if resp.StatusCode != http.StatusOK {
 		writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}

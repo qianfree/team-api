@@ -106,7 +106,10 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return &common.Usage{}, common.ErrStreamInterrupted
+			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
+			interruptedUsage := geminiUsageToCommon(&totalUsage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -262,7 +265,10 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return &common.Usage{}, common.ErrStreamInterrupted
+			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
+			interruptedUsage := geminiUsageToCommon(&totalUsage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 

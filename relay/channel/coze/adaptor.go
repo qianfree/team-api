@@ -155,12 +155,16 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 	scanner := bufio.NewScanner(resp.Body)
 	var currentEvent string
 	var completionTokens int
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-			return &common.Usage{CompletionTokens: completionTokens}, nil
+			// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			interruptedUsage := &common.Usage{}
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			return interruptedUsage, nil
 		default:
 		}
 
@@ -191,6 +195,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 				continue
 			}
 			completionTokens += helper.EstimateTokens(msg.Content)
+			transferredTextLen += len(msg.Content)
 
 			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, msg.Content, nil)
 			chunkJSON, err := json.Marshal(chunk)
@@ -199,7 +204,10 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 			}
 			if err := helper.WriteSSEData(writer, string(chunkJSON)); err != nil {
 				streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-				return &common.Usage{CompletionTokens: completionTokens}, nil
+				// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+				interruptedUsage := &common.Usage{}
+				helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+				return interruptedUsage, nil
 			}
 
 		case "conversation.message.completed":

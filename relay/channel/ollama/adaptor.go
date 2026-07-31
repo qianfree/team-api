@@ -242,11 +242,14 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	scanner.Buffer(buf, 10*1024*1024)
 
 	var usage common.Usage
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -293,6 +296,7 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		}
 
 		// 构建 OpenAI 流式 chunk
+		transferredTextLen += len(ollamaResp.Message.Content)
 		chunk := dto.ChatCompletionStreamResponse{
 			ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
 			Object: "chat.completion.chunk",
@@ -390,11 +394,14 @@ func (a *Adaptor) handleGenerateStreamResponse(ctx context.Context, resp *http.R
 	scanner.Buffer(buf, 10*1024*1024)
 
 	var usage common.Usage
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -449,6 +456,7 @@ func (a *Adaptor) handleGenerateStreamResponse(ctx context.Context, resp *http.R
 				},
 			},
 		}
+		transferredTextLen += len(ollamaResp.Response)
 		writeStreamChunk(writer, &chunk)
 	}
 
