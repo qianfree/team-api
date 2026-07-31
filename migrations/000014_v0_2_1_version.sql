@@ -4,6 +4,9 @@
 --   2. 新增细粒度用量日汇总表 bil_usage_daily（按租户/项目/模型/渠道/状态聚合，
 --      供流量流向桑基图与模型性能分析；延迟以 SUM 存储，视图按 SUM/COUNT 求均值）
 --   3. 移除被新表取代的旧粗粒度用量汇总表 bil_daily/monthly_usage_summary
+--   4. 渠道调度重构（开发计划 §4.1，基线方案 §11）：chn_channels 新增 tier/strict_capacity，
+--      chn_abilities 新增 cost_ratio，并按现有 priority 自动映射三档层级
+--   5. 渠道调度重构收尾（阶段 5）：chn_channel_affinities 表标记废弃（会话绑定已迁移至 Redis）
 
 -- 1. 修正 mdl_tenant_models.multiplier 注释
 --
@@ -56,8 +59,48 @@ CREATE INDEX idx_bil_usage_daily_tenant_date ON bil_usage_daily (tenant_id, stat
 DROP TABLE IF EXISTS bil_daily_usage_summary;
 DROP TABLE IF EXISTS bil_monthly_usage_summary;
 
+-- 4. 渠道调度重构（开发计划 §4.1，基线方案 §11）：
+--   4.1 tier：三档固定层级，替代自由整数优先级的调度语义（priority 列保留不删，仅停止参与调度，供回滚与历史查询）
+--   4.2 strict_capacity：修订 R4，Redis 故障时该渠道 fail-closed（实例级保守限额），默认 fail-open
+--   4.3 cost_ratio：渠道×模型成本比例（无量纲），参与调度 costFactor 计算
+
+ALTER TABLE chn_channels ADD COLUMN IF NOT EXISTS tier VARCHAR(16) NOT NULL DEFAULT 'primary';
+COMMENT ON COLUMN chn_channels.tier IS '调度层级：primary=首选 secondary=备用 reserve=保底';
+
+ALTER TABLE chn_channels ADD COLUMN IF NOT EXISTS strict_capacity BOOLEAN NOT NULL DEFAULT FALSE;
+COMMENT ON COLUMN chn_channels.strict_capacity IS '严格容量：true 时 Redis 故障期间使用实例级保守并发限额（fail-closed），用于高成本/严格配额渠道；false 为 fail-open';
+
+ALTER TABLE chn_abilities ADD COLUMN IF NOT EXISTS cost_ratio NUMERIC(10,4) NOT NULL DEFAULT 1.0;
+COMMENT ON COLUMN chn_abilities.cost_ratio IS '成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）';
+
+-- 按现有 priority 自动映射三档：全局最高优先级值 → primary，次高 → secondary，其余 → reserve
+-- +goose StatementBegin
+WITH ranked AS (
+	SELECT id, DENSE_RANK() OVER (ORDER BY priority DESC) AS rk FROM chn_channels
+)
+UPDATE chn_channels c SET tier = CASE ranked.rk
+	WHEN 1 THEN 'primary'
+	WHEN 2 THEN 'secondary'
+	ELSE 'reserve' END
+FROM ranked WHERE c.id = ranked.id;
+-- +goose StatementEnd
+
+-- 5. 渠道调度重构收尾（阶段 5）：
+-- chn_channel_affinities 表废弃——会话绑定已全部迁移至 Redis（dispatch:v1:bind:*），
+-- 本表自旧调度（relay:affinity:v2 之前的 DB 方案）起已无代码读写，保留仅供历史查询。
+-- 按计划标记废弃不删除，后续版本确认无审计需求后再物理清理。
+COMMENT ON TABLE chn_channel_affinities IS '【已废弃 2026-07】渠道亲和性缓存。会话绑定已迁移至 Redis（dispatch:v1:bind:*），本表无代码读写，仅保留历史数据';
+
 -- +goose Down
 -- 回滚顺序与 Up 相反
+
+-- 5. 恢复 chn_channel_affinities 表注释
+COMMENT ON TABLE chn_channel_affinities IS '渠道亲和性缓存（用户+模型→渠道映射，TTL 1800s）';
+
+-- 4. 移除渠道调度重构新增列
+ALTER TABLE chn_abilities DROP COLUMN IF EXISTS cost_ratio;
+ALTER TABLE chn_channels DROP COLUMN IF EXISTS strict_capacity;
+ALTER TABLE chn_channels DROP COLUMN IF EXISTS tier;
 
 -- 3. 重建旧粗粒度用量汇总表（仅恢复结构）
 CREATE TABLE bil_daily_usage_summary (

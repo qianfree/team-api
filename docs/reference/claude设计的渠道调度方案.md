@@ -522,7 +522,7 @@ return 1
 
 ## 11. 数据库变更
 
-迁移脚本：`migrations/000014_channel_dispatch_redesign.sql`
+迁移脚本：`migrations/000014_v0_2_1_version.sql`
 
 ```sql
 -- +goose Up
@@ -711,7 +711,7 @@ backoff_ms, budgets{inplace_left, failover_left}
 ### 阶段 1：适配层 + 数据迁移
 
 **交付物**
-- `migrations/000014_channel_dispatch_redesign.sql`（§11）+ `gf gen dao`。
+- `migrations/000014_v0_2_1_version.sql`（§11）+ `gf gen dao`。
 - `internal/logic/dispatchadapter/`：
   - catalog.go（内存快照 + 5s 刷新 + pub/sub 失效；快照内容 = 现三表 JOIN 等价数据 + tier + cost_ratio + Redis 健康/负载读值）；
   - state_redis.go（§10 全部 Lua 脚本 + ReportOutcome 后台批量 worker）；
