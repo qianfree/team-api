@@ -162,7 +162,11 @@ func PublishInvalidate(ctx context.Context) {
 
 // Start 启动定时刷新循环与 pub/sub 失效订阅。
 func (c *Catalog) Start(ctx context.Context) {
-	c.Rebuild(ctx) // 启动即加载一次
+	// 启动即加载一次,使用独立 context 避免启动阶段 context 取消导致加载失败
+	rebuildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c.Rebuild(rebuildCtx)
+	cancel()
+
 	go c.refreshLoop(ctx)
 	go c.subscribeInvalidate(ctx)
 }
@@ -176,9 +180,14 @@ func (c *Catalog) refreshLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			c.Rebuild(ctx)
+			// 使用独立 context 避免父 context 取消时中断 DB 查询
+			rebuildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			c.Rebuild(rebuildCtx)
+			cancel()
 		case <-c.refresh:
-			c.Rebuild(ctx)
+			rebuildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			c.Rebuild(rebuildCtx)
+			cancel()
 		case <-c.stop:
 			return
 		}

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
@@ -25,6 +26,13 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 	wireOnce.Do(func() {
 		wireStop = make(chan struct{})
 
+		// 后台循环（目录刷新 / pub-sub 失效 / 健康上报 / 策略热更新 / 维护）必须用
+		// 独立的长生命周期 context：Coordinator 首次由某个请求惰性触发组装，若把该
+		// 请求 ctx 传给后台 goroutine，请求一结束 ctx 即被 cancel，之后所有后台 DB/
+		// Redis 读取都会 context canceled（例如策略刷新器每 30s 读 channel_routing_policy
+		// 失败，导致路由策略热更新形同虚设）。
+		bgCtx := gctx.New()
+
 		pol, err := LoadRoutingPolicy(ctx)
 		if err != nil {
 			g.Log().Warningf(ctx, "[Dispatch] 启动时路由策略非法，使用默认策略: %v", err)
@@ -43,10 +51,10 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 
 		coordinator = dispatch.NewCoordinator(catalog, redisState, pol, dispatch.SystemClock{}, rand.Float64)
 
-		redisState.Start(ctx)
-		catalog.Start(ctx)
-		StartPolicyRefresher(ctx, wireStop, coordinator)
-		startMaintenance(ctx, wireStop)
+		redisState.Start(bgCtx)
+		catalog.Start(bgCtx)
+		StartPolicyRefresher(bgCtx, wireStop, coordinator)
+		startMaintenance(bgCtx, wireStop)
 	})
 	return coordinator
 }
