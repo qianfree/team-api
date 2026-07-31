@@ -16,6 +16,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/dispatchadapter"
 )
 
 // GetSettingsCategories returns all available setting categories.
@@ -118,6 +119,14 @@ func (s *sAdmin) validateSecuritySettings(ctx context.Context, values map[string
 // validateChannelSettings 校验渠道配置项之间的依赖：同步图片厂商异步化依赖对象存储保存生成
 // 结果，开启前必须已在「存储配置」中配置对象存储（OSS/S3/COS），否则生成的图片无处保存。
 func (s *sAdmin) validateChannelSettings(ctx context.Context, values map[string]string) error {
+	// 路由策略覆盖（JSON）：保存前做 Schema 校验，拦截非法配置入库
+	//（调度侧加载时仍会二次校验并沿用上一份，此处是给运营的即时反馈）。
+	if raw, ok := values["channel_routing_policy"]; ok && raw != "" {
+		if err := dispatchadapter.ValidateRoutingPolicyJSON(raw); err != nil {
+			return common.NewBadRequestError(fmt.Sprintf("路由策略配置非法：%v", err))
+		}
+	}
+
 	enabled, ok := values["sync_image_async_enabled"]
 	if !ok || (enabled != "true" && enabled != "1") {
 		return nil

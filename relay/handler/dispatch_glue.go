@@ -30,6 +30,16 @@ func dispatchStatusCode(err error) int {
 	return 0
 }
 
+// retryAfterOf 从错误中提取上游 Retry-After（由共享 handler 在构造 RelayError 时附着）。
+// FSM 据此在 429 时决定「原地等待重试」还是立即 failover；0 = 未携带。
+func retryAfterOf(err error) time.Duration {
+	var relayErr *constant.RelayError
+	if errors.As(err, &relayErr) {
+		return relayErr.RetryAfter
+	}
+	return 0
+}
+
 // deliveryStateOfRequestErr DoRequest 阶段错误的送达状态标注（修订 R2）：
 // 连接拒绝 / DNS 失败 / TLS 建连失败 = 请求确定未发出（可安全重试）；
 // 其余（写出后 RST/EOF/读超时）= 可能已送达上游，非幂等请求禁止重放。

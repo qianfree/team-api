@@ -625,7 +625,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if v.isStream || constant.IsResponseWritten(err) {
 				delivery = dispatch.DeliveryResponseStarted
 			}
-			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
+			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
 			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",

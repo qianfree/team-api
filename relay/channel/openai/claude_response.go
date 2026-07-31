@@ -34,7 +34,7 @@ func handleClaudeInboundNonStream(ctx context.Context, resp *http.Response, info
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}
@@ -76,7 +76,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}

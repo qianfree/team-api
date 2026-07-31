@@ -1409,7 +1409,7 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	var responsesResp dto.OpenAIResponsesResponse

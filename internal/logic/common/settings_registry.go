@@ -213,6 +213,8 @@ var Registry = []SettingDef{
 		Label: "自动恢复探测", Description: "定期测试已自动禁用的渠道，测试通过则恢复启用（依赖自动探测开启）"},
 	{Key: "channel_auto_disable_enabled", Type: SettingTypeBool, Default: "false", Category: "channel",
 		Label: "渠道自动禁用", Description: "渠道熔断持续超过路由策略 breaker.autoDisableAfterSeconds（默认 10 分钟）未恢复时自动禁用"},
+	{Key: "channel_routing_policy", Type: SettingTypeJSON, Default: "", Category: "channel",
+		Label: "路由策略覆盖（JSON）", Description: "渠道调度引擎策略，部分字段覆盖内置默认值，保存后 30 秒内热生效；留空使用全部默认。字段说明见 docs/reference/渠道调度运维手册.md"},
 	{Key: "health_snapshot_retention_days", Type: SettingTypeInt, Default: "7", Category: "channel",
 		Label: "健康快照保留天数", Validation: "min:1,max:90"},
 	{Key: "channel_proxy_url", Type: SettingTypeString, Default: "", Category: "channel",

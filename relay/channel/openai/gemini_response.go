@@ -27,7 +27,7 @@ func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info
 
 	if resp.StatusCode != http.StatusOK {
 		writeOpenAIErrorAsGemini(writer, body, resp.StatusCode)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}
@@ -61,7 +61,7 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		writeOpenAIErrorAsGemini(writer, body, resp.StatusCode)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}

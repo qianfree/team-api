@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relaykit/dispatch"
@@ -62,5 +65,25 @@ func TestReplayabilityOf(t *testing.T) {
 		if got := replayabilityOf(tt.mode); got != tt.want {
 			t.Errorf("replayabilityOf(%v) = %v, want %v", tt.mode, got, tt.want)
 		}
+	}
+}
+
+func TestRetryAfterOf(t *testing.T) {
+	// RelayError 携带 Retry-After → 提取
+	err := constant.NewUpstreamError(429, "rate limited", nil).WithRetryAfter(1500 * time.Millisecond)
+	if got := retryAfterOf(err); got != 1500*time.Millisecond {
+		t.Errorf("retryAfterOf = %v, want 1.5s", got)
+	}
+	// 包装后仍可解包
+	wrapped := fmt.Errorf("do response: %w", err)
+	if got := retryAfterOf(wrapped); got != 1500*time.Millisecond {
+		t.Errorf("包装后 retryAfterOf = %v, want 1.5s", got)
+	}
+	// 普通 error / nil → 0
+	if got := retryAfterOf(errors.New("x")); got != 0 {
+		t.Errorf("普通 error 应返回 0, got %v", got)
+	}
+	if got := retryAfterOf(nil); got != 0 {
+		t.Errorf("nil 应返回 0, got %v", got)
 	}
 }
