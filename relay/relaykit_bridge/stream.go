@@ -64,8 +64,9 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 
 	capturedUsage := &common.Usage{}
 	var (
-		gotFinish  bool // 转换器是否已产出带 finish_reason 的结束 chunk
-		firstChunk bool
+		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
+		firstChunk         bool
+		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	// chunkWriter：将转换器产出的 *dto.ChatCompletionStreamResponse 序列化为 SSE 写出，
@@ -86,6 +87,14 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 		if len(streamChunk.Choices) > 0 && streamChunk.Choices[0].FinishReason != nil {
 			gotFinish = true
+		}
+		for _, choice := range streamChunk.Choices {
+			if text, ok := choice.Delta.Content.(string); ok {
+				transferredTextLen += len(text)
+			}
+			if choice.Delta.ReasoningContent != nil {
+				transferredTextLen += len(*choice.Delta.ReasoningContent)
+			}
 		}
 		data, err := json.Marshal(streamChunk)
 		if err != nil {
@@ -122,6 +131,8 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		if ctx.Err() != nil {
 			// 客户端断开 / 上下文取消：客户端已不可达，不写 [DONE]
 			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
 			return capturedUsage, true
 		}
 		g.Log().Warningf(ctx, "[relaykit] convert stream failed (converter=%s): %v", converterID, err)

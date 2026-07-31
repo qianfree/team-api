@@ -75,14 +75,17 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 	scanner.Buffer(buf, 10*1024*1024)
 
 	var (
-		usage        common.Usage
-		finishReason string
+		usage              common.Usage
+		finishReason       string
+		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -127,6 +130,14 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		for _, choice := range streamResp.Choices {
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
 				finishReason = *choice.FinishReason
+			}
+
+			// 累计已转发文本长度，供流中断输出估算
+			if text, ok := choice.Delta.Content.(string); ok {
+				transferredTextLen += len(text)
+			}
+			if choice.Delta.ReasoningContent != nil {
+				transferredTextLen += len(*choice.Delta.ReasoningContent)
 			}
 
 			parts := buildGeminiPartsFromDelta(&choice.Delta)

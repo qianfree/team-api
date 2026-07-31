@@ -220,11 +220,14 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 
 	scanner := bufio.NewScanner(resp.Body)
 	var usage common.Usage
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, nil
 		default:
 		}
@@ -253,6 +256,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 			if event.Answer == "" {
 				continue
 			}
+			transferredTextLen += len(event.Answer)
 
 			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, event.Answer, nil)
 			chunkJSON, err := json.Marshal(chunk)
@@ -261,6 +265,8 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 			}
 			if err := helper.WriteSSEData(writer, string(chunkJSON)); err != nil {
 				streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
+				// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+				helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 				return &usage, nil
 			}
 

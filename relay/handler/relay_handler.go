@@ -655,7 +655,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 // buildRelayInfo 从渠道选择结果构建 RelayInfo
 // attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
 func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
-	return &common.RelayInfo{
+	info := &common.RelayInfo{
 		Context:          ctx,
 		TenantID:         rc.TenantID,
 		UserID:           rc.UserID,
@@ -686,6 +686,9 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 			Settings:          selection.Settings,
 		},
 	}
+	// 流中断结算时上游 usage 常缺失，记录请求侧输入估算值（与预扣同源）供输入计费兜底
+	info.SetEstimatePromptTokens(v.estimatedTokens)
+	return info
 }
 
 // convertRequestBody 根据是否直连模式转换请求体
