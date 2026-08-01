@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message, Radio } from '@arco-design/web-vue'
+import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -312,7 +313,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- 渠道调度说明（点击弹窗） -->
     <div class="scheduling-hint" @click="showSchedulingGuide = true">
-      <icon-info-circle /> 了解优先级、权重、亲和与容量如何共同调度 →
+      <IconInfoCircle /> 了解优先级、权重、亲和与容量如何共同调度 →
     </div>
 
     <!-- 调度说明弹窗 -->
