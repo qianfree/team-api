@@ -8,39 +8,10 @@ import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
+import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
 
 const router = useRouter()
 const message = Message
-
-// === Provider types ===
-const providerTypeOptions = [
-  { label: 'OpenAI', value: 1 }, { label: 'Claude (Anthropic)', value: 2 },
-  { label: 'Gemini (Google)', value: 3 }, { label: 'Ali (百炼)', value: 4 },
-  { label: 'Tencent (混元)', value: 6 },
-  { label: 'Zhipu (智谱)', value: 7 }, { label: 'DeepSeek', value: 8 },
-  { label: 'Moonshot', value: 9 }, { label: 'Volcengine (火山)', value: 10 },
-  { label: 'AWS Bedrock', value: 11 }, { label: 'Azure OpenAI', value: 12 },
-  { label: 'Vertex AI', value: 13 },
-  { label: 'Mistral', value: 15 }, { label: 'xAI (Grok)', value: 16 },
-  { label: '360 智脑', value: 17 }, { label: 'Lingyi (零一万物)', value: 18 },
-  { label: 'Baidu V2', value: 19 }, { label: 'Cloudflare Workers AI', value: 20 },
-  { label: 'Ollama', value: 22 },
-  { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },
-  { label: 'OpenRouter', value: 27 }, { label: 'XInference', value: 28 },
-  { label: 'MiniMax', value: 29 }, { label: 'Submodel', value: 30 },
-  { label: 'Coze (扣子)', value: 32 },
-  { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
-  { label: 'Codex', value: 35 },
-  { label: 'New API', value: 41 }, { label: 'Sub2API', value: 42 },
-]
-
-const providerTypeName: Record<number, string> = {}
-providerTypeOptions.forEach(o => { providerTypeName[o.value] = o.label })
-
-function filterProviderOption(inputValue: string, option: { label: string; value: number }) {
-  const input = inputValue.toLowerCase()
-  return option.label.toLowerCase().includes(input)
-}
 
 const providerTagColor: Record<number, string> = {
   1: 'green', 2: 'arcoblue', 3: 'orangered', 8: 'green', 15: 'arcoblue',
