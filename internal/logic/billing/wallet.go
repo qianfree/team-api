@@ -585,6 +585,4 @@ func rebuildPredeductFromDB(ctx context.Context, tenantID int64) {
 	}
 	// 确保 active SET 有 TTL（30 天），过期后下次预扣时自动重建
 	g.Redis().Do(ctx, "EXPIRE", activeSetKey, 30*86400)
-
-	g.Log().Infof(ctx, "[PRE-DEDUCT] rebuilt %d active tracks from DB for tenant=%d", len(tracks), tenantID)
 }
