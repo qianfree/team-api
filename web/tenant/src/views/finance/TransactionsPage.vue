@@ -9,7 +9,7 @@ import { useExport } from '@/composables/useExport'
 const loading = ref(false)
 const transactions = ref<any[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 // Filter state
@@ -80,7 +80,7 @@ function formatAmount(amount: number): string {
 async function fetchTransactions() {
 	loading.value = true
 	try {
-		const params: any = { page: page.value, page_size: pageSize }
+		const params: any = { page: page.value, page_size: pageSize.value }
 		if (filterType.value) params.type = filterType.value
 		if (filterStartDate.value) params.start_date = filterStartDate.value
 		if (filterEndDate.value) params.end_date = filterEndDate.value
@@ -229,7 +229,7 @@ onMounted(fetchTransactions)
 				<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTransactions" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTransactions" />
 		</div>
 	</div>
 </template>

@@ -33,7 +33,7 @@ interface ApiKey {
 const keys = ref<ApiKey[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const showExportDropdown = ref(false)
@@ -88,7 +88,7 @@ async function fetchKeys() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/api-keys', {
-			params: { page: page.value, page_size: pageSize, key_type: 'personal' },
+			params: { page: page.value, page_size: pageSize.value, key_type: 'personal' },
 		})
 		const raw = res.data?.data
 		keys.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -256,7 +256,7 @@ onMounted(() => {
 				<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchKeys" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchKeys" />
 		</div>
 
 		<!-- Create Modal -->

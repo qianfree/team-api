@@ -31,7 +31,7 @@ interface TaskItem {
 const loading = ref(false)
 const tasks = ref<TaskItem[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const filterStatus = ref('')
@@ -94,7 +94,7 @@ async function fetchTasks() {
 	try {
 		const params: Record<string, any> = {
 			page: page.value,
-			page_size: pageSize,
+			page_size: pageSize.value,
 		}
 		if (filterStatus.value) params.status = filterStatus.value
 		if (filterPlatform.value) params.platform = filterPlatform.value
@@ -263,7 +263,7 @@ onMounted(() => {
 					</table>
 				</div>
 
-				<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTasks" />
+				<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTasks" />
 			</div>
 		</div>
 

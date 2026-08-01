@@ -38,7 +38,7 @@ const members = ref<Member[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const keyword = ref('')
 
 const showInviteModal = ref(false)
@@ -95,7 +95,7 @@ async function fetchMembers() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/members', {
-			params: { page: page.value, page_size: pageSize, keyword: keyword.value },
+			params: { page: page.value, page_size: pageSize.value, keyword: keyword.value },
 		})
 		const raw = res.data?.data; members.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
 		total.value = raw?.total || 0
@@ -341,7 +341,7 @@ onMounted(() => {
 				<p class="empty-state-description">邀请第一位团队成员吧</p>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchMembers" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchMembers" />
 		</div>
 
 		<!-- Invite Modal -->
