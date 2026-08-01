@@ -618,17 +618,30 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				return usage, v.billingResult, err
 			}
 
-			// 送达状态：流式请求或响应已写出 = ResponseStarted（FSM 必终止，防响应污染）；
-			// 否则为已收到完整错误响应，可按分类决定原地重试/换渠道。
+			// 送达状态判定：
+			// 1. adaptor 显式标记 ResponseWritten → 已写出，必须终止；
+			// 2. 流式请求且流已实际开始（StreamStatus 已有结束原因）→ 已写出 SSE 数据，必须终止；
+			// 3. 流式请求但流尚未开始（上游在 SSE 头之前返回错误，StreamStatus 无结束原因）
+			//    → 未向客户端写出任何字节，允许换渠道重试；
+			// 4. 非流式请求 → 已收到完整错误响应，可按分类决定原地重试/换渠道。
 			delivery := dispatch.DeliveryResponseReceived
-			if v.isStream || constant.IsResponseWritten(err) {
+			if constant.IsResponseWritten(err) {
+				delivery = dispatch.DeliveryResponseStarted
+			} else if v.isStream && (info.StreamStatus == nil || info.StreamStatus.GetEndReason() != "") {
+				// StreamStatus 为 nil：保守兜底，按旧行为终止（遗留流式处理器可能未初始化 StreamStatus）
+				// GetEndReason() != ""：流已开始传输后出错，字节已提交给客户端，必须终止
 				delivery = dispatch.DeliveryResponseStarted
 			}
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
-			g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed: adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
-				adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
+			if decision != dispatch.DecisionAbort {
+				g.Log().Warningf(ctx, "[RelayHandler] DoResponse failed (will retry): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
+					adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
+			} else {
+				g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed (abort): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
+					adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
+			}
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
 				attempt, selection.ChannelID, selection.ChannelName, v.modelName, err, info.LatencyMs()))
 
