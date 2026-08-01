@@ -614,11 +614,11 @@ onUnmounted(() => {
       <!-- Content -->
       <main class="admin-content page-bg">
         <router-view v-slot="{ Component, route: currentRoute }">
-          <Transition name="page-fade" mode="out-in">
-            <RouteErrorBoundary :key="currentRoute.fullPath">
-              <component :is="Component" />
-            </RouteErrorBoundary>
-          </Transition>
+          <RouteErrorBoundary>
+            <Transition name="page-fade" mode="out-in">
+              <component :is="Component" :key="currentRoute.fullPath" />
+            </Transition>
+          </RouteErrorBoundary>
         </router-view>
       </main>
     </div>

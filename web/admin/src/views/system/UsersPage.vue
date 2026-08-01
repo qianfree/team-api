@@ -27,7 +27,7 @@ const editingId = ref<number | null>(null)
 
 const showResetModal = ref(false)
 const resetTarget = ref<any>(null)
-const resetPasswordValue = ref('')
+const resetForm = reactive({ new_password: '' })
 const resetLoading = ref(false)
 
 const form = reactive({
@@ -202,25 +202,25 @@ function generateRandomPassword(length = 16) {
 
 function openResetPassword(row: any) {
   resetTarget.value = row
-  resetPasswordValue.value = ''
+  resetForm.new_password = ''
   showResetModal.value = true
 }
 
 function fillRandomPassword() {
-  resetPasswordValue.value = generateRandomPassword()
+  resetForm.new_password = generateRandomPassword()
 }
 
 async function handleResetPassword(done: () => void) {
-  if (!resetPasswordValue.value || resetPasswordValue.value.length < 8) {
+  if (!resetForm.new_password || resetForm.new_password.length < 8) {
     Message.warning('请输入新密码（至少8位）')
     return false
   }
   resetLoading.value = true
   try {
     await request.put(`/admin/users/${resetTarget.value.id}/reset-password`, {
-      new_password: resetPasswordValue.value,
+      new_password: resetForm.new_password,
     })
-    const pwd = resetPasswordValue.value
+    const pwd = resetForm.new_password
     done()
     Modal.success({
       title: '密码重置成功',
@@ -338,10 +338,10 @@ const { exporting, exportFile } = useExport({
       :ok-loading="resetLoading"
       ok-text="确认重置"
     >
-      <AForm :auto-label-width="true" layout="vertical">
+      <AForm :model="resetForm" :auto-label-width="true" layout="vertical">
         <AFormItem field="new_password" label="新密码">
           <AInput
-            v-model="resetPasswordValue"
+            v-model="resetForm.new_password"
             placeholder="请输入新密码（至少8位），或点击随机生成"
           >
             <template #append>
