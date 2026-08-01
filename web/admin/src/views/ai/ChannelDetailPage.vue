@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import { providerTypeOptions, filterProviderOption } from '@/constants/channel'
 import * as echarts from 'echarts'
 
 const route = useRoute()
@@ -52,6 +53,7 @@ function goBack() {
 const showEditModal = ref(false)
 const editLoading = ref(false)
 const editForm = reactive({
+  type: 0,
   name: '',
   base_url: '',
   priority: 0,
@@ -71,6 +73,7 @@ const editForm = reactive({
 function openEditModal() {
   if (!detail.value) return
   Object.assign(editForm, {
+    type: detail.value.type ?? 0,
     name: detail.value.name || '',
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
@@ -126,7 +129,17 @@ const abilitiesData = ref<any[]>([])
 const abilityColumns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 60 },
   { title: '平台模型名', dataIndex: 'model_name', width: 200 },
-  { title: '上游模型名', dataIndex: 'upstream_model', width: 200 },
+  {
+    title: '上游模型名', dataIndex: 'upstream_model', width: 200,
+    render({ record }) {
+      return h(Input, {
+        modelValue: record.upstream_model || '',
+        size: 'mini',
+        placeholder: '留空则同名',
+        onChange: (v: string) => handleUpstreamModelChange(record, v),
+      })
+    },
+  },
   {
     title: '成本比例', dataIndex: 'cost_ratio', width: 130,
     render({ record }) {
@@ -191,18 +204,28 @@ async function handleToggleAbility(ab: any) {
   } catch { /* error handled by interceptor */ }
 }
 
-// 成本比例内联编辑：600ms 防抖后整表提交
-let costRatioSaveTimer: any = null
+// 能力表内联编辑（成本比例 / 上游模型名）：任意字段变更后统一 600ms 防抖整表提交，
+// 连续改多字段只发一次请求。提交体 abilityPayload 已包含 upstream_model。
+let abilitySaveTimer: any = null
+function scheduleAbilitySave(successMsg: string) {
+  clearTimeout(abilitySaveTimer)
+  abilitySaveTimer = setTimeout(async () => {
+    try {
+      await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(abilitiesData.value))
+      Message.success(successMsg)
+    } catch { /* error handled by interceptor */ }
+  }, 600)
+}
+
 function handleCostRatioChange(record: any, value: number) {
   if (!value || value <= 0) return
   record.cost_ratio = value
-  clearTimeout(costRatioSaveTimer)
-  costRatioSaveTimer = setTimeout(async () => {
-    try {
-      await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(abilitiesData.value))
-      Message.success('成本比例已更新')
-    } catch { /* error handled by interceptor */ }
-  }, 600)
+  scheduleAbilitySave('成本比例已更新')
+}
+
+function handleUpstreamModelChange(record: any, value: string) {
+  record.upstream_model = value
+  scheduleAbilitySave('上游模型名已更新')
 }
 
 // CSV 批量导入成本比例：每行 "model_name,cost_ratio"（首行可为表头）
@@ -407,6 +430,7 @@ function handleTrendHoursChange(val: string | number | boolean) {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
   if (resizeTimer) clearTimeout(resizeTimer)
+  if (abilitySaveTimer) clearTimeout(abilitySaveTimer)
   if (trendChart) { trendChart.dispose(); trendChart = null }
 })
 
@@ -699,36 +723,60 @@ function formatHeaders(headers: Record<string, string>): string {
     </ASpin>
 
     <!-- Edit Channel Modal -->
-    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="600" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
+    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="680" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
       <AForm :model="editForm" :auto-label-width="true" layout="vertical">
+        <!-- 基础信息 -->
+        <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
-          <ACol :span="8">
+          <ACol :span="12">
+            <AFormItem label="供应商类型" required>
+              <ASelect
+                v-model="editForm.type"
+                :options="providerTypeOptions"
+                placeholder="搜索或选择供应商"
+                allow-search
+                :filter-option="filterProviderOption"
+              />
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
             <AFormItem label="渠道名称"><AInput v-model="editForm.name" /></AFormItem>
           </ACol>
-          <ACol :span="16">
-            <AFormItem label="Base URL"><AInput v-model="editForm.base_url" /></AFormItem>
-          </ACol>
         </ARow>
+        <AFormItem label="Base URL">
+          <AInput v-model="editForm.base_url" placeholder="留空使用供应商默认地址" />
+          <template #extra>
+            <span class="field-help">ⓘ 修改供应商类型后，请同步检查 Base URL 与「模型能力」配置</span>
+          </template>
+        </AFormItem>
+
+        <!-- 调度与状态 -->
+        <div class="form-group-title">调度与状态</div>
         <ARow :gutter="16">
-          <ACol :span="6">
+          <ACol :span="8">
             <AFormItem label="调度层级">
               <ASelect v-model="editForm.tier" :options="tierOptions" />
               <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="6">
+          <ACol :span="8">
             <AFormItem label="权重">
               <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
               <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="6">
-            <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
-          </ACol>
-          <ACol :span="6">
+          <ACol :span="8">
             <AFormItem label="状态">
               <ASelect v-model="editForm.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
             </AFormItem>
+          </ACol>
+        </ARow>
+
+        <!-- 功能与测试 -->
+        <div class="form-group-title">功能与测试</div>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
           </ACol>
           <ACol :span="6">
             <AFormItem label="使用代理"><ASwitch v-model="editForm.use_proxy" /></AFormItem>
@@ -740,7 +788,9 @@ function formatHeaders(headers: Record<string, string>): string {
             </AFormItem>
           </ACol>
         </ARow>
+
         <AFormItem label="备注"><AInput v-model="editForm.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" /></AFormItem>
+
         <ACollapse :bordered="false">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
             <ARow :gutter="16">
@@ -819,4 +869,13 @@ function formatHeaders(headers: Record<string, string>): string {
 .test-debug-value { font-size: 12px; color: var(--color-text-2); word-break: break-all; background: var(--color-fill-1); padding: 2px 6px; border-radius: 3px; }
 .test-debug-code { font-size: 12px; background: var(--color-fill-1); padding: 6px 8px; border-radius: 4px; max-height: 150px; overflow: auto; color: var(--color-text-3); white-space: pre-wrap; word-break: break-all; margin: 0; flex: 1; }
 .field-help { color: var(--color-text-3); font-size: 12px; }
+.form-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 12px 0 12px;
+  padding-left: 8px;
+  border-left: 3px solid #165dff;
+  line-height: 1.2;
+}
 </style>
