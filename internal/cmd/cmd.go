@@ -384,6 +384,12 @@ func registerCronJobs(cs *common.CronScheduler) {
 		billing.CleanSettledPreDeductTracks(ctx)
 		return nil
 	})
+	cs.Register("billing_daily_reconciliation", "20 5 * * *", func(ctx context.Context) error {
+		// 日对账：聚合对账（bil_records vs bil_transactions）+ 交叉对账（usage_logs 反连接
+		// 发现漏结算免单请求）+ 冻结余额一致性校验，结果经日志告警
+		_, err := billing.RunDailyReconciliation(ctx)
+		return err
+	})
 	cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
 		if common.Config().GetBool(ctx, "update_auto_check_enabled") {
 			return update.BackgroundCheck(ctx)

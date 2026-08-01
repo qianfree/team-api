@@ -175,9 +175,9 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	}
 
 	// 3. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	//    预扣追踪同时覆盖 requestID 与 requestID+"_adjust"：步骤 3a 已按总预扣额（含 AdjustTaskBilling
-	//    补扣产生的 _adjust 冻结）一次性释放，两条追踪记录都应随之置为 settled；否则残留的 _adjust
-	//    frozen 追踪会被日对账判为不一致，并被孤儿清理二次释放。
+	//    预扣追踪同时覆盖 requestID 与 requestID+"_adjust"（AdjustTaskBilling 补扣产生）：
+	//    结算骨架按 claim 模式认领仍处于 frozen 的追踪并只释放实际认领到的金额，
+	//    _adjust 已被解冻/孤儿清理处理过时自动少释放，不会二次释放。
 	_, err = executeSettlementTx(ctx, settlementTxParams{
 		tenantID:        tenantID,
 		walletID:        wallet.ID,
@@ -257,6 +257,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 				BaseCost:        breakdown.BaseCost,
 				TotalCost:       InexactFloat64(actualCost),
 				OutputCost:      breakdown.OutputCost,
+				DuplicateSkip:   true,
 			}, nil
 		}
 		return nil, err

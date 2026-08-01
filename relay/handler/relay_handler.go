@@ -266,8 +266,8 @@ func settleSuccessfulRequest(
 		}
 	}
 
-	// 16.5 累加成员已用额度
-	if billing != nil && settleResult != nil && settleResult.ActualCost > 0 {
+	// 16.5 累加成员已用额度（幂等重复结算 DuplicateSkip 时不得重复累加）
+	if billing != nil && settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 		billing.IncrMemberQuotaUsed(postCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 		billing.IncrApiKeyQuotaUsed(postCtx, rc.ApiKeyID, settleResult.ActualCost)
 	}
@@ -412,6 +412,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	if billing != nil {
 		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
 		if err != nil {
+			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
+			if errors.Is(err, common.ErrModelPricingNotConfigured) {
+				return nil, nil, constant.NewRequestError("model pricing not configured: "+v.modelName, err)
+			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", err)
 		}
 		preDeductAmount = amt
@@ -419,6 +423,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
+		}
+		// 按实际预扣额复查成员额度（Phase 2 开头的 Check(0) 只是冻结前的快速闸门，
+		// 不带金额无法拦截"当前用量在限额内、本笔请求会超限"的场景）
+		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
 
@@ -598,7 +608,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 								rc.TenantID, rc.ProjectID, rc.RequestID, err)
 						}
 					}
-					if settleResult != nil && settleResult.ActualCost > 0 {
+					if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 						billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -255,12 +256,21 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 
 		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 0, 0, false, rc.RequestID)
 		if billErr != nil {
+			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
+			if errors.Is(billErr, common.ErrModelPricingNotConfigured) {
+				return nil, nil, constant.NewRequestError("model pricing not configured: "+modelName, billErr)
+			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
 		}
 		preDeductAmount = amt
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+		}
+		// 按实际预扣额复查成员额度（上方 Check(0) 只是冻结前的快速闸门）
+		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
 
@@ -306,14 +316,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			}
 			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID)
-			if settleResult != nil && settleResult.ActualCost > 0 {
+			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		} else if usage != nil {
 			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID)
-			if settleResult != nil && settleResult.ActualCost > 0 {
+			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}

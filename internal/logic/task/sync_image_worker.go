@@ -630,7 +630,10 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 			BillingSettled: true,
 			ActualCost:     actualCost,
 		})
-		syncImageBilling.IncrApiKeyQuotaUsed(ctx, job.ApiKeyID, actualCost)
+		// 幂等重复结算（DuplicateSkip）不得重复累加 Key 额度
+		if settleResult == nil || !settleResult.DuplicateSkip {
+			syncImageBilling.IncrApiKeyQuotaUsed(ctx, job.ApiKeyID, actualCost)
+		}
 	}
 
 	// 4. 收尾（渠道健康上报由调度会话 Finish 完成）

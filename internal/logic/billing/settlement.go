@@ -51,6 +51,19 @@ type SettlementResult struct {
 	BillingMode      string         // 计费模式
 	BillingSource    string         // 定价来源
 	RateMultiplier   float64        // 费率倍率
+	DuplicateSkip    bool           // 幂等跳过：本次为重复结算（未扣款未写账单），调用方不得再累加额度
+}
+
+// calcSettlementDiff 计算预扣与实际费用的差额（decimal 精确运算）。
+// 返回 (退款金额, 补扣金额)，两者互斥且均为非负。
+func calcSettlementDiff(preDeductAmount, actualCost float64) (refundAmt, supplementAmt float64) {
+	diffD := SubtractMoney(NewFromFloat(preDeductAmount), NewFromFloat(actualCost))
+	if diffD.GreaterThan(Zero) {
+		refundAmt = InexactFloat64(diffD)
+	} else if diffD.LessThan(Zero) {
+		supplementAmt = InexactFloat64(diffD.Neg())
+	}
+	return
 }
 
 // settlementTxParams 结算事务参数：三处结算共用的事务骨架的可变部分。
@@ -69,48 +82,59 @@ type settlementTxParams struct {
 	predeductRequestIDs []string
 }
 
-// executeSettlementTx 结算事务公共骨架：钱包扣款 → 事务内读准确余额 → 创建计费记录
-// → 记录消费流水 → 标记预扣追踪已结算，五步在同一事务内原子完成。
+// executeSettlementTx 结算事务公共骨架：claim 预扣追踪 → 钱包扣款 → 事务内读准确余额
+// → 创建计费记录 → 记录消费流水，五步在同一事务内原子完成。
 // Settle / SettleWithUsage / SettleTaskSuccess 三处共用，差异部分（计费记录构造、
 // 流水构造、预扣追踪 request_id 集合）由 params 注入。
 //
-// 幂等：计费记录命中 request_id 唯一约束时整个事务回滚（钱包扣款一并撤销），
+// claim 前置的两点意图：
+//  1. 冻结释放额取「实际认领到的 track 金额之和」而非调用方传参——track 已被孤儿清理
+//     置 expired（长请求超龄）或已被解冻置 released 时认领不到，对应冻结已释放过，
+//     此时只扣 balance 不再动 frozen，杜绝 GREATEST 吞掉其他在途请求冻结额的双重释放；
+//  2. 锁序统一为 track→wallet（与 UnfreezePreDeduct、孤儿清理一致），消除死锁隐患。
+//
+// 幂等：计费记录命中 request_id 唯一约束时整个事务回滚（钱包扣款与 claim 一并撤销），
 // 返回 errAlreadySettled，由调用方按幂等空操作处理。
 func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, error) {
 	var billingID int64
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// a. 更新钱包：释放预扣冻结 + 扣除实际成本（decimal 直传 NUMERIC，避免 float64 精度损失）
 		now := time.Now()
-		preDeductD := NewFromFloat(p.preDeductAmount)
 		actualCostD := NewFromFloat(p.actualCost)
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
+
+		// a. claim 预扣追踪（frozen→settled，返回实际认领金额）
+		claimedD, err := claimPredeductSettledTx(ctx, p.predeductRequestIDs)
+		if err != nil {
+			return gerror.Wrapf(err, "%s: claim prededuct settled", p.logPrefix)
+		}
+		if !claimedD.Equal(NewFromFloat(p.preDeductAmount)) {
+			g.Log().Warningf(ctx, "%s: claimed frozen %.6f != pre-deduct %.6f (track expired/released before settle?) requests=%v",
+				p.logPrefix, InexactFloat64(claimedD), p.preDeductAmount, p.predeductRequestIDs)
+		}
+
+		// b. 更新钱包：释放实际 claim 到的冻结 + 扣除实际成本（decimal 直传 NUMERIC，避免 float64 精度损失）
+		_, err = g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
-			preDeductD, actualCostD, now, p.walletID)
+			claimedD, actualCostD, now, p.walletID)
 		if err != nil {
 			return gerror.Wrapf(err, "%s: update wallet", p.logPrefix)
 		}
 
-		// b. 事务内读取准确余额（best-effort，失败则保持 0）
+		// c. 事务内读取准确余额（best-effort，失败则保持 0）
 		balanceAfter, frozenAfter := readWalletBalanceTx(ctx, p.walletID)
 
-		// c. 创建计费记录
+		// d. 创建计费记录
 		billingID, err = p.createBillingRecord(ctx)
 		if err != nil {
 			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚（步骤 a 钱包扣款一并撤销），避免重复扣款/重复账单
+				// 同一 request_id 已结算：整个事务回滚（钱包扣款与 claim 一并撤销），避免重复扣款/重复账单
 				return errAlreadySettled
 			}
 			return gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
 		}
 
-		// d. 记录消费流水（事务内）
+		// e. 记录消费流水（事务内）
 		if _, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID, balanceAfter, frozenAfter)).Insert(); err != nil {
 			return gerror.Wrapf(err, "%s: record transaction", p.logPrefix)
-		}
-
-		// e. 标记预扣追踪记录为已结算（事务内）
-		if err = markPredeductSettledTx(ctx, p.predeductRequestIDs); err != nil {
-			return gerror.Wrapf(err, "%s: mark prededuct settled", p.logPrefix)
 		}
 
 		return nil
@@ -147,12 +171,13 @@ func readWalletBalanceTx(ctx context.Context, walletID int64) (balanceAfter, fro
 	return 0, 0
 }
 
-// markPredeductSettledTx 在结算事务内将指定 request_id 的预扣追踪记录从 frozen 置为 settled。
-// task 结算会传入 requestID 与 requestID+"_adjust" 两条（补扣调整产生），一并置为 settled，
-// 避免残留 _adjust frozen 追踪被日对账判为不一致或被孤儿清理二次释放。
-func markPredeductSettledTx(ctx context.Context, requestIDs []string) error {
+// claimPredeductSettledTx 结算事务内 claim 预扣追踪：frozen→settled 条件更新并返回实际认领金额之和。
+// 只有仍处于 frozen 的 track 才会被认领；已被孤儿清理置 expired / 已被解冻置 released 的 track
+// 认领不到（返回和中不含其金额），对应冻结不再重复释放。task 结算会传入 requestID 与
+// requestID+"_adjust" 两条（补扣调整产生），一并认领求和。
+func claimPredeductSettledTx(ctx context.Context, requestIDs []string) (decimal.Decimal, error) {
 	if len(requestIDs) == 0 {
-		return nil
+		return decimal.Zero, nil
 	}
 	placeholders := make([]string, len(requestIDs))
 	args := make([]any, len(requestIDs))
@@ -160,10 +185,22 @@ func markPredeductSettledTx(ctx context.Context, requestIDs []string) error {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = rid
 	}
-	_, err := g.DB().Ctx(ctx).Exec(ctx,
-		fmt.Sprintf("UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN (%s) AND status = 'frozen'", strings.Join(placeholders, ", ")),
+	rows, err := g.DB().Ctx(ctx).GetAll(ctx,
+		fmt.Sprintf("UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN (%s) AND status = 'frozen' RETURNING amount", strings.Join(placeholders, ", ")),
 		args...)
-	return err
+	if err != nil {
+		return decimal.Zero, err
+	}
+	sum := decimal.Zero
+	for _, row := range rows {
+		// NUMERIC(20,10) 以字符串取出，经 decimal 精确解析，不走 float64
+		amt, convErr := decimal.NewFromString(row["amount"].String())
+		if convErr != nil {
+			return decimal.Zero, gerror.Wrapf(convErr, "parse claimed prededuct amount %q", row["amount"].String())
+		}
+		sum = AddMoney(sum, amt)
+	}
+	return sum, nil
 }
 
 // Settle 结算请求费用
@@ -192,13 +229,8 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	}
 	actualCost := breakdown.TotalCost
 
-	// 2. 计算差额
-	var refundAmt, supplementAmt float64
-	if preDeductAmount > actualCost {
-		refundAmt = preDeductAmount - actualCost
-	} else if actualCost > preDeductAmount {
-		supplementAmt = actualCost - preDeductAmount
-	}
+	// 2. 计算差额（decimal 精确运算，float64 仅在结果出口转换）
+	refundAmt, supplementAmt := calcSettlementDiff(preDeductAmount, actualCost)
 
 	// 3. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
@@ -264,6 +296,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 				RefundAmount:     refundAmt,
 				SupplementAmount: supplementAmt,
 				CostBreakdown:    breakdown,
+				DuplicateSkip:    true,
 			}, nil
 		}
 		return nil, err
@@ -311,13 +344,8 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	}
 	actualCost := breakdown.TotalCost
 
-	// 2. 计算差额
-	var refundAmt, supplementAmt float64
-	if preDeductAmount > actualCost {
-		refundAmt = preDeductAmount - actualCost
-	} else if actualCost > preDeductAmount {
-		supplementAmt = actualCost - preDeductAmount
-	}
+	// 2. 计算差额（decimal 精确运算，float64 仅在结果出口转换）
+	refundAmt, supplementAmt := calcSettlementDiff(preDeductAmount, actualCost)
 
 	// 3. 获取钱包
 	wallet, err := GetWallet(ctx, tenantID)
@@ -387,6 +415,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 				RefundAmount:     refundAmt,
 				SupplementAmount: supplementAmt,
 				CostBreakdown:    breakdown,
+				DuplicateSkip:    true,
 			}, nil
 		}
 		return nil, err
@@ -443,17 +472,25 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 	return nil
 }
 
-// SettleStreamInterrupted 流式中断结算：按已确认 usage 结算
+// SettleStreamInterrupted 流式中断结算：按已确认 usage 走完整 Usage 结算（含 cache token 计费 + 快照）。
+// 此前按 (input, output) 两数走 Settle，会丢弃 usage 中的 cache_read / cache_creation token——
+// Claude 场景 prompt_tokens 不含 cache token，大缓存请求中断时缓存部分完全漏计费。
 func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
-	confirmedInput, confirmedOutput int,
-	preDeductAmount float64, projectID int64) (*SettlementResult, error) {
+	usage *rcommon.Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error) {
 
-	// 流式中断：按已确认的 token 计费
-	return Settle(ctx, tenantID, userID, apiKeyID, channelID,
-		modelName, requestID, relayMode,
-		confirmedInput, confirmedOutput,
-		preDeductAmount, projectID)
+	// usage 为 nil 必须兜换空 Usage：SettleWithUsage 对 nil usage 会 fail-closed 按预扣全额计费，
+	// 而中断且无任何 usage 的正确语义是 0 token 结算（成本 0，全额退差）
+	if usage == nil {
+		usage = &rcommon.Usage{}
+	}
+	relayInfo := &rcommon.RelayInfo{
+		ProjectID:       projectID,
+		OriginModelName: modelName,
+		IsStream:        true,
+	}
+	return SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID,
+		modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)
 }
 
 // createBillingRecord 创建计费记录（含快照字段）。依赖调用方传入携带事务的 ctx，内部用 dao.Xxx.Ctx(ctx) 传播事务
