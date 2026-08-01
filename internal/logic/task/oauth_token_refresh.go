@@ -62,7 +62,7 @@ func RefreshExpiringOAuthTokens(ctx context.Context) error {
 		switch oauthData.Platform {
 		case "claude":
 			newToken, err = oauth.ClaudeRefreshToken(oauthData.RefreshToken)
-		case "openai":
+		case "openai", "codex":
 			newToken, err = oauth.OpenAIRefreshToken(oauthData.RefreshToken)
 		case "gemini":
 			newToken, err = oauth.GeminiRefreshToken(oauthData.RefreshToken)

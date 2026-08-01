@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -18,6 +18,13 @@ const activeTab = ref('info')
 
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
+const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
+const tierOptions = [
+  { label: '首选（承接主要流量）', value: 'primary' },
+  { label: '备用（零星保温流量，主力饱和时溢出承接）', value: 'secondary' },
+  { label: '保底（仅前两层不可用时使用）', value: 'reserve' },
+]
 const healthColor = (score: number | null | undefined) => {
   if (score === null || score === undefined) return '#94a3b8'
   if (score >= 80) return '#10b981'
@@ -49,6 +56,8 @@ const editForm = reactive({
   base_url: '',
   priority: 0,
   weight: 100,
+  tier: 'primary',
+  strict_capacity: false,
   test_model: '',
   remark: '',
   status: 'active',
@@ -66,6 +75,8 @@ function openEditModal() {
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
     weight: detail.value.weight || 100,
+    tier: detail.value.tier || 'primary',
+    strict_capacity: detail.value.strict_capacity || false,
     test_model: detail.value.test_model || '',
     remark: detail.value.remark || '',
     status: detail.value.status || 'active',
@@ -117,6 +128,19 @@ const abilityColumns: TableColumnData[] = [
   { title: '平台模型名', dataIndex: 'model_name', width: 200 },
   { title: '上游模型名', dataIndex: 'upstream_model', width: 200 },
   {
+    title: '成本比例', dataIndex: 'cost_ratio', width: 130,
+    render({ record }) {
+      return h(InputNumber, {
+        modelValue: record.cost_ratio ?? 1,
+        min: 0.0001,
+        max: 100,
+        step: 0.05,
+        size: 'mini',
+        onChange: (v: number) => handleCostRatioChange(record, v),
+      })
+    },
+  },
+  {
     title: '状态', dataIndex: 'enabled', width: 80,
     render({ record }) {
       return h(Tag, {
@@ -145,25 +169,76 @@ async function fetchAbilities() {
   } catch { abilitiesData.value = [] } finally { abilitiesLoading.value = false }
 }
 
+// abilityPayload 组装能力批量提交体（cost_ratio 必须随行提交，否则会被重置为默认 1.0）
+function abilityPayload(list: any[]) {
+  return {
+    channel_id: Number(channelId),
+    abilities: list.map(a => ({
+      model_name: a.model_name,
+      upstream_model: a.upstream_model || '',
+      enabled: a.enabled,
+      cost_ratio: a.cost_ratio ?? 1,
+    })),
+  }
+}
+
 async function handleToggleAbility(ab: any) {
   const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, enabled: !a.enabled } : a)
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     abilitiesData.value = newList
     Message.success('状态已更新')
   } catch { /* error handled by interceptor */ }
 }
 
+// 成本比例内联编辑：600ms 防抖后整表提交
+let costRatioSaveTimer: any = null
+function handleCostRatioChange(record: any, value: number) {
+  if (!value || value <= 0) return
+  record.cost_ratio = value
+  clearTimeout(costRatioSaveTimer)
+  costRatioSaveTimer = setTimeout(async () => {
+    try {
+      await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(abilitiesData.value))
+      Message.success('成本比例已更新')
+    } catch { /* error handled by interceptor */ }
+  }, 600)
+}
+
+// CSV 批量导入成本比例：每行 "model_name,cost_ratio"（首行可为表头）
+const csvInputRef = ref<HTMLInputElement>()
+const csvImporting = ref(false)
+function triggerCsvImport() { csvInputRef.value?.click() }
+async function handleCsvFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const text = await file.text()
+  const items: { channel_id: number; model_name: string; cost_ratio: number }[] = []
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const [model, ratioStr] = line.split(',').map(s => s?.trim())
+    const ratio = Number(ratioStr)
+    if (!model || !Number.isFinite(ratio) || ratio <= 0) continue // 跳过表头与非法行
+    items.push({ channel_id: Number(channelId), model_name: model, cost_ratio: ratio })
+  }
+  if (!items.length) { Message.warning('未解析到有效条目，格式：model_name,cost_ratio'); return }
+  csvImporting.value = true
+  try {
+    const res: any = await request.post('/admin/channels/cost-ratio-import', { items })
+    const data = res.data?.data || res.data
+    const skipped = data?.skipped?.length ? `，未匹配 ${data.skipped.length} 条` : ''
+    Message.success(`已更新 ${data?.updated ?? 0} 条${skipped}`)
+    fetchAbilities()
+  } catch { /* error handled by interceptor */ } finally { csvImporting.value = false }
+}
+
 async function handleDeleteAbility(id: number) {
   const newList = abilitiesData.value.filter(a => a.id !== id)
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     Message.success('能力已移除')
     fetchAbilities()
   } catch { /* error handled by interceptor */ }
@@ -174,21 +249,16 @@ const showAddAbilityModal = ref(false)
 const addAbilityForm = reactive({ model_name: '', upstream_model: '', enabled: true })
 const modelsList = ref<any[]>([])
 const modelsLoading = ref(false)
-let modelSearchTimer: any = null
 
-async function fetchModels(search?: string) {
+// 拉取全部 active 模型（下拉专用、不分页接口 /admin/models/options）。
+// 此前用分页接口 /admin/models 且 page_size=20，导致平台模型超过 20 个时
+// “添加能力”下拉只显示最新 20 条，看不到其余模型。
+async function fetchModels() {
   modelsLoading.value = true
   try {
-    const res: any = await request.get('/admin/models', {
-      params: { page: 1, page_size: 20, status: 'active', search: search || undefined },
-    })
+    const res: any = await request.get('/admin/models/options')
     modelsList.value = res.data?.data?.list || res.data?.list || []
   } catch { modelsList.value = [] } finally { modelsLoading.value = false }
-}
-
-function handleModelSearch(val: string) {
-  clearTimeout(modelSearchTimer)
-  modelSearchTimer = setTimeout(() => fetchModels(val), 300)
 }
 
 const availableModelOptions = computed(() => {
@@ -215,12 +285,9 @@ function openAddAbilityModal() {
 
 async function handleAddAbility(done: () => void) {
   if (!addAbilityForm.model_name) { Message.warning('请输入模型名'); return }
-  const newList = [...abilitiesData.value, { model_name: addAbilityForm.model_name, upstream_model: addAbilityForm.upstream_model, enabled: addAbilityForm.enabled }]
+  const newList = [...abilitiesData.value, { model_name: addAbilityForm.model_name, upstream_model: addAbilityForm.upstream_model, enabled: addAbilityForm.enabled, cost_ratio: 1 }]
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     Message.success('能力已添加')
     done()
     addAbilityForm.model_name = ''
@@ -450,6 +517,13 @@ function formatHeaders(headers: Record<string, string>): string {
                 </ADescriptionsItem>
                 <ADescriptionsItem label="优先级">{{ detail.priority }}</ADescriptionsItem>
                 <ADescriptionsItem label="权重">{{ detail.weight }}</ADescriptionsItem>
+                <ADescriptionsItem label="调度层级">
+                  <ATag :color="tierTagColor[detail.tier] || 'gray'" size="small">{{ tierLabel[detail.tier] || detail.tier || '-' }}</ATag>
+                </ADescriptionsItem>
+                <ADescriptionsItem label="严格容量">
+                  <ATag v-if="detail.strict_capacity" color="purple" size="small">fail-closed</ATag>
+                  <span v-else>-</span>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="健康度">
                   <span v-if="detail.health_score != null" :style="{ color: healthColor(detail.health_score), fontWeight: 600 }">
                     {{ detail.health_score.toFixed(0) }}
@@ -497,7 +571,13 @@ function formatHeaders(headers: Record<string, string>): string {
             <ACard :bordered="false">
               <div class="flex items-center justify-between mb-4">
                 <span style="color: var(--color-text-3)">已配置 {{ abilitiesData.length }} 个模型能力</span>
-                <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
+                <ASpace>
+                  <ATooltip content="CSV 每行：model_name,cost_ratio（如 gpt-4o,0.8）">
+                    <AButton type="outline" :loading="csvImporting" @click="triggerCsvImport">导入成本比例</AButton>
+                  </ATooltip>
+                  <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
+                </ASpace>
+                <input ref="csvInputRef" type="file" accept=".csv,text/csv" style="display:none" @change="handleCsvFile" />
               </div>
               <ATable
                 :columns="abilityColumns"
@@ -631,15 +711,15 @@ function formatHeaders(headers: Record<string, string>): string {
         </ARow>
         <ARow :gutter="16">
           <ACol :span="6">
-            <AFormItem label="优先级">
-              <AInputNumber v-model="editForm.priority" :min="0" class="w-full" />
-              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+            <AFormItem label="调度层级">
+              <ASelect v-model="editForm.tier" :options="tierOptions" />
+              <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
           <ACol :span="6">
             <AFormItem label="权重">
               <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
-              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
+              <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
           <ACol :span="6">
@@ -652,6 +732,12 @@ function formatHeaders(headers: Record<string, string>): string {
           </ACol>
           <ACol :span="6">
             <AFormItem label="使用代理"><ASwitch v-model="editForm.use_proxy" /></AFormItem>
+          </ACol>
+          <ACol :span="6">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="editForm.strict_capacity" />
+              <template #extra><span class="field-help">Redis 故障时按保守限额拒绝新请求（高成本渠道）</span></template>
+            </AFormItem>
           </ACol>
         </ARow>
         <AFormItem label="备注"><AInput v-model="editForm.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" /></AFormItem>

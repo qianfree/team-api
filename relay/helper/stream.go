@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -114,6 +115,38 @@ func EstimateTokens(text string) int {
 		return 0
 	}
 	return (len(text) + 3) / 4
+}
+
+// EstimateStreamOutputTokens 流式输出兜底估算（上游未返回 usage 时按累计文本长度粗估）。
+// 正常结束按每 4 字符 1 token；流中断（客户端断开/空闲超时等部分传输，IsPartialStreamEnd）
+// 按每 2 字符 1 token —— 中断时拿不到上游最终 usage，按保守口径计费。
+func EstimateStreamOutputTokens(info *common.RelayInfo, textLen int) int {
+	if textLen <= 0 {
+		return 0
+	}
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
+		return (textLen + 1) / 2
+	}
+	return textLen / 4
+}
+
+// ApplyInterruptedUsageFallback 流中断（IsPartialStreamEnd）时的计费兜底修正，正常结束为 no-op：
+//  1. 输出：上游未返回输出 token（多数供应商 usage 在最后一个 chunk，中断时拿不到）时，
+//     按已转发文本长度以每 2 字符 1 token 估算；
+//  2. 输入：上游未返回输入 token 时，用请求侧估算值（与预扣同源）补齐，保证输入正常计费。
+//
+// 已有真实 usage（如 Claude message_delta 的累计值）时不覆盖，仅重算 TotalTokens。
+func ApplyInterruptedUsageFallback(info *common.RelayInfo, usage *common.Usage, transferredTextLen int) {
+	if info == nil || usage == nil || info.StreamStatus == nil || !info.StreamStatus.IsPartialStreamEnd() {
+		return
+	}
+	if usage.CompletionTokens == 0 && transferredTextLen > 0 {
+		usage.CompletionTokens = (transferredTextLen + 1) / 2
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = info.GetEstimatePromptTokens()
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 }
 
 // SafeWriter 包装 http.ResponseWriter，用互斥锁串行化 Write/WriteHeader/Flush，

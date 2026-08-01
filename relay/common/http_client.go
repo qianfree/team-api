@@ -11,6 +11,15 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
+// defaultResponseHeaderTimeout 是普通同步请求等待上游响应头的最长时间。
+// 用于在上游「连接已建立却迟迟不回响应头」（假死）时尽早失败，保护短超时请求。
+//
+// 但对总超时本身就较长的请求（图片/音频生成等：上游需先完成生成才发送响应头），
+// 这个头超时会反过来误杀正常的长耗时请求——因此 NewPooledClient 在
+// timeoutSeconds > defaultResponseHeaderTimeout 时改用禁用头超时的 longRun 传输层，
+// 完全交由 http.Client.Timeout 兜底（见 longRunSharedTransport）。
+const defaultResponseHeaderTimeout = 180 * time.Second
+
 // sharedTransport 全局共享的 HTTP 传输层，所有渠道适配器共用一个连接池。
 // http.Client 本身是轻量的，真正持有 TCP 连接池的是 Transport。
 var sharedTransport = &http.Transport{
@@ -21,7 +30,21 @@ var sharedTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 	DisableCompression:    false,
 	TLSHandshakeTimeout:   10 * time.Second,
-	ResponseHeaderTimeout: 180 * time.Second,
+	ResponseHeaderTimeout: defaultResponseHeaderTimeout,
+}
+
+// longRunSharedTransport 用于总超时 > defaultResponseHeaderTimeout 的长耗时同步请求
+// （如图片/音频生成：上游在生成完成前不会发送响应头）。禁用 ResponseHeaderTimeout，
+// 避免被 180s 头超时在中途误杀连接，改由 http.Client.Timeout 统一控制总时长。
+var longRunSharedTransport = &http.Transport{
+	MaxIdleConns:          500,
+	MaxIdleConnsPerHost:   100,
+	IdleConnTimeout:       90 * time.Second,
+	DisableKeepAlives:     false,
+	ForceAttemptHTTP2:     true,
+	DisableCompression:    false,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 0,
 }
 
 // nonStreamClient / streamClient 预创建的单例 Client（无代理）。
@@ -39,7 +62,8 @@ var (
 var proxiedState struct {
 	mu             sync.RWMutex
 	proxyURL       string
-	transport      *http.Transport
+	transport      *http.Transport // ResponseHeaderTimeout=defaultResponseHeaderTimeout（普通）
+	longRun        *http.Transport // ResponseHeaderTimeout=0（长耗时同步）
 	nonStream      *http.Client
 	stream         *http.Client
 	proxyURLCached atomic.Value // string
@@ -65,8 +89,33 @@ func GetSystemProxyURL() string {
 	return proxyURL
 }
 
+// buildProxiedTransport 构建一个带（可选）代理的传输层，ResponseHeaderTimeout 由 rht 决定。
+func buildProxiedTransport(proxyURL string, rht time.Duration) *http.Transport {
+	transport := &http.Transport{
+		MaxIdleConns:          500,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     true,
+		DisableCompression:    false,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: rht,
+	}
+
+	if proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			g.Log().Warningf(context.Background(), "proxy: invalid proxy URL %q: %v", proxyURL, err)
+		} else {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
+	return transport
+}
+
 // getProxiedClients returns (nonStream, stream) clients configured with the current proxy.
-// Rebuilds transport when proxy URL changes.
+// Rebuilds transports when proxy URL changes. 同时维护一个禁用响应头超时的 longRun 传输层，
+// 供 NewPooledClient 在长超时请求时取用。
 func getProxiedClients() (*http.Client, *http.Client) {
 	proxyURL := GetSystemProxyURL()
 
@@ -86,50 +135,38 @@ func getProxiedClients() (*http.Client, *http.Client) {
 		return proxiedState.nonStream, proxiedState.stream
 	}
 
-	// Build new proxied transport
-	transport := &http.Transport{
-		MaxIdleConns:          500,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
-		DisableKeepAlives:     false,
-		ForceAttemptHTTP2:     true,
-		DisableCompression:    false,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 180 * time.Second,
-	}
+	// Build new proxied transports（普通 + 长耗时同步各一份）
+	proxiedState.transport = buildProxiedTransport(proxyURL, defaultResponseHeaderTimeout)
+	proxiedState.longRun = buildProxiedTransport(proxyURL, 0)
 
-	if proxyURL != "" {
-		parsed, err := url.Parse(proxyURL)
-		if err != nil {
-			g.Log().Warningf(context.Background(), "proxy: invalid proxy URL %q: %v", proxyURL, err)
-		} else {
-			transport.Proxy = http.ProxyURL(parsed)
-		}
-	}
-
-	ns := &http.Client{
-		Transport: transport,
+	proxiedState.nonStream = &http.Client{
+		Transport: proxiedState.transport,
 		Timeout:   300 * time.Second,
 	}
-	s := &http.Client{
-		Transport: transport,
+	proxiedState.stream = &http.Client{
+		Transport: proxiedState.transport,
 	}
 
 	proxiedState.proxyURL = proxyURL
-	proxiedState.transport = transport
-	proxiedState.nonStream = ns
-	proxiedState.stream = s
 
-	return ns, s
+	return proxiedState.nonStream, proxiedState.stream
 }
 
 // NewPooledClient returns an http.Client with connection pooling.
 // useProxy=true: uses the system proxy configured in channel_proxy_url.
 // isStream=true: no Client.Timeout, managed by StreamScanner.
+//
+// 当 timeoutSeconds > defaultResponseHeaderTimeout（180s）时，使用禁用响应头超时的
+// longRun 传输层——图片/音频等长耗时同步请求的上游在生成完成前不发响应头，
+// 否则会被 180s 头超时误杀。该阈值由 GetTimeoutSeconds 对图片模式强制下限到 600s 自然满足，
+// 因此各适配器无需改动即可受益。
 func NewPooledClient(timeoutSeconds int, useProxy bool, isStream ...bool) *http.Client {
+	isStreamReq := len(isStream) > 0 && isStream[0]
+	longRun := timeoutSeconds > int(defaultResponseHeaderTimeout/time.Second)
+
 	if useProxy {
 		ns, s := getProxiedClients()
-		if len(isStream) > 0 && isStream[0] {
+		if isStreamReq {
 			return s
 		}
 		if timeoutSeconds <= 0 {
@@ -137,6 +174,9 @@ func NewPooledClient(timeoutSeconds int, useProxy bool, isStream ...bool) *http.
 		}
 		proxiedState.mu.RLock()
 		transport := proxiedState.transport
+		if longRun {
+			transport = proxiedState.longRun
+		}
 		proxiedState.mu.RUnlock()
 		return &http.Client{
 			Transport: transport,
@@ -144,14 +184,18 @@ func NewPooledClient(timeoutSeconds int, useProxy bool, isStream ...bool) *http.
 		}
 	}
 
-	if len(isStream) > 0 && isStream[0] {
+	if isStreamReq {
 		return streamClient
 	}
 	if timeoutSeconds <= 0 {
 		return nonStreamClient
 	}
+	transport := sharedTransport
+	if longRun {
+		transport = longRunSharedTransport
+	}
 	return &http.Client{
-		Transport: sharedTransport,
+		Transport: transport,
 		Timeout:   time.Duration(timeoutSeconds) * time.Second,
 	}
 }

@@ -1,0 +1,38 @@
+{
+  "name": "basic_dify_to_oai_response",
+  "from": "dify",
+  "to": "openai",
+  "response": {
+    "answer": "Hello from Dify!",
+    "conversation_id": "c1",
+    "message_id": "m1",
+    "metadata": {
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 6,
+        "total_tokens": 10
+      }
+    }
+  },
+  "expected_response": {
+    "id": "chatcmpl-1700000000",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gpt-4",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hello from Dify!"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 6,
+      "completion_tokens": 4,
+      "total_tokens": 10
+    }
+  }
+}

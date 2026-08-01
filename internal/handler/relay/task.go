@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
@@ -18,6 +19,8 @@ import (
 	relay_common "github.com/qianfree/team-api/relay/common"
 	relay_constant "github.com/qianfree/team-api/relay/constant"
 	relay_handler "github.com/qianfree/team-api/relay/handler"
+	"github.com/qianfree/team-api/relaykit/dispatch"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 var (
@@ -90,7 +93,6 @@ func HandleTaskSubmit(r *ghttp.Request) {
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
-	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	// 提交成功后切换为任务 ID 跟踪（任务生命周期远超 HTTP 请求）
 	if rc.TaskID != "" {
@@ -164,7 +166,9 @@ func extractTaskID(r *ghttp.Request) string {
 	return r.Get("task_id").String()
 }
 
-// selectTaskChannel 为异步任务选择渠道（复用实时请求的渠道调度逻辑）
+// selectTaskChannel 为异步任务选择渠道（新调度引擎单次选择）。
+// 任务提交是瞬时动作：选定并物化后立即结束调度会话释放租约；
+// 会话绑定已由调度器在选择时写入，提交结果不额外上报健康（与旧行为一致）。
 func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta, error) {
 	// 从请求体提取模型名
 	var req struct {
@@ -179,11 +183,6 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 	userID := middleware.GetUserID(ctx)
 	apiKeyID := middleware.GetApiKeyID(ctx)
 
-	selection, err := relayDataProvider.GetChannelForModel(ctx, tenantID, userID, apiKeyID, req.Model, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	// 检查成员模型范围
 	if allowed, err := relayDataProvider.CheckMemberModelAccess(ctx, tenantID, userID, req.Model); err != nil {
 		return nil, err
@@ -191,16 +190,53 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 		return nil, relay_common.ErrMemberModelNotAllowed
 	}
 
-	return &relay_common.ChannelMeta{
-		ChannelID:         selection.ChannelID,
-		ChannelType:       selection.ChannelType,
-		ChannelName:       selection.ChannelName,
-		BaseURL:           selection.BaseURL,
-		ApiKey:            selection.ApiKey,
-		UpstreamModelName: selection.UpstreamModelName,
-		IsModelMapped:     selection.IsModelMapped,
-		Settings:          selection.Settings,
-	}, nil
+	enabled, channelScope, err := relayDataProvider.CheckTenantModelAccess(ctx, tenantID, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, relay_common.ErrTenantModelNotEnabled
+	}
+
+	sess := dispatchadapter.Coordinator(ctx).Route(ctx, dispatch.RequestProfile{
+		RequestID: r.GetCtxVar("RequestId").String(),
+		TenantID:  tenantID,
+		UserID:    userID,
+		APIKeyID:  apiKeyID,
+		Model:     req.Model,
+		Scope:     channelScope,
+		Replay:    dispatch.ReplayUnsafe,
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, tenantID),
+	})
+	defer sess.Finish(context.WithoutCancel(ctx), false, 0) // 立即释放租约：提交动作瞬时完成，不长占并发额度
+
+	for {
+		d := sess.Next(ctx)
+		if d == nil {
+			monitor.TrackDispatchNoCandidate()
+			return nil, relay_common.ErrChannelUnavailable
+		}
+		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
+		selection, mErr := relayDataProvider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, req.Model)
+		if mErr != nil {
+			dec, _ := sess.Report(ctx, 0, types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey), dispatch.DeliveryNotSent, 0, 0)
+			monitor.TrackDispatchRetry(dispatch.ErrClassChannelFatal.String(), dec.String())
+			if dec == dispatch.DecisionAbort {
+				return nil, relay_common.ErrChannelUnavailable
+			}
+			continue
+		}
+		return &relay_common.ChannelMeta{
+			ChannelID:         selection.ChannelID,
+			ChannelType:       selection.ChannelType,
+			ChannelName:       selection.ChannelName,
+			BaseURL:           selection.BaseURL,
+			ApiKey:            selection.ApiKey,
+			UpstreamModelName: selection.UpstreamModelName,
+			IsModelMapped:     selection.IsModelMapped,
+			Settings:          selection.Settings,
+		}, nil
+	}
 }
 
 // HandleMjSubmit 处理 Midjourney 任务提交（POST /mj/submit/:action）
@@ -247,7 +283,6 @@ func HandleMjSubmit(r *ghttp.Request) {
 		r.Context(), body, r.URL.Path, r.Header,
 		rc, taskDataProvider, taskBillingProvider, channelMeta,
 	)
-	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
@@ -330,7 +365,6 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 		writeSyncImageErrorWithCode(rc.Writer, 400, "image_async_disabled",
 			"async image generation is disabled for this model; call POST /v1/images/generations instead")
 	}
-	commitTaskAffinity(r.Context(), rc, modelName, channelMeta, capture.StatusCode())
 
 	if rc.TaskID != "" {
 		monitor.SwitchToTaskID(rc.RequestID, rc.TaskID)
@@ -340,12 +374,6 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 
 	rc.ForwardingTrace = buildTaskForwardingTrace(r.URL.Path, body, channelMeta, capture.StatusCode())
 	go recordTaskSubmitAudit(r, rc, capture, body)
-}
-
-func commitTaskAffinity(ctx context.Context, rc *relay_handler.TaskRelayContext, modelName string, channelMeta *relay_common.ChannelMeta, statusCode int) {
-	if statusCode >= 200 && statusCode < 300 {
-		relayDataProvider.SetChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, channelMeta.ChannelID)
-	}
 }
 
 // registerAsyncTask 注册异步任务到实时监控

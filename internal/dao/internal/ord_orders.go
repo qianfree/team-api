@@ -43,6 +43,8 @@ type OrdOrdersColumns struct {
 	Description    string // 订单描述
 	CreatedAt      string // 创建时间
 	UpdatedAt      string // 更新时间
+	ExchangeRate   string // 履约当时的 CNY→USD 汇率快照（仅 recharge 订单履约时写入，历史订单为 NULL）
+	CreditedUsd    string // 履约入账钱包的 USD 金额快照（仅 recharge 订单履约时写入，= 原价 CNY × exchange_rate 向上取整 6 位）
 }
 
 // ordOrdersColumns holds the columns for the table ord_orders.
@@ -69,6 +71,8 @@ var ordOrdersColumns = OrdOrdersColumns{
 	Description:    "description",
 	CreatedAt:      "created_at",
 	UpdatedAt:      "updated_at",
+	ExchangeRate:   "exchange_rate",
+	CreditedUsd:    "credited_usd",
 }
 
 // NewOrdOrdersDao creates and returns a new DAO object for table data access.

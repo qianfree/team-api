@@ -15,7 +15,7 @@ type BilTransactions struct {
 	Id           any         // 主键ID
 	TenantId     any         // 租户ID
 	WalletId     any         // 关联钱包ID
-	Type         any         // 类型：consume（消费）/ recharge（充值）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ refund（退款，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）
+	Type         any         // 类型：consume（消费）/ recharge（充值入账）/ redemption（兑换码入账）/ refund（退款扣回）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）
 	Amount       any         // 变动金额（正数=收入，负数=支出）
 	BalanceAfter any         // 变动后总余额
 	FrozenAfter  any         // 变动后冻结余额

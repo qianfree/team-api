@@ -1,0 +1,37 @@
+{
+  "name": "basic_oai_to_claude_request",
+  "from": "openai",
+  "to": "claude",
+  "request": {
+    "max_tokens": 256,
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "system"
+      },
+      {
+        "content": "Hello!",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4",
+    "temperature": 0.7
+  },
+  "expected_request": {
+    "model": "claude-3-5-sonnet-20241022",
+    "system": "You are a helpful assistant.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello!"
+          }
+        ]
+      }
+    ],
+    "max_tokens": 256,
+    "temperature": 0.7
+  }
+}

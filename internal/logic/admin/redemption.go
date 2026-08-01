@@ -53,6 +53,11 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 	if codeType != "quota" && codeType != "plan" && codeType != "duration" {
 		return nil, common.NewBadRequestError("type must be quota, plan, or duration")
 	}
+	// 单码可用次数：默认 1（一次性码），>1 为多次使用码（兑换端按 used_count < max_uses 控制）
+	maxUses := req.MaxUses
+	if maxUses <= 0 {
+		maxUses = 1
+	}
 
 	now := gtime.Now()
 	batchNo := fmt.Sprintf("BATCH%s%04d", now.Format("YmdHis"), now.UnixNano()%10000)
@@ -71,7 +76,7 @@ func (s *sAdmin) BatchCreateRedemptions(ctx context.Context, req *v1.RedemptionC
 				Value:        req.Value,
 				PlanId:       req.PlanID,
 				DurationDays: req.DurationDays,
-				MaxUses:      1,
+				MaxUses:      maxUses,
 				BatchNo:      batchNo,
 				Status:       "active",
 				ExpiresAt:    gtime.Now().Add(90 * 24 * time.Hour),

@@ -1345,11 +1345,14 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 		}
 	})
 
+	// 上游未返回 usage 时按累计文本估算（正常结束 4 字符/token，中断 2 字符/token）
 	if totalUsage.TotalTokens == 0 && usageText.Len() > 0 {
-		estimated := usageText.Len() / 4
+		estimated := helper.EstimateStreamOutputTokens(info, usageText.Len())
 		totalUsage.CompletionTokens = estimated
 		totalUsage.TotalTokens = totalUsage.PromptTokens + estimated
 	}
+	// 流中断：输入 token 用请求侧估算值补齐，保证输入正常计费
+	helper.ApplyInterruptedUsageFallback(info, &totalUsage, usageText.Len())
 	if !sentStart {
 		sendStartIfNeeded()
 	}
@@ -1409,7 +1412,7 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	var responsesResp dto.OpenAIResponsesResponse

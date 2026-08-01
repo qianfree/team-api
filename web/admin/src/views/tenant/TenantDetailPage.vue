@@ -452,11 +452,11 @@ const thresholdForm = reactive({ threshold: 0 })
 const thresholdLoading = ref(false)
 
 const txTypeLabel: Record<string, string> = {
-  recharge: '充值', consume: '消费', pre_deduct: '预扣', settle: '结算',
+  recharge: '充值', redemption: '兑换码', consume: '消费', pre_deduct: '预扣', settle: '结算',
   refund: '退款', adjust: '调整', freeze: '冻结', unfreeze: '解冻',
 }
 const txTypeColor: Record<string, string> = {
-  recharge: 'green', consume: 'orangered', adjust: 'arcoblue', refund: 'cyan',
+  recharge: 'green', redemption: 'green', consume: 'orangered', adjust: 'arcoblue', refund: 'cyan',
   pre_deduct: 'orangered', settle: 'orange', freeze: 'red', unfreeze: 'purple',
 }
 
@@ -739,7 +739,7 @@ onMounted(() => {
                       <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(2) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="预警阈值">
-                      {{ walletInfo.warning_threshold != null ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '未设置' }}
+                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '关闭' }}
                     </ADescriptionsItem>
                   </ADescriptions>
                 </ACard>
@@ -750,6 +750,7 @@ onMounted(() => {
                     <ASpace>
                       <ASelect v-model="txFilterType" placeholder="全部类型" allow-clear style="width: 140px" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
                         <AOption value="recharge">充值</AOption>
+                        <AOption value="redemption">兑换码</AOption>
                         <AOption value="consume">消费</AOption>
                         <AOption value="adjust">调整</AOption>
                         <AOption value="pre_deduct">预扣</AOption>

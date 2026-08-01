@@ -47,6 +47,36 @@ func (s *sMonitor) Traffic(ctx context.Context, req *v1.MonitorTrafficReq) (*v1.
 	return &v1.MonitorTrafficRes{Data: data}, nil
 }
 
+func (s *sMonitor) TrafficFlow(ctx context.Context, req *v1.MonitorTrafficFlowReq) (*v1.MonitorTrafficFlowRes, error) {
+	// 流量流向桑基图为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
+	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
+	metric := req.Metric
+	if metric != "cost" && metric != "tokens" && metric != "requests" {
+		metric = "cost"
+	}
+	data, err := GetTrafficFlow(ctx, startDate, endDate, metric)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MonitorTrafficFlowRes{Data: data}, nil
+}
+
+func (s *sMonitor) ModelPerformance(ctx context.Context, req *v1.MonitorModelPerformanceReq) (*v1.MonitorModelPerformanceRes, error) {
+	// 模型性能为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
+	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
+	data, err := GetModelPerformance(ctx, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MonitorModelPerformanceRes{Data: data}, nil
+}
+
 func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error) {
 	// 延迟直方图为跨租户聚合，限定平台域访问（P2-13）
 	if err := requireAdminScope(ctx); err != nil {
@@ -57,6 +87,37 @@ func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.
 		return nil, err
 	}
 	return &v1.MonitorLatencyRes{Data: data}, nil
+}
+
+// Dispatch 渠道调度引擎指标：最新累计快照 + 窗口增量（供监控页「调度引擎」面板）。
+func (s *sMonitor) Dispatch(ctx context.Context, req *v1.MonitorDispatchReq) (*v1.MonitorDispatchRes, error) {
+	latest, window, collectedAt, err := GetDispatchMetricsRange(ctx, req.Minutes)
+	if err != nil {
+		return nil, err
+	}
+	res := &v1.MonitorDispatchRes{WindowMinutes: req.Minutes}
+	if latest == nil {
+		return res, nil
+	}
+	res.Available = true
+	res.CollectedAt = collectedAt
+	res.Latest = dispatchSnapshotToAPI(latest)
+	if window != nil {
+		res.Window = dispatchSnapshotToAPI(window)
+	}
+	return res, nil
+}
+
+// dispatchSnapshotToAPI 内部快照 → API 数据结构。
+func dispatchSnapshotToAPI(s *DispatchMetricsSnapshot) *v1.DispatchMetricsData {
+	return &v1.DispatchMetricsData{
+		Selections:     s.Selections,
+		Retries:        s.Retries,
+		OverflowByTier: s.OverflowByTier,
+		SessionSources: s.SessionSources,
+		BreakerOpens:   s.BreakerOpens,
+		NoCandidate:    s.NoCandidate,
+	}
 }
 
 func (s *sMonitor) System(ctx context.Context, req *v1.MonitorSystemReq) (*v1.MonitorSystemRes, error) {

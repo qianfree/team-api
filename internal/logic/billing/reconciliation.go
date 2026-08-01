@@ -14,22 +14,26 @@ import (
 
 // DailyReconciliationResult 日对账结果
 type DailyReconciliationResult struct {
-	Date              string
-	TotalSettled      float64
-	TotalWalletDeduct float64
-	Difference        float64
-	DifferencePct     float64
-	RecordCount       int64
+	Date                   string
+	TotalSettled           float64
+	TotalWalletDeduct      float64
+	Difference             float64
+	DifferencePct          float64
+	RecordCount            int64
+	MissingSettlementCount int64   // 交叉对账：成功用量中无计费记录的请求数（漏结算=免单）
+	MissingSettlementCost  float64 // 交叉对账：漏结算请求的用量记录费用合计（结算失败时通常为 0，条数才是信号）
 }
 
 // RunDailyReconciliation 执行日对账
-// 比较 billing_records 中已结算总额 与 钱包扣减总额，差异 > 0.1% 时告警
+// 比较 billing_records 中已结算总额 与 钱包扣减总额，差异 > 0.1% 时告警；
+// 并交叉核对 bil_usage_logs ↔ bil_records，发现"请求成功但从未结算"的免单请求。
 func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, error) {
 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	today := time.Now().Format("2006-01-02")
 
 	result := &DailyReconciliationResult{Date: yesterday}
 
-	// 1. 统计 billing_records 中昨日已结算总额
+	// 1. 统计 billing_records 中昨日已结算总额（上界取次日 00:00 开区间，不丢最后一秒）
 	type settledRow struct {
 		TotalCost float64 `json:"total_cost"`
 		Count     int64   `json:"count"`
@@ -38,7 +42,7 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 	err := dao.BilRecords.Ctx(ctx).
 		Where("status", "settled").
 		Where("settled_at >= ?", yesterday+" 00:00:00").
-		Where("settled_at < ?", yesterday+" 23:59:59").
+		Where("settled_at < ?", today+" 00:00:00").
 		Fields("COALESCE(SUM(total_cost), 0) as total_cost, COUNT(*) as count").
 		Scan(&settled)
 	if err != nil {
@@ -56,7 +60,7 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 	err = dao.BilTransactions.Ctx(ctx).
 		Where("type", "consume").
 		Where("created_at >= ?", yesterday+" 00:00:00").
-		Where("created_at < ?", yesterday+" 23:59:59").
+		Where("created_at < ?", today+" 00:00:00").
 		Fields("COALESCE(SUM(ABS(amount)), 0) as total_deduct").
 		Scan(&txn)
 	if err != nil {
@@ -86,6 +90,34 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 			"[RECONCILIATION OK] date=%s settled=%.6f deduct=%.6f diff=%.6f records=%d",
 			yesterday, result.TotalSettled, result.TotalWalletDeduct,
 			result.Difference, result.RecordCount)
+	}
+
+	// 4.5 交叉对账：昨日成功用量中 request_id 无对应计费记录的请求 = 漏结算（免单）。
+	// bil_records 与 bil_transactions 在同一事务写入、恒相等，上面的聚合对账发现不了漏结算，
+	// 必须以 bil_usage_logs（请求侧真相）为基准反连接核对。join 不限制 bil_records 日期，
+	// 避免跨午夜结算（23:59 成功、00:00 落账）被误报。
+	type missRow struct {
+		Cnt  int64   `json:"cnt"`
+		Cost float64 `json:"cost"`
+	}
+	var miss missRow
+	err = dao.BilUsageLogs.Ctx(ctx).
+		As("u").
+		LeftJoin("bil_records r", "r.request_id = u.request_id").
+		Where("u.status", "success").
+		Where("u.created_at >= ?", yesterday+" 00:00:00").
+		Where("u.created_at < ?", today+" 00:00:00").
+		Where("r.request_id IS NULL").
+		Fields("COUNT(*) as cnt, COALESCE(SUM(u.actual_cost), 0) as cost").
+		Scan(&miss)
+	if err != nil {
+		g.Log().Errorf(ctx, "[RECONCILIATION] cross-check usage_logs vs bil_records failed: %v", err)
+	} else if miss.Cnt > 0 {
+		result.MissingSettlementCount = miss.Cnt
+		result.MissingSettlementCost = miss.Cost
+		g.Log().Warningf(ctx,
+			"[RECONCILIATION WARNING] date=%s missing settlements: count=%d logged_cost=%.6f (usage success but no bil_record — free rides, needs manual recovery)",
+			yesterday, miss.Cnt, miss.Cost)
 	}
 
 	// 5. 冻结余额一致性校验

@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
 	"github.com/qianfree/team-api/internal/logic/common"
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -104,30 +105,13 @@ func testAndRecoverDisabledChannels(ctx context.Context) int {
 			continue
 		}
 
-		// 重置连续失败计数
-		dao.ChnHealthScores.Ctx(ctx).
-			Where("channel_id", ch.ID).
-			Data(do.ChnHealthScores{ConsecutiveFailures: 0}).
-			Update()
+		// 复位调度熔断并开启爬坡窗口 + 跨实例目录失效
+		dispatchadapter.MarkChannelRecovered(ctx, ch.ID)
+		dispatchadapter.PublishInvalidate(ctx)
 
 		recovered++
 		g.Log().Infof(ctx, "[Cron] auto-disabled channel %s (%d) recovered", ch.Name, ch.ID)
 	}
 
 	return recovered
-}
-
-// CleanupExpiredAffinities 清理过期的亲和性记录
-func CleanupExpiredAffinities(ctx context.Context) {
-	g.Log().Debug(ctx, "[Cron] cleaning up expired affinities")
-
-	_, err := dao.ChnChannelAffinities.Ctx(ctx).
-		Where("expires_at < ?", time.Now()).
-		Delete()
-	if err != nil {
-		g.Log().Errorf(ctx, "[Cron] cleanup expired affinities failed: %v", err)
-		return
-	}
-
-	g.Log().Debug(ctx, "[Cron] expired affinities cleaned up")
 }

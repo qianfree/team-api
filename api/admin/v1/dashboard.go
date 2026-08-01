@@ -170,6 +170,7 @@ type AdminUsageLogItem struct {
 	BillingSnapshot       string      `json:"billing_snapshot"`
 	InboundEndpoint       string      `json:"inbound_endpoint"`
 	RequestId             string      `json:"request_id"`
+	TaskId                string      `json:"task_id"`
 	CreatedAt             *gtime.Time `json:"created_at"`
 }
 

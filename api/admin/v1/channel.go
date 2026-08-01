@@ -30,6 +30,8 @@ type ChannelItem struct {
 	Status                   string   `json:"status"`
 	Priority                 int      `json:"priority"`
 	Weight                   int      `json:"weight"`
+	Tier                     string   `json:"tier"`
+	StrictCapacity           bool     `json:"strict_capacity"`
 	TestModel                string   `json:"test_model"`
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
@@ -50,6 +52,8 @@ type ChannelCreateReq struct {
 	ApiKey                   string  `json:"api_key" v:"required#请输入 API Key" dc:"API Key"`
 	Priority                 int     `json:"priority" d:"0" dc:"优先级"`
 	Weight                   int     `json:"weight" d:"100" v:"between:0,100" dc:"权重"`
+	Tier                     string  `json:"tier" d:"primary" v:"in:primary,secondary,reserve" dc:"调度层级：primary=首选 secondary=备用 reserve=保底"`
+	StrictCapacity           bool    `json:"strict_capacity" d:"false" dc:"严格容量：Redis 故障时实例级保守限额（fail-closed），用于高成本渠道"`
 	TestModel                string  `json:"test_model" dc:"测试模型名"`
 	Remark                   string  `json:"remark" dc:"备注"`
 	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`
@@ -76,6 +80,8 @@ type ChannelUpdateReq struct {
 	TestModel                string   `json:"test_model" dc:"测试模型名"`
 	Remark                   string   `json:"remark" dc:"备注"`
 	Status                   string   `json:"status" v:"in:active,disabled,testing" dc:"状态"`
+	Tier                     string   `json:"tier" v:"in:primary,secondary,reserve" dc:"调度层级（留空不更新）"`
+	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
 	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
 	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
 	SharingThreshold         *float64 `json:"sharing_threshold" dc:"普通租户借用阈值"`
@@ -105,6 +111,8 @@ type ChannelDetailRes struct {
 	Status                   string   `json:"status"`
 	Priority                 int      `json:"priority"`
 	Weight                   int      `json:"weight"`
+	Tier                     string   `json:"tier"`
+	StrictCapacity           bool     `json:"strict_capacity"`
 	TestModel                string   `json:"test_model"`
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
@@ -153,10 +161,30 @@ type ChannelAbilityBatchReq struct {
 
 // AbilityItem 模型能力项
 type AbilityItem struct {
-	ID            int64  `json:"id"`
-	ModelName     string `json:"model_name" v:"required" dc:"平台标准模型名"`
-	UpstreamModel string `json:"upstream_model" dc:"上游实际模型名"`
-	Enabled       bool   `json:"enabled" d:"true" dc:"是否启用"`
+	ID            int64   `json:"id"`
+	ModelName     string  `json:"model_name" v:"required" dc:"平台标准模型名"`
+	UpstreamModel string  `json:"upstream_model" dc:"上游实际模型名"`
+	Enabled       bool    `json:"enabled" d:"true" dc:"是否启用"`
+	CostRatio     float64 `json:"cost_ratio" d:"1" v:"between:0,100" dc:"成本比例：上游实际价/平台基准价，1.0=等价（参与调度 costFactor）"`
+}
+
+// ChannelCostRatioImportReq 批量导入渠道模型成本比例（CSV 由前端解析为条目）
+type ChannelCostRatioImportReq struct {
+	g.Meta `path:"/channels/cost-ratio-import" method:"post" mime:"json" tags:"管理后台-渠道" summary:"批量导入成本比例"`
+	Items  []CostRatioImportItem `json:"items" v:"required#请提供导入条目" dc:"导入条目列表"`
+}
+
+// CostRatioImportItem 成本比例导入条目
+type CostRatioImportItem struct {
+	ChannelID int64   `json:"channel_id" v:"required|min:1" dc:"渠道ID"`
+	ModelName string  `json:"model_name" v:"required" dc:"平台标准模型名"`
+	CostRatio float64 `json:"cost_ratio" v:"required|between:0.0001,100" dc:"成本比例"`
+}
+
+// ChannelCostRatioImportRes 批量导入成本比例响应
+type ChannelCostRatioImportRes struct {
+	Updated int      `json:"updated" dc:"成功更新条数"`
+	Skipped []string `json:"skipped" dc:"未匹配到能力记录的条目（渠道ID:模型名）"`
 }
 
 // ProviderDefaultURLReq 获取供应商默认 URL

@@ -1,6 +1,14 @@
 package common
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrModelPricingNotConfigured 模型未配置定价（fail-closed 哨兵错误）。
+// billing 层预扣估价发现零价定价时返回，handler 层用 errors.Is 识别后
+// 返回明确的请求错误，而非误导性的"余额不足"。
+var ErrModelPricingNotConfigured = errors.New("model pricing not configured")
 
 // BillingProvider 计费接口
 // 实现在 internal/logic/billing/ 中，通过接口解耦 relay 层和 GoFrame
@@ -82,4 +90,5 @@ type SettlementResult struct {
 	BillingMode       string
 	BillingSource     string
 	RateMultiplier    float64
+	DuplicateSkip     bool // 幂等跳过：本次为重复结算（未扣款未写账单），调用方不得再累加成员/Key 额度
 }

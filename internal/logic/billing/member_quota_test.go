@@ -195,18 +195,21 @@ func TestNeedsReset(t *testing.T) {
 			false,
 		},
 		{
+			// 注意不能用 now.AddDate(0,-1,0) 构造「上个月」：Go 的月份归一化会把
+			// 7月31日 -1月 变成「6月31日→7月1日」，仍落在本月，导致本用例在每月
+			// 29/30/31 日虚假失败。改用「本月 1 日的前一天」= 上月最后一天，任何日期下恒成立。
 			"month period last month needs reset",
-			"periodic", "month", now.AddDate(0, -1, 0),
+			"periodic", "month", now.AddDate(0, 0, -now.Day()),
 			true,
 		},
 		{
 			"unknown period no reset",
-			"periodic", "quarter", now.AddDate(0, -3, 0),
+			"periodic", "quarter", now.AddDate(0, 0, -100),
 			false,
 		},
 		{
 			"day period distant past needs reset",
-			"periodic", "day", now.AddDate(0, -6, 0),
+			"periodic", "day", now.AddDate(0, 0, -180),
 			true,
 		},
 	}

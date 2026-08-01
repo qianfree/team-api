@@ -22,6 +22,27 @@ type MonitorTrafficRes struct {
 	Data any `json:"data"`
 }
 
+type MonitorTrafficFlowReq struct {
+	g.Meta    `path:"/monitor/traffic-flow" method:"get" mime:"json" tags:"管理后台-监控" summary:"流量流向桑基图"`
+	StartDate string `json:"start_date" in:"query"`           // YYYY-MM-DD，缺省=近30天起点
+	EndDate   string `json:"end_date" in:"query"`             // YYYY-MM-DD，缺省=今天
+	Metric    string `json:"metric" in:"query" d:"cost"`      // cost|tokens|requests，桑基边权重指标
+}
+
+type MonitorTrafficFlowRes struct {
+	Data any `json:"data"`
+}
+
+type MonitorModelPerformanceReq struct {
+	g.Meta    `path:"/monitor/model-performance" method:"get" mime:"json" tags:"管理后台-监控" summary:"模型性能指标"`
+	StartDate string `json:"start_date" in:"query"` // YYYY-MM-DD，缺省=近30天起点
+	EndDate   string `json:"end_date" in:"query"`   // YYYY-MM-DD，缺省=今天
+}
+
+type MonitorModelPerformanceRes struct {
+	Data any `json:"data"`
+}
+
 type MonitorLatencyReq struct {
 	g.Meta  `path:"/monitor/latency" method:"get" mime:"json" tags:"管理后台-监控" summary:"延迟直方图"`
 	Minutes int `json:"minutes" in:"query" d:"5"`
@@ -38,6 +59,33 @@ type MonitorSystemReq struct {
 
 type MonitorSystemRes struct {
 	Data map[string]any `json:"data"`
+}
+
+// MonitorDispatchReq 渠道调度引擎指标请求
+type MonitorDispatchReq struct {
+	g.Meta  `path:"/monitor/dispatch" method:"get" mime:"json" tags:"管理后台-监控" summary:"调度引擎指标"`
+	Minutes int `json:"minutes" in:"query" d:"60" v:"between:5,10080" dc:"统计窗口（分钟）"`
+}
+
+// MonitorDispatchRes 渠道调度引擎指标响应。
+// Latest 为进程启动以来的累计快照；Window 为窗口内增量（窗口首尾快照做差，
+// 计数器因重启回绕时按 0 处理）。窗口内不足两条快照时 Window 为空。
+type MonitorDispatchRes struct {
+	Available     bool                 `json:"available" dc:"是否有指标数据"`
+	CollectedAt   string               `json:"collected_at,omitempty" dc:"最新快照时间"`
+	WindowMinutes int                  `json:"window_minutes" dc:"实际统计窗口（分钟）"`
+	Latest        *DispatchMetricsData `json:"latest,omitempty" dc:"累计快照"`
+	Window        *DispatchMetricsData `json:"window,omitempty" dc:"窗口增量"`
+}
+
+// DispatchMetricsData 调度指标数据（累计或增量）
+type DispatchMetricsData struct {
+	Selections     map[string]int64 `json:"selections" dc:"选择次数按原因（bind/hrw/overflow/probe/cred_rotate）"`
+	Retries        map[string]int64 `json:"retries" dc:"重试决策按 错误类别→决策"`
+	OverflowByTier map[string]int64 `json:"overflow_by_tier" dc:"溢出次数按目标层级"`
+	SessionSources map[string]int64 `json:"session_sources" dc:"会话键来源分布（hdr/anthropic/openai/ident）"`
+	BreakerOpens   int64            `json:"breaker_opens" dc:"熔断打开次数"`
+	NoCandidate    int64            `json:"no_candidate" dc:"无可用渠道次数"`
 }
 
 type MonitorDBPoolReq struct {

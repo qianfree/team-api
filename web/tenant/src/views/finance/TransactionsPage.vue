@@ -37,6 +37,7 @@ const { exporting, exportFile } = useExport({
 
 const txTypeLabel: Record<string, string> = {
 	recharge: '充值',
+	redemption: '兑换码',
 	consume: '消费',
 	pre_deduct: '预扣',
 	settle: '结算',
@@ -48,6 +49,7 @@ const txTypeLabel: Record<string, string> = {
 
 const txTypeBadgeClass: Record<string, string> = {
 	recharge: 'badge-success',
+	redemption: 'badge-success',
 	refund: 'badge-success',
 	consume: 'badge-danger',
 	pre_deduct: 'badge-danger',
@@ -60,6 +62,7 @@ const txTypeBadgeClass: Record<string, string> = {
 const typeOptions = [
 	{ value: '', label: '全部' },
 	{ value: 'recharge', label: '充值' },
+	{ value: 'redemption', label: '兑换码' },
 	{ value: 'consume', label: '消费' },
 	{ value: 'pre_deduct', label: '预扣' },
 	{ value: 'settle', label: '结算' },

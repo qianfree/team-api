@@ -94,6 +94,19 @@ func (r *RequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.Data)
 }
 
+// ForwardingTraceGetReq 按 request_id 查询请求转发路径追踪（用量日志详情懒加载用，仅取 trace 列）。
+type ForwardingTraceGetReq struct {
+	g.Meta    `path:"/audit/forwarding-trace/{request_id}" method:"get" mime:"json" tags:"管理后台-审计" summary:"按 request_id 查转发路径追踪"`
+	RequestId string `json:"request_id" in:"path" v:"required" dc:"请求ID"`
+}
+
+// ForwardingTraceGetRes 返回已解析的 trace 对象（api 包不导入 relay/common，logic 层 json.Unmarshal）。
+type ForwardingTraceGetRes struct {
+	Found           bool           `json:"found"`            // aud_request_logs 是否有记录（区分「未审计」与「无 trace」）
+	AuditLevel      string         `json:"audit_level"`      // 审计级别，便于前端展示原因
+	ForwardingTrace map[string]any `json:"forwarding_trace"` // 已解析对象；无 trace 时为 nil
+}
+
 // OperationLogExportReq 导出操作日志请求
 type OperationLogExportReq struct {
 	g.Meta    `path:"/audit/operation-logs/export" method:"get" mime:"json" tags:"管理后台-审计" summary:"导出操作日志"`

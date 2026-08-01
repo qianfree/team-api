@@ -40,57 +40,6 @@ func TestMemResponseWriter(t *testing.T) {
 	}
 }
 
-func TestTryOccupyChannel_Unlimited(t *testing.T) {
-	const ch = int64(9000001)
-	defer func() { channelInflight = map[int64]int{} }()
-
-	// MaxConcurrency <= 0 视为不限：多次占用均成功。
-	for i := 0; i < 5; i++ {
-		if !tryOccupyChannel(ch, 0) {
-			t.Fatalf("occupy #%d with maxConc=0 should succeed", i)
-		}
-	}
-	if !tryOccupyChannel(ch, -1) {
-		t.Fatalf("occupy with maxConc=-1 should succeed")
-	}
-}
-
-func TestTryOccupyChannel_Saturation(t *testing.T) {
-	const ch = int64(9000002)
-	defer func() { channelInflight = map[int64]int{} }()
-
-	if !tryOccupyChannel(ch, 2) {
-		t.Fatal("occupy #1 should succeed")
-	}
-	if !tryOccupyChannel(ch, 2) {
-		t.Fatal("occupy #2 should succeed")
-	}
-	if tryOccupyChannel(ch, 2) {
-		t.Fatal("occupy #3 should fail (saturated)")
-	}
-	// 释放一个槽后应能再次占用
-	decInflight(ch)
-	if !tryOccupyChannel(ch, 2) {
-		t.Fatal("occupy after release should succeed")
-	}
-}
-
-func TestDecInflight_CleansUpAndFloorsAtZero(t *testing.T) {
-	const ch = int64(9000003)
-	defer func() { channelInflight = map[int64]int{} }()
-
-	tryOccupyChannel(ch, 5)
-	decInflight(ch)
-	if _, ok := channelInflight[ch]; ok {
-		t.Fatal("counter reaching 0 should be deleted from map")
-	}
-	// 多减不应变负 / panic
-	decInflight(ch)
-	if channelInflight[ch] != 0 {
-		t.Fatalf("counter = %d, want 0", channelInflight[ch])
-	}
-}
-
 func TestBuildImageResult_EmptyData(t *testing.T) {
 	job := &SyncImageJob{PublicTaskID: "task_x"}
 	body, _ := json.Marshal(map[string]any{"created": 1, "data": []any{}})
@@ -301,19 +250,19 @@ func TestIsForbiddenIP(t *testing.T) {
 		want bool
 	}{
 		// 禁止：云元数据 / 私网 / loopback / link-local / multicast / unspecified
-		{"169.254.169.254", true},  // AWS/云元数据
-		{"169.254.0.1", true},      // link-local
-		{"10.0.0.1", true},         // 私网 10/8
-		{"172.16.0.1", true},       // 私网 172.16/12
-		{"172.31.255.255", true},   // 私网 172.16/12 上界
-		{"172.32.0.1", false},      // 公网（紧邻私网上界）
-		{"192.168.1.1", true},      // 私网 192.168/16
-		{"127.0.0.1", true},        // loopback
-		{"0.0.0.0", true},          // unspecified
-		{"224.0.0.1", true},        // multicast
-		{"::1", true},              // IPv6 loopback
-		{"fe80::1", true},          // IPv6 link-local
-		{"fc00::1", true},          // IPv6 ULA（私网）
+		{"169.254.169.254", true}, // AWS/云元数据
+		{"169.254.0.1", true},     // link-local
+		{"10.0.0.1", true},        // 私网 10/8
+		{"172.16.0.1", true},      // 私网 172.16/12
+		{"172.31.255.255", true},  // 私网 172.16/12 上界
+		{"172.32.0.1", false},     // 公网（紧邻私网上界）
+		{"192.168.1.1", true},     // 私网 192.168/16
+		{"127.0.0.1", true},       // loopback
+		{"0.0.0.0", true},         // unspecified
+		{"224.0.0.1", true},       // multicast
+		{"::1", true},             // IPv6 loopback
+		{"fe80::1", true},         // IPv6 link-local
+		{"fc00::1", true},         // IPv6 ULA（私网）
 		// 允许：公网
 		{"8.8.8.8", false},
 		{"1.1.1.1", false},

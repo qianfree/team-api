@@ -57,8 +57,8 @@ func TestPreDeductConstants(t *testing.T) {
 	if PreDeductRedisKeyPrefix != "prededuct:v2:" {
 		t.Errorf("PreDeductRedisKeyPrefix = %q, want %q", PreDeductRedisKeyPrefix, "prededuct:v2:")
 	}
-	if PreDeductMaxAge != 1800 {
-		t.Errorf("PreDeductMaxAge = %d, want 1800", PreDeductMaxAge)
+	if PreDeductMaxAge != 7200 {
+		t.Errorf("PreDeductMaxAge = %d, want 7200", PreDeductMaxAge)
 	}
 }
 

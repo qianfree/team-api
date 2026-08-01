@@ -87,8 +87,8 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = c
 	}
 
-	// DashScope 参数适配
-	converted, err := convertRequest(requestBody)
+	// DashScope 参数适配（按上游模型名剥离不支持的 thinking_budget）
+	converted, err := convertRequest(requestBody, info.ChannelMeta.UpstreamModelName)
 	if err != nil {
 		return nil, err
 	}

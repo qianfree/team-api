@@ -35,8 +35,8 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 		return nil, err
 	}
 	if w == nil {
-		// 钱包不存在，初始化
-		threshold := billing.NewFromFloat(1.00)
+		// 钱包不存在，初始化（预警阈值默认 0 = 关闭，用户可自行开启）
+		threshold := billing.Zero
 		_, err = dao.BilWallets.Ctx(ctx).Insert(do.BilWallets{
 			TenantId:         tenantID,
 			Balance:          billing.Zero,
@@ -51,16 +51,23 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 			Balance:          0,
 			FrozenBalance:    0,
 			AvailableBalance: 0,
-			WarningThreshold: 1.00,
+			WarningThreshold: 0,
 			Currency:         "USD",
 		}, nil
+	}
+
+	// 语义：warning_threshold = 0 表示关闭预警。该列当前可空，存量/建钱包路径漏设时会为 NULL，
+	// 这里对 NULL 行按 0（关闭）返回，避免解引用 nil 指针
+	warningThreshold := billing.Zero
+	if w.WarningThreshold != nil {
+		warningThreshold = *w.WarningThreshold
 	}
 
 	return &v1.TenantWalletRes{
 		Balance:          billing.InexactFloat64(w.Balance),
 		FrozenBalance:    billing.InexactFloat64(w.FrozenBalance),
 		AvailableBalance: billing.InexactFloat64(billing.SubtractMoney(w.Balance, w.FrozenBalance)),
-		WarningThreshold: billing.InexactFloat64(*w.WarningThreshold),
+		WarningThreshold: billing.InexactFloat64(warningThreshold),
 		Currency:         w.Currency,
 	}, nil
 }

@@ -19,4 +19,5 @@ type ChnAbilities struct {
 	Enabled       any         // 是否启用该模型能力
 	CreatedAt     *gtime.Time // 创建时间
 	UpdatedAt     *gtime.Time // 更新时间
+	CostRatio     any         // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
 }

@@ -6,6 +6,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -413,52 +414,7 @@ onMounted(() => {
 					</div>
 
 					<!-- 转发路径追踪 -->
-					<div v-if="detailRecord.forwarding_trace" class="mt-4">
-						<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">转发路径追踪</h4>
-						<a-descriptions :column="1" bordered size="medium">
-							<a-descriptions-item label="入口路径">{{ detailRecord.forwarding_trace.entry_path }}</a-descriptions-item>
-							<a-descriptions-item label="入口格式">{{ detailRecord.forwarding_trace.entry_format }}</a-descriptions-item>
-							<a-descriptions-item label="请求模型">{{ detailRecord.forwarding_trace.requested_model }}</a-descriptions-item>
-							<a-descriptions-item label="上游模型">{{ detailRecord.forwarding_trace.upstream_model }}</a-descriptions-item>
-							<a-descriptions-item v-if="detailRecord.forwarding_trace.model_mapped" label="模型映射">
-								<Tag color="orange" size="small">是</Tag>
-							</a-descriptions-item>
-							<a-descriptions-item label="总尝试次数">{{ detailRecord.forwarding_trace.total_attempts }}</a-descriptions-item>
-						</a-descriptions>
-						<div v-if="detailRecord.forwarding_trace.hops?.length" style="margin-top:12px">
-							<h4 style="margin-bottom:8px;color:var(--ta-text-primary)">转发跳转</h4>
-							<a-table
-								:data="detailRecord.forwarding_trace.hops"
-								:bordered="false"
-								:stripe="true"
-								size="mini"
-								:pagination="false"
-								:scroll="{ x: 700 }"
-							>
-								<template #columns>
-									<a-table-column title="次数" data-index="attempt" :width="50" />
-									<a-table-column title="渠道" :width="140">
-										<template #cell="{ record }">
-											{{ record.channel_name || '-' }} <span style="color:#86909c">#{{ record.channel_id }}</span>
-										</template>
-									</a-table-column>
-									<a-table-column title="供应商" data-index="provider" :width="90" />
-									<a-table-column title="上游模型" data-index="upstream_model" :width="130" ellipsis />
-									<a-table-column title="状态" :width="65">
-										<template #cell="{ record }">
-											<Tag :color="record.success ? 'green' : 'red'" size="small">{{ record.success ? '成功' : '失败' }}</Tag>
-										</template>
-									</a-table-column>
-									<a-table-column title="延迟" :width="80">
-										<template #cell="{ record }">
-											{{ record.latency_ms ? formatMs(record.latency_ms) : '-' }}
-										</template>
-									</a-table-column>
-									<a-table-column title="错误" data-index="error" :width="160" ellipsis />
-								</template>
-							</a-table>
-						</div>
-					</div>
+					<ForwardingTracePanel v-if="detailRecord.forwarding_trace" :trace="detailRecord.forwarding_trace" />
 
 					<!-- 请求/响应内容 -->
 					<div v-if="detailRecord.request_body" class="mt-4">

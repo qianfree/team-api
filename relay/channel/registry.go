@@ -15,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/relay/channel/minimax"
 	"github.com/qianfree/team-api/relay/channel/mistral"
 	"github.com/qianfree/team-api/relay/channel/moonshot"
+	"github.com/qianfree/team-api/relay/channel/multinative"
 	"github.com/qianfree/team-api/relay/channel/ollama"
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/channel/siliconflow"
@@ -59,7 +60,7 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderBaiduV2:
 		return &baidu_v2.Adaptor{}
 	case constant.ProviderVolcengine:
-		return &volcengine.Adaptor{}
+		return &volcengine.DispatchAdaptor{}
 	case constant.ProviderMiniMax:
 		return &minimax.Adaptor{}
 	case constant.ProviderOllama:
@@ -71,7 +72,7 @@ func GetAdaptor(providerType int) common.Adaptor {
 	case constant.ProviderAzure:
 		return &openai.Adaptor{} // Azure OpenAI 兼容 OpenAI 协议
 	case constant.ProviderTencent:
-		return &tencent.Adaptor{}
+		return &tencent.DispatchAdaptor{}
 	case constant.ProviderXunfei:
 		return &xunfei.Adaptor{}
 	case constant.ProviderCoze:
@@ -88,6 +89,10 @@ func GetAdaptor(providerType int) common.Adaptor {
 		constant.ProviderOpenRouter,
 		constant.ProviderXInference:
 		return &openai.Adaptor{}
+	// 多协议原生透传：上游同时支持 OpenAI/Claude/Gemini，按入站格式委托对应原生适配器
+	case constant.ProviderNewAPI,
+		constant.ProviderSub2API:
+		return &multinative.Adaptor{}
 	default:
 		return nil
 	}

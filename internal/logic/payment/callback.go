@@ -81,11 +81,12 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 	LockOrder(result.OrderNo)
 	defer UnlockOrder(result.OrderNo)
 
-	// 5. 幂等检查：仅处理 pending 状态
+	// 5. 读取订单当前状态与支付信息（可履约性判断见下方 claimable）
 	var order *struct {
 		ID          int64       `json:"id"`
 		Status      string      `json:"status"`
 		FinalAmount float64     `json:"final_amount"`
+		PaymentNo   string      `json:"payment_no"`
 		ExpiredAt   *gtime.Time `json:"expired_at"`
 	}
 	err = dao.OrdOrders.Ctx(ctx).
@@ -96,11 +97,31 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 	if order == nil {
 		return common.NewNotFoundError("订单")
 	}
-	if order.Status != "pending" {
-		return nil // 已处理，幂等返回
+	// 5. 幂等 / 可履约状态检查。
+	// 可履约状态：pending，以及「支付成功但订单已被过期任务置为 expired」——用户在渠道
+	// 完成扣款可能晚于订单有效期（或回调延迟到达），此时渠道已实际收款，拒绝入账会造成
+	// 用户已付款却得不到权益，只能人工兜底；因此过期订单的成功回调照常履约，仅记告警日志。
+	// 其余状态（paid/fulfilled/cancelled/refunded 等）幂等返回。
+	claimable := order.Status == "pending" || (result.Success && order.Status == "expired")
+	if !claimable {
+		if result.Success && order.Status == "cancelled" {
+			// 渠道已收款但订单已被取消：无法自动履约，记录告警等待人工处理（线下退款或补单）
+			g.Log().Errorf(ctx, "[Payment] order=%s status=cancelled but received SUCCESS callback (trade_no=%s amount=%.2f), money captured without fulfillment, manual intervention required",
+				result.OrderNo, result.TradeNo, result.PaidAmount)
+		}
+		// 重复支付检测：订单已 paid/fulfilled，又收到【不同流水号】的成功回调——说明用户
+		// 对同一订单在多个渠道/多次完成了支付，渠道端已重复收款，第二笔在系统内无对应
+		// 入账，必须人工在渠道侧退回。幂等吞掉不留痕会造成资金无声滞留。
+		if result.Success && (order.Status == "paid" || order.Status == "fulfilled") &&
+			result.TradeNo != "" && result.TradeNo != order.PaymentNo {
+			g.Log().Errorf(ctx, "[Payment] order=%s already %s with trade_no=%s but received ANOTHER success callback trade_no=%s amount=%.2f, duplicate payment captured, manual refund required",
+				result.OrderNo, order.Status, order.PaymentNo, result.TradeNo, result.PaidAmount)
+		}
+		return nil // 已处理或不可履约终态，幂等返回
 	}
-	if order.ExpiredAt != nil && !order.ExpiredAt.IsZero() && order.ExpiredAt.Before(gtime.Now()) {
-		return gerror.Newf("订单已过期: %s", result.OrderNo)
+	if result.Success && (order.Status == "expired" ||
+		(order.ExpiredAt != nil && !order.ExpiredAt.IsZero() && order.ExpiredAt.Before(gtime.Now()))) {
+		g.Log().Warningf(ctx, "[Payment] order=%s paid after expiration, proceed with fulfillment", result.OrderNo)
 	}
 
 	// 6. 金额校验：回调金额与订单金额必须一致（容差 0.01 元，CNY）
@@ -117,15 +138,16 @@ func ProcessCallback(ctx context.Context, r *http.Request, channelType string) e
 	}
 
 	if result.Success {
-		// 7. 原子领取订单：pending → paid。
+		// 7. 原子领取订单：pending/expired → paid。
 		// 该条件更新的 RowsAffected 是【跨实例】幂等闸门：多实例并发回调时，两个回调都会
-		// 通过上面第 5 步的 pending 检查，但 "WHERE status='pending'" 的原子更新只有一个能命中
-		// （另一个在行锁释放后重读到 status 已是 paid → 0 行）。据此仅让真正把订单从 pending
-		// 翻成 paid 的那次回调去履约，杜绝重复入账/重复发套餐。进程内 orderLockShards 仅单实例有效，
-		// 不能作为并发保护依赖。
+		// 通过上面第 5 步的状态检查，但条件原子更新只有一个能命中（另一个在行锁释放后重读
+		// 到 status 已是 paid → 0 行）。据此仅让真正把订单翻成 paid 的那次回调去履约，
+		// 杜绝重复入账/重复发套餐。进程内 orderLockShards 仅单实例有效，不能作为并发保护依赖。
+		// expired 一并纳入条件：过期订单的成功回调照常入账（见第 5 步说明），
+		// 同时覆盖「第 5 步读到 pending、过期任务随后将其置 expired」的竞态窗口。
 		res, err := dao.OrdOrders.Ctx(ctx).
 			Where("id", order.ID).
-			Where("status", "pending").
+			WhereIn("status", g.Slice{"pending", "expired"}).
 			Data(do.OrdOrders{
 				Status:    "paid",
 				PaidAt:    gtime.Now(),

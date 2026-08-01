@@ -1,0 +1,153 @@
+{
+  "name": "tool_calls_oai_to_gemini_request",
+  "from": "openai",
+  "to": "gemini",
+  "request": {
+    "messages": [
+      {
+        "content": "What's the weather in San Francisco?",
+        "role": "user"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"San Francisco\",\"unit\":\"celsius\"}",
+              "name": "get_weather"
+            },
+            "id": "call_123",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"temperature\":18,\"condition\":\"sunny\"}",
+        "role": "tool",
+        "tool_call_id": "call_123"
+      }
+    ],
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "description": "Get weather for a location",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "location": {
+                "type": "string"
+              },
+              "unit": {
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "location"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "expected_request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "What's the weather in San Francisco?"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "San Francisco",
+                "unit": "celsius"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "condition": "sunny",
+                "temperature": 18
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "safetySettings": [
+      {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+              "properties": {
+                "location": {
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ],
+    "toolConfig": {
+      "functionCallingConfig": {
+        "mode": "AUTO"
+      }
+    }
+  },
+  "converter_id": "oai_chat_to_gemini_content"
+}

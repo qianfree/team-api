@@ -284,13 +284,45 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 
 // ─── EstimatePreDeductAmount 逻辑验证 ────────────────────────────────
 
-func TestPreDeductMaxCap(t *testing.T) {
-	cost := 5.0
-	if cost > 1.0 {
-		cost = 1.0
+func TestValidatePricingConfigured(t *testing.T) {
+	tests := []struct {
+		name    string
+		pricing *PricingResult
+		wantErr bool
+	}{
+		{
+			name:    "per_request 零价拒绝",
+			pricing: &PricingResult{BillingMode: "per_request", PerRequestPrice: 0},
+			wantErr: true,
+		},
+		{
+			name:    "per_request 有价放行",
+			pricing: &PricingResult{BillingMode: "per_request", PerRequestPrice: 0.05},
+			wantErr: false,
+		},
+		{
+			name:    "token 双零无阶梯拒绝",
+			pricing: &PricingResult{BillingMode: "token", InputPrice: 0, OutputPrice: 0},
+			wantErr: true,
+		},
+		{
+			name:    "token 仅 OutputPrice 放行（输入免费合法）",
+			pricing: &PricingResult{BillingMode: "token", InputPrice: 0, OutputPrice: 8.0},
+			wantErr: false,
+		},
+		{
+			name:    "tiered 双零但有自定义阶梯放行",
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
+			wantErr: false,
+		},
 	}
-	if cost != 1.0 {
-		t.Errorf("expected cap at 1.0, got %f", cost)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePricingConfigured(tt.pricing, "test-model")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePricingConfigured() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

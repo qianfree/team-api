@@ -40,6 +40,8 @@ type ChnChannelsColumns struct {
 	PreemptionThreshold      string // 触发VIP抢占的利用率阈值（如0.8表示利用率>=80%时VIP可抢占）
 	BorrowingCooldownSeconds string // 普通租户被抢占后的冷却时间（秒）
 	AutoDisabled             string // 是否被自动禁用：0=否, 1=是（由连续失败触发）
+	Tier                     string // 调度层级：primary=首选 secondary=备用 reserve=保底
+	StrictCapacity           string // 严格容量：true 时 Redis 故障期间使用实例级保守并发限额（fail-closed），用于高成本/严格配额渠道；false 为 fail-open
 }
 
 // chnChannelsColumns holds the columns for the table chn_channels.
@@ -63,6 +65,8 @@ var chnChannelsColumns = ChnChannelsColumns{
 	PreemptionThreshold:      "preemption_threshold",
 	BorrowingCooldownSeconds: "borrowing_cooldown_seconds",
 	AutoDisabled:             "auto_disabled",
+	Tier:                     "tier",
+	StrictCapacity:           "strict_capacity",
 }
 
 // NewChnChannelsDao creates and returns a new DAO object for table data access.

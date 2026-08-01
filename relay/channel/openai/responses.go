@@ -198,6 +198,8 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -478,16 +480,18 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 		}
 	}
 
-	// 估算 usage
+	// 估算 usage（正常结束 4 字符/token；scanner 异常等部分传输场景 2 字符/token）
 	if usage.CompletionTokens == 0 {
 		text := contentBuilder.String()
 		if len(text) > 0 {
-			usage.CompletionTokens = len(text) / 4
+			usage.CompletionTokens = helper.EstimateStreamOutputTokens(info, len(text))
 		}
 	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
+	// 流中断：输入 token 用请求侧估算值补齐，保证输入正常计费
+	helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
 
 	// 构建 response.completed 的 output 数组（包含文本消息 + 所有 tool call）
 	finalOutput := make([]map[string]any, 0)

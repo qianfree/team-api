@@ -1,0 +1,43 @@
+{
+  "name": "basic_claude_to_oai_response",
+  "from": "claude",
+  "to": "openai",
+  "response": {
+    "content": [
+      {
+        "text": "Hello! How can I help you today?",
+        "type": "text"
+      }
+    ],
+    "id": "msg_001",
+    "model": "claude-3-5-sonnet-20241022",
+    "role": "assistant",
+    "stop_reason": "end_turn",
+    "type": "message",
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 8
+    }
+  },
+  "expected_response": {
+    "id": "msg_001",
+    "object": "chat.completion",
+    "created": 1785291101,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hello! How can I help you today?"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "total_tokens": 20
+    }
+  }
+}
