@@ -282,6 +282,8 @@ const menuGroups = [
       { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage },
       { name: 'AdminChannels', label: '渠道管理', icon: IconBranch },
       { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar },
+      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
+      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
     ],
   },
   {
@@ -292,7 +294,6 @@ const menuGroups = [
       { name: 'AdminTenants', label: '租户列表', icon: IconHome },
       { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers },
       { name: 'AdminMembers', label: '成员列表', icon: IconUser },
-      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
     ],
   },
   {
@@ -317,7 +318,6 @@ const menuGroups = [
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
       { name: 'AdminPermissions', label: '权限管理', icon: IconSafe },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile },
-      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
     ],
   },
   {
