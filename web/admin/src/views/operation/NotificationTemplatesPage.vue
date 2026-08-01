@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -142,7 +143,7 @@ onMounted(fetchTemplates)
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="通知模板" description="管理各渠道的通知模板内容和格式">
       <template #actions>
         <ASelect v-model="channelFilter" :options="channelOptions" style="width: 120px" allow-clear placeholder="渠道筛选" @change="() => { pagination.current = 1; fetchTemplates() }" />
@@ -150,8 +151,9 @@ onMounted(fetchTemplates)
     </PageHeader>
 
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="templates" :loading="loading" row-key="code" :scroll="{ x: 1000 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchTemplates" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchTemplates() }" />
       </div>
     </ACard>

@@ -6,6 +6,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -520,6 +521,7 @@ const { exporting, exportFile } = useExport({
 		</a-card>
 
 		<a-card :bordered="false">
+			<TableStats :total="pagination.total" />
 			<a-table
 				:columns="columns"
 				:data="data"

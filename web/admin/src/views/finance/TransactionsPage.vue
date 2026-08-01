@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -93,6 +94,7 @@ onMounted(fetchData)
     <PageHeader title="交易流水" description="查看所有租户的钱包交易记录" />
 
     <ACard :bordered="false" class="mt-4">
+      <TableStats :total="pagination.total" />
       <div class="mb-4">
         <ASpace wrap>
           <AInput v-model="filterTenantId" placeholder="租户ID" allow-clear style="width: 120px" @keydown.enter="resetAndFetch" />

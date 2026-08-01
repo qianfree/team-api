@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const list = ref<any[]>([])
@@ -148,19 +149,14 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
     </ACard>
 
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable
         :data="list"
         :loading="loading"
         :bordered="false"
         :stripe="true"
         row-key="id"
-        :pagination="{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: pagination.total,
-          showTotal: true,
-          onChange: onPageChange,
-        }"
+        :pagination="false"
       >
         <template #columns>
           <ATableColumn title="时间" data-index="created_at" :width="180" />
@@ -196,6 +192,17 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
           </ATableColumn>
         </template>
       </ATable>
+      <div class="table-footer">
+        <APagination
+          v-model:current="pagination.current"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.total"
+          :page-size-options="[10, 20, 50]"
+          show-page-size
+          @change="onPageChange"
+          @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }"
+        />
+      </div>
     </ACard>
   </div>
 </template>

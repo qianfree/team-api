@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h, computed } from 'vue'
 import { Tag, Button, Select, Input, DatePicker } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -221,7 +222,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-table">
     <PageHeader title="渠道错误监控" description="上游渠道错误事件记录与趋势分析" />
 
     <!-- Stats Cards -->
@@ -282,22 +283,26 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
+      <TableStats :total="total" />
       <ATable
         :data="data"
         :loading="loading"
         :columns="columns"
-        :pagination="{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: total,
-          showTotal: true,
-          showPageSize: true,
-        }"
+        :pagination="false"
         row-key="id"
         :scroll="{ x: 1400 }"
-        @page-change="handlePageChange"
-        @page-size-change="handlePageSizeChange"
       />
+      <div class="table-footer">
+        <APagination
+          v-model:current="pagination.current"
+          v-model:page-size="pagination.pageSize"
+          :total="total"
+          :page-size-options="[10, 20, 50]"
+          show-page-size
+          @change="handlePageChange"
+          @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }"
+        />
+      </div>
     </ACard>
   </div>
 </template>

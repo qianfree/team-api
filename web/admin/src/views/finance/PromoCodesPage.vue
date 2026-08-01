@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -107,7 +108,7 @@ const { exporting, exportFile } = useExport({
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="优惠码管理" description="创建和管理优惠码">
       <template #actions>
         <AButton type="primary" @click="openCreate">创建优惠码</AButton>
@@ -122,8 +123,9 @@ const { exporting, exportFile } = useExport({
     </PageHeader>
 
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="promoCodes" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

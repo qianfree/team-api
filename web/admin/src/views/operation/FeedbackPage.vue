@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 // ============================================================
@@ -203,7 +204,7 @@ onMounted(() => { fetchStats(); fetchList() })
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="反馈管理" description="查看和管理租户用户提交的反馈" />
 
     <!-- Stats Cards -->
@@ -227,8 +228,9 @@ onMounted(() => { fetchStats(); fetchList() })
           </div>
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" row-key="id" :scroll="{ x: 1300 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

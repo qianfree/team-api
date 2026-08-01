@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
 import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -154,7 +155,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="告警记录" description="查看和管理告警事件" />
 
     <a-card :bordered="false" class="mb-4">
@@ -174,8 +175,9 @@ onUnmounted(() => {
     </a-card>
 
     <a-card :bordered="false">
+      <TableStats :total="total" />
       <a-table :data="data" :columns="columns" :loading="loading" :pagination="false" row-key="id" />
-      <div style="display: flex; justify-content: flex-end; margin-top: 16px">
+      <div class="table-footer">
         <a-pagination :current="pagination.current" :page-size="pagination.pageSize" :total="total" @change="handlePageChange" />
       </div>
     </a-card>

@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -273,7 +274,7 @@ onMounted(fetchTickets)
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="工单管理" description="查看和处理所有租户工单" />
 
     <ACard :bordered="false">
@@ -287,8 +288,9 @@ onMounted(fetchTickets)
           </ASpace>
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="tickets" :loading="loading" row-key="id" :scroll="{ x: 1300 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchTickets" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchTickets() }" />
       </div>
     </ACard>

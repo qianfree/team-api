@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -93,6 +94,7 @@ const { exporting, exportFile } = useExport({
     </PageHeader>
 
     <ACard :bordered="false" class="mt-4">
+      <TableStats :total="billPagination.total" />
       <div class="mb-4">
         <ASpace>
           <AInput v-model="billFilterTenantId" placeholder="租户ID" allow-clear style="width: 120px" @keydown.enter="fetchBillingRecords" />

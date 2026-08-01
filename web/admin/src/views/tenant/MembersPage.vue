@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -375,6 +376,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"

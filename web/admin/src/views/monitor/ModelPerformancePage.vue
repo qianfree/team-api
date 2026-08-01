@@ -3,6 +3,7 @@ import { ref, shallowRef, onMounted, h } from 'vue'
 import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -111,7 +112,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="模型性能" description="各模型跨渠道的成功率 / 延迟 / 吞吐（数据源自 bil_usage_daily，每日聚合；延迟为总延迟/总请求数均值）">
       <template #actions>
         <a-range-picker v-model="dateRange" value-format="YYYY-MM-DD" style="width: 260px" @change="fetchData" />
@@ -119,6 +120,7 @@ onMounted(() => {
     </PageHeader>
 
     <a-card :bordered="false">
+      <TableStats :total="data.length" />
       <a-table
         :columns="columns"
         :data="data"

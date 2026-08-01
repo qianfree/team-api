@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -157,6 +158,7 @@ onMounted(() => {
     </ACard>
 
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"
@@ -165,14 +167,19 @@ onMounted(() => {
         :stripe="true"
         row-key="id"
         :row-class="(record: any) => record?.is_current ? 'current-session-row' : ''"
-        :pagination="{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: pagination.total,
-          showTotal: true,
-          onChange: onPageChange,
-        }"
+        :pagination="false"
       />
+      <div class="table-footer">
+        <APagination
+          v-model:current="pagination.current"
+          v-model:page-size="pagination.pageSize"
+          :total="pagination.total"
+          :page-size-options="[10, 20, 50]"
+          show-page-size
+          @change="onPageChange"
+          @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchSessions() }"
+        />
+      </div>
     </ACard>
   </div>
 </template>
