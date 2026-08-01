@@ -9,16 +9,18 @@ import (
 
 type TenantOrderCreateReq struct {
 	g.Meta    `path:"/orders/create" method:"post" mime:"json" tags:"租户控制台-订单" summary:"创建订单"`
-	PlanID    int64 `json:"plan_id" v:"required|min:1"`
-	Months    int   `json:"months" v:"min:1|max:36#购买月数无效|购买月数不能超过36个月"`
-	AutoRenew bool  `json:"auto_renew"`
+	PlanID    int64  `json:"plan_id" v:"required|min:1"`
+	Months    int    `json:"months" v:"min:1|max:36#购买月数无效|购买月数不能超过36个月"`
+	AutoRenew bool   `json:"auto_renew"`
+	PromoCode string `json:"promo_code" dc:"优惠码（可选）"`
 }
 
 type TenantOrderCreateRes struct {
-	ID          int64   `json:"id"`
-	OrderNo     string  `json:"order_no"`
-	FinalAmount float64 `json:"final_amount"`
-	Status      string  `json:"status"`
+	ID             int64   `json:"id"`
+	OrderNo        string  `json:"order_no"`
+	FinalAmount    float64 `json:"final_amount"`
+	DiscountAmount float64 `json:"discount_amount" dc:"优惠码折扣金额（CNY）"`
+	Status         string  `json:"status"`
 }
 
 type TenantOrderPayReq struct {

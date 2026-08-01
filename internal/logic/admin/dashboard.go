@@ -10,6 +10,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -402,16 +403,18 @@ func (s *sAdmin) GetTenantWallets(ctx context.Context, req *v1.AdminWalletListRe
 // AdjustBalance 调整租户余额（管理后台）
 func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error) {
 	tenantID := req.TenantID
-	amount := req.Amount
+	// 入口即转 decimal（float64 仅允许出现在 API 边界），后续 SQL 参数与流水全程 decimal 直传
+	amount := billing.NewFromFloat(req.Amount)
 	description := req.Description
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 原子更新余额，避免并发竞态
+		// 原子更新余额，避免并发竞态。扣减（负数）时以【可用余额】（balance - frozen_balance）
+		// 为下限：frozen_balance 是支付中/退款中的占用，穿透冻结会破坏预扣一致性。
 		updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
 		args := []any{amount, gtime.Now(), tenantID}
-		if amount < 0 {
-			updateQuery += " AND balance >= ?"
-			args = append(args, -amount)
+		if amount.IsNegative() {
+			updateQuery += " AND balance - frozen_balance >= ?"
+			args = append(args, amount.Neg())
 		}
 		result, err := g.DB().Ctx(ctx).Exec(ctx, updateQuery, args...)
 		if err != nil {
@@ -419,14 +422,14 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 		}
 		affected, _ := result.RowsAffected()
 		if affected == 0 {
-			return common.NewBadRequestError("钱包不存在或余额不足")
+			return common.NewBadRequestError("钱包不存在或可用余额不足")
 		}
 
 		// 查询更新后的余额，用于记录流水
 		var wallet *struct {
-			ID            int64   `json:"id"`
-			Balance       float64 `json:"balance"`
-			FrozenBalance float64 `json:"frozen_balance"`
+			ID            int64           `json:"id"`
+			Balance       decimal.Decimal `json:"balance"`
+			FrozenBalance decimal.Decimal `json:"frozen_balance"`
 		}
 		if err = dao.BilWallets.Ctx(ctx).
 			Where("tenant_id", tenantID).
@@ -455,6 +458,10 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	if err != nil {
 		return nil, err
 	}
+
+	// 事务提交后清除钱包两级缓存（进程内 + Redis），否则调整后的余额在 300s TTL 内
+	// 不生效——下调余额时租户仍按旧的高余额预扣，可短时超支。
+	billing.InvalidateWallet(ctx, tenantID)
 
 	// 管理员调整余额后，重置低余额预警标记（可能余额已恢复到阈值以上）
 	billing.ResetLowBalanceNotified(ctx, tenantID)

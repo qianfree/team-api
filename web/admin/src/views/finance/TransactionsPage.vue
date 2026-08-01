@@ -21,14 +21,16 @@ const typeOptions = [
   { label: '全部', value: '' },
   { label: '消费', value: 'consume' },
   { label: '充值', value: 'recharge' },
+  { label: '兑换码', value: 'redemption' },
+  { label: '退款', value: 'refund' },
   { label: '调整', value: 'adjust' },
 ]
 
 const typeTagColor: Record<string, string> = {
-  consume: 'orangered', recharge: 'green', adjust: 'arcoblue',
+  consume: 'orangered', recharge: 'green', redemption: 'green', refund: 'cyan', adjust: 'arcoblue',
 }
 const typeLabel: Record<string, string> = {
-  consume: '消费', recharge: '充值', adjust: '调整',
+  consume: '消费', recharge: '充值', redemption: '兑换码', refund: '退款', adjust: '调整',
 }
 
 const columns: TableColumnData[] = [

@@ -7,6 +7,8 @@
 --   4. 渠道调度重构（开发计划 §4.1，基线方案 §11）：chn_channels 新增 tier/strict_capacity，
 --      chn_abilities 新增 cost_ratio，并按现有 priority 自动映射三档层级
 --   5. 渠道调度重构收尾（阶段 5）：chn_channel_affinities 表标记废弃（会话绑定已迁移至 Redis）
+--   6. ord_orders 新增汇率快照列 exchange_rate / credited_usd（资金审计修复配套）
+--   7. 更新 bil_transactions.type 注释（新增 redemption 兑换码入账；refund 恢复在用）
 
 -- 1. 修正 mdl_tenant_models.multiplier 注释
 --
@@ -91,8 +93,29 @@ FROM ranked WHERE c.id = ranked.id;
 -- 按计划标记废弃不删除，后续版本确认无审计需求后再物理清理。
 COMMENT ON TABLE chn_channel_affinities IS '【已废弃 2026-07】渠道亲和性缓存。会话绑定已迁移至 Redis（dispatch:v1:bind:*），本表无代码读写，仅保留历史数据';
 
+-- 6. 充值订单汇率快照列（充值/兑换/钱包资金审计修复配套）：
+-- 充值订单履约入账时持久化「原始 CNY（amount 列）+ 当时汇率 + 入账 USD」，
+-- 使历史换算可重建，汇率配置变更不影响已完成订单的现金对账（见 CLAUDE.md《汇率规则》）。
+ALTER TABLE ord_orders ADD COLUMN IF NOT EXISTS exchange_rate NUMERIC(20,10);
+ALTER TABLE ord_orders ADD COLUMN IF NOT EXISTS credited_usd NUMERIC(20,10);
+
+COMMENT ON COLUMN ord_orders.exchange_rate IS '履约当时的 CNY→USD 汇率快照（仅 recharge 订单履约时写入，历史订单为 NULL）';
+COMMENT ON COLUMN ord_orders.credited_usd IS '履约入账钱包的 USD 金额快照（仅 recharge 订单履约时写入，= 原价 CNY × exchange_rate 向上取整 6 位）';
+
+-- 7. bil_transactions.type 注释更新：
+-- 新增 redemption（兑换码入账，与真实充值区分，现金对账不再误计入充值）；
+-- refund 恢复为在用值（退款时按履约入账原额扣回钱包），不再是废弃值。
+COMMENT ON COLUMN bil_transactions.type IS '类型：consume（消费）/ recharge（充值入账）/ redemption（兑换码入账）/ refund（退款扣回）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）';
+
 -- +goose Down
 -- 回滚顺序与 Up 相反
+
+-- 7. 恢复 bil_transactions.type 注释
+COMMENT ON COLUMN bil_transactions.type IS '类型：consume（消费）/ recharge（充值）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ refund（退款，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）';
+
+-- 6. 移除充值订单汇率快照列
+ALTER TABLE ord_orders DROP COLUMN IF EXISTS credited_usd;
+ALTER TABLE ord_orders DROP COLUMN IF EXISTS exchange_rate;
 
 -- 5. 恢复 chn_channel_affinities 表注释
 COMMENT ON TABLE chn_channel_affinities IS '渠道亲和性缓存（用户+模型→渠道映射，TTL 1800s）';

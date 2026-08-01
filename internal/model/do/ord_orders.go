@@ -34,4 +34,6 @@ type OrdOrders struct {
 	Description    any         // 订单描述
 	CreatedAt      *gtime.Time // 创建时间
 	UpdatedAt      *gtime.Time // 更新时间
+	ExchangeRate   any         // 履约当时的 CNY→USD 汇率快照（仅 recharge 订单履约时写入，历史订单为 NULL）
+	CreditedUsd    any         // 履约入账钱包的 USD 金额快照（仅 recharge 订单履约时写入，= 原价 CNY × exchange_rate 向上取整 6 位）
 }

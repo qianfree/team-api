@@ -29,6 +29,7 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			UserID      int64   `json:"user_id"`
 			OrderType   string  `json:"order_type"`
 			PlanID      int64   `json:"plan_id"`
+			Amount      float64 `json:"amount"`
 			FinalAmount float64 `json:"final_amount"`
 			Status      string  `json:"status"`
 		}
@@ -63,9 +64,20 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			}
 
 		case "recharge":
-			usdAmount := billing.ConvertCNYToUSD(ctx, order.FinalAmount)
-			if err = creditWalletTx(ctx, order.TenantID, usdAmount, fmt.Sprintf("Recharge: order #%d (CNY %.2f → USD %.6f)", orderID, order.FinalAmount, usdAmount.InexactFloat64())); err != nil {
+			// 折扣语义「付折后价、按原价入账」：用户实付 FinalAmount（折后 CNY），
+			// 钱包按订单原价 Amount 换算 USD 入账，折扣让利真实生效；无折扣时两者相等。
+			// 汇率只取一次，保证入账换算与快照使用同一汇率。
+			rate := billing.GetExchangeRateCNYToUSD(ctx)
+			usdAmount := billing.CeilUSD(billing.NewFromFloat(order.Amount).Mul(billing.NewFromFloat(rate)))
+			if err = creditWalletTx(ctx, order.TenantID, usdAmount, orderID, fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → USD %.6f)", orderID, order.Amount, order.FinalAmount, usdAmount.InexactFloat64())); err != nil {
 				return gerror.Wrapf(err, "credit wallet failed")
+			}
+			// 汇率结构化快照：持久化「原始 CNY（订单列）+ 当时汇率 + 入账 USD」，
+			// 使历史换算可重建，汇率配置变更不影响已完成订单的现金对账。
+			if _, err = g.DB().Ctx(ctx).Exec(ctx,
+				"UPDATE ord_orders SET exchange_rate = ?, credited_usd = ? WHERE id = ?",
+				billing.NewFromFloat(rate), usdAmount, orderID); err != nil {
+				return gerror.Wrapf(err, "snapshot exchange rate failed")
 			}
 			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
 			// 充值后检查是否需要重置低余额预警标记
@@ -183,7 +195,8 @@ func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int
 // creditWalletTx 在事务内钱包入账（依赖调用方传入携带事务的 ctx）
 // amount 为 USD（bil_ 层永远 USD）；用 decimal 直传原生 SQL（shopspring decimal 实现
 // driver.Valuer → 精确 NUMERIC 字符串），避免 float64 入账在 balance+? 累加时产生漂移。
-func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal, description string) error {
+// orderID 写入流水 related_id：退款时靠它精确找回履约当时入账的 USD（禁止按当前汇率反算）。
+func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal, orderID int64, description string) error {
 	var w *struct {
 		ID int64 `json:"id"`
 	}
@@ -227,6 +240,8 @@ func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal,
 		Amount:       amount,
 		BalanceAfter: balance.Balance,
 		FrozenAfter:  balance.FrozenBalance,
+		RelatedId:    orderID,
+		RelatedType:  "order",
 		Description:  description,
 	})
 	if err != nil {
