@@ -11,7 +11,7 @@ import { useExport } from '@/composables/useExport'
 const loading = ref(false)
 const logs = ref<any[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const filterUsername = ref('')
@@ -103,7 +103,7 @@ const billingSourceLabel: Record<string, string> = {
 async function fetchLogs() {
 	loading.value = true
 	try {
-		const params: any = { page: page.value, page_size: pageSize }
+		const params: any = { page: page.value, page_size: pageSize.value }
 		if (filterUsername.value) params.username = filterUsername.value
 		if (filterModel.value) params.model = filterModel.value
 		if (filterStatus.value) params.status = filterStatus.value
@@ -295,7 +295,6 @@ onMounted(() => {
 							<th class="min-w-50">用户/项目</th>
 							<th class="min-w-40">API Key</th>
 							<th class="min-w-45">模型</th>
-							<th class="min-w-40">模型显示名称</th>
 							<th class="min-w-30">类型</th>
 							<th class="min-w-30">Token</th>
 							<th class="min-w-20">费用</th>
@@ -325,10 +324,6 @@ onMounted(() => {
 									<div class="text-gray-500 text-xs"><span class="mr-0.5">↳</span>{{ log.upstream_model }}</div>
 								</div>
 								<span v-else class="font-medium text-gray-900">{{ log.model_name }}</span>
-							</td>
-							<!-- 模型显示名称 -->
-							<td>
-								<span class="text-sm text-gray-700">{{ log.model_display_name || '-' }}</span>
 							</td>
 
 							<!-- 请求类型 -->
@@ -441,7 +436,7 @@ onMounted(() => {
 				<p class="empty-state-description">日志将在 API 调用后展示</p>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchLogs" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchLogs" />
 		</div>
 
 		<!-- Token Tooltip -->

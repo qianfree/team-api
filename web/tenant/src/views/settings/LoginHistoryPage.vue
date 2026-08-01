@@ -8,7 +8,7 @@ import BaseSelect from '../../components/common/BaseSelect.vue'
 const list = ref<any[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const filterUsername = ref('')
@@ -27,7 +27,7 @@ async function fetchData() {
 	try {
 		const params: Record<string, any> = {
 			page: page.value,
-			page_size: pageSize,
+			page_size: pageSize.value,
 		}
 		if (filterUsername.value) params.username = filterUsername.value
 		if (filterIpAddress.value) params.ip_address = filterIpAddress.value
@@ -180,7 +180,7 @@ const methodLabel: Record<string, string> = {
 					</table>
 				</div>
 
-				<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchData" />
+				<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchData" />
 			</div>
 
 			<!-- Empty state -->

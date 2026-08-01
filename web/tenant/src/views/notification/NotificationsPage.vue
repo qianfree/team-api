@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import { useNotificationCount } from '@/composables/useNotificationCount'
@@ -18,7 +19,7 @@ interface Notification {
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 const activeTab = ref<'all' | 'unread'>('all')
 
@@ -28,8 +29,6 @@ const { exporting, exportFile } = useExport({
 })
 
 const { unreadCount, decrement: decrementUnread, reset: resetUnread } = useNotificationCount()
-
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
 
 const typeLabel: Record<string, string> = {
 	security: '安全',
@@ -50,7 +49,7 @@ const typeBadgeClass: Record<string, string> = {
 async function fetchNotifications() {
 	loading.value = true
 	try {
-		const params: any = { page: page.value, page_size: pageSize }
+		const params: any = { page: page.value, page_size: pageSize.value }
 		if (activeTab.value === 'unread') params.is_read = false
 		const res: any = await request.get('/tenant/notifications', { params })
 		const raw = res.data?.data
@@ -107,11 +106,6 @@ async function deleteNotification(n: Notification) {
 function switchTab(tab: 'all' | 'unread') {
 	activeTab.value = tab
 	page.value = 1
-	fetchNotifications()
-}
-
-function handlePageChange(newPage: number) {
-	page.value = newPage
 	fetchNotifications()
 }
 
@@ -232,26 +226,7 @@ onMounted(() => {
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="totalPages > 1" class="flex items-center justify-between px-1 pt-3">
-				<span class="text-xs text-gray-500">共 {{ total }} 条通知</span>
-				<div class="flex items-center gap-2">
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page <= 1"
-						@click="handlePageChange(page - 1)"
-					>
-						上一页
-					</button>
-					<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page >= totalPages"
-						@click="handlePageChange(page + 1)"
-					>
-						下一页
-					</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchNotifications" />
 		</div>
 	</div>
 </template>
