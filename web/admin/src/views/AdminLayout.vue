@@ -5,6 +5,7 @@ import { Message } from '@arco-design/web-vue'
 import axios from 'axios'
 import { marked } from 'marked'
 import request from '@/utils/request'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary.vue'
 import { useWatermark } from '@/composables/useWatermark'
 import { useSiteName } from '@/composables/useSiteName'
 import {
@@ -612,9 +613,11 @@ onUnmounted(() => {
 
       <!-- Content -->
       <main class="admin-content page-bg">
-        <router-view v-slot="{ Component }">
+        <router-view v-slot="{ Component, route: currentRoute }">
           <Transition name="page-fade" mode="out-in">
-            <component :is="Component" />
+            <RouteErrorBoundary :key="currentRoute.fullPath">
+              <component :is="Component" />
+            </RouteErrorBoundary>
           </Transition>
         </router-view>
       </main>

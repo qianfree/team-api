@@ -82,7 +82,12 @@ export function shouldRefresh(): boolean {
 }
 
 let isRefreshing = false
-let pendingRequests: Array<(token: string) => void> = []
+interface PendingRequest {
+  resolve: (token: string) => void
+  reject: (error: unknown) => void
+}
+
+let pendingRequests: PendingRequest[] = []
 let tokenRefreshedCallback: ((tokens: TokenPair) => void) | null = null
 
 export function onTokenRefreshed(cb: (tokens: TokenPair) => void): void {
@@ -90,12 +95,19 @@ export function onTokenRefreshed(cb: (tokens: TokenPair) => void): void {
 }
 
 function replayPending(token: string): void {
-  pendingRequests.forEach((cb) => cb(token))
+  pendingRequests.forEach(({ resolve }) => resolve(token))
   pendingRequests = []
 }
 
-function clearPending(): void {
+function rejectPending(error: unknown): void {
+  pendingRequests.forEach(({ reject }) => reject(error))
   pendingRequests = []
+}
+
+function waitForRefresh(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    pendingRequests.push({ resolve, reject })
+  })
 }
 
 const request: AxiosInstance = axios.create({
@@ -132,18 +144,18 @@ request.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
     if (shouldRefresh() && !config.url?.includes('/auth/refresh')) {
       if (isRefreshing) {
-        await new Promise<void>((resolve) => {
-          pendingRequests.push(() => resolve())
-        })
+        await waitForRefresh()
       } else {
         isRefreshing = true
         try {
           const newTokens = await doRefresh()
           replayPending(newTokens.accessToken)
-        } catch {
-          clearPending()
+        } catch (error) {
+          rejectPending(error)
           clearTokens()
+          showRequestError(error, config)
           window.location.hash = '#/admin/login'
+          return Promise.reject(error)
         } finally {
           isRefreshing = false
         }
@@ -166,6 +178,26 @@ const DEMO_MODE_CODE = 10403
 function showErrorToast(message: string, config?: InternalAxiosRequestConfig) {
   if (config?._suppressErrorMsg) return
   Message.error(message)
+}
+
+function showRequestError(error: unknown, config?: InternalAxiosRequestConfig) {
+  if (config?._suppressErrorMsg || !axios.isAxiosError(error)) return
+  if ((error as any)._errorToastShown) return
+  ;(error as any)._errorToastShown = true
+  const responseData = error.response?.data
+  if (responseData && typeof responseData === 'object' && 'message' in responseData) {
+    Message.error(String(responseData.message || '请求失败'))
+    return
+  }
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+    Message.error('请求超时，请稍后重试')
+    return
+  }
+  if (!error.response) {
+    Message.error('网络连接异常，请检查后端服务是否正常')
+    return
+  }
+  Message.error(`服务器请求失败（${error.response.status}）`)
 }
 
 request.interceptors.response.use(
@@ -204,18 +236,20 @@ request.interceptors.response.use(
         ;(err as any).isDemoModeError = error.response.data.code === DEMO_MODE_CODE
         return Promise.reject(err)
       }
+      showRequestError(error, originalRequest)
       return Promise.reject(error)
     }
 
     if (isRefreshing) {
-      return new Promise((resolve) => {
-        pendingRequests.push((newToken: string) => {
-          originalRequest.headers = originalRequest.headers ?? {}
-          originalRequest.headers.Authorization = `Bearer ${newToken}`
-          originalRequest._retry = true
-          resolve(request(originalRequest))
-        })
-      })
+      try {
+        const newToken = await waitForRefresh()
+        originalRequest.headers = originalRequest.headers ?? {}
+        originalRequest.headers.Authorization = `Bearer ${newToken}`
+        originalRequest._retry = true
+        return request(originalRequest)
+      } catch (refreshError) {
+        return Promise.reject(refreshError)
+      }
     }
 
     originalRequest._retry = true
@@ -228,11 +262,12 @@ request.interceptors.response.use(
       originalRequest.headers = originalRequest.headers ?? {}
       originalRequest.headers.Authorization = `Bearer ${newTokens.accessToken}`
       return request(originalRequest)
-    } catch {
-      clearPending()
+    } catch (refreshError) {
+      rejectPending(refreshError)
       clearTokens()
+      showRequestError(refreshError, originalRequest)
       window.location.hash = '#/admin/login'
-      return Promise.reject(error)
+      return Promise.reject(refreshError)
     } finally {
       isRefreshing = false
     }
