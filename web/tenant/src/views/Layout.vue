@@ -10,6 +10,7 @@ import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
 import MaintenanceBanner from '@/components/common/MaintenanceBanner.vue'
 import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
+import RouteErrorBoundary from '@/components/common/RouteErrorBoundary.vue'
 import { marked } from 'marked'
 import request from '@/utils/request'
 
@@ -510,7 +511,11 @@ onBeforeUnmount(() => {
 				class="tenant-main px-3 pb-5 pt-4 md:px-5 md:pb-6 lg:pt-5"
 				:class="{ 'tenant-table-main': route.meta.viewportTable }"
 			>
-				<router-view />
+				<router-view v-slot="{ Component, route: currentRoute }">
+					<RouteErrorBoundary :key="currentRoute.fullPath">
+						<component :is="Component" />
+					</RouteErrorBoundary>
+				</router-view>
 			</main>
 		</div>
 	</div>

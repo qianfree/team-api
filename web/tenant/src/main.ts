@@ -29,6 +29,9 @@ console.log(
 )
 
 const app = createApp(App)
+app.config.errorHandler = (error, _instance, info) => {
+  console.error('[VueError]', info, error)
+}
 app.use(head)
 app.use(createPinia())
 app.use(router)
