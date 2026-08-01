@@ -82,7 +82,9 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	}
 
 	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
-		OrderDesc("chn_channels.priority").
+		// 列表默认按 id 倒序：新建渠道排在最前，便于运营查看最新配置。
+		// 注意分页场景下排序必须在 DB 层完成，前端只在当前页排序会导致跨页错乱。
+		OrderDesc("chn_channels.id").
 		Page(req.Page, req.PageSize).
 		ScanAndCount(&channels, &total, false)
 	if err != nil {
