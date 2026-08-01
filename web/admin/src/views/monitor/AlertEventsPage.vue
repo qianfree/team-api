@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
-import { Message, Tag, Button, Space } from '@arco-design/web-vue'
+import { Message, Modal, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -145,6 +146,25 @@ function handlePageChange(page: number) {
   fetchData()
 }
 
+// 清空全部告警记录（硬删除）：异常频发时事件表会迅速膨胀拖累数据库，需二次确认。
+function clearEvents() {
+  Modal.confirm({
+    title: '清空全部告警记录',
+    content: '将硬删除全部告警记录（含已恢复的历史告警），此操作不可恢复，确定继续？',
+    okText: '清空',
+    okButtonProps: { status: 'danger' },
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await request.delete('/admin/alert/events/clear')
+        Message.success('告警记录已清空')
+        fetchData()
+      } catch {
+        // error auto-shown by Axios interceptor
+      }
+    },
+  })
+}
 
 onMounted(() => {
   fetchData()
@@ -156,7 +176,13 @@ onUnmounted(() => {
 
 <template>
   <div class="page-table">
-    <PageHeader title="告警记录" description="查看和管理告警事件" />
+    <PageHeader title="告警记录" description="查看和管理告警事件">
+      <template #actions>
+        <a-button v-if="hasPermission('monitor:edit')" status="danger" @click="clearEvents">
+          清空记录
+        </a-button>
+      </template>
+    </PageHeader>
 
     <a-card :bordered="false" class="mb-4">
       <a-space>

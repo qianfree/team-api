@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { Message, Tag, Button, Space } from '@arco-design/web-vue'
+import { Message, Modal, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -188,6 +189,28 @@ async function batchResolve() {
   }
 }
 
+// 清空全部错误日志（硬删除）：系统报错大量堆积时快速释放数据库空间，需二次确认。
+function clearLogs() {
+  Modal.confirm({
+    title: '清空全部错误日志',
+    content: '将硬删除全部错误日志记录，此操作不可恢复。系统报错频繁时可使用该操作快速释放数据库空间，确定继续？',
+    okText: '清空',
+    okButtonProps: { status: 'danger' },
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await request.delete('/admin/error-logs/clear')
+        Message.success('错误日志已清空')
+        selectedKeys.value = []
+        fetchData()
+        fetchStats()
+      } catch {
+        // error auto-shown by Axios interceptor
+      }
+    },
+  })
+}
+
 function handleFilter() {
   pagination.current = 1
   fetchData()
@@ -229,6 +252,9 @@ onMounted(() => {
           @click="batchResolve"
         >
           批量处理 ({{ selectedKeys.length }})
+        </a-button>
+        <a-button v-if="hasPermission('monitor:edit')" status="danger" @click="clearLogs">
+          清空日志
         </a-button>
       </template>
     </PageHeader>

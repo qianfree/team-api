@@ -328,3 +328,11 @@ func (s *sMonitor) ResolveAlert(ctx context.Context, req *v1.AlertEventResolveRe
 	}
 	return nil, nil
 }
+
+func (s *sMonitor) AlertEventClear(ctx context.Context, _ *v1.AlertEventClearReq) (*v1.AlertEventClearRes, error) {
+	deleted, err := ClearAlertEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.AlertEventClearRes{Deleted: deleted}, nil
+}
