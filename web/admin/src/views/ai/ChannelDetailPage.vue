@@ -249,21 +249,16 @@ const showAddAbilityModal = ref(false)
 const addAbilityForm = reactive({ model_name: '', upstream_model: '', enabled: true })
 const modelsList = ref<any[]>([])
 const modelsLoading = ref(false)
-let modelSearchTimer: any = null
 
-async function fetchModels(search?: string) {
+// 拉取全部 active 模型（下拉专用、不分页接口 /admin/models/options）。
+// 此前用分页接口 /admin/models 且 page_size=20，导致平台模型超过 20 个时
+// “添加能力”下拉只显示最新 20 条，看不到其余模型。
+async function fetchModels() {
   modelsLoading.value = true
   try {
-    const res: any = await request.get('/admin/models', {
-      params: { page: 1, page_size: 20, status: 'active', search: search || undefined },
-    })
+    const res: any = await request.get('/admin/models/options')
     modelsList.value = res.data?.data?.list || res.data?.list || []
   } catch { modelsList.value = [] } finally { modelsLoading.value = false }
-}
-
-function handleModelSearch(val: string) {
-  clearTimeout(modelSearchTimer)
-  modelSearchTimer = setTimeout(() => fetchModels(val), 300)
 }
 
 const availableModelOptions = computed(() => {
