@@ -34,6 +34,7 @@ type (
 		AlertEventList(ctx context.Context, req *v1.AlertEventListReq) (*v1.AlertEventListRes, error)
 		AcknowledgeAlert(ctx context.Context, req *v1.AlertEventAcknowledgeReq) (*v1.AlertEventAcknowledgeRes, error)
 		ResolveAlert(ctx context.Context, req *v1.AlertEventResolveReq) (*v1.AlertEventResolveRes, error)
+		AlertEventClear(ctx context.Context, _ *v1.AlertEventClearReq) (*v1.AlertEventClearRes, error)
 	}
 )
 

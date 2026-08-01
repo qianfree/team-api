@@ -200,6 +200,46 @@ func GetAlertStats(ctx context.Context) (map[string]any, error) {
 	}, nil
 }
 
+// ClearAlertEvents 硬删除全部告警事件，并清理关联的 Redis 触发状态。
+// 告警事件表持续追加，异常频发时会迅速膨胀拖累数据库；TRUNCATE 秒级清空并立即归还
+// 磁盘空间（DELETE 需等 VACUUM 回收）。表无数据库级外键，TRUNCATE 安全。
+func ClearAlertEvents(ctx context.Context) (int64, error) {
+	count, err := dao.OpsAlertEvents.Ctx(ctx).Count()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := g.DB().Ctx(ctx).Exec(ctx, "TRUNCATE TABLE ops_alert_events RESTART IDENTITY"); err != nil {
+		return 0, err
+	}
+	if err := clearAlertFiringState(ctx); err != nil {
+		g.Log().Warningf(ctx, "clear alert events: reset firing state: %v", err)
+	}
+	return int64(count), nil
+}
+
+// clearAlertFiringState 清理 Redis 中所有告警规则的触发状态（ops:alert:firing:{ruleID}）。
+// 事件表清空后，若引擎仍持有旧 eventID 的 firing 状态，会持续尝试 auto-resolve 一个
+// 不存在的记录（产生 404 告警日志），且同一规则即便继续越界也不再生成新事件。
+// 触发状态键按 rule_id 命名，遍历规则表逐个 DEL 即可；已删除规则残留的键无引擎读取、1h 自愈。
+func clearAlertFiringState(ctx context.Context) error {
+	redis := g.Redis()
+	var ruleIDs []struct {
+		Id int64 `json:"id"`
+	}
+	if err := dao.OpsAlertRules.Ctx(ctx).Fields("id").Scan(&ruleIDs); err != nil {
+		return err
+	}
+	for _, r := range ruleIDs {
+		if r.Id <= 0 {
+			continue
+		}
+		if _, err := redis.Do(ctx, "DEL", fmt.Sprintf("ops:alert:firing:%d", r.Id)); err != nil {
+			g.Log().Warningf(ctx, "clear alert firing state for rule %d: %v", r.Id, err)
+		}
+	}
+	return nil
+}
+
 // SendTestAlert sends a test notification for a given rule.
 func SendTestAlert(ctx context.Context, ruleID int64) error {
 	rule, err := GetAlertRule(ctx, ruleID)

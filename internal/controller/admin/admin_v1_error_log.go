@@ -22,3 +22,6 @@ func (c *ControllerV1) ErrorLogBatchResolve(ctx context.Context, req *v1.ErrorLo
 func (c *ControllerV1) ErrorLogStats(ctx context.Context, req *v1.ErrorLogStatsReq) (res *v1.ErrorLogStatsRes, err error) {
 	return service.Admin().ErrorLogStats(ctx, req)
 }
+func (c *ControllerV1) ErrorLogClear(ctx context.Context, req *v1.ErrorLogClearReq) (res *v1.ErrorLogClearRes, err error) {
+	return service.Admin().ErrorLogClear(ctx, req)
+}

@@ -202,6 +202,11 @@ type (
 		ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq) (*v1.ErrorLogResolveRes, error)
 		// ErrorLogBatchResolve marks multiple error logs as resolved.
 		ErrorLogBatchResolve(ctx context.Context, req *v1.ErrorLogBatchResolveReq) (*v1.ErrorLogBatchResolveRes, error)
+		// ErrorLogClear 硬删除全部错误日志。
+		// 系统报错大量堆积时用于快速释放数据库空间：用 TRUNCATE 而非逐行 DELETE，
+		// 秒级清空并立即归还磁盘空间（DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，
+		// 故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+		ErrorLogClear(ctx context.Context, _ *v1.ErrorLogClearReq) (*v1.ErrorLogClearRes, error)
 		// ErrorLogStats returns error log statistics.
 		ErrorLogStats(ctx context.Context, _ *v1.ErrorLogStatsReq) (*v1.ErrorLogStatsRes, error)
 		// ListAllFeedbacks 管理后台反馈列表

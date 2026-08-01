@@ -24,9 +24,9 @@ type MonitorTrafficRes struct {
 
 type MonitorTrafficFlowReq struct {
 	g.Meta    `path:"/monitor/traffic-flow" method:"get" mime:"json" tags:"管理后台-监控" summary:"流量流向桑基图"`
-	StartDate string `json:"start_date" in:"query"`           // YYYY-MM-DD，缺省=近30天起点
-	EndDate   string `json:"end_date" in:"query"`             // YYYY-MM-DD，缺省=今天
-	Metric    string `json:"metric" in:"query" d:"cost"`      // cost|tokens|requests，桑基边权重指标
+	StartDate string `json:"start_date" in:"query"`      // YYYY-MM-DD，缺省=近30天起点
+	EndDate   string `json:"end_date" in:"query"`        // YYYY-MM-DD，缺省=今天
+	Metric    string `json:"metric" in:"query" d:"cost"` // cost|tokens|requests，桑基边权重指标
 }
 
 type MonitorTrafficFlowRes struct {
@@ -242,3 +242,13 @@ type AlertEventResolveReq struct {
 }
 
 type AlertEventResolveRes struct{}
+
+// AlertEventClearReq 清空全部告警记录（硬删除，同时清理 Redis 中的触发状态）
+type AlertEventClearReq struct {
+	g.Meta `path:"/alert/events/clear" method:"delete" mime:"json" tags:"管理后台-告警" summary:"清空告警记录（硬删除全部）"`
+}
+
+// AlertEventClearRes 清空告警记录响应
+type AlertEventClearRes struct {
+	Deleted int64 `json:"deleted" dc:"删除的记录数"`
+}

@@ -67,3 +67,6 @@ func (c *ControllerV1) MonitorModelPerformance(ctx context.Context, req *v1.Moni
 func (c *ControllerV1) MonitorDispatch(ctx context.Context, req *v1.MonitorDispatchReq) (res *v1.MonitorDispatchRes, err error) {
 	return service.Monitor().Dispatch(ctx, req)
 }
+func (c *ControllerV1) AlertEventClear(ctx context.Context, req *v1.AlertEventClearReq) (res *v1.AlertEventClearRes, err error) {
+	return service.Monitor().AlertEventClear(ctx, req)
+}

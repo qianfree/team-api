@@ -129,6 +129,21 @@ func (s *sAdmin) ErrorLogBatchResolve(ctx context.Context, req *v1.ErrorLogBatch
 	return &v1.ErrorLogBatchResolveRes{}, nil
 }
 
+// ErrorLogClear 硬删除全部错误日志。
+// 系统报错大量堆积时用于快速释放数据库空间：用 TRUNCATE 而非逐行 DELETE，
+// 秒级清空并立即归还磁盘空间（DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，
+// 故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+func (s *sAdmin) ErrorLogClear(ctx context.Context, _ *v1.ErrorLogClearReq) (*v1.ErrorLogClearRes, error) {
+	count, err := dao.SysErrorLogs.Ctx(ctx).Count()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := g.DB().Ctx(ctx).Exec(ctx, "TRUNCATE TABLE sys_error_logs RESTART IDENTITY"); err != nil {
+		return nil, err
+	}
+	return &v1.ErrorLogClearRes{Deleted: int64(count)}, nil
+}
+
 // ErrorLogStats returns error log statistics.
 func (s *sAdmin) ErrorLogStats(ctx context.Context, _ *v1.ErrorLogStatsReq) (*v1.ErrorLogStatsRes, error) {
 	// Total unresolved
