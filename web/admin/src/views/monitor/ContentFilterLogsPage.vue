@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -227,7 +228,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<div>
+	<div class="page-table">
 		<PageHeader title="过滤拦截日志" description="查看内容过滤拦截记录，分析敏感词触发趋势" />
 
 		<a-card :bordered="false" class="mb-4">
@@ -262,21 +263,25 @@ onMounted(() => {
 		</a-card>
 
 		<a-card :bordered="false">
+			<TableStats :total="total" />
 			<a-table
 				:data="data"
 				:columns="columns"
 				:loading="loading"
-				:pagination="{
-					current: pagination.current,
-					pageSize: pagination.pageSize,
-					total: total,
-					showTotal: true,
-					showPageSize: true,
-				}"
-				@page-change="handlePageChange"
-				@page-size-change="handlePageSizeChange"
+				:pagination="false"
 				row-key="id"
 			/>
+			<div class="table-footer">
+				<a-pagination
+					v-model:current="pagination.current"
+					v-model:page-size="pagination.pageSize"
+					:total="total"
+					:page-size-options="[10, 20, 50]"
+					show-page-size
+					@change="handlePageChange"
+					@page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }"
+				/>
+			</div>
 		</a-card>
 	</div>
 </template>

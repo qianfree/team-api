@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -239,7 +240,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="定时任务" description="查看系统定时任务运行状态和执行历史">
       <template #actions>
         <a-button @click="fetchJobs">刷新</a-button>
@@ -247,6 +248,7 @@ onMounted(() => {
     </PageHeader>
 
     <a-card :bordered="false">
+      <TableStats :total="jobs.length" />
       <a-table
         :data="jobs"
         :columns="columns"

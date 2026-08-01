@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const route = useRoute()
@@ -679,6 +680,7 @@ onMounted(() => {
               <template #extra>
                 <AButton type="primary" size="small" @click="openGroupModal">分配分组</AButton>
               </template>
+              <TableStats :total="tenantGroups.length" />
               <div v-if="tenantGroups.length === 0" style="color: var(--ta-text-tertiary)">
                 暂未分配模型分组，租户可通过分组获取可用模型
               </div>
@@ -699,6 +701,7 @@ onMounted(() => {
               <template #extra>
                 <AButton type="primary" size="small" @click="openAssignModal">分配模型</AButton>
               </template>
+              <TableStats :total="modelsData.length" />
               <div v-if="modelsData.length === 0" style="color: var(--ta-text-tertiary)">
                 暂无独立分配的模型
               </div>
@@ -746,24 +749,33 @@ onMounted(() => {
 
                 <!-- Transaction History -->
                 <ACard :bordered="false" title="交易记录">
-                  <div class="mb-4">
-                    <ASpace>
-                      <ASelect v-model="txFilterType" placeholder="全部类型" allow-clear style="width: 140px" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
-                        <AOption value="recharge">充值</AOption>
-                        <AOption value="redemption">兑换码</AOption>
-                        <AOption value="consume">消费</AOption>
-                        <AOption value="adjust">调整</AOption>
-                        <AOption value="pre_deduct">预扣</AOption>
-                        <AOption value="settle">结算</AOption>
-                        <AOption value="refund">退款</AOption>
-                        <AOption value="freeze">冻结</AOption>
-                        <AOption value="unfreeze">解冻</AOption>
-                      </ASelect>
-                    </ASpace>
-                  </div>
+                  <template #extra>
+                    <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
+                      <ARadio value="">全部</ARadio>
+                      <ARadio value="recharge">充值</ARadio>
+                      <ARadio value="redemption">兑换码</ARadio>
+                      <ARadio value="consume">消费</ARadio>
+                      <ARadio value="adjust">调整</ARadio>
+                      <ARadio value="pre_deduct">预扣</ARadio>
+                      <ARadio value="settle">结算</ARadio>
+                      <ARadio value="refund">退款</ARadio>
+                      <ARadio value="freeze">冻结</ARadio>
+                      <ARadio value="unfreeze">解冻</ARadio>
+                    </ARadioGroup>
+                  </template>
                   <ATable :columns="txColumns" :data="txData" :loading="walletLoading" :bordered="false" :stripe="true" :pagination="false" row-key="id" size="small" />
                   <div class="table-footer">
-                    <APagination v-model:current="txPagination.current" v-model:page-size="txPagination.pageSize" :total="txPagination.total" simple @change="fetchWalletDetail" />
+                    <TableStats :total="txPagination.total" />
+                    <APagination
+                      v-model:current="txPagination.current"
+                      v-model:page-size="txPagination.pageSize"
+                      :total="txPagination.total"
+                      :page-size-options="[10, 20, 50]"
+                      show-page-size
+                      show-jumper
+                      @change="fetchWalletDetail"
+                      @page-size-change="() => { txPagination.current = 1; fetchWalletDetail() }"
+                    />
                   </div>
                 </ACard>
               </template>
@@ -995,10 +1007,15 @@ onMounted(() => {
 }
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+.table-footer .table-stats {
+  margin-bottom: 0;
 }
 .tier-card {
   padding: 12px 16px;

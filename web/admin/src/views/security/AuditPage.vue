@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -217,6 +218,7 @@ const { exporting, exportFile } = useExport({
       <!-- Tab 1: Operation Logs -->
       <ATabPane key="logs" title="操作日志">
         <ACard :bordered="false" class="mt-4">
+          <TableStats :total="opPagination.total" />
           <div class="mb-4">
             <ASpace wrap>
               <AInput
@@ -269,6 +271,7 @@ const { exporting, exportFile } = useExport({
       <!-- Tab 2: Sensitive Access Logs -->
       <ATabPane key="sensitive" title="敏感访问日志">
         <ACard :bordered="false" class="mt-4">
+          <TableStats :total="sensPagination.total" />
           <div class="mb-4">
             <ASpace wrap>
               <AInput

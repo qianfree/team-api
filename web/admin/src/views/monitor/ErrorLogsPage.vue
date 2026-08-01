@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -218,7 +219,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="系统错误日志" description="查看和管理系统运行中的错误记录">
       <template #actions>
         <a-button
@@ -283,6 +284,7 @@ onMounted(() => {
 
     <!-- Table -->
     <a-card :bordered="false">
+      <TableStats :total="total" />
       <a-table
         :data="data"
         :columns="columns"
@@ -293,7 +295,7 @@ onMounted(() => {
         row-key="id"
         :row-selection="{ type: 'checkbox', showCheckedAll: true, selectedRowKeys: selectedKeys, onSelect: handleSelection }"
       />
-      <div style="display: flex; justify-content: flex-end; margin-top: 16px">
+      <div class="table-footer">
         <a-pagination
           :current="pagination.current"
           :page-size="pagination.pageSize"

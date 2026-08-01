@@ -6,6 +6,7 @@ import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
@@ -361,6 +362,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1400 }" :bordered="false" :stripe="true" :pagination="false" row-key="id" />
       <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />

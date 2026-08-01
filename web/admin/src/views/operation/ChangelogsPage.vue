@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -165,7 +166,7 @@ onMounted(fetchList)
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="更新日志" description="管理系统版本更新日志">
       <template #actions>
         <AButton type="primary" @click="openCreateModal">创建日志</AButton>
@@ -182,8 +183,9 @@ onMounted(fetchList)
           </div>
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

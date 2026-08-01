@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -308,7 +309,7 @@ onMounted(fetchList)
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="消息管理" description="查看通知消息、发送定向消息和租户广播">
       <template #actions>
         <Space>
@@ -325,8 +326,9 @@ onMounted(fetchList)
           <ASelect v-model="typeFilter" :options="typeOptions" style="width: 120px" allow-clear placeholder="类型筛选" @change="() => { pagination.current = 1; fetchList() }" />
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="messages" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

@@ -6,6 +6,7 @@ import {
   IconFile, IconImage, IconArchive, IconStorage, IconSettings, IconExport,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 
@@ -418,7 +419,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="文件管理" description="对象存储文件观测与清理">
       <template #actions>
         <APopover v-if="hasPermission('system:edit')" trigger="click" position="br">
@@ -464,6 +465,7 @@ onMounted(() => {
 
     <!-- 列表 -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ASpace wrap style="margin-bottom:16px">
         <AInput v-model="filter.tenant_id" placeholder="租户ID" allow-clear style="width:110px" />
         <AInput v-model="filter.user_id" placeholder="上传者ID" allow-clear style="width:110px" />
