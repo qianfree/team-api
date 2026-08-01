@@ -229,11 +229,12 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 查询链路：pln_tenant_plans → pln_plans → pln_plan_model_pricing
 	// 定价优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
 
-	// 4.5 模型倍率（占位 = 1.0）
-	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，模型乘数用于按模型
-	// 稀有度/成本动态加价。当前未接入数据来源（mdl_models 暂无 multiplier 字段），
-	// 故恒为 1.0；bil_records.model_multiplier 仍按此值快照，结算链路保持乘法结构
-	// 不变，未来在 mdl_models 增设 multiplier 字段后只需在此处读取即可启用。
+	// 4.5 模型倍率（预留，当前恒为 1.0 且不参与费用计算）
+	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，但模型乘数这一环尚未启用：
+	//   1) 无数据源：mdl_models 暂无 multiplier 字段，无法读取；
+	//   2) computeCost 实际费用计算只乘 TenantMultiplier，不纳入 ModelMultiplier。
+	// 因此当前实际生效的公式是「基础价格 × 租户乘数」，bil_records.model_multiplier 快照恒为 1.0。
+	// 若要启用模型乘数，需三步：mdl_models 增设 multiplier 字段 → 此处读取 → computeCost 接入乘法。
 	modelMultiplier := 1.0
 
 	result := &PricingResult{
@@ -411,19 +412,22 @@ type CostBreakdown struct {
 }
 
 // EstimatePreDeductAmount 估算预扣金额
-// 非流式：输入 + max_tokens；流式：输入 + 预估上限（模型 max_output_tokens 的 80%）
-// 上限 $1.00
+// 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
+// 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
 func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+	_ = isStream // 预留参数：估算逻辑不再区分流式/非流式，接口签名保持兼容
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return 0, gerror.Wrapf(err, "estimate pre-deduct: get model price")
 	}
 
+	// fail-closed：未配置定价的模型直接拒绝，防止零价计费变成免费放行
+	if err := validatePricingConfigured(pricing, modelName); err != nil {
+		return 0, err
+	}
+
 	// 按次计费：直接用单价
 	if pricing.BillingMode == "per_request" {
-		if pricing.PerRequestPrice > 1.0 {
-			return 1.0, nil
-		}
 		return pricing.PerRequestPrice, nil
 	}
 
@@ -446,11 +450,14 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 	}
 
 	estimatedOutput := requestedMaxTokens
-	if estimatedOutput <= 0 || isStream {
+	if estimatedOutput <= 0 {
 		estimatedOutput = int(float64(maxOutput) * 0.8)
 		if estimatedOutput <= 0 {
 			estimatedOutput = 4096
 		}
+	} else if estimatedOutput > maxOutput {
+		// 用户传入超模型上限的 max_tokens：按模型上限截断，避免过度冻结
+		estimatedOutput = maxOutput
 	}
 
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, estimatedOutput)
@@ -458,14 +465,28 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return 0, gerror.Wrapf(err, "estimate pre-deduct: calculate cost")
 	}
 
-	if breakdown.TotalCost > 1.0 {
-		return 1.0, nil
-	}
 	if breakdown.TotalCost < 0.001 {
 		return 0.001, nil
 	}
 
 	return math.Ceil(breakdown.TotalCost*1000000) / 1000000, nil
+}
+
+// validatePricingConfigured 校验模型定价有效性（fail-closed）。
+// 未配置定价的模型不得放行：零价会让预扣/结算全部为 0，等同免费使用。
+// 允许只配 OutputPrice（输入免费）或只配租户自定义阶梯（CustomTiers）的合法场景。
+func validatePricingConfigured(pricing *PricingResult, modelName string) error {
+	switch pricing.BillingMode {
+	case "per_request":
+		if pricing.PerRequestPrice <= 0 {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_request price not set)", modelName)
+		}
+	default: // token / tiered
+		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && len(pricing.CustomTiers) == 0 {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s", modelName)
+		}
+	}
+	return nil
 }
 
 // pricingTierRow 定价阶梯行（绝对价格）

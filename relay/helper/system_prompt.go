@@ -15,7 +15,7 @@ func InjectSystemPrompt(body []byte, info *common.RelayInfo) []byte {
 		return body
 	}
 
-	nativeFormat := providerNativeFormat(info.ChannelMeta.ChannelType)
+	nativeFormat := ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	switch nativeFormat {
 	case constant.RelayFormatClaude:
 		return injectSystemPromptClaude(body, prompt, info.ChannelMeta.Settings.SystemPromptOverride)
@@ -203,18 +203,6 @@ func prependGeminiSystemInstruction(instrRaw json.RawMessage, prompt string) jso
 
 	b, _ := json.Marshal(instr)
 	return b
-}
-
-// providerNativeFormat 返回供应商的原生请求格式（与 passthrough.go 中的逻辑一致）
-func providerNativeFormat(providerType int) constant.RelayFormat {
-	switch constant.ProviderType(providerType) {
-	case constant.ProviderClaude:
-		return constant.RelayFormatClaude
-	case constant.ProviderGemini:
-		return constant.RelayFormatGemini
-	default:
-		return constant.RelayFormatOpenAI
-	}
 }
 
 // jsonEscapeString 对字符串进行 JSON 转义

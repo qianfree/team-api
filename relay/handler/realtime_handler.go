@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,10 +14,13 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gorilla/websocket"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
+	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
 // websocketUpgrader HTTP → WebSocket 升级器
@@ -151,25 +156,49 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		return nil, nil, constant.NewAuthError("model not allowed for this API key")
 	}
 
-	// 4. 渠道选择
-	var (
-		selection *common.ChannelSelection
-		lease     *channelLease
-		excluded  []int64
-	)
-	for {
-		selection, err = provider.GetChannelForModel(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, excluded)
-		if err != nil {
-			return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, err)
-		}
-		var acquired bool
-		lease, acquired = acquireChannelLease(ctx, provider, selection, rc.RequestID)
-		if acquired {
-			break
-		}
-		excluded = append(excluded, selection.ChannelID)
+	// 4. 渠道选择（新调度引擎；websocket 长连接由续期器保活租约）
+	enabled, channelScope, err := provider.CheckTenantModelAccess(ctx, rc.TenantID, modelName)
+	if err != nil {
+		return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, err)
 	}
-	defer lease.Release()
+	if !enabled {
+		return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, common.ErrTenantModelNotEnabled)
+	}
+	sess := dispatchadapter.Coordinator(ctx).Route(ctx, dispatch.RequestProfile{
+		RequestID: rc.RequestID,
+		TenantID:  rc.TenantID,
+		UserID:    rc.UserID,
+		APIKeyID:  rc.ApiKeyID,
+		Model:     modelName,
+		Scope:     channelScope,
+		Replay:    dispatch.ReplayCostly,
+		Signals:   dispatch.SessionSignals{HeaderSessionID: r.Header.Get("X-Session-Id")},
+		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, rc.TenantID),
+	})
+	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
+
+	var selection *common.ChannelSelection
+	for {
+		d := sess.Next(ctx)
+		if d == nil {
+			monitor.TrackDispatchNoCandidate()
+			return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, common.ErrChannelUnavailable)
+		}
+		monitor.TrackDispatchSelection(string(d.Reason), string(d.Channel.Tier), string(d.SessionKey.Source))
+		sel, mErr := provider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, modelName)
+		if mErr != nil {
+			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {
+				return nil, nil, constant.NewChannelError("no available channel for model: "+modelName, mErr)
+			}
+			continue
+		}
+		sel.SelectionReason = string(d.Reason)
+		selection = sel
+		break
+	}
+	leaseRefresh := startDispatchLeaseRefresher(selection.ChannelID, rc.RequestID)
+	defer leaseRefresh.Stop()
+	realtimeStart := time.Now()
 
 	// 5. 构造 RelayInfo
 	info := &common.RelayInfo{
@@ -227,12 +256,21 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 
 		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 0, 0, false, rc.RequestID)
 		if billErr != nil {
+			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
+			if errors.Is(billErr, common.ErrModelPricingNotConfigured) {
+				return nil, nil, constant.NewRequestError("model pricing not configured: "+modelName, billErr)
+			}
 			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
 		}
 		preDeductAmount = amt
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
+		}
+		// 按实际预扣额复查成员额度（上方 Check(0) 只是冻结前的快速闸门）
+		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
+			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
 
@@ -241,7 +279,8 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	// 8. 建立 Realtime 代理
 	proxy := openai.NewRealtimeProxy(info)
 	if err := proxy.DialUpstream(); err != nil {
-		provider.DeleteChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName)
+		// 拨号失败上报健康（绑定不删除，由守卫自然失效）；realtime 不做跨渠道重试，保持原语义
+		_, _ = sess.Report(ctx, 0, err, deliveryStateOfRequestErr(err), float64(time.Since(realtimeStart).Milliseconds()), 0)
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
@@ -259,8 +298,13 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 
 	// 9. 启动双向代理
 	usage, proxyErr := proxy.Proxy(ctx)
-	if proxyErr == nil && !selection.PreserveAffinity {
-		provider.SetChannelAffinity(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, modelName, selection.ChannelID)
+	if proxyErr == nil {
+		// 成功：绑定续期 + 健康上报由 Finish 完成
+		sess.Finish(context.WithoutCancel(ctx), true, float64(time.Since(realtimeStart).Milliseconds()))
+	} else {
+		// 会话中断：响应已开始，不可重试，仅上报健康
+		_, _ = sess.Report(context.WithoutCancel(ctx), 0, proxyErr, dispatch.DeliveryResponseStarted,
+			float64(time.Since(realtimeStart).Milliseconds()), 0)
 	}
 
 	// 10. 结算费用
@@ -272,14 +316,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			}
 			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID)
-			if settleResult != nil && settleResult.ActualCost > 0 {
+			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		} else if usage != nil {
 			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID)
-			if settleResult != nil && settleResult.ActualCost > 0 {
+			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}

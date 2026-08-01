@@ -279,7 +279,7 @@ type (
 		ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUsageStatsReq) (*v1.TenantProjectUsageStatsRes, error)
 		// ProjectUsageLogs 获取项目用量日志（分页）（owner/admin 权限）
 		ProjectUsageLogs(ctx context.Context, req *v1.TenantProjectUsageLogsReq) (*v1.TenantProjectUsageLogsRes, error)
-		// ValidatePromoCode 校验优惠码并返回折扣金额
+		// ValidatePromoCode 校验优惠码并返回折扣金额（只读预检端点，不加锁、不消耗用量）
 		ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error)
 		// RedeemCode 租户兑换码
 		RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (*v1.TenantRedeemCodeRes, error)

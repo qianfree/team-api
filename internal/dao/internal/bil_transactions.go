@@ -24,7 +24,7 @@ type BilTransactionsColumns struct {
 	Id           string // 主键ID
 	TenantId     string // 租户ID
 	WalletId     string // 关联钱包ID
-	Type         string // 类型：consume（消费）/ recharge（充值）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ refund（退款，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）
+	Type         string // 类型：consume（消费）/ recharge（充值入账）/ redemption（兑换码入账）/ refund（退款扣回）/ adjust（调整）/ pre_deduct（预扣，已废弃）/ settle（结算，已废弃）/ freeze（冻结，已废弃）/ unfreeze（解冻，已废弃）
 	Amount       string // 变动金额（正数=收入，负数=支出）
 	BalanceAfter string // 变动后总余额
 	FrozenAfter  string // 变动后冻结余额

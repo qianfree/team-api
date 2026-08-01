@@ -45,8 +45,10 @@ func CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmou
 
 	if info.QuotaType == "periodic" {
 		if needsReset(info) {
-			resetMemberQuota(ctx, tenantID, userID)
-			info.QuotaUsed = 0
+			if resetMemberQuota(ctx, tenantID, userID) {
+				info.QuotaUsed = 0
+			}
+			// 重置失败：保留旧 quota_used 参与本次判定（宁可误限一笔，不放飞额度），下次请求自动重试重置
 		}
 	}
 
@@ -58,6 +60,9 @@ func CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmou
 }
 
 // IncrMemberQuotaUsed increments the member's used quota after settlement.
+// 无条件累加（允许最后一笔超冲）：额度是控制线而非资金线，钱包预扣已兜底资金安全。
+// 若在此处按限额拒绝累加，quota_used 会永远停在限额之下，导致 CheckMemberQuota
+// 永远放行、额度被无限绕过；累加后超限由下一次 CheckMemberQuota 拦截。
 func IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount float64) {
 	if amount <= 0 {
 		return
@@ -66,9 +71,7 @@ func IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount flo
 	result, err := g.DB().Exec(ctx,
 		`UPDATE tnt_users
 		 SET quota_used = COALESCE(quota_used, 0) + $1, updated_at = $2
-		 WHERE id = $3 AND tenant_id = $4
-		   AND (COALESCE(quota_type, 'none') IN ('', 'none')
-		        OR COALESCE(quota_used, 0) + $1 <= COALESCE(quota_limit, 0))`,
+		 WHERE id = $3 AND tenant_id = $4`,
 		amount, time.Now(), userID, tenantID)
 	if err != nil {
 		g.Log().Errorf(ctx, "member_quota: atomic incr failed tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, err)
@@ -80,7 +83,7 @@ func IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount flo
 		return
 	}
 	if affected == 0 {
-		g.Log().Warningf(ctx, "member_quota: settlement increment rejected by quota limit tenant=%d user=%d amount=%f", tenantID, userID, amount)
+		g.Log().Errorf(ctx, "member_quota: settlement increment target user not found tenant=%d user=%d amount=%f", tenantID, userID, amount)
 		return
 	}
 	InvalidateMemberQuotaCache(ctx, tenantID, userID)
@@ -190,27 +193,26 @@ func sameMonth(a, b time.Time) bool {
 	return a.Year() == b.Year() && a.Month() == b.Month()
 }
 
-func resetMemberQuota(ctx context.Context, tenantID, userID int64) {
-	key := memberQuotaRedisKey(tenantID, userID)
+// resetMemberQuota 周期额度重置：先同步落 DB（权威状态），成功后失效 Redis 缓存。
+// DB 失败返回 false，调用方按旧 quota_used 继续判定，下次请求自动重试；
+// 不再异步写 DB——进程退出/写失败会导致 Redis 缓存过期后读回未重置的旧值，重置状态回滚。
+func resetMemberQuota(ctx context.Context, tenantID, userID int64) bool {
 	now := time.Now().UTC()
 
-	_, _ = g.Redis().Do(ctx, "HSET", key,
-		"quota_used", 0,
-		"quota_reset_at", now.Unix(),
-	)
+	_, err := dao.TntUsers.Ctx(ctx).
+		Where("id", userID).
+		Where("tenant_id", tenantID).
+		Data(do.TntUsers{
+			QuotaUsed:    0,
+			QuotaResetAt: gtime.New(now),
+		}).
+		Update()
+	if err != nil {
+		g.Log().Errorf(ctx, "member_quota: reset db failed tenant=%d user=%d: %v", tenantID, userID, err)
+		return false
+	}
 
-	go func() {
-		bgCtx := context.Background()
-		_, err := dao.TntUsers.Ctx(bgCtx).
-			Where("id", userID).
-			Where("tenant_id", tenantID).
-			Data(do.TntUsers{
-				QuotaUsed:    0,
-				QuotaResetAt: gtime.New(now),
-			}).
-			Update()
-		if err != nil {
-			g.Log().Errorf(bgCtx, "member_quota: reset db failed tenant=%d user=%d: %v", tenantID, userID, err)
-		}
-	}()
+	// DB 已重置：直接失效缓存，下次 loadMemberQuota 从 DB 读到新状态（比 HSET 局部字段更不易漂移）
+	InvalidateMemberQuotaCache(ctx, tenantID, userID)
+	return true
 }

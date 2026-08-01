@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // Adaptor Ollama 供应商适配器
@@ -166,6 +167,17 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
+	// 阶段 5：relaykit 响应转换路径（仅 chat；generate/embedding 不迁移，走旧路径）
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+		if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
+			return usage, nil
+		}
+		return &common.Usage{}, nil
+	}
+
 	var ollamaResp OllamaChatResponse
 	if err := json.Unmarshal(body, &ollamaResp); err != nil {
 		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
@@ -216,6 +228,11 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
+	// 阶段 5：relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
+	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		return usage, nil
+	}
+
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
@@ -225,11 +242,14 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	scanner.Buffer(buf, 10*1024*1024)
 
 	var usage common.Usage
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -276,6 +296,7 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		}
 
 		// 构建 OpenAI 流式 chunk
+		transferredTextLen += len(ollamaResp.Message.Content)
 		chunk := dto.ChatCompletionStreamResponse{
 			ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
 			Object: "chat.completion.chunk",
@@ -373,11 +394,14 @@ func (a *Adaptor) handleGenerateStreamResponse(ctx context.Context, resp *http.R
 	scanner.Buffer(buf, 10*1024*1024)
 
 	var usage common.Usage
+	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -432,6 +456,7 @@ func (a *Adaptor) handleGenerateStreamResponse(ctx context.Context, resp *http.R
 				},
 			},
 		}
+		transferredTextLen += len(ollamaResp.Response)
 		writeStreamChunk(writer, &chunk)
 	}
 

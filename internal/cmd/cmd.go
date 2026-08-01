@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -18,6 +19,7 @@ import (
 	openController "github.com/qianfree/team-api/internal/controller/open"
 	settingsController "github.com/qianfree/team-api/internal/controller/settings"
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -98,6 +100,9 @@ var (
 			// Initialize monitoring collector
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
+			monitor.InitRelaykitTracker()
+			monitor.InitDispatchTracker()
+			dispatchadapter.SetBreakerOpenHook(monitor.TrackDispatchBreakerOpen)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {
@@ -360,6 +365,14 @@ func registerCronJobs(cs *common.CronScheduler) {
 		}
 		return task.ScheduleAutoCleanup(ctx, retentionDays)
 	})
+	cs.Register("usage_daily_aggregate", "0 1 * * *", func(ctx context.Context) error {
+		// 用量日维度聚合：将 bil_usage_logs 聚合进 bil_usage_daily，供流量桑基图与趋势分析。
+		// 自愈：每次重算最近 3 个完整天，覆盖短暂宕机；ON CONFLICT 保证幂等。
+		// end 取今天 00:00（开区间），永不聚合当天进行中的数据。
+		end := time.Now().Format("2006-01-02")
+		start := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+		return task.AggregateUsageRange(ctx, start, end)
+	})
 	cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
 		return task.RefreshExpiringOAuthTokens(ctx)
 	})
@@ -370,6 +383,12 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
 		billing.CleanSettledPreDeductTracks(ctx)
 		return nil
+	})
+	cs.Register("billing_daily_reconciliation", "20 5 * * *", func(ctx context.Context) error {
+		// 日对账：聚合对账（bil_records vs bil_transactions）+ 交叉对账（usage_logs 反连接
+		// 发现漏结算免单请求）+ 冻结余额一致性校验，结果经日志告警
+		_, err := billing.RunDailyReconciliation(ctx)
+		return err
 	})
 	cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
 		if common.Config().GetBool(ctx, "update_auto_check_enabled") {

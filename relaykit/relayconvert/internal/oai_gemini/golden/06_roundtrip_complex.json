@@ -1,0 +1,119 @@
+{
+  "name": "roundtrip_complex",
+  "from": "openai",
+  "to": "gemini",
+  "request": {
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant with reasoning capabilities."
+      },
+      {
+        "role": "user",
+        "content": "Solve this problem: 2 + 2 = ?"
+      }
+    ],
+    "temperature": 0.5,
+    "max_tokens": 2048,
+    "reasoning_effort": "medium"
+  },
+  "response": {
+    "modelName": "gemini-2.0-flash-exp",
+    "candidates": [
+      {
+        "index": 0,
+        "finishReason": "STOP",
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Let me think about this step by step."
+            },
+            {
+              "thought": true,
+              "text": "I need to add 2 and 2 together."
+            },
+            {
+              "text": "The answer is 4."
+            }
+          ]
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 15,
+      "candidatesTokenCount": 25,
+      "totalTokenCount": 40
+    }
+  },
+  "expected_request": {
+    "system_instruction": {
+      "parts": [
+        {
+          "text": "You are a helpful assistant with reasoning capabilities."
+        }
+      ]
+    },
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Solve this problem: 2 + 2 = ?"
+          }
+        ]
+      }
+    ],
+    "generation_config": {
+      "temperature": 0.5,
+      "top_p": null,
+      "max_output_tokens": 2048,
+      "thinking_config": {
+        "include_thoughts": true,
+        "thought_budget": 8192,
+        "thinking_level": "MEDIUM"
+      }
+    },
+    "safety_settings": [
+      {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      }
+    ]
+  },
+  "expected_response": {
+    "id": "chatcmpl-1700000000",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gemini-2.0-flash-exp",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Let me think about this step by step.The answer is 4.",
+          "reasoning_content": "I need to add 2 and 2 together."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 15,
+      "completion_tokens": 25,
+      "total_tokens": 40
+    }
+  },
+  "converter_id": "roundtrip_oai_gemini_oai"
+}

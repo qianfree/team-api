@@ -6,6 +6,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -191,9 +192,32 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
+// 转发路径追踪（从审计日志按 request_id 懒加载，用量日志表不存 trace）
+const forwardingTrace = ref<any>(null)
+const forwardingTraceLoading = ref(false)
+const forwardingTraceFound = ref(false)
+
+async function fetchForwardingTrace(requestId: string) {
+	forwardingTrace.value = null
+	forwardingTraceFound.value = false
+	if (!requestId) return
+	forwardingTraceLoading.value = true
+	try {
+		const res: any = await request.get(`/admin/audit/forwarding-trace/${encodeURIComponent(requestId)}`)
+		const d = res.data?.data
+		forwardingTraceFound.value = !!d?.found
+		forwardingTrace.value = d?.forwarding_trace || null
+	} catch {
+		/* 静默：trace 为辅助信息，失败不打扰用户 */
+	} finally {
+		forwardingTraceLoading.value = false
+	}
+}
+
 function openDetail(record: any) {
 	detailLog.value = record
 	detailVisible.value = true
+	fetchForwardingTrace(record.request_id)
 }
 
 function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
@@ -836,9 +860,9 @@ const { exporting, exportFile } = useExport({
 							<div class="snapshot-block">
 								<div class="snapshot-block-title">倍率信息</div>
 								<div class="snapshot-block-body">
-									<div class="snapshot-row">
+									<div v-if="parseSnapshot(detailLog).multipliers.model_multiplier && parseSnapshot(detailLog).multipliers.model_multiplier !== 1" class="snapshot-row">
 										<span class="snapshot-label">模型倍率</span>
-										<span class="snapshot-value">{{ (parseSnapshot(detailLog).multipliers.model_multiplier || 1).toFixed(4) }}x</span>
+										<span class="snapshot-value">{{ (parseSnapshot(detailLog).multipliers.model_multiplier).toFixed(4) }}x</span>
 									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">租户倍率</span>
@@ -925,6 +949,17 @@ const { exporting, exportFile } = useExport({
 						错误信息
 					</div>
 					<div class="error-message">{{ detailLog.error_message }}</div>
+				</div>
+
+				<div class="detail-section">
+					<div class="detail-section-title">
+						转发路径追踪
+					</div>
+					<a-spin :loading="forwardingTraceLoading" class="w-full">
+						<ForwardingTracePanel v-if="forwardingTrace" :trace="forwardingTrace" />
+						<a-empty v-else-if="!forwardingTraceLoading && !forwardingTraceFound" description="该请求未开启审计，无转发追踪数据" />
+						<a-empty v-else-if="!forwardingTraceLoading && forwardingTraceFound" description="审计已记录，但未捕获转发追踪" />
+					</a-spin>
 				</div>
 			</template>
 		</a-modal>

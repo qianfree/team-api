@@ -31,20 +31,13 @@ const values = useFormValues()
 			<div class="section-title">自动禁用</div>
 			<div class="switch-row">
 				<span class="switch-label">渠道自动禁用</span>
-				<span class="switch-desc">连续失败达到阈值时自动禁用渠道</span>
+				<span class="switch-desc">渠道熔断持续超过路由策略 breaker.autoDisableAfterSeconds（默认 10 分钟）未恢复时自动禁用</span>
 				<ASwitch
 					:model-value="!!values['channel_auto_disable_enabled']"
 					@change="(v: string | number | boolean) => values['channel_auto_disable_enabled'] = v"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">
-				<AFormItem label="自动禁用失败阈值">
-					<AInputNumber
-						:model-value="values['channel_auto_disable_threshold'] as number"
-						@change="(v: number | undefined) => values['channel_auto_disable_threshold'] = v ?? 5"
-						:min="2" :max="50" style="width: 100%"
-					/>
-				</AFormItem>
 				<AFormItem label="健康快照保留天数">
 					<AInputNumber
 						:model-value="values['health_snapshot_retention_days'] as number"
@@ -52,6 +45,24 @@ const values = useFormValues()
 						:min="1" :max="90" style="width: 100%"
 					/>
 				</AFormItem>
+			</div>
+		</div>
+
+		<!-- 路由策略 -->
+		<div class="section">
+			<div class="section-title">路由策略</div>
+			<AFormItem label="路由策略覆盖（JSON）">
+				<ATextarea
+					:model-value="values['channel_routing_policy'] as string"
+					@input="(v: string) => values['channel_routing_policy'] = v"
+					:auto-size="{ minRows: 4, maxRows: 12 }"
+					placeholder='{"tierFactors":{"secondary":0.3},"breaker":{"failThreshold":5}}'
+					allow-clear
+				/>
+			</AFormItem>
+			<div class="section-desc">
+				渠道调度引擎策略，部分字段覆盖内置默认值，保存后 30 秒内热生效；留空使用全部默认。
+				保存时会校验 JSON 合法性与取值范围。字段说明见 docs/reference/渠道调度运维手册.md。
 			</div>
 		</div>
 

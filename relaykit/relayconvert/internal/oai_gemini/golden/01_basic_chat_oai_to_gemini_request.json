@@ -1,0 +1,64 @@
+{
+  "name": "basic_chat_oai_to_gemini_request",
+  "from": "openai",
+  "to": "gemini",
+  "request": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "system"
+      },
+      {
+        "content": "Hello, how are you?",
+        "role": "user"
+      }
+    ],
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
+  "expected_request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hello, how are you?"
+          }
+        ]
+      }
+    ],
+    "safetySettings": [
+      {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      },
+      {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_ONLY_HIGH"
+      }
+    ],
+    "generationConfig": {
+      "temperature": 0.7,
+      "topP": 0.9,
+      "maxOutputTokens": 1024
+    },
+    "systemInstruction": {
+      "role": "",
+      "parts": [
+        {
+          "text": "You are a helpful assistant."
+        }
+      ]
+    }
+  },
+  "converter_id": "oai_chat_to_gemini_content"
+}

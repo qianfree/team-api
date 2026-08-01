@@ -257,7 +257,6 @@ func StartCacheInvalidationSubscriber(ctx context.Context) {
 
 				// 仅移除本进程 L1；L2(Redis) 由发布方已 DEL，无需重复处理
 				gcache.Remove(ctx, msg.Payload)
-				g.Log().Debugf(ctx, "[PubSub:cache] L1 已失效: %s", msg.Payload)
 			}
 
 			conn.Close(ctx)

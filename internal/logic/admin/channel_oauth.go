@@ -20,9 +20,10 @@ import (
 
 // 平台到渠道类型的映射
 var platformToChannelType = map[string]int{
-	"claude": 2, // ProviderClaude
-	"openai": 1, // ProviderOpenAI
-	"gemini": 3, // ProviderGemini
+	"claude": 2,  // ProviderClaude
+	"openai": 1,  // ProviderOpenAI
+	"gemini": 3,  // ProviderGemini
+	"codex":  35, // ProviderCodex（直连 chatgpt.com 官方后端）
 }
 
 // 平台默认 base_url
@@ -30,6 +31,7 @@ var platformDefaultBaseURL = map[string]string{
 	"claude": "https://api.anthropic.com",
 	"openai": "https://api.openai.com",
 	"gemini": "https://generativelanguage.googleapis.com",
+	"codex":  "https://chatgpt.com",
 }
 
 // ChannelOAuthAuthURL 生成 OAuth 授权链接
@@ -78,6 +80,9 @@ func (s *sAdmin) ChannelOAuthAuthURL(ctx context.Context, req *v1.ChannelOAuthAu
 		authURL, sessionID, err = oauth.ClaudeGenerateAuthURL(scope)
 	case "openai":
 		authURL, sessionID, err = oauth.OpenAIGenerateAuthURL()
+	case "codex":
+		// Codex 与 OpenAI 共用同一套 OAuth 授权流，仅 platform 标记为 codex（建渠道时得到 type=35）
+		authURL, sessionID, err = oauth.OpenAIGenerateAuthURLForPlatform("codex")
 	case "gemini":
 		authURL, sessionID, err = oauth.GeminiGenerateAuthURL(req.OAuthType)
 	default:
@@ -109,6 +114,8 @@ func (s *sAdmin) ChannelOAuthExchange(ctx context.Context, req *v1.ChannelOAuthE
 		oauthData, err = oauth.ClaudeExchangeCode(req.SessionID, req.Code)
 	case "openai":
 		oauthData, err = oauth.OpenAIExchangeCode(req.SessionID, req.Code, req.State)
+	case "codex":
+		oauthData, err = oauth.OpenAIExchangeCodeForPlatform("codex", req.SessionID, req.Code, req.State)
 	case "gemini":
 		oauthData, err = oauth.GeminiExchangeCode(req.SessionID, req.Code)
 	default:
@@ -175,7 +182,7 @@ func (s *sAdmin) ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRe
 	switch oauthData.Platform {
 	case "claude":
 		newToken, err = oauth.ClaudeRefreshToken(oauthData.RefreshToken)
-	case "openai":
+	case "openai", "codex":
 		newToken, err = oauth.OpenAIRefreshToken(oauthData.RefreshToken)
 	case "gemini":
 		newToken, err = oauth.GeminiRefreshToken(oauthData.RefreshToken)
@@ -317,6 +324,8 @@ func platformTitle(platform string) string {
 		return "Claude"
 	case "openai":
 		return "OpenAI"
+	case "codex":
+		return "Codex"
 	case "gemini":
 		return "Gemini"
 	default:

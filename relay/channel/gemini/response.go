@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // codeAssistWrapper Code Assist 响应包装层
@@ -26,7 +27,12 @@ type codeAssistWrapper struct {
 // 标准格式：{GeminiChatResponse}
 func unwrapCodeAssistData(data []byte) []byte {
 	var wrapper codeAssistWrapper
-	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Response != nil {
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		// 解析失败：日志记录，返回原数据（可能是标准格式或格式错误）
+		// 不在这里打 Debug 日志，因为标准格式也会走到这个分支（预期行为）
+		return data
+	}
+	if wrapper.Response != nil {
 		return wrapper.Response
 	}
 	return data
@@ -64,7 +70,11 @@ func (a *Adaptor) handleGeminiNativeNonStream(ctx context.Context, resp *http.Re
 	_, _ = writer.Write(body)
 
 	var geminiResp dto.GeminiChatResponse
-	if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
+	if err := json.Unmarshal(body, &geminiResp); err != nil {
+		// Usage 解析失败，返回空 Usage（静默处理，非致命错误）
+		return &common.Usage{}, nil
+	}
+	if geminiResp.UsageMetadata != nil {
 		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
 	}
 	return &common.Usage{}, nil
@@ -96,7 +106,10 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return &common.Usage{}, common.ErrStreamInterrupted
+			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
+			interruptedUsage := geminiUsageToCommon(&totalUsage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -130,7 +143,9 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 						rawData = unwrapped
 					}
 					var geminiResp dto.GeminiChatResponse
-					if jsonErr := json.Unmarshal(rawData, &geminiResp); jsonErr == nil {
+					if jsonErr := json.Unmarshal(rawData, &geminiResp); jsonErr != nil {
+						// JSON 解析失败：静默跳过
+					} else {
 						if geminiResp.UsageMetadata != nil {
 							totalUsage = *geminiResp.UsageMetadata
 						}
@@ -173,6 +188,22 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
+	// 阶段 4：relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+
+		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Gemini 响应提取
+		var geminiResp dto.GeminiChatResponse
+		if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
+			return geminiUsageToCommon(geminiResp.UsageMetadata), nil
+		}
+		// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
+		return &common.Usage{}, nil
+	}
+
+	// 旧代码路径（relaykit 未启用或失败回退）
 	var geminiResp dto.GeminiChatResponse
 	if err := json.Unmarshal(body, &geminiResp); err != nil {
 		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
@@ -209,6 +240,11 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
+	// 阶段 4 Task4：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		return usage, nil
+	}
+
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()
@@ -229,7 +265,10 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return &common.Usage{}, common.ErrStreamInterrupted
+			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
+			interruptedUsage := geminiUsageToCommon(&totalUsage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
