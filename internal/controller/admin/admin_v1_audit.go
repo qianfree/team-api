@@ -31,3 +31,6 @@ func (c *ControllerV1) OperationLogExport(ctx context.Context, req *v1.Operation
 func (c *ControllerV1) ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (res *v1.ContentFilterLogListRes, err error) {
 	return service.Admin().ContentFilterLogList(ctx, req)
 }
+func (c *ControllerV1) ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (res *v1.ForwardingTraceGetRes, err error) {
+	return service.Admin().ForwardingTraceGet(ctx, req)
+}

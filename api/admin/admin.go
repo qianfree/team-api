@@ -34,6 +34,7 @@ type IAdminV1 interface {
 	SensitiveLogList(ctx context.Context, req *v1.SensitiveLogListReq) (res *v1.SensitiveLogListRes, err error)
 	RequestAuditLogList(ctx context.Context, req *v1.RequestAuditLogListReq) (res *v1.RequestAuditLogListRes, err error)
 	RequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (res *v1.RequestAuditLogDetailRes, err error)
+	ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (res *v1.ForwardingTraceGetRes, err error)
 	OperationLogExport(ctx context.Context, req *v1.OperationLogExportReq) (res *v1.OperationLogExportRes, err error)
 	ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (res *v1.ContentFilterLogListRes, err error)
 	AdminLogin(ctx context.Context, req *v1.AdminLoginReq) (res *v1.AdminLoginRes, err error)

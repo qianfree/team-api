@@ -60,6 +60,10 @@ type (
 		ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error)
 		// GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 		GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error)
+		// ForwardingTraceGet 按 request_id 查询请求转发路径追踪（仅管理员，用量日志详情懒加载用）。
+		// 从审计库查询 aud_request_logs（可能独立于主库），仅取 forwarding_trace 与 audit_level 两列。
+		// 一个 request_id 仅对应一条审计记录（任务完成审计为 UPDATE 非 INSERT），OrderDesc 取最新为防御性兜底。
+		ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (*v1.ForwardingTraceGetRes, error)
 		// ExportOperationLogs exports operation logs to CSV or Excel.
 		ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error)
 		// ContentFilterLogList returns a paginated list of content filter interception logs.
@@ -323,7 +327,14 @@ type (
 		ListOrders(ctx context.Context, req *v1.OrderListReq) (*v1.OrderListRes, error)
 		// GetOrder 获取订单详情
 		GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.OrderDetailRes, error)
-		// RefundOrder 发起退款
+		// RefundOrder 发起退款（线上侧一步完成：状态流转 + 权益收回；渠道打款由管理员线下原路退回）。
+		//
+		// 退款语义（与《系统货币规则》对齐）：
+		//   - 退款认订单原始 CNY 金额（ord_ 层永远 CNY），线下按此金额原路退给用户；
+		//   - 已履约的充值订单必须按【履约当时入账的 USD】原额扣回钱包（从入账流水取值，
+		//     禁止按当前汇率反算，防止汇率波动套利）；
+		//   - 已履约的套餐订单撤销对应的活跃订阅；
+		//   - 已支付未履约（paid）的订单权益尚未发放，仅做状态流转。
 		RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error)
 		// OrderComplete 手动完成订单
 		OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error)
