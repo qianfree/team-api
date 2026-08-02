@@ -349,6 +349,10 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 	}
 }
 
+// maxAuditBodyLen 审计日志请求体/响应体/任务结果的字节截断上限（2 KiB）。
+// 落库前由 truncateBody 统一截断；流式响应保留首部 + 末尾若干 SSE 消息。
+const maxAuditBodyLen = 2048
+
 // RecordAudit 实现 DataProvider.RecordAudit
 // 异步写入请求审计日志，同时按系统级别和租户级别分别处理请求/响应体
 func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.AuditRecord) {
@@ -378,7 +382,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
 
 		// 截断过长的内容
-		maxBodyLen := 65536
+		maxBodyLen := maxAuditBodyLen
 		sysReq, sysResp = truncateBody(sysReq, maxBodyLen), truncateBody(sysResp, maxBodyLen)
 		tntReq, tntResp = truncateBody(tntReq, maxBodyLen), truncateBody(tntResp, maxBodyLen)
 
@@ -472,7 +476,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		} else if globalLevel == lcommon.AuditLevelMasked {
 			taskResult = lcommon.MaskSensitiveData(taskResult)
 		}
-		taskResult = truncateBody(taskResult, 65536)
+		taskResult = truncateBody(taskResult, maxAuditBodyLen)
 
 		// 上游响应头仅在 full 级别记录
 		upstreamHeadersJSON := "null"
