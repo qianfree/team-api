@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
 )
@@ -26,6 +27,9 @@ type UsageLogWriterConfig struct {
 	FlushInterval time.Duration
 	Workers       int
 	Overflow      OverflowPolicy
+	// DB 可选：返回本次写入使用的数据库实例。为 nil 时使用默认库 g.DB()。
+	// 审计日志等需落到独立审计库（database.audit 分组）时传入 GetAuditDB。
+	DB func() gdb.DB
 }
 
 // WriterStats 写入器统计
@@ -45,6 +49,7 @@ type UsageLogWriter struct {
 	flushInterval time.Duration
 	workers       int
 	overflow      OverflowPolicy
+	db            func() gdb.DB
 
 	submitted atomic.Int64
 	completed atomic.Int64
@@ -99,6 +104,7 @@ func NewUsageLogWriter(cfg UsageLogWriterConfig) *UsageLogWriter {
 		flushInterval: cfg.FlushInterval,
 		workers:       cfg.Workers,
 		overflow:      cfg.Overflow,
+		db:            cfg.DB,
 		stopCh:        make(chan struct{}),
 	}
 }
@@ -122,7 +128,7 @@ func (w *UsageLogWriter) Submit(record any) {
 		case w.queue <- record:
 		default:
 			ctx := gctx.New()
-			if _, err := g.DB().Model(w.table).Ctx(ctx).Data(record).Insert(); err != nil {
+			if _, err := w.dbInstance().Model(w.table).Ctx(ctx).Data(record).Insert(); err != nil {
 				w.failed.Add(1)
 				g.Log().Errorf(ctx, "usage_log_writer: sync fallback insert failed: %v", err)
 			} else {
@@ -213,6 +219,15 @@ func (w *UsageLogWriter) runWorker(id int) {
 	}
 }
 
+// dbInstance 返回本次写入使用的数据库实例：配置了自定义 DB 函数（如独立审计库）时优先使用，
+// 否则回退到默认库。
+func (w *UsageLogWriter) dbInstance() gdb.DB {
+	if w.db != nil {
+		return w.db()
+	}
+	return g.DB()
+}
+
 // flushBatch 批量写入数据库
 func (w *UsageLogWriter) flushBatch(records []any) {
 	if len(records) == 0 {
@@ -222,7 +237,7 @@ func (w *UsageLogWriter) flushBatch(records []any) {
 	copy(batch, records)
 
 	ctx := gctx.New()
-	_, err := g.DB().Model(w.table).Ctx(ctx).Data(batch).Batch(len(batch)).Insert()
+	_, err := w.dbInstance().Model(w.table).Ctx(ctx).Data(batch).Batch(len(batch)).Insert()
 	if err != nil {
 		w.failed.Add(int64(len(batch)))
 		g.Log().Errorf(ctx, "usage_log_writer: batch insert %d records failed: %v", len(batch), err)

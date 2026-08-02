@@ -63,30 +63,43 @@ func CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmou
 // 无条件累加（允许最后一笔超冲）：额度是控制线而非资金线，钱包预扣已兜底资金安全。
 // 若在此处按限额拒绝累加，quota_used 会永远停在限额之下，导致 CheckMemberQuota
 // 永远放行、额度被无限绕过；累加后超限由下一次 CheckMemberQuota 拦截。
+// 累加动作放 fire-and-forget goroutine 异步执行：额度是控制线允许最终一致，不阻塞请求
+// goroutine 与 DB 连接，落库方式与 RecordAudit 的异步审计写入保持一致。
+// ctx 仅用于脱父级取消（WithoutCancel 保留链路值），客户端断开不再中断本次累加与缓存失效。
 func IncrMemberQuotaUsed(ctx context.Context, tenantID, userID int64, amount float64) {
 	if amount <= 0 {
 		return
 	}
 
-	result, err := g.DB().Exec(ctx,
-		`UPDATE tnt_users
-		 SET quota_used = COALESCE(quota_used, 0) + $1, updated_at = $2
-		 WHERE id = $3 AND tenant_id = $4`,
-		amount, time.Now(), userID, tenantID)
-	if err != nil {
-		g.Log().Errorf(ctx, "member_quota: atomic incr failed tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, err)
-		return
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		g.Log().Errorf(ctx, "member_quota: inspect incr result failed tenant=%d user=%d: %v", tenantID, userID, err)
-		return
-	}
-	if affected == 0 {
-		g.Log().Errorf(ctx, "member_quota: settlement increment target user not found tenant=%d user=%d amount=%f", tenantID, userID, amount)
-		return
-	}
-	InvalidateMemberQuotaCache(ctx, tenantID, userID)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.Log().Errorf(context.Background(),
+					"member_quota: incr panic tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, r)
+			}
+		}()
+		bgCtx := context.WithoutCancel(ctx)
+
+		result, err := g.DB().Exec(bgCtx,
+			`UPDATE tnt_users
+			 SET quota_used = COALESCE(quota_used, 0) + $1, updated_at = $2
+			 WHERE id = $3 AND tenant_id = $4`,
+			amount, time.Now(), userID, tenantID)
+		if err != nil {
+			g.Log().Errorf(bgCtx, "member_quota: atomic incr failed tenant=%d user=%d amount=%f: %v", tenantID, userID, amount, err)
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			g.Log().Errorf(bgCtx, "member_quota: inspect incr result failed tenant=%d user=%d: %v", tenantID, userID, err)
+			return
+		}
+		if affected == 0 {
+			g.Log().Errorf(bgCtx, "member_quota: settlement increment target user not found tenant=%d user=%d amount=%f", tenantID, userID, amount)
+			return
+		}
+		InvalidateMemberQuotaCache(bgCtx, tenantID, userID)
+	}()
 }
 
 // InvalidateMemberQuotaCache removes the Redis cache for a member's quota.
