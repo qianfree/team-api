@@ -115,9 +115,6 @@ type (
 		GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) (*v1.ChannelKeyListRes, error)
 		// GetChannelAbilities 获取渠道模型能力列表
 		GetChannelAbilities(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (*v1.ChannelAbilitiesGetRes, error)
-		// ImportChannelCostRatios 批量导入渠道模型成本比例（CSV 由前端解析为条目提交）。
-		// 只更新已存在的能力记录，未匹配的条目返回在 skipped 中；成功后触发目录失效。
-		ImportChannelCostRatios(ctx context.Context, req *v1.ChannelCostRatioImportReq) (*v1.ChannelCostRatioImportRes, error)
 		// GetProviderDefaultURLs 获取供应商默认 API 地址
 		GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefaultURLReq) (*v1.ProviderDefaultURLRes, error)
 		// GetChannelHealthTrend 获取渠道健康趋势数据
