@@ -866,6 +866,12 @@ func InitHealthScore(ctx context.Context, channelID int64) error {
 // MaterializeSelection 由新调度引擎的决策构造 ChannelSelection（阶段 3）：
 // 转发元数据来自目录内存快照（零 DB），渠道 Key 按 keyID 解密（keyID=0 回退取首个 active Key）。
 func (p *DataProviderImpl) MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*common.ChannelSelection, error) {
+	// 优先检查上下文：客户端已断开时直接返回 ctx.Err()，而非 ErrChannelUnavailable，
+	// 让上层能区分"客户端断开"与"真实渠道无可用 Key"，避免误伤渠道健康评分
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	catalog := dispatchadapter.CatalogInstance()
 	if catalog == nil {
 		return nil, common.ErrChannelUnavailable
@@ -883,6 +889,10 @@ func (p *DataProviderImpl) MaterializeSelection(ctx context.Context, channelID, 
 		apiKey, err = getChannelKey(ctx, channelID)
 	}
 	if err != nil || apiKey == "" {
+		// Key 查询失败：再次检查 ctx，区分"客户端断开导致查询中断"与"真实无可用 Key"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, common.ErrChannelUnavailable
 	}
 
