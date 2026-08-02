@@ -98,6 +98,24 @@ type AdminDashboardRecentAlertsRes struct {
 	List []RecentAlertItem `json:"list"`
 }
 
+// 模型费用按小时堆叠统计（堆叠柱状图）
+type AdminDashboardModelHourlyReq struct {
+	g.Meta `path:"/dashboard/model-hourly-cost" method:"get" mime:"json" tags:"管理后台-仪表盘" summary:"模型小时费用堆叠"`
+	Hours  int `json:"hours" d:"24" v:"between:1,168" dc:"统计小时数（rolling，最近 N 小时）"`
+	TopN   int `json:"top_n" d:"8" v:"between:1,20" dc:"展示模型数量（其余归为其他）"`
+}
+
+type ModelHourlySeriesItem struct {
+	Model string    `json:"model"`
+	Data  []float64 `json:"data"` // 对应 Hours 各时间点的费用
+}
+
+type AdminDashboardModelHourlyRes struct {
+	Hours  []string                `json:"hours"`  // X 轴时间标签
+	Models []string                `json:"models"` // 图例（含"其他"）
+	Series []ModelHourlySeriesItem `json:"series"` // 每个模型一条 series
+}
+
 // === 用量日志 ===
 
 type AdminUsageLogListReq struct {
