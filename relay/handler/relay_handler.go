@@ -480,6 +480,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 		selection, mErr := provider.MaterializeSelection(ctx, d.Channel.ID, d.KeyID, v.lookupModel)
 		if mErr != nil {
+			// 客户端已断开（context.Canceled / DeadlineExceeded）：Key 查询被中断不代表渠道有问题，
+			// 静默退出，不记入 channelErrors，不触发渠道健康惩罚，退还预扣款项后返回
+			if errors.Is(mErr, context.Canceled) || errors.Is(mErr, context.DeadlineExceeded) {
+				if billing != nil && preDeductAmount > 0 {
+					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+				}
+				return nil, v.billingResult, mErr
+			}
 			// Key 解密失败 / 目录元数据缺失：按渠道级致命上报换渠道，不发起上游请求
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d materialize_error=[%v]", attempt, d.Channel.ID, mErr))
 			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {
