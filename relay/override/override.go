@@ -324,7 +324,7 @@ func checkConditions(data []byte, ctx map[string]any, conditions []Condition, lo
 		}
 	}
 
-	return isAnd // AND: all matched; OR: none matched
+	return isAnd // AND：全部匹配；OR：无一匹配
 }
 
 // evaluateCondition 评估单个条件

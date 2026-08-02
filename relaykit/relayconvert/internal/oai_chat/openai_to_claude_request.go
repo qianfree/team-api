@@ -12,7 +12,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// OpenAIToClaudeRequestConverter converts OpenAI Chat Completions request to Claude Messages API request.
+// OpenAIToClaudeRequestConverter 将 OpenAI Chat Completions 请求转换为 Claude Messages API 请求。
 type OpenAIToClaudeRequestConverter struct{}
 
 func (c *OpenAIToClaudeRequestConverter) ID() string {
@@ -41,13 +41,13 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		return nil, fmt.Errorf("expected *dto.GeneralOpenAIRequest, got %T", request)
 	}
 
-	// Determine upstream model name
+	// 确定上游模型名
 	upstreamModel := info.GetUpstreamModelName()
 	if upstreamModel == "" {
 		upstreamModel = info.GetOriginModelName()
 	}
 
-	// Parse thinking suffix and strip it from model name if not preserved
+	// 解析 thinking 后缀，若无需保留则从模型名中剥离
 	thinkingInfo := shared.ParseThinkingSuffix(upstreamModel)
 	opts := convmeta.OptionsOf(info)
 	if !opts.ShouldPreserveThinkingSuffix(upstreamModel) {
@@ -60,12 +60,12 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		Stream:   openaiReq.Stream,
 	}
 
-	// MaxTokens (required by Claude API)
+	// MaxTokens（Claude API 必填）
 	if openaiReq.MaxTokens != nil {
 		maxTokens := uint(*openaiReq.MaxTokens)
 		claudeReq.MaxTokens = &maxTokens
 	} else {
-		// Try to get default from options
+		// 尝试从 options 中获取默认值
 		if maxTokens, ok := opts.Claude.DefaultMaxTokensFor(upstreamModel); ok {
 			mt := uint(maxTokens)
 			claudeReq.MaxTokens = &mt
@@ -78,8 +78,8 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	claudeReq.Temperature = openaiReq.Temperature
 	claudeReq.TopP = openaiReq.TopP
 
-	// TopK (OpenAI doesn't have this, but Claude does)
-	// Leave as nil - Claude will use its default
+	// TopK（OpenAI 没有此字段，但 Claude 有）
+	// 保持为 nil，由 Claude 使用其默认值
 
 	// Stop sequences
 	if openaiReq.Stop != nil {
@@ -97,11 +97,11 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		}
 	}
 
-	// Convert messages
+	// 转换 messages
 	systemPrompts := make([]string, 0)
 	for _, msg := range openaiReq.Messages {
 		if msg.Role == "system" {
-			// System messages go to separate System field
+			// system 消息放入独立的 System 字段
 			systemPrompts = append(systemPrompts, shared.MapTextContent(msg.Content))
 			continue
 		}
@@ -110,7 +110,7 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			Role: msg.Role,
 		}
 
-		// Convert content
+		// 转换 content
 		switch content := msg.Content.(type) {
 		case string:
 			text := content
@@ -118,12 +118,12 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		case []dto.ContentPart:
 			claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(content)
 		default:
-			// Try to extract text as fallback
+			// 兜底：尝试提取文本
 			text := shared.MapTextContent(content)
 			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
 		}
 
-		// Convert tool calls (assistant messages with tool_calls)
+		// 转换 tool calls（带 tool_calls 的 assistant 消息）
 		if len(msg.ToolCalls) > 0 {
 			toolBlocks := shared.MapOpenAIToolCallsToClaude(msg.ToolCalls)
 			if blocks, ok := claudeMsg.Content.([]dto.ClaudeContentBlock); ok {
@@ -133,11 +133,11 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			}
 		}
 
-		// Convert tool results (tool role messages)
+		// 转换 tool 结果（role 为 tool 的消息）
 		if msg.Role == "tool" && msg.ToolCallID != "" {
-			// Tool result content
+			// tool 结果内容
 			resultText := shared.MapTextContent(msg.Content)
-			claudeMsg.Role = "user" // Claude uses "user" role for tool results
+			claudeMsg.Role = "user" // Claude 用 "user" 角色承载 tool 结果
 			claudeMsg.Content = []dto.ClaudeContentBlock{
 				{
 					Type:      "tool_result",
@@ -150,16 +150,16 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		claudeReq.Messages = append(claudeReq.Messages, claudeMsg)
 	}
 
-	// Set system prompt
+	// 设置 system prompt
 	if len(systemPrompts) > 0 {
 		claudeReq.System = strings.Join(systemPrompts, "\n\n")
 	}
 
-	// Convert tools
+	// 转换 tools
 	if len(openaiReq.Tools) > 0 {
 		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
 
-		// Convert tool_choice
+		// 转换 tool_choice
 		if openaiReq.ToolChoice != nil {
 			switch tc := openaiReq.ToolChoice.(type) {
 			case string:
@@ -168,7 +168,7 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 				} else if tc == "required" {
 					claudeReq.ToolChoice = map[string]any{"type": "any"}
 				} else if tc == "none" {
-					// Don't set tool_choice, or set to null
+					// 不设置 tool_choice，或置为 null
 					claudeReq.ToolChoice = nil
 				}
 			case map[string]any:
@@ -187,11 +187,10 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		}
 	}
 
-	// Apply thinking adapter
+	// 应用 thinking 适配器
 	shared.ApplyThinkingToClaude(claudeReq, thinkingInfo, opts.Claude)
 
 	return claudeReq, nil
 }
 
-// Converter registration happens at package initialization in the host
-// application, not here in the internal implementation package.
+// 转换器在宿主应用的包初始化阶段注册，而非在此 internal 实现包中完成。

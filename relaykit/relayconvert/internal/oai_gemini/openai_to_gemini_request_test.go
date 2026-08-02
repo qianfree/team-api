@@ -58,7 +58,7 @@ func TestOpenAIToGeminiRequestConverter_BasicConversion(t *testing.T) {
 		t.Fatalf("Expected *dto.GeminiChatRequest, got %T", result)
 	}
 
-	// Check generation config
+	// 检查 generation config
 	if geminiReq.GenerationConfig == nil {
 		t.Fatal("GenerationConfig is nil")
 	}
@@ -72,7 +72,7 @@ func TestOpenAIToGeminiRequestConverter_BasicConversion(t *testing.T) {
 		t.Errorf("MaxOutputTokens = %v, want 1024", geminiReq.GenerationConfig.MaxOutputTokens)
 	}
 
-	// Check system instruction
+	// 检查 system instruction
 	if geminiReq.SystemInstruction == nil {
 		t.Fatal("SystemInstruction is nil")
 	}
@@ -83,7 +83,7 @@ func TestOpenAIToGeminiRequestConverter_BasicConversion(t *testing.T) {
 		t.Errorf("SystemInstruction text = %q, want %q", geminiReq.SystemInstruction.Parts[0].Text, "You are a helpful assistant.")
 	}
 
-	// Check contents
+	// 检查 contents
 	if len(geminiReq.Contents) != 1 {
 		t.Fatalf("Contents count = %d, want 1", len(geminiReq.Contents))
 	}
@@ -97,7 +97,7 @@ func TestOpenAIToGeminiRequestConverter_BasicConversion(t *testing.T) {
 		t.Errorf("First content text = %q, want %q", geminiReq.Contents[0].Parts[0].Text, "Hello, how are you?")
 	}
 
-	// Check safety settings
+	// 检查 safety settings
 	if len(geminiReq.SafetySettings) != 4 {
 		t.Errorf("SafetySettings count = %d, want 4", len(geminiReq.SafetySettings))
 	}
@@ -159,7 +159,7 @@ func TestOpenAIToGeminiRequestConverter_ToolCalls(t *testing.T) {
 		t.Fatalf("Expected *dto.GeminiChatRequest, got %T", result)
 	}
 
-	// Check tools
+	// 检查 tools
 	if geminiReq.Tools == nil {
 		t.Fatal("Tools is nil")
 	}
@@ -177,17 +177,17 @@ func TestOpenAIToGeminiRequestConverter_ToolCalls(t *testing.T) {
 		t.Errorf("Function name = %q, want %q", tools[0].FunctionDeclarations[0].Name, "get_weather")
 	}
 
-	// Check contents structure: user -> model (with functionCall) -> user (with functionResponse)
+	// 检查 contents 结构：user -> model（含 functionCall） -> user（含 functionResponse）
 	if len(geminiReq.Contents) != 3 {
 		t.Fatalf("Contents count = %d, want 3", len(geminiReq.Contents))
 	}
 
-	// First: user message
+	// 第一条：user 消息
 	if geminiReq.Contents[0].Role != "user" {
 		t.Errorf("First content role = %q, want %q", geminiReq.Contents[0].Role, "user")
 	}
 
-	// Second: assistant with tool call
+	// 第二条：带 tool call 的 assistant 消息
 	if geminiReq.Contents[1].Role != "model" {
 		t.Errorf("Second content role = %q, want %q", geminiReq.Contents[1].Role, "model")
 	}
@@ -210,7 +210,7 @@ func TestOpenAIToGeminiRequestConverter_ToolCalls(t *testing.T) {
 		t.Error("No function call found in assistant message")
 	}
 
-	// Third: user with function response
+	// 第三条：带 function response 的 user 消息
 	if geminiReq.Contents[2].Role != "user" {
 		t.Errorf("Third content role = %q, want %q", geminiReq.Contents[2].Role, "user")
 	}
@@ -268,12 +268,12 @@ func TestOpenAIToGeminiRequestConverter_MultimodalContent(t *testing.T) {
 		t.Fatalf("Parts count = %d, want 2", len(parts))
 	}
 
-	// First part: text
+	// 第一个 part：文本
 	if parts[0].Text != "What's in this image?" {
 		t.Errorf("First part text = %q, want %q", parts[0].Text, "What's in this image?")
 	}
 
-	// Second part: image inline data
+	// 第二个 part：图片内联数据
 	if parts[1].InlineData == nil {
 		t.Fatal("Second part InlineData is nil")
 	}
@@ -297,22 +297,34 @@ func TestOpenAIToGeminiRequestConverter_ReasoningEffort(t *testing.T) {
 		{
 			name:   "low effort",
 			effort: "low",
-			want:   struct{ budget int; level string }{budget: 1024, level: "LOW"},
+			want: struct {
+				budget int
+				level  string
+			}{budget: 1024, level: "LOW"},
 		},
 		{
 			name:   "medium effort",
 			effort: "medium",
-			want:   struct{ budget int; level string }{budget: 8192, level: "MEDIUM"},
+			want: struct {
+				budget int
+				level  string
+			}{budget: 8192, level: "MEDIUM"},
 		},
 		{
 			name:   "high effort",
 			effort: "high",
-			want:   struct{ budget int; level string }{budget: 32768, level: "HIGH"},
+			want: struct {
+				budget int
+				level  string
+			}{budget: 32768, level: "HIGH"},
 		},
 		{
 			name:   "unknown effort defaults to medium",
 			effort: "unknown",
-			want:   struct{ budget int; level string }{budget: 8192, level: "MEDIUM"},
+			want: struct {
+				budget int
+				level  string
+			}{budget: 8192, level: "MEDIUM"},
 		},
 	}
 
@@ -397,7 +409,7 @@ func TestOpenAIToGeminiRequestConverter_ResponseFormat(t *testing.T) {
 		t.Fatal("ResponseSchema is nil")
 	}
 
-	// Check that schema types are converted to uppercase
+	// 检查 schema 类型已转换为大写
 	schemaMap, ok := geminiReq.GenerationConfig.ResponseSchema.(map[string]any)
 	if !ok {
 		t.Fatalf("ResponseSchema is not map[string]any, got %T", geminiReq.GenerationConfig.ResponseSchema)
@@ -581,7 +593,7 @@ func TestOpenAIToGeminiRequestConverter_ToolChoice(t *testing.T) {
 				t.Errorf("mode = %q, want %q", mode, tt.wantMode)
 			}
 
-			// Check specific function name if applicable
+			// 若适用，检查特定函数名
 			if tt.name == "specific function" {
 				allowedNames, ok := funcCallingConfig["allowedFunctionNames"].([]string)
 				if !ok {
@@ -621,23 +633,23 @@ func TestOpenAIToGeminiRequestConverter_AssistantWithReasoning(t *testing.T) {
 		t.Fatalf("Contents count = %d, want 2", len(geminiReq.Contents))
 	}
 
-	// Check assistant message
+	// 检查 assistant 消息
 	assistantContent := geminiReq.Contents[1]
 	if assistantContent.Role != "model" {
 		t.Errorf("Assistant role = %q, want %q", assistantContent.Role, "model")
 	}
 
-	// Should have 2 parts: regular text + thought
+	// 应有 2 个 part：常规文本 + thought
 	if len(assistantContent.Parts) != 2 {
 		t.Fatalf("Assistant parts count = %d, want 2", len(assistantContent.Parts))
 	}
 
-	// First part: regular text
+	// 第一个 part：常规文本
 	if assistantContent.Parts[0].Text != "The answer is 42" {
 		t.Errorf("First part text = %q, want %q", assistantContent.Parts[0].Text, "The answer is 42")
 	}
 
-	// Second part: thought
+	// 第二个 part：thought
 	if assistantContent.Parts[1].Text != reasoning {
 		t.Errorf("Second part text = %q, want %q", assistantContent.Parts[1].Text, reasoning)
 	}

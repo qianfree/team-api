@@ -239,7 +239,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 				writeClaudeSSE(writer, "content_block_delta", &delta)
 			}
 
-			// reasoning content (thinking)
+			// 推理内容（thinking）
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
 				transferredTextLen += len(*choice.Delta.ReasoningContent)
 				// 如果当前 block 不是 thinking，先关闭前一个 block
@@ -276,9 +276,9 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 				writeClaudeSSE(writer, "content_block_delta", &delta)
 			}
 
-			// tool calls
+			// 工具调用
 			for _, tc := range choice.Delta.ToolCalls {
-				// content_block_start for tool_use（仅在 function name 出现时）
+				// content_block_start 用于 tool_use（仅在 function name 出现时）
 				if tc.Function.Name != "" {
 					// 先关闭前一个 block
 					if currentBlockType != "" {
@@ -304,7 +304,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 					currentBlockType = "tool_use"
 				}
 
-				// content_block_delta for tool arguments
+				// content_block_delta 用于工具参数
 				if tc.Function.Arguments != "" {
 					delta := dto.ClaudeResponse{
 						Type:  "content_block_delta",

@@ -12,7 +12,7 @@ var OpenAIEffortSuffixes = []string{"-high", "-minimal", "-low", "-medium", "-no
 
 var DeepSeekV4EffortSuffixes = []string{"-none", "-max"}
 
-// TrimEffortSuffix -> modelName level(low) exists
+// TrimEffortSuffix 返回 (去除后缀的 modelName, effort 等级如 "low", 是否匹配到后缀)。
 func TrimEffortSuffix(modelName string) (string, string, bool) {
 	return TrimEffortSuffixWithSuffixes(modelName, EffortSuffixes)
 }

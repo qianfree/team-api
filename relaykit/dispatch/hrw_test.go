@@ -42,7 +42,7 @@ func TestPickHRW_候选顺序无关(t *testing.T) {
 }
 
 func TestPickHRW_权重比例分布(t *testing.T) {
-	// 权重 5:3:2 → 期望占比 50%/30%/20%，10 万采样误差 < 2 个百分点（阶段 0 验收指标）
+	// 权重 5:3:2 → 期望占比 50%/30%/20%，10 万采样误差 < 2 个百分点
 	cands := scoredSet(map[int64]float64{1: 5, 2: 3, 3: 2})
 	const n = 100_000
 	counts := map[int64]int{}

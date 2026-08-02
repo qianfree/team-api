@@ -1,7 +1,5 @@
-// Package kitutil holds the dependency-free helpers shared by the conversion
-// kit packages (dto, types, relayconvert). It moved out of the host's common
-// package as part of the relaykit extraction; common re-exports these for
-// host code.
+// Package kitutil 存放被转换 kit 各包（dto、types、relayconvert）共享的、无外部依赖的辅助函数。
+// 这些函数在 relaykit 抽取过程中从宿主的 common 包迁出；common 为宿主代码做了重新导出。
 package kitutil
 
 import (
@@ -49,7 +47,7 @@ func GetJsonType(data json.RawMessage) string {
 	}
 }
 
-// JsonRawMessageToString returns JSON strings as their decoded value and other JSON values as raw text.
+// JsonRawMessageToString 将 JSON 字符串返回为解码后的值，其他 JSON 值则按原始文本返回。
 func JsonRawMessageToString(data json.RawMessage) string {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {

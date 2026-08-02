@@ -316,7 +316,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 				})
 			}
 
-			// tool calls
+			// 工具调用
 			for _, tc := range choice.Delta.ToolCalls {
 				callID := tc.ID
 
@@ -393,7 +393,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 					continue
 				}
 
-				// tool call arguments delta
+				// 工具调用 arguments 增量
 				if tc.Function.Arguments != "" {
 					toolCallArgsByID[callID] += tc.Function.Arguments
 					emitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{

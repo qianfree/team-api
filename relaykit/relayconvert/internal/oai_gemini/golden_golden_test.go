@@ -219,7 +219,7 @@ func TestGolden_Roundtrip_OpenAI_Gemini(t *testing.T) {
 	}
 }
 
-// mapToOpenAIRequest converts a map to *dto.GeneralOpenAIRequest
+// mapToOpenAIRequest 将 map 转换为 *dto.GeneralOpenAIRequest
 func mapToOpenAIRequest(m any) (*dto.GeneralOpenAIRequest, error) {
 	data, err := json.Marshal(m)
 	if err != nil {
@@ -232,7 +232,7 @@ func mapToOpenAIRequest(m any) (*dto.GeneralOpenAIRequest, error) {
 	return &req, nil
 }
 
-// mapToGeminiResponse converts a map to *dto.GeminiChatResponse
+// mapToGeminiResponse 将 map 转换为 *dto.GeminiChatResponse
 func mapToGeminiResponse(m any) (*dto.GeminiChatResponse, error) {
 	data, err := json.Marshal(m)
 	if err != nil {

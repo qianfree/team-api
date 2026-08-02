@@ -1,4 +1,4 @@
-// Package register 阶段 4：将阶段 3 实现的内置转换器注册进运行时注册表。
+// Package register 将内置转换器注册进运行时注册表。
 //
 // 独立子包解决 import cycle：内置转换器（internal/oai_chat、internal/oai_gemini）
 // 需要 import relayconvert 获取常量和类型，因此 relayconvert 本身不能反向 import 它们。
@@ -27,7 +27,7 @@ import (
 func init() {
 	registerOpenAIToClaude()
 	registerOpenAIToGemini()
-	// 阶段 5：剩余原生格式供应商
+	// 剩余原生格式供应商
 	registerOpenAIToCoze()
 	registerOpenAIToDify()
 	registerOpenAIToOllama()
@@ -100,7 +100,7 @@ func registerOpenAIToGemini() {
 	)
 }
 
-// registerOpenAIToCoze 注册 OpenAI → Coze 方向转换器（阶段 5）。
+// registerOpenAIToCoze 注册 OpenAI → Coze 方向转换器。
 // 客户端说 OpenAI，上游说 Coze v3：
 //   - 请求侧 OpenAI → Coze
 //   - 响应侧 Coze → OpenAI（非流式：解析缓冲 SSE；流式：SSE→SSE）
@@ -132,7 +132,7 @@ func registerOpenAIToCoze() {
 	)
 }
 
-// registerOpenAIToDify 注册 OpenAI → Dify 方向转换器（阶段 5）。
+// registerOpenAIToDify 注册 OpenAI → Dify 方向转换器。
 // 客户端说 OpenAI，上游说 Dify chat-messages：
 //   - 请求侧 OpenAI → Dify
 //   - 响应侧 Dify → OpenAI（非流式 blocking JSON；流式 SSE→SSE）
@@ -164,7 +164,7 @@ func registerOpenAIToDify() {
 	)
 }
 
-// registerOpenAIToOllama 注册 OpenAI → Ollama 方向转换器（阶段 5，仅 chat 路径）。
+// registerOpenAIToOllama 注册 OpenAI → Ollama 方向转换器（仅 chat 路径）。
 // 客户端说 OpenAI，上游说 Ollama /api/chat：
 //   - 请求侧 OpenAI → Ollama
 //   - 响应侧 Ollama → OpenAI（非流式 JSON；流式 NDJSON→SSE）

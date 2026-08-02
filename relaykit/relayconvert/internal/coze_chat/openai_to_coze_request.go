@@ -62,7 +62,7 @@ func (c *OpenAIToCozeRequestConverter) ConvertRequest(
 	}
 
 	// 用户标识：Coze 要求非空。relaykit 无法访问 tenant/user 上下文（Meta 未暴露），
-	// 用客户端 User 或通用占位（与 Dify 一致）；per-用户归因属阶段 6 灰度对齐。
+	// 用客户端 User 或通用占位（与 Dify 一致）；per-用户归因待后续灰度对齐。
 	user := openaiReq.User
 	if user == "" {
 		user = "relay-user"

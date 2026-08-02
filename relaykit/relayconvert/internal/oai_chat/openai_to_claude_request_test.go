@@ -193,7 +193,7 @@ func TestOpenAIToClaudeRequestConverter_ToolCalls(t *testing.T) {
 
 	claudeReq := result.(*dto.ClaudeRequest)
 
-	// Check tools
+	// 校验 tools
 	if len(claudeReq.Tools) != 1 {
 		t.Fatalf("Expected 1 tool, got %d", len(claudeReq.Tools))
 	}
@@ -202,7 +202,7 @@ func TestOpenAIToClaudeRequestConverter_ToolCalls(t *testing.T) {
 		t.Errorf("Tool name = %q, want %q", claudeReq.Tools[0].Name, "get_weather")
 	}
 
-	// Check tool_choice
+	// 校验 tool_choice
 	toolChoice, ok := claudeReq.ToolChoice.(map[string]any)
 	if !ok {
 		t.Fatalf("Expected map[string]any for ToolChoice, got %T", claudeReq.ToolChoice)
@@ -212,12 +212,12 @@ func TestOpenAIToClaudeRequestConverter_ToolCalls(t *testing.T) {
 		t.Errorf("ToolChoice type = %q, want %q", toolChoice["type"], "auto")
 	}
 
-	// Check messages: user, assistant with tool_use, user with tool_result
+	// 校验 messages：user、带 tool_use 的 assistant、带 tool_result 的 user
 	if len(claudeReq.Messages) != 3 {
 		t.Fatalf("Expected 3 messages, got %d", len(claudeReq.Messages))
 	}
 
-	// Assistant message should have tool_use block
+	// assistant 消息应包含 tool_use block
 	assistantBlocks, ok := claudeReq.Messages[1].Content.([]dto.ClaudeContentBlock)
 	if !ok {
 		t.Fatalf("Expected []ClaudeContentBlock for assistant, got %T", claudeReq.Messages[1].Content)
@@ -237,7 +237,7 @@ func TestOpenAIToClaudeRequestConverter_ToolCalls(t *testing.T) {
 		t.Error("Expected tool_use block in assistant message")
 	}
 
-	// Tool result message should be user role with tool_result block
+	// tool 结果消息的 role 应为 user，并包含 tool_result block
 	if claudeReq.Messages[2].Role != "user" {
 		t.Errorf("Tool result message role = %q, want %q", claudeReq.Messages[2].Role, "user")
 	}
@@ -351,7 +351,7 @@ func TestOpenAIToClaudeRequestConverter_MaxTokensDefault(t *testing.T) {
 
 	openaiReq := &dto.GeneralOpenAIRequest{
 		Model:     "gpt-4",
-		MaxTokens: nil, // No max_tokens
+		MaxTokens: nil, // 不提供 max_tokens
 		Messages: []dto.Message{
 			{Role: "user", Content: "Test"},
 		},
@@ -404,11 +404,11 @@ func TestOpenAIToClaudeRequestConverter_ToolChoiceVariants(t *testing.T) {
 	parameters := json.RawMessage(`{"type":"object"}`)
 
 	tests := []struct {
-		name              string
-		toolChoice        any
-		expectedType      string
-		expectedName      string
-		expectNil         bool
+		name         string
+		toolChoice   any
+		expectedType string
+		expectedName string
+		expectNil    bool
 	}{
 		{
 			name:         "auto",
@@ -554,7 +554,7 @@ func TestOpenAIToClaudeRequestConverter_MultiModalContent(t *testing.T) {
 	}
 }
 
-// mockMeta implements convmeta.Meta for testing
+// mockMeta 实现用于测试的 convmeta.Meta 接口
 type mockMeta struct {
 	upstreamModel string
 	originModel   string

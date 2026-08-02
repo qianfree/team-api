@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Coordinator 调度协调器：handler 的唯一入口（基线方案 §9.3）。
+// Coordinator 调度协调器：handler 的唯一入口。
 // 自身无状态（策略热更新用 atomic 指针），可安全并发使用。
 type Coordinator struct {
 	catalog CatalogPort
@@ -42,7 +42,7 @@ func (co *Coordinator) Policy() *RoutingPolicy {
 }
 
 // Route 开启一次请求的调度会话。profile.Policy 非空时本会话使用该策略
-//（租户级覆盖），否则捕获协调器当前全局策略（会话内保持一致，不受热更新影响）。
+// （租户级覆盖），否则捕获协调器当前全局策略（会话内保持一致，不受热更新影响）。
 func (co *Coordinator) Route(ctx context.Context, profile RequestProfile) *RouteSession {
 	pol := profile.Policy
 	if pol == nil {
@@ -128,7 +128,7 @@ func (s *RouteSession) Report(ctx context.Context, statusCode int, err error, de
 
 	decision, backoff := Decide(class, delivery, s.profile.Replay, retryAfter.Milliseconds(), s.attempt, pol.Retry)
 
-	// 结果上报（修订 R6：CLIENT / CREDENTIAL 类不计渠道健康）
+	// 结果上报（CLIENT / CREDENTIAL 类不计渠道健康）
 	switch class {
 	case ErrClassCredential:
 		if s.current.KeyID > 0 {
@@ -148,7 +148,7 @@ func (s *RouteSession) Report(ctx context.Context, statusCode int, err error, de
 		})
 	}
 
-	// 按决策更新预算与排除状态。失败全程不删除绑定（A3 消除）。
+	// 按决策更新预算与排除状态。失败全程不删除绑定。
 	switch decision {
 	case DecisionInPlaceRetry:
 		s.attempt.InPlaceUsed++
@@ -198,7 +198,7 @@ func (s *RouteSession) RefreshLease(ctx context.Context) {
 // 内部：选择
 // ---------------------------------------------------------------------------
 
-// selectChannel 选择流程（基线方案 §15 步骤 2-4）：
+// selectChannel 选择流程：
 // 快照 → 熔断硬排除 → 打分 → 绑定守卫 → HRW → 探测令牌 → 租约。
 // 租约/探测失败只排除重选，不扣预算。
 func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
@@ -272,7 +272,7 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 
 // buildCandidates 构建打分候选集：排除本请求已失败渠道与熔断 OPEN 渠道；
 // HALF_OPEN 渠道进入候选（选中时再取探测令牌）；tierFactor=0 的层级在
-// 无候选时按层级顺序扩组兜底（基线方案 §8.3）。
+// 无候选时按层级顺序扩组兜底。
 //
 // 注意：Channel.Breaker / ModelBreaker 由目录适配层提供，已做过冷却期的
 // 惰性 OPEN→HALF_OPEN 判定（EffectiveBreakerState）。
@@ -332,9 +332,9 @@ func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int
 	return scored, halfOpen, excl
 }
 
-// chooseFrom 绑定守卫 + HRW（基线方案 §5.2）。
+// chooseFrom 绑定守卫 + HRW。
 // 守卫判据是被绑渠道自身状态（健康因子、原始余量），与 tier/cost 解耦——
-// 溢出到 secondary 的绑定在守卫下保持稳定（glm 方案 keepThreshold 缺陷的规避点）。
+// 溢出到 secondary 的绑定在守卫下保持稳定。
 func (s *RouteSession) chooseFrom(ctx context.Context, scored []ScoredChannel, pol *RoutingPolicy) (*ScoredChannel, DecisionReason) {
 	if boundID, ok := s.co.state.GetBinding(ctx, s.sessionKey.Key); ok {
 		for i := range scored {
@@ -364,7 +364,7 @@ func (s *RouteSession) chooseFrom(ctx context.Context, scored []ScoredChannel, p
 	return pick, reason
 }
 
-// rotateKey 凭证轮换（修订 R1）：同渠道选下一个可用 Key。无可用 Key 返回 nil。
+// rotateKey 凭证轮换：同渠道选下一个可用 Key。无可用 Key 返回 nil。
 func (s *RouteSession) rotateKey(ctx context.Context) *Decision {
 	if s.current == nil {
 		return nil

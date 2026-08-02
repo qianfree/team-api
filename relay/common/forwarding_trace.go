@@ -9,10 +9,10 @@ type ForwardingTrace struct {
 	ModelMapped    bool                `json:"model_mapped"`
 	Hops           []ForwardingHop     `json:"hops"`
 	TotalAttempts  int                 `json:"total_attempts"`
-	Scheduler      []SchedulerDecision `json:"scheduler,omitempty"` // 新调度引擎决策明细（修订 R5）
+	Scheduler      []SchedulerDecision `json:"scheduler,omitempty"` // 新调度引擎决策明细
 }
 
-// SchedulerDecision 新调度引擎单次选择的决策明细（修订 R5：权重分解进 ForwardingTrace）。
+// SchedulerDecision 新调度引擎单次选择的决策明细（权重分解进 ForwardingTrace）。
 type SchedulerDecision struct {
 	Attempt         int                `json:"attempt"`
 	ChannelID       int64              `json:"channel_id"`

@@ -29,7 +29,7 @@ func TestClassify_状态码全表(t *testing.T) {
 		{500, ErrClassTransient},
 		{502, ErrClassTransient},
 		{503, ErrClassTransient},
-		{504, ErrClassTimeout}, // 修订 R3：504 不再归 TRANSIENT
+		{504, ErrClassTimeout}, // 504 不再归 TRANSIENT
 		{520, ErrClassTransient},
 		{527, ErrClassTransient},
 		{599, ErrClassTransient},

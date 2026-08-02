@@ -1,12 +1,10 @@
-// Package relayconvert hosts the format-converter registry and dispatch
-// engine. This file defines the REQUEST-side converter spec types and the
-// registration / lookup machinery.
+// Package relayconvert 承载格式转换器注册表与调度引擎。本文件定义请求侧转换器 spec
+// 类型与注册 / 查找机制。
 //
-// 阶段 1 框架子集：本文件只移植「spec 类型 + 函数类型 + 注册 / 查找」结构层。
+// 本文件只移植「spec 类型 + 函数类型 + 注册 / 查找」结构层。
 // 调度引擎（ConvertRequest / ConvertRequestVia / ConvertRequestByID / execute* /
 // inferRequestRelayFormat / prepareRequestForStep）与具体 adapter 函数
-// （convertOpenAIRequestToClaude 等）依赖 DTO 与 internal/* 转换器实现，
-// 留到阶段 3 与首批 OpenAI↔Claude↔Gemini 转换器一同落地。
+// （convertOpenAIRequestToClaude 等）依赖 DTO 与 internal/* 转换器实现。
 package relayconvert
 
 import (
@@ -74,17 +72,17 @@ const (
 )
 
 const (
-	ConverterNone                                   = "none"
-	ConverterClaudeMessagesToOpenAIChat             = "anthropic_messages_to_openai_chat_completions"
-	ConverterClaudeMessagesToOpenAIChatStream       = "anthropic_messages_to_openai_chat_completions_stream"
-	ConverterOpenAIChatToClaudeMessages             = "openai_chat_completions_to_anthropic_messages"
-	ConverterOpenAIChatToOpenAIResponses            = "openai_chat_completions_to_openai_responses"
-	ConverterOpenAIResponsesToOpenAIChat            = "openai_responses_to_openai_chat_completions"
-	ConverterOpenAIResponsesToGemini                = "openai_responses_to_gemini_generate_content"
-	ConverterGeminiContentToOpenAIChat              = "gemini_generate_content_to_openai_chat_completions"
-	ConverterOpenAIChatToGeminiContent              = "openai_chat_completions_to_gemini_generate_content"
+	ConverterNone                             = "none"
+	ConverterClaudeMessagesToOpenAIChat       = "anthropic_messages_to_openai_chat_completions"
+	ConverterClaudeMessagesToOpenAIChatStream = "anthropic_messages_to_openai_chat_completions_stream"
+	ConverterOpenAIChatToClaudeMessages       = "openai_chat_completions_to_anthropic_messages"
+	ConverterOpenAIChatToOpenAIResponses      = "openai_chat_completions_to_openai_responses"
+	ConverterOpenAIResponsesToOpenAIChat      = "openai_responses_to_openai_chat_completions"
+	ConverterOpenAIResponsesToGemini          = "openai_responses_to_gemini_generate_content"
+	ConverterGeminiContentToOpenAIChat        = "gemini_generate_content_to_openai_chat_completions"
+	ConverterOpenAIChatToGeminiContent        = "openai_chat_completions_to_gemini_generate_content"
 
-	// 阶段 5：OpenAI → 原生格式供应商（请求侧）
+	// OpenAI → 原生格式供应商（请求侧）
 	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"
 	ConverterOpenAIChatToDify   = "openai_chat_completions_to_dify_chat_messages"
 	ConverterOpenAIChatToOllama = "openai_chat_completions_to_ollama_chat"
@@ -92,7 +90,7 @@ const (
 
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。
 // 直接转换器（Convert != nil）会同时进入 directRoutes；步骤转换器（StepConverters 非空）
-// 在注册时即校验 From/To 连续性。阶段 3 的 builtin 列表通过 init() 调用本函数。
+// 在注册时即校验 From/To 连续性。builtin 列表通过 init() 调用本函数。
 //
 // 并发安全：持有 requestConverterMu 写锁保护注册过程，防止 data race。
 // 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。

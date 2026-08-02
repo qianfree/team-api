@@ -15,8 +15,8 @@ func TestInjectSystemPromptOpenAI(t *testing.T) {
 		body        string
 		prompt      string
 		override    bool
-		wantSystem  string // expected system message content
-		wantSystems int    // expected number of system messages
+		wantSystem  string // 期望的 system 消息内容
+		wantSystems int    // 期望的 system 消息数量
 	}{
 		{
 			name:        "prepend to empty messages",

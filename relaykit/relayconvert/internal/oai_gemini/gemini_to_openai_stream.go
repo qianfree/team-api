@@ -14,7 +14,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// GeminiToOpenAIStreamConverter converts Gemini streaming response to OpenAI Chat Completions streaming response.
+// GeminiToOpenAIStreamConverter 将 Gemini 流式响应转换为 OpenAI Chat Completions 流式响应。
 type GeminiToOpenAIStreamConverter struct{}
 
 func (c *GeminiToOpenAIStreamConverter) ID() string {
@@ -33,7 +33,7 @@ func (c *GeminiToOpenAIStreamConverter) Quality() relayconvert.ResponseConverter
 	return relayconvert.ResponseConverterQualityGood
 }
 
-// ConvertStreamResponse converts a Gemini SSE stream to OpenAI SSE stream.
+// ConvertStreamResponse 将 Gemini SSE 流转换为 OpenAI SSE 流。
 func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	ctx context.Context,
 	info convmeta.Meta,
@@ -44,7 +44,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
-	// Generate response ID
+	// 生成响应 ID
 	responseID := fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
 
 	modelName := ""
@@ -53,9 +53,9 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	}
 
 	var (
-		totalUsage   dto.GeminiUsageMetadata
-		finishReason string
-		toolCallIdx  int
+		totalUsage    dto.GeminiUsageMetadata
+		finishReason  string
+		toolCallIdx   int
 		roleChunkSent bool
 	)
 
@@ -104,22 +104,22 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 			continue
 		}
 
-		// Collect usage
+		// 收集 usage
 		if geminiResp.UsageMetadata != nil {
 			totalUsage = *geminiResp.UsageMetadata
 		}
 
-		// Check prompt feedback for safety blocks
+		// 检查 prompt feedback 中的安全拦截
 		if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
 			return fmt.Errorf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason)
 		}
 
-		// Collect model name
+		// 收集模型名
 		if geminiResp.ModelName != "" {
 			modelName = geminiResp.ModelName
 		}
 
-		// Send role chunk if not sent yet
+		// 若尚未发送 role chunk 则发送
 		if !roleChunkSent {
 			emptyContent := ""
 			if err := chunkWriter(newChunk(dto.Message{
@@ -143,10 +143,10 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 			for _, part := range candidate.Content.Parts {
 				isThought := part.Thought != nil && *part.Thought
 
-				// Text content
+				// 文本内容
 				if part.Text != "" {
 					if isThought {
-						// Thinking content → reasoning_content
+						// thinking 内容 → reasoning_content
 						if err := chunkWriter(newChunk(dto.Message{
 							ReasoningContent: &part.Text,
 						})); err != nil {
@@ -161,7 +161,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 					}
 				}
 
-				// Inline image data
+				// 内联图片数据
 				if part.InlineData != nil {
 					imageMarkdown := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
 					if err := chunkWriter(newChunk(dto.Message{
@@ -171,7 +171,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 					}
 				}
 
-				// File data
+				// 文件数据
 				if part.FileData != nil {
 					fileMarkdown := fmt.Sprintf("[file](%s)", part.FileData.FileURI)
 					if err := chunkWriter(newChunk(dto.Message{
@@ -181,7 +181,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 					}
 				}
 
-				// Executable code
+				// 可执行代码
 				if part.ExecutableCode != nil {
 					codeBlock := fmt.Sprintf("```%s\n%s\n```", part.ExecutableCode.Language, part.ExecutableCode.Code)
 					if err := chunkWriter(newChunk(dto.Message{
@@ -191,7 +191,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 					}
 				}
 
-				// Code execution result
+				// 代码执行结果
 				if part.CodeExecutionResult != nil {
 					resultText := fmt.Sprintf("Execution %s:\n%s", part.CodeExecutionResult.Outcome, part.CodeExecutionResult.Output)
 					if err := chunkWriter(newChunk(dto.Message{
@@ -201,7 +201,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 					}
 				}
 
-				// Function call
+				// 函数调用
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
 					if err := chunkWriter(newChunk(dto.Message{
@@ -222,7 +222,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		}
 	}
 
-	// Send final chunk with finish_reason and usage
+	// 发送带 finish_reason 和 usage 的最终 chunk
 	reason := finishReason
 	if reason == "" {
 		reason = "stop"

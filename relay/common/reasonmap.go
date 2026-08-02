@@ -1,6 +1,6 @@
 package common
 
-// OpenAI stop reason / finish_reason values
+// OpenAI stop reason / finish_reason 取值
 const (
 	OpenAIStop          = "stop"
 	OpenAILength        = "length"
@@ -8,7 +8,7 @@ const (
 	OpenAIContentFilter = "content_filter"
 )
 
-// Claude stop_reason values
+// Claude stop_reason 取值
 const (
 	ClaudeEndTurn      = "end_turn"
 	ClaudeMaxTokens    = "max_tokens"
@@ -18,7 +18,7 @@ const (
 	ClaudeRefusal      = "refusal"    // 内容拒绝
 )
 
-// Gemini finishReason values
+// Gemini finishReason 取值
 const (
 	GeminiSTOP                      = "STOP"
 	GeminiMAX_TOKENS                = "MAX_TOKENS"

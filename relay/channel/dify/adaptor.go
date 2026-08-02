@@ -136,7 +136,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 
 	info.SetFirstResponseTime()
 
-	// 阶段 5：relaykit 响应转换路径（特性开关控制，默认关闭）。未启用/失败回退旧路径。
+	// relaykit 响应转换路径（特性开关控制，默认关闭）。未启用/失败回退旧路径。
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
@@ -199,7 +199,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 
 // handleStreamResponse 处理 Dify streaming 模式 SSE 响应
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	// 阶段 5：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
 		return usage, nil
 	}

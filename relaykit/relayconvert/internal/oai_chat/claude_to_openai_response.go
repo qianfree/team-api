@@ -13,7 +13,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// ClaudeToOpenAIResponseConverter converts Claude Messages API response to OpenAI Chat Completions response.
+// ClaudeToOpenAIResponseConverter 将 Claude Messages API 响应转换为 OpenAI Chat Completions 响应。
 type ClaudeToOpenAIResponseConverter struct{}
 
 func (c *ClaudeToOpenAIResponseConverter) ID() string {
@@ -42,7 +42,7 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 		return nil, fmt.Errorf("expected *dto.ClaudeResponse, got %T", response)
 	}
 
-	// Determine model name
+	// 确定模型名
 	modelName := claudeResp.Model
 	if modelName == "" && info != nil {
 		modelName = info.GetOriginModelName()
@@ -59,11 +59,11 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 		}},
 	}
 
-	// Convert content blocks to OpenAI message
+	// 将 content blocks 转换为 OpenAI message
 	message := convertClaudeContentToMessage(claudeResp.Content)
 	openaiResp.Choices[0].Message = message
 
-	// Convert usage
+	// 转换 usage
 	if claudeResp.Usage != nil {
 		openaiResp.Usage = dto.UsageWithDetails{
 			PromptTokens:     claudeResp.Usage.InputTokens,
@@ -75,7 +75,7 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 	return openaiResp, nil
 }
 
-// convertClaudeContentToMessage converts Claude content blocks to OpenAI message format
+// convertClaudeContentToMessage 将 Claude content blocks 转换为 OpenAI message 格式
 func convertClaudeContentToMessage(blocks []dto.ClaudeContentBlock) dto.Message {
 	var textParts []string
 	var thinkingParts []string
@@ -92,7 +92,7 @@ func convertClaudeContentToMessage(blocks []dto.ClaudeContentBlock) dto.Message 
 				thinkingParts = append(thinkingParts, *block.Thinking)
 			}
 		case "redacted_thinking":
-			// Redacted thinking has no equivalent in OpenAI format, ignore
+			// 已脱敏的 thinking 在 OpenAI 格式中无对应概念，忽略
 		case "tool_use":
 			toolCalls = append(toolCalls, shared.MapClaudeToolCallsToOpenAI([]dto.ClaudeContentBlock{block})...)
 		}
@@ -102,18 +102,18 @@ func convertClaudeContentToMessage(blocks []dto.ClaudeContentBlock) dto.Message 
 		Role: "assistant",
 	}
 
-	// Set content
+	// 设置 content
 	if len(textParts) > 0 {
 		message.Content = strings.Join(textParts, "\n")
 	}
 
-	// Set reasoning content (thinking)
+	// 设置 reasoning content（thinking）
 	if len(thinkingParts) > 0 {
 		thinking := strings.Join(thinkingParts, "")
 		message.ReasoningContent = &thinking
 	}
 
-	// Set tool calls
+	// 设置 tool calls
 	if len(toolCalls) > 0 {
 		message.ToolCalls = toolCalls
 	}
@@ -121,7 +121,7 @@ func convertClaudeContentToMessage(blocks []dto.ClaudeContentBlock) dto.Message 
 	return message
 }
 
-// mapClaudeStopReasonToOpenAI maps Claude stop_reason to OpenAI finish_reason
+// mapClaudeStopReasonToOpenAI 将 Claude stop_reason 映射为 OpenAI finish_reason
 func mapClaudeStopReasonToOpenAI(stopReason string) string {
 	switch stopReason {
 	case "end_turn":
@@ -137,5 +137,4 @@ func mapClaudeStopReasonToOpenAI(stopReason string) string {
 	}
 }
 
-// Converter registration happens at package initialization in the host
-// application, not here in the internal implementation package.
+// 转换器在宿主应用的包初始化阶段注册，而非在此 internal 实现包中完成。

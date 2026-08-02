@@ -14,7 +14,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// ClaudeToOpenAIStreamConverter converts Claude Messages API streaming response to OpenAI Chat Completions streaming response.
+// ClaudeToOpenAIStreamConverter 将 Claude Messages API 流式响应转换为 OpenAI Chat Completions 流式响应。
 type ClaudeToOpenAIStreamConverter struct{}
 
 func (c *ClaudeToOpenAIStreamConverter) ID() string {
@@ -33,8 +33,8 @@ func (c *ClaudeToOpenAIStreamConverter) Quality() relayconvert.ResponseConverter
 	return relayconvert.ResponseConverterQualityGood
 }
 
-// ConvertStreamResponse converts a Claude SSE stream to OpenAI SSE stream.
-// The reader contains Claude SSE events, and chunks are written to the chunkWriter callback.
+// ConvertStreamResponse 将 Claude SSE 流转换为 OpenAI SSE 流。
+// reader 提供 Claude 的 SSE 事件，转换后的 chunk 通过 chunkWriter 回调写出。
 func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	ctx context.Context,
 	info convmeta.Meta,
@@ -45,11 +45,11 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
-	// Generate response ID
+	// 生成响应 ID
 	responseID := generateResponseID()
 	createdAt := getCurrentTimestamp()
 
-	// Determine model name
+	// 确定模型名
 	modelName := ""
 	if info != nil {
 		modelName = info.GetOriginModelName()
@@ -66,7 +66,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
 		m := modelName
 		if m == "" {
-			m = "claude-3-opus-20240229" // fallback
+			m = "claude-3-opus-20240229" // 兜底值
 		}
 		return &dto.ChatCompletionStreamResponse{
 			ID:      responseID,
@@ -110,7 +110,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 
 		switch event.Type {
 		case "message_start":
-			// Extract model name and initial usage
+			// 提取模型名与初始 usage
 			if event.Message != nil {
 				if event.Message.Model != "" {
 					modelName = event.Message.Model
@@ -120,7 +120,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				}
 			}
 
-			// Send role chunk
+			// 发送 role chunk
 			if !roleChunkSent {
 				emptyContent := ""
 				if err := chunkWriter(newChunk(dto.Message{
@@ -138,13 +138,13 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 			switch event.ContentBlock.Type {
 			case "text":
-				// Text block start, no delta yet
+				// text 块开始，尚无 delta
 			case "thinking":
-				// Thinking block start, no delta yet
+				// thinking 块开始，尚无 delta
 			case "redacted_thinking":
-				// Redacted thinking, ignore (no OpenAI equivalent)
+				// 已脱敏的 thinking，忽略（OpenAI 无对应概念）
 			case "tool_use":
-				// Tool use block start
+				// tool_use 块开始
 				toolCall := dto.ToolCall{
 					Index: toolCallIdx,
 					ID:    event.ContentBlock.ID,
@@ -200,7 +200,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 
 		case "content_block_stop":
-			// Content block ended, no action needed
+			// content block 结束，无需处理
 
 		case "message_delta":
 			if event.Delta != nil {
@@ -222,7 +222,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 
 		case "message_stop":
-			// Final chunk with finish_reason and usage
+			// 末尾 chunk，包含 finish_reason 和 usage
 			reason := finishReason
 			if reason == "" {
 				reason = "stop"
@@ -233,7 +233,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				TotalTokens:      usage.InputTokens + usage.OutputTokens,
 			}
 			if usageObj.CompletionTokens == 0 {
-				// Estimate from text length if not provided
+				// 未提供时根据文本长度估算
 				estimated := responseTextBuf.Len() / 4
 				if estimated > 0 {
 					usageObj.CompletionTokens = estimated
@@ -260,7 +260,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 
 		case "error":
-			// Claude error event
+			// Claude error 事件
 			errMsg := "claude stream error"
 			if event.Error != nil {
 				if b, err := json.Marshal(event.Error); err == nil {
@@ -278,13 +278,13 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	return nil
 }
 
-// Helper functions
+// 辅助函数
 
 func generateResponseID() string {
-	// Simple timestamp-based ID
+	// 基于时间戳的简单 ID
 	return fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
 }
 
 func getCurrentTimestamp() int64 {
-	return 1700000000 // Fixed timestamp for testing
+	return 1700000000 // 测试用的固定时间戳
 }

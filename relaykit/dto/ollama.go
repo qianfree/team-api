@@ -1,6 +1,6 @@
 // Package dto — Ollama /api/chat 协议数据结构。
 //
-// 阶段 5 从 relay/channel/ollama 提取的纯数据结构，供 relaykit 转换器与宿主桥接层使用。
+// 从 relay/channel/ollama 提取的纯数据结构，供 relaykit 转换器与宿主桥接层使用。
 // 仅覆盖 chat 路径（RelayModeChatCompletions）；generate（completions）与 embedding
 // 的 DTO 仍保留在 relay/channel/ollama，本阶段不迁移。
 // 不依赖任何宿主类型（RelayInfo / GoFrame），仅含协议字段。

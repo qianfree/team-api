@@ -22,7 +22,7 @@ func TestDecide_硬规则优先(t *testing.T) {
 		assert.Equal(t, DecisionAbort, d, "state.ResponseStarted 必须 Abort: %s", cls)
 	}
 
-	// 修订 R2：ReplayUnsafe + MaybeSent 无条件 Abort（状态码/类别无关）
+	// ReplayUnsafe + MaybeSent 无条件 Abort（状态码/类别无关）
 	for _, cls := range []ErrorClass{ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassTimeout} {
 		d, _ := Decide(cls, DeliveryMaybeSent, ReplayUnsafe, 0, AttemptState{HasAlternateKey: true}, p)
 		assert.Equal(t, DecisionAbort, d, "ReplayUnsafe+MaybeSent 必须 Abort: %s", cls)
@@ -70,7 +70,7 @@ func TestDecide_MaybeSent禁止原地(t *testing.T) {
 
 func TestDecide_超时不原地重试(t *testing.T) {
 	p := retryPol()
-	// 修订 R3：TIMEOUT（含 504）不原地重试
+	// TIMEOUT（含 504）不原地重试
 	d, _ := Decide(ErrClassTimeout, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{}, p)
 	assert.Equal(t, DecisionFailover, d)
 
@@ -102,7 +102,7 @@ func TestDecide_限流RetryAfter(t *testing.T) {
 func TestDecide_凭证轮换(t *testing.T) {
 	p := retryPol() // credRotateBudget=1
 
-	// 有备用 Key 且预算未耗尽 → 轮换（修订 R1）
+	// 有备用 Key 且预算未耗尽 → 轮换
 	d, backoff := Decide(ErrClassCredential, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{HasAlternateKey: true}, p)
 	assert.Equal(t, DecisionRotateCredential, d)
 	assert.Zero(t, backoff)

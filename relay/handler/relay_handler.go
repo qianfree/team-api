@@ -213,7 +213,7 @@ func validateRelayRequest(
 	}, nil
 }
 
-// extractSessionSignals 从已解析的请求体提取会话信号（基线方案 §3.1 解析链的协议内信号部分）。
+// extractSessionSignals 从已解析的请求体提取会话信号（解析链的协议内信号部分）。
 // 复用 rawRequest 的一次解析，不额外反序列化整个 body。
 func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.SessionSignals {
 	var sig dispatch.SessionSignals
@@ -365,7 +365,7 @@ func settleSuccessfulRequest(
 
 // RelayHandler 共享的 relay 请求编排逻辑（带重试 + 计费）
 func RelayHandler(ctx context.Context, body []byte, path string, headers http.Header, rc *RelayContext, provider common.DataProvider, billing common.BillingProvider) (*common.Usage, *BillingResult, error) {
-	// Phase 1: 校验请求（relay mode、模型、权限、限流）
+	// 校验请求（relay mode、模型、权限、限流）
 	v, err := validateRelayRequest(ctx, body, path, rc, provider, billing)
 	if err != nil {
 		return nil, nil, err
@@ -374,7 +374,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 在写入任何响应体之前设置限流/弃用 header（流式响应中 WriteHeader 后无法追加）
 	setPreResponseHeaders(rc.Writer, v.billingResult)
 
-	// Phase 2: 资源准备（并发控制 + 监控注册 + 预扣）
+	// 资源准备（并发控制 + 监控注册 + 预扣）
 	if billing != nil {
 		if !billing.AcquireConcurrent(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, v.modelName) {
 			return nil, nil, constant.NewRateLimitError("concurrent request limit exceeded")
@@ -424,7 +424,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
 		}
-		// 按实际预扣额复查成员额度（Phase 2 开头的 Check(0) 只是冻结前的快速闸门，
+		// 按实际预扣额复查成员额度（前置的 Check(0) 只是冻结前的快速闸门，
 		// 不带金额无法拦截"当前用量在限额内、本笔请求会超限"的场景）
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
@@ -432,7 +432,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 	}
 
-	// Phase 3: 渠道调度与请求执行（新调度引擎：Route / Next / Report / Finish）
+	// 渠道调度与请求执行（新调度引擎：Route / Next / Report / Finish）
 	// 重试语义由调度核心的 FSM 决定（三预算：原地/凭证轮换/failover），handler 只执行决策。
 	channelErrors := make([]string, 0)
 
@@ -549,7 +549,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
 			leaseRefresh.Stop()
-			// 送达状态标注（修订 R2）：连接拒绝/DNS/TLS 建连失败 = 确定未送达；
+			// 送达状态标注：连接拒绝/DNS/TLS 建连失败 = 确定未送达；
 			// 写出后 EOF/RST/读超时 = 可能已送达。ReplayUnsafe+MaybeSent 由 FSM 硬规则终止。
 			delivery := deliveryStateOfRequestErr(err)
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
@@ -723,7 +723,7 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	// 阶段 4：relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
 	var convertedBody io.Reader
 	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
 		convertedBody = relaykitBody

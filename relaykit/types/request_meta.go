@@ -3,31 +3,31 @@ package types
 type FileType string
 
 const (
-	FileTypeImage FileType = "image" // Image file type
-	FileTypeAudio FileType = "audio" // Audio file type
-	FileTypeVideo FileType = "video" // Video file type
-	FileTypeFile  FileType = "file"  // Generic file type
+	FileTypeImage FileType = "image" // 图片文件类型
+	FileTypeAudio FileType = "audio" // 音频文件类型
+	FileTypeVideo FileType = "video" // 视频文件类型
+	FileTypeFile  FileType = "file"  // 通用文件类型
 )
 
 type TokenType string
 
 const (
-	TokenTypeTextNumber TokenType = "text_number" // Text or number tokens
-	TokenTypeTokenizer  TokenType = "tokenizer"   // Tokenizer tokens
-	TokenTypeImage      TokenType = "image"       // Image tokens
+	TokenTypeTextNumber TokenType = "text_number" // 文本或数字 token
+	TokenTypeTokenizer  TokenType = "tokenizer"   // Tokenizer token
+	TokenTypeImage      TokenType = "image"       // 图片 token
 )
 
 type TokenCountMeta struct {
-	TokenType     TokenType   `json:"token_type,omitempty"`     // Type of tokens used in the request
-	CombineText   string      `json:"combine_text,omitempty"`   // Combined text from all messages
-	ToolsCount    int         `json:"tools_count,omitempty"`    // Number of tools used
-	NameCount     int         `json:"name_count,omitempty"`     // Number of names in the request
-	MessagesCount int         `json:"messages_count,omitempty"` // Number of messages in the request
-	Files         []*FileMeta `json:"files,omitempty"`          // List of files, each with type and content
-	MaxTokens     int         `json:"max_tokens,omitempty"`     // Maximum tokens allowed in the request
+	TokenType     TokenType   `json:"token_type,omitempty"`     // 请求中使用的 token 类型
+	CombineText   string      `json:"combine_text,omitempty"`   // 所有消息合并后的文本
+	ToolsCount    int         `json:"tools_count,omitempty"`    // 使用的工具数量
+	NameCount     int         `json:"name_count,omitempty"`     // 请求中 name 的数量
+	MessagesCount int         `json:"messages_count,omitempty"` // 请求中的消息数量
+	Files         []*FileMeta `json:"files,omitempty"`          // 文件列表，每个文件包含类型和内容
+	MaxTokens     int         `json:"max_tokens,omitempty"`     // 请求允许的最大 token 数
 
-	ImagePriceRatio float64            `json:"image_ratio,omitempty"`    // Ratio for image size, if applicable
-	BillingRatios   map[string]float64 `json:"billing_ratios,omitempty"` // Validated request multipliers used by pre-consume billing
+	ImagePriceRatio float64            `json:"image_ratio,omitempty"`    // 图片尺寸的比率（如适用）
+	BillingRatios   map[string]float64 `json:"billing_ratios,omitempty"` // 预扣计费使用的已校验请求乘数
 	//IsStreaming   bool        `json:"is_streaming,omitempty"`   // Indicates if the request is streaming
 }
 

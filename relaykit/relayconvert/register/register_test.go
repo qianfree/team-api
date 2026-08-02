@@ -7,7 +7,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// TestBuiltinConvertersRegistered 验证阶段 3 的内置转换器已在 init() 中注册进运行时注册表。
+// TestBuiltinConvertersRegistered 验证内置转换器已在 init() 中注册进运行时注册表。
 func TestBuiltinConvertersRegistered(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -63,7 +63,7 @@ func TestBuiltinConvertersRegistered(t *testing.T) {
 	}
 }
 
-// TestBuiltinStreamConvertersRegistered 验证阶段 4 Task4 的流式转换器已在 init() 中
+// TestBuiltinStreamConvertersRegistered 验证流式转换器已在 init() 中
 // 经 RegisterStreamConverter 登记进流式注册表（Claude→OpenAI、Gemini→OpenAI 两个方向）。
 func TestBuiltinStreamConvertersRegistered(t *testing.T) {
 	cases := []struct {

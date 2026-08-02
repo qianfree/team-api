@@ -6,9 +6,8 @@ import (
 	"sync/atomic"
 )
 
-// Kit packages log rare data-shape anomalies through these hooks. The host
-// redirects them into its logging system at startup; standalone relaykit users
-// get stderr defaults.
+// kit 各包通过这些 hook 上报少见的请求数据形态异常。宿主在启动时将它们重定向进自身的日志系统；
+// 独立使用 relaykit 的用户则使用默认的 stderr 输出。
 
 type LogFunc func(message string)
 
@@ -27,7 +26,7 @@ func SetLogging(info LogFunc, errorFn LogFunc) {
 	}
 }
 
-// SetSystemErrorLogging configures the hook for internal converter failures.
+// SetSystemErrorLogging 配置转换器内部故障专用的 hook。
 func SetSystemErrorLogging(errorFn LogFunc) {
 	if errorFn != nil {
 		logSystemError.Store(&errorFn)
@@ -50,8 +49,8 @@ func LogError(message string) {
 	fmt.Fprintf(os.Stderr, "[relaykit] ERROR %s\n", message)
 }
 
-// LogSystemError reports an internal converter failure through its dedicated
-// hook, keeping it distinct from malformed request-data diagnostics.
+// LogSystemError 通过专用 hook 上报转换器内部故障，
+// 与请求数据格式错误的诊断信息区分开来。
 func LogSystemError(message string) {
 	if fn := logSystemError.Load(); fn != nil {
 		(*fn)(message)
@@ -60,6 +59,6 @@ func LogSystemError(message string) {
 	fmt.Fprintf(os.Stderr, "[relaykit] SYSTEM ERROR %s\n", message)
 }
 
-// Debug reports whether verbose kit diagnostics are enabled. The host sets
-// this once at startup (new-api mirrors common.DebugEnabled into it).
+// Debug 标识是否启用 kit 的详细诊断信息。宿主在启动时设置一次
+// （new-api 将 common.DebugEnabled 镜像同步给它）。
 var Debug atomic.Bool

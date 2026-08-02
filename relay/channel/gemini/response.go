@@ -188,7 +188,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	// 阶段 4：relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
@@ -240,7 +240,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	// 阶段 4 Task4：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
 		return usage, nil
 	}
@@ -384,7 +384,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 					}
 				}
 
-				// inline image data
+				// 内联图片数据
 				if part.InlineData != nil {
 					imageText := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
 					imageChunk := dto.ChatCompletionStreamResponse{
@@ -405,7 +405,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 					writeStreamChunk(writer, &imageChunk)
 				}
 
-				// executable code
+				// 可执行代码
 				if part.ExecutableCode != nil {
 					codeText := fmt.Sprintf("```%s\n%s\n```", part.ExecutableCode.Language, part.ExecutableCode.Code)
 					codeChunk := dto.ChatCompletionStreamResponse{
@@ -426,7 +426,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 					writeStreamChunk(writer, &codeChunk)
 				}
 
-				// code execution result
+				// 代码执行结果
 				if part.CodeExecutionResult != nil {
 					resultText := fmt.Sprintf("Execution %s:\n%s", part.CodeExecutionResult.Outcome, part.CodeExecutionResult.Output)
 					resultChunk := dto.ChatCompletionStreamResponse{
@@ -447,7 +447,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 					writeStreamChunk(writer, &resultChunk)
 				}
 
-				// file data
+				// 文件数据
 				if part.FileData != nil {
 					fileText := fmt.Sprintf("[file](%s)", part.FileData.FileURI)
 					fileChunk := dto.ChatCompletionStreamResponse{
@@ -468,7 +468,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 					writeStreamChunk(writer, &fileChunk)
 				}
 
-				// function call
+				// 函数调用
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
 					chunk := dto.ChatCompletionStreamResponse{
@@ -575,19 +575,19 @@ func geminiToOpenAIResponse(geminiResp *dto.GeminiChatResponse, info *common.Rel
 					textParts = append(textParts, part.Text)
 				}
 			}
-			// Gemini inline image data
+			// Gemini 内联图片数据
 			if part.InlineData != nil {
 				textParts = append(textParts, fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data))
 			}
-			// file data
+			// 文件数据
 			if part.FileData != nil {
 				textParts = append(textParts, fmt.Sprintf("[file](%s)", part.FileData.FileURI))
 			}
-			// executable code
+			// 可执行代码
 			if part.ExecutableCode != nil {
 				textParts = append(textParts, fmt.Sprintf("```%s\n%s\n```", part.ExecutableCode.Language, part.ExecutableCode.Code))
 			}
-			// code execution result
+			// 代码执行结果
 			if part.CodeExecutionResult != nil {
 				textParts = append(textParts, fmt.Sprintf("Execution %s:\n%s", part.CodeExecutionResult.Outcome, part.CodeExecutionResult.Output))
 			}

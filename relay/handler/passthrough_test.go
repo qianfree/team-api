@@ -193,7 +193,7 @@ func TestCanPassThrough_MultiNative_ResponsesNotNative(t *testing.T) {
 	}
 }
 
-// TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含阶段 5 新供应商
+// TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含新供应商
 // 与 Ollama 仅 chat 路径启用的 RelayMode 守卫。
 func TestRelaykitRequestConverterID(t *testing.T) {
 	tests := []struct {

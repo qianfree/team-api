@@ -1,13 +1,13 @@
-// Package shared provides reusable mapping functions for format conversion.
-// These functions are extracted from relay/channel adapters and made independent.
+// Package shared 提供格式转换相关的可复用映射函数。
+// 这些函数从 relay/channel 适配器中抽取出来，已彼此独立。
 package shared
 
 import (
 	"github.com/qianfree/team-api/relaykit/dto"
 )
 
-// MapTextContent extracts plain text content from various content formats.
-// Returns empty string if no text is found.
+// MapTextContent 从多种内容格式中抽取纯文本内容。
+// 未找到文本时返回空字符串。
 func MapTextContent(content any) string {
 	switch v := content.(type) {
 	case string:
@@ -28,8 +28,8 @@ func MapTextContent(content any) string {
 	return ""
 }
 
-// MapOpenAIContentPartsToClaude converts OpenAI ContentPart[] to Claude ContentBlock[].
-// Handles text, image_url, and other multimodal content types.
+// MapOpenAIContentPartsToClaude 将 OpenAI ContentPart[] 转换为 Claude ContentBlock[]。
+// 处理 text、image_url 等多模态内容类型。
 func MapOpenAIContentPartsToClaude(parts []dto.ContentPart) []dto.ClaudeContentBlock {
 	blocks := make([]dto.ClaudeContentBlock, 0, len(parts))
 
@@ -51,21 +51,21 @@ func MapOpenAIContentPartsToClaude(parts []dto.ContentPart) []dto.ClaudeContentB
 				})
 			}
 
-		// Other content types can be added here
+			// 其他内容类型可在此处扩展
 		}
 	}
 
 	return blocks
 }
 
-// MapClaudeContentToOpenAI converts Claude ContentBlock[] to OpenAI message content.
-// For simple text, returns a single string; for multimodal, returns ContentPart[].
+// MapClaudeContentToOpenAI 将 Claude ContentBlock[] 转换为 OpenAI 消息内容。
+// 纯文本时返回单个字符串；多模态时返回 ContentPart[]。
 func MapClaudeContentToOpenAI(blocks []dto.ClaudeContentBlock) any {
 	if len(blocks) == 0 {
 		return ""
 	}
 
-	// If only one text block, return as string
+	// 仅单个文本块时，按字符串返回
 	if len(blocks) == 1 && blocks[0].Type == "text" {
 		if blocks[0].Text != nil {
 			return *blocks[0].Text
@@ -73,7 +73,7 @@ func MapClaudeContentToOpenAI(blocks []dto.ClaudeContentBlock) any {
 		return ""
 	}
 
-	// Otherwise, return as ContentPart array
+	// 否则作为 ContentPart 数组返回
 	parts := make([]dto.ContentPart, 0, len(blocks))
 	for _, block := range blocks {
 		switch block.Type {
@@ -92,7 +92,7 @@ func MapClaudeContentToOpenAI(blocks []dto.ClaudeContentBlock) any {
 				parts = append(parts, dto.ContentPart{
 					Type: "image_url",
 					ImageURL: &dto.ImageURL{
-						URL: block.Source.Data, // Base64 data URL
+						URL: block.Source.Data, // Base64 数据 URL
 					},
 				})
 			}
@@ -102,16 +102,16 @@ func MapClaudeContentToOpenAI(blocks []dto.ClaudeContentBlock) any {
 	return parts
 }
 
-// MapOpenAIImageToClaudeSource converts OpenAI ImageURL to Claude Source format.
+// MapOpenAIImageToClaudeSource 将 OpenAI ImageURL 转换为 Claude Source 格式。
 func MapOpenAIImageToClaudeSource(imageURL dto.ImageURL) dto.ClaudeSource {
 	source := dto.ClaudeSource{
 		Type: "base64",
 	}
 
-	// Parse data URL: data:image/png;base64,xxxxx
+	// 解析数据 URL：data:image/png;base64,xxxxx
 	url := imageURL.URL
 	if len(url) > 5 && url[:5] == "data:" {
-		// Extract media type and data
+		// 抽取媒体类型和数据
 		if idx := findSubstring(url, ";base64,"); idx > 0 {
 			mediaType := url[5:idx]
 			data := url[idx+8:]
@@ -119,7 +119,7 @@ func MapOpenAIImageToClaudeSource(imageURL dto.ImageURL) dto.ClaudeSource {
 			source.Data = data
 		}
 	} else {
-		// HTTP URL - not directly supported by Claude, would need to fetch
+		// HTTP URL —— Claude 不直接支持，需要自行抓取
 		source.Type = "url"
 		source.Data = url
 	}
@@ -127,7 +127,7 @@ func MapOpenAIImageToClaudeSource(imageURL dto.ImageURL) dto.ClaudeSource {
 	return source
 }
 
-// findSubstring is a helper to find substring index
+// findSubstring 是用于查找子串索引的辅助函数
 func findSubstring(s, substr string) int {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

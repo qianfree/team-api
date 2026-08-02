@@ -1,13 +1,10 @@
 // Package dispatch 是渠道调度核心库（纯函数 + 端口）。
 //
-// 设计基线：docs/reference/claude设计的渠道调度方案.md
-// 修订清单：docs/reference/渠道调度重构开发计划.md §2（R1-R7）
-//
 // 本包为纯逻辑库：不做任何 I/O，所有外部状态通过 ports.go 中的端口接口注入。
 // relaykit module 不依赖 gf/redis/dao，纯度由模块边界强制。
 package dispatch
 
-// Tier 渠道调度层级，固定三档枚举（评审已议定不采用数值优先级）。
+// Tier 渠道调度层级，固定三档枚举（不采用数值优先级）。
 type Tier string
 
 const (
@@ -28,7 +25,7 @@ const (
 	BreakerHalfOpen                     // 探活中，每窗口放行一个真实请求
 )
 
-// Replayability 请求可重放性（修订 R2，按 relay mode 静态映射）。
+// Replayability 请求可重放性（按 relay mode 静态映射）。
 type Replayability uint8
 
 const (
@@ -37,7 +34,7 @@ const (
 	ReplayUnsafe                      // 图片/视频生成、异步任务提交：重放可能产生重复任务
 )
 
-// DeliveryState 请求送达状态（修订 R2，由执行器在错误发生点标注）。
+// DeliveryState 请求送达状态（由执行器在错误发生点标注）。
 type DeliveryState uint8
 
 const (
@@ -69,7 +66,7 @@ type Channel struct {
 	RampElapsedMs int64 // 距新启用/熔断恢复的毫秒数；<0 表示不在爬坡期
 
 	KeyIDs         []int64 // active 状态的渠道 Key ID 列表（按 id 升序）；空表示由适配层自行取 Key
-	StrictCapacity bool    // 修订 R4：Redis 故障时 fail-closed
+	StrictCapacity bool    // Redis 故障时 fail-closed
 }
 
 // ScoredChannel 打分后的候选。
@@ -79,7 +76,7 @@ type ScoredChannel struct {
 	Breakdown WeightBreakdown
 }
 
-// WeightBreakdown 权重分解，用于决策日志与 ForwardingTrace（修订 R5）。
+// WeightBreakdown 权重分解，用于决策日志与 ForwardingTrace。
 type WeightBreakdown struct {
 	Base      float64 `json:"base"`
 	Tier      float64 `json:"tier"`
@@ -100,7 +97,7 @@ type RequestProfile struct {
 	Scope     []int64 // 租户渠道范围（空 = 不限制），由适配层填充
 	Replay    Replayability
 	Signals   SessionSignals
-	// Policy 请求级策略覆盖（租户级差异化，基线方案 §12「全局默认 + 租户覆盖」）。
+	// Policy 请求级策略覆盖（租户级差异化）。
 	// nil = 使用协调器全局策略。由适配层解析（全局 + 租户浅合并）后传入。
 	Policy *RoutingPolicy
 }
@@ -135,7 +132,7 @@ type Decision struct {
 }
 
 // Outcome 一次尝试的结果，用于健康上报（fire-and-forget）。
-// 修订 R6：Class 决定健康 EWMA 的衰减档位；CLIENT / CREDENTIAL 类不上报。
+// Class 决定健康 EWMA 的衰减档位；CLIENT / CREDENTIAL 类不上报。
 type Outcome struct {
 	ChannelID int64
 	KeyID     int64
