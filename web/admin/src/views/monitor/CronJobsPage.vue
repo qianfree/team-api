@@ -15,26 +15,6 @@ const execLoading = ref<Record<string, boolean>>({})
 const execData = ref<Record<string, any[]>>({})
 const execPagination = reactive<Record<string, { current: number; total: number }>>({})
 
-const jobNameMap: Record<string, string> = {
-  ops_system_collector: '系统指标采集',
-  ops_alert_detector: '告警检测',
-  ops_metrics_cleanup: '指标数据清理',
-  partition_ensure: '分区维护',
-  health_snapshot: '渠道健康快照',
-  channel_auto_test: '渠道自动测试',
-  model_sunset_check: '模型下线检查',
-  data_cleanup: '过期数据清理',
-  export_file_cleanup: '导出文件清理',
-  file_retention_check: '文件保留检查',
-  task_timeout_check: '任务超时检查',
-  task_executor: '异步任务执行',
-  usage_log_cleanup: '用量日志清理',
-  oauth_token_refresh: 'OAuth 令牌刷新',
-  cron_execution_cleanup: '执行记录清理',
-  prededuct_orphan_cleanup: '预扣孤儿清理',
-  plugin_example_daily_cleanup: '插件示例数据清理',
-}
-
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
@@ -46,7 +26,7 @@ const columns: TableColumnData[] = [
     dataIndex: 'name',
     width: 200,
     render({ record }: { record: any }) {
-      return h('span', jobNameMap[record.name] || record.name)
+      return h('span', record.display_name || record.name)
     },
   },
   {
