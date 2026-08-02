@@ -169,25 +169,6 @@ type AbilityItem struct {
 	CostRatio     float64 `json:"cost_ratio" d:"1" v:"between:0,100" dc:"成本比例：上游实际价/平台基准价，1.0=等价（参与调度 costFactor）"`
 }
 
-// ChannelCostRatioImportReq 批量导入渠道模型成本比例（CSV 由前端解析为条目）
-type ChannelCostRatioImportReq struct {
-	g.Meta `path:"/channels/cost-ratio-import" method:"post" mime:"json" tags:"管理后台-渠道" summary:"批量导入成本比例"`
-	Items  []CostRatioImportItem `json:"items" v:"required#请提供导入条目" dc:"导入条目列表"`
-}
-
-// CostRatioImportItem 成本比例导入条目
-type CostRatioImportItem struct {
-	ChannelID int64   `json:"channel_id" v:"required|min:1" dc:"渠道ID"`
-	ModelName string  `json:"model_name" v:"required" dc:"平台标准模型名"`
-	CostRatio float64 `json:"cost_ratio" v:"required|between:0.0001,100" dc:"成本比例"`
-}
-
-// ChannelCostRatioImportRes 批量导入成本比例响应
-type ChannelCostRatioImportRes struct {
-	Updated int      `json:"updated" dc:"成功更新条数"`
-	Skipped []string `json:"skipped" dc:"未匹配到能力记录的条目（渠道ID:模型名）"`
-}
-
 // ProviderDefaultURLReq 获取供应商默认 URL
 type ProviderDefaultURLReq struct {
 	g.Meta `path:"/channels/provider-default-urls" method:"get" mime:"json" tags:"管理后台-渠道" summary:"供应商默认地址"`

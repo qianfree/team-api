@@ -228,36 +228,6 @@ function handleUpstreamModelChange(record: any, value: string) {
   scheduleAbilitySave('上游模型名已更新')
 }
 
-// CSV 批量导入成本比例：每行 "model_name,cost_ratio"（首行可为表头）
-const csvInputRef = ref<HTMLInputElement>()
-const csvImporting = ref(false)
-function triggerCsvImport() { csvInputRef.value?.click() }
-async function handleCsvFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  const text = await file.text()
-  const items: { channel_id: number; model_name: string; cost_ratio: number }[] = []
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const [model, ratioStr] = line.split(',').map(s => s?.trim())
-    const ratio = Number(ratioStr)
-    if (!model || !Number.isFinite(ratio) || ratio <= 0) continue // 跳过表头与非法行
-    items.push({ channel_id: Number(channelId), model_name: model, cost_ratio: ratio })
-  }
-  if (!items.length) { Message.warning('未解析到有效条目，格式：model_name,cost_ratio'); return }
-  csvImporting.value = true
-  try {
-    const res: any = await request.post('/admin/channels/cost-ratio-import', { items })
-    const data = res.data?.data || res.data
-    const skipped = data?.skipped?.length ? `，未匹配 ${data.skipped.length} 条` : ''
-    Message.success(`已更新 ${data?.updated ?? 0} 条${skipped}`)
-    fetchAbilities()
-  } catch { /* error handled by interceptor */ } finally { csvImporting.value = false }
-}
-
 async function handleDeleteAbility(id: number) {
   const newList = abilitiesData.value.filter(a => a.id !== id)
   try {
@@ -593,15 +563,14 @@ function formatHeaders(headers: Record<string, string>): string {
           <!-- Tab 2: Model Abilities -->
           <ATabPane key="abilities" title="模型能力">
             <ACard :bordered="false">
+              <template #title>
+                <div class="flex items-center justify-between">
+                  <span>模型能力配置</span>
+                  <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
+                </div>
+              </template>
               <div class="flex items-center justify-between mb-4">
                 <span style="color: var(--color-text-3)">已配置 {{ abilitiesData.length }} 个模型能力</span>
-                <ASpace>
-                  <ATooltip content="CSV 每行：model_name,cost_ratio（如 gpt-4o,0.8）">
-                    <AButton type="outline" :loading="csvImporting" @click="triggerCsvImport">导入成本比例</AButton>
-                  </ATooltip>
-                  <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
-                </ASpace>
-                <input ref="csvInputRef" type="file" accept=".csv,text/csv" style="display:none" @change="handleCsvFile" />
               </div>
               <ATable
                 :columns="abilityColumns"
@@ -612,6 +581,18 @@ function formatHeaders(headers: Record<string, string>): string {
                 :pagination="false"
                 row-key="id"
               />
+              <!-- 字段功能说明（面向运营者） -->
+              <div class="mt-3 text-xs" style="color: var(--color-text-3); line-height: 1.7;">
+                <div class="mb-1"><strong>字段说明</strong></div>
+                <div class="flex flex-wrap gap-x-6 gap-y-1">
+                  <div>
+                    <span style="font-weight: 500;">上游模型名：</span>该渠道转发请求时实际调用的上游模型名称。仅当上游名称与平台标准模型名不同时填写（如平台名 gpt-4、上游名 gpt-4-0314）；留空表示与平台模型名相同。
+                  </div>
+                  <div>
+                    <span style="font-weight: 500;">成本比例：</span>该渠道相对基准价的成本系数，1.0 为标准。小于 1（如 0.8）表示更便宜，多渠道择优时更优先调度；大于 1（如 1.5）表示更贵，优先级降低。仅用于渠道调度，不影响对用户的计费。
+                  </div>
+                </div>
+              </div>
             </ACard>
           </ATabPane>
 

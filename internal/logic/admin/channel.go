@@ -636,30 +636,6 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 	return &v1.ChannelAbilitiesGetRes{List: list}, nil
 }
 
-// ImportChannelCostRatios 批量导入渠道模型成本比例（CSV 由前端解析为条目提交）。
-// 只更新已存在的能力记录，未匹配的条目返回在 skipped 中；成功后触发目录失效。
-func (s *sAdmin) ImportChannelCostRatios(ctx context.Context, req *v1.ChannelCostRatioImportReq) (*v1.ChannelCostRatioImportRes, error) {
-	res := &v1.ChannelCostRatioImportRes{Skipped: make([]string, 0)}
-	for _, item := range req.Items {
-		affected, err := dao.ChnAbilities.Ctx(ctx).
-			Where("channel_id", item.ChannelID).
-			Where("model_name", item.ModelName).
-			Data(do.ChnAbilities{CostRatio: item.CostRatio}).
-			UpdateAndGetAffected()
-		if err != nil {
-			return nil, err
-		}
-		if affected == 0 {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("%d:%s", item.ChannelID, item.ModelName))
-			continue
-		}
-		res.Updated++
-	}
-	// 成本比例参与调度 costFactor，变更后跨实例目录失效
-	dispatchadapter.PublishInvalidate(ctx)
-	return res, nil
-}
-
 // GetProviderDefaultURLs 获取供应商默认 API 地址
 func (s *sAdmin) GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefaultURLReq) (*v1.ProviderDefaultURLRes, error) {
 	return &v1.ProviderDefaultURLRes{URLs: defaultProviderURLs}, nil

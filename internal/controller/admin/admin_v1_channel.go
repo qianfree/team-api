@@ -49,6 +49,3 @@ func (c *ControllerV1) ChannelExport(ctx context.Context, req *v1.ChannelExportR
 func (c *ControllerV1) ChannelClone(ctx context.Context, req *v1.ChannelCloneReq) (res *v1.ChannelCloneRes, err error) {
 	return service.Admin().CloneChannel(ctx, req)
 }
-func (c *ControllerV1) ChannelCostRatioImport(ctx context.Context, req *v1.ChannelCostRatioImportReq) (res *v1.ChannelCostRatioImportRes, err error) {
-	return service.Admin().ImportChannelCostRatios(ctx, req)
-}
