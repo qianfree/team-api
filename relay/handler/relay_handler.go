@@ -639,7 +639,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				g.Log().Warningf(ctx, "[RelayHandler] DoResponse failed (will retry): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
 					adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
 			} else {
-				g.Log().Errorf(ctx, "[RelayHandler] DoResponse failed (abort): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
+				// 上游响应错误属于预期内的运营事件（4xx/5xx/超时等），非代码 bug：
+				// 用 Warningf 避免触发 glog 默认对 ERROR+ 级别自动打印调用栈（StStatus=1），
+				// 堆栈只会复述对所有请求都一样的中间件链，污染日志且无诊断价值。
+				g.Log().Warningf(ctx, "[RelayHandler] DoResponse failed (abort): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
 					adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
 			}
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
