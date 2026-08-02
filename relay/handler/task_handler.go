@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/taskchannel"
 	_ "github.com/qianfree/team-api/relay/taskchannel/ali"
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
@@ -211,8 +212,10 @@ func HandleTaskSubmit(
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
-		g.Log().Errorf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
-		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+err.Error(), "")
+		// 上游请求失败（网络/超时/拒绝等）属预期内运营事件，非代码 bug：
+		// 用 Warningf 避免 glog 对 ERROR+ 自动打印调用栈污染日志（与 :229 upstream response error 一致）。
+		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
+		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+helper.SafeUpstreamErrorMessage(err), "")
 		return
 	}
 	defer resp.Body.Close()
@@ -379,10 +382,12 @@ func isSyncImageResultTask(t *common.AsyncTask) bool {
 
 // writeTaskError 写入错误响应
 func writeTaskError(w http.ResponseWriter, statusCode int, message, code string) {
+	// 防御性兜底：抹除 message 中可能残留的上游 URL / IP（如 DoRequest 失败的 *url.Error、
+	// MJ 图片代理的 http.Get 错误）。传输层域名已在主要泄露点（:215）经 SafeUpstreamErrorMessage 归一化。
 	resp := map[string]any{
 		"error": map[string]any{
 			"type":    "invalid_request_error",
-			"message": message,
+			"message": helper.RedactMessage(message),
 		},
 	}
 	if code != "" {
