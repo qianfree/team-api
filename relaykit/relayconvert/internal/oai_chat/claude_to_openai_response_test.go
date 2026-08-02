@@ -272,9 +272,9 @@ func TestClaudeToOpenAIResponseConverter_MultipleTextBlocks(t *testing.T) {
 
 func TestClaudeToOpenAIResponseConverter_StopReasonMapping(t *testing.T) {
 	tests := []struct {
-		name              string
-		claudeStopReason  string
-		expectedFinish    string
+		name             string
+		claudeStopReason string
+		expectedFinish   string
 	}{
 		{
 			name:             "end_turn maps to stop",
@@ -370,7 +370,7 @@ func TestClaudeToOpenAIResponseConverter_EmptyContent(t *testing.T) {
 		t.Errorf("Role = %q, want %q", message.Role, "assistant")
 	}
 
-	// Empty content should result in empty string or nil
+	// 内容为空时应得到空字符串或 nil
 	if message.Content != "" && message.Content != nil {
 		t.Errorf("Expected empty content, got %v", message.Content)
 	}
@@ -385,7 +385,7 @@ func TestClaudeToOpenAIResponseConverter_ModelNameFallback(t *testing.T) {
 		ID:         "msg_test",
 		Type:       "message",
 		Role:       "assistant",
-		Model:      "", // Empty model name
+		Model:      "", // 模型名为空
 		StopReason: "end_turn",
 		Content: []dto.ClaudeContentBlock{
 			{

@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// RoutingPolicy 路由策略（基线方案 §12 + 开发计划 §4.3 扩展字段）。
+// RoutingPolicy 路由策略。
 // 单一版本化对象，适配层从 sys_options 加载并做 Schema 校验，非法配置拒绝生效。
 type RoutingPolicy struct {
 	Version int `json:"version"`
@@ -48,11 +48,11 @@ type RoutingPolicy struct {
 	Replay ReplayPolicy `json:"replay"`
 
 	Degrade struct {
-		MaxReplicas int `json:"maxReplicas"` // 修订 R4：实例级保守限额分母，默认 1
+		MaxReplicas int `json:"maxReplicas"` // 实例级保守限额分母，默认 1
 	} `json:"degrade"`
 }
 
-// ReplayPolicy 可重放性策略（修订 R2）。
+// ReplayPolicy 可重放性策略。
 type ReplayPolicy struct {
 	// UnsafeModes 归为 ReplayUnsafe 的 relay mode 字符串列表（与 handler 的
 	// relayModeString 取值一致）。重放可能产生重复任务/高额成本的端点应列入。
@@ -72,23 +72,23 @@ func (p ReplayPolicy) ReplayabilityForMode(mode string) Replayability {
 	return ReplayCostly
 }
 
-// RetryPolicy 重试策略（基线方案 §6.2 + 修订 R1/R2）。
+// RetryPolicy 重试策略。
 type RetryPolicy struct {
 	InPlaceBudget        int   `json:"inPlaceBudget"`        // 原地重试预算（每渠道），默认 2
 	FailoverBudget       int   `json:"failoverBudget"`       // 换渠道预算，默认 2
-	CredRotateBudget     int   `json:"credRotateBudget"`     // 修订 R1：凭证轮换预算（每渠道），默认 1
-	CredCooldownSeconds  int   `json:"credCooldownSeconds"`  // 修订 R1：凭证冷却时长，默认 300
+	CredRotateBudget     int   `json:"credRotateBudget"`     // 凭证轮换预算（每渠道），默认 1
+	CredCooldownSeconds  int   `json:"credCooldownSeconds"`  // 凭证冷却时长，默认 300
 	TotalDeadlineSeconds int   `json:"totalDeadlineSeconds"` // 总时限，默认 30
 	BackoffBaseMs        int64 `json:"backoffBaseMs"`        // 退避基数，默认 100
 	BackoffMaxMs         int64 `json:"backoffMaxMs"`         // 退避上限，默认 1000
 	RateLimitWaitMaxMs   int64 `json:"rateLimitWaitMaxMs"`   // 429 最大等待，默认 2000
 
-	// 修订 R2：ReplayUnsafe 请求的收紧预算（默认 0/0，仅 NotSent 允许 failover）
+	// ReplayUnsafe 请求的收紧预算（默认 0/0，仅 NotSent 允许 failover）
 	UnsafeInPlaceBudget  int `json:"unsafeInPlaceBudget"`
 	UnsafeFailoverBudget int `json:"unsafeFailoverBudget"`
 }
 
-// BreakerPolicy 熔断策略（基线方案 §7）。
+// BreakerPolicy 熔断策略。
 type BreakerPolicy struct {
 	WindowSeconds           int `json:"windowSeconds"`           // 滑动窗口，默认 60
 	FailThreshold           int `json:"failThreshold"`           // 窗口失败阈值，默认 8
@@ -98,14 +98,14 @@ type BreakerPolicy struct {
 	AutoDisableAfterSeconds int `json:"autoDisableAfterSeconds"` // OPEN 持续自动禁用，默认 600
 }
 
-// SessionPolicy 会话解析策略（基线方案 §3）。
+// SessionPolicy 会话解析策略。
 type SessionPolicy struct {
 	HeaderName             string `json:"headerName"`             // 显式头名，默认 X-Session-Id
 	ParseAnthropicMetadata bool   `json:"parseAnthropicMetadata"` // 解析 metadata.user_id
 	ParseOpenAIResponses   bool   `json:"parseOpenAIResponses"`   // 解析 previous_response_id / conversation_id
 }
 
-// DefaultRoutingPolicy 返回默认策略（基线方案 §12 默认值）。
+// DefaultRoutingPolicy 返回默认策略。
 func DefaultRoutingPolicy() *RoutingPolicy {
 	p := &RoutingPolicy{
 		Version: 1,
@@ -218,7 +218,7 @@ func (p *RoutingPolicy) Validate() error {
 }
 
 // ---------------------------------------------------------------------------
-// 重试决策 FSM（基线方案 §6.3 + 修订 R1/R2/R3）
+// 重试决策 FSM
 // ---------------------------------------------------------------------------
 
 // RetryDecision 重试决策。
@@ -227,7 +227,7 @@ type RetryDecision int
 const (
 	DecisionAbort            RetryDecision = iota // 终止，返回错误
 	DecisionInPlaceRetry                          // 同渠道同 Key 退避重试
-	DecisionRotateCredential                      // 修订 R1：同渠道换下一个 Key
+	DecisionRotateCredential                      // 同渠道换下一个 Key
 	DecisionFailover                              // 排除当前渠道重新选择
 )
 
@@ -259,7 +259,7 @@ type AttemptState struct {
 //
 // 硬规则优先级（高于错误分类）：
 //  1. 已向客户端写出响应 → Abort；
-//  2. ReplayUnsafe + MaybeSent → Abort（修订 R2，状态码无关）；
+//  2. ReplayUnsafe + MaybeSent → Abort（状态码无关）；
 //  3. 总时限耗尽 → Abort。
 func Decide(class ErrorClass, delivery DeliveryState, replay Replayability, retryAfterMs int64, s AttemptState, p RetryPolicy) (RetryDecision, int64) {
 	// 硬规则
@@ -276,7 +276,7 @@ func Decide(class ErrorClass, delivery DeliveryState, replay Replayability, retr
 		return DecisionAbort, 0
 	}
 
-	// 修订 R2：ReplayUnsafe 使用收紧预算
+	// ReplayUnsafe 使用收紧预算
 	inPlaceBudget, failoverBudget := p.InPlaceBudget, p.FailoverBudget
 	if replay == ReplayUnsafe {
 		inPlaceBudget, failoverBudget = p.UnsafeInPlaceBudget, p.UnsafeFailoverBudget
@@ -294,7 +294,7 @@ func Decide(class ErrorClass, delivery DeliveryState, replay Replayability, retr
 
 	switch class {
 	case ErrClassCredential:
-		// 修订 R1：先轮换同渠道 Key，耗尽后按渠道级致命处理
+		// 先轮换同渠道 Key，耗尽后按渠道级致命处理
 		if s.CredRotationsUsed < p.CredRotateBudget && s.HasAlternateKey {
 			return DecisionRotateCredential, 0
 		}
@@ -308,7 +308,7 @@ func Decide(class ErrorClass, delivery DeliveryState, replay Replayability, retr
 		return failoverOrAbort()
 
 	case ErrClassTimeout:
-		// 修订 R3：超时（含 504）不原地重试
+		// 超时（含 504）不原地重试
 		return failoverOrAbort()
 
 	case ErrClassTransient:

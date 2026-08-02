@@ -12,7 +12,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// GeminiToOpenAIResponseConverter converts Gemini Generate Content response to OpenAI Chat Completions response.
+// GeminiToOpenAIResponseConverter 将 Gemini Generate Content 响应转换为 OpenAI Chat Completions 响应。
 type GeminiToOpenAIResponseConverter struct{}
 
 func (c *GeminiToOpenAIResponseConverter) ID() string {
@@ -41,7 +41,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		return nil, fmt.Errorf("expected *dto.GeminiChatResponse, got %T", response)
 	}
 
-	// Generate response ID
+	// 生成响应 ID
 	responseID := fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
 
 	modelName := geminiResp.ModelName
@@ -60,12 +60,12 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		Choices: make([]dto.Choice, 0),
 	}
 
-	// Check prompt feedback for safety blocks
+	// 检查 prompt feedback 中的安全拦截
 	if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
 		return nil, fmt.Errorf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason)
 	}
 
-	// Convert candidates to choices
+	// 将 candidates 转换为 choices
 	if len(geminiResp.Candidates) == 0 {
 		return openaiResp, nil
 	}
@@ -85,7 +85,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		for _, part := range candidate.Content.Parts {
 			isThought := part.Thought != nil && *part.Thought
 
-			// Text content
+			// 文本内容
 			if part.Text != "" {
 				if isThought {
 					thinkingParts = append(thinkingParts, part.Text)
@@ -94,31 +94,31 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 				}
 			}
 
-			// Inline image data
+			// 内联图片数据
 			if part.InlineData != nil {
 				imageMarkdown := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
 				textParts = append(textParts, imageMarkdown)
 			}
 
-			// File data
+			// 文件数据
 			if part.FileData != nil {
 				fileMarkdown := fmt.Sprintf("[file](%s)", part.FileData.FileURI)
 				textParts = append(textParts, fileMarkdown)
 			}
 
-			// Executable code
+			// 可执行代码
 			if part.ExecutableCode != nil {
 				codeBlock := fmt.Sprintf("```%s\n%s\n```", part.ExecutableCode.Language, part.ExecutableCode.Code)
 				textParts = append(textParts, codeBlock)
 			}
 
-			// Code execution result
+			// 代码执行结果
 			if part.CodeExecutionResult != nil {
 				resultText := fmt.Sprintf("Execution %s:\n%s", part.CodeExecutionResult.Outcome, part.CodeExecutionResult.Output)
 				textParts = append(textParts, resultText)
 			}
 
-			// Function call
+			// 函数调用
 			if part.FunctionCall != nil {
 				argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
 				toolCalls = append(toolCalls, dto.ToolCall{
@@ -138,13 +138,13 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 			Content: strings.Join(textParts, ""),
 		}
 
-		// Add thinking content
+		// 添加 thinking 内容
 		if len(thinkingParts) > 0 {
 			joined := strings.Join(thinkingParts, "\n")
 			message.ReasoningContent = &joined
 		}
 
-		// Add tool calls
+		// 添加工具调用
 		if len(toolCalls) > 0 {
 			message.ToolCalls = toolCalls
 			choice.FinishReason = "tool_calls"
@@ -155,7 +155,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 
 	openaiResp.Choices = append(openaiResp.Choices, choice)
 
-	// Convert usage
+	// 转换 usage
 	if geminiResp.UsageMetadata != nil {
 		openaiResp.Usage = dto.UsageWithDetails{
 			PromptTokens:     geminiResp.UsageMetadata.PromptTokenCount,
@@ -167,7 +167,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 	return openaiResp, nil
 }
 
-// Helper functions
+// 辅助函数
 
 func mapGeminiFinishReason(reason string) string {
 	switch reason {

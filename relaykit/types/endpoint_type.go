@@ -1,8 +1,8 @@
 package types
 
-// EndpointType identifies a downstream API surface. Moved from constant so
-// the conversion kit (dto/relayconvert) has no host imports; constant keeps
-// aliases for host code.
+// EndpointType 标识下游 API 接口。从 constant 包迁移至此，
+// 这样转换工具包（dto/relayconvert）就不需要导入宿主包；
+// constant 包中保留了供宿主代码使用的别名。
 type EndpointType string
 
 const (
@@ -18,9 +18,9 @@ const (
 	EndpointTypeOpenAIVideo           EndpointType = "openai-video"
 )
 
-// Finish reasons shared by the OpenAI-compatible response formats.
-// Declared as vars (not consts) because converter code takes their address
-// for *string finish-reason fields.
+// OpenAI 兼容响应格式共享的结束原因。
+// 声明为 vars（而非 consts），因为转换器代码会对它们取地址，
+// 用于 *string 类型的 finish-reason 字段。
 var (
 	FinishReasonStop          = "stop"
 	FinishReasonToolCalls     = "tool_calls"

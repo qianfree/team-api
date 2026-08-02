@@ -32,15 +32,15 @@ type SessionKey struct {
 }
 
 const (
-	maxHeaderTokenLen   = 256 // 显式头最大长度，超长视为无效（gpt §7.1）
+	maxHeaderTokenLen   = 256 // 显式头最大长度，超长视为无效
 	maxProtocolTokenLen = 512 // 协议内信号最大长度
 )
 
 // anthropicSessionRe 提取 Claude Code metadata.user_id 中的 session UUID 段。
-// 格式形如 user_<hash>_account_<uuid>_session_<uuid>，格式稳定性需抓包验证（基线方案 §19.1）。
+// 格式形如 user_<hash>_account_<uuid>_session_<uuid>，格式稳定性需抓包验证。
 var anthropicSessionRe = regexp.MustCompile(`session_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
 
-// ResolveSessionKey 会话键解析链（基线方案 §3.1）：
+// ResolveSessionKey 会话键解析链：
 // 显式头 → Anthropic metadata → OpenAI Responses 信号 → 身份四元组回退。
 // 纯函数：相同输入永远得到相同输出。
 func ResolveSessionKey(p RequestProfile, pol SessionPolicy) SessionKey {

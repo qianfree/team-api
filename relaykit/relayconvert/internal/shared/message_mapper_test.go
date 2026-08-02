@@ -51,7 +51,7 @@ func TestMapOpenAIContentPartsToClaude(t *testing.T) {
 	tests := []struct {
 		name     string
 		parts    []dto.ContentPart
-		expected int // Expected number of blocks
+		expected int // 期望的 block 数量
 	}{
 		{
 			name: "text part",

@@ -6,7 +6,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 )
 
-// MapOpenAIToolsToClaudeTools converts OpenAI Tool[] to Claude ClaudeTool[].
+// MapOpenAIToolsToClaudeTools 将 OpenAI Tool[] 转换为 Claude ClaudeTool[]。
 func MapOpenAIToolsToClaudeTools(tools []dto.Tool) []dto.ClaudeTool {
 	claudeTools := make([]dto.ClaudeTool, 0, len(tools))
 
@@ -20,7 +20,7 @@ func MapOpenAIToolsToClaudeTools(tools []dto.Tool) []dto.ClaudeTool {
 			Description: tool.Function.Description,
 		}
 
-		// Convert parameters (JSON Schema)
+		// 转换参数（JSON Schema）
 		if tool.Function.Parameters != nil {
 			claudeTool.InputSchema = tool.Function.Parameters
 		}
@@ -31,7 +31,7 @@ func MapOpenAIToolsToClaudeTools(tools []dto.Tool) []dto.ClaudeTool {
 	return claudeTools
 }
 
-// MapClaudeToolsToOpenAITools converts Claude ClaudeTool[] to OpenAI Tool[].
+// MapClaudeToolsToOpenAITools 将 Claude ClaudeTool[] 转换为 OpenAI Tool[]。
 func MapClaudeToolsToOpenAITools(tools []dto.ClaudeTool) []dto.Tool {
 	openaiTools := make([]dto.Tool, 0, len(tools))
 
@@ -51,7 +51,7 @@ func MapClaudeToolsToOpenAITools(tools []dto.ClaudeTool) []dto.Tool {
 	return openaiTools
 }
 
-// MapClaudeToolCallsToOpenAI converts Claude tool_use ContentBlock[] to OpenAI ToolCall[].
+// MapClaudeToolCallsToOpenAI 将 Claude tool_use ContentBlock[] 转换为 OpenAI ToolCall[]。
 func MapClaudeToolCallsToOpenAI(blocks []dto.ClaudeContentBlock) []dto.ToolCall {
 	toolCalls := make([]dto.ToolCall, 0)
 
@@ -60,7 +60,7 @@ func MapClaudeToolCallsToOpenAI(blocks []dto.ClaudeContentBlock) []dto.ToolCall 
 			continue
 		}
 
-		// Marshal Input to JSON string
+		// 将 Input 序列化为 JSON 字符串
 		arguments := "{}"
 		if block.Input != nil {
 			if data, err := json.Marshal(block.Input); err == nil {
@@ -81,7 +81,7 @@ func MapClaudeToolCallsToOpenAI(blocks []dto.ClaudeContentBlock) []dto.ToolCall 
 	return toolCalls
 }
 
-// MapOpenAIToolCallsToClaude converts OpenAI ToolCall[] to Claude tool_use ContentBlock[].
+// MapOpenAIToolCallsToClaude 将 OpenAI ToolCall[] 转换为 Claude tool_use ContentBlock[]。
 func MapOpenAIToolCallsToClaude(toolCalls []dto.ToolCall) []dto.ClaudeContentBlock {
 	blocks := make([]dto.ClaudeContentBlock, 0, len(toolCalls))
 
@@ -90,7 +90,7 @@ func MapOpenAIToolCallsToClaude(toolCalls []dto.ToolCall) []dto.ClaudeContentBlo
 			continue
 		}
 
-		// Parse Arguments JSON string to map
+		// 将 Arguments JSON 字符串解析为 map
 		var input map[string]any
 		if tc.Function.Arguments != "" {
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)

@@ -1,11 +1,10 @@
-// Package relayconvert — RESPONSE-side converter spec types and registration /
-// lookup machinery.
+// Package relayconvert — 响应侧转换器 spec 类型与注册 / 查找机制。
 //
-// 阶段 1 框架子集：本文件只移植「spec 类型 + 函数类型 + 注册 / 查找 / 别名」结构层。
+// 本文件只移植「spec 类型 + 函数类型 + 注册 / 查找 / 别名」结构层。
 // 调度引擎（ConvertResponse / ConvertStreamResponse / NewResponseStreamState* /
 // ConvertStreamResponseChunk / FinalizeStreamResponse / execute* / infer* /
 // canonicalUsageFromResponse）、ResponseStreamState 的方法（Usage/SetUsage/UsageText
-// 依赖阶段 3 的 stream-state 类型）以及全部 adapter 函数，留到阶段 3。
+// 依赖 stream-state 类型）以及全部 adapter 函数。
 package relayconvert
 
 import (
@@ -81,8 +80,8 @@ type ResponseStreamOptions struct {
 }
 
 // ResponseStreamState 承载一次流式响应转换的跨 chunk 状态。
-// 阶段 1 仅定义数据字段；其方法（Usage/SetUsage/UsageText/rememberUsage）与
-// 构造器（NewResponseStreamState）依赖阶段 3 的 stream-state 实现类型，届时补齐。
+// 仅定义数据字段；其方法（Usage/SetUsage/UsageText/rememberUsage）与
+// 构造器（NewResponseStreamState）依赖 stream-state 实现类型。
 type ResponseStreamState struct {
 	From      types.RelayFormat
 	To        types.RelayFormat
@@ -96,22 +95,22 @@ type ResponseStreamState struct {
 }
 
 const (
-	ResponseConverterOAIChatToOAIResponses          = "oai_chat_to_oai_responses_resp"
-	ResponseConverterOAIResponsesToOAIChat          = "oai_responses_to_oai_chat_resp"
-	ResponseConverterOAIChatToClaudeMessages        = "oai_chat_to_claude_messages_resp"
-	ResponseConverterOAIChatToGeminiChat            = "oai_chat_to_gemini_chat_resp"
-	ResponseConverterClaudeMessagesToOAIChat        = "claude_messages_to_oai_chat_resp"
-	ResponseConverterClaudeMessagesToOAIChatStream  = "claude_messages_to_oai_chat_stream_resp"
-	ResponseConverterGeminiChatToOAIChat            = "gemini_chat_to_oai_chat_resp"
-	ResponseConverterGeminiChatToOAIChatStream      = "gemini_chat_to_oai_chat_stream_resp"
+	ResponseConverterOAIChatToOAIResponses         = "oai_chat_to_oai_responses_resp"
+	ResponseConverterOAIResponsesToOAIChat         = "oai_responses_to_oai_chat_resp"
+	ResponseConverterOAIChatToClaudeMessages       = "oai_chat_to_claude_messages_resp"
+	ResponseConverterOAIChatToGeminiChat           = "oai_chat_to_gemini_chat_resp"
+	ResponseConverterClaudeMessagesToOAIChat       = "claude_messages_to_oai_chat_resp"
+	ResponseConverterClaudeMessagesToOAIChatStream = "claude_messages_to_oai_chat_stream_resp"
+	ResponseConverterGeminiChatToOAIChat           = "gemini_chat_to_oai_chat_resp"
+	ResponseConverterGeminiChatToOAIChatStream     = "gemini_chat_to_oai_chat_stream_resp"
 
-	// 阶段 5：原生格式供应商 → OpenAI（响应侧，含流式）
-	ResponseConverterCozeChatToOAIChat              = "coze_chat_to_oai_chat_resp"
-	ResponseConverterCozeChatToOAIChatStream        = "coze_chat_to_oai_chat_stream_resp"
-	ResponseConverterDifyChatToOAIChat              = "dify_chat_to_oai_chat_resp"
-	ResponseConverterDifyChatToOAIChatStream        = "dify_chat_to_oai_chat_stream_resp"
-	ResponseConverterOllamaChatToOAIChat            = "ollama_chat_to_oai_chat_resp"
-	ResponseConverterOllamaChatToOAIChatStream      = "ollama_chat_to_oai_chat_stream_resp"
+	// 原生格式供应商 → OpenAI（响应侧，含流式）
+	ResponseConverterCozeChatToOAIChat         = "coze_chat_to_oai_chat_resp"
+	ResponseConverterCozeChatToOAIChatStream   = "coze_chat_to_oai_chat_stream_resp"
+	ResponseConverterDifyChatToOAIChat         = "dify_chat_to_oai_chat_resp"
+	ResponseConverterDifyChatToOAIChatStream   = "dify_chat_to_oai_chat_stream_resp"
+	ResponseConverterOllamaChatToOAIChat       = "ollama_chat_to_oai_chat_resp"
+	ResponseConverterOllamaChatToOAIChatStream = "ollama_chat_to_oai_chat_stream_resp"
 
 	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
 	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
@@ -129,7 +128,7 @@ var (
 )
 
 // registerBuiltinResponseConverter 注册响应侧转换器到注册表。
-// 阶段 3 的 init() 通过 registerBuiltinTextConverter() 调用本函数。
+// init() 通过 registerBuiltinTextConverter() 调用本函数。
 //
 // 并发安全：持有 responseConverterMu 写锁保护注册过程，防止 data race。
 // 虽然通常在包 init() 中调用（单线程），但加锁确保未来动态注册或测试并发场景安全。

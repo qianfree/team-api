@@ -11,7 +11,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// OpenAIToGeminiRequestConverter converts OpenAI Chat Completions request to Gemini Generate Content request.
+// OpenAIToGeminiRequestConverter 将 OpenAI Chat Completions 请求转换为 Gemini Generate Content 请求。
 type OpenAIToGeminiRequestConverter struct{}
 
 func (c *OpenAIToGeminiRequestConverter) ID() string {
@@ -66,7 +66,7 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		geminiReq.GenerationConfig.MaxOutputTokens = &v
 	}
 
-	// StopSequences (limit to 5)
+	// StopSequences（限制为 5 个）
 	if stops := parseStopSequences(openaiReq.Stop); len(stops) > 0 {
 		if len(stops) > 5 {
 			stops = stops[:5]
@@ -90,7 +90,7 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		geminiReq.GenerationConfig.FrequencyPenalty = openaiReq.FrequencyPenalty
 	}
 
-	// CandidateCount (from N)
+	// CandidateCount（来自 N 字段）
 	if openaiReq.N != nil && *openaiReq.N > 0 {
 		geminiReq.GenerationConfig.CandidateCount = openaiReq.N
 	}
@@ -123,7 +123,7 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		}
 	}
 
-	// Default safety settings (permissive)
+	// 默认安全设置（宽松）
 	geminiReq.SafetySettings = []dto.GeminiSafetySetting{
 		{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_ONLY_HIGH"},
 		{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_ONLY_HIGH"},
@@ -182,7 +182,7 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 			}
 
 		case "tool":
-			// Ensure last content is user (Gemini requires functionResponse in user content)
+			// 确保最后一条 content 是 user 角色（Gemini 要求 functionResponse 必须位于 user content 中）
 			if len(geminiReq.Contents) == 0 || geminiReq.Contents[len(geminiReq.Contents)-1].Role == "model" {
 				geminiReq.Contents = append(geminiReq.Contents, dto.GeminiContent{Role: "user"})
 			}
@@ -221,7 +221,7 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 	return geminiReq, nil
 }
 
-// Helper functions
+// 辅助函数
 
 func parseStopSequences(stop any) []string {
 	if stop == nil {
@@ -262,7 +262,7 @@ func extractText(content any) string {
 			}
 		}
 		if len(parts) > 0 {
-			return parts[0] // Use first text part for simplicity
+			return parts[0] // 简化处理，取第一个 text part
 		}
 	}
 	return ""
@@ -327,7 +327,7 @@ func parseDataURL(dataURL string) (mimeType, data string, ok bool) {
 	if len(dataURL) < 11 || dataURL[:5] != "data:" {
 		return "", "", false
 	}
-	// Find semicolon separator
+	// 查找分号分隔符
 	semiIdx := -1
 	for i := 5; i < len(dataURL); i++ {
 		if dataURL[i] == ';' {
@@ -413,7 +413,7 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 	return []geminiTool{{FunctionDeclarations: funcDecls}}, nil
 }
 
-// cleanParams removes Gemini-unsupported JSON Schema fields
+// cleanParams 移除 Gemini 不支持的 JSON Schema 字段
 func cleanParams(params any) any {
 	if params == nil {
 		return nil
@@ -496,7 +496,7 @@ func convertResponseSchema(schema any) any {
 		return nil
 	}
 
-	// Handle json_schema wrapper: {"type":"json_schema","json_schema":{"schema":{...}}}
+	// 处理 json_schema 包装结构：{"type":"json_schema","json_schema":{"schema":{...}}}
 	if m, ok := schema.(map[string]any); ok {
 		if js, ok := m["json_schema"].(map[string]any); ok {
 			if innerSchema, ok := js["schema"]; ok {
@@ -509,7 +509,7 @@ func convertResponseSchema(schema any) any {
 	return schema
 }
 
-// convertSchemaMap recursively converts JSON Schema type names to Gemini format
+// convertSchemaMap 递归地将 JSON Schema 类型名转换为 Gemini 格式
 func convertSchemaMap(schema any) any {
 	m, ok := schema.(map[string]any)
 	if !ok {
@@ -554,7 +554,7 @@ func convertSchemaMap(schema any) any {
 	return result
 }
 
-// mapSchemaType maps JSON Schema type names to Gemini Schema type names
+// mapSchemaType 将 JSON Schema 类型名映射为 Gemini Schema 类型名
 func mapSchemaType(t string) string {
 	switch t {
 	case "string":

@@ -167,7 +167,7 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
-	// 阶段 5：relaykit 响应转换路径（仅 chat；generate/embedding 不迁移，走旧路径）
+	// relaykit 响应转换路径（仅 chat；generate/embedding 不迁移，走旧路径）
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
@@ -228,7 +228,7 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
-	// 阶段 5：relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
+	// relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
 		return usage, nil
 	}

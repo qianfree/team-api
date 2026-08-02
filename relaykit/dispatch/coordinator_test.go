@@ -171,7 +171,7 @@ func TestCoordinator_守卫_饱和渠道重绑(t *testing.T) {
 }
 
 // TestCoordinator_守卫_glm缺陷回归 溢出到 secondary 建立的绑定必须保持稳定：
-// 守卫判据与 tier/cost 解耦，不得因 tierFactor 低而每请求重绑（glm 方案 keepThreshold 缺陷）。
+// 守卫判据与 tier/cost 解耦，不得因 tierFactor 低而每请求重绑（规避 keepThreshold 缺陷）。
 func TestCoordinator_守卫_glm缺陷回归(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
@@ -220,7 +220,7 @@ func TestCoordinator_502原地重试与预算耗尽(t *testing.T) {
 	assert.Equal(t, 200*time.Millisecond, backoff)
 	s.Next(ctx)
 
-	// 第三次 502 → 原地预算耗尽，failover 换渠道；绑定不删除（A3）
+	// 第三次 502 → 原地预算耗尽，failover 换渠道；绑定不删除
 	dec, _ = s.Report(ctx, 502, nil, DeliveryResponseReceived, 50, 0)
 	assert.Equal(t, DecisionFailover, dec)
 	d3 := s.Next(ctx)
@@ -253,11 +253,11 @@ func TestCoordinator_401凭证轮换链路(t *testing.T) {
 	require.Equal(t, int64(1), d.Channel.ID)
 	assert.Equal(t, int64(11), d.KeyID, "按序取第一个 active Key")
 
-	// 第一次 401 → 冷却 Key 11，轮换到 Key 12（修订 R1）
+	// 第一次 401 → 冷却 Key 11，轮换到 Key 12
 	dec, _ := s.Report(ctx, 401, nil, DeliveryResponseReceived, 30, 0)
 	assert.Equal(t, DecisionRotateCredential, dec)
 	assert.True(t, state.cooled[11], "失效 Key 必须冷却")
-	assert.Empty(t, state.outcomes, "凭证错误不计渠道健康（修订 R6）")
+	assert.Empty(t, state.outcomes, "凭证错误不计渠道健康")
 
 	d = s.Next(ctx)
 	require.NotNil(t, d)
@@ -289,7 +289,7 @@ func TestCoordinator_单Key渠道401直接failover(t *testing.T) {
 	require.Equal(t, int64(1), d.Channel.ID)
 
 	dec, _ := s.Report(ctx, 401, nil, DeliveryResponseReceived, 30, 0)
-	assert.Equal(t, DecisionFailover, dec, "唯一 Key 冷却后无可轮换，行为退化与基线一致")
+	assert.Equal(t, DecisionFailover, dec, "唯一 Key 冷却后无可轮换的 Key，凭证错误直接 failover")
 	assert.True(t, state.cooled[11])
 }
 
@@ -423,7 +423,7 @@ func TestCoordinator_ReplayUnsafe_MaybeSent必Abort(t *testing.T) {
 	require.NotNil(t, s.Next(ctx))
 
 	dec, _ := s.Report(ctx, 0, errors.New("unexpected EOF"), DeliveryMaybeSent, 100, 0)
-	assert.Equal(t, DecisionAbort, dec, "图片/视频/任务提交在可能已送达时禁止重放（修订 R2）")
+	assert.Equal(t, DecisionAbort, dec, "图片/视频/任务提交在可能已送达时禁止重放")
 	assert.Nil(t, s.Next(ctx))
 }
 
@@ -440,7 +440,7 @@ func TestCoordinator_504不原地重试(t *testing.T) {
 	first := d.Channel.ID
 
 	dec, _ := s.Report(ctx, 504, nil, DeliveryMaybeSent, 30_000, 0)
-	assert.Equal(t, DecisionFailover, dec, "504 默认不原地重试（修订 R3）")
+	assert.Equal(t, DecisionFailover, dec, "504 默认不原地重试")
 	d = s.Next(ctx)
 	require.NotNil(t, d)
 	assert.NotEqual(t, first, d.Channel.ID)

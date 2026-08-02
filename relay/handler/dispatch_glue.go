@@ -40,7 +40,7 @@ func retryAfterOf(err error) time.Duration {
 	return 0
 }
 
-// deliveryStateOfRequestErr DoRequest 阶段错误的送达状态标注（修订 R2）：
+// deliveryStateOfRequestErr DoRequest 阶段错误的送达状态标注：
 // 连接拒绝 / DNS 失败 / TLS 建连失败 = 请求确定未发出（可安全重试）；
 // 其余（写出后 RST/EOF/读超时）= 可能已送达上游，非幂等请求禁止重放。
 func deliveryStateOfRequestErr(err error) dispatch.DeliveryState {
@@ -88,7 +88,7 @@ func sleepBackoff(ctx context.Context, d time.Duration) {
 	}
 }
 
-// appendSchedulerDecision 调度决策明细挂 ForwardingTrace（修订 R5）+ 选择指标计数。
+// appendSchedulerDecision 调度决策明细挂 ForwardingTrace + 选择指标计数。
 func appendSchedulerDecision(trace *common.ForwardingTrace, d *dispatch.Decision, attempt int) {
 	if d == nil {
 		monitor.TrackDispatchNoCandidate()

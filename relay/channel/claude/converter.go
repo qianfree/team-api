@@ -341,9 +341,9 @@ func o2cConvertAssistantMessage(msg dto.Message) any {
 		blocks = append(blocks, dto.ClaudeContentBlock{
 			Type:     "thinking",
 			Thinking: msg.ReasoningContent,
-			// Note: Anthropic officially requires a valid signature for thinking blocks in history.
-			// Since OpenAI format doesn't have a dedicated signature field, we leave it empty here.
-			// If API rejects this, it may need to be stored in Message.Annotations or elsewhere in the future.
+			// 注意：Anthropic 官方要求历史中的 thinking 块必须带有有效签名。
+			// 由于 OpenAI 格式没有专门的签名字段，此处留空。
+			// 如果 API 拒绝该请求，将来可能需要存放在 Message.Annotations 或其它位置。
 		})
 	}
 

@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// PickHRW 加权 Rendezvous Hash 选择（基线方案 §5.1，纯函数）。
+// PickHRW 加权 Rendezvous Hash 选择（纯函数）。
 //
 //	pick = argmin_c [ -ln(u_c) / W(c) ]，u_c = hash(sessionKey, channelID) → (0,1)
 //

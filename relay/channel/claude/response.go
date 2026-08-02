@@ -32,7 +32,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// 阶段 4：relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
@@ -93,7 +93,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// 阶段 4 Task4：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
 		return usage, nil
 	}

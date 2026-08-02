@@ -69,8 +69,8 @@ func TestMapClaudeToolCallsToOpenAI(t *testing.T) {
 
 	blocks := []dto.ClaudeContentBlock{
 		{
-			Type:  "text",
-			Text:  strPtr("Let me check the weather"),
+			Type: "text",
+			Text: strPtr("Let me check the weather"),
 		},
 		{
 			Type:  "tool_use",
@@ -98,7 +98,7 @@ func TestMapClaudeToolCallsToOpenAI(t *testing.T) {
 		t.Errorf("Expected name 'get_weather', got %q", result[0].Function.Name)
 	}
 
-	// Verify arguments are valid JSON
+	// 校验 arguments 为合法 JSON
 	var args map[string]any
 	if err := json.Unmarshal([]byte(result[0].Function.Arguments), &args); err != nil {
 		t.Errorf("Arguments are not valid JSON: %v", err)
@@ -139,7 +139,7 @@ func TestMapOpenAIToolCallsToClaude(t *testing.T) {
 		t.Errorf("Expected name 'get_weather', got %q", result[0].Name)
 	}
 
-	// Verify input is properly parsed
+	// 校验 input 已正确解析
 	input, ok := result[0].Input.(map[string]any)
 	if !ok {
 		t.Fatalf("Expected input to be map[string]any, got %T", result[0].Input)

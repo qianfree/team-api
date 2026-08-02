@@ -42,7 +42,7 @@ const (
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
 
-	// new api error
+	// new api 错误
 	ErrorCodeCountTokenFailed   ErrorCode = "count_token_failed"
 	ErrorCodeModelPriceError    ErrorCode = "model_price_error"
 	ErrorCodeInvalidApiType     ErrorCode = "invalid_api_type"
@@ -51,7 +51,7 @@ const (
 	ErrorCodeGetChannelFailed   ErrorCode = "get_channel_failed"
 	ErrorCodeGenRelayInfoFailed ErrorCode = "gen_relay_info_failed"
 
-	// channel error
+	// 渠道错误
 	ErrorCodeChannelNoAvailableKey        ErrorCode = "channel:no_available_key"
 	ErrorCodeChannelParamOverrideInvalid  ErrorCode = "channel:param_override_invalid"
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
@@ -60,15 +60,15 @@ const (
 	ErrorCodeChannelInvalidKey            ErrorCode = "channel:invalid_key"
 	ErrorCodeChannelResponseTimeExceeded  ErrorCode = "channel:response_time_exceeded"
 
-	// client request error
+	// 客户端请求错误
 	ErrorCodeReadRequestBodyFailed ErrorCode = "read_request_body_failed"
 	ErrorCodeConvertRequestFailed  ErrorCode = "convert_request_failed"
 	ErrorCodeAccessDenied          ErrorCode = "access_denied"
 
-	// request error
+	// 请求错误
 	ErrorCodeBadRequestBody ErrorCode = "bad_request_body"
 
-	// response error
+	// 响应错误
 	ErrorCodeReadResponseBodyFailed ErrorCode = "read_response_body_failed"
 	ErrorCodeBadResponseStatusCode  ErrorCode = "bad_response_status_code"
 	ErrorCodeBadResponse            ErrorCode = "bad_response"
@@ -78,11 +78,11 @@ const (
 	ErrorCodeModelNotFound          ErrorCode = "model_not_found"
 	ErrorCodePromptBlocked          ErrorCode = "prompt_blocked"
 
-	// sql error
+	// SQL 错误
 	ErrorCodeQueryDataError  ErrorCode = "query_data_error"
 	ErrorCodeUpdateDataError ErrorCode = "update_data_error"
 
-	// quota error
+	// 配额错误
 	ErrorCodeInsufficientUserQuota      ErrorCode = "insufficient_user_quota"
 	ErrorCodePreConsumeTokenQuotaFailed ErrorCode = "pre_consume_token_quota_failed"
 )
@@ -98,7 +98,7 @@ type NewAPIError struct {
 	Metadata       json.RawMessage
 }
 
-// Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
+// Unwrap 暴露底层错误，使 errors.Is / errors.As 能够与 NewAPIError 协同工作。
 func (e *NewAPIError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -125,7 +125,7 @@ func (e *NewAPIError) Error() string {
 		return ""
 	}
 	if e.Err == nil {
-		// fallback message when underlying error is missing
+		// 底层错误缺失时的回退消息
 		return string(e.errorCode)
 	}
 	return e.Err.Error()
@@ -410,7 +410,7 @@ func IsRecordErrorLog(e *NewAPIError) bool {
 		return false
 	}
 	if e.recordErrorLog == nil {
-		// default to true if not set
+		// 未设置时默认为 true
 		return true
 	}
 	return *e.recordErrorLog

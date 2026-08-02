@@ -20,7 +20,7 @@ func TestParseThinkingSuffix(t *testing.T) {
 		{"o3-max", "o3", false, "max", false},
 		{"gemini-2.5-flash-minimal", "gemini-2.5-flash", false, "minimal", false},
 		{"claude-opus-4-20250514-thinking", "claude-opus-4-20250514", true, "", false},
-		{"gpt-4o-0613", "gpt-4o-0613", false, "", false}, // not a thinking suffix
+		{"gpt-4o-0613", "gpt-4o-0613", false, "", false}, // 非思考后缀
 	}
 
 	for _, tt := range tests {

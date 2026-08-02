@@ -36,7 +36,7 @@ func TestClaudeToOpenAIStreamConverter_BasicStream(t *testing.T) {
 	converter := &ClaudeToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Claude SSE stream
+	// 模拟 Claude SSE 流
 	claudeStream := `data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus-20240229","usage":{"input_tokens":10,"output_tokens":0}}}
 
 data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
@@ -71,17 +71,17 @@ data: {"type":"message_stop"}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Verify chunks
+	// 校验 chunks
 	if len(chunks) == 0 {
 		t.Fatal("Expected at least one chunk")
 	}
 
-	// First chunk should have role
+	// 首个 chunk 应包含 role
 	if chunks[0].Choices[0].Delta.Role != "assistant" {
 		t.Errorf("First chunk role = %q, want %q", chunks[0].Choices[0].Delta.Role, "assistant")
 	}
 
-	// Find text chunks
+	// 收集 text chunks
 	var textContent string
 	for _, chunk := range chunks {
 		if chunk.Choices[0].Delta.Content != nil {
@@ -96,7 +96,7 @@ data: {"type":"message_stop"}
 		t.Errorf("Text content = %q, want %q", textContent, expectedText)
 	}
 
-	// Last chunk should have finish_reason and usage
+	// 末尾 chunk 应包含 finish_reason 和 usage
 	lastChunk := chunks[len(chunks)-1]
 	if lastChunk.Choices[0].FinishReason == nil || *lastChunk.Choices[0].FinishReason != "stop" {
 		t.Errorf("Last chunk finish_reason = %v, want %q", lastChunk.Choices[0].FinishReason, "stop")
@@ -154,7 +154,7 @@ data: {"type":"message_stop"}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Find thinking content
+	// 收集 thinking 内容
 	var thinkingContent string
 	for _, chunk := range chunks {
 		if chunk.Choices[0].Delta.ReasoningContent != nil {
@@ -166,7 +166,7 @@ data: {"type":"message_stop"}
 		t.Errorf("Thinking content = %q, want %q", thinkingContent, "Let me think...")
 	}
 
-	// Find text content
+	// 收集 text 内容
 	var textContent string
 	for _, chunk := range chunks {
 		if chunk.Choices[0].Delta.Content != nil {
@@ -216,7 +216,7 @@ data: {"type":"message_stop"}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Find tool call chunks
+	// 收集 tool call chunks
 	var toolCallID string
 	var toolCallName string
 	var toolCallArgs string
@@ -249,7 +249,7 @@ data: {"type":"message_stop"}
 		t.Errorf("Tool call arguments = %q, want %q", toolCallArgs, expectedArgs)
 	}
 
-	// Last chunk should have finish_reason = "tool_calls"
+	// 末尾 chunk 应有 finish_reason = "tool_calls"
 	lastChunk := chunks[len(chunks)-1]
 	if lastChunk.Choices[0].FinishReason == nil || *lastChunk.Choices[0].FinishReason != "tool_calls" {
 		t.Errorf("Finish reason = %v, want %q", lastChunk.Choices[0].FinishReason, "tool_calls")
@@ -302,7 +302,7 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
 	chunkWriter := func(chunk any) error {
 		chunkCount++
 		if chunkCount == 1 {
-			cancel() // Cancel after first chunk
+			cancel() // 在首个 chunk 后取消
 		}
 		return nil
 	}
@@ -351,7 +351,7 @@ data: {"type":"message_stop"}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Verify all chunks have correct structure
+	// 校验所有 chunk 的结构是否正确
 	for i, chunk := range chunks {
 		if chunk.ID == "" {
 			t.Errorf("Chunk %d: ID is empty", i)
@@ -378,7 +378,7 @@ data: {"type":"message_stop"}
 		}
 	}
 
-	// Last chunk should have usage
+	// 末尾 chunk 应包含 usage
 	lastChunk := chunks[len(chunks)-1]
 	if lastChunk.Usage == nil {
 		t.Error("Last chunk should have usage")
@@ -445,19 +445,19 @@ data: {"type":"message_stop"}
 		return nil
 	}
 
-	// Should not error on malformed JSON, just skip those lines
+	// 对格式错误的 JSON 不应报错，仅跳过这些行
 	err := converter.ConvertStreamResponse(ctx, nil, reader, chunkWriter)
 	if err != nil {
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Should still process valid chunks
+	// 仍应处理有效的 chunk
 	if len(chunks) == 0 {
 		t.Error("Expected some chunks despite malformed JSON lines")
 	}
 }
 
-// Helper to create a realistic SSE byte stream
+// 辅助函数：构造一个接近真实的 SSE 字节流
 func createClaudeSSEStream(events []map[string]any) *bytes.Buffer {
 	var buf bytes.Buffer
 	for _, event := range events {

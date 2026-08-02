@@ -1,6 +1,6 @@
 // Package dto — Coze（字节扣子）v3 协议数据结构。
 //
-// 阶段 5 从 relay/channel/coze 提取的纯数据结构，供 relaykit 转换器与宿主桥接层使用。
+// 从 relay/channel/coze 提取的纯数据结构，供 relaykit 转换器与宿主桥接层使用。
 // 不依赖任何宿主类型（RelayInfo / GoFrame），仅含协议字段。
 package dto
 

@@ -66,7 +66,7 @@ func TestGeminiToOpenAIResponseConverter_BasicConversion(t *testing.T) {
 		t.Fatalf("Expected *dto.ChatCompletionResponse, got %T", result)
 	}
 
-	// Check basic metadata
+	// 检查基本元数据
 	if openaiResp.Model != "gemini-pro" {
 		t.Errorf("Model = %q, want %q", openaiResp.Model, "gemini-pro")
 	}
@@ -77,7 +77,7 @@ func TestGeminiToOpenAIResponseConverter_BasicConversion(t *testing.T) {
 		t.Fatalf("Choices count = %d, want 1", len(openaiResp.Choices))
 	}
 
-	// Check choice
+	// 检查 choice
 	choice := openaiResp.Choices[0]
 	if choice.Index != 0 {
 		t.Errorf("Choice index = %d, want 0", choice.Index)
@@ -86,7 +86,7 @@ func TestGeminiToOpenAIResponseConverter_BasicConversion(t *testing.T) {
 		t.Errorf("FinishReason = %q, want %q", choice.FinishReason, "stop")
 	}
 
-	// Check message
+	// 检查 message
 	if choice.Message.Role != "assistant" {
 		t.Errorf("Message role = %q, want %q", choice.Message.Role, "assistant")
 	}
@@ -98,7 +98,7 @@ func TestGeminiToOpenAIResponseConverter_BasicConversion(t *testing.T) {
 		t.Errorf("Message content = %q, want %q", content, "Hello! How can I help you today?")
 	}
 
-	// Check usage
+	// 检查 usage
 	if openaiResp.Usage.PromptTokens != 10 {
 		t.Errorf("PromptTokens = %d, want 10", openaiResp.Usage.PromptTokens)
 	}
@@ -175,7 +175,7 @@ func TestGeminiToOpenAIResponseConverter_MultimodalContent(t *testing.T) {
 		t.Fatalf("Message content is not string, got %T", openaiResp.Choices[0].Message.Content)
 	}
 
-	// Should contain image markdown and file link
+	// 应包含图片 markdown 和文件链接
 	if !strings.Contains(content, "![image](data:image/png;base64,") {
 		t.Error("Content should contain image markdown")
 	}
@@ -229,7 +229,7 @@ func TestGeminiToOpenAIResponseConverter_ExecutableCode(t *testing.T) {
 		t.Fatalf("Message content is not string, got %T", openaiResp.Choices[0].Message.Content)
 	}
 
-	// Should contain code block and execution result
+	// 应包含代码块和执行结果
 	if !strings.Contains(content, "```python") {
 		t.Error("Content should contain code block with language")
 	}
@@ -291,7 +291,7 @@ func TestGeminiToOpenAIResponseConverter_ToolCalls(t *testing.T) {
 		t.Errorf("Function name = %q, want %q", toolCall.Function.Name, "get_weather")
 	}
 
-	// Parse arguments
+	// 解析参数
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 		t.Fatalf("Failed to parse arguments: %v", err)
@@ -303,7 +303,7 @@ func TestGeminiToOpenAIResponseConverter_ToolCalls(t *testing.T) {
 		t.Errorf("Unit = %v, want %q", args["unit"], "celsius")
 	}
 
-	// Finish reason should be "tool_calls"
+	// finish_reason 应为 "tool_calls"
 	if choice.FinishReason != "tool_calls" {
 		t.Errorf("FinishReason = %q, want %q", choice.FinishReason, "tool_calls")
 	}
@@ -343,7 +343,7 @@ func TestGeminiToOpenAIResponseConverter_ThinkingContent(t *testing.T) {
 
 	message := openaiResp.Choices[0].Message
 
-	// Regular content should contain non-thought text
+	// 常规内容应包含非 thought 文本
 	content, ok := message.Content.(string)
 	if !ok {
 		t.Fatalf("Message content is not string, got %T", message.Content)
@@ -355,7 +355,7 @@ func TestGeminiToOpenAIResponseConverter_ThinkingContent(t *testing.T) {
 		t.Error("Content should contain third text")
 	}
 
-	// ReasoningContent should contain thought text
+	// ReasoningContent 应包含 thought 文本
 	if message.ReasoningContent == nil {
 		t.Fatal("ReasoningContent is nil")
 	}
@@ -491,17 +491,17 @@ func TestGeminiToOpenAIResponseConverter_MultipleToolCalls(t *testing.T) {
 		t.Fatalf("ToolCalls count = %d, want 2", len(toolCalls))
 	}
 
-	// Check first tool call
+	// 检查第一个 tool call
 	if toolCalls[0].Function.Name != "get_weather" {
 		t.Errorf("First function name = %q, want %q", toolCalls[0].Function.Name, "get_weather")
 	}
 
-	// Check second tool call
+	// 检查第二个 tool call
 	if toolCalls[1].Function.Name != "get_time" {
 		t.Errorf("Second function name = %q, want %q", toolCalls[1].Function.Name, "get_time")
 	}
 
-	// Tool call IDs should be different
+	// 各 tool call 的 ID 应互不相同
 	if toolCalls[0].ID == toolCalls[1].ID {
 		t.Error("Tool call IDs should be different")
 	}
@@ -531,7 +531,7 @@ func TestGeminiToOpenAIStreamConverter_BasicStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream
+	// 模拟 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello"}]}}]}
 
 data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":" world"}]}}]}
@@ -556,27 +556,27 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"prompt
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Should have 4 chunks: role + "Hello" + " world" + final
+	// 应有 4 个 chunk：role + "Hello" + " world" + 最终 chunk
 	if len(chunks) != 4 {
 		t.Fatalf("Chunk count = %d, want 4", len(chunks))
 	}
 
-	// Check first chunk (role)
+	// 检查第一个 chunk（role）
 	if chunks[0].Choices[0].Delta.Role != "assistant" {
 		t.Errorf("First chunk role = %q, want %q", chunks[0].Choices[0].Delta.Role, "assistant")
 	}
 
-	// Check second chunk (text)
+	// 检查第二个 chunk（文本）
 	if chunks[1].Choices[0].Delta.Content != "Hello" {
 		t.Errorf("Second chunk content = %q, want %q", chunks[1].Choices[0].Delta.Content, "Hello")
 	}
 
-	// Check third chunk (text)
+	// 检查第三个 chunk（文本）
 	if chunks[2].Choices[0].Delta.Content != " world" {
 		t.Errorf("Third chunk content = %q, want %q", chunks[2].Choices[0].Delta.Content, " world")
 	}
 
-	// Check final chunk (finish reason + usage)
+	// 检查最终 chunk（finish reason + usage）
 	if chunks[3].Choices[0].FinishReason == nil {
 		t.Error("Final chunk missing finish reason")
 	} else if *chunks[3].Choices[0].FinishReason != "stop" {
@@ -599,7 +599,7 @@ func TestGeminiToOpenAIStreamConverter_ToolCallStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with function call
+	// 模拟带 function call 的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"NYC"}}}]}}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":12,"totalTokenCount":20}}
 
 data: {"candidates":[{"index":0,"finishReason":"STOP"}]}
@@ -622,12 +622,12 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}]}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Should have 3 chunks: role + tool call + final
+	// 应有 3 个 chunk：role + tool call + 最终 chunk
 	if len(chunks) != 3 {
 		t.Fatalf("Chunk count = %d, want 3", len(chunks))
 	}
 
-	// Find tool call chunk (skip role chunk)
+	// 查找 tool call chunk（跳过 role chunk）
 	var toolCallChunk *dto.ChatCompletionStreamResponse
 	for _, chunk := range chunks {
 		if chunk.Choices[0].Delta.Role == "" && len(chunk.Choices[0].Delta.ToolCalls) > 0 {
@@ -639,7 +639,7 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}]}
 		t.Fatal("Tool call chunk not found")
 	}
 
-	// Check tool call chunk
+	// 检查 tool call chunk
 	if len(toolCallChunk.Choices[0].Delta.ToolCalls) != 1 {
 		t.Fatalf("ToolCalls count = %d, want 1", len(toolCallChunk.Choices[0].Delta.ToolCalls))
 	}
@@ -649,7 +649,7 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}]}
 		t.Errorf("Function name = %q, want %q", toolCall.Function.Name, "get_weather")
 	}
 
-	// Parse arguments
+	// 解析参数
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 		t.Fatalf("Failed to parse arguments: %v", err)
@@ -663,7 +663,7 @@ func TestGeminiToOpenAIStreamConverter_ThinkingStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with thinking
+	// 模拟带 thinking 的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"thought":true,"text":"Let me think..."}]}}]}
 
 data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Answer is 42"}]}}]}
@@ -688,19 +688,19 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}]}
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Should have 4 chunks: role + thinking + text + final
+	// 应有 4 个 chunk：role + thinking + text + 最终 chunk
 	if len(chunks) != 4 {
 		t.Fatalf("Chunk count = %d, want 4", len(chunks))
 	}
 
-	// Check thinking chunk
+	// 检查 thinking chunk
 	if chunks[1].Choices[0].Delta.ReasoningContent == nil {
 		t.Error("Thinking chunk missing reasoning_content")
 	} else if *chunks[1].Choices[0].Delta.ReasoningContent != "Let me think..." {
 		t.Errorf("ReasoningContent = %q, want %q", *chunks[1].Choices[0].Delta.ReasoningContent, "Let me think...")
 	}
 
-	// Check text chunk
+	// 检查文本 chunk
 	content, ok := chunks[2].Choices[0].Delta.Content.(string)
 	if !ok {
 		t.Fatalf("Text chunk content is not string, got %T", chunks[2].Choices[0].Delta.Content)
@@ -714,7 +714,7 @@ func TestGeminiToOpenAIStreamConverter_SafetyBlock(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini safety block
+	// 模拟 Gemini 安全拦截
 	streamData := `data: {"promptFeedback":{"blockReason":"SAFETY"}}
 
 `
@@ -735,7 +735,7 @@ func TestGeminiToOpenAIStreamConverter_ImageStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with inline data
+	// 模拟带内联数据的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"inlineData":{"mimeType":"image/png","data":"ABC123"}}]}}]}
 
 `
@@ -773,7 +773,7 @@ func TestGeminiToOpenAIStreamConverter_CodeStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with executable code
+	// 模拟带可执行代码的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"executableCode":{"language":"python","code":"print(42)"}}]}}]}
 
 data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"42"}}]}}]}
@@ -800,7 +800,7 @@ data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"codeExecuti
 		t.Fatalf("Chunk count = %d, want 4 (role + code + result + final)", len(chunks))
 	}
 
-	// Check code chunk
+	// 检查代码 chunk
 	codeContent, ok := chunks[1].Choices[0].Delta.Content.(string)
 	if !ok {
 		t.Fatalf("Code chunk content is not string, got %T", chunks[1].Choices[0].Delta.Content)
@@ -809,7 +809,7 @@ data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"codeExecuti
 		t.Errorf("Code chunk should contain code block, got %q", codeContent)
 	}
 
-	// Check execution result chunk
+	// 检查执行结果 chunk
 	resultContent, ok := chunks[2].Choices[0].Delta.Content.(string)
 	if !ok {
 		t.Fatalf("Result chunk content is not string, got %T", chunks[2].Choices[0].Delta.Content)
@@ -823,7 +823,7 @@ func TestGeminiToOpenAIStreamConverter_MultipleCandidates(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with multiple candidates
+	// 模拟带多个 candidate 的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"First"}]}},{"index":1,"content":{"role":"model","parts":[{"text":"Second"}]}}]}
 
 `
@@ -844,12 +844,12 @@ func TestGeminiToOpenAIStreamConverter_MultipleCandidates(t *testing.T) {
 		t.Fatalf("ConvertStreamResponse failed: %v", err)
 	}
 
-	// Should have 4 chunks: role + first candidate + second candidate + final
+	// 应有 4 个 chunk：role + 第一个 candidate + 第二个 candidate + 最终 chunk
 	if len(chunks) != 4 {
 		t.Fatalf("Chunk count = %d, want 4", len(chunks))
 	}
 
-	// Find candidate chunks (skip role chunk)
+	// 查找 candidate chunk（跳过 role chunk）
 	var candidateChunks []string
 	for _, chunk := range chunks {
 		if chunk.Choices[0].Delta.Role == "" && chunk.Choices[0].Delta.Content != nil {
@@ -876,7 +876,7 @@ func TestGeminiToOpenAIStreamConverter_FileDataStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
 
-	// Simulate Gemini SSE stream with file data
+	// 模拟带文件数据的 Gemini SSE 流
 	streamData := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"fileData":{"fileUri":"gs://my-bucket/document.pdf"}}]}}]}
 
 `

@@ -20,7 +20,7 @@ import (
 // relaykit 流式响应转换器接入桥接层。
 //
 // 设计要点：
-//   - 特性开关已于阶段 7 移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
+//   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；SSE 帧化、保活 ping、[DONE] 收尾、StreamStatus 由本层负责。
 //   - 任何「写入前」的放弃（无 ChannelMeta、同格式、无匹配转换器）都返回 ok=false，
 //     调用方回退到旧 handleStreamToOpenAI 代码路径。

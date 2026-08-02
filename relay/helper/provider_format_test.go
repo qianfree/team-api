@@ -6,7 +6,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 )
 
-// 阶段 7 清理：provider 映射的权威单测集中在本包。
+// provider 映射的权威单测集中在本包。
 // 迁移前 handler/passthrough_test.go 与 relaykit_bridge/response_test.go 各有一份重复表测，
 // 现逻辑已合并到 helper.ProviderNativeFormat，重复副本随之删除。
 

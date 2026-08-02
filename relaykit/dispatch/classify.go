@@ -7,7 +7,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// ErrorClass 错误分类（基线方案 §6.1 + 修订 R1/R3/R7）。
+// ErrorClass 错误分类。
 type ErrorClass int
 
 const (
@@ -15,9 +15,9 @@ const (
 	ErrClassClient                         // 客户端错误：换渠道结果相同，不重试
 	ErrClassTransient                      // 瞬时错误：同渠道退避后原地重试
 	ErrClassRateLimit                      // 限流：Retry-After 短则原地等待，否则 failover
-	ErrClassCredential                     // 修订 R1：凭证错误，先冷却当前 Key 并轮换，耗尽后升级 CHANNEL_FATAL
+	ErrClassCredential                     // 凭证错误，先冷却当前 Key 并轮换，耗尽后升级 CHANNEL_FATAL
 	ErrClassChannelFatal                   // 渠道致命错误：零原地重试，立即 failover + 熔断计数直达
-	ErrClassTimeout                        // 超时（含 504，修订 R3）：不原地重试，按可重放性决定 failover
+	ErrClassTimeout                        // 超时（含 504）：不原地重试，按可重放性决定 failover
 )
 
 // String 实现 fmt.Stringer，用于日志与指标标签。
@@ -43,13 +43,13 @@ func (c ErrorClass) String() string {
 // Classify 错误分类器（纯函数）。
 //
 // statusCode 为上游 HTTP 状态码（网络错误时为 0）；err 允许为 relaykit/types.NewAPIError
-// （修订 R7：解包并尊重其 SkipRetry / 错误码语义）；delivery 用于区分网络错误发生阶段。
+// （解包并尊重其 SkipRetry / 错误码语义）；delivery 用于区分网络错误发生阶段。
 func Classify(statusCode int, err error, delivery DeliveryState) ErrorClass {
 	if statusCode == 0 && err == nil {
 		return ErrClassNone
 	}
 
-	// 修订 R7：优先按 relaykit 错误体系归因
+	// 优先按 relaykit 错误体系归因
 	var apiErr *types.NewAPIError
 	if errors.As(err, &apiErr) && apiErr != nil {
 		if cls, ok := classifyNewAPIError(apiErr); ok {
@@ -64,7 +64,7 @@ func Classify(statusCode int, err error, delivery DeliveryState) ErrorClass {
 	// 超时错误（连接超时 / 首 token 超时 / context deadline）
 	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
 		if errors.Is(err, context.Canceled) {
-			// 客户端取消：不重试也不计渠道健康（gpt §12.1）
+			// 客户端取消：不重试也不计渠道健康
 			return ErrClassClient
 		}
 		return ErrClassTimeout
@@ -89,7 +89,7 @@ func classifyNewAPIError(e *types.NewAPIError) (ErrorClass, bool) {
 	}
 
 	switch e.GetErrorCode() {
-	// 凭证类（修订 R1）
+	// 凭证类
 	case types.ErrorCodeChannelInvalidKey:
 		return ErrClassCredential, true
 
@@ -126,11 +126,11 @@ func classifyNewAPIError(e *types.NewAPIError) (ErrorClass, bool) {
 	return ErrClassNone, false
 }
 
-// classifyStatusCode 按 HTTP 状态码分类（基线方案 §6.1 表 + 修订 R3）。
+// classifyStatusCode 按 HTTP 状态码分类。
 func classifyStatusCode(code int) ErrorClass {
 	switch code {
 	case 401, 403:
-		// 修订 R1：先归因凭证，轮换耗尽后由 FSM 升级为渠道级
+		// 先归因凭证，轮换耗尽后由 FSM 升级为渠道级
 		return ErrClassCredential
 	case 402:
 		// 上游余额耗尽
@@ -143,7 +143,7 @@ func classifyStatusCode(code int) ErrorClass {
 	case 429:
 		return ErrClassRateLimit
 	case 504:
-		// 修订 R3：网关超时大概率已送达且上游处理慢，禁止原地重试
+		// 网关超时大概率已送达且上游处理慢，禁止原地重试
 		return ErrClassTimeout
 	case 500, 502, 503:
 		return ErrClassTransient

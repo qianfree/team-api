@@ -1,10 +1,10 @@
 package dispatch
 
-// 熔断状态机（基线方案 §7）。
+// 熔断状态机。
 //
 // 状态转移逻辑为纯函数；计数与快照的原子存取由适配层（Redis Lua）负责。
 // 适配层在 ReportOutcome 后读取窗口失败数，调用本文件的转移函数得到新快照并写回
-//（写回本身用 Lua CAS 保证原子，阶段 1 实现）。
+//（写回本身用 Lua CAS 保证原子）。
 //
 //	CLOSED → OPEN：滑动窗口内失败 ≥ failThreshold，或 CHANNEL_FATAL 一次直达
 //	OPEN → HALF_OPEN：冷却期满（惰性判定）

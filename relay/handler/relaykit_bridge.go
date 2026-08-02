@@ -22,7 +22,7 @@ import (
 // relaykit 请求转换器接入桥接层。
 //
 // 设计要点：
-//   - 特性开关已于阶段 7 移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
+//   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；转换后仍复用旧路径的系统提示词注入 / 参数改写 / 字段清理。
 //   - 任何失败（无匹配转换器、解析失败、转换失败、同格式、Ollama 非 chat 模式）都返回 ok=false，
 //     调用方回退到 adaptor.ConvertRequest 旧代码路径，保证请求不因 relaykit 中断。

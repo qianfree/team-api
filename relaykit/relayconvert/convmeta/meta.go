@@ -1,7 +1,5 @@
-// Package convmeta defines the conversion-context contract between format
-// converters (future relaykit) and the hosting application. Converters read
-// protocol state and per-request options exclusively through the Meta
-// interface; the host's RelayInfo implements it.
+// Package convmeta 定义了格式转换器（未来的 relaykit）与宿主应用之间的转换上下文契约。
+// 转换器仅通过 Meta 接口读取协议状态和单次请求的选项；由宿主的 RelayInfo 实现该接口。
 package convmeta
 
 import (
@@ -9,48 +7,45 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// Meta is the only view of the relay session that format converters may use.
-// It is satisfied by *relaycommon.RelayInfo on the host side; other embedders
-// (tests, external relaykit users) can use *Values.
-// Implementations backed by pointer types must make every method safe on a nil
-// receiver: a typed-nil pointer stored in Meta is still a non-nil interface,
-// and relaykit deliberately does not use reflection to detect that case.
+// Meta 是格式转换器可以使用的 relay 会话唯一视图。
+// 由宿主端的 *relaycommon.RelayInfo 实现；其他嵌入方（测试、外部 relaykit 用户）可以使用 *Values。
+// 由指针类型支撑的实现必须保证每个方法在 nil 接收者上都是安全的：存入 Meta 的有类型 nil 指针仍是一个非 nil 接口，
+// relaykit 刻意不使用反射来检测这种情况。
 type Meta interface {
 	GetOriginModelName() string
 	GetUpstreamModelName() string
-	// HasChannelMeta reports whether upstream channel information is attached;
-	// converters use it to decide if GetUpstreamModelName is meaningful.
+	// HasChannelMeta 返回是否已附加上游渠道信息；
+	// 转换器用它判断 GetUpstreamModelName 是否有意义。
 	HasChannelMeta() bool
 	GetChannelID() int
 	GetChannelType() int
 	GetIsStream() bool
 	GetReasoningEffort() string
-	// SetReasoningEffort records the effort level a converter derived from a
-	// model-name suffix so downstream billing/logging can see it.
+	// SetReasoningEffort 记录转换器从模型名后缀推导出的 effort 级别，
+	// 以便下游计费/日志能够看到。
 	SetReasoningEffort(effort string)
 	GetEstimatePromptTokens() int
 
-	// EnsureClaudeConvertInfo lazily creates and returns the mutable
-	// OpenAI→Claude stream conversion state. For non-nil receivers, the same
-	// instance must be returned for the lifetime of one streaming session; a
-	// nil receiver may return a temporary initialized state.
+	// EnsureClaudeConvertInfo 懒创建并返回可变的 OpenAI→Claude 流式转换状态。
+	// 对于非 nil 接收者，在一次流式会话的整个生命周期内必须返回同一个实例；
+	// nil 接收者可以返回一个临时初始化的状态。
 	EnsureClaudeConvertInfo() *ClaudeConvertInfo
 
-	// GetSendResponseCount / IncrSendResponseCount expose the shared
-	// downstream-chunk counter (the host may also increment it).
+	// GetSendResponseCount / IncrSendResponseCount 暴露共享的下游 chunk 计数器
+	// （宿主也可以对其进行自增）。
 	GetSendResponseCount() int
 	IncrSendResponseCount()
 
-	// AppendRequestConversion records a hop in the request format chain.
+	// AppendRequestConversion 记录请求格式链中的一次跳转。
 	AppendRequestConversion(format types.RelayFormat)
 
-	// ConvOptions returns the request-scoped conversion options snapshot.
-	// Must never return nil.
+	// ConvOptions 返回请求作用域内的转换选项快照。
+	// 绝不能返回 nil。
 	ConvOptions() *Options
 }
 
-// ClaudeConvertInfo carries mutable state for OpenAI chat → Claude Messages
-// stream conversion. Moved here from relay/common (which keeps an alias).
+// ClaudeConvertInfo 承载 OpenAI chat → Claude Messages 流式转换的可变状态。
+// 从 relay/common 迁移至此（后者保留了一个别名）。
 type ClaudeConvertInfo struct {
 	LastMessagesType string
 	Index            int
@@ -69,8 +64,7 @@ const (
 	LastMessageTypeThinking = "thinking"
 )
 
-// Values is a plain-struct Meta implementation for tests and non-RelayInfo
-// hosts (the relaykit-native entry point).
+// Values 是用于测试和非 RelayInfo 宿主（relaykit 原生入口）的纯结构体 Meta 实现。
 type Values struct {
 	OriginModelName      string
 	UpstreamModelName    string
@@ -189,9 +183,8 @@ func (v *Values) ConvOptions() *Options {
 	return v.Options
 }
 
-// UpstreamModelName / ChannelTypeOf are nil-safe accessors for optional Meta
-// values (converters are often called with a nil Meta in tests and compat
-// shims).
+// UpstreamModelName / ChannelTypeOf 是可选 Meta 值的 nil 安全访问器
+// （在测试和兼容性 shim 中，转换器经常以 nil Meta 被调用）。
 func UpstreamModelName(m Meta) string {
 	if m == nil || !m.HasChannelMeta() {
 		return ""
@@ -206,7 +199,7 @@ func ChannelTypeOf(m Meta) int {
 	return m.GetChannelType()
 }
 
-// OptionsOf returns m's conversion options, or empty defaults when m is nil.
+// OptionsOf 返回 m 的转换选项，当 m 为 nil 时返回空默认值。
 func OptionsOf(m Meta) *Options {
 	if m == nil {
 		return &Options{}

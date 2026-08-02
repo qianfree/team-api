@@ -75,7 +75,7 @@ type GeminiImageParameters = relaykitdto.GeminiImageParameters
 type GeminiImageResponse = relaykitdto.GeminiImageResponse
 type GeminiImagePrediction = relaykitdto.GeminiImagePrediction
 
-// ==================== 阶段 5：Coze / Dify / Ollama 类型别名 ====================
+// ==================== Coze / Dify / Ollama 类型别名 ====================
 
 type CozeCreateRequest = relaykitdto.CozeCreateRequest
 type CozeMessage = relaykitdto.CozeMessage

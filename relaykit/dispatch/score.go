@@ -4,11 +4,11 @@ import (
 	"math"
 )
 
-// EffectiveWeight 权重合成函数 W(c)（基线方案 §4，纯函数）。
+// EffectiveWeight 权重合成函数 W(c)（纯函数）。
 //
 //	W(c) = baseWeight × tierFactor × healthFactor × headroom^γ × costFactor × rampFactor
 //
-// 返回合成权重与分解明细（供决策日志 / ForwardingTrace，修订 R5）。
+// 返回合成权重与分解明细（供决策日志 / ForwardingTrace）。
 func EffectiveWeight(c Channel, pol *RoutingPolicy) (float64, WeightBreakdown) {
 	bd := WeightBreakdown{
 		Base:     c.BaseWeight,
@@ -25,7 +25,7 @@ func EffectiveWeight(c Channel, pol *RoutingPolicy) (float64, WeightBreakdown) {
 	return bd.Effective, bd
 }
 
-// tierFactor 层级偏置（基线方案 §4.1）。未配置的层级视为 0（不参与，由扩组兜底救回）。
+// tierFactor 层级偏置。未配置的层级视为 0（不参与，由扩组兜底救回）。
 func tierFactor(t Tier, pol *RoutingPolicy) float64 {
 	f, ok := pol.TierFactors[t]
 	if !ok {
@@ -34,7 +34,7 @@ func tierFactor(t Tier, pol *RoutingPolicy) float64 {
 	return math.Max(f, 0)
 }
 
-// healthFactor 健康因子（基线方案 §4.2）：
+// healthFactor 健康因子：
 //
 //	clamp(succEwma, 0.01, 1)^α × latencyPenalty
 //	latencyPenalty = clamp(latRef / max(latEwma, latRef), 0.5, 1.0)
@@ -54,7 +54,7 @@ func healthFactor(c Channel, pol *RoutingPolicy) float64 {
 	return f
 }
 
-// headroomFactor 负载余量因子（基线方案 §4.3）：(1 - inflight/softLimit)^γ。
+// headroomFactor 负载余量因子：(1 - inflight/softLimit)^γ。
 // 无容量信息（SoftLimit<=0）时恒为 1。
 func headroomFactor(c Channel, pol *RoutingPolicy) float64 {
 	if c.SoftLimit <= 0 {
@@ -67,7 +67,7 @@ func headroomFactor(c Channel, pol *RoutingPolicy) float64 {
 	return math.Pow(headroom, pol.Load.Gamma)
 }
 
-// costFactor 成本因子（基线方案 §4.4）：clamp((1/costRatio)^β, min, max)。
+// costFactor 成本因子：clamp((1/costRatio)^β, min, max)。
 // CostRatio 是无量纲比例（非金额，float64 不受 decimal 强约束），<=0 视为 1.0。
 func costFactor(c Channel, pol *RoutingPolicy) float64 {
 	ratio := c.CostRatio
@@ -77,7 +77,7 @@ func costFactor(c Channel, pol *RoutingPolicy) float64 {
 	return clamp(math.Pow(1.0/ratio, pol.Cost.Beta), pol.Cost.Min, pol.Cost.Max)
 }
 
-// rampFactor 爬坡因子（基线方案 §4.5）：新渠道 / 熔断恢复后从小流量爬坡。
+// rampFactor 爬坡因子：新渠道 / 熔断恢复后从小流量爬坡。
 func rampFactor(c Channel, pol *RoutingPolicy) float64 {
 	if c.RampElapsedMs < 0 {
 		return 1

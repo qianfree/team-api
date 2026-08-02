@@ -78,7 +78,7 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 
 	switch a.detectedType {
 	case modelTypeClaude:
-		// Claude on Vertex AI
+		// Vertex AI 上的 Claude
 		suffix := ":rawPredict"
 		if info.IsStream {
 			suffix = ":streamRawPredict"
@@ -87,7 +87,7 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 			baseURL, a.projectID, a.region, model, suffix), nil
 
 	default:
-		// Gemini on Vertex AI
+		// Vertex AI 上的 Gemini
 		suffix := ":generateContent"
 		if info.IsStream {
 			suffix = ":streamGenerateContent?alt=sse"

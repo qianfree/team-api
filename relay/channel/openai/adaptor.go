@@ -199,7 +199,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 
-	// Audio multipart form: 由 SetupRequestHeader 跳过，这里补上客户端原始 Content-Type（含 boundary）
+	// 音频 multipart form：由 SetupRequestHeader 跳过，这里补上客户端原始 Content-Type（含 boundary）
 	if (mode == constant.RelayModeAudioTranscription || mode == constant.RelayModeAudioTranslation) &&
 		info.RequestHeaders != nil {
 		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {

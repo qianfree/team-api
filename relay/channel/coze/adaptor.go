@@ -133,7 +133,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 
 // handleStreamResponse 流式模式：逐事件读取 Coze SSE，转换为 OpenAI SSE 格式输出
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	// 阶段 5：relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
 		return usage, nil
 	}
@@ -254,7 +254,7 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 		return nil, fmt.Errorf("read coze response body failed: %w", err)
 	}
 
-	// 阶段 5：relaykit 响应转换路径（Coze 上游为 SSE，桥接把缓冲体交给转换器解析）
+	// relaykit 响应转换路径（Coze 上游为 SSE，桥接把缓冲体交给转换器解析）
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)

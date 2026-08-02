@@ -10,12 +10,12 @@ var (
 	maskURLPattern    = regexp.MustCompile(`(http|https)://[^\s/$.?#].[^\s]*`)
 	maskDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
 	maskIPPattern     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	// maskApiKeyPattern matches patterns like 'api_key:xxx' or "api_key:xxx" to mask the API key value
+	// maskApiKeyPattern 匹配形如 'api_key:xxx' 或 "api_key:xxx" 的模式，对 API key 值做脱敏
 	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
 )
 
-// maskHostTail returns the tail parts of a domain/host that should be preserved.
-// It keeps 2 parts for likely country-code TLDs (e.g., co.uk, com.cn), otherwise keeps only the TLD.
+// maskHostTail 返回域名/主机名中应当保留的尾部部分。
+// 对于可能是国家代码 TLD 的情况（如 co.uk、com.cn）保留 2 段，其余情况只保留 TLD。
 func maskHostTail(parts []string) []string {
 	if len(parts) < 2 {
 		return parts
@@ -23,14 +23,14 @@ func maskHostTail(parts []string) []string {
 	lastPart := parts[len(parts)-1]
 	secondLastPart := parts[len(parts)-2]
 	if len(lastPart) == 2 && len(secondLastPart) <= 3 {
-		// Likely country code TLD like co.uk, com.cn
+		// 可能是国家代码 TLD，如 co.uk、com.cn
 		return []string{secondLastPart, lastPart}
 	}
 	return []string{lastPart}
 }
 
-// maskHostForURL collapses subdomains and keeps only masked prefix + preserved tail.
-// Example: api.openai.com -> ***.com, sub.domain.co.uk -> ***.co.uk
+// maskHostForURL 折叠子域名，仅保留脱敏前缀 + 保留尾部。
+// 示例：api.openai.com -> ***.com，sub.domain.co.uk -> ***.co.uk
 func maskHostForURL(host string) string {
 	parts := strings.Split(host, ".")
 	if len(parts) < 2 {
@@ -40,8 +40,8 @@ func maskHostForURL(host string) string {
 	return "***." + strings.Join(tail, ".")
 }
 
-// maskHostForPlainDomain masks a plain domain and reflects subdomain depth with multiple ***.
-// Example: openai.com -> ***.com, api.openai.com -> ***.***.com, sub.domain.co.uk -> ***.***.co.uk
+// maskHostForPlainDomain 对纯域名做脱敏，并用多个 *** 反映子域名层级深度。
+// 示例：openai.com -> ***.com，api.openai.com -> ***.***.com，sub.domain.co.uk -> ***.***.co.uk
 func maskHostForPlainDomain(domain string) string {
 	parts := strings.Split(domain, ".")
 	if len(parts) < 2 {
@@ -56,8 +56,8 @@ func maskHostForPlainDomain(domain string) string {
 	return stars + "." + strings.Join(tail, ".")
 }
 
-// MaskSensitiveInfo masks sensitive information like URLs, IPs, and domain names in a string
-// Example:
+// MaskSensitiveInfo 对字符串中的 URL、IP、域名等敏感信息做脱敏处理。
+// 示例：
 // http://example.com -> http://***.com
 // https://api.test.org/v1/users/123?key=secret -> https://***.org/***/***/?key=***
 // https://sub.domain.co.uk/path/to/resource -> https://***.co.uk/***/***
@@ -66,7 +66,7 @@ func maskHostForPlainDomain(domain string) string {
 // www.openai.com -> ***.***.com
 // api.openai.com -> ***.***.com
 func MaskSensitiveInfo(str string) string {
-	// Mask URLs
+	// 脱敏 URL
 	str = maskURLPattern.ReplaceAllStringFunc(str, func(urlStr string) string {
 		u, err := url.Parse(urlStr)
 		if err != nil {
@@ -78,12 +78,12 @@ func MaskSensitiveInfo(str string) string {
 			return urlStr
 		}
 
-		// Mask host with unified logic
+		// 用统一逻辑对主机名做脱敏
 		maskedHost := maskHostForURL(host)
 
 		result := u.Scheme + "://" + maskedHost
 
-		// Mask path
+		// 脱敏路径
 		if u.Path != "" && u.Path != "/" {
 			pathParts := strings.Split(strings.Trim(u.Path, "/"), "/")
 			maskedPathParts := make([]string, len(pathParts))
@@ -99,11 +99,11 @@ func MaskSensitiveInfo(str string) string {
 			result += "/"
 		}
 
-		// Mask query parameters
+		// 脱敏查询参数
 		if u.RawQuery != "" {
 			values, err := url.ParseQuery(u.RawQuery)
 			if err != nil {
-				// If can't parse query, just mask the whole query string
+				// 若查询串无法解析，整体脱敏
 				result += "?***"
 			} else {
 				maskedParams := make([]string, 0, len(values))
@@ -119,15 +119,15 @@ func MaskSensitiveInfo(str string) string {
 		return result
 	})
 
-	// Mask domain names without protocol (like openai.com, www.openai.com)
+	// 脱敏不带协议的域名（如 openai.com、www.openai.com）
 	str = maskDomainPattern.ReplaceAllStringFunc(str, func(domain string) string {
 		return maskHostForPlainDomain(domain)
 	})
 
-	// Mask IP addresses
+	// 脱敏 IP 地址
 	str = maskIPPattern.ReplaceAllString(str, "***.***.***.***")
 
-	// Mask API keys (e.g., "api_key:AIzaSyAAAaUooTUni8AdaOkSRMda30n_Q4vrV70" -> "api_key:***")
+	// 脱敏 API key（如 "api_key:AIzaSyAAAaUooTUni8AdaOkSRMda30n_Q4vrV70" -> "api_key:***"）
 	str = maskApiKeyPattern.ReplaceAllString(str, "${1}api_key:***${3}")
 
 	return str

@@ -67,13 +67,13 @@ var proxiedState struct {
 	nonStream      *http.Client
 	stream         *http.Client
 	proxyURLCached atomic.Value // string
-	cacheTime      atomic.Int64 // unix seconds of last config read
+	cacheTime      atomic.Int64 // 上次读取配置的 unix 时间戳（秒）
 }
 
 const proxyCacheTTL = 10 // seconds
 
-// GetSystemProxyURL reads channel_proxy_url from system config with local cache.
-// Exported for use by WebSocket dialers and other non-HTTP-client consumers.
+// GetSystemProxyURL 从系统配置读取 channel_proxy_url（带本地缓存）。
+// 导出供 WebSocket 拨号器等非 HTTP 客户端调用方使用。
 func GetSystemProxyURL() string {
 	now := time.Now().Unix()
 	last := proxiedState.cacheTime.Load()
@@ -113,8 +113,8 @@ func buildProxiedTransport(proxyURL string, rht time.Duration) *http.Transport {
 	return transport
 }
 
-// getProxiedClients returns (nonStream, stream) clients configured with the current proxy.
-// Rebuilds transports when proxy URL changes. 同时维护一个禁用响应头超时的 longRun 传输层，
+// getProxiedClients 返回基于当前代理配置的 (nonStream, stream) 客户端。
+// 代理 URL 变更时重建传输层。同时维护一个禁用响应头超时的 longRun 传输层，
 // 供 NewPooledClient 在长超时请求时取用。
 func getProxiedClients() (*http.Client, *http.Client) {
 	proxyURL := GetSystemProxyURL()
@@ -130,12 +130,12 @@ func getProxiedClients() (*http.Client, *http.Client) {
 	proxiedState.mu.Lock()
 	defer proxiedState.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// 取得写锁后二次检查
 	if proxiedState.transport != nil && proxiedState.proxyURL == proxyURL {
 		return proxiedState.nonStream, proxiedState.stream
 	}
 
-	// Build new proxied transports（普通 + 长耗时同步各一份）
+	// 构建新的代理传输层（普通 + 长耗时同步各一份）
 	proxiedState.transport = buildProxiedTransport(proxyURL, defaultResponseHeaderTimeout)
 	proxiedState.longRun = buildProxiedTransport(proxyURL, 0)
 
@@ -152,9 +152,9 @@ func getProxiedClients() (*http.Client, *http.Client) {
 	return proxiedState.nonStream, proxiedState.stream
 }
 
-// NewPooledClient returns an http.Client with connection pooling.
-// useProxy=true: uses the system proxy configured in channel_proxy_url.
-// isStream=true: no Client.Timeout, managed by StreamScanner.
+// NewPooledClient 返回带连接池的 http.Client。
+// useProxy=true：使用 channel_proxy_url 中配置的系统代理。
+// isStream=true：不设置 Client.Timeout，由 StreamScanner 管理。
 //
 // 当 timeoutSeconds > defaultResponseHeaderTimeout（180s）时，使用禁用响应头超时的
 // longRun 传输层——图片/音频等长耗时同步请求的上游在生成完成前不发响应头，
