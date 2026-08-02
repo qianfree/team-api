@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -433,6 +435,20 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 		}
 	}
 
+	// 在提交任何响应头之前检查客户端是否已断开（常见于上游 TTFB 较慢、客户端在
+	// DoRequest 阶段超时并主动关闭连接的场景）。此时 context 已被取消，若继续写
+	// SSE 头再检测 Done，客户端会收到残缺的 text/event-stream 响应，Anthropic SDK
+	// 尝试解析时报 "Failed to parse JSON"。提前检测并以正常 relay 错误路径返回，
+	// 让上层写出标准 Claude JSON 错误体。
+	if ctx.Err() != nil {
+		resp.Body.Close()
+		g.Log().Warningf(context.Background(),
+			"[ClaudeNativeStream] DoResponse 入口 ctx 已取消，放弃写响应头 request_id=%s ctx.Err=%v",
+			info.RequestID, ctx.Err())
+		info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+		return nil, common.ErrStreamInterrupted
+	}
+
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
 	stopPing := helper.PingTicker(writer, 15*time.Second)
@@ -445,7 +461,15 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 	for {
 		select {
 		case <-streamCtx.Done():
-			// 客户端断开：立即关闭上游连接，停止生成
+			// SSE 头已提交（SetEventStreamHeaders 在循环前已调用），直接关闭连接会
+			// 让 SDK 收到"200 + SSE头 + 无事件 + EOF"，Anthropic SDK 进入等待状态，
+			// 后续请求的响应会被误判为当前流的 SSE 数据 → "Failed to parse JSON"。
+			// 发送一个 Claude 格式的 error event，让 SDK 以正常 API Error 退出，而非挂起。
+			_, _ = fmt.Fprintf(writer,
+				"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream disconnected\"}}\n\n")
+			if f, ok := writer.(http.Flusher); ok {
+				f.Flush()
+			}
 			cleanup()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, streamCtx.Err())
 			interruptedUsage := buildUsageFromClaude(&usage)
@@ -523,6 +547,9 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 
 		if _, err := writer.Write([]byte(line)); err != nil {
 			// 写入客户端失败：立即关闭上游连接，停止生成
+			g.Log().Warningf(context.Background(),
+				"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
+				info.RequestID, err, ctx.Err(), time.Since(info.StartTime))
 			cleanup()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
 			interruptedUsage := buildUsageFromClaude(&usage)
