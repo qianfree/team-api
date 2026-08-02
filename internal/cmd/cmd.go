@@ -115,6 +115,9 @@ var (
 			// Initialize async channel error writer
 			common.InitChannelErrorWriter()
 
+			// Initialize async audit log writer
+			common.InitAuditLogWriter()
+
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
 
@@ -279,6 +282,7 @@ var (
 			// 因此把两个 task.Stop* 注册在最后（最先执行），Writer 关闭注册在前（后执行）。
 			defer plugin.Shutdown(ctx)
 			defer tenant.ShutdownWebhookDispatcher()
+			defer common.CloseAuditLogWriter()
 			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()

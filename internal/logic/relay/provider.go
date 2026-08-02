@@ -27,6 +27,10 @@ import (
 // modelCache 模型信息缓存（TTL 600s）
 var modelCache = lcommon.NewCache("model", 600*time.Second)
 
+// modelCacheKeyPrefix 模型缓存 key 版本前缀：modelInfoCached 扩展弃用字段后用 v2 隔离旧格式缓存，
+// 避免部署后 600s 内读到旧缓存（缺 status/sunset_date/replacement_model 字段）产生零值误判。
+const modelCacheKeyPrefix = "v2:"
+
 const channelKeyLastUsedInterval = time.Minute
 
 var channelKeyUsage = newChannelKeyUsageTracker()
@@ -262,41 +266,60 @@ func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) map[int64]bool 
 
 // GetModelMapping 实现 DataProvider.GetModelMapping
 func (p *DataProviderImpl) GetModelMapping(ctx context.Context, modelName string) (string, string, error) {
-	cacheKey := modelName
+	info, err := loadModelCached(ctx, modelName)
+	if err != nil {
+		return "", "", err
+	}
+	if info == nil || info.Status == "offline" {
+		return "", "", common.ErrModelNotFound
+	}
+	// deprecated 模型放行，弃用信息由 GetModelDeprecationInfo 获取
+	return info.StandardName, info.Category, nil
+}
+
+// loadModelCached 读取模型信息：优先 600s 缓存，未命中时一次查询 mdl_models 的全部所需字段
+// （mapping + 弃用信息）并回填缓存。GetModelMapping 与 GetModelDeprecationInfo 共用，
+// 避免同一请求对同一模型发两条 SQL。返回 nil 表示模型中不存在；不缓存负向结果。
+func loadModelCached(ctx context.Context, modelName string) (*modelInfoCached, error) {
+	cacheKey := modelCacheKeyPrefix + modelName
 	var cached modelInfoCached
 	if modelCache.GetJSON(ctx, cacheKey, &cached) {
-		return cached.StandardName, cached.Category, nil
+		return &cached, nil
 	}
 
 	type modelRow struct {
-		ModelId  string `json:"model_id"`
-		Category string `json:"category"`
-		Status   string `json:"status"`
+		ModelId          string      `json:"model_id"`
+		Category         string      `json:"category"`
+		Status           string      `json:"status"`
+		SunsetDate       *gtime.Time `json:"sunset_date"`
+		ReplacementModel string      `json:"replacement_model"`
 	}
 
 	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
-		Fields("model_id, category, status").
+		Fields("model_id, category, status, sunset_date, replacement_model").
 		Scan(&model)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if model == nil {
-		return "", "", common.ErrModelNotFound
+		return nil, nil
 	}
-	if model.Status == "offline" {
-		return "", "", common.ErrModelNotFound
-	}
-	// deprecated 模型放行，弃用信息由 GetModelDeprecationInfo 获取
 
+	sunset := ""
+	if model.SunsetDate != nil {
+		sunset = model.SunsetDate.Format("Y-m-d")
+	}
 	info := &modelInfoCached{
-		StandardName: model.ModelId,
-		Category:     model.Category,
+		StandardName:     model.ModelId,
+		Category:         model.Category,
+		Status:           model.Status,
+		SunsetDate:       sunset,
+		ReplacementModel: model.ReplacementModel,
 	}
 	modelCache.Set(ctx, cacheKey, info)
-
-	return model.ModelId, model.Category, nil
+	return info, nil
 }
 
 // RecordUsage 实现 DataProvider.RecordUsage
@@ -471,12 +494,20 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			insertData.TaskStatus = record.TaskStatus
 		}
 
-		_, insertErr := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").Data(insertData).Insert()
-		if insertErr != nil {
-			g.Log().Errorf(bgCtx,
-				"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
-				record.RequestID, record.TenantID, record.ApiKeyID, record.Path, record.StatusCode, insertErr)
+		// 投递到批量写入器：审计日志与请求 1:1，走 channel 批量落库（64 条/批或 1s 一次），
+		// 避免每请求一条单条 INSERT 打爆审计库。队列满时写入器按 OverflowSyncFallback 降级同步写，
+		// 审计数据不允许静默丢弃。
+		if lcommon.DefaultAuditLogWriter == nil {
+			// 写入器未初始化（单元测试等场景）：降级为同步单条写入，保证审计不丢
+			_, insertErr := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").Data(insertData).Insert()
+			if insertErr != nil {
+				g.Log().Errorf(bgCtx,
+					"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
+					record.RequestID, record.TenantID, record.ApiKeyID, record.Path, record.StatusCode, insertErr)
+			}
+			return
 		}
+		lcommon.DefaultAuditLogWriter.Submit(insertData)
 	}()
 }
 
@@ -533,7 +564,9 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		// 「已提交」。这里在命中 0 行时短暂重试，兜住这个竞态窗口。
 		// 审计关闭时提交阶段本就不写行，无需重试，直接返回避免空转。
 		auditDisabled := globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone
-		const maxAttempts = 6
+		// 提交阶段的审计 INSERT 已走批量通道（64 条/批或 1s flush），落库延迟比单条写更长，
+		// 重试窗口需覆盖批量 flush 周期：10 次线性退避最迟约 6.75s，足以等行落库。
+		const maxAttempts = 10
 		for attempt := 1; ; attempt++ {
 			res, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
 				Where("task_id", record.TaskID).
@@ -556,7 +589,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 				}
 				return
 			}
-			// 线性退避：150ms、300ms……最长约 2.25s，足够覆盖异步 INSERT 落库延迟。
+			// 线性退避：150ms、300ms……最迟约 6.75s，覆盖批量写入的 flush 周期。
 			time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 		}
 	}()
@@ -843,10 +876,13 @@ func parseCapabilitiesJSON(raw string) map[string]bool {
 }
 
 // incrementConsecutiveFailure 递增连续失败计数
-// modelInfoCached 模型信息缓存
+// modelInfoCached 模型信息缓存（mapping 与弃用信息一次查询共用）
 type modelInfoCached struct {
-	StandardName string
-	Category     string
+	StandardName     string
+	Category         string
+	Status           string
+	SunsetDate       string // 格式 "2006-01-02"，空表示未设置
+	ReplacementModel string
 }
 
 // InitHealthScore 初始化渠道健康度记录
@@ -1139,41 +1175,32 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 }
 
 // GetModelDeprecationInfo 实现 DataProvider.GetModelDeprecationInfo
+// 复用 loadModelCached 的单次查询结果（含 600s 缓存），不再独立查库。
 func (p *DataProviderImpl) GetModelDeprecationInfo(ctx context.Context, modelName string) (*common.DeprecationInfo, error) {
-	type depRow struct {
-		Status           string      `json:"status"`
-		SunsetDate       *gtime.Time `json:"sunset_date"`
-		ReplacementModel string      `json:"replacement_model"`
-	}
-
-	var row *depRow
-	err := dao.MdlModels.Ctx(ctx).
-		Where("model_id", modelName).
-		Fields("status, sunset_date, replacement_model").
-		Scan(&row)
+	info, err := loadModelCached(ctx, modelName)
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
+	if info == nil {
 		return nil, common.ErrModelNotFound
 	}
-	if row.Status != "deprecated" {
+	if info.Status != "deprecated" {
 		return nil, nil
 	}
 
-	info := &common.DeprecationInfo{
+	dep := &common.DeprecationInfo{
 		Deprecated:       true,
-		ReplacementModel: row.ReplacementModel,
+		ReplacementModel: info.ReplacementModel,
 	}
-	if row.SunsetDate != nil {
-		info.SunsetDate = row.SunsetDate.Format("Y-m-d")
+	if info.SunsetDate != "" {
+		dep.SunsetDate = info.SunsetDate
 	}
-	return info, nil
+	return dep, nil
 }
 
 // InvalidateModelCache 实现 DataProvider.InvalidateModelCache
 func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
-	modelCache.Delete(context.Background(), modelName)
+	modelCache.Delete(context.Background(), modelCacheKeyPrefix+modelName)
 }
 
 // ClearTenantModelAccessCache 清除租户的模型访问权限缓存
