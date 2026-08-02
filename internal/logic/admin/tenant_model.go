@@ -11,6 +11,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	tenantLogic "github.com/qianfree/team-api/internal/logic/common"
+	relay "github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
 )
 
@@ -176,6 +177,7 @@ func (s *sAdmin) BatchAssignModels(ctx context.Context, req *v1.TenantModelBatch
 	}
 
 	billing.ClearTenantPriceCache(ctx, req.TenantID)
+	relay.ClearTenantModelAccessCache(ctx, req.TenantID)
 
 	return &v1.TenantModelBatchAssignRes{Assigned: assigned}, nil
 }
@@ -239,6 +241,7 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 	}
 
 	billing.ClearTenantPriceCache(ctx, req.TenantID)
+	relay.ClearTenantModelAccessCache(ctx, req.TenantID)
 
 	return nil, nil
 }
@@ -259,6 +262,7 @@ func (s *sAdmin) DeleteTenantModel(ctx context.Context, req *v1.TenantModelDelet
 	}
 
 	billing.ClearTenantPriceCache(ctx, req.TenantID)
+	relay.ClearTenantModelAccessCache(ctx, req.TenantID)
 
 	return nil, nil
 }
