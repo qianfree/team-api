@@ -215,6 +215,140 @@ func (s *sAdmin) GetModelDistribution(ctx context.Context, req *v1.AdminDashboar
 	return &v1.AdminDashboardModelDistributionRes{List: records}, nil
 }
 
+// GetModelHourlyCost 模型费用按小时堆叠统计，用于仪表盘堆叠柱状图：
+// 取最近 N 小时内费用最高的 TopN 个模型，按小时聚合费用，非 TopN 模型归并为"其他"。
+func (s *sAdmin) GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (*v1.AdminDashboardModelHourlyRes, error) {
+	hours := req.Hours
+	if hours <= 0 || hours > 168 {
+		hours = 24
+	}
+	topN := req.TopN
+	if topN <= 0 || topN > 20 {
+		topN = 8
+	}
+
+	// 步骤1：取费用最高的 TopN 个模型名
+	topResult, err := g.DB().Ctx(ctx).Raw(`
+		SELECT model_name
+		FROM bil_usage_logs
+		WHERE created_at >= now() - ? * interval '1 hour'
+		GROUP BY model_name
+		ORDER BY SUM(total_cost) DESC
+		LIMIT ?
+	`, hours, topN).All()
+	if err != nil {
+		return nil, err
+	}
+	topModels := make([]string, 0, topN)
+	for _, row := range topResult {
+		if name := row["model_name"].String(); name != "" {
+			topModels = append(topModels, name)
+		}
+	}
+
+	// 步骤2：用 generate_series 预先生成完整的小时桶（保证无数据的小时也显示 X 轴刻度），
+	// 再 LEFT JOIN 聚合数据；非 TopN 模型归为"其他"
+	args := make([]any, 0, len(topModels)+2)
+	modelExpr := "model_name"
+	if len(topModels) > 0 {
+		placeholders := make([]string, len(topModels))
+		for i, m := range topModels {
+			placeholders[i] = "?"
+			args = append(args, m)
+		}
+		modelExpr = "CASE WHEN model_name IN (" + strings.Join(placeholders, ",") + ") THEN model_name ELSE '其他' END"
+	}
+	args = append(args, hours, hours)
+
+	result, err := g.DB().Ctx(ctx).Raw(`
+		WITH hourly_agg AS (
+			SELECT
+				date_trunc('hour', created_at) AS h,
+				`+modelExpr+` AS model,
+				SUM(total_cost) AS cost
+			FROM bil_usage_logs
+			WHERE created_at >= now() - ? * interval '1 hour'
+			GROUP BY 1, 2
+		),
+		time_buckets AS (
+			SELECT generate_series(
+				date_trunc('hour', now()) - (? - 1) * interval '1 hour',
+				date_trunc('hour', now()),
+				interval '1 hour'
+			) AS h
+		)
+		SELECT
+			to_char(t.h, 'YYYY-MM-DD HH24:00') AS hour,
+			a.model,
+			COALESCE(a.cost, 0) AS cost
+		FROM time_buckets t
+		LEFT JOIN hourly_agg a ON a.h = t.h
+		ORDER BY t.h
+	`, args...).All()
+	if err != nil {
+		return nil, err
+	}
+
+	// pivot 为 hours（X 轴，含无数据小时）+ series（每个模型一条）
+	// 无数据的小时桶经 LEFT JOIN 得到 model 为 NULL（转空串）：跳过其模型记录，
+	// 但该小时仍纳入 hourList，从而在 X 轴保留刻度、柱体区域留空
+	hourList := make([]string, 0)
+	modelOrder := make([]string, 0)
+	hourIdx := make(map[string]bool)
+	modelIdx := make(map[string]bool)
+	costs := make(map[string]float64) // key: hour + "\x00" + model
+	for _, row := range result {
+		hour := row["hour"].String()
+		if !hourIdx[hour] {
+			hourIdx[hour] = true
+			hourList = append(hourList, hour)
+		}
+		model := row["model"].String()
+		if model == "" {
+			continue
+		}
+		if !modelIdx[model] {
+			modelIdx[model] = true
+			modelOrder = append(modelOrder, model)
+		}
+		costs[hour+"\x00"+model] += row["cost"].Float64()
+	}
+
+	// 图例顺序：TopN 模型（费用降序）在前，"其他"/"未知" 在后
+	modelsOrdered := make([]string, 0, len(modelOrder))
+	added := make(map[string]bool)
+	for _, m := range topModels {
+		if modelIdx[m] && !added[m] {
+			modelsOrdered = append(modelsOrdered, m)
+			added[m] = true
+		}
+	}
+	for _, m := range modelOrder {
+		if !added[m] {
+			modelsOrdered = append(modelsOrdered, m)
+			added[m] = true
+		}
+	}
+
+	series := make([]v1.ModelHourlySeriesItem, 0, len(modelsOrdered))
+	for _, m := range modelsOrdered {
+		data := make([]float64, len(hourList))
+		for i, h := range hourList {
+			data[i] = costs[h+"\x00"+m]
+		}
+		series = append(series, v1.ModelHourlySeriesItem{
+			Model: m,
+			Data:  data,
+		})
+	}
+
+	return &v1.AdminDashboardModelHourlyRes{
+		Hours:  hourList,
+		Models: modelsOrdered,
+		Series: series,
+	}, nil
+}
+
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
 	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {

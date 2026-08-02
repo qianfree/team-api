@@ -80,6 +80,7 @@ type IAdminV1 interface {
 	AdminDashboardModelDistribution(ctx context.Context, req *v1.AdminDashboardModelDistributionReq) (res *v1.AdminDashboardModelDistributionRes, err error)
 	AdminDashboardChannelHealth(ctx context.Context, req *v1.AdminDashboardChannelHealthReq) (res *v1.AdminDashboardChannelHealthRes, err error)
 	AdminDashboardRecentAlerts(ctx context.Context, req *v1.AdminDashboardRecentAlertsReq) (res *v1.AdminDashboardRecentAlertsRes, err error)
+	AdminDashboardModelHourly(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (res *v1.AdminDashboardModelHourlyRes, err error)
 	AdminUsageLogList(ctx context.Context, req *v1.AdminUsageLogListReq) (res *v1.AdminUsageLogListRes, err error)
 	AdminBillingRecordList(ctx context.Context, req *v1.AdminBillingRecordListReq) (res *v1.AdminBillingRecordListRes, err error)
 	AdminWalletList(ctx context.Context, req *v1.AdminWalletListReq) (res *v1.AdminWalletListRes, err error)

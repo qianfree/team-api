@@ -151,6 +151,9 @@ type (
 		GetTopTenants(ctx context.Context, req *v1.AdminDashboardTopTenantsReq) (*v1.AdminDashboardTopTenantsRes, error)
 		// GetModelDistribution returns the model usage distribution.
 		GetModelDistribution(ctx context.Context, req *v1.AdminDashboardModelDistributionReq) (*v1.AdminDashboardModelDistributionRes, error)
+		// GetModelHourlyCost 模型费用按小时堆叠统计，用于仪表盘堆叠柱状图：
+		// 取最近 N 小时内费用最高的 TopN 个模型，按小时聚合费用，非 TopN 模型归并为"其他"。
+		GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (*v1.AdminDashboardModelHourlyRes, error)
 		// GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 		GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error)
 		// GetAllBillingRecords 获取所有计费记录（管理后台）
