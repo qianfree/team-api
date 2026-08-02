@@ -100,6 +100,31 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		ChannelScope string `json:"channel_scope"`
 	}
 
+	// 缓存结构体（与 accessRow 一致，用于缓存序列化）
+	type cachedAccess struct {
+		Enabled      bool    `json:"enabled"`
+		ChannelScope string  `json:"channel_scope"`
+		IsNil        bool    `json:"is_nil"` // 标记数据库中无记录（需走分组权限）
+	}
+
+	cacheKey := fmt.Sprintf("%d:%s", tenantID, modelName)
+
+	// 1. 尝试从缓存获取
+	var cached cachedAccess
+	if lcommon.TenantModelAccessCache.GetJSON(ctx, cacheKey, &cached) {
+		// 缓存命中：无记录时走分组权限
+		if cached.IsNil {
+			return checkGroupModelAccess(ctx, tenantID, modelName)
+		}
+		// 有记录：解析渠道范围并返回
+		var scope []int64
+		if cached.ChannelScope != "" && cached.ChannelScope != "[]" && cached.ChannelScope != "null" {
+			_ = json.Unmarshal([]byte(cached.ChannelScope), &scope)
+		}
+		return cached.Enabled, scope, nil
+	}
+
+	// 2. 缓存未命中：查询数据库
 	var row *accessRow
 	err := dao.MdlTenantModels.Ctx(ctx).As("tm").
 		LeftJoin("mdl_models m ON tm.model_id = m.id").
@@ -111,13 +136,18 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		return false, nil, err
 	}
 
-	// 如果没有分配记录，检查分组访问权限
+	// 3. 数据库无记录：缓存"无记录"标记，走分组权限
 	if row == nil {
+		lcommon.TenantModelAccessCache.Set(ctx, cacheKey, &cachedAccess{IsNil: true})
 		return checkGroupModelAccess(ctx, tenantID, modelName)
 	}
-	if !row.Enabled && row.ChannelScope == "" {
-		return false, nil, nil
-	}
+
+	// 4. 有记录：缓存结果
+	lcommon.TenantModelAccessCache.Set(ctx, cacheKey, &cachedAccess{
+		Enabled:      row.Enabled,
+		ChannelScope: row.ChannelScope,
+		IsNil:        false,
+	})
 
 	// 解析渠道范围 JSONB
 	var scope []int64
@@ -1134,6 +1164,15 @@ func (p *DataProviderImpl) GetModelDeprecationInfo(ctx context.Context, modelNam
 // InvalidateModelCache 实现 DataProvider.InvalidateModelCache
 func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
 	modelCache.Delete(context.Background(), modelName)
+}
+
+// ClearTenantModelAccessCache 清除租户的模型访问权限缓存
+// 在管理后台修改租户模型配置（增删改）后调用，避免高并发下读到陈旧缓存
+func ClearTenantModelAccessCache(ctx context.Context, tenantID int64) {
+	// 使用 pattern 删除该租户的所有模型访问缓存
+	pattern := fmt.Sprintf("%d:*", tenantID)
+	lcommon.TenantModelAccessCache.DeleteByPattern(ctx, pattern)
+	g.Log().Infof(ctx, "[Cache] Cleared tenant model access cache for tenant_id=%d", tenantID)
 }
 
 // memberModelCache 成员模型范围缓存（TTL 60s）。
