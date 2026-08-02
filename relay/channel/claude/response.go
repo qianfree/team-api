@@ -415,16 +415,28 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 
 // handleClaudeNativeStream 直通 Claude 流式响应
 func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	}
+
+	// 创建可取消的上下文，用于在客户端断开时立即中止上游读取
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	// cleanup 函数：关闭上游连接，停止 token 生成
+	cleanup := func() {
+		cancelStream()
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
 	}
 
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	stopPing := helper.PingTicker(writer, 15*time.Second)
+	defer stopPing()
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
 	var usage dto.ClaudeUsage
@@ -432,8 +444,10 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 
 	for {
 		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+		case <-streamCtx.Done():
+			// 客户端断开：立即关闭上游连接，停止生成
+			cleanup()
+			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, streamCtx.Err())
 			interruptedUsage := buildUsageFromClaude(&usage)
 			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
 			return interruptedUsage, common.ErrStreamInterrupted
@@ -446,7 +460,12 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 				break
 			}
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-			return buildUsageFromClaude(&usage), fmt.Errorf("stream read error: %w", err)
+			// 已有部分输出时按部分成功处理（避免标记为完全失败）
+			interruptedUsage := buildUsageFromClaude(&usage)
+			if transferredTextLen > 0 {
+				helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			}
+			return interruptedUsage, fmt.Errorf("upstream stream interrupted: %w", err)
 		}
 
 		if strings.HasPrefix(line, "data:") {
@@ -503,6 +522,8 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 		}
 
 		if _, err := writer.Write([]byte(line)); err != nil {
+			// 写入客户端失败：立即关闭上游连接，停止生成
+			cleanup()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
 			interruptedUsage := buildUsageFromClaude(&usage)
 			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
