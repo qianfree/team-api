@@ -175,10 +175,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://api.openai.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
   showModal.value = true
 }
 
@@ -372,7 +372,8 @@ const { exporting, exportFile } = useExport({
     <!-- Create Channel Modal -->
     <AModal v-model:visible="showModal" title="创建渠道" :width="640" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
       <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
-        <!-- 基本信息 -->
+        <!-- 基础信息 -->
+        <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
           <ACol :span="12">
             <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
@@ -392,40 +393,51 @@ const { exporting, exportFile } = useExport({
         <AFormItem field="api_key" label="API Key" required>
           <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="sk-xxxx..." />
         </AFormItem>
-        <!-- 调度 & 状态 -->
+        <!-- 调度与容量 -->
+        <div class="form-group-title">调度与容量</div>
         <ARow :gutter="16">
-          <ACol :span="8">
+          <ACol :span="12">
             <AFormItem label="调度层级">
               <ASelect v-model="form.tier" :options="tierOptions" />
               <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="8">
+          <ACol :span="12">
             <AFormItem label="权重">
               <AInputNumber v-model="form.weight" :min="0" :max="100" class="w-full" />
               <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="8">
-            <AFormItem label="状态">
-              <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="最大并发">
+              <AInputNumber v-model="form.max_concurrency" :min="0" class="w-full" />
+              <template #extra><span class="field-help">0 = 自动估算（按上游 429 水位动态调整）</span></template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="form.strict_capacity" />
+              <template #extra><span class="field-help">Redis 故障时保守限流（高成本渠道）</span></template>
             </AFormItem>
           </ACol>
         </ARow>
         <ARow :gutter="16">
-          <ACol :span="8">
-            <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
-          </ACol>
-          <ACol :span="8">
-            <AFormItem label="使用代理">
-              <ASwitch v-model="form.use_proxy" />
-              <template #extra><span style="color:var(--color-text-3);font-size:12px">需先在系统设置中配置代理</span></template>
+          <ACol :span="12">
+            <AFormItem label="状态">
+              <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
             </AFormItem>
           </ACol>
-          <ACol :span="8">
-            <AFormItem label="严格容量">
-              <ASwitch v-model="form.strict_capacity" />
-              <template #extra><span style="color:var(--color-text-3);font-size:12px">Redis 故障时保守限流（高成本渠道）</span></template>
+          <ACol :span="12">
+            <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
+          </ACol>
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="使用代理">
+              <ASwitch v-model="form.use_proxy" />
+              <template #extra><span class="field-help">需先在系统设置中配置代理</span></template>
             </AFormItem>
           </ACol>
         </ARow>
@@ -434,18 +446,18 @@ const { exporting, exportFile } = useExport({
         <ACollapse :bordered="false" :default-active-key="form.is_vip ? ['vip'] : []">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
             <ARow :gutter="16">
-              <ACol :span="8">
+              <ACol :span="12">
                 <AFormItem label="VIP 渠道"><ASwitch v-model="form.is_vip" /></AFormItem>
               </ACol>
-              <ACol v-if="form.is_vip" :span="8">
+              <ACol v-if="form.is_vip" :span="12">
                 <AFormItem label="共享阈值"><AInputNumber v-model="form.sharing_threshold" :min="0" :max="100" placeholder="共享健康分阈值" class="w-full" /></AFormItem>
-              </ACol>
-              <ACol v-if="form.is_vip" :span="8">
-                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
             <ARow v-if="form.is_vip" :gutter="16">
-              <ACol :span="8">
+              <ACol :span="12">
+                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
+              </ACol>
+              <ACol :span="12">
                 <AFormItem label="借用冷却(秒)"><AInputNumber v-model="form.borrowing_cooldown_seconds" :min="0" placeholder="非VIP冷却时间" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
@@ -585,5 +597,14 @@ const { exporting, exportFile } = useExport({
 .field-help {
   color: var(--color-text-3);
   font-size: 12px;
+}
+.form-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 12px 0 12px;
+  padding-left: 8px;
+  border-left: 3px solid #165dff;
+  line-height: 1.2;
 }
 </style>
