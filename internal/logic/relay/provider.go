@@ -106,9 +106,9 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 
 	// 缓存结构体（与 accessRow 一致，用于缓存序列化）
 	type cachedAccess struct {
-		Enabled      bool    `json:"enabled"`
-		ChannelScope string  `json:"channel_scope"`
-		IsNil        bool    `json:"is_nil"` // 标记数据库中无记录（需走分组权限）
+		Enabled      bool   `json:"enabled"`
+		ChannelScope string `json:"channel_scope"`
+		IsNil        bool   `json:"is_nil"` // 标记数据库中无记录（需走分组权限）
 	}
 
 	cacheKey := fmt.Sprintf("%d:%s", tenantID, modelName)
@@ -325,6 +325,13 @@ func loadModelCached(ctx context.Context, modelName string) (*modelInfoCached, e
 // RecordUsage 实现 DataProvider.RecordUsage
 func (p *DataProviderImpl) RecordUsage(ctx context.Context, record *common.UsageRecord) {
 	lcommon.DefaultUsageLogWriter.Submit(buildUsageLogDO(record))
+
+	// 实时 RPM/TPM 计数（Redis 滑动窗口桶，内部异步、best-effort）
+	tokens := record.TotalTokens
+	if tokens == 0 {
+		tokens = record.PromptTokens + record.CompletionTokens
+	}
+	lcommon.RecordRealtimeMetrics(ctx, record.TenantID, int64(tokens))
 }
 
 // buildUsageLogDO 将 UsageRecord 转换为 DO 对象

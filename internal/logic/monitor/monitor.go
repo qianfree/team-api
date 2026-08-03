@@ -6,6 +6,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"github.com/qianfree/team-api/internal/service"
@@ -172,7 +173,10 @@ func (s *sMonitor) RedisPool(ctx context.Context, _ *v1.MonitorRedisPoolReq) (*v
 }
 
 func (s *sMonitor) Realtime(ctx context.Context, _ *v1.MonitorRealtimeReq) (*v1.MonitorRealtimeRes, error) {
-	return &v1.MonitorRealtimeRes{Data: GetRealtimeData()}, nil
+	data := GetRealtimeData()
+	// 实时 RPM/TPM（Redis 60 秒滑动窗口，全平台维度；Redis 不可用时为 0）
+	data.Rpm, data.Tpm = lcommon.GetRealtimeMetrics(ctx, 0)
+	return &v1.MonitorRealtimeRes{Data: data}, nil
 }
 
 // ===================== Alert Rules =====================
