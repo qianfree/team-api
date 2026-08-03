@@ -58,6 +58,7 @@ const editForm = reactive({
   base_url: '',
   priority: 0,
   weight: 100,
+  max_concurrency: 100,
   tier: 'primary',
   strict_capacity: false,
   test_model: '',
@@ -78,6 +79,7 @@ function openEditModal() {
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
     weight: detail.value.weight || 100,
+    max_concurrency: detail.value.max_concurrency ?? 100,
     tier: detail.value.tier || 'primary',
     strict_capacity: detail.value.strict_capacity || false,
     test_model: detail.value.test_model || '',
@@ -511,6 +513,10 @@ function formatHeaders(headers: Record<string, string>): string {
                 </ADescriptionsItem>
                 <ADescriptionsItem label="优先级">{{ detail.priority }}</ADescriptionsItem>
                 <ADescriptionsItem label="权重">{{ detail.weight }}</ADescriptionsItem>
+                <ADescriptionsItem label="最大并发">
+                  <span v-if="detail.max_concurrency > 0">{{ detail.max_concurrency }}</span>
+                  <span v-else style="color: #94a3b8">自动</span>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="调度层级">
                   <ATag :color="tierTagColor[detail.tier] || 'gray'" size="small">{{ tierLabel[detail.tier] || detail.tier || '-' }}</ATag>
                 </ADescriptionsItem>
@@ -731,41 +737,50 @@ function formatHeaders(headers: Record<string, string>): string {
           </template>
         </AFormItem>
 
-        <!-- 调度与状态 -->
-        <div class="form-group-title">调度与状态</div>
+        <!-- 调度与容量 -->
+        <div class="form-group-title">调度与容量</div>
         <ARow :gutter="16">
-          <ACol :span="8">
+          <ACol :span="12">
             <AFormItem label="调度层级">
               <ASelect v-model="editForm.tier" :options="tierOptions" />
               <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="8">
+          <ACol :span="12">
             <AFormItem label="权重">
               <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
               <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="8">
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="最大并发">
+              <AInputNumber v-model="editForm.max_concurrency" :min="0" class="w-full" />
+              <template #extra><span class="field-help">0 = 自动估算（按上游 429 水位动态调整）</span></template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="editForm.strict_capacity" />
+              <template #extra><span class="field-help">Redis 故障时按保守限额拒绝新请求（高成本渠道）</span></template>
+            </AFormItem>
+          </ACol>
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
             <AFormItem label="状态">
               <ASelect v-model="editForm.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
             </AFormItem>
           </ACol>
-        </ARow>
-
-        <!-- 功能与测试 -->
-        <div class="form-group-title">功能与测试</div>
-        <ARow :gutter="16">
           <ACol :span="12">
             <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
           </ACol>
-          <ACol :span="6">
-            <AFormItem label="使用代理"><ASwitch v-model="editForm.use_proxy" /></AFormItem>
-          </ACol>
-          <ACol :span="6">
-            <AFormItem label="严格容量">
-              <ASwitch v-model="editForm.strict_capacity" />
-              <template #extra><span class="field-help">Redis 故障时按保守限额拒绝新请求（高成本渠道）</span></template>
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="使用代理">
+              <ASwitch v-model="editForm.use_proxy" />
             </AFormItem>
           </ACol>
         </ARow>
@@ -775,16 +790,18 @@ function formatHeaders(headers: Record<string, string>): string {
         <ACollapse :bordered="false">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
             <ARow :gutter="16">
-              <ACol :span="6">
+              <ACol :span="12">
                 <AFormItem label="VIP 渠道"><ASwitch v-model="editForm.is_vip" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+              <ACol v-if="editForm.is_vip" :span="12">
                 <AFormItem label="共享阈值"><AInputNumber v-model="editForm.sharing_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+            </ARow>
+            <ARow v-if="editForm.is_vip" :gutter="16">
+              <ACol :span="12">
                 <AFormItem label="抢占阈值"><AInputNumber v-model="editForm.preemption_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+              <ACol :span="12">
                 <AFormItem label="借用冷却(秒)"><AInputNumber v-model="editForm.borrowing_cooldown_seconds" :min="0" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
