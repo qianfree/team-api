@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
@@ -22,7 +23,7 @@ interface FeedbackItem {
 const feedbacks = ref<FeedbackItem[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const filterStatus = ref('')
@@ -85,15 +86,13 @@ const categoryIcon: Record<string, string> = {
 	complaint: 'exclamationCircle',
 }
 
-const totalPages = computed(() => Math.ceil(total.value / pageSize))
-
 const filterStatusOptions = computed(() => [{value:'',label:'全部状态'}, ...statusOptions])
 const filterCategoryOptions = computed(() => [{value:'',label:'全部类型'}, ...categoryOptions])
 
 async function fetchFeedbacks() {
 	loading.value = true
 	try {
-		const params: any = { page: page.value, page_size: pageSize }
+		const params: any = { page: page.value, page_size: pageSize.value }
 		if (filterStatus.value) params.status = filterStatus.value
 		if (filterCategory.value) params.category = filterCategory.value
 		const res: any = await request.get('/tenant/feedbacks', { params })
@@ -141,11 +140,6 @@ async function openDetail(fb: FeedbackItem) {
 	} finally {
 		detailLoading.value = false
 	}
-}
-
-function handlePageChange(newPage: number) {
-	page.value = newPage
-	fetchFeedbacks()
 }
 
 function handleFilter() {
@@ -258,26 +252,7 @@ onMounted(() => {
 			</div>
 
 			<!-- Pagination -->
-			<div v-if="totalPages > 1" class="card flex items-center justify-between px-6 py-3">
-				<span class="text-xs text-gray-500">共 {{ total }} 条记录</span>
-				<div class="flex items-center gap-2">
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page <= 1"
-						@click="handlePageChange(page - 1)"
-					>
-						上一页
-					</button>
-					<span class="text-sm text-gray-600">{{ page }} / {{ totalPages }}</span>
-					<button
-						class="btn btn-ghost btn-sm"
-						:disabled="page >= totalPages"
-						@click="handlePageChange(page + 1)"
-					>
-						下一页
-					</button>
-				</div>
-			</div>
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchFeedbacks" />
 		</div>
 
 		<!-- Create Feedback Modal -->

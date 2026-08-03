@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/shopspring/decimal"
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
@@ -32,19 +33,22 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	userID := middleware.GetUserID(ctx)
 
 	var res *v1.TenantRedeemCodeRes
+	// 过期兑换码的标记不能在事务内做：事务因「兑换码已过期」业务错误回滚时，
+	// 标记也会一并回滚、永远落不了库。记下 ID，事务返回后在事务外单独更新。
+	var expiredRedemptionID int64
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 加行锁防止并发超发
 		var redemption *struct {
-			ID           int64     `json:"id"`
-			Type         string    `json:"type"`
-			Value        float64   `json:"value"`
-			PlanID       int64     `json:"plan_id"`
-			DurationDays int       `json:"duration_days"`
-			MaxUses      int       `json:"max_uses"`
-			UsedCount    int       `json:"used_count"`
-			Status       string    `json:"status"`
-			ExpiresAt    time.Time `json:"expires_at"`
+			ID           int64           `json:"id"`
+			Type         string          `json:"type"`
+			Value        decimal.Decimal `json:"value"`
+			PlanID       int64           `json:"plan_id"`
+			DurationDays int             `json:"duration_days"`
+			MaxUses      int             `json:"max_uses"`
+			UsedCount    int             `json:"used_count"`
+			Status       string          `json:"status"`
+			ExpiresAt    time.Time       `json:"expires_at"`
 		}
 		err := dao.OrdRedemptions.Ctx(ctx).
 			Where("code", req.Code).
@@ -60,13 +64,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 			return gerror.Newf("兑换码状态为%s", redemption.Status)
 		}
 		if !redemption.ExpiresAt.IsZero() && redemption.ExpiresAt.Before(time.Now()) {
-			_, updateErr := dao.OrdRedemptions.Ctx(ctx).
-				Where("id", redemption.ID).
-				Data(do.OrdRedemptions{Status: "expired"}).
-				Update()
-			if updateErr != nil {
-				g.Log().Warningf(ctx, "mark redemption %d expired failed: %v", redemption.ID, updateErr)
-			}
+			expiredRedemptionID = redemption.ID
 			return lcommon.NewBusinessError(422, "兑换码已过期")
 		}
 		if redemption.UsedCount >= redemption.MaxUses {
@@ -75,7 +73,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 
 		res = &v1.TenantRedeemCodeRes{Code: req.Code, Type: redemption.Type}
 		var txID int64
-		usageValue := float64(0)
+		usageValue := billing.Zero
 
 		switch redemption.Type {
 		case "quota":
@@ -84,7 +82,7 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 				return err
 			}
 			usageValue = redemption.Value
-			res.Credited = redemption.Value
+			res.Credited = billing.InexactFloat64(redemption.Value)
 
 		case "plan":
 			if redemption.PlanID == 0 {
@@ -146,11 +144,23 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 		return nil
 	})
 	if err != nil {
+		// 过期标记在事务外落库（事务已因业务错误回滚，这里的更新才能真正生效）；
+		// 条件带 status='active' 防止覆盖并发路径已写入的其他终态。
+		if expiredRedemptionID != 0 {
+			if _, updateErr := dao.OrdRedemptions.Ctx(ctx).
+				Where("id", expiredRedemptionID).
+				Where("status", "active").
+				Data(do.OrdRedemptions{Status: "expired"}).
+				Update(); updateErr != nil {
+				g.Log().Warningf(ctx, "mark redemption %d expired failed: %v", expiredRedemptionID, updateErr)
+			}
+		}
 		return nil, err
 	}
 
-	// 事务提交后清除 Redis 钱包缓存
-	billing.InvalidateWalletRedis(ctx, tenantID)
+	// 事务提交后清除钱包两级缓存（进程内 walletCache + Redis，与 FulfillOrder 一致）：
+	// 仅清 Redis 时本实例进程内缓存在 300s TTL 内仍返回旧余额，兑换入账延迟可见。
+	billing.InvalidateWallet(ctx, tenantID)
 
 	// 兑换码充值后，重置低余额预警标记（余额可能已恢复到阈值以上）
 	billing.ResetLowBalanceNotified(ctx, tenantID)
@@ -158,8 +168,11 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	return res, nil
 }
 
-// creditWalletForRedemptionTx 在事务内为租户钱包充值（依赖调用方传入携带事务的 ctx）
-func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount float64, redemptionID int64) (int64, error) {
+// creditWalletForRedemptionTx 在事务内为租户钱包充值（依赖调用方传入携带事务的 ctx）。
+// amount 为 USD（bil_ 层永远 USD），decimal 直传 SQL 参数与流水字段，全程无 float64 中间运算。
+// 流水类型用独立的 "redemption"：与真实充值（recharge）区分，现金对账（对支付渠道流水）
+// 时不会把兑换码入账误计入充值；兑换也不推动 cumulative_recharge / 租户等级。
+func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount decimal.Decimal, redemptionID int64) (int64, error) {
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
@@ -172,10 +185,13 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount flo
 		return 0, err
 	}
 	if w == nil {
-		return 0, nil
+		// 钱包在租户注册/管理后台建租户时初始化，正常不应缺失。这里必须报错回滚整个
+		// 兑换事务：若静默返回成功，外层会照常写使用记录、递增 used_count 并向用户
+		// 报告"兑换成功"，但钱包分文未入账——兑换码被无声作废，用户权益丢失且无法追溯。
+		return 0, gerror.Newf("租户 %d 钱包不存在，无法入账兑换额度", tenantID)
 	}
 
-	// 钱包自增用参数化原生 SQL，避免用 fmt.Sprintf 拼 float 带来的精度丢失与注入隐患；
+	// 钱包自增用参数化原生 SQL（decimal 实现 driver.Valuer，写出精确 NUMERIC 字符串）；
 	// updated_at 手动置为 NOW()，补回原 dao.Update() 自动填充的时间字段。
 	_, err = g.DB().Ctx(ctx).Exec(ctx,
 		"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
@@ -185,8 +201,8 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount flo
 	}
 
 	var balance *struct {
-		Balance       float64 `json:"balance"`
-		FrozenBalance float64 `json:"frozen_balance"`
+		Balance       decimal.Decimal `json:"balance"`
+		FrozenBalance decimal.Decimal `json:"frozen_balance"`
 	}
 	err = dao.BilWallets.Ctx(ctx).
 		Where("id", w.ID).
@@ -202,7 +218,7 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount flo
 	id, err := dao.BilTransactions.Ctx(ctx).InsertAndGetId(do.BilTransactions{
 		TenantId:     tenantID,
 		WalletId:     w.ID,
-		Type:         "recharge",
+		Type:         "redemption",
 		Amount:       amount,
 		BalanceAfter: balance.Balance,
 		FrozenAfter:  balance.FrozenBalance,

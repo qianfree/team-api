@@ -6,8 +6,9 @@ import "bytes"
 // 使用字节级操作避免 JSON 反序列化再序列化的开销。
 func ReplaceModelName(body []byte, modelName string) []byte {
 	fieldPrefix := []byte(`"model":"`)
-	replacement := make([]byte, 0, len(fieldPrefix)+len(modelName)+1)
-	replacement = append(replacement, fieldPrefix...)
+	// result 已包含从原文复制的 `"model":"` 前缀，替换值只需模型名 + 闭合引号，
+	// 不能再带前缀（否则前缀重复写出，产生非法 JSON）
+	replacement := make([]byte, 0, len(modelName)+1)
 	replacement = append(replacement, modelName...)
 	replacement = append(replacement, '"')
 

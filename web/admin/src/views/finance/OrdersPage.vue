@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -115,7 +116,7 @@ const { exporting, exportFile } = useExport({
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="订单管理" description="查看和管理所有订单">
       <template #actions>
         <ADropdown trigger="hover">
@@ -138,8 +139,9 @@ const { exporting, exportFile } = useExport({
           </ASpace>
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="orders" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchOrders" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchOrders() }" />
       </div>
     </ACard>

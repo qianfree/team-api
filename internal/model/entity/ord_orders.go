@@ -33,4 +33,6 @@ type OrdOrders struct {
 	Description    string          `json:"description"      orm:"description"      description:"订单描述"`                                                                   // 订单描述
 	CreatedAt      *gtime.Time     `json:"created_at"       orm:"created_at"       description:"创建时间"`                                                                   // 创建时间
 	UpdatedAt      *gtime.Time     `json:"updated_at"       orm:"updated_at"       description:"更新时间"`                                                                   // 更新时间
+	ExchangeRate   decimal.Decimal `json:"exchange_rate"    orm:"exchange_rate"    description:"履约当时的 CNY→USD 汇率快照（仅 recharge 订单履约时写入，历史订单为 NULL）"`                      // 履约当时的 CNY→USD 汇率快照（仅 recharge 订单履约时写入，历史订单为 NULL）
+	CreditedUsd    decimal.Decimal `json:"credited_usd"     orm:"credited_usd"     description:"履约入账钱包的 USD 金额快照（仅 recharge 订单履约时写入，= 原价 CNY × exchange_rate 向上取整 6 位）"` // 履约入账钱包的 USD 金额快照（仅 recharge 订单履约时写入，= 原价 CNY × exchange_rate 向上取整 6 位）
 }

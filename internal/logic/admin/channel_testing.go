@@ -9,6 +9,7 @@ import (
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 )
@@ -51,6 +52,28 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		return nil, common.NewBadRequestError("请指定测试模型名")
 	}
 
+	// 将系统内模型名称转换为该渠道配置的上游模型名称
+	// chn_abilities 表存储了每个渠道每个模型的上游模型映射
+	// 例如：平台标准名 "deepseek-v4-flash" → 上游实际名 "DeepSeek-V4-Flash"
+	type abilityRow struct {
+		UpstreamModel string `json:"upstream_model"`
+	}
+	var abilityInfo abilityRow
+	upstreamModel := testModel
+
+	// 查询该渠道配置的上游模型名称
+	err = dao.ChnAbilities.Ctx(ctx).
+		Where("channel_id", channelID).
+		Where("model_name", testModel).
+		Where("enabled", true).
+		Fields("upstream_model").
+		Limit(1).
+		Scan(&abilityInfo)
+
+	if abilityInfo.UpstreamModel != "" {
+		upstreamModel = abilityInfo.UpstreamModel
+	}
+
 	// 获取渠道的 API Key
 	type keyRow struct {
 		EncryptedKey string `json:"encrypted_key"`
@@ -86,29 +109,25 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 
 	// 发送最小测试请求
 	startTime := time.Now()
-	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, testModel, useProxy)
+	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, upstreamModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// 更新健康度
-	if result.Success {
-		relay.UpdateHealthScoreDirect(ctx, channelID, true, float64(latencyMs))
-	} else {
-		relay.UpdateHealthScoreDirect(ctx, channelID, false, float64(latencyMs))
-	}
+	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）
+	dispatchadapter.ReportProbeOutcome(ctx, channelID, upstreamModel, result.Success, float64(latencyMs))
 
 	// 记录测试结果日志
 	if result.Success {
-		g.Log().Infof(ctx, "[ChannelTest] 渠道 %s (%d) 测试成功 | 模型: %s | 延迟: %dms | 代理: %v",
-			ch.Name, channelID, testModel, latencyMs, useProxy)
+		g.Log().Infof(ctx, "[ChannelTest] 渠道 %s (%d) 测试成功 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v",
+			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy)
 	} else {
-		g.Log().Warningf(ctx, "[ChannelTest] 渠道 %s (%d) 测试失败 | 模型: %s | 延迟: %dms | 代理: %v | 错误: %s",
-			ch.Name, channelID, testModel, latencyMs, useProxy, result.Error)
+		g.Log().Warningf(ctx, "[ChannelTest] 渠道 %s (%d) 测试失败 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v | 错误: %s",
+			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy, result.Error)
 	}
 
 	return &v1.ChannelTestRes{
 		Success:   result.Success,
 		Latency:   latencyMs,
-		ModelName: testModel,
+		ModelName: upstreamModel,
 		Error:     result.Error,
 		Request:   result.Request,
 		Response:  result.Response,

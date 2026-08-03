@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -119,7 +120,7 @@ const { exporting, exportFile } = useExport({
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="套餐管理" description="管理平台套餐定义和定价">
       <template #actions>
         <AButton type="primary" @click="openCreateModal">创建套餐</AButton>
@@ -140,8 +141,9 @@ const { exporting, exportFile } = useExport({
           <ASelect v-model="statusFilter" :options="statusOptions" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchPlans() }" />
         </div>
       </template>
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="plans" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
-      <div class="mt-4 flex justify-end">
+      <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchPlans" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchPlans() }" />
       </div>
     </ACard>

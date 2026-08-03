@@ -61,12 +61,8 @@ func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, 
 }
 
 func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) (*common.SettlementResult, error) {
-	confirmedInput, confirmedOutput := 0, 0
-	if usage != nil {
-		confirmedInput = usage.PromptTokens
-		confirmedOutput = usage.CompletionTokens
-	}
-	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, confirmedInput, confirmedOutput, preDeductAmount, projectID)
+	// 直接透传完整 usage：流中断结算需计入 cache token（拆成 input/output 两数会丢 cache 明细）
+	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, projectID)
 	return toCommonSettlementResult(result), err
 }
 
@@ -143,5 +139,6 @@ func toCommonSettlementResult(result *SettlementResult) *common.SettlementResult
 		BillingMode:       result.BillingMode,
 		BillingSource:     result.BillingSource,
 		RateMultiplier:    result.RateMultiplier,
+		DuplicateSkip:     result.DuplicateSkip,
 	}
 }

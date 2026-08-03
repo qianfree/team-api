@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -57,6 +58,9 @@ onMounted(fetchPermissions)
     </PageHeader>
 
     <ACard :bordered="false">
+      <TableStats :total="groups.length">
+        <span>{{ groups.reduce((s, g) => s + g.permissions.length, 0) }} 个权限点</span>
+      </TableStats>
       <ATable
         :columns="columns"
         :data="groups"
@@ -66,19 +70,6 @@ onMounted(fetchPermissions)
         :pagination="false"
         row-key="id"
       />
-      <div class="table-footer">
-        <span class="text-sm" style="color: var(--ta-text-tertiary)">
-          共 {{ groups.length }} 个权限组，{{ groups.reduce((s, g) => s + g.permissions.length, 0) }} 个权限点
-        </span>
-      </div>
     </ACard>
   </div>
 </template>
-
-<style scoped>
-.table-footer {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--ta-border-light);
-}
-</style>

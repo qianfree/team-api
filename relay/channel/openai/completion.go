@@ -18,17 +18,17 @@ func (a *Adaptor) handleCompletionNonStreamResponse(ctx context.Context, resp *h
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if info.ChannelMeta.IsModelMapped {

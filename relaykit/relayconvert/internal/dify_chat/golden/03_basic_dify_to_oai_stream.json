@@ -1,0 +1,80 @@
+{
+  "name": "basic_dify_to_oai_stream",
+  "from": "dify",
+  "to": "openai",
+  "stream_data": "data: {\"event\":\"message\",\"answer\":\"Hello \"}\ndata: {\"event\":\"message\",\"answer\":\"world\"}\ndata: {\"event\":\"message_end\",\"metadata\":{\"usage\":{\"total_tokens\":5,\"prompt_tokens\":2,\"completion_tokens\":3}}}\n",
+  "expected_stream_chunks": [
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gpt-4",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant",
+            "content": ""
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gpt-4",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": "Hello "
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gpt-4",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": "world"
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gpt-4",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": null
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5
+      }
+    }
+  ]
+}

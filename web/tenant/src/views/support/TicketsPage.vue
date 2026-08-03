@@ -31,7 +31,7 @@ interface Reply {
 const tickets = ref<Ticket[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const showExportDropdown = ref(false)
@@ -111,7 +111,7 @@ async function fetchTickets() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/tickets', {
-			params: { page: page.value, page_size: pageSize },
+			params: { page: page.value, page_size: pageSize.value },
 		})
 		const raw = res.data?.data
 		tickets.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -306,7 +306,7 @@ onMounted(() => {
 				</table>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchTickets" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTickets" />
 		</div>
 
 		<!-- Create Ticket Modal -->

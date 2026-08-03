@@ -217,7 +217,7 @@ func handleUnsettledTasks(ctx context.Context) {
 				actualCost = t.PreDeductAmount
 			}
 			taskBilling := billing.NewTaskBillingProvider()
-			_, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
+			settleResult, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
 				t.ModelName, t.RequestID, actualCost, t.PreDeductAmount,
 				0, 0, pd.BillingContext.Ratios, t.PublicTaskID)
 			if err != nil {
@@ -225,7 +225,10 @@ func handleUnsettledTasks(ctx context.Context) {
 			} else {
 				t.BillingSettled = true
 				t.ActualCost = actualCost
-				taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
+				// 幂等重复结算（DuplicateSkip）不得重复累加 Key 额度
+				if settleResult == nil || !settleResult.DuplicateSkip {
+					taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
+				}
 				DefaultAsyncProvider.UpdateTask(ctx, t)
 				g.Log().Infof(ctx, "poll: retried settlement for task %s", t.PublicTaskID)
 			}
@@ -259,14 +262,18 @@ func handleUnsettledSyncImage(ctx context.Context, t *common.AsyncTask) {
 		if actualCost.LessThanOrEqual(billing.Zero) {
 			actualCost = t.PreDeductAmount
 		}
-		if _, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
-			t.ModelName, t.RequestID, actualCost, t.PreDeductAmount, 0, 0, pd.BillingContext.Ratios, t.PublicTaskID); err != nil {
+		settleResult, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
+			t.ModelName, t.RequestID, actualCost, t.PreDeductAmount, 0, 0, pd.BillingContext.Ratios, t.PublicTaskID)
+		if err != nil {
 			g.Log().Warningf(ctx, "poll: retry settle sync_image task %s: %v", t.PublicTaskID, err)
 			return
 		}
 		t.BillingSettled = true
 		t.ActualCost = actualCost
-		taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
+		// 幂等重复结算（DuplicateSkip）不得重复累加 Key 额度
+		if settleResult == nil || !settleResult.DuplicateSkip {
+			taskBilling.IncrApiKeyQuotaUsed(ctx, t.ApiKeyID, actualCost)
+		}
 		DefaultAsyncProvider.UpdateTask(ctx, t)
 		g.Log().Infof(ctx, "poll: retried settlement for sync_image task %s", t.PublicTaskID)
 		return
@@ -426,7 +433,10 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {
 				task.BillingSettled = true
-				taskBilling.IncrApiKeyQuotaUsed(ctx, task.ApiKeyID, actualCost)
+				// 幂等重复结算（DuplicateSkip）不得重复累加 Key 额度
+				if settleResult == nil || !settleResult.DuplicateSkip {
+					taskBilling.IncrApiKeyQuotaUsed(ctx, task.ApiKeyID, actualCost)
+				}
 				DefaultAsyncProvider.UpdateTask(ctx, task)
 			}
 			billing.CleanupPreDeduct(ctx, task.TenantID, task.RequestID+"_adjust")

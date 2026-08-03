@@ -282,6 +282,8 @@ const menuGroups = [
       { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage },
       { name: 'AdminChannels', label: '渠道管理', icon: IconBranch },
       { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar },
+      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
+      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
     ],
   },
   {
@@ -292,7 +294,6 @@ const menuGroups = [
       { name: 'AdminTenants', label: '租户列表', icon: IconHome },
       { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers },
       { name: 'AdminMembers', label: '成员列表', icon: IconUser },
-      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
     ],
   },
   {
@@ -317,7 +318,6 @@ const menuGroups = [
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
       { name: 'AdminPermissions', label: '权限管理', icon: IconSafe },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile },
-      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
     ],
   },
   {
@@ -340,6 +340,8 @@ const menuGroups = [
     icon: IconCommand,
     items: [
       { name: 'AdminMonitor', label: '系统监控', icon: IconCommand },
+      { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand },
+      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand },
       { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
       { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
       { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },
@@ -612,11 +614,11 @@ onUnmounted(() => {
       <!-- Content -->
       <main class="admin-content page-bg">
         <router-view v-slot="{ Component, route: currentRoute }">
-          <Transition name="page-fade" mode="out-in">
-            <RouteErrorBoundary :key="currentRoute.fullPath">
-              <component :is="Component" />
-            </RouteErrorBoundary>
-          </Transition>
+          <RouteErrorBoundary>
+            <Transition name="page-fade" mode="out-in">
+              <component :is="Component" :key="currentRoute.fullPath" />
+            </Transition>
+          </RouteErrorBoundary>
         </router-view>
       </main>
     </div>

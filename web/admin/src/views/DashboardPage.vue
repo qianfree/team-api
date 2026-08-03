@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   IconThunderbolt,
@@ -11,7 +11,6 @@ import {
   IconCheckCircle,
 } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
-import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
 import * as echarts from 'echarts'
 
@@ -20,6 +19,7 @@ const router = useRouter()
 // === Data State ===
 const loading = ref(false)
 const trendDays = ref(30)
+const hourlyHours = ref(24)
 
 const dashboard = ref<any>(null)
 const trends = ref<any[]>([])
@@ -27,11 +27,13 @@ const topTenants = ref<any[]>([])
 const modelDist = ref<any[]>([])
 const channelHealth = ref<any[]>([])
 const recentAlerts = ref<any[]>([])
+const modelHourly = ref<any>(null)
 
 // === Charts ===
 let trendChart: echarts.ECharts | null = null
 let tenantTrendChart: echarts.ECharts | null = null
 let modelChart: echarts.ECharts | null = null
+let modelHourlyChart: echarts.ECharts | null = null
 
 // === Growth Calculation ===
 function calcGrowth(current: number, previous: number): { value: number; positive: boolean } | undefined {
@@ -181,6 +183,7 @@ async function fetchAll() {
     request.get('/admin/dashboard/model-distribution', { params: { days: 30 } }),
     request.get('/admin/dashboard/channel-health'),
     request.get('/admin/dashboard/recent-alerts'),
+    request.get('/admin/dashboard/model-hourly-cost', { params: { hours: hourlyHours.value } }),
   ])
   if (results[0].status === 'fulfilled') dashboard.value = results[0].value.data?.data
   if (results[1].status === 'fulfilled') trends.value = results[1].value.data?.data?.list || []
@@ -188,6 +191,7 @@ async function fetchAll() {
   if (results[3].status === 'fulfilled') modelDist.value = results[3].value.data?.data?.list || []
   if (results[4].status === 'fulfilled') channelHealth.value = results[4].value.data?.data?.list || []
   if (results[5].status === 'fulfilled') recentAlerts.value = results[5].value.data?.data?.list || []
+  if (results[6].status === 'fulfilled') modelHourly.value = results[6].value.data?.data
   loading.value = false
 
   await nextTick()
@@ -213,11 +217,28 @@ function onTrendDaysChange(val: any) {
   fetchTrendData()
 }
 
+// 模型小时费用堆叠图切换时间范围
+async function fetchHourlyData() {
+  const results = await Promise.allSettled([
+    request.get('/admin/dashboard/model-hourly-cost', { params: { hours: hourlyHours.value } }),
+  ])
+  if (results[0].status === 'fulfilled') modelHourly.value = results[0].value.data?.data
+
+  await nextTick()
+  renderModelHourlyChart()
+}
+
+function onHourlyHoursChange(val: any) {
+  hourlyHours.value = val
+  fetchHourlyData()
+}
+
 // === Chart Rendering ===
 function renderAllCharts() {
   renderTrendChart()
   renderTenantTrendChart()
   renderModelChart()
+  renderModelHourlyChart()
 }
 
 function renderTrendChart() {
@@ -325,11 +346,51 @@ function renderModelChart() {
   }, true)
 }
 
+// 模型费用按小时堆叠柱状图
+function renderModelHourlyChart() {
+  const el = document.getElementById('model-hourly-chart')
+  if (!el) return
+  if (!modelHourlyChart) modelHourlyChart = echarts.init(el)
+  const data = modelHourly.value
+  if (!data || !data.hours || data.hours.length === 0) {
+    modelHourlyChart.clear()
+    return
+  }
+  modelHourlyChart.setOption({
+    color: ['#6366f1', '#0d9488', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899', '#9ca3af'],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      valueFormatter: (v: number) => '$' + Number(v).toFixed(4),
+    },
+    legend: { data: data.models, bottom: 0, type: 'scroll' },
+    grid: { left: 60, right: 20, top: 15, bottom: 46 },
+    xAxis: {
+      type: 'category',
+      data: data.hours.map((h: string) => h.slice(5)),
+      axisLabel: { fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      name: '费用 ($)',
+      axisLabel: { formatter: (v: number) => '$' + v },
+    },
+    series: data.series.map((s: any) => ({
+      name: s.model,
+      type: 'bar',
+      stack: 'total',
+      data: s.data,
+      emphasis: { focus: 'series' },
+    })),
+  }, true)
+}
+
 // === Resize ===
 const resizeObserver = new ResizeObserver(() => {
   trendChart?.resize()
   tenantTrendChart?.resize()
   modelChart?.resize()
+  modelHourlyChart?.resize()
 })
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
@@ -340,6 +401,7 @@ function onWindowResize() {
     trendChart?.resize()
     tenantTrendChart?.resize()
     modelChart?.resize()
+    modelHourlyChart?.resize()
   }, 200)
 }
 
@@ -351,9 +413,11 @@ onMounted(() => {
     const trendEl = document.getElementById('trend-chart')
     const tenantEl = document.getElementById('tenant-trend-chart')
     const modelEl = document.getElementById('model-chart')
+    const hourlyEl = document.getElementById('model-hourly-chart')
     if (trendEl) resizeObserver.observe(trendEl)
     if (tenantEl) resizeObserver.observe(tenantEl)
     if (modelEl) resizeObserver.observe(modelEl)
+    if (hourlyEl) resizeObserver.observe(hourlyEl)
   })
 })
 
@@ -364,14 +428,13 @@ onBeforeUnmount(() => {
   if (trendChart) { trendChart.dispose(); trendChart = null }
   if (tenantTrendChart) { tenantTrendChart.dispose(); tenantTrendChart = null }
   if (modelChart) { modelChart.dispose(); modelChart = null }
+  if (modelHourlyChart) { modelHourlyChart.dispose(); modelHourlyChart = null }
 })
 </script>
 
 <template>
   <ASpin :loading="loading" style="width: 100%">
     <div style="width: 100%">
-      <PageHeader title="仪表盘" description="平台运营概览" />
-
       <!-- Row 1: Key Metric Cards -->
       <div class="grid grid-cols-4 gap-5 mb-6 max-lg:grid-cols-2 max-md:grid-cols-1 max-md:gap-3">
         <ACard
@@ -397,6 +460,18 @@ onBeforeUnmount(() => {
           </div>
         </ACard>
       </div>
+
+      <!-- Row 1.5: Model Hourly Cost Stacked Chart -->
+      <ACard :bordered="false" class="mb-6" title="模型费用分布（按小时·堆叠）">
+        <template #extra>
+          <ARadioGroup type="button" size="small" :model-value="hourlyHours" @change="onHourlyHoursChange">
+            <ARadio :value="12">12h</ARadio>
+            <ARadio :value="24">24h</ARadio>
+            <ARadio :value="72">3天</ARadio>
+          </ARadioGroup>
+        </template>
+        <div id="model-hourly-chart" style="width: 100%; height: 360px;" />
+      </ACard>
 
       <!-- Row 2: Trend Charts -->
       <div class="grid grid-cols-2 gap-5 mb-6 max-md:grid-cols-1 max-md:gap-3">

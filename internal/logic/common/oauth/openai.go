@@ -48,6 +48,13 @@ type openaiIDTokenClaims struct {
 
 // OpenAIGenerateAuthURL 生成 OpenAI OAuth 授权 URL 和对应的会话 ID
 func OpenAIGenerateAuthURL() (authURL string, sessionID string, err error) {
+	return OpenAIGenerateAuthURLForPlatform("openai")
+}
+
+// OpenAIGenerateAuthURLForPlatform 生成 OpenAI/Codex OAuth 授权 URL。
+// Codex 与 OpenAI 共用同一套 OAuth（auth.openai.com），仅 platform 标记不同，
+// 用于建渠道时区分渠道类型（openai→type=1，codex→type=35）。
+func OpenAIGenerateAuthURLForPlatform(platform string) (authURL string, sessionID string, err error) {
 	state, err := GenerateState()
 	if err != nil {
 		return "", "", fmt.Errorf("生成 state 失败: %w", err)
@@ -66,7 +73,7 @@ func OpenAIGenerateAuthURL() (authURL string, sessionID string, err error) {
 	}
 
 	GlobalSessionStore.Set(sessionID, &OAuthSession{
-		Platform:     "openai",
+		Platform:     platform,
 		State:        state,
 		CodeVerifier: codeVerifier,
 		Scope:        OpenAIDefaultScopes,
@@ -91,6 +98,11 @@ func OpenAIGenerateAuthURL() (authURL string, sessionID string, err error) {
 
 // OpenAIExchangeCode 使用授权码换取 OAuth 凭证
 func OpenAIExchangeCode(sessionID, code, state string) (*OAuthKeyData, error) {
+	return OpenAIExchangeCodeForPlatform("openai", sessionID, code, state)
+}
+
+// OpenAIExchangeCodeForPlatform 使用授权码换取 OAuth 凭证（支持 openai/codex platform 标记）。
+func OpenAIExchangeCodeForPlatform(platform, sessionID, code, state string) (*OAuthKeyData, error) {
 	session, ok := GlobalSessionStore.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("无效的会话 ID: %s", sessionID)
@@ -146,7 +158,7 @@ func OpenAIExchangeCode(sessionID, code, state string) (*OAuthKeyData, error) {
 	}
 
 	keyData := &OAuthKeyData{
-		Platform:     "openai",
+		Platform:     platform,
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Unix(),

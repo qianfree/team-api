@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
@@ -24,6 +24,8 @@ interface DashboardData {
 	today: DayStats | null
 	month: DayStats | null
 	wallet: WalletInfo | null
+	rpm: number
+	tpm: number
 	active_keys: number
 	member_count: number
 }
@@ -297,7 +299,26 @@ watch(selectedDays, () => {
 	void fetchMemberUsage()
 })
 
-onMounted(refreshAll)
+// 实时 RPM/TPM 依赖 60 秒滑动窗口，仅静默轮询 /tenant/dashboard 保持指标新鲜（30s 一次）
+let dashboardTimer: ReturnType<typeof setInterval> | null = null
+
+async function refreshDashboardSilently() {
+	try {
+		const response: any = await request.get('/tenant/dashboard')
+		dashboardData.value = response.data?.data || dashboardData.value
+	} catch {
+		// 静默失败，保留上次数据
+	}
+}
+
+onMounted(() => {
+	refreshAll()
+	dashboardTimer = setInterval(refreshDashboardSilently, 30000)
+})
+
+onBeforeUnmount(() => {
+	if (dashboardTimer) clearInterval(dashboardTimer)
+})
 </script>
 
 <template>
@@ -310,10 +331,19 @@ onMounted(refreshAll)
 				</h1>
 				<p class="mt-1 text-sm text-slate-400">今天是 {{ formattedDate }}，查看团队 API 的最新运行状态。</p>
 			</div>
-			<button class="refresh-button" :disabled="loading || chartsLoading" @click="refreshAll">
-				<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />
-				刷新数据
-			</button>
+			<div class="flex items-center gap-3">
+				<div v-if="dashboardData" class="rate-pill" title="最近 60 秒滑动窗口实时速率">
+					<span class="rate-pill-label">RPM</span>
+					<span class="rate-pill-value text-primary-600">{{ formatNumber(dashboardData.rpm) }}</span>
+					<span class="rate-pill-sep"></span>
+					<span class="rate-pill-label">TPM</span>
+					<span class="rate-pill-value text-teal-600">{{ formatNumber(dashboardData.tpm) }}</span>
+				</div>
+				<button class="refresh-button" :disabled="loading || chartsLoading" @click="refreshAll">
+					<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />
+					刷新数据
+				</button>
+			</div>
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -466,6 +496,39 @@ onMounted(refreshAll)
 .refresh-button:disabled {
 	cursor: wait;
 	opacity: 0.65;
+}
+
+/* 顶部实时 RPM/TPM 速率胶囊（刷新按钮左侧），外观与刷新按钮呼应 */
+.rate-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	height: 2.5rem;
+	padding: 0 1rem;
+	border: 1px solid rgba(255, 255, 255, 0.88);
+	border-radius: 9999px;
+	background: rgba(255, 255, 255, 0.68);
+	box-shadow: 0 8px 24px rgba(87, 102, 151, 0.08);
+}
+
+.rate-pill-label {
+	font-size: 0.6875rem;
+	font-weight: 600;
+	letter-spacing: 0.05em;
+	color: #94a3b8;
+}
+
+.rate-pill-value {
+	font-size: 0.875rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+}
+
+.rate-pill-sep {
+	width: 1px;
+	height: 0.875rem;
+	background: #e2e8f0;
 }
 
 .metric-card {

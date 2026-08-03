@@ -125,7 +125,7 @@ func (a *MjAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *common
 		return "", body, &common.TaskError{StatusCode: 500, Message: "parse response failed"}
 	}
 
-	// code 1 = success, 21 = exists, 22 = queued, 23 = queue full, 24 = sensitive word
+	// code 1 = 成功，21 = 已存在，22 = 已入队，23 = 队列已满，24 = 敏感词
 	if result.Code == 3 {
 		return "", body, &common.TaskError{
 			StatusCode: http.StatusServiceUnavailable,
@@ -230,5 +230,5 @@ func FetchImage(baseURL, apiKey, upstreamTaskID string) (*http.Response, error) 
 	return client.Do(req)
 }
 
-// unused guard
+// 防止未使用告警
 var _ = bytes.NewReader

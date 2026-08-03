@@ -34,7 +34,7 @@ func handleClaudeInboundNonStream(ctx context.Context, resp *http.Response, info
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}
@@ -76,7 +76,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 			"error": map[string]any{"type": "api_error", "message": string(body)},
 		})
 		_, _ = writer.Write(claudeErr)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}
@@ -96,19 +96,26 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 	}
 
 	var (
-		usage            common.Usage
-		startSent        bool
-		finishReason     string
-		contentIndex     int
-		inputTokens      int
-		outputTokens     int
-		currentBlockType string // 跟踪当前 block 类型: "text" 或 "tool_use"
+		usage              common.Usage
+		startSent          bool
+		finishReason       string
+		contentIndex       int
+		inputTokens        int
+		outputTokens       int
+		currentBlockType   string // 跟踪当前 block 类型: "text" 或 "tool_use"
+		transferredTextLen int    // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断：带上已收到的 usage（OpenAI usage 在最后一个 chunk，中断时通常缺失），
+			// 缺失部分由兜底估算补齐（输出按已转发文本 2 字符/token，输入用请求侧估算值）
+			usage.PromptTokens = inputTokens
+			usage.CompletionTokens = outputTokens
+			usage.TotalTokens = inputTokens + outputTokens
+			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
 			return &usage, common.ErrStreamInterrupted
 		default:
 		}
@@ -196,6 +203,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 		for _, choice := range streamResp.Choices {
 			// 文本内容
 			if text, ok := choice.Delta.Content.(string); ok && text != "" {
+				transferredTextLen += len(text)
 				// 如果当前 block 不是 text，先关闭前一个 block
 				if currentBlockType != "" && currentBlockType != "text" {
 					blockStop := dto.ClaudeResponse{
@@ -231,8 +239,9 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 				writeClaudeSSE(writer, "content_block_delta", &delta)
 			}
 
-			// reasoning content (thinking)
+			// 推理内容（thinking）
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
+				transferredTextLen += len(*choice.Delta.ReasoningContent)
 				// 如果当前 block 不是 thinking，先关闭前一个 block
 				if currentBlockType != "" && currentBlockType != "thinking" {
 					blockStop := dto.ClaudeResponse{
@@ -267,9 +276,9 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 				writeClaudeSSE(writer, "content_block_delta", &delta)
 			}
 
-			// tool calls
+			// 工具调用
 			for _, tc := range choice.Delta.ToolCalls {
-				// content_block_start for tool_use（仅在 function name 出现时）
+				// content_block_start 用于 tool_use（仅在 function name 出现时）
 				if tc.Function.Name != "" {
 					// 先关闭前一个 block
 					if currentBlockType != "" {
@@ -295,7 +304,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 					currentBlockType = "tool_use"
 				}
 
-				// content_block_delta for tool arguments
+				// content_block_delta 用于工具参数
 				if tc.Function.Arguments != "" {
 					delta := dto.ClaudeResponse{
 						Type:  "content_block_delta",

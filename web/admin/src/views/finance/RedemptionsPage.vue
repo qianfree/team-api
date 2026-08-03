@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -121,7 +122,7 @@ const { exporting, exportFile } = useExport({
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="兑换码管理" description="管理兑换码的生成、查看和禁用">
       <template #actions>
         <ADropdown trigger="hover">
@@ -139,21 +140,22 @@ const { exporting, exportFile } = useExport({
       <ATabs v-model:active-key="activeTab" @change="onTabChange">
         <ATabPane key="codes" title="兑换码列表">
           <div class="flex items-center justify-between mb-4">
-            <span />
+            <TableStats :total="pagination.total" />
             <ASelect v-model="statusFilter" :options="[
               { label: '全部', value: '' }, { label: '可用', value: 'active' },
               { label: '已禁用', value: 'disabled' }, { label: '已过期', value: 'expired' },
             ]" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchRedemptions() }" />
           </div>
           <ATable :columns="columns" :data="redemptions" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
-          <div class="mt-4 flex justify-end">
+          <div class="table-footer">
             <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchRedemptions" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchRedemptions() }" />
           </div>
         </ATabPane>
 
         <ATabPane key="usages" title="使用记录">
+          <TableStats :total="usagePagination.total" />
           <ATable :columns="usageColumns" :data="usages" :loading="usageLoading" row-key="id" :scroll="{ x: 900 }" :pagination="false" />
-          <div class="mt-4 flex justify-end">
+          <div class="table-footer">
             <APagination v-model:current="usagePagination.current" v-model:page-size="usagePagination.pageSize" :total="usagePagination.total" :page-size-options="usagePagination.pageSizeOptions" show-page-size @change="fetchUsages" @page-size-change="(s: number) => { usagePagination.pageSize = s; usagePagination.current = 1; fetchUsages() }" />
           </div>
         </ATabPane>

@@ -183,7 +183,7 @@ func TestApplyParamOverride_EnsurePrefixSuffix(t *testing.T) {
 	body := `{"model":"gpt-4o","path":"/api/v1"}`
 	info := newTestInfo()
 
-	// ensure_prefix — path already has /v1 prefix
+	// ensure_prefix — path 已包含 /v1 前缀
 	info.ChannelMeta.Settings.ParamOverride = map[string]any{
 		"operations": []any{
 			map[string]any{"path": "path", "mode": "ensure_prefix", "value": "/api"},
@@ -253,7 +253,7 @@ func TestApplyParamOverride_Conditions(t *testing.T) {
 	body := `{"model":"gpt-4o","temperature":0.7}`
 	info := newTestInfo()
 
-	// Condition: model prefix matches → set temperature to 0
+	// 条件：model 前缀匹配 → 将 temperature 置为 0
 	info.ChannelMeta.Settings.ParamOverride = map[string]any{
 		"operations": []any{
 			map[string]any{
@@ -267,7 +267,7 @@ func TestApplyParamOverride_Conditions(t *testing.T) {
 		},
 	}
 
-	// Should match: model starts with "o1-"
+	// 应匹配：model 以 "o1-" 开头
 	body = `{"model":"o1-preview","temperature":0.7}`
 	result, err := ApplyParamOverride([]byte(body), info)
 	if err != nil {
@@ -277,7 +277,7 @@ func TestApplyParamOverride_Conditions(t *testing.T) {
 		t.Errorf("expected temperature=0 (condition matched), got %v", gjson.Get(string(result), "temperature").Float())
 	}
 
-	// Should NOT match: model is "gpt-4o", not "o1-"
+	// 不应匹配：model 为 "gpt-4o"，而非 "o1-"
 	body = `{"model":"gpt-4o","temperature":0.7}`
 	result, err = ApplyParamOverride([]byte(body), info)
 	if err != nil {
@@ -307,7 +307,7 @@ func TestApplyParamOverride_ContextVariables(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Context variable in path should be resolved
+	// 路径中的上下文变量应被解析
 	if gjson.Get(string(result), "retry_tag").Str != "yes" {
 		t.Errorf("expected retry_tag=yes (context variable), got %q", gjson.Get(string(result), "retry_tag").Str)
 	}
@@ -327,7 +327,7 @@ func TestApplyParamOverride_KeepOrigin(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// KeepOrigin: temperature already exists (0.7), so should NOT be overwritten
+	// KeepOrigin：temperature 已存在（0.7），因此不应被覆盖
 	if gjson.Get(string(result), "temperature").Float() != 0.7 {
 		t.Errorf("expected temperature=0.7 (keep_origin), got %v", gjson.Get(string(result), "temperature").Float())
 	}
@@ -452,7 +452,7 @@ func TestResolveContextPath(t *testing.T) {
 	}
 }
 
-// --- Header Override Tests ---
+// --- 请求头覆盖测试 ---
 
 func TestApplyHeaderOverride_StaticValue(t *testing.T) {
 	info := newTestInfo()
@@ -536,7 +536,7 @@ func TestIsUnsafeHeader(t *testing.T) {
 	}
 }
 
-// --- Helper ---
+// --- 辅助函数 ---
 
 func newTestInfo() *common.RelayInfo {
 	return &common.RelayInfo{
@@ -547,6 +547,6 @@ func newTestInfo() *common.RelayInfo {
 }
 
 func init() {
-	// Suppress unused import warning for sjson (used by tests indirectly)
+	// 抑制 sjson 的未使用导入告警（测试间被间接使用）
 	_ = sjson.SetRaw
 }

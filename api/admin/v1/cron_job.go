@@ -10,6 +10,7 @@ type CronJobListReq struct {
 
 type CronJobItem struct {
 	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
 	Schedule       string `json:"schedule"`
 	IsRunning      bool   `json:"is_running"`
 	LastStatus     string `json:"last_status"`

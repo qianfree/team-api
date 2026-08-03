@@ -29,7 +29,7 @@ const invitations = ref<InvitationItem[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 
 const roleBadgeClass: Record<string, string> = {
 	owner: 'badge-primary',
@@ -64,7 +64,7 @@ async function fetchInvitations() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/members/invitations', {
-			params: { page: page.value, page_size: pageSize },
+			params: { page: page.value, page_size: pageSize.value },
 		})
 		const raw = res.data?.data
 		invitations.value = raw?.list || []
@@ -183,7 +183,7 @@ onMounted(() => {
 				<p class="empty-state-description">生成邀请链接后，记录会显示在这里</p>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchInvitations" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchInvitations" />
 		</div>
 	</div>
 </template>

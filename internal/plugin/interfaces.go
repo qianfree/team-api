@@ -71,10 +71,11 @@ type HookResult struct {
 
 // CronJobDef 定时任务定义。
 type CronJobDef struct {
-	Name      string                    // 任务名（全局唯一）
-	CronExpr  string                    // cron 表达式
-	Handler   func(ctx context.Context) // 任务处理函数
-	Singleton bool                      // 是否单例执行
+	Name        string                    // 任务名（全局唯一，注册时自动加 plugin_ 前缀）
+	DisplayName string                    // 中文展示名，供管理后台列表展示
+	CronExpr    string                    // cron 表达式
+	Handler     func(ctx context.Context) // 任务处理函数
+	Singleton   bool                      // 是否单例执行
 }
 
 // ConfigFieldDef 配置字段定义。

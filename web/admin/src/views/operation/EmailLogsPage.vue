@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, watch, h } from 'vue'
 import { Tag, Button } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const activeTab = ref<'send-logs' | 'verify-codes'>('send-logs')
@@ -199,6 +200,7 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
+					<TableStats :total="sendPagination.total" />
 					<a-table
 						:columns="sendColumns"
 						:data="sendData"
@@ -244,6 +246,7 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
+					<TableStats :total="codePagination.total" />
 					<a-table
 						:columns="codeColumns"
 						:data="codeData"

@@ -6,6 +6,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -258,6 +259,7 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"

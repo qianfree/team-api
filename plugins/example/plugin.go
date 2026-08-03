@@ -99,10 +99,11 @@ func (p *examplePlugin) Routes(ctx context.Context, server *ghttp.Server) error 
 func (p *examplePlugin) CronJobs() []plugin.CronJobDef {
 	return []plugin.CronJobDef{
 		{
-			Name:      "example_daily_cleanup",
-			CronExpr:  "0 3 * * *",
-			Handler:   p.dailyCleanup,
-			Singleton: true,
+			Name:        "example_daily_cleanup",
+			DisplayName: "示例插件数据清理",
+			CronExpr:    "0 3 * * *",
+			Handler:     p.dailyCleanup,
+			Singleton:   true,
 		},
 	}
 }

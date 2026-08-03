@@ -2,44 +2,18 @@
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { Tag, Button, Space, Popconfirm, Message, Radio } from '@arco-design/web-vue'
+import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
+import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
 
 const router = useRouter()
 const message = Message
-
-// === Provider types ===
-const providerTypeOptions = [
-  { label: 'OpenAI', value: 1 }, { label: 'Claude (Anthropic)', value: 2 },
-  { label: 'Gemini (Google)', value: 3 }, { label: 'Ali (百炼)', value: 4 },
-  { label: 'Tencent (混元)', value: 6 },
-  { label: 'Zhipu (智谱)', value: 7 }, { label: 'DeepSeek', value: 8 },
-  { label: 'Moonshot', value: 9 }, { label: 'Volcengine (火山)', value: 10 },
-  { label: 'AWS Bedrock', value: 11 }, { label: 'Azure OpenAI', value: 12 },
-  { label: 'Vertex AI', value: 13 },
-  { label: 'Mistral', value: 15 }, { label: 'xAI (Grok)', value: 16 },
-  { label: '360 智脑', value: 17 }, { label: 'Lingyi (零一万物)', value: 18 },
-  { label: 'Baidu V2', value: 19 }, { label: 'Cloudflare Workers AI', value: 20 },
-  { label: 'Ollama', value: 22 },
-  { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },
-  { label: 'OpenRouter', value: 27 }, { label: 'XInference', value: 28 },
-  { label: 'MiniMax', value: 29 }, { label: 'Submodel', value: 30 },
-  { label: 'Coze (扣子)', value: 32 },
-  { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
-  { label: 'Codex', value: 35 },
-]
-
-const providerTypeName: Record<number, string> = {}
-providerTypeOptions.forEach(o => { providerTypeName[o.value] = o.label })
-
-function filterProviderOption(inputValue: string, option: { label: string; value: number }) {
-  const input = inputValue.toLowerCase()
-  return option.label.toLowerCase().includes(input)
-}
 
 const providerTagColor: Record<number, string> = {
   1: 'green', 2: 'arcoblue', 3: 'orangered', 8: 'green', 15: 'arcoblue',
@@ -59,6 +33,13 @@ const statusOptions = [
 ]
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
+const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
+const tierOptions = [
+  { label: '首选（承接主要流量）', value: 'primary' },
+  { label: '备用（零星保温流量，主力饱和时溢出承接）', value: 'secondary' },
+  { label: '保底（仅前两层不可用时使用）', value: 'reserve' },
+]
 
 function healthColor(score: number | null | undefined) {
   if (score === null || score === undefined) return '#94a3b8'
@@ -88,6 +69,12 @@ const columns: TableColumnData[] = [
   },
   { title: '优先级', dataIndex: 'priority', width: 70 },
   { title: '权重', dataIndex: 'weight', width: 70 },
+  {
+    title: '层级', dataIndex: 'tier', width: 80,
+    render({ record }) {
+      return h(Tag, { color: tierTagColor[record.tier] || 'gray', size: 'small' }, () => tierLabel[record.tier] || record.tier || '-')
+    },
+  },
   {
     title: '健康度', dataIndex: 'health_score', width: 90,
     render({ record }) {
@@ -188,10 +175,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://api.openai.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
   showModal.value = true
 }
 
@@ -327,7 +314,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- 渠道调度说明（点击弹窗） -->
     <div class="scheduling-hint" @click="showSchedulingGuide = true">
-      <icon-info-circle /> 了解优先级、权重、亲和与容量如何共同调度 →
+      <IconInfoCircle /> 了解优先级、权重、亲和与容量如何共同调度 →
     </div>
 
     <!-- 调度说明弹窗 -->
@@ -375,6 +362,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1400 }" :bordered="false" :stripe="true" :pagination="false" row-key="id" />
       <div class="table-footer">
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />
@@ -384,7 +372,8 @@ const { exporting, exportFile } = useExport({
     <!-- Create Channel Modal -->
     <AModal v-model:visible="showModal" title="创建渠道" :width="640" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
       <AForm ref="formRef" :model="form" :rules="formRules" :auto-label-width="true" layout="vertical">
-        <!-- 基本信息 -->
+        <!-- 基础信息 -->
+        <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
           <ACol :span="12">
             <AFormItem field="name" label="渠道名称" required><AInput v-model="form.name" placeholder="例如：OpenAI 主力" /></AFormItem>
@@ -404,34 +393,51 @@ const { exporting, exportFile } = useExport({
         <AFormItem field="api_key" label="API Key" required>
           <AInput v-model="form.api_key" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="sk-xxxx..." />
         </AFormItem>
-        <!-- 调度 & 状态 -->
+        <!-- 调度与容量 -->
+        <div class="form-group-title">调度与容量</div>
         <ARow :gutter="16">
-          <ACol :span="8">
-            <AFormItem label="优先级">
-              <AInputNumber v-model="form.priority" :min="0" placeholder="越高越优先" class="w-full" />
-              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+          <ACol :span="12">
+            <AFormItem label="调度层级">
+              <ASelect v-model="form.tier" :options="tierOptions" />
+              <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="8">
+          <ACol :span="12">
             <AFormItem label="权重">
               <AInputNumber v-model="form.weight" :min="0" :max="100" class="w-full" />
-              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
-            </AFormItem>
-          </ACol>
-          <ACol :span="8">
-            <AFormItem label="状态">
-              <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
+              <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
             </AFormItem>
           </ACol>
         </ARow>
         <ARow :gutter="16">
-          <ACol :span="8">
+          <ACol :span="12">
+            <AFormItem label="最大并发">
+              <AInputNumber v-model="form.max_concurrency" :min="0" class="w-full" />
+              <template #extra><span class="field-help">0 = 自动估算（按上游 429 水位动态调整）</span></template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="form.strict_capacity" />
+              <template #extra><span class="field-help">Redis 故障时保守限流（高成本渠道）</span></template>
+            </AFormItem>
+          </ACol>
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="状态">
+              <ASelect v-model="form.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
             <AFormItem label="测试模型"><AInput v-model="form.test_model" placeholder="gpt-4o-mini" /></AFormItem>
           </ACol>
-          <ACol :span="8">
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
             <AFormItem label="使用代理">
               <ASwitch v-model="form.use_proxy" />
-              <template #extra><span style="color:var(--color-text-3);font-size:12px">需先在系统设置中配置代理</span></template>
+              <template #extra><span class="field-help">需先在系统设置中配置代理</span></template>
             </AFormItem>
           </ACol>
         </ARow>
@@ -440,18 +446,18 @@ const { exporting, exportFile } = useExport({
         <ACollapse :bordered="false" :default-active-key="form.is_vip ? ['vip'] : []">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
             <ARow :gutter="16">
-              <ACol :span="8">
+              <ACol :span="12">
                 <AFormItem label="VIP 渠道"><ASwitch v-model="form.is_vip" /></AFormItem>
               </ACol>
-              <ACol v-if="form.is_vip" :span="8">
+              <ACol v-if="form.is_vip" :span="12">
                 <AFormItem label="共享阈值"><AInputNumber v-model="form.sharing_threshold" :min="0" :max="100" placeholder="共享健康分阈值" class="w-full" /></AFormItem>
-              </ACol>
-              <ACol v-if="form.is_vip" :span="8">
-                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
             <ARow v-if="form.is_vip" :gutter="16">
-              <ACol :span="8">
+              <ACol :span="12">
+                <AFormItem label="抢占阈值"><AInputNumber v-model="form.preemption_threshold" :min="0" :max="100" placeholder="抢占优先级阈值" class="w-full" /></AFormItem>
+              </ACol>
+              <ACol :span="12">
                 <AFormItem label="借用冷却(秒)"><AInputNumber v-model="form.borrowing_cooldown_seconds" :min="0" placeholder="非VIP冷却时间" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
@@ -469,6 +475,7 @@ const { exporting, exportFile } = useExport({
             <ARadioGroup v-model="oauthForm.platform">
               <Radio value="claude">Claude</Radio>
               <Radio value="openai">OpenAI</Radio>
+              <Radio value="codex">Codex</Radio>
               <Radio value="gemini">Gemini</Radio>
             </ARadioGroup>
           </AFormItem>
@@ -590,5 +597,14 @@ const { exporting, exportFile } = useExport({
 .field-help {
   color: var(--color-text-3);
   font-size: 12px;
+}
+.form-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 12px 0 12px;
+  padding-left: 8px;
+  border-left: 3px solid #165dff;
+  line-height: 1.2;
 }
 </style>

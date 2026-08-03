@@ -1,0 +1,49 @@
+{
+  "name": "basic_response_gemini_to_oai_response",
+  "from": "gemini",
+  "to": "openai",
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "Hello! I'm doing well, thank you for asking."
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "modelName": "gemini-pro",
+    "usageMetadata": {
+      "candidatesTokenCount": 15,
+      "promptTokenCount": 10,
+      "totalTokenCount": 25
+    }
+  },
+  "expected_response": {
+    "id": "chatcmpl-1700000000",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gemini-pro",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hello! I'm doing well, thank you for asking."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 15,
+      "total_tokens": 25
+    }
+  },
+  "converter_id": "gemini_chat_to_oai_chat_resp"
+}

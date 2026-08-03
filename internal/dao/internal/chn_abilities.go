@@ -28,6 +28,7 @@ type ChnAbilitiesColumns struct {
 	Enabled       string // 是否启用该模型能力
 	CreatedAt     string // 创建时间
 	UpdatedAt     string // 更新时间
+	CostRatio     string // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
 }
 
 // chnAbilitiesColumns holds the columns for the table chn_abilities.
@@ -39,6 +40,7 @@ var chnAbilitiesColumns = ChnAbilitiesColumns{
 	Enabled:       "enabled",
 	CreatedAt:     "created_at",
 	UpdatedAt:     "updated_at",
+	CostRatio:     "cost_ratio",
 }
 
 // NewChnAbilitiesDao creates and returns a new DAO object for table data access.

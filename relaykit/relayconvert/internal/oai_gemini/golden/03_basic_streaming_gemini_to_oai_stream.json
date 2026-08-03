@@ -1,0 +1,81 @@
+{
+  "name": "basic_streaming_gemini_to_oai_stream",
+  "from": "gemini",
+  "to": "openai",
+  "stream_data": "data: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello!\"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" How are you?\"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":12,\"totalTokenCount\":20}}\n\n",
+  "expected_stream_chunks": [
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gemini-pro",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant",
+            "content": ""
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gemini-pro",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": "Hello!"
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "gemini-pro",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": " How are you?"
+          },
+          "finish_reason": null
+        }
+      ],
+      "usage": null
+    },
+    {
+      "id": "chatcmpl-1700000000",
+      "object": "chat.completion.chunk",
+      "created": 0,
+      "model": "",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "",
+            "content": null
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 8,
+        "completion_tokens": 12,
+        "total_tokens": 20
+      }
+    }
+  ],
+  "converter_id": "gemini_chat_to_oai_chat_stream_resp"
+}

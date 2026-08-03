@@ -202,7 +202,7 @@ func ConvertOpenAIToGemini(requestBody []byte, info *common.RelayInfo) (io.Reade
 		}
 	}
 
-	// system instructions
+	// 系统指令
 	if len(systemParts) > 0 {
 		geminiReq.SystemInstruction = &dto.GeminiContent{
 			Parts: systemParts,
@@ -519,7 +519,7 @@ func o2gConvertAssistantParts(msg dto.Message, toolCallIDs map[string]string) []
 		parts = append(parts, dto.GeminiPart{Text: text})
 	}
 
-	// reasoning_content → thought (for multi-turn)
+	// reasoning_content → thought（用于多轮对话）
 	if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
 		t := true
 		parts = append(parts, dto.GeminiPart{

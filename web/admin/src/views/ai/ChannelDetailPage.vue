@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import { providerTypeOptions, filterProviderOption } from '@/constants/channel'
 import * as echarts from 'echarts'
 
 const route = useRoute()
@@ -18,30 +19,13 @@ const activeTab = ref('info')
 
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
-
-// 供应商类型选项（与渠道列表页保持一致，用于编辑时切换渠道协议类型）
-const providerTypeOptions = [
-  { label: 'OpenAI', value: 1 }, { label: 'Claude (Anthropic)', value: 2 },
-  { label: 'Gemini (Google)', value: 3 }, { label: 'Ali (百炼)', value: 4 },
-  { label: 'Tencent (混元)', value: 6 },
-  { label: 'Zhipu (智谱)', value: 7 }, { label: 'DeepSeek', value: 8 },
-  { label: 'Moonshot', value: 9 }, { label: 'Volcengine (火山)', value: 10 },
-  { label: 'AWS Bedrock', value: 11 }, { label: 'Azure OpenAI', value: 12 },
-  { label: 'Vertex AI', value: 13 },
-  { label: 'Mistral', value: 15 }, { label: 'xAI (Grok)', value: 16 },
-  { label: '360 智脑', value: 17 }, { label: 'Lingyi (零一万物)', value: 18 },
-  { label: 'Baidu V2', value: 19 }, { label: 'Cloudflare Workers AI', value: 20 },
-  { label: 'Ollama', value: 22 },
-  { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },
-  { label: 'OpenRouter', value: 27 }, { label: 'XInference', value: 28 },
-  { label: 'MiniMax', value: 29 }, { label: 'Submodel', value: 30 },
-  { label: 'Coze (扣子)', value: 32 },
-  { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
-  { label: 'Codex', value: 35 },
+const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
+const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
+const tierOptions = [
+  { label: '首选（承接主要流量）', value: 'primary' },
+  { label: '备用（零星保温流量，主力饱和时溢出承接）', value: 'secondary' },
+  { label: '保底（仅前两层不可用时使用）', value: 'reserve' },
 ]
-function filterProviderOption(inputValue: string, option: { label: string; value: number }) {
-  return option.label.toLowerCase().includes(inputValue.toLowerCase())
-}
 const healthColor = (score: number | null | undefined) => {
   if (score === null || score === undefined) return '#94a3b8'
   if (score >= 80) return '#10b981'
@@ -69,11 +53,14 @@ function goBack() {
 const showEditModal = ref(false)
 const editLoading = ref(false)
 const editForm = reactive({
+  type: 0,
   name: '',
-  type: 1,
   base_url: '',
   priority: 0,
   weight: 100,
+  max_concurrency: 100,
+  tier: 'primary',
+  strict_capacity: false,
   test_model: '',
   remark: '',
   status: 'active',
@@ -87,11 +74,14 @@ const editForm = reactive({
 function openEditModal() {
   if (!detail.value) return
   Object.assign(editForm, {
+    type: detail.value.type ?? 0,
     name: detail.value.name || '',
-    type: detail.value.type || 1,
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
     weight: detail.value.weight || 100,
+    max_concurrency: detail.value.max_concurrency ?? 100,
+    tier: detail.value.tier || 'primary',
+    strict_capacity: detail.value.strict_capacity || false,
     test_model: detail.value.test_model || '',
     remark: detail.value.remark || '',
     status: detail.value.status || 'active',
@@ -141,7 +131,30 @@ const abilitiesData = ref<any[]>([])
 const abilityColumns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 60 },
   { title: '平台模型名', dataIndex: 'model_name', width: 200 },
-  { title: '上游模型名', dataIndex: 'upstream_model', width: 200 },
+  {
+    title: '上游模型名', dataIndex: 'upstream_model', width: 200,
+    render({ record }) {
+      return h(Input, {
+        modelValue: record.upstream_model || '',
+        size: 'mini',
+        placeholder: '留空则同名',
+        onChange: (v: string) => handleUpstreamModelChange(record, v),
+      })
+    },
+  },
+  {
+    title: '成本比例', dataIndex: 'cost_ratio', width: 130,
+    render({ record }) {
+      return h(InputNumber, {
+        modelValue: record.cost_ratio ?? 1,
+        min: 0.0001,
+        max: 100,
+        step: 0.05,
+        size: 'mini',
+        onChange: (v: number) => handleCostRatioChange(record, v),
+      })
+    },
+  },
   {
     title: '状态', dataIndex: 'enabled', width: 80,
     render({ record }) {
@@ -171,25 +184,56 @@ async function fetchAbilities() {
   } catch { abilitiesData.value = [] } finally { abilitiesLoading.value = false }
 }
 
+// abilityPayload 组装能力批量提交体（cost_ratio 必须随行提交，否则会被重置为默认 1.0）
+function abilityPayload(list: any[]) {
+  return {
+    channel_id: Number(channelId),
+    abilities: list.map(a => ({
+      model_name: a.model_name,
+      upstream_model: a.upstream_model || '',
+      enabled: a.enabled,
+      cost_ratio: a.cost_ratio ?? 1,
+    })),
+  }
+}
+
 async function handleToggleAbility(ab: any) {
   const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, enabled: !a.enabled } : a)
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     abilitiesData.value = newList
     Message.success('状态已更新')
   } catch { /* error handled by interceptor */ }
 }
 
+// 能力表内联编辑（成本比例 / 上游模型名）：任意字段变更后统一 600ms 防抖整表提交，
+// 连续改多字段只发一次请求。提交体 abilityPayload 已包含 upstream_model。
+let abilitySaveTimer: any = null
+function scheduleAbilitySave(successMsg: string) {
+  clearTimeout(abilitySaveTimer)
+  abilitySaveTimer = setTimeout(async () => {
+    try {
+      await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(abilitiesData.value))
+      Message.success(successMsg)
+    } catch { /* error handled by interceptor */ }
+  }, 600)
+}
+
+function handleCostRatioChange(record: any, value: number) {
+  if (!value || value <= 0) return
+  record.cost_ratio = value
+  scheduleAbilitySave('成本比例已更新')
+}
+
+function handleUpstreamModelChange(record: any, value: string) {
+  record.upstream_model = value
+  scheduleAbilitySave('上游模型名已更新')
+}
+
 async function handleDeleteAbility(id: number) {
   const newList = abilitiesData.value.filter(a => a.id !== id)
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     Message.success('能力已移除')
     fetchAbilities()
   } catch { /* error handled by interceptor */ }
@@ -200,21 +244,16 @@ const showAddAbilityModal = ref(false)
 const addAbilityForm = reactive({ model_name: '', upstream_model: '', enabled: true })
 const modelsList = ref<any[]>([])
 const modelsLoading = ref(false)
-let modelSearchTimer: any = null
 
-async function fetchModels(search?: string) {
+// 拉取全部 active 模型（下拉专用、不分页接口 /admin/models/options）。
+// 此前用分页接口 /admin/models 且 page_size=20，导致平台模型超过 20 个时
+// “添加能力”下拉只显示最新 20 条，看不到其余模型。
+async function fetchModels() {
   modelsLoading.value = true
   try {
-    const res: any = await request.get('/admin/models', {
-      params: { page: 1, page_size: 20, status: 'active', search: search || undefined },
-    })
+    const res: any = await request.get('/admin/models/options')
     modelsList.value = res.data?.data?.list || res.data?.list || []
   } catch { modelsList.value = [] } finally { modelsLoading.value = false }
-}
-
-function handleModelSearch(val: string) {
-  clearTimeout(modelSearchTimer)
-  modelSearchTimer = setTimeout(() => fetchModels(val), 300)
 }
 
 const availableModelOptions = computed(() => {
@@ -241,12 +280,9 @@ function openAddAbilityModal() {
 
 async function handleAddAbility(done: () => void) {
   if (!addAbilityForm.model_name) { Message.warning('请输入模型名'); return }
-  const newList = [...abilitiesData.value, { model_name: addAbilityForm.model_name, upstream_model: addAbilityForm.upstream_model, enabled: addAbilityForm.enabled }]
+  const newList = [...abilitiesData.value, { model_name: addAbilityForm.model_name, upstream_model: addAbilityForm.upstream_model, enabled: addAbilityForm.enabled, cost_ratio: 1 }]
   try {
-    await request.put(`/admin/channels/${channelId}/abilities`, {
-      channel_id: Number(channelId),
-      abilities: newList.map(a => ({ model_name: a.model_name, upstream_model: a.upstream_model || '', enabled: a.enabled })),
-    })
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
     Message.success('能力已添加')
     done()
     addAbilityForm.model_name = ''
@@ -366,6 +402,7 @@ function handleTrendHoursChange(val: string | number | boolean) {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
   if (resizeTimer) clearTimeout(resizeTimer)
+  if (abilitySaveTimer) clearTimeout(abilitySaveTimer)
   if (trendChart) { trendChart.dispose(); trendChart = null }
 })
 
@@ -476,6 +513,17 @@ function formatHeaders(headers: Record<string, string>): string {
                 </ADescriptionsItem>
                 <ADescriptionsItem label="优先级">{{ detail.priority }}</ADescriptionsItem>
                 <ADescriptionsItem label="权重">{{ detail.weight }}</ADescriptionsItem>
+                <ADescriptionsItem label="最大并发">
+                  <span v-if="detail.max_concurrency > 0">{{ detail.max_concurrency }}</span>
+                  <span v-else style="color: #94a3b8">自动</span>
+                </ADescriptionsItem>
+                <ADescriptionsItem label="调度层级">
+                  <ATag :color="tierTagColor[detail.tier] || 'gray'" size="small">{{ tierLabel[detail.tier] || detail.tier || '-' }}</ATag>
+                </ADescriptionsItem>
+                <ADescriptionsItem label="严格容量">
+                  <ATag v-if="detail.strict_capacity" color="purple" size="small">fail-closed</ATag>
+                  <span v-else>-</span>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="健康度">
                   <span v-if="detail.health_score != null" :style="{ color: healthColor(detail.health_score), fontWeight: 600 }">
                     {{ detail.health_score.toFixed(0) }}
@@ -521,9 +569,14 @@ function formatHeaders(headers: Record<string, string>): string {
           <!-- Tab 2: Model Abilities -->
           <ATabPane key="abilities" title="模型能力">
             <ACard :bordered="false">
+              <template #title>
+                <div class="flex items-center justify-between">
+                  <span>模型能力配置</span>
+                  <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
+                </div>
+              </template>
               <div class="flex items-center justify-between mb-4">
                 <span style="color: var(--color-text-3)">已配置 {{ abilitiesData.length }} 个模型能力</span>
-                <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
               </div>
               <ATable
                 :columns="abilityColumns"
@@ -534,6 +587,18 @@ function formatHeaders(headers: Record<string, string>): string {
                 :pagination="false"
                 row-key="id"
               />
+              <!-- 字段功能说明（面向运营者） -->
+              <div class="mt-3 text-xs" style="color: var(--color-text-3); line-height: 1.7;">
+                <div class="mb-1"><strong>字段说明</strong></div>
+                <div class="flex flex-wrap gap-x-6 gap-y-1">
+                  <div>
+                    <span style="font-weight: 500;">上游模型名：</span>该渠道转发请求时实际调用的上游模型名称。仅当上游名称与平台标准模型名不同时填写（如平台名 gpt-4、上游名 gpt-4-0314）；留空表示与平台模型名相同。
+                  </div>
+                  <div>
+                    <span style="font-weight: 500;">成本比例：</span>该渠道相对基准价的成本系数，1.0 为标准。小于 1（如 0.8）表示更便宜，多渠道择优时更优先调度；大于 1（如 1.5）表示更贵，优先级降低。仅用于渠道调度，不影响对用户的计费。
+                  </div>
+                </div>
+              </div>
             </ACard>
           </ATabPane>
 
@@ -645,61 +710,98 @@ function formatHeaders(headers: Record<string, string>): string {
     </ASpin>
 
     <!-- Edit Channel Modal -->
-    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="600" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
+    <AModal v-model:visible="showEditModal" title="编辑渠道" :width="680" :mask-closable="false" :on-before-ok="handleEditSubmit" :ok-loading="editLoading">
       <AForm :model="editForm" :auto-label-width="true" layout="vertical">
-        <AFormItem label="供应商类型" field="type">
-          <ASelect v-model="editForm.type" :options="providerTypeOptions" placeholder="搜索或选择" allow-search :filter-option="filterProviderOption" />
-          <template #extra>
-            <span class="field-help">切换协议类型会改变该渠道的转发适配器；请确认 Base URL 与已配置的模型能力与新类型匹配。</span>
-          </template>
-        </AFormItem>
+        <!-- 基础信息 -->
+        <div class="form-group-title">基础信息</div>
         <ARow :gutter="16">
-          <ACol :span="8">
+          <ACol :span="12">
+            <AFormItem label="供应商类型" required>
+              <ASelect
+                v-model="editForm.type"
+                :options="providerTypeOptions"
+                placeholder="搜索或选择供应商"
+                allow-search
+                :filter-option="filterProviderOption"
+              />
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
             <AFormItem label="渠道名称"><AInput v-model="editForm.name" /></AFormItem>
           </ACol>
-          <ACol :span="16">
-            <AFormItem label="Base URL"><AInput v-model="editForm.base_url" /></AFormItem>
+        </ARow>
+        <AFormItem label="Base URL">
+          <AInput v-model="editForm.base_url" placeholder="留空使用供应商默认地址" />
+          <template #extra>
+            <span class="field-help">ⓘ 修改供应商类型后，请同步检查 Base URL 与「模型能力」配置</span>
+          </template>
+        </AFormItem>
+
+        <!-- 调度与容量 -->
+        <div class="form-group-title">调度与容量</div>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="调度层级">
+              <ASelect v-model="editForm.tier" :options="tierOptions" />
+              <template #extra><span class="field-help">三档固定层级，替代旧版数值优先级</span></template>
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="权重">
+              <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
+              <template #extra><span class="field-help">同层级内按权重比例分配</span></template>
+            </AFormItem>
           </ACol>
         </ARow>
         <ARow :gutter="16">
-          <ACol :span="6">
-            <AFormItem label="优先级">
-              <AInputNumber v-model="editForm.priority" :min="0" class="w-full" />
-              <template #extra><span class="field-help">仅最高可用优先级组参与分配</span></template>
+          <ACol :span="12">
+            <AFormItem label="最大并发">
+              <AInputNumber v-model="editForm.max_concurrency" :min="0" class="w-full" />
+              <template #extra><span class="field-help">0 = 自动估算（按上游 429 水位动态调整）</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="6">
-            <AFormItem label="权重">
-              <AInputNumber v-model="editForm.weight" :min="0" :max="100" class="w-full" />
-              <template #extra><span class="field-help">新亲和绑定比例；0 表示不参与调度</span></template>
+          <ACol :span="12">
+            <AFormItem label="严格容量">
+              <ASwitch v-model="editForm.strict_capacity" />
+              <template #extra><span class="field-help">Redis 故障时按保守限额拒绝新请求（高成本渠道）</span></template>
             </AFormItem>
           </ACol>
-          <ACol :span="6">
-            <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
-          </ACol>
-          <ACol :span="6">
+        </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
             <AFormItem label="状态">
               <ASelect v-model="editForm.status" :options="[{ label: '启用', value: 'active' }, { label: '禁用', value: 'disabled' }, { label: '测试中', value: 'testing' }]" />
             </AFormItem>
           </ACol>
-          <ACol :span="6">
-            <AFormItem label="使用代理"><ASwitch v-model="editForm.use_proxy" /></AFormItem>
+          <ACol :span="12">
+            <AFormItem label="测试模型"><AInput v-model="editForm.test_model" /></AFormItem>
           </ACol>
         </ARow>
+        <ARow :gutter="16">
+          <ACol :span="12">
+            <AFormItem label="使用代理">
+              <ASwitch v-model="editForm.use_proxy" />
+            </AFormItem>
+          </ACol>
+        </ARow>
+
         <AFormItem label="备注"><AInput v-model="editForm.remark" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" /></AFormItem>
+
         <ACollapse :bordered="false">
           <ACollapseItem header="VIP 设置" key="vip" :header-style="{ fontSize: '13px' }">
             <ARow :gutter="16">
-              <ACol :span="6">
+              <ACol :span="12">
                 <AFormItem label="VIP 渠道"><ASwitch v-model="editForm.is_vip" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+              <ACol v-if="editForm.is_vip" :span="12">
                 <AFormItem label="共享阈值"><AInputNumber v-model="editForm.sharing_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+            </ARow>
+            <ARow v-if="editForm.is_vip" :gutter="16">
+              <ACol :span="12">
                 <AFormItem label="抢占阈值"><AInputNumber v-model="editForm.preemption_threshold" :min="0" :max="100" class="w-full" /></AFormItem>
               </ACol>
-              <ACol v-if="editForm.is_vip" :span="6">
+              <ACol :span="12">
                 <AFormItem label="借用冷却(秒)"><AInputNumber v-model="editForm.borrowing_cooldown_seconds" :min="0" class="w-full" /></AFormItem>
               </ACol>
             </ARow>
@@ -765,4 +867,13 @@ function formatHeaders(headers: Record<string, string>): string {
 .test-debug-value { font-size: 12px; color: var(--color-text-2); word-break: break-all; background: var(--color-fill-1); padding: 2px 6px; border-radius: 3px; }
 .test-debug-code { font-size: 12px; background: var(--color-fill-1); padding: 6px 8px; border-radius: 4px; max-height: 150px; overflow: auto; color: var(--color-text-3); white-space: pre-wrap; word-break: break-all; margin: 0; flex: 1; }
 .field-help { color: var(--color-text-3); font-size: 12px; }
+.form-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin: 12px 0 12px;
+  padding-left: 8px;
+  border-left: 3px solid #165dff;
+  line-height: 1.2;
+}
 </style>

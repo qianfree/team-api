@@ -105,7 +105,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			MinTokens:          p.MinTokens,
 			MaxTokens:          p.MaxTokens,
 			InputPrice:         p.InputPrice,
-			OutputPrice:         p.OutputPrice,
+			OutputPrice:        p.OutputPrice,
 			PerRequestPrice:    p.PerRequestPrice,
 			CacheReadPrice:     p.CacheReadPrice,
 			CacheCreationPrice: p.CacheCreationPrice,
@@ -299,6 +299,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				}
 
 				relay.NewDataProvider().InvalidateModelCache(item.ModelId)
+				billing.ClearModelPriceCache(ctx, item.ModelId)
 				res.Imported++
 			} else {
 				// 新建模型

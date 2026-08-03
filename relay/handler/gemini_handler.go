@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
 )
 
 // HandleGeminiGenerateContent 处理 /v1beta/models/{model}:generateContent 请求（Gemini 原生格式）
@@ -74,7 +75,7 @@ func WriteGeminiRelayError(w http.ResponseWriter, err error) {
 	var relayErr *constant.RelayError
 	var rateLimitErr *RelayErrorWithRateLimit
 	statusCode := http.StatusInternalServerError
-	errMsg := err.Error()
+	errMsg := helper.SafeUpstreamErrorMessage(err)
 	errStatus := "INTERNAL"
 
 	if errors.As(err, &rateLimitErr) {
@@ -85,7 +86,9 @@ func WriteGeminiRelayError(w http.ResponseWriter, err error) {
 		statusCode = relayErr.StatusCode
 		errMsg = relayErr.Message
 		if relayErr.Cause != nil {
-			errMsg = relayErr.Message + ": " + relayErr.Cause.Error()
+			// 传输层错误（client.Do 的 *url.Error）的 Cause 含上游域名，必须脱敏后再暴露给用户；
+			// 日志侧仍用 originalError=%v 打印完整错误供运维定位。
+			errMsg = relayErr.Message + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
 		}
 		switch statusCode {
 		case 401:

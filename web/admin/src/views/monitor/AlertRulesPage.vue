@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, h } from 'vue'
 import { Message, Tag, Button, Space, Popconfirm } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -212,7 +213,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="告警规则" description="配置系统告警规则">
       <template #actions>
         <a-button type="primary" @click="openCreate">创建规则</a-button>
@@ -236,8 +237,9 @@ onMounted(() => {
     </a-card>
 
     <a-card :bordered="false">
+      <TableStats :total="total" />
       <a-table :data="data" :columns="columns" :loading="loading" :pagination="false" row-key="id" />
-      <div style="display: flex; justify-content: flex-end; margin-top: 16px">
+      <div class="table-footer">
         <a-pagination :current="pagination.current" :page-size="pagination.pageSize" :total="total" @change="handlePageChange" />
       </div>
     </a-card>

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
@@ -81,8 +82,16 @@ func (p *EpayProvider) HandleCallback(ctx context.Context, r *http.Request, conf
 	}
 
 	tradeStatus := r.FormValue("trade_status")
-	var money float64
-	fmt.Sscanf(r.FormValue("money"), "%f", &money)
+	// money 必须严格解析：此前用 Sscanf 忽略错误，money 缺失/畸形时 PaidAmount=0，
+	// 而 ProcessCallback 的金额校验以 PaidAmount>0 为前提，等于被静默绕过。
+	// 成功回调解析失败直接拒绝（返回非 success，渠道会重试）。
+	money, parseErr := strconv.ParseFloat(strings.TrimSpace(r.FormValue("money")), 64)
+	if tradeStatus == "TRADE_SUCCESS" && (parseErr != nil || money <= 0) {
+		return nil, lcommon.NewBusinessError(422, fmt.Sprintf("易支付回调金额无效: %q", r.FormValue("money")))
+	}
+	if parseErr != nil {
+		money = 0
+	}
 
 	return &CallbackResult{
 		OrderNo:     r.FormValue("out_trade_no"),

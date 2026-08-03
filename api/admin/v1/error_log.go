@@ -61,3 +61,13 @@ type ErrorLogStatsReq struct {
 type ErrorLogStatsRes struct {
 	Data map[string]any `json:"data"`
 }
+
+// ErrorLogClearReq 清空全部错误日志（硬删除，用于错误大量堆积时快速释放数据库空间）
+type ErrorLogClearReq struct {
+	g.Meta `path:"/error-logs/clear" method:"delete" mime:"json" tags:"管理后台-系统错误" summary:"清空错误日志（硬删除全部）"`
+}
+
+// ErrorLogClearRes 清空错误日志响应
+type ErrorLogClearRes struct {
+	Deleted int64 `json:"deleted" dc:"删除的记录数"`
+}

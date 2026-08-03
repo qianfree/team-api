@@ -161,7 +161,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	result := replaceModelIfNeeded(converted, info)
 	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数
 	if info.IsStream && mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
-		result = injectStreamOptions(result, info)
+		result = InjectStreamOptions(result, info)
 	}
 
 	// Thinking 后缀路由：注入 reasoning_effort
@@ -199,7 +199,7 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 
-	// Audio multipart form: 由 SetupRequestHeader 跳过，这里补上客户端原始 Content-Type（含 boundary）
+	// 音频 multipart form：由 SetupRequestHeader 跳过，这里补上客户端原始 Content-Type（含 boundary）
 	if (mode == constant.RelayModeAudioTranscription || mode == constant.RelayModeAudioTranslation) &&
 		info.RequestHeaders != nil {
 		if ct := info.RequestHeaders.Get("Content-Type"); ct != "" {
@@ -297,18 +297,18 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		// 尝试解析上游错误格式，如果是标准格式则透传原始响应
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if info.ChannelMeta.IsModelMapped {
@@ -343,11 +343,11 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		// 尝试透传上游错误格式
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	return StreamHandler(ctx, resp, info, writer)
@@ -359,7 +359,7 @@ func (a *Adaptor) handleCompletionStreamResponse(ctx context.Context, resp *http
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	return StreamHandlerForCompletions(ctx, resp, info, writer)
@@ -394,9 +394,10 @@ func replaceModelIfNeeded(r io.Reader, info *common.RelayInfo) io.Reader {
 	return bytes.NewReader(result)
 }
 
-// injectStreamOptions 为流式请求注入 stream_options:{include_usage:true}
-// 确保上游在流式响应的最后一个 chunk 中返回 usage 信息
-func injectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
+// InjectStreamOptions 为流式请求注入 stream_options:{include_usage:true}
+// 确保上游在流式响应的最后一个 chunk 中返回 usage 信息。
+// 导出供其他 OpenAI 兼容适配器（如火山）复用。
+func InjectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
 	if !info.IsStream {
 		return r
 	}
@@ -465,11 +466,11 @@ func (a *Adaptor) handleModerationResponse(_ context.Context, resp *http.Respons
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 	if resp.StatusCode != http.StatusOK {
 		writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return &common.Usage{}, upstreamErr
 	}
