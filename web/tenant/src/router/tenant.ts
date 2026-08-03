@@ -11,6 +11,7 @@ declare module 'vue-router' {
 		viewportTable?: boolean
 		description?: string
 		keywords?: string
+		badge?: string // 菜单项右侧徽章文本
 	}
 }
 
@@ -171,7 +172,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 				path: 'playground',
 				name: 'TenantPlayground',
 				component: () => import('@/views/service/PlaygroundPage.vue'),
-				meta: { title: '在线体验', icon: 'terminal', sort: 50, roles: ['owner', 'admin', 'member'] },
+				meta: { title: '在线体验', icon: 'terminal', sort: 50, roles: ['owner', 'admin', 'member'], badge: '⚡' },
 			},
 			{
 				path: 'tickets',
