@@ -44,6 +44,10 @@ RUN apk add --no-cache git make gcc musl-dev
 WORKDIR /build
 
 COPY go.mod go.sum ./
+# relaykit 是本地 replace 子模块（go.mod: replace ... => ./relaykit），
+# go mod download 需要读取 relaykit/go.mod 才能解析其依赖，
+# 因此在 download 前先拷入 relaykit 的 go.mod / go.sum（无需源码，保留下载层缓存）
+COPY relaykit/go.mod relaykit/go.sum ./relaykit/
 RUN go mod download
 
 COPY . .
