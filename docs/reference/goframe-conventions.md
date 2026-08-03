@@ -616,3 +616,86 @@ dao.Xxx.Ctx(ctx).Where("id", id).Data(map[string]interface{}{
 
 排查信号：接口返回成功但数据库某可空字段没变化，且代码用了 `Data(do.Xxx{Field: nil})`。
 
+
+### 2026-08-03：补偿路径复用已取消的请求 ctx + 资金多语句未用事务，导致冻结余额永久泄漏
+
+**问题**：高并发下客户端超时断开时出现 `pre-deduct db rollback after track failure: ... context canceled`。预扣的冻结 UPDATE 已提交，但追踪 INSERT（`bil_prededuct_tracks`）因 ctx 取消失败，随后的回滚补偿 `unfreezeDBAmount(ctx)` 复用**同一个已取消的 ctx** 也必然失败。最终 `bil_wallets.frozen_balance` 永久多冻结且无追踪记录——孤儿清理与对账均以 tracks 表为权威，这笔泄漏对整个对账体系不可见，租户可用余额被持续蚕食。
+
+**原因（三层）**：
+
+1. **补偿/回滚操作复用请求 ctx**：补偿正是在出错（常为 ctx 取消）时才执行的，用会随客户端断开取消的 ctx 等于没有补偿。GoFrame 的 `g.DB().Exec(ctx)` 在 ctx 取消后直接返回 `context canceled`。
+2. **资金多语句操作未包事务**：冻结 UPDATE 与追踪 INSERT 在 autocommit 下各自成独立事务，中间任意点被打断即状态撕裂，只能依赖脆弱的手动补偿。
+3. **ctx canceled 被误判为 Redis 故障**：`PreDeduct` 对 Redis 报错不加区分一律降级到 `preDeductDB`，客户端断开（ctx 取消）也会触发降级去打 DB 热点行。
+
+**修复**（`internal/logic/billing/wallet.go`）：
+
+```go
+// 错误 — 两条语句独立提交 + 补偿复用请求 ctx
+g.DB().Exec(ctx, "UPDATE bil_wallets SET frozen_balance = frozen_balance + ? ...")  // 已提交
+trackPreDeduct(ctx, ...)                    // ctx 取消 → 失败
+unfreezeDBAmount(ctx, ...)                  // 同一 ctx → 补偿也失败 → 冻结永久泄漏
+
+// 正确 — 资金临界区：单事务原子化 + WithoutCancel 脱离取消 + 独立兜底超时
+dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), preDeductDBTimeout)
+defer cancel()
+err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
+    // 注意：事务内的裸 SQL 必须用 g.DB().Ctx(txCtx).Exec(txCtx, ...) 传播事务
+    if _, err := g.DB().Ctx(txCtx).Exec(txCtx, "UPDATE bil_wallets ..."); err != nil {
+        return err
+    }
+    return trackPreDeduct(txCtx, ...)  // 任一失败整体回滚，无需手动补偿
+})
+```
+
+同时在 `preDeductDB` 入口检查 `ctx.Err()`：请求 ctx 已取消时直接返回错误，不再降级打 DB。
+
+**正确做法（通用规则）**：
+
+- **一旦决定发生资金状态变更，写入过程必须不可被客户端取消**：临界区统一用 `context.WithoutCancel(ctx)` + 独立超时（防连接异常无限占用）。已有先例：`rollbackRedisPreDeduct`、`IncrMemberQuotaUsed`。
+- **关联的多条资金语句必须包进 `g.DB().Transaction`**，靠事务回滚而非手动补偿保证原子性；事务内裸 SQL 用 `g.DB().Ctx(ctx).Exec(ctx, ...)`（与 `executeSettlementTx` 一致），`g.DB().Exec(ctx, ...)` 不带 `.Ctx()` 不会加入 ctx 携带的事务。
+- **降级分支先判 `ctx.Err()`**：`context canceled` 不是基础设施故障，不应触发降级重试。
+
+排查信号：日志同时出现「主操作 context canceled」和「rollback/补偿也 context canceled」，且资金字段与明细表对不上。
+
+### 2026-08-03（二）：进程级全局状态回源使用请求 ctx + 负结果不缓存，客户端断开时刷出 DB 报错风暴
+
+**问题**：高并发客户端断开时出现大量 `[Config] DB error reading option tenant_qps_limit: ... context canceled`。
+
+**原因（三层叠加，`ConfigService.GetOption`）**：
+
+1. **全局配置回源用请求 ctx**：配置缓存是进程级共享状态，回填 DB 查询却随单个请求的 ctx 取消而中断——客户端断开既刷误报，又导致缓存填不上、后续请求继续穿透。
+2. **未落库的 key 不缓存（无负缓存）**：`option == nil` 走注册表默认值分支时不写缓存，导致该 key **每次调用都穿透查 `sys_options`**。`LoadRateLimitConfig` 每请求读 5 个 key（`CheckRateLimit`/`AcquireConcurrent` 各调一次），只要这些 key 没在后台配置过，就是每请求最多 10 次 DB 查询的读风暴。
+3. **无 singleflight**：缓存过期瞬间所有并发请求同时回源。
+
+**修复**（`internal/logic/common/config.go`）：回源包进 `singleflight.Do(key, ...)`，闭包内用 `context.WithoutCancel(ctx)` 先双重检查缓存再查 DB；DB 有行缓存行值，无行缓存注册表默认值（负缓存）。缓存默认值不影响改配置生效——`SetOption` 写库后 `cache.Delete` + Pub/Sub 广播失效。
+
+**正确做法（通用规则）**：
+
+- **进程级共享状态（配置、字典、全局缓存）的回源查询，一律 `context.WithoutCancel(ctx)`**：回填结果服务于所有请求，不属于发起请求的生命周期。请求私有数据（该请求自己的钱包/Key 查询）才随请求 ctx 取消。
+- **回退到默认值的分支也要写缓存（负缓存）**，否则"未配置"成为永久缓存穿透源；前提是写路径有对应的缓存失效。
+- **同 key 并发回源加 `singleflight`**（项目已有先例：`walletSyncGroup`）。
+
+排查信号：某张小配置表的 SELECT 出现在高频请求路径日志中（尤其带 context canceled），说明缓存没挡住——检查负结果是否被缓存、回源是否用了请求 ctx。
+
+### 2026-08-03（三）：客户端断开后请求继续空转流水线，ctx 取消被逐级误报为业务错误
+
+**问题**：高并发客户端断开时连环出现三类告警——`api_key_quota: load failed ... context canceled, skipping check`、`member_quota: load failed ... skipping check`、`[RelayHandler] No available channel for model=...`。
+
+**原因**：请求 ctx 取消后流水线不终止，每个阶段各自撞上 canceled ctx 并按本阶段的错误语义误报：额度检查把取消当 DB 故障告警并 fail-open"跳过"；调度器的 Redis 操作（快照/租约/绑定）被取消导致空决策，被误报成"无可用渠道"，还会记失败用量、污染渠道统计。
+
+**修复**：
+
+1. `RelayHandler` 入口 `ctx.Err()` fail-fast——断开的请求直接终止，不进入流水线；
+2. 调度空决策（`sess.Next` 返回 nil）与 `CheckTenantModelAccess` 出错处识别 `context.Canceled/DeadlineExceeded`：静默退还预扣（`WithoutCancel`）后返回，不记失败用量、不打无可用渠道告警（对齐既有的 `MaterializeSelection` 断开处理）；
+3. `CheckMemberQuota`/`CheckApiKeyQuota` 加载失败时区分取消与真实 DB 故障：取消静默跳过（请求随后在预扣处 fail-fast），仅真实故障才 WARN。
+
+**正确做法（通用规则，与本日（一）（二）合并成完整的 ctx 取消处理决策表）**：
+
+| 操作性质 | ctx 取消时的正确行为 |
+|---------|---------------------|
+| 请求私有读（本请求的额度/Key/权限查询） | 随请求终止；**不告警**（取消不是故障），必要时 Debug |
+| 进程级共享状态回源（配置/字典缓存回填） | `WithoutCancel` 继续完成（见（二）） |
+| 资金状态变更（预扣/结算/解冻及其补偿） | `WithoutCancel` + 事务 + 兜底超时，不可撕裂（见（一）） |
+| 长流水线编排（relay handler） | 入口与各昂贵阶段前 `ctx.Err()` fail-fast；下游报错先判 `errors.Is(err, context.Canceled)`，勿映射为业务错误（"无可用渠道"/"余额不足"等） |
+
+排查信号：同一 request_id 在日志里留下一串不同模块、不同语义的报错，尾部都是 `context canceled`——说明缺 fail-fast 入口闸门，且各模块把取消误当成了自己领域的故障。

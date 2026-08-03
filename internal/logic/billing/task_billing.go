@@ -157,7 +157,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	diff := SubtractMoney(actualCost, preDeductAmount)
 
 	// 1. 获取钱包
-	wallet, err := GetWallet(ctx, tenantID)
+	walletID, err := GetWalletID(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("settle task: get wallet: %w", err)
 	}
@@ -180,7 +180,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 	//    _adjust 已被解冻/孤儿清理处理过时自动少释放，不会二次释放。
 	_, err = executeSettlementTx(ctx, settlementTxParams{
 		tenantID:        tenantID,
-		walletID:        wallet.ID,
+		walletID:        walletID,
 		preDeductAmount: InexactFloat64(preDeductAmount),
 		actualCost:      InexactFloat64(actualCost),
 		logPrefix:       "settle task",
@@ -229,7 +229,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
 			return do.BilTransactions{
 				TenantId:     tenantID,
-				WalletId:     wallet.ID,
+				WalletId:     walletID,
 				Type:         "consume",
 				Amount:       SubtractMoney(Zero, actualCost),
 				BalanceAfter: balanceAfter,

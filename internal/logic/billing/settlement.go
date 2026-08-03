@@ -101,7 +101,23 @@ func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, erro
 		now := time.Now()
 		actualCostD := NewFromFloat(p.actualCost)
 
-		// a. claim 预扣追踪（frozen→settled，返回实际认领金额）
+		// 语句顺序针对钱包热点行优化：bil_wallets 是同租户所有结算争抢的单行热点，
+		// 行锁从钱包 UPDATE 起持有直到 COMMIT，锁内往返次数直接决定单租户结算吞吐。
+		// 故：幂等闸门（计费记录唯一约束）与预扣 claim 前置到钱包锁之外，
+		// 钱包 UPDATE 用 RETURNING 合并余额快照读，锁内只剩「UPDATE → 流水 INSERT → COMMIT」。
+
+		// a. 创建计费记录（幂等闸门：同 request_id 的重复结算在触碰钱包行之前即被拒绝回滚）
+		var err error
+		billingID, err = p.createBillingRecord(ctx)
+		if err != nil {
+			if isDuplicateKeyErr(err) {
+				// 同一 request_id 已结算：整个事务回滚，避免重复扣款/重复账单
+				return errAlreadySettled
+			}
+			return gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
+		}
+
+		// b. claim 预扣追踪（frozen→settled，每请求独立行，无热点争抢）
 		claimedD, err := claimPredeductSettledTx(ctx, p.predeductRequestIDs)
 		if err != nil {
 			return gerror.Wrapf(err, "%s: claim prededuct settled", p.logPrefix)
@@ -111,28 +127,26 @@ func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, erro
 				p.logPrefix, InexactFloat64(claimedD), p.preDeductAmount, p.predeductRequestIDs)
 		}
 
-		// b. 更新钱包：释放实际 claim 到的冻结 + 扣除实际成本（decimal 直传 NUMERIC，避免 float64 精度损失）
-		_, err = g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ?",
+		// c. 更新钱包并原子读回余额快照（RETURNING 合并原「UPDATE + SELECT」两次锁内往返；
+		//    decimal 直传 NUMERIC，避免 float64 精度损失）
+		var balanceAfter, frozenAfter float64
+		row, err := g.DB().Ctx(ctx).GetOne(ctx,
+			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ? RETURNING balance, frozen_balance",
 			claimedD, actualCostD, now, p.walletID)
 		if err != nil {
 			return gerror.Wrapf(err, "%s: update wallet", p.logPrefix)
 		}
-
-		// c. 事务内读取准确余额（best-effort，失败则保持 0）
-		balanceAfter, frozenAfter := readWalletBalanceTx(ctx, p.walletID)
-
-		// d. 创建计费记录
-		billingID, err = p.createBillingRecord(ctx)
-		if err != nil {
-			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚（钱包扣款与 claim 一并撤销），避免重复扣款/重复账单
-				return errAlreadySettled
+		// 余额快照 best-effort：解析失败保持 0/0（与原 readWalletBalanceTx 行为一致）
+		if row != nil {
+			if bd, e := decimal.NewFromString(row["balance"].String()); e == nil {
+				balanceAfter = InexactFloat64(bd)
 			}
-			return gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
+			if fd, e := decimal.NewFromString(row["frozen_balance"].String()); e == nil {
+				frozenAfter = InexactFloat64(fd)
+			}
 		}
 
-		// e. 记录消费流水（事务内）
+		// d. 记录消费流水（事务内）
 		if _, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID, balanceAfter, frozenAfter)).Insert(); err != nil {
 			return gerror.Wrapf(err, "%s: record transaction", p.logPrefix)
 		}
@@ -151,24 +165,6 @@ func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, erro
 		}
 	}
 	return billingID, err
-}
-
-// readWalletBalanceTx 在结算事务内读取钱包的准确余额与冻结额，供消费流水快照使用。
-// best-effort：读取失败返回 0/0，不影响主结算流程（与重构前逐处内联的行为一致）。
-func readWalletBalanceTx(ctx context.Context, walletID int64) (balanceAfter, frozenAfter float64) {
-	type balRow struct {
-		Balance       decimal.Decimal `json:"balance"`
-		FrozenBalance decimal.Decimal `json:"frozen_balance"`
-	}
-	var br *balRow
-	err := dao.BilWallets.Ctx(ctx).
-		Where("id", walletID).
-		Fields("balance, frozen_balance").
-		Scan(&br)
-	if err == nil && br != nil {
-		return InexactFloat64(br.Balance), InexactFloat64(br.FrozenBalance)
-	}
-	return 0, 0
 }
 
 // claimPredeductSettledTx 结算事务内 claim 预扣追踪：frozen→settled 条件更新并返回实际认领金额之和。
@@ -233,7 +229,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	refundAmt, supplementAmt := calcSettlementDiff(preDeductAmount, actualCost)
 
 	// 3. 获取钱包
-	wallet, err := GetWallet(ctx, tenantID)
+	walletID, err := GetWalletID(ctx, tenantID)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "settle: get wallet")
 	}
@@ -244,7 +240,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	billingID, err := executeSettlementTx(ctx, settlementTxParams{
 		tenantID:        tenantID,
-		walletID:        wallet.ID,
+		walletID:        walletID,
 		preDeductAmount: preDeductAmount,
 		actualCost:      actualCost,
 		logPrefix:       "settle",
@@ -268,7 +264,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		buildTransaction: func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions {
 			return do.BilTransactions{
 				TenantId:     tenantID,
-				WalletId:     wallet.ID,
+				WalletId:     walletID,
 				Type:         "consume",
 				Amount:       -actualCost,
 				BalanceAfter: balanceAfter,
@@ -348,7 +344,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	refundAmt, supplementAmt := calcSettlementDiff(preDeductAmount, actualCost)
 
 	// 3. 获取钱包
-	wallet, err := GetWallet(ctx, tenantID)
+	walletID, err := GetWalletID(ctx, tenantID)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "settle_with_usage: get wallet")
 	}
@@ -359,7 +355,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
 	billingID, err := executeSettlementTx(ctx, settlementTxParams{
 		tenantID:        tenantID,
-		walletID:        wallet.ID,
+		walletID:        walletID,
 		preDeductAmount: preDeductAmount,
 		actualCost:      actualCost,
 		logPrefix:       "settle_with_usage",
@@ -387,7 +383,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			}
 			return do.BilTransactions{
 				TenantId:     tenantID,
-				WalletId:     wallet.ID,
+				WalletId:     walletID,
 				Type:         "consume",
 				Amount:       -actualCost,
 				BalanceAfter: balanceAfter,

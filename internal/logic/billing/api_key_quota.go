@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,6 +40,10 @@ func CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount float
 
 	info, err := loadApiKeyQuota(ctx, apiKeyID)
 	if err != nil {
+		// 客户端断开导致的取消不属于 DB 故障，不刷告警：请求随后会在预扣/调度处 fail-fast 终止
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		g.Log().Warningf(ctx, "api_key_quota: load failed apiKey=%d: %v, skipping check", apiKeyID, err)
 		return nil
 	}
