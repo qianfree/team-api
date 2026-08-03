@@ -75,6 +75,14 @@ func ClearTenantPriceCache(ctx context.Context, tenantID int64) {
 	}
 }
 
+// ClearModelPriceCache 清除指定模型在所有租户下的价格缓存。
+// 管理后台修改模型基础定价（SetModelPricing / ImportModels 更新 / DeleteModel）后必须调用，
+// 否则各租户缓存中的旧价格最多残留 600s，出现「已设价但调用仍报未配置定价/按旧价计费」。
+// 缓存键格式为 {tenantID}:{modelName}，此处按模型名匹配所有租户的条目。
+func ClearModelPriceCache(ctx context.Context, modelName string) {
+	modelPriceCache.DeleteByPattern(ctx, fmt.Sprintf("*:%s", modelName))
+}
+
 // GetModelPrice 获取模型价格
 // 优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
 func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*PricingResult, error) {
