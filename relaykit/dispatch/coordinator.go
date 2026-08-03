@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -77,6 +79,47 @@ type RouteSession struct {
 	attempt        AttemptState
 	startedAt      time.Time
 	leaseChannelID int64 // 当前持有租约的渠道（0 = 未持有）
+
+	lastNoChannelDiag NoChannelDiag // 最近一次 selectChannel 的排除明细（无渠道诊断用）
+}
+
+// NoChannelDiag 无可用渠道诊断：候选快照规模与各排除原因的精确计数。
+// 各计数相互独立（一个渠道只计入首个命中的排除原因）。
+type NoChannelDiag struct {
+	Snapshot        int // 目录快照中的候选渠道数（0 = 目录/权限层就没有该模型的渠道）
+	BreakerOpen     int // 熔断 OPEN 硬排除
+	ProbeDenied     int // HALF_OPEN 半开探测令牌拒绝（恢复期每窗口全局仅放行 1 个探测请求）
+	LeaseFull       int // 容量租约满（渠道并发已达 softLimit / max_concurrency）
+	RequestExcluded int // 本请求内先前已失败而被排除的渠道
+	CredUnavailable int // 渠道全部 Key 处于冷却/已排除
+}
+
+// Summary 人类可读的原因摘要（仅列出非零项），供无可用渠道时的日志定位。
+func (d NoChannelDiag) Summary() string {
+	if d.Snapshot == 0 {
+		return "目录快照为空：该租户+模型无候选渠道（检查渠道启用状态/模型能力/渠道范围）"
+	}
+	var parts []string
+	if d.BreakerOpen > 0 {
+		parts = append(parts, fmt.Sprintf("熔断OPEN×%d", d.BreakerOpen))
+	}
+	if d.ProbeDenied > 0 {
+		parts = append(parts, fmt.Sprintf("半开探测限流×%d", d.ProbeDenied))
+	}
+	if d.LeaseFull > 0 {
+		parts = append(parts, fmt.Sprintf("容量租约满×%d", d.LeaseFull))
+	}
+	if d.CredUnavailable > 0 {
+		parts = append(parts, fmt.Sprintf("凭证全部冷却×%d", d.CredUnavailable))
+	}
+	if d.RequestExcluded > 0 {
+		parts = append(parts, fmt.Sprintf("本请求已排除×%d", d.RequestExcluded))
+	}
+	if len(parts) == 0 {
+		// 快照非空且无任何排除计数：候选全部打分为非正权重（PickHRW 无可选）
+		return "候选渠道权重均为 0（健康/余量/层级因子坍缩）"
+	}
+	return strings.Join(parts, "，")
 }
 
 // SessionKey 返回本次请求解析出的会话键（供日志/指标）。
@@ -194,6 +237,13 @@ func (s *RouteSession) RefreshLease(ctx context.Context) {
 	}
 }
 
+// NoChannelDiagnosis 返回最近一次渠道选择的排除明细诊断。
+// Next 返回 nil（无可用渠道）时供 handler 打出可定位原因的日志，
+// 各字段含义见 NoChannelDiag，摘要文本用 Summary()。
+func (s *RouteSession) NoChannelDiagnosis() NoChannelDiag {
+	return s.lastNoChannelDiag
+}
+
 // ---------------------------------------------------------------------------
 // 内部：选择
 // ---------------------------------------------------------------------------
@@ -204,6 +254,7 @@ func (s *RouteSession) RefreshLease(ctx context.Context) {
 func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 	pol := s.pol
 	snapshot := s.co.catalog.Snapshot(ctx, s.profile.TenantID, s.profile.Model, s.profile.Scope)
+	s.lastNoChannelDiag = NoChannelDiag{Snapshot: len(snapshot)}
 
 	// 本轮选择中被探测令牌 / 租约 / 凭证拒绝的渠道（不进入 excludedChans，不影响绑定守卫语义）
 	roundExcluded := make(map[int64]struct{})
@@ -215,6 +266,15 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 			Breaker: exclRound.Breaker + probeDenied,
 			Lease:   leaseDenied,
 			Request: exclRound.Request + credDenied,
+		}
+		// 每轮刷新诊断明细（各原因独立计数）：返回 nil 时调用方通过 NoChannelDiagnosis 定位原因
+		s.lastNoChannelDiag = NoChannelDiag{
+			Snapshot:        len(snapshot),
+			BreakerOpen:     exclRound.Breaker,
+			ProbeDenied:     probeDenied,
+			LeaseFull:       leaseDenied,
+			RequestExcluded: exclRound.Request,
+			CredUnavailable: credDenied,
 		}
 
 		if len(scored) == 0 {

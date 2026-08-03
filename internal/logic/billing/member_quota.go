@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +36,10 @@ func memberQuotaRedisKey(tenantID, userID int64) string {
 func CheckMemberQuota(ctx context.Context, tenantID, userID int64, preDeductAmount float64) error {
 	info, err := loadMemberQuota(ctx, tenantID, userID)
 	if err != nil {
+		// 客户端断开导致的取消不属于 DB 故障，不刷告警：请求随后会在预扣/调度处 fail-fast 终止
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		g.Log().Warningf(ctx, "member_quota: load failed tenant=%d user=%d: %v, skipping check", tenantID, userID, err)
 		return nil
 	}

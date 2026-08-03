@@ -365,6 +365,13 @@ func settleSuccessfulRequest(
 
 // RelayHandler 共享的 relay 请求编排逻辑（带重试 + 计费）
 func RelayHandler(ctx context.Context, body []byte, path string, headers http.Header, rc *RelayContext, provider common.DataProvider, billing common.BillingProvider) (*common.Usage, *BillingResult, error) {
+	// 客户端已断开的请求直接终止（fail-fast）：断开风暴下若继续空转流水线，
+	// 额度检查会误报 "load failed ... skipping check"、调度器会把 canceled ctx
+	// 误报成"无可用渠道"，还平白消耗限流/并发/DB 资源。
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+
 	// 校验请求（relay mode、模型、权限、限流）
 	v, err := validateRelayRequest(ctx, body, path, rc, provider, billing)
 	if err != nil {
@@ -445,11 +452,19 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 租户模型权限与渠道范围校验（原 GetChannelForModel 的第一步，不属于调度模块）
 	modelEnabled, channelScope, err := provider.CheckTenantModelAccess(ctx, rc.TenantID, v.lookupModel)
 	if err != nil {
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err)
+		// 客户端已断开：权限查询被中断不是渠道/权限问题，静默退款退出，
+		// 不记失败用量、不打无可用渠道告警（与下方 MaterializeSelection 的处理一致）
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if billing != nil && preDeductAmount > 0 {
+				_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+			}
+			return nil, v.billingResult, err
+		}
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err, "")
 		return result.usage, result.billingResult, result.err
 	}
 	if !modelEnabled {
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrTenantModelNotEnabled)
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrTenantModelNotEnabled, "")
 		return result.usage, result.billingResult, result.err
 	}
 
@@ -473,7 +488,18 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	for attempt := 0; ; attempt++ {
 		d := sess.Next(ctx)
 		if d == nil {
-			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable)
+			// 客户端已断开：调度器内部的 Redis 操作（快照/租约/绑定）被 canceled ctx
+			// 中断会返回空决策，这不是"无可用渠道"——静默退款退出，不记失败用量、
+			// 不打无可用渠道告警、不污染渠道健康统计
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				if billing != nil && preDeductAmount > 0 {
+					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
+				}
+				return nil, v.billingResult, ctxErr
+			}
+			// 无可用渠道：附带调度器的排除原因摘要（各原因独立计数，仅列非零项）。
+			// 例：熔断OPEN×1 / 容量租约满×1（并发超 softLimit） / 半开探测限流×1（恢复期每窗口仅 1 个探测）
+			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary())
 			return result.usage, result.billingResult, result.err
 		}
 		appendSchedulerDecision(trace, d, attempt)
@@ -491,7 +517,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// Key 解密失败 / 目录元数据缺失：按渠道级致命上报换渠道，不发起上游请求
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d materialize_error=[%v]", attempt, d.Channel.ID, mErr))
 			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {
-				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable)
+				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, "")
 				return result.usage, result.billingResult, result.err
 			}
 			continue
@@ -795,6 +821,7 @@ func handleChannelUnavailable(
 	preDeductAmount float64,
 	channelErrors []string,
 	err error,
+	noChannelDiag string, // 调度器无可用渠道时的排除原因摘要（NoChannelDiag.Summary()），无诊断信息传 ""
 ) *channelUnavailableResult {
 	if err != common.ErrChannelUnavailable {
 		if billing != nil && preDeductAmount > 0 {
@@ -803,13 +830,18 @@ func handleChannelUnavailable(
 		return &channelUnavailableResult{nil, v.billingResult, err}
 	}
 
+	diagSuffix := ""
+	if noChannelDiag != "" {
+		diagSuffix = " 原因: " + noChannelDiag
+	}
+
 	if len(channelErrors) > 0 {
 		if billing != nil && preDeductAmount > 0 {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 		}
 		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
-		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s. Failure details: %s",
-			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, strings.Join(channelErrors, "\n"))
+		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
+			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix, strings.Join(channelErrors, "\n"))
 		allFailedErr := constant.NewChannelError(
 			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
 			constant.ErrAllChannelsFailed,
@@ -821,9 +853,10 @@ func handleChannelUnavailable(
 	if billing != nil && preDeductAmount > 0 {
 		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 	}
-	// 无可用渠道属于正常业务条件（用户请求了未配置/未启用渠道的模型），
-	// 降级为 Warning 并禁用堆栈打印，避免污染 ERROR 日志与刷屏无意义的调用栈
-	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] No available channel for model=%s tenant=%d user=%d", v.modelName, rc.TenantID, rc.UserID)
+	// 无可用渠道属于正常业务条件（模型未配渠道/容量满/熔断中等），降级为 Warning 并禁用堆栈打印；
+	// 具体原因由调度器的排除明细摘要给出（熔断OPEN/半开探测限流/容量租约满/凭证冷却/目录为空）
+	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] 无可用渠道: model=%s tenant=%d user=%d request=%s%s",
+		v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix)
 	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
 	recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, noChErr)
 	return &channelUnavailableResult{nil, v.billingResult, noChErr}
