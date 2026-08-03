@@ -412,6 +412,13 @@ onBeforeUnmount(() => {
 							<Icon name="chevronRight" size="xs" class="text-slate-300" />
 						</div>
 					</button>
+
+					<!-- 支付说明（管理员配置，支持纯文本或 HTML） -->
+					<div v-if="paymentInfo?.payment_notice" class="payment-notice mt-3">
+						<Icon name="infoCircle" size="xs" class="mt-0.5 flex-shrink-0" />
+						<!-- 内容由平台管理员配置，信任来源，支持 HTML 渲染 -->
+						<div v-html="paymentInfo.payment_notice" class="payment-notice-content"></div>
+					</div>
 				</template>
 			</div>
 
@@ -799,6 +806,28 @@ onBeforeUnmount(() => {
 	display: flex; align-items: center; justify-content: center;
 	flex-shrink: 0; color: #d97706;
 }
+
+/* 支付说明（管理员配置，支持 HTML） */
+.payment-notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.5rem;
+	border-radius: 0.75rem;
+	background: #fffbeb;
+	border: 1px solid rgba(252, 211, 77, 0.6);
+	padding: 0.75rem 1rem;
+	color: #92400e;
+}
+.payment-notice-content {
+	flex: 1;
+	min-width: 0;
+	font-size: 0.8125rem;
+	line-height: 1.6;
+}
+.payment-notice-content :deep(p) { margin: 0 0 0.5rem; }
+.payment-notice-content :deep(p:last-child) { margin-bottom: 0; }
+.payment-notice-content :deep(a) { color: inherit; text-decoration: underline; }
+.payment-notice-content :deep(strong) { font-weight: 600; }
 
 .wallet-card {
 	background: rgba(255, 255, 255, 0.94);

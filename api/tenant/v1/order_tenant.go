@@ -119,6 +119,7 @@ type TenantPaymentInfoRes struct {
 	AmountDiscount map[int]float64  `json:"amount_discount,omitempty"`
 	MinTopUp       int              `json:"min_topup,omitempty"`
 	Currency       string           `json:"currency,omitempty"`
+	PaymentNotice  string           `json:"payment_notice,omitempty"`
 }
 
 // TenantOrderExportReq 导出订单列表请求
