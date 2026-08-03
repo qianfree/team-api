@@ -1,19 +1,32 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	modelValue: number
 	pageSize: number
 	total: number
-}>()
+	pageSizeOptions?: number[]
+	showSizeChanger?: boolean
+}>(), {
+	pageSizeOptions: () => [10, 20, 50, 100],
+	showSizeChanger: true,
+})
 
 const emit = defineEmits<{
 	'update:modelValue': [page: number]
+	'update:pageSize': [size: number]
 	change: [page: number]
 }>()
 
 const jumpPage = ref('')
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
+
+// 当前 pageSize 不在候选列表时兜底追加，避免 select 找不到选中项
+const sizeOptions = computed(() => {
+	const opts = [...props.pageSizeOptions]
+	if (!opts.includes(props.pageSize)) opts.push(props.pageSize)
+	return opts.sort((a, b) => a - b)
+})
 
 const pageItems = computed(() => {
 	const count = totalPages.value
@@ -47,6 +60,14 @@ function goToPage(page: number) {
 	emit('change', target)
 }
 
+function changePageSize(size: number) {
+	if (!Number.isFinite(size) || size === props.pageSize) return
+	emit('update:pageSize', size)
+	// 切换每页条数后回到第一页并触发刷新（即使原本就在第一页也要重新拉取）
+	emit('update:modelValue', 1)
+	emit('change', 1)
+}
+
 function submitJump() {
 	const target = Number(jumpPage.value)
 	if (!Number.isFinite(target)) return
@@ -57,7 +78,20 @@ function submitJump() {
 
 <template>
 	<div v-if="total > 0" class="table-pagination">
-		<span>共 {{ total }} 条记录</span>
+		<div class="pagination-meta">
+			<div v-if="showSizeChanger" class="pagination-size">
+				<span>每页</span>
+				<select
+					class="pagination-size-select"
+					:value="pageSize"
+					aria-label="每页条数"
+					@change="changePageSize(Number(($event.target as HTMLSelectElement).value))"
+				>
+					<option v-for="opt in sizeOptions" :key="opt" :value="opt">{{ opt }} 条/页</option>
+				</select>
+			</div>
+			<span>共 {{ total }} 条记录</span>
+		</div>
 
 		<div class="pagination-controls">
 			<button
@@ -114,6 +148,44 @@ function submitJump() {
 </template>
 
 <style scoped>
+.pagination-meta {
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	min-width: 0;
+	font-size: 0.75rem;
+	color: #64748b;
+}
+
+.pagination-size {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	white-space: nowrap;
+}
+
+.pagination-size-select {
+	height: 2rem;
+	border: 1px solid rgba(203, 213, 225, 0.82);
+	border-radius: 0.5rem;
+	background: rgba(255, 255, 255, 0.72);
+	padding: 0 0.5rem;
+	font-size: 0.75rem;
+	color: #334155;
+	outline: none;
+	cursor: pointer;
+	transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.pagination-size-select:hover {
+	border-color: rgba(20, 184, 166, 0.45);
+}
+
+.pagination-size-select:focus {
+	border-color: #14b8a6;
+	box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
 .pagination-controls,
 .pagination-pages,
 .pagination-jump {
@@ -209,6 +281,10 @@ function submitJump() {
 }
 
 @media (max-width: 640px) {
+	.pagination-meta {
+		order: 1;
+	}
+
 	.pagination-controls,
 	.pagination-jump {
 		width: 100%;

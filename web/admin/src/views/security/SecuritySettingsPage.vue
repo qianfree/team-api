@@ -66,7 +66,7 @@
 
 		<!-- Regenerate Backup Codes Modal -->
 		<a-modal v-model:visible="showRegenerateModal" title="重新生成恢复码" @ok="handleRegenerate" :maskClosable="false">
-			<a-form layout="vertical">
+			<a-form :model="{ code: regenerateCode }" layout="vertical">
 				<a-form-item label="输入验证码">
 					<a-input v-model="regenerateCode" placeholder="6位数字验证码" maxlength="6" />
 				</a-form-item>

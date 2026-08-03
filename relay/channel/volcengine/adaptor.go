@@ -13,33 +13,24 @@ import (
 	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
-	"github.com/qianfree/team-api/relay/override"
 )
 
-// Adaptor 火山引擎（豆包）供应商适配器。
-// OpenAI 兼容格式，bot- 前缀模型使用 bots 端点。
-type Adaptor struct {
-	info *common.RelayInfo
-}
+// openaiAdaptor 火山 OpenAI 兼容链路（/api/v3/*），处理非 Claude 入站。
+// bot- 前缀模型使用 bots 端点。
+type openaiAdaptor struct{}
 
-func (a *Adaptor) Init(info *common.RelayInfo) {
-	a.info = info
-}
+func (a *openaiAdaptor) Init(info *common.RelayInfo) {}
 
 // GetRequestURL 构建上游请求 URL。
-// Claude 协议走 Anthropic 兼容端点，bot- 前缀模型使用 bots 端点，其余使用标准路径。
-func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
+func (a *openaiAdaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
-	// 确定实际模型名
 	modelName := info.OriginModelName
 	if info.ChannelMeta.IsModelMapped {
 		modelName = info.ChannelMeta.UpstreamModelName
 	}
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeClaudeMessages:
-		return baseURL + "/api/coding/v1/messages", nil
 	case constant.RelayModeChatCompletions:
 		if strings.HasPrefix(modelName, "bot-") {
 			return baseURL + "/api/v3/bots/chat/completions", nil
@@ -50,26 +41,20 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/api/v3/images/generations", nil
 	default:
-		return "", fmt.Errorf("volcengine: unsupported relay mode: %d", info.RelayMode)
+		return "", fmt.Errorf("volcengine(openai): unsupported relay mode: %d", info.RelayMode)
 	}
 }
 
-func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo) error {
-	header.Set("Authorization", "Bearer "+info.ChannelMeta.ApiKey)
-	header.Set("Content-Type", "application/json")
-	header.Set("Accept", "application/json")
+func (a *openaiAdaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo) error {
+	setupHeader(header, info)
 	return nil
 }
 
-// ConvertRequest 转换请求体。
-// Claude 入站直接透传到 Anthropic 兼容端点，其他格式先转为 OpenAI 再做模型映射。
-func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// Claude 入站：仅做模型映射
-	if info.InboundFormat == constant.RelayFormatClaude {
-		return convertClaudeRequest(requestBody, info)
-	}
-
-	// 非 OpenAI 格式先转换为 OpenAI
+// ConvertRequest 非 OpenAI 格式先转换为 OpenAI，再做模型映射。
+// 流式请求注入 stream_options.include_usage，确保火山 OpenAI 端点在流式响应末尾
+// 返回 usage（计费需要）；images 模式使用原生参数，不注入。
+// 注：不注入 reasoning_effort——火山 OpenAI 端点用 doubao 原生 thinking 而非 reasoning_effort。
+func (a *openaiAdaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
 		converted, err := openai.ConvertToOpenAI(requestBody, info)
 		if err != nil {
@@ -77,81 +62,93 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		}
 		requestBody = converted
 	}
-
-	if info.ChannelMeta.IsModelMapped {
-		var rawMap map[string]json.RawMessage
-		if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-			return bytes.NewReader(requestBody), nil
-		}
-		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
-		converted, err := json.Marshal(rawMap)
-		if err != nil {
-			return nil, fmt.Errorf("marshal converted request failed: %w", err)
-		}
-		return bytes.NewReader(converted), nil
+	result := mapModelIfNeeded(requestBody, info)
+	mode := constant.RelayMode(info.RelayMode)
+	if mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
+		result = openai.InjectStreamOptions(result, info)
 	}
-	return bytes.NewReader(requestBody), nil
+	return result, nil
 }
 
-func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	reqURL, err := a.GetRequestURL(info)
+func (a *openaiAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	url, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("create request failed: %w", err)
-	}
-
-	if err := a.SetupRequestHeader(httpReq.Header, info); err != nil {
-		return nil, fmt.Errorf("setup request header failed: %w", err)
-	}
-
-	if hdrOverrides, hdrErr := override.ApplyHeaderOverride(info); hdrErr == nil && len(hdrOverrides) > 0 {
-		override.MergeHeaderOverrides(httpReq.Header, hdrOverrides)
-	}
-
-	timeout := info.ChannelMeta.Settings.GetTimeoutSeconds(info.RelayMode)
-
-	client := common.NewPooledClient(timeout, info.ChannelMeta.Settings.UseProxy, info.IsStream)
-
-	return client.Do(httpReq)
+	return doSend(ctx, info, url, requestBody)
 }
 
-// DoResponse 处理上游响应。
-// Claude 入站委托 claude.Adaptor 原生直通；其他格式委托 openai.Adaptor。
-func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	if info.GetOriginalClientFormat() == constant.RelayFormatClaude {
-		delegate := &claude.Adaptor{}
-		delegate.Init(info)
-		return delegate.DoResponse(ctx, resp, info, writer)
-	}
-
+// DoResponse 委托 OpenAI 适配器处理上游响应。
+func (a *openaiAdaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	delegate := &openai.Adaptor{}
 	delegate.Init(info)
 	return delegate.DoResponse(ctx, resp, info, writer)
 }
 
-func (a *Adaptor) GetChannelName() string {
-	return ChannelName
+func (a *openaiAdaptor) GetChannelName() string { return ChannelName }
+
+// claudeAdaptor 火山 Anthropic 兼容链路（/api/coding/v1/messages），处理 Claude 入站。
+type claudeAdaptor struct{}
+
+func (a *claudeAdaptor) Init(info *common.RelayInfo) {}
+
+// GetRequestURL 构建上游请求 URL（Anthropic 兼容端点）。
+func (a *claudeAdaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
+	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
+	switch constant.RelayMode(info.RelayMode) {
+	case constant.RelayModeClaudeMessages:
+		return baseURL + "/api/coding/v1/messages", nil
+	default:
+		return "", fmt.Errorf("volcengine(claude): unsupported relay mode: %d", info.RelayMode)
+	}
 }
 
-var _ common.Adaptor = (*Adaptor)(nil)
+func (a *claudeAdaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo) error {
+	setupHeader(header, info)
+	return nil
+}
 
-// convertClaudeRequest 处理 Claude 入站请求的模型映射。
-func convertClaudeRequest(requestBody []byte, info *common.RelayInfo) (io.Reader, error) {
+// ConvertRequest Claude 入站：火山 Anthropic 端点接受原生 Claude 格式，仅做模型映射。
+func (a *claudeAdaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
+	return mapModelIfNeeded(requestBody, info), nil
+}
+
+func (a *claudeAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	url, err := a.GetRequestURL(info)
+	if err != nil {
+		return nil, err
+	}
+	return doSend(ctx, info, url, requestBody)
+}
+
+// DoResponse 委托 Claude 适配器处理上游响应（Claude 客户端走原生直通）。
+func (a *claudeAdaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	delegate := &claude.Adaptor{}
+	delegate.Init(info)
+	return delegate.DoResponse(ctx, resp, info, writer)
+}
+
+func (a *claudeAdaptor) GetChannelName() string { return ChannelName }
+
+// mapModelIfNeeded 模型名映射（两链路共用）。等价于原 convertClaudeRequest 的映射逻辑。
+func mapModelIfNeeded(requestBody []byte, info *common.RelayInfo) io.Reader {
 	if !info.ChannelMeta.IsModelMapped {
-		return bytes.NewReader(requestBody), nil
+		return bytes.NewReader(requestBody)
 	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return bytes.NewReader(requestBody)
 	}
 	rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
-	result, err := json.Marshal(rawMap)
+	converted, err := json.Marshal(rawMap)
 	if err != nil {
-		return bytes.NewReader(requestBody), nil
+		return bytes.NewReader(requestBody)
 	}
-	return bytes.NewReader(result), nil
+	return bytes.NewReader(converted)
 }
+
+// 确保两个子适配器实现接口
+var (
+	_ common.Adaptor = (*openaiAdaptor)(nil)
+	_ common.Adaptor = (*claudeAdaptor)(nil)
+)

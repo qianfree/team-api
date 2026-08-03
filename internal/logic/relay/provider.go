@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,15 +17,19 @@ import (
 	do "github.com/qianfree/team-api/internal/model/do"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/relay/common"
-	"github.com/qianfree/team-api/relay/scheduler"
 )
 
 // modelCache 模型信息缓存（TTL 600s）
 var modelCache = lcommon.NewCache("model", 600*time.Second)
+
+// modelCacheKeyPrefix 模型缓存 key 版本前缀：modelInfoCached 扩展弃用字段后用 v2 隔离旧格式缓存，
+// 避免部署后 600s 内读到旧缓存（缺 status/sunset_date/replacement_model 字段）产生零值误判。
+const modelCacheKeyPrefix = "v2:"
 
 const channelKeyLastUsedInterval = time.Minute
 
@@ -93,209 +96,6 @@ func (p *DataProviderImpl) ValidateApiKey(ctx context.Context, rawKey string) (*
 	}, nil
 }
 
-// GetChannelForModel 实现 DataProvider.GetChannelForModel
-// 使用调度引擎：亲和性优先 → 租户模型权限 → 渠道范围过滤 → 优先级+权重选择 → 健康度过滤
-func (p *DataProviderImpl) GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	// 检查租户模型权限和渠道范围
-	enabled, channelScope, err := p.CheckTenantModelAccess(ctx, tenantID, modelName)
-	if err != nil {
-		return nil, err
-	}
-	if !enabled {
-		return nil, common.ErrTenantModelNotEnabled
-	}
-
-	return p.selectChannelFromDB(ctx, tenantID, userID, apiKeyID, modelName, channelScope, excludeChannelIDs)
-}
-
-func (p *DataProviderImpl) SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64) {
-	setAffinity(ctx, tenantID, userID, apiKeyID, modelName, channelID)
-}
-
-func (p *DataProviderImpl) DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
-	deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-}
-
-// selectChannelFromDB 正常渠道调度（优先级+权重+健康度）
-func (p *DataProviderImpl) selectChannelFromDB(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelScope []int64, excludeChannelIDs []int64) (*common.ChannelSelection, error) {
-	type channelRow struct {
-		ChannelID           int64    `json:"channel_id"`
-		ChannelName         string   `json:"channel_name"`
-		ChannelType         int      `json:"channel_type"`
-		BaseURL             string   `json:"base_url"`
-		UpstreamModel       string   `json:"upstream_model"`
-		Priority            int      `json:"priority"`
-		Weight              int      `json:"weight"`
-		MaxConcurrency      int      `json:"max_concurrency"`
-		Settings            string   `json:"settings"`
-		HealthScore         *float64 `json:"health_score"`
-		ConsecutiveFailures int      `json:"consecutive_failures"`
-	}
-
-	query := dao.ChnAbilities.Ctx(ctx).As("a").
-		LeftJoin("chn_channels c ON a.channel_id = c.id").
-		LeftJoin("chn_health_scores h ON c.id = h.channel_id").
-		Where("a.model_name", modelName).
-		Where("a.enabled", true).
-		Where("c.status", "active").
-		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, a.upstream_model, c.priority, c.weight, c.max_concurrency, c.settings, h.health_score, h.consecutive_failures")
-
-	// 渠道范围过滤
-	if len(channelScope) > 0 {
-		query = query.WhereIn("c.id", channelScope)
-	}
-
-	for _, id := range excludeChannelIDs {
-		query = query.WhereNot("c.id", id)
-	}
-
-	var channels []channelRow
-	err := query.Scan(&channels)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(channels) == 0 {
-		return nil, common.ErrChannelUnavailable
-	}
-
-	if !lcommon.Config().GetBool(ctx, "channel_scheduler_v2_enabled") {
-		sort.SliceStable(channels, func(i, j int) bool {
-			if channels[i].Priority == channels[j].Priority {
-				return channels[i].Weight > channels[j].Weight
-			}
-			return channels[i].Priority > channels[j].Priority
-		})
-		for _, ch := range channels {
-			key, keyErr := getChannelKey(ctx, ch.ChannelID)
-			if keyErr != nil || key == "" {
-				continue
-			}
-			upstreamModel := ch.UpstreamModel
-			if upstreamModel == "" {
-				upstreamModel = modelName
-			}
-			return &common.ChannelSelection{
-				ChannelID:         ch.ChannelID,
-				ChannelType:       ch.ChannelType,
-				ChannelName:       ch.ChannelName,
-				BaseURL:           ch.BaseURL,
-				ApiKey:            key,
-				UpstreamModelName: upstreamModel,
-				IsModelMapped:     ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-				MaxConcurrency:    ch.MaxConcurrency,
-				Settings:          ParseChannelSettings(ch.Settings),
-				SelectionReason:   "legacy",
-				Priority:          ch.Priority,
-				Weight:            ch.Weight,
-				HealthScore:       100,
-			}, nil
-		}
-		return nil, common.ErrChannelUnavailable
-	}
-
-	candidates := make([]scheduler.ChannelCandidate, 0, len(channels))
-	for _, ch := range channels {
-		healthScore := 100.0
-		if ch.HealthScore != nil {
-			healthScore = *ch.HealthScore
-		}
-		upstreamModel := ch.UpstreamModel
-		if upstreamModel == "" {
-			upstreamModel = modelName
-		}
-		candidates = append(candidates, scheduler.ChannelCandidate{
-			ChannelID:      ch.ChannelID,
-			ChannelType:    ch.ChannelType,
-			ChannelName:    ch.ChannelName,
-			BaseURL:        ch.BaseURL,
-			Priority:       ch.Priority,
-			Weight:         ch.Weight,
-			HealthScore:    healthScore,
-			UpstreamModel:  upstreamModel,
-			IsModelMapped:  ch.UpstreamModel != "" && ch.UpstreamModel != modelName,
-			Settings:       ParseChannelSettings(ch.Settings),
-			MaxConcurrency: ch.MaxConcurrency,
-		})
-	}
-
-	preferredChannelID, _ := getAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-	_, seed := affinityIdentity(tenantID, userID, apiKeyID, modelName)
-	bucketSeconds := int64(affinityTTL(ctx).Seconds())
-	seed += ":" + strconv.FormatInt(time.Now().Unix()/bucketSeconds, 10)
-
-	for len(candidates) > 0 {
-		var result *scheduler.SchedulerResult
-		if affinityEnabled(ctx) {
-			result = scheduler.SelectStable(candidates, preferredChannelID, seed)
-		} else {
-			result = scheduler.Select(candidates)
-		}
-		if result == nil {
-			break
-		}
-		affinityHit := preferredChannelID > 0 && result.ChannelID == preferredChannelID
-		preserveAffinity := false
-		if preferredChannelID > 0 && !affinityHit {
-			if containsChannelID(excludeChannelIDs, preferredChannelID) {
-				preserveAffinity = true
-			} else {
-				deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-				preferredChannelID = 0
-			}
-		}
-
-		key, keyErr := getChannelKey(ctx, result.ChannelID)
-		if keyErr == nil && key != "" {
-			reason := "weighted"
-			if affinityHit {
-				reason = "affinity"
-			}
-			return &common.ChannelSelection{
-				ChannelID:         result.ChannelID,
-				ChannelType:       result.ChannelType,
-				ChannelName:       result.ChannelName,
-				BaseURL:           result.BaseURL,
-				ApiKey:            key,
-				UpstreamModelName: result.UpstreamModelName,
-				IsModelMapped:     result.IsModelMapped,
-				MaxConcurrency:    result.MaxConcurrency,
-				Settings:          result.Settings,
-				SelectionReason:   reason,
-				PreserveAffinity:  preserveAffinity,
-				Priority:          result.Priority,
-				Weight:            result.Weight,
-				HealthScore:       result.HealthScore,
-			}, nil
-		}
-		if affinityHit {
-			deleteAffinity(ctx, tenantID, userID, apiKeyID, modelName)
-			preferredChannelID = 0
-		}
-		candidates = removeChannelCandidate(candidates, result.ChannelID)
-	}
-
-	return nil, common.ErrChannelUnavailable
-}
-
-func containsChannelID(channelIDs []int64, channelID int64) bool {
-	for _, id := range channelIDs {
-		if id == channelID {
-			return true
-		}
-	}
-	return false
-}
-
-func removeChannelCandidate(candidates []scheduler.ChannelCandidate, channelID int64) []scheduler.ChannelCandidate {
-	for i := range candidates {
-		if candidates[i].ChannelID == channelID {
-			return append(candidates[:i], candidates[i+1:]...)
-		}
-	}
-	return candidates
-}
-
 // CheckTenantModelAccess 实现 DataProvider.CheckTenantModelAccess
 // 检查租户是否有权使用指定模型，返回是否启用和渠道范围
 func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID int64, modelName string) (bool, []int64, error) {
@@ -304,6 +104,31 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		ChannelScope string `json:"channel_scope"`
 	}
 
+	// 缓存结构体（与 accessRow 一致，用于缓存序列化）
+	type cachedAccess struct {
+		Enabled      bool   `json:"enabled"`
+		ChannelScope string `json:"channel_scope"`
+		IsNil        bool   `json:"is_nil"` // 标记数据库中无记录（需走分组权限）
+	}
+
+	cacheKey := fmt.Sprintf("%d:%s", tenantID, modelName)
+
+	// 1. 尝试从缓存获取
+	var cached cachedAccess
+	if lcommon.TenantModelAccessCache.GetJSON(ctx, cacheKey, &cached) {
+		// 缓存命中：无记录时走分组权限
+		if cached.IsNil {
+			return checkGroupModelAccess(ctx, tenantID, modelName)
+		}
+		// 有记录：解析渠道范围并返回
+		var scope []int64
+		if cached.ChannelScope != "" && cached.ChannelScope != "[]" && cached.ChannelScope != "null" {
+			_ = json.Unmarshal([]byte(cached.ChannelScope), &scope)
+		}
+		return cached.Enabled, scope, nil
+	}
+
+	// 2. 缓存未命中：查询数据库
 	var row *accessRow
 	err := dao.MdlTenantModels.Ctx(ctx).As("tm").
 		LeftJoin("mdl_models m ON tm.model_id = m.id").
@@ -315,13 +140,18 @@ func (p *DataProviderImpl) CheckTenantModelAccess(ctx context.Context, tenantID 
 		return false, nil, err
 	}
 
-	// 如果没有分配记录，检查分组访问权限
+	// 3. 数据库无记录：缓存"无记录"标记，走分组权限
 	if row == nil {
+		lcommon.TenantModelAccessCache.Set(ctx, cacheKey, &cachedAccess{IsNil: true})
 		return checkGroupModelAccess(ctx, tenantID, modelName)
 	}
-	if !row.Enabled && row.ChannelScope == "" {
-		return false, nil, nil
-	}
+
+	// 4. 有记录：缓存结果
+	lcommon.TenantModelAccessCache.Set(ctx, cacheKey, &cachedAccess{
+		Enabled:      row.Enabled,
+		ChannelScope: row.ChannelScope,
+		IsNil:        false,
+	})
 
 	// 解析渠道范围 JSONB
 	var scope []int64
@@ -436,46 +266,72 @@ func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) map[int64]bool 
 
 // GetModelMapping 实现 DataProvider.GetModelMapping
 func (p *DataProviderImpl) GetModelMapping(ctx context.Context, modelName string) (string, string, error) {
-	cacheKey := modelName
+	info, err := loadModelCached(ctx, modelName)
+	if err != nil {
+		return "", "", err
+	}
+	if info == nil || info.Status == "offline" {
+		return "", "", common.ErrModelNotFound
+	}
+	// deprecated 模型放行，弃用信息由 GetModelDeprecationInfo 获取
+	return info.StandardName, info.Category, nil
+}
+
+// loadModelCached 读取模型信息：优先 600s 缓存，未命中时一次查询 mdl_models 的全部所需字段
+// （mapping + 弃用信息）并回填缓存。GetModelMapping 与 GetModelDeprecationInfo 共用，
+// 避免同一请求对同一模型发两条 SQL。返回 nil 表示模型中不存在；不缓存负向结果。
+func loadModelCached(ctx context.Context, modelName string) (*modelInfoCached, error) {
+	cacheKey := modelCacheKeyPrefix + modelName
 	var cached modelInfoCached
 	if modelCache.GetJSON(ctx, cacheKey, &cached) {
-		return cached.StandardName, cached.Category, nil
+		return &cached, nil
 	}
 
 	type modelRow struct {
-		ModelId  string `json:"model_id"`
-		Category string `json:"category"`
-		Status   string `json:"status"`
+		ModelId          string      `json:"model_id"`
+		Category         string      `json:"category"`
+		Status           string      `json:"status"`
+		SunsetDate       *gtime.Time `json:"sunset_date"`
+		ReplacementModel string      `json:"replacement_model"`
 	}
 
 	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
-		Fields("model_id, category, status").
+		Fields("model_id, category, status, sunset_date, replacement_model").
 		Scan(&model)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if model == nil {
-		return "", "", common.ErrModelNotFound
+		return nil, nil
 	}
-	if model.Status == "offline" {
-		return "", "", common.ErrModelNotFound
-	}
-	// deprecated 模型放行，弃用信息由 GetModelDeprecationInfo 获取
 
+	sunset := ""
+	if model.SunsetDate != nil {
+		sunset = model.SunsetDate.Format("Y-m-d")
+	}
 	info := &modelInfoCached{
-		StandardName: model.ModelId,
-		Category:     model.Category,
+		StandardName:     model.ModelId,
+		Category:         model.Category,
+		Status:           model.Status,
+		SunsetDate:       sunset,
+		ReplacementModel: model.ReplacementModel,
 	}
 	modelCache.Set(ctx, cacheKey, info)
-
-	return model.ModelId, model.Category, nil
+	return info, nil
 }
 
 // RecordUsage 实现 DataProvider.RecordUsage
 func (p *DataProviderImpl) RecordUsage(ctx context.Context, record *common.UsageRecord) {
 	lcommon.DefaultUsageLogWriter.Submit(buildUsageLogDO(record))
+
+	// 实时 RPM/TPM 计数（Redis 滑动窗口桶，内部异步、best-effort）
+	tokens := record.TotalTokens
+	if tokens == 0 {
+		tokens = record.PromptTokens + record.CompletionTokens
+	}
+	lcommon.RecordRealtimeMetrics(ctx, record.TenantID, int64(tokens))
 }
 
 // buildUsageLogDO 将 UsageRecord 转换为 DO 对象
@@ -553,6 +409,10 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 	}
 }
 
+// maxAuditBodyLen 审计日志请求体/响应体/任务结果的字节截断上限（2 KiB）。
+// 落库前由 truncateBody 统一截断；流式响应保留首部 + 末尾若干 SSE 消息。
+const maxAuditBodyLen = 2048
+
 // RecordAudit 实现 DataProvider.RecordAudit
 // 异步写入请求审计日志，同时按系统级别和租户级别分别处理请求/响应体
 func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.AuditRecord) {
@@ -582,7 +442,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
 
 		// 截断过长的内容
-		maxBodyLen := 65536
+		maxBodyLen := maxAuditBodyLen
 		sysReq, sysResp = truncateBody(sysReq, maxBodyLen), truncateBody(sysResp, maxBodyLen)
 		tntReq, tntResp = truncateBody(tntReq, maxBodyLen), truncateBody(tntResp, maxBodyLen)
 
@@ -641,12 +501,20 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			insertData.TaskStatus = record.TaskStatus
 		}
 
-		_, insertErr := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").Data(insertData).Insert()
-		if insertErr != nil {
-			g.Log().Errorf(bgCtx,
-				"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
-				record.RequestID, record.TenantID, record.ApiKeyID, record.Path, record.StatusCode, insertErr)
+		// 投递到批量写入器：审计日志与请求 1:1，走 channel 批量落库（64 条/批或 1s 一次），
+		// 避免每请求一条单条 INSERT 打爆审计库。队列满时写入器按 OverflowSyncFallback 降级同步写，
+		// 审计数据不允许静默丢弃。
+		if lcommon.DefaultAuditLogWriter == nil {
+			// 写入器未初始化（单元测试等场景）：降级为同步单条写入，保证审计不丢
+			_, insertErr := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").Data(insertData).Insert()
+			if insertErr != nil {
+				g.Log().Errorf(bgCtx,
+					"record audit log failed: request_id=%s tenant_id=%d api_key_id=%d path=%s status=%d err=%v",
+					record.RequestID, record.TenantID, record.ApiKeyID, record.Path, record.StatusCode, insertErr)
+			}
+			return
 		}
+		lcommon.DefaultAuditLogWriter.Submit(insertData)
 	}()
 }
 
@@ -676,7 +544,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		} else if globalLevel == lcommon.AuditLevelMasked {
 			taskResult = lcommon.MaskSensitiveData(taskResult)
 		}
-		taskResult = truncateBody(taskResult, 65536)
+		taskResult = truncateBody(taskResult, maxAuditBodyLen)
 
 		// 上游响应头仅在 full 级别记录
 		upstreamHeadersJSON := "null"
@@ -703,7 +571,9 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		// 「已提交」。这里在命中 0 行时短暂重试，兜住这个竞态窗口。
 		// 审计关闭时提交阶段本就不写行，无需重试，直接返回避免空转。
 		auditDisabled := globalLevel == lcommon.AuditLevelNone && tenantLevel == lcommon.AuditLevelNone
-		const maxAttempts = 6
+		// 提交阶段的审计 INSERT 已走批量通道（64 条/批或 1s flush），落库延迟比单条写更长，
+		// 重试窗口需覆盖批量 flush 周期：10 次线性退避最迟约 6.75s，足以等行落库。
+		const maxAttempts = 10
 		for attempt := 1; ; attempt++ {
 			res, err := lcommon.AuditModelCtx(bgCtx, "aud_request_logs").
 				Where("task_id", record.TaskID).
@@ -726,7 +596,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 				}
 				return
 			}
-			// 线性退避：150ms、300ms……最长约 2.25s，足够覆盖异步 INSERT 落库延迟。
+			// 线性退避：150ms、300ms……最迟约 6.75s，覆盖批量写入的 flush 周期。
 			time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
 		}
 	}()
@@ -790,31 +660,6 @@ func jsonNullIfEmpty(s string) any {
 		return nil
 	}
 	return s
-}
-
-// UpdateChannelHealth 实现 DataProvider.UpdateChannelHealth
-func (p *DataProviderImpl) UpdateChannelHealth(ctx context.Context, channelID int64, success bool, latencyMs float64) {
-	go func() {
-		bgCtx := context.Background()
-		UpdateHealthScore(bgCtx, channelID, success, latencyMs)
-	}()
-}
-
-// IncrementConsecutiveFailure 实现 DataProvider.IncrementConsecutiveFailure
-func (p *DataProviderImpl) IncrementConsecutiveFailure(ctx context.Context, channelID int64) {
-	incrementConsecutiveFailure(ctx, channelID)
-}
-
-// ResetConsecutiveFailure 实现 DataProvider.ResetConsecutiveFailure
-func (p *DataProviderImpl) ResetConsecutiveFailure(ctx context.Context, channelID int64) {
-	_, err := dao.ChnHealthScores.Ctx(ctx).
-		Where("channel_id", channelID).
-		Data(do.ChnHealthScores{
-			ConsecutiveFailures: 0,
-		}).Update()
-	if err != nil {
-		g.Log().Warningf(ctx, "[DataProvider] ResetConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
-	}
 }
 
 // GetAvailableModels 实现 DataProvider.GetAvailableModels
@@ -1038,19 +883,13 @@ func parseCapabilitiesJSON(raw string) map[string]bool {
 }
 
 // incrementConsecutiveFailure 递增连续失败计数
-func incrementConsecutiveFailure(ctx context.Context, channelID int64) {
-	_, err := g.DB().Exec(ctx,
-		"UPDATE chn_health_scores SET consecutive_failures = consecutive_failures + 1, updated_at = NOW() WHERE channel_id = ? AND consecutive_failures < 10",
-		channelID)
-	if err != nil {
-		g.Log().Warningf(ctx, "[DataProvider] incrementConsecutiveFailure failed: channelID=%d, err=%v", channelID, err)
-	}
-}
-
-// modelInfoCached 模型信息缓存
+// modelInfoCached 模型信息缓存（mapping 与弃用信息一次查询共用）
 type modelInfoCached struct {
-	StandardName string
-	Category     string
+	StandardName     string
+	Category         string
+	Status           string
+	SunsetDate       string // 格式 "2006-01-02"，空表示未设置
+	ReplacementModel string
 }
 
 // InitHealthScore 初始化渠道健康度记录
@@ -1067,16 +906,56 @@ func InitHealthScore(ctx context.Context, channelID int64) error {
 	return err
 }
 
-// getChannelKey 获取渠道的 API Key（每渠道仅一个 Key）
-func getChannelKey(ctx context.Context, channelID int64) (string, error) {
-	type keyRow struct {
-		ID             int64       `json:"id"`
-		EncryptedKey   string      `json:"encrypted_key"`
-		KeyType        string      `json:"key_type"`
-		TokenExpiresAt *gtime.Time `json:"token_expires_at"`
+// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection（阶段 3）：
+// 转发元数据来自目录内存快照（零 DB），渠道 Key 按 keyID 解密（keyID=0 回退取首个 active Key）。
+func (p *DataProviderImpl) MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*common.ChannelSelection, error) {
+	// 优先检查上下文：客户端已断开时直接返回 ctx.Err()，而非 ErrChannelUnavailable，
+	// 让上层能区分"客户端断开"与"真实渠道无可用 Key"，避免误伤渠道健康评分
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
-	var key *keyRow
+	catalog := dispatchadapter.CatalogInstance()
+	if catalog == nil {
+		return nil, common.ErrChannelUnavailable
+	}
+	meta, ok := catalog.ForwardMeta(channelID, modelName)
+	if !ok {
+		return nil, common.ErrChannelUnavailable
+	}
+
+	var apiKey string
+	var err error
+	if keyID > 0 {
+		apiKey, err = getChannelKeyByID(ctx, keyID)
+	} else {
+		apiKey, err = getChannelKey(ctx, channelID)
+	}
+	if err != nil || apiKey == "" {
+		// Key 查询失败：再次检查 ctx，区分"客户端断开导致查询中断"与"真实无可用 Key"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, common.ErrChannelUnavailable
+	}
+
+	return &common.ChannelSelection{
+		ChannelID:         meta.ChannelID,
+		ChannelType:       meta.ChannelType,
+		ChannelName:       meta.ChannelName,
+		BaseURL:           meta.BaseURL,
+		ApiKey:            apiKey,
+		KeyID:             keyID,
+		UpstreamModelName: meta.UpstreamModel,
+		IsModelMapped:     meta.IsModelMapped,
+		MaxConcurrency:    meta.MaxConcurrency,
+		Settings:          ParseChannelSettings(meta.Settings),
+	}, nil
+}
+
+// getChannelKey 获取渠道的 API Key（每渠道仅一个 Key）
+func getChannelKey(ctx context.Context, channelID int64) (string, error) {
+	var key *channelKeyRow
 	err := dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", channelID).
 		Where("status", "active").
@@ -1085,7 +964,34 @@ func getChannelKey(ctx context.Context, channelID int64) (string, error) {
 	if err != nil || key == nil {
 		return "", common.ErrChannelUnavailable
 	}
+	return decryptChannelKey(ctx, key)
+}
 
+// channelKeyRow 渠道 Key 查询行（getChannelKey / getChannelKeyByID / getChannelKeyExcluding 共用）。
+type channelKeyRow struct {
+	ID             int64       `json:"id"`
+	EncryptedKey   string      `json:"encrypted_key"`
+	KeyType        string      `json:"key_type"`
+	TokenExpiresAt *gtime.Time `json:"token_expires_at"`
+}
+
+// getChannelKeyByID 按 KeyID 取渠道 Key 明文（修订 R1 凭证轮换链路：
+// 调度决策已指定 KeyID 时使用），复用解密与 OAuth 按需刷新逻辑。
+func getChannelKeyByID(ctx context.Context, keyID int64) (string, error) {
+	var key *channelKeyRow
+	err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("id", keyID).
+		Where("status", "active").
+		Fields("id, encrypted_key, key_type, token_expires_at").
+		Scan(&key)
+	if err != nil || key == nil {
+		return "", common.ErrChannelUnavailable
+	}
+	return decryptChannelKey(ctx, key)
+}
+
+// decryptChannelKey 解密渠道 Key 并做 OAuth 按需刷新（共享逻辑，行为与原 getChannelKey 一致）。
+func decryptChannelKey(ctx context.Context, key *channelKeyRow) (string, error) {
 	encKey := GetEncryptionKey()
 	decrypted, err := uc.DecryptString(encKey, key.EncryptedKey)
 	if err != nil {
@@ -1213,7 +1119,7 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 	switch oauthData.Platform {
 	case "claude":
 		newToken, err = loauth.ClaudeRefreshToken(oauthData.RefreshToken)
-	case "openai":
+	case "openai", "codex":
 		newToken, err = loauth.OpenAIRefreshToken(oauthData.RefreshToken)
 	case "gemini":
 		newToken, err = loauth.GeminiRefreshToken(oauthData.RefreshToken)
@@ -1276,41 +1182,41 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 }
 
 // GetModelDeprecationInfo 实现 DataProvider.GetModelDeprecationInfo
+// 复用 loadModelCached 的单次查询结果（含 600s 缓存），不再独立查库。
 func (p *DataProviderImpl) GetModelDeprecationInfo(ctx context.Context, modelName string) (*common.DeprecationInfo, error) {
-	type depRow struct {
-		Status           string      `json:"status"`
-		SunsetDate       *gtime.Time `json:"sunset_date"`
-		ReplacementModel string      `json:"replacement_model"`
-	}
-
-	var row *depRow
-	err := dao.MdlModels.Ctx(ctx).
-		Where("model_id", modelName).
-		Fields("status, sunset_date, replacement_model").
-		Scan(&row)
+	info, err := loadModelCached(ctx, modelName)
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
+	if info == nil {
 		return nil, common.ErrModelNotFound
 	}
-	if row.Status != "deprecated" {
+	if info.Status != "deprecated" {
 		return nil, nil
 	}
 
-	info := &common.DeprecationInfo{
+	dep := &common.DeprecationInfo{
 		Deprecated:       true,
-		ReplacementModel: row.ReplacementModel,
+		ReplacementModel: info.ReplacementModel,
 	}
-	if row.SunsetDate != nil {
-		info.SunsetDate = row.SunsetDate.Format("Y-m-d")
+	if info.SunsetDate != "" {
+		dep.SunsetDate = info.SunsetDate
 	}
-	return info, nil
+	return dep, nil
 }
 
 // InvalidateModelCache 实现 DataProvider.InvalidateModelCache
 func (p *DataProviderImpl) InvalidateModelCache(modelName string) {
-	modelCache.Delete(context.Background(), modelName)
+	modelCache.Delete(context.Background(), modelCacheKeyPrefix+modelName)
+}
+
+// ClearTenantModelAccessCache 清除租户的模型访问权限缓存
+// 在管理后台修改租户模型配置（增删改）后调用，避免高并发下读到陈旧缓存
+func ClearTenantModelAccessCache(ctx context.Context, tenantID int64) {
+	// 使用 pattern 删除该租户的所有模型访问缓存
+	pattern := fmt.Sprintf("%d:*", tenantID)
+	lcommon.TenantModelAccessCache.DeleteByPattern(ctx, pattern)
+	g.Log().Infof(ctx, "[Cache] Cleared tenant model access cache for tenant_id=%d", tenantID)
 }
 
 // memberModelCache 成员模型范围缓存（TTL 60s）。

@@ -13,7 +13,7 @@ const router = useRouter()
 const loading = ref(false)
 const projects = ref<any[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 
 const statusLabels: Record<string, string> = {
@@ -85,7 +85,7 @@ async function fetchProjects() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/projects', {
-			params: { page: page.value, page_size: pageSize }
+			params: { page: page.value, page_size: pageSize.value }
 		})
 		const raw = res.data?.data
 		projects.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -170,7 +170,7 @@ function goToDetail(item: any) {
 				</table>
 			</div>
 
-			<BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchProjects" />
+			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchProjects" />
 		</div>
 
 		<!-- Create/Edit Modal -->

@@ -62,15 +62,17 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 		// Dev builds: always report an update if a remote release exists
 		hasUpdate = true
 	} else {
-		currentVer, err := semver.NewVersion(strings.TrimPrefix(consts.Version, "v"))
+		currentVer, err := semver.NewVersion(normalizeSemver(consts.Version))
 		if err != nil {
-			return nil, fmt.Errorf("invalid current version %q: %w", consts.Version, err)
+			// 版本仍无法解析，按开发构建处理：有远端发行版即提示更新，避免阻断检查接口
+			hasUpdate = true
+		} else {
+			latestVer, err := semver.NewVersion(latestStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
+			}
+			hasUpdate = latestVer.GreaterThan(currentVer)
 		}
-		latestVer, err := semver.NewVersion(latestStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
-		}
-		hasUpdate = latestVer.GreaterThan(currentVer)
 	}
 
 	// Find matching asset for current platform
@@ -185,4 +187,16 @@ func setCheckCache(ctx context.Context, result *CheckResult) {
 	ttl := int64(redisCacheTTL.Seconds())
 	// TODO: read from config update_check_interval_hours
 	g.Redis().Do(ctx, "SETEX", redisCacheKey, ttl, string(data))
+}
+
+// normalizeSemver 将构建期注入的版本字符串规整为合法 semver。
+// Makefile 通过 git describe 生成的版本形如 "0.2.0_39"（v0.2.0 之后 39 个提交），
+// 其中的下划线在 semver 中非法，此处转为构建元数据 "+"（"0.2.0+39"），
+// 比较时与基础版本等价，不会误报更新。
+func normalizeSemver(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexByte(v, '_'); i > 0 {
+		v = v[:i] + "+" + v[i+1:]
+	}
+	return v
 }

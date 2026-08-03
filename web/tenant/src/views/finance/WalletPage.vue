@@ -81,8 +81,10 @@ const thresholdValidationError = computed(() => {
 })
 
 const selectedDiscount = computed(() => {
-	if (!rechargeAmount.value) return 1
-	return Number(paymentInfo.value?.amount_discount?.[Math.trunc(rechargeAmount.value)]) || 1
+	// 折扣档位仅整数金额精确命中（与后端 RechargeCreate 口径一致）：
+	// 100.99 不享受 100 档折扣，避免前端展示与实际计价不符
+	if (!rechargeAmount.value || !Number.isInteger(rechargeAmount.value)) return 1
+	return Number(paymentInfo.value?.amount_discount?.[rechargeAmount.value]) || 1
 })
 
 const finalPayAmount = computed(() => (rechargeAmount.value || 0) * selectedDiscount.value)
@@ -505,6 +507,7 @@ onBeforeUnmount(() => {
 								<strong class="text-xl font-bold tabular-nums text-slate-800">¥{{ finalPayAmount.toFixed(2) }}</strong>
 								<span v-if="selectedDiscount < 1" class="text-xs text-slate-400 line-through">¥{{ rechargeAmount?.toFixed(2) }}</span>
 							</div>
+							<p v-if="selectedDiscount < 1" class="mt-0.5 text-[11px] text-emerald-600">到账仍按 ¥{{ rechargeAmount?.toFixed(2) }} 全额折算</p>
 						</div>
 						<button class="btn btn-primary min-w-32" :disabled="!rechargeReady || rechargeLoading" @click="handleRecharge">
 							<Icon v-if="rechargeLoading" name="refresh" size="sm" class="animate-spin" />

@@ -180,10 +180,12 @@ func (c *Cache) Delete(ctx context.Context, key string) {
 
 // DeleteByPattern removes all cache entries matching the pattern.
 // Uses SCAN + DEL to properly handle wildcard patterns (Redis DEL does not support wildcards).
+// 同时清除 L1（gcache）并发布跨实例失效通知，与 Delete 行为对齐。
 func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 	fullPattern := c.fullKey(pattern)
 
-	// L2: Redis — SCAN matching keys and DEL them
+	// 先收集所有匹配的 key，再统一处理 L1/L2/pub/sub
+	var allKeys []string
 	cursor := int64(0)
 	for {
 		result, err := g.Redis().Do(ctx, "SCAN", cursor, "MATCH", fullPattern, "COUNT", 100)
@@ -196,21 +198,29 @@ func (c *Cache) DeleteByPattern(ctx context.Context, pattern string) {
 			break
 		}
 		cursor = gconv.Int64(slice[0])
-		keys := gconv.Strings(slice[1])
-		if len(keys) > 0 {
-			delArgs := make([]any, len(keys))
-			for i, k := range keys {
-				delArgs[i] = k
-			}
-			_, _ = g.Redis().Do(ctx, "DEL", delArgs...)
-		}
+		allKeys = append(allKeys, gconv.Strings(slice[1])...)
 		if cursor == 0 {
 			break
 		}
 	}
 
-	// L1: memory cache — gcache doesn't support pattern delete,
-	// but entries will expire via TTL anyway
+	if len(allKeys) == 0 {
+		return
+	}
+
+	// L2: 批量删除 Redis（比逐条快）
+	delArgs := make([]any, len(allKeys))
+	for i, k := range allKeys {
+		delArgs[i] = k
+	}
+	_, _ = g.Redis().Do(ctx, "DEL", delArgs...)
+
+	// L1 + 跨实例失效：逐 key 清本进程内存缓存并发布失效通知
+	// （gcache 不支持通配符删除，只能逐 key；PUBLISH 触发其他实例的订阅者清理 L1）
+	for _, key := range allKeys {
+		gcache.Remove(ctx, key)
+		_, _ = g.Redis().Do(ctx, "PUBLISH", "cache:invalidate", key)
+	}
 }
 
 // PublishInvalidation publishes a cache invalidation message via Redis Pub/Sub.
@@ -257,7 +267,6 @@ func StartCacheInvalidationSubscriber(ctx context.Context) {
 
 				// 仅移除本进程 L1；L2(Redis) 由发布方已 DEL，无需重复处理
 				gcache.Remove(ctx, msg.Payload)
-				g.Log().Debugf(ctx, "[PubSub:cache] L1 已失效: %s", msg.Payload)
 			}
 
 			conn.Close(ctx)
@@ -267,3 +276,8 @@ func StartCacheInvalidationSubscriber(ctx context.Context) {
 
 // TenantGroupModelCache 缓存租户通过分组可访问的模型集合，TTL 300s
 var TenantGroupModelCache = NewCache("tenant_group_models", 300*time.Second)
+
+// TenantModelAccessCache 缓存租户模型访问权限（enabled + channel_scope），TTL 300s
+// 缓存键格式：{tenantID}:{modelName}
+// 缓存值：{"enabled": true/false, "channel_scope": [1,2,3]}
+var TenantModelAccessCache = NewCache("tenant_model_access", 300*time.Second)

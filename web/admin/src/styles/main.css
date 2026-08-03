@@ -338,34 +338,142 @@ body {
   border-radius: 8px;
 }
 
-/* ===== Table Page Layout (pagination at bottom) ===== */
+/* ===== Table Page Layout (内部滚动 + 左上统计 + 右下分页) ===== */
+
+/* 页面根：纵向 flex 撑满可用高度，自身不滚动 */
 .page-table {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.page-table > .arco-card:has(.table-footer) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   min-height: 0;
-}
-
-.page-table > .arco-card:has(.table-footer) > .arco-card-body {
-  flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+/* 含表格的卡片：撑满剩余高度，内部承载滚动 —— 用 :has(.arco-table) 精确命中
+   （兼容同页有独立筛选卡片、Tab 内嵌等结构，仅表格卡片 flex:1） */
+.page-table .arco-card:has(.arco-table) {
+  flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.page-table .table-footer {
-  margin-top: auto;
+.page-table .arco-card:has(.arco-table) > .arco-card-header {
+  flex-shrink: 0;
 }
 
-.page-table > .arco-card:has(.table-footer):hover {
+.page-table .arco-card:has(.arco-table) > .arco-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 表格卡片不随 hover 上浮 */
+.page-table .arco-card:has(.arco-table):hover {
   transform: none;
   box-shadow: var(--ta-shadow-card);
+}
+
+/* 左上角统计栏（紧凑、不滚动）。不限定 .page-table 前缀，便于详情页等非 page-table 场景复用 */
+.table-stats {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--ta-text-tertiary);
+  flex-wrap: wrap;
+}
+
+.table-stats__value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ta-text-primary);
+  line-height: 1;
+}
+
+.table-stats__divider {
+  width: 1px;
+  height: 14px;
+  background: var(--ta-border);
+}
+
+/* Arco 表格：撑满剩余高度，表体内部滚动 */
+.page-table .arco-table {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-table .arco-table-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表体成为纵向滚动容器（同时保留横向滚动） */
+.page-table .arco-table-content,
+.page-table .arco-table-content-scroll-x {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* sticky 表头：固定在滚动容器顶部 */
+.page-table .arco-table-content .arco-table-th {
+  position: sticky;
+  top: 0;
+  z-index: 11;
+}
+
+/* 表头中的固定列单元格（左上/右上角）：层级最高 */
+.page-table .arco-table-content thead .arco-table-col-fixed-left,
+.page-table .arco-table-content thead .arco-table-col-fixed-right {
+  z-index: 12;
+}
+
+/* 右下角分页栏 */
+.page-table .table-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ta-border-light);
+}
+
+/* Tab 内嵌表格：让 Tab 容器与面板也参与纵向 flex，保证内部表格能撑满滚动 */
+.page-table .arco-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-table .arco-tabs > .arco-tabs-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-table .arco-tabs .arco-tabs-content-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.page-table .arco-tabs .arco-tabs-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Drawer */

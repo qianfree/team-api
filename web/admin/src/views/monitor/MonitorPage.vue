@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
@@ -197,10 +197,44 @@ async function fetchTraffic() {
   }
 }
 
+// --- 调度引擎指标 ---
+const dispatchData = ref<any>(null)
+// 窗口增量优先（首尾快照做差）；窗口内只有一条快照时退回累计值
+const dispatchWindow = computed(() => dispatchData.value?.window || dispatchData.value?.latest)
+
+const dispatchReasonLabels: Record<string, string> = {
+  bind: '绑定命中', hrw: '新选择', overflow: '溢出', probe: '熔断探测', cred_rotate: '凭证轮换',
+}
+const dispatchSourceLabels: Record<string, string> = {
+  hdr: '显式头', anthropic: 'Claude 会话', openai: 'OpenAI 会话', ident: '身份级',
+}
+const dispatchTierLabels: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
+const selectionReasonLabel = (k: string) => dispatchReasonLabels[k] || k
+const sessionSourceLabel = (k: string) => dispatchSourceLabels[k] || k
+const tierLabel = (k: string) => dispatchTierLabels[k] || k
+
+function sumCounter(m?: Record<string, number>) {
+  return Object.values(m || {}).reduce((a, b) => a + b, 0)
+}
+function bindHitRate(m?: Record<string, number>) {
+  const total = sumCounter(m)
+  if (!total) return 0
+  return ((m?.bind ?? 0) / total) * 100
+}
+
+async function fetchDispatch() {
+  try {
+    const res = await request.get('/admin/monitor/dispatch', { params: { minutes: timeRange.value } })
+    dispatchData.value = res.data?.data || res.data
+  } catch {
+    // keep previous data
+  }
+}
+
 async function fetchAll() {
   loading.value = true
   try {
-    await Promise.all([fetchDashboard(), fetchSystemHistory(), fetchTraffic()])
+    await Promise.all([fetchDashboard(), fetchSystemHistory(), fetchTraffic(), fetchDispatch()])
     updateCharts()
   } finally {
     loading.value = false
@@ -364,6 +398,55 @@ onUnmounted(() => {
         </a-card>
       </div>
 
+      <!-- Dispatch engine -->
+      <a-card :bordered="false" class="mb-4">
+        <template #title>
+          <span>调度引擎</span>
+          <span v-if="dispatchData?.available" style="margin-left: 8px; font-size: 12px; color: var(--color-text-3)">
+            窗口内增量 · 最新快照 {{ dispatchData.collected_at }}
+          </span>
+        </template>
+        <template v-if="dispatchData?.available">
+          <div class="grid grid-cols-4 gap-4 mb-4">
+            <a-statistic title="选择次数（窗口）" :value="sumCounter(dispatchWindow?.selections)" />
+            <a-statistic title="绑定命中率" :value="bindHitRate(dispatchWindow?.selections)" :precision="1">
+              <template #suffix><span style="font-size: 14px">%</span></template>
+            </a-statistic>
+            <a-statistic title="熔断打开" :value="num(dispatchWindow?.breaker_opens)"
+              :value-style="{ color: num(dispatchWindow?.breaker_opens) > 0 ? '#ff7d00' : undefined }" />
+            <a-statistic title="无可用渠道" :value="num(dispatchWindow?.no_candidate)"
+              :value-style="{ color: num(dispatchWindow?.no_candidate) > 0 ? '#f53f3f' : undefined }" />
+          </div>
+          <div class="dispatch-tag-rows">
+            <div class="dispatch-tag-row">
+              <span class="dispatch-tag-label">选择原因</span>
+              <a-tag v-for="(cnt, k) in dispatchWindow?.selections || {}" :key="'sel-' + k" size="small">
+                {{ selectionReasonLabel(String(k)) }} {{ cnt }}
+              </a-tag>
+            </div>
+            <div class="dispatch-tag-row">
+              <span class="dispatch-tag-label">会话来源</span>
+              <a-tag v-for="(cnt, k) in dispatchWindow?.session_sources || {}" :key="'src-' + k" size="small" color="arcoblue">
+                {{ sessionSourceLabel(String(k)) }} {{ cnt }}
+              </a-tag>
+            </div>
+            <div v-if="Object.keys(dispatchWindow?.overflow_by_tier || {}).length" class="dispatch-tag-row">
+              <span class="dispatch-tag-label">溢出流向</span>
+              <a-tag v-for="(cnt, k) in dispatchWindow?.overflow_by_tier || {}" :key="'ovf-' + k" size="small" color="orange">
+                → {{ tierLabel(String(k)) }} {{ cnt }}
+              </a-tag>
+            </div>
+            <div v-if="Object.keys(dispatchWindow?.retries || {}).length" class="dispatch-tag-row">
+              <span class="dispatch-tag-label">重试决策</span>
+              <a-tag v-for="(cnt, k) in dispatchWindow?.retries || {}" :key="'rt-' + k" size="small" color="gray">
+                {{ k }} {{ cnt }}
+              </a-tag>
+            </div>
+          </div>
+        </template>
+        <div v-else style="color: var(--color-text-3); font-size: 13px">暂无调度指标数据（窗口内无调度活动或采集尚未落库）</div>
+      </a-card>
+
       <!-- Alerts summary -->
       <a-card :bordered="false" title="告警概要" class="mb-4">
         <div class="grid grid-cols-4 gap-4">
@@ -392,5 +475,22 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.dispatch-tag-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dispatch-tag-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dispatch-tag-label {
+  color: var(--color-text-3);
+  font-size: 12px;
+  width: 64px;
+  flex-shrink: 0;
 }
 </style>

@@ -46,6 +46,7 @@ type RedemptionCreateReq struct {
 	Value        float64 `json:"value"`
 	PlanID       int64   `json:"plan_id"`
 	DurationDays int     `json:"duration_days"`
+	MaxUses      int     `json:"max_uses" d:"1" v:"min:1|max:100000#单码可用次数至少为1|单码可用次数不能超过100000" dc:"单码可用次数（默认 1，>1 为多次使用码）"`
 }
 
 type RedemptionCreateRes struct {

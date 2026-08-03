@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import request from '@/utils/request'
 
@@ -48,9 +49,9 @@ const articleDetail = ref<ArticleDetail | null>(null)
 
 const searchQuery = ref('')
 const isSearchMode = ref(false)
-const searchPage = ref(1)
-const searchTotal = ref(0)
-const pageSize = 20
+const listPage = ref(1)
+const listTotal = ref(0)
+const pageSize = ref(20)
 
 const categoryColors = [
 	{ bg: 'bg-primary-50', text: 'text-primary-600', dot: 'bg-primary-500' },
@@ -122,23 +123,39 @@ async function fetchCategories() {
 	}
 }
 
-async function fetchArticles(slug: string) {
+async function loadList() {
 	articlesLoading.value = true
-	activeCategorySlug.value = slug
-	activeArticleSlug.value = null
 	articleDetail.value = null
-	isSearchMode.value = false
 	try {
-		const res: any = await request.get(`/tenant/help/categories/${slug}/articles`, {
-			params: { page: 1, page_size: pageSize },
-		})
-		const raw = res.data?.data
+		let raw: any = null
+		if (isSearchMode.value) {
+			const res: any = await request.get('/tenant/help/search', {
+				params: { q: searchQuery.value.trim(), page: listPage.value, page_size: pageSize.value },
+			})
+			raw = res.data?.data
+		} else if (activeCategorySlug.value) {
+			const res: any = await request.get(`/tenant/help/categories/${activeCategorySlug.value}/articles`, {
+				params: { page: listPage.value, page_size: pageSize.value },
+			})
+			raw = res.data?.data
+		}
 		articles.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
+		// 分类列表若未返回 total，按当前条数兜底（不足一页时不展示翻页）
+		listTotal.value = raw?.total ?? (isSearchMode.value ? 0 : articles.value.length)
 	} catch {
 		articles.value = []
+		listTotal.value = 0
 	} finally {
 		articlesLoading.value = false
 	}
+}
+
+async function fetchArticles(slug: string) {
+	activeCategorySlug.value = slug
+	activeArticleSlug.value = null
+	isSearchMode.value = false
+	listPage.value = 1
+	await loadList()
 }
 
 async function fetchArticleDetail(slug: string) {
@@ -160,22 +177,13 @@ async function handleSearch() {
 	isSearchMode.value = true
 	activeCategorySlug.value = null
 	activeArticleSlug.value = null
-	articleDetail.value = null
-	articlesLoading.value = true
-	searchPage.value = 1
-	try {
-		const res: any = await request.get('/tenant/help/search', {
-			params: { q, page: 1, page_size: pageSize },
-		})
-		const raw = res.data?.data
-		articles.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
-		searchTotal.value = raw?.total || 0
-	} catch {
-		articles.value = []
-		searchTotal.value = 0
-	} finally {
-		articlesLoading.value = false
-	}
+	listPage.value = 1
+	await loadList()
+}
+
+// 翻页 / 切换每页条数时重新加载（listPage 已由分页组件 v-model 更新）
+function handleListPageChange() {
+	loadList()
 }
 
 function goBackToList() {
@@ -390,7 +398,7 @@ onMounted(fetchCategories)
 				<template v-else-if="articles.length > 0">
 					<div v-if="isSearchMode" class="flex items-center gap-2 text-sm text-gray-500 mb-4">
 						<Icon name="search" size="sm" class="text-gray-400" />
-						搜索 "{{ searchQuery }}" 找到 <span class="font-medium text-gray-700">{{ searchTotal }}</span> 条结果
+						搜索 "{{ searchQuery }}" 找到 <span class="font-medium text-gray-700">{{ listTotal }}</span> 条结果
 					</div>
 					<div v-else-if="activeCategorySlug" class="flex items-center gap-2 text-sm text-gray-500 mb-4">
 						<span class="w-2 h-2 rounded-full" :class="catColor(activeColorIndex).dot" />
@@ -425,6 +433,8 @@ onMounted(fetchCategories)
 							</div>
 						</div>
 					</div>
+
+					<BasePagination v-model="listPage" v-model:page-size="pageSize" :total="listTotal" @change="handleListPageChange" />
 				</template>
 
 				<!-- Empty search results -->

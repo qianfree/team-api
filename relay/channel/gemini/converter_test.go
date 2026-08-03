@@ -293,7 +293,7 @@ func TestConvertOpenAIToGemini_ResponseFormat(t *testing.T) {
 		t.Errorf("expected ResponseMimeType 'application/json', got %s", geminiReq.GenerationConfig.ResponseMimeType)
 	}
 
-	// Verify schema types are converted to uppercase
+	// 验证 schema 类型已转换为大写
 	schemaMap, ok := geminiReq.GenerationConfig.ResponseSchema.(map[string]any)
 	if !ok {
 		t.Fatalf("expected ResponseSchema to be a map, got %T", geminiReq.GenerationConfig.ResponseSchema)
@@ -337,7 +337,7 @@ func TestConvertOpenAIToGemini_ResponseFormat(t *testing.T) {
 		t.Errorf("expected items type 'STRING', got %v", itemsField["type"])
 	}
 
-	// Verify other fields are preserved
+	// 验证其它字段被保留
 	required, ok := schemaMap["required"].([]any)
 	if !ok || len(required) != 1 || required[0] != "name" {
 		t.Errorf("expected required to be preserved as ['name'], got %v", schemaMap["required"])
@@ -636,7 +636,7 @@ func TestConvertOpenAIToGemini_ReasoningContentPassthrough(t *testing.T) {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}
 
-	// First content should be model with thought part
+	// 第一条 content 应为带 thought part 的 model
 	if len(geminiReq.Contents) < 1 {
 		t.Fatal("expected at least 1 content")
 	}
@@ -713,7 +713,7 @@ func TestO2gParseStopSequences(t *testing.T) {
 }
 
 func TestGeminiDTOJsonMarshal(t *testing.T) {
-	// Verify new DTO fields serialize correctly
+	// 验证新增 DTO 字段可正确序列化
 	t.Run("GeminiPart with FileData", func(t *testing.T) {
 		part := dto.GeminiPart{
 			FileData: &dto.GeminiFileData{

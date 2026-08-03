@@ -55,3 +55,6 @@ func (c *ControllerV1) AdminBillingRecordExport(ctx context.Context, req *v1.Adm
 func (c *ControllerV1) AdminTransactionList(ctx context.Context, req *v1.AdminTransactionListReq) (res *v1.AdminTransactionListRes, err error) {
 	return service.Admin().GetAllTransactions(ctx, req)
 }
+func (c *ControllerV1) AdminDashboardModelHourly(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (res *v1.AdminDashboardModelHourlyRes, err error) {
+	return service.Admin().GetModelHourlyCost(ctx, req)
+}

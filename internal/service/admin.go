@@ -60,6 +60,10 @@ type (
 		ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error)
 		// GetRequestAuditLogDetail 查询单条请求审计日志详情（含完整 request_body 和 response_body）
 		GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAuditLogDetailReq) (*v1.RequestAuditLogDetailRes, error)
+		// ForwardingTraceGet 按 request_id 查询请求转发路径追踪（仅管理员，用量日志详情懒加载用）。
+		// 从审计库查询 aud_request_logs（可能独立于主库），仅取 forwarding_trace 与 audit_level 两列。
+		// 一个 request_id 仅对应一条审计记录（任务完成审计为 UPDATE 非 INSERT），OrderDesc 取最新为防御性兜底。
+		ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (*v1.ForwardingTraceGetRes, error)
 		// ExportOperationLogs exports operation logs to CSV or Excel.
 		ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error)
 		// ContentFilterLogList returns a paginated list of content filter interception logs.
@@ -147,6 +151,9 @@ type (
 		GetTopTenants(ctx context.Context, req *v1.AdminDashboardTopTenantsReq) (*v1.AdminDashboardTopTenantsRes, error)
 		// GetModelDistribution returns the model usage distribution.
 		GetModelDistribution(ctx context.Context, req *v1.AdminDashboardModelDistributionReq) (*v1.AdminDashboardModelDistributionRes, error)
+		// GetModelHourlyCost 模型费用按小时堆叠统计，用于仪表盘堆叠柱状图：
+		// 取最近 N 小时内费用最高的 TopN 个模型，按小时聚合费用，非 TopN 模型归并为"其他"。
+		GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (*v1.AdminDashboardModelHourlyRes, error)
 		// GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 		GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error)
 		// GetAllBillingRecords 获取所有计费记录（管理后台）
@@ -195,6 +202,11 @@ type (
 		ErrorLogResolve(ctx context.Context, req *v1.ErrorLogResolveReq) (*v1.ErrorLogResolveRes, error)
 		// ErrorLogBatchResolve marks multiple error logs as resolved.
 		ErrorLogBatchResolve(ctx context.Context, req *v1.ErrorLogBatchResolveReq) (*v1.ErrorLogBatchResolveRes, error)
+		// ErrorLogClear 硬删除全部错误日志。
+		// 系统报错大量堆积时用于快速释放数据库空间：用 TRUNCATE 而非逐行 DELETE，
+		// 秒级清空并立即归还磁盘空间（DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，
+		// 故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+		ErrorLogClear(ctx context.Context, _ *v1.ErrorLogClearReq) (*v1.ErrorLogClearRes, error)
 		// ErrorLogStats returns error log statistics.
 		ErrorLogStats(ctx context.Context, _ *v1.ErrorLogStatsReq) (*v1.ErrorLogStatsRes, error)
 		// ListAllFeedbacks 管理后台反馈列表
@@ -320,7 +332,14 @@ type (
 		ListOrders(ctx context.Context, req *v1.OrderListReq) (*v1.OrderListRes, error)
 		// GetOrder 获取订单详情
 		GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.OrderDetailRes, error)
-		// RefundOrder 发起退款
+		// RefundOrder 发起退款（线上侧一步完成：状态流转 + 权益收回；渠道打款由管理员线下原路退回）。
+		//
+		// 退款语义（与《系统货币规则》对齐）：
+		//   - 退款认订单原始 CNY 金额（ord_ 层永远 CNY），线下按此金额原路退给用户；
+		//   - 已履约的充值订单必须按【履约当时入账的 USD】原额扣回钱包（从入账流水取值，
+		//     禁止按当前汇率反算，防止汇率波动套利）；
+		//   - 已履约的套餐订单撤销对应的活跃订阅；
+		//   - 已支付未履约（paid）的订单权益尚未发放，仅做状态流转。
 		RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error)
 		// OrderComplete 手动完成订单
 		OrderComplete(ctx context.Context, req *v1.OrderCompleteReq) (*v1.OrderCompleteRes, error)

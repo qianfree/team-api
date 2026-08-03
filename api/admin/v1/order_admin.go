@@ -62,7 +62,10 @@ type OrderRefundReq struct {
 	Reason string `json:"reason"`
 }
 
-type OrderRefundRes struct{}
+type OrderRefundRes struct {
+	RefundAmountCny   float64 `json:"refund_amount_cny" dc:"应线下原路退回的人民币金额（订单原始 CNY 金额）"`
+	WalletDeductedUsd float64 `json:"wallet_deducted_usd" dc:"已从租户钱包扣回的美元金额（仅已履约的充值订单）"`
+}
 
 type OrderCompleteReq struct {
 	g.Meta `path:"/orders/{id}/complete" method:"post" mime:"json" tags:"管理后台-订单" summary:"手动完成订单"`

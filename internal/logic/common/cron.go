@@ -14,16 +14,18 @@ import (
 
 // CronJob defines a scheduled job.
 type CronJob struct {
-	Name     string
-	Schedule string // cron expression, e.g. "0 0 * * *" for daily at midnight
-	Handler  func(ctx context.Context) error
+	Name        string
+	DisplayName string // 中文展示名，供管理后台列表展示；空则前端回退到 Name
+	Schedule    string // cron expression, e.g. "0 0 * * *" for daily at midnight
+	Handler     func(ctx context.Context) error
 }
 
 // JobInfo contains info about a registered job for listing.
 type JobInfo struct {
-	Name      string `json:"name"`
-	Schedule  string `json:"schedule"`
-	IsRunning bool   `json:"is_running"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Schedule    string `json:"schedule"`
+	IsRunning   bool   `json:"is_running"`
 }
 
 // CronScheduler manages scheduled tasks with distributed locking.
@@ -64,13 +66,16 @@ func NewCronScheduler() *CronScheduler {
 }
 
 // Register adds a scheduled job.
-func (cs *CronScheduler) Register(name, schedule string, handler func(ctx context.Context) error) {
+// name 为全局唯一标识（用作分布式锁 key 和 sys_cron_jobs 主键，必须稳定，禁止中文）；
+// displayName 为管理后台展示用的中文名，与 name 就近声明，避免散落到前端映射表。
+func (cs *CronScheduler) Register(name, displayName, schedule string, handler func(ctx context.Context) error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.jobs = append(cs.jobs, &CronJob{
-		Name:     name,
-		Schedule: schedule,
-		Handler:  handler,
+		Name:        name,
+		DisplayName: displayName,
+		Schedule:    schedule,
+		Handler:     handler,
 	})
 }
 
@@ -85,9 +90,10 @@ func (cs *CronScheduler) ListJobs() []JobInfo {
 		running := cs.running[j.Name]
 		cs.runMu.Unlock()
 		jobs = append(jobs, JobInfo{
-			Name:      j.Name,
-			Schedule:  j.Schedule,
-			IsRunning: running,
+			Name:        j.Name,
+			DisplayName: j.DisplayName,
+			Schedule:    j.Schedule,
+			IsRunning:   running,
 		})
 	}
 	return jobs

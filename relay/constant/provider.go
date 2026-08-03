@@ -37,6 +37,8 @@ const (
 	ProviderKling       ProviderType = 38
 	ProviderSuno        ProviderType = 39
 	ProviderMidjourney  ProviderType = 40
+	ProviderNewAPI      ProviderType = 41
+	ProviderSub2API     ProviderType = 42
 )
 
 // String 返回供应商类型名称
@@ -108,7 +110,22 @@ func (p ProviderType) String() string {
 		return "Suno"
 	case ProviderMidjourney:
 		return "Midjourney"
+	case ProviderNewAPI:
+		return "New API"
+	case ProviderSub2API:
+		return "Sub2API"
 	default:
 		return "Unknown"
 	}
+}
+
+// IsMultiNativeProvider 判断是否为多协议原生透传供应商。
+// 这类供应商（New API / Sub2API）的上游同时原生支持 OpenAI / Claude / Gemini 协议，
+// 入站为这三种格式之一时可原样直连转发，无需格式归一化。
+func IsMultiNativeProvider(providerType int) bool {
+	switch ProviderType(providerType) {
+	case ProviderNewAPI, ProviderSub2API:
+		return true
+	}
+	return false
 }

@@ -55,6 +55,7 @@ interface NavItem {
 	label: string
 	path: string
 	icon: string
+	badge?: string
 }
 
 const navItems = computed<NavItem[]>(() => {
@@ -71,6 +72,7 @@ const navItems = computed<NavItem[]>(() => {
 			label: r.meta.title as string,
 			path: r.path,
 			icon: r.meta.icon as string,
+			badge: r.meta.badge as string | undefined,
 		}))
 })
 
@@ -280,6 +282,15 @@ onBeforeUnmount(() => {
 						/>
 						<transition name="fade">
 							<span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
+						</transition>
+						<transition name="fade">
+							<span
+								v-if="!sidebarCollapsed && item.badge"
+								class="ml-auto text-base"
+								style="filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.6));"
+							>
+								{{ item.badge }}
+							</span>
 						</transition>
 					</router-link>
 				</div>

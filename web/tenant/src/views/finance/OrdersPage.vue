@@ -8,7 +8,7 @@ import { useExport } from '@/composables/useExport'
 const loading = ref(false)
 const orders = ref<any[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(20)
 const total = ref(0)
 const statusFilter = ref('')
 
@@ -60,7 +60,7 @@ const statusFilterOptions = [
 async function fetchOrders() {
   loading.value = true
   try {
-    const params: any = { page: page.value, page_size: pageSize }
+    const params: any = { page: page.value, page_size: pageSize.value }
     if (statusFilter.value) params.status = statusFilter.value
     const res = await request.get('/tenant/orders', { params })
     const raw = res.data?.data
@@ -199,7 +199,7 @@ onMounted(() => {
         </table>
       </div>
 
-      <BasePagination v-model="page" :page-size="pageSize" :total="total" @change="fetchOrders" />
+      <BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchOrders" />
     </div>
   </div>
 </template>

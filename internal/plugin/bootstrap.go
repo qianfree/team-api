@@ -67,7 +67,7 @@ func startPlugin(ctx context.Context, entry *PluginEntry) error {
 		for _, job := range c.CronJobs() {
 			jobFunc := job.Handler
 			jobName := "plugin_" + job.Name
-			cs.Register(jobName, job.CronExpr, func(ctx context.Context) error {
+			cs.Register(jobName, job.DisplayName, job.CronExpr, func(ctx context.Context) error {
 				jobFunc(ctx)
 				return nil
 			})

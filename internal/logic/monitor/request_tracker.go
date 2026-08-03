@@ -55,6 +55,8 @@ type RealtimeData struct {
 	ByChannel        map[string]int        `json:"by_channel"`
 	ByTenant         map[int64]int         `json:"by_tenant"`
 	SyncImagePool    SyncImagePoolSnapshot `json:"sync_image_pool"`
+	Rpm              int64                 `json:"rpm"` // 最近60秒滑动窗口请求数（全平台，由 Realtime 方法填充）
+	Tpm              int64                 `json:"tpm"` // 最近60秒滑动窗口token数（全平台，由 Realtime 方法填充）
 }
 
 // snapshotRing is a fixed-size circular buffer for arbitrary snapshot types.

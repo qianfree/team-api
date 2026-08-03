@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onErrorCaptured, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onErrorCaptured, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
+const route = useRoute()
 const router = useRouter()
 const error = ref<unknown>(null)
 
@@ -9,6 +10,12 @@ onErrorCaptured((caughtError, _instance, info) => {
   error.value = caughtError
   console.error('[RouteErrorBoundary]', info, caughtError)
   return false
+})
+
+// 边界不再随路由 :key 重建，需在路由切换时主动清除上一个页面的错误状态，
+// 避免新页面继续展示错误兜底。
+watch(() => route.fullPath, () => {
+  error.value = null
 })
 
 function reloadPage() {

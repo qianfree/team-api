@@ -31,30 +31,13 @@ type DeprecationInfo struct {
 // DataProvider 是 relay 层访问业务数据的接口。
 // 实现在 internal/logic/relay/provider.go 中，使用 GoFrame ORM。
 // relay/ 层通过此接口获取数据，不直接依赖 GoFrame。
+//
+// 渠道调度（选号/亲和/健康/容量）已由 relaykit/dispatch 调度引擎统一承担
+// （Route/Next/Report/Finish），本接口只保留数据访问与选择物化。
 type DataProvider interface {
 	// ValidateApiKey 验证 API Key 并返回认证信息。
 	// rawKey 是完整的 API Key 原值（如 sk-a1b2c3d4e5f6...）。
 	ValidateApiKey(ctx context.Context, rawKey string) (*ApiKeyInfo, error)
-
-	// GetChannelForModel 为指定模型选择最佳渠道。
-	// tenantID、userID 和 apiKeyID 用于亲和性计算。
-	// excludeChannelIDs 是本次请求已尝试过且失败的渠道，用于重试时排除。
-	GetChannelForModel(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, excludeChannelIDs []int64) (*ChannelSelection, error)
-
-	// SetChannelAffinity 在请求成功后提交并刷新渠道亲和。
-	SetChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string, channelID int64)
-
-	// DeleteChannelAffinity 在亲和渠道硬失败后清除绑定。
-	DeleteChannelAffinity(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string)
-
-	// AcquireChannelSlot 原子占用渠道并发槽；Redis 异常时降级放行。
-	AcquireChannelSlot(ctx context.Context, channelID int64, maxConcurrency int, requestID string) bool
-
-	// RefreshChannelSlot 刷新长请求的渠道容量租约。
-	RefreshChannelSlot(ctx context.Context, channelID int64, requestID string)
-
-	// ReleaseChannelSlot 释放渠道并发槽。
-	ReleaseChannelSlot(ctx context.Context, channelID int64, requestID string)
 
 	// GetModelMapping 获取模型映射信息。
 	// 返回标准模型名和分类（chat/embedding/image 等）。
@@ -69,15 +52,6 @@ type DataProvider interface {
 	// UpdateTaskAudit 更新异步任务的审计记录（任务完成时调用）。
 	// 通过 task_id 查找提交阶段写入的审计记录，补充最终结果。
 	UpdateTaskAudit(ctx context.Context, record *AuditRecord)
-
-	// UpdateChannelHealth 更新渠道健康度（请求成功/失败后调用）。
-	UpdateChannelHealth(ctx context.Context, channelID int64, success bool, latencyMs float64)
-
-	// IncrementConsecutiveFailure 递增渠道连续失败计数。
-	IncrementConsecutiveFailure(ctx context.Context, channelID int64)
-
-	// ResetConsecutiveFailure 重置渠道连续失败计数为 0。
-	ResetConsecutiveFailure(ctx context.Context, channelID int64)
 
 	// GetAvailableModels 获取指定租户可用的模型列表。
 	// apiKeyID > 0 时进一步按 API Key 的模型范围过滤。
@@ -109,6 +83,10 @@ type DataProvider interface {
 
 	// InvalidateMemberModelCache 清除指定成员的模型范围缓存。
 	InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64)
+
+	// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection：
+	// 从目录快照取转发元数据，按 keyID 解密渠道 Key（keyID=0 时取渠道首个 active Key）。
+	MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*ChannelSelection, error)
 }
 
 // ApiKeyInfo API Key 验证结果
@@ -133,12 +111,12 @@ type ChannelSelection struct {
 	ChannelName       string
 	BaseURL           string
 	ApiKey            string // 解密后的上游 API Key
+	KeyID             int64  // 渠道 Key 记录 ID（凭证级归因；0=未知）
 	UpstreamModelName string
 	IsModelMapped     bool
 	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供各转发入口做容量控制
 	Settings          ChannelSettings
-	SelectionReason   string // affinity / weighted / legacy
-	PreserveAffinity  bool   // 临时容量溢出时不覆盖原亲和
+	SelectionReason   string // bind / hrw / overflow / probe / cred_rotate
 	Priority          int
 	Weight            int
 	HealthScore       float64

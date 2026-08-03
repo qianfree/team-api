@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/shopspring/decimal"
@@ -109,12 +110,12 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 		return nil, lcommon.NewBusinessError(422, "套餐不可用")
 	}
 
-	var amount float64
+	// 订单金额全程 decimal（price × months 连乘禁止 float64 中间值）
+	var amount decimal.Decimal
 	if months >= 12 {
-		amount = billing.InexactFloat64(plan.YearlyPrice)
+		amount = plan.YearlyPrice
 	} else {
-		// 修复订单金额连乘：用 decimal 避免 price × months 的浮点误差
-		amount = billing.InexactFloat64(billing.MultiplyMoney(plan.MonthlyPrice, billing.NewFromFloat(float64(months))))
+		amount = billing.MultiplyMoney(plan.MonthlyPrice, billing.NewFromFloat(float64(months)))
 	}
 
 	// 使用 crypto/rand 生成随机部分，避免碰撞
@@ -124,31 +125,64 @@ func (s *sTenant) OrderCreate(ctx context.Context, req *v1.TenantOrderCreateReq)
 	}
 	orderNo := fmt.Sprintf("ORD%s%08x", time.Now().Format("20060102150405"), randBytes)
 
-	result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
-		OrderNo:        orderNo,
-		TenantId:       tenantID,
-		UserId:         userID,
-		OrderType:      "new_plan",
-		PlanId:         planID,
-		Amount:         amount,
-		DiscountAmount: 0,
-		FinalAmount:    amount,
-		Currency:       "CNY",
-		PaymentChannel: "",
-		Status:         "pending",
-		ExpiredAt:      gtime.Now().Add(30 * time.Minute),
-		Description:    fmt.Sprintf("Order for new_plan"),
+	discount := billing.Zero
+	finalAmount := amount
+	var orderID int64
+
+	// 事务：优惠码行锁校验 → 建单 → 记使用 → 条件递增用量；任一步失败整体回滚，
+	// 优惠码用量不会被无订单空耗，订单也不会带着未记账的折扣入库。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		var promoID int64
+		if req.PromoCode != "" {
+			promoResult, err := validatePromoCode(ctx, tenantID, req.PromoCode, amount, planID, true)
+			if err != nil {
+				return err
+			}
+			promoID = promoResult.PromoCodeID
+			discount = promoResult.Discount
+			finalAmount = promoResult.FinalAmount
+		}
+
+		result, err := dao.OrdOrders.Ctx(ctx).Insert(do.OrdOrders{
+			OrderNo:        orderNo,
+			TenantId:       tenantID,
+			UserId:         userID,
+			OrderType:      "new_plan",
+			PlanId:         planID,
+			Amount:         amount,
+			DiscountAmount: discount,
+			FinalAmount:    finalAmount,
+			Currency:       "CNY",
+			PaymentChannel: "",
+			Status:         "pending",
+			ExpiredAt:      gtime.Now().Add(30 * time.Minute),
+			Description:    "Order for new_plan",
+		})
+		if err != nil {
+			return err
+		}
+		orderID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+
+		if promoID != 0 {
+			if err := recordPromoUsageTx(ctx, promoID, tenantID, userID, orderID, discount); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	id, _ := result.LastInsertId()
 	return &v1.TenantOrderCreateRes{
-		ID:          id,
-		OrderNo:     orderNo,
-		FinalAmount: amount,
-		Status:      "pending",
+		ID:             orderID,
+		OrderNo:        orderNo,
+		FinalAmount:    billing.InexactFloat64(finalAmount),
+		DiscountAmount: billing.InexactFloat64(discount),
+		Status:         "pending",
 	}, nil
 }
 
@@ -159,20 +193,30 @@ func (s *sTenant) OrderCancel(ctx context.Context, req *v1.TenantOrderCancelReq)
 		return nil, lcommon.NewForbiddenError("需要 owner 或 admin 权限")
 	}
 	tenantID := middleware.GetTenantID(ctx)
-	result, err := dao.OrdOrders.Ctx(ctx).
-		Where("id", req.Id).
-		Where("tenant_id", tenantID).
-		Where("status", "pending").
-		Data(do.OrdOrders{
-			Status:      "cancelled",
-			CancelledAt: gtime.Now(),
-		}).Update()
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := dao.OrdOrders.Ctx(ctx).
+			Where("id", req.Id).
+			Where("tenant_id", tenantID).
+			Where("status", "pending").
+			Data(do.OrdOrders{
+				Status:      "cancelled",
+				CancelledAt: gtime.Now(),
+			}).Update()
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return lcommon.NewBusinessError(422, "订单不存在或无法取消")
+		}
+		// 释放该订单占用的优惠码用量（否则取消的订单永久占用名额）
+		return payment.ReleasePromoUsageForOrders(ctx, []int64{req.Id})
+	})
 	if err != nil {
 		return nil, err
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return nil, lcommon.NewBusinessError(422, "订单不存在或无法取消")
 	}
 	return &v1.TenantOrderCancelRes{}, nil
 }
@@ -361,12 +405,18 @@ func (s *sTenant) RechargeCreate(ctx context.Context, req *v1.TenantRechargeCrea
 		return nil, lcommon.NewBusinessError(422, "不支持的支付渠道")
 	}
 
-	// 3. 计算折扣后金额
+	// 3. 计算折扣后实付金额。
+	// 折扣语义为「付折后价、按原价入账」：充 100 配 0.9 折 → 实付 90，履约按 100 CNY 等值 USD 入账
+	// （入账口径见 payment.FulfillOrder 的 recharge 分支，使用订单 Amount 原价换算）。
+	// 档位仅在金额为整数且与配置档位完全一致时命中：此前 int(req.Amount) 截断会让 100.99
+	// 也误命中 100 档，非档位金额享受档位折扣。
 	finalAmount := req.Amount
 	if settings != nil {
-		if discount, ok := settings.AmountDiscount[int(req.Amount)]; ok && discount > 0 {
-			// 修复充值折扣连乘：用 decimal 避免 amount × discount 的浮点误差
-			finalAmount = billing.InexactFloat64(billing.MultiplyMoney(billing.NewFromFloat(req.Amount), billing.NewFromFloat(discount)))
+		if intAmt := int(req.Amount); float64(intAmt) == req.Amount {
+			if discount, ok := settings.AmountDiscount[intAmt]; ok && discount > 0 {
+				// 用 decimal 避免 amount × discount 的浮点误差
+				finalAmount = billing.InexactFloat64(billing.MultiplyMoney(billing.NewFromFloat(req.Amount), billing.NewFromFloat(discount)))
+			}
 		}
 	}
 

@@ -55,7 +55,7 @@ func TestRemapStatusCode(t *testing.T) {
 			name:     "non-RelayError returns same error unchanged",
 			err:      json.Unmarshal([]byte("{bad}"), &map[string]any{}),
 			mapping:  `{"400": 500}`,
-			wantCode: 0, // not a RelayError, won't be modified
+			wantCode: 0, // 非 RelayError，不会被修改
 		},
 	}
 
@@ -71,7 +71,7 @@ func TestRemapStatusCode(t *testing.T) {
 
 			relayErr, ok := result.(*constant.RelayError)
 			if tt.wantCode == 0 {
-				// Not a RelayError — just check it's not nil and not a RelayError
+				// 非 RelayError —— 只需检查它非 nil 且不是 RelayError
 				if ok {
 					t.Errorf("expected non-RelayError, got RelayError with code %d", relayErr.StatusCode)
 				}

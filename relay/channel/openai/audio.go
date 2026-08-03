@@ -21,11 +21,11 @@ func handleAudioSpeechResponse(ctx context.Context, resp *http.Response, info *c
 		body, _ := io.ReadAll(resp.Body)
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	// 透传响应头（Content-Type 可能是 audio/mpeg 等）
@@ -38,7 +38,7 @@ func handleAudioSpeechResponse(ctx context.Context, resp *http.Response, info *c
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read audio response failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read audio response failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if _, err := writer.Write(body); err != nil {
@@ -63,17 +63,17 @@ func handleAudioTranscriptionResponse(ctx context.Context, resp *http.Response, 
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read transcription response failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read transcription response failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if isUpstreamOpenAIError(body) {
 			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
-			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	writer.Header().Set("Content-Type", "application/json")

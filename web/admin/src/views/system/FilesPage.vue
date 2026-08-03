@@ -6,6 +6,7 @@ import {
   IconFile, IconImage, IconArchive, IconStorage, IconSettings, IconExport,
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 
@@ -367,8 +368,10 @@ function manualCleanup() {
 // ============================================================
 const exportVisible = ref(false)
 const exportLoading = ref(false)
-const exportTenantID = ref<number | undefined>(undefined)
-const exportScopes = ref<string[]>(['members', 'usage', 'billing', 'logs'])
+const exportForm = reactive<{ tenant_id: number | undefined; scopes: string[] }>({
+  tenant_id: undefined,
+  scopes: ['members', 'usage', 'billing', 'logs'],
+})
 
 const SCOPE_OPTIONS = [
   { label: '成员信息', value: 'members' },
@@ -378,25 +381,25 @@ const SCOPE_OPTIONS = [
 ]
 
 function openExportDialog() {
-  exportTenantID.value = undefined
-  exportScopes.value = ['members', 'usage', 'billing', 'logs']
+  exportForm.tenant_id = undefined
+  exportForm.scopes = ['members', 'usage', 'billing', 'logs']
   exportVisible.value = true
 }
 
 async function submitExport() {
-  if (!exportTenantID.value || exportTenantID.value <= 0) {
+  if (!exportForm.tenant_id || exportForm.tenant_id <= 0) {
     Message.warning('请输入租户 ID')
     return
   }
-  if (exportScopes.value.length === 0) {
+  if (exportForm.scopes.length === 0) {
     Message.warning('请至少选择一项导出范围')
     return
   }
   exportLoading.value = true
   try {
     const res: any = await request.post('/admin/data-governance/export', {
-      tenant_id: exportTenantID.value,
-      scopes: exportScopes.value,
+      tenant_id: exportForm.tenant_id,
+      scopes: exportForm.scopes,
     })
     const taskID = res.data?.data?.task_id
     Message.success(`导出任务已创建（任务 #${taskID}），文件生成后将在列表中显示（约 1 分钟内）`)
@@ -416,7 +419,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="文件管理" description="对象存储文件观测与清理">
       <template #actions>
         <APopover v-if="hasPermission('system:edit')" trigger="click" position="br">
@@ -462,6 +465,7 @@ onMounted(() => {
 
     <!-- 列表 -->
     <ACard :bordered="false">
+      <TableStats :total="pagination.total" />
       <ASpace wrap style="margin-bottom:16px">
         <AInput v-model="filter.tenant_id" placeholder="租户ID" allow-clear style="width:110px" />
         <AInput v-model="filter.user_id" placeholder="上传者ID" allow-clear style="width:110px" />
@@ -528,17 +532,17 @@ onMounted(() => {
       @ok="submitExport"
       @cancel="exportVisible = false"
     >
-      <AForm layout="vertical">
+      <AForm :model="exportForm" layout="vertical">
         <AFormItem label="租户 ID" required>
           <AInputNumber
-            v-model="exportTenantID"
+            v-model="exportForm.tenant_id"
             :min="1"
             placeholder="输入要导出数据的租户 ID"
             style="width:100%"
           />
         </AFormItem>
         <AFormItem label="导出范围" required>
-          <Checkbox.Group v-model="exportScopes">
+          <Checkbox.Group v-model="exportForm.scopes">
             <Space direction="vertical">
               <Checkbox v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">
                 {{ opt.label }}

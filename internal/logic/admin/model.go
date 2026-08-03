@@ -385,6 +385,16 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 	}
 	dao.MdlGroupModels.Ctx(ctx).Where("model_id", req.ID).Fields("group_id").Scan(&affectedGroups)
 
+	// 查出模型编码，供事务提交后按模型清除所有租户的价格缓存
+	var model struct {
+		ModelId string `json:"model_id"`
+	}
+	if err := dao.MdlModels.Ctx(ctx).Where("id", req.ID).Fields("model_id").Scan(&model); err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+	}
+
 	// 四表删除（定价 / 租户分配 / 分组关联 / 模型本体）放入同一事务，
 	// 避免中途失败留下「模型已删但定价/分配记录残留」的孤儿数据。
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -409,6 +419,11 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 	// 事务提交后再清除受影响租户的缓存
 	for _, ag := range affectedGroups {
 		invalidateTenantsInGroup(ctx, ag.GroupId)
+	}
+
+	// 清除该模型在所有租户下的价格缓存，避免删除后旧价格残留最多 600s
+	if model.ModelId != "" {
+		billing.ClearModelPriceCache(ctx, model.ModelId)
 	}
 
 	return nil, nil
@@ -464,6 +479,16 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 
 // SetModelPricing 设置模型定价（全量替换）
 func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error) {
+	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
+	var model struct {
+		ModelId string `json:"model_id"`
+	}
+	if err := dao.MdlModels.Ctx(ctx).Where("id", req.ModelID).Fields("model_id").Scan(&model); err != nil {
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+	}
+
 	// 全量替换：先删旧定价再插新定价，放入同一事务。否则若删除后插入中途失败，
 	// 该模型会残留「无定价」状态，导致计费失败或回退到默认价。
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -498,6 +523,12 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// 事务提交后再清价格缓存：模型基础定价变更影响所有租户，按模型编码全量失效，
+	// 否则各租户缓存的旧价格（如新建时的零价）最多残留 600s，出现「已设价仍报未配置定价」。
+	if model.ModelId != "" {
+		billing.ClearModelPriceCache(ctx, model.ModelId)
 	}
 
 	return nil, nil

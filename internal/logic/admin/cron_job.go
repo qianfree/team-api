@@ -40,9 +40,10 @@ func (s *sAdmin) CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.Cro
 	items := make([]v1.CronJobItem, 0, len(jobs))
 	for _, j := range jobs {
 		item := v1.CronJobItem{
-			Name:      j.Name,
-			Schedule:  j.Schedule,
-			IsRunning: j.IsRunning,
+			Name:        j.Name,
+			DisplayName: j.DisplayName,
+			Schedule:    j.Schedule,
+			IsRunning:   j.IsRunning,
 		}
 
 		if data, ok := jobMap[j.Name]; ok {

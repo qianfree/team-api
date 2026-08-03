@@ -15,6 +15,7 @@ import (
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
@@ -39,6 +40,8 @@ var providerTypeNames = map[int]string{
 	14: "Cohere",
 	15: "Mistral",
 	16: "xAI",
+	41: "New API",
+	42: "Sub2API",
 }
 
 // ListChannels 获取渠道列表
@@ -65,6 +68,9 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		Status                   string      `json:"status"`
 		Priority                 int         `json:"priority"`
 		Weight                   int         `json:"weight"`
+		MaxConcurrency           int         `json:"max_concurrency"`
+		Tier                     string      `json:"tier"`
+		StrictCapacity           bool        `json:"strict_capacity"`
 		TestModel                string      `json:"test_model"`
 		Remark                   string      `json:"remark"`
 		IsVIP                    bool        `json:"is_vip"`
@@ -76,8 +82,10 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		Settings                 string      `json:"settings"`
 	}
 
-	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
-		OrderDesc("chn_channels.priority").
+	err := query.Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, h.health_score, chn_channels.settings").
+		// 列表默认按 id 倒序：新建渠道排在最前，便于运营查看最新配置。
+		// 注意分页场景下排序必须在 DB 层完成，前端只在当前页排序会导致跨页错乱。
+		OrderDesc("chn_channels.id").
 		Page(req.Page, req.PageSize).
 		ScanAndCount(&channels, &total, false)
 	if err != nil {
@@ -102,6 +110,9 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			Status:                   ch.Status,
 			Priority:                 ch.Priority,
 			Weight:                   ch.Weight,
+			MaxConcurrency:           ch.MaxConcurrency,
+			Tier:                     ch.Tier,
+			StrictCapacity:           ch.StrictCapacity,
 			TestModel:                ch.TestModel,
 			Remark:                   ch.Remark,
 			IsVIP:                    ch.IsVIP,
@@ -132,6 +143,7 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 		BaseURL                  string  `json:"base_url"`
 		Priority                 int     `json:"priority"`
 		Weight                   int     `json:"weight"`
+		MaxConcurrency           int     `json:"max_concurrency"`
 		TestModel                string  `json:"test_model"`
 		Remark                   string  `json:"remark"`
 		Settings                 string  `json:"settings"`
@@ -141,7 +153,7 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 		BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds"`
 	}
 	err := dao.ChnChannels.Ctx(ctx).
-		Fields("id, name, type, base_url, priority, weight, test_model, remark, settings, is_vip, sharing_threshold, preemption_threshold, borrowing_cooldown_seconds").
+		Fields("id, name, type, base_url, priority, weight, max_concurrency, test_model, remark, settings, is_vip, sharing_threshold, preemption_threshold, borrowing_cooldown_seconds").
 		Where("id", req.ID).
 		Scan(&src)
 	if err != nil {
@@ -175,6 +187,7 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 			Status:                   "active",
 			Priority:                 src.Priority,
 			Weight:                   src.Weight,
+			MaxConcurrency:           src.MaxConcurrency,
 			TestModel:                src.TestModel,
 			Remark:                   src.Remark,
 			Settings:                 src.Settings,
@@ -245,6 +258,10 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		settingsJSON = `{"use_proxy":true}`
 	}
 
+	tier := req.Tier
+	if tier == "" {
+		tier = "primary"
+	}
 	id, err := dao.ChnChannels.Ctx(ctx).InsertAndGetId(do.ChnChannels{
 		Name:                     req.Name,
 		Type:                     req.Type,
@@ -252,6 +269,9 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		Status:                   "active",
 		Priority:                 req.Priority,
 		Weight:                   req.Weight,
+		MaxConcurrency:           req.MaxConcurrency,
+		Tier:                     tier,
+		StrictCapacity:           req.StrictCapacity,
 		TestModel:                req.TestModel,
 		Remark:                   req.Remark,
 		Settings:                 settingsJSON,
@@ -302,6 +322,9 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	}
 	data.Priority = req.Priority
 	data.Weight = req.Weight
+	if req.MaxConcurrency != nil {
+		data.MaxConcurrency = *req.MaxConcurrency
+	}
 	if req.TestModel != "" {
 		data.TestModel = req.TestModel
 	}
@@ -310,6 +333,12 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	}
 	if req.Status != "" {
 		data.Status = req.Status
+	}
+	if req.Tier != "" {
+		data.Tier = req.Tier
+	}
+	if req.StrictCapacity != nil {
+		data.StrictCapacity = *req.StrictCapacity
 	}
 	if req.IsVIP != nil {
 		data.IsVip = *req.IsVIP
@@ -361,7 +390,11 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 			return nil, err
 		}
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ID)
+	dispatchadapter.InvalidateChannel(ctx, req.ID)
+	if req.Status == "active" {
+		// 手动启用/恢复：复位熔断并开启爬坡窗口，恢复初期小流量验证（rampFactor）
+		dispatchadapter.MarkChannelRecovered(ctx, req.ID)
+	}
 
 	return nil, nil
 }
@@ -386,7 +419,7 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ID)
+	dispatchadapter.InvalidateChannel(ctx, req.ID)
 
 	return nil, nil
 }
@@ -401,6 +434,9 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Status                   string      `json:"status"`
 		Priority                 int         `json:"priority"`
 		Weight                   int         `json:"weight"`
+		MaxConcurrency           int         `json:"max_concurrency"`
+		Tier                     string      `json:"tier"`
+		StrictCapacity           bool        `json:"strict_capacity"`
 		TestModel                string      `json:"test_model"`
 		Remark                   string      `json:"remark"`
 		IsVIP                    bool        `json:"is_vip"`
@@ -415,7 +451,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 
 	err := dao.ChnChannels.Ctx(ctx).
 		LeftJoin("chn_health_scores h ON chn_channels.id = h.channel_id").
-		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.settings, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, chn_channels.updated_at, h.health_score").
+		Fields("chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.base_url, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.max_concurrency, chn_channels.tier, chn_channels.strict_capacity, chn_channels.test_model, chn_channels.remark, chn_channels.is_vip, chn_channels.settings, chn_channels.sharing_threshold, chn_channels.preemption_threshold, chn_channels.borrowing_cooldown_seconds, chn_channels.created_at, chn_channels.updated_at, h.health_score").
 		Where("chn_channels.id", req.ID).
 		Scan(&ch)
 	if err != nil {
@@ -459,6 +495,9 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Status:                   ch.Status,
 		Priority:                 ch.Priority,
 		Weight:                   ch.Weight,
+		MaxConcurrency:           ch.MaxConcurrency,
+		Tier:                     ch.Tier,
+		StrictCapacity:           ch.StrictCapacity,
 		TestModel:                ch.TestModel,
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
@@ -497,7 +536,7 @@ func (s *sAdmin) DeleteChannelKey(ctx context.Context, req *v1.ChannelKeyDeleteR
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
+	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 	return nil, nil
 }
 
@@ -508,11 +547,16 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 			return err
 		}
 		for _, ab := range req.Abilities {
+			costRatio := ab.CostRatio
+			if costRatio <= 0 {
+				costRatio = 1.0
+			}
 			if _, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
 				ChannelId:     req.ChannelID,
 				ModelName:     ab.ModelName,
 				UpstreamModel: ab.UpstreamModel,
 				Enabled:       ab.Enabled,
+				CostRatio:     costRatio,
 			}); err != nil {
 				return err
 			}
@@ -522,7 +566,7 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 	if err != nil {
 		return nil, err
 	}
-	relay.InvalidateChannelAffinities(ctx, req.ChannelID)
+	dispatchadapter.InvalidateChannel(ctx, req.ChannelID)
 
 	return nil, nil
 }
@@ -573,10 +617,11 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 // GetChannelAbilities 获取渠道模型能力列表
 func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (*v1.ChannelAbilitiesGetRes, error) {
 	var abilities []struct {
-		ID            int64  `json:"id"`
-		ModelName     string `json:"model_name"`
-		UpstreamModel string `json:"upstream_model"`
-		Enabled       bool   `json:"enabled"`
+		ID            int64   `json:"id"`
+		ModelName     string  `json:"model_name"`
+		UpstreamModel string  `json:"upstream_model"`
+		Enabled       bool    `json:"enabled"`
+		CostRatio     float64 `json:"cost_ratio"`
 	}
 
 	err := dao.ChnAbilities.Ctx(ctx).
@@ -594,6 +639,7 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 			ModelName:     a.ModelName,
 			UpstreamModel: a.UpstreamModel,
 			Enabled:       a.Enabled,
+			CostRatio:     a.CostRatio,
 		}
 	}
 
@@ -623,6 +669,8 @@ var defaultProviderURLs = map[int]string{
 	14: "https://api.cohere.com",
 	15: "https://api.mistral.ai",
 	16: "https://api.x.ai",
+	41: "", // New API 自引用渠道，需自行填写实例地址
+	42: "", // Sub2API 渠道，需自行填写实例地址
 }
 
 // defaultProviderURL 返回供应商类型的默认 API 地址

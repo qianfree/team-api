@@ -10,10 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // handleNonStreamToOpenAI 将 Claude 非流式响应转换为 OpenAI 格式
@@ -22,16 +25,44 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
+	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+
+		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
+		var claudeResp dto.ClaudeResponse
+		if err := json.Unmarshal(body, &claudeResp); err != nil {
+			// Usage 解析失败，返回空 Usage（已写响应，不能重试）
+			// 静默处理：非致命错误，响应已正确写入
+			return &common.Usage{}, nil
+		}
+		if claudeResp.Usage != nil {
+			usage := &common.Usage{
+				PromptTokens:        claudeResp.Usage.InputTokens,
+				CompletionTokens:    claudeResp.Usage.OutputTokens,
+				TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
+				CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
+				PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
+			}
+			return usage, nil
+		}
+		// Usage 为 nil，返回空 Usage
+		return &common.Usage{}, nil
+	}
+
+	// 旧代码路径（relaykit 未启用或失败回退）
 	var claudeResp dto.ClaudeResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	// 转换为 OpenAI 格式
@@ -59,7 +90,12 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	}
+
+	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		return usage, nil
 	}
 
 	helper.SetEventStreamHeaders(writer)
@@ -103,7 +139,10 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		select {
 		case <-ctx.Done():
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, responseTextBuf.Len())
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -124,6 +163,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 		var event dto.ClaudeResponse
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			// JSON 解析失败：静默跳过（允许部分格式异常）
 			continue
 		}
 
@@ -342,11 +382,11 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err)
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
 	if info.ChannelMeta.IsModelMapped {
@@ -358,7 +398,11 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 	_, _ = writer.Write(body)
 
 	var claudeResp dto.ClaudeResponse
-	if err := json.Unmarshal(body, &claudeResp); err == nil && claudeResp.Usage != nil {
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		// Usage 解析失败，返回空 Usage（静默处理，非致命错误）
+		return &common.Usage{}, nil
+	}
+	if claudeResp.Usage != nil {
 		return &common.Usage{
 			PromptTokens:        claudeResp.Usage.InputTokens,
 			CompletionTokens:    claudeResp.Usage.OutputTokens,
@@ -373,25 +417,64 @@ func (a *Adaptor) handleClaudeNativeNonStream(ctx context.Context, resp *http.Re
 
 // handleClaudeNativeStream 直通 Claude 流式响应
 func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
+		resp.Body.Close()
+		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	}
+
+	// 创建可取消的上下文，用于在客户端断开时立即中止上游读取
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	// cleanup 函数：关闭上游连接，停止 token 生成
+	cleanup := func() {
+		cancelStream()
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+	}
+
+	// 在提交任何响应头之前检查客户端是否已断开（常见于上游 TTFB 较慢、客户端在
+	// DoRequest 阶段超时并主动关闭连接的场景）。此时 context 已被取消，若继续写
+	// SSE 头再检测 Done，客户端会收到残缺的 text/event-stream 响应，Anthropic SDK
+	// 尝试解析时报 "Failed to parse JSON"。提前检测并以正常 relay 错误路径返回，
+	// 让上层写出标准 Claude JSON 错误体。
+	if ctx.Err() != nil {
+		resp.Body.Close()
+		g.Log().Warningf(context.Background(),
+			"[ClaudeNativeStream] DoResponse 入口 ctx 已取消，放弃写响应头 request_id=%s ctx.Err=%v",
+			info.RequestID, ctx.Err())
+		info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+		return nil, common.ErrStreamInterrupted
 	}
 
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
+	stopPing := helper.PingTicker(writer, 15*time.Second)
+	defer stopPing()
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
 	var usage dto.ClaudeUsage
+	var transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
 
 	for {
 		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+		case <-streamCtx.Done():
+			// SSE 头已提交（SetEventStreamHeaders 在循环前已调用），直接关闭连接会
+			// 让 SDK 收到"200 + SSE头 + 无事件 + EOF"，Anthropic SDK 进入等待状态，
+			// 后续请求的响应会被误判为当前流的 SSE 数据 → "Failed to parse JSON"。
+			// 发送一个 Claude 格式的 error event，让 SDK 以正常 API Error 退出，而非挂起。
+			_, _ = fmt.Fprintf(writer,
+				"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream disconnected\"}}\n\n")
+			if f, ok := writer.(http.Flusher); ok {
+				f.Flush()
+			}
+			cleanup()
+			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, streamCtx.Err())
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -401,7 +484,12 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 				break
 			}
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-			return buildUsageFromClaude(&usage), fmt.Errorf("stream read error: %w", err)
+			// 已有部分输出时按部分成功处理（避免标记为完全失败）
+			interruptedUsage := buildUsageFromClaude(&usage)
+			if transferredTextLen > 0 {
+				helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			}
+			return interruptedUsage, fmt.Errorf("upstream stream interrupted: %w", err)
 		}
 
 		if strings.HasPrefix(line, "data:") {
@@ -412,11 +500,23 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			}
 
 			var event dto.ClaudeResponse
-			if json.Unmarshal([]byte(data), &event) == nil {
+			if json.Unmarshal([]byte(data), &event) != nil {
+				// JSON 解析失败：静默跳过
+			} else {
 				switch event.Type {
 				case "message_start":
 					if event.Message != nil && event.Message.Usage != nil {
 						usage = *event.Message.Usage
+					}
+				case "content_block_delta":
+					// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
+					if event.Delta != nil {
+						if event.Delta.Text != nil {
+							transferredTextLen += len(*event.Delta.Text)
+						}
+						if event.Delta.Thinking != nil {
+							transferredTextLen += len(*event.Delta.Thinking)
+						}
 					}
 				case "message_delta":
 					if event.Usage != nil {
@@ -446,8 +546,15 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 		}
 
 		if _, err := writer.Write([]byte(line)); err != nil {
+			// 写入客户端失败：立即关闭上游连接，停止生成
+			g.Log().Warningf(context.Background(),
+				"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
+				info.RequestID, err, ctx.Err(), time.Since(info.StartTime))
+			cleanup()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
-			return buildUsageFromClaude(&usage), common.ErrStreamInterrupted
+			interruptedUsage := buildUsageFromClaude(&usage)
+			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+			return interruptedUsage, common.ErrStreamInterrupted
 		}
 
 		if len(line) == 1 && line[0] == '\n' {

@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// excludeCacheFields are request body fields that should be excluded from cache hash
-// because they vary between requests but don't affect the model's output.
+// excludeCacheFields 是应从缓存哈希中排除的请求体字段，
+// 因为它们随请求变化但不影响模型输出。
 var excludeCacheFields = map[string]bool{
 	"stream":                true,
 	"seed":                  true,
@@ -18,39 +18,39 @@ var excludeCacheFields = map[string]bool{
 	"top_logprobs":          true,
 	"logprobs":              true,
 	"n":                     true,
-	"frequency_penalty":     false, // include - affects output
-	"presence_penalty":      false, // include - affects output
-	"temperature":           false, // include - affects output
-	"max_tokens":            false, // include - affects output
+	"frequency_penalty":     false, // 保留——影响输出
+	"presence_penalty":      false, // 保留——影响输出
+	"temperature":           false, // 保留——影响输出
+	"max_tokens":            false, // 保留——影响输出
 	"max_completion_tokens": false,
 }
 
-// ComputeCacheHash produces a deterministic SHA-256 hash from a normalized request body.
-// It removes non-deterministic fields (stream, seed, user, request_id, top_logprobs, logprobs, n)
-// and sorts JSON keys for consistent hashing.
+// ComputeCacheHash 基于规范化后的请求体生成确定性 SHA-256 哈希。
+// 它移除非确定性字段（stream、seed、user、request_id、top_logprobs、logprobs、n），
+// 并对 JSON 键排序以保证哈希一致。
 func ComputeCacheHash(body []byte, modelName string) string {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		// Fallback: hash raw body + model name
+		// 兜底：直接哈希原始请求体 + 模型名
 		h := sha256.New()
 		h.Write([]byte(modelName))
 		h.Write(body)
 		return hex.EncodeToString(h.Sum(nil))
 	}
 
-	// Remove excluded fields
+	// 移除需排除的字段
 	for field := range excludeCacheFields {
 		delete(raw, field)
 	}
 
-	// Sort keys for deterministic ordering
+	// 排序键以保证确定性顺序
 	keys := make([]string, 0, len(raw))
 	for k := range raw {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Rebuild JSON with sorted keys
+	// 用排序后的键重建 JSON
 	var buf strings.Builder
 	for _, k := range keys {
 		if buf.Len() > 0 {

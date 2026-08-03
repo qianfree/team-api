@@ -7,44 +7,15 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
+	relaykitdto "github.com/qianfree/team-api/relaykit/dto"
 )
 
-// DifyRequest Dify Chat Messages 请求体
-type DifyRequest struct {
-	Inputs       map[string]interface{} `json:"inputs"`
-	Query        string                 `json:"query"`
-	ResponseMode string                 `json:"response_mode"`
-	User         string                 `json:"user"`
-}
-
-// DifyBlockingResponse Dify 非流式（blocking）响应
-type DifyBlockingResponse struct {
-	Answer   string `json:"answer"`
-	Metadata struct {
-		Usage struct {
-			TotalTokens      int `json:"total_tokens"`
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
-	} `json:"metadata"`
-	ConversationID string `json:"conversation_id"`
-	MessageID      string `json:"message_id"`
-}
-
-// DifyStreamEvent Dify 流式 SSE 事件数据
-type DifyStreamEvent struct {
-	Event          string `json:"event"`
-	Answer         string `json:"answer"`
-	ConversationID string `json:"conversation_id"`
-	MessageID      string `json:"message_id"`
-	Metadata       struct {
-		Usage struct {
-			TotalTokens      int `json:"total_tokens"`
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
-	} `json:"metadata"`
-}
+// DifyRequest / DifyBlockingResponse / DifyStreamEvent 与 relaykit/dto 中定义字节相同
+// （仅本地曾用匿名嵌套 struct 表达 Metadata.Usage，relaykit 用具名 DifyMeta/DifyUsage；
+// JSON 序列化等价，字段访问路径一致）。别名到 relaykit 统一权威定义，消除本地重复。
+type DifyRequest = relaykitdto.DifyRequest
+type DifyBlockingResponse = relaykitdto.DifyBlockingResponse
+type DifyStreamEvent = relaykitdto.DifyStreamEvent
 
 // convertOpenAIToDify 将 OpenAI Chat Completions 请求转换为 Dify 请求格式。
 // 所有消息被拼接为一个 query 字符串，最后一条 user 消息作为主要查询内容。

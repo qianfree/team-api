@@ -48,6 +48,11 @@ type PricingResult struct {
 	CacheReadPrice     float64 // 缓存读取每 1M token 价格
 	CacheCreationPrice float64 // 缓存创建每 1M token 价格
 
+	// 模型最大输出 token 数（随定价一起缓存，供预扣估算使用，
+	// 避免 EstimatePreDeductAmount 每请求单独查一次 mdl_models）。
+	// 0 表示未设置（含旧缓存条目），使用方需自带默认值兜底。
+	MaxOutputTokens int
+
 	// 租户自定义阶梯定价（JSONB 解析后的原始数据，供 CalculateCost 使用）
 	CustomTiers []pricingTierRow
 }
@@ -70,6 +75,14 @@ func ClearTenantPriceCache(ctx context.Context, tenantID int64) {
 	}
 }
 
+// ClearModelPriceCache 清除指定模型在所有租户下的价格缓存。
+// 管理后台修改模型基础定价（SetModelPricing / ImportModels 更新 / DeleteModel）后必须调用，
+// 否则各租户缓存中的旧价格最多残留 600s，出现「已设价但调用仍报未配置定价/按旧价计费」。
+// 缓存键格式为 {tenantID}:{modelName}，此处按模型名匹配所有租户的条目。
+func ClearModelPriceCache(ctx context.Context, modelName string) {
+	modelPriceCache.DeleteByPattern(ctx, fmt.Sprintf("*:%s", modelName))
+}
+
 // GetModelPrice 获取模型价格
 // 优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
 func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*PricingResult, error) {
@@ -79,18 +92,19 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		return &cached, nil
 	}
 
-	// 1. 查模型基础信息
+	// 1. 查模型基础信息（max_output_tokens 一并取出，随定价缓存供预扣估算复用）
 	type modelRow struct {
-		ID      int64  `json:"id"`
-		ModelId string `json:"model_id"`
-		Status  string `json:"status"`
+		ID              int64  `json:"id"`
+		ModelId         string `json:"model_id"`
+		Status          string `json:"status"`
+		MaxOutputTokens int    `json:"max_output_tokens"`
 	}
 
 	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Where("status", "active").
-		Fields("id, model_id, status").
+		Fields("id, model_id, status, max_output_tokens").
 		Scan(&model)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query model price")
@@ -229,11 +243,12 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	// 查询链路：pln_tenant_plans → pln_plans → pln_plan_model_pricing
 	// 定价优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
 
-	// 4.5 模型倍率（占位 = 1.0）
-	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，模型乘数用于按模型
-	// 稀有度/成本动态加价。当前未接入数据来源（mdl_models 暂无 multiplier 字段），
-	// 故恒为 1.0；bil_records.model_multiplier 仍按此值快照，结算链路保持乘法结构
-	// 不变，未来在 mdl_models 增设 multiplier 字段后只需在此处读取即可启用。
+	// 4.5 模型倍率（预留，当前恒为 1.0 且不参与费用计算）
+	// 设计文档规定最终价格 = 基础价格 × 模型乘数 × 租户乘数，但模型乘数这一环尚未启用：
+	//   1) 无数据源：mdl_models 暂无 multiplier 字段，无法读取；
+	//   2) computeCost 实际费用计算只乘 TenantMultiplier，不纳入 ModelMultiplier。
+	// 因此当前实际生效的公式是「基础价格 × 租户乘数」，bil_records.model_multiplier 快照恒为 1.0。
+	// 若要启用模型乘数，需三步：mdl_models 增设 multiplier 字段 → 此处读取 → computeCost 接入乘法。
 	modelMultiplier := 1.0
 
 	result := &PricingResult{
@@ -250,6 +265,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		Currency:           "USD",
 		CacheReadPrice:     cacheReadPrice,
 		CacheCreationPrice: cacheCreationPrice,
+		MaxOutputTokens:    model.MaxOutputTokens,
 		CustomTiers:        customTiers,
 	}
 
@@ -411,46 +427,43 @@ type CostBreakdown struct {
 }
 
 // EstimatePreDeductAmount 估算预扣金额
-// 非流式：输入 + max_tokens；流式：输入 + 预估上限（模型 max_output_tokens 的 80%）
-// 上限 $1.00
+// 输出 token 估算：用户指定 max_tokens 时按其值（截断到模型上限）；未指定时按模型 max_output_tokens 的 80%。
+// 按估算全额冻结（无上限封顶），下限 $0.001；未配置定价的模型 fail-closed 返回错误拒绝请求。
 func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName string, inputTokens, requestedMaxTokens int, isStream bool) (float64, error) {
+	_ = isStream // 预留参数：估算逻辑不再区分流式/非流式，接口签名保持兼容
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return 0, gerror.Wrapf(err, "estimate pre-deduct: get model price")
 	}
 
+	// fail-closed：未配置定价的模型直接拒绝，防止零价计费变成免费放行
+	if err := validatePricingConfigured(pricing, modelName); err != nil {
+		return 0, err
+	}
+
 	// 按次计费：直接用单价
 	if pricing.BillingMode == "per_request" {
-		if pricing.PerRequestPrice > 1.0 {
-			return 1.0, nil
-		}
 		return pricing.PerRequestPrice, nil
 	}
 
-	// Token 计费：估算
-	type modelRow struct {
-		MaxOutputTokens int `json:"max_output_tokens"`
-	}
-	var model *modelRow
-	err = dao.MdlModels.Ctx(ctx).
-		Where("model_id", modelName).
-		Fields("max_output_tokens").
-		Scan(&model)
-	if err != nil {
-		return 0, gerror.Wrapf(err, "estimate pre-deduct: query model output limit")
-	}
-
+	// Token 计费：估算输出上限。
+	// max_output_tokens 已随 GetModelPrice 的 600s 定价缓存一起取出，
+	// 不再单独查 mdl_models（原实现每请求一条无缓存 SQL，高并发下是纯浪费）。
+	// 为 0（模型未设置，或旧缓存条目缺此字段）时按 4096 兜底。
 	maxOutput := 4096
-	if model != nil && model.MaxOutputTokens > 0 {
-		maxOutput = model.MaxOutputTokens
+	if pricing.MaxOutputTokens > 0 {
+		maxOutput = pricing.MaxOutputTokens
 	}
 
 	estimatedOutput := requestedMaxTokens
-	if estimatedOutput <= 0 || isStream {
+	if estimatedOutput <= 0 {
 		estimatedOutput = int(float64(maxOutput) * 0.8)
 		if estimatedOutput <= 0 {
 			estimatedOutput = 4096
 		}
+	} else if estimatedOutput > maxOutput {
+		// 用户传入超模型上限的 max_tokens：按模型上限截断，避免过度冻结
+		estimatedOutput = maxOutput
 	}
 
 	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, estimatedOutput)
@@ -458,14 +471,28 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return 0, gerror.Wrapf(err, "estimate pre-deduct: calculate cost")
 	}
 
-	if breakdown.TotalCost > 1.0 {
-		return 1.0, nil
-	}
 	if breakdown.TotalCost < 0.001 {
 		return 0.001, nil
 	}
 
 	return math.Ceil(breakdown.TotalCost*1000000) / 1000000, nil
+}
+
+// validatePricingConfigured 校验模型定价有效性（fail-closed）。
+// 未配置定价的模型不得放行：零价会让预扣/结算全部为 0，等同免费使用。
+// 允许只配 OutputPrice（输入免费）或只配租户自定义阶梯（CustomTiers）的合法场景。
+func validatePricingConfigured(pricing *PricingResult, modelName string) error {
+	switch pricing.BillingMode {
+	case "per_request":
+		if pricing.PerRequestPrice <= 0 {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_request price not set)", modelName)
+		}
+	default: // token / tiered
+		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && len(pricing.CustomTiers) == 0 {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s", modelName)
+		}
+	}
+	return nil
 }
 
 // pricingTierRow 定价阶梯行（绝对价格）

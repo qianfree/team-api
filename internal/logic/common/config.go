@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
+	"golang.org/x/sync/singleflight"
 )
 
 // ConfigService provides configuration management with a registry-driven schema,
@@ -21,6 +22,7 @@ import (
 type ConfigService struct {
 	cache *Cache
 	mu    sync.RWMutex
+	sf    singleflight.Group // 合并同 key 的并发 DB 回源（缓存过期瞬间/未落库 key 防穿透风暴）
 }
 
 var (
@@ -60,26 +62,48 @@ func (s *ConfigService) GetOption(ctx context.Context, key string) string {
 		return gconv.String(val)
 	}
 
+	// 配置是进程级全局状态，回源必须与单个请求的生死解耦：
+	// 1) WithoutCancel——客户端断开不得中断共享缓存回填，否则高并发断开场景会刷出大量
+	//    "context canceled" 误报，且缓存始终填不上、后续请求继续穿透 DB；
+	// 2) singleflight——缓存过期瞬间/未落库 key 的并发回源合并为单次 DB 查询。
+	v, _, _ := s.sf.Do(key, func() (any, error) {
+		bgCtx := context.WithoutCancel(ctx)
+		// 双重检查：排队等待期间可能已被回填；请求 ctx 已取消导致的 L2(Redis) 读失败
+		// 也在此用不可取消 ctx 重读一次，避免无谓打 DB
+		if val, ok := s.cache.Get(bgCtx, key); ok {
+			return val, nil
+		}
+		return s.loadOption(bgCtx, key), nil
+	})
+	return gconv.String(v)
+}
+
+// loadOption 从 DB 读取配置并回填缓存（含负缓存）。
+// key 未落库时缓存注册表默认值：LoadRateLimitConfig 等热路径每请求读多个 key，
+// 未配置的 key 若不缓存会导致每次调用都穿透到 DB，高并发下形成 sys_options 读风暴。
+// 缓存默认值不影响后台改配置的生效：SetOption 写库后会 Delete 缓存并 Pub/Sub 广播失效。
+func (s *ConfigService) loadOption(ctx context.Context, key string) string {
 	var option *Option
 	err := dao.SysOptions.Ctx(ctx).
 		Where("key", key).
 		Scan(&option)
 	if err != nil {
+		// DB 真实故障：返回注册表默认值兜底，不写缓存（保留下次重试机会）
 		g.Log().Warningf(ctx, "[Config] DB error reading option %s: %v", key, err)
 		if def := GetSettingDef(key); def != nil {
 			return def.Default
 		}
 		return ""
 	}
-	if option == nil {
-		if def := GetSettingDef(key); def != nil {
-			return def.Default
-		}
-		return ""
-	}
 
-	s.cache.Set(ctx, key, option.Value)
-	return option.Value
+	value := ""
+	if option != nil {
+		value = option.Value
+	} else if def := GetSettingDef(key); def != nil {
+		value = def.Default
+	}
+	s.cache.Set(ctx, key, value)
+	return value
 }
 
 // GetOptionJSON retrieves a configuration value and unmarshals it as JSON.

@@ -395,6 +395,37 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 	return &v1.RequestAuditLogDetailRes{Data: detail}, nil
 }
 
+// ForwardingTraceGet 按 request_id 查询请求转发路径追踪（仅管理员，用量日志详情懒加载用）。
+// 从审计库查询 aud_request_logs（可能独立于主库），仅取 forwarding_trace 与 audit_level 两列。
+// 一个 request_id 仅对应一条审计记录（任务完成审计为 UPDATE 非 INSERT），OrderDesc 取最新为防御性兜底。
+func (s *sAdmin) ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (*v1.ForwardingTraceGetRes, error) {
+	var row struct {
+		ForwardingTrace string `orm:"forwarding_trace"`
+		AuditLevel      string `orm:"audit_level"`
+	}
+	err := common.AuditModelCtx(ctx, "aud_request_logs").
+		Where("request_id", req.RequestId).
+		OrderDesc("created_at").
+		Fields("forwarding_trace, audit_level").
+		Scan(&row)
+	if err != nil {
+		return nil, err
+	}
+	// 无审计记录（两级审计级别均为 none 时不会写入）→ found=false，前端据此展示「未开启审计」
+	if row.ForwardingTrace == "" && row.AuditLevel == "" {
+		return &v1.ForwardingTraceGetRes{Found: false}, nil
+	}
+	res := &v1.ForwardingTraceGetRes{Found: true, AuditLevel: row.AuditLevel}
+	// forwarding_trace 为 "null" 字符串（JSONB NULL 序列化）或空时不解析
+	if row.ForwardingTrace != "" && row.ForwardingTrace != "null" {
+		var parsed map[string]any
+		if json.Unmarshal([]byte(row.ForwardingTrace), &parsed) == nil {
+			res.ForwardingTrace = parsed
+		}
+	}
+	return res, nil
+}
+
 // ExportOperationLogs exports operation logs to CSV or Excel.
 func (s *sAdmin) ExportOperationLogs(ctx context.Context, req *v1.OperationLogExportReq) (*v1.OperationLogExportRes, error) {
 	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {

@@ -25,7 +25,7 @@ interface RequestLog {
 const logs = ref<RequestLog[]>([])
 const logsLoading = ref(false)
 const logPage = ref(1)
-const logPageSize = 20
+const logPageSize = ref(20)
 const logTotal = ref(0)
 
 const logFilter = reactive({
@@ -117,7 +117,7 @@ async function fetchRequestLogs() {
 	try {
 		const params: Record<string, any> = {
 			page: logPage.value,
-			page_size: logPageSize,
+			page_size: logPageSize.value,
 		}
 		if (logFilter.username) params.username = logFilter.username
 		if (logFilter.request_id) params.request_id = logFilter.request_id
@@ -307,7 +307,7 @@ onMounted(() => {
 					</table>
 				</div>
 
-				<BasePagination v-model="logPage" :page-size="logPageSize" :total="logTotal" @change="fetchRequestLogs" />
+				<BasePagination v-model="logPage" v-model:page-size="logPageSize" :total="logTotal" @change="fetchRequestLogs" />
 			</div>
 		</div>
 

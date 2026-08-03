@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -133,7 +134,7 @@ onMounted(fetchLevels)
 </script>
 
 <template>
-  <div>
+  <div class="page-table">
     <PageHeader title="租户级别" description="配置租户等级体系，基于累计充值自动升级">
       <template #actions>
         <AButton type="primary" @click="openCreateModal">创建等级</AButton>
@@ -142,6 +143,7 @@ onMounted(fetchLevels)
 
     <ACard :bordered="false">
       <template #title>等级配置列表</template>
+      <TableStats :total="levels.length" />
       <ATable :columns="columns" :data="levels" :loading="loading" row-key="id" :scroll="{ x: 900 }" :pagination="false" />
     </ACard>
 

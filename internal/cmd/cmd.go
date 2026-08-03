@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -18,6 +19,7 @@ import (
 	openController "github.com/qianfree/team-api/internal/controller/open"
 	settingsController "github.com/qianfree/team-api/internal/controller/settings"
 	tenantController "github.com/qianfree/team-api/internal/controller/tenant"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/admin"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -98,6 +100,9 @@ var (
 			// Initialize monitoring collector
 			monitor.InitCollector(ctx)
 			monitor.InitRequestTracker()
+			monitor.InitRelaykitTracker()
+			monitor.InitDispatchTracker()
+			dispatchadapter.SetBreakerOpenHook(monitor.TrackDispatchBreakerOpen)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {
@@ -109,6 +114,9 @@ var (
 
 			// Initialize async channel error writer
 			common.InitChannelErrorWriter()
+
+			// Initialize async audit log writer
+			common.InitAuditLogWriter()
 
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
@@ -274,6 +282,7 @@ var (
 			// 因此把两个 task.Stop* 注册在最后（最先执行），Writer 关闭注册在前（后执行）。
 			defer plugin.Shutdown(ctx)
 			defer tenant.ShutdownWebhookDispatcher()
+			defer common.CloseAuditLogWriter()
 			defer common.CloseChannelErrorWriter()
 			defer common.CloseUsageLogWriter()
 			defer response.CloseErrorLogWriter()
@@ -310,74 +319,88 @@ func printBanner() {
 // registerCronJobs 集中注册所有定时任务，避免散落在主启动流程中。
 // 新增 cron 任务时在此追加一项即可；任务名（用于分布式锁 key）需保持唯一且稳定。
 func registerCronJobs(cs *common.CronScheduler) {
-	cs.Register("ops_system_collector", "* * * * *", func(ctx context.Context) error {
+	cs.Register("ops_system_collector", "系统指标采集", "* * * * *", func(ctx context.Context) error {
 		return monitor.CollectSystemMetrics(ctx)
 	})
-	cs.Register("ops_alert_detector", "* * * * *", func(ctx context.Context) error {
+	cs.Register("ops_alert_detector", "告警检测", "* * * * *", func(ctx context.Context) error {
 		return monitor.RunAlertDetection(ctx)
 	})
-	cs.Register("ops_metrics_cleanup", "0 3 * * *", func(ctx context.Context) error {
+	cs.Register("ops_metrics_cleanup", "指标数据清理", "0 3 * * *", func(ctx context.Context) error {
 		return monitor.CleanupOldMetrics(ctx)
 	})
-	cs.Register("partition_ensure", "0 2 * * *", func(ctx context.Context) error {
+	cs.Register("partition_ensure", "分区维护", "0 2 * * *", func(ctx context.Context) error {
 		return common.EnsurePartitions(ctx)
 	})
-	cs.Register("health_snapshot", "*/5 * * * *", func(ctx context.Context) error {
+	cs.Register("health_snapshot", "渠道健康快照", "*/5 * * * *", func(ctx context.Context) error {
 		return task.SnapshotHealthScores(ctx)
 	})
-	cs.Register("channel_auto_test", "*/5 * * * *", func(ctx context.Context) error {
+	cs.Register("channel_auto_test", "渠道自动测试", "*/5 * * * *", func(ctx context.Context) error {
 		if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
 			task.AutoTestChannels(ctx)
 		}
 		return nil
 	})
-	cs.Register("model_sunset_check", "0 0 * * *", func(ctx context.Context) error {
+	cs.Register("model_sunset_check", "模型下线检查", "0 0 * * *", func(ctx context.Context) error {
 		return task.CheckModelSunset(ctx)
 	})
-	cs.Register("data_cleanup", "0 3 * * *", func(ctx context.Context) error {
+	cs.Register("data_cleanup", "过期数据清理", "0 3 * * *", func(ctx context.Context) error {
 		return admin.CleanupExpiredData(ctx)
 	})
-	cs.Register("export_file_cleanup", "0 4 * * *", func(ctx context.Context) error {
+	cs.Register("export_file_cleanup", "导出文件清理", "0 4 * * *", func(ctx context.Context) error {
 		return admin.CleanupExpiredExportFiles(ctx)
 	})
-	cs.Register("file_retention_check", "0 5 * * *", func(ctx context.Context) error {
+	cs.Register("file_retention_check", "文件保留检查", "0 5 * * *", func(ctx context.Context) error {
 		return admin.CheckFileRetention(ctx)
 	})
-	cs.Register("task_timeout_check", "*/10 * * * *", func(ctx context.Context) error {
+	cs.Register("task_timeout_check", "任务超时检查", "*/10 * * * *", func(ctx context.Context) error {
 		return admin.MarkStuckTasksFailed(ctx)
 	})
-	cs.Register("task_executor", "*/1 * * * *", func(ctx context.Context) error {
+	cs.Register("task_executor", "异步任务执行", "*/1 * * * *", func(ctx context.Context) error {
 		task.RunPendingTasks(ctx)
 		return nil
 	})
-	cs.Register("project_budget_check", "*/5 * * * *", func(ctx context.Context) error {
+	cs.Register("project_budget_check", "项目预算检查", "*/5 * * * *", func(ctx context.Context) error {
 		return tenant.CheckBudgetExhausted(ctx)
 	})
-	cs.Register("usage_log_cleanup", "0 3 * * *", func(ctx context.Context) error {
+	cs.Register("usage_log_cleanup", "用量日志清理", "0 3 * * *", func(ctx context.Context) error {
 		retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
 		if retentionDays == 0 {
 			retentionDays = 90
 		}
 		return task.ScheduleAutoCleanup(ctx, retentionDays)
 	})
-	cs.Register("oauth_token_refresh", "*/10 * * * *", func(ctx context.Context) error {
+	cs.Register("usage_daily_aggregate", "用量日报表聚合", "0 1 * * *", func(ctx context.Context) error {
+		// 用量日维度聚合：将 bil_usage_logs 聚合进 bil_usage_daily，供流量桑基图与趋势分析。
+		// 自愈：每次重算最近 3 个完整天，覆盖短暂宕机；ON CONFLICT 保证幂等。
+		// end 取今天 00:00（开区间），永不聚合当天进行中的数据。
+		end := time.Now().Format("2006-01-02")
+		start := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+		return task.AggregateUsageRange(ctx, start, end)
+	})
+	cs.Register("oauth_token_refresh", "OAuth 令牌刷新", "*/10 * * * *", func(ctx context.Context) error {
 		return task.RefreshExpiringOAuthTokens(ctx)
 	})
-	cs.Register("prededuct_orphan_cleanup", "*/2 * * * *", func(ctx context.Context) error {
+	cs.Register("prededuct_orphan_cleanup", "预扣孤儿清理", "*/2 * * * *", func(ctx context.Context) error {
 		billing.CleanExpiredPreDeducts(ctx)
 		return nil
 	})
-	cs.Register("prededuct_tracks_cleanup", "0 4 * * *", func(ctx context.Context) error {
+	cs.Register("prededuct_tracks_cleanup", "预扣轨迹清理", "0 4 * * *", func(ctx context.Context) error {
 		billing.CleanSettledPreDeductTracks(ctx)
 		return nil
 	})
-	cs.Register("update_check", "0 */6 * * *", func(ctx context.Context) error {
+	cs.Register("billing_daily_reconciliation", "计费日对账", "20 5 * * *", func(ctx context.Context) error {
+		// 日对账：聚合对账（bil_records vs bil_transactions）+ 交叉对账（usage_logs 反连接
+		// 发现漏结算免单请求）+ 冻结余额一致性校验，结果经日志告警
+		_, err := billing.RunDailyReconciliation(ctx)
+		return err
+	})
+	cs.Register("update_check", "系统更新检查", "0 */6 * * *", func(ctx context.Context) error {
 		if common.Config().GetBool(ctx, "update_auto_check_enabled") {
 			return update.BackgroundCheck(ctx)
 		}
 		return nil
 	})
-	cs.Register("order_expiration", "*/5 * * * *", func(ctx context.Context) error {
+	cs.Register("order_expiration", "订单过期处理", "*/5 * * * *", func(ctx context.Context) error {
 		return task.ExpirePendingOrders(ctx)
 	})
 }
