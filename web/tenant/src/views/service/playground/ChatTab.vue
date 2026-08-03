@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick, watch } from 'vue'
 import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
@@ -28,9 +28,17 @@ const isImageModel = computed(() =>
 	selectedModelItem.value?.category === 'image',
 )
 
-if (props.models.length > 0) {
-	selectedModel.value = props.models[0].model_id
-}
+// models 由父组件异步加载，setup 阶段可能为空；用 watch（immediate）保证
+// 首次加载完成或列表变化时，只要当前未选择就自动选中第一个模型
+watch(
+	() => props.models,
+	models => {
+		if (!selectedModel.value && models.length > 0) {
+			selectedModel.value = models[0].model_id
+		}
+	},
+	{ immediate: true },
+)
 
 const params = reactive({
 	temperature: 0.7,
