@@ -117,7 +117,7 @@ function excludedTotal(d: any): number {
 							<span v-else class="fwd-muted">-</span>
 						</template>
 					</a-table-column>
-					<a-table-column title="上游模型" data-index="upstream_model" :width="130" ellipsis />
+					<a-table-column title="上游模型" data-index="upstream_model" :width="130" ellipsis tooltip />
 					<a-table-column title="状态" :width="65">
 						<template #cell="{ record }">
 							<a-tag :color="record.success ? 'green' : 'red'" size="small">
@@ -128,7 +128,7 @@ function excludedTotal(d: any): number {
 					<a-table-column title="延迟" :width="80">
 						<template #cell="{ record }">{{ formatMs(record.latency_ms) }}</template>
 					</a-table-column>
-					<a-table-column title="错误" data-index="error" :width="160" ellipsis />
+					<a-table-column title="错误" data-index="error" :width="200" ellipsis tooltip />
 				</template>
 			</a-table>
 		</div>
@@ -163,7 +163,7 @@ function excludedTotal(d: any): number {
 						</template>
 					</a-table-column>
 					<a-table-column v-if="hasTier" title="层级" data-index="tier" :width="80" />
-					<a-table-column v-if="hasSession" title="会话来源" data-index="session_source" :width="100" ellipsis />
+					<a-table-column v-if="hasSession" title="会话来源" data-index="session_source" :width="100" ellipsis tooltip />
 					<a-table-column title="候选" :width="120">
 						<template #cell="{ record }">
 							<span>{{ record.candidates ?? '-' }}</span>
