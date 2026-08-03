@@ -58,3 +58,6 @@ func (c *ControllerV1) AdminTransactionList(ctx context.Context, req *v1.AdminTr
 func (c *ControllerV1) AdminDashboardModelHourly(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (res *v1.AdminDashboardModelHourlyRes, err error) {
 	return service.Admin().GetModelHourlyCost(ctx, req)
 }
+func (c *ControllerV1) AdminWalletOfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (res *v1.AdminWalletOfflineRechargeRes, err error) {
+	return service.Admin().OfflineRecharge(ctx, req)
+}

@@ -282,6 +282,20 @@ type AdminWalletAdjustReq struct {
 
 type AdminWalletAdjustRes struct{}
 
+type AdminWalletOfflineRechargeReq struct {
+	g.Meta        `path:"/wallets/{tenant_id}/offline-recharge" method:"post" mime:"json" tags:"管理后台-钱包" summary:"线下充值入账"`
+	TenantID      int64   `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	Amount        float64 `json:"amount" v:"required|min:0.01" dc:"线下入账金额（人民币 CNY），按平台汇率换算为 USD 到账"`
+	TransactionNo string  `json:"transaction_no" dc:"银行转账流水号（选填，用于对账与防重复入账）"`
+	Description   string  `json:"description" v:"required" dc:"入账说明（必填，如客户名称、转账原因）"`
+}
+
+type AdminWalletOfflineRechargeRes struct {
+	CreditedUSD float64 `json:"credited_usd" dc:"实际入账美元金额"`
+	Rate        float64 `json:"rate" dc:"使用的 CNY→USD 汇率"`
+	Balance     float64 `json:"balance" dc:"入账后总余额（USD）"`
+}
+
 type AdminWalletTransactionListReq struct {
 	g.Meta   `path:"/wallets/{tenant_id}/transactions" method:"get" mime:"json" tags:"管理后台-钱包" summary:"交易流水"`
 	TenantID int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`

@@ -448,6 +448,9 @@ const txFilterType = ref('')
 const showRechargeModal = ref(false)
 const rechargeForm = reactive({ amount: 0, description: '' })
 const rechargeLoading = ref(false)
+const showOfflineRechargeModal = ref(false)
+const offlineRechargeForm = reactive({ amount: 0, transaction_no: '', description: '' })
+const offlineRechargeLoading = ref(false)
 const showThresholdModal = ref(false)
 const thresholdForm = reactive({ threshold: 0 })
 const thresholdLoading = ref(false)
@@ -470,19 +473,22 @@ const txColumns: TableColumnData[] = [
     },
   },
   {
-    title: '金额', dataIndex: 'amount', width: 120,
+    title: '金额', dataIndex: 'amount', width: 140,
     render({ record }) {
       const val = parseFloat(record.amount) || 0
       const color = val >= 0 ? 'rgb(var(--green-6))' : 'rgb(var(--red-6))'
       const prefix = val >= 0 ? '+' : ''
-      return h('span', { style: { fontWeight: 600, color } }, `${prefix}${val.toFixed(4)}`)
+      return h('span', { style: { fontWeight: 600, color } }, `${prefix}${val.toFixed(6)}`)
     },
   },
   {
-    title: '变动后余额', dataIndex: 'balance_after', width: 120,
-    render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(2)}` },
+    title: '变动后余额', dataIndex: 'balance_after', width: 140,
+    render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(6)}` },
   },
-  { title: '用户', dataIndex: 'username', width: 120 },
+  {
+    title: '用户', dataIndex: 'username', width: 120,
+    render({ record }) { return record.username || '--' },
+  },
   { title: '请求ID', dataIndex: 'request_id', width: 140, ellipsis: true },
   { title: '模型', dataIndex: 'model_name', width: 130 },
   { title: '描述', dataIndex: 'description', ellipsis: true },
@@ -528,9 +534,9 @@ async function handleRecharge(done: (closed: boolean) => void) {
   try {
     await request.post(`/admin/wallets/${tenantId}/adjust`, {
       amount: rechargeForm.amount,
-      description: rechargeForm.description || (rechargeForm.amount > 0 ? '管理员充值' : '管理员扣减'),
+      description: rechargeForm.description || (rechargeForm.amount > 0 ? '管理员增加余额' : '管理员扣减余额'),
     })
-    Message.success(rechargeForm.amount > 0 ? '充值成功' : '扣减成功')
+    Message.success(rechargeForm.amount > 0 ? '余额已增加' : '余额已扣减')
     done(true)
     await fetchWalletDetail()
     await fetchDetail()
@@ -538,6 +544,35 @@ async function handleRecharge(done: (closed: boolean) => void) {
     return false
   } finally {
     rechargeLoading.value = false
+  }
+}
+
+function openOfflineRecharge() {
+  offlineRechargeForm.amount = 0
+  offlineRechargeForm.transaction_no = ''
+  offlineRechargeForm.description = ''
+  showOfflineRechargeModal.value = true
+}
+
+async function handleOfflineRecharge(done: (closed: boolean) => void) {
+  if (!offlineRechargeForm.amount || offlineRechargeForm.amount <= 0) { Message.warning('请输入大于 0 的入账金额'); return }
+  if (!offlineRechargeForm.description.trim()) { Message.warning('请填写入账说明'); return }
+  offlineRechargeLoading.value = true
+  try {
+    const res: any = await request.post(`/admin/wallets/${tenantId}/offline-recharge`, {
+      amount: offlineRechargeForm.amount,
+      transaction_no: offlineRechargeForm.transaction_no || undefined,
+      description: offlineRechargeForm.description,
+    })
+    const data = res.data?.data || {}
+    Message.success(`入账成功，到账 $${parseFloat(data.credited_usd || 0).toFixed(2)}（汇率 ${data.rate}）`)
+    done(true)
+    await fetchWalletDetail()
+    await fetchDetail()
+  } catch {
+    return false
+  } finally {
+    offlineRechargeLoading.value = false
   }
 }
 
@@ -727,22 +762,23 @@ onMounted(() => {
                 <ACard :bordered="false" title="钱包信息" class="mb-4">
                   <template #extra>
                     <ASpace>
-                      <AButton type="primary" @click="openRecharge">充值 / 调整</AButton>
+                      <AButton type="primary" @click="openRecharge">调整余额</AButton>
+                      <AButton status="success" @click="openOfflineRecharge">线下入账</AButton>
                       <AButton @click="openThreshold">预警设置</AButton>
                     </ASpace>
                   </template>
                   <ADescriptions :column="3" bordered size="medium">
                     <ADescriptionsItem label="可用余额">
-                      <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(2) }}</span>
+                      <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="总余额">
-                      ${{ parseFloat(walletInfo.balance).toFixed(2) }}
+                      ${{ parseFloat(walletInfo.balance).toFixed(6) }}
                     </ADescriptionsItem>
                     <ADescriptionsItem label="冻结余额">
-                      <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(2) }}</span>
+                      <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(6) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="预警阈值">
-                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '关闭' }}
+                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(6)}` : '关闭' }}
                     </ADescriptionsItem>
                   </ADescriptions>
                 </ACard>
@@ -750,7 +786,7 @@ onMounted(() => {
                 <!-- Transaction History -->
                 <ACard :bordered="false" title="交易记录">
                   <template #extra>
-                    <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
+                    <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletTransactions() }">
                       <ARadio value="">全部</ARadio>
                       <ARadio value="recharge">充值</ARadio>
                       <ARadio value="redemption">兑换码</ARadio>
@@ -773,8 +809,8 @@ onMounted(() => {
                       :page-size-options="[10, 20, 50]"
                       show-page-size
                       show-jumper
-                      @change="fetchWalletDetail"
-                      @page-size-change="() => { txPagination.current = 1; fetchWalletDetail() }"
+                      @change="fetchWalletTransactions"
+                      @page-size-change="() => { txPagination.current = 1; fetchWalletTransactions() }"
                     />
                   </div>
                 </ACard>
@@ -964,23 +1000,50 @@ onMounted(() => {
       </template>
     </ADrawer>
 
-    <!-- Recharge / Adjust Balance Modal -->
-    <AModal v-model:visible="showRechargeModal" title="充值 / 调整余额" :width="420" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
-      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
-        当前余额：${{ walletInfo ? parseFloat(walletInfo.balance).toFixed(2) : '0.00' }}
+    <!-- Adjust Balance Modal -->
+    <AModal v-model:visible="showRechargeModal" title="调整余额" :width="440" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
+      <div class="mb-3 text-sm leading-6" style="color: var(--ta-text-secondary)">
+        手动调整该租户的美元钱包余额（正数增加、负数扣减），用于运营补偿、余额纠错等场景。
+        <br />
+        总余额 <span class="money">${{ walletInfo ? parseFloat(walletInfo.balance).toFixed(6) : '0.000000' }}</span>
+        ｜ 可用余额 <span class="money">${{ walletInfo ? (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) : '0.000000' }}</span>
+        <span style="color: var(--ta-text-tertiary)">（扣减上限）</span>
       </div>
       <AForm :model="rechargeForm" layout="vertical">
-        <AFormItem label="金额" required>
-          <AInputNumber v-model="rechargeForm.amount" :precision="2" :step="1" placeholder="正数=充值，负数=扣减" class="w-full">
+        <AFormItem label="调整金额（USD）" required>
+          <AInputNumber v-model="rechargeForm.amount" :precision="2" :step="1" placeholder="正数=增加余额，负数=扣减余额" class="w-full">
             <template #prefix>$</template>
           </AInputNumber>
         </AFormItem>
-        <AFormItem label="描述">
-          <ATextarea v-model="rechargeForm.description" placeholder="操作原因（选填，默认自动生成）" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        <AFormItem label="调整说明">
+          <ATextarea v-model="rechargeForm.description" placeholder="如：运营补偿 / 余额纠错。建议填写，便于对账与审计" :auto-size="{ minRows: 2, maxRows: 4 }" />
         </AFormItem>
       </AForm>
       <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
-        提示：输入正数充值余额，输入负数扣减余额
+        提示：扣减金额不能超过可用余额（不含冻结部分）；如需人民币线下转账到账，请使用「线下入账」
+      </div>
+    </AModal>
+
+    <!-- Offline Recharge Modal -->
+    <AModal v-model:visible="showOfflineRechargeModal" title="线下充值入账" :width="440" :on-before-ok="handleOfflineRecharge" :ok-loading="offlineRechargeLoading">
+      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
+        用于线下银行转账入账：输入人民币金额，到账按平台汇率换算为美元，并累计到累计充值（影响租户等级）。
+      </div>
+      <AForm :model="offlineRechargeForm" layout="vertical">
+        <AFormItem label="入账金额（人民币）" required>
+          <AInputNumber v-model="offlineRechargeForm.amount" :min="0.01" :precision="2" placeholder="如 100" class="w-full">
+            <template #prefix>¥</template>
+          </AInputNumber>
+        </AFormItem>
+        <AFormItem label="转账流水号">
+          <AInput v-model="offlineRechargeForm.transaction_no" placeholder="银行转账流水号（选填，用于对账与防重复入账）" />
+        </AFormItem>
+        <AFormItem label="入账说明" required>
+          <ATextarea v-model="offlineRechargeForm.description" placeholder="如：客户名称 / 转账原因" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        </AFormItem>
+      </AForm>
+      <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
+        到账金额 = 人民币金额 × 平台汇率，精确到 6 位小数
       </div>
     </AModal>
 

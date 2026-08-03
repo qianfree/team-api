@@ -603,6 +603,123 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 	return &v1.AdminWalletAdjustRes{}, nil
 }
 
+// OfflineRecharge 线下充值入账（管理后台）
+// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
+// 与 AdjustBalance 的区别：走正规充值链路——余额与累计充值同步累加、触发等级检查、
+// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账 USD + 转账流水号），
+// 供现金对账与开票追溯。
+func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error) {
+	tenantID := req.TenantID
+	cnyAmount := billing.NewFromFloat(req.Amount)
+	if !cnyAmount.IsPositive() {
+		return nil, common.NewBadRequestError("入账金额必须大于 0")
+	}
+
+	// 唯一换汇点：CNY→USD 只经 billing.ConvertCNYToUSD（与充值履约 FulfillOrder 同一函数），
+	// 汇率取一次用于入账与快照，保证换算可重建。
+	rate := billing.GetExchangeRateCNYToUSD(ctx)
+	usdAmount := billing.ConvertCNYToUSD(ctx, req.Amount)
+	if usdAmount.IsZero() {
+		return nil, common.NewBadRequestError("按当前汇率换算后到账金额为 0，请检查汇率配置")
+	}
+
+	// 转账流水号软去重（防重复入账）：同一租户下已入账过该流水号则拒绝。
+	// 非强原子，配合前端 loading 禁用按钮，拦截人工重复提交足够。
+	if req.TransactionNo != "" {
+		count, err := dao.BilTransactions.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("type", "recharge").
+			Where("description like ?", "%转账流水号 "+req.TransactionNo).Count()
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, common.NewBadRequestError("该转账流水号已入账，请勿重复操作")
+		}
+	}
+
+	var creditedUsd decimal.Decimal
+	var balanceAfter decimal.Decimal
+
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 钱包存在性校验
+		var wallet *struct {
+			ID int64 `json:"id"`
+		}
+		if err := dao.BilWallets.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Fields("id").
+			Scan(&wallet); err != nil {
+			return err
+		}
+		if wallet == nil {
+			return common.NewBadRequestError("钱包不存在")
+		}
+
+		// 原子入账：余额与累计充值同步累加（与 creditWalletTx 一致），
+		// 单条 UPDATE 避免 read-modify-write 竞态，并发下不丢更新。
+		if _, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET balance = balance + ?, cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
+			usdAmount, usdAmount, wallet.ID); err != nil {
+			return err
+		}
+
+		// 读回入账后余额，用于流水快照
+		var bal struct {
+			Balance       decimal.Decimal `json:"balance"`
+			FrozenBalance decimal.Decimal `json:"frozen_balance"`
+		}
+		if err := dao.BilWallets.Ctx(ctx).
+			Where("id", wallet.ID).
+			Fields("balance, frozen_balance").
+			Scan(&bal); err != nil {
+			return err
+		}
+
+		// 流水（type=recharge）：描述拼装 CNY 快照 + 转账流水号，供现金对账与开票追溯
+		desc := fmt.Sprintf("线下充值入账 CNY %.2f × 汇率 %.6f = USD %s", cnyAmount.InexactFloat64(), rate, usdAmount)
+		if req.Description != "" {
+			desc = req.Description + "；" + desc
+		}
+		if req.TransactionNo != "" {
+			desc += "；转账流水号 " + req.TransactionNo
+		}
+		if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     wallet.ID,
+			Type:         "recharge",
+			Amount:       usdAmount,
+			BalanceAfter: bal.Balance,
+			FrozenAfter:  bal.FrozenBalance,
+			Description:  desc,
+		}); err != nil {
+			return gerror.Wrapf(err, "record offline recharge transaction")
+		}
+
+		// 充值后检查租户等级（仅升不降）并重置低余额预警标记
+		if err := billing.CheckAndUpgradeLevel(ctx, tenantID); err != nil {
+			return gerror.Wrapf(err, "check upgrade level after offline recharge")
+		}
+		billing.ResetLowBalanceNotified(ctx, tenantID)
+
+		creditedUsd = usdAmount
+		balanceAfter = bal.Balance
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 事务提交后清除钱包两级缓存（进程内 + Redis），避免 300s TTL 内读到旧余额
+	billing.InvalidateWallet(ctx, tenantID)
+
+	return &v1.AdminWalletOfflineRechargeRes{
+		CreditedUSD: billing.InexactFloat64(creditedUsd),
+		Rate:        rate,
+		Balance:     billing.InexactFloat64(balanceAfter),
+	}, nil
+}
+
 // GetWalletInfo 获取租户钱包信息（管理后台）
 func (s *sAdmin) GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (*v1.AdminWalletInfoRes, error) {
 	type walletRow struct {
@@ -655,6 +772,27 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 		ScanAndCount(&records, &total, false)
 	if err != nil {
 		return nil, err
+	}
+
+	// 批量关联用户名：user_id → tnt_users.username（consume 类型为实际消费用户，其余类型一般为空）。
+	// 复用审计模块的批量查询工具，一次 IN 查询解决，避免逐行 N+1。
+	if len(records) > 0 {
+		userKeys := make([]string, 0, len(records))
+		seen := make(map[int64]bool, len(records))
+		for _, r := range records {
+			if r.UserId > 0 && !seen[r.UserId] {
+				seen[r.UserId] = true
+				userKeys = append(userKeys, fmt.Sprintf("%d:%d", req.TenantID, r.UserId))
+			}
+		}
+		if len(userKeys) > 0 {
+			userMap := common.BatchQueryUserNames(ctx, userKeys)
+			for _, r := range records {
+				if r.UserId > 0 {
+					r.Username = userMap[fmt.Sprintf("%d:%d", req.TenantID, r.UserId)]
+				}
+			}
+		}
 	}
 
 	return &v1.AdminWalletTransactionListRes{

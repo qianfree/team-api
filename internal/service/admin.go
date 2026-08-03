@@ -162,6 +162,12 @@ type (
 		GetTenantWallets(ctx context.Context, req *v1.AdminWalletListReq) (*v1.AdminWalletListRes, error)
 		// AdjustBalance 调整租户余额（管理后台）
 		AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error)
+		// OfflineRecharge 线下充值入账（管理后台）
+		// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
+		// 与 AdjustBalance 的区别：走正规充值链路——余额与累计充值同步累加、触发等级检查、
+		// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账 USD + 转账流水号），
+		// 供现金对账与开票追溯。
+		OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error)
 		// GetWalletInfo 获取租户钱包信息（管理后台）
 		GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (*v1.AdminWalletInfoRes, error)
 		// GetWalletTransactions 获取租户钱包交易流水（管理后台）

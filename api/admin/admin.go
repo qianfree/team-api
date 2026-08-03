@@ -86,6 +86,7 @@ type IAdminV1 interface {
 	AdminWalletList(ctx context.Context, req *v1.AdminWalletListReq) (res *v1.AdminWalletListRes, err error)
 	AdminWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (res *v1.AdminWalletInfoRes, err error)
 	AdminWalletAdjust(ctx context.Context, req *v1.AdminWalletAdjustReq) (res *v1.AdminWalletAdjustRes, err error)
+	AdminWalletOfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (res *v1.AdminWalletOfflineRechargeRes, err error)
 	AdminWalletTransactionList(ctx context.Context, req *v1.AdminWalletTransactionListReq) (res *v1.AdminWalletTransactionListRes, err error)
 	AdminWalletSetWarningThreshold(ctx context.Context, req *v1.AdminWalletSetWarningThresholdReq) (res *v1.AdminWalletSetWarningThresholdRes, err error)
 	AdminUsageLogExport(ctx context.Context, req *v1.AdminUsageLogExportReq) (res *v1.AdminUsageLogExportRes, err error)
