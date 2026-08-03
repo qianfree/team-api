@@ -48,6 +48,11 @@ type PricingResult struct {
 	CacheReadPrice     float64 // 缓存读取每 1M token 价格
 	CacheCreationPrice float64 // 缓存创建每 1M token 价格
 
+	// 模型最大输出 token 数（随定价一起缓存，供预扣估算使用，
+	// 避免 EstimatePreDeductAmount 每请求单独查一次 mdl_models）。
+	// 0 表示未设置（含旧缓存条目），使用方需自带默认值兜底。
+	MaxOutputTokens int
+
 	// 租户自定义阶梯定价（JSONB 解析后的原始数据，供 CalculateCost 使用）
 	CustomTiers []pricingTierRow
 }
@@ -79,18 +84,19 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		return &cached, nil
 	}
 
-	// 1. 查模型基础信息
+	// 1. 查模型基础信息（max_output_tokens 一并取出，随定价缓存供预扣估算复用）
 	type modelRow struct {
-		ID      int64  `json:"id"`
-		ModelId string `json:"model_id"`
-		Status  string `json:"status"`
+		ID              int64  `json:"id"`
+		ModelId         string `json:"model_id"`
+		Status          string `json:"status"`
+		MaxOutputTokens int    `json:"max_output_tokens"`
 	}
 
 	var model *modelRow
 	err := dao.MdlModels.Ctx(ctx).
 		Where("model_id", modelName).
 		Where("status", "active").
-		Fields("id, model_id, status").
+		Fields("id, model_id, status, max_output_tokens").
 		Scan(&model)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query model price")
@@ -251,6 +257,7 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		Currency:           "USD",
 		CacheReadPrice:     cacheReadPrice,
 		CacheCreationPrice: cacheCreationPrice,
+		MaxOutputTokens:    model.MaxOutputTokens,
 		CustomTiers:        customTiers,
 	}
 
@@ -431,22 +438,13 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return pricing.PerRequestPrice, nil
 	}
 
-	// Token 计费：估算
-	type modelRow struct {
-		MaxOutputTokens int `json:"max_output_tokens"`
-	}
-	var model *modelRow
-	err = dao.MdlModels.Ctx(ctx).
-		Where("model_id", modelName).
-		Fields("max_output_tokens").
-		Scan(&model)
-	if err != nil {
-		return 0, gerror.Wrapf(err, "estimate pre-deduct: query model output limit")
-	}
-
+	// Token 计费：估算输出上限。
+	// max_output_tokens 已随 GetModelPrice 的 600s 定价缓存一起取出，
+	// 不再单独查 mdl_models（原实现每请求一条无缓存 SQL，高并发下是纯浪费）。
+	// 为 0（模型未设置，或旧缓存条目缺此字段）时按 4096 兜底。
 	maxOutput := 4096
-	if model != nil && model.MaxOutputTokens > 0 {
-		maxOutput = model.MaxOutputTokens
+	if pricing.MaxOutputTokens > 0 {
+		maxOutput = pricing.MaxOutputTokens
 	}
 
 	estimatedOutput := requestedMaxTokens

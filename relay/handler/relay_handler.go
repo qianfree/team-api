@@ -67,7 +67,7 @@ type relayValidation struct {
 	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
 }
 
-// validateRelayRequest 校验请求合法性：relay mode、模型存在性、弃用状态、成员/API Key 模型范围、QPS 限流。
+// validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
 // 纯校验逻辑，无 defer 副作用。
 func validateRelayRequest(
 	ctx context.Context,
@@ -82,6 +82,29 @@ func validateRelayRequest(
 	if relayMode == constant.RelayModeUnknown {
 		g.Log().Errorf(ctx, "[RelayHandler] Unknown relay mode for path: %s", path)
 		return nil, constant.NewRequestError("unsupported endpoint: "+path, nil)
+	}
+
+	// 1.5 QPS 限流检查（尽可能前置：只依赖认证阶段就已就绪的 tenant/user/key ID，
+	// 提前到请求体解析和模型权限检查之前，让超限请求以 1 次 Redis EVAL 的成本被拒绝，
+	// 不再为其解析大 JSON、查模型缓存。副作用：无效请求（坏 body/无权限模型）也计入
+	// QPS 计数——这是期望行为，探测型流量同样应被限流兜住。
+	billingResult := &BillingResult{}
+	if billing != nil {
+		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
+		if !allowed {
+			return nil, &RelayErrorWithRateLimit{
+				StatusCode: 429,
+				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
+				LimitLevel: limitLevel,
+				Remaining:  remaining,
+				ResetAt:    resetAt,
+			}
+		}
+		billingResult.RateLimitInfo = &common.RateLimitInfo{
+			Limit:     limit,
+			Remaining: remaining,
+			ResetAt:   resetAt,
+		}
 	}
 
 	relayModeStr := relayModeString(relayMode)
@@ -143,6 +166,7 @@ func validateRelayRequest(
 			return nil, constant.NewModelGoneError(lookupModel, depInfo.SunsetDate)
 		}
 	}
+	billingResult.Deprecation = depInfo
 
 	// 3.7 检查成员模型范围
 	if allowed, err := provider.CheckMemberModelAccess(ctx, rc.TenantID, rc.UserID, lookupModel); err != nil {
@@ -158,25 +182,7 @@ func validateRelayRequest(
 		return nil, constant.NewAuthError("model not allowed for this API key")
 	}
 
-	// 5. QPS 限流检查
-	billingResult := &BillingResult{Deprecation: depInfo}
-	if billing != nil {
-		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
-		if !allowed {
-			return nil, &RelayErrorWithRateLimit{
-				StatusCode: 429,
-				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
-				LimitLevel: limitLevel,
-				Remaining:  remaining,
-				ResetAt:    resetAt,
-			}
-		}
-		billingResult.RateLimitInfo = &common.RateLimitInfo{
-			Limit:     limit,
-			Remaining: remaining,
-			ResetAt:   resetAt,
-		}
-	}
+	// 5. QPS 限流已前置到步骤 1.5（见上），此处不再检查
 
 	// 7. 估算输入 token 数
 	estimatedInputTokens := estimateInputTokens(body)
@@ -406,15 +412,6 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	})
 	defer monitor.UnregisterRequest(rc.RequestID)
 
-	if billing != nil {
-		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, 0); err != nil {
-			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
-		}
-		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, 0); err != nil {
-			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
-		}
-	}
-
 	var preDeductAmount float64
 	if billing != nil {
 		amt, err := billing.PreDeduct(ctx, rc.TenantID, v.modelName, v.estimatedTokens, v.maxTokens, v.isStream, rc.RequestID)
@@ -427,12 +424,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		}
 		preDeductAmount = amt
 		v.billingResult.PreDeductAmount = amt
+		// 成员/Key 额度检查只做这一次（带实际预扣额）：额度是"控制线"计数器而非资源冻结，
+		// 预扣前后检查的竞态语义相同。原先预扣前额外的 Check(0) 快速闸门对全量请求
+		// 各多付一次 Redis 往返，只为让"额度已耗尽"的请求少走一步预扣+退款，得不偿失
+		//（该场景已被上游 QPS 限流兜底），故移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
 		}
-		// 按实际预扣额复查成员额度（前置的 Check(0) 只是冻结前的快速闸门，
-		// 不带金额无法拦截"当前用量在限额内、本笔请求会超限"的场景）
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("member quota exceeded", err)

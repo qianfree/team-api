@@ -84,6 +84,43 @@ type RealtimeContext struct {
 func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext, provider common.DataProvider, billing common.BillingProvider) (*common.Usage, *BillingResult, error) {
 	ctx := r.Context()
 
+	// 0. 前置检查（scope / IP 白名单 / QPS 限流）：只依赖认证上下文，放在 WebSocket
+	// 升级之前——升级后连接已被劫持，无法再写标准 HTTP 状态码；前置后被拒请求能拿到
+	// 正常的 401/429 响应，也省掉无谓的升级握手和首消息读取。
+	// 注意：上层调用方（internal/handler/relay）对 realtime 的返回错误只记日志、不写响应
+	//（因升级后的错误无法写回），故升级前的拒绝必须在此处自行写回 HTTP 错误响应，
+	// 否则客户端会收到空 body 的 200。
+	billingResult := &BillingResult{}
+	if billing != nil {
+		if !billing.CheckScope(rc.Scope, "realtime") {
+			err := constant.NewAuthError("API key scope denied")
+			WriteRelayError(w, err)
+			return nil, billingResult, err
+		}
+		if !billing.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
+			err := constant.NewAuthError("IP address is not allowed")
+			WriteRelayError(w, err)
+			return nil, billingResult, err
+		}
+		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
+		if !allowed {
+			err := &RelayErrorWithRateLimit{
+				StatusCode: 429,
+				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
+				LimitLevel: limitLevel,
+				Remaining:  remaining,
+				ResetAt:    resetAt,
+			}
+			WriteRelayError(w, err)
+			return nil, billingResult, err
+		}
+		billingResult.RateLimitInfo = &common.RateLimitInfo{
+			Limit:     limit,
+			Remaining: remaining,
+			ResetAt:   resetAt,
+		}
+	}
+
 	// 1. WebSocket 升级
 	clientConn, err := websocketUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -111,31 +148,6 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		})
 		_ = clientConn.WriteMessage(websocket.TextMessage, errMsg)
 		return nil, nil, fmt.Errorf("model not found in first websocket message")
-	}
-
-	billingResult := &BillingResult{}
-	if billing != nil {
-		if !billing.CheckScope(rc.Scope, "realtime") {
-			return nil, billingResult, constant.NewAuthError("API key scope denied")
-		}
-		if !billing.CheckIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
-			return nil, billingResult, constant.NewAuthError("IP address is not allowed")
-		}
-		allowed, limitLevel, limit, remaining, resetAt := billing.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
-		if !allowed {
-			return nil, billingResult, &RelayErrorWithRateLimit{
-				StatusCode: 429,
-				Message:    fmt.Sprintf("rate limit exceeded at %s level", limitLevel),
-				LimitLevel: limitLevel,
-				Remaining:  remaining,
-				ResetAt:    resetAt,
-			}
-		}
-		billingResult.RateLimitInfo = &common.RateLimitInfo{
-			Limit:     limit,
-			Remaining: remaining,
-			ResetAt:   resetAt,
-		}
 	}
 
 	// 3. 验证模型
@@ -247,13 +259,6 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		}
 		defer billing.ReleaseApiKeyConcurrent(ctx, rc.ApiKeyID)
 
-		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, 0); err != nil {
-			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
-		}
-		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, 0); err != nil {
-			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
-		}
-
 		amt, billErr := billing.PreDeduct(ctx, rc.TenantID, modelName, 0, 0, false, rc.RequestID)
 		if billErr != nil {
 			// 未配价模型 fail-closed：返回明确的请求错误，而非误导性的"余额不足"
@@ -263,11 +268,12 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			return nil, nil, constant.NewQuotaError("insufficient balance", billErr)
 		}
 		preDeductAmount = amt
+		// 成员/Key 额度检查只做这一次（带实际预扣额），与 RelayHandler 一致：
+		// 预扣前的 Check(0) 快速闸门对全量请求多付 Redis 往返，收益不成比例，已移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
 		}
-		// 按实际预扣额复查成员额度（上方 Check(0) 只是冻结前的快速闸门）
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
 			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)

@@ -92,6 +92,13 @@ func HandleTaskSubmit(
 	billingProvider common.TaskBillingProvider,
 	channelMeta *common.ChannelMeta,
 ) {
+	// 0. QPS 限流检查（前置：只依赖认证上下文，超限请求在解析请求体之前被拒绝）
+	allowed, limitLevel, _, _, _ := billingProvider.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
+	if !allowed {
+		writeTaskError(rc.Writer, http.StatusTooManyRequests, fmt.Sprintf("rate limit exceeded at %s level", limitLevel), "")
+		return
+	}
+
 	// 1. 解析模型名
 	var req map[string]json.RawMessage
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -119,11 +126,6 @@ func HandleTaskSubmit(
 	}
 	if rc.KeyIpWhitelist != "" && !checkTaskIPWhitelist(rc.KeyIpWhitelist, rc.ClientIP) {
 		writeTaskError(rc.Writer, http.StatusForbidden, "IP address is not allowed", "")
-		return
-	}
-	allowed, limitLevel, _, _, _ := billingProvider.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
-	if !allowed {
-		writeTaskError(rc.Writer, http.StatusTooManyRequests, fmt.Sprintf("rate limit exceeded at %s level", limitLevel), "")
 		return
 	}
 	if !billingProvider.AcquireApiKeyConcurrent(ctx, rc.ApiKeyID, rc.KeyConcurrency) {

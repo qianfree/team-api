@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -38,7 +39,16 @@ var DefaultRateLimitConfig = RateLimitConfig{
 }
 
 // LoadRateLimitConfig loads rate limit config from ConfigService, falling back to defaults.
+//
+// 热路径优化：CheckRateLimit（阶段 2）和 AcquireConcurrent（阶段 3）每请求各调用一次本函数，
+// 每次做 5 个配置 key 查找（各自含缓存锁与可能的 L2/DB 回源）。限流配置是全局低频变更数据，
+// 用进程级 5s 快照把高并发下的重复组装收敛为一次原子读；后台修改限流配置最多延迟 5s 生效，
+// 对限流阈值这类"软控制线"可接受。
 func LoadRateLimitConfig(ctx context.Context) RateLimitConfig {
+	if snap := rateLimitConfigSnapshot.Load(); snap != nil && time.Now().Before(snap.expireAt) {
+		return snap.config
+	}
+
 	cfg := common.Config()
 	c := DefaultRateLimitConfig
 
@@ -58,8 +68,21 @@ func LoadRateLimitConfig(ctx context.Context) RateLimitConfig {
 		c.TenantConc = v
 	}
 
+	rateLimitConfigSnapshot.Store(&rateLimitConfigEntry{
+		config:   c,
+		expireAt: time.Now().Add(5 * time.Second),
+	})
 	return c
 }
+
+// rateLimitConfigEntry 限流配置的进程级快照条目
+type rateLimitConfigEntry struct {
+	config   RateLimitConfig
+	expireAt time.Time
+}
+
+// rateLimitConfigSnapshot 限流配置快照（5s TTL，过期后由下一个请求刷新）
+var rateLimitConfigSnapshot atomic.Pointer[rateLimitConfigEntry]
 
 // ---------------------------------------------------------------------------
 // QPS 限流：单个 Lua 脚本完成 4 级检查
