@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
@@ -14,6 +14,15 @@ const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 const sending = ref(false)
 const errorMessage = ref('')
 const selectedModel = ref(props.models[0]?.model_id || '')
+// models 由父组件异步加载，setup 阶段可能为空；加载完成后若未选择则自动补选第一个
+watch(
+	() => props.models,
+	models => {
+		if (!selectedModel.value && models.length > 0) {
+			selectedModel.value = models[0].model_id
+		}
+	},
+)
 const inputText = ref('')
 const voice = ref('alloy')
 const responseFormat = ref('mp3')
