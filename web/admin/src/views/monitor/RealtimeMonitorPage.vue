@@ -291,6 +291,13 @@ onUnmounted(() => {
     <div class="row row-2 mb-16">
       <a-card :bordered="false">
         <template #title><span class="card-title"><IconBarChart :size="16" style="color:#165DFF" /> 并发趋势</span></template>
+        <template #extra>
+          <span class="rt-rate-group" title="最近 60 秒滑动窗口">
+            <span class="rt-rate"><span class="rt-rate-label">RPM</span><strong class="rt-rate-value" style="color:#165DFF">{{ (data.rpm || 0).toLocaleString() }}</strong></span>
+            <span class="rt-rate-sep" />
+            <span class="rt-rate"><span class="rt-rate-label">TPM</span><strong class="rt-rate-value" style="color:#00B42A">{{ (data.tpm || 0).toLocaleString() }}</strong></span>
+          </span>
+        </template>
         <v-chart ref="concurrencyChart" :option="concurrencyOption" style="height: 280px" autoresize />
       </a-card>
       <a-card :bordered="false">
@@ -719,6 +726,35 @@ onUnmounted(() => {
   gap: 6px;
   font-size: 15px;
   font-weight: 500;
+}
+
+/* 并发趋势卡片 header 右侧的实时 RPM/TPM */
+.rt-rate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.rt-rate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.rt-rate-label {
+  font-size: 11px;
+  color: var(--color-text-3);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.rt-rate-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  line-height: 1;
+}
+.rt-rate-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
 }
 
 /* Sync-image worker pool */

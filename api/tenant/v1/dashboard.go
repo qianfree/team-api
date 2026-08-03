@@ -12,6 +12,8 @@ type TenantDashboardRes struct {
 	Today       map[string]any `json:"today"`
 	Month       map[string]any `json:"month"`
 	Wallet      map[string]any `json:"wallet"`
+	Rpm         int64          `json:"rpm" dc:"最近60秒滑动窗口请求数（本租户）"`
+	Tpm         int64          `json:"tpm" dc:"最近60秒滑动窗口token数（本租户）"`
 	ActiveKeys  int            `json:"active_keys"`
 	MemberCount int            `json:"member_count"`
 }

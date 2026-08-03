@@ -98,6 +98,9 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		return nil, err
 	}
 
+	// 实时 RPM/TPM（Redis 滑动窗口，本租户维度；Redis 不可用时为 0）
+	rpm, tpm := common.GetRealtimeMetrics(ctx, tenantID)
+
 	return &v1.TenantDashboardRes{
 		Today: map[string]any{
 			"requests":      todayRow.Requests,
@@ -117,6 +120,8 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 			"available":         roundUSD(wallet.Balance - wallet.FrozenBalance),
 			"warning_threshold": roundUSD(wallet.WarningThreshold),
 		},
+		Rpm:         rpm,
+		Tpm:         tpm,
 		ActiveKeys:  activeKeys,
 		MemberCount: memberCount,
 	}, nil
