@@ -351,10 +351,10 @@ func (s *sAdmin) GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardM
 
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -363,13 +363,29 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	var conditions []string
 	var args []any
 
+	if req.ID > 0 {
+		conditions = append(conditions, "u.id = ?")
+		args = append(args, req.ID)
+	}
 	if req.TenantID > 0 {
 		conditions = append(conditions, "u.tenant_id = ?")
 		args = append(args, req.TenantID)
 	}
+	if req.UserID > 0 {
+		conditions = append(conditions, "u.user_id = ?")
+		args = append(args, req.UserID)
+	}
 	if req.Username != "" {
 		conditions = append(conditions, "t.username LIKE ?")
 		args = append(args, "%"+req.Username+"%")
+	}
+	if req.ApiKeyID > 0 {
+		conditions = append(conditions, "u.api_key_id = ?")
+		args = append(args, req.ApiKeyID)
+	}
+	if req.ChannelID > 0 {
+		conditions = append(conditions, "u.channel_id = ?")
+		args = append(args, req.ChannelID)
 	}
 	if req.Model != "" {
 		conditions = append(conditions, "u.model_name = ?")
@@ -385,11 +401,11 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, req.StartDate+" 00:00:00")
+		args = append(args, common.StartOfRange(req.StartDate))
 	}
 	if req.EndDate != "" {
 		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, req.EndDate+" 23:59:59")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := ""
@@ -1120,10 +1136,10 @@ func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDash
 
 // ExportUsageLogs exports usage logs to CSV or Excel.
 func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExportReq) (*v1.AdminUsageLogExportRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -1149,13 +1165,29 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	buildUsageWhere := func() (string, []any) {
 		var conditions []string
 		var args []any
+		if req.ID > 0 {
+			conditions = append(conditions, "u.id = ?")
+			args = append(args, req.ID)
+		}
 		if req.TenantID > 0 {
 			conditions = append(conditions, "u.tenant_id = ?")
 			args = append(args, req.TenantID)
 		}
+		if req.UserID > 0 {
+			conditions = append(conditions, "u.user_id = ?")
+			args = append(args, req.UserID)
+		}
 		if req.Username != "" {
 			conditions = append(conditions, "t.username LIKE ?")
 			args = append(args, "%"+req.Username+"%")
+		}
+		if req.ApiKeyID > 0 {
+			conditions = append(conditions, "u.api_key_id = ?")
+			args = append(args, req.ApiKeyID)
+		}
+		if req.ChannelID > 0 {
+			conditions = append(conditions, "u.channel_id = ?")
+			args = append(args, req.ChannelID)
 		}
 		if req.Model != "" {
 			conditions = append(conditions, "u.model_name = ?")
@@ -1171,11 +1203,11 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		}
 		if req.StartDate != "" {
 			conditions = append(conditions, "u.created_at >= ?")
-			args = append(args, req.StartDate+" 00:00:00")
+			args = append(args, common.StartOfRange(req.StartDate))
 		}
 		if req.EndDate != "" {
 			conditions = append(conditions, "u.created_at <= ?")
-			args = append(args, req.EndDate+" 23:59:59")
+			args = append(args, common.EndOfRange(req.EndDate))
 		}
 		where := ""
 		if len(conditions) > 0 {

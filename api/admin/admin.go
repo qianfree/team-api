@@ -63,6 +63,7 @@ type IAdminV1 interface {
 	ChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (res *v1.ChannelHealthTrendRes, err error)
 	ChannelExport(ctx context.Context, req *v1.ChannelExportReq) (res *v1.ChannelExportRes, err error)
 	ChannelClone(ctx context.Context, req *v1.ChannelCloneReq) (res *v1.ChannelCloneRes, err error)
+	ChannelResetHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (res *v1.ChannelResetHealthRes, err error)
 	ChannelErrorEventList(ctx context.Context, req *v1.ChannelErrorEventListReq) (res *v1.ChannelErrorEventListRes, err error)
 	ChannelErrorStats(ctx context.Context, req *v1.ChannelErrorStatsReq) (res *v1.ChannelErrorStatsRes, err error)
 	ChannelErrorTrend(ctx context.Context, req *v1.ChannelErrorTrendReq) (res *v1.ChannelErrorTrendRes, err error)

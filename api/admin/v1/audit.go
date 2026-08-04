@@ -62,7 +62,9 @@ type RequestAuditLogListReq struct {
 	g.Meta     `path:"/audit/request-logs" method:"get" mime:"json" tags:"管理后台-审计" summary:"请求审计日志"`
 	Page       int    `json:"page" d:"1"`
 	PageSize   int    `json:"page_size" d:"20"`
+	ID         int64  `json:"id" dc:"日志ID"`
 	TenantID   int    `json:"tenant_id" dc:"租户ID"`
+	UserID     int64  `json:"user_id" dc:"用户ID"`
 	ApiKeyID   int    `json:"api_key_id" dc:"API Key ID"`
 	Username   string `json:"username" dc:"用户名（模糊匹配）"`
 	RequestId  string `json:"request_id" dc:"Request ID（精确匹配）"`
@@ -70,8 +72,8 @@ type RequestAuditLogListReq struct {
 	Method     string `json:"method" dc:"HTTP 方法"`
 	Path       string `json:"path" dc:"请求路径"`
 	StatusCode int    `json:"status_code" dc:"状态码"`
-	StartDate  string `json:"start_date" dc:"开始日期"`
-	EndDate    string `json:"end_date" dc:"结束日期"`
+	StartDate  string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate    string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type RequestAuditLogListRes struct {

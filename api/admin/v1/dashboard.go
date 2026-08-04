@@ -122,13 +122,17 @@ type AdminUsageLogListReq struct {
 	g.Meta      `path:"/usage-logs" method:"get" mime:"json" tags:"管理后台-用量" summary:"用量日志列表"`
 	Page        int    `json:"page" d:"1" dc:"页码"`
 	PageSize    int    `json:"page_size" d:"20" v:"between:1,100" dc:"每页数量"`
+	ID          int64  `json:"id" dc:"用量记录ID"`
 	TenantID    int64  `json:"tenant_id" dc:"租户ID"`
+	UserID      int64  `json:"user_id" dc:"用户ID"`
 	Username    string `json:"username" dc:"用户名（模糊匹配）"`
+	ApiKeyID    int64  `json:"api_key_id" dc:"API Key ID"`
+	ChannelID   int64  `json:"channel_id" dc:"渠道ID"`
 	Model       string `json:"model" dc:"模型名称"`
 	Status      string `json:"status" dc:"状态"`
 	RequestType int    `json:"request_type" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
-	StartDate   string `json:"start_date" dc:"开始日期"`
-	EndDate     string `json:"end_date" dc:"结束日期"`
+	StartDate   string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate     string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type AdminUsageLogItem struct {
@@ -373,13 +377,17 @@ type AdminWalletSetWarningThresholdRes struct{}
 type AdminUsageLogExportReq struct {
 	g.Meta      `path:"/usage-logs/export" method:"get" mime:"json" tags:"管理后台-用量" summary:"导出用量日志"`
 	Format      string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	ID          int64  `json:"id" in:"query" dc:"用量记录ID"`
 	TenantID    int64  `json:"tenant_id" in:"query" dc:"租户ID"`
+	UserID      int64  `json:"user_id" in:"query" dc:"用户ID"`
 	Username    string `json:"username" in:"query" dc:"用户名（模糊匹配）"`
+	ApiKeyID    int64  `json:"api_key_id" in:"query" dc:"API Key ID"`
+	ChannelID   int64  `json:"channel_id" in:"query" dc:"渠道ID"`
 	Model       string `json:"model" in:"query" dc:"模型名称"`
 	Status      string `json:"status" in:"query" dc:"状态"`
 	RequestType int    `json:"request_type" in:"query" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
-	StartDate   string `json:"start_date" in:"query" dc:"开始日期"`
-	EndDate     string `json:"end_date" in:"query" dc:"结束日期"`
+	StartDate   string `json:"start_date" in:"query" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate     string `json:"end_date" in:"query" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type AdminUsageLogExportRes struct{}

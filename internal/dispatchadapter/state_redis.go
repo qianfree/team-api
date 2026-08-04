@@ -327,6 +327,44 @@ func (s *RedisState) MarkChannelRecovered(ctx context.Context, channelID int64) 
 }
 
 // ---------------------------------------------------------------------------
+// 健康度重置
+// ---------------------------------------------------------------------------
+
+// resetHealthSuccEwma 重置健康度时写入的成功率 EWMA：对应健康分≈80（0.9²×100=81）。
+const resetHealthSuccEwma = 0.9
+
+// luaHealthReset 健康 EWMA 重置（管理后台"重置健康度"）：成功率恢复为健康值、延迟清零。
+// ARGV: succ, nowMs, keyTtlMs
+const luaHealthReset = `
+local succ = tonumber(ARGV[1])
+if succ <= 0 then succ = 1 end
+redis.call('HSET', KEYS[1], 'succ_ewma', succ, 'lat_ewma', 0, 'updated_ms', ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1`
+
+// ResetHealth 重置渠道健康（管理后台"重置健康度"）：渠道级 + 各模型级熔断复位为 CLOSED
+// 并开启爬坡窗口（recovered_ms），各模型成功率 EWMA 恢复为健康值，渠道立即恢复被调度选择的能力。
+// 失败仅记 Debug 日志（管理后台手动操作，重试成本低）。
+func (s *RedisState) ResetHealth(ctx context.Context, channelID int64, models []string) {
+	chStr := strconv.FormatInt(channelID, 10)
+	now := time.Now().UnixMilli()
+
+	s.resetBreakerState(ctx, keyBreaker+chStr, now)
+	for _, model := range models {
+		s.resetBreakerState(ctx, keyBreaker+chStr+":"+model, now)
+		if _, err := g.Redis().Do(ctx, "EVAL", luaHealthReset, 1,
+			keyHealth+chStr+":"+model, resetHealthSuccEwma, now, stateKeyTTLMs); err != nil {
+			g.Log().Debugf(ctx, "[Dispatch] 健康重置失败: channel=%d model=%s err=%v", channelID, model, err)
+		}
+	}
+}
+
+// resetBreakerState 熔断复位为 CLOSED 并记录 recovered_ms（开启爬坡窗口）。
+func (s *RedisState) resetBreakerState(ctx context.Context, key string, nowMs int64) {
+	_, _ = g.Redis().Do(ctx, "EVAL", luaBreakerManualReset, 1, key, nowMs, stateKeyTTLMs)
+}
+
+// ---------------------------------------------------------------------------
 // 熔断探测令牌
 // ---------------------------------------------------------------------------
 

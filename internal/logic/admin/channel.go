@@ -61,6 +61,9 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	if req.ID > 0 {
 		query = query.Where("chn_channels.id", req.ID)
 	}
+	if req.BaseURL != "" {
+		query = query.Where("chn_channels.base_url LIKE ?", "%"+req.BaseURL+"%")
+	}
 	if req.Model != "" {
 		// 按支持的模型名筛选：渠道需具备匹配的模型能力（chn_abilities）。
 		// 用 EXISTS 相关子查询而非 JOIN，避免一个渠道命中多个模型时产生重复行、破坏分页与总数。
@@ -706,6 +709,55 @@ func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealt
 	return &v1.ChannelHealthTrendRes{Points: points}, nil
 }
 
+// ResetChannelHealth 重置渠道健康度（渠道可能已修复、重新可用）：落库健康分 80（展示层），
+// 并复位熔断 + 成功率 EWMA（调度层），使渠道立即恢复被调度选择的能力。
+func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (*v1.ChannelResetHealthRes, error) {
+	// 渠道必须存在
+	count, err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewBusinessError(404, "渠道不存在")
+	}
+
+	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；下次维护快照会按策略重算）
+	affected, err := dao.ChnHealthScores.Ctx(ctx).
+		Where("channel_id", req.ID).
+		Data(do.ChnHealthScores{
+			SuccessRate:         90.00,
+			LatencyMs:           0,
+			StabilityScore:      100.00,
+			ConsecutiveFailures: 0,
+			HealthScore:         80.00,
+			CalculatedAt:        gtime.Now(),
+		}).
+		UpdateAndGetAffected()
+	if err != nil {
+		return nil, err
+	}
+	// 健康分记录缺失时兜底插入（正常情况下创建渠道时已由 InitHealthScore 初始化）
+	if affected == 0 {
+		_, err = dao.ChnHealthScores.Ctx(ctx).Insert(do.ChnHealthScores{
+			ChannelId:           req.ID,
+			SuccessRate:         90.00,
+			LatencyMs:           0,
+			StabilityScore:      100.00,
+			ConsecutiveFailures: 0,
+			HealthScore:         80.00,
+			CalculatedAt:        gtime.Now(),
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 调度层：复位渠道级/模型级熔断 + 成功率恢复，渠道立即恢复被选择能力
+	dispatchadapter.ResetChannelHealth(ctx, req.ID)
+
+	return nil, nil
+}
+
 // ExportChannels exports channel list to CSV or Excel.
 func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error) {
 	channelFields := "chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.created_at, h.health_score"
@@ -741,6 +793,9 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 			}
 			if req.ID > 0 {
 				query = query.Where("chn_channels.id", req.ID)
+			}
+			if req.BaseURL != "" {
+				query = query.Where("chn_channels.base_url LIKE ?", "%"+req.BaseURL+"%")
 			}
 			if req.Model != "" {
 				// 与 ListChannels 保持一致：EXISTS 相关子查询避免 JOIN 重复行

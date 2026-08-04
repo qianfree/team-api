@@ -28,6 +28,7 @@ const filterStatus = ref<string | undefined>(undefined)
 const filterSearch = ref('')
 const filterID = ref<number | undefined>(undefined)
 const filterModel = ref('')
+const filterBaseURL = ref('')
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -122,7 +123,7 @@ const columns: TableColumnData[] = [
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
   {
-    title: '操作', dataIndex: 'actions', width: 210, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 300, fixed: 'right',
     render({ record }) {
       const isActive = record.status === 'active'
       const action = isActive ? '禁用' : '启用'
@@ -136,6 +137,15 @@ const columns: TableColumnData[] = [
               size: 'small',
               status: isActive ? 'normal' : 'success',
             }, () => action))
+          : null,
+        hasPermission('channel:edit')
+          ? h(Popconfirm, {
+              content: '确定重置该渠道健康度？熔断将复位、成功率恢复，渠道立即恢复被调度选择。',
+              onOk: () => resetHealth(record),
+            }, () => h(Button, {
+              size: 'small',
+              status: 'warning',
+            }, () => '重置健康度'))
           : null,
         h(Button, { size: 'small', type: 'primary', onClick: () => openDetail(record) }, () => '详情'),
         hasPermission('channel:delete')
@@ -156,6 +166,7 @@ async function fetchData() {
     if (filterSearch.value) params.search = filterSearch.value
     if (filterID.value) params.id = filterID.value
     if (filterModel.value) params.model = filterModel.value
+    if (filterBaseURL.value) params.base_url = filterBaseURL.value
     const res: any = await request.get('/admin/channels', { params })
     data.value = res.data?.data?.list || res.data?.list || []
     // 记录本次加载时已持久化的权重/层级，供行内编辑失败回滚
@@ -232,6 +243,15 @@ async function handleSubmit(done: () => void) {
 async function deleteChannel(row: any) {
   try { await request.delete(`/admin/channels/${row.id}`); message.success('删除成功'); fetchData() }
   catch { /* interceptor handles error toast */ }
+}
+
+// 重置渠道健康度：熔断复位 + 成功率恢复，渠道立即恢复被调度选择的能力。
+async function resetHealth(row: any) {
+  try {
+    await request.post(`/admin/channels/${row.id}/reset-health`)
+    message.success('已重置健康度')
+    fetchData()
+  } catch { /* interceptor handles error toast */ }
 }
 
 // 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
@@ -385,6 +405,7 @@ const { exporting, exportFile } = useExport({
     search: filterSearch.value,
     id: filterID.value,
     model: filterModel.value,
+    base_url: filterBaseURL.value,
   }),
 })
 </script>
@@ -446,11 +467,12 @@ const { exporting, exportFile } = useExport({
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
       <ASpace>
-        <ASelect v-model="filterType" :options="[{ label: '全部类型', value: '' }, ...providerTypeOptions]" placeholder="供应商类型" allow-clear allow-search style="width: 180px" @change="handleFilter" />
-        <ASelect v-model="filterStatus" :options="statusOptions" placeholder="状态" allow-clear style="width: 120px" @change="handleFilter" />
-        <AInput v-model="filterSearch" placeholder="搜索渠道名..." allow-clear style="width: 200px" @keydown.enter="handleFilter" @clear="handleFilter" />
         <AInputNumber v-model="filterID" placeholder="渠道 ID" :min="1" allow-clear style="width: 120px" @change="handleFilter" @clear="handleFilter" />
+        <ASelect v-model="filterType" :options="[{ label: '全部类型', value: '' }, ...providerTypeOptions]" placeholder="供应商类型" allow-clear allow-search style="width: 180px" @change="handleFilter" />
         <AInput v-model="filterModel" placeholder="搜索模型名..." allow-clear style="width: 160px" @keydown.enter="handleFilter" @clear="handleFilter" />
+        <ASelect v-model="filterStatus" :options="statusOptions" placeholder="状态" allow-clear style="width: 120px" @change="handleFilter" />
+        <AInput v-model="filterBaseURL" placeholder="搜索地址..." allow-clear style="width: 220px" @keydown.enter="handleFilter" @clear="handleFilter" />
+        <AInput v-model="filterSearch" placeholder="搜索渠道名..." allow-clear style="width: 200px" @keydown.enter="handleFilter" @clear="handleFilter" />
         <AButton @click="handleFilter">搜索</AButton>
       </ASpace>
     </ACard>
