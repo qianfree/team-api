@@ -833,6 +833,183 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 	return &v1.AdminWalletSetWarningThresholdRes{}, nil
 }
 
+// frozenReleaseMinAge 手动释放冻结的保护期。冻结时长低于此值的预扣大概率仍有请求在途
+// （长流式/realtime 会话），释放会使该请求失去超扣保护，必须显式 force 并由前端二次确认。
+const frozenReleaseMinAge = 10 * time.Minute
+
+// frozenTaskInfo 冻结项关联的异步任务信息（用于释放护栏判断）
+type frozenTaskInfo struct {
+	Status         string `json:"status"`
+	BillingSettled bool   `json:"billing_settled"`
+}
+
+// isTaskTerminal 异步任务是否已到终态
+func isTaskTerminal(status string) bool {
+	return status == "SUCCESS" || status == "FAILURE"
+}
+
+// frozenItemGuard 计算单笔冻结项的释放护栏结论。
+// 返回：是否可释放、是否需要强制、拦截原因。
+func frozenItemGuard(task *frozenTaskInfo, age time.Duration) (releasable bool, needForce bool, blockReason string) {
+	if task != nil {
+		if !isTaskTerminal(task.Status) {
+			// 任务仍在推进：预扣由任务结算流程负责（成功结算/失败退款/30分钟超时退款），
+			// 手动释放会让后续结算认领不到冻结、track 终态错乱
+			return false, false, "关联异步任务进行中，任务完成或超时后将自动结算/退款"
+		}
+		if !task.BillingSettled {
+			// 终态但未结算：轮询器 15 秒内会重试结算/退款，手动释放只会与之竞争
+			return false, false, "关联异步任务待结算，系统将自动重试，请稍后刷新"
+		}
+		// 终态且已结算但 track 仍 frozen：结算认领异常留下的真孤儿，允许释放
+	}
+	if age < frozenReleaseMinAge {
+		return true, true, ""
+	}
+	return true, false, ""
+}
+
+// queryFrozenTaskInfos 批量查询冻结项关联的异步任务（request_id 剥离 _adjust 后缀后关联 tsk_model_tasks）
+func queryFrozenTaskInfos(ctx context.Context, tenantID int64, requestIDs []string) map[string]*frozenTaskInfo {
+	result := make(map[string]*frozenTaskInfo)
+	if len(requestIDs) == 0 {
+		return result
+	}
+	baseIDs := make([]string, 0, len(requestIDs))
+	seen := make(map[string]bool, len(requestIDs))
+	for _, id := range requestIDs {
+		base := strings.TrimSuffix(id, "_adjust")
+		if !seen[base] {
+			seen[base] = true
+			baseIDs = append(baseIDs, base)
+		}
+	}
+
+	type taskRow struct {
+		RequestId      string `json:"request_id"`
+		Status         string `json:"status"`
+		BillingSettled bool   `json:"billing_settled"`
+	}
+	var rows []taskRow
+	if err := dao.TskModelTasks.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		WhereIn("request_id", baseIDs).
+		Fields("request_id, status, billing_settled").
+		Scan(&rows); err != nil {
+		g.Log().Warningf(ctx, "query frozen task infos: tenant=%d: %v", tenantID, err)
+		return result
+	}
+	for _, r := range rows {
+		result[r.RequestId] = &frozenTaskInfo{Status: r.Status, BillingSettled: r.BillingSettled}
+	}
+	return result
+}
+
+// GetWalletFrozenItems 获取租户钱包冻结明细（管理后台）。
+// 数据源为 DB 预扣追踪表（释放操作的权威依据），而非 Redis 明细缓存。
+func (s *sAdmin) GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (*v1.AdminWalletFrozenItemListRes, error) {
+	type trackRow struct {
+		RequestId string          `json:"request_id"`
+		ModelName string          `json:"model_name"`
+		Amount    decimal.Decimal `json:"amount"`
+		CreatedAt *gtime.Time     `json:"created_at"`
+	}
+	var rows []trackRow
+	err := dao.BilPredeductTracks.Ctx(ctx).
+		Where("tenant_id", req.TenantID).
+		Where("status", "frozen").
+		Fields("request_id, model_name, amount, created_at").
+		OrderAsc("created_at").
+		Scan(&rows)
+	if err != nil {
+		return nil, err
+	}
+
+	requestIDs := make([]string, 0, len(rows))
+	for _, r := range rows {
+		requestIDs = append(requestIDs, r.RequestId)
+	}
+	taskInfos := queryFrozenTaskInfos(ctx, req.TenantID, requestIDs)
+
+	now := time.Now()
+	items := make([]*v1.AdminWalletFrozenItem, 0, len(rows))
+	for _, r := range rows {
+		age := now.Sub(r.CreatedAt.Time)
+		task := taskInfos[strings.TrimSuffix(r.RequestId, "_adjust")]
+		releasable, needForce, blockReason := frozenItemGuard(task, age)
+		taskStatus := ""
+		if task != nil {
+			taskStatus = task.Status
+		}
+		items = append(items, &v1.AdminWalletFrozenItem{
+			RequestID:   r.RequestId,
+			ModelName:   r.ModelName,
+			Amount:      billing.InexactFloat64(r.Amount),
+			CreatedAt:   r.CreatedAt.String(),
+			AgeSeconds:  int64(age.Seconds()),
+			Releasable:  releasable,
+			NeedForce:   needForce,
+			BlockReason: blockReason,
+			TaskStatus:  taskStatus,
+		})
+	}
+
+	return &v1.AdminWalletFrozenItemListRes{List: items}, nil
+}
+
+// ReleaseWalletFrozenItem 按笔释放冻结（管理后台运维逃生舱）。
+// 释放走 billing.UnfreezePreDeduct 的 status='frozen' 原子 claim 路径：与并发结算竞争安全、
+// 幂等、逐笔精确，绝不直接改写 bil_wallets.frozen_balance 汇总值。
+func (s *sAdmin) ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (*v1.AdminWalletFrozenReleaseRes, error) {
+	type trackRow struct {
+		Amount    decimal.Decimal `json:"amount"`
+		Status    string          `json:"status"`
+		CreatedAt *gtime.Time     `json:"created_at"`
+	}
+	var track *trackRow
+	err := dao.BilPredeductTracks.Ctx(ctx).
+		Where("tenant_id", req.TenantID).
+		Where("request_id", req.RequestID).
+		Fields("amount, status, created_at").
+		Scan(&track)
+	if err != nil {
+		return nil, err
+	}
+	if track == nil {
+		return nil, common.NewNotFoundError("冻结项")
+	}
+	if track.Status != "frozen" {
+		return nil, common.NewBadRequestError(fmt.Sprintf("该冻结项已处理（当前状态：%s），无需释放", track.Status))
+	}
+
+	// 护栏一：关联异步任务的预扣由任务结算流程负责，禁止手动释放（force 也不放行）
+	task := queryFrozenTaskInfos(ctx, req.TenantID, []string{req.RequestID})[strings.TrimSuffix(req.RequestID, "_adjust")]
+	age := time.Since(track.CreatedAt.Time)
+	releasable, needForce, blockReason := frozenItemGuard(task, age)
+	if !releasable {
+		return nil, common.NewBadRequestError(blockReason)
+	}
+
+	// 护栏二：保护期内（可能仍有请求在途）必须显式强制释放
+	if needForce && !req.Force {
+		return nil, common.NewBadRequestError(fmt.Sprintf(
+			"该笔冻结仅 %.0f 分钟，对应请求可能仍在进行中（长流式/实时会话），释放将使其失去超扣保护；确认后请使用强制释放",
+			age.Minutes()))
+	}
+
+	if err := billing.UnfreezePreDeduct(ctx, req.TenantID, req.RequestID); err != nil {
+		return nil, err
+	}
+
+	// 业务日志补充释放原因与操作上下文（HTTP 层审计由 OperationLog 中间件记录）
+	g.Log().Infof(ctx, "admin release frozen prededuct: tenant=%d request=%s amount=%s age=%s force=%v reason=%s",
+		req.TenantID, req.RequestID, track.Amount, age.Round(time.Second), req.Force, req.Reason)
+
+	return &v1.AdminWalletFrozenReleaseRes{
+		ReleasedAmount: billing.InexactFloat64(track.Amount),
+	}, nil
+}
+
 // GetAllTransactions 获取所有租户交易流水（管理后台）
 func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
