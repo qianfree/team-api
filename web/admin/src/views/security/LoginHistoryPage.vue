@@ -149,7 +149,6 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
     </ACard>
 
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable
         :data="list"
         :loading="loading"
@@ -193,6 +192,7 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
         </template>
       </ATable>
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"

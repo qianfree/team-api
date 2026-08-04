@@ -228,7 +228,6 @@ onMounted(() => {
     </PageHeader>
 
     <a-card :bordered="false">
-      <TableStats :total="jobs.length" />
       <a-table
         :data="jobs"
         :columns="columns"
@@ -263,6 +262,9 @@ onMounted(() => {
           </div>
         </template>
       </a-table>
+      <div class="table-footer">
+        <TableStats :total="jobs.length" />
+      </div>
     </a-card>
   </div>
 </template>

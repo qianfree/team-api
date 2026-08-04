@@ -123,9 +123,9 @@ const { exporting, exportFile } = useExport({
     </PageHeader>
 
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="promoCodes" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

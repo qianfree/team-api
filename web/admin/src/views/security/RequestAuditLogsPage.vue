@@ -346,7 +346,6 @@ onMounted(() => {
 		</a-card>
 
 		<a-card :bordered="false">
-			<TableStats :total="pagination.total" />
 			<a-table
 				:columns="columns"
 				:data="data"
@@ -359,6 +358,7 @@ onMounted(() => {
 				row-key="id"
 			/>
 			<div class="table-footer">
+				<TableStats :total="pagination.total" />
 				<a-pagination
 					v-model:current="pagination.current"
 					v-model:page-size="pagination.pageSize"
@@ -444,10 +444,16 @@ onMounted(() => {
 <style scoped>
 .table-footer {
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 	margin-top: 16px;
 	padding-top: 16px;
 	border-top: 1px solid var(--color-border-light, #e5e6eb);
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.table-footer :deep(.table-stats) {
+	margin-bottom: 0;
 }
 .audit-body {
 	background: var(--color-fill-2, #f7f8fa);

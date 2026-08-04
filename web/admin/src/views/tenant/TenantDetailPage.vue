@@ -792,7 +792,6 @@ onMounted(() => {
               <template #extra>
                 <AButton type="primary" size="small" @click="openGroupModal">分配分组</AButton>
               </template>
-              <TableStats :total="tenantGroups.length" />
               <div v-if="tenantGroups.length === 0" style="color: var(--ta-text-tertiary)">
                 暂未分配模型分组，租户可通过分组获取可用模型
               </div>
@@ -807,13 +806,15 @@ onMounted(() => {
                 row-key="group_id"
                 size="small"
               />
+              <div class="table-footer">
+                <TableStats :total="tenantGroups.length" />
+              </div>
             </ACard>
 
             <ACard :bordered="false" title="独立模型">
               <template #extra>
                 <AButton type="primary" size="small" @click="openAssignModal">分配模型</AButton>
               </template>
-              <TableStats :total="modelsData.length" />
               <div v-if="modelsData.length === 0" style="color: var(--ta-text-tertiary)">
                 暂无独立分配的模型
               </div>
@@ -828,6 +829,9 @@ onMounted(() => {
                 row-key="id"
                 :scroll="{ x: 1100 }"
               />
+              <div class="table-footer">
+                <TableStats :total="modelsData.length" />
+              </div>
             </ACard>
           </ATabPane>
 
