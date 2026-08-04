@@ -9,7 +9,9 @@ type ChannelListReq struct {
 	PageSize int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
 	Type     int    `json:"type" dc:"供应商类型筛选"`
 	Status   string `json:"status" dc:"状态筛选：active/disabled/testing"`
-	Search   string `json:"search" dc:"搜索关键词"`
+	Search   string `json:"search" dc:"搜索关键词（渠道名称/备注）"`
+	ID       int64  `json:"id" dc:"按渠道 ID 精确筛选"`
+	Model    string `json:"model" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
 }
 
 // ChannelListRes 渠道列表响应
@@ -250,7 +252,9 @@ type ChannelExportReq struct {
 	Format string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
 	Type   int    `json:"type" in:"query" dc:"供应商类型筛选"`
 	Status string `json:"status" in:"query" dc:"状态筛选：active/disabled/testing"`
-	Search string `json:"search" in:"query" dc:"搜索关键词"`
+	Search string `json:"search" in:"query" dc:"搜索关键词（渠道名称/备注）"`
+	ID     int64  `json:"id" in:"query" dc:"按渠道 ID 精确筛选"`
+	Model  string `json:"model" in:"query" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
 }
 
 type ChannelExportRes struct{}

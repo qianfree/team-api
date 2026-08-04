@@ -200,7 +200,6 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
-					<TableStats :total="sendPagination.total" />
 					<a-table
 						:columns="sendColumns"
 						:data="sendData"
@@ -213,6 +212,7 @@ onMounted(() => {
 						row-key="id"
 					/>
 					<div class="table-footer">
+						<TableStats :total="sendPagination.total" />
 						<a-pagination
 							v-model:current="sendPagination.current"
 							v-model:page-size="sendPagination.pageSize"
@@ -246,7 +246,6 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
-					<TableStats :total="codePagination.total" />
 					<a-table
 						:columns="codeColumns"
 						:data="codeData"
@@ -259,6 +258,7 @@ onMounted(() => {
 						row-key="id"
 					/>
 					<div class="table-footer">
+						<TableStats :total="codePagination.total" />
 						<a-pagination
 							v-model:current="codePagination.current"
 							v-model:page-size="codePagination.pageSize"

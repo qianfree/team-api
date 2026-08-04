@@ -158,7 +158,6 @@ onMounted(() => {
     </ACard>
 
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"
@@ -170,6 +169,7 @@ onMounted(() => {
         :pagination="false"
       />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"

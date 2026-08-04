@@ -58,6 +58,14 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	if req.Search != "" {
 		query = query.Where("chn_channels.name LIKE ? OR chn_channels.remark LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
 	}
+	if req.ID > 0 {
+		query = query.Where("chn_channels.id", req.ID)
+	}
+	if req.Model != "" {
+		// 按支持的模型名筛选：渠道需具备匹配的模型能力（chn_abilities）。
+		// 用 EXISTS 相关子查询而非 JOIN，避免一个渠道命中多个模型时产生重复行、破坏分页与总数。
+		query = query.Where("EXISTS (SELECT 1 FROM chn_abilities WHERE chn_abilities.channel_id = chn_channels.id AND (chn_abilities.model_name LIKE ? OR chn_abilities.upstream_model LIKE ?))", "%"+req.Model+"%", "%"+req.Model+"%")
+	}
 
 	var total int
 	var channels []struct {
@@ -730,6 +738,13 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 			}
 			if req.Search != "" {
 				query = query.Where("chn_channels.name LIKE ? OR chn_channels.remark LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+			}
+			if req.ID > 0 {
+				query = query.Where("chn_channels.id", req.ID)
+			}
+			if req.Model != "" {
+				// 与 ListChannels 保持一致：EXISTS 相关子查询避免 JOIN 重复行
+				query = query.Where("EXISTS (SELECT 1 FROM chn_abilities WHERE chn_abilities.channel_id = chn_channels.id AND (chn_abilities.model_name LIKE ? OR chn_abilities.upstream_model LIKE ?))", "%"+req.Model+"%", "%"+req.Model+"%")
 			}
 			var batch []struct {
 				ID          int64       `json:"id"`

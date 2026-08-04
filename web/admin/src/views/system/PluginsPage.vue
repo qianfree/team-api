@@ -305,7 +305,6 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <TableStats :total="data.length" />
       <ATable
         :columns="columns"
         :data="data"
@@ -319,6 +318,9 @@ onMounted(() => {
       <AEmpty v-if="!loading && data.length === 0" style="margin-top: 40px">
         <template #description>暂无已注册的插件</template>
       </AEmpty>
+      <div class="table-footer">
+        <TableStats :total="data.length" />
+      </div>
     </ACard>
 
     <!-- Config Modal -->

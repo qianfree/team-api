@@ -94,7 +94,6 @@ onMounted(fetchData)
     <PageHeader title="交易流水" description="查看所有租户的钱包交易记录" />
 
     <ACard :bordered="false" class="mt-4">
-      <TableStats :total="pagination.total" />
       <div class="mb-4">
         <ASpace wrap>
           <AInput v-model="filterTenantId" placeholder="租户ID" allow-clear style="width: 120px" @keydown.enter="resetAndFetch" />
@@ -107,6 +106,7 @@ onMounted(fetchData)
       </div>
       <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1200 }" :bordered="false" :stripe="true" size="small" :pagination="false" row-key="id" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />
       </div>
     </ACard>

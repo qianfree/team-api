@@ -218,7 +218,6 @@ const { exporting, exportFile } = useExport({
       <!-- Tab 1: Operation Logs -->
       <ATabPane key="logs" title="操作日志">
         <ACard :bordered="false" class="mt-4">
-          <TableStats :total="opPagination.total" />
           <div class="mb-4">
             <ASpace wrap>
               <AInput
@@ -255,6 +254,7 @@ const { exporting, exportFile } = useExport({
             row-key="id"
           />
           <div class="table-footer">
+            <TableStats :total="opPagination.total" />
             <APagination
               v-model:current="opPagination.current"
               v-model:page-size="opPagination.pageSize"
@@ -271,7 +271,6 @@ const { exporting, exportFile } = useExport({
       <!-- Tab 2: Sensitive Access Logs -->
       <ATabPane key="sensitive" title="敏感访问日志">
         <ACard :bordered="false" class="mt-4">
-          <TableStats :total="sensPagination.total" />
           <div class="mb-4">
             <ASpace wrap>
               <AInput
@@ -308,6 +307,7 @@ const { exporting, exportFile } = useExport({
             row-key="id"
           />
           <div class="table-footer">
+            <TableStats :total="sensPagination.total" />
             <APagination
               v-model:current="sensPagination.current"
               v-model:page-size="sensPagination.pageSize"

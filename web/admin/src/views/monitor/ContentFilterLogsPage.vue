@@ -263,7 +263,6 @@ onMounted(() => {
 		</a-card>
 
 		<a-card :bordered="false">
-			<TableStats :total="total" />
 			<a-table
 				:data="data"
 				:columns="columns"
@@ -272,6 +271,7 @@ onMounted(() => {
 				row-key="id"
 			/>
 			<div class="table-footer">
+				<TableStats :total="total" />
 				<a-pagination
 					v-model:current="pagination.current"
 					v-model:page-size="pagination.pageSize"
