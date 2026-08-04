@@ -325,6 +325,42 @@ type AdminWalletTransactionListRes struct {
 	PageSize int                           `json:"page_size"`
 }
 
+// AdminWalletFrozenItemListReq 冻结明细列表请求（预扣追踪表中 status=frozen 的记录）
+type AdminWalletFrozenItemListReq struct {
+	g.Meta   `path:"/wallets/{tenant_id}/frozen-items" method:"get" mime:"json" tags:"管理后台-钱包" summary:"冻结明细列表"`
+	TenantID int64 `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+}
+
+// AdminWalletFrozenItem 单笔冻结明细
+type AdminWalletFrozenItem struct {
+	RequestID   string  `json:"request_id" dc:"请求ID"`
+	ModelName   string  `json:"model_name" dc:"模型名称"`
+	Amount      float64 `json:"amount" dc:"冻结金额（USD）"`
+	CreatedAt   string  `json:"created_at" dc:"冻结时间"`
+	AgeSeconds  int64   `json:"age_seconds" dc:"已冻结时长（秒）"`
+	Releasable  bool    `json:"releasable" dc:"是否可释放（false 时 block_reason 说明原因）"`
+	NeedForce   bool    `json:"need_force" dc:"是否需要强制释放（冻结时长过短，可能仍有请求进行中）"`
+	BlockReason string  `json:"block_reason" dc:"不可释放原因（如关联异步任务进行中）"`
+	TaskStatus  string  `json:"task_status" dc:"关联异步任务状态（无关联时为空）"`
+}
+
+type AdminWalletFrozenItemListRes struct {
+	List []*AdminWalletFrozenItem `json:"list"`
+}
+
+// AdminWalletFrozenReleaseReq 按笔释放冻结请求
+type AdminWalletFrozenReleaseReq struct {
+	g.Meta    `path:"/wallets/{tenant_id}/frozen-items/release" method:"post" mime:"json" tags:"管理后台-钱包" summary:"释放单笔冻结"`
+	TenantID  int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	RequestID string `json:"request_id" v:"required" dc:"要释放的冻结项请求ID"`
+	Force     bool   `json:"force" dc:"强制释放（冻结时长不足保护期时必须显式传 true）"`
+	Reason    string `json:"reason" v:"required" dc:"释放原因（必填，写入审计）"`
+}
+
+type AdminWalletFrozenReleaseRes struct {
+	ReleasedAmount float64 `json:"released_amount" dc:"实际释放金额（USD）"`
+}
+
 type AdminWalletSetWarningThresholdReq struct {
 	g.Meta    `path:"/wallets/{tenant_id}/warning-threshold" method:"put" mime:"json" tags:"管理后台-钱包" summary:"设置预警阈值"`
 	TenantID  int64   `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`

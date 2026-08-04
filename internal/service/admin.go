@@ -174,6 +174,13 @@ type (
 		GetWalletTransactions(ctx context.Context, req *v1.AdminWalletTransactionListReq) (*v1.AdminWalletTransactionListRes, error)
 		// SetWarningThreshold 设置租户钱包预警阈值（管理后台）
 		SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSetWarningThresholdReq) (*v1.AdminWalletSetWarningThresholdRes, error)
+		// GetWalletFrozenItems 获取租户钱包冻结明细（管理后台）。
+		// 数据源为 DB 预扣追踪表（释放操作的权威依据），而非 Redis 明细缓存。
+		GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (*v1.AdminWalletFrozenItemListRes, error)
+		// ReleaseWalletFrozenItem 按笔释放冻结（管理后台运维逃生舱）。
+		// 释放走 billing.UnfreezePreDeduct 的 status='frozen' 原子 claim 路径：与并发结算竞争安全、
+		// 幂等、逐笔精确，绝不直接改写 bil_wallets.frozen_balance 汇总值。
+		ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (*v1.AdminWalletFrozenReleaseRes, error)
 		// GetAllTransactions 获取所有租户交易流水（管理后台）
 		GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error)
 		// GetDashboardChannelHealth 获取渠道健康概览（最不健康的5个活跃渠道）
