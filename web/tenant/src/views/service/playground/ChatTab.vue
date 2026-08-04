@@ -246,7 +246,7 @@ async function sendStream(requestBody: Record<string, any>, assistantIdx: number
 
 async function sendMessage() {
 	const content = inputMessage.value.trim()
-	if (!content || !selectedModel.value) return
+	if (!content || !selectedModel.value || sending.value) return
 
 	if (params.systemPrompt && messages.value.length === 0) {
 		messages.value.push({ role: 'system', content: params.systemPrompt })
@@ -434,7 +434,7 @@ function clearChat() {
 					<!-- Input area -->
 					<div class="p-4 border-t border-gray-200">
 						<div class="flex gap-3">
-							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." :disabled="sending" @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
+							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
 							<button class="btn btn-primary self-end" :disabled="sending || !inputMessage.trim()" @click="sendMessage">
 								<Icon name="edit" size="sm" />
 								发送
