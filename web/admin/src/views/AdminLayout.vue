@@ -332,6 +332,8 @@ const menuGroups = [
       { name: 'AdminTickets', label: '工单管理', icon: IconCommand },
       { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage },
       { name: 'AdminAgreements', label: '用户协议', icon: IconFile },
+      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
+      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
     ],
   },
   {
@@ -360,9 +362,6 @@ const menuGroups = [
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage },
       { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
-      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
-      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
-      { name: 'AdminChangelogs', label: '更新日志', icon: IconFile },
     ],
   },
 ]
