@@ -32,6 +32,8 @@ interface ApiKey {
 
 const keys = ref<ApiKey[]>([])
 const loading = ref(false)
+const copyingKeyId = ref<number | null>(null)
+const baseUrl = `${window.location.origin}/v1`
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -136,6 +138,40 @@ async function disableKey(keyId: number) {
 	}
 }
 
+async function copyKey(keyId: number) {
+	if (copyingKeyId.value !== null) return
+
+	copyingKeyId.value = keyId
+	try {
+		const res: any = await request.get(`/tenant/api-keys/${keyId}/value`)
+		const plainKey = res.data?.data?.key
+		if (typeof plainKey !== 'string' || plainKey.length === 0) {
+			toast.error('未获取到 API Key')
+			return
+		}
+
+		try {
+			await navigator.clipboard.writeText(plainKey)
+			toast.success('API Key 已复制到剪贴板')
+		} catch {
+			toast.error('复制失败，请检查浏览器剪贴板权限')
+		}
+	} catch {
+		// 请求错误由统一拦截器提示。
+	} finally {
+		copyingKeyId.value = null
+	}
+}
+
+async function copyBaseUrl() {
+	try {
+		await navigator.clipboard.writeText(baseUrl)
+		toast.success('Base URL 已复制到剪贴板')
+	} catch {
+		toast.error('复制失败，请检查浏览器剪贴板权限')
+	}
+}
+
 function formatDate(d: string | null): string {
 	if (!d) return '永不过期'
 	return d.replace('T', ' ').substring(0, 16)
@@ -149,12 +185,25 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
+		<div class="page-header flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+			<div class="min-w-0">
 				<h1 class="page-title">API 密钥</h1>
-				<p class="page-description">管理您的个人 API 访问密钥</p>
+				<p class="page-description flex flex-wrap items-center gap-x-1.5 gap-y-2">
+					<span>管理您的个人 API 访问密钥。调用 OpenAI 兼容接口时请使用</span>
+					<span class="font-medium text-gray-600">Base URL</span>
+					<code class="code break-all text-xs sm:text-sm">{{ baseUrl }}</code>
+					<button
+						type="button"
+						class="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+						aria-label="复制 Base URL"
+						title="复制 Base URL"
+						@click="copyBaseUrl"
+					>
+						<Icon name="copy" size="xs" />
+					</button>
+				</p>
 			</div>
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center gap-2 lg:flex-none">
 				<!-- Export dropdown -->
 				<div class="relative inline-block">
 					<button class="btn btn-secondary" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
@@ -198,7 +247,21 @@ onMounted(() => {
 						<tr v-for="key in keys" :key="key.id">
 							<td class="font-medium text-gray-900">{{ key.name }}</td>
 							<td>
-								<span class="code">{{ key.key_prefix }}...</span>
+								<div class="inline-flex items-center gap-1.5">
+									<span class="code">{{ key.key_prefix }}...</span>
+									<button
+										type="button"
+										class="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+										:disabled="copyingKeyId !== null"
+										:aria-busy="copyingKeyId === key.id"
+										:aria-label="copyingKeyId === key.id ? '正在获取并复制 API Key' : '复制 API Key'"
+										:title="copyingKeyId === key.id ? '正在复制' : '复制 API Key'"
+										@click="copyKey(key.id)"
+									>
+										<span v-if="copyingKeyId === key.id" class="spinner h-3.5 w-3.5 border-primary-500"></span>
+										<Icon v-else name="copy" size="xs" />
+									</button>
+								</div>
 							</td>
 							<td>
 								<template v-if="key.model_count > 0">
