@@ -286,10 +286,10 @@ func MaskSensitiveData(data string) string {
 // ListRequestAuditLogs 分页查询请求审计日志（不返回 request_body/response_body 以优化性能）
 // 审计数据从审计库查询，关联信息（用户名、租户名等）从主库批量查询后在应用层合并。
 func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditLogListReq) (*v1.RequestAuditLogListRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -298,9 +298,17 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	var conditions []string
 	var args []any
 
+	if req.ID > 0 {
+		conditions = append(conditions, "id = ?")
+		args = append(args, req.ID)
+	}
 	if req.TenantID > 0 {
 		conditions = append(conditions, "tenant_id = ?")
 		args = append(args, int64(req.TenantID))
+	}
+	if req.UserID > 0 {
+		conditions = append(conditions, "user_id = ?")
+		args = append(args, req.UserID)
 	}
 	if req.ApiKeyID > 0 {
 		conditions = append(conditions, "api_key_id = ?")
@@ -354,11 +362,11 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "created_at >= ?")
-		args = append(args, req.StartDate+" 00:00:00")
+		args = append(args, common.StartOfRange(req.StartDate))
 	}
 	if req.EndDate != "" {
 		conditions = append(conditions, "created_at <= ?")
-		args = append(args, req.EndDate+" 23:59:59")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := strings.Join(conditions, " AND ")

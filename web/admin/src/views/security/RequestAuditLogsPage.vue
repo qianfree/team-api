@@ -22,13 +22,11 @@ const pagination = reactive({
 	pageSizeOptions: [10, 20, 50],
 })
 const filter = reactive({
-	tenant_id: null as number | null,
-	api_key_id: '',
-	username: '',
+	id: null as number | null,
 	request_id: '',
-	task_id: '',
-	method: '',
-	status_code: '',
+	tenant_id: null as number | null,
+	user_id: null as number | null,
+	api_key_id: '',
 	date_range: [] as string[],
 })
 
@@ -197,13 +195,11 @@ async function fetchData() {
 			page: pagination.current,
 			page_size: pagination.pageSize,
 		}
-		if (filter.tenant_id) params.tenant_id = filter.tenant_id
-		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
-		if (filter.username) params.username = filter.username
-		if (filter.method) params.method = filter.method
+		if (filter.id) params.id = filter.id
 		if (filter.request_id) params.request_id = filter.request_id
-		if (filter.task_id) params.task_id = filter.task_id
-		if (filter.status_code) params.status_code = parseInt(filter.status_code)
+		if (filter.tenant_id) params.tenant_id = filter.tenant_id
+		if (filter.user_id) params.user_id = filter.user_id
+		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
 			params.end_date = filter.date_range[1]
@@ -246,13 +242,11 @@ function handleFilter() {
 }
 
 function handleReset() {
-	filter.tenant_id = null
-	filter.api_key_id = ''
-	filter.username = ''
+	filter.id = null
 	filter.request_id = ''
-	filter.task_id = ''
-	filter.method = ''
-	filter.status_code = ''
+	filter.tenant_id = null
+	filter.user_id = null
+	filter.api_key_id = ''
 	filter.date_range = []
 	pagination.current = 1
 	fetchData()
@@ -264,9 +258,6 @@ onMounted(() => {
 	if (route.query.request_id) {
 		filter.request_id = String(route.query.request_id)
 	}
-	if (route.query.task_id) {
-		filter.task_id = String(route.query.task_id)
-	}
 	fetchData()
 })
 </script>
@@ -277,6 +268,28 @@ onMounted(() => {
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>
+				<a-range-picker
+					v-model="filter.date_range"
+					show-time
+					style="width: 340px"
+					@change="handleFilter"
+				/>
+				<a-input-number
+					v-model="filter.id"
+					placeholder="日志ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input
+					v-model="filter.request_id"
+					placeholder="Request ID"
+					allow-clear
+					style="width: 200px"
+					@keydown.enter="handleFilter"
+				/>
 				<a-select
 					v-model="filter.tenant_id"
 					:options="tenantOptions"
@@ -289,56 +302,21 @@ onMounted(() => {
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
+				<a-input-number
+					v-model="filter.user_id"
+					placeholder="用户ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
 				<a-input
 					v-model="filter.api_key_id"
 					placeholder="Key ID"
 					allow-clear
 					style="width: 100px"
 					@keydown.enter="handleFilter"
-				/>
-				<a-input
-					v-model="filter.username"
-					placeholder="用户名"
-					allow-clear
-					style="width: 120px"
-					@keydown.enter="handleFilter"
-				/>
-				<a-input
-					v-model="filter.request_id"
-					placeholder="Request ID"
-					allow-clear
-					style="width: 200px"
-					@keydown.enter="handleFilter"
-				/>
-				<a-input
-					v-model="filter.task_id"
-					placeholder="Task ID"
-					allow-clear
-					style="width: 200px"
-					@keydown.enter="handleFilter"
-				/>
-				<a-select
-					v-model="filter.method"
-					placeholder="方法"
-					allow-clear
-					style="width: 100px"
-				>
-					<a-option value="GET">GET</a-option>
-					<a-option value="POST">POST</a-option>
-					<a-option value="PUT">PUT</a-option>
-					<a-option value="DELETE">DELETE</a-option>
-				</a-select>
-				<a-input
-					v-model="filter.status_code"
-					placeholder="状态码"
-					allow-clear
-					style="width: 100px"
-					@keydown.enter="handleFilter"
-				/>
-				<a-range-picker
-					v-model="filter.date_range"
-					style="width: 260px"
-					format="YYYY-MM-DD"
 				/>
 				<a-button type="primary" @click="handleFilter">搜索</a-button>
 				<a-button @click="handleReset">重置</a-button>

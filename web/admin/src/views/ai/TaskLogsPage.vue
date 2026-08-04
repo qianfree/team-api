@@ -22,6 +22,10 @@ const pagination = reactive({
 const filterStatus = ref<string | null>(null)
 const filterPlatform = ref<string | null>(null)
 const filterTaskId = ref('')
+const filterDateRange = ref<string[]>([])
+const filterModel = ref('')
+const filterTenantId = ref<number | undefined>(undefined)
+const filterUserId = ref<number | undefined>(undefined)
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -156,6 +160,13 @@ async function fetchData() {
     if (filterStatus.value) params.status = filterStatus.value
     if (filterPlatform.value) params.platform = filterPlatform.value
     if (filterTaskId.value) params.public_task_id = filterTaskId.value
+    if (filterDateRange.value && filterDateRange.value.length === 2) {
+      params.start_date = filterDateRange.value[0]
+      params.end_date = filterDateRange.value[1]
+    }
+    if (filterModel.value) params.model_name = filterModel.value
+    if (filterTenantId.value) params.tenant_id = filterTenantId.value
+    if (filterUserId.value) params.user_id = filterUserId.value
     const res: any = await request.get('/admin/tasks', { params })
     const raw = res.data?.data
     data.value = (raw?.list || []).filter(Boolean)
@@ -177,6 +188,10 @@ function resetFilter() {
   filterStatus.value = null
   filterPlatform.value = null
   filterTaskId.value = ''
+  filterDateRange.value = []
+  filterModel.value = ''
+  filterTenantId.value = undefined
+  filterUserId.value = undefined
   pagination.current = 1
   fetchData()
 }
@@ -229,12 +244,26 @@ onMounted(() => {
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
       <ASpace wrap>
+        <ARangePicker
+          v-model="filterDateRange"
+          show-time
+          style="width: 340px"
+          @change="handleFilter"
+        />
         <AInput
           v-model="filterTaskId"
           placeholder="任务ID"
           allow-clear
           style="width: 200px"
           @keydown.enter="handleFilter"
+        />
+        <ASelect
+          v-model="filterPlatform"
+          :options="platformOptions"
+          placeholder="平台"
+          allow-clear
+          style="width: 130px"
+          @change="handleFilter"
         />
         <ASelect
           v-model="filterStatus"
@@ -244,13 +273,30 @@ onMounted(() => {
           style="width: 130px"
           @change="handleFilter"
         />
-        <ASelect
-          v-model="filterPlatform"
-          :options="platformOptions"
-          placeholder="平台"
+        <AInput
+          v-model="filterModel"
+          placeholder="模型"
           allow-clear
-          style="width: 130px"
+          style="width: 160px"
+          @keydown.enter="handleFilter"
+        />
+        <AInputNumber
+          v-model="filterTenantId"
+          placeholder="租户ID"
+          :min="1"
+          allow-clear
+          style="width: 120px"
           @change="handleFilter"
+          @clear="handleFilter"
+        />
+        <AInputNumber
+          v-model="filterUserId"
+          placeholder="用户ID"
+          :min="1"
+          allow-clear
+          style="width: 120px"
+          @change="handleFilter"
+          @clear="handleFilter"
         />
         <AButton type="primary" @click="handleFilter">搜索</AButton>
         <AButton @click="resetFilter">重置</AButton>

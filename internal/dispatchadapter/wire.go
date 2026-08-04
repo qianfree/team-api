@@ -91,6 +91,19 @@ func MarkChannelRecovered(ctx context.Context, channelID int64) {
 	}
 }
 
+// ResetChannelHealth 重置渠道健康度（管理后台"重置健康度"按钮）：熔断复位 + 成功率恢复，
+// 渠道立即恢复被调度选择的能力。models 从目录快照取（该渠道服务的模型列表）。
+func ResetChannelHealth(ctx context.Context, channelID int64) {
+	if redisState == nil {
+		return
+	}
+	var models []string
+	if catalog != nil {
+		models = catalog.ChannelModels()[channelID]
+	}
+	redisState.ResetHealth(ctx, channelID, models)
+}
+
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。
 // 管理后台渠道写操作（更新/删除/Key 变更/能力变更）后调用。
 func InvalidateChannel(ctx context.Context, channelID int64) {

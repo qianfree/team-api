@@ -12,6 +12,7 @@ type ChannelListReq struct {
 	Search   string `json:"search" dc:"搜索关键词（渠道名称/备注）"`
 	ID       int64  `json:"id" dc:"按渠道 ID 精确筛选"`
 	Model    string `json:"model" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
+	BaseURL  string `json:"base_url" dc:"按 API 地址筛选（模糊匹配）"`
 }
 
 // ChannelListRes 渠道列表响应
@@ -248,13 +249,14 @@ type HealthTrendPoint struct {
 
 // ChannelExportReq 导出渠道列表请求
 type ChannelExportReq struct {
-	g.Meta `path:"/channels/export" method:"get" mime:"json" tags:"管理后台-渠道" summary:"导出渠道列表"`
-	Format string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
-	Type   int    `json:"type" in:"query" dc:"供应商类型筛选"`
-	Status string `json:"status" in:"query" dc:"状态筛选：active/disabled/testing"`
-	Search string `json:"search" in:"query" dc:"搜索关键词（渠道名称/备注）"`
-	ID     int64  `json:"id" in:"query" dc:"按渠道 ID 精确筛选"`
-	Model  string `json:"model" in:"query" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
+	g.Meta  `path:"/channels/export" method:"get" mime:"json" tags:"管理后台-渠道" summary:"导出渠道列表"`
+	Format  string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	Type    int    `json:"type" in:"query" dc:"供应商类型筛选"`
+	Status  string `json:"status" in:"query" dc:"状态筛选：active/disabled/testing"`
+	Search  string `json:"search" in:"query" dc:"搜索关键词（渠道名称/备注）"`
+	ID      int64  `json:"id" in:"query" dc:"按渠道 ID 精确筛选"`
+	Model   string `json:"model" in:"query" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
+	BaseURL string `json:"base_url" in:"query" dc:"按 API 地址筛选（模糊匹配）"`
 }
 
 type ChannelExportRes struct{}
@@ -271,3 +273,12 @@ type ChannelCloneReq struct {
 type ChannelCloneRes struct {
 	ID int64 `json:"id"`
 }
+
+// ChannelResetHealthReq 重置渠道健康度请求
+type ChannelResetHealthReq struct {
+	g.Meta `path:"/channels/{id}/reset-health" method:"post" mime:"json" tags:"管理后台-渠道" summary:"重置渠道健康度"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"渠道ID"`
+}
+
+// ChannelResetHealthRes 重置渠道健康度响应
+type ChannelResetHealthRes struct{}

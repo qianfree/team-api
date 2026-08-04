@@ -11,6 +11,11 @@ type TaskListReq struct {
 	Status       string `json:"status" in:"query" dc:"筛选状态"`
 	Platform     string `json:"platform" in:"query" dc:"筛选平台(sora/kling/midjourney/suno)"`
 	PublicTaskID string `json:"public_task_id" in:"query" dc:"任务ID（精确匹配）"`
+	ModelName    string `json:"model_name" in:"query" dc:"筛选模型名（精确匹配）"`
+	TenantID     int64  `json:"tenant_id" in:"query" dc:"筛选租户ID"`
+	UserID       int64  `json:"user_id" in:"query" dc:"筛选用户ID"`
+	StartDate    string `json:"start_date" in:"query" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate      string `json:"end_date" in:"query" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type ModelTaskItem struct {

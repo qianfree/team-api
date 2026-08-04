@@ -119,6 +119,9 @@ type (
 		GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefaultURLReq) (*v1.ProviderDefaultURLRes, error)
 		// GetChannelHealthTrend 获取渠道健康趋势数据
 		GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error)
+		// ResetChannelHealth 重置渠道健康度（渠道可能已修复、重新可用）：落库健康分 80（展示层），
+		// 并复位熔断 + 成功率 EWMA（调度层），使渠道立即恢复被调度选择的能力。
+		ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (*v1.ChannelResetHealthRes, error)
 		// ExportChannels exports channel list to CSV or Excel.
 		ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error)
 		// ChannelErrorEventList 渠道错误事件列表

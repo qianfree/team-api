@@ -21,11 +21,14 @@ const pagination = reactive({
 	pageSizeOptions: [10, 20, 50, 100],
 })
 
+const filterId = ref<number | undefined>(undefined)
 const filterTenantId = ref<number | undefined>(undefined)
-const filterUsername = ref('')
+const filterUserId = ref<number | undefined>(undefined)
 const filterModel = ref<string | undefined>(undefined)
-const filterStatus = ref<string | undefined>(undefined)
+const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
+const filterChannelId = ref<number | undefined>(undefined)
+const filterStatus = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>([])
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
@@ -389,11 +392,14 @@ async function fetchData() {
 			page: pagination.current,
 			page_size: pagination.pageSize,
 		}
+		if (filterId.value) params.id = filterId.value
 		if (filterTenantId.value) params.tenant_id = filterTenantId.value
-		if (filterUsername.value) params.username = filterUsername.value
+		if (filterUserId.value) params.user_id = filterUserId.value
 		if (filterModel.value) params.model = filterModel.value
-		if (filterStatus.value) params.status = filterStatus.value
+		if (filterApiKeyId.value) params.api_key_id = filterApiKeyId.value
 		if (filterRequestType.value) params.request_type = filterRequestType.value
+		if (filterChannelId.value) params.channel_id = filterChannelId.value
+		if (filterStatus.value) params.status = filterStatus.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
 			params.end_date = filterDateRange.value[1]
@@ -417,11 +423,14 @@ function handleFilter() {
 }
 
 function handleReset() {
+	filterId.value = undefined
 	filterTenantId.value = undefined
-	filterUsername.value = ''
+	filterUserId.value = undefined
 	filterModel.value = undefined
-	filterStatus.value = undefined
+	filterApiKeyId.value = undefined
 	filterRequestType.value = undefined
+	filterChannelId.value = undefined
+	filterStatus.value = undefined
 	filterDateRange.value = []
 	pagination.current = 1
 	fetchData()
@@ -436,11 +445,14 @@ onMounted(() => {
 const { exporting, exportFile } = useExport({
 	url: '/admin/usage-logs/export',
 	getFilters: () => ({
+		id: filterId.value,
 		tenant_id: filterTenantId.value,
-		username: filterUsername.value,
+		user_id: filterUserId.value,
 		model: filterModel.value,
-		status: filterStatus.value,
+		api_key_id: filterApiKeyId.value,
 		request_type: filterRequestType.value,
+		channel_id: filterChannelId.value,
+		status: filterStatus.value,
 		start_date: filterDateRange.value?.[0],
 		end_date: filterDateRange.value?.[1],
 	}),
@@ -464,10 +476,25 @@ const { exporting, exportFile } = useExport({
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>
+				<a-range-picker
+					v-model="filterDateRange"
+					show-time
+					style="width: 340px"
+					@change="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterId"
+					placeholder="记录ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
 				<a-select
 						v-model="filterTenantId"
 						:options="tenantOptions"
-						placeholder="搜索租户"
+						placeholder="租户ID"
 						allow-search
 						allow-clear
 						:filter-option="false"
@@ -476,12 +503,14 @@ const { exporting, exportFile } = useExport({
 						@change="handleFilter"
 						@clear="handleFilter"
 					/>
-				<a-input
-					v-model="filterUsername"
-					placeholder="用户名"
+				<a-input-number
+					v-model="filterUserId"
+					placeholder="用户ID"
+					:min="1"
 					allow-clear
 					style="width: 120px"
-					@keydown.enter="handleFilter"
+					@change="handleFilter"
+					@clear="handleFilter"
 				/>
 				<a-select
 						v-model="filterModel"
@@ -495,13 +524,14 @@ const { exporting, exportFile } = useExport({
 						@change="handleFilter"
 						@clear="handleFilter"
 					/>
-				<a-select
-					v-model="filterStatus"
-					:options="statusOptions"
-					placeholder="状态"
+				<a-input-number
+					v-model="filterApiKeyId"
+					placeholder="API Key ID"
+					:min="1"
 					allow-clear
 					style="width: 120px"
 					@change="handleFilter"
+					@clear="handleFilter"
 				/>
 				<a-select
 					v-model="filterRequestType"
@@ -511,9 +541,21 @@ const { exporting, exportFile } = useExport({
 					style="width: 120px"
 					@change="handleFilter"
 				/>
-				<a-range-picker
-					v-model="filterDateRange"
-					style="width: 280px"
+				<a-input-number
+					v-model="filterChannelId"
+					placeholder="渠道ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-select
+					v-model="filterStatus"
+					:options="statusOptions"
+					placeholder="状态"
+					allow-clear
+					style="width: 120px"
 					@change="handleFilter"
 				/>
 				<a-button type="primary" @click="handleFilter">搜索</a-button>
