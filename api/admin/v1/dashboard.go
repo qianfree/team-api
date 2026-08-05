@@ -365,6 +365,22 @@ type AdminWalletFrozenReleaseRes struct {
 	ReleasedAmount float64 `json:"released_amount" dc:"实际释放金额（USD）"`
 }
 
+// AdminWalletFrozenReleaseAllReq 一键释放全部冻结请求
+type AdminWalletFrozenReleaseAllReq struct {
+	g.Meta   `path:"/wallets/{tenant_id}/frozen-items/release-all" method:"post" mime:"json" tags:"管理后台-钱包" summary:"一键释放全部冻结"`
+	TenantID int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	Force    bool   `json:"force" dc:"是否强制释放保护期内（冻结不足 10 分钟）的冻结项"`
+	Reason   string `json:"reason" v:"required" dc:"释放原因（必填，写入审计）"`
+}
+
+// AdminWalletFrozenReleaseAllRes 一键释放结果
+type AdminWalletFrozenReleaseAllRes struct {
+	ReleasedCount  int64    `json:"released_count" dc:"实际释放笔数"`
+	ReleasedAmount float64  `json:"released_amount" dc:"实际释放金额合计（USD）"`
+	SkippedCount   int64    `json:"skipped_count" dc:"跳过笔数（任务关联/待结算/保护期未强制）"`
+	SkippedReasons []string `json:"skipped_reasons" dc:"跳过原因摘要（去重）"`
+}
+
 type AdminWalletSetWarningThresholdReq struct {
 	g.Meta    `path:"/wallets/{tenant_id}/warning-threshold" method:"put" mime:"json" tags:"管理后台-钱包" summary:"设置预警阈值"`
 	TenantID  int64   `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`

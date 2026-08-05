@@ -995,6 +995,86 @@ func (s *sAdmin) ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalle
 	}, nil
 }
 
+// ReleaseAllWalletFrozenItems 一键释放租户全部冻结（管理后台运维逃生舱）。
+// 遍历 Redis 活跃冻结明细，复用 frozenItemGuard 护栏逐项筛选：
+//   - 任务关联在途/待结算项自动跳过（由任务结算流程负责，禁止手动释放）；
+//   - 保护期内（冻结不足 frozenReleaseMinAge）项默认跳过，Force=true 时才释放；
+//   - 其余项逐个 UnfreezePreDeduct（Lua 认领即删，幂等，与并发结算竞争安全）。
+//
+// 返回实际释放笔数/金额与跳过原因摘要（去重）。
+func (s *sAdmin) ReleaseAllWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (*v1.AdminWalletFrozenReleaseAllRes, error) {
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	requestIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		requestIDs = append(requestIDs, it.RequestID)
+	}
+	taskInfos := queryFrozenTaskInfos(ctx, req.TenantID, requestIDs)
+
+	now := time.Now()
+	releasedAmount := billing.Zero
+	var releasedCount int64
+	var skippedCount int64
+	skippedSet := make(map[string]bool)
+	var skippedReasons []string
+
+	for i := range items {
+		it := items[i]
+		age := now.Sub(time.Unix(it.CreatedAt, 0))
+		task := taskInfos[strings.TrimSuffix(it.RequestID, "_adjust")]
+		releasable, needForce, blockReason := frozenItemGuard(task, age)
+
+		switch {
+		case !releasable:
+			skippedCount++
+			if !skippedSet[blockReason] {
+				skippedSet[blockReason] = true
+				skippedReasons = append(skippedReasons, blockReason)
+			}
+			continue
+		case needForce && !req.Force:
+			reason := "保护期内（冻结不足 10 分钟），未勾选强制释放"
+			skippedCount++
+			if !skippedSet[reason] {
+				skippedSet[reason] = true
+				skippedReasons = append(skippedReasons, reason)
+			}
+			continue
+		}
+
+		claimed, err := billing.UnfreezePreDeduct(ctx, req.TenantID, it.RequestID)
+		if err != nil {
+			// 单项释放失败不中断整体：记录并继续，其余项照常释放
+			g.Log().Warningf(ctx, "admin release-all: unfreeze %s failed: %v", it.RequestID, err)
+			skippedCount++
+			reason := fmt.Sprintf("释放失败：%v", err)
+			if !skippedSet[reason] {
+				skippedSet[reason] = true
+				skippedReasons = append(skippedReasons, reason)
+			}
+			continue
+		}
+		if claimed.IsPositive() {
+			releasedCount++
+			releasedAmount = billing.AddMoney(releasedAmount, claimed)
+		}
+	}
+
+	// 业务日志补充释放上下文（HTTP 层审计由 OperationLog 中间件记录）
+	g.Log().Infof(ctx, "admin release-all frozen: tenant=%d released=%d amount=%s skipped=%d force=%v reason=%s",
+		req.TenantID, releasedCount, releasedAmount.String(), skippedCount, req.Force, req.Reason)
+
+	return &v1.AdminWalletFrozenReleaseAllRes{
+		ReleasedCount:  releasedCount,
+		ReleasedAmount: billing.InexactFloat64(releasedAmount),
+		SkippedCount:   skippedCount,
+		SkippedReasons: skippedReasons,
+	}, nil
+}
+
 // GetAllTransactions 获取所有租户交易流水（管理后台）
 func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)

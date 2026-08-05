@@ -163,7 +163,9 @@ type (
 		GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingRecordListReq) (*v1.AdminBillingRecordListRes, error)
 		// GetTenantWallets 获取所有租户钱包（管理后台）
 		GetTenantWallets(ctx context.Context, req *v1.AdminWalletListReq) (*v1.AdminWalletListRes, error)
-		// AdjustBalance 调整租户余额（管理后台）
+		// AdjustBalance 调整租户余额（管理后台）。
+		// Redis 权威化架构：余额变动以 Redis Lua 为资金提交点（扣减在权威可用余额上原子判断，
+		// 穿透冻结会破坏预扣一致性），DB 侧仅记流水；流水失败时逆转 Redis 已发生的变动。
 		AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error)
 		// OfflineRecharge 线下充值入账（管理后台）
 		// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
@@ -178,12 +180,20 @@ type (
 		// SetWarningThreshold 设置租户钱包预警阈值（管理后台）
 		SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSetWarningThresholdReq) (*v1.AdminWalletSetWarningThresholdRes, error)
 		// GetWalletFrozenItems 获取租户钱包冻结明细（管理后台）。
-		// 数据源为 DB 预扣追踪表（释放操作的权威依据），而非 Redis 明细缓存。
+		// 数据源为 Redis 预扣明细（权威），DB 预扣追踪表已废弃。
 		GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (*v1.AdminWalletFrozenItemListRes, error)
 		// ReleaseWalletFrozenItem 按笔释放冻结（管理后台运维逃生舱）。
-		// 释放走 billing.UnfreezePreDeduct 的 status='frozen' 原子 claim 路径：与并发结算竞争安全、
-		// 幂等、逐笔精确，绝不直接改写 bil_wallets.frozen_balance 汇总值。
+		// 释放走 billing.UnfreezePreDeduct 的 Redis 认领路径：认领即删预扣 hash、幂等、逐笔精确，
+		// 绝不直接改写钱包 hash 的 frozen_balance 汇总值。
 		ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (*v1.AdminWalletFrozenReleaseRes, error)
+		// ReleaseAllWalletFrozenItems 一键释放租户全部冻结（管理后台运维逃生舱）。
+		// 遍历 Redis 活跃冻结明细，复用 frozenItemGuard 护栏逐项筛选：
+		//   - 任务关联在途/待结算项自动跳过（由任务结算流程负责，禁止手动释放）；
+		//   - 保护期内（冻结不足 frozenReleaseMinAge）项默认跳过，Force=true 时才释放；
+		//   - 其余项逐个 UnfreezePreDeduct（Lua 认领即删，幂等，与并发结算竞争安全）。
+		//
+		// 返回实际释放笔数/金额与跳过原因摘要（去重）。
+		ReleaseAllWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (*v1.AdminWalletFrozenReleaseAllRes, error)
 		// GetAllTransactions 获取所有租户交易流水（管理后台）
 		GetAllTransactions(ctx context.Context, req *v1.AdminTransactionListReq) (*v1.AdminTransactionListRes, error)
 		// GetDashboardChannelHealth 获取渠道健康概览（最不健康的5个活跃渠道）

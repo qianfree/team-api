@@ -599,6 +599,41 @@ async function handleRelease(done: (closed: boolean) => void) {
   }
 }
 
+// === 一键释放全部冻结 ===
+const showReleaseAllModal = ref(false)
+const releaseAllForm = reactive({ reason: '', force: false })
+const releaseAllLoading = ref(false)
+
+function openReleaseAll() {
+  releaseAllForm.reason = ''
+  releaseAllForm.force = false
+  showReleaseAllModal.value = true
+}
+
+async function handleReleaseAll(done: (closed: boolean) => void) {
+  if (!releaseAllForm.reason.trim()) { Message.warning('请填写释放原因'); return }
+  releaseAllLoading.value = true
+  try {
+    const res: any = await request.post(`/admin/wallets/${tenantId}/frozen-items/release-all`, {
+      force: releaseAllForm.force,
+      reason: releaseAllForm.reason.trim(),
+    })
+    const data = res.data?.data || {}
+    const amt = parseFloat(data.released_amount || 0)
+    const skipped = parseInt(data.skipped_count || 0, 10)
+    Message.success(`已释放 ${data.released_count || 0} 笔冻结，合计 $${amt.toFixed(6)}${skipped ? `，跳过 ${skipped} 笔` : ''}`)
+    if (skipped) {
+      Message.warning(`跳过原因：${(data.skipped_reasons || []).join('；')}`)
+    }
+    done(true)
+    await fetchWalletDetail()
+  } catch {
+    return false
+  } finally {
+    releaseAllLoading.value = false
+  }
+}
+
 function openRecharge() {
   rechargeForm.amount = 0
   rechargeForm.description = ''
@@ -867,7 +902,12 @@ onMounted(() => {
                 <!-- Frozen Items（预扣冻结明细，运维逃生舱） -->
                 <ACard :bordered="false" class="mb-4" title="冻结明细">
                   <template #extra>
-                    <AButton size="small" @click="fetchFrozenItems">刷新</AButton>
+                    <ASpace>
+                      <ATooltip v-if="hasPermission('billing:refund')" content="一次性释放全部可释放的冻结项；任务关联/待结算自动跳过，保护期内需勾选强制">
+                        <AButton size="small" :disabled="!frozenItems.length" @click="openReleaseAll">一键释放</AButton>
+                      </ATooltip>
+                      <AButton size="small" @click="fetchFrozenItems">刷新</AButton>
+                    </ASpace>
                   </template>
                   <AAlert v-if="frozenItems.length" type="warning" class="mb-3">
                     以下金额处于预扣冻结中。正常情况下请求结束即自动释放，异常滞留最长约 2 小时由系统自动清理；仅当用户反馈冻结长时间未释放时才需手动处理。
@@ -1169,6 +1209,25 @@ onMounted(() => {
           </AInputNumber>
         </AFormItem>
       </AForm>
+    </AModal>
+
+    <!-- Release All Frozen Modal -->
+    <AModal v-model:visible="showReleaseAllModal" title="一键释放全部冻结" :width="520" :on-before-ok="handleReleaseAll" :ok-loading="releaseAllLoading" :ok-button-props="{ status: 'danger' }" ok-text="确认释放">
+      <AAlert type="warning" class="mb-3">
+        将一次性释放该租户全部<b>可释放</b>的冻结项（金额从冻结退回可用余额，不改变总余额）。
+        任务关联/待结算的冻结自动跳过；保护期内（冻结不足 10 分钟）的冻结默认跳过。
+      </AAlert>
+      <AForm :model="releaseAllForm" layout="vertical">
+        <AFormItem label="释放原因" required>
+          <ATextarea v-model="releaseAllForm.reason" placeholder="如：用户工单反馈冻结未释放（工单号）/ 实例故障后遗留" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        </AFormItem>
+        <AFormItem>
+          <ACheckbox v-model="releaseAllForm.force">同时强制释放保护期内的冻结项（对应请求可能仍在进行中，释放后将失去超扣保护）</ACheckbox>
+        </AFormItem>
+      </AForm>
+      <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
+        释放为逐笔幂等操作：若某请求恰好同时完成结算，以结算结果为准，不会重复释放
+      </div>
     </AModal>
 
     <!-- Release Frozen Modal -->
