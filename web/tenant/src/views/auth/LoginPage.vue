@@ -575,6 +575,14 @@ async function handleOAuthLogin(provider: string) {
 	position: relative;
 	isolation: isolate;
 	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.86);
+	background: rgba(255, 255, 255, 0.48);
+	box-shadow:
+		inset 0 2px 5px rgba(15, 23, 42, 0.08),
+		inset 0 1px 0 rgba(255, 255, 255, 0.82),
+		0 6px 16px rgba(76, 91, 142, 0.06);
+	backdrop-filter: blur(18px) saturate(1.14);
+	-webkit-backdrop-filter: blur(18px) saturate(1.14);
 }
 
 .login-mode-indicator {
@@ -585,8 +593,12 @@ async function handleOAuthLogin(provider: string) {
 	left: 0.25rem;
 	width: calc((100% - 0.75rem) / 2);
 	border-radius: 0.5rem;
-	background: #fff;
-	box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+	border: 1px solid rgba(20, 184, 166, 0.2);
+	background: linear-gradient(135deg, rgba(204, 251, 241, 0.82), rgba(255, 255, 255, 0.9));
+	box-shadow:
+		0 2px 5px rgba(15, 23, 42, 0.1),
+		0 8px 18px rgba(13, 148, 136, 0.1),
+		inset 0 1px 0 rgba(255, 255, 255, 0.96);
 	pointer-events: none;
 	will-change: transform;
 	transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -604,7 +616,7 @@ async function handleOAuthLogin(provider: string) {
 }
 
 .login-mode-tab-active {
-	color: #111827;
+	color: var(--color-primary-700);
 }
 
 @media (prefers-reduced-motion: reduce) {
