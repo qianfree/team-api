@@ -550,68 +550,59 @@ func (s *sAdmin) GetTenantWallets(ctx context.Context, req *v1.AdminWalletListRe
 	}, nil
 }
 
-// AdjustBalance 调整租户余额（管理后台）
+// AdjustBalance 调整租户余额（管理后台）。
+// Redis 权威化架构：余额变动以 Redis Lua 为资金提交点（扣减在权威可用余额上原子判断，
+// 穿透冻结会破坏预扣一致性），DB 侧仅记流水；流水失败时逆转 Redis 已发生的变动。
 func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error) {
 	tenantID := req.TenantID
-	// 入口即转 decimal（float64 仅允许出现在 API 边界），后续 SQL 参数与流水全程 decimal 直传
+	// 入口即转 decimal（float64 仅允许出现在 API 边界），后续流水字段全程 decimal 直传
 	amount := billing.NewFromFloat(req.Amount)
 	description := req.Description
 
-	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 原子更新余额，避免并发竞态。扣减（负数）时以【可用余额】（balance - frozen_balance）
-		// 为下限：frozen_balance 是支付中/退款中的占用，穿透冻结会破坏预扣一致性。
-		updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
-		args := []any{amount, gtime.Now(), tenantID}
-		if amount.IsNegative() {
-			updateQuery += " AND balance - frozen_balance >= ?"
-			args = append(args, amount.Neg())
-		}
-		result, err := g.DB().Ctx(ctx).Exec(ctx, updateQuery, args...)
-		if err != nil {
-			return err
-		}
-		affected, _ := result.RowsAffected()
-		if affected == 0 {
-			return common.NewBadRequestError("钱包不存在或可用余额不足")
-		}
-
-		// 查询更新后的余额，用于记录流水
-		var wallet *struct {
-			ID            int64           `json:"id"`
-			Balance       decimal.Decimal `json:"balance"`
-			FrozenBalance decimal.Decimal `json:"frozen_balance"`
-		}
-		if err = dao.BilWallets.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Fields("id, balance, frozen_balance").
-			Scan(&wallet); err != nil {
-			return err
-		}
-		if wallet == nil {
-			return common.NewBadRequestError("钱包不存在")
-		}
-
-		// 记录流水
-		if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "adjust",
-			Amount:       amount,
-			BalanceAfter: wallet.Balance,
-			FrozenAfter:  wallet.FrozenBalance,
-			Description:  description,
-		}); err != nil {
-			return gerror.Wrapf(err, "record balance adjust transaction")
-		}
-		return nil
-	})
+	walletID, err := billing.GetWalletID(ctx, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, common.NewBadRequestError("钱包不存在")
 	}
 
-	// 事务提交后清除钱包两级缓存（进程内 + Redis），否则调整后的余额在 300s TTL 内
-	// 不生效——下调余额时租户仍按旧的高余额预扣，可短时超支。
-	billing.InvalidateWallet(ctx, tenantID)
+	var balanceAfter, frozenAfter decimal.Decimal
+	if amount.IsNegative() {
+		// 扣减：可用余额（balance - frozen_balance）门槛在 Redis 权威值原子判断
+		ba, fa, ok, err := billing.DebitWalletRedis(ctx, tenantID, amount.Neg())
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, common.NewBadRequestError("钱包可用余额不足")
+		}
+		balanceAfter, frozenAfter = ba, fa
+	} else {
+		ba, fa, err := billing.CreditWalletRedis(ctx, tenantID, amount)
+		if err != nil {
+			return nil, err
+		}
+		balanceAfter, frozenAfter = ba, fa
+	}
+
+	// 记录流水（append-only INSERT，无行锁竞争）
+	if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
+		TenantId:     tenantID,
+		WalletId:     walletID,
+		Type:         "adjust",
+		Amount:       amount,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
+		Description:  description,
+	}); err != nil {
+		// 流水失败：逆转已发生的 Redis 余额变动（amount.Neg()：扣减→加回，加款→扣回）
+		compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if _, _, compErr := billing.CreditWalletRedis(compCtx, tenantID, amount.Neg()); compErr != nil {
+			g.Log().Errorf(ctx,
+				"CRITICAL: compensate adjust balance failed: tenant=%d usd=%s: %v — wallet drift, manual fix required",
+				tenantID, amount.String(), compErr)
+		}
+		return nil, gerror.Wrapf(err, "record balance adjust transaction")
+	}
 
 	// 管理员调整余额后，重置低余额预警标记（可能余额已恢复到阈值以上）
 	billing.ResetLowBalanceNotified(ctx, tenantID)
@@ -654,41 +645,29 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		}
 	}
 
-	var creditedUsd decimal.Decimal
-	var balanceAfter decimal.Decimal
+	// redisCreditedAmount 记录事务内已发生的 Redis 钱包加款：Redis 是资金提交点、
+	// 不受 DB 事务回滚，事务失败时必须按此补偿逆转。
+	var redisCreditedAmount decimal.Decimal
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 钱包存在性校验
-		var wallet *struct {
-			ID int64 `json:"id"`
-		}
-		if err := dao.BilWallets.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Fields("id").
-			Scan(&wallet); err != nil {
-			return err
-		}
-		if wallet == nil {
+		walletID, err := billing.GetWalletID(ctx, tenantID)
+		if err != nil {
 			return common.NewBadRequestError("钱包不存在")
 		}
 
-		// 原子入账：余额与累计充值同步累加（与 creditWalletTx 一致），
-		// 单条 UPDATE 避免 read-modify-write 竞态，并发下不丢更新。
-		if _, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET balance = balance + ?, cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
-			usdAmount, usdAmount, wallet.ID); err != nil {
+		// Redis 加款（资金提交点）；流水快照取 Redis 返回值
+		balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, usdAmount)
+		// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
+		redisCreditedAmount = usdAmount
+		if err != nil {
 			return err
 		}
 
-		// 读回入账后余额，用于流水快照
-		var bal struct {
-			Balance       decimal.Decimal `json:"balance"`
-			FrozenBalance decimal.Decimal `json:"frozen_balance"`
-		}
-		if err := dao.BilWallets.Ctx(ctx).
-			Where("id", wallet.ID).
-			Fields("balance, frozen_balance").
-			Scan(&bal); err != nil {
+		// DB 仅累加累计充值（余额由物化器从 Redis 覆盖）
+		if _, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
+			usdAmount, walletID); err != nil {
 			return err
 		}
 
@@ -702,11 +681,11 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		}
 		if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 			TenantId:     tenantID,
-			WalletId:     wallet.ID,
+			WalletId:     walletID,
 			Type:         "recharge",
 			Amount:       usdAmount,
-			BalanceAfter: bal.Balance,
-			FrozenAfter:  bal.FrozenBalance,
+			BalanceAfter: balanceAfter,
+			FrozenAfter:  frozenAfter,
 			Description:  desc,
 		}); err != nil {
 			return gerror.Wrapf(err, "record offline recharge transaction")
@@ -718,21 +697,27 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		}
 		billing.ResetLowBalanceNotified(ctx, tenantID)
 
-		creditedUsd = usdAmount
-		balanceAfter = bal.Balance
 		return nil
 	})
 	if err != nil {
+		// 事务回滚：补偿逆转已发生的 Redis 钱包加款（入账未生效，钱包不得进账）。
+		// 补偿自身失败意味着钱包多入账——打 CRITICAL 日志人工追回。
+		if redisCreditedAmount.GreaterThan(billing.Zero) {
+			compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if _, _, compErr := billing.CreditWalletRedis(compCtx, tenantID, redisCreditedAmount.Neg()); compErr != nil {
+				g.Log().Errorf(ctx,
+					"CRITICAL: compensate offline recharge failed: tenant=%d usd=%s: %v — wallet over-credited, manual fix required",
+					tenantID, redisCreditedAmount.String(), compErr)
+			}
+		}
 		return nil, err
 	}
 
-	// 事务提交后清除钱包两级缓存（进程内 + Redis），避免 300s TTL 内读到旧余额
-	billing.InvalidateWallet(ctx, tenantID)
-
 	return &v1.AdminWalletOfflineRechargeRes{
-		CreditedUSD: billing.InexactFloat64(creditedUsd),
+		CreditedUSD: billing.InexactFloat64(redisCreditedAmount),
 		Rate:        rate,
-		Balance:     billing.InexactFloat64(balanceAfter),
+		Balance:     billing.InexactFloat64(redisCreditedAmount),
 	}, nil
 }
 
@@ -922,46 +907,35 @@ func queryFrozenTaskInfos(ctx context.Context, tenantID int64, requestIDs []stri
 }
 
 // GetWalletFrozenItems 获取租户钱包冻结明细（管理后台）。
-// 数据源为 DB 预扣追踪表（释放操作的权威依据），而非 Redis 明细缓存。
+// 数据源为 Redis 预扣明细（权威），DB 预扣追踪表已废弃。
 func (s *sAdmin) GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (*v1.AdminWalletFrozenItemListRes, error) {
-	type trackRow struct {
-		RequestId string          `json:"request_id"`
-		ModelName string          `json:"model_name"`
-		Amount    decimal.Decimal `json:"amount"`
-		CreatedAt *gtime.Time     `json:"created_at"`
-	}
-	var rows []trackRow
-	err := dao.BilPredeductTracks.Ctx(ctx).
-		Where("tenant_id", req.TenantID).
-		Where("status", "frozen").
-		Fields("request_id, model_name, amount, created_at").
-		OrderAsc("created_at").
-		Scan(&rows)
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	requestIDs := make([]string, 0, len(rows))
-	for _, r := range rows {
-		requestIDs = append(requestIDs, r.RequestId)
+	requestIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		requestIDs = append(requestIDs, it.RequestID)
 	}
 	taskInfos := queryFrozenTaskInfos(ctx, req.TenantID, requestIDs)
 
 	now := time.Now()
-	items := make([]*v1.AdminWalletFrozenItem, 0, len(rows))
-	for _, r := range rows {
-		age := now.Sub(r.CreatedAt.Time)
-		task := taskInfos[strings.TrimSuffix(r.RequestId, "_adjust")]
+	out := make([]*v1.AdminWalletFrozenItem, 0, len(items))
+	for _, it := range items {
+		createdAt := time.Unix(it.CreatedAt, 0)
+		age := now.Sub(createdAt)
+		task := taskInfos[strings.TrimSuffix(it.RequestID, "_adjust")]
 		releasable, needForce, blockReason := frozenItemGuard(task, age)
 		taskStatus := ""
 		if task != nil {
 			taskStatus = task.Status
 		}
-		items = append(items, &v1.AdminWalletFrozenItem{
-			RequestID:   r.RequestId,
-			ModelName:   r.ModelName,
-			Amount:      billing.InexactFloat64(r.Amount),
-			CreatedAt:   r.CreatedAt.String(),
+		out = append(out, &v1.AdminWalletFrozenItem{
+			RequestID:   it.RequestID,
+			ModelName:   it.ModelName,
+			Amount:      it.Amount,
+			CreatedAt:   createdAt.String(),
 			AgeSeconds:  int64(age.Seconds()),
 			Releasable:  releasable,
 			NeedForce:   needForce,
@@ -970,37 +944,31 @@ func (s *sAdmin) GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFr
 		})
 	}
 
-	return &v1.AdminWalletFrozenItemListRes{List: items}, nil
+	return &v1.AdminWalletFrozenItemListRes{List: out}, nil
 }
 
 // ReleaseWalletFrozenItem 按笔释放冻结（管理后台运维逃生舱）。
-// 释放走 billing.UnfreezePreDeduct 的 status='frozen' 原子 claim 路径：与并发结算竞争安全、
-// 幂等、逐笔精确，绝不直接改写 bil_wallets.frozen_balance 汇总值。
+// 释放走 billing.UnfreezePreDeduct 的 Redis 认领路径：认领即删预扣 hash、幂等、逐笔精确，
+// 绝不直接改写钱包 hash 的 frozen_balance 汇总值。
 func (s *sAdmin) ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (*v1.AdminWalletFrozenReleaseRes, error) {
-	type trackRow struct {
-		Amount    decimal.Decimal `json:"amount"`
-		Status    string          `json:"status"`
-		CreatedAt *gtime.Time     `json:"created_at"`
-	}
-	var track *trackRow
-	err := dao.BilPredeductTracks.Ctx(ctx).
-		Where("tenant_id", req.TenantID).
-		Where("request_id", req.RequestID).
-		Fields("amount, status, created_at").
-		Scan(&track)
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	if track == nil {
-		return nil, common.NewNotFoundError("冻结项")
+	var found *billing.FrozenItem
+	for i := range items {
+		if items[i].RequestID == req.RequestID {
+			found = &items[i]
+			break
+		}
 	}
-	if track.Status != "frozen" {
-		return nil, common.NewBadRequestError(fmt.Sprintf("该冻结项已处理（当前状态：%s），无需释放", track.Status))
+	if found == nil {
+		return nil, common.NewNotFoundError("冻结项（可能已结算/已释放）")
 	}
 
 	// 护栏一：关联异步任务的预扣由任务结算流程负责，禁止手动释放（force 也不放行）
 	task := queryFrozenTaskInfos(ctx, req.TenantID, []string{req.RequestID})[strings.TrimSuffix(req.RequestID, "_adjust")]
-	age := time.Since(track.CreatedAt.Time)
+	age := time.Since(time.Unix(found.CreatedAt, 0))
 	releasable, needForce, blockReason := frozenItemGuard(task, age)
 	if !releasable {
 		return nil, common.NewBadRequestError(blockReason)
@@ -1013,16 +981,17 @@ func (s *sAdmin) ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalle
 			age.Minutes()))
 	}
 
-	if err := billing.UnfreezePreDeduct(ctx, req.TenantID, req.RequestID); err != nil {
+	released, err := billing.UnfreezePreDeduct(ctx, req.TenantID, req.RequestID)
+	if err != nil {
 		return nil, err
 	}
 
 	// 业务日志补充释放原因与操作上下文（HTTP 层审计由 OperationLog 中间件记录）
 	g.Log().Infof(ctx, "admin release frozen prededuct: tenant=%d request=%s amount=%s age=%s force=%v reason=%s",
-		req.TenantID, req.RequestID, track.Amount, age.Round(time.Second), req.Force, req.Reason)
+		req.TenantID, req.RequestID, released.String(), age.Round(time.Second), req.Force, req.Reason)
 
 	return &v1.AdminWalletFrozenReleaseRes{
-		ReleasedAmount: billing.InexactFloat64(track.Amount),
+		ReleasedAmount: billing.InexactFloat64(released),
 	}, nil
 }
 

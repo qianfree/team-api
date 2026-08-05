@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -74,10 +75,10 @@ func (s *sAdmin) GetOrder(ctx context.Context, req *v1.OrderDetailReq) (*v1.Orde
 func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.OrderRefundRes, error) {
 	adminUserID := common.GetCtxUserID(ctx)
 
-	// 钱包缓存失效必须在事务提交后执行（与 FulfillOrder 相同的时序约束：
-	// 提交前 DEL 会被并发 GetWallet 读旧 DB 值回写污染）。
-	var walletTouchedTenantID int64
-	var walletTouched bool
+	// redisDeductedAmount 记录事务内已发生的 Redis 钱包扣款：Redis 是资金提交点、
+	// 不受 DB 事务回滚，事务失败时必须按此补偿逆转。
+	var redisDeductedAmount decimal.Decimal
+	var orderTenantID int64
 	res := &v1.OrderRefundRes{}
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -119,13 +120,14 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		case "recharge":
 			// 已履约：钱包已入账 USD，必须原额扣回；未履约（paid）钱包未入账，无需扣减
 			if order.Status == "fulfilled" {
+				orderTenantID = order.TenantID
 				deducted, err := deductWalletForRefundTx(ctx, req.Id, order.TenantID)
+				// 先记录已发生的 Redis 扣款（可能 >0 即使整体失败），供事务回滚后补偿逆转
+				redisDeductedAmount = deducted
 				if err != nil {
 					return err
 				}
 				res.WalletDeductedUsd = billing.InexactFloat64(deducted)
-				walletTouchedTenantID = order.TenantID
-				walletTouched = true
 			}
 		case "new_plan", "renew", "upgrade":
 			// 已履约：撤销该套餐当前生效的订阅。若订阅已被后续订单替换（active 行的
@@ -180,12 +182,18 @@ func (s *sAdmin) RefundOrder(ctx context.Context, req *v1.OrderRefundReq) (*v1.O
 		return nil
 	})
 	if err != nil {
+		// 事务回滚：补偿逆转已发生的 Redis 钱包扣款（退款未生效，钱包不得扣回）。
+		// 补偿自身失败意味着钱包被多扣——打 CRITICAL 日志人工追回。
+		if redisDeductedAmount.GreaterThan(billing.Zero) && orderTenantID > 0 {
+			compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if _, _, compErr := billing.CreditWalletRedis(compCtx, orderTenantID, redisDeductedAmount); compErr != nil {
+				g.Log().Errorf(ctx,
+					"CRITICAL: compensate refund redis debit failed: tenant=%d usd=%s order=%d: %v — wallet under-credited, manual fix required",
+					orderTenantID, redisDeductedAmount.String(), req.Id, compErr)
+			}
+		}
 		return nil, err
-	}
-
-	// 事务提交后清除钱包两级缓存（进程内 + Redis），避免扣回后仍按旧余额预扣
-	if walletTouched {
-		billing.InvalidateWallet(ctx, walletTouchedTenantID)
 	}
 	return res, nil
 }
@@ -229,50 +237,36 @@ func deductWalletForRefundTx(ctx context.Context, orderID int64, tenantID int64)
 	}
 
 	// 2. 扣回余额与累计充值（cumulative_recharge 同步回退，保持等级门槛口径真实）。
-	//    条件要求【可用余额】（balance - frozen_balance）足够：不足说明充值额度已被消费，
-	//    继续退款平台将净亏，拒绝并提示人工协商处理。
-	result, err := g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_wallets SET balance = balance - ?, cumulative_recharge = cumulative_recharge - ?, updated_at = NOW() WHERE tenant_id = ? AND balance - frozen_balance >= ?",
-		credit.Amount, credit.Amount, tenantID, credit.Amount)
+	//    Redis 权威化架构：可用余额门槛在 Redis 权威值上原子判断（balance - frozen >= amount，
+	//    不足说明充值额度已被消费，继续退款平台将净亏，拒绝并提示人工协商处理）；
+	//    bil_wallets.balance 由物化器随后从 Redis 覆盖，DB 侧只回退累计充值。
+	balanceAfter, frozenAfter, ok, err := billing.DebitWalletRedis(ctx, tenantID, credit.Amount)
 	if err != nil {
 		return billing.Zero, err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return billing.Zero, err
-	}
-	if affected == 0 {
+	if !ok {
 		return billing.Zero, common.NewBadRequestError("钱包可用余额不足（充值额度可能已被消费），无法退款")
 	}
 
-	// 3. 记录扣减流水（金额记负值，与 consume 类型的方向约定一致）
-	var balance *struct {
-		Balance       decimal.Decimal `json:"balance"`
-		FrozenBalance decimal.Decimal `json:"frozen_balance"`
-	}
-	err = dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", tenantID).
-		Fields("balance, frozen_balance").
-		Scan(&balance)
-	if err != nil {
-		return billing.Zero, err
-	}
-	if balance == nil {
-		return billing.Zero, gerror.New("wallet not found after refund deduction")
+	if _, err = g.DB().Ctx(ctx).Exec(ctx,
+		"UPDATE bil_wallets SET cumulative_recharge = cumulative_recharge - ?, updated_at = NOW() WHERE tenant_id = ?",
+		credit.Amount, tenantID); err != nil {
+		return credit.Amount, err
 	}
 
+	// 3. 记录扣减流水（金额记负值，与 consume 类型的方向约定一致；快照取 Redis 返回值）
 	if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
 		TenantId:     tenantID,
 		WalletId:     credit.WalletId,
 		Type:         "refund",
 		Amount:       credit.Amount.Neg(),
-		BalanceAfter: balance.Balance,
-		FrozenAfter:  balance.FrozenBalance,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
 		RelatedId:    orderID,
 		RelatedType:  "order",
 		Description:  fmt.Sprintf("Refund: order #%d, deduct USD %.6f (original recharge credit)", orderID, credit.Amount.InexactFloat64()),
 	}); err != nil {
-		return billing.Zero, err
+		return credit.Amount, err
 	}
 
 	return credit.Amount, nil

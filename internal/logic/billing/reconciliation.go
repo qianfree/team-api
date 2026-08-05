@@ -7,7 +7,8 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/shopspring/decimal"
+	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/util/gconv"
 
 	"github.com/qianfree/team-api/internal/dao"
 )
@@ -22,6 +23,7 @@ type DailyReconciliationResult struct {
 	RecordCount            int64
 	MissingSettlementCount int64   // 交叉对账：成功用量中无计费记录的请求数（漏结算=免单）
 	MissingSettlementCost  float64 // 交叉对账：漏结算请求的用量记录费用合计（结算失败时通常为 0，条数才是信号）
+	OrphanRecordCount      int64   // 崩溃窗口探测：有计费记录但无消费流水（结算第 2/3 步失败且补偿未覆盖的残留）
 }
 
 // RunDailyReconciliation 执行日对账
@@ -120,160 +122,95 @@ func RunDailyReconciliation(ctx context.Context) (*DailyReconciliationResult, er
 			yesterday, miss.Cnt, miss.Cost)
 	}
 
-	// 5. 冻结余额一致性校验
+	// 4.6 崩溃窗口探测：昨日有计费记录但无对应 consume 流水。
+	// 结算骨架是「闸门（records）→ Redis 扣款 → 流水」三步，第 2/3 步失败会触发补偿删除记录，
+	// 补偿自身失败时留下此类孤儿记录（有账单无账本），需要人工核查资金状态。
+	type orphanRow struct {
+		Cnt int64 `json:"cnt"`
+	}
+	var orphan orphanRow
+	err = dao.BilRecords.Ctx(ctx).
+		As("r").
+		LeftJoin("bil_transactions t", "t.related_id = r.id AND t.related_type = 'billing_record' AND t.type = 'consume'").
+		Where("r.settled_at >= ?", yesterday+" 00:00:00").
+		Where("r.settled_at < ?", today+" 00:00:00").
+		Where("t.id IS NULL").
+		Fields("COUNT(*) as cnt").
+		Scan(&orphan)
+	if err != nil {
+		g.Log().Errorf(ctx, "[RECONCILIATION] orphan-record check failed: %v", err)
+	} else if orphan.Cnt > 0 {
+		result.OrphanRecordCount = orphan.Cnt
+		g.Log().Warningf(ctx,
+			"[RECONCILIATION WARNING] date=%s orphan billing records (no consume transaction): count=%d — settlement crash-window residue, needs manual fund check",
+			yesterday, orphan.Cnt)
+	}
+
+	// 5. 冻结余额一致性校验（Redis 权威值 vs DB 物化值）
 	reconcileFrozenBalance(ctx)
 
 	return result, nil
 }
 
-// reconcileFrozenBalance 校验所有租户的 frozen_balance 与追踪记录是否一致
+// reconcileFrozenBalance 校验 Redis 权威冻结值与 DB 物化冻结值是否一致。
+// 物化窗口（数秒）内的漂移属正常滞后；漂移持续超过 2 倍物化间隔才告警——
+// 意味着物化器停滞或某条资金路径没有正确标记脏租户。
 func reconcileFrozenBalance(ctx context.Context) {
-	type frozenRow struct {
-		TenantID      int64   `json:"tenant_id"`
-		FrozenBalance float64 `json:"frozen_balance"`
-	}
-	var wallets []frozenRow
-	dao.BilWallets.Ctx(ctx).
-		Where("frozen_balance > 0").
-		Fields("tenant_id, frozen_balance").
-		Scan(&wallets)
+	materializeLag := walletMaterializeInterval(ctx) * 2
 
-	for _, w := range wallets {
-		type sumRow struct {
-			Total float64 `json:"total"`
-		}
-		var tracked sumRow
-		dao.BilPredeductTracks.Ctx(ctx).
-			Where("tenant_id", w.TenantID).
-			Where("status", "frozen").
-			Fields("COALESCE(SUM(amount), 0) as total").
-			Scan(&tracked)
-
-		diff := w.FrozenBalance - tracked.Total
-		if diff > 0.000001 || diff < -0.000001 {
-			g.Log().Warningf(ctx,
-				"[RECONCILIATION WARNING] tenant=%d frozen_balance=%.6f tracked=%.6f diff=%.6f",
-				w.TenantID, w.FrozenBalance, tracked.Total, diff)
-		}
-	}
-}
-
-// CleanSettledPreDeductTracks 清理已终态的预扣追踪记录
-// 删除 2 天前状态为 settled / released / expired 的记录，防止表无限增长
-func CleanSettledPreDeductTracks(ctx context.Context) {
-	const (
-		retentionDays = 2
-		batchSize     = 5000
-	)
-
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-
-	var totalDeleted int64
+	cursor := 0
 	for {
-		result, err := g.DB().Ctx(ctx).Exec(ctx,
-			`DELETE FROM bil_prededuct_tracks WHERE id IN (
-				SELECT id FROM bil_prededuct_tracks
-				WHERE status IN ('settled', 'released', 'expired')
-				  AND created_at < ?
-				LIMIT ?
-			)`, cutoff, batchSize)
+		res, err := g.Redis().Do(ctx, "SCAN", cursor, "MATCH", "wallet:v2:*", "COUNT", 200)
 		if err != nil {
-			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean settled tracks: delete failed: %v", err)
+			g.Log().Warningf(ctx, "[RECONCILIATION] scan wallet hashes failed: %v", err)
 			return
 		}
-		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			break
+		arr := res.Array()
+		if len(arr) != 2 {
+			return
 		}
-		totalDeleted += rows
-	}
-
-	if totalDeleted > 0 {
-		g.Log().Infof(ctx, "[PRE-DEDUCT] cleaned %d settled/released/expired tracks older than %d days",
-			totalDeleted, retentionDays)
+		cursor = gconv.Int(arr[0])
+		for _, key := range gconv.Strings(arr[1]) {
+			var tenantID int64
+			if _, err := fmt.Sscanf(key, "wallet:v2:%d", &tenantID); err != nil || tenantID <= 0 {
+				continue
+			}
+			checkOneWalletFrozenDrift(ctx, tenantID, materializeLag)
+		}
+		if cursor == 0 {
+			return
+		}
 	}
 }
 
-// CleanExpiredPreDeducts 清理过期的预扣记录（防止异常占用余额）
-// 超过 PreDeductMaxAge 未结算的预扣应被清理
-func CleanExpiredPreDeducts(ctx context.Context) {
-	// 1. 查询所有超过 PreDeductMaxAge 仍未结算的冻结记录
-	type trackRow struct {
-		RequestID string          `json:"request_id"`
-		TenantID  int64           `json:"tenant_id"`
-		Amount    decimal.Decimal `json:"amount"`
-	}
-	var tracks []trackRow
-
-	cutoff := time.Now().Add(-time.Duration(PreDeductMaxAge) * time.Second)
-	err := dao.BilPredeductTracks.Ctx(ctx).
-		Where("status", "frozen").
-		Where("created_at < ?", cutoff).
-		Fields("request_id, tenant_id, amount").
-		Scan(&tracks)
-	if err != nil {
-		g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: query failed: %v", err)
+// checkOneWalletFrozenDrift 比对单个租户的 Redis/DB 冻结值，超窗漂移告警
+func checkOneWalletFrozenDrift(ctx context.Context, tenantID int64, materializeLag time.Duration) {
+	_, frozenMicro, exists, err := readWalletHash(ctx, tenantID)
+	if err != nil || !exists {
 		return
 	}
 
-	if len(tracks) == 0 {
+	var w *struct {
+		FrozenBalance float64     `json:"frozen_balance"`
+		UpdatedAt     *gtime.Time `json:"updated_at"`
+	}
+	err = dao.BilWallets.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Fields("frozen_balance, updated_at").
+		Scan(&w)
+	if err != nil || w == nil {
 		return
 	}
 
-	g.Log().Warningf(ctx, "[PRE-DEDUCT] found %d orphaned pre-deducts to clean", len(tracks))
-
-	// 2. 按 tenant_id 分组：记录每个租户名下待清理的 (request_id, amount) 明细。
-	//    注意：金额累加会推迟到第 3 步「实际认领成功」之后，只对本实例真正认领到的 tracks 求和。
-	tenantTracks := make(map[int64][]trackRow)
-	for _, t := range tracks {
-		tenantTracks[t.TenantID] = append(tenantTracks[t.TenantID], t)
+	diff := NewFromFloat(w.FrozenBalance).Sub(FromMicro(frozenMicro)).Abs()
+	if !diff.GreaterThan(NewFromFloat(0.000001)) {
+		return
 	}
-
-	// 3. 逐租户释放冻结金额
-	// 多实例部署时，N 个实例会同时扫到同一批过期 tracks。为避免重复/超额释放 frozen_balance，
-	// 采用「先 claim 再 release」：先用带 status='frozen' 谓词的条件更新把 track 标记为 expired，
-	// 仅对本实例真正从 frozen 翻成 expired（RowsAffected > 0）的 track 累加金额并释放。
-	// status='frozen' 的条件更新是跨实例的原子闸门——同一 request_id 只有一个实例能命中，
-	// 因此各实例释放的金额之和恒等于实际冻结总额，不会重复或超额。
-	for tenantID, tenantRows := range tenantTracks {
-		// 3a. 逐条 claim，仅累加本实例成功认领的金额
-		claimedAmount := decimal.Zero
-		claimed := 0
-		for _, tr := range tenantRows {
-			res, err := g.DB().Ctx(ctx).Exec(ctx,
-				"UPDATE bil_prededuct_tracks SET status = 'expired', expired_at = $1 WHERE tenant_id = $2 AND request_id = $3 AND status = 'frozen'",
-				time.Now(), tenantID, tr.RequestID)
-			if err != nil {
-				g.Log().Warningf(ctx, "[PRE-DEDUCT] clean expired: mark track expired failed: tenant=%d request=%s err=%v", tenantID, tr.RequestID, err)
-				continue
-			}
-			if rows, _ := res.RowsAffected(); rows > 0 {
-				claimedAmount = claimedAmount.Add(tr.Amount)
-				claimed++
-			}
-		}
-
-		// 3b. 本实例未认领到任何 track（全部已被其它实例处理）→ 跳过释放，绝不重复入账
-		if claimed == 0 {
-			g.Log().Infof(ctx, "[PRE-DEDUCT] clean expired: tenant=%d all %d tracks already claimed by other instances, skip release", tenantID, len(tenantRows))
-			continue
-		}
-
-		// 3c. 释放 DB frozen_balance（金额仅来自本实例实际认领的 tracks，精确无重复）
-		_, err := g.DB().Ctx(ctx).Exec(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - $1, 0), updated_at = $2 WHERE tenant_id = $3",
-			claimedAmount, time.Now(), tenantID)
-		if err != nil {
-			g.Log().Errorf(ctx, "[PRE-DEDUCT] clean expired: unfreeze failed: tenant=%d err=%v", tenantID, err)
-			continue
-		}
-
-		// 清除缓存
-		walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
-		InvalidateWalletRedis(ctx, tenantID)
-
-		g.Log().Infof(ctx,
-			"[PRE-DEDUCT] cleaned orphaned: tenant=%d amount=%.6f count=%d",
-			tenantID, claimedAmount.InexactFloat64(), claimed)
+	// DB 在物化窗口内刚刷新过：漂移是正常滞后，下轮物化会收敛
+	if w.UpdatedAt != nil && time.Since(w.UpdatedAt.Time) <= materializeLag {
+		return
 	}
+	g.Log().Warningf(ctx,
+		"[RECONCILIATION WARNING] tenant=%d frozen drift persists: db=%.6f redis=%.6f db_updated_at=%v (materializer stuck or dirty-mark missing?)",
+		tenantID, w.FrozenBalance, InexactFloat64(FromMicro(frozenMicro)), w.UpdatedAt)
 }
