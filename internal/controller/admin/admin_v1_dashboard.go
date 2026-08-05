@@ -67,3 +67,6 @@ func (c *ControllerV1) AdminWalletFrozenItemList(ctx context.Context, req *v1.Ad
 func (c *ControllerV1) AdminWalletFrozenRelease(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (res *v1.AdminWalletFrozenReleaseRes, err error) {
 	return service.Admin().ReleaseWalletFrozenItem(ctx, req)
 }
+func (c *ControllerV1) AdminWalletFrozenReleaseAll(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (res *v1.AdminWalletFrozenReleaseAllRes, err error) {
+	return service.Admin().ReleaseAllWalletFrozenItems(ctx, req)
+}

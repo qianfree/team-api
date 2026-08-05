@@ -136,6 +136,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/adjust", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/offline-recharge", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release", perm: "billing:refund"},
+	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release-all", perm: "billing:refund"},
 	{method: "PUT", prefix: "/api/admin/wallets/", suffix: "/warning-threshold", perm: "billing:view"},
 
 	// ── plan 套餐管理 ──
