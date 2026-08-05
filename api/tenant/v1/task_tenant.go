@@ -11,6 +11,8 @@ type TenantTaskListReq struct {
 	Status       string `json:"status" in:"query" dc:"筛选状态"`
 	Platform     string `json:"platform" in:"query" dc:"筛选平台(sora/kling/midjourney/suno)"`
 	PublicTaskID string `json:"public_task_id" in:"query" dc:"任务ID（精确匹配）"`
+	StartDate    string `json:"start_date" in:"query" dc:"开始日期 YYYY-MM-DD"`
+	EndDate      string `json:"end_date" in:"query" dc:"结束日期 YYYY-MM-DD"`
 }
 
 type TenantTaskItem struct {
@@ -56,6 +58,8 @@ type TenantTaskExportReq struct {
 	Status       string `json:"status" in:"query" dc:"筛选状态"`
 	Platform     string `json:"platform" in:"query" dc:"筛选平台(sora/kling/midjourney/suno)"`
 	PublicTaskID string `json:"public_task_id" in:"query" dc:"任务ID（精确匹配）"`
+	StartDate    string `json:"start_date" in:"query" dc:"开始日期 YYYY-MM-DD"`
+	EndDate      string `json:"end_date" in:"query" dc:"结束日期 YYYY-MM-DD"`
 }
 
 type TenantTaskExportRes struct{}

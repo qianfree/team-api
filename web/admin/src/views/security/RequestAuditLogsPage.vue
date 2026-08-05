@@ -10,6 +10,21 @@ import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+function toDateTimeStr(d: Date): string {
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
+// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
+const defaultEnd = toDateTimeStr(new Date())
+function defaultTodayRange(): string[] {
+	const d = new Date()
+	return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
+}
+
 const router = useRouter()
 
 const loading = ref(false)
@@ -27,7 +42,7 @@ const filter = reactive({
 	tenant_id: null as number | null,
 	user_id: null as number | null,
 	api_key_id: '',
-	date_range: [] as string[],
+	date_range: defaultTodayRange(),
 })
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
@@ -202,7 +217,10 @@ async function fetchData() {
 		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
-			params.end_date = filter.date_range[1]
+			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
+			if (filter.date_range[1] && filter.date_range[1] !== defaultEnd) {
+				params.end_date = filter.date_range[1]
+			}
 		}
 		const res: any = await request.get('/admin/audit/request-logs', { params })
 		const raw = res.data?.data
@@ -247,9 +265,14 @@ function handleReset() {
 	filter.tenant_id = null
 	filter.user_id = null
 	filter.api_key_id = ''
-	filter.date_range = []
+	filter.date_range = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
+}
+
+// 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
+function handleRefresh() {
+	handleReset()
 }
 
 onMounted(() => {
@@ -320,6 +343,7 @@ onMounted(() => {
 				/>
 				<a-button type="primary" @click="handleFilter">搜索</a-button>
 				<a-button @click="handleReset">重置</a-button>
+				<a-button @click="handleRefresh">刷新</a-button>
 			</a-space>
 		</a-card>
 

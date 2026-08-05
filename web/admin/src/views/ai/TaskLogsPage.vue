@@ -9,6 +9,21 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+function toDateTimeStr(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
+// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
+const defaultEnd = toDateTimeStr(new Date())
+function defaultTodayRange(): string[] {
+  const d = new Date()
+  return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
+}
+
 const loading = ref(false)
 const data = ref<any[]>([])
 const pagination = reactive({
@@ -22,7 +37,7 @@ const pagination = reactive({
 const filterStatus = ref<string | null>(null)
 const filterPlatform = ref<string | null>(null)
 const filterTaskId = ref('')
-const filterDateRange = ref<string[]>([])
+const filterDateRange = ref<string[]>(defaultTodayRange())
 const filterModel = ref('')
 const filterTenantId = ref<number | undefined>(undefined)
 const filterUserId = ref<number | undefined>(undefined)
@@ -162,7 +177,10 @@ async function fetchData() {
     if (filterTaskId.value) params.public_task_id = filterTaskId.value
     if (filterDateRange.value && filterDateRange.value.length === 2) {
       params.start_date = filterDateRange.value[0]
-      params.end_date = filterDateRange.value[1]
+      // 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
+      if (filterDateRange.value[1] && filterDateRange.value[1] !== defaultEnd) {
+        params.end_date = filterDateRange.value[1]
+      }
     }
     if (filterModel.value) params.model_name = filterModel.value
     if (filterTenantId.value) params.tenant_id = filterTenantId.value
@@ -188,12 +206,17 @@ function resetFilter() {
   filterStatus.value = null
   filterPlatform.value = null
   filterTaskId.value = ''
-  filterDateRange.value = []
+  filterDateRange.value = defaultTodayRange()
   filterModel.value = ''
   filterTenantId.value = undefined
   filterUserId.value = undefined
   pagination.current = 1
   fetchData()
+}
+
+// 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
+function handleRefresh() {
+  resetFilter()
 }
 
 async function cancelTask(row: any) {
@@ -300,6 +323,7 @@ onMounted(() => {
         />
         <AButton type="primary" @click="handleFilter">搜索</AButton>
         <AButton @click="resetFilter">重置</AButton>
+        <AButton @click="handleRefresh">刷新</AButton>
       </ASpace>
     </ACard>
 

@@ -11,6 +11,21 @@ import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+function toDateTimeStr(d: Date): string {
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
+// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
+const defaultEnd = toDateTimeStr(new Date())
+function defaultTodayRange(): string[] {
+	const d = new Date()
+	return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
+}
+
 const loading = ref(false)
 const data = ref<any[]>([])
 const pagination = reactive({
@@ -29,7 +44,7 @@ const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
 const filterChannelId = ref<number | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
-const filterDateRange = ref<string[]>([])
+const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
@@ -402,7 +417,10 @@ async function fetchData() {
 		if (filterStatus.value) params.status = filterStatus.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
-			params.end_date = filterDateRange.value[1]
+			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
+			if (filterDateRange.value[1] && filterDateRange.value[1] !== defaultEnd) {
+				params.end_date = filterDateRange.value[1]
+			}
 		}
 
 		const res: any = await request.get('/admin/usage-logs', { params })
@@ -431,9 +449,14 @@ function handleReset() {
 	filterRequestType.value = undefined
 	filterChannelId.value = undefined
 	filterStatus.value = undefined
-	filterDateRange.value = []
+	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
+}
+
+// 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
+function handleRefresh() {
+	handleReset()
 }
 
 onMounted(() => {
@@ -454,7 +477,8 @@ const { exporting, exportFile } = useExport({
 		channel_id: filterChannelId.value,
 		status: filterStatus.value,
 		start_date: filterDateRange.value?.[0],
-		end_date: filterDateRange.value?.[1],
+		// 与列表查询一致：默认截止「现在」不传截止时间，按「到现在」实时导出
+		end_date: filterDateRange.value?.[1] && filterDateRange.value[1] !== defaultEnd ? filterDateRange.value[1] : undefined,
 	}),
 })
 </script>
@@ -471,6 +495,7 @@ const { exporting, exportFile } = useExport({
 					</template>
 				</ADropdown>
 				<a-button size="small" @click="handleReset">重置筛选</a-button>
+				<a-button size="small" @click="handleRefresh">刷新</a-button>
 			</template>
 		</PageHeader>
 

@@ -163,10 +163,10 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 
 // UsageLogs 获取租户用量日志
 func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -203,11 +203,11 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, req.StartDate+" 00:00:00")
+		args = append(args, common.StartOfRange(req.StartDate))
 	}
 	if req.EndDate != "" {
 		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, req.EndDate+" 23:59:59")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := strings.Join(conditions, " AND ")
@@ -273,10 +273,10 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 
 // ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -331,11 +331,11 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, req.StartDate+" 00:00:00")
+		args = append(args, common.StartOfRange(req.StartDate))
 	}
 	if req.EndDate != "" {
 		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, req.EndDate+" 23:59:59")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := strings.Join(conditions, " AND ")
