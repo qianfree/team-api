@@ -127,6 +127,9 @@ var (
 			registerCronJobs(cs)
 			cs.StartBackground(ctx)
 
+			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
+			billing.StartWalletMaterializer(ctx)
+
 			// Initialize update manager
 			update.InitManager(ctx)
 			update.CheckPendingVerification(ctx)
@@ -380,12 +383,8 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("oauth_token_refresh", "OAuth 令牌刷新", "*/10 * * * *", func(ctx context.Context) error {
 		return task.RefreshExpiringOAuthTokens(ctx)
 	})
-	cs.Register("prededuct_orphan_cleanup", "预扣孤儿清理", "*/2 * * * *", func(ctx context.Context) error {
-		billing.CleanExpiredPreDeducts(ctx)
-		return nil
-	})
-	cs.Register("prededuct_tracks_cleanup", "预扣轨迹清理", "0 4 * * *", func(ctx context.Context) error {
-		billing.CleanSettledPreDeductTracks(ctx)
+	cs.Register("prededuct_sweep", "预扣清扫", "*/2 * * * *", func(ctx context.Context) error {
+		billing.PredeductSweep(ctx)
 		return nil
 	})
 	cs.Register("billing_daily_reconciliation", "计费日对账", "20 5 * * *", func(ctx context.Context) error {

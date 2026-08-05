@@ -54,6 +54,15 @@ cache:
   default:
     adapter: "redis"
 
+# Billing
+# 钱包物化间隔（毫秒，sys_options 键 billing_wallet_materialize_interval_ms，可选）：
+# Redis 权威钱包状态刷回 DB bil_wallets 的周期。Redis 权威化架构下该值决定 DB 余额展示
+# 的滞后上限；过小增加 DB 写频，过大展示滞后明显。默认 5000（未配置即用默认值）。
+# billing_wallet_materialize_interval_ms: 5000
+
+# 预扣孤儿清扫说明：由 cron `prededuct_sweep`（每 2 分钟）基于 Redis 预扣明细重算
+# frozen_balance 自愈，不再依赖 DB 预扣追踪表（bil_prededuct_tracks 已废弃）。
+
 # JWT Authentication
 jwt:
   secret:          "<change-me-to-a-random-secret>"

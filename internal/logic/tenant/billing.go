@@ -518,8 +518,8 @@ func (s *sTenant) UpdateWarningThreshold(ctx context.Context, req *v1.TenantWall
 		return nil, err
 	}
 
-	// 清除钱包缓存
-	billing.InvalidateWalletRedis(ctx, tenantID)
+	// 清除钱包静态字段缓存（Redis 钱包 hash 是权威余额，不失效）
+	billing.InvalidateWalletStaticCache(ctx, tenantID)
 
 	// 阈值变更后重置预警标记，使新阈值能触发新的预警
 	billing.ResetLowBalanceNotified(ctx, tenantID)
