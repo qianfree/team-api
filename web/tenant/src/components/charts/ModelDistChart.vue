@@ -81,7 +81,7 @@ const modelList = computed(() =>
 </script>
 
 <template>
-	<div class="card p-5 sm:p-6">
+	<div class="card card-prominent p-5 sm:p-6">
 		<div class="mb-4 flex items-start justify-between">
 			<div>
 				<h2 class="text-base font-semibold text-slate-900">模型费用占比</h2>

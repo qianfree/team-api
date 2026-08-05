@@ -10,7 +10,7 @@
     </div>
 
     <!-- Navigation -->
-    <nav aria-label="主导航" class="landing-nav glass">
+    <nav aria-label="主导航" class="landing-nav">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between h-16">
           <div class="flex items-center gap-2.5">
@@ -26,9 +26,6 @@
               <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
               <span>GitHub</span>
             </a>
-            <router-link :to="{ name: 'TenantLogin' }" class="btn btn-primary btn-sm">
-              开始使用
-            </router-link>
           </div>
         </div>
       </div>
@@ -69,6 +66,9 @@
                       <span>{{ pt }}</span>
                     </li>
                   </ul>
+                  <router-link :to="{ name: 'TenantLogin' }" class="btn btn-primary btn-compact mt-6">
+                    开始使用
+                  </router-link>
                 </div>
                 <div class="scenario-visual">
                   <!-- Developer: code example -->
@@ -221,15 +221,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSeo } from '@/composables/useSeo'
 import { useHead } from '@unhead/vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { marked } from 'marked'
 import request from '@/utils/request'
 
-const { settings: publicSettings } = usePublicSettings()
-const siteName = publicSettings.value.site_name || 'Team-API'
+const { settings: publicSettings, fetchSettings } = usePublicSettings()
+const siteName = computed(() => publicSettings.value.site_name || 'Team-API')
 // 快速开始示例代码中展示的真实接入地址（取当前浏览器访问域名，OpenAI 兼容端点固定为 /v1）
 const apiBaseUrl = `${window.location.origin}/v1`
 
@@ -318,7 +318,8 @@ function renderMarkdown(text: string): string {
   return marked.parse(text) as string
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await fetchSettings()
   fetchAndShowAnnouncement()
   // 首屏测量滑块位置；延迟一帧再开启过渡，避免首屏滑块从 0 展开的动画
   nextTick(() => {
@@ -366,9 +367,9 @@ function onResize() {
 
 // SEO
 useSeo({
-  title: `${siteName} — 一个 API 接入所有大模型 | 企业级多租户 AI 网关`,
-  description: publicSettings.value.site_description || `${siteName} 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。`,
-  siteName,
+  title: `${siteName.value} — 一个 API 接入所有大模型 | 企业级多租户 AI 网关`,
+  description: publicSettings.value.site_description || `${siteName.value} 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。`,
+  siteName: siteName.value,
   keywords: 'Team-API, 大模型网关, API Gateway, 多租户, OpenAI, Claude, Gemini, DeepSeek, 阿里云百炼, 百度文心, 腾讯混元, 智谱AI, AI代理, LLM Gateway, 开源, 自托管, 计费引擎, 团队管理, API管理, SSE流式, 渠道调度',
   canonicalUrl: 'https://team-api.net/',
 })
@@ -380,7 +381,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'SoftwareApplication',
-        name: siteName,
+        name: siteName.value,
         description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台，聚合 40+ 大模型供应商，内置计费引擎、团队管理、用量审计与渠道调度。',
         url: 'https://github.com/qianfree/team-api',
         applicationCategory: 'DeveloperApplication',
@@ -403,7 +404,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'Organization',
-        name: siteName,
+        name: siteName.value,
         url: 'https://github.com/qianfree/team-api',
         logo: 'https://team-api.net/favicon.png',
         sameAs: ['https://github.com/qianfree/team-api'],
@@ -414,7 +415,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'WebSite',
-        name: siteName,
+        name: siteName.value,
         url: 'https://team-api.net/',
         description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台',
         potentialAction: {
@@ -512,12 +513,10 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
 }
 
 /* ================================================
-   NAV — 液态玻璃
+   NAV — 透明导航栏
    ================================================ */
 .landing-nav {
   position: relative; z-index: 50; flex-shrink: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 6px 24px rgba(76, 91, 142, 0.06);
 }
 
 /* Nav announcement bell — 浅色玻璃按钮 */
@@ -652,6 +651,11 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
 .scenario-points li {
   display: flex; align-items: flex-start; gap: 8px;
   font-size: 13px; color: #475569; line-height: 1.5;
+}
+
+/* Compact button — 紧凑按钮，不占满容器宽度 */
+.btn-compact {
+  align-self: flex-start;
 }
 
 /* Code card — 深色代码块（对齐系统 code-block） */

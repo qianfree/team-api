@@ -154,7 +154,7 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
 </script>
 
 <template>
-	<div class="card p-5 sm:p-6">
+	<div class="card card-prominent p-5 sm:p-6">
 		<div class="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 			<div>
 				<h2 class="text-base font-semibold text-slate-900">使用趋势</h2>
