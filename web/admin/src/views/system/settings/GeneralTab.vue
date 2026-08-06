@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { useFormValues } from './useSettings'
 const values = useFormValues()
+
+// 关闭维护模式时自动清空提示信息和时长
+function handleMaintenanceModeChange(enabled: boolean) {
+	values['maintenance_mode'] = enabled
+	if (!enabled) {
+		values['maintenance_message'] = ''
+		values['maintenance_duration'] = ''
+	}
+}
 </script>
 
 <template>
@@ -73,7 +82,7 @@ const values = useFormValues()
 				<span class="switch-desc">开启后控制台显示维护提示</span>
 				<ASwitch
 					:model-value="!!values['maintenance_mode']"
-					@change="(v: string | number | boolean) => values['maintenance_mode'] = v"
+					@change="handleMaintenanceModeChange"
 				/>
 			</div>
 			<div class="section-grid" style="margin-top: 12px">

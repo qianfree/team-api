@@ -9,7 +9,8 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
 	await fetchSettings()
-	timer = setInterval(() => fetchSettings(), 30 * 60 * 1000)
+	// 每 60 秒强制刷新一次维护状态（绕过缓存）
+	timer = setInterval(() => fetchSettings(true), 60 * 1000)
 })
 
 onBeforeUnmount(() => {
