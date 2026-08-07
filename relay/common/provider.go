@@ -21,6 +21,9 @@ var ErrTenantModelNotEnabled = errors.New("model not enabled for this tenant")
 // ErrMemberModelNotAllowed 成员无权使用该模型
 var ErrMemberModelNotAllowed = errors.New("model not allowed for this member")
 
+// ErrApiKeyModelNotAllowed API Key 无权使用该模型
+var ErrApiKeyModelNotAllowed = errors.New("model not allowed for this API key")
+
 // DeprecationInfo 模型弃用信息
 type DeprecationInfo struct {
 	Deprecated       bool
