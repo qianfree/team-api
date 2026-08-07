@@ -194,7 +194,7 @@ const providerDefaultURLs: Record<number, string> = {
   1: 'https://api.openai.com',
   2: 'https://api.anthropic.com',
   3: 'https://generativelanguage.googleapis.com',
-  4: 'https://dashscope.aliyuncs.com/compatible-mode',
+  4: 'https://dashscope.aliyuncs.com',
   6: 'https://hunyuan.tencentcloudapi.com',
   7: 'https://open.bigmodel.cn/api/paas',
   8: 'https://api.deepseek.com',

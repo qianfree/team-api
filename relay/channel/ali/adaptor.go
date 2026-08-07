@@ -28,7 +28,7 @@ func (a *Adaptor) Init(info *common.RelayInfo) {
 // GetRequestURL 构建上游请求 URL。
 // Claude 协议走 Anthropic 兼容端点，OpenAI 走 compatible-mode 端点，图像生成使用独立端点。
 func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
-	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
+	baseURL := normalizeBaseURL(info.ChannelMeta.BaseURL)
 
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeClaudeMessages:
@@ -160,6 +160,30 @@ func (a *Adaptor) GetChannelName() string {
 }
 
 var _ common.Adaptor = (*Adaptor)(nil)
+
+// normalizeBaseURL 归一化渠道 base URL 为 DashScope 裸域名。
+//
+// adaptor 各端点自行拼接完整路径（compatible-mode / apps/anthropic / api/v1/services），
+// 因此 base 必须是裸域名。但用户手填时有三种常见写法都很自然：
+//
+//	https://dashscope.aliyuncs.com
+//	https://dashscope.aliyuncs.com/compatible-mode        （旧版默认值、控制台文档）
+//	https://dashscope.aliyuncs.com/compatible-mode/v1     （阿里 OpenAI SDK 文档的 base_url）
+//
+// 后两种若直接拼接会产生 /compatible-mode/compatible-mode/v1/... 这类重复路径，
+// DashScope 网关在路由层直接返回 404 且响应体为空，极难定位。
+// 这里统一剥离已知后缀，让三种写法都能正常工作。
+func normalizeBaseURL(raw string) string {
+	base := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+	// 从长到短依次剥离，避免先匹配短后缀导致残留
+	for _, suffix := range []string{"/compatible-mode/v1", "/compatible-mode"} {
+		if strings.HasSuffix(base, suffix) {
+			base = strings.TrimSuffix(base, suffix)
+			break
+		}
+	}
+	return strings.TrimSuffix(base, "/")
+}
 
 // convertClaudeRequest 处理 Claude 入站请求的模型映射。
 func convertClaudeRequest(requestBody []byte, info *common.RelayInfo) (io.Reader, error) {

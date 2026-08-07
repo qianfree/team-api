@@ -308,7 +308,8 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		// 响应体不是标准 OpenAI 错误格式（含空响应体）：附带上游 URL 供日志定位
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 	}
 
 	if info.ChannelMeta.IsModelMapped {
@@ -347,7 +348,8 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 			upstreamErr.ResponseWritten = true
 			return &common.Usage{}, upstreamErr
 		}
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		// 响应体不是标准 OpenAI 错误格式（含空响应体）：附带上游 URL 供日志定位
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 	}
 
 	return StreamHandler(ctx, resp, info, writer)
