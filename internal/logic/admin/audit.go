@@ -416,7 +416,9 @@ func (s *sAdmin) ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTrace
 		OrderDesc("created_at").
 		Fields("forwarding_trace, audit_level").
 		Scan(&row)
-	if err != nil {
+	// Scan(&struct) 无匹配记录时返回 sql.ErrNoRows，归一化为 nil，
+	// 让下方「无审计记录 → found=false」分支生效，而不是把 NoRows 当错误返回。
+	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	// 无审计记录（两级审计级别均为 none 时不会写入）→ found=false，前端据此展示「未开启审计」
