@@ -87,6 +87,9 @@ type DataProvider interface {
 	// InvalidateMemberModelCache 清除指定成员的模型范围缓存。
 	InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64)
 
+	// InvalidateApiKeyModelCache 清除指定 API Key 的模型权限缓存。
+	InvalidateApiKeyModelCache(ctx context.Context, apiKeyID int64)
+
 	// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection：
 	// 从目录快照取转发元数据，按 keyID 解密渠道 Key（keyID=0 时取渠道首个 active Key）。
 	MaterializeSelection(ctx context.Context, channelID, keyID int64, modelName string) (*ChannelSelection, error)
