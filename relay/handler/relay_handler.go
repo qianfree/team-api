@@ -67,6 +67,32 @@ type relayValidation struct {
 	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
 }
 
+type modelMappingProvider interface {
+	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
+}
+
+// resolveRelayModel gives a literal catalog model precedence over the optional
+// thinking/effort suffix syntax. This avoids treating names such as
+// "qwen3.8-max" as the virtual model "qwen3.8" with effort=max.
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, *helper.ThinkingInfo, error) {
+	parsed := helper.ParseThinkingSuffix(modelName)
+	literal := &helper.ThinkingInfo{BaseModel: modelName}
+
+	_, _, err := provider.GetModelMapping(ctx, modelName)
+	if err == nil {
+		return modelName, literal, nil
+	}
+	if parsed.BaseModel == modelName {
+		return "", nil, err
+	}
+
+	_, _, err = provider.GetModelMapping(ctx, parsed.BaseModel)
+	if err != nil {
+		return "", nil, err
+	}
+	return parsed.BaseModel, &parsed, nil
+}
+
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
 // 纯校验逻辑，无 defer 副作用。
 func validateRelayRequest(
@@ -134,23 +160,9 @@ func validateRelayRequest(
 		return nil, constant.NewRequestError("model is required", nil)
 	}
 
-	// 2.5 解析 thinking/effort 后缀
-	parsed := helper.ParseThinkingSuffix(modelName)
-	thinkingInfo := &parsed
-	lookupModel := modelName
-	if thinkingInfo.BaseModel != modelName {
-		lookupModel = thinkingInfo.BaseModel
-	}
-
-	// 3. 验证模型存在且活跃
-	_, _, modelErr := provider.GetModelMapping(ctx, modelName)
-	if modelErr != nil && thinkingInfo.BaseModel != modelName {
-		// 完整模型名查找失败，尝试基础模型名
-		_, _, modelErr = provider.GetModelMapping(ctx, thinkingInfo.BaseModel)
-		if modelErr == nil {
-			lookupModel = thinkingInfo.BaseModel
-		}
-	}
+	// 2.5 解析 thinking/effort 后缀并验证模型。完整模型名存在时按字面模型处理；
+	// 仅在完整名称不存在时，才尝试将后缀解析为虚拟 thinking/effort 参数。
+	lookupModel, thinkingInfo, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
