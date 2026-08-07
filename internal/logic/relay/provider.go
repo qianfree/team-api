@@ -1405,3 +1405,9 @@ func (p *DataProviderImpl) CheckApiKeyModelAccess(ctx context.Context, apiKeyID 
 	}
 	return false, nil
 }
+
+// InvalidateApiKeyModelCache 清除指定 API Key 的模型权限缓存
+func (p *DataProviderImpl) InvalidateApiKeyModelCache(ctx context.Context, apiKeyID int64) {
+	cacheKey := strconv.FormatInt(apiKeyID, 10)
+	apiKeyModelCache.Delete(ctx, cacheKey)
+}
