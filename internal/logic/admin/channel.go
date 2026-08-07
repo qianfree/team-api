@@ -664,10 +664,13 @@ func (s *sAdmin) GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefau
 
 // defaultProviderURLs 供应商默认 API 地址
 var defaultProviderURLs = map[int]string{
-	1:  "https://api.openai.com",
-	2:  "https://api.anthropic.com",
-	3:  "https://generativelanguage.googleapis.com",
-	4:  "https://dashscope.aliyuncs.com/compatible-mode",
+	1: "https://api.openai.com",
+	2: "https://api.anthropic.com",
+	3: "https://generativelanguage.googleapis.com",
+	// 阿里云百炼填裸域名：adaptor 会按 relay 模式自行拼 /compatible-mode/v1/...（OpenAI 兼容）、
+	// /apps/anthropic/v1/messages（Claude）、/api/v1/services/aigc/...（图像），
+	// 这里若带上 /compatible-mode 会导致路径重复而 404。
+	4:  "https://dashscope.aliyuncs.com",
 	5:  "https://aip.baidubce.com",
 	6:  "https://hunyuan.tencentcloudapi.com",
 	7:  "https://open.bigmodel.cn",
