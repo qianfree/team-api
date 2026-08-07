@@ -140,7 +140,7 @@ const columns: TableColumnData[] = [
           : null,
         hasPermission('channel:edit')
           ? h(Popconfirm, {
-              content: '确定重置该渠道健康度？熔断将复位、成功率恢复，渠道立即恢复被调度选择。',
+              content: '确定重置该渠道健康度？',
               onOk: () => resetHealth(record),
             }, () => h(Button, {
               size: 'small',

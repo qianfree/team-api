@@ -366,7 +366,7 @@ const isFormMode = computed(() => {
 					<Icon name="checkCircle" size="md" class="text-emerald-600" />
 				</div>
 				<div>
-					<p class="text-sm text-gray-500">请立即复制密钥，关闭后将无法再次查看</p>
+					<p class="text-sm text-gray-500">请复制并妥善保存密钥，之后仍可在密钥列表中重新复制</p>
 				</div>
 			</div>
 			<div class="p-3 bg-gray-900 rounded-xl">
