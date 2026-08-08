@@ -58,3 +58,15 @@ func (c *ControllerV1) AdminTransactionList(ctx context.Context, req *v1.AdminTr
 func (c *ControllerV1) AdminDashboardModelHourly(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (res *v1.AdminDashboardModelHourlyRes, err error) {
 	return service.Admin().GetModelHourlyCost(ctx, req)
 }
+func (c *ControllerV1) AdminWalletOfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (res *v1.AdminWalletOfflineRechargeRes, err error) {
+	return service.Admin().OfflineRecharge(ctx, req)
+}
+func (c *ControllerV1) AdminWalletFrozenItemList(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (res *v1.AdminWalletFrozenItemListRes, err error) {
+	return service.Admin().GetWalletFrozenItems(ctx, req)
+}
+func (c *ControllerV1) AdminWalletFrozenRelease(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (res *v1.AdminWalletFrozenReleaseRes, err error) {
+	return service.Admin().ReleaseWalletFrozenItem(ctx, req)
+}
+func (c *ControllerV1) AdminWalletFrozenReleaseAll(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (res *v1.AdminWalletFrozenReleaseAllRes, err error) {
+	return service.Admin().ReleaseAllWalletFrozenItems(ctx, req)
+}

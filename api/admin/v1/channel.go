@@ -9,7 +9,10 @@ type ChannelListReq struct {
 	PageSize int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
 	Type     int    `json:"type" dc:"供应商类型筛选"`
 	Status   string `json:"status" dc:"状态筛选：active/disabled/testing"`
-	Search   string `json:"search" dc:"搜索关键词"`
+	Search   string `json:"search" dc:"搜索关键词（渠道名称/备注）"`
+	ID       int64  `json:"id" dc:"按渠道 ID 精确筛选"`
+	Model    string `json:"model" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
+	BaseURL  string `json:"base_url" dc:"按 API 地址筛选（模糊匹配）"`
 }
 
 // ChannelListRes 渠道列表响应
@@ -42,6 +45,8 @@ type ChannelItem struct {
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
 	CreatedAt                string   `json:"created_at"`
 	HealthScore              *float64 `json:"health_score"`
+	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
 }
 
 // ChannelCreateReq 创建渠道请求
@@ -128,6 +133,8 @@ type ChannelDetailRes struct {
 	CreatedAt                string   `json:"created_at"`
 	UpdatedAt                string   `json:"updated_at"`
 	HealthScore              *float64 `json:"health_score"`
+	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
 	KeyType                  string   `json:"key_type"`
 	KeyStatus                string   `json:"key_status"`
 	KeyName                  string   `json:"key_name"`
@@ -246,11 +253,14 @@ type HealthTrendPoint struct {
 
 // ChannelExportReq 导出渠道列表请求
 type ChannelExportReq struct {
-	g.Meta `path:"/channels/export" method:"get" mime:"json" tags:"管理后台-渠道" summary:"导出渠道列表"`
-	Format string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
-	Type   int    `json:"type" in:"query" dc:"供应商类型筛选"`
-	Status string `json:"status" in:"query" dc:"状态筛选：active/disabled/testing"`
-	Search string `json:"search" in:"query" dc:"搜索关键词"`
+	g.Meta  `path:"/channels/export" method:"get" mime:"json" tags:"管理后台-渠道" summary:"导出渠道列表"`
+	Format  string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	Type    int    `json:"type" in:"query" dc:"供应商类型筛选"`
+	Status  string `json:"status" in:"query" dc:"状态筛选：active/disabled/testing"`
+	Search  string `json:"search" in:"query" dc:"搜索关键词（渠道名称/备注）"`
+	ID      int64  `json:"id" in:"query" dc:"按渠道 ID 精确筛选"`
+	Model   string `json:"model" in:"query" dc:"按支持的模型名筛选（模糊匹配平台模型名/上游模型名）"`
+	BaseURL string `json:"base_url" in:"query" dc:"按 API 地址筛选（模糊匹配）"`
 }
 
 type ChannelExportRes struct{}
@@ -267,3 +277,12 @@ type ChannelCloneReq struct {
 type ChannelCloneRes struct {
 	ID int64 `json:"id"`
 }
+
+// ChannelResetHealthReq 重置渠道健康度请求
+type ChannelResetHealthReq struct {
+	g.Meta `path:"/channels/{id}/reset-health" method:"post" mime:"json" tags:"管理后台-渠道" summary:"重置渠道健康度"`
+	ID     int64 `json:"id" in:"path" v:"required" dc:"渠道ID"`
+}
+
+// ChannelResetHealthRes 重置渠道健康度响应
+type ChannelResetHealthRes struct{}

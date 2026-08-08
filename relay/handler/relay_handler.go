@@ -67,6 +67,32 @@ type relayValidation struct {
 	sessionSignals  dispatch.SessionSignals // 请求体中的会话信号（影子模式/新调度用）
 }
 
+type modelMappingProvider interface {
+	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
+}
+
+// resolveRelayModel gives a literal catalog model precedence over the optional
+// thinking/effort suffix syntax. This avoids treating names such as
+// "qwen3.8-max" as the virtual model "qwen3.8" with effort=max.
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, *helper.ThinkingInfo, error) {
+	parsed := helper.ParseThinkingSuffix(modelName)
+	literal := &helper.ThinkingInfo{BaseModel: modelName}
+
+	_, _, err := provider.GetModelMapping(ctx, modelName)
+	if err == nil {
+		return modelName, literal, nil
+	}
+	if parsed.BaseModel == modelName {
+		return "", nil, err
+	}
+
+	_, _, err = provider.GetModelMapping(ctx, parsed.BaseModel)
+	if err != nil {
+		return "", nil, err
+	}
+	return parsed.BaseModel, &parsed, nil
+}
+
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
 // 纯校验逻辑，无 defer 副作用。
 func validateRelayRequest(
@@ -134,23 +160,9 @@ func validateRelayRequest(
 		return nil, constant.NewRequestError("model is required", nil)
 	}
 
-	// 2.5 解析 thinking/effort 后缀
-	parsed := helper.ParseThinkingSuffix(modelName)
-	thinkingInfo := &parsed
-	lookupModel := modelName
-	if thinkingInfo.BaseModel != modelName {
-		lookupModel = thinkingInfo.BaseModel
-	}
-
-	// 3. 验证模型存在且活跃
-	_, _, modelErr := provider.GetModelMapping(ctx, modelName)
-	if modelErr != nil && thinkingInfo.BaseModel != modelName {
-		// 完整模型名查找失败，尝试基础模型名
-		_, _, modelErr = provider.GetModelMapping(ctx, thinkingInfo.BaseModel)
-		if modelErr == nil {
-			lookupModel = thinkingInfo.BaseModel
-		}
-	}
+	// 2.5 解析 thinking/effort 后缀并验证模型。完整模型名存在时按字面模型处理；
+	// 仅在完整名称不存在时，才尝试将后缀解析为虚拟 thinking/effort 参数。
+	lookupModel, thinkingInfo, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
@@ -604,7 +616,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "upstream request failed", err), info.ChannelMeta.Settings.StatusCodeMapping)
@@ -646,7 +658,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}
 				}
-				recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+				recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				return usage, v.billingResult, err
 			}
@@ -692,7 +704,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			recordFailedUsage(provider, rc, selection.ChannelID, v.modelName, v.relayMode, v.isStream, err)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			return nil, v.billingResult, err
@@ -845,7 +857,7 @@ func handleChannelUnavailable(
 			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
 			constant.ErrAllChannelsFailed,
 		)
-		recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, allFailedErr)
+		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr)
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -857,7 +869,9 @@ func handleChannelUnavailable(
 	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] 无可用渠道: model=%s tenant=%d user=%d request=%s%s",
 		v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix)
 	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
-	recordFailedUsage(provider, rc, 0, v.modelName, v.relayMode, v.isStream, noChErr)
+	// 无可用渠道时请求未转发到任何上游（与 QPS 限流、权限/额度拒绝等前置拦截同理），
+	// 不记用量日志，避免零消耗的 error 记录污染请求日志；运营侧的“被拒请求量”已由
+	// 上方 Warning 日志、调度器排除明细指标、chn_error_events 覆盖。
 	return &channelUnavailableResult{nil, v.billingResult, noChErr}
 }
 
@@ -917,23 +931,31 @@ func (e *RelayErrorWithRateLimit) Error() string {
 	return e.Message
 }
 
-// recordFailedUsage 记录失败用量
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, channelID int64, modelName string, relayMode constant.RelayMode, isStream bool, err error) {
-	provider.RecordUsage(context.Background(), &common.UsageRecord{
-		TenantID:     rc.TenantID,
-		UserID:       rc.UserID,
-		ApiKeyID:     rc.ApiKeyID,
-		ProjectID:    rc.ProjectID,
-		ChannelID:    channelID,
-		ModelName:    modelName,
-		RelayMode:    int(relayMode),
-		LatencyMs:    0,
-		IsStream:     isStream,
-		Success:      false,
-		RequestID:    rc.RequestID,
-		Status:       "error",
-		ErrorMessage: err.Error(),
-	})
+// recordFailedUsage 记录失败用量。
+// selection 非 nil 时记录具体失败渠道（ID/名称/类型/上游模型），便于在用量日志定位失败渠道；
+// nil 表示无单一渠道（全部渠道失败），渠道字段留空，失败详情见 error_message。
+func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error) {
+	record := &common.UsageRecord{
+		TenantID:       rc.TenantID,
+		UserID:         rc.UserID,
+		ApiKeyID:       rc.ApiKeyID,
+		ProjectID:      rc.ProjectID,
+		ModelName:      modelName,
+		RequestedModel: modelName,
+		RelayMode:      int(relayMode),
+		IsStream:       isStream,
+		Success:        false,
+		RequestID:      rc.RequestID,
+		Status:         "error",
+		ErrorMessage:   err.Error(),
+	}
+	if selection != nil {
+		record.ChannelID = selection.ChannelID
+		record.ChannelName = selection.ChannelName
+		record.ChannelType = selection.ChannelType
+		record.UpstreamModel = selection.UpstreamModelName
+	}
+	provider.RecordUsage(context.Background(), record)
 }
 
 // recordChannelError 记录渠道错误事件到 chn_error_events（异步，不阻塞请求）

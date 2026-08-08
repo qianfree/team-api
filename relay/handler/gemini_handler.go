@@ -43,8 +43,9 @@ func HandleGeminiModels(ctx context.Context, tenantID, apiKeyID, userID int64, p
 }
 
 // HandleGeminiModelDetail 处理 GET /v1beta/models/{model} 请求（Gemini 原生格式模型详情）
-func HandleGeminiModelDetail(ctx context.Context, tenantID int64, modelName string, provider common.DataProvider) (*dto.GeminiModel, error) {
-	detail, err := provider.GetModelDetail(ctx, tenantID, modelName)
+// apiKeyID / userID 用于进一步按 API Key / 成员的模型范围过滤
+func HandleGeminiModelDetail(ctx context.Context, tenantID, apiKeyID, userID int64, modelName string, provider common.DataProvider) (*dto.GeminiModel, error) {
+	detail, err := provider.GetModelDetail(ctx, tenantID, apiKeyID, userID, modelName)
 	if err != nil {
 		return nil, err
 	}

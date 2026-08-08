@@ -30,7 +30,7 @@ const settings = ref<PublicSettings>({
 
 let fetchPromise: Promise<void> | null = null
 let lastFetchTime = 0
-const CACHE_TTL = 60_000
+const CACHE_TTL = 30_000 // 30秒缓存，维护模式变更时更快响应
 
 export function usePublicSettings() {
 	async function fetchSettings(force = false): Promise<void> {

@@ -120,7 +120,6 @@ onMounted(() => {
     </PageHeader>
 
     <a-card :bordered="false">
-      <TableStats :total="data.length" />
       <a-table
         :columns="columns"
         :data="data"
@@ -130,6 +129,9 @@ onMounted(() => {
         :scroll="{ x: 1200 }"
         size="medium"
       />
+      <div class="table-footer">
+        <TableStats :total="data.length" />
+      </div>
     </a-card>
   </div>
 </template>

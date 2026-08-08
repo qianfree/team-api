@@ -49,3 +49,6 @@ func (c *ControllerV1) ChannelExport(ctx context.Context, req *v1.ChannelExportR
 func (c *ControllerV1) ChannelClone(ctx context.Context, req *v1.ChannelCloneReq) (res *v1.ChannelCloneRes, err error) {
 	return service.Admin().CloneChannel(ctx, req)
 }
+func (c *ControllerV1) ChannelResetHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (res *v1.ChannelResetHealthRes, err error) {
+	return service.Admin().ResetChannelHealth(ctx, req)
+}

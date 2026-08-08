@@ -6,6 +6,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 const route = useRoute()
 const router = useRouter()
@@ -433,7 +434,11 @@ function onTabChange(key: string) {
     fetchTenantGroups()
   }
   if (key === 'wallet') {
-    fetchWalletDetail()
+    fetchWalletInfo()
+    fetchFrozenItems()
+  }
+  if (key === 'transactions') {
+    fetchWalletTransactions()
   }
 }
 
@@ -448,6 +453,9 @@ const txFilterType = ref('')
 const showRechargeModal = ref(false)
 const rechargeForm = reactive({ amount: 0, description: '' })
 const rechargeLoading = ref(false)
+const showOfflineRechargeModal = ref(false)
+const offlineRechargeForm = reactive({ amount: 0, transaction_no: '', description: '' })
+const offlineRechargeLoading = ref(false)
 const showThresholdModal = ref(false)
 const thresholdForm = reactive({ threshold: 0 })
 const thresholdLoading = ref(false)
@@ -470,19 +478,22 @@ const txColumns: TableColumnData[] = [
     },
   },
   {
-    title: '金额', dataIndex: 'amount', width: 120,
+    title: '金额', dataIndex: 'amount', width: 140,
     render({ record }) {
       const val = parseFloat(record.amount) || 0
       const color = val >= 0 ? 'rgb(var(--green-6))' : 'rgb(var(--red-6))'
       const prefix = val >= 0 ? '+' : ''
-      return h('span', { style: { fontWeight: 600, color } }, `${prefix}${val.toFixed(4)}`)
+      return h('span', { style: { fontWeight: 600, color } }, `${prefix}${val.toFixed(6)}`)
     },
   },
   {
-    title: '变动后余额', dataIndex: 'balance_after', width: 120,
-    render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(2)}` },
+    title: '变动后余额', dataIndex: 'balance_after', width: 140,
+    render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(6)}` },
   },
-  { title: '用户', dataIndex: 'username', width: 120 },
+  {
+    title: '用户', dataIndex: 'username', width: 120,
+    render({ record }) { return record.username || '--' },
+  },
   { title: '请求ID', dataIndex: 'request_id', width: 140, ellipsis: true },
   { title: '模型', dataIndex: 'model_name', width: 130 },
   { title: '描述', dataIndex: 'description', ellipsis: true },
@@ -513,7 +524,114 @@ async function fetchWalletTransactions() {
 }
 
 async function fetchWalletDetail() {
-  await Promise.all([fetchWalletInfo(), fetchWalletTransactions()])
+  await Promise.all([fetchWalletInfo(), fetchWalletTransactions(), fetchFrozenItems()])
+}
+
+// === 冻结明细（预扣追踪，按笔释放）===
+const frozenItems = ref<any[]>([])
+const frozenLoading = ref(false)
+const showReleaseModal = ref(false)
+const releaseTarget = ref<any>(null)
+const releaseForm = reactive({ reason: '' })
+const releaseLoading = ref(false)
+
+function formatFrozenAge(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`
+}
+
+const frozenColumns: TableColumnData[] = [
+  { title: '请求ID', dataIndex: 'request_id', width: 200, ellipsis: true, tooltip: true },
+  {
+    title: '模型', dataIndex: 'model_name', width: 140,
+    render({ record }) { return record.model_name || '--' },
+  },
+  {
+    title: '冻结金额', dataIndex: 'amount', width: 130,
+    render({ record }) {
+      return h('span', { style: { color: 'rgb(var(--orange-6))', fontWeight: 600 } }, `$${(parseFloat(record.amount) || 0).toFixed(6)}`)
+    },
+  },
+  { title: '冻结时间', dataIndex: 'created_at', width: 170 },
+  {
+    title: '已冻结时长', dataIndex: 'age_seconds', width: 110,
+    render({ record }) { return formatFrozenAge(record.age_seconds) },
+  },
+  { title: '状态', slotName: 'frozenStatus' },
+  { title: '操作', slotName: 'frozenAction', width: 110 },
+]
+
+async function fetchFrozenItems() {
+  frozenLoading.value = true
+  try {
+    const res: any = await request.get(`/admin/wallets/${tenantId}/frozen-items`)
+    frozenItems.value = res.data?.data?.list || []
+  } catch {
+  } finally {
+    frozenLoading.value = false
+  }
+}
+
+function openRelease(item: any) {
+  releaseTarget.value = item
+  releaseForm.reason = ''
+  showReleaseModal.value = true
+}
+
+async function handleRelease(done: (closed: boolean) => void) {
+  if (!releaseForm.reason.trim()) { Message.warning('请填写释放原因'); return }
+  releaseLoading.value = true
+  try {
+    const res: any = await request.post(`/admin/wallets/${tenantId}/frozen-items/release`, {
+      request_id: releaseTarget.value.request_id,
+      force: !!releaseTarget.value.need_force,
+      reason: releaseForm.reason.trim(),
+    })
+    const amt = parseFloat(res.data?.data?.released_amount || 0)
+    Message.success(`已释放冻结 $${amt.toFixed(6)}`)
+    done(true)
+    await fetchWalletDetail()
+  } catch {
+    return false
+  } finally {
+    releaseLoading.value = false
+  }
+}
+
+// === 一键释放全部冻结 ===
+const showReleaseAllModal = ref(false)
+const releaseAllForm = reactive({ reason: '', force: false })
+const releaseAllLoading = ref(false)
+
+function openReleaseAll() {
+  releaseAllForm.reason = ''
+  releaseAllForm.force = false
+  showReleaseAllModal.value = true
+}
+
+async function handleReleaseAll(done: (closed: boolean) => void) {
+  if (!releaseAllForm.reason.trim()) { Message.warning('请填写释放原因'); return }
+  releaseAllLoading.value = true
+  try {
+    const res: any = await request.post(`/admin/wallets/${tenantId}/frozen-items/release-all`, {
+      force: releaseAllForm.force,
+      reason: releaseAllForm.reason.trim(),
+    })
+    const data = res.data?.data || {}
+    const amt = parseFloat(data.released_amount || 0)
+    const skipped = parseInt(data.skipped_count || 0, 10)
+    Message.success(`已释放 ${data.released_count || 0} 笔冻结，合计 $${amt.toFixed(6)}${skipped ? `，跳过 ${skipped} 笔` : ''}`)
+    if (skipped) {
+      Message.warning(`跳过原因：${(data.skipped_reasons || []).join('；')}`)
+    }
+    done(true)
+    await fetchWalletDetail()
+  } catch {
+    return false
+  } finally {
+    releaseAllLoading.value = false
+  }
 }
 
 function openRecharge() {
@@ -528,9 +646,9 @@ async function handleRecharge(done: (closed: boolean) => void) {
   try {
     await request.post(`/admin/wallets/${tenantId}/adjust`, {
       amount: rechargeForm.amount,
-      description: rechargeForm.description || (rechargeForm.amount > 0 ? '管理员充值' : '管理员扣减'),
+      description: rechargeForm.description || (rechargeForm.amount > 0 ? '管理员增加余额' : '管理员扣减余额'),
     })
-    Message.success(rechargeForm.amount > 0 ? '充值成功' : '扣减成功')
+    Message.success(rechargeForm.amount > 0 ? '余额已增加' : '余额已扣减')
     done(true)
     await fetchWalletDetail()
     await fetchDetail()
@@ -538,6 +656,35 @@ async function handleRecharge(done: (closed: boolean) => void) {
     return false
   } finally {
     rechargeLoading.value = false
+  }
+}
+
+function openOfflineRecharge() {
+  offlineRechargeForm.amount = 0
+  offlineRechargeForm.transaction_no = ''
+  offlineRechargeForm.description = ''
+  showOfflineRechargeModal.value = true
+}
+
+async function handleOfflineRecharge(done: (closed: boolean) => void) {
+  if (!offlineRechargeForm.amount || offlineRechargeForm.amount <= 0) { Message.warning('请输入大于 0 的入账金额'); return }
+  if (!offlineRechargeForm.description.trim()) { Message.warning('请填写入账说明'); return }
+  offlineRechargeLoading.value = true
+  try {
+    const res: any = await request.post(`/admin/wallets/${tenantId}/offline-recharge`, {
+      amount: offlineRechargeForm.amount,
+      transaction_no: offlineRechargeForm.transaction_no || undefined,
+      description: offlineRechargeForm.description,
+    })
+    const data = res.data?.data || {}
+    Message.success(`入账成功，到账 $${parseFloat(data.credited_usd || 0).toFixed(2)}（汇率 ${data.rate}）`)
+    done(true)
+    await fetchWalletDetail()
+    await fetchDetail()
+  } catch {
+    return false
+  } finally {
+    offlineRechargeLoading.value = false
   }
 }
 
@@ -680,7 +827,6 @@ onMounted(() => {
               <template #extra>
                 <AButton type="primary" size="small" @click="openGroupModal">分配分组</AButton>
               </template>
-              <TableStats :total="tenantGroups.length" />
               <div v-if="tenantGroups.length === 0" style="color: var(--ta-text-tertiary)">
                 暂未分配模型分组，租户可通过分组获取可用模型
               </div>
@@ -695,13 +841,15 @@ onMounted(() => {
                 row-key="group_id"
                 size="small"
               />
+              <div class="table-footer">
+                <TableStats :total="tenantGroups.length" />
+              </div>
             </ACard>
 
             <ACard :bordered="false" title="独立模型">
               <template #extra>
                 <AButton type="primary" size="small" @click="openAssignModal">分配模型</AButton>
               </template>
-              <TableStats :total="modelsData.length" />
               <div v-if="modelsData.length === 0" style="color: var(--ta-text-tertiary)">
                 暂无独立分配的模型
               </div>
@@ -716,6 +864,9 @@ onMounted(() => {
                 row-key="id"
                 :scroll="{ x: 1100 }"
               />
+              <div class="table-footer">
+                <TableStats :total="modelsData.length" />
+              </div>
             </ACard>
           </ATabPane>
 
@@ -727,59 +878,94 @@ onMounted(() => {
                 <ACard :bordered="false" title="钱包信息" class="mb-4">
                   <template #extra>
                     <ASpace>
-                      <AButton type="primary" @click="openRecharge">充值 / 调整</AButton>
+                      <AButton type="primary" @click="openRecharge">调整余额</AButton>
+                      <AButton status="success" @click="openOfflineRecharge">线下入账</AButton>
                       <AButton @click="openThreshold">预警设置</AButton>
                     </ASpace>
                   </template>
                   <ADescriptions :column="3" bordered size="medium">
                     <ADescriptionsItem label="可用余额">
-                      <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(2) }}</span>
+                      <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="总余额">
-                      ${{ parseFloat(walletInfo.balance).toFixed(2) }}
+                      ${{ parseFloat(walletInfo.balance).toFixed(6) }}
                     </ADescriptionsItem>
                     <ADescriptionsItem label="冻结余额">
-                      <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(2) }}</span>
+                      <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(6) }}</span>
                     </ADescriptionsItem>
                     <ADescriptionsItem label="预警阈值">
-                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(2)}` : '关闭' }}
+                      {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(6)}` : '关闭' }}
                     </ADescriptionsItem>
                   </ADescriptions>
                 </ACard>
 
-                <!-- Transaction History -->
-                <ACard :bordered="false" title="交易记录">
+                <!-- Frozen Items（预扣冻结明细，运维逃生舱） -->
+                <ACard :bordered="false" class="mb-4" title="冻结明细">
                   <template #extra>
-                    <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletDetail() }">
-                      <ARadio value="">全部</ARadio>
-                      <ARadio value="recharge">充值</ARadio>
-                      <ARadio value="redemption">兑换码</ARadio>
-                      <ARadio value="consume">消费</ARadio>
-                      <ARadio value="adjust">调整</ARadio>
-                      <ARadio value="pre_deduct">预扣</ARadio>
-                      <ARadio value="settle">结算</ARadio>
-                      <ARadio value="refund">退款</ARadio>
-                      <ARadio value="freeze">冻结</ARadio>
-                      <ARadio value="unfreeze">解冻</ARadio>
-                    </ARadioGroup>
+                    <ASpace>
+                      <ATooltip v-if="hasPermission('billing:refund')" content="一次性释放全部可释放的冻结项；任务关联/待结算自动跳过，保护期内需勾选强制">
+                        <AButton size="small" :disabled="!frozenItems.length" @click="openReleaseAll">一键释放</AButton>
+                      </ATooltip>
+                      <AButton size="small" @click="fetchFrozenItems">刷新</AButton>
+                    </ASpace>
                   </template>
-                  <ATable :columns="txColumns" :data="txData" :loading="walletLoading" :bordered="false" :stripe="true" :pagination="false" row-key="id" size="small" />
-                  <div class="table-footer">
-                    <TableStats :total="txPagination.total" />
-                    <APagination
-                      v-model:current="txPagination.current"
-                      v-model:page-size="txPagination.pageSize"
-                      :total="txPagination.total"
-                      :page-size-options="[10, 20, 50]"
-                      show-page-size
-                      show-jumper
-                      @change="fetchWalletDetail"
-                      @page-size-change="() => { txPagination.current = 1; fetchWalletDetail() }"
-                    />
-                  </div>
+                  <AAlert v-if="frozenItems.length" type="warning" class="mb-3">
+                    以下金额处于预扣冻结中。正常情况下请求结束即自动释放，异常滞留最长约 2 小时由系统自动清理；仅当用户反馈冻结长时间未释放时才需手动处理。
+                  </AAlert>
+                  <ATable :columns="frozenColumns" :data="frozenItems" :loading="frozenLoading" :bordered="false" :stripe="true" :pagination="false" row-key="request_id" size="small">
+                    <template #frozenStatus="{ record }">
+                      <ASpace size="mini">
+                        <ATag v-if="record.task_status" color="arcoblue" size="small">任务 {{ record.task_status }}</ATag>
+                        <span v-if="record.block_reason" style="color: var(--color-text-3); font-size: 12px">{{ record.block_reason }}</span>
+                        <ATag v-else-if="record.need_force" color="orangered" size="small">保护期内</ATag>
+                        <ATag v-else color="green" size="small">可释放</ATag>
+                      </ASpace>
+                    </template>
+                    <template #frozenAction="{ record }">
+                      <ATooltip v-if="hasPermission('billing:refund')" :content="record.block_reason || (record.need_force ? '冻结不足 10 分钟，对应请求可能仍在进行中' : '释放该笔冻结，金额退回可用余额')">
+                        <AButton size="mini" :status="record.need_force ? 'danger' : 'warning'" :disabled="!record.releasable" @click="openRelease(record)">
+                          {{ record.need_force ? '强制释放' : '释放' }}
+                        </AButton>
+                      </ATooltip>
+                    </template>
+                  </ATable>
                 </ACard>
               </template>
             </ASpin>
+          </ATabPane>
+
+          <!-- Tab 4: Transactions -->
+          <ATabPane key="transactions" title="交易记录">
+            <ACard :bordered="false" title="交易记录">
+              <template #extra>
+                <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletTransactions() }">
+                  <ARadio value="">全部</ARadio>
+                  <ARadio value="recharge">充值</ARadio>
+                  <ARadio value="redemption">兑换码</ARadio>
+                  <ARadio value="consume">消费</ARadio>
+                  <ARadio value="adjust">调整</ARadio>
+                  <ARadio value="pre_deduct">预扣</ARadio>
+                  <ARadio value="settle">结算</ARadio>
+                  <ARadio value="refund">退款</ARadio>
+                  <ARadio value="freeze">冻结</ARadio>
+                  <ARadio value="unfreeze">解冻</ARadio>
+                </ARadioGroup>
+              </template>
+              <ATable :columns="txColumns" :data="txData" :loading="walletLoading" :bordered="false" :stripe="true" :pagination="false" row-key="id" size="small" />
+              <div class="table-footer">
+                <TableStats :total="txPagination.total" />
+                <APagination
+                  v-model:current="txPagination.current"
+                  v-model:page-size="txPagination.pageSize"
+                  :total="txPagination.total"
+                  :page-size-options="[10, 20, 50]"
+                  show-page-size
+                  show-jumper
+                  @change="fetchWalletTransactions"
+                  @page-size-change="() => { txPagination.current = 1; fetchWalletTransactions() }"
+                />
+              </div>
+            </ACard>
           </ATabPane>
         </ATabs>
       </template>
@@ -964,23 +1150,50 @@ onMounted(() => {
       </template>
     </ADrawer>
 
-    <!-- Recharge / Adjust Balance Modal -->
-    <AModal v-model:visible="showRechargeModal" title="充值 / 调整余额" :width="420" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
-      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
-        当前余额：${{ walletInfo ? parseFloat(walletInfo.balance).toFixed(2) : '0.00' }}
+    <!-- Adjust Balance Modal -->
+    <AModal v-model:visible="showRechargeModal" title="调整余额" :width="440" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
+      <div class="mb-3 text-sm leading-6" style="color: var(--ta-text-secondary)">
+        手动调整该租户的美元钱包余额（正数增加、负数扣减），用于运营补偿、余额纠错等场景。
+        <br />
+        总余额 <span class="money">${{ walletInfo ? parseFloat(walletInfo.balance).toFixed(6) : '0.000000' }}</span>
+        ｜ 可用余额 <span class="money">${{ walletInfo ? (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) : '0.000000' }}</span>
+        <span style="color: var(--ta-text-tertiary)">（扣减上限）</span>
       </div>
       <AForm :model="rechargeForm" layout="vertical">
-        <AFormItem label="金额" required>
-          <AInputNumber v-model="rechargeForm.amount" :precision="2" :step="1" placeholder="正数=充值，负数=扣减" class="w-full">
+        <AFormItem label="调整金额（USD）" required>
+          <AInputNumber v-model="rechargeForm.amount" :precision="2" :step="1" placeholder="正数=增加余额，负数=扣减余额" class="w-full">
             <template #prefix>$</template>
           </AInputNumber>
         </AFormItem>
-        <AFormItem label="描述">
-          <ATextarea v-model="rechargeForm.description" placeholder="操作原因（选填，默认自动生成）" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        <AFormItem label="调整说明">
+          <ATextarea v-model="rechargeForm.description" placeholder="如：运营补偿 / 余额纠错。建议填写，便于对账与审计" :auto-size="{ minRows: 2, maxRows: 4 }" />
         </AFormItem>
       </AForm>
       <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
-        提示：输入正数充值余额，输入负数扣减余额
+        提示：扣减金额不能超过可用余额（不含冻结部分）；如需人民币线下转账到账，请使用「线下入账」
+      </div>
+    </AModal>
+
+    <!-- Offline Recharge Modal -->
+    <AModal v-model:visible="showOfflineRechargeModal" title="线下充值入账" :width="440" :on-before-ok="handleOfflineRecharge" :ok-loading="offlineRechargeLoading">
+      <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
+        用于线下银行转账入账：输入人民币金额，到账按平台汇率换算为美元，并累计到累计充值（影响租户等级）。
+      </div>
+      <AForm :model="offlineRechargeForm" layout="vertical">
+        <AFormItem label="入账金额（人民币）" required>
+          <AInputNumber v-model="offlineRechargeForm.amount" :min="0.01" :precision="2" placeholder="如 100" class="w-full">
+            <template #prefix>¥</template>
+          </AInputNumber>
+        </AFormItem>
+        <AFormItem label="转账流水号">
+          <AInput v-model="offlineRechargeForm.transaction_no" placeholder="银行转账流水号（选填，用于对账与防重复入账）" />
+        </AFormItem>
+        <AFormItem label="入账说明" required>
+          <ATextarea v-model="offlineRechargeForm.description" placeholder="如：客户名称 / 转账原因" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        </AFormItem>
+      </AForm>
+      <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
+        到账金额 = 人民币金额 × 平台汇率，精确到 6 位小数
       </div>
     </AModal>
 
@@ -996,6 +1209,48 @@ onMounted(() => {
           </AInputNumber>
         </AFormItem>
       </AForm>
+    </AModal>
+
+    <!-- Release All Frozen Modal -->
+    <AModal v-model:visible="showReleaseAllModal" title="一键释放全部冻结" :width="520" :on-before-ok="handleReleaseAll" :ok-loading="releaseAllLoading" :ok-button-props="{ status: 'danger' }" ok-text="确认释放">
+      <AAlert type="warning" class="mb-3">
+        将一次性释放该租户全部<b>可释放</b>的冻结项（金额从冻结退回可用余额，不改变总余额）。
+        任务关联/待结算的冻结自动跳过；保护期内（冻结不足 10 分钟）的冻结默认跳过。
+      </AAlert>
+      <AForm :model="releaseAllForm" layout="vertical">
+        <AFormItem label="释放原因" required>
+          <ATextarea v-model="releaseAllForm.reason" placeholder="如：用户工单反馈冻结未释放（工单号）/ 实例故障后遗留" :auto-size="{ minRows: 2, maxRows: 4 }" />
+        </AFormItem>
+        <AFormItem>
+          <ACheckbox v-model="releaseAllForm.force">同时强制释放保护期内的冻结项（对应请求可能仍在进行中，释放后将失去超扣保护）</ACheckbox>
+        </AFormItem>
+      </AForm>
+      <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
+        释放为逐笔幂等操作：若某请求恰好同时完成结算，以结算结果为准，不会重复释放
+      </div>
+    </AModal>
+
+    <!-- Release Frozen Modal -->
+    <AModal v-model:visible="showReleaseModal" :title="releaseTarget?.need_force ? '强制释放冻结' : '释放冻结'" :width="460" :on-before-ok="handleRelease" :ok-loading="releaseLoading" :ok-button-props="{ status: releaseTarget?.need_force ? 'danger' : 'warning' }" :ok-text="releaseTarget?.need_force ? '确认强制释放' : '确认释放'">
+      <template v-if="releaseTarget">
+        <AAlert v-if="releaseTarget.need_force" type="error" class="mb-3">
+          该笔冻结仅 {{ formatFrozenAge(releaseTarget.age_seconds) }}，对应请求（长流式/实时会话）可能仍在进行中。释放后该请求将失去超扣保护，并发消费可能导致余额扣成负数。请确认无在途请求后再操作。
+        </AAlert>
+        <div class="mb-3 text-sm leading-6" style="color: var(--ta-text-secondary)">
+          请求ID：<span style="font-family: monospace">{{ releaseTarget.request_id }}</span>
+          <br />
+          冻结金额：<span style="color: rgb(var(--orange-6)); font-weight: 600">${{ (parseFloat(releaseTarget.amount) || 0).toFixed(6) }}</span>
+          ｜ 已冻结 {{ formatFrozenAge(releaseTarget.age_seconds) }}
+        </div>
+        <AForm :model="releaseForm" layout="vertical">
+          <AFormItem label="释放原因" required>
+            <ATextarea v-model="releaseForm.reason" placeholder="如：用户工单反馈冻结未释放（工单号）/ 实例故障后遗留" :auto-size="{ minRows: 2, maxRows: 4 }" />
+          </AFormItem>
+        </AForm>
+        <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
+          释放为逐笔幂等操作：金额从冻结退回可用余额，不改变总余额；若该请求恰好同时完成结算，以结算结果为准，不会重复释放
+        </div>
+      </template>
     </AModal>
   </div>
 </template>

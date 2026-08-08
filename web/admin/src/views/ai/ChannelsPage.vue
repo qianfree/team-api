@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { Tag, Button, Space, Popconfirm, Message, Radio } from '@arco-design/web-vue'
+import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
 import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
@@ -26,6 +26,9 @@ const pagination = reactive({ current: 1, pageSize: 20, total: 0, showPageSize: 
 const filterType = ref<number | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
 const filterSearch = ref('')
+const filterID = ref<number | undefined>(undefined)
+const filterModel = ref('')
+const filterBaseURL = ref('')
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -33,6 +36,17 @@ const statusOptions = [
 ]
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const breakerTagColor: Record<number, string> = { 0: 'green', 1: 'red', 2: 'orange' }
+const breakerLabel: Record<number, string> = { 0: '正常', 1: '熔断', 2: '半开' }
+
+// 调度状态悬浮说明：渠道级熔断 / 半开探活 / 模型级熔断的语义区分。
+function breakerTooltip(state: number, models: number): string {
+  if (state === 1) return '渠道级熔断中：该渠道已被调度器硬排除，请求会路由到其他渠道。上游修复后可点击「重置健康度」立即复位熔断。'
+  if (state === 2) return '渠道半开探活中：冷却期已过，调度器按窗口放行少量真实请求验证上游恢复，探测成功即自动闭合。'
+  if (models > 0) return `渠道本体正常，但 ${models} 个模型处于熔断/半开：这些模型的请求会被排除或进入探测限流。`
+  return '调度运行正常，无熔断。'
+}
+
 const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
 const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
 const tierOptions = [
@@ -67,12 +81,42 @@ const columns: TableColumnData[] = [
     title: '状态', dataIndex: 'status', width: 80,
     render({ record }) { return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status) },
   },
-  { title: '优先级', dataIndex: 'priority', width: 70 },
-  { title: '权重', dataIndex: 'weight', width: 70 },
   {
-    title: '层级', dataIndex: 'tier', width: 80,
+    title: '层级', dataIndex: 'tier', width: 120,
     render({ record }) {
-      return h(Tag, { color: tierTagColor[record.tier] || 'gray', size: 'small' }, () => tierLabel[record.tier] || record.tier || '-')
+      // 无编辑权限时只读展示
+      if (!hasPermission('channel:edit')) {
+        return h(Tag, { color: tierTagColor[record.tier] || 'gray', size: 'small' }, () => tierLabel[record.tier] || record.tier || '-')
+      }
+      return h(Select, {
+        modelValue: record.tier,
+        size: 'small',
+        style: 'width: 108px',
+        options: [
+          { label: '首选', value: 'primary' },
+          { label: '备用', value: 'secondary' },
+          { label: '保底', value: 'reserve' },
+        ],
+        'onUpdate:modelValue': (val: any) => { record.tier = val },
+        onChange: (val: any) => saveTier(record, val),
+      })
+    },
+  },
+  {
+    title: '权重', dataIndex: 'weight', width: 100,
+    render({ record }) {
+      // 无编辑权限时只读展示
+      if (!hasPermission('channel:edit')) return h('span', {}, record.weight)
+      return h(InputNumber, {
+        modelValue: record.weight,
+        min: 0,
+        max: 100,
+        size: 'small',
+        disabled: record._saving,
+        style: 'width: 84px',
+        'onUpdate:modelValue': (val: number | undefined) => { record.weight = val ?? 0 },
+        onChange: (val: number | undefined) => onWeightChange(record, val),
+      })
     },
   },
   {
@@ -83,6 +127,29 @@ const columns: TableColumnData[] = [
     },
   },
   {
+    title: '调度状态', dataIndex: 'breaker_state', width: 110,
+    render({ record }) {
+      // disabled / testing 渠道不在目录快照中，熔断状态无意义，置灰展示
+      if (record.status !== 'active') {
+        return h('span', { style: 'color:#94a3b8' }, '—')
+      }
+      const state = record.breaker_state ?? 0
+      const models = record.breaker_models ?? 0
+      const tag = h(Tag, { color: breakerTagColor[state], size: 'small' }, () => breakerLabel[state])
+      const badge = models > 0
+        ? h('span', { style: 'font-size:12px;color:#f59e0b;margin-left:4px;font-weight:600' }, `${models}`)
+        : null
+      const trigger = h('span', { style: 'display:inline-flex;gap:4px;align-items:center;cursor:help' }, [tag, badge])
+      const content = () => h('div', { style: 'line-height:1.8' }, [
+        h('div', null, breakerTooltip(state, models)),
+        (state === 1 || state === 2 || models > 0) && hasPermission('channel:edit')
+          ? h('a', { style: 'color:#165dff;cursor:pointer', onClick: () => resetHealth(record) }, '重置健康度')
+          : null,
+      ])
+      return h(Tooltip, null, { default: () => trigger, content })
+    },
+  },
+  {
     title: 'VIP', dataIndex: 'is_vip', width: 70,
     render({ record }) {
       return h(Tag, { color: record.is_vip ? 'gold' : undefined, size: 'small' }, () => record.is_vip ? 'VIP' : '-')
@@ -90,7 +157,7 @@ const columns: TableColumnData[] = [
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
   {
-    title: '操作', dataIndex: 'actions', width: 210, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 300, fixed: 'right',
     render({ record }) {
       const isActive = record.status === 'active'
       const action = isActive ? '禁用' : '启用'
@@ -104,6 +171,15 @@ const columns: TableColumnData[] = [
               size: 'small',
               status: isActive ? 'normal' : 'success',
             }, () => action))
+          : null,
+        hasPermission('channel:edit')
+          ? h(Popconfirm, {
+              content: '确定重置该渠道健康度？',
+              onOk: () => resetHealth(record),
+            }, () => h(Button, {
+              size: 'small',
+              status: 'warning',
+            }, () => '重置健康度'))
           : null,
         h(Button, { size: 'small', type: 'primary', onClick: () => openDetail(record) }, () => '详情'),
         hasPermission('channel:delete')
@@ -122,8 +198,13 @@ async function fetchData() {
     if (filterType.value) params.type = filterType.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
+    if (filterID.value) params.id = filterID.value
+    if (filterModel.value) params.model = filterModel.value
+    if (filterBaseURL.value) params.base_url = filterBaseURL.value
     const res: any = await request.get('/admin/channels', { params })
     data.value = res.data?.data?.list || res.data?.list || []
+    // 记录本次加载时已持久化的权重/层级，供行内编辑失败回滚
+    data.value.forEach((r: any) => { r._savedWeight = r.weight; r._tierSaved = r.tier })
     pagination.total = res.data?.data?.total || res.data?.total || 0
   } catch {
     data.value = []; pagination.total = 0
@@ -147,7 +228,7 @@ const providerDefaultURLs: Record<number, string> = {
   1: 'https://api.openai.com',
   2: 'https://api.anthropic.com',
   3: 'https://generativelanguage.googleapis.com',
-  4: 'https://dashscope.aliyuncs.com/compatible-mode',
+  4: 'https://dashscope.aliyuncs.com',
   6: 'https://hunyuan.tencentcloudapi.com',
   7: 'https://open.bigmodel.cn/api/paas',
   8: 'https://api.deepseek.com',
@@ -198,6 +279,15 @@ async function deleteChannel(row: any) {
   catch { /* interceptor handles error toast */ }
 }
 
+// 重置渠道健康度：熔断复位 + 成功率恢复，渠道立即恢复被调度选择的能力。
+async function resetHealth(row: any) {
+  try {
+    await request.post(`/admin/channels/${row.id}/reset-health`)
+    message.success('已重置健康度')
+    fetchData()
+  } catch { /* interceptor handles error toast */ }
+}
+
 // 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
 // 后端 UpdateChannel 会无条件写入 priority/weight，故必须带上当前值，否则会被重置为 0。
 // status 为 active → 禁用；其它（disabled/testing）→ 启用为 active。
@@ -219,6 +309,61 @@ async function toggleStatus(record: any) {
     record.status = prevStatus // 失败回滚，错误提示由 request 拦截器统一处理
   } finally {
     record._toggling = false
+  }
+}
+
+// === 行内编辑（权重 / 层级） ===
+// 行内编辑复用 PUT /admin/channels/{id}。后端 UpdateChannel 会无条件写入 priority/weight，
+// 故每次提交必须携带当前 priority 与 weight，避免被重置为 0。
+const weightTimers = new Map<number, any>()
+
+function onWeightChange(record: any, val: number | undefined) {
+  if (val === undefined || val === null) {
+    // 清空字段时取消待提交的防抖任务，避免误提交旧值
+    const timer = weightTimers.get(record.id)
+    if (timer) { clearTimeout(timer); weightTimers.delete(record.id) }
+    return
+  }
+  const timer = weightTimers.get(record.id)
+  if (timer) clearTimeout(timer)
+  // 防抖：连续点击步进按钮或连续输入时，只提交最后一次值
+  weightTimers.set(record.id, setTimeout(() => saveWeight(record, val), 350))
+}
+
+async function saveWeight(record: any, val: number) {
+  if (record._saving || val === record._savedWeight) return
+  const prev = record._savedWeight
+  record._saving = true
+  try {
+    await request.put(`/admin/channels/${record.id}`, {
+      priority: record.priority,
+      weight: val,
+    })
+    record._savedWeight = val
+    message.success('权重已更新')
+  } catch {
+    record.weight = prev // 失败回滚显示值
+  } finally {
+    record._saving = false
+  }
+}
+
+async function saveTier(record: any, val: string) {
+  if (!val || record._saving || val === record._tierSaved) return
+  const prev = record._tierSaved
+  record._saving = true
+  try {
+    await request.put(`/admin/channels/${record.id}`, {
+      priority: record.priority,
+      weight: record.weight,
+      tier: val,
+    })
+    record._tierSaved = val
+    message.success('层级已更新')
+  } catch {
+    record.tier = prev // 失败回滚
+  } finally {
+    record._saving = false
   }
 }
 
@@ -292,6 +437,9 @@ const { exporting, exportFile } = useExport({
     type: filterType.value,
     status: filterStatus.value,
     search: filterSearch.value,
+    id: filterID.value,
+    model: filterModel.value,
+    base_url: filterBaseURL.value,
   }),
 })
 </script>
@@ -353,8 +501,11 @@ const { exporting, exportFile } = useExport({
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
       <ASpace>
+        <AInputNumber v-model="filterID" placeholder="渠道 ID" :min="1" allow-clear style="width: 120px" @change="handleFilter" @clear="handleFilter" />
         <ASelect v-model="filterType" :options="[{ label: '全部类型', value: '' }, ...providerTypeOptions]" placeholder="供应商类型" allow-clear allow-search style="width: 180px" @change="handleFilter" />
+        <AInput v-model="filterModel" placeholder="搜索模型名..." allow-clear style="width: 160px" @keydown.enter="handleFilter" @clear="handleFilter" />
         <ASelect v-model="filterStatus" :options="statusOptions" placeholder="状态" allow-clear style="width: 120px" @change="handleFilter" />
+        <AInput v-model="filterBaseURL" placeholder="搜索地址..." allow-clear style="width: 220px" @keydown.enter="handleFilter" @clear="handleFilter" />
         <AInput v-model="filterSearch" placeholder="搜索渠道名..." allow-clear style="width: 200px" @keydown.enter="handleFilter" @clear="handleFilter" />
         <AButton @click="handleFilter">搜索</AButton>
       </ASpace>
@@ -362,9 +513,9 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1400 }" :bordered="false" :stripe="true" :pagination="false" row-key="id" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />
       </div>
     </ACard>
@@ -522,10 +673,16 @@ const { exporting, exportFile } = useExport({
 <style scoped>
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.table-footer :deep(.table-stats) {
+  margin-bottom: 0;
 }
 .scheduling-hint {
   display: inline-flex;

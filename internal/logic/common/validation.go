@@ -81,6 +81,36 @@ func ValidateDateParam(date string, fieldName string) error {
 	return nil
 }
 
+// ValidateDateTimeParam 校验时间筛选参数，兼容 YYYY-MM-DD 与 YYYY-MM-DD HH:mm:ss
+// （前端时间范围选择器精确到分钟时传完整时间戳，仅选日期时传日期）。
+func ValidateDateTimeParam(value string, fieldName string) error {
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{"2006-01-02", "2006-01-02 15:04:05"} {
+		if _, err := time.Parse(layout, value); err == nil {
+			return nil
+		}
+	}
+	return gerror.NewCode(gcode.New(consts.CodeBadRequest, "", nil), "%s格式无效，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss", fieldName)
+}
+
+// StartOfRange 返回时间范围过滤起点：仅日期（YYYY-MM-DD）时补齐当天 00:00:00，带时间则原样使用
+func StartOfRange(value string) string {
+	if len(value) == 10 {
+		return value + " 00:00:00"
+	}
+	return value
+}
+
+// EndOfRange 返回时间范围过滤终点：仅日期（YYYY-MM-DD）时补齐当天 23:59:59，带时间则原样使用
+func EndOfRange(value string) string {
+	if len(value) == 10 {
+		return value + " 23:59:59"
+	}
+	return value
+}
+
 // ValidateForbiddenWords 校验名称是否包含系统禁用词
 // 从系统配置 register_forbidden_words 读取逗号分隔的禁用词列表，对 value 做大小写不敏感的包含检查
 func ValidateForbiddenWords(ctx context.Context, value, fieldName string) error {

@@ -3,6 +3,9 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -58,27 +61,7 @@ func HandleTaskSubmit(r *ghttp.Request) {
 	// 选择渠道
 	channelMeta, err := selectTaskChannel(r, body)
 	if err != nil {
-		statusCode := 503
-		errType := "server_error"
-		errMsg := err.Error()
-
-		if err == relay_common.ErrTenantModelNotEnabled {
-			statusCode = 403
-			errType = "permission_denied"
-			errMsg = "当前租户未启用该模型，请联系管理员"
-		} else if err == relay_common.ErrMemberModelNotAllowed {
-			statusCode = 403
-			errType = "permission_denied"
-			errMsg = "当前成员无权使用该模型"
-		} else if err == relay_common.ErrChannelUnavailable {
-			statusCode = 503
-			errType = "server_error"
-			errMsg = "该模型暂无可用的渠道，请稍后重试或联系管理员"
-		}
-
-		r.Response.WriteStatus(statusCode, g.Map{
-			"error": g.Map{"type": errType, "message": errMsg},
-		})
+		writeTaskChannelSelectionError(r, err)
 		return
 	}
 
@@ -166,6 +149,58 @@ func extractTaskID(r *ghttp.Request) string {
 	return r.Get("task_id").String()
 }
 
+type taskModelAccessChecker interface {
+	CheckMemberModelAccess(ctx context.Context, tenantID, userID int64, modelName string) (bool, error)
+	CheckApiKeyModelAccess(ctx context.Context, apiKeyID int64, modelName string) (bool, error)
+}
+
+func checkTaskModelAccess(
+	ctx context.Context,
+	checker taskModelAccessChecker,
+	tenantID, userID, apiKeyID int64,
+	modelName string,
+) error {
+	allowed, err := checker.CheckMemberModelAccess(ctx, tenantID, userID, modelName)
+	if err != nil {
+		return fmt.Errorf("check member model access: %w", err)
+	}
+	if !allowed {
+		return relay_common.ErrMemberModelNotAllowed
+	}
+
+	allowed, err = checker.CheckApiKeyModelAccess(ctx, apiKeyID, modelName)
+	if err != nil {
+		return fmt.Errorf("check API key model access: %w", err)
+	}
+	if !allowed {
+		return relay_common.ErrApiKeyModelNotAllowed
+	}
+
+	return nil
+}
+
+func taskChannelSelectionError(err error) (statusCode int, errType, message string) {
+	switch {
+	case errors.Is(err, relay_common.ErrTenantModelNotEnabled):
+		return http.StatusForbidden, "permission_denied", "当前租户未启用该模型，请联系管理员"
+	case errors.Is(err, relay_common.ErrMemberModelNotAllowed):
+		return http.StatusForbidden, "permission_denied", "当前成员无权使用该模型"
+	case errors.Is(err, relay_common.ErrApiKeyModelNotAllowed):
+		return http.StatusForbidden, "permission_denied", "当前 API Key 无权使用该模型"
+	case errors.Is(err, relay_common.ErrChannelUnavailable):
+		return http.StatusServiceUnavailable, "server_error", "该模型暂无可用的渠道，请稍后重试或联系管理员"
+	default:
+		return http.StatusServiceUnavailable, "server_error", err.Error()
+	}
+}
+
+func writeTaskChannelSelectionError(r *ghttp.Request, err error) {
+	statusCode, errType, message := taskChannelSelectionError(err)
+	r.Response.WriteStatus(statusCode, g.Map{
+		"error": g.Map{"type": errType, "message": message},
+	})
+}
+
 // selectTaskChannel 为异步任务选择渠道（新调度引擎单次选择）。
 // 任务提交是瞬时动作：选定并物化后立即结束调度会话释放租约；
 // 会话绑定已由调度器在选择时写入，提交结果不额外上报健康（与旧行为一致）。
@@ -183,11 +218,8 @@ func selectTaskChannel(r *ghttp.Request, body []byte) (*relay_common.ChannelMeta
 	userID := middleware.GetUserID(ctx)
 	apiKeyID := middleware.GetApiKeyID(ctx)
 
-	// 检查成员模型范围
-	if allowed, err := relayDataProvider.CheckMemberModelAccess(ctx, tenantID, userID, req.Model); err != nil {
+	if err := checkTaskModelAccess(ctx, relayDataProvider, tenantID, userID, apiKeyID, req.Model); err != nil {
 		return nil, err
-	} else if !allowed {
-		return nil, relay_common.ErrMemberModelNotAllowed
 	}
 
 	enabled, channelScope, err := relayDataProvider.CheckTenantModelAccess(ctx, tenantID, req.Model)
@@ -267,9 +299,7 @@ func HandleMjSubmit(r *ghttp.Request) {
 
 	channelMeta, err := selectTaskChannel(r, body)
 	if err != nil {
-		r.Response.WriteStatus(503, g.Map{
-			"error": g.Map{"type": "server_error", "message": err.Error()},
-		})
+		writeTaskChannelSelectionError(r, err)
 		return
 	}
 
@@ -322,9 +352,7 @@ func HandleAliImageSubmit(r *ghttp.Request) {
 
 	channelMeta, err := selectTaskChannel(r, body)
 	if err != nil {
-		r.Response.WriteStatus(503, g.Map{
-			"error": g.Map{"type": "server_error", "message": err.Error()},
-		})
+		writeTaskChannelSelectionError(r, err)
 		return
 	}
 

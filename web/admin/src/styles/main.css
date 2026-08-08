@@ -449,6 +449,16 @@ body {
   border-top: 1px solid var(--ta-border-light);
 }
 
+/* 统计总数从表格左上角移到底部后：footer 内存在统计栏时两端对齐（统计居左、分页居右），
+   无统计栏的 footer 保持右对齐不受影响（:has 特异性高于 scoped .table-footer，可统一覆盖各页脚注） */
+.page-table .table-footer:has(.table-stats) {
+  justify-content: space-between;
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.page-table .table-footer .table-stats {
+  margin-bottom: 0;
+}
+
 /* Tab 内嵌表格：让 Tab 容器与面板也参与纵向 flex，保证内部表格能撑满滚动 */
 .page-table .arco-tabs {
   flex: 1;

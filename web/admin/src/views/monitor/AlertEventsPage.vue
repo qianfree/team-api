@@ -201,9 +201,9 @@ onUnmounted(() => {
     </a-card>
 
     <a-card :bordered="false">
-      <TableStats :total="total" />
       <a-table :data="data" :columns="columns" :loading="loading" :pagination="false" row-key="id" />
       <div class="table-footer">
+        <TableStats :total="total" />
         <a-pagination :current="pagination.current" :page-size="pagination.pageSize" :total="total" @change="handlePageChange" />
       </div>
     </a-card>

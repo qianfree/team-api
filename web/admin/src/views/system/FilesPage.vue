@@ -465,7 +465,6 @@ onMounted(() => {
 
     <!-- 列表 -->
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ASpace wrap style="margin-bottom:16px">
         <AInput v-model="filter.tenant_id" placeholder="租户ID" allow-clear style="width:110px" />
         <AInput v-model="filter.user_id" placeholder="上传者ID" allow-clear style="width:110px" />
@@ -483,6 +482,7 @@ onMounted(() => {
         :pagination="false" row-key="id"
       />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"

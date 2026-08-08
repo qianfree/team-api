@@ -143,8 +143,10 @@ onMounted(fetchLevels)
 
     <ACard :bordered="false">
       <template #title>等级配置列表</template>
-      <TableStats :total="levels.length" />
       <ATable :columns="columns" :data="levels" :loading="loading" row-key="id" :scroll="{ x: 900 }" :pagination="false" />
+      <div class="table-footer">
+        <TableStats :total="levels.length" />
+      </div>
     </ACard>
 
     <ADrawer v-model:visible="showModal" :title="editingId ? '编辑等级' : '创建等级'" :width="520" :mask-closable="false" :footer="true" unmount-on-close>

@@ -17,6 +17,13 @@ import (
 
 // TaskList 大模型异步任务列表
 func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error) {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+		return nil, err
+	}
+
 	m := dao.TskModelTasks.Ctx(ctx).OrderDesc("id")
 	if req.Status != "" {
 		m = m.Where("status", req.Status)
@@ -26,6 +33,21 @@ func (s *sAdmin) TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskLis
 	}
 	if req.PublicTaskID != "" {
 		m = m.Where("public_task_id", req.PublicTaskID)
+	}
+	if req.ModelName != "" {
+		m = m.Where("model_name", req.ModelName)
+	}
+	if req.TenantID > 0 {
+		m = m.Where("tenant_id", req.TenantID)
+	}
+	if req.UserID > 0 {
+		m = m.Where("user_id", req.UserID)
+	}
+	if req.StartDate != "" {
+		m = m.Where("created_at >= ?", common.StartOfRange(req.StartDate))
+	}
+	if req.EndDate != "" {
+		m = m.Where("created_at <= ?", common.EndOfRange(req.EndDate))
 	}
 
 	var tasks []struct {

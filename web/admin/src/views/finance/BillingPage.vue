@@ -94,7 +94,6 @@ const { exporting, exportFile } = useExport({
     </PageHeader>
 
     <ACard :bordered="false" class="mt-4">
-      <TableStats :total="billPagination.total" />
       <div class="mb-4">
         <ASpace>
           <AInput v-model="billFilterTenantId" placeholder="租户ID" allow-clear style="width: 120px" @keydown.enter="fetchBillingRecords" />
@@ -103,6 +102,7 @@ const { exporting, exportFile } = useExport({
       </div>
       <ATable :columns="billColumns" :data="billData" :loading="billLoading" :scroll="{ x: 1800 }" :bordered="false" :stripe="true" size="small" :pagination="false" row-key="id" />
       <div class="table-footer">
+        <TableStats :total="billPagination.total" />
         <APagination v-model:current="billPagination.current" v-model:page-size="billPagination.pageSize" :total="billPagination.total" :page-size-options="billPagination.pageSizeOptions" show-page-size @change="fetchBillingRecords" @page-size-change="(s: number) => { billPagination.pageSize = s; billPagination.current = 1; fetchBillingRecords() }" />
       </div>
     </ACard>

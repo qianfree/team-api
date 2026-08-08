@@ -147,6 +147,41 @@ func (c *Catalog) ChannelModels() map[int64][]string {
 	return out
 }
 
+// ChannelRuntimeState 单个渠道的调度运行状态聚合（管理后台展示用）。
+// 数据来源：目录内存快照（每 5s 刷新），与调度器 buildCandidates 使用同一份数据；
+// Redis 读值已在 Rebuild 时经 EffectiveBreakerState 做惰性 OPEN→HALF_OPEN 判定。
+type ChannelRuntimeState struct {
+	Breaker       dispatch.BreakerState // 渠道级熔断状态（同一渠道所有模型取值相同）
+	BreakerModels int                   // 处于 OPEN/HALF_OPEN 的模型数量（渠道×模型级汇总）
+}
+
+// ChannelRuntimeStates 返回目录快照中各渠道的熔断聚合视图。
+// 遍历 byModel 按渠道 ID 去重；渠道级 Breaker 取首次遇到值（各模型行相同），
+// 模型级 ModelBreaker 按行计数（同一渠道在 byModel 中每个模型至多出现一次 → 计数即按模型去重）。
+// 注意：disabled / 无 enabled 能力的渠道不在快照（loadCatalogFromDB 仅载 c.status='active'），
+// 不会出现在返回 map 中——调用方需按运营状态自行区分展示。
+// 并发安全：c.current 为 atomic.Pointer，Load() 取到的快照不可变，无锁。
+func (c *Catalog) ChannelRuntimeStates() map[int64]ChannelRuntimeState {
+	idx := c.current.Load()
+	if idx == nil {
+		return nil
+	}
+	out := make(map[int64]ChannelRuntimeState)
+	for _, chans := range idx.byModel {
+		for _, ch := range chans {
+			agg, ok := out[ch.ID]
+			if !ok {
+				agg = ChannelRuntimeState{Breaker: ch.Breaker}
+			}
+			if ch.ModelBreaker != dispatch.BreakerClosed {
+				agg.BreakerModels++
+			}
+			out[ch.ID] = agg
+		}
+	}
+	return out
+}
+
 // Invalidate 主动触发一次刷新（渠道/能力/Key 管理操作后调用；跨实例走 pub/sub）。
 func (c *Catalog) Invalidate() {
 	select {

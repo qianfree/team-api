@@ -158,6 +158,8 @@ var Registry = []SettingDef{
 		Label: "支付回调基础URL", Description: "为空则使用请求 Host"},
 	{Key: "payment_exchange_rate_cny_to_usd", Type: SettingTypeFloat, Default: "0.14", Category: "payment",
 		Label: "CNY → USD 兑换比例", Description: "1 人民币兑换多少美元（USD → CNY 自动取倒数，确保往返闭合）", Validation: "min:0.001,max:100"},
+	{Key: "payment_notice", Type: SettingTypeString, Default: "", Category: "payment",
+		Label: "支付说明", Description: "展示在租户端钱包充值页的说明文案，支持纯文本或 HTML 代码（如提示充值后不支持退款、指定渠道折扣活动等）。纯文本换行需用 <br>，富文本请直接粘贴 HTML"},
 
 	// ── Performance ──
 	{Key: "global_qps_limit", Type: SettingTypeInt, Default: "10000", Category: "performance",

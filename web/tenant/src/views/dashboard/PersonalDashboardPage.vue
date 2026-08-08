@@ -335,7 +335,7 @@ onMounted(refreshAll)
 					@change-days="selectedDays = $event"
 				/>
 
-				<div class="card quota-card p-5 sm:p-6">
+				<div class="card card-prominent quota-card p-5 sm:p-6">
 					<div class="flex items-start justify-between gap-4">
 						<div class="flex items-center gap-3">
 							<div class="section-icon quota-icon"><Icon name="shield" size="md" /></div>
@@ -395,7 +395,7 @@ onMounted(refreshAll)
 			</section>
 
 			<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
-				<div class="card p-5 sm:p-6">
+				<div class="card card-prominent p-5 sm:p-6">
 					<div class="flex items-center justify-between">
 						<div class="flex items-center gap-3">
 							<div class="section-icon quality-icon"><Icon name="checkCircle" size="md" /></div>
@@ -451,7 +451,7 @@ onMounted(refreshAll)
 			</section>
 
 			<section class="grid grid-cols-1 gap-5 xl:grid-cols-2">
-				<div class="card overflow-hidden">
+				<div class="card card-prominent overflow-hidden">
 					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 						<div>
 							<h2 class="text-base font-semibold text-slate-900">API Key 用量</h2>
@@ -484,7 +484,7 @@ onMounted(refreshAll)
 					</div>
 				</div>
 
-				<div class="card overflow-hidden">
+				<div class="card card-prominent overflow-hidden">
 					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 						<div>
 							<h2 class="text-base font-semibold text-slate-900">模型用量明细</h2>

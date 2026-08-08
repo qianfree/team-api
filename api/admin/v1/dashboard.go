@@ -122,13 +122,17 @@ type AdminUsageLogListReq struct {
 	g.Meta      `path:"/usage-logs" method:"get" mime:"json" tags:"管理后台-用量" summary:"用量日志列表"`
 	Page        int    `json:"page" d:"1" dc:"页码"`
 	PageSize    int    `json:"page_size" d:"20" v:"between:1,100" dc:"每页数量"`
+	ID          int64  `json:"id" dc:"用量记录ID"`
 	TenantID    int64  `json:"tenant_id" dc:"租户ID"`
+	UserID      int64  `json:"user_id" dc:"用户ID"`
 	Username    string `json:"username" dc:"用户名（模糊匹配）"`
+	ApiKeyID    int64  `json:"api_key_id" dc:"API Key ID"`
+	ChannelID   int64  `json:"channel_id" dc:"渠道ID"`
 	Model       string `json:"model" dc:"模型名称"`
 	Status      string `json:"status" dc:"状态"`
 	RequestType int    `json:"request_type" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
-	StartDate   string `json:"start_date" dc:"开始日期"`
-	EndDate     string `json:"end_date" dc:"结束日期"`
+	StartDate   string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate     string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type AdminUsageLogItem struct {
@@ -282,6 +286,20 @@ type AdminWalletAdjustReq struct {
 
 type AdminWalletAdjustRes struct{}
 
+type AdminWalletOfflineRechargeReq struct {
+	g.Meta        `path:"/wallets/{tenant_id}/offline-recharge" method:"post" mime:"json" tags:"管理后台-钱包" summary:"线下充值入账"`
+	TenantID      int64   `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	Amount        float64 `json:"amount" v:"required|min:0.01" dc:"线下入账金额（人民币 CNY），按平台汇率换算为 USD 到账"`
+	TransactionNo string  `json:"transaction_no" dc:"银行转账流水号（选填，用于对账与防重复入账）"`
+	Description   string  `json:"description" v:"required" dc:"入账说明（必填，如客户名称、转账原因）"`
+}
+
+type AdminWalletOfflineRechargeRes struct {
+	CreditedUSD float64 `json:"credited_usd" dc:"实际入账美元金额"`
+	Rate        float64 `json:"rate" dc:"使用的 CNY→USD 汇率"`
+	Balance     float64 `json:"balance" dc:"入账后总余额（USD）"`
+}
+
 type AdminWalletTransactionListReq struct {
 	g.Meta   `path:"/wallets/{tenant_id}/transactions" method:"get" mime:"json" tags:"管理后台-钱包" summary:"交易流水"`
 	TenantID int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
@@ -311,6 +329,58 @@ type AdminWalletTransactionListRes struct {
 	PageSize int                           `json:"page_size"`
 }
 
+// AdminWalletFrozenItemListReq 冻结明细列表请求（预扣追踪表中 status=frozen 的记录）
+type AdminWalletFrozenItemListReq struct {
+	g.Meta   `path:"/wallets/{tenant_id}/frozen-items" method:"get" mime:"json" tags:"管理后台-钱包" summary:"冻结明细列表"`
+	TenantID int64 `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+}
+
+// AdminWalletFrozenItem 单笔冻结明细
+type AdminWalletFrozenItem struct {
+	RequestID   string  `json:"request_id" dc:"请求ID"`
+	ModelName   string  `json:"model_name" dc:"模型名称"`
+	Amount      float64 `json:"amount" dc:"冻结金额（USD）"`
+	CreatedAt   string  `json:"created_at" dc:"冻结时间"`
+	AgeSeconds  int64   `json:"age_seconds" dc:"已冻结时长（秒）"`
+	Releasable  bool    `json:"releasable" dc:"是否可释放（false 时 block_reason 说明原因）"`
+	NeedForce   bool    `json:"need_force" dc:"是否需要强制释放（冻结时长过短，可能仍有请求进行中）"`
+	BlockReason string  `json:"block_reason" dc:"不可释放原因（如关联异步任务进行中）"`
+	TaskStatus  string  `json:"task_status" dc:"关联异步任务状态（无关联时为空）"`
+}
+
+type AdminWalletFrozenItemListRes struct {
+	List []*AdminWalletFrozenItem `json:"list"`
+}
+
+// AdminWalletFrozenReleaseReq 按笔释放冻结请求
+type AdminWalletFrozenReleaseReq struct {
+	g.Meta    `path:"/wallets/{tenant_id}/frozen-items/release" method:"post" mime:"json" tags:"管理后台-钱包" summary:"释放单笔冻结"`
+	TenantID  int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	RequestID string `json:"request_id" v:"required" dc:"要释放的冻结项请求ID"`
+	Force     bool   `json:"force" dc:"强制释放（冻结时长不足保护期时必须显式传 true）"`
+	Reason    string `json:"reason" v:"required" dc:"释放原因（必填，写入审计）"`
+}
+
+type AdminWalletFrozenReleaseRes struct {
+	ReleasedAmount float64 `json:"released_amount" dc:"实际释放金额（USD）"`
+}
+
+// AdminWalletFrozenReleaseAllReq 一键释放全部冻结请求
+type AdminWalletFrozenReleaseAllReq struct {
+	g.Meta   `path:"/wallets/{tenant_id}/frozen-items/release-all" method:"post" mime:"json" tags:"管理后台-钱包" summary:"一键释放全部冻结"`
+	TenantID int64  `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
+	Force    bool   `json:"force" dc:"是否强制释放保护期内（冻结不足 10 分钟）的冻结项"`
+	Reason   string `json:"reason" v:"required" dc:"释放原因（必填，写入审计）"`
+}
+
+// AdminWalletFrozenReleaseAllRes 一键释放结果
+type AdminWalletFrozenReleaseAllRes struct {
+	ReleasedCount  int64    `json:"released_count" dc:"实际释放笔数"`
+	ReleasedAmount float64  `json:"released_amount" dc:"实际释放金额合计（USD）"`
+	SkippedCount   int64    `json:"skipped_count" dc:"跳过笔数（任务关联/待结算/保护期未强制）"`
+	SkippedReasons []string `json:"skipped_reasons" dc:"跳过原因摘要（去重）"`
+}
+
 type AdminWalletSetWarningThresholdReq struct {
 	g.Meta    `path:"/wallets/{tenant_id}/warning-threshold" method:"put" mime:"json" tags:"管理后台-钱包" summary:"设置预警阈值"`
 	TenantID  int64   `json:"tenant_id" in:"path" v:"required|min:1" dc:"租户ID"`
@@ -323,13 +393,17 @@ type AdminWalletSetWarningThresholdRes struct{}
 type AdminUsageLogExportReq struct {
 	g.Meta      `path:"/usage-logs/export" method:"get" mime:"json" tags:"管理后台-用量" summary:"导出用量日志"`
 	Format      string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
+	ID          int64  `json:"id" in:"query" dc:"用量记录ID"`
 	TenantID    int64  `json:"tenant_id" in:"query" dc:"租户ID"`
+	UserID      int64  `json:"user_id" in:"query" dc:"用户ID"`
 	Username    string `json:"username" in:"query" dc:"用户名（模糊匹配）"`
+	ApiKeyID    int64  `json:"api_key_id" in:"query" dc:"API Key ID"`
+	ChannelID   int64  `json:"channel_id" in:"query" dc:"渠道ID"`
 	Model       string `json:"model" in:"query" dc:"模型名称"`
 	Status      string `json:"status" in:"query" dc:"状态"`
 	RequestType int    `json:"request_type" in:"query" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
-	StartDate   string `json:"start_date" in:"query" dc:"开始日期"`
-	EndDate     string `json:"end_date" in:"query" dc:"结束日期"`
+	StartDate   string `json:"start_date" in:"query" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate     string `json:"end_date" in:"query" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type AdminUsageLogExportRes struct{}

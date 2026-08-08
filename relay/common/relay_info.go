@@ -23,7 +23,10 @@ type ChannelMeta struct {
 }
 
 const (
-	DefaultTimeoutSeconds       = 60
+	// DefaultTimeoutSeconds 非流式请求的默认总超时（http.Client.Timeout）。
+	// 推理模型（GLM-4.5/4.6 thinking、Claude thinking 等）非流式调用需跑完整段生成才回响应头，
+	// 60s 会误杀；放宽到 180s。个别仍超时的模型建议在渠道级 settings.timeout_seconds 配 >180（自动切 longRun 传输层）。
+	DefaultTimeoutSeconds       = 180
 	ImagesGenerationTimeoutSecs = 600
 )
 

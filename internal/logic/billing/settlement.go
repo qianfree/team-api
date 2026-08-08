@@ -9,19 +9,17 @@ import (
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
-	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
-	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
 	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
 // errAlreadySettled 结算幂等哨兵：当同一 request_id 的计费记录已存在（bil_records 唯一约束冲突）时，
-// 从结算事务闭包返回该错误使整个事务回滚（钱包扣款一并撤销），调用方据此识别为幂等空操作，
-// 不重复扣款、不重复写账单。必须原样返回（不可 gerror.Wrap），以保证 errors.Is 能识别。
+// 骨架在任何资金变动之前返回该错误，调用方据此识别为幂等空操作，不重复扣款、不重复写账单。
+// 必须原样返回（不可 gerror.Wrap），以保证 errors.Is 能识别。
 var errAlreadySettled = errors.New("billing: request already settled (idempotent skip)")
 
 // isDuplicateKeyErr 判断 error 是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
@@ -66,137 +64,83 @@ func calcSettlementDiff(preDeductAmount, actualCost float64) (refundAmt, supplem
 	return
 }
 
-// settlementTxParams 结算事务参数：三处结算共用的事务骨架的可变部分。
+// settlementTxParams 结算参数：三处结算共用的骨架的可变部分。
 type settlementTxParams struct {
 	tenantID        int64
-	walletID        int64   // 钱包 ID
-	preDeductAmount float64 // 预扣冻结金额（事务内从 frozen_balance 释放）
-	actualCost      float64 // 实际扣款金额（事务内从 balance 扣除）
+	walletID        int64   // 钱包 ID（仅用于流水记录，骨架不再更新钱包行）
+	preDeductAmount float64 // 预扣金额（用于与 Redis 实际认领金额比对告警）
+	actualCost      float64 // 实际扣款金额（SettleClaim 从 Redis 余额扣除）
 	logPrefix       string  // 错误信息前缀（settle / settle_with_usage / settle task）
-	// createBillingRecord 在事务内创建计费记录并返回其 ID；
-	// 唯一冲突（同一 request_id 已结算）时返回的 error 由骨架识别为 errAlreadySettled 并回滚。
+	// createBillingRecord 创建计费记录并返回其 ID（幂等闸门）；
+	// 唯一冲突（同一 request_id 已结算）时返回的 error 由骨架识别为 errAlreadySettled。
 	createBillingRecord func(ctx context.Context) (int64, error)
-	// buildTransaction 根据事务内读到的准确余额与计费记录 ID 构造消费流水。
+	// buildTransaction 根据计费记录 ID 与 Redis 返回的余额快照构造消费流水。
 	buildTransaction func(billingID int64, balanceAfter, frozenAfter float64) do.BilTransactions
-	// predeductRequestIDs 本次结算需置为 settled 的预扣追踪 request_id（task 结算含 "_adjust"）。
+	// predeductRequestIDs 本次结算需认领的预扣 request_id（task 结算含 "_adjust"）。
 	predeductRequestIDs []string
 }
 
-// executeSettlementTx 结算事务公共骨架：claim 预扣追踪 → 钱包扣款 → 事务内读准确余额
-// → 创建计费记录 → 记录消费流水，五步在同一事务内原子完成。
+// executeSettlement 结算公共骨架：幂等闸门 → Redis 认领扣款 → 记流水，三步顺序执行。
 // Settle / SettleWithUsage / SettleTaskSuccess 三处共用，差异部分（计费记录构造、
-// 流水构造、预扣追踪 request_id 集合）由 params 注入。
+// 流水构造、预扣认领 request_id 集合）由 params 注入。
 //
-// claim 前置的两点意图：
-//  1. 冻结释放额取「实际认领到的 track 金额之和」而非调用方传参——track 已被孤儿清理
-//     置 expired（长请求超龄）或已被解冻置 released 时认领不到，对应冻结已释放过，
-//     此时只扣 balance 不再动 frozen，杜绝 GREATEST 吞掉其他在途请求冻结额的双重释放；
-//  2. 锁序统一为 track→wallet（与 UnfreezePreDeduct、孤儿清理一致），消除死锁隐患。
+// Redis 权威化架构下结算不再触碰 bil_wallets 行（消除钱包热点行锁）：
+//  1. 幂等闸门先行：bil_records.request_id 唯一约束在任何资金变动之前拒绝重复结算；
+//  2. SettleClaim 是资金提交点：Lua 原子完成「认领预扣 hash → 释放冻结 → 扣减余额」，
+//     认领金额取实际删掉的预扣 hash 之和——预扣已被解冻/过期/丢失时认领不到（0），
+//     对应冻结早已释放，只扣 balance 不再动 frozen，杜绝重复释放；
+//  3. 流水 balance_after/frozen_after 取 Lua 返回值（Redis 权威快照），账本链连续。
 //
-// 幂等：计费记录命中 request_id 唯一约束时整个事务回滚（钱包扣款与 claim 一并撤销），
-// 返回 errAlreadySettled，由调用方按幂等空操作处理。
-func executeSettlementTx(ctx context.Context, p settlementTxParams) (int64, error) {
-	var billingID int64
-	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		now := time.Now()
-		actualCostD := NewFromFloat(p.actualCost)
+// 崩溃窗口补偿：第 2/3 步失败时按「无扣款即无账单」回滚——删除已创建的计费记录；
+// 第 3 步失败另需逆转 Redis 扣款（余额退回、冻结不恢复：请求已结束，语义为本单免费）。
+// 补偿自身失败时由日对账「bil_records 无 consume 流水」探测项兜底发现。
+func executeSettlement(ctx context.Context, p settlementTxParams) (int64, error) {
+	actualCostD := NewFromFloat(p.actualCost)
 
-		// 语句顺序针对钱包热点行优化：bil_wallets 是同租户所有结算争抢的单行热点，
-		// 行锁从钱包 UPDATE 起持有直到 COMMIT，锁内往返次数直接决定单租户结算吞吐。
-		// 故：幂等闸门（计费记录唯一约束）与预扣 claim 前置到钱包锁之外，
-		// 钱包 UPDATE 用 RETURNING 合并余额快照读，锁内只剩「UPDATE → 流水 INSERT → COMMIT」。
-
-		// a. 创建计费记录（幂等闸门：同 request_id 的重复结算在触碰钱包行之前即被拒绝回滚）
-		var err error
-		billingID, err = p.createBillingRecord(ctx)
-		if err != nil {
-			if isDuplicateKeyErr(err) {
-				// 同一 request_id 已结算：整个事务回滚，避免重复扣款/重复账单
-				return errAlreadySettled
-			}
-			return gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
+	// a. 创建计费记录（幂等闸门：同 request_id 的重复结算在触碰资金之前即被拒绝）
+	billingID, err := p.createBillingRecord(ctx)
+	if err != nil {
+		if isDuplicateKeyErr(err) {
+			return 0, errAlreadySettled
 		}
-
-		// b. claim 预扣追踪（frozen→settled，每请求独立行，无热点争抢）
-		claimedD, err := claimPredeductSettledTx(ctx, p.predeductRequestIDs)
-		if err != nil {
-			return gerror.Wrapf(err, "%s: claim prededuct settled", p.logPrefix)
-		}
-		if !claimedD.Equal(NewFromFloat(p.preDeductAmount)) {
-			g.Log().Warningf(ctx, "%s: claimed frozen %.6f != pre-deduct %.6f (track expired/released before settle?) requests=%v",
-				p.logPrefix, InexactFloat64(claimedD), p.preDeductAmount, p.predeductRequestIDs)
-		}
-
-		// c. 更新钱包并原子读回余额快照（RETURNING 合并原「UPDATE + SELECT」两次锁内往返；
-		//    decimal 直传 NUMERIC，避免 float64 精度损失）
-		var balanceAfter, frozenAfter float64
-		row, err := g.DB().Ctx(ctx).GetOne(ctx,
-			"UPDATE bil_wallets SET frozen_balance = GREATEST(frozen_balance - ?, 0), balance = balance - ?, updated_at = ? WHERE id = ? RETURNING balance, frozen_balance",
-			claimedD, actualCostD, now, p.walletID)
-		if err != nil {
-			return gerror.Wrapf(err, "%s: update wallet", p.logPrefix)
-		}
-		// 余额快照 best-effort：解析失败保持 0/0（与原 readWalletBalanceTx 行为一致）
-		if row != nil {
-			if bd, e := decimal.NewFromString(row["balance"].String()); e == nil {
-				balanceAfter = InexactFloat64(bd)
-			}
-			if fd, e := decimal.NewFromString(row["frozen_balance"].String()); e == nil {
-				frozenAfter = InexactFloat64(fd)
-			}
-		}
-
-		// d. 记录消费流水（事务内）
-		if _, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID, balanceAfter, frozenAfter)).Insert(); err != nil {
-			return gerror.Wrapf(err, "%s: record transaction", p.logPrefix)
-		}
-
-		return nil
-	})
-	if err != nil && !errors.Is(err, errAlreadySettled) {
-		// 事务回滚后 DB 钱包仍保留原冻结。立即按预扣追踪记录中的原始金额释放，
-		// 避免等待孤儿清理任务期间持续占用租户可用余额。
-		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		for _, requestID := range p.predeductRequestIDs {
-			if releaseErr := UnfreezePreDeduct(releaseCtx, p.tenantID, requestID); releaseErr != nil {
-				g.Log().Errorf(ctx, "%s: release prededuct after rollback request=%s: %v", p.logPrefix, requestID, releaseErr)
-			}
-		}
+		return 0, gerror.Wrapf(err, "%s: create billing record", p.logPrefix)
 	}
-	return billingID, err
+
+	// b. Redis 认领预扣 + 扣款（资金提交点）
+	claimedD, balanceAfterD, frozenAfterD, err := SettleClaim(ctx, p.tenantID, actualCostD, p.predeductRequestIDs)
+	if err != nil {
+		if delErr := deleteBillingRecord(ctx, billingID); delErr != nil {
+			g.Log().Errorf(ctx, "%s: compensate delete billing record %d failed: %v", p.logPrefix, billingID, delErr)
+		}
+		return 0, gerror.Wrapf(err, "%s: settle claim", p.logPrefix)
+	}
+	if !claimedD.Equal(NewFromFloat(p.preDeductAmount)) {
+		g.Log().Warningf(ctx, "%s: claimed frozen %.6f != pre-deduct %.6f (prededuct released/expired before settle?) requests=%v",
+			p.logPrefix, InexactFloat64(claimedD), p.preDeductAmount, p.predeductRequestIDs)
+	}
+
+	// c. 记录消费流水
+	_, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID,
+		InexactFloat64(balanceAfterD), InexactFloat64(frozenAfterD))).Insert()
+	if err != nil {
+		// 逆转扣款 + 删除计费记录，回到「未结算」状态（预扣已随认领释放，本单免费）
+		if _, _, creditErr := CreditWalletRedis(ctx, p.tenantID, actualCostD); creditErr != nil {
+			g.Log().Errorf(ctx, "%s: compensate reverse charge failed: tenant=%d request=%v cost=%.6f: %v",
+				p.logPrefix, p.tenantID, p.predeductRequestIDs, p.actualCost, creditErr)
+		}
+		if delErr := deleteBillingRecord(ctx, billingID); delErr != nil {
+			g.Log().Errorf(ctx, "%s: compensate delete billing record %d failed: %v", p.logPrefix, billingID, delErr)
+		}
+		return 0, gerror.Wrapf(err, "%s: record transaction", p.logPrefix)
+	}
+
+	return billingID, nil
 }
 
-// claimPredeductSettledTx 结算事务内 claim 预扣追踪：frozen→settled 条件更新并返回实际认领金额之和。
-// 只有仍处于 frozen 的 track 才会被认领；已被孤儿清理置 expired / 已被解冻置 released 的 track
-// 认领不到（返回和中不含其金额），对应冻结不再重复释放。task 结算会传入 requestID 与
-// requestID+"_adjust" 两条（补扣调整产生），一并认领求和。
-func claimPredeductSettledTx(ctx context.Context, requestIDs []string) (decimal.Decimal, error) {
-	if len(requestIDs) == 0 {
-		return decimal.Zero, nil
-	}
-	placeholders := make([]string, len(requestIDs))
-	args := make([]any, len(requestIDs))
-	for i, rid := range requestIDs {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = rid
-	}
-	rows, err := g.DB().Ctx(ctx).GetAll(ctx,
-		fmt.Sprintf("UPDATE bil_prededuct_tracks SET status = 'settled' WHERE request_id IN (%s) AND status = 'frozen' RETURNING amount", strings.Join(placeholders, ", ")),
-		args...)
-	if err != nil {
-		return decimal.Zero, err
-	}
-	sum := decimal.Zero
-	for _, row := range rows {
-		// NUMERIC(20,10) 以字符串取出，经 decimal 精确解析，不走 float64
-		amt, convErr := decimal.NewFromString(row["amount"].String())
-		if convErr != nil {
-			return decimal.Zero, gerror.Wrapf(convErr, "parse claimed prededuct amount %q", row["amount"].String())
-		}
-		sum = AddMoney(sum, amt)
-	}
-	return sum, nil
+// deleteBillingRecord 删除计费记录（结算补偿用：记录创建于数秒前、无任何引用，物理删除保持账表干净）
+func deleteBillingRecord(ctx context.Context, billingID int64) error {
+	_, err := dao.BilRecords.Ctx(ctx).Where("id", billingID).Delete()
+	return err
 }
 
 // Settle 结算请求费用
@@ -237,8 +181,8 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+	// 5. 执行结算（幂等闸门 → Redis 认领扣款 → 流水）
+	billingID, err := executeSettlement(ctx, settlementTxParams{
 		tenantID:        tenantID,
 		walletID:        walletID,
 		preDeductAmount: preDeductAmount,
@@ -298,12 +242,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		return nil, err
 	}
 
-	// 6. 清除缓存（事务提交后）
-	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
-	InvalidateWalletRedis(ctx, tenantID)
-	CleanupPreDeduct(ctx, tenantID, requestID)
-
-	// 7. 异步检查余额预警
+	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
 	go CheckBalanceWarning(context.Background(), tenantID)
 
 	return &SettlementResult{
@@ -352,8 +291,8 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	// 4. 获取定价信息（事务外只读）
 	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
 
-	// 5. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	billingID, err := executeSettlementTx(ctx, settlementTxParams{
+	// 5. 执行结算（幂等闸门 → Redis 认领扣款 → 流水）
+	billingID, err := executeSettlement(ctx, settlementTxParams{
 		tenantID:        tenantID,
 		walletID:        walletID,
 		preDeductAmount: preDeductAmount,
@@ -417,12 +356,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		return nil, err
 	}
 
-	// 6. 清除缓存（事务提交后）
-	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
-	InvalidateWalletRedis(ctx, tenantID)
-	CleanupPreDeduct(ctx, tenantID, requestID)
-
-	// 7. 异步检查余额预警
+	// 6. 异步检查余额预警（GetWallet 读 Redis 权威值，实时准确）
 	go CheckBalanceWarning(context.Background(), tenantID)
 
 	settlementResult := &SettlementResult{
@@ -459,13 +393,9 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 		return nil
 	}
 
-	// 解冻金额由预扣追踪记录决定，不信任调用方传入的估算值。
-	if err := UnfreezePreDeduct(ctx, tenantID, requestID); err != nil {
-		return err
-	}
-
-	// 无需额外操作，预扣金额原路退回
-	return nil
+	// 解冻金额由 Redis 预扣 hash 决定（认领即删，恰好一次），不信任调用方传入的估算值
+	_, err := UnfreezePreDeduct(ctx, tenantID, requestID)
+	return err
 }
 
 // SettleStreamInterrupted 流式中断结算：按已确认 usage 走完整 Usage 结算（含 cache token 计费 + 快照）。

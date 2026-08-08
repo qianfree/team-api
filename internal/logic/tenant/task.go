@@ -22,6 +22,13 @@ func (s *sTenant) TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq)
 	role := middleware.GetUserRole(ctx)
 	userID := middleware.GetUserID(ctx)
 
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+		return nil, err
+	}
+
 	m := dao.TskModelTasks.Ctx(ctx).
 		LeftJoin("tnt_users u", "u.id = tsk_model_tasks.user_id AND u.tenant_id = tsk_model_tasks.tenant_id").
 		Fields("tsk_model_tasks.*, COALESCE(u.username, '') as username").
@@ -41,6 +48,12 @@ func (s *sTenant) TenantTaskList(ctx context.Context, req *v1.TenantTaskListReq)
 	}
 	if req.PublicTaskID != "" {
 		m = m.Where("tsk_model_tasks.public_task_id", req.PublicTaskID)
+	}
+	if req.StartDate != "" {
+		m = m.Where("tsk_model_tasks.created_at >= ?", common.StartOfRange(req.StartDate))
+	}
+	if req.EndDate != "" {
+		m = m.Where("tsk_model_tasks.created_at <= ?", common.EndOfRange(req.EndDate))
 	}
 
 	var tasks []struct {
@@ -191,6 +204,13 @@ func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) 
 	userID := middleware.GetUserID(ctx)
 	role := middleware.GetUserRole(ctx)
 
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+		return nil, err
+	}
+
 	statusLabel := map[string]string{
 		"NOT_START":   "未开始",
 		"SUBMITTED":   "已提交",
@@ -252,6 +272,14 @@ func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) 
 	if req.PublicTaskID != "" {
 		conditions = append(conditions, "t.public_task_id = ?")
 		args = append(args, req.PublicTaskID)
+	}
+	if req.StartDate != "" {
+		conditions = append(conditions, "t.created_at >= ?")
+		args = append(args, common.StartOfRange(req.StartDate))
+	}
+	if req.EndDate != "" {
+		conditions = append(conditions, "t.created_at <= ?")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := ""

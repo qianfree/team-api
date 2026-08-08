@@ -309,6 +309,8 @@ func (s *sTenant) PaymentInfo(ctx context.Context, req *v1.TenantPaymentInfoReq)
 		res.MinTopUp = int(settings.MinTopUp)
 		res.Currency = settings.Currency
 	}
+	// 支付说明由管理员在「系统设置-支付配置」配置，支持纯文本或 HTML，原样下发由前端渲染
+	res.PaymentNotice = lcommon.Config().GetString(ctx, "payment_notice")
 
 	return res, nil
 }

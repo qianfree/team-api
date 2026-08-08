@@ -4,6 +4,21 @@ import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
+import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
+
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+// 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
+function todayStart(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`
+}
+function todayEnd(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
+}
 
 interface RequestLog {
 	id: number
@@ -34,8 +49,8 @@ const logFilter = reactive({
 	task_id: '',
 	path: '',
 	status_code: '',
-	start_date: '',
-	end_date: '',
+	start_date: todayStart(),
+	end_date: todayEnd(),
 })
 
 const showDetail = ref(false)
@@ -164,8 +179,8 @@ function handleReset() {
 	logFilter.task_id = ''
 	logFilter.path = ''
 	logFilter.status_code = ''
-	logFilter.start_date = ''
-	logFilter.end_date = ''
+	logFilter.start_date = todayStart()
+	logFilter.end_date = todayEnd()
 	logPage.value = 1
 	fetchRequestLogs()
 }
@@ -188,14 +203,7 @@ onMounted(() => {
 		<div class="card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="handleFilter">
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
-							<input v-model="logFilter.start_date" type="date" class="input" style="width:140px" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
-							<input v-model="logFilter.end_date" type="date" class="input" style="width:140px" />
-						</div>
+						<DateTimeRangePicker v-model:start="logFilter.start_date" v-model:end="logFilter.end_date" />
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
 							<input v-model="logFilter.username" class="input" placeholder="搜索用户" style="width:120px" @keydown.enter="handleFilter" />

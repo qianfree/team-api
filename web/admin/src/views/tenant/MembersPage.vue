@@ -376,7 +376,6 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"
@@ -388,6 +387,7 @@ const { exporting, exportFile } = useExport({
         row-key="id"
       />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"

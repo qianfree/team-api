@@ -58,9 +58,6 @@ onMounted(fetchPermissions)
     </PageHeader>
 
     <ACard :bordered="false">
-      <TableStats :total="groups.length">
-        <span>{{ groups.reduce((s, g) => s + g.permissions.length, 0) }} 个权限点</span>
-      </TableStats>
       <ATable
         :columns="columns"
         :data="groups"
@@ -70,6 +67,11 @@ onMounted(fetchPermissions)
         :pagination="false"
         row-key="id"
       />
+      <div class="table-footer">
+        <TableStats :total="groups.length">
+          <span>{{ groups.reduce((s, g) => s + g.permissions.length, 0) }} 个权限点</span>
+        </TableStats>
+      </div>
     </ACard>
   </div>
 </template>

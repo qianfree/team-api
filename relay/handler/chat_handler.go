@@ -73,8 +73,9 @@ func HandleModels(ctx context.Context, tenantID, apiKeyID, userID int64, provide
 }
 
 // HandleModelDetail 处理 /v1/models/{model_id} 请求（获取单个模型详情）
-func HandleModelDetail(ctx context.Context, tenantID int64, modelName string, provider common.DataProvider) (*dto.ModelDetailResponse, error) {
-	detail, err := provider.GetModelDetail(ctx, tenantID, modelName)
+// apiKeyID / userID 用于进一步按 API Key / 成员的模型范围过滤
+func HandleModelDetail(ctx context.Context, tenantID, apiKeyID, userID int64, modelName string, provider common.DataProvider) (*dto.ModelDetailResponse, error) {
+	detail, err := provider.GetModelDetail(ctx, tenantID, apiKeyID, userID, modelName)
 	if err != nil {
 		return nil, err
 	}

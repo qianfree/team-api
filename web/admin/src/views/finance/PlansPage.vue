@@ -141,9 +141,9 @@ const { exporting, exportFile } = useExport({
           <ASelect v-model="statusFilter" :options="statusOptions" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchPlans() }" />
         </div>
       </template>
-      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="plans" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchPlans" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchPlans() }" />
       </div>
     </ACard>

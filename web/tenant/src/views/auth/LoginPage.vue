@@ -291,19 +291,26 @@ async function handleOAuthLogin(provider: string) {
 			</div>
 
 			<!-- Login Mode Tabs -->
-			<div class="tabs mb-6">
+			<div class="tabs login-mode-tabs mb-6" role="group" aria-label="登录方式">
+				<span
+					class="login-mode-indicator"
+					:class="{ 'login-mode-indicator-ram': mode === 'ram' }"
+					aria-hidden="true"
+				></span>
 				<button
 					type="button"
-					class="tab flex-1"
-					:class="{ 'tab-active': mode === 'admin' }"
+					class="tab login-mode-tab flex-1"
+					:class="{ 'login-mode-tab-active': mode === 'admin' }"
+					:aria-pressed="mode === 'admin'"
 					@click="switchMode('admin')"
 				>
 					管理员登录
 				</button>
 				<button
 					type="button"
-					class="tab flex-1"
-					:class="{ 'tab-active': mode === 'ram' }"
+					class="tab login-mode-tab flex-1"
+					:class="{ 'login-mode-tab-active': mode === 'ram' }"
+					:aria-pressed="mode === 'ram'"
 					@click="switchMode('ram')"
 				>
 					RAM 账号登录
@@ -353,6 +360,7 @@ async function handleOAuthLogin(provider: string) {
 						/>
 						<button
 							type="button"
+							tabindex="-1"
 							@click="showPassword = !showPassword"
 							class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 transition-colors"
 							:aria-label="showPassword ? '隐藏密码' : '显示密码'"
@@ -451,6 +459,7 @@ async function handleOAuthLogin(provider: string) {
 						/>
 						<button
 							type="button"
+							tabindex="-1"
 							@click="showPassword = !showPassword"
 							class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 transition-colors"
 							:aria-label="showPassword ? '隐藏密码' : '显示密码'"
@@ -540,7 +549,7 @@ async function handleOAuthLogin(provider: string) {
 
 		<template v-if="settings.register_enabled" #footer>
 			<p class="text-gray-500">
-				还没有组织？
+					还没有账号？
 				<router-link to="/tenant/register" class="text-primary-600 font-medium hover:text-primary-700 transition-colors">
 					立即创建
 				</router-link>
@@ -562,6 +571,60 @@ async function handleOAuthLogin(provider: string) {
 </template>
 
 <style scoped>
+.login-mode-tabs {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.86);
+	background: rgba(255, 255, 255, 0.48);
+	box-shadow:
+		inset 0 2px 5px rgba(15, 23, 42, 0.08),
+		inset 0 1px 0 rgba(255, 255, 255, 0.82),
+		0 6px 16px rgba(76, 91, 142, 0.06);
+	backdrop-filter: blur(18px) saturate(1.14);
+	-webkit-backdrop-filter: blur(18px) saturate(1.14);
+}
+
+.login-mode-indicator {
+	position: absolute;
+	z-index: 0;
+	top: 0.25rem;
+	bottom: 0.25rem;
+	left: 0.25rem;
+	width: calc((100% - 0.75rem) / 2);
+	border-radius: 0.5rem;
+	border: 1px solid rgba(20, 184, 166, 0.2);
+	background: linear-gradient(135deg, rgba(204, 251, 241, 0.82), rgba(255, 255, 255, 0.9));
+	box-shadow:
+		0 2px 5px rgba(15, 23, 42, 0.1),
+		0 8px 18px rgba(13, 148, 136, 0.1),
+		inset 0 1px 0 rgba(255, 255, 255, 0.96);
+	pointer-events: none;
+	will-change: transform;
+	transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.login-mode-indicator-ram {
+	transform: translateX(calc(100% + 0.25rem));
+}
+
+.login-mode-tab {
+	position: relative;
+	z-index: 1;
+	background: transparent;
+	transition: color 200ms ease;
+}
+
+.login-mode-tab-active {
+	color: var(--color-primary-700);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.login-mode-indicator {
+		transition: none;
+	}
+}
+
 .slide-fade-enter-active {
 	transition: all 0.25s ease-out;
 }

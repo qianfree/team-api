@@ -351,10 +351,10 @@ func (s *sAdmin) GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardM
 
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -363,13 +363,29 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	var conditions []string
 	var args []any
 
+	if req.ID > 0 {
+		conditions = append(conditions, "u.id = ?")
+		args = append(args, req.ID)
+	}
 	if req.TenantID > 0 {
 		conditions = append(conditions, "u.tenant_id = ?")
 		args = append(args, req.TenantID)
 	}
+	if req.UserID > 0 {
+		conditions = append(conditions, "u.user_id = ?")
+		args = append(args, req.UserID)
+	}
 	if req.Username != "" {
 		conditions = append(conditions, "t.username LIKE ?")
 		args = append(args, "%"+req.Username+"%")
+	}
+	if req.ApiKeyID > 0 {
+		conditions = append(conditions, "u.api_key_id = ?")
+		args = append(args, req.ApiKeyID)
+	}
+	if req.ChannelID > 0 {
+		conditions = append(conditions, "u.channel_id = ?")
+		args = append(args, req.ChannelID)
 	}
 	if req.Model != "" {
 		conditions = append(conditions, "u.model_name = ?")
@@ -385,11 +401,11 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	}
 	if req.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, req.StartDate+" 00:00:00")
+		args = append(args, common.StartOfRange(req.StartDate))
 	}
 	if req.EndDate != "" {
 		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, req.EndDate+" 23:59:59")
+		args = append(args, common.EndOfRange(req.EndDate))
 	}
 
 	where := ""
@@ -534,73 +550,175 @@ func (s *sAdmin) GetTenantWallets(ctx context.Context, req *v1.AdminWalletListRe
 	}, nil
 }
 
-// AdjustBalance 调整租户余额（管理后台）
+// AdjustBalance 调整租户余额（管理后台）。
+// Redis 权威化架构：余额变动以 Redis Lua 为资金提交点（扣减在权威可用余额上原子判断，
+// 穿透冻结会破坏预扣一致性），DB 侧仅记流水；流水失败时逆转 Redis 已发生的变动。
 func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error) {
 	tenantID := req.TenantID
-	// 入口即转 decimal（float64 仅允许出现在 API 边界），后续 SQL 参数与流水全程 decimal 直传
+	// 入口即转 decimal（float64 仅允许出现在 API 边界），后续流水字段全程 decimal 直传
 	amount := billing.NewFromFloat(req.Amount)
 	description := req.Description
 
-	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 原子更新余额，避免并发竞态。扣减（负数）时以【可用余额】（balance - frozen_balance）
-		// 为下限：frozen_balance 是支付中/退款中的占用，穿透冻结会破坏预扣一致性。
-		updateQuery := "UPDATE bil_wallets SET balance = balance + ?, updated_at = ? WHERE tenant_id = ?"
-		args := []any{amount, gtime.Now(), tenantID}
-		if amount.IsNegative() {
-			updateQuery += " AND balance - frozen_balance >= ?"
-			args = append(args, amount.Neg())
-		}
-		result, err := g.DB().Ctx(ctx).Exec(ctx, updateQuery, args...)
-		if err != nil {
-			return err
-		}
-		affected, _ := result.RowsAffected()
-		if affected == 0 {
-			return common.NewBadRequestError("钱包不存在或可用余额不足")
-		}
-
-		// 查询更新后的余额，用于记录流水
-		var wallet *struct {
-			ID            int64           `json:"id"`
-			Balance       decimal.Decimal `json:"balance"`
-			FrozenBalance decimal.Decimal `json:"frozen_balance"`
-		}
-		if err = dao.BilWallets.Ctx(ctx).
-			Where("tenant_id", tenantID).
-			Fields("id, balance, frozen_balance").
-			Scan(&wallet); err != nil {
-			return err
-		}
-		if wallet == nil {
-			return common.NewBadRequestError("钱包不存在")
-		}
-
-		// 记录流水
-		if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
-			TenantId:     tenantID,
-			WalletId:     wallet.ID,
-			Type:         "adjust",
-			Amount:       amount,
-			BalanceAfter: wallet.Balance,
-			FrozenAfter:  wallet.FrozenBalance,
-			Description:  description,
-		}); err != nil {
-			return gerror.Wrapf(err, "record balance adjust transaction")
-		}
-		return nil
-	})
+	walletID, err := billing.GetWalletID(ctx, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, common.NewBadRequestError("钱包不存在")
 	}
 
-	// 事务提交后清除钱包两级缓存（进程内 + Redis），否则调整后的余额在 300s TTL 内
-	// 不生效——下调余额时租户仍按旧的高余额预扣，可短时超支。
-	billing.InvalidateWallet(ctx, tenantID)
+	var balanceAfter, frozenAfter decimal.Decimal
+	if amount.IsNegative() {
+		// 扣减：可用余额（balance - frozen_balance）门槛在 Redis 权威值原子判断
+		ba, fa, ok, err := billing.DebitWalletRedis(ctx, tenantID, amount.Neg())
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, common.NewBadRequestError("钱包可用余额不足")
+		}
+		balanceAfter, frozenAfter = ba, fa
+	} else {
+		ba, fa, err := billing.CreditWalletRedis(ctx, tenantID, amount)
+		if err != nil {
+			return nil, err
+		}
+		balanceAfter, frozenAfter = ba, fa
+	}
+
+	// 记录流水（append-only INSERT，无行锁竞争）
+	if _, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
+		TenantId:     tenantID,
+		WalletId:     walletID,
+		Type:         "adjust",
+		Amount:       amount,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
+		Description:  description,
+	}); err != nil {
+		// 流水失败：逆转已发生的 Redis 余额变动（amount.Neg()：扣减→加回，加款→扣回）
+		compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if _, _, compErr := billing.CreditWalletRedis(compCtx, tenantID, amount.Neg()); compErr != nil {
+			g.Log().Errorf(ctx,
+				"CRITICAL: compensate adjust balance failed: tenant=%d usd=%s: %v — wallet drift, manual fix required",
+				tenantID, amount.String(), compErr)
+		}
+		return nil, gerror.Wrapf(err, "record balance adjust transaction")
+	}
 
 	// 管理员调整余额后，重置低余额预警标记（可能余额已恢复到阈值以上）
 	billing.ResetLowBalanceNotified(ctx, tenantID)
 
 	return &v1.AdminWalletAdjustRes{}, nil
+}
+
+// OfflineRecharge 线下充值入账（管理后台）
+// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
+// 与 AdjustBalance 的区别：走正规充值链路——余额与累计充值同步累加、触发等级检查、
+// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账 USD + 转账流水号），
+// 供现金对账与开票追溯。
+func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error) {
+	tenantID := req.TenantID
+	cnyAmount := billing.NewFromFloat(req.Amount)
+	if !cnyAmount.IsPositive() {
+		return nil, common.NewBadRequestError("入账金额必须大于 0")
+	}
+
+	// 唯一换汇点：CNY→USD 只经 billing.ConvertCNYToUSD（与充值履约 FulfillOrder 同一函数），
+	// 汇率取一次用于入账与快照，保证换算可重建。
+	rate := billing.GetExchangeRateCNYToUSD(ctx)
+	usdAmount := billing.ConvertCNYToUSD(ctx, req.Amount)
+	if usdAmount.IsZero() {
+		return nil, common.NewBadRequestError("按当前汇率换算后到账金额为 0，请检查汇率配置")
+	}
+
+	// 转账流水号软去重（防重复入账）：同一租户下已入账过该流水号则拒绝。
+	// 非强原子，配合前端 loading 禁用按钮，拦截人工重复提交足够。
+	if req.TransactionNo != "" {
+		count, err := dao.BilTransactions.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("type", "recharge").
+			Where("description like ?", "%转账流水号 "+req.TransactionNo).Count()
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, common.NewBadRequestError("该转账流水号已入账，请勿重复操作")
+		}
+	}
+
+	// redisCreditedAmount 记录事务内已发生的 Redis 钱包加款：Redis 是资金提交点、
+	// 不受 DB 事务回滚，事务失败时必须按此补偿逆转。
+	var redisCreditedAmount decimal.Decimal
+
+	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 钱包存在性校验
+		walletID, err := billing.GetWalletID(ctx, tenantID)
+		if err != nil {
+			return common.NewBadRequestError("钱包不存在")
+		}
+
+		// Redis 加款（资金提交点）；流水快照取 Redis 返回值
+		balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, usdAmount)
+		// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
+		redisCreditedAmount = usdAmount
+		if err != nil {
+			return err
+		}
+
+		// DB 仅累加累计充值（余额由物化器从 Redis 覆盖）
+		if _, err := g.DB().Ctx(ctx).Exec(ctx,
+			"UPDATE bil_wallets SET cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
+			usdAmount, walletID); err != nil {
+			return err
+		}
+
+		// 流水（type=recharge）：描述拼装 CNY 快照 + 转账流水号，供现金对账与开票追溯
+		desc := fmt.Sprintf("线下充值入账 CNY %.2f × 汇率 %.6f = USD %s", cnyAmount.InexactFloat64(), rate, usdAmount)
+		if req.Description != "" {
+			desc = req.Description + "；" + desc
+		}
+		if req.TransactionNo != "" {
+			desc += "；转账流水号 " + req.TransactionNo
+		}
+		if _, err := dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
+			TenantId:     tenantID,
+			WalletId:     walletID,
+			Type:         "recharge",
+			Amount:       usdAmount,
+			BalanceAfter: balanceAfter,
+			FrozenAfter:  frozenAfter,
+			Description:  desc,
+		}); err != nil {
+			return gerror.Wrapf(err, "record offline recharge transaction")
+		}
+
+		// 充值后检查租户等级（仅升不降）并重置低余额预警标记
+		if err := billing.CheckAndUpgradeLevel(ctx, tenantID); err != nil {
+			return gerror.Wrapf(err, "check upgrade level after offline recharge")
+		}
+		billing.ResetLowBalanceNotified(ctx, tenantID)
+
+		return nil
+	})
+	if err != nil {
+		// 事务回滚：补偿逆转已发生的 Redis 钱包加款（入账未生效，钱包不得进账）。
+		// 补偿自身失败意味着钱包多入账——打 CRITICAL 日志人工追回。
+		if redisCreditedAmount.GreaterThan(billing.Zero) {
+			compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if _, _, compErr := billing.CreditWalletRedis(compCtx, tenantID, redisCreditedAmount.Neg()); compErr != nil {
+				g.Log().Errorf(ctx,
+					"CRITICAL: compensate offline recharge failed: tenant=%d usd=%s: %v — wallet over-credited, manual fix required",
+					tenantID, redisCreditedAmount.String(), compErr)
+			}
+		}
+		return nil, err
+	}
+
+	return &v1.AdminWalletOfflineRechargeRes{
+		CreditedUSD: billing.InexactFloat64(redisCreditedAmount),
+		Rate:        rate,
+		Balance:     billing.InexactFloat64(redisCreditedAmount),
+	}, nil
 }
 
 // GetWalletInfo 获取租户钱包信息（管理后台）
@@ -657,6 +775,27 @@ func (s *sAdmin) GetWalletTransactions(ctx context.Context, req *v1.AdminWalletT
 		return nil, err
 	}
 
+	// 批量关联用户名：user_id → tnt_users.username（consume 类型为实际消费用户，其余类型一般为空）。
+	// 复用审计模块的批量查询工具，一次 IN 查询解决，避免逐行 N+1。
+	if len(records) > 0 {
+		userKeys := make([]string, 0, len(records))
+		seen := make(map[int64]bool, len(records))
+		for _, r := range records {
+			if r.UserId > 0 && !seen[r.UserId] {
+				seen[r.UserId] = true
+				userKeys = append(userKeys, fmt.Sprintf("%d:%d", req.TenantID, r.UserId))
+			}
+		}
+		if len(userKeys) > 0 {
+			userMap := common.BatchQueryUserNames(ctx, userKeys)
+			for _, r := range records {
+				if r.UserId > 0 {
+					r.Username = userMap[fmt.Sprintf("%d:%d", req.TenantID, r.UserId)]
+				}
+			}
+		}
+	}
+
 	return &v1.AdminWalletTransactionListRes{
 		List:     records,
 		Total:    total,
@@ -693,6 +832,247 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 	billing.ResetLowBalanceNotified(ctx, req.TenantID)
 
 	return &v1.AdminWalletSetWarningThresholdRes{}, nil
+}
+
+// frozenReleaseMinAge 手动释放冻结的保护期。冻结时长低于此值的预扣大概率仍有请求在途
+// （长流式/realtime 会话），释放会使该请求失去超扣保护，必须显式 force 并由前端二次确认。
+const frozenReleaseMinAge = 10 * time.Minute
+
+// frozenTaskInfo 冻结项关联的异步任务信息（用于释放护栏判断）
+type frozenTaskInfo struct {
+	Status         string `json:"status"`
+	BillingSettled bool   `json:"billing_settled"`
+}
+
+// isTaskTerminal 异步任务是否已到终态
+func isTaskTerminal(status string) bool {
+	return status == "SUCCESS" || status == "FAILURE"
+}
+
+// frozenItemGuard 计算单笔冻结项的释放护栏结论。
+// 返回：是否可释放、是否需要强制、拦截原因。
+func frozenItemGuard(task *frozenTaskInfo, age time.Duration) (releasable bool, needForce bool, blockReason string) {
+	if task != nil {
+		if !isTaskTerminal(task.Status) {
+			// 任务仍在推进：预扣由任务结算流程负责（成功结算/失败退款/30分钟超时退款），
+			// 手动释放会让后续结算认领不到冻结、track 终态错乱
+			return false, false, "关联异步任务进行中，任务完成或超时后将自动结算/退款"
+		}
+		if !task.BillingSettled {
+			// 终态但未结算：轮询器 15 秒内会重试结算/退款，手动释放只会与之竞争
+			return false, false, "关联异步任务待结算，系统将自动重试，请稍后刷新"
+		}
+		// 终态且已结算但 track 仍 frozen：结算认领异常留下的真孤儿，允许释放
+	}
+	if age < frozenReleaseMinAge {
+		return true, true, ""
+	}
+	return true, false, ""
+}
+
+// queryFrozenTaskInfos 批量查询冻结项关联的异步任务（request_id 剥离 _adjust 后缀后关联 tsk_model_tasks）
+func queryFrozenTaskInfos(ctx context.Context, tenantID int64, requestIDs []string) map[string]*frozenTaskInfo {
+	result := make(map[string]*frozenTaskInfo)
+	if len(requestIDs) == 0 {
+		return result
+	}
+	baseIDs := make([]string, 0, len(requestIDs))
+	seen := make(map[string]bool, len(requestIDs))
+	for _, id := range requestIDs {
+		base := strings.TrimSuffix(id, "_adjust")
+		if !seen[base] {
+			seen[base] = true
+			baseIDs = append(baseIDs, base)
+		}
+	}
+
+	type taskRow struct {
+		RequestId      string `json:"request_id"`
+		Status         string `json:"status"`
+		BillingSettled bool   `json:"billing_settled"`
+	}
+	var rows []taskRow
+	if err := dao.TskModelTasks.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		WhereIn("request_id", baseIDs).
+		Fields("request_id, status, billing_settled").
+		Scan(&rows); err != nil {
+		g.Log().Warningf(ctx, "query frozen task infos: tenant=%d: %v", tenantID, err)
+		return result
+	}
+	for _, r := range rows {
+		result[r.RequestId] = &frozenTaskInfo{Status: r.Status, BillingSettled: r.BillingSettled}
+	}
+	return result
+}
+
+// GetWalletFrozenItems 获取租户钱包冻结明细（管理后台）。
+// 数据源为 Redis 预扣明细（权威），DB 预扣追踪表已废弃。
+func (s *sAdmin) GetWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenItemListReq) (*v1.AdminWalletFrozenItemListRes, error) {
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	requestIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		requestIDs = append(requestIDs, it.RequestID)
+	}
+	taskInfos := queryFrozenTaskInfos(ctx, req.TenantID, requestIDs)
+
+	now := time.Now()
+	out := make([]*v1.AdminWalletFrozenItem, 0, len(items))
+	for _, it := range items {
+		createdAt := time.Unix(it.CreatedAt, 0)
+		age := now.Sub(createdAt)
+		task := taskInfos[strings.TrimSuffix(it.RequestID, "_adjust")]
+		releasable, needForce, blockReason := frozenItemGuard(task, age)
+		taskStatus := ""
+		if task != nil {
+			taskStatus = task.Status
+		}
+		out = append(out, &v1.AdminWalletFrozenItem{
+			RequestID:   it.RequestID,
+			ModelName:   it.ModelName,
+			Amount:      it.Amount,
+			CreatedAt:   createdAt.String(),
+			AgeSeconds:  int64(age.Seconds()),
+			Releasable:  releasable,
+			NeedForce:   needForce,
+			BlockReason: blockReason,
+			TaskStatus:  taskStatus,
+		})
+	}
+
+	return &v1.AdminWalletFrozenItemListRes{List: out}, nil
+}
+
+// ReleaseWalletFrozenItem 按笔释放冻结（管理后台运维逃生舱）。
+// 释放走 billing.UnfreezePreDeduct 的 Redis 认领路径：认领即删预扣 hash、幂等、逐笔精确，
+// 绝不直接改写钱包 hash 的 frozen_balance 汇总值。
+func (s *sAdmin) ReleaseWalletFrozenItem(ctx context.Context, req *v1.AdminWalletFrozenReleaseReq) (*v1.AdminWalletFrozenReleaseRes, error) {
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	var found *billing.FrozenItem
+	for i := range items {
+		if items[i].RequestID == req.RequestID {
+			found = &items[i]
+			break
+		}
+	}
+	if found == nil {
+		return nil, common.NewNotFoundError("冻结项（可能已结算/已释放）")
+	}
+
+	// 护栏一：关联异步任务的预扣由任务结算流程负责，禁止手动释放（force 也不放行）
+	task := queryFrozenTaskInfos(ctx, req.TenantID, []string{req.RequestID})[strings.TrimSuffix(req.RequestID, "_adjust")]
+	age := time.Since(time.Unix(found.CreatedAt, 0))
+	releasable, needForce, blockReason := frozenItemGuard(task, age)
+	if !releasable {
+		return nil, common.NewBadRequestError(blockReason)
+	}
+
+	// 护栏二：保护期内（可能仍有请求在途）必须显式强制释放
+	if needForce && !req.Force {
+		return nil, common.NewBadRequestError(fmt.Sprintf(
+			"该笔冻结仅 %.0f 分钟，对应请求可能仍在进行中（长流式/实时会话），释放将使其失去超扣保护；确认后请使用强制释放",
+			age.Minutes()))
+	}
+
+	released, err := billing.UnfreezePreDeduct(ctx, req.TenantID, req.RequestID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 业务日志补充释放原因与操作上下文（HTTP 层审计由 OperationLog 中间件记录）
+	g.Log().Infof(ctx, "admin release frozen prededuct: tenant=%d request=%s amount=%s age=%s force=%v reason=%s",
+		req.TenantID, req.RequestID, released.String(), age.Round(time.Second), req.Force, req.Reason)
+
+	return &v1.AdminWalletFrozenReleaseRes{
+		ReleasedAmount: billing.InexactFloat64(released),
+	}, nil
+}
+
+// ReleaseAllWalletFrozenItems 一键释放租户全部冻结（管理后台运维逃生舱）。
+// 遍历 Redis 活跃冻结明细，复用 frozenItemGuard 护栏逐项筛选：
+//   - 任务关联在途/待结算项自动跳过（由任务结算流程负责，禁止手动释放）；
+//   - 保护期内（冻结不足 frozenReleaseMinAge）项默认跳过，Force=true 时才释放；
+//   - 其余项逐个 UnfreezePreDeduct（Lua 认领即删，幂等，与并发结算竞争安全）。
+//
+// 返回实际释放笔数/金额与跳过原因摘要（去重）。
+func (s *sAdmin) ReleaseAllWalletFrozenItems(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (*v1.AdminWalletFrozenReleaseAllRes, error) {
+	items, err := billing.GetFrozenItems(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	requestIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		requestIDs = append(requestIDs, it.RequestID)
+	}
+	taskInfos := queryFrozenTaskInfos(ctx, req.TenantID, requestIDs)
+
+	now := time.Now()
+	releasedAmount := billing.Zero
+	var releasedCount int64
+	var skippedCount int64
+	skippedSet := make(map[string]bool)
+	var skippedReasons []string
+
+	for i := range items {
+		it := items[i]
+		age := now.Sub(time.Unix(it.CreatedAt, 0))
+		task := taskInfos[strings.TrimSuffix(it.RequestID, "_adjust")]
+		releasable, needForce, blockReason := frozenItemGuard(task, age)
+
+		switch {
+		case !releasable:
+			skippedCount++
+			if !skippedSet[blockReason] {
+				skippedSet[blockReason] = true
+				skippedReasons = append(skippedReasons, blockReason)
+			}
+			continue
+		case needForce && !req.Force:
+			reason := "保护期内（冻结不足 10 分钟），未勾选强制释放"
+			skippedCount++
+			if !skippedSet[reason] {
+				skippedSet[reason] = true
+				skippedReasons = append(skippedReasons, reason)
+			}
+			continue
+		}
+
+		claimed, err := billing.UnfreezePreDeduct(ctx, req.TenantID, it.RequestID)
+		if err != nil {
+			// 单项释放失败不中断整体：记录并继续，其余项照常释放
+			g.Log().Warningf(ctx, "admin release-all: unfreeze %s failed: %v", it.RequestID, err)
+			skippedCount++
+			reason := fmt.Sprintf("释放失败：%v", err)
+			if !skippedSet[reason] {
+				skippedSet[reason] = true
+				skippedReasons = append(skippedReasons, reason)
+			}
+			continue
+		}
+		if claimed.IsPositive() {
+			releasedCount++
+			releasedAmount = billing.AddMoney(releasedAmount, claimed)
+		}
+	}
+
+	// 业务日志补充释放上下文（HTTP 层审计由 OperationLog 中间件记录）
+	g.Log().Infof(ctx, "admin release-all frozen: tenant=%d released=%d amount=%s skipped=%d force=%v reason=%s",
+		req.TenantID, releasedCount, releasedAmount.String(), skippedCount, req.Force, req.Reason)
+
+	return &v1.AdminWalletFrozenReleaseAllRes{
+		ReleasedCount:  releasedCount,
+		ReleasedAmount: billing.InexactFloat64(releasedAmount),
+		SkippedCount:   skippedCount,
+		SkippedReasons: skippedReasons,
+	}, nil
 }
 
 // GetAllTransactions 获取所有租户交易流水（管理后台）
@@ -805,10 +1185,10 @@ func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDash
 
 // ExportUsageLogs exports usage logs to CSV or Excel.
 func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExportReq) (*v1.AdminUsageLogExportRes, error) {
-	if err := common.ValidateDateParam(req.StartDate, "开始日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
 		return nil, err
 	}
-	if err := common.ValidateDateParam(req.EndDate, "结束日期"); err != nil {
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
 
@@ -834,13 +1214,29 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	buildUsageWhere := func() (string, []any) {
 		var conditions []string
 		var args []any
+		if req.ID > 0 {
+			conditions = append(conditions, "u.id = ?")
+			args = append(args, req.ID)
+		}
 		if req.TenantID > 0 {
 			conditions = append(conditions, "u.tenant_id = ?")
 			args = append(args, req.TenantID)
 		}
+		if req.UserID > 0 {
+			conditions = append(conditions, "u.user_id = ?")
+			args = append(args, req.UserID)
+		}
 		if req.Username != "" {
 			conditions = append(conditions, "t.username LIKE ?")
 			args = append(args, "%"+req.Username+"%")
+		}
+		if req.ApiKeyID > 0 {
+			conditions = append(conditions, "u.api_key_id = ?")
+			args = append(args, req.ApiKeyID)
+		}
+		if req.ChannelID > 0 {
+			conditions = append(conditions, "u.channel_id = ?")
+			args = append(args, req.ChannelID)
 		}
 		if req.Model != "" {
 			conditions = append(conditions, "u.model_name = ?")
@@ -856,11 +1252,11 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		}
 		if req.StartDate != "" {
 			conditions = append(conditions, "u.created_at >= ?")
-			args = append(args, req.StartDate+" 00:00:00")
+			args = append(args, common.StartOfRange(req.StartDate))
 		}
 		if req.EndDate != "" {
 			conditions = append(conditions, "u.created_at <= ?")
-			args = append(args, req.EndDate+" 23:59:59")
+			args = append(args, common.EndOfRange(req.EndDate))
 		}
 		where := ""
 		if len(conditions) > 0 {

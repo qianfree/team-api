@@ -174,11 +174,11 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		effectiveOutputPrice = pricing.OutputPrice
 	}
 
-	// 3. 事务内执行结算（钱包扣款 + 计费记录 + 流水 + tracks 状态）
-	//    预扣追踪同时覆盖 requestID 与 requestID+"_adjust"（AdjustTaskBilling 补扣产生）：
-	//    结算骨架按 claim 模式认领仍处于 frozen 的追踪并只释放实际认领到的金额，
-	//    _adjust 已被解冻/孤儿清理处理过时自动少释放，不会二次释放。
-	_, err = executeSettlementTx(ctx, settlementTxParams{
+	// 3. 执行结算（幂等闸门 → Redis 认领扣款 → 流水）
+	//    预扣认领同时覆盖 requestID 与 requestID+"_adjust"（AdjustTaskBilling 补扣产生）：
+	//    骨架按认领模式只释放实际认领到的预扣 hash 金额，
+	//    _adjust 已被解冻/过期处理过时自动少释放，不会二次释放。
+	_, err = executeSettlement(ctx, settlementTxParams{
 		tenantID:        tenantID,
 		walletID:        walletID,
 		preDeductAmount: InexactFloat64(preDeductAmount),
@@ -263,23 +263,17 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		return nil, err
 	}
 
-	// 4. 清除缓存（事务提交后）
-	walletCache.Delete(ctx, fmt.Sprintf("%d", tenantID))
-	InvalidateWalletRedis(ctx, tenantID)
-	CleanupPreDeduct(ctx, tenantID, requestID)
-	CleanupPreDeduct(ctx, tenantID, requestID+"_adjust")
-
-	// 5. 异步检查余额预警
+	// 4. 异步检查余额预警
 	go CheckBalanceWarning(context.Background(), tenantID)
 
-	// 6. 差额已在步骤 3a 一次性结清，此处不得再做任何解冻/退款：
-	//    步骤 3a 已 frozen_balance -= preDeductAmount（释放全部预扣冻结）、balance -= actualCost
+	// 5. 差额已在步骤 3 一次性结清，此处不得再做任何解冻/退款：
+	//    SettleClaim 已 frozen -= 全部预扣认领金额（释放冻结）、balance -= actualCost
 	//    （只扣真实成本），无论 actualCost 大于还是小于预扣，可用余额都已精确调整到位
 	//    （available 变化量恰为 preDeductAmount - actualCost）。
-	//    切勿再对 requestID+"_adjust" 调 UnfreezePreDeduct/SettleFailed——那会在步骤 3a 之外
-	//    二次释放从未单独冻结过的金额，导致 frozen_balance 被过度释放（Redis 侧无下限时甚至为负）。
+	//    切勿再对 requestID+"_adjust" 调 UnfreezePreDeduct/SettleFailed——那会在步骤 3 之外
+	//    二次释放从未单独冻结过的金额，导致 frozen_balance 被过度释放。
 
-	// 7. 生成计费快照 + 摘要
+	// 6. 生成计费快照 + 摘要
 	result := &common.SettlementResult{
 		PreDeductAmount: InexactFloat64(preDeductAmount),
 		ActualCost:      InexactFloat64(actualCost),

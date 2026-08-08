@@ -36,6 +36,9 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	// 过期兑换码的标记不能在事务内做：事务因「兑换码已过期」业务错误回滚时，
 	// 标记也会一并回滚、永远落不了库。记下 ID，事务返回后在事务外单独更新。
 	var expiredRedemptionID int64
+	// redisCreditedAmount 记录事务内已发生的 Redis 钱包加款：Redis 是资金提交点、
+	// 不受 DB 事务回滚，事务失败时必须按此补偿逆转。
+	var redisCreditedAmount decimal.Decimal
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		// 加行锁防止并发超发
@@ -77,7 +80,10 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 
 		switch redemption.Type {
 		case "quota":
-			txID, err = creditWalletForRedemptionTx(ctx, tenantID, redemption.Value, redemption.ID)
+			var credited decimal.Decimal
+			txID, credited, err = creditWalletForRedemptionTx(ctx, tenantID, redemption.Value, redemption.ID)
+			// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
+			redisCreditedAmount = credited
 			if err != nil {
 				return err
 			}
@@ -155,12 +161,19 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 				g.Log().Warningf(ctx, "mark redemption %d expired failed: %v", expiredRedemptionID, updateErr)
 			}
 		}
+		// 事务回滚：补偿逆转已发生的 Redis 钱包加款（兑换未生效，钱包不得入账）。
+		// 补偿自身失败意味着钱包多入账——打 CRITICAL 日志人工追回。
+		if redisCreditedAmount.GreaterThan(billing.Zero) {
+			compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if _, _, compErr := billing.CreditWalletRedis(compCtx, tenantID, redisCreditedAmount.Neg()); compErr != nil {
+				g.Log().Errorf(ctx,
+					"CRITICAL: compensate redemption redis credit failed: tenant=%d usd=%s: %v — wallet over-credited, manual fix required",
+					tenantID, redisCreditedAmount.String(), compErr)
+			}
+		}
 		return nil, err
 	}
-
-	// 事务提交后清除钱包两级缓存（进程内 walletCache + Redis，与 FulfillOrder 一致）：
-	// 仅清 Redis 时本实例进程内缓存在 300s TTL 内仍返回旧余额，兑换入账延迟可见。
-	billing.InvalidateWallet(ctx, tenantID)
 
 	// 兑换码充值后，重置低余额预警标记（余额可能已恢复到阈值以上）
 	billing.ResetLowBalanceNotified(ctx, tenantID)
@@ -168,11 +181,16 @@ func (s *sTenant) RedeemCode(ctx context.Context, req *v1.TenantRedeemCodeReq) (
 	return res, nil
 }
 
-// creditWalletForRedemptionTx 在事务内为租户钱包充值（依赖调用方传入携带事务的 ctx）。
-// amount 为 USD（bil_ 层永远 USD），decimal 直传 SQL 参数与流水字段，全程无 float64 中间运算。
+// creditWalletForRedemptionTx 在事务内为租户钱包充值（依赖调用方传入携带事务的 ctx，
+// 且处于兑换码行锁保护内）。
+// amount 为 USD（bil_ 层永远 USD），decimal 直传流水字段，全程无 float64 中间运算。
 // 流水类型用独立的 "redemption"：与真实充值（recharge）区分，现金对账（对支付渠道流水）
 // 时不会把兑换码入账误计入充值；兑换也不推动 cumulative_recharge / 租户等级。
-func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount decimal.Decimal, redemptionID int64) (int64, error) {
+//
+// Redis 权威化架构下：Redis 加款为资金提交点（行锁保护内执行，天然幂等）；
+// bil_wallets.balance 由物化器从 Redis 覆盖，DB 侧仅写账本流水。
+// 返回的 credited 为【已发生的 Redis 加款金额】（>0 即使后续失败），供事务回滚后补偿逆转。
+func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount decimal.Decimal, redemptionID int64) (int64, decimal.Decimal, error) {
 	type walletRow struct {
 		ID int64 `json:"id"`
 	}
@@ -182,37 +200,19 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount dec
 		Fields("id").
 		Scan(&w)
 	if err != nil {
-		return 0, err
+		return 0, billing.Zero, err
 	}
 	if w == nil {
 		// 钱包在租户注册/管理后台建租户时初始化，正常不应缺失。这里必须报错回滚整个
 		// 兑换事务：若静默返回成功，外层会照常写使用记录、递增 used_count 并向用户
 		// 报告"兑换成功"，但钱包分文未入账——兑换码被无声作废，用户权益丢失且无法追溯。
-		return 0, gerror.Newf("租户 %d 钱包不存在，无法入账兑换额度", tenantID)
+		return 0, billing.Zero, gerror.Newf("租户 %d 钱包不存在，无法入账兑换额度", tenantID)
 	}
 
-	// 钱包自增用参数化原生 SQL（decimal 实现 driver.Valuer，写出精确 NUMERIC 字符串）；
-	// updated_at 手动置为 NOW()，补回原 dao.Update() 自动填充的时间字段。
-	_, err = g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_wallets SET balance = balance + ?, updated_at = NOW() WHERE id = ?",
-		amount, w.ID)
+	// Redis 加款（资金提交点）；流水快照取 Redis 返回值，账本链连续可信
+	balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, amount)
 	if err != nil {
-		return 0, err
-	}
-
-	var balance *struct {
-		Balance       decimal.Decimal `json:"balance"`
-		FrozenBalance decimal.Decimal `json:"frozen_balance"`
-	}
-	err = dao.BilWallets.Ctx(ctx).
-		Where("id", w.ID).
-		Fields("balance, frozen_balance").
-		Scan(&balance)
-	if err != nil {
-		return 0, err
-	}
-	if balance == nil {
-		return 0, gerror.New("wallet not found after update")
+		return 0, billing.Zero, err
 	}
 
 	id, err := dao.BilTransactions.Ctx(ctx).InsertAndGetId(do.BilTransactions{
@@ -220,17 +220,17 @@ func creditWalletForRedemptionTx(ctx context.Context, tenantID int64, amount dec
 		WalletId:     w.ID,
 		Type:         "redemption",
 		Amount:       amount,
-		BalanceAfter: balance.Balance,
-		FrozenAfter:  balance.FrozenBalance,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
 		RelatedId:    redemptionID,
 		RelatedType:  "redemption",
 		Description:  "兑换码充值",
 	})
 	if err != nil {
-		return 0, err
+		return 0, amount, err
 	}
 
-	return id, nil
+	return id, amount, nil
 }
 
 // extendPlanDurationTx 在事务内延长套餐时长（依赖调用方传入携带事务的 ctx）

@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"net/http"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -69,19 +70,19 @@ func HandleSetupInitialize(r *ghttp.Request) {
 
 	// Validate username format
 	if utf8.RuneCountInString(req.Username) < 3 || utf8.RuneCountInString(req.Username) > 20 {
-		response.ErrorMsg(r, consts.CodeSetupInvalidUsername, consts.MsgSetupInvalidUsername)
+		response.ErrorWithCode(r, http.StatusUnprocessableEntity, consts.CodeSetupInvalidUsername, consts.MsgSetupInvalidUsername)
 		return
 	}
 
 	// Validate password strength
 	if err := common.ValidatePassword(req.Password); err != nil {
-		response.ErrorMsg(r, consts.CodePasswordTooWeak, err.Error())
+		response.ErrorWithCode(r, http.StatusUnprocessableEntity, consts.CodePasswordTooWeak, err.Error())
 		return
 	}
 
 	// Validate password confirmation
 	if req.Password != req.ConfirmPassword {
-		response.ErrorMsg(r, consts.CodeSetupPasswordMismatch, consts.MsgSetupPasswordMismatch)
+		response.ErrorWithCode(r, http.StatusUnprocessableEntity, consts.CodeSetupPasswordMismatch, consts.MsgSetupPasswordMismatch)
 		return
 	}
 
