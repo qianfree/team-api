@@ -86,6 +86,24 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 				</AFormItem>
 			</div>
 		</div>
+
+		<!-- 支付说明 -->
+		<div class="section">
+			<div class="section-title">支付说明</div>
+			<div class="section-grid">
+				<AFormItem
+					label="钱包页说明"
+					help="展示在租户端钱包充值页，支持纯文本或 HTML 代码（如提示充值后不支持退款、指定渠道折扣活动等）。纯文本换行需用 <br>"
+					class="field-full"
+				>
+					<ATextarea
+						v-model="values['payment_notice']"
+						:auto-size="{ minRows: 3, maxRows: 10 }"
+						placeholder="例如：充值后不支持退款；使用支付宝支付享 95 折；指定渠道优惠见说明..."
+					/>
+				</AFormItem>
+			</div>
+		</div>
 	</div>
 </template>
 

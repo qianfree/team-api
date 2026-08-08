@@ -33,6 +33,7 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	adminHandler "github.com/qianfree/team-api/internal/handler/admin"
+	"github.com/qianfree/team-api/internal/handler/landing"
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
@@ -126,6 +127,9 @@ var (
 			cs := common.GetCronScheduler()
 			registerCronJobs(cs)
 			cs.StartBackground(ctx)
+
+			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
+			billing.StartWalletMaterializer(ctx)
 
 			// Initialize update manager
 			update.InitManager(ctx)
@@ -258,6 +262,9 @@ var (
 			// Embedded frontend SPA serving
 			registerFrontendRoutes(s)
 
+			// Landing page for backend root when frontend is not embedded
+			registerLandingPage(s)
+
 			// Migrate encryption key (legacy default → configured key)
 			relayLogic.MigrateEncryptionKey(ctx)
 
@@ -380,12 +387,8 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("oauth_token_refresh", "OAuth 令牌刷新", "*/10 * * * *", func(ctx context.Context) error {
 		return task.RefreshExpiringOAuthTokens(ctx)
 	})
-	cs.Register("prededuct_orphan_cleanup", "预扣孤儿清理", "*/2 * * * *", func(ctx context.Context) error {
-		billing.CleanExpiredPreDeducts(ctx)
-		return nil
-	})
-	cs.Register("prededuct_tracks_cleanup", "预扣轨迹清理", "0 4 * * *", func(ctx context.Context) error {
-		billing.CleanSettledPreDeductTracks(ctx)
+	cs.Register("prededuct_sweep", "预扣清扫", "*/2 * * * *", func(ctx context.Context) error {
+		billing.PredeductSweep(ctx)
 		return nil
 	})
 	cs.Register("billing_daily_reconciliation", "计费日对账", "20 5 * * *", func(ctx context.Context) error {
@@ -466,6 +469,18 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/submit/{action}", relay.HandleTaskSubmit)
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
+	})
+}
+
+// registerLandingPage 在未内嵌前端（非 embedweb 构建）时，为后端根路径注册项目介绍页，
+// 避免浏览器直接访问后端地址时显示 404。内嵌前端时根路径由租户 SPA 承接，此页不注册。
+func registerLandingPage(s *ghttp.Server) {
+	if web.Enabled {
+		return
+	}
+	s.Group("/", func(group *ghttp.RouterGroup) {
+		group.GET("/", landing.HandleLanding)
+		group.GET("/index.html", landing.HandleLanding)
 	})
 }
 

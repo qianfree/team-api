@@ -7,6 +7,21 @@ import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
+
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+// 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
+function todayStart(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`
+}
+function todayEnd(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
+}
 
 interface TaskItem {
 	id: number
@@ -37,6 +52,8 @@ const total = ref(0)
 const filterStatus = ref('')
 const filterPlatform = ref('')
 const filterTaskId = ref('')
+const filterStartDate = ref(todayStart())
+const filterEndDate = ref(todayEnd())
 const showExportDropdown = ref(false)
 
 const showDetail = ref(false)
@@ -49,6 +66,8 @@ const { exporting, exportFile } = useExport({
 		status: filterStatus.value || undefined,
 		platform: filterPlatform.value || undefined,
 		public_task_id: filterTaskId.value || undefined,
+		start_date: filterStartDate.value || undefined,
+		end_date: filterEndDate.value || undefined,
 	}),
 })
 
@@ -99,6 +118,8 @@ async function fetchTasks() {
 		if (filterStatus.value) params.status = filterStatus.value
 		if (filterPlatform.value) params.platform = filterPlatform.value
 		if (filterTaskId.value) params.public_task_id = filterTaskId.value
+		if (filterStartDate.value) params.start_date = filterStartDate.value
+		if (filterEndDate.value) params.end_date = filterEndDate.value
 
 		const res: any = await request.get('/tenant/tasks', { params })
 		const raw = res.data?.data
@@ -138,6 +159,8 @@ function resetFilters() {
 	filterStatus.value = ''
 	filterPlatform.value = ''
 	filterTaskId.value = ''
+	filterStartDate.value = todayStart()
+	filterEndDate.value = todayEnd()
 	page.value = 1
 	fetchTasks()
 }
@@ -162,6 +185,7 @@ onMounted(() => {
 		<div class="relative z-20 overflow-visible card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
+					<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
 						<input v-model="filterTaskId" class="input" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />

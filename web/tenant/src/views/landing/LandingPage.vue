@@ -1,112 +1,53 @@
 <template>
   <div class="landing-page">
+    <!-- Background Decoration (system mesh + orbs + grid) -->
+    <div class="pointer-events-none absolute inset-0 overflow-hidden">
+      <div class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"></div>
+      <div class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"></div>
+      <div class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"></div>
+      <div class="absolute inset-0"
+           style="background-image: linear-gradient(rgba(123,143,245,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(123,143,245,0.04) 1px, transparent 1px); background-size: 64px 64px"></div>
+    </div>
+
     <!-- Navigation -->
-    <nav aria-label="主导航" class="landing-nav" :class="{ 'nav-scrolled': isScrolled }">
+    <nav aria-label="主导航" class="landing-nav">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between h-16">
           <div class="flex items-center gap-2.5">
             <img src="/favicon.png" :alt="siteName" class="h-8 w-8 rounded-lg" />
-            <span class="text-lg font-bold tracking-tight" :class="isScrolled ? 'text-gray-900' : 'text-white'">{{ siteName }}</span>
+            <span class="text-lg font-bold tracking-tight text-gray-900">{{ siteName }}</span>
           </div>
           <div class="flex items-center gap-2">
             <button v-if="announcements.length" @click="openAnnouncements" class="btn-nav-announce" title="查看公告">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/></svg>
             </button>
             <a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer"
-               class="hidden sm:flex items-center gap-1.5 text-sm transition-colors duration-200"
-               :class="isScrolled ? 'text-gray-500 hover:text-gray-900' : 'text-white/60 hover:text-white'">
+               class="hidden sm:flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors duration-200">
               <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
               <span>GitHub</span>
             </a>
-            <router-link :to="{ name: 'TenantLogin' }" class="btn-nav-cta text-sm font-medium px-4 py-2 rounded-lg">
-              开始使用
-            </router-link>
           </div>
         </div>
       </div>
     </nav>
 
-    <main>
-      <!-- ============ HERO ============ -->
-      <section aria-label="产品介绍" class="hero-section">
-        <div class="hero-bg">
-          <div class="hero-grid"></div>
-          <div class="hero-orb hero-orb-1"></div>
-          <div class="hero-orb hero-orb-2"></div>
-          <div class="hero-orb hero-orb-3"></div>
-          <div class="hero-vignette"></div>
-        </div>
-
-        <div class="hero-inner">
-          <div class="text-center max-w-3xl mx-auto">
-            <h1 class="hero-title">
-              一个 API，<span class="hero-title-accent">接入所有大模型</span>
-            </h1>
-
-            <p class="hero-subtitle">
-              多租户团队管控、精细计费追溯、全链路审计日志、<br />开放平台，可与企业现有OA系统无缝集成。
-            </p>
-
-            <div class="flex items-center justify-center gap-3 mt-10">
-              <router-link :to="{ name: 'TenantLogin' }" class="btn btn-primary btn-lg min-w-[160px]">
-                <Icon name="arrowRight" size="sm" />
-                快速开始
-              </router-link>
-            </div>
-          </div>
-
-          <!-- Provider Logo Wall -->
-          <div class="hero-logo-wall">
-            <div class="logo-wall-inner">
-              <div v-for="p in heroProviders" :key="p.name" class="logo-wall-item">
-                <div class="logo-wall-icon" :style="{ backgroundColor: p.bgColor, color: p.textColor }">
-                  {{ p.abbr }}
-                </div>
-                <span class="logo-wall-name">{{ p.name }}</span>
-              </div>
-            </div>
-            <div class="logo-wall-fade-l"></div>
-            <div class="logo-wall-fade-r"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============ 核心价值 ============ -->
-      <section id="features" aria-label="核心价值" class="features-section">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-          <div class="text-center max-w-2xl mx-auto mb-16">
-            <span class="section-tag">核心价值</span>
-            <h2 class="section-title">为团队而生的 AI 网关</h2>
-            <p class="section-desc">不只是转发请求——从计费到权限、从监控到集成，覆盖企业级 AI 应用的每一个环节。</p>
-          </div>
-
-          <div class="features-grid">
-            <div v-for="f in coreFeatures" :key="f.title" class="feature-card">
-              <div class="feature-card-icon" :style="{ backgroundColor: f.bgColor, color: f.textColor }">
-                <Icon :name="f.icon" size="lg" />
-              </div>
-              <h3 class="feature-card-title">{{ f.title }}</h3>
-              <p class="feature-card-sub">{{ f.sub }}</p>
-              <p class="feature-card-desc">{{ f.desc }}</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============ 场景展示 ============ -->
-      <section id="scenarios" aria-label="场景展示" class="scenarios-section">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-          <div class="text-center max-w-2xl mx-auto mb-14">
-            <span class="section-tag">应用场景</span>
-            <h2 class="section-title">覆盖从开发到运维的全链路</h2>
-          </div>
+    <main class="landing-main">
+      <!-- ============ 合并区：产品标题 + 场景展示 ============ -->
+      <section aria-label="产品介绍" class="merged-section">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+          <h1 class="hero-title">
+            一个 API，<span class="hero-title-accent">接入所有大模型</span>
+          </h1>
 
           <!-- Scenario Tabs -->
-          <div class="scenario-tabs">
+          <div class="scenario-tabs" ref="tabsRef">
+            <div class="scenario-tab-slider"
+                 :class="{ 'is-ready': sliderReady }"
+                 :style="{ transform: `translateX(${sliderLeft}px)`, width: sliderWidth + 'px' }"></div>
             <button v-for="(s, i) in scenarios" :key="s.title"
                     class="scenario-tab"
                     :class="{ 'scenario-tab-active': activeScenario === i }"
-                    @click="activeScenario = i">
+                    @click="setScenario(i)">
               <Icon :name="s.icon" size="sm" />
               <span>{{ s.tabLabel }}</span>
             </button>
@@ -114,22 +55,24 @@
 
           <!-- Scenario Content -->
           <div class="scenario-content">
-            <template v-for="(s, i) in scenarios" :key="s.title">
-              <div v-show="activeScenario === i" class="scenario-panel">
+            <Transition :name="slideDir">
+              <div :key="activeScenario" class="scenario-panel">
                 <div class="scenario-info">
-                  <div class="scenario-number">{{ String(i + 1).padStart(2, '0') }}</div>
-                  <h3 class="scenario-title">{{ s.title }}</h3>
-                  <p class="scenario-desc">{{ s.desc }}</p>
+                  <h3 class="scenario-title">{{ scenarios[activeScenario].title }}</h3>
+                  <p class="scenario-desc">{{ scenarios[activeScenario].desc }}</p>
                   <ul class="scenario-points">
-                    <li v-for="pt in s.points" :key="pt">
+                    <li v-for="pt in scenarios[activeScenario].points" :key="pt">
                       <Icon name="check" size="xs" class="text-primary-500 flex-shrink-0 mt-0.5" />
                       <span>{{ pt }}</span>
                     </li>
                   </ul>
+                  <router-link :to="{ name: 'TenantLogin' }" class="btn btn-primary btn-compact mt-6">
+                    开始使用
+                  </router-link>
                 </div>
                 <div class="scenario-visual">
                   <!-- Developer: code example -->
-                  <div v-if="i === 0" class="code-card">
+                  <div v-if="activeScenario === 0" class="code-card">
                     <div class="code-card-bar">
                       <div class="terminal-dots">
                         <span class="terminal-dot terminal-dot-red"></span>
@@ -141,7 +84,7 @@
                     <pre class="code-card-body"><code><span class="tk-keyword">from</span> <span class="tk-module">openai</span> <span class="tk-keyword">import</span> <span class="tk-module">OpenAI</span>
 
 <span class="tk-var">client</span> <span class="tk-op">=</span> <span class="tk-module">OpenAI</span><span class="tk-paren">(</span>
-  <span class="tk-param">base_url</span><span class="tk-op">=</span><span class="tk-string">"https://your-domain.com/v1"</span><span class="tk-comma">,</span>
+  <span class="tk-param">base_url</span><span class="tk-op">=</span><span class="tk-string">"{{ apiBaseUrl }}"</span><span class="tk-comma">,</span>
   <span class="tk-param">api_key</span><span class="tk-op">=</span><span class="tk-string">"sk-xxx"</span>
 <span class="tk-paren">)</span>
 
@@ -153,7 +96,7 @@
                   </div>
 
                   <!-- Team: member usage dashboard mock -->
-                  <div v-else-if="i === 1" class="mock-card">
+                  <div v-else-if="activeScenario === 1" class="mock-card">
                     <div class="mock-header">
                       <span class="mock-header-title">成员用量概览</span>
                       <span class="mock-header-badge">本月</span>
@@ -176,7 +119,7 @@
                   </div>
 
                   <!-- Ops: monitoring mock -->
-                  <div v-else-if="i === 2" class="mock-card">
+                  <div v-else-if="activeScenario === 2" class="mock-card">
                     <div class="mock-header">
                       <span class="mock-header-title">渠道健康监控</span>
                       <span class="mock-header-badge-green">全部正常</span>
@@ -206,49 +149,20 @@
                   </div>
                 </div>
               </div>
-            </template>
+            </Transition>
           </div>
         </div>
       </section>
-
-      <!-- ============ FAQ ============ -->
-      <section id="faq" aria-label="常见问题" class="faq-section">
-        <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-          <div class="text-center mb-14">
-            <span class="section-tag">常见问题</span>
-            <h2 class="section-title">你可能想了解的</h2>
-          </div>
-          <div class="faq-list">
-            <div v-for="(faq, index) in faqItems" :key="faq.question"
-                 class="faq-item"
-                 :class="{ 'faq-item-open': openFaq === index }">
-              <button class="faq-question" @click="toggleFaq(index)">
-                <span>{{ faq.question }}</span>
-                <Icon name="chevronDown" size="sm" class="faq-chevron" />
-              </button>
-              <div class="faq-answer-wrapper">
-                <div class="faq-answer">
-                  <p>{{ faq.answer }}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
     </main>
 
     <!-- Footer -->
-    <footer aria-label="页脚" class="bg-gray-950 text-gray-500 border-t border-gray-800">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div class="flex items-center gap-2">
-            <img src="/favicon.png" :alt="siteName" class="h-5 w-5 rounded" />
-            <span class="text-xs text-gray-600">&copy; 2026 qianfree. Released under AGPL-3.0.</span>
-          </div>
+    <footer aria-label="页脚" class="landing-footer">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <span class="text-xs text-gray-400">&copy; 2026 qianfree. Released under AGPL-3.0.</span>
           <a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer"
-             class="text-xs text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1.5">
-            Powered by <span class="text-gray-400 font-medium">Team-API</span>
+             class="text-xs text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1.5">
+            Powered by <span class="font-medium text-gray-500">Team-API</span>
           </a>
         </div>
       </div>
@@ -307,15 +221,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSeo } from '@/composables/useSeo'
 import { useHead } from '@unhead/vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { marked } from 'marked'
 import request from '@/utils/request'
 
-const { settings: publicSettings } = usePublicSettings()
-const siteName = publicSettings.value.site_name || 'Team-API'
+const { settings: publicSettings, fetchSettings } = usePublicSettings()
+const siteName = computed(() => publicSettings.value.site_name || 'Team-API')
+// 快速开始示例代码中展示的真实接入地址（取当前浏览器访问域名，OpenAI 兼容端点固定为 /v1）
+const apiBaseUrl = `${window.location.origin}/v1`
 
 // Announcement popup
 const DISMISSED_KEY = 'tenant_dismissed_landing_announcements'
@@ -402,29 +318,58 @@ function renderMarkdown(text: string): string {
   return marked.parse(text) as string
 }
 
-// Nav scroll state
-const isScrolled = ref(false)
-const handleScroll = () => { isScrolled.value = window.scrollY > 40 }
-onMounted(() => {
-  window.addEventListener('scroll', handleScroll, { passive: true })
+onMounted(async () => {
+  await fetchSettings()
   fetchAndShowAnnouncement()
+  // 首屏测量滑块位置；延迟一帧再开启过渡，避免首屏滑块从 0 展开的动画
+  nextTick(() => {
+    updateSlider()
+    requestAnimationFrame(() => { sliderReady.value = true })
+  })
+  window.addEventListener('resize', onResize)
 })
-onUnmounted(() => window.removeEventListener('scroll', handleScroll))
 
-// FAQ accordion
-const openFaq = ref<number | null>(null)
-const toggleFaq = (index: number) => {
-  openFaq.value = openFaq.value === index ? null : index
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+})
+
+// Scenario tabs — 顶部滑块指示器 + 左右滑动切换
+const activeScenario = ref(0)
+const slideDir = ref<'slide-next' | 'slide-prev'>('slide-next')
+
+// 顶部滑块：绝对定位的高亮背景，跟随激活 Tab 平滑左右移动
+const tabsRef = ref<HTMLElement>()
+const sliderLeft = ref(0)
+const sliderWidth = ref(0)
+const sliderReady = ref(false)
+
+function updateSlider() {
+  const container = tabsRef.value
+  if (!container) return
+  const tabs = container.querySelectorAll<HTMLElement>('.scenario-tab')
+  const el = tabs[activeScenario.value]
+  if (el) {
+    sliderLeft.value = el.offsetLeft
+    sliderWidth.value = el.offsetWidth
+  }
 }
 
-// Scenario tabs
-const activeScenario = ref(0)
+function setScenario(i: number) {
+  if (i === activeScenario.value) return
+  slideDir.value = i > activeScenario.value ? 'slide-next' : 'slide-prev'
+  activeScenario.value = i
+  updateSlider()
+}
+
+function onResize() {
+  updateSlider()
+}
 
 // SEO
 useSeo({
-  title: `${siteName} — 一个 API 接入所有大模型 | 企业级多租户 AI 网关`,
-  description: publicSettings.value.site_description || `${siteName} 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。`,
-  siteName,
+  title: `${siteName.value} — 一个 API 接入所有大模型 | 企业级多租户 AI 网关`,
+  description: publicSettings.value.site_description || `${siteName.value} 是开源自托管的企业级多租户大模型 API 网关平台。聚合 OpenAI、Claude、Gemini、DeepSeek 等 40+ 供应商，内置计费引擎、团队管理、用量审计与智能渠道调度。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。`,
+  siteName: siteName.value,
   keywords: 'Team-API, 大模型网关, API Gateway, 多租户, OpenAI, Claude, Gemini, DeepSeek, 阿里云百炼, 百度文心, 腾讯混元, 智谱AI, AI代理, LLM Gateway, 开源, 自托管, 计费引擎, 团队管理, API管理, SSE流式, 渠道调度',
   canonicalUrl: 'https://team-api.net/',
 })
@@ -436,7 +381,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'SoftwareApplication',
-        name: siteName,
+        name: siteName.value,
         description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台，聚合 40+ 大模型供应商，内置计费引擎、团队管理、用量审计与渠道调度。',
         url: 'https://github.com/qianfree/team-api',
         applicationCategory: 'DeveloperApplication',
@@ -459,7 +404,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'Organization',
-        name: siteName,
+        name: siteName.value,
         url: 'https://github.com/qianfree/team-api',
         logo: 'https://team-api.net/favicon.png',
         sameAs: ['https://github.com/qianfree/team-api'],
@@ -470,7 +415,7 @@ useHead({
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'WebSite',
-        name: siteName,
+        name: siteName.value,
         url: 'https://team-api.net/',
         description: publicSettings.value.site_description || '企业级多租户大模型 API 网关平台',
         potentialAction: {
@@ -480,89 +425,10 @@ useHead({
         },
       }),
     },
-    {
-      type: 'application/ld+json',
-      innerHTML: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'FAQPage',
-        mainEntity: [
-          { '@type': 'Question', name: '什么是 Team-API？', acceptedAnswer: { '@type': 'Answer', text: 'Team-API 是一款开源自托管的企业级多租户大模型 API 网关平台。它聚合了 40+ 大模型供应商（包括 OpenAI、Anthropic Claude、Google Gemini、DeepSeek、阿里云百炼等），提供统一接口、内置计费引擎、团队管理、用量审计与智能渠道调度能力。' } },
-          { '@type': 'Question', name: '如何开始使用 Team-API？', acceptedAnswer: { '@type': 'Answer', text: '最简单的方式是使用 Docker：克隆仓库后执行 docker compose up -d，即可在 http://localhost:3000 访问。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。' } },
-          { '@type': 'Question', name: 'Team-API 支持哪些大模型供应商？', acceptedAnswer: { '@type': 'Answer', text: 'Team-API 内置 40+ 供应商适配器，包括 OpenAI、Anthropic Claude、Google Gemini、DeepSeek、阿里云百炼、百度文心、腾讯混元、智谱AI、Mistral、Moonshot、Ollama 等。' } },
-          { '@type': 'Question', name: 'Team-API 如何计费？', acceptedAnswer: { '@type': 'Answer', text: 'Team-API 采用预扣→结算→退款的原子化计费流程，支持五层额度模型（租户→套餐→成员→项目→API Key），梯度定价，并发预扣防超扣，杜绝超额消费。' } },
-          { '@type': 'Question', name: 'Team-API 是免费的吗？', acceptedAnswer: { '@type': 'Answer', text: '是的，Team-API 采用 AGPL-3.0 开源协议，完全免费使用。大模型 API 调用的费用由各供应商收取，Team-API 本身不收取任何费用。' } },
-          { '@type': 'Question', name: 'Team-API 支持私有化部署吗？', acceptedAnswer: { '@type': 'Answer', text: '完全支持。通过 Docker Compose 一键部署到任何 Linux 服务器。支持 PostgreSQL 数据库和 Redis 缓存，数据完全存储在你自己的基础设施上。' } },
-        ],
-      }),
-    },
   ],
 })
 
 // ============ Data ============
-
-const heroProviders = [
-  { name: 'OpenAI', abbr: 'OA', bgColor: 'rgba(16,163,127,0.15)', textColor: '#10a37f' },
-  { name: 'Claude', abbr: 'CL', bgColor: 'rgba(204,120,50,0.15)', textColor: '#cc7832' },
-  { name: 'Gemini', abbr: 'GE', bgColor: 'rgba(66,133,244,0.15)', textColor: '#4285f4' },
-  { name: 'DeepSeek', abbr: 'DS', bgColor: 'rgba(20,184,166,0.15)', textColor: '#14b8a6' },
-  { name: '阿里百炼', abbr: 'AL', bgColor: 'rgba(255,106,0,0.15)', textColor: '#ff6a00' },
-  { name: '百度文心', abbr: 'BD', bgColor: 'rgba(36,100,230,0.15)', textColor: '#2464e6' },
-  { name: '腾讯混元', abbr: 'TX', bgColor: 'rgba(97,79,230,0.15)', textColor: '#614fe6' },
-  { name: '智谱AI', abbr: 'ZP', bgColor: 'rgba(75,142,240,0.15)', textColor: '#4b8ef0' },
-  { name: 'Mistral', abbr: 'MI', bgColor: 'rgba(255,120,0,0.15)', textColor: '#ff7800' },
-  { name: 'Moonshot', abbr: 'MK', bgColor: 'rgba(30,58,138,0.15)', textColor: '#1e3a8a' },
-]
-
-const coreFeatures = [
-  {
-    icon: 'users',
-    title: '多租户管控',
-    sub: '一人付费，团队共享',
-    desc: '行级数据隔离的多租户架构。Owner 统一充值，按项目、成员分配额度。RBAC 权限精细到按钮级别，团队越大越省心。',
-    bgColor: '#eff6ff',
-    textColor: '#2563eb',
-  },
-  {
-    icon: 'wallet',
-    title: '精细计费',
-    sub: '每笔费用都可追溯',
-    desc: '每次消费只产生一笔记录，没有预扣退款等干扰项，冻结额度可追溯。成员用量一目了然，账单清晰到每一笔调用。',
-    bgColor: '#fffbeb',
-    textColor: '#d97706',
-  },
-  {
-    icon: 'link',
-    title: '开放平台',
-    sub: '无缝对接 OA 系统',
-    desc: '开放 API 操作系统数据，支持 Webhook 事件推送。与企业 OA、审批流、BI 看板无缝集成，自动化运维零门槛。',
-    bgColor: '#f0fdfa',
-    textColor: '#0d9488',
-  },
-  {
-    icon: 'refresh',
-    title: '智能调度',
-    sub: '渠道故障零感知',
-    desc: '多渠道路由引擎，优先级/权重调度 + 健康评分 + 自动故障切换。单渠道挂掉，用户无感切换到备用渠道。',
-    bgColor: '#ecfeff',
-    textColor: '#0891b2',
-  },
-  {
-    icon: 'shield',
-    title: '安全合规',
-    sub: '企业级数据保护',
-    desc: 'API Key 作用域控制，敏感数据 AES-256 加密存储，全链路操作审计。满足企业数据安全与合规要求。',
-    bgColor: '#fff1f2',
-    textColor: '#e11d48',
-  },
-  {
-    icon: 'terminal',
-    title: '开发者友好',
-    sub: '改一行代码即接入',
-    desc: '完全兼容 OpenAI SDK，只需修改 base_url。支持流式/非流式、Function Call、多模态、Realtime API 等主流特性。',
-    bgColor: '#faf5ff',
-    textColor: '#9333ea',
-  },
-]
 
 const scenarios = [
   {
@@ -613,145 +479,82 @@ const mockMembers = [
 
 const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78, 60, 42, 85, 70, 55, 68]
 
-const faqItems = [
-  {
-    question: '什么是 Team-API？',
-    answer: 'Team-API 是一款开源自托管的企业级多租户大模型 API 网关平台。它聚合了 40+ 大模型供应商（包括 OpenAI、Anthropic Claude、Google Gemini、DeepSeek、阿里云百炼等），提供统一接口、内置计费引擎、团队管理、用量审计与智能渠道调度能力。',
-  },
-  {
-    question: '如何开始使用 Team-API？',
-    answer: '最简单的方式是使用 Docker：克隆仓库后执行 docker compose up -d，即可在 http://localhost:3000 访问。你也可以直接使用预构建的 Docker 镜像或从源码编译。完全兼容 OpenAI SDK，只需修改 base_url 即可接入。',
-  },
-  {
-    question: 'Team-API 支持哪些大模型供应商？',
-    answer: 'Team-API 内置 40+ 供应商适配器，包括 OpenAI、Anthropic Claude、Google Gemini、DeepSeek、阿里云百炼、百度文心、腾讯混元、智谱AI、Mistral、Moonshot、Ollama 等，通过统一接口自动转换协议，支持 SSE 流式转发。',
-  },
-  {
-    question: 'Team-API 如何计费？',
-    answer: 'Team-API 采用预扣→结算→退款的原子化计费流程，支持五层额度模型（租户→套餐→成员→项目→API Key），梯度定价，并发预扣防超扣，杜绝超额消费。',
-  },
-  {
-    question: 'Team-API 是免费的吗？',
-    answer: '是的，Team-API 采用 AGPL-3.0 开源协议，完全免费使用。你可以自行部署到自己的服务器上，数据完全自主可控。大模型 API 调用的费用由各供应商收取，Team-API 本身不收取任何费用。',
-  },
-  {
-    question: 'Team-API 支持私有化部署吗？',
-    answer: '完全支持。Team-API 设计为自托管架构，你可以通过 Docker Compose 一键部署到任何 Linux 服务器。支持 PostgreSQL 数据库和 Redis 缓存，数据完全存储在你自己的基础设施上。',
-  },
-]
 </script>
 
 <style scoped>
 /* ================================================
-   HERO
+   页面布局 — 单页全屏，无滚动
    ================================================ */
-.hero-section {
+.landing-page {
   position: relative;
-  background: #0a0f1a;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  min-height: 100vh;
+  background:
+    radial-gradient(at 12% 8%, rgba(20, 184, 166, 0.10) 0px, transparent 36%),
+    radial-gradient(at 72% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 40%),
+    radial-gradient(at 95% 70%, rgba(20, 184, 166, 0.06) 0px, transparent 38%),
+    radial-gradient(at 45% 100%, rgba(99, 102, 241, 0.04) 0px, transparent 42%),
+    #f6f8fc;
+}
+.landing-main {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.landing-footer {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+/* ================================================
+   NAV — 透明导航栏
+   ================================================ */
+.landing-nav {
+  position: relative; z-index: 50; flex-shrink: 0;
+}
+
+/* Nav announcement bell — 浅色玻璃按钮 */
+.btn-nav-announce {
+  width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.72);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.2s ease;
+  background: rgba(255,255,255,0.55); color: #64748b;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+}
+.btn-nav-announce:hover {
+  background: rgba(255,255,255,0.9); color: #0d9488;
+  box-shadow: 0 4px 14px rgba(76,91,142,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+/* ================================================
+   合并区 — 产品标题 + 场景展示
+   ================================================ */
+.merged-section {
+  flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
+  padding: 1.5rem 0 1.75rem;
 }
-.hero-inner {
-  position: relative;
-  max-width: 80rem;
-  margin: 0 auto;
-  padding: 6rem 1rem 3rem;
-  width: 100%;
-}
-@media (min-width: 640px) { .hero-inner { padding: 7rem 1.5rem 4rem; } }
-@media (min-width: 1024px) { .hero-inner { padding: 8rem 2rem 5rem; } }
-.hero-bg { position: absolute; inset: 0; }
-.hero-grid {
-  position: absolute; inset: 0;
-  background-image:
-      linear-gradient(rgba(20,184,166,0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(20,184,166,0.05) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 20%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 20%, transparent 70%);
-}
-.hero-orb {
-  position: absolute; border-radius: 9999px; filter: blur(80px);
-  animation: orbFloat 14s ease-in-out infinite;
-}
-.hero-orb-1 { top: -10%; right: -5%; width: 600px; height: 600px; background: rgba(20,184,166,0.12); }
-.hero-orb-2 { bottom: -15%; left: -10%; width: 500px; height: 500px; background: rgba(6,182,212,0.08); animation-delay: -5s; }
-.hero-orb-3 { top: 40%; left: 50%; width: 400px; height: 400px; background: rgba(99,102,241,0.06); animation-delay: -10s; }
-@keyframes orbFloat {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(20px, -30px) scale(1.05); }
-  66% { transform: translate(-15px, 15px) scale(0.95); }
-}
-.hero-vignette {
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at center, transparent 40%, #0a0f1a 100%);
-}
-
-.hero-badge {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 6px 16px; border-radius: 9999px;
-  background: rgba(20,184,166,0.1); border: 1px solid rgba(20,184,166,0.2);
-  margin-bottom: 1.5rem; animation: fadeInUp 0.6s ease-out both;
-}
-.hero-badge-dot {
-  width: 6px; height: 6px; border-radius: 9999px; background: #14b8a6;
-  animation: pulse-dot 2s ease-in-out infinite;
-}
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(20,184,166,0.4); }
-  50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(20,184,166,0); }
-}
-.hero-badge span:last-child { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.7); }
 
 .hero-title {
-  font-size: clamp(2.25rem, 6vw, 3.75rem); font-weight: 800;
-  line-height: 1.15; letter-spacing: -0.03em; color: #fff;
-  margin-bottom: 1.5rem; animation: fadeInUp 0.6s ease-out 0.1s both;
+  font-size: clamp(2rem, 4vw, 3rem); font-weight: 800;
+  line-height: 1.15; letter-spacing: -0.03em; color: #111827;
+  text-align: center; margin-bottom: 2.25rem;
+  animation: fadeInUp 0.6s ease-out 0.1s both;
 }
 .hero-title-accent {
-  background: linear-gradient(135deg, #14b8a6, #06b6d4, #6366f1);
+  background: linear-gradient(135deg, #0d9488, #14b8a6, #06b6d4);
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.hero-subtitle {
-  font-size: clamp(1rem, 2vw, 1.15rem); line-height: 1.7;
-  color: rgba(255,255,255,0.5); max-width: 520px; margin: 0 auto;
-  animation: fadeInUp 0.6s ease-out 0.2s both;
-}
-
-.btn-hero-ghost {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  border-radius: 12px; padding: 12px 24px; font-size: 15px; font-weight: 500;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.8); transition: all 0.2s ease;
-}
-.btn-hero-ghost:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff; }
-
-/* Logo wall in hero */
-.hero-logo-wall {
-  position: relative; margin-top: 3.5rem; overflow: hidden;
-  animation: fadeInUp 0.6s ease-out 0.35s both;
-}
-.logo-wall-inner {
-  display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
-  max-width: 680px; margin: 0 auto;
-}
-.logo-wall-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-radius: 10px;
-  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
-  transition: all 0.2s ease;
-}
-.logo-wall-item:hover { background: rgba(255,255,255,0.08); border-color: rgba(20,184,166,0.2); }
-.logo-wall-icon {
-  width: 28px; height: 28px; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 800; flex-shrink: 0;
-}
-.logo-wall-name { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.55); }
-.logo-wall-fade-l, .logo-wall-fade-r { display: none; }
 
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(16px); }
@@ -759,126 +562,113 @@ const faqItems = [
 }
 
 /* ================================================
-   NAV
-   ================================================ */
-.landing-nav { position: fixed; top: 0; left: 0; right: 0; z-index: 50; transition: all 0.3s ease; }
-.landing-nav:not(.nav-scrolled) { background: transparent; }
-.landing-nav.nav-scrolled {
-  background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(0,0,0,0.06);
-}
-.nav-logo-icon {
-  width: 28px; height: 28px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center; transition: all 0.3s ease;
-}
-.landing-nav:not(.nav-scrolled) .nav-logo-icon { background: rgba(20,184,166,0.2); box-shadow: 0 0 16px rgba(20,184,166,0.3); }
-.landing-nav.nav-scrolled .nav-logo-icon { background: linear-gradient(135deg,#14b8a6,#0d9488); box-shadow: 0 0 12px rgba(20,184,166,0.2); }
-.btn-nav-cta { background: linear-gradient(135deg,#14b8a6,#0d9488); color: #fff; transition: all 0.2s ease; }
-.btn-nav-cta:hover { box-shadow: 0 0 20px rgba(20,184,166,0.35); transform: translateY(-1px); }
-
-/* Nav announcement bell */
-.btn-nav-announce {
-  width: 36px; height: 36px; border-radius: 8px; border: none;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: all 0.2s ease;
-}
-.landing-nav:not(.nav-scrolled) .btn-nav-announce {
-  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);
-}
-.landing-nav:not(.nav-scrolled) .btn-nav-announce:hover {
-  background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.8);
-}
-.landing-nav.nav-scrolled .btn-nav-announce {
-  background: rgba(0,0,0,0.04); color: rgba(0,0,0,0.35);
-}
-.landing-nav.nav-scrolled .btn-nav-announce:hover {
-  background: rgba(0,0,0,0.08); color: rgba(0,0,0,0.6);
-}
-
-/* ================================================
-   SECTION SHARED
-   ================================================ */
-.section-tag {
-  display: inline-block; font-size: 12px; font-weight: 600; color: #14b8a6;
-  letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.75rem;
-}
-.section-title {
-  font-size: clamp(1.75rem, 4vw, 2.5rem); font-weight: 800; color: #111827;
-  letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 0.75rem;
-}
-.section-desc { font-size: 16px; color: #6b7280; line-height: 1.6; }
-
-/* ================================================
-   核心价值 — FEATURES GRID
-   ================================================ */
-.features-section { background: #f9fafb; }
-
-.features-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
-}
-.feature-card {
-  background: #fff; border-radius: 16px; padding: 28px;
-  border: 1px solid rgba(0,0,0,0.06); transition: all 0.3s ease;
-}
-.feature-card:hover {
-  border-color: rgba(20,184,166,0.15); box-shadow: 0 8px 32px rgba(0,0,0,0.06);
-  transform: translateY(-2px);
-}
-.feature-card-icon {
-  width: 44px; height: 44px; border-radius: 12px;
-  display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
-}
-.feature-card-title { font-size: 17px; font-weight: 700; color: #111827; margin-bottom: 4px; }
-.feature-card-sub { font-size: 13px; font-weight: 600; color: #0d9488; margin-bottom: 10px; }
-.feature-card-desc { font-size: 14px; color: #6b7280; line-height: 1.65; }
-
-@media (max-width: 768px) {
-  .features-grid { grid-template-columns: 1fr; }
-}
-
-/* ================================================
    场景展示 — SCENARIOS
    ================================================ */
-.scenarios-section { background: #fff; }
-
 .scenario-tabs {
-  display: flex; gap: 8px; justify-content: center; margin-bottom: 2rem;
+  position: relative; /* 滑块定位锚点 */
+  display: flex; gap: 4px; padding: 4px;
+  justify-content: center; width: fit-content; margin: 0 auto 1.5rem;
+  border-radius: 14px;
+  background: rgba(241, 245, 249, 0.8);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+/* 跟随激活 Tab 平滑移动的滑块（白底高亮背景） */
+.scenario-tab-slider {
+  position: absolute;
+  top: 4px; left: 0;
+  height: calc(100% - 8px);
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 8px rgba(76, 91, 142, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  z-index: 0;
+  pointer-events: none;
+}
+/* 首屏测量完成后再启用过渡，避免滑块从宽度 0 展开的入场动画 */
+.scenario-tab-slider.is-ready {
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+              width 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .scenario-tab {
+  position: relative; z-index: 1;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 500;
-  color: #6b7280; background: #f9fafb; border: 1px solid transparent;
-  cursor: pointer; transition: all 0.2s ease;
+  padding: 8px 18px; border-radius: 10px; font-size: 14px; font-weight: 500;
+  color: #64748b; border: 1px solid transparent;
+  cursor: pointer; transition: color 0.2s ease;
 }
-.scenario-tab:hover { color: #111827; background: #f3f4f6; }
-.scenario-tab-active {
-  color: #0d9488; background: #f0fdfa; border-color: rgba(20,184,166,0.2);
+.scenario-tab:hover { color: #111827; }
+.scenario-tab-active { color: #0f766e; }
+
+.scenario-content {
+  position: relative;
+  overflow: hidden;
+  /* 固定高度：三场景内容区统一高度，切换时不再因面板内容高度差异而上下跳动 */
+  height: 440px;
+}
+.scenario-panel {
+  display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.75rem; align-items: stretch;
+  height: 440px;
+  border-radius: 1.5rem; padding: 2rem 2.25rem;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(28px) saturate(1.18); -webkit-backdrop-filter: blur(28px) saturate(1.18);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow: 0 18px 55px rgba(76, 91, 142, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+/* 左侧文案垂直居中、右侧视觉区让卡片撑满，保证三场景视觉高度一致 */
+.scenario-info {
+  display: flex; flex-direction: column; justify-content: center; min-width: 0;
+}
+.scenario-visual {
+  display: flex; min-width: 0;
 }
 
-.scenario-content { min-height: 380px; }
-.scenario-panel {
-  display: grid; grid-template-columns: 1fr 1.2fr; gap: 2rem; align-items: flex-start;
-  animation: fadeInUp 0.35s ease-out both;
+/* 场景面板左右滑动切换（与容器高度过渡、滑块移动协同） */
+.slide-next-enter-active,
+.slide-next-leave-active,
+.slide-prev-enter-active,
+.slide-prev-leave-active {
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.32s ease;
 }
-.scenario-number {
-  font-size: 12px; font-weight: 800; color: #14b8a6; letter-spacing: 0.05em; margin-bottom: 12px;
+/* 过渡期间旧面板脱离文档流，与新面板交叠滑动 */
+.slide-next-leave-active,
+.slide-prev-leave-active {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
+/* 向后切换（点击右侧 Tab）：新内容右滑入、旧内容左滑出 */
+.slide-next-enter-from { transform: translateX(32px); opacity: 0; }
+.slide-next-leave-to   { transform: translateX(-32px); opacity: 0; }
+/* 向前切换（点击左侧 Tab）：新内容左滑入、旧内容右滑出 */
+.slide-prev-enter-from { transform: translateX(-32px); opacity: 0; }
+.slide-prev-leave-to   { transform: translateX(32px); opacity: 0; }
 .scenario-title { font-size: 22px; font-weight: 700; color: #111827; margin-bottom: 10px; letter-spacing: -0.01em; }
-.scenario-desc { font-size: 14px; color: #6b7280; line-height: 1.65; margin-bottom: 20px; }
+.scenario-desc { font-size: 14px; color: #64748b; line-height: 1.65; margin-bottom: 14px; }
 .scenario-points { display: flex; flex-direction: column; gap: 10px; }
 .scenario-points li {
   display: flex; align-items: flex-start; gap: 8px;
-  font-size: 13px; color: #4b5563; line-height: 1.5;
+  font-size: 13px; color: #475569; line-height: 1.5;
 }
 
-/* Code card (shared with provider section) */
+/* Compact button — 紧凑按钮，不占满容器宽度 */
+.btn-compact {
+  align-self: flex-start;
+}
+
+/* Code card — 深色代码块（对齐系统 code-block） */
 .code-card {
-  border-radius: 12px; overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  border-radius: 1rem; overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background: #0f172a;
+  display: flex; flex-direction: column; flex: 1; height: 100%;
 }
 .code-card-bar {
   display: flex; align-items: center; padding: 10px 16px;
-  background: #f9fafb; border-bottom: 1px solid rgba(0,0,0,0.06);
+  background: #1e293b; border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .terminal-dots { display: flex; gap: 6px; }
 .terminal-dot { width: 10px; height: 10px; border-radius: 9999px; }
@@ -887,12 +677,13 @@ const faqItems = [
 .terminal-dot-green { background: #22c55e; }
 .code-card-title {
   margin-left: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px; color: #9ca3af;
+  font-size: 11px; color: #94a3b8;
 }
 .code-card-body {
-  padding: 20px; background: #1e1e2e;
+  padding: 18px 20px; background: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px; line-height: 1.8; overflow-x: auto;
+  flex: 1; min-height: 0;
 }
 
 /* Code tokens */
@@ -908,15 +699,17 @@ const faqItems = [
 .tk-comma { color: #94a3b8; }
 .tk-comment { color: rgba(255,255,255,0.25); }
 
-/* Mock card for team & ops */
+/* Mock card for team & ops — 浅色卡片 */
 .mock-card {
-  border-radius: 12px; overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  border-radius: 1rem; overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 34px rgba(76, 91, 142, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   background: #fff;
+  display: flex; flex-direction: column; flex: 1; height: 100%;
 }
 .mock-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 20px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fafafa;
+  padding: 12px 18px; border-bottom: 1px solid #f1f5f9; background: #fafbfd;
 }
 .mock-header-title { font-size: 13px; font-weight: 600; color: #374151; }
 .mock-header-badge {
@@ -929,35 +722,37 @@ const faqItems = [
 }
 
 .mock-member-row {
-  display: flex; align-items: center; gap: 10px; padding: 10px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.04);
+  display: flex; align-items: center; gap: 10px; padding: 9px 18px;
+  border-bottom: 1px solid #f1f5f9;
+  flex: 1;
 }
 .mock-member-avatar { width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; }
 .mock-member-info { display: flex; flex-direction: column; min-width: 60px; }
 .mock-member-name { font-size: 12px; font-weight: 600; color: #374151; }
-.mock-member-role { font-size: 10px; color: #9ca3af; }
-.mock-usage-bar-bg { flex: 1; height: 6px; border-radius: 9999px; background: #f3f4f6; overflow: hidden; }
+.mock-member-role { font-size: 10px; color: #94a3b8; }
+.mock-usage-bar-bg { flex: 1; height: 6px; border-radius: 9999px; background: #f1f5f9; overflow: hidden; }
 .mock-usage-bar-fill { height: 100%; border-radius: 9999px; transition: width 0.6s ease; }
-.mock-usage-pct { font-size: 11px; font-weight: 600; color: #9ca3af; width: 32px; text-align: right; }
+.mock-usage-pct { font-size: 11px; font-weight: 600; color: #94a3b8; width: 32px; text-align: right; }
 
 .mock-footer {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 20px; background: #fafafa; font-size: 12px; color: #9ca3af;
+  padding: 10px 18px; background: #fafbfd; font-size: 12px; color: #94a3b8;
 }
 .mock-footer-value { font-weight: 600; color: #374151; }
 
 /* Ops metrics */
 .mock-metric-row {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
-  padding: 16px 20px;
+  padding: 14px 18px;
 }
 .mock-metric { text-align: center; }
 .mock-metric-value { display: block; font-size: 20px; font-weight: 700; color: #111827; }
-.mock-metric-label { display: block; font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.mock-metric-label { display: block; font-size: 11px; color: #94a3b8; margin-top: 2px; }
 
 .mock-chart {
   display: flex; align-items: flex-end; gap: 4px;
-  height: 64px; padding: 0 20px 16px;
+  padding: 0 18px 14px;
+  flex: 1; min-height: 60px;
 }
 .mock-chart-bar {
   flex: 1; border-radius: 3px 3px 0 0;
@@ -968,64 +763,45 @@ const faqItems = [
 
 .mock-alert-row {
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 20px; border-top: 1px solid rgba(0,0,0,0.04);
+  padding: 9px 18px; border-top: 1px solid #f1f5f9;
   background: #fffbeb;
 }
 .mock-alert-text { font-size: 12px; color: #92400e; }
 
 @media (max-width: 768px) {
-  .scenario-panel { grid-template-columns: 1fr; }
-  .scenario-tabs { flex-wrap: wrap; }
+  /* 单列堆叠后内容高于视口：放开整页滚动，避免被 overflow:hidden 裁切 */
+  .landing-page { height: auto; min-height: 100vh; overflow-y: auto; overflow-x: hidden; }
+  .landing-main { flex: none; }
+  .merged-section { align-items: flex-start; padding: 1rem 0 6rem; }
+  /* 版权信息钉在视口底部，不再随中间内容高度变化上下跳动；保持原有透明背景 */
+  .landing-footer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* 标题强制两行：accent 段落另起一行，字号略减、间距收紧 */
+  .hero-title { font-size: 1.75rem; line-height: 1.25; margin-bottom: 1.25rem; }
+  .hero-title-accent { display: block; }
+
+  /* Tabs 占满宽度三等分，单行整齐排列 */
+  .scenario-tabs { width: 100%; margin: 0 auto 1rem; }
+  .scenario-tab { flex: 1 1 0; justify-content: center; padding: 8px 4px; font-size: 12.5px; gap: 4px; }
+
+  /* 面板单列、高度自适应、padding 紧凑 */
+  .scenario-content { height: auto; }
+  .scenario-panel { grid-template-columns: 1fr; height: auto; gap: 1.25rem; padding: 1.25rem; }
+  .scenario-info { justify-content: flex-start; }
+
+  /* 卡片还原自然高度；code-card 限定父容器宽度，超长代码在内部横向自由滚动 */
+  .code-card { height: auto; flex: none; width: 100%; min-width: 0; max-width: 100%; }
+  .mock-card { height: auto; flex: none; width: 100%; min-width: 0; max-width: 100%; }
+  .code-card-body { flex: none; min-width: 0; overflow-x: auto; }
+  .mock-member-row { flex: none; }
+  .mock-chart { flex: none; min-height: 60px; }
 }
 
 /* ================================================
-   FAQ
-   ================================================ */
-.faq-section { background: #fff; }
-.faq-list { display: flex; flex-direction: column; gap: 8px; }
-.faq-item {
-  border-radius: 12px; border: 1px solid rgba(0,0,0,0.06); overflow: hidden; transition: all 0.2s ease;
-}
-.faq-item:hover { border-color: rgba(20,184,166,0.15); }
-.faq-item-open { border-color: rgba(20,184,166,0.2); box-shadow: 0 2px 12px rgba(20,184,166,0.06); }
-.faq-question {
-  display: flex; align-items: center; justify-content: space-between; width: 100%;
-  padding: 18px 20px; text-align: left; font-size: 15px; font-weight: 600;
-  color: #111827; background: none; border: none; cursor: pointer; transition: color 0.2s ease;
-}
-.faq-question:hover { color: #14b8a6; }
-.faq-chevron { flex-shrink: 0; transition: transform 0.25s ease; color: #9ca3af; }
-.faq-item-open .faq-chevron { transform: rotate(180deg); color: #14b8a6; }
-.faq-answer-wrapper { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-.faq-item-open .faq-answer-wrapper { max-height: 200px; }
-.faq-answer { padding: 0 20px 18px; font-size: 14px; color: #6b7280; line-height: 1.7; }
-
-/* ================================================
-   CTA
-   ================================================ */
-.cta-card {
-  position: relative; background: #111827; border-radius: 24px;
-  padding: 64px 32px; overflow: hidden;
-}
-.cta-bg { position: absolute; inset: 0; }
-.cta-orb { position: absolute; border-radius: 9999px; filter: blur(80px); }
-.cta-orb-1 { top: -30%; right: -10%; width: 400px; height: 400px; background: rgba(20,184,166,0.15); }
-.cta-orb-2 { bottom: -30%; left: -10%; width: 300px; height: 300px; background: rgba(99,102,241,0.1); }
-
-/* ================================================
-   GLOBAL OVERRIDES
-   ================================================ */
-.landing-page .btn-primary {
-  background: linear-gradient(135deg, #14b8a6, #0d9488);
-  color: #fff; box-shadow: 0 0 20px rgba(20,184,166,0.3);
-}
-.landing-page .btn-primary:hover {
-  box-shadow: 0 0 28px rgba(20,184,166,0.4); transform: translateY(-1px);
-}
-
-
-/* ================================================
-   ANNOUNCEMENT POPUP
+   ANNOUNCEMENT POPUP — 系统浅色模态
    ================================================ */
 
 /* Overlay */
@@ -1036,20 +812,18 @@ const faqItems = [
 }
 .announce-backdrop {
   position: absolute; inset: 0;
-  background: rgba(2, 6, 23, 0.75);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 
 /* Card */
 .announce-card {
   position: relative; width: 100%; max-width: 860px;
-  border-radius: 20px; overflow: hidden;
-  background: linear-gradient(170deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
-  border: 1px solid rgba(255,255,255,0.08);
-  box-shadow:
-    0 32px 80px -16px rgba(0,0,0,0.6),
-    0 0 80px -24px rgba(20,184,166,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.05);
+  border-radius: 1.5rem; overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(28px) saturate(1.18); -webkit-backdrop-filter: blur(28px) saturate(1.18);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 32px 80px -16px rgba(15, 23, 42, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   animation: announceEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes announceEnter {
@@ -1061,7 +835,7 @@ const faqItems = [
 .announce-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 28px; gap: 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid #f1f5f9;
   position: relative; z-index: 1;
 }
 .announce-header-left {
@@ -1073,12 +847,12 @@ const faqItems = [
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
-.announce-icon-info { background: none; color: #2dd4bf; border: none; }
-.announce-icon-warn { background: none; color: #fbbf24; border: none; }
+.announce-icon-info { background: #f0fdfa; color: #0d9488; }
+.announce-icon-warn { background: #fffbeb; color: #b45309; }
 
 /* Title */
 .announce-title {
-  font-size: 18px; font-weight: 700; color: #f1f5f9;
+  font-size: 18px; font-weight: 700; color: #111827;
   line-height: 1.4; letter-spacing: -0.01em; margin: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -1087,12 +861,11 @@ const faqItems = [
 .announce-close {
   width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.3);
+  background: rgba(0,0,0,0.04); color: #94a3b8;
   cursor: pointer; transition: all 0.2s ease;
 }
 .announce-close:hover {
-  background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7);
-  border-color: rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.08); color: #334155;
 }
 
 /* Body */
@@ -1102,18 +875,17 @@ const faqItems = [
 
 /* Content (markdown rendered) */
 .announce-content {
-  font-size: 15px; line-height: 1.8; color: #94a3b8;
+  font-size: 15px; line-height: 1.8; color: #475569;
   padding: 20px 28px;
   max-height: 65vh; overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.08) transparent;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
 }
 .announce-content::-webkit-scrollbar { width: 4px; }
 .announce-content::-webkit-scrollbar-track { background: transparent; }
-.announce-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
-.announce-content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+.announce-content::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.4); border-radius: 4px; }
 .announce-content h1, .announce-content h2, .announce-content h3 {
-  color: #e2e8f0; font-weight: 600; margin: 1em 0 0.5em;
+  color: #111827; font-weight: 600; margin: 1em 0 0.5em;
 }
 .announce-content h1:first-child, .announce-content h2:first-child, .announce-content h3:first-child,
 .announce-content p:first-child { margin-top: 0; }
@@ -1124,41 +896,41 @@ const faqItems = [
 .announce-content ul, .announce-content ol { padding-left: 1.4em; margin: 0.6em 0; }
 .announce-content li { margin: 0.3em 0; }
 .announce-content ul li::marker { color: #14b8a6; }
-.announce-content a { color: #2dd4bf; text-decoration: none; border-bottom: 1px solid rgba(45,212,191,0.3); transition: border-color 0.15s ease; }
-.announce-content a:hover { border-bottom-color: rgba(45,212,191,0.6); }
+.announce-content a { color: #0d9488; text-decoration: none; border-bottom: 1px solid rgba(13,148,136,0.3); transition: border-color 0.15s ease; }
+.announce-content a:hover { border-bottom-color: rgba(13,148,136,0.6); }
 .announce-content blockquote {
   border-left: 2px solid rgba(20,184,166,0.4); padding: 0.6em 1em; margin: 0.8em 0;
-  background: rgba(20,184,166,0.04); border-radius: 0 10px 10px 0; color: #cbd5e1;
+  background: rgba(20,184,166,0.05); border-radius: 0 10px 10px 0; color: #64748b;
 }
 .announce-content code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.15em 0.5em; border-radius: 6px;
-  color: #a5f3fc; border: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.85em; background: #f1f5f9; padding: 0.15em 0.5em; border-radius: 6px;
+  color: #0f766e;
 }
 .announce-content pre {
-  background: rgba(0,0,0,0.3); color: #e2e8f0; padding: 16px 20px; border-radius: 12px;
-  overflow-x: auto; margin: 0.8em 0; border: 1px solid rgba(255,255,255,0.04);
+  background: #0f172a; color: #e2e8f0; padding: 16px 20px; border-radius: 12px;
+  overflow-x: auto; margin: 0.8em 0; border: 1px solid rgba(15,23,42,0.1);
 }
 .announce-content pre code { background: transparent; padding: 0; color: inherit; border: none; }
-.announce-content strong { color: #e2e8f0; font-weight: 600; }
-.announce-content em { color: #cbd5e1; }
-.announce-content img { max-width: 100%; border-radius: 12px; margin: 0.8em 0; border: 1px solid rgba(255,255,255,0.06); }
-.announce-content hr { border: none; height: 1px; margin: 1.2em 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); }
+.announce-content strong { color: #111827; font-weight: 600; }
+.announce-content em { color: #475569; }
+.announce-content img { max-width: 100%; border-radius: 12px; margin: 0.8em 0; border: 1px solid rgba(0,0,0,0.06); }
+.announce-content hr { border: none; height: 1px; margin: 1.2em 0; background: linear-gradient(90deg, transparent, rgba(0,0,0,0.08), transparent); }
 .announce-content table { width: 100%; border-collapse: collapse; margin: 0.8em 0; border-radius: 10px; overflow: hidden; }
-.announce-content th { background: rgba(255,255,255,0.04); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: #94a3b8; border: 1px solid rgba(255,255,255,0.06); }
-.announce-content td { padding: 10px 14px; font-size: 13px; color: #94a3b8; border: 1px solid rgba(255,255,255,0.06); }
+.announce-content th { background: #f8fafc; padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: #64748b; border: 1px solid #e2e8f0; }
+.announce-content td { padding: 10px 14px; font-size: 13px; color: #475569; border: 1px solid #e2e8f0; }
 
 /* Footer */
 .announce-footer {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 28px; border-top: 1px solid rgba(255,255,255,0.04);
-  position: relative; z-index: 1; background: rgba(0,0,0,0.15);
+  padding: 14px 28px; border-top: 1px solid #f1f5f9;
+  position: relative; z-index: 1; background: rgba(248, 250, 252, 0.6);
 }
 .announce-footer-left {
   display: flex; align-items: center; gap: 6px;
 }
-.announce-footer-clock { color: rgba(255,255,255,0.2); flex-shrink: 0; }
-.announce-date { font-size: 12px; color: rgba(255,255,255,0.25); font-variant-numeric: tabular-nums; }
+.announce-footer-clock { color: #94a3b8; flex-shrink: 0; }
+.announce-date { font-size: 12px; color: #94a3b8; font-variant-numeric: tabular-nums; }
 
 .announce-btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1166,11 +938,11 @@ const faqItems = [
   font-size: 14px; font-weight: 600; cursor: pointer;
   background: linear-gradient(135deg, #14b8a6, #0d9488);
   color: #fff;
-  box-shadow: 0 2px 12px rgba(20,184,166,0.25);
+  box-shadow: 0 6px 20px rgba(20,184,166,0.3);
   transition: all 0.2s ease;
 }
 .announce-btn:hover {
-  box-shadow: 0 4px 20px rgba(20,184,166,0.4);
+  box-shadow: 0 10px 28px rgba(20,184,166,0.4);
   transform: translateY(-1px);
 }
 .announce-btn:active { transform: translateY(0); }
@@ -1180,13 +952,13 @@ const faqItems = [
 .announce-page-btn {
   width: 28px; height: 28px; border-radius: 6px; border: none;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.5);
+  background: rgba(0,0,0,0.04); color: #64748b;
   cursor: pointer; transition: all 0.15s ease;
 }
-.announce-page-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
+.announce-page-btn:hover:not(:disabled) { background: rgba(0,0,0,0.08); color: #334155; }
 .announce-page-btn:disabled { opacity: 0.3; cursor: default; }
 .announce-page-indicator {
-  font-size: 12px; color: rgba(255,255,255,0.3); min-width: 40px; text-align: center;
+  font-size: 12px; color: #94a3b8; min-width: 40px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
 

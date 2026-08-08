@@ -809,8 +809,8 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 }
 
 // GetModelDetail 实现 DataProvider.GetModelDetail
-// 获取单个模型的详细信息，同时校验租户权限
-func (p *DataProviderImpl) GetModelDetail(ctx context.Context, tenantID int64, modelName string) (*common.ModelDetail, error) {
+// 获取单个模型的详细信息，同时校验租户 / API Key / 成员的模型范围权限
+func (p *DataProviderImpl) GetModelDetail(ctx context.Context, tenantID, apiKeyID, userID int64, modelName string) (*common.ModelDetail, error) {
 	type modelRow struct {
 		ID               int64  `json:"id"`
 		ModelId          string `json:"model_id"`
@@ -844,6 +844,24 @@ func (p *DataProviderImpl) GetModelDetail(ctx context.Context, tenantID int64, m
 		}
 		if !enabled {
 			return nil, common.ErrTenantModelNotEnabled
+		}
+	}
+
+	// 校验 API Key 模型范围（与 /v1/models 列表口径一致，仅当 apiKeyID > 0 时）
+	if apiKeyID > 0 {
+		if allowed, err := p.CheckApiKeyModelAccess(ctx, apiKeyID, modelName); err != nil {
+			return nil, err
+		} else if !allowed {
+			return nil, common.ErrApiKeyModelNotAllowed
+		}
+	}
+
+	// 校验成员模型范围（与 /v1/models 列表口径一致，仅当 userID > 0 时）
+	if userID > 0 {
+		if allowed, err := p.CheckMemberModelAccess(ctx, tenantID, userID, modelName); err != nil {
+			return nil, err
+		} else if !allowed {
+			return nil, common.ErrMemberModelNotAllowed
 		}
 	}
 
@@ -1404,4 +1422,10 @@ func (p *DataProviderImpl) CheckApiKeyModelAccess(ctx context.Context, apiKeyID 
 		}
 	}
 	return false, nil
+}
+
+// InvalidateApiKeyModelCache 清除指定 API Key 的模型权限缓存
+func (p *DataProviderImpl) InvalidateApiKeyModelCache(ctx context.Context, apiKeyID int64) {
+	cacheKey := strconv.FormatInt(apiKeyID, 10)
+	apiKeyModelCache.Delete(ctx, cacheKey)
 }

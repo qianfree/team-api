@@ -30,27 +30,49 @@ type RelayError struct {
 	// RetryAfter 上游 Retry-After 头解析结果（0 = 未携带）。
 	// 调度重试 FSM 据此决定 429 时「原地等待重试」还是立即 failover。
 	RetryAfter time.Duration
+	// Detail 服务端诊断上下文（如上游请求 URL），仅出现在 Error() 输出即日志中。
+	// 客户端响应只取 Message 字段（见 WriteRelayError），故此字段不会泄露上游地址。
+	Detail string
 }
 
 func (e *RelayError) Error() string {
-	if e.Cause != nil {
-		return e.Message + ": " + e.Cause.Error()
+	msg := e.Message
+	if e.Detail != "" {
+		msg += " [" + e.Detail + "]"
 	}
-	return e.Message
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
 }
 
 func (e *RelayError) Unwrap() error {
 	return e.Cause
 }
 
-// NewUpstreamError 创建上游错误
+// NewUpstreamError 创建上游错误。
+// message 为空时（上游返回空响应体）用状态码兜底，避免日志里出现 error=[] 这类无信息量的记录。
 func NewUpstreamError(statusCode int, message string, cause error) *RelayError {
+	if strings.TrimSpace(message) == "" && cause == nil {
+		message = "upstream returned HTTP " + strconv.Itoa(statusCode) + " with empty response body"
+	}
 	return &RelayError{
 		StatusCode: statusCode,
 		Message:    message,
 		Type:       "upstream_error",
 		Cause:      cause,
 	}
+}
+
+// NewUpstreamErrorFromResponse 由上游响应构造错误，并把请求 URL 记入 Detail 供日志定位。
+// 空响应体的 4xx 通常是 URL 路径拼错（被上游网关在路由层拒绝），此时 URL 是唯一有效线索。
+func NewUpstreamErrorFromResponse(resp *http.Response, body []byte) *RelayError {
+	e := NewUpstreamError(resp.StatusCode, string(body), nil).
+		WithRetryAfter(RetryAfterFromHeader(resp.Header))
+	if resp.Request != nil && resp.Request.URL != nil {
+		e.Detail = "upstream_url=" + resp.Request.URL.String()
+	}
+	return e
 }
 
 // WithRetryAfter 附着上游 Retry-After 解析结果（链式调用，d<=0 时不生效）。

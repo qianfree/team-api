@@ -9,6 +9,21 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+function toDateTimeStr(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
+// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
+const defaultEnd = toDateTimeStr(new Date())
+function defaultTodayRange(): string[] {
+  const d = new Date()
+  return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
+}
+
 const loading = ref(false)
 const data = ref<any[]>([])
 const pagination = reactive({
@@ -22,6 +37,10 @@ const pagination = reactive({
 const filterStatus = ref<string | null>(null)
 const filterPlatform = ref<string | null>(null)
 const filterTaskId = ref('')
+const filterDateRange = ref<string[]>(defaultTodayRange())
+const filterModel = ref('')
+const filterTenantId = ref<number | undefined>(undefined)
+const filterUserId = ref<number | undefined>(undefined)
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -156,6 +175,16 @@ async function fetchData() {
     if (filterStatus.value) params.status = filterStatus.value
     if (filterPlatform.value) params.platform = filterPlatform.value
     if (filterTaskId.value) params.public_task_id = filterTaskId.value
+    if (filterDateRange.value && filterDateRange.value.length === 2) {
+      params.start_date = filterDateRange.value[0]
+      // 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
+      if (filterDateRange.value[1] && filterDateRange.value[1] !== defaultEnd) {
+        params.end_date = filterDateRange.value[1]
+      }
+    }
+    if (filterModel.value) params.model_name = filterModel.value
+    if (filterTenantId.value) params.tenant_id = filterTenantId.value
+    if (filterUserId.value) params.user_id = filterUserId.value
     const res: any = await request.get('/admin/tasks', { params })
     const raw = res.data?.data
     data.value = (raw?.list || []).filter(Boolean)
@@ -177,8 +206,17 @@ function resetFilter() {
   filterStatus.value = null
   filterPlatform.value = null
   filterTaskId.value = ''
+  filterDateRange.value = defaultTodayRange()
+  filterModel.value = ''
+  filterTenantId.value = undefined
+  filterUserId.value = undefined
   pagination.current = 1
   fetchData()
+}
+
+// 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
+function handleRefresh() {
+  resetFilter()
 }
 
 async function cancelTask(row: any) {
@@ -229,20 +267,18 @@ onMounted(() => {
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
       <ASpace wrap>
+        <ARangePicker
+          v-model="filterDateRange"
+          show-time
+          style="width: 340px"
+          @change="handleFilter"
+        />
         <AInput
           v-model="filterTaskId"
           placeholder="任务ID"
           allow-clear
           style="width: 200px"
           @keydown.enter="handleFilter"
-        />
-        <ASelect
-          v-model="filterStatus"
-          :options="statusOptions"
-          placeholder="状态"
-          allow-clear
-          style="width: 130px"
-          @change="handleFilter"
         />
         <ASelect
           v-model="filterPlatform"
@@ -252,14 +288,47 @@ onMounted(() => {
           style="width: 130px"
           @change="handleFilter"
         />
+        <ASelect
+          v-model="filterStatus"
+          :options="statusOptions"
+          placeholder="状态"
+          allow-clear
+          style="width: 130px"
+          @change="handleFilter"
+        />
+        <AInput
+          v-model="filterModel"
+          placeholder="模型"
+          allow-clear
+          style="width: 160px"
+          @keydown.enter="handleFilter"
+        />
+        <AInputNumber
+          v-model="filterTenantId"
+          placeholder="租户ID"
+          :min="1"
+          allow-clear
+          style="width: 120px"
+          @change="handleFilter"
+          @clear="handleFilter"
+        />
+        <AInputNumber
+          v-model="filterUserId"
+          placeholder="用户ID"
+          :min="1"
+          allow-clear
+          style="width: 120px"
+          @change="handleFilter"
+          @clear="handleFilter"
+        />
         <AButton type="primary" @click="handleFilter">搜索</AButton>
         <AButton @click="resetFilter">重置</AButton>
+        <AButton @click="handleRefresh">刷新</AButton>
       </ASpace>
     </ACard>
 
     <!-- Table -->
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"
@@ -271,6 +340,7 @@ onMounted(() => {
         row-key="id"
       />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"
@@ -349,10 +419,16 @@ onMounted(() => {
 <style scoped>
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.table-footer :deep(.table-stats) {
+  margin-bottom: 0;
 }
 
 .detail-section-title {

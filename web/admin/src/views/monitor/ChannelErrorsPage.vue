@@ -283,7 +283,6 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <TableStats :total="total" />
       <ATable
         :data="data"
         :loading="loading"
@@ -293,6 +292,7 @@ onMounted(() => {
         :scroll="{ x: 1400 }"
       />
       <div class="table-footer">
+        <TableStats :total="total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"

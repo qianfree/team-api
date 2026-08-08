@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team-API · 企业级大模型 API 网关</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20500%20500%22%20role%3D%22img%22%20aria-label%3D%22Three-color%20orbit%20logo%22%20shape-rendering%3D%22geometricPrecision%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22purple-arm%22%20x1%3D%22315%22%20y1%3D%2277%22%20x2%3D%22201%22%20y2%3D%22279%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f000da%22%2F%3E%3Cstop%20offset%3D%220.48%22%20stop-color%3D%22%23b800d1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%236d00a9%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22green-arm%22%20x1%3D%22315%22%20y1%3D%2277%22%20x2%3D%22201%22%20y2%3D%22279%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2300dc72%22%2F%3E%3Cstop%20offset%3D%220.48%22%20stop-color%3D%22%2300bd69%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23008e4c%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22orange-arm%22%20x1%3D%22315%22%20y1%3D%2277%22%20x2%3D%22201%22%20y2%3D%22279%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23d90016%22%2F%3E%3Cstop%20offset%3D%220.48%22%20stop-color%3D%22%23ff7900%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23f79a00%22%2F%3E%3C%2FlinearGradient%3E%3CradialGradient%20id%3D%22purple-ball%22%20cx%3D%2234%25%22%20cy%3D%2227%25%22%20r%3D%2272%25%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ff25e8%22%2F%3E%3Cstop%20offset%3D%220.52%22%20stop-color%3D%22%23d500d2%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%238700ad%22%2F%3E%3C%2FradialGradient%3E%3CradialGradient%20id%3D%22green-ball%22%20cx%3D%2235%25%22%20cy%3D%2227%25%22%20r%3D%2273%25%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2322ed91%22%2F%3E%3Cstop%20offset%3D%220.52%22%20stop-color%3D%22%2300bd6b%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2300834c%22%2F%3E%3C%2FradialGradient%3E%3CradialGradient%20id%3D%22orange-ball%22%20cx%3D%2234%25%22%20cy%3D%2227%25%22%20r%3D%2273%25%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffdc00%22%2F%3E%3Cstop%20offset%3D%220.52%22%20stop-color%3D%22%23ff8b00%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23d71712%22%2F%3E%3C%2FradialGradient%3E%3CradialGradient%20id%3D%22cyan-ball%22%20cx%3D%2235%25%22%20cy%3D%2228%25%22%20r%3D%2273%25%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2317efff%22%2F%3E%3Cstop%20offset%3D%220.58%22%20stop-color%3D%22%2308d8ef%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2319bdd5%22%2F%3E%3C%2FradialGradient%3E%3Cpath%20id%3D%22arm-shape%22%20d%3D%22M219%20286c-38-22-61-59-60-103%201-61%2046-109%20105-112%2020-1%2039%201%2055%206l-5%2021c-16-4-32-6-48-5-47%202-84%2041-85%2090-1%2042%2013%2076%2038%20103z%22%2F%3E%3Ccircle%20id%3D%22endpoint-shape%22%20cx%3D%22331%22%20cy%3D%2282%22%20r%3D%2226.56218506%22%2F%3E%3C%2Fdefs%3E%3Cg%20transform%3D%22translate(250%20244)%20rotate(10.20552699)%20scale(0.94118763)%20translate(-250%20-244)%22%3E%3Cuse%20href%3D%22%23arm-shape%22%20fill%3D%22url(%23purple-arm)%22%2F%3E%3Cuse%20href%3D%22%23endpoint-shape%22%20fill%3D%22url(%23purple-ball)%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D%22rotate(-120%20250%20244)%20translate(250%20244)%20rotate(10.20552699)%20scale(0.94118763)%20translate(-250%20-244)%22%3E%3Cuse%20href%3D%22%23arm-shape%22%20fill%3D%22url(%23green-arm)%22%2F%3E%3Cuse%20href%3D%22%23endpoint-shape%22%20fill%3D%22url(%23green-ball)%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D%22rotate(120%20250%20244)%20translate(250%20244)%20rotate(10.20552699)%20scale(0.94118763)%20translate(-250%20-244)%22%3E%3Cuse%20href%3D%22%23arm-shape%22%20fill%3D%22url(%23orange-arm)%22%2F%3E%3Cuse%20href%3D%22%23endpoint-shape%22%20fill%3D%22url(%23orange-ball)%22%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D%22250%22%20cy%3D%22244%22%20r%3D%2237%22%20fill%3D%22url(%23cyan-ball)%22%2F%3E%3C%2Fsvg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['DM Sans', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'DM Sans', system-ui, sans-serif; }
+
+        .card {
+            box-shadow:
+                0 0 0 1px rgba(0, 0, 0, 0.03),
+                0 2px 4px rgba(0, 0, 0, 0.03),
+                0 12px 24px rgba(0, 0, 0, 0.06);
+        }
+
+        .entry-btn {
+            transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+        }
+        .entry-btn:hover { box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3); }
+        .entry-btn:active { transform: translateY(0.5px); }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4" style="background: linear-gradient(160deg, #f0f4f8 0%, #e8edf5 50%, #f5f3ff 100%);">
+
+    <div class="w-full max-w-md">
+        <div class="card bg-white rounded-2xl p-8 sm:p-10">
+
+            <!-- Brand -->
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 border border-gray-100 bg-white" style="box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
+                    <svg class="w-9 h-9" viewBox="0 0 500 500" role="img" aria-label="Team-API">
+                        <defs>
+                            <linearGradient id="purple-arm" x1="315" y1="77" x2="201" y2="279" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#f000da"/>
+                                <stop offset="0.48" stop-color="#b800d1"/>
+                                <stop offset="1" stop-color="#6d00a9"/>
+                            </linearGradient>
+                            <linearGradient id="green-arm" x1="315" y1="77" x2="201" y2="279" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#00dc72"/>
+                                <stop offset="0.48" stop-color="#00bd69"/>
+                                <stop offset="1" stop-color="#008e4c"/>
+                            </linearGradient>
+                            <linearGradient id="orange-arm" x1="315" y1="77" x2="201" y2="279" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#d90016"/>
+                                <stop offset="0.48" stop-color="#ff7900"/>
+                                <stop offset="1" stop-color="#f79a00"/>
+                            </linearGradient>
+                            <radialGradient id="purple-ball" cx="34%" cy="27%" r="72%">
+                                <stop offset="0" stop-color="#ff25e8"/>
+                                <stop offset="0.52" stop-color="#d500d2"/>
+                                <stop offset="1" stop-color="#8700ad"/>
+                            </radialGradient>
+                            <radialGradient id="green-ball" cx="35%" cy="27%" r="73%">
+                                <stop offset="0" stop-color="#22ed91"/>
+                                <stop offset="0.52" stop-color="#00bd6b"/>
+                                <stop offset="1" stop-color="#00834c"/>
+                            </radialGradient>
+                            <radialGradient id="orange-ball" cx="34%" cy="27%" r="73%">
+                                <stop offset="0" stop-color="#ffdc00"/>
+                                <stop offset="0.52" stop-color="#ff8b00"/>
+                                <stop offset="1" stop-color="#d71712"/>
+                            </radialGradient>
+                            <radialGradient id="cyan-ball" cx="35%" cy="28%" r="73%">
+                                <stop offset="0" stop-color="#17efff"/>
+                                <stop offset="0.58" stop-color="#08d8ef"/>
+                                <stop offset="1" stop-color="#19bdd5"/>
+                            </radialGradient>
+                            <path id="arm-shape" d="M219 286c-38-22-61-59-60-103 1-61 46-109 105-112 20-1 39 1 55 6l-5 21c-16-4-32-6-48-5-47 2-84 41-85 90-1 42 13 76 38 103z"/>
+                            <circle id="endpoint-shape" cx="331" cy="82" r="26.56218506"/>
+                        </defs>
+                        <g transform="translate(250 244) rotate(10.20552699) scale(0.94118763) translate(-250 -244)">
+                            <use href="#arm-shape" fill="url(#purple-arm)"/>
+                            <use href="#endpoint-shape" fill="url(#purple-ball)"/>
+                        </g>
+                        <g transform="rotate(-120 250 244) translate(250 244) rotate(10.20552699) scale(0.94118763) translate(-250 -244)">
+                            <use href="#arm-shape" fill="url(#green-arm)"/>
+                            <use href="#endpoint-shape" fill="url(#green-ball)"/>
+                        </g>
+                        <g transform="rotate(120 250 244) translate(250 244) rotate(10.20552699) scale(0.94118763) translate(-250 -244)">
+                            <use href="#arm-shape" fill="url(#orange-arm)"/>
+                            <use href="#endpoint-shape" fill="url(#orange-ball)"/>
+                        </g>
+                        <circle cx="250" cy="244" r="37" fill="url(#cyan-ball)"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-semibold text-gray-900 tracking-tight">Team-API</h1>
+                <p class="text-sm text-gray-500 mt-1.5">企业级大模型 API 网关</p>
+            </div>
+
+            <!-- Intro -->
+            <p class="text-sm text-gray-500 text-center mb-8">
+                统一接入 OpenAI / Claude / Gemini 等主流大模型，为多租户提供 API Key 管理与计费能力
+            </p>
+
+            <!-- Frontend entry -->
+            <div class="space-y-3">
+                <a href="/admin" class="entry-btn flex items-center justify-between w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700 hover:bg-gray-100">
+                    <span>管理后台</span>
+                    <span class="text-xs text-gray-400">平台运营</span>
+                </a>
+                <a href="/" class="entry-btn flex items-center justify-between w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700 hover:bg-gray-100">
+                    <span>租户控制台</span>
+                    <span class="text-xs text-gray-400">组织使用</span>
+                </a>
+            </div>
+
+            <!-- Dev hint -->
+            <p class="text-center text-xs text-gray-400 mt-6">
+                开发环境请通过 Vite 访问
+                <a id="dev-admin" href="#" class="text-blue-600 hover:underline">管理后台 :4001</a>
+                <span class="mx-1">·</span>
+                <a id="dev-tenant" href="#" class="text-blue-600 hover:underline">租户控制台 :4002</a>
+            </p>
+
+            <p class="text-center text-xs text-gray-400 mt-4">
+                Team-API v<span id="version">__VERSION__</span>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            // 开发环境前端 Vite 开发服务器地址（管理后台 :4001 / 租户控制台 :4002），按当前 hostname 动态拼接
+            var host = window.location.hostname || 'localhost';
+            var admin = document.getElementById('dev-admin');
+            var tenant = document.getElementById('dev-tenant');
+            if (admin) admin.href = 'http://' + host + ':4001';
+            if (tenant) tenant.href = 'http://' + host + ':4002';
+        })();
+    </script>
+</body>
+</html>

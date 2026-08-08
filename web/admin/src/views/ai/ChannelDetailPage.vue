@@ -19,6 +19,8 @@ const activeTab = ref('info')
 
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const breakerTagColor: Record<number, string> = { 0: 'green', 1: 'red', 2: 'orange' }
+const breakerLabel: Record<number, string> = { 0: '正常', 1: '熔断', 2: '半开' }
 const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
 const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
 const tierOptions = [
@@ -138,7 +140,8 @@ const abilityColumns: TableColumnData[] = [
         modelValue: record.upstream_model || '',
         size: 'mini',
         placeholder: '留空则同名',
-        onChange: (v: string) => handleUpstreamModelChange(record, v),
+        'onUpdate:modelValue': (v: string) => handleUpstreamModelChange(record, v),
+        onChange: () => scheduleAbilitySave('上游模型名已更新'),
       })
     },
   },
@@ -206,8 +209,8 @@ async function handleToggleAbility(ab: any) {
   } catch { /* error handled by interceptor */ }
 }
 
-// 能力表内联编辑（成本比例 / 上游模型名）：任意字段变更后统一 600ms 防抖整表提交，
-// 连续改多字段只发一次请求。提交体 abilityPayload 已包含 upstream_model。
+// 能力表内联编辑：成本比例输入过程中 600ms 防抖整表提交；
+// 上游模型名仅失焦/回车时提交（避免逐字保存）。提交体 abilityPayload 已包含 upstream_model。
 let abilitySaveTimer: any = null
 function scheduleAbilitySave(successMsg: string) {
   clearTimeout(abilitySaveTimer)
@@ -227,7 +230,6 @@ function handleCostRatioChange(record: any, value: number) {
 
 function handleUpstreamModelChange(record: any, value: string) {
   record.upstream_model = value
-  scheduleAbilitySave('上游模型名已更新')
 }
 
 async function handleDeleteAbility(id: number) {
@@ -529,6 +531,18 @@ function formatHeaders(headers: Record<string, string>): string {
                     {{ detail.health_score.toFixed(0) }}
                   </span>
                   <span v-else style="color: #94a3b8">N/A</span>
+                </ADescriptionsItem>
+                <ADescriptionsItem label="调度状态">
+                  <!-- disabled / testing 渠道不在目录快照中，熔断状态无意义，置灰展示 -->
+                  <template v-if="detail.status === 'active'">
+                    <ATag :color="breakerTagColor[detail.breaker_state ?? 0]" size="small">
+                      {{ breakerLabel[detail.breaker_state ?? 0] }}
+                    </ATag>
+                    <span v-if="(detail.breaker_models ?? 0) > 0" style="margin-left: 6px; color: #f59e0b; font-size: 12px; font-weight: 600">
+                      {{ detail.breaker_models }} 个模型受影响
+                    </span>
+                  </template>
+                  <span v-else style="color: #94a3b8">—</span>
                 </ADescriptionsItem>
                 <ADescriptionsItem label="VIP">
                   <ATag v-if="detail.is_vip" color="gold" size="small">VIP</ATag>

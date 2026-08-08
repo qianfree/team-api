@@ -310,7 +310,6 @@ onMounted(() => {
 
     <!-- Table -->
     <a-card :bordered="false">
-      <TableStats :total="total" />
       <a-table
         :data="data"
         :columns="columns"
@@ -322,6 +321,7 @@ onMounted(() => {
         :row-selection="{ type: 'checkbox', showCheckedAll: true, selectedRowKeys: selectedKeys, onSelect: handleSelection }"
       />
       <div class="table-footer">
+        <TableStats :total="total" />
         <a-pagination
           :current="pagination.current"
           :page-size="pagination.pageSize"

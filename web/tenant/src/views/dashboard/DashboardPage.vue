@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
 
 		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
 			<TokenTrendChart :data="trendData" :loading="chartsLoading" :days="selectedDays" @change-days="selectedDays = $event" />
-			<div class="card p-5 sm:p-6">
+			<div class="card card-prominent p-5 sm:p-6">
 				<div class="mb-4 flex items-center justify-between">
 					<div>
 						<h2 class="text-base font-semibold text-slate-900">账户概览</h2>
@@ -416,7 +416,7 @@ onBeforeUnmount(() => {
 		</section>
 
 		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
-			<div class="card overflow-hidden">
+			<div class="card card-prominent overflow-hidden">
 				<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 					<div>
 						<h2 class="text-base font-semibold text-slate-900">成员用量排行</h2>

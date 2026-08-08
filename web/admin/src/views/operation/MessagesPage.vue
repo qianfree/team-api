@@ -326,9 +326,9 @@ onMounted(fetchList)
           <ASelect v-model="typeFilter" :options="typeOptions" style="width: 120px" allow-clear placeholder="类型筛选" @change="() => { pagination.current = 1; fetchList() }" />
         </div>
       </template>
-      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="messages" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

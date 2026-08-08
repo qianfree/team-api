@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"fmt"
+	"time"
 
 	do "github.com/qianfree/team-api/internal/model/do"
 
@@ -18,10 +19,10 @@ import (
 
 // FulfillOrder 履约订单（事务内完成：履约+更新订单状态）
 func FulfillOrder(ctx context.Context, orderID int64) error {
-	// walletTouched 标记本次履约是否变更了钱包余额；钱包缓存失效必须在事务提交后执行，
-	// 否则并发 GetWallet 可能在提交前读到旧 DB 值并回写 Redis，污染缓存。
-	var walletTouchedTenantID int64
-	var walletTouched bool
+	// redisCredited* 记录事务内已发生的 Redis 钱包加款：Redis 是资金提交点、不受 DB 事务回滚，
+	// 事务失败时必须按此补偿逆转，防止「订单未履约但钱包已入账」。
+	var redisCreditedTenantID int64
+	var redisCreditedAmount decimal.Decimal
 
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		var order *struct {
@@ -69,7 +70,11 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			// 汇率只取一次，保证入账换算与快照使用同一汇率。
 			rate := billing.GetExchangeRateCNYToUSD(ctx)
 			usdAmount := billing.CeilUSD(billing.NewFromFloat(order.Amount).Mul(billing.NewFromFloat(rate)))
-			if err = creditWalletTx(ctx, order.TenantID, usdAmount, orderID, fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → USD %.6f)", orderID, order.Amount, order.FinalAmount, usdAmount.InexactFloat64())); err != nil {
+			credited, err := creditWalletTx(ctx, order.TenantID, usdAmount, orderID, fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → USD %.6f)", orderID, order.Amount, order.FinalAmount, usdAmount.InexactFloat64()))
+			// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
+			redisCreditedTenantID = order.TenantID
+			redisCreditedAmount = credited
+			if err != nil {
 				return gerror.Wrapf(err, "credit wallet failed")
 			}
 			// 汇率结构化快照：持久化「原始 CNY（订单列）+ 当时汇率 + 入账 USD」，
@@ -82,8 +87,6 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
 			// 充值后检查是否需要重置低余额预警标记
 			billing.ResetLowBalanceNotified(ctx, order.TenantID)
-			walletTouchedTenantID = order.TenantID
-			walletTouched = true
 
 		default:
 			return gerror.Newf("unsupported order type for fulfillment: %s", order.OrderType)
@@ -110,13 +113,18 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 		return nil
 	})
 	if err != nil {
+		// 事务回滚：补偿逆转已发生的 Redis 钱包加款（订单未履约，钱包不得入账）。
+		// 补偿自身失败意味着钱包多入账——打 CRITICAL 日志人工追回。
+		if redisCreditedAmount.GreaterThan(billing.Zero) {
+			compCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if _, _, compErr := billing.CreditWalletRedis(compCtx, redisCreditedTenantID, redisCreditedAmount.Neg()); compErr != nil {
+				g.Log().Errorf(ctx,
+					"CRITICAL: compensate recharge redis credit failed: tenant=%d usd=%s order=%d: %v — wallet over-credited, manual fix required",
+					redisCreditedTenantID, redisCreditedAmount.String(), orderID, compErr)
+			}
+		}
 		return err
-	}
-
-	// 事务提交后再清除钱包两级缓存（进程内 walletCache + Redis），避免充值后 GetWallet 在 300s 内仍返回旧余额。
-	// 放在提交后执行，避免「DEL → 并发 GetWallet 读到旧 DB 值回写」的缓存污染窗口。
-	if walletTouched {
-		billing.InvalidateWallet(ctx, walletTouchedTenantID)
 	}
 	return nil
 }
@@ -192,11 +200,17 @@ func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int
 	})
 }
 
-// creditWalletTx 在事务内钱包入账（依赖调用方传入携带事务的 ctx）
-// amount 为 USD（bil_ 层永远 USD）；用 decimal 直传原生 SQL（shopspring decimal 实现
-// driver.Valuer → 精确 NUMERIC 字符串），避免 float64 入账在 balance+? 累加时产生漂移。
-// orderID 写入流水 related_id：退款时靠它精确找回履约当时入账的 USD（禁止按当前汇率反算）。
-func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal, orderID int64, description string) error {
+// creditWalletTx 钱包入账（依赖调用方传入携带事务的 ctx，且处于订单行锁保护内）。
+// amount 为 USD（bil_ 层永远 USD）；orderID 写入流水 related_id：退款时靠它精确找回
+// 履约当时入账的 USD（禁止按当前汇率反算）。
+//
+// Redis 权威化架构下的职责拆分：
+//   - Redis 加款是资金提交点（实时余额立即生效），在行锁保护内执行，并发回调串行化、天然幂等；
+//   - DB 侧只维护「累计充值 + 账本流水」——bil_wallets.balance 由物化器从 Redis 覆盖，
+//     不再在事务内更新，避免与滞后物化值互相回滚；
+//   - 返回值为【已发生的 Redis 加款金额】（>0 即使后续 DB 步骤失败），供调用方在事务
+//     回滚后补偿逆转。
+func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal, orderID int64, description string) (decimal.Decimal, error) {
 	var w *struct {
 		ID int64 `json:"id"`
 	}
@@ -205,32 +219,24 @@ func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal,
 		Fields("id").
 		Scan(&w)
 	if err != nil {
-		return err
+		return billing.Zero, err
 	}
 	if w == nil {
-		return gerror.Newf("wallet not found for tenant %d", tenantID)
+		return billing.Zero, gerror.Newf("wallet not found for tenant %d", tenantID)
 	}
 
+	// Redis 加款（资金提交点）；流水快照取 Redis 返回值，账本链连续可信
+	balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, amount)
+	if err != nil {
+		return billing.Zero, err
+	}
+
+	// DB 仅累加累计充值（decimal 直传 NUMERIC，driver.Valuer 精确字符串无漂移）
 	_, err = g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_wallets SET balance = balance + ?, cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
-		amount, amount, w.ID)
+		"UPDATE bil_wallets SET cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
+		amount, w.ID)
 	if err != nil {
-		return err
-	}
-
-	var balance *struct {
-		Balance       decimal.Decimal `json:"balance"`
-		FrozenBalance decimal.Decimal `json:"frozen_balance"`
-	}
-	err = dao.BilWallets.Ctx(ctx).
-		Where("id", w.ID).
-		Fields("balance, frozen_balance").
-		Scan(&balance)
-	if err != nil {
-		return err
-	}
-	if balance == nil {
-		return gerror.New("wallet not found after update")
+		return amount, err
 	}
 
 	_, err = dao.BilTransactions.Ctx(ctx).Insert(do.BilTransactions{
@@ -238,18 +244,15 @@ func creditWalletTx(ctx context.Context, tenantID int64, amount decimal.Decimal,
 		WalletId:     w.ID,
 		Type:         "recharge",
 		Amount:       amount,
-		BalanceAfter: balance.Balance,
-		FrozenAfter:  balance.FrozenBalance,
+		BalanceAfter: balanceAfter,
+		FrozenAfter:  frozenAfter,
 		RelatedId:    orderID,
 		RelatedType:  "order",
 		Description:  description,
 	})
 	if err != nil {
-		return err
+		return amount, err
 	}
 
-	// 注意：钱包缓存失效（billing.InvalidateWallet）不在事务内调用——事务尚未提交时 DEL Redis，
-	// 并发 GetWallet 可能从 DB 读到旧余额并回写 Redis，导致缓存被旧值重新污染。
-	// 失效由调用方 FulfillOrder 在事务提交后统一执行。
-	return nil
+	return amount, nil
 }

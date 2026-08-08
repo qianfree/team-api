@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/relay"
+	lrelay "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/middleware"
 	do "github.com/qianfree/team-api/internal/model/do"
 
@@ -472,6 +473,8 @@ func (s *sTenant) ApiKeyUpdate(ctx context.Context, req *v1.TenantApiKeyUpdateRe
 
 	if hasUpdate || req.ModelNames != nil {
 		relay.InvalidateApiKey(ctx, info.KeyPrefix)
+		// 失效模型权限缓存（修复：更新模型范围后缓存未失效的问题）
+		lrelay.NewDataProvider().InvalidateApiKeyModelCache(ctx, keyID)
 	}
 
 	return &v1.TenantApiKeyUpdateRes{}, nil
@@ -527,6 +530,8 @@ func (s *sTenant) ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUp
 	}
 
 	relay.InvalidateApiKey(ctx, info.KeyPrefix)
+	// 失效模型权限缓存（修复：更新模型范围后缓存未失效的问题）
+	lrelay.NewDataProvider().InvalidateApiKeyModelCache(ctx, keyID)
 
 	return &v1.TenantApiKeyUpdateScopesRes{}, nil
 }

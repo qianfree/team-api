@@ -29,12 +29,13 @@ const isImageModel = computed(() =>
 )
 
 // models 由父组件异步加载，setup 阶段可能为空；用 watch（immediate）保证
-// 首次加载完成或列表变化时，只要当前未选择就自动选中第一个模型
+// 首次加载完成或列表变化时，若当前未选择或选中模型不在列表内
+//（如切换 API Key 后模型范围变化），自动选中第一个模型
 watch(
 	() => props.models,
 	models => {
-		if (!selectedModel.value && models.length > 0) {
-			selectedModel.value = models[0].model_id
+		if (!selectedModel.value || !models.some(m => m.model_id === selectedModel.value)) {
+			selectedModel.value = models[0]?.model_id || ''
 		}
 	},
 	{ immediate: true },
@@ -246,7 +247,7 @@ async function sendStream(requestBody: Record<string, any>, assistantIdx: number
 
 async function sendMessage() {
 	const content = inputMessage.value.trim()
-	if (!content || !selectedModel.value) return
+	if (!content || !selectedModel.value || sending.value) return
 
 	if (params.systemPrompt && messages.value.length === 0) {
 		messages.value.push({ role: 'system', content: params.systemPrompt })
@@ -434,7 +435,7 @@ function clearChat() {
 					<!-- Input area -->
 					<div class="p-4 border-t border-gray-200">
 						<div class="flex gap-3">
-							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." :disabled="sending" @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
+							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
 							<button class="btn btn-primary self-end" :disabled="sending || !inputMessage.trim()" @click="sendMessage">
 								<Icon name="edit" size="sm" />
 								发送

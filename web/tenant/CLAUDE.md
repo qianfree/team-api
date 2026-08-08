@@ -113,7 +113,10 @@ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 |------|------|------|
 | 小元素（Badge、小按钮） | `rounded-lg` / `rounded-full` | 8px / 全圆 |
 | 中元素（按钮、输入框、Tab） | `rounded-xl` | 12px |
-| 大元素（卡片、模态框、面板） | `rounded-2xl` | 16px |
+| 紧凑面板（表格、筛选栏、模态框） | `rounded-2xl` | 16px |
+| 普通卡片 | `rounded-[20px]` | 20px |
+| 重点卡片（登录、主图表） | `rounded-3xl` | 24px |
+| 大型容器（侧栏） | `rounded-[28px]` | 28px |
 
 ---
 

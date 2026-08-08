@@ -11,6 +11,21 @@ import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+function toDateTimeStr(d: Date): string {
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
+// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
+const defaultEnd = toDateTimeStr(new Date())
+function defaultTodayRange(): string[] {
+	const d = new Date()
+	return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
+}
+
 const loading = ref(false)
 const data = ref<any[]>([])
 const pagination = reactive({
@@ -21,12 +36,15 @@ const pagination = reactive({
 	pageSizeOptions: [10, 20, 50, 100],
 })
 
+const filterId = ref<number | undefined>(undefined)
 const filterTenantId = ref<number | undefined>(undefined)
-const filterUsername = ref('')
+const filterUserId = ref<number | undefined>(undefined)
 const filterModel = ref<string | undefined>(undefined)
-const filterStatus = ref<string | undefined>(undefined)
+const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
-const filterDateRange = ref<string[]>([])
+const filterChannelId = ref<number | undefined>(undefined)
+const filterStatus = ref<string | undefined>(undefined)
+const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
@@ -389,14 +407,20 @@ async function fetchData() {
 			page: pagination.current,
 			page_size: pagination.pageSize,
 		}
+		if (filterId.value) params.id = filterId.value
 		if (filterTenantId.value) params.tenant_id = filterTenantId.value
-		if (filterUsername.value) params.username = filterUsername.value
+		if (filterUserId.value) params.user_id = filterUserId.value
 		if (filterModel.value) params.model = filterModel.value
-		if (filterStatus.value) params.status = filterStatus.value
+		if (filterApiKeyId.value) params.api_key_id = filterApiKeyId.value
 		if (filterRequestType.value) params.request_type = filterRequestType.value
+		if (filterChannelId.value) params.channel_id = filterChannelId.value
+		if (filterStatus.value) params.status = filterStatus.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
-			params.end_date = filterDateRange.value[1]
+			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
+			if (filterDateRange.value[1] && filterDateRange.value[1] !== defaultEnd) {
+				params.end_date = filterDateRange.value[1]
+			}
 		}
 
 		const res: any = await request.get('/admin/usage-logs', { params })
@@ -417,14 +441,22 @@ function handleFilter() {
 }
 
 function handleReset() {
+	filterId.value = undefined
 	filterTenantId.value = undefined
-	filterUsername.value = ''
+	filterUserId.value = undefined
 	filterModel.value = undefined
-	filterStatus.value = undefined
+	filterApiKeyId.value = undefined
 	filterRequestType.value = undefined
-	filterDateRange.value = []
+	filterChannelId.value = undefined
+	filterStatus.value = undefined
+	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
+}
+
+// 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
+function handleRefresh() {
+	handleReset()
 }
 
 onMounted(() => {
@@ -436,13 +468,17 @@ onMounted(() => {
 const { exporting, exportFile } = useExport({
 	url: '/admin/usage-logs/export',
 	getFilters: () => ({
+		id: filterId.value,
 		tenant_id: filterTenantId.value,
-		username: filterUsername.value,
+		user_id: filterUserId.value,
 		model: filterModel.value,
-		status: filterStatus.value,
+		api_key_id: filterApiKeyId.value,
 		request_type: filterRequestType.value,
+		channel_id: filterChannelId.value,
+		status: filterStatus.value,
 		start_date: filterDateRange.value?.[0],
-		end_date: filterDateRange.value?.[1],
+		// 与列表查询一致：默认截止「现在」不传截止时间，按「到现在」实时导出
+		end_date: filterDateRange.value?.[1] && filterDateRange.value[1] !== defaultEnd ? filterDateRange.value[1] : undefined,
 	}),
 })
 </script>
@@ -459,15 +495,31 @@ const { exporting, exportFile } = useExport({
 					</template>
 				</ADropdown>
 				<a-button size="small" @click="handleReset">重置筛选</a-button>
+				<a-button size="small" @click="handleRefresh">刷新</a-button>
 			</template>
 		</PageHeader>
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>
+				<a-range-picker
+					v-model="filterDateRange"
+					show-time
+					style="width: 340px"
+					@change="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterId"
+					placeholder="记录ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
 				<a-select
 						v-model="filterTenantId"
 						:options="tenantOptions"
-						placeholder="搜索租户"
+						placeholder="租户ID"
 						allow-search
 						allow-clear
 						:filter-option="false"
@@ -476,12 +528,14 @@ const { exporting, exportFile } = useExport({
 						@change="handleFilter"
 						@clear="handleFilter"
 					/>
-				<a-input
-					v-model="filterUsername"
-					placeholder="用户名"
+				<a-input-number
+					v-model="filterUserId"
+					placeholder="用户ID"
+					:min="1"
 					allow-clear
 					style="width: 120px"
-					@keydown.enter="handleFilter"
+					@change="handleFilter"
+					@clear="handleFilter"
 				/>
 				<a-select
 						v-model="filterModel"
@@ -495,13 +549,14 @@ const { exporting, exportFile } = useExport({
 						@change="handleFilter"
 						@clear="handleFilter"
 					/>
-				<a-select
-					v-model="filterStatus"
-					:options="statusOptions"
-					placeholder="状态"
+				<a-input-number
+					v-model="filterApiKeyId"
+					placeholder="API Key ID"
+					:min="1"
 					allow-clear
 					style="width: 120px"
 					@change="handleFilter"
+					@clear="handleFilter"
 				/>
 				<a-select
 					v-model="filterRequestType"
@@ -511,9 +566,21 @@ const { exporting, exportFile } = useExport({
 					style="width: 120px"
 					@change="handleFilter"
 				/>
-				<a-range-picker
-					v-model="filterDateRange"
-					style="width: 280px"
+				<a-input-number
+					v-model="filterChannelId"
+					placeholder="渠道ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-select
+					v-model="filterStatus"
+					:options="statusOptions"
+					placeholder="状态"
+					allow-clear
+					style="width: 120px"
 					@change="handleFilter"
 				/>
 				<a-button type="primary" @click="handleFilter">搜索</a-button>
@@ -521,7 +588,6 @@ const { exporting, exportFile } = useExport({
 		</a-card>
 
 		<a-card :bordered="false">
-			<TableStats :total="pagination.total" />
 			<a-table
 				:columns="columns"
 				:data="data"
@@ -534,6 +600,7 @@ const { exporting, exportFile } = useExport({
 				row-key="id"
 			/>
 			<div class="table-footer">
+				<TableStats :total="pagination.total" />
 				<a-pagination
 					v-model:current="pagination.current"
 					v-model:page-size="pagination.pageSize"
@@ -1317,9 +1384,15 @@ const { exporting, exportFile } = useExport({
 
 .table-footer {
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 	margin-top: 16px;
 	padding-top: 16px;
 	border-top: 1px solid var(--color-border-light, #e5e6eb);
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.table-footer :deep(.table-stats) {
+	margin-bottom: 0;
 }
 </style>

@@ -44,6 +44,16 @@ var providerTypeNames = map[int]string{
 	42: "Sub2API",
 }
 
+// channelRuntimeStates 返回目录快照的渠道熔断聚合（管理后台列表/详情展示用）。
+// 目录未初始化（首次 relay 请求前）时返回 nil，调用方按「正常」处理。
+func channelRuntimeStates() map[int64]dispatchadapter.ChannelRuntimeState {
+	cat := dispatchadapter.CatalogInstance()
+	if cat == nil {
+		return nil
+	}
+	return cat.ChannelRuntimeStates()
+}
+
 // ListChannels 获取渠道列表
 func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.ChannelListRes, error) {
 	query := dao.ChnChannels.Ctx(ctx).
@@ -57,6 +67,17 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	}
 	if req.Search != "" {
 		query = query.Where("chn_channels.name LIKE ? OR chn_channels.remark LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+	}
+	if req.ID > 0 {
+		query = query.Where("chn_channels.id", req.ID)
+	}
+	if req.BaseURL != "" {
+		query = query.Where("chn_channels.base_url LIKE ?", "%"+req.BaseURL+"%")
+	}
+	if req.Model != "" {
+		// 按支持的模型名筛选：渠道需具备匹配的模型能力（chn_abilities）。
+		// 用 EXISTS 相关子查询而非 JOIN，避免一个渠道命中多个模型时产生重复行、破坏分页与总数。
+		query = query.Where("EXISTS (SELECT 1 FROM chn_abilities WHERE chn_abilities.channel_id = chn_channels.id AND (chn_abilities.model_name LIKE ? OR chn_abilities.upstream_model LIKE ?))", "%"+req.Model+"%", "%"+req.Model+"%")
 	}
 
 	var total int
@@ -93,6 +114,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	}
 
 	list := make([]v1.ChannelItem, 0, len(channels))
+	runtimeStates := channelRuntimeStates()
 	for _, ch := range channels {
 		typeName := providerTypeNames[ch.Type]
 		if typeName == "" {
@@ -101,7 +123,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 
 		settings := relay.ParseChannelSettings(ch.Settings)
 
-		list = append(list, v1.ChannelItem{
+		item := v1.ChannelItem{
 			ID:                       ch.ID,
 			Name:                     ch.Name,
 			Type:                     ch.Type,
@@ -122,7 +144,12 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
 			CreatedAt:                ch.CreatedAt.String(),
 			HealthScore:              ch.HealthScore,
-		})
+		}
+		if rs, ok := runtimeStates[ch.ID]; ok {
+			item.BreakerState = int(rs.Breaker)
+			item.BreakerModels = rs.BreakerModels
+		}
+		list = append(list, item)
 	}
 
 	return &v1.ChannelListRes{
@@ -512,6 +539,10 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		KeyStatus:                keyInfo.Status,
 		KeyName:                  keyInfo.Name,
 	}
+	if rs, ok := channelRuntimeStates()[req.ID]; ok {
+		res.BreakerState = int(rs.Breaker)
+		res.BreakerModels = rs.BreakerModels
+	}
 	if res.KeyType == "" {
 		res.KeyType = "apikey"
 	}
@@ -653,10 +684,13 @@ func (s *sAdmin) GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefau
 
 // defaultProviderURLs 供应商默认 API 地址
 var defaultProviderURLs = map[int]string{
-	1:  "https://api.openai.com",
-	2:  "https://api.anthropic.com",
-	3:  "https://generativelanguage.googleapis.com",
-	4:  "https://dashscope.aliyuncs.com/compatible-mode",
+	1: "https://api.openai.com",
+	2: "https://api.anthropic.com",
+	3: "https://generativelanguage.googleapis.com",
+	// 阿里云百炼填裸域名：adaptor 会按 relay 模式自行拼 /compatible-mode/v1/...（OpenAI 兼容）、
+	// /apps/anthropic/v1/messages（Claude）、/api/v1/services/aigc/...（图像），
+	// 这里若带上 /compatible-mode 会导致路径重复而 404。
+	4:  "https://dashscope.aliyuncs.com",
 	5:  "https://aip.baidubce.com",
 	6:  "https://hunyuan.tencentcloudapi.com",
 	7:  "https://open.bigmodel.cn",
@@ -698,6 +732,55 @@ func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealt
 	return &v1.ChannelHealthTrendRes{Points: points}, nil
 }
 
+// ResetChannelHealth 重置渠道健康度（渠道可能已修复、重新可用）：落库健康分 80（展示层），
+// 并复位熔断 + 成功率 EWMA（调度层），使渠道立即恢复被调度选择的能力。
+func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (*v1.ChannelResetHealthRes, error) {
+	// 渠道必须存在
+	count, err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, common.NewBusinessError(404, "渠道不存在")
+	}
+
+	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；下次维护快照会按策略重算）
+	affected, err := dao.ChnHealthScores.Ctx(ctx).
+		Where("channel_id", req.ID).
+		Data(do.ChnHealthScores{
+			SuccessRate:         90.00,
+			LatencyMs:           0,
+			StabilityScore:      100.00,
+			ConsecutiveFailures: 0,
+			HealthScore:         80.00,
+			CalculatedAt:        gtime.Now(),
+		}).
+		UpdateAndGetAffected()
+	if err != nil {
+		return nil, err
+	}
+	// 健康分记录缺失时兜底插入（正常情况下创建渠道时已由 InitHealthScore 初始化）
+	if affected == 0 {
+		_, err = dao.ChnHealthScores.Ctx(ctx).Insert(do.ChnHealthScores{
+			ChannelId:           req.ID,
+			SuccessRate:         90.00,
+			LatencyMs:           0,
+			StabilityScore:      100.00,
+			ConsecutiveFailures: 0,
+			HealthScore:         80.00,
+			CalculatedAt:        gtime.Now(),
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 调度层：复位渠道级/模型级熔断 + 成功率恢复，渠道立即恢复被选择能力
+	dispatchadapter.ResetChannelHealth(ctx, req.ID)
+
+	return nil, nil
+}
+
 // ExportChannels exports channel list to CSV or Excel.
 func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error) {
 	channelFields := "chn_channels.id, chn_channels.name, chn_channels.type, chn_channels.status, chn_channels.priority, chn_channels.weight, chn_channels.created_at, h.health_score"
@@ -730,6 +813,16 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 			}
 			if req.Search != "" {
 				query = query.Where("chn_channels.name LIKE ? OR chn_channels.remark LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
+			}
+			if req.ID > 0 {
+				query = query.Where("chn_channels.id", req.ID)
+			}
+			if req.BaseURL != "" {
+				query = query.Where("chn_channels.base_url LIKE ?", "%"+req.BaseURL+"%")
+			}
+			if req.Model != "" {
+				// 与 ListChannels 保持一致：EXISTS 相关子查询避免 JOIN 重复行
+				query = query.Where("EXISTS (SELECT 1 FROM chn_abilities WHERE chn_abilities.channel_id = chn_channels.id AND (chn_abilities.model_name LIKE ? OR chn_abilities.upstream_model LIKE ?))", "%"+req.Model+"%", "%"+req.Model+"%")
 			}
 			var batch []struct {
 				ID          int64       `json:"id"`

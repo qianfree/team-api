@@ -258,16 +258,25 @@ cmd（路由注册）
 ### 计费流程
 
 ```
-预扣（Redis 原子操作）→ 转发请求 → 结算（实际用量）→ 退款/补扣差额
+预扣（Redis Lua 原子冻结）→ 转发请求 → 结算（幂等闸门 → Redis 认领扣款 → 记流水）→ 退款/补扣差额
 ```
 
 价格查询优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认。
 
 最终价格公式：`最终价格 = 基础价格 × 模型乘数 × 租户乘数`。模型乘数根据模型稀有度/成本动态调整；租户乘数根据租户等级/用量等级设置（VIP 折扣等）。双层乘数替代单纯的"租户独立定价"，提供更灵活的定价能力。
 
-### 钱包冻结余额
+### 钱包状态：Redis 权威 + DB 物化（强约束）
 
-wallets 表包含 `frozen_balance` 字段，用于支付中/退款中的金额冻结，防止并发超扣。可用余额 = `balance - frozen_balance`。预扣和支付操作需检查可用余额而非总余额。
+钱包资金状态采用 **Redis 唯一实时权威 + DB 滞后物化视图** 架构（详见 [`docs/钱包Redis权威化设计.md`](docs/钱包Redis权威化设计.md)）：
+
+- **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
+- **DB 物化**：`bil_wallets.balance / frozen_balance` 只是展示/报表/灾难恢复用的滞后副本，由后台物化器每 `billing_wallet_materialize_interval_ms`（默认 5000ms）从 Redis 全量覆盖。**禁止**把 DB 钱包余额当作实时判断依据（如余额门槛、防超扣闸门）。
+- **预扣记录纯 Redis**：`bil_prededuct_tracks` 表已废弃（预扣明细 = `prededuct:v2:{request_id}` hash + `prededuct_active:{tenant}` 集合，TTL 2h），孤儿清扫由 cron `prededuct_sweep` 每 2 分钟按「重算 frozen = Σ 幸存预扣」自愈，不再依赖 DB 表。
+- **可用余额** = balance - frozen_balance，预扣/扣款/退款门槛都在 Redis Lua 内原子判断。
+- **幂等闸门**：结算幂等靠 `bil_records.request_id` 唯一约束（DB，先行于任何资金变动）；预扣/解冻幂等靠 Redis hash 认领即删。
+- **Redis 服务不可用**：预扣/结算 fail-closed（拒绝请求），禁止降级放行无额度保护的流量；接受 Redis 数据丢失窗口内的少量超扣。
+- 充值/兑换/调账/退款等低频写路径：**Redis Lua 为提交点**（实时生效）→ DB 只写账本流水与累计充值（余额由物化器覆盖），事务回滚时补偿逆转 Redis。
+- 流水（`bil_transactions`）的 `balance_after / frozen_after` 一律取 Redis Lua 返回值（账本链连续可信）。
 
 ### 系统货币规则
 

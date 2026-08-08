@@ -228,9 +228,9 @@ onMounted(() => { fetchStats(); fetchList() })
           </div>
         </div>
       </template>
-      <TableStats :total="pagination.total" />
       <ATable :columns="columns" :data="data" :loading="loading" row-key="id" :scroll="{ x: 1300 }" :pagination="false" />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
       </div>
     </ACard>

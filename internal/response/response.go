@@ -2,6 +2,7 @@ package response
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -128,6 +129,9 @@ func ErrorMsg(r *ghttp.Request, code int, message string) {
 // ErrorWithCode writes an error with separate HTTP status and business code.
 // Use this when HTTP status differs from the business code (e.g., HTTP 401 with code 10020).
 func ErrorWithCode(r *ghttp.Request, httpStatus int, code int, message string) {
+	if httpStatus < 100 || httpStatus > 599 {
+		httpStatus = http.StatusInternalServerError
+	}
 	requestID := getRequestID(r)
 	r.Response.WriteHeader(httpStatus)
 	r.Response.WriteJson(jsonResp{

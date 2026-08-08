@@ -7,6 +7,21 @@ import BasePagination from '@/components/common/BasePagination.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
+
+// 日期辅助（native，避免引入 dayjs 依赖）
+function pad2(n: number): string {
+	return String(n).padStart(2, '0')
+}
+// 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
+function todayStart(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`
+}
+function todayEnd(): string {
+	const d = new Date()
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
+}
 
 const loading = ref(false)
 const logs = ref<any[]>([])
@@ -18,8 +33,8 @@ const filterUsername = ref('')
 const filterModel = ref('')
 const filterStatus = ref('')
 const filterRequestType = ref('')
-const filterStartDate = ref('')
-const filterEndDate = ref('')
+const filterStartDate = ref(todayStart())
+const filterEndDate = ref(todayEnd())
 
 const showExportDropdown = ref(false)
 const { exporting, exportFile } = useExport({
@@ -132,8 +147,8 @@ function resetFilters() {
 	filterModel.value = ''
 	filterStatus.value = ''
 	filterRequestType.value = ''
-	filterStartDate.value = ''
-	filterEndDate.value = ''
+	filterStartDate.value = todayStart()
+	filterEndDate.value = todayEnd()
 	page.value = 1
 	fetchLogs()
 }
@@ -230,14 +245,7 @@ onMounted(() => {
 		<div class="relative z-20 overflow-visible card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
-							<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
-							<input v-model="filterEndDate" type="date" class="input" style="width:140px" />
-						</div>
+						<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
 							<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />

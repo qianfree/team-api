@@ -272,7 +272,6 @@ onMounted(() => {
     </ACard>
 
     <ACard :bordered="false">
-      <TableStats :total="pagination.total" />
       <ATable
         :columns="columns"
         :data="data"
@@ -284,6 +283,7 @@ onMounted(() => {
         :scroll="{ x: 1200 }"
       />
       <div class="table-footer">
+        <TableStats :total="pagination.total" />
         <APagination
           v-model:current="pagination.current"
           v-model:page-size="pagination.pageSize"
@@ -347,8 +347,14 @@ onMounted(() => {
 }
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 16px;
+}
+/* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
+.table-footer :deep(.table-stats) {
+  margin-bottom: 0;
 }
 .mb-4 {
   margin-bottom: 16px;

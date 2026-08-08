@@ -21,6 +21,9 @@ var ErrTenantModelNotEnabled = errors.New("model not enabled for this tenant")
 // ErrMemberModelNotAllowed 成员无权使用该模型
 var ErrMemberModelNotAllowed = errors.New("model not allowed for this member")
 
+// ErrApiKeyModelNotAllowed API Key 无权使用该模型
+var ErrApiKeyModelNotAllowed = errors.New("model not allowed for this API key")
+
 // DeprecationInfo 模型弃用信息
 type DeprecationInfo struct {
 	Deprecated       bool
@@ -60,7 +63,8 @@ type DataProvider interface {
 
 	// GetModelDetail 获取单个模型的详细信息。
 	// tenantID 用于权限校验（检查租户是否有权使用该模型）。
-	GetModelDetail(ctx context.Context, tenantID int64, modelName string) (*ModelDetail, error)
+	// apiKeyID / userID 大于 0 时进一步校验 API Key 与成员的模型范围（与 GetAvailableModels 口径一致）。
+	GetModelDetail(ctx context.Context, tenantID, apiKeyID, userID int64, modelName string) (*ModelDetail, error)
 
 	// CheckTenantModelAccess 检查租户是否有权使用指定模型。
 	// 返回是否启用和渠道范围（nil/空表示不限渠道）。
@@ -83,6 +87,9 @@ type DataProvider interface {
 
 	// InvalidateMemberModelCache 清除指定成员的模型范围缓存。
 	InvalidateMemberModelCache(ctx context.Context, tenantID, userID int64)
+
+	// InvalidateApiKeyModelCache 清除指定 API Key 的模型权限缓存。
+	InvalidateApiKeyModelCache(ctx context.Context, apiKeyID int64)
 
 	// MaterializeSelection 由新调度引擎的决策构造 ChannelSelection：
 	// 从目录快照取转发元数据，按 keyID 解密渠道 Key（keyID=0 时取渠道首个 active Key）。
