@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select } from '@arco-design/web-vue'
+import { Tag, Button, Space, Popconfirm, Message, Radio, InputNumber, Select, Tooltip } from '@arco-design/web-vue'
 import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
@@ -36,6 +36,17 @@ const statusOptions = [
 ]
 const statusTagColor: Record<string, string> = { active: 'green', disabled: 'orangered', testing: 'arcoblue' }
 const statusLabel: Record<string, string> = { active: '启用', disabled: '禁用', testing: '测试中' }
+const breakerTagColor: Record<number, string> = { 0: 'green', 1: 'red', 2: 'orange' }
+const breakerLabel: Record<number, string> = { 0: '正常', 1: '熔断', 2: '半开' }
+
+// 调度状态悬浮说明：渠道级熔断 / 半开探活 / 模型级熔断的语义区分。
+function breakerTooltip(state: number, models: number): string {
+  if (state === 1) return '渠道级熔断中：该渠道已被调度器硬排除，请求会路由到其他渠道。上游修复后可点击「重置健康度」立即复位熔断。'
+  if (state === 2) return '渠道半开探活中：冷却期已过，调度器按窗口放行少量真实请求验证上游恢复，探测成功即自动闭合。'
+  if (models > 0) return `渠道本体正常，但 ${models} 个模型处于熔断/半开：这些模型的请求会被排除或进入探测限流。`
+  return '调度运行正常，无熔断。'
+}
+
 const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
 const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
 const tierOptions = [
@@ -71,23 +82,6 @@ const columns: TableColumnData[] = [
     render({ record }) { return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status) },
   },
   {
-    title: '权重', dataIndex: 'weight', width: 100,
-    render({ record }) {
-      // 无编辑权限时只读展示
-      if (!hasPermission('channel:edit')) return h('span', {}, record.weight)
-      return h(InputNumber, {
-        modelValue: record.weight,
-        min: 0,
-        max: 100,
-        size: 'small',
-        disabled: record._saving,
-        style: 'width: 84px',
-        'onUpdate:modelValue': (val: number | undefined) => { record.weight = val ?? 0 },
-        onChange: (val: number | undefined) => onWeightChange(record, val),
-      })
-    },
-  },
-  {
     title: '层级', dataIndex: 'tier', width: 120,
     render({ record }) {
       // 无编辑权限时只读展示
@@ -109,10 +103,50 @@ const columns: TableColumnData[] = [
     },
   },
   {
+    title: '权重', dataIndex: 'weight', width: 100,
+    render({ record }) {
+      // 无编辑权限时只读展示
+      if (!hasPermission('channel:edit')) return h('span', {}, record.weight)
+      return h(InputNumber, {
+        modelValue: record.weight,
+        min: 0,
+        max: 100,
+        size: 'small',
+        disabled: record._saving,
+        style: 'width: 84px',
+        'onUpdate:modelValue': (val: number | undefined) => { record.weight = val ?? 0 },
+        onChange: (val: number | undefined) => onWeightChange(record, val),
+      })
+    },
+  },
+  {
     title: '健康度', dataIndex: 'health_score', width: 90,
     render({ record }) {
       if (record.health_score === null || record.health_score === undefined) return h('span', { style: 'color:#94a3b8' }, 'N/A')
       return h('span', { style: { color: healthColor(record.health_score), fontWeight: 600 } }, record.health_score.toFixed(0))
+    },
+  },
+  {
+    title: '调度状态', dataIndex: 'breaker_state', width: 110,
+    render({ record }) {
+      // disabled / testing 渠道不在目录快照中，熔断状态无意义，置灰展示
+      if (record.status !== 'active') {
+        return h('span', { style: 'color:#94a3b8' }, '—')
+      }
+      const state = record.breaker_state ?? 0
+      const models = record.breaker_models ?? 0
+      const tag = h(Tag, { color: breakerTagColor[state], size: 'small' }, () => breakerLabel[state])
+      const badge = models > 0
+        ? h('span', { style: 'font-size:12px;color:#f59e0b;margin-left:4px;font-weight:600' }, `${models}`)
+        : null
+      const trigger = h('span', { style: 'display:inline-flex;gap:4px;align-items:center;cursor:help' }, [tag, badge])
+      const content = () => h('div', { style: 'line-height:1.8' }, [
+        h('div', null, breakerTooltip(state, models)),
+        (state === 1 || state === 2 || models > 0) && hasPermission('channel:edit')
+          ? h('a', { style: 'color:#165dff;cursor:pointer', onClick: () => resetHealth(record) }, '重置健康度')
+          : null,
+      ])
+      return h(Tooltip, null, { default: () => trigger, content })
     },
   },
   {
