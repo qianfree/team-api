@@ -33,6 +33,7 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 
 	adminHandler "github.com/qianfree/team-api/internal/handler/admin"
+	"github.com/qianfree/team-api/internal/handler/landing"
 	"github.com/qianfree/team-api/internal/handler/public"
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
@@ -261,6 +262,9 @@ var (
 			// Embedded frontend SPA serving
 			registerFrontendRoutes(s)
 
+			// Landing page for backend root when frontend is not embedded
+			registerLandingPage(s)
+
 			// Migrate encryption key (legacy default → configured key)
 			relayLogic.MigrateEncryptionKey(ctx)
 
@@ -465,6 +469,18 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/submit/{action}", relay.HandleTaskSubmit)
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
+	})
+}
+
+// registerLandingPage 在未内嵌前端（非 embedweb 构建）时，为后端根路径注册项目介绍页，
+// 避免浏览器直接访问后端地址时显示 404。内嵌前端时根路径由租户 SPA 承接，此页不注册。
+func registerLandingPage(s *ghttp.Server) {
+	if web.Enabled {
+		return
+	}
+	s.Group("/", func(group *ghttp.RouterGroup) {
+		group.GET("/", landing.HandleLanding)
+		group.GET("/index.html", landing.HandleLanding)
 	})
 }
 
