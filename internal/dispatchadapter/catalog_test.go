@@ -148,3 +148,46 @@ func TestRampElapsed(t *testing.T) {
 	// 窗口未配置：不爬坡
 	assert.Equal(t, int64(-1), rampElapsed(now, now-10, 0, 0))
 }
+
+// TestCatalog_渠道运行状态聚合 验证 ChannelRuntimeStates 按渠道去重、渠道级熔断取同值、
+// 模型级熔断按模型计数。
+func TestCatalog_渠道运行状态聚合(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "claude-sonnet", Weight: 10, Tier: "primary"},
+		{ChannelID: 2, ChannelName: "B", ModelName: "gpt-4o", Weight: 5, Tier: "secondary"},
+		{ChannelID: 3, ChannelName: "C", ModelName: "gpt-4o", Weight: 5, Tier: "secondary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, channelID int64, _ string) RuntimeReadout {
+		switch channelID {
+		case 1:
+			return RuntimeReadout{Breaker: dispatch.BreakerOpen, ModelBreaker: dispatch.BreakerOpen}
+		case 2:
+			return RuntimeReadout{Breaker: dispatch.BreakerClosed, ModelBreaker: dispatch.BreakerHalfOpen}
+		default:
+			return RuntimeReadout{Breaker: dispatch.BreakerClosed, ModelBreaker: dispatch.BreakerClosed}
+		}
+	})
+
+	got := c.ChannelRuntimeStates()
+	require.Len(t, got, 3)
+
+	// 渠道 1：渠道级熔断 OPEN，两个模型均熔断
+	assert.Equal(t, dispatch.BreakerOpen, got[1].Breaker)
+	assert.Equal(t, 2, got[1].BreakerModels, "两个模型均熔断")
+
+	// 渠道 2：渠道级正常，仅 gpt-4o 模型半开
+	assert.Equal(t, dispatch.BreakerClosed, got[2].Breaker)
+	assert.Equal(t, 1, got[2].BreakerModels, "仅 gpt-4o 半开")
+
+	// 渠道 3：完全正常
+	assert.Equal(t, dispatch.BreakerClosed, got[3].Breaker)
+	assert.Equal(t, 0, got[3].BreakerModels)
+}
+
+// TestCatalog_运行状态_未Rebuild返回空 验证目录未构建时返回空 map（而非 nil），
+// 调用方遍历时安全。
+func TestCatalog_运行状态_未Rebuild返回空(t *testing.T) {
+	c := NewCatalog(func() *dispatch.RoutingPolicy { return dispatch.DefaultRoutingPolicy() }, nil, nil)
+	assert.Empty(t, c.ChannelRuntimeStates())
+}

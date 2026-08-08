@@ -44,6 +44,16 @@ var providerTypeNames = map[int]string{
 	42: "Sub2API",
 }
 
+// channelRuntimeStates 返回目录快照的渠道熔断聚合（管理后台列表/详情展示用）。
+// 目录未初始化（首次 relay 请求前）时返回 nil，调用方按「正常」处理。
+func channelRuntimeStates() map[int64]dispatchadapter.ChannelRuntimeState {
+	cat := dispatchadapter.CatalogInstance()
+	if cat == nil {
+		return nil
+	}
+	return cat.ChannelRuntimeStates()
+}
+
 // ListChannels 获取渠道列表
 func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.ChannelListRes, error) {
 	query := dao.ChnChannels.Ctx(ctx).
@@ -104,6 +114,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 	}
 
 	list := make([]v1.ChannelItem, 0, len(channels))
+	runtimeStates := channelRuntimeStates()
 	for _, ch := range channels {
 		typeName := providerTypeNames[ch.Type]
 		if typeName == "" {
@@ -112,7 +123,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 
 		settings := relay.ParseChannelSettings(ch.Settings)
 
-		list = append(list, v1.ChannelItem{
+		item := v1.ChannelItem{
 			ID:                       ch.ID,
 			Name:                     ch.Name,
 			Type:                     ch.Type,
@@ -133,7 +144,12 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
 			CreatedAt:                ch.CreatedAt.String(),
 			HealthScore:              ch.HealthScore,
-		})
+		}
+		if rs, ok := runtimeStates[ch.ID]; ok {
+			item.BreakerState = int(rs.Breaker)
+			item.BreakerModels = rs.BreakerModels
+		}
+		list = append(list, item)
 	}
 
 	return &v1.ChannelListRes{
@@ -522,6 +538,10 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		KeyType:                  keyInfo.KeyType,
 		KeyStatus:                keyInfo.Status,
 		KeyName:                  keyInfo.Name,
+	}
+	if rs, ok := channelRuntimeStates()[req.ID]; ok {
+		res.BreakerState = int(rs.Breaker)
+		res.BreakerModels = rs.BreakerModels
 	}
 	if res.KeyType == "" {
 		res.KeyType = "apikey"

@@ -45,6 +45,8 @@ type ChannelItem struct {
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
 	CreatedAt                string   `json:"created_at"`
 	HealthScore              *float64 `json:"health_score"`
+	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
 }
 
 // ChannelCreateReq 创建渠道请求
@@ -131,6 +133,8 @@ type ChannelDetailRes struct {
 	CreatedAt                string   `json:"created_at"`
 	UpdatedAt                string   `json:"updated_at"`
 	HealthScore              *float64 `json:"health_score"`
+	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
+	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
 	KeyType                  string   `json:"key_type"`
 	KeyStatus                string   `json:"key_status"`
 	KeyName                  string   `json:"key_name"`
