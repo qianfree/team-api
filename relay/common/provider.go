@@ -63,7 +63,8 @@ type DataProvider interface {
 
 	// GetModelDetail 获取单个模型的详细信息。
 	// tenantID 用于权限校验（检查租户是否有权使用该模型）。
-	GetModelDetail(ctx context.Context, tenantID int64, modelName string) (*ModelDetail, error)
+	// apiKeyID / userID 大于 0 时进一步校验 API Key 与成员的模型范围（与 GetAvailableModels 口径一致）。
+	GetModelDetail(ctx context.Context, tenantID, apiKeyID, userID int64, modelName string) (*ModelDetail, error)
 
 	// CheckTenantModelAccess 检查租户是否有权使用指定模型。
 	// 返回是否启用和渠道范围（nil/空表示不限渠道）。

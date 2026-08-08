@@ -357,6 +357,38 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		}
 	}
 
+	// 按 API Key 模型范围过滤（与 relay /v1/models 列表口径一致：Key 配置了范围才过滤，无记录不限）。
+	// 通过 JOIN api_keys 校验 Key 归属：仅当 Key 属于当前租户时才应用其模型范围，
+	// 避免传入他人 Key ID 时泄露其模型范围。
+	if req.ApiKeyID > 0 {
+		var keyScopes []struct {
+			ModelName string `json:"model_name"`
+		}
+		err = dao.ApiKeyModelScopes.Ctx(ctx).As("sc").
+			InnerJoin("api_keys k ON k.id = sc.api_key_id").
+			Where("sc.api_key_id", req.ApiKeyID).
+			Where("k.tenant_id", tenantID).
+			Fields("sc.model_name").
+			Scan(&keyScopes)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(keyScopes) > 0 {
+			allowed := make(map[string]bool, len(keyScopes))
+			for _, s := range keyScopes {
+				allowed[s.ModelName] = true
+			}
+			filtered := make([]v1.TenantAvailableModelItem, 0, len(list))
+			for _, item := range list {
+				if allowed[item.ModelId] {
+					filtered = append(filtered, item)
+				}
+			}
+			list = filtered
+		}
+	}
+
 	// 标记图片模型可用的调用模式（同步端点 / 异步端点），供在线体验决定同步/异步开关。
 	// 判定与同步端点拦截 gate 同源（constant.IsAsyncImageModel），保证在线体验示例与后端实际
 	// 行为一致。仅对图片分类模型跑一次批量查询。

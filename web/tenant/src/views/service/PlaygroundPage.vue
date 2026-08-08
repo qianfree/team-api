@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import request from '@/utils/request'
 import ChatTab from './playground/ChatTab.vue'
 import ImageTab from './playground/ImageTab.vue'
@@ -41,14 +41,40 @@ const { apiKeys, selectedKeyId, revealedKey, loading: keyLoading, error: keyErro
 const modelsByCategory = (category: string) =>
 	computed(() => allModels.value.filter(m => m.category === category))
 
-onMounted(async () => {
+const modelsLoading = ref(false)
+let loadingTimer: number | null = null
+let loadSeq = 0
+
+// 按右上角选中的 API Key 拉取其可用模型，使左侧模型列表跟随 Key 切换。
+// 切换期间保留旧列表避免空白闪烁；加载提示延迟 200ms 才出现，请求更快时
+// 完全不显示，杜绝 spinner 瞬闪；loadSeq 丢弃过期响应，防止快速切换 Key 时旧结果覆盖。
+async function loadModels() {
+	const seq = ++loadSeq
+	if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null }
+	if (!selectedKeyId.value) {
+		allModels.value = []
+		modelsLoading.value = false
+		return
+	}
+	loadingTimer = window.setTimeout(() => { modelsLoading.value = true }, 200)
 	try {
-		const res = await request.get('/tenant/models')
-		if (res.data?.code === 0) {
-			allModels.value = res.data.data.list || []
-		}
-	} catch (e) { console.error(e) }
-})
+		const res = await request.get('/tenant/models', {
+			params: { api_key_id: selectedKeyId.value },
+		})
+		if (seq !== loadSeq) return
+		allModels.value = res.data?.code === 0 ? (res.data.data.list || []) : []
+	} catch (e) {
+		if (seq !== loadSeq) return
+		console.error(e)
+		allModels.value = []
+	} finally {
+		if (seq !== loadSeq) return
+		if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null }
+		modelsLoading.value = false
+	}
+}
+
+watch(selectedKeyId, loadModels, { immediate: true })
 </script>
 
 <template>
@@ -105,6 +131,12 @@ onMounted(async () => {
 		</div>
 
 		<template v-if="revealedKey">
+			<transition name="fade">
+				<div v-if="modelsLoading" class="mb-4 flex items-center gap-2 text-sm text-gray-500">
+					<div class="spinner h-4 w-4 text-primary-600"></div>
+					加载模型...
+				</div>
+			</transition>
 			<ChatTab v-if="activeTab === 'chat'" :models="modelsByCategory('chat').value" :api-key="revealedKey" />
 			<ImageTab v-if="activeTab === 'image'" :models="modelsByCategory('image').value" :api-key="revealedKey" />
 			<VideoTab v-if="activeTab === 'video'" :models="modelsByCategory('video').value" :api-key="revealedKey" />

@@ -7,6 +7,8 @@ type TenantAvailableModelsReq struct {
 	g.Meta   `path:"/models" method:"get" mime:"json" tags:"租户控制台-模型" summary:"租户可用模型列表"`
 	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank"`
 	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
+	// ApiKeyID 按指定 API Key 的模型范围过滤（可选；不传或为 0 时返回租户全部可用模型）
+	ApiKeyID int64 `json:"api_key_id" dc:"API Key ID（可选，传入时按该 Key 的模型范围过滤）"`
 }
 
 type TenantAvailableModelsRes struct {

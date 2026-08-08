@@ -29,12 +29,13 @@ const isImageModel = computed(() =>
 )
 
 // models 由父组件异步加载，setup 阶段可能为空；用 watch（immediate）保证
-// 首次加载完成或列表变化时，只要当前未选择就自动选中第一个模型
+// 首次加载完成或列表变化时，若当前未选择或选中模型不在列表内
+//（如切换 API Key 后模型范围变化），自动选中第一个模型
 watch(
 	() => props.models,
 	models => {
-		if (!selectedModel.value && models.length > 0) {
-			selectedModel.value = models[0].model_id
+		if (!selectedModel.value || !models.some(m => m.model_id === selectedModel.value)) {
+			selectedModel.value = models[0]?.model_id || ''
 		}
 	},
 	{ immediate: true },
