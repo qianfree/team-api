@@ -140,7 +140,8 @@ const abilityColumns: TableColumnData[] = [
         modelValue: record.upstream_model || '',
         size: 'mini',
         placeholder: '留空则同名',
-        onChange: (v: string) => handleUpstreamModelChange(record, v),
+        'onUpdate:modelValue': (v: string) => handleUpstreamModelChange(record, v),
+        onChange: () => scheduleAbilitySave('上游模型名已更新'),
       })
     },
   },
@@ -208,8 +209,8 @@ async function handleToggleAbility(ab: any) {
   } catch { /* error handled by interceptor */ }
 }
 
-// 能力表内联编辑（成本比例 / 上游模型名）：任意字段变更后统一 600ms 防抖整表提交，
-// 连续改多字段只发一次请求。提交体 abilityPayload 已包含 upstream_model。
+// 能力表内联编辑：成本比例输入过程中 600ms 防抖整表提交；
+// 上游模型名仅失焦/回车时提交（避免逐字保存）。提交体 abilityPayload 已包含 upstream_model。
 let abilitySaveTimer: any = null
 function scheduleAbilitySave(successMsg: string) {
   clearTimeout(abilitySaveTimer)
@@ -229,7 +230,6 @@ function handleCostRatioChange(record: any, value: number) {
 
 function handleUpstreamModelChange(record: any, value: string) {
   record.upstream_model = value
-  scheduleAbilitySave('上游模型名已更新')
 }
 
 async function handleDeleteAbility(id: number) {
