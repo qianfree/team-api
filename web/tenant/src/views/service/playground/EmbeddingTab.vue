@@ -19,12 +19,13 @@ const props = defineProps<{ models: ModelItem[]; apiKey: string }>()
 const sending = ref(false)
 const errorMessage = ref('')
 const selectedModel = ref(props.models[0]?.model_id || '')
-// models 由父组件异步加载，setup 阶段可能为空；加载完成后若未选择则自动补选第一个
+// models 由父组件异步加载，setup 阶段可能为空；列表变化时若当前选中模型不在列表内
+//（如切换 API Key 后模型范围变化）则自动重置为第一个
 watch(
 	() => props.models,
 	models => {
-		if (!selectedModel.value && models.length > 0) {
-			selectedModel.value = models[0].model_id
+		if (!selectedModel.value || !models.some(m => m.model_id === selectedModel.value)) {
+			selectedModel.value = models[0]?.model_id || ''
 		}
 	},
 )

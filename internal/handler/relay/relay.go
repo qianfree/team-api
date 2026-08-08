@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -366,7 +367,7 @@ func HandleModelDetail(r *ghttp.Request) {
 		return
 	}
 
-	resp, err := handler.HandleModelDetail(r.Context(), rc.TenantID, modelName, dataProvider)
+	resp, err := handler.HandleModelDetail(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, modelName, dataProvider)
 	if err != nil {
 		// 根据错误类型返回不同状态码
 		statusCode := 500
@@ -377,7 +378,9 @@ func HandleModelDetail(r *ghttp.Request) {
 			statusCode = 404
 			errType = "model_not_found"
 			errMsg = "The model '" + modelName + "' does not exist"
-		} else if err == relay_common.ErrTenantModelNotEnabled {
+		} else if err == relay_common.ErrTenantModelNotEnabled ||
+			err == relay_common.ErrMemberModelNotAllowed ||
+			err == relay_common.ErrApiKeyModelNotAllowed {
 			statusCode = 403
 			errType = "permission_denied"
 			errMsg = "You do not have access to model '" + modelName + "'"
@@ -437,13 +440,35 @@ func HandleGeminiModelDetail(r *ghttp.Request) {
 		return
 	}
 
-	resp, err := handler.HandleGeminiModelDetail(r.Context(), rc.TenantID, modelName, dataProvider)
+	resp, err := handler.HandleGeminiModelDetail(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, modelName, dataProvider)
 	if err != nil {
-		handler.WriteGeminiRelayError(r.Response.Writer, err)
+		handler.WriteGeminiRelayError(r.Response.Writer, geminiModelDetailError(err, modelName))
 		return
 	}
 
 	r.Response.WriteJsonExit(resp)
+}
+
+// geminiModelDetailError 将模型详情接口的模型不存在 / 权限拒绝错误映射为对应状态码的 RelayError，
+// 供 WriteGeminiRelayError 输出 Gemini 原生错误格式（NOT_FOUND / PERMISSION_DENIED）。
+func geminiModelDetailError(err error, modelName string) error {
+	switch {
+	case err == relay_common.ErrModelNotFound:
+		return &relay_constant.RelayError{
+			StatusCode: http.StatusNotFound,
+			Message:    "model '" + modelName + "' does not exist",
+			Type:       "model_not_found",
+		}
+	case err == relay_common.ErrTenantModelNotEnabled,
+		err == relay_common.ErrMemberModelNotAllowed,
+		err == relay_common.ErrApiKeyModelNotAllowed:
+		return &relay_constant.RelayError{
+			StatusCode: http.StatusForbidden,
+			Message:    "You do not have access to model '" + modelName + "'",
+			Type:       "permission_denied",
+		}
+	}
+	return err
 }
 
 // buildRelayContext 从 GoFrame 请求中构建 relay 上下文
