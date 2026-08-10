@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import type { FormInstance } from '@arco-design/web-vue'
@@ -98,6 +98,16 @@ async function acceptAgreements() {
   }
 }
 
+// Check if already logged in on mount
+import { onMounted } from 'vue'
+
+onMounted(() => {
+  // If already logged in, redirect to dashboard
+  if (authStore.isLoggedIn) {
+    const redirect = (route.query.redirect as string) || '/admin'
+    router.replace(redirect)
+  }
+})
 async function handleLogin() {
   try {
     const errors = await formRef.value?.validate()
