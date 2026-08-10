@@ -77,6 +77,13 @@ function onAgreementsAccepted() {
 }
 
 onMounted(async () => {
+	// Check if already logged in — if yes, redirect to dashboard
+	if (authStore.isLoggedIn) {
+		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+		router.replace(redirect)
+		return
+	}
+
 	nextTick(() => emailInput.value?.focus())
 	await fetchSettings()
 })

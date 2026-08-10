@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useTenantAuthStore } from '@/stores/tenant-auth'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'
 import SlideCaptcha from '@/components/common/SlideCaptcha.vue'
@@ -8,6 +9,7 @@ import PasswordStrengthMeter from '@/components/common/PasswordStrengthMeter.vue
 import request, { extractApiError } from '@/utils/request'
 
 const router = useRouter()
+const authStore = useTenantAuthStore()
 
 const step = ref<1 | 2>(1)
 const loading = ref(false)
@@ -41,6 +43,13 @@ function isCaptchaError(apiErr: any): boolean {
 function clearErrors() {
 	Object.keys(errors).forEach((k) => delete errors[k])
 }
+
+onMounted(() => {
+	// Check if already logged in — if yes, redirect to dashboard
+	if (authStore.isLoggedIn) {
+		router.replace('/tenant/dashboard')
+	}
+})
 
 async function sendCode() {
 	if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {

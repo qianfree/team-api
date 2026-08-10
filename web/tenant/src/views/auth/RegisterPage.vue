@@ -48,6 +48,12 @@ function proceedAfterRegister() {
 }
 
 onMounted(async () => {
+	// Check if already logged in — if yes, redirect to dashboard
+	if (authStore.isLoggedIn) {
+		router.replace('/tenant/dashboard')
+		return
+	}
+
 	await fetchSettings()
 	emailVerification.value = settings.value.register_email_verification === true
 })
