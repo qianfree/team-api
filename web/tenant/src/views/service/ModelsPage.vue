@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { NInput } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
@@ -230,9 +231,10 @@ onMounted(fetchModels)
 						</span>
 					</button>
 				</div>
-				<div class="relative w-full sm:w-64">
-					<Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-					<input v-model="searchQuery" type="text" class="input pl-9" placeholder="搜索模型..." />
+				<div class="w-full sm:w-64">
+					<n-input v-model:value="searchQuery" type="text" placeholder="搜索模型...">
+						<template #prefix><Icon name="search" size="sm" class="text-gray-400" /></template>
+					</n-input>
 				</div>
 			</div>
 		</div>

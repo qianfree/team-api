@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput, NInputNumber } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '@/components/common/BaseSelect.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import { renderBadge } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -16,8 +18,8 @@ const total = ref(0)
 const filterType = ref('')
 const filterStartDate = ref('')
 const filterEndDate = ref('')
-const filterAmountMin = ref('')
-const filterAmountMax = ref('')
+const filterAmountMin = ref<number | null>(null)
+const filterAmountMax = ref<number | null>(null)
 const filterUsername = ref('')
 const filterModel = ref('')
 
@@ -111,10 +113,53 @@ function resetFilters() {
 	filterType.value = ''
 	filterStartDate.value = ''
 	filterEndDate.value = ''
-	filterAmountMin.value = ''
-	filterAmountMax.value = ''
+	filterAmountMin.value = null
+	filterAmountMax.value = null
 	filterUsername.value = ''
 	filterModel.value = ''
+	page.value = 1
+	fetchTransactions()
+}
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+	{ title: '类型', key: 'type', width: 80, render: (row) => renderBadge(row.type, txTypeLabel, txTypeBadgeClass) },
+	{
+		title: '金额',
+		key: 'amount',
+		width: 120,
+		render: (row) =>
+			h('span', { class: row.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold' }, formatAmount(row.amount)),
+	},
+	{
+		title: '余额',
+		key: 'balance_after',
+		width: 120,
+		render: (row) => h('span', { class: 'text-gray-700' }, row.balance_after != null ? `$${row.balance_after.toFixed(6)}` : '--'),
+	},
+	{ title: '用户', key: 'username', width: 140, render: (row) => h('span', { class: 'text-gray-700 text-sm' }, row.username || '--') },
+	{
+		title: '请求ID',
+		key: 'request_id',
+		width: 200,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs font-mono' }, row.request_id || '--'),
+	},
+	{ title: '模型', key: 'model_name', width: 160, render: (row) => h('span', { class: 'text-gray-700 text-sm' }, row.model_name || '--') },
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 160,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs' }, (row.created_at || '').replace('T', ' ').substring(0, 16)),
+	},
+	{
+		title: '描述',
+		key: 'description',
+		width: 240,
+		render: (row) => h('span', { class: 'text-gray-500 text-sm' }, row.description || '--'),
+	},
+])
+
+function handlePageSizeChange() {
 	page.value = 1
 	fetchTransactions()
 }
@@ -142,17 +187,17 @@ onMounted(fetchTransactions)
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">金额范围</label>
-						<input v-model="filterAmountMin" type="number" step="0.01" placeholder="最小" class="input" style="width:100px" @keyup.enter="applyFilters" />
+						<n-input-number v-model:value="filterAmountMin" :min="0" :step="0.01" placeholder="最小" style="width:100px" @keyup.enter="applyFilters" />
 						<span class="text-gray-400">~</span>
-						<input v-model="filterAmountMax" type="number" step="0.01" placeholder="最大" class="input" style="width:100px" @keyup.enter="applyFilters" />
+						<n-input-number v-model:value="filterAmountMax" :min="0" :step="0.01" placeholder="最大" style="width:100px" @keyup.enter="applyFilters" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
-						<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />
+						<n-input v-model:value="filterUsername" type="text" placeholder="搜索用户" style="width:120px" @keyup.enter="applyFilters" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">模型</label>
-						<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:150px" @keyup.enter="applyFilters" />
+						<n-input v-model:value="filterModel" type="text" placeholder="例如：gpt-4o" style="width:150px" @keyup.enter="applyFilters" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button type="submit" class="btn btn-primary btn-sm">
@@ -184,52 +229,28 @@ onMounted(fetchTransactions)
 
 		<!-- Transactions -->
 		<div class="viewport-table-panel relative z-0 card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="transactions.length > 0" class="viewport-table-scroll table-container table-container-flush">
-				<table class="table">
-					<thead>
-						<tr>
-							<th class="min-w-20">类型</th>
-							<th class="min-w-30">金额</th>
-							<th class="min-w-30">余额</th>
-							<th class="min-w-35">用户</th>
-							<th class="min-w-50">请求ID</th>
-							<th class="min-w-40">模型</th>
-							<th class="min-w-40">时间</th>
-							<th class="min-w-200">描述</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="tx in transactions" :key="tx.id">
-							<td>
-								<span class="badge" :class="txTypeBadgeClass[tx.type] || 'badge-gray'">
-									{{ txTypeLabel[tx.type] || tx.type }}
-								</span>
-							</td>
-							<td :class="tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
-								{{ formatAmount(tx.amount) }}
-							</td>
-							<td class="text-gray-700">${{ tx.balance_after?.toFixed(6) ?? '--' }}</td>
-							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>
-							<td class="text-gray-500 text-xs font-mono">{{ tx.request_id || '--' }}</td>
-							<td class="text-gray-700 text-sm">{{ tx.model_name || '--' }}</td>
-							<td class="text-gray-500 text-xs">{{ (tx.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
-							<td class="text-gray-500 text-sm">{{ tx.description || '--' }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<div v-else class="empty-state">
-				<Icon name="creditCard" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无交易记录</p>
-				<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTransactions" />
+			<n-data-table
+				remote
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:data="transactions"
+				:row-key="(row: any) => row.id"
+				@update:page="fetchTransactions"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="creditCard" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无交易记录</p>
+						<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 	</div>
 </template>

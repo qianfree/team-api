@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
+import { NInput } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
@@ -457,7 +458,7 @@ function closeZoom() {
 					<!-- 提示词 -->
 					<div>
 						<label class="input-label">提示词</label>
-						<textarea v-model="prompt" class="input" rows="4" placeholder="描述你想生成的图片..." />
+						<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的图片..." />
 					</div>
 
 					<!-- 自定义参数 -->
@@ -504,14 +505,14 @@ function closeZoom() {
 								:key="param.id"
 								class="flex items-center gap-2 group"
 							>
-								<input
-									v-model="param.key"
-									class="input flex-1"
+								<n-input
+									v-model:value="param.key"
+									class="flex-1"
 									placeholder="参数名"
 								/>
-								<input
-									v-model="param.value"
-									class="input flex-1"
+								<n-input
+									v-model:value="param.value"
+									class="flex-1"
 									placeholder="值"
 								/>
 								<button

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
+import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
@@ -94,11 +95,11 @@ function formatEmbedding(values: number[], full: boolean) {
 					</div>
 					<div>
 						<label class="input-label">输入文本</label>
-						<textarea v-model="inputText" class="input" rows="4" placeholder="输入要嵌入的文本..." />
+						<n-input v-model:value="inputText" type="textarea" :rows="4" placeholder="输入要嵌入的文本..." />
 					</div>
 					<div>
 						<label class="input-label">维度（可选）</label>
-						<input v-model.number="dimensions" type="number" class="input" placeholder="留空使用默认" />
+						<n-input-number v-model:value="dimensions" class="w-full" placeholder="留空使用默认" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="sending || !inputText.trim()" @click="embed">
 						{{ sending ? '计算中...' : '计算嵌入' }}

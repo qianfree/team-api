@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NInput } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
@@ -34,6 +35,8 @@ interface RequestLog {
 	task_id?: string
 	task_status?: string
 	task_completed_at?: string
+	username?: string
+	project_name?: string
 	created_at: string
 }
 
@@ -185,6 +188,112 @@ function handleReset() {
 	fetchRequestLogs()
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<RequestLog>>(() => [
+	{
+		title: 'Request ID',
+		key: 'request_id',
+		render: (row) => h('span', { class: 'font-mono text-xs text-gray-500' }, row.request_id),
+	},
+	{
+		title: '用户/项目',
+		key: 'user',
+		render: (row) =>
+			row.project_name
+				? h('span', { class: 'text-sm text-primary-600 font-medium' }, row.project_name)
+				: h('span', { class: 'text-sm text-gray-700' }, row.username || '-'),
+	},
+	{
+		title: '方法',
+		key: 'method',
+		render: (row) => h('span', { class: 'badge badge-gray text-xs' }, row.method),
+	},
+	{
+		title: '路径',
+		key: 'path',
+		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.path),
+	},
+	{
+		title: '状态码',
+		key: 'status_code',
+		render: (row) => h('span', { class: ['badge text-xs', statusBadgeClass(row.status_code)] }, String(row.status_code)),
+	},
+	{
+		title: '客户端',
+		key: 'user_agent',
+		render: (row) => h('span', { class: 'text-xs text-gray-500', title: row.user_agent }, parseUA(row.user_agent)),
+	},
+	{
+		title: '延迟',
+		key: 'latency_ms',
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatMs(row.latency_ms)),
+	},
+	{
+		title: '首Token',
+		key: 'first_token_ms',
+		render: (row) =>
+			row.first_token_ms
+				? h(
+						'span',
+						{
+							class: [
+								'text-xs',
+								row.first_token_ms < 500
+									? 'text-emerald-600'
+									: row.first_token_ms < 1500
+									? 'text-amber-600'
+									: 'text-red-500',
+							],
+						},
+						formatMs(row.first_token_ms)
+				  )
+				: h('span', { class: 'text-xs text-gray-300' }, '-'),
+	},
+	{
+		title: '审计级别',
+		key: 'audit_level',
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, auditLevelLabel[row.audit_level] || row.audit_level),
+	},
+	{
+		title: '任务',
+		key: 'task_id',
+		render: (row) =>
+			row.task_id
+				? h(
+						'span',
+						{
+							class: ['inline-flex items-center rounded px-2 py-0.5 text-xs font-medium', taskStatusBadge[row.task_status] || 'bg-gray-100 text-gray-800'],
+						},
+						taskStatusLabel[row.task_status] || row.task_status || '-'
+				  )
+				: h('span', { class: 'text-xs text-gray-300' }, '-'),
+	},
+	{
+		title: '时间',
+		key: 'created_at',
+		render: (row) =>
+			h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		fixed: 'right',
+		align: 'right',
+		render: (row) =>
+			h(
+				NButton,
+				{ text: true, type: 'primary', size: 'small', onClick: () => fetchDetail(row.id) },
+				{ default: () => '详情' }
+			),
+	},
+])
+
+// pageSize 变化回第 1 页并刷新
+function handlePageSizeChange() {
+	logPage.value = 1
+	fetchRequestLogs()
+}
+
 onMounted(() => {
 	const route = useRoute()
 	if (route.query.request_id) {
@@ -206,23 +315,23 @@ onMounted(() => {
 						<DateTimeRangePicker v-model:start="logFilter.start_date" v-model:end="logFilter.end_date" />
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
-							<input v-model="logFilter.username" class="input" placeholder="搜索用户" style="width:120px" @keydown.enter="handleFilter" />
+							<n-input v-model:value="logFilter.username" placeholder="搜索用户" style="width:120px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">Request ID</label>
-							<input v-model="logFilter.request_id" class="input" placeholder="请求 ID" style="width:180px" @keydown.enter="handleFilter" />
+							<n-input v-model:value="logFilter.request_id" placeholder="请求 ID" style="width:180px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">Task ID</label>
-							<input v-model="logFilter.task_id" class="input" placeholder="任务 ID" style="width:180px" @keydown.enter="handleFilter" />
+							<n-input v-model:value="logFilter.task_id" placeholder="任务 ID" style="width:180px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">请求路径</label>
-							<input v-model="logFilter.path" class="input" placeholder="例如：/v1/chat" style="width:160px" @keydown.enter="handleFilter" />
+							<n-input v-model:value="logFilter.path" placeholder="例如：/v1/chat" style="width:160px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">状态码</label>
-							<input v-model="logFilter.status_code" class="input" placeholder="200" style="width:80px" @keydown.enter="handleFilter" />
+							<n-input v-model:value="logFilter.status_code" placeholder="200" style="width:80px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="ml-auto flex items-center gap-2">
 							<button type="submit" class="btn btn-primary btn-sm">
@@ -236,87 +345,28 @@ onMounted(() => {
 		</div>
 		<!-- Table -->
 		<div class="viewport-table-panel card p-0 overflow-hidden">
-			<!-- Loading -->
-			<div v-if="logsLoading" class="p-8 text-center">
-				<div class="spinner mx-auto mb-3"></div>
-				<p class="text-sm text-gray-500">加载中...</p>
-			</div>
-
-			<!-- Empty -->
-			<div v-else-if="logs.length === 0" class="empty-state">
-				<Icon name="clipboard" size="xl" class="empty-state-icon text-gray-300" />
-				<p class="empty-state-title">暂无请求审计日志</p>
-				<p class="empty-state-description">API 调用的输入输出记录将显示在这里</p>
-			</div>
-
-			<!-- Table -->
-			<div v-else class="viewport-table-content">
-				<div class="viewport-table-scroll table-container table-container-flush request-audit-table">
-					<table class="table">
-						<thead>
-							<tr>
-								<th class="min-w-60">Request ID</th>
-								<th class="min-w-55">用户/项目</th>
-								<th class="min-w-10">方法</th>
-								<th class="min-w-40">路径</th>
-								<th class="min-w-20">状态码</th>
-                <th class="min-w-40">客户端</th>
-                <th class="min-w-20">延迟</th>
-							  <th class="min-w-25">首Token</th>
-								<th class="min-w-30">审计级别</th>
-								<th class="min-w-25">任务</th>
-								<th class="min-w-30">时间</th>
-								<th class="audit-action-column">操作</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="log in logs" :key="log.id">
-								<td>
-									<span class="font-mono text-xs text-gray-500 truncate max-w-60 inline-block">{{ log.request_id }}</span>
-								</td>
-								<td>
-									<span v-if="log.project_name" class="text-sm text-primary-600 font-medium">{{ log.project_name }}</span>
-										<span v-else class="text-sm text-gray-700">{{ log.username || '-' }}</span>
-								</td>
-								<td>
-									<span class="badge badge-gray text-xs">{{ log.method }}</span>
-								</td>
-								<td>
-									<span class="font-mono text-xs text-gray-600">{{ log.path }}</span>
-								</td>
-								<td>
-									<span class="badge text-xs" :class="statusBadgeClass(log.status_code)">{{ log.status_code }}</span>
-								</td>
-                <td :title="log.user_agent">
-                  <span class="text-xs text-gray-500">{{ parseUA(log.user_agent) }}</span>
-                </td>
-								<td>
-									<span class="text-xs text-gray-500">{{ formatMs(log.latency_ms) }}</span>
-								</td>
-                <td>
-                  <span v-if="log.first_token_ms" class="text-xs" :class="log.first_token_ms < 500 ? 'text-emerald-600' : log.first_token_ms < 1500 ? 'text-amber-600' : 'text-red-500'">{{ formatMs(log.first_token_ms) }}</span>
-                  <span v-else class="text-xs text-gray-300">-</span>
-                </td>
-								<td>
-									<span class="text-xs text-gray-500">{{ auditLevelLabel[log.audit_level] || log.audit_level }}</span>
-								</td>
-								<td>
-									<span v-if="log.task_id" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="taskStatusBadge[log.task_status] || 'bg-gray-100 text-gray-800'">{{ taskStatusLabel[log.task_status] || log.task_status || '-' }}</span>
-									<span v-else class="text-xs text-gray-300">-</span>
-								</td>
-								<td>
-									<span class="text-xs text-gray-500">{{ log.created_at ? new Date(log.created_at).toLocaleString() : '-' }}</span>
-								</td>
-								<td class="audit-action-column">
-									<button class="btn btn-ghost btn-sm text-primary-600" @click="fetchDetail(log.id)">详情</button>
-								</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-
-				<BasePagination v-model="logPage" v-model:page-size="logPageSize" :total="logTotal" @change="fetchRequestLogs" />
-			</div>
+			<n-data-table
+				remote
+				v-model:page="logPage"
+				v-model:page-size="logPageSize"
+				:item-count="logTotal"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="logsLoading"
+				:columns="columns"
+				:data="logs"
+				:row-key="(row: RequestLog) => row.id"
+				@update:page="fetchRequestLogs"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="clipboard" size="xl" class="empty-state-icon text-gray-300" />
+						<p class="empty-state-title">暂无请求审计日志</p>
+						<p class="empty-state-description">API 调用的输入输出记录将显示在这里</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 
 		<!-- Detail Modal -->
@@ -434,44 +484,3 @@ onMounted(() => {
 	</div>
 </template>
 
-<style scoped>
-.request-audit-table {
-	position: relative;
-}
-
-.request-audit-table .audit-action-column {
-	position: sticky;
-	right: 0;
-	z-index: 3;
-	width: 6rem;
-	min-width: 6rem;
-	text-align: right;
-	box-shadow: -14px 0 24px -20px rgba(55, 65, 105, 0.42);
-}
-
-.request-audit-table .table thead .audit-action-column {
-	z-index: 5;
-	background:
-		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
-		linear-gradient(100deg, rgba(6, 182, 212, 0.07), rgba(20, 184, 166, 0.1));
-	backdrop-filter: blur(24px) saturate(1.35);
-	-webkit-backdrop-filter: blur(24px) saturate(1.35);
-}
-
-.request-audit-table .table tbody tr .audit-action-column {
-	background: rgba(251, 252, 255, 0.94);
-	backdrop-filter: blur(22px) saturate(1.25);
-	-webkit-backdrop-filter: blur(22px) saturate(1.25);
-}
-
-.request-audit-table .table tbody tr:nth-child(even) .audit-action-column {
-	background: rgba(246, 248, 255, 0.95);
-}
-
-.request-audit-table .table tbody tr:hover .audit-action-column,
-.request-audit-table .table tbody tr:focus-within .audit-action-column {
-	background:
-		linear-gradient(90deg, rgba(235, 247, 255, 0.95), rgba(244, 240, 255, 0.96)),
-		rgba(255, 255, 255, 0.96);
-}
-</style>

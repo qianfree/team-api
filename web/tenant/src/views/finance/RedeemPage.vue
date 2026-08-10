@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
+import { renderBadge } from '@/utils/renderUtils'
 import request from '@/utils/request'
 
 const code = ref('')
@@ -47,6 +50,21 @@ async function fetchHistory() {
 	}
 }
 
+// NDataTable 列定义（无分页，固定最近 10 条）
+const columns = computed<DataTableColumns<any>>(() => [
+	{ title: '兑换码', key: 'code', render: (row) => h('span', { class: 'font-mono text-xs' }, row.code || '-') },
+	{ title: '兑换类型', key: 'type', render: (row) => renderBadge(row.type, typeLabels, typeBadgeClasses) },
+	{
+		title: '面值',
+		key: 'value',
+		render: (row) =>
+			row.type === 'quota'
+				? h('span', { class: 'font-mono' }, `+${Number(row.value).toFixed(6)}`)
+				: h('span', { class: 'font-mono' }, '-'),
+	},
+	{ title: '时间', key: 'created_at', render: (row) => h('span', { class: 'text-gray-400 text-xs' }, row.created_at?.substring(0, 16)) },
+])
+
 onMounted(fetchHistory)
 </script>
 
@@ -63,12 +81,12 @@ onMounted(fetchHistory)
 
 			<div class="flex gap-3">
 				<div class="flex-1">
-					<input
-						v-model="code"
+					<n-input
+						v-model:value="code"
 						type="text"
-						class="input font-mono"
+						class="font-mono"
 						placeholder="请输入兑换码"
-						maxlength="32"
+						:maxlength="32"
 						@keyup.enter="handleRedeem"
 					/>
 				</div>
@@ -111,52 +129,21 @@ onMounted(fetchHistory)
 				<h3 class="text-base font-semibold text-gray-900">兑换记录</h3>
 			</div>
 
-			<!-- Loading -->
-			<div v-if="historyLoading" class="flex items-center justify-center py-12">
-				<div class="spinner"></div>
-				<span class="ml-2 text-sm text-gray-400">加载中...</span>
-			</div>
-
-			<!-- Empty -->
-			<div v-else-if="recentRedemptions.length === 0" class="flex flex-col items-center justify-center px-4 py-12 text-center">
-				<div class="mb-4 text-gray-300">
-					<Icon name="document" size="xl" />
-				</div>
-				<p class="text-sm text-gray-500">暂无兑换记录</p>
-			</div>
-
-			<!-- Table -->
-			<div v-else class="table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>兑换码</th>
-							<th>兑换类型</th>
-							<th>面值</th>
-							<th>时间</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="item in recentRedemptions" :key="item.id">
-							<td class="font-mono text-xs">{{ item.code || '-' }}</td>
-							<td>
-								<span class="badge" :class="typeBadgeClasses[item.type] || 'badge-gray'">
-									{{ typeLabels[item.type] || item.type }}
-								</span>
-							</td>
-							<td class="font-mono">
-								<template v-if="item.type === 'quota'">
-									+{{ Number(item.value).toFixed(6) }}
-								</template>
-								<template v-else>
-									-
-								</template>
-							</td>
-							<td class="text-gray-400 text-xs">{{ item.created_at?.substring(0, 16) }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
+			<n-data-table
+				:loading="historyLoading"
+				:columns="columns"
+				:data="recentRedemptions"
+				:row-key="(row: any) => row.id"
+			>
+				<template #empty>
+					<div class="flex flex-col items-center justify-center px-4 py-12 text-center">
+						<div class="mb-4 text-gray-300">
+							<Icon name="document" size="xl" />
+						</div>
+						<p class="text-sm text-gray-500">暂无兑换记录</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 	</div>
 </template>

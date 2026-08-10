@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { NInput } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
@@ -212,19 +213,15 @@ function goBack() {
 		<form v-if="step === 1" @submit.prevent="goToStep2" class="space-y-5">
 			<div>
 				<label class="input-label">邮箱地址</label>
-				<div class="relative">
-					<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-						<Icon name="mail" size="sm" />
-					</div>
-					<input
-						v-model="form.email"
-						type="email"
-						placeholder="you@example.com"
-						class="input pl-11"
-						:class="{ 'input-error': errors.email }"
-					/>
-				</div>
-				<p v-if="errors.email" class="input-error-text">{{ errors.email }}</p>
+				<n-input
+					v-model:value="form.email"
+					type="email"
+					placeholder="you@example.com"
+					:status="errors.email ? 'error' : undefined"
+				>
+					<template #prefix><Icon name="mail" size="sm" class="text-gray-400" /></template>
+					<template #feedback v-if="errors.email">{{ errors.email }}</template>
+				</n-input>
 			</div>
 
 			<SlideCaptcha ref="captchaRef" v-model="captcha" @verified="captchaVerified = $event" class="mb-4" />
@@ -246,14 +243,14 @@ function goBack() {
 			<div>
 				<label class="input-label">验证码</label>
 				<div class="flex gap-2">
-					<input
-						v-model="form.code"
+					<n-input
+						v-model:value="form.code"
 						type="text"
 						placeholder="请输入 6 位验证码"
 						maxlength="6"
-						class="input flex-1"
-						:class="{ 'input-error': errors.code }"
-					/>
+						class="flex-1"
+						:status="errors.code ? 'error' : undefined"
+					></n-input>
 					<button
 						type="button"
 						@click="sendCode"
@@ -268,27 +265,29 @@ function goBack() {
 
 			<div>
 				<label class="input-label">新密码</label>
-				<input
-					v-model="form.newPassword"
+				<n-input
+					v-model:value="form.newPassword"
 					type="password"
+					show-password-on="click"
 					placeholder="至少 8 位字符"
-					class="input"
-					:class="{ 'input-error': errors.newPassword }"
-				/>
+					:status="errors.newPassword ? 'error' : undefined"
+				>
+					<template #feedback v-if="errors.newPassword">{{ errors.newPassword }}</template>
+				</n-input>
 				<PasswordStrengthMeter :password="form.newPassword" />
-				<p v-if="errors.newPassword" class="input-error-text">{{ errors.newPassword }}</p>
 			</div>
 
 			<div>
 				<label class="input-label">确认新密码</label>
-				<input
-					v-model="form.confirmPassword"
+				<n-input
+					v-model:value="form.confirmPassword"
 					type="password"
+					show-password-on="click"
 					placeholder="请再次输入新密码"
-					class="input"
-					:class="{ 'input-error': errors.confirmPassword }"
-				/>
-				<p v-if="errors.confirmPassword" class="input-error-text">{{ errors.confirmPassword }}</p>
+					:status="errors.confirmPassword ? 'error' : undefined"
+				>
+					<template #feedback v-if="errors.confirmPassword">{{ errors.confirmPassword }}</template>
+				</n-input>
 			</div>
 
 			<div class="flex gap-3">

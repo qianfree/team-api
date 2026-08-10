@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { NInput, NModal } from 'naive-ui'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -370,193 +371,190 @@ function formatStatus(status: number) {
     </div>
 
     <!-- Create/Edit Modal -->
-    <Teleport to="body">
-      <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
-        <div class="modal-content bg-white w-full max-w-lg">
-          <div class="modal-header">
-            <h3 class="modal-title">{{ modalMode === 'create' ? '创建 Webhook' : '编辑 Webhook' }}</h3>
-            <button class="btn btn-ghost btn-icon" @click="showModal = false">
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
-          <div class="modal-body space-y-4">
-            <div>
-              <label class="input-label">配置名称</label>
-              <input v-model="form.name" type="text" class="input" placeholder="如：生产环境通知" />
-            </div>
-            <div>
-              <label class="input-label">回调 URL（HTTPS）</label>
-              <input v-model="form.url" type="url" class="input" placeholder="https://example.com/webhook" />
-            </div>
-            <div>
-              <label class="input-label">订阅事件</label>
-              <div class="flex items-center gap-2 mt-1">
-                <span class="badge badge-primary">wallet.low_balance</span>
-                <span class="text-xs text-gray-400">余额低于预警线时触发</span>
-              </div>
-            </div>
-            <div>
-              <label class="input-label">最大连续失败次数</label>
-              <input v-model.number="form.max_consecutive_failures" type="number" class="input" min="1" max="100" />
-              <p class="input-hint">超过后自动禁用此 Webhook</p>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" @click="showModal = false">取消</button>
-            <button class="btn btn-primary" :disabled="saving" @click="handleSave">
-              <div v-if="saving" class="spinner h-4 w-4 border-white"></div>
-              {{ saving ? '保存中...' : '保存' }}
-            </button>
+    <n-modal
+      v-model:show="showModal"
+      preset="card"
+      :title="modalMode === 'create' ? '创建 Webhook' : '编辑 Webhook'"
+      :style="{ width: '600px' }"
+      :bordered="false"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="input-label">配置名称</label>
+          <n-input v-model:value="form.name" type="text" placeholder="如：生产环境通知" />
+        </div>
+        <div>
+          <label class="input-label">回调 URL（HTTPS）</label>
+          <n-input v-model:value="form.url" type="url" placeholder="https://example.com/webhook" />
+        </div>
+        <div>
+          <label class="input-label">订阅事件</label>
+          <div class="flex items-center gap-2 mt-1">
+            <span class="badge badge-primary">wallet.low_balance</span>
+            <span class="text-xs text-gray-400">余额低于预警线时触发</span>
           </div>
         </div>
+        <div>
+          <label class="input-label">最大连续失败次数</label>
+          <n-input
+            :value="String(form.max_consecutive_failures)"
+            type="number"
+            min="1"
+            max="100"
+            @update:value="(v: string | null) => { form.max_consecutive_failures = Number(v) }"
+          />
+          <p class="input-hint">超过后自动禁用此 Webhook</p>
+        </div>
       </div>
-    </Teleport>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button class="btn btn-secondary" @click="showModal = false">取消</button>
+          <button class="btn btn-primary" :disabled="saving" @click="handleSave">
+            <div v-if="saving" class="spinner h-4 w-4 border-white"></div>
+            {{ saving ? '保存中...' : '保存' }}
+          </button>
+        </div>
+      </template>
+    </n-modal>
 
     <!-- Secret Key Modal -->
-    <Teleport to="body">
-      <div v-if="showSecretModal" class="modal-overlay" @click.self="showSecretModal = false">
-        <div class="modal-content bg-white w-full max-w-lg">
-          <div class="modal-header">
-            <h3 class="modal-title">签名密钥</h3>
-            <button class="btn btn-ghost btn-icon" @click="showSecretModal = false">
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
-          <div class="modal-body">
-            <div class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-4">
-              <p class="text-sm text-amber-800 font-medium">请立即复制并安全保存此签名密钥，关闭后将无法再次查看。</p>
-            </div>
-            <div>
-              <label class="input-label">Secret Key</label>
-              <div class="flex items-center gap-2">
-                <code class="code-block flex-1 text-sm break-all">{{ newSecretKey }}</code>
-                <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecretKey)">
-                  <Icon name="copy" size="sm" />
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-primary" @click="showSecretModal = false">我已安全保存</button>
-          </div>
+    <n-modal
+      v-model:show="showSecretModal"
+      preset="card"
+      title="签名密钥"
+      :style="{ width: '600px' }"
+      :bordered="false"
+    >
+      <div class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-4">
+        <p class="text-sm text-amber-800 font-medium">请立即复制并安全保存此签名密钥，关闭后将无法再次查看。</p>
+      </div>
+      <div>
+        <label class="input-label">Secret Key</label>
+        <div class="flex items-center gap-2">
+          <code class="code-block flex-1 text-sm break-all">{{ newSecretKey }}</code>
+          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecretKey)">
+            <Icon name="copy" size="sm" />
+          </button>
         </div>
       </div>
-    </Teleport>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary" @click="showSecretModal = false">我已安全保存</button>
+        </div>
+      </template>
+    </n-modal>
 
     <!-- Delivery Logs Modal -->
-    <Teleport to="body">
-      <div v-if="showLogsModal" class="modal-overlay" @click.self="showLogsModal = false">
-        <div class="modal-content bg-white w-full max-w-3xl max-h-[85vh]">
-          <div class="modal-header">
-            <h3 class="modal-title">投递记录</h3>
-            <button class="btn btn-ghost btn-icon" @click="showLogsModal = false">
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
+    <n-modal
+      v-model:show="showLogsModal"
+      preset="card"
+      title="投递记录"
+      :style="{ width: '800px' }"
+      :bordered="false"
+    >
+      <!-- Filter tabs -->
+      <div class="mb-4">
+        <div class="tabs">
+          <button
+            class="tab"
+            :class="{ 'tab-active': logsStatusFilter === '' }"
+            @click="setLogsFilter('')"
+          >全部</button>
+          <button
+            class="tab"
+            :class="{ 'tab-active': logsStatusFilter === 'delivered' }"
+            @click="setLogsFilter('delivered')"
+          >已送达</button>
+          <button
+            class="tab"
+            :class="{ 'tab-active': logsStatusFilter === 'failed' }"
+            @click="setLogsFilter('failed')"
+          >失败</button>
+        </div>
+      </div>
 
-          <!-- Filter tabs -->
-          <div class="px-4 sm:px-6 pt-4">
-            <div class="tabs">
-              <button
-                class="tab"
-                :class="{ 'tab-active': logsStatusFilter === '' }"
-                @click="setLogsFilter('')"
-              >全部</button>
-              <button
-                class="tab"
-                :class="{ 'tab-active': logsStatusFilter === 'delivered' }"
-                @click="setLogsFilter('delivered')"
-              >已送达</button>
-              <button
-                class="tab"
-                :class="{ 'tab-active': logsStatusFilter === 'failed' }"
-                @click="setLogsFilter('failed')"
-              >失败</button>
+      <div class="max-h-[60vh] overflow-y-auto">
+        <!-- Loading -->
+        <div v-if="logsLoading" class="text-center py-12">
+          <div class="spinner h-6 w-6 mx-auto"></div>
+        </div>
+
+        <!-- Empty -->
+        <div v-else-if="logs.length === 0" class="text-center py-12 text-gray-500">
+          <p>暂无投递记录</p>
+          <p class="text-xs mt-1 text-gray-400">事件触发后将在此显示投递详情</p>
+        </div>
+
+        <!-- Log list -->
+        <div v-else class="space-y-2">
+          <div
+            v-for="log in logs"
+            :key="log.id"
+            class="rounded-xl border p-3 transition-colors"
+            :class="isLogSuccess(log) ? 'border-gray-200 hover:bg-gray-50' : 'border-red-200 bg-red-50/30 hover:bg-red-50/50'"
+          >
+            <!-- Row 1: event type + status badge + time -->
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <span class="badge text-xs" :class="isLogSuccess(log) ? 'badge-success' : 'badge-danger'">
+                  {{ isLogSuccess(log) ? '成功' : '失败' }}
+                </span>
+                <span class="badge badge-primary text-xs">{{ log.event_type || '未知事件' }}</span>
+              </div>
+              <span class="text-xs text-gray-400">{{ log.created_at }}</span>
             </div>
-          </div>
 
-          <div class="modal-body overflow-y-auto">
-            <!-- Loading -->
-            <div v-if="logsLoading" class="text-center py-12">
-              <div class="spinner h-6 w-6 mx-auto"></div>
-            </div>
-
-            <!-- Empty -->
-            <div v-else-if="logs.length === 0" class="text-center py-12 text-gray-500">
-              <p>暂无投递记录</p>
-              <p class="text-xs mt-1 text-gray-400">事件触发后将在此显示投递详情</p>
-            </div>
-
-            <!-- Log list -->
-            <div v-else class="space-y-2">
-              <div
-                v-for="log in logs"
-                :key="log.id"
-                class="rounded-xl border p-3 transition-colors"
-                :class="isLogSuccess(log) ? 'border-gray-200 hover:bg-gray-50' : 'border-red-200 bg-red-50/30 hover:bg-red-50/50'"
-              >
-                <!-- Row 1: event type + status badge + time -->
-                <div class="flex items-center justify-between mb-2">
-                  <div class="flex items-center gap-2">
-                    <span class="badge text-xs" :class="isLogSuccess(log) ? 'badge-success' : 'badge-danger'">
-                      {{ isLogSuccess(log) ? '成功' : '失败' }}
-                    </span>
-                    <span class="badge badge-primary text-xs">{{ log.event_type || '未知事件' }}</span>
-                  </div>
-                  <span class="text-xs text-gray-400">{{ log.created_at }}</span>
-                </div>
-
-                <!-- Row 2: details -->
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-4 text-xs text-gray-500">
-                    <span>
-                      HTTP
-                      <span class="font-mono font-medium" :class="isLogSuccess(log) ? 'text-emerald-600' : 'text-red-600'">
-                        {{ formatStatus(log.response_status) }}
-                      </span>
-                    </span>
-                    <span>第 {{ log.attempt }} 次尝试</span>
-                    <span v-if="log.response_time_ms">
-                      <span :class="log.response_time_ms > 3000 ? 'text-amber-600 font-medium' : ''">{{ log.response_time_ms }}ms</span>
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <button
-                      v-if="!isLogSuccess(log)"
-                      class="btn btn-ghost btn-sm text-xs"
-                      @click="handleRetry(log.event_id)"
-                    >重试</button>
-                  </div>
-                </div>
-
-                <!-- Row 3: error message -->
-                <p v-if="log.error_message" class="mt-2 text-xs text-red-600 bg-red-100/60 rounded-lg px-2 py-1 break-all">
-                  {{ log.error_message }}
-                </p>
+            <!-- Row 2: details -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-4 text-xs text-gray-500">
+                <span>
+                  HTTP
+                  <span class="font-mono font-medium" :class="isLogSuccess(log) ? 'text-emerald-600' : 'text-red-600'">
+                    {{ formatStatus(log.response_status) }}
+                  </span>
+                </span>
+                <span>第 {{ log.attempt }} 次尝试</span>
+                <span v-if="log.response_time_ms">
+                  <span :class="log.response_time_ms > 3000 ? 'text-amber-600 font-medium' : ''">{{ log.response_time_ms }}ms</span>
+                </span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button
+                  v-if="!isLogSuccess(log)"
+                  class="btn btn-ghost btn-sm text-xs"
+                  @click="handleRetry(log.event_id)"
+                >重试</button>
               </div>
             </div>
-          </div>
 
-          <!-- Pagination -->
-          <div v-if="logsTotal > logsPageSize" class="modal-footer justify-between">
-            <span class="text-xs text-gray-400">
-              共 {{ logsTotal }} 条记录，第 {{ logsPage }} / {{ logsTotalPages }} 页
-            </span>
-            <div class="flex items-center gap-2">
-              <button
-                class="btn btn-ghost btn-sm"
-                :disabled="logsPage <= 1"
-                @click="goToLogsPage(logsPage - 1)"
-              >上一页</button>
-              <button
-                class="btn btn-ghost btn-sm"
-                :disabled="logsPage >= logsTotalPages"
-                @click="goToLogsPage(logsPage + 1)"
-              >下一页</button>
-            </div>
+            <!-- Row 3: error message -->
+            <p v-if="log.error_message" class="mt-2 text-xs text-red-600 bg-red-100/60 rounded-lg px-2 py-1 break-all">
+              {{ log.error_message }}
+            </p>
           </div>
         </div>
       </div>
-    </Teleport>
+
+      <!-- Pagination -->
+      <template #footer v-if="logsTotal > logsPageSize">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-gray-400">
+            共 {{ logsTotal }} 条记录，第 {{ logsPage }} / {{ logsTotalPages }} 页
+          </span>
+          <div class="flex items-center gap-2">
+            <button
+              class="btn btn-ghost btn-sm"
+              :disabled="logsPage <= 1"
+              @click="goToLogsPage(logsPage - 1)"
+            >上一页</button>
+            <button
+              class="btn btn-ghost btn-sm"
+              :disabled="logsPage >= logsTotalPages"
+              @click="goToLogsPage(logsPage + 1)"
+            >下一页</button>
+          </div>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>

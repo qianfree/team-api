@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -698,11 +699,11 @@ onMounted(() => {
 				</p>
 				<div>
 					<label class="input-label">新密码 <span class="text-red-500">*</span></label>
-					<input
-						v-model="resetPassword"
+					<n-input
+						v-model:value="resetPassword"
 						type="password"
+						show-password-on="click"
 						placeholder="至少 8 位，含字母和数字"
-						class="input"
 						@keyup.enter="handleResetPassword"
 					/>
 				</div>
@@ -794,13 +795,13 @@ onMounted(() => {
 				<!-- Quota Limit -->
 				<div v-if="quotaForm.quota_type !== 'none'">
 					<label class="input-label">额度上限 (USD)</label>
-					<input
-						v-model.number="quotaForm.quota_limit"
+					<n-input
+						:value="String(quotaForm.quota_limit)"
 						type="number"
 						step="0.01"
 						min="0"
-						class="input"
 						placeholder="输入额度上限"
+						@update:value="(v: string | null) => { quotaForm.quota_limit = Number(v) }"
 					/>
 					<p class="input-hint">设置为 0 表示不限制使用量</p>
 				</div>
@@ -840,14 +841,14 @@ onMounted(() => {
 
 				<!-- Search + Actions -->
 				<div class="flex items-center gap-3">
-					<div class="relative flex-1">
-						<Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-						<input
-							v-model="modelSearch"
+					<div class="flex-1">
+						<n-input
+							v-model:value="modelSearch"
 							type="text"
-							class="input pl-9"
 							placeholder="搜索模型..."
-						/>
+						>
+							<template #prefix><Icon name="search" size="sm" class="text-gray-400" /></template>
+						</n-input>
 					</div>
 					<button class="btn btn-ghost btn-sm" @click="selectAllModels">全选</button>
 					<button class="btn btn-ghost btn-sm" @click="clearAllModels">清空</button>
@@ -865,11 +866,9 @@ onMounted(() => {
 							:key="m.id"
 							class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer"
 						>
-							<input
-								type="checkbox"
+							<n-checkbox
 								:checked="selectedModelIds.includes(m.id)"
-								@change="toggleModel(m.id)"
-								class="h-4 w-4 rounded border-gray-300 text-primary-500 focus:ring-primary-500/30"
+								@update:checked="toggleModel(m.id)"
 							/>
 							<div class="min-w-0 flex-1">
 								<p class="text-sm font-medium text-gray-900 truncate">{{ m.model_name || m.model_id }}</p>

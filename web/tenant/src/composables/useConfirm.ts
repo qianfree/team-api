@@ -1,37 +1,41 @@
-import { ref } from 'vue'
+import { createDiscreteApi } from 'naive-ui'
+import { themeOverrides } from './../utils/naiveTheme'
 
 interface ConfirmOptions {
-  title?: string
-  message: string
-  confirmText?: string
-  cancelText?: string
-  danger?: boolean
+	title?: string
+	message: string
+	confirmText?: string
+	cancelText?: string
+	danger?: boolean
 }
 
-const visible = ref(false)
-const options = ref<ConfirmOptions>({ message: '' })
-let resolvePromise: ((value: boolean) => void) | null = null
+// createDiscreteApi 使 dialog 可在任意非组件上下文调用，且随 configProviderProps 对齐主题
+const { dialog } = createDiscreteApi(['dialog'], {
+	configProviderProps: { themeOverrides },
+})
 
 export function useConfirm() {
-  function confirm(opts: ConfirmOptions | string): Promise<boolean> {
-    options.value = typeof opts === 'string' ? { message: opts } : opts
-    visible.value = true
-    return new Promise((resolve) => {
-      resolvePromise = resolve
-    })
-  }
+	/** 弹出确认框，返回 Promise：确认 resolve(true)，取消/关闭 resolve(false) */
+	function confirm(opts: ConfirmOptions | string): Promise<boolean> {
+		const options: ConfirmOptions = typeof opts === 'string' ? { message: opts } : opts
+		return new Promise((resolve) => {
+			const base = {
+				title: options.title ?? '确认操作',
+				content: options.message,
+				positiveText: options.confirmText ?? '确认',
+				negativeText: options.cancelText ?? '取消',
+				onPositiveClick: () => resolve(true),
+				onNegativeClick: () => resolve(false),
+				onClose: () => resolve(false),
+			}
+			// danger 用 error 预设（红色确认按钮），否则用 warning 预设（黄色提示）
+			if (options.danger) {
+				dialog.error(base)
+			} else {
+				dialog.warning(base)
+			}
+		})
+	}
 
-  function handleConfirm() {
-    visible.value = false
-    resolvePromise?.(true)
-    resolvePromise = null
-  }
-
-  function handleCancel() {
-    visible.value = false
-    resolvePromise?.(false)
-    resolvePromise = null
-  }
-
-  return { visible, options, confirm, handleConfirm, handleCancel }
+	return { confirm }
 }
