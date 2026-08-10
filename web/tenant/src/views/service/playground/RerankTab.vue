@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
+import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
@@ -94,15 +95,15 @@ function scoreColor(score: number) {
 					</div>
 					<div>
 						<label class="input-label">查询文本</label>
-						<textarea v-model="query" class="input" rows="2" placeholder="输入查询..." />
+						<n-input v-model:value="query" type="textarea" :rows="2" placeholder="输入查询..." />
 					</div>
 					<div>
 						<label class="input-label">文档列表（每行一个）</label>
-						<textarea v-model="documentsText" class="input" rows="6" placeholder="文档 1&#10;文档 2&#10;文档 3" />
+						<n-input v-model:value="documentsText" type="textarea" :rows="6" placeholder="文档 1&#10;文档 2&#10;文档 3" />
 					</div>
 					<div>
 						<label class="input-label">Top N（可选）</label>
-						<input v-model.number="topN" type="number" class="input" min="1" placeholder="留空返回全部" />
+						<n-input-number v-model:value="topN" :min="1" class="w-full" placeholder="留空返回全部" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="sending || !query.trim() || !documentsText.trim()" @click="rerank">
 						{{ sending ? '排序中...' : '重排序' }}

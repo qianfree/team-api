@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
@@ -379,10 +380,10 @@ async function handleOAuthUnlink(provider: string) {
 							</button>
 						</div>
 						<div v-else class="flex items-center gap-2">
-							<input
-								v-model="displayNameForm.display_name"
+							<n-input
+								v-model:value="displayNameForm.display_name"
 								type="text"
-								class="input flex-1"
+								class="flex-1"
 								@keyup.enter="saveDisplayName"
 							/>
 							<button
@@ -546,26 +547,28 @@ async function handleOAuthUnlink(provider: string) {
 			<form @submit.prevent="handleChangePassword" class="space-y-4">
 				<div>
 					<label class="input-label">当前密码</label>
-					<input
-						v-model="passwordForm.old_password"
+					<n-input
+						v-model:value="passwordForm.old_password"
 						type="password"
+						show-password-on="click"
 						placeholder="请输入当前密码"
-						class="input"
-						:class="{ 'input-error': passwordErrors.old_password }"
-					/>
-					<p v-if="passwordErrors.old_password" class="input-error-text">{{ passwordErrors.old_password }}</p>
+						:status="passwordErrors.old_password ? 'error' : undefined"
+					>
+						<template #feedback v-if="passwordErrors.old_password">{{ passwordErrors.old_password }}</template>
+					</n-input>
 				</div>
 
 				<div>
 					<label class="input-label">新密码</label>
-					<input
-						v-model="passwordForm.new_password"
+					<n-input
+						v-model:value="passwordForm.new_password"
 						type="password"
+						show-password-on="click"
 						placeholder="至少 8 位字符，且至少包含数字和字符"
-						class="input"
-						:class="{ 'input-error': passwordErrors.new_password }"
-					/>
-					<p v-if="passwordErrors.new_password" class="input-error-text">{{ passwordErrors.new_password }}</p>
+						:status="passwordErrors.new_password ? 'error' : undefined"
+					>
+						<template #feedback v-if="passwordErrors.new_password">{{ passwordErrors.new_password }}</template>
+					</n-input>
 				</div>
 			</form>
 
@@ -587,11 +590,11 @@ async function handleOAuthUnlink(provider: string) {
 			<div>
 				<label class="input-label">新邮箱</label>
 				<div class="flex gap-2">
-					<input
-						v-model="emailForm.new_email"
+					<n-input
+						v-model:value="emailForm.new_email"
 						type="email"
 						placeholder="请输入邮箱"
-						class="input flex-1"
+						class="flex-1"
 					/>
 					<button
 						type="button"
@@ -606,12 +609,11 @@ async function handleOAuthUnlink(provider: string) {
 
 			<div>
 				<label class="input-label">验证码</label>
-				<input
-					v-model="emailForm.code"
+				<n-input
+					v-model:value="emailForm.code"
 					type="text"
 					maxlength="6"
 					placeholder="请输入6位验证码"
-					class="input"
 				/>
 			</div>
 

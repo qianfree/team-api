@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
+import { renderBadge } from '@/utils/renderUtils'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 
 const list = ref<any[]>([])
@@ -74,6 +76,42 @@ const methodLabel: Record<string, string> = {
 	totp: '双因素',
 	sso: '单点登录',
 }
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+	{ title: '时间', key: 'created_at', render: (row) => h('span', { class: 'whitespace-nowrap' }, row.created_at) },
+	{
+		title: '用户',
+		key: 'user',
+		render: (row) =>
+			h('div', {}, [
+				row.display_name || row.username || '-',
+				row.display_name && row.username ? h('div', { class: 'text-xs text-gray-400' }, row.username) : null,
+			]),
+	},
+	{ title: '登录方式', key: 'login_method', render: (row) => renderBadge(row.login_method, methodLabel, methodBadge) },
+	{ title: 'IP 地址', key: 'ip_address', render: (row) => h('span', { class: 'font-mono text-sm' }, row.ip_address) },
+	{
+		title: '设备',
+		key: 'user_agent',
+		render: (row) =>
+			h('span', { class: 'max-w-[200px] truncate block text-gray-500', title: row.user_agent }, row.user_agent),
+	},
+	{
+		title: '状态',
+		key: 'success',
+		render: (row) =>
+			row.success
+				? renderBadge('ok', { ok: '成功' }, { ok: 'badge-success' })
+				: renderBadge('fail', { fail: '失败' }, { fail: 'badge-danger' }),
+	},
+	{ title: '失败原因', key: 'fail_reason', render: (row) => h('span', { class: 'text-gray-500' }, row.fail_reason || '-') },
+])
+
+function handlePageSizeChange() {
+	page.value = 1
+	fetchData()
+}
 </script>
 
 <template>
@@ -90,21 +128,19 @@ const methodLabel: Record<string, string> = {
 					<div class="flex flex-1 flex-wrap items-end gap-4">
 						<div class="w-full sm:w-auto sm:min-w-[120px]">
 							<label class="input-label">用户名</label>
-							<input
-								v-model="filterUsername"
+							<n-input
+								v-model:value="filterUsername"
 								type="text"
 								placeholder="搜索用户名"
-								class="input"
 								@keyup.enter="applyFilters"
 							/>
 						</div>
 						<div class="w-full sm:w-auto sm:min-w-[140px]">
 							<label class="input-label">IP 地址</label>
-							<input
-								v-model="filterIpAddress"
+							<n-input
+								v-model:value="filterIpAddress"
 								type="text"
 								placeholder="搜索 IP"
-								class="input"
 								@keyup.enter="applyFilters"
 							/>
 						</div>
@@ -138,57 +174,28 @@ const methodLabel: Record<string, string> = {
 
 		<!-- Table -->
 		<div class="viewport-table-panel card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="list.length > 0" class="viewport-table-content">
-				<div class="viewport-table-scroll table-container">
-					<table class="table">
-						<thead>
-							<tr>
-								<th>时间</th>
-								<th>用户</th>
-								<th>登录方式</th>
-								<th>IP 地址</th>
-								<th>设备</th>
-								<th>状态</th>
-								<th>失败原因</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="item in list" :key="item.id">
-								<td class="whitespace-nowrap">{{ item.created_at }}</td>
-								<td>
-									<div>{{ item.display_name || item.username || '-' }}</div>
-									<div v-if="item.display_name && item.username" class="text-xs text-gray-400">{{ item.username }}</div>
-								</td>
-								<td>
-									<span class="badge" :class="methodBadge[item.login_method] || 'badge-gray'">
-										{{ methodLabel[item.login_method] || item.login_method }}
-									</span>
-								</td>
-								<td class="font-mono text-sm">{{ item.ip_address }}</td>
-								<td class="max-w-[200px] truncate text-gray-500" :title="item.user_agent">{{ item.user_agent }}</td>
-								<td>
-									<span v-if="item.success" class="badge badge-success">成功</span>
-									<span v-else class="badge badge-danger">失败</span>
-								</td>
-								<td class="text-gray-500">{{ item.fail_reason || '-' }}</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-
-				<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchData" />
-			</div>
-
-			<!-- Empty state -->
-			<div v-else class="empty-state">
-				<Icon name="shield" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无登录记录</p>
-				<p class="empty-state-description">当前没有任何登录历史记录</p>
-			</div>
+			<n-data-table
+				remote
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:data="list"
+				:row-key="(row: any) => row.id"
+				@update:page="fetchData"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="shield" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无登录记录</p>
+						<p class="empty-state-description">当前没有任何登录历史记录</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 	</div>
 </template>

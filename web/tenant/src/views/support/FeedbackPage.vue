@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
+import { NInput } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
 import BasePagination from '@/components/common/BasePagination.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -282,23 +283,22 @@ onMounted(() => {
 				</div>
 				<div>
 					<label class="input-label">标题 <span class="text-red-500">*</span></label>
-					<input
-						v-model="createForm.title"
+					<n-input
+						v-model:value="createForm.title"
 						type="text"
-						class="input"
 						placeholder="一句话概括您的反馈"
-						maxlength="200"
+						:maxlength="200"
 					/>
 				</div>
 				<div>
 					<label class="input-label">详细描述 <span class="text-red-500">*</span></label>
-					<textarea
-						v-model="createForm.description"
-						class="input"
-						rows="5"
+					<n-input
+						v-model:value="createForm.description"
+						type="textarea"
+						:rows="5"
 						placeholder="请详细描述您遇到的问题或建议，包括相关的操作步骤、截图等信息"
-						maxlength="5000"
-					></textarea>
+						:maxlength="5000"
+					/>
 					<p class="input-hint">{{ createForm.description.length }} / 5000</p>
 				</div>
 			</div>

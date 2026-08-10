@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NInput, NInputNumber } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import { renderBadge } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -27,17 +29,17 @@ const statusBadgeClasses: Record<string, string> = {
 const showModal = ref(false)
 const formLoading = ref(false)
 const editingId = ref<number | null>(null)
-const form = ref({ name: '', description: '', budget: '' as string })
+const form = ref({ name: '', description: '', budget: null as number | null })
 
 function openCreate() {
 	editingId.value = null
-	form.value = { name: '', description: '', budget: '' }
+	form.value = { name: '', description: '', budget: null }
 	showModal.value = true
 }
 
 function openEdit(item: any) {
 	editingId.value = item.id
-	form.value = { name: item.name, description: item.description || '', budget: item.budget ? String(item.budget) : '' }
+	form.value = { name: item.name, description: item.description || '', budget: item.budget ? Number(item.budget) : null }
 	showModal.value = true
 }
 
@@ -102,6 +104,79 @@ onMounted(fetchProjects)
 function goToDetail(item: any) {
 	router.push(`/tenant/projects/${item.id}`)
 }
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+	{ title: '项目名称', key: 'name', render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name) },
+	{
+		title: '描述',
+		key: 'description',
+		render: (row) =>
+			h('span', { class: 'text-gray-500 max-w-[200px] truncate block' }, row.description || '-'),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		render: (row) => renderBadge(row.status, statusLabels, statusBadgeClasses),
+	},
+	{
+		title: '预算上限',
+		key: 'budget',
+		render: (row) =>
+			h('span', { class: 'font-mono' }, row.budget ? `$${Number(row.budget).toFixed(2)}` : '不限'),
+	},
+	{
+		title: '创建时间',
+		key: 'created_at',
+		render: (row) => h('span', { class: 'text-xs text-gray-400' }, row.created_at?.substring(0, 16)),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		align: 'right',
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-1 justify-end' }, [
+				h(
+					NButton,
+					{ quaternary: true, size: 'small', title: '详情', onClick: (e: MouseEvent) => { e.stopPropagation(); goToDetail(row) } },
+					{ icon: () => h(Icon, { name: 'eye', size: 'sm' }) }
+				),
+				row.status === 'active'
+					? h(
+							NButton,
+							{ quaternary: true, size: 'small', title: '编辑', onClick: (e: MouseEvent) => { e.stopPropagation(); openEdit(row) } },
+							{ icon: () => h(Icon, { name: 'edit', size: 'sm' }) }
+						)
+					: null,
+				row.status === 'active'
+					? h(
+							NButton,
+							{ quaternary: true, size: 'small', title: '归档', onClick: (e: MouseEvent) => { e.stopPropagation(); handleArchive(row) } },
+							{ icon: () => h(Icon, { name: 'x', size: 'sm' }) }
+						)
+					: null,
+				row.status === 'archived'
+					? h(
+							NButton,
+							{ quaternary: true, size: 'small', title: '取消归档', onClick: (e: MouseEvent) => { e.stopPropagation(); handleUnarchive(row) } },
+							{ icon: () => h(Icon, { name: 'refresh', size: 'sm' }) }
+						)
+					: null,
+			]),
+	},
+])
+
+function handleRowProps(row: any) {
+	return {
+		style: 'cursor: pointer',
+		onClick: () => goToDetail(row),
+	}
+}
+
+function handlePageSizeChange() {
+	page.value = 1
+	fetchProjects()
+}
 </script>
 
 <template>
@@ -118,59 +193,29 @@ function goToDetail(item: any) {
 		</div>
 
 		<div class="viewport-table-panel card">
-			<div v-if="loading" class="flex items-center justify-center py-12">
-				<div class="spinner h-6 w-6 text-primary-500"></div>
-			</div>
-			<div v-else-if="projects.length === 0" class="empty-state">
-				<Icon name="project" size="xl" class="empty-state-icon" />
-				<h3 class="empty-state-title">暂无项目</h3>
-				<p class="empty-state-description">创建项目来组织你的 API Key 和资源</p>
-			</div>
-			<div v-else class="viewport-table-scroll table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>项目名称</th>
-							<th>描述</th>
-							<th>状态</th>
-							<th>预算上限</th>
-							<th>创建时间</th>
-							<th>操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="p in projects" :key="p.id" class="cursor-pointer" @click="goToDetail(p)">
-							<td class="font-medium text-gray-900">{{ p.name }}</td>
-							<td class="text-gray-500 max-w-[200px] truncate">{{ p.description || '-' }}</td>
-							<td>
-								<span class="badge" :class="statusBadgeClasses[p.status] || 'badge-gray'">
-									{{ statusLabels[p.status] || p.status }}
-								</span>
-							</td>
-							<td class="font-mono">${{ p.budget ? Number(p.budget).toFixed(2) : '不限' }}</td>
-							<td class="text-xs text-gray-400">{{ p.created_at?.substring(0, 16) }}</td>
-							<td>
-								<div class="flex items-center gap-1" @click.stop>
-									<button class="btn-ghost btn-icon btn-sm" title="详情" @click="goToDetail(p)">
-										<Icon name="eye" size="sm" class="text-primary-500" />
-									</button>
-									<button v-if="p.status === 'active'" class="btn-ghost btn-icon btn-sm" title="编辑" @click="openEdit(p)">
-										<Icon name="edit" size="sm" class="text-gray-400" />
-									</button>
-									<button v-if="p.status === 'active'" class="btn-ghost btn-icon btn-sm" title="归档" @click="handleArchive(p)">
-										<Icon name="x" size="sm" class="text-amber-500" />
-									</button>
-									<button v-if="p.status === 'archived'" class="btn-ghost btn-icon btn-sm" title="取消归档" @click="handleUnarchive(p)">
-										<Icon name="refresh" size="sm" class="text-primary-500" />
-									</button>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchProjects" />
+			<n-data-table
+				remote
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:data="projects"
+				:row-key="(row: any) => row.id"
+				:row-props="handleRowProps"
+				@update:page="fetchProjects"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="project" size="xl" class="empty-state-icon" />
+						<h3 class="empty-state-title">暂无项目</h3>
+						<p class="empty-state-description">创建项目来组织你的 API Key 和资源</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 
 		<!-- Create/Edit Modal -->
@@ -178,15 +223,20 @@ function goToDetail(item: any) {
 			<div class="space-y-4">
 				<div>
 					<label class="input-label">项目名称 <span class="text-red-500">*</span></label>
-					<input v-model="form.name" type="text" class="input" placeholder="输入项目名称" />
+					<n-input v-model:value="form.name" type="text" placeholder="输入项目名称" />
 				</div>
 				<div>
 					<label class="input-label">描述</label>
-					<textarea v-model="form.description" class="input" rows="2" placeholder="项目描述（选填）"></textarea>
+					<n-input
+						v-model:value="form.description"
+						type="textarea"
+						:rows="2"
+						placeholder="项目描述（选填）"
+					/>
 				</div>
 				<div>
 					<label class="input-label">预算上限</label>
-					<input v-model="form.budget" type="number" step="0.01" min="0" class="input" placeholder="0 = 不限制" />
+					<n-input-number v-model:value="form.budget" :min="0" :step="0.01" placeholder="0 = 不限制" style="width: 100%" />
 					<p class="input-hint">设为 0 表示不限制。达到预算上限后，项目下所有 Key 将停止服务。</p>
 				</div>
 			</div>

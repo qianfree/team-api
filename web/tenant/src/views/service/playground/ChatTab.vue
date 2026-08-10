@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick, watch } from 'vue'
+import { NInput, NInputNumber, NSwitch } from 'naive-ui'
 import { calculateCost } from './calculateCost'
 import Icon from '@/components/common/Icon.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
@@ -76,14 +77,6 @@ function toggleThinking(idx: number) {
 }
 
 const messagesRef = ref<HTMLElement | null>(null)
-const inputRef = ref<HTMLTextAreaElement | null>(null)
-
-function autoResize() {
-	const el = inputRef.value
-	if (!el) return
-	el.style.height = 'auto'
-	el.style.height = Math.min(el.scrollHeight, 160) + 'px'
-}
 
 // 判断用户是否在消息区域底部（允许 40px 容差）
 function isNearBottom(): boolean {
@@ -256,7 +249,6 @@ async function sendMessage() {
 	messages.value.push({ role: 'user', content })
 	inputMessage.value = ''
 	sending.value = true
-	if (inputRef.value) inputRef.value.style.height = 'auto'
 
 	const assistantIdx = messages.value.length
 	messages.value.push({ role: 'assistant', content: '', reasoningContent: '' })
@@ -315,27 +307,15 @@ function clearChat() {
 						</div>
 						<div>
 							<label class="input-label">Max Tokens</label>
-							<input v-model.number="params.maxTokens" type="number" class="input" min="1" max="128000" />
+							<n-input-number v-model:value="params.maxTokens" :min="1" :max="128000" class="w-full" />
 						</div>
 						<div>
 							<label class="input-label">System Prompt</label>
-							<textarea v-model="params.systemPrompt" class="input" rows="3" placeholder="设置系统提示词..."></textarea>
+							<n-input v-model:value="params.systemPrompt" type="textarea" :rows="3" placeholder="设置系统提示词..." />
 						</div>
 						<div class="flex items-center justify-between">
 							<label class="input-label mb-0">流式响应</label>
-							<button
-								type="button"
-								role="switch"
-								:aria-checked="params.stream"
-								class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500/50"
-								:class="params.stream ? 'bg-primary-500' : 'bg-gray-200'"
-								@click="params.stream = !params.stream"
-							>
-								<span
-									class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-									:class="params.stream ? 'translate-x-5' : 'translate-x-0'"
-								/>
-							</button>
+							<n-switch v-model:value="params.stream" />
 						</div>
 						<template v-if="isImageModel">
 							<div class="border-t border-gray-100 pt-4">
@@ -435,7 +415,7 @@ function clearChat() {
 					<!-- Input area -->
 					<div class="p-4 border-t border-gray-200">
 						<div class="flex gap-3">
-							<textarea ref="inputRef" v-model="inputMessage" class="input flex-1 resize-none" rows="1" placeholder="输入消息..." @keydown.enter.exact.prevent="sendMessage" @input="autoResize" />
+							<n-input v-model:value="inputMessage" autosize placeholder="输入消息..." class="flex-1" @keydown.enter.exact.prevent="sendMessage" />
 							<button class="btn btn-primary self-end" :disabled="sending || !inputMessage.trim()" @click="sendMessage">
 								<Icon name="edit" size="sm" />
 								发送

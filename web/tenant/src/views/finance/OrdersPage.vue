@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import { renderBadge, formatMoney } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -91,6 +93,38 @@ async function handleCancel(order: any) {
   }
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+  { title: '订单号', key: 'order_no', render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.order_no) },
+  { title: '类型', key: 'order_type', render: (row) => h('span', { class: 'font-medium text-gray-900' }, orderTypeLabel[row.order_type] || row.order_type) },
+  { title: '金额', key: 'final_amount', render: (row) => h('span', { class: 'font-medium' }, formatMoney(row.final_amount, { currency: 'CNY', precision: 2 })) },
+  { title: '状态', key: 'status', render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
+  {
+    title: '创建时间',
+    key: 'created_at',
+    render: (row) => h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    align: 'right',
+    render: (row) =>
+      h('div', { class: 'flex items-center justify-end gap-2' }, [
+        row.status === 'pending'
+          ? h(NButton, { size: 'small', type: 'primary', onClick: () => handlePay(row) }, { default: () => '支付' })
+          : null,
+        row.status === 'pending'
+          ? h(NButton, { size: 'small', onClick: () => handleCancel(row) }, { default: () => '取消' })
+          : null,
+      ]),
+  },
+])
+
+function handlePageSizeChange() {
+  page.value = 1
+  fetchOrders()
+}
+
 onMounted(() => {
   fetchOrders()
 })
@@ -132,74 +166,30 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="card p-8 text-center">
-      <div class="spinner mx-auto mb-3"></div>
-      <p class="text-sm text-gray-500">加载中...</p>
-    </div>
-
-    <!-- Empty -->
-    <div v-else-if="orders.length === 0" class="empty-state card">
-      <Icon name="document" size="xl" class="empty-state-icon text-gray-300" />
-      <p class="empty-state-title">暂无订单</p>
-      <p class="empty-state-description">您的订单记录将显示在这里</p>
-    </div>
-
     <!-- Table -->
-    <div v-else class="viewport-table-panel card p-0 overflow-hidden">
-      <div class="viewport-table-scroll table-container">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>订单号</th>
-              <th>类型</th>
-              <th>金额</th>
-              <th>状态</th>
-              <th>创建时间</th>
-              <th class="text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="order in orders" :key="order.id">
-              <td>
-                <span class="font-mono text-xs text-gray-600">{{ order.order_no }}</span>
-              </td>
-              <td>
-                <span class="font-medium text-gray-900">{{ orderTypeLabel[order.order_type] || order.order_type }}</span>
-              </td>
-              <td>
-                <span class="font-medium">¥{{ Number(order.final_amount).toFixed(2) }}</span>
-              </td>
-              <td>
-                <span :class="['badge', statusBadgeClass[order.status] || 'badge-gray']">
-                  {{ statusLabel[order.status] || order.status }}
-                </span>
-              </td>
-              <td>
-                <span class="text-xs text-gray-500">{{ order.created_at ? new Date(order.created_at).toLocaleString() : '-' }}</span>
-              </td>
-              <td class="text-right">
-                <button
-                  v-if="order.status === 'pending'"
-                  class="btn btn-primary btn-sm"
-                  @click="handlePay(order)"
-                >
-                  支付
-                </button>
-                <button
-                  v-if="order.status === 'pending'"
-                  class="btn btn-ghost btn-sm text-red-500"
-                  @click="handleCancel(order)"
-                >
-                  取消
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchOrders" />
+    <div class="viewport-table-panel card p-0 overflow-hidden">
+      <n-data-table
+        remote
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :item-count="total"
+        :page-sizes="[10, 20, 50, 100]"
+        show-size-picker
+        :loading="loading"
+        :columns="columns"
+        :data="orders"
+        :row-key="(row: any) => row.id"
+        @update:page="fetchOrders"
+        @update:page-size="handlePageSizeChange"
+      >
+        <template #empty>
+          <div class="empty-state">
+            <Icon name="document" size="xl" class="empty-state-icon text-gray-300" />
+            <p class="empty-state-title">暂无订单</p>
+            <p class="empty-state-description">您的订单记录将显示在这里</p>
+          </div>
+        </template>
+      </n-data-table>
     </div>
   </div>
 </template>

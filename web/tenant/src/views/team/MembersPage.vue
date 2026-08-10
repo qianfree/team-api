@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NInput, NTag } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import Icon from '@/components/common/Icon.vue'
+import { renderBadge, BADGE_TYPE_MAP } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -208,6 +210,88 @@ function goDetail(memberId: number) {
 	router.push(`/tenant/members/${memberId}`)
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<Member>>(() => [
+	{
+		title: '用户',
+		key: 'user',
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-3' }, [
+				h(
+					'div',
+					{
+						class:
+							'h-9 w-9 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 bg-gradient-to-r from-primary-500 to-primary-600',
+					},
+					(row.username || '').charAt(0).toUpperCase()
+				),
+				h('div', {}, [
+					h('p', { class: 'text-sm font-medium text-gray-900' }, row.display_name || row.username),
+					h('p', { class: 'text-xs text-gray-500' }, row.email || '--'),
+				]),
+			]),
+	},
+	{
+		title: '角色',
+		key: 'role',
+		render: (row) => renderBadge(row.role, roleLabel, roleBadgeClass),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		render: (row) =>
+			h(
+				NTag,
+				{ size: 'small', type: BADGE_TYPE_MAP[statusBadgeClass[row.status] || 'badge-gray'] || 'default' },
+				{
+					icon: () =>
+						h('span', {
+							class: ['h-1.5 w-1.5 rounded-full', statusDotClass[row.status] || 'bg-gray-400'],
+						}),
+					default: () => statusLabel[row.status] || row.status,
+				}
+			),
+	},
+	{
+		title: '加入时间',
+		key: 'created_at',
+		render: (row) => row.created_at || '--',
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		align: 'right',
+		render: (row) =>
+			h(
+				NButton,
+				{
+					text: true,
+					type: 'primary',
+					size: 'small',
+					onClick: (e: MouseEvent) => {
+						e.stopPropagation()
+						goDetail(row.id)
+					},
+				},
+				{ default: () => '查看详情' }
+			),
+	},
+])
+
+// 整行点击跳详情
+function handleRowProps(row: Member) {
+	return {
+		style: 'cursor: pointer',
+		onClick: () => goDetail(row.id),
+	}
+}
+
+// pageSize 变化回第 1 页并刷新
+function handlePageSizeChange() {
+	page.value = 1
+	fetchMembers()
+}
+
 onMounted(() => {
 	fetchMembers()
 })
@@ -260,88 +344,29 @@ onMounted(() => {
 
 		<!-- Members Table -->
 		<div class="viewport-table-panel card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="members.length > 0" class="viewport-table-scroll table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>用户</th>
-							<th>角色</th>
-							<th>状态</th>
-							<th>加入时间</th>
-							<th class="text-right">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr
-							v-for="member in members"
-							:key="member.id"
-							class="cursor-pointer hover:bg-primary-50/50 transition-colors"
-							@click="goDetail(member.id)"
-						>
-							<!-- User -->
-							<td>
-								<div class="flex items-center gap-3">
-									<div
-										class="h-9 w-9 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 bg-gradient-to-r from-primary-500 to-primary-600"
-									>
-										{{ member.username.charAt(0).toUpperCase() }}
-									</div>
-									<div>
-										<p class="text-sm font-medium text-gray-900">{{ member.display_name || member.username }}</p>
-										<p class="text-xs text-gray-500">{{ member.email || '--' }}</p>
-									</div>
-								</div>
-							</td>
-
-							<!-- Role -->
-							<td>
-								<span class="badge" :class="roleBadgeClass[member.role]">
-									{{ roleLabel[member.role] || member.role }}
-								</span>
-							</td>
-
-							<!-- Status -->
-							<td>
-								<span class="badge" :class="statusBadgeClass[member.status] || 'badge-gray'">
-									<span class="h-1.5 w-1.5 rounded-full" :class="statusDotClass[member.status] || 'bg-gray-400'"></span>
-									{{ statusLabel[member.status] || member.status }}
-								</span>
-							</td>
-
-							<!-- Joined -->
-							<td class="text-gray-500">
-								{{ member.created_at || '--' }}
-							</td>
-
-							<!-- Actions -->
-							<td>
-								<div class="flex items-center justify-end">
-									<button
-										@click.stop="goDetail(member.id)"
-										class="btn btn-ghost btn-sm text-primary-600 hover:text-primary-700 hover:bg-primary-50"
-									>
-										查看详情
-										<Icon name="chevronRight" size="xs" />
-									</button>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<!-- Empty state -->
-			<div v-else class="empty-state">
-				<Icon name="users" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无成员</p>
-				<p class="empty-state-description">邀请第一位团队成员吧</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchMembers" />
+			<n-data-table
+				remote
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:data="members"
+				:row-key="(row: Member) => row.id"
+				:row-props="handleRowProps"
+				@update:page="fetchMembers"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="users" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无成员</p>
+						<p class="empty-state-description">邀请第一位团队成员吧</p>
+					</div>
+				</template>
+			</n-data-table>
 		</div>
 
 		<!-- Invite Modal -->
@@ -421,41 +446,38 @@ onMounted(() => {
 
 				<div>
 					<label class="input-label">用户名 <span class="text-red-500">*</span></label>
-					<input
-						v-model="createForm.username"
+					<n-input
+						v-model:value="createForm.username"
 						type="text"
 						placeholder="3-50 位字符"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">邮箱</label>
-					<input
-						v-model="createForm.email"
+					<n-input
+						v-model:value="createForm.email"
 						type="email"
 						placeholder="选填"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">密码 <span class="text-red-500">*</span></label>
-					<input
-						v-model="createForm.password"
+					<n-input
+						v-model:value="createForm.password"
 						type="password"
+						show-password-on="click"
 						placeholder="至少 8 位，含字母和数字"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">显示名称</label>
-					<input
-						v-model="createForm.display_name"
+					<n-input
+						v-model:value="createForm.display_name"
 						type="text"
 						placeholder="选填"
-						class="input"
 					/>
 				</div>
 

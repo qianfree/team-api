@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { NInput } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
@@ -90,7 +91,7 @@ async function synthesize() {
 					</div>
 					<div>
 						<label class="input-label">文本内容</label>
-						<textarea v-model="inputText" class="input" rows="4" placeholder="输入要合成的文本..." />
+						<n-input v-model:value="inputText" type="textarea" :rows="4" placeholder="输入要合成的文本..." />
 					</div>
 					<div>
 						<label class="input-label">语音</label>
