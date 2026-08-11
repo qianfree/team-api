@@ -9,7 +9,7 @@ import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import Icon from '@/components/common/Icon.vue'
-import { renderBadge, BADGE_TYPE_MAP, tableScrollX } from '@/utils/renderUtils'
+import { renderBadge, BADGE_TYPE_MAP, tableScrollX, formatMoney, formatDate } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -51,6 +51,17 @@ interface Member {
 	role: string
 	status: string
 	created_at: string
+	// 额度限制
+	quota_type: string
+	quota_limit: number
+	quota_period: string
+	// 可用模型数
+	model_count: number
+	model_unlimited: boolean
+	// 本月消费（USD）
+	month_cost: number
+	// 最后更新时间
+	updated_at: string
 }
 
 
@@ -238,6 +249,36 @@ function goDetail(memberId: number) {
 	router.push(`/tenant/members/${memberId}`)
 }
 
+const periodLabel: Record<string, string> = {
+	day: '按天',
+	week: '按周',
+	month: '按月',
+}
+
+// 额度限制列渲染：不限制 / 金额（周期性追加周期徽章）
+function renderQuota(row: Member) {
+	if (!row.quota_type || row.quota_type === 'none') {
+		return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '不限制' })
+	}
+	const children: ReturnType<typeof h>[] = [
+		h('span', { class: 'text-sm font-medium text-gray-900' }, formatMoney(row.quota_limit, { precision: 2 })),
+	]
+	if (row.quota_type === 'periodic' && row.quota_period) {
+		children.push(
+			h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => periodLabel[row.quota_period] || row.quota_period })
+		)
+	}
+	return h('div', { class: 'flex items-center gap-1.5' }, children)
+}
+
+// 可用模型数列渲染：不限 / 授权数量
+function renderModelCount(row: Member) {
+	if (row.model_unlimited) {
+		return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '不限' })
+	}
+	return h('span', { class: 'text-sm font-medium text-gray-900' }, String(row.model_count))
+}
+
 // NDataTable 列定义
 const columns = computed<DataTableColumns<Member>>(() => [
 	{
@@ -284,10 +325,34 @@ const columns = computed<DataTableColumns<Member>>(() => [
 			),
 	},
 	{
+		title: '额度限制',
+		key: 'quota_type',
+		width: 130,
+		render: (row) => renderQuota(row),
+	},
+	{
+		title: '可用模型',
+		key: 'model_count',
+		width: 100,
+		render: (row) => renderModelCount(row),
+	},
+	{
+		title: '本月消费',
+		key: 'month_cost',
+		width: 120,
+		render: (row) => h('span', { class: 'text-sm font-semibold text-primary-600' }, formatMoney(row.month_cost, { precision: 2 })),
+	},
+	{
 		title: '加入时间',
 		key: 'created_at',
 		width: 170,
 		render: (row) => row.created_at || '--',
+	},
+	{
+		title: '最后更新',
+		key: 'updated_at',
+		width: 170,
+		render: (row) => formatDate(row.updated_at),
 	},
 	{
 		title: '操作',

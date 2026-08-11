@@ -131,6 +131,52 @@ function formatDate(d: string | null | undefined): string {
 	return d.replace('T', ' ').substring(0, 16)
 }
 
+const statCards = computed(() => {
+	const u = usage.value
+	return [
+		{
+			label: '今日请求数',
+			icon: 'play',
+			color: '#06b6d4',
+			soft: '#cffafe',
+			value: u ? formatNumber(u.today_requests) : '--',
+			detail: u ? '次' : '',
+		},
+		{
+			label: '本月请求数',
+			icon: 'chart',
+			color: '#10b981',
+			soft: '#d1fae5',
+			value: u ? formatNumber(u.month_requests) : '--',
+			detail: u ? '次' : '',
+		},
+		{
+			label: '本月 Token 用量',
+			icon: 'clipboard',
+			color: '#f59e0b',
+			soft: '#fef3c7',
+			value: u ? formatNumber(u.month_input_tokens + u.month_output_tokens) : '--',
+			detail: u ? `输入 ${formatNumber(u.month_input_tokens)} · 输出 ${formatNumber(u.month_output_tokens)}` : '',
+		},
+		{
+			label: '本月消费',
+			icon: 'creditCard',
+			color: '#8b5cf6',
+			soft: '#ede9fe',
+			value: u ? `$${u.month_total_cost.toFixed(2)}` : '--',
+			detail: u ? 'USD' : '',
+		},
+		{
+			label: 'API Key 数量',
+			icon: 'key',
+			color: '#0ea5e9',
+			soft: '#e0f2fe',
+			value: String(apiKeyCount.value),
+			detail: '个',
+		},
+	]
+})
+
 async function fetchMemberDetail() {
 	loading.value = true
 	try {
@@ -471,51 +517,24 @@ onMounted(() => {
 
 			<!-- Stats Cards -->
 			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-				<div class="stat-card">
-					<div class="stat-icon stat-icon-primary">
-						<Icon name="play" size="lg" />
+				<article
+					v-for="card in statCards"
+					:key="card.label"
+					class="stat-card member-stat-card"
+					:style="{ '--stat-color': card.color, '--stat-soft': card.soft }"
+				>
+					<div class="member-stat-accent" aria-hidden="true"></div>
+					<div class="flex items-center justify-between gap-3">
+						<div class="member-stat-icon">
+							<Icon :name="card.icon" size="md" />
+						</div>
+						<p class="member-stat-value">{{ card.value }}</p>
 					</div>
-					<div>
-						<p class="stat-value">{{ usage ? formatNumber(usage.today_requests) : '--' }}</p>
-						<p class="stat-label">今日请求数</p>
+					<div class="mt-2.5 flex items-baseline justify-between gap-3">
+						<p class="flex-shrink-0 text-sm font-medium text-slate-600">{{ card.label }}</p>
+						<p v-if="card.detail" class="member-stat-unit" :title="card.detail">{{ card.detail }}</p>
 					</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon stat-icon-success">
-						<Icon name="chart" size="lg" />
-					</div>
-					<div>
-						<p class="stat-value">{{ usage ? formatNumber(usage.month_requests) : '--' }}</p>
-						<p class="stat-label">本月请求数</p>
-					</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon stat-icon-warning">
-						<Icon name="clipboard" size="lg" />
-					</div>
-					<div>
-						<p class="stat-value">{{ usage ? formatNumber(usage.month_input_tokens + usage.month_output_tokens) : '--' }}</p>
-						<p class="stat-label">本月 Token 用量</p>
-					</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon stat-icon-danger">
-						<Icon name="creditCard" size="lg" />
-					</div>
-					<div>
-						<p class="stat-value">{{ usage ? '$' + usage.month_total_cost.toFixed(2) : '--' }}</p>
-						<p class="stat-label">本月消费</p>
-					</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon stat-icon-primary">
-						<Icon name="key" size="lg" />
-					</div>
-					<div>
-						<p class="stat-value">{{ apiKeyCount }}</p>
-						<p class="stat-label">API Key 数量</p>
-					</div>
-				</div>
+				</article>
 			</div>
 
 			<!-- Info Grid -->
@@ -904,3 +923,67 @@ onMounted(() => {
 		</BaseModal>
 	</div>
 </template>
+
+<style scoped>
+/* ============ 成员统计卡片（对齐仪表盘 metric-card 风格） ============ */
+.member-stat-card {
+	min-height: 108px;
+	display: flex;
+	flex-direction: column;
+	padding: 1.125rem 1.25rem;
+	transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.member-stat-card:hover {
+	transform: translateY(-3px);
+	box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+}
+
+.member-stat-accent {
+	position: absolute;
+	top: 0;
+	right: 1.25rem;
+	left: 1.25rem;
+	height: 2px;
+	border-radius: 0 0 9999px 9999px;
+	background: linear-gradient(90deg, transparent, var(--stat-color), transparent);
+	opacity: 0.7;
+}
+
+.member-stat-icon {
+	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
+	background: var(--stat-soft);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	color: var(--stat-color);
+}
+
+.member-stat-value {
+	min-width: 0;
+	overflow: hidden;
+	color: #172033;
+	font-size: 1.75rem;
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	text-align: right;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.member-stat-unit {
+	min-width: 0;
+	overflow: hidden;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+	text-align: right;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+</style>

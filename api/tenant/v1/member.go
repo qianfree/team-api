@@ -27,6 +27,17 @@ type TenantMemberItem struct {
 	Status      string `json:"status"`
 	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
+	// 额度限制（直接取自 tnt_users，与详情页 MemberQuota 口径一致）
+	QuotaType   string  `json:"quota_type"`   // none / total / periodic
+	QuotaLimit  float64 `json:"quota_limit"`  // 额度上限 USD（none 时为 0）
+	QuotaPeriod string  `json:"quota_period"` // day / week / month（仅 periodic）
+	// 可用模型数（取自 tnt_member_model_scopes 聚合）
+	ModelCount     int  `json:"model_count"`     // 已授权模型数（model_id>0 的数量）
+	ModelUnlimited bool `json:"model_unlimited"` // true=不限制（无任何模型范围记录）
+	// 本月消费（取自 bil_usage_logs 当月 SUM(total_cost)，USD）
+	MonthCost float64 `json:"month_cost"`
+	// 最后更新时间（tnt_users.updated_at）
+	UpdatedAt string `json:"updated_at"`
 }
 
 // TenantMemberInviteReq 生成邀请链接请求
