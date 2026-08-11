@@ -22,6 +22,7 @@ defineProps<{
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 20px;
 }
 
@@ -42,5 +43,17 @@ defineProps<{
 .page-header__desc {
   font-size: 14px;
   color: var(--ta-text-tertiary);
+}
+
+/* 移动端：标题与操作区纵向堆叠，操作按钮自动换行，避免横向溢出 */
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-header__actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
 }
 </style>

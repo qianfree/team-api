@@ -617,7 +617,7 @@ function resetImport() {
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
-      <ASpace>
+      <ASpace wrap>
         <ASelect
           v-model="filterCategory"
           :options="categoryOptions"

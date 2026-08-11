@@ -500,7 +500,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
-      <ASpace>
+      <ASpace wrap>
         <AInputNumber v-model="filterID" placeholder="渠道 ID" :min="1" allow-clear style="width: 120px" @change="handleFilter" @clear="handleFilter" />
         <ASelect v-model="filterType" :options="[{ label: '全部类型', value: '' }, ...providerTypeOptions]" placeholder="供应商类型" allow-clear allow-search style="width: 180px" @change="handleFilter" />
         <AInput v-model="filterModel" placeholder="搜索模型名..." allow-clear style="width: 160px" @keydown.enter="handleFilter" @clear="handleFilter" />

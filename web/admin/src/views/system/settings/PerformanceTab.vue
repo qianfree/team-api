@@ -161,4 +161,19 @@ function set(key: string, v: number | undefined): void {
 .compact-row :deep(.arco-input-number) {
 	width: 160px;
 }
+
+/* 移动端：3 列分组降为单列，行内输入框收窄并允许换行，避免横向溢出 */
+@media (max-width: 768px) {
+	.perf-grid {
+		grid-template-columns: 1fr;
+		gap: 12px;
+	}
+	.compact-row {
+		flex-wrap: wrap;
+	}
+	.compact-row :deep(.arco-input-number) {
+		width: 140px;
+		max-width: 60%;
+	}
+}
 </style>

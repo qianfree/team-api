@@ -23,6 +23,14 @@
 	grid-column: 1 / -1;
 }
 
+/* 移动端：表单字段单列堆叠，避免双列在窄屏被挤压 */
+@media (max-width: 768px) {
+	.section-grid {
+		grid-template-columns: 1fr;
+		gap: 12px;
+	}
+}
+
 .switch-row {
 	display: flex;
 	align-items: center;

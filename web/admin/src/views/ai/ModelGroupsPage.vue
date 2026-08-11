@@ -245,6 +245,9 @@ onMounted(() => {
 <template>
   <div class="page-table">
     <PageHeader title="模型分组" description="通过分组批量管理租户可用的模型，新增模型加入分组后自动对组内租户生效">
+      <template #actions>
+        <AButton type="primary" @click="openCreate">创建分组</AButton>
+      </template>
     </PageHeader>
 
     <AAlert v-if="!loading && !hasDefaultGroup" type="warning" class="mb-4" closable>
@@ -252,23 +255,14 @@ onMounted(() => {
     </AAlert>
 
     <ACard :bordered="false" class="mb-4">
-      <ARow :gutter="16" align="center">
-        <ACol :span="8">
-          <AInput v-model="filterSearch" placeholder="搜索分组名称或标识" allow-clear @clear="resetFilter" @press-enter="() => { pagination.current = 1; fetchData() }" />
-        </ACol>
-        <ACol :span="4">
-          <ASelect v-model="filterStatus" placeholder="全部状态" allow-clear @change="() => { pagination.current = 1; fetchData() }">
-            <AOption value="active">启用</AOption>
-            <AOption value="disabled">禁用</AOption>
-          </ASelect>
-        </ACol>
-        <ACol :span="4">
-          <AButton @click="() => { pagination.current = 1; fetchData() }">查询</AButton>
-        </ACol>
-        <ACol :span="8" style="text-align: right">
-          <AButton type="primary" @click="openCreate">创建分组</AButton>
-        </ACol>
-      </ARow>
+      <ASpace wrap>
+        <AInput v-model="filterSearch" placeholder="搜索分组名称或标识" allow-clear style="width: 220px" @clear="resetFilter" @press-enter="() => { pagination.current = 1; fetchData() }" />
+        <ASelect v-model="filterStatus" placeholder="全部状态" allow-clear style="width: 140px" @change="() => { pagination.current = 1; fetchData() }">
+          <AOption value="active">启用</AOption>
+          <AOption value="disabled">禁用</AOption>
+        </ASelect>
+        <AButton @click="() => { pagination.current = 1; fetchData() }">查询</AButton>
+      </ASpace>
     </ACard>
 
     <ACard :bordered="false">
