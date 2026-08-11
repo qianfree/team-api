@@ -34,6 +34,8 @@ const filterFields: FilterField[] = [
 	},
 ]
 
+const showExportDropdown = ref(false)
+const showMoreMenu = ref(false)
 const { exporting, exportFile } = useExport({
 	url: '/tenant/members/export',
 	getFilters: () => ({
@@ -332,12 +334,13 @@ onMounted(() => {
 	<TeamLockedBanner v-if="!teamEnabled" />
 	<div v-else class="viewport-table-page space-y-6">
 		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
+		<div class="page-header flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div class="min-w-0">
 				<h1 class="page-title">成员管理</h1>
 				<p class="page-description">管理组织团队中的成员</p>
 			</div>
-			<div class="flex items-center gap-2">
+			<!-- 桌面端操作区 -->
+			<div class="hidden lg:flex flex-wrap items-center gap-2">
 				<router-link to="/tenant/members/invitations" class="btn btn-secondary">
 					<Icon name="document" size="sm" />
 					邀请记录
@@ -358,6 +361,51 @@ onMounted(() => {
 					<Icon name="userPlus" size="sm" />
 					邀请成员
 				</button>
+			</div>
+			<!-- 移动端操作区 -->
+			<div class="flex lg:hidden items-center gap-2">
+				<button class="btn btn-primary flex-1" @click="showInviteModal = true">
+					<Icon name="userPlus" size="sm" />
+					邀请成员
+				</button>
+				<div class="relative">
+					<button
+						class="btn btn-secondary"
+						aria-haspopup="true"
+						:aria-expanded="showMoreMenu"
+						@click="showMoreMenu = !showMoreMenu"
+					>
+						<Icon name="more" size="sm" />
+						更多
+					</button>
+					<div v-if="showMoreMenu" class="fixed inset-0 z-40" @click="showMoreMenu = false"></div>
+					<div v-if="showMoreMenu" class="dropdown right-0 mt-2 w-44">
+						<router-link to="/tenant/members/invitations" class="dropdown-item" @click="showMoreMenu = false">
+							<Icon name="document" size="sm" />
+							邀请记录
+						</router-link>
+						<div class="dropdown-item" @click="downloadTemplate(); showMoreMenu = false">
+							<Icon name="document" size="sm" />
+							导入模板
+						</div>
+						<div class="dropdown-item" @click="showImportModal = true; showMoreMenu = false">
+							<Icon name="plus" size="sm" />
+							批量导入
+						</div>
+						<div class="dropdown-item" @click="showCreateModal = true; showMoreMenu = false">
+							<Icon name="userPlus" size="sm" />
+							创建成员
+						</div>
+						<div class="dropdown-item" @click="exportFile('csv'); showMoreMenu = false">
+							<Icon name="download" size="sm" />
+							导出 CSV
+						</div>
+						<div class="dropdown-item" @click="exportFile('xlsx'); showMoreMenu = false">
+							<Icon name="download" size="sm" />
+							导出 Excel
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 

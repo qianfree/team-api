@@ -2,6 +2,7 @@
 import { ref, computed, h } from 'vue'
 import { NForm, NFormItem, NInput, NSelect, NDatePicker, NInputNumber, NButton, NDrawer, NDrawerContent } from 'naive-ui'
 import Icon from './Icon.vue'
+import MobileRangeFilter from './MobileRangeFilter.vue'
 
 // 表单字段配置类型
 export interface FilterField {
@@ -165,23 +166,41 @@ const renderField = (field: FilterField) => {
       })
 
     case 'daterange':
+      // 移动端抽屉：用快捷范围 + 原生输入替代日历面板（面板固定宽度，移动端会溢出屏幕）
+      if (useDrawer.value) {
+        return h(MobileRangeFilter, {
+          modelValue: modelValue.value[field.key],
+          'onUpdate:modelValue': (val: [number, number] | null) => { modelValue.value[field.key] = val },
+          type: 'daterange',
+          shortcuts: field.shortcuts || defaultShortcuts,
+        })
+      }
       return h(NDatePicker, {
         value: modelValue.value[field.key],
         'onUpdate:value': (val: [number, number] | null) => { modelValue.value[field.key] = val },
         type: 'daterange',
         placeholder: field.placeholder || '选择日期范围',
-        style: { width: useDrawer.value ? '100%' : (field.width || '280px') },
+        style: { width: field.width || '280px' },
         clearable: field.clearable !== false,
       })
 
     case 'datetimerange':
+      // 移动端抽屉：用快捷范围 + 原生输入替代日历面板（面板固定宽度，移动端会溢出屏幕）
+      if (useDrawer.value) {
+        return h(MobileRangeFilter, {
+          modelValue: modelValue.value[field.key],
+          'onUpdate:modelValue': (val: [number, number] | null) => { modelValue.value[field.key] = val },
+          type: 'datetimerange',
+          shortcuts: field.shortcuts || defaultShortcuts,
+        })
+      }
       return h(NDatePicker, {
         value: modelValue.value[field.key],
         'onUpdate:value': (val: [number, number] | null) => { modelValue.value[field.key] = val },
         type: 'datetimerange',
         shortcuts: field.shortcuts || defaultShortcuts,
         placeholder: field.placeholder || '选择时间范围',
-        style: { width: useDrawer.value ? '100%' : (field.width || '400px') },
+        style: { width: field.width || '400px' },
         clearable: field.clearable !== false,
         actions: ['clear', 'confirm'],
       })

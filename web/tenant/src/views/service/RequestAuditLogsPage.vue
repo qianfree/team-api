@@ -289,7 +289,7 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 	{
 		title: '操作',
 		key: 'actions',
-		width: 120,
+		width: 60,
 		fixed: 'right',
 		align: 'right',
 		render: (row) =>

@@ -485,7 +485,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '操作',
 		key: 'actions',
-		width: 120,
+		width: 60,
 		fixed: 'right',
 		align: 'right',
 		render: (row) =>
