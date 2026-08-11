@@ -1,27 +1,34 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NInput } from 'naive-ui'
+import { NButton } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BaseSelect from '../../components/common/BaseSelect.vue'
+import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
-import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
 function pad2(n: number): string {
 	return String(n).padStart(2, '0')
 }
 // 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
-function todayStart(): string {
+function todayStart(): number {
 	const d = new Date()
-	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`
+	d.setHours(0, 0, 0, 0)
+	return d.getTime()
 }
-function todayEnd(): string {
+function todayEnd(): number {
 	const d = new Date()
-	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
+	d.setHours(23, 59, 59, 999)
+	return d.getTime()
+}
+// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
+function tsToStr(ts: number): string {
+	const d = new Date(ts)
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 const loading = ref(false)
@@ -30,24 +37,79 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
-const filterUsername = ref('')
-const filterModel = ref('')
-const filterStatus = ref('')
-const filterRequestType = ref('')
-const filterStartDate = ref(todayStart())
-const filterEndDate = ref(todayEnd())
+// 查询表单数据
+const filters = ref({
+	dateTimeRange: [todayStart(), todayEnd()] as [number, number] | null,
+	username: '',
+	model: '',
+	status: '',
+	requestType: '',
+})
 
-const showExportDropdown = ref(false)
+// 查询表单字段配置
+const filterFields: FilterField[] = [
+	{
+		type: 'datetimerange',
+		key: 'dateTimeRange',
+		label: '时间范围',
+		width: '400px',
+	},
+	{
+		type: 'input',
+		key: 'username',
+		label: '用户名',
+		placeholder: '搜索用户',
+		width: '120px',
+	},
+	{
+		type: 'input',
+		key: 'model',
+		label: '模型名称',
+		placeholder: '例如：gpt-4o',
+		width: '160px',
+	},
+	{
+		type: 'select',
+		key: 'status',
+		label: '状态',
+		width: '100px',
+		options: [
+			{ value: '', label: '全部' },
+			{ value: 'success', label: '成功' },
+			{ value: 'error', label: '失败' },
+			{ value: 'interrupted', label: '中断' },
+			{ value: 'timeout', label: '超时' },
+		],
+	},
+	{
+		type: 'select',
+		key: 'requestType',
+		label: '请求类型',
+		width: '100px',
+		options: [
+			{ value: '', label: '全部' },
+			{ value: '1', label: '同步' },
+			{ value: '2', label: '流式' },
+			{ value: '3', label: '异步' },
+		],
+	},
+]
+
 const { exporting, exportFile } = useExport({
 	url: '/tenant/usage-logs/export',
-	getFilters: () => ({
-		username: filterUsername.value,
-		model: filterModel.value,
-		status: filterStatus.value,
-		request_type: filterRequestType.value,
-		start_date: filterStartDate.value,
-		end_date: filterEndDate.value,
-	}),
+	getFilters: () => {
+		const params: any = {
+			username: filters.value.username,
+			model: filters.value.model,
+			status: filters.value.status,
+			request_type: filters.value.requestType,
+		}
+		if (filters.value.dateTimeRange) {
+			params.start_date = tsToStr(filters.value.dateTimeRange[0])
+			params.end_date = tsToStr(filters.value.dateTimeRange[1])
+		}
+		return params
+	},
 })
 
 // 详情弹窗
@@ -120,12 +182,14 @@ async function fetchLogs() {
 	loading.value = true
 	try {
 		const params: any = { page: page.value, page_size: pageSize.value }
-		if (filterUsername.value) params.username = filterUsername.value
-		if (filterModel.value) params.model = filterModel.value
-		if (filterStatus.value) params.status = filterStatus.value
-		if (filterRequestType.value) params.request_type = filterRequestType.value
-		if (filterStartDate.value) params.start_date = filterStartDate.value
-		if (filterEndDate.value) params.end_date = filterEndDate.value
+		if (filters.value.username) params.username = filters.value.username
+		if (filters.value.model) params.model = filters.value.model
+		if (filters.value.status) params.status = filters.value.status
+		if (filters.value.requestType) params.request_type = filters.value.requestType
+		if (filters.value.dateTimeRange) {
+			params.start_date = tsToStr(filters.value.dateTimeRange[0])
+			params.end_date = tsToStr(filters.value.dateTimeRange[1])
+		}
 
 		const res: any = await request.get('/tenant/usage-logs', { params })
 		const raw = res.data?.data
@@ -144,12 +208,13 @@ function applyFilters() {
 }
 
 function resetFilters() {
-	filterUsername.value = ''
-	filterModel.value = ''
-	filterStatus.value = ''
-	filterRequestType.value = ''
-	filterStartDate.value = todayStart()
-	filterEndDate.value = todayEnd()
+	filters.value = {
+		dateTimeRange: [todayStart(), todayEnd()],
+		username: '',
+		model: '',
+		status: '',
+		requestType: '',
+	}
 	page.value = 1
 	fetchLogs()
 }
@@ -431,54 +496,17 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="relative z-20 overflow-visible card">
-			<div class="card-body !p-4">
-				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-						<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
-							<n-input v-model:value="filterUsername" placeholder="搜索用户" style="width:120px" @keyup.enter="applyFilters" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">模型名称</label>
-							<n-input v-model:value="filterModel" placeholder="例如：gpt-4o" style="width:160px" @keyup.enter="applyFilters" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
-							<BaseSelect v-model="filterStatus" :options="[{value:'',label:'全部'},{value:'success',label:'成功'},{value:'error',label:'失败'},{value:'interrupted',label:'中断'},{value:'timeout',label:'超时'}]" container-class="w-[100px]" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
-							<BaseSelect v-model="filterRequestType" :options="[{value:'',label:'全部'},{value:'1',label:'同步'},{value:'2',label:'流式'},{value:'3',label:'异步'}]" container-class="w-[100px]" />
-						</div>
-						<div class="ml-auto flex items-center gap-2">
-							<button type="submit" class="btn btn-primary btn-sm">
-								<Icon name="search" size="sm" />
-								搜索
-							</button>
-							<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
-							<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-							<div class="relative">
-								<button
-									type="button"
-									class="btn btn-secondary btn-sm"
-									:disabled="exporting"
-									@click="showExportDropdown = !showExportDropdown"
-								>
-									<span v-if="exporting" class="spinner h-4 w-4"></span>
-									<Icon v-else name="download" size="sm" />
-									导出
-									<Icon name="chevronDown" size="xs" />
-								</button>
-								<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
-									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
-								</div>
-							</div>
-						</div>
-					</form>
-			</div>
-		</div>
+		<TableFilterForm
+			v-model="filters"
+			:fields="filterFields"
+			:loading="loading"
+			:show-export="true"
+			:exporting="exporting"
+			@search="applyFilters"
+			@reset="resetFilters"
+			@export="exportFile"
+		/>
+
 		<!-- Logs Table -->
 		<div class="viewport-table-panel relative z-0 overflow-hidden">
 			<n-data-table
