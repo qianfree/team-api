@@ -228,7 +228,7 @@ onMounted(fetchTransactions)
 		</div>
 
 		<!-- Transactions -->
-		<div class="viewport-table-panel relative z-0 card">
+		<div class="viewport-table-panel relative z-0">
 			<n-data-table
 				remote
 				v-model:page="page"
