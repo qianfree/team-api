@@ -338,6 +338,24 @@ body {
   border-radius: 8px;
 }
 
+/* 移动端：Arco RangePicker 弹层双日历纵向堆叠，避免横向超出屏幕。
+   弹层 teleport 到 body，scoped / :deep 均无法触达，必须用全局样式。
+   .arco-picker-range-wrapper(display:flex) 默认横向并排两个 DatePanel，
+   强制换行 + 每个面板各占满宽，即可在窄屏纵向堆叠成单列。 */
+@media (max-width: 768px) {
+  .arco-picker-range-wrapper {
+    flex-wrap: wrap;
+  }
+  .arco-picker-range-wrapper > * {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+  /* 选择器输入框移动端撑满，避免固定宽度（如 340px）在小屏横向溢出 */
+  .arco-picker {
+    width: 100% !important;
+  }
+}
+
 /* ===== Table Page Layout (内部滚动 + 左上统计 + 右下分页) ===== */
 
 /* 页面根：纵向 flex 撑满可用高度，自身不滚动 */

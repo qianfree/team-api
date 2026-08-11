@@ -149,4 +149,41 @@ onMounted(() => {
 	gap: 8px;
 	margin-top: 16px;
 }
+
+/* 移动端：左侧分类菜单转为顶部横向滚动条，内容区下沉为单列，避免 200px 固定侧栏挤压内容 */
+@media (max-width: 768px) {
+	.settings-layout {
+		flex-direction: column;
+		gap: 12px;
+	}
+	.settings-sidebar {
+		width: 100%;
+		position: sticky;
+		top: 0;
+		z-index: 5;
+	}
+	.settings-sidebar :deep(.arco-menu-inner) {
+		display: flex;
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		padding: 4px;
+		/* 隐藏横向滚动条，保留可滑动 */
+		scrollbar-width: none;
+	}
+	.settings-sidebar :deep(.arco-menu-inner)::-webkit-scrollbar {
+		display: none;
+	}
+	.settings-sidebar :deep(.arco-menu-item) {
+		flex-shrink: 0;
+		white-space: nowrap;
+		margin: 0 2px;
+	}
+	.settings-footer {
+		/* 底部按钮在移动端填满整行，便于拇指触达 */
+		justify-content: flex-start;
+	}
+	.settings-footer :deep(.arco-btn) {
+		flex: 1;
+	}
+}
 </style>
