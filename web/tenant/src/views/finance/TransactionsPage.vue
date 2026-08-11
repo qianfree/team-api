@@ -3,7 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -263,6 +263,7 @@ onMounted(fetchTransactions)
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="transactions"
 				:row-key="(row: any) => row.id"
 				@update:page="fetchTransactions"

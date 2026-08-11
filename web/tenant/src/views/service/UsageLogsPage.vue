@@ -7,6 +7,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
@@ -305,6 +306,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '用户/项目',
 		key: 'user',
+		width: 160,
 		render: (row) =>
 			row.project_name
 				? h('span', { class: 'text-sm text-primary-600 font-medium' }, row.project_name)
@@ -313,11 +315,13 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: 'API Key',
 		key: 'api_key',
+		width: 160,
 		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.api_key_name || row.api_key_id || '-'),
 	},
 	{
 		title: '模型',
 		key: 'model',
+		width: 170,
 		render: (row) =>
 			hasUpstreamModel(row)
 				? h('div', { class: 'space-y-0.5' }, [
@@ -329,6 +333,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '类型',
 		key: 'type',
+		width: 120,
 		render: (row) => {
 			const children: any[] = [
 				h(
@@ -362,6 +367,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: 'Token',
 		key: 'token',
+		width: 280,
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-1.5' }, [
 				h('div', { class: 'flex items-center gap-2' }, [
@@ -403,6 +409,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '费用',
 		key: 'cost',
+		width: 120,
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-1.5' }, [
 				h('span', { class: 'font-medium text-emerald-600' }, formatCost(row.actual_cost || row.total_cost)),
@@ -427,6 +434,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '用时',
 		key: 'latency',
+		width: 110,
 		render: (row) => {
 			const children: any[] = [h('div', { class: 'text-sm text-gray-600' }, formatMs(row.latency_ms))]
 			if (row.first_token_ms > 0) {
@@ -438,6 +446,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '状态',
 		key: 'status',
+		width: 100,
 		render: (row) => {
 			const children: any[] = [
 				h(
@@ -469,12 +478,14 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '时间',
 		key: 'created_at',
+		width: 170,
 		render: (row) =>
 			h('span', { class: 'text-sm text-gray-600 whitespace-nowrap' }, formatTime(row.created_at)),
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		fixed: 'right',
 		align: 'right',
 		render: (row) =>
@@ -518,6 +529,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="logs"
 				:row-key="(row: any) => row.id"
 				@update:page="fetchLogs"

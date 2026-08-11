@@ -5,7 +5,7 @@ import { NInput } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -283,6 +283,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="tickets"
 				:row-key="(row: Ticket) => row.id"
 				:row-props="handleRowProps"

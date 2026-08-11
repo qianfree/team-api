@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton, NTag } from 'naive-ui'
-import { renderBadge, formatDate, formatTokens, formatMs } from '@/utils/renderUtils'
+import { renderBadge, formatDate, formatTokens, formatMs, tableScrollX } from '@/utils/renderUtils'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
@@ -304,16 +304,19 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 	{
 		title: '名称',
 		key: 'name',
+		width: 140,
 		render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name),
 	},
 	{
 		title: 'Key 前缀',
 		key: 'key_prefix',
+		width: 170,
 		render: (row) => h('span', { class: 'code' }, `${row.key_prefix}...`),
 	},
 	{
 		title: '权限',
 		key: 'scope',
+		width: 160,
 		render: (row) =>
 			row.model_count > 0
 				? h(
@@ -326,6 +329,7 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 	{
 		title: '限制',
 		key: 'limit',
+		width: 140,
 		render: (row) =>
 			h('div', { class: 'space-y-1 text-xs text-gray-500' }, [
 				h('div', {}, `QPS：${formatKeyLimit(row.rate_limit_qps)}`),
@@ -337,11 +341,13 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 	{
 		title: '状态',
 		key: 'status',
+		width: 90,
 		render: (row) => renderBadge(row.status, keyStatusLabel, keyStatusBadgeClass),
 	},
 	{
 		title: '过期时间',
 		key: 'expires_at',
+		width: 160,
 		render: (row) =>
 			h(
 				'span',
@@ -352,11 +358,13 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 	{
 		title: '创建时间',
 		key: 'created_at',
+		width: 160,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatDate(row.created_at)),
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		align: 'right',
 		render: (row) => {
 			if (row.status === 'active') {
@@ -383,36 +391,43 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '模型',
 		key: 'model_name',
+		width: 160,
 		render: (row) => h('span', { class: 'code text-xs' }, row.model_name),
 	},
 	{
 		title: '类型',
 		key: 'relay_mode',
+		width: 120,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, relayModeLabel[row.relay_mode] || row.relay_mode),
 	},
 	{
 		title: '输入',
 		key: 'input_tokens',
+		width: 120,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTokens(row.input_tokens || 0)),
 	},
 	{
 		title: '输出',
 		key: 'output_tokens',
+		width: 120,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTokens(row.output_tokens || 0)),
 	},
 	{
 		title: '费用',
 		key: 'total_cost',
+		width: 120,
 		render: (row) => h('span', { class: 'text-xs font-medium' }, formatCost(row.total_cost || 0)),
 	},
 	{
 		title: '延迟',
 		key: 'latency_ms',
+		width: 110,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatMs(row.latency_ms)),
 	},
 	{
 		title: '状态',
 		key: 'status',
+		width: 100,
 		render: (row) =>
 			h(
 				NTag,
@@ -423,6 +438,7 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '时间',
 		key: 'created_at',
+		width: 170,
 		render: (row) => h('span', { class: 'text-xs text-gray-400' }, formatDate(row.created_at)),
 	},
 ])
@@ -549,6 +565,7 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 						show-size-picker
 						:loading="keysLoading"
 						:columns="keysColumns"
+						:scroll-x="tableScrollX(keysColumns)"
 						:data="keys"
 						:row-key="(row: ApiKey) => row.id"
 						@update:page="fetchKeys"
@@ -626,6 +643,7 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 							show-size-picker
 							:loading="usageLogsLoading"
 							:columns="usageLogsColumns"
+							:scroll-x="tableScrollX(usageLogsColumns)"
 							:data="usageLogs"
 							:row-key="(row: any) => row.id"
 							@update:page="fetchUsageLogs"

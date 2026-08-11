@@ -6,7 +6,7 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -326,6 +326,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="keys"
 				:row-key="(row: ApiKey) => row.id"
 				@update:page="fetchKeys"

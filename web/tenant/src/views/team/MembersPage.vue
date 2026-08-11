@@ -9,7 +9,7 @@ import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import Icon from '@/components/common/Icon.vue'
-import { renderBadge, BADGE_TYPE_MAP } from '@/utils/renderUtils'
+import { renderBadge, BADGE_TYPE_MAP, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -241,6 +241,7 @@ const columns = computed<DataTableColumns<Member>>(() => [
 	{
 		title: '用户',
 		key: 'user',
+		width: 200,
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-3' }, [
 				h(
@@ -260,11 +261,13 @@ const columns = computed<DataTableColumns<Member>>(() => [
 	{
 		title: '角色',
 		key: 'role',
+		width: 110,
 		render: (row) => renderBadge(row.role, roleLabel, roleBadgeClass),
 	},
 	{
 		title: '状态',
 		key: 'status',
+		width: 110,
 		render: (row) =>
 			h(
 				NTag,
@@ -281,11 +284,13 @@ const columns = computed<DataTableColumns<Member>>(() => [
 	{
 		title: '加入时间',
 		key: 'created_at',
+		width: 170,
 		render: (row) => row.created_at || '--',
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		align: 'right',
 		render: (row) =>
 			h(
@@ -379,6 +384,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="members"
 				:row-key="(row: Member) => row.id"
 				:row-props="handleRowProps"

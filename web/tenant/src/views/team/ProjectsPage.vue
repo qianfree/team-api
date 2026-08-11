@@ -5,7 +5,7 @@ import { NButton, NInput, NInputNumber } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -107,32 +107,37 @@ function goToDetail(item: any) {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<any>>(() => [
-	{ title: '项目名称', key: 'name', render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name) },
+	{ title: '项目名称', key: 'name', width: 160, render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name) },
 	{
 		title: '描述',
 		key: 'description',
+		width: 240,
 		render: (row) =>
 			h('span', { class: 'text-gray-500 max-w-[200px] truncate block' }, row.description || '-'),
 	},
 	{
 		title: '状态',
 		key: 'status',
+		width: 100,
 		render: (row) => renderBadge(row.status, statusLabels, statusBadgeClasses),
 	},
 	{
 		title: '预算上限',
 		key: 'budget',
+		width: 140,
 		render: (row) =>
 			h('span', { class: 'font-mono' }, row.budget ? `$${Number(row.budget).toFixed(2)}` : '不限'),
 	},
 	{
 		title: '创建时间',
 		key: 'created_at',
+		width: 170,
 		render: (row) => h('span', { class: 'text-xs text-gray-400' }, row.created_at?.substring(0, 16)),
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		align: 'right',
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-1 justify-end' }, [
@@ -202,6 +207,7 @@ function handlePageSizeChange() {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="projects"
 				:row-key="(row: any) => row.id"
 				:row-props="handleRowProps"
