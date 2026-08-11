@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NInput, NTag } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
+import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import Icon from '@/components/common/Icon.vue'
 import { renderBadge, BADGE_TYPE_MAP } from '@/utils/renderUtils'
 import request from '@/utils/request'
@@ -17,11 +18,26 @@ const router = useRouter()
 const authStore = useTenantAuthStore()
 const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
 
-const showExportDropdown = ref(false)
+// 查询表单数据
+const filters = ref({
+	keyword: '',
+})
+
+// 查询表单字段配置
+const filterFields: FilterField[] = [
+	{
+		type: 'input',
+		key: 'keyword',
+		label: '关键词',
+		placeholder: '搜索用户名/邮箱/显示名',
+		width: '240px',
+	},
+]
+
 const { exporting, exportFile } = useExport({
 	url: '/tenant/members/export',
 	getFilters: () => ({
-		keyword: keyword.value,
+		keyword: filters.value.keyword,
 	}),
 })
 
@@ -41,7 +57,6 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const keyword = ref('')
 
 const showInviteModal = ref(false)
 const inviteForm = reactive({
@@ -97,7 +112,7 @@ async function fetchMembers() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/members', {
-			params: { page: page.value, page_size: pageSize.value, keyword: keyword.value },
+			params: { page: page.value, page_size: pageSize.value, keyword: filters.value.keyword },
 		})
 		const raw = res.data?.data; members.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
 		total.value = raw?.total || 0
@@ -106,6 +121,17 @@ async function fetchMembers() {
 	} finally {
 		loading.value = false
 	}
+}
+
+function applyFilters() {
+	page.value = 1
+	fetchMembers()
+}
+
+function resetFilters() {
+	filters.value.keyword = ''
+	page.value = 1
+	fetchMembers()
 }
 
 async function generateInviteLink() {
@@ -327,20 +353,20 @@ onMounted(() => {
 					<Icon name="userPlus" size="sm" />
 					邀请成员
 				</button>
-				<!-- Export dropdown -->
-				<div class="relative inline-block">
-					<button class="btn btn-secondary" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-						<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-						<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-						导出
-					</button>
-					<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
-					</div>
-				</div>
 			</div>
 		</div>
+
+		<!-- Search & Export -->
+		<TableFilterForm
+			v-model="filters"
+			:fields="filterFields"
+			:loading="loading"
+			:show-export="true"
+			:exporting="exporting"
+			@search="applyFilters"
+			@reset="resetFilters"
+			@export="exportFile"
+		/>
 
 		<!-- Members Table -->
 		<div class="viewport-table-panel">
