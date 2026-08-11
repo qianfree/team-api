@@ -3,7 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import { renderBadge, formatMoney } from '@/utils/renderUtils'
+import { renderBadge, formatMoney, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -95,18 +95,40 @@ async function handleCancel(order: any) {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<any>>(() => [
-  { title: '订单号', key: 'order_no', render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.order_no) },
-  { title: '类型', key: 'order_type', render: (row) => h('span', { class: 'font-medium text-gray-900' }, orderTypeLabel[row.order_type] || row.order_type) },
-  { title: '金额', key: 'final_amount', render: (row) => h('span', { class: 'font-medium' }, formatMoney(row.final_amount, { currency: 'CNY', precision: 2 })) },
-  { title: '状态', key: 'status', render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
+  {
+    title: '订单号',
+    key: 'order_no',
+    width: 180,
+    render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.order_no),
+  },
+  {
+    title: '类型',
+    key: 'order_type',
+    width: 110,
+    render: (row) => h('span', { class: 'font-medium text-gray-900' }, orderTypeLabel[row.order_type] || row.order_type),
+  },
+  {
+    title: '金额',
+    key: 'final_amount',
+    width: 130,
+    render: (row) => h('span', { class: 'font-medium' }, formatMoney(row.final_amount, { currency: 'CNY', precision: 2 })),
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 110,
+    render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass),
+  },
   {
     title: '创建时间',
     key: 'created_at',
+    width: 170,
     render: (row) => h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
   },
   {
     title: '操作',
     key: 'actions',
+    width: 120,
     align: 'right',
     render: (row) =>
       h('div', { class: 'flex items-center justify-end gap-2' }, [
@@ -177,6 +199,7 @@ onMounted(() => {
         show-size-picker
         :loading="loading"
         :columns="columns"
+        :scroll-x="tableScrollX(columns)"
         :data="orders"
         :row-key="(row: any) => row.id"
         @update:page="fetchOrders"

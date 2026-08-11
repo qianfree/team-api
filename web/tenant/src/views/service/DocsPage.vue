@@ -2,7 +2,7 @@
 import { ref, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NTag } from 'naive-ui'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 
@@ -1107,11 +1107,13 @@ const paramColumns = computed<DataTableColumns<Param>>(() => [
 	{
 		title: '字段',
 		key: 'field',
+		width: 140,
 		render: (row) => h('code', { class: 'font-mono text-primary-600 text-xs' }, row.field),
 	},
 	{
 		title: '类型',
 		key: 'type',
+		width: 110,
 		render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.type),
 	},
 	{
@@ -1128,6 +1130,7 @@ const paramColumns = computed<DataTableColumns<Param>>(() => [
 	{
 		title: '说明',
 		key: 'desc',
+		width: 300,
 		render: (row) => h('span', { class: 'text-gray-600 text-sm' }, row.desc),
 	},
 ])
@@ -1150,11 +1153,13 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '说明',
 		key: 'desc',
+		width: 240,
 		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.desc),
 	},
 	{
 		title: '示例消息',
 		key: 'example',
+		width: 240,
 		render: (row) => h('span', { class: 'text-xs text-gray-400 font-mono' }, row.example),
 	},
 ])
@@ -1328,7 +1333,12 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 								<!-- Parameters Table -->
 								<div v-if="ep.params.length > 0">
 									<h5 class="text-sm font-semibold text-gray-800 mb-2">请求参数</h5>
-									<n-data-table :columns="paramColumns" :data="ep.params" :row-key="(row:any)=>row.field" />
+									<n-data-table
+										:columns="paramColumns"
+										:scroll-x="tableScrollX(paramColumns)"
+										:data="ep.params"
+										:row-key="(row:any)=>row.field"
+									/>
 								</div>
 
 								<!-- Request/Response Examples -->
@@ -1449,7 +1459,12 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 						<h3 class="font-semibold text-gray-900">错误码一览</h3>
 					</div>
 					<div class="card-body !pt-0">
-						<n-data-table :columns="errorColumns" :data="errorCodes" :row-key="(row:any)=>row.code" />
+						<n-data-table
+							:columns="errorColumns"
+							:scroll-x="tableScrollX(errorColumns)"
+							:data="errorCodes"
+							:row-key="(row:any)=>row.code"
+						/>
 					</div>
 				</div>
 			</div>

@@ -5,6 +5,7 @@ import { NButton, NInput } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
@@ -193,11 +194,13 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 	{
 		title: 'Request ID',
 		key: 'request_id',
+		width: 180,
 		render: (row) => h('span', { class: 'font-mono text-xs text-gray-500' }, row.request_id),
 	},
 	{
 		title: '用户/项目',
 		key: 'user',
+		width: 130,
 		render: (row) =>
 			row.project_name
 				? h('span', { class: 'text-sm text-primary-600 font-medium' }, row.project_name)
@@ -206,31 +209,37 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 	{
 		title: '方法',
 		key: 'method',
+		width: 90,
 		render: (row) => h('span', { class: 'badge badge-gray text-xs' }, row.method),
 	},
 	{
 		title: '路径',
 		key: 'path',
+		width: 240,
 		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.path),
 	},
 	{
 		title: '状态码',
 		key: 'status_code',
+		width: 110,
 		render: (row) => h('span', { class: ['badge text-xs', statusBadgeClass(row.status_code)] }, String(row.status_code)),
 	},
 	{
 		title: '客户端',
 		key: 'user_agent',
+		width: 220,
 		render: (row) => h('span', { class: 'text-xs text-gray-500', title: row.user_agent }, parseUA(row.user_agent)),
 	},
 	{
 		title: '延迟',
 		key: 'latency_ms',
+		width: 110,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatMs(row.latency_ms)),
 	},
 	{
 		title: '首Token',
 		key: 'first_token_ms',
+		width: 120,
 		render: (row) =>
 			row.first_token_ms
 				? h(
@@ -252,11 +261,13 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 	{
 		title: '审计级别',
 		key: 'audit_level',
+		width: 110,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, auditLevelLabel[row.audit_level] || row.audit_level),
 	},
 	{
 		title: '任务',
 		key: 'task_id',
+		width: 150,
 		render: (row) =>
 			row.task_id
 				? h(
@@ -271,12 +282,14 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 	{
 		title: '时间',
 		key: 'created_at',
+		width: 170,
 		render: (row) =>
 			h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		fixed: 'right',
 		align: 'right',
 		render: (row) =>
@@ -354,6 +367,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="logsLoading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="logs"
 				:row-key="(row: RequestLog) => row.id"
 				@update:page="fetchRequestLogs"

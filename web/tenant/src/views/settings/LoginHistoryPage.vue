@@ -4,7 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 
 const list = ref<any[]>([])
@@ -79,33 +79,56 @@ const methodLabel: Record<string, string> = {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<any>>(() => [
-	{ title: '时间', key: 'created_at', render: (row) => h('span', { class: 'whitespace-nowrap' }, row.created_at) },
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => h('span', { class: 'whitespace-nowrap' }, row.created_at),
+	},
 	{
 		title: '用户',
 		key: 'user',
+		width: 140,
 		render: (row) =>
 			h('div', {}, [
 				row.display_name || row.username || '-',
 				row.display_name && row.username ? h('div', { class: 'text-xs text-gray-400' }, row.username) : null,
 			]),
 	},
-	{ title: '登录方式', key: 'login_method', render: (row) => renderBadge(row.login_method, methodLabel, methodBadge) },
-	{ title: 'IP 地址', key: 'ip_address', render: (row) => h('span', { class: 'font-mono text-sm' }, row.ip_address) },
+	{
+		title: '登录方式',
+		key: 'login_method',
+		width: 120,
+		render: (row) => renderBadge(row.login_method, methodLabel, methodBadge),
+	},
+	{
+		title: 'IP 地址',
+		key: 'ip_address',
+		width: 150,
+		render: (row) => h('span', { class: 'font-mono text-sm' }, row.ip_address),
+	},
 	{
 		title: '设备',
 		key: 'user_agent',
+		width: 240,
 		render: (row) =>
 			h('span', { class: 'max-w-[200px] truncate block text-gray-500', title: row.user_agent }, row.user_agent),
 	},
 	{
 		title: '状态',
 		key: 'success',
+		width: 100,
 		render: (row) =>
 			row.success
 				? renderBadge('ok', { ok: '成功' }, { ok: 'badge-success' })
 				: renderBadge('fail', { fail: '失败' }, { fail: 'badge-danger' }),
 	},
-	{ title: '失败原因', key: 'fail_reason', render: (row) => h('span', { class: 'text-gray-500' }, row.fail_reason || '-') },
+	{
+		title: '失败原因',
+		key: 'fail_reason',
+		width: 180,
+		render: (row) => h('span', { class: 'text-gray-500' }, row.fail_reason || '-'),
+	},
 ])
 
 function handlePageSizeChange() {
@@ -183,6 +206,7 @@ function handlePageSizeChange() {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="list"
 				:row-key="(row: any) => row.id"
 				@update:page="fetchData"

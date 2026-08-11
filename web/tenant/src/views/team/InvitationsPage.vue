@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import Icon from '@/components/common/Icon.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 
@@ -94,20 +94,22 @@ async function revokeInvitation(id: number) {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<InvitationItem>>(() => [
-	{ title: '邀请码', key: 'code', render: (row) => h('span', { class: 'font-mono text-xs' }, row.code) },
-	{ title: '角色', key: 'role', render: (row) => renderBadge(row.role, roleLabel, roleBadgeClass) },
-	{ title: '状态', key: 'status', render: (row) => renderBadge(row.status, statusLabelMap, statusBadgeMap) },
+	{ title: '邀请码', key: 'code', width: 160, render: (row) => h('span', { class: 'font-mono text-xs' }, row.code) },
+	{ title: '角色', key: 'role', width: 110, render: (row) => renderBadge(row.role, roleLabel, roleBadgeClass) },
+	{ title: '状态', key: 'status', width: 110, render: (row) => renderBadge(row.status, statusLabelMap, statusBadgeMap) },
 	{
 		title: '已使用',
 		key: 'use_count',
+		width: 100,
 		render: (row) => h('span', { class: 'text-gray-600 text-sm' }, `${row.use_count} / ${row.max_uses === 0 ? '∞' : row.max_uses}`),
 	},
-	{ title: '创建者', key: 'creator_name', render: (row) => h('span', { class: 'text-gray-500' }, row.creator_name || '--') },
-	{ title: '过期时间', key: 'expires_at', render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.expires_at || '永不过期') },
-	{ title: '创建时间', key: 'created_at', render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.created_at) },
+	{ title: '创建者', key: 'creator_name', width: 130, render: (row) => h('span', { class: 'text-gray-500' }, row.creator_name || '--') },
+	{ title: '过期时间', key: 'expires_at', width: 170, render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.expires_at || '永不过期') },
+	{ title: '创建时间', key: 'created_at', width: 170, render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.created_at) },
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		align: 'right',
 		render: (row) =>
 			h('div', { class: 'flex items-center justify-end gap-1' }, [
@@ -170,6 +172,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="invitations"
 				:row-key="(row: InvitationItem) => row.id"
 				@update:page="fetchInvitations"

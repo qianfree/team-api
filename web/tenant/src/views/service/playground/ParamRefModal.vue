@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
 
@@ -167,6 +167,7 @@ const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
 	{
 		title: '可选值',
 		key: 'values',
+		width: 140,
 		render: (row) => {
 			if (!row.values?.length) return h('span', { class: 'text-xs text-gray-400' }, '—')
 			return h(
@@ -179,6 +180,7 @@ const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
 	{
 		title: '说明',
 		key: 'description',
+		width: 240,
 		render: (row) => h('span', { class: 'text-xs text-gray-600' }, row.description),
 	},
 ])
@@ -201,7 +203,12 @@ const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
 
 		<!-- 参数表格 -->
 		<div v-if="currentGroup">
-			<n-data-table :columns="paramTableColumns" :data="currentGroup.params" :row-key="(row:any)=>row.name" />
+			<n-data-table
+				:columns="paramTableColumns"
+				:scroll-x="tableScrollX(paramTableColumns)"
+				:data="currentGroup.params"
+				:row-key="(row:any)=>row.name"
+			/>
 		</div>
 
 		<!-- 官方文档链接 -->

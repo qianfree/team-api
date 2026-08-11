@@ -7,6 +7,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
@@ -186,27 +187,32 @@ const columns = computed<DataTableColumns<TaskItem>>(() => [
 	{
 		title: '任务 ID',
 		key: 'public_task_id',
+		width: 160,
 		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.public_task_id),
 	},
 	{
 		title: '平台',
 		key: 'platform',
+		width: 110,
 		render: (row) => h('span', { class: 'text-sm font-medium text-gray-700' }, platformLabel[row.platform] || row.platform),
 	},
 	{
 		title: '状态',
 		key: 'status',
+		width: 110,
 		render: (row) =>
 			h(NTag, { type: taskStatusType[row.status] || 'default', size: 'small' }, { default: () => statusLabel[row.status] || row.status }),
 	},
 	{
 		title: '模型',
 		key: 'model_name',
+		width: 160,
 		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.model_name || '-'),
 	},
 	{
 		title: '费用',
 		key: 'cost',
+		width: 110,
 		render: (row) =>
 			row.billing_settled && row.actual_cost > 0
 				? h('span', { class: 'text-sm font-medium text-emerald-600' }, formatCost(row.actual_cost))
@@ -217,16 +223,19 @@ const columns = computed<DataTableColumns<TaskItem>>(() => [
 	{
 		title: '提交时间',
 		key: 'submit_time',
+		width: 170,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.submit_time)),
 	},
 	{
 		title: '完成时间',
 		key: 'finish_time',
+		width: 170,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.finish_time)),
 	},
 	{
 		title: '操作',
 		key: 'actions',
+		width: 120,
 		align: 'right',
 		render: (row) =>
 			h(NButton, { size: 'small', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
@@ -302,6 +311,7 @@ onMounted(() => {
 				show-size-picker
 				:loading="loading"
 				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
 				:data="tasks"
 				:row-key="(row: TaskItem) => row.id"
 				@update:page="fetchTasks"

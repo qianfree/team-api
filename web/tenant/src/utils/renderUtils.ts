@@ -72,3 +72,12 @@ export function formatMs(value: unknown): string {
 	if (value == null || value === '') return '-'
 	return `${Math.round(Number(value))}ms`
 }
+
+/**
+ * 计算 NDataTable 的 scroll-x：取所有列 width 之和。
+ * 搭配每列都有 width 的用法，桌面端表格按 width 比例撑满容器、
+ * 移动端（容器 < 列宽和）触发横向滚动。
+ */
+export function tableScrollX(columns: { width?: number | string }[]): number {
+	return columns.reduce((sum, col) => sum + (Number(col.width) || 0), 0)
+}

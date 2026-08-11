@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
@@ -130,6 +131,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '模型',
 		key: 'model_name',
+		width: 160,
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-2' }, [
 				h('span', { class: 'font-medium text-gray-900 text-sm' }, row.model_name),
@@ -139,6 +141,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '请求数',
 		key: 'requests',
+		width: 110,
 		render: (row) =>
 			h(
 				'span',
@@ -149,6 +152,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '成功率',
 		key: 'success_rate',
+		width: 120,
 		render: (row) =>
 			h(
 				'span',
@@ -159,6 +163,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '平均延迟',
 		key: 'avg_latency_ms',
+		width: 130,
 		render: (row) =>
 			h(
 				'span',
@@ -169,6 +174,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: 'P95 延迟',
 		key: 'p95_latency_ms',
+		width: 130,
 		render: (row) =>
 			h(
 				'span',
@@ -179,6 +185,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '总费用',
 		key: 'total_cost',
+		width: 120,
 		render: (row) =>
 			h(
 				'span',
@@ -189,6 +196,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '平均费用/次',
 		key: 'avg_cost_per_request',
+		width: 150,
 		render: (row) =>
 			h(
 				'span',
@@ -199,6 +207,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: 'Token',
 		key: 'token',
+		width: 160,
 		render: (row) =>
 			h(
 				'span',
@@ -209,6 +218,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 	{
 		title: '评分',
 		key: 'score',
+		width: 110,
 		render: (row) =>
 			row.requests > 0
 				? h(
@@ -317,6 +327,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 				<div class="table-container">
 					<n-data-table
 						:columns="columns"
+						:scroll-x="tableScrollX(columns)"
 						:data="items"
 						:row-key="(row: ComparisonItem) => row.model_name"
 					>

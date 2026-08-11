@@ -4,7 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { NInput, NInputNumber, NModal } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
-import { renderBadge } from '@/utils/renderUtils'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
 
@@ -246,17 +246,33 @@ async function fetchRedeemHistory() {
 
 // 兑换记录表格列
 const redeemHistoryColumns = computed<DataTableColumns<any>>(() => [
-	{ title: '兑换码', key: 'code', render: (row) => h('span', { class: 'font-mono text-xs' }, row.code || '-') },
-	{ title: '兑换类型', key: 'type', render: (row) => renderBadge(row.type, redeemTypeLabels, redeemTypeBadgeClasses) },
+	{
+		title: '兑换码',
+		key: 'code',
+		width: 180,
+		render: (row) => h('span', { class: 'font-mono text-xs' }, row.code || '-'),
+	},
+	{
+		title: '兑换类型',
+		key: 'type',
+		width: 110,
+		render: (row) => renderBadge(row.type, redeemTypeLabels, redeemTypeBadgeClasses),
+	},
 	{
 		title: '面值',
 		key: 'value',
+		width: 130,
 		render: (row) =>
 			row.type === 'quota'
 				? h('span', { class: 'font-mono' }, `+${Number(row.value).toFixed(6)}`)
 				: h('span', { class: 'font-mono' }, '-'),
 	},
-	{ title: '时间', key: 'created_at', render: (row) => h('span', { class: 'text-gray-400 text-xs' }, row.created_at?.substring(0, 16)) },
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => h('span', { class: 'text-gray-400 text-xs' }, row.created_at?.substring(0, 16)),
+	},
 ])
 
 // Warning threshold
@@ -659,6 +675,7 @@ onBeforeUnmount(() => {
 				<n-data-table
 					:loading="redeemHistoryLoading"
 					:columns="redeemHistoryColumns"
+					:scroll-x="tableScrollX(redeemHistoryColumns)"
 					:data="redeemHistory"
 					:row-key="(row: any) => row.id"
 				>
