@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-// 日期时间范围选择器：开始/结束各一个 datetime-local 输入（支持到分钟精度）。
+// 日期时间范围选择器：基于 Naive NDatePicker（datetimerange）+ 快捷选择按钮（今日/昨天/近3天/近一周）。
 // 对外暴露 v-model:start / v-model:end，值为后端格式字符串 YYYY-MM-DD HH:mm:ss（结束留空 = 到现在）。
 const props = defineProps<{
 	start?: string
@@ -12,33 +12,67 @@ const emit = defineEmits<{
 	'update:end': [value: string]
 }>()
 
-// datetime-local 值（YYYY-MM-DDTHH:mm）与后端值（YYYY-MM-DD HH:mm:ss）互转
-function toInputValue(v: string | undefined): string {
-	if (!v) return ''
-	return v.replace(' ', 'T').slice(0, 16)
+// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
+function tsToStr(ts: number): string {
+	const d = new Date(ts)
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-function toBackendValue(v: string): string {
-	if (!v) return ''
-	const s = v.replace('T', ' ')
-	return s.length === 16 ? s + ':00' : s
+function strToTs(v: string | undefined): number | null {
+	if (!v) return null
+	const t = new Date(v.replace(' ', 'T')).getTime()
+	return Number.isNaN(t) ? null : t
 }
 
-const startInput = computed({
-	get: () => toInputValue(props.start),
-	set: (v: string) => emit('update:start', toBackendValue(v)),
+// NDatePicker 显示值：仅当 start/end 均有效时返回 [s, e]
+const rangeValue = computed<[number, number] | null>(() => {
+	const s = strToTs(props.start)
+	const e = strToTs(props.end)
+	return s != null && e != null ? [s, e] : null
 })
-const endInput = computed({
-	get: () => toInputValue(props.end),
-	set: (v: string) => emit('update:end', toBackendValue(v)),
-})
+
+function onRangeChange(v: [number, number] | null) {
+	if (v) {
+		emit('update:start', tsToStr(v[0]))
+		emit('update:end', tsToStr(v[1]))
+	} else {
+		emit('update:start', '')
+		emit('update:end', '')
+	}
+}
+
+// 以本地时区"天"为粒度的快捷范围
+function dayStart(offsetDays: number): number {
+	const d = new Date()
+	d.setDate(d.getDate() + offsetDays)
+	d.setHours(0, 0, 0, 0)
+	return d.getTime()
+}
+function dayEnd(offsetDays: number): number {
+	const d = new Date()
+	d.setDate(d.getDate() + offsetDays)
+	d.setHours(23, 59, 59, 999)
+	return d.getTime()
+}
+
+// NDatePicker 面板内的快捷选项（点击后自动设置 start/end）
+// 键为面板内显示的标签，值为 [startTs, endTs] 或返回该元组的函数
+const shortcuts = {
+	今日: () => [dayStart(0), dayEnd(0)] as [number, number],
+	昨天: () => [dayStart(-1), dayEnd(-1)] as [number, number],
+	近3天: () => [dayStart(-2), dayEnd(0)] as [number, number],
+	近一周: () => [dayStart(-6), dayEnd(0)] as [number, number],
+}
 </script>
 
 <template>
-	<div class="flex items-center gap-2">
-		<label class="text-sm text-gray-500 whitespace-nowrap">开始时间</label>
-		<input v-model="startInput" type="datetime-local" class="input" style="width:190px" />
-		<span class="text-gray-400 select-none">~</span>
-		<label class="text-sm text-gray-500 whitespace-nowrap">结束时间</label>
-		<input v-model="endInput" type="datetime-local" class="input" style="width:190px" />
-	</div>
+	<n-date-picker
+		type="datetimerange"
+		:value="rangeValue"
+		:shortcuts="shortcuts"
+		:clearable="true"
+		:actions="['clear', 'confirm']"
+		style="width: 400px"
+		@update:value="onRangeChange"
+	/>
 </template>

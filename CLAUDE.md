@@ -393,7 +393,7 @@ cmd（路由注册）
 
 - Vue 3 Composition API + `<script setup>` 语法
 - **管理后台**：使用 **Arco Design Vue** 组件库（`@arco-design/web-vue`），快速构建数据密集型页面（表格、表单、图表等），可参考 [Soybean Admin](https://github.com/soybeanjs/soybean-admin) 的架构设计（路由、权限、布局）
-- **租户控制台**：TailwindCSS 原子类 + 自建组件，面向客户，注重品牌调性和视觉差异化
+- **租户控制台**：TailwindCSS 原子类 + **Naive UI 组件库**（`naive-ui`，全量引入 + `n-config-provider` 主题对齐主色 `#14b8a6`）。表格用 `NDataTable`、表单用 `NForm`/`NInput`/`NInputNumber`/`NSelect`/`NCheckbox`/`NModal`；保留自研组件：`SlideCaptcha`（滑块验证码）、`Turnstile`（Cloudflare）、`Icon`（图标）、`MarkdownRenderer`。公共渲染工具在 `src/utils/renderUtils.ts`（`renderBadge`/`formatMoney`/`formatDate`/`formatTokens`/`formatMs`）。面向客户，注重品牌调性和视觉差异化
 - TailwindCSS 作为基础样式层，两个控制台共用（注意与 Arco 组件内置样式共存，避免全局 reset 冲突）
 - 状态管理用 Pinia
 - HTTP 请求封装 Axios，JWT 自动刷新，统一错误处理
