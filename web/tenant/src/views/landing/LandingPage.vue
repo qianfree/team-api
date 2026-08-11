@@ -36,7 +36,7 @@
       <section aria-label="产品介绍" class="merged-section">
         <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <h1 class="hero-title">
-            一个 API，<span class="hero-title-accent">接入所有大模型</span>
+            一个 Key，<span class="hero-title-accent">接入所有大模型</span>
           </h1>
 
           <!-- Scenario Tabs -->
@@ -71,8 +71,31 @@
                   </router-link>
                 </div>
                 <div class="scenario-visual">
+                  <!-- Team: member usage dashboard mock -->
+                  <div v-if="activeScenario === 0" class="mock-card">
+                    <div class="mock-header">
+                      <span class="mock-header-title">成员用量概览</span>
+                      <span class="mock-header-badge">本月</span>
+                    </div>
+                    <div class="mock-member-row" v-for="(m, mi) in mockMembers" :key="mi">
+                      <div class="mock-member-avatar" :style="{ backgroundColor: m.color }"></div>
+                      <div class="mock-member-info">
+                        <span class="mock-member-name">{{ m.name }}</span>
+                        <span class="mock-member-role">{{ m.role }}</span>
+                      </div>
+                      <div class="mock-usage-bar-bg">
+                        <div class="mock-usage-bar-fill" :style="{ width: m.usage + '%', backgroundColor: m.usage > 85 ? '#ef4444' : '#14b8a6' }"></div>
+                      </div>
+                      <span class="mock-usage-pct">{{ m.usage }}%</span>
+                    </div>
+                    <div class="mock-footer">
+                      <span>额度总计</span>
+                      <span class="mock-footer-value">$128.50 / $200.00</span>
+                    </div>
+                  </div>
+
                   <!-- Developer: code example -->
-                  <div v-if="activeScenario === 0" class="code-card">
+                  <div v-else-if="activeScenario === 1" class="code-card">
                     <div class="code-card-bar">
                       <div class="terminal-dots">
                         <span class="terminal-dot terminal-dot-red"></span>
@@ -93,29 +116,6 @@
   <span class="tk-param">model</span><span class="tk-op">=</span><span class="tk-string">"gpt-4o"</span><span class="tk-comma">,</span>
   <span class="tk-param">messages</span><span class="tk-op">=</span><span class="tk-bracket">[{</span><span class="tk-string">"role"</span><span class="tk-op">:</span> <span class="tk-string">"user"</span><span class="tk-comma">,</span> <span class="tk-string">"content"</span><span class="tk-op">:</span> <span class="tk-string">"Hello!"</span><span class="tk-bracket">}]</span>
 <span class="tk-paren">)</span></code></pre>
-                  </div>
-
-                  <!-- Team: member usage dashboard mock -->
-                  <div v-else-if="activeScenario === 1" class="mock-card">
-                    <div class="mock-header">
-                      <span class="mock-header-title">成员用量概览</span>
-                      <span class="mock-header-badge">本月</span>
-                    </div>
-                    <div class="mock-member-row" v-for="(m, mi) in mockMembers" :key="mi">
-                      <div class="mock-member-avatar" :style="{ backgroundColor: m.color }"></div>
-                      <div class="mock-member-info">
-                        <span class="mock-member-name">{{ m.name }}</span>
-                        <span class="mock-member-role">{{ m.role }}</span>
-                      </div>
-                      <div class="mock-usage-bar-bg">
-                        <div class="mock-usage-bar-fill" :style="{ width: m.usage + '%', backgroundColor: m.usage > 85 ? '#ef4444' : '#14b8a6' }"></div>
-                      </div>
-                      <span class="mock-usage-pct">{{ m.usage }}%</span>
-                    </div>
-                    <div class="mock-footer">
-                      <span>额度总计</span>
-                      <span class="mock-footer-value">$128.50 / $200.00</span>
-                    </div>
                   </div>
 
                   <!-- Ops: monitoring mock -->
@@ -432,18 +432,6 @@ useHead({
 
 const scenarios = [
   {
-    icon: 'terminal',
-    tabLabel: '开发者接入',
-    title: '快速接入，零改动迁移',
-    desc: '如果你已经在用 OpenAI SDK，接入 Team-API 只需要改一行 base_url。协议自动转换、流式透传、错误格式兼容，你的代码一行都不用动。',
-    points: [
-      '完全兼容 OpenAI Python / Node.js SDK',
-      '支持 SSE 流式转发与中断恢复',
-      'Function Call、多模态、Embedding 全支持',
-      '请求级超时控制，自动重试与降级',
-    ],
-  },
-  {
     icon: 'users',
     tabLabel: '团队管理',
     title: '额度、权限、用量，一目了然',
@@ -453,6 +441,18 @@ const scenarios = [
       '成员用量排行与明细，实时可查',
       'RBAC 权限：Owner / Admin / Member 三级',
       '预算超限自动熔断，并发预扣防超额',
+    ],
+  },
+  {
+    icon: 'terminal',
+    tabLabel: '开发者接入',
+    title: '快速接入，零改动迁移',
+    desc: '如果你已经在用 OpenAI SDK，接入 Team-API 只需要改一行 base_url。协议自动转换、流式透传、错误格式兼容，你的代码一行都不用动。',
+    points: [
+      '完全兼容 OpenAI Python / Node.js SDK',
+      '支持 SSE 流式转发与中断恢复',
+      'Function Call、多模态、Embedding 全支持',
+      '请求级超时控制，自动重试与降级',
     ],
   },
   {
@@ -606,6 +606,8 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   overflow: hidden;
   /* 固定高度：三场景内容区统一高度，切换时不再因面板内容高度差异而上下跳动 */
   height: 440px;
+  /* 圆角与内部 scenario-panel 对齐，避免面板阴影被裁剪成直角 */
+  border-radius: 1.5rem;
 }
 .scenario-panel {
   display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.75rem; align-items: stretch;
@@ -772,10 +774,10 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   /* 单列堆叠后内容高于视口：放开整页滚动，避免被 overflow:hidden 裁切 */
   .landing-page { height: auto; min-height: 100vh; overflow-y: auto; overflow-x: hidden; }
   .landing-main { flex: none; }
-  .merged-section { align-items: flex-start; padding: 1rem 0 6rem; }
-  /* 版权信息钉在视口底部，不再随中间内容高度变化上下跳动；保持原有透明背景 */
+  .merged-section { align-items: flex-start; padding: 1rem 0 1.5rem; }
+  /* 移动端版权信息在文档流底部，不固定在屏幕底部，避免与内容重叠 */
   .landing-footer {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    position: relative;
     padding-bottom: env(safe-area-inset-bottom);
   }
 
