@@ -192,7 +192,7 @@ function handlePageSizeChange() {
 			</button>
 		</div>
 
-		<div class="viewport-table-panel card">
+		<div class="viewport-table-panel">
 			<n-data-table
 				remote
 				v-model:page="page"

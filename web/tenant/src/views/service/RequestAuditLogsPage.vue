@@ -344,7 +344,7 @@ onMounted(() => {
 			</div>
 		</div>
 		<!-- Table -->
-		<div class="viewport-table-panel card p-0 overflow-hidden">
+		<div class="viewport-table-panel p-0 overflow-hidden">
 			<n-data-table
 				remote
 				v-model:page="logPage"

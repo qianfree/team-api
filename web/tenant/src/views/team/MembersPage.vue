@@ -343,7 +343,7 @@ onMounted(() => {
 		</div>
 
 		<!-- Members Table -->
-		<div class="viewport-table-panel card">
+		<div class="viewport-table-panel">
 			<n-data-table
 				remote
 				v-model:page="page"
