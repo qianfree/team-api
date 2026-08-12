@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
+import { NInput, NInputNumber, NSelect } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -13,75 +14,25 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
+// 日期格式化辅助函数
+function formatDate(ts: number): string {
+	const d = new Date(ts)
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 // 查询表单数据
 const filters = ref({
 	type: '',
-	dateRange: null as [number, number] | null,
+	start_date: '',
+	end_date: '',
 	amountMin: null as number | null,
 	amountMax: null as number | null,
 	username: '',
 	model: '',
 })
 
-// 查询表单字段配置
-const filterFields: FilterField[] = [
-	{
-		type: 'daterange',
-		key: 'dateRange',
-		label: '日期范围',
-		width: '280px',
-	},
-	{
-		type: 'select',
-		key: 'type',
-		label: '类型',
-		width: '120px',
-		options: [
-			{ value: '', label: '全部' },
-			{ value: 'recharge', label: '充值' },
-			{ value: 'redemption', label: '兑换码' },
-			{ value: 'consume', label: '消费' },
-			{ value: 'pre_deduct', label: '预扣' },
-			{ value: 'settle', label: '结算' },
-			{ value: 'refund', label: '退款' },
-			{ value: 'adjust', label: '调整' },
-			{ value: 'freeze', label: '冻结' },
-			{ value: 'unfreeze', label: '解冻' },
-		],
-	},
-	{
-		type: 'number',
-		key: 'amountMin',
-		label: '最小金额',
-		placeholder: '最小',
-		width: '100px',
-		min: 0,
-		step: 0.01,
-	},
-	{
-		type: 'number',
-		key: 'amountMax',
-		label: '最大金额',
-		placeholder: '最大',
-		width: '100px',
-		min: 0,
-		step: 0.01,
-	},
-	{
-		type: 'input',
-		key: 'username',
-		label: '用户名',
-		placeholder: '搜索用户',
-		width: '120px',
-	},
-	{
-		type: 'input',
-		key: 'model',
-		label: '模型',
-		placeholder: '例如：gpt-4o',
-		width: '150px',
-	},
-]
+// 导出下拉菜单
+const showExportDropdown = ref(false)
 
 const { exporting, exportFile } = useExport({
 	url: '/tenant/wallet/transactions/export',
@@ -93,13 +44,11 @@ const { exporting, exportFile } = useExport({
 			username: filters.value.username,
 			model_name: filters.value.model,
 		}
-		if (filters.value.dateRange) {
-			const formatDate = (ts: number) => {
-				const d = new Date(ts)
-				return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-			}
-			params.start_date = formatDate(filters.value.dateRange[0])
-			params.end_date = formatDate(filters.value.dateRange[1])
+		if (filters.value.start_date) {
+			params.start_date = filters.value.start_date
+		}
+		if (filters.value.end_date) {
+			params.end_date = filters.value.end_date
 		}
 		return params
 	},
@@ -143,14 +92,8 @@ async function fetchTransactions() {
 		if (filters.value.amountMax) params.amount_max = filters.value.amountMax
 		if (filters.value.username) params.username = filters.value.username
 		if (filters.value.model) params.model_name = filters.value.model
-		if (filters.value.dateRange) {
-			const formatDate = (ts: number) => {
-				const d = new Date(ts)
-				return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-			}
-			params.start_date = formatDate(filters.value.dateRange[0])
-			params.end_date = formatDate(filters.value.dateRange[1])
-		}
+		if (filters.value.start_date) params.start_date = filters.value.start_date
+		if (filters.value.end_date) params.end_date = filters.value.end_date
 
 		const res: any = await request.get('/tenant/wallet/transactions', {
 			params,
@@ -173,7 +116,8 @@ function applyFilters() {
 function resetFilters() {
 	filters.value = {
 		type: '',
-		dateRange: null,
+		start_date: '',
+		end_date: '',
 		amountMin: null,
 		amountMax: null,
 		username: '',
@@ -232,25 +176,76 @@ onMounted(fetchTransactions)
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<TableFilterForm
-			v-model="filters"
-			:fields="filterFields"
-			:loading="loading"
-			:show-export="true"
-			:exporting="exporting"
-			@search="applyFilters"
-			@reset="resetFilters"
-			@export="exportFile"
-		>
-			<template #extra-actions>
-				<n-button :disabled="loading" @click="fetchTransactions">
-					<template #icon>
-						<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
-					</template>
-					刷新
-				</n-button>
-			</template>
-		</TableFilterForm>
+		<div class="card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
+					<DateRangePicker
+						v-model:start="filters.start_date"
+						v-model:end="filters.end_date"
+						@change="handleSearch"
+					/>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">类型</label>
+						<n-select
+							v-model:value="filters.type"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: 'recharge', label: '充值' },
+								{ value: 'redemption', label: '兑换码' },
+								{ value: 'consume', label: '消费' },
+								{ value: 'pre_deduct', label: '预扣' },
+								{ value: 'settle', label: '结算' },
+								{ value: 'refund', label: '退款' },
+								{ value: 'adjust', label: '调整' },
+								{ value: 'freeze', label: '冻结' },
+								{ value: 'unfreeze', label: '解冻' },
+							]"
+							style="width:120px"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">最小金额</label>
+						<n-input-number v-model:value="filters.amountMin" placeholder="最小" :min="0" :step="0.01" style="width:100px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">最大金额</label>
+						<n-input-number v-model:value="filters.amountMax" placeholder="最大" :min="0" :step="0.01" style="width:100px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+						<n-input v-model:value="filters.username" placeholder="搜索用户" style="width:120px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">模型</label>
+						<n-input v-model:value="filters.model" placeholder="例如：gpt-4o" style="width:150px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="ml-auto flex items-center gap-2">
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="fetchTransactions">
+							<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
+							刷新
+						</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
+							</button>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+							</div>
+						</div>
+					</div>
+				</form>
+			</div>
+		</div>
 
 		<!-- Transactions Table -->
 		<div class="viewport-table-panel relative z-0">
