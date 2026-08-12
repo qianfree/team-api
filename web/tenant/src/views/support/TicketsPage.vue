@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NInput } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
@@ -227,13 +228,6 @@ const columns = computed<DataTableColumns<Ticket>>(() => [
 	},
 ])
 
-function handleRowProps(row: Ticket) {
-	return {
-		style: 'cursor: pointer',
-		onClick: () => openDetail(row),
-	}
-}
-
 function handlePageSizeChange() {
 	page.value = 1
 	fetchTickets()
@@ -274,8 +268,9 @@ onMounted(() => {
 
 		<!-- Table -->
 		<div class="viewport-table-panel p-0 overflow-hidden">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -286,7 +281,11 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="tickets"
 				:row-key="(row: Ticket) => row.id"
-				:row-props="handleRowProps"
+				card-title-key="title"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="['id', 'category', 'urgency', 'assigned_admin']"
+				:row-click="openDetail"
 				@update:page="fetchTickets"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -301,7 +300,7 @@ onMounted(() => {
 						</button>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Create Ticket Modal -->

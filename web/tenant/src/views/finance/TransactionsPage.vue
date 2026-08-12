@@ -4,6 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { NInput, NInputNumber, NSelect } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -182,7 +183,7 @@ onMounted(fetchTransactions)
 					<DateRangePicker
 						v-model:start="filters.start_date"
 						v-model:end="filters.end_date"
-						@change="handleSearch"
+						@change="applyFilters"
 					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">类型</label>
@@ -249,8 +250,9 @@ onMounted(fetchTransactions)
 
 		<!-- Transactions Table -->
 		<div class="viewport-table-panel relative z-0">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -261,6 +263,10 @@ onMounted(fetchTransactions)
 				:scroll-x="tableScrollX(columns)"
 				:data="transactions"
 				:row-key="(row: any) => row.id"
+				card-title-key="amount"
+				card-badge-key="type"
+				card-subtitle-key="created_at"
+				:card-fields="['balance_after', 'username', 'model_name', { key: 'request_id', full: true }, { key: 'description', full: true }]"
 				@update:page="fetchTransactions"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -271,7 +277,7 @@ onMounted(fetchTransactions)
 						<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 	</div>
 </template>

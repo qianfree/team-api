@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const props = withDefaults(defineProps<{
 	modelValue: number
@@ -17,6 +18,8 @@ const emit = defineEmits<{
 	'update:pageSize': [size: number]
 	change: [page: number]
 }>()
+
+const { isMobile } = useIsMobile()
 
 // 当前 pageSize 不在候选列表时兜底追加，避免 select 找不到选中项
 const sizeOptions = computed(() => {
@@ -40,14 +43,18 @@ function handlePageSize(size: number) {
 </script>
 
 <template>
-	<n-pagination
-		v-if="total > 0"
-		:page="modelValue"
-		:page-size="pageSize"
-		:item-count="total"
-		:page-sizes="sizeOptions"
-		:show-size-picker="showSizeChanger"
-		@update:page="handlePage"
-		@update:page-size="handlePageSize"
-	/>
+	<div v-if="total > 0" class="flex w-full min-w-0 flex-col items-center justify-center gap-2 sm:flex-row">
+		<span v-if="isMobile" class="text-xs text-gray-500">共 {{ total }} 条</span>
+		<n-pagination
+			class="max-w-full"
+			:page="modelValue"
+			:page-size="pageSize"
+			:item-count="total"
+			:page-sizes="sizeOptions"
+			:simple="isMobile"
+			:show-size-picker="showSizeChanger && !isMobile"
+			@update:page="handlePage"
+			@update:page-size="handlePageSize"
+		/>
+	</div>
 </template>

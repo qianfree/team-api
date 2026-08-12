@@ -4,6 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { NInput, NInputNumber, NModal } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
@@ -672,12 +673,17 @@ onBeforeUnmount(() => {
 				<h4 class="text-sm font-semibold text-gray-900 mb-3">兑换记录</h4>
 
 				<!-- History table -->
-				<n-data-table
+				<ResponsiveDataTable
+					:show-pagination="false"
 					:loading="redeemHistoryLoading"
 					:columns="redeemHistoryColumns"
 					:scroll-x="tableScrollX(redeemHistoryColumns)"
 					:data="redeemHistory"
 					:row-key="(row: any) => row.id"
+					card-title-key="code"
+					card-badge-key="type"
+					card-subtitle-key="created_at"
+					:card-fields="['value']"
 				>
 					<template #empty>
 						<div class="flex flex-col items-center justify-center py-8 text-center">
@@ -687,7 +693,7 @@ onBeforeUnmount(() => {
 							<p class="text-sm text-gray-500">暂无兑换记录</p>
 						</div>
 					</template>
-				</n-data-table>
+				</ResponsiveDataTable>
 			</div>
 			<template #footer>
 				<div class="flex justify-end gap-3">

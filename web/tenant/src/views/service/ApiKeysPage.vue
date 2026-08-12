@@ -3,6 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton, NTag } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -317,8 +318,9 @@ onMounted(() => {
 
 		<!-- Keys Table -->
 		<div class="viewport-table-panel">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -329,6 +331,11 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="keys"
 				:row-key="(row: ApiKey) => row.id"
+				card-title-key="name"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="[{ key: 'key_prefix', full: true }, 'model_count', 'expires_at', { key: 'limits', full: true }]"
+				card-actions-key="actions"
 				@update:page="fetchKeys"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -339,7 +346,7 @@ onMounted(() => {
 						<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Create Modal -->

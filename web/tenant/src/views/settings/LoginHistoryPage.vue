@@ -3,6 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import request from '@/utils/request'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import BaseSelect from '../../components/common/BaseSelect.vue'
@@ -197,8 +198,9 @@ function handlePageSizeChange() {
 
 		<!-- Table -->
 		<div class="viewport-table-panel">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -209,6 +211,10 @@ function handlePageSizeChange() {
 				:scroll-x="tableScrollX(columns)"
 				:data="list"
 				:row-key="(row: any) => row.id"
+				card-title-key="user"
+				card-badge-key="success"
+				card-subtitle-key="created_at"
+				:card-fields="['login_method', 'ip_address', { key: 'user_agent', full: true }, { key: 'fail_reason', full: true }]"
 				@update:page="fetchData"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -219,7 +225,7 @@ function handlePageSizeChange() {
 						<p class="empty-state-description">当前没有任何登录历史记录</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 	</div>
 </template>
