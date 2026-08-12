@@ -8,6 +8,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
 function pad2(n: number): string {
@@ -329,15 +330,17 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         :scroll="{ x: 1400 }"
-        :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="id"
+        card-title-key="public_task_id"
+        card-subtitle-key="model_name"
+        card-badge-key="status"
+        :card-fields="['platform', 'action', 'progress', 'actual_cost']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />

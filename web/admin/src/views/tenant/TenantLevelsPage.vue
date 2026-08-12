@@ -7,6 +7,7 @@ import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 const loading = ref(false)
 const levels = ref<any[]>([])
@@ -143,7 +144,15 @@ onMounted(fetchLevels)
 
     <ACard :bordered="false">
       <template #title>等级配置列表</template>
-      <ATable :columns="columns" :data="levels" :loading="loading" row-key="id" :scroll="{ x: 900 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="levels"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 900 }"
+        card-title-key="name"
+        :card-fields="['level', 'cumulative_recharge_threshold', 'price_multiplier', 'max_members']"
+      />
       <div class="table-footer">
         <TableStats :total="levels.length" />
       </div>

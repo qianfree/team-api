@@ -436,7 +436,7 @@ onBeforeUnmount(() => {
   <ASpin :loading="loading" style="width: 100%">
     <div style="width: 100%">
       <!-- Row 1: Key Metric Cards -->
-      <div class="grid grid-cols-4 gap-5 mb-6 max-lg:grid-cols-2 max-md:grid-cols-1 max-md:gap-3">
+      <div class="grid grid-cols-4 gap-5 mb-6 max-lg:grid-cols-2 max-md:grid-cols-2 max-md:gap-3">
         <ACard
           v-for="(stat, idx) in metricCards"
           :key="idx"

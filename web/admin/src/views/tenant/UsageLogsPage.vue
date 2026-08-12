@@ -9,6 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
@@ -289,7 +290,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: 'Token', width: 250,
+		title: 'Token', dataIndex: 'tokens', width: 250,
 		render({ record }) {
 			const tooltipContent = [
 				h('div', { class: 'dark-tooltip-title' }, 'Token 详情'),
@@ -328,7 +329,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: '费用', width: 120,
+		title: '费用', dataIndex: 'cost', width: 120,
 		render({ record }) {
 			const tooltipContent = [
 				h('div', { class: 'dark-tooltip-title' }, '费用明细'),
@@ -588,16 +589,18 @@ const { exporting, exportFile } = useExport({
 		</a-card>
 
 		<a-card :bordered="false">
-			<a-table
+			<ResponsiveTable
 				:columns="columns"
 				:data="data"
 				:loading="loading"
 				:scroll="{ x: 1400 }"
-				:bordered="false"
 				:stripe="true"
 				size="small"
-				:pagination="false"
 				row-key="id"
+				card-title-key="model_name"
+				card-subtitle-key="tenant_name"
+				card-badge-key="status"
+				:card-fields="[{ key: 'username' }, { key: 'channel_name' }, { key: 'tokens', full: true }, { key: 'request_type' }, { key: 'cost' }, { key: 'latency_ms' }, { key: 'created_at' }]"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />

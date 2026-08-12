@@ -9,6 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
 function pad2(n: number): string {
@@ -348,16 +349,18 @@ onMounted(() => {
 		</a-card>
 
 		<a-card :bordered="false">
-			<a-table
+			<ResponsiveTable
 				:columns="columns"
 				:data="data"
 				:loading="loading"
 				:scroll="{ x: 1400 }"
-				:bordered="false"
 				:stripe="true"
 				size="small"
-				:pagination="false"
 				row-key="id"
+				card-title-key="request_id"
+				card-subtitle-key="path"
+				card-badge-key="status_code"
+				:card-fields="['tenant_name', 'method', 'latency_ms', 'first_token_ms', 'client_ip', 'created_at']"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />
