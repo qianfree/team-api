@@ -5,6 +5,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -266,15 +267,17 @@ onMounted(() => {
     </ACard>
 
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
-        :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="id"
         :scroll="{ x: 1200 }"
+        card-title-key="name"
+        card-subtitle-key="code"
+        card-badge-key="status"
+        :card-fields="['description', 'model_count', 'tenant_count', 'created_at']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />

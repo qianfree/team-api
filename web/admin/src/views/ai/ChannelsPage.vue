@@ -8,6 +8,7 @@ import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
 import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
@@ -513,7 +514,18 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1400 }" :bordered="false" :stripe="true" :pagination="false" row-key="id" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :scroll="{ x: 1400 }"
+        :stripe="true"
+        row-key="id"
+        card-title-key="name"
+        card-subtitle-key="base_url"
+        card-badge-key="status"
+        :card-fields="['type', 'tier', 'health_score', 'breaker_state', 'weight']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />
