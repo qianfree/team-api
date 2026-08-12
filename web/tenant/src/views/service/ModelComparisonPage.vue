@@ -291,29 +291,29 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 		<template v-if="items.length > 0">
 			<!-- Summary -->
 			<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-primary">
 						<Icon name="chart" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">{{ summary.total_requests.toLocaleString() }}</div>
 						<div class="stat-label">总请求数</div>
 					</div>
 				</div>
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-warning">
 						<Icon name="creditCard" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">${{ formatCost(summary.total_cost) }}</div>
 						<div class="stat-label">总费用</div>
 					</div>
 				</div>
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-success">
 						<Icon name="checkCircle" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">{{ summary.recommended || '-' }}</div>
 						<div class="stat-label">{{ summary.reason || '推荐模型' }}</div>
 					</div>
