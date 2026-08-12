@@ -18,6 +18,12 @@
             <span class="text-lg font-bold tracking-tight text-gray-900">{{ siteName }}</span>
           </div>
           <div class="flex items-center gap-2">
+            <router-link :to="{ name: 'Marketplace' }" class="btn-nav-link">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859M12 3v8.25m0 0l-3-3m3 3l3-3"/>
+              </svg>
+              <span>模型广场</span>
+            </router-link>
             <button v-if="announcements.length" @click="openAnnouncements" class="btn-nav-announce" title="查看公告">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/></svg>
             </button>
@@ -528,6 +534,20 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
 }
 .btn-nav-announce:hover {
+  background: rgba(255,255,255,0.9); color: #0d9488;
+  box-shadow: 0 4px 14px rgba(76,91,142,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+/* Nav link — 模型广场链接 */
+.btn-nav-link {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.72);
+  font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+  background: rgba(255,255,255,0.55); color: #64748b;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+  text-decoration: none;
+}
+.btn-nav-link:hover {
   background: rgba(255,255,255,0.9); color: #0d9488;
   box-shadow: 0 4px 14px rgba(76,91,142,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
 }

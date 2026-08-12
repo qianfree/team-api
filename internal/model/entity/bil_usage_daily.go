@@ -23,8 +23,8 @@ type BilUsageDaily struct {
 	OutputTokens    int64           `json:"output_tokens"      orm:"output_tokens"      description:"输出Token合计"`                                                         // 输出Token合计
 	TotalCost       decimal.Decimal `json:"total_cost"         orm:"total_cost"         description:"客户侧成本合计（USD，源自 bil_usage_logs.total_cost）"`                         // 客户侧成本合计（USD，源自 bil_usage_logs.total_cost）
 	AccountCost     decimal.Decimal `json:"account_cost"       orm:"account_cost"       description:"上游账户成本合计（USD，源自 bil_usage_logs.account_cost，用于利润分析）"`               // 上游账户成本合计（USD，源自 bil_usage_logs.account_cost，用于利润分析）
-	CreatedAt       *gtime.Time     `json:"created_at"         orm:"created_at"         description:""`                                                                  //
-	UpdatedAt       *gtime.Time     `json:"updated_at"         orm:"updated_at"         description:""`                                                                  //
 	SumLatencyMs    int64           `json:"sum_latency_ms"     orm:"sum_latency_ms"     description:"总延迟合计（ms，源自 bil_usage_logs.latency_ms；视图按 SUM/COUNT 求均值）"`          // 总延迟合计（ms，源自 bil_usage_logs.latency_ms；视图按 SUM/COUNT 求均值）
 	SumFirstTokenMs int64           `json:"sum_first_token_ms" orm:"sum_first_token_ms" description:"首Token延迟合计（ms，源自 bil_usage_logs.first_token_ms；视图按 SUM/COUNT 求均值）"` // 首Token延迟合计（ms，源自 bil_usage_logs.first_token_ms；视图按 SUM/COUNT 求均值）
+	CreatedAt       *gtime.Time     `json:"created_at"         orm:"created_at"         description:""`                                                                  //
+	UpdatedAt       *gtime.Time     `json:"updated_at"         orm:"updated_at"         description:""`                                                                  //
 }

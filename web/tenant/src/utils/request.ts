@@ -150,6 +150,8 @@ const PUBLIC_PATHS = [
 	// 找回密码流程无需登录态：发送验证码 / 重置密码
 	'/email/send-code',
 	'/email/reset-password',
+	// 模型广场（公开访问）
+	'/marketplace/',
 ]
 
 function isPublicPath(url?: string): boolean {
@@ -239,6 +241,13 @@ request.interceptors.response.use(
   },
   async (error) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean }
+
+		// 公开接口即使暂时返回 401，也不应触发刷新令牌或把访客踢到登录页。
+		// 交给调用页面展示自己的错误状态即可。
+		if (error.response?.status === 401 && isPublicPath(originalRequest?.url)) {
+			showRequestError(error, originalRequest)
+			return Promise.reject(error)
+		}
 
     if (error.response?.status !== 401 || originalRequest._retry) {
       // Extract unified error from response body

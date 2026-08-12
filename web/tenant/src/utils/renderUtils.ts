@@ -43,13 +43,15 @@ export interface FormatMoneyOptions {
  * 统一金额格式化。默认 USD、6 位精度（与 NUMERIC(20,10) 对齐）。
  * currency='CNY' 时用 ¥ 前缀 + 2 位精度（订单/充值层）。
  * showSign 用 +/− 前缀（交易流水）。
+ * 自动去掉末尾的 0（如 $1.500000 → $1.5）。
  */
 export function formatMoney(value: unknown, opts: FormatMoneyOptions = {}): string {
 	const { currency = 'USD', precision = 6, showSign = false } = opts
 	const num = Number(value ?? 0)
 	const symbol = currency === 'CNY' ? '¥' : '$'
 	const sign = showSign ? (num > 0 ? '+' : num < 0 ? '-' : '') : ''
-	return `${sign}${symbol}${Math.abs(num).toFixed(precision)}`
+	// 先 toFixed 确保精度，再用 Number 去掉末尾的 0
+	return `${sign}${symbol}${Number(Math.abs(num).toFixed(precision))}`
 }
 
 /** 统一日期格式化：ISO T 转空格、截断到分钟；空值显示 -- */
