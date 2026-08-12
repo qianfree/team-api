@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/consts"
@@ -45,8 +46,14 @@ func ExecuteUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		Progress:       &Progress{Phase: PhaseDownloading, Message: "正在准备下载...", Percentage: 0},
 	})
 
-	// Run update in background
-	go performUpdate(ctx, targetVersion, downloadURL, checksumURL, assetSize)
+	// 脱离 HTTP 请求 context：ExecuteUpdate 返回后 handler 随即结束，请求 ctx 会被取消，
+	// 若复用该 ctx，后台下载/校验/替换任务会立即收到 context canceled。
+	// 改用独立的 GoFrame context（保留 trace 用于日志关联），并加总超时兜底防止任务挂死。
+	updateCtx, cancel := context.WithTimeout(gctx.New(), 15*time.Minute)
+	go func() {
+		defer cancel()
+		performUpdate(updateCtx, targetVersion, downloadURL, checksumURL, assetSize)
+	}()
 
 	return nil
 }
