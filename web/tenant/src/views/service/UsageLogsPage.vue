@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton } from 'naive-ui'
+import { NButton, NInput, NSelect } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
+import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
@@ -14,22 +14,22 @@ import { useExport } from '@/composables/useExport'
 function pad2(n: number): string {
 	return String(n).padStart(2, '0')
 }
-// 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
-function todayStart(): number {
-	const d = new Date()
-	d.setHours(0, 0, 0, 0)
-	return d.getTime()
-}
-function todayEnd(): number {
-	const d = new Date()
-	d.setHours(23, 59, 59, 999)
-	return d.getTime()
-}
 // timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
 function tsToStr(ts: number): string {
 	const d = new Date(ts)
 	const pad = (n: number) => String(n).padStart(2, '0')
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+// 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
+function todayStart(): string {
+	const d = new Date()
+	d.setHours(0, 0, 0, 0)
+	return tsToStr(d.getTime())
+}
+function todayEnd(): string {
+	const d = new Date()
+	d.setHours(23, 59, 59, 999)
+	return tsToStr(d.getTime())
 }
 
 const loading = ref(false)
@@ -40,61 +40,16 @@ const total = ref(0)
 
 // 查询表单数据
 const filters = ref({
-	dateTimeRange: [todayStart(), todayEnd()] as [number, number] | null,
+	start_date: todayStart(),
+	end_date: todayEnd(),
 	username: '',
 	model: '',
 	status: '',
 	requestType: '',
 })
 
-// 查询表单字段配置
-const filterFields: FilterField[] = [
-	{
-		type: 'datetimerange',
-		key: 'dateTimeRange',
-		label: '时间范围',
-		width: '400px',
-	},
-	{
-		type: 'input',
-		key: 'username',
-		label: '用户名',
-		placeholder: '搜索用户',
-		width: '120px',
-	},
-	{
-		type: 'input',
-		key: 'model',
-		label: '模型名称',
-		placeholder: '例如：gpt-4o',
-		width: '160px',
-	},
-	{
-		type: 'select',
-		key: 'status',
-		label: '状态',
-		width: '100px',
-		options: [
-			{ value: '', label: '全部' },
-			{ value: 'success', label: '成功' },
-			{ value: 'error', label: '失败' },
-			{ value: 'interrupted', label: '中断' },
-			{ value: 'timeout', label: '超时' },
-		],
-	},
-	{
-		type: 'select',
-		key: 'requestType',
-		label: '请求类型',
-		width: '100px',
-		options: [
-			{ value: '', label: '全部' },
-			{ value: '1', label: '同步' },
-			{ value: '2', label: '流式' },
-			{ value: '3', label: '异步' },
-		],
-	},
-]
+// 导出下拉菜单
+const showExportDropdown = ref(false)
 
 const { exporting, exportFile } = useExport({
 	url: '/tenant/usage-logs/export',
@@ -105,9 +60,11 @@ const { exporting, exportFile } = useExport({
 			status: filters.value.status,
 			request_type: filters.value.requestType,
 		}
-		if (filters.value.dateTimeRange) {
-			params.start_date = tsToStr(filters.value.dateTimeRange[0])
-			params.end_date = tsToStr(filters.value.dateTimeRange[1])
+		if (filters.value.start_date) {
+			params.start_date = filters.value.start_date
+		}
+		if (filters.value.end_date) {
+			params.end_date = filters.value.end_date
 		}
 		return params
 	},
@@ -187,10 +144,8 @@ async function fetchLogs() {
 		if (filters.value.model) params.model = filters.value.model
 		if (filters.value.status) params.status = filters.value.status
 		if (filters.value.requestType) params.request_type = filters.value.requestType
-		if (filters.value.dateTimeRange) {
-			params.start_date = tsToStr(filters.value.dateTimeRange[0])
-			params.end_date = tsToStr(filters.value.dateTimeRange[1])
-		}
+		if (filters.value.start_date) params.start_date = filters.value.start_date
+		if (filters.value.end_date) params.end_date = filters.value.end_date
 
 		const res: any = await request.get('/tenant/usage-logs', { params })
 		const raw = res.data?.data
@@ -210,7 +165,8 @@ function applyFilters() {
 
 function resetFilters() {
 	filters.value = {
-		dateTimeRange: [todayStart(), todayEnd()],
+		start_date: todayStart(),
+		end_date: todayEnd(),
 		username: '',
 		model: '',
 		status: '',
@@ -507,16 +463,72 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<TableFilterForm
-			v-model="filters"
-			:fields="filterFields"
-			:loading="loading"
-			:show-export="true"
-			:exporting="exporting"
-			@search="applyFilters"
-			@reset="resetFilters"
-			@export="exportFile"
-		/>
+		<div class="card">
+			<div class="card-body !p-4">
+				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
+					<DateTimeRangePicker
+						v-model:start="filters.start_date"
+						v-model:end="filters.end_date"
+						@change="handleSearch"
+					/>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+						<n-input v-model:value="filters.username" placeholder="搜索用户" style="width:120px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">模型名称</label>
+						<n-input v-model:value="filters.model" placeholder="例如：gpt-4o" style="width:160px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
+						<n-select
+							v-model:value="filters.status"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: 'success', label: '成功' },
+								{ value: 'error', label: '失败' },
+								{ value: 'interrupted', label: '中断' },
+								{ value: 'timeout', label: '超时' },
+							]"
+							style="width:100px"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
+						<n-select
+							v-model:value="filters.requestType"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: '1', label: '同步' },
+								{ value: '2', label: '流式' },
+								{ value: '3', label: '异步' },
+							]"
+							style="width:100px"
+						/>
+					</div>
+					<div class="ml-auto flex items-center gap-2">
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
+							</button>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
+							</div>
+						</div>
+					</div>
+				</form>
+			</div>
+		</div>
 
 		<!-- Logs Table -->
 		<div class="viewport-table-panel relative z-0 overflow-hidden">

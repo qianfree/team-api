@@ -2,10 +2,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import Icon from './Icon.vue'
 
-// 响应式日期时间范围选择器：
-// - 桌面端：使用 Naive NDatePicker（datetimerange）+ 快捷选择按钮
-// - 移动端：使用快捷按钮 + 原生 <input type="datetime-local">（调用系统底部弹出选择器）
-// 对外暴露 v-model:start / v-model:end，值为后端格式字符串 YYYY-MM-DD HH:mm:ss
+// 响应式日期范围选择器（纯日期，不含时间）：
+// - 桌面端：使用 Naive NDatePicker（daterange）+ 快捷选择按钮
+// - 移动端：使用快捷按钮 + 原生 <input type="date">（调用系统底部弹出选择器）
+// 对外暴露 v-model:start / v-model:end，值为后端格式字符串 YYYY-MM-DD
 const props = withDefaults(defineProps<{
 	start?: string
 	end?: string
@@ -35,27 +35,27 @@ onUnmounted(() => {
 	window.removeEventListener('resize', checkMobile)
 })
 
-// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
+// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD
 function tsToStr(ts: number): string {
 	const d = new Date(ts)
 	const pad = (n: number) => String(n).padStart(2, '0')
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 function strToTs(v: string | undefined): number | null {
 	if (!v) return null
-	const t = new Date(v.replace(' ', 'T')).getTime()
+	const t = new Date(v + 'T00:00:00').getTime()
 	return Number.isNaN(t) ? null : t
 }
 
-// 时间戳 ↔ 原生输入框字符串（datetime-local: YYYY-MM-DDTHH:mm）
+// 时间戳 ↔ 原生输入框字符串（date: YYYY-MM-DD）
 function tsToInput(ts: number): string {
 	const d = new Date(ts)
 	const pad = (n: number) => String(n).padStart(2, '0')
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 function inputToTs(v: string): number | null {
 	if (!v) return null
-	const t = new Date(v).getTime()
+	const t = new Date(v + 'T00:00:00').getTime()
 	return Number.isNaN(t) ? null : t
 }
 
@@ -94,8 +94,8 @@ function dayEnd(offsetDays: number): number {
 const shortcuts = {
 	今日: () => [dayStart(0), dayEnd(0)] as [number, number],
 	昨天: () => [dayStart(-1), dayEnd(-1)] as [number, number],
-	近3天: () => [dayStart(-2), dayEnd(0)] as [number, number],
-	近一周: () => [dayStart(-6), dayEnd(0)] as [number, number],
+	近7天: () => [dayStart(-6), dayEnd(0)] as [number, number],
+	近30天: () => [dayStart(-29), dayEnd(0)] as [number, number],
 }
 
 // 移动端：快捷按钮 + 自定义输入
@@ -163,12 +163,12 @@ onMounted(() => {
 	<!-- 桌面端：Naive NDatePicker -->
 	<n-date-picker
 		v-if="!isMobile"
-		type="datetimerange"
+		type="daterange"
 		:value="rangeValue"
 		:shortcuts="shortcuts"
 		:clearable="true"
 		:actions="['clear', 'confirm']"
-		style="width: 400px"
+		style="width: 280px"
 		@update:value="onRangeChange"
 	/>
 
@@ -192,7 +192,7 @@ onMounted(() => {
 			</button>
 			<button
 				type="button"
-				class="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all duration-150 active:scale-95 active:bg-primary-100"
+				class="flex items-center gap-0.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all duration-150 active:scale-95 active:bg-primary-100"
 				:class="
 					showCustom
 						? 'border-primary-500 bg-primary-50 text-primary-700'
@@ -208,19 +208,19 @@ onMounted(() => {
 		<!-- 自定义范围：原生输入，移动端弹出系统全屏选择器 -->
 		<div v-if="showCustom" class="space-y-2">
 			<label class="block min-w-0">
-				<span class="mb-1 block text-xs text-gray-500">开始时间</span>
+				<span class="mb-1 block text-xs text-gray-500">开始日期</span>
 				<input
 					v-model="customStart"
-					type="datetime-local"
+					type="date"
 					class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
 					@change="onCustomInput"
 				/>
 			</label>
 			<label class="block min-w-0">
-				<span class="mb-1 block text-xs text-gray-500">结束时间</span>
+				<span class="mb-1 block text-xs text-gray-500">结束日期</span>
 				<input
 					v-model="customEnd"
-					type="datetime-local"
+					type="date"
 					class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
 					@change="onCustomInput"
 				/>

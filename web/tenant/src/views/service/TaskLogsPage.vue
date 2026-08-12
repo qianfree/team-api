@@ -263,7 +263,11 @@ onMounted(() => {
 		<div class="relative z-20 overflow-visible card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-					<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
+					<DateTimeRangePicker
+						v-model:start="filterStartDate"
+						v-model:end="filterEndDate"
+						@change="handleSearch"
+					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
 						<n-input v-model:value="filterTaskId" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />

@@ -325,7 +325,11 @@ onMounted(() => {
 		<div class="card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="handleFilter">
-						<DateTimeRangePicker v-model:start="logFilter.start_date" v-model:end="logFilter.end_date" />
+						<DateTimeRangePicker
+							v-model:start="logFilter.start_date"
+							v-model:end="logFilter.end_date"
+							@change="handleSearchLogs"
+						/>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
 							<n-input v-model:value="logFilter.username" placeholder="搜索用户" style="width:120px" @keydown.enter="handleFilter" />
