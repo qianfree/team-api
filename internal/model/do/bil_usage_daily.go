@@ -24,8 +24,8 @@ type BilUsageDaily struct {
 	OutputTokens    any         // 输出Token合计
 	TotalCost       any         // 客户侧成本合计（USD，源自 bil_usage_logs.total_cost）
 	AccountCost     any         // 上游账户成本合计（USD，源自 bil_usage_logs.account_cost，用于利润分析）
-	CreatedAt       *gtime.Time //
-	UpdatedAt       *gtime.Time //
 	SumLatencyMs    any         // 总延迟合计（ms，源自 bil_usage_logs.latency_ms；视图按 SUM/COUNT 求均值）
 	SumFirstTokenMs any         // 首Token延迟合计（ms，源自 bil_usage_logs.first_token_ms；视图按 SUM/COUNT 求均值）
+	CreatedAt       *gtime.Time //
+	UpdatedAt       *gtime.Time //
 }
