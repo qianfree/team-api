@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
@@ -44,8 +45,8 @@ const turnstileRef = ref<InstanceType<typeof Turnstile> | null>(null)
 
 const useTurnstile = computed(() => settings.value['turnstile_enabled'] === true)
 
-const emailInput = ref<HTMLInputElement | null>(null)
-const accountInput = ref<HTMLInputElement | null>(null)
+const emailInput = ref<InstanceType<typeof NInput> | null>(null)
+const accountInput = ref<InstanceType<typeof NInput> | null>(null)
 
 // Pending agreements
 const showAgreements = ref(false)
@@ -77,6 +78,13 @@ function onAgreementsAccepted() {
 }
 
 onMounted(async () => {
+	// Check if already logged in — if yes, redirect to dashboard
+	if (authStore.isLoggedIn) {
+		const redirect = (route.query.redirect as string) || '/tenant/dashboard'
+		router.replace(redirect)
+		return
+	}
+
 	nextTick(() => emailInput.value?.focus())
 	await fetchSettings()
 })
@@ -322,53 +330,37 @@ async function handleOAuthLogin(provider: string) {
 				<!-- Email -->
 				<div>
 					<label for="admin-email" class="input-label">邮箱</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="mail" size="sm" />
-						</div>
-						<input
-							ref="emailInput"
-							id="admin-email"
-							v-model="adminForm.email"
-							type="email"
-							placeholder="admin@example.com"
-							autocomplete="email"
-							class="input pl-11"
-							:class="{ 'input-error': adminErrors.email }"
-							@input="clearAdminError('email')"
-						/>
-					</div>
-					<p v-if="adminErrors.email" class="input-error-text">{{ adminErrors.email }}</p>
+					<n-input
+						ref="emailInput"
+						id="admin-email"
+						v-model:value="adminForm.email"
+						type="email"
+						placeholder="admin@example.com"
+						autocomplete="email"
+						:status="adminErrors.email ? 'error' : undefined"
+						@update:value="clearAdminError('email')"
+					>
+						<template #prefix><Icon name="mail" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="adminErrors.email">{{ adminErrors.email }}</template>
+					</n-input>
 				</div>
 
 				<!-- Password -->
 				<div>
 					<label for="admin-password" class="input-label">密码</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="lock" size="sm" />
-						</div>
-						<input
-							id="admin-password"
-							v-model="adminForm.password"
-							:type="showPassword ? 'text' : 'password'"
-							placeholder="请输入密码"
-							autocomplete="current-password"
-							class="input pl-11 pr-11"
-							:class="{ 'input-error': adminErrors.password }"
-							@input="clearAdminError('password')"
-						/>
-						<button
-							type="button"
-							tabindex="-1"
-							@click="showPassword = !showPassword"
-							class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 transition-colors"
-							:aria-label="showPassword ? '隐藏密码' : '显示密码'"
-						>
-							<Icon :name="showPassword ? 'eyeOff' : 'eye'" size="sm" />
-						</button>
-					</div>
-					<p v-if="adminErrors.password" class="input-error-text">{{ adminErrors.password }}</p>
+					<n-input
+						id="admin-password"
+						v-model:value="adminForm.password"
+						type="password"
+						show-password-on="click"
+						placeholder="请输入密码"
+						autocomplete="current-password"
+						:status="adminErrors.password ? 'error' : undefined"
+						@update:value="clearAdminError('password')"
+					>
+						<template #prefix><Icon name="lock" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="adminErrors.password">{{ adminErrors.password }}</template>
+					</n-input>
 				</div>
 
 				<!-- Captcha -->
@@ -377,14 +369,7 @@ async function handleOAuthLogin(provider: string) {
 
 				<!-- Remember & Forgot -->
 				<div class="flex items-center justify-between">
-					<label class="flex items-center gap-2 cursor-pointer select-none">
-						<input
-							v-model="adminForm.remember"
-							type="checkbox"
-							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
-						/>
-						<span class="text-sm text-gray-600">记住登录状态（7天免登录）</span>
-					</label>
+					<n-checkbox v-model:checked="adminForm.remember">记住登录状态（7天免登录）</n-checkbox>
 					<router-link
 						to="/tenant/forgot-password"
 						class="text-sm text-primary-600 font-medium hover:text-primary-700 transition-colors"
@@ -420,54 +405,38 @@ async function handleOAuthLogin(provider: string) {
 				<!-- RAM Account -->
 				<div>
 					<label for="ram-account" class="input-label">RAM 用户名</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="user" size="sm" />
-						</div>
-						<input
-							ref="accountInput"
-							id="ram-account"
-							v-model="ramForm.account"
-							type="text"
-							placeholder="用户名@组织代码"
-							autocomplete="username"
-							class="input pl-11"
-							:class="{ 'input-error': ramErrors.account }"
-							@input="clearRamError('account')"
-						/>
-					</div>
+					<n-input
+						ref="accountInput"
+						id="ram-account"
+						v-model:value="ramForm.account"
+						type="text"
+						placeholder="用户名@组织代码"
+						autocomplete="username"
+						:status="ramErrors.account ? 'error' : undefined"
+						@update:value="clearRamError('account')"
+					>
+						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="ramErrors.account">{{ ramErrors.account }}</template>
+					</n-input>
 					<p class="input-hint">格式：用户名@组织代码</p>
-					<p v-if="ramErrors.account" class="input-error-text">{{ ramErrors.account }}</p>
 				</div>
 
 				<!-- Password -->
 				<div>
 					<label for="ram-password" class="input-label">密码</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="lock" size="sm" />
-						</div>
-						<input
-							id="ram-password"
-							v-model="ramForm.password"
-							:type="showPassword ? 'text' : 'password'"
-							placeholder="请输入密码"
-							autocomplete="current-password"
-							class="input pl-11 pr-11"
-							:class="{ 'input-error': ramErrors.password }"
-							@input="clearRamError('password')"
-						/>
-						<button
-							type="button"
-							tabindex="-1"
-							@click="showPassword = !showPassword"
-							class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 transition-colors"
-							:aria-label="showPassword ? '隐藏密码' : '显示密码'"
-						>
-							<Icon :name="showPassword ? 'eyeOff' : 'eye'" size="sm" />
-						</button>
-					</div>
-					<p v-if="ramErrors.password" class="input-error-text">{{ ramErrors.password }}</p>
+					<n-input
+						id="ram-password"
+						v-model:value="ramForm.password"
+						type="password"
+						show-password-on="click"
+						placeholder="请输入密码"
+						autocomplete="current-password"
+						:status="ramErrors.password ? 'error' : undefined"
+						@update:value="clearRamError('password')"
+					>
+						<template #prefix><Icon name="lock" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="ramErrors.password">{{ ramErrors.password }}</template>
+					</n-input>
 				</div>
 
 				<!-- Captcha -->
@@ -476,14 +445,7 @@ async function handleOAuthLogin(provider: string) {
 
 				<!-- Remember & Forgot -->
 				<div class="flex items-center justify-between">
-					<label class="flex items-center gap-2 cursor-pointer select-none">
-						<input
-							v-model="ramForm.remember"
-							type="checkbox"
-							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
-						/>
-						<span class="text-sm text-gray-600">记住登录状态（7天免登录）</span>
-					</label>
+					<n-checkbox v-model:checked="ramForm.remember">记住登录状态（7天免登录）</n-checkbox>
 					<router-link
 						to="/tenant/forgot-password"
 						class="text-sm text-primary-600 font-medium hover:text-primary-700 transition-colors"

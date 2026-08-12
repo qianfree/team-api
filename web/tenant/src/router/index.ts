@@ -31,15 +31,16 @@ const router = createRouter({
 })
 
 const { start, done } = useTopProgress()
+const { settings: publicSettings, fetchSettings } = usePublicSettings()
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
 	start()
 
 	const tenantAuthStore = useTenantAuthStore()
 	tenantAuthStore.loadFromStorage()
 
 	if (to.meta.title) {
-		const { settings: publicSettings } = usePublicSettings()
+		await fetchSettings()
 		const siteName = publicSettings.value.site_name || 'Team-API'
 		document.title = to.name === 'TenantHome' ? `${siteName} — 企业级多租户大模型 API 网关平台 | 开源自托管` : `${to.meta.title} — ${siteName}`
 	}

@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="tenant-layout min-h-screen overflow-x-hidden">
+	<div class="tenant-layout min-h-screen overflow-x-clip">
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
 			<AnnouncementBanner v-if="consoleAnnouncements.length" :announcements="consoleAnnouncements" />

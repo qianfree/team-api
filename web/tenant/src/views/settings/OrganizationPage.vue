@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { NInput } from 'naive-ui'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -299,29 +300,29 @@ onMounted(() => {
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 						<div>
 							<label class="input-label">组织名称</label>
-							<input
-								v-model="teamForm.name"
+							<n-input
+								v-model:value="teamForm.name"
 								type="text"
 								placeholder="例如：某某科技"
-								class="input"
-								:class="{ 'input-error': teamNameError }"
-								@input="teamNameError = ''"
-							/>
+								:status="teamNameError ? 'error' : undefined"
+								@update:value="teamNameError = ''"
+							>
+								<template #feedback v-if="teamNameError">{{ teamNameError }}</template>
+							</n-input>
 							<p class="input-hint">汉字最多 8 个，字母最多 16 个</p>
-							<p v-if="teamNameError" class="input-error-text">{{ teamNameError }}</p>
 						</div>
 						<div>
 							<label class="input-label">组织代码</label>
-							<input
-								v-model="teamForm.code"
+							<n-input
+								v-model:value="teamForm.code"
 								type="text"
 								placeholder="例如：my-team"
-								class="input"
-								:class="{ 'input-error': codeError }"
-								@input="codeError = ''"
-							/>
+								:status="codeError ? 'error' : undefined"
+								@update:value="codeError = ''"
+							>
+								<template #feedback v-if="codeError">{{ codeError }}</template>
+							</n-input>
 							<p class="input-hint">3-30 位，小写字母、数字、连字符，字母数字开头结尾</p>
-							<p v-if="codeError" class="input-error-text">{{ codeError }}</p>
 						</div>
 					</div>
 
@@ -372,10 +373,10 @@ onMounted(() => {
 							</button>
 						</div>
 						<div v-else class="flex items-center gap-2">
-							<input
-								v-model="nameForm.name"
+							<n-input
+								v-model:value="nameForm.name"
 								type="text"
-								class="input flex-1"
+								class="flex-1"
 								@keyup.enter="saveName"
 							/>
 							<button
@@ -649,21 +650,20 @@ onMounted(() => {
 
 				<div>
 					<label class="input-label">新所有者用户 ID</label>
-					<input
-						v-model="transferForm.new_owner_id"
+					<n-input
+						v-model:value="transferForm.new_owner_id"
 						type="number"
 						placeholder="请输入成员的用户 ID"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">确认您的密码</label>
-					<input
-						v-model="transferForm.password"
+					<n-input
+						v-model:value="transferForm.password"
 						type="password"
+						show-password-on="click"
 						placeholder="请输入密码以确认操作"
-						class="input"
 					/>
 				</div>
 			</div>

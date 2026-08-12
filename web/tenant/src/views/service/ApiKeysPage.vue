@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -177,6 +180,96 @@ function formatDate(d: string | null): string {
 	return d.replace('T', ' ').substring(0, 16)
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<ApiKey>>(() => [
+	{ title: '名称', key: 'name', width: 130, render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name) },
+	{
+		title: 'Key 前缀',
+		key: 'key_prefix',
+		width: 170,
+		render: (row) =>
+			h('div', { class: 'inline-flex items-center gap-1.5' }, [
+				h('span', { class: 'code' }, `${row.key_prefix}...`),
+				h(
+					'button',
+					{
+						type: 'button',
+						class:
+							'inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50',
+						disabled: copyingKeyId.value !== null,
+						title: copyingKeyId.value === row.id ? '正在复制' : '复制 API Key',
+						onClick: () => copyKey(row.id),
+					},
+					copyingKeyId.value === row.id
+						? h('span', { class: 'spinner h-3.5 w-3.5 border-primary-500' })
+						: h(Icon, { name: 'copy', size: 'xs' })
+				),
+			]),
+	},
+	{
+		title: '权限',
+		key: 'model_count',
+		width: 110,
+		render: (row) =>
+			row.model_count > 0
+				? h(
+						NTag,
+						{ type: 'info', size: 'small', style: 'cursor:pointer', onClick: () => openScopeModal(row.id, row.name) },
+						{ default: () => `${row.model_count} 个模型` }
+					)
+				: renderBadge('unlimited', { unlimited: '不限模型' }, { unlimited: 'badge-gray' }),
+	},
+	{
+		title: '限制',
+		key: 'limits',
+		width: 200,
+		render: (row) =>
+			h('div', { class: 'space-y-1 text-xs text-gray-500' }, [
+				h('div', {}, `QPS：${formatLimit(row.rate_limit_qps)}`),
+				h('div', {}, `并发：${formatLimit(row.rate_limit_concurrency)}`),
+				h('div', {}, `额度：${formatQuota(row)}`),
+				h('div', {}, `IP：${row.ip_whitelist?.length ? row.ip_whitelist.length + ' 条' : '不限'}`),
+			]),
+	},
+	{ title: '状态', key: 'status', width: 90, render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
+	{ title: '过期时间', key: 'expires_at', width: 150, render: (row) => h('span', { class: 'text-gray-500 text-xs' }, formatDate(row.expires_at)) },
+	{
+		title: '创建时间',
+		key: 'created_at',
+		width: 150,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs' }, (row.created_at || '').replace('T', ' ').substring(0, 16)),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		align: 'right',
+		width: 110,
+		render: (row) =>
+			h('div', { class: 'flex items-center justify-end gap-1' }, [
+				row.status === 'active'
+					? h(
+							NButton,
+							{ text: true, size: 'small', onClick: () => openEditModal(row) },
+							{ icon: () => h(Icon, { name: 'edit', size: 'xs' }), default: () => '编辑' }
+						)
+					: null,
+				row.status === 'active'
+					? h(
+							NButton,
+							{ text: true, size: 'small', type: 'error', onClick: () => disableKey(row.id) },
+							{ icon: () => h(Icon, { name: 'trash', size: 'xs' }), default: () => '禁用' }
+						)
+					: null,
+				row.status === 'disabled' ? h('span', { class: 'text-xs text-gray-400' }, '已禁用') : null,
+			]),
+	},
+])
+
+function handlePageSizeChange() {
+	page.value = 1
+	fetchKeys()
+}
+
 onMounted(() => {
 	fetchKeys()
 })
@@ -224,102 +317,36 @@ onMounted(() => {
 		</div>
 
 		<!-- Keys Table -->
-		<div class="viewport-table-panel card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="keys.length > 0" class="viewport-table-scroll table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>名称</th>
-							<th>Key 前缀</th>
-							<th>权限</th>
-							<th>限制</th>
-							<th>状态</th>
-							<th>过期时间</th>
-							<th>创建时间</th>
-							<th class="text-right">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="key in keys" :key="key.id">
-							<td class="font-medium text-gray-900">{{ key.name }}</td>
-							<td>
-								<div class="inline-flex items-center gap-1.5">
-									<span class="code">{{ key.key_prefix }}...</span>
-									<button
-										type="button"
-										class="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50"
-										:disabled="copyingKeyId !== null"
-										:aria-busy="copyingKeyId === key.id"
-										:aria-label="copyingKeyId === key.id ? '正在获取并复制 API Key' : '复制 API Key'"
-										:title="copyingKeyId === key.id ? '正在复制' : '复制 API Key'"
-										@click="copyKey(key.id)"
-									>
-										<span v-if="copyingKeyId === key.id" class="spinner h-3.5 w-3.5 border-primary-500"></span>
-										<Icon v-else name="copy" size="xs" />
-									</button>
-								</div>
-							</td>
-							<td>
-								<template v-if="key.model_count > 0">
-									<button class="badge badge-primary cursor-pointer hover:bg-primary-100 transition-colors" @click="openScopeModal(key.id, key.name)">
-										{{ key.model_count }} 个模型
-									</button>
-								</template>
-								<span v-else class="badge badge-gray">不限模型</span>
-							</td>
-							<td>
-								<div class="space-y-1 text-xs text-gray-500">
-									<div>QPS：{{ formatLimit(key.rate_limit_qps) }}</div>
-									<div>并发：{{ formatLimit(key.rate_limit_concurrency) }}</div>
-									<div>额度：{{ formatQuota(key) }}</div>
-									<div>IP：{{ key.ip_whitelist?.length ? key.ip_whitelist.length + ' 条' : '不限' }}</div>
-								</div>
-							</td>
-							<td>
-								<span class="badge" :class="statusBadgeClass[key.status] || 'badge-gray'">
-									{{ statusLabel[key.status] || key.status }}
-								</span>
-							</td>
-							<td class="text-gray-500 text-xs">{{ formatDate(key.expires_at) }}</td>
-							<td class="text-gray-500 text-xs">{{ (key.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
-							<td class="text-right">
-								<div class="flex items-center justify-end gap-1">
-									<button
-										v-if="key.status === 'active'"
-										@click="openEditModal(key)"
-										class="btn btn-ghost btn-sm"
-									>
-										<Icon name="edit" size="xs" />
-										编辑
-									</button>
-									<button
-										v-if="key.status === 'active'"
-										@click="disableKey(key.id)"
-										class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
-									>
-										<Icon name="trash" size="xs" />
-										禁用
-									</button>
-									<span v-if="key.status === 'disabled'" class="text-xs text-gray-400">已禁用</span>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<!-- Empty state -->
-			<div v-else class="empty-state">
-				<Icon name="key" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无个人密钥</p>
-				<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchKeys" />
+		<div class="viewport-table-panel">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="keys"
+				:row-key="(row: ApiKey) => row.id"
+				card-title-key="name"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="[{ key: 'key_prefix', full: true }, 'model_count', 'expires_at', { key: 'limits', full: true }]"
+				card-actions-key="actions"
+				@update:page="fetchKeys"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="key" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无个人密钥</p>
+						<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Create Modal -->

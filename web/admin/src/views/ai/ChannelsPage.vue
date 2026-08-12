@@ -8,6 +8,7 @@ import type { FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 import { hasPermission } from '@/utils/permission'
 import { providerTypeOptions, providerTypeName, filterProviderOption } from '@/constants/channel'
@@ -500,7 +501,7 @@ const { exporting, exportFile } = useExport({
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
-      <ASpace>
+      <ASpace wrap>
         <AInputNumber v-model="filterID" placeholder="渠道 ID" :min="1" allow-clear style="width: 120px" @change="handleFilter" @clear="handleFilter" />
         <ASelect v-model="filterType" :options="[{ label: '全部类型', value: '' }, ...providerTypeOptions]" placeholder="供应商类型" allow-clear allow-search style="width: 180px" @change="handleFilter" />
         <AInput v-model="filterModel" placeholder="搜索模型名..." allow-clear style="width: 160px" @keydown.enter="handleFilter" @clear="handleFilter" />
@@ -513,7 +514,18 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1400 }" :bordered="false" :stripe="true" :pagination="false" row-key="id" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :scroll="{ x: 1400 }"
+        :stripe="true"
+        row-key="id"
+        card-title-key="name"
+        card-subtitle-key="base_url"
+        card-badge-key="status"
+        :card-fields="['type', 'tier', 'health_score', 'breaker_state', 'weight']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />

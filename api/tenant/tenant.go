@@ -57,6 +57,8 @@ type ITenantV1 interface {
 	HelpPublicArticleGet(ctx context.Context, req *v1.HelpPublicArticleGetReq) (res *v1.HelpPublicArticleGetRes, err error)
 	HelpPublicSearch(ctx context.Context, req *v1.HelpPublicSearchReq) (res *v1.HelpPublicSearchRes, err error)
 	TenantLevelBenefits(ctx context.Context, req *v1.TenantLevelBenefitsReq) (res *v1.TenantLevelBenefitsRes, err error)
+	MarketplaceList(ctx context.Context, req *v1.MarketplaceListReq) (res *v1.MarketplaceListRes, err error)
+	MarketplaceDetail(ctx context.Context, req *v1.MarketplaceDetailReq) (res *v1.MarketplaceDetailRes, err error)
 	TenantMemberList(ctx context.Context, req *v1.TenantMemberListReq) (res *v1.TenantMemberListRes, err error)
 	TenantMemberInvite(ctx context.Context, req *v1.TenantMemberInviteReq) (res *v1.TenantMemberInviteRes, err error)
 	TenantInvitationList(ctx context.Context, req *v1.TenantInvitationListReq) (res *v1.TenantInvitationListRes, err error)

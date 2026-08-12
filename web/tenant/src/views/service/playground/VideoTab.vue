@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
@@ -199,11 +200,11 @@ function downloadVideo() {
 					</div>
 					<div>
 						<label class="input-label">提示词</label>
-						<textarea v-model="prompt" class="input" rows="4" placeholder="描述你想生成的视频..." />
+						<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的视频..." />
 					</div>
 					<div>
 						<label class="input-label">分辨率</label>
-						<input v-model="resolution" class="input" placeholder="如 1280x720" />
+						<n-input v-model:value="resolution" placeholder="如 1280x720" />
 						<div class="flex flex-wrap gap-1.5 mt-2">
 							<button
 								v-for="p in resolutionPresets"
@@ -220,7 +221,7 @@ function downloadVideo() {
 					</div>
 					<div>
 						<label class="input-label">时长（{{ duration }} 秒）</label>
-						<input v-model.number="duration" type="number" class="input" min="5" max="15" step="1" />
+						<n-input-number v-model:value="duration" :min="5" :max="15" :step="1" class="w-full" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
 						{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}

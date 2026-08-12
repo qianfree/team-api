@@ -125,6 +125,10 @@ type (
 		RequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (*v1.TenantRequestClosureRes, error)
 		// CancelClosure 取消关户（仅 owner）
 		CancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (*v1.TenantCancelClosureRes, error)
+		// GetModelList 获取模型广场列表（从默认模型分组加载）
+		GetModelList(ctx context.Context, req *v1.MarketplaceListReq) (*v1.MarketplaceListRes, error)
+		// GetModelDetail 获取模型详情
+		GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailReq) (*v1.MarketplaceDetailRes, error)
 		// ListMembers returns a paginated list of tenant members.
 		ListMembers(ctx context.Context, req *v1.TenantMemberListReq) (*v1.TenantMemberListRes, error)
 		// InviteMember generates an invitation link.

@@ -33,52 +33,39 @@
 			<form class="space-y-5" @submit.prevent="handleJoin">
 				<div>
 					<label class="input-label">用户名 <span class="text-red-500">*</span></label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="user" size="sm" />
-						</div>
-						<input
-							v-model="form.username"
-							type="text"
-							required
-							placeholder="仅支持英文字母和数字，不能为纯数字"
-							class="input pl-11"
-							:class="{ 'input-error': usernameError }"
-							@input="validateUsername"
-						/>
-					</div>
-					<p v-if="usernameError" class="input-error-text">{{ usernameError }}</p>
+					<n-input
+						v-model:value="form.username"
+						type="text"
+						placeholder="仅支持英文字母和数字，不能为纯数字"
+						:status="usernameError ? 'error' : undefined"
+						@update:value="validateUsername"
+					>
+						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="usernameError">{{ usernameError }}</template>
+					</n-input>
 				</div>
 
 				<div>
 					<label class="input-label">显示名称</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="user" size="sm" />
-						</div>
-						<input
-							v-model="form.display_name"
-							type="text"
-							placeholder="选填，如：张三"
-							class="input pl-11"
-						/>
-					</div>
+					<n-input
+						v-model:value="form.display_name"
+						type="text"
+						placeholder="选填，如：张三"
+					>
+						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
+					</n-input>
 				</div>
 
 				<div>
 					<label class="input-label">密码 <span class="text-red-500">*</span></label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="lock" size="sm" />
-						</div>
-						<input
-							v-model="form.password"
-							type="password"
-							required
-							placeholder="至少 8 位，含字母和数字"
-							class="input pl-11"
-						/>
-					</div>
+					<n-input
+						v-model:value="form.password"
+						type="password"
+						show-password-on="click"
+						placeholder="至少 8 位，含字母和数字"
+					>
+						<template #prefix><Icon name="lock" size="sm" class="text-gray-400" /></template>
+					</n-input>
 				</div>
 
 				<button
@@ -149,6 +136,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { NInput } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import Icon from '@/components/common/Icon.vue'

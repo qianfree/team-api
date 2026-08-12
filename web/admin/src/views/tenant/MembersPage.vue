@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -177,26 +178,26 @@ const columns: TableColumnData[] = [
       const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
       const actions = [
         h(Button, {
-          type: 'text',
+          type: 'outline',
           size: 'mini',
           status: isDisabled ? 'success' : 'warning',
           onClick: () => handleToggleStatus(record),
         }, () => isDisabled ? '启用' : '禁用'),
         h(Button, {
-          type: 'text',
+          type: 'outline',
           size: 'mini',
           onClick: () => handleResetPassword(record),
         }, () => '重置密码'),
       ]
       if (locked) {
         actions.push(h(Button, {
-          type: 'text',
+          type: 'outline',
           size: 'mini',
           status: 'success',
           onClick: () => handleUnlock(record),
         }, () => '解锁'))
       }
-      return h(Space, { size: 'mini' }, () => actions)
+      return h(Space, { size: 4 }, () => actions)
     },
   },
 ]
@@ -376,16 +377,42 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         :scroll="{ x: 1500 }"
-        :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="id"
-      />
+        card-title-key="username"
+        card-subtitle-key="tenant_name"
+        card-badge-key="status"
+        :card-fields="['display_name', 'role', 'email', 'last_login_at']"
+      >
+        <!-- 卡片操作栏：移动端用 small outline（比桌面列 render 的 mini 更易点）；桌面端表格走列 render 的 outline 按钮 -->
+        <template #card-actions="{ row }">
+          <AButton
+            size="small"
+            type="outline"
+            :status="row.status === 'disabled' ? 'success' : 'warning'"
+            @click="handleToggleStatus(row)"
+          >
+            {{ row.status === 'disabled' ? '启用' : '禁用' }}
+          </AButton>
+          <AButton size="small" type="outline" @click="handleResetPassword(row)">
+            重置密码
+          </AButton>
+          <AButton
+            v-if="row.locked_until && new Date(row.locked_until) > new Date()"
+            size="small"
+            type="outline"
+            status="success"
+            @click="handleUnlock(row)"
+          >
+            解锁
+          </AButton>
+        </template>
+      </ResponsiveTable>
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination

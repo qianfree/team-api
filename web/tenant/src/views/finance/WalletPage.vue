@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput, NInputNumber, NModal } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
 
@@ -11,7 +15,7 @@ const walletLoading = ref(true)
 
 // Recharge
 const rechargeAmount = ref<number | null>(null)
-const customAmount = ref('')
+const customAmount = ref<number | null>(null)
 const rechargeLoading = ref(false)
 const selectedChannel = ref('')
 const selectedPaymentMethod = ref('')
@@ -39,7 +43,7 @@ const redeemTypeBadgeClasses: Record<string, string> = { quota: 'badge-success',
 
 // Warning threshold
 const showThresholdModal = ref(false)
-const thresholdInput = ref('')
+const thresholdInput = ref<number | null>(null)
 const thresholdSaving = ref(false)
 
 // Computed: preset amounts from payment settings
@@ -75,7 +79,7 @@ const thresholdActive = computed(() => Number(wallet.value?.warning_threshold) >
 
 const thresholdValidationError = computed(() => {
 	const val = Number(thresholdInput.value)
-	if (thresholdInput.value === '' || isNaN(val)) return '请输入有效金额'
+	if (thresholdInput.value === null || isNaN(val)) return '请输入有效金额'
 	if (val < 0) return '阈值不能为负数'
 	return ''
 })
@@ -132,12 +136,12 @@ async function fetchPaymentInfo() {
 
 function selectPresetAmount(amount: number) {
 	rechargeAmount.value = amount
-	customAmount.value = ''
+	customAmount.value = null
 }
 
 function onCustomInput() {
-	const val = parseFloat(customAmount.value)
-	rechargeAmount.value = isNaN(val) || val <= 0 ? null : val
+	const val = customAmount.value ?? 0
+	rechargeAmount.value = val <= 0 ? null : val
 }
 
 function selectPayMethod(method: { channel: string; type: string }) {
@@ -241,9 +245,40 @@ async function fetchRedeemHistory() {
 	}
 }
 
+// 兑换记录表格列
+const redeemHistoryColumns = computed<DataTableColumns<any>>(() => [
+	{
+		title: '兑换码',
+		key: 'code',
+		width: 180,
+		render: (row) => h('span', { class: 'font-mono text-xs' }, row.code || '-'),
+	},
+	{
+		title: '兑换类型',
+		key: 'type',
+		width: 110,
+		render: (row) => renderBadge(row.type, redeemTypeLabels, redeemTypeBadgeClasses),
+	},
+	{
+		title: '面值',
+		key: 'value',
+		width: 130,
+		render: (row) =>
+			row.type === 'quota'
+				? h('span', { class: 'font-mono' }, `+${Number(row.value).toFixed(6)}`)
+				: h('span', { class: 'font-mono' }, '-'),
+	},
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => h('span', { class: 'text-gray-400 text-xs' }, row.created_at?.substring(0, 16)),
+	},
+])
+
 // Warning threshold
 function openThresholdModal() {
-	thresholdInput.value = wallet.value?.warning_threshold ? String(wallet.value.warning_threshold) : '0'
+	thresholdInput.value = wallet.value?.warning_threshold ? Number(wallet.value.warning_threshold) : 0
 	showThresholdModal.value = true
 }
 
@@ -465,15 +500,14 @@ onBeforeUnmount(() => {
 						</div>
 						<div class="relative mt-3">
 							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">¥</span>
-							<input
-								v-model="customAmount"
-								type="number"
-								class="input pl-8"
-								:class="{ 'input-error': rechargeValidationMessage }"
-								placeholder="输入其他金额"
+							<n-input-number
+								v-model:value="customAmount"
 								:min="minimumAmount"
-								step="0.01"
-								@input="onCustomInput"
+								:step="0.01"
+								:status="rechargeValidationMessage ? 'error' : undefined"
+								placeholder="输入其他金额"
+								style="width: 100%; padding-left: 1.75rem"
+								@update:value="onCustomInput"
 							/>
 						</div>
 						<p v-if="rechargeValidationMessage" class="mt-1.5 text-xs text-red-500">{{ rechargeValidationMessage }}</p>
@@ -534,231 +568,190 @@ onBeforeUnmount(() => {
 		<!-- ============================================ -->
 		<!-- Frozen Items Modal -->
 		<!-- ============================================ -->
-		<Teleport to="body">
-			<transition name="modal">
-				<div v-if="showFrozenModal" class="modal-overlay" @click.self="closeFrozenModal">
-					<div class="modal-content w-full max-w-lg">
-						<div class="modal-header">
-							<h3 class="modal-title">冻结明细</h3>
-							<button @click="closeFrozenModal" class="btn-ghost btn-icon">
-								<Icon name="x" size="md" />
-							</button>
-						</div>
-						<div class="modal-body">
-							<!-- Loading -->
-							<div v-if="frozenLoading && frozenItems.length === 0" class="space-y-3">
-								<div v-for="i in 3" :key="i" class="h-14 bg-gray-100 rounded-xl animate-pulse"></div>
-							</div>
-							<!-- Empty -->
-							<div v-else-if="frozenItems.length === 0" class="py-10 text-center">
-								<div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-50 mb-3">
-									<Icon name="checkCircle" size="lg" class="text-gray-300" />
-								</div>
-								<p class="text-gray-500 text-sm">当前没有冻结的资金</p>
-							</div>
-							<!-- Items list -->
-							<div v-else class="space-y-2">
-								<div v-for="item in frozenItems" :key="item.request_id"
-									class="flex items-center justify-between p-3.5 bg-gray-50/80 rounded-xl hover:bg-gray-100/80 transition-colors">
-									<div class="min-w-0 flex-1">
-										<p class="text-sm font-medium text-gray-900 truncate">{{ item.model_name || '未知模型' }}</p>
-										<p class="text-xs text-gray-400 truncate mt-0.5">
-											{{ item.request_id.substring(0, 16) }}...
-											<span class="ml-2">{{ formatTime(item.created_at) }}</span>
-										</p>
-									</div>
-									<div class="text-right ml-3 flex-shrink-0">
-										<p class="text-sm font-semibold text-amber-600">${{ item.amount?.toFixed(4) }}</p>
-										<p class="text-xs text-gray-400">剩余 {{ formatRemaining(item.remaining) }}</p>
-									</div>
-								</div>
-							</div>
-						</div>
-						<div class="modal-footer">
-							<p class="text-xs text-gray-400 flex-1 flex items-center gap-1.5">
-								<span class="w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse"></span>
-								自动刷新中 · 每 10 秒更新
-							</p>
-							<button @click="closeFrozenModal" class="btn btn-secondary btn-sm">关闭</button>
-						</div>
+		<n-modal
+			v-model:show="showFrozenModal"
+			preset="card"
+			title="冻结明细"
+			:style="{ width: '640px' }"
+			@update:show="(v: boolean) => { if (!v) closeFrozenModal() }"
+		>
+			<!-- Loading -->
+			<div v-if="frozenLoading && frozenItems.length === 0" class="space-y-3">
+				<div v-for="i in 3" :key="i" class="h-14 bg-gray-100 rounded-xl animate-pulse"></div>
+			</div>
+			<!-- Empty -->
+			<div v-else-if="frozenItems.length === 0" class="py-10 text-center">
+				<div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-50 mb-3">
+					<Icon name="checkCircle" size="lg" class="text-gray-300" />
+				</div>
+				<p class="text-gray-500 text-sm">当前没有冻结的资金</p>
+			</div>
+			<!-- Items list -->
+			<div v-else class="space-y-2">
+				<div v-for="item in frozenItems" :key="item.request_id"
+					class="flex items-center justify-between p-3.5 bg-gray-50/80 rounded-xl hover:bg-gray-100/80 transition-colors">
+					<div class="min-w-0 flex-1">
+						<p class="text-sm font-medium text-gray-900 truncate">{{ item.model_name || '未知模型' }}</p>
+						<p class="text-xs text-gray-400 truncate mt-0.5">
+							{{ item.request_id.substring(0, 16) }}...
+							<span class="ml-2">{{ formatTime(item.created_at) }}</span>
+						</p>
+					</div>
+					<div class="text-right ml-3 flex-shrink-0">
+						<p class="text-sm font-semibold text-amber-600">${{ item.amount?.toFixed(4) }}</p>
+						<p class="text-xs text-gray-400">剩余 {{ formatRemaining(item.remaining) }}</p>
 					</div>
 				</div>
-			</transition>
-		</Teleport>
+			</div>
+			<template #footer>
+				<div class="flex items-center justify-between gap-3">
+					<p class="text-xs text-gray-400 flex-1 flex items-center gap-1.5">
+						<span class="w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse"></span>
+						自动刷新中 · 每 10 秒更新
+					</p>
+					<button @click="closeFrozenModal" class="btn btn-secondary btn-sm">关闭</button>
+				</div>
+			</template>
+		</n-modal>
 
 		<!-- ============================================ -->
 		<!-- Redeem Code Modal -->
 		<!-- ============================================ -->
-		<Teleport to="body">
-			<transition name="modal">
-				<div v-if="showRedeemModal" class="modal-overlay" @click.self="closeRedeemModal">
-					<div class="modal-content w-full max-w-lg">
-						<div class="modal-header">
-							<h3 class="modal-title">兑换码</h3>
-							<button @click="closeRedeemModal" class="btn-ghost btn-icon">
-								<Icon name="x" size="md" />
-							</button>
-						</div>
-						<div class="modal-body space-y-5">
-							<!-- Redeem input -->
-							<div>
-								<p class="text-sm text-gray-500 mb-3">输入兑换码领取额度、套餐时长等福利</p>
-								<div class="flex gap-3">
-									<div class="flex-1">
-										<input
-											v-model="redeemCode"
-											type="text"
-											class="input font-mono"
-											placeholder="请输入兑换码"
-											maxlength="32"
-											@keyup.enter="handleRedeem"
-										/>
-									</div>
-									<button
-										class="btn btn-primary"
-										:disabled="redeemLoading || !redeemCode.trim()"
-										@click="handleRedeem"
-									>
-										<Icon v-if="redeemLoading" name="refresh" size="sm" class="animate-spin" />
-										<Icon v-else name="check" size="sm" />
-										{{ redeemLoading ? '兑换中...' : '兑换' }}
-									</button>
-								</div>
-
-								<!-- Success -->
-								<div v-if="redeemResult" class="mt-3 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">
-									<Icon name="checkCircle" size="sm" />
-									兑换成功！
-									<span v-if="redeemResult.type === 'quota'" class="font-medium">
-										获得 {{ redeemResult.credited?.toLocaleString() }} 额度
-									</span>
-									<span v-else-if="redeemResult.type === 'plan'" class="font-medium">
-										获得 {{ redeemResult.months }} 个月套餐
-									</span>
-									<span v-else-if="redeemResult.type === 'duration'" class="font-medium">
-										账户有效期延长 {{ redeemResult.extended_days }} 天
-									</span>
-								</div>
-							</div>
-
-							<!-- Divider -->
-							<div class="border-t border-gray-100"></div>
-
-							<!-- Redeem history -->
-							<div>
-								<h4 class="text-sm font-semibold text-gray-900 mb-3">兑换记录</h4>
-
-								<!-- Loading -->
-								<div v-if="redeemHistoryLoading" class="flex items-center justify-center py-8">
-									<div class="spinner"></div>
-									<span class="ml-2 text-sm text-gray-400">加载中...</span>
-								</div>
-
-								<!-- Empty -->
-								<div v-else-if="redeemHistory.length === 0" class="flex flex-col items-center justify-center py-8 text-center">
-									<div class="mb-3 text-gray-300">
-										<Icon name="document" size="lg" />
-									</div>
-									<p class="text-sm text-gray-500">暂无兑换记录</p>
-								</div>
-
-								<!-- History table -->
-								<div v-else class="table-container">
-									<table class="table">
-										<thead>
-											<tr>
-												<th>兑换码</th>
-												<th>兑换类型</th>
-												<th>面值</th>
-												<th>时间</th>
-											</tr>
-										</thead>
-										<tbody>
-											<tr v-for="item in redeemHistory" :key="item.id">
-												<td class="font-mono text-xs">{{ item.code || '-' }}</td>
-												<td>
-													<span class="badge" :class="redeemTypeBadgeClasses[item.type] || 'badge-gray'">
-														{{ redeemTypeLabels[item.type] || item.type }}
-													</span>
-												</td>
-												<td class="font-mono">
-													<template v-if="item.type === 'quota'">
-														+{{ Number(item.value).toFixed(6) }}
-													</template>
-													<template v-else>
-														-
-													</template>
-												</td>
-												<td class="text-gray-400 text-xs">{{ item.created_at?.substring(0, 16) }}</td>
-											</tr>
-										</tbody>
-									</table>
-								</div>
-							</div>
-						</div>
-						<div class="modal-footer">
-							<button @click="closeRedeemModal" class="btn btn-secondary btn-sm">关闭</button>
-						</div>
+		<n-modal
+			v-model:show="showRedeemModal"
+			preset="card"
+			title="兑换码"
+			:style="{ width: '640px' }"
+			@update:show="(v: boolean) => { if (!v) closeRedeemModal() }"
+		>
+			<!-- Redeem input -->
+			<div>
+				<p class="text-sm text-gray-500 mb-3">输入兑换码领取额度、套餐时长等福利</p>
+				<div class="flex gap-3">
+					<div class="flex-1">
+						<n-input
+							v-model:value="redeemCode"
+							type="text"
+							class="font-mono"
+							placeholder="请输入兑换码"
+							:maxlength="32"
+							@keyup.enter="handleRedeem"
+						/>
 					</div>
+					<button
+						class="btn btn-primary"
+						:disabled="redeemLoading || !redeemCode.trim()"
+						@click="handleRedeem"
+					>
+						<Icon v-if="redeemLoading" name="refresh" size="sm" class="animate-spin" />
+						<Icon v-else name="check" size="sm" />
+						{{ redeemLoading ? '兑换中...' : '兑换' }}
+					</button>
 				</div>
-			</transition>
-		</Teleport>
+
+				<!-- Success -->
+				<div v-if="redeemResult" class="mt-3 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">
+					<Icon name="checkCircle" size="sm" />
+					兑换成功！
+					<span v-if="redeemResult.type === 'quota'" class="font-medium">
+						获得 {{ redeemResult.credited?.toLocaleString() }} 额度
+					</span>
+					<span v-else-if="redeemResult.type === 'plan'" class="font-medium">
+						获得 {{ redeemResult.months }} 个月套餐
+					</span>
+					<span v-else-if="redeemResult.type === 'duration'" class="font-medium">
+						账户有效期延长 {{ redeemResult.extended_days }} 天
+					</span>
+				</div>
+			</div>
+
+			<!-- Divider -->
+			<div class="border-t border-gray-100"></div>
+
+			<!-- Redeem history -->
+			<div>
+				<h4 class="text-sm font-semibold text-gray-900 mb-3">兑换记录</h4>
+
+				<!-- History table -->
+				<ResponsiveDataTable
+					:show-pagination="false"
+					:loading="redeemHistoryLoading"
+					:columns="redeemHistoryColumns"
+					:scroll-x="tableScrollX(redeemHistoryColumns)"
+					:data="redeemHistory"
+					:row-key="(row: any) => row.id"
+					card-title-key="code"
+					card-badge-key="type"
+					card-subtitle-key="created_at"
+					:card-fields="['value']"
+				>
+					<template #empty>
+						<div class="flex flex-col items-center justify-center py-8 text-center">
+							<div class="mb-3 text-gray-300">
+								<Icon name="document" size="lg" />
+							</div>
+							<p class="text-sm text-gray-500">暂无兑换记录</p>
+						</div>
+					</template>
+				</ResponsiveDataTable>
+			</div>
+			<template #footer>
+				<div class="flex justify-end gap-3">
+					<button @click="closeRedeemModal" class="btn btn-secondary btn-sm">关闭</button>
+				</div>
+			</template>
+		</n-modal>
 
 		<!-- ============================================ -->
 		<!-- Warning Threshold Modal -->
 		<!-- ============================================ -->
-		<Teleport to="body">
-			<transition name="modal">
-				<div v-if="showThresholdModal" class="modal-overlay" @click.self="closeThresholdModal">
-					<div class="modal-content w-full max-w-md">
-						<div class="modal-header">
-							<h3 class="modal-title">余额预警</h3>
-							<button @click="closeThresholdModal" class="btn-ghost btn-icon">
-								<Icon name="x" size="md" />
-							</button>
-						</div>
-						<div class="modal-body space-y-4">
-							<div class="threshold-note">
-								<Icon name="infoCircle" size="sm" class="mt-0.5 flex-shrink-0 text-primary-500" />
-								<p>当可用余额低于预警线时，向组织 owner / admin 发送通知。设为 0 可关闭预警。</p>
-							</div>
-							<div>
-								<label class="text-xs font-semibold text-slate-600">预警阈值（USD）</label>
-								<div class="relative mt-3">
-									<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
-									<input
-										v-model="thresholdInput"
-										type="number"
-										class="input pl-8"
-										:class="{ 'input-error': thresholdValidationError }"
-										placeholder="例如 1.00"
-										min="0"
-										step="0.01"
-										@keyup.enter="saveThreshold"
-									/>
-								</div>
-								<p v-if="thresholdValidationError" class="mt-1.5 text-xs text-red-500">{{ thresholdValidationError }}</p>
-								<p v-else class="mt-1.5 text-xs text-slate-400">设为 0 表示关闭预警</p>
-							</div>
-							<div class="flex flex-wrap gap-2">
-								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 0 }" @click="thresholdInput = '0'">关闭</button>
-								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 1 }" @click="thresholdInput = '1'">$1</button>
-								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 5 }" @click="thresholdInput = '5'">$5</button>
-								<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 10 }" @click="thresholdInput = '10'">$10</button>
-							</div>
-						</div>
-						<div class="modal-footer">
-							<button @click="closeThresholdModal" class="btn btn-secondary btn-sm">取消</button>
-							<button class="btn btn-primary btn-sm" :disabled="thresholdSaving || !!thresholdValidationError" @click="saveThreshold">
-								<Icon v-if="thresholdSaving" name="refresh" size="sm" class="animate-spin" />
-								<Icon v-else name="check" size="sm" />
-								{{ thresholdSaving ? '保存中...' : '保存' }}
-							</button>
-						</div>
-					</div>
+		<n-modal
+			v-model:show="showThresholdModal"
+			preset="card"
+			title="余额预警"
+			:style="{ width: '480px' }"
+			@update:show="(v: boolean) => { if (!v) closeThresholdModal() }"
+		>
+			<div class="space-y-4">
+				<div class="threshold-note">
+					<Icon name="infoCircle" size="sm" class="mt-0.5 flex-shrink-0 text-primary-500" />
+					<p>当可用余额低于预警线时，向组织 owner / admin 发送通知。设为 0 可关闭预警。</p>
 				</div>
-			</transition>
-		</Teleport>
+				<div>
+					<label class="text-xs font-semibold text-slate-600">预警阈值（USD）</label>
+					<div class="relative mt-3">
+						<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
+						<n-input-number
+							v-model:value="thresholdInput"
+							:min="0"
+							:step="0.01"
+							:status="thresholdValidationError ? 'error' : undefined"
+							placeholder="例如 1.00"
+							style="width: 100%; padding-left: 1.75rem"
+							@keyup.enter="saveThreshold"
+						/>
+					</div>
+					<p v-if="thresholdValidationError" class="mt-1.5 text-xs text-red-500">{{ thresholdValidationError }}</p>
+					<p v-else class="mt-1.5 text-xs text-slate-400">设为 0 表示关闭预警</p>
+				</div>
+				<div class="flex flex-wrap gap-2">
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 0 }" @click="thresholdInput = 0">关闭</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 1 }" @click="thresholdInput = 1">$1</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 5 }" @click="thresholdInput = 5">$5</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 10 }" @click="thresholdInput = 10">$10</button>
+				</div>
+			</div>
+			<template #footer>
+				<div class="flex justify-end gap-3">
+					<button @click="closeThresholdModal" class="btn btn-secondary btn-sm">取消</button>
+					<button class="btn btn-primary btn-sm" :disabled="thresholdSaving || !!thresholdValidationError" @click="saveThreshold">
+						<Icon v-if="thresholdSaving" name="refresh" size="sm" class="animate-spin" />
+						<Icon v-else name="check" size="sm" />
+						{{ thresholdSaving ? '保存中...' : '保存' }}
+					</button>
+				</div>
+			</template>
+		</n-modal>
 	</div>
 </template>
 

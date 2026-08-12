@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 interface ComparisonItem {
@@ -123,6 +126,110 @@ const modelColors = ['#7b8ff5', '#f7b955', '#5b9df9', '#f6a5c0']
 function modelColor(idx: number): string {
 	return modelColors[idx % modelColors.length]
 }
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<ComparisonItem>>(() => [
+	{
+		title: '模型',
+		key: 'model_name',
+		width: 160,
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-2' }, [
+				h('span', { class: 'font-medium text-gray-900 text-sm' }, row.model_name),
+				row.is_recommended ? h('span', { class: 'badge badge-success text-xs' }, '推荐') : undefined,
+			]),
+	},
+	{
+		title: '请求数',
+		key: 'requests',
+		width: 110,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'requests') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? row.requests.toLocaleString() : '-'
+			),
+	},
+	{
+		title: '成功率',
+		key: 'success_rate',
+		width: 120,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'success_rate') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? formatPct(row.success_rate) : '-'
+			),
+	},
+	{
+		title: '平均延迟',
+		key: 'avg_latency_ms',
+		width: 130,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'avg_latency_ms') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? Math.round(row.avg_latency_ms) + 'ms' : '-'
+			),
+	},
+	{
+		title: 'P95 延迟',
+		key: 'p95_latency_ms',
+		width: 130,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'p95_latency_ms') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? Math.round(row.p95_latency_ms) + 'ms' : '-'
+			),
+	},
+	{
+		title: '总费用',
+		key: 'total_cost',
+		width: 120,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'total_cost') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? '$' + formatCost(row.total_cost) : '-'
+			),
+	},
+	{
+		title: '平均费用/次',
+		key: 'avg_cost_per_request',
+		width: 150,
+		render: (row) =>
+			h(
+				'span',
+				{ class: isBest(row, 'avg_cost_per_request') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
+				row.requests > 0 ? '$' + formatCost(row.avg_cost_per_request) : '-'
+			),
+	},
+	{
+		title: 'Token',
+		key: 'token',
+		width: 160,
+		render: (row) =>
+			h(
+				'span',
+				{ class: 'text-xs text-gray-500' },
+				row.requests > 0 ? (row.input_tokens + row.output_tokens).toLocaleString() : '-'
+			),
+	},
+	{
+		title: '评分',
+		key: 'score',
+		width: 110,
+		render: (row) =>
+			row.requests > 0
+				? h(
+						'span',
+						{ class: ['badge', row.score >= 70 ? 'badge-success' : row.score >= 40 ? 'badge-warning' : 'badge-gray'] },
+						row.score.toFixed(0)
+				  )
+				: h('span', { class: 'text-gray-300' }, '-'),
+	},
+])
 </script>
 
 <template>
@@ -184,29 +291,29 @@ function modelColor(idx: number): string {
 		<template v-if="items.length > 0">
 			<!-- Summary -->
 			<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-primary">
 						<Icon name="chart" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">{{ summary.total_requests.toLocaleString() }}</div>
 						<div class="stat-label">总请求数</div>
 					</div>
 				</div>
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-warning">
 						<Icon name="creditCard" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">${{ formatCost(summary.total_cost) }}</div>
 						<div class="stat-label">总费用</div>
 					</div>
 				</div>
-				<div class="stat-card">
+				<div class="stat-card flex items-center gap-4">
 					<div class="stat-icon stat-icon-success">
 						<Icon name="checkCircle" size="lg" />
 					</div>
-					<div>
+					<div class="min-w-0 flex-1 text-right">
 						<div class="stat-value">{{ summary.recommended || '-' }}</div>
 						<div class="stat-label">{{ summary.reason || '推荐模型' }}</div>
 					</div>
@@ -219,58 +326,22 @@ function modelColor(idx: number): string {
 					<h3 class="text-sm font-semibold text-gray-900">详细对比</h3>
 				</div>
 				<div class="table-container">
-					<table class="table">
-						<thead>
-							<tr>
-								<th>模型</th>
-								<th>请求数</th>
-								<th>成功率</th>
-								<th>平均延迟</th>
-								<th>P95 延迟</th>
-								<th>总费用</th>
-								<th>平均费用/次</th>
-								<th>Token</th>
-								<th>评分</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="item in items" :key="item.model_name">
-								<td>
-									<div class="flex items-center gap-2">
-										<span class="font-medium text-gray-900 text-sm">{{ item.model_name }}</span>
-										<span v-if="item.is_recommended" class="badge badge-success text-xs">推荐</span>
-									</div>
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'requests') && item.requests > 0 }">
-									{{ item.requests.toLocaleString() }}
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'success_rate') && item.requests > 0 }">
-									{{ item.requests > 0 ? formatPct(item.success_rate) : '-' }}
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'avg_latency_ms') && item.requests > 0 }">
-									{{ item.requests > 0 ? Math.round(item.avg_latency_ms) + 'ms' : '-' }}
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'p95_latency_ms') && item.requests > 0 }">
-									{{ item.requests > 0 ? Math.round(item.p95_latency_ms) + 'ms' : '-' }}
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'total_cost') && item.requests > 0 }">
-									{{ item.requests > 0 ? '$' + formatCost(item.total_cost) : '-' }}
-								</td>
-								<td :class="{ 'text-emerald-600 font-medium': isBest(item, 'avg_cost_per_request') && item.requests > 0 }">
-									{{ item.requests > 0 ? '$' + formatCost(item.avg_cost_per_request) : '-' }}
-								</td>
-								<td class="text-xs text-gray-500">
-									{{ item.requests > 0 ? (item.input_tokens + item.output_tokens).toLocaleString() : '-' }}
-								</td>
-								<td>
-									<span v-if="item.requests > 0" class="badge" :class="item.score >= 70 ? 'badge-success' : item.score >= 40 ? 'badge-warning' : 'badge-gray'">
-										{{ item.score.toFixed(0) }}
-									</span>
-									<span v-else class="text-gray-300">-</span>
-								</td>
-							</tr>
-						</tbody>
-					</table>
+					<ResponsiveDataTable
+						:show-pagination="false"
+						:columns="columns"
+						:scroll-x="tableScrollX(columns)"
+						:data="items"
+						:row-key="(row: ComparisonItem) => row.model_name"
+						card-title-key="model_name"
+						card-badge-key="score"
+						:card-fields="['requests', 'success_rate', 'avg_latency_ms', 'p95_latency_ms', 'total_cost', 'avg_cost_per_request', { key: 'token', full: true }]"
+					>
+						<template #empty>
+							<div class="empty-state">
+								<p class="text-sm text-gray-500">暂无对比数据</p>
+							</div>
+						</template>
+					</ResponsiveDataTable>
 				</div>
 			</div>
 

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NTag } from 'naive-ui'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
 const router = useRouter()
 const activeSection = ref('quickstart')
@@ -1098,6 +1102,68 @@ function initEndpoint() {
 	}
 }
 initEndpoint()
+
+// 请求参数表列定义
+const paramColumns = computed<DataTableColumns<Param>>(() => [
+	{
+		title: '字段',
+		key: 'field',
+		width: 140,
+		render: (row) => h('code', { class: 'font-mono text-primary-600 text-xs' }, row.field),
+	},
+	{
+		title: '类型',
+		key: 'type',
+		width: 110,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs' }, row.type),
+	},
+	{
+		title: '必填',
+		key: 'required',
+		width: 70,
+		render: (row) =>
+			renderBadge(
+				String(row.required),
+				{ 'true': '必填', 'false': '可选' },
+				{ 'true': 'badge-danger', 'false': 'badge-gray' }
+			),
+	},
+	{
+		title: '说明',
+		key: 'desc',
+		width: 300,
+		render: (row) => h('span', { class: 'text-gray-600 text-sm' }, row.desc),
+	},
+])
+
+// 错误码一览表列定义
+const errorColumns = computed<DataTableColumns<any>>(() => [
+	{
+		title: 'HTTP 状态码',
+		key: 'status',
+		width: 120,
+		render: (row) =>
+			h(NTag, { size: 'small', type: row.status >= 500 ? 'error' : 'warning' }, { default: () => String(row.status) }),
+	},
+	{
+		title: '业务错误码',
+		key: 'code',
+		width: 120,
+		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, String(row.code)),
+	},
+	{
+		title: '说明',
+		key: 'desc',
+		width: 240,
+		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.desc),
+	},
+	{
+		title: '示例消息',
+		key: 'example',
+		width: 240,
+		render: (row) => h('span', { class: 'text-xs text-gray-400 font-mono' }, row.example),
+	},
+])
 </script>
 
 <template>
@@ -1268,29 +1334,16 @@ initEndpoint()
 								<!-- Parameters Table -->
 								<div v-if="ep.params.length > 0">
 									<h5 class="text-sm font-semibold text-gray-800 mb-2">请求参数</h5>
-									<div class="table-container">
-										<table class="table">
-											<thead>
-												<tr>
-													<th>字段</th>
-													<th>类型</th>
-													<th>必填</th>
-													<th>说明</th>
-												</tr>
-											</thead>
-											<tbody>
-												<tr v-for="p in ep.params" :key="p.field">
-													<td class="font-mono text-primary-600 text-xs">{{ p.field }}</td>
-													<td class="text-gray-500 text-xs">{{ p.type }}</td>
-													<td>
-														<span v-if="p.required" class="badge badge-danger text-xs">必填</span>
-														<span v-else class="text-gray-400 text-xs">可选</span>
-													</td>
-													<td class="text-gray-600 text-sm">{{ p.desc }}</td>
-												</tr>
-											</tbody>
-										</table>
-									</div>
+									<ResponsiveDataTable
+										:show-pagination="false"
+										:columns="paramColumns"
+										:scroll-x="tableScrollX(paramColumns)"
+										:data="ep.params"
+										:row-key="(row:any)=>row.field"
+										card-title-key="field"
+										card-badge-key="required"
+										:card-fields="['type', { key: 'desc', full: true }]"
+									/>
 								</div>
 
 								<!-- Request/Response Examples -->
@@ -1411,31 +1464,16 @@ initEndpoint()
 						<h3 class="font-semibold text-gray-900">错误码一览</h3>
 					</div>
 					<div class="card-body !pt-0">
-						<div class="table-container">
-							<table class="table">
-								<thead>
-									<tr>
-										<th>HTTP 状态码</th>
-										<th>业务错误码</th>
-										<th>说明</th>
-										<th>示例消息</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr v-for="err in errorCodes" :key="err.code">
-										<td>
-											<span class="badge text-xs" :class="{
-												'badge-warning': err.status >= 400 && err.status < 500,
-												'badge-danger': err.status >= 500,
-											}">{{ err.status }}</span>
-										</td>
-										<td class="font-mono text-xs text-gray-600">{{ err.code }}</td>
-										<td class="text-sm text-gray-700">{{ err.desc }}</td>
-										<td class="text-xs text-gray-400 font-mono">{{ err.example }}</td>
-									</tr>
-								</tbody>
-							</table>
-						</div>
+						<ResponsiveDataTable
+							:show-pagination="false"
+							:columns="errorColumns"
+							:scroll-x="tableScrollX(errorColumns)"
+							:data="errorCodes"
+							:row-key="(row:any)=>row.code"
+							card-title-key="code"
+							card-badge-key="status"
+							:card-fields="[{ key: 'desc', full: true }, { key: 'example', full: true }]"
+						/>
 					</div>
 				</div>
 			</div>

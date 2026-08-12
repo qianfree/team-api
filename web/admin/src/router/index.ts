@@ -54,7 +54,7 @@ router.beforeEach(async (to) => {
   authStore.loadFromStorage()
 
   if (to.meta.title) {
-    fetchSiteName()
+    await fetchSiteName()
     const name = siteName.value || 'Team-API'
     document.title = `${to.meta.title as string} — ${name}`
   }

@@ -18,6 +18,12 @@
             <span class="text-lg font-bold tracking-tight text-gray-900">{{ siteName }}</span>
           </div>
           <div class="flex items-center gap-2">
+            <router-link :to="{ name: 'Marketplace' }" class="btn-nav-link">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859M12 3v8.25m0 0l-3-3m3 3l3-3"/>
+              </svg>
+              <span>模型广场</span>
+            </router-link>
             <button v-if="announcements.length" @click="openAnnouncements" class="btn-nav-announce" title="查看公告">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/></svg>
             </button>
@@ -36,7 +42,7 @@
       <section aria-label="产品介绍" class="merged-section">
         <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <h1 class="hero-title">
-            一个 API，<span class="hero-title-accent">接入所有大模型</span>
+            一个 Key，<span class="hero-title-accent">接入所有大模型</span>
           </h1>
 
           <!-- Scenario Tabs -->
@@ -71,8 +77,31 @@
                   </router-link>
                 </div>
                 <div class="scenario-visual">
+                  <!-- Team: member usage dashboard mock -->
+                  <div v-if="activeScenario === 0" class="mock-card">
+                    <div class="mock-header">
+                      <span class="mock-header-title">成员用量概览</span>
+                      <span class="mock-header-badge">本月</span>
+                    </div>
+                    <div class="mock-member-row" v-for="(m, mi) in mockMembers" :key="mi">
+                      <div class="mock-member-avatar" :style="{ backgroundColor: m.color }"></div>
+                      <div class="mock-member-info">
+                        <span class="mock-member-name">{{ m.name }}</span>
+                        <span class="mock-member-role">{{ m.role }}</span>
+                      </div>
+                      <div class="mock-usage-bar-bg">
+                        <div class="mock-usage-bar-fill" :style="{ width: m.usage + '%', backgroundColor: m.usage > 85 ? '#ef4444' : '#14b8a6' }"></div>
+                      </div>
+                      <span class="mock-usage-pct">{{ m.usage }}%</span>
+                    </div>
+                    <div class="mock-footer">
+                      <span>额度总计</span>
+                      <span class="mock-footer-value">$128.50 / $200.00</span>
+                    </div>
+                  </div>
+
                   <!-- Developer: code example -->
-                  <div v-if="activeScenario === 0" class="code-card">
+                  <div v-else-if="activeScenario === 1" class="code-card">
                     <div class="code-card-bar">
                       <div class="terminal-dots">
                         <span class="terminal-dot terminal-dot-red"></span>
@@ -93,29 +122,6 @@
   <span class="tk-param">model</span><span class="tk-op">=</span><span class="tk-string">"gpt-4o"</span><span class="tk-comma">,</span>
   <span class="tk-param">messages</span><span class="tk-op">=</span><span class="tk-bracket">[{</span><span class="tk-string">"role"</span><span class="tk-op">:</span> <span class="tk-string">"user"</span><span class="tk-comma">,</span> <span class="tk-string">"content"</span><span class="tk-op">:</span> <span class="tk-string">"Hello!"</span><span class="tk-bracket">}]</span>
 <span class="tk-paren">)</span></code></pre>
-                  </div>
-
-                  <!-- Team: member usage dashboard mock -->
-                  <div v-else-if="activeScenario === 1" class="mock-card">
-                    <div class="mock-header">
-                      <span class="mock-header-title">成员用量概览</span>
-                      <span class="mock-header-badge">本月</span>
-                    </div>
-                    <div class="mock-member-row" v-for="(m, mi) in mockMembers" :key="mi">
-                      <div class="mock-member-avatar" :style="{ backgroundColor: m.color }"></div>
-                      <div class="mock-member-info">
-                        <span class="mock-member-name">{{ m.name }}</span>
-                        <span class="mock-member-role">{{ m.role }}</span>
-                      </div>
-                      <div class="mock-usage-bar-bg">
-                        <div class="mock-usage-bar-fill" :style="{ width: m.usage + '%', backgroundColor: m.usage > 85 ? '#ef4444' : '#14b8a6' }"></div>
-                      </div>
-                      <span class="mock-usage-pct">{{ m.usage }}%</span>
-                    </div>
-                    <div class="mock-footer">
-                      <span>额度总计</span>
-                      <span class="mock-footer-value">$128.50 / $200.00</span>
-                    </div>
                   </div>
 
                   <!-- Ops: monitoring mock -->
@@ -432,18 +438,6 @@ useHead({
 
 const scenarios = [
   {
-    icon: 'terminal',
-    tabLabel: '开发者接入',
-    title: '快速接入，零改动迁移',
-    desc: '如果你已经在用 OpenAI SDK，接入 Team-API 只需要改一行 base_url。协议自动转换、流式透传、错误格式兼容，你的代码一行都不用动。',
-    points: [
-      '完全兼容 OpenAI Python / Node.js SDK',
-      '支持 SSE 流式转发与中断恢复',
-      'Function Call、多模态、Embedding 全支持',
-      '请求级超时控制，自动重试与降级',
-    ],
-  },
-  {
     icon: 'users',
     tabLabel: '团队管理',
     title: '额度、权限、用量，一目了然',
@@ -453,6 +447,18 @@ const scenarios = [
       '成员用量排行与明细，实时可查',
       'RBAC 权限：Owner / Admin / Member 三级',
       '预算超限自动熔断，并发预扣防超额',
+    ],
+  },
+  {
+    icon: 'terminal',
+    tabLabel: '开发者接入',
+    title: '快速接入，零改动迁移',
+    desc: '如果你已经在用 OpenAI SDK，接入 Team-API 只需要改一行 base_url。协议自动转换、流式透传、错误格式兼容，你的代码一行都不用动。',
+    points: [
+      '完全兼容 OpenAI Python / Node.js SDK',
+      '支持 SSE 流式转发与中断恢复',
+      'Function Call、多模态、Embedding 全支持',
+      '请求级超时控制，自动重试与降级',
     ],
   },
   {
@@ -532,6 +538,20 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   box-shadow: 0 4px 14px rgba(76,91,142,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 
+/* Nav link — 模型广场链接 */
+.btn-nav-link {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.72);
+  font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+  background: rgba(255,255,255,0.55); color: #64748b;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+  text-decoration: none;
+}
+.btn-nav-link:hover {
+  background: rgba(255,255,255,0.9); color: #0d9488;
+  box-shadow: 0 4px 14px rgba(76,91,142,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
 /* ================================================
    合并区 — 产品标题 + 场景展示
    ================================================ */
@@ -606,6 +626,8 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   overflow: hidden;
   /* 固定高度：三场景内容区统一高度，切换时不再因面板内容高度差异而上下跳动 */
   height: 440px;
+  /* 圆角与内部 scenario-panel 对齐，避免面板阴影被裁剪成直角 */
+  border-radius: 1.5rem;
 }
 .scenario-panel {
   display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.75rem; align-items: stretch;
@@ -772,10 +794,10 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   /* 单列堆叠后内容高于视口：放开整页滚动，避免被 overflow:hidden 裁切 */
   .landing-page { height: auto; min-height: 100vh; overflow-y: auto; overflow-x: hidden; }
   .landing-main { flex: none; }
-  .merged-section { align-items: flex-start; padding: 1rem 0 6rem; }
-  /* 版权信息钉在视口底部，不再随中间内容高度变化上下跳动；保持原有透明背景 */
+  .merged-section { align-items: flex-start; padding: 1rem 0 1.5rem; }
+  /* 移动端版权信息在文档流底部，不固定在屏幕底部，避免与内容重叠 */
   .landing-footer {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    position: relative;
     padding-bottom: env(safe-area-inset-bottom);
   }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { NSelect } from 'naive-ui'
 import request from '@/utils/request'
 import ChatTab from './playground/ChatTab.vue'
 import ImageTab from './playground/ImageTab.vue'
@@ -113,17 +114,13 @@ watch(selectedKeyId, loadModels, { immediate: true })
 					<!-- Key 选择器 -->
 					<template v-else>
 						<span class="text-xs font-medium text-gray-400">API Key</span>
-						<div class="relative">
-							<select
+						<div class="w-56">
+							<n-select
 								:value="selectedKeyId"
-								class="appearance-none rounded-lg border border-gray-200 bg-white py-1.5 pl-3 pr-8 text-sm text-gray-700 transition-all hover:border-gray-300 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-								@change="selectKey(Number(($event.target as HTMLSelectElement).value))"
-							>
-								<option v-for="key in apiKeys" :key="key.id" :value="key.id">
-									{{ key.name }} ({{ key.key_prefix }}...)
-								</option>
-							</select>
-							<Icon name="chevronDown" size="xs" class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+								:options="apiKeys.map(k => ({ label: `${k.name} (${k.key_prefix}...)`, value: k.id }))"
+								placeholder="选择 API Key"
+								@update:value="selectKey"
+							/>
 						</div>
 					</template>
 				</div>

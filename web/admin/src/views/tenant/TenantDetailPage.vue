@@ -5,11 +5,14 @@ import { Tag, Button, Space, Popconfirm, Message } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const route = useRoute()
 const router = useRouter()
+const isMobile = useIsMobile()
 
 const loading = ref(false)
 const detail = ref<any>(null)
@@ -469,6 +472,25 @@ const txTypeColor: Record<string, string> = {
   pre_deduct: 'orangered', settle: 'orange', freeze: 'red', unfreeze: 'purple',
 }
 
+// 交易类型筛选选项（桌面端 RadioGroup 与移动端 ASelect 共用）
+const txFilterOptions = [
+  { label: '全部', value: '' },
+  { label: '充值', value: 'recharge' },
+  { label: '兑换码', value: 'redemption' },
+  { label: '消费', value: 'consume' },
+  { label: '调整', value: 'adjust' },
+  { label: '预扣', value: 'pre_deduct' },
+  { label: '结算', value: 'settle' },
+  { label: '退款', value: 'refund' },
+  { label: '冻结', value: 'freeze' },
+  { label: '解冻', value: 'unfreeze' },
+]
+
+function onTxFilterChange() {
+  txPagination.current = 1
+  fetchWalletTransactions()
+}
+
 const txColumns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
   {
@@ -718,7 +740,7 @@ onMounted(() => {
   <div class="tenant-detail-page">
     <PageHeader :title="detail ? detail.name : '租户详情'" :description="detail ? `租户代码: ${detail.code}` : ''">
       <template #actions>
-        <ASpace>
+        <ASpace :wrap="isMobile" :size="isMobile ? 'small' : 'medium'">
           <AButton @click="goBack">返回列表</AButton>
           <template v-if="detail">
             <Popconfirm
@@ -755,8 +777,9 @@ onMounted(() => {
           </template>
           <!-- Tab 1: Basic Info -->
           <ATabPane key="info" title="基本信息">
-            <ACard :bordered="false" class="mb-4" title="租户信息">
-              <ADescriptions :column="2" bordered size="medium">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <ACard :bordered="false" title="租户信息">
+              <ADescriptions :column="isMobile ? 1 : 2" bordered size="medium">
                 <ADescriptionsItem label="ID">{{ detail.id }}</ADescriptionsItem>
                 <ADescriptionsItem label="租户名称">{{ detail.name }}</ADescriptionsItem>
                 <ADescriptionsItem label="租户代码">
@@ -797,18 +820,18 @@ onMounted(() => {
             </ACard>
 
             <ACard :bordered="false" title="编辑租户">
-              <AForm :model="editForm" :auto-label-width="true" layout="inline">
+              <AForm :model="editForm" :auto-label-width="true" layout="vertical">
                 <AFormItem label="租户名称">
-                  <AInput v-model="editForm.name" style="width: 200px" />
+                  <AInput v-model="editForm.name" class="w-full" />
                 </AFormItem>
                 <AFormItem label="最大成员数">
-                  <AInputNumber v-model="editForm.max_members" :min="1" allow-clear placeholder="跟随等级" style="width: 140px" />
+                  <AInputNumber v-model="editForm.max_members" :min="1" allow-clear placeholder="跟随等级" class="w-full" />
                 </AFormItem>
                 <AFormItem label="并发上限">
-                  <AInputNumber v-model="editForm.max_concurrency" :min="0" allow-clear placeholder="跟随等级" style="width: 140px" />
+                  <AInputNumber v-model="editForm.max_concurrency" :min="0" allow-clear placeholder="跟随等级" class="w-full" />
                 </AFormItem>
                 <AFormItem label="等级">
-                  <ASelect v-model="editForm.level" allow-clear placeholder="选择等级" style="width: 200px">
+                  <ASelect v-model="editForm.level" allow-clear placeholder="选择等级" class="w-full">
                     <AOption v-for="opt in levelOptions" :key="opt.level" :value="opt.level">
                       {{ opt.name }}（{{ (opt.price_multiplier * 100).toFixed(0) }}%）
                     </AOption>
@@ -819,6 +842,7 @@ onMounted(() => {
                 </AFormItem>
               </AForm>
             </ACard>
+          </div>
           </ATabPane>
 
           <!-- Tab 2: Model Assignment -->
@@ -830,16 +854,17 @@ onMounted(() => {
               <div v-if="tenantGroups.length === 0" style="color: var(--ta-text-tertiary)">
                 暂未分配模型分组，租户可通过分组获取可用模型
               </div>
-              <ATable
+              <ResponsiveTable
                 v-else
                 :columns="groupColumns"
                 :data="tenantGroups"
                 :loading="groupsLoading"
-                :bordered="false"
                 :stripe="true"
-                :pagination="false"
                 row-key="group_id"
                 size="small"
+                card-title-key="name"
+                card-badge-key="status"
+                :card-fields="['code', 'model_count']"
               />
               <div class="table-footer">
                 <TableStats :total="tenantGroups.length" />
@@ -853,16 +878,18 @@ onMounted(() => {
               <div v-if="modelsData.length === 0" style="color: var(--ta-text-tertiary)">
                 暂无独立分配的模型
               </div>
-              <ATable
+              <ResponsiveTable
                 v-else
                 :columns="modelColumns"
                 :data="modelsData"
                 :loading="modelsLoading"
-                :bordered="false"
                 :stripe="true"
-                :pagination="false"
                 row-key="id"
                 :scroll="{ x: 1100 }"
+                card-title-key="model_code"
+                card-subtitle-key="model_name"
+                card-badge-key="enabled"
+                :card-fields="['category', 'billing_mode', 'discount_ratio', 'max_concurrency', 'version']"
               />
               <div class="table-footer">
                 <TableStats :total="modelsData.length" />
@@ -877,13 +904,13 @@ onMounted(() => {
                 <!-- Wallet Info Card -->
                 <ACard :bordered="false" title="钱包信息" class="mb-4">
                   <template #extra>
-                    <ASpace>
+                    <ASpace :wrap="isMobile" :size="isMobile ? 'small' : 'medium'">
                       <AButton type="primary" @click="openRecharge">调整余额</AButton>
                       <AButton status="success" @click="openOfflineRecharge">线下入账</AButton>
                       <AButton @click="openThreshold">预警设置</AButton>
                     </ASpace>
                   </template>
-                  <ADescriptions :column="3" bordered size="medium">
+                  <ADescriptions :column="isMobile ? 1 : 3" bordered size="medium">
                     <ADescriptionsItem label="可用余额">
                       <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) }}</span>
                     </ADescriptionsItem>
@@ -912,7 +939,16 @@ onMounted(() => {
                   <AAlert v-if="frozenItems.length" type="warning" class="mb-3">
                     以下金额处于预扣冻结中。正常情况下请求结束即自动释放，异常滞留最长约 2 小时由系统自动清理；仅当用户反馈冻结长时间未释放时才需手动处理。
                   </AAlert>
-                  <ATable :columns="frozenColumns" :data="frozenItems" :loading="frozenLoading" :bordered="false" :stripe="true" :pagination="false" row-key="request_id" size="small">
+                  <ResponsiveTable
+                    :columns="frozenColumns"
+                    :data="frozenItems"
+                    :loading="frozenLoading"
+                    :stripe="true"
+                    row-key="request_id"
+                    size="small"
+                    :card-fields="['amount', 'age_seconds', 'created_at']"
+                  >
+                    <!-- 桌面端：状态/操作列 slot 透传给内部 ATable -->
                     <template #frozenStatus="{ record }">
                       <ASpace size="mini">
                         <ATag v-if="record.task_status" color="arcoblue" size="small">任务 {{ record.task_status }}</ATag>
@@ -928,7 +964,28 @@ onMounted(() => {
                         </AButton>
                       </ATooltip>
                     </template>
-                  </ATable>
+                    <!-- 移动端：头部展示请求ID+模型+状态，操作栏放释放按钮 -->
+                    <template #card-header="{ row }">
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <div class="truncate font-mono text-sm text-[var(--color-text-1)]">{{ row.request_id }}</div>
+                          <div class="mt-0.5 truncate text-xs text-[var(--color-text-3)]">{{ row.model_name || '模型未知' }}</div>
+                        </div>
+                        <div class="flex flex-shrink-0 items-center">
+                          <ATag v-if="row.task_status" color="arcoblue" size="small">任务 {{ row.task_status }}</ATag>
+                          <ATag v-else-if="row.block_reason" color="gray" size="small">阻塞</ATag>
+                          <ATag v-else-if="row.need_force" color="orangered" size="small">保护期</ATag>
+                          <ATag v-else color="green" size="small">可释放</ATag>
+                        </div>
+                      </div>
+                      <div v-if="row.block_reason" class="mt-2 text-xs text-[var(--color-text-3)]">{{ row.block_reason }}</div>
+                    </template>
+                    <template #card-actions="{ row }">
+                      <AButton v-if="hasPermission('billing:refund')" size="small" :status="row.need_force ? 'danger' : 'warning'" :disabled="!row.releasable" @click="openRelease(row)">
+                        {{ row.need_force ? '强制释放' : '释放' }}
+                      </AButton>
+                    </template>
+                  </ResponsiveTable>
                 </ACard>
               </template>
             </ASpin>
@@ -938,20 +995,36 @@ onMounted(() => {
           <ATabPane key="transactions" title="交易记录">
             <ACard :bordered="false" title="交易记录">
               <template #extra>
-                <ARadioGroup v-model="txFilterType" type="button" size="small" @change="() => { txPagination.current = 1; fetchWalletTransactions() }">
-                  <ARadio value="">全部</ARadio>
-                  <ARadio value="recharge">充值</ARadio>
-                  <ARadio value="redemption">兑换码</ARadio>
-                  <ARadio value="consume">消费</ARadio>
-                  <ARadio value="adjust">调整</ARadio>
-                  <ARadio value="pre_deduct">预扣</ARadio>
-                  <ARadio value="settle">结算</ARadio>
-                  <ARadio value="refund">退款</ARadio>
-                  <ARadio value="freeze">冻结</ARadio>
-                  <ARadio value="unfreeze">解冻</ARadio>
+                <ARadioGroup
+                  v-if="!isMobile"
+                  v-model="txFilterType"
+                  type="button"
+                  size="small"
+                  @change="onTxFilterChange"
+                >
+                  <ARadio v-for="opt in txFilterOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</ARadio>
                 </ARadioGroup>
+                <ASelect
+                  v-else
+                  v-model="txFilterType"
+                  size="small"
+                  :options="txFilterOptions"
+                  placeholder="筛选类型"
+                  style="width: 140px"
+                  @change="onTxFilterChange"
+                />
               </template>
-              <ATable :columns="txColumns" :data="txData" :loading="walletLoading" :bordered="false" :stripe="true" :pagination="false" row-key="id" size="small" />
+              <ResponsiveTable
+                :columns="txColumns"
+                :data="txData"
+                :loading="walletLoading"
+                :stripe="true"
+                row-key="id"
+                size="small"
+                card-title-key="model_name"
+                card-badge-key="type"
+                :card-fields="[{ key: 'amount', full: true }, { key: 'balance_after' }, { key: 'username' }, { key: 'request_id', full: true }, { key: 'description', full: true }, { key: 'created_at', full: true }]"
+              />
               <div class="table-footer">
                 <TableStats :total="txPagination.total" />
                 <APagination
@@ -959,8 +1032,9 @@ onMounted(() => {
                   v-model:page-size="txPagination.pageSize"
                   :total="txPagination.total"
                   :page-size-options="[10, 20, 50]"
-                  show-page-size
-                  show-jumper
+                  :show-page-size="!isMobile"
+                  :show-jumper="!isMobile"
+                  :simple="isMobile"
                   @change="fetchWalletTransactions"
                   @page-size-change="() => { txPagination.current = 1; fetchWalletTransactions() }"
                 />

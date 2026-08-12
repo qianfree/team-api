@@ -41,6 +41,12 @@ const tenantRoutes: RouteRecordRaw[] = [
 		meta: { requiresAuth: false, title: '加入组织' },
 	},
 	{
+		path: '/marketplace',
+		name: 'Marketplace',
+		component: () => import('@/views/marketplace/MarketplacePage.vue'),
+		meta: { requiresAuth: false, title: '模型广场' },
+	},
+	{
 		path: '/tenant',
 		component: () => import('@/views/Layout.vue'),
 		meta: { requiresAuth: true },

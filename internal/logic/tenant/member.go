@@ -48,14 +48,18 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 	}
 
 	var users []struct {
-		Id          int64  `json:"id"`
-		Username    string `json:"username"`
-		Email       string `json:"email"`
-		DisplayName string `json:"display_name"`
-		Role        string `json:"role"`
-		Status      string `json:"status"`
-		LockedUntil string `json:"locked_until"`
-		CreatedAt   string `json:"created_at"`
+		Id          int64   `json:"id"`
+		Username    string  `json:"username"`
+		Email       string  `json:"email"`
+		DisplayName string  `json:"display_name"`
+		Role        string  `json:"role"`
+		Status      string  `json:"status"`
+		LockedUntil string  `json:"locked_until"`
+		CreatedAt   string  `json:"created_at"`
+		QuotaType   string  `json:"quota_type"`
+		QuotaLimit  float64 `json:"quota_limit"`
+		QuotaPeriod string  `json:"quota_period"`
+		UpdatedAt   string  `json:"updated_at"`
 	}
 	err = model.OrderDesc("id").
 		Page(page, pageSize).
@@ -64,17 +68,79 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 		return nil, err
 	}
 
+	// 收集本页用户 ID，批量聚合模型范围与本月消费，避免逐行 N+1 查询
+	userIds := make([]int64, len(users))
+	for i, u := range users {
+		userIds[i] = u.Id
+	}
+
+	// 模型范围：有记录=受限（unlimited=false），无任何记录=不限制（unlimited=true）
+	// model_id>0 计入有效授权数；model_id=-1 为「禁止所有」哨兵，不计入
+	modelCountMap := make(map[int64]int)
+	hasScopeMap := make(map[int64]bool)
+	if len(userIds) > 0 {
+		var scopeRows []struct {
+			UserId  int64 `json:"user_id"`
+			ModelId int64 `json:"model_id"`
+		}
+		if err = dao.TntMemberModelScopes.Ctx(ctx).
+			Where("tenant_id", tenantID).
+			Where("user_id", userIds).
+			Scan(&scopeRows); err != nil {
+			if err = common.IgnoreScanNoRows(err); err != nil {
+				return nil, err
+			}
+		}
+		for _, r := range scopeRows {
+			hasScopeMap[r.UserId] = true
+			if r.ModelId > 0 {
+				modelCountMap[r.UserId]++
+			}
+		}
+	}
+
+	// 本月消费：按 user_id 聚合当月 total_cost，口径与 GetMemberUsage 一致
+	monthCostMap := make(map[int64]float64)
+	if len(userIds) > 0 {
+		monthStart := time.Now().Format("2006-01") + "-01 00:00:00"
+		var costRows []struct {
+			UserId int64   `json:"user_id"`
+			Cost   float64 `json:"cost"`
+		}
+		if err = dao.BilUsageLogs.Ctx(ctx).
+			Fields("user_id, COALESCE(SUM(total_cost), 0) as cost").
+			Where("tenant_id", tenantID).
+			Where("user_id", userIds).
+			Where("created_at >= ?", monthStart).
+			Group("user_id").
+			Scan(&costRows); err != nil {
+			if err = common.IgnoreScanNoRows(err); err != nil {
+				return nil, err
+			}
+		}
+		for _, c := range costRows {
+			monthCostMap[c.UserId] = c.Cost
+		}
+	}
+
 	items := make([]v1.TenantMemberItem, len(users))
 	for i, u := range users {
 		items[i] = v1.TenantMemberItem{
-			ID:          u.Id,
-			Username:    u.Username,
-			Email:       u.Email,
-			DisplayName: u.DisplayName,
-			Role:        u.Role,
-			Status:      u.Status,
-			LockedUntil: u.LockedUntil,
-			CreatedAt:   u.CreatedAt,
+			ID:             u.Id,
+			Username:       u.Username,
+			Email:          u.Email,
+			DisplayName:    u.DisplayName,
+			Role:           u.Role,
+			Status:         u.Status,
+			LockedUntil:    u.LockedUntil,
+			CreatedAt:      u.CreatedAt,
+			QuotaType:      u.QuotaType,
+			QuotaLimit:     u.QuotaLimit,
+			QuotaPeriod:    u.QuotaPeriod,
+			ModelCount:     modelCountMap[u.Id],
+			ModelUnlimited: !hasScopeMap[u.Id],
+			MonthCost:      monthCostMap[u.Id],
+			UpdatedAt:      u.UpdatedAt,
 		}
 	}
 

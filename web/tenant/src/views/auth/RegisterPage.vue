@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { usePublicSettings } from '@/composables/usePublicSettings'
@@ -48,6 +49,12 @@ function proceedAfterRegister() {
 }
 
 onMounted(async () => {
+	// Check if already logged in — if yes, redirect to dashboard
+	if (authStore.isLoggedIn) {
+		router.replace('/tenant/dashboard')
+		return
+	}
+
 	await fetchSettings()
 	emailVerification.value = settings.value.register_email_verification === true
 })
@@ -211,37 +218,31 @@ async function handleRegister() {
 				<!-- Username -->
 				<div>
 					<label class="input-label">用户名</label>
-					<div class="relative">
-						<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-							<Icon name="user" size="sm" />
-						</div>
-						<input
-							v-model="userForm.username"
-							type="text"
-							placeholder="仅支持英文字母和数字，不能为纯数字"
-							class="input pl-11"
-							:class="{ 'input-error': userErrors.username }"
-							@input="validateUsernameRealtime"
-						/>
-					</div>
-					<p v-if="userErrors.username" class="input-error-text">{{ userErrors.username }}</p>
+					<n-input
+						v-model:value="userForm.username"
+						type="text"
+						placeholder="仅支持英文字母和数字，不能为纯数字"
+						:status="userErrors.username ? 'error' : undefined"
+						@update:value="validateUsernameRealtime"
+					>
+						<template #prefix><Icon name="user" size="sm" class="text-gray-400" /></template>
+						<template #feedback v-if="userErrors.username">{{ userErrors.username }}</template>
+					</n-input>
 				</div>
 
 				<!-- Email -->
 				<div>
 					<label class="input-label">邮箱</label>
 					<div class="flex gap-2">
-						<div class="relative flex-1">
-							<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400">
-								<Icon name="mail" size="sm" />
-							</div>
-							<input
-								v-model="userForm.email"
+						<div class="flex-1">
+							<n-input
+								v-model:value="userForm.email"
 								type="email"
 								placeholder="you@example.com"
-								class="input pl-11"
-								:class="{ 'input-error': userErrors.email }"
-							/>
+								:status="userErrors.email ? 'error' : undefined"
+							>
+								<template #prefix><Icon name="mail" size="sm" class="text-gray-400" /></template>
+							</n-input>
 						</div>
 						<button
 							v-if="emailVerification"
@@ -259,15 +260,15 @@ async function handleRegister() {
 				<template v-if="emailVerification">
 					<div>
 						<label class="input-label">验证码</label>
-						<input
-							v-model="userForm.code"
+						<n-input
+							v-model:value="userForm.code"
 							type="text"
 							placeholder="请输入 6 位验证码"
 							maxlength="6"
-							class="input"
-							:class="{ 'input-error': userErrors.code }"
-						/>
-						<p v-if="userErrors.code" class="input-error-text">{{ userErrors.code }}</p>
+							:status="userErrors.code ? 'error' : undefined"
+						>
+							<template #feedback v-if="userErrors.code">{{ userErrors.code }}</template>
+						</n-input>
 					</div>
 				</template>
 
@@ -280,39 +281,35 @@ async function handleRegister() {
 				<!-- Password -->
 				<div>
 					<label class="input-label">密码</label>
-					<input
-						v-model="userForm.password"
+					<n-input
+						v-model:value="userForm.password"
 						type="password"
+						show-password-on="click"
 						placeholder="至少 8 位字符"
-						class="input"
-						:class="{ 'input-error': userErrors.password }"
-					/>
+						:status="userErrors.password ? 'error' : undefined"
+					>
+						<template #feedback v-if="userErrors.password">{{ userErrors.password }}</template>
+					</n-input>
 					<PasswordStrengthMeter :password="userForm.password" />
-					<p v-if="userErrors.password" class="input-error-text">{{ userErrors.password }}</p>
 				</div>
 
 				<!-- Confirm Password -->
 				<div>
 					<label class="input-label">确认密码</label>
-					<input
-						v-model="userForm.confirmPassword"
+					<n-input
+						v-model:value="userForm.confirmPassword"
 						type="password"
+						show-password-on="click"
 						placeholder="请再次输入密码"
-						class="input"
-						:class="{ 'input-error': userErrors.confirmPassword }"
-					/>
-					<p v-if="userErrors.confirmPassword" class="input-error-text">{{ userErrors.confirmPassword }}</p>
+						:status="userErrors.confirmPassword ? 'error' : undefined"
+					>
+						<template #feedback v-if="userErrors.confirmPassword">{{ userErrors.confirmPassword }}</template>
+					</n-input>
 				</div>
 
 				<!-- Agreement Checkbox -->
 				<div class="flex items-start gap-2.5">
-					<label class="mt-0.5 cursor-pointer">
-						<input
-							v-model="userForm.agreed"
-							type="checkbox"
-							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/30 transition-colors cursor-pointer"
-						/>
-					</label>
+					<n-checkbox v-model:checked="userForm.agreed" class="mt-0.5" />
 					<span class="text-xs text-gray-500 leading-relaxed">
 						我已阅读并同意
 						<button type="button" class="text-primary-600 hover:text-primary-700 underline underline-offset-2" @click.prevent="openAgreement('terms')">服务条款</button>

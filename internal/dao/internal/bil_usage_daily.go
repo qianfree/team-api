@@ -33,10 +33,10 @@ type BilUsageDailyColumns struct {
 	OutputTokens    string // 输出Token合计
 	TotalCost       string // 客户侧成本合计（USD，源自 bil_usage_logs.total_cost）
 	AccountCost     string // 上游账户成本合计（USD，源自 bil_usage_logs.account_cost，用于利润分析）
-	CreatedAt       string //
-	UpdatedAt       string //
 	SumLatencyMs    string // 总延迟合计（ms，源自 bil_usage_logs.latency_ms；视图按 SUM/COUNT 求均值）
 	SumFirstTokenMs string // 首Token延迟合计（ms，源自 bil_usage_logs.first_token_ms；视图按 SUM/COUNT 求均值）
+	CreatedAt       string //
+	UpdatedAt       string //
 }
 
 // bilUsageDailyColumns holds the columns for the table bil_usage_daily.
@@ -53,10 +53,10 @@ var bilUsageDailyColumns = BilUsageDailyColumns{
 	OutputTokens:    "output_tokens",
 	TotalCost:       "total_cost",
 	AccountCost:     "account_cost",
-	CreatedAt:       "created_at",
-	UpdatedAt:       "updated_at",
 	SumLatencyMs:    "sum_latency_ms",
 	SumFirstTokenMs: "sum_first_token_ms",
+	CreatedAt:       "created_at",
+	UpdatedAt:       "updated_at",
 }
 
 // NewBilUsageDailyDao creates and returns a new DAO object for table data access.
