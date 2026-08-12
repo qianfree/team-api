@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import Icon from '@/components/common/Icon.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
@@ -163,8 +164,9 @@ onMounted(() => {
 
 		<!-- Table -->
 		<div class="viewport-table-panel">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -175,6 +177,11 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="invitations"
 				:row-key="(row: InvitationItem) => row.id"
+				card-title-key="code"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="['role', 'use_count', 'creator_name', { key: 'expires_at', full: true }]"
+				card-actions-key="actions"
 				@update:page="fetchInvitations"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -185,7 +192,7 @@ onMounted(() => {
 						<p class="empty-state-description">生成邀请链接后，记录会显示在这里</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 	</div>
 </template>

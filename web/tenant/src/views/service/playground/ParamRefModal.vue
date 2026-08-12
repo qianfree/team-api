@@ -3,6 +3,7 @@ import { ref, computed, watch, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import Icon from '@/components/common/Icon.vue'
 
 export interface ParamDef {
@@ -203,11 +204,15 @@ const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
 
 		<!-- 参数表格 -->
 		<div v-if="currentGroup">
-			<n-data-table
+			<ResponsiveDataTable
+				:show-pagination="false"
 				:columns="paramTableColumns"
 				:scroll-x="tableScrollX(paramTableColumns)"
 				:data="currentGroup.params"
 				:row-key="(row:any)=>row.name"
+				card-title-key="name"
+				card-badge-key="required"
+				:card-fields="['type', 'default', { key: 'values', full: true }, { key: 'description', full: true }]"
 			/>
 		</div>
 

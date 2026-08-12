@@ -4,6 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { NButton, NInput } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
@@ -328,7 +329,7 @@ onMounted(() => {
 						<DateTimeRangePicker
 							v-model:start="logFilter.start_date"
 							v-model:end="logFilter.end_date"
-							@change="handleSearchLogs"
+							@change="handleFilter"
 						/>
 						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
@@ -362,8 +363,9 @@ onMounted(() => {
 		</div>
 		<!-- Table -->
 		<div class="viewport-table-panel p-0 overflow-hidden">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="logPage"
 				v-model:page-size="logPageSize"
 				:item-count="logTotal"
@@ -374,6 +376,12 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="logs"
 				:row-key="(row: RequestLog) => row.id"
+				card-title-key="request_id"
+				card-badge-key="status_code"
+				card-subtitle-key="created_at"
+				:card-fields="[{ key: 'path', full: true }, 'user', 'method', 'latency_ms', 'first_token_ms', 'audit_level', 'task_id']"
+				card-actions-key="actions"
+				:row-click="(row: RequestLog) => fetchDetail(row.id)"
 				@update:page="fetchRequestLogs"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -384,7 +392,7 @@ onMounted(() => {
 						<p class="empty-state-description">API 调用的输入输出记录将显示在这里</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Detail Modal -->
@@ -501,4 +509,3 @@ onMounted(() => {
 		</Teleport>
 	</div>
 </template>
-

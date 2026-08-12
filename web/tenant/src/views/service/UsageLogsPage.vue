@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
@@ -469,7 +470,7 @@ onMounted(() => {
 					<DateTimeRangePicker
 						v-model:start="filters.start_date"
 						v-model:end="filters.end_date"
-						@change="handleSearch"
+						@change="applyFilters"
 					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
@@ -530,10 +531,11 @@ onMounted(() => {
 			</div>
 		</div>
 
-		<!-- Logs Table -->
+		<!-- Logs Table / 移动端卡片 -->
 		<div class="viewport-table-panel relative z-0 overflow-hidden">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -544,6 +546,19 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="logs"
 				:row-key="(row: any) => row.id"
+				card-title-key="model"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="[
+					{ key: 'user' },
+					{ key: 'api_key' },
+					{ key: 'type' },
+					{ key: 'token', full: true },
+					{ key: 'cost' },
+					{ key: 'latency' },
+				]"
+				card-actions-key="actions"
+				:row-click="openDetail"
 				@update:page="fetchLogs"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -554,7 +569,7 @@ onMounted(() => {
 						<p class="empty-state-description">日志将在 API 调用后展示</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Token Tooltip -->

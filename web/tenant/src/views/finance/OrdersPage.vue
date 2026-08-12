@@ -3,6 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, formatMoney, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
@@ -190,8 +191,9 @@ onMounted(() => {
 
     <!-- Table -->
     <div class="viewport-table-panel p-0 overflow-hidden">
-      <n-data-table
+      <ResponsiveDataTable
         remote
+        fill-height
         v-model:page="page"
         v-model:page-size="pageSize"
         :item-count="total"
@@ -202,6 +204,11 @@ onMounted(() => {
         :scroll-x="tableScrollX(columns)"
         :data="orders"
         :row-key="(row: any) => row.id"
+        card-title-key="order_no"
+        card-badge-key="status"
+        card-subtitle-key="created_at"
+        :card-fields="['order_type', 'final_amount']"
+        card-actions-key="actions"
         @update:page="fetchOrders"
         @update:page-size="handlePageSizeChange"
       >
@@ -212,7 +219,7 @@ onMounted(() => {
             <p class="empty-state-description">您的订单记录将显示在这里</p>
           </div>
         </template>
-      </n-data-table>
+      </ResponsiveDataTable>
     </div>
   </div>
 </template>

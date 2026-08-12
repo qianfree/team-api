@@ -5,6 +5,7 @@ import { NButton, NTag, NInput } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
@@ -266,7 +267,7 @@ onMounted(() => {
 					<DateTimeRangePicker
 						v-model:start="filterStartDate"
 						v-model:end="filterEndDate"
-						@change="handleSearch"
+						@change="applyFilters"
 					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
@@ -306,8 +307,9 @@ onMounted(() => {
 
 		<!-- Table -->
 		<div class="viewport-table-panel relative z-0 p-0 overflow-hidden">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -318,6 +320,12 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="tasks"
 				:row-key="(row: TaskItem) => row.id"
+				card-title-key="public_task_id"
+				card-badge-key="status"
+				card-subtitle-key="submit_time"
+				:card-fields="['platform', 'model_name', 'cost', 'finish_time']"
+				card-actions-key="actions"
+				:row-click="openDetail"
 				@update:page="fetchTasks"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -328,7 +336,7 @@ onMounted(() => {
 						<p class="empty-state-description">异步生成任务的执行记录将显示在这里</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Detail Modal -->

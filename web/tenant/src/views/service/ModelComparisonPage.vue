@@ -4,6 +4,7 @@ import type { DataTableColumns } from 'naive-ui'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
 interface ModelItem { model_id: string; model_name: string; category: string }
 interface ComparisonItem {
@@ -325,18 +326,22 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 					<h3 class="text-sm font-semibold text-gray-900">详细对比</h3>
 				</div>
 				<div class="table-container">
-					<n-data-table
+					<ResponsiveDataTable
+						:show-pagination="false"
 						:columns="columns"
 						:scroll-x="tableScrollX(columns)"
 						:data="items"
 						:row-key="(row: ComparisonItem) => row.model_name"
+						card-title-key="model_name"
+						card-badge-key="score"
+						:card-fields="['requests', 'success_rate', 'avg_latency_ms', 'p95_latency_ms', 'total_cost', 'avg_cost_per_request', { key: 'token', full: true }]"
 					>
 						<template #empty>
 							<div class="empty-state">
 								<p class="text-sm text-gray-500">暂无对比数据</p>
 							</div>
 						</template>
-					</n-data-table>
+					</ResponsiveDataTable>
 				</div>
 			</div>
 

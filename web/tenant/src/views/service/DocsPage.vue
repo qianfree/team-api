@@ -5,6 +5,7 @@ import { NTag } from 'naive-ui'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
 const router = useRouter()
 const activeSection = ref('quickstart')
@@ -1333,11 +1334,15 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 								<!-- Parameters Table -->
 								<div v-if="ep.params.length > 0">
 									<h5 class="text-sm font-semibold text-gray-800 mb-2">请求参数</h5>
-									<n-data-table
+									<ResponsiveDataTable
+										:show-pagination="false"
 										:columns="paramColumns"
 										:scroll-x="tableScrollX(paramColumns)"
 										:data="ep.params"
 										:row-key="(row:any)=>row.field"
+										card-title-key="field"
+										card-badge-key="required"
+										:card-fields="['type', { key: 'desc', full: true }]"
 									/>
 								</div>
 
@@ -1459,11 +1464,15 @@ const errorColumns = computed<DataTableColumns<any>>(() => [
 						<h3 class="font-semibold text-gray-900">错误码一览</h3>
 					</div>
 					<div class="card-body !pt-0">
-						<n-data-table
+						<ResponsiveDataTable
+							:show-pagination="false"
 							:columns="errorColumns"
 							:scroll-x="tableScrollX(errorColumns)"
 							:data="errorCodes"
 							:row-key="(row:any)=>row.code"
+							card-title-key="code"
+							card-badge-key="status"
+							:card-fields="[{ key: 'desc', full: true }, { key: 'example', full: true }]"
 						/>
 					</div>
 				</div>

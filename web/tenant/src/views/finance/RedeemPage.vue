@@ -3,6 +3,7 @@ import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 
@@ -145,12 +146,17 @@ onMounted(fetchHistory)
 				<h3 class="text-base font-semibold text-gray-900">兑换记录</h3>
 			</div>
 
-			<n-data-table
+			<ResponsiveDataTable
+				:show-pagination="false"
 				:loading="historyLoading"
 				:columns="columns"
 				:scroll-x="tableScrollX(columns)"
 				:data="recentRedemptions"
 				:row-key="(row: any) => row.id"
+				card-title-key="code"
+				card-badge-key="type"
+				card-subtitle-key="created_at"
+				:card-fields="['value']"
 			>
 				<template #empty>
 					<div class="flex flex-col items-center justify-center px-4 py-12 text-center">
@@ -160,7 +166,7 @@ onMounted(fetchHistory)
 						<p class="text-sm text-gray-500">暂无兑换记录</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 	</div>
 </template>

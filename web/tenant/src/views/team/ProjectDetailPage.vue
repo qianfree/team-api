@@ -5,6 +5,7 @@ import { NButton, NTag } from 'naive-ui'
 import { renderBadge, formatDate, formatTokens, formatMs, tableScrollX } from '@/utils/renderUtils'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -555,8 +556,8 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 
 			<!-- Keys Tab -->
 			<div v-if="activeTab === 'keys'" class="space-y-4">
-				<div class="card">
-					<n-data-table
+				<div>
+					<ResponsiveDataTable
 						remote
 						v-model:page="keysPage"
 						v-model:page-size="keysPageSize"
@@ -568,6 +569,11 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 						:scroll-x="tableScrollX(keysColumns)"
 						:data="keys"
 						:row-key="(row: ApiKey) => row.id"
+						card-title-key="name"
+						card-badge-key="status"
+						card-subtitle-key="created_at"
+						:card-fields="[{ key: 'key_prefix', full: true }, 'scope', { key: 'limit', full: true }, 'expires_at']"
+						card-actions-key="actions"
 						@update:page="fetchKeys"
 						@update:page-size="handleKeysPageSizeChange"
 					>
@@ -578,7 +584,7 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 								<p class="empty-state-description">创建密钥以为此项目提供 AI 能力</p>
 							</div>
 						</template>
-					</n-data-table>
+					</ResponsiveDataTable>
 				</div>
 			</div>
 
@@ -630,11 +636,11 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 					</div>
 
 					<!-- Usage Logs -->
-					<div class="card">
+					<div class="space-y-3">
 						<div class="card-header">
 							<h3 class="text-base font-semibold text-gray-900">用量日志</h3>
 						</div>
-						<n-data-table
+						<ResponsiveDataTable
 							remote
 							v-model:page="usageLogsPage"
 							v-model:page-size="usageLogsPageSize"
@@ -646,6 +652,10 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 							:scroll-x="tableScrollX(usageLogsColumns)"
 							:data="usageLogs"
 							:row-key="(row: any) => row.id"
+							card-title-key="model_name"
+							card-badge-key="status"
+							card-subtitle-key="created_at"
+							:card-fields="['relay_mode', 'input_tokens', 'output_tokens', 'total_cost', 'latency_ms']"
 							@update:page="fetchUsageLogs"
 							@update:page-size="handleUsageLogsPageSizeChange"
 						>
@@ -656,7 +666,7 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 									<p class="empty-state-description">项目密钥调用后将在此显示用量数据</p>
 								</div>
 							</template>
-						</n-data-table>
+						</ResponsiveDataTable>
 					</div>
 				</template>
 			</div>

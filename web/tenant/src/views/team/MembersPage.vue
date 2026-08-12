@@ -5,6 +5,7 @@ import { NButton, NTag } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
@@ -376,14 +377,6 @@ const columns = computed<DataTableColumns<Member>>(() => [
 	},
 ])
 
-// 整行点击跳详情
-function handleRowProps(row: Member) {
-	return {
-		style: 'cursor: pointer',
-		onClick: () => goDetail(row.id),
-	}
-}
-
 // pageSize 变化回第 1 页并刷新
 function handlePageSizeChange() {
 	page.value = 1
@@ -488,8 +481,9 @@ onMounted(() => {
 
 		<!-- Members Table -->
 		<div class="viewport-table-panel">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -500,7 +494,12 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="members"
 				:row-key="(row: Member) => row.id"
-				:row-props="handleRowProps"
+				card-title-key="user"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="['role', 'quota_type', 'model_count', 'month_cost', 'updated_at']"
+				card-actions-key="actions"
+				:row-click="(row: Member) => goDetail(row.id)"
 				@update:page="fetchMembers"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -511,7 +510,7 @@ onMounted(() => {
 						<p class="empty-state-description">邀请第一位团队成员吧</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Invite Modal -->

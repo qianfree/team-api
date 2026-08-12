@@ -5,6 +5,7 @@ import { NButton, NInput, NInputNumber } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useConfirm } from '@/composables/useConfirm'
@@ -171,13 +172,6 @@ const columns = computed<DataTableColumns<any>>(() => [
 	},
 ])
 
-function handleRowProps(row: any) {
-	return {
-		style: 'cursor: pointer',
-		onClick: () => goToDetail(row),
-	}
-}
-
 function handlePageSizeChange() {
 	page.value = 1
 	fetchProjects()
@@ -198,8 +192,9 @@ function handlePageSizeChange() {
 		</div>
 
 		<div class="viewport-table-panel">
-			<n-data-table
+			<ResponsiveDataTable
 				remote
+				fill-height
 				v-model:page="page"
 				v-model:page-size="pageSize"
 				:item-count="total"
@@ -210,7 +205,12 @@ function handlePageSizeChange() {
 				:scroll-x="tableScrollX(columns)"
 				:data="projects"
 				:row-key="(row: any) => row.id"
-				:row-props="handleRowProps"
+				card-title-key="name"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="[{ key: 'description', full: true }, 'budget']"
+				card-actions-key="actions"
+				:row-click="goToDetail"
 				@update:page="fetchProjects"
 				@update:page-size="handlePageSizeChange"
 			>
@@ -221,7 +221,7 @@ function handlePageSizeChange() {
 						<p class="empty-state-description">创建项目来组织你的 API Key 和资源</p>
 					</div>
 				</template>
-			</n-data-table>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Create/Edit Modal -->
