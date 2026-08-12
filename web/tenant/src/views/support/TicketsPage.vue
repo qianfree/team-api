@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -204,6 +207,32 @@ async function reopenTicket() {
 	}
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<Ticket>>(() => [
+	{ title: 'ID', key: 'id', width: 70, render: (row) => h('span', { class: 'font-mono text-xs text-gray-500' }, `#${row.id}`) },
+	{ title: '分类', key: 'category', width: 120, render: (row) => h('span', { class: 'text-sm text-gray-600' }, categoryLabel[row.category] || row.category) },
+	{
+		title: '标题',
+		key: 'title',
+		width: 260,
+		render: (row) => h('span', { class: 'font-medium text-gray-900 max-w-[240px] truncate block' }, row.title),
+	},
+	{ title: '优先级', key: 'urgency', width: 100, render: (row) => renderBadge(row.urgency, urgencyLabel, urgencyBadgeClass) },
+	{ title: '状态', key: 'status', width: 110, render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
+	{ title: '处理人', key: 'assigned_admin', width: 140, render: (row) => h('span', { class: 'text-sm text-gray-500' }, row.assigned_admin || '暂未分配') },
+	{
+		title: '创建时间',
+		key: 'created_at',
+		width: 180,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
+	},
+])
+
+function handlePageSizeChange() {
+	page.value = 1
+	fetchTickets()
+}
+
 onMounted(() => {
 	fetchTickets()
 })
@@ -237,76 +266,41 @@ onMounted(() => {
 			</div>
 		</div>
 
-		<!-- Loading -->
-		<div v-if="loading" class="card p-8 text-center">
-			<div class="spinner mx-auto mb-3"></div>
-			<p class="text-sm text-gray-500">加载中...</p>
-		</div>
-
-		<!-- Empty -->
-		<div v-else-if="tickets.length === 0" class="empty-state card">
-			<Icon name="document" size="xl" class="empty-state-icon text-gray-300" />
-			<p class="empty-state-title">暂无工单</p>
-			<p class="empty-state-description">遇到问题？创建一个工单获取帮助</p>
-			<button class="btn btn-primary mt-4" @click="showCreateModal = true">
-				<Icon name="plus" size="sm" />
-				新建工单
-			</button>
-		</div>
-
 		<!-- Table -->
-		<div v-else class="viewport-table-panel card p-0 overflow-hidden">
-			<div class="viewport-table-scroll table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>分类</th>
-							<th>标题</th>
-							<th>优先级</th>
-							<th>状态</th>
-							<th>处理人</th>
-							<th>创建时间</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr
-							v-for="ticket in tickets"
-							:key="ticket.id"
-							class="cursor-pointer hover:bg-primary-50/50"
-							@click="openDetail(ticket)"
-						>
-							<td>
-								<span class="font-mono text-xs text-gray-500">#{{ ticket.id }}</span>
-							</td>
-							<td>
-								<span class="text-sm text-gray-600">{{ categoryLabel[ticket.category] || ticket.category }}</span>
-							</td>
-							<td>
-								<span class="font-medium text-gray-900 max-w-[240px] truncate block">{{ ticket.title }}</span>
-							</td>
-							<td>
-								<span class="badge" :class="urgencyBadgeClass[ticket.urgency] || 'badge-gray'">
-									{{ urgencyLabel[ticket.urgency] || ticket.urgency }}
-								</span>
-							</td>
-							<td>
-								<span class="badge" :class="statusBadgeClass[ticket.status] || 'badge-gray'">
-									{{ statusLabel[ticket.status] || ticket.status }}
-								</span>
-							</td>
-							<td>
-								<span class="text-sm text-gray-500">{{ ticket.assigned_admin || '暂未分配' }}</span>
-							</td>
-							<td>
-								<span class="text-xs text-gray-500">{{ ticket.created_at ? new Date(ticket.created_at).toLocaleString() : '-' }}</span>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTickets" />
+		<div class="viewport-table-panel p-0 overflow-hidden">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="tickets"
+				:row-key="(row: Ticket) => row.id"
+				card-title-key="title"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="['id', 'category', 'urgency', 'assigned_admin']"
+				:row-click="openDetail"
+				@update:page="fetchTickets"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="document" size="xl" class="empty-state-icon text-gray-300" />
+						<p class="empty-state-title">暂无工单</p>
+						<p class="empty-state-description">遇到问题？创建一个工单获取帮助</p>
+						<button class="btn btn-primary mt-4" @click="showCreateModal = true">
+							<Icon name="plus" size="sm" />
+							新建工单
+						</button>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Create Ticket Modal -->
@@ -323,7 +317,7 @@ onMounted(() => {
 				</div>
 				<div>
 					<label class="input-label">标题 <span class="text-red-500">*</span></label>
-					<input v-model="createForm.title" type="text" class="input" placeholder="请简要描述您的问题" maxlength="200" />
+					<n-input v-model:value="createForm.title" type="text" placeholder="请简要描述您的问题" :maxlength="200" />
 				</div>
 				<div>
 					<label class="input-label">优先级</label>
@@ -331,13 +325,13 @@ onMounted(() => {
 				</div>
 				<div>
 					<label class="input-label">详细描述 <span class="text-red-500">*</span></label>
-					<textarea
-						v-model="createForm.description"
-						class="input"
-						rows="5"
+					<n-input
+						v-model:value="createForm.description"
+						type="textarea"
+						:rows="5"
 						placeholder="请详细描述您遇到的问题，包括相关的操作步骤和错误信息"
-						maxlength="2000"
-					></textarea>
+						:maxlength="2000"
+					/>
 					<p class="input-hint">{{ createForm.description.length }} / 2000</p>
 				</div>
 			</div>
@@ -450,13 +444,13 @@ onMounted(() => {
 				<!-- Reply Form -->
 				<div v-if="detailTicket.status !== 'closed'" class="border-t border-gray-200 pt-4">
 					<label class="input-label">回复</label>
-					<textarea
-						v-model="detailReplyContent"
-						class="input"
-						rows="3"
+					<n-input
+						v-model:value="detailReplyContent"
+						type="textarea"
+						:rows="3"
 						placeholder="输入您的回复... (Ctrl + Enter 发送)"
 						@keyup.ctrl.enter="handleDetailReply"
-					></textarea>
+					/>
 					<div class="flex justify-end mt-2">
 						<button
 							class="btn btn-primary btn-sm"

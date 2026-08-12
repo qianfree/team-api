@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NTag, NInput } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
@@ -170,6 +173,82 @@ function isImageResult(url: string | undefined): boolean {
 	return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)
 }
 
+// 任务状态 → NTag type 映射（statusBadge 为 bg-* 类，无法映射到 renderBadge，改为直接渲染 NTag）
+const taskStatusType: Record<string, 'default' | 'success' | 'info' | 'warning' | 'error' | 'primary'> = {
+	NOT_START: 'default',
+	SUBMITTED: 'info',
+	IN_PROGRESS: 'warning',
+	SUCCESS: 'success',
+	FAILURE: 'error',
+	TIMEOUT: 'warning',
+}
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<TaskItem>>(() => [
+	{
+		title: '任务 ID',
+		key: 'public_task_id',
+		width: 160,
+		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.public_task_id),
+	},
+	{
+		title: '平台',
+		key: 'platform',
+		width: 110,
+		render: (row) => h('span', { class: 'text-sm font-medium text-gray-700' }, platformLabel[row.platform] || row.platform),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		width: 110,
+		render: (row) =>
+			h(NTag, { type: taskStatusType[row.status] || 'default', size: 'small' }, { default: () => statusLabel[row.status] || row.status }),
+	},
+	{
+		title: '模型',
+		key: 'model_name',
+		width: 160,
+		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.model_name || '-'),
+	},
+	{
+		title: '费用',
+		key: 'cost',
+		width: 110,
+		render: (row) =>
+			row.billing_settled && row.actual_cost > 0
+				? h('span', { class: 'text-sm font-medium text-emerald-600' }, formatCost(row.actual_cost))
+				: row.pre_deduct_amount > 0
+				? h('span', { class: 'text-sm text-gray-500' }, formatCost(row.pre_deduct_amount) + ' (预扣)')
+				: h('span', { class: 'text-sm text-gray-400' }, '-'),
+	},
+	{
+		title: '提交时间',
+		key: 'submit_time',
+		width: 170,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.submit_time)),
+	},
+	{
+		title: '完成时间',
+		key: 'finish_time',
+		width: 170,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.finish_time)),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		width: 120,
+		align: 'right',
+		render: (row) =>
+			h(NButton, { size: 'small', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
+	},
+])
+
+// pageSize 变化回第 1 页并刷新
+function handlePageSizeChange() {
+	page.value = 1
+	fetchTasks()
+}
+
 onMounted(() => {
 	const route = useRoute()
 	if (route.query.public_task_id) {
@@ -185,10 +264,14 @@ onMounted(() => {
 		<div class="relative z-20 overflow-visible card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-					<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
+					<DateTimeRangePicker
+						v-model:start="filterStartDate"
+						v-model:end="filterEndDate"
+						@change="applyFilters"
+					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">任务 ID</label>
-						<input v-model="filterTaskId" class="input" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />
+						<n-input v-model:value="filterTaskId" placeholder="搜索任务 ID" style="width:200px" @keydown.enter="applyFilters" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
@@ -223,72 +306,37 @@ onMounted(() => {
 		</div>
 
 		<!-- Table -->
-		<div class="viewport-table-panel relative z-0 card p-0 overflow-hidden">
-			<div v-if="loading" class="p-8 text-center">
-				<div class="spinner mx-auto mb-3"></div>
-				<p class="text-sm text-gray-500">加载中...</p>
-			</div>
-
-			<div v-else-if="tasks.length === 0" class="empty-state">
-				<Icon name="clipboard" size="xl" class="empty-state-icon text-gray-300" />
-				<p class="empty-state-title">暂无任务记录</p>
-				<p class="empty-state-description">异步生成任务的执行记录将显示在这里</p>
-			</div>
-
-			<div v-else class="viewport-table-content">
-				<div class="viewport-table-scroll table-container">
-					<table class="table table-fixed w-full">
-						<thead>
-							<tr>
-								<th class="w-52">任务 ID</th>
-								<th class="w-24">平台</th>
-								<th class="w-20">状态</th>
-								<th class="w-44">模型</th>
-								<th class="w-25">费用</th>
-								<th class="w-38">提交时间</th>
-								<th class="w-38">完成时间</th>
-								<th class="w-15">操作</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr v-for="task in tasks" :key="task.id">
-								<td class="truncate" :title="task.public_task_id">
-									<span class="font-mono text-xs text-gray-600">{{ task.public_task_id }}</span>
-								</td>
-								<td class="truncate">
-									<span class="text-sm font-medium text-gray-700">{{ platformLabel[task.platform] || task.platform }}</span>
-								</td>
-								<td>
-									<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium" :class="statusBadge[task.status] || 'bg-gray-100 text-gray-800'">
-										{{ statusLabel[task.status] || task.status }}
-									</span>
-								</td>
-								<td class="truncate" :title="task.model_name">
-									<span class="text-sm text-gray-700">{{ task.model_name || '-' }}</span>
-								</td>
-								<td class="truncate">
-									<span v-if="task.billing_settled && task.actual_cost > 0" class="text-sm font-medium text-emerald-600">{{ formatCost(task.actual_cost) }}</span>
-									<span v-else-if="task.pre_deduct_amount > 0" class="text-sm text-gray-500">{{ formatCost(task.pre_deduct_amount) }} <span class="text-xs text-gray-400">(预扣)</span></span>
-									<span v-else class="text-sm text-gray-400">-</span>
-								</td>
-								<td class="truncate">
-									<span class="text-xs text-gray-500">{{ formatTime(task.submit_time) }}</span>
-								</td>
-								<td class="truncate">
-									<span class="text-xs text-gray-500">{{ formatTime(task.finish_time) }}</span>
-								</td>
-								<td>
-									<button class="btn btn-ghost btn-sm p-1.5" title="查看详情" @click="openDetail(task)">
-										<Icon name="eye" size="sm" class="text-gray-400 hover:text-primary-500" />
-									</button>
-								</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-
-				<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTasks" />
-			</div>
+		<div class="viewport-table-panel relative z-0 p-0 overflow-hidden">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="tasks"
+				:row-key="(row: TaskItem) => row.id"
+				card-title-key="public_task_id"
+				card-badge-key="status"
+				card-subtitle-key="submit_time"
+				:card-fields="['platform', 'model_name', 'cost', 'finish_time']"
+				card-actions-key="actions"
+				:row-click="openDetail"
+				@update:page="fetchTasks"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="clipboard" size="xl" class="empty-state-icon text-gray-300" />
+						<p class="empty-state-title">暂无任务记录</p>
+						<p class="empty-state-description">异步生成任务的执行记录将显示在这里</p>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Detail Modal -->

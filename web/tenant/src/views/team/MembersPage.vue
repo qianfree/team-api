@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import TeamLockedBanner from '@/components/common/TeamLockedBanner.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
+import TableFilterForm, { type FilterField } from '@/components/common/TableFilterForm.vue'
 import Icon from '@/components/common/Icon.vue'
+import { renderBadge, BADGE_TYPE_MAP, tableScrollX, formatMoney, formatDate } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useExport } from '@/composables/useExport'
@@ -15,11 +19,28 @@ const router = useRouter()
 const authStore = useTenantAuthStore()
 const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
 
+// 查询表单数据
+const filters = ref({
+	keyword: '',
+})
+
+// 查询表单字段配置
+const filterFields: FilterField[] = [
+	{
+		type: 'input',
+		key: 'keyword',
+		label: '关键词',
+		placeholder: '搜索用户名/邮箱/显示名',
+		width: '240px',
+	},
+]
+
 const showExportDropdown = ref(false)
+const showMoreMenu = ref(false)
 const { exporting, exportFile } = useExport({
 	url: '/tenant/members/export',
 	getFilters: () => ({
-		keyword: keyword.value,
+		keyword: filters.value.keyword,
 	}),
 })
 
@@ -31,6 +52,17 @@ interface Member {
 	role: string
 	status: string
 	created_at: string
+	// 额度限制
+	quota_type: string
+	quota_limit: number
+	quota_period: string
+	// 可用模型数
+	model_count: number
+	model_unlimited: boolean
+	// 本月消费（USD）
+	month_cost: number
+	// 最后更新时间
+	updated_at: string
 }
 
 
@@ -39,7 +71,6 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const keyword = ref('')
 
 const showInviteModal = ref(false)
 const inviteForm = reactive({
@@ -95,7 +126,7 @@ async function fetchMembers() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/members', {
-			params: { page: page.value, page_size: pageSize.value, keyword: keyword.value },
+			params: { page: page.value, page_size: pageSize.value, keyword: filters.value.keyword },
 		})
 		const raw = res.data?.data; members.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
 		total.value = raw?.total || 0
@@ -104,6 +135,17 @@ async function fetchMembers() {
 	} finally {
 		loading.value = false
 	}
+}
+
+function applyFilters() {
+	page.value = 1
+	fetchMembers()
+}
+
+function resetFilters() {
+	filters.value.keyword = ''
+	page.value = 1
+	fetchMembers()
 }
 
 async function generateInviteLink() {
@@ -208,6 +250,139 @@ function goDetail(memberId: number) {
 	router.push(`/tenant/members/${memberId}`)
 }
 
+const periodLabel: Record<string, string> = {
+	day: '按天',
+	week: '按周',
+	month: '按月',
+}
+
+// 额度限制列渲染：不限制 / 金额（周期性追加周期徽章）
+function renderQuota(row: Member) {
+	if (!row.quota_type || row.quota_type === 'none') {
+		return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '不限制' })
+	}
+	const children: ReturnType<typeof h>[] = [
+		h('span', { class: 'text-sm font-medium text-gray-900' }, formatMoney(row.quota_limit, { precision: 2 })),
+	]
+	if (row.quota_type === 'periodic' && row.quota_period) {
+		children.push(
+			h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => periodLabel[row.quota_period] || row.quota_period })
+		)
+	}
+	return h('div', { class: 'flex items-center gap-1.5' }, children)
+}
+
+// 可用模型数列渲染：不限 / 授权数量
+function renderModelCount(row: Member) {
+	if (row.model_unlimited) {
+		return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '不限' })
+	}
+	return h('span', { class: 'text-sm font-medium text-gray-900' }, String(row.model_count))
+}
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<Member>>(() => [
+	{
+		title: '用户',
+		key: 'user',
+		width: 200,
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-3' }, [
+				h(
+					'div',
+					{
+						class:
+							'h-9 w-9 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 bg-gradient-to-r from-primary-500 to-primary-600',
+					},
+					(row.username || '').charAt(0).toUpperCase()
+				),
+				h('div', {}, [
+					h('p', { class: 'text-sm font-medium text-gray-900' }, row.display_name || row.username),
+					h('p', { class: 'text-xs text-gray-500' }, row.email || '--'),
+				]),
+			]),
+	},
+	{
+		title: '角色',
+		key: 'role',
+		width: 110,
+		render: (row) => renderBadge(row.role, roleLabel, roleBadgeClass),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		width: 110,
+		render: (row) =>
+			h(
+				NTag,
+				{ size: 'small', type: BADGE_TYPE_MAP[statusBadgeClass[row.status] || 'badge-gray'] || 'default' },
+				{
+					icon: () =>
+						h('span', {
+							class: ['h-1.5 w-1.5 rounded-full', statusDotClass[row.status] || 'bg-gray-400'],
+						}),
+					default: () => statusLabel[row.status] || row.status,
+				}
+			),
+	},
+	{
+		title: '额度限制',
+		key: 'quota_type',
+		width: 130,
+		render: (row) => renderQuota(row),
+	},
+	{
+		title: '可用模型',
+		key: 'model_count',
+		width: 100,
+		render: (row) => renderModelCount(row),
+	},
+	{
+		title: '本月消费',
+		key: 'month_cost',
+		width: 120,
+		render: (row) => h('span', { class: 'text-sm font-semibold text-primary-600' }, formatMoney(row.month_cost, { precision: 2 })),
+	},
+	{
+		title: '加入时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => row.created_at || '--',
+	},
+	{
+		title: '最后更新',
+		key: 'updated_at',
+		width: 170,
+		render: (row) => formatDate(row.updated_at),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		width: 120,
+		align: 'right',
+		render: (row) =>
+			h(
+				NButton,
+				{
+					text: true,
+					type: 'primary',
+					size: 'small',
+					onClick: (e: MouseEvent) => {
+						e.stopPropagation()
+						goDetail(row.id)
+					},
+				},
+				{ default: () => '查看详情' }
+			),
+	},
+])
+
+// pageSize 变化回第 1 页并刷新
+function handlePageSizeChange() {
+	page.value = 1
+	fetchMembers()
+}
+
 onMounted(() => {
 	fetchMembers()
 })
@@ -217,12 +392,13 @@ onMounted(() => {
 	<TeamLockedBanner v-if="!teamEnabled" />
 	<div v-else class="viewport-table-page space-y-6">
 		<!-- Page Header -->
-		<div class="page-header flex items-center justify-between">
-			<div>
+		<div class="page-header flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div class="min-w-0">
 				<h1 class="page-title">成员管理</h1>
 				<p class="page-description">管理组织团队中的成员</p>
 			</div>
-			<div class="flex items-center gap-2">
+			<!-- 桌面端操作区 -->
+			<div class="hidden lg:flex flex-wrap items-center gap-2">
 				<router-link to="/tenant/members/invitations" class="btn btn-secondary">
 					<Icon name="document" size="sm" />
 					邀请记录
@@ -243,105 +419,98 @@ onMounted(() => {
 					<Icon name="userPlus" size="sm" />
 					邀请成员
 				</button>
-				<!-- Export dropdown -->
-				<div class="relative inline-block">
-					<button class="btn btn-secondary" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-						<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-						<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-						导出
+			</div>
+			<!-- 移动端操作区 -->
+			<div class="flex lg:hidden items-center gap-2">
+				<button class="btn btn-primary flex-1" @click="showInviteModal = true">
+					<Icon name="userPlus" size="sm" />
+					邀请成员
+				</button>
+				<div class="relative">
+					<button
+						class="btn btn-secondary"
+						aria-haspopup="true"
+						:aria-expanded="showMoreMenu"
+						@click="showMoreMenu = !showMoreMenu"
+					>
+						<Icon name="more" size="sm" />
+						更多
 					</button>
-					<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
+					<div v-if="showMoreMenu" class="fixed inset-0 z-40" @click="showMoreMenu = false"></div>
+					<div v-if="showMoreMenu" class="dropdown right-0 mt-2 w-44">
+						<router-link to="/tenant/members/invitations" class="dropdown-item" @click="showMoreMenu = false">
+							<Icon name="document" size="sm" />
+							邀请记录
+						</router-link>
+						<div class="dropdown-item" @click="downloadTemplate(); showMoreMenu = false">
+							<Icon name="document" size="sm" />
+							导入模板
+						</div>
+						<div class="dropdown-item" @click="showImportModal = true; showMoreMenu = false">
+							<Icon name="plus" size="sm" />
+							批量导入
+						</div>
+						<div class="dropdown-item" @click="showCreateModal = true; showMoreMenu = false">
+							<Icon name="userPlus" size="sm" />
+							创建成员
+						</div>
+						<div class="dropdown-item" @click="exportFile('csv'); showMoreMenu = false">
+							<Icon name="download" size="sm" />
+							导出 CSV
+						</div>
+						<div class="dropdown-item" @click="exportFile('xlsx'); showMoreMenu = false">
+							<Icon name="download" size="sm" />
+							导出 Excel
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
 
+		<!-- Search & Export -->
+		<TableFilterForm
+			v-model="filters"
+			:fields="filterFields"
+			:loading="loading"
+			:show-export="true"
+			:exporting="exporting"
+			@search="applyFilters"
+			@reset="resetFilters"
+			@export="exportFile"
+		/>
+
 		<!-- Members Table -->
-		<div class="viewport-table-panel card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="members.length > 0" class="viewport-table-scroll table-container">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>用户</th>
-							<th>角色</th>
-							<th>状态</th>
-							<th>加入时间</th>
-							<th class="text-right">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr
-							v-for="member in members"
-							:key="member.id"
-							class="cursor-pointer hover:bg-primary-50/50 transition-colors"
-							@click="goDetail(member.id)"
-						>
-							<!-- User -->
-							<td>
-								<div class="flex items-center gap-3">
-									<div
-										class="h-9 w-9 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0 bg-gradient-to-r from-primary-500 to-primary-600"
-									>
-										{{ member.username.charAt(0).toUpperCase() }}
-									</div>
-									<div>
-										<p class="text-sm font-medium text-gray-900">{{ member.display_name || member.username }}</p>
-										<p class="text-xs text-gray-500">{{ member.email || '--' }}</p>
-									</div>
-								</div>
-							</td>
-
-							<!-- Role -->
-							<td>
-								<span class="badge" :class="roleBadgeClass[member.role]">
-									{{ roleLabel[member.role] || member.role }}
-								</span>
-							</td>
-
-							<!-- Status -->
-							<td>
-								<span class="badge" :class="statusBadgeClass[member.status] || 'badge-gray'">
-									<span class="h-1.5 w-1.5 rounded-full" :class="statusDotClass[member.status] || 'bg-gray-400'"></span>
-									{{ statusLabel[member.status] || member.status }}
-								</span>
-							</td>
-
-							<!-- Joined -->
-							<td class="text-gray-500">
-								{{ member.created_at || '--' }}
-							</td>
-
-							<!-- Actions -->
-							<td>
-								<div class="flex items-center justify-end">
-									<button
-										@click.stop="goDetail(member.id)"
-										class="btn btn-ghost btn-sm text-primary-600 hover:text-primary-700 hover:bg-primary-50"
-									>
-										查看详情
-										<Icon name="chevronRight" size="xs" />
-									</button>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<!-- Empty state -->
-			<div v-else class="empty-state">
-				<Icon name="users" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无成员</p>
-				<p class="empty-state-description">邀请第一位团队成员吧</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchMembers" />
+		<div class="viewport-table-panel">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="members"
+				:row-key="(row: Member) => row.id"
+				card-title-key="user"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="['role', 'quota_type', 'model_count', 'month_cost', 'updated_at']"
+				card-actions-key="actions"
+				:row-click="(row: Member) => goDetail(row.id)"
+				@update:page="fetchMembers"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="users" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无成员</p>
+						<p class="empty-state-description">邀请第一位团队成员吧</p>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Invite Modal -->
@@ -421,41 +590,38 @@ onMounted(() => {
 
 				<div>
 					<label class="input-label">用户名 <span class="text-red-500">*</span></label>
-					<input
-						v-model="createForm.username"
+					<n-input
+						v-model:value="createForm.username"
 						type="text"
 						placeholder="3-50 位字符"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">邮箱</label>
-					<input
-						v-model="createForm.email"
+					<n-input
+						v-model:value="createForm.email"
 						type="email"
 						placeholder="选填"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">密码 <span class="text-red-500">*</span></label>
-					<input
-						v-model="createForm.password"
+					<n-input
+						v-model:value="createForm.password"
 						type="password"
+						show-password-on="click"
 						placeholder="至少 8 位，含字母和数字"
-						class="input"
 					/>
 				</div>
 
 				<div>
 					<label class="input-label">显示名称</label>
-					<input
-						v-model="createForm.display_name"
+					<n-input
+						v-model:value="createForm.display_name"
 						type="text"
 						placeholder="选填"
-						class="input"
 					/>
 				</div>
 

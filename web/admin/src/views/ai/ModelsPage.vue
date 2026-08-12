@@ -9,6 +9,7 @@ import TableStats from '@/components/TableStats.vue'
 import ModelPricingDrawer from '@/components/ModelPricingDrawer.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -149,6 +150,48 @@ const statusTagLabel: Record<string, string> = {
   active: '启用',
   deprecated: '弃用',
   offline: '下线',
+}
+
+// ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
+
+// token 数紧凑格式化：128000 → 128K，1500000 → 1.5M，无值返回 '-'
+function formatTokens(n: number | null | undefined): string {
+  if (!n) return '-'
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
+  }
+  if (n >= 1_000) return `${Math.round(n / 1000)}K`
+  return String(n)
+}
+
+// 定价主文本：$输入/$输出、$单价/次、未定价
+function pricingMain(row: any): string {
+  if (!row.pricing_mode) return '未定价'
+  if (row.pricing_mode === 'per_request') {
+    return `$${row.per_request_price?.toFixed(4) ?? '0'}/次`
+  }
+  return `$${row.input_price?.toFixed(2) ?? '0'}/$${row.output_price?.toFixed(2) ?? '0'}`
+}
+
+// 定价模式副文本：按量 / 按次 / 阶梯（未定价返回空串）
+function pricingMode(row: any): string {
+  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
+  return row.pricing_mode ? (m[row.pricing_mode] || row.pricing_mode) : ''
+}
+
+// 可用渠道数量
+function channelCount(row: any): number {
+  return row.channels?.length ?? 0
+}
+
+// 可用渠道名摘要：前 2 个渠道名 + 其余数量，无则 '—'
+function channelSummary(row: any): string {
+  const ch = row.channels
+  if (!ch || ch.length === 0) return '—'
+  const names = ch.slice(0, 2).map((c: any) => c.channel_name).filter(Boolean)
+  if (ch.length > 2) names.push(`+${ch.length - 2}`)
+  return names.join('、') || '—'
 }
 
 const columns: TableColumnData[] = [
@@ -617,7 +660,7 @@ function resetImport() {
 
     <!-- Filters -->
     <ACard :bordered="false" class="mb-4">
-      <ASpace>
+      <ASpace wrap>
         <ASelect
           v-model="filterCategory"
           :options="categoryOptions"
@@ -656,19 +699,70 @@ function resetImport() {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         :scroll="{ x: 1500 }"
-        :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="id"
         :row-selection="{ type: 'checkbox', showCheckedAll: true }"
         :selected-keys="selectedRowKeys"
+        :card-fields="[]"
         @selection-change="handleSelectionChange"
-      />
+      >
+        <!-- 卡片头部：模型标识 + 状态（精简，不含显示名/分类） -->
+        <template #card-header="{ row }">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-mono text-base font-semibold text-[var(--color-text-1)]">
+                {{ row.model_id }}
+              </div>
+            </div>
+            <div class="flex flex-shrink-0 items-center">
+              <Tag :color="statusTagColor[row.status]" size="small">
+                {{ statusTagLabel[row.status] || row.status }}
+              </Tag>
+            </div>
+          </div>
+        </template>
+
+        <!-- 卡片正文：定价/上下文指标块 + 可用渠道 -->
+        <template #card-extra="{ row }">
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <div class="rounded-lg bg-[var(--color-fill-2)] px-3 py-2">
+              <div class="text-xs text-[var(--color-text-3)]">定价</div>
+              <div
+                class="mt-0.5 text-sm font-semibold"
+                :class="row.pricing_mode ? 'text-[var(--color-text-1)]' : 'text-[var(--color-danger-6)]'"
+              >
+                {{ pricingMain(row) }}
+              </div>
+              <div v-if="pricingMode(row)" class="text-xs text-[var(--color-text-3)]">
+                {{ pricingMode(row) }}
+              </div>
+            </div>
+            <div class="rounded-lg bg-[var(--color-fill-2)] px-3 py-2">
+              <div class="text-xs text-[var(--color-text-3)]">上下文</div>
+              <div class="mt-0.5 text-sm font-semibold text-[var(--color-text-1)]">
+                {{ formatTokens(row.max_context_tokens) }}
+              </div>
+              <div v-if="row.max_output_tokens" class="text-xs text-[var(--color-text-3)]">
+                输出 {{ formatTokens(row.max_output_tokens) }}
+              </div>
+            </div>
+          </div>
+          <div class="mt-2 flex items-center justify-between gap-2 text-xs">
+            <span class="text-[var(--color-text-3)]">可用渠道</span>
+            <span
+              class="truncate"
+              :class="channelCount(row) ? 'text-[var(--color-text-2)]' : 'text-[var(--color-text-4)]'"
+            >
+              {{ channelSummary(row) }}
+            </span>
+          </div>
+        </template>
+      </ResponsiveTable>
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination

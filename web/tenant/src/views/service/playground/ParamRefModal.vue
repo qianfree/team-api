@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import Icon from '@/components/common/Icon.vue'
 
 export interface ParamDef {
@@ -130,6 +133,58 @@ watch(groups, (val) => {
 })
 
 const currentGroup = computed(() => groups.value.find(g => g.key === activeGroup.value))
+
+// 参数定义表列定义
+const paramTableColumns = computed<DataTableColumns<ParamDef>>(() => [
+	{
+		title: '参数名',
+		key: 'name',
+		width: 144,
+		render: (row) => h('code', { class: 'text-xs font-mono text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded' }, row.name),
+	},
+	{
+		title: '类型',
+		key: 'type',
+		width: 80,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, row.type),
+	},
+	{
+		title: '必填',
+		key: 'required',
+		width: 56,
+		render: (row) =>
+			renderBadge(
+				String(row.required),
+				{ 'true': '是', 'false': '否' },
+				{ 'true': 'badge-danger', 'false': 'badge-gray' }
+			),
+	},
+	{
+		title: '默认值',
+		key: 'default',
+		width: 96,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, row.default || '—'),
+	},
+	{
+		title: '可选值',
+		key: 'values',
+		width: 140,
+		render: (row) => {
+			if (!row.values?.length) return h('span', { class: 'text-xs text-gray-400' }, '—')
+			return h(
+				'div',
+				{ class: 'flex flex-wrap gap-1' },
+				row.values.map(v => h('span', { class: 'text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded' }, v))
+			)
+		},
+	},
+	{
+		title: '说明',
+		key: 'description',
+		width: 240,
+		render: (row) => h('span', { class: 'text-xs text-gray-600' }, row.description),
+	},
+])
 </script>
 
 <template>
@@ -148,41 +203,17 @@ const currentGroup = computed(() => groups.value.find(g => g.key === activeGroup
 		</div>
 
 		<!-- 参数表格 -->
-		<div v-if="currentGroup" class="table-container">
-			<table class="table">
-				<thead>
-					<tr>
-						<th class="w-36">参数名</th>
-						<th class="w-20">类型</th>
-						<th class="w-14">必填</th>
-						<th class="w-24">默认值</th>
-						<th>可选值</th>
-						<th>说明</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr v-for="p in currentGroup.params" :key="p.name">
-						<td>
-							<code class="text-xs font-mono text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded">{{ p.name }}</code>
-						</td>
-						<td class="text-xs text-gray-500">{{ p.type }}</td>
-						<td>
-							<span v-if="p.required" class="text-xs font-medium text-red-500">是</span>
-							<span v-else class="text-xs text-gray-400">否</span>
-						</td>
-						<td class="text-xs text-gray-500">{{ p.default || '—' }}</td>
-						<td>
-							<template v-if="p.values?.length">
-								<div class="flex flex-wrap gap-1">
-									<span v-for="v in p.values" :key="v" class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{{ v }}</span>
-								</div>
-							</template>
-							<span v-else class="text-xs text-gray-400">—</span>
-						</td>
-						<td class="text-xs text-gray-600">{{ p.description }}</td>
-					</tr>
-				</tbody>
-			</table>
+		<div v-if="currentGroup">
+			<ResponsiveDataTable
+				:show-pagination="false"
+				:columns="paramTableColumns"
+				:scroll-x="tableScrollX(paramTableColumns)"
+				:data="currentGroup.params"
+				:row-key="(row:any)=>row.name"
+				card-title-key="name"
+				card-badge-key="required"
+				:card-fields="['type', 'default', { key: 'values', full: true }, { key: 'description', full: true }]"
+			/>
 		</div>
 
 		<!-- 官方文档链接 -->

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
+import { renderBadge, formatDate, formatTokens, formatMs, tableScrollX } from '@/utils/renderUtils'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
 import type { ApiKeyData } from '@/components/common/ApiKeyEditModal.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -63,7 +67,7 @@ interface ApiKey {
 const keys = ref<ApiKey[]>([])
 const keysLoading = ref(false)
 const keysPage = ref(1)
-const keysPageSize = 20
+const keysPageSize = ref(20)
 const keysTotal = ref(0)
 
 // Key modals (shared component)
@@ -104,7 +108,7 @@ const usageLoading = ref(false)
 const usageLogs = ref<any[]>([])
 const usageLogsLoading = ref(false)
 const usageLogsPage = ref(1)
-const usageLogsPageSize = 20
+const usageLogsPageSize = ref(20)
 const usageLogsTotal = ref(0)
 
 const statusBadgeClasses: Record<string, string> = {
@@ -193,7 +197,7 @@ async function fetchKeys() {
 	keysLoading.value = true
 	try {
 		const res: any = await request.get(`/tenant/projects/${projectId.value}/api-keys`, {
-			params: { page: keysPage.value, page_size: keysPageSize },
+			params: { page: keysPage.value, page_size: keysPageSize.value },
 		})
 		const raw = res.data?.data
 		keys.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -258,7 +262,7 @@ async function fetchUsageLogs() {
 	usageLogsLoading.value = true
 	try {
 		const res: any = await request.get(`/tenant/projects/${projectId.value}/usage-logs`, {
-			params: { page: usageLogsPage.value, page_size: usageLogsPageSize },
+			params: { page: usageLogsPage.value, page_size: usageLogsPageSize.value },
 		})
 		const raw = res.data?.data
 		usageLogs.value = Array.isArray(raw) ? raw : (raw?.list || [])
@@ -270,21 +274,9 @@ async function fetchUsageLogs() {
 	}
 }
 
-function formatTokens(n: number): string {
-	if (!n) return '0'
-	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-	if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-	return String(n)
-}
-
 function formatCost(n: number): string {
 	if (!n) return '$0.00'
 	return '$' + n.toFixed(4)
-}
-
-function formatDate(d: string | null): string {
-	if (!d) return '永不过期'
-	return d.replace('T', ' ').substring(0, 16)
 }
 
 function switchTab(tab: 'overview' | 'keys' | 'usage') {
@@ -295,6 +287,162 @@ function switchTab(tab: 'overview' | 'keys' | 'usage') {
 		fetchUsageLogs()
 	}
 }
+
+// 密钥分页：pageSize 变化回第 1 页并刷新
+function handleKeysPageSizeChange() {
+	keysPage.value = 1
+	fetchKeys()
+}
+
+// 用量日志分页：pageSize 变化回第 1 页并刷新
+function handleUsageLogsPageSizeChange() {
+	usageLogsPage.value = 1
+	fetchUsageLogs()
+}
+
+// API 密钥表列定义
+const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
+	{
+		title: '名称',
+		key: 'name',
+		width: 140,
+		render: (row) => h('span', { class: 'font-medium text-gray-900' }, row.name),
+	},
+	{
+		title: 'Key 前缀',
+		key: 'key_prefix',
+		width: 170,
+		render: (row) => h('span', { class: 'code' }, `${row.key_prefix}...`),
+	},
+	{
+		title: '权限',
+		key: 'scope',
+		width: 160,
+		render: (row) =>
+			row.model_count > 0
+				? h(
+						NButton,
+						{ text: true, type: 'primary', size: 'small', onClick: () => openScopeModal(row.id, row.name) },
+						{ default: () => `${row.model_count} 个模型` }
+				  )
+				: h('span', { class: 'badge badge-gray' }, '不限模型'),
+	},
+	{
+		title: '限制',
+		key: 'limit',
+		width: 140,
+		render: (row) =>
+			h('div', { class: 'space-y-1 text-xs text-gray-500' }, [
+				h('div', {}, `QPS：${formatKeyLimit(row.rate_limit_qps)}`),
+				h('div', {}, `并发：${formatKeyLimit(row.rate_limit_concurrency)}`),
+				h('div', {}, `额度：${formatKeyQuota(row)}`),
+				h('div', {}, `IP：${row.ip_whitelist?.length ? row.ip_whitelist.length + ' 条' : '不限'}`),
+			]),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		width: 90,
+		render: (row) => renderBadge(row.status, keyStatusLabel, keyStatusBadgeClass),
+	},
+	{
+		title: '过期时间',
+		key: 'expires_at',
+		width: 160,
+		render: (row) =>
+			h(
+				'span',
+				{ class: 'text-xs text-gray-500' },
+				row.expires_at ? String(row.expires_at).replace('T', ' ').substring(0, 16) : '永不过期'
+			),
+	},
+	{
+		title: '创建时间',
+		key: 'created_at',
+		width: 160,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatDate(row.created_at)),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		width: 120,
+		align: 'right',
+		render: (row) => {
+			if (row.status === 'active') {
+				return h('div', { class: 'flex items-center justify-end gap-1' }, [
+					h(
+						NButton,
+						{ text: true, size: 'small', onClick: () => openEditModal(row) },
+						{ default: () => [h(Icon, { name: 'edit', size: 'xs' }), ' 编辑'] }
+					),
+					h(
+						NButton,
+						{ text: true, size: 'small', type: 'error', onClick: () => deleteKey(row.id) },
+						{ default: () => [h(Icon, { name: 'trash', size: 'xs' }), ' 禁用'] }
+					),
+				])
+			}
+			return h('span', { class: 'text-xs text-gray-400' }, keyStatusLabel[row.status] || '已禁用')
+		},
+	},
+])
+
+// 用量日志表列定义
+const usageLogsColumns = computed<DataTableColumns<any>>(() => [
+	{
+		title: '模型',
+		key: 'model_name',
+		width: 160,
+		render: (row) => h('span', { class: 'code text-xs' }, row.model_name),
+	},
+	{
+		title: '类型',
+		key: 'relay_mode',
+		width: 120,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, relayModeLabel[row.relay_mode] || row.relay_mode),
+	},
+	{
+		title: '输入',
+		key: 'input_tokens',
+		width: 120,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTokens(row.input_tokens || 0)),
+	},
+	{
+		title: '输出',
+		key: 'output_tokens',
+		width: 120,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTokens(row.output_tokens || 0)),
+	},
+	{
+		title: '费用',
+		key: 'total_cost',
+		width: 120,
+		render: (row) => h('span', { class: 'text-xs font-medium' }, formatCost(row.total_cost || 0)),
+	},
+	{
+		title: '延迟',
+		key: 'latency_ms',
+		width: 110,
+		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatMs(row.latency_ms)),
+	},
+	{
+		title: '状态',
+		key: 'status',
+		width: 100,
+		render: (row) =>
+			h(
+				NTag,
+				{ size: 'small', type: row.status === 'success' ? 'success' : 'error' },
+				{ default: () => (row.status === 'success' ? '成功' : '失败') }
+			),
+	},
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => h('span', { class: 'text-xs text-gray-400' }, formatDate(row.created_at)),
+	},
+])
 </script>
 
 <template>
@@ -408,91 +556,35 @@ function switchTab(tab: 'overview' | 'keys' | 'usage') {
 
 			<!-- Keys Tab -->
 			<div v-if="activeTab === 'keys'" class="space-y-4">
-				<div class="card">
-					<div v-if="keysLoading" class="p-8 flex justify-center">
-						<div class="spinner h-6 w-6 border-primary-500"></div>
-					</div>
-
-					<div v-else-if="keys.length > 0" class="table-container">
-						<table class="table">
-							<thead>
-								<tr>
-									<th>名称</th>
-									<th>Key 前缀</th>
-									<th>权限</th>
-									<th>限制</th>
-									<th>状态</th>
-									<th>过期时间</th>
-									<th>创建时间</th>
-									<th class="text-right">操作</th>
-								</tr>
-							</thead>
-							<tbody>
-								<tr v-for="key in keys" :key="key.id">
-									<td class="font-medium text-gray-900">{{ key.name }}</td>
-									<td><span class="code">{{ key.key_prefix }}...</span></td>
-									<td>
-										<template v-if="key.model_count > 0">
-											<button class="badge badge-primary cursor-pointer hover:bg-primary-100 transition-colors" @click="openScopeModal(key.id, key.name)">
-												{{ key.model_count }} 个模型
-											</button>
-										</template>
-										<span v-else class="badge badge-gray">不限模型</span>
-									</td>
-									<td>
-										<div class="space-y-1 text-xs text-gray-500">
-											<div>QPS：{{ formatKeyLimit(key.rate_limit_qps) }}</div>
-											<div>并发：{{ formatKeyLimit(key.rate_limit_concurrency) }}</div>
-											<div>额度：{{ formatKeyQuota(key) }}</div>
-											<div>IP：{{ key.ip_whitelist?.length ? key.ip_whitelist.length + ' 条' : '不限' }}</div>
-										</div>
-									</td>
-									<td>
-										<span class="badge" :class="keyStatusBadgeClass[key.status] || 'badge-gray'">
-											{{ keyStatusLabel[key.status] || key.status }}
-										</span>
-									</td>
-									<td class="text-gray-500 text-xs">{{ formatDate(key.expires_at) }}</td>
-									<td class="text-gray-500 text-xs">{{ (key.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
-									<td class="text-right">
-										<div class="flex items-center justify-end gap-1">
-											<button
-												v-if="key.status === 'active'"
-												@click="openEditModal(key)"
-												class="btn btn-ghost btn-sm"
-											>
-												<Icon name="edit" size="xs" />
-												编辑
-											</button>
-											<button
-												v-if="key.status === 'active'"
-												@click="deleteKey(key.id)"
-												class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50"
-											>
-												<Icon name="trash" size="xs" />
-												禁用
-											</button>
-											<span v-if="key.status === 'disabled'" class="text-xs text-gray-400">{{ keyStatusLabel[key.status] || '已禁用' }}</span>
-										</div>
-									</td>
-								</tr>
-							</tbody>
-						</table>
-					</div>
-
-					<div v-else class="empty-state">
-						<Icon name="key" size="xl" class="empty-state-icon" />
-						<p class="empty-state-title">暂无项目密钥</p>
-						<p class="empty-state-description">创建密钥以为此项目提供 AI 能力</p>
-					</div>
-
-					<div v-if="keysTotal > keysPageSize" class="card-footer flex justify-end">
-						<div class="flex items-center gap-2">
-							<button class="btn btn-ghost btn-sm" :disabled="keysPage <= 1" @click="keysPage--; fetchKeys()">上一页</button>
-							<span class="text-sm text-gray-500">{{ keysPage }} / {{ Math.ceil(keysTotal / keysPageSize) }}</span>
-							<button class="btn btn-ghost btn-sm" :disabled="keysPage * keysPageSize >= keysTotal" @click="keysPage++; fetchKeys()">下一页</button>
-						</div>
-					</div>
+				<div>
+					<ResponsiveDataTable
+						remote
+						v-model:page="keysPage"
+						v-model:page-size="keysPageSize"
+						:item-count="keysTotal"
+						:page-sizes="[10, 20, 50, 100]"
+						show-size-picker
+						:loading="keysLoading"
+						:columns="keysColumns"
+						:scroll-x="tableScrollX(keysColumns)"
+						:data="keys"
+						:row-key="(row: ApiKey) => row.id"
+						card-title-key="name"
+						card-badge-key="status"
+						card-subtitle-key="created_at"
+						:card-fields="[{ key: 'key_prefix', full: true }, 'scope', { key: 'limit', full: true }, 'expires_at']"
+						card-actions-key="actions"
+						@update:page="fetchKeys"
+						@update:page-size="handleKeysPageSizeChange"
+					>
+						<template #empty>
+							<div class="empty-state">
+								<Icon name="key" size="xl" class="empty-state-icon" />
+								<p class="empty-state-title">暂无项目密钥</p>
+								<p class="empty-state-description">创建密钥以为此项目提供 AI 能力</p>
+							</div>
+						</template>
+					</ResponsiveDataTable>
 				</div>
 			</div>
 
@@ -544,57 +636,37 @@ function switchTab(tab: 'overview' | 'keys' | 'usage') {
 					</div>
 
 					<!-- Usage Logs -->
-					<div class="card">
+					<div class="space-y-3">
 						<div class="card-header">
 							<h3 class="text-base font-semibold text-gray-900">用量日志</h3>
 						</div>
-						<div v-if="usageLogsLoading" class="p-8 flex justify-center">
-							<div class="spinner h-6 w-6 border-primary-500"></div>
-						</div>
-						<div v-else-if="usageLogs.length > 0" class="table-container">
-							<table class="table">
-								<thead>
-									<tr>
-										<th>模型</th>
-										<th>类型</th>
-										<th>输入</th>
-										<th>输出</th>
-										<th>费用</th>
-										<th>延迟</th>
-										<th>状态</th>
-										<th>时间</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr v-for="log in usageLogs" :key="log.id">
-										<td><span class="code text-xs">{{ log.model_name }}</span></td>
-										<td class="text-xs text-gray-500">{{ relayModeLabel[log.relay_mode] || log.relay_mode }}</td>
-										<td class="text-xs text-gray-500">{{ formatTokens(log.input_tokens || 0) }}</td>
-										<td class="text-xs text-gray-500">{{ formatTokens(log.output_tokens || 0) }}</td>
-										<td class="text-xs font-medium">{{ formatCost(log.total_cost || 0) }}</td>
-										<td class="text-xs text-gray-500">{{ log.latency_ms ? log.latency_ms + 'ms' : '-' }}</td>
-										<td>
-											<span class="badge" :class="log.status === 'success' ? 'badge-success' : 'badge-danger'">
-												{{ log.status === 'success' ? '成功' : '失败' }}
-											</span>
-										</td>
-										<td class="text-xs text-gray-400">{{ (log.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
-									</tr>
-								</tbody>
-							</table>
-						</div>
-						<div v-else class="empty-state">
-							<Icon name="chart" size="xl" class="empty-state-icon" />
-							<p class="empty-state-title">暂无用量记录</p>
-							<p class="empty-state-description">项目密钥调用后将在此显示用量数据</p>
-						</div>
-						<div v-if="usageLogsTotal > usageLogsPageSize" class="card-footer flex justify-end">
-							<div class="flex items-center gap-2">
-								<button class="btn btn-ghost btn-sm" :disabled="usageLogsPage <= 1" @click="usageLogsPage--; fetchUsageLogs()">上一页</button>
-								<span class="text-sm text-gray-500">{{ usageLogsPage }} / {{ Math.ceil(usageLogsTotal / usageLogsPageSize) }}</span>
-								<button class="btn btn-ghost btn-sm" :disabled="usageLogsPage * usageLogsPageSize >= usageLogsTotal" @click="usageLogsPage++; fetchUsageLogs()">下一页</button>
-							</div>
-						</div>
+						<ResponsiveDataTable
+							remote
+							v-model:page="usageLogsPage"
+							v-model:page-size="usageLogsPageSize"
+							:item-count="usageLogsTotal"
+							:page-sizes="[10, 20, 50, 100]"
+							show-size-picker
+							:loading="usageLogsLoading"
+							:columns="usageLogsColumns"
+							:scroll-x="tableScrollX(usageLogsColumns)"
+							:data="usageLogs"
+							:row-key="(row: any) => row.id"
+							card-title-key="model_name"
+							card-badge-key="status"
+							card-subtitle-key="created_at"
+							:card-fields="['relay_mode', 'input_tokens', 'output_tokens', 'total_cost', 'latency_ms']"
+							@update:page="fetchUsageLogs"
+							@update:page-size="handleUsageLogsPageSizeChange"
+						>
+							<template #empty>
+								<div class="empty-state">
+									<Icon name="chart" size="xl" class="empty-state-icon" />
+									<p class="empty-state-title">暂无用量记录</p>
+									<p class="empty-state-description">项目密钥调用后将在此显示用量数据</p>
+								</div>
+							</template>
+						</ResponsiveDataTable>
 					</div>
 				</template>
 			</div>

@@ -1,44 +1,230 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import Icon from './Icon.vue'
 
-// 日期时间范围选择器：开始/结束各一个 datetime-local 输入（支持到分钟精度）。
-// 对外暴露 v-model:start / v-model:end，值为后端格式字符串 YYYY-MM-DD HH:mm:ss（结束留空 = 到现在）。
-const props = defineProps<{
+// 响应式日期时间范围选择器：
+// - 桌面端：使用 Naive NDatePicker（datetimerange）+ 快捷选择按钮
+// - 移动端：使用快捷按钮 + 原生 <input type="datetime-local">（调用系统底部弹出选择器）
+// 对外暴露 v-model:start / v-model:end，值为后端格式字符串 YYYY-MM-DD HH:mm:ss
+const props = withDefaults(defineProps<{
 	start?: string
 	end?: string
-}>()
+	mobileBreakpoint?: number  // 移动端断点（px），默认 768
+}>(), {
+	mobileBreakpoint: 768,
+})
+
 const emit = defineEmits<{
 	'update:start': [value: string]
 	'update:end': [value: string]
+	'change': []  // 快捷按钮点击后触发，通知父组件自动搜索
 }>()
 
-// datetime-local 值（YYYY-MM-DDTHH:mm）与后端值（YYYY-MM-DD HH:mm:ss）互转
-function toInputValue(v: string | undefined): string {
-	if (!v) return ''
-	return v.replace(' ', 'T').slice(0, 16)
-}
-function toBackendValue(v: string): string {
-	if (!v) return ''
-	const s = v.replace('T', ' ')
-	return s.length === 16 ? s + ':00' : s
+// 检测是否为移动端
+const isMobile = ref(false)
+const checkMobile = () => {
+	isMobile.value = window.innerWidth < props.mobileBreakpoint
 }
 
-const startInput = computed({
-	get: () => toInputValue(props.start),
-	set: (v: string) => emit('update:start', toBackendValue(v)),
+onMounted(() => {
+	checkMobile()
+	window.addEventListener('resize', checkMobile)
 })
-const endInput = computed({
-	get: () => toInputValue(props.end),
-	set: (v: string) => emit('update:end', toBackendValue(v)),
+
+onUnmounted(() => {
+	window.removeEventListener('resize', checkMobile)
+})
+
+// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
+function tsToStr(ts: number): string {
+	const d = new Date(ts)
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+function strToTs(v: string | undefined): number | null {
+	if (!v) return null
+	const t = new Date(v.replace(' ', 'T')).getTime()
+	return Number.isNaN(t) ? null : t
+}
+
+// 时间戳 ↔ 原生输入框字符串（datetime-local: YYYY-MM-DDTHH:mm）
+function tsToInput(ts: number): string {
+	const d = new Date(ts)
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function inputToTs(v: string): number | null {
+	if (!v) return null
+	const t = new Date(v).getTime()
+	return Number.isNaN(t) ? null : t
+}
+
+// NDatePicker 显示值：仅当 start/end 均有效时返回 [s, e]
+const rangeValue = computed<[number, number] | null>(() => {
+	const s = strToTs(props.start)
+	const e = strToTs(props.end)
+	return s != null && e != null ? [s, e] : null
+})
+
+function onRangeChange(v: [number, number] | null) {
+	if (v) {
+		emit('update:start', tsToStr(v[0]))
+		emit('update:end', tsToStr(v[1]))
+	} else {
+		emit('update:start', '')
+		emit('update:end', '')
+	}
+}
+
+// 以本地时区"天"为粒度的快捷范围
+function dayStart(offsetDays: number): number {
+	const d = new Date()
+	d.setDate(d.getDate() + offsetDays)
+	d.setHours(0, 0, 0, 0)
+	return d.getTime()
+}
+function dayEnd(offsetDays: number): number {
+	const d = new Date()
+	d.setDate(d.getDate() + offsetDays)
+	d.setHours(23, 59, 59, 999)
+	return d.getTime()
+}
+
+// NDatePicker 面板内的快捷选项（点击后自动设置 start/end）
+const shortcuts = {
+	今日: () => [dayStart(0), dayEnd(0)] as [number, number],
+	昨天: () => [dayStart(-1), dayEnd(-1)] as [number, number],
+	近3天: () => [dayStart(-2), dayEnd(0)] as [number, number],
+	近一周: () => [dayStart(-6), dayEnd(0)] as [number, number],
+}
+
+// 移动端：快捷按钮 + 自定义输入
+const showCustom = ref(false)
+const customStart = ref('')
+const customEnd = ref('')
+
+const quickItems = computed(() => Object.entries(shortcuts).map(([label, range]) => ({ label, range })))
+
+function isActive(item: { label: string; range: () => [number, number] }): boolean {
+	const v = rangeValue.value
+	if (!v) return false
+	const [s, e] = item.range()
+	return v[0] === s && v[1] === e
+}
+
+// 点击快捷项：直接写值并同步到自定义输入框
+function pick(item: { label: string; range: () => [number, number] }, event?: Event) {
+	event?.preventDefault()
+	event?.stopPropagation()
+	const [s, e] = item.range()
+	customStart.value = tsToInput(s)
+	customEnd.value = tsToInput(e)
+	emit('update:start', tsToStr(s))
+	emit('update:end', tsToStr(e))
+	showCustom.value = false
+	// 触发 change 事件，通知父组件自动搜索
+	emit('change')
+}
+
+// 切换自定义输入显示
+function toggleCustom(event?: Event) {
+	event?.preventDefault()
+	event?.stopPropagation()
+	showCustom.value = !showCustom.value
+}
+
+// 自定义输入变化：两端均有效才写回，任一端无效则置空
+function onCustomInput() {
+	const s = inputToTs(customStart.value)
+	const e = inputToTs(customEnd.value)
+	if (s != null && e != null) {
+		emit('update:start', tsToStr(s))
+		emit('update:end', tsToStr(e))
+	} else {
+		emit('update:start', '')
+		emit('update:end', '')
+	}
+}
+
+onMounted(() => {
+	// 初始值回填到移动端输入框
+	if (rangeValue.value) {
+		customStart.value = tsToInput(rangeValue.value[0])
+		customEnd.value = tsToInput(rangeValue.value[1])
+		// 如果不是快捷项，自动展开自定义输入
+		if (!quickItems.value.some(isActive)) {
+			showCustom.value = true
+		}
+	}
 })
 </script>
 
 <template>
-	<div class="flex items-center gap-2">
-		<label class="text-sm text-gray-500 whitespace-nowrap">开始时间</label>
-		<input v-model="startInput" type="datetime-local" class="input" style="width:190px" />
-		<span class="text-gray-400 select-none">~</span>
-		<label class="text-sm text-gray-500 whitespace-nowrap">结束时间</label>
-		<input v-model="endInput" type="datetime-local" class="input" style="width:190px" />
+	<!-- 桌面端：Naive NDatePicker -->
+	<n-date-picker
+		v-if="!isMobile"
+		type="datetimerange"
+		:value="rangeValue"
+		:shortcuts="shortcuts"
+		:clearable="true"
+		:actions="['clear', 'confirm']"
+		style="width: 400px"
+		@update:value="onRangeChange"
+	/>
+
+	<!-- 移动端：快捷按钮 + 原生输入 -->
+	<div v-else class="space-y-2 w-full">
+		<!-- 快捷范围按钮 -->
+		<div class="flex flex-wrap gap-1.5">
+			<button
+				v-for="item in quickItems"
+				:key="item.label"
+				type="button"
+				class="rounded-lg border px-2.5 py-1 text-xs font-medium transition-all duration-150 active:scale-95 active:bg-primary-100"
+				:class="
+					isActive(item)
+						? 'border-primary-500 bg-primary-50 text-primary-700'
+						: 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-600'
+				"
+				@click.prevent.stop="pick(item, $event)"
+			>
+				{{ item.label }}
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all duration-150 active:scale-95 active:bg-primary-100"
+				:class="
+					showCustom
+						? 'border-primary-500 bg-primary-50 text-primary-700'
+						: 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-600'
+				"
+				@click.prevent.stop="toggleCustom($event)"
+			>
+				<span>自定义</span>
+				<Icon :name="showCustom ? 'chevronUp' : 'chevronDown'" size="xs" />
+			</button>
+		</div>
+
+		<!-- 自定义范围：原生输入，移动端弹出系统全屏选择器 -->
+		<div v-if="showCustom" class="space-y-2">
+			<label class="block min-w-0">
+				<span class="mb-1 block text-xs text-gray-500">开始时间</span>
+				<input
+					v-model="customStart"
+					type="datetime-local"
+					class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+					@change="onCustomInput"
+				/>
+			</label>
+			<label class="block min-w-0">
+				<span class="mb-1 block text-xs text-gray-500">结束时间</span>
+				<input
+					v-model="customEnd"
+					type="datetime-local"
+					class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+					@change="onCustomInput"
+				/>
+			</label>
+		</div>
 	</div>
 </template>

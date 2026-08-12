@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { NInput, NCheckbox, NModal } from 'naive-ui'
 import request from '@/utils/request'
 import Icon from '@/components/common/Icon.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -194,7 +195,7 @@ function copyToClipboard(text: string) {
     <div class="card mb-6">
       <div class="card-body">
         <div class="flex gap-3">
-          <input v-model="keyword" type="text" class="input" placeholder="搜索应用名称..." @keydown.enter="loadApps" />
+          <n-input v-model:value="keyword" type="text" placeholder="搜索应用名称..." @keydown.enter="loadApps" />
           <button class="btn btn-secondary" @click="loadApps">搜索</button>
         </div>
       </div>
@@ -246,87 +247,87 @@ function copyToClipboard(text: string) {
     </div>
 
     <!-- Create/Edit Modal -->
-    <Teleport to="body">
-      <div v-if="showModal" class="modal-overlay" @click.self="showModal = false">
-        <div class="modal-content bg-white w-full max-w-lg">
-          <div class="modal-header">
-            <h3 class="modal-title">{{ modalMode === 'create' ? '创建应用' : '编辑应用' }}</h3>
-            <button class="btn btn-ghost btn-icon" @click="showModal = false">
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
-          <div class="modal-body space-y-4">
-            <div>
-              <label class="input-label">应用名称</label>
-              <input v-model="form.name" type="text" class="input" placeholder="输入应用名称" />
-            </div>
-            <div>
-              <label class="input-label">应用描述</label>
-              <textarea v-model="form.description" class="input" rows="3" placeholder="输入应用描述"></textarea>
-            </div>
-            <div>
-              <label class="input-label">权限范围</label>
-              <div class="grid grid-cols-2 gap-2">
-                <label v-for="perm in availablePermissions" :key="perm" class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" :checked="form.permissions.includes(perm)" @change="togglePermission(perm)" class="rounded border-gray-300" />
-                  <span class="text-sm">{{ perm }}</span>
-                </label>
-              </div>
-            </div>
-            <div>
-              <label class="input-label">请求频率限制（每分钟）</label>
-              <input v-model.number="form.rate_limit" type="number" class="input" min="1" max="10000" />
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" @click="showModal = false">取消</button>
-            <button class="btn btn-primary" :disabled="saving" @click="handleSave">
-              <div v-if="saving" class="spinner h-4 w-4 border-white"></div>
-              {{ saving ? '保存中...' : '保存' }}
-            </button>
+    <n-modal
+      v-model:show="showModal"
+      preset="card"
+      :title="modalMode === 'create' ? '创建应用' : '编辑应用'"
+      :style="{ width: '600px' }"
+      :bordered="false"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="input-label">应用名称</label>
+          <n-input v-model:value="form.name" type="text" placeholder="输入应用名称" />
+        </div>
+        <div>
+          <label class="input-label">应用描述</label>
+          <n-input v-model:value="form.description" type="textarea" :rows="3" placeholder="输入应用描述" />
+        </div>
+        <div>
+          <label class="input-label">权限范围</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label v-for="perm in availablePermissions" :key="perm" class="flex items-center gap-2 cursor-pointer">
+              <n-checkbox :checked="form.permissions.includes(perm)" @update:checked="togglePermission(perm)" />
+              <span class="text-sm">{{ perm }}</span>
+            </label>
           </div>
         </div>
+        <div>
+          <label class="input-label">请求频率限制（每分钟）</label>
+          <n-input
+            :value="String(form.rate_limit)"
+            type="number"
+            min="1"
+            max="10000"
+            @update:value="(v: string | null) => { form.rate_limit = Number(v) }"
+          />
+        </div>
       </div>
-    </Teleport>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button class="btn btn-secondary" @click="showModal = false">取消</button>
+          <button class="btn btn-primary" :disabled="saving" @click="handleSave">
+            <div v-if="saving" class="spinner h-4 w-4 border-white"></div>
+            {{ saving ? '保存中...' : '保存' }}
+          </button>
+        </div>
+      </template>
+    </n-modal>
 
     <!-- Secret Display Modal -->
-    <Teleport to="body">
-      <div v-if="showSecretModal" class="modal-overlay" @click.self="showSecretModal = false">
-        <div class="modal-content bg-white w-full max-w-lg">
-          <div class="modal-header">
-            <h3 class="modal-title">应用密钥</h3>
-            <button class="btn btn-ghost btn-icon" @click="showSecretModal = false">
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
-          <div class="modal-body">
-            <div class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-4">
-              <p class="text-sm text-amber-800 font-medium">请立即复制并安全保存此密钥，关闭后将无法再次查看。</p>
-            </div>
-            <div v-if="newAppId" class="mb-3">
-              <label class="input-label">App ID</label>
-              <div class="flex items-center gap-2">
-                <code class="code-block flex-1 text-sm">{{ newAppId }}</code>
-                <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newAppId)">
-                  <Icon name="copy" size="sm" />
-                </button>
-              </div>
-            </div>
-            <div>
-              <label class="input-label">App Secret</label>
-              <div class="flex items-center gap-2">
-                <code class="code-block flex-1 text-sm break-all">{{ newSecret }}</code>
-                <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecret)">
-                  <Icon name="copy" size="sm" />
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-primary" @click="showSecretModal = false">我已安全保存</button>
-          </div>
+    <n-modal
+      v-model:show="showSecretModal"
+      preset="card"
+      title="应用密钥"
+      :style="{ width: '600px' }"
+      :bordered="false"
+    >
+      <div class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-4">
+        <p class="text-sm text-amber-800 font-medium">请立即复制并安全保存此密钥，关闭后将无法再次查看。</p>
+      </div>
+      <div v-if="newAppId" class="mb-3">
+        <label class="input-label">App ID</label>
+        <div class="flex items-center gap-2">
+          <code class="code-block flex-1 text-sm">{{ newAppId }}</code>
+          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newAppId)">
+            <Icon name="copy" size="sm" />
+          </button>
         </div>
       </div>
-    </Teleport>
+      <div>
+        <label class="input-label">App Secret</label>
+        <div class="flex items-center gap-2">
+          <code class="code-block flex-1 text-sm break-all">{{ newSecret }}</code>
+          <button class="btn btn-ghost btn-sm" @click="copyToClipboard(newSecret)">
+            <Icon name="copy" size="sm" />
+          </button>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary" @click="showSecretModal = false">我已安全保存</button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>

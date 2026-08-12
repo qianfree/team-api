@@ -1,26 +1,36 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NInput, NSelect } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
-import BaseSelect from '../../components/common/BaseSelect.vue'
-import request from '@/utils/request'
-import { useExport } from '@/composables/useExport'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
+import request from '@/utils/request'
+import { tableScrollX } from '@/utils/renderUtils'
+import { useExport } from '@/composables/useExport'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
 function pad2(n: number): string {
 	return String(n).padStart(2, '0')
 }
+// timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
+function tsToStr(ts: number): string {
+	const d = new Date(ts)
+	const pad = (n: number) => String(n).padStart(2, '0')
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 // 默认查询当天：开始 = 当天 0 点，结束 = 当天 23:59:59
 function todayStart(): string {
 	const d = new Date()
-	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`
+	d.setHours(0, 0, 0, 0)
+	return tsToStr(d.getTime())
 }
 function todayEnd(): string {
 	const d = new Date()
-	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
+	d.setHours(23, 59, 59, 999)
+	return tsToStr(d.getTime())
 }
 
 const loading = ref(false)
@@ -29,24 +39,36 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
-const filterUsername = ref('')
-const filterModel = ref('')
-const filterStatus = ref('')
-const filterRequestType = ref('')
-const filterStartDate = ref(todayStart())
-const filterEndDate = ref(todayEnd())
+// 查询表单数据
+const filters = ref({
+	start_date: todayStart(),
+	end_date: todayEnd(),
+	username: '',
+	model: '',
+	status: '',
+	requestType: '',
+})
 
+// 导出下拉菜单
 const showExportDropdown = ref(false)
+
 const { exporting, exportFile } = useExport({
 	url: '/tenant/usage-logs/export',
-	getFilters: () => ({
-		username: filterUsername.value,
-		model: filterModel.value,
-		status: filterStatus.value,
-		request_type: filterRequestType.value,
-		start_date: filterStartDate.value,
-		end_date: filterEndDate.value,
-	}),
+	getFilters: () => {
+		const params: any = {
+			username: filters.value.username,
+			model: filters.value.model,
+			status: filters.value.status,
+			request_type: filters.value.requestType,
+		}
+		if (filters.value.start_date) {
+			params.start_date = filters.value.start_date
+		}
+		if (filters.value.end_date) {
+			params.end_date = filters.value.end_date
+		}
+		return params
+	},
 })
 
 // 详情弹窗
@@ -119,12 +141,12 @@ async function fetchLogs() {
 	loading.value = true
 	try {
 		const params: any = { page: page.value, page_size: pageSize.value }
-		if (filterUsername.value) params.username = filterUsername.value
-		if (filterModel.value) params.model = filterModel.value
-		if (filterStatus.value) params.status = filterStatus.value
-		if (filterRequestType.value) params.request_type = filterRequestType.value
-		if (filterStartDate.value) params.start_date = filterStartDate.value
-		if (filterEndDate.value) params.end_date = filterEndDate.value
+		if (filters.value.username) params.username = filters.value.username
+		if (filters.value.model) params.model = filters.value.model
+		if (filters.value.status) params.status = filters.value.status
+		if (filters.value.requestType) params.request_type = filters.value.requestType
+		if (filters.value.start_date) params.start_date = filters.value.start_date
+		if (filters.value.end_date) params.end_date = filters.value.end_date
 
 		const res: any = await request.get('/tenant/usage-logs', { params })
 		const raw = res.data?.data
@@ -143,12 +165,14 @@ function applyFilters() {
 }
 
 function resetFilters() {
-	filterUsername.value = ''
-	filterModel.value = ''
-	filterStatus.value = ''
-	filterRequestType.value = ''
-	filterStartDate.value = todayStart()
-	filterEndDate.value = todayEnd()
+	filters.value = {
+		start_date: todayStart(),
+		end_date: todayEnd(),
+		username: '',
+		model: '',
+		status: '',
+		requestType: '',
+	}
 	page.value = 1
 	fetchLogs()
 }
@@ -234,6 +258,204 @@ function hideTokenTooltip() {
 	tokenTooltipData.value = null
 }
 
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+	{
+		title: '用户/项目',
+		key: 'user',
+		width: 160,
+		render: (row) =>
+			row.project_name
+				? h('span', { class: 'text-sm text-primary-600 font-medium' }, row.project_name)
+				: h('span', { class: 'text-sm text-gray-700' }, row.username || '-'),
+	},
+	{
+		title: 'API Key',
+		key: 'api_key',
+		width: 160,
+		render: (row) => h('span', { class: 'text-sm text-gray-700' }, row.api_key_name || row.api_key_id || '-'),
+	},
+	{
+		title: '模型',
+		key: 'model',
+		width: 170,
+		render: (row) =>
+			hasUpstreamModel(row)
+				? h('div', { class: 'space-y-0.5' }, [
+						h('div', { class: 'font-medium text-gray-900 break-all' }, row.model_name),
+						h('div', { class: 'text-gray-500 text-xs' }, [h('span', { class: 'mr-0.5' }, '↳'), row.upstream_model]),
+				  ])
+				: h('span', { class: 'font-medium text-gray-900' }, row.model_name),
+	},
+	{
+		title: '类型',
+		key: 'type',
+		width: 120,
+		render: (row) => {
+			const children: any[] = [
+				h(
+					'span',
+					{
+						class: [
+							'inline-flex items-center rounded px-2 py-0.5 text-xs font-medium',
+							requestTypeBadge[row.request_type] || 'bg-gray-100 text-gray-800',
+						],
+					},
+					requestTypeLabel[row.request_type] || '-'
+				),
+			]
+			if (row.billing_mode) {
+				children.push(
+					h(
+						'span',
+						{
+							class: [
+								'ml-1 inline-flex items-center rounded px-2 py-0.5 text-xs font-medium',
+								billingModeBadge[row.billing_mode] || 'bg-gray-100 text-gray-800',
+							],
+						},
+						billingModeLabel[row.billing_mode] || row.billing_mode
+					)
+				)
+			}
+			return h('div', { class: 'flex items-center gap-1' }, children)
+		},
+	},
+	{
+		title: 'Token',
+		key: 'token',
+		width: 280,
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-1.5' }, [
+				h('div', { class: 'flex items-center gap-2' }, [
+					h('div', { class: 'inline-flex items-center gap-1' }, [
+						h(Icon, { name: 'arrowUp', size: 'sm', class: 'h-3.5 w-3.5 text-violet-500' }),
+						h('span', { class: 'font-medium text-gray-900' }, (row.input_tokens || 0).toLocaleString()),
+					]),
+					h('div', { class: 'inline-flex items-center gap-1' }, [
+						h(Icon, { name: 'arrowDown', size: 'sm', class: 'h-3.5 w-3.5 text-emerald-500' }),
+						h('span', { class: 'font-medium text-gray-900' }, (row.output_tokens || 0).toLocaleString()),
+					]),
+					h('div', { class: 'inline-flex items-center gap-1' }, [
+						h(Icon, { name: 'edit', size: 'xs', class: 'h-3.5 w-3.5 text-amber-500' }),
+						h('span', { class: 'font-medium text-amber-600' }, (row.cache_creation_tokens || 0).toLocaleString()),
+					]),
+					h('div', { class: 'inline-flex items-center gap-1' }, [
+						h(Icon, { name: 'bookOpen', size: 'xs', class: 'h-3.5 w-3.5 text-sky-500' }),
+						h('span', { class: 'font-medium text-sky-600' }, (row.cache_read_tokens || 0).toLocaleString()),
+					]),
+				]),
+				h(
+					'div',
+					{
+						class: 'group relative',
+						onClick: (e: Event) => e.stopPropagation(),
+						onMouseenter: (e: MouseEvent) => showTokenTooltip(e, row),
+						onMouseleave: hideTokenTooltip,
+					},
+					[
+						h(
+							'div',
+							{ class: 'flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100' },
+							[h(Icon, { name: 'infoCircle', size: 'xs', class: 'text-gray-400 group-hover:text-blue-500' })]
+						),
+					]
+				),
+			]),
+	},
+	{
+		title: '费用',
+		key: 'cost',
+		width: 120,
+		render: (row) =>
+			h('div', { class: 'flex items-center gap-1.5' }, [
+				h('span', { class: 'font-medium text-emerald-600' }, formatCost(row.actual_cost || row.total_cost)),
+				h(
+					'div',
+					{
+						class: 'group relative',
+						onClick: (e: Event) => e.stopPropagation(),
+						onMouseenter: (e: MouseEvent) => showCostTooltip(e, row),
+						onMouseleave: hideCostTooltip,
+					},
+					[
+						h(
+							'div',
+							{ class: 'flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100' },
+							[h(Icon, { name: 'infoCircle', size: 'xs', class: 'text-gray-400 group-hover:text-blue-500' })]
+						),
+					]
+				),
+			]),
+	},
+	{
+		title: '用时',
+		key: 'latency',
+		width: 110,
+		render: (row) => {
+			const children: any[] = [h('div', { class: 'text-sm text-gray-600' }, formatMs(row.latency_ms))]
+			if (row.first_token_ms > 0) {
+				children.push(h('div', { class: 'text-xs text-gray-400' }, 'TTFT ' + formatMs(row.first_token_ms)))
+			}
+			return h('div', { class: 'leading-tight' }, children)
+		},
+	},
+	{
+		title: '状态',
+		key: 'status',
+		width: 100,
+		render: (row) => {
+			const children: any[] = [
+				h(
+					'span',
+					{
+						class: [
+							'inline-flex items-center rounded px-2 py-0.5 text-xs font-medium',
+							statusBadgeClass[row.status] || 'bg-gray-100 text-gray-800',
+						],
+					},
+					statusLabel[row.status] || row.status
+				),
+			]
+			if (row.retry_index > 0) {
+				children.push(
+					h(
+						'span',
+						{
+							class: 'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight bg-amber-100 text-amber-600',
+							title: '重试 ' + row.retry_index + ' 次',
+						},
+						'R' + row.retry_index
+					)
+				)
+			}
+			return h('div', { class: 'flex items-center gap-1' }, children)
+		},
+	},
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) =>
+			h('span', { class: 'text-sm text-gray-600 whitespace-nowrap' }, formatTime(row.created_at)),
+	},
+	{
+		title: '操作',
+		key: 'actions',
+		width: 60,
+		fixed: 'right',
+		align: 'right',
+		render: (row) =>
+			h(NButton, { size: 'small', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
+	},
+])
+
+// pageSize 变化回第 1 页并刷新
+function handlePageSizeChange() {
+	page.value = 1
+	fetchLogs()
+}
+
 onMounted(() => {
 	fetchLogs()
 })
@@ -242,209 +464,112 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="relative z-20 overflow-visible card">
+		<div class="card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-						<DateTimeRangePicker v-model:start="filterStartDate" v-model:end="filterEndDate" />
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
-							<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">模型名称</label>
-							<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:160px" @keyup.enter="applyFilters" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
-							<BaseSelect v-model="filterStatus" :options="[{value:'',label:'全部'},{value:'success',label:'成功'},{value:'error',label:'失败'},{value:'interrupted',label:'中断'},{value:'timeout',label:'超时'}]" container-class="w-[100px]" />
-						</div>
-						<div class="flex items-center gap-2">
-							<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
-							<BaseSelect v-model="filterRequestType" :options="[{value:'',label:'全部'},{value:'1',label:'同步'},{value:'2',label:'流式'},{value:'3',label:'异步'}]" container-class="w-[100px]" />
-						</div>
-						<div class="ml-auto flex items-center gap-2">
-							<button type="submit" class="btn btn-primary btn-sm">
-								<Icon name="search" size="sm" />
-								搜索
+					<DateTimeRangePicker
+						v-model:start="filters.start_date"
+						v-model:end="filters.end_date"
+						@change="applyFilters"
+					/>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
+						<n-input v-model:value="filters.username" placeholder="搜索用户" style="width:120px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">模型名称</label>
+						<n-input v-model:value="filters.model" placeholder="例如：gpt-4o" style="width:160px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">状态</label>
+						<n-select
+							v-model:value="filters.status"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: 'success', label: '成功' },
+								{ value: 'error', label: '失败' },
+								{ value: 'interrupted', label: '中断' },
+								{ value: 'timeout', label: '超时' },
+							]"
+							style="width:100px"
+						/>
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">请求类型</label>
+						<n-select
+							v-model:value="filters.requestType"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: '1', label: '同步' },
+								{ value: '2', label: '流式' },
+								{ value: '3', label: '异步' },
+							]"
+							style="width:100px"
+						/>
+					</div>
+					<div class="ml-auto flex items-center gap-2">
+						<button type="submit" class="btn btn-primary btn-sm">
+							<Icon name="search" size="sm" />
+							搜索
+						</button>
+						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
+						<div class="relative">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+								<Icon v-else name="download" size="sm" />
+								导出
+								<Icon name="chevronDown" size="xs" />
 							</button>
-							<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
-							<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-							<div class="relative">
-								<button
-									type="button"
-									class="btn btn-secondary btn-sm"
-									:disabled="exporting"
-									@click="showExportDropdown = !showExportDropdown"
-								>
-									<span v-if="exporting" class="spinner h-4 w-4"></span>
-									<Icon v-else name="download" size="sm" />
-									导出
-									<Icon name="chevronDown" size="xs" />
-								</button>
-								<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
-									<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
-								</div>
+							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
+								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
 							</div>
 						</div>
-					</form>
+					</div>
+				</form>
 			</div>
 		</div>
-		<!-- Logs Table -->
-		<div class="viewport-table-panel relative z-0 card overflow-hidden">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
 
-			<div v-else-if="logs.length > 0" class="viewport-table-scroll table-container table-container-flush usage-log-table">
-				<table class="table">
-					<thead>
-						<tr>
-							<th class="min-w-50">用户/项目</th>
-							<th class="min-w-40">API Key</th>
-							<th class="min-w-45">模型</th>
-							<th class="min-w-30">类型</th>
-							<th class="min-w-30">Token</th>
-							<th class="min-w-20">费用</th>
-							<th class="min-w-30">用时</th>
-							<th class="min-w-25">状态</th>
-							<th class="min-w-35">时间</th>
-							<th class="usage-action-column">操作</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="log in logs" :key="log.id">
-							<!-- 用户 -->
-							<td>
-								<span v-if="log.project_name" class="text-sm text-primary-600 font-medium">{{ log.project_name }}</span>
-									<span v-else class="text-sm text-gray-700">{{ log.username || "-" }}</span>
-							</td>
-
-							<!-- API Key -->
-								<td>
-									<span class="text-sm text-gray-700">{{ log.api_key_name || log.api_key_id || '-' }}</span>
-								</td>
-
-								<!-- 模型 -->
-							<td>
-								<div v-if="hasUpstreamModel(log)" class="space-y-0.5">
-									<div class="font-medium text-gray-900 break-all">{{ log.model_name }}</div>
-									<div class="text-gray-500 text-xs"><span class="mr-0.5">↳</span>{{ log.upstream_model }}</div>
-								</div>
-								<span v-else class="font-medium text-gray-900">{{ log.model_name }}</span>
-							</td>
-
-							<!-- 请求类型 -->
-							<td>
-								<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="requestTypeBadge[log.request_type] || 'bg-gray-100 text-gray-800'">
-									{{ requestTypeLabel[log.request_type] || '-' }}
-								</span>
-								<span v-if="log.billing_mode" class="ml-1 inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="billingModeBadge[log.billing_mode] || 'bg-gray-100 text-gray-800'">
-									{{ billingModeLabel[log.billing_mode] || log.billing_mode }}
-								</span>
-							</td>
-
-							<!-- Token -->
-							<td>
-								<div class="flex items-center gap-1.5">
-									<div class="flex items-center gap-2">
-										<div class="inline-flex items-center gap-1">
-                      <Icon name="arrowUp" size="sm" class="h-3.5 w-3.5 text-violet-500" />
-											<span class="font-medium text-gray-900">{{ (log.input_tokens || 0).toLocaleString() }}</span>
-										</div>
-										<div class="inline-flex items-center gap-1">
-                      <Icon name="arrowDown" size="sm" class="h-3.5 w-3.5 text-emerald-500" />
-											<span class="font-medium text-gray-900">{{ (log.output_tokens || 0).toLocaleString() }}</span>
-										</div>
-                    <div class="inline-flex items-center gap-1">
-                      <Icon name="edit" size="xs" class="h-3.5 w-3.5 text-amber-500" />
-                      <span class="font-medium text-amber-600">{{ (log.cache_creation_tokens || 0).toLocaleString() }}</span>
-                    </div>
-										<div class="inline-flex items-center gap-1">
-											<Icon name="bookOpen" size="xs" class="h-3.5 w-3.5 text-sky-500" />
-											<span class="font-medium text-sky-600">{{ (log.cache_read_tokens || 0).toLocaleString() }}</span>
-										</div>
-									</div>
-									<!-- Token info tooltip trigger -->
-									<div
-										class="group relative"
-										@click.stop
-										@mouseenter="showTokenTooltip($event, log)"
-										@mouseleave="hideTokenTooltip"
-									>
-										<div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100">
-											<Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500" />
-										</div>
-									</div>
-								</div>
-							</td>
-
-							<!-- 费用 -->
-							<td>
-								<div class="flex items-center gap-1.5">
-									<span class="font-medium text-emerald-600">{{ formatCost(log.actual_cost || log.total_cost) }}</span>
-									<div
-										class="group relative"
-										@click.stop
-										@mouseenter="showCostTooltip($event, log)"
-										@mouseleave="hideCostTooltip"
-									>
-										<div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100">
-											<Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500" />
-										</div>
-									</div>
-								</div>
-							</td>
-
-							<!-- 延迟 -->
-							<td>
-								<div class="leading-tight">
-									<div class="text-sm text-gray-600">{{ formatMs(log.latency_ms) }}</div>
-									<div v-if="log.first_token_ms > 0" class="text-xs text-gray-400">TTFT {{ formatMs(log.first_token_ms) }}</div>
-								</div>
-							</td>
-
-							<!-- 状态 -->
-							<td>
-								<div class="flex items-center gap-1">
-									<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="statusBadgeClass[log.status] || 'bg-gray-100 text-gray-800'">
-										{{ statusLabel[log.status] || log.status }}
-									</span>
-									<span
-										v-if="log.retry_index > 0"
-										class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight bg-amber-100 text-amber-600"
-										:title="'重试 ' + log.retry_index + ' 次'"
-									>R{{ log.retry_index }}</span>
-								</div>
-							</td>
-
-							<!-- 时间 -->
-							<td>
-								<span class="text-sm text-gray-600 whitespace-nowrap">{{ formatTime(log.created_at) }}</span>
-							</td>
-
-							<!-- 详情按钮 -->
-							<td class="usage-action-column">
-								<button
-									class="btn btn-ghost btn-sm p-1.5"
-									title="查看详情"
-									@click="openDetail(log)"
-								>
-									<Icon name="eye" size="sm" class="text-gray-400 hover:text-primary-500" />
-								</button>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<div v-else class="empty-state">
-				<Icon name="document" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无用量日志</p>
-				<p class="empty-state-description">日志将在 API 调用后展示</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchLogs" />
+		<!-- Logs Table / 移动端卡片 -->
+		<div class="viewport-table-panel relative z-0 overflow-hidden">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="logs"
+				:row-key="(row: any) => row.id"
+				card-title-key="model"
+				card-badge-key="status"
+				card-subtitle-key="created_at"
+				:card-fields="[
+					{ key: 'user' },
+					{ key: 'api_key' },
+					{ key: 'type' },
+					{ key: 'token', full: true },
+					{ key: 'cost' },
+					{ key: 'latency' },
+				]"
+				card-actions-key="actions"
+				:row-click="openDetail"
+				@update:page="fetchLogs"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="document" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无用量日志</p>
+						<p class="empty-state-description">日志将在 API 调用后展示</p>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 
 		<!-- Token Tooltip -->
@@ -986,44 +1111,3 @@ onMounted(() => {
 	</div>
 </template>
 
-<style scoped>
-.usage-log-table {
-	position: relative;
-}
-
-.usage-log-table .usage-action-column {
-	position: sticky;
-	right: 0;
-	z-index: 3;
-	width: 5.5rem;
-	min-width: 5.5rem;
-	text-align: right;
-	box-shadow: -14px 0 24px -20px rgba(55, 65, 105, 0.42);
-}
-
-.usage-log-table .table thead .usage-action-column {
-	z-index: 5;
-	background:
-		linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 255, 0.94)),
-		linear-gradient(100deg, rgba(6, 182, 212, 0.07), rgba(20, 184, 166, 0.1));
-	backdrop-filter: blur(24px) saturate(1.35);
-	-webkit-backdrop-filter: blur(24px) saturate(1.35);
-}
-
-.usage-log-table .table tbody tr .usage-action-column {
-	background: rgba(251, 252, 255, 0.94);
-	backdrop-filter: blur(22px) saturate(1.25);
-	-webkit-backdrop-filter: blur(22px) saturate(1.25);
-}
-
-.usage-log-table .table tbody tr:nth-child(even) .usage-action-column {
-	background: rgba(246, 248, 255, 0.95);
-}
-
-.usage-log-table .table tbody tr:hover .usage-action-column,
-.usage-log-table .table tbody tr:focus-within .usage-action-column {
-	background:
-		linear-gradient(90deg, rgba(235, 247, 255, 0.95), rgba(244, 240, 255, 0.96)),
-		rgba(255, 255, 255, 0.96);
-}
-</style>

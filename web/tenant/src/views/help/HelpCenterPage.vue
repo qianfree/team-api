@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { NInput } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import BasePagination from '@/components/common/BasePagination.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
@@ -210,21 +211,24 @@ onMounted(fetchCategories)
 				<h1 class="page-title">帮助中心</h1>
 				<p class="page-description">浏览帮助文档，快速找到常见问题的解答</p>
 			</div>
-			<div class="relative flex-shrink-0">
-				<Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-				<input
-					v-model="searchQuery"
-					class="h-9 w-44 sm:w-52 lg:w-64 rounded-lg bg-gray-100 border border-transparent pl-9 pr-8 text-sm text-gray-700 placeholder:text-gray-400 focus:bg-white focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all"
+			<div class="flex-shrink-0">
+				<n-input
+					v-model:value="searchQuery"
+					class="w-44 sm:w-52 lg:w-64"
 					placeholder="搜索帮助文章..."
 					@keydown.enter="handleSearch"
-				/>
-				<button
-					v-if="searchQuery"
-					class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-					@click="searchQuery = ''"
 				>
-					<Icon name="x" size="xs" />
-				</button>
+					<template #prefix><Icon name="search" size="sm" class="text-gray-400" /></template>
+					<template #suffix>
+						<button
+							v-if="searchQuery"
+							class="text-gray-400 hover:text-gray-600 transition-colors"
+							@click="searchQuery = ''"
+						>
+							<Icon name="x" size="xs" />
+						</button>
+					</template>
+				</n-input>
 			</div>
 		</div>
 

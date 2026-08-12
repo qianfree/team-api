@@ -163,7 +163,7 @@ onMounted(() => {
 			<!-- 全局支付设置 -->
 			<ACard :bordered="false" :loading="settingsLoading" title="全局设置">
 				<AForm :model="settingsForm" :auto-label-width="true">
-					<AGrid :cols="2" :col-gap="24" :row-gap="0">
+					<AGrid :cols="{ xs: 1, sm: 1, md: 2 }" :col-gap="24" :row-gap="0">
 						<AGridItem>
 							<AFormItem label="金额选项" extra="预设充值金额，用逗号分隔">
 								<AInput v-model="settingsForm.amount_options" placeholder="10,20,50,100,200,500" />
@@ -218,7 +218,7 @@ onMounted(() => {
 					</div>
 				</template>
 				<AForm :model="epayForm" :auto-label-width="true">
-					<AGrid :cols="2" :col-gap="24" :row-gap="0">
+					<AGrid :cols="{ xs: 1, sm: 1, md: 2 }" :col-gap="24" :row-gap="0">
 						<AGridItem>
 							<AFormItem label="启用">
 								<ASwitch v-model="epayForm.is_enabled" />

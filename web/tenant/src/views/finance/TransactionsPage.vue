@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NInput, NInputNumber, NSelect } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import BaseSelect from '@/components/common/BaseSelect.vue'
-import BasePagination from '@/components/common/BasePagination.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
+import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -12,27 +15,44 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
-// Filter state
-const filterType = ref('')
-const filterStartDate = ref('')
-const filterEndDate = ref('')
-const filterAmountMin = ref('')
-const filterAmountMax = ref('')
-const filterUsername = ref('')
-const filterModel = ref('')
+// 日期格式化辅助函数
+function formatDate(ts: number): string {
+	const d = new Date(ts)
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
+// 查询表单数据
+const filters = ref({
+	type: '',
+	start_date: '',
+	end_date: '',
+	amountMin: null as number | null,
+	amountMax: null as number | null,
+	username: '',
+	model: '',
+})
+
+// 导出下拉菜单
 const showExportDropdown = ref(false)
+
 const { exporting, exportFile } = useExport({
 	url: '/tenant/wallet/transactions/export',
-	getFilters: () => ({
-		type: filterType.value,
-		start_date: filterStartDate.value,
-		end_date: filterEndDate.value,
-		amount_min: filterAmountMin.value || undefined,
-		amount_max: filterAmountMax.value || undefined,
-		username: filterUsername.value,
-		model_name: filterModel.value,
-	}),
+	getFilters: () => {
+		const params: any = {
+			type: filters.value.type,
+			amount_min: filters.value.amountMin || undefined,
+			amount_max: filters.value.amountMax || undefined,
+			username: filters.value.username,
+			model_name: filters.value.model,
+		}
+		if (filters.value.start_date) {
+			params.start_date = filters.value.start_date
+		}
+		if (filters.value.end_date) {
+			params.end_date = filters.value.end_date
+		}
+		return params
+	},
 })
 
 const txTypeLabel: Record<string, string> = {
@@ -59,19 +79,6 @@ const txTypeBadgeClass: Record<string, string> = {
 	unfreeze: 'badge-gray',
 }
 
-const typeOptions = [
-	{ value: '', label: '全部' },
-	{ value: 'recharge', label: '充值' },
-	{ value: 'redemption', label: '兑换码' },
-	{ value: 'consume', label: '消费' },
-	{ value: 'pre_deduct', label: '预扣' },
-	{ value: 'settle', label: '结算' },
-	{ value: 'refund', label: '退款' },
-	{ value: 'adjust', label: '调整' },
-	{ value: 'freeze', label: '冻结' },
-	{ value: 'unfreeze', label: '解冻' },
-]
-
 function formatAmount(amount: number): string {
 	if (amount >= 0) return '+$' + amount.toFixed(6)
 	return '-$' + Math.abs(amount).toFixed(6)
@@ -81,13 +88,13 @@ async function fetchTransactions() {
 	loading.value = true
 	try {
 		const params: any = { page: page.value, page_size: pageSize.value }
-		if (filterType.value) params.type = filterType.value
-		if (filterStartDate.value) params.start_date = filterStartDate.value
-		if (filterEndDate.value) params.end_date = filterEndDate.value
-		if (filterAmountMin.value) params.amount_min = filterAmountMin.value
-		if (filterAmountMax.value) params.amount_max = filterAmountMax.value
-		if (filterUsername.value) params.username = filterUsername.value
-		if (filterModel.value) params.model_name = filterModel.value
+		if (filters.value.type) params.type = filters.value.type
+		if (filters.value.amountMin) params.amount_min = filters.value.amountMin
+		if (filters.value.amountMax) params.amount_max = filters.value.amountMax
+		if (filters.value.username) params.username = filters.value.username
+		if (filters.value.model) params.model_name = filters.value.model
+		if (filters.value.start_date) params.start_date = filters.value.start_date
+		if (filters.value.end_date) params.end_date = filters.value.end_date
 
 		const res: any = await request.get('/tenant/wallet/transactions', {
 			params,
@@ -108,13 +115,58 @@ function applyFilters() {
 }
 
 function resetFilters() {
-	filterType.value = ''
-	filterStartDate.value = ''
-	filterEndDate.value = ''
-	filterAmountMin.value = ''
-	filterAmountMax.value = ''
-	filterUsername.value = ''
-	filterModel.value = ''
+	filters.value = {
+		type: '',
+		start_date: '',
+		end_date: '',
+		amountMin: null,
+		amountMax: null,
+		username: '',
+		model: '',
+	}
+	page.value = 1
+	fetchTransactions()
+}
+
+// NDataTable 列定义
+const columns = computed<DataTableColumns<any>>(() => [
+	{ title: '类型', key: 'type', width: 80, render: (row) => renderBadge(row.type, txTypeLabel, txTypeBadgeClass) },
+	{
+		title: '金额',
+		key: 'amount',
+		width: 120,
+		render: (row) =>
+			h('span', { class: row.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold' }, formatAmount(row.amount)),
+	},
+	{
+		title: '余额',
+		key: 'balance_after',
+		width: 120,
+		render: (row) => h('span', { class: 'text-gray-700' }, row.balance_after != null ? `$${row.balance_after.toFixed(6)}` : '--'),
+	},
+	{ title: '用户', key: 'username', width: 140, render: (row) => h('span', { class: 'text-gray-700 text-sm' }, row.username || '--') },
+	{
+		title: '请求ID',
+		key: 'request_id',
+		width: 200,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs font-mono' }, row.request_id || '--'),
+	},
+	{ title: '模型', key: 'model_name', width: 160, render: (row) => h('span', { class: 'text-gray-700 text-sm' }, row.model_name || '--') },
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 160,
+		render: (row) => h('span', { class: 'text-gray-500 text-xs' }, (row.created_at || '').replace('T', ' ').substring(0, 16)),
+	},
+	{
+		title: '描述',
+		key: 'description',
+		width: 240,
+		render: (row) => h('span', { class: 'text-gray-500 text-sm' }, row.description || '--'),
+	},
+])
+
+function handlePageSizeChange() {
 	page.value = 1
 	fetchTransactions()
 }
@@ -125,34 +177,48 @@ onMounted(fetchTransactions)
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="relative z-20 overflow-visible card">
+		<div class="card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
-					<div class="flex items-center gap-2">
-						<label class="text-sm text-gray-500 whitespace-nowrap">开始日期</label>
-						<input v-model="filterStartDate" type="date" class="input" style="width:140px" />
-					</div>
-					<div class="flex items-center gap-2">
-						<label class="text-sm text-gray-500 whitespace-nowrap">结束日期</label>
-						<input v-model="filterEndDate" type="date" class="input" style="width:140px" />
-					</div>
+					<DateRangePicker
+						v-model:start="filters.start_date"
+						v-model:end="filters.end_date"
+						@change="applyFilters"
+					/>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">类型</label>
-						<BaseSelect v-model="filterType" :options="typeOptions" container-class="w-[100px]" />
+						<n-select
+							v-model:value="filters.type"
+							:options="[
+								{ value: '', label: '全部' },
+								{ value: 'recharge', label: '充值' },
+								{ value: 'redemption', label: '兑换码' },
+								{ value: 'consume', label: '消费' },
+								{ value: 'pre_deduct', label: '预扣' },
+								{ value: 'settle', label: '结算' },
+								{ value: 'refund', label: '退款' },
+								{ value: 'adjust', label: '调整' },
+								{ value: 'freeze', label: '冻结' },
+								{ value: 'unfreeze', label: '解冻' },
+							]"
+							style="width:120px"
+						/>
 					</div>
 					<div class="flex items-center gap-2">
-						<label class="text-sm text-gray-500 whitespace-nowrap">金额范围</label>
-						<input v-model="filterAmountMin" type="number" step="0.01" placeholder="最小" class="input" style="width:100px" @keyup.enter="applyFilters" />
-						<span class="text-gray-400">~</span>
-						<input v-model="filterAmountMax" type="number" step="0.01" placeholder="最大" class="input" style="width:100px" @keyup.enter="applyFilters" />
+						<label class="text-sm text-gray-500 whitespace-nowrap">最小金额</label>
+						<n-input-number v-model:value="filters.amountMin" placeholder="最小" :min="0" :step="0.01" style="width:100px" @keydown.enter="applyFilters" />
+					</div>
+					<div class="flex items-center gap-2">
+						<label class="text-sm text-gray-500 whitespace-nowrap">最大金额</label>
+						<n-input-number v-model:value="filters.amountMax" placeholder="最大" :min="0" :step="0.01" style="width:100px" @keydown.enter="applyFilters" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">用户名</label>
-						<input v-model="filterUsername" type="text" placeholder="搜索用户" class="input" style="width:120px" @keyup.enter="applyFilters" />
+						<n-input v-model:value="filters.username" placeholder="搜索用户" style="width:120px" @keydown.enter="applyFilters" />
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">模型</label>
-						<input v-model="filterModel" type="text" placeholder="例如：gpt-4o" class="input" style="width:150px" @keyup.enter="applyFilters" />
+						<n-input v-model:value="filters.model" placeholder="例如：gpt-4o" style="width:150px" @keydown.enter="applyFilters" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button type="submit" class="btn btn-primary btn-sm">
@@ -160,13 +226,13 @@ onMounted(fetchTransactions)
 							搜索
 						</button>
 						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
-						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-						<button type="button" class="btn btn-ghost btn-sm" :disabled="loading" @click="fetchTransactions">
+						<button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="fetchTransactions">
 							<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
 							刷新
 						</button>
+						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
 						<div class="relative">
-							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
 								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
 								<Icon v-else name="download" size="sm" />
 								导出
@@ -182,54 +248,36 @@ onMounted(fetchTransactions)
 			</div>
 		</div>
 
-		<!-- Transactions -->
-		<div class="viewport-table-panel relative z-0 card">
-			<div v-if="loading" class="p-8 flex justify-center">
-				<div class="spinner h-6 w-6 border-primary-500"></div>
-			</div>
-
-			<div v-else-if="transactions.length > 0" class="viewport-table-scroll table-container table-container-flush">
-				<table class="table">
-					<thead>
-						<tr>
-							<th class="min-w-20">类型</th>
-							<th class="min-w-30">金额</th>
-							<th class="min-w-30">余额</th>
-							<th class="min-w-35">用户</th>
-							<th class="min-w-50">请求ID</th>
-							<th class="min-w-40">模型</th>
-							<th class="min-w-40">时间</th>
-							<th class="min-w-200">描述</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="tx in transactions" :key="tx.id">
-							<td>
-								<span class="badge" :class="txTypeBadgeClass[tx.type] || 'badge-gray'">
-									{{ txTypeLabel[tx.type] || tx.type }}
-								</span>
-							</td>
-							<td :class="tx.amount >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
-								{{ formatAmount(tx.amount) }}
-							</td>
-							<td class="text-gray-700">${{ tx.balance_after?.toFixed(6) ?? '--' }}</td>
-							<td class="text-gray-700 text-sm">{{ tx.username || '--' }}</td>
-							<td class="text-gray-500 text-xs font-mono">{{ tx.request_id || '--' }}</td>
-							<td class="text-gray-700 text-sm">{{ tx.model_name || '--' }}</td>
-							<td class="text-gray-500 text-xs">{{ (tx.created_at || '').replace('T', ' ').substring(0, 16) }}</td>
-							<td class="text-gray-500 text-sm">{{ tx.description || '--' }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<div v-else class="empty-state">
-				<Icon name="creditCard" size="xl" class="empty-state-icon" />
-				<p class="empty-state-title">暂无交易记录</p>
-				<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
-			</div>
-
-			<BasePagination v-model="page" v-model:page-size="pageSize" :total="total" @change="fetchTransactions" />
+		<!-- Transactions Table -->
+		<div class="viewport-table-panel relative z-0">
+			<ResponsiveDataTable
+				remote
+				fill-height
+				v-model:page="page"
+				v-model:page-size="pageSize"
+				:item-count="total"
+				:page-sizes="[10, 20, 50, 100]"
+				show-size-picker
+				:loading="loading"
+				:columns="columns"
+				:scroll-x="tableScrollX(columns)"
+				:data="transactions"
+				:row-key="(row: any) => row.id"
+				card-title-key="amount"
+				card-badge-key="type"
+				card-subtitle-key="created_at"
+				:card-fields="['balance_after', 'username', 'model_name', { key: 'request_id', full: true }, { key: 'description', full: true }]"
+				@update:page="fetchTransactions"
+				@update:page-size="handlePageSizeChange"
+			>
+				<template #empty>
+					<div class="empty-state">
+						<Icon name="creditCard" size="xl" class="empty-state-icon" />
+						<p class="empty-state-title">暂无交易记录</p>
+						<p class="empty-state-description">交易记录将在 API 调用和充值后展示</p>
+					</div>
+				</template>
+			</ResponsiveDataTable>
 		</div>
 	</div>
 </template>
