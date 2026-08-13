@@ -4,6 +4,7 @@ import { Tag, Button, Space, Message, Modal } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -159,7 +160,7 @@ onMounted(() => { fetchCategories() })
           </Space>
         </div>
       </template>
-      <ATable :columns="columns" :data="articles" :loading="loading" row-key="id" :scroll="{ x: 1300 }" :pagination="false" />
+      <ResponsiveTable :columns="columns" :data="articles" :loading="loading" row-key="id" :scroll="{ x: 1300 }" card-title-key="title" card-subtitle-key="category_id" card-badge-key="status" :card-fields="['slug', 'view_count', 'sort_order', 'published_at', 'created_at']" />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />

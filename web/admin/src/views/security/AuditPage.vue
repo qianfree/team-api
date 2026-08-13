@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -242,7 +243,7 @@ const { exporting, exportFile } = useExport({
             </ASpace>
           </div>
 
-          <ATable
+          <ResponsiveTable
             :columns="opColumns"
             :data="opData"
             :loading="opLoading"
@@ -250,8 +251,11 @@ const { exporting, exportFile } = useExport({
             :bordered="false"
             :stripe="true"
             size="small"
-            :pagination="false"
             row-key="id"
+            card-title-key="action"
+            card-subtitle-key="ip_address"
+            card-badge-key="user_type"
+            :card-fields="['user_id', 'resource_type', 'detail', 'created_at']"
           />
           <div class="table-footer">
             <TableStats :total="opPagination.total" />
@@ -295,7 +299,7 @@ const { exporting, exportFile } = useExport({
             </ASpace>
           </div>
 
-          <ATable
+          <ResponsiveTable
             :columns="sensColumns"
             :data="sensData"
             :loading="sensLoading"
@@ -303,8 +307,11 @@ const { exporting, exportFile } = useExport({
             :bordered="false"
             :stripe="true"
             size="small"
-            :pagination="false"
             row-key="id"
+            card-title-key="action"
+            card-subtitle-key="resource_type"
+            card-badge-key="user_type"
+            :card-fields="['user_id', 'reason', 'ip_address', 'created_at']"
           />
           <div class="table-footer">
             <TableStats :total="sensPagination.total" />

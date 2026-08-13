@@ -4,6 +4,7 @@ import { Message, Modal, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 
@@ -310,15 +311,20 @@ onMounted(() => {
 
     <!-- Table -->
     <a-card :bordered="false">
-      <a-table
+      <ResponsiveTable
         :data="data"
         :columns="columns"
         :loading="loading"
-        :pagination="false"
         :bordered="false"
         :stripe="true"
         row-key="id"
-        :row-selection="{ type: 'checkbox', showCheckedAll: true, selectedRowKeys: selectedKeys, onSelect: handleSelection }"
+        :row-selection="{ type: 'checkbox', showCheckedAll: true }"
+        :selected-keys="selectedKeys"
+        card-title-key="error_message"
+        card-subtitle-key="request_path"
+        card-badge-key="resolved"
+        :card-fields="['source', 'error_code', 'created_at']"
+        @selection-change="handleSelection"
       />
       <div class="table-footer">
         <TableStats :total="total" />

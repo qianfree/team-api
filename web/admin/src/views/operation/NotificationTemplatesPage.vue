@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -151,7 +152,17 @@ onMounted(fetchTemplates)
     </PageHeader>
 
     <ACard :bordered="false">
-      <ATable :columns="columns" :data="templates" :loading="loading" row-key="code" :scroll="{ x: 1000 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="templates"
+        :loading="loading"
+        row-key="code"
+        :scroll="{ x: 1000 }"
+        card-title-key="code"
+        card-subtitle-key="subject"
+        card-badge-key="channel"
+        :card-fields="['status', 'updated_at']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchTemplates" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchTemplates() }" />

@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -326,7 +327,17 @@ onMounted(fetchList)
           <ASelect v-model="typeFilter" :options="typeOptions" style="width: 120px" allow-clear placeholder="类型筛选" @change="() => { pagination.current = 1; fetchList() }" />
         </div>
       </template>
-      <ATable :columns="columns" :data="messages" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="messages"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1100 }"
+        card-title-key="title"
+        card-subtitle-key="tenant_name"
+        card-badge-key="type"
+        :card-fields="['user_name', 'channel', 'is_read', 'is_broadcast', 'created_at']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />

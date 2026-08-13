@@ -4,6 +4,7 @@ import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -220,21 +221,24 @@ onMounted(() => {
     </div>
 
     <a-card :bordered="false">
-      <a-table
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         row-key="model_name"
-        :pagination="false"
         :scroll="{ x: 1200 }"
         size="large"
         stripe
         :border="{ wrapper: true, headerCell: true }"
+        card-title-key="model_name"
+        card-subtitle-key="request_count"
+        card-badge-key="success_rate"
+        :card-fields="['avg_latency_ms', 'avg_first_token_ms', 'tps', 'total_tokens', 'total_cost']"
       >
         <template #empty>
           <a-empty description="所选区间暂无模型性能数据" />
         </template>
-      </a-table>
+      </ResponsiveTable>
       <div class="table-footer">
         <TableStats :total="data.length" />
       </div>

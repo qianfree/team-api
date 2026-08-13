@@ -4,6 +4,7 @@ import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -263,12 +264,22 @@ onMounted(() => {
 		</a-card>
 
 		<a-card :bordered="false">
-			<a-table
+			<ResponsiveTable
 				:data="data"
 				:columns="columns"
 				:loading="loading"
-				:pagination="false"
 				row-key="id"
+				card-title-key="user_name"
+				card-subtitle-key="tenant_name"
+				card-badge-key="blocked"
+				:card-fields="[
+					'filter_mode',
+					'method',
+					'client_ip',
+					'created_at',
+					{ key: 'path', full: true },
+					{ key: 'matched_words', full: true },
+				]"
 			/>
 			<div class="table-footer">
 				<TableStats :total="total" />

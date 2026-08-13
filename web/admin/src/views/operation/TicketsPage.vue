@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -288,7 +289,35 @@ onMounted(fetchTickets)
           </ASpace>
         </div>
       </template>
-      <ATable :columns="columns" :data="tickets" :loading="loading" row-key="id" :scroll="{ x: 1300 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="tickets"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1300 }"
+        :card-fields="['category', 'user_name', 'assigned_admin_name', 'created_at']"
+      >
+        <template #card-header="{ row }">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-base font-semibold text-[var(--color-text-1)]">
+                {{ row.title }}
+              </div>
+              <div v-if="row.tenant_name" class="mt-0.5 truncate text-xs text-[var(--color-text-3)]">
+                {{ row.tenant_name }}
+              </div>
+            </div>
+            <div class="flex flex-shrink-0 flex-col items-end gap-1">
+              <ATag :color="statusColor[row.status]" size="small">
+                {{ statusLabel[row.status] || row.status }}
+              </ATag>
+              <ATag :color="urgencyColor[row.urgency]" size="small">
+                {{ urgencyLabel[row.urgency] || row.urgency }}
+              </ATag>
+            </div>
+          </div>
+        </template>
+      </ResponsiveTable>
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchTickets" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchTickets() }" />

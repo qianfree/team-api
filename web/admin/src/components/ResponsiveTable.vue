@@ -72,6 +72,7 @@ const props = withDefaults(
     cardFields?: (CardField | string)[] // 卡片网格字段；缺省取除 标题/徽章/副标题/操作 外的全部列
     cardActionsKey?: string // 操作列 dataIndex，渲染在卡片底部（默认 'actions'）
     rowClick?: (row: any) => void // 提供后整张卡片可点击（仅移动端；桌面端用 row-click 事件）
+    rowClass?: (row: any) => string // 自定义行类名（桌面端 ATable row-class，如高亮当前会话）
     breakpoint?: number // 卡片切换断点（默认 768 = md）
   }>(),
   {
@@ -105,8 +106,11 @@ const badgeCol = computed(() => props.columns.find((c) => c.dataIndex === props.
 const subtitleCol = computed(() => props.columns.find((c) => c.dataIndex === props.cardSubtitleKey))
 const actionsCol = computed(() => props.columns.find((c) => c.dataIndex === props.cardActionsKey))
 
-// 桌面端行类名：可点击时显示手型
-const rowClassHandler = () => (props.rowClick ? 'cursor-pointer' : '')
+// 桌面端行类名：合并页面自定义 rowClass + 可点击时的手型
+const rowClassHandler = (record: any) => {
+  const cls = typeof props.rowClass === 'function' ? props.rowClass(record) || '' : ''
+  return [cls, props.rowClick ? 'cursor-pointer' : ''].filter(Boolean).join(' ') || undefined
+}
 
 // 网格字段：按 cardFields 顺序取；未传 cardFields（undefined）时用除 标题/徽章/副标题/操作 外的全部列。
 // 注意：显式传 :card-fields="[]" 表示「不要字段网格」，必须与「未传」区分，不能按 truthy 判断。

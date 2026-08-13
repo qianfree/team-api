@@ -4,6 +4,7 @@ import { Tag, Button } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const activeTab = ref<'send-logs' | 'verify-codes'>('send-logs')
@@ -200,7 +201,7 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
-					<a-table
+					<ResponsiveTable
 						:columns="sendColumns"
 						:data="sendData"
 						:loading="sendLoading"
@@ -208,8 +209,11 @@ onMounted(() => {
 						:bordered="false"
 						:stripe="true"
 						size="small"
-						:pagination="false"
 						row-key="id"
+						card-title-key="recipient"
+						card-subtitle-key="subject"
+						card-badge-key="status"
+						:card-fields="['template_code', 'retry_count', 'sent_at', { key: 'error_message', full: true }]"
 					/>
 					<div class="table-footer">
 						<TableStats :total="sendPagination.total" />
@@ -246,7 +250,7 @@ onMounted(() => {
 				</a-card>
 
 				<a-card :bordered="false">
-					<a-table
+					<ResponsiveTable
 						:columns="codeColumns"
 						:data="codeData"
 						:loading="codeLoading"
@@ -254,8 +258,11 @@ onMounted(() => {
 						:bordered="false"
 						:stripe="true"
 						size="small"
-						:pagination="false"
 						row-key="id"
+						card-title-key="email"
+						card-subtitle-key="code"
+						card-badge-key="purpose"
+						:card-fields="['expires_at', 'used_at', 'created_at']"
 					/>
 					<div class="table-footer">
 						<TableStats :total="codePagination.total" />

@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -139,7 +140,17 @@ const { exporting, exportFile } = useExport({
           </ASpace>
         </div>
       </template>
-      <ATable :columns="columns" :data="orders" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="orders"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1100 }"
+        card-title-key="order_no"
+        card-badge-key="status"
+        card-subtitle-key="created_at"
+        :card-fields="['order_type', 'final_amount', 'payment_channel', 'tenant_id']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchOrders" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchOrders() }" />
