@@ -3,13 +3,15 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/middleware"
 	"math"
 	"sort"
-	"github.com/qianfree/team-api/internal/dao"
-	"github.com/qianfree/team-api/internal/middleware"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/logic/common"
 )
 
 // ⚠️ 平台域查询约定（P2-13）
@@ -135,57 +137,127 @@ func gradeSuccessRate(rate float64) string {
 	}
 }
 
-// GetModelPerformance 从 bil_usage_daily 按模型聚合性能指标：
-// 成功率/请求数/Token/成本/平均延迟/平均首Token/吞吐(TPS)。
-// 延迟按 SUM 求和、视图以 SUM/COUNT 求均值（分位数不可跨桶加，p95/p99 留后续）。
+// perfModelAgg 模型性能合并聚合值（历史日表 + 当日 Redis 热桶）。
+type perfModelAgg struct {
+	requestCount    int64
+	successCount    int64
+	inputTokens     int64
+	outputTokens    int64
+	sumLatencyMs    int64
+	sumFirstTokenMs int64
+	totalCost       float64
+}
+
+// GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日 Redis 实时热桶
+// （见 common.RecordModelPerfMetrics，桶粒度小时），使页面当天即可看到最新数据，不再滞后一天。
+// 指标口径与 bil_usage_daily 一致：延迟按 SUM 求和、视图以 SUM/COUNT 求均值（分位数不可跨桶加，p95/p99 留后续）。
 func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, error) {
+	today := time.Now().Format("2006-01-02")
+
+	// 历史段：stat_date < today（当天由 Redis 热桶实时提供，避免与每日 01:00 的日聚合重复/滞后）
 	const query = `
 		SELECT
 			model_name,
-			SUM(request_count)                                               AS request_count,
-			SUM(CASE WHEN status = 'success' THEN request_count ELSE 0 END)  AS success_count,
-			COALESCE(SUM(input_tokens), 0)                                   AS input_tokens,
-			COALESCE(SUM(output_tokens), 0)                                  AS output_tokens,
-			COALESCE(SUM(total_cost), 0)                                     AS total_cost,
-			COALESCE(SUM(sum_latency_ms), 0)                                 AS sum_latency_ms,
-			COALESCE(SUM(sum_first_token_ms), 0)                             AS sum_first_token_ms
+			SUM(request_count)                                              AS request_count,
+			SUM(CASE WHEN status = 'success' THEN request_count ELSE 0 END) AS success_count,
+			COALESCE(SUM(input_tokens), 0)                                  AS input_tokens,
+			COALESCE(SUM(output_tokens), 0)                                 AS output_tokens,
+			COALESCE(SUM(total_cost), 0)                                    AS total_cost,
+			COALESCE(SUM(sum_latency_ms), 0)                                AS sum_latency_ms,
+			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms
 		FROM bil_usage_daily
-		WHERE stat_date >= $1 AND stat_date <= $2 AND model_name <> 'unknown'
+		WHERE stat_date >= $1 AND stat_date <= $2 AND stat_date < $3 AND model_name <> 'unknown'
 		GROUP BY model_name
-		ORDER BY request_count DESC
 	`
 	var rows []modelPerfRow
-	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate).Scan(&rows); err != nil {
+	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today).Scan(&rows); err != nil {
 		return nil, err
 	}
 
-	list := make([]map[string]any, 0, len(rows))
-	for _, r := range rows {
-		var successRate, avgLatency, avgTTFT, tps float64
-		if r.RequestCount > 0 {
-			successRate = float64(r.SuccessCount) * 100 / float64(r.RequestCount)
-			avgLatency = float64(r.SumLatencyMs) / float64(r.RequestCount)
-			avgTTFT = float64(r.SumFirstTokenMs) / float64(r.RequestCount)
+	// 当日 Redis 热桶（best-effort：仅当查询窗口包含今天时参与；Redis 异常则忽略当日数据，退化为历史日表）
+	todayCounts := map[string]common.ModelPerfCounter{}
+	if endDate == today {
+		tc, err := common.GetModelPerfMetricsToday(ctx, today)
+		if err != nil {
+			g.Log().Warningf(ctx, "model performance today redis read failed, fallback to daily only: %v", err)
+		} else {
+			todayCounts = tc
 		}
-		if r.SumLatencyMs > 0 {
-			tps = float64(r.OutputTokens) / (float64(r.SumLatencyMs) / 1000)
+	}
+
+	return map[string]any{"list": buildModelPerformanceList(rows, todayCounts)}, nil
+}
+
+// buildModelPerformanceList 将历史日表聚合行与当日 Redis 热桶合并为统一的模型性能列表，
+// 统一重算派生指标（成功率/均延迟/均首Token/TPS/分级）并按 request_count 降序输出。
+func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]common.ModelPerfCounter) []map[string]any {
+	agg := make(map[string]*perfModelAgg)
+	ensure := func(model string) *perfModelAgg {
+		a, ok := agg[model]
+		if !ok {
+			a = &perfModelAgg{}
+			agg[model] = a
+		}
+		return a
+	}
+	for _, r := range rows {
+		if r.ModelName == "" || r.ModelName == "unknown" {
+			continue
+		}
+		a := ensure(r.ModelName)
+		a.requestCount += r.RequestCount
+		a.successCount += r.SuccessCount
+		a.inputTokens += r.InputTokens
+		a.outputTokens += r.OutputTokens
+		a.sumLatencyMs += r.SumLatencyMs
+		a.sumFirstTokenMs += r.SumFirstTokenMs
+		a.totalCost += r.TotalCost
+	}
+	for model, c := range todayCounts {
+		if c.Req <= 0 || model == "" || model == "unknown" {
+			continue
+		}
+		a := ensure(model)
+		a.requestCount += c.Req
+		a.successCount += c.Ok
+		a.inputTokens += c.Tin
+		a.outputTokens += c.Tout
+		a.sumLatencyMs += c.Lat
+		a.sumFirstTokenMs += c.Ttft
+		a.totalCost += billing.FromMicro(c.CostMicro).InexactFloat64()
+	}
+
+	list := make([]map[string]any, 0, len(agg))
+	for model, a := range agg {
+		var successRate, avgLatency, avgTTFT, tps float64
+		if a.requestCount > 0 {
+			successRate = float64(a.successCount) * 100 / float64(a.requestCount)
+			avgLatency = float64(a.sumLatencyMs) / float64(a.requestCount)
+			avgTTFT = float64(a.sumFirstTokenMs) / float64(a.requestCount)
+		}
+		if a.sumLatencyMs > 0 {
+			tps = float64(a.outputTokens) / (float64(a.sumLatencyMs) / 1000)
 		}
 		list = append(list, map[string]any{
-			"model_name":         r.ModelName,
-			"request_count":      r.RequestCount,
-			"success_count":      r.SuccessCount,
+			"model_name":         model,
+			"request_count":      a.requestCount,
+			"success_count":      a.successCount,
 			"success_rate":       math.Round(successRate*100) / 100,
 			"grade":              gradeSuccessRate(successRate),
-			"input_tokens":       r.InputTokens,
-			"output_tokens":      r.OutputTokens,
-			"total_tokens":       r.InputTokens + r.OutputTokens,
-			"total_cost":         r.TotalCost,
+			"input_tokens":       a.inputTokens,
+			"output_tokens":      a.outputTokens,
+			"total_tokens":       a.inputTokens + a.outputTokens,
+			"total_cost":         a.totalCost,
 			"avg_latency_ms":     math.Round(avgLatency*100) / 100,
 			"avg_first_token_ms": math.Round(avgTTFT*100) / 100,
 			"tps":                math.Round(tps*100) / 100,
 		})
 	}
-	return map[string]any{"list": list}, nil
+	// 默认按模型名称升序排列，便于运营按名称定位具体模型；用户可在前端表格点任意列切换排序。
+	sort.Slice(list, func(i, j int) bool {
+		return list[i]["model_name"].(string) < list[j]["model_name"].(string)
+	})
+	return list
 }
 
 // buildTrafficFlowSankey 将聚合行组装为 ECharts Sankey 的 {nodes, links}。
