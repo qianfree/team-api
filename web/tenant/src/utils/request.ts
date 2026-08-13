@@ -27,6 +27,9 @@ const EXPIRES_AT_KEY = 'tenant_token_expires_at'
 const REMEMBER_ME_KEY = 'tenant_remember_me'
 const TOKEN_BUFFER_SECONDS = 60
 
+// 并发 401 时只清理并跳转一次；登录/刷新成功后由 setTokens 复位
+let isLoggingOut = false
+
 // Dynamic storage selection based on "remember me" preference
 function getStorage(): Storage {
   // Check user's "remember me" preference (defaults to true for backward compatibility)
@@ -45,6 +48,8 @@ export function getRememberMe(): boolean {
 }
 
 export function setTokens(tokens: TokenPair): void {
+  // 登录/刷新成功，复位登出节流标志，保证下次失效仍可跳转登录页
+  isLoggingOut = false
   const storage = getStorage()
   storage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
   storage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken)
@@ -92,6 +97,38 @@ let tokenRefreshedCallback: ((tokens: TokenPair) => void) | null = null
 
 export function onTokenRefreshed(cb: (tokens: TokenPair) => void): void {
   tokenRefreshedCallback = cb
+}
+
+// 认证彻底失效时由 tenant auth store 注册的清理回调（清空响应式状态与持久化登录数据）
+let authExpiredCallback: (() => void) | null = null
+
+export function onAuthExpired(cb: () => void): void {
+  authExpiredCallback = cb
+}
+
+/** 取登录失效后应回跳的路径（排除登录页自身） */
+function getLoginRedirectPath(): string {
+  const hash = window.location.hash || ''
+  const path = hash.startsWith('#') ? hash.slice(1) : hash
+  const clean = path.split('?')[0]
+  if (!clean || clean.startsWith('/tenant/login')) return '/tenant/dashboard'
+  return clean
+}
+
+/**
+ * 认证彻底失效（401 且无法刷新）：先清空全部登录数据，再跳转登录页。
+ * 并发 401 只执行一次清理与跳转，避免重复弹窗。
+ */
+function handleAuthExpired(): void {
+  if (isLoggingOut) return
+  isLoggingOut = true
+  rejectPending(new Error('authentication expired'))
+  // 由 tenant auth store 清空响应式状态与持久化数据（store 自身负责全部清理）
+  authExpiredCallback?.()
+  // 兜底清除 token storage
+  clearTokens()
+  toast.warning('登录状态已失效，请重新登录')
+  window.location.hash = `#/tenant/login?redirect=${encodeURIComponent(getLoginRedirectPath())}`
 }
 
 function replayPending(token: string): void {
@@ -170,10 +207,7 @@ request.interceptors.request.use(
           const newTokens = await doRefresh()
           replayPending(newTokens.accessToken)
         } catch (error) {
-          rejectPending(error)
-          clearTokens()
-          showRequestError(error, config)
-          window.location.hash = '#/tenant/login'
+          handleAuthExpired()
           return Promise.reject(error)
         } finally {
           isRefreshing = false
@@ -291,10 +325,7 @@ request.interceptors.response.use(
       originalRequest.headers.Authorization = `Bearer ${newTokens.accessToken}`
       return request(originalRequest)
     } catch (refreshError) {
-      rejectPending(refreshError)
-      clearTokens()
-      showRequestError(refreshError, originalRequest)
-      window.location.hash = '#/tenant/login'
+      handleAuthExpired()
       return Promise.reject(refreshError)
     } finally {
       isRefreshing = false
