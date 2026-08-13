@@ -7,6 +7,7 @@ import {
 } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 
@@ -476,10 +477,14 @@ onMounted(() => {
         <AButton @click="resetFilter">重置</AButton>
       </ASpace>
 
-      <ATable
+      <ResponsiveTable
         :columns="columns" :data="data" :loading="loading"
         :scroll="{ x: 1200 }" :bordered="false" :stripe="true" size="small"
-        :pagination="false" row-key="id"
+        row-key="id"
+        card-title-key="original_name"
+        card-subtitle-key="size"
+        card-badge-key="category"
+        :card-fields="['tenant_id', 'user_id', 'mime_type', 'storage_provider', 'created_at']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />

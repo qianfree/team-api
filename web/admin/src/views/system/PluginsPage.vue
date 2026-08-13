@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -305,15 +306,18 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         :scroll="{ x: 1000 }"
         :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="name"
+        card-title-key="name"
+        card-subtitle-key="description"
+        card-badge-key="status"
+        :card-fields="['category', 'version', 'author']"
       />
       <AEmpty v-if="!loading && data.length === 0" style="margin-top: 40px">
         <template #description>暂无已注册的插件</template>

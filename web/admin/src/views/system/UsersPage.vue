@@ -7,6 +7,7 @@ import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import { IconSync } from '@arco-design/web-vue/es/icon'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -275,15 +276,18 @@ const { exporting, exportFile } = useExport({
 
     <!-- Table Card -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
         :scroll="{ x: 1200 }"
         :bordered="false"
         :stripe="true"
-        :pagination="false"
         row-key="id"
+        card-title-key="username"
+        card-subtitle-key="email"
+        card-badge-key="role"
+        :card-fields="['status', 'last_login_at']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />

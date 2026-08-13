@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -158,7 +159,7 @@ onMounted(() => {
     </ACard>
 
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :columns="columns"
         :data="data"
         :loading="loading"
@@ -166,7 +167,10 @@ onMounted(() => {
         :stripe="true"
         row-key="id"
         :row-class="(record: any) => record?.is_current ? 'current-session-row' : ''"
-        :pagination="false"
+        card-title-key="username"
+        card-subtitle-key="ip_address"
+        card-badge-key="is_current"
+        :card-fields="['device_info', 'created_at', 'expires_at']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
