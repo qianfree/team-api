@@ -332,6 +332,18 @@ func (p *DataProviderImpl) RecordUsage(ctx context.Context, record *common.Usage
 		tokens = record.PromptTokens + record.CompletionTokens
 	}
 	lcommon.RecordRealtimeMetrics(ctx, record.TenantID, int64(tokens))
+
+	// 模型当日性能热桶（Redis 小时桶，内部异步、best-effort）：供模型性能页展示当天实时数据，
+	// 次日由 usage_daily_aggregate 聚合进 bil_usage_daily 后不再依赖。
+	lcommon.RecordModelPerfMetrics(ctx, lcommon.ModelPerfRecord{
+		Model:        record.ModelName,
+		Success:      record.Success,
+		LatencyMs:    record.LatencyMs,
+		FirstTokenMs: record.FirstTokenMs,
+		InputTokens:  record.PromptTokens,
+		OutputTokens: record.CompletionTokens,
+		CostUSD:      record.TotalCost,
+	})
 }
 
 // buildUsageLogDO 将 UsageRecord 转换为 DO 对象
