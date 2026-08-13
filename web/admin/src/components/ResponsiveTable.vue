@@ -3,6 +3,7 @@ import { computed, defineComponent, useSlots } from 'vue'
 import type { PropType, VNodeChild } from 'vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import { useIsMobile } from '@/composables/useIsMobile'
+import TableEmpty from '@/components/TableEmpty.vue'
 
 /**
  * 响应式数据表格：桌面端（≥ breakpoint）渲染 ATable，移动端渲染卡片列表。
@@ -178,8 +179,12 @@ function onRowClick(record: any, ev: MouseEvent) {
     <template v-for="name in tableSlotNames" :key="name" #[name]="slotProps">
       <slot :name="name" v-bind="slotProps ?? {}" />
     </template>
+    <!-- 空状态：页面未自定义 #empty 时兜底显示插画 + 提示文字（TableEmpty），
+         外层 .arco-table-tr-empty 的全局样式负责最小高度与垂直居中 -->
     <template #empty>
-      <slot name="empty" />
+      <slot name="empty">
+        <TableEmpty />
+      </slot>
     </template>
   </ATable>
 
@@ -190,10 +195,10 @@ function onRowClick(record: any, ev: MouseEvent) {
       <ASpin />
     </div>
 
-    <!-- 空状态 -->
+    <!-- 空状态：插画 + 提示文字居中，与桌面端空表观感一致 -->
     <div v-else-if="data.length === 0">
       <slot name="empty">
-        <AEmpty />
+        <TableEmpty />
       </slot>
     </div>
 

@@ -250,6 +250,15 @@ body {
   background: var(--ta-primary-light) !important;
 }
 
+/* 表格空状态：空数据时图标在表格中央竖直居中，并保留一个最低高度，
+   避免无数据时表格高度塌陷为 0（ResponsiveTable 与直接使用 a-table 的页面统一生效） */
+.arco-table .arco-table-tr-empty > .arco-table-td {
+  height: 240px;
+  padding: 0 16px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 /* Card */
 .arco-card {
   border-radius: var(--ta-radius);
