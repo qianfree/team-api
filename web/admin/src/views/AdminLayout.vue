@@ -51,6 +51,7 @@ const demoMessage = ref('')
 
 // --- Version & Update ---
 const appVersion = ref(__APP_VERSION__ || 'dev')
+const currentVersion = ref('') // 后端实时版本（权威来源：/admin/update/status 的 current_version）
 const hasUpdate = ref(false)
 const latestVersion = ref('')
 const updateModalVisible = ref(false)
@@ -75,6 +76,24 @@ const progress = computed(() => updateStatus.value?.update_progress)
 const rollbackAvailable = computed(() => updateStatus.value?.rollback_available === true)
 const backupVersion = computed(() => updateStatus.value?.backup_version || '')
 
+// 取版本号的 base 部分：去掉 v 前缀和 -N-gXXXX / +N / _N 等构建后缀，
+// 仅保留主版本号用于判断"是否同一发行版"，避免 git describe 后缀干扰比较
+function baseVersion(v: string): string {
+  if (!v) return ''
+  const s = String(v).replace(/^v/, '')
+  const i = s.search(/[-+_]/)
+  return i > 0 ? s.slice(0, i) : s
+}
+
+// 是否真的有新版本可更新：除后端 has_update 外，再用展示的当前版本与最新版本做一次校验，
+// 二者一致（同一发行版）时不展示更新入口，避免后端 has_update 滞后/缓存误报导致
+// "相同版本"仍显示【立即更新】按钮
+const canUpdate = computed(() => {
+  if (!latestVersion.value || !hasUpdate.value) return false
+  const current = currentVersion.value || appVersion.value
+  return baseVersion(current) !== baseVersion(latestVersion.value)
+})
+
 async function checkUpdate(force = false) {
   try {
     const res = await request.get('/admin/update/check', { params: { force } })
@@ -94,6 +113,11 @@ async function fetchUpdateStatus() {
   try {
     const res = await request.get('/admin/update/status')
     updateStatus.value = res.data?.data
+    // 以 /status 的 current_version 为权威当前版本：它直接读后端 consts.Version，
+    // 是二进制实时版本，不受 /check 的检查缓存影响，保证更新判断始终基于真实版本
+    if (res.data?.data?.current_version) {
+      currentVersion.value = res.data.data.current_version
+    }
   } catch {
     // silent
   }
@@ -102,6 +126,7 @@ async function fetchUpdateStatus() {
 function openUpdateModal() {
   updateModalVisible.value = true
   fetchUpdateStatus()
+  checkUpdate() // 打开弹窗时刷新版本检查，确保当前版本/最新版本为最新
 }
 
 function closeUpdateModal() {
@@ -426,6 +451,7 @@ onMounted(() => {
 
   // Check for updates on mount
   checkUpdate()
+  fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
 
   axios.get('/api/settings/public').then((res) => {
     const settings = res.data?.data?.settings
@@ -459,7 +485,7 @@ onUnmounted(() => {
             {{ siteName || 'Team-API' }}
             <span class="admin-sidebar__version">
               {{ appVersion === 'dev' ? 'dev' : 'v' + appVersion }}
-              <span v-if="hasUpdate" class="admin-sidebar__update-dot" title="有新版本可用"></span>
+              <span v-if="canUpdate" class="admin-sidebar__update-dot" title="有新版本可用"></span>
             </span>
           </span>
         </Transition>
@@ -644,11 +670,11 @@ onUnmounted(() => {
       <div style="display: flex; gap: 16px; margin-bottom: 20px;">
         <a-card :bordered="false" class="update-modal-stat" size="small">
           <div class="update-modal-stat__title">当前版本</div>
-          <div class="update-modal-stat__value">v{{ appVersion }}</div>
+          <div class="update-modal-stat__value">v{{ currentVersion || appVersion }}</div>
         </a-card>
         <a-card :bordered="false" class="update-modal-stat" size="small">
           <div class="update-modal-stat__title">最新版本</div>
-          <div class="update-modal-stat__value" :style="hasUpdate ? { color: '#00b42a' } : {}">
+          <div class="update-modal-stat__value" :style="canUpdate ? { color: '#00b42a' } : {}">
             {{ latestVersion ? 'v' + latestVersion : '--' }}
           </div>
         </a-card>
@@ -671,7 +697,7 @@ onUnmounted(() => {
       </template>
 
       <!-- Update available -->
-      <template v-if="hasUpdate && !isUpdating && !isFailed && !isComplete && !isDocker">
+      <template v-if="canUpdate && !isUpdating && !isFailed && !isComplete && !isDocker">
         <a-divider style="margin: 16px 0;" />
         <div style="margin-bottom: 12px;">
           <a-typography-text bold>更新说明</a-typography-text>
@@ -687,7 +713,7 @@ onUnmounted(() => {
       </template>
 
       <!-- No update -->
-      <template v-if="!hasUpdate && !isUpdating">
+      <template v-if="!canUpdate && !isUpdating">
         <a-result>
           <template #icon><icon-check-circle-fill style="color: #00b42a; font-size: 32px;" /></template>
           <template #title><span style="color: #00b42a; font-size: 14px;">当前已是最新版本</span></template>
@@ -731,7 +757,7 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <template v-if="releaseUrl && hasUpdate">
+      <template v-if="releaseUrl && canUpdate">
         <a-divider style="margin: 8px 0 0;" />
         <div style="text-align: center; padding-top: 8px;">
           <a-link :href="releaseUrl" target="_blank" style="font-size: 12px;">在 GitHub 上查看完整发布说明</a-link>

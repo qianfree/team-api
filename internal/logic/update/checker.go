@@ -28,7 +28,9 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	// Try Redis cache first (unless force)
 	if !force {
 		cached := getCheckCache(ctx)
-		if cached != nil {
+		// 缓存里的 current_version 与当前二进制版本不一致时（通常发生在刚升级后），
+		// 视为失效并 fallthrough 重算，避免旧缓存里的 has_update 在"相同版本"下误报更新
+		if cached != nil && cached.CurrentVersion == consts.Version {
 			return cached, nil
 		}
 	}
@@ -40,10 +42,27 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	}
 
 	if release == nil {
-		// 304 Not Modified — use cached result
+		// 304 Not Modified — GitHub 最新发行版未变化，复用缓存的发行版信息
 		cached := getCheckCache(ctx)
 		if cached != nil {
-			return cached, nil
+			// 二进制版本与缓存一致：直接返回缓存
+			if cached.CurrentVersion == consts.Version {
+				return cached, nil
+			}
+			// 二进制刚升级（缓存里仍是旧版本）：基于当前版本重算 hasUpdate 并覆盖缓存，
+			// 否则旧缓存里 has_update=true 会让小圆点在"相同版本"下也误亮
+			refreshed := *cached
+			refreshed.CurrentVersion = consts.Version
+			hasUpdate, cmpErr := compareVersions(consts.Version, cached.LatestVersion)
+			if cmpErr != nil {
+				// latest_version 无法解析（理论上不会发生，缓存写入时已校验），保守沿用旧值
+				hasUpdate = cached.HasUpdate
+			}
+			refreshed.HasUpdate = hasUpdate
+			refreshed.CheckedAt = gtime.Now()
+			setCheckCache(ctx, &refreshed)
+			manager.checkResult.Store(&refreshed)
+			return &refreshed, nil
 		}
 		return &CheckResult{
 			CurrentVersion: consts.Version,
@@ -56,23 +75,10 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 
 	latestStr := strings.TrimPrefix(release.TagName, "v")
 
-	// Determine if update is available
-	var hasUpdate bool
-	if consts.Version == "dev" {
-		// Dev builds: always report an update if a remote release exists
-		hasUpdate = true
-	} else {
-		currentVer, err := semver.NewVersion(normalizeSemver(consts.Version))
-		if err != nil {
-			// 版本仍无法解析，按开发构建处理：有远端发行版即提示更新，避免阻断检查接口
-			hasUpdate = true
-		} else {
-			latestVer, err := semver.NewVersion(latestStr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid latest version %q: %w", release.TagName, err)
-			}
-			hasUpdate = latestVer.GreaterThan(currentVer)
-		}
+	// 判断是否有更新：dev 构建或无法解析的当前版本保守按"有更新"处理，避免漏报
+	hasUpdate, err := compareVersions(consts.Version, latestStr)
+	if err != nil {
+		return nil, err
 	}
 
 	// Find matching asset for current platform
@@ -199,4 +205,26 @@ func normalizeSemver(v string) string {
 		v = v[:i] + "+" + v[i+1:]
 	}
 	return v
+}
+
+// compareVersions 判断 currentVersion 是否落后于 latestVersion（即是否有新版本可用）。
+// 判定规则与历史行为保持一致：
+//   - dev 构建，或当前版本无法解析为合法 semver 时，保守返回 (true, nil)：
+//     只要有远端发行版即提示更新，宁可误报也不漏报。
+//   - latestVersion 无法解析时返回错误（正常情况下缓存写入时已校验过），
+//     调用方决定降级策略。
+func compareVersions(currentVersion, latestVersion string) (bool, error) {
+	if currentVersion == "dev" {
+		return true, nil
+	}
+	currentVer, err := semver.NewVersion(normalizeSemver(currentVersion))
+	if err != nil {
+		// 当前版本无法解析，按开发构建处理
+		return true, nil
+	}
+	latestVer, err := semver.NewVersion(strings.TrimPrefix(latestVersion, "v"))
+	if err != nil {
+		return false, fmt.Errorf("invalid latest version %q: %w", latestVersion, err)
+	}
+	return latestVer.GreaterThan(currentVer), nil
 }
