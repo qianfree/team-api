@@ -79,7 +79,8 @@ router.beforeEach(async (to) => {
 
   // Token expired and no refresh token available — force login
   if (shouldRefresh() && !getRefreshToken()) {
-    authStore.logout()
+    // 同步清空登录数据后再跳转，避免 async 登出未完成时登录页把用户又跳回系统
+    authStore.logoutLocal()
     return { name: 'AdminLogin', query: { redirect: to.fullPath } }
   }
 

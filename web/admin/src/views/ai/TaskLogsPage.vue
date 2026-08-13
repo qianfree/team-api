@@ -9,21 +9,9 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import { useDateRange } from '@/composables/useDateRange'
 
-// 日期辅助（native，避免引入 dayjs 依赖）
-function pad2(n: number): string {
-  return String(n).padStart(2, '0')
-}
-function toDateTimeStr(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
-}
-// 默认查询当天：起始时间为当天 0 点，截止时间留空（后端按「到现在」实时处理）。
-// 日期选择器里的「现在」仅用于展示；查询时截止仍为默认「现在」则不传 end_date，避免固定截止时间漏掉后续新记录。
-const defaultEnd = toDateTimeStr(new Date())
-function defaultTodayRange(): string[] {
-  const d = new Date()
-  return [`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 00:00:00`, defaultEnd]
-}
+const { defaultEnd, defaultTodayRange, quickDateRanges } = useDateRange()
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -271,6 +259,8 @@ onMounted(() => {
         <ARangePicker
           v-model="filterDateRange"
           show-time
+          :shortcuts="quickDateRanges"
+          shortcuts-position="bottom"
           style="width: 340px"
           @change="handleFilter"
         />

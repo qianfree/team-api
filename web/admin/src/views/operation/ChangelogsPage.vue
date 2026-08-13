@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -183,7 +184,17 @@ onMounted(fetchList)
           </div>
         </div>
       </template>
-      <ATable :columns="columns" :data="data" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1200 }"
+        card-title-key="title"
+        card-subtitle-key="version"
+        card-badge-key="status"
+        :card-fields="['type', 'published_at', 'created_at']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />

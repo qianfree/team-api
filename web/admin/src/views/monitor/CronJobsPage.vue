@@ -4,6 +4,7 @@ import { Message, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -79,6 +80,7 @@ const columns: TableColumnData[] = [
   },
   {
     title: '统计',
+    dataIndex: 'stats',
     width: 160,
     render({ record }: { record: any }) {
       if (!record.total_executions) return '-'
@@ -228,15 +230,18 @@ onMounted(() => {
     </PageHeader>
 
     <a-card :bordered="false">
-      <a-table
+      <ResponsiveTable
         :data="jobs"
         :columns="columns"
         :loading="loading"
-        :pagination="false"
         :bordered="false"
         :stripe="true"
         row-key="name"
         :expanded-keys="expandedKeys"
+        card-title-key="name"
+        card-subtitle-key="schedule"
+        card-badge-key="is_running"
+        :card-fields="['last_status', 'last_duration_ms', 'last_started_at', { key: 'stats', full: true }]"
         @expanded-change="handleExpand"
       >
         <template #expand-row="{ record }">
@@ -261,7 +266,7 @@ onMounted(() => {
             </div>
           </div>
         </template>
-      </a-table>
+      </ResponsiveTable>
       <div class="table-footer">
         <TableStats :total="jobs.length" />
       </div>

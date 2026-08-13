@@ -4,6 +4,7 @@ import { Message, Modal, Tag, Button, Space } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 
@@ -201,7 +202,22 @@ onUnmounted(() => {
     </a-card>
 
     <a-card :bordered="false">
-      <a-table :data="data" :columns="columns" :loading="loading" :pagination="false" row-key="id" />
+      <ResponsiveTable
+        :data="data"
+        :columns="columns"
+        :loading="loading"
+        row-key="id"
+        card-title-key="rule_name"
+        card-subtitle-key="metric_type"
+        card-badge-key="status"
+        :card-fields="[
+          'level',
+          'trigger_value',
+          'threshold_value',
+          { key: 'trigger_message', full: true },
+          'created_at',
+        ]"
+      />
       <div class="table-footer">
         <TableStats :total="total" />
         <a-pagination :current="pagination.current" :page-size="pagination.pageSize" :total="total" @change="handlePageChange" />

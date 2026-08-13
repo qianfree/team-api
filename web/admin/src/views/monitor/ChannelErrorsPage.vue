@@ -4,6 +4,7 @@ import { Tag, Button, Select, Input, DatePicker } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -283,13 +284,23 @@ onMounted(() => {
 
     <!-- Table -->
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :data="data"
         :loading="loading"
         :columns="columns"
-        :pagination="false"
         row-key="id"
         :scroll="{ x: 1400 }"
+        card-title-key="channel_name"
+        card-subtitle-key="model_name"
+        card-badge-key="error_category"
+        :card-fields="[
+          'provider',
+          'status_code',
+          'latency_ms',
+          'attempt',
+          'created_at',
+          { key: 'error_message', full: true },
+        ]"
       />
       <div class="table-footer">
         <TableStats :total="total" />

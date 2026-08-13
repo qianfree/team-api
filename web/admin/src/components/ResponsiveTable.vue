@@ -3,6 +3,7 @@ import { computed, defineComponent, useSlots } from 'vue'
 import type { PropType, VNodeChild } from 'vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import { useIsMobile } from '@/composables/useIsMobile'
+import TableEmpty from '@/components/TableEmpty.vue'
 
 /**
  * 响应式数据表格：桌面端（≥ breakpoint）渲染 ATable，移动端渲染卡片列表。
@@ -72,6 +73,7 @@ const props = withDefaults(
     cardFields?: (CardField | string)[] // 卡片网格字段；缺省取除 标题/徽章/副标题/操作 外的全部列
     cardActionsKey?: string // 操作列 dataIndex，渲染在卡片底部（默认 'actions'）
     rowClick?: (row: any) => void // 提供后整张卡片可点击（仅移动端；桌面端用 row-click 事件）
+    rowClass?: (row: any) => string // 自定义行类名（桌面端 ATable row-class，如高亮当前会话）
     breakpoint?: number // 卡片切换断点（默认 768 = md）
   }>(),
   {
@@ -105,8 +107,11 @@ const badgeCol = computed(() => props.columns.find((c) => c.dataIndex === props.
 const subtitleCol = computed(() => props.columns.find((c) => c.dataIndex === props.cardSubtitleKey))
 const actionsCol = computed(() => props.columns.find((c) => c.dataIndex === props.cardActionsKey))
 
-// 桌面端行类名：可点击时显示手型
-const rowClassHandler = () => (props.rowClick ? 'cursor-pointer' : '')
+// 桌面端行类名：合并页面自定义 rowClass + 可点击时的手型
+const rowClassHandler = (record: any) => {
+  const cls = typeof props.rowClass === 'function' ? props.rowClass(record) || '' : ''
+  return [cls, props.rowClick ? 'cursor-pointer' : ''].filter(Boolean).join(' ') || undefined
+}
 
 // 网格字段：按 cardFields 顺序取；未传 cardFields（undefined）时用除 标题/徽章/副标题/操作 外的全部列。
 // 注意：显式传 :card-fields="[]" 表示「不要字段网格」，必须与「未传」区分，不能按 truthy 判断。
@@ -174,8 +179,12 @@ function onRowClick(record: any, ev: MouseEvent) {
     <template v-for="name in tableSlotNames" :key="name" #[name]="slotProps">
       <slot :name="name" v-bind="slotProps ?? {}" />
     </template>
+    <!-- 空状态：页面未自定义 #empty 时兜底显示插画 + 提示文字（TableEmpty），
+         外层 .arco-table-tr-empty 的全局样式负责最小高度与垂直居中 -->
     <template #empty>
-      <slot name="empty" />
+      <slot name="empty">
+        <TableEmpty />
+      </slot>
     </template>
   </ATable>
 
@@ -186,10 +195,10 @@ function onRowClick(record: any, ev: MouseEvent) {
       <ASpin />
     </div>
 
-    <!-- 空状态 -->
+    <!-- 空状态：插画 + 提示文字居中，与桌面端空表观感一致 -->
     <div v-else-if="data.length === 0">
       <slot name="empty">
-        <AEmpty />
+        <TableEmpty />
       </slot>
     </div>
 

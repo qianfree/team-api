@@ -6,6 +6,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -145,7 +146,17 @@ const { exporting, exportFile } = useExport({
               { label: '已禁用', value: 'disabled' }, { label: '已过期', value: 'expired' },
             ]" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchRedemptions() }" />
           </div>
-          <ATable :columns="columns" :data="redemptions" :loading="loading" row-key="id" :scroll="{ x: 1100 }" :pagination="false" />
+          <ResponsiveTable
+            :columns="columns"
+            :data="redemptions"
+            :loading="loading"
+            row-key="id"
+            :scroll="{ x: 1100 }"
+            card-title-key="code"
+            card-subtitle-key="type"
+            card-badge-key="status"
+            :card-fields="['value', 'usage', 'batch_no', 'duration_days', 'plan_id']"
+          />
           <div class="table-footer">
             <TableStats :total="pagination.total" />
             <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchRedemptions" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchRedemptions() }" />
@@ -153,7 +164,17 @@ const { exporting, exportFile } = useExport({
         </ATabPane>
 
         <ATabPane key="usages" title="使用记录">
-          <ATable :columns="usageColumns" :data="usages" :loading="usageLoading" row-key="id" :scroll="{ x: 900 }" :pagination="false" />
+          <ResponsiveTable
+            :columns="usageColumns"
+            :data="usages"
+            :loading="usageLoading"
+            row-key="id"
+            :scroll="{ x: 900 }"
+            card-title-key="code"
+            card-subtitle-key="tenant_name"
+            card-badge-key="type"
+            :card-fields="['value', 'username', 'created_at']"
+          />
           <div class="table-footer">
             <TableStats :total="usagePagination.total" />
             <APagination v-model:current="usagePagination.current" v-model:page-size="usagePagination.pageSize" :total="usagePagination.total" :page-size-options="usagePagination.pageSizeOptions" show-page-size @change="fetchUsages" @page-size-change="(s: number) => { usagePagination.pageSize = s; usagePagination.current = 1; fetchUsages() }" />

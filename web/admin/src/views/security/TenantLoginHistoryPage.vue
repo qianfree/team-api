@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, h } from 'vue'
+import { Tag } from '@arco-design/web-vue'
+import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const list = ref<any[]>([])
@@ -131,6 +134,57 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
     searchForm.end_time = dateString || ''
   }
 }
+
+const columns: TableColumnData[] = [
+  { title: '时间', dataIndex: 'created_at', width: 180 },
+  { title: '租户ID', dataIndex: 'tenant_id', width: 90 },
+  {
+    title: '用户',
+    dataIndex: 'username',
+    width: 160,
+    render({ record }: any) {
+      return h('span', [
+        record.display_name || record.username,
+        record.display_name ? h('span', { style: 'color: var(--ta-text-tertiary); margin-left: 4px' }, `(${record.username})`) : null,
+      ])
+    },
+  },
+  {
+    title: '登录方式',
+    dataIndex: 'login_method',
+    width: 110,
+    render({ record }: any) {
+      return h(Tag, { color: methodColor(record.login_method), size: 'small' }, () => methodLabel(record.login_method))
+    },
+  },
+  { title: 'IP 地址', dataIndex: 'ip_address', width: 150 },
+  { title: '设备', dataIndex: 'user_agent', width: 200, ellipsis: true },
+  {
+    title: '状态',
+    dataIndex: 'success',
+    width: 80,
+    render({ record }: any) {
+      return h(Tag, { color: record.success ? 'green' : 'red', size: 'small' }, () => record.success ? '成功' : '失败')
+    },
+  },
+  {
+    title: '新设备',
+    dataIndex: 'is_new_device',
+    width: 80,
+    render({ record }: any) {
+      return record.is_new_device ? h(Tag, { color: 'orangered', size: 'small' }, () => '新设备') : '-'
+    },
+  },
+  {
+    title: '失败原因',
+    dataIndex: 'fail_reason',
+    width: 180,
+    ellipsis: true,
+    render({ record }: any) {
+      return record.fail_reason || '-'
+    },
+  },
+]
 </script>
 
 <template>
@@ -179,49 +233,18 @@ function onDateChange(dateString: string | undefined, type: 'start' | 'end') {
     </ACard>
 
     <ACard :bordered="false">
-      <ATable
+      <ResponsiveTable
         :data="list"
+        :columns="columns"
         :loading="loading"
         :bordered="false"
         :stripe="true"
         row-key="id"
-        :pagination="false"
-      >
-        <template #columns>
-          <ATableColumn title="时间" data-index="created_at" :width="180" />
-          <ATableColumn title="租户ID" data-index="tenant_id" :width="90" />
-          <ATableColumn title="用户" :width="160">
-            <template #cell="{ record }">
-              <span>{{ record.display_name || record.username }}</span>
-              <span v-if="record.display_name" style="color: var(--ta-text-tertiary); margin-left: 4px">({{ record.username }})</span>
-            </template>
-          </ATableColumn>
-          <ATableColumn title="登录方式" data-index="login_method" :width="110">
-            <template #cell="{ record }">
-              <ATag :color="methodColor(record.login_method)" size="small">{{ methodLabel(record.login_method) }}</ATag>
-            </template>
-          </ATableColumn>
-          <ATableColumn title="IP 地址" data-index="ip_address" :width="150" />
-          <ATableColumn title="设备" data-index="user_agent" :width="200" ellipsis />
-          <ATableColumn title="状态" :width="80">
-            <template #cell="{ record }">
-              <ATag :color="record.success ? 'green' : 'red'" size="small">{{ record.success ? '成功' : '失败' }}</ATag>
-            </template>
-          </ATableColumn>
-          <ATableColumn title="新设备" :width="80">
-            <template #cell="{ record }">
-              <ATag v-if="record.is_new_device" color="orangered" size="small">新设备</ATag>
-              <span v-else>-</span>
-            </template>
-          </ATableColumn>
-          <ATableColumn title="失败原因" data-index="fail_reason" :width="180" ellipsis>
-            <template #cell="{ record }">
-              <span v-if="record.fail_reason">{{ record.fail_reason }}</span>
-              <span v-else>-</span>
-            </template>
-          </ATableColumn>
-        </template>
-      </ATable>
+        card-title-key="username"
+        card-subtitle-key="ip_address"
+        card-badge-key="success"
+        :card-fields="['tenant_id', 'login_method', 'is_new_device', 'created_at', { key: 'fail_reason', full: true }]"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination

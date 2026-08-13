@@ -4,6 +4,7 @@ import { Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -104,7 +105,26 @@ onMounted(fetchData)
           <AButton type="primary" @click="resetAndFetch">搜索</AButton>
         </ASpace>
       </div>
-      <ATable :columns="columns" :data="data" :loading="loading" :scroll="{ x: 1200 }" :bordered="false" :stripe="true" size="small" :pagination="false" row-key="id" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :scroll="{ x: 1200 }"
+        :bordered="false"
+        :stripe="true"
+        size="small"
+        row-key="id"
+        card-title-key="username"
+        card-subtitle-key="tenant_name"
+        card-badge-key="type"
+        :card-fields="[
+          { key: 'amount' },
+          { key: 'balance_after' },
+          { key: 'created_at' },
+          { key: 'description', full: true },
+          { key: 'model_name' },
+        ]"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchData" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchData() }" />
