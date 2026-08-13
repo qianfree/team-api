@@ -24,6 +24,7 @@ var tenantPublicPaths = map[string]bool{
 	"/api/tenant/members/invite-info":  true,
 	"/api/tenant/agreements/current":   true,
 	"/api/tenant/oauth/authorize":      true,
+	"/api/tenant/marketplace/models":   true,
 	"/api/tenant/help/categories":      true,
 	"/api/tenant/help/search":          true,
 }
@@ -31,6 +32,7 @@ var tenantPublicPaths = map[string]bool{
 // tenantPublicPrefixes lists path prefixes that skip JWT auth (for dynamic routes like /current/{code}).
 var tenantPublicPrefixes = []string{
 	"/api/tenant/agreements/current/",
+	"/api/tenant/marketplace/models/",
 	"/api/tenant/help/categories/",
 	"/api/tenant/help/articles/",
 }
