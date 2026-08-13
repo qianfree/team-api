@@ -7,6 +7,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import { marked } from 'marked'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -267,7 +268,17 @@ onMounted(fetchList)
           </div>
         </div>
       </template>
-      <ATable :columns="columns" :data="data" :loading="loading" row-key="id" :scroll="{ x: 1400 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1400 }"
+        card-title-key="title"
+        card-subtitle-key="code"
+        card-badge-key="status"
+        :card-fields="['version', 'force_accept', 'published_at', 'created_at']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchList" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchList() }" />
@@ -318,7 +329,15 @@ onMounted(fetchList)
 
     <!-- Acceptances Drawer -->
     <ADrawer v-model:visible="showAcceptances" :title="acceptancesTitle" :width="640" unmount-on-close>
-      <ATable :columns="acceptanceColumns" :data="acceptancesData" :loading="acceptancesLoading" row-key="id" :pagination="false" />
+      <ResponsiveTable
+        :columns="acceptanceColumns"
+        :data="acceptancesData"
+        :loading="acceptancesLoading"
+        row-key="id"
+        card-title-key="user_type"
+        card-subtitle-key="user_id"
+        :card-fields="['ip_address', 'created_at']"
+      />
       <div class="mt-4 flex justify-end">
         <APagination v-model:current="acceptancesPagination.current" :total="acceptancesPagination.total" :page-size="acceptancesPagination.pageSize" @change="fetchAcceptances" />
       </div>

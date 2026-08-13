@@ -4,6 +4,7 @@ import { Message, Tag, Button, Space, Popconfirm } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -46,6 +47,7 @@ const columns: TableColumnData[] = [
   { title: '指标', dataIndex: 'metric_type_label', width: 160 },
   {
     title: '条件',
+    dataIndex: 'condition',
     width: 150,
     render({ record }: { record: any }) {
       const cond = record.condition_label || record.condition
@@ -237,7 +239,16 @@ onMounted(() => {
     </a-card>
 
     <a-card :bordered="false">
-      <a-table :data="data" :columns="columns" :loading="loading" :pagination="false" row-key="id" />
+      <ResponsiveTable
+        :data="data"
+        :columns="columns"
+        :loading="loading"
+        row-key="id"
+        card-title-key="name"
+        card-subtitle-key="metric_type_label"
+        card-badge-key="level"
+        :card-fields="['condition', 'is_enabled', 'last_triggered_at']"
+      />
       <div class="table-footer">
         <TableStats :total="total" />
         <a-pagination :current="pagination.current" :page-size="pagination.pageSize" :total="total" @change="handlePageChange" />

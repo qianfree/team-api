@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import request, { setTokens, clearTokens, onTokenRefreshed, setRememberMe, getRememberMe } from '@/utils/request'
+import request, { setTokens, clearTokens, onTokenRefreshed, onAuthExpired, setRememberMe, getRememberMe } from '@/utils/request'
 import { setAdminSession, clearAdminSession, ADMIN_ROLES } from '@/utils/permission'
 
 export interface AdminUser {
@@ -113,21 +113,32 @@ export const useAuthStore = defineStore('admin-auth', () => {
     applySession(loginData)
   }
 
+  /** 同步清空全部登录数据（响应式状态 + token storage + session 持久化），不调用后端 */
+  function clearAuthState(): void {
+    token.value = null
+    refreshToken.value = null
+    expiresAt.value = null
+    user.value = null
+    permissions.value = []
+    pendingAgreements.value = []
+
+    clearTokens()
+    clearAdminSession()
+    localStorage.removeItem(STORE_KEY)
+  }
+
+  /** 同步本地登出（仅清前端，不通知后端），用于路由守卫等需要立即生效的场景 */
+  function logoutLocal(): void {
+    clearAuthState()
+  }
+
   async function logout(): Promise<void> {
     try {
       await request.post('/admin/auth/logout')
     } catch {
       // best-effort
     }
-    token.value = null
-    refreshToken.value = null
-    expiresAt.value = null
-    user.value = null
-    permissions.value = []
-
-    clearTokens()
-    clearAdminSession()
-    localStorage.removeItem(STORE_KEY)
+    clearAuthState()
   }
 
   async function refreshTokens(): Promise<void> {
@@ -149,6 +160,12 @@ export const useAuthStore = defineStore('admin-auth', () => {
     persist()
   })
 
+  // Axios 拦截器在 401 认证彻底失效时回调，由 store 清空全部登录数据
+  // （必须先清后跳，否则路由守卫会从持久化数据恢复登录态，造成登录页↔系统死循环）
+  onAuthExpired(() => {
+    clearAuthState()
+  })
+
   function clearPendingAgreements(): void {
     pendingAgreements.value = []
   }
@@ -166,6 +183,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     login,
     applyTokensFrom2FA,
     logout,
+    logoutLocal,
     refreshTokens,
     loadFromStorage,
     clearPendingAgreements,

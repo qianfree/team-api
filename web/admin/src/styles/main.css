@@ -250,6 +250,15 @@ body {
   background: var(--ta-primary-light) !important;
 }
 
+/* 表格空状态：空数据时图标在表格中央竖直居中，并保留一个最低高度，
+   避免无数据时表格高度塌陷为 0（ResponsiveTable 与直接使用 a-table 的页面统一生效） */
+.arco-table .arco-table-tr-empty > .arco-table-td {
+  height: 240px;
+  padding: 0 16px;
+  text-align: center;
+  vertical-align: middle;
+}
+
 /* Card */
 .arco-card {
   border-radius: var(--ta-radius);
@@ -507,4 +516,19 @@ body {
 /* Drawer */
 .arco-drawer-wrapper .arco-drawer {
   border-radius: 0 var(--ta-radius-xl) var(--ta-radius-xl) 0;
+}
+
+/* 移动端弹层自适应：固定宽度统一收口，避免溢出可视区（断点与 useIsMobile 的 768 对齐） */
+@media (max-width: 767px) {
+  /* 抽屉整屏铺满 */
+  .arco-drawer {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  /* 模态框左右各留 16px 边距，更符合模态语义，并顶部留白 */
+  .arco-modal {
+    width: calc(100vw - 32px) !important;
+    max-width: 100% !important;
+    top: 16px;
+  }
 }

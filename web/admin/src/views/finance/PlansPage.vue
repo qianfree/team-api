@@ -6,6 +6,7 @@ import {
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 
@@ -141,7 +142,17 @@ const { exporting, exportFile } = useExport({
           <ASelect v-model="statusFilter" :options="statusOptions" style="width: 120px" allow-clear @change="() => { pagination.current = 1; fetchPlans() }" />
         </div>
       </template>
-      <ATable :columns="columns" :data="plans" :loading="loading" row-key="id" :scroll="{ x: 1200 }" :pagination="false" />
+      <ResponsiveTable
+        :columns="columns"
+        :data="plans"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 1200 }"
+        card-title-key="name"
+        card-subtitle-key="identifier"
+        card-badge-key="status"
+        :card-fields="['monthly_price', 'yearly_price', 'is_recommended', 'sort_order']"
+      />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
         <APagination v-model:current="pagination.current" v-model:page-size="pagination.pageSize" :total="pagination.total" :page-size-options="pagination.pageSizeOptions" show-page-size @change="fetchPlans" @page-size-change="(s: number) => { pagination.pageSize = s; pagination.current = 1; fetchPlans() }" />
