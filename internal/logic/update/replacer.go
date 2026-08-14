@@ -84,9 +84,24 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		return
 	}
 
-	// Step 3: Extract binary from tarball
+	// Step 3: 定位当前二进制路径
+	// 新二进制必须提取到与当前二进制相同的目录（同一文件系统），
+	// 否则后续 os.Rename 会因跨设备（EXDEV）失败，如 /tmp 与部署目录不在同一分区
+	currentExe, err := os.Executable()
+	if err != nil {
+		manager.setProgressError("获取当前程序路径失败", err.Error())
+		_ = os.Remove(dlResult.FilePath)
+		return
+	}
+	// Resolve symlinks
+	currentExe, err = filepath.EvalSymlinks(currentExe)
+	if err != nil {
+		g.Log().Warningf(ctx, "Failed to resolve symlink: %v", err)
+	}
+
+	// Step 4: Extract binary from tarball（提取到当前二进制同目录）
 	manager.setProgress(PhaseBackingUp, "正在提取二进制文件...", 10)
-	newBinaryPath, err := extractBinary(ctx, dlResult.FilePath)
+	newBinaryPath, err := extractBinary(ctx, dlResult.FilePath, currentExe+".new")
 	if err != nil {
 		manager.setProgressError("提取文件失败", err.Error())
 		g.Log().Errorf(ctx, "Extract failed: %v", err)
@@ -95,19 +110,8 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	}
 	_ = os.Remove(dlResult.FilePath) // clean up tarball
 
-	// Step 4: Backup current binary
+	// Step 5: Backup current binary
 	manager.setProgress(PhaseBackingUp, "正在备份当前版本...", 30)
-	currentExe, err := os.Executable()
-	if err != nil {
-		manager.setProgressError("获取当前程序路径失败", err.Error())
-		_ = os.Remove(newBinaryPath)
-		return
-	}
-	// Resolve symlinks
-	currentExe, err = filepath.EvalSymlinks(currentExe)
-	if err != nil {
-		g.Log().Warningf(ctx, "Failed to resolve symlink: %v", err)
-	}
 
 	backupPath := fmt.Sprintf("%s.backup.%s", currentExe, gtime.Now().Format("YmdHis"))
 	if err := copyFile(currentExe, backupPath); err != nil {
@@ -128,7 +132,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		g.Log().Warningf(ctx, "Failed to save rollback info: %v", err)
 	}
 
-	// Step 5: Replace binary
+	// Step 6: Replace binary
 	manager.setProgress(PhaseReplacing, "正在替换程序文件...", 60)
 	if err := replaceBinary(ctx, currentExe, newBinaryPath); err != nil {
 		manager.setProgressError("替换程序文件失败", err.Error())
@@ -137,7 +141,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		return
 	}
 
-	// Step 6: Write pending verification marker
+	// Step 7: Write pending verification marker
 	pendingData, _ := json.Marshal(struct {
 		Version   string `json:"version"`
 		OldBinary string `json:"old_binary"`
@@ -147,7 +151,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	})
 	_ = os.WriteFile(filepath.Join(updateDir, pendingVerificationFile), pendingData, 0644)
 
-	// Step 7: Restart
+	// Step 8: Restart
 	manager.setProgress(PhaseRestarting, "正在重启服务...", 90)
 	g.Log().Info(ctx, "Update complete, exiting for restart...")
 	time.Sleep(500 * time.Millisecond) // give status API a moment to respond
@@ -155,8 +159,10 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	os.Exit(0)
 }
 
-// extractBinary extracts the team-api binary from a tar.gz archive
-func extractBinary(ctx context.Context, tarballPath string) (string, error) {
+// extractBinary extracts the team-api binary from a tar.gz archive to outputPath.
+// outputPath 必须与被替换的二进制位于同一文件系统（通常为同目录），
+// 否则 replaceBinary 中的 os.Rename 会因跨设备（EXDEV）失败
+func extractBinary(ctx context.Context, tarballPath, outputPath string) (string, error) {
 	f, err := os.Open(tarballPath)
 	if err != nil {
 		return "", err
@@ -185,8 +191,6 @@ func extractBinary(ctx context.Context, tarballPath string) (string, error) {
 		// Look for the binary file (not directory)
 		baseName := filepath.Base(hdr.Name)
 		if baseName == "team-api" && hdr.Typeflag == tar.TypeReg {
-			// Extract to temp file
-			outputPath := filepath.Join(updateDir, "team-api.new")
 			outf, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 			if err != nil {
 				return "", err
