@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -67,10 +68,15 @@ func Rollback(ctx context.Context) error {
 	_ = os.Remove(filepath.Join(updateDir, pendingVerificationFile))
 	_ = os.Remove(oldPath)
 
-	g.Log().Infof(ctx, "Rollback to %s complete, exiting for restart...", info.BackupVersion)
+	g.Log().Infof(ctx, "Rollback to %s complete, scheduling restart...", info.BackupVersion)
 
-	// Exit — process supervisor will restart with the old binary
-	os.Exit(0)
+	// 延迟退出：Rollback 在 HTTP handler 调用栈内同步执行，直接 os.Exit 会切断
+	// 尚未写出的响应（前端拿到连接重置而非成功提示）。先让 handler 返回响应，
+	// 稍后退出进程，由进程管理器（systemd/supervisor 等）拉起旧版本
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+	}()
 	return nil
 }
 
