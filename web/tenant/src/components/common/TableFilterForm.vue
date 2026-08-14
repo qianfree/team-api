@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, h } from 'vue'
-import { NForm, NFormItem, NInput, NSelect, NDatePicker, NInputNumber, NButton, NDrawer, NDrawerContent } from 'naive-ui'
+import { NForm, NFormItem, NInput, NSelect, NDatePicker, NInputNumber, NButton, NDrawer, NDrawerContent, NDropdown } from 'naive-ui'
 import Icon from './Icon.vue'
 import MobileRangeFilter from './MobileRangeFilter.vue'
 
@@ -49,8 +49,16 @@ const emit = defineEmits<{
 // 表单数据（由父组件通过 v-model 绑定）
 const modelValue = defineModel<Record<string, any>>({ required: true })
 
-const showExportDropdown = ref(false)
 const showFilterDrawer = ref(false)
+
+// 导出格式下拉选项（NDropdown 默认 teleport 到 body，避免被 .card 的 backdrop-filter
+// stacking context 困住而被下方表格面板遮挡）
+const exportDropdownOptions = computed(() =>
+  props.exportFormats.map(format => ({
+    label: format === 'csv' ? '导出 CSV' : '导出 Excel',
+    key: format,
+  }))
+)
 
 // 检测是否为移动端
 const isMobile = ref(false)
@@ -104,9 +112,8 @@ function handleReset() {
   emit('reset')
 }
 
-function handleExport(format: 'csv' | 'xlsx') {
-  showExportDropdown.value = false
-  emit('export', format)
+function handleExport(format: string | number) {
+  emit('export', format as 'csv' | 'xlsx')
 }
 
 // 日期时间范围默认快捷选项
@@ -243,39 +250,19 @@ const renderField = (field: FilterField) => {
 
         <div class="flex items-center gap-2">
           <!-- 导出按钮 -->
-          <div v-if="showExport" class="relative">
-            <n-button
-              :loading="exporting"
-              :disabled="exporting"
-              @click="showExportDropdown = !showExportDropdown"
-            >
+          <n-dropdown
+            v-if="showExport"
+            trigger="click"
+            :options="exportDropdownOptions"
+            @select="handleExport"
+          >
+            <n-button :loading="exporting" :disabled="exporting">
               <template #icon>
                 <Icon name="download" size="sm" />
               </template>
               导出
             </n-button>
-            <div
-              v-if="showExportDropdown"
-              class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-            >
-              <button
-                v-if="exportFormats.includes('csv')"
-                type="button"
-                class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="handleExport('csv')"
-              >
-                导出 CSV
-              </button>
-              <button
-                v-if="exportFormats.includes('xlsx')"
-                type="button"
-                class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="handleExport('xlsx')"
-              >
-                导出 Excel
-              </button>
-            </div>
-          </div>
+          </n-dropdown>
 
           <!-- 自定义额外按钮插槽 -->
           <slot name="extra-actions" />
@@ -356,12 +343,12 @@ const renderField = (field: FilterField) => {
             <!-- 导出按钮 -->
             <template v-if="showExport">
               <span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-              <div class="relative">
-                <n-button
-                  :loading="exporting"
-                  :disabled="exporting"
-                  @click="showExportDropdown = !showExportDropdown"
-                >
+              <n-dropdown
+                trigger="click"
+                :options="exportDropdownOptions"
+                @select="handleExport"
+              >
+                <n-button :loading="exporting" :disabled="exporting">
                   <template #icon>
                     <Icon name="download" size="sm" />
                   </template>
@@ -370,28 +357,7 @@ const renderField = (field: FilterField) => {
                     <Icon name="chevronDown" size="xs" />
                   </template>
                 </n-button>
-                <div
-                  v-if="showExportDropdown"
-                  class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-                >
-                  <button
-                    v-if="exportFormats.includes('csv')"
-                    type="button"
-                    class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                    @click="handleExport('csv')"
-                  >
-                    导出 CSV
-                  </button>
-                  <button
-                    v-if="exportFormats.includes('xlsx')"
-                    type="button"
-                    class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                    @click="handleExport('xlsx')"
-                  >
-                    导出 Excel
-                  </button>
-                </div>
-              </div>
+              </n-dropdown>
             </template>
 
             <!-- 自定义额外按钮插槽 -->

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { NDropdown } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
@@ -23,7 +24,16 @@ const pageSize = ref(20)
 const total = ref(0)
 const activeTab = ref<'all' | 'unread'>('all')
 
-const showExportDropdown = ref(false)
+// 导出格式下拉选项（NDropdown 默认 teleport 到 body，避免被 .card 的 backdrop-filter
+// stacking context 困住而被下方表格面板遮挡）
+const exportDropdownOptions = [
+	{ label: '导出 CSV', key: 'csv' },
+	{ label: '导出 Excel', key: 'xlsx' },
+]
+
+function handleExport(format: string | number) {
+	exportFile(format as 'csv' | 'xlsx')
+}
 const { exporting, exportFile } = useExport({
 	url: '/tenant/notifications/export',
 })
@@ -125,17 +135,14 @@ onMounted(() => {
 			</div>
 			<div class="flex items-center gap-2">
 				<!-- Export dropdown -->
-				<div class="relative inline-block">
-					<button class="btn btn-secondary" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-						<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-						<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+				<n-dropdown trigger="click" :options="exportDropdownOptions" @select="handleExport">
+					<button type="button" class="btn btn-secondary" :disabled="exporting">
+						<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
+						<Icon v-else name="download" size="sm" />
 						导出
+						<Icon name="chevronDown" size="xs" />
 					</button>
-					<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
-					</div>
-				</div>
+				</n-dropdown>
 				<button class="btn btn-secondary" @click="markAllRead" :disabled="unreadCount === 0">
 					<Icon name="check" size="sm" />
 					全部已读
