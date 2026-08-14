@@ -50,6 +50,15 @@ type RoutingPolicy struct {
 	Degrade struct {
 		MaxReplicas int `json:"maxReplicas"` // 实例级保守限额分母，默认 1
 	} `json:"degrade"`
+
+	Proto struct {
+		// ResponsesMismatch responses 入站打在不支持 Responses 协议渠道上的降权因子，
+		// 默认 0.25（经 chat 转换丢失有状态 Responses 特性，降权较重）。
+		ResponsesMismatch float64 `json:"responsesMismatch"`
+		// ChatBridgeMismatch chat 入站打在 responses-only 桥接渠道上的降权因子，
+		// 默认 0.75（桥接基本无损，降权较轻）。
+		ChatBridgeMismatch float64 `json:"chatBridgeMismatch"`
+	} `json:"proto"`
 }
 
 // ReplayPolicy 可重放性策略。
@@ -157,6 +166,8 @@ func DefaultRoutingPolicy() *RoutingPolicy {
 		SafeModes:   []string{"embeddings", "rerank"},
 	}
 	p.Degrade.MaxReplicas = 1
+	p.Proto.ResponsesMismatch = 0.25
+	p.Proto.ChatBridgeMismatch = 0.75
 	return p
 }
 
@@ -213,6 +224,12 @@ func (p *RoutingPolicy) Validate() error {
 	}
 	if p.Degrade.MaxReplicas <= 0 {
 		return fmt.Errorf("degrade.maxReplicas 必须 > 0")
+	}
+	// proto 偏好因子必须为 (0,1]：>1 会反向惩罚匹配渠道，=0 会把不匹配渠道硬排除
+	if p.Proto.ResponsesMismatch <= 0 || p.Proto.ResponsesMismatch > 1 ||
+		p.Proto.ChatBridgeMismatch <= 0 || p.Proto.ChatBridgeMismatch > 1 {
+		return fmt.Errorf("proto 因子必须在 (0,1]: responsesMismatch=%v chatBridgeMismatch=%v",
+			p.Proto.ResponsesMismatch, p.Proto.ChatBridgeMismatch)
 	}
 	return nil
 }

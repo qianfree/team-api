@@ -499,6 +499,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		Scope:     channelScope,
 		Replay:    co.Policy().Replay.ReplayabilityForMode(v.relayModeStr),
 		Signals:   sig,
+		Proto:     protoPreference(constant.RelayMode(v.relayMode)),
 		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, rc.TenantID),
 	})
 	// 兜底：任何未显式 Finish 的退出路径释放租约（Finish 幂等，成功路径的显式调用优先生效）
@@ -763,7 +764,16 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 			UpstreamModelName: selection.UpstreamModelName,
 			IsModelMapped:     selection.IsModelMapped,
 			Settings:          selection.Settings,
+
+			SupportsResponses: selection.SupportsResponses,
+			ChatViaResponses:  selection.ChatViaResponses,
 		},
+	}
+	// responses-only 上游桥接：chat 入站经 /v1/responses 发送（chat→Responses 请求转换 +
+	// Responses→chat 响应转换）。仅对 OpenAI chat 入站生效；claude/gemini 入站需
+	// Responses→原生格式链式转换，暂不支持（此类渠道上会 404，运营应避免混用）。
+	if selection.ChatViaResponses && v.relayMode == constant.RelayModeChatCompletions {
+		info.UseResponsesAPI = true
 	}
 	// 流中断结算时上游 usage 常缺失，记录请求侧输入估算值（与预扣同源）供输入计费兜底
 	info.SetEstimatePromptTokens(v.estimatedTokens)
@@ -1040,6 +1050,19 @@ func setPreResponseHeaders(w http.ResponseWriter, br *BillingResult) {
 			w.Header().Set("Link", fmt.Sprintf("</v1/models/%s>; rel=\"successor-version\"", dep.ReplacementModel))
 		}
 	}
+}
+
+// protoPreference 入站端点协议 → 调度软偏好（只降权不排除）：
+// responses 端点偏好声明支持 Responses 协议的渠道（避免经 chat 转换丢失有状态特性），
+// chat 端点偏好原生 chat 渠道（responses-only 桥接渠道降权但仍可服务），其余端点无偏好。
+func protoPreference(mode constant.RelayMode) dispatch.ProtoPreference {
+	switch mode {
+	case constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		return dispatch.ProtoResponses
+	case constant.RelayModeChatCompletions:
+		return dispatch.ProtoChat
+	}
+	return dispatch.ProtoAny
 }
 
 // requestType 根据 isStream 返回请求类型

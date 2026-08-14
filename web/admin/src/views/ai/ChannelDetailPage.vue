@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -68,7 +68,6 @@ const editForm = reactive({
   status: 'active',
   is_vip: false,
   use_proxy: false,
-  upstream_responses: false,
   sharing_threshold: null as number | null,
   preemption_threshold: null as number | null,
   borrowing_cooldown_seconds: null as number | null,
@@ -90,7 +89,6 @@ function openEditModal() {
     status: detail.value.status || 'active',
     is_vip: detail.value.is_vip || false,
     use_proxy: detail.value.use_proxy || false,
-    upstream_responses: detail.value.upstream_responses || false,
     sharing_threshold: detail.value.sharing_threshold ?? null,
     preemption_threshold: detail.value.preemption_threshold ?? null,
     borrowing_cooldown_seconds: detail.value.borrowing_cooldown_seconds ?? null,
@@ -161,6 +159,26 @@ const abilityColumns: TableColumnData[] = [
     },
   },
   {
+    title: 'Responses 协议', dataIndex: 'supports_responses', width: 110,
+    render({ record }) {
+      return h(Switch, {
+        modelValue: !!record.supports_responses,
+        size: 'mini',
+        onChange: (v: boolean) => handleToggleProtoFlag(record, 'supports_responses', v),
+      })
+    },
+  },
+  {
+    title: 'Chat 经 Responses', dataIndex: 'chat_via_responses', width: 120,
+    render({ record }) {
+      return h(Switch, {
+        modelValue: !!record.chat_via_responses,
+        size: 'mini',
+        onChange: (v: boolean) => handleToggleProtoFlag(record, 'chat_via_responses', v),
+      })
+    },
+  },
+  {
     title: '状态', dataIndex: 'enabled', width: 80,
     render({ record }) {
       return h(Tag, {
@@ -189,7 +207,7 @@ async function fetchAbilities() {
   } catch { abilitiesData.value = [] } finally { abilitiesLoading.value = false }
 }
 
-// abilityPayload 组装能力批量提交体（cost_ratio 必须随行提交，否则会被重置为默认 1.0）
+// abilityPayload 组装能力批量提交体（cost_ratio / 协议开关必须随行提交，否则会被重置为默认值）
 function abilityPayload(list: any[]) {
   return {
     channel_id: Number(channelId),
@@ -198,6 +216,8 @@ function abilityPayload(list: any[]) {
       upstream_model: a.upstream_model || '',
       enabled: a.enabled,
       cost_ratio: a.cost_ratio ?? 1,
+      supports_responses: !!a.supports_responses,
+      chat_via_responses: !!a.chat_via_responses,
     })),
   }
 }
@@ -232,6 +252,16 @@ function handleCostRatioChange(record: any, value: number) {
 
 function handleUpstreamModelChange(record: any, value: string) {
   record.upstream_model = value
+}
+
+// 协议能力开关（supports_responses / chat_via_responses）：即时整表提交
+async function handleToggleProtoFlag(ab: any, flag: 'supports_responses' | 'chat_via_responses', value: boolean) {
+  const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, [flag]: value } : a)
+  try {
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
+    abilitiesData.value = newList
+    Message.success(flag === 'supports_responses' ? 'Responses 协议支持已更新' : 'Chat 经 Responses 已更新')
+  } catch { /* error handled by interceptor */ }
 }
 
 async function handleDeleteAbility(id: number) {
@@ -613,6 +643,12 @@ function formatHeaders(headers: Record<string, string>): string {
                   <div>
                     <span style="font-weight: 500;">成本比例：</span>该渠道相对基准价的成本系数，1.0 为标准。小于 1（如 0.8）表示更便宜，多渠道择优时更优先调度；大于 1（如 1.5）表示更贵，优先级降低。仅用于渠道调度，不影响对用户的计费。
                   </div>
+                  <div>
+                    <span style="font-weight: 500;">Responses 协议：</span>该模型在上游支持 OpenAI Responses API（/v1/responses）。开启后 /v1/responses 端点请求直连上游原生协议转发（不经 chat 转换），且调度时优先选择此类渠道。
+                  </div>
+                  <div>
+                    <span style="font-weight: 500;">Chat 经 Responses：</span>上游仅有 Responses 协议（responses-only，如 Codex 类中转）。开启后 /v1/chat/completions 请求自动经桥接转换发送到 /v1/responses。
+                  </div>
                 </div>
               </div>
             </ACard>
@@ -797,12 +833,6 @@ function formatHeaders(headers: Record<string, string>): string {
           <ACol :span="12">
             <AFormItem label="使用代理">
               <ASwitch v-model="editForm.use_proxy" />
-            </AFormItem>
-          </ACol>
-          <ACol :span="12">
-            <AFormItem label="上游使用 Responses 协议">
-              <ASwitch v-model="editForm.upstream_responses" />
-              <template #extra><span class="field-help">上游为 OpenAI Responses API（/v1/responses），responses 入站直连转发</span></template>
             </AFormItem>
           </ACol>
         </ARow>

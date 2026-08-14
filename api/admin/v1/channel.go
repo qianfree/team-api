@@ -40,7 +40,6 @@ type ChannelItem struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
-	UpstreamResponses        bool     `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
@@ -66,7 +65,6 @@ type ChannelCreateReq struct {
 	Remark                   string  `json:"remark" dc:"备注"`
 	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`
 	UseProxy                 bool    `json:"use_proxy" d:"false" dc:"启用代理"`
-	UpstreamResponses        bool    `json:"upstream_responses" d:"false" dc:"上游使用 OpenAI Responses 协议（/v1/responses），responses 入站直连转发"`
 	SharingThreshold         float64 `json:"sharing_threshold" d:"0.6" dc:"普通租户借用阈值"`
 	PreemptionThreshold      float64 `json:"preemption_threshold" d:"0.8" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds" d:"30" dc:"被抢占后冷却时间(秒)"`
@@ -95,7 +93,6 @@ type ChannelUpdateReq struct {
 	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
 	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
 	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
-	UpstreamResponses        *bool    `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold" dc:"普通租户借用阈值"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds" dc:"被抢占后冷却时间(秒)"`
@@ -130,7 +127,6 @@ type ChannelDetailRes struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
-	UpstreamResponses        bool     `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
@@ -177,11 +173,13 @@ type ChannelAbilityBatchReq struct {
 
 // AbilityItem 模型能力项
 type AbilityItem struct {
-	ID            int64   `json:"id"`
-	ModelName     string  `json:"model_name" v:"required" dc:"平台标准模型名"`
-	UpstreamModel string  `json:"upstream_model" dc:"上游实际模型名"`
-	Enabled       bool    `json:"enabled" d:"true" dc:"是否启用"`
-	CostRatio     float64 `json:"cost_ratio" d:"1" v:"between:0,100" dc:"成本比例：上游实际价/平台基准价，1.0=等价（参与调度 costFactor）"`
+	ID                int64   `json:"id"`
+	ModelName         string  `json:"model_name" v:"required" dc:"平台标准模型名"`
+	UpstreamModel     string  `json:"upstream_model" dc:"上游实际模型名"`
+	Enabled           bool    `json:"enabled" d:"true" dc:"是否启用"`
+	CostRatio         float64 `json:"cost_ratio" d:"1" v:"between:0,100" dc:"成本比例：上游实际价/平台基准价，1.0=等价（参与调度 costFactor）"`
+	SupportsResponses bool    `json:"supports_responses" d:"false" dc:"支持 OpenAI Responses 协议（/v1/responses 原生直连，responses 入站软偏好）"`
+	ChatViaResponses  bool    `json:"chat_via_responses" d:"false" dc:"上游仅有 Responses 协议（responses-only），chat 入站经桥接发送 /v1/responses"`
 }
 
 // ProviderDefaultURLReq 获取供应商默认 URL

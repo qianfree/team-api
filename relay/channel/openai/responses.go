@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -194,6 +197,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	var contentBuilder strings.Builder
 	sentCreated := false
 	sentTextDone := false
+	parsedChunks := 0
 	outputIndex := 0
 	contentIndex := 0
 	toolCallIndexByID := make(map[string]int)
@@ -232,10 +236,32 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			break
 		}
 
+		// 检测 SSE 流中内嵌的上游错误对象：部分聚合商出错时返回 HTTP 200 + SSE，
+		// 错误信息夹在 data 行里（{"error":{...}}）。不识别会被当作解析失败静默丢弃，
+		// 最终合成空的 response.completed（客户端表现为"成功但无内容"）。
+		if errBody, ok := extractStreamEmbeddedError([]byte(data)); ok {
+			err := fmt.Errorf("upstream embedded error in SSE stream: %.500s", string(errBody))
+			g.Log().Warningf(ctx, "[OpenAI.handleResponsesInboundStream] %v", err)
+			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
+			if !sentCreated {
+				// 尚未向客户端发送任何事件：透传上游错误体（与 SSE 开始前的非 200 分支行为一致）
+				writeUpstreamErrorResponse(writer, resp.StatusCode, []byte(data))
+				upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(errBody), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+				upstreamErr.ResponseWritten = true
+				return &usage, upstreamErr
+			}
+			// 已发送部分事件：流已污染无法回写错误体，直接返回错误终止处理
+			return &usage, constant.NewUpstreamError(resp.StatusCode, string(errBody), nil)
+		}
+
 		var chunk dto.ChatCompletionStreamResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			// 解析失败不静默丢弃：记录日志便于定位上游返回非 chat 格式的问题
+			// （如 responses 格式 SSE、纯 JSON 非流式体、空 body 等）
+			g.Log().Warningf(ctx, "[OpenAI.handleResponsesInboundStream] unmarshal chat stream chunk failed: %v, data: %.200s", err, data)
 			continue
 		}
+		parsedChunks++
 
 		// 第一个 chunk：发送 response.created + output_item.added + content_part.added
 		if !sentCreated {
@@ -488,6 +514,14 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 		}
 	}
 
+	// 上游零有效 chunk 时不再静默合成空响应：记录告警便于定位
+	// （上游返回非 SSE 体 / 非 chat 格式 / 空 body / 纯 [DONE] 等异常都会走到这里）
+	if !sentCreated {
+		g.Log().Warningf(ctx,
+			"[OpenAI.handleResponsesInboundStream] upstream stream yielded no parseable chat chunks (parsed=%d), synthesizing empty response.completed: channel=%d(%s) model=%s request_id=%s",
+			parsedChunks, info.ChannelMeta.ChannelID, info.ChannelMeta.ChannelName, info.OriginModelName, info.RequestID)
+	}
+
 	// 估算 usage（正常结束 4 字符/token；scanner 异常等部分传输场景 2 字符/token）
 	if usage.CompletionTokens == 0 {
 		text := contentBuilder.String()
@@ -542,6 +576,25 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 	usage.CacheIncludedInPrompt = true
 	return &usage, nil
+}
+
+// extractStreamEmbeddedError 检测 SSE data 行中内嵌的上游错误对象（存在 "error" 键且值非 null）。
+// 与 isUpstreamOpenAIError 的区别：后者用于完整响应体且不区分 null；这里对流式 chunk 逐行
+// 检测，并排除 "error":null（部分供应商的正常 chunk 会携带空 error 字段）。
+func extractStreamEmbeddedError(data []byte) (json.RawMessage, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false
+	}
+	errBody, ok := raw["error"]
+	if !ok {
+		return nil, false
+	}
+	trimmed := string(bytes.TrimSpace(errBody))
+	if trimmed == "" || trimmed == "null" {
+		return nil, false
+	}
+	return errBody, true
 }
 
 // emitResponsesSSE 发送一个 Responses API 格式的 SSE 事件
