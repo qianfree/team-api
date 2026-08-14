@@ -347,8 +347,14 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	if req.BaseURL != "" {
 		data.BaseUrl = req.BaseURL
 	}
-	data.Priority = req.Priority
-	data.Weight = req.Weight
+	// priority/weight 为指针字段，仅在显式传入时更新，避免不含这两个字段的
+	// 局部更新（如仅切换状态、仅换 Key）把已有值洗成 0。
+	if req.Priority != nil {
+		data.Priority = *req.Priority
+	}
+	if req.Weight != nil {
+		data.Weight = *req.Weight
+	}
 	if req.MaxConcurrency != nil {
 		data.MaxConcurrency = *req.MaxConcurrency
 	}
