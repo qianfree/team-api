@@ -35,7 +35,6 @@ const filterFields: FilterField[] = [
 	},
 ]
 
-const showExportDropdown = ref(false)
 const showMoreMenu = ref(false)
 const { exporting, exportFile } = useExport({
 	url: '/tenant/members/export',
