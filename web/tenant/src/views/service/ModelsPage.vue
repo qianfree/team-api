@@ -355,6 +355,10 @@ onMounted(fetchModels)
 										<span class="text-gray-400">输出</span>
 										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(m.output_price) }}</span>
 									</span>
+									<span v-if="m.cache_read_price">
+										<span class="text-gray-400">缓存读取</span>
+										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(m.cache_read_price) }}</span>
+									</span>
 									<span class="text-gray-300">/1M tokens</span>
 								</div>
 							</template>
