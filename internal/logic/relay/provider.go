@@ -421,9 +421,20 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 	}
 }
 
-// maxAuditBodyLen 审计日志请求体/响应体/任务结果的字节截断上限（2 KiB）。
+// maxAuditBodyLen 未配置独立审计库时，审计日志请求体/响应体/任务结果的字节截断上限（2 KiB）。
 // 落库前由 truncateBody 统一截断；流式响应保留首部 + 末尾若干 SSE 消息。
+// 配置了独立审计库（database.audit）时 auditBodyMaxLen 返回 0，不截断、按审计规则完整记录。
 const maxAuditBodyLen = 2048
+
+// auditBodyMaxLen 返回审计请求体/响应体/任务结果的落库截断上限。
+// 配置了独立审计库时返回 0（truncateBody 视为不截断），此时有充足存储空间按审计规则完整记录；
+// 未配置时返回 maxAuditBodyLen，防止与业务数据共用主库导致库膨胀。
+func auditBodyMaxLen() int {
+	if lcommon.IsAuditDBConfigured() {
+		return 0
+	}
+	return maxAuditBodyLen
+}
 
 // RecordAudit 实现 DataProvider.RecordAudit
 // 异步写入请求审计日志，同时按系统级别和租户级别分别处理请求/响应体
@@ -453,8 +464,9 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 		// 按租户级别处理
 		tntReq, tntResp := lcommon.ApplyAuditLevel(tenantLevel, record.RequestBody, record.ResponseBody, record.IsStream, record.Path)
 
-		// 截断过长的内容
-		maxBodyLen := maxAuditBodyLen
+		// 截断过长的内容：配置了独立审计库时完整记录（auditBodyMaxLen=0 不截断），
+		// 否则截断到 2 KiB，防止与业务数据共用主库导致库膨胀。
+		maxBodyLen := auditBodyMaxLen()
 		sysReq, sysResp = truncateBody(sysReq, maxBodyLen), truncateBody(sysResp, maxBodyLen)
 		tntReq, tntResp = truncateBody(tntReq, maxBodyLen), truncateBody(tntResp, maxBodyLen)
 
@@ -556,7 +568,7 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 		} else if globalLevel == lcommon.AuditLevelMasked {
 			taskResult = lcommon.MaskSensitiveData(taskResult)
 		}
-		taskResult = truncateBody(taskResult, maxAuditBodyLen)
+		taskResult = truncateBody(taskResult, auditBodyMaxLen())
 
 		// 上游响应头仅在 full 级别记录
 		upstreamHeadersJSON := "null"
@@ -615,7 +627,8 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 }
 
 func truncateBody(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	// maxLen <= 0 表示不截断（配置了独立审计库时完整记录）
+	if maxLen <= 0 || len(s) <= maxLen {
 		return s
 	}
 	// 流式响应：保留首部 + 最后 20 条消息，截断中间

@@ -84,6 +84,23 @@ func TestTruncateBody_LongNonStreamTruncated(t *testing.T) {
 	}
 }
 
+func TestTruncateBody_ZeroMaxLenDisablesTruncation(t *testing.T) {
+	// 配置了独立审计库时 auditBodyMaxLen 返回 0，truncateBody 应原样返回不截断。
+	s := strings.Repeat("x", 10000)
+	if got := truncateBody(s, 0); got != s {
+		t.Errorf("maxLen=0 should disable truncation and return input verbatim")
+	}
+	// 负数 maxLen 同样视为不截断（防御性）
+	if got := truncateBody(s, -1); got != s {
+		t.Errorf("negative maxLen should disable truncation and return input verbatim")
+	}
+	// 流式输入在 maxLen=0 时同样完整保留，不进入流式截断分支
+	stream := "data: first\ndata: second\ndata: [DONE]"
+	if got := truncateBody(stream, 0); got != stream {
+		t.Errorf("stream body with maxLen=0 should be returned verbatim")
+	}
+}
+
 func TestTruncateStreamBody_KeepsHeadAndTailDropsMiddle(t *testing.T) {
 	// 40 行短 SSE，每行 "data: Lxx"（9 字节）。尾部 20 行 = 199 字节。
 	// maxLen=250 留出 headBudget>0，结果形如 head + marker + tail。
