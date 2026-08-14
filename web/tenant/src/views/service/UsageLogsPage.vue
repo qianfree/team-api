@@ -11,10 +11,6 @@ import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
 
-// 日期辅助（native，避免引入 dayjs 依赖）
-function pad2(n: number): string {
-	return String(n).padStart(2, '0')
-}
 // timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
 function tsToStr(ts: number): string {
 	const d = new Date(ts)
@@ -208,16 +204,6 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	if (taskId) query.task_id = taskId
 	else query.request_id = requestId
 	router.push({ name: 'TenantRequestAuditLogs', query })
-}
-
-function hasCacheTokens(log: any): boolean {
-	return (log.cache_creation_tokens > 0) || (log.cache_read_tokens > 0) ||
-		(log.cache_creation_5m_tokens > 0) || (log.cache_creation_1h_tokens > 0)
-}
-
-function hasExtraTokens(log: any): boolean {
-	return (log.reasoning_tokens > 0) || (log.audio_input_tokens > 0) ||
-		(log.audio_output_tokens > 0) || (log.image_output_tokens > 0)
 }
 
 function hasUpstreamModel(log: any): boolean {

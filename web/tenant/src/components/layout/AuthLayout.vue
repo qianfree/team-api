@@ -86,7 +86,6 @@ onBeforeUnmount(() => {
 	background: rgba(255, 255, 255, 0.66);
 	box-shadow: var(--shadow-glass-sm), inset 0 1px 0 rgba(255, 255, 255, 0.94);
 	backdrop-filter: blur(20px) saturate(1.16);
-	-webkit-backdrop-filter: blur(20px) saturate(1.16);
 }
 
 .auth-card {

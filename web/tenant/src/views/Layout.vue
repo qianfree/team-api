@@ -600,7 +600,6 @@ onBeforeUnmount(() => {
 .user-dropdown {
 	background: #fff;
 	backdrop-filter: none;
-	-webkit-backdrop-filter: none;
 }
 
 .fade-enter-active,
