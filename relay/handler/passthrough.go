@@ -48,9 +48,13 @@ func canPassThrough(info *common.RelayInfo) bool {
 }
 
 // inboundMatchesChannelNative 判断入站格式是否与渠道原生格式匹配（匹配则可原样直连转发）。
+//   - 渠道显式声明上游为 Responses 协议（upstream_responses）：Responses 入站视为原生匹配。
 //   - 普通渠道：入站格式须等于该渠道的唯一原生格式（helper.ProviderNativeFormat）。
 //   - 多协议原生透传渠道（New API / Sub2API）：OpenAI/Claude/Gemini 三种格式均视为匹配。
 func inboundMatchesChannelNative(info *common.RelayInfo) bool {
+	if info.ChannelMeta.Settings.UpstreamResponses {
+		return info.InboundFormat == constant.RelayFormatResponses
+	}
 	if constant.IsMultiNativeProvider(info.ChannelMeta.ChannelType) {
 		switch info.InboundFormat {
 		case constant.RelayFormatOpenAI, constant.RelayFormatClaude, constant.RelayFormatGemini:

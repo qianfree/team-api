@@ -40,6 +40,7 @@ type ChannelItem struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
+	UpstreamResponses        bool     `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
@@ -65,6 +66,7 @@ type ChannelCreateReq struct {
 	Remark                   string  `json:"remark" dc:"备注"`
 	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`
 	UseProxy                 bool    `json:"use_proxy" d:"false" dc:"启用代理"`
+	UpstreamResponses        bool    `json:"upstream_responses" d:"false" dc:"上游使用 OpenAI Responses 协议（/v1/responses），responses 入站直连转发"`
 	SharingThreshold         float64 `json:"sharing_threshold" d:"0.6" dc:"普通租户借用阈值"`
 	PreemptionThreshold      float64 `json:"preemption_threshold" d:"0.8" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds" d:"30" dc:"被抢占后冷却时间(秒)"`
@@ -93,6 +95,7 @@ type ChannelUpdateReq struct {
 	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
 	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
 	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
+	UpstreamResponses        *bool    `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold" dc:"普通租户借用阈值"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds" dc:"被抢占后冷却时间(秒)"`
@@ -127,6 +130,7 @@ type ChannelDetailRes struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
+	UpstreamResponses        bool     `json:"upstream_responses" dc:"上游使用 OpenAI Responses 协议（/v1/responses）"`
 	SharingThreshold         *float64 `json:"sharing_threshold"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`

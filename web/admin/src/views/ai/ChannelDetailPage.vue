@@ -68,6 +68,7 @@ const editForm = reactive({
   status: 'active',
   is_vip: false,
   use_proxy: false,
+  upstream_responses: false,
   sharing_threshold: null as number | null,
   preemption_threshold: null as number | null,
   borrowing_cooldown_seconds: null as number | null,
@@ -89,6 +90,7 @@ function openEditModal() {
     status: detail.value.status || 'active',
     is_vip: detail.value.is_vip || false,
     use_proxy: detail.value.use_proxy || false,
+    upstream_responses: detail.value.upstream_responses || false,
     sharing_threshold: detail.value.sharing_threshold ?? null,
     preemption_threshold: detail.value.preemption_threshold ?? null,
     borrowing_cooldown_seconds: detail.value.borrowing_cooldown_seconds ?? null,
@@ -795,6 +797,12 @@ function formatHeaders(headers: Record<string, string>): string {
           <ACol :span="12">
             <AFormItem label="使用代理">
               <ASwitch v-model="editForm.use_proxy" />
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="上游使用 Responses 协议">
+              <ASwitch v-model="editForm.upstream_responses" />
+              <template #extra><span class="field-help">上游为 OpenAI Responses API（/v1/responses），responses 入站直连转发</span></template>
             </AFormItem>
           </ACol>
         </ARow>

@@ -76,3 +76,14 @@ func TestParseChannelSettings_FullOverride(t *testing.T) {
 		t.Errorf("RetryCount = %d, want 3", s.RetryCount)
 	}
 }
+
+func TestParseChannelSettings_UpstreamResponses(t *testing.T) {
+	// 未配置时默认 false
+	if s := ParseChannelSettings(`{}`); s.UpstreamResponses {
+		t.Error("UpstreamResponses should default to false")
+	}
+	// 开启后正确解析
+	if s := ParseChannelSettings(`{"upstream_responses":true}`); !s.UpstreamResponses {
+		t.Error("UpstreamResponses should parse true")
+	}
+}
