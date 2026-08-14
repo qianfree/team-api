@@ -18,6 +18,13 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return false
 	}
 
+	// responses-only 桥接渠道的 chat 入站：chat 体与上游 /v1/responses 端点不兼容，
+	// 必须经 ConvertOpenAIToResponses 桥接转换，即使显式开启直连也不得原样透传。
+	if info.ChannelMeta.ChatViaResponses &&
+		constant.RelayMode(info.RelayMode) == constant.RelayModeChatCompletions {
+		return false
+	}
+
 	// 显式开启：运营者明确配置直连，不做额外检查
 	if settings.PassThroughBodyEnabled {
 		return true
@@ -48,11 +55,14 @@ func canPassThrough(info *common.RelayInfo) bool {
 }
 
 // inboundMatchesChannelNative 判断入站格式是否与渠道原生格式匹配（匹配则可原样直连转发）。
-//   - 渠道显式声明上游为 Responses 协议（upstream_responses）：Responses 入站视为原生匹配。
+//   - 上游原生支持 Responses 协议（supports_responses / chat_via_responses）：Responses 入站视为原生匹配。
 //   - 普通渠道：入站格式须等于该渠道的唯一原生格式（helper.ProviderNativeFormat）。
 //   - 多协议原生透传渠道（New API / Sub2API）：OpenAI/Claude/Gemini 三种格式均视为匹配。
+//
+// 注意：chat_via_responses（responses-only 桥接渠道）的 chat 入站由 canPassThrough
+// 前置硬排除——chat 体必须经 ConvertOpenAIToResponses 转换后才能发 /v1/responses。
 func inboundMatchesChannelNative(info *common.RelayInfo) bool {
-	if info.ChannelMeta.Settings.UpstreamResponses {
+	if info.ChannelMeta.UpstreamSpeaksResponses() {
 		return info.InboundFormat == constant.RelayFormatResponses
 	}
 	if constant.IsMultiNativeProvider(info.ChannelMeta.ChannelType) {

@@ -58,8 +58,8 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	case constant.RelayModeRerank:
 		return baseURL + "/v1/rerank", nil
 	case constant.RelayModeResponses, constant.RelayModeResponsesCompact:
-		// 渠道上游为 Responses 协议：直接打 /v1/responses 端点（响应按 Responses 格式原样透传）
-		if info.ChannelMeta.Settings.UpstreamResponses {
+		// 上游原生支持 Responses 协议：直接打 /v1/responses 端点（响应按 Responses 格式原样透传）
+		if info.ChannelMeta.UpstreamSpeaksResponses() {
 			if constant.RelayMode(info.RelayMode) == constant.RelayModeResponsesCompact {
 				return baseURL + "/v1/responses/compact", nil
 			}
@@ -134,8 +134,8 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 根据入站格式转换请求体为 OpenAI 格式，然后做 OpenAI 特有后处理。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	mode := constant.RelayMode(info.RelayMode)
-	// responses 入站 + 渠道声明上游为 Responses 协议：保持 Responses 格式直连，不做 chat 转换
-	responsesUpstream := info.ChannelMeta.Settings.UpstreamResponses && info.InboundFormat == constant.RelayFormatResponses
+	// responses 入站 + 上游原生支持 Responses 协议：保持 Responses 格式直连，不做 chat 转换
+	responsesUpstream := info.ChannelMeta.UpstreamSpeaksResponses() && info.InboundFormat == constant.RelayFormatResponses
 
 	// Audio/Rerank: OpenAI 原生格式直接透传（不做 replaceModelIfNeeded 和 injectStreamOptions）
 	switch mode {
@@ -172,6 +172,25 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	default:
 		converted = bytes.NewReader(requestBody)
 	}
+
+	// responses-only 上游桥接：chat 请求体转换为 Responses 格式发送 /v1/responses。
+	// 转换器自行处理模型映射，并读取 chat 体的 reasoning_effort 映射为 reasoning.effort
+	// （thinking 后缀先注入 chat 体再进转换器），故此分支直接返回、不走后续 chat 后处理。
+	if info.UseResponsesAPI && mode == constant.RelayModeChatCompletions && !responsesUpstream {
+		if info.ReasoningEffort != "" {
+			converted = injectReasoningEffort(converted, info.ReasoningEffort)
+		}
+		body, err := io.ReadAll(converted)
+		if err != nil {
+			return nil, fmt.Errorf("read chat body for responses bridge failed: %w", err)
+		}
+		r, err := ConvertOpenAIToResponses(body, info)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(r), nil
+	}
+
 	result := replaceModelIfNeeded(converted, info)
 	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数；
 	// Responses 上游走原生 stream 字段，不注入 chat 专属 stream_options
@@ -262,7 +281,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return handleGeminiInboundNonStream(ctx, resp, info, writer)
 	case constant.RelayFormatResponses:
-		if info.ChannelMeta.Settings.UpstreamResponses {
+		if info.ChannelMeta.UpstreamSpeaksResponses() {
 			// 上游为 Responses 协议：原样透传上游 Responses 响应
 			if info.IsStream {
 				return a.handleResponsesUpstreamStream(ctx, resp, info, writer)

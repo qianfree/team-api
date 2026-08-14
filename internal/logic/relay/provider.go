@@ -993,6 +993,8 @@ func (p *DataProviderImpl) MaterializeSelection(ctx context.Context, channelID, 
 		IsModelMapped:     meta.IsModelMapped,
 		MaxConcurrency:    meta.MaxConcurrency,
 		Settings:          ParseChannelSettings(meta.Settings),
+		SupportsResponses: meta.SupportsResponses,
+		ChatViaResponses:  meta.ChatViaResponses,
 	}, nil
 }
 

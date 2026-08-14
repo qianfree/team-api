@@ -67,7 +67,22 @@ type Channel struct {
 
 	KeyIDs         []int64 // active 状态的渠道 Key ID 列表（按 id 升序）；空表示由适配层自行取 Key
 	StrictCapacity bool    // Redis 故障时 fail-closed
+
+	// 协议能力（chn_abilities 渠道×模型级），参与 protoFactor 软偏好：
+	// responses 入站偏好 SupportsResponses 渠道（避免经 chat 转换丢失有状态 Responses 特性），
+	// chat 入站偏好原生 chat 渠道（ChatViaResponses 桥接渠道降权但仍可用）。
+	SupportsResponses bool // 模型在该渠道支持 /v1/responses 原生协议
+	ChatViaResponses  bool // 上游仅有 Responses 协议，chat 需经桥接发送
 }
+
+// ProtoPreference 入站端点协议偏好（软偏好，只降权不排除）。
+type ProtoPreference uint8
+
+const (
+	ProtoAny       ProtoPreference = iota // 非文本生成端点 / 无偏好
+	ProtoResponses                        // responses 入站：偏好 SupportsResponses 渠道
+	ProtoChat                             // chat 入站：偏好原生 chat 渠道
+)
 
 // ScoredChannel 打分后的候选。
 type ScoredChannel struct {
@@ -84,6 +99,7 @@ type WeightBreakdown struct {
 	Headroom  float64 `json:"headroom"`
 	Cost      float64 `json:"cost"`
 	Ramp      float64 `json:"ramp"`
+	Proto     float64 `json:"proto"`
 	Effective float64 `json:"effective"`
 }
 
@@ -97,6 +113,9 @@ type RequestProfile struct {
 	Scope     []int64 // 租户渠道范围（空 = 不限制），由适配层填充
 	Replay    Replayability
 	Signals   SessionSignals
+	// Proto 入站端点协议偏好（ProtoAny=无偏好）。responses 入站软偏好
+	// SupportsResponses 渠道、chat 入站软偏好原生 chat 渠道，只降权不排除。
+	Proto ProtoPreference
 	// Policy 请求级策略覆盖（租户级差异化）。
 	// nil = 使用协调器全局策略。由适配层解析（全局 + 租户浅合并）后传入。
 	Policy *RoutingPolicy

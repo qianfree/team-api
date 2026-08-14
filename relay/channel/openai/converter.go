@@ -1149,6 +1149,22 @@ func extractOutputFromResponses(resp *dto.OpenAIResponsesResponse) (string, []dt
 func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 
+	// 非 200：上游在 SSE 开始前返回错误（非 SSE 体）。必须在 StreamScannerHandler 写出
+	// 200 SSE 响应头之前拦截，否则错误体会被当作 SSE 流转发、且无法再向客户端传递状态码。
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		}
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
+	}
+
 	responseID := fmt.Sprintf("chatcmpl-%s", info.RequestID)
 	createAt := time.Now().Unix()
 	model := info.ChannelMeta.UpstreamModelName
@@ -1412,7 +1428,10 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		// 错误体已写给客户端，标记 ResponseWritten 防止调度 FSM 误判为可重试导致二次写入
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		upstreamErr.ResponseWritten = true
+		return nil, upstreamErr
 	}
 
 	var responsesResp dto.OpenAIResponsesResponse

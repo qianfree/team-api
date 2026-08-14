@@ -257,10 +257,10 @@ const providerDefaultURLs: Record<number, string> = {
   35: 'https://api.openai.com',
 }
 
-const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, upstream_responses: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
+const form = reactive({ name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null as number | null, preemption_threshold: null as number | null, borrowing_cooldown_seconds: null as number | null })
 
 function openCreate() {
-  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, upstream_responses: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
+  Object.assign(form, { name: '', type: 1, base_url: '', api_key: '', priority: 0, weight: 100, max_concurrency: 100, tier: 'primary', strict_capacity: false, test_model: '', remark: '', status: 'active', is_vip: false, use_proxy: false, sharing_threshold: null, preemption_threshold: null, borrowing_cooldown_seconds: null })
   showModal.value = true
 }
 
@@ -601,12 +601,6 @@ const { exporting, exportFile } = useExport({
             <AFormItem label="使用代理">
               <ASwitch v-model="form.use_proxy" />
               <template #extra><span class="field-help">需先在系统设置中配置代理</span></template>
-            </AFormItem>
-          </ACol>
-          <ACol :span="12">
-            <AFormItem label="上游使用 Responses 协议">
-              <ASwitch v-model="form.upstream_responses" />
-              <template #extra><span class="field-help">上游为 OpenAI Responses API（/v1/responses），responses 入站直连转发</span></template>
             </AFormItem>
           </ACol>
         </ARow>

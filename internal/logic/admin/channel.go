@@ -139,7 +139,6 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			Remark:                   ch.Remark,
 			IsVIP:                    ch.IsVIP,
 			UseProxy:                 settings.UseProxy,
-			UpstreamResponses:        settings.UpstreamResponses,
 			SharingThreshold:         ch.SharingThreshold,
 			PreemptionThreshold:      ch.PreemptionThreshold,
 			BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
@@ -241,12 +240,15 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 
 	// 克隆 abilities
 	var abilities []struct {
-		ModelName     string `json:"model_name"`
-		UpstreamModel string `json:"upstream_model"`
-		Enabled       bool   `json:"enabled"`
+		ModelName         string  `json:"model_name"`
+		UpstreamModel     string  `json:"upstream_model"`
+		Enabled           bool    `json:"enabled"`
+		CostRatio         float64 `json:"cost_ratio"`
+		SupportsResponses bool    `json:"supports_responses"`
+		ChatViaResponses  bool    `json:"chat_via_responses"`
 	}
 	err = dao.ChnAbilities.Ctx(ctx).
-		Fields("model_name, upstream_model, enabled").
+		Fields("model_name, upstream_model, enabled, cost_ratio, supports_responses, chat_via_responses").
 		Where("channel_id", req.ID).
 		Scan(&abilities)
 	if err != nil {
@@ -254,10 +256,13 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 	}
 	for _, ab := range abilities {
 		_, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
-			ChannelId:     newID,
-			ModelName:     ab.ModelName,
-			UpstreamModel: ab.UpstreamModel,
-			Enabled:       ab.Enabled,
+			ChannelId:         newID,
+			ModelName:         ab.ModelName,
+			UpstreamModel:     ab.UpstreamModel,
+			Enabled:           ab.Enabled,
+			CostRatio:         ab.CostRatio,
+			SupportsResponses: ab.SupportsResponses,
+			ChatViaResponses:  ab.ChatViaResponses,
 		})
 		if err != nil {
 			g.Log().Warningf(ctx, "clone ability %s for channel %d failed: %v", ab.ModelName, newID, err)
@@ -280,15 +285,10 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		baseURL = defaultProviderURL(req.Type)
 	}
 
-	// Build settings JSON（use_proxy / upstream_responses 协议类开关）
+	// Build settings JSON
 	settingsJSON := "{}"
-	if req.UseProxy || req.UpstreamResponses {
-		settings := relay.DefaultChannelSettings()
-		settings.UseProxy = req.UseProxy
-		settings.UpstreamResponses = req.UpstreamResponses
-		if b, err := json.Marshal(settings); err == nil {
-			settingsJSON = string(b)
-		}
+	if req.UseProxy {
+		settingsJSON = `{"use_proxy":true}`
 	}
 
 	tier := req.Tier
@@ -386,17 +386,12 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		data.BorrowingCooldownSeconds = *req.BorrowingCooldownSeconds
 	}
 
-	// Update protocol-related settings in settings JSONB
-	if req.UseProxy != nil || req.UpstreamResponses != nil {
+	// Update use_proxy in settings JSONB
+	if req.UseProxy != nil {
 		var currentSettings string
 		_ = dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("settings").Scan(&currentSettings)
 		settings := relay.ParseChannelSettings(currentSettings)
-		if req.UseProxy != nil {
-			settings.UseProxy = *req.UseProxy
-		}
-		if req.UpstreamResponses != nil {
-			settings.UpstreamResponses = *req.UpstreamResponses
-		}
+		settings.UseProxy = *req.UseProxy
 		if settingsJSON, err := json.Marshal(settings); err == nil {
 			data.Settings = string(settingsJSON)
 		}
@@ -540,7 +535,6 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
 		UseProxy:                 settings.UseProxy,
-		UpstreamResponses:        settings.UpstreamResponses,
 		SharingThreshold:         ch.SharingThreshold,
 		PreemptionThreshold:      ch.PreemptionThreshold,
 		BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
@@ -595,11 +589,13 @@ func (s *sAdmin) SetChannelAbilities(ctx context.Context, req *v1.ChannelAbility
 				costRatio = 1.0
 			}
 			if _, err := dao.ChnAbilities.Ctx(ctx).Insert(do.ChnAbilities{
-				ChannelId:     req.ChannelID,
-				ModelName:     ab.ModelName,
-				UpstreamModel: ab.UpstreamModel,
-				Enabled:       ab.Enabled,
-				CostRatio:     costRatio,
+				ChannelId:         req.ChannelID,
+				ModelName:         ab.ModelName,
+				UpstreamModel:     ab.UpstreamModel,
+				Enabled:           ab.Enabled,
+				CostRatio:         costRatio,
+				SupportsResponses: ab.SupportsResponses,
+				ChatViaResponses:  ab.ChatViaResponses,
 			}); err != nil {
 				return err
 			}
@@ -660,11 +656,13 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 // GetChannelAbilities 获取渠道模型能力列表
 func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (*v1.ChannelAbilitiesGetRes, error) {
 	var abilities []struct {
-		ID            int64   `json:"id"`
-		ModelName     string  `json:"model_name"`
-		UpstreamModel string  `json:"upstream_model"`
-		Enabled       bool    `json:"enabled"`
-		CostRatio     float64 `json:"cost_ratio"`
+		ID                int64   `json:"id"`
+		ModelName         string  `json:"model_name"`
+		UpstreamModel     string  `json:"upstream_model"`
+		Enabled           bool    `json:"enabled"`
+		CostRatio         float64 `json:"cost_ratio"`
+		SupportsResponses bool    `json:"supports_responses"`
+		ChatViaResponses  bool    `json:"chat_via_responses"`
 	}
 
 	err := dao.ChnAbilities.Ctx(ctx).
@@ -678,11 +676,13 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 	list := make([]v1.AbilityItem, len(abilities))
 	for i, a := range abilities {
 		list[i] = v1.AbilityItem{
-			ID:            a.ID,
-			ModelName:     a.ModelName,
-			UpstreamModel: a.UpstreamModel,
-			Enabled:       a.Enabled,
-			CostRatio:     a.CostRatio,
+			ID:                a.ID,
+			ModelName:         a.ModelName,
+			UpstreamModel:     a.UpstreamModel,
+			Enabled:           a.Enabled,
+			CostRatio:         a.CostRatio,
+			SupportsResponses: a.SupportsResponses,
+			ChatViaResponses:  a.ChatViaResponses,
 		}
 	}
 

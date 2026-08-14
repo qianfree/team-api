@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,9 +28,8 @@ func responsesUpstreamInfo(relayMode constant.RelayMode, isStream bool) *common.
 			BaseURL:           "https://upstream.example.com",
 			UpstreamModelName: "gpt-4o-upstream",
 			IsModelMapped:     false,
-			Settings: common.ChannelSettings{
-				UpstreamResponses: true,
-			},
+
+			SupportsResponses: true,
 		},
 	}
 }
@@ -62,7 +62,8 @@ func TestAdaptor_GetRequestURL_ResponsesUpstream(t *testing.T) {
 // responses 入站仍转换到 /v1/chat/completions（chat-only 上游兜底）。
 func TestAdaptor_GetRequestURL_ResponsesChatFallback(t *testing.T) {
 	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
-	info.ChannelMeta.Settings.UpstreamResponses = false
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.ChatViaResponses = false
 	a := &Adaptor{}
 	got, err := a.GetRequestURL(info)
 	if err != nil {
@@ -70,6 +71,40 @@ func TestAdaptor_GetRequestURL_ResponsesChatFallback(t *testing.T) {
 	}
 	if want := "https://upstream.example.com/v1/chat/completions"; got != want {
 		t.Errorf("GetRequestURL = %q, want %q", got, want)
+	}
+}
+
+// TestAdaptor_GetRequestURL_ChatViaResponses responses-only 渠道（chat_via_responses）：
+// responses 入站同样直连 /v1/responses（上游本来就说 Responses 协议），
+// chat 入站经 UseResponsesAPI 桥接也打 /v1/responses。
+func TestAdaptor_GetRequestURL_ChatViaResponses(t *testing.T) {
+	a := &Adaptor{}
+
+	// responses 入站：仅勾 chat_via_responses（未勾 supports_responses）也应直连
+	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.ChatViaResponses = true
+	got, err := a.GetRequestURL(info)
+	if err != nil {
+		t.Fatalf("GetRequestURL error: %v", err)
+	}
+	if want := "https://upstream.example.com/v1/responses"; got != want {
+		t.Errorf("responses inbound on chat_via_responses channel: URL = %q, want %q", got, want)
+	}
+
+	// chat 入站 + 桥接标志：URL 走 /v1/responses
+	chatInfo := responsesUpstreamInfo(constant.RelayModeChatCompletions, false)
+	chatInfo.InboundFormat = constant.RelayFormatOpenAI
+	chatInfo.ClientFormat = constant.RelayFormatOpenAI
+	chatInfo.ChannelMeta.SupportsResponses = false
+	chatInfo.ChannelMeta.ChatViaResponses = true
+	chatInfo.UseResponsesAPI = true
+	got, err = a.GetRequestURL(chatInfo)
+	if err != nil {
+		t.Fatalf("GetRequestURL error: %v", err)
+	}
+	if want := "https://upstream.example.com/v1/responses"; got != want {
+		t.Errorf("chat inbound via bridge: URL = %q, want %q", got, want)
 	}
 }
 
@@ -307,5 +342,204 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream_ModelMapped(t *testing.T) {
 	// 模型名回写不得破坏 usage 解析
 	if usage.PromptTokens != 10 || usage.CompletionTokens != 20 {
 		t.Errorf("usage = %+v, want prompt=10 completion=20", usage)
+	}
+}
+
+// TestAdaptor_ConvertRequest_ChatViaResponsesBridge responses-only 上游桥接：
+// chat 请求体转换为 Responses 格式（messages→input），thinking 后缀映射 reasoning.effort，
+// 不注入 chat 专属 stream_options。
+func TestAdaptor_ConvertRequest_ChatViaResponsesBridge(t *testing.T) {
+	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, true)
+	info.InboundFormat = constant.RelayFormatOpenAI
+	info.ClientFormat = constant.RelayFormatOpenAI
+	info.OriginModelName = "gpt-4o"
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.ChatViaResponses = true
+	info.UseResponsesAPI = true
+
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"say hi"}],"stream":true}`)
+	a := &Adaptor{}
+	out, err := a.ConvertRequest(context.Background(), info, body)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad bridged json: %v\n%s", err, raw)
+	}
+	if _, ok := m["messages"]; ok {
+		t.Error("bridge should convert messages to responses input")
+	}
+	if _, ok := m["input"]; !ok {
+		t.Error("bridge output missing input field")
+	}
+	if _, ok := m["stream_options"]; ok {
+		t.Error("bridge should NOT inject chat stream_options")
+	}
+	if stream := string(m["stream"]); stream != "true" {
+		t.Errorf("stream = %s, want true", stream)
+	}
+}
+
+// TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped 桥接 + 模型映射：
+// 转换器应将模型名替换为上游模型名。
+func TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped(t *testing.T) {
+	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, false)
+	info.InboundFormat = constant.RelayFormatOpenAI
+	info.ClientFormat = constant.RelayFormatOpenAI
+	info.ChannelMeta.IsModelMapped = true
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.ChatViaResponses = true
+	info.UseResponsesAPI = true
+
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	a := &Adaptor{}
+	out, err := a.ConvertRequest(context.Background(), info, body)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad bridged json: %v", err)
+	}
+	if got := string(m["model"]); got != `"gpt-4o-upstream"` {
+		t.Errorf("model = %s, want gpt-4o-upstream", got)
+	}
+}
+
+// responsesInboundInfo responses 入站 + 上游 chat 渠道（无 responses 协议能力），
+// 响应侧走 chat→responses 桥接（handleResponsesInboundStream）。
+func responsesInboundInfo(isStream bool) *common.RelayInfo {
+	info := responsesUpstreamInfo(constant.RelayModeResponses, isStream)
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.ChatViaResponses = false
+	return info
+}
+
+// TestExtractStreamEmbeddedError 内嵌错误对象检测：
+// "error":null 与无 error 键不算错误，对象/字符串错误都要识别。
+func TestExtractStreamEmbeddedError(t *testing.T) {
+	if _, ok := extractStreamEmbeddedError([]byte(`{"id":"1","choices":[]}`)); ok {
+		t.Error("chunk without error key should not be detected")
+	}
+	if _, ok := extractStreamEmbeddedError([]byte(`{"error":null,"choices":[]}`)); ok {
+		t.Error(`"error":null should not be detected`)
+	}
+	if body, ok := extractStreamEmbeddedError([]byte(`{"error":{"type":"rate_limit_error","message":"limited"}}`)); !ok {
+		t.Error("error object should be detected")
+	} else if !strings.Contains(string(body), "rate_limit_error") {
+		t.Errorf("error body = %s", string(body))
+	}
+	if _, ok := extractStreamEmbeddedError([]byte(`{"error":"overloaded"}`)); !ok {
+		t.Error("string error should be detected")
+	}
+	if _, ok := extractStreamEmbeddedError([]byte(`not json`)); ok {
+		t.Error("invalid json should not be detected")
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorBeforeEvents
+// 上游 200 + SSE 但首个 data 行即内嵌错误对象（部分聚合商的出错形态）：
+// 必须返回 upstream error 并向客户端透传错误体，而非静默合成空 response.completed。
+func TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorBeforeEvents(t *testing.T) {
+	errLine := `{"error":{"type":"rate_limit_error","message":"Rate limit reached"}}`
+	ss := strings.Join([]string{
+		"data: " + errLine,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+
+	info := responsesInboundInfo(true)
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	_, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err == nil {
+		t.Fatal("embedded upstream error should return an upstream error, got nil")
+	}
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("error should be *constant.RelayError, got %T", err)
+	}
+	if !relayErr.ResponseWritten {
+		t.Error("ResponseWritten should be true after writing error body to client")
+	}
+	if !strings.Contains(rec.Body.String(), "rate_limit_error") {
+		t.Errorf("error body not passed through: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "response.completed") {
+		t.Errorf("should not synthesize empty response.completed on upstream error: %s", rec.Body.String())
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorMidStream
+// 流中途出现内嵌错误：已发送的事件保留，处理终止并返回 upstream error。
+func TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorMidStream(t *testing.T) {
+	ss := strings.Join([]string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}`,
+		"",
+		`data: {"error":{"type":"server_error","message":"upstream crashed"}}`,
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+
+	info := responsesInboundInfo(true)
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	usage, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err == nil {
+		t.Fatal("mid-stream embedded error should return an upstream error, got nil")
+	}
+	if usage == nil {
+		t.Fatal("usage should be non-nil for error path")
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, "response.created") || !strings.Contains(out, `"delta":"Hi"`) {
+		t.Errorf("events emitted before the error should remain:\n%s", out)
+	}
+	if strings.Contains(out, "response.completed") {
+		t.Errorf("should not synthesize response.completed after mid-stream error:\n%s", out)
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks
+// 上游 data 行全部无法解析为 chat chunk（如返回了非 chat 格式）：
+// 保持既有兜底行为（合成空 response.completed、不报错），但不再静默无痕。
+func TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks(t *testing.T) {
+	ss := strings.Join([]string{
+		"data: {invalid json",
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+
+	info := responsesInboundInfo(true)
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	usage, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err != nil {
+		t.Fatalf("unparseable chunks keep fallback behavior, unexpected error: %v", err)
+	}
+	if !strings.Contains(rec.Body.String(), "response.completed") {
+		t.Errorf("fallback response.completed missing:\n%s", rec.Body.String())
+	}
+	if usage == nil {
+		t.Fatal("usage should be non-nil")
 	}
 }

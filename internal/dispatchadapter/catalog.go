@@ -21,33 +21,37 @@ const (
 
 // ChannelMeta 转发所需的渠道元数据（调度核心不关心，handler 构造 ChannelSelection 用）。
 type ChannelMeta struct {
-	ChannelID      int64
-	ChannelName    string
-	ChannelType    int
-	BaseURL        string
-	UpstreamModel  string
-	IsModelMapped  bool
-	Settings       string
-	MaxConcurrency int
-	StrictCapacity bool
-	Tier           string
+	ChannelID         int64
+	ChannelName       string
+	ChannelType       int
+	BaseURL           string
+	UpstreamModel     string
+	IsModelMapped     bool
+	Settings          string
+	MaxConcurrency    int
+	StrictCapacity    bool
+	Tier              string
+	SupportsResponses bool // 模型在该渠道支持 /v1/responses（responses 入站直连 + 调度软偏好）
+	ChatViaResponses  bool // responses-only 上游：chat 入站经桥接发送 /v1/responses
 }
 
 // catalogRow 目录加载的原始行（渠道×模型）。
 type catalogRow struct {
-	ChannelID      int64   `json:"channel_id"`
-	ChannelName    string  `json:"channel_name"`
-	ChannelType    int     `json:"channel_type"`
-	BaseURL        string  `json:"base_url"`
-	ModelName      string  `json:"model_name"`
-	UpstreamModel  string  `json:"upstream_model"`
-	Weight         int     `json:"weight"`
-	MaxConcurrency int     `json:"max_concurrency"`
-	Settings       string  `json:"settings"`
-	Tier           string  `json:"tier"`
-	StrictCapacity bool    `json:"strict_capacity"`
-	CostRatio      float64 `json:"cost_ratio"`
-	CreatedAtMs    int64   `json:"created_at_ms"`
+	ChannelID         int64   `json:"channel_id"`
+	ChannelName       string  `json:"channel_name"`
+	ChannelType       int     `json:"channel_type"`
+	BaseURL           string  `json:"base_url"`
+	ModelName         string  `json:"model_name"`
+	UpstreamModel     string  `json:"upstream_model"`
+	Weight            int     `json:"weight"`
+	MaxConcurrency    int     `json:"max_concurrency"`
+	Settings          string  `json:"settings"`
+	Tier              string  `json:"tier"`
+	StrictCapacity    bool    `json:"strict_capacity"`
+	CostRatio         float64 `json:"cost_ratio"`
+	CreatedAtMs       int64   `json:"created_at_ms"`
+	SupportsResponses bool    `json:"supports_responses"`
+	ChatViaResponses  bool    `json:"chat_via_responses"`
 }
 
 // catalogData 一次完整加载的目录数据。
@@ -294,20 +298,22 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		}
 
 		ch := dispatch.Channel{
-			ID:             row.ChannelID,
-			Name:           row.ChannelName,
-			Tier:           dispatch.Tier(row.Tier),
-			BaseWeight:     float64(row.Weight),
-			CostRatio:      row.CostRatio,
-			SuccEwma:       rt.SuccEwma,
-			LatEwmaMs:      rt.LatEwmaMs,
-			Inflight:       rt.Inflight,
-			SoftLimit:      effectiveSoftLimit(row.MaxConcurrency, rt.Onset429Ewma),
-			Breaker:        rt.Breaker,
-			ModelBreaker:   rt.ModelBreaker,
-			RampElapsedMs:  rampElapsed(now, rt.RecoveredMs, row.CreatedAtMs, rampWindowMs),
-			KeyIDs:         data.keysByChannel[row.ChannelID],
-			StrictCapacity: row.StrictCapacity,
+			ID:                row.ChannelID,
+			Name:              row.ChannelName,
+			Tier:              dispatch.Tier(row.Tier),
+			BaseWeight:        float64(row.Weight),
+			CostRatio:         row.CostRatio,
+			SuccEwma:          rt.SuccEwma,
+			LatEwmaMs:         rt.LatEwmaMs,
+			Inflight:          rt.Inflight,
+			SoftLimit:         effectiveSoftLimit(row.MaxConcurrency, rt.Onset429Ewma),
+			Breaker:           rt.Breaker,
+			ModelBreaker:      rt.ModelBreaker,
+			RampElapsedMs:     rampElapsed(now, rt.RecoveredMs, row.CreatedAtMs, rampWindowMs),
+			KeyIDs:            data.keysByChannel[row.ChannelID],
+			StrictCapacity:    row.StrictCapacity,
+			SupportsResponses: row.SupportsResponses,
+			ChatViaResponses:  row.ChatViaResponses,
 		}
 		idx.byModel[row.ModelName] = append(idx.byModel[row.ModelName], ch)
 		idx.channelModels[row.ChannelID] = append(idx.channelModels[row.ChannelID], row.ModelName)
@@ -320,16 +326,18 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 			upstream = row.ModelName
 		}
 		idx.meta[row.ChannelID][row.ModelName] = ChannelMeta{
-			ChannelID:      row.ChannelID,
-			ChannelName:    row.ChannelName,
-			ChannelType:    row.ChannelType,
-			BaseURL:        row.BaseURL,
-			UpstreamModel:  upstream,
-			IsModelMapped:  row.UpstreamModel != "" && row.UpstreamModel != row.ModelName,
-			Settings:       row.Settings,
-			MaxConcurrency: row.MaxConcurrency,
-			StrictCapacity: row.StrictCapacity,
-			Tier:           row.Tier,
+			ChannelID:         row.ChannelID,
+			ChannelName:       row.ChannelName,
+			ChannelType:       row.ChannelType,
+			BaseURL:           row.BaseURL,
+			UpstreamModel:     upstream,
+			IsModelMapped:     row.UpstreamModel != "" && row.UpstreamModel != row.ModelName,
+			Settings:          row.Settings,
+			MaxConcurrency:    row.MaxConcurrency,
+			StrictCapacity:    row.StrictCapacity,
+			Tier:              row.Tier,
+			SupportsResponses: row.SupportsResponses,
+			ChatViaResponses:  row.ChatViaResponses,
 		}
 		if row.StrictCapacity {
 			idx.strict[row.ChannelID] = row.MaxConcurrency
@@ -379,6 +387,7 @@ func loadCatalogFromDB(ctx context.Context) (*catalogData, error) {
 		Fields("c.id as channel_id, c.name as channel_name, c.type as channel_type, c.base_url, " +
 			"a.model_name, a.upstream_model, c.weight, c.max_concurrency, c.settings, " +
 			"c.tier, c.strict_capacity, a.cost_ratio, " +
+			"a.supports_responses, a.chat_via_responses, " +
 			"(EXTRACT(EPOCH FROM c.created_at) * 1000)::bigint as created_at_ms").
 		Scan(&rows)
 	if err != nil {
