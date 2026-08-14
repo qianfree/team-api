@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -70,13 +69,10 @@ func Rollback(ctx context.Context) error {
 
 	g.Log().Infof(ctx, "Rollback to %s complete, scheduling restart...", info.BackupVersion)
 
-	// 延迟退出：Rollback 在 HTTP handler 调用栈内同步执行，直接 os.Exit 会切断
-	// 尚未写出的响应（前端拿到连接重置而非成功提示）。先让 handler 返回响应，
-	// 稍后退出进程，由进程管理器（systemd/supervisor 等）拉起旧版本
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		os.Exit(0)
-	}()
+	// 走 SIGTERM 优雅退出（见 gracefulExit 注释）：先让 handler 把"回滚已启动"
+	// 响应写出去，再触发优雅关闭链路排空任务池/异步 Writer 后自然退出，
+	// 由进程管理器（systemd/supervisor 等）拉起旧版本
+	gracefulExit(ctx, "rollback complete")
 	return nil
 }
 

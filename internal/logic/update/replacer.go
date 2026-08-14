@@ -153,10 +153,11 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 
 	// Step 8: Restart
 	manager.setProgress(PhaseRestarting, "正在重启服务...", 90)
-	g.Log().Info(ctx, "Update complete, exiting for restart...")
-	time.Sleep(500 * time.Millisecond) // give status API a moment to respond
+	g.Log().Info(ctx, "Update complete, restarting...")
 
-	os.Exit(0)
+	// 走 SIGTERM 优雅关闭链路（见 gracefulExit 注释），让 cmd.go 的 defer 链
+	// 排空任务池并 flush 用量/审计日志后自然退出，由进程管理器拉起新版本
+	gracefulExit(ctx, "update complete")
 }
 
 // extractBinary extracts the team-api binary from a tar.gz archive to outputPath.
