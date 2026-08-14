@@ -623,7 +623,6 @@ useSeo({
 	border-bottom: 1px solid rgba(220, 229, 225, 0.82);
 	background: rgba(247, 250, 248, 0.88);
 	backdrop-filter: blur(18px) saturate(1.2);
-	-webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
 
 .header-inner,
@@ -2101,7 +2100,6 @@ useSeo({
 	border-bottom: 0;
 	background: transparent;
 	backdrop-filter: none;
-	-webkit-backdrop-filter: none;
 }
 
 .header-inner {
@@ -2146,7 +2144,6 @@ useSeo({
 	background: rgba(241, 245, 249, 0.58);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
 	backdrop-filter: blur(12px);
-	-webkit-backdrop-filter: blur(12px);
 }
 
 .header-nav a {
@@ -2211,7 +2208,6 @@ useSeo({
 	box-shadow: 0 5px 16px rgba(76, 91, 142, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 	color: #475569;
 	backdrop-filter: blur(14px);
-	-webkit-backdrop-filter: blur(14px);
 }
 
 .secondary-button:hover {
@@ -2263,7 +2259,6 @@ useSeo({
 	background: rgba(255, 255, 255, 0.64);
 	box-shadow: 0 18px 55px rgba(76, 91, 142, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 	backdrop-filter: blur(28px) saturate(1.16);
-	-webkit-backdrop-filter: blur(28px) saturate(1.16);
 }
 
 .category-panel {
@@ -2422,7 +2417,6 @@ useSeo({
 	box-shadow: 0 18px 55px rgba(76, 91, 142, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.92);
 	color: #111827;
 	backdrop-filter: blur(28px) saturate(1.18);
-	-webkit-backdrop-filter: blur(28px) saturate(1.18);
 }
 
 .cta-icon {
@@ -2471,7 +2465,6 @@ useSeo({
 	background: rgba(255, 255, 255, 0.9);
 	box-shadow: 0 24px 80px rgba(76, 91, 142, 0.24), inset 0 1px 0 #fff;
 	backdrop-filter: blur(28px) saturate(1.16);
-	-webkit-backdrop-filter: blur(28px) saturate(1.16);
 }
 
 .detail-hero {
