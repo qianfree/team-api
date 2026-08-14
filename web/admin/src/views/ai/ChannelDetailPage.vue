@@ -80,7 +80,7 @@ function openEditModal() {
     name: detail.value.name || '',
     base_url: detail.value.base_url || '',
     priority: detail.value.priority || 0,
-    weight: detail.value.weight || 100,
+    weight: detail.value.weight,
     max_concurrency: detail.value.max_concurrency ?? 100,
     tier: detail.value.tier || 'primary',
     strict_capacity: detail.value.strict_capacity || false,

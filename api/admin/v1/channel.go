@@ -83,8 +83,8 @@ type ChannelUpdateReq struct {
 	Type                     *int     `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
 	BaseURL                  string   `json:"base_url" dc:"API 基础地址"`
 	ApiKey                   *string  `json:"api_key" dc:"更新 API Key（留空不更新）"`
-	Priority                 int      `json:"priority" dc:"优先级"`
-	Weight                   int      `json:"weight" dc:"权重"`
+	Priority                 *int     `json:"priority" dc:"优先级（留空不更新）"`
+	Weight                   *int     `json:"weight" dc:"权重（留空不更新）"`
 	MaxConcurrency           *int     `json:"max_concurrency" v:"min:0" dc:"最大并发请求数（0=按上游 429 水位自动估算，留空不更新）"`
 	TestModel                string   `json:"test_model" dc:"测试模型名"`
 	Remark                   string   `json:"remark" dc:"备注"`
