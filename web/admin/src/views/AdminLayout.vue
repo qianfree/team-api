@@ -58,6 +58,7 @@ const updateModalVisible = ref(false)
 const updateLoading = ref(false)
 const executing = ref(false)
 const rollingBack = ref(false)
+const checking = ref(false)
 const updateStatus = ref<any>(null)
 const releaseNotes = ref('')
 const releaseUrl = ref('')
@@ -127,6 +128,16 @@ function openUpdateModal() {
   updateModalVisible.value = true
   fetchUpdateStatus()
   checkUpdate() // 打开弹窗时刷新版本检查，确保当前版本/最新版本为最新
+}
+
+// 立即检测：force=true 跳过后端检查缓存，强制向上游拉取最新版本信息
+async function manualCheck() {
+  checking.value = true
+  try {
+    await Promise.all([fetchUpdateStatus(), checkUpdate(true)])
+  } finally {
+    checking.value = false
+  }
 }
 
 function closeUpdateModal() {
@@ -717,6 +728,9 @@ onUnmounted(() => {
         <a-result>
           <template #icon><icon-check-circle-fill style="color: #00b42a; font-size: 32px;" /></template>
           <template #title><span style="color: #00b42a; font-size: 14px;">当前已是最新版本</span></template>
+          <template #extra>
+            <a-button size="small" :loading="checking" @click="manualCheck">立即检测</a-button>
+          </template>
         </a-result>
       </template>
 

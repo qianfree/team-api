@@ -35,8 +35,8 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 		}
 	}
 
-	// Call GitHub API
-	release, etag, err := fetchLatestRelease(ctx)
+	// Call GitHub API（force 时不带 ETag 条件请求，见 fetchLatestRelease 注释）
+	release, etag, err := fetchLatestRelease(ctx, !force)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -120,8 +120,11 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	return result, nil
 }
 
-// fetchLatestRelease calls the GitHub Releases API with conditional request support
-func fetchLatestRelease(ctx context.Context) (*GitHubRelease, string, error) {
+// fetchLatestRelease calls the GitHub Releases API.
+// conditional 为 true 时携带 If-None-Match ETag 做条件请求（省配额）；
+// 强制检测（force）必须传 false：GitHub /releases/latest 有 CDN 缓存，刚发布新版本后
+// 条件请求可能返回过期的 304 Not Modified，导致强制检测仍拿不到最新发行版。
+func fetchLatestRelease(ctx context.Context, conditional bool) (*GitHubRelease, string, error) {
 	url := githubAPIBase + "/releases/latest"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -133,9 +136,11 @@ func fetchLatestRelease(ctx context.Context) (*GitHubRelease, string, error) {
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	// Add ETag for conditional request
-	if etagVal := manager.lastETag.Load(); etagVal != nil {
-		if etag, ok := etagVal.(string); ok && etag != "" {
-			req.Header.Set("If-None-Match", etag)
+	if conditional {
+		if etagVal := manager.lastETag.Load(); etagVal != nil {
+			if etag, ok := etagVal.(string); ok && etag != "" {
+				req.Header.Set("If-None-Match", etag)
+			}
 		}
 	}
 
