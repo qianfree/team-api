@@ -590,7 +590,7 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   justify-content: center; width: fit-content; margin: 0 auto 1.5rem;
   border-radius: 14px;
   background: rgba(241, 245, 249, 0.8);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
@@ -634,7 +634,7 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   height: 440px;
   border-radius: 1.5rem; padding: 2rem 2.25rem;
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(28px) saturate(1.18); -webkit-backdrop-filter: blur(28px) saturate(1.18);
+  backdrop-filter: blur(28px) saturate(1.18);
   border: 1px solid rgba(255, 255, 255, 0.82);
   box-shadow: 0 18px 55px rgba(76, 91, 142, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
@@ -835,7 +835,7 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
 .announce-backdrop {
   position: absolute; inset: 0;
   background: rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 
 /* Card */
@@ -843,7 +843,7 @@ const mockChartHeights = [45, 62, 38, 71, 55, 82, 67, 48, 73, 58, 90, 65, 52, 78
   position: relative; width: 100%; max-width: 860px;
   border-radius: 1.5rem; overflow: hidden;
   background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(28px) saturate(1.18); -webkit-backdrop-filter: blur(28px) saturate(1.18);
+  backdrop-filter: blur(28px) saturate(1.18);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 32px 80px -16px rgba(15, 23, 42, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   animation: announceEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
