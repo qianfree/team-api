@@ -45,11 +45,13 @@ type tenantModelPriceRow struct {
 
 // groupPriceRow 分组模型的 base 价格查询结果
 type groupPriceRow struct {
-	ModelID             int64    `json:"model_id"`
-	BaseBillingMode     string   `json:"base_billing_mode"`
-	BaseInputPrice      float64  `json:"base_input_price"`
-	BaseOutputPrice     float64  `json:"base_output_price"`
-	BasePerRequestPrice *float64 `json:"base_per_request_price"`
+	ModelID                int64    `json:"model_id"`
+	BaseBillingMode        string   `json:"base_billing_mode"`
+	BaseInputPrice         float64  `json:"base_input_price"`
+	BaseOutputPrice        float64  `json:"base_output_price"`
+	BaseCacheReadPrice     float64  `json:"base_cache_read_price"`
+	BaseCacheCreationPrice float64  `json:"base_cache_creation_price"`
+	BasePerRequestPrice    *float64 `json:"base_per_request_price"`
 }
 
 // baseTierRow 阶梯定价查询结果
@@ -89,10 +91,12 @@ type priceInfo struct {
 
 // groupPriceInfo 分组模型的价格信息
 type groupPriceInfo struct {
-	BaseBillingMode     string
-	BaseInputPrice      float64
-	BaseOutputPrice     float64
-	BasePerRequestPrice *float64
+	BaseBillingMode        string
+	BaseInputPrice         float64
+	BaseOutputPrice        float64
+	BaseCacheReadPrice     float64
+	BaseCacheCreationPrice float64
+	BasePerRequestPrice    *float64
 }
 
 // ListAvailableModels 获取租户可用的模型列表
@@ -167,7 +171,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		err = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", groupDBIDs).
 			Where("min_tokens", 0).
-			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price, per_request_price AS base_per_request_price").
+			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price, cache_read_price AS base_cache_read_price, cache_creation_price AS base_cache_creation_price, per_request_price AS base_per_request_price").
 			Scan(&groupPrices)
 		if err != nil {
 			return nil, err
@@ -175,10 +179,12 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 
 		for _, gp := range groupPrices {
 			groupPriceMap[gp.ModelID] = &groupPriceInfo{
-				BaseBillingMode:     gp.BaseBillingMode,
-				BaseInputPrice:      gp.BaseInputPrice,
-				BaseOutputPrice:     gp.BaseOutputPrice,
-				BasePerRequestPrice: gp.BasePerRequestPrice,
+				BaseBillingMode:        gp.BaseBillingMode,
+				BaseInputPrice:         gp.BaseInputPrice,
+				BaseOutputPrice:        gp.BaseOutputPrice,
+				BaseCacheReadPrice:     gp.BaseCacheReadPrice,
+				BaseCacheCreationPrice: gp.BaseCacheCreationPrice,
+				BasePerRequestPrice:    gp.BasePerRequestPrice,
 			}
 		}
 	}
@@ -272,9 +278,9 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 
 			list = append(list, item)
 		} else {
-			// group 来源的模型：使用 base 定价，与显式模型展示一致（含按次单价 / 阶梯明细）
+			// group 来源的模型：使用 base 定价，与显式模型展示一致（含按次单价 / 缓存价 / 阶梯明细）
 			billingMode := "token"
-			var inputPrice, outputPrice, perRequestPrice *float64
+			var inputPrice, outputPrice, cacheReadPrice, cacheCreationPrice, perRequestPrice *float64
 			var baseInputPrice, baseOutputPrice float64
 			gp, ok := groupPriceMap[m.ModelDBID]
 			if ok {
@@ -286,23 +292,27 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				baseOutputPrice = gp.BaseOutputPrice
 				inputPrice = effectivePrice(nil, baseInputPrice)
 				outputPrice = effectivePrice(nil, baseOutputPrice)
+				cacheReadPrice = effectivePrice(nil, gp.BaseCacheReadPrice)
+				cacheCreationPrice = effectivePrice(nil, gp.BaseCacheCreationPrice)
 				perRequestPrice = gp.BasePerRequestPrice
 			}
 
 			item := v1.TenantAvailableModelItem{
-				ID:              m.ModelDBID,
-				ModelId:         m.ModelId,
-				ModelName:       m.ModelName,
-				Category:        m.Category,
-				MaxContext:      m.MaxContextTokens,
-				MaxOutput:       m.MaxOutputTokens,
-				Description:     m.Description,
-				Tags:            m.Tags,
-				Capabilities:    m.Capabilities,
-				BillingMode:     &billingMode,
-				PerRequestPrice: perRequestPrice,
-				InputPrice:      inputPrice,
-				OutputPrice:     outputPrice,
+				ID:                 m.ModelDBID,
+				ModelId:            m.ModelId,
+				ModelName:          m.ModelName,
+				Category:           m.Category,
+				MaxContext:         m.MaxContextTokens,
+				MaxOutput:          m.MaxOutputTokens,
+				Description:        m.Description,
+				Tags:               m.Tags,
+				Capabilities:       m.Capabilities,
+				BillingMode:        &billingMode,
+				PerRequestPrice:    perRequestPrice,
+				InputPrice:         inputPrice,
+				OutputPrice:        outputPrice,
+				CacheReadPrice:     cacheReadPrice,
+				CacheCreationPrice: cacheCreationPrice,
 			}
 			if billingMode == "tiered" && ok {
 				item.PricingTiers = buildTiers("", baseInputPrice, baseOutputPrice, baseTiersMap[m.ModelDBID])
