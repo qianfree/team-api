@@ -53,6 +53,7 @@ type ChannelSettings struct {
 	HeaderOverride              map[string]any `json:"header_override,omitempty"`                // Header 改写规则
 	ChatCompletionsViaResponses bool           `json:"chat_completions_via_responses,omitempty"` // Chat Completions → Responses API 桥接
 	PassThroughBodyEnabled      bool           `json:"pass_through_body_enabled,omitempty"`      // 直连转发：跳过协议转换，原始请求体直接转发上游
+	UpstreamResponses           bool           `json:"upstream_responses,omitempty"`             // 上游使用 OpenAI Responses 协议（/v1/responses），responses 入站直连转发
 
 	// System Prompt 注入
 	SystemPrompt         string `json:"system_prompt,omitempty"`          // 渠道级系统提示词

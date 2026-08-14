@@ -215,6 +215,14 @@ func validateRelayRequest(
 			maxTokens = mc
 		}
 	}
+	if moVal, ok := rawRequest["max_output_tokens"]; ok {
+		// Responses API 用 max_output_tokens 而非 max_tokens/max_completion_tokens
+		var mo int
+		_ = json.Unmarshal(moVal, &mo)
+		if mo > maxTokens {
+			maxTokens = mo
+		}
+	}
 
 	return &relayValidation{
 		relayMode:       relayMode,

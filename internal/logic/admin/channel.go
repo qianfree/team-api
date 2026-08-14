@@ -139,6 +139,7 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 			Remark:                   ch.Remark,
 			IsVIP:                    ch.IsVIP,
 			UseProxy:                 settings.UseProxy,
+			UpstreamResponses:        settings.UpstreamResponses,
 			SharingThreshold:         ch.SharingThreshold,
 			PreemptionThreshold:      ch.PreemptionThreshold,
 			BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
@@ -279,10 +280,15 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		baseURL = defaultProviderURL(req.Type)
 	}
 
-	// Build settings JSON
+	// Build settings JSON（use_proxy / upstream_responses 协议类开关）
 	settingsJSON := "{}"
-	if req.UseProxy {
-		settingsJSON = `{"use_proxy":true}`
+	if req.UseProxy || req.UpstreamResponses {
+		settings := relay.DefaultChannelSettings()
+		settings.UseProxy = req.UseProxy
+		settings.UpstreamResponses = req.UpstreamResponses
+		if b, err := json.Marshal(settings); err == nil {
+			settingsJSON = string(b)
+		}
 	}
 
 	tier := req.Tier
@@ -380,12 +386,17 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		data.BorrowingCooldownSeconds = *req.BorrowingCooldownSeconds
 	}
 
-	// Update use_proxy in settings JSONB
-	if req.UseProxy != nil {
+	// Update protocol-related settings in settings JSONB
+	if req.UseProxy != nil || req.UpstreamResponses != nil {
 		var currentSettings string
 		_ = dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("settings").Scan(&currentSettings)
 		settings := relay.ParseChannelSettings(currentSettings)
-		settings.UseProxy = *req.UseProxy
+		if req.UseProxy != nil {
+			settings.UseProxy = *req.UseProxy
+		}
+		if req.UpstreamResponses != nil {
+			settings.UpstreamResponses = *req.UpstreamResponses
+		}
 		if settingsJSON, err := json.Marshal(settings); err == nil {
 			data.Settings = string(settingsJSON)
 		}
@@ -529,6 +540,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
 		UseProxy:                 settings.UseProxy,
+		UpstreamResponses:        settings.UpstreamResponses,
 		SharingThreshold:         ch.SharingThreshold,
 		PreemptionThreshold:      ch.PreemptionThreshold,
 		BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,
