@@ -456,7 +456,7 @@ func (s *sTenant) WebhookConfigDelete(ctx context.Context, req *v1.WebhookConfig
 		return nil, err
 	}
 	if count == 0 {
-		return nil, common.NewNotFoundError("Webhook 配置不存在")
+		return nil, common.NewNotFoundError("Webhook 配置")
 	}
 
 	// 级联删除：投递日志 → 事件 → 配置
