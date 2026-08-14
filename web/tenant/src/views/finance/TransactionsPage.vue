@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NInput, NInputNumber, NSelect } from 'naive-ui'
+import { NInput, NInputNumber, NSelect, NDropdown } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
@@ -32,8 +32,16 @@ const filters = ref({
 	model: '',
 })
 
-// 导出下拉菜单
-const showExportDropdown = ref(false)
+// 导出格式下拉选项（NDropdown 默认 teleport 到 body，避免被 .card 的 backdrop-filter
+// stacking context 困住而被下方表格面板遮挡）
+const exportDropdownOptions = [
+	{ label: '导出 CSV', key: 'csv' },
+	{ label: '导出 Excel', key: 'xlsx' },
+]
+
+function handleExport(format: string | number) {
+	exportFile(format as 'csv' | 'xlsx')
+}
 
 const { exporting, exportFile } = useExport({
 	url: '/tenant/wallet/transactions/export',
@@ -231,18 +239,14 @@ onMounted(fetchTransactions)
 							刷新
 						</button>
 						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-						<div class="relative">
-							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+						<n-dropdown trigger="click" :options="exportDropdownOptions" @select="handleExport">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading">
 								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
 								<Icon v-else name="download" size="sm" />
 								导出
 								<Icon name="chevronDown" size="xs" />
 							</button>
-							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
-								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
-							</div>
-						</div>
+						</n-dropdown>
 					</div>
 				</form>
 			</div>
