@@ -262,13 +262,11 @@ body.modal-open {
 .glass {
 	background: var(--glass-bg-subtle);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 /* 液态玻璃卡片：弱透明底 + 模糊 + 高光描边 + 冷投影 + 内高光 */
 .glass-card {
 	background: var(--glass-bg);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 	border: 1px solid var(--glass-border);
 	border-radius: var(--radius-panel);
 	box-shadow: var(--shadow-glass), var(--glass-highlight);
@@ -286,7 +284,6 @@ body.modal-open {
 	border-radius: var(--radius-card);
 	background: var(--glass-bg-strong);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 	border: 1px solid var(--glass-border);
 	box-shadow: var(--shadow-card);
 }
@@ -305,7 +302,6 @@ body.modal-open {
 .card-glass {
 	background: var(--glass-bg-strong);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 	border: 1px solid var(--glass-border);
 	box-shadow: var(--shadow-glass);
 }
@@ -343,7 +339,6 @@ body.modal-open {
 	border-radius: var(--radius-card);
 	background: var(--glass-bg-strong);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 	border: 1px solid var(--glass-border);
 	box-shadow: var(--shadow-card);
 }
@@ -389,7 +384,6 @@ body.modal-open {
 		0 10px 30px rgba(75, 91, 137, 0.07),
 		inset 0 1px 0 rgba(255, 255, 255, 0.92);
 	backdrop-filter: blur(22px) saturate(1.2);
-	-webkit-backdrop-filter: blur(22px) saturate(1.2);
 	scrollbar-width: thin;
 	scrollbar-color: rgba(20, 184, 166, 0.28) transparent;
 }
@@ -661,7 +655,6 @@ body.modal-open {
 	@apply origin-top-right animate-scale-in;
 	background: var(--glass-bg-strong);
 	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-	-webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 	border: 1px solid var(--glass-border);
 	box-shadow: var(--shadow-glass), var(--glass-highlight);
 }
@@ -747,7 +740,6 @@ body.modal-open {
 		linear-gradient(115deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.035) 42%, rgba(255, 255, 255, 0.08)),
 		rgba(238, 246, 252, 0.2);
 	backdrop-filter: blur(20px) saturate(1.38) brightness(1.04);
-	-webkit-backdrop-filter: blur(20px) saturate(1.38) brightness(1.04);
 	border: 1px solid rgba(255, 255, 255, 0.38);
 	box-shadow:
 		0 16px 38px rgba(35, 48, 68, 0.12),
@@ -868,7 +860,6 @@ body.modal-open {
 	.sidebar {
 		background: rgba(247, 249, 253, 0.94);
 		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
 	}
 }
 @media (prefers-contrast: more) {
