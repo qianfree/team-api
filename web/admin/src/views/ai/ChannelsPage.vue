@@ -290,7 +290,6 @@ async function resetHealth(row: any) {
 }
 
 // 快捷启用/禁用渠道：复用 PUT /admin/channels/{id}。
-// 后端 UpdateChannel 会无条件写入 priority/weight，故必须带上当前值，否则会被重置为 0。
 // status 为 active → 禁用；其它（disabled/testing）→ 启用为 active。
 async function toggleStatus(record: any) {
   if (record._toggling) return
@@ -302,8 +301,6 @@ async function toggleStatus(record: any) {
   try {
     await request.put(`/admin/channels/${record.id}`, {
       status: nextStatus,
-      priority: record.priority,
-      weight: record.weight,
     })
     message.success(nextStatus === 'active' ? '已启用' : '已禁用')
   } catch {
@@ -314,8 +311,7 @@ async function toggleStatus(record: any) {
 }
 
 // === 行内编辑（权重 / 层级） ===
-// 行内编辑复用 PUT /admin/channels/{id}。后端 UpdateChannel 会无条件写入 priority/weight，
-// 故每次提交必须携带当前 priority 与 weight，避免被重置为 0。
+// 行内编辑复用 PUT /admin/channels/{id}，仅提交变更字段（其余字段留空不更新）。
 const weightTimers = new Map<number, any>()
 
 function onWeightChange(record: any, val: number | undefined) {
@@ -337,7 +333,6 @@ async function saveWeight(record: any, val: number) {
   record._saving = true
   try {
     await request.put(`/admin/channels/${record.id}`, {
-      priority: record.priority,
       weight: val,
     })
     record._savedWeight = val
@@ -355,8 +350,6 @@ async function saveTier(record: any, val: string) {
   record._saving = true
   try {
     await request.put(`/admin/channels/${record.id}`, {
-      priority: record.priority,
-      weight: record.weight,
       tier: val,
     })
     record._tierSaved = val
