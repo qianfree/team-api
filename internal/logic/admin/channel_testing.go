@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -87,7 +88,7 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 		Limit(1).
 		Scan(&keyInfo)
 	if err != nil || keyInfo == nil || keyInfo.EncryptedKey == "" {
-		return nil, common.NewNotFoundError("渠道没有可用的 API Key")
+		return nil, common.NewBusinessError(consts.CodeNotFound, "渠道没有可用的 API Key")
 	}
 
 	encKey := relay.GetEncryptionKey()
