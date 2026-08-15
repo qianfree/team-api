@@ -452,5 +452,4 @@ Copyright (C) 2026 qianfree. 本项目采用 [GNU Affero General Public License 
 
 - [GoFrame](https://goframe.org/) — Go 应用开发框架
 - [new-api](https://github.com/Calcium-Ion/new-api) — AI 网关参考实现
-- [sub2api](https://github.com/sub2api/sub2api) — 监控与亲和性参考实现
 - [Naive UI](https://www.naiveui.com/) — Vue 3 组件库

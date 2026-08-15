@@ -16,7 +16,7 @@ import (
 var aggregateUsageCmd = gcmd.Command{
 	Name:  "aggregate-usage",
 	Usage: "aggregate-usage --from <YYYY-MM-DD> --to <YYYY-MM-DD>",
-	Brief: "回填 bil_usage_daily 用量日汇总（历史数据）",
+	Brief: "回填 bil_usage_daily 用量日汇总（历史数据）， 一般用不到",
 	Description: `
 将 bil_usage_logs 的历史用量按月分块聚合写入 bil_usage_daily，供流量流向桑基图与趋势分析使用。
 按月分块以避免单次扫描全部分区表。--from/--to 均为包含的日期边界；--to 缺省为昨天。
