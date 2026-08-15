@@ -32,6 +32,13 @@ func ExecuteUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		return fmt.Errorf("auto-update is not supported in Docker mode")
 	}
 
+	// Windows 不支持在线更新：无 exec 换壳语义（见 exec_windows.go），
+	// 且 Windows 上运行中的二进制无法被重命名，替换必然失败，显式拒绝
+	if runtime.GOOS == "windows" {
+		manager.updating.Store(false)
+		return fmt.Errorf("auto-update is not supported on Windows")
+	}
+
 	// Check download URL
 	if downloadURL == "" {
 		manager.updating.Store(false)
@@ -147,8 +154,10 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		OldBinary  string `json:"old_binary"`
 		OldVersion string `json:"old_version"`
 	}{
-		Version:   targetVersion,
-		OldBinary: backupPath,
+		Version: targetVersion,
+		// 旧版本被 replaceBinary 重命名为 {exe}.old 的实际路径：自检成功后据此清理；
+		// 回滚仍走 rollback.json 的 .backup.* 副本，不受该清理影响
+		OldBinary: currentExe + ".old",
 		// 记录升级前版本号：自检完成后展示 rollback 入口时需要显示版本而非备份路径
 		OldVersion: consts.Version,
 	})

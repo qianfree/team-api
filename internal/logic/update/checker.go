@@ -87,7 +87,8 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	var assetSize int64
 
 	for _, asset := range release.Assets {
-		if asset.Name == assetName {
+		// 资产名可能带/不带 v 前缀（历史 release 命名不一致），归一化后比较
+		if normalizeAssetName(asset.Name) == assetName {
 			downloadURL = asset.BrowserDownloadURL
 			assetSize = asset.Size
 		}

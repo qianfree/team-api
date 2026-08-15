@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -139,9 +140,10 @@ func CheckPendingVerification(ctx context.Context) {
 				}
 				manager.status.Store(status)
 
-				// Clean up .old file
+				// Clean up .old file（旧版本被 replaceBinary 重命名为 {exe}.old；
+				// 成功验证后移除该残留。回滚依赖的 .backup.* 副本不受影响）
 				if info.OldBinary != "" {
-					_ = os.Remove(info.OldBinary + ".old")
+					_ = os.Remove(info.OldBinary)
 				}
 				return
 			}
@@ -264,7 +266,7 @@ func cleanOldBackups(ctx context.Context) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		// Match pattern: {binary}.backup.{timestamp} or {binary}.old
+		// Match pattern: {binary}.backup.{timestamp}
 		if len(name) > len(base) && name[:len(base)] == base {
 			suffix := name[len(base):]
 			if len(suffix) > 8 && suffix[:8] == ".backup." {
@@ -279,6 +281,10 @@ func cleanOldBackups(ctx context.Context) {
 			}
 		}
 	}
+
+	// 清理残留的 {binary}.old：正常链路在自检成功后已移除，
+	// 这里兜底处理进程异常终止（自检未执行）留下的旧版本副本
+	_ = os.Remove(filepath.Join(dir, base+".old"))
 }
 
 // GetDeploymentMode returns the current deployment mode
@@ -303,4 +309,14 @@ func getPlatformAssetName(version string) string {
 		v = v[1:]
 	}
 	return fmt.Sprintf("team-api-%s-%s-%s.%s", v, osName, arch, ext)
+}
+
+// normalizeAssetName 将资产名归一化到"无 v 前缀"的规范形式，用于兼容历史上
+// 以 "team-api-v{version}-..." 命名的旧资产（release.yml 早期版本未去掉 v）。
+// 例：team-api-v0.2.0-linux-amd64.tar.gz → team-api-0.2.0-linux-amd64.tar.gz
+func normalizeAssetName(name string) string {
+	if strings.HasPrefix(name, "team-api-v") {
+		return "team-api-" + strings.TrimPrefix(name, "team-api-v")
+	}
+	return name
 }
