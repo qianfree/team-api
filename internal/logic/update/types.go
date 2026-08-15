@@ -3,6 +3,7 @@ package update
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -65,6 +66,15 @@ type Progress struct {
 	Message    string `json:"message"`
 	Percentage int    `json:"percentage"`
 	Error      string `json:"error,omitempty"`
+	// FinishedAt 终态（complete/failed）产生时间。终态进度只在内存中保留一段
+	// 时间供发起升级的管理员查看，超过 progressExpire 后 GetStatus 不再返回，
+	// 避免上次升级留下的快照永久残留误导后续状态判断
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// isTerminalPhase 判断进度是否处于终态（complete/failed），只有终态会过期
+func isTerminalPhase(phase string) bool {
+	return phase == PhaseComplete || phase == PhaseFailed
 }
 
 // RollbackInfo holds information needed for rollback (persisted to disk)

@@ -76,9 +76,9 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		return
 	}
 
-	// Step 2: Verify
+	// Step 2: Verify（校验失败一律中止，不放行未通过完整性校验的更新包）
 	if err := VerifyChecksum(ctx, dlResult.FilePath, checksumURL, assetName); err != nil {
-		manager.setProgressError("文件校验失败", err.Error())
+		manager.setProgressError("文件校验失败，更新包可能已破损", err.Error())
 		g.Log().Errorf(ctx, "Checksum verification failed: %v", err)
 		_ = os.Remove(dlResult.FilePath)
 		return
@@ -143,11 +143,14 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 
 	// Step 7: Write pending verification marker
 	pendingData, _ := json.Marshal(struct {
-		Version   string `json:"version"`
-		OldBinary string `json:"old_binary"`
+		Version    string `json:"version"`
+		OldBinary  string `json:"old_binary"`
+		OldVersion string `json:"old_version"`
 	}{
 		Version:   targetVersion,
 		OldBinary: backupPath,
+		// 记录升级前版本号：自检完成后展示 rollback 入口时需要显示版本而非备份路径
+		OldVersion: consts.Version,
 	})
 	_ = os.WriteFile(filepath.Join(updateDir, pendingVerificationFile), pendingData, 0644)
 
