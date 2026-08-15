@@ -287,6 +287,10 @@ var (
 			// 2) 再 flush 关闭异步 Writer。
 			// 3) 最后关 webhook / 调度后台任务 / plugin。
 			// 因此把两个 task.Stop* 注册在最后（最先执行），Writer 关闭注册在前（后执行）。
+			// 0) MaybeExecRestart 注册在最前、最后执行：在线更新/回滚换壳后，用
+			//    syscall.Exec 原地换壳为新版本（同 PID 继续运行，不依赖外部进程管理器）；
+			//    正常退出时是空操作。必须在所有任务池/Writer 排空之后执行。
+			defer update.MaybeExecRestart(ctx)
 			defer plugin.Shutdown(ctx)
 			defer dispatchadapter.Shutdown()
 			defer tenant.ShutdownWebhookDispatcher()

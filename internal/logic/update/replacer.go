@@ -154,6 +154,10 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	})
 	_ = os.WriteFile(filepath.Join(updateDir, pendingVerificationFile), pendingData, 0644)
 
+	// 记录待重启的新版本路径：cmd.go 退出链末尾用 syscall.Exec 原地换壳为新版本，
+	// 同 PID 继续运行，不依赖外部进程管理器拉起（见 gracefulExit 注释）
+	manager.SetRestartBinary(currentExe)
+
 	// Step 8: Restart
 	manager.setProgress(PhaseRestarting, "正在重启服务...", 90)
 	g.Log().Info(ctx, "Update complete, restarting...")
