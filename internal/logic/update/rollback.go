@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -16,6 +17,11 @@ import (
 func Rollback(ctx context.Context) error {
 	if IsDocker() {
 		return fmt.Errorf("rollback is not supported in Docker mode")
+	}
+
+	// Windows 无 exec 换壳语义，且运行中二进制无法被重命名，显式拒绝
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("rollback is not supported on Windows")
 	}
 
 	if manager.IsUpdating() {
@@ -61,6 +67,10 @@ func Rollback(ctx context.Context) error {
 	}
 
 	_ = os.Chmod(currentExe, 0755)
+
+	// 记录待重启的旧版本路径：退出链末尾用 syscall.Exec 原地换壳回到旧版本，
+	// 同 PID 继续运行，不依赖外部进程管理器拉起（见 gracefulExit 注释）
+	manager.SetRestartBinary(currentExe)
 
 	// Clean up
 	_ = os.Remove(filepath.Join(updateDir, rollbackFile))

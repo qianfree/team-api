@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"runtime"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -102,6 +103,11 @@ func (s *sAdmin) UpdateExecute(ctx context.Context, req *v1.UpdateExecuteReq) (*
 		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateNotSupported, consts.MsgUpdateNotSupported, nil))
 	}
 
+	// Windows 不支持在线更新：无 exec 换壳语义，且运行中二进制无法被重命名
+	if runtime.GOOS == "windows" {
+		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateNotSupported, "Windows 平台不支持在线更新，请手动更新（下载最新版本替换当前程序）", nil))
+	}
+
 	// Check if already updating
 	if update.GetManager().IsUpdating() {
 		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateAlreadyRunning, consts.MsgUpdateAlreadyRunning, nil))
@@ -144,6 +150,11 @@ func (s *sAdmin) UpdateExecute(ctx context.Context, req *v1.UpdateExecuteReq) (*
 func (s *sAdmin) UpdateRollback(ctx context.Context, req *v1.UpdateRollbackReq) (*v1.UpdateRollbackRes, error) {
 	if update.IsDocker() {
 		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateNotSupported, consts.MsgUpdateNotSupported, nil))
+	}
+
+	// Windows 不支持在线更新（与 UpdateExecute 保持一致）
+	if runtime.GOOS == "windows" {
+		return nil, gerror.NewCode(gcode.New(consts.CodeUpdateNotSupported, "Windows 平台不支持在线更新，请手动更新（下载最新版本替换当前程序）", nil))
 	}
 
 	if err := update.Rollback(ctx); err != nil {
