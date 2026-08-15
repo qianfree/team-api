@@ -85,3 +85,10 @@ demo:
 
 # Channel proxy (for accessing Google/Anthropic etc. from China)
 channel_proxy_url: ""
+
+# System update source override
+# Default: GitHub official API (https://api.github.com/repos/qianfree/team-api).
+# Override to point at a self-hosted release server / local mock release (see
+# scripts/mock-release.sh) or a China mirror. Leave empty to use GitHub.
+update:
+  api_base: ""

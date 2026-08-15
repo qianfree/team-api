@@ -12,7 +12,7 @@ const (
 	// exitResponseGrace 让 HTTP 响应先写出的等待时间
 	exitResponseGrace = 500 * time.Millisecond
 	// gracefulExitTimeout 优雅关闭链路的最长等待。需覆盖 cmd.go defer 链中
-	// sync-image 任务池的收尾等待（3 分钟），再留余量；超时则强制退出兜底，
+	// sync-image 任务池的收尾等待（3 分钟），再留余量；超时则强制换壳/退出兜底，
 	// 防止个别长连接把退出拖到无限长。
 	gracefulExitTimeout = 4 * time.Minute
 )
@@ -24,9 +24,11 @@ const (
 // 正确做法是向自身发送 SIGTERM，走 GoFrame 的信号处理链路：
 //
 //	SIGTERM → ghttp 关闭监听并等待在途请求 → s.Run() 返回
-//	        → cmd.go defer 链执行（LIFO）→ main 返回，进程自然退出
+//	        → cmd.go defer 链执行（LIFO，排空任务池/Writer）
+//	        → 末尾 MaybeExecRestart 用 syscall.Exec 原地换壳为新版本
+//	          （同 PID 继续运行，不依赖外部进程管理器拉起）
+//	        → 若没有待重启版本则自然退出
 //
-// 由进程管理器（systemd Restart=always / supervisor 等）随后拉起新二进制。
 // Windows 无自信号机制（且在线更新仅支持 Linux），退化为直接退出。
 func gracefulExit(ctx context.Context, reason string) {
 	go func() {
@@ -38,11 +40,43 @@ func gracefulExit(ctx context.Context, reason string) {
 			os.Exit(0)
 		}
 
-		// 优雅链路正常情况下会让 main 自然返回；若超过上限仍未退出
-		// （如 SSE 流长时间不结束），强制退出兜底
+		// 优雅链路正常情况下会走完 cmd.go defer 链末尾的 MaybeExecRestart 换壳；
+		// 若超过上限仍未完成（如 SSE 流长时间不结束），defer 链不会执行，
+		// 这里直接原地换壳/退出兜底，防止服务停机。
 		time.Sleep(gracefulExitTimeout)
-		g.Log().Warningf(ctx, "%s: graceful shutdown not finished within %v, forcing exit",
+		g.Log().Warningf(ctx, "%s: graceful shutdown not finished within %v, restarting directly",
 			reason, gracefulExitTimeout)
-		os.Exit(0)
+		restartOrExit(ctx)
 	}()
+}
+
+// MaybeExecRestart 是 cmd.go defer 链的最后一步（注册在最前、最后执行）。
+// 若存在待重启的新版本（在线更新/回滚已完成换壳），用 syscall.Exec 原地换壳：
+// 进程 PID 不变，不依赖外部进程管理器拉起；正常退出（无待重启版本）时是空操作，
+// 不干预普通关闭流程。
+func MaybeExecRestart(ctx context.Context) {
+	bin := manager.ConsumeRestartBinary()
+	if bin == "" {
+		return
+	}
+	g.Log().Infof(ctx, "Restarting into %s", bin)
+	if !execSelf(bin) {
+		g.Log().Errorf(ctx, "Failed to exec %s, exiting", bin)
+		os.Exit(1)
+	}
+	// exec 成功时进程镜像已被替换，永不返回
+}
+
+// restartOrExit 超时兜底入口：此时 cmd.go defer 链尚未执行，直接原地换壳；
+// 无待重启版本则直接退出。
+func restartOrExit(ctx context.Context) {
+	bin := manager.ConsumeRestartBinary()
+	if bin == "" {
+		os.Exit(0)
+	}
+	g.Log().Infof(ctx, "Restarting into %s (timeout fallback)", bin)
+	if !execSelf(bin) {
+		g.Log().Errorf(ctx, "Failed to exec %s, exiting", bin)
+		os.Exit(1)
+	}
 }
