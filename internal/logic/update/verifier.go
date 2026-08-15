@@ -28,23 +28,22 @@ func VerifyChecksum(ctx context.Context, filePath, checksumURL, expectedFilename
 
 	g.Log().Debugf(ctx, "Computed SHA256: %s", actualHash)
 
-	// If no checksum URL, skip verification (log warning)
+	// 缺少校验文件地址时禁止放行：无法确认更新包完整性，宁可中止升级
 	if checksumURL == "" {
-		g.Log().Warning(ctx, "No checksum URL available, skipping verification")
-		return nil
+		return fmt.Errorf("release 未提供 checksums-sha256.txt，无法校验更新包完整性，已中止更新")
 	}
 
 	// Download checksums file
 	expectedHash, err := fetchExpectedHash(ctx, checksumURL, expectedFilename)
 	if err != nil {
-		g.Log().Warningf(ctx, "Failed to fetch checksum file, skipping verification: %v", err)
-		return nil
+		// 拉不到校验文件同样不放行，防止跳过校验把破损/篡改的包替换上线
+		return fmt.Errorf("获取校验文件失败: %w", err)
 	}
 
 	manager.setProgress(PhaseVerifying, "正在对比校验值...", 80)
 
 	if !strings.EqualFold(actualHash, expectedHash) {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHash)
+		return fmt.Errorf("SHA256 校验不一致（期望 %s，实际 %s），下载的文件可能已破损或被篡改，已中止更新", expectedHash, actualHash)
 	}
 
 	manager.setProgress(PhaseVerifying, "文件校验通过", 100)
