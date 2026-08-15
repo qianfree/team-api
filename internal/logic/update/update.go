@@ -17,9 +17,10 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 )
 
+// updateDir is the temp directory for update operations（本地集成测试可覆盖为临时目录）
+var updateDir = "/tmp/team-api-update"
+
 const (
-	// updateDir is the temp directory for update operations
-	updateDir = "/tmp/team-api-update"
 	// rollbackFile stores rollback metadata
 	rollbackFile = "rollback.json"
 	// pendingVerificationFile marks a just-updated process

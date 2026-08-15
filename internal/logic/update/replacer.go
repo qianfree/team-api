@@ -19,6 +19,10 @@ import (
 	"github.com/qianfree/team-api/internal/consts"
 )
 
+// executablePath 获取当前二进制路径。默认 os.Executable；本地集成测试可覆盖为
+// 指向临时目录的假二进制，避免真实替换测试进程自身（见 update_integration_test.go）。
+var executablePath = os.Executable
+
 // ExecuteUpdate runs the full update process in a goroutine
 func ExecuteUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL string, assetSize int64) error {
 	// Check if already updating
@@ -74,13 +78,27 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		}
 	}()
 
+	if _, err := stageUpdate(ctx, targetVersion, downloadURL, checksumURL, assetSize); err != nil {
+		return // stageUpdate 已设置失败状态并记录日志
+	}
+
+	// 触发重启：SIGTERM 优雅关闭 → cmd.go defer 链排空任务池/flush 日志
+	// → MaybeExecRestart 用 syscall.Exec 原地换壳为新版本（同 PID，不依赖进程管理器）
+	manager.setProgress(PhaseRestarting, "正在重启服务...", 90)
+	g.Log().Info(ctx, "Update complete, restarting...")
+	gracefulExit(ctx, "update complete")
+}
+
+// stageUpdate 执行下载→校验→备份→替换→写标记的完整流水线，返回替换后的新二进制路径。
+// 与 performUpdate 分离，便于本地集成测试直接驱动生产流水线而不触发进程重启（exec）。
+func stageUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL string, assetSize int64) (string, error) {
 	// Step 1: Download
 	assetName := getPlatformAssetName(targetVersion)
 	dlResult, err := DownloadFile(ctx, downloadURL, assetName, assetSize)
 	if err != nil {
 		manager.setProgressError("下载更新文件失败", err.Error())
 		g.Log().Errorf(ctx, "Download failed: %v", err)
-		return
+		return "", err
 	}
 
 	// Step 2: Verify（校验失败一律中止，不放行未通过完整性校验的更新包）
@@ -88,17 +106,17 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		manager.setProgressError("文件校验失败，更新包可能已破损", err.Error())
 		g.Log().Errorf(ctx, "Checksum verification failed: %v", err)
 		_ = os.Remove(dlResult.FilePath)
-		return
+		return "", err
 	}
 
 	// Step 3: 定位当前二进制路径
 	// 新二进制必须提取到与当前二进制相同的目录（同一文件系统），
 	// 否则后续 os.Rename 会因跨设备（EXDEV）失败，如 /tmp 与部署目录不在同一分区
-	currentExe, err := os.Executable()
+	currentExe, err := executablePath()
 	if err != nil {
 		manager.setProgressError("获取当前程序路径失败", err.Error())
 		_ = os.Remove(dlResult.FilePath)
-		return
+		return "", err
 	}
 	// Resolve symlinks
 	currentExe, err = filepath.EvalSymlinks(currentExe)
@@ -113,7 +131,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		manager.setProgressError("提取文件失败", err.Error())
 		g.Log().Errorf(ctx, "Extract failed: %v", err)
 		_ = os.Remove(dlResult.FilePath)
-		return
+		return "", err
 	}
 	_ = os.Remove(dlResult.FilePath) // clean up tarball
 
@@ -124,7 +142,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	if err := copyFile(currentExe, backupPath); err != nil {
 		manager.setProgressError("备份当前版本失败", err.Error())
 		_ = os.Remove(newBinaryPath)
-		return
+		return "", err
 	}
 	g.Log().Infof(ctx, "Backed up current binary to %s", backupPath)
 
@@ -145,7 +163,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 		manager.setProgressError("替换程序文件失败", err.Error())
 		g.Log().Errorf(ctx, "Replace failed: %v", err)
 		_ = os.Remove(newBinaryPath)
-		return
+		return "", err
 	}
 
 	// Step 7: Write pending verification marker
@@ -167,13 +185,7 @@ func performUpdate(ctx context.Context, targetVersion, downloadURL, checksumURL 
 	// 同 PID 继续运行，不依赖外部进程管理器拉起（见 gracefulExit 注释）
 	manager.SetRestartBinary(currentExe)
 
-	// Step 8: Restart
-	manager.setProgress(PhaseRestarting, "正在重启服务...", 90)
-	g.Log().Info(ctx, "Update complete, restarting...")
-
-	// 走 SIGTERM 优雅关闭链路（见 gracefulExit 注释），让 cmd.go 的 defer 链
-	// 排空任务池并 flush 用量/审计日志后自然退出，由进程管理器拉起新版本
-	gracefulExit(ctx, "update complete")
+	return currentExe, nil
 }
 
 // extractBinary extracts the team-api binary from a tar.gz archive to outputPath.
