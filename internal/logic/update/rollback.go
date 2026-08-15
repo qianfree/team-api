@@ -62,6 +62,10 @@ func Rollback(ctx context.Context) error {
 
 	_ = os.Chmod(currentExe, 0755)
 
+	// 记录待重启的旧版本路径：退出链末尾用 syscall.Exec 原地换壳回到旧版本，
+	// 同 PID 继续运行，不依赖外部进程管理器拉起（见 gracefulExit 注释）
+	manager.SetRestartBinary(currentExe)
+
 	// Clean up
 	_ = os.Remove(filepath.Join(updateDir, rollbackFile))
 	_ = os.Remove(filepath.Join(updateDir, pendingVerificationFile))
