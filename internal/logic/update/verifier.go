@@ -133,7 +133,8 @@ func fetchExpectedHash(ctx context.Context, checksumURL, filename string) (strin
 		if len(parts) >= 2 {
 			hash := parts[0]
 			file := strings.TrimPrefix(parts[1], "*")
-			if file == baseFilename || file == filename {
+			// 兼容历史资产命名（checksums 文件中的文件名可能带/不带 v 前缀）
+			if normalizeAssetName(file) == normalizeAssetName(baseFilename) {
 				return strings.ToLower(hash), nil
 			}
 		}
