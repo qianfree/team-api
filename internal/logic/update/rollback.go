@@ -67,10 +67,12 @@ func Rollback(ctx context.Context) error {
 	_ = os.Remove(filepath.Join(updateDir, pendingVerificationFile))
 	_ = os.Remove(oldPath)
 
-	g.Log().Infof(ctx, "Rollback to %s complete, exiting for restart...", info.BackupVersion)
+	g.Log().Infof(ctx, "Rollback to %s complete, scheduling restart...", info.BackupVersion)
 
-	// Exit — process supervisor will restart with the old binary
-	os.Exit(0)
+	// 走 SIGTERM 优雅退出（见 gracefulExit 注释）：先让 handler 把"回滚已启动"
+	// 响应写出去，再触发优雅关闭链路排空任务池/异步 Writer 后自然退出，
+	// 由进程管理器（systemd/supervisor 等）拉起旧版本
+	gracefulExit(ctx, "rollback complete")
 	return nil
 }
 

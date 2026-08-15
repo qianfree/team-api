@@ -75,7 +75,7 @@ func (s *sTenant) GetCurrentAgreementByCode(ctx context.Context, req *v1.Agreeme
 		return nil, err
 	}
 	if detail == nil {
-		return nil, common.NewNotFoundError("协议不存在")
+		return nil, common.NewNotFoundError("协议")
 	}
 
 	return &v1.AgreementCurrentGetRes{
