@@ -343,6 +343,9 @@ func (p *DataProviderImpl) RecordUsage(ctx context.Context, record *common.Usage
 		InputTokens:  record.PromptTokens,
 		OutputTokens: record.CompletionTokens,
 		CostUSD:      record.TotalCost,
+		// 缓存 token 透传给热桶（命中请求判定由热桶模块从 read>0 推导）
+		CacheCreationTokens: record.CacheCreationTokens,
+		CacheReadTokens:     record.CacheReadTokens,
 	})
 }
 
