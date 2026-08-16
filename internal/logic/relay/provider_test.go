@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -222,5 +223,60 @@ func TestBuildUsageLogDO_FieldMapping(t *testing.T) {
 	rec2 := &common.UsageRecord{BillingSnapshot: `{"k":1}`}
 	if got := buildUsageLogDO(rec2).BillingSnapshot; got != `{"k":1}` {
 		t.Errorf("non-empty BillingSnapshot should pass through, got %v", got)
+	}
+}
+
+func TestBuildUsageLogDO_SanitizesInvalidUTF8(t *testing.T) {
+	// 构造带原始 0xa0 字节（非法 UTF-8，PG 协议层会整体拒绝插入）的 UsageRecord，
+	// 验证 buildUsageLogDO 已对所有字符串字段清洗为合法 UTF-8。
+	bad := "pre\xa0post"
+	rec := &common.UsageRecord{
+		TenantID:        7,
+		ModelName:       bad,
+		RequestID:       bad,
+		Status:          bad,
+		ErrorMessage:    bad,
+		ClientIP:        bad,
+		Currency:        bad,
+		RequestedModel:  bad,
+		UpstreamModel:   bad,
+		UserAgent:       bad,
+		ServiceTier:     bad,
+		ReasoningEffort: bad,
+		InboundEndpoint: bad,
+		ChannelName:     bad,
+		BillingMode:     bad,
+		BillingSource:   bad,
+		StreamEndReason: bad,
+		ImageSize:       bad,
+		BillingSnapshot: `{"err":"` + bad + `"}`,
+		BillingSummary:  bad,
+		TaskID:          bad,
+	}
+
+	d := buildUsageLogDO(rec)
+
+	// 逐一校验所有字符串字段
+	v := reflect.ValueOf(d)
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		if field.Kind() != reflect.Interface || field.IsNil() {
+			continue
+		}
+		s, ok := field.Interface().(string)
+		if !ok {
+			continue
+		}
+		if !utf8.ValidString(s) {
+			t.Errorf("field %s still contains invalid UTF-8: %q", v.Type().Field(i).Name, s)
+		}
+		if strings.Contains(s, "\xa0") {
+			t.Errorf("field %s still contains raw 0xa0 byte: %q", v.Type().Field(i).Name, s)
+		}
+	}
+
+	// 校验清洗结果：0xa0 被替换为 U+FFFD
+	if got, _ := d.ErrorMessage.(string); got != "pre�post" {
+		t.Errorf("ErrorMessage = %q, want %q", got, "pre�post")
 	}
 }
