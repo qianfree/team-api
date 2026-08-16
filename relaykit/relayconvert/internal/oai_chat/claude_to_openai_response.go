@@ -70,6 +70,12 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 			CompletionTokens: claudeResp.Usage.OutputTokens,
 			TotalTokens:      claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
 		}
+		if claudeResp.Usage.CacheReadInputTokens > 0 || claudeResp.Usage.CacheCreationInputTokens > 0 {
+			openaiResp.Usage.PromptTokensDetails = &dto.TokenDetails{
+				CachedTokens:         claudeResp.Usage.CacheReadInputTokens,
+				CachedCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
+			}
+		}
 	}
 
 	return openaiResp, nil

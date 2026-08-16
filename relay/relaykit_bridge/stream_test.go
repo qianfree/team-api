@@ -30,7 +30,7 @@ func newStreamTestRelayInfo(channelType constant.ProviderType, clientFormat cons
 // 并正确提取 usage、写入 [DONE] 收尾、设置正常结束原因。
 func TestConvertStreamViaRelaykit_ClaudeToOpenAI(t *testing.T) {
 	// 复用 relaykit 内 claude_to_openai_stream_test.go 的 BasicStream 报文
-	claudeStream := `data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus-20240229","usage":{"input_tokens":10,"output_tokens":0}}}
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus-20240229","usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":4,"cache_creation_input_tokens":3}}}
 
 data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
 
@@ -62,6 +62,13 @@ data: {"type":"message_stop"}
 	if usage.CompletionTokens != 7 {
 		t.Errorf("CompletionTokens = %d, want 7", usage.CompletionTokens)
 	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 || usage.CacheCreationTokens != 3 {
+		t.Errorf("cache usage = %+v, want read=4 creation=3", usage)
+	}
+	// Claude 的 input_tokens 与缓存桶独立：不得扣减（保持 false），缓存部分按 cache 价单独计
+	if usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = true, want false for Claude upstream")
+	}
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "chat.completion.chunk") {
@@ -81,6 +88,49 @@ data: {"type":"message_stop"}
 	}
 	if info.StreamStatus == nil || info.StreamStatus.GetEndReason() != common.StreamEndReasonDone {
 		t.Errorf("expected end reason %q, got %v", common.StreamEndReasonDone, info.StreamStatus.GetEndReason())
+	}
+}
+
+// TestConvertStreamViaRelaykit_GeminiToOpenAI 验证 Gemini SSE 流经 relaykit 转换为 OpenAI SSE，
+// 缓存/思考 token 明细正确透出，且因 Gemini 的 promptTokenCount 已含 cached（子集语义）
+// 计费标记 CacheIncludedInPrompt=true（计费时扣减缓存部分，避免双重计费）。
+func TestConvertStreamViaRelaykit_GeminiToOpenAI(t *testing.T) {
+	// 报文格式同 relaykit golden 用例 03_basic_streaming，末 chunk 带缓存/思考用量
+	geminiStream := `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello!"}]}}]}
+
+data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"totalTokenCount":25,"cachedContentTokenCount":8,"thoughtsTokenCount":3}}
+
+`
+
+	info := newStreamTestRelayInfo(constant.ProviderGemini, constant.RelayFormatOpenAI)
+	rec := httptest.NewRecorder()
+
+	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(geminiStream), rec)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if usage.PromptTokens != 20 || usage.CompletionTokens != 5 || usage.TotalTokens != 25 {
+		t.Errorf("token counts = %+v, want prompt=20 completion=5 total=25", usage)
+	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 8 {
+		t.Errorf("cached tokens = %+v, want 8", usage.PromptTokensDetails)
+	}
+	if usage.CompletionTokenDetails == nil || usage.CompletionTokenDetails.ReasoningTokens != 3 {
+		t.Errorf("reasoning tokens = %+v, want 3", usage.CompletionTokenDetails)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true for Gemini upstream (cached ⊆ prompt)")
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Hello!") {
+		t.Errorf("output missing streamed text, got: %s", body)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(body), "data: [DONE]") {
+		t.Errorf("output should end with [DONE], got tail: %q", tail(body, 40))
 	}
 }
 

@@ -26,3 +26,13 @@ func RequestId(r *ghttp.Request) {
 
 	r.Middleware.Next()
 }
+
+// serviceName 随响应头 X-Service-Name 返回的稳定服务标识。
+const serviceName = "team-api"
+
+// ServiceName 在每个响应上写入服务标识头 X-Service-Name，
+// 与 RequestId 同属全局注册的响应头中间件。
+func ServiceName(r *ghttp.Request) {
+	r.Response.Header().Set("X-Service-Name", serviceName)
+	r.Middleware.Next()
+}

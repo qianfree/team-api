@@ -23,8 +23,8 @@ func TestRelaykitResponseConverterID(t *testing.T) {
 		{constant.RelayFormatCoze, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToCoze},
 		{constant.RelayFormatDify, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToDify},
 		{constant.RelayFormatOllama, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToOllama},
-		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""},   // 同格式
-		{constant.RelayFormatClaude, constant.RelayFormatGemini, ""},   // 未知方向
+		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""}, // 同格式
+		{constant.RelayFormatClaude, constant.RelayFormatGemini, ""}, // 未知方向
 	}
 	for _, c := range cases {
 		if got := relaykitResponseConverterID(c.upstream, c.client); got != c.want {
@@ -37,13 +37,20 @@ func TestRelaykitResponseConverterID(t *testing.T) {
 
 func TestUsageFromConvertedChatResponse(t *testing.T) {
 	body, _ := json.Marshal(dto.ChatCompletionResponse{
-		Usage: dto.UsageWithDetails{PromptTokens: 5, CompletionTokens: 3, TotalTokens: 8},
+		Usage: dto.UsageWithDetails{
+			PromptTokens: 5, CompletionTokens: 3, TotalTokens: 8,
+			PromptTokensDetails:    &dto.TokenDetails{CachedTokens: 2, CachedCreationTokens: 1},
+			CompletionTokenDetails: &dto.TokenDetails{ReasoningTokens: 4},
+		},
 	})
 	usage, ok := UsageFromConvertedChatResponse(body)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
-	if usage == nil || usage.PromptTokens != 5 || usage.CompletionTokens != 3 {
+	if usage == nil || usage.PromptTokens != 5 || usage.CompletionTokens != 3 ||
+		usage.CacheCreationTokens != 1 || usage.PromptTokensDetails == nil ||
+		usage.PromptTokensDetails.CachedTokens != 2 || usage.CompletionTokenDetails == nil ||
+		usage.CompletionTokenDetails.ReasoningTokens != 4 {
 		t.Errorf("unexpected usage: %+v", usage)
 	}
 

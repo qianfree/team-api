@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -62,7 +63,10 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	safeWriter := helper.NewSafeWriter(writer)
 	defer helper.PingTicker(safeWriter, 15*time.Second)()
 
-	capturedUsage := &common.Usage{}
+	// Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
+	// 置 CacheIncludedInPrompt 让计费扣减缓存部分避免双重计费；
+	// Claude 的 input_tokens 与缓存桶独立，保持默认 false 由缓存部分单独计价
+	capturedUsage := &common.Usage{CacheIncludedInPrompt: upstream == constant.RelayFormatGemini}
 	var (
 		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
 		firstChunk         bool
@@ -84,6 +88,9 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			capturedUsage.PromptTokens = streamChunk.Usage.PromptTokens
 			capturedUsage.CompletionTokens = streamChunk.Usage.CompletionTokens
 			capturedUsage.TotalTokens = streamChunk.Usage.TotalTokens
+			capturedUsage.CacheCreationTokens = convertedCacheCreationTokens(streamChunk.Usage.PromptTokensDetails)
+			capturedUsage.PromptTokensDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.PromptTokensDetails)
+			capturedUsage.CompletionTokenDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.CompletionTokenDetails)
 		}
 		if len(streamChunk.Choices) > 0 && streamChunk.Choices[0].FinishReason != nil {
 			gotFinish = true

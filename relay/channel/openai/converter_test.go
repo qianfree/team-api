@@ -204,6 +204,37 @@ func TestConvertClaudeUserMessage_StringContent(t *testing.T) {
 	}
 }
 
+// TestConvertClaudeUserMessage_ToolResultArrayContent tool_result.content 为内容块数组
+// （Claude 规范形式 [{type:"text",text:"..."}]）时，文本块须拼接保留，
+// 否则工具结果会被替换为空字符串导致内容丢失。
+func TestConvertClaudeUserMessage_ToolResultArrayContent(t *testing.T) {
+	msgs := convertClaudeUserMessage(dto.ClaudeMessage{
+		Role: "user",
+		Content: []any{
+			map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": "toolu_123",
+				"content": []any{
+					map[string]any{"type": "text", "text": "result-a"},
+					map[string]any{"type": "text", "text": "result-b"},
+				},
+			},
+		},
+	})
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].Role != "tool" {
+		t.Errorf("role = %q, want tool", msgs[0].Role)
+	}
+	if msgs[0].ToolCallID != "toolu_123" {
+		t.Errorf("ToolCallID = %q, want toolu_123", msgs[0].ToolCallID)
+	}
+	if msgs[0].Content != "result-a\nresult-b" {
+		t.Errorf("content = %q, want %q", msgs[0].Content, "result-a\nresult-b")
+	}
+}
+
 // TestConvertResponsesToOpenAI_PenaltyPassthrough Responses 入站转 chat 出站时
 // 透传 presence/frequency penalty 与 prompt_cache_key（vLLM 等 OpenAI 兼容上游接受）。
 func TestConvertResponsesToOpenAI_PenaltyPassthrough(t *testing.T) {

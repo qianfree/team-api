@@ -648,6 +648,9 @@ func geminiUsageToCommon(um *dto.GeminiUsageMetadata) *common.Usage {
 		PromptTokens:     um.PromptTokenCount,
 		CompletionTokens: um.CandidatesTokenCount,
 		TotalTokens:      um.TotalTokenCount,
+		// Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
+		// 置 true 让计费先扣减缓存部分，避免「input 全价 + cache 价」双重计费
+		CacheIncludedInPrompt: true,
 		PromptTokensDetails: &common.TokenDetails{
 			CachedTokens: um.CachedContentTokenCount,
 		},

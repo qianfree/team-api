@@ -255,6 +255,9 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream(t *testing.T) {
 	if usage.PromptTokens != 10 || usage.CompletionTokens != 20 || usage.TotalTokens != 30 {
 		t.Errorf("usage = %+v, want prompt=10 completion=20 total=30", usage)
 	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 5 {
+		t.Errorf("cached usage = %+v, want cached=5", usage)
+	}
 }
 
 // fakeResponseRouteStore 路由存储 fake，用于断言 Record 调用
