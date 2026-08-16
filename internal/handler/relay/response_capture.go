@@ -1,10 +1,12 @@
 package relay
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 const maxCaptureSize = 1 << 18           // 256KB total capture budget
@@ -58,8 +60,15 @@ func (w *ResponseCaptureWriter) Write(b []byte) (int, error) {
 		if len(b) <= remaining {
 			w.buf = append(w.buf, b...)
 		} else {
-			w.buf = append(w.buf, b[:remaining]...)
-			w.appendToTail(b[remaining:])
+			// 切点回退到多字节字符的起始字节（UTF-8 最长 4 字节，最多回退 3 字节），
+			// 整字符归 tail，避免 head 末尾留下半个字符产生无效 UTF-8。
+			// 跨 Write 到达的割裂字符无法在此对齐，由 Body() 出口清洗兜底。
+			cut := remaining
+			for cut > 0 && remaining-cut < 3 && !utf8.RuneStart(b[cut]) {
+				cut--
+			}
+			w.buf = append(w.buf, b[:cut]...)
+			w.appendToTail(b[cut:])
 		}
 	} else {
 		w.appendToTail(b)
@@ -96,22 +105,31 @@ func (w *ResponseCaptureWriter) Flush() {
 
 // Body 返回已捕获的响应体内容。
 // 短响应（<= headLimit）直接返回；长响应保留 head + truncation marker + tail。
+// 两个无效 UTF-8 来源都在出口兜底：分块到达的流可能在任意字节边界切开多字节字符
+// （跨 Write 的割裂无法在写入侧对齐），上游也可能直接输出非法字节；不清洗会导致
+// 审计日志 INSERT 被 UTF8 编码的 PostgreSQL 以 invalid byte sequence 拒绝、整条丢失。
 func (w *ResponseCaptureWriter) Body() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.tailBuf == nil {
-		return string(w.buf)
+		return strings.ToValidUTF8(string(w.buf), string(utf8.RuneError))
 	}
 	var sb strings.Builder
 	sb.Write(w.buf)
 	sb.WriteString("\n...[truncated]...\n")
 	if w.tailWrapped {
-		sb.Write(w.tailBuf[w.tailPos:])
+		// 环形缓冲区起点落在残行中间：残行前半已被覆盖、不可恢复，
+		// 跳到下一行行首，让 tail 从完整 SSE 行开始；找不到换行则原样输出。
+		tail := w.tailBuf[w.tailPos:]
+		if idx := bytes.IndexByte(tail, '\n'); idx >= 0 {
+			tail = tail[idx+1:]
+		}
+		sb.Write(tail)
 		sb.Write(w.tailBuf[:w.tailPos])
 	} else {
 		sb.Write(w.tailBuf[:w.tailPos])
 	}
-	return sb.String()
+	return strings.ToValidUTF8(sb.String(), string(utf8.RuneError))
 }
 
 // StatusCode 返回捕获的 HTTP 状态码
