@@ -137,6 +137,54 @@ func TestBuildModelPerformanceList_CacheEdgeCases(t *testing.T) {
 	assertPerfField(t, list, "text-embedding-3", "cache_hit_request_rate", 0.0, 0)
 }
 
+// 当天明细聚合行 → 热桶同构计数：字段映射、cost 转 micro（math.Round）、条件计数透传，并与合并层贯通。
+func TestRowsToTodayCounters(t *testing.T) {
+	rows := []modelPerfTodayRow{
+		{ModelName: "gpt-4o", Req: 30, Ok: 28, Lat: 15000, Ttft: 4200, TtftN: 25, Tin: 3000, Tout: 6000,
+			TotalCost: 0.123456, CacheCreation: 100, CacheRead: 900, Chit: 20},
+		{ModelName: "tiny", Req: 2, Ok: 2, TotalCost: 0.0000004},
+	}
+	m := rowsToTodayCounters(rows)
+	c := m["gpt-4o"]
+	if c.Req != 30 || c.Ok != 28 || c.Lat != 15000 || c.Ttft != 4200 || c.TtftN != 25 ||
+		c.Tin != 3000 || c.Tout != 6000 || c.CostMicro != 123456 ||
+		c.CacheCreation != 100 || c.CacheRead != 900 || c.CacheHitReq != 20 {
+		t.Errorf("unexpected counter: %+v", c)
+	}
+	// 极小金额四舍五入到 0 micro（对齐 common.microFromUSD 的 math.Round 语义）
+	if m["tiny"].CostMicro != 0 {
+		t.Errorf("CostMicro = %d, want 0", m["tiny"].CostMicro)
+	}
+	// 与合并层贯通：明细行经转换后与热桶路径产出等价（USD 还原一致）
+	list := buildModelPerformanceList(nil, m)
+	assertPerfField(t, list, "gpt-4o", "request_count", 0, 30)
+	assertPerfField(t, list, "gpt-4o", "total_cost", 0.123456, 0)
+	assertPerfField(t, list, "gpt-4o", "cache_hit_request_count", 0, 20)
+}
+
+func TestRowsToTodayCounters_Empty(t *testing.T) {
+	if m := rowsToTodayCounters(nil); len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+// 热桶路径的模型过滤：命中只留一键；未命中返回空；空模型名原样返回。
+func TestFilterTodayCounts(t *testing.T) {
+	tc := map[string]common.ModelPerfCounter{
+		"gpt-4o":            {Req: 3},
+		"claude-3-5-sonnet": {Req: 5},
+	}
+	if got := filterTodayCounts(tc, ""); len(got) != 2 {
+		t.Errorf("empty model should keep all, got %v", got)
+	}
+	if got := filterTodayCounts(tc, "gpt-4o"); len(got) != 1 || got["gpt-4o"].Req != 3 {
+		t.Errorf("unexpected filtered map: %v", got)
+	}
+	if got := filterTodayCounts(tc, "no-such-model"); len(got) != 0 {
+		t.Errorf("miss should be empty, got %v", got)
+	}
+}
+
 func TestBuildModelPerformanceList_FilterUnknownAndEmpty(t *testing.T) {
 	rows := []modelPerfRow{
 		{ModelName: "unknown", RequestCount: 999, SuccessCount: 0},

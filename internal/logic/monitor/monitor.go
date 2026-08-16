@@ -71,7 +71,8 @@ func (s *sMonitor) ModelPerformance(ctx context.Context, req *v1.MonitorModelPer
 		return nil, err
 	}
 	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
-	data, err := GetModelPerformance(ctx, startDate, endDate)
+	// 渠道/模型为可选过滤（channel_id=0、model_name 空 = 不过滤），透传给聚合层拼 SQL 条件
+	data, err := GetModelPerformance(ctx, startDate, endDate, req.ChannelId, req.ModelName)
 	if err != nil {
 		return nil, err
 	}

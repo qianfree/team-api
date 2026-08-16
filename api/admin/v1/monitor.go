@@ -37,6 +37,10 @@ type MonitorModelPerformanceReq struct {
 	g.Meta    `path:"/monitor/model-performance" method:"get" mime:"json" tags:"管理后台-监控" summary:"模型性能指标"`
 	StartDate string `json:"start_date" in:"query"` // YYYY-MM-DD，缺省=近30天起点
 	EndDate   string `json:"end_date" in:"query"`   // YYYY-MM-DD，缺省=今天
+	// 可选渠道筛选：0=全部渠道（选定渠道后当天数据改从 bil_usage_logs 明细实时聚合；0 哨兵被占用，无法筛「无渠道」）
+	ChannelId int64 `json:"channel_id" in:"query" d:"0"`
+	// 可选模型筛选：空=全部模型（与 bil_usage_daily.model_name 同口径）
+	ModelName string `json:"model_name" in:"query"`
 }
 
 type MonitorModelPerformanceRes struct {
