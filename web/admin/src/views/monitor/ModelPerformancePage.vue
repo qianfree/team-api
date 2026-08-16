@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
 import { Tag } from '@arco-design/web-vue'
+import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -11,6 +12,8 @@ const loading = ref(false)
 const data = ref<any[]>([])
 // 默认只查当天（配合后端 Redis 当日实时热桶，打开即可看到最新的模型性能）
 const dateRange = ref<[string, string] | null>(defaultRange(0))
+// 指标说明弹窗
+const showMetricsGuide = ref(false)
 
 function toDateStr(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0')
@@ -110,6 +113,29 @@ const columns: TableColumnData[] = [
     render: ({ record }: any) => `${fmtNum(record.tps).toFixed(1)} t/s`,
   },
   {
+    title: '缓存命中',
+    dataIndex: 'cache_read_tokens',
+    width: 170,
+    align: 'right',
+    sortable: { sortDirections: ['ascend', 'descend'] },
+    render: ({ record }: any) => {
+      // 无缓存活动（读/写均为 0）显示 —，embedding/图像类模型不参与缓存统计
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_read_tokens).toLocaleString()} (${fmtNum(record.cache_hit_rate).toFixed(1)}%)`
+    },
+  },
+  {
+    title: '请求缓存命中率',
+    dataIndex: 'cache_hit_request_rate',
+    width: 140,
+    align: 'right',
+    sortable: { sortDirections: ['ascend', 'descend'] },
+    render: ({ record }: any) => {
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_hit_request_rate).toFixed(1)}%`
+    },
+  },
+  {
     title: '总 Token',
     dataIndex: 'total_tokens',
     width: 130,
@@ -148,16 +174,22 @@ const stats = computed(() => {
   let totalRequests = 0
   let totalSuccess = 0
   let totalCost = 0
+  let totalCacheHitReq = 0
+  let totalCacheTokens = 0
   for (const item of data.value) {
     totalRequests += fmtNum(item.request_count)
     totalSuccess += fmtNum(item.success_count)
     totalCost += fmtNum(item.total_cost)
+    totalCacheHitReq += fmtNum(item.cache_hit_request_count)
+    totalCacheTokens += fmtNum(item.cache_read_tokens) + fmtNum(item.cache_creation_tokens)
   }
   return {
     modelCount: data.value.length,
     totalRequests,
     overallRate: totalRequests > 0 ? (totalSuccess / totalRequests) * 100 : 0,
     totalCost,
+    // 全局请求缓存命中率（无任何缓存活动时为 null，页面显示 —）
+    cacheHitReqRate: totalCacheTokens > 0 && totalRequests > 0 ? (totalCacheHitReq / totalRequests) * 100 : null,
   }
 })
 
@@ -185,7 +217,7 @@ onMounted(() => {
 
 <template>
   <div class="page-table">
-    <PageHeader title="模型性能" description="各模型跨渠道的成功率 / 延迟 / 吞吐（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值）">
+    <PageHeader title="模型性能" description="各模型跨渠道的成功率 / 延迟 / 吞吐 / 缓存命中（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值。Token 命中率对 OpenAI 原生渠道为保守值）">
       <template #actions>
         <a-button
           size="small"
@@ -200,6 +232,106 @@ onMounted(() => {
         <a-button size="small" :loading="loading" @click="fetchData">刷新</a-button>
       </template>
     </PageHeader>
+
+    <!-- 指标说明入口（点击弹窗） -->
+    <div class="metrics-hint" @click="showMetricsGuide = true">
+      <IconInfoCircle /> 了解各指标的含义与计算公式 →
+    </div>
+
+    <!-- 指标说明弹窗 -->
+    <a-modal v-model:visible="showMetricsGuide" title="模型性能指标说明" :width="720" :footer="false">
+      <div class="metrics-guide">
+        <p class="guide-intro">
+          以下指标按所选时间区间逐模型聚合：历史数据（昨天及以前）源自 <code>bil_usage_daily</code> 每日聚合，
+          当天数据来自 Redis 实时热桶（小时粒度），两段口径一致、合并计算。顶部概览卡为全部模型汇总。
+        </p>
+
+        <div class="guide-group">基础指标</div>
+        <div class="metric-item">
+          <div class="metric-name">请求数</div>
+          <div class="metric-body">
+            <p>区间内该模型的总请求数（含失败请求，重试成功按最终一次成功计）。</p>
+            <p><code>请求数 = Σ request_count</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">成功率</div>
+          <div class="metric-body">
+            <p>成功请求占总请求的比例。标签按阈值分级：≥99 优秀（绿）/ ≥95 良好（蓝）/ ≥90 警告（橙）/ 其余严重（红）。</p>
+            <p><code>成功率 = Σ 成功请求数 ÷ Σ 总请求数 × 100%</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">总 Token</div>
+          <div class="metric-body">
+            <p>输入与输出 token 之和（不含缓存写入部分）。</p>
+            <p><code>总 Token = Σ input_tokens + Σ output_tokens</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">总成本</div>
+          <div class="metric-body">
+            <p>区间内该模型实际计费成本合计（USD），已含输入、输出与缓存各项费用。</p>
+            <p><code>总成本 = Σ total_cost</code></p>
+          </div>
+        </div>
+
+        <div class="guide-group">延迟与吞吐</div>
+        <div class="metric-item">
+          <div class="metric-name">平均延迟</div>
+          <div class="metric-body">
+            <p>请求从发起到响应完成的全程耗时均值（毫秒），流式请求计至最后一个分片。</p>
+            <p><code>平均延迟 = Σ 请求延迟 ÷ Σ 总请求数</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">平均首Token</div>
+          <div class="metric-body">
+            <p>流式请求从发出到收到首个 token 的耗时均值（毫秒）。非流式 / 无首 token 的请求按 0 计入分母，会拉低该均值。</p>
+            <p><code>平均首Token = Σ 首 token 延迟 ÷ Σ 总请求数</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">吞吐 TPS</div>
+          <div class="metric-body">
+            <p>平均每秒输出的 token 数，衡量模型生成速度。</p>
+            <p><code>TPS = Σ 输出 token ÷ (Σ 请求延迟 ÷ 1000)</code></p>
+          </div>
+        </div>
+
+        <div class="guide-group">缓存指标</div>
+        <div class="metric-item">
+          <div class="metric-name">缓存命中</div>
+          <div class="metric-body">
+            <p>
+              从上游提示词缓存读取的 token 数，括号内为 Token 级命中率。某次请求的缓存读取 token &gt; 0 即视为命中；
+              无任何缓存读写活动的模型（如 embedding / 图像类）显示 —。
+            </p>
+            <p><code>缓存命中 Token = Σ cache_read_tokens</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">缓存命中率<br />（Token 级）</div>
+          <div class="metric-body">
+            <p>
+              缓存命中 token 占总输入 token 的比例，分母为归一化总输入（未命中输入 + 缓存写入 + 缓存读取）。
+              注意：OpenAI 原生渠道的 input_tokens 已包含缓存部分，该口径下命中率为保守值（偏低），Claude 渠道精确。
+            </p>
+            <p><code>缓存命中率 = Σ cache_read_tokens ÷ (Σ input_tokens + Σ cache_creation_tokens + Σ cache_read_tokens) × 100%</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">请求缓存命中率</div>
+          <div class="metric-body">
+            <p>
+              命中缓存的请求数占总请求数的比例。仅写入缓存（首次建立缓存、未读取）不计命中。
+              与 Token 级命中率互补：本指标高说明缓存覆盖面广，Token 级高说明单次请求复用的前缀长。
+            </p>
+            <p><code>请求缓存命中率 = Σ 命中缓存的请求数 ÷ Σ 总请求数 × 100%</code></p>
+          </div>
+        </div>
+      </div>
+    </a-modal>
 
     <div class="stats-row">
       <div class="metric-card metric-card--blue">
@@ -218,6 +350,10 @@ onMounted(() => {
         <div class="metric-card__label">总成本 (USD)</div>
         <div class="metric-card__value">${{ stats.totalCost.toFixed(6) }}</div>
       </div>
+      <div class="metric-card metric-card--green">
+        <div class="metric-card__label">请求缓存命中率</div>
+        <div class="metric-card__value">{{ stats.cacheHitReqRate === null ? '—' : `${stats.cacheHitReqRate.toFixed(2)}%` }}</div>
+      </div>
     </div>
 
     <a-card :bordered="false">
@@ -226,7 +362,7 @@ onMounted(() => {
         :data="data"
         :loading="loading"
         row-key="model_name"
-        :scroll="{ x: 1200 }"
+        :scroll="{ x: 1510 }"
         size="large"
         stripe
         :border="{ wrapper: true, headerCell: true }"
@@ -247,10 +383,72 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 指标说明入口（复用渠道页 scheduling-hint 风格） */
+.metrics-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.metrics-hint:hover {
+  color: rgb(var(--arcoblue-6));
+}
+
+/* 指标说明弹窗 */
+.metrics-guide {
+  color: var(--color-text-1);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.guide-intro {
+  margin: 0 0 14px;
+  color: var(--color-text-2);
+}
+.guide-group {
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+}
+.metric-item {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 14px;
+  padding: 6px 0;
+}
+.metric-name {
+  font-weight: 600;
+  color: var(--color-text-2);
+}
+.metric-body p {
+  margin: 0;
+  color: var(--color-text-2);
+}
+.metric-body p + p {
+  margin-top: 2px;
+}
+.metrics-guide code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: rgb(var(--arcoblue-6));
+  background: var(--color-primary-light-1);
+  word-break: break-all;
+}
+@media (max-width: 600px) {
+  .metric-item {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 顶部概览卡片：与实时监控页 metric-card 风格保持一致（左色条 + 渐变底） */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 20px;
 }

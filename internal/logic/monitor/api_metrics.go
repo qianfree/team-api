@@ -121,6 +121,10 @@ type modelPerfRow struct {
 	TotalCost       float64 `json:"total_cost"`
 	SumLatencyMs    int64   `json:"sum_latency_ms"`
 	SumFirstTokenMs int64   `json:"sum_first_token_ms"`
+	// 缓存聚合列（000016 迁移新增，口径与 bil_usage_logs 明细一致）
+	CacheCreationTokens  int64 `json:"cache_creation_tokens"`
+	CacheReadTokens      int64 `json:"cache_read_tokens"`
+	CacheHitRequestCount int64 `json:"cache_hit_request_count"`
 }
 
 // gradeSuccessRate 按成功率返回分级。阈值：≥99 excellent、≥95 good、≥90 warning、<90 critical。
@@ -146,6 +150,10 @@ type perfModelAgg struct {
 	sumLatencyMs    int64
 	sumFirstTokenMs int64
 	totalCost       float64
+	// 缓存累计（历史日表 + 当日热桶同口径累加）
+	cacheCreationTokens int64
+	cacheReadTokens     int64
+	cacheHitRequests    int64
 }
 
 // GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日 Redis 实时热桶
@@ -164,7 +172,10 @@ func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, e
 			COALESCE(SUM(output_tokens), 0)                                 AS output_tokens,
 			COALESCE(SUM(total_cost), 0)                                    AS total_cost,
 			COALESCE(SUM(sum_latency_ms), 0)                                AS sum_latency_ms,
-			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms
+			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms,
+			COALESCE(SUM(cache_creation_tokens), 0)                         AS cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0)                             AS cache_read_tokens,
+			COALESCE(SUM(cache_hit_request_count), 0)                       AS cache_hit_request_count
 		FROM bil_usage_daily
 		WHERE stat_date >= $1 AND stat_date <= $2 AND stat_date < $3 AND model_name <> 'unknown'
 		GROUP BY model_name
@@ -189,7 +200,7 @@ func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, e
 }
 
 // buildModelPerformanceList 将历史日表聚合行与当日 Redis 热桶合并为统一的模型性能列表，
-// 统一重算派生指标（成功率/均延迟/均首Token/TPS/分级）并按 request_count 降序输出。
+// 统一重算派生指标（成功率/均延迟/均首Token/TPS/分级/缓存命中率）并按模型名称升序输出。
 func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]common.ModelPerfCounter) []map[string]any {
 	agg := make(map[string]*perfModelAgg)
 	ensure := func(model string) *perfModelAgg {
@@ -212,6 +223,9 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		a.sumLatencyMs += r.SumLatencyMs
 		a.sumFirstTokenMs += r.SumFirstTokenMs
 		a.totalCost += r.TotalCost
+		a.cacheCreationTokens += r.CacheCreationTokens
+		a.cacheReadTokens += r.CacheReadTokens
+		a.cacheHitRequests += r.CacheHitRequestCount
 	}
 	for model, c := range todayCounts {
 		if c.Req <= 0 || model == "" || model == "unknown" {
@@ -225,6 +239,9 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		a.sumLatencyMs += c.Lat
 		a.sumFirstTokenMs += c.Ttft
 		a.totalCost += billing.FromMicro(c.CostMicro).InexactFloat64()
+		a.cacheCreationTokens += c.CacheCreation
+		a.cacheReadTokens += c.CacheRead
+		a.cacheHitRequests += c.CacheHitReq
 	}
 
 	list := make([]map[string]any, 0, len(agg))
@@ -238,19 +255,34 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		if a.sumLatencyMs > 0 {
 			tps = float64(a.outputTokens) / (float64(a.sumLatencyMs) / 1000)
 		}
+		// 缓存命中率（Token 级）= 命中读取 / 归一化总输入（input + creation + read）。
+		// Claude 口径（input 不含缓存）精确；OpenAI 原生口径（input 已含 cached）分母偏大，
+		// 命中率为保守值，趋势仍可比。请求级命中率分母为 request_count，不受该口径影响。
+		var cacheHitRate, cacheHitReqRate float64
+		if totalInput := a.inputTokens + a.cacheCreationTokens + a.cacheReadTokens; totalInput > 0 {
+			cacheHitRate = float64(a.cacheReadTokens) * 100 / float64(totalInput)
+		}
+		if a.requestCount > 0 {
+			cacheHitReqRate = float64(a.cacheHitRequests) * 100 / float64(a.requestCount)
+		}
 		list = append(list, map[string]any{
-			"model_name":         model,
-			"request_count":      a.requestCount,
-			"success_count":      a.successCount,
-			"success_rate":       math.Round(successRate*100) / 100,
-			"grade":              gradeSuccessRate(successRate),
-			"input_tokens":       a.inputTokens,
-			"output_tokens":      a.outputTokens,
-			"total_tokens":       a.inputTokens + a.outputTokens,
-			"total_cost":         a.totalCost,
-			"avg_latency_ms":     math.Round(avgLatency*100) / 100,
-			"avg_first_token_ms": math.Round(avgTTFT*100) / 100,
-			"tps":                math.Round(tps*100) / 100,
+			"model_name":              model,
+			"request_count":           a.requestCount,
+			"success_count":           a.successCount,
+			"success_rate":            math.Round(successRate*100) / 100,
+			"grade":                   gradeSuccessRate(successRate),
+			"input_tokens":            a.inputTokens,
+			"output_tokens":           a.outputTokens,
+			"total_tokens":            a.inputTokens + a.outputTokens,
+			"total_cost":              a.totalCost,
+			"avg_latency_ms":          math.Round(avgLatency*100) / 100,
+			"avg_first_token_ms":      math.Round(avgTTFT*100) / 100,
+			"tps":                     math.Round(tps*100) / 100,
+			"cache_creation_tokens":   a.cacheCreationTokens,
+			"cache_read_tokens":       a.cacheReadTokens,
+			"cache_hit_rate":          math.Round(cacheHitRate*100) / 100,
+			"cache_hit_request_count": a.cacheHitRequests,
+			"cache_hit_request_rate":  math.Round(cacheHitReqRate*100) / 100,
 		})
 	}
 	// 默认按模型名称升序排列，便于运营按名称定位具体模型；用户可在前端表格点任意列切换排序。
