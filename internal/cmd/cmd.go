@@ -149,6 +149,7 @@ var (
 			// Global middleware
 			s.Use(middleware.Recovery)
 			s.Use(middleware.RequestId)
+			s.Use(middleware.ServiceName)
 
 			// Setup mode guard: block all requests until initialization is complete
 			s.Use(func(r *ghttp.Request) {

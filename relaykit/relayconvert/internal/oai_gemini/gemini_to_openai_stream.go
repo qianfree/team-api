@@ -245,6 +245,12 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 			CompletionTokens: totalUsage.CandidatesTokenCount,
 			TotalTokens:      totalUsage.TotalTokenCount,
 		}
+		if totalUsage.CachedContentTokenCount > 0 {
+			finalChunk.Usage.PromptTokensDetails = &dto.TokenDetails{CachedTokens: totalUsage.CachedContentTokenCount}
+		}
+		if totalUsage.ThoughtsTokenCount > 0 {
+			finalChunk.Usage.CompletionTokenDetails = &dto.TokenDetails{ReasoningTokens: totalUsage.ThoughtsTokenCount}
+		}
 	}
 
 	if err := chunkWriter(finalChunk); err != nil {

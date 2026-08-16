@@ -175,6 +175,18 @@ func convertClaudeUserMessage(msg dto.ClaudeMessage) []dto.Message {
 					if b, err := json.Marshal(cMap); err == nil {
 						toolContent = string(b)
 					}
+				} else if cArr, ok := m["content"].([]any); ok {
+					// 内容块数组（Claude 规范形式，如 [{type:"text",text:"..."}]）：
+					// 拼接文本块，否则工具结果会被替换为空字符串导致内容丢失
+					var parts []string
+					for _, item := range cArr {
+						if b, ok := item.(map[string]any); ok && b["type"] == "text" {
+							if text, ok := b["text"].(string); ok {
+								parts = append(parts, text)
+							}
+						}
+					}
+					toolContent = c2oJoinParts(parts)
 				}
 				if len(contentParts) > 0 {
 					if len(contentParts) == 1 && contentParts[0].Type == "text" {
@@ -1454,9 +1466,7 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 					createAt = int64(streamResp.Response.CreatedAt)
 				}
 				if streamResp.Response.Usage != nil {
-					totalUsage.PromptTokens = streamResp.Response.Usage.InputTokens
-					totalUsage.CompletionTokens = streamResp.Response.Usage.OutputTokens
-					totalUsage.TotalTokens = streamResp.Response.Usage.TotalTokens
+					totalUsage = *responsesUsageToCommon(streamResp.Response.Usage)
 					if totalUsage.TotalTokens == 0 {
 						totalUsage.TotalTokens = totalUsage.PromptTokens + totalUsage.CompletionTokens
 					}

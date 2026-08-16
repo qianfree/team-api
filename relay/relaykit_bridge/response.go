@@ -109,10 +109,20 @@ func UsageFromConvertedChatResponse(body []byte) (*common.Usage, bool) {
 		return nil, false
 	}
 	return &common.Usage{
-		PromptTokens:     resp.Usage.PromptTokens,
-		CompletionTokens: resp.Usage.CompletionTokens,
-		TotalTokens:      resp.Usage.TotalTokens,
+		PromptTokens:           resp.Usage.PromptTokens,
+		CompletionTokens:       resp.Usage.CompletionTokens,
+		TotalTokens:            resp.Usage.TotalTokens,
+		CacheCreationTokens:    convertedCacheCreationTokens(resp.Usage.PromptTokensDetails),
+		PromptTokensDetails:    common.DtoTokenDetailsToCommon(resp.Usage.PromptTokensDetails),
+		CompletionTokenDetails: common.DtoTokenDetailsToCommon(resp.Usage.CompletionTokenDetails),
 	}, true
+}
+
+func convertedCacheCreationTokens(details *dto.TokenDetails) int {
+	if details == nil {
+		return 0
+	}
+	return details.CachedCreationTokens
 }
 
 // relaykitResponseConverterID 根据 (上游原生格式, 客户端格式) 返回响应转换器 ID。

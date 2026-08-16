@@ -232,6 +232,12 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				CompletionTokens: usage.OutputTokens,
 				TotalTokens:      usage.InputTokens + usage.OutputTokens,
 			}
+			if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+				usageObj.PromptTokensDetails = &dto.TokenDetails{
+					CachedTokens:         usage.CacheReadInputTokens,
+					CachedCreationTokens: usage.CacheCreationInputTokens,
+				}
+			}
 			if usageObj.CompletionTokens == 0 {
 				// 未提供时根据文本长度估算
 				estimated := responseTextBuf.Len() / 4

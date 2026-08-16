@@ -3,7 +3,6 @@ package setup_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,15 +11,14 @@ import (
 
 	"github.com/qianfree/team-api/internal/consts"
 	setuphandler "github.com/qianfree/team-api/internal/handler/setup"
+	"github.com/qianfree/team-api/internal/testutil"
 )
 
 func TestHandleSetupInitializeValidationErrors(t *testing.T) {
 	s := g.Server(guid.S())
-	s.SetDumpRouterMap(false)
 	s.BindHandler("/initialize", setuphandler.HandleSetupInitialize)
 
-	server := httptest.NewServer(s)
-	defer server.Close()
+	baseURL := testutil.StartGFServer(t, s)
 
 	tests := []struct {
 		name     string
@@ -46,8 +44,8 @@ func TestHandleSetupInitializeValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := server.Client().Post(
-				server.URL+"/initialize",
+			res, err := http.Post(
+				baseURL+"/initialize",
 				"application/json",
 				strings.NewReader(tt.body),
 			)

@@ -162,6 +162,16 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount,
 			TotalTokens:      geminiResp.UsageMetadata.TotalTokenCount,
 		}
+		if geminiResp.UsageMetadata.CachedContentTokenCount > 0 {
+			openaiResp.Usage.PromptTokensDetails = &dto.TokenDetails{
+				CachedTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			}
+		}
+		if geminiResp.UsageMetadata.ThoughtsTokenCount > 0 {
+			openaiResp.Usage.CompletionTokenDetails = &dto.TokenDetails{
+				ReasoningTokens: geminiResp.UsageMetadata.ThoughtsTokenCount,
+			}
+		}
 	}
 
 	return openaiResp, nil
