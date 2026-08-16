@@ -156,13 +156,17 @@ type perfModelAgg struct {
 	cacheHitRequests    int64
 }
 
-// GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日 Redis 实时热桶
-// （见 common.RecordModelPerfMetrics，桶粒度小时），使页面当天即可看到最新数据，不再滞后一天。
+// GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日实时数据，
+// 支持可选的渠道（channelID，0=全部）与模型（modelName，空=全部）过滤：选定渠道后可查看
+// 该渠道下各模型的性能。历史段经 bil_usage_daily（唯一键含 channel_id）过滤；
+// 当天段在渠道过滤下改走 bil_usage_logs 明细实时聚合（热桶无渠道维度），两段口径一致。
 // 指标口径与 bil_usage_daily 一致：延迟按 SUM 求和、视图以 SUM/COUNT 求均值（分位数不可跨桶加，p95/p99 留后续）。
-func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, error) {
+func GetModelPerformance(ctx context.Context, startDate, endDate string, channelID int64, modelName string) (any, error) {
 	today := time.Now().Format("2006-01-02")
 
-	// 历史段：stat_date < today（当天由 Redis 热桶实时提供，避免与每日 01:00 的日聚合重复/滞后）
+	// 历史段：stat_date < today（当天由实时数据提供，避免与每日 01:00 的日聚合重复/滞后）。
+	// 渠道/模型过滤用「参数=哨兵值 OR 等值匹配」写法保持 SQL 常量字符串，未筛选时等价于无条件；
+	// $4/$5 显式转型规避 PostgreSQL 对 OR 两侧参数的类型推断歧义。
 	const query = `
 		SELECT
 			model_name,
@@ -178,25 +182,129 @@ func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, e
 			COALESCE(SUM(cache_hit_request_count), 0)                       AS cache_hit_request_count
 		FROM bil_usage_daily
 		WHERE stat_date >= $1 AND stat_date <= $2 AND stat_date < $3 AND model_name <> 'unknown'
+			AND ($4::bigint = 0 OR channel_id = $4)
+			AND ($5::text = '' OR model_name = $5)
 		GROUP BY model_name
 	`
 	var rows []modelPerfRow
-	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today).Scan(&rows); err != nil {
+	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today, channelID, modelName).Scan(&rows); err != nil {
 		return nil, err
 	}
 
-	// 当日 Redis 热桶（best-effort：仅当查询窗口包含今天时参与；Redis 异常则忽略当日数据，退化为历史日表）
+	// 当天段（best-effort：仅当查询窗口包含今天时参与；数据源失败则忽略当日数据，退化为历史日表）：
+	//   - 选定渠道：Redis 热桶无渠道维度，改从 bil_usage_logs 当天明细实时聚合（输出同构，合并逻辑复用）
+	//   - 未选渠道：保持热桶路径与现状一致；仅选模型时热桶键即模型名，按键过滤
 	todayCounts := map[string]common.ModelPerfCounter{}
 	if endDate == today {
-		tc, err := common.GetModelPerfMetricsToday(ctx, today)
-		if err != nil {
-			g.Log().Warningf(ctx, "model performance today redis read failed, fallback to daily only: %v", err)
+		if channelID > 0 {
+			tc, err := getModelPerfTodayFromLogs(ctx, today, channelID, modelName)
+			if err != nil {
+				g.Log().Warningf(ctx, "model performance today logs aggregate failed, fallback to daily only: %v", err)
+			} else {
+				todayCounts = tc
+			}
 		} else {
-			todayCounts = tc
+			tc, err := common.GetModelPerfMetricsToday(ctx, today)
+			if err != nil {
+				g.Log().Warningf(ctx, "model performance today redis read failed, fallback to daily only: %v", err)
+			} else {
+				todayCounts = filterTodayCounts(tc, modelName)
+			}
 		}
 	}
 
 	return map[string]any{"list": buildModelPerformanceList(rows, todayCounts)}, nil
+}
+
+// filterTodayCounts 热桶结果按模型过滤（热桶键即模型名；modelName 空 = 原样返回）。
+// 未命中返回 nil，交给合并层按空处理。
+func filterTodayCounts(tc map[string]common.ModelPerfCounter, modelName string) map[string]common.ModelPerfCounter {
+	if modelName == "" {
+		return tc
+	}
+	if c, ok := tc[modelName]; ok {
+		return map[string]common.ModelPerfCounter{modelName: c}
+	}
+	return nil
+}
+
+// modelPerfTodayRow 当天明细聚合行（bil_usage_logs 按模型分组，仅渠道筛选路径使用）。
+// 列名对齐 common.ModelPerfCounter 语义；口径与 usage_aggregation 写入 bil_usage_daily 一致：
+// ok=成功请求、ttft=Σ首Token（无首Token请求计 0）、ttft_n=有首Token样本数、chit=命中缓存的请求数。
+type modelPerfTodayRow struct {
+	ModelName     string  `json:"model_name"`
+	Req           int64   `json:"req"`
+	Ok            int64   `json:"ok"`
+	Lat           int64   `json:"lat"`
+	Ttft          int64   `json:"ttft"`
+	TtftN         int64   `json:"ttft_n"`
+	Tin           int64   `json:"tin"`
+	Tout          int64   `json:"tout"`
+	TotalCost     float64 `json:"total_cost"`
+	CacheCreation int64   `json:"cache_creation"`
+	CacheRead     int64   `json:"cache_read"`
+	Chit          int64   `json:"chit"`
+}
+
+// getModelPerfTodayFromLogs 渠道筛选下的当天数据源：从 bil_usage_logs 明细按模型实时聚合。
+// Redis 热桶（perf_model:{model}:{hour}）无渠道维度，选定渠道后当天必须回明细表；
+// 时间区间沿用日聚合的半开区间口径 [today 00:00, tomorrow 00:00)，命中 created_at 的 BRIN 索引
+// （tomorrow 从 today 参数推导而非另取 now，避免跨午夜瞬间的边界漂移）。
+// 输出与 common.GetModelPerfMetricsToday 同构，合并逻辑复用不分叉。
+func getModelPerfTodayFromLogs(ctx context.Context, today string, channelID int64, modelName string) (map[string]common.ModelPerfCounter, error) {
+	dayStart, err := time.ParseInLocation("2006-01-02", today, time.Local)
+	if err != nil {
+		return nil, err
+	}
+	start := today + " 00:00:00"
+	end := dayStart.AddDate(0, 0, 1).Format("2006-01-02") + " 00:00:00"
+	const query = `
+		SELECT
+			model_name                                    AS model_name,
+			COUNT(*)                                      AS req,
+			COUNT(*) FILTER (WHERE status = 'success')    AS ok,
+			COALESCE(SUM(latency_ms), 0)                  AS lat,
+			COALESCE(SUM(first_token_ms), 0)              AS ttft,
+			COUNT(*) FILTER (WHERE first_token_ms > 0)    AS ttft_n,
+			COALESCE(SUM(input_tokens), 0)                AS tin,
+			COALESCE(SUM(output_tokens), 0)               AS tout,
+			COALESCE(SUM(total_cost), 0)                  AS total_cost,
+			COALESCE(SUM(cache_creation_tokens), 0)       AS cache_creation,
+			COALESCE(SUM(cache_read_tokens), 0)           AS cache_read,
+			COUNT(*) FILTER (WHERE cache_read_tokens > 0) AS chit
+		FROM bil_usage_logs
+		WHERE created_at >= $1 AND created_at < $2 AND channel_id = $3
+			AND ($4::text = '' OR model_name = $4)
+		GROUP BY model_name
+	`
+	var rows []modelPerfTodayRow
+	if err := g.DB().Ctx(ctx).Raw(query, start, end, channelID, modelName).Scan(&rows); err != nil {
+		return nil, err
+	}
+	return rowsToTodayCounters(rows), nil
+}
+
+// rowsToTodayCounters 当天明细聚合行 → 热桶同构计数。
+// total_cost 以 float 聚合后转整数 micro-USD（common.microFromUSD 未导出，此处同式内联），
+// 合并侧统一经 billing.FromMicro 还原 USD，保证两条当天数据路径口径一致。
+func rowsToTodayCounters(rows []modelPerfTodayRow) map[string]common.ModelPerfCounter {
+	out := make(map[string]common.ModelPerfCounter, len(rows))
+	for _, r := range rows {
+		out[r.ModelName] = common.ModelPerfCounter{
+			Req:           r.Req,
+			Ok:            r.Ok,
+			Lat:           r.Lat,
+			Ttft:          r.Ttft,
+			TtftN:         r.TtftN,
+			Tin:           r.Tin,
+			Tout:          r.Tout,
+			CostMicro:     int64(math.Round(r.TotalCost * 1e6)),
+			CacheCreation: r.CacheCreation,
+			CacheRead:     r.CacheRead,
+			CacheHitReq:   r.Chit,
+		}
+	}
+	return out
 }
 
 // buildModelPerformanceList 将历史日表聚合行与当日 Redis 热桶合并为统一的模型性能列表，

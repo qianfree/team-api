@@ -15,6 +15,51 @@ const dateRange = ref<[string, string] | null>(defaultRange(0))
 // 指标说明弹窗
 const showMetricsGuide = ref(false)
 
+// 渠道/模型可选筛选：选定渠道后按渠道查看其下各模型性能；清空下拉 = 全部
+const filterChannelId = ref<number | undefined>(undefined)
+const filterModelName = ref<string | undefined>(undefined)
+const channelOptions = ref<{ label: string; value: number }[]>([])
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
+// 渠道下拉数据：渠道量级为几十，一次性拉全量（page_size 放大即可）
+async function fetchChannelOptions() {
+  try {
+    const res: any = await request.get('/admin/channels', { params: { page: 1, page_size: 200 } })
+    channelOptions.value = (res.data?.data?.list || res.data?.list || []).map((c: any) => ({
+      label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
+      value: c.id,
+    }))
+  } catch {
+    channelOptions.value = []
+  }
+}
+
+// 模型下拉数据：专用不分页接口 /admin/models/options（model_id 与统计口径 model_name 同名）
+async function fetchModelOptions() {
+  try {
+    const res: any = await request.get('/admin/models/options')
+    modelOptions.value = (res.data?.data?.list || res.data?.list || []).map((m: any) => ({
+      label: m.model_name ? `${m.model_name} (${m.model_id})` : m.model_id,
+      value: m.model_id,
+    }))
+  } catch {
+    modelOptions.value = []
+  }
+}
+
+// 页头描述：追加当前筛选提示，避免「跨渠道」文案与实际筛选状态不符
+const pageDescription = computed(() => {
+  const base =
+    '各模型跨渠道的成功率 / 延迟 / 吞吐 / 缓存命中（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值。Token 命中率对 OpenAI 原生渠道为保守值）'
+  const parts: string[] = []
+  if (filterChannelId.value) {
+    const ch = channelOptions.value.find((c) => c.value === filterChannelId.value)
+    parts.push(`渠道：${ch ? ch.label : `#${filterChannelId.value}`}`)
+  }
+  if (filterModelName.value) parts.push(`模型：${filterModelName.value}`)
+  return parts.length ? `${base}。当前筛选 — ${parts.join('，')}` : base
+})
+
 function toDateStr(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0')
   const day = `${d.getDate()}`.padStart(2, '0')
@@ -196,11 +241,14 @@ const stats = computed(() => {
 async function fetchData() {
   loading.value = true
   try {
-    const params: Record<string, string> = {}
+    const params: Record<string, any> = {}
     if (dateRange.value && dateRange.value.length === 2) {
       params.start_date = dateRange.value[0]
       params.end_date = dateRange.value[1]
     }
+    // 可选筛选：清空下拉（undefined）即不传参 = 全部
+    if (filterChannelId.value) params.channel_id = filterChannelId.value
+    if (filterModelName.value) params.model_name = filterModelName.value
     const res = await request.get('/admin/monitor/model-performance', { params })
     data.value = res.data?.data?.data?.list || []
   } catch {
@@ -212,13 +260,35 @@ async function fetchData() {
 
 onMounted(() => {
   fetchData()
+  // 下拉数据与列表并行加载，失败仅选项为空，不影响主列表
+  fetchChannelOptions()
+  fetchModelOptions()
 })
 </script>
 
 <template>
   <div class="page-table">
-    <PageHeader title="模型性能" description="各模型跨渠道的成功率 / 延迟 / 吞吐 / 缓存命中（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值。Token 命中率对 OpenAI 原生渠道为保守值）">
+    <PageHeader title="模型性能" :description="pageDescription">
       <template #actions>
+        <!-- 渠道/模型筛选：清空 = 全部；选定渠道后当天数据由后端从请求明细实时聚合 -->
+        <a-select
+          v-model="filterChannelId"
+          :options="channelOptions"
+          placeholder="全部渠道"
+          allow-clear
+          allow-search
+          style="width: 190px"
+          @change="fetchData"
+        />
+        <a-select
+          v-model="filterModelName"
+          :options="modelOptions"
+          placeholder="全部模型"
+          allow-clear
+          allow-search
+          style="width: 250px"
+          @change="fetchData"
+        />
         <a-button
           size="small"
           v-for="q in QUICK_RANGES"
@@ -243,7 +313,8 @@ onMounted(() => {
       <div class="metrics-guide">
         <p class="guide-intro">
           以下指标按所选时间区间逐模型聚合：历史数据（昨天及以前）源自 <code>bil_usage_daily</code> 每日聚合，
-          当天数据来自 Redis 实时热桶（小时粒度），两段口径一致、合并计算。顶部概览卡为全部模型汇总。
+          当天数据来自 Redis 实时热桶（小时粒度）；选择渠道筛选后，当天数据改为从请求明细（<code>bil_usage_logs</code>）实时聚合。
+          两段口径一致、合并计算。顶部概览卡为当前筛选范围的汇总。
         </p>
 
         <div class="guide-group">基础指标</div>
