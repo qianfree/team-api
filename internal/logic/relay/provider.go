@@ -640,6 +640,9 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 }
 
 func truncateBody(s string, maxLen int) string {
+	// 请求/响应体可能携带无效 UTF-8 字节（捕获侧按字节切割、上游/客户端原始输出），
+	// 落库前统一清洗为合法 UTF-8，避免 INSERT 被 UTF8 编码的 PostgreSQL 拒绝、整条记录丢失。
+	s = strings.ToValidUTF8(s, string(utf8.RuneError))
 	// maxLen <= 0 表示不截断（配置了独立审计库时完整记录）
 	if maxLen <= 0 || len(s) <= maxLen {
 		return s
