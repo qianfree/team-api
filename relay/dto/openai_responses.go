@@ -37,6 +37,8 @@ type OpenAIResponsesRequest struct {
 	PromptCacheKey       string          `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string          `json:"prompt_cache_retention,omitempty"`
 	SafetyIdentifier     string          `json:"safety_identifier,omitempty"`
+	FrequencyPenalty     json.RawMessage `json:"frequency_penalty,omitempty"`
+	PresencePenalty      json.RawMessage `json:"presence_penalty,omitempty"`
 }
 
 // Reasoning 推理参数（用于 o1/o3 等推理模型）

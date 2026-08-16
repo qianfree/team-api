@@ -184,7 +184,20 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 	}
 
 	// 转换为 OpenAI ChatCompletion 格式
-	finishReason := "stop"
+	message := dto.Message{
+		Role:    ollamaResp.Message.Role,
+		Content: ollamaResp.Message.Content,
+	}
+	if reasoning := ollamaThinkingToOpenAI(ollamaResp.Message.Thinking); reasoning != nil {
+		message.ReasoningContent = reasoning
+	}
+	if toolCalls := legacyOllamaToolCallsToOpenAI(ollamaResp.Message.ToolCalls); len(toolCalls) > 0 {
+		message.ToolCalls = toolCalls
+	}
+	finishReason := ollamaDoneReasonToFinishReason(ollamaResp.DoneReason)
+	if len(message.ToolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
 	openaiResp := dto.ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-%s", info.RequestID),
 		Object:  "chat.completion",
@@ -192,11 +205,8 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		Model:   info.OriginModelName,
 		Choices: []dto.Choice{
 			{
-				Index: 0,
-				Message: dto.Message{
-					Role:    ollamaResp.Message.Role,
-					Content: ollamaResp.Message.Content,
-				},
+				Index:        0,
+				Message:      message,
 				FinishReason: finishReason,
 			},
 		},
@@ -244,6 +254,8 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	var usage common.Usage
 	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
 
+	sawToolCalls := false
+	nextToolCallIndex := 0
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -273,7 +285,10 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 			usage.TotalTokens = ollamaResp.PromptEvalCount + ollamaResp.EvalCount
 
 			// 发送带 finish_reason 的结束 chunk
-			finishReason := "stop"
+			finishReason := ollamaDoneReasonToFinishReason(ollamaResp.DoneReason)
+			if sawToolCalls {
+				finishReason = "tool_calls"
+			}
 			endChunk := dto.ChatCompletionStreamResponse{
 				ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
 				Object: "chat.completion.chunk",
@@ -297,6 +312,17 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 
 		// 构建 OpenAI 流式 chunk
 		transferredTextLen += len(ollamaResp.Message.Content)
+		delta := dto.Message{
+			Role:    ollamaResp.Message.Role,
+			Content: ollamaResp.Message.Content,
+		}
+		if thinking := ollamaThinkingToOpenAI(ollamaResp.Message.Thinking); thinking != nil {
+			delta.ReasoningContent = thinking
+		}
+		if toolCalls := legacyOllamaStreamToolCalls(ollamaResp.Message.ToolCalls, &nextToolCallIndex); len(toolCalls) > 0 {
+			delta.ToolCalls = toolCalls
+			sawToolCalls = true
+		}
 		chunk := dto.ChatCompletionStreamResponse{
 			ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
 			Object: "chat.completion.chunk",
@@ -304,10 +330,7 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 			Choices: []dto.StreamChoice{
 				{
 					Index: 0,
-					Delta: dto.Message{
-						Role:    ollamaResp.Message.Role,
-						Content: ollamaResp.Message.Content,
-					},
+					Delta: delta,
 				},
 			},
 		}
@@ -521,4 +544,88 @@ func (a *Adaptor) handleEmbeddingResponse(ctx context.Context, resp *http.Respon
 func writeStreamChunk(w http.ResponseWriter, chunk any) {
 	data, _ := json.Marshal(chunk)
 	_ = helper.WriteSSEData(w, string(data))
+}
+
+// ollamaThinkingToOpenAI 将 Ollama thinking 字段（JSON 字符串）转为 OpenAI reasoning_content。
+// 字段缺失、null、空串或非字符串时返回 nil，避免产出空的 reasoning_content。
+func ollamaThinkingToOpenAI(thinking json.RawMessage) *string {
+	if len(thinking) == 0 {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(thinking, &s); err != nil {
+		return nil
+	}
+	// JSON null 反序列化不报错且保持零值，空思考内容同样不产出字段
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// ollamaDoneReasonToFinishReason 将 Ollama done_reason 映射为 OpenAI finish_reason。
+// stop/length 均为 OpenAI 合法取值，其余（如 load 等运行态原因）归一为 stop。
+func ollamaDoneReasonToFinishReason(doneReason string) string {
+	if doneReason == "length" {
+		return "length"
+	}
+	return "stop"
+}
+
+// legacyOllamaToolCallsToOpenAI 将 Ollama tool_calls 转换为 OpenAI tool_calls（非流式回退路径）。
+func legacyOllamaToolCallsToOpenAI(toolCalls []OllamaToolCall) []dto.ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	out := make([]dto.ToolCall, 0, len(toolCalls))
+	for i, tc := range toolCalls {
+		id := tc.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", i)
+		}
+		argsBytes := []byte("{}")
+		if tc.Function.Arguments != nil {
+			if b, err := json.Marshal(tc.Function.Arguments); err == nil {
+				argsBytes = b
+			}
+		}
+		out = append(out, dto.ToolCall{
+			ID:   id,
+			Type: "function",
+			Function: dto.FunctionCall{
+				Name:      tc.Function.Name,
+				Arguments: string(argsBytes),
+			},
+		})
+	}
+	return out
+}
+
+// legacyOllamaStreamToolCalls 将 Ollama tool_calls 转换为 OpenAI 流式增量 delta（回退路径），
+// 为每个调用分配稳定递增的 index。
+func legacyOllamaStreamToolCalls(toolCalls []OllamaToolCall, nextIndex *int) []dto.ToolCall {
+	out := make([]dto.ToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		id := tc.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", *nextIndex)
+		}
+		argsBytes := []byte("{}")
+		if tc.Function.Arguments != nil {
+			if b, err := json.Marshal(tc.Function.Arguments); err == nil {
+				argsBytes = b
+			}
+		}
+		out = append(out, dto.ToolCall{
+			Index: *nextIndex,
+			ID:    id,
+			Type:  "function",
+			Function: dto.FunctionCall{
+				Name:      tc.Function.Name,
+				Arguments: string(argsBytes),
+			},
+		})
+		*nextIndex++
+	}
+	return out
 }

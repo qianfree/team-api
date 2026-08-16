@@ -2,8 +2,10 @@ package openai
 
 import (
 	"encoding/json"
+	"io"
 	"testing"
 
+	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -197,5 +199,58 @@ func TestConvertClaudeUserMessage_StringContent(t *testing.T) {
 	}
 	if msgs[0].Role != "user" || msgs[0].Content != "hi there" {
 		t.Errorf("got %+v", msgs[0])
+	}
+}
+
+// TestConvertResponsesToOpenAI_PenaltyPassthrough Responses 入站转 chat 出站时
+// 透传 presence/frequency penalty 与 prompt_cache_key（vLLM 等 OpenAI 兼容上游接受）。
+func TestConvertResponsesToOpenAI_PenaltyPassthrough(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"gpt-4o","input":"hi","frequency_penalty":0.5,"presence_penalty":0.2}`)
+	out, err := ConvertResponsesToOpenAI(body, info)
+	if err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, raw)
+	}
+	if m["frequency_penalty"] != 0.5 {
+		t.Errorf("frequency_penalty = %v, want 0.5", m["frequency_penalty"])
+	}
+	if m["presence_penalty"] != 0.2 {
+		t.Errorf("presence_penalty = %v, want 0.2", m["presence_penalty"])
+	}
+	if _, ok := m["messages"]; !ok {
+		t.Error("messages should be present")
+	}
+}
+
+// TestConvertOpenAIToResponses_PenaltyDropped chat 入站转 Responses 出站时
+// 丢弃官方不支持的 presence/frequency penalty（透传会被严格上游拒绝），
+// 保留官方参数 prompt_cache_key。
+func TestConvertOpenAIToResponses_PenaltyDropped(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.5,"presence_penalty":0.2,"prompt_cache_key":"abc"}`)
+	out, err := ConvertOpenAIToResponses(body, info)
+	if err != nil {
+		t.Fatalf("ConvertOpenAIToResponses: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, out)
+	}
+	if _, ok := m["frequency_penalty"]; ok {
+		t.Error("frequency_penalty should be dropped (not official Responses API)")
+	}
+	if _, ok := m["presence_penalty"]; ok {
+		t.Error("presence_penalty should be dropped (not official Responses API)")
+	}
+	if m["prompt_cache_key"] != "abc" {
+		t.Errorf("prompt_cache_key = %v, want abc", m["prompt_cache_key"])
+	}
+	if _, ok := m["input"]; !ok {
+		t.Error("input should be present")
 	}
 }
