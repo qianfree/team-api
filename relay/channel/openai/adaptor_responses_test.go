@@ -257,6 +257,188 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream(t *testing.T) {
 	}
 }
 
+// fakeResponseRouteStore 路由存储 fake，用于断言 Record 调用
+type fakeResponseRouteStore struct {
+	calls []fakeRouteCall
+}
+
+type fakeRouteCall struct {
+	tenantID   int64
+	responseID string
+	route      common.ResponseRoute
+}
+
+func (f *fakeResponseRouteStore) Record(_ context.Context, tenantID int64, responseID string, route common.ResponseRoute) {
+	f.calls = append(f.calls, fakeRouteCall{tenantID: tenantID, responseID: responseID, route: route})
+}
+
+func (f *fakeResponseRouteStore) Lookup(context.Context, int64, string) (common.ResponseRoute, bool) {
+	return common.ResponseRoute{}, false
+}
+
+func (f *fakeResponseRouteStore) Delete(context.Context, int64, string) {}
+
+// TestChatCompletionToResponsesResponse_StoreFalseAndEcho 合成响应的保真度：
+// store 恒为 false（合成响应不落上游存储，不可 retrieve）；
+// temperature/top_p/max_output_tokens/instructions 从请求快照 echo，快照缺失回退默认值。
+func TestChatCompletionToResponsesResponse_StoreFalseAndEcho(t *testing.T) {
+	buildChatResp := func() *dto.ChatCompletionResponse {
+		return &dto.ChatCompletionResponse{
+			ID:      "abc123",
+			Created: 1700000000,
+			Model:   "gpt-4o",
+			Choices: []dto.Choice{{
+				Index:        0,
+				Message:      dto.Message{Role: "assistant", Content: "hello"},
+				FinishReason: "stop",
+			}},
+			Usage: dto.UsageWithDetails{
+				PromptTokensDetails:    &dto.TokenDetails{},
+				CompletionTokenDetails: &dto.TokenDetails{},
+			},
+		}
+	}
+
+	t.Run("echo from request snapshot", func(t *testing.T) {
+		temp, topP := 0.7, 0.9
+		maxOut := uint(1024)
+		info := &common.RelayInfo{
+			OriginModelName: "gpt-4o",
+			ResponsesRequest: &dto.OpenAIResponsesRequest{
+				Temperature:     &temp,
+				TopP:            &topP,
+				MaxOutputTokens: &maxOut,
+				Instructions:    json.RawMessage(`"be brief"`),
+			},
+		}
+		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
+		if resp.Store {
+			t.Error("store should be false（合成响应不可 retrieve）")
+		}
+		if resp.Temperature == nil || *resp.Temperature != 0.7 {
+			t.Errorf("temperature = %v, want 0.7", resp.Temperature)
+		}
+		if resp.TopP == nil || *resp.TopP != 0.9 {
+			t.Errorf("top_p = %v, want 0.9", resp.TopP)
+		}
+		if resp.MaxOutputTokens == nil || *resp.MaxOutputTokens != 1024 {
+			t.Errorf("max_output_tokens = %v, want 1024", resp.MaxOutputTokens)
+		}
+		if instr, ok := resp.Instructions.(json.RawMessage); !ok || string(instr) != `"be brief"` {
+			t.Errorf("instructions = %v, want echo", resp.Instructions)
+		}
+	})
+
+	t.Run("nil snapshot falls back to defaults", func(t *testing.T) {
+		info := &common.RelayInfo{OriginModelName: "gpt-4o"}
+		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
+		if resp.Store {
+			t.Error("store should be false")
+		}
+		if resp.Temperature == nil || *resp.Temperature != 1.0 {
+			t.Errorf("temperature = %v, want default 1.0", resp.Temperature)
+		}
+		if resp.TopP == nil || *resp.TopP != 1.0 {
+			t.Errorf("top_p = %v, want default 1.0", resp.TopP)
+		}
+	})
+}
+
+// TestBuildResponsesObjectMap_StoreFalseEcho 流式合成 response 对象同样 store:false + echo。
+func TestBuildResponsesObjectMap_StoreFalseEcho(t *testing.T) {
+	temp := 0.5
+	info := &common.RelayInfo{
+		ResponsesRequest: &dto.OpenAIResponsesRequest{Temperature: &temp},
+	}
+	m := buildResponsesObjectMap("resp_1", 1700000000, "completed", "gpt-4o", []any{}, nil, nil, info)
+	if m["store"] != false {
+		t.Errorf("store = %v, want false", m["store"])
+	}
+	if m["temperature"] != 0.5 {
+		t.Errorf("temperature = %v, want 0.5", m["temperature"])
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesUpstreamNonStream_RecordsRoute 直连非流式响应：
+// 解析出 response id 后记录 response_id → 渠道路由（tenant 隔离、lookupModel 口径）。
+func TestAdaptor_DoResponse_ResponsesUpstreamNonStream_RecordsRoute(t *testing.T) {
+	fake := &fakeResponseRouteStore{}
+	old := common.DefaultResponseRouteStore
+	common.DefaultResponseRouteStore = fake
+	t.Cleanup(func() { common.DefaultResponseRouteStore = old })
+
+	respBody := `{"id":"resp_route1","object":"response","status":"completed","output":[]}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(respBody)),
+	}
+	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
+	info.TenantID = 42
+	info.BaseModelName = "gpt-4o"
+	info.ChannelMeta.ChannelID = 7
+
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	if _, err := a.DoResponse(context.Background(), resp, info, rec); err != nil {
+		t.Fatalf("DoResponse error: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("Record calls = %d, want 1", len(fake.calls))
+	}
+	call := fake.calls[0]
+	if call.tenantID != 42 || call.responseID != "resp_route1" {
+		t.Errorf("call = %+v", call)
+	}
+	if call.route.ChannelID != 7 || call.route.ModelName != "gpt-4o" {
+		t.Errorf("route = %+v", call.route)
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesUpstreamStream_RecordsRoute 直连流式响应：
+// response.created 事件即记录路由（cancel 尽早可用），completed 再刷新。
+func TestAdaptor_DoResponse_ResponsesUpstreamStream_RecordsRoute(t *testing.T) {
+	fake := &fakeResponseRouteStore{}
+	old := common.DefaultResponseRouteStore
+	common.DefaultResponseRouteStore = fake
+	t.Cleanup(func() { common.DefaultResponseRouteStore = old })
+
+	ss := strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_s1","object":"response","status":"in_progress"}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_s1","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+	info := responsesUpstreamInfo(constant.RelayModeResponses, true)
+	info.TenantID = 42
+	info.BaseModelName = "gpt-4o"
+	info.ChannelMeta.ChannelID = 7
+
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	if _, err := a.DoResponse(context.Background(), resp, info, rec); err != nil {
+		t.Fatalf("DoResponse error: %v", err)
+	}
+	if len(fake.calls) < 2 {
+		t.Fatalf("Record calls = %d, want >=2（created + completed）", len(fake.calls))
+	}
+	if fake.calls[0].responseID != "resp_s1" || fake.calls[0].tenantID != 42 {
+		t.Errorf("first call = %+v", fake.calls[0])
+	}
+	if fake.calls[len(fake.calls)-1].route.ChannelID != 7 {
+		t.Errorf("last call route = %+v", fake.calls[len(fake.calls)-1].route)
+	}
+}
+
 // TestAdaptor_DoResponse_ResponsesUpstreamNonStream_Error 非 200 上游响应：
 // 错误体透传给客户端的同时必须返回 upstream error（驱动重试/渠道健康上报）。
 func TestAdaptor_DoResponse_ResponsesUpstreamNonStream_Error(t *testing.T) {

@@ -72,9 +72,42 @@ func (a *Adaptor) handleResponsesInboundNonStream(ctx context.Context, resp *htt
 	}, nil
 }
 
+// responsesRequestEcho 合成 Responses 响应时需回显（echo）的请求参数
+type responsesRequestEcho struct {
+	temperature     *float64
+	topP            *float64
+	maxOutputTokens *int
+	instructions    any
+}
+
+// extractResponsesRequestEcho 从 info.ResponsesRequest 提取合成响应应 echo 的请求参数。
+// 快照缺失（直连路径/异常）时回退 OpenAI 默认值（temperature=1.0 / top_p=1.0，其余 nil）。
+func extractResponsesRequestEcho(info *common.RelayInfo) responsesRequestEcho {
+	echo := responsesRequestEcho{temperature: float64Ptr(1.0), topP: float64Ptr(1.0)}
+	if info == nil || info.ResponsesRequest == nil {
+		return echo
+	}
+	rr := info.ResponsesRequest
+	if rr.Temperature != nil {
+		echo.temperature = rr.Temperature
+	}
+	if rr.TopP != nil {
+		echo.topP = rr.TopP
+	}
+	if rr.MaxOutputTokens != nil {
+		m := int(*rr.MaxOutputTokens)
+		echo.maxOutputTokens = &m
+	}
+	if len(rr.Instructions) > 0 {
+		echo.instructions = json.RawMessage(rr.Instructions)
+	}
+	return echo
+}
+
 // chatCompletionToResponsesResponse 将 Chat Completions 响应转换为 Responses API 响应
 func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, info *common.RelayInfo) *dto.OpenAIResponsesResponse {
 	modelName := info.OriginModelName
+	echo := extractResponsesRequestEcho(info)
 
 	// 构建 output
 	output := make([]dto.ResponsesOutput, 0)
@@ -129,22 +162,23 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 		Status:             json.RawMessage(`"completed"`),
 		Error:              nil,
 		IncompleteDetails:  nil,
-		Instructions:       nil,
-		MaxOutputTokens:    nil,
+		Instructions:       echo.instructions,
+		MaxOutputTokens:    echo.maxOutputTokens,
 		Model:              modelName,
 		Output:             output,
 		ParallelToolCalls:  true,
 		PreviousResponseID: nil,
 		Reasoning:          &dto.ResponsesReasoning{Effort: nil, Summary: nil},
-		Store:              true,
-		Temperature:        float64Ptr(1.0),
-		Text:               &dto.ResponsesText{Format: dto.ResponsesTextFormat{Type: "text"}},
-		ToolChoice:         "auto",
-		Tools:              make([]any, 0),
-		TopP:               float64Ptr(1.0),
-		Truncation:         "disabled",
-		User:               nil,
-		Metadata:           make(map[string]any),
+		// store:false 是真实语义：合成响应不落上游存储，客户端不可经 GET /v1/responses/{id} retrieve
+		Store:       false,
+		Temperature: echo.temperature,
+		Text:        &dto.ResponsesText{Format: dto.ResponsesTextFormat{Type: "text"}},
+		ToolChoice:  "auto",
+		Tools:       make([]any, 0),
+		TopP:        echo.topP,
+		Truncation:  "disabled",
+		User:        nil,
+		Metadata:    make(map[string]any),
 		Usage: &dto.ResponsesUsage{
 			InputTokens:  chatResp.Usage.PromptTokens,
 			OutputTokens: chatResp.Usage.CompletionTokens,
@@ -279,7 +313,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			// response.created
 			emitResponsesSSE(writer, "response.created", map[string]any{
 				"type":     "response.created",
-				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil),
+				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, info),
 			})
 
 			// response.output_item.added
@@ -567,7 +601,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	completedAt := int(time.Now().Unix())
 	emitResponsesSSE(writer, "response.completed", map[string]any{
 		"type":     "response.completed",
-		"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt),
+		"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt, info),
 	})
 
 	if info.StreamStatus.GetEndReason() == "" {
@@ -609,8 +643,11 @@ func emitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
 	}
 }
 
-// buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map
-func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int) map[string]any {
+// buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map。
+// 请求参数从 info.ResponsesRequest echo（快照缺失时回退默认值）；
+// store 恒为 false——合成响应不落上游存储，客户端不可经生命周期端点 retrieve。
+func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, info *common.RelayInfo) map[string]any {
+	echo := extractResponsesRequestEcho(info)
 	m := map[string]any{
 		"id":                   respID,
 		"object":               "response",
@@ -618,19 +655,19 @@ func buildResponsesObjectMap(respID string, createdAt int, status string, model 
 		"status":               status,
 		"error":                nil,
 		"incomplete_details":   nil,
-		"instructions":         nil,
-		"max_output_tokens":    nil,
+		"instructions":         echo.instructions,
+		"max_output_tokens":    echo.maxOutputTokens,
 		"model":                model,
 		"output":               output,
 		"parallel_tool_calls":  true,
 		"previous_response_id": nil,
 		"reasoning":            map[string]any{"effort": nil, "summary": nil},
-		"store":                true,
-		"temperature":          1.0,
+		"store":                false,
+		"temperature":          *echo.temperature,
 		"text":                 map[string]any{"format": map[string]any{"type": "text"}},
 		"tool_choice":          "auto",
 		"tools":                []any{},
-		"top_p":                1.0,
+		"top_p":                *echo.topP,
 		"truncation":           "disabled",
 		"user":                 nil,
 		"metadata":             map[string]any{},
@@ -708,6 +745,19 @@ func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
 	return usage
 }
 
+// recordResponseRoute 记录 response_id → 渠道路由（Redis），供 GET/DELETE/cancel
+// 生命周期端点还原原始请求落到的渠道。ModelName 存 lookupModel 口径（BaseModelName），
+// 与 MaterializeSelection 入参一致。
+func recordResponseRoute(ctx context.Context, info *common.RelayInfo, responseID string) {
+	if responseID == "" || info == nil || info.ChannelMeta == nil {
+		return
+	}
+	common.DefaultResponseRouteStore.Record(ctx, info.TenantID, responseID, common.ResponseRoute{
+		ChannelID: info.ChannelMeta.ChannelID,
+		ModelName: info.BaseModelName,
+	})
+}
+
 // handleResponsesUpstreamNonStream 上游为 Responses 协议时的非流式响应：
 // 解析 usage 后原样透传上游响应体（模型映射时回写客户端请求的模型名）。
 func (a *Adaptor) handleResponsesUpstreamNonStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
@@ -740,6 +790,7 @@ func (a *Adaptor) handleResponsesUpstreamNonStream(ctx context.Context, resp *ht
 	// 解析 usage（计费用），响应体仍透传上游原始内容
 	var responsesResp dto.OpenAIResponsesResponse
 	if err := json.Unmarshal(body, &responsesResp); err == nil {
+		recordResponseRoute(ctx, info, responsesResp.ID)
 		return responsesUsageToCommon(responsesResp.Usage), nil
 	}
 	return &common.Usage{}, nil
@@ -817,10 +868,14 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 			var streamResp dto.ResponsesStreamResponse
 			if err := json.Unmarshal([]byte(data), &streamResp); err == nil {
 				switch streamResp.Type {
-				case "response.completed", "response.done":
-					if r := streamResp.Response; r != nil && r.Usage != nil {
-						if u := responsesUsageToCommon(r.Usage); u != nil {
-							usage = *u
+				case "response.created", "response.completed", "response.done":
+					if r := streamResp.Response; r != nil {
+						// 路由记录：created 即记录使 cancel 尽早可用，completed/done 刷新 TTL（SET 幂等）
+						recordResponseRoute(ctx, info, r.ID)
+						if streamResp.Type != "response.created" && r.Usage != nil {
+							if u := responsesUsageToCommon(r.Usage); u != nil {
+								usage = *u
+							}
 						}
 					}
 				case "response.output_text.delta":
