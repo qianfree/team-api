@@ -78,6 +78,8 @@ func (c *OllamaToOpenAIStreamConverter) ConvertStreamResponse(
 
 	roleChunkSent := false
 	finishEmitted := false
+	sawToolCalls := false
+	nextToolCallIndex := 0
 
 	for scanner.Scan() {
 		select {
@@ -102,7 +104,10 @@ func (c *OllamaToOpenAIStreamConverter) ConvertStreamResponse(
 				CompletionTokens: ollamaResp.EvalCount,
 				TotalTokens:      ollamaResp.PromptEvalCount + ollamaResp.EvalCount,
 			}
-			reason := "stop"
+			reason := ollamaDoneReasonToFinishReason(ollamaResp.DoneReason)
+			if sawToolCalls {
+				reason = "tool_calls"
+			}
 			if err := chunkWriter(newChunk(dto.Message{}, &reason, usage)); err != nil {
 				return err
 			}
@@ -113,6 +118,13 @@ func (c *OllamaToOpenAIStreamConverter) ConvertStreamResponse(
 		// 内容增量（首个 chunk 带 role）
 		delta := dto.Message{
 			Content: ollamaResp.Message.Content,
+		}
+		if thinking := ollamaThinkingToOpenAI(ollamaResp.Message.Thinking); thinking != nil {
+			delta.ReasoningContent = thinking
+		}
+		if toolCalls := ollamaStreamToolCalls(ollamaResp.Message.ToolCalls, &nextToolCallIndex); len(toolCalls) > 0 {
+			delta.ToolCalls = toolCalls
+			sawToolCalls = true
 		}
 		if !roleChunkSent {
 			delta.Role = "assistant"
@@ -137,6 +149,9 @@ func (c *OllamaToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 		}
 		reason := "stop"
+		if sawToolCalls {
+			reason = "tool_calls"
+		}
 		if err := chunkWriter(newChunk(dto.Message{}, &reason, nil)); err != nil {
 			return err
 		}
@@ -146,4 +161,33 @@ func (c *OllamaToOpenAIStreamConverter) ConvertStreamResponse(
 		return fmt.Errorf("stream scanner error: %w", err)
 	}
 	return nil
+}
+
+// ollamaStreamToolCalls 将 Ollama tool_calls 转换为 OpenAI 流式增量 delta，
+// 为每个调用分配稳定递增的 index。
+func ollamaStreamToolCalls(toolCalls []dto.OllamaToolCall, nextIndex *int) []dto.ToolCall {
+	out := make([]dto.ToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		id := tc.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", *nextIndex)
+		}
+		argsBytes := []byte("{}")
+		if tc.Function.Arguments != nil {
+			if b, err := json.Marshal(tc.Function.Arguments); err == nil {
+				argsBytes = b
+			}
+		}
+		out = append(out, dto.ToolCall{
+			Index: *nextIndex,
+			ID:    id,
+			Type:  "function",
+			Function: dto.FunctionCall{
+				Name:      tc.Function.Name,
+				Arguments: string(argsBytes),
+			},
+		})
+		*nextIndex++
+	}
+	return out
 }

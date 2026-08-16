@@ -655,6 +655,18 @@ func ConvertResponsesToOpenAI(requestBody []byte, info *common.RelayInfo) (io.Re
 	if req.PromptCacheKey != "" {
 		chatReq["prompt_cache_key"] = req.PromptCacheKey
 	}
+	if len(req.FrequencyPenalty) > 0 {
+		var v float64
+		if err := json.Unmarshal(req.FrequencyPenalty, &v); err == nil {
+			chatReq["frequency_penalty"] = v
+		}
+	}
+	if len(req.PresencePenalty) > 0 {
+		var v float64
+		if err := json.Unmarshal(req.PresencePenalty, &v); err == nil {
+			chatReq["presence_penalty"] = v
+		}
+	}
 	if len(req.Metadata) > 0 {
 		chatReq["metadata"] = json.RawMessage(req.Metadata)
 	}
@@ -834,6 +846,12 @@ func ConvertOpenAIToResponses(body []byte, info *common.RelayInfo) ([]byte, erro
 	}
 	if req.TopP != nil {
 		respReq["top_p"] = *req.TopP
+	}
+	// prompt_cache_key 是官方 Responses API 参数，原样透传；
+	// presence/frequency penalty 不属于官方 Responses API，透传会被严格上游
+	// （如 api.openai.com）以未知参数拒绝，chat 入站时不注入、静默丢弃。
+	if req.PromptCacheKey != "" {
+		respReq["prompt_cache_key"] = req.PromptCacheKey
 	}
 	if maxTokens := c2rGetMaxTokens(req); maxTokens > 0 {
 		respReq["max_output_tokens"] = maxTokens
