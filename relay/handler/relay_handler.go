@@ -586,6 +586,23 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 转换请求（直连模式跳过协议转换和参数改写）
 		convertedBody, err := convertRequestBody(ctx, info, body, adaptor)
 		if err != nil {
+			// responses 有状态请求（previous_response_id）落在 chat-only 渠道：协议能力不匹配
+			// 而非请求错误，换渠道可能命中 Responses 原生渠道——按渠道级致命上报驱动 failover，
+			// 而非直接返回（直接返回会让有能力渠道存在时也失败）
+			if errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+				channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s convert_error=[%v]",
+					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
+				g.Log().Warningf(ctx, "[RelayHandler] Stateful responses not supported by chat-only channel, failing over: channel=%d(%s) model=%s attempt=%d",
+					selection.ChannelID, selection.ChannelName, v.modelName, attempt)
+				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
+					if billing != nil && preDeductAmount > 0 {
+						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+					}
+					return nil, v.billingResult, constant.NewRequestError(
+						"previous_response_id is only supported on responses-native channels; no eligible channel remains for this model. Resend the full conversation input without previous_response_id.", nil)
+				}
+				continue
+			}
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}

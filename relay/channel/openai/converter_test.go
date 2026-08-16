@@ -2,10 +2,12 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 )
 
@@ -252,5 +254,218 @@ func TestConvertOpenAIToResponses_PenaltyDropped(t *testing.T) {
 	}
 	if _, ok := m["input"]; !ok {
 		t.Error("input should be present")
+	}
+}
+
+// TestConvertResponsesToOpenAI_PreviousResponseIDRejected 有状态请求（previous_response_id）
+// 落在 chat-only 渠道时必须快速失败：降级转换会静默丢失全部会话上下文。
+// 错误须携带哨兵以供 relay_handler 识别并驱动调度 FSM 换渠道。
+func TestConvertResponsesToOpenAI_PreviousResponseIDRejected(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"gpt-4o","input":"hi","previous_response_id":"resp_prev"}`)
+	_, err := ConvertResponsesToOpenAI(body, info)
+	if err == nil {
+		t.Fatal("previous_response_id should be rejected on chat-only conversion")
+	}
+	if !errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+		t.Errorf("error should wrap ErrStatefulResponsesUnsupported, got: %v", err)
+	}
+}
+
+// TestConvertResponsesToOpenAI_TextFormat Responses text.format（扁平结构）转 chat
+// response_format（json_schema 嵌套结构）；text 类型不映射。
+func TestConvertResponsesToOpenAI_TextFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want map[string]any
+	}{
+		{
+			name: "json_object",
+			text: `{"format":{"type":"json_object"}}`,
+			want: map[string]any{"type": "json_object"},
+		},
+		{
+			name: "json_schema",
+			text: `{"format":{"type":"json_schema","name":"out","schema":{"type":"object"},"strict":true}}`,
+			want: map[string]any{
+				"type": "json_schema",
+				"json_schema": map[string]any{
+					"name":   "out",
+					"schema": map[string]any{"type": "object"},
+					"strict": true,
+				},
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+			body := []byte(`{"model":"gpt-4o","input":"hi","text":` + c.text + `}`)
+			out, err := ConvertResponsesToOpenAI(body, info)
+			if err != nil {
+				t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+			}
+			raw, _ := io.ReadAll(out)
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err != nil {
+				t.Fatalf("bad json: %v\n%s", err, raw)
+			}
+			got, ok := m["response_format"].(map[string]any)
+			if !ok {
+				t.Fatalf("response_format missing or wrong type: %v", m["response_format"])
+			}
+			wantJSON, _ := json.Marshal(c.want)
+			gotJSON, _ := json.Marshal(got)
+			if string(gotJSON) != string(wantJSON) {
+				t.Errorf("response_format = %s, want %s", gotJSON, wantJSON)
+			}
+		})
+	}
+
+	t.Run("text format not mapped", func(t *testing.T) {
+		info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+		body := []byte(`{"model":"gpt-4o","input":"hi","text":{"format":{"type":"text"}}}`)
+		out, err := ConvertResponsesToOpenAI(body, info)
+		if err != nil {
+			t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+		}
+		raw, _ := io.ReadAll(out)
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		if _, ok := m["response_format"]; ok {
+			t.Error("text format should not map to response_format")
+		}
+	})
+}
+
+// TestConvertResponsesToOpenAI_StashesResponsesRequest 转换时 stash 请求快照，
+// 供上游 chat 响应合成回 Responses 格式时 echo 请求参数。
+func TestConvertResponsesToOpenAI_StashesResponsesRequest(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	temp := 0.7
+	// 先填充再转换，断言转换覆盖为最新请求体
+	info.ResponsesRequest = &dto.OpenAIResponsesRequest{Model: "stale"}
+	body := []byte(`{"model":"gpt-4o","input":"hi","temperature":0.7}`)
+	if _, err := ConvertResponsesToOpenAI(body, info); err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	if info.ResponsesRequest == nil {
+		t.Fatal("ResponsesRequest should be stashed")
+	}
+	if info.ResponsesRequest.Model != "gpt-4o" {
+		t.Errorf("stashed model = %q, want gpt-4o", info.ResponsesRequest.Model)
+	}
+	if info.ResponsesRequest.Temperature == nil || *info.ResponsesRequest.Temperature != temp {
+		t.Errorf("stashed temperature = %v, want 0.7", info.ResponsesRequest.Temperature)
+	}
+}
+
+// TestConvertResponsesToOpenAI_InputAudioAndFile 多模态输入透传：
+// input_audio 与 Responses 同形透传；input_file 扁平结构转 chat 的 file 嵌套结构。
+func TestConvertResponsesToOpenAI_InputAudioAndFile(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"gpt-4o","input":[{"type":"message","role":"user","content":[` +
+		`{"type":"input_text","text":"listen"},` +
+		`{"type":"input_audio","input_audio":{"data":"QUJD","format":"wav"}},` +
+		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"}` +
+		`]}]}`)
+	out, err := ConvertResponsesToOpenAI(body, info)
+	if err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, raw)
+	}
+	msgs, _ := m["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %v", msgs)
+	}
+	parts, _ := msgs[0].(map[string]any)["content"].([]any)
+	if len(parts) != 3 {
+		t.Fatalf("content parts = %v, want 3（audio/file 不再被丢弃）", parts)
+	}
+	audio, _ := parts[1].(map[string]any)
+	if audio["type"] != "input_audio" {
+		t.Errorf("audio part = %v", audio)
+	}
+	ia, _ := audio["input_audio"].(map[string]any)
+	if ia["data"] != "QUJD" || ia["format"] != "wav" {
+		t.Errorf("input_audio = %v", ia)
+	}
+	file, _ := parts[2].(map[string]any)
+	if file["type"] != "file" {
+		t.Errorf("file part = %v", file)
+	}
+	f, _ := file["file"].(map[string]any)
+	if f["file_data"] != "data:text/plain;base64,aGk=" || f["filename"] != "a.txt" {
+		t.Errorf("file = %v", f)
+	}
+}
+
+// TestConvertOpenAIToResponses_TextFormatUnpack chat response_format 转 Responses
+// text.format：json_schema 需解包为扁平结构（不能原样塞入嵌套形状）。
+func TestConvertOpenAIToResponses_TextFormatUnpack(t *testing.T) {
+	t.Run("json_schema", func(t *testing.T) {
+		info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],` +
+			`"response_format":{"type":"json_schema","json_schema":{"name":"out","schema":{"type":"object"},"strict":true}}}`)
+		out, err := ConvertOpenAIToResponses(body, info)
+		if err != nil {
+			t.Fatalf("ConvertOpenAIToResponses: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(out, &m); err != nil {
+			t.Fatalf("bad json: %v\n%s", err, out)
+		}
+		text, _ := m["text"].(map[string]any)
+		format, _ := text["format"].(map[string]any)
+		if format["type"] != "json_schema" {
+			t.Fatalf("format = %v", format)
+		}
+		if format["name"] != "out" {
+			t.Errorf("format.name = %v, want out", format["name"])
+		}
+		if _, nested := format["json_schema"]; nested {
+			t.Error("format should be flat（json_schema 嵌套必须解包）")
+		}
+		if s, _ := format["schema"].(map[string]any); s == nil {
+			t.Errorf("format.schema = %v", format["schema"])
+		}
+	})
+	t.Run("json_object", func(t *testing.T) {
+		info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`)
+		out, err := ConvertOpenAIToResponses(body, info)
+		if err != nil {
+			t.Fatalf("ConvertOpenAIToResponses: %v", err)
+		}
+		var m map[string]any
+		_ = json.Unmarshal(out, &m)
+		text, _ := m["text"].(map[string]any)
+		format, _ := text["format"].(map[string]any)
+		if format["type"] != "json_object" {
+			t.Errorf("format = %v", format)
+		}
+	})
+}
+
+// TestConvertOpenAIToResponses_StoreFalse 桥接方向显式 store:false：
+// chat 客户端无法经 previous_response_id 引用响应，无需上游存储。
+func TestConvertOpenAIToResponses_StoreFalse(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	out, err := ConvertOpenAIToResponses(body, info)
+	if err != nil {
+		t.Fatalf("ConvertOpenAIToResponses: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, out)
+	}
+	if v, ok := m["store"]; !ok || v != false {
+		t.Errorf("store = %v(%T), want explicit false", m["store"], m["store"])
 	}
 }
