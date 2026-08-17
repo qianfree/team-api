@@ -343,7 +343,20 @@ func (p *DataProviderImpl) RecordUsage(ctx context.Context, record *common.Usage
 		InputTokens:  record.PromptTokens,
 		OutputTokens: record.CompletionTokens,
 		CostUSD:      record.TotalCost,
+		// 缓存 token 透传给热桶（命中请求判定由热桶模块从 read>0 推导）
+		CacheCreationTokens: record.CacheCreationTokens,
+		CacheReadTokens:     record.CacheReadTokens,
 	})
+}
+
+// sanitizeUTF8 清洗字符串字段：将非法 UTF-8 字节替换为 U+FFFD 替换符。
+// 上游错误文本/请求头/回显模型名等可能夹带 0xa0 等单字节脏数据，PostgreSQL 在协议层
+// 会以 invalid byte sequence 拒绝整批插入，必须在落库前清洗保证字符串合法。
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "�")
 }
 
 // buildUsageLogDO 将 UsageRecord 转换为 DO 对象
@@ -363,23 +376,23 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		ApiKeyId:     record.ApiKeyID,
 		ProjectId:    record.ProjectID,
 		ChannelId:    record.ChannelID,
-		ModelName:    record.ModelName,
-		RequestId:    record.RequestID,
+		ModelName:    sanitizeUTF8(record.ModelName),
+		RequestId:    sanitizeUTF8(record.RequestID),
 		RelayMode:    record.RelayMode,
 		InputTokens:  record.PromptTokens,
 		OutputTokens: record.CompletionTokens,
 		TotalCost:    record.TotalCost,
 		LatencyMs:    int(record.LatencyMs),
-		Status:       record.Status,
-		ErrorMessage: record.ErrorMessage,
-		ClientIp:     record.ClientIP,
+		Status:       sanitizeUTF8(record.Status),
+		ErrorMessage: sanitizeUTF8(record.ErrorMessage),
+		ClientIp:     sanitizeUTF8(record.ClientIP),
 
 		InputCost:         record.InputCost,
 		OutputCost:        record.OutputCost,
 		CacheCreationCost: record.CacheCreationCost,
 		CacheReadCost:     record.CacheReadCost,
 		ActualCost:        record.ActualCost,
-		Currency:          record.Currency,
+		Currency:          sanitizeUTF8(record.Currency),
 		PreDeductAmount:   record.PreDeductAmount,
 		RefundAmount:      record.RefundAmount,
 		SupplementAmount:  record.SupplementAmount,
@@ -392,32 +405,32 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		ImageOutputTokens: record.ImageOutputTokens,
 		ReasoningTokens:   record.ReasoningTokens,
 
-		RequestedModel: record.RequestedModel,
-		UpstreamModel:  record.UpstreamModel,
+		RequestedModel: sanitizeUTF8(record.RequestedModel),
+		UpstreamModel:  sanitizeUTF8(record.UpstreamModel),
 
 		RequestType:     requestType,
-		UserAgent:       record.UserAgent,
+		UserAgent:       sanitizeUTF8(record.UserAgent),
 		FirstTokenMs:    record.FirstTokenMs,
-		ServiceTier:     record.ServiceTier,
-		ReasoningEffort: record.ReasoningEffort,
-		InboundEndpoint: record.InboundEndpoint,
+		ServiceTier:     sanitizeUTF8(record.ServiceTier),
+		ReasoningEffort: sanitizeUTF8(record.ReasoningEffort),
+		InboundEndpoint: sanitizeUTF8(record.InboundEndpoint),
 
-		ChannelName: record.ChannelName,
+		ChannelName: sanitizeUTF8(record.ChannelName),
 		ChannelType: record.ChannelType,
 
-		BillingMode:    record.BillingMode,
-		BillingSource:  record.BillingSource,
+		BillingMode:    sanitizeUTF8(record.BillingMode),
+		BillingSource:  sanitizeUTF8(record.BillingSource),
 		RateMultiplier: record.RateMultiplier,
 		RetryIndex:     record.RetryIndex,
 
-		StreamEndReason: record.StreamEndReason,
+		StreamEndReason: sanitizeUTF8(record.StreamEndReason),
 
 		ImageCount: record.ImageCount,
-		ImageSize:  record.ImageSize,
+		ImageSize:  sanitizeUTF8(record.ImageSize),
 
-		BillingSnapshot: jsonNullIfEmpty(record.BillingSnapshot),
-		BillingSummary:  record.BillingSummary,
-		TaskId:          record.TaskID,
+		BillingSnapshot: jsonNullIfEmpty(sanitizeUTF8(record.BillingSnapshot)),
+		BillingSummary:  sanitizeUTF8(record.BillingSummary),
+		TaskId:          sanitizeUTF8(record.TaskID),
 	}
 }
 
@@ -627,6 +640,9 @@ func (p *DataProviderImpl) UpdateTaskAudit(ctx context.Context, record *common.A
 }
 
 func truncateBody(s string, maxLen int) string {
+	// 请求/响应体可能携带无效 UTF-8 字节（捕获侧按字节切割、上游/客户端原始输出），
+	// 落库前统一清洗为合法 UTF-8，避免 INSERT 被 UTF8 编码的 PostgreSQL 拒绝、整条记录丢失。
+	s = strings.ToValidUTF8(s, string(utf8.RuneError))
 	// maxLen <= 0 表示不截断（配置了独立审计库时完整记录）
 	if maxLen <= 0 || len(s) <= maxLen {
 		return s

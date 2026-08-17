@@ -3,6 +3,7 @@ package ollama_chat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
@@ -27,8 +28,8 @@ func TestOpenAIToOllamaRequestConverter_BasicWithOptions(t *testing.T) {
 	c := &OpenAIToOllamaRequestConverter{}
 	temp, topP, maxTok, freq, pres := 0.5, 0.8, 100, 0.1, 0.2
 	req := &dto.GeneralOpenAIRequest{
-		Model:    "openai-model",
-		Messages: []dto.Message{{Role: "user", Content: "hi"}},
+		Model:       "openai-model",
+		Messages:    []dto.Message{{Role: "user", Content: "hi"}},
 		Temperature: &temp, TopP: &topP, MaxTokens: &maxTok,
 		FrequencyPenalty: &freq, PresencePenalty: &pres, Stop: "STOP",
 	}
@@ -66,7 +67,7 @@ func TestOpenAIToOllamaRequestConverter_MaxCompletionTokens(t *testing.T) {
 	c := &OpenAIToOllamaRequestConverter{}
 	mct := 256
 	req := &dto.GeneralOpenAIRequest{
-		Messages:           []dto.Message{{Role: "user", Content: "hi"}},
+		Messages:            []dto.Message{{Role: "user", Content: "hi"}},
 		MaxCompletionTokens: &mct,
 	}
 	res, _ := c.ConvertRequest(context.Background(), nil, req)
@@ -189,5 +190,248 @@ func TestOllamaToOpenAIStreamConverter_NoDoneFallback(t *testing.T) {
 	last := chunks[len(chunks)-1]
 	if last.Choices[0].FinishReason == nil {
 		t.Error("expected terminal finish chunk when no done line")
+	}
+}
+
+// ---------- 请求转换：tools / format / think ----------
+
+func TestOpenAIToOllamaRequestConverter_ToolsFormatThink(t *testing.T) {
+	c := &OpenAIToOllamaRequestConverter{}
+	req := &dto.GeneralOpenAIRequest{
+		Messages: []dto.Message{{Role: "user", Content: "hi"}},
+		Tools: []dto.Tool{{
+			Type: "function",
+			Function: dto.FunctionDef{
+				Name:        "get_weather",
+				Description: "get weather",
+				Parameters:  map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}},
+			},
+		}},
+		ResponseFormat:  &dto.ResponseFormat{Type: "json_schema", JSONSchema: map[string]any{"name": "weather", "schema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}}}},
+		ReasoningEffort: "high",
+	}
+	res, err := c.ConvertRequest(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	r := res.(*dto.OllamaChatRequest)
+	if len(r.Tools) != 1 || r.Tools[0].Type != "function" || r.Tools[0].Function.Name != "get_weather" {
+		t.Errorf("Tools = %+v", r.Tools)
+	}
+	// json_schema 应解包为裸 schema，不带外层包装字段
+	format, ok := r.Format.(map[string]any)
+	if !ok || format["type"] != "object" {
+		t.Errorf("Format = %#v, want bare schema {type:object}", r.Format)
+	}
+	if _, hasName := format["name"]; hasName {
+		t.Errorf("Format should not keep json_schema wrapper name, got %#v", r.Format)
+	}
+	if string(r.Think) != `"high"` {
+		t.Errorf("Think = %s, want \"high\"", r.Think)
+	}
+}
+
+func TestOpenAIToOllamaRequestConverter_JSONFormatAndThinkNone(t *testing.T) {
+	c := &OpenAIToOllamaRequestConverter{}
+	req := &dto.GeneralOpenAIRequest{
+		Messages:        []dto.Message{{Role: "user", Content: "hi"}},
+		ResponseFormat:  &dto.ResponseFormat{Type: "json_object"},
+		ReasoningEffort: "none",
+	}
+	res, err := c.ConvertRequest(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	r := res.(*dto.OllamaChatRequest)
+	if r.Format != "json" {
+		t.Errorf("Format = %#v, want json", r.Format)
+	}
+	if string(r.Think) != "false" {
+		t.Errorf("Think = %s, want false", r.Think)
+	}
+}
+
+func TestOpenAIToOllamaRequestConverter_ToolCallContext(t *testing.T) {
+	c := &OpenAIToOllamaRequestConverter{}
+	rc := "thinking text"
+	req := &dto.GeneralOpenAIRequest{
+		Messages: []dto.Message{
+			{
+				Role:             "assistant",
+				Content:          "",
+				ReasoningContent: &rc,
+				ToolCalls: []dto.ToolCall{{
+					ID:   "call_abc",
+					Type: "function",
+					Function: dto.FunctionCall{
+						Name:      "get_weather",
+						Arguments: `{"city":"Paris"}`,
+					},
+				}},
+			},
+			{
+				Role:       "tool",
+				Content:    "sunny",
+				ToolCallID: "call_abc",
+			},
+		},
+	}
+	res, err := c.ConvertRequest(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	r := res.(*dto.OllamaChatRequest)
+	asst := r.Messages[0]
+	if string(asst.Thinking) != `"thinking text"` {
+		t.Errorf("assistant Thinking = %s, want \"thinking text\"", asst.Thinking)
+	}
+	if len(asst.ToolCalls) != 1 || asst.ToolCalls[0].ID != "call_abc" {
+		t.Fatalf("assistant ToolCalls = %+v", asst.ToolCalls)
+	}
+	args, ok := asst.ToolCalls[0].Function.Arguments.(map[string]any)
+	if !ok || args["city"] != "Paris" {
+		t.Errorf("tool call arguments = %#v", asst.ToolCalls[0].Function.Arguments)
+	}
+	toolMsg := r.Messages[1]
+	if toolMsg.ToolCallID != "call_abc" {
+		t.Errorf("tool ToolCallID = %q, want call_abc", toolMsg.ToolCallID)
+	}
+	if toolMsg.ToolName != "get_weather" {
+		t.Errorf("tool ToolName = %q, want get_weather (fallback from tool_calls)", toolMsg.ToolName)
+	}
+}
+
+// ---------- 非流式响应转换：tool_calls / thinking ----------
+
+func TestOllamaToOpenAIResponseConverter_ToolCallsAndThinking(t *testing.T) {
+	c := &OllamaToOpenAIResponseConverter{}
+	resp := &dto.OllamaChatResponse{
+		Message: dto.OllamaMessage{
+			Role:     "assistant",
+			Content:  "",
+			Thinking: json.RawMessage(`"step by step"`),
+			ToolCalls: []dto.OllamaToolCall{{
+				ID: "call_upstream",
+			}},
+		},
+		PromptEvalCount: 5,
+		EvalCount:       7,
+	}
+	resp.Message.ToolCalls[0].Function.Name = "get_weather"
+	resp.Message.ToolCalls[0].Function.Arguments = map[string]any{"city": "Paris"}
+
+	res, err := c.ConvertResponse(context.Background(), nil, resp)
+	if err != nil {
+		t.Fatalf("ConvertResponse: %v", err)
+	}
+	o := res.(*dto.ChatCompletionResponse)
+	msg := o.Choices[0].Message
+	if o.Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish reason = %q, want tool_calls", o.Choices[0].FinishReason)
+	}
+	if msg.ReasoningContent == nil || *msg.ReasoningContent != "step by step" {
+		t.Errorf("reasoning content = %v", msg.ReasoningContent)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v", msg.ToolCalls)
+	}
+	tc := msg.ToolCalls[0]
+	if tc.ID != "call_upstream" || tc.Type != "function" {
+		t.Errorf("tool call = %+v", tc)
+	}
+	if tc.Function.Name != "get_weather" || tc.Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("tool call function = %+v", tc.Function)
+	}
+}
+
+func TestOllamaToOpenAIResponseConverter_ThinkingOnly(t *testing.T) {
+	c := &OllamaToOpenAIResponseConverter{}
+	resp := &dto.OllamaChatResponse{
+		Message: dto.OllamaMessage{Role: "assistant", Content: "answer", Thinking: json.RawMessage(`"draft"`)},
+	}
+	res, err := c.ConvertResponse(context.Background(), nil, resp)
+	if err != nil {
+		t.Fatalf("ConvertResponse: %v", err)
+	}
+	o := res.(*dto.ChatCompletionResponse)
+	if o.Choices[0].FinishReason != "stop" {
+		t.Errorf("finish reason = %q, want stop", o.Choices[0].FinishReason)
+	}
+	if o.Choices[0].Message.ReasoningContent == nil || *o.Choices[0].Message.ReasoningContent != "draft" {
+		t.Errorf("reasoning content = %v", o.Choices[0].Message.ReasoningContent)
+	}
+	if len(o.Choices[0].Message.ToolCalls) != 0 {
+		t.Errorf("tool calls should be empty, got %+v", o.Choices[0].Message.ToolCalls)
+	}
+}
+
+func TestOllamaToOpenAIResponseConverter_ThinkingNullOrEmpty(t *testing.T) {
+	c := &OllamaToOpenAIResponseConverter{}
+	for _, raw := range []string{"null", `""`} {
+		resp := &dto.OllamaChatResponse{
+			Message: dto.OllamaMessage{Role: "assistant", Content: "answer", Thinking: json.RawMessage(raw)},
+		}
+		res, err := c.ConvertResponse(context.Background(), nil, resp)
+		if err != nil {
+			t.Fatalf("ConvertResponse(thinking=%s): %v", raw, err)
+		}
+		o := res.(*dto.ChatCompletionResponse)
+		if o.Choices[0].Message.ReasoningContent != nil {
+			t.Errorf("thinking=%s: reasoning content = %q, want nil", raw, *o.Choices[0].Message.ReasoningContent)
+		}
+	}
+}
+
+func TestOllamaToOpenAIResponseConverter_DoneReasonLength(t *testing.T) {
+	c := &OllamaToOpenAIResponseConverter{}
+	resp := &dto.OllamaChatResponse{
+		Message:    dto.OllamaMessage{Role: "assistant", Content: "partial"},
+		Done:       true,
+		DoneReason: "length",
+	}
+	res, err := c.ConvertResponse(context.Background(), nil, resp)
+	if err != nil {
+		t.Fatalf("ConvertResponse: %v", err)
+	}
+	o := res.(*dto.ChatCompletionResponse)
+	if o.Choices[0].FinishReason != "length" {
+		t.Errorf("finish reason = %q, want length", o.Choices[0].FinishReason)
+	}
+}
+
+// ---------- 流式响应转换：tool_calls ----------
+
+func TestOllamaToOpenAIStreamConverter_ToolCalls(t *testing.T) {
+	c := &OllamaToOpenAIStreamConverter{}
+	ndjson := `{"model":"llama3","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","function":{"name":"get_weather","arguments":{"city":"Paris"}}}]},"done":false}` + "\n" +
+		`{"model":"llama3","message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":10,"eval_count":5}` + "\n"
+	var chunks []*dto.ChatCompletionStreamResponse
+	err := c.ConvertStreamResponse(context.Background(), nil, bytes.NewReader([]byte(ndjson)), func(chunk any) error {
+		if sc, ok := chunk.(*dto.ChatCompletionStreamResponse); ok {
+			chunks = append(chunks, sc)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ConvertStreamResponse: %v", err)
+	}
+	// role 首包 + tool_calls 增量 + finish(usage) 共三段
+	if len(chunks) != 3 {
+		t.Fatalf("chunks = %d, want 3", len(chunks))
+	}
+	toolDelta := chunks[1].Choices[0].Delta
+	if len(toolDelta.ToolCalls) != 1 {
+		t.Fatalf("tool delta = %+v", toolDelta.ToolCalls)
+	}
+	tc := toolDelta.ToolCalls[0]
+	if tc.Index != 0 || tc.ID != "call_1" || tc.Type != "function" {
+		t.Errorf("tool call = %+v", tc)
+	}
+	if tc.Function.Name != "get_weather" || tc.Function.Arguments != `{"city":"Paris"}` {
+		t.Errorf("tool call function = %+v", tc.Function)
+	}
+	last := chunks[2]
+	if last.Choices[0].FinishReason == nil || *last.Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish reason = %v, want tool_calls", last.Choices[0].FinishReason)
 	}
 }

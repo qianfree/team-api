@@ -20,16 +20,17 @@ type UsageWithDetails struct {
 
 // TokenDetails Token 类型细分
 type TokenDetails struct {
-	CachedTokens               int  `json:"cached_tokens,omitempty"`
-	CachedCreationTokens       int  `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens     int  `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens     int  `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
-	AudioTokens                int  `json:"audio_tokens,omitempty"`
-	TextTokens                 int  `json:"text_tokens,omitempty"`
-	ImageTokens                int  `json:"image_tokens,omitempty"`
-	ReasoningTokens            int  `json:"reasoning_tokens,omitempty"`
-	AcceptedPredictionTokens  int  `json:"accepted_prediction_tokens,omitempty"`
-	RejectedPredictionTokens   int  `json:"rejected_prediction_tokens,omitempty"`
+	CachedTokens             int `json:"cached_tokens,omitempty"`
+	CachedCreationTokens     int `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
+	CachedCreation5mTokens   int `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
+	CachedCreation1hTokens   int `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`        // OpenAI Responses cache_write_tokens（观测字段，prompt_tokens 子集）
+	AudioTokens              int `json:"audio_tokens,omitempty"`
+	TextTokens               int `json:"text_tokens,omitempty"`
+	ImageTokens              int `json:"image_tokens,omitempty"`
+	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
+	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
 }
 
 // CompletionsRequest 文本补全请求

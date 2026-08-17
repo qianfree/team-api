@@ -17,6 +17,11 @@ import (
 // Relay 层哨兵错误
 var ErrAllChannelsFailed = gerror.New("all channels failed")
 
+// ErrStatefulResponsesUnsupported responses 有状态请求（previous_response_id）落在
+// 不支持 Responses 协议的 chat-only 渠道上，降级转换会静默丢失会话上下文，必须快速失败。
+// 由 ConvertResponsesToOpenAI 返回，relay_handler 捕获后按渠道级致命上报调度 FSM 换渠道。
+var ErrStatefulResponsesUnsupported = gerror.New("previous_response_id requires a responses-native channel")
+
 // RelayError 包装 relay 层错误，携带上游返回的状态码和信息
 type RelayError struct {
 	StatusCode int

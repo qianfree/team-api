@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
 import { Tag } from '@arco-design/web-vue'
+import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -11,6 +12,53 @@ const loading = ref(false)
 const data = ref<any[]>([])
 // 默认只查当天（配合后端 Redis 当日实时热桶，打开即可看到最新的模型性能）
 const dateRange = ref<[string, string] | null>(defaultRange(0))
+// 指标说明弹窗
+const showMetricsGuide = ref(false)
+
+// 渠道/模型可选筛选：选定渠道后按渠道查看其下各模型性能；清空下拉 = 全部
+const filterChannelId = ref<number | undefined>(undefined)
+const filterModelName = ref<string | undefined>(undefined)
+const channelOptions = ref<{ label: string; value: number }[]>([])
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
+// 渠道下拉数据：渠道量级为几十，一次性拉全量（page_size 放大即可）
+async function fetchChannelOptions() {
+  try {
+    const res: any = await request.get('/admin/channels', { params: { page: 1, page_size: 200 } })
+    channelOptions.value = (res.data?.data?.list || res.data?.list || []).map((c: any) => ({
+      label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
+      value: c.id,
+    }))
+  } catch {
+    channelOptions.value = []
+  }
+}
+
+// 模型下拉数据：专用不分页接口 /admin/models/options（model_id 与统计口径 model_name 同名）
+async function fetchModelOptions() {
+  try {
+    const res: any = await request.get('/admin/models/options')
+    modelOptions.value = (res.data?.data?.list || res.data?.list || []).map((m: any) => ({
+      label: m.model_name ? `${m.model_name} (${m.model_id})` : m.model_id,
+      value: m.model_id,
+    }))
+  } catch {
+    modelOptions.value = []
+  }
+}
+
+// 页头描述：追加当前筛选提示，避免「跨渠道」文案与实际筛选状态不符
+const pageDescription = computed(() => {
+  const base =
+    '各模型跨渠道的成功率 / 延迟 / 吞吐 / 缓存命中（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值。Token 命中率对 OpenAI 原生渠道为保守值）'
+  const parts: string[] = []
+  if (filterChannelId.value) {
+    const ch = channelOptions.value.find((c) => c.value === filterChannelId.value)
+    parts.push(`渠道：${ch ? ch.label : `#${filterChannelId.value}`}`)
+  }
+  if (filterModelName.value) parts.push(`模型：${filterModelName.value}`)
+  return parts.length ? `${base}。当前筛选 — ${parts.join('，')}` : base
+})
 
 function toDateStr(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0')
@@ -110,6 +158,29 @@ const columns: TableColumnData[] = [
     render: ({ record }: any) => `${fmtNum(record.tps).toFixed(1)} t/s`,
   },
   {
+    title: '缓存命中',
+    dataIndex: 'cache_read_tokens',
+    width: 170,
+    align: 'right',
+    sortable: { sortDirections: ['ascend', 'descend'] },
+    render: ({ record }: any) => {
+      // 无缓存活动（读/写均为 0）显示 —，embedding/图像类模型不参与缓存统计
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_read_tokens).toLocaleString()} (${fmtNum(record.cache_hit_rate).toFixed(1)}%)`
+    },
+  },
+  {
+    title: '请求缓存命中率',
+    dataIndex: 'cache_hit_request_rate',
+    width: 140,
+    align: 'right',
+    sortable: { sortDirections: ['ascend', 'descend'] },
+    render: ({ record }: any) => {
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_hit_request_rate).toFixed(1)}%`
+    },
+  },
+  {
     title: '总 Token',
     dataIndex: 'total_tokens',
     width: 130,
@@ -148,27 +219,36 @@ const stats = computed(() => {
   let totalRequests = 0
   let totalSuccess = 0
   let totalCost = 0
+  let totalCacheHitReq = 0
+  let totalCacheTokens = 0
   for (const item of data.value) {
     totalRequests += fmtNum(item.request_count)
     totalSuccess += fmtNum(item.success_count)
     totalCost += fmtNum(item.total_cost)
+    totalCacheHitReq += fmtNum(item.cache_hit_request_count)
+    totalCacheTokens += fmtNum(item.cache_read_tokens) + fmtNum(item.cache_creation_tokens)
   }
   return {
     modelCount: data.value.length,
     totalRequests,
     overallRate: totalRequests > 0 ? (totalSuccess / totalRequests) * 100 : 0,
     totalCost,
+    // 全局请求缓存命中率（无任何缓存活动时为 null，页面显示 —）
+    cacheHitReqRate: totalCacheTokens > 0 && totalRequests > 0 ? (totalCacheHitReq / totalRequests) * 100 : null,
   }
 })
 
 async function fetchData() {
   loading.value = true
   try {
-    const params: Record<string, string> = {}
+    const params: Record<string, any> = {}
     if (dateRange.value && dateRange.value.length === 2) {
       params.start_date = dateRange.value[0]
       params.end_date = dateRange.value[1]
     }
+    // 可选筛选：清空下拉（undefined）即不传参 = 全部
+    if (filterChannelId.value) params.channel_id = filterChannelId.value
+    if (filterModelName.value) params.model_name = filterModelName.value
     const res = await request.get('/admin/monitor/model-performance', { params })
     data.value = res.data?.data?.data?.list || []
   } catch {
@@ -180,13 +260,35 @@ async function fetchData() {
 
 onMounted(() => {
   fetchData()
+  // 下拉数据与列表并行加载，失败仅选项为空，不影响主列表
+  fetchChannelOptions()
+  fetchModelOptions()
 })
 </script>
 
 <template>
   <div class="page-table">
-    <PageHeader title="模型性能" description="各模型跨渠道的成功率 / 延迟 / 吞吐（历史数据源自 bil_usage_daily 每日聚合，当天实时统计；延迟为总延迟/总请求数均值）">
+    <PageHeader title="模型性能" :description="pageDescription">
       <template #actions>
+        <!-- 渠道/模型筛选：清空 = 全部；选定渠道后当天数据由后端从请求明细实时聚合 -->
+        <a-select
+          v-model="filterChannelId"
+          :options="channelOptions"
+          placeholder="全部渠道"
+          allow-clear
+          allow-search
+          style="width: 190px"
+          @change="fetchData"
+        />
+        <a-select
+          v-model="filterModelName"
+          :options="modelOptions"
+          placeholder="全部模型"
+          allow-clear
+          allow-search
+          style="width: 250px"
+          @change="fetchData"
+        />
         <a-button
           size="small"
           v-for="q in QUICK_RANGES"
@@ -200,6 +302,107 @@ onMounted(() => {
         <a-button size="small" :loading="loading" @click="fetchData">刷新</a-button>
       </template>
     </PageHeader>
+
+    <!-- 指标说明入口（点击弹窗） -->
+    <div class="metrics-hint" @click="showMetricsGuide = true">
+      <IconInfoCircle /> 了解各指标的含义与计算公式 →
+    </div>
+
+    <!-- 指标说明弹窗 -->
+    <a-modal v-model:visible="showMetricsGuide" title="模型性能指标说明" :width="720" :footer="false">
+      <div class="metrics-guide">
+        <p class="guide-intro">
+          以下指标按所选时间区间逐模型聚合：历史数据（昨天及以前）源自 <code>bil_usage_daily</code> 每日聚合，
+          当天数据来自 Redis 实时热桶（小时粒度）；选择渠道筛选后，当天数据改为从请求明细（<code>bil_usage_logs</code>）实时聚合。
+          两段口径一致、合并计算。顶部概览卡为当前筛选范围的汇总。
+        </p>
+
+        <div class="guide-group">基础指标</div>
+        <div class="metric-item">
+          <div class="metric-name">请求数</div>
+          <div class="metric-body">
+            <p>区间内该模型的总请求数（含失败请求，重试成功按最终一次成功计）。</p>
+            <p><code>请求数 = Σ request_count</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">成功率</div>
+          <div class="metric-body">
+            <p>成功请求占总请求的比例。标签按阈值分级：≥99 优秀（绿）/ ≥95 良好（蓝）/ ≥90 警告（橙）/ 其余严重（红）。</p>
+            <p><code>成功率 = Σ 成功请求数 ÷ Σ 总请求数 × 100%</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">总 Token</div>
+          <div class="metric-body">
+            <p>输入与输出 token 之和（不含缓存写入部分）。</p>
+            <p><code>总 Token = Σ input_tokens + Σ output_tokens</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">总成本</div>
+          <div class="metric-body">
+            <p>区间内该模型实际计费成本合计（USD），已含输入、输出与缓存各项费用。</p>
+            <p><code>总成本 = Σ total_cost</code></p>
+          </div>
+        </div>
+
+        <div class="guide-group">延迟与吞吐</div>
+        <div class="metric-item">
+          <div class="metric-name">平均延迟</div>
+          <div class="metric-body">
+            <p>请求从发起到响应完成的全程耗时均值（毫秒），流式请求计至最后一个分片。</p>
+            <p><code>平均延迟 = Σ 请求延迟 ÷ Σ 总请求数</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">平均首Token</div>
+          <div class="metric-body">
+            <p>流式请求从发出到收到首个 token 的耗时均值（毫秒）。非流式 / 无首 token 的请求按 0 计入分母，会拉低该均值。</p>
+            <p><code>平均首Token = Σ 首 token 延迟 ÷ Σ 总请求数</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">吞吐 TPS</div>
+          <div class="metric-body">
+            <p>平均每秒输出的 token 数，衡量模型生成速度。</p>
+            <p><code>TPS = Σ 输出 token ÷ (Σ 请求延迟 ÷ 1000)</code></p>
+          </div>
+        </div>
+
+        <div class="guide-group">缓存指标</div>
+        <div class="metric-item">
+          <div class="metric-name">缓存命中</div>
+          <div class="metric-body">
+            <p>
+              从上游提示词缓存读取的 token 数，括号内为 Token 级命中率。某次请求的缓存读取 token &gt; 0 即视为命中；
+              无任何缓存读写活动的模型（如 embedding / 图像类）显示 —。
+            </p>
+            <p><code>缓存命中 Token = Σ cache_read_tokens</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">缓存命中率<br />（Token 级）</div>
+          <div class="metric-body">
+            <p>
+              缓存命中 token 占总输入 token 的比例，分母为归一化总输入（未命中输入 + 缓存写入 + 缓存读取）。
+              注意：OpenAI 原生渠道的 input_tokens 已包含缓存部分，该口径下命中率为保守值（偏低），Claude 渠道精确。
+            </p>
+            <p><code>缓存命中率 = Σ cache_read_tokens ÷ (Σ input_tokens + Σ cache_creation_tokens + Σ cache_read_tokens) × 100%</code></p>
+          </div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">请求缓存命中率</div>
+          <div class="metric-body">
+            <p>
+              命中缓存的请求数占总请求数的比例。仅写入缓存（首次建立缓存、未读取）不计命中。
+              与 Token 级命中率互补：本指标高说明缓存覆盖面广，Token 级高说明单次请求复用的前缀长。
+            </p>
+            <p><code>请求缓存命中率 = Σ 命中缓存的请求数 ÷ Σ 总请求数 × 100%</code></p>
+          </div>
+        </div>
+      </div>
+    </a-modal>
 
     <div class="stats-row">
       <div class="metric-card metric-card--blue">
@@ -218,6 +421,10 @@ onMounted(() => {
         <div class="metric-card__label">总成本 (USD)</div>
         <div class="metric-card__value">${{ stats.totalCost.toFixed(6) }}</div>
       </div>
+      <div class="metric-card metric-card--green">
+        <div class="metric-card__label">请求缓存命中率</div>
+        <div class="metric-card__value">{{ stats.cacheHitReqRate === null ? '—' : `${stats.cacheHitReqRate.toFixed(2)}%` }}</div>
+      </div>
     </div>
 
     <a-card :bordered="false">
@@ -226,7 +433,7 @@ onMounted(() => {
         :data="data"
         :loading="loading"
         row-key="model_name"
-        :scroll="{ x: 1200 }"
+        :scroll="{ x: 1510 }"
         size="large"
         stripe
         :border="{ wrapper: true, headerCell: true }"
@@ -247,10 +454,72 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 指标说明入口（复用渠道页 scheduling-hint 风格） */
+.metrics-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.metrics-hint:hover {
+  color: rgb(var(--arcoblue-6));
+}
+
+/* 指标说明弹窗 */
+.metrics-guide {
+  color: var(--color-text-1);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.guide-intro {
+  margin: 0 0 14px;
+  color: var(--color-text-2);
+}
+.guide-group {
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+}
+.metric-item {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 14px;
+  padding: 6px 0;
+}
+.metric-name {
+  font-weight: 600;
+  color: var(--color-text-2);
+}
+.metric-body p {
+  margin: 0;
+  color: var(--color-text-2);
+}
+.metric-body p + p {
+  margin-top: 2px;
+}
+.metrics-guide code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: rgb(var(--arcoblue-6));
+  background: var(--color-primary-light-1);
+  word-break: break-all;
+}
+@media (max-width: 600px) {
+  .metric-item {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 顶部概览卡片：与实时监控页 metric-card 风格保持一致（左色条 + 渐变底） */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 20px;
 }

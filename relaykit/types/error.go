@@ -59,6 +59,10 @@ const (
 	ErrorCodeChannelAwsClientError        ErrorCode = "channel:aws_client_error"
 	ErrorCodeChannelInvalidKey            ErrorCode = "channel:invalid_key"
 	ErrorCodeChannelResponseTimeExceeded  ErrorCode = "channel:response_time_exceeded"
+	// ErrorCodeChannelProtocolMismatch 渠道协议能力不匹配：如 responses 有状态请求
+	// （previous_response_id）落在仅支持 chat 协议的渠道上，无法经转换等价表达。
+	// 归类渠道级致命（channel: 前缀规则），驱动调度 FSM 换渠道。
+	ErrorCodeChannelProtocolMismatch ErrorCode = "channel:protocol_mismatch"
 
 	// 客户端请求错误
 	ErrorCodeReadRequestBodyFailed ErrorCode = "read_request_body_failed"

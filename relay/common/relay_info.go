@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/types"
 )
@@ -128,6 +129,11 @@ type RelayInfo struct {
 
 	// UseResponsesAPI 桥接标志：客户端发送 Chat Completions，但请求应通过 Responses API 发送到上游
 	UseResponsesAPI bool
+
+	// ResponsesRequest responses 入站请求快照（ConvertResponsesToOpenAI 解析后 stash），
+	// 供 chat 上游响应合成回 Responses 格式时 echo temperature/top_p/max_output_tokens/instructions。
+	// 直连（原生 Responses 上游）路径不填充，合成时保持默认值。
+	ResponsesRequest *dto.OpenAIResponsesRequest
 
 	// Thinking 后缀路由（从模型名解析，供适配器消费）
 	ThinkingEnabled  bool   // 是否有 -thinking 后缀
