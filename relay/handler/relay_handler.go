@@ -693,7 +693,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}
 				}
-				recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				return usage, v.billingResult, err
 			}
@@ -998,6 +998,37 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		record.ChannelName = selection.ChannelName
 		record.ChannelType = selection.ChannelType
 		record.UpstreamModel = selection.UpstreamModelName
+	}
+	provider.RecordUsage(context.Background(), record)
+}
+
+// recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
+// 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage) {
+	record := &common.UsageRecord{
+		TenantID:       rc.TenantID,
+		UserID:         rc.UserID,
+		ApiKeyID:       rc.ApiKeyID,
+		ProjectID:      rc.ProjectID,
+		ModelName:      modelName,
+		RequestedModel: modelName,
+		RelayMode:      int(relayMode),
+		IsStream:       isStream,
+		Success:        false,
+		RequestID:      rc.RequestID,
+		Status:         "error",
+		ErrorMessage:   err.Error(),
+	}
+	if selection != nil {
+		record.ChannelID = selection.ChannelID
+		record.ChannelName = selection.ChannelName
+		record.ChannelType = selection.ChannelType
+		record.UpstreamModel = selection.UpstreamModelName
+	}
+	if usage != nil {
+		record.PromptTokens = usage.PromptTokens
+		record.CompletionTokens = usage.CompletionTokens
+		record.TotalTokens = usage.TotalTokens
 	}
 	provider.RecordUsage(context.Background(), record)
 }
