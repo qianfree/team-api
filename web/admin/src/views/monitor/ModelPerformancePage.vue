@@ -6,6 +6,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import TableEmpty from '@/components/TableEmpty.vue'
 import request from '@/utils/request'
 
 const loading = ref(false)
@@ -627,7 +628,7 @@ function renderChannelMatrix(record: any) {
         @expand="handleTableExpand"
       >
         <template #empty>
-          <a-empty description="所选区间暂无模型性能数据" />
+          <TableEmpty description="所选区间暂无模型性能数据" />
         </template>
       </ResponsiveTable>
       <div class="table-footer">
