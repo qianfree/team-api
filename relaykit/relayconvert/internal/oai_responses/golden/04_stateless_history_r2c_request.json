@@ -1,0 +1,143 @@
+{
+  "name": "stateless_history_responses_to_oai_chat_request",
+  "from": "responses",
+  "to": "openai",
+  "request": {
+    "input": [
+      {
+        "content": "仅使用中文回复",
+        "role": "developer",
+        "type": "message"
+      },
+      {
+        "content": "帮我写一个加法函数",
+        "role": "user",
+        "type": "message"
+      },
+      {
+        "encrypted_content": "eyJkYXRhIn0=",
+        "id": "rs_1",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "arguments": "{\"file\":\"main.go\"}",
+        "call_id": "call_1",
+        "name": "run_tests",
+        "type": "function_call"
+      },
+      {
+        "arguments": "{\"dir\":\"src\"}",
+        "call_id": "call_2",
+        "name": "lint",
+        "type": "function_call"
+      },
+      {
+        "call_id": "call_1",
+        "output": "PASS",
+        "type": "function_call_output"
+      },
+      {
+        "call_id": "call_2",
+        "output": "0 issues",
+        "type": "function_call_output"
+      },
+      {
+        "content": [
+          {
+            "text": "测试都通过了，帮我提交",
+            "type": "output_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "你是 codex 编码助手",
+    "model": "gpt-4o",
+    "parallel_tool_calls": false,
+    "text": {
+      "format": {
+        "name": "commit_result",
+        "schema": {
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "strict": true,
+        "type": "json_schema"
+      }
+    }
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是 codex 编码助手"
+      },
+      {
+        "role": "system",
+        "content": "仅使用中文回复"
+      },
+      {
+        "role": "user",
+        "content": "帮我写一个加法函数"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "run_tests",
+              "arguments": "{\"file\":\"main.go\"}"
+            }
+          },
+          {
+            "id": "call_2",
+            "type": "function",
+            "function": {
+              "name": "lint",
+              "arguments": "{\"dir\":\"src\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "PASS",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "tool",
+        "content": "0 issues",
+        "tool_call_id": "call_2"
+      },
+      {
+        "role": "user",
+        "content": "测试都通过了，帮我提交"
+      }
+    ],
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "commit_result",
+        "schema": {
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "strict": true
+      }
+    }
+  }
+}

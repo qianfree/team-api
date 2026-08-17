@@ -1,0 +1,90 @@
+{
+  "name": "tools_responses_to_oai_chat_request",
+  "from": "responses",
+  "to": "openai",
+  "request": {
+    "input": [
+      {
+        "content": "北京今天天气怎么样？",
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "gpt-4o",
+    "reasoning": {
+      "effort": "medium",
+      "summary": "auto"
+    },
+    "text": {
+      "format": {
+        "type": "json_object"
+      }
+    },
+    "tool_choice": {
+      "function": {
+        "name": "get_weather"
+      },
+      "type": "function"
+    },
+    "tools": [
+      {
+        "description": "查询指定城市天气",
+        "name": "get_weather",
+        "parameters": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "type": "object"
+        },
+        "type": "function"
+      },
+      {
+        "type": "web_search_preview"
+      }
+    ]
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "user",
+        "content": "北京今天天气怎么样？"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "查询指定城市天气",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "function": {
+        "name": "get_weather"
+      },
+      "type": "function"
+    },
+    "response_format": {
+      "type": "json_object"
+    },
+    "reasoning_effort": "medium"
+  }
+}

@@ -20,17 +20,36 @@ import (
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/dify_chat"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_chat"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_gemini"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_responses"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/ollama_chat"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
 func init() {
+	// Responses 方向须最先注册：后续的 responses→claude 链式 spec 引用其转换器 ID
+	registerResponsesToOpenAIChat()
 	registerOpenAIToClaude()
 	registerOpenAIToGemini()
 	// 剩余原生格式供应商
 	registerOpenAIToCoze()
 	registerOpenAIToDify()
 	registerOpenAIToOllama()
+}
+
+// registerResponsesToOpenAIChat 注册 Responses → OpenAI Chat 方向转换器（仅请求侧）。
+// 客户端说 Responses，上游说 OpenAI Chat（chat-only 渠道）：
+//   - 请求侧 Responses → OpenAI Chat
+//   - 响应侧（chat 上游 → Responses 客户端）不在本 spec 范围，由宿主 responses.go 合成器承担
+func registerResponsesToOpenAIChat() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+		From:    types.RelayFormatOpenAIResponses,
+		To:      types.RelayFormatOpenAI,
+		Quality: relayconvert.TextConverterQualityGood,
+		Req: relayconvert.TextRequestSide{
+			Convert: (&oai_responses.ResponsesToOpenAIChatRequestConverter{}).ConvertRequest,
+		},
+	})
 }
 
 // registerOpenAIToClaude 注册 OpenAI → Claude 方向转换器。
