@@ -30,6 +30,8 @@ func init() {
 	registerResponsesToOpenAIChat()
 	registerOpenAIChatToResponses()
 	registerOpenAIToClaude()
+	// 链式 spec 依赖上述步骤转换器，须在其后注册
+	registerResponsesToClaudeChain()
 	registerOpenAIToGemini()
 	// 剩余原生格式供应商
 	registerOpenAIToCoze()
@@ -64,6 +66,26 @@ func registerOpenAIChatToResponses() {
 		Quality: relayconvert.TextConverterQualityGood,
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_responses.OpenAIChatToResponsesRequestConverter{}).ConvertRequest,
+		},
+	})
+}
+
+// registerResponsesToClaudeChain 注册 Responses → Claude 请求链（StepConverters 两跳：
+// Responses→OpenAI Chat→Claude Messages）。替换旧路径 claude/converter.go 的手工拼接链
+// ConvertResponsesToClaude（后者保留为回退）。
+// 响应侧（Claude 上游 → Responses 客户端）由独立的 Claude→Responses 转换器承担（后续注册）。
+func registerResponsesToClaudeChain() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIResponsesToClaudeMessages,
+		From:    types.RelayFormatOpenAIResponses,
+		To:      types.RelayFormatClaude,
+		// 多跳链路有中间格式信息损耗，质量标记为 fair
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			StepConverters: []string{
+				relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+				relayconvert.ConverterOpenAIChatToClaudeMessages,
+			},
 		},
 	})
 }
