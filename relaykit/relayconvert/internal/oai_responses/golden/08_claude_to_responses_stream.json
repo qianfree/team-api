@@ -214,7 +214,8 @@
               "content": [
                 {
                   "type": "output_text",
-                  "text": "你好，世界"
+                  "text": "你好，世界",
+                  "annotations": []
                 }
               ]
             },
@@ -251,9 +252,16 @@
             "output_tokens": 30,
             "total_tokens": 80,
             "input_tokens_details": {
-              "cached_tokens": 0
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0
             },
-            "output_tokens_details": {}
+            "output_tokens_details": {
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
           },
           "user": null,
           "metadata": {}
