@@ -353,7 +353,7 @@ func TestBuildResponsesObjectMap_StoreFalseEcho(t *testing.T) {
 	info := &common.RelayInfo{
 		ResponsesRequest: &dto.OpenAIResponsesRequest{Temperature: &temp},
 	}
-	m := buildResponsesObjectMap("resp_1", 1700000000, "completed", "gpt-4o", []any{}, nil, nil, info)
+	m := BuildResponsesObjectMap("resp_1", 1700000000, "completed", "gpt-4o", []any{}, nil, nil, info)
 	if m["store"] != false {
 		t.Errorf("store = %v, want false", m["store"])
 	}

@@ -316,13 +316,13 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			}
 
 			// response.created
-			emitResponsesSSE(writer, "response.created", map[string]any{
+			EmitResponsesSSE(writer, "response.created", map[string]any{
 				"type":     "response.created",
-				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, info),
+				"response": BuildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, info),
 			})
 
 			// response.output_item.added
-			emitResponsesSSE(writer, "response.output_item.added", map[string]any{
+			EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
 				"output_index": outputIndex,
 				"item": map[string]any{
@@ -335,7 +335,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			})
 
 			// response.content_part.added
-			emitResponsesSSE(writer, "response.content_part.added", map[string]any{
+			EmitResponsesSSE(writer, "response.content_part.added", map[string]any{
 				"type":          "response.content_part.added",
 				"item_id":       msgID,
 				"output_index":  outputIndex,
@@ -368,7 +368,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 				}
 				if deltaText != "" {
 					contentBuilder.WriteString(deltaText)
-					emitResponsesSSE(writer, "response.output_text.delta", map[string]any{
+					EmitResponsesSSE(writer, "response.output_text.delta", map[string]any{
 						"type":          "response.output_text.delta",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
@@ -380,7 +380,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 			// 推理内容
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-				emitResponsesSSE(writer, "response.reasoning_summary_text.delta", map[string]any{
+				EmitResponsesSSE(writer, "response.reasoning_summary_text.delta", map[string]any{
 					"type":          "response.reasoning_summary_text.delta",
 					"item_id":       msgID,
 					"output_index":  outputIndex,
@@ -401,14 +401,14 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 					// 先关闭文本 content part
 					if !sentTextDone {
 						finishedText := contentBuilder.String()
-						emitResponsesSSE(writer, "response.output_text.done", map[string]any{
+						EmitResponsesSSE(writer, "response.output_text.done", map[string]any{
 							"type":          "response.output_text.done",
 							"item_id":       msgID,
 							"output_index":  outputIndex,
 							"content_index": contentIndex,
 							"text":          finishedText,
 						})
-						emitResponsesSSE(writer, "response.content_part.done", map[string]any{
+						EmitResponsesSSE(writer, "response.content_part.done", map[string]any{
 							"type":          "response.content_part.done",
 							"item_id":       msgID,
 							"output_index":  outputIndex,
@@ -419,7 +419,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 								"annotations": []any{},
 							},
 						})
-						emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+						EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 							"type":         "response.output_item.done",
 							"output_index": outputIndex,
 							"item": map[string]any{
@@ -444,7 +444,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 					toolCallNameByID[callID] = tc.Function.Name
 					toolCallArgsByID[callID] = ""
 
-					emitResponsesSSE(writer, "response.output_item.added", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
 						"type":         "response.output_item.added",
 						"output_index": outputIndex,
 						"item": map[string]any{
@@ -469,7 +469,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 				// 工具调用 arguments 增量
 				if tc.Function.Arguments != "" {
 					toolCallArgsByID[callID] += tc.Function.Arguments
-					emitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{
+					EmitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{
 						"type":         "response.function_call_arguments.delta",
 						"item_id":      callID,
 						"output_index": toolCallIndexByID[callID],
@@ -484,14 +484,14 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 				// 关闭文本 content part（如果尚未关闭）
 				if !sentTextDone {
-					emitResponsesSSE(writer, "response.output_text.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_text.done", map[string]any{
 						"type":          "response.output_text.done",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
 						"content_index": contentIndex,
 						"text":          finishedText,
 					})
-					emitResponsesSSE(writer, "response.content_part.done", map[string]any{
+					EmitResponsesSSE(writer, "response.content_part.done", map[string]any{
 						"type":          "response.content_part.done",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
@@ -502,7 +502,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 							"annotations": []any{},
 						},
 					})
-					emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 						"type":         "response.output_item.done",
 						"output_index": outputIndex,
 						"item": map[string]any{
@@ -523,13 +523,13 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 				// 发送每个 tool call 的 function_call_arguments.done + output_item.done
 				for tcID, tcIdx := range toolCallIndexByID {
-					emitResponsesSSE(writer, "response.function_call_arguments.done", map[string]any{
+					EmitResponsesSSE(writer, "response.function_call_arguments.done", map[string]any{
 						"type":         "response.function_call_arguments.done",
 						"item_id":      tcID,
 						"output_index": tcIdx,
 						"arguments":    toolCallArgsByID[tcID],
 					})
-					emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 						"type":         "response.output_item.done",
 						"output_index": tcIdx,
 						"item": map[string]any{
@@ -624,9 +624,9 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 	// response.completed
 	completedAt := int(time.Now().Unix())
-	emitResponsesSSE(writer, "response.completed", map[string]any{
+	EmitResponsesSSE(writer, "response.completed", map[string]any{
 		"type":     "response.completed",
-		"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt, info),
+		"response": BuildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, BuildResponsesUsageMap(&usage), &completedAt, info),
 	})
 
 	if info.StreamStatus.GetEndReason() == "" {
@@ -656,8 +656,8 @@ func extractStreamEmbeddedError(data []byte) (json.RawMessage, bool) {
 	return errBody, true
 }
 
-// emitResponsesSSE 发送一个 Responses API 格式的 SSE 事件
-func emitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
+// EmitResponsesSSE 发送一个 Responses API 格式的 SSE 事件（导出供 claude 等适配器的 Responses 桥接复用）
+func EmitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return
@@ -671,7 +671,7 @@ func emitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
 // buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map。
 // 请求参数从 info.ResponsesRequest echo（快照缺失时回退默认值）；
 // store 恒为 false——合成响应不落上游存储，客户端不可经生命周期端点 retrieve。
-func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, info *common.RelayInfo) map[string]any {
+func BuildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, info *common.RelayInfo) map[string]any {
 	echo := extractResponsesRequestEcho(info)
 	m := map[string]any{
 		"id":                   respID,
@@ -707,7 +707,7 @@ func buildResponsesObjectMap(respID string, createdAt int, status string, model 
 }
 
 // buildResponsesUsageMap 构建 Responses API usage 对象
-func buildResponsesUsageMap(usage *common.Usage) map[string]any {
+func BuildResponsesUsageMap(usage *common.Usage) map[string]any {
 	inputDetails := map[string]any{"cached_tokens": 0}
 	outputDetails := map[string]any{"reasoning_tokens": 0}
 	if usage.PromptTokensDetails != nil {
