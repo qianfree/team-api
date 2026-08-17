@@ -1,0 +1,39 @@
+{
+  "name": "basic_chat_to_responses_request",
+  "from": "openai",
+  "to": "responses",
+  "request": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "你是一个助手",
+        "role": "system"
+      },
+      {
+        "content": "你好",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4o",
+    "stream": true
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "你好",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "你是一个助手",
+    "max_output_tokens": 512,
+    "store": false,
+    "stream": true
+  }
+}

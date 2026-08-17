@@ -32,6 +32,13 @@ import (
 // 已注册的请求转换器 ID。返回空串表示没有匹配的 relaykit 转换器（调用方回退旧路径）。
 // Ollama 仅注册了 chat 路径转换器，其 generate/embedding 模式返回空串以回退旧 adaptor。
 func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream constant.RelayFormat, relayMode int) string {
+	// chat 客户端桥接到 Responses 上游（ChatViaResponses 渠道）：inbound 与 upstream 同为
+	// openai（ProviderNativeFormat 不反映 responses 能力），必须在「同格式早退」之前判定，
+	// 对应旧路径 openai adaptor 的 UseResponsesAPI 分支
+	if info.UseResponsesAPI && constant.RelayMode(relayMode) == constant.RelayModeChatCompletions &&
+		inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatOpenAI {
+		return relayconvert.ConverterOpenAIChatToOpenAIResponses
+	}
 	// Responses 入站（Responses/ResponsesCompact 模式均映射 responses 格式）
 	if inbound == constant.RelayFormatResponses {
 		switch {

@@ -23,6 +23,44 @@ func r2cGoldenMeta() *convmeta.Values {
 	}
 }
 
+func TestGolden_OAIChat_To_Responses_Request(t *testing.T) {
+	converter := &OpenAIChatToResponsesRequestConverter{}
+	ctx := context.Background()
+	info := r2cGoldenMeta()
+
+	files, err := os.ReadDir("golden")
+	if err != nil {
+		t.Fatalf("Failed to read golden directory: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), "_c2r_request.json") {
+			continue
+		}
+		t.Run(file.Name(), func(t *testing.T) {
+			tc := goldentest.Load(t, filepath.Join("golden", file.Name()))
+			if tc.From != types.RelayFormatOpenAI || tc.To != types.RelayFormatOpenAIResponses {
+				t.Skip("not an OpenAI chat→Responses request test")
+			}
+			req, err := kitutil.Any2Type[dto.GeneralOpenAIRequest](tc.Request)
+			if err != nil {
+				t.Fatalf("map→chat request: %v", err)
+			}
+			result, err := converter.ConvertRequest(ctx, info, &req)
+			if err != nil {
+				t.Fatalf("ConvertRequest: %v", err)
+			}
+			if *goldentest.Update {
+				tc.ExpectedRequest = result
+				goldentest.Save(t, filepath.Join("golden", file.Name()), tc)
+				return
+			}
+			if !goldentest.Equal(result, tc.ExpectedRequest) {
+				t.Errorf("result does not match golden\nGot:  %+v\nWant: %+v", result, tc.ExpectedRequest)
+			}
+		})
+	}
+}
+
 func TestGolden_Responses_To_OAIChat_Request(t *testing.T) {
 	converter := &ResponsesToOpenAIChatRequestConverter{}
 	ctx := context.Background()
