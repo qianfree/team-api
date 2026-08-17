@@ -70,3 +70,6 @@ func (c *ControllerV1) MonitorDispatch(ctx context.Context, req *v1.MonitorDispa
 func (c *ControllerV1) AlertEventClear(ctx context.Context, req *v1.AlertEventClearReq) (res *v1.AlertEventClearRes, err error) {
 	return service.Monitor().AlertEventClear(ctx, req)
 }
+func (c *ControllerV1) MonitorModelChannels(ctx context.Context, req *v1.MonitorModelChannelsReq) (res *v1.MonitorModelChannelsRes, err error) {
+	return service.Monitor().ModelChannels(ctx, req)
+}
