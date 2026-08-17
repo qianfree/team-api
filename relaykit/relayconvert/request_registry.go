@@ -67,13 +67,15 @@ const (
 	ConverterNone                             = "none"
 	ConverterClaudeMessagesToOpenAIChat       = "anthropic_messages_to_openai_chat_completions"
 	ConverterClaudeMessagesToOpenAIChatStream = "anthropic_messages_to_openai_chat_completions_stream"
-	ConverterOpenAIChatToClaudeMessages       = "openai_chat_completions_to_anthropic_messages"
-	ConverterOpenAIChatToOpenAIResponses      = "openai_chat_completions_to_openai_responses"
-	ConverterOpenAIResponsesToOpenAIChat      = "openai_responses_to_openai_chat_completions"
-	ConverterOpenAIResponsesToClaudeMessages  = "openai_responses_to_claude_messages"
-	ConverterOpenAIResponsesToGemini          = "openai_responses_to_gemini_generate_content"
-	ConverterGeminiContentToOpenAIChat        = "gemini_generate_content_to_openai_chat_completions"
-	ConverterOpenAIChatToGeminiContent        = "openai_chat_completions_to_gemini_generate_content"
+	// ConverterClaudeMessagesToOpenAIResponsesStream Claude 上游 SSE → Responses 客户端 SSE（流式响应侧）
+	ConverterClaudeMessagesToOpenAIResponsesStream = "anthropic_messages_to_openai_responses_stream"
+	ConverterOpenAIChatToClaudeMessages            = "openai_chat_completions_to_anthropic_messages"
+	ConverterOpenAIChatToOpenAIResponses           = "openai_chat_completions_to_openai_responses"
+	ConverterOpenAIResponsesToOpenAIChat           = "openai_responses_to_openai_chat_completions"
+	ConverterOpenAIResponsesToClaudeMessages       = "openai_responses_to_claude_messages"
+	ConverterOpenAIResponsesToGemini               = "openai_responses_to_gemini_generate_content"
+	ConverterGeminiContentToOpenAIChat             = "gemini_generate_content_to_openai_chat_completions"
+	ConverterOpenAIChatToGeminiContent             = "openai_chat_completions_to_gemini_generate_content"
 
 	// OpenAI → 原生格式供应商（请求侧）
 	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"

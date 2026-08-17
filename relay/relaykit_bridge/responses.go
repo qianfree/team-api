@@ -1,0 +1,258 @@
+package relaykit_bridge
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/qianfree/team-api/internal/logic/monitor"
+	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
+	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relaykit/relayconvert"
+	"github.com/qianfree/team-api/relaykit/types"
+)
+
+// relaykit Claude→Responses 方向的响应侧桥接（非流式 + 流式）。
+//
+// 与 stream.go/response.go 的差异：客户端格式为 Responses（异构 SSE 事件，非
+// ChatCompletionStreamResponse chunk），需要独立的流式桥接入口与 usage 提取逻辑；
+// 写出格式为 `event: <type>\ndata: <json>\n\n`（对齐 openai.EmitResponsesSSE），
+// 且不写 [DONE]（Responses 客户端以 response.completed 收尾，不期待 [DONE]）。
+//
+// 计费口径已知差异：旧路径 handleStreamToResponses 返回 Claude 口径 usage
+//（input 不含缓存），本桥接从转换结果提取 OpenAI 口径（input 含缓存，
+// CacheIncludedInPrompt=true 由计费侧扣减），金额等价、明细口径不同。
+
+// relaykitResponsesResponseConverterID 返回 Claude 上游 → Responses 客户端的响应转换器 ID。
+// 返回空串表示无匹配（调用方回退旧路径）。
+func relaykitResponsesResponseConverterID(upstream, clientFormat constant.RelayFormat) string {
+	if upstream == constant.RelayFormatClaude && clientFormat == constant.RelayFormatResponses {
+		// 复用 responses→claude 链 spec 的 Resp 侧（方向相反，先例同 ConverterOpenAIChatToClaudeMessages）
+		return relayconvert.ConverterOpenAIResponsesToClaudeMessages
+	}
+	return ""
+}
+
+// TryConvertResponsesResponseViaRelaykit 尝试用 relaykit 转换器将 Claude 非流式响应体
+// 转换为 Responses 格式。成功返回 (响应体, 计费 usage, true)；失败返回 (nil, nil, false)，
+// 调用方回退旧 handleNonStreamToResponses 内联逻辑。
+func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *common.Usage, bool) {
+	if info == nil || info.ChannelMeta == nil {
+		return nil, nil, false
+	}
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	clientFormat := info.GetOriginalClientFormat()
+	converterID := relaykitResponsesResponseConverterID(upstream, clientFormat)
+	if converterID == "" {
+		return nil, nil, false
+	}
+
+	spec, ok := relayconvert.LookupTextConverter(converterID)
+	if !ok || spec.Resp.Convert == nil {
+		return nil, nil, false
+	}
+
+	var claudeResp dto.ClaudeResponse
+	if err := json.Unmarshal(upstreamBody, &claudeResp); err != nil {
+		g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
+		return nil, nil, false
+	}
+
+	start := time.Now()
+	converted, _, err := spec.Resp.Convert(ctx, info, &claudeResp)
+	duration := time.Since(start)
+	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		return nil, nil, false
+	}
+
+	out, err := json.Marshal(converted)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		return nil, nil, false
+	}
+
+	usage := usageFromResponsesBody(out)
+	return out, usage, true
+}
+
+// usageFromResponsesBody 从转换后的 Responses 响应体提取计费 usage。
+// 转换器写入的 usage 统一为 OpenAI 口径（prompt_tokens 已含缓存，cached 为其子集），
+// 故置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免双重计费。
+func usageFromResponsesBody(body []byte) *common.Usage {
+	var resp dto.OpenAIResponsesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return &common.Usage{CacheIncludedInPrompt: true}
+	}
+	usage := &common.Usage{CacheIncludedInPrompt: true}
+	if resp.Usage == nil {
+		return usage
+	}
+	usage.PromptTokens = resp.Usage.InputTokens
+	usage.CompletionTokens = resp.Usage.OutputTokens
+	usage.TotalTokens = resp.Usage.TotalTokens
+	if d := resp.Usage.InputTokensDetails; d != nil {
+		usage.PromptTokensDetails = &common.TokenDetails{
+			CachedTokens:     d.CachedTokens,
+			CacheWriteTokens: d.CacheWriteTokens,
+			TextTokens:       d.TextTokens,
+			AudioTokens:      d.AudioTokens,
+			ImageTokens:      d.ImageTokens,
+		}
+	}
+	if d := resp.Usage.OutputTokenDetails; d != nil {
+		usage.CompletionTokenDetails = &common.TokenDetails{
+			TextTokens:               d.TextTokens,
+			AudioTokens:              d.AudioTokens,
+			ReasoningTokens:          d.ReasoningTokens,
+			AcceptedPredictionTokens: d.AcceptedPredictionTokens,
+			RejectedPredictionTokens: d.RejectedPredictionTokens,
+		}
+	}
+	return usage
+}
+
+// TryConvertResponsesStreamViaRelaykit 尝试用 relaykit 流式转换器将 Claude SSE 转为 Responses SSE。
+//
+// 返回：
+//   - usage：计费用量（OpenAI 口径，CacheIncludedInPrompt=true）
+//   - ok：false 表示未接管（写入前放弃），调用方回退旧 handleStreamToResponses；
+//     true 表示已接管（SSE 头可能已提交，不可再回退）
+//   - err：接管后发生的上游/中断错误（透传给调用方，语义对齐旧路径的返回错误）；
+//     未接管时恒为 nil
+func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool, error) {
+	if info == nil || info.ChannelMeta == nil {
+		return nil, false, nil
+	}
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	clientFormat := info.GetOriginalClientFormat()
+	converterID := relaykitResponsesResponseConverterID(upstream, clientFormat)
+	if converterID == "" {
+		return nil, false, nil
+	}
+
+	fn, streamID, ok := relayconvert.LookupStreamConverter(types.RelayFormat(upstream), types.RelayFormat(clientFormat))
+	if !ok {
+		return nil, false, nil
+	}
+
+	// 设置 SSE 头 + 并发安全 writer + 保活 ping（与旧 handleStreamToResponses 一致）
+	helper.SetEventStreamHeaders(writer)
+	safeWriter := helper.NewSafeWriter(writer)
+	defer helper.PingTicker(safeWriter, 15*time.Second)()
+
+	capturedUsage := &common.Usage{CacheIncludedInPrompt: true}
+	var (
+		firstEvent         bool
+		sentCompleted      bool // 是否已发出 response.completed
+		transferredTextLen int   // 已转发的文本/思考内容长度，供流中断输出估算
+	)
+
+	// emitResponsesEvent 写出一个 Responses SSE 事件，并提取 usage / 记录首字节时间。
+	emitResponsesEvent := func(event *dto.ResponsesStreamEvent) error {
+		if !firstEvent {
+			firstEvent = true
+			info.SetFirstResponseTime()
+		}
+		if data, ok := event.Data.(map[string]any); ok {
+			switch event.Type {
+			case "response.output_text.delta", "response.reasoning_summary_text.delta":
+				if delta, ok := data["delta"].(string); ok {
+					transferredTextLen += len(delta)
+				}
+			case "response.completed":
+				sentCompleted = true
+				if resp, ok := data["response"].(*dto.OpenAIResponsesResponse); ok && resp.Usage != nil {
+					capturedUsage.PromptTokens = resp.Usage.InputTokens
+					capturedUsage.CompletionTokens = resp.Usage.OutputTokens
+					capturedUsage.TotalTokens = resp.Usage.TotalTokens
+					if d := resp.Usage.InputTokensDetails; d != nil {
+						capturedUsage.PromptTokensDetails = &common.TokenDetails{
+							CachedTokens:     d.CachedTokens,
+							CacheWriteTokens: d.CacheWriteTokens,
+							AudioTokens:      d.AudioTokens,
+						}
+					}
+				}
+			}
+		}
+		data, err := json.Marshal(event.Data)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(safeWriter, "event: %s\ndata: %s\n\n", event.Type, string(data))
+		safeWriter.Flush()
+		return err
+	}
+
+	setEndReason := func(reason common.StreamEndReason, err error) {
+		if info.StreamStatus != nil {
+			info.StreamStatus.SetEndReason(reason, err)
+		}
+	}
+
+	// 兜底估算：completed 携带的输出 token 缺失时按已转发文本估算
+	finalizeUsage := func() {
+		if capturedUsage.CompletionTokens == 0 && transferredTextLen > 0 {
+			capturedUsage.CompletionTokens = helper.EstimateStreamOutputTokens(info, transferredTextLen)
+			capturedUsage.TotalTokens = capturedUsage.PromptTokens + capturedUsage.CompletionTokens
+		}
+	}
+
+	start := time.Now()
+	err := fn(ctx, info, upstreamBody, func(chunk any) error {
+		event, ok := chunk.(*dto.ResponsesStreamEvent)
+		if !ok {
+			return nil // 忽略非预期类型
+		}
+		return emitResponsesEvent(event)
+	})
+	duration := time.Since(start)
+	monitor.TrackConverterCall(streamID, string(upstream), string(clientFormat), duration, err)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			// 客户端断开 / 上下文取消：客户端已不可达，不再写事件
+			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
+			return capturedUsage, true, common.ErrStreamInterrupted
+		}
+		g.Log().Warningf(ctx, "[relaykit] convert responses stream failed (converter=%s): %v", converterID, err)
+		// 对齐旧路径：首个事件前出错则写 Responses 兼容错误体（SSE 头已提交，状态码已固定 200）
+		if !firstEvent {
+			errBody, _ := json.Marshal(map[string]any{
+				"error": map[string]any{
+					"message": err.Error(),
+					"type":    "upstream_error",
+					"param":   nil,
+					"code":    "upstream_stream_error",
+				},
+			})
+			safeWriter.Header().Set("Content-Type", "application/json")
+			_, _ = safeWriter.Write(errBody)
+			safeWriter.Flush()
+		}
+		finalizeUsage()
+		setEndReason(common.StreamEndReasonError, err)
+		upstreamErr := constant.NewUpstreamError(http.StatusBadGateway, err.Error(), nil)
+		if !firstEvent {
+			upstreamErr.ResponseWritten = true
+		}
+		return capturedUsage, true, upstreamErr
+	}
+
+	finalizeUsage()
+	if !sentCompleted {
+		setEndReason(common.StreamEndReasonError, fmt.Errorf("stream ended without response.completed"))
+	} else if info.StreamStatus.GetEndReason() == "" {
+		setEndReason(common.StreamEndReasonDone, nil)
+	}
+	return capturedUsage, true, nil
+}

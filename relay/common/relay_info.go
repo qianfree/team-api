@@ -153,6 +153,15 @@ type RelayInfo struct {
 	convOptions          *convmeta.Options
 }
 
+// ResponsesRequestSnapshot 提供 Responses 入站请求快照（relaykit Claude→Responses
+// 响应转换器经 responsesEchoProvider 接口读取，用于响应对象 echo 请求参数）。
+func (r *RelayInfo) ResponsesRequestSnapshot() *dto.OpenAIResponsesRequest {
+	if r == nil {
+		return nil
+	}
+	return r.ResponsesRequest
+}
+
 // GetOriginalClientFormat 返回客户端原始请求格式
 func (info *RelayInfo) GetOriginalClientFormat() constant.RelayFormat {
 	if info.ClientFormat != "" {

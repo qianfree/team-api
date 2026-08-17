@@ -1,0 +1,100 @@
+{
+  "name": "claude_to_responses_response_with_tools",
+  "from": "claude",
+  "to": "responses",
+  "response": {
+    "content": [
+      {
+        "text": "我先查一下天气",
+        "type": "text"
+      },
+      {
+        "thinking": "内部思考内容",
+        "type": "thinking"
+      },
+      {
+        "id": "toolu_01XYZ",
+        "input": {
+          "city": "北京"
+        },
+        "name": "get_weather",
+        "type": "tool_use"
+      }
+    ],
+    "id": "msg_01ABC",
+    "model": "claude-sonnet-4-20250514",
+    "role": "assistant",
+    "stop_reason": "tool_use",
+    "type": "message",
+    "usage": {
+      "cache_creation_input_tokens": 20,
+      "cache_read_input_tokens": 60,
+      "input_tokens": 100,
+      "output_tokens": 40
+    }
+  },
+  "expected_response": {
+    "id": "resp_msg_01ABC",
+    "object": "response",
+    "created_at": 1786986884,
+    "completed_at": 1786986884,
+    "status": "completed",
+    "error": null,
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "model": "claude-sonnet-4-20250514",
+    "output": [
+      {
+        "type": "message",
+        "id": "msg_msg_01ABC",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "我先查一下天气"
+          }
+        ]
+      },
+      {
+        "type": "function_call",
+        "id": "toolu_01XYZ",
+        "status": "completed",
+        "call_id": "toolu_01XYZ",
+        "name": "get_weather",
+        "arguments": "{\"city\":\"北京\"}"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "prompt": null,
+    "reasoning": {
+      "effort": null,
+      "summary": null
+    },
+    "store": false,
+    "conversation": null,
+    "temperature": 1,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [],
+    "top_p": 1,
+    "truncation": "disabled",
+    "usage": {
+      "input_tokens": 180,
+      "output_tokens": 40,
+      "total_tokens": 220,
+      "input_tokens_details": {
+        "cached_tokens": 60
+      },
+      "output_tokens_details": {}
+    },
+    "user": null,
+    "metadata": {}
+  }
+}

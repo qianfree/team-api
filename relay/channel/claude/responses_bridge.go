@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // ========== Responses 入站桥接：Claude Messages → OpenAI Responses ==========
@@ -43,6 +44,14 @@ func (a *Adaptor) handleNonStreamToResponses(ctx context.Context, resp *http.Res
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	}
+
+	// relaykit 转换器路径优先；失败/未覆盖回退下方旧内联转换逻辑
+	if responsesBody, usage, ok := relaykit_bridge.TryConvertResponsesResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(responsesBody)
+		return usage, nil
 	}
 
 	var claudeResp dto.ClaudeResponse

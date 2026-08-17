@@ -14,7 +14,7 @@ import (
 // OpenAIChatToResponsesRequestConverter OpenAI Chat 客户端 → Responses 上游（请求侧）。
 // 用于 ChatViaResponses 渠道：chat 入站请求转换为 Responses 格式发送 /v1/responses。
 // 吸收了旧路径 adaptor 在转换前对 chat 体注入 reasoning_effort 的后处理
-//（显式 req.ReasoningEffort 优先，为空时取宿主 thinking 后缀映射）。
+// （显式 req.ReasoningEffort 优先，为空时取宿主 thinking 后缀映射）。
 type OpenAIChatToResponsesRequestConverter struct{}
 
 func (c *OpenAIChatToResponsesRequestConverter) ID() string {
