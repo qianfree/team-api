@@ -81,7 +81,7 @@ type ChannelUpdateReq struct {
 	ID                       int64    `json:"id" in:"path" v:"required" dc:"渠道ID"`
 	Name                     string   `json:"name" dc:"渠道名称"`
 	Type                     *int     `json:"type" v:"min:1#请选择供应商类型" dc:"供应商类型（留空不修改）"`
-	BaseURL                  string   `json:"base_url" dc:"API 基础地址"`
+	BaseURL                  string   `json:"base_url" dc:"API 基础地址（留空不更新；切换类型且旧地址为该类型默认值时自动跟随新类型默认地址）"`
 	ApiKey                   *string  `json:"api_key" dc:"更新 API Key（留空不更新）"`
 	Priority                 *int     `json:"priority" dc:"优先级（留空不更新）"`
 	Weight                   *int     `json:"weight" dc:"权重（留空不更新）"`
