@@ -162,6 +162,23 @@ func (r *RelayInfo) ResponsesRequestSnapshot() *dto.OpenAIResponsesRequest {
 	return r.ResponsesRequest
 }
 
+// ModelNameMapped 提供渠道模型映射标志（relaykit 转换器经可选能力接口读取，
+// 决定响应模型名的选取口径）。方法名避开与 ChannelMeta.IsModelMapped 字段撞名。
+func (r *RelayInfo) ModelNameMapped() bool {
+	if r == nil || r.ChannelMeta == nil {
+		return false
+	}
+	return r.ChannelMeta.IsModelMapped
+}
+
+// GetRequestID 提供请求 ID（relaykit 转换器经可选能力接口读取，用于合成响应 ID）。
+func (r *RelayInfo) GetRequestID() string {
+	if r == nil {
+		return ""
+	}
+	return r.RequestID
+}
+
 // GetOriginalClientFormat 返回客户端原始请求格式
 func (info *RelayInfo) GetOriginalClientFormat() constant.RelayFormat {
 	if info.ClientFormat != "" {
