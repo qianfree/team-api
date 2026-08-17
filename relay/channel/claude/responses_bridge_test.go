@@ -24,6 +24,9 @@ func responsesInboundInfo(isStream bool) *common.RelayInfo {
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
 			BaseURL:           "https://upstream.example.com",
+			// ChannelType 必须显式设置：ProviderNativeFormat(0) 默认归为 openai，
+			// 会让 relaykit 桥接把 Claude 格式响应误解析为 chat（空 choices → 空输出）
+			ChannelType:       int(constant.ProviderClaude),
 			UpstreamModelName: "glm-5.3",
 			IsModelMapped:     false,
 		},
@@ -134,9 +137,13 @@ func TestDoResponse_ResponsesInboundStream_TextAndToolCall(t *testing.T) {
 		t.Errorf("completed output should contain function_call item:\n%s", completed)
 	}
 
-	// 计费返回值按 Claude 口径（input 不含缓存，cache 独立）
-	if usage.PromptTokens != 10 || usage.CompletionTokens != 7 {
-		t.Errorf("billing usage = %+v, want prompt=10 completion=7", usage)
+	// 计费返回值按 OpenAI 口径（relaykit 桥接，P0 已上线行为）：input 含缓存（10+4），
+	// CacheIncludedInPrompt=true 由计费侧扣减缓存部分——金额与 Claude 口径等价
+	if usage.PromptTokens != 14 || usage.CompletionTokens != 7 {
+		t.Errorf("billing usage = %+v, want prompt=14 completion=7", usage)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Errorf("billing usage should set CacheIncludedInPrompt=true: %+v", usage)
 	}
 	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 {
 		t.Errorf("billing usage cache detail = %+v, want cached_tokens=4", usage.PromptTokensDetails)
@@ -221,8 +228,12 @@ func TestDoResponse_ResponsesInboundNonStream(t *testing.T) {
 		t.Errorf("input_tokens_details = %v, want cached_tokens=4", d)
 	}
 
-	// 计费口径按 Claude（input 不含缓存）
-	if usage.PromptTokens != 10 || usage.CompletionTokens != 5 {
-		t.Errorf("billing usage = %+v, want prompt=10 completion=5", usage)
+	// 计费口径按 OpenAI（relaykit 桥接，P0 已上线行为）：input 含缓存（10+4），
+	// CacheIncludedInPrompt=true 由计费侧扣减——金额与 Claude 口径等价
+	if usage.PromptTokens != 14 || usage.CompletionTokens != 5 {
+		t.Errorf("billing usage = %+v, want prompt=14 completion=5", usage)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Errorf("billing usage should set CacheIncludedInPrompt=true: %+v", usage)
 	}
 }
