@@ -12,7 +12,7 @@ export const providerTypeOptions: { label: string; value: number }[] = [
   { label: 'AWS Bedrock', value: 11 }, { label: 'Azure OpenAI', value: 12 },
   { label: 'Vertex AI', value: 13 },
   { label: 'Mistral', value: 15 }, { label: 'xAI (Grok)', value: 16 },
-  { label: '360 智脑', value: 17 }, { label: 'Lingyi (零一万物)', value: 18 },
+  { label: 'Lingyi (零一万物)', value: 18 },
   { label: 'Baidu V2', value: 19 }, { label: 'Cloudflare Workers AI', value: 20 },
   { label: 'Ollama', value: 22 },
   { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },

@@ -352,6 +352,19 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	}
 	if req.BaseURL != "" {
 		data.BaseUrl = req.BaseURL
+	} else if req.Type != nil {
+		// 切换供应商类型且未显式传 base_url：旧地址为空或等于旧类型默认值（用户未自定义过）时，
+		// 自动跟随为新类型默认地址，避免残留旧供应商端点导致上游请求 404；自定义地址（如中转站）保留不动
+		var old struct {
+			Type    int    `json:"type"`
+			BaseUrl string `json:"base_url"`
+		}
+		if err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("type, base_url").Scan(&old); err == nil {
+			if newDefault := defaultProviderURL(*req.Type); newDefault != "" &&
+				(old.BaseUrl == "" || old.BaseUrl == defaultProviderURL(old.Type)) {
+				data.BaseUrl = newDefault
+			}
+		}
 	}
 	// priority/weight 为指针字段，仅在显式传入时更新，避免不含这两个字段的
 	// 局部更新（如仅切换状态、仅换 Key）把已有值洗成 0。
@@ -721,6 +734,35 @@ var defaultProviderURLs = map[int]string{
 	14: "https://api.cohere.com",
 	15: "https://api.mistral.ai",
 	16: "https://api.x.ai",
+	// 零一万物 OpenAI 兼容端点，adaptor 自拼 /v1/chat/completions
+	18: "https://api.lingyiwanwu.com",
+	// 百度千帆 v2：qianfan.baidubce.com/v2/chat/completions
+	19: "https://qianfan.baidubce.com",
+	// Cloudflare 填裸域名即可：adaptor 自拼 /client/v4/accounts/{id}/ai/v1，
+	// account_id 从 ApiKey（token|accountid 格式）解析，无需写在地址里
+	20: "https://api.cloudflare.com",
+	// Ollama 本地服务，adaptor 自拼 /api/chat
+	22: "http://localhost:11434",
+	// 硅基流动（国内站；国际站为 api.siliconflow.com）
+	25: "https://api.siliconflow.cn",
+	// 讯飞 OpenAI 兼容端点是 spark-api-open（注意 -open 后缀），
+	// 旧版 spark-api.xf-yun.com 是 WebSocket 协议主机，走这里会 404
+	26: "https://spark-api-open.xf-yun.com",
+	// OpenRouter：openrouter.ai/api/v1/chat/completions
+	27: "https://openrouter.ai/api",
+	// XInference 默认本地端口
+	28: "http://localhost:9997",
+	// MiniMax 国内站（海外站为 api.minimaxi.chat），adaptor 自拼 /v1/text/chatcompletion_v2
+	29: "https://api.minimax.chat",
+	// Coze 国内站（海外站为 api.coze.com），adaptor 自拼 /v3/chat
+	32: "https://api.coze.cn",
+	// Dify 云端默认（api.dify.ai/v1/chat-messages）；自部署实例需自行填写。
+	// 填裸域名即可，adaptor 自拼 /v1/chat-messages，带 /v1 会双拼
+	33: "https://api.dify.ai",
+	// 即梦：适配器拼 /v2/images/generations，无官方对齐端点可验证，需自行填写
+	34: "",
+	// Codex 直连 chatgpt.com/backend-api/codex/responses（对齐 Codex CLI）
+	35: "https://chatgpt.com",
 	41: "", // New API 自引用渠道，需自行填写实例地址
 	42: "", // Sub2API 渠道，需自行填写实例地址
 }
