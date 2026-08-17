@@ -1,0 +1,265 @@
+{
+  "name": "claude_to_responses_stream_text_and_tool",
+  "from": "claude",
+  "to": "responses",
+  "stream_data": "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01S\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-20250514\",\"usage\":{\"input_tokens\":50,\"output_tokens\":1}}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"，世界\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01T\",\"name\":\"get_weather\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\":\\\"北京\\\"}\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"input_tokens\":50,\"output_tokens\":30}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+  "expected_stream_chunks": [
+    {
+      "Type": "response.created",
+      "Data": {
+        "response": {
+          "id": "resp_1730000000001000000",
+          "object": "response",
+          "created_at": 1730000000,
+          "status": "in_progress",
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "claude-sonnet-4-20250514",
+          "output": [],
+          "parallel_tool_calls": true,
+          "previous_response_id": null,
+          "prompt": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": false,
+          "conversation": null,
+          "temperature": 1,
+          "text": {
+            "format": {
+              "type": "text"
+            }
+          },
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": 1,
+          "truncation": "disabled",
+          "user": null,
+          "metadata": {}
+        },
+        "type": "response.created"
+      }
+    },
+    {
+      "Type": "response.output_item.added",
+      "Data": {
+        "item": {
+          "content": [],
+          "id": "msg_1730000000001000000",
+          "role": "assistant",
+          "status": "in_progress",
+          "type": "message"
+        },
+        "output_index": 0,
+        "type": "response.output_item.added"
+      }
+    },
+    {
+      "Type": "response.content_part.added",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_1730000000001000000",
+        "output_index": 0,
+        "part": {
+          "annotations": [],
+          "text": "",
+          "type": "output_text"
+        },
+        "type": "response.content_part.added"
+      }
+    },
+    {
+      "Type": "response.output_text.delta",
+      "Data": {
+        "content_index": 0,
+        "delta": "你好",
+        "item_id": "msg_1730000000001000000",
+        "output_index": 0,
+        "type": "response.output_text.delta"
+      }
+    },
+    {
+      "Type": "response.output_text.delta",
+      "Data": {
+        "content_index": 0,
+        "delta": "，世界",
+        "item_id": "msg_1730000000001000000",
+        "output_index": 0,
+        "type": "response.output_text.delta"
+      }
+    },
+    {
+      "Type": "response.output_text.done",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_1730000000001000000",
+        "output_index": 0,
+        "text": "你好，世界",
+        "type": "response.output_text.done"
+      }
+    },
+    {
+      "Type": "response.content_part.done",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_1730000000001000000",
+        "output_index": 0,
+        "part": {
+          "annotations": [],
+          "text": "你好，世界",
+          "type": "output_text"
+        },
+        "type": "response.content_part.done"
+      }
+    },
+    {
+      "Type": "response.output_item.done",
+      "Data": {
+        "item": {
+          "content": [
+            {
+              "annotations": [],
+              "text": "你好，世界",
+              "type": "output_text"
+            }
+          ],
+          "id": "msg_1730000000001000000",
+          "role": "assistant",
+          "status": "completed",
+          "type": "message"
+        },
+        "output_index": 0,
+        "type": "response.output_item.done"
+      }
+    },
+    {
+      "Type": "response.output_item.added",
+      "Data": {
+        "item": {
+          "call_id": "toolu_01T",
+          "id": "toolu_01T",
+          "name": "get_weather",
+          "status": "in_progress",
+          "type": "function_call"
+        },
+        "output_index": 1,
+        "type": "response.output_item.added"
+      }
+    },
+    {
+      "Type": "response.function_call_arguments.delta",
+      "Data": {
+        "delta": "{\"city\"",
+        "item_id": "toolu_01T",
+        "output_index": 1,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "Type": "response.function_call_arguments.delta",
+      "Data": {
+        "delta": ":\"北京\"}",
+        "item_id": "toolu_01T",
+        "output_index": 1,
+        "type": "response.function_call_arguments.delta"
+      }
+    },
+    {
+      "Type": "response.function_call_arguments.done",
+      "Data": {
+        "arguments": "{\"city\":\"北京\"}",
+        "item_id": "toolu_01T",
+        "output_index": 1,
+        "type": "response.function_call_arguments.done"
+      }
+    },
+    {
+      "Type": "response.output_item.done",
+      "Data": {
+        "item": {
+          "arguments": "{\"city\":\"北京\"}",
+          "call_id": "toolu_01T",
+          "id": "toolu_01T",
+          "name": "get_weather",
+          "status": "completed",
+          "type": "function_call"
+        },
+        "output_index": 1,
+        "type": "response.output_item.done"
+      }
+    },
+    {
+      "Type": "response.completed",
+      "Data": {
+        "response": {
+          "id": "resp_1730000000001000000",
+          "object": "response",
+          "created_at": 1730000000,
+          "completed_at": 1730000000,
+          "status": "completed",
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "claude-sonnet-4-20250514",
+          "output": [
+            {
+              "type": "message",
+              "id": "msg_1730000000001000000",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "你好，世界"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "id": "toolu_01T",
+              "status": "completed",
+              "call_id": "toolu_01T",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"北京\"}"
+            }
+          ],
+          "parallel_tool_calls": true,
+          "previous_response_id": null,
+          "prompt": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": false,
+          "conversation": null,
+          "temperature": 1,
+          "text": {
+            "format": {
+              "type": "text"
+            }
+          },
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": 1,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 30,
+            "total_tokens": 80,
+            "input_tokens_details": {
+              "cached_tokens": 0
+            },
+            "output_tokens_details": {}
+          },
+          "user": null,
+          "metadata": {}
+        },
+        "type": "response.completed"
+      }
+    }
+  ]
+}

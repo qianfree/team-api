@@ -70,15 +70,18 @@ func registerOpenAIChatToResponses() {
 	})
 }
 
-// registerResponsesToClaudeChain 注册 Responses → Claude 请求链（StepConverters 两跳：
-// Responses→OpenAI Chat→Claude Messages）。替换旧路径 claude/converter.go 的手工拼接链
-// ConvertResponsesToClaude（后者保留为回退）。
-// 响应侧（Claude 上游 → Responses 客户端）由独立的 Claude→Responses 转换器承担（后续注册）。
+// registerResponsesToClaudeChain 注册 Responses → Claude 方向转换器。
+//   - 请求侧为 StepConverters 两跳链（Responses→OpenAI Chat→Claude Messages），
+//     替换旧路径 claude/converter.go 的手工拼接链 ConvertResponsesToClaude（后者保留为回退）；
+//   - 响应侧（非流式）为 ClaudeToResponsesResponseConverter（spec 的 From/To 是请求方向语义，
+//     Resp 侧做反向，与 ConverterOpenAIChatToClaudeMessages 先例一致）。
 func registerResponsesToClaudeChain() {
+	respConv := &oai_responses.ClaudeToResponsesResponseConverter{}
+
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
-		ID:      relayconvert.ConverterOpenAIResponsesToClaudeMessages,
-		From:    types.RelayFormatOpenAIResponses,
-		To:      types.RelayFormatClaude,
+		ID:   relayconvert.ConverterOpenAIResponsesToClaudeMessages,
+		From: types.RelayFormatOpenAIResponses,
+		To:   types.RelayFormatClaude,
 		// 多跳链路有中间格式信息损耗，质量标记为 fair
 		Quality: relayconvert.TextConverterQualityFair,
 		Req: relayconvert.TextRequestSide{
@@ -87,7 +90,21 @@ func registerResponsesToClaudeChain() {
 				relayconvert.ConverterOpenAIChatToClaudeMessages,
 			},
 		},
+		Resp: relayconvert.TextResponseSide{
+			// 与其余方向一致：usage 由宿主从转换后的响应体提取，注册表层丢弃
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, _, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
+		},
 	})
+
+	// 流式响应侧：Claude SSE → Responses SSE（经独立流式注册表，宿主桥接层查找调用）
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatClaude, types.RelayFormatOpenAIResponses,
+		relayconvert.ConverterClaudeMessagesToOpenAIResponsesStream,
+		(&oai_responses.ClaudeToResponsesStreamConverter{}).ConvertStreamResponse,
+	)
 }
 
 // registerOpenAIToClaude 注册 OpenAI → Claude 方向转换器。

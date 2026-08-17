@@ -14,6 +14,7 @@ import (
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // Adaptor Claude 供应商适配器
@@ -212,8 +213,15 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	case constant.RelayFormatClaude:
 		return a.handleClaudeNativeResponse(ctx, resp, info, writer)
 	case constant.RelayFormatResponses:
-		// Responses 入站（codex 等）：Claude 响应转换为 Responses 格式
+		// Responses 入站（codex 等）：Claude 响应转换为 Responses 格式。
+		// 流式优先走 relaykit 转换器（仅在 200 时；未接管时 body 未被读取，旧路径完整重走）
 		if info.IsStream {
+			if resp.StatusCode == http.StatusOK {
+				if usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+					resp.Body.Close()
+					return usage, streamErr
+				}
+			}
 			return a.handleStreamToResponses(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToResponses(ctx, resp, info, writer)
