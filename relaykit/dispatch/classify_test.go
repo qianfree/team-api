@@ -49,6 +49,7 @@ func TestClassify_NewAPIError错误码(t *testing.T) {
 	}{
 		{"invalid_key 归凭证", types.ErrorCodeChannelInvalidKey, ErrClassCredential},
 		{"no_available_key 归渠道级", types.ErrorCodeChannelNoAvailableKey, ErrClassChannelFatal},
+		{"protocol_mismatch 归渠道级（驱动换渠道）", types.ErrorCodeChannelProtocolMismatch, ErrClassChannelFatal},
 		{"model_not_found 归渠道级", types.ErrorCodeModelNotFound, ErrClassChannelFatal},
 		{"response_time_exceeded 归超时", types.ErrorCodeChannelResponseTimeExceeded, ErrClassTimeout},
 		{"aws_client_error 归渠道级", types.ErrorCodeChannelAwsClientError, ErrClassChannelFatal},

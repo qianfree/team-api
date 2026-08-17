@@ -3,7 +3,6 @@ package response_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -11,11 +10,11 @@ import (
 	"github.com/gogf/gf/v2/util/guid"
 
 	apiresponse "github.com/qianfree/team-api/internal/response"
+	"github.com/qianfree/team-api/internal/testutil"
 )
 
 func TestErrorResponseStatusAndCode(t *testing.T) {
 	s := g.Server(guid.S())
-	s.SetDumpRouterMap(false)
 	s.BindHandler("/standard", func(r *ghttp.Request) {
 		apiresponse.ErrorMsg(r, http.StatusBadRequest, "bad request")
 	})
@@ -26,8 +25,7 @@ func TestErrorResponseStatusAndCode(t *testing.T) {
 		apiresponse.ErrorWithCode(r, 10079, 10079, "invalid username")
 	})
 
-	server := httptest.NewServer(s)
-	defer server.Close()
+	baseURL := testutil.StartGFServer(t, s)
 
 	tests := []struct {
 		name       string
@@ -57,7 +55,7 @@ func TestErrorResponseStatusAndCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := server.Client().Get(server.URL + tt.path)
+			res, err := http.Get(baseURL + tt.path)
 			if err != nil {
 				t.Fatalf("GET %s: %v", tt.path, err)
 			}

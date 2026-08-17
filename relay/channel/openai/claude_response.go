@@ -102,6 +102,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 		contentIndex       int
 		inputTokens        int
 		outputTokens       int
+		cachedTokens       int    // prompt_tokens_details.cached_tokens（OpenAI 口径：已含于 prompt_tokens）
 		currentBlockType   string // 跟踪当前 block 类型: "text" 或 "tool_use"
 		transferredTextLen int    // 已转发的文本/思考内容长度，供流中断输出估算
 	)
@@ -146,15 +147,23 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 				currentBlockType = ""
 			}
 
-			// 发送 message_delta（stop_reason）+ message_stop
+			// 发送 message_delta（stop_reason）+ message_stop。
+			// Claude 语义：input_tokens 不含 cache_read（OpenAI 的 prompt_tokens 含 cached，扣减后映射）；
+			// OpenAI 的 usage 在流尾才返回、message_start 时不可得，最终用量在此补报
 			reason := common.OpenAIFinishReasonToClaude(finishReason)
+			deltaInput := inputTokens - cachedTokens
+			if deltaInput < 0 {
+				deltaInput = 0
+			}
 			delta := dto.ClaudeResponse{
 				Type: "message_delta",
 				Delta: &dto.ClaudeDelta{
 					StopReason: strPtr(reason),
 				},
 				Usage: &dto.ClaudeUsage{
-					OutputTokens: outputTokens,
+					InputTokens:          deltaInput,
+					CacheReadInputTokens: cachedTokens,
+					OutputTokens:         outputTokens,
 				},
 			}
 			writeClaudeSSE(writer, "message_delta", &delta)
@@ -175,6 +184,14 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 		if streamResp.Usage != nil {
 			inputTokens = streamResp.Usage.PromptTokens
 			outputTokens = streamResp.Usage.CompletionTokens
+			if streamResp.Usage.PromptTokensDetails != nil {
+				cachedTokens = streamResp.Usage.PromptTokensDetails.CachedTokens
+			}
+			// 缓存/思考明细透传给计费；OpenAI 的 prompt_tokens 含 cached（子集语义），
+			// 置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免缓存按 input 全价计费
+			usage.PromptTokensDetails = common.DtoTokenDetailsToCommon(streamResp.Usage.PromptTokensDetails)
+			usage.CompletionTokenDetails = common.DtoTokenDetailsToCommon(streamResp.Usage.CompletionTokenDetails)
+			usage.CacheIncludedInPrompt = true
 		}
 
 		// 发送 message_start（首块数据时）
@@ -327,6 +344,11 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 
 	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
 		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
+		// 读流出错：带上已收到的 usage，避免整段按零值计费漏计
+		usage.PromptTokens = inputTokens
+		usage.CompletionTokens = outputTokens
+		usage.TotalTokens = inputTokens + outputTokens
+		usage.CacheIncludedInPrompt = true
 		return &usage, fmt.Errorf("stream scanner error: %w", err)
 	}
 
@@ -423,6 +445,18 @@ func openAIToClaudeResponse(openaiResp *dto.ChatCompletionResponse, info *common
 		stopReason = common.OpenAIFinishReasonToClaude(openaiResp.Choices[0].FinishReason)
 	}
 
+	// OpenAI 的 prompt_tokens 已含 cached（子集语义），Claude 的 input_tokens 不含 cache_read，
+	// 需扣减后映射，否则 Claude 客户端按本协议语义计账时缓存部分被重复计入。
+	// PromptTokensDetails 可能为 nil（多数 OpenAI 兼容上游不返回该字段），必须判空。
+	cachedTokens := 0
+	if openaiResp.Usage.PromptTokensDetails != nil {
+		cachedTokens = openaiResp.Usage.PromptTokensDetails.CachedTokens
+	}
+	inputTokens := openaiResp.Usage.PromptTokens - cachedTokens
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+
 	return dto.ClaudeResponse{
 		ID:           fmt.Sprintf("msg_%s", info.RequestID),
 		Type:         "message",
@@ -432,9 +466,9 @@ func openAIToClaudeResponse(openaiResp *dto.ChatCompletionResponse, info *common
 		StopSequence: nil,
 		Model:        modelName,
 		Usage: &dto.ClaudeUsage{
-			InputTokens:          openaiResp.Usage.PromptTokens,
+			InputTokens:          inputTokens,
 			OutputTokens:         openaiResp.Usage.CompletionTokens,
-			CacheReadInputTokens: openaiResp.Usage.PromptTokensDetails.CachedTokens,
+			CacheReadInputTokens: cachedTokens,
 		},
 	}
 }

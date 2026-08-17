@@ -719,3 +719,15 @@ err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
 - **前端编辑表单慎用 `x || 默认值` 兜底**：对数值字段，0 会被 falsy 规则吞掉，既掩盖真实数据，又可能在保存时把合法的 0 改写为默认值。
 
 排查信号：某字段在库里莫名变成 0/空串，而创建时明明写过合法值——查该表所有 UPDATE 路径中是否存在非指针字段的无条件赋值。
+
+### 2026-08-16：httptest.NewServer 直接包裹未 Start 的 g.Server，每个请求都在 Session.Close() panic
+
+**问题**：`go test -v` 下凡是用 `httptest.NewServer(g.Server(guid.S()))` 方式测 HTTP 处理逻辑的用例，每个请求都向 stderr 刷一段 `http: panic serving ... nil pointer dereference`（`gsession.(*Session).Close`）。测试仍然 PASS——响应在 panic 前已完整写出、panic 发生在 deferred `handleAfterRequestDone` 中且被 net/http recover——导致问题长期被掩盖（不带 `-v` 时 `go test` 丢弃通过用例的输出）。涉及 `internal/middleware`、`internal/response`、`internal/handler/setup` 三处。
+
+**原因**：gf v2.10.2 只在 `Server.Start()` 中初始化 `sessionManager`（ghttp_server.go），而 `ServeHTTP` 对每个请求无条件执行 `request.Session.Close()`，后者第一行就解引用 `s.manager.storage`。未经 `Start()` 的 server 其 `sessionManager` 为 nil → `Session.manager` 为 nil → 必 panic。无导出 API 可以单独初始化 manager，绕不开。
+
+**修复**：新增共享测试辅助 `internal/testutil.StartGFServer(t, s)`——把 server 绑定到 `127.0.0.1:0`（内核随机分配端口避免冲突，绑定回环地址避免 Windows 防火墙弹窗）走真实 `s.Start()`，返回 `http://127.0.0.1:{port}` 供用例直接请求，`t.Cleanup` 注册 `s.Shutdown()`。`Start()` 返回时 listener 已创建完毕（`startServer` 内 `wg.Wait()` 等待 `CreateListener` 完成后才返回），`GetListenedPort()` 立即可用，无需轮询。三处测试全部改用该辅助。
+
+**正确做法**：测试中需要真实走 ghttp 请求链路（中间件、handler、hook）时，一律用 `testutil.StartGFServer(t, s)` 启动真实 server；**禁止**把 `g.Server` 直接塞进 `httptest.NewServer`——那只会执行 `ServeHTTP` 路径而不执行 `Start()` 的初始化（session manager、graceful listener 等），属于未定义用法。`httptest.NewServer` 仅用于包装自建的普通 `http.Handler`。
+
+排查信号：`go test -v` 输出中出现成段的 `http: panic serving` + `gsession.(*Session).Close` 栈。

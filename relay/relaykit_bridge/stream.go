@@ -62,7 +62,10 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	safeWriter := helper.NewSafeWriter(writer)
 	defer helper.PingTicker(safeWriter, 15*time.Second)()
 
-	capturedUsage := &common.Usage{}
+	// relaykit 转换器输出的 usage 统一为 OpenAI 口径：prompt_tokens 已含缓存
+	//（Gemini 的 cached ⊆ promptTokenCount；Claude 转换时已做 input+cache_read+cache_creation 加法）。
+	// 置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免「input 全价 + cache 价」双重计费
+	capturedUsage := &common.Usage{CacheIncludedInPrompt: true}
 	var (
 		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
 		firstChunk         bool
@@ -84,6 +87,9 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			capturedUsage.PromptTokens = streamChunk.Usage.PromptTokens
 			capturedUsage.CompletionTokens = streamChunk.Usage.CompletionTokens
 			capturedUsage.TotalTokens = streamChunk.Usage.TotalTokens
+			capturedUsage.CacheCreationTokens = convertedCacheCreationTokens(streamChunk.Usage.PromptTokensDetails)
+			capturedUsage.PromptTokensDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.PromptTokensDetails)
+			capturedUsage.CompletionTokenDetails = common.DtoTokenDetailsToCommon(streamChunk.Usage.CompletionTokenDetails)
 		}
 		if len(streamChunk.Choices) > 0 && streamChunk.Choices[0].FinishReason != nil {
 			gotFinish = true

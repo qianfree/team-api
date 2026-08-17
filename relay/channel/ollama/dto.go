@@ -6,6 +6,9 @@ import relaykitdto "github.com/qianfree/team-api/relaykit/dto"
 type OllamaChatRequest = relaykitdto.OllamaChatRequest
 type OllamaMessage = relaykitdto.OllamaMessage
 type OllamaChatResponse = relaykitdto.OllamaChatResponse
+type OllamaTool = relaykitdto.OllamaTool
+type OllamaToolFunction = relaykitdto.OllamaToolFunction
+type OllamaToolCall = relaykitdto.OllamaToolCall
 
 // OllamaGenerateRequest Ollama Generate（文本补全）请求
 type OllamaGenerateRequest struct {

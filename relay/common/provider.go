@@ -158,7 +158,7 @@ type UsageRecord struct {
 	ErrorMessage     string
 
 	// Cache token 细分
-	CacheCreationTokens   int // 缓存创建 token（合并）
+	CacheCreationTokens   int // 写入缓存的 token（Claude cache_creation / OpenAI Responses cache_write）
 	CacheCreation5mTokens int // Claude 5分钟缓存创建
 	CacheCreation1hTokens int // Claude 1小时缓存创建
 	CacheReadTokens       int // 缓存读取 token
