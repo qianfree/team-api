@@ -1,0 +1,71 @@
+{
+  "name": "tools_only_responses_to_chat_response",
+  "from": "responses",
+  "to": "openai",
+  "response": {
+    "created_at": 1730000000,
+    "id": "resp_2",
+    "model": "gpt-4o-2024-11-20",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_1",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "arguments": "{\"city\":\"北京\"}",
+        "call_id": "call_1",
+        "id": "fc_1",
+        "name": "get_weather",
+        "status": "completed",
+        "type": "function_call"
+      },
+      {
+        "action": {
+          "query": "x",
+          "type": "search"
+        },
+        "id": "ws_1",
+        "type": "web_search_call"
+      }
+    ],
+    "status": "completed",
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 8,
+      "total_tokens": 28
+    }
+  },
+  "expected_response": {
+    "id": "chatcmpl-1786989814095418800",
+    "object": "chat.completion",
+    "created": 1786989814,
+    "model": "gpt-4o-2024-11-20",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"北京\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 20,
+      "completion_tokens": 8,
+      "total_tokens": 28
+    }
+  }
+}

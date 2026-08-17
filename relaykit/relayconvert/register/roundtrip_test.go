@@ -36,10 +36,12 @@ func TestRegisteredConverters_Roundtrip(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		converterID string
-		upstream    string
-		nativeResp  any // 上游原生响应（响应侧输入）
+		name          string
+		converterID   string
+		upstream      string
+		reqInput      any        // 请求侧输入（默认 openaiReq，Responses 入站方向不同）
+		nativeResp    any        // 上游原生响应（响应侧输入）
+		respResultPtr func() any // 响应侧期望类型断言（非 chat 方向）
 	}{
 		{
 			name: "Claude", converterID: relayconvert.ConverterOpenAIChatToClaudeMessages, upstream: "claude-3-5-sonnet-20241022",
@@ -79,6 +81,26 @@ func TestRegisteredConverters_Roundtrip(t *testing.T) {
 				Done: true, PromptEvalCount: 5, EvalCount: 3,
 			},
 		},
+		// P1-R：Responses 方向的 Resp 侧（输出类型为对应客户端格式，非 chat）
+		{
+			name: "ResponsesInbound", converterID: relayconvert.ConverterOpenAIResponsesToOpenAIChat, upstream: "gpt-4o",
+			reqInput: &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(`"hi"`), MaxOutputTokens: new(uint)},
+			nativeResp: &dto.ChatCompletionResponse{
+				ID: "c1", Object: "chat.completion", Created: 1730000000, Model: "gpt-4o",
+				Choices: []dto.Choice{{Index: 0, Message: dto.Message{Role: "assistant", Content: "hi"}, FinishReason: "stop"}},
+				Usage: dto.UsageWithDetails{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
+			},
+			respResultPtr: func() any { return &dto.OpenAIResponsesResponse{} },
+		},
+		{
+			name: "ChatViaResponses", converterID: relayconvert.ConverterOpenAIChatToOpenAIResponses, upstream: "gpt-4o",
+			nativeResp: &dto.OpenAIResponsesResponse{
+				ID: "resp_1", Object: "response", Model: "gpt-4o", Status: []byte(`"completed"`),
+				Output: []dto.ResponsesOutput{{Type: "message", ID: "m", Role: "assistant",
+					Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: "hi"}}}},
+			},
+			respResultPtr: func() any { return &dto.ChatCompletionResponse{} },
+		},
 	}
 
 	for _, tc := range cases {
@@ -90,18 +112,29 @@ func TestRegisteredConverters_Roundtrip(t *testing.T) {
 
 			m := meta(tc.upstream)
 
-			// 请求侧：OpenAI → 原生
-			reqResult, err := spec.Req.Convert(ctx, m, openaiReq)
+			// 请求侧：客户端格式 → 上游原生（默认 chat 入参，Responses 入站方向自带 reqInput）
+			reqInput := tc.reqInput
+			if reqInput == nil {
+				reqInput = openaiReq
+			}
+			reqResult, err := spec.Req.Convert(ctx, m, reqInput)
 			require.NoError(t, err, "Req.Convert failed")
 			assert.NotNil(t, reqResult, "Req.Convert returned nil")
 
-			// 响应侧：原生 → OpenAI ChatCompletionResponse（adapter 闭包丢弃 usage → 返回 nil）
+			// 响应侧：原生 → 客户端格式
 			respResult, usage, err := spec.Resp.Convert(ctx, m, tc.nativeResp)
 			require.NoError(t, err, "Resp.Convert failed")
 			require.NotNil(t, respResult, "Resp.Convert returned nil")
-			_, isChatResp := respResult.(*dto.ChatCompletionResponse)
-			assert.True(t, isChatResp, "Resp.Convert result type = %T, want *dto.ChatCompletionResponse", respResult)
 			assert.Nil(t, usage, "adapter closure must discard usage (return nil)")
+
+			if tc.respResultPtr != nil {
+				// Responses 方向：输出类型断言
+				expected := tc.respResultPtr()
+				assert.IsType(t, expected, respResult, "Resp.Convert result type = %T", respResult)
+			} else {
+				_, isChatResp := respResult.(*dto.ChatCompletionResponse)
+				assert.True(t, isChatResp, "Resp.Convert result type = %T, want *dto.ChatCompletionResponse", respResult)
+			}
 		})
 	}
 }
