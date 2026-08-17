@@ -63,6 +63,13 @@ func registerResponsesToOpenAIChat() {
 			},
 		},
 	})
+
+	// 流式响应侧：chat SSE → Responses SSE（codex 打 chat-only 渠道的流式主路径）
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses,
+		relayconvert.ConverterOpenAIChatToOpenAIResponsesStream,
+		(&oai_responses.OpenAIChatToResponsesStreamConverter{}).ConvertStreamResponse,
+	)
 }
 
 // registerOpenAIChatToResponses 注册 OpenAI Chat → Responses 方向转换器。

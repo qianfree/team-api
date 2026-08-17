@@ -3,6 +3,7 @@ package relaykit_bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -113,6 +114,53 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 	}
 
 	usage := usageFromResponsesBody(out)
+	return out, usage, true
+}
+
+// TryConvertChatViaResponsesResponseViaRelaykit 尝试用 relaykit 转换器将 Responses 上游
+// 非流式响应体转换为 chat 格式（ChatViaResponses 渠道的响应侧）。
+// 门控 info.UseResponsesAPI 而非 (upstream, clientFormat) 格式路由——该场景两者同为
+// openai，与「无需转换」同形（请求侧桥接 UseResponsesAPI 特判的同款先例）。
+// 成功返回 (响应体, 计费 usage, true)；失败返回 (nil, nil, false)，调用方回退旧逻辑。
+func TryConvertChatViaResponsesResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *common.Usage, bool) {
+	if info == nil || info.ChannelMeta == nil || !info.UseResponsesAPI {
+		return nil, nil, false
+	}
+	clientFormat := info.GetOriginalClientFormat()
+	if clientFormat != constant.RelayFormatOpenAI {
+		return nil, nil, false
+	}
+
+	spec, ok := relayconvert.LookupTextConverter(relayconvert.ConverterOpenAIChatToOpenAIResponses)
+	if !ok || spec.Resp.Convert == nil {
+		return nil, nil, false
+	}
+
+	var responsesResp dto.OpenAIResponsesResponse
+	if err := json.Unmarshal(upstreamBody, &responsesResp); err != nil {
+		g.Log().Warningf(ctx, "[relaykit] parse responses body failed, fallback to legacy: %v", err)
+		return nil, nil, false
+	}
+
+	start := time.Now()
+	converted, _, err := spec.Resp.Convert(ctx, info, &responsesResp)
+	duration := time.Since(start)
+	monitor.TrackConverterCall(relayconvert.ConverterOpenAIChatToOpenAIResponses,
+		string(constant.RelayFormatResponses), string(clientFormat), duration, err)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] convert responses→chat failed, fallback to legacy: %v", err)
+		return nil, nil, false
+	}
+
+	out, err := json.Marshal(converted)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] marshal chat body failed, fallback to legacy: %v", err)
+		return nil, nil, false
+	}
+
+	// 计费 usage 从转换后的 chat 体提取（CacheIncludedInPrompt=true——顺带修正 legacy
+	// 非流式侧不设该标志、与流式侧 responsesUsageToCommon 自相矛盾的口径）
+	usage, _ := UsageFromConvertedChatResponse(out)
 	return out, usage, true
 }
 
@@ -256,6 +304,49 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
 			return capturedUsage, true, common.ErrStreamInterrupted
 		}
+
+		// 首个事件前 Header 尚未 flush（SetEventStreamHeaders 只 Set 未提交），
+		// 可显式 WriteHeader 复刻 legacy 的状态码与错误体透传
+		var embeddedErr *types.EmbeddedUpstreamError
+		var mismatchErr = errors.Is(err, types.ErrProtocolMismatch)
+		if mismatchErr || errors.As(err, &embeddedErr) {
+			g.Log().Warningf(ctx, "[relaykit] convert responses stream failed (converter=%s): %v", streamID, err)
+			if !firstEvent {
+				safeWriter.Header().Set("Content-Type", "application/json")
+				if mismatchErr {
+					// 假成功防护：上游流不是预期协议格式，写 legacy 原文错误体（502）
+					errBody, _ := json.Marshal(map[string]any{
+						"error": map[string]any{
+							"message": "upstream returned a non-chat-completions stream",
+							"type":    "upstream_error",
+							"param":   nil,
+							"code":    "upstream_protocol_mismatch",
+						},
+					})
+					safeWriter.WriteHeader(http.StatusBadGateway)
+					_, _ = safeWriter.Write(errBody)
+				} else {
+					// SSE 内嵌上游错误：透传原文（对齐 legacy 透传行为，保留上游错误码结构）
+					safeWriter.WriteHeader(http.StatusOK)
+					_, _ = safeWriter.Write(embeddedErr.Body)
+				}
+				safeWriter.Flush()
+			}
+			finalizeUsage()
+			setEndReason(common.StreamEndReasonError, err)
+			status := http.StatusBadGateway
+			body := err.Error()
+			if embeddedErr != nil {
+				status = http.StatusOK
+				body = string(embeddedErr.Body)
+			}
+			upstreamErr := constant.NewUpstreamError(status, body, nil)
+			if !firstEvent {
+				upstreamErr.ResponseWritten = true
+			}
+			return capturedUsage, true, upstreamErr
+		}
+
 		g.Log().Warningf(ctx, "[relaykit] convert responses stream failed (converter=%s): %v", streamID, err)
 		// 对齐旧路径：首个事件前出错则写 Responses 兼容错误体（SSE 头已提交，状态码已固定 200）
 		if !firstEvent {
