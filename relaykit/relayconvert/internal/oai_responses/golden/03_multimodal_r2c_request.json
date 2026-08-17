@@ -1,0 +1,72 @@
+{
+  "name": "multimodal_responses_to_oai_chat_request",
+  "from": "responses",
+  "to": "openai",
+  "request": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "描述这张图片并听懂这段音频",
+            "type": "input_text"
+          },
+          {
+            "detail": "high",
+            "image_url": "https://example.com/cat.png",
+            "type": "input_image"
+          },
+          {
+            "input_audio": {
+              "data": "base64audiodata",
+              "format": "wav"
+            },
+            "type": "input_audio"
+          },
+          {
+            "file_data": "data:text/plain;base64,aGVsbG8=",
+            "filename": "notes.txt",
+            "type": "input_file"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "gpt-4o"
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "描述这张图片并听懂这段音频"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/cat.png",
+              "detail": "high"
+            }
+          },
+          {
+            "type": "input_audio",
+            "input_audio": {
+              "data": "base64audiodata",
+              "format": "wav"
+            }
+          },
+          {
+            "type": "file",
+            "file": {
+              "file_data": "data:text/plain;base64,aGVsbG8=",
+              "filename": "notes.txt"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

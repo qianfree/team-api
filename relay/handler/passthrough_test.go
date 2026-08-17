@@ -277,28 +277,39 @@ func TestCanPassThrough_ChatViaResponses_ResponsesInbound(t *testing.T) {
 	}
 }
 
-// TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含新供应商
-// 与 Ollama 仅 chat 路径启用的 RelayMode 守卫。
+// TestRelaykitRequestConverterID 验证请求侧 converter ID 解析，含新供应商、
+// Ollama 仅 chat 路径启用的 RelayMode 守卫、Responses 入站方向的守卫。
 func TestRelaykitRequestConverterID(t *testing.T) {
 	tests := []struct {
-		name      string
-		inbound   constant.RelayFormat
-		upstream  constant.RelayFormat
-		relayMode int
-		want      string
+		name        string
+		supportsUps bool // 渠道是否原生支持 Responses（UpstreamSpeaksResponses）
+		inbound     constant.RelayFormat
+		upstream    constant.RelayFormat
+		relayMode   int
+		want        string
 	}{
-		{"OpenAI→Claude", constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToClaudeMessages},
-		{"OpenAI→Gemini", constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToGeminiContent},
-		{"OpenAI→Coze", constant.RelayFormatOpenAI, constant.RelayFormatCoze, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToCoze},
-		{"OpenAI→Dify", constant.RelayFormatOpenAI, constant.RelayFormatDify, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToDify},
-		{"OpenAI→Ollama chat", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
-		{"OpenAI→Ollama generate 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
-		{"OpenAI→Ollama embedding 不迁移", constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
-		{"同格式不转换", constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"OpenAI→Claude", false, constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToClaudeMessages},
+		{"OpenAI→Gemini", false, constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToGeminiContent},
+		{"OpenAI→Coze", false, constant.RelayFormatOpenAI, constant.RelayFormatCoze, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToCoze},
+		{"OpenAI→Dify", false, constant.RelayFormatOpenAI, constant.RelayFormatDify, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToDify},
+		{"OpenAI→Ollama chat", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
+		{"OpenAI→Ollama generate 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
+		{"OpenAI→Ollama embedding 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
+		{"同格式不转换", false, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"Responses→OpenAI chat-only 上游", false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToOpenAIChat},
+		{"Responses→OpenAI responses 原生上游不转换", true, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
+		{"Responses→Claude 链", false, constant.RelayFormatResponses, constant.RelayFormatClaude, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToClaudeMessages},
+		{"Responses→Gemini 未覆盖", false, constant.RelayFormatResponses, constant.RelayFormatGemini, int(constant.RelayModeResponses), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := relaykitRequestConverterID(tt.inbound, tt.upstream, tt.relayMode)
+			info := &common.RelayInfo{
+				ChannelMeta: &common.ChannelMeta{
+					ChannelType:       int(constant.ProviderOpenAI),
+					SupportsResponses: tt.supportsUps,
+				},
+			}
+			got := relaykitRequestConverterID(info, tt.inbound, tt.upstream, tt.relayMode)
 			if got != tt.want {
 				t.Errorf("relaykitRequestConverterID(%s,%s,%d) = %q, want %q", tt.inbound, tt.upstream, tt.relayMode, got, tt.want)
 			}
