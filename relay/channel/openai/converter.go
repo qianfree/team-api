@@ -714,6 +714,9 @@ type r2cInputItem struct {
 	CallID  string          `json:"call_id,omitempty"`
 	Output  string          `json:"output,omitempty"`
 	Text    string          `json:"text,omitempty"`
+	// function_call 项字段（Responses 历史中的助手工具调用）
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type r2cContentPart struct {
@@ -749,6 +752,16 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		return nil, fmt.Errorf("input must be string or array: %w", err)
 	}
 	messages := make([]map[string]any, 0, len(items))
+	// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
+	// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息
+	var pendingToolCalls []map[string]any
+	flushToolCalls := func() {
+		if len(pendingToolCalls) == 0 {
+			return
+		}
+		messages = append(messages, map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls})
+		pendingToolCalls = nil
+	}
 	for _, raw := range items {
 		var item r2cInputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -756,12 +769,31 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		}
 		switch item.Type {
 		case "message":
+			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
 				messages = append(messages, msg)
 			}
+		case "function_call":
+			// 历史中的助手工具调用：转为 assistant.tool_calls 条目，id 用 call_id（与 tool 消息的 tool_call_id 对应）
+			if item.CallID == "" && item.Name == "" {
+				continue
+			}
+			pendingToolCalls = append(pendingToolCalls, map[string]any{
+				"id":   item.CallID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      item.Name,
+					"arguments": item.Arguments,
+				},
+			})
 		case "function_call_output":
+			flushToolCalls()
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": item.CallID, "content": item.Output})
+		case "reasoning":
+			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
+			continue
 		default:
+			flushToolCalls()
 			if item.Role != "" {
 				if msg := r2cConvertMessage(item); msg != nil {
 					messages = append(messages, msg)
@@ -769,6 +801,7 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 			}
 		}
 	}
+	flushToolCalls()
 	return messages, nil
 }
 
@@ -776,6 +809,11 @@ func r2cConvertMessage(item r2cInputItem) map[string]any {
 	role := item.Role
 	if role == "" {
 		role = "user"
+	}
+	// Responses 的 developer 角色（OpenAI 新式系统提示，codex 等客户端常用）
+	// 多数第三方 chat 上游不识别（serde 严格校验直接拒绝），统一映射为 system
+	if role == "developer" {
+		role = "system"
 	}
 	if len(item.Content) == 0 {
 		return nil
