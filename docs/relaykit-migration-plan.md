@@ -2318,8 +2318,50 @@ relaykit:
 ### 后续待办
 
 - 灰度验证（monitor.TrackConverterCall 面板观察 5 个新转换器成功率）
-- Responses↔Chat **响应侧**合成器（openai/responses.go 的 `handleResponsesInbound*`）与 r2c 响应侧（`chatCompletionToResponsesResponse`）未收编（P1+ 范围）
+- ~~Responses↔Chat **响应侧**合成器（openai/responses.go 的 `handleResponsesInbound*`）与 r2c 响应侧（`chatCompletionToResponsesResponse`）未收编（P1+ 范围）~~ → 已由 P1-R 完成（见下节）
+- B 方向流式（`HandleResponsesStreamToChat`）明确排除：依赖 StreamScannerHandler 超时治理，收编需桥接层重构且 ChatViaResponses 场景较小众，保持 legacy
 - gemini adaptor 的 responses 入站、Responses→Gemini 方向未覆盖（保持 legacy）
+
+---
+
+## P1-R：Responses 响应侧合成器收编（2026-08-18，feat/responses 分支）
+
+codex 打 chat-only 渠道的**响应合成主路径**收编进 relaykit，旧代码保留为回退。5 个提交落地（地基 / A 非流式+夹具修正 / B 非流式 / A 流式 / 收尾）。
+
+### 收编范围与挂载点
+
+| 方向 | 转换器 | 挂载 |
+|------|--------|------|
+| A 非流式（chat 上游→responses 客户端） | `OpenAIChatToResponsesResponseConverter` | r2c spec Resp 侧 |
+| A 流式（chat SSE→responses 事件） | `OpenAIChatToResponsesStreamConverter` | 流式注册表 (openai→responses) |
+| B 非流式（responses 上游→chat 客户端） | `ResponsesToOpenAIChatResponseConverter` | c2r spec Resp 侧 |
+
+**排除 B 流式**（StreamScannerHandler 超时治理依赖）。
+
+### 配套基础设施
+
+- 错误契约 `relaykit/types/convert_error.go`：`ErrProtocolMismatch` 哨兵（假成功防护）+ `EmbeddedUpstreamError`（SSE 内嵌错误原文）；桥接经 errors.Is/As 分类——mismatch 首事件前 502+原文体、embedded 首事件前 200+原文透传（均 ResponseWritten）
+- Meta 能力接口：`RelayInfo.ModelNameMapped()/GetRequestID()`（沿 responsesEchoProvider 先例），B 方向模型名三段逻辑因此精确复刻 legacy（消灭原计划的已知差异）
+
+### 顺手修复的 legacy 确定性 bug（golden/单测锁定）
+
+1. **A 非流式 nil panic**：`chatCompletionToResponsesResponse` 直接解引用 `Usage.PromptTokensDetails`（上游不带 details 时 panic）——relaykit 版 nil 安全，legacy 回退路径同补 `detailField` 判空
+2. **A 流式多工具顺序随机**：done 事件与 completed output 遍历 map → 改有序 slice（登记顺序）
+3. **A 流式重复 done**：重复 finish_reason 无去重 → done 标志
+4. **时间戳口径**：CompletedAt=Created+1 / completed<created 可能 → 统一同刻（max(Now,created)）
+5. **`responsesUsageOf` 漏拷 CacheWriteTokens**（P0 遗留）
+
+### 更正的探索误判
+
+- ~~「文本+工具并存时丢文本」~~：golden 13 证实 content 恒保留文本、finish=stop——真实风险是按 finish_reason 分派的客户端可能忽略工具调用（legacy 取舍保持）
+
+### 已知差异（桥接文件头注释固化，7 项）
+
+计费口径统一 OpenAI 语义（B 非流式漏设 CacheIncludedInPrompt 的自相矛盾顺带修正）；transferredTextLen 含 reasoning；SetFirstResponseTime 时机；prompt/conversation null 两键；completed_at 差恒 0；工具顺序确定；usage details 键恒存在。
+
+### 验证
+
+golden 9 个新增（09-15，suffix 驱动 runner）；strictjson 键集回归（A 非流式）；单测 9 个（错误契约/顺序/去重/Index 反查/估算）；宿主对拍 3 个（A 非流式深度相等、B 非流式模型名四象限、A 流式事件序列归一化比较）；roundtrip 补两 spec Resp 执行用例。夹具修正：claude 桥接测试补 ChannelType（原缺省 0 被 ProviderNativeFormat 归为 openai 导致误路由）。
 
 #### 7.1 删除旧转换函数
 
