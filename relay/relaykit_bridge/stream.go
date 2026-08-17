@@ -11,7 +11,6 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
-	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -63,10 +62,10 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	safeWriter := helper.NewSafeWriter(writer)
 	defer helper.PingTicker(safeWriter, 15*time.Second)()
 
-	// Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
-	// 置 CacheIncludedInPrompt 让计费扣减缓存部分避免双重计费；
-	// Claude 的 input_tokens 与缓存桶独立，保持默认 false 由缓存部分单独计价
-	capturedUsage := &common.Usage{CacheIncludedInPrompt: upstream == constant.RelayFormatGemini}
+	// relaykit 转换器输出的 usage 统一为 OpenAI 口径：prompt_tokens 已含缓存
+	//（Gemini 的 cached ⊆ promptTokenCount；Claude 转换时已做 input+cache_read+cache_creation 加法）。
+	// 置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免「input 全价 + cache 价」双重计费
+	capturedUsage := &common.Usage{CacheIncludedInPrompt: true}
 	var (
 		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
 		firstChunk         bool

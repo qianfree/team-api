@@ -518,10 +518,18 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 	}
 
 	if totalUsage.PromptTokenCount > 0 || totalUsage.CandidatesTokenCount > 0 {
+		// OpenAI 口径：prompt 含 cached（子集），completion 含 thoughts（子集），
+		// 与计费用量 geminiUsageToCommon 保持同一换算
 		endChunk.Usage = &dto.UsageWithDetails{
 			PromptTokens:     totalUsage.PromptTokenCount,
-			CompletionTokens: totalUsage.CandidatesTokenCount,
+			CompletionTokens: totalUsage.CandidatesTokenCount + totalUsage.ThoughtsTokenCount,
 			TotalTokens:      totalUsage.TotalTokenCount,
+			PromptTokensDetails: &dto.TokenDetails{
+				CachedTokens: totalUsage.CachedContentTokenCount,
+			},
+			CompletionTokenDetails: &dto.TokenDetails{
+				ReasoningTokens: totalUsage.ThoughtsTokenCount,
+			},
 		}
 	}
 
@@ -623,10 +631,18 @@ func geminiToOpenAIResponse(geminiResp *dto.GeminiChatResponse, info *common.Rel
 	resp.Choices = append(resp.Choices, choice)
 
 	if geminiResp.UsageMetadata != nil {
+		// OpenAI 口径：prompt 含 cached（子集），completion 含 thoughts（子集），
+		// 与计费用量 geminiUsageToCommon 保持同一换算
 		resp.Usage = dto.UsageWithDetails{
 			PromptTokens:     geminiResp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount,
+			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      geminiResp.UsageMetadata.TotalTokenCount,
+			PromptTokensDetails: &dto.TokenDetails{
+				CachedTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			},
+			CompletionTokenDetails: &dto.TokenDetails{
+				ReasoningTokens: geminiResp.UsageMetadata.ThoughtsTokenCount,
+			},
 		}
 	}
 
@@ -645,8 +661,11 @@ func geminiUsageToCommon(um *dto.GeminiUsageMetadata) *common.Usage {
 		return &common.Usage{}
 	}
 	usage := &common.Usage{
-		PromptTokens:     um.PromptTokenCount,
-		CompletionTokens: um.CandidatesTokenCount,
+		PromptTokens: um.PromptTokenCount,
+		// Gemini 的 candidatesTokenCount 不含思考 token，thoughtsTokenCount 是输出侧
+		// 独立字段（按输出价计费）。OpenAI 口径的 completion 含 reasoning（子集语义），
+		// 计费用量必须 candidates+thoughts 合计，否则思考 token 漏计费
+		CompletionTokens: um.CandidatesTokenCount + um.ThoughtsTokenCount,
 		TotalTokens:      um.TotalTokenCount,
 		// Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
 		// 置 true 让计费先扣减缓存部分，避免「input 全价 + cache 价」双重计费

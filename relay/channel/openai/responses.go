@@ -184,8 +184,9 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 			OutputTokens: chatResp.Usage.CompletionTokens,
 			TotalTokens:  chatResp.Usage.TotalTokens,
 			InputTokensDetails: &dto.InputTokenDetails{
-				CachedTokens: chatResp.Usage.PromptTokensDetails.CachedTokens,
-				AudioTokens:  chatResp.Usage.PromptTokensDetails.AudioTokens,
+				CachedTokens:     chatResp.Usage.PromptTokensDetails.CachedTokens,
+				CacheWriteTokens: chatResp.Usage.PromptTokensDetails.CacheWriteTokens,
+				AudioTokens:      chatResp.Usage.PromptTokensDetails.AudioTokens,
 			},
 			OutputTokenDetails: &dto.OutputTokenDetails{
 				ReasoningTokens:          chatResp.Usage.CompletionTokenDetails.ReasoningTokens,
@@ -687,8 +688,9 @@ func buildResponsesUsageMap(usage *common.Usage) map[string]any {
 	outputDetails := map[string]any{"reasoning_tokens": 0}
 	if usage.PromptTokensDetails != nil {
 		inputDetails = map[string]any{
-			"cached_tokens": usage.PromptTokensDetails.CachedTokens,
-			"audio_tokens":  usage.PromptTokensDetails.AudioTokens,
+			"cached_tokens":      usage.PromptTokensDetails.CachedTokens,
+			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
+			"audio_tokens":       usage.PromptTokensDetails.AudioTokens,
 		}
 	}
 	if usage.CompletionTokenDetails != nil {
@@ -727,10 +729,11 @@ func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
 	usage.TotalTokens = u.TotalTokens
 	if d := u.InputTokensDetails; d != nil {
 		usage.PromptTokensDetails = &common.TokenDetails{
-			CachedTokens: d.CachedTokens,
-			TextTokens:   d.TextTokens,
-			AudioTokens:  d.AudioTokens,
-			ImageTokens:  d.ImageTokens,
+			CachedTokens:     d.CachedTokens,
+			CacheWriteTokens: d.CacheWriteTokens,
+			TextTokens:       d.TextTokens,
+			AudioTokens:      d.AudioTokens,
+			ImageTokens:      d.ImageTokens,
 		}
 	}
 	if d := u.OutputTokenDetails; d != nil {

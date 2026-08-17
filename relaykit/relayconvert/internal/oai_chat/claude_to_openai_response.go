@@ -63,12 +63,17 @@ func (c *ClaudeToOpenAIResponseConverter) ConvertResponse(
 	message := convertClaudeContentToMessage(claudeResp.Content)
 	openaiResp.Choices[0].Message = message
 
-	// 转换 usage
+	// 转换 usage。Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens
+	// 含缓存（cached 是其子集），转换必须做加法：prompt = input + cache_read + cache_creation，
+	// 否则缓存场景下客户端按 OpenAI 语义解析会少算输入量（甚至出现 cached > prompt 的矛盾）
 	if claudeResp.Usage != nil {
+		promptTotal := claudeResp.Usage.InputTokens +
+			claudeResp.Usage.CacheReadInputTokens +
+			claudeResp.Usage.CacheCreationInputTokens
 		openaiResp.Usage = dto.UsageWithDetails{
-			PromptTokens:     claudeResp.Usage.InputTokens,
+			PromptTokens:     promptTotal,
 			CompletionTokens: claudeResp.Usage.OutputTokens,
-			TotalTokens:      claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
+			TotalTokens:      promptTotal + claudeResp.Usage.OutputTokens,
 		}
 		if claudeResp.Usage.CacheReadInputTokens > 0 || claudeResp.Usage.CacheCreationInputTokens > 0 {
 			openaiResp.Usage.PromptTokensDetails = &dto.TokenDetails{
