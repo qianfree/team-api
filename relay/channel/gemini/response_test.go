@@ -42,10 +42,12 @@ func TestBuildGeminiUpstreamError_FallbackStatusCode(t *testing.T) {
 	}
 }
 
-// TestGeminiUsageToCommon_CacheSemantics 验证 Gemini usage 转换的缓存语义：
-// Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
-// 必须置 CacheIncludedInPrompt=true 让计费扣减缓存部分，否则缓存 token 会被
-// 「input 全价 + cache 价」双重计费。
+// TestGeminiUsageToCommon_CacheSemantics 验证 Gemini usage 转换的缓存与思考语义：
+//  1. Gemini 的 promptTokenCount 已含 cachedContentTokenCount（cached 为其子集），
+//     必须置 CacheIncludedInPrompt=true 让计费扣减缓存部分，否则缓存 token 会被
+//     「input 全价 + cache 价」双重计费；
+//  2. Gemini 的 candidatesTokenCount 不含思考 token，thoughtsTokenCount 是输出侧
+//     独立字段（按输出价计费），completion 必须为 candidates+thoughts 合计，否则思考漏计费。
 func TestGeminiUsageToCommon_CacheSemantics(t *testing.T) {
 	usage := geminiUsageToCommon(&dto.GeminiUsageMetadata{
 		PromptTokenCount:        414,
@@ -58,8 +60,9 @@ func TestGeminiUsageToCommon_CacheSemantics(t *testing.T) {
 	if !usage.CacheIncludedInPrompt {
 		t.Error("CacheIncludedInPrompt = false, want true (cachedContentTokenCount 是 promptTokenCount 的子集)")
 	}
-	if usage.PromptTokens != 414 || usage.CompletionTokens != 219 || usage.TotalTokens != 633 {
-		t.Errorf("token counts = %+v, want prompt=414 completion=219 total=633", usage)
+	// 计费输出须含思考 token：completion = candidates(219) + thoughts(100)
+	if usage.PromptTokens != 414 || usage.CompletionTokens != 319 || usage.TotalTokens != 633 {
+		t.Errorf("token counts = %+v, want prompt=414 completion=319 total=633", usage)
 	}
 	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 231 {
 		t.Errorf("cached tokens = %+v, want 231", usage.PromptTokensDetails)

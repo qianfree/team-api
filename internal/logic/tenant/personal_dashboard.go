@@ -150,7 +150,8 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 		CacheReadTokens:     lat.CacheReadTkns,
 		TotalInputTokens:    lat.TotalInputTkns,
 	}
-	totalForRatio := float64(lat.TotalInputTkns + lat.CacheCreationTkns + lat.CacheReadTkns)
+	// input_tokens 已统一为「含缓存总输入」口径（Claude 渠道入库时补加缓存），分母直接取总和
+	totalForRatio := float64(lat.TotalInputTkns)
 	if totalForRatio > 0 {
 		cache.HitRatio = math.Round(float64(lat.CacheReadTkns)/totalForRatio*10000) / 10000
 	}

@@ -56,8 +56,9 @@ data: {"type":"message_stop"}
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 10 {
-		t.Errorf("PromptTokens = %d, want 10", usage.PromptTokens)
+	// 转换器已按 OpenAI 口径做加法：prompt = input(10) + cache_read(4) + cache_creation(3)
+	if usage.PromptTokens != 17 {
+		t.Errorf("PromptTokens = %d, want 17", usage.PromptTokens)
 	}
 	if usage.CompletionTokens != 7 {
 		t.Errorf("CompletionTokens = %d, want 7", usage.CompletionTokens)
@@ -65,9 +66,9 @@ data: {"type":"message_stop"}
 	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 || usage.CacheCreationTokens != 3 {
 		t.Errorf("cache usage = %+v, want read=4 creation=3", usage)
 	}
-	// Claude 的 input_tokens 与缓存桶独立：不得扣减（保持 false），缓存部分按 cache 价单独计
-	if usage.CacheIncludedInPrompt {
-		t.Error("CacheIncludedInPrompt = true, want false for Claude upstream")
+	// 转换后的 prompt 已含缓存（OpenAI 子集语义），计费前须扣减缓存部分避免双重计费
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true for Claude upstream (converted usage is OpenAI semantics)")
 	}
 
 	body := rec.Body.String()
@@ -112,8 +113,9 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"prompt
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
 	}
-	if usage.PromptTokens != 20 || usage.CompletionTokens != 5 || usage.TotalTokens != 25 {
-		t.Errorf("token counts = %+v, want prompt=20 completion=5 total=25", usage)
+	// 转换器已按 OpenAI 口径合并思考 token：completion = candidates(5) + thoughts(3)
+	if usage.PromptTokens != 20 || usage.CompletionTokens != 8 || usage.TotalTokens != 25 {
+		t.Errorf("token counts = %+v, want prompt=20 completion=8 total=25", usage)
 	}
 	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 8 {
 		t.Errorf("cached tokens = %+v, want 8", usage.PromptTokensDetails)

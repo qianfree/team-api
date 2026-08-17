@@ -112,4 +112,11 @@ type TokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+
+	// 缓存/推理明细（上游未返回时为 0）。PromptTokens 始终为「含缓存总输入」，
+	// cache 各项是其子集明细；CacheIncludedInPrompt 标记原始口径（false=Claude 排除口径）
+	CacheReadTokens       int  `json:"cache_read_tokens,omitempty"`     // 缓存命中读取
+	CacheCreationTokens   int  `json:"cache_creation_tokens,omitempty"` // 写入缓存（Claude cache_creation / OpenAI cache_write）
+	ReasoningTokens       int  `json:"reasoning_tokens,omitempty"`      // 推理 token（CompletionTokens 子集）
+	CacheIncludedInPrompt bool `json:"-"`                               // 原始响应的 PromptTokens 是否已含缓存（OpenAI/Gemini=true，Claude=false）
 }

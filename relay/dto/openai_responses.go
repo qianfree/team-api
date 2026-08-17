@@ -118,10 +118,11 @@ type ResponsesTextFormat struct {
 
 // InputTokenDetails 输入 token 细分
 type InputTokenDetails struct {
-	CachedTokens int `json:"cached_tokens"`
-	TextTokens   int `json:"text_tokens,omitempty"`
-	AudioTokens  int `json:"audio_tokens,omitempty"`
-	ImageTokens  int `json:"image_tokens,omitempty"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"` // 本次写入缓存的 token（input_tokens 子集，按普通输入价计费）
+	TextTokens       int `json:"text_tokens,omitempty"`
+	AudioTokens      int `json:"audio_tokens,omitempty"`
+	ImageTokens      int `json:"image_tokens,omitempty"`
 }
 
 // OutputTokenDetails 输出 token 细分

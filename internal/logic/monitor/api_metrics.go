@@ -363,12 +363,12 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		if a.sumLatencyMs > 0 {
 			tps = float64(a.outputTokens) / (float64(a.sumLatencyMs) / 1000)
 		}
-		// 缓存命中率（Token 级）= 命中读取 / 归一化总输入（input + creation + read）。
-		// Claude 口径（input 不含缓存）精确；OpenAI 原生口径（input 已含 cached）分母偏大，
-		// 命中率为保守值，趋势仍可比。请求级命中率分母为 request_count，不受该口径影响。
+		// 缓存命中率（Token 级）= 命中读取 / 总输入。input_tokens 已统一为「含缓存总输入」口径
+		//（Claude 渠道入库时补加缓存读写，OpenAI/Gemini 原生即含），分母直接取 input_tokens，
+		// 跨渠道口径一致。请求级命中率分母为 request_count，不受该口径影响。
 		var cacheHitRate, cacheHitReqRate float64
-		if totalInput := a.inputTokens + a.cacheCreationTokens + a.cacheReadTokens; totalInput > 0 {
-			cacheHitRate = float64(a.cacheReadTokens) * 100 / float64(totalInput)
+		if a.inputTokens > 0 {
+			cacheHitRate = float64(a.cacheReadTokens) * 100 / float64(a.inputTokens)
 		}
 		if a.requestCount > 0 {
 			cacheHitReqRate = float64(a.cacheHitRequests) * 100 / float64(a.requestCount)

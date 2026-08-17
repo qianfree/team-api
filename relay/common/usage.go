@@ -4,10 +4,14 @@ import "github.com/qianfree/team-api/relay/dto"
 
 // TokenDetails Token 使用量细分
 type TokenDetails struct {
-	CachedTokens             int `json:"cached_tokens,omitempty"`
-	CachedCreationTokens     int `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens   int `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens   int `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	CachedTokens           int `json:"cached_tokens,omitempty"`
+	CachedCreationTokens   int `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
+	CachedCreation5mTokens int `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
+	CachedCreation1hTokens int `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	// CacheWriteTokens 本次写入缓存的 token（OpenAI Responses cache_write_tokens，观测字段）。
+	// 注意：OpenAI 缓存写入按普通输入价计费（含于 PromptTokens），不得并入 CachedCreationTokens
+	// 计费桶（Claude 写入才有独立 CacheCreationPrice），计费引擎不读取本字段
+	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`
 	AudioTokens              int `json:"audio_tokens,omitempty"`
 	TextTokens               int `json:"text_tokens,omitempty"`
 	ImageTokens              int `json:"image_tokens,omitempty"`
@@ -30,6 +34,20 @@ type Usage struct {
 	CacheIncludedInPrompt bool `json:"-"`
 }
 
+// TotalInputTokens 返回「含缓存的总输入 token」：口径未包含缓存（Claude）时补加缓存读/写，
+// 口径已包含（OpenAI/Gemini）时原样返回。bil_usage_logs.input_tokens 统一按此口径入库，
+// 保证跨渠道 SUM 聚合语义一致（cache_read/cache_creation 列为其子集明细）。
+func (u *Usage) TotalInputTokens() int {
+	if u == nil {
+		return 0
+	}
+	total := u.PromptTokens
+	if !u.CacheIncludedInPrompt && u.PromptTokensDetails != nil {
+		total += u.PromptTokensDetails.CachedTokens + u.PromptTokensDetails.CachedCreationTokens
+	}
+	return total
+}
+
 // DtoTokenDetailsToCommon 将 dto.TokenDetails 转换为 common.TokenDetails
 func DtoTokenDetailsToCommon(d *dto.TokenDetails) *TokenDetails {
 	if d == nil {
@@ -40,6 +58,7 @@ func DtoTokenDetailsToCommon(d *dto.TokenDetails) *TokenDetails {
 		CachedCreationTokens:     d.CachedCreationTokens,
 		CachedCreation5mTokens:   d.CachedCreation5mTokens,
 		CachedCreation1hTokens:   d.CachedCreation1hTokens,
+		CacheWriteTokens:         d.CacheWriteTokens,
 		AudioTokens:              d.AudioTokens,
 		TextTokens:               d.TextTokens,
 		ImageTokens:              d.ImageTokens,
@@ -59,6 +78,7 @@ func CommonTokenDetailsToDto(c *TokenDetails) *dto.TokenDetails {
 		CachedCreationTokens:     c.CachedCreationTokens,
 		CachedCreation5mTokens:   c.CachedCreation5mTokens,
 		CachedCreation1hTokens:   c.CachedCreation1hTokens,
+		CacheWriteTokens:         c.CacheWriteTokens,
 		AudioTokens:              c.AudioTokens,
 		TextTokens:               c.TextTokens,
 		ImageTokens:              c.ImageTokens,

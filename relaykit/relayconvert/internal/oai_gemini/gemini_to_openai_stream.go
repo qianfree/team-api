@@ -240,9 +240,12 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	}
 
 	if totalUsage.PromptTokenCount > 0 || totalUsage.CandidatesTokenCount > 0 {
+		// OpenAI 口径：prompt 含 cached（子集），completion 含 thoughts（子集）——
+		// Gemini 的 candidatesTokenCount 不含思考 token，须与 thoughtsTokenCount 合计，
+		// 否则计费捕获与客户端按 OpenAI 语义解析都会漏掉思考部分
 		finalChunk.Usage = &dto.UsageWithDetails{
 			PromptTokens:     totalUsage.PromptTokenCount,
-			CompletionTokens: totalUsage.CandidatesTokenCount,
+			CompletionTokens: totalUsage.CandidatesTokenCount + totalUsage.ThoughtsTokenCount,
 			TotalTokens:      totalUsage.TotalTokenCount,
 		}
 		if totalUsage.CachedContentTokenCount > 0 {

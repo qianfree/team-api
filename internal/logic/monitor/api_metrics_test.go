@@ -36,10 +36,12 @@ func assertPerfField(t *testing.T, list []map[string]any, model, field string, w
 }
 
 func TestBuildModelPerformanceList_HistoryOnly(t *testing.T) {
+	// input_tokens 为「含缓存总输入」统一口径（base + cache_read + cache_creation）：
+	// gpt-4o 行 1000 base + 800 read = 1800；claude 行 100 base + 200 creation + 700 read = 1000
 	rows := []modelPerfRow{
-		{ModelName: "gpt-4o", RequestCount: 100, SuccessCount: 90, InputTokens: 1000, OutputTokens: 2000, TotalCost: 1.5, SumLatencyMs: 50000, SumFirstTokenMs: 8000,
+		{ModelName: "gpt-4o", RequestCount: 100, SuccessCount: 90, InputTokens: 1800, OutputTokens: 2000, TotalCost: 1.5, SumLatencyMs: 50000, SumFirstTokenMs: 8000,
 			CacheReadTokens: 800, CacheHitRequestCount: 80},
-		{ModelName: "claude-3-5-sonnet", RequestCount: 50, SuccessCount: 1, InputTokens: 100, OutputTokens: 50, TotalCost: 0.1, SumLatencyMs: 30000, SumFirstTokenMs: 0,
+		{ModelName: "claude-3-5-sonnet", RequestCount: 50, SuccessCount: 1, InputTokens: 1000, OutputTokens: 50, TotalCost: 0.1, SumLatencyMs: 30000, SumFirstTokenMs: 0,
 			CacheCreationTokens: 200, CacheReadTokens: 700, CacheHitRequestCount: 40},
 	}
 	list := buildModelPerformanceList(rows, nil)
@@ -53,10 +55,10 @@ func TestBuildModelPerformanceList_HistoryOnly(t *testing.T) {
 	assertPerfField(t, list, "gpt-4o", "avg_latency_ms", 500.0, 0)
 	assertPerfField(t, list, "gpt-4o", "avg_first_token_ms", 80.0, 0) // 8000/100
 	assertPerfField(t, list, "gpt-4o", "tps", 40.0, 0)                // 2000 / (50000/1000)
-	assertPerfField(t, list, "gpt-4o", "total_tokens", 0, 3000)
+	assertPerfField(t, list, "gpt-4o", "total_tokens", 0, 3800)       // 1800+2000
 	assertPerfField(t, list, "gpt-4o", "total_cost", 1.5, 0)
 
-	// 缓存：无写入，命中率 = 800/(1000+0+800) = 44.44%；请求级 = 80/100 = 80%
+	// 缓存：无写入，命中率 = 800/1800 = 44.44%；请求级 = 80/100 = 80%
 	assertPerfField(t, list, "gpt-4o", "cache_read_tokens", 0, 800)
 	assertPerfField(t, list, "gpt-4o", "cache_creation_tokens", 0, 0)
 	assertPerfField(t, list, "gpt-4o", "cache_hit_rate", 44.44, 0)
@@ -69,19 +71,21 @@ func TestBuildModelPerformanceList_HistoryOnly(t *testing.T) {
 	assertPerfField(t, list, "claude-3-5-sonnet", "avg_latency_ms", 600.0, 0)
 	assertPerfField(t, list, "claude-3-5-sonnet", "tps", 1.67, 0) // 50/(30000/1000)=1.6666
 
-	// 缓存：命中率 = 700/(100+200+700) = 70%；请求级 = 40/50 = 80%
+	// 缓存：命中率 = 700/1000 = 70%；请求级 = 40/50 = 80%
 	assertPerfField(t, list, "claude-3-5-sonnet", "cache_hit_rate", 70.0, 0)
 	assertPerfField(t, list, "claude-3-5-sonnet", "cache_hit_request_rate", 80.0, 0)
 }
 
 func TestBuildModelPerformanceList_MergeToday(t *testing.T) {
+	// input_tokens 为「含缓存总输入」统一口径：
+	// 历史行 1000 base + 800 read + 100 creation = 1900；当日 Tin = 50 base + 180 read + 20 creation = 250
 	rows := []modelPerfRow{
-		{ModelName: "gpt-4o", RequestCount: 100, SuccessCount: 90, InputTokens: 1000, OutputTokens: 2000, TotalCost: 1.5, SumLatencyMs: 50000, SumFirstTokenMs: 8000,
+		{ModelName: "gpt-4o", RequestCount: 100, SuccessCount: 90, InputTokens: 1900, OutputTokens: 2000, TotalCost: 1.5, SumLatencyMs: 50000, SumFirstTokenMs: 8000,
 			CacheCreationTokens: 100, CacheReadTokens: 800, CacheHitRequestCount: 70},
 	}
 	today := map[string]common.ModelPerfCounter{
-		"gpt-4o":        {Req: 10, Ok: 9, Lat: 6000, Ttft: 500, TtftN: 10, Tin: 50, Tout: 150, CostMicro: 500000, CacheCreation: 20, CacheRead: 180, CacheHitReq: 8}, // 500000 micro = 0.5 USD
-		"new-model-day": {Req: 1, Ok: 0, Lat: 8000, Ttft: 0, TtftN: 0, Tin: 100, Tout: 0, CostMicro: 12345, CacheRead: 60, CacheHitReq: 1},
+		"gpt-4o":        {Req: 10, Ok: 9, Lat: 6000, Ttft: 500, TtftN: 10, Tin: 250, Tout: 150, CostMicro: 500000, CacheCreation: 20, CacheRead: 180, CacheHitReq: 8}, // 500000 micro = 0.5 USD
+		"new-model-day": {Req: 1, Ok: 0, Lat: 8000, Ttft: 0, TtftN: 0, Tin: 160, Tout: 0, CostMicro: 12345, CacheRead: 60, CacheHitReq: 1},                            // 100 base + 60 read
 	}
 	list := buildModelPerformanceList(rows, today)
 
@@ -90,11 +94,11 @@ func TestBuildModelPerformanceList_MergeToday(t *testing.T) {
 	assertPerfField(t, list, "gpt-4o", "success_count", 0, 99)
 	assertPerfField(t, list, "gpt-4o", "success_rate", 90.0, 0)
 	assertPerfField(t, list, "gpt-4o", "avg_latency_ms", 509.09, 0) // 56000/110 = 509.0909
-	assertPerfField(t, list, "gpt-4o", "total_tokens", 0, 3200)     // (1000+50)+(2000+150)
+	assertPerfField(t, list, "gpt-4o", "total_tokens", 0, 4300)     // (1900+250)+(2000+150)
 	assertPerfField(t, list, "gpt-4o", "total_cost", 2.0, 0)
 
 	// 缓存合并：read 800+180=980、creation 100+20=120、命中请求 70+8=78；
-	// 命中率 = 980/((1000+50)+120+980) = 980/2150 = 45.58%；请求级 = 78/110 = 70.91%
+	// 命中率 = 980/(1900+250) = 980/2150 = 45.58%；请求级 = 78/110 = 70.91%
 	assertPerfField(t, list, "gpt-4o", "cache_read_tokens", 0, 980)
 	assertPerfField(t, list, "gpt-4o", "cache_creation_tokens", 0, 120)
 	assertPerfField(t, list, "gpt-4o", "cache_hit_rate", 45.58, 0)
@@ -108,7 +112,7 @@ func TestBuildModelPerformanceList_MergeToday(t *testing.T) {
 	assertPerfField(t, list, "new-model-day", "avg_latency_ms", 8000.0, 0)
 	assertPerfField(t, list, "new-model-day", "tps", 0.0, 0) // 无输出 token
 
-	// 仅当日缓存：命中率 = 60/(100+0+60) = 37.5%；请求级 = 1/1 = 100%
+	// 仅当日缓存：命中率 = 60/160 = 37.5%；请求级 = 1/1 = 100%
 	assertPerfField(t, list, "new-model-day", "cache_hit_rate", 37.5, 0)
 	assertPerfField(t, list, "new-model-day", "cache_hit_request_rate", 100.0, 0)
 
@@ -119,8 +123,8 @@ func TestBuildModelPerformanceList_MergeToday(t *testing.T) {
 // 缓存边界：仅写入未命中（creation>0、read=0）不算命中请求；无缓存活动时分母为 0 不 panic、比率为 0。
 func TestBuildModelPerformanceList_CacheEdgeCases(t *testing.T) {
 	rows := []modelPerfRow{
-		// 首次写入缓存，尚未命中：creation 500 / read 0 / 命中请求 0
-		{ModelName: "write-only", RequestCount: 10, SuccessCount: 10, InputTokens: 500, OutputTokens: 100,
+		// 首次写入缓存，尚未命中：500 base + 500 creation（含缓存总输入 1000）/ read 0 / 命中请求 0
+		{ModelName: "write-only", RequestCount: 10, SuccessCount: 10, InputTokens: 1000, OutputTokens: 100,
 			CacheCreationTokens: 500},
 		// 完全无缓存活动（embedding 类模型）
 		{ModelName: "text-embedding-3", RequestCount: 20, SuccessCount: 20, InputTokens: 4000, OutputTokens: 0},
@@ -129,7 +133,7 @@ func TestBuildModelPerformanceList_CacheEdgeCases(t *testing.T) {
 
 	assertPerfField(t, list, "write-only", "cache_creation_tokens", 0, 500)
 	assertPerfField(t, list, "write-only", "cache_read_tokens", 0, 0)
-	assertPerfField(t, list, "write-only", "cache_hit_rate", 0.0, 0)         // 0/(500+500+0)
+	assertPerfField(t, list, "write-only", "cache_hit_rate", 0.0, 0)         // 0/1000
 	assertPerfField(t, list, "write-only", "cache_hit_request_count", 0, 0)  // 仅写入不计命中
 	assertPerfField(t, list, "write-only", "cache_hit_request_rate", 0.0, 0) // 0/10
 

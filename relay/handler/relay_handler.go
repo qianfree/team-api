@@ -310,7 +310,13 @@ func settleSuccessfulRequest(
 		firstTokenMs = int(info.FirstResponseTime.Sub(info.StartTime).Milliseconds())
 	}
 
-	// 构建用量记录
+	// 构建用量记录。input_tokens 统一按「含缓存总输入」口径入库（Claude 口径未含缓存时补加），
+	// 保证跨渠道 SUM 聚合语义一致；total_tokens 同步按 totalInput+output 重算
+	totalInput := usage.TotalInputTokens()
+	totalTokens := totalInput + usage.CompletionTokens
+	if totalTokens == 0 {
+		totalTokens = usage.TotalTokens
+	}
 	usageRecord := &common.UsageRecord{
 		TenantID:         rc.TenantID,
 		UserID:           rc.UserID,
@@ -319,9 +325,9 @@ func settleSuccessfulRequest(
 		ChannelID:        selection.ChannelID,
 		ModelName:        v.modelName,
 		RelayMode:        int(v.relayMode),
-		PromptTokens:     usage.PromptTokens,
+		PromptTokens:     totalInput,
 		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
+		TotalTokens:      totalTokens,
 		CachedTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
 		AudioTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }) +
 			tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
@@ -333,8 +339,11 @@ func settleSuccessfulRequest(
 		RequestID:       rc.RequestID,
 		Status:          "success",
 
-		// Cache token 明细
-		CacheCreationTokens:   usage.CacheCreationTokens,
+		// Cache token 明细。cache_creation_tokens 列统一记录「写入缓存的 token」：
+		// Claude 为 cache_creation_input_tokens，OpenAI Responses 为 cache_write_tokens（两者物理语义相同，
+		// 仅计价不同——后者按普通输入价计费且已含于 input_tokens，不参与计费扣减，仅作观测）
+		CacheCreationTokens: usage.CacheCreationTokens +
+			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),
 		CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),
 		CacheCreation1hTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation1hTokens }),
 		CacheReadTokens:       tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
