@@ -69,6 +69,8 @@ const (
 	ConverterClaudeMessagesToOpenAIChatStream = "anthropic_messages_to_openai_chat_completions_stream"
 	// ConverterClaudeMessagesToOpenAIResponsesStream Claude 上游 SSE → Responses 客户端 SSE（流式响应侧）
 	ConverterClaudeMessagesToOpenAIResponsesStream = "anthropic_messages_to_openai_responses_stream"
+	// ConverterOpenAIChatToOpenAIResponsesStream OpenAI Chat 上游 SSE → Responses 客户端 SSE（流式响应侧）
+	ConverterOpenAIChatToOpenAIResponsesStream = "openai_chat_to_openai_responses_stream"
 	ConverterOpenAIChatToClaudeMessages            = "openai_chat_completions_to_anthropic_messages"
 	ConverterOpenAIChatToOpenAIResponses           = "openai_chat_completions_to_openai_responses"
 	ConverterOpenAIResponsesToOpenAIChat           = "openai_responses_to_openai_chat_completions"

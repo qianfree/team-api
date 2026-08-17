@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // Adaptor OpenAI 供应商适配器
@@ -289,6 +290,13 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			return a.handleResponsesUpstreamNonStream(ctx, resp, info, writer)
 		}
 		if info.IsStream {
+			// relaykit 流式转换器优先（仅 200 时；未接管 body 未读取，旧路径完整重走）
+			if resp.StatusCode == http.StatusOK {
+				if usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+					resp.Body.Close()
+					return usage, streamErr
+				}
+			}
 			return a.handleResponsesInboundStream(ctx, resp, info, writer)
 		}
 		return a.handleResponsesInboundNonStream(ctx, resp, info, writer)

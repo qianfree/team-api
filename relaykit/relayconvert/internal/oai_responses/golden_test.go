@@ -180,6 +180,48 @@ func TestGolden_Claude_To_Responses_Response(t *testing.T) {
 	}
 }
 
+func TestGolden_OAIChat_To_Responses_Stream(t *testing.T) {
+	converter := &OpenAIChatToResponsesStreamConverter{}
+	ctx := context.Background()
+	info := r2cGoldenMeta()
+
+	files, err := os.ReadDir("golden")
+	if err != nil {
+		t.Fatalf("Failed to read golden directory: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), "_chat_to_responses_stream.json") {
+			continue
+		}
+		t.Run(file.Name(), func(t *testing.T) {
+			tc := goldentest.Load(t, filepath.Join("golden", file.Name()))
+			if tc.From != types.RelayFormatOpenAI || tc.To != types.RelayFormatOpenAIResponses {
+				t.Skip("not an OpenAI chat→Responses stream test")
+			}
+			originalNow := NowFunc
+			NowFunc = func() time.Time { return time.Unix(1730000000, 1000000) }
+			defer func() { NowFunc = originalNow }()
+
+			var chunks []any
+			chunkWriter := func(chunk any) error {
+				chunks = append(chunks, chunk)
+				return nil
+			}
+			if err := converter.ConvertStreamResponse(ctx, info, strings.NewReader(tc.StreamData), chunkWriter); err != nil {
+				t.Fatalf("ConvertStreamResponse: %v", err)
+			}
+			if *goldentest.Update {
+				tc.ExpectedStreamChunks = chunks
+				goldentest.Save(t, filepath.Join("golden", file.Name()), tc)
+				return
+			}
+			if !goldentest.EqualChunksExcluding(chunks, tc.ExpectedStreamChunks) {
+				t.Errorf("stream chunks do not match golden\nGot %d chunks, want %d", len(chunks), len(tc.ExpectedStreamChunks))
+			}
+		})
+	}
+}
+
 func TestGolden_Claude_To_Responses_Stream(t *testing.T) {
 	converter := &ClaudeToResponsesStreamConverter{}
 	ctx := context.Background()

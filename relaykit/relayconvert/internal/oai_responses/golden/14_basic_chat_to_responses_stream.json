@@ -1,0 +1,219 @@
+{
+  "name": "basic_chat_to_responses_stream",
+  "from": "openai",
+  "to": "responses",
+  "stream_data": "data: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"created\":1730000000,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\ndata: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你好\"}}]}\n\ndata: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"思考中\"}}]}\n\ndata: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"，世界\"}}]}\n\ndata: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"chatcmpl-S1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\ndata: [DONE]\n\n",
+  "expected_stream_chunks": [
+    {
+      "Type": "response.created",
+      "Data": {
+        "response": {
+          "id": "resp_chatcmpl-S1",
+          "object": "response",
+          "created_at": 1730000000,
+          "status": "in_progress",
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "glm-4.6",
+          "output": [],
+          "parallel_tool_calls": true,
+          "previous_response_id": null,
+          "prompt": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": false,
+          "conversation": null,
+          "temperature": 1,
+          "text": {
+            "format": {
+              "type": "text"
+            }
+          },
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": 1,
+          "truncation": "disabled",
+          "user": null,
+          "metadata": {}
+        },
+        "type": "response.created"
+      }
+    },
+    {
+      "Type": "response.output_item.added",
+      "Data": {
+        "item": {
+          "content": [],
+          "id": "msg_chatcmpl-S1",
+          "role": "assistant",
+          "status": "in_progress",
+          "type": "message"
+        },
+        "output_index": 0,
+        "type": "response.output_item.added"
+      }
+    },
+    {
+      "Type": "response.content_part.added",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "part": {
+          "annotations": [],
+          "text": "",
+          "type": "output_text"
+        },
+        "type": "response.content_part.added"
+      }
+    },
+    {
+      "Type": "response.output_text.delta",
+      "Data": {
+        "content_index": 0,
+        "delta": "你好",
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "type": "response.output_text.delta"
+      }
+    },
+    {
+      "Type": "response.reasoning_summary_text.delta",
+      "Data": {
+        "delta": "思考中",
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "summary_index": 0,
+        "type": "response.reasoning_summary_text.delta"
+      }
+    },
+    {
+      "Type": "response.output_text.delta",
+      "Data": {
+        "content_index": 0,
+        "delta": "，世界",
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "type": "response.output_text.delta"
+      }
+    },
+    {
+      "Type": "response.output_text.done",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "text": "你好，世界",
+        "type": "response.output_text.done"
+      }
+    },
+    {
+      "Type": "response.content_part.done",
+      "Data": {
+        "content_index": 0,
+        "item_id": "msg_chatcmpl-S1",
+        "output_index": 0,
+        "part": {
+          "annotations": [],
+          "text": "你好，世界",
+          "type": "output_text"
+        },
+        "type": "response.content_part.done"
+      }
+    },
+    {
+      "Type": "response.output_item.done",
+      "Data": {
+        "item": {
+          "content": [
+            {
+              "annotations": [],
+              "text": "你好，世界",
+              "type": "output_text"
+            }
+          ],
+          "id": "msg_chatcmpl-S1",
+          "role": "assistant",
+          "status": "completed",
+          "type": "message"
+        },
+        "output_index": 0,
+        "type": "response.output_item.done"
+      }
+    },
+    {
+      "Type": "response.completed",
+      "Data": {
+        "response": {
+          "id": "resp_chatcmpl-S1",
+          "object": "response",
+          "created_at": 1730000000,
+          "completed_at": 1730000000,
+          "status": "completed",
+          "error": null,
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "glm-4.6",
+          "output": [
+            {
+              "type": "message",
+              "id": "msg_chatcmpl-S1",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "你好，世界",
+                  "annotations": []
+                }
+              ]
+            }
+          ],
+          "parallel_tool_calls": true,
+          "previous_response_id": null,
+          "prompt": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": false,
+          "conversation": null,
+          "temperature": 1,
+          "text": {
+            "format": {
+              "type": "text"
+            }
+          },
+          "tool_choice": "auto",
+          "tools": [],
+          "top_p": 1,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0
+            },
+            "output_tokens_details": {
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          "user": null,
+          "metadata": {}
+        },
+        "type": "response.completed"
+      }
+    }
+  ]
+}
