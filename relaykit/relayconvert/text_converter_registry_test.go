@@ -78,18 +78,34 @@ func TestRegisterTextConverter_Panics(t *testing.T) {
 		s.Quality = ""
 		RegisterTextConverter(s)
 	})
-	// 缺请求侧（Convert 为 nil 且无 StepConverters）
+	// 双侧全空（无请求转换也无响应转换）
 	assertPanic(t, func() {
-		s := validTextSpec("text_no_req")
+		s := validTextSpec("text_no_both")
 		s.Req = TextRequestSide{}
-		RegisterTextConverter(s)
-	})
-	// 缺响应侧（全部为 nil）
-	assertPanic(t, func() {
-		s := validTextSpec("text_no_resp")
 		s.Resp = TextResponseSide{}
 		RegisterTextConverter(s)
 	})
+	// 单侧 spec 合法：仅请求方向（Req-only，如 Responses→OpenAI chat 请求侧转换）
+	{
+		s := validTextSpec("text_req_only")
+		s.Resp = TextResponseSide{}
+		RegisterTextConverter(s)
+		if _, ok := LookupTextConverter("text_req_only"); !ok {
+			t.Error("req-only text converter should register and be lookup-able")
+		}
+		if _, ok := LookupRequestConverter("text_req_only"); !ok {
+			t.Error("req-only text converter should be registered in request registry")
+		}
+	}
+	// 单侧 spec 合法：仅响应方向（Resp-only）
+	{
+		s := validTextSpec("text_resp_only")
+		s.Req = TextRequestSide{}
+		RegisterTextConverter(s)
+		if _, ok := LookupTextConverter("text_resp_only"); !ok {
+			t.Error("resp-only text converter should register and be lookup-able")
+		}
+	}
 	// 重复 ID（不同路由）
 	assertPanic(t, func() {
 		RegisterTextConverter(validTextSpec("text_dup"))

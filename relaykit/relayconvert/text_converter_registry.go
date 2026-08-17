@@ -94,11 +94,10 @@ func registerBuiltinTextConverter(spec TextConverterSpec) {
 	if spec.Quality == "" {
 		panic(fmt.Sprintf("text converter %q must declare quality", spec.ID))
 	}
-	if !textRequestSideConfigured(spec.Req) {
-		panic(fmt.Sprintf("text converter %q must declare request conversion", spec.ID))
-	}
-	if !textResponseSideConfigured(spec.Resp) {
-		panic(fmt.Sprintf("text converter %q must declare response conversion", spec.ID))
+	// 允许单侧 spec：仅请求方向（Req-only）或仅响应方向（Resp-only）的转换器合法，
+	// 至少一侧已配置即可（如 Responses→OpenAI chat 请求侧转换暂无对应响应侧实现）。
+	if !textRequestSideConfigured(spec.Req) && !textResponseSideConfigured(spec.Resp) {
+		panic(fmt.Sprintf("text converter %q must declare request or response conversion", spec.ID))
 	}
 
 	textConverterMu.Lock()
@@ -108,26 +107,30 @@ func registerBuiltinTextConverter(spec TextConverterSpec) {
 		panic(fmt.Sprintf("text converter %q is already registered", spec.ID))
 	}
 
-	registerBuiltinRequestConverter(RequestConverterSpec{
-		ID:             spec.ID,
-		From:           spec.From,
-		To:             spec.To,
-		Quality:        RequestConverterQuality(spec.Quality),
-		Convert:        spec.Req.Convert,
-		StepConverters: cloneTextConverterStrings(spec.Req.StepConverters),
-	})
-	registerBuiltinResponseConverter(ResponseConverterSpec{
-		ID:                 spec.ID,
-		From:               spec.From,
-		To:                 spec.To,
-		Quality:            ResponseConverterQuality(spec.Quality),
-		Convert:            spec.Resp.Convert,
-		ConvertStream:      spec.Resp.ConvertStream,
-		NewStreamState:     spec.Resp.NewStreamState,
-		ConvertStreamChunk: spec.Resp.ConvertStreamChunk,
-		FinalizeStream:     spec.Resp.FinalizeStream,
-		StepConverters:     cloneTextConverterStrings(spec.Resp.StepConverters),
-	})
+	if textRequestSideConfigured(spec.Req) {
+		registerBuiltinRequestConverter(RequestConverterSpec{
+			ID:             spec.ID,
+			From:           spec.From,
+			To:             spec.To,
+			Quality:        RequestConverterQuality(spec.Quality),
+			Convert:        spec.Req.Convert,
+			StepConverters: cloneTextConverterStrings(spec.Req.StepConverters),
+		})
+	}
+	if textResponseSideConfigured(spec.Resp) {
+		registerBuiltinResponseConverter(ResponseConverterSpec{
+			ID:                 spec.ID,
+			From:               spec.From,
+			To:                 spec.To,
+			Quality:            ResponseConverterQuality(spec.Quality),
+			Convert:            spec.Resp.Convert,
+			ConvertStream:      spec.Resp.ConvertStream,
+			NewStreamState:     spec.Resp.NewStreamState,
+			ConvertStreamChunk: spec.Resp.ConvertStreamChunk,
+			FinalizeStream:     spec.Resp.FinalizeStream,
+			StepConverters:     cloneTextConverterStrings(spec.Resp.StepConverters),
+		})
+	}
 
 	textConverters[spec.ID] = cloneTextConverterSpec(spec)
 	for _, alias := range spec.Resp.Aliases {
