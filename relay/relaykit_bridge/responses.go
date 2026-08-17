@@ -19,16 +19,26 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-// relaykit Claude→Responses 方向的响应侧桥接（非流式 + 流式）。
+// relaykit →Responses 方向的响应侧桥接（Claude/openai chat 上游 × 非流式/流式）。
 //
 // 与 stream.go/response.go 的差异：客户端格式为 Responses（异构 SSE 事件，非
 // ChatCompletionStreamResponse chunk），需要独立的流式桥接入口与 usage 提取逻辑；
 // 写出格式为 `event: <type>\ndata: <json>\n\n`（对齐 openai.EmitResponsesSSE），
 // 且不写 [DONE]（Responses 客户端以 response.completed 收尾，不期待 [DONE]）。
 //
-// 计费口径已知差异：旧路径 handleStreamToResponses 返回 Claude 口径 usage
-//（input 不含缓存），本桥接从转换结果提取 OpenAI 口径（input 含缓存，
-// CacheIncludedInPrompt=true 由计费侧扣减），金额等价、明细口径不同。
+// ===================== 已知差异清单（P0/P1-R 收编，评审时逐条确认） =====================
+//  1. 计费口径：旧路径返回上游原生口径（Claude 方向 input 不含缓存），本桥接统一为
+//     OpenAI 口径（input 含缓存，CacheIncludedInPrompt=true 由计费侧扣减）——金额等价、
+//     明细口径变化；B 方向（ChatViaResponses）非流式旧路径漏设该标志的自相矛盾已顺带修正。
+//  2. transferredTextLen（流式中断兜底估算）含 reasoning delta——旧路径 A 方向仅计纯文本，
+//     仅影响「上游无 usage 且流中断」的兜底计费（略高估）。
+//  3. SetFirstResponseTime 时机：首事件发出时（旧路径为首个 data 行，含解析失败行）。
+//  4. 响应对象为 typed DTO：恒含 prompt/conversation null 两键（旧路径 map 不含；
+//     官方 Responses API 本就含这两个 null 字段，语义等价）。
+//  5. completed_at 与 created_at 差恒 0（确定性修复项；旧路径为 +1 或真实耗时）。
+//  6. 多工具 done 事件与 completed output 按登记顺序、重复 finish 不重复发 done
+//     （确定性修复项；旧路径 map 遍历顺序随机且可能重复）。
+//  7. usage details 键恒存在（含零值）——codex 严格解析必需，2026-08-18 修复后固化。
 
 // relaykitResponsesResponseConverterID 返回 X 上游 → Responses 客户端的响应转换器 ID。
 // 返回空串表示无匹配（调用方回退旧路径）。info 参与 openai 上游的 responses 能力守卫：
