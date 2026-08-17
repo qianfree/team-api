@@ -62,6 +62,44 @@ func TestGolden_OAIChat_To_Responses_Request(t *testing.T) {
 	}
 }
 
+func TestGolden_OAIChat_To_Responses_Response(t *testing.T) {
+	converter := &OpenAIChatToResponsesResponseConverter{}
+	ctx := context.Background()
+	info := r2cGoldenMeta()
+
+	files, err := os.ReadDir("golden")
+	if err != nil {
+		t.Fatalf("Failed to read golden directory: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), "_chat_to_responses_response.json") {
+			continue
+		}
+		t.Run(file.Name(), func(t *testing.T) {
+			tc := goldentest.Load(t, filepath.Join("golden", file.Name()))
+			if tc.From != types.RelayFormatOpenAI || tc.To != types.RelayFormatOpenAIResponses {
+				t.Skip("not an OpenAI chat→Responses response test")
+			}
+			resp, err := kitutil.Any2Type[dto.ChatCompletionResponse](tc.Response)
+			if err != nil {
+				t.Fatalf("map→chat response: %v", err)
+			}
+			result, _, err := converter.ConvertResponse(ctx, info, &resp)
+			if err != nil {
+				t.Fatalf("ConvertResponse: %v", err)
+			}
+			if *goldentest.Update {
+				tc.ExpectedResponse = result
+				goldentest.Save(t, filepath.Join("golden", file.Name()), tc)
+				return
+			}
+			if !goldentest.EqualExcluding(result, tc.ExpectedResponse, "created_at", "completed_at") {
+				t.Errorf("result does not match golden\nGot:  %+v\nWant: %+v", result, tc.ExpectedResponse)
+			}
+		})
+	}
+}
+
 func TestGolden_Claude_To_Responses_Response(t *testing.T) {
 	converter := &ClaudeToResponsesResponseConverter{}
 	ctx := context.Background()

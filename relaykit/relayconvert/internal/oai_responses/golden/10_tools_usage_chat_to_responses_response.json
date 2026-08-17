@@ -1,0 +1,117 @@
+{
+  "name": "tools_and_no_details_chat_to_responses_response",
+  "from": "openai",
+  "to": "responses",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "content": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"北京\"}",
+                "name": "get_weather"
+              },
+              "id": "call_1",
+              "type": "function"
+            },
+            {
+              "function": {
+                "arguments": "{\"file\":\"a.go\"}",
+                "name": "run_tests"
+              },
+              "id": "call_2",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1730000100,
+    "id": "chatcmpl-XyZ9",
+    "model": "glm-4.6",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 10,
+      "prompt_tokens": 50,
+      "total_tokens": 60
+    }
+  },
+  "expected_response": {
+    "id": "resp_chatcmpl-XyZ9",
+    "object": "response",
+    "created_at": 1730000100,
+    "completed_at": 1730000100,
+    "status": "completed",
+    "error": null,
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "model": "gpt-4o",
+    "output": [
+      {
+        "type": "message",
+        "id": "msg_chatcmpl-XyZ9",
+        "status": "completed",
+        "role": "assistant"
+      },
+      {
+        "type": "function_call",
+        "id": "call_1",
+        "status": "completed",
+        "call_id": "call_1",
+        "name": "get_weather",
+        "arguments": "{\"city\":\"北京\"}"
+      },
+      {
+        "type": "function_call",
+        "id": "call_2",
+        "status": "completed",
+        "call_id": "call_2",
+        "name": "run_tests",
+        "arguments": "{\"file\":\"a.go\"}"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "prompt": null,
+    "reasoning": {
+      "effort": null,
+      "summary": null
+    },
+    "store": false,
+    "conversation": null,
+    "temperature": 1,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [],
+    "top_p": 1,
+    "truncation": "disabled",
+    "usage": {
+      "input_tokens": 50,
+      "output_tokens": 10,
+      "total_tokens": 60,
+      "input_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0
+      },
+      "output_tokens_details": {
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "accepted_prediction_tokens": 0,
+        "rejected_prediction_tokens": 0
+      }
+    },
+    "user": null,
+    "metadata": {}
+  }
+}

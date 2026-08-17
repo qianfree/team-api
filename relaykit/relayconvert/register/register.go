@@ -39,11 +39,14 @@ func init() {
 	registerOpenAIToOllama()
 }
 
-// registerResponsesToOpenAIChat 注册 Responses → OpenAI Chat 方向转换器（仅请求侧）。
+// registerResponsesToOpenAIChat 注册 Responses → OpenAI Chat 方向转换器。
 // 客户端说 Responses，上游说 OpenAI Chat（chat-only 渠道）：
 //   - 请求侧 Responses → OpenAI Chat
-//   - 响应侧（chat 上游 → Responses 客户端）不在本 spec 范围，由宿主 responses.go 合成器承担
+//   - 响应侧（chat 上游 → Responses 客户端）：OpenAIChatToResponsesResponseConverter
+//     （codex 打 chat-only 渠道的非流式响应合成）
 func registerResponsesToOpenAIChat() {
+	respConv := &oai_responses.OpenAIChatToResponsesResponseConverter{}
+
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
 		ID:      relayconvert.ConverterOpenAIResponsesToOpenAIChat,
 		From:    types.RelayFormatOpenAIResponses,
@@ -51,6 +54,13 @@ func registerResponsesToOpenAIChat() {
 		Quality: relayconvert.TextConverterQualityGood,
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_responses.ResponsesToOpenAIChatRequestConverter{}).ConvertRequest,
+		},
+		Resp: relayconvert.TextResponseSide{
+			// 与其余方向一致：usage 由宿主从转换后的响应体提取，注册表层丢弃
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, _, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
 		},
 	})
 }

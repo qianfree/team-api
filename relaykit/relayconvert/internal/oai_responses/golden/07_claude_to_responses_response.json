@@ -36,8 +36,8 @@
   "expected_response": {
     "id": "resp_msg_01ABC",
     "object": "response",
-    "created_at": 1786987830,
-    "completed_at": 1786987830,
+    "created_at": 1786989493,
+    "completed_at": 1786989493,
     "status": "completed",
     "error": null,
     "incomplete_details": null,
