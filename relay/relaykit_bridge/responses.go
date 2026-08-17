@@ -29,26 +29,60 @@ import (
 //（input 不含缓存），本桥接从转换结果提取 OpenAI 口径（input 含缓存，
 // CacheIncludedInPrompt=true 由计费侧扣减），金额等价、明细口径不同。
 
-// relaykitResponsesResponseConverterID 返回 Claude 上游 → Responses 客户端的响应转换器 ID。
-// 返回空串表示无匹配（调用方回退旧路径）。
-func relaykitResponsesResponseConverterID(upstream, clientFormat constant.RelayFormat) string {
-	if upstream == constant.RelayFormatClaude && clientFormat == constant.RelayFormatResponses {
+// relaykitResponsesResponseConverterID 返回 X 上游 → Responses 客户端的响应转换器 ID。
+// 返回空串表示无匹配（调用方回退旧路径）。info 参与 openai 上游的 responses 能力守卫：
+// 上游原生支持 Responses 时不转换（adaptor 走原样直连 + 后处理）。
+func relaykitResponsesResponseConverterID(info *common.RelayInfo, upstream, clientFormat constant.RelayFormat) string {
+	if clientFormat != constant.RelayFormatResponses {
+		return ""
+	}
+	switch upstream {
+	case constant.RelayFormatClaude:
 		// 复用 responses→claude 链 spec 的 Resp 侧（方向相反，先例同 ConverterOpenAIChatToClaudeMessages）
 		return relayconvert.ConverterOpenAIResponsesToClaudeMessages
+	case constant.RelayFormatOpenAI:
+		if !info.ChannelMeta.UpstreamSpeaksResponses() {
+			return relayconvert.ConverterOpenAIResponsesToOpenAIChat
+		}
+		return ""
+	default:
+		return ""
 	}
-	return ""
 }
 
-// TryConvertResponsesResponseViaRelaykit 尝试用 relaykit 转换器将 Claude 非流式响应体
-// 转换为 Responses 格式。成功返回 (响应体, 计费 usage, true)；失败返回 (nil, nil, false)，
-// 调用方回退旧 handleNonStreamToResponses 内联逻辑。
+// parseUpstreamResponse 按上游格式解析响应体（多态入参，供非流式转换）。
+// 解析失败返回 nil（调用方回退旧路径）。
+func parseUpstreamResponse(ctx context.Context, upstream constant.RelayFormat, body []byte) any {
+	switch upstream {
+	case constant.RelayFormatClaude:
+		var claudeResp dto.ClaudeResponse
+		if err := json.Unmarshal(body, &claudeResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
+			return nil
+		}
+		return &claudeResp
+	case constant.RelayFormatOpenAI:
+		var chatResp dto.ChatCompletionResponse
+		if err := json.Unmarshal(body, &chatResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse chat response failed, fallback to legacy: %v", err)
+			return nil
+		}
+		return &chatResp
+	default:
+		return nil
+	}
+}
+
+// TryConvertResponsesResponseViaRelaykit 尝试用 relaykit 转换器将上游非流式响应体
+// （Claude 或 OpenAI Chat 上游）转换为 Responses 格式。成功返回 (响应体, 计费 usage, true)；
+// 失败返回 (nil, nil, false)，调用方回退旧内联转换逻辑。
 func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *common.Usage, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, nil, false
 	}
 	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	clientFormat := info.GetOriginalClientFormat()
-	converterID := relaykitResponsesResponseConverterID(upstream, clientFormat)
+	converterID := relaykitResponsesResponseConverterID(info, upstream, clientFormat)
 	if converterID == "" {
 		return nil, nil, false
 	}
@@ -58,14 +92,13 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 		return nil, nil, false
 	}
 
-	var claudeResp dto.ClaudeResponse
-	if err := json.Unmarshal(upstreamBody, &claudeResp); err != nil {
-		g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
+	upstreamResp := parseUpstreamResponse(ctx, upstream, upstreamBody)
+	if upstreamResp == nil {
 		return nil, nil, false
 	}
 
 	start := time.Now()
-	converted, _, err := spec.Resp.Convert(ctx, info, &claudeResp)
+	converted, _, err := spec.Resp.Convert(ctx, info, upstreamResp)
 	duration := time.Since(start)
 	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
@@ -133,8 +166,7 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 	}
 	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	clientFormat := info.GetOriginalClientFormat()
-	converterID := relaykitResponsesResponseConverterID(upstream, clientFormat)
-	if converterID == "" {
+	if relaykitResponsesResponseConverterID(info, upstream, clientFormat) == "" {
 		return nil, false, nil
 	}
 
@@ -224,7 +256,7 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
 			return capturedUsage, true, common.ErrStreamInterrupted
 		}
-		g.Log().Warningf(ctx, "[relaykit] convert responses stream failed (converter=%s): %v", converterID, err)
+		g.Log().Warningf(ctx, "[relaykit] convert responses stream failed (converter=%s): %v", streamID, err)
 		// 对齐旧路径：首个事件前出错则写 Responses 兼容错误体（SSE 头已提交，状态码已固定 200）
 		if !firstEvent {
 			errBody, _ := json.Marshal(map[string]any{

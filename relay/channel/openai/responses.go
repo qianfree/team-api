@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // ========== 响应转换：Chat Completions → Responses ==========
@@ -39,6 +40,14 @@ func (a *Adaptor) handleResponsesInboundNonStream(ctx context.Context, resp *htt
 			return &common.Usage{}, upstreamErr
 		}
 		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
+	}
+
+	// relaykit 转换器路径优先；失败/未覆盖回退下方旧内联转换逻辑
+	if responsesBody, usage, ok := relaykit_bridge.TryConvertResponsesResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(responsesBody)
+		return usage, nil
 	}
 
 	// 解析 Chat Completions 响应
@@ -102,6 +111,14 @@ func extractResponsesRequestEcho(info *common.RelayInfo) responsesRequestEcho {
 		echo.instructions = json.RawMessage(rr.Instructions)
 	}
 	return echo
+}
+
+// detailField nil 安全地提取 usage 细分字段。
+func detailField(d *dto.TokenDetails, pick func(*dto.TokenDetails) int) int {
+	if d == nil {
+		return 0
+	}
+	return pick(d)
 }
 
 // chatCompletionToResponsesResponse 将 Chat Completions 响应转换为 Responses API 响应
@@ -183,15 +200,17 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 			InputTokens:  chatResp.Usage.PromptTokens,
 			OutputTokens: chatResp.Usage.CompletionTokens,
 			TotalTokens:  chatResp.Usage.TotalTokens,
+			// details 指针可能为 nil（上游不带 prompt/completion_tokens_details 时），
+			// 显式判空防止回退路径 nil panic（键集合不变——DTO tag 保证恒输出零值）
 			InputTokensDetails: &dto.InputTokenDetails{
-				CachedTokens:     chatResp.Usage.PromptTokensDetails.CachedTokens,
-				CacheWriteTokens: chatResp.Usage.PromptTokensDetails.CacheWriteTokens,
-				AudioTokens:      chatResp.Usage.PromptTokensDetails.AudioTokens,
+				CachedTokens:     detailField(chatResp.Usage.PromptTokensDetails, func(d *dto.TokenDetails) int { return d.CachedTokens }),
+				CacheWriteTokens: detailField(chatResp.Usage.PromptTokensDetails, func(d *dto.TokenDetails) int { return d.CacheWriteTokens }),
+				AudioTokens:      detailField(chatResp.Usage.PromptTokensDetails, func(d *dto.TokenDetails) int { return d.AudioTokens }),
 			},
 			OutputTokenDetails: &dto.OutputTokenDetails{
-				ReasoningTokens:          chatResp.Usage.CompletionTokenDetails.ReasoningTokens,
-				AcceptedPredictionTokens: chatResp.Usage.CompletionTokenDetails.AcceptedPredictionTokens,
-				RejectedPredictionTokens: chatResp.Usage.CompletionTokenDetails.RejectedPredictionTokens,
+				ReasoningTokens:          detailField(chatResp.Usage.CompletionTokenDetails, func(d *dto.TokenDetails) int { return d.ReasoningTokens }),
+				AcceptedPredictionTokens: detailField(chatResp.Usage.CompletionTokenDetails, func(d *dto.TokenDetails) int { return d.AcceptedPredictionTokens }),
+				RejectedPredictionTokens: detailField(chatResp.Usage.CompletionTokenDetails, func(d *dto.TokenDetails) int { return d.RejectedPredictionTokens }),
 			},
 		},
 	}

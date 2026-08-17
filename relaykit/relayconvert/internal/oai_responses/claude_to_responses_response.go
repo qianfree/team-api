@@ -196,8 +196,9 @@ func responsesUsageOf(usage *dto.UsageWithDetails) *dto.ResponsesUsage {
 	}
 	if usage.PromptTokensDetails != nil {
 		result.InputTokensDetails = &dto.InputTokenDetails{
-			CachedTokens: usage.PromptTokensDetails.CachedTokens,
-			AudioTokens:  usage.PromptTokensDetails.AudioTokens,
+			CachedTokens:     usage.PromptTokensDetails.CachedTokens,
+			CacheWriteTokens: usage.PromptTokensDetails.CacheWriteTokens,
+			AudioTokens:      usage.PromptTokensDetails.AudioTokens,
 		}
 	} else {
 		result.InputTokensDetails = &dto.InputTokenDetails{}
