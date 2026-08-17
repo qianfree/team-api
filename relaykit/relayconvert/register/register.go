@@ -28,6 +28,7 @@ import (
 func init() {
 	// Responses 方向须最先注册：后续的 responses→claude 链式 spec 引用其转换器 ID
 	registerResponsesToOpenAIChat()
+	registerOpenAIChatToResponses()
 	registerOpenAIToClaude()
 	registerOpenAIToGemini()
 	// 剩余原生格式供应商
@@ -48,6 +49,21 @@ func registerResponsesToOpenAIChat() {
 		Quality: relayconvert.TextConverterQualityGood,
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_responses.ResponsesToOpenAIChatRequestConverter{}).ConvertRequest,
+		},
+	})
+}
+
+// registerOpenAIChatToResponses 注册 OpenAI Chat → Responses 方向转换器（仅请求侧）。
+// ChatViaResponses 渠道：chat 客户端桥接到 Responses 上游，请求侧 chat → Responses；
+// 响应侧（Responses 上游 → chat 客户端）由宿主 chat_via_responses.go 承担。
+func registerOpenAIChatToResponses() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterOpenAIChatToOpenAIResponses,
+		From:    types.RelayFormatOpenAI,
+		To:      types.RelayFormatOpenAIResponses,
+		Quality: relayconvert.TextConverterQualityGood,
+		Req: relayconvert.TextRequestSide{
+			Convert: (&oai_responses.OpenAIChatToResponsesRequestConverter{}).ConvertRequest,
 		},
 	})
 }

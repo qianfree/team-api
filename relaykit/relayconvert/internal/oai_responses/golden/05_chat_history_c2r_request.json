@@ -1,0 +1,203 @@
+{
+  "name": "chat_history_to_responses_request",
+  "from": "openai",
+  "to": "responses",
+  "request": {
+    "max_completion_tokens": 2048,
+    "messages": [
+      {
+        "content": "你是翻译助手",
+        "role": "system"
+      },
+      {
+        "content": "仅输出译文",
+        "role": "developer"
+      },
+      {
+        "content": "Hello",
+        "role": "user"
+      },
+      {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"term\":\"Hello\"}",
+              "name": "lookup"
+            },
+            "id": "call_1",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "你好（词典释义）",
+        "role": "tool",
+        "tool_call_id": "call_1"
+      },
+      {
+        "content": "你好",
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "text": "翻译这段",
+            "type": "text"
+          },
+          {
+            "image_url": {
+              "detail": "low",
+              "url": "https://example.com/pic.png"
+            },
+            "type": "image_url"
+          },
+          {
+            "input_audio": {
+              "data": "aGk=",
+              "format": "mp3"
+            },
+            "type": "input_audio"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4o",
+    "parallel_tool_calls": false,
+    "prompt_cache_key": "sess-123",
+    "reasoning_effort": "high",
+    "response_format": {
+      "json_schema": {
+        "name": "out",
+        "schema": {
+          "type": "object"
+        },
+        "strict": false
+      },
+      "type": "json_schema"
+    },
+    "temperature": 0.5,
+    "tool_choice": {
+      "function": {
+        "name": "lookup"
+      },
+      "type": "function"
+    },
+    "tools": [
+      {
+        "function": {
+          "description": "查词典",
+          "name": "lookup",
+          "parameters": {
+            "properties": {
+              "term": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ],
+    "user": "user-42"
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "Hello",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      },
+      {
+        "arguments": "{\"term\":\"Hello\"}",
+        "call_id": "call_1",
+        "name": "lookup",
+        "type": "function_call"
+      },
+      {
+        "call_id": "call_1",
+        "output": "你好（词典释义）",
+        "type": "function_call_output"
+      },
+      {
+        "content": [
+          {
+            "text": "你好",
+            "type": "output_text"
+          }
+        ],
+        "role": "assistant",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "翻译这段",
+            "type": "input_text"
+          },
+          {
+            "detail": "low",
+            "image_url": "https://example.com/pic.png",
+            "type": "input_image"
+          },
+          {
+            "data": "",
+            "format": "",
+            "type": "input_audio"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "你是翻译助手\n\n仅输出译文",
+    "max_output_tokens": 2048,
+    "parallel_tool_calls": false,
+    "reasoning": {
+      "effort": "high",
+      "summary": "detailed"
+    },
+    "store": false,
+    "temperature": 0.5,
+    "text": {
+      "format": {
+        "name": "out",
+        "schema": {
+          "type": "object"
+        },
+        "strict": false,
+        "type": "json_schema"
+      }
+    },
+    "tool_choice": {
+      "name": "lookup",
+      "type": "function"
+    },
+    "tools": [
+      {
+        "description": "查词典",
+        "name": "lookup",
+        "parameters": {
+          "properties": {
+            "term": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": "function"
+      }
+    ],
+    "user": "user-42",
+    "prompt_cache_key": "sess-123"
+  }
+}
