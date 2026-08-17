@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, h } from 'vue'
-import { Tag } from '@arco-design/web-vue'
+import { Tag, Message, Table, Spin, Empty } from '@arco-design/web-vue'
 import { IconInfoCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -21,10 +21,14 @@ const filterModelName = ref<string | undefined>(undefined)
 const channelOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
 
-// 渠道下拉数据：渠道量级为几十，一次性拉全量（page_size 放大即可）
+// 行展开状态：记录正在加载和已加载的模型名
+const expandedRows = ref<Set<string>>(new Set())
+const expandLoading = ref<Set<string>>(new Set())
+const channelData = ref<Map<string, any[]>>(new Map())
+// 渠道下拉数据：渠道量级为几十，一次性拉全量（后端分页限制最大 100）
 async function fetchChannelOptions() {
   try {
-    const res: any = await request.get('/admin/channels', { params: { page: 1, page_size: 200 } })
+    const res: any = await request.get('/admin/channels', { params: { page: 1, page_size: 100 } })
     channelOptions.value = (res.data?.data?.list || res.data?.list || []).map((c: any) => ({
       label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
       value: c.id,
@@ -46,6 +50,111 @@ async function fetchModelOptions() {
     modelOptions.value = []
   }
 }
+
+// 行展开：加载指定模型的各渠道性能
+async function handleExpand(record: any) {
+  const modelName = record.model_name
+
+  // 切换展开状态
+  if (expandedRows.value.has(modelName)) {
+    expandedRows.value.delete(modelName)
+    return
+  }
+
+  expandedRows.value.add(modelName)
+
+  // 如果已有缓存数据，直接使用
+  if (channelData.value.has(modelName)) {
+    return
+  }
+
+  // 否则加载数据
+  expandLoading.value.add(modelName)
+  try {
+    const params: Record<string, any> = { model_name: modelName }
+    if (dateRange.value && dateRange.value.length === 2) {
+      params.start_date = dateRange.value[0]
+      params.end_date = dateRange.value[1]
+    }
+    const res = await request.get('/admin/monitor/model-channels', { params })
+    const list = res.data?.data?.list || res.data?.list || []
+    channelData.value.set(modelName, list)
+  } catch (err: any) {
+    Message.error(err.message || '加载渠道数据失败')
+    expandedRows.value.delete(modelName)
+  } finally {
+    expandLoading.value.delete(modelName)
+  }
+}
+
+function handleTableExpand(_rowKey: string | number, record: any) {
+  handleExpand(record)
+}
+
+// 渠道矩阵小表列定义
+const channelColumns: TableColumnData[] = [
+  { title: '渠道', dataIndex: 'channel_name', width: 200 },
+  {
+    title: '请求数',
+    dataIndex: 'request_count',
+    width: 110,
+    align: 'right',
+    render: ({ record }: any) => fmtNum(record.request_count).toLocaleString(),
+  },
+  {
+    title: '成功率',
+    dataIndex: 'success_rate',
+    width: 110,
+    align: 'right',
+    render: ({ record }: any) => {
+      const rate = fmtNum(record.success_rate)
+      const grade = rateGrade(rate)
+      return h(Tag, { color: gradeColor[grade] || 'blue', size: 'small' }, () => `${rate.toFixed(2)}%`)
+    },
+  },
+  {
+    title: '平均延迟',
+    dataIndex: 'avg_latency_ms',
+    width: 110,
+    align: 'right',
+    render: ({ record }: any) => `${fmtNum(record.avg_latency_ms).toFixed(0)} ms`,
+  },
+  {
+    title: '平均首Token',
+    dataIndex: 'avg_first_token_ms',
+    width: 130,
+    align: 'right',
+    render: ({ record }: any) => `${fmtNum(record.avg_first_token_ms).toFixed(0)} ms`,
+  },
+  {
+    title: '吞吐 TPS',
+    dataIndex: 'tps',
+    width: 110,
+    align: 'right',
+    render: ({ record }: any) => `${fmtNum(record.tps).toFixed(1)} t/s`,
+  },
+  {
+    title: '缓存命中',
+    dataIndex: 'cache_read_tokens',
+    width: 170,
+    align: 'right',
+    render: ({ record }: any) => {
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_read_tokens).toLocaleString()} (${fmtNum(record.cache_hit_rate).toFixed(1)}%)`
+    },
+  },
+  {
+    title: '请求缓存命中率',
+    dataIndex: 'cache_hit_request_rate',
+    width: 140,
+    align: 'right',
+    render: ({ record }: any) => {
+      if (fmtNum(record.cache_read_tokens) === 0 && fmtNum(record.cache_creation_tokens) === 0) return '—'
+      return `${fmtNum(record.cache_hit_request_rate).toFixed(1)}%`
+    },
+  },
+]
+
 
 // 页头描述：追加当前筛选提示，避免「跨渠道」文案与实际筛选状态不符
 const pageDescription = computed(() => {
@@ -238,6 +347,11 @@ const stats = computed(() => {
   }
 })
 
+// 安全的展开键数组（防止 undefined/null 导致迭代错误）
+const expandedRowKeysArray = computed(() => {
+  return expandedRows.value ? Array.from(expandedRows.value) : []
+})
+
 async function fetchData() {
   loading.value = true
   try {
@@ -250,7 +364,10 @@ async function fetchData() {
     if (filterChannelId.value) params.channel_id = filterChannelId.value
     if (filterModelName.value) params.model_name = filterModelName.value
     const res = await request.get('/admin/monitor/model-performance', { params })
-    data.value = res.data?.data?.data?.list || []
+    data.value = res.data?.data?.list || res.data?.list || []
+    // 清空展开状态和缓存（日期范围/筛选条件变化后，旧的渠道数据已失效）
+    expandedRows.value.clear()
+    channelData.value.clear()
   } catch {
     // 错误由 Axios 拦截器统一提示
   } finally {
@@ -264,44 +381,104 @@ onMounted(() => {
   fetchChannelOptions()
   fetchModelOptions()
 })
+
+// 渲染行展开内容：渠道性能对比小表
+function renderChannelMatrix(record: any) {
+  const modelName = record.model_name
+  const channels = channelData.value.get(modelName) || []
+  const isLoading = expandLoading.value.has(modelName)
+
+  if (isLoading) {
+    return h(
+      'div',
+      { class: 'channel-matrix-loading' },
+      h(Spin, { tip: '加载渠道数据中...' })
+    )
+  }
+
+  if (channels.length === 0) {
+    return h(
+      'div',
+      { class: 'channel-matrix-empty' },
+      h(Empty, { description: '该模型在所选时间范围内无渠道数据' })
+    )
+  }
+
+  return h(
+    'div',
+    { class: 'channel-matrix' },
+    h(Table, {
+      columns: channelColumns,
+      data: channels,
+      pagination: false,
+      bordered: { cell: true },
+      size: 'small',
+      stripe: true,
+    })
+  )
+}
 </script>
 
 <template>
   <div class="page-table">
-    <PageHeader title="模型性能" :description="pageDescription">
-      <template #actions>
-        <!-- 渠道/模型筛选：清空 = 全部；选定渠道后当天数据由后端从请求明细实时聚合 -->
-        <a-select
-          v-model="filterChannelId"
-          :options="channelOptions"
-          placeholder="全部渠道"
-          allow-clear
-          allow-search
-          style="width: 190px"
-          @change="fetchData"
-        />
-        <a-select
-          v-model="filterModelName"
-          :options="modelOptions"
-          placeholder="全部模型"
-          allow-clear
-          allow-search
-          style="width: 250px"
-          @change="fetchData"
-        />
-        <a-button
-          size="small"
-          v-for="q in QUICK_RANGES"
-          :key="q.label"
-          :type="isActive(q) ? 'primary' : undefined"
-          @click="applyQuickRange(q)"
-        >
-          {{ q.label }}
-        </a-button>
-        <a-range-picker v-model="dateRange" value-format="YYYY-MM-DD" style="width: 260px" @change="fetchData" />
-        <a-button size="small" :loading="loading" @click="fetchData">刷新</a-button>
-      </template>
-    </PageHeader>
+    <PageHeader title="模型性能" :description="pageDescription" />
+
+    <!-- 筛选条件卡片 -->
+    <a-card class="filter-card" :bordered="false">
+      <div class="filter-container">
+        <!-- 第一行：渠道/模型筛选 -->
+        <div class="filter-row">
+          <div class="filter-item">
+            <span class="filter-label">渠道</span>
+            <a-select
+              v-model="filterChannelId"
+              :options="channelOptions"
+              placeholder="全部渠道"
+              allow-clear
+              allow-search
+              style="width: 220px"
+              @change="fetchData"
+            />
+          </div>
+          <div class="filter-item">
+            <span class="filter-label">模型</span>
+            <a-select
+              v-model="filterModelName"
+              :options="modelOptions"
+              placeholder="全部模型"
+              allow-clear
+              allow-search
+              style="width: 280px"
+              @change="fetchData"
+            />
+          </div>
+        </div>
+
+        <!-- 第二行：时间范围 -->
+        <div class="filter-row">
+          <div class="filter-item filter-item--full">
+            <span class="filter-label">时间范围</span>
+            <div class="time-range-container">
+              <!-- 快捷时间范围按钮组 -->
+              <a-space :size="8">
+                <a-button
+                  size="small"
+                  v-for="q in QUICK_RANGES"
+                  :key="q.label"
+                  :type="isActive(q) ? 'primary' : undefined"
+                  @click="applyQuickRange(q)"
+                >
+                  {{ q.label }}
+                </a-button>
+              </a-space>
+              <!-- 自定义时间范围 -->
+              <a-range-picker v-model="dateRange" value-format="YYYY-MM-DD" style="width: 260px" @change="fetchData" />
+              <a-button type="primary" :loading="loading" @click="fetchData">查询</a-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </a-card>
 
     <!-- 指标说明入口（点击弹窗） -->
     <div class="metrics-hint" @click="showMetricsGuide = true">
@@ -441,6 +618,13 @@ onMounted(() => {
         card-subtitle-key="request_count"
         card-badge-key="success_rate"
         :card-fields="['avg_latency_ms', 'avg_first_token_ms', 'tps', 'total_tokens', 'total_cost']"
+        :expandable="{
+          title: '渠道',
+          width: 60,
+          expandedRowRender: (record: any) => renderChannelMatrix(record),
+          expandedRowKeys: expandedRowKeysArray,
+        }"
+        @expand="handleTableExpand"
       >
         <template #empty>
           <a-empty description="所选区间暂无模型性能数据" />
@@ -566,4 +750,208 @@ onMounted(() => {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* 渠道矩阵展开区域样式 */
+.channel-matrix {
+  padding: 16px 24px;
+  background: var(--color-fill-1);
+}
+.channel-matrix-loading,
+.channel-matrix-empty {
+  padding: 32px;
+  text-align: center;
+}
+
+/* 筛选条件卡片 */
+.filter-card {
+  margin-bottom: 16px;
+}
+
+.filter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-item--full {
+  flex: 1;
+  min-width: 100%;
+}
+
+.filter-label {
+  font-size: 14px;
+  color: var(--color-text-2);
+  white-space: nowrap;
+  min-width: 56px;
+}
+
+.time-range-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .filter-item {
+    width: 100%;
+  }
+
+  .filter-item :deep(.arco-select),
+  .time-range-container {
+    width: 100%;
+  }
+
+  .time-range-container :deep(.arco-range-picker) {
+    width: 100% !important;
+  }
+}
+
+/* 指标说明入口（复用渠道页 scheduling-hint 风格） */
+.metrics-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition: color 0.2s;
+  user-select: none;
+}
+.metrics-hint:hover {
+  color: rgb(var(--arcoblue-6));
+}
+
+/* 指标说明弹窗 */
+.metrics-guide {
+  color: var(--color-text-1);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.guide-intro {
+  margin: 0 0 14px;
+  color: var(--color-text-2);
+}
+.guide-group {
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+}
+.metric-item {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  margin: 12px 0 0;
+  padding-left: 12px;
+}
+.metric-name {
+  font-weight: 500;
+  color: var(--color-text-2);
+}
+.metric-body p {
+  margin: 0;
+  color: var(--color-text-2);
+}
+.metric-body p + p {
+  margin-top: 2px;
+}
+.metrics-guide code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: rgb(var(--arcoblue-6));
+  background: var(--color-primary-light-1);
+  word-break: break-all;
+}
+@media (max-width: 600px) {
+  .metric-item {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 顶部概览卡片：与实时监控页 metric-card 风格保持一致（左色条 + 渐变底） */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.metric-card {
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-medium);
+  padding: 18px 20px;
+  border-left: 4px solid transparent;
+}
+.metric-card--blue {
+  border-left-color: #165dff;
+  background: linear-gradient(135deg, rgba(22, 93, 255, 0.05), var(--color-bg-2) 70%);
+}
+.metric-card--purple {
+  border-left-color: #722ed1;
+  background: linear-gradient(135deg, rgba(114, 46, 209, 0.05), var(--color-bg-2) 70%);
+}
+.metric-card--green {
+  border-left-color: #00b42a;
+  background: linear-gradient(135deg, rgba(0, 180, 42, 0.05), var(--color-bg-2) 70%);
+}
+.metric-card--orange {
+  border-left-color: #ff7d00;
+  background: linear-gradient(135deg, rgba(255, 125, 0, 0.05), var(--color-bg-2) 70%);
+}
+.metric-card--red {
+  border-left-color: #f53f3f;
+  background: linear-gradient(135deg, rgba(245, 63, 63, 0.05), var(--color-bg-2) 70%);
+}
+.metric-card__label {
+  font-size: 13px;
+  color: var(--color-text-3);
+  margin-bottom: 8px;
+}
+.metric-card__value {
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 768px) {
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 渠道矩阵展开区域样式 */
+.channel-matrix {
+  padding: 16px 24px;
+  background: var(--color-fill-1);
+}
+.channel-matrix-loading,
+.channel-matrix-empty {
+  padding: 32px;
+  text-align: center;
+}
 </style>
+
+/* 指标说明入口（复用渠道页 scheduling-hint 风格） */
+.metrics-hint {

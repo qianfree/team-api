@@ -72,11 +72,24 @@ func (s *sMonitor) ModelPerformance(ctx context.Context, req *v1.MonitorModelPer
 	}
 	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
 	// 渠道/模型为可选过滤（channel_id=0、model_name 空 = 不过滤），透传给聚合层拼 SQL 条件
-	data, err := GetModelPerformance(ctx, startDate, endDate, req.ChannelId, req.ModelName)
+	list, err := GetModelPerformance(ctx, startDate, endDate, req.ChannelId, req.ModelName)
 	if err != nil {
 		return nil, err
 	}
-	return &v1.MonitorModelPerformanceRes{Data: data}, nil
+	return &v1.MonitorModelPerformanceRes{List: list}, nil
+}
+
+func (s *sMonitor) ModelChannels(ctx context.Context, req *v1.MonitorModelChannelsReq) (*v1.MonitorModelChannelsRes, error) {
+	// 模型渠道性能为跨租户聚合，限定平台域访问（P2-13）
+	if err := requireAdminScope(ctx); err != nil {
+		return nil, err
+	}
+	startDate, endDate := normalizeMonitorDateRange(req.StartDate, req.EndDate)
+	list, err := GetModelChannels(ctx, startDate, endDate, req.ModelName)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.MonitorModelChannelsRes{List: list}, nil
 }
 
 func (s *sMonitor) Latency(ctx context.Context, req *v1.MonitorLatencyReq) (*v1.MonitorLatencyRes, error) {
