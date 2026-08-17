@@ -556,13 +556,15 @@ func TestComputeCost_ZeroTokens(t *testing.T) {
 
 func TestComputeCost_WithCacheTokens(t *testing.T) {
 	pricing := &PricingResult{
-		InputPrice:         10.0,
-		OutputPrice:        30.0,
-		CacheReadPrice:     1.0, // $1/1M cache read
-		CacheCreationPrice: 2.5, // $2.5/1M cache creation
-		BillingMode:        "token",
-		TenantMultiplier:   1.0,
-		Currency:           "USD",
+		InputPrice:           10.0,
+		OutputPrice:          30.0,
+		CacheReadPrice:       1.0, // $1/1M cache read
+		CacheCreationPrice:   2.5, // $2.5/1M cache creation（5m 基础价）
+		CacheCreation5mPrice: 2.5, // 5m TTL 价格
+		CacheCreation1hPrice: 4.0, // 1h TTL 价格（2.5 × 1.6）
+		BillingMode:          "token",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
 	}
 
 	usage := &rcommon.Usage{
@@ -599,13 +601,15 @@ func TestComputeCost_WithCacheTokens(t *testing.T) {
 
 func TestComputeCost_CacheNotIncludedInPrompt(t *testing.T) {
 	pricing := &PricingResult{
-		InputPrice:         10.0,
-		OutputPrice:        30.0,
-		CacheReadPrice:     1.0,
-		CacheCreationPrice: 2.5,
-		BillingMode:        "token",
-		TenantMultiplier:   1.0,
-		Currency:           "USD",
+		InputPrice:           10.0,
+		OutputPrice:          30.0,
+		CacheReadPrice:       1.0,
+		CacheCreationPrice:   2.5,
+		CacheCreation5mPrice: 2.5,
+		CacheCreation1hPrice: 4.0,
+		BillingMode:          "token",
+		TenantMultiplier:     1.0,
+		Currency:             "USD",
 	}
 
 	usage := &rcommon.Usage{
@@ -660,9 +664,9 @@ func TestComputeCost_CacheWithTenantMultiplier(t *testing.T) {
 // ─── resolveTokenCounts ─────────────────────────────────────────────
 
 func TestResolveTokenCounts_NoUsage(t *testing.T) {
-	baseIn, out, cr, cc := resolveTokenCounts(&PricingResult{}, 1000, 500, nil)
-	if baseIn != 1000 || out != 500 || cr != 0 || cc != 0 {
-		t.Errorf("expected (1000,500,0,0), got (%d,%d,%d,%d)", baseIn, out, cr, cc)
+	baseIn, out, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 1000, 500, nil)
+	if baseIn != 1000 || out != 500 || cr != 0 || cc5m != 0 || cc1h != 0 {
+		t.Errorf("expected (1000,500,0,0,0), got (%d,%d,%d,%d,%d)", baseIn, out, cr, cc5m, cc1h)
 	}
 }
 
@@ -675,12 +679,31 @@ func TestResolveTokenCounts_CacheIncluded(t *testing.T) {
 		},
 		CacheIncludedInPrompt: true,
 	}
-	baseIn, _, cr, cc := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	baseIn, _, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
 	if baseIn != 5_000 {
 		t.Errorf("baseInput = %d, want 5000 (10000 - 3000 - 2000)", baseIn)
 	}
-	if cr != 3_000 || cc != 2_000 {
-		t.Errorf("cache: read=%d creation=%d, want 3000, 2000", cr, cc)
+	if cr != 3_000 || cc5m != 2_000 || cc1h != 0 {
+		t.Errorf("cache: read=%d creation5m=%d creation1h=%d, want 3000, 2000, 0", cr, cc5m, cc1h)
+	}
+}
+
+func TestResolveTokenCounts_CacheIncluded_5m1hSplit(t *testing.T) {
+	usage := &rcommon.Usage{
+		PromptTokens: 10_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens:           3_000,
+			CachedCreation5mTokens: 1_200,
+			CachedCreation1hTokens: 800,
+		},
+		CacheIncludedInPrompt: true,
+	}
+	baseIn, _, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	if baseIn != 5_000 {
+		t.Errorf("baseInput = %d, want 5000 (10000 - 3000 - 1200 - 800)", baseIn)
+	}
+	if cr != 3_000 || cc5m != 1_200 || cc1h != 800 {
+		t.Errorf("cache: read=%d creation5m=%d creation1h=%d, want 3000, 1200, 800", cr, cc5m, cc1h)
 	}
 }
 
@@ -693,7 +716,7 @@ func TestResolveTokenCounts_CacheExceedsInput(t *testing.T) {
 		},
 		CacheIncludedInPrompt: true,
 	}
-	baseIn, _, _, _ := resolveTokenCounts(&PricingResult{}, 100, 50, usage)
+	baseIn, _, _, _, _ := resolveTokenCounts(&PricingResult{}, 100, 50, usage)
 	// 100 - 200 - 50 = -150 → clamped to 0
 	if baseIn != 0 {
 		t.Errorf("baseInput = %d, want 0 (clamped)", baseIn)
@@ -708,7 +731,7 @@ func TestResolveTokenCounts_CacheNotIncluded(t *testing.T) {
 		},
 		CacheIncludedInPrompt: false,
 	}
-	baseIn, _, cr, _ := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	baseIn, _, cr, _, _ := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
 	// No deduction when cache not included
 	if baseIn != 10_000 {
 		t.Errorf("baseInput = %d, want 10000 (no deduction)", baseIn)
@@ -725,8 +748,8 @@ func TestResolveTokenCounts_NilTokenDetails(t *testing.T) {
 		PromptTokensDetails:   nil,
 		CacheIncludedInPrompt: true,
 	}
-	baseIn, out, cr, cc := resolveTokenCounts(&PricingResult{}, 1000, 500, usage)
-	if baseIn != 1000 || out != 500 || cr != 0 || cc != 0 {
-		t.Errorf("expected (1000,500,0,0), got (%d,%d,%d,%d)", baseIn, out, cr, cc)
+	baseIn, out, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 1000, 500, usage)
+	if baseIn != 1000 || out != 500 || cr != 0 || cc5m != 0 || cc1h != 0 {
+		t.Errorf("expected (1000,500,0,0,0), got (%d,%d,%d,%d,%d)", baseIn, out, cr, cc5m, cc1h)
 	}
 }
