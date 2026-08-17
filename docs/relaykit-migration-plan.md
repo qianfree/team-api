@@ -2304,7 +2304,8 @@ relaykit:
 1. **链第二跳语义**（legacy `ConvertOpenAIToClaude` vs `oai_chat` 转换器，后者为线上常开主路径）：纯文本 content 形态（string vs `[{"type":"text"}]` 块数组，Claude API 均合法）；max_tokens 缺省来源（legacy 固定 4096 vs 宿主 `DefaultMaxTokens` hook，模型相关更正确）；nil content 的 `"<nil>"` 垃圾文本块（**legacy 既有 bug**，relaykit 输出空块）
 2. **计费口径**：Claude→Responses 流式/非流式计费 usage 由 Claude 语义（input 不含缓存）换为 OpenAI 语义（input 含缓存，`CacheIncludedInPrompt=true` 由计费侧扣减）——金额等价、明细口径变化
 3. **模型名字段**：响应对象 model 优先上游返回值（legacy 在 IsModelMapped 时强制 OriginModelName）；流式 message_start 的模型名同理（convmeta 无 IsModelMapped 信号，不为它扩 Meta 接口）
-4. **序列化形态**：类型化 DTO 输出 `prompt:null`/`conversation:null` 恒存在、`annotations:[]`/usage 细分零值键 omitempty 省略（legacy map 显式输出）——语义等价，官方 Responses API 本就含这些 null 字段
+4. **序列化形态**：类型化 DTO 输出 `prompt:null`/`conversation:null` 恒存在（legacy map 不含；官方 Responses API 本就含这两个 null 字段，语义等价）。
+   > ⚠️ **2026-08-18 修复**：初版曾将 `annotations:[]` 与 usage 细分零值键（`reasoning_tokens` 等）也列为 omitempty 省略的"无害形态差"——**实为致命 bug**：codex 客户端（Rust serde 非Option字段）解析 `response.completed` 时要求这些键必须存在，缺失报 `missing field reasoning_tokens` 并触发反复重连。已将 `InputTokenDetails`/`OutputTokenDetails` 的 legacy 曾输出键与 `ResponsesOutputContent.Annotations` 改为恒输出（含零值），并新增回归测试 `TestCompletedEventStrictJSONKeys` 锁定。教训：**合成 JSON 的"省略零值键"对严格客户端不是无害差异**，对拍测试归一化时必须区分"客户端可见的键集合差异"与"纯序列化形态差"。
 5. **c2r input_audio 怪癖忠实保留**：legacy 读扁平 `part["data"]`（标准 chat 格式数据在 `part["input_audio"]["data"]`），音频数据在 c2r 桥接中两侧同样丢失——golden 如实记录，未修复（修复=偏离 legacy）
 
 ### 对拍验证结论

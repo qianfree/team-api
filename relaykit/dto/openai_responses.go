@@ -116,22 +116,28 @@ type ResponsesTextFormat struct {
 	Type string `json:"type"`
 }
 
-// InputTokenDetails 输入 token 细分
+// InputTokenDetails 输入 token 细分。
+// 注意：cached_tokens/cache_write_tokens/audio_tokens 不带 omitempty 恒输出（含零值）——
+// codex 等严格客户端（serde 非Option字段）要求这些键必须存在，缺失会导致
+// response.completed 解析失败并触发客户端重连；text_tokens/image_tokens 旧路径
+// 从未输出，保持 omitempty 以免对 deny_unknown_fields 客户端引入新键。
 type InputTokenDetails struct {
 	CachedTokens     int `json:"cached_tokens"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"` // 本次写入缓存的 token（input_tokens 子集，按普通输入价计费）
+	CacheWriteTokens int `json:"cache_write_tokens"` // 本次写入缓存的 token（input_tokens 子集，按普通输入价计费）
 	TextTokens       int `json:"text_tokens,omitempty"`
-	AudioTokens      int `json:"audio_tokens,omitempty"`
+	AudioTokens      int `json:"audio_tokens"`
 	ImageTokens      int `json:"image_tokens,omitempty"`
 }
 
-// OutputTokenDetails 输出 token 细分
+// OutputTokenDetails 输出 token 细分。
+// reasoning_tokens 及 legacy 曾输出的键恒输出（含零值），原因同 InputTokenDetails；
+// text_tokens 旧路径从未输出，保持 omitempty。
 type OutputTokenDetails struct {
 	TextTokens               int `json:"text_tokens,omitempty"`
-	AudioTokens              int `json:"audio_tokens,omitempty"`
-	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
-	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
-	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+	AudioTokens              int `json:"audio_tokens"`
+	ReasoningTokens          int `json:"reasoning_tokens"`
+	AcceptedPredictionTokens int `json:"accepted_prediction_tokens"`
+	RejectedPredictionTokens int `json:"rejected_prediction_tokens"`
 }
 
 // ResponsesOutput 响应输出项（通用结构，支持所有 output item 类型）
@@ -179,11 +185,13 @@ type ResponsesOutput struct {
 	Input string `json:"input,omitempty"`
 }
 
-// ResponsesOutputContent 响应输出内容块
+// ResponsesOutputContent 响应输出内容块。
+// annotations 恒输出（含空数组）：旧路径 BuildResponsesObjectMap 恒写 []，
+// 且 codex 等严格客户端要求 output_text 内容块携带该键。
 type ResponsesOutputContent struct {
 	Type        string                `json:"type"`
 	Text        string                `json:"text,omitempty"`
-	Annotations []ResponsesAnnotation `json:"annotations,omitempty"`
+	Annotations []ResponsesAnnotation `json:"annotations"`
 	// refusal 内容类型
 	Refusal string `json:"refusal,omitempty"`
 	// reasoning_text 内容类型
