@@ -65,10 +65,14 @@ func registerResponsesToOpenAIChat() {
 	})
 }
 
-// registerOpenAIChatToResponses 注册 OpenAI Chat → Responses 方向转换器（仅请求侧）。
-// ChatViaResponses 渠道：chat 客户端桥接到 Responses 上游，请求侧 chat → Responses；
-// 响应侧（Responses 上游 → chat 客户端）由宿主 chat_via_responses.go 承担。
+// registerOpenAIChatToResponses 注册 OpenAI Chat → Responses 方向转换器。
+// ChatViaResponses 渠道：chat 客户端桥接到 Responses 上游：
+//   - 请求侧 chat → Responses
+//   - 响应侧（Responses 上游 → chat 客户端，非流式）：ResponsesToOpenAIChatResponseConverter
+//     （流式侧由宿主 HandleResponsesStreamToChat 承担——依赖 StreamScannerHandler 超时治理，未收编）
 func registerOpenAIChatToResponses() {
+	respConv := &oai_responses.ResponsesToOpenAIChatResponseConverter{}
+
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
 		ID:      relayconvert.ConverterOpenAIChatToOpenAIResponses,
 		From:    types.RelayFormatOpenAI,
@@ -76,6 +80,12 @@ func registerOpenAIChatToResponses() {
 		Quality: relayconvert.TextConverterQualityGood,
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_responses.OpenAIChatToResponsesRequestConverter{}).ConvertRequest,
+		},
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, _, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
 		},
 	})
 }

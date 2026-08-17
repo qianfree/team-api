@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // ConvertToOpenAI 根据入站格式将请求转换为 OpenAI 格式。
@@ -1614,6 +1615,14 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 		upstreamErr.ResponseWritten = true
 		return nil, upstreamErr
+	}
+
+	// relaykit 转换器路径优先；失败/未覆盖回退下方旧内联转换逻辑
+	if chatBody, usage, ok := relaykit_bridge.TryConvertChatViaResponsesResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(chatBody)
+		return usage, nil
 	}
 
 	var responsesResp dto.OpenAIResponsesResponse

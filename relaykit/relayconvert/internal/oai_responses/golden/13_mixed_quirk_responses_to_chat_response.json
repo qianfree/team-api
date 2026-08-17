@@ -1,0 +1,65 @@
+{
+  "name": "mixed_quirk_responses_to_chat_response",
+  "from": "responses",
+  "to": "openai",
+  "response": {
+    "created_at": 1730000000,
+    "id": "resp_3",
+    "model": "gpt-4o-2024-11-20",
+    "object": "response",
+    "output": [
+      {
+        "content": [
+          {
+            "text": "我先查一下",
+            "type": "output_text"
+          }
+        ],
+        "id": "msg_3",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "arguments": "{\"q\":\"答案\"}",
+        "call_id": "call_3",
+        "id": "fc_3",
+        "name": "search",
+        "status": "completed",
+        "type": "function_call"
+      }
+    ],
+    "status": "completed"
+  },
+  "expected_response": {
+    "id": "chatcmpl-1786989814095418800",
+    "object": "chat.completion",
+    "created": 1786989814,
+    "model": "gpt-4o-2024-11-20",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "我先查一下",
+          "tool_calls": [
+            {
+              "id": "call_3",
+              "type": "function",
+              "function": {
+                "name": "search",
+                "arguments": "{\"q\":\"答案\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 3,
+      "total_tokens": 3
+    }
+  }
+}
