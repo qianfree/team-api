@@ -2269,9 +2269,56 @@ relaykit:
 
 **验证**：`relaykit` 独立构建 + 主模块 `go build ./...` + `go vet ./relay/... ./internal/...` + relaykit/relay/internal 全量测试均通过；残留符号 grep 确认 `.go` 源码零引用（仅本文档注释命中）。
 
-**残留可选清理（未做，与 relaykit 无关）**：`relay/channel/openai/converter.go` 的 `ConvertOpenAIToResponses` 经 grep 确认零调用方，属 Responses API 遗留死代码，建议作为独立提交清理，未纳入本次 relaykit 收尾。
+**残留可选清理（未做，与 relaykit 无关）**：~~`relay/channel/openai/converter.go` 的 `ConvertOpenAIToResponses` 经 grep 确认零调用方，属 Responses API 遗留死代码~~
+> ⚠️ **2026-08-18 更正**：该结论已过时。`feat/responses` 分支的 responses 系列提交重新启用了它——`relay/channel/openai/adaptor.go` 的 ChatViaResponses 桥接分支（`info.UseResponsesAPI && mode == ChatCompletions`）是活调用方。**禁止按旧结论删除。**
 
 **已知差异随全量常开生效**：Coze 强制 `Stream=true`、Coze `user` 归因丢失、响应用固定时间戳。用户已线下测试基础功能通过。
+
+---
+
+## Responses 协议收编（2026-08-18，feat/responses 分支，执行前置条件①的 Responses 部分）
+
+将 `feat/responses` 分支实现在 relay/ 层的 Responses 协议转换收编进 relaykit，旧代码全部保留为回退路径（bridge 失败/未覆盖自动回退，与 2026-07-29 cutover 架构一致）。分四个提交落地（地基 / r2c / c2r+链 / 响应侧）。
+
+### 收编范围
+
+| 方向 | 转换器 | 注册 ID | 桥接入口 |
+|------|--------|---------|---------|
+| Responses→OpenAI Chat（请求侧） | `oai_responses.ResponsesToOpenAIChatRequestConverter` | `openai_responses_to_openai_chat_completions` | `relay/handler/relaykit_bridge.go`（responses 入站 + `!UpstreamSpeaksResponses()` 守卫） |
+| OpenAI Chat→Responses（请求侧） | `oai_responses.OpenAIChatToResponsesRequestConverter` | `openai_chat_completions_to_openai_responses` | 同上（`UseResponsesAPI && ChatCompletions && upstream==openai`，置于同格式早退之前） |
+| Responses→Claude（请求链） | StepConverters 两跳 spec（复用上述 r2c + `oai_chat` 转换器） | `openai_responses_to_claude_messages` | 同上（upstream==claude 分支） |
+| Claude→Responses（非流式响应） | `oai_responses.ClaudeToResponsesResponseConverter` | 挂链 spec Resp 侧 | `relay/relaykit_bridge/responses.go` `TryConvertResponsesResponseViaRelaykit` |
+| Claude→Responses（流式响应） | `oai_responses.ClaudeToResponsesStreamConverter` | `anthropic_messages_to_openai_responses_stream`（stream registry） | 同文件 `TryConvertResponsesStreamViaRelaykit` |
+
+### 配套基础设施变更
+
+- **RelayFormat 值对齐**：relaykit `RelayFormatOpenAIResponses` 由 `"openai_responses"` 改为 `"responses"`（原值全仓库零引用；桥接依赖字符串值相等 + 强转约定）
+- **DTO 下沉**：24 个 Responses 类型从 `relay/dto/openai_responses.go` 平移至 `relaykit/dto/openai_responses.go`，relay 侧改类型别名（宿主零改动）；新增 `ResponsesStreamEvent{Type, Data}` 流式 chunk 载荷
+- **链执行器**：新增 `relayconvert.ExecuteRequestConverter`——StepConverters 此前只有注册校验、没有执行引擎
+- **单侧 spec 放宽**：`registerBuiltinTextConverter` 允许 Req-only / Resp-only spec（双侧全空仍 panic）
+- **echo 接口**：relaykit 定义 `responsesEchoProvider{ ResponsesRequestSnapshot() }` 可选接口，宿主 `RelayInfo` 实现提供请求快照
+- **有状态预检/stash 留桥接层**：`previous_response_id != ""` → 回退 legacy 由 `ConvertResponsesToOpenAI` 返回哨兵驱动 failover；`info.ResponsesRequest` stash 在桥接层完成
+
+### 已知差异清单（计划内接受，对拍测试逐条覆盖）
+
+1. **链第二跳语义**（legacy `ConvertOpenAIToClaude` vs `oai_chat` 转换器，后者为线上常开主路径）：纯文本 content 形态（string vs `[{"type":"text"}]` 块数组，Claude API 均合法）；max_tokens 缺省来源（legacy 固定 4096 vs 宿主 `DefaultMaxTokens` hook，模型相关更正确）；nil content 的 `"<nil>"` 垃圾文本块（**legacy 既有 bug**，relaykit 输出空块）
+2. **计费口径**：Claude→Responses 流式/非流式计费 usage 由 Claude 语义（input 不含缓存）换为 OpenAI 语义（input 含缓存，`CacheIncludedInPrompt=true` 由计费侧扣减）——金额等价、明细口径变化
+3. **模型名字段**：响应对象 model 优先上游返回值（legacy 在 IsModelMapped 时强制 OriginModelName）；流式 message_start 的模型名同理（convmeta 无 IsModelMapped 信号，不为它扩 Meta 接口）
+4. **序列化形态**：类型化 DTO 输出 `prompt:null`/`conversation:null` 恒存在、`annotations:[]`/usage 细分零值键 omitempty 省略（legacy map 显式输出）——语义等价，官方 Responses API 本就含这些 null 字段
+5. **c2r input_audio 怪癖忠实保留**：legacy 读扁平 `part["data"]`（标准 chat 格式数据在 `part["input_audio"]["data"]`），音频数据在 c2r 桥接中两侧同样丢失——golden 如实记录，未修复（修复=偏离 legacy）
+
+### 对拍验证结论
+
+- r2c / c2r 请求侧：同输入双跑 legacy 完整路径（转换器 + adaptor 后处理链）与 relaykit 转换器，`map[string]any` + `reflect.DeepEqual` **深度相等**（`converter_r2c_parity_test.go` / `converter_c2r_parity_test.go`）
+- Responses→Claude 链：语义归一化对拍（文本提取 + `<nil>` 剔除 + 缺省 max_tokens 剔除），tool_use/tool_result/tools/tool_choice **严格相等**（`converter_chain_parity_test.go`）
+- Claude→Responses 响应侧：流式事件序列逐条深度相等（归一化时间戳/ID/null 键形态差，`responses_bridge_parity_test.go`），计费口径换算断言成立（input 50 + cache_read 10 = prompt 60）
+- golden fixture 8 个（r2c×4 / c2r×2 / 响应×2），首次由 relaykit 输出生成、与 legacy 输出并排审阅
+
+### 后续待办
+
+- 灰度验证（monitor.TrackConverterCall 面板观察 5 个新转换器成功率）
+- Responses↔Chat **响应侧**合成器（openai/responses.go 的 `handleResponsesInbound*`）与 r2c 响应侧（`chatCompletionToResponsesResponse`）未收编（P1+ 范围）
+- gemini adaptor 的 responses 入站、Responses→Gemini 方向未覆盖（保持 legacy）
 
 #### 7.1 删除旧转换函数
 
