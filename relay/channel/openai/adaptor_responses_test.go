@@ -698,9 +698,90 @@ func TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorMidStream(t *tes
 	}
 }
 
+// TestAdaptor_DoResponse_ResponsesInboundStream_UpstreamResponsesSSE
+// 上游返回 Responses 格式 SSE（渠道误配为 chat-only 但上游实际说 Responses 的典型形态）：
+// 每个 data 行都能解析为"空 chat chunk"，绝不能静默合成空 response.completed 假成功，
+// 必须返回 502 upstream error（此时已发过前置事件，无法回写错误体）。
+func TestAdaptor_DoResponse_ResponsesInboundStream_UpstreamResponsesSSE(t *testing.T) {
+	ss := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+		"",
+		`data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Hi"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`,
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+
+	info := responsesInboundInfo(true)
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	usage, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err == nil {
+		t.Fatal("non-chat upstream stream should return an upstream error, got nil")
+	}
+	if usage == nil {
+		t.Fatal("usage should be non-nil for error path")
+	}
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("error should be *constant.RelayError, got %T", err)
+	}
+	if relayErr.StatusCode != http.StatusBadGateway {
+		t.Errorf("status code = %d, want %d", relayErr.StatusCode, http.StatusBadGateway)
+	}
+	out := rec.Body.String()
+	// 首个"空 chunk"触发的 created 系列事件可以保留，但不得合成假成功、不得转发 Responses delta
+	if strings.Contains(out, "response.completed") {
+		t.Errorf("should not synthesize empty response.completed:\n%s", out)
+	}
+	if strings.Contains(out, `"delta":"Hi"`) {
+		t.Errorf("upstream responses delta must not be forwarded as chat delta:\n%s", out)
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesInboundStream_NonSSEJSONBody
+// 上游 200 但返回非流式 JSON 体（无 data: 行）：应向客户端写入 502 错误并返回 upstream error，
+// 而不是合成空 response.completed。
+func TestAdaptor_DoResponse_ResponsesInboundStream_NonSSEJSONBody(t *testing.T) {
+	body := `{"id":"chatcmpl-1","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"Hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	info := responsesInboundInfo(true)
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	_, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err == nil {
+		t.Fatal("non-SSE upstream body should return an upstream error, got nil")
+	}
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("error should be *constant.RelayError, got %T", err)
+	}
+	if !relayErr.ResponseWritten {
+		t.Error("ResponseWritten should be true after writing error body to client")
+	}
+	// SetEventStreamHeaders 已提前提交 HTTP 200，状态码无法改写为 502；
+	// 但错误体必须写入（客户端可见明确错误而非空 SSE 流）
+	if !strings.Contains(rec.Body.String(), "upstream_protocol_mismatch") {
+		t.Errorf("error body should contain protocol mismatch code: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "response.completed") {
+		t.Errorf("should not synthesize empty response.completed: %s", rec.Body.String())
+	}
+}
+
 // TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks
 // 上游 data 行全部无法解析为 chat chunk（如返回了非 chat 格式）：
-// 保持既有兜底行为（合成空 response.completed、不报错），但不再静默无痕。
+// 不再合成空 response.completed 假成功，必须返回 upstream error 并向客户端写入错误体。
 func TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks(t *testing.T) {
 	ss := strings.Join([]string{
 		"data: {invalid json",
@@ -718,13 +799,23 @@ func TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks(t *testing.
 	rec := httptest.NewRecorder()
 	a := &Adaptor{}
 	usage, err := a.DoResponse(context.Background(), resp, info, rec)
-	if err != nil {
-		t.Fatalf("unparseable chunks keep fallback behavior, unexpected error: %v", err)
-	}
-	if !strings.Contains(rec.Body.String(), "response.completed") {
-		t.Errorf("fallback response.completed missing:\n%s", rec.Body.String())
+	if err == nil {
+		t.Fatal("unparseable non-chat stream should return an upstream error, got nil")
 	}
 	if usage == nil {
 		t.Fatal("usage should be non-nil")
+	}
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("error should be *constant.RelayError, got %T", err)
+	}
+	if !relayErr.ResponseWritten {
+		t.Error("ResponseWritten should be true after writing error body to client")
+	}
+	if strings.Contains(rec.Body.String(), "response.completed") {
+		t.Errorf("should not synthesize empty response.completed:\n%s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "upstream_protocol_mismatch") {
+		t.Errorf("error body should contain protocol mismatch code: %s", rec.Body.String())
 	}
 }

@@ -436,6 +436,89 @@ func TestConvertResponsesToOpenAI_InputAudioAndFile(t *testing.T) {
 	}
 }
 
+// TestConvertResponsesToOpenAI_DeveloperRoleMappedToSystem codex 等客户端会在 input 中
+// 发送 developer 角色消息（新式系统提示）；第三方 chat 上游（serde 严格校验）不识别该角色，
+// 必须映射为 system，否则上游直接拒绝整个请求体。
+func TestConvertResponsesToOpenAI_DeveloperRoleMappedToSystem(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"deepseek-v4-flash","instructions":"You are helpful.",` +
+		`"input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are a coding agent."}]},` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}`)
+	out, err := ConvertResponsesToOpenAI(body, info)
+	if err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, raw)
+	}
+	msgs, _ := m["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %v, want 3 (instructions→system + developer→system + user)", msgs)
+	}
+	for i, want := range []string{"system", "system", "user"} {
+		msg := msgs[i].(map[string]any)
+		if got := msg["role"]; got != want {
+			t.Errorf("messages[%d].role = %v, want %q", i, got, want)
+		}
+	}
+}
+
+// TestConvertResponsesToOpenAI_FunctionCallHistory codex 多轮会把历史 function_call /
+// function_call_output / reasoning 项放进 input：function_call 需聚合为 assistant.tool_calls
+// （其后的 tool 消息才有对应的 tool_call_id），reasoning 项直接跳过。
+func TestConvertResponsesToOpenAI_FunctionCallHistory(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"deepseek-v4-flash","input":[` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]},` +
+		`{"type":"reasoning","summary":[]},` +
+		`{"type":"function_call","call_id":"call_a","name":"shell","arguments":"{\"cmd\":\"ls\"}"},` +
+		`{"type":"function_call","call_id":"call_b","name":"read","arguments":"{\"path\":\"a.go\"}"},` +
+		`{"type":"function_call_output","call_id":"call_a","output":"a.go b.go"},` +
+		`{"type":"function_call_output","call_id":"call_b","output":"package main"}` +
+		`]}`)
+	out, err := ConvertResponsesToOpenAI(body, info)
+	if err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, raw)
+	}
+	msgs, _ := m["messages"].([]any)
+	if len(msgs) != 4 {
+		t.Fatalf("messages = %v, want 4 (user + assistant[2 calls] + tool + tool)", msgs)
+	}
+
+	// 连续两条 function_call 聚合为一条 assistant 消息
+	assistant := msgs[1].(map[string]any)
+	if assistant["role"] != "assistant" {
+		t.Fatalf("messages[1].role = %v, want assistant", assistant["role"])
+	}
+	calls, _ := assistant["tool_calls"].([]any)
+	if len(calls) != 2 {
+		t.Fatalf("tool_calls = %v, want 2 aggregated calls", calls)
+	}
+	first, _ := calls[0].(map[string]any)
+	if first["id"] != "call_a" || first["type"] != "function" {
+		t.Errorf("tool_calls[0] = %v", first)
+	}
+	fn, _ := first["function"].(map[string]any)
+	if fn["name"] != "shell" || fn["arguments"] != `{"cmd":"ls"}` {
+		t.Errorf("tool_calls[0].function = %v", fn)
+	}
+
+	// function_call_output → tool 消息，tool_call_id 与聚合条目对应
+	for i, wantID := range []string{"call_a", "call_b"} {
+		tool := msgs[2+i].(map[string]any)
+		if tool["role"] != "tool" || tool["tool_call_id"] != wantID {
+			t.Errorf("messages[%d] = %v, want tool with tool_call_id=%s", 2+i, tool, wantID)
+		}
+	}
+}
+
 // TestConvertOpenAIToResponses_TextFormatUnpack chat response_format 转 Responses
 // text.format：json_schema 需解包为扁平结构（不能原样塞入嵌套形状）。
 func TestConvertOpenAIToResponses_TextFormatUnpack(t *testing.T) {

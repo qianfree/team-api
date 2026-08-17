@@ -233,6 +233,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	sentCreated := false
 	sentTextDone := false
 	parsedChunks := 0
+	sawChoices := false
 	outputIndex := 0
 	contentIndex := 0
 	toolCallIndexByID := make(map[string]int)
@@ -297,6 +298,9 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			continue
 		}
 		parsedChunks++
+		if len(chunk.Choices) > 0 {
+			sawChoices = true
+		}
 
 		// 第一个 chunk：发送 response.created + output_item.added + content_part.added
 		if !sentCreated {
@@ -549,12 +553,32 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 		}
 	}
 
-	// 上游零有效 chunk 时不再静默合成空响应：记录告警便于定位
-	// （上游返回非 SSE 体 / 非 chat 格式 / 空 body / 纯 [DONE] 等异常都会走到这里）
-	if !sentCreated {
+	// 上游流始终不是 chat 格式（全程无 choices 且无内容/工具调用/usage）时不再静默合成空响应：
+	// 典型形态包括 Responses/Claude 格式 SSE（JSON 能解析为空 chat chunk）、非流式 JSON 体、空 body 等。
+	// 假成功的空 response.completed 会让客户端"成功但无内容"，必须报错驱动重试换渠道/健康上报。
+	if !sawChoices && contentBuilder.Len() == 0 && len(toolCallIndexByID) == 0 && usage.TotalTokens == 0 {
+		errUpstream := fmt.Errorf("upstream stream is not chat completions format: %d chunks parsed, none contained choices", parsedChunks)
 		g.Log().Warningf(ctx,
-			"[OpenAI.handleResponsesInboundStream] upstream stream yielded no parseable chat chunks (parsed=%d), synthesizing empty response.completed: channel=%d(%s) model=%s request_id=%s",
-			parsedChunks, info.ChannelMeta.ChannelID, info.ChannelMeta.ChannelName, info.OriginModelName, info.RequestID)
+			"[OpenAI.handleResponsesInboundStream] %v: channel=%d(%s) model=%s request_id=%s",
+			errUpstream, info.ChannelMeta.ChannelID, info.ChannelMeta.ChannelName, info.OriginModelName, info.RequestID)
+		info.StreamStatus.SetEndReason(common.StreamEndReasonError, errUpstream)
+		if !sentCreated {
+			// 尚未向客户端发送任何事件：写入错误响应（与 SSE 开始前的非 200 分支行为一致）
+			errBody, _ := json.Marshal(map[string]any{
+				"error": map[string]any{
+					"message": "upstream returned a non-chat-completions stream",
+					"type":    "upstream_error",
+					"param":   nil,
+					"code":    "upstream_protocol_mismatch",
+				},
+			})
+			writeUpstreamErrorResponse(writer, http.StatusBadGateway, errBody)
+			upstreamErr := constant.NewUpstreamError(http.StatusBadGateway, string(errBody), nil)
+			upstreamErr.ResponseWritten = true
+			return &usage, upstreamErr
+		}
+		// 已发送部分事件：流已污染无法回写错误体，直接返回错误终止处理
+		return &usage, constant.NewUpstreamError(http.StatusBadGateway, errUpstream.Error(), nil)
 	}
 
 	// 估算 usage（正常结束 4 字符/token；scanner 异常等部分传输场景 2 字符/token）
