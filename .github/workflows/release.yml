@@ -42,13 +42,16 @@ jobs:
         id: vars
         run: |
           VERSION=${GITHUB_REF_NAME}
+          # 资产文件名统一去掉 v 前缀，与 Go 侧 getPlatformAssetName 的命名约定一致
+          # （内置版本号 VERSION 保留原始 tag，如 v0.2.0；仅文件名用 ASSET_VERSION）
+          ASSET_VERSION=${VERSION#v}
           BINARY=team-api
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY=team-api.exe
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "binary=${BINARY}" >> $GITHUB_OUTPUT
-          echo "artifact=team-api-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}" >> $GITHUB_OUTPUT
+          echo "artifact=team-api-${ASSET_VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}" >> $GITHUB_OUTPUT
 
       - name: Build
         env:

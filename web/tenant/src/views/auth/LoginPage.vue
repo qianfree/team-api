@@ -544,7 +544,6 @@ async function handleOAuthLogin(provider: string) {
 		inset 0 1px 0 rgba(255, 255, 255, 0.82),
 		0 6px 16px rgba(76, 91, 142, 0.06);
 	backdrop-filter: blur(18px) saturate(1.14);
-	-webkit-backdrop-filter: blur(18px) saturate(1.14);
 }
 
 .login-mode-indicator {
