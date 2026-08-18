@@ -2452,7 +2452,36 @@ golden 6 个（c2o×3 含怪癖集 / g2o×3 含同名函数 ID 错配与未知 r
 | **Claude** | ✅ 全侧 | 直连 | ✅ 全侧（P2） | ❌ legacy | ❌ 无 |
 | **Gemini** | ✅ 全侧 | ✅ 全侧（P2） | 直连 | ❌ legacy | ❌ 无 |
 
-剩余 legacy：Coze/Dify/Ollama 上游 × claude/gemini/responses 客户端（低频，组合件已在库可按需补）；chat→responses 的 B 方向流式（StreamScannerHandler 超时治理依赖）。
+剩余 legacy：Coze/Dify/Ollama 上游 × claude/gemini/responses 客户端（低频，组合件已在库可按需补）。
+
+---
+
+## P3：Claude/Gemini 客户端 → Responses 上游（2026-08-18，转换矩阵最后两个象限）
+
+3 个提交（E1 B 流式转换器 / E2 组合注册+桥接+接线 / E3 文档）。
+
+### E1: B 方向流式转换器（当初被排除的方向补齐）
+
+`ResponsesToOpenAIChatStreamConverter`（responses SSE→chat chunks）：移植 HandleResponsesStreamToChat 事件状态机（前缀差分 args / name 去重 / finish 判据 / 独立 usage chunk / error 事件→EmbeddedUpstreamError），**去除 StreamScannerHandler 超时治理**（PingTicker 兜底，与 P2 D1 同款取舍）。B 流式的补齐使 claude/gemini 客户端×responses 上游的流式组合链闭环。
+
+### E2: 组合与接线
+
+- 请求链：claude→responses / gemini→responses（StepConverters 两跳）+ Resp 组合 + 两条流式 io.Pipe 组合
+- 桥接 `bridgeUpstreamFormat` helper：claude/gemini 客户端 + `info.UseResponsesAPI` → 上游按 responses 路由（openai 客户端不受影响）
+- handler `UseResponsesAPI` 条件扩到 ClaudeMessages/GeminiChat 模式（此前注释明说"暂不支持会 404"——限制移除）
+- **修复 P1-A 遗留 bug**：openai adaptor `GetRequestURL` 补 `RelayModeGeminiChat`（gemini 客户端打普通 openai 兼容渠道此前直接报 unsupported relay mode——g2o 转换层做了但 URL 路由漏了）
+- adaptor c2r 桥接分支扩到 claude/gemini 模式（body 已转 chat，与 chat 入站路径同构）
+
+### 转换矩阵最终态（P3 后）
+
+| 客户端 \ 上游 | OpenAI chat | Claude | Gemini | Coze/Dify/Ollama | Responses |
+|---|---|---|---|---|---|
+| **OpenAI chat** | 直连 | ✅ 全侧 | ✅ 全侧 | ✅ 全侧 | ✅ 全侧 |
+| **Responses** | ✅ 全侧 | ✅ 全侧 | ✅ 全侧 | ❌ legacy | 直连 |
+| **Claude** | ✅ 全侧 | 直连 | ✅ 全侧 | ❌ legacy | ✅ 全侧（P3） |
+| **Gemini** | ✅ 全侧 | ✅ 全侧 | 直连 | ❌ legacy | ✅ 全侧（P3） |
+
+除 Coze/Dify/Ollama 上游的低频交叉方向外，**转换矩阵全面 relaykit 化**（16/20 象限，其中 3 个直连）。旧代码全部保留为回退。
 
 #### 7.1 删除旧转换函数
 
