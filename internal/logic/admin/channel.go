@@ -772,11 +772,11 @@ func defaultProviderURL(t int) string {
 	return defaultProviderURLs[t]
 }
 
-// GetChannelHealthTrend 获取渠道健康趋势数据
+// GetChannelHealthTrend 获取渠道健康趋势数据（健康度、延迟在 SQL 层四舍五入取整，避免展示小数）
 func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error) {
 	var points []v1.HealthTrendPoint
 	err := dao.ChnHealthSnapshots.Ctx(ctx).
-		Fields("snapshot_at, health_score, success_rate, latency_ms, stability_score, consecutive_failures").
+		Fields("snapshot_at, ROUND(health_score)::int AS health_score, success_rate, ROUND(latency_ms)::int AS latency_ms, stability_score, consecutive_failures").
 		Where("channel_id", req.ID).
 		Where("snapshot_at >= ?", gtime.Now().Add(-time.Duration(req.Hours)*time.Hour)).
 		OrderAsc("snapshot_at").
