@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // handleClaudeInboundNonStream 将 OpenAI 非流式响应转换为 Claude 格式
@@ -44,14 +45,22 @@ func handleClaudeInboundNonStream(ctx context.Context, resp *http.Response, info
 		return nil, fmt.Errorf("invalid response body: %w", err)
 	}
 
-	// 转换为 Claude 格式
-	claudeResp := openAIToClaudeResponse(&openaiResp, info)
+	// relaykit 转换器路径优先（P1-B）；失败/未覆盖回退下方旧内联转换
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+	} else {
+		// 转换为 Claude 格式
+		claudeResp := openAIToClaudeResponse(&openaiResp, info)
 
-	respBody, _ := json.Marshal(claudeResp)
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
+		respBody, _ := json.Marshal(claudeResp)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
+	}
 
+	// 计费 usage 提取保持 legacy 口径（choices>0 守卫怪癖保留；与转换路径无关）
 	usage := &common.Usage{}
 	if len(openaiResp.Choices) > 0 {
 		usage.PromptTokens = openaiResp.Usage.PromptTokens

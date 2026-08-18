@@ -14,6 +14,7 @@ import (
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // handleGeminiInboundNonStream 将 OpenAI 非流式响应转换为 Gemini 格式
@@ -37,12 +38,19 @@ func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info
 		return nil, fmt.Errorf("invalid response body: %w", err)
 	}
 
-	geminiResp := openAIToGeminiResponse(&openaiResp, info)
+	// relaykit 转换器路径优先（P1-B）；失败/未覆盖回退旧内联转换
+	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(convertedBody)
+	} else {
+		geminiResp := openAIToGeminiResponse(&openaiResp, info)
 
-	respBody, _ := json.Marshal(geminiResp)
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
+		respBody, _ := json.Marshal(geminiResp)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
+	}
 
 	usage := &common.Usage{
 		PromptTokens:           openaiResp.Usage.PromptTokens,
