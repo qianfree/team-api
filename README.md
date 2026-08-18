@@ -43,18 +43,12 @@
 
 <table>
   <tr>
-    <td align="center">管理仪表盘</td>
-    <td align="center">用量统计</td>
+    <td align="center"><strong>管理仪表盘</strong><br><img src="docs/screenshot/admin_dashboard.png" width="480"></td>
+    <td align="center"><strong>用量统计</strong><br><img src="docs/screenshot/admin_usage_log.png" width="480"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshot/admin_dashboard.png" width="600"/></td>
-    <td><img src="docs/screenshot/admin_usage_log.png" width="600"/></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2">请求日志</td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/screenshot/admin_request_log.png" width="600"/></td>
+    <td align="center"><strong>请求日志</strong><br><img src="docs/screenshot/admin_request_log.png" width="480"></td>
+    <td align="center"><strong>渠道监控</strong><br><img src="docs/screenshot/admin_channel_monitor.png" width="480"></td>
   </tr>
 </table>
 
@@ -62,41 +56,16 @@
 
 <table>
   <tr>
-    <td align="center">租户仪表盘</td>
-    <td align="center">成员管理</td>
+    <td align="center"><strong>租户仪表盘</strong><br><img src="docs/screenshot/tenant_dashboard.png" width="480"></td>
+    <td align="center"><strong>团队详情</strong><br><img src="docs/screenshot/tenant_team_detail.png" width="480"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshot/tenant_dashboard.png" width="600"/></td>
-    <td><img src="docs/screenshot/tenant_person.png" width="600"/></td>
+    <td align="center"><strong>用量统计</strong><br><img src="docs/screenshot/tenant_usage_log.png" width="480"></td>
+    <td align="center"><strong>组织设置</strong><br><img src="docs/screenshot/tenant_org_setting.png" width="480"></td>
   </tr>
   <tr>
-    <td align="center" colspan="2">用量统计</td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/screenshot/tenant_usage_log.png" width="600"/></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2">用量详情</td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/screenshot/tenant_usage_detail.png" width="600"/></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2">请求日志</td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/screenshot/tenant_request_log.png" width="600"/></td>
-  </tr>
-</table>
-
-### 运维监控
-
-<table>
-  <tr>
-    <td align="center">实时监控面板</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshot/实时监控面板.png" width="600"/></td>
+    <td align="center"><strong>在线对话体验</strong><br><img src="docs/screenshot/tenant_playground_chat.png" width="480"></td>
+    <td align="center"><strong>在线图像体验</strong><br><img src="docs/screenshot/tenant_playground_image.png" width="480"></td>
   </tr>
 </table>
 
