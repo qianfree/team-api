@@ -52,6 +52,13 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		query = query.Where("user_id", userID).Where("key_type", "personal")
 	}
 
+	// valid_only：只返回真正可用的密钥（active 且未过期）。过期密钥的 status 仍为 active，
+	// 仅凭状态过滤不出来，必须同时比较 expires_at；管理列表默认不过滤，禁用/过期密钥仍需展示
+	if req.ValidOnly {
+		query = query.Where("status", "active").
+			Where("(expires_at IS NULL OR expires_at > NOW())")
+	}
+
 	type keyRow struct {
 		Id                   int64      `json:"id"`
 		Name                 string     `json:"name"`

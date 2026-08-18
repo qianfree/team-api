@@ -11,6 +11,7 @@ type TenantApiKeyListReq struct {
 	g.Meta    `path:"/api-keys" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"API Key列表"`
 	KeyType   string `json:"key_type" in:"query"`
 	ProjectID int64  `json:"project_id" in:"query"`
+	ValidOnly bool   `json:"valid_only" in:"query" dc:"仅返回有效密钥（active 且未过期），用于在线体验等场景"`
 	Page      int    `json:"page" in:"query" d:"1"`
 	PageSize  int    `json:"page_size" in:"query" d:"20"`
 }
