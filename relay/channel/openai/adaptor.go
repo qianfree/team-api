@@ -35,7 +35,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages, constant.RelayModeGeminiChat:
+		// GeminiChat（P3 修复 P1-A 遗留 bug）：gemini 客户端打 openai 兼容渠道此前落 default
+		// 报 unsupported relay mode——g2o 转换后同样打 chat 端点；UseResponsesAPI（P3 起
+		// claude/gemini 入站也置位）则打 /v1/responses
 		if info.UseResponsesAPI {
 			return baseURL + "/v1/responses", nil
 		}
@@ -173,7 +176,10 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	// responses-only 上游桥接：chat 请求体转换为 Responses 格式发送 /v1/responses。
 	// 转换器自行处理模型映射，并读取 chat 体的 reasoning_effort 映射为 reasoning.effort
 	// （thinking 后缀先注入 chat 体再进转换器），故此分支直接返回、不走后续 chat 后处理。
-	if info.UseResponsesAPI && mode == constant.RelayModeChatCompletions && !responsesUpstream {
+	// P3：claude/gemini 入站（P3 起 UseResponsesAPI 也置位）同样走此桥接——body 已被
+	// 上方内联 switch 经 ConvertToOpenAI 转为 chat 格式，与 chat 入站路径完全同构。
+	if info.UseResponsesAPI && !responsesUpstream &&
+		(mode == constant.RelayModeChatCompletions || mode == constant.RelayModeClaudeMessages || mode == constant.RelayModeGeminiChat) {
 		if info.ReasoningEffort != "" {
 			converted = injectReasoningEffort(converted, info.ReasoningEffort)
 		}
