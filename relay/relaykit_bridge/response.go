@@ -78,6 +78,14 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 			return nil, nil, false
 		}
 		upstreamResp = &ollamaResp
+	case constant.RelayFormatOpenAI:
+		// P1-B：openai 上游 → claude/gemini 客户端（ChatCompletionResponse → 客户端格式）
+		var chatResp dto.ChatCompletionResponse
+		if err := json.Unmarshal(upstreamBody, &chatResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse chat response failed, fallback to legacy: %v", err)
+			return nil, nil, false
+		}
+		upstreamResp = &chatResp
 	default:
 		return nil, nil, false
 	}
@@ -145,6 +153,11 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 		return relayconvert.ConverterOpenAIChatToDify // 响应侧是 Dify→OpenAI
 	case upstream == constant.RelayFormatOllama && clientFormat == constant.RelayFormatOpenAI:
 		return relayconvert.ConverterOpenAIChatToOllama // 响应侧是 Ollama→OpenAI
+	// P1-B：openai 上游 → claude/gemini 客户端（Claude Code/Gemini 客户端打 openai 兼容渠道）
+	case upstream == constant.RelayFormatOpenAI && clientFormat == constant.RelayFormatClaude:
+		return relayconvert.ConverterClaudeMessagesToOpenAIChat // spec A，Resp 侧反向（openai→claude）
+	case upstream == constant.RelayFormatOpenAI && clientFormat == constant.RelayFormatGemini:
+		return relayconvert.ConverterGeminiContentToOpenAIChat // spec B，Resp 侧反向（openai→gemini）
 	default:
 		return ""
 	}
