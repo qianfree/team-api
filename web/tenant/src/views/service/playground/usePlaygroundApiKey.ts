@@ -25,10 +25,10 @@ export function usePlaygroundApiKey() {
 			loading.value = true
 			error.value = null
 			const res = await request.get('/tenant/api-keys', {
-				params: { key_type: 'personal', valid_only: true, page: 1, page_size: 100 },
+				params: { key_type: 'personal', validity: 'valid', page: 1, page_size: 100 },
 			})
 			const list: ApiKeyItem[] = res.data?.data?.list ?? []
-			// 后端 valid_only 已过滤禁用/过期密钥，此处再按 active 兜底一次
+			// 后端 validity=valid 已过滤禁用/过期密钥，此处再按 active 兜底一次
 			apiKeys.value = list.filter((k: ApiKeyItem) => k.status === 'active')
 
 			if (apiKeys.value.length > 0) {

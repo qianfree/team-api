@@ -33,8 +33,6 @@ type (
 		ApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUpdateScopesReq) (*v1.TenantApiKeyUpdateScopesRes, error)
 		// ApiKeyModelScopes 查询 API Key 的模型范围
 		ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (*v1.TenantApiKeyModelScopesRes, error)
-		// ExportApiKeys exports the tenant API key list as CSV or Excel.
-		ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error)
 		// ApiKeyReveal 获取 API Key 明文值（用于 Playground 等场景）
 		ApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealReq) (*v1.TenantApiKeyRevealRes, error)
 		// AuditConfigGet returns the tenant's own audit level.

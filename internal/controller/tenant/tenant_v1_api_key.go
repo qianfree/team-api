@@ -25,9 +25,6 @@ func (c *ControllerV1) TenantApiKeyUpdateScopes(ctx context.Context, req *v1.Ten
 func (c *ControllerV1) TenantApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (res *v1.TenantApiKeyModelScopesRes, err error) {
 	return service.Tenant().ApiKeyModelScopes(ctx, req)
 }
-func (c *ControllerV1) TenantApiKeyExport(ctx context.Context, req *v1.TenantApiKeyExportReq) (res *v1.TenantApiKeyExportRes, err error) {
-	return service.Tenant().ExportApiKeys(ctx, req)
-}
 func (c *ControllerV1) TenantApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealReq) (res *v1.TenantApiKeyRevealRes, err error) {
 	return service.Tenant().ApiKeyReveal(ctx, req)
 }
