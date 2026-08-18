@@ -71,6 +71,10 @@ const (
 	ConverterClaudeMessagesToOpenAIResponsesStream = "anthropic_messages_to_openai_responses_stream"
 	// ConverterOpenAIChatToOpenAIResponsesStream OpenAI Chat 上游 SSE → Responses 客户端 SSE（流式响应侧）
 	ConverterOpenAIChatToOpenAIResponsesStream = "openai_chat_to_openai_responses_stream"
+	// ConverterOpenAIChatToClaudeMessagesStream OpenAI Chat 上游 SSE → Claude 客户端 SSE（流式响应侧，P2）
+	ConverterOpenAIChatToClaudeMessagesStream = "openai_chat_to_anthropic_messages_stream"
+	// ConverterOpenAIChatToGeminiContentStream OpenAI Chat 上游 SSE → Gemini 客户端流（流式响应侧，P2）
+	ConverterOpenAIChatToGeminiContentStream = "openai_chat_to_gemini_generate_content_stream"
 	ConverterOpenAIChatToClaudeMessages            = "openai_chat_completions_to_anthropic_messages"
 	ConverterOpenAIChatToOpenAIResponses           = "openai_chat_completions_to_openai_responses"
 	ConverterOpenAIResponsesToOpenAIChat           = "openai_responses_to_openai_chat_completions"
