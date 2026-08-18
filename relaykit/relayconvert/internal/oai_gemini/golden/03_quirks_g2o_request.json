@@ -1,0 +1,103 @@
+{
+  "name": "quirks_gemini_to_oai_request",
+  "from": "gemini",
+  "to": "openai",
+  "request": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "看图"
+          },
+          {
+            "inlineData": {
+              "data": "aGVsbG8=",
+              "mimeType": "image/png"
+            }
+          },
+          {
+            "fileData": {
+              "fileUri": "gs://bucket/file",
+              "mimeType": "application/pdf"
+            }
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "parts": [
+          {
+            "text": "未知角色的文本会丢失"
+          }
+        ],
+        "role": "strangerole"
+      },
+      {
+        "parts": [
+          {
+            "text": "第一段"
+          },
+          {
+            "text": "第二段"
+          },
+          {
+            "inlineData": {
+              "data": "aW1nMQ==",
+              "mimeType": "image/png"
+            }
+          },
+          {
+            "functionCall": {
+              "args": null,
+              "name": "noop"
+            }
+          }
+        ],
+        "role": "model"
+      }
+    ]
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "看图"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,aGVsbG8=",
+              "detail": "auto"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,aW1nMQ==",
+              "detail": "auto"
+            }
+          }
+        ],
+        "tool_calls": [
+          {
+            "id": "call_0",
+            "type": "function",
+            "function": {
+              "name": "noop",
+              "arguments": "{}"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

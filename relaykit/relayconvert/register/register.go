@@ -32,6 +32,10 @@ func init() {
 	registerOpenAIToClaude()
 	// 链式 spec 依赖上述步骤转换器，须在其后注册
 	registerResponsesToClaudeChain()
+	// Claude/Gemini 入站方向（P1-A）：spec B（gemini→openai）必须先于链 spec C 注册
+	registerClaudeToOpenAIChat()
+	registerGeminiToOpenAIChat()
+	registerGeminiToClaudeChain()
 	registerOpenAIToGemini()
 	// 剩余原生格式供应商
 	registerOpenAIToCoze()
@@ -132,6 +136,59 @@ func registerResponsesToClaudeChain() {
 		relayconvert.ConverterClaudeMessagesToOpenAIResponsesStream,
 		(&oai_responses.ClaudeToResponsesStreamConverter{}).ConvertStreamResponse,
 	)
+}
+
+// registerClaudeToOpenAIChat 注册 Claude → OpenAI Chat 方向转换器（spec A，P1-A）。
+// 客户端说 Claude，上游说 OpenAI Chat：
+//   - 请求侧 Claude → OpenAI Chat（宿主接管点在共享函数 ConvertToOpenAI 内部，
+//     各 adaptor 的定制后处理照常执行）
+//   - 响应侧（openai 上游 → claude 客户端，非流式）由 P1-B 的 Resp 侧承担
+func registerClaudeToOpenAIChat() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterClaudeMessagesToOpenAIChat,
+		From:    types.RelayFormatClaude,
+		To:      types.RelayFormatOpenAI,
+		Quality: relayconvert.TextConverterQualityGood,
+		Req: relayconvert.TextRequestSide{
+			Convert: (&oai_chat.ClaudeToOpenAIRequestConverter{}).ConvertRequest,
+		},
+	})
+}
+
+// registerGeminiToOpenAIChat 注册 Gemini → OpenAI Chat 方向转换器（spec B，P1-A）。
+// 客户端说 Gemini，上游说 OpenAI Chat（宿主接管点同 spec A）。
+// 注意：本 spec 必须先于 gemini→claude 链 spec 注册（链引用其转换器 ID）。
+func registerGeminiToOpenAIChat() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterGeminiContentToOpenAIChat,
+		From:    types.RelayFormatGemini,
+		To:      types.RelayFormatOpenAI,
+		Quality: relayconvert.TextConverterQualityGood,
+		Req: relayconvert.TextRequestSide{
+			Convert: (&oai_gemini.GeminiToOpenAIRequestConverter{}).ConvertRequest,
+		},
+	})
+}
+
+// registerGeminiToClaudeChain 注册 Gemini → Claude 请求链（spec C，P1-A）。
+// StepConverters 两跳：Gemini→OpenAI Chat→Claude Messages，替换宿主
+// claude/converter.go 的手工拼接链 ConvertGeminiToClaude（后者保留为回退）。
+// 响应侧（Claude 上游 → Gemini 客户端）无 legacy 蓝本（现存缺陷 #18：交叉客户端响应
+// 落到 OpenAI 格式 handler），本 spec 为 Req-only。
+func registerGeminiToClaudeChain() {
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:   relayconvert.ConverterGeminiContentToClaudeMessages,
+		From: types.RelayFormatGemini,
+		To:   types.RelayFormatClaude,
+		// 多跳链路有中间格式信息损耗，质量标记为 fair
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			StepConverters: []string{
+				relayconvert.ConverterGeminiContentToOpenAIChat,
+				relayconvert.ConverterOpenAIChatToClaudeMessages,
+			},
+		},
+	})
 }
 
 // registerOpenAIToClaude 注册 OpenAI → Claude 方向转换器。

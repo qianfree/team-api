@@ -1,0 +1,183 @@
+{
+  "name": "tools_thinking_claude_to_oai_request",
+  "from": "claude",
+  "to": "openai",
+  "request": {
+    "max_tokens": 8192,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "查天气",
+            "type": "text"
+          },
+          {
+            "source": {
+              "data": "aGVsbG8=",
+              "media_type": "image/jpeg",
+              "type": "base64"
+            },
+            "type": "image"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "signature": "sig-to-be-dropped",
+            "thinking": "先思考",
+            "type": "thinking"
+          },
+          {
+            "text": "我调一下工具",
+            "type": "text"
+          },
+          {
+            "id": "toolu_1",
+            "input": {
+              "city": "北京"
+            },
+            "name": "get_weather",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "晴",
+                "type": "text"
+              }
+            ],
+            "tool_use_id": "toolu_1",
+            "type": "tool_result"
+          },
+          {
+            "text": "收到，谢谢",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "ignored",
+    "system": [
+      {
+        "text": "系统提示一",
+        "type": "text"
+      },
+      {
+        "text": "系统提示二",
+        "type": "text"
+      },
+      {
+        "source": {
+          "data": "xxx",
+          "media_type": "image/png",
+          "type": "base64"
+        },
+        "type": "image"
+      }
+    ],
+    "thinking": {
+      "budget_tokens": 20000,
+      "type": "enabled"
+    },
+    "tool_choice": {
+      "name": "get_weather",
+      "type": "tool"
+    },
+    "tools": [
+      {
+        "description": "查天气",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "get_weather"
+      }
+    ]
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "system",
+        "content": "系统提示一\n系统提示二"
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "查天气"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,aGVsbG8=",
+              "detail": "auto"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "我调一下工具",
+        "reasoning_content": "先思考",
+        "tool_calls": [
+          {
+            "id": "toolu_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"北京\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "晴",
+        "tool_call_id": "toolu_1"
+      },
+      {
+        "role": "user",
+        "content": "收到，谢谢"
+      }
+    ],
+    "max_tokens": 8192,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "查天气",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "function": {
+        "name": "get_weather"
+      },
+      "type": "function"
+    },
+    "reasoning_effort": "high"
+  }
+}

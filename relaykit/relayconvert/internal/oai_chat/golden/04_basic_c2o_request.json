@@ -1,0 +1,54 @@
+{
+  "name": "basic_claude_to_oai_request",
+  "from": "claude",
+  "to": "openai",
+  "request": {
+    "max_tokens": 2048,
+    "messages": [
+      {
+        "content": "Hello",
+        "role": "user"
+      },
+      {
+        "content": "你好",
+        "role": "assistant"
+      },
+      {
+        "content": "Thanks",
+        "role": "user"
+      }
+    ],
+    "model": "ignored",
+    "stop_sequences": [
+      "END"
+    ],
+    "system": "你是翻译助手",
+    "temperature": 0.5
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是翻译助手"
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      },
+      {
+        "role": "assistant",
+        "content": "你好"
+      },
+      {
+        "role": "user",
+        "content": "Thanks"
+      }
+    ],
+    "max_tokens": 2048,
+    "temperature": 0.5,
+    "stop": [
+      "END"
+    ]
+  }
+}

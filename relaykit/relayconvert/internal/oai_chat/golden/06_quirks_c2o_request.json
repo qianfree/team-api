@@ -1,0 +1,101 @@
+{
+  "name": "quirks_claude_to_oai_request",
+  "from": "claude",
+  "to": "openai",
+  "request": {
+    "messages": [
+      {
+        "content": null,
+        "role": "user"
+      },
+      {
+        "content": "非 user/assistant 角色整条丢弃",
+        "role": "system_or_other"
+      },
+      {
+        "content": [
+          {
+            "id": "toolu_x",
+            "name": "f",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_y",
+            "input": {
+              "a": 1
+            },
+            "name": "g",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": {
+              "map": "form"
+            },
+            "tool_use_id": "toolu_x",
+            "type": "tool_result"
+          },
+          {
+            "content": "string form",
+            "tool_use_id": "toolu_y",
+            "type": "tool_result"
+          },
+          {
+            "data": "丢弃",
+            "type": "unknown_block"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "ignored",
+    "tool_choice": "any"
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\u003cnil\u003e"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "toolu_x",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          },
+          {
+            "id": "toolu_y",
+            "type": "function",
+            "function": {
+              "name": "g",
+              "arguments": "{\"a\":1}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"map\":\"form\"}",
+        "tool_call_id": "toolu_x"
+      },
+      {
+        "role": "tool",
+        "content": "string form",
+        "tool_call_id": "toolu_y"
+      }
+    ],
+    "max_tokens": 4096,
+    "tool_choice": "any"
+  }
+}
