@@ -103,15 +103,3 @@ func TestApiKeyUpdateScopes(t *testing.T) {
 		t.Fatalf("expected 2 model names, got %d", len(scopesData.ModelNames))
 	}
 }
-
-func TestApiKeyExport(t *testing.T) {
-	client, _ := testinfra.GetAuthedClient(t)
-
-	_, cleanup := testinfra.CreateTestApiKey(t, client)
-	defer cleanup()
-
-	resp := client.Get("/api/tenant/api-keys/export", map[string]string{
-		"format": "csv",
-	})
-	resp.AssertSuccess(t)
-}

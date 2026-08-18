@@ -21,7 +21,6 @@ import (
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	uc "github.com/qianfree/team-api/internal/utility/crypto"
-	"github.com/qianfree/team-api/internal/utility/export"
 )
 
 // ApiKeyList 列出 API Keys，支持按类型过滤
@@ -52,12 +51,8 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		query = query.Where("user_id", userID).Where("key_type", "personal")
 	}
 
-	// valid_only：只返回真正可用的密钥（active 且未过期）。过期密钥的 status 仍为 active，
-	// 仅凭状态过滤不出来，必须同时比较 expires_at；管理列表默认不过滤，禁用/过期密钥仍需展示
-	if req.ValidOnly {
-		query = query.Where("status", "active").
-			Where("(expires_at IS NULL OR expires_at > NOW())")
-	}
+	// 按有效性过滤（valid=仅可用 / invalid=仅失效），默认 all 不过滤
+	query = applyValidityFilter(query, req.Validity)
 
 	type keyRow struct {
 		Id                   int64      `json:"id"`
@@ -143,6 +138,21 @@ func (s *sTenant) ApiKeyList(ctx context.Context, req *v1.TenantApiKeyListReq) (
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// applyValidityFilter 按有效性过滤密钥查询：valid=仅可用（active 且未过期），
+// invalid=仅失效（禁用/吊销或已过期）。过期密钥的 status 仍为 active，
+// 仅凭状态过滤不出来，必须同时比较 expires_at；列表与导出共用此过滤口径
+func applyValidityFilter(query *gdb.Model, validity string) *gdb.Model {
+	switch validity {
+	case "valid":
+		return query.Where("status", "active").
+			Where("(expires_at IS NULL OR expires_at > NOW())")
+	case "invalid":
+		return query.Where("(status != 'active' OR (expires_at IS NOT NULL AND expires_at <= NOW()))")
+	default:
+		return query
+	}
 }
 
 func normalizeIPWhitelist(items []string) []string {
@@ -602,86 +612,6 @@ func (s *sTenant) ApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyMod
 	}
 
 	return &v1.TenantApiKeyModelScopesRes{ModelNames: names}, nil
-}
-
-// ExportApiKeys exports the tenant API key list as CSV or Excel.
-func (s *sTenant) ExportApiKeys(ctx context.Context, req *v1.TenantApiKeyExportReq) (*v1.TenantApiKeyExportRes, error) {
-	tenantID := middleware.GetTenantID(ctx)
-	userID := middleware.GetUserID(ctx)
-
-	columns := []export.Column{
-		{Field: "id", Header: "ID"},
-		{Field: "name", Header: "名称"},
-		{Field: "key_prefix", Header: "Key前缀"},
-		{Field: "key_type", Header: "类型"},
-		{Field: "scope", Header: "范围"},
-		{Field: "status", Header: "状态"},
-		{Field: "expires_at", Header: "过期时间"},
-		{Field: "created_at", Header: "创建时间"},
-	}
-
-	config := export.Config{
-		Format:   req.Format,
-		Filename: "API密钥_" + gtime.Now().Format("Ymd_His"),
-		Columns:  columns,
-	}
-
-	buildQuery := func() *gdb.Model {
-		query := dao.ApiKeys.Ctx(ctx).Where("tenant_id", tenantID)
-		if req.KeyType == "project" {
-			query = query.Where("key_type", "project")
-			if req.ProjectID > 0 {
-				query = query.Where("project_id", req.ProjectID)
-			}
-		} else {
-			query = query.Where("user_id", userID).Where("key_type", "personal")
-		}
-		return query
-	}
-
-	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
-		for {
-			type keyRow struct {
-				Id        int64      `json:"id"`
-				Name      string     `json:"name"`
-				KeyPrefix string     `json:"key_prefix"`
-				KeyType   string     `json:"key_type"`
-				Scope     string     `json:"scope"`
-				Status    string     `json:"status"`
-				ExpiresAt *time.Time `json:"expires_at"`
-				CreatedAt *time.Time `json:"created_at"`
-			}
-
-			var keys []keyRow
-			err := buildQuery().
-				Fields("id, name, key_prefix, key_type, scope, status, expires_at, created_at").
-				OrderDesc("created_at").
-				Limit(1000).Offset(offset).
-				Scan(&keys)
-			if err != nil {
-				return
-			}
-			for _, k := range keys {
-				if !yield(map[string]any{
-					"id":         k.Id,
-					"name":       k.Name,
-					"key_prefix": k.KeyPrefix,
-					"key_type":   k.KeyType,
-					"scope":      k.Scope,
-					"status":     k.Status,
-					"expires_at": k.ExpiresAt,
-					"created_at": k.CreatedAt,
-				}) {
-					return
-				}
-			}
-			if len(keys) < 1000 {
-				break
-			}
-			offset += 1000
-		}
-	})
 }
 
 // ApiKeyReveal 获取 API Key 明文值（用于 Playground 等场景）

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NTag } from 'naive-ui'
+import { NButton, NDropdown, NTag } from 'naive-ui'
 import BaseModal from '@/components/common/BaseModal.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import ApiKeyEditModal from '@/components/common/ApiKeyEditModal.vue'
@@ -10,7 +10,6 @@ import Icon from '@/components/common/Icon.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
-import { useExport } from '@/composables/useExport'
 import { useConfirm } from '@/composables/useConfirm'
 
 const { confirm } = useConfirm()
@@ -41,13 +40,22 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
-const showExportDropdown = ref(false)
-const { exporting, exportFile } = useExport({
-	url: '/tenant/api-keys/export',
-	getFilters: () => ({
-		key_type: 'personal',
-	}),
-})
+// 有效性筛选：默认仅展示可用密钥
+const validityFilter = ref('valid')
+const validityOptions = [
+	{ label: '仅可用', key: 'valid' },
+	{ label: '所有', key: 'all' },
+	{ label: '仅失效', key: 'invalid' },
+]
+const currentValidityLabel = computed(
+	() => validityOptions.find((o) => o.key === validityFilter.value)?.label ?? '仅可用',
+)
+
+function handleValiditySelect(key: string | number) {
+	validityFilter.value = String(key)
+	page.value = 1
+	fetchKeys()
+}
 
 // Create modal
 const showCreateModal = ref(false)
@@ -81,19 +89,29 @@ const statusBadgeClass: Record<string, string> = {
 	active: 'badge-success',
 	disabled: 'badge-gray',
 	revoked: 'badge-danger',
+	expired: 'badge-warning',
 }
 
 const statusLabel: Record<string, string> = {
 	active: '活跃',
 	disabled: '已禁用',
 	revoked: '已吊销',
+	expired: '已过期',
+}
+
+// 已过期的密钥 status 仍为 active，展示时按 expires_at 归一为"已过期"
+function displayStatus(key: ApiKey): string {
+	if (key.status === 'active' && key.expires_at && new Date(key.expires_at).getTime() < Date.now()) {
+		return 'expired'
+	}
+	return key.status
 }
 
 async function fetchKeys() {
 	loading.value = true
 	try {
 		const res: any = await request.get('/tenant/api-keys', {
-			params: { page: page.value, page_size: pageSize.value, key_type: 'personal' },
+			params: { page: page.value, page_size: pageSize.value, key_type: 'personal', validity: validityFilter.value },
 		})
 		const raw = res.data?.data
 		keys.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -135,8 +153,8 @@ async function disableKey(keyId: number) {
 	if (!await confirm({ message: '确定禁用该 API Key？禁用后将无法使用。', confirmText: '确认禁用', danger: true })) return
 	try {
 		await request.delete(`/tenant/api-keys/${keyId}`)
-		const key = keys.value.find((k) => k.id === keyId)
-		if (key) key.status = 'disabled'
+		// 禁用后刷新列表，保证"仅可用"筛选下失效密钥即时移除
+		await fetchKeys()
 	} catch {
 	}
 }
@@ -225,13 +243,16 @@ const columns = computed<DataTableColumns<ApiKey>>(() => [
 		width: 200,
 		render: (row) =>
 			h('div', { class: 'space-y-1 text-xs text-gray-500' }, [
-				h('div', {}, `QPS：${formatLimit(row.rate_limit_qps)}`),
-				h('div', {}, `并发：${formatLimit(row.rate_limit_concurrency)}`),
+				h('div', { class: 'flex items-center gap-3 whitespace-nowrap' }, [
+					h('span', {}, `QPS：${formatLimit(row.rate_limit_qps)}`),
+					h('span', {}, `并发：${formatLimit(row.rate_limit_concurrency)}`),
+				]),
 				h('div', {}, `额度：${formatQuota(row)}`),
-				h('div', {}, `IP：${row.ip_whitelist?.length ? row.ip_whitelist.length + ' 条' : '不限'}`),
+				// 仅配置了 IP 白名单时才显示该行
+				...(row.ip_whitelist?.length ? [h('div', {}, `IP：${row.ip_whitelist.length} 条`)] : []),
 			]),
 	},
-	{ title: '状态', key: 'status', width: 90, render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
+	{ title: '状态', key: 'status', width: 90, render: (row) => renderBadge(displayStatus(row), statusLabel, statusBadgeClass) },
 	{ title: '过期时间', key: 'expires_at', width: 150, render: (row) => h('span', { class: 'text-gray-500 text-xs' }, formatDate(row.expires_at)) },
 	{
 		title: '创建时间',
@@ -297,18 +318,13 @@ onMounted(() => {
 				</p>
 			</div>
 			<div class="flex flex-wrap items-center gap-2 lg:flex-none">
-				<!-- Export dropdown -->
-				<div class="relative inline-block">
-					<button class="btn btn-secondary" :disabled="exporting" @click="showExportDropdown = !showExportDropdown">
-						<svg v-if="!exporting" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-						<svg v-else class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-						导出
+				<!-- Validity filter -->
+				<NDropdown trigger="click" :options="validityOptions" @select="handleValiditySelect">
+					<button type="button" class="btn btn-secondary">
+						{{ currentValidityLabel }}
+						<Icon name="chevronDown" size="xs" class="text-gray-400" />
 					</button>
-					<div v-if="showExportDropdown" class="absolute right-0 mt-2 w-36 bg-white rounded-xl border shadow-lg py-1 z-50">
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</div>
-						<div class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</div>
-					</div>
-				</div>
+				</NDropdown>
 				<button class="btn btn-primary" @click="showCreateModal = true">
 					<Icon name="plus" size="sm" />
 					创建密钥
@@ -342,8 +358,12 @@ onMounted(() => {
 				<template #empty>
 					<div class="empty-state">
 						<Icon name="key" size="xl" class="empty-state-icon" />
-						<p class="empty-state-title">暂无个人密钥</p>
-						<p class="empty-state-description">创建第一个密钥以开始使用 AI 模型</p>
+						<p class="empty-state-title">
+							{{ validityFilter === 'valid' ? '暂无可用密钥' : validityFilter === 'invalid' ? '暂无失效密钥' : '暂无个人密钥' }}
+						</p>
+						<p class="empty-state-description">
+							{{ validityFilter === 'valid' ? '所有密钥均已失效或尚未创建' : validityFilter === 'invalid' ? '所有密钥均正常可用' : '创建第一个密钥以开始使用 AI 模型' }}
+						</p>
 					</div>
 				</template>
 			</ResponsiveDataTable>
