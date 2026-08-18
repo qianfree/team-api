@@ -90,6 +90,14 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 		return &common.Usage{}, upstreamErr
 	}
 
+	// relaykit 流式转换器优先（P2，仅 200 时；未接管 body 未读取，下方 legacy 完整重走）
+	if resp.StatusCode == http.StatusOK {
+		if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+			resp.Body.Close()
+			return usage, nil
+		}
+	}
+
 	helper.SetEventStreamHeaders(writer)
 	writer = helper.NewSafeWriter(writer)
 	defer helper.PingTicker(writer, 15*time.Second)()

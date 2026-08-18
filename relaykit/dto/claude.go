@@ -141,3 +141,10 @@ type ClaudeUsage struct {
 	ServerToolUse            *ClaudeServerToolUsage `json:"server_tool_use,omitempty"`
 	ServiceTier              string                 `json:"service_tier,omitempty"`
 }
+
+// ClaudeStreamEvent 流式转换器的 chunk 载荷：宿主桥接层据此写出
+// `event: <Type>\ndata: <Data JSON>\n\n` 格式的 Claude SSE（message_stop 收尾，无 [DONE]）。
+type ClaudeStreamEvent struct {
+	Type string
+	Data *ClaudeResponse
+}

@@ -44,6 +44,7 @@ type ClaudeMessageInfo = relaykitdto.ClaudeMessageInfo
 type ClaudeCacheUsage = relaykitdto.ClaudeCacheUsage
 type ClaudeServerToolUsage = relaykitdto.ClaudeServerToolUsage
 type ClaudeUsage = relaykitdto.ClaudeUsage
+type ClaudeStreamEvent = relaykitdto.ClaudeStreamEvent
 
 // ==================== Gemini 类型别名 ====================
 

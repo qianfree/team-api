@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -72,9 +73,127 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
-	// chunkWriter：将转换器产出的 *dto.ChatCompletionStreamResponse 序列化为 SSE 写出，
-	// 并提取 Usage / 记录首字节时间 / 追踪是否已发结束 chunk。
+	// claudeClient / geminiClient：P2 扩展的客户端格式分派（openai 上游 → claude/gemini 客户端）。
+	// 收尾约定：claude 客户端不写 [DONE]（message_stop 由转换器发，terminal 补发亦为 claude 事件）；
+	// gemini 客户端写 data: [DONE]（转换器发完尾 chunk 后由本层补）。
+	claudeClient := clientFormat == constant.RelayFormatClaude
+	geminiClient := clientFormat == constant.RelayFormatGemini
+
+	// writeDoneMarker 按客户端格式写收尾标记
+	writeDoneMarker := func() {
+		if claudeClient {
+			return // Claude 以 message_stop 收尾，无 [DONE]
+		}
+		_ = helper.WriteSSEData(safeWriter, "[DONE]")
+	}
+
+	// writeTerminalForClient 在转换器未产出结束事件时按客户端格式补发终止事件
+	writeTerminalForClient := func() {
+		if claudeClient {
+			// 补 message_delta(stop) + message_stop，保证 Claude 客户端正常收尾
+			stop := "end_turn"
+			_, _ = fmt.Fprintf(safeWriter, "event: message_delta\ndata: %s\n\n",
+				fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%q}}`, stop))
+			_, _ = fmt.Fprintf(safeWriter, "event: message_stop\ndata: %s\n\n", `{"type":"message_stop"}`)
+			safeWriter.Flush()
+			return
+		}
+		// openai / gemini：补 chat 终止 chunk（gemini 客户端收到多余的 chat 格式终止行——
+		// legacy 对 gemini 中断同样不完美，此处保持简单补发 + [DONE]）
+		stop := "stop"
+		terminal := &dto.ChatCompletionStreamResponse{
+			ID:      fmt.Sprintf("chatcmpl-%s", info.RequestID),
+			Object:  "chat.completion.chunk",
+			Model:   info.OriginModelName,
+			Choices: []dto.StreamChoice{{Index: 0, FinishReason: &stop}},
+		}
+		data, _ := json.Marshal(terminal)
+		_ = helper.WriteSSEData(safeWriter, string(data))
+	}
+	_ = geminiClient
+
+	// chunkWriter：按 chunk 类型三态分派——
+	//   *dto.ChatCompletionStreamResponse（openai 客户端，现状）→ data: 行；
+	//   *dto.ClaudeStreamEvent（claude 客户端，P2）→ event: + data: 行，message_delta 提取计费 usage；
+	//   *dto.GeminiChatResponse（gemini 客户端，P2）→ data: 行，UsageMetadata 提取计费 usage。
 	chunkWriter := func(chunk any) error {
+		switch typed := chunk.(type) {
+		case *dto.ClaudeStreamEvent:
+			if !firstChunk {
+				firstChunk = true
+				info.SetFirstResponseTime()
+			}
+			if typed == nil || typed.Data == nil {
+				return nil
+			}
+			if typed.Type == "message_delta" {
+				// message_delta 携带 Claude 扣减口径 usage——还原为 OpenAI 计费口径
+				//（prompt = input + cache_read，含 cache 子集，CacheIncludedInPrompt 已置）
+				if u := typed.Data.Usage; u != nil {
+					capturedUsage.PromptTokens = u.InputTokens + u.CacheReadInputTokens
+					capturedUsage.CompletionTokens = u.OutputTokens
+					capturedUsage.TotalTokens = capturedUsage.PromptTokens + capturedUsage.CompletionTokens
+					if capturedUsage.PromptTokensDetails == nil {
+						capturedUsage.PromptTokensDetails = &common.TokenDetails{}
+					}
+					capturedUsage.PromptTokensDetails.CachedTokens = u.CacheReadInputTokens
+				}
+				gotFinish = true
+			}
+			if typed.Type == "content_block_delta" && typed.Data.Delta != nil {
+				if typed.Data.Delta.Text != nil {
+					transferredTextLen += len(*typed.Data.Delta.Text)
+				}
+				if typed.Data.Delta.Thinking != nil {
+					transferredTextLen += len(*typed.Data.Delta.Thinking)
+				}
+			}
+			dataJSON, err := json.Marshal(typed.Data)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(safeWriter, "event: %s\ndata: %s\n\n", typed.Type, string(dataJSON))
+			safeWriter.Flush()
+			return err
+		case *dto.GeminiChatResponse:
+			if !firstChunk {
+				firstChunk = true
+				info.SetFirstResponseTime()
+			}
+			if typed == nil {
+				return nil
+			}
+			if um := typed.UsageMetadata; um != nil {
+				// Gemini 口径还原 OpenAI 计费口径：prompt 含 cached 子集；
+				// completion = candidates + thoughts（2f0cc01 扣减的逆运算）
+				capturedUsage.PromptTokens = um.PromptTokenCount
+				capturedUsage.CompletionTokens = um.CandidatesTokenCount + um.ThoughtsTokenCount
+				capturedUsage.TotalTokens = um.TotalTokenCount
+				if capturedUsage.PromptTokensDetails == nil {
+					capturedUsage.PromptTokensDetails = &common.TokenDetails{}
+				}
+				capturedUsage.PromptTokensDetails.CachedTokens = um.CachedContentTokenCount
+				if capturedUsage.CompletionTokenDetails == nil {
+					capturedUsage.CompletionTokenDetails = &common.TokenDetails{}
+				}
+				capturedUsage.CompletionTokenDetails.ReasoningTokens = um.ThoughtsTokenCount
+			}
+			for _, cand := range typed.Candidates {
+				if cand.FinishReason != "" && cand.FinishReason != "FINISH_REASON_UNSPECIFIED" {
+					gotFinish = true
+				}
+				if cand.Content != nil {
+					for _, p := range cand.Content.Parts {
+						transferredTextLen += len(p.Text)
+					}
+				}
+			}
+			dataJSON, err := json.Marshal(typed)
+			if err != nil {
+				return err
+			}
+			return helper.WriteSSEData(safeWriter, string(dataJSON))
+		}
 		streamChunk, ok := chunk.(*dto.ChatCompletionStreamResponse)
 		if !ok {
 			return nil // 忽略非预期类型
@@ -109,19 +228,6 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		return helper.WriteSSEData(safeWriter, string(data))
 	}
 
-	// writeTerminal 在转换器未产出结束 chunk 时补发一个终止 chunk，保证客户端正常收尾。
-	writeTerminal := func() {
-		stop := "stop"
-		terminal := &dto.ChatCompletionStreamResponse{
-			ID:      fmt.Sprintf("chatcmpl-%s", info.RequestID),
-			Object:  "chat.completion.chunk",
-			Model:   info.OriginModelName,
-			Choices: []dto.StreamChoice{{Index: 0, FinishReason: &stop}},
-		}
-		data, _ := json.Marshal(terminal)
-		_ = helper.WriteSSEData(safeWriter, string(data))
-	}
-
 	setEndReason := func(reason common.StreamEndReason, err error) {
 		if info.StreamStatus != nil {
 			info.StreamStatus.SetEndReason(reason, err)
@@ -135,7 +241,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 
 	if err != nil {
 		if ctx.Err() != nil {
-			// 客户端断开 / 上下文取消：客户端已不可达，不写 [DONE]
+			// 客户端断开 / 上下文取消：客户端已不可达，不写收尾标记
 			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
 			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
@@ -143,17 +249,17 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 		g.Log().Warningf(ctx, "[relaykit] convert stream failed (converter=%s): %v", converterID, err)
 		if !gotFinish {
-			writeTerminal()
+			writeTerminalForClient()
 		}
-		_ = helper.WriteSSEData(safeWriter, "[DONE]")
+		writeDoneMarker()
 		setEndReason(common.StreamEndReasonError, err)
 		return capturedUsage, true
 	}
 
 	if !gotFinish {
-		writeTerminal()
+		writeTerminalForClient()
 	}
-	_ = helper.WriteSSEData(safeWriter, "[DONE]")
+	writeDoneMarker()
 	setEndReason(common.StreamEndReasonDone, nil)
 	return capturedUsage, true
 }

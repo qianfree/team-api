@@ -36,6 +36,8 @@ func init() {
 	registerClaudeToOpenAIChat()
 	registerGeminiToOpenAIChat()
 	registerGeminiToClaudeChain()
+	// P2：openai 上游 → claude/gemini 客户端的流式响应方向
+	registerOpenAIToClaudeGeminiStreams()
 	registerOpenAIToGemini()
 	// 剩余原生格式供应商
 	registerOpenAIToCoze()
@@ -73,6 +75,21 @@ func registerResponsesToOpenAIChat() {
 		types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses,
 		relayconvert.ConverterOpenAIChatToOpenAIResponsesStream,
 		(&oai_responses.OpenAIChatToResponsesStreamConverter{}).ConvertStreamResponse,
+	)
+}
+
+// registerOpenAIToClaudeGeminiStreams 注册 P2 的两个流式响应方向（openai 上游 →
+// claude/gemini 客户端——Claude Code / Gemini 客户端打 openai 兼容渠道的流式）。
+func registerOpenAIToClaudeGeminiStreams() {
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAI, types.RelayFormatClaude,
+		relayconvert.ConverterOpenAIChatToClaudeMessagesStream,
+		(&oai_chat.OpenAIToClaudeStreamConverter{}).ConvertStreamResponse,
+	)
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAI, types.RelayFormatGemini,
+		relayconvert.ConverterOpenAIChatToGeminiContentStream,
+		(&oai_gemini.OpenAIToGeminiStreamConverter{}).ConvertStreamResponse,
 	)
 }
 
