@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch, Alert } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -656,6 +656,19 @@ function formatHeaders(headers: Record<string, string>): string {
 
           <!-- Tab 3: Test -->
           <ATabPane key="test" title="测试">
+            <!-- 功能限制提示 -->
+            <AAlert type="info" class="mb-4" show-icon closable>
+              <template #title>仅支持文本对话模型测试</template>
+              <div style="font-size: 12px; line-height: 1.6; color: var(--color-text-2);">
+                <div>当前渠道测试功能仅支持<strong>文本对话模型</strong>（如 Chat 系列）的基础测试。</div>
+                <div style="margin-top: 6px;">其他模型类型（如视频生成、图片生成、Embeddings 等）暂不支持此测试方式，建议：</div>
+                <ul style="margin: 6px 0 0 20px; padding: 0;">
+                  <li>使用<strong>租户端的在线体验功能</strong>进行端到端测试</li>
+                  <li>通过 <strong>API 直接调用</strong>进行验证测试</li>
+                </ul>
+              </div>
+            </AAlert>
+
             <ACard :bordered="false">
               <div class="flex gap-2 items-end mb-4">
                 <AFormItem label="测试模型" class="flex-1 !mb-0">
