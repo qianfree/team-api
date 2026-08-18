@@ -57,6 +57,12 @@ func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream consta
 		return "" // 同格式无需转换（这类请求本就走 passthrough）
 	}
 	switch {
+	// ⚠️ claude/gemini 入站 → openai 上游方向严禁在此路由：该方向的 relaykit 接管
+	// 在共享函数 openai.ConvertToOpenAI 内部（relay/relaykit_bridge/request.go），
+	// 在 handler 层接管会跳过 20+ 个 openai 兼容 adaptor 的定制后处理。
+	case inbound == constant.RelayFormatGemini && upstream == constant.RelayFormatClaude:
+		// Gemini → Claude Messages（链式：gemini→openai→claude）
+		return relayconvert.ConverterGeminiContentToClaudeMessages
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatClaude:
 		return relayconvert.ConverterOpenAIChatToClaudeMessages
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatGemini:
@@ -159,6 +165,15 @@ func parseInboundRequest(ctx context.Context, inbound constant.RelayFormat, body
 			return nil, false
 		}
 		return &responsesReq, true
+	case constant.RelayFormatGemini:
+		// gemini 入站（仅 gemini→claude 链走此分支；gemini→openai 在 ConvertToOpenAI 内接管）。
+		// 无 stash/预检需求——GeminiChatRequest 无 previous_response_id 类有状态字段
+		var geminiReq dto.GeminiChatRequest
+		if err := json.Unmarshal(body, &geminiReq); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse inbound gemini request failed, fallback to legacy: %v", err)
+			return nil, false
+		}
+		return &geminiReq, true
 	default:
 		return nil, false
 	}

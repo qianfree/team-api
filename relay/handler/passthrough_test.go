@@ -300,6 +300,11 @@ func TestRelaykitRequestConverterID(t *testing.T) {
 		{"Responses→OpenAI responses 原生上游不转换", true, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
 		{"Responses→Claude 链", false, constant.RelayFormatResponses, constant.RelayFormatClaude, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToClaudeMessages},
 		{"Responses→Gemini 未覆盖", false, constant.RelayFormatResponses, constant.RelayFormatGemini, int(constant.RelayModeResponses), ""},
+		{"Gemini→Claude 链", false, constant.RelayFormatGemini, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterGeminiContentToClaudeMessages},
+		// claude/gemini→openai 方向严禁在 handler 层路由（接管点在 ConvertToOpenAI 内部，
+		// 此处路由会跳过各 adaptor 定制后处理）——断言保持空
+		{"Claude→OpenAI 不在此路由", false, constant.RelayFormatClaude, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"Gemini→OpenAI 不在此路由", false, constant.RelayFormatGemini, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
