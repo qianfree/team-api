@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1065,7 +1066,35 @@ func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApi
 	}, nil
 }
 
+// 成员导出显示文案，与前端成员列表页保持一致
+var memberRoleLabels = map[string]string{
+	"owner":  "所有者",
+	"admin":  "管理员",
+	"member": "成员",
+}
+
+var memberStatusLabels = map[string]string{
+	"active":   "已激活",
+	"invited":  "已邀请",
+	"disabled": "已禁用",
+}
+
+var memberPeriodLabels = map[string]string{
+	"day":   "按天",
+	"week":  "按周",
+	"month": "按月",
+}
+
+// formatMemberUSD 格式化金额为 $ 前缀、最多两位小数（去掉末尾 0），与前端 formatMoney(precision: 2) 输出一致
+func formatMemberUSD(v float64) string {
+	s := strconv.FormatFloat(v, 'f', 2, 64)
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimSuffix(s, ".")
+	return "$" + s
+}
+
 // ExportMembers exports the tenant member list as CSV or Excel.
+// 导出列与成员列表页表格保持一致（用户/角色/状态/额度限制/可用模型/本月消费/加入时间/最后更新）。
 func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
@@ -1077,13 +1106,16 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	tenantID := middleware.GetTenantID(ctx)
 
 	columns := []export.Column{
-		{Field: "id", Header: "ID"},
 		{Field: "username", Header: "用户名"},
-		{Field: "email", Header: "邮箱"},
 		{Field: "display_name", Header: "显示名称"},
+		{Field: "email", Header: "邮箱"},
 		{Field: "role", Header: "角色"},
 		{Field: "status", Header: "状态"},
-		{Field: "created_at", Header: "创建时间"},
+		{Field: "quota", Header: "额度限制"},
+		{Field: "model_count", Header: "可用模型"},
+		{Field: "month_cost", Header: "本月消费(USD)"},
+		{Field: "created_at", Header: "加入时间"},
+		{Field: "updated_at", Header: "最后更新"},
 	}
 
 	config := export.Config{
@@ -1106,27 +1138,92 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 			}
 
 			var users []struct {
-				Id          int64  `json:"id"`
-				Username    string `json:"username"`
-				Email       string `json:"email"`
-				DisplayName string `json:"display_name"`
-				Role        string `json:"role"`
-				Status      string `json:"status"`
-				CreatedAt   string `json:"created_at"`
+				Id          int64   `json:"id"`
+				Username    string  `json:"username"`
+				Email       string  `json:"email"`
+				DisplayName string  `json:"display_name"`
+				Role        string  `json:"role"`
+				Status      string  `json:"status"`
+				CreatedAt   string  `json:"created_at"`
+				QuotaType   string  `json:"quota_type"`
+				QuotaLimit  float64 `json:"quota_limit"`
+				QuotaPeriod string  `json:"quota_period"`
+				UpdatedAt   string  `json:"updated_at"`
 			}
 			err := model.OrderDesc("id").Limit(1000).Offset(offset).Scan(&users)
 			if err = common.IgnoreScanNoRows(err); err != nil {
 				return
 			}
+
+			// 与列表页口径一致：批量聚合模型范围与本月消费，避免逐行 N+1 查询
+			userIds := make([]int64, len(users))
+			for i, u := range users {
+				userIds[i] = u.Id
+			}
+			modelCountMap := make(map[int64]int)
+			hasScopeMap := make(map[int64]bool)
+			monthCostMap := make(map[int64]float64)
+			if len(userIds) > 0 {
+				var scopeRows []struct {
+					UserId  int64 `json:"user_id"`
+					ModelId int64 `json:"model_id"`
+				}
+				if err = dao.TntMemberModelScopes.Ctx(ctx).
+					Where("tenant_id", tenantID).
+					Where("user_id", userIds).
+					Scan(&scopeRows); err == nil {
+					for _, r := range scopeRows {
+						hasScopeMap[r.UserId] = true
+						if r.ModelId > 0 {
+							modelCountMap[r.UserId]++
+						}
+					}
+				}
+
+				monthStart := time.Now().Format("2006-01") + "-01 00:00:00"
+				var costRows []struct {
+					UserId int64   `json:"user_id"`
+					Cost   float64 `json:"cost"`
+				}
+				if err = dao.BilUsageLogs.Ctx(ctx).
+					Fields("user_id, COALESCE(SUM(total_cost), 0) as cost").
+					Where("tenant_id", tenantID).
+					Where("user_id", userIds).
+					Where("created_at >= ?", monthStart).
+					Group("user_id").
+					Scan(&costRows); err == nil {
+					for _, c := range costRows {
+						monthCostMap[c.UserId] = c.Cost
+					}
+				}
+			}
+
 			for _, u := range users {
+				// 额度限制：不限制 / 金额（周期性追加周期文案），与列表页渲染一致
+				quota := "不限制"
+				if u.QuotaType != "" && u.QuotaType != "none" {
+					quota = formatMemberUSD(u.QuotaLimit)
+					if u.QuotaType == "periodic" && u.QuotaPeriod != "" {
+						quota += "（" + memberPeriodLabels[u.QuotaPeriod] + "）"
+					}
+				}
+				// 可用模型：无任何范围记录 = 不限，否则输出授权数量
+				modelCount := "不限"
+				if hasScopeMap[u.Id] {
+					modelCount = strconv.Itoa(modelCountMap[u.Id])
+				}
+
 				if !yield(map[string]any{
-					"id":           u.Id,
 					"username":     u.Username,
-					"email":        u.Email,
 					"display_name": u.DisplayName,
-					"role":         u.Role,
-					"status":       u.Status,
+					"email":        u.Email,
+					"role":         memberRoleLabels[u.Role],
+					"status":       memberStatusLabels[u.Status],
+					"quota":        quota,
+					"model_count":  modelCount,
+					"month_cost":   formatMemberUSD(monthCostMap[u.Id]),
 					"created_at":   u.CreatedAt,
+					"updated_at":   u.UpdatedAt,
 				}) {
 					return
 				}

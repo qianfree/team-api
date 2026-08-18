@@ -3,6 +3,7 @@ package update
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -65,6 +66,15 @@ type Progress struct {
 	Message    string `json:"message"`
 	Percentage int    `json:"percentage"`
 	Error      string `json:"error,omitempty"`
+	// FinishedAt 终态（complete/failed）产生时间。终态进度只在内存中保留一段
+	// 时间供发起升级的管理员查看，超过 progressExpire 后 GetStatus 不再返回，
+	// 避免上次升级留下的快照永久残留误导后续状态判断
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// isTerminalPhase 判断进度是否处于终态（complete/failed），只有终态会过期
+func isTerminalPhase(phase string) bool {
+	return phase == PhaseComplete || phase == PhaseFailed
 }
 
 // RollbackInfo holds information needed for rollback (persisted to disk)
@@ -82,6 +92,27 @@ type UpdateManager struct {
 	mu          sync.Mutex   // serialize update operations
 	checkResult atomic.Value // *CheckResult
 	lastETag    atomic.Value // string - GitHub API ETag for conditional requests
+
+	restartMu  sync.Mutex // 保护 restartBin
+	restartBin string     // 待重启的二进制路径（在线更新/回滚换壳后由 exec 原地换入）
+}
+
+// SetRestartBinary 记录待重启的二进制路径。在线更新/回滚已完成换壳、即将触发
+// 优雅退出前调用；cmd.go 退出链末尾的 MaybeExecRestart 会消费该路径执行换壳。
+func (m *UpdateManager) SetRestartBinary(bin string) {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.restartBin = bin
+}
+
+// ConsumeRestartBinary 读取并清空待重启二进制路径。读取即失效（取一次即删），
+// 保证换壳只发生一次，避免 update 与 rollback、超时兜底与正常退出路径重复执行。
+func (m *UpdateManager) ConsumeRestartBinary() string {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	bin := m.restartBin
+	m.restartBin = ""
+	return bin
 }
 
 // Status holds the full update status

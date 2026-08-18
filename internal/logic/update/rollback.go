@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -16,6 +17,11 @@ import (
 func Rollback(ctx context.Context) error {
 	if IsDocker() {
 		return fmt.Errorf("rollback is not supported in Docker mode")
+	}
+
+	// Windows 无 exec 换壳语义，且运行中二进制无法被重命名，显式拒绝
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("rollback is not supported on Windows")
 	}
 
 	if manager.IsUpdating() {
@@ -62,15 +68,21 @@ func Rollback(ctx context.Context) error {
 
 	_ = os.Chmod(currentExe, 0755)
 
+	// 记录待重启的旧版本路径：退出链末尾用 syscall.Exec 原地换壳回到旧版本，
+	// 同 PID 继续运行，不依赖外部进程管理器拉起（见 gracefulExit 注释）
+	manager.SetRestartBinary(currentExe)
+
 	// Clean up
 	_ = os.Remove(filepath.Join(updateDir, rollbackFile))
 	_ = os.Remove(filepath.Join(updateDir, pendingVerificationFile))
 	_ = os.Remove(oldPath)
 
-	g.Log().Infof(ctx, "Rollback to %s complete, exiting for restart...", info.BackupVersion)
+	g.Log().Infof(ctx, "Rollback to %s complete, scheduling restart...", info.BackupVersion)
 
-	// Exit — process supervisor will restart with the old binary
-	os.Exit(0)
+	// 走 SIGTERM 优雅退出（见 gracefulExit 注释）：先让 handler 把"回滚已启动"
+	// 响应写出去，再触发优雅关闭链路排空任务池/异步 Writer 后自然退出，
+	// 由进程管理器（systemd/supervisor 等）拉起旧版本
+	gracefulExit(ctx, "rollback complete")
 	return nil
 }
 

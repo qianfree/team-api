@@ -411,11 +411,13 @@ make migrate-status  # 查看迁移状态
 
 ## 主线路线图
 
-1. 完善大模型支持，特别是图像和视频的支持
-2. 支付模块（Easy Pay）
-3. 插件功能（定制功能通过插件实现，确保不与主线代码冲突）
-4. 开放平台（对接OA的能力，方便企业对接管理）
-5. 在线升级
+1. ~~在线升级（已完成）~~
+2. ~~支付模块（Easy Pay 已支持）~~
+3. ~~图片生成同步转异步~~
+4. 完善大模型支持，特别是图像和视频的支持
+5. 角色管理，方便运营团队内部协作，预设角色（管理员，销售，技术支持）
+6. 插件功能（定制功能通过插件实现，确保不与主线代码冲突）
+7. 开放平台（对接OA的能力，方便企业对接管理）
 
 
 ## 参与贡献
@@ -452,5 +454,4 @@ Copyright (C) 2026 qianfree. 本项目采用 [GNU Affero General Public License 
 
 - [GoFrame](https://goframe.org/) — Go 应用开发框架
 - [new-api](https://github.com/Calcium-Ion/new-api) — AI 网关参考实现
-- [sub2api](https://github.com/sub2api/sub2api) — 监控与亲和性参考实现
 - [Naive UI](https://www.naiveui.com/) — Vue 3 组件库

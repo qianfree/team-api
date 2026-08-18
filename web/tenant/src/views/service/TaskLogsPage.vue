@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NTag, NInput } from 'naive-ui'
+import { NButton, NTag, NInput, NDropdown } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -57,7 +57,16 @@ const filterPlatform = ref('')
 const filterTaskId = ref('')
 const filterStartDate = ref(todayStart())
 const filterEndDate = ref(todayEnd())
-const showExportDropdown = ref(false)
+// 导出格式下拉选项（NDropdown 默认 teleport 到 body，避免被 .card 的 backdrop-filter
+// stacking context 困住而被下方表格面板遮挡）
+const exportDropdownOptions = [
+	{ label: '导出 CSV', key: 'csv' },
+	{ label: '导出 Excel', key: 'xlsx' },
+]
+
+function handleExport(format: string | number) {
+	exportFile(format as 'csv' | 'xlsx')
+}
 
 const showDetail = ref(false)
 const detailLoading = ref(false)
@@ -261,7 +270,7 @@ onMounted(() => {
 <template>
 	<div class="viewport-table-page space-y-6">
 		<!-- Filters -->
-		<div class="relative z-20 overflow-visible card">
+		<div class="card">
 			<div class="card-body !p-4">
 				<form class="flex flex-wrap items-center gap-x-3 gap-y-3" @submit.prevent="applyFilters">
 					<DateTimeRangePicker
@@ -288,18 +297,14 @@ onMounted(() => {
 						</button>
 						<button type="button" class="btn btn-secondary btn-sm" @click="resetFilters">重置</button>
 						<span class="mx-1 h-6 w-px bg-gray-200" aria-hidden="true"></span>
-						<div class="relative">
-							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading" @click="showExportDropdown = !showExportDropdown">
+						<n-dropdown trigger="click" :options="exportDropdownOptions" @select="handleExport">
+							<button type="button" class="btn btn-secondary btn-sm" :disabled="exporting || loading">
 								<Icon v-if="exporting" name="refresh" size="sm" class="animate-spin" />
 								<Icon v-else name="download" size="sm" />
 								导出
 								<Icon name="chevronDown" size="xs" />
 							</button>
-							<div v-if="showExportDropdown" class="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('csv'); showExportDropdown = false">导出 CSV</button>
-								<button type="button" class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" @click="exportFile('xlsx'); showExportDropdown = false">导出 Excel</button>
-							</div>
-						</div>
+						</n-dropdown>
 					</div>
 				</form>
 			</div>

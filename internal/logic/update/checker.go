@@ -35,8 +35,8 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 		}
 	}
 
-	// Call GitHub API
-	release, etag, err := fetchLatestRelease(ctx)
+	// Call GitHub API（force 时不带 ETag 条件请求，见 fetchLatestRelease 注释）
+	release, etag, err := fetchLatestRelease(ctx, !force)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
@@ -87,7 +87,8 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	var assetSize int64
 
 	for _, asset := range release.Assets {
-		if asset.Name == assetName {
+		// 资产名可能带/不带 v 前缀（历史 release 命名不一致），归一化后比较
+		if normalizeAssetName(asset.Name) == assetName {
 			downloadURL = asset.BrowserDownloadURL
 			assetSize = asset.Size
 		}
@@ -120,9 +121,21 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	return result, nil
 }
 
-// fetchLatestRelease calls the GitHub Releases API with conditional request support
-func fetchLatestRelease(ctx context.Context) (*GitHubRelease, string, error) {
-	url := githubAPIBase + "/releases/latest"
+// updateAPIBase 返回更新检查的 API 基地址。默认 GitHub 官方 API；
+// 可通过配置 update.api_base 覆盖（自建发布服务器 / 本地测试 / 国内镜像）。
+func updateAPIBase(ctx context.Context) string {
+	if base := g.Cfg().MustGet(ctx, "update.api_base").String(); base != "" {
+		return strings.TrimSuffix(base, "/")
+	}
+	return githubAPIBase
+}
+
+// fetchLatestRelease calls the GitHub Releases API.
+// conditional 为 true 时携带 If-None-Match ETag 做条件请求（省配额）；
+// 强制检测（force）必须传 false：GitHub /releases/latest 有 CDN 缓存，刚发布新版本后
+// 条件请求可能返回过期的 304 Not Modified，导致强制检测仍拿不到最新发行版。
+func fetchLatestRelease(ctx context.Context, conditional bool) (*GitHubRelease, string, error) {
+	url := updateAPIBase(ctx) + "/releases/latest"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -133,9 +146,11 @@ func fetchLatestRelease(ctx context.Context) (*GitHubRelease, string, error) {
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	// Add ETag for conditional request
-	if etagVal := manager.lastETag.Load(); etagVal != nil {
-		if etag, ok := etagVal.(string); ok && etag != "" {
-			req.Header.Set("If-None-Match", etag)
+	if conditional {
+		if etagVal := manager.lastETag.Load(); etagVal != nil {
+			if etag, ok := etagVal.(string); ok && etag != "" {
+				req.Header.Set("If-None-Match", etag)
+			}
 		}
 	}
 
@@ -170,8 +185,17 @@ func fetchLatestRelease(ctx context.Context) (*GitHubRelease, string, error) {
 	return &release, etag, nil
 }
 
-// getCheckCache reads cached check result from Redis
-func getCheckCache(ctx context.Context) *CheckResult {
+// getCheckCache reads cached check result from Redis.
+// 缓存是纯优化（TTL 24h），Redis 未配置/不可用时应降级为无缓存、走实时检查，
+// 绝不能因 g.Redis() 客户端创建失败而 panic（见 goframe-conventions.md 已修复记录）。
+func getCheckCache(ctx context.Context) (out *CheckResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			g.Log().Warningf(ctx, "update check cache read skipped: %v", r)
+			out = nil
+		}
+	}()
+
 	val, err := g.Redis().Do(ctx, "GET", redisCacheKey)
 	if err != nil || val.IsNil() || val.IsEmpty() {
 		return nil
@@ -184,8 +208,14 @@ func getCheckCache(ctx context.Context) *CheckResult {
 	return &result
 }
 
-// setCheckCache stores check result in Redis
+// setCheckCache stores check result in Redis. 与 getCheckCache 同理，失败仅降级不 panic。
 func setCheckCache(ctx context.Context, result *CheckResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			g.Log().Warningf(ctx, "update check cache write skipped: %v", r)
+		}
+	}()
+
 	data, err := json.Marshal(result)
 	if err != nil {
 		return

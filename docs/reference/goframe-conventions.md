@@ -731,3 +731,23 @@ err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
 **正确做法**：测试中需要真实走 ghttp 请求链路（中间件、handler、hook）时，一律用 `testutil.StartGFServer(t, s)` 启动真实 server；**禁止**把 `g.Server` 直接塞进 `httptest.NewServer`——那只会执行 `ServeHTTP` 路径而不执行 `Start()` 的初始化（session manager、graceful listener 等），属于未定义用法。`httptest.NewServer` 仅用于包装自建的普通 `http.Handler`。
 
 排查信号：`go test -v` 输出中出现成段的 `http: panic serving` + `gsession.(*Session).Close` 栈。
+
+### 2026-08-14（五）：更新接口非指针 int 字段被零值无条件覆写（渠道 weight/priority 被洗成 0）
+
+**问题**：渠道创建后数据库 `chn_channels.weight` 是 0，但创建表单明明提交了 100。前端"仅切换状态"或"仅更新 API Key"的 PUT 请求会把已有渠道的 weight/priority 洗成 0。
+
+**原因**：`ChannelUpdateReq.Weight/Priority` 是非指针 `int`，JSON 里不带该字段时解析为 Go 零值 0，无法区分"未提交"与"显式提交 0"；而 `UpdateChannel` 里 `data.Weight = req.Weight` 无条件写入，`do` 结构体的非 nil 字段（含 0）都会进 UPDATE SET 列表，于是 0 覆盖了库里的 100。前端曾在多处用"提交时带上当前 weight"打补丁，但详情页的状态切换/Key 更新漏带，且编辑表单 `weight || 100` 的 falsy 兜底把数据损坏掩盖成"显示正常"。
+
+**修复**：
+
+1. `ChannelUpdateReq.Weight/Priority` 改为 `*int`（与同结构体 `MaxConcurrency`、`Type` 等"留空不更新"字段风格一致），Logic 里仅在非 nil 时赋值；
+2. 删除前端"必须携带当前 priority/weight"的 workaround（ChannelsPage 的状态切换/行内权重/行内层级三处），只提交变更字段；
+3. 详情页编辑表单去掉 `detail.weight || 100` 兜底，显示真实库值，避免再次掩盖数据异常。
+
+**正确做法（通用规则）**：
+
+- **更新接口的"可选更新"字段一律用指针类型**（`*int`/`*string`/`*bool`），`nil` = 不更新，非 nil（含零值）= 显式更新；非指针字段意味着"调用方必须每次全量携带"，要在 API 注释里写明并让所有前端调用点遵守。
+- **do 结构体字段是 `interface{}`**：nil 才会被 ORM 过滤，非 nil 的 0/""/false 都会写入——"零值是否合法的业务值"必须在 Req 层用指针区分，不能指望 ORM 帮你跳过。
+- **前端编辑表单慎用 `x || 默认值` 兜底**：对数值字段，0 会被 falsy 规则吞掉，既掩盖真实数据，又可能在保存时把合法的 0 改写为默认值。
+
+排查信号：某字段在库里莫名变成 0/空串，而创建时明明写过合法值——查该表所有 UPDATE 路径中是否存在非指针字段的无条件赋值。

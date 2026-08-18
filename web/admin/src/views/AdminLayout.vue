@@ -58,6 +58,7 @@ const updateModalVisible = ref(false)
 const updateLoading = ref(false)
 const executing = ref(false)
 const rollingBack = ref(false)
+const checking = ref(false)
 const updateStatus = ref<any>(null)
 const releaseNotes = ref('')
 const releaseUrl = ref('')
@@ -127,6 +128,16 @@ function openUpdateModal() {
   updateModalVisible.value = true
   fetchUpdateStatus()
   checkUpdate() // 打开弹窗时刷新版本检查，确保当前版本/最新版本为最新
+}
+
+// 立即检测：force=true 跳过后端检查缓存，强制向上游拉取最新版本信息
+async function manualCheck() {
+  checking.value = true
+  try {
+    await Promise.all([fetchUpdateStatus(), checkUpdate(true)])
+  } finally {
+    checking.value = false
+  }
 }
 
 function closeUpdateModal() {
@@ -697,7 +708,10 @@ onUnmounted(() => {
       </template>
 
       <!-- Update available -->
-      <template v-if="canUpdate && !isUpdating && !isFailed && !isComplete && !isDocker">
+      <!-- 注意不能被 isFailed/isComplete 挡住：后端的 complete/failed 进度快照在进程内
+           不会过期（上次升级留下的状态会一直挂着），否则新版本出现后更新入口被吞掉、
+           失败后也无法重试。更新进行中（isUpdating）才是真正的互斥条件 -->
+      <template v-if="canUpdate && !isUpdating && !isDocker">
         <a-divider style="margin: 16px 0;" />
         <div style="margin-bottom: 12px;">
           <a-typography-text bold>更新说明</a-typography-text>
@@ -717,6 +731,9 @@ onUnmounted(() => {
         <a-result>
           <template #icon><icon-check-circle-fill style="color: #00b42a; font-size: 32px;" /></template>
           <template #title><span style="color: #00b42a; font-size: 14px;">当前已是最新版本</span></template>
+          <template #extra>
+            <a-button size="small" :loading="checking" @click="manualCheck">立即检测</a-button>
+          </template>
         </a-result>
       </template>
 
@@ -749,7 +766,9 @@ onUnmounted(() => {
       </template>
 
       <!-- Complete with rollback option -->
-      <template v-if="isComplete && rollbackAvailable">
+      <!-- 有新版本可更新时隐藏：这个 complete 是历史升级留下的常驻状态，
+           不应与新版本入口同时出现 -->
+      <template v-if="isComplete && rollbackAvailable && !canUpdate">
         <a-divider style="margin: 16px 0;" />
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <a-typography-text type="secondary" style="font-size: 12px;">如遇问题可回滚到 v{{ backupVersion }}</a-typography-text>
