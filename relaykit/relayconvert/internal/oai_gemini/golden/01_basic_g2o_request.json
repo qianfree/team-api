@@ -1,0 +1,58 @@
+{
+  "name": "basic_gemini_to_oai_request",
+  "from": "gemini",
+  "to": "openai",
+  "request": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "你好"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 1024,
+      "seed": 42,
+      "stopSequences": [
+        "END"
+      ],
+      "temperature": 0.7,
+      "topK": 40,
+      "topP": 0.9
+    },
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "你是助手"
+        },
+        {
+          "text": "仅中文"
+        }
+      ]
+    }
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是助手\n仅中文"
+      },
+      {
+        "role": "user",
+        "content": "你好"
+      }
+    ],
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "top_k": 40,
+    "stop": [
+      "END"
+    ],
+    "seed": 42
+  }
+}

@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
+	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/goldentest"
+	"github.com/qianfree/team-api/relaykit/relayconvert/kitutil"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -244,3 +246,51 @@ func mapToGeminiResponse(m any) (*dto.GeminiChatResponse, error) {
 	}
 	return &resp, nil
 }
+
+func TestGolden_Gemini_To_OAIChat_Request(t *testing.T) {
+	converter := &GeminiToOpenAIRequestConverter{}
+	ctx := context.Background()
+	info := convmetaValuesForG2O()
+
+	files, err := os.ReadDir("golden")
+	if err != nil {
+		t.Fatalf("Failed to read golden directory: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), "_g2o_request.json") {
+			continue
+		}
+		t.Run(file.Name(), func(t *testing.T) {
+			tc := goldentest.Load(t, filepath.Join("golden", file.Name()))
+			if tc.From != types.RelayFormatGemini || tc.To != types.RelayFormatOpenAI {
+				t.Skip("not a Gemini→OpenAI chat request test")
+			}
+			req, err := kitutil.Any2Type[dto.GeminiChatRequest](tc.Request)
+			if err != nil {
+				t.Fatalf("map→Gemini request: %v", err)
+			}
+			result, err := converter.ConvertRequest(ctx, info, &req)
+			if err != nil {
+				t.Fatalf("ConvertRequest: %v", err)
+			}
+			if *goldentest.Update {
+				tc.ExpectedRequest = result
+				goldentest.Save(t, filepath.Join("golden", file.Name()), tc)
+				return
+			}
+			if !goldentest.Equal(result, tc.ExpectedRequest) {
+				t.Errorf("result does not match golden\nGot:  %+v\nWant: %+v", result, tc.ExpectedRequest)
+			}
+		})
+	}
+}
+
+// convmetaValuesForG2O g2o golden 测试用 Meta（映射渠道）。
+func convmetaValuesForG2O() *convmeta.Values {
+	return &convmeta.Values{
+		ChannelMetaAttached: true,
+		OriginModelName:     "gpt-4o",
+		UpstreamModelName:   "gpt-4o-2024-11-20",
+	}
+}
+

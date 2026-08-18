@@ -77,7 +77,10 @@ const (
 	ConverterOpenAIResponsesToClaudeMessages       = "openai_responses_to_claude_messages"
 	ConverterOpenAIResponsesToGemini               = "openai_responses_to_gemini_generate_content"
 	ConverterGeminiContentToOpenAIChat             = "gemini_generate_content_to_openai_chat_completions"
-	ConverterOpenAIChatToGeminiContent             = "openai_chat_completions_to_gemini_generate_content"
+	// ConverterGeminiContentToClaudeMessages Gemini 客户端 → Claude 上游（StepConverters 链：
+	// gemini→openai→claude 两跳，替换宿主 claude/converter.go 的手工拼接链）
+	ConverterGeminiContentToClaudeMessages = "gemini_generate_content_to_claude_messages"
+	ConverterOpenAIChatToGeminiContent     = "openai_chat_completions_to_gemini_generate_content"
 
 	// OpenAI → 原生格式供应商（请求侧）
 	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"

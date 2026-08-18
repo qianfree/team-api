@@ -1,0 +1,158 @@
+{
+  "name": "tools_history_gemini_to_oai_request",
+  "from": "gemini",
+  "to": "openai",
+  "request": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "跑测试"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "parts": [
+          {
+            "functionCall": {
+              "args": {
+                "file": "a.go"
+              },
+              "name": "run_tests"
+            }
+          },
+          {
+            "functionCall": {
+              "args": {
+                "file": "b.go"
+              },
+              "name": "run_tests"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      {
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "run_tests",
+              "response": {
+                "ok": true
+              }
+            }
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "parts": [
+          {
+            "text": "通过了"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "responseMimeType": "application/json",
+      "thinkingConfig": {
+        "thoughtBudget": 3000
+      }
+    },
+    "toolConfig": {
+      "functionCallingConfig": {
+        "allowedFunctionNames": [
+          "run_tests"
+        ],
+        "mode": "ANY"
+      }
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "description": "执行测试",
+            "name": "run_tests",
+            "parameters": {
+              "properties": {
+                "file": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expected_request": {
+    "model": "gpt-4o-2024-11-20",
+    "messages": [
+      {
+        "role": "user",
+        "content": "跑测试"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_0",
+            "type": "function",
+            "function": {
+              "name": "run_tests",
+              "arguments": "{\"file\":\"a.go\"}"
+            }
+          },
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "run_tests",
+              "arguments": "{\"file\":\"b.go\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"ok\":true}",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "user",
+        "content": "通过了"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "run_tests",
+          "description": "执行测试",
+          "parameters": {
+            "properties": {
+              "file": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "function": {
+        "name": "run_tests"
+      },
+      "type": "function"
+    },
+    "response_format": {
+      "type": "json_object"
+    },
+    "reasoning_effort": "medium"
+  }
+}
