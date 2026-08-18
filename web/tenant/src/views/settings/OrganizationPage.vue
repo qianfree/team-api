@@ -442,60 +442,6 @@ onMounted(() => {
 			</div>
 		</div>
 
-		<!-- Audit Config -->
-		<div class="card">
-			<div class="card-header">
-				<h2 class="text-lg font-semibold text-gray-900">审计设置</h2>
-				<p class="text-sm text-gray-500 mt-0.5">配置组织的审计日志记录级别</p>
-			</div>
-			<div class="card-body space-y-4">
-				<div v-if="auditLoading" class="space-y-3">
-					<div class="skeleton h-4 w-16"></div>
-					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-						<div v-for="i in 4" :key="i" class="skeleton h-16 rounded-xl"></div>
-					</div>
-				</div>
-				<template v-else>
-					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-						<div
-							v-for="opt in auditLevelOptions"
-							:key="opt.value"
-							class="p-4 rounded-xl border-2 cursor-pointer transition-all duration-200"
-							:class="[
-								auditLevel === opt.value
-									? 'border-primary-500 bg-primary-50'
-									: 'border-gray-200 hover:border-gray-300',
-							]"
-							@click="auditLevel = opt.value"
-						>
-							<div class="flex items-center gap-2">
-								<div
-									class="h-4 w-4 rounded-full border-2 flex items-center justify-center"
-									:class="auditLevel === opt.value ? 'border-primary-500' : 'border-gray-300'"
-								>
-									<div v-if="auditLevel === opt.value" class="h-2 w-2 rounded-full bg-primary-500"></div>
-								</div>
-								<span class="text-sm font-medium" :class="auditLevel === opt.value ? 'text-primary-700' : 'text-gray-700'">
-									{{ opt.label }}
-								</span>
-							</div>
-							<p class="text-xs text-gray-500 mt-1 ml-6">{{ opt.desc }}</p>
-						</div>
-					</div>
-
-					<div class="flex justify-end pt-2">
-						<button
-							class="btn btn-primary"
-							:disabled="auditSaving"
-							@click="saveAuditConfig"
-						>
-							{{ auditSaving ? '保存中...' : '保存配置' }}
-						</button>
-					</div>
-				</template>
-			</div>
-		</div>
-
 		<!-- Level Benefits -->
 		<div class="card">
 			<div class="card-header">
@@ -601,6 +547,60 @@ onMounted(() => {
 								</div>
 							</div>
 						</div>
+					</div>
+				</template>
+			</div>
+		</div>
+
+		<!-- Audit Config -->
+		<div class="card">
+			<div class="card-header">
+				<h2 class="text-lg font-semibold text-gray-900">审计设置</h2>
+				<p class="text-sm text-gray-500 mt-0.5">配置组织的审计日志记录级别</p>
+			</div>
+			<div class="card-body space-y-4">
+				<div v-if="auditLoading" class="space-y-3">
+					<div class="skeleton h-4 w-16"></div>
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+						<div v-for="i in 4" :key="i" class="skeleton h-16 rounded-xl"></div>
+					</div>
+				</div>
+				<template v-else>
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+						<div
+							v-for="opt in auditLevelOptions"
+							:key="opt.value"
+							class="p-4 rounded-xl border-2 cursor-pointer transition-all duration-200"
+							:class="[
+								auditLevel === opt.value
+									? 'border-primary-500 bg-primary-50'
+									: 'border-gray-200 hover:border-gray-300',
+							]"
+							@click="auditLevel = opt.value"
+						>
+							<div class="flex items-center gap-2">
+								<div
+									class="h-4 w-4 rounded-full border-2 flex items-center justify-center"
+									:class="auditLevel === opt.value ? 'border-primary-500' : 'border-gray-300'"
+								>
+									<div v-if="auditLevel === opt.value" class="h-2 w-2 rounded-full bg-primary-500"></div>
+								</div>
+								<span class="text-sm font-medium" :class="auditLevel === opt.value ? 'text-primary-700' : 'text-gray-700'">
+									{{ opt.label }}
+								</span>
+							</div>
+							<p class="text-xs text-gray-500 mt-1 ml-6">{{ opt.desc }}</p>
+						</div>
+					</div>
+
+					<div class="flex justify-end pt-2">
+						<button
+							class="btn btn-primary"
+							:disabled="auditSaving"
+							@click="saveAuditConfig"
+						>
+							{{ auditSaving ? '保存中...' : '保存配置' }}
+						</button>
 					</div>
 				</template>
 			</div>
