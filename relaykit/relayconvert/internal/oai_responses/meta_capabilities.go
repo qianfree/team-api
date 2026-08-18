@@ -4,30 +4,15 @@ import (
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 )
 
-// modelMappedProvider 宿主可选实现的 Meta 扩展接口：提供渠道模型映射标志。
-// 宿主 relay/common.RelayInfo 实现本接口；未实现（如 convmeta.Values 测试桩）时
-// 回退「未映射」语义，保证 golden 测试确定性。
-type modelMappedProvider interface {
-	ModelNameMapped() bool
-}
-
-// requestIDProvider 宿主可选实现的 Meta 扩展接口：提供请求 ID（合成响应 ID 用）。
-type requestIDProvider interface {
-	GetRequestID() string
-}
+// 能力接口助手已上移 convmeta/metacap.go（P1-B 起多个转换器包共用；kitutil 会造成
+// import 环），此处保留薄代理维持本包内调用点的可读性。
 
 // modelMappedOf 提取模型映射标志（接口未实现时回退 false）。
 func modelMappedOf(info convmeta.Meta) bool {
-	if provider, ok := info.(modelMappedProvider); ok && provider != nil {
-		return provider.ModelNameMapped()
-	}
-	return false
+	return convmeta.ModelNameMappedOf(info)
 }
 
 // requestIDOf 提取请求 ID（接口未实现时回退空串）。
 func requestIDOf(info convmeta.Meta) string {
-	if provider, ok := info.(requestIDProvider); ok && provider != nil {
-		return provider.GetRequestID()
-	}
-	return ""
+	return convmeta.RequestIDOf(info)
 }

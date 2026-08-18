@@ -144,6 +144,8 @@ func registerResponsesToClaudeChain() {
 //     各 adaptor 的定制后处理照常执行）
 //   - 响应侧（openai 上游 → claude 客户端，非流式）由 P1-B 的 Resp 侧承担
 func registerClaudeToOpenAIChat() {
+	respConv := &oai_chat.OpenAIToClaudeResponseConverter{}
+
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
 		ID:      relayconvert.ConverterClaudeMessagesToOpenAIChat,
 		From:    types.RelayFormatClaude,
@@ -152,6 +154,14 @@ func registerClaudeToOpenAIChat() {
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_chat.ClaudeToOpenAIRequestConverter{}).ConvertRequest,
 		},
+		// Resp 侧方向反转约定：spec 的 From/To 是请求方向语义，Resp 实际转换
+		// openai 上游 → claude 客户端（与 ConverterOpenAIChatToClaudeMessages 先例一致）
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, _, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
+		},
 	})
 }
 
@@ -159,6 +169,8 @@ func registerClaudeToOpenAIChat() {
 // 客户端说 Gemini，上游说 OpenAI Chat（宿主接管点同 spec A）。
 // 注意：本 spec 必须先于 gemini→claude 链 spec 注册（链引用其转换器 ID）。
 func registerGeminiToOpenAIChat() {
+	respConv := &oai_gemini.OpenAIToGeminiResponseConverter{}
+
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
 		ID:      relayconvert.ConverterGeminiContentToOpenAIChat,
 		From:    types.RelayFormatGemini,
@@ -166,6 +178,13 @@ func registerGeminiToOpenAIChat() {
 		Quality: relayconvert.TextConverterQualityGood,
 		Req: relayconvert.TextRequestSide{
 			Convert: (&oai_gemini.GeminiToOpenAIRequestConverter{}).ConvertRequest,
+		},
+		// Resp 侧方向反转约定：实际转换 openai 上游 → gemini 客户端
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				result, _, err := respConv.ConvertResponse(ctx, info, response)
+				return result, nil, err
+			},
 		},
 	})
 }
