@@ -796,9 +796,11 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 		},
 	}
 	// responses-only 上游桥接：chat 入站经 /v1/responses 发送（chat→Responses 请求转换 +
-	// Responses→chat 响应转换）。仅对 OpenAI chat 入站生效；claude/gemini 入站需
-	// Responses→原生格式链式转换，暂不支持（此类渠道上会 404，运营应避免混用）。
-	if selection.ChatViaResponses && v.relayMode == constant.RelayModeChatCompletions {
+	// Responses→chat 响应转换）。P3 起对 claude/gemini 入站同样生效：请求经
+	// ConvertToOpenAI 转 chat 后走 adaptor 的 c2r 桥接发 /v1/responses，响应经
+	// bridgeUpstreamFormat 判定为 responses 上游后由组合链转回客户端格式。
+	if selection.ChatViaResponses && (v.relayMode == constant.RelayModeChatCompletions ||
+		v.relayMode == constant.RelayModeClaudeMessages || v.relayMode == constant.RelayModeGeminiChat) {
 		info.UseResponsesAPI = true
 	}
 	// 流中断结算时上游 usage 常缺失，记录请求侧输入估算值（与预扣同源）供输入计费兜底

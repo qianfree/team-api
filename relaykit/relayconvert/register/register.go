@@ -43,6 +43,8 @@ func init() {
 	registerOpenAIToGemini()
 	// 跨原生链（claude↔gemini / responses→gemini）依赖 openai→gemini 步骤，须在其后
 	registerCrossNativeChains()
+	// P3：claude/gemini 客户端 → responses 上游链（依赖 c2r spec，P0 已注册在前）
+	registerToResponsesChains()
 	// 剩余原生格式供应商
 	registerOpenAIToCoze()
 	registerOpenAIToDify()
@@ -541,6 +543,87 @@ func registerCrossStreamChains() {
 		chainStreamConverters(
 			(&oai_gemini.GeminiToOpenAIStreamConverter{}).ConvertStreamResponse,
 			(&oai_responses.OpenAIChatToResponsesStreamConverter{}).ConvertStreamResponse,
+		),
+	)
+}
+
+// registerToResponsesChains 注册 P3 的 claude/gemini 客户端 → Responses 上游链
+//（ChatViaResponses 渠道上的跨协议客户端——请求经链转 Responses 发送 /v1/responses，
+// 响应侧组合回客户端格式）。
+func registerToResponsesChains() {
+	r2cResp := &oai_responses.ResponsesToOpenAIChatResponseConverter{}
+	o2cResp := &oai_chat.OpenAIToClaudeResponseConverter{}
+	o2gResp := &oai_gemini.OpenAIToGeminiResponseConverter{}
+
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterClaudeMessagesToOpenAIResponses,
+		From:    types.RelayFormatClaude,
+		To:      types.RelayFormatOpenAIResponses,
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			StepConverters: []string{
+				relayconvert.ConverterClaudeMessagesToOpenAIChat,
+				relayconvert.ConverterOpenAIChatToOpenAIResponses,
+			},
+		},
+		// Resp 方向反转：responses 上游 → claude 客户端（B 非流式 + openai→claude 组合）
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				chatResp, _, err := r2cResp.ConvertResponse(ctx, info, response)
+				if err != nil {
+					return nil, nil, err
+				}
+				claudeResp, _, err := o2cResp.ConvertResponse(ctx, info, chatResp)
+				if err != nil {
+					return nil, nil, err
+				}
+				return claudeResp, nil, nil
+			},
+		},
+	})
+
+	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
+		ID:      relayconvert.ConverterGeminiContentToOpenAIResponses,
+		From:    types.RelayFormatGemini,
+		To:      types.RelayFormatOpenAIResponses,
+		Quality: relayconvert.TextConverterQualityFair,
+		Req: relayconvert.TextRequestSide{
+			StepConverters: []string{
+				relayconvert.ConverterGeminiContentToOpenAIChat,
+				relayconvert.ConverterOpenAIChatToOpenAIResponses,
+			},
+		},
+		// Resp 方向反转：responses 上游 → gemini 客户端（B 非流式 + openai→gemini 组合）
+		Resp: relayconvert.TextResponseSide{
+			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
+				chatResp, _, err := r2cResp.ConvertResponse(ctx, info, response)
+				if err != nil {
+					return nil, nil, err
+				}
+				geminiResp, _, err := o2gResp.ConvertResponse(ctx, info, chatResp)
+				if err != nil {
+					return nil, nil, err
+				}
+				return geminiResp, nil, nil
+			},
+		},
+	})
+
+	// 流式组合：responses SSE → claude/gemini 客户端（B 流式 + P2 流式转换器）
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAIResponses, types.RelayFormatClaude,
+		"oai_responses_to_anthropic_messages_stream",
+		chainStreamConverters(
+			(&oai_responses.ResponsesToOpenAIChatStreamConverter{}).ConvertStreamResponse,
+			(&oai_chat.OpenAIToClaudeStreamConverter{}).ConvertStreamResponse,
+		),
+	)
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAIResponses, types.RelayFormatGemini,
+		"oai_responses_to_gemini_generate_content_stream",
+		chainStreamConverters(
+			(&oai_responses.ResponsesToOpenAIChatStreamConverter{}).ConvertStreamResponse,
+			(&oai_gemini.OpenAIToGeminiStreamConverter{}).ConvertStreamResponse,
 		),
 	)
 }

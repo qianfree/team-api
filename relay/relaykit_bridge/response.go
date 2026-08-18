@@ -30,7 +30,7 @@ func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, 
 // info 与 info.ChannelMeta 必须非空。
 func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
 	// 响应转换方向：上游格式 → 客户端格式（与请求相反）
-	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	upstream := bridgeUpstreamFormat(info, info.GetOriginalClientFormat())
 	clientFormat := info.GetOriginalClientFormat()
 	converterID := relaykitResponseConverterID(upstream, clientFormat)
 	if converterID == "" {
@@ -61,6 +61,13 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 			return nil, nil, false
 		}
 		upstreamResp = &geminiResp
+	case constant.RelayFormatResponses:
+		var responsesResp dto.OpenAIResponsesResponse
+		if err := json.Unmarshal(upstreamBody, &responsesResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse responses body failed, fallback to legacy: %v", err)
+			return nil, nil, false
+		}
+		upstreamResp = &responsesResp
 	case constant.RelayFormatCoze:
 		// 原始缓冲 SSE 体，由 CozeToOpenAIResponseConverter 解析
 		upstreamResp = upstreamBody
@@ -136,6 +143,19 @@ func convertedCacheCreationTokens(details *dto.TokenDetails) int {
 	return details.CachedCreationTokens
 }
 
+// bridgeUpstreamFormat 计算桥接路由用的上游格式：ProviderNativeFormat 基础上，
+// 若客户端为 claude/gemini 且请求实际发送到了 /v1/responses（info.UseResponsesAPI——
+// P3 起 claude/gemini 入站在 ChatViaResponses 渠道也置位），上游按 responses 处理。
+// openai 客户端不走本判定（其 ChatViaResponses 响应由 handleChatViaResponses* 承担）。
+func bridgeUpstreamFormat(info *common.RelayInfo, clientFormat constant.RelayFormat) constant.RelayFormat {
+	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	if info.UseResponsesAPI &&
+		(clientFormat == constant.RelayFormatClaude || clientFormat == constant.RelayFormatGemini) {
+		return constant.RelayFormatResponses
+	}
+	return upstream
+}
+
 // relaykitResponseConverterID 根据 (上游原生格式, 客户端格式) 返回响应转换器 ID。
 // 返回空串表示没有匹配的 relaykit 响应转换器（调用方回退旧路径）。
 func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) string {
@@ -168,6 +188,11 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatResponses:
 		// gemini 上游 → responses 客户端：挂 responses→gemini 链 spec 的 Resp 组合
 		return relayconvert.ConverterOpenAIResponsesToGemini
+	// P3：responses 上游 → claude/gemini 客户端（ChatViaResponses 渠道上的跨协议客户端）
+	case upstream == constant.RelayFormatResponses && clientFormat == constant.RelayFormatClaude:
+		return relayconvert.ConverterClaudeMessagesToOpenAIResponses // Resp 组合（B 非流式 + openai→claude）
+	case upstream == constant.RelayFormatResponses && clientFormat == constant.RelayFormatGemini:
+		return relayconvert.ConverterGeminiContentToOpenAIResponses // Resp 组合（B 非流式 + openai→gemini）
 	default:
 		return ""
 	}
