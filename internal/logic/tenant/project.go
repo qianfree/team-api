@@ -488,9 +488,12 @@ func (s *sTenant) ProjectApiKeyList(ctx context.Context, req *v1.TenantProjectAp
 	var keys []apiKeyRow
 	var total int
 	var err error
-	err = dao.ApiKeys.Ctx(ctx).
+	query := dao.ApiKeys.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		Where("project_id", req.Id).
+		Where("project_id", req.Id)
+	// 按有效性过滤（valid=仅可用 / invalid=仅失效），默认 all 不过滤，与个人密钥列表同口径
+	query = applyValidityFilter(query, req.Validity)
+	err = query.
 		Fields("id, name, key_prefix, scope, status, rate_limit_qps, rate_limit_concurrency, ip_whitelist, total_quota, used_quota, created_at, expires_at").
 		OrderDesc("id").
 		Page(page, pageSize).

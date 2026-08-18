@@ -468,3 +468,55 @@ func createClaudeSSEStream(events []map[string]any) *bytes.Buffer {
 	}
 	return &buf
 }
+
+// TestClaudeToOpenAIStreamConverter_CacheUsageAddition 验证流式转换的缓存加法口径：
+// 末 chunk 的 prompt_tokens 须为 input+cache_read+cache_creation 合计（OpenAI 子集语义）。
+func TestClaudeToOpenAIStreamConverter_CacheUsageAddition(t *testing.T) {
+	converter := &ClaudeToOpenAIStreamConverter{}
+	ctx := context.Background()
+
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_cache","type":"message","role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":204,"output_tokens":0,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}
+
+data: {"type":"message_stop"}
+
+`
+
+	reader := strings.NewReader(claudeStream)
+	var chunks []*dto.ChatCompletionStreamResponse
+	chunkWriter := func(chunk any) error {
+		if c, ok := chunk.(*dto.ChatCompletionStreamResponse); ok {
+			chunks = append(chunks, c)
+		}
+		return nil
+	}
+
+	if err := converter.ConvertStreamResponse(ctx, nil, reader, chunkWriter); err != nil {
+		t.Fatalf("ConvertStreamResponse failed: %v", err)
+	}
+
+	lastChunk := chunks[len(chunks)-1]
+	if lastChunk.Usage == nil {
+		t.Fatal("Last chunk should have usage")
+	}
+	// prompt = 204 + 1800 + 248 = 2252
+	if lastChunk.Usage.PromptTokens != 2252 {
+		t.Errorf("PromptTokens = %d, want 2252 (input+cache_read+cache_creation)", lastChunk.Usage.PromptTokens)
+	}
+	if lastChunk.Usage.CompletionTokens != 50 {
+		t.Errorf("CompletionTokens = %d, want 50", lastChunk.Usage.CompletionTokens)
+	}
+	if lastChunk.Usage.TotalTokens != 2302 {
+		t.Errorf("TotalTokens = %d, want 2302", lastChunk.Usage.TotalTokens)
+	}
+	if d := lastChunk.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1800 || d.CachedCreationTokens != 248 {
+		t.Errorf("PromptTokensDetails = %+v, want cached=1800 creation=248", lastChunk.Usage.PromptTokensDetails)
+	}
+}

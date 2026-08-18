@@ -361,7 +361,7 @@ func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int
 			zeroTier = append(zeroTier, ch)
 			continue
 		}
-		w, bd := EffectiveWeight(ch, pol)
+		w, bd := EffectiveWeight(ch, pol, s.profile.Proto)
 		scored = append(scored, ScoredChannel{Channel: ch, Weight: w, Breakdown: bd})
 	}
 
@@ -374,10 +374,10 @@ func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int
 				if ch.Tier != t {
 					continue
 				}
-				w, bd := EffectiveWeight(ch, pol)
+				w, bd := EffectiveWeight(ch, pol, s.profile.Proto)
 				// tierFactor 为 0，用 epsilon 重算
 				bd.Tier = epsilonTier
-				bd.Effective = bd.Base * bd.Tier * bd.Health * bd.Headroom * bd.Cost * bd.Ramp
+				bd.Effective = bd.Base * bd.Tier * bd.Health * bd.Headroom * bd.Cost * bd.Ramp * bd.Proto
 				w = bd.Effective
 				if w > 0 {
 					added = true

@@ -66,13 +66,25 @@ func deliveryStateOfRequestErr(err error) dispatch.DeliveryState {
 	return dispatch.DeliveryMaybeSent
 }
 
-// reportMaterializeFailure 选择物化失败（Key 解密失败/目录缺失）时按渠道级致命上报，
-// 让 FSM 决定换渠道或终止。不发起过上游请求，送达状态为 NotSent。
-func reportMaterializeFailure(ctx context.Context, sess *dispatch.RouteSession, mErr error) dispatch.RetryDecision {
-	failErr := types.NewError(mErr, types.ErrorCodeChannelNoAvailableKey)
+// reportChannelFatal 渠道级致命错误上报（请求未送达上游），让 FSM 决定换渠道或终止。
+// code 必须为 channel: 前缀错误码（classify 归 ErrClassChannelFatal → failover）。
+func reportChannelFatal(ctx context.Context, sess *dispatch.RouteSession, err error, code types.ErrorCode) dispatch.RetryDecision {
+	failErr := types.NewError(err, code)
 	decision, _ := sess.Report(ctx, 0, failErr, dispatch.DeliveryNotSent, 0, 0)
 	trackRetryDecision(0, failErr, dispatch.DeliveryNotSent, decision)
 	return decision
+}
+
+// reportMaterializeFailure 选择物化失败（Key 解密失败/目录缺失）时按渠道级致命上报，
+// 让 FSM 决定换渠道或终止。不发起过上游请求，送达状态为 NotSent。
+func reportMaterializeFailure(ctx context.Context, sess *dispatch.RouteSession, mErr error) dispatch.RetryDecision {
+	return reportChannelFatal(ctx, sess, mErr, types.ErrorCodeChannelNoAvailableKey)
+}
+
+// reportProtocolMismatch 渠道协议能力不匹配（如 responses 有状态请求落在 chat-only
+// 渠道）时上报：换渠道可能得到支持 Responses 协议的渠道，不等于渠道本身故障。
+func reportProtocolMismatch(ctx context.Context, sess *dispatch.RouteSession, err error) dispatch.RetryDecision {
+	return reportChannelFatal(ctx, sess, err, types.ErrorCodeChannelProtocolMismatch)
 }
 
 // sleepBackoff 执行退避等待，客户端断开时立即返回。

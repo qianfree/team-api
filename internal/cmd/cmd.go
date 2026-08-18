@@ -149,6 +149,7 @@ var (
 			// Global middleware
 			s.Use(middleware.Recovery)
 			s.Use(middleware.RequestId)
+			s.Use(middleware.ServiceName)
 
 			// Setup mode guard: block all requests until initialization is complete
 			s.Use(func(r *ghttp.Request) {
@@ -436,6 +437,10 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/completions", relay.HandleCompletions)
 		group.POST("/responses", relay.HandleResponses)
 		group.POST("/responses/compact", relay.HandleResponses)
+		// Responses 生命周期端点（Redis 路由还原渠道后透传上游）
+		group.GET("/responses/{id}", relay.HandleResponsesRetrieve)
+		group.POST("/responses/{id}/cancel", relay.HandleResponsesCancel)
+		group.DELETE("/responses/{id}", relay.HandleResponsesDelete)
 		group.POST("/messages", relay.HandleMessages)
 		group.POST("/audio/speech", relay.HandleAudioSpeech)
 		group.POST("/audio/transcriptions", relay.HandleAudioTranscription)

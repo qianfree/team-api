@@ -11,13 +11,15 @@ import (
 
 // ChnAbilities is the golang structure of table chn_abilities for DAO operations like Where/Data.
 type ChnAbilities struct {
-	g.Meta        `orm:"table:chn_abilities, do:true"`
-	Id            any         // 主键ID
-	ChannelId     any         // 关联渠道ID
-	ModelName     any         // 平台标准模型名（用户请求使用的模型名）
-	UpstreamModel any         // 上游实际模型名（与平台标准名不同时需要映射，如平台名 gpt-4 → 上游名 gpt-4-0314）
-	Enabled       any         // 是否启用该模型能力
-	CreatedAt     *gtime.Time // 创建时间
-	UpdatedAt     *gtime.Time // 更新时间
-	CostRatio     any         // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
+	g.Meta            `orm:"table:chn_abilities, do:true"`
+	Id                any         // 主键ID
+	ChannelId         any         // 关联渠道ID
+	ModelName         any         // 平台标准模型名（用户请求使用的模型名）
+	UpstreamModel     any         // 上游实际模型名（与平台标准名不同时需要映射，如平台名 gpt-4 → 上游名 gpt-4-0314）
+	Enabled           any         // 是否启用该模型能力
+	CreatedAt         *gtime.Time // 创建时间
+	UpdatedAt         *gtime.Time // 更新时间
+	CostRatio         any         // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
+	SupportsResponses any         // 模型在该渠道支持 OpenAI Responses 协议（/v1/responses），responses 入站直连转发并获调度软偏好
+	ChatViaResponses  any         // 上游仅有 Responses 协议（responses-only 上游），chat 入站经桥接转换后发送 /v1/responses
 }

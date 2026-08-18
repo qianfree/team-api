@@ -175,6 +175,18 @@ func convertClaudeUserMessage(msg dto.ClaudeMessage) []dto.Message {
 					if b, err := json.Marshal(cMap); err == nil {
 						toolContent = string(b)
 					}
+				} else if cArr, ok := m["content"].([]any); ok {
+					// 内容块数组（Claude 规范形式，如 [{type:"text",text:"..."}]）：
+					// 拼接文本块，否则工具结果会被替换为空字符串导致内容丢失
+					var parts []string
+					for _, item := range cArr {
+						if b, ok := item.(map[string]any); ok && b["type"] == "text" {
+							if text, ok := b["text"].(string); ok {
+								parts = append(parts, text)
+							}
+						}
+					}
+					toolContent = c2oJoinParts(parts)
 				}
 				if len(contentParts) > 0 {
 					if len(contentParts) == 1 && contentParts[0].Type == "text" {
@@ -594,6 +606,18 @@ func ConvertResponsesToOpenAI(requestBody []byte, info *common.RelayInfo) (io.Re
 		return nil, fmt.Errorf("parse responses request: %w", err)
 	}
 
+	// 有状态请求快速失败：previous_response_id 的会话历史存储在上游 Responses 服务侧，
+	// chat-only 渠道无法还原（本网关不存储响应体），降级转换会静默丢失全部上下文。
+	// 返回哨兵错误，由 relay_handler 按渠道级致命上报调度 FSM 换渠道。
+	if req.PreviousResponseID != "" {
+		return nil, fmt.Errorf("stateful responses (previous_response_id) not supported by chat-only channels: %w", constant.ErrStatefulResponsesUnsupported)
+	}
+
+	// stash 请求快照，供上游 chat 响应合成回 Responses 格式时 echo 请求参数
+	if info != nil {
+		info.ResponsesRequest = &req
+	}
+
 	chatReq := make(map[string]any)
 	if info.ChannelMeta.IsModelMapped {
 		chatReq["model"] = info.ChannelMeta.UpstreamModelName
@@ -655,6 +679,23 @@ func ConvertResponsesToOpenAI(requestBody []byte, info *common.RelayInfo) (io.Re
 	if req.PromptCacheKey != "" {
 		chatReq["prompt_cache_key"] = req.PromptCacheKey
 	}
+	if len(req.Text) > 0 {
+		if rf := r2cParseTextFormat(req.Text); rf != nil {
+			chatReq["response_format"] = rf
+		}
+	}
+	if len(req.FrequencyPenalty) > 0 {
+		var v float64
+		if err := json.Unmarshal(req.FrequencyPenalty, &v); err == nil {
+			chatReq["frequency_penalty"] = v
+		}
+	}
+	if len(req.PresencePenalty) > 0 {
+		var v float64
+		if err := json.Unmarshal(req.PresencePenalty, &v); err == nil {
+			chatReq["presence_penalty"] = v
+		}
+	}
 	if len(req.Metadata) > 0 {
 		chatReq["metadata"] = json.RawMessage(req.Metadata)
 	}
@@ -673,6 +714,9 @@ type r2cInputItem struct {
 	CallID  string          `json:"call_id,omitempty"`
 	Output  string          `json:"output,omitempty"`
 	Text    string          `json:"text,omitempty"`
+	// function_call 项字段（Responses 历史中的助手工具调用）
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type r2cContentPart struct {
@@ -681,6 +725,18 @@ type r2cContentPart struct {
 	ImageURL string `json:"image_url,omitempty"`
 	URL      string `json:"url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	// input_audio：Responses 为 {"type":"input_audio","input_audio":{"data","format"}}，
+	// chat 同形，原样透传
+	InputAudio *r2cInputAudio `json:"input_audio,omitempty"`
+	// input_file：Responses 为扁平 {"type":"input_file","file_data","filename"}，
+	// 转换为 chat 的 {"type":"file","file":{"file_data","filename"}}
+	FileData string `json:"file_data,omitempty"`
+	Filename string `json:"filename,omitempty"`
+}
+
+type r2cInputAudio struct {
+	Data   string `json:"data,omitempty"`
+	Format string `json:"format,omitempty"`
 }
 
 func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) {
@@ -696,6 +752,16 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		return nil, fmt.Errorf("input must be string or array: %w", err)
 	}
 	messages := make([]map[string]any, 0, len(items))
+	// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
+	// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息
+	var pendingToolCalls []map[string]any
+	flushToolCalls := func() {
+		if len(pendingToolCalls) == 0 {
+			return
+		}
+		messages = append(messages, map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls})
+		pendingToolCalls = nil
+	}
 	for _, raw := range items {
 		var item r2cInputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -703,12 +769,31 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		}
 		switch item.Type {
 		case "message":
+			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
 				messages = append(messages, msg)
 			}
+		case "function_call":
+			// 历史中的助手工具调用：转为 assistant.tool_calls 条目，id 用 call_id（与 tool 消息的 tool_call_id 对应）
+			if item.CallID == "" && item.Name == "" {
+				continue
+			}
+			pendingToolCalls = append(pendingToolCalls, map[string]any{
+				"id":   item.CallID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      item.Name,
+					"arguments": item.Arguments,
+				},
+			})
 		case "function_call_output":
+			flushToolCalls()
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": item.CallID, "content": item.Output})
+		case "reasoning":
+			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
+			continue
 		default:
+			flushToolCalls()
 			if item.Role != "" {
 				if msg := r2cConvertMessage(item); msg != nil {
 					messages = append(messages, msg)
@@ -716,6 +801,7 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 			}
 		}
 	}
+	flushToolCalls()
 	return messages, nil
 }
 
@@ -723,6 +809,11 @@ func r2cConvertMessage(item r2cInputItem) map[string]any {
 	role := item.Role
 	if role == "" {
 		role = "user"
+	}
+	// Responses 的 developer 角色（OpenAI 新式系统提示，codex 等客户端常用）
+	// 多数第三方 chat 上游不识别（serde 严格校验直接拒绝），统一映射为 system
+	if role == "developer" {
+		role = "system"
 	}
 	if len(item.Content) == 0 {
 		return nil
@@ -740,6 +831,24 @@ func r2cConvertMessage(item r2cInputItem) map[string]any {
 		switch part.Type {
 		case "input_text":
 			chatParts = append(chatParts, map[string]any{"type": "text", "text": part.Text})
+		case "input_audio":
+			// 音频输入：chat 的 input_audio 与 Responses 同形（input_audio:{data,format}）
+			if part.InputAudio != nil && part.InputAudio.Data != "" {
+				audio := map[string]any{"data": part.InputAudio.Data}
+				if part.InputAudio.Format != "" {
+					audio["format"] = part.InputAudio.Format
+				}
+				chatParts = append(chatParts, map[string]any{"type": "input_audio", "input_audio": audio})
+			}
+		case "input_file":
+			// 文件输入：Responses 扁平 {file_data,filename} → chat 的 file:{file_data,filename}
+			if part.FileData != "" {
+				file := map[string]any{"file_data": part.FileData}
+				if part.Filename != "" {
+					file["filename"] = part.Filename
+				}
+				chatParts = append(chatParts, map[string]any{"type": "file", "file": file})
+			}
 		case "input_image":
 			imageURL := part.ImageURL
 			if imageURL == "" {
@@ -805,6 +914,44 @@ func r2cConvertToolChoice(tcRaw json.RawMessage) any {
 	return tc
 }
 
+// r2cParseTextFormat 解析 Responses text.format（扁平 {type,name,schema,strict}）
+// 为 chat 的 response_format（json_schema 时嵌套为 json_schema:{name,schema,strict}）。
+// text 或未知类型返回 nil（chat 无对应字段，不映射）。
+func r2cParseTextFormat(raw json.RawMessage) map[string]any {
+	var textCfg struct {
+		Format struct {
+			Type   string          `json:"type"`
+			Name   string          `json:"name"`
+			Schema json.RawMessage `json:"schema"`
+			Strict *bool           `json:"strict"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &textCfg); err != nil {
+		return nil
+	}
+	switch textCfg.Format.Type {
+	case "json_object":
+		return map[string]any{"type": "json_object"}
+	case "json_schema":
+		jsonSchema := make(map[string]any, 3)
+		if textCfg.Format.Name != "" {
+			jsonSchema["name"] = textCfg.Format.Name
+		}
+		if len(textCfg.Format.Schema) > 0 {
+			var schema any
+			if err := json.Unmarshal(textCfg.Format.Schema, &schema); err == nil {
+				jsonSchema["schema"] = schema
+			}
+		}
+		if textCfg.Format.Strict != nil {
+			jsonSchema["strict"] = *textCfg.Format.Strict
+		}
+		return map[string]any{"type": "json_schema", "json_schema": jsonSchema}
+	default:
+		return nil
+	}
+}
+
 // ===== OpenAI → Responses 请求转换（Responses API Bridge） =====
 
 // ConvertOpenAIToResponses 将 Chat Completions 请求体转换为 Responses API 请求体
@@ -835,12 +982,23 @@ func ConvertOpenAIToResponses(body []byte, info *common.RelayInfo) ([]byte, erro
 	if req.TopP != nil {
 		respReq["top_p"] = *req.TopP
 	}
+	// prompt_cache_key 是官方 Responses API 参数，原样透传；
+	// presence/frequency penalty 不属于官方 Responses API，透传会被严格上游
+	// （如 api.openai.com）以未知参数拒绝，chat 入站时不注入、静默丢弃。
+	if req.PromptCacheKey != "" {
+		respReq["prompt_cache_key"] = req.PromptCacheKey
+	}
 	if maxTokens := c2rGetMaxTokens(req); maxTokens > 0 {
 		respReq["max_output_tokens"] = maxTokens
 	}
 	if req.ResponseFormat != nil {
-		respReq["text"] = map[string]any{"format": req.ResponseFormat}
+		if tf := c2rBuildTextFormat(req.ResponseFormat); tf != nil {
+			respReq["text"] = tf
+		}
 	}
+	// 桥接的响应不可被 chat 客户端经 previous_response_id 引用（chat 协议无此概念），
+	// 显式 store:false 避免上游无谓存储；渠道配置 DisableStore 时 SanitizeFields 会删掉该字段
+	respReq["store"] = false
 	if req.ReasoningEffort != "" {
 		respReq["reasoning"] = map[string]any{"effort": req.ReasoningEffort, "summary": "detailed"}
 	}
@@ -1059,6 +1217,32 @@ func c2rGetMaxTokens(req dto.GeneralOpenAIRequest) int {
 	return max
 }
 
+// c2rBuildTextFormat 将 chat 的 response_format 转换为 Responses 的 text 配置。
+// chat 的 json_schema 为嵌套 {type,json_schema:{name,schema,strict}}，
+// Responses 的 format 为扁平 {type,name,schema,strict}——需解包提升，不能原样塞入。
+// 其余类型（json_object）两侧同形；无法识别时返回 nil 不映射。
+func c2rBuildTextFormat(rf *dto.ResponseFormat) map[string]any {
+	if rf == nil {
+		return nil
+	}
+	switch rf.Type {
+	case "json_object":
+		return map[string]any{"format": map[string]any{"type": "json_object"}}
+	case "json_schema":
+		format := map[string]any{"type": "json_schema"}
+		if js, ok := rf.JSONSchema.(map[string]any); ok {
+			for _, k := range []string{"name", "schema", "strict"} {
+				if v, ok := js[k]; ok {
+					format[k] = v
+				}
+			}
+		}
+		return map[string]any{"format": format}
+	default:
+		return nil
+	}
+}
+
 // ===== Responses → Chat 响应转换 =====
 
 // ResponsesResponseToChatCompletions 将 Responses API 非流式响应转换为 Chat Completions 响应
@@ -1148,6 +1332,22 @@ func extractOutputFromResponses(resp *dto.OpenAIResponsesResponse) (string, []dt
 // HandleResponsesStreamToChat 将 Responses API 流式响应实时转换为 Chat Completions SSE 流
 func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
+
+	// 非 200：上游在 SSE 开始前返回错误（非 SSE 体）。必须在 StreamScannerHandler 写出
+	// 200 SSE 响应头之前拦截，否则错误体会被当作 SSE 流转发、且无法再向客户端传递状态码。
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		}
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
+	}
 
 	responseID := fmt.Sprintf("chatcmpl-%s", info.RequestID)
 	createAt := time.Now().Unix()
@@ -1304,9 +1504,7 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 					createAt = int64(streamResp.Response.CreatedAt)
 				}
 				if streamResp.Response.Usage != nil {
-					totalUsage.PromptTokens = streamResp.Response.Usage.InputTokens
-					totalUsage.CompletionTokens = streamResp.Response.Usage.OutputTokens
-					totalUsage.TotalTokens = streamResp.Response.Usage.TotalTokens
+					totalUsage = *responsesUsageToCommon(streamResp.Response.Usage)
 					if totalUsage.TotalTokens == 0 {
 						totalUsage.TotalTokens = totalUsage.PromptTokens + totalUsage.CompletionTokens
 					}
@@ -1412,7 +1610,10 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(resp.StatusCode)
 		_, _ = writer.Write(body)
-		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		// 错误体已写给客户端，标记 ResponseWritten 防止调度 FSM 误判为可重试导致二次写入
+		upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		upstreamErr.ResponseWritten = true
+		return nil, upstreamErr
 	}
 
 	var responsesResp dto.OpenAIResponsesResponse

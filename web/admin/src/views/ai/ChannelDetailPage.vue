@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch, Alert } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -159,6 +159,26 @@ const abilityColumns: TableColumnData[] = [
     },
   },
   {
+    title: 'Responses 协议', dataIndex: 'supports_responses', width: 110,
+    render({ record }) {
+      return h(Switch, {
+        modelValue: !!record.supports_responses,
+        size: 'mini',
+        onChange: (v: boolean) => handleToggleProtoFlag(record, 'supports_responses', v),
+      })
+    },
+  },
+  {
+    title: 'Chat 经 Responses', dataIndex: 'chat_via_responses', width: 120,
+    render({ record }) {
+      return h(Switch, {
+        modelValue: !!record.chat_via_responses,
+        size: 'mini',
+        onChange: (v: boolean) => handleToggleProtoFlag(record, 'chat_via_responses', v),
+      })
+    },
+  },
+  {
     title: '状态', dataIndex: 'enabled', width: 80,
     render({ record }) {
       return h(Tag, {
@@ -187,7 +207,7 @@ async function fetchAbilities() {
   } catch { abilitiesData.value = [] } finally { abilitiesLoading.value = false }
 }
 
-// abilityPayload 组装能力批量提交体（cost_ratio 必须随行提交，否则会被重置为默认 1.0）
+// abilityPayload 组装能力批量提交体（cost_ratio / 协议开关必须随行提交，否则会被重置为默认值）
 function abilityPayload(list: any[]) {
   return {
     channel_id: Number(channelId),
@@ -196,6 +216,8 @@ function abilityPayload(list: any[]) {
       upstream_model: a.upstream_model || '',
       enabled: a.enabled,
       cost_ratio: a.cost_ratio ?? 1,
+      supports_responses: !!a.supports_responses,
+      chat_via_responses: !!a.chat_via_responses,
     })),
   }
 }
@@ -230,6 +252,16 @@ function handleCostRatioChange(record: any, value: number) {
 
 function handleUpstreamModelChange(record: any, value: string) {
   record.upstream_model = value
+}
+
+// 协议能力开关（supports_responses / chat_via_responses）：即时整表提交
+async function handleToggleProtoFlag(ab: any, flag: 'supports_responses' | 'chat_via_responses', value: boolean) {
+  const newList = abilitiesData.value.map(a => a.id === ab.id ? { ...a, [flag]: value } : a)
+  try {
+    await request.put(`/admin/channels/${channelId}/abilities`, abilityPayload(newList))
+    abilitiesData.value = newList
+    Message.success(flag === 'supports_responses' ? 'Responses 协议支持已更新' : 'Chat 经 Responses 已更新')
+  } catch { /* error handled by interceptor */ }
 }
 
 async function handleDeleteAbility(id: number) {
@@ -367,10 +399,11 @@ function renderTrendChart() {
     return
   }
   const times = trendData.value.map((p: any) => p.snapshot_at)
-  const scores = trendData.value.map((p: any) => p.health_score)
-  const latencies = trendData.value.map((p: any) => p.latency_ms)
+  const scores = trendData.value.map((p: any) => Math.round(Number(p.health_score) || 0))
+  const latencies = trendData.value.map((p: any) => Math.round(Number(p.latency_ms) || 0))
   trendChart.setOption({
-    tooltip: { trigger: 'axis' },
+    // 健康度、延迟统一取整展示
+    tooltip: { trigger: 'axis', valueFormatter: (value: any) => String(Math.round(Number(value) || 0)) },
     legend: { data: ['健康度', '延迟(ms)'], bottom: 0 },
     grid: { left: 50, right: 50, top: 30, bottom: 45 },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 11 } },
@@ -380,7 +413,7 @@ function renderTrendChart() {
     ],
     series: [
       {
-        name: '健康度', type: 'line', data: scores, smooth: true, lineStyle: { width: 2 },
+        name: '健康度', type: 'line', data: scores, smooth: true, showSymbol: false, lineStyle: { width: 2 },
         itemStyle: { color: '#10b981' },
         areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
           { offset: 0, color: 'rgba(16,185,129,0.3)' },
@@ -611,6 +644,12 @@ function formatHeaders(headers: Record<string, string>): string {
                   <div>
                     <span style="font-weight: 500;">成本比例：</span>该渠道相对基准价的成本系数，1.0 为标准。小于 1（如 0.8）表示更便宜，多渠道择优时更优先调度；大于 1（如 1.5）表示更贵，优先级降低。仅用于渠道调度，不影响对用户的计费。
                   </div>
+                  <div>
+                    <span style="font-weight: 500;">Responses 协议：</span>该模型在上游支持 OpenAI Responses API（/v1/responses）。开启后 /v1/responses 端点请求直连上游原生协议转发（不经 chat 转换），且调度时优先选择此类渠道。
+                  </div>
+                  <div>
+                    <span style="font-weight: 500;">Chat 经 Responses：</span>上游仅有 Responses 协议（responses-only，如 Codex 类中转）。开启后 /v1/chat/completions 请求自动经桥接转换发送到 /v1/responses。
+                  </div>
                 </div>
               </div>
             </ACard>
@@ -618,6 +657,19 @@ function formatHeaders(headers: Record<string, string>): string {
 
           <!-- Tab 3: Test -->
           <ATabPane key="test" title="测试">
+            <!-- 功能限制提示 -->
+            <AAlert type="info" class="mb-4" show-icon closable>
+              <template #title>仅支持文本对话模型测试</template>
+              <div style="font-size: 12px; line-height: 1.6; color: var(--color-text-2);">
+                <div>当前渠道测试功能仅支持<strong>文本对话模型</strong>（如 Chat 系列）的基础测试。</div>
+                <div style="margin-top: 6px;">其他模型类型（如视频生成、图片生成、Embeddings 等）暂不支持此测试方式，建议：</div>
+                <ul style="margin: 6px 0 0 20px; padding: 0;">
+                  <li>使用<strong>租户端的在线体验功能</strong>进行端到端测试</li>
+                  <li>通过 <strong>API 直接调用</strong>进行验证测试</li>
+                </ul>
+              </div>
+            </AAlert>
+
             <ACard :bordered="false">
               <div class="flex gap-2 items-end mb-4">
                 <AFormItem label="测试模型" class="flex-1 !mb-0">

@@ -6,10 +6,15 @@ import (
 
 // EffectiveWeight 权重合成函数 W(c)（纯函数）。
 //
-//	W(c) = baseWeight × tierFactor × healthFactor × headroom^γ × costFactor × rampFactor
+//	W(c) = baseWeight × tierFactor × healthFactor × headroom^γ × costFactor × rampFactor × protoFactor
 //
 // 返回合成权重与分解明细（供决策日志 / ForwardingTrace）。
-func EffectiveWeight(c Channel, pol *RoutingPolicy) (float64, WeightBreakdown) {
+// pref 为可选的入站协议偏好（省略 = ProtoAny，protoFactor 恒为 1）。
+func EffectiveWeight(c Channel, pol *RoutingPolicy, pref ...ProtoPreference) (float64, WeightBreakdown) {
+	var proto ProtoPreference
+	if len(pref) > 0 {
+		proto = pref[0]
+	}
 	bd := WeightBreakdown{
 		Base:     c.BaseWeight,
 		Tier:     tierFactor(c.Tier, pol),
@@ -17,11 +22,12 @@ func EffectiveWeight(c Channel, pol *RoutingPolicy) (float64, WeightBreakdown) {
 		Headroom: headroomFactor(c, pol),
 		Cost:     costFactor(c, pol),
 		Ramp:     rampFactor(c, pol),
+		Proto:    protoFactor(c, proto, pol),
 	}
 	if bd.Base <= 0 {
 		bd.Base = 0
 	}
-	bd.Effective = bd.Base * bd.Tier * bd.Health * bd.Headroom * bd.Cost * bd.Ramp
+	bd.Effective = bd.Base * bd.Tier * bd.Health * bd.Headroom * bd.Cost * bd.Ramp * bd.Proto
 	return bd.Effective, bd
 }
 
@@ -87,6 +93,29 @@ func rampFactor(c Channel, pol *RoutingPolicy) float64 {
 		return 1
 	}
 	return clamp(float64(c.RampElapsedMs)/float64(window), pol.Ramp.Floor, 1.0)
+}
+
+// protoFactor 协议偏好因子（软偏好，只降权不排除，恒 > 0）：
+//   - ProtoResponses：上游原生支持 Responses 协议（supports_responses 或
+//     chat_via_responses，后者定义上即 responses-only 上游）的渠道为 1，其余降权
+//     （经 chat 转换会丢失 previous_response_id 有状态多轮等 Responses 专属特性，
+//     损失大故降权较重）；
+//   - ProtoChat：原生 chat 渠道为 1，ChatViaResponses 桥接渠道降权（桥接基本无损，
+//     仅响应细节略有出入，降权较轻）。
+func protoFactor(c Channel, pref ProtoPreference, pol *RoutingPolicy) float64 {
+	switch pref {
+	case ProtoResponses:
+		if c.SupportsResponses || c.ChatViaResponses {
+			return 1
+		}
+		return pol.Proto.ResponsesMismatch
+	case ProtoChat:
+		if !c.ChatViaResponses {
+			return 1
+		}
+		return pol.Proto.ChatBridgeMismatch
+	}
+	return 1
 }
 
 func clamp(v, lo, hi float64) float64 {

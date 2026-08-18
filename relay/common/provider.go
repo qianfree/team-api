@@ -123,6 +123,11 @@ type ChannelSelection struct {
 	IsModelMapped     bool
 	MaxConcurrency    int // 该渠道最大并发（0/负值表示不限），供各转发入口做容量控制
 	Settings          ChannelSettings
+	// 协议能力（chn_abilities 渠道×模型级）：
+	// SupportsResponses：responses 入站原样直连 /v1/responses；
+	// ChatViaResponses：responses-only 上游，chat 入站经桥接发送 /v1/responses。
+	SupportsResponses bool
+	ChatViaResponses  bool
 	SelectionReason   string // bind / hrw / overflow / probe / cred_rotate
 	Priority          int
 	Weight            int
@@ -153,7 +158,7 @@ type UsageRecord struct {
 	ErrorMessage     string
 
 	// Cache token 细分
-	CacheCreationTokens   int // 缓存创建 token（合并）
+	CacheCreationTokens   int // 写入缓存的 token（Claude cache_creation / OpenAI Responses cache_write）
 	CacheCreation5mTokens int // Claude 5分钟缓存创建
 	CacheCreation1hTokens int // Claude 1小时缓存创建
 	CacheReadTokens       int // 缓存读取 token

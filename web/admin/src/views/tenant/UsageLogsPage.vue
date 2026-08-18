@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import {
 	Message, Tag, Tooltip, Space, Button,
 } from '@arco-design/web-vue'
+import { IconArchive, IconSave } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
@@ -278,7 +279,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: 'Token', dataIndex: 'tokens', width: 250,
+		title: 'Token', dataIndex: 'tokens', width: 180,
 		render({ record }) {
 			const tooltipContent = [
 				h('div', { class: 'dark-tooltip-title' }, 'Token 详情'),
@@ -305,19 +306,31 @@ const columns: TableColumnData[] = [
 				position: 'right',
 			}, {
 				default: () => h('div', { class: 'token-cell' }, [
-						h('div', { class: 'token-row' }, [
-							h('span', { class: 'token-item', style: 'color: #18a058' }, `↑${(record.input_tokens || 0).toLocaleString()}`),
-							h('span', { class: 'token-item', style: 'color: #722ed1' }, `↓${(record.output_tokens || 0).toLocaleString()}`),
-							h('span', { class: 'token-item', style: 'color: #ff7d00' }, `✎${(record.cache_creation_tokens || 0).toLocaleString()}`),
-							h('span', { class: 'token-item', style: 'color: #0fc6c2' }, `⚡${(record.cache_read_tokens || 0).toLocaleString()}`),
+					h('div', { class: 'token-row' }, [
+						h('span', { class: 'token-item', style: 'color: #18a058', 'aria-label': `输入 Token ${(record.input_tokens || 0).toLocaleString()}` }, [
+							h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '↑'),
+							h('span', { class: 'token-value' }, (record.input_tokens || 0).toLocaleString()),
 						]),
+						h('span', { class: 'token-item', style: 'color: #722ed1', 'aria-label': `输出 Token ${(record.output_tokens || 0).toLocaleString()}` }, [
+							h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '↓'),
+							h('span', { class: 'token-value' }, (record.output_tokens || 0).toLocaleString()),
+						]),
+						h('span', { class: 'token-item', style: 'color: #ff7d00', 'aria-label': `缓存写入 ${(record.cache_creation_tokens || 0).toLocaleString()}` }, [
+							h(IconSave, { size: 13, 'aria-hidden': 'true' }),
+							h('span', { class: 'token-value' }, (record.cache_creation_tokens || 0).toLocaleString()),
+						]),
+						h('span', { class: 'token-item', style: 'color: #0fc6c2', 'aria-label': `缓存读取 ${(record.cache_read_tokens || 0).toLocaleString()}` }, [
+							h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '⚡'),
+							h('span', { class: 'token-value' }, (record.cache_read_tokens || 0).toLocaleString()),
+						]),
+					]),
 				]),
 				content: () => h('div', { class: 'dark-tooltip' }, tooltipContent),
 			})
 		},
 	},
 	{
-		title: '费用', dataIndex: 'cost', width: 120,
+		title: '费用', dataIndex: 'cost', width: 100,
 		render({ record }) {
 			const tooltipContent = [
 				h('div', { class: 'dark-tooltip-title' }, '费用明细'),
@@ -364,7 +377,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: '状态', dataIndex: 'status', width: 90,
+		title: '状态', dataIndex: 'status', width: 80,
 		render({ record }) {
 			const items: any[] = [
 				h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status),
@@ -376,7 +389,7 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{
-		title: '时间', dataIndex: 'created_at', width: 180,
+		title: '时间', dataIndex: 'created_at', width: 160,
 		render({ record }) {
 			return h('span', { class: 'time-text' }, formatTime(record.created_at))
 		},
@@ -1041,19 +1054,32 @@ const { exporting, exportFile } = useExport({
 	background: rgba(22, 93, 255, 0.06);
 }
 .token-row {
-	display: flex;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 	align-items: center;
-  justify-content: flex-start;
-	line-height: 1.8;
+	column-gap: 12px;
+	row-gap: 0;
+	line-height: 1.4;
 }
 .token-item {
-  min-width: 50px;
+	min-width: 0;
+	width: 100%;
 	font-size: 12px;
 	font-weight: 600;
 	white-space: nowrap;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
+}
+.token-item > svg,
+.token-symbol {
+	flex-shrink: 0;
+}
+.token-value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-variant-numeric: tabular-nums;
 }
 .token-in { color: #18a058; }
 .token-out { color: #722ed1; }

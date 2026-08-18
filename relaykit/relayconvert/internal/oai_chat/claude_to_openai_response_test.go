@@ -112,6 +112,56 @@ func TestClaudeToOpenAIResponseConverter_BasicConversion(t *testing.T) {
 	}
 }
 
+// TestClaudeToOpenAIResponseConverter_CacheUsageAddition 验证缓存 token 的加法口径：
+// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存（cached 为其子集），
+// 转换必须做 input+cache_read+cache_creation 加法，否则缓存场景下客户端少算输入量、
+// 出现 cached > prompt 的矛盾数据。
+func TestClaudeToOpenAIResponseConverter_CacheUsageAddition(t *testing.T) {
+	converter := &ClaudeToOpenAIResponseConverter{}
+	ctx := context.Background()
+
+	textContent := "Hi"
+	claudeResp := &dto.ClaudeResponse{
+		ID:         "msg_cache",
+		Type:       "message",
+		Role:       "assistant",
+		Model:      "claude-sonnet-4",
+		StopReason: "end_turn",
+		Content: []dto.ClaudeContentBlock{
+			{Type: "text", Text: &textContent},
+		},
+		Usage: &dto.ClaudeUsage{
+			InputTokens:              204,
+			OutputTokens:             50,
+			CacheReadInputTokens:     1800,
+			CacheCreationInputTokens: 248,
+		},
+	}
+
+	result, err := converter.ConvertResponse(ctx, nil, claudeResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse failed: %v", err)
+	}
+	openaiResp, ok := result.(*dto.ChatCompletionResponse)
+	if !ok {
+		t.Fatalf("Expected *dto.ChatCompletionResponse, got %T", result)
+	}
+
+	// prompt = 204 + 1800 + 248 = 2252
+	if openaiResp.Usage.PromptTokens != 2252 {
+		t.Errorf("PromptTokens = %d, want 2252 (input+cache_read+cache_creation)", openaiResp.Usage.PromptTokens)
+	}
+	if openaiResp.Usage.CompletionTokens != 50 {
+		t.Errorf("CompletionTokens = %d, want 50", openaiResp.Usage.CompletionTokens)
+	}
+	if openaiResp.Usage.TotalTokens != 2302 {
+		t.Errorf("TotalTokens = %d, want 2302", openaiResp.Usage.TotalTokens)
+	}
+	if d := openaiResp.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1800 || d.CachedCreationTokens != 248 {
+		t.Errorf("PromptTokensDetails = %+v, want cached=1800 creation=248", openaiResp.Usage.PromptTokensDetails)
+	}
+}
+
 func TestClaudeToOpenAIResponseConverter_ThinkingContent(t *testing.T) {
 	converter := &ClaudeToOpenAIResponseConverter{}
 	ctx := context.Background()

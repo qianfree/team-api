@@ -23,6 +23,8 @@ import (
 //     SUM(latency_ms) 对 NULL 跳过、但 SUM/COUNT 用全部请求数作分母的语义一致）
 //   - 平均首 Token = Σttft / Σttft_n（首 Token 单独计数，避免非流式/无首Token请求计入分母拉低均值）
 //   - 成本以整数 micro-USD 累加（对齐 Redis 钱包 micro 规范，杜绝 HINCRBYFLOAT 漂移）
+//   - 缓存指标与日聚合对齐：cache 命中请求数（chit）按「该次请求 cache_read>0」计 1，
+//     仅写入缓存（creation>0、read=0）不计命中
 //
 // 可靠性为 best-effort：Redis 不可用时计数丢弃、查询返回空，不影响请求主链路，页面退化为历史日表。
 const (
@@ -41,6 +43,9 @@ type ModelPerfRecord struct {
 	InputTokens  int
 	OutputTokens int
 	CostUSD      float64
+	// 缓存 token（命中判定由本模块从 CacheReadTokens>0 推导，调用方无需单独传标志）
+	CacheCreationTokens int
+	CacheReadTokens     int
 }
 
 // ModelPerfCounter 当日某模型的累计计数（Redis 小时桶聚合结果）。
@@ -54,6 +59,10 @@ type ModelPerfCounter struct {
 	Tin       int64
 	Tout      int64
 	CostMicro int64
+	// 缓存累计：creation/read token 与 命中缓存的请求数（与 bil_usage_daily 同口径）
+	CacheCreation int64
+	CacheRead     int64
+	CacheHitReq   int64
 }
 
 func modelPerfModelsKey(date string) string {
@@ -84,7 +93,8 @@ func microFromUSD(usd float64) int64 {
 // modelPerfIncrLua 一次 RTT 把样本原子累加到「当日模型集合 + 小时桶」并续期。
 // KEYS[1] = perf_models:{date}；KEYS[2] = perf_model:{hex}:{hour}
 // ARGV[1] = 模型名；ARGV[2] = TTL 秒；ARGV[3] = ok(1/0)；ARGV[4] = lat ms；
-// ARGV[5] = ttft ms；ARGV[6] = input tokens；ARGV[7] = output tokens；ARGV[8] = cost micro-USD。
+// ARGV[5] = ttft ms；ARGV[6] = input tokens；ARGV[7] = output tokens；ARGV[8] = cost micro-USD；
+// ARGV[9] = cache creation tokens；ARGV[10] = cache read tokens（>0 时 chit 同步 +1）。
 const modelPerfIncrLua = `
 redis.call("SADD", KEYS[1], ARGV[1])
 redis.call("EXPIRE", KEYS[1], ARGV[2])
@@ -98,14 +108,20 @@ end
 if tonumber(ARGV[6]) > 0 then redis.call("HINCRBY", KEYS[2], "tin", tonumber(ARGV[6])) end
 if tonumber(ARGV[7]) > 0 then redis.call("HINCRBY", KEYS[2], "tout", tonumber(ARGV[7])) end
 if tonumber(ARGV[8]) > 0 then redis.call("HINCRBY", KEYS[2], "cost", tonumber(ARGV[8])) end
+if tonumber(ARGV[9]) > 0 then redis.call("HINCRBY", KEYS[2], "ccr", tonumber(ARGV[9])) end
+if tonumber(ARGV[10]) > 0 then
+	redis.call("HINCRBY", KEYS[2], "crd", tonumber(ARGV[10]))
+	redis.call("HINCRBY", KEYS[2], "chit", 1)
+end
 redis.call("EXPIRE", KEYS[2], ARGV[2])
 return 1
 `
 
 // modelPerfReadLua 累加某模型当日所有小时桶计数。KEYS = 当日各小时桶 key。
-// 返回扁平数组 [req, ok, lat, ttft, ttft_n, tin, tout, cost]。
+// 返回扁平数组 [req, ok, lat, ttft, ttft_n, tin, tout, cost, ccr, crd, chit]。
+// 旧版本桶缺失 ccr/crd/chit 字段时 tonumber(nil) or 0 兜底为 0，平滑上线。
 const modelPerfReadLua = `
-local req,ok,lat,ttft,ttftn,tin,tout,cost = 0,0,0,0,0,0,0,0
+local req,ok,lat,ttft,ttftn,tin,tout,cost,ccr,crd,chit = 0,0,0,0,0,0,0,0,0,0,0
 for i = 1, #KEYS do
 	local h = redis.call("HGETALL", KEYS[i])
 	for j = 1, #h, 2 do
@@ -118,10 +134,13 @@ for i = 1, #KEYS do
 		elseif f == "ttft_n" then ttftn = ttftn + v
 		elseif f == "tin" then tin = tin + v
 		elseif f == "tout" then tout = tout + v
-		elseif f == "cost" then cost = cost + v end
+		elseif f == "cost" then cost = cost + v
+		elseif f == "ccr" then ccr = ccr + v
+		elseif f == "crd" then crd = crd + v
+		elseif f == "chit" then chit = chit + v end
 	end
 end
-return {req, ok, lat, ttft, ttftn, tin, tout, cost}
+return {req, ok, lat, ttft, ttftn, tin, tout, cost, ccr, crd, chit}
 `
 
 // RecordModelPerfMetrics 将一次请求的模型性能采样累加到 Redis 当日小时桶。
@@ -153,6 +172,7 @@ func RecordModelPerfMetrics(ctx context.Context, r ModelPerfRecord) {
 			boolToInt(r.Success), int64(math.Round(r.LatencyMs)),
 			int64(r.FirstTokenMs), int64(r.InputTokens), int64(r.OutputTokens),
 			microFromUSD(r.CostUSD),
+			int64(r.CacheCreationTokens), int64(r.CacheReadTokens),
 		}
 		if _, err := g.Redis().Do(bgCtx, "EVAL", args...); err != nil {
 			// 指标是 best-effort，Redis 抖动只记 debug，不刷告警
@@ -203,14 +223,17 @@ func GetModelPerfMetricsToday(ctx context.Context, date string) (map[string]Mode
 		}
 		vals := res.Vars()
 		out[model] = ModelPerfCounter{
-			Req:       vals[0].Int64(),
-			Ok:        vals[1].Int64(),
-			Lat:       vals[2].Int64(),
-			Ttft:      vals[3].Int64(),
-			TtftN:     vals[4].Int64(),
-			Tin:       vals[5].Int64(),
-			Tout:      vals[6].Int64(),
-			CostMicro: vals[7].Int64(),
+			Req:           vals[0].Int64(),
+			Ok:            vals[1].Int64(),
+			Lat:           vals[2].Int64(),
+			Ttft:          vals[3].Int64(),
+			TtftN:         vals[4].Int64(),
+			Tin:           vals[5].Int64(),
+			Tout:          vals[6].Int64(),
+			CostMicro:     vals[7].Int64(),
+			CacheCreation: vals[8].Int64(),
+			CacheRead:     vals[9].Int64(),
+			CacheHitReq:   vals[10].Int64(),
 		}
 	}
 	return out, nil

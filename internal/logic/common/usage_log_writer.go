@@ -239,8 +239,27 @@ func (w *UsageLogWriter) flushBatch(records []any) {
 	ctx := gctx.New()
 	_, err := w.dbInstance().Model(w.table).Ctx(ctx).Data(batch).Batch(len(batch)).Insert()
 	if err != nil {
-		w.failed.Add(int64(len(batch)))
-		g.Log().Errorf(ctx, "usage_log_writer: batch insert %d records failed: %v", len(batch), err)
+		// 批量写入失败（如某条记录含非法 UTF-8 字节被 PG 整体拒绝）时降级为逐条写入，
+		// 避免一条脏数据拖垮整批记录（usage_logs 为计费数据，audit_logs 不允许丢失）；
+		// 单条仍失败才丢弃该条，并汇总打日志。
+		g.Log().Errorf(ctx, "usage_log_writer: batch insert %d records failed: %v, fallback to per-record insert", len(batch), err)
+		saved := 0
+		var firstErr error
+		for _, rec := range batch {
+			if _, e := w.dbInstance().Model(w.table).Ctx(ctx).Data(rec).Insert(); e != nil {
+				if firstErr == nil {
+					firstErr = e
+				}
+				continue
+			}
+			saved++
+		}
+		w.completed.Add(int64(saved))
+		dropped := len(batch) - saved
+		w.failed.Add(int64(dropped))
+		if firstErr != nil {
+			g.Log().Errorf(ctx, "usage_log_writer: %d/%d records dropped in per-record fallback, first error: %v", dropped, len(batch), firstErr)
+		}
 		return
 	}
 	w.completed.Add(int64(len(batch)))

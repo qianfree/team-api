@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/types"
 )
@@ -20,6 +21,20 @@ type ChannelMeta struct {
 	UpstreamModelName string // 上游实际模型名（可能与用户请求不同）
 	IsModelMapped     bool   // 是否经过模型名映射
 	Settings          ChannelSettings
+
+	// 协议能力（chn_abilities 渠道×模型级）：
+	// SupportsResponses：模型支持 /v1/responses，responses 入站原样直连（不做 chat 转换）；
+	// ChatViaResponses：responses-only 上游，chat 入站经桥接转换后发送 /v1/responses。
+	// ChatViaResponses 隐含上游原生说 Responses 协议（UpstreamSpeaksResponses）。
+	SupportsResponses bool
+	ChatViaResponses  bool
+}
+
+// UpstreamSpeaksResponses 上游（针对当前模型）是否原生支持 Responses 协议：
+// supports_responses 或 chat_via_responses 任一为真即成立——后者定义上就是
+// "上游只有 /v1/responses"，responses 入站在其上同样应直连而非转 chat。
+func (m *ChannelMeta) UpstreamSpeaksResponses() bool {
+	return m != nil && (m.SupportsResponses || m.ChatViaResponses)
 }
 
 const (
@@ -47,12 +62,11 @@ func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
 
 // ChannelSettings 渠道配置（来自 chn_channels.settings JSONB）
 type ChannelSettings struct {
-	TimeoutSeconds              int            `json:"timeout_seconds"`                          // 请求超时秒数，默认 60
-	RetryCount                  int            `json:"retry_count"`                              // 重试次数，默认 1
-	ParamOverride               map[string]any `json:"param_override,omitempty"`                 // 请求体改写规则
-	HeaderOverride              map[string]any `json:"header_override,omitempty"`                // Header 改写规则
-	ChatCompletionsViaResponses bool           `json:"chat_completions_via_responses,omitempty"` // Chat Completions → Responses API 桥接
-	PassThroughBodyEnabled      bool           `json:"pass_through_body_enabled,omitempty"`      // 直连转发：跳过协议转换，原始请求体直接转发上游
+	TimeoutSeconds         int            `json:"timeout_seconds"`                     // 请求超时秒数，默认 60
+	RetryCount             int            `json:"retry_count"`                         // 重试次数，默认 1
+	ParamOverride          map[string]any `json:"param_override,omitempty"`            // 请求体改写规则
+	HeaderOverride         map[string]any `json:"header_override,omitempty"`           // Header 改写规则
+	PassThroughBodyEnabled bool           `json:"pass_through_body_enabled,omitempty"` // 直连转发：跳过协议转换，原始请求体直接转发上游
 
 	// System Prompt 注入
 	SystemPrompt         string `json:"system_prompt,omitempty"`          // 渠道级系统提示词
@@ -115,6 +129,11 @@ type RelayInfo struct {
 
 	// UseResponsesAPI 桥接标志：客户端发送 Chat Completions，但请求应通过 Responses API 发送到上游
 	UseResponsesAPI bool
+
+	// ResponsesRequest responses 入站请求快照（ConvertResponsesToOpenAI 解析后 stash），
+	// 供 chat 上游响应合成回 Responses 格式时 echo temperature/top_p/max_output_tokens/instructions。
+	// 直连（原生 Responses 上游）路径不填充，合成时保持默认值。
+	ResponsesRequest *dto.OpenAIResponsesRequest
 
 	// Thinking 后缀路由（从模型名解析，供适配器消费）
 	ThinkingEnabled  bool   // 是否有 -thinking 后缀

@@ -283,10 +283,13 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 			if reason == "" {
 				reason = "stop"
 			}
+			// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
+			//（cached 是其子集），客户端可见 usage 做加法；计费返回值另行按 Claude 口径构建
+			promptTotal := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 			usageObj := &dto.UsageWithDetails{
-				PromptTokens:        usage.InputTokens,
+				PromptTokens:        promptTotal,
 				CompletionTokens:    usage.OutputTokens,
-				TotalTokens:         usage.InputTokens + usage.OutputTokens,
+				TotalTokens:         promptTotal + usage.OutputTokens,
 				PromptTokensDetails: common.CommonTokenDetailsToDto(claudeUsageToTokenDetails(&usage)),
 			}
 			if usageObj.CompletionTokens == 0 {
@@ -656,10 +659,21 @@ func claudeToOpenAIResponse(claudeResp *dto.ClaudeResponse, info *common.RelayIn
 	resp.Choices[0].Message = message
 
 	if claudeResp.Usage != nil {
+		// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
+		//（cached 是其子集），转换做加法并透出缓存明细，客户端按 OpenAI 语义解析才正确
+		promptTotal := claudeResp.Usage.InputTokens +
+			claudeResp.Usage.CacheReadInputTokens +
+			claudeResp.Usage.CacheCreationInputTokens
 		resp.Usage = dto.UsageWithDetails{
-			PromptTokens:     claudeResp.Usage.InputTokens,
+			PromptTokens:     promptTotal,
 			CompletionTokens: claudeResp.Usage.OutputTokens,
-			TotalTokens:      claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
+			TotalTokens:      promptTotal + claudeResp.Usage.OutputTokens,
+		}
+		if claudeResp.Usage.CacheReadInputTokens > 0 || claudeResp.Usage.CacheCreationInputTokens > 0 {
+			resp.Usage.PromptTokensDetails = &dto.TokenDetails{
+				CachedTokens:         claudeResp.Usage.CacheReadInputTokens,
+				CachedCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
+			}
 		}
 	}
 

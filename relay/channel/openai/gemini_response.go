@@ -172,9 +172,19 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		FinishReason: reason,
 	}}
 	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
+		// Gemini 语义：CandidatesTokenCount 不含 thoughts，OpenAI CompletionTokens 已含 reasoning
+		// 需要扣减 reasoning 避免双计（Gemini 客户端按 total = prompt + candidates + thoughts 汇总）
+		candidatesTokens := usage.CompletionTokens
+		if usage.CompletionTokenDetails != nil && usage.CompletionTokenDetails.ReasoningTokens > 0 {
+			candidatesTokens -= usage.CompletionTokenDetails.ReasoningTokens
+			if candidatesTokens < 0 {
+				candidatesTokens = 0
+			}
+		}
+
 		finalChunk.UsageMetadata = &dto.GeminiUsageMetadata{
 			PromptTokenCount:     usage.PromptTokens,
-			CandidatesTokenCount: usage.CompletionTokens,
+			CandidatesTokenCount: candidatesTokens,
 			TotalTokenCount:      usage.TotalTokens,
 		}
 		if usage.PromptTokensDetails != nil {
@@ -220,9 +230,19 @@ func openAIToGeminiResponse(openaiResp *dto.ChatCompletionResponse, info *common
 
 	resp.Candidates = []dto.GeminiCandidate{candidate}
 
+	// Gemini 语义：CandidatesTokenCount 不含 thoughts，OpenAI CompletionTokens 已含 reasoning
+	// 需要扣减 reasoning 避免双计（Gemini 客户端按 total = prompt + candidates + thoughts 汇总）
+	candidatesTokens := openaiResp.Usage.CompletionTokens
+	if openaiResp.Usage.CompletionTokenDetails != nil && openaiResp.Usage.CompletionTokenDetails.ReasoningTokens > 0 {
+		candidatesTokens -= openaiResp.Usage.CompletionTokenDetails.ReasoningTokens
+		if candidatesTokens < 0 {
+			candidatesTokens = 0
+		}
+	}
+
 	resp.UsageMetadata = &dto.GeminiUsageMetadata{
 		PromptTokenCount:     openaiResp.Usage.PromptTokens,
-		CandidatesTokenCount: openaiResp.Usage.CompletionTokens,
+		CandidatesTokenCount: candidatesTokens,
 		TotalTokenCount:      openaiResp.Usage.TotalTokens,
 	}
 	if openaiResp.Usage.PromptTokensDetails != nil {

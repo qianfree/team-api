@@ -45,8 +45,10 @@ type PricingResult struct {
 	Currency         string
 
 	// Cache 直接定价
-	CacheReadPrice     float64 // 缓存读取每 1M token 价格
-	CacheCreationPrice float64 // 缓存创建每 1M token 价格
+	CacheReadPrice       float64 // 缓存读取每 1M token 价格
+	CacheCreationPrice   float64 // 缓存创建每 1M token 价格（5m TTL 基础价）
+	CacheCreation5mPrice float64 // 5 分钟缓存创建价格（1.25× 基础价）
+	CacheCreation1hPrice float64 // 1 小时缓存创建价格（2× 基础价）
 
 	// 模型最大输出 token 数（随定价一起缓存，供预扣估算使用，
 	// 避免 EstimatePreDeductAmount 每请求单独查一次 mdl_models）。
@@ -252,21 +254,23 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 	modelMultiplier := 1.0
 
 	result := &PricingResult{
-		InputPrice:         inputPrice,
-		OutputPrice:        outputPrice,
-		BaseInputPrice:     baseInputPrice,
-		BaseOutputPrice:    baseOutputPrice,
-		BillingMode:        billingMode,
-		BillingSource:      billingSource,
-		PerRequestPrice:    perRequestPrice,
-		DiscountRatio:      discountRatio,
-		TenantMultiplier:   tenantMultiplier,
-		ModelMultiplier:    modelMultiplier,
-		Currency:           "USD",
-		CacheReadPrice:     cacheReadPrice,
-		CacheCreationPrice: cacheCreationPrice,
-		MaxOutputTokens:    model.MaxOutputTokens,
-		CustomTiers:        customTiers,
+		InputPrice:           inputPrice,
+		OutputPrice:          outputPrice,
+		BaseInputPrice:       baseInputPrice,
+		BaseOutputPrice:      baseOutputPrice,
+		BillingMode:          billingMode,
+		BillingSource:        billingSource,
+		PerRequestPrice:      perRequestPrice,
+		DiscountRatio:        discountRatio,
+		TenantMultiplier:     tenantMultiplier,
+		ModelMultiplier:      modelMultiplier,
+		Currency:             "USD",
+		CacheReadPrice:       cacheReadPrice,
+		CacheCreationPrice:   cacheCreationPrice,
+		CacheCreation5mPrice: cacheCreationPrice,       // 5m TTL = cache_creation_price 基础价（对应官方 1.25× 输入价）
+		CacheCreation1hPrice: cacheCreationPrice * 1.6, // 1h TTL = 1.6× 基础价（因为 2.0÷1.25=1.6，对应官方 2× 输入价）
+		MaxOutputTokens:      model.MaxOutputTokens,
+		CustomTiers:          customTiers,
 	}
 
 	modelPriceCache.Set(ctx, cacheKey, result)
@@ -287,27 +291,27 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 // computeCost 纯计算：根据定价结果和 token 用量计算费用明细。
 // 提取为独立函数以便单元测试，不依赖数据库或缓存。
 func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) *CostBreakdown {
-	inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
+	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 
 	// 按次计费：直接返回单价
 	if pricing.BillingMode == "per_request" {
 		return &CostBreakdown{
 			BaseCost:            pricing.PerRequestPrice,
 			TotalCost:           pricing.PerRequestPrice,
-			InputTokens:         inputTokens,
+			InputTokens:         baseInputTokens,
 			OutputTokens:        outputTokens,
 			BillingMode:         pricing.BillingMode,
 			PerRequestPrice:     pricing.PerRequestPrice,
 			DiscountRatio:       pricing.DiscountRatio,
 			TenantMultiplier:    pricing.TenantMultiplier,
 			Currency:            pricing.Currency,
-			CacheCreationTokens: cacheCreationTokens,
+			CacheCreationTokens: cacheCreation5mTokens + cacheCreation1hTokens,
 			CacheReadTokens:     cacheReadTokens,
 		}
 	}
 
 	// 基础输入费用（已改为 decimal）
-	baseInputCostD := computeInputCost(pricing, inputTokens)
+	baseInputCostD := computeInputCost(pricing, baseInputTokens)
 
 	// 输出费用（已改为 decimal）
 	outputCostD := computeOutputCost(pricing, outputTokens)
@@ -318,7 +322,11 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	mul := NewFromFloat(pricing.TenantMultiplier)
 
 	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
-	cacheCreationCostD := decimal.NewFromInt(int64(cacheCreationTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreationPrice))
+
+	// 缓存创建按 TTL 分别计价：5m 按 1.25×，1h 按 2×
+	cacheCreation5mCostD := decimal.NewFromInt(int64(cacheCreation5mTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation5mPrice))
+	cacheCreation1hCostD := decimal.NewFromInt(int64(cacheCreation1hTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation1hPrice))
+	cacheCreationCostD := cacheCreation5mCostD.Add(cacheCreation1hCostD)
 
 	// 总费用 = (基础输入 + 输出 + cache各项) × 租户倍率
 	subtotalD := baseInputCostD.Add(outputCostD).Add(cacheReadCostD).Add(cacheCreationCostD)
@@ -329,14 +337,14 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 		InputCost:           InexactFloat64(RoundMoney(baseInputCostD.Mul(mul))),
 		OutputCost:          InexactFloat64(RoundMoney(outputCostD.Mul(mul))),
 		TotalCost:           InexactFloat64(RoundMoney(totalCostD)),
-		InputTokens:         inputTokens,
+		InputTokens:         baseInputTokens,
 		OutputTokens:        outputTokens,
 		BillingMode:         pricing.BillingMode,
 		PerRequestPrice:     pricing.PerRequestPrice,
 		DiscountRatio:       pricing.DiscountRatio,
 		TenantMultiplier:    pricing.TenantMultiplier,
 		Currency:            pricing.Currency,
-		CacheCreationTokens: cacheCreationTokens,
+		CacheCreationTokens: cacheCreation5mTokens + cacheCreation1hTokens,
 		CacheReadTokens:     cacheReadTokens,
 		CacheCreationCost:   InexactFloat64(RoundMoney(cacheCreationCostD.Mul(mul))),
 		CacheReadCost:       InexactFloat64(RoundMoney(cacheReadCostD.Mul(mul))),
@@ -345,17 +353,25 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 
 // resolveTokenCounts 根据 usage 信息解析最终的 token 计数。
 // 处理 cacheIncludedInPrompt 逻辑：如果 PromptTokens 包含 cache tokens，则扣减以避免重复计费。
-func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) (baseInput, output, cacheRead, cacheCreation int) {
+// 返回：baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h
+func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) (baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h int) {
 	baseInput = inputTokens
 	output = outputTokens
 
 	if usage != nil {
 		if usage.PromptTokensDetails != nil {
 			cacheRead = usage.PromptTokensDetails.CachedTokens
-			cacheCreation = usage.PromptTokensDetails.CachedCreationTokens
+			// 优先使用细分的 5m/1h token（Claude 新协议）
+			if usage.PromptTokensDetails.CachedCreation5mTokens > 0 || usage.PromptTokensDetails.CachedCreation1hTokens > 0 {
+				cacheCreation5m = usage.PromptTokensDetails.CachedCreation5mTokens
+				cacheCreation1h = usage.PromptTokensDetails.CachedCreation1hTokens
+			} else if usage.PromptTokensDetails.CachedCreationTokens > 0 {
+				// 旧协议无 TTL 细分：全部按 5m 兜底（保守计费）
+				cacheCreation5m = usage.PromptTokensDetails.CachedCreationTokens
+			}
 		}
 		if usage.CacheIncludedInPrompt {
-			baseInput = inputTokens - cacheRead - cacheCreation
+			baseInput = inputTokens - cacheRead - cacheCreation5m - cacheCreation1h
 			if baseInput < 0 {
 				baseInput = 0
 			}

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -121,6 +122,10 @@ type modelPerfRow struct {
 	TotalCost       float64 `json:"total_cost"`
 	SumLatencyMs    int64   `json:"sum_latency_ms"`
 	SumFirstTokenMs int64   `json:"sum_first_token_ms"`
+	// 缓存聚合列（000016 迁移新增，口径与 bil_usage_logs 明细一致）
+	CacheCreationTokens  int64 `json:"cache_creation_tokens"`
+	CacheReadTokens      int64 `json:"cache_read_tokens"`
+	CacheHitRequestCount int64 `json:"cache_hit_request_count"`
 }
 
 // gradeSuccessRate 按成功率返回分级。阈值：≥99 excellent、≥95 good、≥90 warning、<90 critical。
@@ -146,15 +151,23 @@ type perfModelAgg struct {
 	sumLatencyMs    int64
 	sumFirstTokenMs int64
 	totalCost       float64
+	// 缓存累计（历史日表 + 当日热桶同口径累加）
+	cacheCreationTokens int64
+	cacheReadTokens     int64
+	cacheHitRequests    int64
 }
 
-// GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日 Redis 实时热桶
-// （见 common.RecordModelPerfMetrics，桶粒度小时），使页面当天即可看到最新数据，不再滞后一天。
+// GetModelPerformance 从 bil_usage_daily 按模型聚合历史性能指标，并合并当日实时数据，
+// 支持可选的渠道（channelID，0=全部）与模型（modelName，空=全部）过滤：选定渠道后可查看
+// 该渠道下各模型的性能。历史段经 bil_usage_daily（唯一键含 channel_id）过滤；
+// 当天段在渠道过滤下改走 bil_usage_logs 明细实时聚合（热桶无渠道维度），两段口径一致。
 // 指标口径与 bil_usage_daily 一致：延迟按 SUM 求和、视图以 SUM/COUNT 求均值（分位数不可跨桶加，p95/p99 留后续）。
-func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, error) {
+func GetModelPerformance(ctx context.Context, startDate, endDate string, channelID int64, modelName string) ([]v1.ModelPerformanceSummary, error) {
 	today := time.Now().Format("2006-01-02")
 
-	// 历史段：stat_date < today（当天由 Redis 热桶实时提供，避免与每日 01:00 的日聚合重复/滞后）
+	// 历史段：stat_date < today（当天由实时数据提供，避免与每日 01:00 的日聚合重复/滞后）。
+	// 渠道/模型过滤用「参数=哨兵值 OR 等值匹配」写法保持 SQL 常量字符串，未筛选时等价于无条件；
+	// $4/$5 显式转型规避 PostgreSQL 对 OR 两侧参数的类型推断歧义。
 	const query = `
 		SELECT
 			model_name,
@@ -164,33 +177,313 @@ func GetModelPerformance(ctx context.Context, startDate, endDate string) (any, e
 			COALESCE(SUM(output_tokens), 0)                                 AS output_tokens,
 			COALESCE(SUM(total_cost), 0)                                    AS total_cost,
 			COALESCE(SUM(sum_latency_ms), 0)                                AS sum_latency_ms,
-			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms
+			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms,
+			COALESCE(SUM(cache_creation_tokens), 0)                         AS cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0)                             AS cache_read_tokens,
+			COALESCE(SUM(cache_hit_request_count), 0)                       AS cache_hit_request_count
 		FROM bil_usage_daily
 		WHERE stat_date >= $1 AND stat_date <= $2 AND stat_date < $3 AND model_name <> 'unknown'
+			AND ($4::bigint = 0 OR channel_id = $4)
+			AND ($5::text = '' OR model_name = $5)
 		GROUP BY model_name
 	`
 	var rows []modelPerfRow
-	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today).Scan(&rows); err != nil {
+	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today, channelID, modelName).Scan(&rows); err != nil {
 		return nil, err
 	}
 
-	// 当日 Redis 热桶（best-effort：仅当查询窗口包含今天时参与；Redis 异常则忽略当日数据，退化为历史日表）
+	// 当天段（best-effort：仅当查询窗口包含今天时参与；数据源失败则忽略当日数据，退化为历史日表）：
+	//   - 选定渠道：Redis 热桶无渠道维度，改从 bil_usage_logs 当天明细实时聚合（输出同构，合并逻辑复用）
+	//   - 未选渠道：保持热桶路径与现状一致；仅选模型时热桶键即模型名，按键过滤
 	todayCounts := map[string]common.ModelPerfCounter{}
 	if endDate == today {
-		tc, err := common.GetModelPerfMetricsToday(ctx, today)
-		if err != nil {
-			g.Log().Warningf(ctx, "model performance today redis read failed, fallback to daily only: %v", err)
+		if channelID > 0 {
+			tc, err := getModelPerfTodayFromLogs(ctx, today, channelID, modelName)
+			if err != nil {
+				g.Log().Warningf(ctx, "model performance today logs aggregate failed, fallback to daily only: %v", err)
+			} else {
+				todayCounts = tc
+			}
 		} else {
-			todayCounts = tc
+			tc, err := common.GetModelPerfMetricsToday(ctx, today)
+			if err != nil {
+				g.Log().Warningf(ctx, "model performance today redis read failed, fallback to daily only: %v", err)
+			} else {
+				todayCounts = filterTodayCounts(tc, modelName)
+			}
 		}
 	}
 
-	return map[string]any{"list": buildModelPerformanceList(rows, todayCounts)}, nil
+	return buildModelPerformanceList(rows, todayCounts), nil
+}
+
+// GetModelChannels 单个模型各渠道性能对比（行展开用）：按渠道分组聚合指定模型的性能数据。
+// 返回该模型在各个渠道的请求数/成功率/延迟/缓存命中，供前端点击展开行时渲染渠道对比小表。
+func GetModelChannels(ctx context.Context, startDate, endDate, modelName string) ([]v1.ModelChannelPerformance, error) {
+	today := time.Now().Format("2006-01-02")
+
+	// 历史段：从 bil_usage_daily 按 channel_id 分组聚合指定模型
+	const query = `
+		SELECT
+			channel_id,
+			SUM(request_count)                                              AS request_count,
+			SUM(CASE WHEN status = 'success' THEN request_count ELSE 0 END) AS success_count,
+			COALESCE(SUM(sum_latency_ms), 0)                                AS sum_latency_ms,
+			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms,
+			COALESCE(SUM(input_tokens + output_tokens), 0)                  AS total_tokens,
+			COALESCE(SUM(cache_read_tokens), 0)                             AS cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0)                         AS cache_creation_tokens,
+			COALESCE(SUM(cache_hit_request_count), 0)                       AS cache_hit_request_count
+		FROM bil_usage_daily
+		WHERE stat_date >= $1 AND stat_date <= $2 AND stat_date < $3 AND model_name = $4
+		GROUP BY channel_id
+	`
+	type channelPerfRow struct {
+		ChannelID            int64 `json:"channel_id"`
+		RequestCount         int64 `json:"request_count"`
+		SuccessCount         int64 `json:"success_count"`
+		SumLatencyMs         int64 `json:"sum_latency_ms"`
+		SumFirstTokenMs      int64 `json:"sum_first_token_ms"`
+		TotalTokens          int64 `json:"total_tokens"`
+		CacheReadTokens      int64 `json:"cache_read_tokens"`
+		CacheCreationTokens  int64 `json:"cache_creation_tokens"`
+		CacheHitRequestCount int64 `json:"cache_hit_request_count"`
+	}
+	var rows []channelPerfRow
+	if err := g.DB().Ctx(ctx).Raw(query, startDate, endDate, today, modelName).Scan(&rows); err != nil {
+		return nil, err
+	}
+
+	// 当天段：仅当查询窗口包含今天时，从 bil_usage_logs 按渠道实时聚合
+	todayCounts := map[int64]*channelPerfRow{}
+	if endDate == today {
+		dayStart, err := time.ParseInLocation("2006-01-02", today, time.Local)
+		if err != nil {
+			return nil, err
+		}
+		start := today + " 00:00:00"
+		end := dayStart.AddDate(0, 0, 1).Format("2006-01-02") + " 00:00:00"
+		const todayQuery = `
+			SELECT
+				channel_id,
+				COUNT(*)                                      AS request_count,
+				COUNT(*) FILTER (WHERE status = 'success')    AS success_count,
+				COALESCE(SUM(latency_ms), 0)                  AS sum_latency_ms,
+				COALESCE(SUM(first_token_ms), 0)              AS sum_first_token_ms,
+				COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+				COALESCE(SUM(cache_read_tokens), 0)           AS cache_read_tokens,
+				COALESCE(SUM(cache_creation_tokens), 0)       AS cache_creation_tokens,
+				COUNT(*) FILTER (WHERE cache_read_tokens > 0) AS cache_hit_request_count
+			FROM bil_usage_logs
+			WHERE created_at >= $1 AND created_at < $2 AND model_name = $3
+			GROUP BY channel_id
+		`
+		var todayRows []channelPerfRow
+		if err := g.DB().Ctx(ctx).Raw(todayQuery, start, end, modelName).Scan(&todayRows); err != nil {
+			g.Log().Warningf(ctx, "model channels today aggregate failed, fallback to daily only: %v", err)
+		} else {
+			for _, r := range todayRows {
+				todayCounts[r.ChannelID] = &r
+			}
+		}
+	}
+
+	// 合并历史 + 当天
+	agg := make(map[int64]*channelPerfRow)
+	for _, r := range rows {
+		agg[r.ChannelID] = &r
+	}
+	for cid, tc := range todayCounts {
+		if base, ok := agg[cid]; ok {
+			base.RequestCount += tc.RequestCount
+			base.SuccessCount += tc.SuccessCount
+			base.SumLatencyMs += tc.SumLatencyMs
+			base.SumFirstTokenMs += tc.SumFirstTokenMs
+			base.TotalTokens += tc.TotalTokens
+			base.CacheReadTokens += tc.CacheReadTokens
+			base.CacheCreationTokens += tc.CacheCreationTokens
+			base.CacheHitRequestCount += tc.CacheHitRequestCount
+		} else {
+			agg[cid] = tc
+		}
+	}
+
+	// 查询渠道名（批量读取，避免 N+1）
+	channelIDs := make([]int64, 0, len(agg))
+	for cid := range agg {
+		channelIDs = append(channelIDs, cid)
+	}
+	channelNames := make(map[int64]string)
+	if len(channelIDs) > 0 {
+		var channels []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := g.DB().Ctx(ctx).Model("chn_channels").
+			Fields("id", "name").
+			Where("id IN ?", channelIDs).
+			Scan(&channels); err != nil {
+			g.Log().Warningf(ctx, "query channel names failed: %v", err)
+		} else {
+			for _, ch := range channels {
+				channelNames[ch.ID] = ch.Name
+			}
+		}
+	}
+
+	// 构建输出列表（重算派生指标：成功率/均延迟/均首Token/TPS/缓存命中率）
+	list := make([]v1.ModelChannelPerformance, 0, len(agg))
+	for cid, r := range agg {
+		successRate := float64(0)
+		if r.RequestCount > 0 {
+			successRate = float64(r.SuccessCount) / float64(r.RequestCount) * 100
+		}
+		avgLatency := float64(0)
+		if r.RequestCount > 0 {
+			avgLatency = float64(r.SumLatencyMs) / float64(r.RequestCount)
+		}
+		avgFirstToken := float64(0)
+		if r.RequestCount > 0 {
+			avgFirstToken = float64(r.SumFirstTokenMs) / float64(r.RequestCount)
+		}
+		tps := float64(0)
+		if r.SumLatencyMs > 0 {
+			// TPS = 总Token数 / (总延迟ms / 1000)
+			tps = float64(r.TotalTokens) / (float64(r.SumLatencyMs) / 1000.0)
+		}
+		cacheHitRate := float64(0)
+		totalCacheTokens := r.CacheReadTokens + r.CacheCreationTokens
+		if totalCacheTokens > 0 {
+			cacheHitRate = float64(r.CacheReadTokens) / float64(totalCacheTokens) * 100
+		}
+		cacheHitRequestRate := float64(0)
+		if r.RequestCount > 0 {
+			cacheHitRequestRate = float64(r.CacheHitRequestCount) / float64(r.RequestCount) * 100
+		}
+		channelName := channelNames[cid]
+		if channelName == "" {
+			channelName = fmt.Sprintf("#%d", cid)
+		}
+
+		list = append(list, v1.ModelChannelPerformance{
+			ChannelID:            cid,
+			ChannelName:          channelName,
+			RequestCount:         int(r.RequestCount),
+			SuccessCount:         int(r.SuccessCount),
+			SuccessRate:          successRate,
+			AvgLatencyMs:         avgLatency,
+			AvgFirstTokenMs:      avgFirstToken,
+			TPS:                  tps,
+			CacheCreationTokens:  r.CacheCreationTokens,
+			CacheReadTokens:      r.CacheReadTokens,
+			CacheHitRequestCount: int(r.CacheHitRequestCount),
+			CacheHitRequestRate:  cacheHitRequestRate,
+			CacheHitRate:         cacheHitRate,
+		})
+	}
+
+	// 按请求数降序排列（请求量大的渠道排前面，最能反映主力渠道表现）
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].RequestCount > list[j].RequestCount
+	})
+
+	return list, nil
+}
+
+// filterTodayCounts 热桶结果按模型过滤（热桶键即模型名；modelName 空 = 原样返回）。
+// 未命中返回 nil，交给合并层按空处理。
+func filterTodayCounts(tc map[string]common.ModelPerfCounter, modelName string) map[string]common.ModelPerfCounter {
+	if modelName == "" {
+		return tc
+	}
+	if c, ok := tc[modelName]; ok {
+		return map[string]common.ModelPerfCounter{modelName: c}
+	}
+	return nil
+}
+
+// modelPerfTodayRow 当天明细聚合行（bil_usage_logs 按模型分组，仅渠道筛选路径使用）。
+// 列名对齐 common.ModelPerfCounter 语义；口径与 usage_aggregation 写入 bil_usage_daily 一致：
+// ok=成功请求、ttft=Σ首Token（无首Token请求计 0）、ttft_n=有首Token样本数、chit=命中缓存的请求数。
+type modelPerfTodayRow struct {
+	ModelName     string  `json:"model_name"`
+	Req           int64   `json:"req"`
+	Ok            int64   `json:"ok"`
+	Lat           int64   `json:"lat"`
+	Ttft          int64   `json:"ttft"`
+	TtftN         int64   `json:"ttft_n"`
+	Tin           int64   `json:"tin"`
+	Tout          int64   `json:"tout"`
+	TotalCost     float64 `json:"total_cost"`
+	CacheCreation int64   `json:"cache_creation"`
+	CacheRead     int64   `json:"cache_read"`
+	Chit          int64   `json:"chit"`
+}
+
+// getModelPerfTodayFromLogs 渠道筛选下的当天数据源：从 bil_usage_logs 明细按模型实时聚合。
+// Redis 热桶（perf_model:{model}:{hour}）无渠道维度，选定渠道后当天必须回明细表；
+// 时间区间沿用日聚合的半开区间口径 [today 00:00, tomorrow 00:00)，命中 created_at 的 BRIN 索引
+// （tomorrow 从 today 参数推导而非另取 now，避免跨午夜瞬间的边界漂移）。
+// 输出与 common.GetModelPerfMetricsToday 同构，合并逻辑复用不分叉。
+func getModelPerfTodayFromLogs(ctx context.Context, today string, channelID int64, modelName string) (map[string]common.ModelPerfCounter, error) {
+	dayStart, err := time.ParseInLocation("2006-01-02", today, time.Local)
+	if err != nil {
+		return nil, err
+	}
+	start := today + " 00:00:00"
+	end := dayStart.AddDate(0, 0, 1).Format("2006-01-02") + " 00:00:00"
+	const query = `
+		SELECT
+			model_name                                    AS model_name,
+			COUNT(*)                                      AS req,
+			COUNT(*) FILTER (WHERE status = 'success')    AS ok,
+			COALESCE(SUM(latency_ms), 0)                  AS lat,
+			COALESCE(SUM(first_token_ms), 0)              AS ttft,
+			COUNT(*) FILTER (WHERE first_token_ms > 0)    AS ttft_n,
+			COALESCE(SUM(input_tokens), 0)                AS tin,
+			COALESCE(SUM(output_tokens), 0)               AS tout,
+			COALESCE(SUM(total_cost), 0)                  AS total_cost,
+			COALESCE(SUM(cache_creation_tokens), 0)       AS cache_creation,
+			COALESCE(SUM(cache_read_tokens), 0)           AS cache_read,
+			COUNT(*) FILTER (WHERE cache_read_tokens > 0) AS chit
+		FROM bil_usage_logs
+		WHERE created_at >= $1 AND created_at < $2 AND channel_id = $3
+			AND ($4::text = '' OR model_name = $4)
+		GROUP BY model_name
+	`
+	var rows []modelPerfTodayRow
+	if err := g.DB().Ctx(ctx).Raw(query, start, end, channelID, modelName).Scan(&rows); err != nil {
+		return nil, err
+	}
+	return rowsToTodayCounters(rows), nil
+}
+
+// rowsToTodayCounters 当天明细聚合行 → 热桶同构计数。
+// total_cost 以 float 聚合后转整数 micro-USD（common.microFromUSD 未导出，此处同式内联），
+// 合并侧统一经 billing.FromMicro 还原 USD，保证两条当天数据路径口径一致。
+func rowsToTodayCounters(rows []modelPerfTodayRow) map[string]common.ModelPerfCounter {
+	out := make(map[string]common.ModelPerfCounter, len(rows))
+	for _, r := range rows {
+		out[r.ModelName] = common.ModelPerfCounter{
+			Req:           r.Req,
+			Ok:            r.Ok,
+			Lat:           r.Lat,
+			Ttft:          r.Ttft,
+			TtftN:         r.TtftN,
+			Tin:           r.Tin,
+			Tout:          r.Tout,
+			CostMicro:     int64(math.Round(r.TotalCost * 1e6)),
+			CacheCreation: r.CacheCreation,
+			CacheRead:     r.CacheRead,
+			CacheHitReq:   r.Chit,
+		}
+	}
+	return out
 }
 
 // buildModelPerformanceList 将历史日表聚合行与当日 Redis 热桶合并为统一的模型性能列表，
-// 统一重算派生指标（成功率/均延迟/均首Token/TPS/分级）并按 request_count 降序输出。
-func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]common.ModelPerfCounter) []map[string]any {
+// 统一重算派生指标（成功率/均延迟/均首Token/TPS/分级/缓存命中率）并按模型名称升序输出。
+func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]common.ModelPerfCounter) []v1.ModelPerformanceSummary {
 	agg := make(map[string]*perfModelAgg)
 	ensure := func(model string) *perfModelAgg {
 		a, ok := agg[model]
@@ -212,6 +505,9 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		a.sumLatencyMs += r.SumLatencyMs
 		a.sumFirstTokenMs += r.SumFirstTokenMs
 		a.totalCost += r.TotalCost
+		a.cacheCreationTokens += r.CacheCreationTokens
+		a.cacheReadTokens += r.CacheReadTokens
+		a.cacheHitRequests += r.CacheHitRequestCount
 	}
 	for model, c := range todayCounts {
 		if c.Req <= 0 || model == "" || model == "unknown" {
@@ -225,9 +521,12 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		a.sumLatencyMs += c.Lat
 		a.sumFirstTokenMs += c.Ttft
 		a.totalCost += billing.FromMicro(c.CostMicro).InexactFloat64()
+		a.cacheCreationTokens += c.CacheCreation
+		a.cacheReadTokens += c.CacheRead
+		a.cacheHitRequests += c.CacheHitReq
 	}
 
-	list := make([]map[string]any, 0, len(agg))
+	list := make([]v1.ModelPerformanceSummary, 0, len(agg))
 	for model, a := range agg {
 		var successRate, avgLatency, avgTTFT, tps float64
 		if a.requestCount > 0 {
@@ -238,24 +537,39 @@ func buildModelPerformanceList(rows []modelPerfRow, todayCounts map[string]commo
 		if a.sumLatencyMs > 0 {
 			tps = float64(a.outputTokens) / (float64(a.sumLatencyMs) / 1000)
 		}
-		list = append(list, map[string]any{
-			"model_name":         model,
-			"request_count":      a.requestCount,
-			"success_count":      a.successCount,
-			"success_rate":       math.Round(successRate*100) / 100,
-			"grade":              gradeSuccessRate(successRate),
-			"input_tokens":       a.inputTokens,
-			"output_tokens":      a.outputTokens,
-			"total_tokens":       a.inputTokens + a.outputTokens,
-			"total_cost":         a.totalCost,
-			"avg_latency_ms":     math.Round(avgLatency*100) / 100,
-			"avg_first_token_ms": math.Round(avgTTFT*100) / 100,
-			"tps":                math.Round(tps*100) / 100,
+		// 缓存命中率（Token 级）= 命中读取 / 总输入。input_tokens 已统一为「含缓存总输入」口径
+		//（Claude 渠道入库时补加缓存读写，OpenAI/Gemini 原生即含），分母直接取 input_tokens，
+		// 跨渠道口径一致。请求级命中率分母为 request_count，不受该口径影响。
+		var cacheHitRate, cacheHitReqRate float64
+		if a.inputTokens > 0 {
+			cacheHitRate = float64(a.cacheReadTokens) * 100 / float64(a.inputTokens)
+		}
+		if a.requestCount > 0 {
+			cacheHitReqRate = float64(a.cacheHitRequests) * 100 / float64(a.requestCount)
+		}
+		list = append(list, v1.ModelPerformanceSummary{
+			ModelName:            model,
+			RequestCount:         int(a.requestCount),
+			SuccessCount:         int(a.successCount),
+			SuccessRate:          math.Round(successRate*100) / 100,
+			Grade:                gradeSuccessRate(successRate),
+			InputTokens:          a.inputTokens,
+			OutputTokens:         a.outputTokens,
+			TotalTokens:          a.inputTokens + a.outputTokens,
+			TotalCost:            a.totalCost,
+			AvgLatencyMs:         math.Round(avgLatency*100) / 100,
+			AvgFirstTokenMs:      math.Round(avgTTFT*100) / 100,
+			TPS:                  math.Round(tps*100) / 100,
+			CacheCreationTokens:  a.cacheCreationTokens,
+			CacheReadTokens:      a.cacheReadTokens,
+			CacheHitRate:         math.Round(cacheHitRate*100) / 100,
+			CacheHitRequestCount: int(a.cacheHitRequests),
+			CacheHitRequestRate:  math.Round(cacheHitReqRate*100) / 100,
 		})
 	}
 	// 默认按模型名称升序排列，便于运营按名称定位具体模型；用户可在前端表格点任意列切换排序。
 	sort.Slice(list, func(i, j int) bool {
-		return list[i]["model_name"].(string) < list[j]["model_name"].(string)
+		return list[i].ModelName < list[j].ModelName
 	})
 	return list
 }
