@@ -399,10 +399,11 @@ function renderTrendChart() {
     return
   }
   const times = trendData.value.map((p: any) => p.snapshot_at)
-  const scores = trendData.value.map((p: any) => p.health_score)
-  const latencies = trendData.value.map((p: any) => p.latency_ms)
+  const scores = trendData.value.map((p: any) => Math.round(Number(p.health_score) || 0))
+  const latencies = trendData.value.map((p: any) => Math.round(Number(p.latency_ms) || 0))
   trendChart.setOption({
-    tooltip: { trigger: 'axis' },
+    // 健康度、延迟统一取整展示
+    tooltip: { trigger: 'axis', valueFormatter: (value: any) => String(Math.round(Number(value) || 0)) },
     legend: { data: ['健康度', '延迟(ms)'], bottom: 0 },
     grid: { left: 50, right: 50, top: 30, bottom: 45 },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 11 } },
@@ -412,7 +413,7 @@ function renderTrendChart() {
     ],
     series: [
       {
-        name: '健康度', type: 'line', data: scores, smooth: true, lineStyle: { width: 2 },
+        name: '健康度', type: 'line', data: scores, smooth: true, showSymbol: false, lineStyle: { width: 2 },
         itemStyle: { color: '#10b981' },
         areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
           { offset: 0, color: 'rgba(16,185,129,0.3)' },

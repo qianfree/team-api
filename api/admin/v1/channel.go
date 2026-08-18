@@ -243,12 +243,12 @@ type ChannelHealthTrendRes struct {
 	Points []HealthTrendPoint `json:"points"`
 }
 
-// HealthTrendPoint 健康趋势数据点
+// HealthTrendPoint 健康趋势数据点（健康度、延迟取整展示，不含小数）
 type HealthTrendPoint struct {
 	SnapshotAt          string  `json:"snapshot_at"`
-	HealthScore         float64 `json:"health_score"`
+	HealthScore         int64   `json:"health_score"`
 	SuccessRate         float64 `json:"success_rate"`
-	LatencyMs           float64 `json:"latency_ms"`
+	LatencyMs           int64   `json:"latency_ms"`
 	StabilityScore      float64 `json:"stability_score"`
 	ConsecutiveFailures int     `json:"consecutive_failures"`
 }
