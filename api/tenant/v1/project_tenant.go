@@ -77,9 +77,10 @@ type TenantProjectGetRes struct {
 
 type TenantProjectApiKeyListReq struct {
 	g.Meta   `path:"/projects/{id}/api-keys" method:"get" mime:"json" tags:"租户控制台-项目" summary:"项目密钥列表"`
-	Id       int64 `json:"id" in:"path" v:"required|min:1"`
-	Page     int   `json:"page" in:"query" d:"1"`
-	PageSize int   `json:"page_size" in:"query" d:"20"`
+	Id       int64  `json:"id" in:"path" v:"required|min:1"`
+	Validity string `json:"validity" in:"query" d:"all" v:"in:all,valid,invalid" dc:"密钥有效性过滤：valid=仅可用（active 且未过期），invalid=仅失效，all=全部（默认）"`
+	Page     int    `json:"page" in:"query" d:"1"`
+	PageSize int    `json:"page_size" in:"query" d:"20"`
 }
 
 type TenantProjectApiKeyListRes struct {

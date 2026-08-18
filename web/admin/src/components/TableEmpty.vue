@@ -26,7 +26,7 @@ withDefaults(
 <template>
   <div class="table-empty">
     <img
-      src="/empty-state.svg"
+      src="/empty.png"
       alt=""
       aria-hidden="true"
       class="table-empty__illustration"
@@ -50,7 +50,8 @@ withDefaults(
 }
 
 .table-empty__illustration {
-  width: 136px;
+  /* empty.png 为 3:2 横版，比旧正方形 SVG 稍加宽以保持视觉量感 */
+  width: 160px;
   max-width: 46vw;
   height: auto;
   margin-bottom: 16px;

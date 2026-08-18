@@ -55,9 +55,9 @@ function updateCharts() {
     },
     yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { type: 'dashed' } } },
     series: [
-      { name: '总数', type: 'line', data: history.map((h: any) => h.total_active), smooth: true, lineStyle: { width: 2 }, itemStyle: { color: '#165DFF' }, areaStyle: { color: 'rgba(22,93,255,0.06)' } },
-      { name: '流式', type: 'line', data: history.map((h: any) => h.streaming_active), smooth: true, lineStyle: { width: 1.5 }, itemStyle: { color: '#00B42A' } },
-      { name: '非流式', type: 'line', data: history.map((h: any) => h.non_streaming_active), smooth: true, lineStyle: { width: 1.5 }, itemStyle: { color: '#FF7D00' } },
+      { name: '总数', type: 'line', data: history.map((h: any) => h.total_active), smooth: true, showSymbol: false, lineStyle: { width: 2 }, itemStyle: { color: '#165DFF' }, areaStyle: { color: 'rgba(22,93,255,0.06)' } },
+      { name: '流式', type: 'line', data: history.map((h: any) => h.streaming_active), smooth: true, showSymbol: false, lineStyle: { width: 1.5 }, itemStyle: { color: '#00B42A' } },
+      { name: '非流式', type: 'line', data: history.map((h: any) => h.non_streaming_active), smooth: true, showSymbol: false, lineStyle: { width: 1.5 }, itemStyle: { color: '#FF7D00' } },
     ],
   }
 
@@ -80,8 +80,8 @@ function updateCharts() {
       splitLine: { lineStyle: { type: 'dashed' } },
     },
     series: [
-      { name: '入站', type: 'line', areaStyle: { color: 'rgba(22,93,255,0.08)' }, data: bwHistory.map((h: any) => h.bytes_in_per_sec), smooth: true, lineStyle: { width: 2 }, itemStyle: { color: '#165DFF' } },
-      { name: '出站', type: 'line', areaStyle: { color: 'rgba(0,180,42,0.08)' }, data: bwHistory.map((h: any) => h.bytes_out_per_sec), smooth: true, lineStyle: { width: 2 }, itemStyle: { color: '#00B42A' } },
+      { name: '入站', type: 'line', areaStyle: { color: 'rgba(22,93,255,0.08)' }, data: bwHistory.map((h: any) => h.bytes_in_per_sec), smooth: true, showSymbol: false, lineStyle: { width: 2 }, itemStyle: { color: '#165DFF' } },
+      { name: '出站', type: 'line', areaStyle: { color: 'rgba(0,180,42,0.08)' }, data: bwHistory.map((h: any) => h.bytes_out_per_sec), smooth: true, showSymbol: false, lineStyle: { width: 2 }, itemStyle: { color: '#00B42A' } },
     ],
   }
 

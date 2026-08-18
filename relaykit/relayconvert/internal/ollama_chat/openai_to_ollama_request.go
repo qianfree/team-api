@@ -6,6 +6,7 @@ package ollama_chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -53,13 +54,48 @@ func (c *OpenAIToOllamaRequestConverter) ConvertRequest(
 		}
 	}
 
-	// 消息转换：Ollama Content 为纯文本（多模态文本部分拼接）
+	// 消息转换：Ollama Content 为纯文本（多模态文本部分拼接）。
+	// 保留跨轮次的工具调用与推理上下文：
+	// assistant 消息保留 tool_calls（含 id 与对象形式的 arguments），
+	// tool 消息保留 tool_call_id/tool_name，reasoning_content 转为 thinking 回传。
 	ollamaMessages := make([]dto.OllamaMessage, 0, len(openaiReq.Messages))
+	toolNamesByCallID := make(map[string]string)
 	for _, msg := range openaiReq.Messages {
-		ollamaMessages = append(ollamaMessages, dto.OllamaMessage{
+		om := dto.OllamaMessage{
 			Role:    msg.Role,
 			Content: extractOllamaContent(msg.Content),
-		})
+		}
+		if msg.Role == "tool" {
+			om.ToolCallID = msg.ToolCallID
+			om.ToolName = msg.Name
+			if om.ToolName == "" {
+				// 消息未带 name 时按 tool_call_id 从前面 assistant 的 tool_calls 反查工具名；
+				// Ollama 的 tool 消息靠 tool_name 关联结果（tool_call_id 仅原样透传）。
+				om.ToolName = toolNamesByCallID[msg.ToolCallID]
+			}
+		}
+		if msg.Role == "assistant" {
+			if msg.ReasoningContent != nil {
+				thinking, err := json.Marshal(*msg.ReasoningContent)
+				if err != nil {
+					return nil, fmt.Errorf("marshal ollama thinking: %w", err)
+				}
+				om.Thinking = thinking
+			}
+			if len(msg.ToolCalls) > 0 {
+				calls, err := toOllamaToolCalls(msg.ToolCalls)
+				if err != nil {
+					return nil, err
+				}
+				for _, tc := range msg.ToolCalls {
+					if tc.ID != "" {
+						toolNamesByCallID[tc.ID] = tc.Function.Name
+					}
+				}
+				om.ToolCalls = calls
+			}
+		}
+		ollamaMessages = append(ollamaMessages, om)
 	}
 
 	stream := false
@@ -67,11 +103,24 @@ func (c *OpenAIToOllamaRequestConverter) ConvertRequest(
 		stream = info.GetIsStream()
 	}
 
+	think, err := toOllamaThink(openaiReq.ReasoningEffort)
+	if err != nil {
+		return nil, err
+	}
+
+	format, err := toOllamaResponseFormat(openaiReq.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
+
 	ollamaReq := &dto.OllamaChatRequest{
 		Model:    model,
 		Messages: ollamaMessages,
 		Stream:   stream,
 		Options:  buildOllamaOptions(openaiReq),
+		Tools:    toOllamaTools(openaiReq.Tools),
+		Format:   format,
+		Think:    think,
 	}
 
 	return ollamaReq, nil
@@ -138,4 +187,100 @@ func buildOllamaOptions(req *dto.GeneralOpenAIRequest) map[string]any {
 		return nil
 	}
 	return options
+}
+
+// toOllamaTools 将 OpenAI tools 转换为 Ollama tools（两者 function 格式一致）。
+func toOllamaTools(tools []dto.Tool) []dto.OllamaTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]dto.OllamaTool, 0, len(tools))
+	for _, t := range tools {
+		if t.Type != "function" {
+			continue
+		}
+		out = append(out, dto.OllamaTool{
+			Type: "function",
+			Function: dto.OllamaToolFunction{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Parameters:  t.Function.Parameters,
+			},
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// toOllamaToolCalls 将 OpenAI tool_calls 转换为 Ollama tool_calls，
+// 把字符串编码的 arguments 解码为 JSON 对象。
+func toOllamaToolCalls(toolCalls []dto.ToolCall) ([]dto.OllamaToolCall, error) {
+	out := make([]dto.OllamaToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		oc := dto.OllamaToolCall{ID: tc.ID}
+		oc.Function.Name = tc.Function.Name
+		var args any
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				return nil, fmt.Errorf("parse tool call arguments: %w", err)
+			}
+		}
+		if args == nil {
+			args = map[string]any{}
+		}
+		oc.Function.Arguments = args
+		out = append(out, oc)
+	}
+	return out, nil
+}
+
+// toOllamaThink 将 reasoning_effort 映射为 Ollama think 参数。
+// "none" 关闭思考；low/medium/high/max 作为思考档位原样透传；
+// 未知取值直接跳过（不注入 think）而非报错。
+func toOllamaThink(effort string) (json.RawMessage, error) {
+	if effort == "" {
+		return nil, nil
+	}
+	var value any
+	switch effort {
+	case "none":
+		value = false
+	case "low", "medium", "high", "max":
+		value = effort
+	default:
+		return nil, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ollama think: %w", err)
+	}
+	return raw, nil
+}
+
+// toOllamaResponseFormat 将 OpenAI response_format 映射为 Ollama format。
+func toOllamaResponseFormat(responseFormat *dto.ResponseFormat) (any, error) {
+	if responseFormat == nil {
+		return nil, nil
+	}
+	switch responseFormat.Type {
+	case "json", "json_object":
+		return "json", nil
+	case "json_schema":
+		return extractJSONSchema(responseFormat.JSONSchema), nil
+	default:
+		return nil, nil
+	}
+}
+
+// extractJSONSchema 从 OpenAI json_schema 包装结构（{name, description, schema, strict}）
+// 中提取裸 schema；Ollama 的 format 字段期望 schema 对象本身。
+func extractJSONSchema(v any) any {
+	if m, ok := v.(map[string]any); ok {
+		if schema, ok := m["schema"]; ok {
+			return schema
+		}
+	}
+	return v
 }

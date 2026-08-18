@@ -11,6 +11,7 @@ type TenantApiKeyListReq struct {
 	g.Meta    `path:"/api-keys" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"API Key列表"`
 	KeyType   string `json:"key_type" in:"query"`
 	ProjectID int64  `json:"project_id" in:"query"`
+	Validity  string `json:"validity" in:"query" d:"all" v:"in:all,valid,invalid" dc:"密钥有效性过滤：valid=仅可用（active 且未过期），invalid=仅失效，all=全部（默认）"`
 	Page      int    `json:"page" in:"query" d:"1"`
 	PageSize  int    `json:"page_size" in:"query" d:"20"`
 }
@@ -96,13 +97,3 @@ type TenantApiKeyRevealRes struct {
 	KeyPrefix string `json:"key_prefix"`
 	Status    string `json:"status"`
 }
-
-// TenantApiKeyExportReq 导出API Key列表请求
-type TenantApiKeyExportReq struct {
-	g.Meta    `path:"/api-keys/export" method:"get" mime:"json" tags:"租户控制台-API Key" summary:"导出API Key列表"`
-	Format    string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
-	KeyType   string `json:"key_type" in:"query"`
-	ProjectID int64  `json:"project_id" in:"query"`
-}
-
-type TenantApiKeyExportRes struct{}

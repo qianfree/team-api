@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 )
@@ -26,12 +30,15 @@ func (a *Adaptor) handleResponsesInboundNonStream(ctx context.Context, resp *htt
 		return nil, fmt.Errorf("read response body failed: %w", err)
 	}
 
-	// 非 200：转换为 Responses 格式的错误
+	// 非 200：透传上游错误响应并返回上游错误（驱动重试/渠道健康上报）
 	if resp.StatusCode != http.StatusOK {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, nil
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 	}
 
 	// 解析 Chat Completions 响应
@@ -65,9 +72,42 @@ func (a *Adaptor) handleResponsesInboundNonStream(ctx context.Context, resp *htt
 	}, nil
 }
 
+// responsesRequestEcho 合成 Responses 响应时需回显（echo）的请求参数
+type responsesRequestEcho struct {
+	temperature     *float64
+	topP            *float64
+	maxOutputTokens *int
+	instructions    any
+}
+
+// extractResponsesRequestEcho 从 info.ResponsesRequest 提取合成响应应 echo 的请求参数。
+// 快照缺失（直连路径/异常）时回退 OpenAI 默认值（temperature=1.0 / top_p=1.0，其余 nil）。
+func extractResponsesRequestEcho(info *common.RelayInfo) responsesRequestEcho {
+	echo := responsesRequestEcho{temperature: float64Ptr(1.0), topP: float64Ptr(1.0)}
+	if info == nil || info.ResponsesRequest == nil {
+		return echo
+	}
+	rr := info.ResponsesRequest
+	if rr.Temperature != nil {
+		echo.temperature = rr.Temperature
+	}
+	if rr.TopP != nil {
+		echo.topP = rr.TopP
+	}
+	if rr.MaxOutputTokens != nil {
+		m := int(*rr.MaxOutputTokens)
+		echo.maxOutputTokens = &m
+	}
+	if len(rr.Instructions) > 0 {
+		echo.instructions = json.RawMessage(rr.Instructions)
+	}
+	return echo
+}
+
 // chatCompletionToResponsesResponse 将 Chat Completions 响应转换为 Responses API 响应
 func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, info *common.RelayInfo) *dto.OpenAIResponsesResponse {
 	modelName := info.OriginModelName
+	echo := extractResponsesRequestEcho(info)
 
 	// 构建 output
 	output := make([]dto.ResponsesOutput, 0)
@@ -122,29 +162,31 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 		Status:             json.RawMessage(`"completed"`),
 		Error:              nil,
 		IncompleteDetails:  nil,
-		Instructions:       nil,
-		MaxOutputTokens:    nil,
+		Instructions:       echo.instructions,
+		MaxOutputTokens:    echo.maxOutputTokens,
 		Model:              modelName,
 		Output:             output,
 		ParallelToolCalls:  true,
 		PreviousResponseID: nil,
 		Reasoning:          &dto.ResponsesReasoning{Effort: nil, Summary: nil},
-		Store:              true,
-		Temperature:        float64Ptr(1.0),
-		Text:               &dto.ResponsesText{Format: dto.ResponsesTextFormat{Type: "text"}},
-		ToolChoice:         "auto",
-		Tools:              make([]any, 0),
-		TopP:               float64Ptr(1.0),
-		Truncation:         "disabled",
-		User:               nil,
-		Metadata:           make(map[string]any),
+		// store:false 是真实语义：合成响应不落上游存储，客户端不可经 GET /v1/responses/{id} retrieve
+		Store:       false,
+		Temperature: echo.temperature,
+		Text:        &dto.ResponsesText{Format: dto.ResponsesTextFormat{Type: "text"}},
+		ToolChoice:  "auto",
+		Tools:       make([]any, 0),
+		TopP:        echo.topP,
+		Truncation:  "disabled",
+		User:        nil,
+		Metadata:    make(map[string]any),
 		Usage: &dto.ResponsesUsage{
 			InputTokens:  chatResp.Usage.PromptTokens,
 			OutputTokens: chatResp.Usage.CompletionTokens,
 			TotalTokens:  chatResp.Usage.TotalTokens,
 			InputTokensDetails: &dto.InputTokenDetails{
-				CachedTokens: chatResp.Usage.PromptTokensDetails.CachedTokens,
-				AudioTokens:  chatResp.Usage.PromptTokensDetails.AudioTokens,
+				CachedTokens:     chatResp.Usage.PromptTokensDetails.CachedTokens,
+				CacheWriteTokens: chatResp.Usage.PromptTokensDetails.CacheWriteTokens,
+				AudioTokens:      chatResp.Usage.PromptTokensDetails.AudioTokens,
 			},
 			OutputTokenDetails: &dto.OutputTokenDetails{
 				ReasoningTokens:          chatResp.Usage.CompletionTokenDetails.ReasoningTokens,
@@ -161,12 +203,16 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 
+	// 非 200：上游在 SSE 开始前返回错误（非 SSE 体），透传并返回上游错误驱动重试
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(resp.StatusCode)
-		_, _ = writer.Write(body)
-		return &common.Usage{}, nil
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 	}
 
 	helper.SetEventStreamHeaders(writer)
@@ -186,6 +232,8 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	var contentBuilder strings.Builder
 	sentCreated := false
 	sentTextDone := false
+	parsedChunks := 0
+	sawChoices := false
 	outputIndex := 0
 	contentIndex := 0
 	toolCallIndexByID := make(map[string]int)
@@ -224,9 +272,34 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			break
 		}
 
+		// 检测 SSE 流中内嵌的上游错误对象：部分聚合商出错时返回 HTTP 200 + SSE，
+		// 错误信息夹在 data 行里（{"error":{...}}）。不识别会被当作解析失败静默丢弃，
+		// 最终合成空的 response.completed（客户端表现为"成功但无内容"）。
+		if errBody, ok := extractStreamEmbeddedError([]byte(data)); ok {
+			err := fmt.Errorf("upstream embedded error in SSE stream: %.500s", string(errBody))
+			g.Log().Warningf(ctx, "[OpenAI.handleResponsesInboundStream] %v", err)
+			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
+			if !sentCreated {
+				// 尚未向客户端发送任何事件：透传上游错误体（与 SSE 开始前的非 200 分支行为一致）
+				writeUpstreamErrorResponse(writer, resp.StatusCode, []byte(data))
+				upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(errBody), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+				upstreamErr.ResponseWritten = true
+				return &usage, upstreamErr
+			}
+			// 已发送部分事件：流已污染无法回写错误体，直接返回错误终止处理
+			return &usage, constant.NewUpstreamError(resp.StatusCode, string(errBody), nil)
+		}
+
 		var chunk dto.ChatCompletionStreamResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			// 解析失败不静默丢弃：记录日志便于定位上游返回非 chat 格式的问题
+			// （如 responses 格式 SSE、纯 JSON 非流式体、空 body 等）
+			g.Log().Warningf(ctx, "[OpenAI.handleResponsesInboundStream] unmarshal chat stream chunk failed: %v, data: %.200s", err, data)
 			continue
+		}
+		parsedChunks++
+		if len(chunk.Choices) > 0 {
+			sawChoices = true
 		}
 
 		// 第一个 chunk：发送 response.created + output_item.added + content_part.added
@@ -243,13 +316,13 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			}
 
 			// response.created
-			emitResponsesSSE(writer, "response.created", map[string]any{
+			EmitResponsesSSE(writer, "response.created", map[string]any{
 				"type":     "response.created",
-				"response": buildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil),
+				"response": BuildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, info),
 			})
 
 			// response.output_item.added
-			emitResponsesSSE(writer, "response.output_item.added", map[string]any{
+			EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
 				"output_index": outputIndex,
 				"item": map[string]any{
@@ -262,7 +335,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			})
 
 			// response.content_part.added
-			emitResponsesSSE(writer, "response.content_part.added", map[string]any{
+			EmitResponsesSSE(writer, "response.content_part.added", map[string]any{
 				"type":          "response.content_part.added",
 				"item_id":       msgID,
 				"output_index":  outputIndex,
@@ -295,7 +368,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 				}
 				if deltaText != "" {
 					contentBuilder.WriteString(deltaText)
-					emitResponsesSSE(writer, "response.output_text.delta", map[string]any{
+					EmitResponsesSSE(writer, "response.output_text.delta", map[string]any{
 						"type":          "response.output_text.delta",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
@@ -307,7 +380,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 			// 推理内容
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-				emitResponsesSSE(writer, "response.reasoning_summary_text.delta", map[string]any{
+				EmitResponsesSSE(writer, "response.reasoning_summary_text.delta", map[string]any{
 					"type":          "response.reasoning_summary_text.delta",
 					"item_id":       msgID,
 					"output_index":  outputIndex,
@@ -328,14 +401,14 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 					// 先关闭文本 content part
 					if !sentTextDone {
 						finishedText := contentBuilder.String()
-						emitResponsesSSE(writer, "response.output_text.done", map[string]any{
+						EmitResponsesSSE(writer, "response.output_text.done", map[string]any{
 							"type":          "response.output_text.done",
 							"item_id":       msgID,
 							"output_index":  outputIndex,
 							"content_index": contentIndex,
 							"text":          finishedText,
 						})
-						emitResponsesSSE(writer, "response.content_part.done", map[string]any{
+						EmitResponsesSSE(writer, "response.content_part.done", map[string]any{
 							"type":          "response.content_part.done",
 							"item_id":       msgID,
 							"output_index":  outputIndex,
@@ -346,7 +419,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 								"annotations": []any{},
 							},
 						})
-						emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+						EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 							"type":         "response.output_item.done",
 							"output_index": outputIndex,
 							"item": map[string]any{
@@ -371,7 +444,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 					toolCallNameByID[callID] = tc.Function.Name
 					toolCallArgsByID[callID] = ""
 
-					emitResponsesSSE(writer, "response.output_item.added", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
 						"type":         "response.output_item.added",
 						"output_index": outputIndex,
 						"item": map[string]any{
@@ -396,7 +469,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 				// 工具调用 arguments 增量
 				if tc.Function.Arguments != "" {
 					toolCallArgsByID[callID] += tc.Function.Arguments
-					emitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{
+					EmitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{
 						"type":         "response.function_call_arguments.delta",
 						"item_id":      callID,
 						"output_index": toolCallIndexByID[callID],
@@ -411,14 +484,14 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 				// 关闭文本 content part（如果尚未关闭）
 				if !sentTextDone {
-					emitResponsesSSE(writer, "response.output_text.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_text.done", map[string]any{
 						"type":          "response.output_text.done",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
 						"content_index": contentIndex,
 						"text":          finishedText,
 					})
-					emitResponsesSSE(writer, "response.content_part.done", map[string]any{
+					EmitResponsesSSE(writer, "response.content_part.done", map[string]any{
 						"type":          "response.content_part.done",
 						"item_id":       msgID,
 						"output_index":  outputIndex,
@@ -429,7 +502,7 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 							"annotations": []any{},
 						},
 					})
-					emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 						"type":         "response.output_item.done",
 						"output_index": outputIndex,
 						"item": map[string]any{
@@ -450,13 +523,13 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 				// 发送每个 tool call 的 function_call_arguments.done + output_item.done
 				for tcID, tcIdx := range toolCallIndexByID {
-					emitResponsesSSE(writer, "response.function_call_arguments.done", map[string]any{
+					EmitResponsesSSE(writer, "response.function_call_arguments.done", map[string]any{
 						"type":         "response.function_call_arguments.done",
 						"item_id":      tcID,
 						"output_index": tcIdx,
 						"arguments":    toolCallArgsByID[tcID],
 					})
-					emitResponsesSSE(writer, "response.output_item.done", map[string]any{
+					EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
 						"type":         "response.output_item.done",
 						"output_index": tcIdx,
 						"item": map[string]any{
@@ -478,6 +551,34 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
 			return &usage, fmt.Errorf("stream scanner error: %w", err)
 		}
+	}
+
+	// 上游流始终不是 chat 格式（全程无 choices 且无内容/工具调用/usage）时不再静默合成空响应：
+	// 典型形态包括 Responses/Claude 格式 SSE（JSON 能解析为空 chat chunk）、非流式 JSON 体、空 body 等。
+	// 假成功的空 response.completed 会让客户端"成功但无内容"，必须报错驱动重试换渠道/健康上报。
+	if !sawChoices && contentBuilder.Len() == 0 && len(toolCallIndexByID) == 0 && usage.TotalTokens == 0 {
+		errUpstream := fmt.Errorf("upstream stream is not chat completions format: %d chunks parsed, none contained choices", parsedChunks)
+		g.Log().Warningf(ctx,
+			"[OpenAI.handleResponsesInboundStream] %v: channel=%d(%s) model=%s request_id=%s",
+			errUpstream, info.ChannelMeta.ChannelID, info.ChannelMeta.ChannelName, info.OriginModelName, info.RequestID)
+		info.StreamStatus.SetEndReason(common.StreamEndReasonError, errUpstream)
+		if !sentCreated {
+			// 尚未向客户端发送任何事件：写入错误响应（与 SSE 开始前的非 200 分支行为一致）
+			errBody, _ := json.Marshal(map[string]any{
+				"error": map[string]any{
+					"message": "upstream returned a non-chat-completions stream",
+					"type":    "upstream_error",
+					"param":   nil,
+					"code":    "upstream_protocol_mismatch",
+				},
+			})
+			writeUpstreamErrorResponse(writer, http.StatusBadGateway, errBody)
+			upstreamErr := constant.NewUpstreamError(http.StatusBadGateway, string(errBody), nil)
+			upstreamErr.ResponseWritten = true
+			return &usage, upstreamErr
+		}
+		// 已发送部分事件：流已污染无法回写错误体，直接返回错误终止处理
+		return &usage, constant.NewUpstreamError(http.StatusBadGateway, errUpstream.Error(), nil)
 	}
 
 	// 估算 usage（正常结束 4 字符/token；scanner 异常等部分传输场景 2 字符/token）
@@ -523,9 +624,9 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 
 	// response.completed
 	completedAt := int(time.Now().Unix())
-	emitResponsesSSE(writer, "response.completed", map[string]any{
+	EmitResponsesSSE(writer, "response.completed", map[string]any{
 		"type":     "response.completed",
-		"response": buildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, buildResponsesUsageMap(&usage), &completedAt),
+		"response": BuildResponsesObjectMap(respID, createdAt, "completed", modelName, finalOutput, BuildResponsesUsageMap(&usage), &completedAt, info),
 	})
 
 	if info.StreamStatus.GetEndReason() == "" {
@@ -536,8 +637,27 @@ func (a *Adaptor) handleResponsesInboundStream(ctx context.Context, resp *http.R
 	return &usage, nil
 }
 
-// emitResponsesSSE 发送一个 Responses API 格式的 SSE 事件
-func emitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
+// extractStreamEmbeddedError 检测 SSE data 行中内嵌的上游错误对象（存在 "error" 键且值非 null）。
+// 与 isUpstreamOpenAIError 的区别：后者用于完整响应体且不区分 null；这里对流式 chunk 逐行
+// 检测，并排除 "error":null（部分供应商的正常 chunk 会携带空 error 字段）。
+func extractStreamEmbeddedError(data []byte) (json.RawMessage, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false
+	}
+	errBody, ok := raw["error"]
+	if !ok {
+		return nil, false
+	}
+	trimmed := string(bytes.TrimSpace(errBody))
+	if trimmed == "" || trimmed == "null" {
+		return nil, false
+	}
+	return errBody, true
+}
+
+// EmitResponsesSSE 发送一个 Responses API 格式的 SSE 事件（导出供 claude 等适配器的 Responses 桥接复用）
+func EmitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return
@@ -548,8 +668,11 @@ func emitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
 	}
 }
 
-// buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map
-func buildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int) map[string]any {
+// buildResponsesObjectMap 构建 Responses API response 对象的完整字段 map。
+// 请求参数从 info.ResponsesRequest echo（快照缺失时回退默认值）；
+// store 恒为 false——合成响应不落上游存储，客户端不可经生命周期端点 retrieve。
+func BuildResponsesObjectMap(respID string, createdAt int, status string, model string, output any, usageObj map[string]any, completedAt *int, info *common.RelayInfo) map[string]any {
+	echo := extractResponsesRequestEcho(info)
 	m := map[string]any{
 		"id":                   respID,
 		"object":               "response",
@@ -557,19 +680,19 @@ func buildResponsesObjectMap(respID string, createdAt int, status string, model 
 		"status":               status,
 		"error":                nil,
 		"incomplete_details":   nil,
-		"instructions":         nil,
-		"max_output_tokens":    nil,
+		"instructions":         echo.instructions,
+		"max_output_tokens":    echo.maxOutputTokens,
 		"model":                model,
 		"output":               output,
 		"parallel_tool_calls":  true,
 		"previous_response_id": nil,
 		"reasoning":            map[string]any{"effort": nil, "summary": nil},
-		"store":                true,
-		"temperature":          1.0,
+		"store":                false,
+		"temperature":          *echo.temperature,
 		"text":                 map[string]any{"format": map[string]any{"type": "text"}},
 		"tool_choice":          "auto",
 		"tools":                []any{},
-		"top_p":                1.0,
+		"top_p":                *echo.topP,
 		"truncation":           "disabled",
 		"user":                 nil,
 		"metadata":             map[string]any{},
@@ -584,13 +707,14 @@ func buildResponsesObjectMap(respID string, createdAt int, status string, model 
 }
 
 // buildResponsesUsageMap 构建 Responses API usage 对象
-func buildResponsesUsageMap(usage *common.Usage) map[string]any {
+func BuildResponsesUsageMap(usage *common.Usage) map[string]any {
 	inputDetails := map[string]any{"cached_tokens": 0}
 	outputDetails := map[string]any{"reasoning_tokens": 0}
 	if usage.PromptTokensDetails != nil {
 		inputDetails = map[string]any{
-			"cached_tokens": usage.PromptTokensDetails.CachedTokens,
-			"audio_tokens":  usage.PromptTokensDetails.AudioTokens,
+			"cached_tokens":      usage.PromptTokensDetails.CachedTokens,
+			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
+			"audio_tokens":       usage.PromptTokensDetails.AudioTokens,
 		}
 	}
 	if usage.CompletionTokenDetails != nil {
@@ -613,4 +737,217 @@ func buildResponsesUsageMap(usage *common.Usage) map[string]any {
 // float64Ptr 返回 float64 的指针
 func float64Ptr(v float64) *float64 {
 	return &v
+}
+
+// ========== 上游为 Responses 协议：Responses 响应原样透传 ==========
+
+// responsesUsageToCommon 将 Responses API usage 转换为 common.Usage。
+// OpenAI 原生 API 的 input_tokens 已含缓存 token（cache 是其子集），故 CacheIncludedInPrompt=true。
+func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
+	usage := &common.Usage{CacheIncludedInPrompt: true}
+	if u == nil {
+		return usage
+	}
+	usage.PromptTokens = u.InputTokens
+	usage.CompletionTokens = u.OutputTokens
+	usage.TotalTokens = u.TotalTokens
+	if d := u.InputTokensDetails; d != nil {
+		usage.PromptTokensDetails = &common.TokenDetails{
+			CachedTokens:     d.CachedTokens,
+			CacheWriteTokens: d.CacheWriteTokens,
+			TextTokens:       d.TextTokens,
+			AudioTokens:      d.AudioTokens,
+			ImageTokens:      d.ImageTokens,
+		}
+	}
+	if d := u.OutputTokenDetails; d != nil {
+		usage.CompletionTokenDetails = &common.TokenDetails{
+			TextTokens:               d.TextTokens,
+			AudioTokens:              d.AudioTokens,
+			ReasoningTokens:          d.ReasoningTokens,
+			AcceptedPredictionTokens: d.AcceptedPredictionTokens,
+			RejectedPredictionTokens: d.RejectedPredictionTokens,
+		}
+	}
+	return usage
+}
+
+// recordResponseRoute 记录 response_id → 渠道路由（Redis），供 GET/DELETE/cancel
+// 生命周期端点还原原始请求落到的渠道。ModelName 存 lookupModel 口径（BaseModelName），
+// 与 MaterializeSelection 入参一致。
+func recordResponseRoute(ctx context.Context, info *common.RelayInfo, responseID string) {
+	if responseID == "" || info == nil || info.ChannelMeta == nil {
+		return
+	}
+	common.DefaultResponseRouteStore.Record(ctx, info.TenantID, responseID, common.ResponseRoute{
+		ChannelID: info.ChannelMeta.ChannelID,
+		ModelName: info.BaseModelName,
+	})
+}
+
+// handleResponsesUpstreamNonStream 上游为 Responses 协议时的非流式响应：
+// 解析 usage 后原样透传上游响应体（模型映射时回写客户端请求的模型名）。
+func (a *Adaptor) handleResponsesUpstreamNonStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	}
+
+	// 非 200：透传上游错误响应并返回上游错误（驱动重试/渠道健康上报，同 handleChatNonStreamResponse）
+	if resp.StatusCode != http.StatusOK {
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
+	}
+
+	if info.ChannelMeta.IsModelMapped {
+		body = helper.ReplaceModelName(body, info.OriginModelName)
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(body)
+
+	// 解析 usage（计费用），响应体仍透传上游原始内容
+	var responsesResp dto.OpenAIResponsesResponse
+	if err := json.Unmarshal(body, &responsesResp); err == nil {
+		recordResponseRoute(ctx, info, responsesResp.ID)
+		return responsesUsageToCommon(responsesResp.Usage), nil
+	}
+	return &common.Usage{}, nil
+}
+
+// handleResponsesUpstreamStream 上游为 Responses 协议时的流式响应：
+// 逐行原样透传 SSE（含 event: 行），从 response.completed / response.done 事件解析 usage。
+func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	defer resp.Body.Close()
+
+	// 非 200：上游在 SSE 开始前返回错误（非 SSE 体），透传并返回上游错误驱动重试
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, constant.NewUpstreamError(resp.StatusCode, "read response body failed", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+		}
+		if isUpstreamOpenAIError(body) {
+			writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+			upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+			upstreamErr.ResponseWritten = true
+			return &common.Usage{}, upstreamErr
+		}
+		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
+	}
+
+	helper.SetEventStreamHeaders(writer)
+	writer = helper.NewSafeWriter(writer)
+	defer helper.PingTicker(writer, 15*time.Second)()
+
+	scanner := bufio.NewScanner(resp.Body)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	var usage common.Usage
+	var contentBuilder strings.Builder
+
+	flush := func() {
+		if f, ok := writer.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
+			helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
+			return &usage, common.ErrStreamInterrupted
+		default:
+		}
+
+		line := scanner.Text()
+		if line == "" {
+			fmt.Fprintf(writer, "\n")
+			flush()
+			continue
+		}
+		// 原样透传 event: 行
+		if strings.HasPrefix(line, "event:") {
+			fmt.Fprintf(writer, "%s\n", line)
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data, _ := helper.ExtractSSEData(line)
+
+		if data != "" && data != "[DONE]" {
+			info.SetFirstResponseTime()
+		}
+
+		// 解析 data 提取 usage（不影响原样透传）
+		if data != "[DONE]" {
+			var streamResp dto.ResponsesStreamResponse
+			if err := json.Unmarshal([]byte(data), &streamResp); err == nil {
+				switch streamResp.Type {
+				case "response.created", "response.completed", "response.done":
+					if r := streamResp.Response; r != nil {
+						// 路由记录：created 即记录使 cancel 尽早可用，completed/done 刷新 TTL（SET 幂等）
+						recordResponseRoute(ctx, info, r.ID)
+						if streamResp.Type != "response.created" && r.Usage != nil {
+							if u := responsesUsageToCommon(r.Usage); u != nil {
+								usage = *u
+							}
+						}
+					}
+				case "response.output_text.delta":
+					contentBuilder.WriteString(streamResp.Delta)
+				}
+			}
+		}
+
+		// 模型映射时回写客户端请求的模型名：response.created / response.completed 等事件携带上游模型名，
+		// 直连透传前替换（同 chat StreamHandler 的逐行替换）
+		outLine := line
+		if info.ChannelMeta.IsModelMapped && data != "" && data != "[DONE]" {
+			outLine = "data: " + string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
+		}
+
+		fmt.Fprintf(writer, "%s\n", outLine)
+		flush()
+
+		if data == "[DONE]" {
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		if err != io.EOF && ctx.Err() == nil {
+			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
+			return &usage, fmt.Errorf("stream scanner error: %w", err)
+		}
+	}
+
+	// 估算 usage（正常结束 4 字符/token；异常部分传输 2 字符/token）
+	if usage.CompletionTokens == 0 {
+		text := contentBuilder.String()
+		if len(text) > 0 {
+			usage.CompletionTokens = helper.EstimateStreamOutputTokens(info, len(text))
+		}
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	usage.CacheIncludedInPrompt = true
+
+	if info.StreamStatus.GetEndReason() == "" {
+		info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
+	}
+
+	return &usage, nil
 }

@@ -222,15 +222,24 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			}
 
 		case "message_stop":
-			// 末尾 chunk，包含 finish_reason 和 usage
+			// 末尾 chunk，包含 finish_reason 和 usage。
+			// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
+			//（cached 是其子集），转换必须做加法，否则缓存场景下客户端少算输入量
 			reason := finishReason
 			if reason == "" {
 				reason = "stop"
 			}
+			promptTotal := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 			usageObj := &dto.UsageWithDetails{
-				PromptTokens:     usage.InputTokens,
+				PromptTokens:     promptTotal,
 				CompletionTokens: usage.OutputTokens,
-				TotalTokens:      usage.InputTokens + usage.OutputTokens,
+				TotalTokens:      promptTotal + usage.OutputTokens,
+			}
+			if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+				usageObj.PromptTokensDetails = &dto.TokenDetails{
+					CachedTokens:         usage.CacheReadInputTokens,
+					CachedCreationTokens: usage.CacheCreationInputTokens,
+				}
 			}
 			if usageObj.CompletionTokens == 0 {
 				// 未提供时根据文本长度估算

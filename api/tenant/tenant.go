@@ -22,7 +22,6 @@ type ITenantV1 interface {
 	TenantApiKeyUpdateScopes(ctx context.Context, req *v1.TenantApiKeyUpdateScopesReq) (res *v1.TenantApiKeyUpdateScopesRes, err error)
 	TenantApiKeyModelScopes(ctx context.Context, req *v1.TenantApiKeyModelScopesReq) (res *v1.TenantApiKeyModelScopesRes, err error)
 	TenantApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealReq) (res *v1.TenantApiKeyRevealRes, err error)
-	TenantApiKeyExport(ctx context.Context, req *v1.TenantApiKeyExportReq) (res *v1.TenantApiKeyExportRes, err error)
 	TenantAuditConfigGet(ctx context.Context, req *v1.TenantAuditConfigGetReq) (res *v1.TenantAuditConfigGetRes, err error)
 	TenantAuditConfigUpdate(ctx context.Context, req *v1.TenantAuditConfigUpdateReq) (res *v1.TenantAuditConfigUpdateRes, err error)
 	TenantAuditLogs(ctx context.Context, req *v1.TenantAuditLogsReq) (res *v1.TenantAuditLogsRes, err error)

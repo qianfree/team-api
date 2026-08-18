@@ -58,7 +58,14 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	case constant.RelayModeRerank:
 		return baseURL + "/v1/rerank", nil
 	case constant.RelayModeResponses, constant.RelayModeResponsesCompact:
-		// Responses API 请求会被转换为 Chat Completions 格式发送
+		// 上游原生支持 Responses 协议：直接打 /v1/responses 端点（响应按 Responses 格式原样透传）
+		if info.ChannelMeta.UpstreamSpeaksResponses() {
+			if constant.RelayMode(info.RelayMode) == constant.RelayModeResponsesCompact {
+				return baseURL + "/v1/responses/compact", nil
+			}
+			return baseURL + "/v1/responses", nil
+		}
+		// 兜底（chat-only 上游）：Responses API 请求转换为 Chat Completions 格式发送
 		return baseURL + "/v1/chat/completions", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode: %d", info.RelayMode)
@@ -127,6 +134,8 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 根据入站格式转换请求体为 OpenAI 格式，然后做 OpenAI 特有后处理。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	mode := constant.RelayMode(info.RelayMode)
+	// responses 入站 + 上游原生支持 Responses 协议：保持 Responses 格式直连，不做 chat 转换
+	responsesUpstream := info.ChannelMeta.UpstreamSpeaksResponses() && info.InboundFormat == constant.RelayFormatResponses
 
 	// Audio/Rerank: OpenAI 原生格式直接透传（不做 replaceModelIfNeeded 和 injectStreamOptions）
 	switch mode {
@@ -150,23 +159,52 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		}
 		converted = r
 	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
+		if responsesUpstream {
+			// 上游为 Responses 协议：保持 Responses 格式直连，仅做模型映射等后处理
+			converted = bytes.NewReader(requestBody)
+		} else {
+			r, err := ConvertResponsesToOpenAI(requestBody, info)
+			if err != nil {
+				return nil, err
+			}
+			converted = r
 		}
-		converted = r
 	default:
 		converted = bytes.NewReader(requestBody)
 	}
+
+	// responses-only 上游桥接：chat 请求体转换为 Responses 格式发送 /v1/responses。
+	// 转换器自行处理模型映射，并读取 chat 体的 reasoning_effort 映射为 reasoning.effort
+	// （thinking 后缀先注入 chat 体再进转换器），故此分支直接返回、不走后续 chat 后处理。
+	if info.UseResponsesAPI && mode == constant.RelayModeChatCompletions && !responsesUpstream {
+		if info.ReasoningEffort != "" {
+			converted = injectReasoningEffort(converted, info.ReasoningEffort)
+		}
+		body, err := io.ReadAll(converted)
+		if err != nil {
+			return nil, fmt.Errorf("read chat body for responses bridge failed: %w", err)
+		}
+		r, err := ConvertOpenAIToResponses(body, info)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(r), nil
+	}
+
 	result := replaceModelIfNeeded(converted, info)
-	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数
-	if info.IsStream && mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
+	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数；
+	// Responses 上游走原生 stream 字段，不注入 chat 专属 stream_options
+	if info.IsStream && !responsesUpstream && mode != constant.RelayModeImagesGenerations && mode != constant.RelayModeImagesEdits {
 		result = InjectStreamOptions(result, info)
 	}
 
-	// Thinking 后缀路由：注入 reasoning_effort
+	// Thinking 后缀路由：Responses 上游映射为 reasoning.effort，其余注入 chat 的 reasoning_effort
 	if info.ReasoningEffort != "" {
-		result = injectReasoningEffort(result, info.ReasoningEffort)
+		if responsesUpstream {
+			result = injectResponsesReasoning(result, info.ReasoningEffort)
+		} else {
+			result = injectReasoningEffort(result, info.ReasoningEffort)
+		}
 	}
 
 	return result, nil
@@ -243,6 +281,13 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return handleGeminiInboundNonStream(ctx, resp, info, writer)
 	case constant.RelayFormatResponses:
+		if info.ChannelMeta.UpstreamSpeaksResponses() {
+			// 上游为 Responses 协议：原样透传上游 Responses 响应
+			if info.IsStream {
+				return a.handleResponsesUpstreamStream(ctx, resp, info, writer)
+			}
+			return a.handleResponsesUpstreamNonStream(ctx, resp, info, writer)
+		}
 		if info.IsStream {
 			return a.handleResponsesInboundStream(ctx, resp, info, writer)
 		}
@@ -436,6 +481,29 @@ func injectReasoningEffort(r io.Reader, effort string) io.Reader {
 	// 仅在客户端未显式设置时注入
 	if _, exists := rawMap["reasoning_effort"]; !exists {
 		rawMap["reasoning_effort"], _ = json.Marshal(effort)
+		result, err := json.Marshal(rawMap)
+		if err != nil {
+			return bytes.NewReader(body)
+		}
+		return bytes.NewReader(result)
+	}
+	return bytes.NewReader(body)
+}
+
+// injectResponsesReasoning 为 Responses 请求注入 reasoning.effort（对应 chat 的 reasoning_effort）。
+// Responses 协议无 reasoning_effort 字段，thinking 后缀映射为 reasoning: {"effort": ...}。
+func injectResponsesReasoning(r io.Reader, effort string) io.Reader {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return r
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawMap); err != nil {
+		return bytes.NewReader(body)
+	}
+	// 仅在客户端未显式设置 reasoning 时注入
+	if _, exists := rawMap["reasoning"]; !exists {
+		rawMap["reasoning"], _ = json.Marshal(map[string]any{"effort": effort})
 		result, err := json.Marshal(rawMap)
 		if err != nil {
 			return bytes.NewReader(body)

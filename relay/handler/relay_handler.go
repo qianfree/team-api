@@ -215,6 +215,14 @@ func validateRelayRequest(
 			maxTokens = mc
 		}
 	}
+	if moVal, ok := rawRequest["max_output_tokens"]; ok {
+		// Responses API 用 max_output_tokens 而非 max_tokens/max_completion_tokens
+		var mo int
+		_ = json.Unmarshal(moVal, &mo)
+		if mo > maxTokens {
+			maxTokens = mo
+		}
+	}
 
 	return &relayValidation{
 		relayMode:       relayMode,
@@ -302,7 +310,13 @@ func settleSuccessfulRequest(
 		firstTokenMs = int(info.FirstResponseTime.Sub(info.StartTime).Milliseconds())
 	}
 
-	// 构建用量记录
+	// 构建用量记录。input_tokens 统一按「含缓存总输入」口径入库（Claude 口径未含缓存时补加），
+	// 保证跨渠道 SUM 聚合语义一致；total_tokens 同步按 totalInput+output 重算
+	totalInput := usage.TotalInputTokens()
+	totalTokens := totalInput + usage.CompletionTokens
+	if totalTokens == 0 {
+		totalTokens = usage.TotalTokens
+	}
 	usageRecord := &common.UsageRecord{
 		TenantID:         rc.TenantID,
 		UserID:           rc.UserID,
@@ -311,9 +325,9 @@ func settleSuccessfulRequest(
 		ChannelID:        selection.ChannelID,
 		ModelName:        v.modelName,
 		RelayMode:        int(v.relayMode),
-		PromptTokens:     usage.PromptTokens,
+		PromptTokens:     totalInput,
 		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
+		TotalTokens:      totalTokens,
 		CachedTokens:     tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
 		AudioTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.AudioTokens }) +
 			tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.AudioTokens }),
@@ -325,8 +339,11 @@ func settleSuccessfulRequest(
 		RequestID:       rc.RequestID,
 		Status:          "success",
 
-		// Cache token 明细
-		CacheCreationTokens:   usage.CacheCreationTokens,
+		// Cache token 明细。cache_creation_tokens 列统一记录「写入缓存的 token」：
+		// Claude 为 cache_creation_input_tokens，OpenAI Responses 为 cache_write_tokens（两者物理语义相同，
+		// 仅计价不同——后者按普通输入价计费且已含于 input_tokens，不参与计费扣减，仅作观测）
+		CacheCreationTokens: usage.CacheCreationTokens +
+			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),
 		CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),
 		CacheCreation1hTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation1hTokens }),
 		CacheReadTokens:       tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedTokens }),
@@ -491,6 +508,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		Scope:     channelScope,
 		Replay:    co.Policy().Replay.ReplayabilityForMode(v.relayModeStr),
 		Signals:   sig,
+		Proto:     protoPreference(constant.RelayMode(v.relayMode)),
 		Policy:    dispatchadapter.TenantRoutingPolicy(ctx, rc.TenantID),
 	})
 	// 兜底：任何未显式 Finish 的退出路径释放租约（Finish 幂等，成功路径的显式调用优先生效）
@@ -577,6 +595,23 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 转换请求（直连模式跳过协议转换和参数改写）
 		convertedBody, err := convertRequestBody(ctx, info, body, adaptor)
 		if err != nil {
+			// responses 有状态请求（previous_response_id）落在 chat-only 渠道：协议能力不匹配
+			// 而非请求错误，换渠道可能命中 Responses 原生渠道——按渠道级致命上报驱动 failover，
+			// 而非直接返回（直接返回会让有能力渠道存在时也失败）
+			if errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+				channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s convert_error=[%v]",
+					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
+				g.Log().Warningf(ctx, "[RelayHandler] Stateful responses not supported by chat-only channel, failing over: channel=%d(%s) model=%s attempt=%d",
+					selection.ChannelID, selection.ChannelName, v.modelName, attempt)
+				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
+					if billing != nil && preDeductAmount > 0 {
+						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+					}
+					return nil, v.billingResult, constant.NewRequestError(
+						"previous_response_id is only supported on responses-native channels; no eligible channel remains for this model. Resend the full conversation input without previous_response_id.", nil)
+				}
+				continue
+			}
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
@@ -658,7 +693,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}
 				}
-				recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				return usage, v.billingResult, err
 			}
@@ -755,7 +790,16 @@ func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, s
 			UpstreamModelName: selection.UpstreamModelName,
 			IsModelMapped:     selection.IsModelMapped,
 			Settings:          selection.Settings,
+
+			SupportsResponses: selection.SupportsResponses,
+			ChatViaResponses:  selection.ChatViaResponses,
 		},
+	}
+	// responses-only 上游桥接：chat 入站经 /v1/responses 发送（chat→Responses 请求转换 +
+	// Responses→chat 响应转换）。仅对 OpenAI chat 入站生效；claude/gemini 入站需
+	// Responses→原生格式链式转换，暂不支持（此类渠道上会 404，运营应避免混用）。
+	if selection.ChatViaResponses && v.relayMode == constant.RelayModeChatCompletions {
+		info.UseResponsesAPI = true
 	}
 	// 流中断结算时上游 usage 常缺失，记录请求侧输入估算值（与预扣同源）供输入计费兜底
 	info.SetEstimatePromptTokens(v.estimatedTokens)
@@ -958,6 +1002,37 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 	provider.RecordUsage(context.Background(), record)
 }
 
+// recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
+// 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage) {
+	record := &common.UsageRecord{
+		TenantID:       rc.TenantID,
+		UserID:         rc.UserID,
+		ApiKeyID:       rc.ApiKeyID,
+		ProjectID:      rc.ProjectID,
+		ModelName:      modelName,
+		RequestedModel: modelName,
+		RelayMode:      int(relayMode),
+		IsStream:       isStream,
+		Success:        false,
+		RequestID:      rc.RequestID,
+		Status:         "error",
+		ErrorMessage:   err.Error(),
+	}
+	if selection != nil {
+		record.ChannelID = selection.ChannelID
+		record.ChannelName = selection.ChannelName
+		record.ChannelType = selection.ChannelType
+		record.UpstreamModel = selection.UpstreamModelName
+	}
+	if usage != nil {
+		record.PromptTokens = usage.PromptTokens
+		record.CompletionTokens = usage.CompletionTokens
+		record.TotalTokens = usage.TotalTokens
+	}
+	provider.RecordUsage(context.Background(), record)
+}
+
 // recordChannelError 记录渠道错误事件到 chn_error_events（异步，不阻塞请求）
 func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, modelName string, attempt int, isFinal bool, err error, latencyMs float64) {
 	if commonlogic.DefaultChannelErrorWriter == nil {
@@ -1032,6 +1107,19 @@ func setPreResponseHeaders(w http.ResponseWriter, br *BillingResult) {
 			w.Header().Set("Link", fmt.Sprintf("</v1/models/%s>; rel=\"successor-version\"", dep.ReplacementModel))
 		}
 	}
+}
+
+// protoPreference 入站端点协议 → 调度软偏好（只降权不排除）：
+// responses 端点偏好声明支持 Responses 协议的渠道（避免经 chat 转换丢失有状态特性），
+// chat 端点偏好原生 chat 渠道（responses-only 桥接渠道降权但仍可服务），其余端点无偏好。
+func protoPreference(mode constant.RelayMode) dispatch.ProtoPreference {
+	switch mode {
+	case constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		return dispatch.ProtoResponses
+	case constant.RelayModeChatCompletions:
+		return dispatch.ProtoChat
+	}
+	return dispatch.ProtoAny
 }
 
 // requestType 根据 isStream 返回请求类型

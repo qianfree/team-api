@@ -21,26 +21,30 @@ type ChnAbilitiesDao struct {
 
 // ChnAbilitiesColumns defines and stores column names for the table chn_abilities.
 type ChnAbilitiesColumns struct {
-	Id            string // 主键ID
-	ChannelId     string // 关联渠道ID
-	ModelName     string // 平台标准模型名（用户请求使用的模型名）
-	UpstreamModel string // 上游实际模型名（与平台标准名不同时需要映射，如平台名 gpt-4 → 上游名 gpt-4-0314）
-	Enabled       string // 是否启用该模型能力
-	CreatedAt     string // 创建时间
-	UpdatedAt     string // 更新时间
-	CostRatio     string // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
+	Id                string // 主键ID
+	ChannelId         string // 关联渠道ID
+	ModelName         string // 平台标准模型名（用户请求使用的模型名）
+	UpstreamModel     string // 上游实际模型名（与平台标准名不同时需要映射，如平台名 gpt-4 → 上游名 gpt-4-0314）
+	Enabled           string // 是否启用该模型能力
+	CreatedAt         string // 创建时间
+	UpdatedAt         string // 更新时间
+	CostRatio         string // 成本比例：该渠道该模型上游实际价/平台基准价，1.0=等价，0.8=八折，参与调度 costFactor 计算（无量纲比例，非金额）
+	SupportsResponses string // 模型在该渠道支持 OpenAI Responses 协议（/v1/responses），responses 入站直连转发并获调度软偏好
+	ChatViaResponses  string // 上游仅有 Responses 协议（responses-only 上游），chat 入站经桥接转换后发送 /v1/responses
 }
 
 // chnAbilitiesColumns holds the columns for the table chn_abilities.
 var chnAbilitiesColumns = ChnAbilitiesColumns{
-	Id:            "id",
-	ChannelId:     "channel_id",
-	ModelName:     "model_name",
-	UpstreamModel: "upstream_model",
-	Enabled:       "enabled",
-	CreatedAt:     "created_at",
-	UpdatedAt:     "updated_at",
-	CostRatio:     "cost_ratio",
+	Id:                "id",
+	ChannelId:         "channel_id",
+	ModelName:         "model_name",
+	UpstreamModel:     "upstream_model",
+	Enabled:           "enabled",
+	CreatedAt:         "created_at",
+	UpdatedAt:         "updated_at",
+	CostRatio:         "cost_ratio",
+	SupportsResponses: "supports_responses",
+	ChatViaResponses:  "chat_via_responses",
 }
 
 // NewChnAbilitiesDao creates and returns a new DAO object for table data access.

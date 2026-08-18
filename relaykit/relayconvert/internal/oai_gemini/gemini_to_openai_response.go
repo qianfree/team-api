@@ -155,12 +155,25 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 
 	openaiResp.Choices = append(openaiResp.Choices, choice)
 
-	// 转换 usage
+	// 转换 usage。
+	// OpenAI 口径：prompt 含 cached（子集），completion 含 thoughts（子集）——
+	// Gemini 的 candidatesTokenCount 不含思考 token，须与 thoughtsTokenCount 合计，
+	// 否则计费捕获与客户端按 OpenAI 语义解析都会漏掉思考部分
 	if geminiResp.UsageMetadata != nil {
 		openaiResp.Usage = dto.UsageWithDetails{
 			PromptTokens:     geminiResp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount,
+			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      geminiResp.UsageMetadata.TotalTokenCount,
+		}
+		if geminiResp.UsageMetadata.CachedContentTokenCount > 0 {
+			openaiResp.Usage.PromptTokensDetails = &dto.TokenDetails{
+				CachedTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			}
+		}
+		if geminiResp.UsageMetadata.ThoughtsTokenCount > 0 {
+			openaiResp.Usage.CompletionTokenDetails = &dto.TokenDetails{
+				ReasoningTokens: geminiResp.UsageMetadata.ThoughtsTokenCount,
+			}
 		}
 	}
 

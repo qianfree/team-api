@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NTag } from 'naive-ui'
+import { NButton, NDropdown, NTag } from 'naive-ui'
 import { renderBadge, formatDate, formatTokens, formatMs, tableScrollX } from '@/utils/renderUtils'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -70,6 +70,23 @@ const keysPage = ref(1)
 const keysPageSize = ref(20)
 const keysTotal = ref(0)
 
+// 密钥有效性筛选：默认仅展示可用密钥（与个人 API 密钥页同口径）
+const validityFilter = ref('valid')
+const validityOptions = [
+	{ label: '仅可用', key: 'valid' },
+	{ label: '所有', key: 'all' },
+	{ label: '仅失效', key: 'invalid' },
+]
+const currentValidityLabel = computed(
+	() => validityOptions.find((o) => o.key === validityFilter.value)?.label ?? '仅可用',
+)
+
+function handleValiditySelect(key: string | number) {
+	validityFilter.value = String(key)
+	keysPage.value = 1
+	fetchKeys()
+}
+
 // Key modals (shared component)
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
@@ -125,11 +142,21 @@ const keyStatusBadgeClass: Record<string, string> = {
 	active: 'badge-success',
 	disabled: 'badge-gray',
 	revoked: 'badge-danger',
+	expired: 'badge-warning',
 }
 const keyStatusLabel: Record<string, string> = {
 	active: '活跃',
 	disabled: '已禁用',
 	revoked: '已吊销',
+	expired: '已过期',
+}
+
+// 已过期的密钥 status 仍为 active，展示时按 expires_at 归一为"已过期"
+function displayStatus(key: ApiKey): string {
+	if (key.status === 'active' && key.expires_at && new Date(key.expires_at).getTime() < Date.now()) {
+		return 'expired'
+	}
+	return key.status
 }
 const relayModeLabel: Record<string, string> = {
 	'chat': '对话',
@@ -197,7 +224,7 @@ async function fetchKeys() {
 	keysLoading.value = true
 	try {
 		const res: any = await request.get(`/tenant/projects/${projectId.value}/api-keys`, {
-			params: { page: keysPage.value, page_size: keysPageSize.value },
+			params: { page: keysPage.value, page_size: keysPageSize.value, validity: validityFilter.value },
 		})
 		const raw = res.data?.data
 		keys.value = Array.isArray(raw) ? raw : (raw?.data || raw?.list || [])
@@ -227,6 +254,34 @@ function formatKeyLimit(value: number | null | undefined): string {
 	if (value === null || value === undefined) return '默认'
 	if (value <= 0) return '不限'
 	return String(value)
+}
+
+// 复制 API Key 明文（与个人 API 密钥页同款交互）
+const copyingKeyId = ref<number | null>(null)
+
+async function copyKey(keyId: number) {
+	if (copyingKeyId.value !== null) return
+
+	copyingKeyId.value = keyId
+	try {
+		const res: any = await request.get(`/tenant/api-keys/${keyId}/value`)
+		const plainKey = res.data?.data?.key
+		if (typeof plainKey !== 'string' || plainKey.length === 0) {
+			toast.error('未获取到 API Key')
+			return
+		}
+
+		try {
+			await navigator.clipboard.writeText(plainKey)
+			toast.success('API Key 已复制到剪贴板')
+		} catch {
+			toast.error('复制失败，请检查浏览器剪贴板权限')
+		}
+	} catch {
+		// 请求错误由统一拦截器提示。
+	} finally {
+		copyingKeyId.value = null
+	}
 }
 
 function formatKeyQuota(key: ApiKey): string {
@@ -312,7 +367,24 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 		title: 'Key 前缀',
 		key: 'key_prefix',
 		width: 170,
-		render: (row) => h('span', { class: 'code' }, `${row.key_prefix}...`),
+		render: (row) =>
+			h('div', { class: 'inline-flex items-center gap-1.5' }, [
+				h('span', { class: 'code' }, `${row.key_prefix}...`),
+				h(
+					'button',
+					{
+						type: 'button',
+						class:
+							'inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50',
+						disabled: copyingKeyId.value !== null,
+						title: copyingKeyId.value === row.id ? '正在复制' : '复制 API Key',
+						onClick: () => copyKey(row.id),
+					},
+					copyingKeyId.value === row.id
+						? h('span', { class: 'spinner h-3.5 w-3.5 border-primary-500' })
+						: h(Icon, { name: 'copy', size: 'xs' })
+				),
+			]),
 	},
 	{
 		title: '权限',
@@ -330,20 +402,23 @@ const keysColumns = computed<DataTableColumns<ApiKey>>(() => [
 	{
 		title: '限制',
 		key: 'limit',
-		width: 140,
+		width: 200,
 		render: (row) =>
 			h('div', { class: 'space-y-1 text-xs text-gray-500' }, [
-				h('div', {}, `QPS：${formatKeyLimit(row.rate_limit_qps)}`),
-				h('div', {}, `并发：${formatKeyLimit(row.rate_limit_concurrency)}`),
+				h('div', { class: 'flex items-center gap-3 whitespace-nowrap' }, [
+					h('span', {}, `QPS：${formatKeyLimit(row.rate_limit_qps)}`),
+					h('span', {}, `并发：${formatKeyLimit(row.rate_limit_concurrency)}`),
+				]),
 				h('div', {}, `额度：${formatKeyQuota(row)}`),
-				h('div', {}, `IP：${row.ip_whitelist?.length ? row.ip_whitelist.length + ' 条' : '不限'}`),
+				// 仅配置了 IP 白名单时才显示该行
+				...(row.ip_whitelist?.length ? [h('div', {}, `IP：${row.ip_whitelist.length} 条`)] : []),
 			]),
 	},
 	{
 		title: '状态',
 		key: 'status',
 		width: 90,
-		render: (row) => renderBadge(row.status, keyStatusLabel, keyStatusBadgeClass),
+		render: (row) => renderBadge(displayStatus(row), keyStatusLabel, keyStatusBadgeClass),
 	},
 	{
 		title: '过期时间',
@@ -556,6 +631,15 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 
 			<!-- Keys Tab -->
 			<div v-if="activeTab === 'keys'" class="space-y-4">
+				<div class="flex justify-end">
+					<!-- Validity filter -->
+					<NDropdown trigger="click" :options="validityOptions" @select="handleValiditySelect">
+						<button type="button" class="btn btn-secondary btn-sm">
+							{{ currentValidityLabel }}
+							<Icon name="chevronDown" size="xs" class="text-gray-400" />
+						</button>
+					</NDropdown>
+				</div>
 				<div>
 					<ResponsiveDataTable
 						remote
@@ -580,8 +664,12 @@ const usageLogsColumns = computed<DataTableColumns<any>>(() => [
 						<template #empty>
 							<div class="empty-state">
 								<Icon name="key" size="xl" class="empty-state-icon" />
-								<p class="empty-state-title">暂无项目密钥</p>
-								<p class="empty-state-description">创建密钥以为此项目提供 AI 能力</p>
+								<p class="empty-state-title">
+									{{ validityFilter === 'valid' ? '暂无可用密钥' : validityFilter === 'invalid' ? '暂无失效密钥' : '暂无项目密钥' }}
+								</p>
+								<p class="empty-state-description">
+									{{ validityFilter === 'valid' ? '所有密钥均已失效或尚未创建' : validityFilter === 'invalid' ? '所有密钥均正常可用' : '创建密钥以为此项目提供 AI 能力' }}
+								</p>
 							</div>
 						</template>
 					</ResponsiveDataTable>

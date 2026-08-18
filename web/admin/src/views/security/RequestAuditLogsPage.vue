@@ -161,7 +161,7 @@ const columns: TableColumnData[] = [
 		title: '用时', dataIndex: 'latency_ms', width: 90,
 		render({ record }) {
 			const ms = record.latency_ms
-			const color = ms < 1000 ? 'green' : ms < 3000 ? 'orange' : 'red'
+			const color = ms < 10000 ? 'green' : ms < 30000 ? 'orange' : 'red'
 			return h(Tag, { color, size: 'small' }, () => formatMs(ms))
 		},
 	},
@@ -170,7 +170,7 @@ const columns: TableColumnData[] = [
 		render({ record }) {
 			const ms = record.first_token_ms
 			if (!ms) return h("span", { style: "color: #c9cdd4" }, "-")
-			const color = ms < 500 ? "green" : ms < 1500 ? "orange" : "red"
+			const color = ms < 2000 ? "green" : ms < 5000 ? "orange" : "red"
 			return h(Tag, { color, size: "small" }, () => formatMs(ms))
 		},
 	},

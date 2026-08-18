@@ -76,3 +76,12 @@ func TestParseChannelSettings_FullOverride(t *testing.T) {
 		t.Errorf("RetryCount = %d, want 3", s.RetryCount)
 	}
 }
+
+func TestParseChannelSettings_IgnoresUnknownProtoKeys(t *testing.T) {
+	// 协议能力已迁移到 chn_abilities（supports_responses / chat_via_responses），
+	// 渠道 settings 不再有协议类字段：历史遗留的 upstream_responses 键应被静默忽略
+	s := ParseChannelSettings(`{"upstream_responses":true,"chat_completions_via_responses":true}`)
+	if s.PassThroughBodyEnabled {
+		t.Error("unknown protocol keys must not map to any channel setting")
+	}
+}

@@ -31,7 +31,9 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		// Responses 入站：请求转 Claude Messages 格式打 /v1/messages，响应转回 Responses 格式
 		return baseURL + "/v1/messages", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode for Claude: %d", info.RelayMode)
@@ -209,6 +211,12 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	switch clientFormat {
 	case constant.RelayFormatClaude:
 		return a.handleClaudeNativeResponse(ctx, resp, info, writer)
+	case constant.RelayFormatResponses:
+		// Responses 入站（codex 等）：Claude 响应转换为 Responses 格式
+		if info.IsStream {
+			return a.handleStreamToResponses(ctx, resp, info, writer)
+		}
+		return a.handleNonStreamToResponses(ctx, resp, info, writer)
 	case constant.RelayFormatOpenAI:
 		if info.IsStream {
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)

@@ -95,10 +95,13 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 
 	// 官方兼容性字段处理（对齐 Codex CLI 行为）：
 	//   - store 必须为 false（chatgpt.com 官方后端硬性要求）
-	//   - 移除 max_output_tokens / temperature（上游不支持这两个字段，透传会被拒）
+	//   - 移除 max_output_tokens / temperature（上游不支持，透传会被拒）
+	//   - 移除 frequency_penalty / presence_penalty（非官方 Responses 参数，防御性剥离）
 	rawMap["store"] = json.RawMessage("false")
 	delete(rawMap, "max_output_tokens")
 	delete(rawMap, "temperature")
+	delete(rawMap, "frequency_penalty")
+	delete(rawMap, "presence_penalty")
 	// instructions 字段必须存在，缺省时默认空串
 	if _, ok := rawMap["instructions"]; !ok {
 		rawMap["instructions"] = json.RawMessage(`""`)

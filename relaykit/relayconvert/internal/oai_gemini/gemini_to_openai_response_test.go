@@ -872,6 +872,57 @@ func TestGeminiToOpenAIStreamConverter_MultipleCandidates(t *testing.T) {
 	}
 }
 
+// TestGeminiToOpenAIResponseConverter_ThoughtsUsage 验证思考 token 计入输出：
+// Gemini 的 candidatesTokenCount 不含思考，OpenAI 口径的 completion 含 reasoning（子集），
+// 转换必须输出 candidates+thoughts 合计，否则计费捕获与客户端解析都会漏掉思考部分。
+func TestGeminiToOpenAIResponseConverter_ThoughtsUsage(t *testing.T) {
+	converter := &GeminiToOpenAIResponseConverter{}
+	ctx := context.Background()
+
+	geminiResp := &dto.GeminiChatResponse{
+		Candidates: []dto.GeminiCandidate{{
+			Content: &dto.GeminiContent{
+				Role:  "model",
+				Parts: []dto.GeminiPart{{Text: "Hello!"}},
+			},
+			FinishReason: "STOP",
+		}},
+		UsageMetadata: &dto.GeminiUsageMetadata{
+			PromptTokenCount:        1050,
+			CandidatesTokenCount:    200,
+			ThoughtsTokenCount:      150,
+			TotalTokenCount:         1400,
+			CachedContentTokenCount: 1000,
+		},
+	}
+
+	result, err := converter.ConvertResponse(ctx, nil, geminiResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse failed: %v", err)
+	}
+	openaiResp, ok := result.(*dto.ChatCompletionResponse)
+	if !ok {
+		t.Fatalf("Expected *dto.ChatCompletionResponse, got %T", result)
+	}
+
+	if openaiResp.Usage.PromptTokens != 1050 {
+		t.Errorf("PromptTokens = %d, want 1050", openaiResp.Usage.PromptTokens)
+	}
+	// completion = candidates(200) + thoughts(150)，thoughts 作为 reasoning 子集透出
+	if openaiResp.Usage.CompletionTokens != 350 {
+		t.Errorf("CompletionTokens = %d, want 350 (candidates+thoughts)", openaiResp.Usage.CompletionTokens)
+	}
+	if openaiResp.Usage.TotalTokens != 1400 {
+		t.Errorf("TotalTokens = %d, want 1400", openaiResp.Usage.TotalTokens)
+	}
+	if d := openaiResp.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1000 {
+		t.Errorf("PromptTokensDetails = %+v, want cached=1000", openaiResp.Usage.PromptTokensDetails)
+	}
+	if d := openaiResp.Usage.CompletionTokenDetails; d == nil || d.ReasoningTokens != 150 {
+		t.Errorf("CompletionTokenDetails = %+v, want reasoning=150", openaiResp.Usage.CompletionTokenDetails)
+	}
+}
+
 func TestGeminiToOpenAIStreamConverter_FileDataStreaming(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
