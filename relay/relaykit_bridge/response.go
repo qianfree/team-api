@@ -158,6 +158,16 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 		return relayconvert.ConverterClaudeMessagesToOpenAIChat // spec A，Resp 侧反向（openai→claude）
 	case upstream == constant.RelayFormatOpenAI && clientFormat == constant.RelayFormatGemini:
 		return relayconvert.ConverterGeminiContentToOpenAIChat // spec B，Resp 侧反向（openai→gemini）
+	// P2：跨原生交叉客户端（#18 修复）——Resp 侧为两跳组合（经 openai 中间态）
+	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatClaude:
+		// gemini 上游 → claude 客户端：挂 claude→gemini 链 spec 的 Resp 组合
+		return relayconvert.ConverterClaudeMessagesToGeminiContent
+	case upstream == constant.RelayFormatClaude && clientFormat == constant.RelayFormatGemini:
+		// claude 上游 → gemini 客户端：挂 gemini→claude 链 spec（P1-A spec C）的 Resp 组合
+		return relayconvert.ConverterGeminiContentToClaudeMessages
+	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatResponses:
+		// gemini 上游 → responses 客户端：挂 responses→gemini 链 spec 的 Resp 组合
+		return relayconvert.ConverterOpenAIResponsesToGemini
 	default:
 		return ""
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 const codeAssistBaseURL = "https://cloudcode-pa.googleapis.com"
@@ -111,7 +112,9 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	model := info.ChannelMeta.UpstreamModelName
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		// P2 #18 修复：claude/responses 入站经链转 Gemini 格式后同样打 generateContent 端点
+		constant.RelayModeClaudeMessages, constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", baseURL, model), nil
 		}
@@ -329,6 +332,11 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	switch clientFormat {
 	case constant.RelayFormatGemini:
 		return a.handleGeminiNativeResponse(ctx, resp, info, writer)
+	case constant.RelayFormatClaude, constant.RelayFormatResponses:
+		// P2 #18 修复：claude/responses 客户端打 gemini 渠道——经链转换
+		//（claude→gemini / responses→gemini 的反向响应组合 + 流式组合已注册）。
+		// 之前落到 default 的 OpenAI handler（格式错误）；未命中时回退维持旧行为
+		return a.handleCrossClientOnGemini(ctx, resp, info, writer)
 	case constant.RelayFormatOpenAI:
 		if info.IsStream {
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
@@ -340,6 +348,43 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 	}
+}
+
+// handleCrossClientOnGemini claude/responses 客户端 × Gemini 上游（#18 修复）：
+// 流式/非流式先试 relaykit 桥接（gemini→claude / gemini→responses 已注册），
+// 未命中（如非 200 流式）回退旧 OpenAI handler。
+func (a *Adaptor) handleCrossClientOnGemini(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	if info.IsStream {
+		if resp.StatusCode == http.StatusOK {
+			if clientFormat := info.GetOriginalClientFormat(); clientFormat == constant.RelayFormatClaude {
+				if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+					resp.Body.Close()
+					return usage, nil
+				}
+			} else {
+				// responses 客户端：gemini→responses 流式组合（Responses 事件流格式）
+				if usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+					resp.Body.Close()
+					return usage, streamErr
+				}
+			}
+		}
+		return a.handleStreamToOpenAI(ctx, resp, info, writer)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read response body failed: %w", err)
+	}
+	if converted, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(converted)
+		return nil, nil
+	}
+	// 未命中：重构 body reader 回退旧 OpenAI handler（维持旧行为）
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 }
 
 // handleCodeAssistAggregatedStream 聚合 Code Assist 强制流式响应为非流式

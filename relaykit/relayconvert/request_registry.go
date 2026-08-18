@@ -84,6 +84,9 @@ const (
 	// ConverterGeminiContentToClaudeMessages Gemini 客户端 → Claude 上游（StepConverters 链：
 	// gemini→openai→claude 两跳，替换宿主 claude/converter.go 的手工拼接链）
 	ConverterGeminiContentToClaudeMessages = "gemini_generate_content_to_claude_messages"
+	// ConverterClaudeMessagesToGeminiContent Claude 客户端 → Gemini 上游（StepConverters 链：
+	// claude→openai→gemini 两跳，替换宿主 gemini/converter.go 的手工拼接链）
+	ConverterClaudeMessagesToGeminiContent = "anthropic_messages_to_gemini_generate_content"
 	ConverterOpenAIChatToGeminiContent     = "openai_chat_completions_to_gemini_generate_content"
 
 	// OpenAI → 原生格式供应商（请求侧）
