@@ -22,15 +22,23 @@ import (
 // ConvertToOpenAI 根据入站格式将请求转换为 OpenAI 格式。
 // 如果入站已是 OpenAI 格式（或空），原样返回。
 // 其他供应商适配器可调用此函数统一处理入站格式预转换。
+//
+// claude/gemini 入站：relaykit 转换器优先（P1-A 接管点在此函数内部而非 handler 桥接——
+// 20+ 个 openai 兼容 adaptor 在本函数之后各有定制后处理，接管点在内部可保持后处理不变），
+// 失败回退下方 legacy 转换函数。
 func ConvertToOpenAI(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
+	case constant.RelayFormatClaude, constant.RelayFormatGemini:
+		if out, ok := relaykit_bridge.TryConvertInboundToOpenAIChat(context.Background(), info, requestBody); ok {
+			return out, nil
 		}
-		return io.ReadAll(r)
-	case constant.RelayFormatGemini:
+		if info.InboundFormat == constant.RelayFormatClaude {
+			r, err := ConvertClaudeToOpenAI(requestBody, info)
+			if err != nil {
+				return nil, err
+			}
+			return io.ReadAll(r)
+		}
 		r, err := ConvertGeminiToOpenAI(requestBody, info)
 		if err != nil {
 			return nil, err

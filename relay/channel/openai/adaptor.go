@@ -147,18 +147,14 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 
 	var converted io.Reader
 	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToOpenAI(requestBody, info)
+	case constant.RelayFormatClaude, constant.RelayFormatGemini:
+		// 收敛到共享 ConvertToOpenAI（内部 relaykit 优先 + legacy 回退），消除内联重复；
+		// 后续 replaceModelIfNeeded/InjectStreamOptions/injectReasoningEffort 后处理照常执行
+		out, err := ConvertToOpenAI(requestBody, info)
 		if err != nil {
 			return nil, err
 		}
-		converted = r
-	case constant.RelayFormatGemini:
-		r, err := ConvertGeminiToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+		converted = bytes.NewReader(out)
 	case constant.RelayFormatResponses:
 		if responsesUpstream {
 			// 上游为 Responses 协议：保持 Responses 格式直连，仅做模型映射等后处理
