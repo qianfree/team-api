@@ -2407,6 +2407,53 @@ Claude Code（claude 协议）与 Gemini 客户端打 openai 兼容渠道的**�
 
 golden 6 个（c2o×3 含怪癖集 / g2o×3 含同名函数 ID 错配与未知 role）；链集成测试（R6 类型契约 + 工具链路无损）；对拍 5 个（c2o/g2o 字节级 DeepEqual——同构 typed struct 优势、gemini→claude 链语义归一化、openai→claude/gemini 响应 + handler 全路径一致性）；register/roundtrip 扩展；passthrough_test 三行断言（链路由 + 双通道禁令）。
 
+---
+
+## P2：收尾批次——openai→claude/gemini 流式 + 交叉客户端修复 + Responses→Gemini（2026-08-18，feat/responses 分支）
+
+转换矩阵最后三个空格收编/修复，3 个提交（D1 流式转换器 / D2+D3 链组合与 adaptor 修复 / D4 文档）。
+
+### D1: openai→claude/gemini 流式（Claude Code / Gemini 客户端打 openai 兼容渠道的流式）
+
+- `OpenAIToClaudeStreamConverter`（chat SSE→Claude 事件流，块状态机全移植）+ **确定性修复**：参数 delta 按 tc.Index 反查所属块（legacy 错挂当前块）、意外断流补发 message_delta（legacy 只发 message_stop，客户端拿不到 stop_reason 与最终 usage）
+- `OpenAIToGeminiStreamConverter`（chat SSE→Gemini 流，尾 chunk 收尾）+ **确定性修复**：分片 arguments 聚合为完整 functionCall part（legacy 逐片 unmarshal 产出垃圾 part——Gemini 协议 args 无增量语义）
+- 流式桥接 chunkWriter 三态分派（chat chunk→data: 行 / ClaudeStreamEvent→event:+data: 行 / GeminiChatResponse→data: 行 + 各自 usage 提取还原 OpenAI 计费口径）；收尾按客户端格式（claude 无 [DONE]）；terminal 补发按格式分派
+- dto 新增 `ClaudeStreamEvent` 载荷
+
+### D2: 跨原生链组合（全部经 openai 中间态）
+
+| 方向 | 请求 | 非流式响应 | 流式 |
+|------|------|-----------|------|
+| claude↔gemini 双向 | StepConverters 两跳链（新注册） | Resp 直挂两跳组合函数 | io.Pipe 串联组合 |
+| responses→gemini | 链（启用预留常量） | Resp 组合 | io.Pipe 组合 |
+| gemini→responses（响应方向） | — | Resp 组合（同 spec） | io.Pipe 组合 |
+
+**io.Pipe 流式组合**：第一跳的 chat chunk 输出序列化为 `data:` 行写 pipe，第二跳从 pipe 读取——错误经 CloseWithError 传递。
+
+### D3: #18 修复（比记录的更早断点：GetRequestURL 就拒绝交叉 mode）
+
+探索证实交叉客户端（gemini 打 claude 渠道 / claude/responses 打 gemini 渠道）在 DoRequest 阶段就报 `unsupported relay mode`，#18 的 DoResponse default 缺陷实际不可达。修复：
+- claude adaptor GetRequestURL 收 `RelayModeGeminiChat`（打 /v1/messages）；DoResponse 加 Gemini 分支
+- gemini adaptor GetRequestURL 收 `RelayModeClaudeMessages/Responses/ResponsesCompact`；DoResponse 加 Claude/Responses 分支
+- 未命中桥接时重构 body reader 回退旧 OpenAI handler（维持旧行为兜底）
+
+### 已知差异与修复项
+
+- gemini args 聚合为**行为改进**（修复 legacy 垃圾 part）；claude 断流补 message_delta 为修复项
+- claude 流式模型名口径与非流式相反（legacy 保持：流式 OriginModelName/映射→Upstream；非流式 resp.Model/映射→Origin）
+- 流式桥接 gemini 中断路径的 terminal 补发为 chat 格式终止行（legacy 同样不完美，注释记录）
+
+### 转换矩阵终态
+
+| 客户端 \ 上游 | OpenAI chat | Claude | Gemini | Coze/Dify/Ollama | Responses |
+|---|---|---|---|---|---|
+| **OpenAI chat** | 直连 | ✅ 全侧 | ✅ 全侧 | ✅ 全侧 | ✅ 全侧（非流式+流式 B 方向遗留） |
+| **Responses** | ✅ 全侧 | ✅ 全侧 | ✅ 全侧（P2） | ❌ legacy | 直连 |
+| **Claude** | ✅ 全侧 | 直连 | ✅ 全侧（P2） | ❌ legacy | ❌ 无 |
+| **Gemini** | ✅ 全侧 | ✅ 全侧（P2） | 直连 | ❌ legacy | ❌ 无 |
+
+剩余 legacy：Coze/Dify/Ollama 上游 × claude/gemini/responses 客户端（低频，组合件已在库可按需补）；chat→responses 的 B 方向流式（StreamScannerHandler 超时治理依赖）。
+
 #### 7.1 删除旧转换函数
 
 确认 relaykit 稳定运行 2 周以上，且所有供应商都已迁移后，删除旧代码：
