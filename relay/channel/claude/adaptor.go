@@ -33,8 +33,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
-		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact,
+		constant.RelayModeGeminiChat:
 		// Responses 入站：请求转 Claude Messages 格式打 /v1/messages，响应转回 Responses 格式
+		// Gemini 入站（P2 #18 修复）：请求经 gemini→claude 链转 Claude 格式，同样打 /v1/messages
 		return baseURL + "/v1/messages", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode for Claude: %d", info.RelayMode)
@@ -225,6 +227,11 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			return a.handleStreamToResponses(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToResponses(ctx, resp, info, writer)
+	case constant.RelayFormatGemini:
+		// P2 #18 修复：Gemini 客户端打 claude 渠道——经 gemini→claude 链转换。
+		// 之前落到 default 的 OpenAI handler（格式错误）；本方向无 legacy 实现，
+		// relaykit 桥接为唯一路径（未命中时仍走 OpenAI handler 兜底，维持旧行为）
+		return a.handleGeminiClientOnClaude(ctx, resp, info, writer)
 	case constant.RelayFormatOpenAI:
 		if info.IsStream {
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
@@ -237,6 +244,35 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 	}
+}
+
+// handleGeminiClientOnClaude Gemini 客户端 × Claude 上游（#18 修复）：流式/非流式先试
+// relaykit 桥接（gemini→claude 已注册）；未命中（如非 200 流式）回退旧 OpenAI handler。
+func (a *Adaptor) handleGeminiClientOnClaude(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
+	if info.IsStream {
+		if resp.StatusCode == http.StatusOK {
+			if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+				resp.Body.Close()
+				return usage, nil
+			}
+		}
+		return a.handleStreamToOpenAI(ctx, resp, info, writer)
+	}
+	// 非流式：读 body 后先试桥接（gemini→claude 响应组合已注册），写出转换体；未命中回退
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read response body failed: %w", err)
+	}
+	if converted, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(converted)
+		return nil, nil
+	}
+	// 未命中：重构 body reader 回退旧 OpenAI handler（维持旧行为）
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 }
 
 // GetChannelName 返回渠道名称

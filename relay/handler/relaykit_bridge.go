@@ -49,6 +49,9 @@ func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream consta
 		case upstream == constant.RelayFormatClaude:
 			// Responses → Claude Messages（链式：responses→openai→claude）
 			return relayconvert.ConverterOpenAIResponsesToClaudeMessages
+		case upstream == constant.RelayFormatGemini:
+			// Responses → Gemini（链式：responses→openai→gemini）
+			return relayconvert.ConverterOpenAIResponsesToGemini
 		default:
 			return ""
 		}
@@ -63,6 +66,9 @@ func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream consta
 	case inbound == constant.RelayFormatGemini && upstream == constant.RelayFormatClaude:
 		// Gemini → Claude Messages（链式：gemini→openai→claude）
 		return relayconvert.ConverterGeminiContentToClaudeMessages
+	case inbound == constant.RelayFormatClaude && upstream == constant.RelayFormatGemini:
+		// Claude → Gemini（链式：claude→openai→gemini）
+		return relayconvert.ConverterClaudeMessagesToGeminiContent
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatClaude:
 		return relayconvert.ConverterOpenAIChatToClaudeMessages
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatGemini:
