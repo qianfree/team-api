@@ -2363,6 +2363,50 @@ codex 打 chat-only 渠道的**响应合成主路径**收编进 relaykit，旧�
 
 golden 9 个新增（09-15，suffix 驱动 runner）；strictjson 键集回归（A 非流式）；单测 9 个（错误契约/顺序/去重/Index 反查/估算）；宿主对拍 3 个（A 非流式深度相等、B 非流式模型名四象限、A 流式事件序列归一化比较）；roundtrip 补两 spec Resp 执行用例。夹具修正：claude 桥接测试补 ChannelType（原缺省 0 被 ProviderNativeFormat 归为 openai 导致误路由）。
 
+---
+
+## P1-A/P1-B：Claude/Gemini 入站 + openai→claude/gemini 响应映射收编（2026-08-18，feat/responses 分支）
+
+Claude Code（claude 协议）与 Gemini 客户端打 openai 兼容渠道的**请求转换**（c2o/g2o）与**非流式响应映射**收编 relaykit。5 个提交（C1 转换器纯增量 → C2 请求接线 → C3 响应转换器纯增量 → C4 响应接线 → C5 文档）。
+
+### 核心设计决策：c2o/g2o 接管点在共享函数内部（D1）
+
+`ConvertToOpenAI` 被 **20 个 openai 兼容 adaptor** 共用（ali/aws/baidu_v2/…/zhipu），各 adaptor 在其后有定制后处理（volcengine 删 reasoning_effort、tencent 参数截断等）。若在 handler 桥接层路由会跳过全部后处理造成行为回退。**接管点在 `relay/relaykit_bridge/request.go` 的 `TryConvertInboundToOpenAIChat`**，由 ConvertToOpenAI 与 openai adaptor 内联分支收敛调用——签名零变化、后处理照常执行、**无需吸收任何后处理逻辑**。两侧交叉注释固化「严禁在 handler 层加同方向路由」的双通道禁令。
+
+### 收编范围与挂载点
+
+| 方向 | 转换器 | 挂载 |
+|------|--------|------|
+| Claude→OpenAI Chat（请求侧） | `oai_chat.ClaudeToOpenAIRequestConverter` | spec A，宿主接管点在 ConvertToOpenAI 内部 |
+| Gemini→OpenAI Chat（请求侧） | `oai_gemini.GeminiToOpenAIRequestConverter` | spec B，同上 |
+| Gemini→Claude（请求链） | StepConverters [B, openai→claude] | spec C，handler 桥接路由（P0 responses→claude 同构） |
+| OpenAI→Claude（非流式响应） | `oai_chat.OpenAIToClaudeResponseConverter` | spec A Resp 侧（方向反转约定） |
+| OpenAI→Gemini（非流式响应） | `oai_gemini.OpenAIToGeminiResponseConverter` | spec B Resp 侧 |
+
+流式全部保留 legacy（P2 范围）；B 方向流式明确排除（StreamScannerHandler 超时治理依赖）。
+
+### 配套基础设施
+
+- 能力接口助手上移 `convmeta/metacap.go`（`ModelNameMappedOf`/`RequestIDOf`；原方案 kitutil 撞 import 环 kitutil→convmeta→types→kitutil，改放 Meta 本家包）
+- reasonmap 新增 `OpenAIFinishReasonToClaudeLegacySemantics`（精确复刻宿主：不 ToLower、空串→end_turn——与 relaykit 既有函数语义不同，注释固化勿混用）与 `OpenAIFinishReasonToGeminiFinishReason`（tool_calls→STOP 怪癖保持）
+
+### legacy 怪癖清单（golden/对拍锁定，24 项精华）
+
+**c2o**：Model 无条件 UpstreamModelName / MaxTokens 缺省 4096 / thinking→effort 阈值（nil→medium、≤2048→low、≤16384→medium）/ system []any 只收 text 块 / user content 非 string-[]any → `Sprintf`（nil→`"<nil>"` 字面量）/ tool_result 三形态 / 空补 user 空消息 / thinking signature 丢 / tool_use input 缺失→`"{}"` / tool_choice string 原样透传（含非法 "any"）/ 非 user-assistant 角色整条丢 / TopK 丢弃（g2o 映射——不对称）
+**g2o**：MaxOutputTokens 无默认 / ThinkingConfig 只看 ThoughtBudget / ResponseMimeType 任意非空→json_object / call_N 合成 ID + map[name] 反查（同名函数 ID 复用错配）/ pending tool 重排 / 未知 role 文本丢失但 functionResponse 仍产出 / user 三态 / assistant 图文互斥图赢 / inlineData 一律 image_url / FileData 丢 / toolConfig 非 map→nil
+**openai→claude 响应**：块序 thinking→text→tool_use / Content 仅 string / thinking 无 signature / 空 choices 仍产骨架 / finish_reason LegacySemantics / msg_<RequestID> / usage 扣减判空
+**openai→gemini 响应**：空 choices 完全空对象（与 claude 不对称）/ usageMetadata 无条件非 nil / candidates 扣 reasoning（2f0cc01 口径）/ ModelName 不填 / tool_calls→STOP
+
+### 已知差异与缺陷记录
+
+- **gemini→claude 链（R3）**：与 P0 responses→claude 链同款——thinking budget 80%↔50%、temperature 处理、effort adaptive 形态、max_tokens 缺省 4096↔DefaultMaxTokens hook、第二跳 content 形态（string↔块数组）；第二跳把 tool 消息包装为 user 消息内 tool_result 块（Claude 协议正确形态）
+- **#18 现存缺陷（本批不修）**：claude/gemini adaptor 对交叉客户端（gemini 客户端打 claude 渠道、claude 客户端打 gemini 渠道）的响应落到 default OpenAI handler——请求侧链修好后端到端仍破，需 claude→gemini / gemini→claude 响应转换器（无 legacy 蓝本）
+- **R5 方向反转约定**：spec A/B 的 Resp 实际转换方向与 response 注册表 route 键相反（(claude,openai) route 指向的 spec 做 openai→claude）——register 注释固化，route 查找仅测试使用
+
+### 验证
+
+golden 6 个（c2o×3 含怪癖集 / g2o×3 含同名函数 ID 错配与未知 role）；链集成测试（R6 类型契约 + 工具链路无损）；对拍 5 个（c2o/g2o 字节级 DeepEqual——同构 typed struct 优势、gemini→claude 链语义归一化、openai→claude/gemini 响应 + handler 全路径一致性）；register/roundtrip 扩展；passthrough_test 三行断言（链路由 + 双通道禁令）。
+
 #### 7.1 删除旧转换函数
 
 确认 relaykit 稳定运行 2 周以上，且所有供应商都已迁移后，删除旧代码：
