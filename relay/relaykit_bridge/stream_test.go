@@ -153,9 +153,10 @@ func TestConvertStreamViaRelaykit_SameFormatFallback(t *testing.T) {
 	}
 }
 
-// TestConvertStreamViaRelaykit_NoMatchingRoute 无匹配流式转换器的方向（OpenAI→Gemini）应回退。
+// TestConvertStreamViaRelaykit_NoMatchingRoute 无匹配流式转换器的方向（Coze→Claude——
+// P2 后 OpenAI→Gemini 已注册，改用真正未注册的方向）应回退。
 func TestConvertStreamViaRelaykit_NoMatchingRoute(t *testing.T) {
-	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
+	info := newStreamTestRelayInfo(constant.ProviderCoze, constant.RelayFormatClaude)
 	rec := httptest.NewRecorder()
 
 	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
