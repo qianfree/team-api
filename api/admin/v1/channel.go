@@ -180,6 +180,11 @@ type AbilityItem struct {
 	CostRatio         float64 `json:"cost_ratio" d:"1" v:"between:0,100" dc:"成本比例：上游实际价/平台基准价，1.0=等价（参与调度 costFactor）"`
 	SupportsResponses bool    `json:"supports_responses" d:"false" dc:"支持 OpenAI Responses 协议（/v1/responses 原生直连，responses 入站软偏好）"`
 	ChatViaResponses  bool    `json:"chat_via_responses" d:"false" dc:"上游仅有 Responses 协议（responses-only），chat 入站经桥接发送 /v1/responses"`
+	// 模型级健康状态（从 Redis 实时读取）
+	HealthScore  *float64 `json:"health_score" dc:"健康分 0-100，null=无数据"`
+	SuccEWMA     *float64 `json:"succ_ewma" dc:"成功率 EWMA 0-1"`
+	LatencyEWMA  *float64 `json:"latency_ewma" dc:"延迟 EWMA (ms)"`
+	BreakerState *int     `json:"breaker_state" dc:"熔断状态：0=正常 1=熔断 2=半开，null=无熔断器"`
 }
 
 // ProviderDefaultURLReq 获取供应商默认 URL
@@ -282,8 +287,9 @@ type ChannelCloneRes struct {
 
 // ChannelResetHealthReq 重置渠道健康度请求
 type ChannelResetHealthReq struct {
-	g.Meta `path:"/channels/{id}/reset-health" method:"post" mime:"json" tags:"管理后台-渠道" summary:"重置渠道健康度"`
-	ID     int64 `json:"id" in:"path" v:"required" dc:"渠道ID"`
+	g.Meta    `path:"/channels/{id}/reset-health" method:"post" mime:"json" tags:"管理后台-渠道" summary:"重置渠道健康度"`
+	ID        int64  `json:"id" in:"path" v:"required" dc:"渠道ID"`
+	ModelName string `json:"model_name" dc:"可选：指定模型名则只重置该模型的健康度，留空则重置整个渠道（含所有模型）"`
 }
 
 // ChannelResetHealthRes 重置渠道健康度响应

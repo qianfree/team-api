@@ -692,9 +692,10 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 		return nil, err
 	}
 
-	list := make([]v1.AbilityItem, len(abilities))
+	// 转换为具名类型以传递给 batchGetModelHealth
+	abilityRecords := make([]abilityRecord, len(abilities))
 	for i, a := range abilities {
-		list[i] = v1.AbilityItem{
+		abilityRecords[i] = abilityRecord{
 			ID:                a.ID,
 			ModelName:         a.ModelName,
 			UpstreamModel:     a.UpstreamModel,
@@ -705,7 +706,119 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 		}
 	}
 
+	// 批量读取模型级健康状态（从 Redis）
+	healthMap := s.batchGetModelHealth(ctx, req.ChannelID, abilityRecords)
+
+	list := make([]v1.AbilityItem, len(abilities))
+	for i, a := range abilities {
+		item := v1.AbilityItem{
+			ID:                a.ID,
+			ModelName:         a.ModelName,
+			UpstreamModel:     a.UpstreamModel,
+			Enabled:           a.Enabled,
+			CostRatio:         a.CostRatio,
+			SupportsResponses: a.SupportsResponses,
+			ChatViaResponses:  a.ChatViaResponses,
+		}
+
+		// 填充健康数据
+		if h, ok := healthMap[a.ModelName]; ok {
+			item.HealthScore = h.HealthScore
+			item.SuccEWMA = h.SuccEWMA
+			item.LatencyEWMA = h.LatencyEWMA
+			item.BreakerState = h.BreakerState
+		}
+
+		list[i] = item
+	}
+
 	return &v1.ChannelAbilitiesGetRes{List: list}, nil
+}
+
+// ModelHealthData 模型健康数据
+type ModelHealthData struct {
+	HealthScore  *float64
+	SuccEWMA     *float64
+	LatencyEWMA  *float64
+	BreakerState *int
+}
+
+// abilityRecord 能力记录（用于类型匹配）
+type abilityRecord struct {
+	ID                int64
+	ModelName         string
+	UpstreamModel     string
+	Enabled           bool
+	CostRatio         float64
+	SupportsResponses bool
+	ChatViaResponses  bool
+}
+
+// batchGetModelHealth 批量读取模型级健康状态（从 Redis）
+// Redis key 模式：
+//   - dispatch:v1:health:<channelID>:<model> (HASH) → succ_ewma, lat_ewma
+//   - dispatch:v1:breaker:<channelID>:<model> (HASH) → state, half_open_at, first_opened_ms
+func (s *sAdmin) batchGetModelHealth(ctx context.Context, channelID int64, abilities []abilityRecord) map[string]*ModelHealthData {
+	healthMap := make(map[string]*ModelHealthData)
+	if len(abilities) == 0 {
+		return healthMap
+	}
+
+	redis := g.Redis()
+	for _, ab := range abilities {
+		healthKey := fmt.Sprintf("dispatch:v1:health:%d:%s", channelID, ab.ModelName)
+		breakerKey := fmt.Sprintf("dispatch:v1:breaker:%d:%s", channelID, ab.ModelName)
+
+		data := &ModelHealthData{}
+
+		// 读取健康分数（HGETALL health key）
+		healthHash, err := redis.HGetAll(ctx, healthKey)
+		if err == nil && !healthHash.IsEmpty() {
+			hashMap := healthHash.Map()
+
+			// succ_ewma: 成功率 EWMA (0-1)
+			if succEWMAVal, ok := hashMap["succ_ewma"]; ok && succEWMAVal != nil {
+				if succStr, ok := succEWMAVal.(string); ok {
+					var succEWMA float64
+					if _, err := fmt.Sscanf(succStr, "%f", &succEWMA); err == nil && succEWMA >= 0 {
+						data.SuccEWMA = &succEWMA
+						// 健康分 = succ_ewma * 100
+						healthScore := succEWMA * 100
+						data.HealthScore = &healthScore
+					}
+				}
+			}
+
+			// lat_ewma: 延迟 EWMA (ms)
+			if latEWMAVal, ok := hashMap["lat_ewma"]; ok && latEWMAVal != nil {
+				if latStr, ok := latEWMAVal.(string); ok {
+					var latEWMA float64
+					if _, err := fmt.Sscanf(latStr, "%f", &latEWMA); err == nil && latEWMA >= 0 {
+						data.LatencyEWMA = &latEWMA
+					}
+				}
+			}
+		}
+
+		// 读取熔断状态（HGET breaker key state）
+		stateVal, err := redis.HGet(ctx, breakerKey, "state")
+		if err == nil && !stateVal.IsNil() {
+			if stateStr := stateVal.String(); stateStr != "" {
+				var state int
+				if _, err := fmt.Sscanf(stateStr, "%d", &state); err == nil {
+					// 0=CLOSED(正常), 1=OPEN(熔断), 2=HALF_OPEN(半开)
+					data.BreakerState = &state
+				}
+			}
+		}
+
+		// 只有至少有一个健康指标时才加入 map
+		if data.HealthScore != nil || data.SuccEWMA != nil || data.LatencyEWMA != nil || data.BreakerState != nil {
+			healthMap[ab.ModelName] = data
+		}
+	}
+
+	return healthMap
 }
 
 // GetProviderDefaultURLs 获取供应商默认 API 地址
@@ -803,6 +916,28 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 	if count == 0 {
 		return nil, common.NewBusinessError(404, "渠道不存在")
 	}
+
+	// 如果指定了模型名，只重置该模型的健康度
+	if req.ModelName != "" {
+		// 验证模型能力是否存在
+		abilityCount, err := dao.ChnAbilities.Ctx(ctx).
+			Where("channel_id", req.ID).
+			Where("model_name", req.ModelName).
+			Count()
+		if err != nil {
+			return nil, err
+		}
+		if abilityCount == 0 {
+			return nil, common.NewBusinessError(404, fmt.Sprintf("模型 %s 不存在于该渠道", req.ModelName))
+		}
+
+		// 调度层：只复位指定模型的熔断 + 成功率恢复
+		dispatchadapter.ResetModelHealth(ctx, req.ID, req.ModelName)
+
+		return nil, nil
+	}
+
+	// 未指定模型名，重置整个渠道（含所有模型）
 
 	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；下次维护快照会按策略重算）
 	affected, err := dao.ChnHealthScores.Ctx(ctx).
