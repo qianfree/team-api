@@ -51,6 +51,8 @@ interface ModelItem {
 	cache_creation_price: number | null
 	pricing_tiers: PricingTierItem[]
 	time_prices?: TimePriceItem[] | null
+	discount_label?: string | null
+	price_change_note?: string | null
 }
 
 const capabilityLabel: Record<string, string> = {
@@ -217,7 +219,7 @@ function timeWindow(tp: TimePriceItem): string {
 
 function timePriceText(m: ModelItem, tp: TimePriceItem): string {
 	if (m.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? null)} /次`
-	if (m.billing_mode === 'tiered') return `${formatPrice(tp.input_price ?? null)} 起`
+	if (m.billing_mode === 'tiered') return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)} 起`
 	return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)}`
 }
 
@@ -334,6 +336,13 @@ onMounted(fetchModels)
 								{{ categoryLabel[m.category] || m.category }}
 							</span>
 							<h3 class="text-sm font-semibold text-gray-900 truncate">{{ m.model_name || m.model_id }}</h3>
+							<span
+								v-if="m.discount_label"
+								class="shrink-0 px-1.5 py-0.5 text-[10px] font-semibold text-white rounded-md"
+								style="background: linear-gradient(135deg, #f43f5e, #fb923c);"
+							>
+								{{ m.discount_label }}
+							</span>
 						</div>
 
 						<!-- Model ID + Copy -->
@@ -380,6 +389,15 @@ onMounted(fetchModels)
 							>
 								+{{ parseCapabilities(m.capabilities).length - 4 }}
 							</span>
+						</div>
+
+						<!-- 价格调整说明（平台调价提示，仅配置时展示） -->
+						<div
+							v-if="m.price_change_note"
+							class="mt-2.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5"
+						>
+							<Icon name="infoCircle" size="xs" class="shrink-0 mt-px text-amber-500" />
+							<span>{{ m.price_change_note }}</span>
 						</div>
 
 						<!-- Pricing (pushed to bottom) -->
