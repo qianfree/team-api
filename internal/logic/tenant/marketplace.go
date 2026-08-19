@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -12,6 +13,22 @@ import (
 	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/model/entity"
 )
+
+// marketplacePricingRow 定价锚点行（min_tokens=0）：全部计费模式的基础价载体
+// （token 默认价 / tiered 首档价 / per_request 单价），另带时段定价与对外展示字段。
+// 显式列名扫描进独立结构体，与 do/entity 生成物解耦（新展示列需迁移落库 + gf gen dao 后才进生成物）。
+type marketplacePricingRow struct {
+	ModelID            int64    `json:"model_id"`
+	BillingMode        string   `json:"billing_mode"`
+	InputPrice         float64  `json:"input_price"`
+	OutputPrice        float64  `json:"output_price"`
+	PerRequestPrice    *float64 `json:"per_request_price"`
+	CacheReadPrice     float64  `json:"cache_read_price"`
+	CacheCreationPrice float64  `json:"cache_creation_price"`
+	TimeSegments       string   `json:"time_segments"`
+	DiscountLabel      *string  `json:"discount_label"`
+	PriceChangeNote    *string  `json:"price_change_note"`
+}
 
 // GetModelList 获取模型广场列表（从默认模型分组加载）
 func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) (*v1.MarketplaceListRes, error) {
@@ -84,19 +101,19 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 		modelIds[i] = model.Id
 	}
 
-	var pricings []*entity.MdlPricing
+	var pricings []marketplacePricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		WhereIn("model_id", modelIds).
-		Where("billing_mode", "token"). // 只取 token 计费模式的基础价格
+		Where("min_tokens", 0). // 锚点行承载全部计费模式的基础价与展示字段
 		Scan(&pricings)
 	if err != nil {
 		return nil, err
 	}
 
 	// 构建价格映射（model_id -> pricing）
-	priceMap := make(map[int64]*entity.MdlPricing)
-	for _, pricing := range pricings {
-		priceMap[pricing.ModelId] = pricing
+	priceMap := make(map[int64]*marketplacePricingRow, len(pricings))
+	for i := range pricings {
+		priceMap[pricings[i].ModelID] = &pricings[i]
 	}
 
 	// 6. 转换为响应格式
@@ -145,11 +162,11 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 		return nil, fmt.Errorf("模型不存在或未公开")
 	}
 
-	// 3. 查询价格
-	var pricing *entity.MdlPricing
+	// 3. 查询价格（锚点行：全部计费模式的基础价 + 时段/展示字段）
+	var pricing *marketplacePricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.Id).
-		Where("billing_mode", "token").
+		Where("min_tokens", 0).
 		Scan(&pricing)
 	if err != nil {
 		return nil, err
@@ -164,7 +181,7 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 }
 
 // convertToMarketplaceItem 转换模型实体为响应格式
-func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.MdlModels, pricing *entity.MdlPricing) v1.MarketplaceModelItem {
+func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.MdlModels, pricing *marketplacePricingRow) v1.MarketplaceModelItem {
 	item := v1.MarketplaceModelItem{
 		ModelId:          model.ModelId,
 		ModelName:        model.ModelName,
@@ -189,12 +206,41 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		}
 	}
 
-	// 价格（数据库已存储每百万 token 的美元价格，直接返回）
-	if pricing != nil {
-		// input_price/output_price 数据库字段存储的就是每 1M token 价格（USD）
-		// 无需转换，直接使用
-		item.InputPrice = billing.InexactFloat64(pricing.InputPrice)
-		item.OutputPrice = billing.InexactFloat64(pricing.OutputPrice)
+	if pricing == nil {
+		return item
+	}
+
+	billingMode := pricing.BillingMode
+	if billingMode == "" {
+		billingMode = "token"
+	}
+	item.BillingMode = billingMode
+	// 锚点行价即对外展示价（数据库存的就是每 1M token 美元价，直接返回）：
+	// token=默认价，tiered=首档价（前端标「起」），per_request=按次单价
+	item.InputPrice = pricing.InputPrice
+	item.OutputPrice = pricing.OutputPrice
+	item.CacheReadPrice = pricing.CacheReadPrice
+	item.CacheCreationPrice = pricing.CacheCreationPrice
+	if pricing.PerRequestPrice != nil {
+		item.PerRequestPrice = *pricing.PerRequestPrice
+	}
+	if pricing.DiscountLabel != nil {
+		item.DiscountLabel = *pricing.DiscountLabel
+	}
+	if pricing.PriceChangeNote != nil {
+		item.PriceChangeNote = *pricing.PriceChangeNote
+	}
+
+	// 时段价目：平台基础价 × 时段乘数换算（tiered 用锚点首档价换算，与 buildTiers 首档口径一致）
+	if pricing.TimeSegments != "" && pricing.TimeSegments != "null" {
+		var segments []billing.TimeSegment
+		if err := json.Unmarshal([]byte(pricing.TimeSegments), &segments); err == nil && len(segments) > 0 {
+			var tiers []v1.PricingTierItem
+			if billingMode == "tiered" {
+				tiers = append(tiers, v1.PricingTierItem{InputPrice: pricing.InputPrice, OutputPrice: pricing.OutputPrice})
+			}
+			item.TimePrices = buildTimePrices(segments, billingMode, &pricing.InputPrice, &pricing.OutputPrice, pricing.PerRequestPrice, tiers)
+		}
 	}
 
 	return item

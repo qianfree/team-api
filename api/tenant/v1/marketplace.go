@@ -20,16 +20,23 @@ type MarketplaceListRes struct {
 }
 
 type MarketplaceModelItem struct {
-	ModelId          string   `json:"model_id"`           // 模型标识
-	ModelName        string   `json:"model_name"`         // 模型显示名称
-	Category         string   `json:"category"`           // 分类（chat/embedding/image等）
-	Description      string   `json:"description"`        // 描述
-	MaxContextTokens int      `json:"max_context_tokens"` // 最大上下文 tokens
-	MaxOutputTokens  int      `json:"max_output_tokens"`  // 最大输出 tokens
-	InputPrice       float64  `json:"input_price"`        // 输入价格（每百万 token，USD）
-	OutputPrice      float64  `json:"output_price"`       // 输出价格（每百万 token，USD）
-	Tags             []string `json:"tags"`               // 标签
-	Capabilities     g.Map    `json:"capabilities"`       // 能力标签
+	ModelId            string          `json:"model_id"`             // 模型标识
+	ModelName          string          `json:"model_name"`           // 模型显示名称
+	Category           string          `json:"category"`             // 分类（chat/embedding/image等）
+	Description        string          `json:"description"`          // 描述
+	MaxContextTokens   int             `json:"max_context_tokens"`   // 最大上下文 tokens
+	MaxOutputTokens    int             `json:"max_output_tokens"`    // 最大输出 tokens
+	BillingMode        string          `json:"billing_mode"`         // 计费模式：token/per_request/tiered
+	InputPrice         float64         `json:"input_price"`          // 输入价格（每百万 token，USD；tiered=首档）
+	OutputPrice        float64         `json:"output_price"`         // 输出价格（每百万 token，USD；tiered=首档）
+	PerRequestPrice    float64         `json:"per_request_price"`    // 按次单价（USD/次，仅 per_request）
+	CacheReadPrice     float64         `json:"cache_read_price"`     // 缓存读取价格（每百万 token，USD）
+	CacheCreationPrice float64         `json:"cache_creation_price"` // 缓存创建价格（每百万 token，USD）
+	DiscountLabel      string          `json:"discount_label"`       // 折扣标签（营销展示，空=不展示）
+	PriceChangeNote    string          `json:"price_change_note"`    // 价格调整说明（对外提示，空=不展示）
+	TimePrices         []TimePriceItem `json:"time_prices"`          // 时段价目（平台基础价 × 时段乘数，无配置=空）
+	Tags               []string        `json:"tags"`                 // 标签
+	Capabilities       g.Map           `json:"capabilities"`         // 能力标签
 }
 
 type MarketplaceDetailReq struct {
