@@ -132,7 +132,9 @@ const abilitiesData = ref<any[]>([])
 
 const abilityColumns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 60 },
-  { title: '平台模型名', dataIndex: 'model_name', width: 200 },
+  { title: '平台模型名', dataIndex: 'model_name', width: 180 },
+
+  // 配置操作列
   {
     title: '上游模型名', dataIndex: 'upstream_model', width: 200,
     render({ record }) {
@@ -189,12 +191,40 @@ const abilityColumns: TableColumnData[] = [
       }, () => record.enabled ? '启用' : '禁用')
     },
   },
+
+  // 健康监控列（放在右侧，操作按钮前面）
   {
-    title: '操作', dataIndex: 'actions', width: 80, fixed: 'right',
+    title: '健康状态', dataIndex: 'health_score', width: 120,
     render({ record }) {
-      return h(Popconfirm, { content: '确定移除该能力？', onOk: () => handleDeleteAbility(record.id) }, () =>
-        h(Button, { size: 'mini', status: 'danger' }, () => '移除')
-      )
+      return renderHealthBadge(record)
+    },
+  },
+  {
+    title: '熔断', dataIndex: 'breaker_state', width: 80,
+    render({ record }) {
+      if (record.breaker_state === null || record.breaker_state === undefined) {
+        return h('span', { style: 'color: var(--color-text-4); font-size: 12px' }, '—')
+      }
+      const color = breakerTagColor[record.breaker_state]
+      const label = breakerLabel[record.breaker_state]
+      return h(Tag, { color, size: 'small' }, () => label)
+    },
+  },
+
+  // 操作列（固定在最右侧）
+  {
+    title: '操作', dataIndex: 'actions', width: 150, fixed: 'right',
+    render({ record }) {
+      return h('div', { style: 'display: flex; gap: 8px' }, [
+        h(Button, {
+          size: 'mini',
+          onClick: () => handleResetModelHealth(record),
+          disabled: !record.health_score && record.breaker_state === null,
+        }, () => '重置健康'),
+        h(Popconfirm, { content: '确定移除该能力？', onOk: () => handleDeleteAbility(record.id) }, () =>
+          h(Button, { size: 'mini', status: 'danger' }, () => '移除')
+        ),
+      ])
     },
   },
 ]
@@ -271,6 +301,43 @@ async function handleDeleteAbility(id: number) {
     Message.success('能力已移除')
     fetchAbilities()
   } catch { /* error handled by interceptor */ }
+}
+
+// 新增：健康徽章渲染函数
+function renderHealthBadge(record: any) {
+  if (record.health_score === null || record.health_score === undefined) {
+    return h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
+      h('div', {
+        style: 'width: 8px; height: 8px; border-radius: 50%; background: #94a3b8'
+      }),
+      h('span', { style: 'color: var(--color-text-3); font-size: 13px' }, '无数据'),
+    ])
+  }
+
+  const score = Math.round(record.health_score)
+  const color = healthColor(score)
+  const statusText = score >= 80 ? '健康' : score >= 50 ? '降级' : '故障'
+
+  return h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
+    h('div', {
+      style: `width: 8px; height: 8px; border-radius: 50%; background: ${color}`
+    }),
+    h('span', { style: `color: ${color}; font-weight: 500; font-size: 13px` }, statusText),
+    h('span', { style: 'color: var(--color-text-3); font-size: 12px; margin-left: 2px' }, `(${score})`),
+  ])
+}
+
+// 新增：重置模型级健康
+async function handleResetModelHealth(record: any) {
+  try {
+    await request.post(`/admin/channels/${channelId}/reset_health`, {
+      model_name: record.model_name,
+    })
+    Message.success(`模型 ${record.model_name} 健康已重置`)
+    fetchAbilities()
+  } catch {
+    // error handled by interceptor
+  }
 }
 
 // Add Ability Modal
