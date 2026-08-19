@@ -70,3 +70,6 @@ func (c *ControllerV1) AdminWalletFrozenRelease(ctx context.Context, req *v1.Adm
 func (c *ControllerV1) AdminWalletFrozenReleaseAll(ctx context.Context, req *v1.AdminWalletFrozenReleaseAllReq) (res *v1.AdminWalletFrozenReleaseAllRes, err error) {
 	return service.Admin().ReleaseAllWalletFrozenItems(ctx, req)
 }
+func (c *ControllerV1) AdminUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSummaryReq) (res *v1.AdminUsageLogSummaryRes, err error) {
+	return service.Admin().GetUsageLogSummary(ctx, req)
+}

@@ -13,10 +13,13 @@ import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 import { useDateRange } from '@/composables/useDateRange'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const { defaultEnd, defaultTodayRange, quickDateRanges } = useDateRange()
+const isMobileView = useIsMobile()
 
 const loading = ref(false)
+const summaryLoading = ref(false)
 const data = ref<any[]>([])
 const pagination = reactive({
 	current: 1,
@@ -25,6 +28,14 @@ const pagination = reactive({
 	showPageSize: true,
 	pageSizeOptions: [10, 20, 50, 100],
 })
+const summary = ref<{
+	total_cost: number
+	total_output_tokens: number
+	cache_read_ratio: number
+} | null>(null)
+
+// 用于判断是否需要重新加载统计数据的筛选条件快照
+let lastSummaryFilters = ''
 
 const filterId = ref<number | undefined>(undefined)
 const filterTenantId = ref<number | undefined>(undefined)
@@ -165,6 +176,18 @@ function formatMs(n: number): string {
 function formatTime(s: string): string {
 	if (!s) return '-'
 	return s.replace('T', ' ').substring(0, 19)
+}
+
+// 格式化金额（保留2位小数）
+function formatMoney(amount: number): string {
+	if (amount == null || isNaN(amount)) return '$0.00'
+	return '$' + amount.toFixed(2)
+}
+
+// 格式化数字（添加千分位）
+function formatNumber(num: number): string {
+	if (num == null || isNaN(num)) return '0'
+	return num.toLocaleString()
 }
 
 function hasUpstreamModel(log: any): boolean {
@@ -437,9 +460,49 @@ async function fetchData() {
 	}
 }
 
+// 获取统计数据（独立接口异步加载）
+async function fetchSummary() {
+	// 构建筛选条件参数（不包含分页）
+	const params: Record<string, any> = {}
+	if (filterId.value) params.id = filterId.value
+	if (filterTenantId.value) params.tenant_id = filterTenantId.value
+	if (filterUserId.value) params.user_id = filterUserId.value
+	if (filterModel.value) params.model = filterModel.value
+	if (filterApiKeyId.value) params.api_key_id = filterApiKeyId.value
+	if (filterRequestType.value) params.request_type = filterRequestType.value
+	if (filterChannelId.value) params.channel_id = filterChannelId.value
+	if (filterStatus.value) params.status = filterStatus.value
+	if (filterDateRange.value && filterDateRange.value.length === 2) {
+		params.start_date = filterDateRange.value[0]
+		if (filterDateRange.value[1] && filterDateRange.value[1] !== defaultEnd) {
+			params.end_date = filterDateRange.value[1]
+		}
+	}
+
+	// 生成筛选条件的唯一标识
+	const currentFilters = JSON.stringify(params)
+
+	// 如果筛选条件没有变化，不重新加载统计数据
+	if (currentFilters === lastSummaryFilters && summary.value !== null) {
+		return
+	}
+
+	summaryLoading.value = true
+	try {
+		const res: any = await request.get('/admin/usage-logs/summary', { params })
+		summary.value = res.data?.data || null
+		lastSummaryFilters = currentFilters
+	} catch {
+		summary.value = null
+	} finally {
+		summaryLoading.value = false
+	}
+}
+
 function handleFilter() {
 	pagination.current = 1
 	fetchData()
+	fetchSummary() // 筛选条件变化时重新加载统计数据
 }
 
 function handleReset() {
@@ -454,6 +517,7 @@ function handleReset() {
 	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
+	fetchSummary() // 重置后重新加载统计数据
 }
 
 // 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
@@ -465,6 +529,7 @@ onMounted(() => {
 	fetchTenantOptions()
 	fetchModelOptions()
 	fetchData()
+	fetchSummary() // 初始加载时获取统计数据
 })
 
 const { exporting, exportFile } = useExport({
@@ -605,17 +670,45 @@ const { exporting, exportFile } = useExport({
 				card-badge-key="status"
 				:card-fields="[{ key: 'username' }, { key: 'channel_name' }, { key: 'tokens', full: true }, { key: 'request_type' }, { key: 'cost' }, { key: 'latency_ms' }, { key: 'created_at' }]"
 			/>
+
 			<div class="table-footer">
-				<TableStats :total="pagination.total" />
-				<a-pagination
-					v-model:current="pagination.current"
-					v-model:page-size="pagination.pageSize"
-					:total="pagination.total"
-					:page-size-options="pagination.pageSizeOptions"
-					show-page-size
-					@change="fetchData"
-					@page-size-change="(size: number) => { pagination.pageSize = size; pagination.current = 1; fetchData() }"
-				/>
+				<div class="table-footer-left">
+					<!-- 统计汇总 -->
+					<a-space v-if="summary" :size="16" wrap>
+						<div class="summary-item summary-cost">
+							<span class="summary-label">总费用：</span>
+							<span class="summary-value">{{ formatMoney(summary.total_cost) }}</span>
+						</div>
+
+						<a-divider direction="vertical" style="height: 16px; margin: 0" />
+
+						<div class="summary-item summary-tokens">
+							<span class="summary-label">总输出Token：</span>
+							<span class="summary-value">{{ formatNumber(summary.total_output_tokens) }}</span>
+						</div>
+
+						<a-divider direction="vertical" style="height: 16px; margin: 0" />
+
+						<div class="summary-item summary-cache">
+							<span class="summary-label">缓存读取占比：</span>
+							<span class="summary-value">{{ (summary.cache_read_ratio || 0).toFixed(2) }}%</span>
+						</div>
+					</a-space>
+				</div>
+
+				<div class="table-footer-right">
+					<TableStats :total="pagination.total" />
+					<a-pagination
+						v-model:current="pagination.current"
+						v-model:page-size="pagination.pageSize"
+						:total="pagination.total"
+						:page-size-options="pagination.pageSizeOptions"
+						:simple="isMobileView"
+						show-page-size
+						@change="fetchData"
+						@page-size-change="(size: number) => { pagination.pageSize = size; pagination.current = 1; fetchData() }"
+					/>
+				</div>
 			</div>
 		</a-card>
 
@@ -1401,15 +1494,81 @@ const { exporting, exportFile } = useExport({
 .text-success { color: #00b42a !important; }
 .text-warning { color: #ff7d00 !important; }
 
+/* 统计汇总样式 */
+.summary-item {
+	display: inline-flex;
+	align-items: center;
+	font-size: 13px;
+}
+
+.summary-label {
+	color: var(--color-text-2);
+	margin-right: 6px;
+}
+
+.summary-value {
+	font-weight: 600;
+	font-size: 14px;
+}
+
+/* 不同指标使用不同颜色 */
+.summary-cost .summary-value {
+	color: rgb(var(--primary-6)); /* 蓝色 - 总费用 */
+}
+
+.summary-tokens .summary-value {
+	color: rgb(var(--success-6)); /* 绿色 - Token数 */
+}
+
+.summary-cache .summary-value {
+	color: rgb(var(--warning-6)); /* 橙色 - 缓存占比 */
+}
+
 .table-footer {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 16px;
 	margin-top: 16px;
 	padding-top: 16px;
 	border-top: 1px solid var(--color-border-light, #e5e6eb);
 }
+
+.table-footer-left {
+	flex: 1;
+	min-width: 0;
+}
+
+.table-footer-right {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-shrink: 0;
+}
+
+/* 移动端：统计栏和分页栏分两行显示 */
+@media (max-width: 768px) {
+	.table-footer {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+
+	.table-footer-right {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+	}
+
+	.summary-item {
+		font-size: 12px;
+	}
+
+	.summary-item .summary-value {
+		font-size: 13px;
+	}
+}
+
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
 	margin-bottom: 0;
