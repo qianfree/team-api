@@ -118,6 +118,44 @@ func TestBuildTaskCostBreakdown_TokenMode_ZeroTokens(t *testing.T) {
 	assertFloat(t, bd.TotalCost, 3.375, "TotalCost")
 }
 
+// TestBuildTaskCostBreakdown_TokenMode_TimeMultiplier BaseCost 还原必须同时除以
+// 租户乘数与时段乘数（actualCost 已含全部乘数），与 computeCost 的折扣前小计语义对齐。
+func TestBuildTaskCostBreakdown_TokenMode_TimeMultiplier(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "token",
+		OutputPrice:      3.0,
+		TenantMultiplier: 0.8,
+		TimeMultiplier:   0.5,
+		Currency:         "USD",
+	}
+
+	// 0.4 / (0.8 × 0.5) = 1.0
+	bd := buildTaskCostBreakdown(pricing, 0.4, 10000, 5000)
+	assertFloat(t, bd.BaseCost, 1.0, "BaseCost (tenant × time)")
+	assertFloat(t, bd.TotalCost, 0.4, "TotalCost")
+
+	// 无 token 用量分支同样按双乘数还原：0.08 / (0.8 × 0.5) = 0.2
+	bd = buildTaskCostBreakdown(pricing, 0.08, 0, 0)
+	assertFloat(t, bd.BaseCost, 0.2, "BaseCost zero-token (tenant × time)")
+	assertFloat(t, bd.TotalCost, 0.08, "TotalCost zero-token")
+}
+
+// TestBuildTaskCostBreakdown_ZeroTimeMultiplierFallback 时段乘数零值（升级部署后
+// Redis L2 旧定价条目缺字段）兜底为 1.0，BaseCost 还原不得失真。
+func TestBuildTaskCostBreakdown_ZeroTimeMultiplierFallback(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "token",
+		OutputPrice:      3.0,
+		TenantMultiplier: 0.8,
+		TimeMultiplier:   0, // 旧缓存条目缺字段
+		Currency:         "USD",
+	}
+
+	// 0.024 / (0.8 × 1.0) = 0.03
+	bd := buildTaskCostBreakdown(pricing, 0.024, 1000, 500)
+	assertFloat(t, bd.BaseCost, 0.03, "BaseCost (time fallback 1.0)")
+}
+
 // TestEstimateTaskCost_PerRequest 按次计费直接取按次单价。
 func TestEstimateTaskCost_PerRequest(t *testing.T) {
 	pricing := &PricingResult{

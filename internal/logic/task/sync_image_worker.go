@@ -593,7 +593,7 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 	actualCost := job.PreDeductAmount
 	// 上游返回了 token 用量 → 按真实 token 重算；仅 token 计费模型返回 >0，按次模型返回 0 保持预扣。
 	if totalTokens > 0 {
-		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios); rerr == nil && tokenCost.GreaterThan(billing.Zero) {
+		if tokenCost, rerr := syncImageBilling.RecalculateByTokens(ctx, job.TenantID, job.Model, totalTokens, job.Ratios, job.SubmitTime); rerr == nil && tokenCost.GreaterThan(billing.Zero) {
 			actualCost = tokenCost
 		}
 	}
@@ -612,9 +612,10 @@ func settleSyncImageSuccess(ctx context.Context, job *SyncImageJob, sel *common.
 		return
 	}
 
-	// 2. 结算钱包（传真实 token 用量：驱动 bil_records.output_tokens 与计费快照的 token 明细）
+	// 2. 结算钱包（传真实 token 用量：驱动 bil_records.output_tokens 与计费快照的 token 明细；
+	// billAt=提交时刻，时段定价按受理时刻计价）
 	settleResult, serr := syncImageBilling.SettleTaskSuccess(ctx, job.TenantID, job.UserID, job.ApiKeyID, sel.ChannelID,
-		job.Model, job.RequestID, actualCost, job.PreDeductAmount, totalTokens, completionTokens, job.Ratios, job.PublicTaskID)
+		job.Model, job.RequestID, actualCost, job.PreDeductAmount, totalTokens, completionTokens, job.Ratios, job.PublicTaskID, job.SubmitTime)
 	if serr != nil {
 		// 保留 billing_settled=false，由未结算兜底网重放结算
 		g.Log().Warningf(ctx, "sync_image: task %s settle success failed (unsettled net will retry): %v", job.PublicTaskID, serr)

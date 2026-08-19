@@ -315,6 +315,17 @@ func TestValidatePricingConfigured(t *testing.T) {
 			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 1.0}}},
 			wantErr: false,
 		},
+		{
+			// 平台阶梯兜底使 CustomTiers 恒非空，全 0 价阶梯不得视为「已配置」放行（免费使用）
+			name:    "tiered 双零且阶梯全 0 价拒绝",
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, InputPrice: 0, OutputPrice: 0}}},
+			wantErr: true,
+		},
+		{
+			name:    "tiered 双零但阶梯任一档有正价放行",
+			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -516,8 +527,66 @@ func TestComputeCost_PerRequestMode_WithMultiplier(t *testing.T) {
 
 	cb := computeCost(pricing, 100, 50, nil)
 
-	// Per-request ignores multiplier in BaseCost but applies it to TotalCost
-	assertFloat(t, cb.TotalCost, 0.10, "per_request TotalCost")
+	// BaseCost 保持折扣前单价，TotalCost = 单价 × 租户乘数 × 时段乘数
+	// （此前按次计费不乘租户乘数，租户折扣对按次模型不生效，已对齐 token/tiered 口径）
+	assertFloat(t, cb.TotalCost, 0.09, "per_request TotalCost")
+	assertFloat(t, cb.BaseCost, 0.10, "per_request BaseCost")
+}
+
+func TestComputeCost_PerRequestMode_WithTimeMultiplier(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.10,
+		TenantMultiplier: 0.9,
+		TimeMultiplier:   0.5,
+		Currency:         "USD",
+	}
+
+	cb := computeCost(pricing, 100, 50, nil)
+	assertFloat(t, cb.TotalCost, 0.045, "per_request TotalCost (tenant×time)")
+
+	// 时段乘数零值兜底：视为 1.0，不得把费用清零
+	pricing.TimeMultiplier = 0
+	cb = computeCost(pricing, 100, 50, nil)
+	assertFloat(t, cb.TotalCost, 0.09, "per_request TotalCost (zero time multiplier fallback)")
+}
+
+func TestComputeCost_WithTimeMultiplier(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "token",
+		InputPrice:       3.0,
+		OutputPrice:      15.0,
+		TenantMultiplier: 1.0,
+		TimeMultiplier:   0.5,
+		Currency:         "USD",
+	}
+
+	// 1M input + 1M output：默认价 18，闲时半价 9
+	cb := computeCost(pricing, 1_000_000, 1_000_000, nil)
+	assertFloat(t, cb.InputCost, 1.5, "InputCost (time 0.5)")
+	assertFloat(t, cb.OutputCost, 7.5, "OutputCost (time 0.5)")
+	assertFloat(t, cb.TotalCost, 9.0, "TotalCost (time 0.5)")
+
+	// 与租户乘数叠加：0.8 × 0.5 = 0.4
+	pricing.TenantMultiplier = 0.8
+	cb = computeCost(pricing, 1_000_000, 1_000_000, nil)
+	assertFloat(t, cb.TotalCost, 7.2, "TotalCost (tenant 0.8 × time 0.5)")
+
+	// tiered 模式：阶梯小计 × 时段乘数
+	tiered := &PricingResult{
+		BillingMode:      "tiered",
+		TenantMultiplier: 1.0,
+		TimeMultiplier:   0.5,
+		Currency:         "USD",
+		CustomTiers: []pricingTierRow{
+			{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
+			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
+		},
+	}
+	// 输入 200K：第一档 100K×$5/1M=0.5 + 第二档 100K×$3/1M=0.3 = 0.8，半价 0.4
+	cb = computeCost(tiered, 200_000, 0, nil)
+	assertFloat(t, cb.InputCost, 0.4, "tiered InputCost (time 0.5)")
+	assertFloat(t, cb.TotalCost, 0.4, "tiered TotalCost (time 0.5)")
 }
 
 func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {

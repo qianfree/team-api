@@ -321,14 +321,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 				streamUsage = &common.Usage{}
 			}
 			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID)
+				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		} else if usage != nil {
 			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID)
+				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)

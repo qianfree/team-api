@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -27,8 +28,9 @@ type TaskBillingProvider interface {
 	// CheckApiKeyQuota 检查 API Key 额度是否足够
 	CheckApiKeyQuota(ctx context.Context, apiKeyID int64, preDeductAmount decimal.Decimal) error
 
-	// SettleTaskSuccess 任务成功结算（含计费快照）
-	SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string) (*SettlementResult, error)
+	// SettleTaskSuccess 任务成功结算（含计费快照）。billAt 为任务受理时刻（时段定价按该时刻评估，
+	// 异步任务结算滞后数分钟~小时，按结算时刻会丢失受理时的时段价）
+	SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string, billAt time.Time) (*SettlementResult, error)
 
 	// SettleTaskFailed 任务失败退还预扣
 	SettleTaskFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount decimal.Decimal) error
@@ -39,8 +41,8 @@ type TaskBillingProvider interface {
 	// AdjustTaskBilling 调整预扣金额（提交后上游确认了新参数）
 	AdjustTaskBilling(ctx context.Context, tenantID int64, requestID string, preDeductAmount, newEstimatedCost decimal.Decimal) (decimal.Decimal, error)
 
-	// RecalculateByTokens 根据上游返回的 total_tokens 重算费用
+	// RecalculateByTokens 根据上游返回的 total_tokens 重算费用（billAt 为任务受理时刻，时段定价用）
 	// totalTokens: 上游返回的 token 计费单位
 	// ratios: 提交时保存的计费比率（如 video_input 折扣）
-	RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (decimal.Decimal, error)
+	RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64, billAt time.Time) (decimal.Decimal, error)
 }

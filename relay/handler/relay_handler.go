@@ -678,7 +678,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				}
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID)
+						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
 					if err != nil {
 						g.Log().Warningf(settleCtx, "[RelayHandler] Stream interrupted settlement failed: tenant=%d project=%d request=%s err=%v",
 							rc.TenantID, rc.ProjectID, rc.RequestID, err)

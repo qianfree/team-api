@@ -7,6 +7,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 )
@@ -232,6 +233,36 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		}
 	}
 
+	// 时段定价批量查询（锚点行 JSONB；显式与分组来源模型统一处理，展示换算价目用）
+	allDBIDs := make([]int64, 0, len(models))
+	for _, m := range models {
+		allDBIDs = append(allDBIDs, m.ModelDBID)
+	}
+	timeSegmentsMap := make(map[int64][]billing.TimeSegment)
+	if len(allDBIDs) > 0 {
+		var segRows []struct {
+			ModelId      int64  `json:"model_id"`
+			TimeSegments string `json:"time_segments"`
+		}
+		if err := dao.MdlPricing.Ctx(ctx).
+			WhereIn("model_id", allDBIDs).
+			Where("min_tokens", 0).
+			WhereNotNull("time_segments").
+			Fields("model_id, time_segments").
+			Scan(&segRows); err != nil {
+			return nil, err
+		}
+		for _, r := range segRows {
+			if r.TimeSegments == "" || r.TimeSegments == "null" {
+				continue
+			}
+			var segs []billing.TimeSegment
+			if err := json.Unmarshal([]byte(r.TimeSegments), &segs); err == nil && len(segs) > 0 {
+				timeSegmentsMap[r.ModelId] = segs
+			}
+		}
+	}
+
 	// 组装最终列表
 	list := make([]v1.TenantAvailableModelItem, 0, len(models))
 	for _, m := range models {
@@ -276,6 +307,9 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				item.PricingTiers = buildTiers(pi.CustomPricingTiers, pi.BaseInputPrice, pi.BaseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
 
+			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], effectiveBillingMode,
+				inputPrice, outputPrice, perRequestPrice, item.PricingTiers)
+
 			list = append(list, item)
 		} else {
 			// group 来源的模型：使用 base 定价，与显式模型展示一致（含按次单价 / 缓存价 / 阶梯明细）
@@ -317,6 +351,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if billingMode == "tiered" && ok {
 				item.PricingTiers = buildTiers("", baseInputPrice, baseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
+			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], billingMode,
+				inputPrice, outputPrice, perRequestPrice, item.PricingTiers)
 			list = append(list, item)
 		}
 	}
@@ -487,4 +523,64 @@ func buildTiers(customTiersJSON string, baseInputPrice, baseOutputPrice float64,
 		tiers = append(tiers, baseTiers...)
 	}
 	return tiers
+}
+
+// buildTimePrices 构建时段展示价目：每个时段 = 模型当前有效价 × 时段乘数（后端换算，前端直接渲染）。
+// token 模式换算输入/输出价；per_request 换算按次价；tiered 用首档价换算（起价，前端标注「起」）。
+func buildTimePrices(segments []billing.TimeSegment, billingMode string,
+	inputPrice, outputPrice, perRequestPrice *float64, tiers []v1.PricingTierItem) []v1.TimePriceItem {
+	if len(segments) == 0 {
+		return nil
+	}
+
+	// tiered 模式无阶梯数据时无法换算，不展示时段价目（防御）
+	var tierInput, tierOutput *float64
+	if billingMode == "tiered" {
+		if len(tiers) == 0 {
+			return nil
+		}
+		tierInput = &tiers[0].InputPrice
+		tierOutput = &tiers[0].OutputPrice
+	}
+
+	result := make([]v1.TimePriceItem, 0, len(segments))
+	for _, seg := range segments {
+		tp := v1.TimePriceItem{
+			Name:       seg.Name,
+			Days:       seg.Days,
+			StartTime:  seg.StartTime,
+			EndTime:    seg.EndTime,
+			ValidFrom:  seg.ValidFrom,
+			ValidTo:    seg.ValidTo,
+			Multiplier: seg.Multiplier,
+		}
+		switch billingMode {
+		case "per_request":
+			if perRequestPrice != nil {
+				tp.PerRequestPrice = mulDisplayPrice(*perRequestPrice, seg.Multiplier)
+			}
+		case "tiered":
+			if tierInput != nil {
+				tp.InputPrice = mulDisplayPrice(*tierInput, seg.Multiplier)
+			}
+			if tierOutput != nil {
+				tp.OutputPrice = mulDisplayPrice(*tierOutput, seg.Multiplier)
+			}
+		default: // token
+			if inputPrice != nil {
+				tp.InputPrice = mulDisplayPrice(*inputPrice, seg.Multiplier)
+			}
+			if outputPrice != nil {
+				tp.OutputPrice = mulDisplayPrice(*outputPrice, seg.Multiplier)
+			}
+		}
+		result = append(result, tp)
+	}
+	return result
+}
+
+// mulDisplayPrice 展示价换算：单价 × 时段乘数（decimal 单步乘法，出口转 float64 供前端渲染）
+func mulDisplayPrice(price, multiplier float64) *float64 {
+	v := billing.InexactFloat64(billing.NewFromFloat(price).Mul(billing.NewFromFloat(multiplier)))
+	return &v
 }
