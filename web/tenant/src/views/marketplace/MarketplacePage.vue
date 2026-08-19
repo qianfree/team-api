@@ -140,6 +140,7 @@
 										<div class="model-provider">{{ getProvider(model) }}</div>
 										<div class="model-name-line">
 											<h3>{{ model.model_name || model.model_id }}</h3>
+											<span v-if="model.discount_label" class="promo-badge">{{ model.discount_label }}</span>
 											<button type="button" aria-label="复制模型 ID" title="复制模型 ID" @click="copyModelId(model.model_id)">
 												<Icon name="copy" size="xs" />
 											</button>
@@ -164,8 +165,28 @@
 									</div>
 								</div>
 
+								<div v-if="model.time_prices?.length" class="time-price-list">
+									<div v-for="(tp, idx) in model.time_prices" :key="idx" class="time-price-row">
+										<span>{{ tp.name }}<small>{{ timeWindow(tp) }}</small></span>
+										<strong>{{ timePriceText(model, tp) }}</strong>
+									</div>
+								</div>
+								<p v-if="model.price_change_note" class="price-change-note">
+									<Icon name="infoCircle" size="xs" />
+									{{ model.price_change_note }}
+								</p>
+								
 								<div class="model-card-footer">
-									<div class="price-pair">
+									<template v-if="model.billing_mode === 'per_request'">
+										<div class="price-pair">
+											<div>
+												<span>调用单价</span>
+												<strong>{{ formatPrice(model.per_request_price) }}</strong>
+											</div>
+										<small>/ 次</small>
+										</div>
+									</template>
+									<div v-else class="price-pair">
 										<div>
 											<span>输入</span>
 											<strong>{{ formatPrice(model.input_price) }}</strong>
@@ -175,7 +196,7 @@
 											<span>输出</span>
 											<strong>{{ formatPrice(model.output_price) }}</strong>
 										</div>
-										<small>/ 1M tokens</small>
+										<small>{{ model.billing_mode === 'tiered' ? '/ 1M tokens 起' : '/ 1M tokens' }}</small>
 									</div>
 									<button type="button" class="detail-button" @click="openDetail(model)">
 										查看详情
@@ -249,6 +270,7 @@
 							</button>
 						</div>
 					</div>
+					<span v-if="selectedModel.discount_label" class="promo-badge large">{{ selectedModel.discount_label }}</span>
 					<span class="detail-category">{{ getCategoryMeta(selectedModel.category).label }}</span>
 				</div>
 
@@ -263,7 +285,51 @@
 							<span class="detail-section-label">模型简介</span>
 							<p class="detail-description">{{ selectedModel.description || '暂无模型描述。' }}</p>
 						</section>
-
+						<section class="detail-section">
+							<span class="detail-section-label">计费信息<em v-if="selectedModel.billing_mode === 'tiered'" class="price-tiered-hint">阶梯计费 · 以下为首档起价</em></span>
+							<div class="price-tile-grid">
+								<template v-if="selectedModel.billing_mode === 'per_request'">
+									<div class="price-tile accent">
+										<span>单次调用</span>
+										<strong>{{ formatPrice(selectedModel.per_request_price) }}</strong>
+										<small>USD / 次</small>
+									</div>
+								</template>
+								<template v-else>
+									<div class="price-tile accent">
+										<span>输入</span>
+										<strong>{{ formatPrice(selectedModel.input_price) }}</strong>
+										<small>USD / 1M tokens</small>
+									</div>
+									<div class="price-tile">
+										<span>输出</span>
+										<strong>{{ formatPrice(selectedModel.output_price) }}</strong>
+										<small>USD / 1M tokens</small>
+									</div>
+									<div v-if="selectedModel.cache_read_price" class="price-tile">
+										<span>缓存读取</span>
+										<strong>{{ formatPrice(selectedModel.cache_read_price) }}</strong>
+										<small>USD / 1M tokens</small>
+									</div>
+									<div v-if="selectedModel.cache_creation_price" class="price-tile">
+										<span>缓存创建</span>
+										<strong>{{ formatPrice(selectedModel.cache_creation_price) }}</strong>
+										<small>USD / 1M tokens</small>
+									</div>
+								</template>
+							</div>
+							<div v-if="selectedModel.time_prices?.length" class="detail-time-prices">
+								<div class="detail-time-head">分时段价格<small>命中时段按乘数计费，未命中按默认价</small></div>
+								<div v-for="(tp, idx) in selectedModel.time_prices" :key="idx" class="detail-time-row">
+									<span>{{ tp.name }}<small>{{ timeWindow(tp) }}</small></span>
+									<strong>{{ timePriceText(selectedModel, tp) }}</strong>
+								</div>
+							</div>
+							<p v-if="selectedModel.price_change_note" class="price-change-note">
+								<Icon name="infoCircle" size="xs" />
+								{{ selectedModel.price_change_note }}
+							</p>
+						</section>
 						<section class="detail-section">
 							<span class="detail-section-label">能力支持</span>
 							<div class="detail-capabilities">
@@ -278,12 +344,7 @@
 							</div>
 						</section>
 
-						<section v-if="selectedModel.tags?.length" class="detail-section">
-							<span class="detail-section-label">模型标签</span>
-							<div class="detail-tags">
-								<span v-for="tag in selectedModel.tags" :key="tag">{{ tag }}</span>
-							</div>
-						</section>
+
 					</div>
 
 					<aside class="detail-side-column">
@@ -301,19 +362,18 @@
 								<span><Icon name="grid" size="sm" /> 模型类别</span>
 								<strong>{{ getCategoryMeta(selectedModel.category).label }}</strong>
 							</div>
+							<div class="detail-spec-row">
+								<span><Icon name="creditCard" size="sm" /> 计费模式</span>
+								<strong>{{ billingModeLabel(selectedModel.billing_mode) }}</strong>
+							</div>
+						</div>
+						<div v-if="selectedModel.tags?.length" class="detail-spec-card">
+							<div class="detail-spec-title">模型标签</div>
+							<div class="detail-tags">
+								<span v-for="tag in selectedModel.tags" :key="tag">{{ tag }}</span>
+							</div>
 						</div>
 
-						<div class="detail-price-card">
-							<div class="detail-spec-title">Token 计费</div>
-							<div class="detail-price-row">
-								<div><span>输入价格</span><small>每百万 tokens</small></div>
-								<strong>{{ formatPrice(selectedModel.input_price) }}</strong>
-							</div>
-							<div class="detail-price-row">
-								<div><span>输出价格</span><small>每百万 tokens</small></div>
-								<strong>{{ formatPrice(selectedModel.output_price) }}</strong>
-							</div>
-						</div>
 					</aside>
 				</div>
 
@@ -333,7 +393,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NModal, NPagination } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
-import { getMarketplaceModelDetail, getMarketplaceModels, type MarketplaceModel } from '@/api/marketplace'
+import { getMarketplaceModelDetail, getMarketplaceModels, type MarketplaceModel, type TimePriceItem } from '@/api/marketplace'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useSeo } from '@/composables/useSeo'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
@@ -467,6 +527,36 @@ function formatPrice(price?: number): string {
 	if (!Number.isFinite(value)) return '—'
 	// 最多保留 6 位小数（与后端 NUMERIC(20,10) 精度对齐），自动去掉末尾的 0
 	return `$${Number(value.toFixed(6))}`
+}
+
+function billingModeLabel(mode?: string): string {
+	if (mode === 'per_request') return '按次计费'
+	if (mode === 'tiered') return '阶梯计费'
+	return '按量计费'
+}
+
+// ── 时段价目展示辅助（价格为后端换算好的展示价，前端直接渲染） ──
+
+function daysLabel(days?: number[] | null): string {
+	if (!days || days.length === 0) return '每天'
+	const sorted = [...days].sort((a, b) => a - b)
+	if (sorted.join(',') === '1,2,3,4,5') return '工作日'
+	if (sorted.join(',') === '6,7') return '周末'
+	const names = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
+	return sorted.map((d) => names[d] || String(d)).join('、')
+}
+
+function timeWindow(tp: TimePriceItem): string {
+	const parts: string[] = [daysLabel(tp.days)]
+	if (tp.start_time && tp.end_time) parts.push(`${tp.start_time}~${tp.end_time}`)
+	else parts.push('全天')
+	if (tp.valid_from) parts.push(tp.valid_to ? `${tp.valid_from}~${tp.valid_to}` : `${tp.valid_from} 起`)
+	return parts.join(' · ')
+}
+
+function timePriceText(model: MarketplaceModel, tp: TimePriceItem): string {
+	if (model.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? undefined)} /次`
+	return `输入 ${formatPrice(tp.input_price ?? undefined)} · 输出 ${formatPrice(tp.output_price ?? undefined)}${model.billing_mode === 'tiered' ? ' 起' : ''}`
 }
 
 async function loadModels(): Promise<void> {
@@ -1244,6 +1334,186 @@ useSeo({
 	font-weight: 700;
 }
 
+.promo-badge {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: linear-gradient(135deg, #f43f5e, #fb923c);
+	color: #fff;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	box-shadow: 0 3px 10px rgba(244, 63, 94, 0.25);
+}
+
+.promo-badge.large {
+	margin-left: auto;
+	padding: 4px 11px;
+	font-size: 11px;
+}
+
+.price-change-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	margin-top: 10px;
+	padding: 7px 9px;
+	border: 1px solid rgba(180, 83, 9, 0.16);
+	border-radius: 9px;
+	background: rgba(180, 83, 9, 0.06);
+	color: #b45309;
+	font-size: 10px;
+	line-height: 1.5;
+}
+
+.time-price-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 11px;
+	padding-top: 9px;
+	border-top: 1px dashed #e2e8f0;
+}
+
+.time-price-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	color: #64706c;
+	font-size: 9px;
+}
+
+.time-price-row span {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.time-price-row small {
+	flex: 0 0 auto;
+	color: #98a29f;
+	font-size: 8px;
+}
+
+.time-price-row strong {
+	flex: 0 0 auto;
+	color: #10231f;
+	font-size: 9px;
+	font-weight: 700;
+}
+
+.detail-time-prices {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px dashed rgba(15, 118, 110, 0.22);
+}
+
+.detail-time-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	color: #586660;
+	font-size: 11px;
+}
+
+.detail-time-row span {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+}
+
+.detail-time-row small {
+	color: #98a29f;
+	font-size: 9px;
+}
+
+.detail-time-row strong {
+	flex: 0 0 auto;
+	color: #10231f;
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.price-tile-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+	gap: 10px;
+}
+
+.price-tile {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: 13px 15px;
+	border: 1px solid #e0e8e5;
+	border-radius: 13px;
+	background: #fafcfb;
+}
+
+.price-tile span {
+	color: #64706c;
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.price-tile strong {
+	color: var(--ink);
+	font-size: 17px;
+	font-weight: 800;
+	letter-spacing: -0.01em;
+}
+
+.price-tile small {
+	color: #98a29f;
+	font-size: 9px;
+}
+
+.price-tile.accent {
+	border-color: color-mix(in srgb, var(--model-accent) 26%, #dfe7e4);
+	background: var(--model-soft);
+}
+
+.price-tile.accent strong {
+	color: var(--model-accent);
+}
+
+.price-tiered-hint {
+	margin-left: 7px;
+	color: #98a29f;
+	font-size: 9px;
+	font-style: normal;
+	letter-spacing: 0.02em;
+	text-transform: none;
+}
+
+.detail-time-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 8px;
+	color: #0f766e;
+	font-size: 10px;
+	font-weight: 700;
+}
+
+.detail-time-head small {
+	color: #98a29f;
+	font-size: 9px;
+	font-weight: 400;
+}
+
 .model-card-footer {
 	justify-content: space-between;
 	gap: 9px;
@@ -1727,19 +1997,12 @@ useSeo({
 }
 
 .detail-spec-card,
-.detail-price-card {
-	padding: 18px;
-	border: 1px solid #dfe7e4;
-	border-radius: 16px;
-	background: #fafcfb;
-}
-
 .detail-spec-row,
 .detail-price-row {
 	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 15px;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
 	padding: 11px 0;
 	border-bottom: 1px solid #e7ecea;
 }
@@ -1763,14 +2026,8 @@ useSeo({
 }
 
 .detail-spec-row strong {
-	font-size: 12px;
+	font-size: 13px;
 	font-weight: 700;
-	text-align: right;
-}
-
-.detail-price-card {
-	border-color: color-mix(in srgb, var(--model-accent) 20%, #dfe7e4);
-	background: var(--model-soft);
 }
 
 .detail-price-row > div {
@@ -2477,11 +2734,6 @@ useSeo({
 	border-color: rgba(255, 255, 255, 0.9);
 	background: rgba(248, 250, 252, 0.82);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94);
-}
-
-.detail-price-card {
-	border-color: rgba(153, 246, 228, 0.55);
-	background: rgba(240, 253, 250, 0.82);
 }
 
 .detail-price-row strong {
