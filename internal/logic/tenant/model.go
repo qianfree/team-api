@@ -37,6 +37,8 @@ type tenantModelPriceRow struct {
 	BaseCacheCreationPrice   float64  `json:"base_cache_creation_price"`
 	BaseBillingMode          string   `json:"base_billing_mode"`
 	BasePerRequestPrice      *float64 `json:"base_per_request_price"`
+	BaseDiscountLabel        *string  `json:"base_discount_label"`
+	BasePriceChangeNote      *string  `json:"base_price_change_note"`
 	CustomInputPrice         *float64 `json:"custom_input_price"`
 	CustomOutputPrice        *float64 `json:"custom_output_price"`
 	CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
@@ -53,6 +55,8 @@ type groupPriceRow struct {
 	BaseCacheReadPrice     float64  `json:"base_cache_read_price"`
 	BaseCacheCreationPrice float64  `json:"base_cache_creation_price"`
 	BasePerRequestPrice    *float64 `json:"base_per_request_price"`
+	BaseDiscountLabel      *string  `json:"base_discount_label"`
+	BasePriceChangeNote    *string  `json:"base_price_change_note"`
 }
 
 // baseTierRow 阶梯定价查询结果
@@ -83,6 +87,8 @@ type priceInfo struct {
 	BaseCacheCreationPrice   float64
 	BaseBillingMode          string
 	BasePerRequestPrice      *float64
+	BaseDiscountLabel        *string
+	BasePriceChangeNote      *string
 	CustomInputPrice         *float64
 	CustomOutputPrice        *float64
 	CustomCacheReadPrice     *float64
@@ -98,6 +104,8 @@ type groupPriceInfo struct {
 	BaseCacheReadPrice     float64
 	BaseCacheCreationPrice float64
 	BasePerRequestPrice    *float64
+	BaseDiscountLabel      *string
+	BasePriceChangeNote    *string
 }
 
 // ListAvailableModels 获取租户可用的模型列表
@@ -128,7 +136,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id AND p.min_tokens = 0").
 			Where("mdl_tenant_models.tenant_id", tenantID).
 			WhereIn("mdl_tenant_models.model_id", explicitDBIDs).
-			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, p.per_request_price AS base_per_request_price, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
+			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, p.per_request_price AS base_per_request_price, p.discount_label AS base_discount_label, p.price_change_note AS base_price_change_note, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
 			Scan(&priceResults)
 		if err != nil {
 			return nil, err
@@ -150,6 +158,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			BaseCacheCreationPrice:   r.BaseCacheCreationPrice,
 			BaseBillingMode:          r.BaseBillingMode,
 			BasePerRequestPrice:      r.BasePerRequestPrice,
+			BaseDiscountLabel:        r.BaseDiscountLabel,
+			BasePriceChangeNote:      r.BasePriceChangeNote,
 			CustomInputPrice:         r.CustomInputPrice,
 			CustomOutputPrice:        r.CustomOutputPrice,
 			CustomCacheReadPrice:     r.CustomCacheReadPrice,
@@ -172,7 +182,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		err = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", groupDBIDs).
 			Where("min_tokens", 0).
-			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price, cache_read_price AS base_cache_read_price, cache_creation_price AS base_cache_creation_price, per_request_price AS base_per_request_price").
+			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price, cache_read_price AS base_cache_read_price, cache_creation_price AS base_cache_creation_price, per_request_price AS base_per_request_price, discount_label AS base_discount_label, price_change_note AS base_price_change_note").
 			Scan(&groupPrices)
 		if err != nil {
 			return nil, err
@@ -186,6 +196,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				BaseCacheReadPrice:     gp.BaseCacheReadPrice,
 				BaseCacheCreationPrice: gp.BaseCacheCreationPrice,
 				BasePerRequestPrice:    gp.BasePerRequestPrice,
+				BaseDiscountLabel:      gp.BaseDiscountLabel,
+				BasePriceChangeNote:    gp.BasePriceChangeNote,
 			}
 		}
 	}
@@ -301,6 +313,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				OutputPrice:        outputPrice,
 				CacheReadPrice:     cacheReadPrice,
 				CacheCreationPrice: cacheCreationPrice,
+				DiscountLabel:      pi.BaseDiscountLabel,
+				PriceChangeNote:    pi.BasePriceChangeNote,
 			}
 
 			if effectiveBillingMode == "tiered" {
@@ -316,6 +330,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			billingMode := "token"
 			var inputPrice, outputPrice, cacheReadPrice, cacheCreationPrice, perRequestPrice *float64
 			var baseInputPrice, baseOutputPrice float64
+			var discountLabel, priceChangeNote *string
 			gp, ok := groupPriceMap[m.ModelDBID]
 			if ok {
 				billingMode = gp.BaseBillingMode
@@ -329,6 +344,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				cacheReadPrice = effectivePrice(nil, gp.BaseCacheReadPrice)
 				cacheCreationPrice = effectivePrice(nil, gp.BaseCacheCreationPrice)
 				perRequestPrice = gp.BasePerRequestPrice
+				discountLabel = gp.BaseDiscountLabel
+				priceChangeNote = gp.BasePriceChangeNote
 			}
 
 			item := v1.TenantAvailableModelItem{
@@ -347,6 +364,8 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				OutputPrice:        outputPrice,
 				CacheReadPrice:     cacheReadPrice,
 				CacheCreationPrice: cacheCreationPrice,
+				DiscountLabel:      discountLabel,
+				PriceChangeNote:    priceChangeNote,
 			}
 			if billingMode == "tiered" && ok {
 				item.PricingTiers = buildTiers("", baseInputPrice, baseOutputPrice, baseTiersMap[m.ModelDBID])

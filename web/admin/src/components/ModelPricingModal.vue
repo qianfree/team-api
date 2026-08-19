@@ -23,6 +23,11 @@ const editorSaving = ref(false)
 const editorBillingMode = ref('token')
 const editorItems = reactive<any[]>([])
 
+// 展示字段（挂锚点行：内部备注 + 对外营销文案）
+const editorPriceNote = ref('')
+const editorDiscountLabel = ref('')
+const editorPriceChangeNote = ref('')
+
 const billingModeOptions = [
 	{ label: '按量计费 (Token)', value: 'token' },
 	{ label: '按次计费', value: 'per_request' },
@@ -46,6 +51,9 @@ function resetEditorDefaults() {
 	editorBillingMode.value = 'token'
 	editorItems.length = 0
 	editorItems.push(createEmptyItem('token'))
+	editorPriceNote.value = ''
+	editorDiscountLabel.value = ''
+	editorPriceChangeNote.value = ''
 	resetTimeSegments()
 }
 
@@ -124,6 +132,9 @@ async function loadPricing() {
 	try {
 		const res: any = await request.get(`/admin/models/${props.modelId}/pricing`)
 		const list: any[] = res.data?.data?.list || []
+		editorPriceNote.value = res.data?.data?.price_note || ''
+		editorDiscountLabel.value = res.data?.data?.discount_label || ''
+		editorPriceChangeNote.value = res.data?.data?.price_change_note || ''
 		if (list.length > 0) {
 			editorBillingMode.value = list[0].billing_mode || 'token'
 			editorItems.length = 0
@@ -379,7 +390,13 @@ async function savePricing() {
 			cache_read_price: item.cache_read_price,
 			cache_creation_price: item.cache_creation_price,
 		}))
-		await request.put(`/admin/models/${props.modelId}/pricing`, { items, time_segments: segmentsPayload() })
+		await request.put(`/admin/models/${props.modelId}/pricing`, {
+			items,
+			time_segments: segmentsPayload(),
+			price_note: editorPriceNote.value.trim(),
+			discount_label: editorDiscountLabel.value.trim(),
+			price_change_note: editorPriceChangeNote.value.trim(),
+		})
 		Message.success('定价已保存')
 		emit('update:visible', false)
 		emit('saved')
@@ -746,6 +763,30 @@ watch(() => props.visible, (val) => {
 							</div>
 						</div>
 					</template>
+				</div>
+
+				<!-- 展示信息（折扣标签 / 价格调整说明对外展示，价格说明仅内部可见） -->
+				<div class="editor-section">
+					<div class="editor-section-header">
+						<h3>展示信息</h3>
+						<span class="section-hint">折扣标签与调整说明会展示给租户；价格说明仅管理后台可见</span>
+					</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-x-4">
+						<AFormItem label="折扣标签（对外展示）">
+							<AInput v-model="editorDiscountLabel" :maxlength="50" placeholder="如：7折起、限时5折" allow-clear />
+						</AFormItem>
+						<AFormItem label="价格调整说明（对外展示）">
+							<AInput v-model="editorPriceChangeNote" :maxlength="200" placeholder="如：9月1日起输入价下调 20%" allow-clear />
+						</AFormItem>
+					</div>
+					<AFormItem label="价格说明（仅内部可见）">
+						<ATextarea
+							v-model="editorPriceNote"
+							:max-length="500"
+							:auto-size="{ minRows: 2, maxRows: 4 }"
+							placeholder="调价背景、渠道成本等内部备注，不对外展示"
+						/>
+					</AFormItem>
 				</div>
 
 			</div>

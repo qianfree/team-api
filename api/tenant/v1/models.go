@@ -60,6 +60,10 @@ type TenantAvailableModelItem struct {
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
 	// TimePrices 时段价目（平台配置了时段定价的模型才有；价格为换算后的展示价）
 	TimePrices []TimePriceItem `json:"time_prices"`
+	// DiscountLabel 折扣标签（平台定价锚点行配置的营销展示文案，如"7折起"；NULL=不展示）
+	DiscountLabel *string `json:"discount_label"`
+	// PriceChangeNote 价格调整说明（对外提示价格有变动；NULL=不展示）
+	PriceChangeNote *string `json:"price_change_note"`
 	// AsyncImage 图片模型异步端点是否可用（提交 /v1/images/generations/async 后轮询取图）。
 	// 仅图片分类模型有意义；真异步厂商，或同步厂商且「同步图片异步化」开关开启时为 true。
 	AsyncImage bool `json:"async_image"`

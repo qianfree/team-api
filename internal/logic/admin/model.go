@@ -452,6 +452,9 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		CacheReadPrice     float64  `json:"cache_read_price"`
 		CacheCreationPrice float64  `json:"cache_creation_price"`
 		TimeSegments       string   `json:"time_segments"`
+		PriceNote          *string  `json:"price_note"`
+		DiscountLabel      *string  `json:"discount_label"`
+		PriceChangeNote    *string  `json:"price_change_note"`
 	}
 
 	err := dao.MdlPricing.Ctx(ctx).
@@ -464,7 +467,9 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 
 	result := make([]v1.PricingItem, 0, len(rows))
 	var timeSegments []billing.TimeSegment
-	for _, r := range rows {
+	var priceNote, discountLabel, priceChangeNote string
+	for i := range rows {
+		r := rows[i]
 		result = append(result, v1.PricingItem{
 			BillingMode:        r.BillingMode,
 			MinTokens:          r.MinTokens,
@@ -475,15 +480,34 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 			CacheReadPrice:     r.CacheReadPrice,
 			CacheCreationPrice: r.CacheCreationPrice,
 		})
-		// 时段定价只认锚点行（min_tokens=0），阶梯行上的残留忽略
-		if r.MinTokens == 0 && r.TimeSegments != "" && r.TimeSegments != "null" {
-			if err := json.Unmarshal([]byte(r.TimeSegments), &timeSegments); err != nil {
-				g.Log().Warningf(ctx, "admin: 模型 %d 时段定价解析失败: %v", req.ModelID, err)
-				timeSegments = nil
+		// 时段定价与展示字段只认锚点行（min_tokens=0），阶梯行上的残留忽略
+		if r.MinTokens == 0 {
+			if r.TimeSegments != "" && r.TimeSegments != "null" {
+				if err := json.Unmarshal([]byte(r.TimeSegments), &timeSegments); err != nil {
+					g.Log().Warningf(ctx, "admin: 模型 %d 时段定价解析失败: %v", req.ModelID, err)
+					timeSegments = nil
+				}
 			}
+			priceNote = derefStr(r.PriceNote)
+			discountLabel = derefStr(r.DiscountLabel)
+			priceChangeNote = derefStr(r.PriceChangeNote)
 		}
 	}
-	return &v1.PricingGetRes{List: result, TimeSegments: timeSegmentsToAPI(timeSegments)}, nil
+	return &v1.PricingGetRes{
+		List:            result,
+		TimeSegments:    timeSegmentsToAPI(timeSegments),
+		PriceNote:       priceNote,
+		DiscountLabel:   discountLabel,
+		PriceChangeNote: priceChangeNote,
+	}, nil
+}
+
+// derefStr 字符串指针安全解引用（NULL → 空串）
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // timeSegmentsToAPI billing.TimeSegment → API 时段项
@@ -556,6 +580,29 @@ func writeTimeSegmentsForModel(ctx context.Context, modelDBID int64, items []v1.
 	return err
 }
 
+// writePricingDisplayFieldsForModel 把展示字段（价格说明/折扣标签/价格调整说明）写到定价锚点行（min_tokens=0）。
+// 全量替换语义：空串=清除（写 NULL）。与 writeTimeSegmentsForModel 同理用列名直写而非 do 字段，
+// 与 gf gen dao 生成物解耦。调用方需保证事务 ctx 传播。
+func writePricingDisplayFieldsForModel(ctx context.Context, modelDBID int64, priceNote, discountLabel, priceChangeNote string) error {
+	trimOrNull := func(s string) any {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	_, err := dao.MdlPricing.Ctx(ctx).
+		Where("model_id", modelDBID).
+		Where("min_tokens", 0).
+		Data(g.Map{
+			"price_note":        trimOrNull(priceNote),
+			"discount_label":    trimOrNull(discountLabel),
+			"price_change_note": trimOrNull(priceChangeNote),
+		}).
+		Update()
+	return err
+}
+
 // SetModelPricing 设置模型定价（全量替换）
 func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error) {
 	// 时段定价校验（乘数范围/时间格式/星期/日期边界），fail-fast 返回用户可读错误
@@ -620,6 +667,11 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 
 		// 时段定价写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
 		if err := writeTimeSegmentsForModel(ctx, req.ModelID, req.TimeSegments); err != nil {
+			return err
+		}
+
+		// 展示字段写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
+		if err := writePricingDisplayFieldsForModel(ctx, req.ModelID, req.PriceNote, req.DiscountLabel, req.PriceChangeNote); err != nil {
 			return err
 		}
 

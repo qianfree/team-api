@@ -128,6 +128,10 @@ type PricingGetReq struct {
 type PricingGetRes struct {
 	List         []PricingItem     `json:"list"`
 	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价列表（锚点行 time_segments）"`
+	// 以下为锚点行展示字段（仅 min_tokens=0 行生效）
+	PriceNote       string `json:"price_note" dc:"价格说明（仅管理后台可见的内部备注）"`
+	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示，如 7折起）"`
+	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示，提示价格有变动）"`
 }
 
 // PricingSetReq 设置模型定价（全量替换）
@@ -136,6 +140,10 @@ type PricingSetReq struct {
 	ModelID      int64             `json:"model_id" in:"path" v:"required" dc:"模型ID"`
 	Items        []PricingItem     `json:"items" v:"required" dc:"定价列表"`
 	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价（可选，全量替换；空数组清除时段配置）"`
+	// 以下为锚点行展示字段（全量替换语义：空=清除；price_note 不透出到租户端）
+	PriceNote       string `json:"price_note" dc:"价格说明（仅内部可见）"`
+	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示）"`
+	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示）"`
 }
 
 type PricingSetRes struct{}
