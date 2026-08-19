@@ -14,7 +14,7 @@ func TestDecide_硬规则优先(t *testing.T) {
 	p := retryPol()
 
 	// 已向客户端写出响应：任何类别都终止
-	for _, cls := range []ErrorClass{ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassTimeout} {
+	for _, cls := range []ErrorClass{ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassModelFatal, ErrClassTimeout} {
 		d, _ := Decide(cls, DeliveryResponseStarted, ReplaySafe, 0, AttemptState{}, p)
 		assert.Equal(t, DecisionAbort, d, "ResponseStarted 必须 Abort: %s", cls)
 
@@ -23,7 +23,7 @@ func TestDecide_硬规则优先(t *testing.T) {
 	}
 
 	// ReplayUnsafe + MaybeSent 无条件 Abort（状态码/类别无关）
-	for _, cls := range []ErrorClass{ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassTimeout} {
+	for _, cls := range []ErrorClass{ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassModelFatal, ErrClassTimeout} {
 		d, _ := Decide(cls, DeliveryMaybeSent, ReplayUnsafe, 0, AttemptState{HasAlternateKey: true}, p)
 		assert.Equal(t, DecisionAbort, d, "ReplayUnsafe+MaybeSent 必须 Abort: %s", cls)
 	}
@@ -126,6 +126,17 @@ func TestDecide_渠道致命零原地(t *testing.T) {
 	assert.Equal(t, DecisionFailover, d)
 }
 
+func TestDecide_模型致命直接failover(t *testing.T) {
+	p := retryPol()
+	// 模型致命与渠道致命同语义：零原地重试、立即 failover
+	d, _ := Decide(ErrClassModelFatal, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{}, p)
+	assert.Equal(t, DecisionFailover, d)
+
+	// failover 预算耗尽 → Abort
+	d, _ = Decide(ErrClassModelFatal, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{FailoverUsed: 2}, p)
+	assert.Equal(t, DecisionAbort, d)
+}
+
 func TestDecide_ReplayUnsafe预算收紧(t *testing.T) {
 	p := retryPol() // unsafe 预算默认 0/0
 
@@ -149,7 +160,7 @@ func TestDecide_ReplayUnsafe预算收紧(t *testing.T) {
 // 用随机错误序列驱动 FSM，断言任何序列都不会突破预算且必然终止。
 func TestDecide_属性_任意错误序列不突破预算(t *testing.T) {
 	p := retryPol()
-	classes := []ErrorClass{ErrClassClient, ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassTimeout}
+	classes := []ErrorClass{ErrClassClient, ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassModelFatal, ErrClassTimeout}
 	deliveries := []DeliveryState{DeliveryNotSent, DeliveryMaybeSent, DeliveryResponseReceived}
 	replays := []Replayability{ReplaySafe, ReplayCostly, ReplayUnsafe}
 
@@ -230,6 +241,7 @@ func TestRoutingPolicy_校验拒绝非法配置(t *testing.T) {
 		{"负预算", mutate(func(p *RoutingPolicy) { p.Retry.FailoverBudget = -1 })},
 		{"退避上限小于基数", mutate(func(p *RoutingPolicy) { p.Retry.BackoffMaxMs = 10 })},
 		{"熔断阈值非正", mutate(func(p *RoutingPolicy) { p.Breaker.FailThreshold = 0 })},
+		{"模型级熔断阈值非正", mutate(func(p *RoutingPolicy) { p.Breaker.ModelFailThreshold = 0 })},
 		{"冷却上限小于起始", mutate(func(p *RoutingPolicy) { p.Breaker.CooldownMaxSeconds = 1 })},
 		{"副本数非正", mutate(func(p *RoutingPolicy) { p.Degrade.MaxReplicas = 0 })},
 	}
