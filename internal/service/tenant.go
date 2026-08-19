@@ -155,6 +155,7 @@ type (
 		// ListMemberApiKeys returns a paginated list of API keys belonging to a specific member.
 		ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApiKeysReq) (*v1.TenantMemberApiKeysRes, error)
 		// ExportMembers exports the tenant member list as CSV or Excel.
+		// 导出列与成员列表页表格保持一致（用户/角色/状态/额度限制/可用模型/本月消费/加入时间/最后更新）。
 		ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error)
 		// MemberImport parses CSV content, validates, creates an import record.
 		MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error)

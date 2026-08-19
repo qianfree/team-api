@@ -159,6 +159,8 @@ type (
 		GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (*v1.AdminDashboardModelHourlyRes, error)
 		// GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 		GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error)
+		// GetUsageLogSummary 获取用量日志统计汇总（独立接口，与列表共用筛选口径）
+		GetUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSummaryReq) (*v1.AdminUsageLogSummaryRes, error)
 		// GetAllBillingRecords 获取所有计费记录（管理后台）
 		GetAllBillingRecords(ctx context.Context, req *v1.AdminBillingRecordListReq) (*v1.AdminBillingRecordListRes, error)
 		// GetTenantWallets 获取所有租户钱包（管理后台）
