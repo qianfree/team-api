@@ -119,6 +119,13 @@ func startMockReleaseServer(t *testing.T, version string) (*httptest.Server, str
 // （CheckForUpdate → stageUpdate：下载→校验→备份→替换→写标记），
 // 验证整个更新链路的磁盘产物，无需 GitHub / PostgreSQL / Redis。
 func TestUpdatePipeline_Local(t *testing.T) {
+	// 自更新流水线面向 Linux 部署：getPlatformAssetName 在 Windows 期望 .zip 资产，
+	// 而 extractBinary 仅支持 tar.gz，且运行中的 exe 被锁定无法 rename 替换。
+	// Windows 开发机跳过，流水线在 Linux CI 上完整验证。
+	if runtime.GOOS == "windows" {
+		t.Skip("self-update pipeline targets Linux deployments (tar.gz asset + rename-based replace)")
+	}
+
 	ctx := gctx.New()
 	version := "0.9.0" // 模拟的"新版本"，必须高于当前版本才判定有更新
 
