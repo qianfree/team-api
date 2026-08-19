@@ -18,6 +18,19 @@ interface PricingTierItem {
 	output_price: number
 }
 
+interface TimePriceItem {
+	name: string
+	days?: number[] | null
+	start_time?: string
+	end_time?: string
+	valid_from?: string
+	valid_to?: string
+	multiplier: number
+	input_price?: number | null
+	output_price?: number | null
+	per_request_price?: number | null
+}
+
 interface ModelItem {
 	id: number
 	model_id: string
@@ -37,6 +50,7 @@ interface ModelItem {
 	cache_read_price: number | null
 	cache_creation_price: number | null
 	pricing_tiers: PricingTierItem[]
+	time_prices?: TimePriceItem[] | null
 }
 
 const capabilityLabel: Record<string, string> = {
@@ -180,6 +194,31 @@ function getTieredStartPrice(m: ModelItem): string {
 	}
 	if (first.input_price > 0) return formatPrice(first.input_price)
 	return formatPrice(first.output_price)
+}
+
+// ── 时段价目展示辅助（价格为后端换算好的展示价，前端直接渲染） ──
+
+function daysLabel(days?: number[] | null): string {
+	if (!days || days.length === 0) return '每天'
+	const sorted = [...days].sort((a, b) => a - b)
+	if (sorted.join(',') === '1,2,3,4,5') return '工作日'
+	if (sorted.join(',') === '6,7') return '周末'
+	const names = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
+	return sorted.map((d) => names[d] || String(d)).join('、')
+}
+
+function timeWindow(tp: TimePriceItem): string {
+	const parts: string[] = [daysLabel(tp.days)]
+	if (tp.start_time && tp.end_time) parts.push(`${tp.start_time}~${tp.end_time}`)
+	else parts.push('全天')
+	if (tp.valid_from) parts.push(tp.valid_to ? `${tp.valid_from}~${tp.valid_to}` : `${tp.valid_from} 起`)
+	return parts.join(' · ')
+}
+
+function timePriceText(m: ModelItem, tp: TimePriceItem): string {
+	if (m.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? null)} /次`
+	if (m.billing_mode === 'tiered') return `${formatPrice(tp.input_price ?? null)} 起`
+	return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)}`
 }
 
 async function fetchModels() {
@@ -401,6 +440,21 @@ onMounted(fetchModels)
 									</div>
 								</div>
 							</template>
+
+							<!-- 时段价目（平台配置了时段定价时展示，价格为换算后的展示价） -->
+							<div v-if="m.time_prices?.length" class="mt-2 space-y-1 border-t border-dashed border-gray-100 pt-2">
+								<div
+									v-for="(tp, idx) in m.time_prices"
+									:key="idx"
+									class="flex items-center justify-between gap-2 text-xs"
+								>
+									<span class="text-gray-500 truncate">
+										{{ tp.name }}
+										<span class="text-gray-400 ml-1">{{ timeWindow(tp) }}</span>
+									</span>
+									<span class="shrink-0 text-gray-600">{{ timePriceText(m, tp) }}</span>
+								</div>
+							</div>
 						</div>
 					</div>
 				</div>

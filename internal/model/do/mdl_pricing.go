@@ -25,4 +25,5 @@ type MdlPricing struct {
 	UpdatedAt          *gtime.Time      //
 	CacheReadPrice     any              // 缓存读取每 1M token 价格（直接定价）
 	CacheCreationPrice any              // 缓存创建每 1M token 价格（直接定价）
+	TimeSegments       any              // 时段定价（JSONB 有序数组，仅 min_tokens=0 锚点行生效）：[{"name":"闲时","days":[1,2,3,4,5],"start_time":"00:00","end_time":"08:00","valid_from":"","valid_to":"","multiplier":0.5}]，按序先命中先生效，未命中=默认价（乘数 1.0），days 1=周一..7=周日 空=每天，end<start 表示跨零点
 }

@@ -27,6 +27,9 @@ function handleMaintenanceModeChange(enabled: boolean) {
 				<AFormItem label="租户控制台地址" help="用于生成邀请链接等，如 https://console.example.com" class="field-full">
 					<AInput v-model="values['tenant_console_url']" placeholder="https://console.example.com" />
 				</AFormItem>
+				<AFormItem label="计费时区" help="模型时段定价（峰谷/促销）按此时区解释，IANA 时区名" class="field-full">
+					<AInput v-model="values['pricing_time_timezone']" placeholder="Asia/Shanghai" />
+				</AFormItem>
 			</div>
 		</div>
 

@@ -75,6 +75,8 @@ var Registry = []SettingDef{
 		Label: "全局 API 维护", Description: "开启后 API 代理返回 503，叠加维护模式使用", IsPublic: true},
 	{Key: "tenant_console_url", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "租户控制台地址", Description: "租户控制台的完整 URL，如 https://console.example.com，用于生成邀请链接等"},
+	{Key: "pricing_time_timezone", Type: SettingTypeString, Default: "Asia/Shanghai", Category: "general",
+		Label: "计费时区", Description: "模型时段定价（峰谷/促销）按此时区解释，IANA 时区名，如 Asia/Shanghai"},
 
 	// ── OAuth (第三方登录) ──
 	{Key: "oauth_auto_register", Type: SettingTypeBool, Default: "false", Category: "oauth",

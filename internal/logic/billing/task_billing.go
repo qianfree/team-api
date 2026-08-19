@@ -153,7 +153,8 @@ func (b *TaskBillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID
 // SettleTaskSuccess 任务成功结算（含计费快照）
 // totalTokens/completionTokens: 上游返回的 token 用量
 // ratios: 提交时保存的计费比率（如 video_input 折扣）
-func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string) (*common.SettlementResult, error) {
+// billAt: 任务受理时刻（时段定价按该时刻评估；零值按当前时刻兜底）
+func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string, billAt time.Time) (*common.SettlementResult, error) {
 	diff := SubtractMoney(actualCost, preDeductAmount)
 
 	// 1. 获取钱包
@@ -162,8 +163,8 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		return nil, fmt.Errorf("settle task: get wallet: %w", err)
 	}
 
-	// 2. 获取定价（事务外只读）
-	pricing, _ := GetModelPrice(ctx, tenantID, modelName)
+	// 2. 获取定价（事务外只读，按任务受理时刻评估时段乘数）
+	pricing, _ := GetModelPriceAt(ctx, tenantID, modelName, billAt)
 	breakdown := buildTaskCostBreakdown(pricing, InexactFloat64(actualCost), totalTokens, completionTokens)
 
 	var billingMode string
@@ -337,7 +338,7 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 	// 不摊进 OutputCost。否则快照会生成「0 token 却有 output 费用」的自相矛盾行
 	// （如 0 tokens × $30/1M = $3.375）。真实费用仍由结算的 actual_cost 体现。
 	if totalTokens <= 0 {
-		bd.BaseCost = actualCost
+		bd.BaseCost = preMultiplierCost(actualCost, pricing)
 		bd.TotalCost = actualCost
 		return bd
 	}
@@ -346,15 +347,20 @@ func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTok
 	bd.OutputTokens = totalTokens
 	bd.OutputCost = actualCost
 	bd.TotalCost = actualCost
-
-	tenantMul := pricing.TenantMultiplier
-	if tenantMul > 0 {
-		bd.BaseCost = actualCost / tenantMul
-	} else {
-		bd.BaseCost = actualCost
-	}
+	bd.BaseCost = preMultiplierCost(actualCost, pricing)
 
 	return bd
+}
+
+// preMultiplierCost 把已含「租户乘数 × 时段乘数」的实际费用还原为折扣前成本（BaseCost 语义）。
+// actualCost 来自 RecalculateByTokens（已乘全部乘数）或预扣额（EstimatePreDeductAmount 同样含乘数），
+// 还原时两个乘数都要除，与 computeCost 的 BaseCost = 折扣前小计语义对齐
+func preMultiplierCost(actualCost float64, pricing *PricingResult) float64 {
+	mul := pricing.TenantMultiplier * effectiveTimeMultiplier(pricing)
+	if mul <= 0 {
+		return actualCost
+	}
+	return actualCost / mul
 }
 
 // SettleTaskFailed 任务失败退还预扣
@@ -395,14 +401,15 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 }
 
 // RecalculateByTokens 根据上游返回的 total_tokens 重算费用。
-// 公式：totalTokens / 1M × output_price × tenant_multiplier × 附加比率
-// 如果模型没有配置 token 单价（纯按次计费），返回 0 表示不做 token 重算。
-func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64) (decimal.Decimal, error) {
+// 公式：totalTokens / 1M × output_price × tenant_multiplier × 时段乘数 × 附加比率
+// billAt 为任务受理时刻（时段定价按该时刻评估）；如果模型没有配置 token 单价（纯按次计费），
+// 返回 0 表示不做 token 重算。
+func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64, billAt time.Time) (decimal.Decimal, error) {
 	if totalTokens <= 0 {
 		return Zero, nil
 	}
 
-	pricing, err := GetModelPrice(ctx, tenantID, modelName)
+	pricing, err := GetModelPriceAt(ctx, tenantID, modelName, billAt)
 	if err != nil {
 		return Zero, nil
 	}
@@ -416,7 +423,8 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 	million := decimal.NewFromInt(1_000_000)
 	costD := decimal.NewFromInt(int64(totalTokens)).Div(million).
 		Mul(NewFromFloat(pricing.OutputPrice)).
-		Mul(NewFromFloat(pricing.TenantMultiplier))
+		Mul(NewFromFloat(pricing.TenantMultiplier)).
+		Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 
 	// 应用附加比率（视频输入折扣等）
 	// 注意：跳过 duration/resolution，它们已体现在上游返回的 token 数中，不应再乘
