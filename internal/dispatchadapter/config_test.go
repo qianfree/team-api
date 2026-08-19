@@ -24,6 +24,14 @@ func TestValidateRoutingPolicyJSON(t *testing.T) {
 	assert.Error(t, ValidateRoutingPolicyJSON(`{"health":{"alpha":-1}}`))
 	assert.Error(t, ValidateRoutingPolicyJSON(`{"retry":{"failoverBudget":-1}}`))
 	assert.Error(t, ValidateRoutingPolicyJSON(`{"tierFactors":{"vip":1}}`), "未知层级")
+	assert.Error(t, ValidateRoutingPolicyJSON(`{"breaker":{"modelFailThreshold":0}}`), "模型级阈值必须 > 0")
+	assert.NoError(t, ValidateRoutingPolicyJSON(`{"breaker":{"modelFailThreshold":6}}`))
+
+	// 存量 JSON 缺 modelFailThreshold → 内置默认 4（默认值 + 浅覆盖机制兼容）
+	pol, err := buildPolicy(`{"breaker":{"failThreshold":5}}`)
+	assert.NoError(t, err)
+	assert.Equal(t, 5, pol.Breaker.FailThreshold)
+	assert.Equal(t, 4, pol.Breaker.ModelFailThreshold)
 }
 
 func TestBuildTenantPolicy(t *testing.T) {

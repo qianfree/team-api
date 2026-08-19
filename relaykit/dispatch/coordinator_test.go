@@ -22,13 +22,19 @@ func (f *fakeCatalog) Snapshot(_ context.Context, _ int64, _ string, _ []int64) 
 	return out
 }
 
+// probeTokenKey fakeState 探测令牌的复合键：model 空串 = 渠道级，非空 = 渠道×模型级。
+type probeTokenKey struct {
+	ch    int64
+	model string
+}
+
 type fakeState struct {
 	bindings    map[string]int64
 	setBinds    int
 	touchBinds  int
 	invalidated []int64
 	outcomes    []Outcome
-	probeGrant  map[int64]bool // 默认拒绝
+	probeGrant  map[probeTokenKey]bool // 默认拒绝
 	leaseDeny   map[int64]bool
 	acquired    map[int64]int
 	released    map[int64]int
@@ -39,7 +45,7 @@ type fakeState struct {
 func newFakeState() *fakeState {
 	return &fakeState{
 		bindings:   map[string]int64{},
-		probeGrant: map[int64]bool{},
+		probeGrant: map[probeTokenKey]bool{},
 		leaseDeny:  map[int64]bool{},
 		acquired:   map[int64]int{},
 		released:   map[int64]int{},
@@ -60,8 +66,10 @@ func (f *fakeState) TouchBinding(_ context.Context, _ string, _ time.Duration) {
 func (f *fakeState) InvalidateChannelBindings(_ context.Context, channelID int64) {
 	f.invalidated = append(f.invalidated, channelID)
 }
-func (f *fakeState) ReportOutcome(o Outcome)                        { f.outcomes = append(f.outcomes, o) }
-func (f *fakeState) TryProbeToken(_ context.Context, id int64) bool { return f.probeGrant[id] }
+func (f *fakeState) ReportOutcome(o Outcome) { f.outcomes = append(f.outcomes, o) }
+func (f *fakeState) TryProbeToken(_ context.Context, id int64, model string) bool {
+	return f.probeGrant[probeTokenKey{id, model}]
+}
 func (f *fakeState) AcquireLease(_ context.Context, id int64, _ int, _ string) bool {
 	if f.leaseDeny[id] {
 		return false
@@ -352,7 +360,7 @@ func TestCoordinator_熔断排除与探测放行(t *testing.T) {
 
 	// 探测令牌放行：HALF_OPEN 渠道作为探测请求
 	state2 := newFakeState()
-	state2.probeGrant[2] = true
+	state2.probeGrant[probeTokenKey{2, ""}] = true
 	co2, _ := newTestCoordinator(state2, open, half, normal)
 	s2 := co2.Route(ctx, testProfile())
 	d2 := s2.Next(ctx)
@@ -373,6 +381,66 @@ func TestCoordinator_模型级熔断排除(t *testing.T) {
 	d := s.Next(ctx)
 	require.NotNil(t, d)
 	assert.Equal(t, int64(2), d.Channel.ID)
+}
+
+// TestCoordinator_模型级半开探测 模型级熔断冷却期满（HALF_OPEN）走模型级探测令牌：
+// 渠道级熔断 CLOSED 时不再被渠道级令牌误拒（修复模型级熔断无法靠流量恢复的死锁）。
+func TestCoordinator_模型级半开探测(t *testing.T) {
+	ctx := context.Background()
+
+	modelHalf := healthyChannel(1, TierPrimary, 100)
+	modelHalf.ModelBreaker = BreakerHalfOpen // 仅模型级半开，渠道级 CLOSED
+	normal := healthyChannel(2, TierPrimary, 0.001)
+
+	// 模型级令牌放行 → 作为探测请求选中
+	state := newFakeState()
+	state.probeGrant[probeTokenKey{1, "gpt-4o"}] = true
+	co, _ := newTestCoordinator(state, modelHalf, normal)
+	s := co.Route(ctx, testProfile())
+	d := s.Next(ctx)
+	require.NotNil(t, d)
+	assert.Equal(t, int64(1), d.Channel.ID)
+	assert.Equal(t, ReasonProbe, d.Reason)
+
+	// 模型级令牌被拒 → 排除落到普通渠道（每探测窗口只放行一个）
+	state2 := newFakeState()
+	co2, _ := newTestCoordinator(state2, modelHalf, normal)
+	s2 := co2.Route(ctx, testProfile())
+	d2 := s2.Next(ctx)
+	require.NotNil(t, d2)
+	assert.Equal(t, int64(2), d2.Channel.ID)
+	assert.Equal(t, 1, d2.Excluded.Breaker, "模型级探测拒绝计入 Breaker 排除")
+}
+
+// TestCoordinator_双级别半开组合 渠道级与模型级同时 HALF_OPEN：两枚令牌都取，
+// 任一被拒即排除；模型级令牌先取（被拒不消耗渠道级令牌）。
+func TestCoordinator_双级别半开组合(t *testing.T) {
+	ctx := context.Background()
+
+	both := healthyChannel(1, TierPrimary, 100)
+	both.Breaker = BreakerHalfOpen
+	both.ModelBreaker = BreakerHalfOpen
+	normal := healthyChannel(2, TierPrimary, 0.001)
+
+	// 模型级放行 + 渠道级拒绝 → 排除
+	state := newFakeState()
+	state.probeGrant[probeTokenKey{1, "gpt-4o"}] = true
+	co, _ := newTestCoordinator(state, both, normal)
+	s := co.Route(ctx, testProfile())
+	d := s.Next(ctx)
+	require.NotNil(t, d)
+	assert.Equal(t, int64(2), d.Channel.ID, "渠道级令牌被拒时整体排除")
+
+	// 双放行 → 探测请求
+	state2 := newFakeState()
+	state2.probeGrant[probeTokenKey{1, "gpt-4o"}] = true
+	state2.probeGrant[probeTokenKey{1, ""}] = true
+	co2, _ := newTestCoordinator(state2, both, normal)
+	s2 := co2.Route(ctx, testProfile())
+	d2 := s2.Next(ctx)
+	require.NotNil(t, d2)
+	assert.Equal(t, int64(1), d2.Channel.ID)
+	assert.Equal(t, ReasonProbe, d2.Reason)
 }
 
 func TestCoordinator_tier扩组兜底(t *testing.T) {

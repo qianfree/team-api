@@ -24,7 +24,8 @@ type StatePort interface {
 	ReportOutcome(o Outcome)
 
 	// 熔断探测令牌：HALF_OPEN 时每窗口全局只放行一个真实请求。
-	TryProbeToken(ctx context.Context, channelID int64) bool
+	// model 为空串 = 渠道级熔断 key；非空 = 渠道×模型级熔断 key。
+	TryProbeToken(ctx context.Context, channelID int64, model string) bool
 
 	// 容量租约（多副本安全，实例崩溃后自愈）。
 	AcquireLease(ctx context.Context, channelID int64, softLimit int, requestID string) bool

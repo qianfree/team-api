@@ -20,7 +20,7 @@ func TestClassify_状态码全表(t *testing.T) {
 		{401, ErrClassCredential},
 		{402, ErrClassChannelFatal},
 		{403, ErrClassCredential},
-		{404, ErrClassChannelFatal},
+		{404, ErrClassModelFatal}, // 模型不存在：单模型信号，喂模型级熔断
 		{408, ErrClassTimeout},
 		{409, ErrClassClient},
 		{413, ErrClassClient},
@@ -50,7 +50,8 @@ func TestClassify_NewAPIError错误码(t *testing.T) {
 		{"invalid_key 归凭证", types.ErrorCodeChannelInvalidKey, ErrClassCredential},
 		{"no_available_key 归渠道级", types.ErrorCodeChannelNoAvailableKey, ErrClassChannelFatal},
 		{"protocol_mismatch 归渠道级（驱动换渠道）", types.ErrorCodeChannelProtocolMismatch, ErrClassChannelFatal},
-		{"model_not_found 归渠道级", types.ErrorCodeModelNotFound, ErrClassChannelFatal},
+		{"model_not_found 归模型级", types.ErrorCodeModelNotFound, ErrClassModelFatal},
+		{"model_mapped_error 归模型级", types.ErrorCodeChannelModelMappedError, ErrClassModelFatal},
 		{"response_time_exceeded 归超时", types.ErrorCodeChannelResponseTimeExceeded, ErrClassTimeout},
 		{"aws_client_error 归渠道级", types.ErrorCodeChannelAwsClientError, ErrClassChannelFatal},
 		{"prompt_blocked 归客户端", types.ErrorCodePromptBlocked, ErrClassClient},
@@ -98,5 +99,6 @@ func TestClassify_无错误(t *testing.T) {
 func TestErrorClass_String(t *testing.T) {
 	assert.Equal(t, "credential", ErrClassCredential.String())
 	assert.Equal(t, "timeout", ErrClassTimeout.String())
+	assert.Equal(t, "model_fatal", ErrClassModelFatal.String())
 	assert.Equal(t, "none", ErrClassNone.String())
 }

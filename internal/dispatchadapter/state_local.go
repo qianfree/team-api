@@ -7,12 +7,18 @@ import (
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
+// probeKey 本地探测限流的复合键：model 空串 = 渠道级，非空 = 渠道×模型级。
+type probeKey struct {
+	ch    int64
+	model string
+}
+
 // localState Redis 故障时的实例本地降级镜像（基线方案 §13）：
 // 保护仍在、只是不再全局协同。Redis 恢复后自然弃用（无需回填）。
 type localState struct {
 	mu sync.Mutex
 
-	probeMs map[int64]int64 // channelID → 最近探测放行时间（本地探测限流）
+	probeMs map[probeKey]int64 // 渠道/渠道×模型 → 最近探测放行时间（本地探测限流）
 
 	leases map[int64]map[string]int64 // channelID → requestID → 过期时间戳 ms（严格容量渠道）
 
@@ -28,7 +34,7 @@ type localHealth struct {
 
 func newLocalState() *localState {
 	return &localState{
-		probeMs: make(map[int64]int64),
+		probeMs: make(map[probeKey]int64),
 		leases:  make(map[int64]map[string]int64),
 		credCD:  make(map[int64]time.Time),
 		health:  make(map[int64]*localHealth),
@@ -36,14 +42,16 @@ func newLocalState() *localState {
 }
 
 // tryProbe 本地探测限流：每窗口本实例只放行一个（失去全局协同，仍防打爆）。
-func (l *localState) tryProbe(channelID int64, windowMs int64) bool {
+// model 语义与 TryProbeToken 一致：空串 = 渠道级，非空 = 渠道×模型级。
+func (l *localState) tryProbe(channelID int64, model string, windowMs int64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now().UnixMilli()
-	if now-l.probeMs[channelID] < windowMs {
+	k := probeKey{ch: channelID, model: model}
+	if now-l.probeMs[k] < windowMs {
 		return false
 	}
-	l.probeMs[channelID] = now
+	l.probeMs[k] = now
 	return true
 }
 

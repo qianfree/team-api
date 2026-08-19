@@ -42,8 +42,8 @@ func healthDecayFor(class dispatch.ErrorClass) float64 {
 	switch class {
 	case dispatch.ErrClassRateLimit:
 		return 0.97 // 429 主要喂 softLimit 估计器，基本不伤健康
-	case dispatch.ErrClassChannelFatal:
-		return 0.70 // 重罚，加速权重坍缩
+	case dispatch.ErrClassChannelFatal, dispatch.ErrClassModelFatal:
+		return 0.70 // 重罚，加速权重坍缩（模型级只伤该模型健康分）
 	default: // TRANSIENT / TIMEOUT
 		return 0.93 // 轻罚，瞬时抖动不重伤
 	}
@@ -186,60 +186,114 @@ redis.call('HSET', KEYS[1], 'succ_ewma', succ, 'lat_ewma', lat, 'updated_ms', AR
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 return 1`
 
-// luaBreakerFail 熔断失败转移（与 dispatch/breaker.go 纯函数规则保持一致，改动需同步）。
-// first_opened_ms 记录本轮故障期的起点（探测失败重置 opened_ms 但不重置它），供自动禁用判定。
-// ARGV: nowMs, windowMs, failThreshold, fatal(0/1), cooldownBaseMs, cooldownMaxMs, keyTtlMs
-const luaBreakerFail = `
-local h = KEYS[1]
-local state  = tonumber(redis.call('HGET', h, 'state') or '0')
-local opened = tonumber(redis.call('HGET', h, 'opened_ms') or '0')
-local cd     = tonumber(redis.call('HGET', h, 'cooldown_ms') or '0')
-local now    = tonumber(ARGV[1])
-if state == 1 then
-  if now - opened >= cd then
-    -- 有效态 HALF_OPEN：探测失败 → 回 OPEN，冷却翻倍封顶
-    cd = cd * 2
-    if cd <= 0 then cd = tonumber(ARGV[5]) end
-    if cd > tonumber(ARGV[6]) then cd = tonumber(ARGV[6]) end
-    redis.call('HSET', h, 'state', 1, 'opened_ms', now, 'cooldown_ms', cd, 'fail_count', 0)
+// luaBreakerOutcome 渠道级+模型级熔断转移（单脚本双 key 原子执行，与 dispatch/breaker.go
+// 纯函数规则保持一致，改动需同步）。
+//
+// 错误按作用域分流（classCode）：
+//
+//	0=成功       双 key 复位（HALF_OPEN 探测成功 → CLOSED / 清窗口计数）
+//	1=渠道致命   只喂渠道级，fatal 一次直达 OPEN（渠道级信号：余额尽/Key 耗尽/网络全断）
+//	2=模型致命   模型级 fatal 直达；渠道级仅窗口计 1 票（404/模型映射错误是单模型信号）
+//	3=瞬时/超时  双 key 窗口计数
+//
+// 去重守卫（pre-event）：在执行转移前，先读取模型级**旧状态**（state==1 含冷却期满的
+// 有效 HALF_OPEN）。若旧状态为 OPEN，本事件跳过渠道级计数；若旧状态为 CLOSED，本事件
+// 仍给渠道级计数（即使本事件会触发模型级 CLOSED→OPEN 转移）。配合 modelFailThreshold
+// < failThreshold，单模型故障对渠道级的贡献封顶在 modelFailThreshold 次，渠道级 OPEN
+// 只能由多模型同时恶化达成（跨模型共识）。
+//
+// 关键时序：首次打开模型级的事件（第 modelFailThreshold 次故障）本身仍给渠道级贡献 1 票
+// （因守卫判断用的是转移前的旧状态 CLOSED），之后的事件（第 modelFailThreshold+1 次起）
+// 才被守卫拦截（旧状态已是 OPEN）。这保证了整渠道故障（如 8 个模型各 404 一次）渠道级能
+// 累积到 8 票而非 0 票。
+//
+// KEYS[1]=渠道级 breaker key，KEYS[2]=模型级 breaker key
+// ARGV: nowMs, windowMs, chFailThreshold, modelFailThreshold,
+//
+//	cooldownBaseMs, cooldownMaxMs, keyTtlMs, classCode
+//
+// 返回按位打包：bit0(1)=渠道级 CLOSED→OPEN，bit1(2)=模型级 CLOSED→OPEN（探测失败回 OPEN 不计）
+const luaBreakerOutcome = `
+local function success_key(h, now, ttl)
+  local state  = tonumber(redis.call('HGET', h, 'state') or '0')
+  local opened = tonumber(redis.call('HGET', h, 'opened_ms') or '0')
+  local cd     = tonumber(redis.call('HGET', h, 'cooldown_ms') or '0')
+  if state == 1 and now - opened >= cd then
+    redis.call('HSET', h, 'state', 0, 'opened_ms', 0, 'cooldown_ms', 0, 'fail_count', 0, 'recovered_ms', now)
+    redis.call('HDEL', h, 'first_opened_ms')
+  elseif state == 0 then
+    redis.call('HSET', h, 'fail_count', 0)
+    redis.call('HDEL', h, 'first_opened_ms')
   end
-  redis.call('PEXPIRE', h, ARGV[7])
-  return -1
+  redis.call('PEXPIRE', h, ttl)
 end
--- CLOSED：滑动窗口计数
-local ws = tonumber(redis.call('HGET', h, 'window_start_ms') or '0')
-local fc = tonumber(redis.call('HGET', h, 'fail_count') or '0')
-if now - ws > tonumber(ARGV[2]) then ws = now; fc = 0 end
-fc = fc + 1
-if ARGV[4] == '1' or fc >= tonumber(ARGV[3]) then
-  redis.call('HSET', h, 'state', 1, 'opened_ms', now, 'cooldown_ms', ARGV[5], 'fail_count', 0, 'window_start_ms', ws)
-  if redis.call('HEXISTS', h, 'first_opened_ms') == 0 then
-    redis.call('HSET', h, 'first_opened_ms', now)
-  end
-else
-  redis.call('HSET', h, 'fail_count', fc, 'window_start_ms', ws)
-end
-redis.call('PEXPIRE', h, ARGV[7])
-return fc`
 
-// luaBreakerSuccess 熔断成功转移：HALF_OPEN 探测成功 → CLOSED（记录 recovered_ms 供爬坡，
-// 清除 first_opened_ms 结束本轮故障期）。
-// ARGV: nowMs, keyTtlMs
-const luaBreakerSuccess = `
-local h = KEYS[1]
-local state  = tonumber(redis.call('HGET', h, 'state') or '0')
-local opened = tonumber(redis.call('HGET', h, 'opened_ms') or '0')
-local cd     = tonumber(redis.call('HGET', h, 'cooldown_ms') or '0')
-local now    = tonumber(ARGV[1])
-if state == 1 and now - opened >= cd then
-  redis.call('HSET', h, 'state', 0, 'opened_ms', 0, 'cooldown_ms', 0, 'fail_count', 0, 'recovered_ms', now)
-  redis.call('HDEL', h, 'first_opened_ms')
-elseif state == 0 then
-  redis.call('HSET', h, 'fail_count', 0)
-  redis.call('HDEL', h, 'first_opened_ms')
+-- 返回 1 表示发生 CLOSED→OPEN 转移（供指标），HALF_OPEN 探测失败回 OPEN 返回 0。
+-- first_opened_ms 记录本轮故障期起点（探测失败不重置），供自动禁用判定。
+local function fail_key(h, threshold, fatal, now, windowMs, cdBase, cdMax, ttl)
+  local state  = tonumber(redis.call('HGET', h, 'state') or '0')
+  local opened = tonumber(redis.call('HGET', h, 'opened_ms') or '0')
+  local cd     = tonumber(redis.call('HGET', h, 'cooldown_ms') or '0')
+  if state == 1 then
+    if now - opened >= cd then
+      -- 有效态 HALF_OPEN：探测失败 → 回 OPEN，冷却翻倍封顶
+      cd = cd * 2
+      if cd <= 0 then cd = cdBase end
+      if cd > cdMax then cd = cdMax end
+      redis.call('HSET', h, 'state', 1, 'opened_ms', now, 'cooldown_ms', cd, 'fail_count', 0)
+    end
+    redis.call('PEXPIRE', h, ttl)
+    return 0
+  end
+  -- CLOSED：滑动窗口计数
+  local ws = tonumber(redis.call('HGET', h, 'window_start_ms') or '0')
+  local fc = tonumber(redis.call('HGET', h, 'fail_count') or '0')
+  if now - ws > windowMs then ws = now; fc = 0 end
+  fc = fc + 1
+  if fatal == 1 or fc >= threshold then
+    redis.call('HSET', h, 'state', 1, 'opened_ms', now, 'cooldown_ms', cdBase, 'fail_count', 0, 'window_start_ms', ws)
+    if redis.call('HEXISTS', h, 'first_opened_ms') == 0 then
+      redis.call('HSET', h, 'first_opened_ms', now)
+    end
+    redis.call('PEXPIRE', h, ttl)
+    return 1
+  end
+  redis.call('HSET', h, 'fail_count', fc, 'window_start_ms', ws)
+  redis.call('PEXPIRE', h, ttl)
+  return 0
 end
-redis.call('PEXPIRE', h, ARGV[2])
-return 1`
+
+local now     = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local chTh    = tonumber(ARGV[3])
+local mdlTh   = tonumber(ARGV[4])
+local cdBase  = tonumber(ARGV[5])
+local cdMax   = tonumber(ARGV[6])
+local ttl     = ARGV[7]
+local cls     = tonumber(ARGV[8])
+
+if cls == 0 then
+  success_key(KEYS[1], now, ttl)
+  success_key(KEYS[2], now, ttl)
+  return 0
+end
+
+local mOpen = tonumber(redis.call('HGET', KEYS[2], 'state') or '0') == 1
+local ret = 0
+if cls == 1 then
+  ret = fail_key(KEYS[1], chTh, 1, now, windowMs, cdBase, cdMax, ttl)
+elseif cls == 2 then
+  if not mOpen then
+    ret = fail_key(KEYS[1], chTh, 0, now, windowMs, cdBase, cdMax, ttl)
+  end
+  ret = ret + 2 * fail_key(KEYS[2], mdlTh, 1, now, windowMs, cdBase, cdMax, ttl)
+else
+  if not mOpen then
+    ret = ret + fail_key(KEYS[1], chTh, 0, now, windowMs, cdBase, cdMax, ttl)
+  end
+  ret = ret + 2 * fail_key(KEYS[2], mdlTh, 0, now, windowMs, cdBase, cdMax, ttl)
+end
+return ret`
 
 // luaLimit429Observe softLimit 自动估计（基线方案 §8.2）：记录收到 429 时的 inflight 水位，
 // onset_ewma = onset×0.8 + 当前水位×0.2（首次直接取当前水位）。
@@ -281,30 +335,31 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 			keyLimit429+chStr, keyInflight+chStr, now, stateKeyTTLMs)
 	}
 
-	breakerKeys := []string{keyBreaker + chStr}
-	// 模型级熔断只喂模型相关的致命错误（如 404 模型不存在），避免误伤其它模型
-	if o.Class == dispatch.ErrClassChannelFatal || o.Success {
-		breakerKeys = append(breakerKeys, keyBreaker+chStr+":"+o.Model)
-	}
-	for _, bk := range breakerKeys {
-		if o.Success {
-			_, _ = g.Redis().Do(ctx, "EVAL", luaBreakerSuccess, 1, bk, now, stateKeyTTLMs)
-			continue
-		}
-		if o.Class == dispatch.ErrClassRateLimit {
-			continue
-		}
-		fatal := "0"
-		if o.Class == dispatch.ErrClassChannelFatal {
-			fatal = "1"
+	// 熔断上报（429 属容量信号不喂熔断，改喂上方 softLimit 估计器）：
+	// 渠道级 + 模型级双 key 单脚本原子转移，错误按作用域分流，见 luaBreakerOutcome 注释。
+	if o.Success || o.Class != dispatch.ErrClassRateLimit {
+		classCode := int64(3) // 瞬时/超时
+		switch {
+		case o.Success:
+			classCode = 0
+		case o.Class == dispatch.ErrClassChannelFatal:
+			classCode = 1
+		case o.Class == dispatch.ErrClassModelFatal:
+			classCode = 2
 		}
 		b := pol.Breaker
-		ret, err := g.Redis().Do(ctx, "EVAL", luaBreakerFail, 1, bk,
-			now, int64(b.WindowSeconds)*1000, b.FailThreshold, fatal,
-			int64(b.CooldownSeconds)*1000, int64(b.CooldownMaxSeconds)*1000, stateKeyTTLMs)
-		// CLOSED→OPEN 转移（返回值为窗口失败数且达到阈值/致命直达）计入熔断打开指标
-		if err == nil && ret.Int() >= 0 && (fatal == "1" || ret.Int() >= b.FailThreshold) && BreakerOpenHook != nil {
-			BreakerOpenHook()
+		ret, err := g.Redis().Do(ctx, "EVAL", luaBreakerOutcome, 2,
+			keyBreaker+chStr, keyBreaker+chStr+":"+o.Model,
+			now, int64(b.WindowSeconds)*1000, int64(b.FailThreshold), int64(b.ModelFailThreshold),
+			int64(b.CooldownSeconds)*1000, int64(b.CooldownMaxSeconds)*1000, stateKeyTTLMs, classCode)
+		// 按位触发熔断打开指标：bit0=渠道级 CLOSED→OPEN，bit1=模型级（HALF_OPEN 探测失败回 OPEN 不计）
+		if err == nil && BreakerOpenHook != nil {
+			if ret.Int()&1 != 0 {
+				BreakerOpenHook()
+			}
+			if ret.Int()&2 != 0 {
+				BreakerOpenHook()
+			}
 		}
 	}
 }
@@ -317,8 +372,15 @@ redis.call('HDEL', KEYS[1], 'first_opened_ms')
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return 1`
 
-// MarkChannelRecovered 渠道被运营手动启用/恢复时调用：复位熔断并开启爬坡窗口，
+// MarkChannelRecovered 渠道被运营手动启用/恢复时调用：复位渠道级熔断并开启爬坡窗口，
 // 避免恢复瞬间被 HRW 一次性灌满流量（基线方案 §4.5 rampFactor）。
+//
+// 只复位渠道级，不动模型级熔断：调用方（管理后台启用/auto-test 恢复）只验证了 test_model
+// 一个模型，不能证明其它模型已恢复，模型级隔离是真实流量失败挣来的证据，保留更安全。
+//
+// 运维影响：启用渠道后，已打开的模型级熔断需自然恢复（冷却封顶 300s + 探测窗口 10s，
+// 最长 5 分钟）。期间该模型请求仍需等待探测窗口放行，可能出现「渠道已启用但部分模型
+// 仍不可用」的现象。需要立即全复位（包括所有模型级熔断 + 健康 EWMA）时，使用 ResetHealth。
 func (s *RedisState) MarkChannelRecovered(ctx context.Context, channelID int64) {
 	if _, err := g.Redis().Do(ctx, "EVAL", luaBreakerManualReset, 1,
 		keyBreaker+strconv.FormatInt(channelID, 10), time.Now().UnixMilli(), stateKeyTTLMs); err != nil {
@@ -382,14 +444,18 @@ if now - ps < tonumber(ARGV[2]) then return 0 end
 redis.call('HSET', h, 'probe_ms', now)
 return 1`
 
-// TryProbeToken 尝试获取 HALF_OPEN 探测令牌。Redis 故障 → 实例本地限流兜底。
-func (s *RedisState) TryProbeToken(ctx context.Context, channelID int64) bool {
+// TryProbeToken 尝试获取 HALF_OPEN 探测令牌（model 空串 = 渠道级熔断 key，
+// 非空 = 渠道×模型级熔断 key）。Redis 故障 → 实例本地限流兜底。
+func (s *RedisState) TryProbeToken(ctx context.Context, channelID int64, model string) bool {
 	pol := s.policy()
+	key := keyBreaker + strconv.FormatInt(channelID, 10)
+	if model != "" {
+		key += ":" + model
+	}
 	v, err := g.Redis().Do(ctx, "EVAL", luaProbeToken, 1,
-		keyBreaker+strconv.FormatInt(channelID, 10),
-		time.Now().UnixMilli(), int64(pol.Breaker.ProbeWindowSeconds)*1000)
+		key, time.Now().UnixMilli(), int64(pol.Breaker.ProbeWindowSeconds)*1000)
 	if err != nil {
-		return s.local.tryProbe(channelID, int64(pol.Breaker.ProbeWindowSeconds)*1000)
+		return s.local.tryProbe(channelID, model, int64(pol.Breaker.ProbeWindowSeconds)*1000)
 	}
 	return v.Int() == 1
 }

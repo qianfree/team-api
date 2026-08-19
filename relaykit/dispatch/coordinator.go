@@ -286,9 +286,11 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 			return nil
 		}
 
-		// HALF_OPEN 渠道被选中：取探测令牌，每窗口全局只放行一个
-		if _, isHalfOpen := halfOpen[chosen.ID]; isHalfOpen {
-			if !s.co.state.TryProbeToken(ctx, chosen.ID) {
+		// HALF_OPEN 渠道被选中：按熔断级别取探测令牌，每窗口全局只放行一个。
+		// 先取更具体的模型级令牌（被拒不消耗渠道级令牌），再取渠道级；任一被拒即排除重选。
+		if need, isHalfOpen := halfOpen[chosen.ID]; isHalfOpen {
+			if (need[1] && !s.co.state.TryProbeToken(ctx, chosen.ID, s.profile.Model)) ||
+				(need[0] && !s.co.state.TryProbeToken(ctx, chosen.ID, "")) {
 				roundExcluded[chosen.ID] = struct{}{}
 				probeDenied++
 				continue
@@ -336,8 +338,8 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 //
 // 注意：Channel.Breaker / ModelBreaker 由目录适配层提供，已做过冷却期的
 // 惰性 OPEN→HALF_OPEN 判定（EffectiveBreakerState）。
-func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int64]struct{}, pol *RoutingPolicy) ([]ScoredChannel, map[int64]struct{}, ExclusionStats) {
-	halfOpen := make(map[int64]struct{})
+func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int64]struct{}, pol *RoutingPolicy) ([]ScoredChannel, map[int64][2]bool, ExclusionStats) {
+	halfOpen := make(map[int64][2]bool)
 	excl := ExclusionStats{}
 	var scored []ScoredChannel
 	var zeroTier []Channel // 因 tierFactor=0 被排除的渠道，供扩组兜底
@@ -355,7 +357,8 @@ func (s *RouteSession) buildCandidates(snapshot []Channel, roundExcluded map[int
 			continue
 		}
 		if ch.Breaker == BreakerHalfOpen || ch.ModelBreaker == BreakerHalfOpen {
-			halfOpen[ch.ID] = struct{}{}
+			// [0]=渠道级半开、[1]=模型级半开（快照按模型行展开，每渠道至多一行）
+			halfOpen[ch.ID] = [2]bool{ch.Breaker == BreakerHalfOpen, ch.ModelBreaker == BreakerHalfOpen}
 		}
 		if tierFactor(ch.Tier, pol) <= 0 {
 			zeroTier = append(zeroTier, ch)
