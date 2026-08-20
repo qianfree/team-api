@@ -443,3 +443,54 @@ func TestFormatPrice(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateBillingSnapshot_TimeMultipliers(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice:       1.0,
+		OutputPrice:      2.0,
+		BillingMode:      "token",
+		TenantMultiplier: 0.8,
+		TimeMultiplier:   0.5,
+		TimeRuleName:     "闲时",
+	}
+	breakdown := &CostBreakdown{InputTokens: 100, OutputTokens: 50}
+
+	snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil)
+	assertFloat(t, snapshot.Multipliers.TimeMultiplier, 0.5, "TimeMultiplier")
+	if snapshot.Multipliers.TimeRule != "闲时" {
+		t.Errorf("TimeRule = %q, want 闲时", snapshot.Multipliers.TimeRule)
+	}
+
+	// 时段乘数零值兜底：快照记录 1 而非 0
+	pricing.TimeMultiplier = 0
+	snapshot = GenerateBillingSnapshot(pricing, breakdown, nil, nil, nil)
+	assertFloat(t, snapshot.Multipliers.TimeMultiplier, 1.0, "TimeMultiplier (zero fallback)")
+}
+
+func TestGenerateBillingSummary_TimeRule(t *testing.T) {
+	snapshot := &BillingSnapshot{
+		Pricing: BillingSnapshotPricing{
+			BillingMode:         "token",
+			EffectiveInputPrice: 1.0,
+			BillingSource:       "base",
+		},
+		Multipliers: BillingSnapshotMultipliers{
+			TenantMultiplier: 0.8,
+			TimeMultiplier:   0.5,
+			TimeRule:         "闲时",
+		},
+		Settlement: BillingSnapshotSettlement{
+			PreDeductAmount: 0.1,
+			ActualCost:      0.04,
+		},
+		RequestMeta: BillingSnapshotRequestMeta{RequestedModel: "gpt-4o"},
+	}
+
+	text := GenerateBillingSummary(snapshot)
+	if !strings.Contains(text, "闲时") {
+		t.Errorf("summary should contain time rule name, got:\n%s", text)
+	}
+	if !strings.Contains(text, "时段(0.50)") {
+		t.Errorf("summary should contain time multiplier in subtotal line, got:\n%s", text)
+	}
+}

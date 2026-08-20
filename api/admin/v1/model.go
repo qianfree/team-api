@@ -106,6 +106,19 @@ type PricingItem struct {
 	CacheCreationPrice float64  `json:"cache_creation_price" dc:"缓存创建每 1M token 价格"`
 }
 
+// TimeSegmentItem 时段定价项（mdl_pricing.time_segments JSONB 数组元素）。
+// 语义：按数组顺序先命中先生效（促销时段放前面覆盖常驻时段），未命中=默认价（乘数 1.0）；
+// 最终费用 = 各项小计 × 租户乘数 × 时段乘数。
+type TimeSegmentItem struct {
+	Name       string  `json:"name" v:"required" dc:"时段名（写入计费快照）"`
+	Days       []int   `json:"days" dc:"适用星期 1=周一..7=周日；空=每天"`
+	StartTime  string  `json:"start_time" dc:"每日开始时刻 HH:MM；与 end_time 均空=全天"`
+	EndTime    string  `json:"end_time" dc:"每日结束时刻 HH:MM；end<start 表示跨零点（如 22:00~06:00）"`
+	ValidFrom  string  `json:"valid_from" dc:"生效起始日期 YYYY-MM-DD（含端点）；空=长期，促销/定时调价用"`
+	ValidTo    string  `json:"valid_to" dc:"生效结束日期 YYYY-MM-DD（含端点）"`
+	Multiplier float64 `json:"multiplier" v:"required|min:0.0001|max:10" dc:"价格乘数，0.5=半价"`
+}
+
 // PricingGetReq 获取模型定价
 type PricingGetReq struct {
 	g.Meta  `path:"/models/{model_id}/pricing" method:"get" mime:"json" tags:"管理后台-模型" summary:"获取模型定价"`
@@ -113,14 +126,24 @@ type PricingGetReq struct {
 }
 
 type PricingGetRes struct {
-	List []PricingItem `json:"list"`
+	List         []PricingItem     `json:"list"`
+	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价列表（锚点行 time_segments）"`
+	// 以下为锚点行展示字段（仅 min_tokens=0 行生效）
+	PriceNote       string `json:"price_note" dc:"价格说明（仅管理后台可见的内部备注）"`
+	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示，如 7折起）"`
+	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示，提示价格有变动）"`
 }
 
 // PricingSetReq 设置模型定价（全量替换）
 type PricingSetReq struct {
-	g.Meta  `path:"/models/{model_id}/pricing" method:"put" mime:"json" tags:"管理后台-模型" summary:"设置模型定价"`
-	ModelID int64         `json:"model_id" in:"path" v:"required" dc:"模型ID"`
-	Items   []PricingItem `json:"items" v:"required" dc:"定价列表"`
+	g.Meta       `path:"/models/{model_id}/pricing" method:"put" mime:"json" tags:"管理后台-模型" summary:"设置模型定价"`
+	ModelID      int64             `json:"model_id" in:"path" v:"required" dc:"模型ID"`
+	Items        []PricingItem     `json:"items" v:"required" dc:"定价列表"`
+	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价（可选，全量替换；空数组清除时段配置）"`
+	// 以下为锚点行展示字段（全量替换语义：空=清除；price_note 不透出到租户端）
+	PriceNote       string `json:"price_note" dc:"价格说明（仅内部可见）"`
+	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示）"`
+	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示）"`
 }
 
 type PricingSetRes struct{}
@@ -232,19 +255,20 @@ type ModelImportPreviewRes struct {
 
 // ModelImportPreviewItem 导入预览项（模型信息 + 冲突标记）
 type ModelImportPreviewItem struct {
-	ModelId          string          `json:"model_id"`
-	ModelName        string          `json:"model_name"`
-	Category         string          `json:"category"`
-	Status           string          `json:"status"`
-	MaxContextTokens int             `json:"max_context_tokens"`
-	MaxOutputTokens  int             `json:"max_output_tokens"`
-	Capabilities     map[string]bool `json:"capabilities"`
-	Description      string          `json:"description"`
-	Tags             []string        `json:"tags"`
-	SunsetDate       string          `json:"sunset_date"`
-	ReplacementModel string          `json:"replacement_model"`
-	Pricing          []PricingItem   `json:"pricing"`
-	Conflict         string          `json:"conflict"` // "" 或 "exists"
+	ModelId          string            `json:"model_id"`
+	ModelName        string            `json:"model_name"`
+	Category         string            `json:"category"`
+	Status           string            `json:"status"`
+	MaxContextTokens int               `json:"max_context_tokens"`
+	MaxOutputTokens  int               `json:"max_output_tokens"`
+	Capabilities     map[string]bool   `json:"capabilities"`
+	Description      string            `json:"description"`
+	Tags             []string          `json:"tags"`
+	SunsetDate       string            `json:"sunset_date"`
+	ReplacementModel string            `json:"replacement_model"`
+	Pricing          []PricingItem     `json:"pricing"`
+	TimeSegments     []TimeSegmentItem `json:"time_segments" dc:"时段定价列表"`
+	Conflict         string            `json:"conflict"` // "" 或 "exists"
 }
 
 // ModelImportReq 确认导入模型请求
@@ -255,19 +279,20 @@ type ModelImportReq struct {
 
 // ModelImportItem 导入模型项
 type ModelImportItem struct {
-	ModelId          string          `json:"model_id" v:"required" dc:"模型唯一标识"`
-	ModelName        string          `json:"model_name" dc:"模型显示名称"`
-	Category         string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
-	Status           string          `json:"status" dc:"状态"`
-	MaxContextTokens int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
-	MaxOutputTokens  int             `json:"max_output_tokens" dc:"最大输出 token 数"`
-	Capabilities     map[string]bool `json:"capabilities" dc:"模型能力特性"`
-	Description      string          `json:"description" dc:"模型描述"`
-	Tags             []string        `json:"tags" dc:"标签列表"`
-	SunsetDate       string          `json:"sunset_date" dc:"下线日期"`
-	ReplacementModel string          `json:"replacement_model" dc:"推荐替代模型名"`
-	Pricing          []PricingItem   `json:"pricing" dc:"定价列表"`
-	ConflictAction   string          `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
+	ModelId          string            `json:"model_id" v:"required" dc:"模型唯一标识"`
+	ModelName        string            `json:"model_name" dc:"模型显示名称"`
+	Category         string            `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
+	Status           string            `json:"status" dc:"状态"`
+	MaxContextTokens int               `json:"max_context_tokens" dc:"最大上下文 token 数"`
+	MaxOutputTokens  int               `json:"max_output_tokens" dc:"最大输出 token 数"`
+	Capabilities     map[string]bool   `json:"capabilities" dc:"模型能力特性"`
+	Description      string            `json:"description" dc:"模型描述"`
+	Tags             []string          `json:"tags" dc:"标签列表"`
+	SunsetDate       string            `json:"sunset_date" dc:"下线日期"`
+	ReplacementModel string            `json:"replacement_model" dc:"推荐替代模型名"`
+	Pricing          []PricingItem     `json:"pricing" dc:"定价列表"`
+	TimeSegments     []TimeSegmentItem `json:"time_segments" dc:"时段定价列表（可选）"`
+	ConflictAction   string            `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
 }
 
 // ModelImportRes 导入结果响应

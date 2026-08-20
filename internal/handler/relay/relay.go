@@ -56,7 +56,7 @@ func HandleChatCompletions(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/chat/completions", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -90,7 +90,7 @@ func HandleEmbeddings(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/embeddings", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -124,7 +124,7 @@ func HandleImagesGenerations(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/images/generations", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -158,7 +158,7 @@ func HandleCompletions(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/completions", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -196,7 +196,7 @@ func HandleResponses(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/responses", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -228,7 +228,7 @@ func HandleMessages(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteClaudeRelayError(capture, err)
+		handler.WriteClaudeRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/messages", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -314,7 +314,7 @@ func HandleGeminiGenerateContent(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteGeminiRelayError(capture, err)
+		handler.WriteGeminiRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, modifiedBody, path, latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -568,6 +568,10 @@ func recordAudit(r *ghttp.Request, rc *handler.RelayContext, capture *ResponseCa
 		ResponseHeaders: capture.ResponseHeaders(),
 		ForwardingTrace: rc.ForwardingTrace,
 	})
+
+	// 渠道调试日志：补段4（客户端响应，此时错误分支的 WriteRelayError 已写入 rc.Writer）
+	// 并提交最终尝试记录；无调试会话（开关未开启）时 no-op
+	rc.Debug.FinalizeAndSubmit(int64(latencyMs), int64(ttft))
 }
 
 // isBinaryContentType 判断请求是否为 multipart 或其它二进制类型，
@@ -641,7 +645,7 @@ func HandleAudioSpeech(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/audio/speech", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -672,7 +676,7 @@ func HandleAudioTranscription(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/audio/transcriptions", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -703,7 +707,7 @@ func HandleAudioTranslation(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/audio/translations", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -734,7 +738,7 @@ func HandleRerank(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/rerank", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -819,7 +823,7 @@ func HandleModerations(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/moderations", latencyMs, firstTokenMs(billingResult))
 		return
 	}
@@ -850,7 +854,7 @@ func HandleImagesEdits(r *ghttp.Request) {
 	setDeprecationHeaders(r, billingResult)
 
 	if err != nil {
-		handler.WriteRelayError(capture, err)
+		handler.WriteRelayError(rc.Writer, err)
 		recordAudit(r, rc, capture, body, "/images/edits", latencyMs, firstTokenMs(billingResult))
 		return
 	}

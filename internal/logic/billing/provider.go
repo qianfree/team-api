@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 
@@ -30,13 +31,13 @@ func (b *BillingProviderImpl) PreDeduct(ctx context.Context, tenantID int64, mod
 	return amount, nil
 }
 
-func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) (*common.SettlementResult, error) {
+func (b *BillingProviderImpl) Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*common.SettlementResult, error) {
 	inputTokens, outputTokens := 0, 0
 	if usage != nil {
 		inputTokens = usage.PromptTokens
 		outputTokens = usage.CompletionTokens
 	}
-	result, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount, projectID)
+	result, err := Settle(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, inputTokens, outputTokens, preDeductAmount, projectID, billAt)
 	return toCommonSettlementResult(result), err
 }
 
@@ -60,9 +61,9 @@ func (b *BillingProviderImpl) SettleFailed(ctx context.Context, tenantID int64, 
 	return SettleFailed(ctx, tenantID, requestID, preDeductAmount)
 }
 
-func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64) (*common.SettlementResult, error) {
+func (b *BillingProviderImpl) SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *common.Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*common.SettlementResult, error) {
 	// 直接透传完整 usage：流中断结算需计入 cache token（拆成 input/output 两数会丢 cache 明细）
-	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, projectID)
+	result, err := SettleStreamInterrupted(ctx, tenantID, userID, apiKeyID, channelID, modelName, requestID, relayMode, usage, preDeductAmount, projectID, billAt)
 	return toCommonSettlementResult(result), err
 }
 

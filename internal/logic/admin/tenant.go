@@ -654,3 +654,44 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 		}
 	})
 }
+
+// TenantApiKeySelect 租户 API Key 下拉选择列表（轻量，不返回密钥原值）。
+// 供渠道调试目标过滤等管理端选择器使用；user_id > 0 时按创建者过滤。
+// 注意：Fields 不能挂在 Count 之前的模型上——gdb 会生成 COUNT(col1, col2, ...)，
+// PostgreSQL 的 count 只接受单参数，会直接报错。
+func (s *sAdmin) TenantApiKeySelect(ctx context.Context, req *v1.TenantApiKeySelectReq) (*v1.TenantApiKeySelectRes, error) {
+	m := dao.ApiKeys.Ctx(ctx).
+		Where("tenant_id", req.TenantID).
+		OrderDesc("id")
+	if req.UserID > 0 {
+		m = m.Where("user_id", req.UserID)
+	}
+
+	total, err := m.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	var keys []struct {
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		KeyPrefix string `json:"key_prefix"`
+		UserID    int64  `json:"user_id"`
+		Status    string `json:"status"`
+	}
+	if err := m.Fields("id, name, key_prefix, user_id, status").Page(req.Page, req.PageSize).Scan(&keys); err != nil {
+		return nil, err
+	}
+
+	list := make([]v1.TenantApiKeySelectItem, len(keys))
+	for i, k := range keys {
+		list[i] = v1.TenantApiKeySelectItem{
+			ID:        k.ID,
+			Name:      k.Name,
+			KeyPrefix: k.KeyPrefix,
+			UserID:    k.UserID,
+			Status:    k.Status,
+		}
+	}
+	return &v1.TenantApiKeySelectRes{List: list, Total: total, Page: req.Page, PageSize: req.PageSize}, nil
+}

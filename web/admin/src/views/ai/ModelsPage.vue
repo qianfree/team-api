@@ -6,7 +6,7 @@ import {
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
-import ModelPricingDrawer from '@/components/ModelPricingDrawer.vue'
+import ModelPricingModal from '@/components/ModelPricingModal.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -914,8 +914,8 @@ function resetImport() {
       </div>
     </AModal>
 
-    <!-- Pricing Drawer -->
-    <ModelPricingDrawer
+    <!-- Pricing Modal -->
+    <ModelPricingModal
       v-model:visible="pricingDrawerVisible"
       :model-id="pricingDrawerModelId"
       :model-id-str="pricingDrawerModelIdStr"

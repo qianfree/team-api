@@ -405,12 +405,34 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		data.BorrowingCooldownSeconds = *req.BorrowingCooldownSeconds
 	}
 
-	// Update use_proxy in settings JSONB
-	if req.UseProxy != nil {
+	// Update use_proxy / debug_log_* in settings JSONB。
+	// 必须单块合并处理（读一次旧值 → 同时应用全部字段 → 回写一次）：
+	// 若写成多个同构块，各自从 DB 读旧值再各自 marshal，同请求多字段时会互相覆盖。
+	if req.UseProxy != nil || req.DebugLogEnabled != nil || req.DebugLogTenantID != nil ||
+		req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil {
+		// 注意：读单列字符串必须用 Value()——gdb 的 Model.Scan 只接受 struct 系列，
+		// 传入 *string 会直接报错；此前用 _ = Scan(&string) 吞错导致永远读到空串，
+		// 每次局部更新都会把未提交的 settings 字段静默重置为默认值
 		var currentSettings string
-		_ = dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("settings").Scan(&currentSettings)
+		if v, err := dao.ChnChannels.Ctx(ctx).Where("id", req.ID).Fields("settings").Value(); err == nil {
+			currentSettings = v.String()
+		}
 		settings := relay.ParseChannelSettings(currentSettings)
-		settings.UseProxy = *req.UseProxy
+		if req.UseProxy != nil {
+			settings.UseProxy = *req.UseProxy
+		}
+		if req.DebugLogEnabled != nil {
+			settings.DebugLogEnabled = *req.DebugLogEnabled
+		}
+		if req.DebugLogTenantID != nil {
+			settings.DebugLogTenantID = *req.DebugLogTenantID
+		}
+		if req.DebugLogUserID != nil {
+			settings.DebugLogUserID = *req.DebugLogUserID
+		}
+		if req.DebugLogApiKeyID != nil {
+			settings.DebugLogApiKeyID = *req.DebugLogApiKeyID
+		}
 		if settingsJSON, err := json.Marshal(settings); err == nil {
 			data.Settings = string(settingsJSON)
 		}
@@ -554,6 +576,10 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
 		UseProxy:                 settings.UseProxy,
+		DebugLogEnabled:          settings.DebugLogEnabled,
+		DebugLogTenantID:         settings.DebugLogTenantID,
+		DebugLogUserID:           settings.DebugLogUserID,
+		DebugLogApiKeyID:         settings.DebugLogApiKeyID,
 		SharingThreshold:         ch.SharingThreshold,
 		PreemptionThreshold:      ch.PreemptionThreshold,
 		BorrowingCooldownSeconds: ch.BorrowingCooldownSeconds,

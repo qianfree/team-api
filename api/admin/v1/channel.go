@@ -93,6 +93,10 @@ type ChannelUpdateReq struct {
 	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
 	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
 	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
+	DebugLogEnabled          *bool    `json:"debug_log_enabled" dc:"启用渠道调试日志（记录四段完整报文，排障用，用完及时关闭）"`
+	DebugLogTenantID         *int64   `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
+	DebugLogUserID           *int64   `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
+	DebugLogApiKeyID         *int64   `json:"debug_log_api_key_id" dc:"调试目标密钥ID过滤（0=不限）"`
 	SharingThreshold         *float64 `json:"sharing_threshold" dc:"普通租户借用阈值"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds" dc:"被抢占后冷却时间(秒)"`
@@ -127,6 +131,10 @@ type ChannelDetailRes struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
+	DebugLogEnabled          bool     `json:"debug_log_enabled"`
+	DebugLogTenantID         int64    `json:"debug_log_tenant_id"`
+	DebugLogUserID           int64    `json:"debug_log_user_id"`
+	DebugLogApiKeyID         int64    `json:"debug_log_api_key_id"`
 	SharingThreshold         *float64 `json:"sharing_threshold"`
 	PreemptionThreshold      *float64 `json:"preemption_threshold"`
 	BorrowingCooldownSeconds *int     `json:"borrowing_cooldown_seconds"`
