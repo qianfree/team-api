@@ -64,7 +64,8 @@ func TestBuiltinConvertersRegistered(t *testing.T) {
 }
 
 // TestBuiltinStreamConvertersRegistered 验证流式转换器已在 init() 中
-// 经 RegisterStreamConverter 登记进流式注册表（Claude→OpenAI、Gemini→OpenAI 两个方向）。
+// 经 RegisterStreamConverter 登记进流式注册表——覆盖全部 14 个已注册方向
+// （原生 5 个 + P1-R/P2/P3 新增 9 个，与迁移文档转换矩阵流式列一致）。
 func TestBuiltinStreamConvertersRegistered(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -101,6 +102,65 @@ func TestBuiltinStreamConvertersRegistered(t *testing.T) {
 			from:   types.RelayFormatOllama,
 			to:     types.RelayFormatOpenAI,
 			wantID: relayconvert.ResponseConverterOllamaChatToOAIChatStream,
+		},
+		// P1-R：chat 上游 → responses 客户端（codex 主路径）
+		{
+			name:   "OpenAI→Responses",
+			from:   types.RelayFormatOpenAI,
+			to:     types.RelayFormatOpenAIResponses,
+			wantID: relayconvert.ConverterOpenAIChatToOpenAIResponsesStream,
+		},
+		// P0：claude 上游 → responses 客户端
+		{
+			name:   "Claude→Responses",
+			from:   types.RelayFormatClaude,
+			to:     types.RelayFormatOpenAIResponses,
+			wantID: relayconvert.ConverterClaudeMessagesToOpenAIResponsesStream,
+		},
+		// P2 D1：openai 上游 → claude/gemini 客户端
+		{
+			name:   "OpenAI→Claude",
+			from:   types.RelayFormatOpenAI,
+			to:     types.RelayFormatClaude,
+			wantID: relayconvert.ConverterOpenAIChatToClaudeMessagesStream,
+		},
+		{
+			name:   "OpenAI→Gemini",
+			from:   types.RelayFormatOpenAI,
+			to:     types.RelayFormatGemini,
+			wantID: relayconvert.ConverterOpenAIChatToGeminiContentStream,
+		},
+		// P2 D2：跨原生流式组合（io.Pipe 串联，ID 为 register.go 内字面量）
+		{
+			name:   "Claude→Gemini",
+			from:   types.RelayFormatClaude,
+			to:     types.RelayFormatGemini,
+			wantID: "anthropic_messages_to_gemini_generate_content_stream",
+		},
+		{
+			name:   "Gemini→Claude",
+			from:   types.RelayFormatGemini,
+			to:     types.RelayFormatClaude,
+			wantID: "gemini_generate_content_to_anthropic_messages_stream",
+		},
+		{
+			name:   "Gemini→Responses",
+			from:   types.RelayFormatGemini,
+			to:     types.RelayFormatOpenAIResponses,
+			wantID: "gemini_generate_content_to_oai_responses_stream",
+		},
+		// P3：responses 上游 → claude/gemini 客户端（B 流式 + P2 流式转换器组合）
+		{
+			name:   "Responses→Claude",
+			from:   types.RelayFormatOpenAIResponses,
+			to:     types.RelayFormatClaude,
+			wantID: "oai_responses_to_anthropic_messages_stream",
+		},
+		{
+			name:   "Responses→Gemini",
+			from:   types.RelayFormatOpenAIResponses,
+			to:     types.RelayFormatGemini,
+			wantID: "oai_responses_to_gemini_generate_content_stream",
 		},
 	}
 

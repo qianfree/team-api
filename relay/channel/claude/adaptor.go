@@ -13,6 +13,7 @@ import (
 
 	loauth "github.com/qianfree/team-api/internal/logic/common/oauth"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relay/override"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
@@ -258,7 +259,8 @@ func (a *Adaptor) handleGeminiClientOnClaude(ctx context.Context, resp *http.Res
 		}
 		return a.handleStreamToOpenAI(ctx, resp, info, writer)
 	}
-	// 非流式：读 body 后先试桥接（gemini→claude 响应组合已注册），写出转换体；未命中回退
+	// 非流式：读 body 后先试桥接（gemini→claude 响应组合已注册），写出转换体；未命中回退。
+	// 计费 usage 从上游原生 Claude 体提取（Claude 口径），注册表 Resp 侧统一不回传 usage
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
@@ -268,7 +270,11 @@ func (a *Adaptor) handleGeminiClientOnClaude(ctx context.Context, resp *http.Res
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(converted)
-		return nil, nil
+		var claudeResp dto.ClaudeResponse
+		if json.Unmarshal(body, &claudeResp) != nil || claudeResp.Usage == nil {
+			return &common.Usage{}, nil
+		}
+		return buildUsageFromClaude(claudeResp.Usage), nil
 	}
 	// 未命中：重构 body reader 回退旧 OpenAI handler（维持旧行为）
 	resp.Body = io.NopCloser(bytes.NewReader(body))

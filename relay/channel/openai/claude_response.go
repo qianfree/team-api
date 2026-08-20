@@ -45,11 +45,17 @@ func handleClaudeInboundNonStream(ctx context.Context, resp *http.Response, info
 		return nil, fmt.Errorf("invalid response body: %w", err)
 	}
 
-	// relaykit 转换器路径优先（P1-B）；失败/未覆盖回退下方旧内联转换
+	// relaykit 转换器路径优先（P1-B/P3）；失败/未覆盖回退下方旧内联转换
 	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(convertedBody)
+		// P3（UseResponsesAPI，上游为 /v1/responses）：上方按 chat 格式解析 responses 体
+		// 必得零值，计费 usage 须从上游 responses 体提取（OpenAI 口径）；
+		// P1-B（chat 上游）沿用下方 legacy 口径提取
+		if info.UseResponsesAPI {
+			return relaykit_bridge.UsageFromResponsesBody(body), nil
+		}
 	} else {
 		// 转换为 Claude 格式
 		claudeResp := openAIToClaudeResponse(&openaiResp, info)

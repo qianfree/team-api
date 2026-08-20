@@ -273,6 +273,11 @@ func settleSuccessfulRequest(
 	headers http.Header,
 	path string,
 ) *BillingResult {
+	// 防御：adaptor 成功路径必须回传非 nil usage（下方多处直接解引用），个别桥接路径
+	// 无 usage 可提时也应返回零值 Usage 而非 nil——此处兜底避免结算 nil 解引用 panic
+	if usage == nil {
+		usage = &common.Usage{}
+	}
 	// 16. 结算费用（使用完整 Usage 含 cache token）
 	// 重新创建 context，上游 DoResponse 可能耗时很长（长文本流式输出）
 	postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)

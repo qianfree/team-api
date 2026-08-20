@@ -376,11 +376,17 @@ func (a *Adaptor) handleCrossClientOnGemini(ctx context.Context, resp *http.Resp
 	if err != nil {
 		return nil, fmt.Errorf("read response body failed: %w", err)
 	}
+	// 非流式：先试桥接（gemini→claude / gemini→responses 响应组合已注册），写出转换体。
+	// 计费 usage 从上游原生 Gemini 体提取（Gemini 口径），注册表 Resp 侧统一不回传 usage
 	if converted, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(converted)
-		return nil, nil
+		var geminiResp dto.GeminiChatResponse
+		if json.Unmarshal(body, &geminiResp) != nil {
+			return &common.Usage{}, nil
+		}
+		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
 	}
 	// 未命中：重构 body reader 回退旧 OpenAI handler（维持旧行为）
 	resp.Body = io.NopCloser(bytes.NewReader(body))

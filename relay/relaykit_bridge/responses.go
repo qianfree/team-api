@@ -51,6 +51,11 @@ func relaykitResponsesResponseConverterID(info *common.RelayInfo, upstream, clie
 	case constant.RelayFormatClaude:
 		// 复用 responses→claude 链 spec 的 Resp 侧（方向相反，先例同 ConverterOpenAIChatToClaudeMessages）
 		return relayconvert.ConverterOpenAIResponsesToClaudeMessages
+	case constant.RelayFormatGemini:
+		// gemini 上游 → responses 客户端（P2 流式 io.Pipe 组合链挂在流式注册表）。
+		// 缺此分支时 gate 拒绝 → 回退 stream.go 桥接命中同一条链，但其 chunkWriter
+		// 不认 ResponsesStreamEvent，事件会被静默丢弃（客户端只收到 chat 格式收尾）
+		return relayconvert.ConverterOpenAIResponsesToGemini
 	case constant.RelayFormatOpenAI:
 		if !info.ChannelMeta.UpstreamSpeaksResponses() {
 			return relayconvert.ConverterOpenAIResponsesToOpenAIChat
@@ -72,6 +77,13 @@ func parseUpstreamResponse(ctx context.Context, upstream constant.RelayFormat, b
 			return nil
 		}
 		return &claudeResp
+	case constant.RelayFormatGemini:
+		var geminiResp dto.GeminiChatResponse
+		if err := json.Unmarshal(body, &geminiResp); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed, fallback to legacy: %v", err)
+			return nil
+		}
+		return &geminiResp
 	case constant.RelayFormatOpenAI:
 		var chatResp dto.ChatCompletionResponse
 		if err := json.Unmarshal(body, &chatResp); err != nil {
@@ -123,7 +135,7 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 		return nil, nil, false
 	}
 
-	usage := usageFromResponsesBody(out)
+	usage := UsageFromResponsesBody(out)
 	return out, usage, true
 }
 
@@ -174,10 +186,11 @@ func TryConvertChatViaResponsesResponseViaRelaykit(ctx context.Context, info *co
 	return out, usage, true
 }
 
-// usageFromResponsesBody 从转换后的 Responses 响应体提取计费 usage。
+// UsageFromResponsesBody 从 Responses 格式响应体提取计费 usage。
 // 转换器写入的 usage 统一为 OpenAI 口径（prompt_tokens 已含缓存，cached 为其子集），
 // 故置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免双重计费。
-func usageFromResponsesBody(body []byte) *common.Usage {
+// body 可为转换后的响应体或上游原生 responses 体（两者 usage 结构一致）。
+func UsageFromResponsesBody(body []byte) *common.Usage {
 	var resp dto.OpenAIResponsesResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return &common.Usage{CacheIncludedInPrompt: true}
@@ -242,7 +255,7 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 	var (
 		firstEvent         bool
 		sentCompleted      bool // 是否已发出 response.completed
-		transferredTextLen int   // 已转发的文本/思考内容长度，供流中断输出估算
+		transferredTextLen int  // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	// emitResponsesEvent 写出一个 Responses SSE 事件，并提取 usage / 记录首字节时间。
