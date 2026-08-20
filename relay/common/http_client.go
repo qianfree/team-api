@@ -48,13 +48,15 @@ var longRunSharedTransport = &http.Transport{
 }
 
 // nonStreamClient / streamClient 预创建的单例 Client（无代理）。
+// Transport 统一经 WrapDebugTransport 包装：渠道调试开关开启的请求经 ctx 捕获器
+// 镜像上游报文，其余请求一次 ctx 查找后直接透传（连接池/H2 仍由底层 Transport 管理）。
 var (
 	nonStreamClient = &http.Client{
-		Transport: sharedTransport,
+		Transport: WrapDebugTransport(sharedTransport),
 		Timeout:   300 * time.Second,
 	}
 	streamClient = &http.Client{
-		Transport: sharedTransport,
+		Transport: WrapDebugTransport(sharedTransport),
 	}
 )
 
@@ -140,11 +142,11 @@ func getProxiedClients() (*http.Client, *http.Client) {
 	proxiedState.longRun = buildProxiedTransport(proxyURL, 0)
 
 	proxiedState.nonStream = &http.Client{
-		Transport: proxiedState.transport,
+		Transport: WrapDebugTransport(proxiedState.transport),
 		Timeout:   300 * time.Second,
 	}
 	proxiedState.stream = &http.Client{
-		Transport: proxiedState.transport,
+		Transport: WrapDebugTransport(proxiedState.transport),
 	}
 
 	proxiedState.proxyURL = proxyURL
@@ -179,7 +181,7 @@ func NewPooledClient(timeoutSeconds int, useProxy bool, isStream ...bool) *http.
 		}
 		proxiedState.mu.RUnlock()
 		return &http.Client{
-			Transport: transport,
+			Transport: WrapDebugTransport(transport),
 			Timeout:   time.Duration(timeoutSeconds) * time.Second,
 		}
 	}
@@ -195,7 +197,7 @@ func NewPooledClient(timeoutSeconds int, useProxy bool, isStream ...bool) *http.
 		transport = longRunSharedTransport
 	}
 	return &http.Client{
-		Transport: transport,
+		Transport: WrapDebugTransport(transport),
 		Timeout:   time.Duration(timeoutSeconds) * time.Second,
 	}
 }

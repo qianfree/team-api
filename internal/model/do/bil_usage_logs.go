@@ -20,7 +20,7 @@ type BilUsageLogs struct {
 	ModelName             any         // 调用的模型名
 	RequestId             any         // 请求唯一ID
 	RelayMode             any         // 代理模式：chat_completions / embeddings / images_generations 等
-	InputTokens           any         // 输入 token 数
+	InputTokens           any         // 输入 token 数（含缓存总输入：base + cache_read + cache_creation，跨渠道统一口径）
 	OutputTokens          any         // 输出 token 数
 	TotalCost             any         // 本次调用费用
 	Currency              any         // 货币（USD）
@@ -30,7 +30,7 @@ type BilUsageLogs struct {
 	ClientIp              any         // 客户端 IP
 	CreatedAt             *gtime.Time // 创建时间
 	UpdatedAt             *gtime.Time // 更新时间
-	CacheCreationTokens   any         // 缓存创建 token 数 (Claude)
+	CacheCreationTokens   any         // 写入缓存的 token 数（Claude cache_creation_input_tokens / OpenAI Responses cache_write_tokens）
 	CacheReadTokens       any         // 缓存读取 token 数 (Claude/OpenAI)
 	InputCost             any         // 输入 token 费用
 	OutputCost            any         // 输出 token 费用

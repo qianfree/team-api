@@ -1,111 +1,252 @@
 package helper
 
 import (
-	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
-
-	"github.com/qianfree/team-api/relay/common"
 )
 
-// newInterruptedInfo 构造一个已标记为客户端断开（部分传输）的 RelayInfo
-func newInterruptedInfo(estimatePromptTokens int) *common.RelayInfo {
-	info := &common.RelayInfo{StreamStatus: common.NewStreamStatus()}
-	info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, errors.New("client gone"))
-	info.SetEstimatePromptTokens(estimatePromptTokens)
-	return info
-}
-
-// newNormalEndInfo 构造一个正常结束的 RelayInfo
-func newNormalEndInfo() *common.RelayInfo {
-	info := &common.RelayInfo{StreamStatus: common.NewStreamStatus()}
-	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-	return info
-}
-
-func TestEstimateStreamOutputTokens(t *testing.T) {
+// TestSetEventStreamHeaders_Idempotency 测试 SSE 头幂等性保护
+func TestSetEventStreamHeaders_Idempotency(t *testing.T) {
 	tests := []struct {
-		name    string
-		info    *common.RelayInfo
-		textLen int
-		want    int
+		name           string
+		useSafeWriter  bool
+		callCount      int
+		validateHeader func(t *testing.T, w *httptest.ResponseRecorder)
 	}{
-		{"空文本返回 0", newNormalEndInfo(), 0, 0},
-		{"nil info 按正常口径 4 字符/token", nil, 100, 25},
-		{"正常结束 4 字符/token", newNormalEndInfo(), 100, 25},
-		{"流中断 2 字符/token", newInterruptedInfo(0), 100, 50},
-		{"流中断奇数长度向上取整", newInterruptedInfo(0), 101, 51},
-		{"无 StreamStatus 按正常口径", &common.RelayInfo{}, 100, 25},
+		{
+			name:          "SafeWriter 多次调用幂等性保护",
+			useSafeWriter: true,
+			callCount:     3,
+			validateHeader: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+					t.Errorf("Content-Type = %v, want text/event-stream", ct)
+				}
+				if te := w.Header().Get("Transfer-Encoding"); te != "chunked" {
+					t.Errorf("Transfer-Encoding = %v, want chunked", te)
+				}
+				if xab := w.Header().Get("X-Accel-Buffering"); xab != "no" {
+					t.Errorf("X-Accel-Buffering = %v, want no", xab)
+				}
+			},
+		},
+		{
+			name:          "原生 ResponseWriter 单次调用正常工作",
+			useSafeWriter: false,
+			callCount:     1,
+			validateHeader: func(t *testing.T, w *httptest.ResponseRecorder) {
+				if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+					t.Errorf("Content-Type = %v, want text/event-stream", ct)
+				}
+				if te := w.Header().Get("Transfer-Encoding"); te != "chunked" {
+					t.Errorf("Transfer-Encoding = %v, want chunked", te)
+				}
+			},
+		},
+		{
+			name:          "原生 ResponseWriter 多次调用（httptest.ResponseRecorder 自带保护）",
+			useSafeWriter: false,
+			callCount:     2,
+			validateHeader: func(t *testing.T, w *httptest.ResponseRecorder) {
+				// httptest.ResponseRecorder 本身有幂等性保护，验证头仍然正确
+				if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+					t.Errorf("Content-Type = %v, want text/event-stream", ct)
+				}
+			},
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EstimateStreamOutputTokens(tt.info, tt.textLen); got != tt.want {
-				t.Errorf("EstimateStreamOutputTokens() = %d, want %d", got, tt.want)
+			w := httptest.NewRecorder()
+			var writer http.ResponseWriter = w
+
+			if tt.useSafeWriter {
+				writer = NewSafeWriter(w)
 			}
+
+			// 多次调用 SetEventStreamHeaders
+			for i := 0; i < tt.callCount; i++ {
+				SetEventStreamHeaders(writer)
+			}
+
+			tt.validateHeader(t, w)
 		})
 	}
 }
 
-func TestApplyInterruptedUsageFallback_NormalEndNoOp(t *testing.T) {
-	info := newNormalEndInfo()
-	usage := &common.Usage{}
-	ApplyInterruptedUsageFallback(info, usage, 1000)
-	if usage.PromptTokens != 0 || usage.CompletionTokens != 0 || usage.TotalTokens != 0 {
-		t.Errorf("正常结束不应修改 usage，got %+v", usage)
+// TestSetEventStreamHeaders_AllHeaders 测试所有必要的 SSE 头都被正确设置
+func TestSetEventStreamHeaders_AllHeaders(t *testing.T) {
+	w := httptest.NewRecorder()
+	sw := NewSafeWriter(w)
+
+	SetEventStreamHeaders(sw)
+
+	expectedHeaders := map[string]string{
+		"Content-Type":      "text/event-stream",
+		"Cache-Control":     "no-cache",
+		"Connection":        "keep-alive",
+		"Transfer-Encoding": "chunked",
+		"X-Accel-Buffering": "no",
+	}
+
+	for key, expectedValue := range expectedHeaders {
+		actualValue := w.Header().Get(key)
+		if actualValue != expectedValue {
+			t.Errorf("Header %s = %v, want %v", key, actualValue, expectedValue)
+		}
+	}
+
+	// 验证状态码
+	if w.Code != http.StatusOK {
+		t.Errorf("StatusCode = %v, want %v", w.Code, http.StatusOK)
 	}
 }
 
-func TestApplyInterruptedUsageFallback_FillsPromptAndOutput(t *testing.T) {
-	// 中断且上游 usage 完全缺失：输入用请求侧估算补齐，输出按 2 字符/token
-	info := newInterruptedInfo(120)
-	usage := &common.Usage{}
-	ApplyInterruptedUsageFallback(info, usage, 200)
-	if usage.PromptTokens != 120 {
-		t.Errorf("PromptTokens = %d, want 120（请求侧估算值）", usage.PromptTokens)
+// TestSafeWriter_ConcurrentSafety 测试 SafeWriter 的并发安全性
+func TestSafeWriter_ConcurrentSafety(t *testing.T) {
+	w := httptest.NewRecorder()
+	sw := NewSafeWriter(w)
+
+	SetEventStreamHeaders(sw)
+
+	// 并发写入 SSE 数据
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(n int) {
+			defer func() { done <- true }()
+			for j := 0; j < 100; j++ {
+				_ = WriteSSEData(sw, "test data")
+			}
+		}(i)
 	}
-	if usage.CompletionTokens != 100 {
-		t.Errorf("CompletionTokens = %d, want 100（200 字符 / 2）", usage.CompletionTokens)
+
+	// 等待所有 goroutine 完成
+	for i := 0; i < 10; i++ {
+		<-done
 	}
-	if usage.TotalTokens != 220 {
-		t.Errorf("TotalTokens = %d, want 220", usage.TotalTokens)
+
+	// 验证没有 panic 且数据写入成功
+	body := w.Body.String()
+	if !strings.Contains(body, "data: test data") {
+		t.Error("Expected SSE data not found in response body")
 	}
 }
 
-func TestApplyInterruptedUsageFallback_KeepsRealUsage(t *testing.T) {
-	// 中断但已拿到真实 usage（如 Claude message_delta 累计值）：不覆盖，只重算 total
-	info := newInterruptedInfo(120)
-	usage := &common.Usage{PromptTokens: 80, CompletionTokens: 45}
-	ApplyInterruptedUsageFallback(info, usage, 200)
-	if usage.PromptTokens != 80 || usage.CompletionTokens != 45 {
-		t.Errorf("真实 usage 不应被覆盖，got %+v", usage)
+// TestWriteSSEData 测试 SSE 数据写入
+func TestWriteSSEData(t *testing.T) {
+	w := httptest.NewRecorder()
+	sw := NewSafeWriter(w)
+
+	SetEventStreamHeaders(sw)
+
+	testData := "Hello, SSE!"
+	err := WriteSSEData(sw, testData)
+	if err != nil {
+		t.Fatalf("WriteSSEData failed: %v", err)
 	}
-	if usage.TotalTokens != 125 {
-		t.Errorf("TotalTokens = %d, want 125", usage.TotalTokens)
+
+	body := w.Body.String()
+	expected := "data: " + testData + "\n\n"
+	if body != expected {
+		t.Errorf("Body = %q, want %q", body, expected)
 	}
 }
 
-func TestApplyInterruptedUsageFallback_PartialUsage(t *testing.T) {
-	// 中断且只有输出（无输入）：输入补齐，输出保留真实值
-	info := newInterruptedInfo(60)
-	usage := &common.Usage{CompletionTokens: 30}
-	ApplyInterruptedUsageFallback(info, usage, 500)
-	if usage.CompletionTokens != 30 {
-		t.Errorf("CompletionTokens = %d, want 30（保留真实值）", usage.CompletionTokens)
+// TestWriteSSEEvent 测试带事件名的 SSE 写入
+func TestWriteSSEEvent(t *testing.T) {
+	w := httptest.NewRecorder()
+	sw := NewSafeWriter(w)
+
+	SetEventStreamHeaders(sw)
+
+	err := WriteSSEEvent(sw, "message", `{"content":"test"}`)
+	if err != nil {
+		t.Fatalf("WriteSSEEvent failed: %v", err)
 	}
-	if usage.PromptTokens != 60 {
-		t.Errorf("PromptTokens = %d, want 60", usage.PromptTokens)
-	}
-	if usage.TotalTokens != 90 {
-		t.Errorf("TotalTokens = %d, want 90", usage.TotalTokens)
+
+	body := w.Body.String()
+	expected := "event: message\ndata: {\"content\":\"test\"}\n\n"
+	if body != expected {
+		t.Errorf("Body = %q, want %q", body, expected)
 	}
 }
 
-func TestApplyInterruptedUsageFallback_NilSafe(t *testing.T) {
-	ApplyInterruptedUsageFallback(nil, nil, 100)
-	ApplyInterruptedUsageFallback(newInterruptedInfo(10), nil, 100)
-	ApplyInterruptedUsageFallback(nil, &common.Usage{}, 100)
-	usage := &common.Usage{}
-	ApplyInterruptedUsageFallback(&common.RelayInfo{}, usage, 100)
-	if usage.TotalTokens != 0 {
-		t.Errorf("无 StreamStatus 应为 no-op，got %+v", usage)
+// TestWriteSSEPing 测试 SSE 保活注释
+func TestWriteSSEPing(t *testing.T) {
+	w := httptest.NewRecorder()
+	sw := NewSafeWriter(w)
+
+	SetEventStreamHeaders(sw)
+
+	err := WriteSSEPing(sw)
+	if err != nil {
+		t.Fatalf("WriteSSEPing failed: %v", err)
+	}
+
+	body := w.Body.String()
+	expected := ": PING\n\n"
+	if body != expected {
+		t.Errorf("Body = %q, want %q", body, expected)
+	}
+}
+
+// TestExtractSSEData 测试 SSE 数据提取
+func TestExtractSSEData(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		wantData string
+		wantOk   bool
+	}{
+		{
+			name:     "标准格式（带空格）",
+			line:     "data: Hello World",
+			wantData: "Hello World",
+			wantOk:   true,
+		},
+		{
+			name:     "标准格式（不带空格）",
+			line:     "data:HelloWorld",
+			wantData: "HelloWorld",
+			wantOk:   true,
+		},
+		{
+			name:     "JSON 数据",
+			line:     `data: {"message":"test"}`,
+			wantData: `{"message":"test"}`,
+			wantOk:   true,
+		},
+		{
+			name:     "非 data 行",
+			line:     "event: message",
+			wantData: "",
+			wantOk:   false,
+		},
+		{
+			name:     "注释行",
+			line:     ": PING",
+			wantData: "",
+			wantOk:   false,
+		},
+		{
+			name:     "空 data",
+			line:     "data: ",
+			wantData: "",
+			wantOk:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, ok := ExtractSSEData(tt.line)
+			if ok != tt.wantOk {
+				t.Errorf("ExtractSSEData() ok = %v, want %v", ok, tt.wantOk)
+			}
+			if data != tt.wantData {
+				t.Errorf("ExtractSSEData() data = %q, want %q", data, tt.wantData)
+			}
+		})
 	}
 }

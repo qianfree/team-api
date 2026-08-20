@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrModelPricingNotConfigured 模型未配置定价（fail-closed 哨兵错误）。
@@ -17,8 +18,8 @@ type BillingProvider interface {
 	// 检查余额 → 冻结预扣金额 → 返回是否成功
 	PreDeduct(ctx context.Context, tenantID int64, modelName string, inputTokens, maxTokens int, isStream bool, requestID string) (preDeductAmount float64, err error)
 
-	// Settle 结算费用（成功请求）
-	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error)
+	// Settle 结算费用（成功请求）。billAt 为请求受理时刻（时段定价按该时刻评估）
+	Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error)
 
 	// SettleWithUsage 完整 Usage 结算（含 cache token + 计费快照）
 	SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
@@ -28,8 +29,8 @@ type BillingProvider interface {
 	// SettleFailed 失败请求结算（退还预扣）
 	SettleFailed(ctx context.Context, tenantID int64, requestID string, preDeductAmount float64) error
 
-	// SettleStreamInterrupted 流式中断结算
-	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error)
+	// SettleStreamInterrupted 流式中断结算。billAt 为请求受理时刻（时段定价按该时刻评估）
+	SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID, relayMode string, usage *Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error)
 
 	// CheckRateLimit QPS 限流检查
 	CheckRateLimit(ctx context.Context, tenantID, userID, apiKeyID int64, keyQPS int) (allowed bool, limitLevel string, limit int, remaining int, resetAt int64)

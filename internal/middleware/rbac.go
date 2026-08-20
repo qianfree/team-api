@@ -129,6 +129,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/billing-records", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/billing-records/export", perm: "billing:export"},
 	{method: "GET", path: "/api/admin/usage-logs", perm: "billing:view"},
+	{method: "GET", path: "/api/admin/usage-logs/summary", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/usage-logs/export", perm: "billing:export"},
 	{method: "GET", path: "/api/admin/transactions", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/wallets", perm: "billing:view"},

@@ -29,7 +29,7 @@ type BilUsageLogsColumns struct {
 	ModelName             string // 调用的模型名
 	RequestId             string // 请求唯一ID
 	RelayMode             string // 代理模式：chat_completions / embeddings / images_generations 等
-	InputTokens           string // 输入 token 数
+	InputTokens           string // 输入 token 数（含缓存总输入：base + cache_read + cache_creation，跨渠道统一口径）
 	OutputTokens          string // 输出 token 数
 	TotalCost             string // 本次调用费用
 	Currency              string // 货币（USD）
@@ -39,7 +39,7 @@ type BilUsageLogsColumns struct {
 	ClientIp              string // 客户端 IP
 	CreatedAt             string // 创建时间
 	UpdatedAt             string // 更新时间
-	CacheCreationTokens   string // 缓存创建 token 数 (Claude)
+	CacheCreationTokens   string // 写入缓存的 token 数（Claude cache_creation_input_tokens / OpenAI Responses cache_write_tokens）
 	CacheReadTokens       string // 缓存读取 token 数 (Claude/OpenAI)
 	InputCost             string // 输入 token 费用
 	OutputCost            string // 输出 token 费用

@@ -29,7 +29,7 @@ type BilUsageDailyColumns struct {
 	ChannelId            string // 渠道ID（0=无渠道）
 	Status               string // 请求状态：success/error/timeout/cancelled
 	RequestCount         string // 请求数（COUNT(*)）
-	InputTokens          string // 输入Token合计
+	InputTokens          string // 输入Token合计（含缓存总输入，源自 bil_usage_logs.input_tokens）
 	OutputTokens         string // 输出Token合计
 	TotalCost            string // 客户侧成本合计（USD，源自 bil_usage_logs.total_cost）
 	AccountCost          string // 上游账户成本合计（USD，源自 bil_usage_logs.account_cost，用于利润分析）
@@ -37,7 +37,7 @@ type BilUsageDailyColumns struct {
 	SumFirstTokenMs      string // 首Token延迟合计（ms，源自 bil_usage_logs.first_token_ms；视图按 SUM/COUNT 求均值）
 	CreatedAt            string //
 	UpdatedAt            string //
-	CacheCreationTokens  string // 缓存创建 token 数（Claude cache_creation，SUM 聚合）
+	CacheCreationTokens  string // 写入缓存的 token 数（Claude cache_creation / OpenAI cache_write，SUM 聚合）
 	CacheReadTokens      string // 缓存命中读取 token 数（Claude cache_read / OpenAI cached_tokens，SUM 聚合）
 	CacheHitRequestCount string // 命中缓存的请求数（明细 cache_read_tokens>0 计 1，含失败状态行）
 }

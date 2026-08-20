@@ -9,20 +9,33 @@ import (
 
 // clientRequestIdRegexp 校验客户端传入的 X-Request-Id：仅允许字母、数字、连字符，
 // 长度 1-64。拒绝含空白/特殊字符/超长的值，防止日志注入与不可控的下游传播。
-// 不合法时丢弃客户端值并改用服务端生成的 ID。
 var clientRequestIdRegexp = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
-// RequestId generates a unique request ID for each request,
-// injects it into the context and returns it in the response header.
+// RequestId 双 ID 机制中间件：
+//  1. 服务端强制生成唯一的内部 RequestId（用于幂等性控制、数据库主键）
+//  2. 客户端可选传入追踪 ID（仅用于日志关联，不影响业务逻辑）
+//  3. 通过 X-Teamapi-Request-Id 响应头返回服务端 ID
+//  4. 通过 X-Request-Id 回显客户端追踪 ID（如果有效）
+//
+// 安全性说明：
+//   - RequestId（服务端）：不可控，保证唯一性，用于幂等性判断（bil_records.request_id）
+//   - ClientTraceId（客户端）：可选，仅用于日志追踪，不参与业务逻辑
 func RequestId(r *ghttp.Request) {
-	requestId := r.GetHeader("X-Request-Id")
-	// 客户端可传入请求追踪 ID，但必须通过格式校验；不合法则忽略，改用服务端生成
-	if requestId == "" || !clientRequestIdRegexp.MatchString(requestId) {
-		requestId = guid.S()
-	}
+	// 1. 服务端强制生成唯一 ID（用于业务幂等性控制）
+	serverRequestId := guid.S()
+	r.SetCtxVar("RequestId", serverRequestId)
+	r.Response.Header().Set("X-Teamapi-Request-Id", serverRequestId)
 
-	r.SetCtxVar("RequestId", requestId)
-	r.Response.Header().Set("X-Request-Id", requestId)
+	// 2. 客户端可选传入追踪 ID（仅用于日志关联）
+	clientTraceId := r.GetHeader("X-Request-Id")
+	if clientTraceId != "" && clientRequestIdRegexp.MatchString(clientTraceId) {
+		r.SetCtxVar("ClientTraceId", clientTraceId)
+		// 回显有效的客户端追踪 ID
+		r.Response.Header().Set("X-Request-Id", clientTraceId)
+	} else {
+		// 客户端未传或格式非法，使用服务端 ID 填充
+		r.Response.Header().Set("X-Request-Id", serverRequestId)
+	}
 
 	r.Middleware.Next()
 }
