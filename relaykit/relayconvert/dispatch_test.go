@@ -3,9 +3,11 @@ package relayconvert
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 // registerExecTestChain 注册一条 A→B→C 两跳链供执行器测试使用（幂等，重复调用跳过）。
@@ -103,5 +105,66 @@ func TestExecuteRequestConverter_EmptySpec(t *testing.T) {
 	_, err := ExecuteRequestConverter(context.Background(), RequestConverterSpec{ID: "exec_empty"}, nil, "in")
 	if err == nil {
 		t.Fatal("expected error for empty spec")
+	}
+}
+
+// 直接转换器成功后记录轨迹 [From, To]。
+func TestExecuteRequestConverter_RecordsChain_Direct(t *testing.T) {
+	registerExecTestChain(t)
+
+	spec, _ := LookupRequestConverter("exec_direct_ab")
+	meta := &convmeta.Values{}
+	if _, err := ExecuteRequestConverter(context.Background(), spec, meta, "in"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []types.RelayFormat{"exec_fmt_a", "exec_fmt_b"}
+	if !reflect.DeepEqual(meta.ConversionChain, want) {
+		t.Errorf("chain = %v, want %v", meta.ConversionChain, want)
+	}
+}
+
+// 链式 spec 成功后记录轨迹 [From, 各跳 To...]，中间格式留痕。
+func TestExecuteRequestConverter_RecordsChain_Chained(t *testing.T) {
+	registerExecTestChain(t)
+
+	spec, _ := LookupRequestConverter("exec_chain_ac")
+	meta := &convmeta.Values{}
+	if _, err := ExecuteRequestConverter(context.Background(), spec, meta, "in"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []types.RelayFormat{"exec_fmt_a", "exec_fmt_b", "exec_fmt_c"}
+	if !reflect.DeepEqual(meta.ConversionChain, want) {
+		t.Errorf("chain = %v, want %v", meta.ConversionChain, want)
+	}
+}
+
+// 转换失败时不提交半程轨迹（调用方回退旧路径，轨迹留给兜底两端记录）。
+func TestExecuteRequestConverter_RecordsChain_NotOnFailure(t *testing.T) {
+	if _, ok := LookupRequestConverter("exec_chain_failrec"); !ok {
+		registerBuiltinRequestConverter(RequestConverterSpec{
+			ID: "exec_err_first_failrec", From: "exec_fmt_h", To: "exec_fmt_i",
+			Quality: RequestConverterQualityGood,
+			Convert: func(_ context.Context, _ convmeta.Meta, _ any) (any, error) {
+				return nil, errors.New("boom")
+			},
+		})
+		registerBuiltinRequestConverter(RequestConverterSpec{
+			ID: "exec_err_second_failrec", From: "exec_fmt_i", To: "exec_fmt_j",
+			Quality: RequestConverterQualityGood, Convert: noopReqConvert,
+		})
+		registerBuiltinRequestConverter(RequestConverterSpec{
+			ID: "exec_chain_failrec", From: "exec_fmt_h", To: "exec_fmt_j",
+			Quality:        RequestConverterQualityGood,
+			StepConverters: []string{"exec_err_first_failrec", "exec_err_second_failrec"},
+		})
+	}
+
+	spec, _ := LookupRequestConverter("exec_chain_failrec")
+	meta := &convmeta.Values{}
+	if _, err := ExecuteRequestConverter(context.Background(), spec, meta, "in"); err == nil {
+		t.Fatal("expected error from failing step")
+	}
+	if len(meta.ConversionChain) != 0 {
+		t.Errorf("failed conversion should not record chain, got %v", meta.ConversionChain)
 	}
 }
