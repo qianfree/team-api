@@ -217,7 +217,7 @@ func HandleTaskSubmit(
 		// 上游请求失败（网络/超时/拒绝等）属预期内运营事件，非代码 bug：
 		// 用 Warningf 避免 glog 对 ERROR+ 自动打印调用栈污染日志（与 :229 upstream response error 一致）。
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
-		writeTaskError(rc.Writer, http.StatusBadGateway, "upstream request failed: "+helper.SafeUpstreamErrorMessage(err), "")
+		writeTaskError(rc.Writer, http.StatusBadGateway, helper.SafeUpstreamErrorMessage(err), "")
 		return
 	}
 	defer resp.Body.Close()
@@ -464,7 +464,7 @@ func HandleMjImageProxy(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		writeTaskError(writer, resp.StatusCode, "upstream image fetch failed", "")
+		writeTaskError(writer, resp.StatusCode, "图片获取失败", "")
 		return
 	}
 
