@@ -1290,79 +1290,125 @@ function formatHeaders(headers: Record<string, string>): string {
 
           <!-- Tab 5: Debug Logs -->
           <ATabPane key="debug_logs" title="调试日志">
-            <ACard :bordered="false" class="mb-4">
-              <div class="flex items-center justify-between flex-wrap" style="gap: 12px;">
-                <div class="flex items-center" style="gap: 10px;">
-                  <span style="font-weight: 600;">调试开关</span>
+            <!-- 配置区块 -->
+            <ACard :bordered="false" class="mb-4" title="调试配置">
+              <template #extra>
+                <div class="flex items-center" style="gap: 8px;">
+                  <span style="font-size: 13px; color: var(--color-text-2);">调试开关</span>
                   <Switch
                     :model-value="!!detail.debug_log_enabled"
                     :loading="debugSwitchLoading"
                     @change="toggleDebugLog"
                   />
-                  <span style="color: var(--color-text-3); font-size: 12px;">
-                    开启后记录经该渠道每次请求尝试的四段完整报文（含脱敏凭证），排障完成请及时关闭并清理
-                  </span>
                 </div>
-                <Popconfirm content="确定清空该渠道全部调试日志？此操作不可逆" @ok="clearDebugLogs">
-                  <AButton status="danger" type="outline" size="small" :disabled="!debugStats || debugStats.total === 0">清空日志</AButton>
-                </Popconfirm>
-              </div>
-              <div class="flex items-center flex-wrap mt-3" style="gap: 8px;">
-                <span style="font-size: 12px; color: var(--color-text-3); flex-shrink: 0;">捕捉范围（不选 = 不限）：</span>
-                <ASelect
-                  :model-value="debugTarget.tenantId"
-                  :options="debugTenantOptions"
-                  placeholder="租户不限"
-                  allow-search
-                  allow-clear
-                  size="small"
-                  style="width: 220px"
-                  @search="searchDebugTenants"
-                  @change="handleDebugTenantChange"
-                />
-                <ASelect
-                  :model-value="debugTarget.userId"
-                  :options="debugUserOptions"
-                  placeholder="成员不限"
-                  allow-search
-                  allow-clear
-                  size="small"
-                  style="width: 200px"
-                  :disabled="!debugTarget.tenantId"
-                  @change="handleDebugUserChange"
-                />
-                <ASelect
-                  :model-value="debugTarget.apiKeyId"
-                  :options="debugKeyOptions"
-                  placeholder="密钥不限"
-                  allow-search
-                  allow-clear
-                  size="small"
-                  style="width: 240px"
-                  :disabled="!debugTarget.tenantId"
-                  @change="(v: any) => debugTarget.apiKeyId = v ?? null"
-                />
-                <AButton size="small" type="primary" :loading="debugTargetSaving" @click="saveDebugTarget">保存过滤条件</AButton>
-              </div>
+              </template>
+
+              <!-- 状态提示 -->
               <Alert
                 v-if="detail.debug_log_enabled"
                 type="warning"
-                class="mt-3"
+                closable
+                class="mb-3"
+              >
+                <template #icon><icon-exclamation-circle-fill /></template>
+                调试日志已开启，正在记录经该渠道每次请求尝试的四段完整报文（含脱敏凭证）。排障完成请及时关闭并清理日志。
+              </Alert>
+
+              <!-- 捕捉范围配置 -->
+              <div class="form-group-title">捕捉范围配置</div>
+              <div style="padding: 12px; background: var(--color-fill-1); border-radius: 6px;">
+                <div class="flex items-center flex-wrap" style="gap: 10px 12px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: var(--color-text-2); min-width: 60px;">租户：</span>
+                    <ASelect
+                      :model-value="debugTarget.tenantId"
+                      :options="debugTenantOptions"
+                      placeholder="不限（捕捉所有租户）"
+                      allow-search
+                      allow-clear
+                      size="small"
+                      style="width: 240px"
+                      @search="searchDebugTenants"
+                      @change="handleDebugTenantChange"
+                    />
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: var(--color-text-2); min-width: 60px;">成员：</span>
+                    <ASelect
+                      :model-value="debugTarget.userId"
+                      :options="debugUserOptions"
+                      placeholder="不限"
+                      allow-search
+                      allow-clear
+                      size="small"
+                      style="width: 220px"
+                      :disabled="!debugTarget.tenantId"
+                      @change="handleDebugUserChange"
+                    />
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 13px; color: var(--color-text-2); min-width: 60px;">密钥：</span>
+                    <ASelect
+                      :model-value="debugTarget.apiKeyId"
+                      :options="debugKeyOptions"
+                      placeholder="不限"
+                      allow-search
+                      allow-clear
+                      size="small"
+                      style="width: 260px"
+                      :disabled="!debugTarget.tenantId"
+                      @change="(v: any) => debugTarget.apiKeyId = v ?? null"
+                    />
+                  </div>
+                  <AButton
+                    size="small"
+                    type="primary"
+                    :loading="debugTargetSaving"
+                    @click="saveDebugTarget"
+                  >
+                    <template #icon><icon-save /></template>
+                    保存配置
+                  </AButton>
+                </div>
+                <div style="margin-top: 8px; font-size: 12px; color: var(--color-text-3); padding-left: 2px;">
+                  提示：未选择任何过滤条件时，捕捉该渠道的所有请求；选择后只捕捉匹配的请求。配置保存后立即生效。
+                </div>
+              </div>
+            </ACard>
+
+            <!-- 日志列表区块 -->
+            <ACard :bordered="false">
+              <template #title>
+                <div class="flex items-center justify-between" style="width: 100%;">
+                  <span>日志记录</span>
+                  <Popconfirm content="确定清空该渠道全部调试日志？此操作不可逆" @ok="clearDebugLogs">
+                    <AButton status="danger" type="outline" size="small" :disabled="!debugStats || debugStats.total === 0">
+                      <template #icon><icon-delete /></template>
+                      清空日志
+                    </AButton>
+                  </Popconfirm>
+                </div>
+              </template>
+              <Alert
+                v-if="!detail.debug_log_enabled && debugStats && debugStats.total > 0"
+                type="normal"
+                closable
+                class="mb-3"
               >
                 调试日志完整保留请求/响应体（可能数 MB/条），无自动过期。当前捕捉范围：{{ debugTargetDesc }}；累计
                 {{ debugStats ? debugStats.total : 0 }} 条 / {{ formatBytes(debugStats?.total_bytes || 0) }}
                 <template v-if="debugStats && debugStats.oldest_at">，最早 {{ debugStats.oldest_at }}</template>
                 —— 请及时清理，避免存储膨胀。
               </Alert>
-            </ACard>
 
-            <ACard :bordered="false">
-              <div class="flex items-center flex-wrap mb-4" style="gap: 8px;">
-                <Input v-model="debugFilter.request_id" placeholder="Request ID" style="width: 200px" allow-clear @clear="handleDebugFilter" @press-enter="handleDebugFilter" />
-                <Input v-model="debugFilter.model_name" placeholder="模型名" style="width: 160px" allow-clear @clear="handleDebugFilter" @press-enter="handleDebugFilter" />
+              <!-- 查询过滤 -->
+              <div class="flex items-center flex-wrap mb-3" style="gap: 8px;">
+                <Input v-model="debugFilter.request_id" placeholder="Request ID" size="small" style="width: 200px" allow-clear @clear="handleDebugFilter" @press-enter="handleDebugFilter" />
+                <Input v-model="debugFilter.model_name" placeholder="模型名" size="small" style="width: 160px" allow-clear @clear="handleDebugFilter" @press-enter="handleDebugFilter" />
                 <DatePicker
                   :model-value="debugFilter.dateRange"
                   range
+                  size="small"
                   style="width: 240px"
                   format="YYYY-MM-DD"
                   @change="(val: any) => { debugFilter.dateRange = val }"
@@ -1374,6 +1420,9 @@ function formatHeaders(headers: Record<string, string>): string {
                 <AButton type="primary" size="small" @click="handleDebugFilter">搜索</AButton>
                 <AButton size="small" @click="resetDebugFilter">重置</AButton>
               </div>
+
+              <!-- 日志表格 -->
+              <!-- 日志表格 -->
               <ATable
                 :columns="debugColumns"
                 :data="debugLogs"
