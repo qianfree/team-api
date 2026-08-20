@@ -27,10 +27,10 @@ const (
 
 // 预定义常量（减少重复 NewFromInt 调用）
 var (
-	Million      = decimal.NewFromInt(MicroScale)        // 1_000_000，token 单价换算
-	MoneyEpsilon = decimal.NewFromFloat(0.000001)        // 1 微美元容差（浮点比较遗留兼容）
-	Zero         = decimal.Zero                          // 常用零值
-	One          = decimal.NewFromInt(1)                 // 常用 1
+	Million      = decimal.NewFromInt(MicroScale) // 1_000_000，token 单价换算
+	MoneyEpsilon = decimal.NewFromFloat(0.000001) // 1 微美元容差（浮点比较遗留兼容）
+	Zero         = decimal.Zero                   // 常用零值
+	One          = decimal.NewFromInt(1)          // 常用 1
 )
 
 // RoundMoney 将 decimal 金额四舍五入到 10 位小数（与 NUMERIC(20,10) 对齐）。

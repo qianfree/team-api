@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -11,12 +10,14 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/test/gtest"
+
+	"github.com/qianfree/team-api/internal/testutil"
 )
 
 // TestRequestId_DualIDMechanism 测试双 ID 机制
 func TestRequestId_DualIDMechanism(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		s := g.Server(gtest.DataPath("request-id-test"))
+		s := g.Server("request-id-dual-test")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -28,13 +29,11 @@ func TestRequestId_DualIDMechanism(t *testing.T) {
 				})
 			})
 		})
-		s.SetDumpRouterMap(false)
-		s.Start()
-		defer s.Shutdown()
+		baseURL := testutil.StartGFServer(t.T, s)
 
 		ctx := gctx.New()
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetPrefix(baseURL)
 
 		tests := []struct {
 			name                    string
@@ -98,7 +97,7 @@ func TestRequestId_SecurityIsolation(t *testing.T) {
 		serverIDs := make(map[string]bool)
 		var mu sync.Mutex
 
-		s := g.Server(gtest.DataPath("request-id-security"))
+		s := g.Server("request-id-security-test")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -111,13 +110,11 @@ func TestRequestId_SecurityIsolation(t *testing.T) {
 				})
 			})
 		})
-		s.SetDumpRouterMap(false)
-		s.Start()
-		defer s.Shutdown()
+		baseURL := testutil.StartGFServer(t.T, s)
 
 		ctx := gctx.New()
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetPrefix(baseURL)
 
 		// 模拟恶意客户端：连续 10 次请求，传递相同的客户端 ID
 		maliciousClientID := "malicious-repeated-id"
@@ -138,7 +135,7 @@ func TestRequestId_IdempotencyKeyUniqueness(t *testing.T) {
 		const concurrency = 100
 		serverIDs := make(chan string, concurrency)
 
-		s := g.Server(gtest.DataPath("request-id-idempotency"))
+		s := g.Server("request-id-idempotency-test")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -148,13 +145,11 @@ func TestRequestId_IdempotencyKeyUniqueness(t *testing.T) {
 				})
 			})
 		})
-		s.SetDumpRouterMap(false)
-		s.Start()
-		defer s.Shutdown()
+		baseURL := testutil.StartGFServer(t.T, s)
 
 		ctx := gctx.New()
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetPrefix(baseURL)
 
 		// 并发发起请求
 		var wg sync.WaitGroup

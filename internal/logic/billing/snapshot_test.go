@@ -479,6 +479,9 @@ func TestGenerateBillingSummary_TimeRule(t *testing.T) {
 			TimeMultiplier:   0.5,
 			TimeRule:         "闲时",
 		},
+		TokenCosts: map[string]TokenCostDetail{
+			"input": {Tokens: 50000, UnitPrice: 1.0, Cost: 0.05},
+		},
 		Settlement: BillingSnapshotSettlement{
 			PreDeductAmount: 0.1,
 			ActualCost:      0.04,
@@ -490,7 +493,12 @@ func TestGenerateBillingSummary_TimeRule(t *testing.T) {
 	if !strings.Contains(text, "闲时") {
 		t.Errorf("summary should contain time rule name, got:\n%s", text)
 	}
-	if !strings.Contains(text, "时段(0.50)") {
+	// 小计行的倍率链中应包含时段乘数（与租户倍率并列展示）
+	if !strings.Contains(text, "时段乘数(0.50)") {
 		t.Errorf("summary should contain time multiplier in subtotal line, got:\n%s", text)
+	}
+	// 独立的时段定价行应展示命中的时段名和乘数
+	if !strings.Contains(text, "时段: 闲时 ×0.50") {
+		t.Errorf("summary should contain time rule line, got:\n%s", text)
 	}
 }
