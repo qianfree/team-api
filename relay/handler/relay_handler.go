@@ -684,7 +684,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
-			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "upstream request failed", err), info.ChannelMeta.Settings.StatusCodeMapping)
+			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "请求处理失败", err), info.ChannelMeta.Settings.StatusCodeMapping)
 		}
 
 		if !v.isStream {
@@ -931,8 +931,9 @@ func handleChannelUnavailable(
 		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
 		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
 			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix, strings.Join(channelErrors, "\n"))
+		// 用户侧只返回通用错误，不暴露渠道数量和详情
 		allFailedErr := constant.NewChannelError(
-			fmt.Sprintf("all %d channels failed for model: %s", len(channelErrors), v.modelName),
+			"当前模型暂时不可用",
 			constant.ErrAllChannelsFailed,
 		)
 		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr)
@@ -946,7 +947,8 @@ func handleChannelUnavailable(
 	// 具体原因由调度器的排除明细摘要给出（熔断OPEN/半开探测限流/容量租约满/凭证冷却/目录为空）
 	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] 无可用渠道: model=%s tenant=%d user=%d request=%s%s",
 		v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix)
-	noChErr := constant.NewChannelError("no available channel for model: "+v.modelName, err)
+	// 用户侧返回通用错误，不暴露 "channel" 字眼
+	noChErr := constant.NewChannelError("当前模型暂时不可用", err)
 	// 无可用渠道时请求未转发到任何上游（与 QPS 限流、权限/额度拒绝等前置拦截同理），
 	// 不记用量日志，避免零消耗的 error 记录污染请求日志；运营侧的“被拒请求量”已由
 	// 上方 Warning 日志、调度器排除明细指标、chn_error_events 覆盖。
