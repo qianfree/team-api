@@ -751,3 +751,31 @@ err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
 - **前端编辑表单慎用 `x || 默认值` 兜底**：对数值字段，0 会被 falsy 规则吞掉，既掩盖真实数据，又可能在保存时把合法的 0 改写为默认值。
 
 排查信号：某字段在库里莫名变成 0/空串，而创建时明明写过合法值——查该表所有 UPDATE 路径中是否存在非指针字段的无条件赋值。
+
+### 2026-08-20（三）：Fields 挂在共用模型上导致 COUNT(col1, col2, ...) 报错
+
+**问题**：`TenantApiKeySelect` 中把 `.Fields("id, name, ...")` 挂在模型链上后调用 `m.Count()`，PostgreSQL 报 `function count(bigint, character varying, ...) does not exist`——gdb 生成了 `SELECT COUNT("id","name",...)` 而不是 `COUNT(*)`。
+
+**原因**：gdb 的 `Count()` 会复用模型上已设置的 `Fields` 作为 COUNT 的参数列表（多字段时逐个传入 count 聚合函数），而 PostgreSQL 的 `count` 只接受单个参数（MySQL 语义下多参 count 也不等于总行数）。这是"链式复用同一 model 做计数 + 查询"模式下的隐蔽陷阱：查列表正常、计数 SQL 被悄悄改写。
+
+**修复**：`.Fields(...)` 只挂在分页查询链上（`m.Fields(...).Page(...).Scan(...)`），`Count()` 用不带 Fields 的基础模型（生成 `COUNT(*)`）。
+
+**正确做法**：凡"先 Count 再分页 Scan"的写法，构建条件模型（Where/Order）后**先 Count**，再把 `Fields/Page/Scan` 链在同一个基础模型上；不要在 Count 之前设置 Fields。若必须提前设置 Fields，用 `m.Clone()` 或为 Count 单独构建条件链。
+
+排查信号：日志出现 `function count(... N 个参数 ...) does not exist` 或 `COUNT("a","b")` 形态的 SQL，且调用栈落在 `*.Count()`。
+
+### 2026-08-20（三）：Model.Scan(&string) 静默吞错，局部更新把未提交的 JSONB 字段重置为默认值
+
+**问题**：渠道调试日志「保存捕捉条件后开关自动关闭」。PUT 只带 `debug_log_tenant_id` 等过滤字段，settings JSONB 里的 `debug_log_enabled:true` 被静默丢弃。查库发现过滤字段写入成功、唯独开关标志消失。
+
+**原因**：读旧 settings 用的是 `_ = dao.ChnChannels...Fields("settings").Scan(&currentSettings)`——gdb 的 `Model.Scan` **只接受 struct/*struct/[]struct/[]*struct**，传入 `*string` 直接返回错误 `element of parameter "pointer" for function Scan should type of struct/...`；`_ =` 把错误吞掉后 `currentSettings` 永远是空串，`ParseChannelSettings("")` 返回默认值，套上本次请求的字段 marshal 回写——**所有未在本次请求中显式提交的 settings 字段全部被重置为默认**。开关单独提交时显式带上了 enabled 所以正常；过滤条件单独提交时没带 enabled，于是被重置为 false。这是个从原 UseProxy 更新块继承来的潜伏 bug：此前每次切换 use_proxy 同样会把 timeout_seconds 覆盖、header_override 等自定义配置静默洗掉，只是显式字段每次都带、无人察觉。同模式的 `GetTenantAuditLevel`（audit.go，只读路径）也中招——租户级审计设置因此**从未生效过**。
+
+**修复**：读单列字符串一律用 `Model.Value()`（返回 `*gvar.Var`，`v.String()` 取值），两处（channel.go 更新块、audit.go）均已改为 Value()。
+
+**正确做法（通用规则）**：
+
+- **读单个标量列用 `.Value()` 或 `.Array()`/`.All()` 后取字段，禁止 `Scan(&string)`/`Scan(&int)`**——Scan 只认 struct 系列，对基础类型指针直接报错。
+- **禁止 `_ =` 吞掉 DB 读取错误**，尤其是「读旧值 → 改字段 → 写回」的合并更新模式：读失败意味着回写会把整个 JSONB 洗成默认值，属于数据破坏而非可忽略的小错。
+- 「读-改-写」JSONB 配置的合并更新块，读失败时应中止更新并返回错误，而不是带着默认值继续。
+
+排查信号：JSONB 配置列中「本次没提交的字段莫名回到默认值」；`grep 'Scan(&' `命中基础类型指针。

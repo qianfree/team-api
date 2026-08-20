@@ -41,6 +41,7 @@ type RelayContext struct {
 	KeyTotalQuota   float64                 // API Key 总额度，0 表示不限制
 	KeyUsedQuota    float64                 // API Key 已用额度（仅展示/审计，额度检查会鲜读 DB）
 	ForwardingTrace *common.ForwardingTrace // 转发路径追踪（仅管理员可见）
+	Debug           *common.DebugSession    // 渠道调试日志会话（仅调试开关开启的请求非 nil）
 }
 
 // BillingResult 计费结果（返回给调用方用于设置响应头）
@@ -569,7 +570,30 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
 		}
 
-		info := buildRelayInfo(ctx, rc, v, selection, path, headers, attempt)
+		// 渠道调试日志：首个开启调试且匹配目标过滤（租户/成员/密钥，AND 组合，0=不限）的尝试
+		// 创建会话（捕获段1客户端请求 + 包装段4 writer，writer 保持到请求结束——中间失败尝试
+		// 不向客户端写字节，累积字节即最终响应）；每轮尝试独立捕获器经 attemptCtx 传递给传输层。
+		// 必须用独立变量 attemptCtx，不可重赋值 ctx：否则陈旧捕获器会泄漏进下一轮 sess.Next
+		// 选中无调试渠道的请求。
+		var dbgAttempt *common.DebugAttempt
+		if selection.Settings.DebugLogEnabled &&
+			selection.Settings.DebugTargetMatch(rc.TenantID, rc.UserID, rc.ApiKeyID) {
+			if rc.Debug == nil {
+				rc.Debug = common.NewDebugSession(rc.RequestID, rc.TenantID, rc.UserID, rc.ApiKeyID, path)
+				rc.Debug.CaptureClientRequest(headers, body)
+				dw := common.NewDebugClientWriter(rc.Writer)
+				rc.Debug.SetClientWriter(dw)
+				rc.Writer = dw
+			}
+			dbgAttempt = rc.Debug.BeginAttempt(selection, v.modelName, v.relayModeStr, v.isStream, attempt)
+		}
+		attemptCtx := ctx
+		if dbgAttempt != nil {
+			attemptCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
+		}
+
+		info := buildRelayInfo(attemptCtx, rc, v, selection, path, headers, attempt)
+		dbgAttempt.CaptureProtocol(info)
 
 		if tr := monitor.GetTrackedRequest(rc.RequestID); tr != nil {
 			tr.ChannelID = selection.ChannelID
@@ -582,6 +606,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
+			dbgAttempt.MarkFinal(fmt.Errorf("unsupported channel type: %d", selection.ChannelType))
 			return nil, v.billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
 		}
 		adaptor.Init(info)
@@ -607,21 +632,24 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					if billing != nil && preDeductAmount > 0 {
 						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 					}
+					dbgAttempt.MarkFinal(err)
 					return nil, v.billingResult, constant.NewRequestError(
 						"previous_response_id is only supported on responses-native channels; no eligible channel remains for this model. Resend the full conversation input without previous_response_id.", nil)
 				}
+				dbgAttempt.Submit(err)
 				continue
 			}
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
+			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, err
 		}
 
 		// 容量租约已由调度器在 Next 内获取；长流式请求由续期器保活
 		leaseRefresh := startDispatchLeaseRefresher(d.Channel.ID, rc.RequestID)
 
-		upstreamCtx := context.WithoutCancel(ctx)
+		upstreamCtx := context.WithoutCancel(attemptCtx)
 		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer settleCancel()
 
@@ -645,6 +673,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 				settleCancel()
 				sleepBackoff(ctx, backoff)
+				dbgAttempt.Submit(err)
 				continue
 			}
 
@@ -654,6 +683,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "upstream request failed", err), info.ChannelMeta.Settings.StatusCodeMapping)
 		}
 
@@ -695,6 +725,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				}
 				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
 			}
 
@@ -733,6 +764,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
 				settleCancel()
 				sleepBackoff(ctx, backoff)
+				dbgAttempt.Submit(err)
 				continue
 			}
 
@@ -742,10 +774,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, err
 		}
 
 		// 成功路径：绑定续期 + 健康上报由 Finish 完成
+		dbgAttempt.MarkFinal(nil)
 		sess.Finish(settleCtx, true, info.LatencyMs())
 		appendHop(trace, hop, true, "", info.LatencyMs())
 		trace.TotalAttempts = attempt + 1
