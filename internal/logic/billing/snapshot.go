@@ -232,21 +232,46 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
 		}
 
-		// 小计 × 倍率（乘法链 = 租户倍率 × 时段乘数，两者均为 1 时省略该行）
-		subtotal := snapshot.Settlement.ActualCost
+		// 小计 × 倍率：展开各项费用明细，乘法链 = 租户倍率 × 时段乘数
 		effTenant := snapshot.Multipliers.TenantMultiplier
 		effTime := snapshot.Multipliers.TimeMultiplier
 		if effTime <= 0 {
 			effTime = 1.0
 		}
 		if effTenant > 0 && (effTenant != 1.0 || effTime != 1.0) {
-			preMultiplier := subtotal / (effTenant * effTime)
-			multDesc := fmt.Sprintf("%.2f", effTenant)
-			if effTime != 1.0 {
-				multDesc += fmt.Sprintf(" × 时段(%.2f)", effTime)
+			// 收集各项费用明细
+			var costParts []string
+			if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
 			}
-			lines = append(lines, fmt.Sprintf("小计: $%s × 租户倍率(%s) = $%s",
-				formatPrice(preMultiplier), multDesc, formatPrice(subtotal)))
+			if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+			if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+			if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+
+			// 构建倍率描述（租户倍率和时段乘数是并列关系，带文字标签）
+			multDesc := fmt.Sprintf("租户倍率(%.2f)", effTenant)
+			if effTime != 1.0 {
+				multDesc += fmt.Sprintf(" × 时段乘数(%.2f)", effTime)
+			}
+
+			// 展开格式：(abc + def + feg) × 倍率 = 总计
+			costsExpr := ""
+			if len(costParts) > 1 {
+				costsExpr = fmt.Sprintf("(%s)", joinWithPlus(costParts))
+			} else if len(costParts) == 1 {
+				costsExpr = costParts[0]
+			}
+
+			if costsExpr != "" {
+				lines = append(lines, fmt.Sprintf("小计: %s × %s = $%s",
+					costsExpr, multDesc, formatPrice(snapshot.Settlement.ActualCost)))
+			}
 		}
 	}
 
@@ -299,4 +324,16 @@ func SnapshotToJSON(snapshot *BillingSnapshot) string {
 // formatPrice 格式化价格（去除尾部多余零）
 func formatPrice(v float64) string {
 	return formatCost(v)
+}
+
+// joinWithPlus 用 " + " 连接字符串数组
+func joinWithPlus(parts []string) string {
+	result := ""
+	for i, part := range parts {
+		if i > 0 {
+			result += " + "
+		}
+		result += part
+	}
+	return result
 }

@@ -214,19 +214,6 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'TenantRequestAuditLogs', query })
 }
 
-function hasUpstreamModel(log: any): boolean {
-	return log.upstream_model && log.upstream_model !== log.model_name && log.upstream_model !== ''
-}
-
-function parseSnapshot(log: any): any {
-	if (!log.billing_snapshot) return null
-	try {
-		return typeof log.billing_snapshot === 'string' ? JSON.parse(log.billing_snapshot) : log.billing_snapshot
-	} catch {
-		return null
-	}
-}
-
 // Tooltip helpers
 function showCostTooltip(event: MouseEvent, row: any) {
 	const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -273,13 +260,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 		title: '模型',
 		key: 'model',
 		width: 170,
-		render: (row) =>
-			hasUpstreamModel(row)
-				? h('div', { class: 'space-y-0.5' }, [
-						h('div', { class: 'font-medium text-gray-900 break-all' }, row.model_name),
-						h('div', { class: 'text-gray-500 text-xs' }, [h('span', { class: 'mr-0.5' }, '↳'), row.upstream_model]),
-				  ])
-				: h('span', { class: 'font-medium text-gray-900' }, row.model_name),
+		render: (row) => h('span', { class: 'font-medium text-gray-900 break-all' }, row.model_name),
 	},
 	{
 		title: '类型',
@@ -705,10 +686,6 @@ onMounted(() => {
 							</span>
 						</div>
 						<div class="flex justify-between">
-							<span class="text-gray-500">代理模式</span>
-							<span class="font-mono text-xs">{{ detailLog.relay_mode || '-' }}</span>
-						</div>
-						<div class="flex justify-between">
 							<span class="text-gray-500">请求类型</span>
 							<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="requestTypeBadge[detailLog.request_type] || 'bg-gray-100 text-gray-800'">
 								{{ requestTypeLabel[detailLog.request_type] || '-' }}
@@ -730,9 +707,45 @@ onMounted(() => {
 							<span class="text-gray-500">重试次数</span>
 							<span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight bg-amber-100 text-amber-600">{{ detailLog.retry_index }}</span>
 						</div>
-						<div v-if="detailLog.api_key_id" class="flex justify-between">
-							<span class="text-gray-500">API Key ID</span>
-							<span class="font-mono text-xs">{{ detailLog.api_key_id }}</span>
+						<div class="flex justify-between">
+							<span class="text-gray-500">成员</span>
+							<span class="text-gray-700">{{ detailLog.username || '-' }}</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-500">API Key</span>
+							<span class="text-gray-700">{{ detailLog.api_key_name || '-' }}</span>
+						</div>
+						<div v-if="detailLog.project_name" class="flex justify-between">
+							<span class="text-gray-500">项目</span>
+							<span class="inline-flex items-center rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-700">{{ detailLog.project_name }}</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-500">时间</span>
+							<span>{{ formatTime(detailLog.created_at) }}</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-500">首Token/总用时</span>
+							<span>{{ formatMs(detailLog.first_token_ms) }} / {{ formatMs(detailLog.latency_ms) }}</span>
+						</div>
+						<div v-if="detailLog.stream_end_reason" class="flex justify-between">
+							<span class="text-gray-500">流结束原因</span>
+							<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="detailLog.stream_end_reason === 'done' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-800'">
+								{{ detailLog.stream_end_reason }}
+							</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- 技术详情（默认折叠）：排查问题时展开查看 -->
+				<details class="group rounded-lg border border-gray-200 px-4 py-2.5">
+					<summary class="cursor-pointer list-none text-sm font-semibold text-gray-500 select-none flex items-center gap-2 hover:text-gray-700">
+						<Icon name="chevronRight" size="xs" class="text-gray-400 transition-transform group-open:rotate-90" />
+						技术详情
+					</summary>
+					<div class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+						<div class="flex justify-between">
+							<span class="text-gray-500">代理模式</span>
+							<span class="font-mono text-xs">{{ detailLog.relay_mode || '-' }}</span>
 						</div>
 						<div v-if="detailLog.inbound_endpoint" class="flex justify-between">
 							<span class="text-gray-500">请求端点</span>
@@ -754,25 +767,8 @@ onMounted(() => {
 							<span class="text-gray-500">Reasoning Effort</span>
 							<span>{{ detailLog.reasoning_effort }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">时间</span>
-							<span>{{ formatTime(detailLog.created_at) }}</span>
-						</div>
 					</div>
-				</div>
-
-				<!-- 模型映射 -->
-				<div v-if="hasUpstreamModel(detailLog)">
-					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-						<Icon name="arrowRight" size="sm" class="text-primary-500" />
-						模型映射
-					</h4>
-					<div class="flex items-center gap-2 text-sm bg-gray-50 rounded-lg px-4 py-2.5">
-						<span class="font-mono inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-800">{{ detailLog.model_name }}</span>
-						<Icon name="arrowRight" size="sm" class="text-gray-400" />
-						<span class="font-mono inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800">{{ detailLog.upstream_model }}</span>
-					</div>
-				</div>
+				</details>
 
 				<!-- Token 使用量 -->
 				<div>
@@ -855,232 +851,21 @@ onMounted(() => {
 							<span class="text-gray-700">实际费用</span>
 							<span class="text-emerald-600">{{ formatCost(detailLog.actual_cost || 0) }}</span>
 						</div>
-						<div v-if="detailLog.plan_deduction > 0 || detailLog.wallet_deduction > 0" class="flex items-center justify-between">
-							<span class="text-gray-500">扣费来源</span>
-							<span class="flex items-center gap-1.5">
-								<span v-if="detailLog.plan_deduction > 0" class="inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700">套餐 ${{ formatCost(detailLog.plan_deduction) }}</span>
-								<span v-if="detailLog.wallet_deduction > 0" class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">余额 ${{ formatCost(detailLog.wallet_deduction) }}</span>
-							</span>
-						</div>
-						<div v-if="detailLog.rate_multiplier && detailLog.rate_multiplier !== 1" class="flex items-center justify-between">
-							<span class="text-gray-500">费率倍率</span>
-							<span class="font-medium" :class="Number(detailLog.rate_multiplier) < 1 ? 'text-emerald-600' : 'text-amber-600'">{{ Number(detailLog.rate_multiplier).toFixed(4) }}x</span>
-						</div>
 						<div class="flex items-center justify-between">
 							<span class="text-gray-500">定价来源</span>
 							<span>{{ billingSourceLabel[detailLog.billing_source] || detailLog.billing_source || '-' }}</span>
 						</div>
-						<div class="flex items-center justify-between">
-							<span class="text-gray-500">货币</span>
-							<span>{{ detailLog.currency || 'USD' }}</span>
-						</div>
 					</div>
 				</div>
 
-				<!-- 结算明细 -->
-				<div v-if="detailLog.pre_deduct_amount > 0 || detailLog.refund_amount > 0 || detailLog.supplement_amount > 0 || detailLog.settled_at">
-					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-						<Icon name="refresh" size="sm" class="text-primary-500" />
-						结算明细
-					</h4>
-					<div class="space-y-2 text-sm">
-						<div class="flex items-center justify-between">
-							<span class="text-gray-500">预扣金额</span>
-							<span>{{ formatCost(detailLog.pre_deduct_amount) }}</span>
-						</div>
-						<div v-if="detailLog.refund_amount > 0" class="flex items-center justify-between">
-							<span class="text-gray-500">退回金额</span>
-							<span class="text-emerald-600">{{ formatCost(detailLog.refund_amount) }}</span>
-						</div>
-						<div v-if="detailLog.supplement_amount > 0" class="flex items-center justify-between">
-							<span class="text-gray-500">补扣金额</span>
-							<span class="text-amber-600">{{ formatCost(detailLog.supplement_amount) }}</span>
-						</div>
-						<div v-if="detailLog.settled_at" class="flex items-center justify-between">
-							<span class="text-gray-500">结算时间</span>
-							<span>{{ formatTime(detailLog.settled_at) }}</span>
-						</div>
-					</div>
-				</div>
-
-				<!-- 性能指标 -->
-				<div>
-					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-						<Icon name="clock" size="sm" class="text-primary-500" />
-						性能指标
-					</h4>
-					<div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-						<div class="flex justify-between">
-							<span class="text-gray-500">总延迟</span>
-							<span>{{ formatMs(detailLog.latency_ms) }}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">首 Token 延迟</span>
-							<span>{{ formatMs(detailLog.first_token_ms) }}</span>
-						</div>
-						<div v-if="detailLog.stream_end_reason" class="flex justify-between">
-							<span class="text-gray-500">流结束原因</span>
-							<span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="detailLog.stream_end_reason === 'done' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-800'">
-								{{ detailLog.stream_end_reason }}
-							</span>
-						</div>
-					</div>
-				</div>
-
-				<!-- 计费快照：结构化 JSONB + 文本摘要 -->
-				<div v-if="detailLog.billing_summary || parseSnapshot(detailLog)">
-					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-						<Icon name="clipboard" size="sm" class="text-primary-500" />
-						计费快照
-					</h4>
-
-					<!-- 结构化 JSONB 展示 -->
-					<template v-if="parseSnapshot(detailLog)">
-						<div class="grid grid-cols-2 gap-3">
-							<!-- 定价信息 -->
-							<div class="bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">定价信息</div>
-								<div class="space-y-1 text-xs">
-									<div v-if="parseSnapshot(detailLog).pricing.billing_source" class="flex justify-between">
-										<span class="text-gray-500">价格来源</span>
-										<span class="font-medium">{{ billingSourceLabel[parseSnapshot(detailLog).pricing.billing_source] || parseSnapshot(detailLog).pricing.billing_source }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.billing_mode" class="flex justify-between">
-										<span class="text-gray-500">计费模式</span>
-										<span class="font-medium">{{ billingModeLabel[parseSnapshot(detailLog).pricing.billing_mode] || parseSnapshot(detailLog).pricing.billing_mode }}</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">基础输入价</span>
-										<span class="font-mono">${{ Number(parseSnapshot(detailLog).pricing.base_input_price || 0).toFixed(6) }}/1M</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">基础输出价</span>
-										<span class="font-mono">${{ Number(parseSnapshot(detailLog).pricing.base_output_price || 0).toFixed(6) }}/1M</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.effective_input_price !== parseSnapshot(detailLog).pricing.base_input_price" class="flex justify-between">
-										<span class="text-gray-500">实际输入价</span>
-										<span class="font-mono text-emerald-600">${{ Number(parseSnapshot(detailLog).pricing.effective_input_price || 0).toFixed(6) }}/1M</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.effective_output_price !== parseSnapshot(detailLog).pricing.base_output_price" class="flex justify-between">
-										<span class="text-gray-500">实际输出价</span>
-										<span class="font-mono text-emerald-600">${{ Number(parseSnapshot(detailLog).pricing.effective_output_price || 0).toFixed(6) }}/1M</span>
-									</div>
-								</div>
-							</div>
-
-							<!-- 倍率信息 -->
-							<div class="bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">倍率信息</div>
-								<div class="space-y-1 text-xs">
-									<div class="flex justify-between">
-										<span class="text-gray-500">模型倍率</span>
-										<span class="font-mono">{{ Number(parseSnapshot(detailLog).multipliers.model_multiplier || 1).toFixed(4) }}x</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">租户倍率</span>
-										<span class="font-mono" :class="Number(parseSnapshot(detailLog).multipliers.tenant_multiplier || 1) < 1 ? 'text-emerald-600' : ''">
-											{{ Number(parseSnapshot(detailLog).multipliers.tenant_multiplier || 1).toFixed(4) }}x
-										</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).multipliers.discount_ratio && parseSnapshot(detailLog).multipliers.discount_ratio !== 1" class="flex justify-between">
-										<span class="text-gray-500">折扣比例</span>
-										<span class="font-mono text-emerald-600">{{ Number(parseSnapshot(detailLog).multipliers.discount_ratio).toFixed(4) }}x</span>
-									</div>
-								</div>
-							</div>
-
-							<!-- Token 费用计算 -->
-							<div v-if="parseSnapshot(detailLog).token_costs" class="col-span-2 bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">Token 费用计算</div>
-								<div class="space-y-1 text-xs">
-									<template v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key">
-										<div v-if="(tc.tokens || 0) > 0" class="flex justify-between items-center">
-											<span class="text-gray-500">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
-											<span class="font-mono">
-												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ Number(tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ Number(tc.cost || 0).toFixed(6) }}</strong>
-											</span>
-										</div>
-									</template>
-								</div>
-							</div>
-
-							<!-- Cache 比率 -->
-							<div v-if="parseSnapshot(detailLog).cache_ratios" class="bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">Cache 比率</div>
-								<div class="space-y-1 text-xs">
-									<div class="flex justify-between">
-										<span class="text-gray-500">缓存读取比率</span>
-										<span class="font-mono">{{ Number(parseSnapshot(detailLog).cache_ratios.cache_ratio || 0).toFixed(4) }}x</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">缓存创建比率</span>
-										<span class="font-mono">{{ Number(parseSnapshot(detailLog).cache_ratios.cache_creation_ratio || 0).toFixed(4) }}x</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">5分钟缓存比率</span>
-										<span class="font-mono">{{ Number(parseSnapshot(detailLog).cache_ratios.cache_creation_5m_ratio || 0).toFixed(4) }}x</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">1小时缓存比率</span>
-										<span class="font-mono">{{ Number(parseSnapshot(detailLog).cache_ratios.cache_creation_1h_ratio || 0).toFixed(4) }}x</span>
-									</div>
-								</div>
-							</div>
-
-							<!-- 结算信息 -->
-							<div v-if="parseSnapshot(detailLog).settlement" class="bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">结算信息</div>
-								<div class="space-y-1 text-xs">
-									<div class="flex justify-between">
-										<span class="text-gray-500">预扣金额</span>
-										<span class="font-mono">{{ formatCost(parseSnapshot(detailLog).settlement.pre_deduct_amount || 0) }}</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">实际费用</span>
-										<span class="font-mono text-emerald-600">{{ formatCost(parseSnapshot(detailLog).settlement.actual_cost || 0) }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).settlement.refund_amount > 0" class="flex justify-between">
-										<span class="text-gray-500">退还金额</span>
-										<span class="font-mono text-emerald-600">{{ formatCost(parseSnapshot(detailLog).settlement.refund_amount) }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).settlement.supplement_amount > 0" class="flex justify-between">
-										<span class="text-gray-500">补扣金额</span>
-										<span class="font-mono text-amber-600">{{ formatCost(parseSnapshot(detailLog).settlement.supplement_amount) }}</span>
-									</div>
-								</div>
-							</div>
-
-							<!-- 请求元信息 -->
-							<div v-if="parseSnapshot(detailLog).request_meta" class="bg-gray-50 rounded-xl p-3">
-								<div class="text-xs font-semibold text-gray-700 mb-2">请求元信息</div>
-								<div class="space-y-1 text-xs">
-									<div v-if="parseSnapshot(detailLog).request_meta.requested_model" class="flex justify-between">
-										<span class="text-gray-500">请求模型</span>
-										<span class="font-mono">{{ parseSnapshot(detailLog).request_meta.requested_model }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).request_meta.upstream_model" class="flex justify-between">
-										<span class="text-gray-500">上游模型</span>
-										<span class="font-mono">{{ parseSnapshot(detailLog).request_meta.upstream_model }}</span>
-									</div>
-									<div class="flex justify-between">
-										<span class="text-gray-500">流式请求</span>
-										<span>{{ parseSnapshot(detailLog).request_meta.is_stream ? '是' : '否' }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).request_meta.first_token_ms" class="flex justify-between">
-										<span class="text-gray-500">首 Token</span>
-										<span>{{ parseSnapshot(detailLog).request_meta.first_token_ms }}ms</span>
-									</div>
-								</div>
-							</div>
-						</div>
-					</template>
-
-					<!-- 文本摘要 -->
-					<div v-if="detailLog.billing_summary" class="mt-3">
-						<div class="text-xs font-semibold text-gray-500 mb-1">计算过程</div>
-						<pre class="whitespace-pre-wrap rounded-lg bg-gray-900 px-4 py-3 text-xs leading-relaxed text-gray-100">{{ detailLog.billing_summary }}</pre>
-					</div>
-				</div>
+				<!-- 计费过程：billing_summary 文本摘要（默认折叠，点击展开） -->
+				<details v-if="detailLog.billing_summary" class="group rounded-lg border border-gray-200 px-4 py-2.5">
+					<summary class="cursor-pointer list-none text-sm font-semibold text-gray-500 select-none flex items-center gap-2 hover:text-gray-700">
+						<Icon name="chevronRight" size="xs" class="text-gray-400 transition-transform group-open:rotate-90" />
+						计费过程
+					</summary>
+					<pre class="mt-3 whitespace-pre-wrap rounded-lg bg-gray-900 px-4 py-3 text-xs leading-relaxed text-gray-100">{{ detailLog.billing_summary }}</pre>
+				</details>
 
 				<!-- 错误信息 -->
 				<div v-if="detailLog.error_message">
@@ -1093,10 +878,6 @@ onMounted(() => {
 					</div>
 				</div>
 			</div>
-
-			<template #footer>
-				<button class="btn btn-secondary" @click="detailModal = false">关闭</button>
-			</template>
 		</BaseModal>
 	</div>
 </template>
