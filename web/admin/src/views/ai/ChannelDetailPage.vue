@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch, Alert, DatePicker } from '@arco-design/web-vue'
+import { Tag, Button, Popconfirm, Message, RadioGroup, Radio, InputNumber, Input, Switch, DatePicker } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
@@ -790,17 +790,6 @@ async function initDebugTarget() {
   }
 }
 
-// 捕捉范围描述（警告条展示）
-const debugTargetDesc = computed(() => {
-  const label = (opts: DebugSelectOption[], v: number | null) =>
-    opts.find(o => o.value === v)?.label || `#${v}`
-  const parts: string[] = []
-  if (debugTarget.tenantId) parts.push(`租户 ${label(debugTenantOptions.value, debugTarget.tenantId)}`)
-  if (debugTarget.userId) parts.push(`成员 ${label(debugUserOptions.value, debugTarget.userId)}`)
-  if (debugTarget.apiKeyId) parts.push(`密钥 ${label(debugKeyOptions.value, debugTarget.apiKeyId)}`)
-  return parts.length ? parts.join(' / ') : '全部请求（未设过滤）'
-})
-
 // 复制到剪切板（含非安全上下文降级）
 function copyText(text: string, label = '内容') {
   if (!text) { Message.warning('内容为空'); return }
@@ -1291,7 +1280,13 @@ function formatHeaders(headers: Record<string, string>): string {
           <!-- Tab 5: Debug Logs -->
           <ATabPane key="debug_logs" title="调试日志">
             <!-- 配置区块 -->
-            <ACard :bordered="false" class="mb-4" title="调试配置">
+            <ACard :bordered="false" class="mb-4">
+              <template #title>
+                <div class="flex items-center" style="gap: 8px;">
+                  <span>调试配置</span>
+                  <span style="font-size: 12px; color: var(--color-text-3); font-weight: normal;">开启后记录每次请求尝试的四段完整报文（含脱敏凭证），排障完成请及时关闭并清理</span>
+                </div>
+              </template>
               <template #extra>
                 <div class="flex items-center" style="gap: 8px;">
                   <span style="font-size: 13px; color: var(--color-text-2);">调试开关</span>
@@ -1302,17 +1297,6 @@ function formatHeaders(headers: Record<string, string>): string {
                   />
                 </div>
               </template>
-
-              <!-- 状态提示 -->
-              <Alert
-                v-if="detail.debug_log_enabled"
-                type="warning"
-                closable
-                class="mb-3"
-              >
-                <template #icon><icon-exclamation-circle-fill /></template>
-                调试日志已开启，正在记录经该渠道每次请求尝试的四段完整报文（含脱敏凭证）。排障完成请及时关闭并清理日志。
-              </Alert>
 
               <!-- 捕捉范围配置 -->
               <div class="form-group-title">捕捉范围配置</div>
@@ -1380,7 +1364,12 @@ function formatHeaders(headers: Record<string, string>): string {
             <ACard :bordered="false">
               <template #title>
                 <div class="flex items-center justify-between" style="width: 100%;">
-                  <span>日志记录</span>
+                  <div class="flex items-center" style="gap: 8px;">
+                    <span>日志记录</span>
+                    <span v-if="debugStats && debugStats.total > 0" style="font-size: 12px; color: var(--color-text-3); font-weight: normal;">
+                      累计 {{ debugStats.total }} 条 / {{ formatBytes(debugStats.total_bytes || 0) }}<span v-if="debugStats.oldest_at">，最早 {{ debugStats.oldest_at }}</span>，无自动过期请及时清理
+                    </span>
+                  </div>
                   <Popconfirm content="确定清空该渠道全部调试日志？此操作不可逆" @ok="clearDebugLogs">
                     <AButton status="danger" type="outline" size="small" :disabled="!debugStats || debugStats.total === 0">
                       <template #icon><icon-delete /></template>
@@ -1389,17 +1378,6 @@ function formatHeaders(headers: Record<string, string>): string {
                   </Popconfirm>
                 </div>
               </template>
-              <Alert
-                v-if="!detail.debug_log_enabled && debugStats && debugStats.total > 0"
-                type="normal"
-                closable
-                class="mb-3"
-              >
-                调试日志完整保留请求/响应体（可能数 MB/条），无自动过期。当前捕捉范围：{{ debugTargetDesc }}；累计
-                {{ debugStats ? debugStats.total : 0 }} 条 / {{ formatBytes(debugStats?.total_bytes || 0) }}
-                <template v-if="debugStats && debugStats.oldest_at">，最早 {{ debugStats.oldest_at }}</template>
-                —— 请及时清理，避免存储膨胀。
-              </Alert>
 
               <!-- 查询过滤 -->
               <div class="flex items-center flex-wrap mb-3" style="gap: 8px;">
@@ -1413,15 +1391,11 @@ function formatHeaders(headers: Record<string, string>): string {
                   format="YYYY-MM-DD"
                   @change="(val: any) => { debugFilter.dateRange = val }"
                 />
-                <Switch v-model="debugFilter.only_error" size="small">
-                  <template #checked>仅错误</template>
-                  <template #unchecked>仅错误</template>
-                </Switch>
+                <ASelect v-model="debugFilter.only_error" :options="[{ label: '全部记录', value: false }, { label: '仅错误', value: true }]" size="small" style="width: 110px" @change="handleDebugFilter" />
                 <AButton type="primary" size="small" @click="handleDebugFilter">搜索</AButton>
                 <AButton size="small" @click="resetDebugFilter">重置</AButton>
               </div>
 
-              <!-- 日志表格 -->
               <!-- 日志表格 -->
               <ATable
                 :columns="debugColumns"
