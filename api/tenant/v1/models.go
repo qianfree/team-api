@@ -23,6 +23,21 @@ type PricingTierItem struct {
 	OutputPrice float64 `json:"output_price"`
 }
 
+// TimePriceItem 时段价目项（后端按「租户有效价 × 时段乘数」换算好的展示价，前端直接渲染）。
+// tiered 模型 InputPrice/OutputPrice 为首档换算价（起价）；per_request 模型填 PerRequestPrice。
+type TimePriceItem struct {
+	Name            string   `json:"name"`                 // 时段名
+	Days            []int    `json:"days,omitempty"`       // 适用星期 1=周一..7=周日；空=每天
+	StartTime       string   `json:"start_time,omitempty"` // 空=全天
+	EndTime         string   `json:"end_time,omitempty"`
+	ValidFrom       string   `json:"valid_from,omitempty"` // 促销/定时调价窗口（空=长期）
+	ValidTo         string   `json:"valid_to,omitempty"`
+	Multiplier      float64  `json:"multiplier"`
+	InputPrice      *float64 `json:"input_price"`
+	OutputPrice     *float64 `json:"output_price"`
+	PerRequestPrice *float64 `json:"per_request_price"`
+}
+
 // TenantAvailableModelItem 租户可用模型信息
 type TenantAvailableModelItem struct {
 	ID                 int64             `json:"id"`
@@ -43,6 +58,12 @@ type TenantAvailableModelItem struct {
 	CacheReadPrice     *float64          `json:"cache_read_price"`
 	CacheCreationPrice *float64          `json:"cache_creation_price"`
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
+	// TimePrices 时段价目（平台配置了时段定价的模型才有；价格为换算后的展示价）
+	TimePrices []TimePriceItem `json:"time_prices"`
+	// DiscountLabel 折扣标签（平台定价锚点行配置的营销展示文案，如"7折起"；NULL=不展示）
+	DiscountLabel *string `json:"discount_label"`
+	// PriceChangeNote 价格调整说明（对外提示价格有变动；NULL=不展示）
+	PriceChangeNote *string `json:"price_change_note"`
 	// AsyncImage 图片模型异步端点是否可用（提交 /v1/images/generations/async 后轮询取图）。
 	// 仅图片分类模型有意义；真异步厂商，或同步厂商且「同步图片异步化」开关开启时为 true。
 	AsyncImage bool `json:"async_image"`

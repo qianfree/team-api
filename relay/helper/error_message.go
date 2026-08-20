@@ -54,33 +54,33 @@ func categorizeTransportError(urlErr *url.Error) string {
 
 	// 客户端主动取消：不可重试，向用户说明即可
 	if errors.Is(inner, context.Canceled) {
-		return "request canceled"
+		return "请求已取消"
 	}
 	// 请求 / 响应超时（context 截止、i/o timeout、Client.Timeout 等）
 	if errors.Is(inner, context.DeadlineExceeded) {
-		return "upstream request timed out"
+		return "请求超时，请重试"
 	}
 	var netErr net.Error
 	if errors.As(inner, &netErr) && netErr.Timeout() {
-		return "upstream request timed out"
+		return "请求超时，请重试"
 	}
 	// 连接被上游拒绝（端口未开放 / 服务未启动）
 	if errors.Is(inner, syscall.ECONNREFUSED) {
-		return "upstream connection refused"
+		return "服务暂时不可用，请稍后重试"
 	}
 	// DNS 解析失败：域名不存在或解析异常
 	var dnsErr *net.DNSError
 	if errors.As(inner, &dnsErr) {
-		return "upstream host resolution failed"
+		return "服务暂时不可用，请稍后重试"
 	}
 	// 连接被对端重置 / 提前关闭（GFW 干扰、上游瞬断的典型表现）
 	if errors.Is(inner, syscall.ECONNRESET) ||
 		errors.Is(inner, io.EOF) ||
 		errors.Is(inner, io.ErrUnexpectedEOF) {
-		return "upstream connection reset"
+		return "连接中断，请重试"
 	}
 	// 其余无法归类的传输层错误
-	return "upstream connection failed"
+	return "服务暂时不可用，请稍后重试"
 }
 
 // RedactMessage 全量抹除字符串中的 URL / IP，替换为 [redacted]。

@@ -104,6 +104,14 @@ func ResetChannelHealth(ctx context.Context, channelID int64) {
 	redisState.ResetHealth(ctx, channelID, models)
 }
 
+// ResetModelHealth 重置指定模型的健康度（只重置该模型，不影响其他模型）
+func ResetModelHealth(ctx context.Context, channelID int64, modelName string) {
+	if redisState == nil {
+		return
+	}
+	redisState.ResetHealth(ctx, channelID, []string{modelName})
+}
+
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。
 // 管理后台渠道写操作（更新/删除/Key 变更/能力变更）后调用。
 func InvalidateChannel(ctx context.Context, channelID int64) {

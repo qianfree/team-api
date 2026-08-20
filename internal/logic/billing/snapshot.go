@@ -33,6 +33,8 @@ type BillingSnapshotMultipliers struct {
 	TenantMultiplier float64 `json:"tenant_multiplier"`
 	DiscountRatio    float64 `json:"discount_ratio"`
 	RateMultiplier   float64 `json:"rate_multiplier"`
+	TimeMultiplier   float64 `json:"time_multiplier"` // 时段乘数（未启用时段定价时为 1）
+	TimeRule         string  `json:"time_rule"`       // 命中的时段名（供账单解释；未命中为空）
 }
 
 // BillingSnapshotCachePrices 缓存价格信息
@@ -91,6 +93,8 @@ func GenerateBillingSnapshot(
 			TenantMultiplier: pricing.TenantMultiplier,
 			DiscountRatio:    pricing.DiscountRatio,
 			RateMultiplier:   pricing.TenantMultiplier,
+			TimeMultiplier:   effectiveTimeMultiplier(pricing),
+			TimeRule:         pricing.TimeRuleName,
 		},
 		TokenCosts: buildTokenCosts(pricing, breakdown),
 	}
@@ -228,13 +232,52 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
 		}
 
-		// 小计 × 倍率
-		subtotal := snapshot.Settlement.ActualCost
-		if snapshot.Multipliers.TenantMultiplier != 1.0 && snapshot.Multipliers.TenantMultiplier != 0 {
-			preMultiplier := subtotal / snapshot.Multipliers.TenantMultiplier
-			lines = append(lines, fmt.Sprintf("小计: $%s × 租户倍率(%.2f) = $%s",
-				formatPrice(preMultiplier), snapshot.Multipliers.TenantMultiplier, formatPrice(subtotal)))
+		// 小计 × 倍率：展开各项费用明细，乘法链 = 租户倍率 × 时段乘数
+		effTenant := snapshot.Multipliers.TenantMultiplier
+		effTime := snapshot.Multipliers.TimeMultiplier
+		if effTime <= 0 {
+			effTime = 1.0
 		}
+		if effTenant > 0 && (effTenant != 1.0 || effTime != 1.0) {
+			// 收集各项费用明细
+			var costParts []string
+			if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+			if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+			if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+			if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Cost > 0 {
+				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+			}
+
+			// 构建倍率描述（租户倍率和时段乘数是并列关系，带文字标签）
+			multDesc := fmt.Sprintf("租户倍率(%.2f)", effTenant)
+			if effTime != 1.0 {
+				multDesc += fmt.Sprintf(" × 时段乘数(%.2f)", effTime)
+			}
+
+			// 展开格式：(abc + def + feg) × 倍率 = 总计
+			costsExpr := ""
+			if len(costParts) > 1 {
+				costsExpr = fmt.Sprintf("(%s)", joinWithPlus(costParts))
+			} else if len(costParts) == 1 {
+				costsExpr = costParts[0]
+			}
+
+			if costsExpr != "" {
+				lines = append(lines, fmt.Sprintf("小计: %s × %s = $%s",
+					costsExpr, multDesc, formatPrice(snapshot.Settlement.ActualCost)))
+			}
+		}
+	}
+
+	// 时段定价行：放在 token/per_request 分支之后统一展示，保证账单可解释（按次计费同样适用时段乘数）
+	if snapshot.Multipliers.TimeRule != "" && snapshot.Multipliers.TimeMultiplier > 0 && snapshot.Multipliers.TimeMultiplier != 1.0 {
+		lines = append(lines, fmt.Sprintf("时段: %s ×%.2f", snapshot.Multipliers.TimeRule, snapshot.Multipliers.TimeMultiplier))
 	}
 
 	// 结算信息
@@ -281,4 +324,16 @@ func SnapshotToJSON(snapshot *BillingSnapshot) string {
 // formatPrice 格式化价格（去除尾部多余零）
 func formatPrice(v float64) string {
 	return formatCost(v)
+}
+
+// joinWithPlus 用 " + " 连接字符串数组
+func joinWithPlus(parts []string) string {
+	result := ""
+	for i, part := range parts {
+		if i > 0 {
+			result += " + "
+		}
+		result += part
+	}
+	return result
 }

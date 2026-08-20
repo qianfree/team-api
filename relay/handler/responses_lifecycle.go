@@ -76,7 +76,7 @@ func HandleResponsesLifecycle(ctx context.Context, method string, responseID str
 	client := common.NewPooledClient(info.ChannelMeta.Settings.GetTimeoutSeconds(info.RelayMode), info.ChannelMeta.Settings.UseProxy)
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return constant.NewUpstreamError(http.StatusBadGateway, "upstream lifecycle request failed", err)
+		return constant.NewUpstreamError(http.StatusBadGateway, "请求处理失败", err)
 	}
 	defer resp.Body.Close()
 

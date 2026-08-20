@@ -2,19 +2,45 @@ package monitor
 
 import (
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 
+	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
 
-// 断言 list 中某模型的字段（浮点用容差比较，派生指标均四舍五入到 2 位小数）。
-func assertPerfField(t *testing.T, list []map[string]any, model, field string, wantFloat float64, wantInt int64) {
-	t.Helper()
-	for _, item := range list {
-		if item["model_name"] != model {
+// perfFieldValue 按 JSON 字段名（snake_case）从结构体取值，整数统一归一为 int64、
+// 浮点统一为 float64，与旧的 []map[string]any 断言口径保持一致。
+func perfFieldValue(item v1.ModelPerformanceSummary, field string) any {
+	rv := reflect.ValueOf(item)
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if name != field {
 			continue
 		}
-		switch v := item[field].(type) {
+		fv := rv.Field(i)
+		switch fv.Kind() {
+		case reflect.Int, reflect.Int64:
+			return fv.Int()
+		case reflect.Float64:
+			return fv.Float()
+		default:
+			return fv.Interface()
+		}
+	}
+	return nil
+}
+
+// 断言 list 中某模型的字段（浮点用容差比较，派生指标均四舍五入到 2 位小数）。
+func assertPerfField(t *testing.T, list []v1.ModelPerformanceSummary, model, field string, wantFloat float64, wantInt int64) {
+	t.Helper()
+	for _, item := range list {
+		if item.ModelName != model {
+			continue
+		}
+		switch v := perfFieldValue(item, field).(type) {
 		case int64:
 			if v != wantInt {
 				t.Errorf("%s.%s = %d, want %d", model, field, v, wantInt)
@@ -23,11 +49,6 @@ func assertPerfField(t *testing.T, list []map[string]any, model, field string, w
 		case float64:
 			if math.Abs(v-wantFloat) > 1e-9 {
 				t.Errorf("%s.%s = %v, want %v", model, field, v, wantFloat)
-			}
-			return
-		case string:
-			if v != model {
-				t.Errorf("%s.%s = %q", model, field, v)
 			}
 			return
 		}
@@ -199,7 +220,7 @@ func TestBuildModelPerformanceList_FilterUnknownAndEmpty(t *testing.T) {
 		"skip-zero": {Req: 0, Lat: 999}, // 当日请求数为 0 不并入
 	}
 	list := buildModelPerformanceList(rows, today)
-	if len(list) != 1 || list[0]["model_name"] != "gpt-4o" {
+	if len(list) != 1 || list[0].ModelName != "gpt-4o" {
 		t.Fatalf("expected only gpt-4o, got %v", list)
 	}
 	assertPerfField(t, list, "gpt-4o", "request_count", 0, 10)
@@ -212,11 +233,11 @@ func TestBuildModelPerformanceList_Empty(t *testing.T) {
 	}
 }
 
-func assertOrder(t *testing.T, list []map[string]any, first, second string) bool {
+func assertOrder(t *testing.T, list []v1.ModelPerformanceSummary, first, second string) bool {
 	t.Helper()
 	pos := map[string]int{}
 	for i, item := range list {
-		pos[item["model_name"].(string)] = i
+		pos[item.ModelName] = i
 	}
 	if pos[first] > pos[second] {
 		t.Errorf("expected %s before %s, got positions %v", first, second, pos)
@@ -225,12 +246,12 @@ func assertOrder(t *testing.T, list []map[string]any, first, second string) bool
 	return true
 }
 
-func assertGrade(t *testing.T, list []map[string]any, model, want string) {
+func assertGrade(t *testing.T, list []v1.ModelPerformanceSummary, model, want string) {
 	t.Helper()
 	for _, item := range list {
-		if item["model_name"] == model {
-			if g, ok := item["grade"].(string); !ok || g != want {
-				t.Errorf("%s.grade = %v, want %s", model, item["grade"], want)
+		if item.ModelName == model {
+			if item.Grade != want {
+				t.Errorf("%s.grade = %v, want %s", model, item.Grade, want)
 			}
 			return
 		}

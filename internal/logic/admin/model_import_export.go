@@ -61,18 +61,19 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 	}
 
 	type exportModel struct {
-		ModelId          string          `json:"model_id"`
-		ModelName        string          `json:"model_name"`
-		Category         string          `json:"category"`
-		Status           string          `json:"status"`
-		MaxContextTokens int             `json:"max_context_tokens"`
-		MaxOutputTokens  int             `json:"max_output_tokens"`
-		Description      string          `json:"description"`
-		Tags             []string        `json:"tags"`
-		Capabilities     map[string]bool `json:"capabilities"`
-		SunsetDate       string          `json:"sunset_date,omitempty"`
-		ReplacementModel string          `json:"replacement_model,omitempty"`
-		Pricing          []exportPricing `json:"pricing"`
+		ModelId          string               `json:"model_id"`
+		ModelName        string               `json:"model_name"`
+		Category         string               `json:"category"`
+		Status           string               `json:"status"`
+		MaxContextTokens int                  `json:"max_context_tokens"`
+		MaxOutputTokens  int                  `json:"max_output_tokens"`
+		Description      string               `json:"description"`
+		Tags             []string             `json:"tags"`
+		Capabilities     map[string]bool      `json:"capabilities"`
+		SunsetDate       string               `json:"sunset_date,omitempty"`
+		ReplacementModel string               `json:"replacement_model,omitempty"`
+		Pricing          []exportPricing      `json:"pricing"`
+		TimeSegments     []v1.TimeSegmentItem `json:"time_segments,omitempty"`
 	}
 
 	// 批量查询所有模型的定价行（避免循环内逐模型查询导致 N+1），与 ListModels 的批量模式对齐。
@@ -90,6 +91,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		PerRequestPrice    *float64 `orm:"per_request_price" json:"per_request_price"`
 		CacheReadPrice     float64  `orm:"cache_read_price" json:"cache_read_price"`
 		CacheCreationPrice float64  `orm:"cache_creation_price" json:"cache_creation_price"`
+		TimeSegments       string   `orm:"time_segments" json:"time_segments"`
 	}
 	var allPricingRows []pricingRow
 	if len(modelIDs) > 0 {
@@ -97,8 +99,9 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			return nil, err
 		}
 	}
-	// 按 model_id 分组，供后续组装
+	// 按 model_id 分组，供后续组装；时段定价只认锚点行（min_tokens=0）
 	pricingByModel := make(map[int64][]exportPricing, len(allPricingRows))
+	segmentsByModel := make(map[int64][]v1.TimeSegmentItem, len(allPricingRows))
 	for _, p := range allPricingRows {
 		pricingByModel[p.ModelId] = append(pricingByModel[p.ModelId], exportPricing{
 			BillingMode:        p.BillingMode,
@@ -110,6 +113,12 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			CacheReadPrice:     p.CacheReadPrice,
 			CacheCreationPrice: p.CacheCreationPrice,
 		})
+		if p.MinTokens == 0 && p.TimeSegments != "" && p.TimeSegments != "null" {
+			var segs []billing.TimeSegment
+			if err := json.Unmarshal([]byte(p.TimeSegments), &segs); err == nil {
+				segmentsByModel[p.ModelId] = timeSegmentsToAPI(segs)
+			}
+		}
 	}
 
 	result := make([]exportModel, 0, len(models))
@@ -125,6 +134,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			Capabilities:     parseCapabilities(m.Capabilities),
 			ReplacementModel: m.ReplacementModel,
 			Pricing:          pricingByModel[m.ID],
+			TimeSegments:     segmentsByModel[m.ID],
 		}
 		if em.Pricing == nil {
 			em.Pricing = []exportPricing{}
@@ -298,6 +308,11 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					}
 				}
 
+				// 时段定价透传（挂锚点行，全量替换语义：导入文件无该字段=清除）
+				if err := writeTimeSegmentsForModel(ctx, existing.ID, item.TimeSegments); err != nil {
+					return gerror.Wrapf(err, "模型 %s 时段定价", item.ModelId)
+				}
+
 				relay.NewDataProvider().InvalidateModelCache(item.ModelId)
 				billing.ClearModelPriceCache(ctx, item.ModelId)
 				res.Imported++
@@ -349,6 +364,11 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					if err != nil {
 						return err
 					}
+				}
+
+				// 时段定价透传（挂锚点行）
+				if err := writeTimeSegmentsForModel(ctx, id, item.TimeSegments); err != nil {
+					return gerror.Wrapf(err, "模型 %s 时段定价", item.ModelId)
 				}
 
 				res.Imported++

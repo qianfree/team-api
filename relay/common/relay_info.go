@@ -84,6 +84,31 @@ type ChannelSettings struct {
 
 	// UseProxy 启用代理，使用系统配置的代理地址转发请求
 	UseProxy bool `json:"use_proxy,omitempty"`
+
+	// DebugLogEnabled 启用渠道调试日志：记录经该渠道每次请求尝试的四段完整报文
+	//（客户端↔系统↔上游，body 不截断、凭证脱敏）。数据量大，仅排查问题时开启
+	DebugLogEnabled bool `json:"debug_log_enabled,omitempty"`
+
+	// 调试目标过滤（AND 组合，0 = 不限）：只捕捉匹配租户/成员/密钥的请求，
+	// 避免调试期间把全部租户的报文都录下来
+	DebugLogTenantID int64 `json:"debug_log_tenant_id,omitempty"`
+	DebugLogUserID   int64 `json:"debug_log_user_id,omitempty"`
+	DebugLogApiKeyID int64 `json:"debug_log_api_key_id,omitempty"`
+}
+
+// DebugTargetMatch 调试目标过滤：已设置的过滤器全部匹配（AND），未设置（0）= 不限。
+// 在渠道调试开关开启的前提下由 relay 接线处调用，不匹配则整条捕获链跳过。
+func (s ChannelSettings) DebugTargetMatch(tenantID, userID, apiKeyID int64) bool {
+	if s.DebugLogTenantID > 0 && tenantID != s.DebugLogTenantID {
+		return false
+	}
+	if s.DebugLogUserID > 0 && userID != s.DebugLogUserID {
+		return false
+	}
+	if s.DebugLogApiKeyID > 0 && apiKeyID != s.DebugLogApiKeyID {
+		return false
+	}
+	return true
 }
 
 // RelayInfo 代理请求上下文，贯穿整个 relay 请求链路
@@ -288,6 +313,15 @@ func (info *RelayInfo) AppendRequestConversion(format types.RelayFormat) {
 		return
 	}
 	info.conversionChain = append(info.conversionChain, format)
+}
+
+// ConversionChain 返回请求侧协议转换链（relaykit 转换器追加；直传/同构路径可能为空）。
+// 供渠道调试日志记录协议转换轨迹。
+func (info *RelayInfo) ConversionChain() []types.RelayFormat {
+	if info == nil {
+		return nil
+	}
+	return info.conversionChain
 }
 
 func (info *RelayInfo) ConvOptions() *convmeta.Options {

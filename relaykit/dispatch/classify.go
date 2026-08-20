@@ -18,6 +18,7 @@ const (
 	ErrClassCredential                     // 凭证错误，先冷却当前 Key 并轮换，耗尽后升级 CHANNEL_FATAL
 	ErrClassChannelFatal                   // 渠道致命错误：零原地重试，立即 failover + 熔断计数直达
 	ErrClassTimeout                        // 超时（含 504）：不原地重试，按可重放性决定 failover
+	ErrClassModelFatal                     // 模型级致命（404/模型不存在/模型映射失败）：立即 failover + 模型级熔断直达，不归因渠道整体
 )
 
 // String 实现 fmt.Stringer，用于日志与指标标签。
@@ -33,6 +34,8 @@ func (c ErrorClass) String() string {
 		return "credential"
 	case ErrClassChannelFatal:
 		return "channel_fatal"
+	case ErrClassModelFatal:
+		return "model_fatal"
 	case ErrClassTimeout:
 		return "timeout"
 	default:
@@ -97,10 +100,13 @@ func classifyNewAPIError(e *types.NewAPIError) (ErrorClass, bool) {
 	case types.ErrorCodeChannelNoAvailableKey,
 		types.ErrorCodeChannelParamOverrideInvalid,
 		types.ErrorCodeChannelHeaderOverrideInvalid,
-		types.ErrorCodeChannelModelMappedError,
-		types.ErrorCodeChannelAwsClientError,
-		types.ErrorCodeModelNotFound:
+		types.ErrorCodeChannelAwsClientError:
 		return ErrClassChannelFatal, true
+
+	// 模型级致命：只影响渠道下的单个模型，仅喂渠道×模型级熔断（不归因渠道整体）
+	case types.ErrorCodeChannelModelMappedError,
+		types.ErrorCodeModelNotFound:
+		return ErrClassModelFatal, true
 
 	// 超时
 	case types.ErrorCodeChannelResponseTimeExceeded:
@@ -136,8 +142,8 @@ func classifyStatusCode(code int) ErrorClass {
 		// 上游余额耗尽
 		return ErrClassChannelFatal
 	case 404:
-		// 模型在该渠道不存在：换渠道可能有效（喂给渠道×模型级熔断）
-		return ErrClassChannelFatal
+		// 模型在该渠道不存在：换渠道可能有效（喂给渠道×模型级熔断，不伤渠道其它模型）
+		return ErrClassModelFatal
 	case 408:
 		return ErrClassTimeout
 	case 429:

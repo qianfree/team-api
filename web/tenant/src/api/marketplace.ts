@@ -1,5 +1,18 @@
 import request from '@/utils/request'
 
+export interface TimePriceItem {
+  name: string
+  days?: number[] | null
+  start_time?: string
+  end_time?: string
+  valid_from?: string
+  valid_to?: string
+  multiplier: number
+  input_price?: number | null
+  output_price?: number | null
+  per_request_price?: number | null
+}
+
 export interface MarketplaceModel {
   model_id: string
   model_name: string
@@ -7,8 +20,15 @@ export interface MarketplaceModel {
   description: string
   max_context_tokens: number
   max_output_tokens: number
+  billing_mode?: string
   input_price: number
   output_price: number
+  per_request_price?: number
+  cache_read_price?: number
+  cache_creation_price?: number
+  discount_label?: string | null
+  price_change_note?: string | null
+  time_prices?: TimePriceItem[] | null
   tags: string[]
   capabilities: Record<string, any>
 }

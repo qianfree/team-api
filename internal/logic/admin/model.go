@@ -451,6 +451,10 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		PerRequestPrice    *float64 `json:"per_request_price"`
 		CacheReadPrice     float64  `json:"cache_read_price"`
 		CacheCreationPrice float64  `json:"cache_creation_price"`
+		TimeSegments       string   `json:"time_segments"`
+		PriceNote          *string  `json:"price_note"`
+		DiscountLabel      *string  `json:"discount_label"`
+		PriceChangeNote    *string  `json:"price_change_note"`
 	}
 
 	err := dao.MdlPricing.Ctx(ctx).
@@ -462,7 +466,10 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 	}
 
 	result := make([]v1.PricingItem, 0, len(rows))
-	for _, r := range rows {
+	var timeSegments []billing.TimeSegment
+	var priceNote, discountLabel, priceChangeNote string
+	for i := range rows {
+		r := rows[i]
 		result = append(result, v1.PricingItem{
 			BillingMode:        r.BillingMode,
 			MinTokens:          r.MinTokens,
@@ -473,12 +480,151 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 			CacheReadPrice:     r.CacheReadPrice,
 			CacheCreationPrice: r.CacheCreationPrice,
 		})
+		// 时段定价与展示字段只认锚点行（min_tokens=0），阶梯行上的残留忽略
+		if r.MinTokens == 0 {
+			if r.TimeSegments != "" && r.TimeSegments != "null" {
+				if err := json.Unmarshal([]byte(r.TimeSegments), &timeSegments); err != nil {
+					g.Log().Warningf(ctx, "admin: 模型 %d 时段定价解析失败: %v", req.ModelID, err)
+					timeSegments = nil
+				}
+			}
+			priceNote = derefStr(r.PriceNote)
+			discountLabel = derefStr(r.DiscountLabel)
+			priceChangeNote = derefStr(r.PriceChangeNote)
+		}
 	}
-	return &v1.PricingGetRes{List: result}, nil
+	return &v1.PricingGetRes{
+		List:            result,
+		TimeSegments:    timeSegmentsToAPI(timeSegments),
+		PriceNote:       priceNote,
+		DiscountLabel:   discountLabel,
+		PriceChangeNote: priceChangeNote,
+	}, nil
+}
+
+// derefStr 字符串指针安全解引用（NULL → 空串）
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// timeSegmentsToAPI billing.TimeSegment → API 时段项
+func timeSegmentsToAPI(segments []billing.TimeSegment) []v1.TimeSegmentItem {
+	if len(segments) == 0 {
+		return nil
+	}
+	result := make([]v1.TimeSegmentItem, 0, len(segments))
+	for _, seg := range segments {
+		result = append(result, v1.TimeSegmentItem{
+			Name:       seg.Name,
+			Days:       seg.Days,
+			StartTime:  seg.StartTime,
+			EndTime:    seg.EndTime,
+			ValidFrom:  seg.ValidFrom,
+			ValidTo:    seg.ValidTo,
+			Multiplier: seg.Multiplier,
+		})
+	}
+	return result
+}
+
+// timeSegmentsFromAPI API 时段项 → billing.TimeSegment（含校验）
+func timeSegmentsFromAPI(items []v1.TimeSegmentItem) ([]billing.TimeSegment, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	result := make([]billing.TimeSegment, 0, len(items))
+	for _, item := range items {
+		result = append(result, billing.TimeSegment{
+			Name:       item.Name,
+			Days:       item.Days,
+			StartTime:  item.StartTime,
+			EndTime:    item.EndTime,
+			ValidFrom:  item.ValidFrom,
+			ValidTo:    item.ValidTo,
+			Multiplier: item.Multiplier,
+		})
+	}
+	if err := billing.ValidateTimeSegments(result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// writeTimeSegmentsForModel 把时段定价写到模型定价锚点行（min_tokens=0），空列表=清除（全量替换语义）。
+// 定价保存与模型导入共用。清除时写 "[]" 而非 SQL NULL：避免依赖 ORM 对 nil 值 UPDATE 的默认行为
+// （被省略会让「关闭时段」静默失效），所有读取方（计费/租户/管理端）均已把空数组视为未配置。
+// 用列名直写而非 do 字段：do.MdlPricing 的 TimeSegments 字段需迁移落库后 gf gen dao 重新生成才存在，
+// 直写列名与生成物解耦（wire 格式与 custom_pricing_tiers JSONB 先例一致）。调用方需保证事务 ctx 传播。
+func writeTimeSegmentsForModel(ctx context.Context, modelDBID int64, items []v1.TimeSegmentItem) error {
+	segs, err := timeSegmentsFromAPI(items)
+	if err != nil {
+		return err
+	}
+	// 空配置显式写 "[]"（nil 切片会序列化成 "null"，语义不明确）
+	segmentsJSON := "[]"
+	if len(segs) > 0 {
+		data, mErr := json.Marshal(segs)
+		if mErr != nil {
+			return mErr
+		}
+		segmentsJSON = string(data)
+	}
+	_, err = dao.MdlPricing.Ctx(ctx).
+		Where("model_id", modelDBID).
+		Where("min_tokens", 0).
+		Data(g.Map{"time_segments": segmentsJSON}).
+		Update()
+	return err
+}
+
+// writePricingDisplayFieldsForModel 把展示字段（价格说明/折扣标签/价格调整说明）写到定价锚点行（min_tokens=0）。
+// 全量替换语义：空串=清除（写 NULL）。与 writeTimeSegmentsForModel 同理用列名直写而非 do 字段，
+// 与 gf gen dao 生成物解耦。调用方需保证事务 ctx 传播。
+func writePricingDisplayFieldsForModel(ctx context.Context, modelDBID int64, priceNote, discountLabel, priceChangeNote string) error {
+	trimOrNull := func(s string) any {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	_, err := dao.MdlPricing.Ctx(ctx).
+		Where("model_id", modelDBID).
+		Where("min_tokens", 0).
+		Data(g.Map{
+			"price_note":        trimOrNull(priceNote),
+			"discount_label":    trimOrNull(discountLabel),
+			"price_change_note": trimOrNull(priceChangeNote),
+		}).
+		Update()
+	return err
 }
 
 // SetModelPricing 设置模型定价（全量替换）
 func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error) {
+	// 时段定价校验（乘数范围/时间格式/星期/日期边界），fail-fast 返回用户可读错误
+	segments, err := timeSegmentsFromAPI(req.TimeSegments)
+	if err != nil {
+		return nil, err
+	}
+
+	// 时段配置挂在锚点行（min_tokens=0）上，列表中必须存在锚点行
+	if len(segments) > 0 {
+		hasAnchor := false
+		for _, item := range req.Items {
+			if item.MinTokens == 0 {
+				hasAnchor = true
+				break
+			}
+		}
+		if !hasAnchor {
+			return nil, gerror.New("时段定价要求定价列表包含 min_tokens=0 的基础行")
+		}
+	}
+
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
 	var model struct {
 		ModelId string `json:"model_id"`
@@ -491,7 +637,7 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 
 	// 全量替换：先删旧定价再插新定价，放入同一事务。否则若删除后插入中途失败，
 	// 该模型会残留「无定价」状态，导致计费失败或回退到默认价。
-	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Delete(); err != nil {
 			return err
 		}
@@ -517,6 +663,16 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 			}); err != nil {
 				return err
 			}
+		}
+
+		// 时段定价写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
+		if err := writeTimeSegmentsForModel(ctx, req.ModelID, req.TimeSegments); err != nil {
+			return err
+		}
+
+		// 展示字段写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
+		if err := writePricingDisplayFieldsForModel(ctx, req.ModelID, req.PriceNote, req.DiscountLabel, req.PriceChangeNote); err != nil {
+			return err
 		}
 
 		return nil
