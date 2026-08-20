@@ -50,12 +50,17 @@ func GetAuditLevels(ctx context.Context, tenantID int64) (globalLevel, tenantLev
 // GetTenantAuditLevel 从 tnt_tenants.settings JSONB 中读取租户自身设置的审计级别。
 // 未设置时返回空字符串，不回退到全局级别。
 func GetTenantAuditLevel(ctx context.Context, tenantID int64) string {
-	var settingsJSON string
-	err := dao.TntTenants.Ctx(ctx).
+	// 读单列字符串必须用 Value()——gdb 的 Model.Scan 只接受 struct 系列，
+	// 传入 *string 直接报错，会导致租户审计级别永远读不到
+	v, err := dao.TntTenants.Ctx(ctx).
 		Where("id", tenantID).
 		Fields("settings").
-		Scan(&settingsJSON)
-	if err != nil || settingsJSON == "" {
+		Value()
+	settingsJSON := ""
+	if err == nil {
+		settingsJSON = v.String()
+	}
+	if settingsJSON == "" {
 		return ""
 	}
 	var settings struct {
