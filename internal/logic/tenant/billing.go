@@ -211,7 +211,8 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	}
 
 	where := strings.Join(conditions, " AND ")
-	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id LEFT JOIN mdl_models mdl ON u.model_name = mdl.model_id"
+	// 列表查询不 JOIN mdl_models（model_display_name 仅导出使用）
+	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
 	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + " WHERE " + where
 	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
@@ -223,8 +224,20 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 		total = countResult[0]["total"].Int()
 	}
 
+	// 白名单查询：仅返回租户端展示所需字段。
+	// 禁止改回 SELECT u.* —— bil_usage_logs 含平台侧敏感字段，曾因此泄露
+	// upstream_model（模型映射）、account_cost（上游成本/利润）、upstream_endpoint、
+	// billing_snapshot（含上游模型与模型倍率）给租户。新增展示需求时在此追加列。
 	dataSQL := fmt.Sprintf(
-		`SELECT u.*, COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name, COALESCE(mdl.model_name, '') AS model_display_name
+		`SELECT u.id, u.request_id, u.task_id, u.api_key_id, u.model_name, u.relay_mode, u.inbound_endpoint,
+		       u.request_type, u.billing_mode, u.billing_source, u.rate_multiplier, u.status, u.retry_index,
+		       u.stream_end_reason, u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort,
+		       u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens,
+		       u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens,
+		       u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.image_count, u.image_size,
+		       u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost,
+		       u.latency_ms, u.first_token_ms, u.created_at, u.billing_summary,
+		       COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
 		 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
 		fromClause, where,
 	)
@@ -234,20 +247,10 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 		return nil, err
 	}
 
-	// 需要从响应中移除的渠道相关字段
-	channelFields := map[string]bool{
-		"channel_name": true,
-		"channel_type": true,
-		"channel_id":   true,
-	}
-
 	list := make([]map[string]any, 0, len(result))
 	for _, row := range result {
 		m := make(map[string]any, len(row))
 		for k, v := range row {
-			if channelFields[k] {
-				continue
-			}
 			switch raw := v.Val().(type) {
 			case []byte:
 				s := string(raw)
