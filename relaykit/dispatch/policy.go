@@ -100,7 +100,8 @@ type RetryPolicy struct {
 // BreakerPolicy 熔断策略。
 type BreakerPolicy struct {
 	WindowSeconds           int `json:"windowSeconds"`           // 滑动窗口，默认 60
-	FailThreshold           int `json:"failThreshold"`           // 窗口失败阈值，默认 8
+	FailThreshold           int `json:"failThreshold"`           // 渠道级窗口失败阈值，默认 8
+	ModelFailThreshold      int `json:"modelFailThreshold"`      // 模型级窗口失败阈值，默认 4（低于渠道级，单模型故障先在模型级熔断隔离）
 	CooldownSeconds         int `json:"cooldownSeconds"`         // OPEN 冷却起始，默认 30
 	CooldownMaxSeconds      int `json:"cooldownMaxSeconds"`      // 冷却上限，默认 300
 	ProbeWindowSeconds      int `json:"probeWindowSeconds"`      // HALF_OPEN 探测窗口，默认 10
@@ -151,6 +152,7 @@ func DefaultRoutingPolicy() *RoutingPolicy {
 	p.Breaker = BreakerPolicy{
 		WindowSeconds:           60,
 		FailThreshold:           8,
+		ModelFailThreshold:      4,
 		CooldownSeconds:         30,
 		CooldownMaxSeconds:      300,
 		ProbeWindowSeconds:      10,
@@ -218,8 +220,8 @@ func (p *RoutingPolicy) Validate() error {
 		return fmt.Errorf("retry 时间参数非法")
 	}
 	b := p.Breaker
-	if b.WindowSeconds <= 0 || b.FailThreshold <= 0 || b.CooldownSeconds <= 0 ||
-		b.CooldownMaxSeconds < b.CooldownSeconds || b.ProbeWindowSeconds <= 0 {
+	if b.WindowSeconds <= 0 || b.FailThreshold <= 0 || b.ModelFailThreshold <= 0 ||
+		b.CooldownSeconds <= 0 || b.CooldownMaxSeconds < b.CooldownSeconds || b.ProbeWindowSeconds <= 0 {
 		return fmt.Errorf("breaker 参数非法")
 	}
 	if p.Degrade.MaxReplicas <= 0 {
@@ -335,7 +337,7 @@ func Decide(class ErrorClass, delivery DeliveryState, replay Replayability, retr
 		}
 		return failoverOrAbort()
 
-	case ErrClassChannelFatal:
+	case ErrClassChannelFatal, ErrClassModelFatal:
 		return failoverOrAbort()
 	}
 	return DecisionAbort, 0

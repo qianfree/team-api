@@ -37,3 +37,6 @@ func (c *ControllerV1) AdminMemberExport(ctx context.Context, req *v1.AdminMembe
 func (c *ControllerV1) TenantSelect(ctx context.Context, req *v1.TenantSelectReq) (res *v1.TenantSelectRes, err error) {
 	return service.Admin().TenantSelect(ctx, req)
 }
+func (c *ControllerV1) TenantApiKeySelect(ctx context.Context, req *v1.TenantApiKeySelectReq) (res *v1.TenantApiKeySelectRes, err error) {
+	return service.Admin().TenantApiKeySelect(ctx, req)
+}

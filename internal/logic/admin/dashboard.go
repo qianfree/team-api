@@ -349,69 +349,78 @@ func (s *sAdmin) GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardM
 	}, nil
 }
 
+// validateUsageLogDateRange 校验用量日志筛选的起止时间参数（列表 / 统计 / 导出共用）
+func validateUsageLogDateRange(start, end string) error {
+	if err := common.ValidateDateTimeParam(start, "开始时间"); err != nil {
+		return err
+	}
+	return common.ValidateDateTimeParam(end, "结束时间")
+}
+
+// buildUsageLogFilter 构建用量日志查询的 WHERE 条件与绑定参数（列表 / 统计 / 导出共用，保证筛选口径一致）。
+// 注意：Username 筛选条件引用 t.username，调用方需按需 JOIN tnt_users（别名 t）。
+func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
+	var conditions []string
+
+	if f.ID > 0 {
+		conditions = append(conditions, "u.id = ?")
+		args = append(args, f.ID)
+	}
+	if f.TenantID > 0 {
+		conditions = append(conditions, "u.tenant_id = ?")
+		args = append(args, f.TenantID)
+	}
+	if f.UserID > 0 {
+		conditions = append(conditions, "u.user_id = ?")
+		args = append(args, f.UserID)
+	}
+	if f.Username != "" {
+		conditions = append(conditions, "t.username LIKE ?")
+		args = append(args, "%"+f.Username+"%")
+	}
+	if f.ApiKeyID > 0 {
+		conditions = append(conditions, "u.api_key_id = ?")
+		args = append(args, f.ApiKeyID)
+	}
+	if f.ChannelID > 0 {
+		conditions = append(conditions, "u.channel_id = ?")
+		args = append(args, f.ChannelID)
+	}
+	if f.Model != "" {
+		conditions = append(conditions, "u.model_name = ?")
+		args = append(args, f.Model)
+	}
+	if f.Status != "" {
+		conditions = append(conditions, "u.status = ?")
+		args = append(args, f.Status)
+	}
+	if f.RequestType > 0 {
+		conditions = append(conditions, "u.request_type = ?")
+		args = append(args, f.RequestType)
+	}
+	if f.StartDate != "" {
+		conditions = append(conditions, "u.created_at >= ?")
+		args = append(args, common.StartOfRange(f.StartDate))
+	}
+	if f.EndDate != "" {
+		conditions = append(conditions, "u.created_at <= ?")
+		args = append(args, common.EndOfRange(f.EndDate))
+	}
+
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+	return where, args
+}
+
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
-	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
-		return nil, err
-	}
-	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+	if err := validateUsageLogDateRange(req.StartDate, req.EndDate); err != nil {
 		return nil, err
 	}
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
-
-	var conditions []string
-	var args []any
-
-	if req.ID > 0 {
-		conditions = append(conditions, "u.id = ?")
-		args = append(args, req.ID)
-	}
-	if req.TenantID > 0 {
-		conditions = append(conditions, "u.tenant_id = ?")
-		args = append(args, req.TenantID)
-	}
-	if req.UserID > 0 {
-		conditions = append(conditions, "u.user_id = ?")
-		args = append(args, req.UserID)
-	}
-	if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
-	}
-	if req.ApiKeyID > 0 {
-		conditions = append(conditions, "u.api_key_id = ?")
-		args = append(args, req.ApiKeyID)
-	}
-	if req.ChannelID > 0 {
-		conditions = append(conditions, "u.channel_id = ?")
-		args = append(args, req.ChannelID)
-	}
-	if req.Model != "" {
-		conditions = append(conditions, "u.model_name = ?")
-		args = append(args, req.Model)
-	}
-	if req.Status != "" {
-		conditions = append(conditions, "u.status = ?")
-		args = append(args, req.Status)
-	}
-	if req.RequestType > 0 {
-		conditions = append(conditions, "u.request_type = ?")
-		args = append(args, req.RequestType)
-	}
-	if req.StartDate != "" {
-		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, common.StartOfRange(req.StartDate))
-	}
-	if req.EndDate != "" {
-		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, common.EndOfRange(req.EndDate))
-	}
-
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE " + strings.Join(conditions, " AND ")
-	}
+	where, args := buildUsageLogFilter(req.AdminUsageLogFilter)
 
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
@@ -427,8 +436,8 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 
 	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.created_at
 		 FROM ` + fromClause + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
-	args = append(args, pageSize, (page-1)*pageSize)
-	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	dataArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, dataArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -447,6 +456,61 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		Page:     page,
 		PageSize: pageSize,
 		List:     logs,
+	}, nil
+}
+
+// GetUsageLogSummary 获取用量日志统计汇总（独立接口，与列表共用筛选口径）
+func (s *sAdmin) GetUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSummaryReq) (*v1.AdminUsageLogSummaryRes, error) {
+	if err := validateUsageLogDateRange(req.StartDate, req.EndDate); err != nil {
+		return nil, err
+	}
+	where, args := buildUsageLogFilter(req.AdminUsageLogFilter)
+
+	// 统计聚合不展示名称，仅在按用户名筛选时才 JOIN 用户表，避免大表 SUM 背负无关 JOIN
+	fromClause := "bil_usage_logs u"
+	if req.Username != "" {
+		fromClause += " LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id"
+	}
+
+	summarySQL := `SELECT
+		COALESCE(SUM(u.total_cost), 0) AS total_cost,
+		COALESCE(SUM(u.output_tokens), 0) AS total_output_tokens,
+		COALESCE(SUM(u.input_tokens), 0) AS total_input_tokens,
+		COALESCE(SUM(u.cache_read_tokens), 0) AS total_cache_read
+	FROM ` + fromClause + where
+
+	summaryResult, err := g.DB().Ctx(ctx).Query(ctx, summarySQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	// 无 GROUP BY 的聚合必返回一行；空结果兜底为零值
+	if len(summaryResult) == 0 {
+		return &v1.AdminUsageLogSummaryRes{}, nil
+	}
+
+	var row struct {
+		TotalCost         float64 `json:"total_cost"`
+		TotalOutputTokens int64   `json:"total_output_tokens"`
+		TotalInputTokens  int64   `json:"total_input_tokens"`
+		TotalCacheRead    int64   `json:"total_cache_read"`
+	}
+	if err := summaryResult[0].Struct(&row); err != nil {
+		return nil, err
+	}
+
+	// 计算缓存读取占比 = cache_read / input_tokens。
+	// input_tokens 入库口径为「含缓存的总输入」（见 relay/common/usage.go TotalInputTokens），
+	// cache_read 是其子集，分母直接取总和即可，禁止再加 cache_read（会重复计入导致占比偏低）。
+	// 口径与租户个人仪表盘 HitRatio（personal_dashboard.go）保持一致。
+	var cacheReadRatio float64
+	if row.TotalInputTokens > 0 {
+		cacheReadRatio = float64(row.TotalCacheRead) / float64(row.TotalInputTokens) * 100
+	}
+
+	return &v1.AdminUsageLogSummaryRes{
+		TotalCost:         row.TotalCost,
+		TotalOutputTokens: row.TotalOutputTokens,
+		CacheReadRatio:    cacheReadRatio,
 	}, nil
 }
 
@@ -1185,10 +1249,7 @@ func (s *sAdmin) GetDashboardRecentAlerts(ctx context.Context, req *v1.AdminDash
 
 // ExportUsageLogs exports usage logs to CSV or Excel.
 func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExportReq) (*v1.AdminUsageLogExportRes, error) {
-	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
-		return nil, err
-	}
-	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+	if err := validateUsageLogDateRange(req.StartDate, req.EndDate); err != nil {
 		return nil, err
 	}
 
@@ -1211,59 +1272,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		Columns:  columns,
 	}
 
-	buildUsageWhere := func() (string, []any) {
-		var conditions []string
-		var args []any
-		if req.ID > 0 {
-			conditions = append(conditions, "u.id = ?")
-			args = append(args, req.ID)
-		}
-		if req.TenantID > 0 {
-			conditions = append(conditions, "u.tenant_id = ?")
-			args = append(args, req.TenantID)
-		}
-		if req.UserID > 0 {
-			conditions = append(conditions, "u.user_id = ?")
-			args = append(args, req.UserID)
-		}
-		if req.Username != "" {
-			conditions = append(conditions, "t.username LIKE ?")
-			args = append(args, "%"+req.Username+"%")
-		}
-		if req.ApiKeyID > 0 {
-			conditions = append(conditions, "u.api_key_id = ?")
-			args = append(args, req.ApiKeyID)
-		}
-		if req.ChannelID > 0 {
-			conditions = append(conditions, "u.channel_id = ?")
-			args = append(args, req.ChannelID)
-		}
-		if req.Model != "" {
-			conditions = append(conditions, "u.model_name = ?")
-			args = append(args, req.Model)
-		}
-		if req.Status != "" {
-			conditions = append(conditions, "u.status = ?")
-			args = append(args, req.Status)
-		}
-		if req.RequestType > 0 {
-			conditions = append(conditions, "u.request_type = ?")
-			args = append(args, req.RequestType)
-		}
-		if req.StartDate != "" {
-			conditions = append(conditions, "u.created_at >= ?")
-			args = append(args, common.StartOfRange(req.StartDate))
-		}
-		if req.EndDate != "" {
-			conditions = append(conditions, "u.created_at <= ?")
-			args = append(args, common.EndOfRange(req.EndDate))
-		}
-		where := ""
-		if len(conditions) > 0 {
-			where = " WHERE " + strings.Join(conditions, " AND ")
-		}
-		return where, args
-	}
+	where, filterArgs := buildUsageLogFilter(req.AdminUsageLogFilter)
 
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id"
 	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at"
@@ -1271,9 +1280,9 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		offset := 0
 		for {
-			where, args := buildUsageWhere()
 			sql := "SELECT " + selectFields + " FROM " + fromClause + where + " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
-			batchArgs := append(args, 1000, offset)
+			// 复制一份再追加分页参数，避免污染循环外构建的共用筛选参数
+			batchArgs := append(append([]any{}, filterArgs...), 1000, offset)
 			result, err := g.DB().Ctx(ctx).Query(ctx, sql, batchArgs...)
 			if err != nil {
 				g.Log().Errorf(ctx, "ExportUsageLogs: query batch at offset %d failed: %v", offset, err)

@@ -119,6 +119,10 @@ var (
 			// Initialize async audit log writer
 			common.InitAuditLogWriter()
 
+			// Initialize async channel debug log writer + 注入 relay 层提交钩子
+			common.InitChannelDebugLogWriter()
+			relayLogic.InitDebugLogRecorder()
+
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
 

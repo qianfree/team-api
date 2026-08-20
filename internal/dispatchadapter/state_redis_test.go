@@ -50,7 +50,8 @@ func newTestState(t *testing.T, mutate func(*dispatch.RoutingPolicy)) *RedisStat
 func Test并发健康EWMA原子性(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
-		p.Breaker.FailThreshold = 1000 // 阈值调高，只验证计数不触发熔断
+		p.Breaker.FailThreshold = 1000      // 阈值调高，只验证计数不触发熔断
+		p.Breaker.ModelFailThreshold = 1000 // 模型级阈值同步调高，避免打开后渠道级停止计数
 	})
 
 	var wg sync.WaitGroup
@@ -88,6 +89,7 @@ func Test健康衰减分档(t *testing.T) {
 		{2, dispatch.ErrClassTimeout, 0.93},
 		{3, dispatch.ErrClassRateLimit, 0.97},
 		{4, dispatch.ErrClassChannelFatal, 0.70},
+		{5, dispatch.ErrClassModelFatal, 0.70},
 	}
 	for _, c := range cases {
 		s.processOutcome(ctx, dispatch.Outcome{ChannelID: c.channel, Model: "m", Success: false, Class: c.class})
@@ -119,7 +121,9 @@ func Test限流不喂熔断窗口(t *testing.T) {
 
 func Test熔断转移与探测令牌(t *testing.T) {
 	ctx := context.Background()
-	s := newTestState(t, nil) // failThreshold=8
+	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
+		p.Breaker.ModelFailThreshold = 100 // 调高模型级阈值，聚焦验证渠道级 8 次语义
+	})
 
 	// 8 次瞬时失败 → 渠道级熔断 OPEN
 	for range 8 {
@@ -129,7 +133,7 @@ func Test熔断转移与探测令牌(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerOpen, rt.Breaker)
 
 	// 冷却期内探测令牌不放行
-	assert.False(t, s.TryProbeToken(ctx, 7))
+	assert.False(t, s.TryProbeToken(ctx, 7, ""))
 
 	// 手动把 opened_ms 拨回 31s 前（冷却 30s）→ 有效态 HALF_OPEN
 	_, err := g.Redis().Do(ctx, "HSET", keyBreaker+"7", "opened_ms", time.Now().UnixMilli()-31_000)
@@ -138,8 +142,8 @@ func Test熔断转移与探测令牌(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerHalfOpen, rt.Breaker)
 
 	// 探测令牌：每窗口全局只放行一个
-	assert.True(t, s.TryProbeToken(ctx, 7))
-	assert.False(t, s.TryProbeToken(ctx, 7), "同窗口第二个探测必须拒绝")
+	assert.True(t, s.TryProbeToken(ctx, 7, ""))
+	assert.False(t, s.TryProbeToken(ctx, 7, ""), "同窗口第二个探测必须拒绝")
 
 	// 探测成功 → CLOSED + recovered_ms（供爬坡因子）
 	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 7, Model: "m", Success: true, LatencyMs: 100})
@@ -166,6 +170,131 @@ func Test熔断探测失败冷却翻倍(t *testing.T) {
 	vals := v.Vars()
 	assert.Equal(t, 1, vals[0].Int(), "探测失败回 OPEN")
 	assert.Equal(t, int64(60_000), vals[1].Int64(), "冷却翻倍 30s→60s")
+}
+
+// ---------------------------------------------------------------------------
+// 模型级隔离（错误作用域分流 + 去重守卫）
+// ---------------------------------------------------------------------------
+
+// Test模型致命一次直达模型级 404/模型不存在：模型级 fatal 直达 OPEN，
+// 渠道级仅窗口计 1 票；模型级已 OPEN 后同模型后续失败不再污染渠道级。
+func Test模型致命一次直达模型级(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 62, Model: "gone", Success: false, Class: dispatch.ErrClassModelFatal})
+	rt := s.ReadRuntime(ctx, 62, "gone")
+	assert.Equal(t, dispatch.BreakerOpen, rt.ModelBreaker, "模型级 fatal 一次直达")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker, "渠道级不被拉黑")
+
+	v, err := g.Redis().Do(ctx, "HGET", keyBreaker+"62", "fail_count")
+	require.NoError(t, err)
+	assert.Equal(t, 1, v.Int(), "渠道级仅窗口计 1 票")
+
+	// 去重守卫：模型级 OPEN（含有效 HALF_OPEN）后，本模型失败不再喂渠道级
+	for range 5 {
+		s.processOutcome(ctx, dispatch.Outcome{ChannelID: 62, Model: "gone", Success: false, Class: dispatch.ErrClassModelFatal})
+	}
+	v, _ = g.Redis().Do(ctx, "HGET", keyBreaker+"62", "fail_count")
+	assert.Equal(t, 1, v.Int(), "模型 OPEN 后渠道级不再计数")
+}
+
+// Test模型级窗口阈值与渠道级隔离 单模型慢性故障（瞬时类）：模型级阈值 4 先打开，
+// 渠道级贡献封顶在 4 票（< 8），渠道级永不熔断——单模型故障不误伤其它模型。
+func Test模型级窗口阈值与渠道级隔离(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil) // failThreshold=8, modelFailThreshold=4
+
+	for range 3 {
+		s.processOutcome(ctx, dispatch.Outcome{ChannelID: 60, Model: "m", Success: false, Class: dispatch.ErrClassTransient})
+	}
+	v, err := g.Redis().Do(ctx, "HGET", keyBreaker+"60", "fail_count")
+	require.NoError(t, err)
+	assert.Equal(t, 3, v.Int(), "渠道级窗口计数 3")
+	v, _ = g.Redis().Do(ctx, "HGET", keyBreaker+"60:m", "fail_count")
+	assert.Equal(t, 3, v.Int(), "模型级窗口计数 3")
+
+	// 第 4 次触发模型级打开（先渠道计数后模型转移，本事件贡献第 4 票），此后不再计数
+	for range 10 {
+		s.processOutcome(ctx, dispatch.Outcome{ChannelID: 60, Model: "m", Success: false, Class: dispatch.ErrClassTransient})
+	}
+	rt := s.ReadRuntime(ctx, 60, "m")
+	assert.Equal(t, dispatch.BreakerOpen, rt.ModelBreaker, "模型级达阈值 4 打开")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker, "渠道级停在 4 票不熔断")
+	v, _ = g.Redis().Do(ctx, "HGET", keyBreaker+"60", "fail_count")
+	assert.Equal(t, 4, v.Int(), "单模型对渠道级贡献封顶在 modelFailThreshold")
+}
+
+// Test跨模型共识渠道级熔断 两个模型各恶化 4 次（4+4=8）→ 渠道级 OPEN：
+// 渠道级熔断保留给真正的多模型同时恶化（整渠道故障）。
+func Test跨模型共识渠道级熔断(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	for _, m := range []string{"m1", "m2"} {
+		for range 4 {
+			s.processOutcome(ctx, dispatch.Outcome{ChannelID: 61, Model: m, Success: false, Class: dispatch.ErrClassTransient})
+		}
+	}
+	rt := s.ReadRuntime(ctx, 61, "m1")
+	assert.Equal(t, dispatch.BreakerOpen, rt.Breaker, "跨模型 4+4=8 达成共识")
+	assert.Equal(t, dispatch.BreakerOpen, rt.ModelBreaker, "两模型各自也达阈值 4")
+}
+
+// Test渠道致命不喂模型级 402/Key 耗尽等渠道级信号：fatal 只打渠道级，模型级 key 不被触碰
+// （渠道恢复后模型无残留熔断）。
+func Test渠道致命不喂模型级(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 63, Model: "m", Success: false, Class: dispatch.ErrClassChannelFatal})
+	rt := s.ReadRuntime(ctx, 63, "m")
+	assert.Equal(t, dispatch.BreakerOpen, rt.Breaker)
+
+	v, err := g.Redis().Do(ctx, "EXISTS", keyBreaker+"63:m")
+	require.NoError(t, err)
+	assert.Equal(t, 0, v.Int(), "渠道级致命不创建/触碰模型级 key")
+}
+
+// Test模型级探测成功复位 模型级 OPEN 冷却期满 → HALF_OPEN → 成功 → CLOSED + recovered_ms
+// （模型级熔断可靠流量探测恢复，不再死锁到 24h TTL）。
+func Test模型级探测成功复位(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 64, Model: "m", Success: false, Class: dispatch.ErrClassModelFatal})
+	_, _ = g.Redis().Do(ctx, "HSET", keyBreaker+"64:m", "opened_ms", time.Now().UnixMilli()-31_000)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 64, Model: "m", Success: true, LatencyMs: 100})
+	rt := s.ReadRuntime(ctx, 64, "m")
+	assert.Equal(t, dispatch.BreakerClosed, rt.ModelBreaker)
+	v, _ := g.Redis().Do(ctx, "HGET", keyBreaker+"64:m", "recovered_ms")
+	assert.Greater(t, v.Int64(), int64(0), "模型级恢复时间必须记录")
+}
+
+// Test模型级探测令牌与探测失败翻倍 模型级令牌按渠道×模型 key 独立限流；
+// 冷却期满后的失败走 HALF_OPEN 探测失败分支（模型级回 OPEN 冷却翻倍，渠道级不计数）。
+func Test模型级探测令牌与探测失败翻倍(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 65, Model: "m", Success: false, Class: dispatch.ErrClassModelFatal})
+	_, _ = g.Redis().Do(ctx, "HSET", keyBreaker+"65:m", "opened_ms", time.Now().UnixMilli()-31_000)
+
+	// 模型级令牌：每窗口放行一个；渠道级 CLOSED 时渠道令牌不放行（不再误拒探测）
+	assert.True(t, s.TryProbeToken(ctx, 65, "m"))
+	assert.False(t, s.TryProbeToken(ctx, 65, "m"), "同窗口第二个模型级探测必须拒绝")
+	assert.False(t, s.TryProbeToken(ctx, 65, ""), "渠道级 CLOSED 不放行渠道令牌")
+
+	// 探测失败：模型级回 OPEN 冷却翻倍，渠道级不新增计数（保持首次 ModelFatal 贡献的 1 票）
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 65, Model: "m", Success: false, Class: dispatch.ErrClassTransient})
+	v, err := g.Redis().Do(ctx, "HMGET", keyBreaker+"65:m", "state", "cooldown_ms")
+	require.NoError(t, err)
+	vals := v.Vars()
+	assert.Equal(t, 1, vals[0].Int(), "模型级探测失败回 OPEN")
+	assert.Equal(t, int64(60_000), vals[1].Int64(), "冷却翻倍 30s→60s")
+	v, _ = g.Redis().Do(ctx, "HGET", keyBreaker+"65", "fail_count")
+	assert.Equal(t, 1, v.Int(), "渠道级不因探测失败新增计数")
 }
 
 func Test绑定CAS与反向索引(t *testing.T) {
@@ -334,9 +463,10 @@ func TestLocal严格容量租约(t *testing.T) {
 
 func TestLocal探测限流(t *testing.T) {
 	l := newLocalState()
-	assert.True(t, l.tryProbe(1, 10_000))
-	assert.False(t, l.tryProbe(1, 10_000), "同窗口本实例只放行一个")
-	assert.True(t, l.tryProbe(2, 10_000), "不同渠道互不影响")
+	assert.True(t, l.tryProbe(1, "", 10_000))
+	assert.False(t, l.tryProbe(1, "", 10_000), "同窗口本实例只放行一个")
+	assert.True(t, l.tryProbe(2, "", 10_000), "不同渠道互不影响")
+	assert.True(t, l.tryProbe(1, "gpt-4o", 10_000), "同渠道的模型级令牌与渠道级互不影响")
 }
 
 func TestLocal凭证冷却过期(t *testing.T) {
@@ -393,4 +523,11 @@ func Test手动恢复复位熔断并开启爬坡(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
 	assert.Greater(t, rt.RecoveredMs, int64(0))
 	assert.Zero(t, rt.FirstOpenedMs)
+
+	// 模型级熔断不受 MarkChannelRecovered 影响（只验证了 test_model，不能证明其它模型恢复；
+	// 模型级靠流量探测自行恢复，决策见 MarkChannelRecovered 注释）
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 50, Model: "m2", Success: false, Class: dispatch.ErrClassModelFatal})
+	rt = s.ReadRuntime(ctx, 50, "m2")
+	assert.Equal(t, dispatch.BreakerOpen, rt.ModelBreaker, "模型级熔断必须保留")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker, "渠道级保持复位后状态")
 }

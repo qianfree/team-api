@@ -15,7 +15,9 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 )
 
-// TestChannel 测试渠道可用性（发送最小请求验证）
+// TestChannel 测试渠道可用性（发送最小请求验证）。
+// 不限制渠道状态：禁用中的渠道也允许手动测试，便于管理员在启用放流量前确认已恢复；
+// 自动探测 cron 只查 active 渠道，禁用渠道不会被自动探测。
 func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error) {
 	channelID := req.ID
 
@@ -40,9 +42,6 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	}
 	if ch == nil {
 		return nil, common.NewNotFoundError("渠道")
-	}
-	if ch.Status == "disabled" {
-		return nil, common.NewBadRequestError("渠道已禁用")
 	}
 
 	testModel := req.ModelName
@@ -113,8 +112,12 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, upstreamModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）
-	dispatchadapter.ReportProbeOutcome(ctx, channelID, upstreamModel, result.Success, float64(latencyMs))
+	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）。
+	// 仅 active 渠道上报：禁用/测试中渠道不在调度目录，喂健康分只会无意义拉低展示值；
+	// 渠道启用时 MarkChannelRecovered 会复位熔断，无需在禁用期间预热。
+	if ch.Status == "active" {
+		dispatchadapter.ReportProbeOutcome(ctx, channelID, upstreamModel, result.Success, float64(latencyMs))
+	}
 
 	// 记录测试结果日志
 	if result.Success {

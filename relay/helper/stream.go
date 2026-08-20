@@ -11,12 +11,25 @@ import (
 	"github.com/qianfree/team-api/relay/dto"
 )
 
-// SetEventStreamHeaders 设置 SSE 必要的响应头
+// SetEventStreamHeaders 设置 SSE 必要的响应头。
+// 使用 SafeWriter 的 context 字段实现幂等性保护，防止重复设置导致的 panic。
 func SetEventStreamHeaders(w http.ResponseWriter) {
+	// 幂等性检查：如果是 SafeWriter 且已设置过，直接返回
+	if sw, ok := w.(*SafeWriter); ok {
+		sw.mu.Lock()
+		if sw.headersSet {
+			sw.mu.Unlock()
+			return
+		}
+		sw.headersSet = true
+		sw.mu.Unlock()
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // 禁用 Nginx 缓冲
+	w.Header().Set("Transfer-Encoding", "chunked") // 显式声明分块传输
+	w.Header().Set("X-Accel-Buffering", "no")      // 禁用 Nginx 缓冲
 	w.WriteHeader(http.StatusOK)
 
 	if f, ok := w.(http.Flusher); ok {
@@ -155,13 +168,17 @@ func ApplyInterruptedUsageFallback(info *common.RelayInfo, usage *common.Usage, 
 // 注意：fmt.Fprintf 对单个 SSE 帧只产生一次 Write 调用，因此每个 SSE 帧在锁内是原子写入的；
 // Flush 单独加锁，与其他写入交错也不会破坏帧的字节完整性。
 type SafeWriter struct {
-	w  http.ResponseWriter
-	mu sync.Mutex
+	w          http.ResponseWriter
+	mu         sync.Mutex
+	headersSet bool // SSE 头幂等性标志（防止 SetEventStreamHeaders 重复调用导致 panic）
 }
 
 // NewSafeWriter 创建一个并发安全的 ResponseWriter 包装器。
 func NewSafeWriter(w http.ResponseWriter) *SafeWriter {
-	return &SafeWriter{w: w}
+	return &SafeWriter{
+		w:          w,
+		headersSet: false,
+	}
 }
 
 func (s *SafeWriter) Header() http.Header {

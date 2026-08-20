@@ -174,3 +174,27 @@ type TenantSelectItem struct {
 	Name string `json:"name"`
 	Code string `json:"code"`
 }
+
+// TenantApiKeySelectReq 租户 API Key 下拉选择列表（轻量，用于调试目标过滤等选择器）
+type TenantApiKeySelectReq struct {
+	g.Meta   `path:"/tenants/{tenant_id}/api-keys/select" method:"get" mime:"json" tags:"管理后台-租户管理" summary:"租户API Key下拉选择列表"`
+	TenantID int64 `json:"tenant_id" in:"path" v:"required" dc:"租户ID"`
+	UserID   int64 `json:"user_id" in:"query" dc:"按创建者成员ID筛选（0=不限）"`
+	Page     int   `json:"page" in:"query" d:"1" dc:"页码"`
+	PageSize int   `json:"page_size" in:"query" d:"100" v:"min:1|max:200" dc:"每页数量"`
+}
+
+type TenantApiKeySelectRes struct {
+	List     []TenantApiKeySelectItem `json:"list"`
+	Total    int                      `json:"total"`
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+}
+
+type TenantApiKeySelectItem struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	KeyPrefix string `json:"key_prefix"`
+	UserID    int64  `json:"user_id"`
+	Status    string `json:"status"`
+}
