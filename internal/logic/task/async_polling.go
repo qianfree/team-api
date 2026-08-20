@@ -219,7 +219,7 @@ func handleUnsettledTasks(ctx context.Context) {
 			taskBilling := billing.NewTaskBillingProvider()
 			settleResult, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
 				t.ModelName, t.RequestID, actualCost, t.PreDeductAmount,
-				0, 0, pd.BillingContext.Ratios, t.PublicTaskID)
+				0, 0, pd.BillingContext.Ratios, t.PublicTaskID, t.CreatedAt)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: retry settle task %s: %v", t.PublicTaskID, err)
 			} else {
@@ -263,7 +263,7 @@ func handleUnsettledSyncImage(ctx context.Context, t *common.AsyncTask) {
 			actualCost = t.PreDeductAmount
 		}
 		settleResult, err := taskBilling.SettleTaskSuccess(ctx, t.TenantID, t.UserID, t.ApiKeyID, t.ChannelID,
-			t.ModelName, t.RequestID, actualCost, t.PreDeductAmount, 0, 0, pd.BillingContext.Ratios, t.PublicTaskID)
+			t.ModelName, t.RequestID, actualCost, t.PreDeductAmount, 0, 0, pd.BillingContext.Ratios, t.PublicTaskID, t.CreatedAt)
 		if err != nil {
 			g.Log().Warningf(ctx, "poll: retry settle sync_image task %s: %v", t.PublicTaskID, err)
 			return
@@ -422,13 +422,13 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 				actualCost = billing.NewFromFloat(taskInfo.ActualCost)
 			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
 				// 用上游 total_tokens + 保存的 ratios 重算
-				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios); err == nil && tokenCost.GreaterThan(billing.Zero) {
+				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {
 					actualCost = tokenCost
 				}
 			}
 
 			task.ActualCost = actualCost
-			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios, task.PublicTaskID)
+			settleResult, err = taskBilling.SettleTaskSuccess(ctx, task.TenantID, task.UserID, task.ApiKeyID, task.ChannelID, task.ModelName, task.RequestID, actualCost, task.PreDeductAmount, taskInfo.TotalTokens, taskInfo.CompletionTokens, pd.BillingContext.Ratios, task.PublicTaskID, task.CreatedAt)
 			if err != nil {
 				g.Log().Warningf(ctx, "poll: settle task %s: %v", task.PublicTaskID, err)
 			} else {

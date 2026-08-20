@@ -124,6 +124,16 @@ type (
 		ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (*v1.ChannelResetHealthRes, error)
 		// ExportChannels exports channel list to CSV or Excel.
 		ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (*v1.ChannelExportRes, error)
+		// ChannelDebugLogList 渠道调试日志列表（原生 SQL：octet_length 表达式经 gdb Fields 有引号化风险）
+		ChannelDebugLogList(ctx context.Context, req *v1.ChannelDebugLogListReq) (*v1.ChannelDebugLogListRes, error)
+		// ChannelDebugLogStats 渠道调试日志统计（条数/落库体积/最早时间，供清理提示）
+		ChannelDebugLogStats(ctx context.Context, req *v1.ChannelDebugLogStatsReq) (*v1.ChannelDebugLogStatsRes, error)
+		// ChannelDebugLogDetail 渠道调试日志详情（四段完整报文；headers JSONB 解析为对象便于前端渲染）
+		ChannelDebugLogDetail(ctx context.Context, req *v1.ChannelDebugLogDetailReq) (*v1.ChannelDebugLogDetailRes, error)
+		// ChannelDebugLogDelete 删除单条调试日志（硬删除）
+		ChannelDebugLogDelete(ctx context.Context, req *v1.ChannelDebugLogDeleteReq) (*v1.ChannelDebugLogDeleteRes, error)
+		// ChannelDebugLogClear 清空渠道调试日志（按渠道硬删除全部）
+		ChannelDebugLogClear(ctx context.Context, req *v1.ChannelDebugLogClearReq) (*v1.ChannelDebugLogClearRes, error)
 		// ChannelErrorEventList 渠道错误事件列表
 		ChannelErrorEventList(ctx context.Context, req *v1.ChannelErrorEventListReq) (*v1.ChannelErrorEventListRes, error)
 		// ChannelErrorStats 渠道错误统计
@@ -140,7 +150,9 @@ type (
 		ChannelOAuthExchange(ctx context.Context, req *v1.ChannelOAuthExchangeReq) (*v1.ChannelOAuthExchangeRes, error)
 		// ChannelOAuthRefresh 手动刷新 OAuth 令牌
 		ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRefreshReq) (*v1.ChannelOAuthRefreshRes, error)
-		// TestChannel 测试渠道可用性（发送最小请求验证）
+		// TestChannel 测试渠道可用性（发送最小请求验证）。
+		// 不限制渠道状态：禁用中的渠道也允许手动测试，便于管理员在启用放流量前确认已恢复；
+		// 自动探测 cron 只查 active 渠道，禁用渠道不会被自动探测。
 		TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.ChannelTestRes, error)
 		// CronJobList returns all registered cron jobs with their last execution status.
 		CronJobList(ctx context.Context, _ *v1.CronJobListReq) (*v1.CronJobListRes, error)
@@ -483,6 +495,9 @@ type (
 		UpdateTenantChannelScope(ctx context.Context, req *v1.TenantChannelScopeUpdateReq) (*v1.TenantChannelScopeUpdateRes, error)
 		// ExportTenants exports tenant list to CSV or Excel.
 		ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v1.TenantExportRes, error)
+		// TenantApiKeySelect 租户 API Key 下拉选择列表（轻量，不返回密钥原值）。
+		// 供渠道调试目标过滤等管理端选择器使用；user_id > 0 时按创建者过滤。
+		TenantApiKeySelect(ctx context.Context, req *v1.TenantApiKeySelectReq) (*v1.TenantApiKeySelectRes, error)
 		ListTenantLevelConfigs(ctx context.Context, _ *v1.TenantLevelConfigListReq) (*v1.TenantLevelConfigListRes, error)
 		CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigCreateReq) (*v1.TenantLevelConfigCreateRes, error)
 		UpdateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigUpdateReq) (*v1.TenantLevelConfigUpdateRes, error)

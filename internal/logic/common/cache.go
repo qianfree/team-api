@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"math"
 	"math/rand/v2"
+	"reflect"
 	"time"
 
 	"github.com/gogf/gf/v2/database/gredis"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -135,13 +137,35 @@ func (c *Cache) GetJSON(ctx context.Context, key string, target any) bool {
 				g.Log().Warningf(ctx, "[Cache] JSON unmarshal failed key=%s: %v", fullKey, unmarshalErr)
 				return false
 			}
-			// Backfill L1
-			gcache.Set(ctx, fullKey, target, jitterTTL(c.ttl))
+			// Backfill L1：存反序列化副本而非 target 本身。target 指针归调用方所有，
+			// 若调用方在 GetJSON 返回后就地改写（如定价缓存按时段重评乘数），
+			// 存储别名会与并发 L1 读者的 json.Marshal 构成数据竞争。
+			// 副本失败时退回存 target（此时调用方须自律不改写，与历史行为一致）
+			if cp, cpErr := unmarshalCopy(jsonStr, target); cpErr == nil {
+				gcache.Set(ctx, fullKey, cp, jitterTTL(c.ttl))
+			} else {
+				gcache.Set(ctx, fullKey, target, jitterTTL(c.ttl))
+			}
 			return true
 		}
 	}
 
 	return false
+}
+
+// unmarshalCopy 按 target 的具体类型从 JSON 生成一个独立副本（L1 回填用，避免
+// L1 持有调用方 target 指针的别名）。target 必须是非 nil 指针（调用前已成功
+// unmarshal 到 target，天然满足）。
+func unmarshalCopy(jsonStr string, target any) (any, error) {
+	t := reflect.TypeOf(target)
+	if t == nil || t.Kind() != reflect.Pointer {
+		return nil, gerror.New("cache: unmarshalCopy target must be a non-nil pointer")
+	}
+	cp := reflect.New(t.Elem()).Interface()
+	if err := json.Unmarshal([]byte(jsonStr), cp); err != nil {
+		return nil, err
+	}
+	return cp, nil
 }
 
 // GetOrSet retrieves a value or calls fn to set it if missing.

@@ -75,6 +75,8 @@ var Registry = []SettingDef{
 		Label: "全局 API 维护", Description: "开启后 API 代理返回 503，叠加维护模式使用", IsPublic: true},
 	{Key: "tenant_console_url", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "租户控制台地址", Description: "租户控制台的完整 URL，如 https://console.example.com，用于生成邀请链接等"},
+	{Key: "pricing_time_timezone", Type: SettingTypeString, Default: "Asia/Shanghai", Category: "general",
+		Label: "计费时区", Description: "模型时段定价（峰谷/促销）按此时区解释，IANA 时区名，如 Asia/Shanghai"},
 
 	// ── OAuth (第三方登录) ──
 	{Key: "oauth_auto_register", Type: SettingTypeBool, Default: "false", Category: "oauth",
@@ -210,9 +212,7 @@ var Registry = []SettingDef{
 
 	// ── Channel ──
 	{Key: "channel_auto_test_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
-		Label: "渠道自动探测", Description: "定期向活跃渠道发送测试请求，检测连通性并更新健康度（会消耗少量 Token）"},
-	{Key: "channel_auto_test_recovery_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
-		Label: "自动恢复探测", Description: "定期测试已自动禁用的渠道，测试通过则恢复启用（依赖自动探测开启）"},
+		Label: "渠道自动探测", Description: "定期向活跃渠道发送测试请求，检测连通性并更新健康度（会消耗少量 Token）。禁用渠道不自动探测，由管理员手动测试确认后再启用"},
 	{Key: "channel_auto_disable_enabled", Type: SettingTypeBool, Default: "false", Category: "channel",
 		Label: "渠道自动禁用", Description: "渠道熔断持续超过路由策略 breaker.autoDisableAfterSeconds（默认 10 分钟）未恢复时自动禁用"},
 	{Key: "channel_routing_policy", Type: SettingTypeJSON, Default: "", Category: "channel",

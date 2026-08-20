@@ -145,20 +145,22 @@ func deleteBillingRecord(ctx context.Context, billingID int64) error {
 
 // Settle 结算请求费用
 // 预扣→调用→结算→退差额/补扣
+// billAt 为请求受理时刻（时段定价按该时刻评估；零值按当前时刻兜底）
 func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	inputTokens, outputTokens int,
-	preDeductAmount float64, projectID int64) (*SettlementResult, error) {
+	preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error) {
 
-	// 1. 计算实际费用
-	breakdown, err := CalculateCost(ctx, tenantID, modelName, inputTokens, outputTokens)
-	if err != nil {
+	// 1. 定价与实际费用：按受理时刻一次性取价（时段定价预扣/结算口径一致）
+	pricingResult, pricingErr := GetModelPriceAt(ctx, tenantID, modelName, billAt)
+	var breakdown *CostBreakdown
+	if pricingErr != nil {
 		// A4 修复：计价失败【不得】按零费用结算——那会把定价异常/模型未配价/短暂 DB 故障
 		// 都变成免费请求。改为 fail-closed 兜底：按已冻结的预扣额计费（预扣是请求受理时的估价，
 		// 当前可得的最佳估值），与 task 结算路径（async_polling / sync_image_worker 默认
 		// actualCost = PreDeductAmount）保持一致。保留 token 数便于账单核对。
 		g.Log().Errorf(ctx, "settle: calculate cost failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %v",
-			requestID, modelName, preDeductAmount, err)
+			requestID, modelName, preDeductAmount, pricingErr)
 		breakdown = &CostBreakdown{
 			TotalCost:    preDeductAmount,
 			BaseCost:     preDeductAmount,
@@ -166,6 +168,8 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			OutputTokens: outputTokens,
 			Currency:     "USD",
 		}
+	} else {
+		breakdown = computeCost(pricingResult, inputTokens, outputTokens, nil)
 	}
 	actualCost := breakdown.TotalCost
 
@@ -178,8 +182,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 		return nil, gerror.Wrapf(err, "settle: get wallet")
 	}
 
-	// 4. 获取定价信息（事务外只读）
-	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
+	// 4. 定价信息已在第 1 步随费用计算一并获取（事务外只读）
 
 	// 5. 执行结算（幂等闸门 → Redis 认领扣款 → 流水）
 	billingID, err := executeSettlement(ctx, settlementTxParams{
@@ -255,17 +258,29 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	}, nil
 }
 
-// SettleWithUsage 完整 Usage 结算（含 cache token 计费 + 计费快照）
+// SettleWithUsage 完整 Usage 结算（含 cache token 计费 + 计费快照）。
+// 时段定价按 relayInfo.StartTime（请求受理时刻）评估，跨时段边界的请求不因结算延迟变价。
 func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
 	usage *rcommon.Usage, preDeductAmount float64, relayInfo *rcommon.RelayInfo) (*SettlementResult, error) {
 
-	// 1. 使用完整 Usage 计算实际费用（含 cache token）
-	breakdown, err := CalculateCostWithUsage(ctx, tenantID, modelName, usage)
-	if err != nil {
+	// 1. 定价与实际费用：按受理时刻一次性取价后用完整 Usage 计算（含 cache token）。
+	// 此前 CalculateCostWithUsage 与第 4 步各取一次定价，两次结果可能不一致（缓存刷新窗口），已合并。
+	var billAt time.Time
+	if relayInfo != nil {
+		billAt = relayInfo.StartTime
+	}
+	pricingResult, pricingErr := GetModelPriceAt(ctx, tenantID, modelName, billAt)
+	var breakdown *CostBreakdown
+	if pricingErr != nil || usage == nil {
 		// A4 修复：计价失败 fail-closed 兜底按预扣额计费，而非零费用（免费请求）。见 Settle 同段说明。
-		g.Log().Errorf(ctx, "settle_with_usage: calculate cost failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %v",
-			requestID, modelName, preDeductAmount, err)
+		if pricingErr != nil {
+			g.Log().Errorf(ctx, "settle_with_usage: calculate cost failed for %s (model=%s), fallback to pre-deduct estimate %.6f: %v",
+				requestID, modelName, preDeductAmount, pricingErr)
+		} else {
+			g.Log().Errorf(ctx, "settle_with_usage: usage is nil for %s (model=%s), fallback to pre-deduct estimate %.6f",
+				requestID, modelName, preDeductAmount)
+		}
 		fb := &CostBreakdown{
 			TotalCost: preDeductAmount,
 			BaseCost:  preDeductAmount,
@@ -276,6 +291,8 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 			fb.OutputTokens = usage.CompletionTokens
 		}
 		breakdown = fb
+	} else {
+		breakdown = computeCost(pricingResult, usage.PromptTokens, usage.CompletionTokens, usage)
 	}
 	actualCost := breakdown.TotalCost
 
@@ -288,8 +305,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		return nil, gerror.Wrapf(err, "settle_with_usage: get wallet")
 	}
 
-	// 4. 获取定价信息（事务外只读）
-	pricingResult, _ := GetModelPrice(ctx, tenantID, modelName)
+	// 4. 定价信息已在第 1 步随费用计算一并获取（事务外只读）
 
 	// 5. 执行结算（幂等闸门 → Redis 认领扣款 → 流水）
 	billingID, err := executeSettlement(ctx, settlementTxParams{
@@ -401,9 +417,10 @@ func SettleFailed(ctx context.Context, tenantID int64, requestID string, preDedu
 // SettleStreamInterrupted 流式中断结算：按已确认 usage 走完整 Usage 结算（含 cache token 计费 + 快照）。
 // 此前按 (input, output) 两数走 Settle，会丢弃 usage 中的 cache_read / cache_creation token——
 // Claude 场景 prompt_tokens 不含 cache token，大缓存请求中断时缓存部分完全漏计费。
+// billAt 为请求受理时刻（写入合成 RelayInfo 供时段定价评估；零值按当前时刻兜底）。
 func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 	modelName, requestID, relayMode string,
-	usage *rcommon.Usage, preDeductAmount float64, projectID int64) (*SettlementResult, error) {
+	usage *rcommon.Usage, preDeductAmount float64, projectID int64, billAt time.Time) (*SettlementResult, error) {
 
 	// usage 为 nil 必须兜换空 Usage：SettleWithUsage 对 nil usage 会 fail-closed 按预扣全额计费，
 	// 而中断且无任何 usage 的正确语义是 0 token 结算（成本 0，全额退差）
@@ -414,6 +431,7 @@ func SettleStreamInterrupted(ctx context.Context, tenantID, userID, apiKeyID, ch
 		ProjectID:       projectID,
 		OriginModelName: modelName,
 		IsStream:        true,
+		StartTime:       billAt,
 	}
 	return SettleWithUsage(ctx, tenantID, userID, apiKeyID, channelID,
 		modelName, requestID, relayMode, usage, preDeductAmount, relayInfo)

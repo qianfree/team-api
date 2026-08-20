@@ -33,6 +33,8 @@ type BillingSnapshotMultipliers struct {
 	TenantMultiplier float64 `json:"tenant_multiplier"`
 	DiscountRatio    float64 `json:"discount_ratio"`
 	RateMultiplier   float64 `json:"rate_multiplier"`
+	TimeMultiplier   float64 `json:"time_multiplier"` // 时段乘数（未启用时段定价时为 1）
+	TimeRule         string  `json:"time_rule"`       // 命中的时段名（供账单解释；未命中为空）
 }
 
 // BillingSnapshotCachePrices 缓存价格信息
@@ -91,6 +93,8 @@ func GenerateBillingSnapshot(
 			TenantMultiplier: pricing.TenantMultiplier,
 			DiscountRatio:    pricing.DiscountRatio,
 			RateMultiplier:   pricing.TenantMultiplier,
+			TimeMultiplier:   effectiveTimeMultiplier(pricing),
+			TimeRule:         pricing.TimeRuleName,
 		},
 		TokenCosts: buildTokenCosts(pricing, breakdown),
 	}
@@ -228,13 +232,27 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
 		}
 
-		// 小计 × 倍率
+		// 小计 × 倍率（乘法链 = 租户倍率 × 时段乘数，两者均为 1 时省略该行）
 		subtotal := snapshot.Settlement.ActualCost
-		if snapshot.Multipliers.TenantMultiplier != 1.0 && snapshot.Multipliers.TenantMultiplier != 0 {
-			preMultiplier := subtotal / snapshot.Multipliers.TenantMultiplier
-			lines = append(lines, fmt.Sprintf("小计: $%s × 租户倍率(%.2f) = $%s",
-				formatPrice(preMultiplier), snapshot.Multipliers.TenantMultiplier, formatPrice(subtotal)))
+		effTenant := snapshot.Multipliers.TenantMultiplier
+		effTime := snapshot.Multipliers.TimeMultiplier
+		if effTime <= 0 {
+			effTime = 1.0
 		}
+		if effTenant > 0 && (effTenant != 1.0 || effTime != 1.0) {
+			preMultiplier := subtotal / (effTenant * effTime)
+			multDesc := fmt.Sprintf("%.2f", effTenant)
+			if effTime != 1.0 {
+				multDesc += fmt.Sprintf(" × 时段(%.2f)", effTime)
+			}
+			lines = append(lines, fmt.Sprintf("小计: $%s × 租户倍率(%s) = $%s",
+				formatPrice(preMultiplier), multDesc, formatPrice(subtotal)))
+		}
+	}
+
+	// 时段定价行：放在 token/per_request 分支之后统一展示，保证账单可解释（按次计费同样适用时段乘数）
+	if snapshot.Multipliers.TimeRule != "" && snapshot.Multipliers.TimeMultiplier > 0 && snapshot.Multipliers.TimeMultiplier != 1.0 {
+		lines = append(lines, fmt.Sprintf("时段: %s ×%.2f", snapshot.Multipliers.TimeRule, snapshot.Multipliers.TimeMultiplier))
 	}
 
 	// 结算信息

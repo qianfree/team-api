@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/internal/dao"
@@ -56,7 +57,15 @@ type PricingResult struct {
 	MaxOutputTokens int
 
 	// 租户自定义阶梯定价（JSONB 解析后的原始数据，供 CalculateCost 使用）
-	CustomTiers []pricingTierRow
+	// 租户未自定义时回落为平台阶梯（mdl_pricing 的 min_tokens 档位行）
+	CustomTiers []pricingTierRow `json:"CustomTiers"`
+
+	// 时段定价配置（mdl_pricing 锚点行 time_segments，随定价缓存存储）
+	TimeSegments []TimeSegment `json:"time_segments,omitempty"`
+	// 时段乘数（读取时按定价时刻评估；缓存条目中的值是写入时刻的结果，仅作参考）
+	TimeMultiplier float64 `json:"time_multiplier"`
+	// 命中的时段名（写入计费快照，供账单解释；未命中为空）
+	TimeRuleName string `json:"time_rule_name"`
 }
 
 // ClearTenantPriceCache 清除租户的所有模型价格缓存
@@ -85,13 +94,27 @@ func ClearModelPriceCache(ctx context.Context, modelName string) {
 	modelPriceCache.DeleteByPattern(ctx, fmt.Sprintf("*:%s", modelName))
 }
 
-// GetModelPrice 获取模型价格
-// 优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认
+// GetModelPrice 获取模型价格（时段乘数按当前时刻评估）。
+// 预扣等「调用时刻≈受理时刻」的路径使用本函数。
 func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*PricingResult, error) {
+	return GetModelPriceAt(ctx, tenantID, modelName, time.Time{})
+}
+
+// GetModelPriceAt 获取模型价格，时段乘数按 billAt（定价时刻）评估。
+// 优先级：租户独立价 > 套餐价 > 模型基础价 > 硬编码默认。
+// 定价时刻语义：结算/异步任务路径必须传「请求（任务）受理时刻」，保证 07:59 发出的请求
+// 即使 08:05 结算也按 07:59 的时段价计费，预扣与结算口径一致；billAt 零值按当前时刻。
+func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, billAt time.Time) (*PricingResult, error) {
+	if billAt.IsZero() {
+		billAt = time.Now()
+	}
 	cacheKey := fmt.Sprintf("%d:%s", tenantID, modelName)
 	var cached PricingResult
 	if modelPriceCache.GetJSON(ctx, cacheKey, &cached) {
-		return &cached, nil
+		// 缓存条目中的时段乘数是写入时刻的评估结果，必须按 billAt 重评估
+		// （GetJSON 的 target 为调用方独有副本，L1 回填存的也是反序列化副本，
+		// 就地改写不会波及缓存内对象、无数据竞争）
+		return reapplyTimeMultiplier(ctx, &cached, billAt), nil
 	}
 
 	// 1. 查模型基础信息（max_output_tokens 一并取出，随定价缓存供预扣估算复用）
@@ -115,23 +138,43 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		return nil, gerror.Newf("model not found: %s", modelName)
 	}
 
-	// 2. 从 mdl_pricing 获取基础定价
+	// 2. 从 mdl_pricing 获取定价（全行读取：锚点行 min_tokens=0 是默认价与时段配置载体，
+	// 其余行是平台阶梯档位。此前只读锚点行导致平台阶梯不参与计费，退化为第一档平价）
 	type pricingRow struct {
+		MinTokens          int64    `json:"min_tokens"`
+		MaxTokens          *int64   `json:"max_tokens"`
 		BillingMode        string   `json:"billing_mode"`
 		InputPrice         float64  `json:"input_price"`
 		OutputPrice        float64  `json:"output_price"`
 		PerRequestPrice    *float64 `json:"per_request_price"`
 		CacheReadPrice     float64  `json:"cache_read_price"`
 		CacheCreationPrice float64  `json:"cache_creation_price"`
+		TimeSegments       string   `json:"time_segments"`
 	}
 
-	var pricing *pricingRow
+	var pricingRows []pricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.ID).
-		Where("min_tokens", 0).
-		Scan(&pricing)
+		OrderAsc("min_tokens").
+		Scan(&pricingRows)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query model pricing")
+	}
+
+	// 锚点行（默认价）与平台阶梯（含锚点行作为第一档，与租户端 buildTiers 口径一致）
+	var pricing *pricingRow
+	var platformTiers []pricingTierRow
+	for i := range pricingRows {
+		row := &pricingRows[i]
+		if row.MinTokens == 0 {
+			pricing = row
+		}
+		platformTiers = append(platformTiers, pricingTierRow{
+			MinTokens:   row.MinTokens,
+			MaxTokens:   row.MaxTokens,
+			InputPrice:  row.InputPrice,
+			OutputPrice: row.OutputPrice,
+		})
 	}
 
 	billingMode := "token"
@@ -229,6 +272,21 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		}
 	}
 
+	// 2.5 平台阶梯兜底：租户未自定义阶梯时使用平台阶梯（mdl_pricing 档位行）。
+	// 计费模式非 tiered 时 computeCost 不会读取 CustomTiers，无副作用
+	if len(customTiers) == 0 {
+		customTiers = platformTiers
+	}
+
+	// 2.6 时段定价（锚点行 JSONB；解析失败按默认价处理并告警，不阻断计费）
+	var timeSegments []TimeSegment
+	if pricing != nil && pricing.TimeSegments != "" && pricing.TimeSegments != "null" {
+		if err := json.Unmarshal([]byte(pricing.TimeSegments), &timeSegments); err != nil {
+			g.Log().Warningf(ctx, "billing: 模型 %s 时段定价配置解析失败，按默认价处理: %v", modelName, err)
+			timeSegments = nil
+		}
+	}
+
 	// 3.5 级别折扣 fallback：当租户×模型维度未设置倍率时，使用租户级别的 price_multiplier
 	if tenantMultiplier == 1.0 {
 		levelMultiplier := GetLevelPriceMultiplier(ctx, tenantID)
@@ -271,10 +329,34 @@ func GetModelPrice(ctx context.Context, tenantID int64, modelName string) (*Pric
 		CacheCreation1hPrice: cacheCreationPrice * 1.6, // 1h TTL = 1.6× 基础价（因为 2.0÷1.25=1.6，对应官方 2× 输入价）
 		MaxOutputTokens:      model.MaxOutputTokens,
 		CustomTiers:          customTiers,
+		TimeSegments:         timeSegments,
+	}
+
+	// 时段乘数按定价时刻评估后随缓存存储（缓存命中路径会按 billAt 重评估，存储值仅参考）
+	if len(timeSegments) > 0 {
+		loc := pricingTimeLocation(ctx)
+		result.TimeMultiplier, result.TimeRuleName = resolveTimeMultiplier(timeSegments, billAt, loc)
+	} else {
+		result.TimeMultiplier = 1.0
 	}
 
 	modelPriceCache.Set(ctx, cacheKey, result)
 	return result, nil
+}
+
+// reapplyTimeMultiplier 缓存命中路径：按 billAt 重评估时段乘数后就地改写并返回。
+// 入参必须是本调用新建/反序列化的独有副本，不得传入共享指针：
+// GetJSON 保证 target 归调用方所有（L1 回填存反序列化副本），
+// DB 加载路径的 result 在 Set 之后不再改写。
+func reapplyTimeMultiplier(ctx context.Context, p *PricingResult, billAt time.Time) *PricingResult {
+	if len(p.TimeSegments) == 0 {
+		p.TimeMultiplier = 1.0
+		p.TimeRuleName = ""
+		return p
+	}
+	loc := pricingTimeLocation(ctx)
+	p.TimeMultiplier, p.TimeRuleName = resolveTimeMultiplier(p.TimeSegments, billAt, loc)
+	return p
 }
 
 // CalculateCost 计算实际费用（含阶梯定价）
@@ -293,11 +375,13 @@ func CalculateCost(ctx context.Context, tenantID int64, modelName string, inputT
 func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) *CostBreakdown {
 	baseInputTokens, outputTokens, cacheReadTokens, cacheCreation5mTokens, cacheCreation1hTokens := resolveTokenCounts(pricing, inputTokens, outputTokens, usage)
 
-	// 按次计费：直接返回单价
+	// 按次计费：单价 × 租户乘数 × 时段乘数。
+	// 此前未乘租户乘数（按次模型对租户折扣免疫，疑似遗漏），本次与 token/tiered 口径对齐
 	if pricing.BillingMode == "per_request" {
+		mulD := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		return &CostBreakdown{
 			BaseCost:            pricing.PerRequestPrice,
-			TotalCost:           pricing.PerRequestPrice,
+			TotalCost:           InexactFloat64(RoundMoney(NewFromFloat(pricing.PerRequestPrice).Mul(mulD))),
 			InputTokens:         baseInputTokens,
 			OutputTokens:        outputTokens,
 			BillingMode:         pricing.BillingMode,
@@ -316,10 +400,10 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	// 输出费用（已改为 decimal）
 	outputCostD := computeOutputCost(pricing, outputTokens)
 
-	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 + 各项求和）改用 decimal 精确运算，
+	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 × 时段乘数 + 各项求和）改用 decimal 精确运算，
 	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
 	million := decimal.NewFromInt(1_000_000)
-	mul := NewFromFloat(pricing.TenantMultiplier)
+	mul := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 
 	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
 
@@ -457,9 +541,10 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 		return 0, err
 	}
 
-	// 按次计费：直接用单价
+	// 按次计费：单价 × 租户乘数 × 时段乘数（与 computeCost 结算口径一致）
 	if pricing.BillingMode == "per_request" {
-		return pricing.PerRequestPrice, nil
+		mult := NewFromFloat(pricing.TenantMultiplier).Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
+		return InexactFloat64(NewFromFloat(pricing.PerRequestPrice).Mul(mult)), nil
 	}
 
 	// Token 计费：估算输出上限。
@@ -496,7 +581,7 @@ func EstimatePreDeductAmount(ctx context.Context, tenantID int64, modelName stri
 
 // validatePricingConfigured 校验模型定价有效性（fail-closed）。
 // 未配置定价的模型不得放行：零价会让预扣/结算全部为 0，等同免费使用。
-// 允许只配 OutputPrice（输入免费）或只配租户自定义阶梯（CustomTiers）的合法场景。
+// 允许只配 OutputPrice（输入免费）或只配含正价的自定义/平台阶梯（CustomTiers）的合法场景。
 func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 	switch pricing.BillingMode {
 	case "per_request":
@@ -504,11 +589,22 @@ func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_request price not set)", modelName)
 		}
 	default: // token / tiered
-		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && len(pricing.CustomTiers) == 0 {
+		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && !tiersHavePrice(pricing.CustomTiers) {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s", modelName)
 		}
 	}
 	return nil
+}
+
+// tiersHavePrice 阶梯数组中是否存在任一档正价（输入或输出）。
+// 平台阶梯兜底后 CustomTiers 可能恒非空，全 0 价阶梯不得视为「已配置定价」放行
+func tiersHavePrice(tiers []pricingTierRow) bool {
+	for _, tier := range tiers {
+		if tier.InputPrice > 0 || tier.OutputPrice > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // pricingTierRow 定价阶梯行（绝对价格）
@@ -519,41 +615,18 @@ type pricingTierRow struct {
 	OutputPrice float64 `json:"output_price"`
 }
 
-// calculateTieredCostFromPricing 从 mdl_pricing 读取阶梯绝对价格计算费用
-func calculateTieredCostFromPricing(ctx context.Context, modelName string, tokens int, isInput bool) (float64, float64) {
-	if tokens <= 0 {
-		return 0, 1.0
+// effectiveTimeMultiplier 时段乘数归一化：0/负值视为 1.0。
+// 兜底两类场景：升级部署后 Redis L2 缓存中的旧定价条目（无该字段）、手工构造的零值 PricingResult。
+// 计费系统 fail-safe 原则：时段字段缺失不得把费用清零。
+func effectiveTimeMultiplier(p *PricingResult) float64 {
+	if p.TimeMultiplier <= 0 {
+		return 1.0
 	}
-
-	// 查模型ID
-	type modelIDRow struct {
-		ID int64 `json:"id"`
-	}
-	var mid modelIDRow
-	err := dao.MdlModels.Ctx(ctx).
-		Where("model_id", modelName).
-		Fields("id").
-		Scan(&mid)
-	if err != nil || mid.ID == 0 {
-		return 0, 1.0
-	}
-
-	// 查阶梯定价（绝对价格）
-	var tiers []pricingTierRow
-	err = dao.MdlPricing.Ctx(ctx).
-		Where("model_id", mid.ID).
-		Where("billing_mode", "tiered").
-		OrderAsc("min_tokens").
-		Fields("min_tokens, max_tokens, input_price, output_price").
-		Scan(&tiers)
-	if err != nil || len(tiers) == 0 {
-		return 0, 1.0
-	}
-
-	return calculateTieredCostFromTiers(tiers, tokens, isInput), 1.0
+	return p.TimeMultiplier
 }
 
-// calculateTieredCostFromTiers 从给定的阶梯数组计算费用（租户自定义阶梯或基础阶梯共用）
+// calculateTieredCostFromTiers 从给定的阶梯数组计算费用（租户自定义阶梯或平台阶梯共用；
+// 平台阶梯随 GetModelPrice 加载进 PricingResult.CustomTiers，走 600s 定价缓存）
 func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bool) float64 {
 	if tokens <= 0 || len(tiers) == 0 {
 		return 0
