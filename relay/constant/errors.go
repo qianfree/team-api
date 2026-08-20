@@ -22,6 +22,10 @@ var ErrAllChannelsFailed = gerror.New("all channels failed")
 // 由 ConvertResponsesToOpenAI 返回，relay_handler 捕获后按渠道级致命上报调度 FSM 换渠道。
 var ErrStatefulResponsesUnsupported = gerror.New("previous_response_id requires a responses-native channel")
 
+// StatefulResponsesSwitchEndpointHint 有状态 responses 请求换遍渠道仍无 Responses 原生
+// 渠道时返回给客户端的自救指引：切换到 /v1/chat/completions 端点携带完整会话历史重发。
+const StatefulResponsesSwitchEndpointHint = "previous_response_id is only supported on responses-native channels; no eligible channel remains for this model. Please switch to the /v1/chat/completions endpoint with the full conversation history, or resend the full input without previous_response_id."
+
 // RelayError 包装 relay 层错误，携带上游返回的状态码和信息
 type RelayError struct {
 	StatusCode int

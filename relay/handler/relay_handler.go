@@ -471,6 +471,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 渠道调度与请求执行（新调度引擎：Route / Next / Report / Finish）
 	// 重试语义由调度核心的 FSM 决定（三预算：原地/凭证轮换/failover），handler 只执行决策。
 	channelErrors := make([]string, 0)
+	// responses 有状态协议不匹配的失败次数：与 channelErrors 总数相等说明本次请求的全部失败
+	// 均为协议约束（无其他渠道故障），无渠道出口应返回端点切换指引而非"模型不可用"
+	statefulMismatchCount := 0
 
 	trace := &common.ForwardingTrace{
 		EntryPath:      path,
@@ -529,6 +532,16 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 			// 无可用渠道：附带调度器的排除原因摘要（各原因独立计数，仅列非零项）。
 			// 例：熔断OPEN×1 / 容量租约满×1（并发超 softLimit） / 半开探测限流×1（恢复期每窗口仅 1 个探测）
+			// 全部失败均为 responses 有状态协议不匹配时，属客户端可自救的协议约束而非运营故障，
+			// 静默返回端点切换指引（与上方 Abort 路径同文案），不误导为"当前模型暂时不可用"，
+			// 也不按全部渠道失败记 ERROR 告警/失败用量；事件仍由审计日志与调度监控计数覆盖
+			if len(channelErrors) > 0 && statefulMismatchCount == len(channelErrors) {
+				if billing != nil && preDeductAmount > 0 {
+					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
+				}
+				return nil, v.billingResult, constant.NewRequestError(
+					constant.StatefulResponsesSwitchEndpointHint, nil)
+			}
 			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary())
 			return result.usage, result.billingResult, result.err
 		}
@@ -624,17 +637,16 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 而非请求错误，换渠道可能命中 Responses 原生渠道——按渠道级致命上报驱动 failover，
 			// 而非直接返回（直接返回会让有能力渠道存在时也失败）
 			if errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+				statefulMismatchCount++
 				channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s convert_error=[%v]",
 					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
-				g.Log().Warningf(ctx, "[RelayHandler] Stateful responses not supported by chat-only channel, failing over: channel=%d(%s) model=%s attempt=%d",
-					selection.ChannelID, selection.ChannelName, v.modelName, attempt)
 				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
 					if billing != nil && preDeductAmount > 0 {
 						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
 					}
 					dbgAttempt.MarkFinal(err)
 					return nil, v.billingResult, constant.NewRequestError(
-						"previous_response_id is only supported on responses-native channels; no eligible channel remains for this model. Resend the full conversation input without previous_response_id.", nil)
+						constant.StatefulResponsesSwitchEndpointHint, nil)
 				}
 				dbgAttempt.Submit(err)
 				continue
@@ -856,8 +868,12 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 	} else {
 		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)
 		if err != nil {
-			g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
-				adaptor.GetChannelName(), info.InboundFormat, err)
+			// responses 有状态协议不匹配为预期内错误（上层按哨兵驱动换渠道并向客户端返回
+			// 端点切换指引），不打 ERRO 噪音；其余转换失败仍按内部错误记录
+			if !errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+				g.Log().Errorf(ctx, "[RelayHandler] ConvertRequest failed: adaptor=%s, inboundFormat=%s, error=%v",
+					adaptor.GetChannelName(), info.InboundFormat, err)
+			}
 			return nil, err
 		}
 		convertedBody = legacyBody
