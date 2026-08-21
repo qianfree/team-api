@@ -73,15 +73,14 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return convertClaudeRequestForDeepSeek(requestBody, info)
 	}
 
-	// Responses 模式：上游原生支持时保持 Responses 格式（模型映射 + reasoning.effort 注入）；
-	// chat-only 上游由 handler 层桥接（responses→openai）先行转换，走到本分支说明桥接
-	// 未接管，按转换失败报错（legacy 回退已收割）
-	if constant.RelayMode(info.RelayMode) == constant.RelayModeResponses ||
-		constant.RelayMode(info.RelayMode) == constant.RelayModeResponsesCompact {
-		if info.ChannelMeta.UpstreamSpeaksResponses() {
-			return convertResponsesRequestForDeepSeek(requestBody, info)
-		}
-		return nil, fmt.Errorf("[relaykit] responses→openai 请求转换失败（handler 层桥接未接管）")
+	// Responses 模式且上游原生支持：保持 Responses 格式（模型映射 + reasoning.effort 注入）。
+	// chat-only 上游落入下方通用路径——经 ConvertToOpenAI 完成 r2o 转换后照常执行
+	// DeepSeek 特有的 injectStreamOptions/injectThinkingParams 注入与模型映射
+	//（接管点在 adaptor 层，与 claude/gemini 入站同构；GetRequestURL 已兜底 chat 端点）
+	if (constant.RelayMode(info.RelayMode) == constant.RelayModeResponses ||
+		constant.RelayMode(info.RelayMode) == constant.RelayModeResponsesCompact) &&
+		info.ChannelMeta.UpstreamSpeaksResponses() {
+		return convertResponsesRequestForDeepSeek(requestBody, info)
 	}
 
 	// 非 OpenAI 格式先转换为 OpenAI

@@ -170,6 +170,48 @@ func TestAdaptor_ConvertRequest_ResponsesUpstream_Thinking(t *testing.T) {
 	}
 }
 
+// TestAdaptor_ConvertRequest_ResponsesChatOnlyUpstream chat-only 上游（supports_responses=false）
+// 的 responses 入站：经共享 ConvertToOpenAI 转 chat 体，adaptor 后处理照常执行
+// ——接管点在 adaptor 层（与 claude/gemini 入站同构），stream_options / reasoning_effort
+// 注入不再被 handler 层桥接跳过（#12 专项）。
+func TestAdaptor_ConvertRequest_ResponsesChatOnlyUpstream(t *testing.T) {
+	info := responsesUpstreamInfo(constant.RelayModeResponses, true)
+	info.ChannelMeta.SupportsResponses = false
+	info.ChannelMeta.IsModelMapped = true
+	info.ReasoningEffort = "high"
+
+	body := []byte(`{"model":"gpt-4o","input":"say hi","stream":true}`)
+	a := &Adaptor{}
+	out, err := a.ConvertRequest(context.Background(), info, body)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad converted json: %v\n%s", err, raw)
+	}
+	if _, ok := m["messages"]; !ok {
+		t.Error("converted body missing messages（r2o 转换未生效）")
+	}
+	if _, ok := m["input"]; ok {
+		t.Error("responses input should be converted to chat messages")
+	}
+	if _, ok := m["stream_options"]; !ok {
+		t.Error("stream_options should be injected for chat-only upstream")
+	}
+	// thinking 后缀走 chat 字段 reasoning_effort（responsesUpstream=false）
+	if got := string(m["reasoning_effort"]); got != `"high"` {
+		t.Errorf("reasoning_effort = %s, want \"high\"", got)
+	}
+	if _, ok := m["reasoning"]; ok {
+		t.Error("should NOT inject responses reasoning object for chat-only upstream")
+	}
+	if got := string(m["model"]); got != `"gpt-4o-upstream"` {
+		t.Errorf("model = %s, want gpt-4o-upstream（模型映射应执行）", got)
+	}
+}
+
 // TestResponsesUsageToCommon 验证 Responses usage → common.Usage 映射。
 func TestResponsesUsageToCommon(t *testing.T) {
 	u := responsesUsageToCommon(&dto.ResponsesUsage{

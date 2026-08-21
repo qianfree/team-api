@@ -25,6 +25,9 @@ import (
 // 设计要点：
 //   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；转换后仍复用旧路径的系统提示词注入 / 参数改写 / 字段清理。
+//   - X→openai(chat) 方向（claude/gemini/responses 入站）一律不在本层路由：接管点在共享
+//     函数 openai.ConvertToOpenAI 内部，由各 adaptor 调用——保证 adaptor 的定制后处理
+//     （deepseek thinking 注入、zhipu GLM 裁剪等）在任何入站格式下都照常执行。
 //   - 无匹配（同格式 / Ollama 非 chat 模式等）或解析/转换失败返回 ok=false，调用方回退
 //     adaptor.ConvertRequest——legacy 转换器已收割，该回退只覆盖原生直通与 adaptor 本地模式，
 //     relaykit 已注册方向的转换失败会显式报错（问题经 monitor.TrackConverterCall 暴露）。
@@ -41,13 +44,14 @@ func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream consta
 		inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatOpenAI {
 		return relayconvert.ConverterOpenAIChatToOpenAIResponses
 	}
-	// Responses 入站（Responses/ResponsesCompact 模式均映射 responses 格式）
+	// Responses 入站（Responses/ResponsesCompact 模式均映射 responses 格式）。
+	// ⚠️ responses→openai(chat-only 上游) 方向严禁在此路由：接管点在共享函数
+	// openai.ConvertToOpenAI 内部（同 claude/gemini→openai 的既有约定）——handler 层
+	// 接管会整体跳过 adaptor.ConvertRequest，deepseek injectThinkingParams、zhipu
+	// applyGLMCompatibility、ali top_p 夹取、xai/baidu_v2 后缀注入等定制后处理全部失效。
+	// Responses 原生上游（UpstreamSpeaksResponses）同样不路由，adaptor 走原样直连。
 	if inbound == constant.RelayFormatResponses {
 		switch {
-		case upstream == constant.RelayFormatOpenAI && !info.ChannelMeta.UpstreamSpeaksResponses():
-			// chat-only 上游：Responses → OpenAI Chat。
-			// 上游原生支持 Responses 时不转换（adaptor 走原样直连 + 后处理）
-			return relayconvert.ConverterOpenAIResponsesToOpenAIChat
 		case upstream == constant.RelayFormatClaude:
 			// Responses → Claude Messages（链式：responses→openai→claude）
 			return relayconvert.ConverterOpenAIResponsesToClaudeMessages
@@ -128,9 +132,11 @@ func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body
 	}
 
 	// Responses 入站专属预处理：
-	//   - 有状态请求（previous_response_id）且已匹配到跨格式转换器（即上游非 Responses
-	//     原生）：返回哨兵错误驱动 failover（原 legacy ConvertResponsesToOpenAI 的快速失败
-	//     检查——会话历史存于上游 Responses 服务侧，降级转换会静默丢失全部上下文）；
+	//   - 有状态请求（previous_response_id）且已匹配到跨格式转换器（即 claude/gemini 链
+	//     上游）：返回哨兵错误驱动 failover（会话历史存于上游 Responses 服务侧，降级转换
+	//     会静默丢失全部上下文）。chat-only openai 上游方向的哨兵由共享桥
+	//     TryConvertInboundToOpenAIChat 经 adaptor.ConvertRequest 产出——relay_handler
+	//     的哨兵判定点对两条路径统一生效；
 	//   - stash 请求快照，供响应侧合成 Responses 格式时 echo 请求参数（对应 legacy 行为）。
 	if inbound == constant.RelayFormatResponses {
 		responsesReq := parsed.(*dto.OpenAIResponsesRequest)

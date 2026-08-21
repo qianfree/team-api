@@ -66,8 +66,12 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // 做模型名映射，并对齐 Codex CLI 剥离官方不兼容字段（store/max_output_tokens/temperature）、补默认 instructions。
 // 以 map 形式操作，保留 Responses 其余字段（input/tools/reasoning 等）原样透传，避免结构体 round-trip 丢字段。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
+	// 非 OpenAI 格式先转换为 OpenAI。Responses 入站除外：codex 上游只说 Responses 协议
+	//（GetRequestURL 恒为 Responses 专用端点），Responses 体须原样进入下方字段手术——
+	// 若错转成 chat 体再发往 Responses 端点会被上游拒绝并触发重试风暴。
+	// claude/gemini 入站维持转换（随后被下方模式检查拒绝，不会发出请求）。
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI &&
+		info.InboundFormat != constant.RelayFormatResponses {
 		converted, err := openai.ConvertToOpenAI(requestBody, info)
 		if err != nil {
 			return nil, err

@@ -182,3 +182,41 @@ func TestConvertRequest_ModelMapping(t *testing.T) {
 		t.Errorf("model = %s, want \"gpt-5.6-codex\"", got["model"])
 	}
 }
+
+// TestConvertRequest_ResponsesInboundKeepsResponsesBody 回归：responses 入站 +
+// 模型映射（canPassThrough 被关闭）时，Responses 体必须原样进入字段手术——
+// 此前会被 ConvertToOpenAI 错转成 chat 体再发往 Responses 专用端点（上游拒绝）。
+func TestConvertRequest_ResponsesInboundKeepsResponsesBody(t *testing.T) {
+	a := &Adaptor{}
+	info := newTestInfo(testCodexKey)
+	info.InboundFormat = constant.RelayFormatResponses
+	info.ChannelMeta.IsModelMapped = true
+	info.ChannelMeta.UpstreamModelName = "gpt-5.6-codex"
+
+	body := `{"model":"user-alias","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"temperature":0.7}`
+	reader, err := a.ConvertRequest(context.Background(), info, []byte(body))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out, _ := io.ReadAll(reader)
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("converted body is not json: %v, body: %s", err, out)
+	}
+	if _, ok := got["input"]; !ok {
+		t.Errorf("responses input should be preserved: %s", out)
+	}
+	if _, ok := got["messages"]; ok {
+		t.Errorf("must NOT convert to chat messages（responses 体被错转）: %s", out)
+	}
+	if string(got["store"]) != "false" {
+		t.Errorf("store = %s, want false（字段手术应执行）", got["store"])
+	}
+	if _, ok := got["temperature"]; ok {
+		t.Errorf("temperature should be stripped: %s", out)
+	}
+	if string(got["model"]) != `"gpt-5.6-codex"` {
+		t.Errorf("model = %s, want gpt-5.6-codex", got["model"])
+	}
+}

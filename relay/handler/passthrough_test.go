@@ -296,7 +296,10 @@ func TestRelaykitRequestConverterID(t *testing.T) {
 		{"OpenAI→Ollama generate 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
 		{"OpenAI→Ollama embedding 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
 		{"同格式不转换", false, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
-		{"Responses→OpenAI chat-only 上游", false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToOpenAIChat},
+		// responses→openai 方向（chat-only 与 responses 原生上游）均严禁在 handler 层路由：
+		// chat-only 的接管点在 ConvertToOpenAI 内部（同 claude/gemini→openai 约定，路由会
+		// 跳过各 adaptor 定制后处理）；responses 原生上游走 adaptor 直连
+		{"Responses→OpenAI chat-only 上游不在此路由", false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
 		{"Responses→OpenAI responses 原生上游不转换", true, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
 		{"Responses→Claude 链", false, constant.RelayFormatResponses, constant.RelayFormatClaude, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToClaudeMessages},
 		{"Responses→Gemini 链", false, constant.RelayFormatResponses, constant.RelayFormatGemini, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToGemini},

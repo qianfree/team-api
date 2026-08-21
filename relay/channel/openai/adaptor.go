@@ -163,9 +163,14 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 			// 上游为 Responses 协议：保持 Responses 格式直连，仅做模型映射等后处理
 			converted = bytes.NewReader(requestBody)
 		} else {
-			// chat-only 上游：handler 层桥接（responses→openai）先行转换，走到本分支
-			// 说明桥接未接管，按转换失败报错（legacy 回退已收割）
-			return nil, fmt.Errorf("[relaykit] responses→openai 请求转换失败（handler 层桥接未接管）")
+			// chat-only 上游：经共享 ConvertToOpenAI 完成 r2o 转换（接管点在 adaptor 层，
+			// 与 claude/gemini 入站同构——handler 桥不路由该方向），随后照常走下方
+			// replaceModelIfNeeded / InjectStreamOptions / injectReasoningEffort 后处理
+			out, err := ConvertToOpenAI(requestBody, info)
+			if err != nil {
+				return nil, err
+			}
+			converted = bytes.NewReader(out)
 		}
 	default:
 		converted = bytes.NewReader(requestBody)

@@ -3,6 +3,7 @@ package relaykit_bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -26,7 +27,10 @@ func TestTryConvertInboundToOpenAIChat_ResponsesInbound(t *testing.T) {
 	}
 	body := []byte(`{"model":"llama3","instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
 
-	out, ok := TryConvertInboundToOpenAIChat(context.Background(), info, body)
+	out, ok, err := TryConvertInboundToOpenAIChat(context.Background(), info, body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !ok {
 		t.Fatal("expected responses→openai conversion via shared bridge")
 	}
@@ -45,10 +49,13 @@ func TestTryConvertInboundToOpenAIChat_ResponsesInbound(t *testing.T) {
 		t.Error("info.ResponsesRequest snapshot not stashed")
 	}
 
-	// 有状态请求（previous_response_id）：非 responses 原生上游无法还原，按未覆盖处理
+	// 有状态请求（previous_response_id）：非 responses 原生上游无法还原——返回哨兵错误
+	// 驱动 FSM 换渠道（经 ConvertToOpenAI → adaptor 透传至 relay_handler 哨兵判定点）
 	stateful := []byte(`{"model":"llama3","previous_response_id":"resp_1","input":"hi"}`)
-	if _, ok := TryConvertInboundToOpenAIChat(context.Background(), info, stateful); ok {
+	if _, ok, err := TryConvertInboundToOpenAIChat(context.Background(), info, stateful); ok || err == nil {
 		t.Error("stateful responses request should not convert via shared bridge")
+	} else if !errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+		t.Errorf("stateful error should wrap ErrStatefulResponsesUnsupported, got: %v", err)
 	}
 }
 

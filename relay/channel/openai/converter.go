@@ -30,7 +30,13 @@ import (
 func ConvertToOpenAI(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	switch info.InboundFormat {
 	case constant.RelayFormatClaude, constant.RelayFormatGemini, constant.RelayFormatResponses:
-		if out, ok := relaykit_bridge.TryConvertInboundToOpenAIChat(context.Background(), info, requestBody); ok {
+		out, ok, err := relaykit_bridge.TryConvertInboundToOpenAIChat(context.Background(), info, requestBody)
+		// 有状态哨兵（ErrStatefulResponsesUnsupported）：透传给 adaptor → convertRequestBody →
+		// relay_handler 的哨兵判定点驱动 FSM 换渠道，不得降级为普通转换失败
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			return out, nil
 		}
 		return nil, fmt.Errorf("[relaykit] %s→openai 请求转换失败（无匹配转换器或转换出错）", info.InboundFormat)

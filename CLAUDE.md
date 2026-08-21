@@ -134,7 +134,7 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 接线约定（写转换相关代码必须遵守）：
 
 - **relaykit 常开，legacy 转换器已收割**：其覆盖的转换方向（claude/gemini/openai/responses/coze/dify/ollama-chat 互转的请求/响应/流式三侧）唯一走 relaykit，转换失败显式报错而非静默回退；转换成败与耗时经 `monitor.TrackConverterCall` 记录，可在 dashboard 观测。仍保留本地转换的场景：各 adaptor 的原生直通后处理（模型替换、thinking 注入）、Ollama generate/embedding 模式、`ConvertToOpenAI` 内共享的 openai 兼容后处理链。
-- **claude/gemini 入站 → openai 上游方向的 relaykit 接管只发生在 `relay/channel/openai.ConvertToOpenAI` 内部**（经 `relay/relaykit_bridge/`）。严禁在 `relay/handler` 的 relaykit 路由加同方向入口——那会跳过 20+ 个 openai 兼容 adaptor 的定制后处理（volcengine 删 reasoning_effort、tencent 参数截断等），造成行为回退。
+- **X 入站（claude/gemini/responses）→ openai(chat) 上游方向的 relaykit 接管只发生在 `relay/channel/openai.ConvertToOpenAI` 内部**（经 `relay/relaykit_bridge/`）。严禁在 `relay/handler` 的 relaykit 路由加同方向入口——那会整体跳过 adaptor.ConvertRequest，20+ 个 openai 兼容 adaptor 的定制后处理（deepseek thinking 注入、zhipu GLM 裁剪、ali top_p 夹取、xai/baidu_v2 后缀注入等）全部失效。有状态 responses 请求（previous_response_id）的 `ErrStatefulResponsesUnsupported` 哨兵同样由共享桥产出、经 adaptor 透传至 handler 哨兵判定点驱动换渠道。
 - **内置转换器经 blank import 注册**：`_ "github.com/qianfree/team-api/relaykit/relayconvert/register"`（独立子包解决 import cycle）。
 - relaykit 内禁止引入 GoFrame / internal/ 依赖；需要宿主信息时通过 `convmeta.Meta` 能力接口由 `RelayInfo` 实现。
 

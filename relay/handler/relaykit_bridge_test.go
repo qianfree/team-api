@@ -127,9 +127,10 @@ func TestTryConvertRequestViaRelaykit_NilGuards(t *testing.T) {
 }
 
 // TestConvertRequestViaRelaykit_StatefulResponsesSentinel 有状态 responses 请求
-// （previous_response_id）命中跨格式转换方向时必须返回哨兵错误 ErrStatefulResponsesUnsupported
-// （驱动调度 FSM 换渠道），不得静默降级转换丢失上下文，也不得走 adaptor 旧路径。
-// legacy ConvertResponsesToOpenAI 收割后，该检查移入本桥接层（行为等价回归）。
+// （previous_response_id）命中链式转换方向（claude/gemini 上游）时必须返回哨兵错误
+// ErrStatefulResponsesUnsupported（驱动调度 FSM 换渠道），不得静默降级转换丢失上下文。
+// chat-only openai 上游方向已下放 adaptor 层（接管点在 ConvertToOpenAI 内部），
+// 哨兵由共享桥 TryConvertInboundToOpenAIChat 产出——桥对该方向不再接管（契约断言）。
 func TestConvertRequestViaRelaykit_StatefulResponsesSentinel(t *testing.T) {
 	statefulBody := []byte(`{"model":"gpt-4o","previous_response_id":"resp_123","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
 
@@ -137,7 +138,6 @@ func TestConvertRequestViaRelaykit_StatefulResponsesSentinel(t *testing.T) {
 		name    string
 		channel constant.ProviderType
 	}{
-		{"chat-only openai 上游", constant.ProviderOpenAI},
 		{"claude 上游", constant.ProviderClaude},
 		{"gemini 上游", constant.ProviderGemini},
 	} {
@@ -155,6 +155,14 @@ func TestConvertRequestViaRelaykit_StatefulResponsesSentinel(t *testing.T) {
 				t.Fatalf("error should wrap ErrStatefulResponsesUnsupported, got: %v", err)
 			}
 		})
+	}
+
+	// chat-only openai 上游：桥不路由该方向（接管点在 ConvertToOpenAI 内部），
+	// 未接管且无哨兵——哨兵由 adaptor 路径的共享桥产出
+	chatOnly := newRequestTestRelayInfo(constant.ProviderOpenAI, "gpt-4o", constant.RelayModeResponses)
+	chatOnly.InboundFormat = constant.RelayFormatResponses
+	if _, ok2, err2 := convertRequestViaRelaykit(context.Background(), chatOnly, statefulBody); ok2 || err2 != nil {
+		t.Errorf("chat-only openai upstream should not be routed here (ok=%v err=%v)", ok2, err2)
 	}
 
 	// Responses 原生上游（UpstreamSpeaksResponses）：不匹配转换器（直连），不应报哨兵

@@ -3,6 +3,7 @@ package deepseek
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -63,19 +64,65 @@ func TestGetRequestURL_ResponsesFlagRouting(t *testing.T) {
 
 const deepseekResponsesRequestBody = `{"model":"deepseek-v4-flash","instructions":"You are helpful.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"}]}],"stream":true}`
 
-// TestConvertRequest_ResponsesChatFallback 收割后契约：responses→chat 转换已上收
-// handler 层桥接（relaykit），adaptor 的 chat-only 兜底分支不再做 legacy 转换——
-// 走到该分支说明桥接未接管，按转换失败报错。
+// TestConvertRequest_ResponsesChatFallback chat-only 上游（supports_responses=false）：
+// responses 入站经共享 ConvertToOpenAI 转 chat 体，且 DeepSeek 定制后处理照常执行
+// ——接管点在 adaptor 层（与 claude/gemini 入站同构），injectStreamOptions /
+// injectThinkingParams / 模型映射不再被 handler 层桥接跳过（#12 专项修复体）。
 func TestConvertRequest_ResponsesChatFallback(t *testing.T) {
 	a := &Adaptor{}
+
+	// 基础路径：r2o 转换 + stream_options 注入（IsStream=true）
 	info := deepseekResponsesInfo(false)
-	_, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	out, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("converted body is not json: %v, body: %s", err, raw)
+	}
+	if _, ok := m["messages"]; !ok {
+		t.Errorf("converted body missing messages（r2o 转换未生效）: %s", raw)
+	}
+	if _, ok := m["input"]; ok {
+		t.Errorf("responses input should be converted to chat messages: %s", raw)
+	}
+	if _, ok := m["stream_options"]; !ok {
+		t.Errorf("stream_options should be injected for chat-only upstream: %s", raw)
+	}
+
+	// thinking 注入：-thinking 后缀 → injectThinkingParams 生效
+	thinkInfo := deepseekResponsesInfo(false)
+	thinkInfo.ThinkingEnabled = true
+	raw2, err := io.ReadAll(mustConvert(t, a, thinkInfo))
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !strings.Contains(string(raw2), `"thinking"`) {
+		t.Errorf("thinking params should be injected for responses inbound on chat-only upstream: %s", raw2)
+	}
+
+	// 有状态哨兵：previous_response_id 经共享桥 → ConvertToOpenAI → adaptor 透传
+	statefulInfo := deepseekResponsesInfo(false)
+	stateful := `{"model":"deepseek-v4-flash","previous_response_id":"resp_1","input":"hi"}`
+	_, err = a.ConvertRequest(context.Background(), statefulInfo, []byte(stateful))
 	if err == nil {
-		t.Fatal("expected conversion error after harvest（handler 层桥接未接管时 adaptor 必须报错）")
+		t.Fatal("stateful responses on chat-only upstream should fail")
 	}
-	if !strings.Contains(err.Error(), "responses→openai") {
-		t.Errorf("error should mention responses→openai direction, got: %v", err)
+	if !errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
+		t.Errorf("error should wrap ErrStatefulResponsesUnsupported（驱动换渠道）, got: %v", err)
 	}
+}
+
+// mustConvert 执行 ConvertRequest 并读取全部输出。
+func mustConvert(t *testing.T, a *Adaptor, info *common.RelayInfo) io.Reader {
+	t.Helper()
+	out, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	return out
 }
 
 // TestConvertRequest_ResponsesUpstreamPassthrough 渠道开启 supports_responses 时，
