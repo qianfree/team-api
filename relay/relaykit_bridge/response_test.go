@@ -23,7 +23,7 @@ func TestRelaykitResponseConverterID(t *testing.T) {
 		{constant.RelayFormatCoze, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToCoze},
 		{constant.RelayFormatDify, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToDify},
 		{constant.RelayFormatOllama, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToOllama},
-		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""}, // 同格式
+		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""},                                                  // 同格式
 		{constant.RelayFormatClaude, constant.RelayFormatGemini, relayconvert.ConverterGeminiContentToClaudeMessages}, // P2 跨原生（spec C Resp 组合）
 	}
 	for _, c := range cases {

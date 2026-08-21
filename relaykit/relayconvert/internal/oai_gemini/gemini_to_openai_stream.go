@@ -227,6 +227,12 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	if reason == "" {
 		reason = "stop"
 	}
+	// 发出过 functionCall 时强制 tool_calls——Gemini 的 finishReason 为 STOP，
+	// 直接映射成 stop 会让以 finish_reason 为判据的 agent 客户端不执行工具
+	//（对齐非流式 gemini_to_openai_response 的强制修正）
+	if toolCallIdx > 0 {
+		reason = "tool_calls"
+	}
 
 	finalChunk := &dto.ChatCompletionStreamResponse{
 		ID:      responseID,

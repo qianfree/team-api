@@ -257,15 +257,36 @@ func c2rConvertContentPart(part map[string]any, role string) map[string]any {
 			return result
 		}
 	case "input_audio":
+		// chat 形态为嵌套 {"type":"input_audio","input_audio":{data,format}}，
+		// Responses 侧同为嵌套；宽容兼容顶层字段（畸形客户端）
 		data, _ := part["data"].(string)
 		format, _ := part["format"].(string)
-		return map[string]any{"type": "input_audio", "data": data, "format": format}
+		if audio, ok := part["input_audio"].(map[string]any); ok {
+			if d, ok := audio["data"].(string); ok {
+				data = d
+			}
+			if f, ok := audio["format"].(string); ok {
+				format = f
+			}
+		}
+		return map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": data, "format": format}}
 	case "file":
+		// chat 形态为嵌套 {"type":"file","file":{file_data,filename}}；Responses input_file 为顶层字段
+		fileData, _ := part["file_data"].(string)
+		filename, _ := part["filename"].(string)
+		if f, ok := part["file"].(map[string]any); ok {
+			if d, ok := f["file_data"].(string); ok {
+				fileData = d
+			}
+			if n, ok := f["filename"].(string); ok {
+				filename = n
+			}
+		}
 		result := map[string]any{"type": "input_file"}
-		if fileData, ok := part["file_data"].(string); ok {
+		if fileData != "" {
 			result["file_data"] = fileData
 		}
-		if filename, ok := part["filename"].(string); ok {
+		if filename != "" {
 			result["filename"] = filename
 		}
 		return result

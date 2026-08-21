@@ -6,8 +6,8 @@ const (
 	RelayFormatOpenAI RelayFormat = "openai"
 	RelayFormatClaude             = "claude"
 	RelayFormatGemini             = "gemini"
-	// RelayFormatOpenAIResponses 字符串值与宿主 relay/constant.RelayFormatResponses 保持一致：
-	// 桥接层依赖 types.RelayFormat(x) 直接强转（字符串值相等约定），值不一致会导致路由查不到。
+	// RelayFormatOpenAIResponses 宿主侧常量名为 relay/constant.RelayFormatResponses；
+	// 宿主已通过类型别名直接引用本包定义，两侧为同一类型，无字符串值同步约定。
 	RelayFormatOpenAIResponses           = "responses"
 	RelayFormatOpenAIResponsesCompaction = "openai_responses_compaction"
 	RelayFormatOpenAIAlphaSearch         = "openai_alpha_search"

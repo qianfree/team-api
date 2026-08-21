@@ -50,21 +50,21 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	case constant.RelayFormatClaude:
 		var claudeResp dto.ClaudeResponse
 		if err := json.Unmarshal(upstreamBody, &claudeResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &claudeResp
 	case constant.RelayFormatGemini:
 		var geminiResp dto.GeminiChatResponse
 		if err := json.Unmarshal(upstreamBody, &geminiResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &geminiResp
 	case constant.RelayFormatResponses:
 		var responsesResp dto.OpenAIResponsesResponse
 		if err := json.Unmarshal(upstreamBody, &responsesResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse responses body failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse responses body failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &responsesResp
@@ -74,14 +74,14 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	case constant.RelayFormatDify:
 		var difyResp dto.DifyBlockingResponse
 		if err := json.Unmarshal(upstreamBody, &difyResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Dify response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Dify response failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &difyResp
 	case constant.RelayFormatOllama:
 		var ollamaResp dto.OllamaChatResponse
 		if err := json.Unmarshal(upstreamBody, &ollamaResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Ollama response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Ollama response failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &ollamaResp
@@ -89,7 +89,7 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 		// P1-B：openai 上游 → claude/gemini 客户端（ChatCompletionResponse → 客户端格式）
 		var chatResp dto.ChatCompletionResponse
 		if err := json.Unmarshal(upstreamBody, &chatResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse chat response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse chat response failed, unhandled by relaykit: %v", err)
 			return nil, nil, false
 		}
 		upstreamResp = &chatResp

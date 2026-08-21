@@ -358,10 +358,16 @@ func r2cConvertToolChoice(tcRaw json.RawMessage) any {
 		return "auto"
 	}
 	if tc["type"] == "function" {
+		// chat 形态：{"type":"function","function":{"name":...}}
 		if fn, ok := tc["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
 				return map[string]any{"type": "function", "function": map[string]any{"name": name}}
 			}
+		}
+		// Responses 扁平形态：{"type":"function","name":...}——包装为嵌套，
+		// 原样透传会被 chat 上游拒绝（要求嵌套 function.name）
+		if name, ok := tc["name"].(string); ok && name != "" {
+			return map[string]any{"type": "function", "function": map[string]any{"name": name}}
 		}
 	}
 	return tc

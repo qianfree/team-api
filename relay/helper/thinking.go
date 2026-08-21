@@ -1,6 +1,10 @@
 package helper
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/qianfree/team-api/relaykit/relayconvert/reasoning"
+)
 
 // ThinkingInfo 从模型名解析出的 thinking 配置
 type ThinkingInfo struct {
@@ -10,20 +14,9 @@ type ThinkingInfo struct {
 	IsNoThinking bool   // 是否有 -nothinking 后缀
 }
 
-// 后缀列表，按长度降序排列以避免误匹配（如 -minimal 优先于 -min）
-var effortSuffixes = []struct {
-	suffix string
-	level  string
-}{
-	{"-minimal", "minimal"},
-	{"-medium", "medium"},
-	{"-xhigh", "xhigh"},
-	{"-high", "high"},
-	{"-low", "low"},
-	{"-max", "max"},
-}
-
-// ParseThinkingSuffix 从模型名解析 thinking 和 effort 后缀
+// ParseThinkingSuffix 从模型名解析 thinking 和 effort 后缀。
+// effort 后缀匹配委托 relaykit/reasoning（单一权威定义），路由层与转换器层的
+// 后缀集合天然同源；-thinking/-nothinking/-none 是路由层虚拟模型语义，不进 relaykit。
 func ParseThinkingSuffix(modelName string) ThinkingInfo {
 	info := ThinkingInfo{}
 
@@ -45,12 +38,10 @@ func ParseThinkingSuffix(modelName string) ThinkingInfo {
 		return info
 	}
 
-	for _, s := range effortSuffixes {
-		if strings.HasSuffix(modelName, s.suffix) {
-			info.EffortLevel = s.level
-			info.BaseModel = modelName[:len(modelName)-len(s.suffix)]
-			return info
-		}
+	if base, effort, ok := reasoning.TrimEffortSuffix(modelName); ok {
+		info.EffortLevel = effort
+		info.BaseModel = base
+		return info
 	}
 
 	info.BaseModel = modelName

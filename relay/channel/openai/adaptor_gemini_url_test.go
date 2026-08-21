@@ -5,6 +5,8 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 // TestGetRequestURL_GeminiChat P1-A 遗留 bug 修复验证：gemini 客户端打 openai 兼容渠道

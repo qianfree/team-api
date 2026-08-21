@@ -150,8 +150,10 @@
             "type": "input_image"
           },
           {
-            "data": "",
-            "format": "",
+            "input_audio": {
+              "data": "aGk=",
+              "format": "mp3"
+            },
             "type": "input_audio"
           }
         ],

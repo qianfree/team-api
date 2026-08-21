@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/qianfree/team-api/relay/dto"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 // TestBuildGeminiUpstreamError_ResourceExhausted 验证真实 Gemini 429（区域配额耗尽）

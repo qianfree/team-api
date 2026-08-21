@@ -14,6 +14,8 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 const crossClientClaudeUpstreamBody = `{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":7,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}`

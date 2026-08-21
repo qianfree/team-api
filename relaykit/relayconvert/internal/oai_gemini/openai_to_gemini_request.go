@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -108,9 +109,16 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		geminiReq.ServiceTier = openaiReq.ServiceTier
 	}
 
-	// ReasoningEffort → ThinkingConfig
+	// ReasoningEffort → ThinkingConfig（请求体显式指定）
 	if openaiReq.ReasoningEffort != "" {
 		geminiReq.GenerationConfig.ThinkingConfig = convertReasoningEffort(openaiReq.ReasoningEffort)
+	} else if info != nil {
+		// 模型名 thinking 后缀（-thinking/-low 等）：gemini adaptor 的 injectGeminiThinking
+		// 在桥接路径不执行，此处吸收该语义；请求体已显式设置 effort 时以请求体为准
+		thinkingInfo := shared.ParseThinkingSuffix(info.GetUpstreamModelName())
+		if thinkingInfo.IsThinking || thinkingInfo.IsNoThinking || thinkingInfo.EffortLevel != "" {
+			shared.ApplyThinkingToGemini(geminiReq.GenerationConfig, thinkingInfo, convmeta.OptionsOf(info).Gemini)
+		}
 	}
 
 	// ResponseFormat → ResponseMimeType + ResponseSchema
@@ -250,6 +258,13 @@ func extractText(content any) string {
 	switch v := content.(type) {
 	case string:
 		return v
+	case []dto.ContentPart:
+		// 链式第一跳的 typed 切片（system/assistant/tool 消息文本经此提取）
+		for _, part := range v {
+			if part.Type == "text" {
+				return part.Text
+			}
+		}
 	case []any:
 		var parts []string
 		for _, item := range v {
@@ -275,6 +290,44 @@ func convertUserParts(content any) []dto.GeminiPart {
 			return nil
 		}
 		return []dto.GeminiPart{{Text: v}}
+
+	case []dto.ContentPart:
+		// 链式转换第一跳（claude→openai / responses→openai）产出的 typed 切片——
+		// dispatch 原样传对象无 JSON 往返，缺失此分支会整条丢弃消息（含文字）
+		var parts []dto.GeminiPart
+		for _, part := range v {
+			switch part.Type {
+			case "text":
+				if part.Text != "" {
+					parts = append(parts, dto.GeminiPart{Text: part.Text})
+				}
+			case "image_url":
+				if part.ImageURL != nil {
+					if mimeType, data, ok := parseDataURL(part.ImageURL.URL); ok {
+						parts = append(parts, dto.GeminiPart{
+							InlineData: &dto.GeminiInlineData{
+								MimeType: mimeType,
+								Data:     data,
+							},
+						})
+					}
+				}
+			case "input_audio":
+				if part.InputAudio != nil && part.InputAudio.Data != "" {
+					mimeType := "audio/wav"
+					if part.InputAudio.Format != "" {
+						mimeType = "audio/" + part.InputAudio.Format
+					}
+					parts = append(parts, dto.GeminiPart{
+						InlineData: &dto.GeminiInlineData{
+							MimeType: mimeType,
+							Data:     part.InputAudio.Data,
+						},
+					})
+				}
+			}
+		}
+		return parts
 
 	case []any:
 		var parts []dto.GeminiPart

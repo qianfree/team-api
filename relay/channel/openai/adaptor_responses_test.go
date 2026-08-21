@@ -13,6 +13,9 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
+
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 func responsesUpstreamInfo(relayMode constant.RelayMode, isStream bool) *common.RelayInfo {
@@ -281,72 +284,6 @@ func (f *fakeResponseRouteStore) Lookup(context.Context, int64, string) (common.
 
 func (f *fakeResponseRouteStore) Delete(context.Context, int64, string) {}
 
-// TestChatCompletionToResponsesResponse_StoreFalseAndEcho 合成响应的保真度：
-// store 恒为 false（合成响应不落上游存储，不可 retrieve）；
-// temperature/top_p/max_output_tokens/instructions 从请求快照 echo，快照缺失回退默认值。
-func TestChatCompletionToResponsesResponse_StoreFalseAndEcho(t *testing.T) {
-	buildChatResp := func() *dto.ChatCompletionResponse {
-		return &dto.ChatCompletionResponse{
-			ID:      "abc123",
-			Created: 1700000000,
-			Model:   "gpt-4o",
-			Choices: []dto.Choice{{
-				Index:        0,
-				Message:      dto.Message{Role: "assistant", Content: "hello"},
-				FinishReason: "stop",
-			}},
-			Usage: dto.UsageWithDetails{
-				PromptTokensDetails:    &dto.TokenDetails{},
-				CompletionTokenDetails: &dto.TokenDetails{},
-			},
-		}
-	}
-
-	t.Run("echo from request snapshot", func(t *testing.T) {
-		temp, topP := 0.7, 0.9
-		maxOut := uint(1024)
-		info := &common.RelayInfo{
-			OriginModelName: "gpt-4o",
-			ResponsesRequest: &dto.OpenAIResponsesRequest{
-				Temperature:     &temp,
-				TopP:            &topP,
-				MaxOutputTokens: &maxOut,
-				Instructions:    json.RawMessage(`"be brief"`),
-			},
-		}
-		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
-		if resp.Store {
-			t.Error("store should be false（合成响应不可 retrieve）")
-		}
-		if resp.Temperature == nil || *resp.Temperature != 0.7 {
-			t.Errorf("temperature = %v, want 0.7", resp.Temperature)
-		}
-		if resp.TopP == nil || *resp.TopP != 0.9 {
-			t.Errorf("top_p = %v, want 0.9", resp.TopP)
-		}
-		if resp.MaxOutputTokens == nil || *resp.MaxOutputTokens != 1024 {
-			t.Errorf("max_output_tokens = %v, want 1024", resp.MaxOutputTokens)
-		}
-		if instr, ok := resp.Instructions.(json.RawMessage); !ok || string(instr) != `"be brief"` {
-			t.Errorf("instructions = %v, want echo", resp.Instructions)
-		}
-	})
-
-	t.Run("nil snapshot falls back to defaults", func(t *testing.T) {
-		info := &common.RelayInfo{OriginModelName: "gpt-4o"}
-		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
-		if resp.Store {
-			t.Error("store should be false")
-		}
-		if resp.Temperature == nil || *resp.Temperature != 1.0 {
-			t.Errorf("temperature = %v, want default 1.0", resp.Temperature)
-		}
-		if resp.TopP == nil || *resp.TopP != 1.0 {
-			t.Errorf("top_p = %v, want default 1.0", resp.TopP)
-		}
-	})
-}
-
 // TestBuildResponsesObjectMap_StoreFalseEcho 流式合成 response 对象同样 store:false + echo。
 func TestBuildResponsesObjectMap_StoreFalseEcho(t *testing.T) {
 	temp := 0.5
@@ -533,6 +470,7 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream_ModelMapped(t *testing.T) {
 // TestAdaptor_ConvertRequest_ChatViaResponsesBridge responses-only 上游桥接：
 // chat 请求体转换为 Responses 格式（messages→input），thinking 后缀映射 reasoning.effort，
 // 不注入 chat 专属 stream_options。
+// claude/gemini 入站的第二跳（ConvertToOpenAI 转 chat 后）同在本分支完成，见下方回归测试。
 func TestAdaptor_ConvertRequest_ChatViaResponsesBridge(t *testing.T) {
 	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, true)
 	info.InboundFormat = constant.RelayFormatOpenAI
@@ -551,7 +489,7 @@ func TestAdaptor_ConvertRequest_ChatViaResponsesBridge(t *testing.T) {
 	raw, _ := io.ReadAll(out)
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad bridged json: %v\n%s", err, raw)
+		t.Fatalf("bad bridged json: %v (raw=%s)", err, raw)
 	}
 	if _, ok := m["messages"]; ok {
 		t.Error("bridge should convert messages to responses input")
@@ -567,18 +505,20 @@ func TestAdaptor_ConvertRequest_ChatViaResponsesBridge(t *testing.T) {
 	}
 }
 
-// TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped 桥接 + 模型映射：
-// 转换器应将模型名替换为上游模型名。
-func TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped(t *testing.T) {
-	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, false)
-	info.InboundFormat = constant.RelayFormatOpenAI
-	info.ClientFormat = constant.RelayFormatOpenAI
-	info.ChannelMeta.IsModelMapped = true
+// TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ClaudeInbound 回归（2026-08-21 收割
+// 误伤修复）：claude 入站 × ChatViaResponses 渠道——handler 桥只路由 openai 入站的
+// chat→responses，claude 入站经 ConvertToOpenAI 转 chat 后必须在本分支完成第二跳，
+// 不得报「handler 层桥接未接管」错误。
+func TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ClaudeInbound(t *testing.T) {
+	info := responsesUpstreamInfo(constant.RelayModeClaudeMessages, true)
+	info.InboundFormat = constant.RelayFormatClaude
+	info.ClientFormat = constant.RelayFormatClaude
+	info.OriginModelName = "glm-4.7"
 	info.ChannelMeta.SupportsResponses = false
 	info.ChannelMeta.ChatViaResponses = true
 	info.UseResponsesAPI = true
 
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
+	body := []byte(`{"model":"glm-4.7","max_tokens":1024,"messages":[{"role":"user","content":"列出目录文件"}],"stream":true}`)
 	a := &Adaptor{}
 	out, err := a.ConvertRequest(context.Background(), info, body)
 	if err != nil {
@@ -587,42 +527,27 @@ func TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped(t *testing.T)
 	raw, _ := io.ReadAll(out)
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad bridged json: %v", err)
+		t.Fatalf("bad bridged json: %v (raw=%s)", err, raw)
 	}
-	if got := string(m["model"]); got != `"gpt-4o-upstream"` {
-		t.Errorf("model = %s, want gpt-4o-upstream", got)
+	if _, ok := m["messages"]; ok {
+		t.Error("claude body should be converted to responses format (no messages key)")
+	}
+	if _, ok := m["input"]; !ok {
+		t.Error("bridge output missing input field")
+	}
+	// claude 必填 max_tokens 应已吸收进 Responses 的 max_output_tokens
+	if maxOut := string(m["max_output_tokens"]); maxOut != "1024" {
+		t.Errorf("max_output_tokens = %s, want 1024", maxOut)
 	}
 }
 
 // responsesInboundInfo responses 入站 + 上游 chat 渠道（无 responses 协议能力），
-// 响应侧走 chat→responses 桥接（handleResponsesInboundStream）。
+// 响应侧走 chat→responses 桥接（adaptor DoResponse 内的 relaykit 流式转换）。
 func responsesInboundInfo(isStream bool) *common.RelayInfo {
 	info := responsesUpstreamInfo(constant.RelayModeResponses, isStream)
 	info.ChannelMeta.SupportsResponses = false
 	info.ChannelMeta.ChatViaResponses = false
 	return info
-}
-
-// TestExtractStreamEmbeddedError 内嵌错误对象检测：
-// "error":null 与无 error 键不算错误，对象/字符串错误都要识别。
-func TestExtractStreamEmbeddedError(t *testing.T) {
-	if _, ok := extractStreamEmbeddedError([]byte(`{"id":"1","choices":[]}`)); ok {
-		t.Error("chunk without error key should not be detected")
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`{"error":null,"choices":[]}`)); ok {
-		t.Error(`"error":null should not be detected`)
-	}
-	if body, ok := extractStreamEmbeddedError([]byte(`{"error":{"type":"rate_limit_error","message":"limited"}}`)); !ok {
-		t.Error("error object should be detected")
-	} else if !strings.Contains(string(body), "rate_limit_error") {
-		t.Errorf("error body = %s", string(body))
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`{"error":"overloaded"}`)); !ok {
-		t.Error("string error should be detected")
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`not json`)); ok {
-		t.Error("invalid json should not be detected")
-	}
 }
 
 // TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorBeforeEvents

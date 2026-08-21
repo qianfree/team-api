@@ -1,23 +1,20 @@
 package openai
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
-	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
-// handleGeminiInboundNonStream 将 OpenAI 非流式响应转换为 Gemini 格式
+// handleGeminiInboundNonStream 将 OpenAI 非流式响应转换为 Gemini 格式。
+// relaykit 唯一路径（P1-B/P3；legacy 回退已收割）：未接管按转换失败报错。
 func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 
@@ -38,24 +35,18 @@ func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info
 		return nil, fmt.Errorf("invalid response body: %w", err)
 	}
 
-	// relaykit 转换器路径优先（P1-B/P3）；失败/未覆盖回退旧内联转换
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-		// P3（UseResponsesAPI，上游为 /v1/responses）：上方按 chat 格式解析 responses 体
-		// 必得零值，计费 usage 须从上游 responses 体提取（OpenAI 口径）；
-		// P1-B（chat 上游）沿用下方 legacy 口径提取
-		if info.UseResponsesAPI {
-			return relaykit_bridge.UsageFromResponsesBody(body), nil
-		}
-	} else {
-		geminiResp := openAIToGeminiResponse(&openaiResp, info)
+	convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] openai→gemini 响应转换失败")
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(convertedBody)
 
-		respBody, _ := json.Marshal(geminiResp)
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(respBody)
+	// P3（UseResponsesAPI，上游为 /v1/responses）：上方按 chat 格式解析 responses 体
+	// 必得零值，计费 usage 须从上游 responses 体提取（OpenAI 口径）
+	if info.UseResponsesAPI {
+		return relaykit_bridge.UsageFromResponsesBody(body), nil
 	}
 
 	usage := &common.Usage{
@@ -69,7 +60,9 @@ func handleGeminiInboundNonStream(ctx context.Context, resp *http.Response, info
 	return usage, nil
 }
 
-// handleGeminiInboundStream 将 OpenAI SSE 流转换为 Gemini SSE 流
+// handleGeminiInboundStream 将 OpenAI SSE 流转换为 Gemini SSE 流。
+// relaykit 唯一路径（P2；legacy 回退已收割）：未接管按转换失败报错。
+// 转换中途失败由桥接层优雅降级（补终止 chunk + [DONE] + end reason），不走本函数。
 func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -80,278 +73,17 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		return &common.Usage{}, upstreamErr
 	}
 
-	// relaykit 流式转换器优先（P2，仅 200 时；未接管 body 未读取，下方 legacy 完整重走）
-	if resp.StatusCode == http.StatusOK {
-		if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-			resp.Body.Close()
-			return usage, nil
-		}
+	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	if !ok {
+		resp.Body.Close()
+		return nil, fmt.Errorf("[relaykit] openai→gemini 流式转换失败（无匹配转换器）")
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	var (
-		usage              common.Usage
-		finishReason       string
-		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
-	)
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
-			return &usage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data, _ := helper.ExtractSSEData(line)
-
-		if data != "" && data != "[DONE]" {
-			info.SetFirstResponseTime()
-		}
-
-		if data == "[DONE]" {
-			break
-		}
-
-		var streamResp dto.ChatCompletionStreamResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-			continue
-		}
-
-		// 收集 usage（通常在最后一个 chunk）
-		if streamResp.Usage != nil {
-			usage.PromptTokens = streamResp.Usage.PromptTokens
-			usage.CompletionTokens = streamResp.Usage.CompletionTokens
-			usage.TotalTokens = streamResp.Usage.TotalTokens
-			usage.PromptTokensDetails = common.DtoTokenDetailsToCommon(streamResp.Usage.PromptTokensDetails)
-			usage.CompletionTokenDetails = common.DtoTokenDetailsToCommon(streamResp.Usage.CompletionTokenDetails)
-			usage.CacheIncludedInPrompt = true
-		}
-
-		// 构造 Gemini 响应 chunk
-		geminiChunk := dto.GeminiChatResponse{}
-
-		for _, choice := range streamResp.Choices {
-			if choice.FinishReason != nil && *choice.FinishReason != "" {
-				finishReason = *choice.FinishReason
-			}
-
-			// 累计已转发文本长度，供流中断输出估算
-			if text, ok := choice.Delta.Content.(string); ok {
-				transferredTextLen += len(text)
-			}
-			if choice.Delta.ReasoningContent != nil {
-				transferredTextLen += len(*choice.Delta.ReasoningContent)
-			}
-
-			parts := buildGeminiPartsFromDelta(&choice.Delta)
-			if len(parts) == 0 && choice.FinishReason == nil {
-				continue
-			}
-
-			candidate := dto.GeminiCandidate{
-				Index: choice.Index,
-				Content: &dto.GeminiContent{
-					Role:  "model",
-					Parts: parts,
-				},
-			}
-
-			geminiChunk.Candidates = append(geminiChunk.Candidates, candidate)
-		}
-
-		if len(geminiChunk.Candidates) > 0 {
-			chunkData, _ := json.Marshal(geminiChunk)
-			_ = helper.WriteSSEData(writer, string(chunkData))
-		}
-	}
-
-	// 发送包含 finishReason 和 usageMetadata 的最终 chunk
-	finalChunk := dto.GeminiChatResponse{}
-	reason := common.OpenAIFinishReasonToGemini(finishReason)
-	finalChunk.Candidates = []dto.GeminiCandidate{{
-		Content: &dto.GeminiContent{
-			Role: "model",
-		},
-		FinishReason: reason,
-	}}
-	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
-		// Gemini 语义：CandidatesTokenCount 不含 thoughts，OpenAI CompletionTokens 已含 reasoning
-		// 需要扣减 reasoning 避免双计（Gemini 客户端按 total = prompt + candidates + thoughts 汇总）
-		candidatesTokens := usage.CompletionTokens
-		if usage.CompletionTokenDetails != nil && usage.CompletionTokenDetails.ReasoningTokens > 0 {
-			candidatesTokens -= usage.CompletionTokenDetails.ReasoningTokens
-			if candidatesTokens < 0 {
-				candidatesTokens = 0
-			}
-		}
-
-		finalChunk.UsageMetadata = &dto.GeminiUsageMetadata{
-			PromptTokenCount:     usage.PromptTokens,
-			CandidatesTokenCount: candidatesTokens,
-			TotalTokenCount:      usage.TotalTokens,
-		}
-		if usage.PromptTokensDetails != nil {
-			finalChunk.UsageMetadata.CachedContentTokenCount = usage.PromptTokensDetails.CachedTokens
-		}
-		if usage.CompletionTokenDetails != nil {
-			finalChunk.UsageMetadata.ThoughtsTokenCount = usage.CompletionTokenDetails.ReasoningTokens
-		}
-	}
-	chunkData, _ := json.Marshal(finalChunk)
-	_ = helper.WriteSSEData(writer, string(chunkData))
-
-	helper.WriteSSEData(writer, "[DONE]")
-	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &usage, fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	return &usage, nil
+	resp.Body.Close()
+	return usage, nil
 }
 
-// openAIToGeminiResponse 将 OpenAI ChatCompletion 响应转换为 Gemini Chat 响应
-func openAIToGeminiResponse(openaiResp *dto.ChatCompletionResponse, info *common.RelayInfo) dto.GeminiChatResponse {
-	resp := dto.GeminiChatResponse{}
-
-	if len(openaiResp.Choices) == 0 {
-		return resp
-	}
-
-	choice := openaiResp.Choices[0]
-	parts := buildGeminiPartsFromMessage(&choice.Message)
-
-	candidate := dto.GeminiCandidate{
-		Index: choice.Index,
-		Content: &dto.GeminiContent{
-			Role:  "model",
-			Parts: parts,
-		},
-		FinishReason: common.OpenAIFinishReasonToGemini(choice.FinishReason),
-	}
-
-	resp.Candidates = []dto.GeminiCandidate{candidate}
-
-	// Gemini 语义：CandidatesTokenCount 不含 thoughts，OpenAI CompletionTokens 已含 reasoning
-	// 需要扣减 reasoning 避免双计（Gemini 客户端按 total = prompt + candidates + thoughts 汇总）
-	candidatesTokens := openaiResp.Usage.CompletionTokens
-	if openaiResp.Usage.CompletionTokenDetails != nil && openaiResp.Usage.CompletionTokenDetails.ReasoningTokens > 0 {
-		candidatesTokens -= openaiResp.Usage.CompletionTokenDetails.ReasoningTokens
-		if candidatesTokens < 0 {
-			candidatesTokens = 0
-		}
-	}
-
-	resp.UsageMetadata = &dto.GeminiUsageMetadata{
-		PromptTokenCount:     openaiResp.Usage.PromptTokens,
-		CandidatesTokenCount: candidatesTokens,
-		TotalTokenCount:      openaiResp.Usage.TotalTokens,
-	}
-	if openaiResp.Usage.PromptTokensDetails != nil {
-		resp.UsageMetadata.CachedContentTokenCount = openaiResp.Usage.PromptTokensDetails.CachedTokens
-	}
-	if openaiResp.Usage.CompletionTokenDetails != nil {
-		resp.UsageMetadata.ThoughtsTokenCount = openaiResp.Usage.CompletionTokenDetails.ReasoningTokens
-	}
-
-	return resp
-}
-
-// buildGeminiPartsFromMessage 将 OpenAI Message 转换为 Gemini Parts
-func buildGeminiPartsFromMessage(msg *dto.Message) []dto.GeminiPart {
-	var parts []dto.GeminiPart
-
-	// thinking 内容 → thought part
-	if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
-		parts = append(parts, dto.GeminiPart{
-			Text:    *msg.ReasoningContent,
-			Thought: boolPtr(true),
-		})
-	}
-
-	// 文本内容
-	if text, ok := msg.Content.(string); ok && text != "" {
-		parts = append(parts, dto.GeminiPart{Text: text})
-	}
-
-	// 工具调用 → functionCall parts
-	for _, tc := range msg.ToolCalls {
-		var args any
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			args = map[string]any{}
-		}
-		parts = append(parts, dto.GeminiPart{
-			FunctionCall: &dto.GeminiFunctionCall{
-				ID:           tc.ID,
-				FunctionName: tc.Function.Name,
-				Arguments:    args,
-			},
-		})
-	}
-
-	if len(parts) == 0 {
-		parts = append(parts, dto.GeminiPart{Text: ""})
-	}
-
-	return parts
-}
-
-// buildGeminiPartsFromDelta 将 OpenAI 流式 Delta 转换为 Gemini Parts
-func buildGeminiPartsFromDelta(delta *dto.Message) []dto.GeminiPart {
-	var parts []dto.GeminiPart
-
-	// thinking 内容
-	if delta.ReasoningContent != nil && *delta.ReasoningContent != "" {
-		parts = append(parts, dto.GeminiPart{
-			Text:    *delta.ReasoningContent,
-			Thought: boolPtr(true),
-		})
-	}
-
-	// 文本内容
-	if text, ok := delta.Content.(string); ok && text != "" {
-		parts = append(parts, dto.GeminiPart{Text: text})
-	}
-
-	// 工具调用
-	for _, tc := range delta.ToolCalls {
-		var args any
-		if tc.Function.Arguments != "" {
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				args = map[string]any{}
-			}
-		}
-		parts = append(parts, dto.GeminiPart{
-			FunctionCall: &dto.GeminiFunctionCall{
-				ID:           tc.ID,
-				FunctionName: tc.Function.Name,
-				Arguments:    args,
-			},
-		})
-	}
-
-	return parts
-}
+// openAIToGeminiResponse / buildGeminiParts* 等 legacy 转换已随 relaykit 收割删除：
+// openai→gemini 方向统一走 relaykit_bridge.TryConvertResponse/TryConvertStreamViaRelaykit。
 
 // writeOpenAIErrorAsGemini 将上游 OpenAI 错误转换为 Gemini RPC Status 格式写入响应
 func writeOpenAIErrorAsGemini(writer http.ResponseWriter, body []byte, defaultStatusCode int) {
@@ -420,9 +152,4 @@ func openAIErrorTypeToGeminiStatus(errorType string) string {
 	default:
 		return "INTERNAL"
 	}
-}
-
-// boolPtr 返回 bool 的指针
-func boolPtr(v bool) *bool {
-	return &v
 }

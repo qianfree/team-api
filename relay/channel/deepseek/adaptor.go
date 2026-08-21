@@ -74,13 +74,14 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	}
 
 	// Responses 模式：上游原生支持时保持 Responses 格式（模型映射 + reasoning.effort 注入）；
-	// chat-only 上游（渠道未开 supports_responses）先转 Chat 格式，再叠加 DeepSeek 特有适配
+	// chat-only 上游由 handler 层桥接（responses→openai）先行转换，走到本分支说明桥接
+	// 未接管，按转换失败报错（legacy 回退已收割）
 	if constant.RelayMode(info.RelayMode) == constant.RelayModeResponses ||
 		constant.RelayMode(info.RelayMode) == constant.RelayModeResponsesCompact {
 		if info.ChannelMeta.UpstreamSpeaksResponses() {
 			return convertResponsesRequestForDeepSeek(requestBody, info)
 		}
-		return convertResponsesToChatForDeepSeek(requestBody, info)
+		return nil, fmt.Errorf("[relaykit] responses→openai 请求转换失败（handler 层桥接未接管）")
 	}
 
 	// 非 OpenAI 格式先转换为 OpenAI
@@ -303,35 +304,6 @@ func convertResponsesRequestForDeepSeek(requestBody []byte, info *common.RelayIn
 	result, err := json.Marshal(rawMap)
 	if err != nil {
 		return bytes.NewReader(requestBody), nil
-	}
-	return bytes.NewReader(result), nil
-}
-
-// convertResponsesToChatForDeepSeek chat-only 上游兜底：将 Responses 请求转换为 Chat Completions 格式，
-// 再叠加 DeepSeek 特有适配（stream_options / 思考参数注入）。
-// 模型映射与 ResponsesRequest 快照（响应侧合成 Responses 格式时 echo 请求参数）由
-// ConvertResponsesToOpenAI 完成；思考后缀经 chat 侧 reasoning_effort 映射注入。
-func convertResponsesToChatForDeepSeek(requestBody []byte, info *common.RelayInfo) (io.Reader, error) {
-	converted, err := openai.ConvertResponsesToOpenAI(requestBody, info)
-	if err != nil {
-		return nil, err
-	}
-	chatBody, err := io.ReadAll(converted)
-	if err != nil {
-		return nil, fmt.Errorf("read converted chat body failed: %w", err)
-	}
-
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(chatBody, &rawMap); err != nil {
-		return bytes.NewReader(chatBody), nil
-	}
-
-	rawMap = injectStreamOptions(rawMap, info)
-	rawMap = injectThinkingParams(rawMap, info)
-
-	result, err := json.Marshal(rawMap)
-	if err != nil {
-		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
 	return bytes.NewReader(result), nil
 }

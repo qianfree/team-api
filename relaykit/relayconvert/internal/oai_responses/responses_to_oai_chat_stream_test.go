@@ -185,3 +185,41 @@ func TestR2CStream_UnexpectedEOF(t *testing.T) {
 		t.Error("断流无 usage，不应发 usage chunk（估算兜底归桥接）")
 	}
 }
+
+// TestR2CStream_ToolItemIDNeqCallID 回归（2026-08-21 Claude Code × ChatViaResponses 渠道
+// "Invalid tool parameters" 修复）：真实 OpenAI Responses 流的 function_call_arguments.delta
+// 事件 item_id 为 output item 的 id（"fc_xxx"），≠ output_item 事件的 call_id（"call_xxx"）。
+// 修复前两键分裂：delta 记在 fc_ 键名下，done 前缀差分基准（call_ 键）为空 → 完整参数被
+// 当增量重发，客户端组装出重复拼接的非法 JSON 工具入参。
+func TestR2CStream_ToolItemIDNeqCallID(t *testing.T) {
+	sse := "data: " + `{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_abc123","call_id":"call_xyz","name":"Bash","arguments":""}}` + "\n\n" +
+		"data: " + `{"type":"response.function_call_arguments.delta","item_id":"fc_abc123","delta":"{\"command\":"}` + "\n\n" +
+		"data: " + `{"type":"response.function_call_arguments.delta","item_id":"fc_abc123","delta":"\"ls -la\"}"}` + "\n\n" +
+		"data: " + `{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_abc123","call_id":"call_xyz","name":"Bash","arguments":"{\"command\":\"ls -la\"}"}}` + "\n\n" +
+		"data: " + `{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}` + "\n\n"
+	chunks, err := runR2CStream(t, sse)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+
+	var assembledArgs string
+	var indexes = map[int]bool{}
+	for _, c := range chunks {
+		if len(c.Choices) == 0 {
+			continue
+		}
+		for _, tc := range c.Choices[0].Delta.ToolCalls {
+			assembledArgs += tc.Function.Arguments
+			indexes[tc.Index] = true
+			if tc.ID != "call_xyz" {
+				t.Errorf("tool chunk ID = %q, want 统一为 call_xyz", tc.ID)
+			}
+		}
+	}
+	if assembledArgs != `{"command":"ls -la"}` {
+		t.Errorf("组装参数 = %q（重复拼接即非法 JSON）, want 原始完整参数一次", assembledArgs)
+	}
+	if len(indexes) != 1 {
+		t.Errorf("工具 index 集合 = %v, want 单一 index（键分裂会分配两个）", indexes)
+	}
+}

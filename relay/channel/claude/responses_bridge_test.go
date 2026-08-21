@@ -11,6 +11,8 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 // responsesInboundInfo 构造 responses 入站（codex 等）+ Claude 上游渠道的 RelayInfo
@@ -23,7 +25,7 @@ func responsesInboundInfo(isStream bool) *common.RelayInfo {
 		OriginModelName: "glm-5.3",
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
-			BaseURL:           "https://upstream.example.com",
+			BaseURL: "https://upstream.example.com",
 			// ChannelType 必须显式设置：ProviderNativeFormat(0) 默认归为 openai，
 			// 会让 relaykit 桥接把 Claude 格式响应误解析为 chat（空 choices → 空输出）
 			ChannelType:       int(constant.ProviderClaude),

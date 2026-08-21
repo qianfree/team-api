@@ -129,8 +129,13 @@ func TestApplyThinkingToClaude(t *testing.T) {
 				if req.Thinking == nil {
 					t.Error("Expected Thinking to be set, got nil")
 				} else {
-					if req.Thinking.Type != "enabled" {
-						t.Errorf("Expected Thinking.Type = 'enabled', got %q", req.Thinking.Type)
+					// 无 budget 时为 adaptive（无法确定合规 budget_tokens，enabled 裸形态会被上游拒绝）
+					wantType := "adaptive"
+					if tt.expectBudget {
+						wantType = "enabled"
+					}
+					if req.Thinking.Type != wantType {
+						t.Errorf("Expected Thinking.Type = %q, got %q", wantType, req.Thinking.Type)
 					}
 
 					if tt.expectBudget {
@@ -218,9 +223,5 @@ func TestApplyThinkingToGemini(t *testing.T) {
 }
 
 func uintPtr(i uint) *uint {
-	return &i
-}
-
-func intPtr(i int) *int {
 	return &i
 }

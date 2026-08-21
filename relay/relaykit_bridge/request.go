@@ -25,9 +25,13 @@ import (
 //     relaykit 输出同构 *dto.GeneralOpenAIRequest 的 marshal ⇒ 后处理照常执行，
 //     本层无需吸收任何后处理逻辑（与 handler 层接管 Responses 方向的 P0 模式本质不同）。
 
-// TryConvertInboundToOpenAIChat 尝试用 relaykit 转换器将 claude/gemini 入站请求体
-// 转换为 OpenAI Chat 格式。成功返回 (转换后字节, true)；失败/未覆盖返回 (nil, false)，
-// 调用方回退 legacy ConvertClaudeToOpenAI / ConvertGeminiToOpenAI。
+// TryConvertInboundToOpenAIChat 尝试用 relaykit 转换器将 claude/gemini/responses 入站
+// 请求体转换为 OpenAI Chat 格式。成功返回 (转换后字节, true)；失败/未覆盖返回 (nil, false)，
+// 调用方（ConvertToOpenAI）按转换失败报错——legacy 回退已收割。
+//
+// responses 入站走本入口（而非 handler 桥）的场景：ollama/coze/dify 等原生格式上游——
+// handler 桥的 responses 路由只认 openai/claude/gemini 上游，其余上游的 r2o 转换由
+// 各 adaptor 经共享 ConvertToOpenAI 在此完成（legacy ConvertResponsesToOpenAI 的收编）。
 func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, bool) {
 	if info == nil || info.ChannelMeta == nil {
 		return nil, false
@@ -39,6 +43,8 @@ func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, 
 		converterID = relayconvert.ConverterClaudeMessagesToOpenAIChat
 	case constant.RelayFormatGemini:
 		converterID = relayconvert.ConverterGeminiContentToOpenAIChat
+	case constant.RelayFormatResponses:
+		converterID = relayconvert.ConverterOpenAIResponsesToOpenAIChat
 	default:
 		return nil, false
 	}
@@ -64,6 +70,20 @@ func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, 
 			return nil, false
 		}
 		parsed = &geminiReq
+	case constant.RelayFormatResponses:
+		var responsesReq dto.OpenAIResponsesRequest
+		if err := json.Unmarshal(body, &responsesReq); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse responses request failed, fallback to legacy: %v", err)
+			return nil, false
+		}
+		// 有状态请求（previous_response_id）在 handler 桥返回哨兵；走到本入口的非
+		// responses 原生上游同样无法还原会话历史，按未覆盖处理（调用方报错）
+		if responsesReq.PreviousResponseID != "" {
+			return nil, false
+		}
+		// stash 快照供响应侧合成 Responses 格式时 echo 请求参数（对齐 handler 桥行为）
+		info.ResponsesRequest = &responsesReq
+		parsed = &responsesReq
 	}
 
 	start := time.Now()

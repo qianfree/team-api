@@ -66,17 +66,18 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 	}
 
 	var (
-		totalUsage    dto.UsageWithDetails
-		outputText    strings.Builder // finish_reason 判定用
-		usageText     strings.Builder // 估算判据用（含 reasoning + 工具名 + 参数）
-		sentStart     bool
-		sentStop      bool
-		sawToolCall   bool
-		toolCallIdx   = 0                       // 已分配的工具调用序号（递增）
-		toolSeen      = make(map[string]bool)   // callID → 是否已分配 index
-		toolArgsByID  = make(map[string]string) // callID → 已发参数累积（前缀差分基准）
-		toolNameSent  = make(map[string]bool)   // callID → name 是否已随 chunk 发出
-		toolIndexByID = make(map[string]int)    // callID → 分配的 delta index
+		totalUsage     dto.UsageWithDetails
+		outputText     strings.Builder // finish_reason 判定用
+		usageText      strings.Builder // 估算判据用（含 reasoning + 工具名 + 参数）
+		sentStart      bool
+		sentStop       bool
+		sawToolCall    bool
+		toolCallIdx    = 0                       // 已分配的工具调用序号（递增）
+		toolSeen       = make(map[string]bool)   // callID → 是否已分配 index
+		toolArgsByID   = make(map[string]string) // callID → 已发参数累积（前缀差分基准）
+		toolNameSent   = make(map[string]bool)   // callID → name 是否已随 chunk 发出
+		toolIndexByID  = make(map[string]int)    // callID → 分配的 delta index
+		callIDByItemID = make(map[string]string) // item.id → call_id（delta 事件只带 item_id，需归一键）
 	)
 
 	// emit 基础 chunk 骨架（ID/Created/Model 各跳统一）
@@ -216,6 +217,13 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 			if callID == "" {
 				continue
 			}
+			// 登记 item.id → call_id：function_call_arguments.delta 事件只携带 item_id
+			//（OpenAI 规范为 output item 的 id，如 "fc_xxx"，≠ call_id），必须归一到
+			// 同一键，否则 done 事件的前缀差分基准为空、完整参数会被当作增量重发一遍，
+			// 客户端组装出非法 JSON 工具入参（"Invalid tool parameters"）
+			if event.Item.ID != "" && event.Item.ID != callID {
+				callIDByItemID[event.Item.ID] = callID
+			}
 			if err := sendStartIfNeeded(); err != nil {
 				return err
 			}
@@ -246,6 +254,10 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 
 		case "response.function_call_arguments.delta":
 			callID := event.ItemID
+			// 归一到 output_item 事件的 call_id 键（见 output_item 分支注释）
+			if mapped, ok := callIDByItemID[callID]; ok {
+				callID = mapped
+			}
 			if callID == "" {
 				continue
 			}

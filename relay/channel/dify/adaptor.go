@@ -1,21 +1,15 @@
 package dify
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
-	"github.com/qianfree/team-api/relay/dto"
-	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
@@ -56,11 +50,10 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	// 非 OpenAI 格式先转换为 OpenAI
 	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
+		// 交叉客户端（claude/gemini/responses）× dify 上游：请求侧虽可转换，但响应侧
+		// 只有 dify→openai 转换器——不 fail-fast 会形成「请求已发上游、响应转换失败」，
+		// 白耗上游 token 且触发全渠道重试风暴。响应侧组合链注册前不支持该方向
+		return nil, fmt.Errorf("[relaykit] %s 客户端 × dify 上游暂不支持（响应侧无注册转换器）", info.InboundFormat)
 	}
 
 	difyBody, err := convertOpenAIToDify(requestBody, info)
@@ -136,179 +129,28 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 
 	info.SetFirstResponseTime()
 
-	// relaykit 响应转换路径（特性开关控制，默认关闭）。未启用/失败回退旧路径。
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-		if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
-			return usage, nil
-		}
-		return &common.Usage{}, nil
+	// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错
+	convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] dify→openai 响应转换失败")
 	}
-
-	var difyResp DifyBlockingResponse
-	if err := json.Unmarshal(body, &difyResp); err != nil {
-		return nil, fmt.Errorf("parse Dify response failed: %w", err)
-	}
-
-	// 构建 OpenAI 非流式响应
-	chatResp := dto.ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-dify-%s", info.RequestID),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   info.OriginModelName,
-		Choices: []dto.Choice{
-			{
-				Index: 0,
-				Message: dto.Message{
-					Role:    "assistant",
-					Content: difyResp.Answer,
-				},
-				FinishReason: "stop",
-			},
-		},
-		Usage: dto.UsageWithDetails{
-			PromptTokens:     difyResp.Metadata.Usage.PromptTokens,
-			CompletionTokens: difyResp.Metadata.Usage.CompletionTokens,
-			TotalTokens:      difyResp.Metadata.Usage.TotalTokens,
-		},
-	}
-
-	// 如果 Dify 未返回用量信息，使用粗略估算
-	if chatResp.Usage.TotalTokens == 0 {
-		chatResp.Usage.CompletionTokens = helper.EstimateTokens(difyResp.Answer)
-		chatResp.Usage.TotalTokens = chatResp.Usage.CompletionTokens
-	}
-
-	respJSON, err := json.Marshal(chatResp)
-	if err != nil {
-		return nil, fmt.Errorf("marshal OpenAI response failed: %w", err)
-	}
-
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respJSON)
-
-	return &common.Usage{
-		PromptTokens:     chatResp.Usage.PromptTokens,
-		CompletionTokens: chatResp.Usage.CompletionTokens,
-		TotalTokens:      chatResp.Usage.TotalTokens,
-	}, nil
+	_, _ = writer.Write(convertedBody)
+	if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
+		return usage, nil
+	}
+	return &common.Usage{}, nil
 }
 
 // handleStreamResponse 处理 Dify streaming 模式 SSE 响应
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		return usage, nil
+	// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错
+	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] dify→openai 流式转换失败（无匹配转换器）")
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	streamStatus := info.StreamStatus
-	if streamStatus == nil {
-		streamStatus = common.NewStreamStatus()
-		info.StreamStatus = streamStatus
-	}
-
-	chatID := fmt.Sprintf("chatcmpl-dify-%s", info.RequestID)
-	createdAt := time.Now().Unix()
-	modelName := info.OriginModelName
-
-	scanner := bufio.NewScanner(resp.Body)
-	var usage common.Usage
-	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
-			return &usage, nil
-		default:
-		}
-
-		line := scanner.Text()
-
-		// Dify SSE 格式: "data: {...}"
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data, _ := helper.ExtractSSEData(line)
-		if data == "" {
-			continue
-		}
-
-		info.SetFirstResponseTime()
-
-		var event DifyStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		switch event.Event {
-		case "message":
-			// 内容增量
-			if event.Answer == "" {
-				continue
-			}
-			transferredTextLen += len(event.Answer)
-
-			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, event.Answer, nil)
-			chunkJSON, err := json.Marshal(chunk)
-			if err != nil {
-				continue
-			}
-			if err := helper.WriteSSEData(writer, string(chunkJSON)); err != nil {
-				streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-				// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-				helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
-				return &usage, nil
-			}
-
-		case "message_end":
-			// 流结束，包含用量信息
-			usage.PromptTokens = event.Metadata.Usage.PromptTokens
-			usage.CompletionTokens = event.Metadata.Usage.CompletionTokens
-			usage.TotalTokens = event.Metadata.Usage.TotalTokens
-
-			// 发送带 finish_reason 的最终 chunk
-			finishReason := "stop"
-			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
-			chunkJSON, _ := json.Marshal(chunk)
-			_ = helper.WriteSSEData(writer, string(chunkJSON))
-
-			// 发送 [DONE]
-			_ = helper.WriteSSEData(writer, "[DONE]")
-			streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-			return &usage, nil
-
-		case "error":
-			streamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("dify error: %s", data))
-			return &usage, fmt.Errorf("dify stream error: %s", data)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		streamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &usage, fmt.Errorf("read dify stream failed: %w", err)
-	}
-
-	// 流异常结束（未收到 message_end），补充兜底的结束 chunk 和 [DONE]
-	if streamStatus.GetEndReason() == "" {
-		finishReason := "stop"
-		chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
-		chunkJSON, _ := json.Marshal(chunk)
-		_ = helper.WriteSSEData(writer, string(chunkJSON))
-		_ = helper.WriteSSEData(writer, "[DONE]")
-		streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-	}
-
-	return &usage, nil
+	return usage, nil
 }
 
 func (a *Adaptor) GetChannelName() string {

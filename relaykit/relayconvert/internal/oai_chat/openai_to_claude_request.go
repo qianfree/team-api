@@ -60,9 +60,13 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		Stream:   openaiReq.Stream,
 	}
 
-	// MaxTokens（Claude API 必填）
-	if openaiReq.MaxTokens != nil {
-		maxTokens := uint(*openaiReq.MaxTokens)
+	// MaxTokens（Claude API 必填）；max_completion_tokens 为新式客户端（o 系列/gpt-5 系 SDK）的字段，同等生效
+	maxTokensRequested := openaiReq.MaxTokens
+	if maxTokensRequested == nil {
+		maxTokensRequested = openaiReq.MaxCompletionTokens
+	}
+	if maxTokensRequested != nil {
+		maxTokens := uint(*maxTokensRequested)
 		claudeReq.MaxTokens = &maxTokens
 	} else {
 		// 尝试从 options 中获取默认值
@@ -110,17 +114,22 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			Role: msg.Role,
 		}
 
-		// 转换 content
+		// 转换 content。Anthropic 协议拒绝空 text 块（"text":"" 上游 400 参数错误），
+		// 因此文本为空时不落块——带 tool_calls 的 assistant 消息 content 常为 nil/""，
+		// 仅 tool_use 块即为合法内容。
+		// 多模态经 NormalizeContentParts 归一：真实 JSON 流量为 []any（元素 map），
+		// 链式转换第一跳产出 typed []dto.ContentPart，两种形态都须识别
 		switch content := msg.Content.(type) {
 		case string:
-			text := content
-			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
-		case []dto.ContentPart:
-			claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(content)
+			if content != "" {
+				claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &content}}
+			}
 		default:
-			// 兜底：尝试提取文本
-			text := shared.MapTextContent(content)
-			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			if parts := shared.NormalizeContentParts(content); len(parts) > 0 {
+				claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(parts)
+			} else if text := shared.MapTextContent(content); text != "" {
+				claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			}
 		}
 
 		// 转换 tool calls（带 tool_calls 的 assistant 消息）
@@ -145,6 +154,14 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 					Content:   resultText,
 				},
 			}
+		}
+
+		// 空内容兜底：以上转换后仍无任何内容块（content 为 nil 或空数组——如纯文本为空
+		// 且无 tool_calls）时，Claude 拒绝 null/空 content——补单个空格 text 块
+		//（对齐 legacy o2cConvertAssistantMessage）
+		if blocks, ok := claudeMsg.Content.([]dto.ClaudeContentBlock); claudeMsg.Content == nil || (ok && len(blocks) == 0) {
+			space := " "
+			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &space}}
 		}
 
 		claudeReq.Messages = append(claudeReq.Messages, claudeMsg)
@@ -189,6 +206,26 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 
 	// 应用 thinking 适配器
 	shared.ApplyThinkingToClaude(claudeReq, thinkingInfo, opts.Claude)
+
+	// 请求体 reasoning_effort → thinking（legacy o2cConvertReasoningEffort 的迁移）。
+	// 显式请求参数优先于模型名后缀，故在适配器之后应用；thinking 与 temperature 修改不兼容，须置 1.0
+	if openaiReq.ReasoningEffort != "" {
+		budget := 8192
+		switch openaiReq.ReasoningEffort {
+		case "low":
+			budget = 1024
+		case "medium":
+			budget = 8192
+		case "high":
+			budget = 32768
+		}
+		claudeReq.Thinking = &dto.ClaudeThinking{
+			Type:         "enabled",
+			BudgetTokens: &budget,
+		}
+		one := 1.0
+		claudeReq.Temperature = &one
+	}
 
 	return claudeReq, nil
 }

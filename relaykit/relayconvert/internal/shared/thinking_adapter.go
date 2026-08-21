@@ -60,17 +60,36 @@ func ApplyThinkingToClaude(req *dto.ClaudeRequest, info ThinkingInfo, opts convm
 
 	// 启用 thinking
 	if info.IsThinking || info.EffortLevel != "" {
-		req.Thinking = &dto.ClaudeThinking{
-			Type: "enabled",
-		}
-
-		// 若已配置则设置 budget tokens
+		// budget_tokens 须 ≥1024（Anthropic 下限）且 < max_tokens。
+		// 百分比折算值低于下限时钳到 1024；客户端 max_tokens 装不下时抬高 max_tokens
+		//（对齐宿主 injectClaudeThinking 的小 max_tokens 处理思路）
+		var budgetTokens int
 		if req.MaxTokens != nil && opts.ThinkingAdapterBudgetTokensPercentage > 0 {
-			budgetTokens := int(float64(*req.MaxTokens) * opts.ThinkingAdapterBudgetTokensPercentage)
-			if budgetTokens > 0 {
-				req.Thinking.BudgetTokens = &budgetTokens
+			maxTokens := int(*req.MaxTokens)
+			budgetTokens = int(float64(maxTokens) * opts.ThinkingAdapterBudgetTokensPercentage)
+			if budgetTokens < 1024 {
+				budgetTokens = 1024
+			}
+			if budgetTokens >= maxTokens {
+				raisedMax := uint(budgetTokens + 1024)
+				req.MaxTokens = &raisedMax
 			}
 		}
+		if budgetTokens > 0 {
+			req.Thinking = &dto.ClaudeThinking{
+				Type:         "enabled",
+				BudgetTokens: &budgetTokens,
+			}
+		} else {
+			// 未配置百分比/无 max_tokens，无法确定合规 budget：adaptive 模式由上游
+			// 自适应分配（对齐宿主 injectClaudeEffort 的无 budget 注入形态——
+			// enabled 而无 budget_tokens 会被上游拒绝）
+			req.Thinking = &dto.ClaudeThinking{Type: "adaptive"}
+		}
+		// thinking 与 temperature/top_p 修改不兼容：强制 temperature=1.0、去除 top_p（上游 400 防护）
+		one := 1.0
+		req.Temperature = &one
+		req.TopP = nil
 	}
 }
 
@@ -91,12 +110,13 @@ func ApplyThinkingToGemini(config *dto.GeminiGenerationConfig, info ThinkingInfo
 			IncludeThoughts: true,
 		}
 
-		// 将 effort 等级映射为 thinking budget
+		// 将 effort 等级映射为 thinking budget，下限 128（Gemini thoughtBudget 最小值）
 		if config.MaxOutputTokens != nil && opts.ThinkingAdapterBudgetTokensPercentage > 0 {
 			thinkingBudget := int(float64(*config.MaxOutputTokens) * opts.ThinkingAdapterBudgetTokensPercentage)
-			if thinkingBudget > 0 {
-				thinkingConfig.ThoughtBudget = &thinkingBudget
+			if thinkingBudget < 128 {
+				thinkingBudget = 128
 			}
+			thinkingConfig.ThoughtBudget = &thinkingBudget
 		}
 
 		config.ThinkingConfig = thinkingConfig

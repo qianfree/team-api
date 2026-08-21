@@ -162,7 +162,10 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 根据入站格式转换请求体为 Gemini 格式
+// ConvertRequest 根据入站格式转换请求体为 Gemini 格式。
+// 跨格式方向（openai/claude/responses 入站）由 handler 层 relaykit 桥接先行转换，
+// 走到跨格式分支说明桥接未接管，按转换失败报错（legacy 回退已收割）；
+// gemini 原生入站直通（剥 stream 字段），照常做 thinking 注入。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	// 图片生成模式：Imagen 走 predict 格式，其他走 generateContent + ResponseModalities
 	if constant.RelayMode(info.RelayMode) == constant.RelayModeImagesGenerations {
@@ -178,30 +181,10 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
 		cleaned := helper.StripStreamField(requestBody)
 		converted = bytes.NewReader(cleaned)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+	case constant.RelayFormatOpenAI, constant.RelayFormatClaude, constant.RelayFormatResponses:
+		return nil, fmt.Errorf("[relaykit] %s→gemini 请求转换失败（handler 层桥接未接管）", info.InboundFormat)
 	default:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+		return nil, fmt.Errorf("[relaykit] 未知入站格式 %s→gemini，无法转换", info.InboundFormat)
 	}
 
 	// Thinking 后缀路由
@@ -544,11 +527,18 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(respBody)
 	default:
-		openaiResp := geminiToOpenAIResponse(&aggregated, info)
-		respBody, _ := json.Marshal(openaiResp)
+		// openai 等跨格式客户端：聚合后的 GeminiChatResponse 经 relaykit 响应转换器转换
+		aggBytes, err := json.Marshal(aggregated)
+		if err != nil {
+			return nil, fmt.Errorf("marshal aggregated gemini response failed: %w", err)
+		}
+		converted, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, aggBytes)
+		if !ok {
+			return nil, fmt.Errorf("[relaykit] gemini→%s 聚合响应转换失败", info.GetOriginalClientFormat())
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(respBody)
+		_, _ = writer.Write(converted)
 	}
 
 	return geminiUsageToCommon(&totalUsage), nil

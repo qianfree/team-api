@@ -402,3 +402,44 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 	}
 	return capturedUsage, true, nil
 }
+
+// TryConvertChatToResponsesRequestViaRelaykit 用 relaykit c2r 转换器将 chat 请求体
+// 转换为 Responses 格式（ChatViaResponses 渠道请求侧的第二跳）。
+//
+// handler 层桥只路由 openai 入站的 chat→responses；claude/gemini 入站先经
+// ConvertToOpenAI 转 chat，再由 openai adaptor 的 UseResponsesAPI 分支调本函数完成
+// chat→responses（legacy ConvertOpenAIToResponses 收割后的等价路径；openai 入站走到
+// 此处则为 handler 桥失败后的同转换器重试）。
+// 成功返回 (responses 体, true)；未接管/失败返回 (nil, false)，调用方按转换失败报错。
+func TryConvertChatToResponsesRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, chatBody []byte) ([]byte, bool) {
+	if info == nil || info.ChannelMeta == nil || !info.UseResponsesAPI {
+		return nil, false
+	}
+	converterID := relayconvert.ConverterOpenAIChatToOpenAIResponses
+	spec, ok := relayconvert.LookupRequestConverter(converterID)
+	if !ok {
+		return nil, false
+	}
+
+	var chatReq dto.GeneralOpenAIRequest
+	if err := json.Unmarshal(chatBody, &chatReq); err != nil {
+		g.Log().Warningf(ctx, "[relaykit] parse chat body for responses bridge failed: %v", err)
+		return nil, false
+	}
+
+	start := time.Now()
+	converted, err := relayconvert.ExecuteRequestConverter(ctx, spec, info, &chatReq)
+	duration := time.Since(start)
+	monitor.TrackConverterCall(converterID, string(constant.RelayFormatOpenAI), string(constant.RelayFormatResponses), duration, err)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] convert chat→responses request failed (converter=%s): %v", converterID, err)
+		return nil, false
+	}
+
+	out, err := json.Marshal(converted)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] marshal responses request failed (converter=%s): %v", converterID, err)
+		return nil, false
+	}
+	return out, true
+}

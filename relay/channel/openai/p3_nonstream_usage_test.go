@@ -14,6 +14,8 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 // p3ResponsesUpstreamBody 上游 /v1/responses 的非流式响应体（usage.input_tokens=50、output=20）

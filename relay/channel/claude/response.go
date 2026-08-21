@@ -19,7 +19,8 @@ import (
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
-// handleNonStreamToOpenAI 将 Claude 非流式响应转换为 OpenAI 格式
+// handleNonStreamToOpenAI 将 Claude 非流式响应转换为 OpenAI 格式。
+// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
 func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 
@@ -32,59 +33,35 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-
-		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
-		var claudeResp dto.ClaudeResponse
-		if err := json.Unmarshal(body, &claudeResp); err != nil {
-			// Usage 解析失败，返回空 Usage（已写响应，不能重试）
-			// 静默处理：非致命错误，响应已正确写入
-			return &common.Usage{}, nil
-		}
-		if claudeResp.Usage != nil {
-			usage := &common.Usage{
-				PromptTokens:        claudeResp.Usage.InputTokens,
-				CompletionTokens:    claudeResp.Usage.OutputTokens,
-				TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
-				CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-				PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
-			}
-			return usage, nil
-		}
-		// Usage 为 nil，返回空 Usage
-		return &common.Usage{}, nil
+	convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] claude→openai 响应转换失败")
 	}
-
-	// 旧代码路径（relaykit 未启用或失败回退）
-	var claudeResp dto.ClaudeResponse
-	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
-	}
-
-	// 转换为 OpenAI 格式
-	openaiResp := claudeToOpenAIResponse(&claudeResp, info)
-
-	respBody, _ := json.Marshal(openaiResp)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
+	_, _ = writer.Write(convertedBody)
 
-	usage := &common.Usage{}
-	if claudeResp.Usage != nil {
-		usage.PromptTokens = claudeResp.Usage.InputTokens
-		usage.CompletionTokens = claudeResp.Usage.OutputTokens
-		usage.TotalTokens = claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens
-		usage.CacheCreationTokens = claudeResp.Usage.CacheCreationInputTokens
-		usage.PromptTokensDetails = claudeUsageToTokenDetails(claudeResp.Usage)
+	// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
+	var claudeResp dto.ClaudeResponse
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		// Usage 解析失败，返回空 Usage（已写响应，不能重试）
+		return &common.Usage{}, nil
 	}
-	return usage, nil
+	if claudeResp.Usage != nil {
+		return &common.Usage{
+			PromptTokens:        claudeResp.Usage.InputTokens,
+			CompletionTokens:    claudeResp.Usage.OutputTokens,
+			TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
+			CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
+			PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
+		}, nil
+	}
+	return &common.Usage{}, nil
 }
 
-// handleStreamToOpenAI 将 Claude 流式响应转换为 OpenAI SSE 格式
+// handleStreamToOpenAI 将 Claude 流式响应转换为 OpenAI SSE 格式。
+// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
+// 转换中途失败由桥接层优雅降级（补终止 chunk + [DONE] + end reason），不走本函数。
 func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 
@@ -93,282 +70,11 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		return usage, nil
+	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] claude→openai 流式转换失败（无匹配转换器）")
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	responseID := fmt.Sprintf("chatcmpl-%s", info.RequestID)
-	createdAt := time.Now().Unix()
-
-	var (
-		usage           dto.ClaudeUsage
-		modelName       string
-		finishReason    string
-		toolCallIdx     int
-		roleChunkSent   bool
-		responseTextBuf strings.Builder
-	)
-
-	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
-		m := modelName
-		if m == "" {
-			m = info.OriginModelName
-		}
-		return &dto.ChatCompletionStreamResponse{
-			ID:      responseID,
-			Object:  "chat.completion.chunk",
-			Created: createdAt,
-			Model:   m,
-			Choices: []dto.StreamChoice{{
-				Index: 0,
-				Delta: delta,
-			}},
-		}
-	}
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			interruptedUsage := buildUsageFromClaude(&usage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, responseTextBuf.Len())
-			return interruptedUsage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data, _ := helper.ExtractSSEData(line)
-
-		if data != "" && data != "[DONE]" {
-			info.SetFirstResponseTime()
-		}
-
-		var event dto.ClaudeResponse
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			// JSON 解析失败：静默跳过（允许部分格式异常）
-			continue
-		}
-
-		switch event.Type {
-		case "message_start":
-			if event.Message != nil {
-				modelName = event.Message.Model
-				if modelName == "" {
-					modelName = info.OriginModelName
-				}
-				if event.Message.Usage != nil {
-					usage = *event.Message.Usage
-				}
-			}
-
-			if !roleChunkSent {
-				emptyContent := ""
-				writeStreamChunk(writer, newChunk(dto.Message{
-					Role:    "assistant",
-					Content: &emptyContent,
-				}))
-				roleChunkSent = true
-			}
-
-		case "content_block_start":
-			if event.ContentBlock == nil {
-				continue
-			}
-			switch event.ContentBlock.Type {
-			case "text":
-			case "thinking":
-			case "redacted_thinking":
-				// 脱敏思考，OpenAI 格式无等价物，忽略
-			case "tool_use":
-				toolCall := dto.ToolCall{
-					Index: toolCallIdx,
-					ID:    event.ContentBlock.ID,
-					Type:  "function",
-					Function: dto.FunctionCall{
-						Name:      event.ContentBlock.Name,
-						Arguments: "",
-					},
-				}
-				writeStreamChunk(writer, newChunk(dto.Message{
-					ToolCalls: []dto.ToolCall{toolCall},
-				}))
-				toolCallIdx++
-			}
-
-		case "content_block_delta":
-			if event.Delta == nil {
-				continue
-			}
-			switch event.Delta.Type {
-			case "text_delta":
-				if event.Delta.Text != nil && *event.Delta.Text != "" {
-					responseTextBuf.WriteString(*event.Delta.Text)
-					writeStreamChunk(writer, newChunk(dto.Message{
-						Content: *event.Delta.Text,
-					}))
-				}
-			case "thinking_delta":
-				if event.Delta.Thinking != nil && *event.Delta.Thinking != "" {
-					writeStreamChunk(writer, newChunk(dto.Message{
-						ReasoningContent: event.Delta.Thinking,
-					}))
-				}
-			case "input_json_delta":
-				if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" {
-					writeStreamChunk(writer, newChunk(dto.Message{
-						ToolCalls: []dto.ToolCall{{
-							Index: toolCallIdx - 1,
-							Function: dto.FunctionCall{
-								Arguments: *event.Delta.PartialJSON,
-							},
-						}},
-					}))
-				}
-			case "signature_delta":
-			}
-
-		case "content_block_stop":
-
-		case "error":
-			errMsg := "claude stream error"
-			if event.Error != nil {
-				if b, err := json.Marshal(event.Error); err == nil {
-					errMsg = fmt.Sprintf("claude stream error: %s", string(b))
-				}
-			}
-			info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("%s", errMsg))
-
-		case "message_delta":
-			if event.Delta != nil {
-				if event.Delta.StopReason != nil {
-					finishReason = common.ClaudeStopReasonToOpenAI(*event.Delta.StopReason)
-				}
-			}
-			if event.Usage != nil {
-				if event.Usage.InputTokens > 0 {
-					usage.InputTokens = event.Usage.InputTokens
-				}
-				usage.OutputTokens = event.Usage.OutputTokens
-				if event.Usage.CacheReadInputTokens > 0 {
-					usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
-				}
-				if event.Usage.CacheCreationInputTokens > 0 {
-					usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
-				}
-				if event.Usage.CacheCreation != nil {
-					usage.CacheCreation = event.Usage.CacheCreation
-				}
-			}
-
-		case "message_stop":
-			reason := finishReason
-			if reason == "" {
-				reason = "stop"
-			}
-			// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
-			//（cached 是其子集），客户端可见 usage 做加法；计费返回值另行按 Claude 口径构建
-			promptTotal := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-			usageObj := &dto.UsageWithDetails{
-				PromptTokens:        promptTotal,
-				CompletionTokens:    usage.OutputTokens,
-				TotalTokens:         promptTotal + usage.OutputTokens,
-				PromptTokensDetails: common.CommonTokenDetailsToDto(claudeUsageToTokenDetails(&usage)),
-			}
-			if usageObj.CompletionTokens == 0 {
-				estimated := responseTextBuf.Len() / 4
-				if estimated > 0 {
-					usageObj.CompletionTokens = estimated
-					usageObj.TotalTokens = usageObj.PromptTokens + usageObj.CompletionTokens
-				}
-			}
-
-			chunk := &dto.ChatCompletionStreamResponse{
-				ID:      responseID,
-				Object:  "chat.completion.chunk",
-				Created: createdAt,
-				Model:   modelName,
-				Choices: []dto.StreamChoice{{
-					Index:        0,
-					FinishReason: &reason,
-				}},
-				Usage: usageObj,
-			}
-			if chunk.Model == "" {
-				chunk.Model = info.OriginModelName
-			}
-			writeStreamChunk(writer, chunk)
-			helper.WriteSSEData(writer, "[DONE]")
-			info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-		}
-	}
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &common.Usage{}, fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	if info.StreamStatus.GetEndReason() == "" {
-		reason := "stop"
-		if finishReason != "" {
-			reason = finishReason
-		}
-		usageObj := &dto.UsageWithDetails{
-			PromptTokens:        usage.InputTokens,
-			CompletionTokens:    usage.OutputTokens,
-			TotalTokens:         usage.InputTokens + usage.OutputTokens,
-			PromptTokensDetails: common.CommonTokenDetailsToDto(claudeUsageToTokenDetails(&usage)),
-		}
-		if usageObj.CompletionTokens == 0 {
-			estimated := responseTextBuf.Len() / 4
-			if estimated > 0 {
-				usageObj.CompletionTokens = estimated
-				usageObj.TotalTokens = usageObj.PromptTokens + usageObj.CompletionTokens
-			}
-		}
-		chunk := &dto.ChatCompletionStreamResponse{
-			ID:      responseID,
-			Object:  "chat.completion.chunk",
-			Created: createdAt,
-			Model:   modelName,
-			Choices: []dto.StreamChoice{{
-				Index:        0,
-				FinishReason: &reason,
-			}},
-			Usage: usageObj,
-		}
-		if chunk.Model == "" {
-			chunk.Model = info.OriginModelName
-		}
-		writeStreamChunk(writer, chunk)
-		helper.WriteSSEData(writer, "[DONE]")
-		info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-	}
-
-	return &common.Usage{
-		PromptTokens:        usage.InputTokens,
-		CompletionTokens:    usage.OutputTokens,
-		TotalTokens:         usage.InputTokens + usage.OutputTokens,
-		CacheCreationTokens: usage.CacheCreationInputTokens,
-		PromptTokensDetails: claudeUsageToTokenDetails(&usage),
-	}, nil
+	return usage, nil
 }
 
 // handleClaudeNativeResponse 直通 Claude 原生格式响应
@@ -599,103 +305,5 @@ func claudeUsageToTokenDetails(u *dto.ClaudeUsage) *common.TokenDetails {
 	return td
 }
 
-// claudeToOpenAIResponse 将 Claude 非流式响应转换为 OpenAI ChatCompletion 格式
-func claudeToOpenAIResponse(claudeResp *dto.ClaudeResponse, info *common.RelayInfo) dto.ChatCompletionResponse {
-	resp := dto.ChatCompletionResponse{
-		ID:      claudeResp.ID,
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   claudeResp.Model,
-		Choices: []dto.Choice{{
-			Index:        0,
-			FinishReason: common.ClaudeStopReasonToOpenAI(claudeResp.StopReason),
-		}},
-	}
-
-	if info.ChannelMeta.IsModelMapped {
-		resp.Model = info.OriginModelName
-	}
-
-	var textParts []string
-	var thinkingParts []string
-	var toolCalls []dto.ToolCall
-
-	for _, block := range claudeResp.Content {
-		switch block.Type {
-		case "text":
-			if block.Text != nil {
-				textParts = append(textParts, *block.Text)
-			}
-		case "thinking":
-			if block.Thinking != nil {
-				thinkingParts = append(thinkingParts, *block.Thinking)
-			}
-		case "redacted_thinking":
-			// 脱敏思考，OpenAI 格式无等价物，忽略
-		case "tool_use":
-			argsJSON, _ := json.Marshal(block.Input)
-			toolCalls = append(toolCalls, dto.ToolCall{
-				ID:   block.ID,
-				Type: "function",
-				Function: dto.FunctionCall{
-					Name:      block.Name,
-					Arguments: string(argsJSON),
-				},
-			})
-		}
-	}
-
-	message := dto.Message{
-		Role:    "assistant",
-		Content: joinTextPartsResponse(textParts),
-	}
-	if len(thinkingParts) > 0 {
-		thinking := strings.Join(thinkingParts, "")
-		message.ReasoningContent = &thinking
-	}
-	if len(toolCalls) > 0 {
-		message.ToolCalls = toolCalls
-	}
-	resp.Choices[0].Message = message
-
-	if claudeResp.Usage != nil {
-		// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
-		//（cached 是其子集），转换做加法并透出缓存明细，客户端按 OpenAI 语义解析才正确
-		promptTotal := claudeResp.Usage.InputTokens +
-			claudeResp.Usage.CacheReadInputTokens +
-			claudeResp.Usage.CacheCreationInputTokens
-		resp.Usage = dto.UsageWithDetails{
-			PromptTokens:     promptTotal,
-			CompletionTokens: claudeResp.Usage.OutputTokens,
-			TotalTokens:      promptTotal + claudeResp.Usage.OutputTokens,
-		}
-		if claudeResp.Usage.CacheReadInputTokens > 0 || claudeResp.Usage.CacheCreationInputTokens > 0 {
-			resp.Usage.PromptTokensDetails = &dto.TokenDetails{
-				CachedTokens:         claudeResp.Usage.CacheReadInputTokens,
-				CachedCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-			}
-		}
-	}
-
-	return resp
-}
-
-// writeStreamChunk 写入流式 chunk
-func writeStreamChunk(w http.ResponseWriter, chunk *dto.ChatCompletionStreamResponse) {
-	data, _ := json.Marshal(chunk)
-	_ = helper.WriteSSEData(w, string(data))
-}
-
-func joinTextPartsResponse(parts []string) any {
-	if len(parts) == 0 {
-		return nil
-	}
-	result := make([]byte, 0, 64)
-	for i, p := range parts {
-		if i > 0 {
-			result = append(result, '\n')
-		}
-		result = append(result, p...)
-	}
-	return string(result)
-}
+// claudeToOpenAIResponse 等 legacy 响应转换已随 relaykit 收割删除：
+// claude→openai 方向统一走 relaykit_bridge.TryConvertResponse/TryConvertStreamViaRelaykit。

@@ -163,11 +163,9 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 			// 上游为 Responses 协议：保持 Responses 格式直连，仅做模型映射等后处理
 			converted = bytes.NewReader(requestBody)
 		} else {
-			r, err := ConvertResponsesToOpenAI(requestBody, info)
-			if err != nil {
-				return nil, err
-			}
-			converted = r
+			// chat-only 上游：handler 层桥接（responses→openai）先行转换，走到本分支
+			// 说明桥接未接管，按转换失败报错（legacy 回退已收割）
+			return nil, fmt.Errorf("[relaykit] responses→openai 请求转换失败（handler 层桥接未接管）")
 		}
 	default:
 		converted = bytes.NewReader(requestBody)
@@ -178,6 +176,8 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	// （thinking 后缀先注入 chat 体再进转换器），故此分支直接返回、不走后续 chat 后处理。
 	// P3：claude/gemini 入站（P3 起 UseResponsesAPI 也置位）同样走此桥接——body 已被
 	// 上方内联 switch 经 ConvertToOpenAI 转为 chat 格式，与 chat 入站路径完全同构。
+	// handler 层桥只路由 openai 入站的 chat→responses，claude/gemini 入站的第二跳在
+	// 此经 relaykit c2r 桥完成（legacy ConvertOpenAIToResponses 收割后的等价路径）。
 	if info.UseResponsesAPI && !responsesUpstream &&
 		(mode == constant.RelayModeChatCompletions || mode == constant.RelayModeClaudeMessages || mode == constant.RelayModeGeminiChat) {
 		if info.ReasoningEffort != "" {
@@ -187,11 +187,11 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		if err != nil {
 			return nil, fmt.Errorf("read chat body for responses bridge failed: %w", err)
 		}
-		r, err := ConvertOpenAIToResponses(body, info)
-		if err != nil {
-			return nil, err
+		responsesBody, ok := relaykit_bridge.TryConvertChatToResponsesRequestViaRelaykit(ctx, info, body)
+		if !ok {
+			return nil, fmt.Errorf("[relaykit] chat→responses 请求转换失败（claude/gemini 入站主路径或 openai 入站桥接失败重试）")
 		}
-		return bytes.NewReader(r), nil
+		return bytes.NewReader(responsesBody), nil
 	}
 
 	result := replaceModelIfNeeded(converted, info)
@@ -292,14 +292,26 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			return a.handleResponsesUpstreamNonStream(ctx, resp, info, writer)
 		}
 		if info.IsStream {
-			// relaykit 流式转换器优先（仅 200 时；未接管 body 未读取，旧路径完整重走）
-			if resp.StatusCode == http.StatusOK {
-				if usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-					resp.Body.Close()
-					return usage, streamErr
+			// 非 200：上游在 SSE 开始前返回错误（非 SSE 体），透传并返回上游错误驱动重试
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if isUpstreamOpenAIError(body) {
+					writeUpstreamErrorResponse(writer, resp.StatusCode, body)
+					upstreamErr := constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+					upstreamErr.ResponseWritten = true
+					return &common.Usage{}, upstreamErr
 				}
+				return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 			}
-			return a.handleResponsesInboundStream(ctx, resp, info, writer)
+			// relaykit 流式转换器唯一路径（legacy 回退已收割）
+			usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer)
+			if !ok {
+				resp.Body.Close()
+				return nil, fmt.Errorf("[relaykit] chat→responses 流式转换失败（无匹配转换器）")
+			}
+			resp.Body.Close()
+			return usage, streamErr
 		}
 		return a.handleResponsesInboundNonStream(ctx, resp, info, writer)
 	}

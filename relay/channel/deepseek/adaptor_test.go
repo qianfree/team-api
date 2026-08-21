@@ -9,6 +9,8 @@ import (
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	// blank import 触发内置转换器注册（relaykit 桥接为唯一路径，测试二进制须自备注册）
+	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
 
 // deepseekResponsesInfo 构造 responses 入站的 DeepSeek 渠道 RelayInfo，
@@ -61,60 +63,18 @@ func TestGetRequestURL_ResponsesFlagRouting(t *testing.T) {
 
 const deepseekResponsesRequestBody = `{"model":"deepseek-v4-flash","instructions":"You are helpful.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"}]}],"stream":true}`
 
-// TestConvertRequest_ResponsesChatFallback 渠道未开 supports_responses 时，
-// Responses 请求必须转换为 Chat 格式（instructions→system、input→messages、stream 保留），
-// 不能再以 Responses 体直发 chat-only 上游。
+// TestConvertRequest_ResponsesChatFallback 收割后契约：responses→chat 转换已上收
+// handler 层桥接（relaykit），adaptor 的 chat-only 兜底分支不再做 legacy 转换——
+// 走到该分支说明桥接未接管，按转换失败报错。
 func TestConvertRequest_ResponsesChatFallback(t *testing.T) {
 	a := &Adaptor{}
 	info := deepseekResponsesInfo(false)
-	out, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
-	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
+	_, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	if err == nil {
+		t.Fatal("expected conversion error after harvest（handler 层桥接未接管时 adaptor 必须报错）")
 	}
-	raw, _ := io.ReadAll(out)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("converted body is not json: %v, body: %s", err, raw)
-	}
-
-	// Responses 专属字段必须消失，chat 专属字段必须存在
-	if _, ok := m["input"]; ok {
-		t.Error("input field should be converted to messages")
-	}
-	msgsRaw, ok := m["messages"]
-	if !ok {
-		t.Fatalf("messages field missing: %s", raw)
-	}
-
-	// instructions → system 消息，input → user 消息
-	var msgs []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
-		t.Fatalf("unmarshal messages: %v", err)
-	}
-	if len(msgs) != 2 {
-		t.Fatalf("messages len = %d, want 2 (system + user): %s", len(msgs), raw)
-	}
-	if msgs[0].Role != "system" || strings.TrimSpace(string(msgs[0].Content)) != `"You are helpful."` {
-		t.Errorf("first message should be system with instructions, got role=%s content=%s", msgs[0].Role, msgs[0].Content)
-	}
-	if msgs[1].Role != "user" || !strings.Contains(string(msgs[1].Content), "你好") {
-		t.Errorf("second message should be user with input text, got role=%s content=%s", msgs[1].Role, msgs[1].Content)
-	}
-
-	// stream 保留 + 注入 stream_options（usage 计费需要）
-	if string(m["stream"]) != "true" {
-		t.Errorf("stream should be preserved as true, got %s", m["stream"])
-	}
-	if _, ok := m["stream_options"]; !ok {
-		t.Errorf("stream_options should be injected for stream request: %s", raw)
-	}
-
-	// ResponsesRequest 快照需落 RelayInfo，供响应侧合成 Responses 格式时 echo
-	if info.ResponsesRequest == nil {
-		t.Error("info.ResponsesRequest snapshot should be stashed by conversion")
+	if !strings.Contains(err.Error(), "responses→openai") {
+		t.Errorf("error should mention responses→openai direction, got: %v", err)
 	}
 }
 

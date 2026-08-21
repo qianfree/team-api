@@ -41,6 +41,7 @@ team-api/
 │   │   ├── captcha/            #   验证码控制器
 │   │   ├── docs/               #   文档控制器
 │   │   ├── open/               #   开放平台控制器
+│   ├── dispatchadapter/        # relaykit/dispatch 调度引擎的宿主适配层（渠道目录、Redis 熔断状态、策略热更新）
 │   ├── handler/                # 特殊端点处理器（不走 Controller 链路，见下方说明）
 │   │   ├── relay/              #   AI 代理端点处理器
 │   │   ├── public/             #   支付回调端点处理器
@@ -55,15 +56,17 @@ team-api/
 │   │   ├── notification/       #   通知服务
 │   │   ├── open/               #   开放平台业务逻辑
 │   │   ├── payment/            #   支付逻辑（回调处理、订单履约）
-│   │   ├── relay/              #   Relay 业务逻辑（亲和性、健康检查、缓存）
+│   │   ├── relay/              #   Relay 业务逻辑（模型/渠道元数据 provider、API Key、调试日志）
 │   │   └── task/               #   异步任务框架
 │   ├── model/                  # 数据模型（由 gf gen dao 自动生成，禁止手动修改）
 │   │   ├── do/                 #   Domain Objects（查询条件、输入结构体）
 │   │   └── entity/             #   Entity（与数据库表 1:1 映射的数据实体）
 │   ├── packed/                 # 打包资源（内嵌静态文件、编译时生成）
+│   ├── plugin/                 # 插件系统（生命周期、钩子、配置）
 │   ├── dao/                    # 数据访问对象（由 gf gen dao 自动生成，禁止手动修改）
 │   ├── response/               # 统一响应工具包（Success/Error 封装）
 │   ├── service/                # 业务接口定义（由 gf gen service 从 logic/ 自动生成，禁止手动修改）
+│   ├── testutil/               # 测试工具
 │   ├── middleware/             # 中间件
 │   └── utility/                # 工具函数
 │       ├── crypto/             #   加密工具
@@ -74,18 +77,24 @@ team-api/
 │   ├── channel/                #   供应商适配器（registry.go + 24 个子目录，每个供应商一个）
 │   │   └── openai/ claude/ gemini/ ...
 │   ├── common/                 #   Relay 层共享类型和工具
-│   ├── constant/               #   Relay 层常量（供应商类型、模式、错误码）
-│   ├── dto/                    #   数据传输对象（OpenAI/Claude/Gemini/Realtime/Task 等格式定义）
+│   ├── constant/               #   Relay 层常量（供应商类型、模式、错误码；RelayFormat 为 relaykit/types 的类型别名）
+│   ├── dto/                    #   DTO 别名层（全部类型别名到 relaykit/dto，权威定义在 relaykit）
 │   ├── handler/                #   Relay 请求处理器（chat/claude/gemini/audio/rerank/task/realtime 等）
 │   ├── helper/                 #   Relay 辅助函数（流式处理、状态码映射、系统提示词、thinking 处理）
 │   ├── override/               #   请求/响应覆盖（Header 改写、参数覆盖）
-│   ├── scheduler/              #   渠道调度器（调度、亲和性、重试）
+│   ├── relaykit_bridge/        #   relaykit 转换器桥接（claude/gemini 入站→openai 上游方向的接管入口）
 │   └── taskchannel/            #   异步任务渠道适配器
 │       ├── registry.go         #     任务渠道注册表
 │       ├── kling/              #     可灵视频生成
 │       ├── midjourney/         #     Midjourney 图像生成
 │       ├── sora/               #     Sora 视频生成
 │       └── suno/               #     Suno 音乐生成
+├── relaykit/                   # AI 代理核心算法库（独立 Go module，零 GoFrame 依赖，见下方设计说明）
+│   ├── dto/                    #   协议类型权威定义（OpenAI/Claude/Gemini/Responses/Coze/Dify/Ollama 等）
+│   ├── types/                  #   RelayFormat、渠道/转换错误码、请求元数据
+│   ├── relayconvert/           #   协议转换器（请求/响应/流式注册表 + 内置转换器 + 链式组合 + golden 测试）
+│   ├── dispatch/               #   渠道调度引擎纯函数核心（熔断状态机、HRW、评分、协调器）
+│   └── reasonmap/              #   finish_reason/stop_reason 跨协议映射
 ├── manifest/
 │   ├── config/                 # 应用运行时配置（GoFrame 标准路径）
 │   ├── deploy/                 # 部署配置（K8s/Compose 等）
@@ -113,7 +122,21 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 - **职责独立**：Relay 是纯粹的代理转发层，不依赖 GoFrame ORM/DAO，与 `internal/` 下的业务逻辑解耦
 - **参考对齐**：目录结构与 new-api 的 `relay/` 保持一致，降低移植和理解成本
 
-`internal/logic/` 中的业务逻辑（如计费、渠道调度）通过 Go import 调用 `relay/` 包，而非将 relay 嵌入 logic 内部。
+`internal/logic/` 中的业务逻辑（如计费）通过 Go import 调用 `relay/` 包，而非将 relay 嵌入 logic 内部。
+
+### Relay 与 relaykit 双模块设计（强约束）
+
+`relaykit/` 是从 relay 层抽出的**纯算法核心库**（独立 Go module `github.com/qianfree/team-api/relaykit`，零 GoFrame 依赖），承载两类与框架无关的逻辑：
+
+- **协议转换**（`relaykit/relayconvert`）：请求/响应/流式三张转换器注册表 + 内置转换器 + 链式组合（如 gemini→openai→claude 两跳链）。协议 DTO 与 `RelayFormat` 的权威定义都在 relaykit（`relaykit/dto`、`relaykit/types`），`relay/dto`、`relay/constant` 全部为类型别名。
+- **渠道调度**（`relaykit/dispatch`）：熔断状态机、HRW 一致性哈希、评分、协调器的纯函数核心；Redis/DB 适配层在 `internal/dispatchadapter/`。
+
+接线约定（写转换相关代码必须遵守）：
+
+- **relaykit 常开，legacy 转换器已收割**：其覆盖的转换方向（claude/gemini/openai/responses/coze/dify/ollama-chat 互转的请求/响应/流式三侧）唯一走 relaykit，转换失败显式报错而非静默回退；转换成败与耗时经 `monitor.TrackConverterCall` 记录，可在 dashboard 观测。仍保留本地转换的场景：各 adaptor 的原生直通后处理（模型替换、thinking 注入）、Ollama generate/embedding 模式、`ConvertToOpenAI` 内共享的 openai 兼容后处理链。
+- **claude/gemini 入站 → openai 上游方向的 relaykit 接管只发生在 `relay/channel/openai.ConvertToOpenAI` 内部**（经 `relay/relaykit_bridge/`）。严禁在 `relay/handler` 的 relaykit 路由加同方向入口——那会跳过 20+ 个 openai 兼容 adaptor 的定制后处理（volcengine 删 reasoning_effort、tencent 参数截断等），造成行为回退。
+- **内置转换器经 blank import 注册**：`_ "github.com/qianfree/team-api/relaykit/relayconvert/register"`（独立子包解决 import cycle）。
+- relaykit 内禁止引入 GoFrame / internal/ 依赖；需要宿主信息时通过 `convmeta.Meta` 能力接口由 `RelayInfo` 实现。
 
 ### GoFrame 代码生成与手动编写分界
 
@@ -135,6 +158,7 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 | `internal/utility/` | 手动编写 | 是（工具函数：加密、导出、TOTP、Turnstile） |
 | `manifest/config/` | 手动编写 | 是（运行时配置） |
 | `relay/` | 手动编写 | 是（AI 模型代理层，独立于 GoFrame 脚手架） |
+| `relaykit/` | 手动编写 | 是（独立 Go module：协议转换 + 调度算法核心库） |
 
 ### internal/handler/ 目录说明
 

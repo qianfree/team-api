@@ -868,9 +868,15 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	// relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 转换器路径（常开，优先）。无匹配/失败回退 adaptor 路径（收割后 adaptor 的
+	// legacy 转换已移除，回退仅覆盖原生直通与 Ollama 非 chat 等本地模式）。
 	var convertedBody io.Reader
-	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
+	relaykitBody, ok, convErr := tryConvertRequestViaRelaykit(ctx, info, body)
+	if convErr != nil {
+		// 有状态 responses 哨兵：协议能力不匹配为预期内错误（上层按哨兵驱动换渠道），不打 ERRO 噪音
+		return nil, convErr
+	}
+	if ok {
 		convertedBody = relaykitBody
 	} else {
 		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)

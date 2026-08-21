@@ -1,7 +1,6 @@
 package coze
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,13 +8,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/qianfree/team-api/relay/channel/openai"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
-	"github.com/qianfree/team-api/relay/dto"
-	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
@@ -49,11 +44,10 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	// 非 OpenAI 格式先转换为 OpenAI
 	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
+		// 交叉客户端（claude/gemini/responses）× coze 上游：请求侧虽可转换，但响应侧
+		// 只有 coze→openai 转换器——不 fail-fast 会形成「请求已发上游、响应转换失败」，
+		// 白耗上游 token 且触发全渠道重试风暴。响应侧组合链注册前不支持该方向
+		return nil, fmt.Errorf("[relaykit] %s 客户端 × coze 上游暂不支持（响应侧无注册转换器）", info.InboundFormat)
 	}
 
 	// 非流式请求也强制使用流式模式，以便在 DoResponse 中统一处理
@@ -131,120 +125,14 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	return a.handleNonStreamResponse(ctx, resp, info, writer)
 }
 
-// handleStreamResponse 流式模式：逐事件读取 Coze SSE，转换为 OpenAI SSE 格式输出
+// handleStreamResponse 流式模式：Coze SSE 经 relaykit 转换为 OpenAI SSE 输出。
+// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		return usage, nil
+	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] coze→openai 流式转换失败（无匹配转换器）")
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	streamStatus := info.StreamStatus
-	if streamStatus == nil {
-		streamStatus = common.NewStreamStatus()
-		info.StreamStatus = streamStatus
-	}
-
-	chatID := fmt.Sprintf("chatcmpl-coze-%s", info.RequestID)
-	createdAt := time.Now().Unix()
-	modelName := info.OriginModelName
-
-	scanner := bufio.NewScanner(resp.Body)
-	var currentEvent string
-	var completionTokens int
-	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-			// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			interruptedUsage := &common.Usage{}
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-			return interruptedUsage, nil
-		default:
-		}
-
-		line := scanner.Text()
-
-		// 解析 SSE event 行
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-
-		// 解析 SSE data 行
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data, _ := helper.ExtractSSEData(line)
-
-		info.SetFirstResponseTime()
-
-		switch currentEvent {
-		case "conversation.message.delta":
-			var msg CozeMessage
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			// 只转发 answer 类型的消息
-			if msg.Type != "answer" {
-				continue
-			}
-			completionTokens += helper.EstimateTokens(msg.Content)
-			transferredTextLen += len(msg.Content)
-
-			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, msg.Content, nil)
-			chunkJSON, err := json.Marshal(chunk)
-			if err != nil {
-				continue
-			}
-			if err := helper.WriteSSEData(writer, string(chunkJSON)); err != nil {
-				streamStatus.SetEndReason(common.StreamEndReasonClientGone, common.ErrStreamInterrupted)
-				// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-				interruptedUsage := &common.Usage{}
-				helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-				return interruptedUsage, nil
-			}
-
-		case "conversation.message.completed":
-			// 完成事件，发送带 finish_reason 的最终 chunk
-			finishReason := "stop"
-			chunk := helper.BuildOpenAIStreamChunk(chatID, createdAt, modelName, "", &finishReason)
-			chunkJSON, _ := json.Marshal(chunk)
-			_ = helper.WriteSSEData(writer, string(chunkJSON))
-
-		case "done":
-			// 流结束
-			_ = helper.WriteSSEData(writer, "[DONE]")
-			streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-			return &common.Usage{
-				CompletionTokens: completionTokens,
-				TotalTokens:      completionTokens,
-			}, nil
-
-		case "error":
-			// Coze 错误事件
-			streamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("coze error: %s", data))
-			return &common.Usage{CompletionTokens: completionTokens}, fmt.Errorf("coze stream error: %s", data)
-		}
-
-		currentEvent = ""
-	}
-
-	if err := scanner.Err(); err != nil {
-		streamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &common.Usage{CompletionTokens: completionTokens}, fmt.Errorf("read coze stream failed: %w", err)
-	}
-
-	streamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-	return &common.Usage{
-		CompletionTokens: completionTokens,
-		TotalTokens:      completionTokens,
-	}, nil
+	return usage, nil
 }
 
 // handleNonStreamResponse 非流式模式：读取 Coze SSE 收集完整内容，转换为 OpenAI JSON 响应
@@ -254,110 +142,17 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 		return nil, fmt.Errorf("read coze response body failed: %w", err)
 	}
 
-	// relaykit 响应转换路径（Coze 上游为 SSE，桥接把缓冲体交给转换器解析）
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-		if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
-			return usage, nil
-		}
-		return &common.Usage{}, nil
+	convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !ok {
+		return nil, fmt.Errorf("[relaykit] coze→openai 响应转换失败")
 	}
-
-	// 旧路径：扫描缓冲的 SSE 收集完整内容
-	scanner := bufio.NewScanner(strings.NewReader(string(body)))
-	var currentEvent string
-	var fullContent strings.Builder
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context cancelled while reading coze response")
-		default:
-		}
-
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data, _ := helper.ExtractSSEData(line)
-
-		info.SetFirstResponseTime()
-
-		switch currentEvent {
-		case "conversation.message.delta":
-			var msg CozeMessage
-			if err := json.Unmarshal([]byte(data), &msg); err != nil {
-				continue
-			}
-			if msg.Type == "answer" {
-				fullContent.WriteString(msg.Content)
-			}
-
-		case "conversation.message.completed":
-			// completed 事件包含完整内容，优先使用
-			var msg CozeMessage
-			if err := json.Unmarshal([]byte(data), &msg); err == nil && msg.Type == "answer" {
-				fullContent.Reset()
-				fullContent.WriteString(msg.Content)
-			}
-
-		case "error":
-			return nil, fmt.Errorf("coze error: %s", data)
-		}
-
-		currentEvent = ""
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read coze response failed: %w", err)
-	}
-
-	content := fullContent.String()
-	completionTokens := helper.EstimateTokens(content)
-
-	// 构建 OpenAI 非流式响应
-	chatResp := dto.ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-coze-%s", info.RequestID),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   info.OriginModelName,
-		Choices: []dto.Choice{
-			{
-				Index: 0,
-				Message: dto.Message{
-					Role:    "assistant",
-					Content: content,
-				},
-				FinishReason: "stop",
-			},
-		},
-		Usage: dto.UsageWithDetails{
-			CompletionTokens: completionTokens,
-			TotalTokens:      completionTokens,
-		},
-	}
-
-	respJSON, err := json.Marshal(chatResp)
-	if err != nil {
-		return nil, fmt.Errorf("marshal OpenAI response failed: %w", err)
-	}
-
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respJSON)
-
-	return &common.Usage{
-		CompletionTokens: completionTokens,
-		TotalTokens:      completionTokens,
-	}, nil
+	_, _ = writer.Write(convertedBody)
+	if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
+		return usage, nil
+	}
+	return &common.Usage{}, nil
 }
 
 func (a *Adaptor) GetChannelName() string {

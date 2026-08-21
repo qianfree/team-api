@@ -494,9 +494,12 @@ func registerResponsesToGeminiChain() {
 // chainStreamConverters 流式两跳组合：第一跳的 chat chunk 输出序列化为 SSE data: 行
 // 写入 io.Pipe，第二跳从 pipe 读取解析（两个转换器均消费 chat SSE 帧格式）。
 // 第一跳错误经 CloseWithError 传递给第二跳的 scanner（表现为 scanner 错误）。
+// 第二跳提前返回（客户端断连/写出失败）时须 Close 读端，否则第一跳 goroutine
+// 永久阻塞在 pw.Write（io.Pipe 写等待读端）——Close 使挂起的 Write 返回 ErrClosedPipe。
 func chainStreamConverters(first, second relayconvert.StreamConverterFunc) relayconvert.StreamConverterFunc {
 	return func(ctx context.Context, info convmeta.Meta, reader io.Reader, chunkWriter func(chunk any) error) error {
 		pr, pw := io.Pipe()
+		defer pr.Close()
 		go func() {
 			err := first(ctx, info, reader, func(chunk any) error {
 				streamChunk, ok := chunk.(*dto.ChatCompletionStreamResponse)
@@ -548,7 +551,7 @@ func registerCrossStreamChains() {
 }
 
 // registerToResponsesChains 注册 P3 的 claude/gemini 客户端 → Responses 上游链
-//（ChatViaResponses 渠道上的跨协议客户端——请求经链转 Responses 发送 /v1/responses，
+// （ChatViaResponses 渠道上的跨协议客户端——请求经链转 Responses 发送 /v1/responses，
 // 响应侧组合回客户端格式）。
 func registerToResponsesChains() {
 	r2cResp := &oai_responses.ResponsesToOpenAIChatResponseConverter{}

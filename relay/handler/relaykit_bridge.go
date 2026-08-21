@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -24,8 +25,9 @@ import (
 // 设计要点：
 //   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；转换后仍复用旧路径的系统提示词注入 / 参数改写 / 字段清理。
-//   - 任何失败（无匹配转换器、解析失败、转换失败、同格式、Ollama 非 chat 模式）都返回 ok=false，
-//     调用方回退到 adaptor.ConvertRequest 旧代码路径，保证请求不因 relaykit 中断。
+//   - 无匹配（同格式 / Ollama 非 chat 模式等）或解析/转换失败返回 ok=false，调用方回退
+//     adaptor.ConvertRequest——legacy 转换器已收割，该回退只覆盖原生直通与 adaptor 本地模式，
+//     relaykit 已注册方向的转换失败会显式报错（问题经 monitor.TrackConverterCall 暴露）。
 //   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测。
 
 // relaykitRequestConverterID 根据 (RelayInfo, 客户端入站格式, 上游原生格式, RelayMode) 返回
@@ -89,48 +91,51 @@ func relaykitRequestConverterID(info *common.RelayInfo, inbound, upstream consta
 }
 
 // tryConvertRequestViaRelaykit 尝试用 relaykit 转换器转换请求体。
-// 成功返回 (转换后的 io.Reader, true)；无匹配 / 解析或转换失败返回 (nil, false)。
+// 成功返回 (转换后的 io.Reader, true, nil)；无匹配 / 解析或转换失败返回 (nil, false, nil)；
+// 有状态 responses 请求命中非 Responses 原生转换方向时返回哨兵错误
+// ErrStatefulResponsesUnsupported（驱动调度 FSM 换渠道，不走 adaptor 旧路径）。
 //
 // 结构与流式桥接（relay/relaykit_bridge/stream.go）对称：nil 守卫留在公开入口，
 // 真正的转换逻辑抽到 config-free 的 convertRequestViaRelaykit 核心以便单测直接覆盖。
-func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
+func tryConvertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool, error) {
 	if info == nil || info.ChannelMeta == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	return convertRequestViaRelaykit(ctx, info, body)
 }
 
 // convertRequestViaRelaykit 是请求转换的 config-free 核心（特性开关已由调用方校验）。
 // info 与 info.ChannelMeta 必须非空。
-func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool) {
+func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body []byte) (io.Reader, bool, error) {
 	inbound := info.InboundFormat
 	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	converterID := relaykitRequestConverterID(info, inbound, upstream, info.RelayMode)
 	if converterID == "" {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 经请求注册表查找（支持直接转换器与链式 spec；链式 spec 的 Req.Convert 为 nil
 	// 由 ExecuteRequestConverter 逐跳执行）
 	reqSpec, ok := relayconvert.LookupRequestConverter(converterID)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 按入站格式解析请求体（转换器入参类型契约由此保证）
 	parsed, ok := parseInboundRequest(ctx, inbound, body)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Responses 入站专属预处理：
-	//   - 有状态请求（previous_response_id）回退旧路径，由 legacy ConvertResponsesToOpenAI
-	//     返回哨兵错误驱动 failover（relaykit 转换器不做此检查）；
+	//   - 有状态请求（previous_response_id）且已匹配到跨格式转换器（即上游非 Responses
+	//     原生）：返回哨兵错误驱动 failover（原 legacy ConvertResponsesToOpenAI 的快速失败
+	//     检查——会话历史存于上游 Responses 服务侧，降级转换会静默丢失全部上下文）；
 	//   - stash 请求快照，供响应侧合成 Responses 格式时 echo 请求参数（对应 legacy 行为）。
 	if inbound == constant.RelayFormatResponses {
 		responsesReq := parsed.(*dto.OpenAIResponsesRequest)
 		if responsesReq.PreviousResponseID != "" {
-			return nil, false
+			return nil, false, fmt.Errorf("stateful responses (previous_response_id) not supported by chat-only channels: %w", constant.ErrStatefulResponsesUnsupported)
 		}
 		info.ResponsesRequest = responsesReq
 	}
@@ -141,20 +146,20 @@ func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body
 	monitor.TrackConverterCall(converterID, string(inbound), string(upstream), duration, err)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] convert request failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, false
+		return nil, false, nil
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] marshal converted request failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, false
+		return nil, false, nil
 	}
 
-	return bytes.NewReader(out), true
+	return bytes.NewReader(out), true, nil
 }
 
 // parseInboundRequest 按入站格式将请求体解析为对应 DTO 指针。
-// 解析失败记 Warning 并返回 false（调用方回退旧路径）。
+// 解析失败记 Warning 并返回 false（调用方走 adaptor 路径）。
 func parseInboundRequest(ctx context.Context, inbound constant.RelayFormat, body []byte) (any, bool) {
 	switch inbound {
 	case constant.RelayFormatOpenAI:
@@ -180,6 +185,15 @@ func parseInboundRequest(ctx context.Context, inbound constant.RelayFormat, body
 			return nil, false
 		}
 		return &geminiReq, true
+	case constant.RelayFormatClaude:
+		// claude 入站（仅 claude→gemini 链走此分支；claude→openai 在 ConvertToOpenAI 内接管）。
+		// 无 stash/预检需求——ClaudeRequest 无 previous_response_id 类有状态字段
+		var claudeReq dto.ClaudeRequest
+		if err := json.Unmarshal(body, &claudeReq); err != nil {
+			g.Log().Warningf(ctx, "[relaykit] parse inbound claude request failed, fallback to legacy: %v", err)
+			return nil, false
+		}
+		return &claudeReq, true
 	default:
 		return nil, false
 	}

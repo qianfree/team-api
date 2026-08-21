@@ -76,30 +76,17 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 根据入站格式转换请求体为 Claude 格式
+// ConvertRequest 根据入站格式转换请求体为 Claude 格式。
+// 跨格式方向（openai/gemini/responses 入站）由 handler 层 relaykit 桥接先行转换，
+// 走到跨格式分支说明桥接未接管，按转换失败报错（legacy 回退已收割）；
+// claude 原生入站直通，照常做模型替换与 thinking 注入。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	var converted io.Reader
 	switch info.InboundFormat {
 	case constant.RelayFormatClaude:
 		converted = bytes.NewReader(requestBody)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatGemini:
-		r, err := ConvertGeminiToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+	case constant.RelayFormatOpenAI, constant.RelayFormatGemini, constant.RelayFormatResponses:
+		return nil, fmt.Errorf("[relaykit] %s→claude 请求转换失败（handler 层桥接未接管）", info.InboundFormat)
 	default:
 		converted = bytes.NewReader(requestBody)
 	}
