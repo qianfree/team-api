@@ -144,13 +144,15 @@ func convertedCacheCreationTokens(details *dto.TokenDetails) int {
 }
 
 // bridgeUpstreamFormat 计算桥接路由用的上游格式：ProviderNativeFormat 基础上，
-// 若客户端为 claude/gemini 且请求实际发送到了 /v1/responses（info.UseResponsesAPI——
-// P3 起 claude/gemini 入站在 ChatViaResponses 渠道也置位），上游按 responses 处理。
-// openai 客户端不走本判定（其 ChatViaResponses 响应由 handleChatViaResponses* 承担）。
+// 若客户端为 openai/claude/gemini 且请求实际发送到了 /v1/responses（info.UseResponsesAPI
+// ——ChatViaResponses 渠道对三种入站均置位），上游按 responses 处理。
+// 非流式桥对 openai 客户端 × responses 上游暂无匹配转换方向（relaykitResponseConverterID
+// 返回空串回退，由宿主 HandleResponsesNonStreamToChat 承担）；流式桥经直达注册表条目接管。
 func bridgeUpstreamFormat(info *common.RelayInfo, clientFormat constant.RelayFormat) constant.RelayFormat {
 	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
 	if info.UseResponsesAPI &&
-		(clientFormat == constant.RelayFormatClaude || clientFormat == constant.RelayFormatGemini) {
+		(clientFormat == constant.RelayFormatOpenAI || clientFormat == constant.RelayFormatClaude ||
+			clientFormat == constant.RelayFormatGemini) {
 		return constant.RelayFormatResponses
 	}
 	return upstream

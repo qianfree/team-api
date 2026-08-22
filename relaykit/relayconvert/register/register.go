@@ -103,7 +103,9 @@ func registerOpenAIToClaudeGeminiStreams() {
 // ChatViaResponses 渠道：chat 客户端桥接到 Responses 上游：
 //   - 请求侧 chat → Responses
 //   - 响应侧（Responses 上游 → chat 客户端，非流式）：ResponsesToOpenAIChatResponseConverter
-//     （流式侧由宿主 HandleResponsesStreamToChat 承担——依赖 StreamScannerHandler 超时治理，未收编）
+//   - 响应侧（同上，流式）：ResponsesToOpenAIChatStreamConverter——原宿主
+//     HandleResponsesStreamToChat 的事件状态机移植（P3 备好、此处收编为直达注册表条目），
+//     非 200 拦截与 usage 兜底由宿主桥接层承担
 func registerOpenAIChatToResponses() {
 	respConv := &oai_responses.ResponsesToOpenAIChatResponseConverter{}
 
@@ -122,6 +124,15 @@ func registerOpenAIChatToResponses() {
 			},
 		},
 	})
+
+	// 流式响应侧：Responses SSE → OpenAI Chat SSE（方向与请求相反）。
+	// 宿主 chat 客户端 × ChatViaResponses 渠道的流式唯一路径（原 HandleResponsesStreamToChat
+	// 双实现收割；非 200 拦截前移至调用方，超时治理以 PingTicker 保活兜底——与 P2 D1/P3 同款取舍）。
+	relayconvert.RegisterStreamConverter(
+		types.RelayFormatOpenAIResponses, types.RelayFormatOpenAI,
+		relayconvert.ConverterOpenAIResponsesToOpenAIChatStream,
+		(&oai_responses.ResponsesToOpenAIChatStreamConverter{}).ConvertStreamResponse,
+	)
 }
 
 // registerResponsesToClaudeChain 注册 Responses → Claude 方向转换器。

@@ -162,6 +162,13 @@ func TestBuiltinStreamConvertersRegistered(t *testing.T) {
 			to:     types.RelayFormatGemini,
 			wantID: "oai_responses_to_gemini_generate_content_stream",
 		},
+		// B 方向流式收编：responses 上游 → openai chat 客户端直达（宿主双实现收割）
+		{
+			name:   "Responses→OpenAI",
+			from:   types.RelayFormatOpenAIResponses,
+			to:     types.RelayFormatOpenAI,
+			wantID: relayconvert.ConverterOpenAIResponsesToOpenAIChatStream,
+		},
 	}
 
 	for _, tc := range cases {

@@ -70,7 +70,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	var (
 		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
 		firstChunk         bool
-		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
+		transferredTextLen int // 已转发的文本/思考/工具内容长度，供无 usage 与流中断的输出估算
 	)
 
 	// claudeClient / geminiClient：P2 扩展的客户端格式分派（openai 上游 → claude/gemini 客户端）。
@@ -220,6 +220,11 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			if choice.Delta.ReasoningContent != nil {
 				transferredTextLen += len(*choice.Delta.ReasoningContent)
 			}
+			for _, tc := range choice.Delta.ToolCalls {
+				// 工具名仅随首个 chunk 发出（转换器按 callID 去重），参数为增量——
+				// 纯工具调用流的文本长度为 0，不计入则估算兜底恒为 0
+				transferredTextLen += len(tc.Function.Name) + len(tc.Function.Arguments)
+			}
 		}
 		data, err := json.Marshal(streamChunk)
 		if err != nil {
@@ -234,6 +239,17 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 	}
 
+	// 兜底估算（须在 setEndReason 之后调用——中断口径 2 字符/token 依赖结束原因已落位）：
+	// 上游未返回 usage 时按已转发内容估算输出 token；流中断时输入 token 用请求侧估算值补齐。
+	// 与宿主各流式路径（openai/stream.go、HandleResponsesStreamToChat）同口径。
+	finalizeUsage := func() {
+		if capturedUsage.TotalTokens == 0 && transferredTextLen > 0 {
+			capturedUsage.CompletionTokens = helper.EstimateStreamOutputTokens(info, transferredTextLen)
+			capturedUsage.TotalTokens = capturedUsage.PromptTokens + capturedUsage.CompletionTokens
+		}
+		helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
+	}
+
 	start := time.Now()
 	err := fn(ctx, info, upstreamBody, chunkWriter)
 	duration := time.Since(start)
@@ -243,8 +259,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		if ctx.Err() != nil {
 			// 客户端断开 / 上下文取消：客户端已不可达，不写收尾标记
 			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
+			finalizeUsage()
 			return capturedUsage, true
 		}
 		g.Log().Warningf(ctx, "[relaykit] convert stream failed (converter=%s): %v", converterID, err)
@@ -253,6 +268,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 		writeDoneMarker()
 		setEndReason(common.StreamEndReasonError, err)
+		finalizeUsage()
 		return capturedUsage, true
 	}
 
@@ -261,5 +277,6 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	}
 	writeDoneMarker()
 	setEndReason(common.StreamEndReasonDone, nil)
+	finalizeUsage()
 	return capturedUsage, true
 }

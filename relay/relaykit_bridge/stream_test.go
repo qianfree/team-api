@@ -2,12 +2,14 @@ package relaykit_bridge
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/dto"
 	// blank import 触发内置流式转换器注册（register.init() → RegisterStreamConverter）
 	_ "github.com/qianfree/team-api/relaykit/relayconvert/register"
 )
@@ -136,6 +138,45 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"prompt
 	}
 }
 
+// TestConvertStreamViaRelaykit_EstimatedUsageOnMissingUsage 上游流未携带 usage 时
+// （如部分上游正常结束但末事件不带用量），正常结束按已转发文本 4 字符/token 估算兜底。
+func TestConvertStreamViaRelaykit_EstimatedUsageOnMissingUsage(t *testing.T) {
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus-20240229"}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello, how can I help you?"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+data: {"type":"message_stop"}
+
+`
+
+	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
+	rec := httptest.NewRecorder()
+
+	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	// "Hello, how can I help you?" 共 26 字符，正常结束 4 字符/token → 26/4 = 6
+	if usage.CompletionTokens != 6 {
+		t.Errorf("CompletionTokens = %d, want 6 (estimated from 26 chars / 4)", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 6 {
+		t.Errorf("TotalTokens = %d, want 6 (prompt=0 + estimated 6)", usage.TotalTokens)
+	}
+	if info.StreamStatus == nil || info.StreamStatus.GetEndReason() != common.StreamEndReasonDone {
+		t.Errorf("expected end reason %q, got %v", common.StreamEndReasonDone, info.StreamStatus.GetEndReason())
+	}
+}
+
 // TestConvertStreamViaRelaykit_SameFormatFallback 同格式（OpenAI→OpenAI）无需转换，应回退（ok=false）。
 func TestConvertStreamViaRelaykit_SameFormatFallback(t *testing.T) {
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
@@ -183,6 +224,95 @@ func TestTryConvertStreamViaRelaykit_NilGuards(t *testing.T) {
 	info.ChannelMeta = nil
 	if _, ok := TryConvertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec); ok {
 		t.Fatal("expected ok=false for nil ChannelMeta")
+	}
+}
+
+// TestConvertStreamViaRelaykit_ResponsesToChatToolCallItemIDMismatch 回归：
+// ChatViaResponses 渠道（chat 客户端 × responses 上游）流式工具调用的 item_id/call_id
+// 键归一。Responses 上游的 response.function_call_arguments.delta 只携带 item_id
+// （output item 的 id，如 fc_xxx，≠ call_id call_xxx）——不归一到同一键时 delta 事件
+// 分配新 index，name 与参数碎裂成两个 tool_call，done 事件再按首个 index 全量重发参数，
+// 客户端组装出非法 JSON。（移植自闭主的 HandleResponsesStreamToChat 回归测试，随双实现收割。）
+func TestConvertStreamViaRelaykit_ResponsesToChatToolCallItemIDMismatch(t *testing.T) {
+	ss := strings.Join([]string{
+		"event: response.output_item.added",
+		`data: {"type":"response.output_item.added","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"lookup","arguments":""}}`,
+		"",
+		"event: response.function_call_arguments.delta",
+		`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"a\""}`,
+		"",
+		"event: response.function_call_arguments.delta",
+		`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":":1}"}`,
+		"",
+		"event: response.output_item.done",
+		`data: {"type":"response.output_item.done","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"lookup","arguments":"{\"a\":1}"}}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":5,"output_tokens":7,"total_tokens":12}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
+	info.UseResponsesAPI = true // ChatViaResponses：bridgeUpstreamFormat 判定上游为 responses
+	info.ChannelMeta.UpstreamModelName = "gpt-5-codex"
+	rec := httptest.NewRecorder()
+
+	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(ss), rec)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+
+	// 解析输出 SSE，聚合 tool_calls 的 index 与参数
+	indexes := map[int]bool{}
+	argsByID := map[int]string{}
+	namesByID := map[int]string{}
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") || strings.Contains(line, "[DONE]") {
+			continue
+		}
+		var chunk dto.ChatCompletionStreamResponse
+		if err := json.Unmarshal([]byte(line[len("data: "):]), &chunk); err != nil {
+			continue
+		}
+		for _, choice := range chunk.Choices {
+			for _, tc := range choice.Delta.ToolCalls {
+				indexes[tc.Index] = true
+				argsByID[tc.Index] += tc.Function.Arguments
+				if tc.Function.Name != "" {
+					namesByID[tc.Index] = tc.Function.Name
+				}
+			}
+		}
+	}
+
+	if len(indexes) != 1 {
+		t.Errorf("tool_call index 集合 = %v, want 单一 index（delta 未归一到 call_id 键则碎裂成两个）", indexes)
+	}
+	for idx, args := range argsByID {
+		if want := `{"a":1}`; args != want {
+			t.Errorf("index %d 参数拼接 = %q, want %q（done 全量重发会拼出重复参数）", idx, args, want)
+		}
+	}
+	for idx, name := range namesByID {
+		if name != "lookup" {
+			t.Errorf("index %d name = %q, want lookup", idx, name)
+		}
+	}
+	if len(namesByID) == 0 {
+		t.Error("未发出任何带 name 的 tool_call chunk")
+	}
+
+	// usage 取自 response.completed 的独立 usage chunk（OpenAI include_usage 语义）
+	if usage == nil || usage.PromptTokens != 5 || usage.CompletionTokens != 7 || usage.TotalTokens != 12 {
+		t.Errorf("usage = %+v, want prompt=5 completion=7 total=12", usage)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(rec.Body.String()), "data: [DONE]") {
+		t.Errorf("output should end with [DONE], got tail: %q", tail(rec.Body.String(), 40))
+	}
+	if info.StreamStatus == nil || info.StreamStatus.GetEndReason() != common.StreamEndReasonDone {
+		t.Errorf("expected end reason %q, got %v", common.StreamEndReasonDone, info.StreamStatus.GetEndReason())
 	}
 }
 

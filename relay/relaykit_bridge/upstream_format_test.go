@@ -25,11 +25,13 @@ func TestBridgeUpstreamFormat(t *testing.T) {
 		// P3：claude/gemini 客户端 + UseResponsesAPI → responses 上游
 		{true, constant.RelayFormatClaude, constant.RelayFormatResponses},
 		{true, constant.RelayFormatGemini, constant.RelayFormatResponses},
-		// openai 客户端不受本判定影响（其 ChatViaResponses 响应走 handleChatViaResponses*）
-		{true, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI},
+		// B 方向流式收编：openai 客户端 + UseResponsesAPI 同样按 responses 上游处理
+		//（流式桥经直达转换器接管；非流式桥无匹配方向回退宿主路径）
+		{true, constant.RelayFormatOpenAI, constant.RelayFormatResponses},
 		// 未置位：回退 ProviderNativeFormat
 		{false, constant.RelayFormatClaude, constant.RelayFormatOpenAI},
 		{false, constant.RelayFormatGemini, constant.RelayFormatOpenAI},
+		{false, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI},
 	}
 	for _, c := range cases {
 		if got := bridgeUpstreamFormat(newInfo(c.useResponses), c.client); got != c.want {
