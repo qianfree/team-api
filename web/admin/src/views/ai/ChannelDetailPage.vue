@@ -330,7 +330,7 @@ function renderHealthBadge(record: any) {
 // 新增：重置模型级健康
 async function handleResetModelHealth(record: any) {
   try {
-    await request.post(`/admin/channels/${channelId}/reset_health`, {
+    await request.post(`/admin/channels/${channelId}/reset-health`, {
       model_name: record.model_name,
     })
     Message.success(`模型 ${record.model_name} 健康已重置`)
