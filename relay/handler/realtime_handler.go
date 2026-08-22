@@ -271,11 +271,11 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		// 成员/Key 额度检查只做这一次（带实际预扣额），与 RelayHandler 一致：
 		// 预扣前的 Check(0) 快速闸门对全量请求多付 Redis 往返，收益不成比例，已移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("API key quota exceeded", err)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, amt)
 			return nil, billingResult, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
@@ -287,18 +287,14 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 	if err := proxy.DialUpstream(); err != nil {
 		// 拨号失败上报健康（绑定不删除，由守卫自然失效）；realtime 不做跨渠道重试，保持原语义
 		_, _ = sess.Report(ctx, 0, err, deliveryStateOfRequestErr(err), float64(time.Since(realtimeStart).Milliseconds()), 0)
-		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-		}
+		refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		return nil, billingResult, err
 	}
 	defer proxy.Close()
 
 	// 把第一条消息转发到上游
 	if err := proxy.GetTargetConn().WriteMessage(websocket.TextMessage, firstMsg); err != nil {
-		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-		}
+		refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		return nil, billingResult, err
 	}
 
@@ -313,25 +309,28 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 			float64(time.Since(realtimeStart).Milliseconds()), 0)
 	}
 
-	// 10. 结算费用
+	// 10. 结算费用（结算 ctx 此刻新建：WebSocket 会话常以客户端断开收场，请求 ctx 已
+	// canceled/deadline，直接透传会漏计费并滞留预扣冻结——与 RelayHandler 流中断路径同款修复）
+	settleCtx, settleCancel := newSettleCtx()
+	defer settleCancel()
 	if billing != nil && preDeductAmount > 0 {
 		if proxyErr != nil {
 			streamUsage := usage
 			if streamUsage == nil {
 				streamUsage = &common.Usage{}
 			}
-			settleResult, _ := billing.SettleStreamInterrupted(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult, _ := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
-				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
-				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
+				billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+				billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		} else if usage != nil {
-			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+			settleResult, _ := billing.Settle(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID, info.StartTime)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
-				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
-				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
+				billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
+				billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		}
 	}

@@ -261,6 +261,26 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	return sig
 }
 
+// newSettleCtx 创建结算/收尾专用 context（30s 预算，独立于请求生命周期）。
+// 必须在使用时刻新建：DoRequest/DoResponse 可能耗时数分钟（长流式输出），若在请求前预建，
+// 预算会被上游耗时耗尽，请求结束后的结算、退款、健康上报（sess.Report/Finish）将全部
+// context deadline exceeded——计费漏记、预扣冻结滞留、渠道健康漏报。
+func newSettleCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
+// refundPreDeduct 退还预扣冻结（请求失败/终止路径的统一出口）。结算 ctx 独立创建：
+// 调用点的请求 ctx 可能已随客户端断开而 canceled，直接透传会使 Redis 解冻失败、
+// 预扣冻结滞留（虽有 prededuct_sweep 周期清算兜底，能不滞后就不滞后）。
+func refundPreDeduct(billing common.BillingProvider, tenantID int64, requestID string, amount float64) {
+	if billing == nil || amount <= 0 {
+		return
+	}
+	ctx, cancel := newSettleCtx()
+	defer cancel()
+	_ = billing.SettleFailed(ctx, tenantID, requestID, amount)
+}
+
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
 	rc *RelayContext,
@@ -464,11 +484,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 各多付一次 Redis 往返，只为让"额度已耗尽"的请求少走一步预扣+退款，得不偿失
 		//（该场景已被上游 QPS 限流兜底），故移除。
 		if err := billing.CheckApiKeyQuota(ctx, rc.ApiKeyID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("API key quota exceeded", err)
 		}
 		if err := billing.CheckMemberQuota(ctx, rc.TenantID, rc.UserID, amt); err != nil {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, amt)
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, amt)
 			return nil, nil, constant.NewQuotaError("member quota exceeded", err)
 		}
 	}
@@ -476,6 +496,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	// 渠道调度与请求执行（新调度引擎：Route / Next / Report / Finish）
 	// 重试语义由调度核心的 FSM 决定（三预算：原地/凭证轮换/failover），handler 只执行决策。
 	channelErrors := make([]string, 0)
+	// 本请求实际尝试且失败的渠道（去重）：终态日志区分「尝试次数」与「渠道数」，
+	// 避免单渠道原地重试 3 次被误读成 3 个渠道全部故障
+	failedChannels := make(map[int64]struct{})
 	// responses 有状态协议不匹配的失败次数：与 channelErrors 总数相等说明本次请求的全部失败
 	// 均为协议约束（无其他渠道故障），无渠道出口应返回端点切换指引而非"模型不可用"
 	statefulMismatchCount := 0
@@ -492,16 +515,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 客户端已断开：权限查询被中断不是渠道/权限问题，静默退款退出，
 		// 不记失败用量、不打无可用渠道告警（与下方 MaterializeSelection 的处理一致）
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
-			}
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			return nil, v.billingResult, err
 		}
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, err, "")
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, 0, err, "")
 		return result.usage, result.billingResult, result.err
 	}
 	if !modelEnabled {
-		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrTenantModelNotEnabled, "")
+		result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, 0, common.ErrTenantModelNotEnabled, "")
 		return result.usage, result.billingResult, result.err
 	}
 
@@ -530,9 +551,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 中断会返回空决策，这不是"无可用渠道"——静默退款退出，不记失败用量、
 			// 不打无可用渠道告警、不污染渠道健康统计
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
-				}
+				refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				return nil, v.billingResult, ctxErr
 			}
 			// 无可用渠道：附带调度器的排除原因摘要（各原因独立计数，仅列非零项）。
@@ -541,13 +560,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 静默返回端点切换指引（与上方 Abort 路径同文案），不误导为"当前模型暂时不可用"，
 			// 也不按全部渠道失败记 ERROR 告警/失败用量；事件仍由审计日志与调度监控计数覆盖
 			if len(channelErrors) > 0 && statefulMismatchCount == len(channelErrors) {
-				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-				}
+				refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				return nil, v.billingResult, constant.NewRequestError(
 					constant.StatefulResponsesSwitchEndpointHint, nil)
 			}
-			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary())
+			result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, len(failedChannels), common.ErrChannelUnavailable, sess.NoChannelDiagnosis().Summary())
 			return result.usage, result.billingResult, result.err
 		}
 		appendSchedulerDecision(trace, d, attempt)
@@ -557,15 +574,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 客户端已断开（context.Canceled / DeadlineExceeded）：Key 查询被中断不代表渠道有问题，
 			// 静默退出，不记入 channelErrors，不触发渠道健康惩罚，退还预扣款项后返回
 			if errors.Is(mErr, context.Canceled) || errors.Is(mErr, context.DeadlineExceeded) {
-				if billing != nil && preDeductAmount > 0 {
-					_ = billing.SettleFailed(context.WithoutCancel(ctx), rc.TenantID, rc.RequestID, preDeductAmount)
-				}
+				refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 				return nil, v.billingResult, mErr
 			}
 			// Key 解密失败 / 目录元数据缺失：按渠道级致命上报换渠道，不发起上游请求
+			failedChannels[d.Channel.ID] = struct{}{}
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d materialize_error=[%v]", attempt, d.Channel.ID, mErr))
 			if decision := reportMaterializeFailure(ctx, sess, mErr); decision == dispatch.DecisionAbort {
-				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, common.ErrChannelUnavailable, "")
+				result := handleChannelUnavailable(ctx, billing, provider, rc, v, preDeductAmount, channelErrors, len(failedChannels), common.ErrChannelUnavailable, "")
 				return result.usage, result.billingResult, result.err
 			}
 			continue
@@ -581,9 +597,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		// 同步 multimodal 模型不在此列，会继续走下方同步转发。租户模型列表 async_image 标记同源。
 		if v.relayMode == constant.RelayModeImagesGenerations &&
 			constant.IsAsyncImageModel(constant.ProviderType(selection.ChannelType), selection.UpstreamModelName) {
-			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-			}
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			return nil, v.billingResult, constant.NewRequestError(
 				"this image model uses asynchronous generation on Alibaba DashScope; submit via POST /v1/images/generations/async and poll for the result", nil)
 		}
@@ -621,9 +635,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		adaptor := channel.GetAdaptor(selection.ChannelType)
 		if adaptor == nil {
 			g.Log().Errorf(ctx, "[RelayHandler] No adaptor found for channelType: %d", selection.ChannelType)
-			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-			}
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			dbgAttempt.MarkFinal(fmt.Errorf("unsupported channel type: %d", selection.ChannelType))
 			return nil, v.billingResult, fmt.Errorf("unsupported channel type: %d", selection.ChannelType)
 		}
@@ -643,12 +655,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 而非直接返回（直接返回会让有能力渠道存在时也失败）
 			if errors.Is(err, constant.ErrStatefulResponsesUnsupported) {
 				statefulMismatchCount++
+				failedChannels[selection.ChannelID] = struct{}{}
 				channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s convert_error=[%v]",
 					attempt, selection.ChannelID, selection.ChannelName, v.modelName, err))
 				if reportProtocolMismatch(ctx, sess, err) == dispatch.DecisionAbort {
-					if billing != nil && preDeductAmount > 0 {
-						_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-					}
+					refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 					dbgAttempt.MarkFinal(err)
 					return nil, v.billingResult, constant.NewRequestError(
 						constant.StatefulResponsesSwitchEndpointHint, nil)
@@ -656,9 +667,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				dbgAttempt.Submit(err)
 				continue
 			}
-			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-			}
+			refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, err
 		}
@@ -667,39 +676,45 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		leaseRefresh := startDispatchLeaseRefresher(d.Channel.ID, rc.RequestID)
 
 		upstreamCtx := context.WithoutCancel(attemptCtx)
-		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer settleCancel()
 
 		// 发送请求到上游
+		reqStart := time.Now()
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
 		if err != nil {
+			// 失败时 FirstResponseTime 尚未设置（info.LatencyMs() 恒为 0），用实际墙钟耗时
+			// 记录日志与错误事件——DNS/建连卡顿（可长达系统 DNS 超时窗口 ~10s）才能可见
+			attemptLatency := float64(time.Since(reqStart).Milliseconds())
 			leaseRefresh.Stop()
 			// 送达状态标注：连接拒绝/DNS/TLS 建连失败 = 确定未送达；
 			// 写出后 EOF/RST/读超时 = 可能已送达。ReplayUnsafe+MaybeSent 由 FSM 硬规则终止。
 			delivery := deliveryStateOfRequestErr(err)
-			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
+			reportCtx, reportCancel := newSettleCtx()
+			decision, backoff := sess.Report(reportCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
+			reportCancel()
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
 			failReason := fmt.Sprintf("attempt=%d channel=%d(%s) model=%s upstreamModel=%s error=[%v] latency=%.0fms decision=%s",
-				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, info.LatencyMs(), decision)
+				attempt, selection.ChannelID, selection.ChannelName, v.modelName, selection.UpstreamModelName, err, attemptLatency, decision)
+			failedChannels[selection.ChannelID] = struct{}{}
 			channelErrors = append(channelErrors, failReason)
 			g.Log().Warningf(ctx, "[RelayHandler] Upstream request failed: %s", failReason)
 
 			if decision != dispatch.DecisionAbort {
-				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
-				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
-				settleCancel()
+				recordChannelError(rc, selection, v.modelName, attempt, false, err, attemptLatency)
+				appendHop(trace, hop, false, err.Error(), attemptLatency)
 				sleepBackoff(ctx, backoff)
 				dbgAttempt.Submit(err)
 				continue
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				failCtx, failCancel := newSettleCtx()
+				_ = billing.SettleFailed(failCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				failCancel()
 			}
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
-			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
-			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
+			recordChannelError(rc, selection, v.modelName, attempt, true, err, attemptLatency)
+			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), attemptLatency)
 			dbgAttempt.MarkFinal(err)
 			return nil, v.billingResult, helper.RemapStatusCode(constant.NewUpstreamError(502, "请求处理失败", err), info.ChannelMeta.Settings.StatusCodeMapping)
 		}
@@ -717,7 +732,10 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
 				g.Log().Warningf(ctx, "[RelayHandler] Stream interrupted: adaptor=%s, model=%s, reason=%s",
 					adaptor.GetChannelName(), v.modelName, info.StreamStatus.Summary())
-				// 客户端已收到部分流：不可重试（响应已污染），上报健康后按流中断结算
+				// 客户端已收到部分流：不可重试（响应已污染），上报健康后按流中断结算。
+				// 结算 context 此刻新建：流可能已运行数分钟，请求前预建的早已超时
+				settleCtx, settleCancel := newSettleCtx()
+				defer settleCancel()
 				_, _ = sess.Report(settleCtx, dispatchStatusCode(err), err, dispatch.DeliveryResponseStarted, info.LatencyMs(), 0)
 				streamUsage := usage
 				if streamUsage == nil {
@@ -760,7 +778,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				// GetEndReason() != ""：流已开始传输后出错，字节已提交给客户端，必须终止
 				delivery = dispatch.DeliveryResponseStarted
 			}
-			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
+			reportCtx, reportCancel := newSettleCtx()
+			decision, backoff := sess.Report(reportCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
+			reportCancel()
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
 			if decision != dispatch.DecisionAbort {
@@ -773,20 +793,22 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				g.Log().Warningf(ctx, "[RelayHandler] DoResponse failed (abort): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",
 					adaptor.GetChannelName(), info.InboundFormat, selection.ChannelID, selection.ChannelName, v.modelName, attempt, err, info.LatencyMs(), decision)
 			}
+			failedChannels[selection.ChannelID] = struct{}{}
 			channelErrors = append(channelErrors, fmt.Sprintf("attempt=%d channel=%d(%s) model=%s doResponse_error=[%v] latency=%.0fms",
 				attempt, selection.ChannelID, selection.ChannelName, v.modelName, err, info.LatencyMs()))
 
 			if decision != dispatch.DecisionAbort {
 				recordChannelError(rc, selection, v.modelName, attempt, false, err, info.LatencyMs())
 				appendHop(trace, hop, false, err.Error(), info.LatencyMs())
-				settleCancel()
 				sleepBackoff(ctx, backoff)
 				dbgAttempt.Submit(err)
 				continue
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				failCtx, failCancel := newSettleCtx()
+				_ = billing.SettleFailed(failCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				failCancel()
 			}
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
@@ -797,7 +819,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 		// 成功路径：绑定续期 + 健康上报由 Finish 完成
 		dbgAttempt.MarkFinal(nil)
-		sess.Finish(settleCtx, true, info.LatencyMs())
+		finishCtx, finishCancel := newSettleCtx()
+		sess.Finish(finishCtx, true, info.LatencyMs())
+		finishCancel()
 		appendHop(trace, hop, true, "", info.LatencyMs())
 		trace.TotalAttempts = attempt + 1
 		trace.UpstreamModel = selection.UpstreamModelName
@@ -938,13 +962,12 @@ func handleChannelUnavailable(
 	v *relayValidation,
 	preDeductAmount float64,
 	channelErrors []string,
+	failedChannelCount int, // 实际尝试且失败的渠道数（去重）；尝试数与渠道数分离，避免单渠道原地重试被误读为多渠道故障
 	err error,
 	noChannelDiag string, // 调度器无可用渠道时的排除原因摘要（NoChannelDiag.Summary()），无诊断信息传 ""
 ) *channelUnavailableResult {
 	if err != common.ErrChannelUnavailable {
-		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-		}
+		refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 		return &channelUnavailableResult{nil, v.billingResult, err}
 	}
 
@@ -954,12 +977,11 @@ func handleChannelUnavailable(
 	}
 
 	if len(channelErrors) > 0 {
-		if billing != nil && preDeductAmount > 0 {
-			_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-		}
-		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印
-		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d channels failed for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
-			len(channelErrors), v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix, strings.Join(channelErrors, "\n"))
+		refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
+		// 全部渠道失败是真实运营告警，保留 ERROR 级别；但调用栈固定无意义，禁用堆栈打印。
+		// 尝试数与渠道数分开统计：单渠道原地重试 3 次是 3 次尝试 × 1 个渠道，不是 3 个渠道故障
+		g.Log().Stack(false).Errorf(ctx, "[RelayHandler] All %d attempts failed (across %d channels) for model=%s tenant=%d user=%d request=%s.%s Failure details: %s",
+			len(channelErrors), failedChannelCount, v.modelName, rc.TenantID, rc.UserID, rc.RequestID, diagSuffix, strings.Join(channelErrors, "\n"))
 		// 用户侧只返回通用错误，不暴露渠道数量和详情
 		allFailedErr := constant.NewChannelError(
 			"当前模型暂时不可用",
@@ -969,9 +991,7 @@ func handleChannelUnavailable(
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
-	if billing != nil && preDeductAmount > 0 {
-		_ = billing.SettleFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount)
-	}
+	refundPreDeduct(billing, rc.TenantID, rc.RequestID, preDeductAmount)
 	// 无可用渠道属于正常业务条件（模型未配渠道/容量满/熔断中等），降级为 Warning 并禁用堆栈打印；
 	// 具体原因由调度器的排除明细摘要给出（熔断OPEN/半开探测限流/容量租约满/凭证冷却/目录为空）
 	g.Log().Stack(false).Warningf(ctx, "[RelayHandler] 无可用渠道: model=%s tenant=%d user=%d request=%s%s",
