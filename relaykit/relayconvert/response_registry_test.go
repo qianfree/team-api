@@ -36,18 +36,6 @@ func TestRegisterBuiltinResponseConverter_Valid(t *testing.T) {
 	if got.Convert == nil {
 		t.Error("expected non-nil Convert")
 	}
-	if _, ok := lookupResponseRoute(spec.From, spec.To); !ok {
-		t.Error("lookupResponseRoute expected hit")
-	}
-	// 仅声明流式字段也视为合法（无 Convert）
-	registerBuiltinResponseConverter(ResponseConverterSpec{
-		ID: "resp_stream_only", From: "resp_stream_only_from", To: "resp_stream_only_to",
-		Quality:       ResponseConverterQualityFair,
-		ConvertStream: noopRespConvert,
-	})
-	if _, ok := LookupResponseConverter("resp_stream_only"); !ok {
-		t.Error("expected stream-only response converter registered")
-	}
 }
 
 func TestRegisterBuiltinResponseConverter_Panics(t *testing.T) {

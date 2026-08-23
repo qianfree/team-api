@@ -1,10 +1,8 @@
 // Package relayconvert — 响应侧转换器 spec 类型与注册 / 查找机制。
 //
-// 本文件只移植「spec 类型 + 函数类型 + 注册 / 查找 / 别名」结构层。
-// 调度引擎（ConvertResponse / ConvertStreamResponse / NewResponseStreamState* /
-// ConvertStreamResponseChunk / FinalizeStreamResponse / execute* / infer* /
-// canonicalUsageFromResponse）、ResponseStreamState 的方法（Usage/SetUsage/UsageText
-// 依赖 stream-state 类型）以及全部 adapter 函数。
+// 非流式响应转换经本注册表（ResponseConverterSpec.Convert）；流式响应转换走独立的
+// stream_registry.go（StreamConverterFunc 签名基于 io.Reader + chunk 回调，与本表
+// 的整响应 any 签名不兼容）。请求侧见 request_registry.go。
 package relayconvert
 
 import (
@@ -20,14 +18,6 @@ import (
 
 type ResponseConverterFunc func(c context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error)
 
-type ResponseStreamConverterFunc func(c context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error)
-
-type ResponseStreamStateFactory func(options ResponseStreamOptions) any
-
-type ResponseStreamChunkConverterFunc func(c context.Context, info convmeta.Meta, response any, state any) ([]any, *dto.Usage, error)
-
-type ResponseStreamFinalizerFunc func(c context.Context, info convmeta.Meta, state any) ([]any, *dto.Usage, error)
-
 type ResponseConverterQuality string
 
 const (
@@ -36,62 +26,18 @@ const (
 	ResponseConverterQualityDiscouraged ResponseConverterQuality = "discouraged"
 )
 
-type ResponseStep struct {
-	Converter string
-	From      types.RelayFormat
-	To        types.RelayFormat
-}
-
-type ResponseResult struct {
-	Value     any
-	Usage     *dto.Usage
-	From      types.RelayFormat
-	To        types.RelayFormat
-	Converter string
-	Quality   ResponseConverterQuality
-	Steps     []ResponseStep
-	Stream    bool
-}
-
 type ResponseConverterSpec struct {
-	ID                 string
-	From               types.RelayFormat
-	To                 types.RelayFormat
-	Quality            ResponseConverterQuality
-	Convert            ResponseConverterFunc
-	ConvertStream      ResponseStreamConverterFunc
-	NewStreamState     ResponseStreamStateFactory
-	ConvertStreamChunk ResponseStreamChunkConverterFunc
-	FinalizeStream     ResponseStreamFinalizerFunc
-	StepConverters     []string
+	ID             string
+	From           types.RelayFormat
+	To             types.RelayFormat
+	Quality        ResponseConverterQuality
+	Convert        ResponseConverterFunc
+	StepConverters []string
 }
 
 type responseConverterRoute struct {
 	from types.RelayFormat
 	to   types.RelayFormat
-}
-
-// ResponseStreamOptions 透传给 NewStreamState 工厂，用于初始化流式转换状态。
-type ResponseStreamOptions struct {
-	ID           string
-	Model        string
-	Created      int64
-	IncludeUsage bool
-}
-
-// ResponseStreamState 承载一次流式响应转换的跨 chunk 状态。
-// 仅定义数据字段；其方法（Usage/SetUsage/UsageText/rememberUsage）与
-// 构造器（NewResponseStreamState）依赖 stream-state 实现类型。
-type ResponseStreamState struct {
-	From      types.RelayFormat
-	To        types.RelayFormat
-	Converter string
-	Quality   ResponseConverterQuality
-	Steps     []ResponseStep
-
-	specs      []ResponseConverterSpec
-	stepStates []any
-	usage      *dto.Usage
 }
 
 const (
@@ -111,13 +57,6 @@ const (
 	ResponseConverterDifyChatToOAIChatStream   = "dify_chat_to_oai_chat_stream_resp"
 	ResponseConverterOllamaChatToOAIChat       = "ollama_chat_to_oai_chat_resp"
 	ResponseConverterOllamaChatToOAIChatStream = "ollama_chat_to_oai_chat_stream_resp"
-
-	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
-	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
-	responseConverterGeminiToClaude    = "gemini_chat_to_claude_messages_resp"
-	responseConverterGeminiToResponses = "gemini_chat_to_oai_responses_resp"
-	responseConverterResponsesToClaude = "oai_responses_to_claude_messages_resp"
-	responseConverterResponsesToGemini = "oai_responses_to_gemini_chat_resp"
 )
 
 var (
@@ -143,14 +82,10 @@ func registerBuiltinResponseConverter(spec ResponseConverterSpec) {
 	if spec.Quality == "" {
 		panic(fmt.Sprintf("response converter %q must declare quality", spec.ID))
 	}
-	if spec.Convert == nil &&
-		spec.ConvertStream == nil &&
-		spec.ConvertStreamChunk == nil &&
-		len(spec.StepConverters) == 0 {
-		panic(fmt.Sprintf("response converter %q must declare convert, stream convert, or step converters", spec.ID))
+	if spec.Convert == nil && len(spec.StepConverters) == 0 {
+		panic(fmt.Sprintf("response converter %q must declare convert or step converters", spec.ID))
 	}
-	if len(spec.StepConverters) > 0 &&
-		(spec.Convert != nil || spec.ConvertStream != nil || spec.NewStreamState != nil || spec.ConvertStreamChunk != nil || spec.FinalizeStream != nil) {
+	if len(spec.StepConverters) > 0 && spec.Convert != nil {
 		panic(fmt.Sprintf("response converter %q cannot declare direct implementations and step converters together", spec.ID))
 	}
 
@@ -234,18 +169,6 @@ func LookupResponseConverter(converter string) (ResponseConverterSpec, bool) {
 		return ResponseConverterSpec{}, false
 	}
 	return cloneResponseConverterSpec(spec), true
-}
-
-func lookupResponseRoute(from types.RelayFormat, to types.RelayFormat) (ResponseConverterSpec, bool) {
-	responseConverterMu.RLock()
-	defer responseConverterMu.RUnlock()
-
-	converterID, ok := responseConverterRoutes[responseConverterRoute{from: from, to: to}]
-	if !ok {
-		return ResponseConverterSpec{}, false
-	}
-	spec, ok := responseConverters[converterID]
-	return cloneResponseConverterSpec(spec), ok
 }
 
 func resolveResponseConverterID(converter string) string {

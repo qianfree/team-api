@@ -30,13 +30,9 @@ type TextRequestSide struct {
 }
 
 type TextResponseSide struct {
-	Convert            ResponseConverterFunc
-	ConvertStream      ResponseStreamConverterFunc
-	NewStreamState     ResponseStreamStateFactory
-	ConvertStreamChunk ResponseStreamChunkConverterFunc
-	FinalizeStream     ResponseStreamFinalizerFunc
-	StepConverters     []string
-	Aliases            []string
+	Convert        ResponseConverterFunc
+	StepConverters []string
+	Aliases        []string
 }
 
 type TextConverterSpec struct {
@@ -119,16 +115,12 @@ func registerBuiltinTextConverter(spec TextConverterSpec) {
 	}
 	if textResponseSideConfigured(spec.Resp) {
 		registerBuiltinResponseConverter(ResponseConverterSpec{
-			ID:                 spec.ID,
-			From:               spec.From,
-			To:                 spec.To,
-			Quality:            ResponseConverterQuality(spec.Quality),
-			Convert:            spec.Resp.Convert,
-			ConvertStream:      spec.Resp.ConvertStream,
-			NewStreamState:     spec.Resp.NewStreamState,
-			ConvertStreamChunk: spec.Resp.ConvertStreamChunk,
-			FinalizeStream:     spec.Resp.FinalizeStream,
-			StepConverters:     cloneTextConverterStrings(spec.Resp.StepConverters),
+			ID:             spec.ID,
+			From:           spec.From,
+			To:             spec.To,
+			Quality:        ResponseConverterQuality(spec.Quality),
+			Convert:        spec.Resp.Convert,
+			StepConverters: cloneTextConverterStrings(spec.Resp.StepConverters),
 		})
 	}
 
@@ -168,12 +160,7 @@ func textRequestSideConfigured(side TextRequestSide) bool {
 }
 
 func textResponseSideConfigured(side TextResponseSide) bool {
-	return side.Convert != nil ||
-		side.ConvertStream != nil ||
-		side.NewStreamState != nil ||
-		side.ConvertStreamChunk != nil ||
-		side.FinalizeStream != nil ||
-		len(side.StepConverters) > 0
+	return side.Convert != nil || len(side.StepConverters) > 0
 }
 
 func resolveTextConverterID(converter string) string {

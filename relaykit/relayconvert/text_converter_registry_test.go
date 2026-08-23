@@ -142,9 +142,9 @@ func TestTextRequestResponseSideConfigured(t *testing.T) {
 	if textRequestSideConfigured(TextRequestSide{}) {
 		t.Error("empty request side should not be configured")
 	}
-	// 响应侧：单个流式字段非 nil 即视为已配置
-	if !textResponseSideConfigured(TextResponseSide{ConvertStream: noopRespConvert}) {
-		t.Error("ConvertStream-only response side should be configured")
+	// 响应侧：仅 StepConverters 也算已配置；空响应侧不算
+	if !textResponseSideConfigured(TextResponseSide{StepConverters: []string{"a"}}) {
+		t.Error("StepConverters-only response side should be configured")
 	}
 	if textResponseSideConfigured(TextResponseSide{}) {
 		t.Error("empty response side should not be configured")
