@@ -114,6 +114,29 @@ func TestChatStream_ToolDoneOrder(t *testing.T) {
 	}
 }
 
+// TestChatStream_MultiChoiceGuard n>1 多 choice 流只处理首个 choice：
+// 第二 choice 的文本不得混入 output_text.delta（交错会损坏 Responses 事件流）。
+func TestChatStream_MultiChoiceGuard(t *testing.T) {
+	sse := "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"首选\"}},{\"index\":1,\"delta\":{\"content\":\"次选污染\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	events, err := runStreamCollector(t, sse)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	for _, e := range events {
+		if e.Type != "response.output_text.delta" {
+			continue
+		}
+		if data, ok := e.Data.(map[string]any); ok {
+			if delta, _ := data["delta"].(string); delta == "次选污染" {
+				t.Error("second choice content must not leak into responses stream")
+			}
+		}
+	}
+}
+
 // 重复 finish_reason 不重复发 done（确定性修复项的显式断言）。
 func TestChatStream_RepeatedFinishNoDuplicateDone(t *testing.T) {
 	sse := "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n" +

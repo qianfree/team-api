@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -100,7 +99,7 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	start := time.Now()
 	converted, usage, err := spec.Resp.Convert(ctx, info, upstreamResp)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
+	common.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false

@@ -236,6 +236,10 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 
 		// 处理 choices delta
 		for _, choice := range chunk.Choices {
+			// n>1 的多 choice 流在 Responses 单输出流无对应物，交错输出会损坏事件流——只处理首个 choice
+			if choice.Index > 0 {
+				continue
+			}
 			// 文本内容 delta（仅 string 形态，非 string 静默丢弃——legacy 口径）
 			if choice.Delta.Content != nil {
 				if deltaText, ok := choice.Delta.Content.(string); ok && deltaText != "" {

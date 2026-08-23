@@ -1,11 +1,7 @@
-// Package relayconvert — 文本转换器配对（Req+Resp）注册表层。
+// 文本转换器配对（Req+Resp）注册表层。包级文档见 doc.go。
 //
 // TextConverterSpec 是请求侧与响应侧的成对外观；registerBuiltinTextConverter
 // 将其拆分并分别注册进 request / response 注册表（同 ID）。
-//
-// 本文件移植 spec 类型 + 注册 / 查找 / 别名 / clone 机制。
-// builtinTextConverters 列表与 init()（注册全部内置转换器）依赖
-// adapter 函数注入。
 package relayconvert
 
 import (

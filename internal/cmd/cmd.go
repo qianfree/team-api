@@ -109,6 +109,8 @@ var (
 			// 注入 relay 转换选项的配置读取函数（relay/common 不 import internal，
 			// 经钩子单向获取 sys_options 组装的 convmeta.Options 快照）
 			relaycommon.SetConvOptionsProvider(common.RelayConvOptionsProvider)
+			// 转换指标观测同样经接口注入（反转 relay → internal/logic/monitor 的 import 方向）
+			relaycommon.SetConverterObserver(monitor.RelaykitConverterObserver{})
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {

@@ -8,7 +8,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -143,7 +142,7 @@ func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body
 	start := time.Now()
 	converted, err := relayconvert.ExecuteRequestConverter(ctx, reqSpec, info, parsed)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(inbound), string(upstream), duration, err)
+	common.TrackConverterCall(converterID, string(inbound), string(upstream), duration, err)
 	if err != nil {
 		return nil, false, fmt.Errorf("[relaykit] convert request failed (converter=%s, %s→%s): %w", converterID, inbound, upstream, err)
 	}

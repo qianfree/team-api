@@ -30,7 +30,9 @@ import (
 type OpenAIToClaudeStreamConverter struct{}
 
 func (c *OpenAIToClaudeStreamConverter) ID() string {
-	return relayconvert.ConverterClaudeMessagesToOpenAIChat
+	// 独立流式转换器：ID/From/To 表达自身真实流方向（openai→claude），
+	// 与挂载 spec 的 Resp 侧方向约定（spec From/To=请求方向、Resp 反向）无关
+	return relayconvert.ConverterOpenAIChatToClaudeMessagesStream
 }
 
 func (c *OpenAIToClaudeStreamConverter) From() types.RelayFormat {
@@ -168,6 +170,10 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		}
 
 		for _, choice := range chunk.Choices {
+			// n>1 的多 choice 流在 Claude 单消息流无对应物，交错输出会损坏块流——只处理首个 choice
+			if choice.Index > 0 {
+				continue
+			}
 			// 文本 delta
 			if text, ok := choice.Delta.Content.(string); ok && text != "" {
 				if currentBlockType != "" && currentBlockType != "text" {

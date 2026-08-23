@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -123,7 +122,7 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 	start := time.Now()
 	converted, _, err := spec.Resp.Convert(ctx, info, upstreamResp)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
+	common.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false
@@ -167,7 +166,7 @@ func TryConvertChatViaResponsesResponseViaRelaykit(ctx context.Context, info *co
 	start := time.Now()
 	converted, _, err := spec.Resp.Convert(ctx, info, &responsesResp)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(relayconvert.ConverterOpenAIChatToOpenAIResponses,
+	common.TrackConverterCall(relayconvert.ConverterOpenAIChatToOpenAIResponses,
 		string(constant.RelayFormatResponses), string(clientFormat), duration, err)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] convert responses→chat failed: %v", err)
@@ -318,7 +317,7 @@ func TryConvertResponsesStreamViaRelaykit(ctx context.Context, info *common.Rela
 		return emitResponsesEvent(event)
 	})
 	duration := time.Since(start)
-	monitor.TrackConverterCall(streamID, string(upstream), string(clientFormat), duration, err)
+	common.TrackConverterCall(streamID, string(upstream), string(clientFormat), duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -430,7 +429,7 @@ func TryConvertChatToResponsesRequestViaRelaykit(ctx context.Context, info *comm
 	start := time.Now()
 	converted, err := relayconvert.ExecuteRequestConverter(ctx, spec, info, &chatReq)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(constant.RelayFormatOpenAI), string(constant.RelayFormatResponses), duration, err)
+	common.TrackConverterCall(converterID, string(constant.RelayFormatOpenAI), string(constant.RelayFormatResponses), duration, err)
 	if err != nil {
 		g.Log().Warningf(ctx, "[relaykit] convert chat→responses request failed (converter=%s): %v", converterID, err)
 		return nil, false

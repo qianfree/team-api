@@ -76,3 +76,27 @@ func TestO2GStream_EmptyStream(t *testing.T) {
 		t.Errorf("空流尾 chunk = %+v, want 无 usage 的空尾", tail)
 	}
 }
+
+// TestO2GStream_MultiChoiceGuard n>1 多 choice 流只处理首个 choice：
+// 第二 choice 的文本不得混入 parts（交错会损坏 Gemini 单候选流）。
+func TestO2GStream_MultiChoiceGuard(t *testing.T) {
+	sse := "data: {\"id\":\"c1\",\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"首选\"}},{\"index\":1,\"delta\":{\"content\":\"次选污染\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	chunks, err := runO2GStream(t, sse)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	for _, c := range chunks {
+		for _, cand := range c.Candidates {
+			if cand.Content == nil {
+				continue
+			}
+			for _, p := range cand.Content.Parts {
+				if p.Text == "次选污染" {
+					t.Error("second choice content must not leak into gemini stream")
+				}
+			}
+		}
+	}
+}

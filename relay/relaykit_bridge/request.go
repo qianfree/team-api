@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -74,7 +73,7 @@ func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, 
 	start := time.Now()
 	converted, err := relayconvert.ExecuteRequestConverter(ctx, spec, info, parsed)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(info.InboundFormat), string(constant.RelayFormatOpenAI), duration, err)
+	common.TrackConverterCall(converterID, string(info.InboundFormat), string(constant.RelayFormatOpenAI), duration, err)
 	if err != nil {
 		return nil, false, fmt.Errorf("[relaykit] convert inbound request failed (converter=%s): %w", converterID, err)
 	}

@@ -1,7 +1,6 @@
 package dify
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -46,21 +45,14 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 将 OpenAI Chat 请求转换为 Dify 请求格式
+// ConvertRequest 请求侧转换已由 handler 层 relaykit 桥接统一接管
+// （openai 入站 → ConverterOpenAIChatToDify，streaming 模式按 info.IsStream 选择）。
+// 走到本函数说明桥接未接管，按转换失败报错：
+//   - legacy 本地转换已随收割删除（原 convertOpenAIToDify 平行实现，防语义漂移）；
+//   - 交叉客户端（claude/gemini/responses）× dify 上游：响应侧只有 dify→openai 转换器，
+//     不 fail-fast 会形成「请求已发上游、响应转换失败」，白耗上游 token 且触发重试风暴。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		// 交叉客户端（claude/gemini/responses）× dify 上游：请求侧虽可转换，但响应侧
-		// 只有 dify→openai 转换器——不 fail-fast 会形成「请求已发上游、响应转换失败」，
-		// 白耗上游 token 且触发全渠道重试风暴。响应侧组合链注册前不支持该方向
-		return nil, fmt.Errorf("[relaykit] %s 客户端 × dify 上游暂不支持（响应侧无注册转换器）", info.InboundFormat)
-	}
-
-	difyBody, err := convertOpenAIToDify(requestBody, info)
-	if err != nil {
-		return nil, fmt.Errorf("convert to Dify request failed: %w", err)
-	}
-	return bytes.NewReader(difyBody), nil
+	return nil, fmt.Errorf("[relaykit] %s→dify 请求转换失败（handler 层桥接未接管）", info.InboundFormat)
 }
 
 // DoRequest 发送请求到 Dify 上游

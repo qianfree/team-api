@@ -29,7 +29,8 @@ import (
 type OpenAIToGeminiStreamConverter struct{}
 
 func (c *OpenAIToGeminiStreamConverter) ID() string {
-	return relayconvert.ConverterGeminiContentToOpenAIChat
+	// 独立流式转换器：ID/From/To 表达自身真实流方向（openai→gemini）
+	return relayconvert.ConverterOpenAIChatToGeminiContentStream
 }
 
 func (c *OpenAIToGeminiStreamConverter) From() types.RelayFormat {
@@ -108,6 +109,10 @@ func (c *OpenAIToGeminiStreamConverter) ConvertStreamResponse(
 
 		var geminiChunk dto.GeminiChatResponse
 		for _, choice := range chunk.Choices {
+			// n>1 的多 choice 流在 Gemini 单候选流无对应物，交错输出会损坏 parts——只处理首个 choice
+			if choice.Index > 0 {
+				continue
+			}
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
 				finishReason = *choice.FinishReason
 			}

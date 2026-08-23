@@ -146,3 +146,23 @@ func TestO2CStream_EmptyStream(t *testing.T) {
 		t.Errorf("empty stream should emit nothing, got %d events", len(events))
 	}
 }
+
+// TestO2CStream_MultiChoiceGuard n>1 多 choice 流只处理首个 choice：
+// 第二 choice 的文本/finish_reason 不得混入输出（交错会损坏 Claude 单消息块流）。
+func TestO2CStream_MultiChoiceGuard(t *testing.T) {
+	sse := "data: {\"id\":\"c1\",\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}},{\"index\":1,\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"首选\"}},{\"index\":1,\"delta\":{\"content\":\"次选污染\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: {\"id\":\"c1\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}\n\n" +
+		"data: [DONE]\n\n"
+	events, err := runO2CStream(t, sse)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	for _, e := range events {
+		if e.Data != nil && e.Data.Delta != nil && e.Data.Delta.Text != nil && *e.Data.Delta.Text == "次选污染" {
+			t.Error("second choice content must not leak into claude stream")
+		}
+	}
+	// 第二 choice 的 finish_reason 不覆盖：stop_reason 按收尾映射仍应为 stop（无 length 污染）
+}

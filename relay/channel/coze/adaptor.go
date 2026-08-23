@@ -1,9 +1,7 @@
 package coze
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,31 +38,14 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 将 OpenAI Chat 请求转换为 Coze v3 请求格式
+// ConvertRequest 请求侧转换已由 handler 层 relaykit 桥接统一接管
+// （openai 入站 → ConverterOpenAIChatToCoze，含强制 Stream=true——Coze 非流式需轮询，
+// 由宿主缓冲整段 SSE 后解析）。走到本函数说明桥接未接管，按转换失败报错：
+//   - legacy 本地转换已随收割删除（原 convertOpenAIToCoze 平行实现，防语义漂移）；
+//   - 交叉客户端（claude/gemini/responses）× coze 上游：响应侧只有 coze→openai 转换器，
+//     不 fail-fast 会形成「请求已发上游、响应转换失败」，白耗上游 token 且触发重试风暴。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		// 交叉客户端（claude/gemini/responses）× coze 上游：请求侧虽可转换，但响应侧
-		// 只有 coze→openai 转换器——不 fail-fast 会形成「请求已发上游、响应转换失败」，
-		// 白耗上游 token 且触发全渠道重试风暴。响应侧组合链注册前不支持该方向
-		return nil, fmt.Errorf("[relaykit] %s 客户端 × coze 上游暂不支持（响应侧无注册转换器）", info.InboundFormat)
-	}
-
-	// 非流式请求也强制使用流式模式，以便在 DoResponse 中统一处理
-	cozeBody, err := convertOpenAIToCoze(requestBody, info)
-	if err != nil {
-		return nil, fmt.Errorf("convert to Coze request failed: %w", err)
-	}
-
-	// 强制开启流式模式：Coze 非流式需要轮询，实现复杂，
-	// 这里统一走流式，非流式场景在 DoResponse 中收集完整响应后一次性返回
-	var cozeReq CozeCreateRequest
-	if err := json.Unmarshal(cozeBody, &cozeReq); err == nil {
-		cozeReq.Stream = true
-		cozeBody, _ = json.Marshal(cozeReq)
-	}
-
-	return bytes.NewReader(cozeBody), nil
+	return nil, fmt.Errorf("[relaykit] %s→coze 请求转换失败（handler 层桥接未接管）", info.InboundFormat)
 }
 
 // DoRequest 发送请求到 Coze 上游

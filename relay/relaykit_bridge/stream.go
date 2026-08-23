@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
@@ -267,7 +266,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	start := time.Now()
 	err := fn(ctx, info, upstreamBody, chunkWriter)
 	duration := time.Since(start)
-	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
+	common.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 
 	if err != nil {
 		if ctx.Err() != nil {

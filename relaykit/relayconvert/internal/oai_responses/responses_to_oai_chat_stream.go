@@ -34,7 +34,8 @@ import (
 type ResponsesToOpenAIChatStreamConverter struct{}
 
 func (c *ResponsesToOpenAIChatStreamConverter) ID() string {
-	return relayconvert.ConverterOpenAIChatToOpenAIResponses
+	// 独立流式转换器：ID/From/To 表达自身真实流方向（responses→openai chat）
+	return relayconvert.ConverterOpenAIResponsesToOpenAIChatStream
 }
 
 func (c *ResponsesToOpenAIChatStreamConverter) From() types.RelayFormat {

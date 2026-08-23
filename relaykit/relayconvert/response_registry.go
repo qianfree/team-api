@@ -1,8 +1,4 @@
-// Package relayconvert — 响应侧转换器 spec 类型与注册 / 查找机制。
-//
-// 非流式响应转换经本注册表（ResponseConverterSpec.Convert）；流式响应转换走独立的
-// stream_registry.go（StreamConverterFunc 签名基于 io.Reader + chunk 回调，与本表
-// 的整响应 any 签名不兼容）。请求侧见 request_registry.go。
+// 响应侧转换器 spec 类型与注册 / 查找机制。包级文档见 doc.go。
 package relayconvert
 
 import (
