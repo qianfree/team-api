@@ -94,6 +94,72 @@ const values = useFormValues()
 				/>
 			</div>
 		</div>
+
+		<!-- 协议转换选项 -->
+		<div class="section">
+			<div class="section-title">协议转换选项</div>
+			<div class="switch-row">
+				<span class="switch-label">Claude thinking 后缀适配</span>
+				<span class="switch-desc">OpenAI 入站 × Claude 上游把模型名 -thinking/effort 后缀转换为扩展思考请求（注入 thinking 配置）</span>
+				<ASwitch
+					:model-value="!!values['relay_claude_thinking_adapter_enabled']"
+					@change="(v: string | number | boolean) => values['relay_claude_thinking_adapter_enabled'] = v"
+				/>
+			</div>
+			<div class="section-grid" style="margin-top: 12px">
+				<AFormItem label="Claude 思考预算比例">
+					<AInputNumber
+						:model-value="values['relay_claude_thinking_budget_percentage'] as number"
+						@change="(v: number | undefined) => values['relay_claude_thinking_budget_percentage'] = v ?? 0.5"
+						:min="0.1" :max="0.9" :step="0.1" style="width: 100%"
+					/>
+				</AFormItem>
+			</div>
+			<div class="switch-row" style="margin-top: 12px">
+				<span class="switch-label">Gemini thinking 后缀适配</span>
+				<span class="switch-desc">OpenAI 入站 × Gemini 上游把模型名 -thinking/-nothinking/effort 后缀映射到 thinkingConfig</span>
+				<ASwitch
+					:model-value="!!values['relay_gemini_thinking_adapter_enabled']"
+					@change="(v: string | number | boolean) => values['relay_gemini_thinking_adapter_enabled'] = v"
+				/>
+			</div>
+			<div class="section-grid" style="margin-top: 12px">
+				<AFormItem label="Gemini 思考预算比例">
+					<AInputNumber
+						:model-value="values['relay_gemini_thinking_budget_percentage'] as number"
+						@change="(v: number | undefined) => values['relay_gemini_thinking_budget_percentage'] = v ?? 0.5"
+						:min="0.1" :max="0.9" :step="0.1" style="width: 100%"
+					/>
+				</AFormItem>
+			</div>
+			<div class="switch-row" style="margin-top: 12px">
+				<span class="switch-label">Gemini thoughtSignature 透传</span>
+				<span class="switch-desc">Gemini 上游的 function-call parts 附带 thoughtSignature 绕过值（多轮工具调用校验所需）</span>
+				<ASwitch
+					:model-value="!!values['relay_gemini_thought_signature_enabled']"
+					@change="(v: string | number | boolean) => values['relay_gemini_thought_signature_enabled'] = v"
+				/>
+			</div>
+			<AFormItem label="Gemini 安全阈值（JSON）" style="margin-top: 12px">
+				<ATextarea
+					:model-value="values['relay_gemini_safety_setting'] as string"
+					@input="(v: string) => values['relay_gemini_safety_setting'] = v"
+					:auto-size="{ minRows: 2, maxRows: 8 }"
+					placeholder='{"HARM_CATEGORY_HARASSMENT":"BLOCK_ONLY_HIGH"}'
+					allow-clear
+				/>
+			</AFormItem>
+			<div class="section-desc">类别 → 伤害阈值映射，转换后的 Gemini 请求按此附带 safetySettings；留空不附带。</div>
+			<AFormItem label="保留 thinking 后缀的模型" style="margin-top: 12px">
+				<AInput
+					:model-value="values['relay_preserve_thinking_suffix_models'] as string"
+					@input="(v: string) => values['relay_preserve_thinking_suffix_models'] = v"
+					placeholder="gemini-2.5-pro, gpt-4*, claude-3-5-sonnet"
+					allow-clear
+				/>
+			</AFormItem>
+			<div class="section-desc">逗号分隔的模型名列表，列表内模型（支持尾部 * 前缀匹配）在发往上游的模型名上保留 -thinking/-nothinking/effort 后缀；留空对所有模型剥离后缀。</div>
+		</div>
 	</div>
 </template>
 
