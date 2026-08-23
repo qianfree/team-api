@@ -51,5 +51,5 @@ func (a *Adaptor) handleStreamToResponses(ctx context.Context, resp *http.Respon
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 	resp.Body.Close()
-	return nil, fmt.Errorf("[relaykit] claude→responses 流式转换失败（无匹配转换器）")
+	return nil, fmt.Errorf("[relaykit] claude→responses 流式转换失败（无匹配转换器或转换失败）")
 }

@@ -72,7 +72,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
-		return nil, fmt.Errorf("[relaykit] claude→openai 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] claude→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
 	return usage, nil
 }

@@ -73,21 +73,21 @@ func parseUpstreamResponse(ctx context.Context, upstream constant.RelayFormat, b
 	case constant.RelayFormatClaude:
 		var claudeResp dto.ClaudeResponse
 		if err := json.Unmarshal(body, &claudeResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed: %v", err)
 			return nil
 		}
 		return &claudeResp
 	case constant.RelayFormatGemini:
 		var geminiResp dto.GeminiChatResponse
 		if err := json.Unmarshal(body, &geminiResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed: %v", err)
 			return nil
 		}
 		return &geminiResp
 	case constant.RelayFormatOpenAI:
 		var chatResp dto.ChatCompletionResponse
 		if err := json.Unmarshal(body, &chatResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse chat response failed, fallback to legacy: %v", err)
+			g.Log().Warningf(ctx, "[relaykit] parse chat response failed: %v", err)
 			return nil
 		}
 		return &chatResp
@@ -125,13 +125,13 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 	duration := time.Since(start)
 	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false
 	}
 
@@ -160,7 +160,7 @@ func TryConvertChatViaResponsesResponseViaRelaykit(ctx context.Context, info *co
 
 	var responsesResp dto.OpenAIResponsesResponse
 	if err := json.Unmarshal(upstreamBody, &responsesResp); err != nil {
-		g.Log().Warningf(ctx, "[relaykit] parse responses body failed, fallback to legacy: %v", err)
+		g.Log().Warningf(ctx, "[relaykit] parse responses body failed: %v", err)
 		return nil, nil, false
 	}
 
@@ -170,13 +170,13 @@ func TryConvertChatViaResponsesResponseViaRelaykit(ctx context.Context, info *co
 	monitor.TrackConverterCall(relayconvert.ConverterOpenAIChatToOpenAIResponses,
 		string(constant.RelayFormatResponses), string(clientFormat), duration, err)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] convert responses→chat failed, fallback to legacy: %v", err)
+		g.Log().Warningf(ctx, "[relaykit] convert responses→chat failed: %v", err)
 		return nil, nil, false
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] marshal chat body failed, fallback to legacy: %v", err)
+		g.Log().Warningf(ctx, "[relaykit] marshal chat body failed: %v", err)
 		return nil, nil, false
 	}
 

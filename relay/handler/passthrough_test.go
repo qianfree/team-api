@@ -283,35 +283,42 @@ func TestRelaykitRequestConverterID(t *testing.T) {
 	tests := []struct {
 		name        string
 		supportsUps bool // 渠道是否原生支持 Responses（UpstreamSpeaksResponses）
+		useUpsAPI   bool // ChatViaResponses 桥接标志（chat 客户端经 Responses API 发上游）
 		inbound     constant.RelayFormat
 		upstream    constant.RelayFormat
 		relayMode   int
 		want        string
 	}{
-		{"OpenAI→Claude", false, constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToClaudeMessages},
-		{"OpenAI→Gemini", false, constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToGeminiContent},
-		{"OpenAI→Coze", false, constant.RelayFormatOpenAI, constant.RelayFormatCoze, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToCoze},
-		{"OpenAI→Dify", false, constant.RelayFormatOpenAI, constant.RelayFormatDify, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToDify},
-		{"OpenAI→Ollama chat", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
-		{"OpenAI→Ollama generate 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
-		{"OpenAI→Ollama embedding 不迁移", false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
-		{"同格式不转换", false, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"OpenAI→Claude", false, false, constant.RelayFormatOpenAI, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToClaudeMessages},
+		{"OpenAI→Gemini", false, false, constant.RelayFormatOpenAI, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToGeminiContent},
+		{"OpenAI→Coze", false, false, constant.RelayFormatOpenAI, constant.RelayFormatCoze, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToCoze},
+		{"OpenAI→Dify", false, false, constant.RelayFormatOpenAI, constant.RelayFormatDify, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToDify},
+		{"OpenAI→Ollama chat", false, false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOllama},
+		{"OpenAI→Ollama generate 不迁移", false, false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeCompletions), ""},
+		{"OpenAI→Ollama embedding 不迁移", false, false, constant.RelayFormatOpenAI, constant.RelayFormatOllama, int(constant.RelayModeEmbeddings), ""},
+		{"同格式不转换", false, false, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		// ChatViaResponses 桥接渠道：inbound 与 upstream 同为 openai（ProviderNativeFormat
+		// 不反映 responses 能力），必须在「同格式早退」之前命中，且仅限 chat 模式
+		{"ChatViaResponses 桥接（UseResponsesAPI）", false, true, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), relayconvert.ConverterOpenAIChatToOpenAIResponses},
+		{"ChatViaResponses 非 chat 模式不桥接", false, true, constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, int(constant.RelayModeCompletions), ""},
 		// responses→openai 方向（chat-only 与 responses 原生上游）均严禁在 handler 层路由：
 		// chat-only 的接管点在 ConvertToOpenAI 内部（同 claude/gemini→openai 约定，路由会
 		// 跳过各 adaptor 定制后处理）；responses 原生上游走 adaptor 直连
-		{"Responses→OpenAI chat-only 上游不在此路由", false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
-		{"Responses→OpenAI responses 原生上游不转换", true, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
-		{"Responses→Claude 链", false, constant.RelayFormatResponses, constant.RelayFormatClaude, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToClaudeMessages},
-		{"Responses→Gemini 链", false, constant.RelayFormatResponses, constant.RelayFormatGemini, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToGemini},
-		{"Gemini→Claude 链", false, constant.RelayFormatGemini, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterGeminiContentToClaudeMessages},
+		{"Responses→OpenAI chat-only 上游不在此路由", false, false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
+		{"Responses→OpenAI responses 原生上游不转换", true, false, constant.RelayFormatResponses, constant.RelayFormatOpenAI, int(constant.RelayModeResponses), ""},
+		{"Responses→Claude 链", false, false, constant.RelayFormatResponses, constant.RelayFormatClaude, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToClaudeMessages},
+		{"Responses→Gemini 链", false, false, constant.RelayFormatResponses, constant.RelayFormatGemini, int(constant.RelayModeResponses), relayconvert.ConverterOpenAIResponsesToGemini},
+		{"Gemini→Claude 链", false, false, constant.RelayFormatGemini, constant.RelayFormatClaude, int(constant.RelayModeChatCompletions), relayconvert.ConverterGeminiContentToClaudeMessages},
+		{"Claude→Gemini 链", false, false, constant.RelayFormatClaude, constant.RelayFormatGemini, int(constant.RelayModeChatCompletions), relayconvert.ConverterClaudeMessagesToGeminiContent},
 		// claude/gemini→openai 方向严禁在 handler 层路由（接管点在 ConvertToOpenAI 内部，
 		// 此处路由会跳过各 adaptor 定制后处理）——断言保持空
-		{"Claude→OpenAI 不在此路由", false, constant.RelayFormatClaude, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
-		{"Gemini→OpenAI 不在此路由", false, constant.RelayFormatGemini, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"Claude→OpenAI 不在此路由", false, false, constant.RelayFormatClaude, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
+		{"Gemini→OpenAI 不在此路由", false, false, constant.RelayFormatGemini, constant.RelayFormatOpenAI, int(constant.RelayModeChatCompletions), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			info := &common.RelayInfo{
+				UseResponsesAPI: tt.useUpsAPI,
 				ChannelMeta: &common.ChannelMeta{
 					ChannelType:       int(constant.ProviderOpenAI),
 					SupportsResponses: tt.supportsUps,

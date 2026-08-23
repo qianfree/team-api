@@ -91,7 +91,7 @@ func handleClaudeInboundStream(ctx context.Context, resp *http.Response, info *c
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
 		resp.Body.Close()
-		return nil, fmt.Errorf("[relaykit] openai→claude 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] openai→claude 流式转换失败（无匹配转换器或转换失败）")
 	}
 	resp.Body.Close()
 	return usage, nil

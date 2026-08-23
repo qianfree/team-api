@@ -148,7 +148,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 	// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
-		return nil, fmt.Errorf("[relaykit] dify→openai 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] dify→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
 	return usage, nil
 }

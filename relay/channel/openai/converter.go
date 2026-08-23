@@ -32,7 +32,8 @@ func ConvertToOpenAI(requestBody []byte, info *common.RelayInfo) ([]byte, error)
 		if ok {
 			return out, nil
 		}
-		return nil, fmt.Errorf("[relaykit] %s→openai 请求转换失败（无匹配转换器或转换出错）", info.InboundFormat)
+		// ok=false 仅剩「入站格式不在桥接覆盖范围」一种可能（防御分支，正常不可达）
+		return nil, fmt.Errorf("[relaykit] %s→openai 请求转换失败（无匹配转换器）", info.InboundFormat)
 	default:
 		return requestBody, nil
 	}

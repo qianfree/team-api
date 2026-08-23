@@ -102,13 +102,13 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	duration := time.Since(start)
 	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s), fallback to legacy: %v", converterID, err)
+		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s): %v", converterID, err)
 		return nil, nil, false
 	}
 

@@ -130,7 +130,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
-		return nil, fmt.Errorf("[relaykit] coze→openai 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] coze→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
 	return usage, nil
 }

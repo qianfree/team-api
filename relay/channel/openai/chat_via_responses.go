@@ -59,7 +59,7 @@ func (a *Adaptor) handleChatViaResponsesStream(
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	resp.Body.Close()
 	if !ok {
-		return nil, fmt.Errorf("[relaykit] responses→chat 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] responses→chat 流式转换失败（无匹配转换器或转换失败）")
 	}
 	return usage, nil
 }

@@ -219,7 +219,7 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 	// 转换中途失败由桥接层优雅降级（按客户端格式补终止事件 + end reason），不走本函数。
 	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
-		return nil, fmt.Errorf("[relaykit] gemini→openai 流式转换失败（无匹配转换器）")
+		return nil, fmt.Errorf("[relaykit] gemini→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
 	return usage, nil
 }

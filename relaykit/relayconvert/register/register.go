@@ -137,7 +137,7 @@ func registerOpenAIChatToResponses() {
 
 // registerResponsesToClaudeChain 注册 Responses → Claude 方向转换器。
 //   - 请求侧为 StepConverters 两跳链（Responses→OpenAI Chat→Claude Messages），
-//     替换旧路径 claude/converter.go 的手工拼接链 ConvertResponsesToClaude（后者保留为回退）；
+//     替换旧路径 claude/converter.go 的手工拼接链 ConvertResponsesToClaude（legacy 已随收割删除）；
 //   - 响应侧（非流式）为 ClaudeToResponsesResponseConverter（spec 的 From/To 是请求方向语义，
 //     Resp 侧做反向，与 ConverterOpenAIChatToClaudeMessages 先例一致）。
 func registerResponsesToClaudeChain() {
@@ -433,7 +433,7 @@ func registerCrossNativeChains() {
 }
 
 // registerClaudeToGeminiChain Claude 客户端 → Gemini 上游（链：claude→openai→gemini）。
-// 替换宿主 gemini/converter.go 的手工拼接链 ConvertClaudeToGemini（保留为回退）。
+// 替换宿主 gemini/converter.go 的手工拼接链 ConvertClaudeToGemini（legacy 已随收割删除）。
 // Resp 侧（gemini→claude 响应）：ClaudeToOpenAIResponseConverter → OpenAIToGeminiResponseConverter 组合。
 func registerClaudeToGeminiChain() {
 	g2oResp := &oai_gemini.GeminiToOpenAIResponseConverter{}
@@ -468,7 +468,7 @@ func registerClaudeToGeminiChain() {
 }
 
 // registerResponsesToGeminiChain Responses 客户端 → Gemini 上游（链：responses→openai→gemini）。
-// 替换宿主 gemini/converter.go 的手工拼接链 ConvertResponsesToGemini（保留为回退）。
+// 替换宿主 gemini/converter.go 的手工拼接链 ConvertResponsesToGemini（legacy 已随收割删除）。
 // Resp 侧（gemini→responses 响应）：GeminiToOpenAI → OpenAIChatToResponses 组合。
 func registerResponsesToGeminiChain() {
 	g2oResp := &oai_gemini.GeminiToOpenAIResponseConverter{}

@@ -50,7 +50,7 @@ func ExecuteRequestConverter(ctx context.Context, spec RequestConverterSpec, inf
 // recordRequestConversionChain 记录请求侧协议转换轨迹（宿主渠道调试日志经
 // ConversionChain() 消费）：链首记 spec.From，其后逐跳记各步骤的 To——链式组合
 // （如 claude→responses→chat）的中间格式由此留痕。仅在整条转换成功后提交：
-// 中途失败会回退旧路径，半程轨迹会挤掉调试日志"未覆盖时兜底记录两端"的分支。
+// 中途失败直接报错，半程轨迹会挤掉调试日志"未覆盖时兜底记录两端"的分支。
 func recordRequestConversionChain(info convmeta.Meta, spec RequestConverterSpec) {
 	if info == nil {
 		return

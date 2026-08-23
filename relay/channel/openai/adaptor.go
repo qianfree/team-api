@@ -313,7 +313,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			usage, ok, streamErr := relaykit_bridge.TryConvertResponsesStreamViaRelaykit(ctx, info, resp.Body, writer)
 			if !ok {
 				resp.Body.Close()
-				return nil, fmt.Errorf("[relaykit] chat→responses 流式转换失败（无匹配转换器）")
+				return nil, fmt.Errorf("[relaykit] chat→responses 流式转换失败（无匹配转换器或转换失败）")
 			}
 			resp.Body.Close()
 			return usage, streamErr
