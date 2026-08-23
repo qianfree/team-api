@@ -44,8 +44,13 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
-	// 生成响应 ID
-	responseID := fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
+	// ID：请求 ID 合成（缺失时用 NowFunc 兜底）；时间戳取转换开始时刻
+	requestID := convmeta.RequestIDOf(info)
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", NowFunc().UnixNano())
+	}
+	responseID := fmt.Sprintf("chatcmpl-%s", requestID)
+	createdAt := NowFunc().Unix()
 
 	modelName := ""
 	if info != nil {
@@ -67,7 +72,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		return &dto.ChatCompletionStreamResponse{
 			ID:      responseID,
 			Object:  "chat.completion.chunk",
-			Created: 0,
+			Created: createdAt,
 			Model:   m,
 			Choices: []dto.StreamChoice{{
 				Index: 0,
@@ -237,7 +242,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	finalChunk := &dto.ChatCompletionStreamResponse{
 		ID:      responseID,
 		Object:  "chat.completion.chunk",
-		Created: 0,
+		Created: createdAt,
 		Model:   modelName,
 		Choices: []dto.StreamChoice{{
 			Index:        0,

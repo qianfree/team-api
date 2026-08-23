@@ -3,57 +3,50 @@
   "from": "openai",
   "to": "gemini",
   "request": {
+    "max_tokens": 2048,
     "messages": [
       {
-        "role": "system",
-        "content": "You are a helpful assistant with reasoning capabilities."
+        "content": "You are a helpful assistant with reasoning capabilities.",
+        "role": "system"
       },
       {
-        "role": "user",
-        "content": "Solve this problem: 2 + 2 = ?"
+        "content": "Solve this problem: 2 + 2 = ?",
+        "role": "user"
       }
     ],
-    "temperature": 0.5,
-    "max_tokens": 2048,
-    "reasoning_effort": "medium"
+    "reasoning_effort": "medium",
+    "temperature": 0.5
   },
   "response": {
-    "modelName": "gemini-2.0-flash-exp",
     "candidates": [
       {
-        "index": 0,
-        "finishReason": "STOP",
         "content": {
-          "role": "model",
           "parts": [
             {
               "text": "Let me think about this step by step."
             },
             {
-              "thought": true,
-              "text": "I need to add 2 and 2 together."
+              "text": "I need to add 2 and 2 together.",
+              "thought": true
             },
             {
               "text": "The answer is 4."
             }
-          ]
-        }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
       }
     ],
+    "modelName": "gemini-2.0-flash-exp",
     "usageMetadata": {
-      "promptTokenCount": 15,
       "candidatesTokenCount": 25,
+      "promptTokenCount": 15,
       "totalTokenCount": 40
     }
   },
   "expected_request": {
-    "system_instruction": {
-      "parts": [
-        {
-          "text": "You are a helpful assistant with reasoning capabilities."
-        }
-      ]
-    },
     "contents": [
       {
         "role": "user",
@@ -64,17 +57,7 @@
         ]
       }
     ],
-    "generation_config": {
-      "temperature": 0.5,
-      "top_p": null,
-      "max_output_tokens": 2048,
-      "thinking_config": {
-        "include_thoughts": true,
-        "thought_budget": 8192,
-        "thinking_level": "MEDIUM"
-      }
-    },
-    "safety_settings": [
+    "safetySettings": [
       {
         "category": "HARM_CATEGORY_HARASSMENT",
         "threshold": "BLOCK_ONLY_HIGH"
@@ -91,13 +74,30 @@
         "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
         "threshold": "BLOCK_ONLY_HIGH"
       }
-    ]
+    ],
+    "generationConfig": {
+      "temperature": 0.5,
+      "maxOutputTokens": 2048,
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thoughtBudget": 8192,
+        "thinkingLevel": "MEDIUM"
+      }
+    },
+    "systemInstruction": {
+      "role": "",
+      "parts": [
+        {
+          "text": "You are a helpful assistant with reasoning capabilities."
+        }
+      ]
+    }
   },
   "expected_response": {
-    "id": "chatcmpl-1700000000",
+    "id": "chatcmpl-1700000000000000000",
     "object": "chat.completion",
-    "created": 0,
-    "model": "gemini-2.0-flash-exp",
+    "created": 1700000000,
+    "model": "gemini-pro",
     "choices": [
       {
         "index": 0,

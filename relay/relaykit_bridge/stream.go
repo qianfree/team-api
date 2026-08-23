@@ -22,11 +22,11 @@ import (
 //
 // 设计要点：
 //   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
-//   - 只替换「格式转换」这一步；SSE 帧化、保活 ping、[DONE] 收尾、StreamStatus 由本层负责。
+//   - 只替换「格式转换」这一步；SSE 帧化、保活 ping、[DONE] 收尾（openai 客户端）、StreamStatus 由本层负责。
 //   - 任何「写入前」的放弃（无 ChannelMeta、同格式、无匹配转换器）都返回 ok=false，
 //     调用方回退到旧 handleStreamToOpenAI 代码路径。
 //   - 一旦 SetEventStreamHeaders 之后（开始写 chunk）即不可回退：
-//     转换中途失败由本层写入结束 chunk + [DONE] + 设置 end reason 后返回 ok=true。
+//     转换中途失败由本层按客户端格式写入结束事件（openai 客户端另补 [DONE]）+ 设置 end reason 后返回 ok=true。
 //   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测。
 
 // TryConvertStreamViaRelaykit 尝试用 relaykit 流式转换器将上游 SSE 流转换为客户端格式。
@@ -75,14 +75,17 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 
 	// claudeClient / geminiClient：P2 扩展的客户端格式分派（openai 上游 → claude/gemini 客户端）。
 	// 收尾约定：claude 客户端不写 [DONE]（message_stop 由转换器发，terminal 补发亦为 claude 事件）；
-	// gemini 客户端写 data: [DONE]（转换器发完尾 chunk 后由本层补）。
+	// gemini 客户端不写 [DONE]（官方 Gemini SSE 无此哨兵，转换器以带 finishReason 的尾 chunk 收尾）；
+	// openai 客户端写 data: [DONE]。
 	claudeClient := clientFormat == constant.RelayFormatClaude
 	geminiClient := clientFormat == constant.RelayFormatGemini
 
 	// writeDoneMarker 按客户端格式写收尾标记
 	writeDoneMarker := func() {
-		if claudeClient {
-			return // Claude 以 message_stop 收尾，无 [DONE]
+		if claudeClient || geminiClient {
+			// Claude 以 message_stop 收尾；Gemini SSE（alt=sse）官方协议无 [DONE] 哨兵，
+			// 直连路径也仅在上游发了 [DONE] 时才转发——两者均不补发
+			return
 		}
 		_ = helper.WriteSSEData(safeWriter, "[DONE]")
 	}
@@ -98,8 +101,20 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			safeWriter.Flush()
 			return
 		}
-		// openai / gemini：补 chat 终止 chunk（gemini 客户端收到多余的 chat 格式终止行——
-		// legacy 对 gemini 中断同样不完美，此处保持简单补发 + [DONE]）
+		if geminiClient {
+			// 补 Gemini 格式收尾 chunk（candidates 带 finishReason=STOP，
+			// 形状与 OpenAIToGeminiStreamConverter 的尾 chunk 一致）
+			terminal := &dto.GeminiChatResponse{
+				Candidates: []dto.GeminiCandidate{{
+					Content:      &dto.GeminiContent{Role: "model", Parts: []dto.GeminiPart{}},
+					FinishReason: "STOP",
+				}},
+			}
+			data, _ := json.Marshal(terminal)
+			_ = helper.WriteSSEData(safeWriter, string(data))
+			return
+		}
+		// openai：补 chat 终止 chunk（[DONE] 由 writeDoneMarker 统一写）
 		stop := "stop"
 		terminal := &dto.ChatCompletionStreamResponse{
 			ID:      fmt.Sprintf("chatcmpl-%s", info.RequestID),
@@ -110,7 +125,6 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		data, _ := json.Marshal(terminal)
 		_ = helper.WriteSSEData(safeWriter, string(data))
 	}
-	_ = geminiClient
 
 	// chunkWriter：按 chunk 类型三态分派——
 	//   *dto.ChatCompletionStreamResponse（openai 客户端，现状）→ data: 行；

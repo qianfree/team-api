@@ -61,7 +61,7 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 
 // handleStreamToOpenAI 将 Claude 流式响应转换为 OpenAI SSE 格式。
 // relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
-// 转换中途失败由桥接层优雅降级（补终止 chunk + [DONE] + end reason），不走本函数。
+// 转换中途失败由桥接层优雅降级（按客户端格式补终止事件 + end reason），不走本函数。
 func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	defer resp.Body.Close()
 

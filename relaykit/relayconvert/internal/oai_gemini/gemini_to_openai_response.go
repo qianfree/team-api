@@ -41,8 +41,12 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		return nil, fmt.Errorf("expected *dto.GeminiChatResponse, got %T", response)
 	}
 
-	// 生成响应 ID
-	responseID := fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
+	// ID：请求 ID 合成（缺失时用 NowFunc 兜底，golden 冻结时钟下确定）
+	requestID := convmeta.RequestIDOf(info)
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", NowFunc().UnixNano())
+	}
+	responseID := fmt.Sprintf("chatcmpl-%s", requestID)
 
 	modelName := geminiResp.ModelName
 	if modelName == "" && info != nil {
@@ -55,7 +59,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 	openaiResp := &dto.ChatCompletionResponse{
 		ID:      responseID,
 		Object:  "chat.completion",
-		Created: 0,
+		Created: NowFunc().Unix(),
 		Model:   modelName,
 		Choices: make([]dto.Choice, 0),
 	}

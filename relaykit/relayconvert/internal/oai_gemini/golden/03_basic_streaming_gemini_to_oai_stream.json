@@ -5,9 +5,9 @@
   "stream_data": "data: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello!\"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" How are you?\"}]}}]}\n\ndata: {\"candidates\":[{\"index\":0,\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":12,\"totalTokenCount\":20}}\n\n",
   "expected_stream_chunks": [
     {
-      "id": "chatcmpl-1700000000",
+      "id": "chatcmpl-1700000000000000000",
       "object": "chat.completion.chunk",
-      "created": 0,
+      "created": 1700000000,
       "model": "gemini-pro",
       "choices": [
         {
@@ -22,9 +22,9 @@
       "usage": null
     },
     {
-      "id": "chatcmpl-1700000000",
+      "id": "chatcmpl-1700000000000000000",
       "object": "chat.completion.chunk",
-      "created": 0,
+      "created": 1700000000,
       "model": "gemini-pro",
       "choices": [
         {
@@ -39,9 +39,9 @@
       "usage": null
     },
     {
-      "id": "chatcmpl-1700000000",
+      "id": "chatcmpl-1700000000000000000",
       "object": "chat.completion.chunk",
-      "created": 0,
+      "created": 1700000000,
       "model": "gemini-pro",
       "choices": [
         {
@@ -56,9 +56,9 @@
       "usage": null
     },
     {
-      "id": "chatcmpl-1700000000",
+      "id": "chatcmpl-1700000000000000000",
       "object": "chat.completion.chunk",
-      "created": 0,
+      "created": 1700000000,
       "model": "",
       "choices": [
         {

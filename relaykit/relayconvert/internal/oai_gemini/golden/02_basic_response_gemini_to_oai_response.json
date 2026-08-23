@@ -25,9 +25,9 @@
     }
   },
   "expected_response": {
-    "id": "chatcmpl-1700000000",
+    "id": "chatcmpl-1700000000000000000",
     "object": "chat.completion",
-    "created": 0,
+    "created": 1700000000,
     "model": "gemini-pro",
     "choices": [
       {

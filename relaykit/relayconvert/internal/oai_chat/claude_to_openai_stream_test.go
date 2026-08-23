@@ -9,6 +9,7 @@ import (
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
+	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -518,5 +519,40 @@ data: {"type":"message_stop"}
 	}
 	if d := lastChunk.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 1800 || d.CachedCreationTokens != 248 {
 		t.Errorf("PromptTokensDetails = %+v, want cached=1800 creation=248", lastChunk.Usage.PromptTokensDetails)
+	}
+}
+
+// TestClaudeToOpenAIStreamConverter_RequestIDAndCreated 验证响应 ID 优先取请求 ID、
+// 时间戳取真实时钟（NowFunc），不再使用固定值。
+func TestClaudeToOpenAIStreamConverter_RequestIDAndCreated(t *testing.T) {
+	converter := &ClaudeToOpenAIStreamConverter{}
+	ctx := context.Background()
+
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":3,"output_tokens":0}}}
+
+data: {"type":"message_stop"}
+
+`
+	info := &mappedMeta{Values: convmeta.Values{OriginModelName: "gpt-4"}, requestID: "req-42"}
+
+	var chunks []*dto.ChatCompletionStreamResponse
+	chunkWriter := func(chunk any) error {
+		if c, ok := chunk.(*dto.ChatCompletionStreamResponse); ok {
+			chunks = append(chunks, c)
+		}
+		return nil
+	}
+
+	if err := converter.ConvertStreamResponse(ctx, info, strings.NewReader(claudeStream), chunkWriter); err != nil {
+		t.Fatalf("ConvertStreamResponse failed: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("Expected at least one chunk")
+	}
+	if chunks[0].ID != "chatcmpl-req-42" {
+		t.Errorf("ID = %q, want chatcmpl-req-42", chunks[0].ID)
+	}
+	if chunks[0].Created <= 0 {
+		t.Errorf("Created = %d, want > 0（真实时钟）", chunks[0].Created)
 	}
 }

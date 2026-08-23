@@ -8,6 +8,7 @@ import (
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
+	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -958,5 +959,75 @@ func TestGeminiToOpenAIStreamConverter_FileDataStreaming(t *testing.T) {
 	}
 	if !strings.Contains(content, "[file](gs://my-bucket/document.pdf)") {
 		t.Errorf("Content = %q, should contain file link", content)
+	}
+}
+
+// g2oMeta 实现 GetRequestID 能力接口的测试桩（响应 ID 合成用）。
+type g2oMeta struct {
+	convmeta.Values
+	requestID string
+}
+
+func (m *g2oMeta) GetRequestID() string { return m.requestID }
+
+// TestGeminiToOpenAIResponseConverter_RequestIDAndCreated 验证非流式响应 ID 优先取
+// 请求 ID、created 用真实时钟（NowFunc），不再使用固定值。
+func TestGeminiToOpenAIResponseConverter_RequestIDAndCreated(t *testing.T) {
+	converter := &GeminiToOpenAIResponseConverter{}
+	info := &g2oMeta{Values: convmeta.Values{OriginModelName: "gpt-4o"}, requestID: "req-42"}
+
+	geminiResp := &dto.GeminiChatResponse{
+		ModelName: "gemini-pro",
+		Candidates: []dto.GeminiCandidate{{
+			Index:        0,
+			FinishReason: "STOP",
+			Content:      &dto.GeminiContent{Role: "model", Parts: []dto.GeminiPart{{Text: "Hi"}}},
+		}},
+	}
+
+	result, err := converter.ConvertResponse(context.Background(), info, geminiResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse failed: %v", err)
+	}
+	openaiResp, ok := result.(*dto.ChatCompletionResponse)
+	if !ok {
+		t.Fatalf("Expected *dto.ChatCompletionResponse, got %T", result)
+	}
+	if openaiResp.ID != "chatcmpl-req-42" {
+		t.Errorf("ID = %q, want chatcmpl-req-42", openaiResp.ID)
+	}
+	if openaiResp.Created <= 0 {
+		t.Errorf("Created = %d, want > 0（真实时钟）", openaiResp.Created)
+	}
+}
+
+// TestGeminiToOpenAIStreamConverter_RequestIDAndCreated 验证流式首 chunk 的 ID/created
+// 与非流式同口径（请求 ID 合成 + NowFunc 时钟）。
+func TestGeminiToOpenAIStreamConverter_RequestIDAndCreated(t *testing.T) {
+	converter := &GeminiToOpenAIStreamConverter{}
+	info := &g2oMeta{Values: convmeta.Values{OriginModelName: "gpt-4o"}, requestID: "req-42"}
+
+	stream := `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"index":0}]}
+
+`
+	var chunks []*dto.ChatCompletionStreamResponse
+	chunkWriter := func(chunk any) error {
+		if c, ok := chunk.(*dto.ChatCompletionStreamResponse); ok {
+			chunks = append(chunks, c)
+		}
+		return nil
+	}
+
+	if err := converter.ConvertStreamResponse(context.Background(), info, strings.NewReader(stream), chunkWriter); err != nil {
+		t.Fatalf("ConvertStreamResponse failed: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("Expected at least one chunk")
+	}
+	if chunks[0].ID != "chatcmpl-req-42" {
+		t.Errorf("ID = %q, want chatcmpl-req-42", chunks[0].ID)
+	}
+	if chunks[0].Created <= 0 {
+		t.Errorf("Created = %d, want > 0（真实时钟）", chunks[0].Created)
 	}
 }

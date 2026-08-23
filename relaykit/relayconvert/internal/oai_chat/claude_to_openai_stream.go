@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/types"
 )
+
+// NowFunc 时间源（默认 time.Now）。claude→openai 流式转换器生成响应时间戳与兜底 ID 时使用，
+// 单测替换为固定时钟以保证输出确定性。
+var NowFunc = time.Now
 
 // ClaudeToOpenAIStreamConverter 将 Claude Messages API 流式响应转换为 OpenAI Chat Completions 流式响应。
 type ClaudeToOpenAIStreamConverter struct{}
@@ -45,9 +50,13 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
-	// 生成响应 ID
-	responseID := generateResponseID()
-	createdAt := getCurrentTimestamp()
+	// ID：请求 ID 合成（缺失时用 NowFunc 兜底）；时间戳取转换开始时刻
+	requestID := convmeta.RequestIDOf(info)
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", NowFunc().UnixNano())
+	}
+	responseID := fmt.Sprintf("chatcmpl-%s", requestID)
+	createdAt := NowFunc().Unix()
 
 	// 确定模型名
 	modelName := ""
@@ -285,15 +294,4 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 	}
 
 	return nil
-}
-
-// 辅助函数
-
-func generateResponseID() string {
-	// 基于时间戳的简单 ID
-	return fmt.Sprintf("chatcmpl-%d", getCurrentTimestamp())
-}
-
-func getCurrentTimestamp() int64 {
-	return 1700000000 // 测试用的固定时间戳
 }

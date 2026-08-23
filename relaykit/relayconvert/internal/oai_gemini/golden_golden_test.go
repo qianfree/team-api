@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
@@ -66,6 +67,11 @@ func TestGolden_Gemini_To_OpenAI_Response(t *testing.T) {
 	converter := &GeminiToOpenAIResponseConverter{}
 	ctx := context.Background()
 
+	// 冻结时钟：响应 ID 兜底与 created 均由 NowFunc 派生，保证 golden 确定
+	originalNow := NowFunc
+	NowFunc = func() time.Time { return time.Unix(1700000000, 0) }
+	defer func() { NowFunc = originalNow }()
+
 	testDir := "golden"
 	files, err := os.ReadDir(testDir)
 	if err != nil {
@@ -112,6 +118,11 @@ func TestGolden_Gemini_To_OpenAI_Response(t *testing.T) {
 func TestGolden_Gemini_To_OpenAI_Stream(t *testing.T) {
 	converter := &GeminiToOpenAIStreamConverter{}
 	ctx := context.Background()
+
+	// 冻结时钟：响应 ID 兜底与 created 均由 NowFunc 派生，保证 golden 确定
+	originalNow := NowFunc
+	NowFunc = func() time.Time { return time.Unix(1700000000, 0) }
+	defer func() { NowFunc = originalNow }()
 
 	testDir := "golden"
 	files, err := os.ReadDir(testDir)
@@ -168,6 +179,11 @@ func TestGolden_Roundtrip_OpenAI_Gemini(t *testing.T) {
 	reqConverter := &OpenAIToGeminiRequestConverter{}
 	respConverter := &GeminiToOpenAIResponseConverter{}
 	ctx := context.Background()
+
+	// 冻结时钟：响应 ID 兜底与 created 均由 NowFunc 派生，保证 golden 确定
+	originalNow := NowFunc
+	NowFunc = func() time.Time { return time.Unix(1700000000, 0) }
+	defer func() { NowFunc = originalNow }()
 
 	testDir := "golden"
 	files, err := os.ReadDir(testDir)
@@ -293,4 +309,3 @@ func convmetaValuesForG2O() *convmeta.Values {
 		UpstreamModelName:   "gpt-4o-2024-11-20",
 	}
 }
-

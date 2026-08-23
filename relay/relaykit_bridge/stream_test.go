@@ -323,3 +323,75 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// TestConvertStreamViaRelaykit_OpenAIToGemini_NormalCompletion openai 上游 → gemini 客户端：
+// 正常结束以转换器带 finishReason 的尾 chunk 收尾，不写 [DONE]（官方 Gemini SSE 无此哨兵），
+// 也不应漏出任何 chat 格式 chunk。
+func TestConvertStreamViaRelaykit_OpenAIToGemini_NormalCompletion(t *testing.T) {
+	openaiStream := `data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hello!"}}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":5,"total_tokens":13}}
+
+data: [DONE]
+
+`
+	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
+	rec := httptest.NewRecorder()
+
+	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+	if usage == nil || usage.PromptTokens != 8 || usage.CompletionTokens != 5 {
+		t.Errorf("usage = %+v, want prompt=8 completion=5", usage)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"text":"Hello!"`) {
+		t.Errorf("output missing streamed text, got: %s", body)
+	}
+	if !strings.Contains(body, `"finishReason":"STOP"`) {
+		t.Errorf("output missing finishReason=STOP tail chunk, got: %s", body)
+	}
+	if strings.Contains(body, "[DONE]") {
+		t.Errorf("output should not contain [DONE] for gemini client, got tail: %q", tail(body, 60))
+	}
+	if strings.Contains(body, "chat.completion.chunk") {
+		t.Error("output should not contain chat-format chunks for gemini client")
+	}
+	if info.StreamStatus == nil || info.StreamStatus.GetEndReason() != common.StreamEndReasonDone {
+		t.Errorf("expected end reason %q, got %v", common.StreamEndReasonDone, info.StreamStatus.GetEndReason())
+	}
+}
+
+// TestConvertStreamViaRelaykit_OpenAIToGemini_TruncatedStreamTerminal 截断流（上游无
+// finish_reason 即 EOF）时按 Gemini 格式补终止 chunk（finishReason=STOP），不写 [DONE]、
+// 不漏出 chat 格式终止 chunk。
+func TestConvertStreamViaRelaykit_OpenAIToGemini_TruncatedStreamTerminal(t *testing.T) {
+	openaiStream := `data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hi"}}]}
+
+`
+	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
+	rec := httptest.NewRecorder()
+
+	_, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"text":"Hi"`) {
+		t.Errorf("output missing streamed text, got: %s", body)
+	}
+	if !strings.Contains(body, `"finishReason":"STOP"`) {
+		t.Errorf("output missing gemini-format terminal chunk, got: %s", body)
+	}
+	if strings.Contains(body, "[DONE]") {
+		t.Errorf("output should not contain [DONE] for gemini client, got tail: %q", tail(body, 60))
+	}
+	if strings.Contains(body, "chat.completion.chunk") {
+		t.Error("output should not contain chat-format terminal chunk for gemini client")
+	}
+}
