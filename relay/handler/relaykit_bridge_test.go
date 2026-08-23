@@ -108,10 +108,31 @@ func TestConvertRequestViaRelaykit_SameFormatFallback(t *testing.T) {
 	}
 }
 
-func TestConvertRequestViaRelaykit_MalformedBodyFallback(t *testing.T) {
-	info := newRequestTestRelayInfo(constant.ProviderClaude, "claude-x", constant.RelayModeChatCompletions)
-	if _, ok, _ := convertRequestViaRelaykit(context.Background(), info, []byte(`not-json`)); ok {
-		t.Fatal("expected ok=false for malformed body")
+// TestConvertRequestViaRelaykit_MalformedBodyError 已匹配转换器方向的畸形请求体
+// 必须显式报错（legacy 回退已收割，不得静默回退 adaptor 路径）。
+func TestConvertRequestViaRelaykit_MalformedBodyError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		channel constant.ProviderType
+		inbound constant.RelayFormat
+		body    string
+	}{
+		{"openai 入站 × claude 上游", constant.ProviderClaude, constant.RelayFormatOpenAI, `not-json`},
+		{"responses 入站 × claude 上游", constant.ProviderClaude, constant.RelayFormatResponses, `not-json`},
+		{"claude 入站 × gemini 上游", constant.ProviderGemini, constant.RelayFormatClaude, `not-json`},
+		{"gemini 入站 × claude 上游", constant.ProviderClaude, constant.RelayFormatGemini, `not-json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := newRequestTestRelayInfo(tc.channel, "upstream-model", constant.RelayModeChatCompletions)
+			info.InboundFormat = tc.inbound
+			r, ok, err := convertRequestViaRelaykit(context.Background(), info, []byte(tc.body))
+			if ok || r != nil {
+				t.Fatalf("expected no output for malformed body, got ok=%v reader=%v", ok, r != nil)
+			}
+			if err == nil {
+				t.Fatal("expected explicit error for malformed body on a matched converter direction")
+			}
+		})
 	}
 }
 

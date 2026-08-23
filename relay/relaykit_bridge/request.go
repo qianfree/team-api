@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/logic/monitor"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -27,8 +26,9 @@ import (
 //     本层无需吸收任何后处理逻辑（与 handler 层接管 Responses 方向的 P0 模式本质不同）。
 
 // TryConvertInboundToOpenAIChat 尝试用 relaykit 转换器将 claude/gemini/responses 入站
-// 请求体转换为 OpenAI Chat 格式。成功返回 (转换后字节, true, nil)；失败/未覆盖返回
-// (nil, false, nil)，调用方（ConvertToOpenAI）按转换失败报错——legacy 回退已收割。
+// 请求体转换为 OpenAI Chat 格式。成功返回 (转换后字节, true, nil)；未覆盖的入站格式返回
+// (nil, false, nil)；已覆盖方向的解析/转换失败返回 error（调用方 ConvertToOpenAI 直接
+// 透传报错，不回退——legacy 回退已收割）。
 // 有状态 responses 请求（previous_response_id）命中非 Responses 原生上游时返回哨兵错误
 // ErrStatefulResponsesUnsupported（wrap），经 ConvertToOpenAI → adaptor → convertRequestBody
 // 透传至 relay_handler 的哨兵判定点驱动 FSM 换渠道——与 handler 桥（claude/gemini 链）
@@ -57,40 +57,18 @@ func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, 
 
 	spec, ok := relayconvert.LookupRequestConverter(converterID)
 	if !ok {
-		return nil, false, nil
+		return nil, false, fmt.Errorf("[relaykit] converter %q not registered", converterID)
 	}
 
-	var parsed any
-	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		var claudeReq dto.ClaudeRequest
-		if err := json.Unmarshal(body, &claudeReq); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse claude request failed, fallback to legacy: %v", err)
-			return nil, false, nil
+	// 解析与 Responses 预处理（哨兵 + stash）走共享入口（inbound.go），与 handler 桥同源
+	parsed, err := ParseInboundRequest(ctx, info.InboundFormat, body)
+	if err != nil {
+		return nil, false, fmt.Errorf("[relaykit] parse %s inbound request failed: %w", info.InboundFormat, err)
+	}
+	if info.InboundFormat == constant.RelayFormatResponses {
+		if err := PrepareResponsesInbound(info, parsed.(*dto.OpenAIResponsesRequest)); err != nil {
+			return nil, false, err
 		}
-		parsed = &claudeReq
-	case constant.RelayFormatGemini:
-		var geminiReq dto.GeminiChatRequest
-		if err := json.Unmarshal(body, &geminiReq); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse gemini request failed, fallback to legacy: %v", err)
-			return nil, false, nil
-		}
-		parsed = &geminiReq
-	case constant.RelayFormatResponses:
-		var responsesReq dto.OpenAIResponsesRequest
-		if err := json.Unmarshal(body, &responsesReq); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse responses request failed, fallback to legacy: %v", err)
-			return nil, false, nil
-		}
-		// 有状态请求（previous_response_id）命中非 Responses 原生上游：会话历史存于上游
-		// Responses 服务侧，降级转换会静默丢失全部上下文——返回哨兵错误驱动调度 FSM 换渠道
-		//（与 handler 桥 claude/gemini 链的同构语义）
-		if responsesReq.PreviousResponseID != "" {
-			return nil, false, fmt.Errorf("stateful responses (previous_response_id) not supported by chat-only channels: %w", constant.ErrStatefulResponsesUnsupported)
-		}
-		// stash 快照供响应侧合成 Responses 格式时 echo 请求参数（对齐 handler 桥行为）
-		info.ResponsesRequest = &responsesReq
-		parsed = &responsesReq
 	}
 
 	start := time.Now()
@@ -98,14 +76,12 @@ func TryConvertInboundToOpenAIChat(ctx context.Context, info *common.RelayInfo, 
 	duration := time.Since(start)
 	monitor.TrackConverterCall(converterID, string(info.InboundFormat), string(constant.RelayFormatOpenAI), duration, err)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] convert inbound request failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, false, nil
+		return nil, false, fmt.Errorf("[relaykit] convert inbound request failed (converter=%s): %w", converterID, err)
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] marshal converted request failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, false, nil
+		return nil, false, fmt.Errorf("[relaykit] marshal converted request failed (converter=%s): %w", converterID, err)
 	}
 	return out, true, nil
 }

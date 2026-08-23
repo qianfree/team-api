@@ -59,6 +59,27 @@ func TestTryConvertInboundToOpenAIChat_ResponsesInbound(t *testing.T) {
 	}
 }
 
+// TestTryConvertInboundToOpenAIChat_MalformedBodyError 已覆盖方向（claude/gemini/responses
+// 入站）的畸形请求体必须显式报错（legacy 回退已收割，不得静默返回 ok=false）。
+func TestTryConvertInboundToOpenAIChat_MalformedBodyError(t *testing.T) {
+	for _, inbound := range []constant.RelayFormat{
+		constant.RelayFormatClaude,
+		constant.RelayFormatGemini,
+		constant.RelayFormatResponses,
+	} {
+		info := &common.RelayInfo{
+			InboundFormat: inbound,
+			ChannelMeta: &common.ChannelMeta{
+				ChannelType:       int(constant.ProviderOpenAI),
+				UpstreamModelName: "gpt-4o",
+			},
+		}
+		if _, ok, err := TryConvertInboundToOpenAIChat(context.Background(), info, []byte(`not-json`)); ok || err == nil {
+			t.Errorf("%s inbound malformed body should return explicit error, got ok=%v err=%v", inbound, ok, err)
+		}
+	}
+}
+
 // TestTryConvertChatToResponsesRequestViaRelaykit ChatViaResponses 请求侧第二跳：
 // 未置 UseResponsesAPI 时不得接管（防误伤普通 chat 渠道）。
 func TestTryConvertChatToResponsesRequestViaRelaykit(t *testing.T) {
