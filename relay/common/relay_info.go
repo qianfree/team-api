@@ -360,24 +360,38 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 	return info.convOptions
 }
 
-// buildConvOptions 从配置系统构建转换选项快照
+// buildConvOptions 构建转换选项快照：优先走宿主注入的配置 provider
+// （SetConvOptionsProvider，internal/logic/common 读 sys_options 组装），
+// 未注入（单测 / 独立嵌入场景）回退到包内默认值。
+// OpenRouterDialect 属渠道属性，始终按当前渠道类型覆写。
 func (info *RelayInfo) buildConvOptions() *convmeta.Options {
-	opts := &convmeta.Options{
-		Claude: convmeta.ClaudeOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			DefaultMaxTokens:                      defaultMaxTokensForClaude,
-		},
-		Gemini: convmeta.GeminiOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			FunctionCallThoughtSignatureEnabled:   true, // TODO: 从配置读取
-			SupportsImagine:                       supportsImagineModel,
-			SafetySetting:                         nil, // TODO: 从配置读取
-		},
-		OpenRouterDialect:      info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
-		PreserveThinkingSuffix: nil, // TODO: 实现黑名单检查
+	opts := convOptionsFromProvider(info.Context)
+	if opts == nil {
+		opts = &convmeta.Options{
+			Claude: convmeta.ClaudeOptions{
+				ThinkingAdapterEnabled:                true,
+				ThinkingAdapterBudgetTokensPercentage: 0.5,
+				DefaultMaxTokens:                      defaultMaxTokensForClaude,
+			},
+			Gemini: convmeta.GeminiOptions{
+				ThinkingAdapterEnabled:                true,
+				ThinkingAdapterBudgetTokensPercentage: 0.5,
+				FunctionCallThoughtSignatureEnabled:   true,
+				SupportsImagine:                       supportsImagineModel,
+				SafetySetting:                         nil,
+			},
+			PreserveThinkingSuffix: nil,
+		}
+	} else {
+		// provider 未填的函数型钩子按包内默认补齐（配置侧只覆盖标量项）
+		if opts.Claude.DefaultMaxTokens == nil {
+			opts.Claude.DefaultMaxTokens = defaultMaxTokensForClaude
+		}
+		if opts.Gemini.SupportsImagine == nil {
+			opts.Gemini.SupportsImagine = supportsImagineModel
+		}
 	}
+	opts.OpenRouterDialect = info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter)
 	return opts
 }
 

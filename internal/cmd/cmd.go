@@ -38,6 +38,7 @@ import (
 	"github.com/qianfree/team-api/internal/handler/relay"
 	setupHandler "github.com/qianfree/team-api/internal/handler/setup"
 	"github.com/qianfree/team-api/internal/plugin"
+	relaycommon "github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/web"
 )
 
@@ -104,6 +105,10 @@ var (
 			monitor.InitRelaykitTracker()
 			monitor.InitDispatchTracker()
 			dispatchadapter.SetBreakerOpenHook(monitor.TrackDispatchBreakerOpen)
+
+			// 注入 relay 转换选项的配置读取函数（relay/common 不 import internal，
+			// 经钩子单向获取 sys_options 组装的 convmeta.Options 快照）
+			relaycommon.SetConvOptionsProvider(common.RelayConvOptionsProvider)
 
 			// Ensure partitioned tables have current+future partitions
 			if partitionErr := common.EnsurePartitions(ctx); partitionErr != nil {
