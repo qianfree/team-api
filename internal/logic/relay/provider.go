@@ -1096,6 +1096,31 @@ func touchChannelKeyLastUsed(ctx context.Context, keyID int64) {
 	}
 }
 
+// RecordChannelKeyError 凭证类错误（401/403/无效密钥）落库 Key 的 last_error（fire-and-forget）。
+// 凭证冷却只存在于 Redis（credcd 标记 + TTL），不落库、不进健康 EWMA/熔断体系，
+// 管理后台此前无任何页面出口——单 Key 渠道全部冷却 = 渠道事实不可用但页面全绿。
+// 此处把最后一次凭证错误同步到 chn_channel_keys.last_error 供 Key 列表展示。
+// 只更新 last_error 不动 status：瞬态凭证错误（如上游余额待充值）不应永久改变调度行为，
+// 冷却到期自动恢复；status=exhausted 留给运营手动判断。
+func RecordChannelKeyError(keyID int64, errMsg string) {
+	if keyID <= 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// 上游错误体可能夹带非法 UTF-8 字节，PostgreSQL 协议层会拒绝写入
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500]
+		}
+		msg := fmt.Sprintf("[凭证错误 %s] %s", gtime.Now().Format("Y-m-d H:i:s"), sanitizeUTF8(errMsg))
+		if _, err := dao.ChnChannelKeys.Ctx(ctx).Where("id", keyID).
+			Data(do.ChnChannelKeys{LastError: msg}).Update(); err != nil {
+			g.Log().Warningf(ctx, "[DataProvider] 更新渠道 Key LastError 失败: keyID=%d err=%v", keyID, err)
+		}
+	}()
+}
+
 // refreshOAuthKey 刷新 OAuth 令牌并更新数据库
 func refreshOAuthKey(ctx context.Context, keyID int64, encKey []byte) (string, error) {
 	value, err, _ := oauthRefreshGroup.Do(strconv.FormatInt(keyID, 10), func() (any, error) {

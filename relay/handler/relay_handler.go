@@ -16,6 +16,7 @@ import (
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	commonlogic "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/logic/monitor"
+	relaylogic "github.com/qianfree/team-api/internal/logic/relay"
 	tenantlogic "github.com/qianfree/team-api/internal/logic/tenant"
 	"github.com/qianfree/team-api/relay/channel"
 	"github.com/qianfree/team-api/relay/common"
@@ -782,6 +783,14 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			decision, backoff := sess.Report(reportCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
 			reportCancel()
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
+
+			// 凭证类错误（401/403/无效密钥）：落库 Key last_error 供管理后台展示。
+			// 调度器对此类错误只冷却 Key（Redis credcd 标记）不进健康/熔断体系，
+			// 无任何页面出口——单 Key 渠道全部冷却时渠道事实不可用但页面全绿。
+			// 与 sess.Report 内部同一份分类结果（纯函数重算，无状态漂移）。
+			if selection.KeyID > 0 && dispatch.Classify(dispatchStatusCode(err), err, delivery) == dispatch.ErrClassCredential {
+				relaylogic.RecordChannelKeyError(selection.KeyID, err.Error())
+			}
 
 			if decision != dispatch.DecisionAbort {
 				g.Log().Warningf(ctx, "[RelayHandler] DoResponse failed (will retry): adaptor=%s, inboundFormat=%s, channel=%d(%s) model=%s attempt=%d error=%v latency=%.0fms decision=%s",

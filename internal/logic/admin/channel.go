@@ -684,6 +684,7 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 			Name:      k.Name,
 			Status:    k.Status,
 			KeyType:   k.KeyType,
+			LastError: k.LastError,
 			CreatedAt: k.CreatedAt.String(),
 		}
 		if item.KeyType == "" {
@@ -692,6 +693,8 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 		if k.TokenExpiresAt != nil {
 			item.TokenExpiresAt = k.TokenExpiresAt.String()
 		}
+		// 凭证冷却剩余秒数（调度器 401/403 后冷却该 Key，Redis 瞬态标记）
+		item.CooldownRemainingS = dispatchadapter.CredentialCooldownRemaining(ctx, k.ID)
 		list[i] = item
 	}
 
@@ -758,7 +761,32 @@ func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbiliti
 		list[i] = item
 	}
 
-	return &v1.ChannelAbilitiesGetRes{List: list}, nil
+	return &v1.ChannelAbilitiesGetRes{
+		List:                list,
+		CredentialAllCooled: s.allActiveKeysCooling(ctx, req.ChannelID),
+	}, nil
+}
+
+// allActiveKeysCooling 判断渠道的全部 active Key 是否都在凭证冷却中。
+// 凭证类错误（401/403）只冷却 Key 不进健康/熔断体系，全部冷却时渠道事实不可被调度，
+// 但各模型健康分照常显示正常——此判定供渠道详情叠加"凭证冷却中"标记。
+// 无 active Key 或查询失败时返回 false（无法判定时不误报）。
+func (s *sAdmin) allActiveKeysCooling(ctx context.Context, channelID int64) bool {
+	var keyIDs []int64
+	err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("channel_id", channelID).
+		Where("status", "active").
+		Fields("id").
+		Scan(&keyIDs)
+	if err != nil || len(keyIDs) == 0 {
+		return false
+	}
+	for _, id := range keyIDs {
+		if dispatchadapter.CredentialCooldownRemaining(ctx, id) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // ModelHealthData 模型健康数据

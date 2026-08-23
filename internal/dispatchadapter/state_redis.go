@@ -562,6 +562,21 @@ func (s *RedisState) CoolCredential(ctx context.Context, keyID int64, ttl time.D
 	}
 }
 
+// CredentialCooldownRemaining 返回渠道 Key 的凭证冷却剩余秒数（0 = 未在冷却）。
+// 凭证冷却是调度器内部的瞬态状态（Redis credcd 标记 + TTL），无任何管理页面出口；
+// 本函数供管理后台 Key 列表/渠道详情展示。读 TTL 而非 EXISTS，让前端能显示剩余时间。
+// Redis 故障时返回 0：仅影响展示精度，不影响调度行为（调度走 IsCredentialCooled 的本地镜像降级）。
+func CredentialCooldownRemaining(ctx context.Context, keyID int64) int {
+	v, err := g.Redis().Do(ctx, "TTL", keyCredCD+strconv.FormatInt(keyID, 10))
+	if err != nil || v == nil {
+		return 0
+	}
+	if s := v.Int(); s > 0 {
+		return s
+	}
+	return 0
+}
+
 // ---------------------------------------------------------------------------
 // 运行时读值（供目录快照合并健康/熔断/负载）
 // ---------------------------------------------------------------------------

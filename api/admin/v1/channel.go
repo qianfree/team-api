@@ -225,13 +225,15 @@ type ChannelKeyListRes struct {
 
 // ChannelKeyItem 渠道 Key 信息
 type ChannelKeyItem struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name"`
-	ApiKey         string `json:"api_key"`
-	Status         string `json:"status"`
-	KeyType        string `json:"key_type"`
-	TokenExpiresAt string `json:"token_expires_at"`
-	CreatedAt      string `json:"created_at"`
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	ApiKey             string `json:"api_key"`
+	Status             string `json:"status"`
+	KeyType            string `json:"key_type"`
+	TokenExpiresAt     string `json:"token_expires_at"`
+	LastError          string `json:"last_error" dc:"最后一次错误信息（凭证类错误带 [凭证错误 时间] 前缀）"`
+	CooldownRemainingS int    `json:"cooldown_remaining_s" dc:"凭证冷却剩余秒数（401/403 后调度器冷却该 Key），0 = 未在冷却"`
+	CreatedAt          string `json:"created_at"`
 }
 
 // ChannelAbilitiesGetReq 获取渠道模型能力请求
@@ -242,6 +244,9 @@ type ChannelAbilitiesGetReq struct {
 
 type ChannelAbilitiesGetRes struct {
 	List []AbilityItem `json:"list"`
+	// 全部 active Key 均在凭证冷却中：该渠道当前不可被调度（调度器 pickKey 找不到可用凭证），
+	// 但凭证类错误不进健康 EWMA/熔断体系，各模型健康分/熔断仍显示正常——前端需叠加此标记展示
+	CredentialAllCooled bool `json:"credential_all_cooled" dc:"全部 active Key 凭证冷却中（渠道当前不可调度）"`
 }
 
 // ChannelHealthTrendReq 渠道健康趋势请求

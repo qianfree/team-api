@@ -194,7 +194,7 @@ const abilityColumns: TableColumnData[] = [
 
   // 健康监控列（放在右侧，操作按钮前面）
   {
-    title: '健康状态', dataIndex: 'health_score', width: 120,
+    title: '健康状态', dataIndex: 'health_score', width: 160,
     render({ record }) {
       return renderHealthBadge(record)
     },
@@ -233,7 +233,10 @@ async function fetchAbilities() {
   abilitiesLoading.value = true
   try {
     const res: any = await request.get(`/admin/channels/${channelId}/abilities`)
-    abilitiesData.value = res.data?.data?.list || res.data?.list || []
+    const raw = res.data?.data || res.data || {}
+    // 渠道级凭证冷却标记烘焙进每行记录：ATable 的 render 闭包不追踪外部 ref，落在数据上才可靠
+    const allCooled = !!raw.credential_all_cooled
+    abilitiesData.value = (raw.list || []).map((a: any) => ({ ...a, cred_all_cooled: allCooled }))
   } catch { abilitiesData.value = [] } finally { abilitiesLoading.value = false }
 }
 
@@ -304,26 +307,35 @@ async function handleDeleteAbility(id: number) {
 }
 
 // 新增：健康徽章渲染函数
+// cred_all_cooled：渠道全部 active Key 凭证冷却中（渠道事实不可调度，但凭证错误不进
+// 健康体系，健康分/熔断照常为绿）——叠加橙色标记，避免"页面全绿但请求全挂"的误导
 function renderHealthBadge(record: any) {
+  let badge: ReturnType<typeof h>
   if (record.health_score === null || record.health_score === undefined) {
-    return h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
+    badge = h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
       h('div', {
         style: 'width: 8px; height: 8px; border-radius: 50%; background: #94a3b8'
       }),
       h('span', { style: 'color: var(--color-text-3); font-size: 13px' }, '无数据'),
     ])
+  } else {
+    const score = Math.round(record.health_score)
+    const color = healthColor(score)
+    const statusText = score >= 80 ? '健康' : score >= 50 ? '降级' : '故障'
+
+    badge = h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
+      h('div', {
+        style: `width: 8px; height: 8px; border-radius: 50%; background: ${color}`
+      }),
+      h('span', { style: `color: ${color}; font-weight: 500; font-size: 13px` }, statusText),
+      h('span', { style: 'color: var(--color-text-3); font-size: 12px; margin-left: 2px' }, `(${score})`),
+    ])
   }
 
-  const score = Math.round(record.health_score)
-  const color = healthColor(score)
-  const statusText = score >= 80 ? '健康' : score >= 50 ? '降级' : '故障'
-
-  return h('div', { style: 'display: flex; align-items: center; gap: 6px' }, [
-    h('div', {
-      style: `width: 8px; height: 8px; border-radius: 50%; background: ${color}`
-    }),
-    h('span', { style: `color: ${color}; font-weight: 500; font-size: 13px` }, statusText),
-    h('span', { style: 'color: var(--color-text-3); font-size: 12px; margin-left: 2px' }, `(${score})`),
+  if (!record.cred_all_cooled) return badge
+  return h('div', { style: 'display: flex; align-items: center; gap: 6px; flex-wrap: wrap' }, [
+    badge,
+    h(Tag, { color: 'orange', size: 'small' }, () => '凭证冷却中'),
   ])
 }
 
@@ -940,10 +952,12 @@ onBeforeUnmount(() => {
   if (resizeTimer) clearTimeout(resizeTimer)
   if (abilitySaveTimer) clearTimeout(abilitySaveTimer)
   if (trendChart) { trendChart.dispose(); trendChart = null }
+  stopKeyClock()
 })
 
 function onTabChange(key: string) {
-  if (key === 'abilities' && abilitiesData.value.length === 0) fetchAbilities()
+  // 凭证冷却标记易变（300s 到期自动恢复），上次抓取时全冷却则重进 tab 时刷新
+  if (key === 'abilities' && (abilitiesData.value.length === 0 || abilitiesData.value[0]?.cred_all_cooled)) fetchAbilities()
   if (key === 'test' && abilitiesData.value.length === 0) fetchAbilities()
   if (key === 'health_trend' && trendData.value.length === 0) fetchHealthTrend()
   if (key === 'debug_logs') {
@@ -951,6 +965,81 @@ function onTabChange(key: string) {
     initDebugTarget()
   }
 }
+
+// === Channel Keys（渠道 Key 列表 + 凭证冷却状态） ===
+const keysData = ref<any[]>([])
+const keysLoading = ref(false)
+let keyClockTimer: any = null
+
+function stopKeyClock() {
+  if (keyClockTimer) { clearInterval(keyClockTimer); keyClockTimer = null }
+}
+
+// 冷却剩余秒数倒计时：接口返回的是抓取时刻快照，前端直接递减数据本身驱动重渲染
+// （render 闭包只读 record 字段，不依赖外部 ref 的依赖收集是否被表格 cell 组件追踪）
+function startKeyClock() {
+  if (keyClockTimer) return
+  keyClockTimer = setInterval(() => {
+    let anyCooling = false
+    keysData.value = keysData.value.map(k => {
+      if (k.cooldown_remaining_s > 0) {
+        anyCooling = true
+        return { ...k, cooldown_remaining_s: k.cooldown_remaining_s - 1 }
+      }
+      return k
+    })
+    if (!anyCooling) stopKeyClock()
+  }, 1000)
+}
+
+async function fetchKeys() {
+  keysLoading.value = true
+  try {
+    const res: any = await request.get(`/admin/channels/${channelId}/keys`)
+    const list = res.data?.data?.list || res.data?.list || []
+    keysData.value = list
+    if (keysData.value.some(k => k.cooldown_remaining_s > 0)) {
+      startKeyClock()
+    } else {
+      stopKeyClock()
+    }
+  } catch { keysData.value = [] } finally { keysLoading.value = false }
+}
+
+const keyStatusColor: Record<string, string> = { active: 'green', disabled: 'orangered', exhausted: 'orange' }
+const keyStatusLabel: Record<string, string> = { active: '可用', disabled: '禁用', exhausted: '额度耗尽' }
+
+const keyColumns: TableColumnData[] = [
+  { title: 'Key 名称', dataIndex: 'name', width: 130, render: ({ record }) => record.name || `#${record.id}` },
+  {
+    title: '类型', dataIndex: 'key_type', width: 85,
+    render: ({ record }) => h(Tag, { size: 'small' }, () => record.key_type === 'oauth' ? 'OAuth' : 'API Key'),
+  },
+  {
+    title: '状态', dataIndex: 'status', width: 90,
+    render: ({ record }) => h(Tag, { size: 'small', color: keyStatusColor[record.status] || 'gray' },
+      () => keyStatusLabel[record.status] || record.status),
+  },
+  {
+    title: '凭证冷却', dataIndex: 'cooldown_remaining_s', width: 115,
+    render: ({ record }) => {
+      if (record.cooldown_remaining_s > 0) {
+        return h(Tag, { color: 'orange', size: 'small' }, () => `冷却中 ${record.cooldown_remaining_s}s`)
+      }
+      return h('span', { style: 'color: var(--color-text-4); font-size: 12px' }, '—')
+    },
+  },
+  {
+    title: '最近错误', dataIndex: 'last_error', ellipsis: true, tooltip: true, width: 240,
+    render: ({ record }) => record.last_error
+      ? h('span', { style: 'color: #f53f3f; font-size: 12px' }, record.last_error)
+      : '-',
+  },
+  {
+    title: '创建时间', dataIndex: 'created_at', width: 105,
+    render: ({ record }) => h('span', { style: 'font-size:12px' }, String(record.created_at || '').replace('T', ' ').slice(0, 10)),
+  },
+]
 
 // === Update Key ===
 const showUpdateKeyModal = ref(false)
@@ -966,6 +1055,7 @@ async function handleUpdateKey(done: () => void) {
     done()
     newApiKey.value = ''
     fetchDetail()
+    fetchKeys()
   } catch { return false } finally { updateKeyLoading.value = false }
 }
 
@@ -994,6 +1084,7 @@ async function handleClone(done: () => void) {
 
 onMounted(() => {
   fetchDetail()
+  fetchKeys()
   window.addEventListener('resize', onWindowResize)
 })
 
@@ -1096,23 +1187,24 @@ function formatHeaders(headers: Record<string, string>): string {
               </ADescriptions>
             </ACard>
 
-            <ACard :bordered="false" class="mb-4" title="API Key">
-              <ADescriptions :column="2" bordered size="medium">
-                <ADescriptionsItem label="Key 名称">{{ detail.key_name || 'default' }}</ADescriptionsItem>
-                <ADescriptionsItem label="Key 类型">
-                  <ATag size="small">{{ detail.key_type === 'oauth' ? 'OAuth' : 'API Key' }}</ATag>
-                </ADescriptionsItem>
-                <ADescriptionsItem label="Key 状态">
-                  <ATag :color="detail.key_status === 'active' ? 'green' : 'orangered'" size="small">
-                    {{ detail.key_status === 'active' ? '正常' : detail.key_status || 'N/A' }}
-                  </ATag>
-                </ADescriptionsItem>
-                <ADescriptionsItem v-if="detail.token_expires_at" label="Token 过期时间">
-                  {{ detail.token_expires_at }}
-                </ADescriptionsItem>
-              </ADescriptions>
-              <div style="margin-top: 12px;">
+            <ACard :bordered="false" class="mb-4" title="渠道 Key">
+              <template #extra>
                 <AButton type="outline" size="small" @click="showUpdateKeyModal = true">更新 Key</AButton>
+              </template>
+              <ATable
+                :columns="keyColumns"
+                :data="keysData"
+                :loading="keysLoading"
+                :bordered="false"
+                :stripe="true"
+                :pagination="false"
+                :scroll-x="780"
+                size="small"
+                row-key="id"
+              />
+              <div class="mt-2 text-xs" style="color: var(--color-text-3)">
+                凭证冷却：Key 因上游 401/403（密钥无效或上游账户额度不足）被调度器临时停用，到期自动恢复。
+                全部 Key 同时冷却时该渠道暂不可用，期间的模型健康分为历史数据。
               </div>
             </ACard>
 
@@ -1127,6 +1219,16 @@ function formatHeaders(headers: Record<string, string>): string {
                   <AButton type="primary" @click="openAddAbilityModal">添加能力</AButton>
                 </div>
               </template>
+              <AAlert
+                v-if="abilitiesData.length > 0 && abilitiesData[0]?.cred_all_cooled"
+                type="warning"
+                class="mb-3"
+                show-icon
+              >
+                <template #title>该渠道全部 Key 处于凭证冷却中，当前无法调度</template>
+                渠道 Key 因上游凭证错误（401/403，如密钥失效或上游账户额度不足）被调度器临时停用，冷却到期自动恢复。
+                期间各模型的健康分 / 熔断状态为历史数据（凭证错误不计入健康体系），实际请求会返回"当前模型暂时不可用"。
+              </AAlert>
               <div class="flex items-center justify-between mb-4">
                 <span style="color: var(--color-text-3)">已配置 {{ abilitiesData.length }} 个模型能力</span>
               </div>
