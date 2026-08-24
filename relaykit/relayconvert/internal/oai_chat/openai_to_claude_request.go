@@ -103,12 +103,34 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 
 	// 转换 messages
 	systemPrompts := make([]string, 0)
+	// 连续 tool 消息聚合缓冲：Claude 要求同一 assistant tool_use 轮的全部 tool_result 位于
+	// 紧随的下一条 user 消息——逐条映射为多条 user/tool_result 消息违反该约束，并行工具调用
+	//（codex 等客户端对一轮多个 function_call 各回一条 function_call_output）必被上游 400
+	var pendingToolResults []dto.ClaudeContentBlock
+	flushToolResults := func() {
+		if len(pendingToolResults) == 0 {
+			return
+		}
+		claudeReq.Messages = append(claudeReq.Messages, dto.ClaudeMessage{Role: "user", Content: pendingToolResults})
+		pendingToolResults = nil
+	}
 	for _, msg := range openaiReq.Messages {
 		if msg.Role == "system" {
+			flushToolResults()
 			// system 消息放入独立的 System 字段
 			systemPrompts = append(systemPrompts, shared.MapTextContent(msg.Content))
 			continue
 		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			// tool 结果：聚合为下一条 user 消息的 tool_result 块（连续 tool 消息合并）
+			pendingToolResults = append(pendingToolResults, dto.ClaudeContentBlock{
+				Type:      "tool_result",
+				ToolUseID: msg.ToolCallID,
+				Content:   shared.MapTextContent(msg.Content),
+			})
+			continue
+		}
+		flushToolResults()
 
 		claudeMsg := dto.ClaudeMessage{
 			Role: msg.Role,
@@ -142,20 +164,6 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			}
 		}
 
-		// 转换 tool 结果（role 为 tool 的消息）
-		if msg.Role == "tool" && msg.ToolCallID != "" {
-			// tool 结果内容
-			resultText := shared.MapTextContent(msg.Content)
-			claudeMsg.Role = "user" // Claude 用 "user" 角色承载 tool 结果
-			claudeMsg.Content = []dto.ClaudeContentBlock{
-				{
-					Type:      "tool_result",
-					ToolUseID: msg.ToolCallID,
-					Content:   resultText,
-				},
-			}
-		}
-
 		// 空内容兜底：以上转换后仍无任何内容块（content 为 nil 或空数组——如纯文本为空
 		// 且无 tool_calls）时，Claude 拒绝 null/空 content——补单个空格 text 块
 		//（对齐 legacy o2cConvertAssistantMessage）
@@ -166,6 +174,7 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 
 		claudeReq.Messages = append(claudeReq.Messages, claudeMsg)
 	}
+	flushToolResults()
 
 	// 设置 system prompt
 	if len(systemPrompts) > 0 {
@@ -176,30 +185,39 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	if len(openaiReq.Tools) > 0 {
 		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
 
-		// 转换 tool_choice
-		if openaiReq.ToolChoice != nil {
+		// 转换 tool_choice。parallel_tool_calls=false 透传为 disable_parallel_tool_use
+		//（codex 等客户端默认单工具串行，对齐 new-api 的映射；Claude 无 none 对应物，不设置）
+		if openaiReq.ToolChoice != nil || openaiReq.ParallelToolCalls != nil {
+			claudeChoice := &dto.ClaudeToolChoice{}
 			switch tc := openaiReq.ToolChoice.(type) {
 			case string:
-				if tc == "auto" {
-					claudeReq.ToolChoice = map[string]any{"type": "auto"}
-				} else if tc == "required" {
-					claudeReq.ToolChoice = map[string]any{"type": "any"}
-				} else if tc == "none" {
+				switch tc {
+				case "auto":
+					claudeChoice.Type = "auto"
+				case "required":
+					claudeChoice.Type = "any"
+				case "none":
 					// 不设置 tool_choice，或置为 null
-					claudeReq.ToolChoice = nil
 				}
 			case map[string]any:
 				// {"type": "function", "function": {"name": "get_weather"}}
 				if tc["type"] == "function" {
 					if fn, ok := tc["function"].(map[string]any); ok {
 						if name, ok := fn["name"].(string); ok {
-							claudeReq.ToolChoice = map[string]any{
-								"type": "tool",
-								"name": name,
-							}
+							claudeChoice.Type = "tool"
+							claudeChoice.Name = name
 						}
 					}
 				}
+			}
+			if openaiReq.ParallelToolCalls != nil {
+				claudeChoice.DisableParallelToolUse = !*openaiReq.ParallelToolCalls
+				if claudeChoice.Type == "" {
+					claudeChoice.Type = "auto"
+				}
+			}
+			if claudeChoice.Type != "" {
+				claudeReq.ToolChoice = claudeChoice
 			}
 		}
 	}
@@ -209,15 +227,26 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 
 	// 请求体 reasoning_effort → thinking（legacy o2cConvertReasoningEffort 的迁移）。
 	// 显式请求参数优先于模型名后缀，故在适配器之后应用；thinking 与 temperature 修改不兼容，须置 1.0
-	if openaiReq.ReasoningEffort != "" {
+	if openaiReq.ReasoningEffort == "none" {
+		// 显式关闭推理：覆盖模型名后缀注入的 thinking（显式参数优先）
+		claudeReq.Thinking = nil
+	} else if openaiReq.ReasoningEffort != "" {
 		budget := 8192
 		switch openaiReq.ReasoningEffort {
-		case "low":
+		case "minimal", "low":
 			budget = 1024
 		case "medium":
 			budget = 8192
-		case "high":
+		case "high", "xhigh", "max", "ultra":
 			budget = 32768
+		}
+		// Anthropic 约束：thinking.budget_tokens 须 ≥1024 且严格小于 max_tokens。codex 等客户端
+		// 默认 reasoning.effort=medium 且不带 max_output_tokens（网关默认 max_tokens=4096），
+		// budget 8192 装不进 4096 → 上游 400 "budget_tokens must be less than max_tokens"。
+		// 对齐 ApplyThinkingToClaude 的处理：客户端 max_tokens 装不下时抬高 max_tokens
+		if claudeReq.MaxTokens != nil && int(*claudeReq.MaxTokens) <= budget {
+			raised := uint(budget + 1024)
+			claudeReq.MaxTokens = &raised
 		}
 		claudeReq.Thinking = &dto.ClaudeThinking{
 			Type:         "enabled",

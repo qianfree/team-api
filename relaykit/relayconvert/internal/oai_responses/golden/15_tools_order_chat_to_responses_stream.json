@@ -129,6 +129,7 @@
       "Type": "response.output_item.added",
       "Data": {
         "item": {
+          "arguments": "",
           "call_id": "call_A",
           "id": "call_A",
           "name": "weather",
@@ -152,6 +153,7 @@
       "Type": "response.output_item.added",
       "Data": {
         "item": {
+          "arguments": "",
           "call_id": "call_B",
           "id": "call_B",
           "name": "run",

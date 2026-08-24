@@ -124,6 +124,7 @@
         "content": "测试都通过了，帮我提交"
       }
     ],
+    "parallel_tool_calls": false,
     "response_format": {
       "type": "json_schema",
       "json_schema": {

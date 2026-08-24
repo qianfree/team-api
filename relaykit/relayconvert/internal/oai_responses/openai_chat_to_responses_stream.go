@@ -285,11 +285,12 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 					if err := emit("response.output_item.added", map[string]any{
 						"output_index": outputIndex,
 						"item": map[string]any{
-							"type":    "function_call",
-							"id":      callID,
-							"call_id": callID,
-							"name":    tc.Function.Name,
-							"status":  "in_progress",
+							"type":      "function_call",
+							"id":        callID,
+							"call_id":   callID,
+							"name":      tc.Function.Name,
+							"arguments": "", // codex 等严格客户端的 FunctionCall.arguments 为必填键，缺失解析失败（真实 OpenAI 恒带空串）
+							"status":    "in_progress",
 						},
 					}); err != nil {
 						return err

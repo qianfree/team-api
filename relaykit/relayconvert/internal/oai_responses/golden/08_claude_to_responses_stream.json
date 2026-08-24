@@ -139,6 +139,7 @@
       "Type": "response.output_item.added",
       "Data": {
         "item": {
+          "arguments": "",
           "call_id": "toolu_01T",
           "id": "toolu_01T",
           "name": "get_weather",

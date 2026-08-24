@@ -112,6 +112,14 @@ func buildChatRequest(info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto
 	if len(req.ToolChoice) > 0 {
 		chatReq.ToolChoice = r2cConvertToolChoice(req.ToolChoice)
 	}
+	// parallel_tool_calls 透传（codex 默认 false=单工具串行，claude 上游映射为
+	// disable_parallel_tool_use；false 必须以非 nil 指针传递，不能用 omitempty 语义丢值）
+	if len(req.ParallelToolCalls) > 0 {
+		var ptc bool
+		if err := json.Unmarshal(req.ParallelToolCalls, &ptc); err == nil {
+			chatReq.ParallelToolCalls = &ptc
+		}
+	}
 	// reasoning_effort：客户端显式设置优先；为空时回退宿主注入的 thinking 后缀映射
 	//（吸收旧路径 adaptor 的 injectReasoningEffort「仅缺席时注入」语义）
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {

@@ -77,4 +77,48 @@ func systemToString(t *testing.T, system any) string {
 	}
 }
 
+// TestResponsesToClaudeChain_ParallelToolResults 回归：codex 对 Claude 单轮并行多工具
+// （assistant 一轮多个 function_call）各回一条 function_call_output——Claude 要求全部
+// tool_result 位于紧随的下一条 user 消息，逐条映射为连续多条 user/tool_result 消息会被
+// 上游 400 拒绝。链式转换必须聚合为单条 user 消息（多个 tool_result 块）。
+func TestResponsesToClaudeChain_ParallelToolResults(t *testing.T) {
+	spec, ok := relayconvert.LookupRequestConverter(relayconvert.ConverterOpenAIResponsesToClaudeMessages)
+	require.True(t, ok, "chain converter not registered")
+
+	req := &dto.OpenAIResponsesRequest{
+		Model: "claude-sonnet-4-5",
+		Input: json.RawMessage(`[
+			{"type": "message", "role": "user", "content": "看看两个文件"},
+			{"type": "function_call", "call_id": "call_A", "name": "shell", "arguments": "{\"command\":[\"cat a\"]}"},
+			{"type": "function_call", "call_id": "call_B", "name": "shell", "arguments": "{\"command\":[\"cat b\"]}"},
+			{"type": "function_call_output", "call_id": "call_A", "output": "content of a"},
+			{"type": "function_call_output", "call_id": "call_B", "output": "content of b"}
+		]`),
+		Tools:           json.RawMessage(`[{"type": "function", "name": "shell", "parameters": {"type": "object"}}]`),
+		MaxOutputTokens: uintPtr(4096),
+	}
+	info := &convmeta.Values{
+		ChannelMetaAttached: true,
+		OriginModelName:     "claude-sonnet-4-5",
+		UpstreamModelName:   "claude-sonnet-4-5-20251001",
+	}
+
+	result, err := relayconvert.ExecuteRequestConverter(context.Background(), spec, info, req)
+	require.NoError(t, err)
+	claudeReq, ok := result.(*dto.ClaudeRequest)
+	require.True(t, ok, "chain result type = %T, want *dto.ClaudeRequest", result)
+
+	// user → assistant(2 tool_use) → user(2 tool_result 合一)
+	require.Len(t, claudeReq.Messages, 3, "messages: %+v", claudeReq.Messages)
+	merged := claudeReq.Messages[2]
+	require.Equal(t, "user", merged.Role)
+	blocks, ok := merged.Content.([]dto.ClaudeContentBlock)
+	require.True(t, ok, "merged content type = %T", merged.Content)
+	require.Len(t, blocks, 2)
+	require.Equal(t, "tool_result", blocks[0].Type)
+	require.Equal(t, "call_A", blocks[0].ToolUseID)
+	require.Equal(t, "tool_result", blocks[1].Type)
+	require.Equal(t, "call_B", blocks[1].ToolUseID)
+}
+
 func uintPtr(v uint) *uint { return &v }

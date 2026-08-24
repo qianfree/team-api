@@ -255,11 +255,12 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				if err := emit("response.output_item.added", map[string]any{
 					"output_index": outputIndex,
 					"item": map[string]any{
-						"type":    "function_call",
-						"id":      tc.id,
-						"call_id": tc.id,
-						"name":    tc.name,
-						"status":  "in_progress",
+						"type":      "function_call",
+						"id":        tc.id,
+						"call_id":   tc.id,
+						"name":      tc.name,
+						"arguments": "", // codex 等严格客户端的 FunctionCall.arguments 为必填键，缺失解析失败（真实 OpenAI 恒带空串）
+						"status":    "in_progress",
 					},
 				}); err != nil {
 					return err
