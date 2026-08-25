@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -13,9 +14,61 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
+// DegradationReporter 宿主可选实现的 Meta 扩展接口：转换丢弃无目标协议对应物的请求内容
+// 时上报（宿主转发到日志与监控，使能力降级可见）。宿主 relay/common.RelayInfo 实现本接口；
+// 未实现或 info 为 nil 时（单测/非宿主调用）静默跳过，零开销。
+type DegradationReporter interface {
+	ReportConversionDegradation(converterID, reason string, count int)
+}
+
+// degradationRecorder 聚合单次转换内的降级计数（按 reason），flush 时逐条上报。
+// 所有方法 nil-safe：reporter 缺席时调用点无需判空。
+type degradationRecorder struct {
+	reporter    DegradationReporter
+	converterID string
+	counts      map[string]int
+}
+
+func newDegradationRecorder(info convmeta.Meta, converterID string) *degradationRecorder {
+	rec := &degradationRecorder{converterID: converterID}
+	if reporter, ok := info.(DegradationReporter); ok && reporter != nil {
+		rec.reporter = reporter
+		rec.counts = make(map[string]int)
+	}
+	return rec
+}
+
+// drop 记录一次降级（reason 即指标维度，含具体类型，长度截断防膨胀）。
+func (d *degradationRecorder) drop(reason string) {
+	if d == nil || d.reporter == nil {
+		return
+	}
+	if len(reason) > 64 {
+		reason = reason[:64]
+	}
+	d.counts[reason]++
+}
+
+// flush 上报聚合结果（结果稳定：按 reason 排序）。
+func (d *degradationRecorder) flush() {
+	if d == nil || d.reporter == nil || len(d.counts) == 0 {
+		return
+	}
+	reasons := make([]string, 0, len(d.counts))
+	for r := range d.counts {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	for _, r := range reasons {
+		d.reporter.ReportConversionDegradation(d.converterID, r, d.counts[r])
+	}
+}
+
 // ResponsesToOpenAIChatRequestConverter Responses 客户端 → OpenAI Chat 上游（请求侧）。
 // 仅做纯格式转换：
 //   - 有状态检查（previous_response_id）与请求快照 stash 是宿主桥接层职责，本转换器不做；
+//   - 无 chat 对应物的输入（additional_tools/custom 工具、reasoning 项等）被丢弃，
+//     经 DegradationReporter 上报使降级可见；
 //   - 吸收了旧路径 adaptor 后处理中的 reasoning_effort 注入与 stream_options 注入语义
 //     （relaykit 接管后 adaptor.ConvertRequest 不再执行）。
 type ResponsesToOpenAIChatRequestConverter struct{}
@@ -68,12 +121,14 @@ func buildChatRequest(info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto
 			messages = append(messages, dto.Message{Role: "system", Content: instructions})
 		}
 	}
-	inputMessages, err := r2cConvertInputToMessages(req.Input)
+	drops := newDegradationRecorder(info, relayconvert.ConverterOpenAIResponsesToOpenAIChat)
+	inputMessages, err := r2cConvertInputToMessages(req.Input, drops)
 	if err != nil {
 		return nil, fmt.Errorf("convert input to messages: %w", err)
 	}
 	messages = append(messages, inputMessages...)
 	chatReq.Messages = messages
+	defer drops.flush()
 
 	if req.Stream != nil {
 		stream := *req.Stream
@@ -105,7 +160,7 @@ func buildChatRequest(info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto
 		chatReq.LogProbs = &logprobs
 	}
 	if len(req.Tools) > 0 {
-		if chatTools := r2cConvertTools(req.Tools); len(chatTools) > 0 {
+		if chatTools := r2cConvertTools(req.Tools, drops); len(chatTools) > 0 {
 			chatReq.Tools = chatTools
 		}
 	}
@@ -192,8 +247,10 @@ type r2cInputAudio struct {
 
 // r2cConvertInputToMessages 将 Responses input（字符串或项数组）转换为 chat 消息数组。
 // 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
-// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息；reasoning 项跳过。
-func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
+// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息。
+// 无 chat 对应物的输入项（reasoning / additional_tools / custom 工具调用及产物、未知类型）
+// 被丢弃并经 drops 上报——降级必须可见，不允许静默砍能力。
+func r2cConvertInputToMessages(input json.RawMessage, drops *degradationRecorder) ([]dto.Message, error) {
 	if len(input) == 0 {
 		return nil, nil
 	}
@@ -243,14 +300,35 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
 			flushToolCalls()
 			messages = append(messages, dto.Message{Role: "tool", ToolCallID: item.CallID, Content: item.Output})
 		case "reasoning":
-			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
+			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过——跨轮思考连续性丢失
+			drops.drop("input_item:reasoning")
 			continue
+		case "additional_tools":
+			// codex 新版把 exec/wait/协作等嵌套工具定义放在该输入项（带 role 但无 content，
+			// 且 namespace/custom 工具无 chat 对应物），整体丢弃——模型侧工具能力丢失
+			flushToolCalls()
+			drops.drop("input_item:additional_tools")
+		case "custom_tool_call":
+			// custom（grammar/freeform）工具调用历史无 chat 对应物（chat 工具调用必为 JSON function）
+			flushToolCalls()
+			drops.drop("input_item:custom_tool_call")
+		case "custom_tool_call_output":
+			// custom 工具调用的执行结果随调用一并丢弃——模型丢失工具执行历史
+			flushToolCalls()
+			drops.drop("input_item:custom_tool_call_output")
 		default:
 			flushToolCalls()
 			if item.Role != "" {
-				if msg := r2cConvertMessage(item); msg != nil {
+				msg := r2cConvertMessage(item)
+				if msg != nil {
 					messages = append(messages, *msg)
+				} else {
+					// 有 role 但无可转换内容（如未知新类型）：记录类型便于跟进协议演进
+					drops.drop("input_item:" + item.Type)
 				}
+			} else {
+				// 无 role 的未知类型输入项（如 codex 的 goal/plan 等新项）
+				drops.drop("input_item:" + item.Type)
 			}
 		}
 	}
@@ -325,7 +403,9 @@ func r2cConvertMessage(item r2cInputItem) *dto.Message {
 	return &dto.Message{Role: role, Content: chatParts}
 }
 
-func r2cConvertTools(toolsRaw json.RawMessage) []dto.Tool {
+// r2cConvertTools 顶层 tools 中仅 type=function 有 chat 对应物；namespace/custom(grammar)、
+// web_search 等内置工具被丢弃并经 drops 上报（按具体类型）。
+func r2cConvertTools(toolsRaw json.RawMessage, drops *degradationRecorder) []dto.Tool {
 	var tools []map[string]any
 	if err := json.Unmarshal(toolsRaw, &tools); err != nil {
 		return nil
@@ -342,6 +422,9 @@ func r2cConvertTools(toolsRaw json.RawMessage) []dto.Tool {
 				fn.Description = desc
 			}
 			chatTools = append(chatTools, dto.Tool{Type: "function", Function: fn})
+		} else if toolType != "" {
+			// namespace / custom(grammar) / web_search 等内置工具无 chat 对应物
+			drops.drop("tool:" + toolType)
 		}
 	}
 	return chatTools

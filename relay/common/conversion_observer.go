@@ -10,6 +10,9 @@ import (
 // 避免 relay → internal/logic/monitor 的反向 import（依赖方向保持 internal → relay）。
 type ConverterObserver interface {
 	TrackConverterCall(converterID, from, to string, duration time.Duration, err error)
+	// TrackConversionDegradation 上报协议转换中的能力降级：converterID 定位转换器，
+	// reason 为丢弃原因（含具体输入类型，如 "input_item:additional_tools"），count 为本次聚合数
+	TrackConversionDegradation(converterID, reason string, count int64)
 }
 
 var (
@@ -31,5 +34,15 @@ func TrackConverterCall(converterID, from, to string, duration time.Duration, er
 	converterObserverMu.RUnlock()
 	if o != nil {
 		o.TrackConverterCall(converterID, from, to, duration, err)
+	}
+}
+
+// TrackConversionDegradation 上报一次转换降级聚合（未注入时 no-op）。
+func TrackConversionDegradation(converterID, reason string, count int64) {
+	converterObserverMu.RLock()
+	o := converterObserver
+	converterObserverMu.RUnlock()
+	if o != nil {
+		o.TrackConversionDegradation(converterID, reason, count)
 	}
 }

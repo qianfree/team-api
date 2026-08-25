@@ -25,25 +25,25 @@ import (
 
 // RelayConverterMetrics 是单个转换器的累计指标快照（读取时计算派生字段）。
 type RelayConverterMetrics struct {
-	ConverterID   string  `json:"converter_id"`            // 如 "openai_to_claude"
-	From          string  `json:"from"`                    // 源协议格式
-	To            string  `json:"to"`                      // 目标协议格式
-	Success       int64   `json:"success"`                 // 累计成功次数
-	Failed        int64   `json:"failed"`                  // 累计失败次数
-	TotalMs       int64   `json:"total_ms"`                // 累计耗时（毫秒），用于算均值
-	LastError     string  `json:"last_error,omitempty"`    // 最近一次错误信息（截断）
-	ErrorRate     float64 `json:"error_rate"`              // 派生：失败率 = failed/(success+failed)
-	AvgDurationMs float64 `json:"avg_duration_ms"`         // 派生：平均耗时（毫秒）
+	ConverterID   string  `json:"converter_id"`         // 如 "openai_to_claude"
+	From          string  `json:"from"`                 // 源协议格式
+	To            string  `json:"to"`                   // 目标协议格式
+	Success       int64   `json:"success"`              // 累计成功次数
+	Failed        int64   `json:"failed"`               // 累计失败次数
+	TotalMs       int64   `json:"total_ms"`             // 累计耗时（毫秒），用于算均值
+	LastError     string  `json:"last_error,omitempty"` // 最近一次错误信息（截断）
+	ErrorRate     float64 `json:"error_rate"`           // 派生：失败率 = failed/(success+failed)
+	AvgDurationMs float64 `json:"avg_duration_ms"`      // 派生：平均耗时（毫秒）
 }
 
 // converterCounter 是单个转换器的并发安全计数器。
 // from/to 在创建时写入后只读（无需加锁）；热路径字段用 atomic；lastErr 失败稀疏，用自带互斥锁。
 type converterCounter struct {
-	from     string
-	to       string
-	success  atomic.Int64
-	failed   atomic.Int64
-	totalMs  atomic.Int64
+	from      string
+	to        string
+	success   atomic.Int64
+	failed    atomic.Int64
+	totalMs   atomic.Int64
 	lastErrMu sync.Mutex
 	lastErr   string
 }
@@ -68,17 +68,37 @@ func (c *converterCounter) lastErrorString() string {
 	return c.lastErr
 }
 
+// RelayDegradationMetrics 单个（转换器 × 降级原因）的累计降级指标快照。
+// reason 形如 "input_item:additional_tools" / "tool:namespace"——见
+// relaykit r2c 转换器的丢弃上报，非零即代表真实发生了能力降级。
+type RelayDegradationMetrics struct {
+	ConverterID string `json:"converter_id"`
+	Reason      string `json:"reason"`
+	Count       int64  `json:"count"` // 累计丢弃数（自启动起）
+}
+
+// degradationCounter 单个（converterID × reason）的并发安全降级计数器。
+type degradationCounter struct {
+	converterID string
+	reason      string
+	count       atomic.Int64
+}
+
 // relaykitTracker 是全局单例，按 converterID 聚合各转换器的计数器。
 type relaykitTracker struct {
-	mu       sync.RWMutex
-	counters map[string]*converterCounter
+	mu           sync.RWMutex
+	counters     map[string]*converterCounter
+	degradations map[string]*degradationCounter
 }
 
 var relaykitT *relaykitTracker
 
 // InitRelaykitTracker 初始化全局 relaykit 计数器。在 cmd 启动流程中与 InitRequestTracker 一起调用。
 func InitRelaykitTracker() {
-	relaykitT = &relaykitTracker{counters: make(map[string]*converterCounter)}
+	relaykitT = &relaykitTracker{
+		counters:     make(map[string]*converterCounter),
+		degradations: make(map[string]*degradationCounter),
+	}
 }
 
 // getOrCreate 以双检锁获取或创建计数器（首次见到某 converterID 时创建并记录 from/to）。
@@ -115,6 +135,59 @@ func TrackConverterCall(converterID, from, to string, duration time.Duration, er
 	if duration > 0 {
 		c.totalMs.Add(duration.Milliseconds())
 	}
+}
+
+// TrackConversionDegradation 记录一次转换降级聚合（热路径入口，由 relay 层经
+// ConverterObserver 转发）。reason 含具体丢弃类型，非零计数即真实降级证据。
+func TrackConversionDegradation(converterID, reason string, count int64) {
+	if relaykitT == nil || converterID == "" || reason == "" || count <= 0 {
+		return
+	}
+	key := converterID + "|" + reason
+	relaykitT.mu.RLock()
+	c, ok := relaykitT.degradations[key]
+	relaykitT.mu.RUnlock()
+	if !ok {
+		relaykitT.mu.Lock()
+		if c, ok = relaykitT.degradations[key]; !ok {
+			c = &degradationCounter{converterID: converterID, reason: reason}
+			relaykitT.degradations[key] = c
+		}
+		relaykitT.mu.Unlock()
+	}
+	c.count.Add(count)
+}
+
+// GetRelaykitDegradationMetrics 返回所有降级计数的累计快照（按 key 排序，结果稳定）。
+func GetRelaykitDegradationMetrics() []RelayDegradationMetrics {
+	if relaykitT == nil {
+		return nil
+	}
+	relaykitT.mu.RLock()
+	keys := make([]string, 0, len(relaykitT.degradations))
+	for k := range relaykitT.degradations {
+		keys = append(keys, k)
+	}
+	relaykitT.mu.RUnlock()
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	out := make([]RelayDegradationMetrics, 0, len(keys))
+	for _, k := range keys {
+		relaykitT.mu.RLock()
+		c := relaykitT.degradations[k]
+		relaykitT.mu.RUnlock()
+		if c == nil || c.count.Load() == 0 {
+			continue
+		}
+		out = append(out, RelayDegradationMetrics{
+			ConverterID: c.converterID,
+			Reason:      c.reason,
+			Count:       c.count.Load(),
+		})
+	}
+	return out
 }
 
 // GetRelaykitConverterMetrics 返回所有转换器的累计指标快照（按 converterID 排序，结果稳定）。
@@ -169,11 +242,13 @@ func GetRelaykitConverterMetrics() []RelayConverterMetrics {
 // 由 collector.go 的 CollectSystemMetrics 每分钟 tick 调用；无 relaykit 活动时跳过，避免空噪声。
 func flushRelaykitMetrics(ts time.Time) {
 	metrics := GetRelaykitConverterMetrics()
-	if len(metrics) == 0 {
+	degradations := GetRelaykitDegradationMetrics()
+	if len(metrics) == 0 && len(degradations) == 0 {
 		return
 	}
 	payload, err := json.Marshal(map[string]any{
 		"converters":          metrics,
+		"degradations":        degradations, // 非空数组即发生过能力降级；nil 时 marshal 为 null
 		"window_collected_at": ts,
 	})
 	if err != nil {

@@ -259,6 +259,11 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	if v, ok := rawRequest["conversation_id"]; ok {
 		_ = json.Unmarshal(v, &sig.ConversationID)
 	}
+	// prompt_cache_key：codex CLI（store:false）用 thread_id 填充，是其唯一稳定的线程级
+	// 会话信号（无 previous_response_id / conversation_id），线程级亲和依赖此键
+	if v, ok := rawRequest["prompt_cache_key"]; ok {
+		_ = json.Unmarshal(v, &sig.PromptCacheKey)
+	}
 	return sig
 }
 
@@ -528,7 +533,17 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 	}
 
 	sig := v.sessionSignals
+	// 会话头收割：X-Session-Id（网关约定）优先，回落 codex CLI 的 session-id / thread-id 头
+	// （codex-rs codex-api/src/requests/headers.rs：build_session_headers 注入这两个头）。
+	// 命中后 codex 流量获得线程级亲和，而非身份四元组级的粗粒度绑定
 	sig.HeaderSessionID = headers.Get("X-Session-Id")
+	if sig.HeaderSessionID == "" {
+		if sid := headers.Get("Session-Id"); sid != "" {
+			sig.HeaderSessionID = sid
+		} else {
+			sig.HeaderSessionID = headers.Get("Thread-Id")
+		}
+	}
 	co := dispatchadapter.Coordinator(ctx)
 	sess := co.Route(ctx, dispatch.RequestProfile{
 		RequestID: rc.RequestID,

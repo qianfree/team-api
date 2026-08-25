@@ -15,4 +15,9 @@ func (RelaykitConverterObserver) TrackConverterCall(converterID, from, to string
 	TrackConverterCall(converterID, from, to, duration, err)
 }
 
+// TrackConversionDegradation 实现 relay/common.ConverterObserver。
+func (RelaykitConverterObserver) TrackConversionDegradation(converterID, reason string, count int64) {
+	TrackConversionDegradation(converterID, reason, count)
+}
+
 var _ relaycommon.ConverterObserver = RelaykitConverterObserver{}

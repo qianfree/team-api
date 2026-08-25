@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
@@ -243,6 +245,33 @@ func (info *RelayInfo) GetOriginModelName() string {
 		return ""
 	}
 	return info.OriginModelName
+}
+
+// ReportConversionDegradation 实现 relaykit 转换器的降级上报能力接口
+// （oai_responses.DegradationReporter 等，结构化类型匹配）：转换器丢弃无目标协议
+// 对应物的请求内容（codex 的 additional_tools/custom 工具、reasoning 项等）时回调。
+// 转发到监控计数（dashboard 可见）并打 Warning 日志——降级必须可见，不允许静默砍能力。
+func (info *RelayInfo) ReportConversionDegradation(converterID, reason string, count int) {
+	if info == nil || count <= 0 {
+		return
+	}
+	TrackConversionDegradation(converterID, reason, int64(count))
+	ctx := info.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	g.Log().Warningf(ctx,
+		"[RelayInfo] 协议转换降级：request=%s converter=%s reason=%s count=%d model=%s channel=%d inbound=%s（该类输入无目标协议对应物，已被丢弃）",
+		info.RequestID, converterID, reason, count, info.OriginModelName,
+		info.ChannelIDOf(), string(info.InboundFormat))
+}
+
+// ChannelIDOf 返回当前渠道 ID（无渠道信息时 0）。
+func (info *RelayInfo) ChannelIDOf() int64 {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return info.ChannelMeta.ChannelID
 }
 
 func (info *RelayInfo) GetUpstreamModelName() string {

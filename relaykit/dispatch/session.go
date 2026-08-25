@@ -23,6 +23,7 @@ type SessionSignals struct {
 	AnthropicUserID    string // Anthropic 格式的 metadata.user_id
 	PreviousResponseID string // OpenAI Responses previous_response_id
 	ConversationID     string // OpenAI conversation_id / thread
+	PromptCacheKey     string // OpenAI Responses prompt_cache_key（codex 等客户端用 thread_id 填充，线程级稳定）
 }
 
 // SessionKey 解析后的会话键。Key 为哈希后的稳定标识，可直接作为 Redis 绑定 key 的一部分。
@@ -66,6 +67,11 @@ func ResolveSessionKey(p RequestProfile, pol SessionPolicy) SessionKey {
 		}
 		if validToken(p.Signals.ConversationID, maxProtocolTokenLen) {
 			return makeSessionKey(SourceOpenAI, p, p.Signals.ConversationID)
+		}
+		// prompt_cache_key：codex CLI（store:false，无前两个信号）用 thread_id 填充，
+		// 线程级稳定——命中后亲和粒度从身份四元组细化到线程，避免整租户流量锚定单渠道
+		if validToken(p.Signals.PromptCacheKey, maxProtocolTokenLen) {
+			return makeSessionKey(SourceOpenAI, p, p.Signals.PromptCacheKey)
 		}
 	}
 

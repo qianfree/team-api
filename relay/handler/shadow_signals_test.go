@@ -16,7 +16,8 @@ func TestExtractSessionSignals(t *testing.T) {
 		"model": "claude-sonnet",
 		"metadata": {"user_id": "user_abc_session_11111111-2222-3333-4444-555555555555"},
 		"previous_response_id": "resp_123",
-		"conversation_id": "conv_456"
+		"conversation_id": "conv_456",
+		"prompt_cache_key": "thread-789"
 	}`)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -33,12 +34,15 @@ func TestExtractSessionSignals(t *testing.T) {
 	if sig.ConversationID != "conv_456" {
 		t.Errorf("ConversationID = %q", sig.ConversationID)
 	}
+	if sig.PromptCacheKey != "thread-789" {
+		t.Errorf("PromptCacheKey = %q, want thread-789", sig.PromptCacheKey)
+	}
 
 	// 无信号的请求体
 	var empty map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(`{"model":"gpt-4o"}`), &empty)
 	sig = extractSessionSignals(empty)
-	if sig.AnthropicUserID != "" || sig.PreviousResponseID != "" || sig.ConversationID != "" {
+	if sig.AnthropicUserID != "" || sig.PreviousResponseID != "" || sig.ConversationID != "" || sig.PromptCacheKey != "" {
 		t.Errorf("空请求体不应提取出信号: %+v", sig)
 	}
 

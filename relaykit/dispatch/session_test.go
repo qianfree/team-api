@@ -27,6 +27,7 @@ func TestResolveSessionKey_解析链优先级(t *testing.T) {
 		{"Anthropic 次之", SessionSignals{AnthropicUserID: "user_x_session_11111111-2222-3333-4444-555555555555", PreviousResponseID: "resp_1"}, SourceAnthropic},
 		{"OpenAI previous_response_id", SessionSignals{PreviousResponseID: "resp_1"}, SourceOpenAI},
 		{"OpenAI conversation_id", SessionSignals{ConversationID: "conv_1"}, SourceOpenAI},
+		{"OpenAI prompt_cache_key", SessionSignals{PromptCacheKey: "thread-abc"}, SourceOpenAI},
 		{"全空回退身份级", SessionSignals{}, SourceIdentity},
 	}
 	for _, tt := range tests {
@@ -66,6 +67,30 @@ func TestResolveSessionKey_策略开关(t *testing.T) {
 	pol.ParseOpenAIResponses = false
 	got = ResolveSessionKey(profileWith(SessionSignals{PreviousResponseID: "resp_1"}), pol)
 	assert.Equal(t, SourceIdentity, got.Source, "关闭 openai 解析后应回退身份级")
+
+	pol = defaultSessionPolicy()
+	pol.ParseOpenAIResponses = false
+	got = ResolveSessionKey(profileWith(SessionSignals{PromptCacheKey: "thread-abc"}), pol)
+	assert.Equal(t, SourceIdentity, got.Source, "关闭 openai 解析后 prompt_cache_key 也应回退身份级")
+}
+
+// TestResolveSessionKey_PromptCacheKey线程级亲和 codex 场景：store:false 流量没有
+// previous_response_id / conversation_id，prompt_cache_key（=thread_id）是唯一稳定信号——
+// 同线程多轮请求应得到同一会话键，不同线程应分散（按权重摊到不同渠道）。
+func TestResolveSessionKey_PromptCacheKey线程级亲和(t *testing.T) {
+	pol := defaultSessionPolicy()
+
+	same1 := ResolveSessionKey(profileWith(SessionSignals{PromptCacheKey: "thread-1"}), pol)
+	same2 := ResolveSessionKey(profileWith(SessionSignals{PromptCacheKey: "thread-1"}), pol)
+	assert.Equal(t, same1.Key, same2.Key, "同线程多轮请求应得到相同会话键")
+
+	other := ResolveSessionKey(profileWith(SessionSignals{PromptCacheKey: "thread-2"}), pol)
+	assert.NotEqual(t, same1.Key, other.Key, "不同线程的会话键应不同")
+
+	// 优先级：previous_response_id 存在时仍以它为准（既有行为不变）
+	prev := ResolveSessionKey(profileWith(SessionSignals{PreviousResponseID: "resp_9", PromptCacheKey: "thread-1"}), pol)
+	onlyPrev := ResolveSessionKey(profileWith(SessionSignals{PreviousResponseID: "resp_9"}), pol)
+	assert.Equal(t, prev.Key, onlyPrev.Key, "previous_response_id 优先于 prompt_cache_key")
 }
 
 func TestResolveSessionKey_非法信号跳过(t *testing.T) {
