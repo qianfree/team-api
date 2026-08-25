@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -466,26 +467,184 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 	return []geminiTool{{FunctionDeclarations: funcDecls}}, nil
 }
 
-// cleanParams 移除 Gemini 不支持的 JSON Schema 字段
+// geminiSchemaAllowedFields Gemini Schema 支持的 OpenAPI 子集字段白名单。
+// additionalProperties/$schema/oneOf 等 JSON Schema 扩展不在其中，透传会被
+// Gemini 以 400 "Unknown name ... Cannot find field" 拒绝。
+var geminiSchemaAllowedFields = map[string]struct{}{
+	"anyOf":            {},
+	"default":          {},
+	"description":      {},
+	"enum":             {},
+	"example":          {},
+	"format":           {},
+	"items":            {},
+	"maxItems":         {},
+	"maxLength":        {},
+	"maxProperties":    {},
+	"maximum":          {},
+	"minItems":         {},
+	"minLength":        {},
+	"minProperties":    {},
+	"minimum":          {},
+	"nullable":         {},
+	"pattern":          {},
+	"properties":       {},
+	"propertyOrdering": {},
+	"required":         {},
+	"title":            {},
+	"type":             {},
+}
+
+// geminiSchemaMaxDepth schema 递归清洗深度上限，超过后浅清洗（防深嵌套栈溢出/DoS）
+const geminiSchemaMaxDepth = 64
+
+// cleanParams 清洗工具参数 schema 为 Gemini Schema 子集。
+// 必须递归到 properties/items/anyOf 的每一层：codex 等 CLI 的工具 schema（schemars 生成）
+// 在每个嵌套 object 上都携带 additionalProperties:false，仅清洗顶层会让嵌套层透传，
+// 导致上游 400 "Unknown name additionalProperties"（顶层已洗掉、嵌套漏网的形态）。
 func cleanParams(params any) any {
-	if params == nil {
+	return cleanGeminiSchema(params, 0)
+}
+
+// cleanGeminiSchema 递归剔除 Gemini 不支持的 schema 字段并规范化 type。
+// 行为对齐 new-api 的 shared/gemini.CleanFunctionParameters。
+func cleanGeminiSchema(schema any, depth int) any {
+	if schema == nil {
 		return nil
 	}
-	m, ok := params.(map[string]any)
-	if !ok {
-		return params
+	if depth >= geminiSchemaMaxDepth {
+		return cleanGeminiSchemaShallow(schema)
 	}
-	cleaned := make(map[string]any)
-	for k, v := range m {
-		switch k {
-		case "type", "description", "properties", "required", "items",
-			"anyOf", "default", "enum", "format", "maxLength", "minLength",
-			"maximum", "minimum", "pattern", "title", "nullable",
-			"maxItems", "minItems", "maxProperties", "minProperties", "example":
-			cleaned[k] = v
+	switch v := schema.(type) {
+	case map[string]any:
+		cleaned := make(map[string]any, len(v))
+		for k, val := range v {
+			if _, ok := geminiSchemaAllowedFields[k]; ok {
+				cleaned[k] = val
+			}
+		}
+		normalizeGeminiSchemaType(cleaned)
+
+		if props, ok := cleaned["properties"].(map[string]any); ok && props != nil {
+			cleanedProps := make(map[string]any, len(props))
+			for name, pv := range props {
+				cleanedProps[name] = cleanGeminiSchema(pv, depth+1)
+			}
+			cleaned["properties"] = cleanedProps
+		}
+		if items, ok := cleaned["items"].(map[string]any); ok && items != nil {
+			cleaned["items"] = cleanGeminiSchema(items, depth+1)
+		}
+		// draft-2020 之前的 items 数组形态：以第一个元素为元素 schema
+		if itemsArr, ok := cleaned["items"].([]any); ok && len(itemsArr) > 0 {
+			cleaned["items"] = cleanGeminiSchema(itemsArr[0], depth+1)
+		}
+		if nested, ok := cleaned["anyOf"].([]any); ok && nested != nil {
+			cleanedAnyOf := make([]any, len(nested))
+			for i, item := range nested {
+				cleanedAnyOf[i] = cleanGeminiSchema(item, depth+1)
+			}
+			cleaned["anyOf"] = cleanedAnyOf
+		}
+		return cleaned
+	case []any:
+		cleanedArr := make([]any, len(v))
+		for i, item := range v {
+			cleanedArr[i] = cleanGeminiSchema(item, depth+1)
+		}
+		return cleanedArr
+	default:
+		return schema
+	}
+}
+
+// cleanGeminiSchemaShallow 深度超限后的兜底：仅过滤本层字段、不再下钻
+func cleanGeminiSchemaShallow(schema any) any {
+	switch v := schema.(type) {
+	case map[string]any:
+		cleaned := make(map[string]any, len(v))
+		for k, val := range v {
+			if _, ok := geminiSchemaAllowedFields[k]; ok {
+				cleaned[k] = val
+			}
+		}
+		normalizeGeminiSchemaType(cleaned)
+		delete(cleaned, "properties")
+		delete(cleaned, "items")
+		delete(cleaned, "anyOf")
+		return cleaned
+	case []any:
+		return []any{}
+	default:
+		return schema
+	}
+}
+
+// normalizeGeminiSchemaType 规范化 type 字段：小写 JSON Schema 类型名 → Gemini 大写枚举名；
+// 数组形态（schemars 对 Option<T> 生成的 ["string","null"]）折叠为单一 type + nullable:true；
+// 纯 "null" 折叠为 nullable:true（Gemini 枚举无 NULL 类型）。
+func normalizeGeminiSchemaType(schema map[string]any) {
+	rawType, ok := schema["type"]
+	if !ok || rawType == nil {
+		return
+	}
+
+	normalize := func(t string) (string, bool) {
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "object":
+			return "OBJECT", false
+		case "array":
+			return "ARRAY", false
+		case "string":
+			return "STRING", false
+		case "integer":
+			return "INTEGER", false
+		case "number":
+			return "NUMBER", false
+		case "boolean":
+			return "BOOLEAN", false
+		case "null":
+			return "", true
+		default:
+			return t, false
 		}
 	}
-	return cleaned
+
+	switch typed := rawType.(type) {
+	case string:
+		normalized, isNull := normalize(typed)
+		if isNull {
+			schema["nullable"] = true
+			delete(schema, "type")
+			return
+		}
+		schema["type"] = normalized
+	case []any:
+		nullable := false
+		var chosen string
+		for _, item := range typed {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			normalized, isNull := normalize(s)
+			if isNull {
+				nullable = true
+				continue
+			}
+			if chosen == "" {
+				chosen = normalized
+			}
+		}
+		if nullable {
+			schema["nullable"] = true
+		}
+		if chosen != "" {
+			schema["type"] = chosen
+		} else {
+			delete(schema, "type")
+		}
+	}
 }
 
 func convertToolChoice(toolChoice any) any {
@@ -544,6 +703,9 @@ func convertReasoningEffort(effort string) *dto.GeminiThinkingConfig {
 	}
 }
 
+// convertResponseSchema 将 response_format.json_schema 的 schema 转换为 Gemini ResponseSchema。
+// 与工具参数共用 cleanGeminiSchema：structured output 的 strict 模式 schema 顶层即携带
+// additionalProperties:false，未清洗同样会被上游以 "Unknown name" 拒绝。
 func convertResponseSchema(schema any) any {
 	if schema == nil {
 		return nil
@@ -553,78 +715,11 @@ func convertResponseSchema(schema any) any {
 	if m, ok := schema.(map[string]any); ok {
 		if js, ok := m["json_schema"].(map[string]any); ok {
 			if innerSchema, ok := js["schema"]; ok {
-				return convertSchemaMap(innerSchema)
+				return cleanGeminiSchema(innerSchema, 0)
 			}
 		}
-		return convertSchemaMap(m)
+		return cleanGeminiSchema(m, 0)
 	}
 
 	return schema
-}
-
-// convertSchemaMap 递归地将 JSON Schema 类型名转换为 Gemini 格式
-func convertSchemaMap(schema any) any {
-	m, ok := schema.(map[string]any)
-	if !ok {
-		return schema
-	}
-
-	result := make(map[string]any, len(m))
-	for k, v := range m {
-		switch k {
-		case "type":
-			if s, ok := v.(string); ok {
-				result["type"] = mapSchemaType(s)
-			} else {
-				result[k] = v
-			}
-		case "properties":
-			if props, ok := v.(map[string]any); ok {
-				converted := make(map[string]any, len(props))
-				for pk, pv := range props {
-					converted[pk] = convertSchemaMap(pv)
-				}
-				result["properties"] = converted
-			} else {
-				result[k] = v
-			}
-		case "items":
-			result["items"] = convertSchemaMap(v)
-		case "anyOf", "oneOf", "allOf":
-			if arr, ok := v.([]any); ok {
-				converted := make([]any, len(arr))
-				for i, item := range arr {
-					converted[i] = convertSchemaMap(item)
-				}
-				result[k] = converted
-			} else {
-				result[k] = v
-			}
-		default:
-			result[k] = v
-		}
-	}
-	return result
-}
-
-// mapSchemaType 将 JSON Schema 类型名映射为 Gemini Schema 类型名
-func mapSchemaType(t string) string {
-	switch t {
-	case "string":
-		return "STRING"
-	case "number":
-		return "NUMBER"
-	case "integer":
-		return "INTEGER"
-	case "boolean":
-		return "BOOLEAN"
-	case "object":
-		return "OBJECT"
-	case "array":
-		return "ARRAY"
-	case "null":
-		return "NULL"
-	default:
-		return t
-	}
 }

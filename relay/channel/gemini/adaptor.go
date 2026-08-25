@@ -69,7 +69,8 @@ func (a *Adaptor) isCodeAssistForcedStream() bool {
 // getRelayAction 获取当前 relay 模式对应的 Gemini action 名称
 func (a *Adaptor) getRelayAction(info *common.RelayInfo) (string, error) {
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeClaudeMessages, constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return "streamGenerateContent", nil
 		}

@@ -124,20 +124,20 @@
             "parameters": {
               "properties": {
                 "location": {
-                  "type": "string"
+                  "type": "STRING"
                 },
                 "unit": {
                   "enum": [
                     "celsius",
                     "fahrenheit"
                   ],
-                  "type": "string"
+                  "type": "STRING"
                 }
               },
               "required": [
                 "location"
               ],
-              "type": "object"
+              "type": "OBJECT"
             }
           }
         ]
