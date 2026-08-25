@@ -236,6 +236,11 @@ func (a *Adaptor) handleResponsesUpstreamNonStream(ctx context.Context, resp *ht
 		body = helper.ReplaceModelName(body, info.OriginModelName)
 	}
 
+	// codex CLI 的 compact（POST /responses/compact，非流式）从响应头读取轮次状态
+	// （codex-rs codex-api/src/endpoint/compact.rs 读取 x-codex-turn-state），原样透传给客户端
+	if v := resp.Header.Get("x-codex-turn-state"); v != "" {
+		writer.Header().Set("x-codex-turn-state", v)
+	}
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(body)

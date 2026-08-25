@@ -33,15 +33,19 @@ func (a *Adaptor) Init(info *common.RelayInfo) {
 	_ = json.Unmarshal([]byte(info.ChannelMeta.ApiKey), &a.creds)
 }
 
-// GetRequestURL 构建上游请求 URL。Codex 直连 chatgpt.com 官方 /backend-api/codex/responses 端点。
+// GetRequestURL 构建上游请求 URL。Codex 直连 chatgpt.com 官方 /backend-api/codex/responses 端点；
+// compact（长会话上下文压缩）走 /backend-api/codex/responses/compact——对齐 codex CLI
+// CompactClient 的相对路径 "responses/compact"（非流式 POST，codex-rs codex-api/src/endpoint/compact.rs）。
 func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeResponses:
 		return baseURL + "/backend-api/codex/responses", nil
+	case constant.RelayModeResponsesCompact:
+		return baseURL + "/backend-api/codex/responses/compact", nil
 	default:
-		return "", fmt.Errorf("codex only supports Responses mode, got relay mode: %d", info.RelayMode)
+		return "", fmt.Errorf("codex only supports Responses modes (responses/responses/compact), got relay mode: %d", info.RelayMode)
 	}
 }
 
@@ -62,9 +66,10 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 转换请求体。Codex 仅支持 Responses 模式。
+// ConvertRequest 转换请求体。Codex 支持 Responses 主端点与 compact（上下文压缩）两种模式。
 // 做模型名映射，并对齐 Codex CLI 剥离官方不兼容字段（store/max_output_tokens/temperature）、补默认 instructions。
-// 以 map 形式操作，保留 Responses 其余字段（input/tools/reasoning 等）原样透传，避免结构体 round-trip 丢字段。
+// 以 map 形式操作，保留 Responses 其余字段（input/instructions/previous_response_id 等）原样透传，
+// 避免结构体 round-trip 丢字段。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	// 非 OpenAI 格式先转换为 OpenAI。Responses 入站除外：codex 上游只说 Responses 协议
 	//（GetRequestURL 恒为 Responses 专用端点），Responses 体须原样进入下方字段手术——
@@ -79,8 +84,11 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = converted
 	}
 
-	if constant.RelayMode(info.RelayMode) != constant.RelayModeResponses {
-		return nil, fmt.Errorf("codex only supports Responses mode, got relay mode: %d", info.RelayMode)
+	// 模式守卫：responses 与 responses/compact 共用同一套字段手术（compact 体仅
+	// model/input/instructions/previous_response_id，手术规则对其同样安全）
+	if mode := constant.RelayMode(info.RelayMode); mode != constant.RelayModeResponses &&
+		mode != constant.RelayModeResponsesCompact {
+		return nil, fmt.Errorf("codex only supports Responses modes (responses/responses/compact), got relay mode: %d", info.RelayMode)
 	}
 
 	var rawMap map[string]json.RawMessage

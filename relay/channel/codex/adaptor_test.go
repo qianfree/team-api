@@ -42,6 +42,23 @@ func TestGetRequestURL_OfficialEndpoint(t *testing.T) {
 	}
 }
 
+// TestGetRequestURL_CompactEndpoint compact 模式走 /backend-api/codex/responses/compact
+// （对齐 codex CLI CompactClient 的相对路径 "responses/compact"）。
+func TestGetRequestURL_CompactEndpoint(t *testing.T) {
+	a := &Adaptor{}
+	info := newTestInfo(testCodexKey)
+	info.RelayMode = int(constant.RelayModeResponsesCompact)
+
+	url, err := a.GetRequestURL(info)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	const wantSuffix = "/backend-api/codex/responses/compact"
+	if !strings.HasSuffix(url, wantSuffix) {
+		t.Errorf("URL = %s, want suffix %s", url, wantSuffix)
+	}
+}
+
 func TestGetRequestURL_RejectsNonResponses(t *testing.T) {
 	a := &Adaptor{}
 	info := newTestInfo(testCodexKey)
@@ -180,6 +197,45 @@ func TestConvertRequest_ModelMapping(t *testing.T) {
 	_ = json.Unmarshal(out, &got)
 	if string(got["model"]) != `"gpt-5.6-codex"` {
 		t.Errorf("model = %s, want \"gpt-5.6-codex\"", got["model"])
+	}
+}
+
+// TestConvertRequest_CompactMode compact 模式：字段手术照常执行（store 强制 false、
+// 剥离 temperature），previous_response_id / input 等 compact 专有字段原样保留。
+func TestConvertRequest_CompactMode(t *testing.T) {
+	a := &Adaptor{}
+	info := newTestInfo(testCodexKey)
+	info.RelayMode = int(constant.RelayModeResponsesCompact)
+	info.InboundFormat = constant.RelayFormatResponses
+	info.ChannelMeta.IsModelMapped = true
+	info.ChannelMeta.UpstreamModelName = "gpt-5.6-codex"
+
+	body := `{"model":"user-alias","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],` +
+		`"previous_response_id":"resp_abc","store":true,"temperature":0.7}`
+	reader, err := a.ConvertRequest(context.Background(), info, []byte(body))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out, _ := io.ReadAll(reader)
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v (out=%s)", err, out)
+	}
+	if string(got["store"]) != "false" {
+		t.Errorf("store = %s, want false", got["store"])
+	}
+	if _, ok := got["temperature"]; ok {
+		t.Error("temperature should be stripped")
+	}
+	if string(got["previous_response_id"]) != `"resp_abc"` {
+		t.Errorf("previous_response_id = %s, want \"resp_abc\"", got["previous_response_id"])
+	}
+	if _, ok := got["input"]; !ok {
+		t.Errorf("compact input should be preserved: %s", out)
+	}
+	if string(got["model"]) != `"gpt-5.6-codex"` {
+		t.Errorf("model = %s, want gpt-5.6-codex", got["model"])
 	}
 }
 
