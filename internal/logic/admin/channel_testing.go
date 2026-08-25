@@ -115,8 +115,11 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）。
 	// 仅 active 渠道上报：禁用/测试中渠道不在调度目录，喂健康分只会无意义拉低展示值；
 	// 渠道启用时 MarkChannelRecovered 会复位熔断，无需在禁用期间预热。
+	// model 必须传平台标准名（testModel）而非上游名：调度的健康/熔断 Redis key 统一
+	// 以平台名为口径（真实流量报 profile.Model，维护快照按 catalog 的 model_name 读取），
+	// 传上游名会写到无人读取的 key——探测既影响不了健康分，也关不掉 HALF_OPEN 熔断。
 	if ch.Status == "active" {
-		dispatchadapter.ReportProbeOutcome(ctx, channelID, upstreamModel, result.Success, float64(latencyMs))
+		dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
 	}
 
 	// 记录测试结果日志
