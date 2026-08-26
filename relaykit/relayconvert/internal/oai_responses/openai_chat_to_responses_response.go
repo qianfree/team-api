@@ -115,14 +115,9 @@ func chatCompletionToResponses(info convmeta.Meta, chatResp *dto.ChatCompletionR
 		}
 
 		for _, tc := range choice.Message.ToolCalls {
-			output = append(output, dto.ResponsesOutput{
-				Type:      "function_call",
-				ID:        tc.ID,
-				CallID:    tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-				Status:    "completed",
-			})
+			// 按请求侧 stash 的原始工具类型还原输出项（custom_tool_call /
+			// local_shell_call / apply_patch_call），未 stash 为 function_call
+			output = append(output, buildToolCallDoneItem(info, tc.ID, tc.Function.Name, tc.Function.Arguments))
 		}
 	}
 

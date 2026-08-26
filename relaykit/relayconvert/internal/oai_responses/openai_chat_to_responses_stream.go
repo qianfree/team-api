@@ -240,29 +240,31 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		return nil
 	}
 
-	// finishTools 按登记顺序为每个未收尾的工具发 done 双事件（done 标志兼作去重）
+	// finishTools 按登记顺序为每个未收尾的工具发 done 事件（done 标志兼作去重）。
+	// 事件类型按请求侧 stash 的原始工具类型分派：function 走
+	// function_call_arguments.done，custom 走 custom_tool_call_input.done
+	// （解包 freeform 字符串），local_shell/apply_patch 无参数收尾事件（仅 output_item.done）。
 	finishTools := func() error {
 		for _, tool := range tools {
 			if tool.done {
 				continue
 			}
-			if err := emit("response.function_call_arguments.done", map[string]any{
-				"item_id":      tool.id,
-				"output_index": tool.index,
-				"arguments":    tool.args.String(),
-			}); err != nil {
-				return err
+			if evType, payloadKey, ok := toolCallArgsDoneEvent(info, tool.name); ok {
+				payloadVal := tool.args.String()
+				if payloadKey == "input" {
+					payloadVal = unwrapCustomToolInput(payloadVal)
+				}
+				if err := emit(evType, map[string]any{
+					"item_id":      tool.id,
+					"output_index": tool.index,
+					payloadKey:     payloadVal,
+				}); err != nil {
+					return err
+				}
 			}
 			if err := emit("response.output_item.done", map[string]any{
 				"output_index": tool.index,
-				"item": map[string]any{
-					"type":      "function_call",
-					"id":        tool.id,
-					"call_id":   tool.id,
-					"name":      tool.name,
-					"arguments": tool.args.String(),
-					"status":    "completed",
-				},
+				"item":         toolCallDoneItemPayload(info, tool.id, tool.name, tool.args.String()),
 			}); err != nil {
 				return err
 			}
@@ -392,20 +394,13 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 					tools = append(tools, tool)
 					toolByID[callID] = tool
 
-					if err := emit("response.output_item.added", map[string]any{
-						"output_index": outputIndex,
-						"item": map[string]any{
-							"type":      "function_call",
-							"id":        callID,
-							"call_id":   callID,
-							"name":      tc.Function.Name,
-							"arguments": "", // codex 等严格客户端的 FunctionCall.arguments 为必填键，缺失解析失败（真实 OpenAI 恒带空串）
-							"status":    "in_progress",
-						},
-					}); err != nil {
-						return err
-					}
-					outputIndex++
+				if err := emit("response.output_item.added", map[string]any{
+					"output_index": outputIndex,
+					"item":         buildToolCallAddedItem(info, callID, tc.Function.Name),
+				}); err != nil {
+					return err
+				}
+				outputIndex++
 				}
 
 				// 参数 chunk：ID 可能为空，通过 index 查找对应的 callID
@@ -416,15 +411,20 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 					continue
 				}
 
-				if tc.Function.Arguments != "" {
-					// legacy 怪癖保持：未登记的 callID（仅 ID 无 name 的 chunk）参数不进入
-					// done 事件与 completed output，仅透传 delta（output_index 取零值）
-					toolIdx := 0
-					if tool, ok := toolByID[callID]; ok {
-						tool.args.WriteString(tc.Function.Arguments)
-						toolIdx = tool.index
-					}
-					if err := emit("response.function_call_arguments.delta", map[string]any{
+			if tc.Function.Arguments != "" {
+				// legacy 怪癖保持：未登记的 callID（仅 ID 无 name 的 chunk）参数不进入
+				// done 事件与 completed output，仅透传 delta（output_index 取零值）
+				toolIdx := 0
+				toolName := ""
+				if tool, ok := toolByID[callID]; ok {
+					tool.args.WriteString(tc.Function.Arguments)
+					toolIdx = tool.index
+					toolName = tool.name
+				}
+				// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
+				// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
+				if deltaEvent, ok := toolCallArgsDeltaEvent(info, toolName); ok {
+					if err := emit(deltaEvent, map[string]any{
 						"item_id":      callID,
 						"output_index": toolIdx,
 						"delta":        tc.Function.Arguments,
@@ -432,6 +432,7 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 						return err
 					}
 				}
+			}
 			}
 
 			// finish_reason：收尾思考段 + 关闭文本 part + 按登记顺序收尾全部工具
@@ -508,14 +509,8 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		}})
 	}
 	for _, tool := range tools {
-		items = append(items, indexedOutput{index: tool.index, out: dto.ResponsesOutput{
-			Type:      "function_call",
-			ID:        tool.id,
-			CallID:    tool.id,
-			Name:      tool.name,
-			Arguments: tool.args.String(),
-			Status:    "completed",
-		}})
+		items = append(items, indexedOutput{index: tool.index,
+			out: buildToolCallDoneItem(info, tool.id, tool.name, tool.args.String())})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
 	finalOutput := make([]dto.ResponsesOutput, 0, len(items))

@@ -205,7 +205,9 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		return nil
 	}
 
-	// finish 发送每个工具调用的收尾事件 + response.completed
+	// finish 发送每个工具调用的收尾事件 + response.completed。
+	// 事件类型按请求侧 stash 的原始工具类型分派（function→function_call_arguments.done，
+	// custom→custom_tool_call_input.done，local_shell/apply_patch 仅 output_item.done）。
 	finish := func() error {
 		if sentCompleted {
 			return nil
@@ -218,23 +220,22 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}
 
 		for _, tc := range toolCalls {
-			if err := emit("response.function_call_arguments.done", map[string]any{
-				"item_id":      tc.id,
-				"output_index": toolIndexByID[tc.id],
-				"arguments":    tc.args.String(),
-			}); err != nil {
-				return err
+			if evType, payloadKey, ok := toolCallArgsDoneEvent(info, tc.name); ok {
+				payloadVal := tc.args.String()
+				if payloadKey == "input" {
+					payloadVal = unwrapCustomToolInput(payloadVal)
+				}
+				if err := emit(evType, map[string]any{
+					"item_id":      tc.id,
+					"output_index": toolIndexByID[tc.id],
+					payloadKey:     payloadVal,
+				}); err != nil {
+					return err
+				}
 			}
 			if err := emit("response.output_item.done", map[string]any{
 				"output_index": toolIndexByID[tc.id],
-				"item": map[string]any{
-					"type":      "function_call",
-					"id":        tc.id,
-					"call_id":   tc.id,
-					"name":      tc.name,
-					"arguments": tc.args.String(),
-					"status":    "completed",
-				},
+				"item":         toolCallDoneItemPayload(info, tc.id, tc.name, tc.args.String()),
 			}); err != nil {
 				return err
 			}
@@ -270,14 +271,8 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}})
 		}
 		for _, tc := range toolCalls {
-			items = append(items, indexedOutput{index: toolIndexByID[tc.id], out: dto.ResponsesOutput{
-				Type:      "function_call",
-				ID:        tc.id,
-				CallID:    tc.id,
-				Name:      tc.name,
-				Arguments: tc.args.String(),
-				Status:    "completed",
-			}})
+			items = append(items, indexedOutput{index: toolIndexByID[tc.id],
+				out: buildToolCallDoneItem(info, tc.id, tc.name, tc.args.String())})
 		}
 		sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
 		finalOutput := make([]dto.ResponsesOutput, 0, len(items))
@@ -358,24 +353,17 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				if err := closeTextPart(); err != nil {
 					return err
 				}
-				tc := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
-				toolCalls = append(toolCalls, tc)
-				toolIndexByID[tc.id] = outputIndex
-				currentTool = tc
-				if err := emit("response.output_item.added", map[string]any{
-					"output_index": outputIndex,
-					"item": map[string]any{
-						"type":      "function_call",
-						"id":        tc.id,
-						"call_id":   tc.id,
-						"name":      tc.name,
-						"arguments": "", // codex 等严格客户端的 FunctionCall.arguments 为必填键，缺失解析失败（真实 OpenAI 恒带空串）
-						"status":    "in_progress",
-					},
-				}); err != nil {
-					return err
-				}
-				outputIndex++
+			tc := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+			toolCalls = append(toolCalls, tc)
+			toolIndexByID[tc.id] = outputIndex
+			currentTool = tc
+			if err := emit("response.output_item.added", map[string]any{
+				"output_index": outputIndex,
+				"item":         buildToolCallAddedItem(info, tc.id, tc.name),
+			}); err != nil {
+				return err
+			}
+			outputIndex++
 			case "text", "thinking", "redacted_thinking":
 				// 文本/思考块：均由增量驱动（text_delta 惰性开启 message 项，
 				// thinking_delta 开启独立 reasoning 项）
@@ -422,10 +410,13 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 						return err
 					}
 				}
-			case "input_json_delta":
-				if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" && currentTool != nil {
-					currentTool.args.WriteString(*event.Delta.PartialJSON)
-					if err := emit("response.function_call_arguments.delta", map[string]any{
+		case "input_json_delta":
+			if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" && currentTool != nil {
+				currentTool.args.WriteString(*event.Delta.PartialJSON)
+				// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
+				// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
+				if deltaEvent, ok := toolCallArgsDeltaEvent(info, currentTool.name); ok {
+					if err := emit(deltaEvent, map[string]any{
 						"item_id":      currentTool.id,
 						"output_index": toolIndexByID[currentTool.id],
 						"delta":        *event.Delta.PartialJSON,
@@ -433,6 +424,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 						return err
 					}
 				}
+			}
 			case "signature_delta":
 				// 思考签名无 Responses 对应物，忽略
 			}

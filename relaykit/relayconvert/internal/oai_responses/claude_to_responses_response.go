@@ -114,14 +114,9 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 			// 加密思考内容无文本可透出，跳过
 		case "tool_use":
 			argsJSON, _ := json.Marshal(block.Input)
-			output = append(output, dto.ResponsesOutput{
-				Type:      "function_call",
-				ID:        block.ID,
-				CallID:    block.ID,
-				Name:      block.Name,
-				Arguments: string(argsJSON),
-				Status:    "completed",
-			})
+			// 按请求侧 stash 的原始工具类型还原输出项（custom_tool_call /
+			// local_shell_call / apply_patch_call），未 stash 为 function_call
+			output = append(output, buildToolCallDoneItem(info, block.ID, block.Name, string(argsJSON)))
 		}
 	}
 	head := make([]dto.ResponsesOutput, 0, 2)

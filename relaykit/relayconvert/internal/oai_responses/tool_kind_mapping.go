@@ -148,6 +148,148 @@ func wrapCustomToolInput(input string) string {
 	return string(b)
 }
 
+// ==================== 响应侧：function_call → codex 输出项还原 ====================
+
+// buildToolCallAddedItem 构建 output_item.added 事件的 item 载荷（in_progress）。
+// 按 stash 的工具原始类型产出对应项类型；未 stash 时为 function_call（行为与映射引入前一致）。
+func buildToolCallAddedItem(info convmeta.Meta, id, name string) map[string]any {
+	switch toolKindOf(info, name) {
+	case ToolKindCustom:
+		return map[string]any{
+			"type": "custom_tool_call", "id": id, "call_id": id,
+			"name": name, "input": "", "status": "in_progress",
+		}
+	case ToolKindLocalShell:
+		return map[string]any{
+			"type": "local_shell_call", "id": id, "call_id": id,
+			"status": "in_progress", "action": map[string]any{"type": "exec"},
+		}
+	case ToolKindApplyPatch:
+		return map[string]any{
+			"type": "apply_patch_call", "id": id, "call_id": id, "status": "in_progress",
+		}
+	default:
+		return map[string]any{
+			"type": "function_call", "id": id, "call_id": id,
+			"name": name,
+			// codex 等严格客户端的 FunctionCall.arguments 为必填键，缺失解析失败（真实 OpenAI 恒带空串）
+			"arguments": "", "status": "in_progress",
+		}
+	}
+}
+
+// unwrapCustomToolInput 解包 custom 工具的 {"input":...} arguments 为 freeform 字符串
+// （与请求侧 wrapCustomToolInput 互逆）；解包失败时回退原始 arguments。
+func unwrapCustomToolInput(argsJSON string) string {
+	var v struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &v); err == nil && v.Input != "" {
+		return v.Input
+	}
+	return argsJSON
+}
+
+// buildShellAction 由 function arguments 构建 local_shell_call 的 action（type 恒 exec）。
+func buildShellAction(argsJSON string) json.RawMessage {
+	action := map[string]any{"type": "exec"}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+		for k, v := range args {
+			if k != "type" {
+				action[k] = v
+			}
+		}
+	}
+	b, _ := json.Marshal(action)
+	return b
+}
+
+// buildPatchAction 由 function arguments（operation/path/patch）构建 apply_patch_call 的 action。
+func buildPatchAction(argsJSON string) json.RawMessage {
+	var args struct {
+		Operation string `json:"operation"`
+		Path      string `json:"path"`
+		Patch     string `json:"patch"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+	op := args.Operation
+	if op == "" {
+		op = "update_file"
+	}
+	action := map[string]any{"type": op}
+	if args.Path != "" {
+		action["path"] = args.Path
+	}
+	if args.Patch != "" {
+		action["patch"] = args.Patch
+	}
+	b, _ := json.Marshal(action)
+	return b
+}
+
+// buildToolCallDoneItem 构建 completed 状态的工具调用输出项（非流式 output 数组与
+// 流式 output_item.done / response.completed 共用）。
+func buildToolCallDoneItem(info convmeta.Meta, id, name, argsJSON string) dto.ResponsesOutput {
+	switch toolKindOf(info, name) {
+	case ToolKindCustom:
+		return dto.ResponsesOutput{
+			Type: "custom_tool_call", ID: id, CallID: id, Name: name,
+			Input: unwrapCustomToolInput(argsJSON), Status: "completed",
+		}
+	case ToolKindLocalShell:
+		return dto.ResponsesOutput{
+			Type: "local_shell_call", ID: id, CallID: id,
+			Status: "completed", Action: buildShellAction(argsJSON),
+		}
+	case ToolKindApplyPatch:
+		return dto.ResponsesOutput{
+			Type: "apply_patch_call", ID: id, CallID: id,
+			Status: "completed", Action: buildPatchAction(argsJSON),
+		}
+	default:
+		return dto.ResponsesOutput{
+			Type: "function_call", ID: id, CallID: id, Name: name,
+			Arguments: argsJSON, Status: "completed",
+		}
+	}
+}
+
+// toolCallArgsDoneEvent 返回工具参数收尾事件的类型与载荷键；ok=false 表示该工具类型
+// 无参数收尾事件（local_shell/apply_patch 的参数非流式文本，仅在 output_item.done 携带）。
+// custom 工具的参数收尾事件为 response.custom_tool_call_input.done，载荷键 input
+// （解包后的 freeform 字符串）；function 工具为 response.function_call_arguments.done /
+// arguments（原始 JSON 字符串）。
+func toolCallArgsDoneEvent(info convmeta.Meta, name string) (eventType, payloadKey string, ok bool) {
+	switch toolKindOf(info, name) {
+	case ToolKindCustom:
+		return "response.custom_tool_call_input.done", "input", true
+	case ToolKindLocalShell, ToolKindApplyPatch:
+		return "", "", false
+	default:
+		return "response.function_call_arguments.done", "arguments", true
+	}
+}
+
+// toolCallArgsDeltaEvent 返回工具参数增量事件类型；ok=false 表示抑制增量
+// （非 function 工具的 arguments 是 JSON 包装形态，增量透出会破坏客户端解析，
+// 缓冲至收尾事件一次性给出）。
+func toolCallArgsDeltaEvent(info convmeta.Meta, name string) (string, bool) {
+	if toolKindOf(info, name) == "" {
+		return "response.function_call_arguments.delta", true
+	}
+	return "", false
+}
+
+// toolCallDoneItemPayload 将 done 状态的输出项转为事件载荷 map（output_item.done 的 item 键）。
+func toolCallDoneItemPayload(info convmeta.Meta, id, name, argsJSON string) map[string]any {
+	item := buildToolCallDoneItem(info, id, name, argsJSON)
+	b, _ := json.Marshal(item)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
 // mapNonFunctionToolToChat 将单个非 function 的 Responses 工具定义映射为 chat function
 // 工具。返回 false 表示无法映射（调用方走丢弃上报）。seen 为已占用的工具名集合
 // （跨顶层 tools 与 additional_tools 共享），映射名冲突时放弃映射。
