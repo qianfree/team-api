@@ -71,13 +71,15 @@ func RefreshDispatchLease(ctx context.Context, channelID int64, requestID string
 }
 
 // ReportProbeOutcome 渠道测试（管理后台手动测试 / 自动探测 cron）结果喂给调度健康体系。
-// 探测失败按 TRANSIENT 轻罚（0.93 档），成功正常回升并可关闭 HALF_OPEN 熔断。
+// model 必须传平台模型名（chn_abilities.model_name），与调度健康键一致，不要传上游名。
+// 探测失败只喂熔断窗口不衰减健康分（防周期性探测把无流量渠道健康分拖垮）；
+// 探测成功正常回升健康并可关闭 HALF_OPEN 熔断。
 func ReportProbeOutcome(ctx context.Context, channelID int64, model string, success bool, latencyMs float64) {
 	Coordinator(ctx) // 确保已组装（含健康上报 worker）
 	if redisState == nil {
 		return
 	}
-	o := dispatch.Outcome{ChannelID: channelID, Model: model, Success: success, LatencyMs: latencyMs}
+	o := dispatch.Outcome{ChannelID: channelID, Model: model, Success: success, LatencyMs: latencyMs, Probe: true}
 	if !success {
 		o.Class = dispatch.ErrClassTransient
 	}

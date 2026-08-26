@@ -313,6 +313,8 @@ return 1`
 
 // processOutcome 消费一条结果事件：健康 EWMA + 渠道级/模型级熔断转移。
 // 限流类不喂熔断窗口（429 属容量信号而非故障信号），改喂 softLimit 估计器。
+// 探测失败（Probe）不喂健康 EWMA 只喂熔断窗口：周期性探测持续失败会把无流量
+// 渠道的健康分指数拖垮（0.93^N）且无真实流量对冲；探测成功照常回升健康。
 func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	pol := s.policy()
 	now := time.Now().UnixMilli()
@@ -323,10 +325,12 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	if o.Success {
 		success = "1"
 	}
-	if _, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
-		success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
-		s.local.observe(o) // 降级：实例本地健康镜像
-		return
+	if !o.Probe || o.Success {
+		if _, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
+			success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
+			s.local.observe(o) // 降级：实例本地健康镜像
+			return
+		}
 	}
 
 	// 429 → softLimit 自动估计器（基线方案 §8.2）
@@ -588,10 +592,14 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 	if v, err := g.Redis().Do(ctx, "HMGET", keyHealth+chStr+":"+model, "succ_ewma", "lat_ewma"); err == nil {
 		vals := v.Vars()
 		if len(vals) == 2 {
-			if !vals[0].IsNil() {
+			// gf redis 驱动对 HMGET 缺失字段返回空字符串而非 nil（IsNil()==false），
+			// 必须按无数据处理保留乐观默认值：否则无流量/键过期（TTL 24h）的模型
+			// 读成 succ=0，健康快照取平均被拖到个位数（调度打分有 succ<=0 兜底，
+			// 快照聚合没有）。
+			if str := vals[0].String(); str != "" {
 				out.SuccEwma = vals[0].Float64()
 			}
-			if !vals[1].IsNil() {
+			if str := vals[1].String(); str != "" {
 				out.LatEwmaMs = vals[1].Float64()
 			}
 		}
@@ -614,7 +622,8 @@ func (s *RedisState) readBreaker(ctx context.Context, key string, nowMs int64) (
 		return dispatch.BreakerClosed, 0, 0
 	}
 	vals := v.Vars()
-	if len(vals) != 5 || vals[0].IsNil() {
+	// 缺失字段经 gf 驱动转换后为空字符串（IsNil()==false），与 nil 同判为无快照
+	if len(vals) != 5 || vals[0].IsNil() || vals[0].String() == "" {
 		return dispatch.BreakerClosed, 0, 0
 	}
 	snap := dispatch.BreakerSnapshot{
