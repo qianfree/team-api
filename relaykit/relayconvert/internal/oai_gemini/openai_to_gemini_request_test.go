@@ -722,3 +722,72 @@ func TestOpenAIToGeminiRequestConverter_InvalidRequestType(t *testing.T) {
 		t.Fatal("Expected error for invalid request type, got nil")
 	}
 }
+
+// TestOpenAIToGeminiRequestConverter_WebSearchOptions web_search_options（responses 入站
+// 的 web_search 托管工具经 r2c 提取）映射为 googleSearch grounding tool 条目；
+// 与 functionDeclarations 条目并存。
+func TestOpenAIToGeminiRequestConverter_WebSearchOptions(t *testing.T) {
+	converter := &OpenAIToGeminiRequestConverter{}
+	ctx := context.Background()
+
+	openaiReq := &dto.GeneralOpenAIRequest{
+		WebSearchOptions: json.RawMessage(`{"search_context_size":"high"}`),
+		Messages:         []dto.Message{{Role: "user", Content: "search news"}},
+		Tools: []dto.Tool{{
+			Type: "function",
+			Function: dto.FunctionDef{
+				Name:       "f1",
+				Parameters: map[string]any{"type": "object"},
+			},
+		}},
+	}
+
+	result, err := converter.ConvertRequest(ctx, nil, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+	geminiReq := result.(*dto.GeminiChatRequest)
+
+	if geminiReq.Tools == nil {
+		t.Fatal("Tools is nil")
+	}
+	var tools []geminiTool
+	if err := json.Unmarshal(geminiReq.Tools, &tools); err != nil {
+		t.Fatalf("Failed to unmarshal tools: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("Tools count = %d, want 2 (functionDeclarations + googleSearch)", len(tools))
+	}
+	if len(tools[0].FunctionDeclarations) != 1 || tools[0].FunctionDeclarations[0].Name != "f1" {
+		t.Errorf("tools[0] = %+v, want f1 declarations", tools[0])
+	}
+	if tools[1].GoogleSearch == nil {
+		t.Errorf("tools[1] = %+v, want googleSearch entry", tools[1])
+	}
+}
+
+// TestOpenAIToGeminiRequestConverter_WebSearchOptionsOnly 无 function 工具时
+// googleSearch grounding 独立生效。
+func TestOpenAIToGeminiRequestConverter_WebSearchOptionsOnly(t *testing.T) {
+	converter := &OpenAIToGeminiRequestConverter{}
+	ctx := context.Background()
+
+	openaiReq := &dto.GeneralOpenAIRequest{
+		WebSearchOptions: json.RawMessage(`{}`),
+		Messages:         []dto.Message{{Role: "user", Content: "search news"}},
+	}
+
+	result, err := converter.ConvertRequest(ctx, nil, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+	geminiReq := result.(*dto.GeminiChatRequest)
+
+	var tools []geminiTool
+	if err := json.Unmarshal(geminiReq.Tools, &tools); err != nil {
+		t.Fatalf("Failed to unmarshal tools: %v", err)
+	}
+	if len(tools) != 1 || tools[0].GoogleSearch == nil {
+		t.Fatalf("tools = %+v, want single googleSearch entry", tools)
+	}
+}

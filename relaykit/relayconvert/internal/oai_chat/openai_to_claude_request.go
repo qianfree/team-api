@@ -184,7 +184,6 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	// 转换 tools
 	if len(openaiReq.Tools) > 0 {
 		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
-
 		// 转换 tool_choice。parallel_tool_calls=false 透传为 disable_parallel_tool_use
 		//（codex 等客户端默认单工具串行，对齐 new-api 的映射；Claude 无 none 对应物，不设置）
 		if openaiReq.ToolChoice != nil || openaiReq.ParallelToolCalls != nil {
@@ -220,6 +219,16 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 				claudeReq.ToolChoice = claudeChoice
 			}
 		}
+	}
+
+	// web_search_options（responses 入站的 web_search 托管工具经 r2c 提取）→
+	// Claude 托管 web_search server tool；与 function 工具并存，独立于上方 tools 块
+	// （无 function 工具时搜索仍应生效）
+	if len(openaiReq.WebSearchOptions) > 0 {
+		claudeReq.Tools = append(claudeReq.Tools, dto.ClaudeTool{
+			Type: "web_search_20250305",
+			Name: "web_search",
+		})
 	}
 
 	// 应用 thinking 适配器

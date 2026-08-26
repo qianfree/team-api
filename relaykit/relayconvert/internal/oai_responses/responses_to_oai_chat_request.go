@@ -74,7 +74,9 @@ func (d *degradationRecorder) flush() {
 //     additional_tools 输入项）映射为 function 工具并按映射名 stash 原始类型
 //     （响应侧据此还原 local_shell_call/custom_tool_call/apply_patch_call 输出项）；
 //     对应调用历史项（custom_tool_call 等）还原为 assistant tool_calls + tool 消息；
-//   - 无 chat 对应物的输入（web_search 等内置工具、仅 encrypted_content 的
+//   - web_search 托管搜索工具提取为 chat 请求级 web_search_options（上游 claude/gemini
+//     转换器再映射为各自托管搜索能力）；
+//   - 无 chat 对应物的输入（file_search 等内置工具、仅 encrypted_content 的
 //     reasoning 项等）被丢弃，经 DegradationReporter 上报使降级可见；
 //   - 吸收了旧路径 adaptor 后处理中的 reasoning_effort 注入与 stream_options 注入语义
 //     （relaykit 接管后 adaptor.ConvertRequest 不再执行）。
@@ -130,7 +132,7 @@ func buildChatRequest(info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto
 	}
 	drops := newDegradationRecorder(info, relayconvert.ConverterOpenAIResponsesToOpenAIChat)
 	seenTools := make(map[string]bool)
-	inputMessages, extraTools, err := r2cConvertInputToMessages(info, req.Input, drops, seenTools)
+	inputMessages, extraTools, extraWSOpts, err := r2cConvertInputToMessages(info, req.Input, drops, seenTools)
 	if err != nil {
 		return nil, fmt.Errorf("convert input to messages: %w", err)
 	}
@@ -168,14 +170,22 @@ func buildChatRequest(info convmeta.Meta, req *dto.OpenAIResponsesRequest) (*dto
 		chatReq.LogProbs = &logprobs
 	}
 	if len(req.Tools) > 0 {
-		if chatTools := r2cConvertTools(info, req.Tools, drops, seenTools); len(chatTools) > 0 {
+		chatTools, wsOpts := r2cConvertTools(info, req.Tools, drops, seenTools)
+		if len(chatTools) > 0 {
 			chatReq.Tools = chatTools
+		}
+		if len(wsOpts) > 0 {
+			chatReq.WebSearchOptions = wsOpts
 		}
 	}
 	// additional_tools 输入项提取出的工具（codex 新版把 exec/wait 等嵌套工具定义
 	// 放在 input 中）合并进 chat tools，排在顶层 tools 之后
 	if len(extraTools) > 0 {
 		chatReq.Tools = append(chatReq.Tools, extraTools...)
+	}
+	// additional_tools 中提取出的 web_search_options（顶层未提供时采用）
+	if chatReq.WebSearchOptions == nil && len(extraWSOpts) > 0 {
+		chatReq.WebSearchOptions = extraWSOpts
 	}
 	if len(req.ToolChoice) > 0 {
 		chatReq.ToolChoice = r2cConvertToolChoice(req.ToolChoice)
@@ -297,7 +307,8 @@ type r2cInputAudio struct {
 }
 
 // r2cConvertInputToMessages 将 Responses input（字符串或项数组）转换为 chat 消息数组。
-// 返回值 extraTools 为从 additional_tools 输入项提取并映射的工具（附加到 chat tools）。
+// 返回值 extraTools 为从 additional_tools 输入项提取并映射的工具（附加到 chat tools），
+// extraWSOpts 为其中 web_search 工具提取的 web_search_options。
 // 助手轮重建规则（DeepSeek 等思考模式上游要求单轮单条 assistant 消息，且多轮工具调用时
 // 必须回传 reasoning_content）：
 //   - 连续的 function_call 项聚合为 tool_calls 数组；紧邻的 assistant 文本消息属同一助手轮，
@@ -313,20 +324,21 @@ type r2cInputAudio struct {
 // 无 chat 对应物的输入项（仅 encrypted_content 的 reasoning 项、未知类型）被丢弃并经
 // drops 上报——降级必须可见，不允许静默砍能力。
 // seenTools 为跨顶层 tools 与 additional_tools 共享的工具名去重集合（调用方持有）。
-func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops *degradationRecorder, seenTools map[string]bool) ([]dto.Message, []dto.Tool, error) {
+func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops *degradationRecorder, seenTools map[string]bool) ([]dto.Message, []dto.Tool, json.RawMessage, error) {
 	if len(input) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var simpleText string
 	if err := json.Unmarshal(input, &simpleText); err == nil {
-		return []dto.Message{{Role: "user", Content: simpleText}}, nil, nil
+		return []dto.Message{{Role: "user", Content: simpleText}}, nil, nil, nil
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(input, &items); err != nil {
-		return nil, nil, fmt.Errorf("input must be string or array: %w", err)
+		return nil, nil, nil, fmt.Errorf("input must be string or array: %w", err)
 	}
 	messages := make([]dto.Message, 0, len(items))
 	extraTools := make([]dto.Tool, 0)
+	var extraWSOpts json.RawMessage
 	var pendingToolCalls []dto.ToolCall
 	var pendingReasoning []string
 	// mergeableAssistant：最后一条消息是本轮尚未闭合的 assistant 文本消息，
@@ -423,13 +435,18 @@ func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops 
 			continue
 		case "additional_tools":
 			// codex 新版把 exec/wait 等嵌套工具定义放在该输入项：提取并映射为
-			// function 工具（合并进 chat tools），不再整体丢弃；无工具可提取时仍上报
+			// function 工具（合并进 chat tools），不再整体丢弃；全部不可提取时仍上报
 			flushToolCalls()
-			before := len(extraTools)
+			extracted := false
 			if len(item.Tools) > 0 {
-				extraTools = append(extraTools, r2cConvertTools(info, item.Tools, drops, seenTools)...)
+				subTools, subWS := r2cConvertTools(info, item.Tools, drops, seenTools)
+				extraTools = append(extraTools, subTools...)
+				if len(extraWSOpts) == 0 && len(subWS) > 0 {
+					extraWSOpts = subWS
+				}
+				extracted = len(subTools) > 0 || len(subWS) > 0
 			}
-			if len(extraTools) == before {
+			if !extracted {
 				drops.drop("input_item:additional_tools")
 			}
 			mergeableAssistant = false
@@ -502,7 +519,7 @@ func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops 
 	}
 	flushToolCalls()
 	orphanPendingReasoning()
-	return messages, extraTools, nil
+	return messages, extraTools, extraWSOpts, nil
 }
 
 func r2cConvertMessage(item r2cInputItem) *dto.Message {
@@ -575,14 +592,17 @@ func r2cConvertMessage(item r2cInputItem) *dto.Message {
 // r2cConvertTools 转换 Responses 顶层 tools（或 additional_tools 项内的 tools）为 chat
 // 工具数组。function 工具原样保留；local_shell / custom / apply_patch 经
 // mapNonFunctionToolToChat 映射为 function 工具（按映射名 stash 原始类型，响应侧还原）；
-// namespace 递归展开其子工具；web_search 等内置工具无 chat 对应物，丢弃并经 drops 上报。
+// namespace 递归展开其子工具；web_search 提取为 chat 的 web_search_options 返回值
+// （chat 协议无对应工具定义，为请求级选项；上游 claude/gemini 转换器再映射为各自
+// 托管搜索能力）；file_search 等其余内置工具无 chat 对应物，丢弃并经 drops 上报。
 // seen 为调用方持有的工具名去重集合（顶层 tools 与 additional_tools 共享）。
-func r2cConvertTools(info convmeta.Meta, toolsRaw json.RawMessage, drops *degradationRecorder, seen map[string]bool) []dto.Tool {
+func r2cConvertTools(info convmeta.Meta, toolsRaw json.RawMessage, drops *degradationRecorder, seen map[string]bool) ([]dto.Tool, json.RawMessage) {
 	var tools []map[string]any
 	if err := json.Unmarshal(toolsRaw, &tools); err != nil {
-		return nil
+		return nil, nil
 	}
 	chatTools := make([]dto.Tool, 0, len(tools))
+	var webSearchOptions json.RawMessage
 	for _, tool := range tools {
 		toolType, _ := tool["type"].(string)
 		switch toolType {
@@ -611,26 +631,53 @@ func r2cConvertTools(info convmeta.Meta, toolsRaw json.RawMessage, drops *degrad
 				drops.drop("tool:namespace")
 				continue
 			}
-			sub := r2cConvertTools(info, subRaw, drops, seen)
-			if len(sub) == 0 {
+			sub, subWS := r2cConvertTools(info, subRaw, drops, seen)
+			if len(sub) == 0 && len(subWS) == 0 {
 				drops.drop("tool:namespace")
 				continue
 			}
 			chatTools = append(chatTools, sub...)
+			if len(subWS) > 0 {
+				webSearchOptions = subWS
+			}
 		case ToolKindLocalShell, ToolKindApplyPatch, ToolKindCustom:
 			if mapped, ok := mapNonFunctionToolToChat(info, tool, seen); ok {
 				chatTools = append(chatTools, mapped)
 			} else {
 				drops.drop("tool:" + toolType)
 			}
+		case "web_search":
+			// 托管搜索工具：提取为 chat 请求级 web_search_options（search_context_size /
+			// user_location 直接可用；filters.allowed_domains 无 chat 对应物，忽略）。
+			// 首个 web_search 生效，后续忽略（上游均为单搜索配置）
+			if len(webSearchOptions) == 0 {
+				webSearchOptions = r2cConvertWebSearchOptions(tool)
+			}
 		default:
-			// web_search / file_search / computer_use / mcp 等内置工具无 chat 对应物
+			// file_search / computer_use / mcp 等内置工具无 chat 对应物
 			if toolType != "" {
 				drops.drop("tool:" + toolType)
 			}
 		}
 	}
-	return chatTools
+	return chatTools, webSearchOptions
+}
+
+// r2cConvertWebSearchOptions 将 Responses web_search 工具配置映射为 chat completions 的
+// web_search_options（仅保留两协议共有的 search_context_size / user_location 键）。
+func r2cConvertWebSearchOptions(tool map[string]any) json.RawMessage {
+	opts := make(map[string]any, 2)
+	if v, ok := tool["search_context_size"]; ok {
+		opts["search_context_size"] = v
+	}
+	if v, ok := tool["user_location"]; ok {
+		opts["user_location"] = v
+	}
+	b, err := json.Marshal(opts)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // toolName 提取工具名（非法类型时退化为空串，与旧路径 nil→null 的差异仅为可忽略的序列化形态差）

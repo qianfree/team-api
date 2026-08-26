@@ -851,3 +851,69 @@ func TestOpenAIToClaudeRequestConverter_ParallelToolCallsToDisable(t *testing.T)
 		t.Errorf("ToolChoice = %+v, want any + parallel allowed", choice)
 	}
 }
+
+// TestOpenAIToClaudeRequestConverter_WebSearchOptions web_search_options（responses 入站
+// 的 web_search 托管工具经 r2c 提取）映射为 Claude 托管 web_search server tool；
+// 无 function 工具时同样生效。
+func TestOpenAIToClaudeRequestConverter_WebSearchOptions(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	ctx := context.Background()
+
+	maxTokens := 1024
+	openaiReq := &dto.GeneralOpenAIRequest{
+		Model:            "gpt-4",
+		MaxTokens:        &maxTokens,
+		WebSearchOptions: json.RawMessage(`{"search_context_size":"high"}`),
+		Messages:         []dto.Message{{Role: "user", Content: "search news"}},
+	}
+	info := &mockMeta{upstreamModel: "claude-sonnet-4"}
+
+	result, err := converter.ConvertRequest(ctx, info, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+	claudeReq := result.(*dto.ClaudeRequest)
+
+	if len(claudeReq.Tools) != 1 {
+		t.Fatalf("Tools = %+v, want single web_search server tool", claudeReq.Tools)
+	}
+	if claudeReq.Tools[0].Type != "web_search_20250305" || claudeReq.Tools[0].Name != "web_search" {
+		t.Errorf("Tools[0] = %+v", claudeReq.Tools[0])
+	}
+}
+
+// TestOpenAIToClaudeRequestConverter_WebSearchOptionsWithFunctionTools
+// web_search server tool 与 function 工具并存（追加在 function 工具之后）。
+func TestOpenAIToClaudeRequestConverter_WebSearchOptionsWithFunctionTools(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	ctx := context.Background()
+
+	maxTokens := 1024
+	openaiReq := &dto.GeneralOpenAIRequest{
+		Model:            "gpt-4",
+		MaxTokens:        &maxTokens,
+		WebSearchOptions: json.RawMessage(`{}`),
+		Tools: []dto.Tool{{
+			Type: "function",
+			Function: dto.FunctionDef{
+				Name:       "f1",
+				Parameters: map[string]any{"type": "object"},
+			},
+		}},
+		Messages: []dto.Message{{Role: "user", Content: "hi"}},
+	}
+	info := &mockMeta{upstreamModel: "claude-sonnet-4"}
+
+	result, err := converter.ConvertRequest(ctx, info, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest failed: %v", err)
+	}
+	claudeReq := result.(*dto.ClaudeRequest)
+
+	if len(claudeReq.Tools) != 2 {
+		t.Fatalf("Tools = %+v, want [f1 web_search]", claudeReq.Tools)
+	}
+	if claudeReq.Tools[0].Name != "f1" || claudeReq.Tools[1].Type != "web_search_20250305" {
+		t.Errorf("Tools = %+v", claudeReq.Tools)
+	}
+}

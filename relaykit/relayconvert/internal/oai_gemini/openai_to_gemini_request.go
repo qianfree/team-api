@@ -160,6 +160,22 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		}
 	}
 
+	// web_search_options（responses 入站的 web_search 托管工具经 r2c 提取）→
+	// Gemini googleSearch grounding；独立于上方 tools 块（无 function 工具时搜索仍应生效）。
+	// 与已有 functionDeclarations 合并为追加的 tool 条目
+	if len(openaiReq.WebSearchOptions) > 0 {
+		var existing []geminiTool
+		if len(geminiReq.Tools) > 0 {
+			_ = json.Unmarshal(geminiReq.Tools, &existing)
+		}
+		existing = append(existing, geminiTool{GoogleSearch: &googleSearchTool{}})
+		toolsJSON, err := json.Marshal(existing)
+		if err != nil {
+			return nil, fmt.Errorf("marshal gemini tools with google search: %w", err)
+		}
+		geminiReq.Tools = toolsJSON
+	}
+
 	// Messages conversion
 	toolCallIDs := make(map[string]string) // toolCallID -> functionName
 	var systemParts []dto.GeminiPart
@@ -467,7 +483,13 @@ func convertAssistantParts(msg dto.Message, toolCallIDs map[string]string) []dto
 
 type geminiTool struct {
 	FunctionDeclarations []functionDecl `json:"functionDeclarations,omitempty"`
+	// GoogleSearch grounding 托管搜索（web_search_options 经 r2c 提取后映射至此；
+	// 与 functionDeclarations 分属不同 tool 条目，由调用方分别 append）
+	GoogleSearch *googleSearchTool `json:"googleSearch,omitempty"`
 }
+
+// googleSearchTool Gemini googleSearch grounding 配置（空对象即启用）
+type googleSearchTool struct{}
 
 type functionDecl struct {
 	Name        string `json:"name"`

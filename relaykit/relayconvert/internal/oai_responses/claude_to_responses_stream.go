@@ -48,6 +48,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 	toolCalls := make([]*claudeToolCallState, 0) // 有序聚合，completed 的 output 数组按此顺序
 	toolIndexByID := make(map[string]int)        // callID → output_index
 	var currentTool *claudeToolCallState         // 正在接收参数增量的工具调用
+	// Claude 托管 web_search（server_tool_use/web_search_tool_result 块）→ web_search_call 项
+	webSearches := make([]*claudeWebSearchState, 0)
+	webSearchByID := make(map[string]*claudeWebSearchState)
+	var currentWebSearch *claudeWebSearchState // 正在接收 query JSON 增量的搜索调用
 	// 思考段状态：thinking 块产出独立 reasoning 项（工具调用打断后新 thinking 增量开新段）
 	rsOpen := false
 	rsSeq := 0
@@ -241,6 +245,24 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}
 		}
 
+		// 托管搜索收尾：web_search_call 无参数增量事件，done 项携带完整 action
+		// （query 由 input_json_delta 累积还原，sources 来自 web_search_tool_result 块）
+		for _, ws := range webSearches {
+			var action map[string]any
+			_ = json.Unmarshal(webSearchAction(webSearchQueryOf(ws.query.String()), ws.sources), &action)
+			if err := emit("response.output_item.done", map[string]any{
+				"output_index": ws.index,
+				"item": map[string]any{
+					"type":   "web_search_call",
+					"id":     ws.id,
+					"status": "completed",
+					"action": action,
+				},
+			}); err != nil {
+				return err
+			}
+		}
+
 		// 输出数组：思考段 + 文本消息（有文本才保留）+ 工具，按 output_index 排序
 		type indexedOutput struct {
 			index int
@@ -273,6 +295,14 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		for _, tc := range toolCalls {
 			items = append(items, indexedOutput{index: toolIndexByID[tc.id],
 				out: buildToolCallDoneItem(info, tc.id, tc.name, tc.args.String())})
+		}
+		for _, ws := range webSearches {
+			items = append(items, indexedOutput{index: ws.index, out: dto.ResponsesOutput{
+				Type:   "web_search_call",
+				ID:     ws.id,
+				Status: "completed",
+				Action: webSearchAction(webSearchQueryOf(ws.query.String()), ws.sources),
+			}})
 		}
 		sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
 		finalOutput := make([]dto.ResponsesOutput, 0, len(items))
@@ -353,17 +383,49 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				if err := closeTextPart(); err != nil {
 					return err
 				}
-			tc := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
-			toolCalls = append(toolCalls, tc)
-			toolIndexByID[tc.id] = outputIndex
-			currentTool = tc
-			if err := emit("response.output_item.added", map[string]any{
-				"output_index": outputIndex,
-				"item":         buildToolCallAddedItem(info, tc.id, tc.name),
-			}); err != nil {
-				return err
-			}
-			outputIndex++
+				tc := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				toolCalls = append(toolCalls, tc)
+				toolIndexByID[tc.id] = outputIndex
+				currentTool = tc
+				if err := emit("response.output_item.added", map[string]any{
+					"output_index": outputIndex,
+					"item":         buildToolCallAddedItem(info, tc.id, tc.name),
+				}); err != nil {
+					return err
+				}
+				outputIndex++
+			case "server_tool_use":
+				// Claude 托管搜索：开 web_search_call 项（query 由后续 input_json_delta 累积）
+				if event.ContentBlock.Name != "web_search" {
+					continue
+				}
+				if err := closeReasoning(); err != nil {
+					return err
+				}
+				if err := closeTextPart(); err != nil {
+					return err
+				}
+				ws := &claudeWebSearchState{id: event.ContentBlock.ID, index: outputIndex}
+				webSearches = append(webSearches, ws)
+				webSearchByID[ws.id] = ws
+				currentWebSearch = ws
+				if err := emit("response.output_item.added", map[string]any{
+					"output_index": outputIndex,
+					"item": map[string]any{
+						"type":   "web_search_call",
+						"id":     ws.id,
+						"status": "in_progress",
+						"action": map[string]any{"type": "search", "query": ""},
+					},
+				}); err != nil {
+					return err
+				}
+				outputIndex++
+			case "web_search_tool_result":
+				// 搜索结果块（完整到达）：sources 暂存到对应搜索调用，done 时随 action 产出
+				if ws, ok := webSearchByID[event.ContentBlock.ToolUseID]; ok {
+					ws.sources = claudeWebSearchSources(event.ContentBlock.Content)
+				}
 			case "text", "thinking", "redacted_thinking":
 				// 文本/思考块：均由增量驱动（text_delta 惰性开启 message 项，
 				// thinking_delta 开启独立 reasoning 项）
@@ -411,7 +473,16 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 					}
 				}
 		case "input_json_delta":
-			if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" && currentTool != nil {
+			if event.Delta.PartialJSON == nil || *event.Delta.PartialJSON == "" {
+				continue
+			}
+			// web_search 的 query JSON 增量：缓冲（web_search_call 无参数增量事件，
+			// done 时随 action 一次性产出）
+			if currentWebSearch != nil {
+				currentWebSearch.query.WriteString(*event.Delta.PartialJSON)
+				continue
+			}
+			if currentTool != nil {
 				currentTool.args.WriteString(*event.Delta.PartialJSON)
 				// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
 				// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
@@ -430,9 +501,12 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}
 
 		case "content_block_stop":
-			// 块级收尾统一延迟到 message_stop / finish，这里仅结束当前工具块的增量定向
+			// 块级收尾统一延迟到 message_stop / finish，这里仅结束当前工具/搜索块的增量定向
 			if currentTool != nil {
 				currentTool = nil
+			}
+			if currentWebSearch != nil {
+				currentWebSearch = nil
 			}
 
 		case "message_delta":
@@ -489,6 +563,15 @@ type claudeToolCallState struct {
 	id   string
 	name string
 	args strings.Builder
+}
+
+// claudeWebSearchState 流式中聚合的托管搜索调用（server_tool_use 块的 query JSON 增量 +
+// web_search_tool_result 块的 sources）；index 为 output_index（completed output 排序依据）
+type claudeWebSearchState struct {
+	id      string
+	index   int
+	query   strings.Builder
+	sources []dto.ResponsesWebSearchSource
 }
 
 // extractSSEData 从 SSE data 行提取数据部分（与宿主 helper.ExtractSSEData 等价的纯实现）。

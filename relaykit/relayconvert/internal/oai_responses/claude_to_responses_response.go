@@ -62,6 +62,82 @@ func responsesEchoOf(info convmeta.Meta) responsesEcho {
 
 func ptrFloat64(v float64) *float64 { return &v }
 
+// ==================== Claude 托管 web_search → Responses web_search_call ====================
+
+// webSearchQueryOf 从 server_tool_use 的 input（对象或累积 JSON 文本）提取 query。
+func webSearchQueryOf(input any) string {
+	switch v := input.(type) {
+	case map[string]any:
+		if q, ok := v["query"].(string); ok {
+			return q
+		}
+	case string:
+		var m map[string]any
+		if err := json.Unmarshal([]byte(v), &m); err == nil {
+			if q, ok := m["query"].(string); ok {
+				return q
+			}
+		}
+	}
+	return ""
+}
+
+// claudeWebSearchSources 从 web_search_tool_result 块的 content 提取 sources
+// （content 为 web_search_result 对象数组，仅取有 url 的项；无结果返回 nil）。
+func claudeWebSearchSources(content any) []dto.ResponsesWebSearchSource {
+	b, err := json.Marshal(content)
+	if err != nil {
+		return nil
+	}
+	var results []struct {
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}
+	if err := json.Unmarshal(b, &results); err != nil {
+		return nil
+	}
+	sources := make([]dto.ResponsesWebSearchSource, 0, len(results))
+	for _, r := range results {
+		if r.URL != "" {
+			sources = append(sources, dto.ResponsesWebSearchSource{Type: "url", URL: r.URL})
+		}
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources
+}
+
+// webSearchAction 构建 web_search_call 的 action（type=search；sources 可选）。
+func webSearchAction(query string, sources []dto.ResponsesWebSearchSource) json.RawMessage {
+	action := dto.ResponsesWebSearchAction{Type: "search", Query: query}
+	if len(sources) > 0 {
+		action.Sources = sources
+	}
+	b, _ := json.Marshal(action)
+	return b
+}
+
+// mergeWebSearchSources 把 web_search_tool_result 的 sources 合并进已产出的
+// web_search_call 项（按 ToolUseID 匹配项 ID）；未找到匹配项时忽略。
+func mergeWebSearchSources(output []dto.ResponsesOutput, toolUseID string, sources []dto.ResponsesWebSearchSource) {
+	if toolUseID == "" || len(sources) == 0 {
+		return
+	}
+	for i := range output {
+		if output[i].Type != "web_search_call" || output[i].ID != toolUseID {
+			continue
+		}
+		var action dto.ResponsesWebSearchAction
+		if len(output[i].Action) > 0 {
+			_ = json.Unmarshal(output[i].Action, &action)
+		}
+		action.Sources = sources
+		output[i].Action = webSearchAction(action.Query, sources)
+		return
+	}
+}
+
 // ClaudeToResponsesResponseConverter Claude 上游 → Responses 客户端（非流式响应侧）。
 // 移植自宿主 relay/channel/claude/responses_bridge.go 的 handleNonStreamToResponses 纯映射部分。
 type ClaudeToResponsesResponseConverter struct{}
@@ -117,6 +193,20 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 			// 按请求侧 stash 的原始工具类型还原输出项（custom_tool_call /
 			// local_shell_call / apply_patch_call），未 stash 为 function_call
 			output = append(output, buildToolCallDoneItem(info, block.ID, block.Name, string(argsJSON)))
+		case "server_tool_use":
+			// Claude 托管搜索（web_search_options 经 chat→claude 映射为 server tool）：
+			// 还原为 Responses web_search_call 项，codex 等客户端据此展示搜索过程
+			if block.Name == "web_search" {
+				output = append(output, dto.ResponsesOutput{
+					Type:   "web_search_call",
+					ID:     block.ID,
+					Status: "completed",
+					Action: webSearchAction(webSearchQueryOf(block.Input), nil),
+				})
+			}
+		case "web_search_tool_result":
+			// 搜索结果：sources 合并进对应的 web_search_call 项（ToolUseID 匹配）
+			mergeWebSearchSources(output, block.ToolUseID, claudeWebSearchSources(block.Content))
 		}
 	}
 	head := make([]dto.ResponsesOutput, 0, 2)
