@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -178,6 +179,39 @@ type RelayInfo struct {
 	sendResponseCount    int
 	conversionChain      []types.RelayFormat
 	convOptions          *convmeta.Options
+
+	// responsesToolKinds 请求侧 r2c 转换器 stash 的工具映射名 → 原始 Responses 工具
+	// 类型（local_shell/custom/apply_patch），响应侧据此把上游 function_call 还原为
+	// codex 期望的输出项类型。gemini 链的 io.Pipe 组合会让响应侧转换跑在独立
+	// goroutine，故加锁保护。
+	responsesToolKindsMu sync.RWMutex
+	responsesToolKinds   map[string]string
+}
+
+// StashResponsesToolKind 实现 relaykit r2c 转换器的工具类型 stash 能力接口
+// （oai_responses.responsesToolKindStash，结构化类型匹配）：请求侧把 codex 非 function
+// 工具映射为 chat function 工具时记录映射名 → 原始类型。
+func (r *RelayInfo) StashResponsesToolKind(name, kind string) {
+	if r == nil || name == "" || kind == "" {
+		return
+	}
+	r.responsesToolKindsMu.Lock()
+	defer r.responsesToolKindsMu.Unlock()
+	if r.responsesToolKinds == nil {
+		r.responsesToolKinds = make(map[string]string)
+	}
+	r.responsesToolKinds[name] = kind
+}
+
+// ResponsesToolKind 查询工具映射名的原始 Responses 工具类型（未 stash 返回空串，
+// 表示普通 function 工具）。
+func (r *RelayInfo) ResponsesToolKind(name string) string {
+	if r == nil {
+		return ""
+	}
+	r.responsesToolKindsMu.RLock()
+	defer r.responsesToolKindsMu.RUnlock()
+	return r.responsesToolKinds[name]
 }
 
 // ResponsesRequestSnapshot 提供 Responses 入站请求快照（relaykit Claude→Responses
