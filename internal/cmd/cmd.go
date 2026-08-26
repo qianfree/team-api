@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -521,6 +523,54 @@ func registerFrontendRoutes(s *ghttp.Server) {
 	})
 }
 
+// staticAssetExts 视为静态资源的扩展名集合：此类请求未命中文件时应返回 404
+// 而非回退 index.html，避免把 HTML 当 JS/JSON 返回触发浏览器严格 MIME 校验报错。
+var staticAssetExts = map[string]struct{}{
+	".js": {}, ".mjs": {}, ".css": {}, ".wasm": {}, ".map": {},
+	".jpg": {}, ".jpeg": {}, ".png": {}, ".gif": {}, ".webp": {}, ".avif": {},
+	".svg": {}, ".ico": {}, ".woff": {}, ".woff2": {}, ".ttf": {}, ".otf": {}, ".eot": {},
+	".mp4": {}, ".webm": {}, ".mp3": {}, ".wav": {}, ".json": {}, ".xml": {}, ".txt": {},
+}
+
+// isAssetPath 判断请求路径是否具有静态资源特征（assets 目录或带资源扩展名）。
+func isAssetPath(path string) bool {
+	if strings.HasPrefix(path, "assets/") {
+		return true
+	}
+	ext := strings.ToLower(path[strings.LastIndex(path, "/")+1:])
+	dot := strings.LastIndex(ext, ".")
+	if dot <= 0 {
+		return false
+	}
+	_, ok := staticAssetExts[ext[dot:]]
+	return ok
+}
+
+// setStaticCacheHeader 按资源类型设置缓存策略：
+// Vite 构建产物（assets/ 下 hash 文件名）永久强缓存；入口文件（index.html 等）要求每次进站重新校验，
+// 保证发版后用户总能拿到新入口。
+func setStaticCacheHeader(w http.ResponseWriter, path string) {
+	if strings.HasPrefix(path, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+}
+
+// matchesEtag 判断请求头 If-None-Match 是否包含当前指纹（值可能是逗号分隔列表或通配 *）。
+func matchesEtag(header, tag string) bool {
+	if header == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "*" || part == tag {
+			return true
+		}
+	}
+	return false
+}
+
 // spaHandler returns an http.HandlerFunc that serves static files from the
 // given filesystem, falling back to index.html for SPA client-side routing.
 func spaHandler(root fs.FS, prefix string) http.HandlerFunc {
@@ -529,28 +579,58 @@ func spaHandler(root fs.FS, prefix string) http.HandlerFunc {
 		fileServer = http.StripPrefix(prefix, fileServer)
 	}
 
+	// 启动时预读入口文件并预计算 SHA-256 指纹作为 ETag：
+	// index.html 走 no-cache 协商缓存，未重新发布的重复访问返回 304 空响应，
+	// 既保证发版即生效、又不产生重复下载开销。
+	indexBytes, indexErr := fs.ReadFile(root, "index.html")
+	indexTag := ""
+	if indexErr == nil {
+		sum := sha256.Sum256(indexBytes)
+		indexTag = `"` + hex.EncodeToString(sum[:]) + `"`
+	}
+
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		if indexErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", indexTag)
+		if matchesEtag(r.Header.Get("If-None-Match"), indexTag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Write(indexBytes)
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Resolve the file path within the embedded FS
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		path = strings.TrimPrefix(path, "/")
-		if path == "" {
-			path = "index.html"
+
+		// 入口文件统一走自建响应（fileServer 无法为 embed FS 提供 Last-Modified/ETag）
+		if path == "" || path == "index.html" {
+			serveIndex(w, r)
+			return
 		}
 
 		// Try to open the file; if it exists, serve it directly
 		if f, err := root.Open(path); err == nil {
 			f.Close()
+			setStaticCacheHeader(w, path)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// File not found — serve index.html (SPA fallback)
-		indexBytes, err := fs.ReadFile(root, "index.html")
-		if err != nil {
+		// 带静态资源特征的请求（如发版后旧 hash chunk）缺失时返回 404，
+		// 不回退 SPA，方便前端自愈逻辑识别并整页刷新到新版本。
+		if isAssetPath(path) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(indexBytes)
+
+		// Route not found — serve index.html (SPA fallback)
+		serveIndex(w, r)
 	}
 }

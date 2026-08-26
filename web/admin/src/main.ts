@@ -26,6 +26,28 @@ console.log(
   'color: #666;',
 )
 
+// 构建发版后旧 hash chunk 失效时自动整页刷新加载新版本；标记防止刷新死循环
+const CHUNK_RELOAD_KEY = 'spa_stale_chunk_reloaded'
+
+function reloadOnStaleChunk() {
+  if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, '1')
+    window.location.reload()
+  }
+}
+
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault()
+  reloadOnStaleChunk()
+})
+
+router.onError((error) => {
+  const msg = String(error instanceof Error ? error.message : error)
+  if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(msg)) {
+    reloadOnStaleChunk()
+  }
+})
+
 const app = createApp(App)
 app.config.errorHandler = (error, _instance, info) => {
   console.error('[VueError]', info, error)
@@ -34,3 +56,6 @@ app.use(createPinia())
 app.use(ArcoVue)
 app.use(router)
 app.mount('#app')
+
+// 页面成功启动后清除标记，后续每次发版仍可各自动刷新一次
+sessionStorage.removeItem(CHUNK_RELOAD_KEY)
