@@ -210,6 +210,11 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 					response = parsed
 				}
 			}
+			// Gemini 要求 functionResponse.response 必须是 JSON 对象（Struct），
+			// 纯文本/数组/标量等非对象结果统一包进 {"result": ...}，否则上游按 map 解析会直接报错
+			if _, isMap := response.(map[string]any); !isMap {
+				response = map[string]any{"result": response}
+			}
 
 			geminiReq.Contents[lastIdx].Parts = append(geminiReq.Contents[lastIdx].Parts, dto.GeminiPart{
 				FunctionResponse: &dto.GeminiFunctionResponse{
@@ -403,10 +408,12 @@ func parseDataURL(dataURL string) (mimeType, data string, ok bool) {
 
 func convertAssistantParts(msg dto.Message, toolCallIDs map[string]string) []dto.GeminiPart {
 	var parts []dto.GeminiPart
+	textIdx, thoughtIdx := -1, -1
 
 	text := extractText(msg.Content)
 	if text != "" {
 		parts = append(parts, dto.GeminiPart{Text: text})
+		textIdx = len(parts) - 1
 	}
 
 	// ReasoningContent → thought
@@ -416,9 +423,11 @@ func convertAssistantParts(msg dto.Message, toolCallIDs map[string]string) []dto
 			Text:    *msg.ReasoningContent,
 			Thought: &t,
 		})
+		thoughtIdx = len(parts) - 1
 	}
 
-	// ToolCalls → FunctionCall
+	// ToolCalls → FunctionCall（工具级 thoughtSignature 直挂对应 part）
+	firstBareFCIdx := -1
 	for _, tc := range msg.ToolCalls {
 		args := map[string]any{}
 		if tc.Function.Arguments != "" {
@@ -431,8 +440,26 @@ func convertAssistantParts(msg dto.Message, toolCallIDs map[string]string) []dto
 				FunctionName: tc.Function.Name,
 				Arguments:    args,
 			},
+			ThoughtSignature: tc.ThoughtSignature,
 		})
+		if tc.ThoughtSignature == "" && firstBareFCIdx == -1 {
+			firstBareFCIdx = len(parts) - 1
+		}
 		toolCallIDs[tc.ID] = tc.Function.Name
+	}
+
+	// 消息级 thoughtSignature 回填（claude 链的 thinking 块签名走消息级）：
+	// 优先首个无签名 functionCall part（Gemini 3 的强校验点），其次 thought part，
+	// 最后 text part（纯文本轮次的签名附着位）
+	if msg.ThoughtSignature != "" {
+		switch {
+		case firstBareFCIdx >= 0:
+			parts[firstBareFCIdx].ThoughtSignature = msg.ThoughtSignature
+		case thoughtIdx >= 0:
+			parts[thoughtIdx].ThoughtSignature = msg.ThoughtSignature
+		case textIdx >= 0:
+			parts[textIdx].ThoughtSignature = msg.ThoughtSignature
+		}
 	}
 
 	return parts

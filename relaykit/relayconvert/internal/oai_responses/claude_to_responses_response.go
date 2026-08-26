@@ -91,12 +91,14 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 }
 
 // buildResponsesFromClaude 将 Claude 非流式响应转换为 Responses 响应对象。
-// 文本块聚合为 message 项（置于输出数组最前），tool_use 块转为 function_call 项，
-// thinking 块跳过（流式侧以 reasoning summary 事件透出）。
+// thinking 块聚合为 reasoning 项（置于输出数组最前——真实 OpenAI 项序，codex 等客户端
+// 据此在后续轮次回传思考内容；signature 无 Responses 对应物丢弃），文本块聚合为 message 项，
+// tool_use 块转为 function_call 项。
 // 返回的 usage 为客户端可见口径（OpenAI 语义：input 含缓存，cached 为其子集）。
 func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse) (*dto.OpenAIResponsesResponse, *dto.UsageWithDetails) {
-	// 构建 output：文本块 → message 项，tool_use 块 → function_call 项
+	// 构建 output：thinking 块 → reasoning 项，文本块 → message 项，tool_use 块 → function_call 项
 	var textParts []string
+	var thinkingParts []string
 	output := make([]dto.ResponsesOutput, 0)
 	for _, block := range claudeResp.Content {
 		switch block.Type {
@@ -104,8 +106,12 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 			if block.Text != nil && *block.Text != "" {
 				textParts = append(textParts, *block.Text)
 			}
-		case "thinking", "redacted_thinking":
-			// 思考内容无 Responses 非流式对应物，跳过
+		case "thinking":
+			if block.Thinking != nil && *block.Thinking != "" {
+				thinkingParts = append(thinkingParts, *block.Thinking)
+			}
+		case "redacted_thinking":
+			// 加密思考内容无文本可透出，跳过
 		case "tool_use":
 			argsJSON, _ := json.Marshal(block.Input)
 			output = append(output, dto.ResponsesOutput{
@@ -118,8 +124,19 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 			})
 		}
 	}
+	head := make([]dto.ResponsesOutput, 0, 2)
+	if len(thinkingParts) > 0 {
+		head = append(head, dto.ResponsesOutput{
+			Type: "reasoning",
+			ID:   fmt.Sprintf("rs_%s", claudeResp.ID),
+			Summary: []dto.ResponsesSummaryPart{{
+				Type: "summary_text",
+				Text: strings.Join(thinkingParts, "\n"),
+			}},
+		})
+	}
 	if len(textParts) > 0 {
-		msgItem := dto.ResponsesOutput{
+		head = append(head, dto.ResponsesOutput{
 			Type:   "message",
 			ID:     fmt.Sprintf("msg_%s", claudeResp.ID),
 			Status: "completed",
@@ -129,8 +146,10 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 				Text:        strings.Join(textParts, "\n"),
 				Annotations: []dto.ResponsesAnnotation{},
 			}},
-		}
-		output = append([]dto.ResponsesOutput{msgItem}, output...)
+		})
+	}
+	if len(head) > 0 {
+		output = append(head, output...)
 	}
 
 	// 模型名：优先上游返回值，为空时回退客户端请求模型名。

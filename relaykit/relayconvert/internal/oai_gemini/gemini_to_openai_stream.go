@@ -147,6 +147,11 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 
 			for _, part := range candidate.Content.Parts {
 				isThought := part.Thought != nil && *part.Thought
+				// thoughtSignature 透传：签名附着在其来源 part 对应的 chunk 上
+				//（thought 文本 → 消息级、functionCall → 工具级），part 未产出
+				// chunk 时补发签名专用 chunk——Gemini 3 函数调用轮次强校验签名回传
+				sig := part.ThoughtSignature
+				sigAttached := false
 
 				// 文本内容
 				if part.Text != "" {
@@ -154,15 +159,19 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 						// thinking 内容 → reasoning_content
 						if err := chunkWriter(newChunk(dto.Message{
 							ReasoningContent: &part.Text,
+							ThoughtSignature: sig,
 						})); err != nil {
 							return err
 						}
+						sigAttached = sig != ""
 					} else {
 						if err := chunkWriter(newChunk(dto.Message{
-							Content: part.Text,
+							Content:          part.Text,
+							ThoughtSignature: sig,
 						})); err != nil {
 							return err
 						}
+						sigAttached = sig != ""
 					}
 				}
 
@@ -217,11 +226,22 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 								Name:      part.FunctionCall.FunctionName,
 								Arguments: string(argsJSON),
 							},
+							ThoughtSignature: sig,
 						}},
 					})); err != nil {
 						return err
 					}
 					toolCallIdx++
+					sigAttached = sigAttached || sig != ""
+				}
+
+				// 签名孤儿 part（无文本/函数调用等可附着内容）：补发签名专用 chunk
+				if sig != "" && !sigAttached {
+					if err := chunkWriter(newChunk(dto.Message{
+						ThoughtSignature: sig,
+					})); err != nil {
+						return err
+					}
 				}
 			}
 		}

@@ -70,3 +70,51 @@ func TestChatToResponsesStrictJSONKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestChatToResponsesNoEmptyContentMessage 回归测试：空 content 的 message 项因 DTO omitempty
+// 会丢掉整个 content 键（OpenAI SDK 等严格客户端把 message.content 视为必填，解析失败），
+// 因此内容为空时不产出 message 项——工具调用响应输出 [function_call...]，与真实 OpenAI
+// 及流式侧 completed output 口径一致。
+func TestChatToResponsesNoEmptyContentMessage(t *testing.T) {
+	// 工具调用响应：content 为空串，仅 tool_calls
+	var chatResp dto.ChatCompletionResponse
+	if err := json.Unmarshal([]byte(`{
+		"id": "chatcmpl-1", "object": "chat.completion", "created": 1730000000, "model": "m",
+		"choices": [{"index": 0, "message": {"role": "assistant", "content": "",
+			"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "f", "arguments": "{}"}}]},
+			"finish_reason": "tool_calls"}],
+		"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+	}`), &chatResp); err != nil {
+		t.Fatalf("parse chat response: %v", err)
+	}
+
+	result, _, err := (&OpenAIChatToResponsesResponseConverter{}).ConvertResponse(context.Background(), nil, &chatResp)
+	if err != nil {
+		t.Fatalf("ConvertResponse: %v", err)
+	}
+	resp := result.(*dto.OpenAIResponsesResponse)
+	if len(resp.Output) != 1 || resp.Output[0].Type != "function_call" {
+		t.Fatalf("output = %+v, want 仅 [function_call]（无空 message 项）", resp.Output)
+	}
+
+	// 序列化层面兜底断言：任何 message 项必须携带非空 content 键
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw struct {
+		Output []map[string]any `json:"output"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, item := range raw.Output {
+		if item["type"] != "message" {
+			continue
+		}
+		content, ok := item["content"].([]any)
+		if !ok || len(content) == 0 {
+			t.Errorf("message 项 content 键缺失或为空: %v", item)
+		}
+	}
+}

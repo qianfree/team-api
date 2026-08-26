@@ -25,7 +25,7 @@
       {
         "content": [
           {
-            "signature": "sig-to-be-dropped",
+            "signature": "sig-roundtrip",
             "thinking": "先思考",
             "type": "thinking"
           },
@@ -133,6 +133,7 @@
         "role": "assistant",
         "content": "我调一下工具",
         "reasoning_content": "先思考",
+        "thought_signature": "sig-roundtrip",
         "tool_calls": [
           {
             "id": "toolu_1",

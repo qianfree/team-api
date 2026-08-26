@@ -85,9 +85,14 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		var thinkingParts []string
 		var toolCalls []dto.ToolCall
 		toolIdx := 0
+		// thoughtSignature 透传（消息级取首个非空；functionCall part 的签名挂在对应 tool call 上）
+		msgSignature := ""
 
 		for _, part := range candidate.Content.Parts {
 			isThought := part.Thought != nil && *part.Thought
+			if part.ThoughtSignature != "" && part.FunctionCall == nil && msgSignature == "" {
+				msgSignature = part.ThoughtSignature
+			}
 
 			// 文本内容
 			if part.Text != "" {
@@ -132,14 +137,16 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 						Name:      part.FunctionCall.FunctionName,
 						Arguments: string(argsJSON),
 					},
+					ThoughtSignature: part.ThoughtSignature,
 				})
 				toolIdx++
 			}
 		}
 
 		message := dto.Message{
-			Role:    "assistant",
-			Content: strings.Join(textParts, ""),
+			Role:             "assistant",
+			Content:          strings.Join(textParts, ""),
+			ThoughtSignature: msgSignature,
 		}
 
 		// 添加 thinking 内容

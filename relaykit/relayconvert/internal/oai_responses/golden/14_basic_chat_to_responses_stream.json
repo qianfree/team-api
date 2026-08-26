@@ -82,13 +82,52 @@
       }
     },
     {
+      "Type": "response.output_item.added",
+      "Data": {
+        "item": {
+          "id": "rs_chatcmpl-S1",
+          "summary": [],
+          "type": "reasoning"
+        },
+        "output_index": 1,
+        "type": "response.output_item.added"
+      }
+    },
+    {
       "Type": "response.reasoning_summary_text.delta",
       "Data": {
         "delta": "思考中",
-        "item_id": "msg_chatcmpl-S1",
-        "output_index": 0,
+        "item_id": "rs_chatcmpl-S1",
+        "output_index": 1,
         "summary_index": 0,
         "type": "response.reasoning_summary_text.delta"
+      }
+    },
+    {
+      "Type": "response.reasoning_summary_text.done",
+      "Data": {
+        "item_id": "rs_chatcmpl-S1",
+        "output_index": 1,
+        "summary_index": 0,
+        "text": "思考中",
+        "type": "response.reasoning_summary_text.done"
+      }
+    },
+    {
+      "Type": "response.output_item.done",
+      "Data": {
+        "item": {
+          "id": "rs_chatcmpl-S1",
+          "summary": [
+            {
+              "text": "思考中",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning"
+        },
+        "output_index": 1,
+        "type": "response.output_item.done"
       }
     },
     {
@@ -170,6 +209,16 @@
                   "type": "output_text",
                   "text": "你好，世界",
                   "annotations": []
+                }
+              ]
+            },
+            {
+              "type": "reasoning",
+              "id": "rs_chatcmpl-S1",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "思考中"
                 }
               ]
             }

@@ -17,7 +17,8 @@ import (
 // 挂在 spec A（ConverterClaudeMessagesToOpenAIChat）的 Resp 侧（方向与请求相反）。
 //
 // legacy 怪癖清单（保持勿改）：
-//   - 只取 Choices[0]；块序 thinking→text→tool_use；thinking 块无 signature
+//   - 只取 Choices[0]；块序 thinking→text→tool_use（thinking 块 signature 承载
+//     Gemini thoughtSignature 往返，见 Message/ToolCall.ThoughtSignature）
 //   - Content 非 string（数组形态）不提取任何 text（断言失败即无）
 //   - ToolCalls Arguments unmarshal 失败→{}；content 空时补空 text 块；空 choices 仍产完整骨架
 //   - finish_reason 用 LegacySemantics 精确复刻（不 ToLower、空串→end_turn）——
@@ -54,9 +55,13 @@ func buildClaudeResponseFromOpenAI(info convmeta.Meta, openaiResp *dto.ChatCompl
 	var textParts []string
 	var thinkingParts []string
 	var toolCalls []dto.ClaudeContentBlock
+	// thoughtSignature 透传：消息级优先，其次首个非空的工具级签名——
+	// 附着到 thinking 块的 signature 字段（Claude Code 回传 thinking 块实现签名往返）
+	thoughtSignature := ""
 
 	if len(openaiResp.Choices) > 0 {
 		choice := openaiResp.Choices[0]
+		thoughtSignature = choice.Message.ThoughtSignature
 
 		// 提取文本（仅 string 形态——legacy 口径）
 		if text, ok := choice.Message.Content.(string); ok && text != "" {
@@ -74,6 +79,9 @@ func buildClaudeResponseFromOpenAI(info convmeta.Meta, openaiResp *dto.ChatCompl
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &inputObj); err != nil {
 				inputObj = map[string]any{}
 			}
+			if thoughtSignature == "" && tc.ThoughtSignature != "" {
+				thoughtSignature = tc.ThoughtSignature
+			}
 			toolCalls = append(toolCalls, dto.ClaudeContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
@@ -84,11 +92,24 @@ func buildClaudeResponseFromOpenAI(info convmeta.Meta, openaiResp *dto.ChatCompl
 	}
 
 	// 块序：thinking → text → tool_use（Claude 语义）
-	for _, thinking := range thinkingParts {
+	for i, thinking := range thinkingParts {
 		t := thinking
-		content = append(content, dto.ClaudeContentBlock{
+		block := dto.ClaudeContentBlock{
 			Type:     "thinking",
 			Thinking: &t,
+		}
+		// 签名附着到末个 thinking 块
+		if i == len(thinkingParts)-1 {
+			block.Signature = thoughtSignature
+		}
+		content = append(content, block)
+	}
+	// 有签名但无 thinking 块（如未开 includeThoughts 的 Gemini 3 函数调用）：补空 thinking 块承载
+	if thoughtSignature != "" && len(thinkingParts) == 0 {
+		content = append(content, dto.ClaudeContentBlock{
+			Type:      "thinking",
+			Thinking:  strPtrToLocal(""),
+			Signature: thoughtSignature,
 		})
 	}
 	for _, text := range textParts {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
@@ -23,11 +24,24 @@ import (
 //   - 重复 finish_reason 不再重复发 done（legacy 无去重标志）；
 //   - completedAt = max(NowFunc, createdAt)（legacy 为独立 Now()，可能出现 completed < created）。
 //
+// 思考内容（reasoning_content）产出为独立的 reasoning output item（output_item.added →
+// reasoning_summary_text.delta/done → output_item.done，并进 completed 的 output 数组）——
+// codex 等 Responses 客户端据此在后续轮次回传思考项，配合请求侧还原 reasoning_content，
+// 满足 DeepSeek 等思考模式上游的回传要求。message 项为惰性开启（首个文本增量时才 added），
+// 对齐真实 OpenAI 的 reasoning→message 项序。
+//
 // 错误契约（宿主桥接经 errors.Is/As 分类）：
 //   - SSE 内嵌上游错误 → *types.EmbeddedUpstreamError（原文载荷）；
 //   - 上游流非 chat 格式（假成功防护）→ 包装 types.ErrProtocolMismatch 的错误；
 //   - 客户端断开 → ctx.Err()。
 type OpenAIChatToResponsesStreamConverter struct{}
+
+// chatReasoningSeg 已收尾的思考段（completed output 按 index 参与排序）
+type chatReasoningSeg struct {
+	id    string
+	index int
+	text  string
+}
 
 // chatToolCallState 流式聚合的工具调用；tools slice 按登记顺序是 done 事件与
 // finalOutput 的唯一遍历源（替代 legacy 的 map 遍历，保证顺序确定）。
@@ -63,10 +77,19 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 	sawChoices := false
 	outputIndex := 0
 	contentIndex := 0
+	msgAdded := false // message 项惰性开启：首个文本增量时才发 output_item.added
+	msgIndex := 0
 	tools := make([]*chatToolCallState, 0)
 	toolByID := make(map[string]*chatToolCallState)
 	// OpenAI 流式中后续参数 chunk 的 ID 为空只有 index，靠 index 反查
 	toolIDByUpstreamIndex := make(map[int]string)
+	// 思考段状态：当前开启的 reasoning 项 + 已收尾的段（工具调用打断后再来思考增量会开新段）
+	rsOpen := false
+	rsSeq := 0
+	rsID := ""
+	rsIndex := 0
+	var rsBuilder strings.Builder
+	reasoningSegs := make([]chatReasoningSeg, 0)
 	echo := responsesEchoOf(info)
 
 	// emit 输出一个 Responses SSE 事件（chunkWriter 出错即客户端写失败，终止转换）
@@ -75,15 +98,111 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		return chunkWriter(&dto.ResponsesStreamEvent{Type: eventType, Data: payload})
 	}
 
+	// ensureMessageItem 惰性开启 message 项（output_item.added + content_part.added）
+	ensureMessageItem := func() error {
+		if msgAdded {
+			return nil
+		}
+		msgIndex = outputIndex
+		outputIndex++
+		msgAdded = true
+		if err := emit("response.output_item.added", map[string]any{
+			"output_index": msgIndex,
+			"item": map[string]any{
+				"type":    "message",
+				"id":      msgID,
+				"status":  "in_progress",
+				"role":    "assistant",
+				"content": []any{},
+			},
+		}); err != nil {
+			return err
+		}
+		return emit("response.content_part.added", map[string]any{
+			"item_id":       msgID,
+			"output_index":  msgIndex,
+			"content_index": contentIndex,
+			"part": map[string]any{
+				"type":        "output_text",
+				"text":        "",
+				"annotations": []any{},
+			},
+		})
+	}
+
+	// openReasoning 开启一个 reasoning 项（首个思考增量时调用；被打断后新增量开新段）
+	openReasoning := func() error {
+		if rsOpen {
+			return nil
+		}
+		rsSeq++
+		rsID = fmt.Sprintf("rs_%s", strings.TrimPrefix(msgID, "msg_"))
+		if rsSeq > 1 {
+			rsID = fmt.Sprintf("%s_%d", rsID, rsSeq)
+		}
+		rsIndex = outputIndex
+		outputIndex++
+		rsBuilder.Reset()
+		rsOpen = true
+		return emit("response.output_item.added", map[string]any{
+			"output_index": rsIndex,
+			"item": map[string]any{
+				"type":    "reasoning",
+				"id":      rsID,
+				"summary": []any{}, // codex 等严格客户端的 Reasoning.summary 为必填键
+			},
+		})
+	}
+
+	// closeReasoning 收尾当前 reasoning 项（文本/工具开始或 finish 时调用）
+	closeReasoning := func() error {
+		if !rsOpen {
+			return nil
+		}
+		finishedText := rsBuilder.String()
+		if err := emit("response.reasoning_summary_text.done", map[string]any{
+			"item_id":       rsID,
+			"output_index":  rsIndex,
+			"summary_index": 0,
+			"text":          finishedText,
+		}); err != nil {
+			return err
+		}
+		if err := emit("response.output_item.done", map[string]any{
+			"output_index": rsIndex,
+			"item": map[string]any{
+				"type": "reasoning",
+				"id":   rsID,
+				"summary": []map[string]any{{
+					"type": "summary_text",
+					"text": finishedText,
+				}},
+			},
+		}); err != nil {
+			return err
+		}
+		reasoningSegs = append(reasoningSegs, chatReasoningSeg{id: rsID, index: rsIndex, text: finishedText})
+		rsOpen = false
+		return nil
+	}
+
 	// closeTextPart 关闭文本 content part（进入工具调用或 finish 时调用）
 	closeTextPart := func() error {
 		if sentTextDone {
 			return nil
 		}
+		// message 项从未开启且已有其他输出（思考/工具）：无需合成空消息项
+		if !msgAdded && (len(reasoningSegs) > 0 || rsOpen || len(tools) > 0) {
+			sentTextDone = true
+			return nil
+		}
+		if err := ensureMessageItem(); err != nil {
+			return err
+		}
 		finishedText := contentBuilder.String()
 		if err := emit("response.output_text.done", map[string]any{
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  msgIndex,
 			"content_index": contentIndex,
 			"text":          finishedText,
 		}); err != nil {
@@ -91,7 +210,7 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		}
 		if err := emit("response.content_part.done", map[string]any{
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  msgIndex,
 			"content_index": contentIndex,
 			"part": map[string]any{
 				"type":        "output_text",
@@ -102,7 +221,7 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		if err := emit("response.output_item.done", map[string]any{
-			"output_index": outputIndex,
+			"output_index": msgIndex,
 			"item": map[string]any{
 				"type":   "message",
 				"id":     msgID,
@@ -118,7 +237,6 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		sentTextDone = true
-		outputIndex++
 		return nil
 	}
 
@@ -182,7 +300,8 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 			sawChoices = true
 		}
 
-		// 第一个 chunk：发送 response.created + output_item.added + content_part.added
+		// 第一个 chunk：发送 response.created（message 项惰性开启，见 ensureMessageItem——
+		// 思考模型先到 reasoning 增量，reasoning 项先于 message 项，对齐真实 OpenAI 项序）
 		if !sentCreated {
 			if chunk.ID != "" {
 				respID = fmt.Sprintf("resp_%s", chunk.ID)
@@ -197,30 +316,6 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 
 			if err := emit("response.created", map[string]any{
 				"response": buildResponsesObject(respID, createdAt, "in_progress", modelName, []dto.ResponsesOutput{}, nil, nil, echo),
-			}); err != nil {
-				return err
-			}
-			if err := emit("response.output_item.added", map[string]any{
-				"output_index": outputIndex,
-				"item": map[string]any{
-					"type":    "message",
-					"id":      msgID,
-					"status":  "in_progress",
-					"role":    "assistant",
-					"content": []any{},
-				},
-			}); err != nil {
-				return err
-			}
-			if err := emit("response.content_part.added", map[string]any{
-				"item_id":       msgID,
-				"output_index":  outputIndex,
-				"content_index": contentIndex,
-				"part": map[string]any{
-					"type":        "output_text",
-					"text":        "",
-					"annotations": []any{},
-				},
 			}); err != nil {
 				return err
 			}
@@ -240,30 +335,42 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 			if choice.Index > 0 {
 				continue
 			}
-			// 文本内容 delta（仅 string 形态，非 string 静默丢弃——legacy 口径）
+			// 推理内容：产出独立 reasoning 项（先于文本，对齐真实 OpenAI 项序），
+			// 收尾后进 completed 的 output——codex 等客户端据此在后续轮次回传思考内容
+			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
+				if err := openReasoning(); err != nil {
+					return err
+				}
+				rsBuilder.WriteString(*choice.Delta.ReasoningContent)
+				if err := emit("response.reasoning_summary_text.delta", map[string]any{
+					"item_id":       rsID,
+					"output_index":  rsIndex,
+					"summary_index": 0,
+					"delta":         *choice.Delta.ReasoningContent,
+				}); err != nil {
+					return err
+				}
+			}
+
+			// 文本内容 delta（仅 string 形态，非 string 静默丢弃——legacy 口径）：
+			// 答案开始即思考段结束，先收尾 reasoning 再惰性开启 message 项
 			if choice.Delta.Content != nil {
 				if deltaText, ok := choice.Delta.Content.(string); ok && deltaText != "" {
+					if err := closeReasoning(); err != nil {
+						return err
+					}
+					if err := ensureMessageItem(); err != nil {
+						return err
+					}
 					contentBuilder.WriteString(deltaText)
 					if err := emit("response.output_text.delta", map[string]any{
 						"item_id":       msgID,
-						"output_index":  outputIndex,
+						"output_index":  msgIndex,
 						"content_index": contentIndex,
 						"delta":         deltaText,
 					}); err != nil {
 						return err
 					}
-				}
-			}
-
-			// 推理内容：仅流中透出，不进 completed 的 output（legacy 口径）
-			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-				if err := emit("response.reasoning_summary_text.delta", map[string]any{
-					"item_id":       msgID,
-					"output_index":  outputIndex,
-					"summary_index": 0,
-					"delta":         *choice.Delta.ReasoningContent,
-				}); err != nil {
-					return err
 				}
 			}
 
@@ -274,7 +381,10 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 				// 新 tool call：有 ID 和 name
 				if callID != "" && tc.Function.Name != "" {
 					toolIDByUpstreamIndex[tc.Index] = callID
-					// 先关闭文本 content part
+					// 先收尾思考段与文本 content part
+					if err := closeReasoning(); err != nil {
+						return err
+					}
 					if err := closeTextPart(); err != nil {
 						return err
 					}
@@ -324,8 +434,11 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 				}
 			}
 
-			// finish_reason：关闭文本 part + 按登记顺序收尾全部工具
+			// finish_reason：收尾思考段 + 关闭文本 part + 按登记顺序收尾全部工具
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				if err := closeReasoning(); err != nil {
+					return err
+				}
 				if err := closeTextPart(); err != nil {
 					return err
 				}
@@ -338,6 +451,11 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
+	}
+
+	// 未到 finish_reason 即断流：思考段仍需收尾进 completed（文本 part 保持 legacy 口径不补 done）
+	if err := closeReasoning(); err != nil {
+		return err
 	}
 
 	// 假成功防护：上游流始终不是 chat 格式（无 choices 且无内容/工具/usage）时不再
@@ -354,10 +472,20 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 
-	// 构建 completed 的 output 数组（文本消息 + 工具，按登记顺序）
-	finalOutput := make([]dto.ResponsesOutput, 0)
-	if !sentTextDone || contentBuilder.Len() > 0 {
-		finalOutput = append(finalOutput, dto.ResponsesOutput{
+	// 构建 completed 的 output 数组（思考段 + 文本消息 + 工具，按 output_index 排序）
+	type indexedOutput struct {
+		index int
+		out   dto.ResponsesOutput
+	}
+	items := make([]indexedOutput, 0, 1+len(reasoningSegs)+len(tools))
+	// message 项保留口径与 legacy 一致：有文本、或未正常收尾（断流）；从未开启且已有
+	// 其他输出时不合成空消息
+	includeMsg := contentBuilder.Len() > 0 || !sentTextDone
+	if includeMsg && !msgAdded && (len(reasoningSegs) > 0 || len(tools) > 0) {
+		includeMsg = false
+	}
+	if includeMsg {
+		items = append(items, indexedOutput{index: msgIndex, out: dto.ResponsesOutput{
 			Type:   "message",
 			ID:     msgID,
 			Status: "completed",
@@ -367,17 +495,32 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 				Text:        contentBuilder.String(),
 				Annotations: []dto.ResponsesAnnotation{},
 			}},
-		})
+		}})
+	}
+	for _, seg := range reasoningSegs {
+		items = append(items, indexedOutput{index: seg.index, out: dto.ResponsesOutput{
+			Type: "reasoning",
+			ID:   seg.id,
+			Summary: []dto.ResponsesSummaryPart{{
+				Type: "summary_text",
+				Text: seg.text,
+			}},
+		}})
 	}
 	for _, tool := range tools {
-		finalOutput = append(finalOutput, dto.ResponsesOutput{
+		items = append(items, indexedOutput{index: tool.index, out: dto.ResponsesOutput{
 			Type:      "function_call",
 			ID:        tool.id,
 			CallID:    tool.id,
 			Name:      tool.name,
 			Arguments: tool.args.String(),
 			Status:    "completed",
-		})
+		}})
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
+	finalOutput := make([]dto.ResponsesOutput, 0, len(items))
+	for _, it := range items {
+		finalOutput = append(finalOutput, it.out)
 	}
 
 	completedAt := int(NowFunc().Unix())

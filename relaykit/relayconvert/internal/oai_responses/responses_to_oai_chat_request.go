@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -67,8 +68,10 @@ func (d *degradationRecorder) flush() {
 // ResponsesToOpenAIChatRequestConverter Responses 客户端 → OpenAI Chat 上游（请求侧）。
 // 仅做纯格式转换：
 //   - 有状态检查（previous_response_id）与请求快照 stash 是宿主桥接层职责，本转换器不做；
-//   - 无 chat 对应物的输入（additional_tools/custom 工具、reasoning 项等）被丢弃，
-//     经 DegradationReporter 上报使降级可见；
+//   - reasoning 项还原为所属 assistant 消息的 reasoning_content（DeepSeek 等思考模式
+//     上游要求多轮工具调用时回传思考内容）；
+//   - 无 chat 对应物的输入（additional_tools/custom 工具、仅 encrypted_content 的
+//     reasoning 项等）被丢弃，经 DegradationReporter 上报使降级可见；
 //   - 吸收了旧路径 adaptor 后处理中的 reasoning_effort 注入与 stream_options 注入语义
 //     （relaykit 接管后 adaptor.ConvertRequest 不再执行）。
 type ResponsesToOpenAIChatRequestConverter struct{}
@@ -222,6 +225,38 @@ type r2cInputItem struct {
 	// function_call 项字段（Responses 历史中的助手工具调用）
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	// reasoning 项字段（Responses 历史中回传的思考内容摘要）
+	Summary []r2cReasoningPart `json:"summary,omitempty"`
+}
+
+// r2cReasoningPart reasoning 项的文本部分（summary 的 summary_text / content 的 reasoning_text）
+type r2cReasoningPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// r2cExtractReasoningText 从 reasoning 输入项提取思考文本：content（完整思考）优先，
+// 缺失时回退 summary。仅 encrypted_content 的思考项无文本可还原，返回空串。
+func r2cExtractReasoningText(item r2cInputItem) string {
+	var parts []string
+	if len(item.Content) > 0 {
+		var cps []r2cReasoningPart
+		if err := json.Unmarshal(item.Content, &cps); err == nil {
+			for _, p := range cps {
+				if (p.Type == "reasoning_text" || p.Type == "text") && p.Text != "" {
+					parts = append(parts, p.Text)
+				}
+			}
+		}
+	}
+	if len(parts) == 0 {
+		for _, s := range item.Summary {
+			if s.Text != "" {
+				parts = append(parts, s.Text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // r2cContentPart Responses 内容块（input_text/input_image/input_audio/input_file/output_text）
@@ -246,10 +281,17 @@ type r2cInputAudio struct {
 }
 
 // r2cConvertInputToMessages 将 Responses input（字符串或项数组）转换为 chat 消息数组。
-// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
-// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息。
-// 无 chat 对应物的输入项（reasoning / additional_tools / custom 工具调用及产物、未知类型）
-// 被丢弃并经 drops 上报——降级必须可见，不允许静默砍能力。
+// 助手轮重建规则（DeepSeek 等思考模式上游要求单轮单条 assistant 消息，且多轮工具调用时
+// 必须回传 reasoning_content）：
+//   - 连续的 function_call 项聚合为 tool_calls 数组；紧邻的 assistant 文本消息属同一助手轮，
+//     tool_calls 合并进该消息而非另起一条（中间隔了丢弃项/其他角色消息则不合并）；
+//   - reasoning 项还原为所属 assistant 消息的 reasoning_content：思考项先于消息出现
+//     （真实 OpenAI 项序）时暂存待附着，晚于消息出现（本网关 completed output 项序为
+//     message→reasoning→function_call）时直接附着到紧邻的前一条 assistant 消息；
+//   - function_call_output 转为引用对应 tool_call_id 的 tool 消息。
+//
+// 无 chat 对应物的输入项（additional_tools / custom 工具调用及产物、仅 encrypted_content
+// 的 reasoning 项、未知类型）被丢弃并经 drops 上报——降级必须可见，不允许静默砍能力。
 func r2cConvertInputToMessages(input json.RawMessage, drops *degradationRecorder) ([]dto.Message, error) {
 	if len(input) == 0 {
 		return nil, nil
@@ -264,12 +306,49 @@ func r2cConvertInputToMessages(input json.RawMessage, drops *degradationRecorder
 	}
 	messages := make([]dto.Message, 0, len(items))
 	var pendingToolCalls []dto.ToolCall
+	var pendingReasoning []string
+	// mergeableAssistant：最后一条消息是本轮尚未闭合的 assistant 文本消息，
+	// 其后的 function_call / reasoning 项仍属同一助手轮，可直接合并/附着
+	mergeableAssistant := false
+
+	// setReasoning 将思考文本写入消息（已有内容时换行追加）
+	setReasoning := func(msg *dto.Message, text string) {
+		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+			text = *msg.ReasoningContent + "\n\n" + text
+		}
+		msg.ReasoningContent = &text
+	}
+	// consumePendingReasoning 将暂存的思考文本附着到 assistant 消息
+	consumePendingReasoning := func(msg *dto.Message) {
+		if len(pendingReasoning) == 0 || msg == nil || msg.Role != "assistant" {
+			return
+		}
+		setReasoning(msg, strings.Join(pendingReasoning, "\n\n"))
+		pendingReasoning = nil
+	}
+	// orphanPendingReasoning 丢弃无处附着的思考文本（后续无所属 assistant 消息）并上报
+	orphanPendingReasoning := func() {
+		for range pendingReasoning {
+			drops.drop("input_item:reasoning_orphan")
+		}
+		pendingReasoning = nil
+	}
 	flushToolCalls := func() {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
-		messages = append(messages, dto.Message{Role: "assistant", Content: nil, ToolCalls: pendingToolCalls})
+		if mergeableAssistant && len(messages) > 0 &&
+			messages[len(messages)-1].Role == "assistant" && len(messages[len(messages)-1].ToolCalls) == 0 {
+			// 同一助手轮：tool_calls 合并进紧邻的 assistant 文本消息
+			messages[len(messages)-1].ToolCalls = pendingToolCalls
+			consumePendingReasoning(&messages[len(messages)-1])
+		} else {
+			msg := dto.Message{Role: "assistant", Content: nil, ToolCalls: pendingToolCalls}
+			consumePendingReasoning(&msg)
+			messages = append(messages, msg)
+		}
 		pendingToolCalls = nil
+		mergeableAssistant = false
 	}
 	for _, raw := range items {
 		var item r2cInputItem
@@ -280,7 +359,13 @@ func r2cConvertInputToMessages(input json.RawMessage, drops *degradationRecorder
 		case "message":
 			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
+				if msg.Role == "assistant" {
+					consumePendingReasoning(msg)
+				} else {
+					orphanPendingReasoning()
+				}
 				messages = append(messages, *msg)
+				mergeableAssistant = msg.Role == "assistant"
 			}
 		case "function_call":
 			// 历史中的助手工具调用：转为 assistant.tool_calls 条目，id 用 call_id
@@ -298,41 +383,64 @@ func r2cConvertInputToMessages(input json.RawMessage, drops *degradationRecorder
 			})
 		case "function_call_output":
 			flushToolCalls()
+			orphanPendingReasoning()
 			messages = append(messages, dto.Message{Role: "tool", ToolCallID: item.CallID, Content: item.Output})
+			mergeableAssistant = false
 		case "reasoning":
-			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过——跨轮思考连续性丢失
-			drops.drop("input_item:reasoning")
+			// 思考项：还原为所属 assistant 消息的 reasoning_content（思考模式上游要求回传）；
+			// 仅 encrypted_content 无文本可还原时仍属降级
+			if text := r2cExtractReasoningText(item); text != "" {
+				if mergeableAssistant && len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+					setReasoning(&messages[len(messages)-1], text)
+				} else {
+					pendingReasoning = append(pendingReasoning, text)
+				}
+			} else {
+				drops.drop("input_item:reasoning")
+			}
 			continue
 		case "additional_tools":
 			// codex 新版把 exec/wait/协作等嵌套工具定义放在该输入项（带 role 但无 content，
 			// 且 namespace/custom 工具无 chat 对应物），整体丢弃——模型侧工具能力丢失
 			flushToolCalls()
 			drops.drop("input_item:additional_tools")
+			mergeableAssistant = false
 		case "custom_tool_call":
 			// custom（grammar/freeform）工具调用历史无 chat 对应物（chat 工具调用必为 JSON function）
 			flushToolCalls()
 			drops.drop("input_item:custom_tool_call")
+			mergeableAssistant = false
 		case "custom_tool_call_output":
 			// custom 工具调用的执行结果随调用一并丢弃——模型丢失工具执行历史
 			flushToolCalls()
 			drops.drop("input_item:custom_tool_call_output")
+			mergeableAssistant = false
 		default:
 			flushToolCalls()
 			if item.Role != "" {
 				msg := r2cConvertMessage(item)
 				if msg != nil {
+					if msg.Role == "assistant" {
+						consumePendingReasoning(msg)
+					} else {
+						orphanPendingReasoning()
+					}
 					messages = append(messages, *msg)
+					mergeableAssistant = msg.Role == "assistant"
 				} else {
 					// 有 role 但无可转换内容（如未知新类型）：记录类型便于跟进协议演进
 					drops.drop("input_item:" + item.Type)
+					mergeableAssistant = false
 				}
 			} else {
 				// 无 role 的未知类型输入项（如 codex 的 goal/plan 等新项）
 				drops.drop("input_item:" + item.Type)
+				mergeableAssistant = false
 			}
 		}
 	}
 	flushToolCalls()
+	orphanPendingReasoning()
 	return messages, nil
 }
 

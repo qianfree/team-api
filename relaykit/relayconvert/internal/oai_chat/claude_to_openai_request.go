@@ -25,7 +25,8 @@ import (
 //   - user content 非 string/[]any → Sprintf("%v")（nil 产出 "<nil>" 字面量）
 //   - tool_result content 三形态：string / map→JSON / 块数组拼 text（其它类型产出空串）
 //   - 空转换结果补一条 user 空消息；非 user/assistant 角色整条丢弃
-//   - assistant thinking→ReasoningContent（signature 丢弃）；tool_use input 缺失/marshal 失败→"{}"
+//   - assistant thinking→ReasoningContent（signature 经 ThoughtSignature 透传——
+//     Gemini 3 签名往返，2026-08 起不再丢弃）；tool_use input 缺失/marshal 失败→"{}"
 //   - tool_choice string 原样透传（含非法 "any"）、{any}→"required"、{tool,name空}→"required"
 type ClaudeToOpenAIRequestConverter struct{}
 
@@ -46,7 +47,7 @@ func (c *ClaudeToOpenAIRequestConverter) Quality() relayconvert.RequestConverter
 }
 
 // ConvertRequest 入参断言 *dto.ClaudeRequest，输出 *dto.GeneralOpenAIRequest
-//（gemini→claude 链不走本转换器；gemini→openai→claude 链的第二跳入参契约由此保证）。
+// （gemini→claude 链不走本转换器；gemini→openai→claude 链的第二跳入参契约由此保证）。
 func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 	ctx context.Context, info convmeta.Meta, request any,
 ) (any, error) {
@@ -254,6 +255,11 @@ func c2oConvertAssistantMessage(msg dto.ClaudeMessage) dto.Message {
 			case "thinking":
 				if thinking, ok := m["thinking"].(string); ok && thinking != "" {
 					reasoningParts = append(reasoningParts, thinking)
+				}
+				// signature 透传（Gemini thoughtSignature 往返载体，取首个非空；
+				// 空 thinking 的签名承载块同样捕获——见 o2c 响应侧的补块逻辑）
+				if sig, ok := m["signature"].(string); ok && sig != "" && result.ThoughtSignature == "" {
+					result.ThoughtSignature = sig
 				}
 			case "tool_use":
 				id, _ := m["id"].(string)

@@ -63,10 +63,28 @@ func chatCompletionToResponses(info convmeta.Meta, chatResp *dto.ChatCompletionR
 	}
 	echo := responsesEchoOf(info)
 
-	// 构建 output：每 choice 一个 message 项（空内容也保留，content 为显式空切片
-	// 序列化成 [] 而非 null——codex 等严格客户端要求），随后每个 tool_call 一项
+	// 构建 output：每 choice 依次产出 reasoning 项（有思考内容时，先于 message——真实
+	// OpenAI 项序，codex 等客户端据此在后续轮次回传思考内容）、message 项（仅内容非空时保留：
+	// DTO 的 content 为 omitempty，空切片会丢掉整个 content 键，OpenAI SDK 等严格客户端把
+	// message.content 视为必填会解析失败；真实 OpenAI 的工具调用响应也不含空 message 项，
+	// 与流式侧 completed output 的保留口径一致）、tool_call 项
 	output := make([]dto.ResponsesOutput, 0)
-	for _, choice := range chatResp.Choices {
+	for i, choice := range chatResp.Choices {
+		if choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
+			rsID := fmt.Sprintf("rs_%s", chatResp.ID)
+			if i > 0 {
+				rsID = fmt.Sprintf("rs_%s_%d", chatResp.ID, i)
+			}
+			output = append(output, dto.ResponsesOutput{
+				Type: "reasoning",
+				ID:   rsID,
+				Summary: []dto.ResponsesSummaryPart{{
+					Type: "summary_text",
+					Text: *choice.Message.ReasoningContent,
+				}},
+			})
+		}
+
 		content := make([]dto.ResponsesOutputContent, 0)
 		if choice.Message.Content != nil {
 			var textContent string
@@ -86,14 +104,15 @@ func chatCompletionToResponses(info convmeta.Meta, chatResp *dto.ChatCompletionR
 			}
 		}
 
-		msgOutput := dto.ResponsesOutput{
-			Type:    "message",
-			ID:      fmt.Sprintf("msg_%s", chatResp.ID),
-			Status:  "completed",
-			Role:    "assistant",
-			Content: content,
+		if len(content) > 0 {
+			output = append(output, dto.ResponsesOutput{
+				Type:    "message",
+				ID:      fmt.Sprintf("msg_%s", chatResp.ID),
+				Status:  "completed",
+				Role:    "assistant",
+				Content: content,
+			})
 		}
-		output = append(output, msgOutput)
 
 		for _, tc := range choice.Message.ToolCalls {
 			output = append(output, dto.ResponsesOutput{

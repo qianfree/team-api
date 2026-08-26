@@ -228,6 +228,61 @@ func TestOpenAIToGeminiRequestConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+// 回归：非 JSON 对象的 tool 结果（纯文本/标量/数组）必须包进 {"result": ...}，
+// Gemini 上游按 map 解析 functionResponse.response，裸字符串会报
+// "cannot unmarshal string into Go struct field ... of type map[string]interface {}"
+func TestOpenAIToGeminiRequestConverter_ToolResultNonObjectWrapped(t *testing.T) {
+	converter := &OpenAIToGeminiRequestConverter{}
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		content string
+		want    any
+	}{
+		{"纯文本", "exec_command failed: exit 1", map[string]any{"result": "exec_command failed: exit 1"}},
+		{"JSON 数组", `[1,2]`, map[string]any{"result": []any{float64(1), float64(2)}}},
+		{"JSON 标量", `42`, map[string]any{"result": float64(42)}},
+		{"空字符串", "", map[string]any{"result": ""}},
+		{"JSON 对象保持原样", `{"ok":true}`, map[string]any{"ok": true}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			openaiReq := &dto.GeneralOpenAIRequest{
+				Messages: []dto.Message{
+					{Role: "tool", Content: tc.content, ToolCallID: "call_1", Name: "exec_command"},
+				},
+			}
+			result, err := converter.ConvertRequest(ctx, nil, openaiReq)
+			if err != nil {
+				t.Fatalf("ConvertRequest failed: %v", err)
+			}
+			geminiReq := result.(*dto.GeminiChatRequest)
+			if len(geminiReq.Contents) == 0 || len(geminiReq.Contents[0].Parts) == 0 {
+				t.Fatal("no contents/parts generated")
+			}
+			fr := geminiReq.Contents[0].Parts[0].FunctionResponse
+			if fr == nil {
+				t.Fatal("FunctionResponse is nil")
+			}
+			got, want := mustJSON(t, fr.Response), mustJSON(t, tc.want)
+			if got != want {
+				t.Errorf("Response = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
+}
+
 func TestOpenAIToGeminiRequestConverter_MultimodalContent(t *testing.T) {
 	converter := &OpenAIToGeminiRequestConverter{}
 	ctx := context.Background()

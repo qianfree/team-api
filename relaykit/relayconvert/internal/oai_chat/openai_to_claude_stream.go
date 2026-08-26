@@ -61,13 +61,13 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 	}
 
 	var (
-		finishReason       string
-		startSent          bool
-		currentBlockType   string // "text" / "thinking" / "tool_use"
-		contentIndex       int
-		inputTokens        int
-		outputTokens       int
-		cachedTokens       int // OpenAI 口径：cached ⊆ prompt_tokens
+		finishReason     string
+		startSent        bool
+		currentBlockType string // "text" / "thinking" / "tool_use"
+		contentIndex     int
+		inputTokens      int
+		outputTokens     int
+		cachedTokens     int // OpenAI 口径：cached ⊆ prompt_tokens
 		// toolIndexByUpstreamIndex：chat delta 的 tc.Index → 已开 tool_use 块的 contentIndex
 		//（修复项：参数 delta 反查所属块；legacy 直接用当前 contentIndex 会错挂）
 		toolBlockByUpstreamIndex = make(map[int]int)
@@ -91,6 +91,35 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		contentIndex++
 		currentBlockType = ""
 		return nil
+	}
+
+	// emitSignature 将 Gemini thoughtSignature 写为 Claude thinking 块的 signature_delta
+	//（Claude 协议中签名只能附着于 thinking 块；无打开的 thinking 块时开一个空块承载——
+	// Claude Code 会原样回传 thinking 块及其 signature，实现 Gemini 3 的签名往返）
+	emitSignature := func(sig string) error {
+		if sig == "" {
+			return nil
+		}
+		if currentBlockType != "thinking" {
+			if err := closeCurrentBlock(); err != nil {
+				return err
+			}
+			if err := emit("content_block_start", &dto.ClaudeResponse{
+				Type:  "content_block_start",
+				Index: &contentIndex,
+				ContentBlock: &dto.ClaudeContentBlock{
+					Type: "thinking", Thinking: strPtrToLocal(""),
+				},
+			}); err != nil {
+				return err
+			}
+			currentBlockType = "thinking"
+		}
+		return emit("content_block_delta", &dto.ClaudeResponse{
+			Type:  "content_block_delta",
+			Index: &contentIndex,
+			Delta: &dto.ClaudeDelta{Type: "signature_delta", Signature: sig},
+		})
 	}
 
 	// emitMessageDelta 发送 message_delta（stop_reason + Claude 扣减口径 usage）+ message_stop
@@ -231,8 +260,23 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 				}
 			}
 
+			// 消息级 thoughtSignature（Gemini thought part 的签名）：附着到当前/新开 thinking 块。
+			// 置于推理 delta 之后，使同 chunk 携带的 reasoning+signature 落在同一 thinking 块
+			if choice.Delta.ThoughtSignature != "" {
+				if err := emitSignature(choice.Delta.ThoughtSignature); err != nil {
+					return err
+				}
+			}
+
 			// 工具调用 delta
 			for _, tc := range choice.Delta.ToolCalls {
+				// 工具级 thoughtSignature（Gemini functionCall part 的签名）：在 tool_use 块
+				// 开启前经 thinking 块承载（随后 closeCurrentBlock 正常关块）
+				if tc.ThoughtSignature != "" {
+					if err := emitSignature(tc.ThoughtSignature); err != nil {
+						return err
+					}
+				}
 				// 新调用判定：有 name（legacy 口径）
 				if tc.Function.Name != "" {
 					if err := closeCurrentBlock(); err != nil {

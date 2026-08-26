@@ -36,8 +36,8 @@
   "expected_response": {
     "id": "resp_msg_01ABC",
     "object": "response",
-    "created_at": 1786990324,
-    "completed_at": 1786990324,
+    "created_at": 1787673089,
+    "completed_at": 1787673089,
     "status": "completed",
     "error": null,
     "incomplete_details": null,
@@ -45,6 +45,16 @@
     "max_output_tokens": null,
     "model": "claude-sonnet-4-20250514",
     "output": [
+      {
+        "type": "reasoning",
+        "id": "rs_msg_01ABC",
+        "summary": [
+          {
+            "type": "summary_text",
+            "text": "内部思考内容"
+          }
+        ]
+      },
       {
         "type": "message",
         "id": "msg_msg_01ABC",

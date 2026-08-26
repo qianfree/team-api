@@ -54,12 +54,6 @@
     "model": "gpt-4o",
     "output": [
       {
-        "type": "message",
-        "id": "msg_chatcmpl-XyZ9",
-        "status": "completed",
-        "role": "assistant"
-      },
-      {
         "type": "function_call",
         "id": "call_1",
         "status": "completed",

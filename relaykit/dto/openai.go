@@ -57,6 +57,10 @@ type Message struct {
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 	Annotations      []any      `json:"annotations,omitempty"`
+	// ThoughtSignature Gemini thoughtSignature 的中间格式载体（消息级）：
+	// gemini→claude 链经此透传到 Claude thinking 块的 signature 字段（Gemini 3
+	// 函数调用轮次强校验签名回传，丢弃会被上游 400）。omitempty，非 Gemini 链不出现
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // ContentPart 多模态内容块
@@ -107,6 +111,9 @@ type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+	// ThoughtSignature Gemini functionCall part 的 thoughtSignature 中间载体
+	//（Gemini 3 对函数调用签名回传强校验）。omitempty，非 Gemini 链不出现
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // FunctionCall 函数调用

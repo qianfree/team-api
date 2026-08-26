@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
@@ -42,9 +43,18 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 	sentCompleted := false
 	outputIndex := 0
 	contentIndex := 0
+	msgAdded := false // message 项惰性开启：首个文本增量时才发 output_item.added
+	msgIndex := 0
 	toolCalls := make([]*claudeToolCallState, 0) // 有序聚合，completed 的 output 数组按此顺序
 	toolIndexByID := make(map[string]int)        // callID → output_index
 	var currentTool *claudeToolCallState         // 正在接收参数增量的工具调用
+	// 思考段状态：thinking 块产出独立 reasoning 项（工具调用打断后新 thinking 增量开新段）
+	rsOpen := false
+	rsSeq := 0
+	rsID := ""
+	rsIndex := 0
+	var rsBuilder strings.Builder
+	reasoningSegs := make([]chatReasoningSeg, 0)
 	echo := responsesEchoOf(info)
 
 	// emit 输出一个 Responses SSE 事件（chunkWriter 出错即客户端写失败，终止转换）
@@ -53,15 +63,111 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		return chunkWriter(&dto.ResponsesStreamEvent{Type: eventType, Data: payload})
 	}
 
+	// ensureMessageItem 惰性开启 message 项（output_item.added + content_part.added）
+	ensureMessageItem := func() error {
+		if msgAdded {
+			return nil
+		}
+		msgIndex = outputIndex
+		outputIndex++
+		msgAdded = true
+		if err := emit("response.output_item.added", map[string]any{
+			"output_index": msgIndex,
+			"item": map[string]any{
+				"type":    "message",
+				"id":      msgID,
+				"status":  "in_progress",
+				"role":    "assistant",
+				"content": []any{},
+			},
+		}); err != nil {
+			return err
+		}
+		return emit("response.content_part.added", map[string]any{
+			"item_id":       msgID,
+			"output_index":  msgIndex,
+			"content_index": contentIndex,
+			"part": map[string]any{
+				"type":        "output_text",
+				"text":        "",
+				"annotations": []any{},
+			},
+		})
+	}
+
+	// openReasoning 开启一个 reasoning 项（首个 thinking 增量时调用）
+	openReasoning := func() error {
+		if rsOpen {
+			return nil
+		}
+		rsSeq++
+		rsID = fmt.Sprintf("rs_%s", strings.TrimPrefix(msgID, "msg_"))
+		if rsSeq > 1 {
+			rsID = fmt.Sprintf("%s_%d", rsID, rsSeq)
+		}
+		rsIndex = outputIndex
+		outputIndex++
+		rsBuilder.Reset()
+		rsOpen = true
+		return emit("response.output_item.added", map[string]any{
+			"output_index": rsIndex,
+			"item": map[string]any{
+				"type":    "reasoning",
+				"id":      rsID,
+				"summary": []any{}, // codex 等严格客户端的 Reasoning.summary 为必填键
+			},
+		})
+	}
+
+	// closeReasoning 收尾当前 reasoning 项（文本/工具开始或流结束时调用）
+	closeReasoning := func() error {
+		if !rsOpen {
+			return nil
+		}
+		finishedText := rsBuilder.String()
+		if err := emit("response.reasoning_summary_text.done", map[string]any{
+			"item_id":       rsID,
+			"output_index":  rsIndex,
+			"summary_index": 0,
+			"text":          finishedText,
+		}); err != nil {
+			return err
+		}
+		if err := emit("response.output_item.done", map[string]any{
+			"output_index": rsIndex,
+			"item": map[string]any{
+				"type": "reasoning",
+				"id":   rsID,
+				"summary": []map[string]any{{
+					"type": "summary_text",
+					"text": finishedText,
+				}},
+			},
+		}); err != nil {
+			return err
+		}
+		reasoningSegs = append(reasoningSegs, chatReasoningSeg{id: rsID, index: rsIndex, text: finishedText})
+		rsOpen = false
+		return nil
+	}
+
 	// closeTextPart 关闭文本 content part（进入工具调用或流结束时调用）
 	closeTextPart := func() error {
 		if sentTextDone {
 			return nil
 		}
+		// message 项从未开启且已有其他输出（思考/工具）：无需合成空消息项
+		if !msgAdded && (len(reasoningSegs) > 0 || rsOpen || len(toolCalls) > 0) {
+			sentTextDone = true
+			return nil
+		}
+		if err := ensureMessageItem(); err != nil {
+			return err
+		}
 		finishedText := textBuf.String()
 		if err := emit("response.output_text.done", map[string]any{
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  msgIndex,
 			"content_index": contentIndex,
 			"text":          finishedText,
 		}); err != nil {
@@ -69,7 +175,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}
 		if err := emit("response.content_part.done", map[string]any{
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  msgIndex,
 			"content_index": contentIndex,
 			"part": map[string]any{
 				"type":        "output_text",
@@ -80,7 +186,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		if err := emit("response.output_item.done", map[string]any{
-			"output_index": outputIndex,
+			"output_index": msgIndex,
 			"item": map[string]any{
 				"type":   "message",
 				"id":     msgID,
@@ -96,7 +202,6 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		sentTextDone = true
-		outputIndex++
 		return nil
 	}
 
@@ -105,24 +210,11 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		if sentCompleted {
 			return nil
 		}
-		if err := closeTextPart(); err != nil {
+		if err := closeReasoning(); err != nil {
 			return err
 		}
-
-		// 输出数组：文本消息（有文本才保留），与 chat→responses 桥接的 finalOutput 构建口径一致
-		finalOutput := make([]dto.ResponsesOutput, 0)
-		if textBuf.Len() > 0 {
-			finalOutput = append(finalOutput, dto.ResponsesOutput{
-				Type:   "message",
-				ID:     msgID,
-				Status: "completed",
-				Role:   "assistant",
-				Content: []dto.ResponsesOutputContent{{
-					Type:        "output_text",
-					Text:        textBuf.String(),
-					Annotations: []dto.ResponsesAnnotation{},
-				}},
-			})
+		if err := closeTextPart(); err != nil {
+			return err
 		}
 
 		for _, tc := range toolCalls {
@@ -146,14 +238,51 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}); err != nil {
 				return err
 			}
-			finalOutput = append(finalOutput, dto.ResponsesOutput{
+		}
+
+		// 输出数组：思考段 + 文本消息（有文本才保留）+ 工具，按 output_index 排序
+		type indexedOutput struct {
+			index int
+			out   dto.ResponsesOutput
+		}
+		items := make([]indexedOutput, 0, 1+len(reasoningSegs)+len(toolCalls))
+		if textBuf.Len() > 0 {
+			items = append(items, indexedOutput{index: msgIndex, out: dto.ResponsesOutput{
+				Type:   "message",
+				ID:     msgID,
+				Status: "completed",
+				Role:   "assistant",
+				Content: []dto.ResponsesOutputContent{{
+					Type:        "output_text",
+					Text:        textBuf.String(),
+					Annotations: []dto.ResponsesAnnotation{},
+				}},
+			}})
+		}
+		for _, seg := range reasoningSegs {
+			items = append(items, indexedOutput{index: seg.index, out: dto.ResponsesOutput{
+				Type: "reasoning",
+				ID:   seg.id,
+				Summary: []dto.ResponsesSummaryPart{{
+					Type: "summary_text",
+					Text: seg.text,
+				}},
+			}})
+		}
+		for _, tc := range toolCalls {
+			items = append(items, indexedOutput{index: toolIndexByID[tc.id], out: dto.ResponsesOutput{
 				Type:      "function_call",
 				ID:        tc.id,
 				CallID:    tc.id,
 				Name:      tc.name,
 				Arguments: tc.args.String(),
 				Status:    "completed",
-			})
+			}})
+		}
+		sort.SliceStable(items, func(i, j int) bool { return items[i].index < items[j].index })
+		finalOutput := make([]dto.ResponsesOutput, 0, len(items))
+		for _, it := range items {
+			finalOutput = append(finalOutput, it.out)
 		}
 
 		// 客户端可见 usage 用 OpenAI 语义（input 含缓存，cached 为其子集）
@@ -207,32 +336,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			if sentCreated {
 				continue
 			}
+			// message 项惰性开启（见 ensureMessageItem）：thinking 块先到时 reasoning 项
+			// 先于 message 项，对齐真实 OpenAI 项序
 			if err := emit("response.created", map[string]any{
 				"response": buildResponsesObject(respID, createdAt, "in_progress", modelName, []dto.ResponsesOutput{}, nil, nil, echo),
-			}); err != nil {
-				return err
-			}
-			if err := emit("response.output_item.added", map[string]any{
-				"output_index": outputIndex,
-				"item": map[string]any{
-					"type":    "message",
-					"id":      msgID,
-					"status":  "in_progress",
-					"role":    "assistant",
-					"content": []any{},
-				},
-			}); err != nil {
-				return err
-			}
-			if err := emit("response.content_part.added", map[string]any{
-				"item_id":       msgID,
-				"output_index":  outputIndex,
-				"content_index": contentIndex,
-				"part": map[string]any{
-					"type":        "output_text",
-					"text":        "",
-					"annotations": []any{},
-				},
 			}); err != nil {
 				return err
 			}
@@ -244,7 +351,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}
 			switch event.ContentBlock.Type {
 			case "tool_use":
-				// 先关闭文本 content part，再开 function_call 项
+				// 先收尾思考段与文本 content part，再开 function_call 项
+				if err := closeReasoning(); err != nil {
+					return err
+				}
 				if err := closeTextPart(); err != nil {
 					return err
 				}
@@ -267,7 +377,8 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}
 				outputIndex++
 			case "text", "thinking", "redacted_thinking":
-				// 文本/思考块：文本复用首个 content part，思考以 reasoning summary 事件透出
+				// 文本/思考块：均由增量驱动（text_delta 惰性开启 message 项，
+				// thinking_delta 开启独立 reasoning 项）
 			}
 
 		case "content_block_delta":
@@ -277,10 +388,17 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			switch event.Delta.Type {
 			case "text_delta":
 				if event.Delta.Text != nil && *event.Delta.Text != "" {
+					// 答案开始即思考段结束，先收尾 reasoning 再惰性开启 message 项
+					if err := closeReasoning(); err != nil {
+						return err
+					}
+					if err := ensureMessageItem(); err != nil {
+						return err
+					}
 					textBuf.WriteString(*event.Delta.Text)
 					if err := emit("response.output_text.delta", map[string]any{
 						"item_id":       msgID,
-						"output_index":  0,
+						"output_index":  msgIndex,
 						"content_index": contentIndex,
 						"delta":         *event.Delta.Text,
 					}); err != nil {
@@ -288,10 +406,16 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 					}
 				}
 			case "thinking_delta":
+				// 思考增量：产出独立 reasoning 项，收尾后进 completed 的 output——
+				// codex 等客户端据此在后续轮次回传思考内容
 				if event.Delta.Thinking != nil && *event.Delta.Thinking != "" {
+					if err := openReasoning(); err != nil {
+						return err
+					}
+					rsBuilder.WriteString(*event.Delta.Thinking)
 					if err := emit("response.reasoning_summary_text.delta", map[string]any{
-						"item_id":       msgID,
-						"output_index":  0,
+						"item_id":       rsID,
+						"output_index":  rsIndex,
 						"summary_index": 0,
 						"delta":         *event.Delta.Thinking,
 					}); err != nil {
