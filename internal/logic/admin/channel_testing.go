@@ -112,11 +112,13 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, upstreamModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// 更新健康度（喂给调度引擎的健康体系；探测失败按瞬时错误轻罚）。
+	// 更新健康度（喂给调度引擎的健康体系；探测失败只喂熔断窗口不衰减健康分）。
+	// 必须上报平台模型名 testModel：调度健康键与目录聚合均按 chn_abilities.model_name
+	// 组织，上报上游名会写进调度器永远不读的孤立 key，探测结果对健康度完全无效。
 	// 仅 active 渠道上报：禁用/测试中渠道不在调度目录，喂健康分只会无意义拉低展示值；
 	// 渠道启用时 MarkChannelRecovered 会复位熔断，无需在禁用期间预热。
 	if ch.Status == "active" {
-		dispatchadapter.ReportProbeOutcome(ctx, channelID, upstreamModel, result.Success, float64(latencyMs))
+		dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
 	}
 
 	// 记录测试结果日志

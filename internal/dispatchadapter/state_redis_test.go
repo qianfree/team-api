@@ -104,6 +104,55 @@ func Test健康衰减分档(t *testing.T) {
 	assert.InEpsilon(t, 800, rt.LatEwmaMs, 1e-9)
 }
 
+// Test探测失败不衰减健康EWMA 探测类（Probe）失败只喂熔断窗口，健康分不变——
+// 防止每 5 分钟的自动探测持续失败把无流量渠道健康分指数拖垮（0.93^N → 个位数）；
+// 探测成功照常回升健康并记录延迟。
+func Test探测失败不衰减健康EWMA(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
+		p.Breaker.FailThreshold = 1000 // 阈值调高，只验证窗口计数不触发熔断
+		p.Breaker.ModelFailThreshold = 1000
+	})
+
+	// 连续探测失败：健康 EWMA 保持满分，熔断窗口照常计数
+	for range 5 {
+		s.processOutcome(ctx, dispatch.Outcome{
+			ChannelID: 9, Model: "m", Success: false,
+			Class: dispatch.ErrClassTransient, Probe: true,
+		})
+	}
+	rt := s.ReadRuntime(ctx, 9, "m")
+	assert.InEpsilon(t, 1.0, rt.SuccEwma, 1e-9, "探测失败不得衰减健康分")
+
+	v, err := g.Redis().Do(ctx, "HGET", keyBreaker+"9", "fail_count")
+	require.NoError(t, err)
+	assert.Equal(t, 5, v.Int(), "探测失败仍喂熔断窗口")
+
+	// 真实流量失败拉低健康分后，探测成功照常回升
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 9, Model: "m", Success: false, Class: dispatch.ErrClassTransient})
+	rt = s.ReadRuntime(ctx, 9, "m")
+	require.InEpsilon(t, 0.93, rt.SuccEwma, 1e-9)
+
+	s.processOutcome(ctx, dispatch.Outcome{ChannelID: 9, Model: "m", Success: true, LatencyMs: 500, Probe: true})
+	rt = s.ReadRuntime(ctx, 9, "m")
+	assert.InEpsilon(t, 0.93*0.9+0.1, rt.SuccEwma, 1e-9, "探测成功照常回升健康分")
+	assert.InEpsilon(t, 500, rt.LatEwmaMs, 1e-9)
+}
+
+// Test缺失健康键读默认值 gf 驱动对 HMGET 缺失字段返回空字符串而非 nil（IsNil()==false）。
+// ReadRuntime 必须按无数据处理保留乐观默认（succ=1）：无流量模型或 TTL（24h）过期键
+// 若读成 succ=0，健康快照取平均会把渠道健康度拖到个位数。
+func Test缺失健康键读默认值(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	rt := s.ReadRuntime(ctx, 999, "no-traffic-model")
+	assert.InEpsilon(t, 1.0, rt.SuccEwma, 1e-9, "无健康数据必须默认满分")
+	assert.Zero(t, rt.LatEwmaMs)
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
+	assert.Equal(t, dispatch.BreakerClosed, rt.ModelBreaker)
+}
+
 func Test限流不喂熔断窗口(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
