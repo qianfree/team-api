@@ -27,7 +27,7 @@ type MdlTenantModelsColumns struct {
 	Enabled                  string // 是否启用（禁用后该租户无法调用此模型）
 	CustomInputPrice         string // 租户自定义输入价格（NULL 表示使用默认定价）
 	CustomOutputPrice        string // 租户自定义输出价格（NULL 表示使用默认定价）
-	Multiplier               string // 租户价格倍率（VIP 折扣）。作为 tenant_multiplier 参与最终价格计算：最终价格 = 基础价格 × 租户倍率。倍率来源优先级：discount_ratio > multiplier > 租户等级 price_multiplier
+	Multiplier               string // 租户价格倍率（VIP 折扣）。作为 tenant_multiplier 参与计费，当前实际生效公式 = 基础价格 × 租户乘数 × 时段乘数；模型乘数为预留能力（mdl_models 无 multiplier 字段、computeCost 未接入），bil_records.model_multiplier 快照恒为 1.0。倍率来源优先级：discount_ratio > multiplier > 租户等级 price_multiplier（级别兜底仅在前两者均未设置、且级别倍率 <1.0 时生效）
 	CreatedAt                string // 创建时间
 	UpdatedAt                string // 更新时间
 	BillingMode              string // 覆盖模型计费方式（NULL表示跟随模型默认）
