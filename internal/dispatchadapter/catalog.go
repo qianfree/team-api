@@ -2,6 +2,7 @@ package dispatchadapter
 
 import (
 	"context"
+	"math"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -157,6 +158,13 @@ func (c *Catalog) ChannelModels() map[int64][]string {
 type ChannelRuntimeState struct {
 	Breaker       dispatch.BreakerState // 渠道级熔断状态（同一渠道所有模型取值相同）
 	BreakerModels int                   // 处于 OPEN/HALF_OPEN 的模型数量（渠道×模型级汇总）
+
+	// WorstModel / WorstModelScore 健康度最低的模型及其健康分（succ_ewma^α×100，
+	// 与渠道聚合分同口径）。渠道分是均值，单个模型全挂会被其余健康模型摊薄——10 个
+	// 健康模型 + 1 个挂掉仍能算出 90 分绿灯，最差项让这种情况在列表页直接可见。
+	// 取最小值天然免疫冷模型问题：无上报的模型读作满分 1.0，永远不会成为最差项。
+	WorstModel      string
+	WorstModelScore float64
 }
 
 // ChannelRuntimeStates 返回目录快照中各渠道的熔断聚合视图。
@@ -170,18 +178,40 @@ func (c *Catalog) ChannelRuntimeStates() map[int64]ChannelRuntimeState {
 	if idx == nil {
 		return nil
 	}
-	out := make(map[int64]ChannelRuntimeState)
-	for _, chans := range idx.byModel {
+	type accEntry struct {
+		st        ChannelRuntimeState
+		worstSucc float64
+		found     bool
+	}
+	acc := make(map[int64]*accEntry)
+	for model, chans := range idx.byModel {
 		for _, ch := range chans {
-			agg, ok := out[ch.ID]
+			a, ok := acc[ch.ID]
 			if !ok {
-				agg = ChannelRuntimeState{Breaker: ch.Breaker}
+				a = &accEntry{st: ChannelRuntimeState{Breaker: ch.Breaker}}
+				acc[ch.ID] = a
 			}
 			if ch.ModelBreaker != dispatch.BreakerClosed {
-				agg.BreakerModels++
+				a.st.BreakerModels++
 			}
-			out[ch.ID] = agg
+			// 同分时按模型名取小者：byModel 是 map，遍历顺序随机，不做确定性
+			// 打破平局的话，全部模型同分（例如都满分）时每次请求返回的模型名都会跳变。
+			if !a.found || ch.SuccEwma < a.worstSucc ||
+				(ch.SuccEwma == a.worstSucc && model < a.st.WorstModel) {
+				a.found = true
+				a.worstSucc = ch.SuccEwma
+				a.st.WorstModel = model
+			}
 		}
+	}
+
+	alpha := HealthAlpha()
+	out := make(map[int64]ChannelRuntimeState, len(acc))
+	for id, a := range acc {
+		if a.found {
+			a.st.WorstModelScore = math.Pow(clampFloat(a.worstSucc, 0, 1), alpha) * 100
+		}
+		out[id] = a.st
 	}
 	return out
 }
