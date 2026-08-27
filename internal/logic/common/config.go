@@ -387,11 +387,53 @@ func (s *ConfigService) StartSubscriber(ctx context.Context) {
 				s.cache.Delete(ctx, "public_options")
 				s.cache.Delete(ctx, "category:"+getCategoryForKey(key))
 				g.Log().Debugf(ctx, "[PubSub:settings] 缓存已失效: %s", key)
+				// 缓存失效后再触发回调：回调内部大概率要读该配置的新值
+				fireSettingsChanged(ctx, key)
 			}
 
 			conn.Close(ctx)
 		}
 	}()
+}
+
+// ──────────────────────────────────────────
+//  配置变更回调
+// ──────────────────────────────────────────
+
+var (
+	settingsHookMu sync.RWMutex
+	settingsHooks  []func(ctx context.Context, key string)
+)
+
+// OnSettingsChanged 注册配置变更回调，用于"改了配置要立刻做点什么"的场景
+// （如按新的探测间隔重排 cron），而不只是让缓存失效。
+//
+// 回调经 Redis pub/sub 触发，因此本实例自己的写入同样会走一遍（发布者也订阅了该频道），
+// 无需在写入路径上重复调用。Redis 不可用时回调不触发——与缓存失效同等降级。
+// 回调在订阅 goroutine 内串行执行，实现必须快速返回、自行兜底 panic。
+func OnSettingsChanged(fn func(ctx context.Context, key string)) {
+	settingsHookMu.Lock()
+	defer settingsHookMu.Unlock()
+	settingsHooks = append(settingsHooks, fn)
+}
+
+// fireSettingsChanged 依次触发已注册回调，单个回调 panic 不影响其余回调与订阅循环。
+func fireSettingsChanged(ctx context.Context, key string) {
+	settingsHookMu.RLock()
+	hooks := make([]func(ctx context.Context, key string), len(settingsHooks))
+	copy(hooks, settingsHooks)
+	settingsHookMu.RUnlock()
+
+	for _, fn := range hooks {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					g.Log().Errorf(ctx, "[PubSub:settings] 变更回调 panic (key=%s): %v", key, r)
+				}
+			}()
+			fn(ctx, key)
+		}()
+	}
 }
 
 // ──────────────────────────────────────────

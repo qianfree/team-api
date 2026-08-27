@@ -23,11 +23,11 @@ type ChnHealthSnapshotsDao struct {
 type ChnHealthSnapshotsColumns struct {
 	Id                  string // 主键ID
 	ChannelId           string // 关联渠道ID
-	HealthScore         string // 综合健康度（0-100）
+	HealthScore         string // 综合健康度（0-100）快照，取自 chn_health_scores.health_score
 	SuccessRate         string // 请求成功率（0-100）
 	LatencyMs           string // 平均延迟（毫秒）
-	StabilityScore      string // 稳定性评分（0-100）
-	ConsecutiveFailures string // 连续失败次数
+	StabilityScore      string // 【已废弃】稳定性评分，不再写入，新快照为 0
+	ConsecutiveFailures string // 【已废弃】连续失败次数，不再写入，新快照为 0
 	SnapshotAt          string // 快照时间
 }
 

@@ -230,7 +230,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 			SUM(CASE WHEN status = 'success' THEN request_count ELSE 0 END) AS success_count,
 			COALESCE(SUM(sum_latency_ms), 0)                                AS sum_latency_ms,
 			COALESCE(SUM(sum_first_token_ms), 0)                            AS sum_first_token_ms,
-			COALESCE(SUM(input_tokens + output_tokens), 0)                  AS total_tokens,
+			COALESCE(SUM(output_tokens), 0)                                 AS output_tokens,
 			COALESCE(SUM(cache_read_tokens), 0)                             AS cache_read_tokens,
 			COALESCE(SUM(cache_creation_tokens), 0)                         AS cache_creation_tokens,
 			COALESCE(SUM(cache_hit_request_count), 0)                       AS cache_hit_request_count
@@ -244,7 +244,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 		SuccessCount         int64 `json:"success_count"`
 		SumLatencyMs         int64 `json:"sum_latency_ms"`
 		SumFirstTokenMs      int64 `json:"sum_first_token_ms"`
-		TotalTokens          int64 `json:"total_tokens"`
+		OutputTokens         int64 `json:"output_tokens"`
 		CacheReadTokens      int64 `json:"cache_read_tokens"`
 		CacheCreationTokens  int64 `json:"cache_creation_tokens"`
 		CacheHitRequestCount int64 `json:"cache_hit_request_count"`
@@ -270,7 +270,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 				COUNT(*) FILTER (WHERE status = 'success')    AS success_count,
 				COALESCE(SUM(latency_ms), 0)                  AS sum_latency_ms,
 				COALESCE(SUM(first_token_ms), 0)              AS sum_first_token_ms,
-				COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+				COALESCE(SUM(output_tokens), 0)               AS output_tokens,
 				COALESCE(SUM(cache_read_tokens), 0)           AS cache_read_tokens,
 				COALESCE(SUM(cache_creation_tokens), 0)       AS cache_creation_tokens,
 				COUNT(*) FILTER (WHERE cache_read_tokens > 0) AS cache_hit_request_count
@@ -299,7 +299,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 			base.SuccessCount += tc.SuccessCount
 			base.SumLatencyMs += tc.SumLatencyMs
 			base.SumFirstTokenMs += tc.SumFirstTokenMs
-			base.TotalTokens += tc.TotalTokens
+			base.OutputTokens += tc.OutputTokens
 			base.CacheReadTokens += tc.CacheReadTokens
 			base.CacheCreationTokens += tc.CacheCreationTokens
 			base.CacheHitRequestCount += tc.CacheHitRequestCount
@@ -321,7 +321,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 		}
 		if err := g.DB().Ctx(ctx).Model("chn_channels").
 			Fields("id", "name").
-			Where("id IN ?", channelIDs).
+			WhereIn("id", channelIDs).
 			Scan(&channels); err != nil {
 			g.Log().Warningf(ctx, "query channel names failed: %v", err)
 		} else {
@@ -348,8 +348,9 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 		}
 		tps := float64(0)
 		if r.SumLatencyMs > 0 {
-			// TPS = 总Token数 / (总延迟ms / 1000)
-			tps = float64(r.TotalTokens) / (float64(r.SumLatencyMs) / 1000.0)
+			// TPS 口径与模型层（buildModelPerformanceList）一致：Σ 输出 token / (Σ 延迟ms / 1000)。
+			// 不能用输入+输出总量：输入 token 为「含缓存总输入」口径，命中缓存的请求会把 TPS 虚高数倍
+			tps = float64(r.OutputTokens) / (float64(r.SumLatencyMs) / 1000.0)
 		}
 		cacheHitRate := float64(0)
 		totalCacheTokens := r.CacheReadTokens + r.CacheCreationTokens

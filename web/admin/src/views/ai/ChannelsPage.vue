@@ -121,10 +121,24 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '健康度', dataIndex: 'health_score', width: 90,
+    title: '健康度', dataIndex: 'health_score', width: 140,
     render({ record }) {
       if (record.health_score === null || record.health_score === undefined) return h('span', { style: 'color:#94a3b8' }, 'N/A')
-      return h('span', { style: { color: healthColor(record.health_score), fontWeight: 600 } }, record.health_score.toFixed(0))
+      const score = h('span', { style: { color: healthColor(record.health_score), fontWeight: 600 } }, record.health_score.toFixed(0))
+      // 渠道分是各模型均值，单个模型全挂会被其余健康模型摊薄（10 健康 + 1 全挂 ≈ 90 分绿灯）。
+      // 最差模型低于健康档时补一行提示，让"是哪个模型拖后腿"在列表页直接可见。
+      // disabled / testing 渠道不在目录快照，无最差项数据。
+      const worst = record.worst_model_score
+      if (record.status !== 'active' || !record.worst_model || worst === null || worst === undefined || worst >= 80) {
+        return score
+      }
+      return h('div', { style: 'display:flex; flex-direction:column; gap:2px; line-height:1.3' }, [
+        score,
+        h('span', {
+          style: `color:${healthColor(worst)}; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap`,
+          title: `最差模型 ${record.worst_model}：${worst.toFixed(0)} 分`,
+        }, `⚠ ${record.worst_model} ${worst.toFixed(0)}`),
+      ])
     },
   },
   {

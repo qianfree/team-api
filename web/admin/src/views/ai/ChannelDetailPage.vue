@@ -1069,6 +1069,13 @@ function formatHeaders(headers: Record<string, string>): string {
                     {{ detail.health_score.toFixed(0) }}
                   </span>
                   <span v-else style="color: #94a3b8">N/A</span>
+                  <!-- 渠道分是各模型均值，单个模型全挂会被摊薄；最差项低于健康档时点名 -->
+                  <span
+                    v-if="detail.status === 'active' && detail.worst_model && detail.worst_model_score != null && detail.worst_model_score < 80"
+                    :style="{ marginLeft: '8px', color: healthColor(detail.worst_model_score), fontSize: '12px' }"
+                  >
+                    ⚠ 最差模型 {{ detail.worst_model }} {{ detail.worst_model_score.toFixed(0) }} 分
+                  </span>
                 </ADescriptionsItem>
                 <ADescriptionsItem label="调度状态">
                   <!-- disabled / testing 渠道不在目录快照中，熔断状态无意义，置灰展示 -->

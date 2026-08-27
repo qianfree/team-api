@@ -159,8 +159,7 @@ type Outcome struct {
 	Success   bool
 	Class     ErrorClass
 	LatencyMs float64
-	// Probe 标记探测类结果（管理后台手动测试 / 自动探测 cron），非真实用户流量。
-	// 探测失败只喂熔断窗口不衰减健康 EWMA：无流量渠道若探测持续失败（如 test_model
-	// 配置错误），周期性 ×decay 会把健康分指数拖垮且无真实流量对冲回升。
+	// Probe 标记本结果来自探测请求（管理后台渠道测试 / 自动探测 cron）而非真实流量。
+	// 纯核心库不消费，仅供适配层观测日志区分健康分变化来源。
 	Probe bool
 }

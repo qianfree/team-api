@@ -952,15 +952,15 @@ type modelInfoCached struct {
 }
 
 // InitHealthScore 初始化渠道健康度记录
+// 新渠道无任何 EWMA 数据，落 100 分作为展示初值；首次有真实上报后由维护任务按
+// avg(succ_ewma)^α×100 重算。stability_score / consecutive_failures 已废弃，不再写入。
 func InitHealthScore(ctx context.Context, channelID int64) error {
 	_, err := dao.ChnHealthScores.Ctx(ctx).Insert(do.ChnHealthScores{
-		ChannelId:           channelID,
-		SuccessRate:         100.00,
-		LatencyMs:           0,
-		StabilityScore:      100.00,
-		ConsecutiveFailures: 0,
-		HealthScore:         100.00,
-		CalculatedAt:        gtime.Now(),
+		ChannelId:    channelID,
+		SuccessRate:  100.00,
+		LatencyMs:    0,
+		HealthScore:  100.00,
+		CalculatedAt: gtime.Now(),
 	})
 	return err
 }
