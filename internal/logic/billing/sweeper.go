@@ -193,8 +193,7 @@ return 1
 			args := append([]any{activeSetKey}, staleIDs...)
 			g.Redis().Do(ctx, "SREM", args...)
 		}
-		g.Log().Debugf(ctx, "[PREDEDUCT SWEEP] tenant=%d frozen recomputed: %d micro (stale members: %d)",
-			tenantID, frozenMicro, len(staleIDs))
+		// 心跳不打日志（每 2 分钟一条太吵），异常路径（围栏重试耗尽/Redis 故障）仍有 Warningf
 		return
 	}
 	g.Log().Warningf(ctx, "[PREDEDUCT SWEEP] tenant=%d frozen recompute aborted after %d fenced retries (hot wallet)",
