@@ -233,3 +233,63 @@ func TestCatalog_运行状态_未Rebuild返回空(t *testing.T) {
 	c := NewCatalog(func() *dispatch.RoutingPolicy { return dispatch.DefaultRoutingPolicy() }, nil, nil)
 	assert.Empty(t, c.ChannelRuntimeStates())
 }
+
+// TestCatalog_最差模型_单模型故障不被均值摊薄 渠道健康分是均值，10 个健康模型 + 1 个
+// 全挂仍能算出 90 分绿灯；最差项要如实报出那个挂掉的模型。
+func TestCatalog_最差模型_单模型故障不被均值摊薄(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-a", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-b", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "broken", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, model string) RuntimeReadout {
+		if model == "broken" {
+			return RuntimeReadout{SuccEwma: 0.1, HasHealth: true}
+		}
+		return RuntimeReadout{SuccEwma: 1.0, HasHealth: true}
+	})
+
+	got := c.ChannelRuntimeStates()
+	require.Len(t, got, 1)
+	assert.Equal(t, "broken", got[1].WorstModel)
+	// α 默认 2：0.1² × 100 = 1
+	assert.InDelta(t, 1.0, got[1].WorstModelScore, 1e-6)
+}
+
+// TestCatalog_最差模型_冷模型不被误报 无真实上报的模型读作满分 1.0，取最小值天然
+// 不会把它选成最差项——这正是拖垮渠道均值的缺陷在 min 聚合下不存在的原因。
+func TestCatalog_最差模型_冷模型不被误报(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "cold", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "warm", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, model string) RuntimeReadout {
+		if model == "cold" {
+			return RuntimeReadout{SuccEwma: 1} // HasHealth=false，从未上报
+		}
+		return RuntimeReadout{SuccEwma: 0.8, HasHealth: true}
+	})
+
+	got := c.ChannelRuntimeStates()
+	assert.Equal(t, "warm", got[1].WorstModel, "冷模型读作满分，不应被选为最差")
+	assert.InDelta(t, 64.0, got[1].WorstModelScore, 1e-6) // 0.8² × 100
+}
+
+// TestCatalog_最差模型_同分时结果稳定 byModel 是 map，遍历顺序随机；同分不做确定性
+// 打破平局的话，全部模型满分时每次请求返回的模型名都会跳变。
+func TestCatalog_最差模型_同分时结果稳定(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "zeta", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "alpha", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "mid", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		return RuntimeReadout{SuccEwma: 1, HasHealth: true}
+	})
+
+	for range 20 {
+		got := c.ChannelRuntimeStates()
+		require.Equal(t, "alpha", got[1].WorstModel, "同分必须稳定取模型名最小者")
+		assert.InDelta(t, 100.0, got[1].WorstModelScore, 1e-6)
+	}
+}
