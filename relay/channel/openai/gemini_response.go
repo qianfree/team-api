@@ -73,13 +73,16 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		return &common.Usage{}, upstreamErr
 	}
 
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
 		resp.Body.Close()
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] openai→gemini 流式转换失败（无匹配转换器或转换失败）")
 	}
 	resp.Body.Close()
-	return usage, nil
+	return usage, streamErr
 }
 
 // openAIToGeminiResponse / buildGeminiParts* 等 legacy 转换已随 relaykit 收割删除：

@@ -112,10 +112,19 @@ type GeminiImageConfig struct {
 	ImageSize   string `json:"imageSize,omitempty"`
 }
 
-// GeminiThinkingConfig Gemini 思考配置
+// GeminiThinkingConfig Gemini 思考配置。
+//
+// ⚠️ 字段名以 Gemini REST 契约为准（generationConfig.thinkingConfig）：
+//   - thinkingBudget（**不是** thoughtBudget——后者不是合法字段名，会被上游以
+//     400 "Unknown name" 拒绝）：Gemini 2.5 系的思考 token 预算；
+//   - thinkingLevel：Gemini 3 及以后的思考档位。
+//
+// 两者**互斥**：同时下发上游返回 400
+// "thinking_budget and thinking_level are not supported together"。
+// 按模型代次二选一，判定见 shared.GeminiUsesThinkingLevel。
 type GeminiThinkingConfig struct {
 	IncludeThoughts bool   `json:"includeThoughts"`
-	ThoughtBudget   *int   `json:"thoughtBudget,omitempty"`
+	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
 	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
 }
 

@@ -80,8 +80,8 @@ func TestOpenAIToGeminiRequestConverter_ThinkingSuffix(t *testing.T) {
 	if !tc.IncludeThoughts {
 		t.Error("thinkingConfig.includeThoughts = false, want true")
 	}
-	if tc.ThoughtBudget == nil || *tc.ThoughtBudget != 4096 {
-		t.Errorf("thoughtBudget = %v, want 4096（8192×0.5）", tc.ThoughtBudget)
+	if tc.ThinkingBudget == nil || *tc.ThinkingBudget != 4096 {
+		t.Errorf("thinkingBudget = %v, want 4096（8192×0.5）", tc.ThinkingBudget)
 	}
 }
 

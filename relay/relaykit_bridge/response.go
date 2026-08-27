@@ -111,6 +111,10 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 		return nil, nil, false
 	}
 
+	// compact 端点（codex /responses/compact）：合成体需改写为 response.compaction 形态
+	if clientFormat == constant.RelayFormatResponses {
+		out = reshapeCompactResponse(info, out)
+	}
 	return out, usage, true
 }
 

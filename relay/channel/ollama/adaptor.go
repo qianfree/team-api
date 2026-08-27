@@ -239,8 +239,12 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 	}
 
 	// relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		return usage, nil
+	bridgeUsage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	if ok {
+		return bridgeUsage, streamErr
+	}
+	if streamErr != nil {
+		return nil, streamErr // 入口 ctx 已取消：不回退旧路径（客户端已不可达）
 	}
 
 	helper.SetEventStreamHeaders(writer)

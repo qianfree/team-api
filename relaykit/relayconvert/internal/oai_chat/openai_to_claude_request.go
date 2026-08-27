@@ -103,6 +103,14 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 
 	// 转换 messages
 	systemPrompts := make([]string, 0)
+	// thinking 块重建追踪：
+	//   thinkingHeadMsgIdx —— 已前置 thinking 块的 assistant 消息下标（回退时需要摘除）；
+	//   toolUseWithoutThinking —— 存在「带 tool_use 但无 thinking 块」的 assistant 轮。
+	// Anthropic 强制约束：thinking 开启时，最后一组 tool_use/tool_result 之前的 assistant
+	// 消息必须以 thinking 块开头，否则 400
+	// "Expected `thinking` or `redacted_thinking`, but found `tool_use`"。
+	thinkingHeadMsgIdx := make([]int, 0)
+	toolUseWithoutThinking := false
 	// 连续 tool 消息聚合缓冲：Claude 要求同一 assistant tool_use 轮的全部 tool_result 位于
 	// 紧随的下一条 user 消息——逐条映射为多条 user/tool_result 消息违反该约束，并行工具调用
 	//（codex 等客户端对一轮多个 function_call 各回一条 function_call_output）必被上游 400
@@ -162,6 +170,30 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			} else {
 				claudeMsg.Content = toolBlocks
 			}
+		}
+
+		// thinking 块重建：Responses 客户端（codex）回传的 reasoning 项经 r2o 还原为
+		// reasoning_content + thought_signature，此处复原为 Claude thinking 块并置于内容
+		// 块最前——这是「Claude 扩展思考 + 工具调用」多轮能闭环的必要条件。
+		// 签名必须与原文逐字配对（r2o 已保证不做多段合并），否则上游验签失败。
+		hasThinkingHead := false
+		if msg.Role == "assistant" && msg.ThoughtSignature != "" &&
+			msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+			thinkingText := *msg.ReasoningContent
+			blocks := []dto.ClaudeContentBlock{{
+				Type:      "thinking",
+				Thinking:  &thinkingText,
+				Signature: msg.ThoughtSignature,
+			}}
+			if existing, ok := claudeMsg.Content.([]dto.ClaudeContentBlock); ok {
+				blocks = append(blocks, existing...)
+			}
+			claudeMsg.Content = blocks
+			hasThinkingHead = true
+			thinkingHeadMsgIdx = append(thinkingHeadMsgIdx, len(claudeReq.Messages))
+		}
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 && !hasThinkingHead {
+			toolUseWithoutThinking = true
 		}
 
 		// 空内容兜底：以上转换后仍无任何内容块（content 为 nil 或空数组——如纯文本为空
@@ -234,8 +266,12 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	// 应用 thinking 适配器
 	shared.ApplyThinkingToClaude(claudeReq, thinkingInfo, opts.Claude)
 
+	// thinking 回退时需要还原的原始采样参数（thinking 会强制 temperature=1 且去 top_p）
+	origTemperature, origTopP := claudeReq.Temperature, claudeReq.TopP
+
 	// 请求体 reasoning_effort → thinking（legacy o2cConvertReasoningEffort 的迁移）。
-	// 显式请求参数优先于模型名后缀，故在适配器之后应用；thinking 与 temperature 修改不兼容，须置 1.0
+	// 显式请求参数优先于模型名后缀，故在适配器之后应用；thinking 与 temperature/top_p
+	// 修改不兼容，须置 temperature=1.0 并去掉 top_p（与 ApplyThinkingToClaude 同款处理）
 	if openaiReq.ReasoningEffort == "none" {
 		// 显式关闭推理：覆盖模型名后缀注入的 thinking（显式参数优先）
 		claudeReq.Thinking = nil
@@ -263,6 +299,29 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		}
 		one := 1.0
 		claudeReq.Temperature = &one
+		claudeReq.TopP = nil
+	}
+
+	// 签名缺失兜底：thinking 开启但历史里存在「带 tool_use 却无 thinking 块」的 assistant
+	// 轮时，Anthropic 必 400。签名不可得的场景（客户端未回传 encrypted_content、
+	// 经不携带签名的协议链转入等）关闭 thinking 保证 agent 循环不断——损失思考能力，
+	// 但好过每一轮工具调用都失败。同时摘除已重建的 thinking 块（thinking 关闭时
+	// 消息里残留 thinking 块同样会被上游拒绝）并还原采样参数。
+	if claudeReq.Thinking != nil && toolUseWithoutThinking {
+		claudeReq.Thinking = nil
+		claudeReq.Temperature, claudeReq.TopP = origTemperature, origTopP
+		for _, idx := range thinkingHeadMsgIdx {
+			blocks, ok := claudeReq.Messages[idx].Content.([]dto.ClaudeContentBlock)
+			if !ok || len(blocks) == 0 || blocks[0].Type != "thinking" {
+				continue
+			}
+			remaining := blocks[1:]
+			if len(remaining) == 0 {
+				space := " "
+				remaining = []dto.ClaudeContentBlock{{Type: "text", Text: &space}}
+			}
+			claudeReq.Messages[idx].Content = remaining
+		}
 	}
 
 	return claudeReq, nil

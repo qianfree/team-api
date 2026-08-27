@@ -247,12 +247,22 @@ type r2cInputItem struct {
 	Arguments string `json:"arguments,omitempty"`
 	// reasoning 项字段（Responses 历史中回传的思考内容摘要）
 	Summary []r2cReasoningPart `json:"summary,omitempty"`
+	// EncryptedContent 上游思考签名的透传载体（响应侧由 claude thinking.signature /
+	// gemini thoughtSignature 写入）。还原为 chat 中间格式的 thought_signature，
+	// 供 o2c 重建 Claude thinking 块、o2g 回挂 Gemini thoughtSignature
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 	// additional_tools 项字段（codex 新版把 exec/wait 等嵌套工具定义放在该输入项）
 	Tools json.RawMessage `json:"tools,omitempty"`
 	// custom_tool_call 项字段（freeform 输入字符串）
 	Input string `json:"input,omitempty"`
 	// local_shell_call / apply_patch_call 项字段（结构化动作，原样透传为 arguments）
 	Action json.RawMessage `json:"action,omitempty"`
+}
+
+// r2cReasoning 一个 reasoning 输入项还原出的思考内容 + 上游签名。
+type r2cReasoning struct {
+	text      string
+	signature string
 }
 
 // r2cReasoningPart reasoning 项的文本部分（summary 的 summary_text / content 的 reasoning_text）
@@ -340,24 +350,59 @@ func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops 
 	extraTools := make([]dto.Tool, 0)
 	var extraWSOpts json.RawMessage
 	var pendingToolCalls []dto.ToolCall
-	var pendingReasoning []string
+	var pendingReasoning []r2cReasoning
 	// mergeableAssistant：最后一条消息是本轮尚未闭合的 assistant 文本消息，
 	// 其后的 function_call / reasoning 项仍属同一助手轮，可直接合并/附着
 	mergeableAssistant := false
 
-	// setReasoning 将思考文本写入消息（已有内容时换行追加）
-	setReasoning := func(msg *dto.Message, text string) {
-		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
-			text = *msg.ReasoningContent + "\n\n" + text
+	// applyReasoning 把一组思考项写入 assistant 消息。
+	//
+	// 无签名时沿用历史口径：多段文本换行合并进 reasoning_content（DeepSeek 等思考模式
+	// 上游要求多轮工具调用回传思考内容）。
+	//
+	// 带签名时不能合并：Claude 对 thinking 块做签名校验，回传文本必须与签名产出时逐字
+	// 一致，拼接其他段会被上游拒绝。此时只取首个带签名段的文本与签名，其余段按降级上报。
+	applyReasoning := func(msg *dto.Message, items []r2cReasoning) {
+		if len(items) == 0 || msg == nil || msg.Role != "assistant" {
+			return
 		}
-		msg.ReasoningContent = &text
+		signedIdx := -1
+		for i, it := range items {
+			if it.signature != "" {
+				signedIdx = i
+				break
+			}
+		}
+		if signedIdx >= 0 {
+			for i := range items {
+				if i != signedIdx {
+					drops.drop("input_item:reasoning_unsigned_dropped")
+				}
+			}
+			// 文本为空（仅 encrypted_content 的思考项）时不写 reasoning_content——
+			// 空串会被序列化进请求体，思考模式上游可能因空思考内容报错
+			if text := items[signedIdx].text; text != "" {
+				msg.ReasoningContent = &text
+			}
+			msg.ThoughtSignature = items[signedIdx].signature
+			return
+		}
+		texts := make([]string, 0, len(items))
+		for _, it := range items {
+			texts = append(texts, it.text)
+		}
+		merged := strings.Join(texts, "\n\n")
+		if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+			merged = *msg.ReasoningContent + "\n\n" + merged
+		}
+		msg.ReasoningContent = &merged
 	}
-	// consumePendingReasoning 将暂存的思考文本附着到 assistant 消息
+	// consumePendingReasoning 将暂存的思考项附着到 assistant 消息
 	consumePendingReasoning := func(msg *dto.Message) {
 		if len(pendingReasoning) == 0 || msg == nil || msg.Role != "assistant" {
 			return
 		}
-		setReasoning(msg, strings.Join(pendingReasoning, "\n\n"))
+		applyReasoning(msg, pendingReasoning)
 		pendingReasoning = nil
 	}
 	// orphanPendingReasoning 丢弃无处附着的思考文本（后续无所属 assistant 消息）并上报
@@ -421,16 +466,18 @@ func r2cConvertInputToMessages(info convmeta.Meta, input json.RawMessage, drops 
 			messages = append(messages, dto.Message{Role: "tool", ToolCallID: item.CallID, Content: item.Output})
 			mergeableAssistant = false
 		case "reasoning":
-			// 思考项：还原为所属 assistant 消息的 reasoning_content（思考模式上游要求回传）；
-			// 仅 encrypted_content 无文本可还原时仍属降级
-			if text := r2cExtractReasoningText(item); text != "" {
-				if mergeableAssistant && len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
-					setReasoning(&messages[len(messages)-1], text)
-				} else {
-					pendingReasoning = append(pendingReasoning, text)
-				}
-			} else {
+			// 思考项：还原为所属 assistant 消息的 reasoning_content（思考模式上游要求回传）
+			// 与 thought_signature（Claude thinking 块 / Gemini thoughtSignature 的回传载体）。
+			// 两者皆空时无可还原内容，属降级
+			seg := r2cReasoning{text: r2cExtractReasoningText(item), signature: item.EncryptedContent}
+			if seg.text == "" && seg.signature == "" {
 				drops.drop("input_item:reasoning")
+				continue
+			}
+			if mergeableAssistant && len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+				applyReasoning(&messages[len(messages)-1], []r2cReasoning{seg})
+			} else {
+				pendingReasoning = append(pendingReasoning, seg)
 			}
 			continue
 		case "additional_tools":

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -412,9 +413,11 @@ func TestClaudeToOpenAIStreamConverter_EmptyStream(t *testing.T) {
 		return nil
 	}
 
+	// 假成功防护：空流/非 Claude 协议流必须报 ErrProtocolMismatch，
+	// 静默产出 0 chunk 会被宿主桥当成功收尾（客户端收到无内容的流、健康度记为成功）
 	err := converter.ConvertStreamResponse(ctx, nil, reader, chunkWriter)
-	if err != nil {
-		t.Fatalf("ConvertStreamResponse failed: %v", err)
+	if !errors.Is(err, types.ErrProtocolMismatch) {
+		t.Fatalf("empty stream err = %v, want ErrProtocolMismatch", err)
 	}
 
 	if len(chunks) != 0 {

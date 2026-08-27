@@ -5,6 +5,7 @@ import (
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/kitutil"
 	"github.com/qianfree/team-api/relaykit/relayconvert/reasoning"
 )
 
@@ -110,13 +111,17 @@ func ApplyThinkingToGemini(config *dto.GeminiGenerationConfig, info ThinkingInfo
 			IncludeThoughts: true,
 		}
 
-		// 将 effort 等级映射为 thinking budget，下限 128（Gemini thoughtBudget 最小值）
-		if config.MaxOutputTokens != nil && opts.ThinkingAdapterBudgetTokensPercentage > 0 {
+		// thinkingBudget 与 thinkingLevel 互斥（同时下发上游 400），按模型代次二选一：
+		// Gemini 3+ 只认 thinkingLevel，2.5 系只认 thinkingBudget
+		if GeminiUsesThinkingLevel(info.BaseModel) {
+			thinkingConfig.ThinkingLevel = GeminiThinkingLevelOf(info.EffortLevel)
+		} else if config.MaxOutputTokens != nil && opts.ThinkingAdapterBudgetTokensPercentage > 0 {
+			// 将 effort 等级映射为 thinking budget，下限 128（Gemini thinkingBudget 最小值）
 			thinkingBudget := int(float64(*config.MaxOutputTokens) * opts.ThinkingAdapterBudgetTokensPercentage)
 			if thinkingBudget < 128 {
 				thinkingBudget = 128
 			}
-			thinkingConfig.ThoughtBudget = &thinkingBudget
+			thinkingConfig.ThinkingBudget = &thinkingBudget
 		}
 
 		config.ThinkingConfig = thinkingConfig
@@ -130,3 +135,9 @@ func ShouldPreserveThinkingSuffix(modelName string, opts *convmeta.Options) bool
 	}
 	return opts.ShouldPreserveThinkingSuffix(modelName)
 }
+
+// GeminiUsesThinkingLevel / GeminiThinkingLevelOf 的权威实现在 kitutil（导出包），
+// 宿主 relay/channel/gemini 的原生注入路径需要同一判据，internal/shared 对宿主不可见。
+func GeminiUsesThinkingLevel(model string) bool { return kitutil.GeminiUsesThinkingLevel(model) }
+
+func GeminiThinkingLevelOf(effort string) string { return kitutil.GeminiThinkingLevelOf(effort) }

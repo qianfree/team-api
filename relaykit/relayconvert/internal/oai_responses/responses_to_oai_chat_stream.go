@@ -79,7 +79,21 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 		toolNameSent   = make(map[string]bool)   // callID → name 是否已随 chunk 发出
 		toolIndexByID  = make(map[string]int)    // callID → 分配的 delta index
 		callIDByItemID = make(map[string]string) // item.id → call_id（delta 事件只带 item_id，需归一键）
+
+		parsedChunks      int  // 成功解析的 data 行数（假成功防护的诊断信息）
+		sawResponsesEvent bool // 是否出现过 response.* 事件 —— Responses 流的协议特征
 	)
+
+	// mismatchIfEmpty 假成功防护：整段上游流没有任何目标协议特征时报 ErrProtocolMismatch，
+	// 由宿主桥接层按上游错误处理并置 StreamEndReasonError。绝不能静默收尾成空响应——
+	// 客户端只会收到补发的终止事件而无任何内容，且该次请求在健康度上被记为成功、
+	// 调度 FSM 失去换渠道机会。
+	mismatchIfEmpty := func() error {
+		if sawResponsesEvent {
+			return nil
+		}
+		return fmt.Errorf("%w: %d chunks parsed, none was a response.* event", types.ErrProtocolMismatch, parsedChunks)
+	}
 
 	// emit 基础 chunk 骨架（ID/Created/Model 各跳统一）
 	newChunk := func(choices []dto.StreamChoice) *dto.ChatCompletionStreamResponse {
@@ -161,6 +175,10 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 		var event dto.ResponsesStreamResponse
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
+		}
+		parsedChunks++
+		if strings.HasPrefix(event.Type, "response.") {
+			sawResponsesEvent = true
 		}
 
 		switch event.Type {
@@ -327,6 +345,10 @@ func (c *ResponsesToOpenAIChatStreamConverter) ConvertStreamResponse(
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
+	}
+
+	if err := mismatchIfEmpty(); err != nil {
+		return err
 	}
 
 	// 上游未发 response.completed 即断流：补 start/finish 保证客户端正常收尾

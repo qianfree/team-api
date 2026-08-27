@@ -112,7 +112,13 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 
 	// ReasoningEffort → ThinkingConfig（请求体显式指定）
 	if openaiReq.ReasoningEffort != "" {
-		geminiReq.GenerationConfig.ThinkingConfig = convertReasoningEffort(openaiReq.ReasoningEffort)
+		upstreamModel := openaiReq.Model
+		if info != nil {
+			if m := info.GetUpstreamModelName(); m != "" {
+				upstreamModel = m
+			}
+		}
+		geminiReq.GenerationConfig.ThinkingConfig = convertReasoningEffort(openaiReq.ReasoningEffort, upstreamModel)
 	} else if info != nil {
 		// 模型名 thinking 后缀（-thinking/-low 等）：gemini adaptor 的 injectGeminiThinking
 		// 在桥接路径不执行，此处吸收该语义；请求体已显式设置 effort 时以请求体为准
@@ -728,28 +734,31 @@ func convertToolChoice(toolChoice any) any {
 	return nil
 }
 
-func convertReasoningEffort(effort string) *dto.GeminiThinkingConfig {
+// convertReasoningEffort 将 chat 的 reasoning_effort 映射为 Gemini thinkingConfig。
+//
+// ⚠️ thinkingBudget 与 thinkingLevel 互斥，同时下发上游返回 400
+// "thinking_budget and thinking_level are not supported together"——必须按模型代次
+// 二选一：Gemini 3+ 走 thinkingLevel，2.5 系走 thinkingBudget。
+// （codex 等客户端默认恒带 reasoning.effort，此处每次请求都会命中。）
+func convertReasoningEffort(effort, model string) *dto.GeminiThinkingConfig {
+	cfg := &dto.GeminiThinkingConfig{IncludeThoughts: true}
+	if shared.GeminiUsesThinkingLevel(model) {
+		cfg.ThinkingLevel = shared.GeminiThinkingLevelOf(effort)
+		return cfg
+	}
 	var budget int
-	var level string
 	switch effort {
-	case "low":
+	case "minimal", "low":
 		budget = 1024
-		level = "LOW"
 	case "medium":
 		budget = 8192
-		level = "MEDIUM"
-	case "high":
+	case "high", "xhigh", "max", "ultra":
 		budget = 32768
-		level = "HIGH"
 	default:
 		budget = 8192
-		level = "MEDIUM"
 	}
-	return &dto.GeminiThinkingConfig{
-		IncludeThoughts: true,
-		ThoughtBudget:   &budget,
-		ThinkingLevel:   level,
-	}
+	cfg.ThinkingBudget = &budget
+	return cfg
 }
 
 // convertResponseSchema 将 response_format.json_schema 的 schema 转换为 Gemini ResponseSchema。

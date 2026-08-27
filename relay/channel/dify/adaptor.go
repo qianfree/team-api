@@ -138,11 +138,14 @@ func (a *Adaptor) handleNonStreamResponse(ctx context.Context, resp *http.Respon
 // handleStreamResponse 处理 Dify streaming 模式 SSE 响应
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] dify→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
-	return usage, nil
+	return usage, streamErr
 }
 
 func (a *Adaptor) GetChannelName() string {

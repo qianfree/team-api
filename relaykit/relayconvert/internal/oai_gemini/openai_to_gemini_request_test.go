@@ -3,6 +3,7 @@ package oai_gemini
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
@@ -340,47 +341,28 @@ func TestOpenAIToGeminiRequestConverter_MultimodalContent(t *testing.T) {
 	}
 }
 
+// TestOpenAIToGeminiRequestConverter_ReasoningEffort reasoning_effort → thinkingConfig。
+//
+// ⚠️ thinkingBudget 与 thinkingLevel 互斥：同时下发上游返回 400
+// "thinking_budget and thinking_level are not supported together"。按模型代次二选一——
+// Gemini 2.5 系只发 thinkingBudget，Gemini 3+ 只发 thinkingLevel。
 func TestOpenAIToGeminiRequestConverter_ReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name   string
-		effort string
-		want   struct {
-			budget int
-			level  string
-		}
+		name       string
+		model      string
+		effort     string
+		wantBudget int    // 0 表示不应设置
+		wantLevel  string // "" 表示不应设置
 	}{
-		{
-			name:   "low effort",
-			effort: "low",
-			want: struct {
-				budget int
-				level  string
-			}{budget: 1024, level: "LOW"},
-		},
-		{
-			name:   "medium effort",
-			effort: "medium",
-			want: struct {
-				budget int
-				level  string
-			}{budget: 8192, level: "MEDIUM"},
-		},
-		{
-			name:   "high effort",
-			effort: "high",
-			want: struct {
-				budget int
-				level  string
-			}{budget: 32768, level: "HIGH"},
-		},
-		{
-			name:   "unknown effort defaults to medium",
-			effort: "unknown",
-			want: struct {
-				budget int
-				level  string
-			}{budget: 8192, level: "MEDIUM"},
-		},
+		{name: "2.5 low effort", model: "gemini-2.5-pro", effort: "low", wantBudget: 1024},
+		{name: "2.5 medium effort", model: "gemini-2.5-pro", effort: "medium", wantBudget: 8192},
+		{name: "2.5 high effort", model: "gemini-2.5-flash", effort: "high", wantBudget: 32768},
+		{name: "2.5 unknown effort defaults to medium", model: "gemini-2.5-pro", effort: "unknown", wantBudget: 8192},
+		{name: "2.5 xhigh folds to high budget", model: "gemini-2.5-pro", effort: "xhigh", wantBudget: 32768},
+		{name: "3 pro uses level not budget", model: "gemini-3-pro-preview", effort: "medium", wantLevel: "MEDIUM"},
+		{name: "3 pro low", model: "gemini-3-pro-preview", effort: "low", wantLevel: "LOW"},
+		{name: "3 pro xhigh folds to HIGH", model: "gemini-3-pro-preview", effort: "xhigh", wantLevel: "HIGH"},
+		{name: "unknown model falls back to budget", model: "some-proxy-model", effort: "medium", wantBudget: 8192},
 	}
 
 	converter := &OpenAIToGeminiRequestConverter{}
@@ -389,6 +371,7 @@ func TestOpenAIToGeminiRequestConverter_ReasoningEffort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			openaiReq := &dto.GeneralOpenAIRequest{
+				Model:           tt.model,
 				Messages:        []dto.Message{{Role: "user", Content: "Test"}},
 				ReasoningEffort: tt.effort,
 			}
@@ -402,22 +385,42 @@ func TestOpenAIToGeminiRequestConverter_ReasoningEffort(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected *dto.GeminiChatRequest, got %T", result)
 			}
-
 			if geminiReq.GenerationConfig == nil || geminiReq.GenerationConfig.ThinkingConfig == nil {
 				t.Fatal("ThinkingConfig is nil")
 			}
 
-			thinkingConfig := geminiReq.GenerationConfig.ThinkingConfig
-			if !thinkingConfig.IncludeThoughts {
+			tc := geminiReq.GenerationConfig.ThinkingConfig
+			if !tc.IncludeThoughts {
 				t.Error("IncludeThoughts should be true")
 			}
-			if thinkingConfig.ThoughtBudget == nil || *thinkingConfig.ThoughtBudget != tt.want.budget {
-				t.Errorf("ThoughtBudget = %v, want %d", thinkingConfig.ThoughtBudget, tt.want.budget)
+			if tt.wantBudget == 0 {
+				if tc.ThinkingBudget != nil {
+					t.Errorf("ThinkingBudget = %d, want unset（与 thinkingLevel 互斥）", *tc.ThinkingBudget)
+				}
+			} else if tc.ThinkingBudget == nil || *tc.ThinkingBudget != tt.wantBudget {
+				t.Errorf("ThinkingBudget = %v, want %d", tc.ThinkingBudget, tt.wantBudget)
 			}
-			if thinkingConfig.ThinkingLevel != tt.want.level {
-				t.Errorf("ThinkingLevel = %q, want %q", thinkingConfig.ThinkingLevel, tt.want.level)
+			if tc.ThinkingLevel != tt.wantLevel {
+				t.Errorf("ThinkingLevel = %q, want %q（与 thinkingBudget 互斥）", tc.ThinkingLevel, tt.wantLevel)
 			}
 		})
+	}
+}
+
+// TestGeminiThinkingConfigJSONFieldName 锁定 REST 字段名：必须是 thinkingBudget，
+// 不是 thoughtBudget——后者不是合法字段，会被上游以 400 "Unknown name" 拒绝。
+func TestGeminiThinkingConfigJSONFieldName(t *testing.T) {
+	budget := 4096
+	b, err := json.Marshal(&dto.GeminiThinkingConfig{IncludeThoughts: true, ThinkingBudget: &budget})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"thinkingBudget":4096`) {
+		t.Errorf("thinkingConfig = %s, want thinkingBudget 字段", got)
+	}
+	if strings.Contains(got, "thoughtBudget") {
+		t.Errorf("thinkingConfig 含非法字段 thoughtBudget: %s", got)
 	}
 }
 

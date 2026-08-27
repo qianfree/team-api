@@ -168,13 +168,14 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 
 // buildResponsesFromClaude 将 Claude 非流式响应转换为 Responses 响应对象。
 // thinking 块聚合为 reasoning 项（置于输出数组最前——真实 OpenAI 项序，codex 等客户端
-// 据此在后续轮次回传思考内容；signature 无 Responses 对应物丢弃），文本块聚合为 message 项，
+// 据此在后续轮次回传思考内容；signature 经 encrypted_content 透传，见下），文本块聚合为 message 项，
 // tool_use 块转为 function_call 项。
 // 返回的 usage 为客户端可见口径（OpenAI 语义：input 含缓存，cached 为其子集）。
 func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse) (*dto.OpenAIResponsesResponse, *dto.UsageWithDetails) {
 	// 构建 output：thinking 块 → reasoning 项，文本块 → message 项，tool_use 块 → function_call 项
 	var textParts []string
 	var thinkingParts []string
+	thinkingSignature := ""
 	output := make([]dto.ResponsesOutput, 0)
 	for _, block := range claudeResp.Content {
 		switch block.Type {
@@ -185,6 +186,11 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 		case "thinking":
 			if block.Thinking != nil && *block.Thinking != "" {
 				thinkingParts = append(thinkingParts, *block.Thinking)
+			}
+			// 首个 thinking 块的签名经 encrypted_content 透传（Anthropic 要求带 tool_use
+			// 的 assistant 轮回传原始 thinking 块含 signature，否则下一轮 400）
+			if block.Signature != "" && thinkingSignature == "" {
+				thinkingSignature = block.Signature
 			}
 		case "redacted_thinking":
 			// 加密思考内容无文本可透出，跳过
@@ -212,8 +218,9 @@ func buildResponsesFromClaude(info convmeta.Meta, claudeResp *dto.ClaudeResponse
 	head := make([]dto.ResponsesOutput, 0, 2)
 	if len(thinkingParts) > 0 {
 		head = append(head, dto.ResponsesOutput{
-			Type: "reasoning",
-			ID:   fmt.Sprintf("rs_%s", claudeResp.ID),
+			Type:             "reasoning",
+			ID:               fmt.Sprintf("rs_%s", claudeResp.ID),
+			EncryptedContent: thinkingSignature,
 			Summary: []dto.ResponsesSummaryPart{{
 				Type: "summary_text",
 				Text: strings.Join(thinkingParts, "\n"),

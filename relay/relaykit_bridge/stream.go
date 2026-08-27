@@ -3,6 +3,7 @@ package relaykit_bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,39 +23,65 @@ import (
 // 设计要点：
 //   - 特性开关已移除（relaykit 常开）：relaykit 在其覆盖的转换方向上始终优先。
 //   - 只替换「格式转换」这一步；SSE 帧化、保活 ping、[DONE] 收尾（openai 客户端）、StreamStatus 由本层负责。
-//   - 任何「写入前」的放弃（无 ChannelMeta、同格式、无匹配转换器）都返回 ok=false，
-//     调用方回退到旧 handleStreamToOpenAI 代码路径。
+//   - 任何「写入前」的放弃（无 ChannelMeta、同格式、无匹配转换器、入口 ctx 已取消）
+//     都返回 ok=false，调用方回退到旧 handleStreamToOpenAI 代码路径。
 //   - 一旦 SetEventStreamHeaders 之后（开始写 chunk）即不可回退：
 //     转换中途失败由本层按客户端格式写入结束事件（openai 客户端另补 [DONE]）+ 设置 end reason 后返回 ok=true。
 //   - 转换耗时与成败通过 monitor.TrackConverterCall 记录，供 dashboard 观测。
+//
+// ⚠️ 假成功防护（与 responses.go 桥同构，勿删）：上游流一个有效 chunk 都没产出时，
+// 转换器返回 types.ErrProtocolMismatch，本层按上游错误处理并置 StreamEndReasonError
+// ——绝不能当成功返回。否则客户端只会收到「补发的终止事件」而无 message_start/首 chunk，
+// Anthropic SDK 报 "Streaming response ended before any complete data was received"，
+// 同时该次请求在健康度上被记为成功、调度 FSM 失去换渠道机会。
 
 // TryConvertStreamViaRelaykit 尝试用 relaykit 流式转换器将上游 SSE 流转换为客户端格式。
 //
 // 返回：
 //   - usage：从最后一个带 Usage 的 chunk 提取的用量（无则零值 Usage）
 //   - ok：true 表示已接管响应（成功或优雅失败），调用方应直接返回，不再走旧路径；
-//     false 表示未接管（无 ChannelMeta / 同格式 / 无匹配转换器），调用方回退旧路径。
+//     false 表示未接管（无 ChannelMeta / 同格式 / 无匹配转换器 / 入口 ctx 已取消），
+//     调用方回退旧路径。
+//   - err：接管后发生的上游/中断错误（透传给调用方驱动调度 FSM）。
+//     未接管时通常为 nil；唯一例外是「入口 ctx 已取消」——此时返回
+//     common.ErrStreamInterrupted，调用方应直接透传该错误而非回退旧路径
+//     （回退会再次尝试写已不可达的客户端）。
 //
 // 注意：未接管时在任何 I/O 之前即返回 false，旧路径行为零变化。
-func TryConvertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool) {
+func TryConvertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool, error) {
 	if info == nil || info.ChannelMeta == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	return convertStreamViaRelaykit(ctx, info, upstreamBody, writer)
 }
 
 // convertStreamViaRelaykit 流式转换核心：不读取特性开关配置（由公开入口保证），
 // 抽离出来便于单测（参照 internal/logic/relay 中 isChannelInProviders 的纯函数抽离手法）。
-func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool) {
+func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody io.Reader, writer http.ResponseWriter) (*common.Usage, bool, error) {
 	clientFormat := info.GetOriginalClientFormat()
 	upstream := bridgeUpstreamFormat(info, clientFormat)
 	if upstream == clientFormat {
-		return nil, false // 同格式无需转换
+		return nil, false, nil // 同格式无需转换
 	}
 
 	fn, converterID, ok := relayconvert.LookupStreamConverter(types.RelayFormat(upstream), types.RelayFormat(clientFormat))
 	if !ok {
-		return nil, false // 无匹配的 relaykit 流式转换器
+		return nil, false, nil // 无匹配的 relaykit 流式转换器
+	}
+
+	// 在提交任何响应头之前检查客户端是否已断开（常见于上游 TTFB 较慢、客户端在
+	// DoRequest 阶段超时并主动关闭连接的场景）。此时若继续写 SSE 头再检测 Done，
+	// 客户端会收到「200 + SSE 头 + 无事件 + EOF」的残缺响应，Anthropic SDK 解析时
+	// 报 "Failed to parse JSON"。提前放弃接管，让上层走标准 JSON 错误体路径
+	//（对齐 claude/response.go handleClaudeNativeStream 的同款预检）。
+	if ctx.Err() != nil {
+		g.Log().Warningf(context.Background(),
+			"[relaykit] 流式桥入口 ctx 已取消，放弃写响应头 request_id=%s converter=%s ctx.Err=%v",
+			info.RequestID, converterID, ctx.Err())
+		if info.StreamStatus != nil {
+			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
+		}
+		return nil, false, common.ErrStreamInterrupted
 	}
 
 	// 设置 SSE 头 + 并发安全 writer + 保活 ping（与旧 handleStreamToOpenAI 一致）
@@ -246,6 +273,46 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		return helper.WriteSSEData(safeWriter, string(data))
 	}
 
+	// writeErrorForClient 按客户端格式写出一条终止性错误事件。
+	// SSE 头已提交后不能再改状态码，只能以「客户端能识别为错误并正常退出」的事件收尾——
+	// 否则 SDK 收到「200 + SSE 头 + 无事件 + EOF」会挂起，并把后续请求的响应误判为本流
+	// 数据（Anthropic SDK 表现为 "Failed to parse JSON"）。
+	// 与 claude/response.go handleClaudeNativeStream 的 streamCtx.Done 分支同款处理。
+	writeErrorForClient := func(message string) {
+		switch {
+		case claudeClient:
+			payload, _ := json.Marshal(map[string]any{
+				"type":  "error",
+				"error": map[string]any{"type": "api_error", "message": message},
+			})
+			_, _ = fmt.Fprintf(safeWriter, "event: error\ndata: %s\n\n", string(payload))
+			safeWriter.Flush()
+		case geminiClient:
+			// Gemini SSE 无独立 error 事件类型：以 promptFeedback.blockReason 之外的
+			// 通用形态写出——candidates 带 finishReason=OTHER，客户端据此结束并报错
+			terminal := &dto.GeminiChatResponse{
+				Candidates: []dto.GeminiCandidate{{
+					Content:      &dto.GeminiContent{Role: "model", Parts: []dto.GeminiPart{}},
+					FinishReason: "OTHER",
+				}},
+			}
+			data, _ := json.Marshal(terminal)
+			_ = helper.WriteSSEData(safeWriter, string(data))
+		default:
+			// openai：SSE 内嵌 error 对象（OpenAI SDK 识别 data 行内的 error 字段）+ [DONE]
+			payload, _ := json.Marshal(map[string]any{
+				"error": map[string]any{
+					"message": message,
+					"type":    "upstream_error",
+					"param":   nil,
+					"code":    "upstream_stream_error",
+				},
+			})
+			_ = helper.WriteSSEData(safeWriter, string(payload))
+			_ = helper.WriteSSEData(safeWriter, "[DONE]")
+		}
+	}
+
 	setEndReason := func(reason common.StreamEndReason, err error) {
 		if info.StreamStatus != nil {
 			info.StreamStatus.SetEndReason(reason, err)
@@ -270,11 +337,41 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 
 	if err != nil {
 		if ctx.Err() != nil {
-			// 客户端断开 / 上下文取消：客户端已不可达，不写收尾标记
+			// 客户端断开 / 上下文取消：SSE 头已提交，直接收尾会让 SDK 收到
+			// 「200 + SSE 头 + 无事件 + EOF」而挂起，补一条客户端格式的 error 事件让其正常退出
+			writeErrorForClient("upstream disconnected")
 			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			finalizeUsage()
-			return capturedUsage, true
+			return capturedUsage, true, common.ErrStreamInterrupted
 		}
+
+		// 假成功防护：上游流零有效 chunk（协议不匹配）或 SSE 内嵌上游错误。
+		// 必须按上游错误上报——当成功返回会让客户端收到无首事件的空流，
+		// 且该次请求在健康度上记为成功、调度 FSM 失去换渠道机会。
+		var embeddedErr *types.EmbeddedUpstreamError
+		mismatch := errors.Is(err, types.ErrProtocolMismatch)
+		if mismatch || errors.As(err, &embeddedErr) {
+			g.Log().Warningf(ctx, "[relaykit] convert stream aborted (converter=%s): %v", converterID, err)
+			if embeddedErr != nil && !firstChunk {
+				// 首个 chunk 之前拿到内嵌错误：原样透传上游错误体（保留上游错误码结构）
+				_, _ = safeWriter.Write(embeddedErr.Body)
+				safeWriter.Flush()
+			} else {
+				writeErrorForClient(err.Error())
+			}
+			setEndReason(common.StreamEndReasonError, err)
+			finalizeUsage()
+			status := http.StatusBadGateway
+			body := err.Error()
+			if embeddedErr != nil {
+				status = http.StatusOK
+				body = string(embeddedErr.Body)
+			}
+			upstreamErr := constant.NewUpstreamError(status, body, nil)
+			upstreamErr.ResponseWritten = true
+			return capturedUsage, true, upstreamErr
+		}
+
 		g.Log().Warningf(ctx, "[relaykit] convert stream failed (converter=%s): %v", converterID, err)
 		if !gotFinish {
 			writeTerminalForClient()
@@ -282,7 +379,9 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		writeDoneMarker()
 		setEndReason(common.StreamEndReasonError, err)
 		finalizeUsage()
-		return capturedUsage, true
+		upstreamErr := constant.NewUpstreamError(http.StatusBadGateway, err.Error(), nil)
+		upstreamErr.ResponseWritten = true
+		return capturedUsage, true, upstreamErr
 	}
 
 	if !gotFinish {
@@ -291,5 +390,5 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	writeDoneMarker()
 	setEndReason(common.StreamEndReasonDone, nil)
 	finalizeUsage()
-	return capturedUsage, true
+	return capturedUsage, true, nil
 }

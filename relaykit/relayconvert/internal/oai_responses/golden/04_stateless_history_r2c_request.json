@@ -90,6 +90,7 @@
       {
         "role": "assistant",
         "content": null,
+        "thought_signature": "eyJkYXRhIn0=",
         "tool_calls": [
           {
             "id": "call_1",

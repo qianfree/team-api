@@ -109,11 +109,14 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 // handleStreamResponse 流式模式：Coze SSE 经 relaykit 转换为 OpenAI SSE 输出。
 // relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] coze→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
-	return usage, nil
+	return usage, streamErr
 }
 
 // handleNonStreamResponse 非流式模式：读取 Coze SSE 收集完整内容，转换为 OpenAI JSON 响应

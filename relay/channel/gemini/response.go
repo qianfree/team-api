@@ -217,11 +217,14 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 
 	// relaykit 唯一路径（legacy 回退已收割）：未接管按转换失败报错。
 	// 转换中途失败由桥接层优雅降级（按客户端格式补终止事件 + end reason），不走本函数。
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] gemini→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
-	return usage, nil
+	return usage, streamErr
 }
 
 // geminiToOpenAIResponse / writeStreamChunk 等 legacy 响应转换已随 relaykit 收割删除：

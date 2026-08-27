@@ -51,7 +51,7 @@ data: {"type":"message_stop"}
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -108,7 +108,7 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"prompt
 	info := newStreamTestRelayInfo(constant.ProviderGemini, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(geminiStream), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(geminiStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -158,7 +158,7 @@ data: {"type":"message_stop"}
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -182,7 +182,7 @@ func TestConvertStreamViaRelaykit_SameFormatFallback(t *testing.T) {
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
 	if ok {
 		t.Fatal("expected ok=false for same format, got true")
 	}
@@ -200,7 +200,7 @@ func TestConvertStreamViaRelaykit_NoMatchingRoute(t *testing.T) {
 	info := newStreamTestRelayInfo(constant.ProviderCoze, constant.RelayFormatClaude)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
 	if ok {
 		t.Fatal("expected ok=false for unmatched route, got true")
 	}
@@ -216,13 +216,13 @@ func TestConvertStreamViaRelaykit_NoMatchingRoute(t *testing.T) {
 // （nil 守卫位于公开入口；core convertStreamViaRelaykit 由调用方保证 info 非空。）
 func TestTryConvertStreamViaRelaykit_NilGuards(t *testing.T) {
 	rec := httptest.NewRecorder()
-	if _, ok := TryConvertStreamViaRelaykit(context.Background(), nil, strings.NewReader(""), rec); ok {
+	if _, ok, _ := TryConvertStreamViaRelaykit(context.Background(), nil, strings.NewReader(""), rec); ok {
 		t.Fatal("expected ok=false for nil info")
 	}
 
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	info.ChannelMeta = nil
-	if _, ok := TryConvertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec); ok {
+	if _, ok, _ := TryConvertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec); ok {
 		t.Fatal("expected ok=false for nil ChannelMeta")
 	}
 }
@@ -259,7 +259,7 @@ func TestConvertStreamViaRelaykit_ResponsesToChatToolCallItemIDMismatch(t *testi
 	info.ChannelMeta.UpstreamModelName = "gpt-5-codex"
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(ss), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(ss), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -340,7 +340,7 @@ data: [DONE]
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
+	usage, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -376,7 +376,7 @@ func TestConvertStreamViaRelaykit_OpenAIToGemini_TruncatedStreamTerminal(t *test
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
 	rec := httptest.NewRecorder()
 
-	_, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
+	_, ok, _ := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(openaiStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
@@ -393,5 +393,76 @@ func TestConvertStreamViaRelaykit_OpenAIToGemini_TruncatedStreamTerminal(t *test
 	}
 	if strings.Contains(body, "chat.completion.chunk") {
 		t.Error("output should not contain chat-format terminal chunk for gemini client")
+	}
+}
+
+// TestConvertStreamViaRelaykit_ProtocolMismatchNotFakeSuccess 假成功防护回归。
+//
+// 场景：Claude Code（claude 客户端）打 OpenAI 兼容渠道（如 DeepSeek），上游却返回了
+// 非 chat 格式的流（端点配错 / 上游降级为非 SSE JSON）。转换器产不出任何 chunk。
+//
+// 修复前：转换器静默返回 nil → 桥当成功收尾，只补发 message_delta+message_stop
+// （无 message_start），客户端报 "Streaming response ended before any complete data
+// was received"，且该次请求在健康度上记为成功、调度 FSM 失去换渠道机会。
+// 修复后：必须返回上游错误 + StreamEndReasonError + 客户端格式的 error 事件。
+func TestConvertStreamViaRelaykit_ProtocolMismatchNotFakeSuccess(t *testing.T) {
+	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatClaude)
+	rec := httptest.NewRecorder()
+
+	// 上游返回的是 Claude 格式 SSE（非 chat chunk）——data 行能解析成零值 chat chunk
+	notChatStream := "event: message_start\ndata: {\"type\":\"message_start\"}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
+	_, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(notChatStream), rec)
+	if !ok {
+		t.Fatal("expected ok=true (已接管)，got false")
+	}
+	if err == nil {
+		t.Fatal("协议不匹配必须返回上游错误，不得当成功返回（假成功防护）")
+	}
+	if !constant.IsResponseWritten(err) {
+		t.Error("错误须标记 ResponseWritten，防止调度 FSM 重试导致二次写入")
+	}
+	if info.StreamStatus.GetEndReason() != common.StreamEndReasonError {
+		t.Errorf("end reason = %q, want %q", info.StreamStatus.GetEndReason(), common.StreamEndReasonError)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: error") {
+		t.Errorf("claude 客户端应收到 error 事件以正常退出，got %q", body)
+	}
+	if strings.Contains(body, "message_stop") {
+		t.Errorf("不得补发正常收尾事件（会被客户端当成一次空但成功的回复），got %q", body)
+	}
+}
+
+// TestConvertStreamViaRelaykit_CtxCanceledBeforeHeaders 入口 ctx 已取消时不得提交 SSE 头。
+//
+// 客户端在上游 TTFB 期间断开时，若继续写 SSE 头再收尾，客户端会收到
+// 「200 + SSE 头 + 无事件 + EOF」，Anthropic SDK 挂起并把后续请求的响应误判为本流数据
+// （表现为 "Failed to parse JSON"）。应放弃接管（ok=false）并返回中断错误，
+// 由上层写标准 JSON 错误体 / 静默跳过。
+func TestConvertStreamViaRelaykit_CtxCanceledBeforeHeaders(t *testing.T) {
+	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
+	rec := httptest.NewRecorder()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	usage, ok, err := convertStreamViaRelaykit(ctx, info, strings.NewReader("data: {}\n\n"), rec)
+	if ok {
+		t.Fatal("入口 ctx 已取消时不得接管（会提交 SSE 头）")
+	}
+	if usage != nil {
+		t.Errorf("未接管应返回 nil usage, got %+v", usage)
+	}
+	if err == nil {
+		t.Fatal("应返回中断错误供调用方透传，不得返回 nil（会被回退到旧路径再写一次）")
+	}
+	if rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
+		t.Errorf("不得写出任何字节或提交 SSE 头，got body=%q ct=%q",
+			rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
+	if info.StreamStatus.GetEndReason() != common.StreamEndReasonClientGone {
+		t.Errorf("end reason = %q, want %q", info.StreamStatus.GetEndReason(), common.StreamEndReasonClientGone)
 	}
 }

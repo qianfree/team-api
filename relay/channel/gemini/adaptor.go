@@ -18,6 +18,7 @@ import (
 	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
 	"github.com/qianfree/team-api/relay/relaykit_bridge"
+	"github.com/qianfree/team-api/relaykit/relayconvert/kitutil"
 )
 
 const codeAssistBaseURL = "https://cloudcode-pa.googleapis.com"
@@ -207,24 +208,38 @@ func injectGeminiThinking(r io.Reader, info *common.RelayInfo) io.Reader {
 		return bytes.NewReader(body)
 	}
 
-	if info.ThinkingEnabled {
-		// -thinking: 设置 thoughtBudget
-		var maxTokens int
-		if mt, ok := req["maxOutputTokens"]; ok {
-			_ = json.Unmarshal(mt, &maxTokens)
+	// thinkingBudget（Gemini 2.5 系）与 thinkingLevel（Gemini 3+）互斥且不可混用：
+	// 字段名写错或两者同时下发都会被上游以 400 拒绝，按模型代次二选一
+	useLevel := kitutil.GeminiUsesThinkingLevel(info.ChannelMeta.UpstreamModelName)
+	if info.ThinkingEnabled || info.ReasoningEffort != "" {
+		if useLevel {
+			req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingLevel":"%s","includeThoughts":true}`,
+				kitutil.GeminiThinkingLevelOf(info.ReasoningEffort)))
+		} else if info.ThinkingEnabled {
+			// -thinking: 按 maxOutputTokens 折算 thinkingBudget
+			var maxTokens int
+			if mt, ok := req["maxOutputTokens"]; ok {
+				_ = json.Unmarshal(mt, &maxTokens)
+			}
+			if maxTokens < 128 {
+				maxTokens = 8192
+			}
+			budget := maxTokens * 80 / 100
+			if budget < 128 {
+				budget = 128
+			}
+			req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingBudget":%d,"includeThoughts":true}`, budget))
+		} else {
+			// effort 后缀 × 2.5 系：effort 折算为固定 budget 档位
+			budget := 8192
+			switch strings.ToLower(info.ReasoningEffort) {
+			case "minimal", "low":
+				budget = 1024
+			case "high", "xhigh", "max", "ultra":
+				budget = 32768
+			}
+			req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingBudget":%d,"includeThoughts":true}`, budget))
 		}
-		if maxTokens < 128 {
-			maxTokens = 8192
-		}
-		budget := maxTokens * 80 / 100
-		if budget < 128 {
-			budget = 128
-		}
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thoughtBudget":%d,"includeThoughts":true}`, budget))
-	} else if info.ReasoningEffort != "" {
-		// effort 后缀：设置 thinkingLevel
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingLevel":"%s","includeThoughts":true}`,
-			strings.ToUpper(info.ReasoningEffort)))
 	}
 
 	result, err := json.Marshal(req)
@@ -341,9 +356,14 @@ func (a *Adaptor) handleCrossClientOnGemini(ctx context.Context, resp *http.Resp
 	if info.IsStream {
 		if resp.StatusCode == http.StatusOK {
 			if clientFormat := info.GetOriginalClientFormat(); clientFormat == constant.RelayFormatClaude {
-				if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+				usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+				if ok {
 					resp.Body.Close()
-					return usage, nil
+					return usage, streamErr
+				}
+				if streamErr != nil {
+					resp.Body.Close()
+					return nil, streamErr // 入口 ctx 已取消：不回退旧路径（客户端已不可达）
 				}
 			} else {
 				// responses 客户端：gemini→responses 流式组合（Responses 事件流格式）

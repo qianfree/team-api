@@ -58,7 +58,7 @@
     "generationConfig": {
       "responseMimeType": "application/json",
       "thinkingConfig": {
-        "thoughtBudget": 3000
+        "thinkingBudget": 3000
       }
     },
     "toolConfig": {

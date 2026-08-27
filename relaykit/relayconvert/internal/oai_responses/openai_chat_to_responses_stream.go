@@ -36,11 +36,18 @@ import (
 //   - 客户端断开 → ctx.Err()。
 type OpenAIChatToResponsesStreamConverter struct{}
 
-// chatReasoningSeg 已收尾的思考段（completed output 按 index 参与排序）
+// chatReasoningSeg 已收尾的思考段（completed output 按 index 参与排序）。
+//
+// signature 为上游思考签名（Claude thinking 块的 signature / Gemini thoughtSignature），
+// 经 Responses reasoning 项的 encrypted_content 字段透传给客户端。codex 等客户端会原样
+// 回传该项，请求侧据此还原签名并重建上游需要的思考块——这是 Claude 扩展思考 + 工具调用
+// 多轮（Anthropic 强制回传 thinking 块）与 Gemini 3 函数调用（强制回传 thoughtSignature）
+// 能在 Responses 协议下闭环的唯一载体。
 type chatReasoningSeg struct {
-	id    string
-	index int
-	text  string
+	id        string
+	index     int
+	text      string
+	signature string
 }
 
 // chatToolCallState 流式聚合的工具调用；tools slice 按登记顺序是 done 事件与
@@ -89,6 +96,7 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 	rsID := ""
 	rsIndex := 0
 	var rsBuilder strings.Builder
+	rsSignature := "" // 当前思考段的上游签名（Gemini thoughtSignature 经 chat 中间格式透传）
 	reasoningSegs := make([]chatReasoningSeg, 0)
 	echo := responsesEchoOf(info)
 
@@ -168,21 +176,30 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 		}); err != nil {
 			return err
 		}
+		doneItem := map[string]any{
+			"type": "reasoning",
+			"id":   rsID,
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": finishedText,
+			}},
+		}
+		// 上游思考签名经 encrypted_content 透传（Gemini 3 函数调用要求回传 thoughtSignature，
+		// 缺失被上游 400）。codex 等客户端原样回传 reasoning 项，请求侧 r2o 据此还原
+		if rsSignature != "" {
+			doneItem["encrypted_content"] = rsSignature
+		}
 		if err := emit("response.output_item.done", map[string]any{
 			"output_index": rsIndex,
-			"item": map[string]any{
-				"type": "reasoning",
-				"id":   rsID,
-				"summary": []map[string]any{{
-					"type": "summary_text",
-					"text": finishedText,
-				}},
-			},
+			"item":         doneItem,
 		}); err != nil {
 			return err
 		}
-		reasoningSegs = append(reasoningSegs, chatReasoningSeg{id: rsID, index: rsIndex, text: finishedText})
+		reasoningSegs = append(reasoningSegs, chatReasoningSeg{
+			id: rsID, index: rsIndex, text: finishedText, signature: rsSignature,
+		})
 		rsOpen = false
+		rsSignature = ""
 		return nil
 	}
 
@@ -339,6 +356,13 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 			}
 			// 推理内容：产出独立 reasoning 项（先于文本，对齐真实 OpenAI 项序），
 			// 收尾后进 completed 的 output——codex 等客户端据此在后续轮次回传思考内容
+			// 消息级 thoughtSignature（g2o 从 Gemini thought part 捕获）：附着到当前思考段
+			if choice.Delta.ThoughtSignature != "" {
+				if err := openReasoning(); err != nil {
+					return err
+				}
+				rsSignature = choice.Delta.ThoughtSignature
+			}
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
 				if err := openReasoning(); err != nil {
 					return err
@@ -394,13 +418,13 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 					tools = append(tools, tool)
 					toolByID[callID] = tool
 
-				if err := emit("response.output_item.added", map[string]any{
-					"output_index": outputIndex,
-					"item":         buildToolCallAddedItem(info, callID, tc.Function.Name),
-				}); err != nil {
-					return err
-				}
-				outputIndex++
+					if err := emit("response.output_item.added", map[string]any{
+						"output_index": outputIndex,
+						"item":         buildToolCallAddedItem(info, callID, tc.Function.Name),
+					}); err != nil {
+						return err
+					}
+					outputIndex++
 				}
 
 				// 参数 chunk：ID 可能为空，通过 index 查找对应的 callID
@@ -411,28 +435,28 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 					continue
 				}
 
-			if tc.Function.Arguments != "" {
-				// legacy 怪癖保持：未登记的 callID（仅 ID 无 name 的 chunk）参数不进入
-				// done 事件与 completed output，仅透传 delta（output_index 取零值）
-				toolIdx := 0
-				toolName := ""
-				if tool, ok := toolByID[callID]; ok {
-					tool.args.WriteString(tc.Function.Arguments)
-					toolIdx = tool.index
-					toolName = tool.name
-				}
-				// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
-				// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
-				if deltaEvent, ok := toolCallArgsDeltaEvent(info, toolName); ok {
-					if err := emit(deltaEvent, map[string]any{
-						"item_id":      callID,
-						"output_index": toolIdx,
-						"delta":        tc.Function.Arguments,
-					}); err != nil {
-						return err
+				if tc.Function.Arguments != "" {
+					// legacy 怪癖保持：未登记的 callID（仅 ID 无 name 的 chunk）参数不进入
+					// done 事件与 completed output，仅透传 delta（output_index 取零值）
+					toolIdx := 0
+					toolName := ""
+					if tool, ok := toolByID[callID]; ok {
+						tool.args.WriteString(tc.Function.Arguments)
+						toolIdx = tool.index
+						toolName = tool.name
+					}
+					// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
+					// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
+					if deltaEvent, ok := toolCallArgsDeltaEvent(info, toolName); ok {
+						if err := emit(deltaEvent, map[string]any{
+							"item_id":      callID,
+							"output_index": toolIdx,
+							"delta":        tc.Function.Arguments,
+						}); err != nil {
+							return err
+						}
 					}
 				}
-			}
 			}
 
 			// finish_reason：收尾思考段 + 关闭文本 part + 按登记顺序收尾全部工具
@@ -506,6 +530,7 @@ func (c *OpenAIChatToResponsesStreamConverter) ConvertStreamResponse(
 				Type: "summary_text",
 				Text: seg.text,
 			}},
+			EncryptedContent: seg.signature,
 		}})
 	}
 	for _, tool := range tools {

@@ -82,6 +82,8 @@ func chatCompletionToResponses(info convmeta.Meta, chatResp *dto.ChatCompletionR
 					Type: "summary_text",
 					Text: *choice.Message.ReasoningContent,
 				}},
+				// 上游思考签名经 encrypted_content 透传（Gemini 3 函数调用要求回传）
+				EncryptedContent: choice.Message.ThoughtSignature,
 			})
 		}
 

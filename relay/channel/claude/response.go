@@ -70,11 +70,14 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	if !ok {
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] claude→openai 流式转换失败（无匹配转换器或转换失败）")
 	}
-	return usage, nil
+	return usage, streamErr
 }
 
 // handleClaudeNativeResponse 直通 Claude 原生格式响应

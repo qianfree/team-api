@@ -58,11 +58,24 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 	}
 
 	var (
-		totalUsage    dto.GeminiUsageMetadata
-		finishReason  string
-		toolCallIdx   int
-		roleChunkSent bool
+		totalUsage       dto.GeminiUsageMetadata
+		finishReason     string
+		toolCallIdx      int
+		roleChunkSent    bool
+		parsedChunks     int  // 成功解析的 data 行数（假成功防护的诊断信息）
+		sawGeminiPayload bool // 是否出现过 candidates / usageMetadata —— Gemini 流的协议特征
 	)
+
+	// mismatchIfEmpty 假成功防护：整段上游流没有任何目标协议特征时报 ErrProtocolMismatch，
+	// 由宿主桥接层按上游错误处理并置 StreamEndReasonError。绝不能静默收尾成空响应——
+	// 客户端只会收到补发的终止事件而无任何内容，且该次请求在健康度上被记为成功、
+	// 调度 FSM 失去换渠道机会。
+	mismatchIfEmpty := func() error {
+		if sawGeminiPayload {
+			return nil
+		}
+		return fmt.Errorf("%w: %d chunks parsed, none contained candidates", types.ErrProtocolMismatch, parsedChunks)
+	}
 
 	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
 		m := modelName
@@ -107,6 +120,10 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		var geminiResp dto.GeminiChatResponse
 		if err := json.Unmarshal([]byte(data), &geminiResp); err != nil {
 			continue
+		}
+		parsedChunks++
+		if len(geminiResp.Candidates) > 0 || geminiResp.UsageMetadata != nil {
+			sawGeminiPayload = true
 		}
 
 		// 收集 usage
@@ -285,6 +302,10 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		if totalUsage.ThoughtsTokenCount > 0 {
 			finalChunk.Usage.CompletionTokenDetails = &dto.TokenDetails{ReasoningTokens: totalUsage.ThoughtsTokenCount}
 		}
+	}
+
+	if err := mismatchIfEmpty(); err != nil {
+		return err
 	}
 
 	if err := chunkWriter(finalChunk); err != nil {

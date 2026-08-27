@@ -11,6 +11,7 @@ import (
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 // ClaudeToResponsesStreamConverter Claude 上游 SSE → Responses 客户端 SSE（流式响应侧）。
@@ -58,8 +59,11 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 	rsID := ""
 	rsIndex := 0
 	var rsBuilder strings.Builder
+	rsSignature := "" // 当前思考段的 Claude thinking 签名（signature_delta 累积）
 	reasoningSegs := make([]chatReasoningSeg, 0)
 	echo := responsesEchoOf(info)
+	parsedChunks := 0       // 成功解析的 data 行数（假成功防护的诊断信息）
+	sawClaudeEvent := false // 是否出现过已知 Claude 事件类型 —— Claude 流的协议特征
 
 	// emit 输出一个 Responses SSE 事件（chunkWriter 出错即客户端写失败，终止转换）
 	emit := func(eventType string, payload map[string]any) error {
@@ -112,6 +116,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		rsIndex = outputIndex
 		outputIndex++
 		rsBuilder.Reset()
+		rsSignature = ""
 		rsOpen = true
 		return emit("response.output_item.added", map[string]any{
 			"output_index": rsIndex,
@@ -137,20 +142,30 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}); err != nil {
 			return err
 		}
+		doneItem := map[string]any{
+			"type": "reasoning",
+			"id":   rsID,
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": finishedText,
+			}},
+		}
+		// thinking 签名经 encrypted_content 透传给客户端：Anthropic 要求带 tool_use 的
+		// assistant 轮回传原始 thinking 块（含 signature），否则下一轮 400
+		// "Expected `thinking` or `redacted_thinking`, but found `tool_use`"。
+		// codex 等客户端原样回传 reasoning 项，请求侧 r2o 据此还原
+		if rsSignature != "" {
+			doneItem["encrypted_content"] = rsSignature
+		}
 		if err := emit("response.output_item.done", map[string]any{
 			"output_index": rsIndex,
-			"item": map[string]any{
-				"type": "reasoning",
-				"id":   rsID,
-				"summary": []map[string]any{{
-					"type": "summary_text",
-					"text": finishedText,
-				}},
-			},
+			"item":         doneItem,
 		}); err != nil {
 			return err
 		}
-		reasoningSegs = append(reasoningSegs, chatReasoningSeg{id: rsID, index: rsIndex, text: finishedText})
+		reasoningSegs = append(reasoningSegs, chatReasoningSeg{
+			id: rsID, index: rsIndex, text: finishedText, signature: rsSignature,
+		})
 		rsOpen = false
 		return nil
 	}
@@ -290,6 +305,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 					Type: "summary_text",
 					Text: seg.text,
 				}},
+				EncryptedContent: seg.signature,
 			}})
 		}
 		for _, tc := range toolCalls {
@@ -344,6 +360,12 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		var event dto.ClaudeResponse
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
+		}
+		parsedChunks++
+		switch event.Type {
+		case "message_start", "content_block_start", "content_block_delta",
+			"content_block_stop", "message_delta", "message_stop", "error", "ping":
+			sawClaudeEvent = true
 		}
 
 		switch event.Type {
@@ -472,32 +494,39 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 						return err
 					}
 				}
-		case "input_json_delta":
-			if event.Delta.PartialJSON == nil || *event.Delta.PartialJSON == "" {
-				continue
-			}
-			// web_search 的 query JSON 增量：缓冲（web_search_call 无参数增量事件，
-			// done 时随 action 一次性产出）
-			if currentWebSearch != nil {
-				currentWebSearch.query.WriteString(*event.Delta.PartialJSON)
-				continue
-			}
-			if currentTool != nil {
-				currentTool.args.WriteString(*event.Delta.PartialJSON)
-				// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
-				// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
-				if deltaEvent, ok := toolCallArgsDeltaEvent(info, currentTool.name); ok {
-					if err := emit(deltaEvent, map[string]any{
-						"item_id":      currentTool.id,
-						"output_index": toolIndexByID[currentTool.id],
-						"delta":        *event.Delta.PartialJSON,
-					}); err != nil {
-						return err
+			case "input_json_delta":
+				if event.Delta.PartialJSON == nil || *event.Delta.PartialJSON == "" {
+					continue
+				}
+				// web_search 的 query JSON 增量：缓冲（web_search_call 无参数增量事件，
+				// done 时随 action 一次性产出）
+				if currentWebSearch != nil {
+					currentWebSearch.query.WriteString(*event.Delta.PartialJSON)
+					continue
+				}
+				if currentTool != nil {
+					currentTool.args.WriteString(*event.Delta.PartialJSON)
+					// 非 function 工具（custom/local_shell/apply_patch）的 arguments 为 JSON
+					// 包装形态，抑制增量透出，缓冲至收尾事件一次性给出
+					if deltaEvent, ok := toolCallArgsDeltaEvent(info, currentTool.name); ok {
+						if err := emit(deltaEvent, map[string]any{
+							"item_id":      currentTool.id,
+							"output_index": toolIndexByID[currentTool.id],
+							"delta":        *event.Delta.PartialJSON,
+						}); err != nil {
+							return err
+						}
 					}
 				}
-			}
 			case "signature_delta":
-				// 思考签名无 Responses 对应物，忽略
+				// 思考签名 → 当前 reasoning 段（收尾时写入 encrypted_content）。
+				// 签名可能先于 thinking_delta 到达，必要时先开段承载
+				if event.Delta.Signature != "" {
+					if err := openReasoning(); err != nil {
+						return err
+					}
+					rsSignature += event.Delta.Signature
+				}
 			}
 
 		case "content_block_stop":
@@ -549,6 +578,12 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		return fmt.Errorf("stream scanner error: %w", err)
+	}
+
+	// 假成功防护：整段上游流不是 Claude SSE（零已知事件类型）——报 ErrProtocolMismatch，
+	// 由宿主桥接层按上游错误处理。静默合成 completed 会让 codex 收到空响应且健康度记为成功。
+	if !sawClaudeEvent {
+		return fmt.Errorf("%w: %d chunks parsed, none was a Claude stream event", types.ErrProtocolMismatch, parsedChunks)
 	}
 
 	// 上游未发 message_stop 即断流：仍合成 completed，避免客户端挂起

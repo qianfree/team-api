@@ -2,10 +2,12 @@ package oai_gemini
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 func runO2GStream(t *testing.T, sse string) ([]*dto.GeminiChatResponse, error) {
@@ -62,18 +64,15 @@ func TestO2GStream_ArgsAggregation(t *testing.T) {
 	}
 }
 
-// 空流：只发尾 chunk（无 parts、无 finish、无 usage——跳过条件不产 candidate）。
+// 空流：报 ErrProtocolMismatch（假成功防护）——曾经只发一个空尾 chunk 当成功收尾，
+// 客户端拿到无内容的响应，且该次请求在健康度上记为成功、调度 FSM 失去换渠道机会。
 func TestO2GStream_EmptyStream(t *testing.T) {
 	chunks, err := runO2GStream(t, "data: [DONE]\n\n")
-	if err != nil {
-		t.Fatalf("stream: %v", err)
+	if !errors.Is(err, types.ErrProtocolMismatch) {
+		t.Fatalf("empty stream err = %v, want ErrProtocolMismatch", err)
 	}
-	if len(chunks) != 1 {
-		t.Fatalf("chunks = %d, want 1（仅尾 chunk）", len(chunks))
-	}
-	tail := chunks[0]
-	if len(tail.Candidates) != 1 || tail.UsageMetadata != nil {
-		t.Errorf("空流尾 chunk = %+v, want 无 usage 的空尾", tail)
+	if len(chunks) != 0 {
+		t.Errorf("empty stream should emit nothing, got %d chunks", len(chunks))
 	}
 }
 

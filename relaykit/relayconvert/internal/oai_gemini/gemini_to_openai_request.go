@@ -20,8 +20,8 @@ import (
 //
 // legacy 怪癖清单（保持勿改）：
 //   - MaxOutputTokens 无默认（与 c2o 的 4096 不对称）；TopK 映射（c2o 丢弃——不对称）
-//   - ThinkingConfig 只看 ThoughtBudget（≤2048→low / ≤16384→medium / else high，nil→medium），
-//     忽略 ThinkingLevel 字符串
+//   - ThinkingConfig 优先取 ThinkingLevel（Gemini 3+ 的档位字段），缺失时按
+//     ThinkingBudget 折算（≤2048→low / ≤16384→medium / else high，两者皆缺→medium）
 //   - ResponseMimeType 任意非空→json_object；有 ResponseSchema→json_schema 且 schema 原样
 //   - systemInstruction 只收非空 text（inlineData 丢弃）
 //   - functionCall 合成 call_N ID + map[函数名] 反查（同名函数多次调用 ID 复用错配）；
@@ -292,10 +292,17 @@ func g2oConvertToolConfig(toolConfig any) any {
 }
 
 func g2oConvertThinkingConfig(tc *dto.GeminiThinkingConfig) string {
-	if tc.ThoughtBudget == nil {
+	if lvl := strings.ToLower(strings.TrimSpace(tc.ThinkingLevel)); lvl != "" {
+		// Gemini 3+ 用 thinkingLevel 表达强度，直接映射回 chat 的 reasoning_effort
+		switch lvl {
+		case "low", "medium", "high":
+			return lvl
+		}
+	}
+	if tc.ThinkingBudget == nil {
 		return "medium"
 	}
-	budget := *tc.ThoughtBudget
+	budget := *tc.ThinkingBudget
 	switch {
 	case budget <= 2048:
 		return "low"

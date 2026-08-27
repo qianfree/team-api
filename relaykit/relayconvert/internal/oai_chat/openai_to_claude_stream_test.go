@@ -2,11 +2,13 @@ package oai_chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/types"
 )
 
 // streamTestMeta 带能力接口的测试桩。
@@ -136,14 +138,30 @@ func TestO2CStream_UnexpectedEOF_GetsMessageDelta(t *testing.T) {
 	}
 }
 
-// 空流：不产出任何事件（调用方按假成功防护处理）。
+// 空流 / 非 chat 协议流：报 ErrProtocolMismatch（假成功防护）。
+// 曾经静默返回 nil，宿主桥把它当成功收尾 → 客户端只收到补发的 message_delta+message_stop
+// 而无 message_start，Anthropic SDK 报 "Streaming response ended before any complete
+// data was received"；同时该次请求在健康度上记为成功、调度 FSM 失去换渠道机会。
 func TestO2CStream_EmptyStream(t *testing.T) {
 	events, err := runO2CStream(t, "")
-	if err != nil {
-		t.Fatalf("stream: %v", err)
+	if !errors.Is(err, types.ErrProtocolMismatch) {
+		t.Fatalf("empty stream err = %v, want ErrProtocolMismatch", err)
 	}
 	if len(events) != 0 {
 		t.Errorf("empty stream should emit nothing, got %d events", len(events))
+	}
+}
+
+// 上游返回的是 Claude 格式 SSE（渠道配错/上游端点不对）而非 chat chunk：
+// data 行能 unmarshal 成 ChatCompletionStreamResponse 零值，但无 choices 无 usage，
+// 同样须报 ErrProtocolMismatch 而非合成一条空 Claude 消息流。
+func TestO2CStream_NonChatUpstreamStream(t *testing.T) {
+	sse := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	_, err := runO2CStream(t, sse)
+	if !errors.Is(err, types.ErrProtocolMismatch) {
+		t.Fatalf("claude-format upstream err = %v, want ErrProtocolMismatch", err)
 	}
 }
 

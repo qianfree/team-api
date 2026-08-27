@@ -208,7 +208,7 @@ func TestApplyThinkingToGemini(t *testing.T) {
 					}
 
 					if tt.expectBudget {
-						if config.ThinkingConfig.ThoughtBudget == nil {
+						if config.ThinkingConfig.ThinkingBudget == nil {
 							t.Error("Expected ThoughtBudget to be set, got nil")
 						}
 					}

@@ -239,9 +239,14 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 func (a *Adaptor) handleGeminiClientOnClaude(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	if info.IsStream {
 		if resp.StatusCode == http.StatusOK {
-			if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+			usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+			if ok {
 				resp.Body.Close()
-				return usage, nil
+				return usage, streamErr
+			}
+			if streamErr != nil {
+				resp.Body.Close()
+				return nil, streamErr // 入口 ctx 已取消：不回退旧路径（客户端已不可达）
 			}
 		}
 		return a.handleStreamToOpenAI(ctx, resp, info, writer)

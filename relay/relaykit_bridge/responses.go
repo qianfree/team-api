@@ -135,7 +135,33 @@ func TryConvertResponsesResponseViaRelaykit(ctx context.Context, info *common.Re
 	}
 
 	usage := UsageFromResponsesBody(out)
-	return out, usage, true
+	return reshapeCompactResponse(info, out), usage, true
+}
+
+// reshapeCompactResponse 把合成的 Responses 响应体改写为 codex compact 端点期望的形态。
+//
+// codex CLI 的 /responses/compact 是非流式 POST，响应体为 {"output": [...]}，
+// object 标记为 response.compaction（codex-rs codex-api/src/endpoint/compact.rs）。
+// 原生 codex 渠道走直连透传，形态天然正确；经协议转换合成的响应（claude/gemini/
+// chat-only 上游）默认产出的是普通 response 对象，object 不对，codex 侧解析会失败。
+// 这里只改 object 标记并保证 output 键存在，其余字段原样保留（codex serde 忽略未知字段）。
+func reshapeCompactResponse(info *common.RelayInfo, body []byte) []byte {
+	if info == nil || constant.RelayMode(info.RelayMode) != constant.RelayModeResponsesCompact {
+		return body
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return body
+	}
+	obj["object"] = "response.compaction"
+	if _, ok := obj["output"]; !ok {
+		obj["output"] = []any{}
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // TryConvertChatViaResponsesResponseViaRelaykit 尝试用 relaykit 转换器将 Responses 上游

@@ -61,9 +61,22 @@ func (c *OpenAIToGeminiStreamConverter) ConvertStreamResponse(
 		finishReason string
 		usage        dto.UsageWithDetails
 		// 工具调用聚合（修复项）：上游 index → 分片累积；顺序按首次出现
-		toolFrags   []*geminiToolFrag
-		toolFragIdx = make(map[int]*geminiToolFrag)
+		toolFrags    []*geminiToolFrag
+		toolFragIdx  = make(map[int]*geminiToolFrag)
+		parsedChunks int  // 成功解析的 data 行数（假成功防护的诊断信息）
+		sawChoices   bool // 是否出现过 choices —— chat 流的协议特征
 	)
+
+	// mismatchIfEmpty 假成功防护：整段上游流没有任何目标协议特征时报 ErrProtocolMismatch，
+	// 由宿主桥接层按上游错误处理并置 StreamEndReasonError。绝不能静默收尾成空响应——
+	// 客户端只会收到补发的终止事件而无任何内容，且该次请求在健康度上被记为成功、
+	// 调度 FSM 失去换渠道机会。
+	mismatchIfEmpty := func() error {
+		if sawChoices || usage.TotalTokens > 0 || usage.PromptTokens > 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: %d chunks parsed, none contained choices", types.ErrProtocolMismatch, parsedChunks)
+	}
 
 	// flushToolFrags 把已聚合的完整 functionCall parts 追加进当前 candidate
 	buildToolParts := func() []dto.GeminiPart {
@@ -100,6 +113,10 @@ func (c *OpenAIToGeminiStreamConverter) ConvertStreamResponse(
 		var chunk dto.ChatCompletionStreamResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
+		}
+		parsedChunks++
+		if len(chunk.Choices) > 0 {
+			sawChoices = true
 		}
 
 		// usage 提取（任意 chunk 覆盖）
@@ -168,7 +185,7 @@ func (c *OpenAIToGeminiStreamConverter) ConvertStreamResponse(
 	// 尾 chunk：聚合的工具 parts + finishReason + usageMetadata（legacy 推迟到收尾的口径）
 	tail := dto.GeminiChatResponse{
 		Candidates: []dto.GeminiCandidate{{
-			Content:     &dto.GeminiContent{Role: "model", Parts: buildToolParts()},
+			Content:      &dto.GeminiContent{Role: "model", Parts: buildToolParts()},
 			FinishReason: reasonmap.OpenAIFinishReasonToGeminiFinishReason(finishReason),
 		}},
 	}
@@ -197,6 +214,9 @@ func (c *OpenAIToGeminiStreamConverter) ConvertStreamResponse(
 	// legacy 口径：usage 有值时才附 UsageMetadata
 	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
 		tail.UsageMetadata = um
+	}
+	if err := mismatchIfEmpty(); err != nil {
+		return err
 	}
 	return chunkWriter(&tail)
 }

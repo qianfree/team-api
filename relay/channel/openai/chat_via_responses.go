@@ -56,10 +56,13 @@ func (a *Adaptor) handleChatViaResponsesStream(
 		return nil, constant.NewUpstreamErrorFromResponse(resp, body)
 	}
 
-	usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
+	usage, ok, streamErr := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer)
 	resp.Body.Close()
 	if !ok {
+		if streamErr != nil {
+			return nil, streamErr // 入口 ctx 已取消：透传中断错误，不再尝试写客户端
+		}
 		return nil, fmt.Errorf("[relaykit] responses→chat 流式转换失败（无匹配转换器或转换失败）")
 	}
-	return usage, nil
+	return usage, streamErr
 }

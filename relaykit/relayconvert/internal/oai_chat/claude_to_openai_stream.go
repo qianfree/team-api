@@ -70,7 +70,20 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 		toolCallIdx     int
 		roleChunkSent   bool
 		responseTextBuf strings.Builder
+		parsedChunks    int  // 成功解析的 data 行数（假成功防护的诊断信息）
+		sawClaudeEvent  bool // 是否出现过已知 Claude 事件类型 —— Claude 流的协议特征
 	)
+
+	// mismatchIfEmpty 假成功防护：整段上游流没有任何目标协议特征时报 ErrProtocolMismatch，
+	// 由宿主桥接层按上游错误处理并置 StreamEndReasonError。绝不能静默收尾成空响应——
+	// 客户端只会收到补发的终止事件而无任何内容，且该次请求在健康度上被记为成功、
+	// 调度 FSM 失去换渠道机会。
+	mismatchIfEmpty := func() error {
+		if sawClaudeEvent {
+			return nil
+		}
+		return fmt.Errorf("%w: %d chunks parsed, none was a Claude stream event", types.ErrProtocolMismatch, parsedChunks)
+	}
 
 	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
 		m := modelName
@@ -115,6 +128,13 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 		var event dto.ClaudeResponse
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
+		}
+
+		parsedChunks++
+		switch event.Type {
+		case "message_start", "content_block_start", "content_block_delta",
+			"content_block_stop", "message_delta", "message_stop", "error", "ping":
+			sawClaudeEvent = true
 		}
 
 		switch event.Type {
@@ -293,5 +313,5 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 		return fmt.Errorf("stream scanner error: %w", err)
 	}
 
-	return nil
+	return mismatchIfEmpty()
 }

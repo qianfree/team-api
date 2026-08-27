@@ -63,6 +63,8 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 	var (
 		finishReason     string
 		startSent        bool
+		parsedChunks     int    // 成功解析的 data 行数（假成功防护的诊断信息）
+		sawChoices       bool   // 是否出现过 choices —— chat 流的协议特征
 		currentBlockType string // "text" / "thinking" / "tool_use"
 		contentIndex     int
 		inputTokens      int
@@ -122,6 +124,18 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		})
 	}
 
+	// mismatchIfEmpty 假成功防护：整段上游流没有任何 chat 协议特征（无 choices 且无 usage）
+	// 时报 ErrProtocolMismatch，由宿主桥接层按上游错误处理。绝不能静默收尾成空消息流——
+	// 客户端只会收到「message_start + 补发的终止事件」而无任何内容块，Anthropic SDK 报
+	// "Streaming response ended before any complete data was received"，且该次请求在
+	// 健康度上被记为成功、调度 FSM 失去换渠道机会。
+	mismatchIfEmpty := func() error {
+		if sawChoices || inputTokens > 0 || outputTokens > 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: %d chunks parsed, none contained choices", types.ErrProtocolMismatch, parsedChunks)
+	}
+
 	// emitMessageDelta 发送 message_delta（stop_reason + Claude 扣减口径 usage）+ message_stop
 	emitMessageDeltaAndStop := func() error {
 		reason := reasonmap.OpenAIFinishReasonToClaudeLegacySemantics(finishReason)
@@ -156,6 +170,9 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		}
 		data := extractClaudeSSEData(line)
 		if data == "[DONE]" {
+			if err := mismatchIfEmpty(); err != nil {
+				return err
+			}
 			if err := closeCurrentBlock(); err != nil {
 				return err
 			}
@@ -165,6 +182,10 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		var chunk dto.ChatCompletionStreamResponse
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
+		}
+		parsedChunks++
+		if len(chunk.Choices) > 0 {
+			sawChoices = true
 		}
 
 		// usage 提取（任意 chunk，通常最后一个）
@@ -323,13 +344,16 @@ func (c *OpenAIToClaudeStreamConverter) ConvertStreamResponse(
 		return fmt.Errorf("stream scanner error: %w", err)
 	}
 
+	// 空流 / 非 chat 协议流：报 ErrProtocolMismatch（假成功防护，见 mismatchIfEmpty）。
+	// startSent==false 必然落入此分支（零解析 chunk ⇒ 无 choices 无 usage）。
+	if err := mismatchIfEmpty(); err != nil {
+		return err
+	}
+
 	// 意外断流（无 [DONE] 的 EOF）：关块 + 补发 message_delta（修复项：legacy 只发
 	// message_stop，客户端拿不到 stop_reason 与最终 usage）+ message_stop
 	if err := closeCurrentBlock(); err != nil {
 		return err
-	}
-	if !startSent {
-		return nil // 空流：什么都不发（调用方按假成功防护处理）
 	}
 	return emitMessageDeltaAndStop()
 }

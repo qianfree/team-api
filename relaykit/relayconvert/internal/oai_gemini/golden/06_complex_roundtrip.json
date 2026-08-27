@@ -80,8 +80,7 @@
       "maxOutputTokens": 2048,
       "thinkingConfig": {
         "includeThoughts": true,
-        "thoughtBudget": 8192,
-        "thinkingLevel": "MEDIUM"
+        "thinkingBudget": 8192
       }
     },
     "systemInstruction": {

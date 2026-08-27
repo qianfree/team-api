@@ -143,12 +143,13 @@ func TestR2C_DegradationReporting(t *testing.T) {
 	}
 	chat := mustCastChatRequest(t, result)
 
-	// 降级上报：仅无可还原内容的上报（空 namespace、加密 reasoning、
-	// 与 additional_tools 中已映射 exec 重名的顶层 custom exec）
+	// 降级上报：仅无可还原内容的上报（空 namespace、与 additional_tools 中已映射 exec
+	// 重名的顶层 custom exec）。
+	// 注意：仅带 encrypted_content 的 reasoning 项**不再**算降级——签名是 Claude thinking
+	// 块 / Gemini thoughtSignature 的回传载体，会还原为 thought_signature 送往上游。
 	want := map[string]int{
-		"input_item:reasoning": 1,
-		"tool:namespace":       1,
-		"tool:custom":          1,
+		"tool:namespace": 1,
+		"tool:custom":    1,
 	}
 	got := map[string]int{}
 	converterIDs := map[string]bool{}
@@ -158,6 +159,9 @@ func TestR2C_DegradationReporting(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Fatalf("degradation reports = %v, want %v", got, want)
+	}
+	if sig := lastAssistantThoughtSignature(chat); sig != "enc" {
+		t.Errorf("reasoning.encrypted_content 应还原为 assistant 消息的 thought_signature，got %q", sig)
 	}
 	for reason, n := range want {
 		if got[reason] != n {
@@ -317,4 +321,14 @@ func TestR2C_NoDegradationReportForCleanInput(t *testing.T) {
 	if len(info.reports) != 0 {
 		t.Errorf("clean input should report nothing, got %v", info.reports)
 	}
+}
+
+// lastAssistantThoughtSignature 取最后一条带签名的 assistant 消息的 thought_signature。
+func lastAssistantThoughtSignature(chat *dto.GeneralOpenAIRequest) string {
+	for i := len(chat.Messages) - 1; i >= 0; i-- {
+		if chat.Messages[i].Role == "assistant" && chat.Messages[i].ThoughtSignature != "" {
+			return chat.Messages[i].ThoughtSignature
+		}
+	}
+	return ""
 }
