@@ -14,10 +14,10 @@ type ChnHealthSnapshots struct {
 	g.Meta              `orm:"table:chn_health_snapshots, do:true"`
 	Id                  any         // 主键ID
 	ChannelId           any         // 关联渠道ID
-	HealthScore         any         // 综合健康度（0-100）
+	HealthScore         any         // 综合健康度（0-100）快照，取自 chn_health_scores.health_score
 	SuccessRate         any         // 请求成功率（0-100）
 	LatencyMs           any         // 平均延迟（毫秒）
-	StabilityScore      any         // 稳定性评分（0-100）
-	ConsecutiveFailures any         // 连续失败次数
+	StabilityScore      any         // 【已废弃】稳定性评分，不再写入，新快照为 0
+	ConsecutiveFailures any         // 【已废弃】连续失败次数，不再写入，新快照为 0
 	SnapshotAt          *gtime.Time // 快照时间
 }
