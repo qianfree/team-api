@@ -133,6 +133,48 @@ func TestCatalog_加载失败保留上一份快照(t *testing.T) {
 	assert.Len(t, c.Snapshot(ctx, 0, "m", nil), 1, "last-known 快照必须保留")
 }
 
+// TestCatalog_Redis降级沿用上一份健康读值 Redis 读失败时若让乐观默认值 succ=1 落进
+// 新快照，一次 Redis 抖动就会把全渠道的健康记忆清零、healthFactor 集体回满分，
+// 与 Rebuild 声称的 last-known 语义相悖。
+func TestCatalog_Redis降级沿用上一份健康读值(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
+	}
+	degraded := false
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		if degraded {
+			return RuntimeReadout{SuccEwma: 1, Degraded: true}
+		}
+		return RuntimeReadout{SuccEwma: 0.3, LatEwmaMs: 4000, HasHealth: true}
+	})
+
+	got := c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 0.3, got[0].SuccEwma)
+
+	degraded = true
+	c.Rebuild(context.Background())
+	got = c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 0.3, got[0].SuccEwma, "Redis 降级必须沿用 last-known，不得回落满分")
+	assert.Equal(t, 4000.0, got[0].LatEwmaMs, "延迟读值同样沿用")
+}
+
+// TestCatalog_首次刷新即降级无历史可沿用 新实例启动时 Redis 就不可用：没有 last-known
+// 可沿用，保持乐观默认满分（不能让新实例启动即把全渠道判死）。
+func TestCatalog_首次刷新即降级无历史可沿用(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		return RuntimeReadout{SuccEwma: 1, Degraded: true}
+	})
+
+	got := c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1.0, got[0].SuccEwma, "无历史时保持乐观默认")
+}
+
 func TestRampElapsed(t *testing.T) {
 	now := time.Now().UnixMilli()
 	window := int64(120_000)
