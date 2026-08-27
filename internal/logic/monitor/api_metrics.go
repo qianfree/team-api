@@ -321,7 +321,7 @@ func GetModelChannels(ctx context.Context, startDate, endDate, modelName string)
 		}
 		if err := g.DB().Ctx(ctx).Model("chn_channels").
 			Fields("id", "name").
-			Where("id IN ?", channelIDs).
+			WhereIn("id", channelIDs).
 			Scan(&channels); err != nil {
 			g.Log().Warningf(ctx, "query channel names failed: %v", err)
 		} else {
