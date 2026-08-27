@@ -108,6 +108,8 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	}
 
 	// 发送最小测试请求
+	g.Log().Infof(ctx, "[ChannelProbe] 渠道 %s (%d) 开始探测 | 模型: %s (上游: %s) | 渠道状态: %s | 代理: %v",
+		ch.Name, channelID, testModel, upstreamModel, ch.Status, useProxy)
 	startTime := time.Now()
 	result := sendTestRequest(ctx, ch.Type, ch.BaseURL, apiKey, upstreamModel, useProxy)
 	latencyMs := time.Since(startTime).Milliseconds()
@@ -120,14 +122,26 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	// 传上游名会写到无人读取的 key——探测既影响不了健康分，也关不掉 HALF_OPEN 熔断。
 	if ch.Status == "active" {
 		dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
+		if dispatchadapter.CatalogHasModel(channelID, testModel) {
+			g.Log().Infof(ctx, "[ChannelProbe] 渠道 %s (%d) 探测结果已投递健康上报 | 模型: %s | success: %v | 延迟: %dms（EWMA 变化将打印 [ChannelHealth] 日志，5 分钟内落盘刷新）",
+				ch.Name, channelID, testModel, result.Success, latencyMs)
+		} else {
+			// 探测目标不在调度目录：EWMA 照常写入 Redis，但调度不读、维护快照不落盘，
+			// 管理后台健康分不会变化——探测看起来"生效了但没效果"的常见根因
+			g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测结果已投递健康上报，但模型 %s 不在调度目录（渠道无启用的模型能力行或该模型未配置能力）| 健康分不会落盘展示，渠道/模型不参与调度，请检查渠道的模型能力配置",
+				ch.Name, channelID, testModel)
+		}
+	} else {
+		g.Log().Infof(ctx, "[ChannelProbe] 渠道 %s (%d) 状态为 %s（非 active），探测结果不上报健康体系",
+			ch.Name, channelID, ch.Status)
 	}
 
 	// 记录测试结果日志
 	if result.Success {
-		g.Log().Infof(ctx, "[ChannelTest] 渠道 %s (%d) 测试成功 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v",
+		g.Log().Infof(ctx, "[ChannelProbe] 渠道 %s (%d) 探测成功 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v",
 			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy)
 	} else {
-		g.Log().Warningf(ctx, "[ChannelTest] 渠道 %s (%d) 测试失败 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v | 错误: %s",
+		g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测失败 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v | 错误: %s",
 			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy, result.Error)
 	}
 

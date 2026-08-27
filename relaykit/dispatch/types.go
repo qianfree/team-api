@@ -159,4 +159,7 @@ type Outcome struct {
 	Success   bool
 	Class     ErrorClass
 	LatencyMs float64
+	// Probe 标记本结果来自探测请求（管理后台渠道测试 / 自动探测 cron）而非真实流量。
+	// 纯核心库不消费，仅供适配层观测日志区分健康分变化来源。
+	Probe bool
 }

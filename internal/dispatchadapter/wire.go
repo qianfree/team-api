@@ -3,6 +3,7 @@ package dispatchadapter
 import (
 	"context"
 	"math/rand"
+	"slices"
 	"sync"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -77,11 +78,22 @@ func ReportProbeOutcome(ctx context.Context, channelID int64, model string, succ
 	if redisState == nil {
 		return
 	}
-	o := dispatch.Outcome{ChannelID: channelID, Model: model, Success: success, LatencyMs: latencyMs}
+	o := dispatch.Outcome{ChannelID: channelID, Model: model, Success: success, LatencyMs: latencyMs, Probe: true}
 	if !success {
 		o.Class = dispatch.ErrClassTransient
 	}
 	redisState.ReportOutcome(o)
+}
+
+// CatalogHasModel 判断渠道×模型当前是否在调度目录中（探测可观测性检查用）。
+// 不在目录的探测目标（渠道无启用的能力行、或模型未配置能力）健康 EWMA 写入后无人消费：
+// 调度不会选它、维护快照也不会落盘该渠道的健康分——管理后台将看不到探测效果。
+// 需已调用过 Coordinator 完成组装；未组装时返回 false。
+func CatalogHasModel(channelID int64, model string) bool {
+	if catalog == nil {
+		return false
+	}
+	return slices.Contains(catalog.ChannelModels()[channelID], model)
 }
 
 // MarkChannelRecovered 渠道被手动启用/恢复时复位熔断并开启爬坡窗口（管理后台调用）。
