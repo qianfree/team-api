@@ -259,6 +259,20 @@ func (c *Catalog) subscribeInvalidate(ctx context.Context) {
 	}
 }
 
+// healthOf 从快照中查渠道×模型的健康读值（Redis 降级时沿用 last-known）。
+// byModel 每个模型下同一渠道至多一行，线性扫描只发生在降级路径，不影响正常刷新。
+func (idx *snapshotIndex) healthOf(channelID int64, model string) (succ, lat float64, ok bool) {
+	if idx == nil {
+		return 0, 0, false
+	}
+	for _, ch := range idx.byModel[model] {
+		if ch.ID == channelID {
+			return ch.SuccEwma, ch.LatEwmaMs, true
+		}
+	}
+	return 0, 0, false
+}
+
 // Rebuild 全量重建快照：DB 目录 + Redis 运行时读值合并。
 // 加载失败保留上一份快照（last-known，基线方案 §13）。
 func (c *Catalog) Rebuild(ctx context.Context) {
@@ -268,6 +282,7 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		return
 	}
 
+	prev := c.current.Load()
 	pol := c.policy()
 	now := time.Now().UnixMilli()
 	rampWindowMs := int64(pol.Ramp.WindowSeconds) * 1000
@@ -284,6 +299,7 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		model string
 	}
 	rtCache := make(map[rtKey]RuntimeReadout)
+	degraded, carried := 0, 0
 
 	for _, row := range data.rows {
 		rk := rtKey{row.ChannelID, row.ModelName}
@@ -293,6 +309,16 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 				rt = c.runtime(ctx, row.ChannelID, row.ModelName)
 			} else {
 				rt = RuntimeReadout{SuccEwma: 1}
+			}
+			// Redis 健康读取失败：沿用上一份快照的健康读值。若让乐观默认值 succ=1 落进
+			// 新快照，Redis 抖一下就会把全渠道的健康记忆清零（healthFactor 集体回满分），
+			// 与注释声称的 last-known 语义相悖。
+			if rt.Degraded {
+				degraded++
+				if succ, lat, found := prev.healthOf(row.ChannelID, row.ModelName); found {
+					rt.SuccEwma, rt.LatEwmaMs = succ, lat
+					carried++
+				}
 			}
 			rtCache[rk] = rt
 		}
@@ -344,6 +370,10 @@ func (c *Catalog) Rebuild(ctx context.Context) {
 		}
 	}
 	c.current.Store(idx)
+	if degraded > 0 {
+		g.Log().Warningf(ctx, "[Dispatch] 目录刷新时 Redis 健康读取降级: %d 个渠道×模型读失败，其中 %d 个已沿用上一份快照的健康读值（其余无历史，按满分处理）",
+			degraded, carried)
+	}
 }
 
 // effectiveSoftLimit softLimit 双来源（基线方案 §8.2）：

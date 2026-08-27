@@ -636,16 +636,28 @@ type RuntimeReadout struct {
 	RecoveredMs   int64   // 渠道级熔断最近恢复时间（0 = 无记录）
 	FirstOpenedMs int64   // 渠道级本轮故障期起点（0 = 非故障期），供自动禁用判定
 	Onset429Ewma  float64 // 429 起始水位 EWMA（0 = 无 429 历史），供 softLimit 自动估计
+
+	// HasHealth 健康 hash 中读到了可用的 succ_ewma（该渠道×模型有过真实上报）。
+	// false 表示 SuccEwma/LatEwmaMs 是乐观默认值而非实测值——聚合展示分时必须排除，
+	// 否则大量无流量模型的"满分"会把真正故障模型的低分稀释掉。
+	HasHealth bool
+	// Degraded Redis 健康读取失败，本次读值完全不可信（既非实测也非"确实无数据"）。
+	// 调用方必须区分对待：调度侧沿用上一份快照，展示侧跳过本轮落盘。
+	Degraded bool
 }
 
 // ReadRuntime 读取渠道×模型的运行时状态（目录刷新循环调用，非请求热路径）。
-// Redis 故障 → 返回乐观默认值（健康满分 + CLOSED），由 last-known 快照语义兜底。
+// Redis 故障 → 返回乐观默认值（健康满分 + CLOSED）并置 Degraded，由调用方决定兜底策略。
 func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model string) RuntimeReadout {
 	out := RuntimeReadout{SuccEwma: 1}
 	chStr := strconv.FormatInt(channelID, 10)
 	now := time.Now().UnixMilli()
 
-	if v, err := g.Redis().Do(ctx, "HMGET", keyHealth+chStr+":"+model, "succ_ewma", "lat_ewma"); err == nil {
+	if v, err := g.Redis().Do(ctx, "HMGET", keyHealth+chStr+":"+model, "succ_ewma", "lat_ewma"); err != nil {
+		// 读失败与"字段不存在"必须区分：前者读值不可信（Degraded），后者是确实没有
+		// 真实上报（HasHealth=false）。二者都不能当成"这个渠道很健康"落盘或重建快照。
+		out.Degraded = true
+	} else {
 		vals := v.Vars()
 		if len(vals) == 2 {
 			// 必须按字符串显式判空：HMGET 对不存在的 key/字段返回 Redis nil，但 gredis 把它
@@ -656,6 +668,7 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 			if s := strings.TrimSpace(vals[0].String()); s != "" {
 				if f, perr := strconv.ParseFloat(s, 64); perr == nil && f > 0 && f <= 1 {
 					out.SuccEwma = f
+					out.HasHealth = true
 				}
 			}
 			if s := strings.TrimSpace(vals[1].String()); s != "" {
