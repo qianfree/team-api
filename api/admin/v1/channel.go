@@ -47,6 +47,8 @@ type ChannelItem struct {
 	HealthScore              *float64 `json:"health_score"`
 	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
 	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
+	WorstModel               string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
+	WorstModelScore          float64  `json:"worst_model_score"`
 }
 
 // ChannelCreateReq 创建渠道请求
@@ -143,6 +145,8 @@ type ChannelDetailRes struct {
 	HealthScore              *float64 `json:"health_score"`
 	BreakerState             int      `json:"breaker_state"`  // 调度熔断状态：0=正常 1=熔断中 2=半开探活
 	BreakerModels            int      `json:"breaker_models"` // 处于熔断/半开的模型数量（渠道×模型级汇总）
+	WorstModel               string   `json:"worst_model"`    // 健康度最低的模型名（空=渠道不在调度目录）
+	WorstModelScore          float64  `json:"worst_model_score"`
 	KeyType                  string   `json:"key_type"`
 	KeyStatus                string   `json:"key_status"`
 	KeyName                  string   `json:"key_name"`
@@ -258,12 +262,10 @@ type ChannelHealthTrendRes struct {
 
 // HealthTrendPoint 健康趋势数据点（健康度、延迟取整展示，不含小数）
 type HealthTrendPoint struct {
-	SnapshotAt          string  `json:"snapshot_at"`
-	HealthScore         int64   `json:"health_score"`
-	SuccessRate         float64 `json:"success_rate"`
-	LatencyMs           int64   `json:"latency_ms"`
-	StabilityScore      float64 `json:"stability_score"`
-	ConsecutiveFailures int     `json:"consecutive_failures"`
+	SnapshotAt  string  `json:"snapshot_at"`
+	HealthScore int64   `json:"health_score"`
+	SuccessRate float64 `json:"success_rate"`
+	LatencyMs   int64   `json:"latency_ms"`
 }
 
 // ChannelExportReq 导出渠道列表请求

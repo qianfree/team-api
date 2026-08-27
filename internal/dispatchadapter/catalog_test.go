@@ -133,6 +133,48 @@ func TestCatalog_加载失败保留上一份快照(t *testing.T) {
 	assert.Len(t, c.Snapshot(ctx, 0, "m", nil), 1, "last-known 快照必须保留")
 }
 
+// TestCatalog_Redis降级沿用上一份健康读值 Redis 读失败时若让乐观默认值 succ=1 落进
+// 新快照，一次 Redis 抖动就会把全渠道的健康记忆清零、healthFactor 集体回满分，
+// 与 Rebuild 声称的 last-known 语义相悖。
+func TestCatalog_Redis降级沿用上一份健康读值(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
+	}
+	degraded := false
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		if degraded {
+			return RuntimeReadout{SuccEwma: 1, Degraded: true}
+		}
+		return RuntimeReadout{SuccEwma: 0.3, LatEwmaMs: 4000, HasHealth: true}
+	})
+
+	got := c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 0.3, got[0].SuccEwma)
+
+	degraded = true
+	c.Rebuild(context.Background())
+	got = c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 0.3, got[0].SuccEwma, "Redis 降级必须沿用 last-known，不得回落满分")
+	assert.Equal(t, 4000.0, got[0].LatEwmaMs, "延迟读值同样沿用")
+}
+
+// TestCatalog_首次刷新即降级无历史可沿用 新实例启动时 Redis 就不可用：没有 last-known
+// 可沿用，保持乐观默认满分（不能让新实例启动即把全渠道判死）。
+func TestCatalog_首次刷新即降级无历史可沿用(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		return RuntimeReadout{SuccEwma: 1, Degraded: true}
+	})
+
+	got := c.Snapshot(context.Background(), 0, "gpt-4o", nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1.0, got[0].SuccEwma, "无历史时保持乐观默认")
+}
+
 func TestRampElapsed(t *testing.T) {
 	now := time.Now().UnixMilli()
 	window := int64(120_000)
@@ -190,4 +232,64 @@ func TestCatalog_渠道运行状态聚合(t *testing.T) {
 func TestCatalog_运行状态_未Rebuild返回空(t *testing.T) {
 	c := NewCatalog(func() *dispatch.RoutingPolicy { return dispatch.DefaultRoutingPolicy() }, nil, nil)
 	assert.Empty(t, c.ChannelRuntimeStates())
+}
+
+// TestCatalog_最差模型_单模型故障不被均值摊薄 渠道健康分是均值，10 个健康模型 + 1 个
+// 全挂仍能算出 90 分绿灯；最差项要如实报出那个挂掉的模型。
+func TestCatalog_最差模型_单模型故障不被均值摊薄(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-a", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-b", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "broken", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, model string) RuntimeReadout {
+		if model == "broken" {
+			return RuntimeReadout{SuccEwma: 0.1, HasHealth: true}
+		}
+		return RuntimeReadout{SuccEwma: 1.0, HasHealth: true}
+	})
+
+	got := c.ChannelRuntimeStates()
+	require.Len(t, got, 1)
+	assert.Equal(t, "broken", got[1].WorstModel)
+	// α 默认 2：0.1² × 100 = 1
+	assert.InDelta(t, 1.0, got[1].WorstModelScore, 1e-6)
+}
+
+// TestCatalog_最差模型_冷模型不被误报 无真实上报的模型读作满分 1.0，取最小值天然
+// 不会把它选成最差项——这正是拖垮渠道均值的缺陷在 min 聚合下不存在的原因。
+func TestCatalog_最差模型_冷模型不被误报(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "cold", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "warm", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, model string) RuntimeReadout {
+		if model == "cold" {
+			return RuntimeReadout{SuccEwma: 1} // HasHealth=false，从未上报
+		}
+		return RuntimeReadout{SuccEwma: 0.8, HasHealth: true}
+	})
+
+	got := c.ChannelRuntimeStates()
+	assert.Equal(t, "warm", got[1].WorstModel, "冷模型读作满分，不应被选为最差")
+	assert.InDelta(t, 64.0, got[1].WorstModelScore, 1e-6) // 0.8² × 100
+}
+
+// TestCatalog_最差模型_同分时结果稳定 byModel 是 map，遍历顺序随机；同分不做确定性
+// 打破平局的话，全部模型满分时每次请求返回的模型名都会跳变。
+func TestCatalog_最差模型_同分时结果稳定(t *testing.T) {
+	rows := []catalogRow{
+		{ChannelID: 1, ChannelName: "A", ModelName: "zeta", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "alpha", Weight: 10, Tier: "primary"},
+		{ChannelID: 1, ChannelName: "A", ModelName: "mid", Weight: 10, Tier: "primary"},
+	}
+	c := testCatalog(rows, nil, func(_ context.Context, _ int64, _ string) RuntimeReadout {
+		return RuntimeReadout{SuccEwma: 1, HasHealth: true}
+	})
+
+	for range 20 {
+		got := c.ChannelRuntimeStates()
+		require.Equal(t, "alpha", got[1].WorstModel, "同分必须稳定取模型名最小者")
+		assert.InDelta(t, 100.0, got[1].WorstModelScore, 1e-6)
+	}
 }

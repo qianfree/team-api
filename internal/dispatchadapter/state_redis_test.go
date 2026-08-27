@@ -486,6 +486,98 @@ func TestReportOutcome异步消费(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond, "后台 worker 必须消费上报事件")
 }
 
+// TestReadRuntime无数据回落默认值 从未被访问过的渠道×模型（Redis key 不存在）必须回落
+// 默认满分 1.0。HMGET 缺失字段经 gredis 包装成非 nil 空 gvar（IsNil() 恒为 false、
+// Float64() 静默返回 0），旧代码用 IsNil() 判空失效，把全部冷模型读成 0 分，
+// 拖垮渠道聚合健康分与调度 healthFactor。
+func TestReadRuntime无数据回落默认值(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	rt := s.ReadRuntime(ctx, 99, "never-touched")
+	assert.Equal(t, 1.0, rt.SuccEwma, "key 不存在必须回落默认满分，不能是 0")
+	assert.Equal(t, 0.0, rt.LatEwmaMs, "无延迟数据为 0")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
+
+	// 只有 lat_ewma、无 succ_ewma 字段时，succ 同样回落默认值
+	_, err := g.Redis().Do(ctx, "HSET", keyHealth+"99:partial", "lat_ewma", "100")
+	require.NoError(t, err)
+	rt = s.ReadRuntime(ctx, 99, "partial")
+	assert.Equal(t, 1.0, rt.SuccEwma, "字段缺失必须回落默认满分")
+	assert.Equal(t, 100.0, rt.LatEwmaMs)
+}
+
+// TestReadRuntime异常值防御 succ_ewma 为空串/非法值/精确 0 时视为无数据（保持默认 1.0）。
+func TestReadRuntime异常值防御(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	for _, bad := range []string{"", "  ", "abc", "0"} {
+		_, err := g.Redis().Do(ctx, "HSET", keyHealth+"30:dirty", "succ_ewma", bad, "lat_ewma", "100")
+		require.NoError(t, err)
+		rt := s.ReadRuntime(ctx, 30, "dirty")
+		assert.Equal(t, 1.0, rt.SuccEwma, "succ_ewma=%q 应视为无数据", bad)
+	}
+
+	// 真实低分（正数）不受影响
+	_, err := g.Redis().Do(ctx, "HSET", keyHealth+"30:low", "succ_ewma", "0.0008", "lat_ewma", "100")
+	require.NoError(t, err)
+	rt := s.ReadRuntime(ctx, 30, "low")
+	assert.Equal(t, 0.0008, rt.SuccEwma, "合法低分必须如实读取")
+
+	// lat_ewma 同样防御：脏值回落 0
+	_, err = g.Redis().Do(ctx, "HSET", keyHealth+"30:dirtylat", "succ_ewma", "0.5", "lat_ewma", "xyz")
+	require.NoError(t, err)
+	rt = s.ReadRuntime(ctx, 30, "dirtylat")
+	assert.Equal(t, 0.5, rt.SuccEwma)
+	assert.Equal(t, 0.0, rt.LatEwmaMs)
+}
+
+// TestReadRuntime区分无数据与读失败 「没读到」与「读失败」必须可区分：前者是真实的
+// 「该模型没有流量」，后者是 Redis 不可用。二者都会回落成默认满分，若调用方无法区分，
+// Redis 抖动期间维护快照会把全渠道健康分刷成 100，事故现场被销毁。
+func TestReadRuntime区分无数据与读失败(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	// 从未上报：读值是乐观默认满分，但必须标记为「无真实数据」
+	rt := s.ReadRuntime(ctx, 77, "cold")
+	assert.Equal(t, 1.0, rt.SuccEwma)
+	assert.False(t, rt.HasHealth, "无上报的默认满分不得冒充实测值")
+	assert.False(t, rt.Degraded)
+
+	// 有真实上报
+	_, err := g.Redis().Do(ctx, "HSET", keyHealth+"77:hot", "succ_ewma", "0.42", "lat_ewma", "900")
+	require.NoError(t, err)
+	rt = s.ReadRuntime(ctx, 77, "hot")
+	assert.Equal(t, 0.42, rt.SuccEwma)
+	assert.True(t, rt.HasHealth)
+	assert.False(t, rt.Degraded)
+
+	// Redis 故障：同样回落满分，但标记 Degraded
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	defer mr.SetError("")
+	rt = s.ReadRuntime(ctx, 77, "hot")
+	assert.True(t, rt.Degraded, "读失败必须显式标记")
+	assert.False(t, rt.HasHealth, "读失败不是「有数据」")
+	assert.Equal(t, 1.0, rt.SuccEwma)
+}
+
+// TestReadRuntime脏值不算有效数据 精确 0 / 非法值视为无数据，HasHealth 保持 false，
+// 避免脏数据以「实测值」身份参与渠道聚合（2026-08-27 全渠道健康分坍缩事故的读侧防线）。
+func TestReadRuntime脏值不算有效数据(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	for _, bad := range []string{"", "abc", "0"} {
+		_, err := g.Redis().Do(ctx, "HSET", keyHealth+"78:dirty", "succ_ewma", bad, "lat_ewma", "100")
+		require.NoError(t, err)
+		rt := s.ReadRuntime(ctx, 78, "dirty")
+		assert.False(t, rt.HasHealth, "succ_ewma=%q 不得算作有效实测数据", bad)
+		assert.Equal(t, 1.0, rt.SuccEwma)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 本地降级（修订 R4 + 基线方案 §13）
 // ---------------------------------------------------------------------------

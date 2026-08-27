@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	do "github.com/qianfree/team-api/internal/model/do"
@@ -148,6 +149,8 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		if rs, ok := runtimeStates[ch.ID]; ok {
 			item.BreakerState = int(rs.Breaker)
 			item.BreakerModels = rs.BreakerModels
+			item.WorstModel = rs.WorstModel
+			item.WorstModelScore = rs.WorstModelScore
 		}
 		list = append(list, item)
 	}
@@ -593,6 +596,8 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	if rs, ok := channelRuntimeStates()[req.ID]; ok {
 		res.BreakerState = int(rs.Breaker)
 		res.BreakerModels = rs.BreakerModels
+		res.WorstModel = rs.WorstModel
+		res.WorstModelScore = rs.WorstModelScore
 	}
 	if res.KeyType == "" {
 		res.KeyType = "apikey"
@@ -791,6 +796,9 @@ func (s *sAdmin) batchGetModelHealth(ctx context.Context, channelID int64, abili
 	}
 
 	redis := g.Redis()
+	// 健康分折算口径必须与调度 healthFactor / 维护快照落盘一致（succ^α×100），
+	// α 取当前生效的路由策略而非硬编码——策略支持热更新。
+	alpha := dispatchadapter.HealthAlpha()
 	for _, ab := range abilities {
 		healthKey := fmt.Sprintf("dispatch:v1:health:%d:%s", channelID, ab.ModelName)
 		breakerKey := fmt.Sprintf("dispatch:v1:breaker:%d:%s", channelID, ab.ModelName)
@@ -808,8 +816,8 @@ func (s *sAdmin) batchGetModelHealth(ctx context.Context, channelID int64, abili
 					var succEWMA float64
 					if _, err := fmt.Sscanf(succStr, "%f", &succEWMA); err == nil && succEWMA >= 0 {
 						data.SuccEWMA = &succEWMA
-						// 健康分 = succ_ewma * 100
-						healthScore := succEWMA * 100
+						// 健康分 = succ_ewma^α × 100（与调度 healthFactor 同源）
+						healthScore := math.Pow(succEWMA, alpha) * 100
 						data.HealthScore = &healthScore
 					}
 				}
@@ -912,10 +920,12 @@ func defaultProviderURL(t int) string {
 }
 
 // GetChannelHealthTrend 获取渠道健康趋势数据（健康度、延迟在 SQL 层四舍五入取整，避免展示小数）
+// 不再返回 stability_score / consecutive_failures：健康体系重写后这两列已停止写入，
+// 返回恒定值只会让前端画出两条毫无意义的常量线。
 func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error) {
 	var points []v1.HealthTrendPoint
 	err := dao.ChnHealthSnapshots.Ctx(ctx).
-		Fields("snapshot_at, ROUND(health_score)::int AS health_score, success_rate, ROUND(latency_ms)::int AS latency_ms, stability_score, consecutive_failures").
+		Fields("snapshot_at, ROUND(health_score)::int AS health_score, success_rate, ROUND(latency_ms)::int AS latency_ms").
 		Where("channel_id", req.ID).
 		Where("snapshot_at >= ?", gtime.Now().Add(-time.Duration(req.Hours)*time.Hour)).
 		OrderAsc("snapshot_at").
@@ -959,22 +969,25 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 
 		// 调度层：只复位指定模型的熔断 + 成功率恢复
 		dispatchadapter.ResetModelHealth(ctx, req.ID, req.ModelName)
+		// 单模型重置不直接写 chn_health_scores（渠道分是全模型聚合值，不能按单模型拍值），
+		// 改为请求重算——否则展示分永远停在旧值，管理员会以为重置没生效
+		dispatchadapter.RequestHealthSnapshot(req.ID)
 
 		return nil, nil
 	}
 
 	// 未指定模型名，重置整个渠道（含所有模型）
 
-	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；下次维护快照会按策略重算）
+	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；随后的按需重算/
+	// 维护快照会按 Redis 实际读值重算，此处只是让界面立即有反馈）
+	// stability_score / consecutive_failures 已废弃，不再写入
 	affected, err := dao.ChnHealthScores.Ctx(ctx).
 		Where("channel_id", req.ID).
 		Data(do.ChnHealthScores{
-			SuccessRate:         90.00,
-			LatencyMs:           0,
-			StabilityScore:      100.00,
-			ConsecutiveFailures: 0,
-			HealthScore:         80.00,
-			CalculatedAt:        gtime.Now(),
+			SuccessRate:  90.00,
+			LatencyMs:    0,
+			HealthScore:  80.00,
+			CalculatedAt: gtime.Now(),
 		}).
 		UpdateAndGetAffected()
 	if err != nil {
@@ -983,13 +996,11 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 	// 健康分记录缺失时兜底插入（正常情况下创建渠道时已由 InitHealthScore 初始化）
 	if affected == 0 {
 		_, err = dao.ChnHealthScores.Ctx(ctx).Insert(do.ChnHealthScores{
-			ChannelId:           req.ID,
-			SuccessRate:         90.00,
-			LatencyMs:           0,
-			StabilityScore:      100.00,
-			ConsecutiveFailures: 0,
-			HealthScore:         80.00,
-			CalculatedAt:        gtime.Now(),
+			ChannelId:    req.ID,
+			SuccessRate:  90.00,
+			LatencyMs:    0,
+			HealthScore:  80.00,
+			CalculatedAt: gtime.Now(),
 		})
 		if err != nil {
 			return nil, err
@@ -998,6 +1009,9 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 
 	// 调度层：复位渠道级/模型级熔断 + 成功率恢复，渠道立即恢复被选择能力
 	dispatchadapter.ResetChannelHealth(ctx, req.ID)
+	// 请求按 Redis 实际读值重算落盘：上面写死的 80 只是调度引擎未组装时的兜底，
+	// 重算后会收敛到与调度同源的 0.9^α×100
+	dispatchadapter.RequestHealthSnapshot(req.ID)
 
 	return nil, nil
 }

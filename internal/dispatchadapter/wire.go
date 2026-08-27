@@ -3,6 +3,7 @@ package dispatchadapter
 import (
 	"context"
 	"math/rand"
+	"slices"
 	"sync"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -62,6 +63,21 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 // CatalogInstance 返回目录单例（handler 取 ForwardMeta 用，需先调用过 Coordinator）。
 func CatalogInstance() *Catalog { return catalog }
 
+// HealthAlpha 返回当前路由策略的健康指数 α（健康分 = succ_ewma^α × 100）。
+//
+// 管理后台展示健康分必须与调度 healthFactor、维护快照落盘同源：三处都用 succ^α，
+// 唯独模型级能力列表曾用线性 succ×100，而前端两处共用同一套 80/50 阈值，导致
+// succ=0.89 时模型行显示 89「健康」、渠道行显示 79「降级」，看起来像 bug。
+//
+// 调度引擎未组装（首次 relay 请求前）时返回默认策略的 α，不触发组装
+// ——管理后台读接口不应有装配整个调度引擎的副作用（与 CatalogInstance 同策略）。
+func HealthAlpha() float64 {
+	if coordinator == nil {
+		return dispatch.DefaultRoutingPolicy().Health.Alpha
+	}
+	return coordinator.Policy().Health.Alpha
+}
+
 // RefreshDispatchLease 长请求（流式/websocket）续期调度租约。
 // 供 handler 的租约续期器直接调用（RouteSession 非并发安全，不经会话）。
 func RefreshDispatchLease(ctx context.Context, channelID int64, requestID string) {
@@ -84,6 +100,17 @@ func ReportProbeOutcome(ctx context.Context, channelID int64, model string, succ
 		o.Class = dispatch.ErrClassTransient
 	}
 	redisState.ReportOutcome(o)
+}
+
+// CatalogHasModel 判断渠道×模型当前是否在调度目录中（探测可观测性检查用）。
+// 不在目录的探测目标（渠道无启用的能力行、或模型未配置能力）健康 EWMA 写入后无人消费：
+// 调度不会选它、维护快照也不会落盘该渠道的健康分——管理后台将看不到探测效果。
+// 需已调用过 Coordinator 完成组装；未组装时返回 false。
+func CatalogHasModel(channelID int64, model string) bool {
+	if catalog == nil {
+		return false
+	}
+	return slices.Contains(catalog.ChannelModels()[channelID], model)
 }
 
 // MarkChannelRecovered 渠道被手动启用/恢复时复位熔断并开启爬坡窗口（管理后台调用）。

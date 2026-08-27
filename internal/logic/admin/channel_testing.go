@@ -119,14 +119,21 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	// 渠道启用时 MarkChannelRecovered 会复位熔断，无需在禁用期间预热。
 	if ch.Status == "active" {
 		dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
+		// 请求立即重算渠道健康快照：维护循环 5 分钟一轮，不触发的话管理员会看到
+		// "测试成功了但渠道健康度纹丝不动"（模型级能力列表直读 Redis 会立刻变，
+		// 渠道健康分读的是 chn_health_scores 落盘值）
+		dispatchadapter.RequestHealthSnapshot(channelID)
+		// 探测目标不在调度目录：EWMA 照常写入 Redis，但调度不读、维护快照不落盘，
+		// 管理后台健康分不会变化——探测看起来"生效了但没效果"的常见根因，必须告警
+		if !dispatchadapter.CatalogHasModel(channelID, testModel) {
+			g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测结果已投递健康上报，但模型 %s 不在调度目录（渠道无启用的模型能力行或该模型未配置能力）| 健康分不会落盘展示，渠道/模型不参与调度，请检查渠道的模型能力配置",
+				ch.Name, channelID, testModel)
+		}
 	}
 
-	// 记录测试结果日志
-	if result.Success {
-		g.Log().Infof(ctx, "[ChannelTest] 渠道 %s (%d) 测试成功 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v",
-			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy)
-	} else {
-		g.Log().Warningf(ctx, "[ChannelTest] 渠道 %s (%d) 测试失败 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v | 错误: %s",
+	// 仅失败需要日志留痕（成功结果已通过 API 响应返回）
+	if !result.Success {
+		g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测失败 | 模型: %s (上游: %s) | 延迟: %dms | 代理: %v | 错误: %s",
 			ch.Name, channelID, testModel, upstreamModel, latencyMs, useProxy, result.Error)
 	}
 
