@@ -789,3 +789,29 @@ err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
 **修复**：`internal/dispatchadapter/state_redis.go` `ReadRuntime`/`readBreaker` 改为 `vals[i].String() != ""` 判有无数据；空串一律按无数据处理保留默认值。回归测试 `Test缺失健康键读默认值`。
 
 **正确做法（通用规则）**：判断 gf redis `HMGET`/批量读的字段是否存在，**不要依赖 `IsNil()`**（驱动转换后 nil 会变空字符串）；用 `String() != ""` 判断，或改用 Lua 脚本内 `HGET ... or '默认值'` 在 Redis 侧兜底。单 key `HGET` 缺失返回的是真 nil（`IsNil()==true`），两者行为不一致，混用时尤其注意。
+
+### 2026-08-27：Redis HMGET 缺失字段的 gvar 判空失效（`IsNil()` 恒为 false），默认值兜底全线失守
+
+**问题**：渠道探测一切正常（Redis succ_ewma=1.0），管理后台渠道健康度却长期停在 25，其余渠道全是 0。排查发现维护快照读到的几乎所有「从未被真实流量访问过」的渠道×模型健康值都是 `0.000`，而这些模型的 Redis key **根本不存在**——按设计应回落到默认满分 1.0。
+
+**原因**：`RedisState.ReadRuntime` 用如下写法读健康 EWMA：
+
+```go
+v, _ := g.Redis().Do(ctx, "HMGET", key, "succ_ewma", "lat_ewma")
+vals := v.Vars()
+if !vals[0].IsNil() { out.SuccEwma = vals[0].Float64() }  // ← 判空失效
+```
+
+HMGET 对不存在的 key/字段返回 Redis nil，但 gredis 把它们包装成**非 nil 的空 gvar**：实测 `IsNil()=false`、`IsEmpty()=true`、`String()=""`、`Float64()=0`。于是判空分支永远进入，`Float64("")` 静默返回 **0**，把「无数据」变成了「健康分 0 分」。影响远超展示：`ReadRuntime` 同时供调度目录构建 `healthFactor`，所有冷模型的路由权重被压成 0。
+
+两个读取方对同一份「无数据」表现还不一致，极大增加了排查难度——管理后台 `batchGetModelHealth` 用 `fmt.Sscanf` 解析，解析失败就不赋值，UI 显示"无数据"；维护循环用 gconv 读成 0。同一个模型，UI 说无数据、健康分算 0。
+
+**修复**：`state_redis.go` 的 `ReadRuntime` 改为显式字符串校验——`TrimSpace(String())` 为空则保持默认值，非空再 `strconv.ParseFloat` 并做值域校验（succ 取 `0 < f <= 1`；EWMA 由正数衰减而来，数学上不会精确到达 0，精确 0 视为异常数据）。回归测试 `TestReadRuntime脏数据防御`。
+
+**正确做法（通用规则）**：
+
+- **禁止用 `gvar.IsNil()` 判断 Redis 读取结果是否存在**——gredis 的空回复是非 nil 空 gvar，`IsNil()` 恒为 false。用 `IsEmpty()`，或取 `String()` 后判空串。
+- **禁止把 `gvar.Float64()`/`Int()` 直接用于「缺失应回落默认值」的场景**：gconv 对空串/非法值静默返回零值，会把「无数据」变成「0 分/0 次」这类**具有强业务含义的极端值**。默认值不是 0 的字段（健康分、成功率、权重、配额），必须显式校验后再赋值。
+- 同一份状态有多个读取方时（调度用 gconv、管理后台用 Sscanf），**解析方式必须统一**，否则同一数据在不同页面表现不同，故障期误导排查方向。
+
+排查信号：某项指标「本该回落默认值却全是 0」；同一数据 UI 显示"无数据"而后台计算按 0 处理；`grep -n 'IsNil()' ` 命中 Redis 读取路径。

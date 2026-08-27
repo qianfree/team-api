@@ -30,9 +30,14 @@ func AutoTestChannels(ctx context.Context) {
 		Fields("id, name, type, base_url, test_model").
 		Scan(&channels)
 	if err != nil {
-		g.Log().Errorf(ctx, "[Cron] query active channels failed: %v", err)
+		g.Log().Errorf(ctx, "[ChannelProbe] 自动探测查询活跃渠道失败: %v", err)
 		return
 	}
+	if len(channels) == 0 {
+		g.Log().Infof(ctx, "[ChannelProbe] 自动探测开始: 无待探测渠道（活跃且配置了 test_model 的渠道为 0）")
+		return
+	}
+	g.Log().Infof(ctx, "[ChannelProbe] 自动探测开始: 待探测活跃渠道 %d 个", len(channels))
 
 	successCount := 0
 	failCount := 0
@@ -44,7 +49,8 @@ func AutoTestChannels(ctx context.Context) {
 
 		if err != nil {
 			failCount++
-			g.Log().Warningf(ctx, "[Cron] channel %s (%d) test error: %v", ch.Name, ch.ID, err)
+			// 探测请求尚未发出（无可用 Key/渠道不存在等），TestChannel 内部无结果日志，此处记录
+			g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测执行出错: %v", ch.Name, ch.ID, err)
 			continue
 		}
 
@@ -52,9 +58,10 @@ func AutoTestChannels(ctx context.Context) {
 			successCount++
 		} else {
 			failCount++
-			if result.Error != "" {
-				g.Log().Warningf(ctx, "[Cron] channel %s (%d) test failed: %s", ch.Name, ch.ID, result.Error)
-			}
 		}
+		// 成功/失败明细日志由 TestChannel 统一打印（含模型/延迟/错误），此处只做轮次汇总
 	}
+
+	g.Log().Infof(ctx, "[ChannelProbe] 自动探测完成: 共 %d 个渠道 | 成功 %d | 失败 %d",
+		len(channels), successCount, failCount)
 }

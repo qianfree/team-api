@@ -56,11 +56,11 @@ func executeTest(ctx context.Context, provider, method, reqURL string, headers m
 	maskedHdrs := maskHeaders(headers)
 	bodyStr := string(body)
 
-	g.Log().Infof(ctx, "[ChannelTest] %s | 发送请求 | %s %s | 代理: %v", provider, method, reqURL, useProxy)
+	g.Log().Infof(ctx, "[ChannelProbe]%s | 发送请求 | %s %s | 代理: %v", provider, method, reqURL, useProxy)
 
 	resp, err := doTestHTTPRequest(ctx, method, reqURL, headers, body, useProxy)
 	if err != nil {
-		g.Log().Warningf(ctx, "[ChannelTest] %s | 请求失败 | %s | 错误: %v", provider, reqURL, err)
+		g.Log().Warningf(ctx, "[ChannelProbe]%s | 请求失败 | %s | 错误: %v", provider, reqURL, err)
 		return testResult{
 			Error:   fmt.Sprintf("请求失败: %v", err),
 			Request: buildReqDetail(method, reqURL, maskedHdrs, bodyStr),
@@ -72,7 +72,7 @@ func executeTest(ctx context.Context, provider, method, reqURL string, headers m
 	respStr := string(respBody)
 
 	if resp.StatusCode != 200 {
-		g.Log().Warningf(ctx, "[ChannelTest] %s | 测试失败 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
+		g.Log().Warningf(ctx, "[ChannelProbe]%s | 测试失败 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
 		return testResult{
 			Success:  false,
 			Error:    fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateStr(respStr, 500)),
@@ -81,7 +81,7 @@ func executeTest(ctx context.Context, provider, method, reqURL string, headers m
 		}
 	}
 
-	g.Log().Infof(ctx, "[ChannelTest] %s | 测试成功 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
+	g.Log().Infof(ctx, "[ChannelProbe]%s | 测试成功 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
 	return testResult{
 		Success:  true,
 		Response: truncateStr(respStr, 500),
