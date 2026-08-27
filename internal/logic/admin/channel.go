@@ -149,6 +149,8 @@ func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.
 		if rs, ok := runtimeStates[ch.ID]; ok {
 			item.BreakerState = int(rs.Breaker)
 			item.BreakerModels = rs.BreakerModels
+			item.WorstModel = rs.WorstModel
+			item.WorstModelScore = rs.WorstModelScore
 		}
 		list = append(list, item)
 	}
@@ -594,6 +596,8 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	if rs, ok := channelRuntimeStates()[req.ID]; ok {
 		res.BreakerState = int(rs.Breaker)
 		res.BreakerModels = rs.BreakerModels
+		res.WorstModel = rs.WorstModel
+		res.WorstModelScore = rs.WorstModelScore
 	}
 	if res.KeyType == "" {
 		res.KeyType = "apikey"
