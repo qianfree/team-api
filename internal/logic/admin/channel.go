@@ -944,10 +944,12 @@ func defaultProviderURL(t int) string {
 }
 
 // GetChannelHealthTrend 获取渠道健康趋势数据（健康度、延迟在 SQL 层四舍五入取整，避免展示小数）
+// 不再返回 stability_score / consecutive_failures：健康体系重写后这两列已停止写入，
+// 返回恒定值只会让前端画出两条毫无意义的常量线。
 func (s *sAdmin) GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error) {
 	var points []v1.HealthTrendPoint
 	err := dao.ChnHealthSnapshots.Ctx(ctx).
-		Fields("snapshot_at, ROUND(health_score)::int AS health_score, success_rate, ROUND(latency_ms)::int AS latency_ms, stability_score, consecutive_failures").
+		Fields("snapshot_at, ROUND(health_score)::int AS health_score, success_rate, ROUND(latency_ms)::int AS latency_ms").
 		Where("channel_id", req.ID).
 		Where("snapshot_at >= ?", gtime.Now().Add(-time.Duration(req.Hours)*time.Hour)).
 		OrderAsc("snapshot_at").
@@ -1002,15 +1004,14 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 
 	// 展示层：健康分落库为 80（调度不读此表，仅供仪表盘/审计展示；随后的按需重算/
 	// 维护快照会按 Redis 实际读值重算，此处只是让界面立即有反馈）
+	// stability_score / consecutive_failures 已废弃，不再写入
 	affected, err := dao.ChnHealthScores.Ctx(ctx).
 		Where("channel_id", req.ID).
 		Data(do.ChnHealthScores{
-			SuccessRate:         90.00,
-			LatencyMs:           0,
-			StabilityScore:      100.00,
-			ConsecutiveFailures: 0,
-			HealthScore:         80.00,
-			CalculatedAt:        gtime.Now(),
+			SuccessRate:  90.00,
+			LatencyMs:    0,
+			HealthScore:  80.00,
+			CalculatedAt: gtime.Now(),
 		}).
 		UpdateAndGetAffected()
 	if err != nil {
@@ -1019,13 +1020,11 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 	// 健康分记录缺失时兜底插入（正常情况下创建渠道时已由 InitHealthScore 初始化）
 	if affected == 0 {
 		_, err = dao.ChnHealthScores.Ctx(ctx).Insert(do.ChnHealthScores{
-			ChannelId:           req.ID,
-			SuccessRate:         90.00,
-			LatencyMs:           0,
-			StabilityScore:      100.00,
-			ConsecutiveFailures: 0,
-			HealthScore:         80.00,
-			CalculatedAt:        gtime.Now(),
+			ChannelId:    req.ID,
+			SuccessRate:  90.00,
+			LatencyMs:    0,
+			HealthScore:  80.00,
+			CalculatedAt: gtime.Now(),
 		})
 		if err != nil {
 			return nil, err
