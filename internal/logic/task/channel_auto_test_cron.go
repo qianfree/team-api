@@ -43,18 +43,7 @@ func AutoTestChannels(ctx context.Context) {
 	failCount := 0
 
 	for _, ch := range channels {
-		testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		result, err := admin.New().TestChannel(testCtx, &v1.ChannelTestReq{ID: ch.ID})
-		cancel()
-
-		if err != nil {
-			failCount++
-			// 探测请求尚未发出（无可用 Key/渠道不存在等），TestChannel 内部无结果日志，此处记录
-			g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测执行出错: %v", ch.Name, ch.ID, err)
-			continue
-		}
-
-		if result.Success {
+		if probeOneChannel(ctx, ch.ID, ch.Name) {
 			successCount++
 		} else {
 			failCount++
@@ -64,4 +53,28 @@ func AutoTestChannels(ctx context.Context) {
 
 	g.Log().Infof(ctx, "[ChannelProbe] 自动探测完成: 共 %d 个渠道 | 成功 %d | 失败 %d",
 		len(channels), successCount, failCount)
+}
+
+// probeOneChannel 探测单个渠道，返回是否成功。
+// 独立超时 + panic 兜底：单个渠道无论超时、报错还是 panic，都不影响本轮后续渠道
+// （panic 若逃逸到 cron 层虽有 runHandlerSafely 兜底进程，但本轮剩余渠道会被整体跳过）。
+func probeOneChannel(ctx context.Context, channelID int64, channelName string) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+			g.Log().Errorf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测 panic，跳过该渠道继续下一个: %v",
+				channelName, channelID, r)
+		}
+	}()
+
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	result, err := admin.New().TestChannel(testCtx, &v1.ChannelTestReq{ID: channelID})
+	if err != nil {
+		// 探测请求尚未发出（无可用 Key/渠道不存在等），TestChannel 内部无结果日志，此处记录
+		g.Log().Warningf(ctx, "[ChannelProbe] 渠道 %s (%d) 探测执行出错: %v", channelName, channelID, err)
+		return false
+	}
+	return result.Success
 }

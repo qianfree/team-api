@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -35,6 +36,10 @@ type CronScheduler struct {
 	running map[string]bool
 	runMu   sync.Mutex
 	cron    *cron.Cron
+	// entryIDs job 名 → robfig/cron 条目 ID，供 Reschedule 摘除旧条目。
+	// 仅在 StartBackground 之后有值。
+	entryIDs map[string]cron.EntryID
+	entryMu  sync.Mutex
 }
 
 var (
@@ -60,8 +65,9 @@ func GetCronScheduler() *CronScheduler {
 // NewCronScheduler creates a new CronScheduler.
 func NewCronScheduler() *CronScheduler {
 	return &CronScheduler{
-		running: make(map[string]bool),
-		cron:    cron.New(),
+		running:  make(map[string]bool),
+		entryIDs: make(map[string]cron.EntryID),
+		cron:     cron.New(),
 	}
 }
 
@@ -180,7 +186,7 @@ func (cs *CronScheduler) runJobInternal(ctx context.Context, name, triggeredBy s
 
 	// Execute job
 	startTime := time.Now()
-	handlerErr := job.Handler(ctx)
+	handlerErr := runHandlerSafely(ctx, job)
 	duration := time.Since(startTime)
 
 	status := "succeeded"
@@ -195,6 +201,23 @@ func (cs *CronScheduler) runJobInternal(ctx context.Context, name, triggeredBy s
 	cs.recordExecution(ctx, job.Name, status, startTime, duration, errMsg, triggeredBy)
 
 	return handlerErr
+}
+
+// runHandlerSafely 执行 job handler 并兜底 panic。
+//
+// robfig/cron v3 的 cron.New() 默认不带 Recover 链，其 startJob 是裸的
+// `go func() { j.Run() }()`——任意一个 job panic 都会直接崩掉整个进程，而不只是
+// 让该任务失败。此处把 panic 转成普通 error：进程存活，且失败会经 recordExecution
+// 落进 sys_cron_jobs，管理后台的任务列表能看到，不会变成一次无声的重启。
+func runHandlerSafely(ctx context.Context, job *CronJob) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// 堆栈只进日志：last_error 会入库并在管理后台展示，塞完整堆栈会撑爆展示
+			g.Log().Errorf(ctx, "cron job panicked: %s: %v\n%s", job.Name, r, debug.Stack())
+			err = gerror.Newf("任务执行 panic: %v", r)
+		}
+	}()
+	return job.Handler(ctx)
 }
 
 // recordExecution persists an execution record to the database.
@@ -268,7 +291,7 @@ func (cs *CronScheduler) StartBackground(ctx context.Context) {
 
 	for _, job := range jobs {
 		j := job
-		_, err := cs.cron.AddFunc(j.Schedule, func() {
+		entryID, err := cs.cron.AddFunc(j.Schedule, func() {
 			bgCtx := gctx.New()
 			if err := cs.RunJob(bgCtx, j.Name); err != nil {
 				g.Log().Errorf(bgCtx, "background cron error: %s: %v", j.Name, err)
@@ -276,7 +299,11 @@ func (cs *CronScheduler) StartBackground(ctx context.Context) {
 		})
 		if err != nil {
 			g.Log().Errorf(ctx, "failed to register cron job %s with schedule %s: %v", j.Name, j.Schedule, err)
+			continue
 		}
+		cs.entryMu.Lock()
+		cs.entryIDs[j.Name] = entryID
+		cs.entryMu.Unlock()
 	}
 
 	cs.cron.Start()
@@ -289,6 +316,58 @@ func (cs *CronScheduler) StartBackground(ctx context.Context) {
 	}()
 
 	g.Log().Info(ctx, "cron scheduler started in background")
+}
+
+// Reschedule 更新已注册 job 的调度表达式并即时生效（配置热更新用）。
+//
+// 先添加新条目、成功后再摘除旧条目：表达式非法时保持原调度不变，
+// 避免一次错误配置把任务从调度器里彻底摘掉。
+// StartBackground 之前调用无意义（尚无条目），此时只更新 job.Schedule 记录。
+func (cs *CronScheduler) Reschedule(ctx context.Context, name, schedule string) error {
+	cs.mu.RLock()
+	var job *CronJob
+	for _, j := range cs.jobs {
+		if j.Name == name {
+			job = j
+			break
+		}
+	}
+	cs.mu.RUnlock()
+	if job == nil {
+		return gerror.Newf("job %s not registered", name)
+	}
+
+	cs.entryMu.Lock()
+	defer cs.entryMu.Unlock()
+
+	oldID, started := cs.entryIDs[name]
+	if !started {
+		cs.mu.Lock()
+		job.Schedule = schedule
+		cs.mu.Unlock()
+		return nil
+	}
+
+	newID, err := cs.cron.AddFunc(schedule, func() {
+		bgCtx := gctx.New()
+		if err := cs.RunJob(bgCtx, name); err != nil {
+			g.Log().Errorf(bgCtx, "background cron error: %s: %v", name, err)
+		}
+	})
+	if err != nil {
+		return gerror.Wrapf(err, "invalid schedule %q for job %s", schedule, name)
+	}
+
+	cs.cron.Remove(oldID)
+	cs.entryIDs[name] = newID
+
+	cs.mu.Lock()
+	oldSchedule := job.Schedule
+	job.Schedule = schedule
+	cs.mu.Unlock()
+
+	g.Log().Infof(ctx, "cron job %s rescheduled: %s → %s", name, oldSchedule, schedule)
+	return nil
 }
 
 // cronLockTTL 分布式锁过期时间：仅用于实例崩溃时的兜底自动释放（正常完成会主动释放）。
