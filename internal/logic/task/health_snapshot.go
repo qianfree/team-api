@@ -13,19 +13,19 @@ import (
 )
 
 // SnapshotHealthScores 快照所有渠道的当前健康度
+// stability_score / consecutive_failures 已废弃（健康体系重写后从未被更新），不再复制，
+// 新快照由 DB 默认值填 0；对应迁移 000017 已为 stability_score 补上 DEFAULT。
 func SnapshotHealthScores(ctx context.Context) error {
 	type healthRow struct {
-		ChannelID           int64   `json:"channel_id"`
-		HealthScore         float64 `json:"health_score"`
-		SuccessRate         float64 `json:"success_rate"`
-		LatencyMs           float64 `json:"latency_ms"`
-		StabilityScore      float64 `json:"stability_score"`
-		ConsecutiveFailures int     `json:"consecutive_failures"`
+		ChannelID   int64   `json:"channel_id"`
+		HealthScore float64 `json:"health_score"`
+		SuccessRate float64 `json:"success_rate"`
+		LatencyMs   float64 `json:"latency_ms"`
 	}
 
 	var rows []healthRow
 	err := dao.ChnHealthScores.Ctx(ctx).
-		Fields("channel_id, health_score, success_rate, latency_ms, stability_score, consecutive_failures").
+		Fields("channel_id, health_score, success_rate, latency_ms").
 		Scan(&rows)
 	if err != nil {
 		g.Log().Errorf(ctx, "[Cron] query health scores failed: %v", err)
@@ -40,13 +40,11 @@ func SnapshotHealthScores(ctx context.Context) error {
 	now := gtime.Now()
 	for _, row := range rows {
 		_, err = dao.ChnHealthSnapshots.Ctx(ctx).Insert(do.ChnHealthSnapshots{
-			ChannelId:           row.ChannelID,
-			HealthScore:         row.HealthScore,
-			SuccessRate:         row.SuccessRate,
-			LatencyMs:           row.LatencyMs,
-			StabilityScore:      row.StabilityScore,
-			ConsecutiveFailures: row.ConsecutiveFailures,
-			SnapshotAt:          now,
+			ChannelId:   row.ChannelID,
+			HealthScore: row.HealthScore,
+			SuccessRate: row.SuccessRate,
+			LatencyMs:   row.LatencyMs,
+			SnapshotAt:  now,
 		})
 		if err != nil {
 			g.Log().Warningf(ctx, "[Cron] insert snapshot for channel %d failed: %v", row.ChannelID, err)
