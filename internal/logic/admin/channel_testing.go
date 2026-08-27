@@ -121,6 +121,10 @@ func (s *sAdmin) TestChannel(ctx context.Context, req *v1.ChannelTestReq) (*v1.C
 	// 渠道启用时 MarkChannelRecovered 会复位熔断，无需在禁用期间预热。
 	if ch.Status == "active" {
 		dispatchadapter.ReportProbeOutcome(ctx, channelID, testModel, result.Success, float64(latencyMs))
+		// 请求立即重算渠道健康快照：维护循环 5 分钟一轮，不触发的话管理员会看到
+		// "测试成功了但渠道健康度纹丝不动"（模型级能力列表直读 Redis 会立刻变，
+		// 渠道健康分读的是 chn_health_scores 落盘值）
+		dispatchadapter.RequestHealthSnapshot(channelID)
 		if dispatchadapter.CatalogHasModel(channelID, testModel) {
 			g.Log().Infof(ctx, "[ChannelProbe] 渠道 %s (%d) 探测结果已投递健康上报 | 模型: %s | success: %v | 延迟: %dms（EWMA 变化将打印 [ChannelHealth] 日志，5 分钟内落盘刷新）",
 				ch.Name, channelID, testModel, result.Success, latencyMs)
