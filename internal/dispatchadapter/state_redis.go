@@ -7,7 +7,9 @@ package dispatchadapter
 
 import (
 	"context"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -170,9 +172,12 @@ func (s *RedisState) ReportOutcome(o dispatch.Outcome) {
 
 // luaHealthObserve 健康 EWMA 原子更新（基线方案 §10.2 + 修订 R6 分档衰减）。
 // ARGV: success(0/1), latencyMs, decay, nowMs, keyTtlMs
+// 返回 {旧succ, 新succ, 旧lat, 新lat}（tostring 字符串，避免浮点被整数回复截断），
+// 供适配层打印健康分变化日志。
 const luaHealthObserve = `
 local succ = tonumber(redis.call('HGET', KEYS[1], 'succ_ewma') or '1.0')
 local lat  = tonumber(redis.call('HGET', KEYS[1], 'lat_ewma') or '0')
+local oldSucc, oldLat = succ, lat
 if ARGV[1] == '1' then
   succ = succ * 0.9 + 0.1
   local l = tonumber(ARGV[2])
@@ -184,7 +189,7 @@ else
 end
 redis.call('HSET', KEYS[1], 'succ_ewma', succ, 'lat_ewma', lat, 'updated_ms', ARGV[4])
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
-return 1`
+return {tostring(oldSucc), tostring(succ), tostring(oldLat), tostring(lat)}`
 
 // luaBreakerOutcome 渠道级+模型级熔断转移（单脚本双 key 原子执行，与 dispatch/breaker.go
 // 纯函数规则保持一致，改动需同步）。
@@ -313,8 +318,6 @@ return 1`
 
 // processOutcome 消费一条结果事件：健康 EWMA + 渠道级/模型级熔断转移。
 // 限流类不喂熔断窗口（429 属容量信号而非故障信号），改喂 softLimit 估计器。
-// 探测失败（Probe）不喂健康 EWMA 只喂熔断窗口：周期性探测持续失败会把无流量
-// 渠道的健康分指数拖垮（0.93^N）且无真实流量对冲；探测成功照常回升健康。
 func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	pol := s.policy()
 	now := time.Now().UnixMilli()
@@ -325,11 +328,19 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	if o.Success {
 		success = "1"
 	}
-	if !o.Probe || o.Success {
-		if _, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
-			success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
-			s.local.observe(o) // 降级：实例本地健康镜像
-			return
+	v, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
+		success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs)
+	if err != nil {
+		s.local.observe(o) // 降级：实例本地健康镜像
+		return
+	}
+	if vals := v.Strings(); len(vals) == 4 {
+		oldSucc, e1 := strconv.ParseFloat(vals[0], 64)
+		newSucc, e2 := strconv.ParseFloat(vals[1], 64)
+		oldLat, e3 := strconv.ParseFloat(vals[2], 64)
+		newLat, e4 := strconv.ParseFloat(vals[3], 64)
+		if e1 == nil && e2 == nil && e3 == nil && e4 == nil {
+			logHealthChange(ctx, o, pol, oldSucc, newSucc, oldLat, newLat)
 		}
 	}
 
@@ -366,6 +377,34 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 			}
 		}
 	}
+}
+
+// logHealthChange 健康读值变化日志：按调度同源公式（succ^alpha 百分制，与 healthFactor
+// 及 chn_health_scores 落盘一致）折算健康分，**仅在健康分实际移动时**记 Info——稳态成功流量
+// 的 succ 恒为 1.0（只有延迟 EWMA 在抖），若每次上报都打印会在生产流量下淹没日志。
+// 健康分持平时降为 Debug，保留延迟变化的排查能力。
+func logHealthChange(ctx context.Context, o dispatch.Outcome, pol *dispatch.RoutingPolicy, oldSucc, newSucc, oldLat, newLat float64) {
+	if oldSucc == newSucc && oldLat == newLat {
+		return
+	}
+	src := "真实流量"
+	if o.Probe {
+		src = "探测"
+	}
+	result := "成功"
+	if !o.Success {
+		result = "失败(" + o.Class.String() + ")"
+	}
+	oldScore := math.Pow(oldSucc, pol.Health.Alpha) * 100
+	newScore := math.Pow(newSucc, pol.Health.Alpha) * 100
+
+	if math.Abs(newScore-oldScore) < 0.05 {
+		g.Log().Debugf(ctx, "[ChannelHealth] 渠道 %d 模型 %s 健康分持平 %.1f | lat_ewma %.1fms → %.1fms | 来源: %s %s",
+			o.ChannelID, o.Model, newScore, oldLat, newLat, src, result)
+		return
+	}
+	g.Log().Infof(ctx, "[ChannelHealth] 渠道 %d 模型 %s 健康分变化: %.1f → %.1f | succ_ewma %.4f → %.4f | lat_ewma %.1fms → %.1fms | 来源: %s %s",
+		o.ChannelID, o.Model, oldScore, newScore, oldSucc, newSucc, oldLat, newLat, src, result)
 }
 
 // luaBreakerManualReset 手动恢复：熔断复位为 CLOSED 并记录 recovered_ms（触发爬坡因子）。
@@ -423,6 +462,8 @@ func (s *RedisState) ResetHealth(ctx context.Context, channelID int64, models []
 			g.Log().Debugf(ctx, "[Dispatch] 健康重置失败: channel=%d model=%s err=%v", channelID, model, err)
 		}
 	}
+	g.Log().Infof(ctx, "[ChannelHealth] 渠道 %d 健康度已重置: %d 个模型 succ_ewma → %.2f（健康分≈%.1f）、熔断复位",
+		channelID, len(models), resetHealthSuccEwma, math.Pow(resetHealthSuccEwma, s.policy().Health.Alpha)*100)
 }
 
 // resetBreakerState 熔断复位为 CLOSED 并记录 recovered_ms（开启爬坡窗口）。
@@ -566,6 +607,21 @@ func (s *RedisState) CoolCredential(ctx context.Context, keyID int64, ttl time.D
 	}
 }
 
+// CredentialCooldownRemaining 返回渠道 Key 的凭证冷却剩余秒数（0 = 未在冷却）。
+// 凭证冷却是调度器内部的瞬态状态（Redis credcd 标记 + TTL），无任何管理页面出口；
+// 本函数供管理后台 Key 列表/渠道详情展示。读 TTL 而非 EXISTS，让前端能显示剩余时间。
+// Redis 故障时返回 0：仅影响展示精度，不影响调度行为（调度走 IsCredentialCooled 的本地镜像降级）。
+func CredentialCooldownRemaining(ctx context.Context, keyID int64) int {
+	v, err := g.Redis().Do(ctx, "TTL", keyCredCD+strconv.FormatInt(keyID, 10))
+	if err != nil || v == nil {
+		return 0
+	}
+	if s := v.Int(); s > 0 {
+		return s
+	}
+	return 0
+}
+
 // ---------------------------------------------------------------------------
 // 运行时读值（供目录快照合并健康/熔断/负载）
 // ---------------------------------------------------------------------------
@@ -592,15 +648,20 @@ func (s *RedisState) ReadRuntime(ctx context.Context, channelID int64, model str
 	if v, err := g.Redis().Do(ctx, "HMGET", keyHealth+chStr+":"+model, "succ_ewma", "lat_ewma"); err == nil {
 		vals := v.Vars()
 		if len(vals) == 2 {
-			// gf redis 驱动对 HMGET 缺失字段返回空字符串而非 nil（IsNil()==false），
-			// 必须按无数据处理保留乐观默认值：否则无流量/键过期（TTL 24h）的模型
-			// 读成 succ=0，健康快照取平均被拖到个位数（调度打分有 succ<=0 兜底，
-			// 快照聚合没有）。
-			if str := vals[0].String(); str != "" {
-				out.SuccEwma = vals[0].Float64()
+			// 必须按字符串显式判空：HMGET 对不存在的 key/字段返回 Redis nil，但 gredis 把它
+			// 包装成非 nil 空 gvar（IsNil() 恒为 false、Float64() 静默返回 0）。曾用
+			// `if !vals[0].IsNil()` 判空，导致所有从未被真实流量访问过的模型被读成 0 分而非
+			// 默认满分，拖垮渠道聚合健康分与调度 healthFactor。详见 goframe-conventions.md。
+			// 值域校验：EWMA 由正数衰减而来，数学上不会精确到达 0，精确 0 视为异常数据。
+			if s := strings.TrimSpace(vals[0].String()); s != "" {
+				if f, perr := strconv.ParseFloat(s, 64); perr == nil && f > 0 && f <= 1 {
+					out.SuccEwma = f
+				}
 			}
-			if str := vals[1].String(); str != "" {
-				out.LatEwmaMs = vals[1].Float64()
+			if s := strings.TrimSpace(vals[1].String()); s != "" {
+				if f, perr := strconv.ParseFloat(s, 64); perr == nil && f >= 0 {
+					out.LatEwmaMs = f
+				}
 			}
 		}
 	}
@@ -622,8 +683,9 @@ func (s *RedisState) readBreaker(ctx context.Context, key string, nowMs int64) (
 		return dispatch.BreakerClosed, 0, 0
 	}
 	vals := v.Vars()
-	// 缺失字段经 gf 驱动转换后为空字符串（IsNil()==false），与 nil 同判为无快照
-	if len(vals) != 5 || vals[0].IsNil() || vals[0].String() == "" {
+	// 判空必须用 IsEmpty()：HMGET 缺失字段的 gvar IsNil() 恒为 false（见 ReadRuntime 注释）。
+	// 此处即使漏判也侥幸无害（默认 BreakerClosed 恰为零值 0），但保持与健康读取一致的正确写法。
+	if len(vals) != 5 || vals[0].IsEmpty() {
 		return dispatch.BreakerClosed, 0, 0
 	}
 	snap := dispatch.BreakerSnapshot{

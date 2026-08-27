@@ -486,6 +486,53 @@ func TestReportOutcome异步消费(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond, "后台 worker 必须消费上报事件")
 }
 
+// TestReadRuntime无数据回落默认值 从未被访问过的渠道×模型（Redis key 不存在）必须回落
+// 默认满分 1.0。HMGET 缺失字段经 gredis 包装成非 nil 空 gvar（IsNil() 恒为 false、
+// Float64() 静默返回 0），旧代码用 IsNil() 判空失效，把全部冷模型读成 0 分，
+// 拖垮渠道聚合健康分与调度 healthFactor。
+func TestReadRuntime无数据回落默认值(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	rt := s.ReadRuntime(ctx, 99, "never-touched")
+	assert.Equal(t, 1.0, rt.SuccEwma, "key 不存在必须回落默认满分，不能是 0")
+	assert.Equal(t, 0.0, rt.LatEwmaMs, "无延迟数据为 0")
+	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
+
+	// 只有 lat_ewma、无 succ_ewma 字段时，succ 同样回落默认值
+	_, err := g.Redis().Do(ctx, "HSET", keyHealth+"99:partial", "lat_ewma", "100")
+	require.NoError(t, err)
+	rt = s.ReadRuntime(ctx, 99, "partial")
+	assert.Equal(t, 1.0, rt.SuccEwma, "字段缺失必须回落默认满分")
+	assert.Equal(t, 100.0, rt.LatEwmaMs)
+}
+
+// TestReadRuntime异常值防御 succ_ewma 为空串/非法值/精确 0 时视为无数据（保持默认 1.0）。
+func TestReadRuntime异常值防御(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	for _, bad := range []string{"", "  ", "abc", "0"} {
+		_, err := g.Redis().Do(ctx, "HSET", keyHealth+"30:dirty", "succ_ewma", bad, "lat_ewma", "100")
+		require.NoError(t, err)
+		rt := s.ReadRuntime(ctx, 30, "dirty")
+		assert.Equal(t, 1.0, rt.SuccEwma, "succ_ewma=%q 应视为无数据", bad)
+	}
+
+	// 真实低分（正数）不受影响
+	_, err := g.Redis().Do(ctx, "HSET", keyHealth+"30:low", "succ_ewma", "0.0008", "lat_ewma", "100")
+	require.NoError(t, err)
+	rt := s.ReadRuntime(ctx, 30, "low")
+	assert.Equal(t, 0.0008, rt.SuccEwma, "合法低分必须如实读取")
+
+	// lat_ewma 同样防御：脏值回落 0
+	_, err = g.Redis().Do(ctx, "HSET", keyHealth+"30:dirtylat", "succ_ewma", "0.5", "lat_ewma", "xyz")
+	require.NoError(t, err)
+	rt = s.ReadRuntime(ctx, 30, "dirtylat")
+	assert.Equal(t, 0.5, rt.SuccEwma)
+	assert.Equal(t, 0.0, rt.LatEwmaMs)
+}
+
 // ---------------------------------------------------------------------------
 // 本地降级（修订 R4 + 基线方案 §13）
 // ---------------------------------------------------------------------------
