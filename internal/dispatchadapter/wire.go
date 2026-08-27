@@ -63,6 +63,21 @@ func Coordinator(ctx context.Context) *dispatch.Coordinator {
 // CatalogInstance 返回目录单例（handler 取 ForwardMeta 用，需先调用过 Coordinator）。
 func CatalogInstance() *Catalog { return catalog }
 
+// HealthAlpha 返回当前路由策略的健康指数 α（健康分 = succ_ewma^α × 100）。
+//
+// 管理后台展示健康分必须与调度 healthFactor、维护快照落盘同源：三处都用 succ^α，
+// 唯独模型级能力列表曾用线性 succ×100，而前端两处共用同一套 80/50 阈值，导致
+// succ=0.89 时模型行显示 89「健康」、渠道行显示 79「降级」，看起来像 bug。
+//
+// 调度引擎未组装（首次 relay 请求前）时返回默认策略的 α，不触发组装
+// ——管理后台读接口不应有装配整个调度引擎的副作用（与 CatalogInstance 同策略）。
+func HealthAlpha() float64 {
+	if coordinator == nil {
+		return dispatch.DefaultRoutingPolicy().Health.Alpha
+	}
+	return coordinator.Policy().Health.Alpha
+}
+
 // RefreshDispatchLease 长请求（流式/websocket）续期调度租约。
 // 供 handler 的租约续期器直接调用（RouteSession 非并发安全，不经会话）。
 func RefreshDispatchLease(ctx context.Context, channelID int64, requestID string) {
