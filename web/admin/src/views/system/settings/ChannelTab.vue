@@ -16,6 +16,19 @@ const values = useFormValues()
 					@change="(v: string | number | boolean) => values['channel_auto_test_enabled'] = v"
 				/>
 			</div>
+			<div class="section-grid" style="margin-top: 12px">
+				<AFormItem label="探测间隔（分钟）">
+					<AInputNumber
+						:model-value="values['channel_auto_test_interval_minutes'] as number"
+						@change="(v: number | undefined) => values['channel_auto_test_interval_minutes'] = v ?? 5"
+						:min="1" :max="1440" style="width: 100%"
+					/>
+				</AFormItem>
+			</div>
+			<div class="section-desc">
+				保存后即时生效，无需重启。探测是串行的（每渠道最多 30 秒），渠道多或上游超时多时单轮耗时会变长；
+				上一轮未结束时下一轮自动跳过，因此间隔不宜小于「渠道数 × 30 秒」。
+			</div>
 		</div>
 
 		<!-- 自动禁用 -->

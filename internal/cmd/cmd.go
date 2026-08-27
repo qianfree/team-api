@@ -11,6 +11,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcmd"
+	"github.com/gogf/gf/v2/os/gctx"
 
 	"github.com/qianfree/team-api/internal/consts"
 	adminController "github.com/qianfree/team-api/internal/controller/admin"
@@ -340,9 +341,37 @@ func printBanner() {
 	fmt.Println()
 }
 
+// channelAutoTestSchedule 按配置的探测间隔生成 cron 表达式。
+//
+// 用 @every 而非 */N：*/N 只在 N < 60 时有意义（*/90 在分钟位上等价于 */30，
+// 静默给出与配置不符的频率），而 @every 支持任意时长。副作用是触发时刻相对进程
+// 启动时间而非整点对齐——多实例部署时反而更好，不会所有实例卡在同一分钟同时探测。
+func channelAutoTestSchedule(ctx context.Context) string {
+	minutes := common.Config().GetInt(ctx, "channel_auto_test_interval_minutes")
+	// 配置缺失（GetInt 返回 0）或越界时回落默认值，避免非法表达式让任务注册失败
+	if minutes < 1 || minutes > 1440 {
+		minutes = 5
+	}
+	return fmt.Sprintf("@every %dm", minutes)
+}
+
+// watchChannelAutoTestInterval 探测间隔配置变更时重排 cron，无需重启。
+// 回调经 Redis pub/sub 触发，多实例会各自重排自己的调度器。
+func watchChannelAutoTestInterval(cs *common.CronScheduler) {
+	common.OnSettingsChanged(func(ctx context.Context, key string) {
+		if key != "channel_auto_test_interval_minutes" {
+			return
+		}
+		if err := cs.Reschedule(ctx, "channel_auto_test", channelAutoTestSchedule(ctx)); err != nil {
+			g.Log().Errorf(ctx, "渠道自动探测重排失败，沿用原间隔: %v", err)
+		}
+	})
+}
+
 // registerCronJobs 集中注册所有定时任务，避免散落在主启动流程中。
 // 新增 cron 任务时在此追加一项即可；任务名（用于分布式锁 key）需保持唯一且稳定。
 func registerCronJobs(cs *common.CronScheduler) {
+	watchChannelAutoTestInterval(cs)
 	cs.Register("ops_system_collector", "系统指标采集", "* * * * *", func(ctx context.Context) error {
 		return monitor.CollectSystemMetrics(ctx)
 	})
@@ -358,7 +387,7 @@ func registerCronJobs(cs *common.CronScheduler) {
 	cs.Register("health_snapshot", "渠道健康快照", "*/5 * * * *", func(ctx context.Context) error {
 		return task.SnapshotHealthScores(ctx)
 	})
-	cs.Register("channel_auto_test", "渠道自动测试", "*/5 * * * *", func(ctx context.Context) error {
+	cs.Register("channel_auto_test", "渠道自动测试", channelAutoTestSchedule(gctx.New()), func(ctx context.Context) error {
 		if common.Config().GetBool(ctx, "channel_auto_test_enabled") {
 			task.AutoTestChannels(ctx)
 		}

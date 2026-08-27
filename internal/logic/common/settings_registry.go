@@ -213,6 +213,9 @@ var Registry = []SettingDef{
 	// ── Channel ──
 	{Key: "channel_auto_test_enabled", Type: SettingTypeBool, Default: "true", Category: "channel",
 		Label: "渠道自动探测", Description: "定期向活跃渠道发送测试请求，检测连通性并更新健康度（会消耗少量 Token）。禁用渠道不自动探测，由管理员手动测试确认后再启用"},
+	{Key: "channel_auto_test_interval_minutes", Type: SettingTypeInt, Default: "5", Category: "channel",
+		Label: "自动探测间隔（分钟）", Validation: "min:1,max:1440",
+		Description: "两轮自动探测之间的间隔，保存后即时生效。探测是串行的（每渠道最多 30 秒），渠道多或上游超时多时单轮耗时会变长；上一轮未结束时下一轮自动跳过，因此间隔不宜小于「渠道数 × 30 秒」"},
 	{Key: "channel_auto_disable_enabled", Type: SettingTypeBool, Default: "false", Category: "channel",
 		Label: "渠道自动禁用", Description: "渠道熔断持续超过路由策略 breaker.autoDisableAfterSeconds（默认 10 分钟）未恢复时自动禁用"},
 	{Key: "channel_routing_policy", Type: SettingTypeJSON, Default: "", Category: "channel",
