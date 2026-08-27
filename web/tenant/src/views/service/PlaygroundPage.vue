@@ -80,16 +80,11 @@ watch(selectedKeyId, loadModels, { immediate: true })
 
 <template>
 	<div>
-		<div class="page-header">
-			<h1 class="page-title">API Playground</h1>
-			<p class="page-description">在线调试 AI 模型。不同大模型参数不一致，此处仅做简单功能演示，验证资源可用。请还用API调用获取最佳体验。</p>
-		</div>
-
-		<!-- Toolbar: 分类标签 + API Key 选择器 -->
-		<div class="card mb-6">
-			<div class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-				<!-- 分类标签 -->
-				<div class="tabs">
+		<!-- 紧凑工具栏：左侧模型类型标签 + 右侧 API Key 单行收纳 -->
+		<div class="card mb-3">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
+				<!-- 左侧：模型类型标签 -->
+				<div class="tabs flex-wrap">
 					<button v-for="tab in tabs" :key="tab.key"
 						class="tab"
 						:class="{ 'tab-active': activeTab === tab.key }"
@@ -98,8 +93,16 @@ watch(selectedKeyId, loadModels, { immediate: true })
 					</button>
 				</div>
 
-				<!-- API Key 区域 -->
-				<div class="flex shrink-0 items-center gap-2">
+				<!-- 模型加载指示内联在工具栏中，避免独立行造成的布局跳动 -->
+				<transition name="fade">
+					<div v-if="modelsLoading" class="flex shrink-0 items-center gap-1.5 text-xs text-gray-400">
+						<div class="spinner h-3.5 w-3.5 text-primary-600"></div>
+						加载模型...
+					</div>
+				</transition>
+
+				<!-- 右侧：API Key 区域 -->
+				<div class="ml-auto flex shrink-0 items-center gap-2">
 					<!-- 加载中 -->
 					<template v-if="keyLoading">
 						<div class="spinner h-4 w-4 text-primary-600"></div>
@@ -128,12 +131,6 @@ watch(selectedKeyId, loadModels, { immediate: true })
 		</div>
 
 		<template v-if="revealedKey">
-			<transition name="fade">
-				<div v-if="modelsLoading" class="mb-4 flex items-center gap-2 text-sm text-gray-500">
-					<div class="spinner h-4 w-4 text-primary-600"></div>
-					加载模型...
-				</div>
-			</transition>
 			<ChatTab v-if="activeTab === 'chat'" :models="modelsByCategory('chat').value" :api-key="revealedKey" />
 			<ImageTab v-if="activeTab === 'image'" :models="modelsByCategory('image').value" :api-key="revealedKey" />
 			<VideoTab v-if="activeTab === 'video'" :models="modelsByCategory('video').value" :api-key="revealedKey" />

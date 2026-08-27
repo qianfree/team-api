@@ -48,6 +48,7 @@ const params = reactive({
 	systemPrompt: '',
 	topP: 1.0,
 	stream: true,
+	thinking: false,
 })
 
 const imageConfig = reactive({
@@ -100,6 +101,10 @@ function buildRequestBody(apiMessages: { role: string; content: string }[]) {
 		temperature: params.temperature,
 		max_tokens: params.maxTokens,
 		stream: params.stream,
+	}
+	// 思考控制：通过 thinking 参数开关（{"type": "enabled"} / {"type": "disabled"}），图片模型不参与
+	if (!isImageModel.value) {
+		body.thinking = { type: params.thinking ? 'enabled' : 'disabled' }
 	}
 	if (params.stream) {
 		body.stream_options = { include_usage: true }
@@ -284,11 +289,13 @@ function clearChat() {
 </script>
 
 <template>
-	<div class="flex flex-col lg:h-[calc(100vh-20rem)] lg:overflow-hidden">
-		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 lg:min-h-0 lg:flex-1">
+	<!-- 高度偏移 ≈ 顶栏与页边距(约128px) + 上方工具栏卡片(约116px)，保证对话卡片完整落在视口内 -->
+	<div class="flex flex-col lg:h-[calc(100vh-15.5rem)] lg:overflow-hidden">
+		<!-- grid-rows minmax(0,1fr) 强制行高等于容器高，配合左列内部滚动，避免行高被参数卡撑破导致底部输入框被裁切 -->
+		<div class="grid grid-cols-1 lg:grid-cols-4 lg:grid-rows-[minmax(0,1fr)] gap-6 lg:min-h-0 lg:flex-1">
 			<!-- Left: Parameters -->
-			<div class="lg:col-span-1">
-				<div class="card lg:sticky lg:top-6">
+			<div class="lg:col-span-1 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+				<div class="card">
 					<div class="card-header">
 						<h3 class="text-sm font-semibold text-gray-900">参数配置</h3>
 					</div>
@@ -313,6 +320,13 @@ function clearChat() {
 							<label class="input-label">System Prompt</label>
 							<n-input v-model:value="params.systemPrompt" type="textarea" :rows="3" placeholder="设置系统提示词..." />
 						</div>
+						<div v-if="!isImageModel">
+							<div class="flex items-center justify-between">
+								<label class="input-label mb-0">深度思考</label>
+								<n-switch v-model:value="params.thinking" />
+							</div>
+							<p class="mt-1 text-xs text-gray-400">通过 thinking 参数控制开关，仅对支持的模型生效</p>
+						</div>
 						<div class="flex items-center justify-between">
 							<label class="input-label mb-0">流式响应</label>
 							<n-switch v-model:value="params.stream" />
@@ -335,7 +349,7 @@ function clearChat() {
 			</div>
 
 			<!-- Right: Chat -->
-			<div class="lg:col-span-3 min-h-0 h-[65vh] lg:h-auto">
+			<div class="h-[65vh] lg:col-span-3 lg:h-auto lg:min-h-0">
 				<div class="card flex flex-col h-full overflow-hidden">
 					<div class="px-6 py-2 bg-amber-50 border-b border-amber-200 text-center">
 						<span class="text-xs text-amber-700 font-medium">Playground 模式 — 使用真实 API Key 调用，产生实际费用</span>
