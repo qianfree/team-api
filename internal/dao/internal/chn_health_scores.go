@@ -23,12 +23,12 @@ type ChnHealthScoresDao struct {
 type ChnHealthScoresColumns struct {
 	Id                  string // 主键ID
 	ChannelId           string // 关联渠道ID
-	SuccessRate         string // 请求成功率（0-100）
-	LatencyMs           string // 平均延迟（毫秒）
-	StabilityScore      string // 稳定性评分（0-100，基于延迟波动计算）
-	ConsecutiveFailures string // 连续失败次数（成功后归零）
-	HealthScore         string // 综合健康度（0-100）= 成功率×0.40 + 延迟分×0.25 + 稳定性×0.20 + 连续失败分×0.15
-	CalculatedAt        string // 最近一次计算时间
+	SuccessRate         string // 成功率（0-100）= 该渠道各模型 succ_ewma 均值×100，仅统计有真实上报的模型
+	LatencyMs           string // 平均延迟（毫秒）= 该渠道各模型 lat_ewma 均值，仅统计有真实上报的模型；仅展示用，不参与健康分计算
+	StabilityScore      string // 【已废弃】稳定性评分，健康体系重写后不再写入，保留列仅为兼容历史数据
+	ConsecutiveFailures string // 【已废弃】连续失败次数，已由 Redis 熔断器的滑动窗口计数取代（dispatch:v1:breaker:*），保留列仅为兼容历史数据
+	HealthScore         string // 综合健康度（0-100）= avg(succ_ewma)^α × 100，α 取路由策略 health.alpha（默认 2），与调度 healthFactor 同源；每 5 分钟由维护任务聚合落盘，另可由渠道测试/重置健康度即时触发；Redis 读失败或全部模型无真实上报时保留旧值不覆盖。调度决策不读此表，仅供管理后台展示
+	CalculatedAt        string // 最近一次聚合落盘时间
 	CreatedAt           string // 创建时间
 	UpdatedAt           string // 更新时间
 }
