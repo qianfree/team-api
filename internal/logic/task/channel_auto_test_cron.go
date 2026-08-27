@@ -34,10 +34,8 @@ func AutoTestChannels(ctx context.Context) {
 		return
 	}
 	if len(channels) == 0 {
-		g.Log().Infof(ctx, "[ChannelProbe] 自动探测开始: 无待探测渠道（活跃且配置了 test_model 的渠道为 0）")
 		return
 	}
-	g.Log().Infof(ctx, "[ChannelProbe] 自动探测开始: 待探测活跃渠道 %d 个", len(channels))
 
 	successCount := 0
 	failCount := 0
@@ -48,10 +46,10 @@ func AutoTestChannels(ctx context.Context) {
 		} else {
 			failCount++
 		}
-		// 成功/失败明细日志由 TestChannel 统一打印（含模型/延迟/错误），此处只做轮次汇总
+		// 失败明细由 TestChannel 以 Warning 打印（含模型/延迟/错误），此处仅 Debug 级轮次汇总
 	}
 
-	g.Log().Infof(ctx, "[ChannelProbe] 自动探测完成: 共 %d 个渠道 | 成功 %d | 失败 %d",
+	g.Log().Debugf(ctx, "[ChannelProbe] 自动探测完成: 共 %d 个渠道 | 成功 %d | 失败 %d",
 		len(channels), successCount, failCount)
 }
 

@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gogf/gf/v2/frame/g"
-
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	relaycommon "github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -52,15 +50,12 @@ func doTestHTTPRequest(ctx context.Context, method, reqURL string, headers map[s
 }
 
 // executeTest 封装通用的测试请求执行和结果处理逻辑
-func executeTest(ctx context.Context, provider, method, reqURL string, headers map[string]string, body []byte, useProxy bool) testResult {
+func executeTest(ctx context.Context, method, reqURL string, headers map[string]string, body []byte, useProxy bool) testResult {
 	maskedHdrs := maskHeaders(headers)
 	bodyStr := string(body)
 
-	g.Log().Infof(ctx, "[ChannelProbe]%s | 发送请求 | %s %s | 代理: %v", provider, method, reqURL, useProxy)
-
 	resp, err := doTestHTTPRequest(ctx, method, reqURL, headers, body, useProxy)
 	if err != nil {
-		g.Log().Warningf(ctx, "[ChannelProbe]%s | 请求失败 | %s | 错误: %v", provider, reqURL, err)
 		return testResult{
 			Error:   fmt.Sprintf("请求失败: %v", err),
 			Request: buildReqDetail(method, reqURL, maskedHdrs, bodyStr),
@@ -72,7 +67,6 @@ func executeTest(ctx context.Context, provider, method, reqURL string, headers m
 	respStr := string(respBody)
 
 	if resp.StatusCode != 200 {
-		g.Log().Warningf(ctx, "[ChannelProbe]%s | 测试失败 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
 		return testResult{
 			Success:  false,
 			Error:    fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateStr(respStr, 500)),
@@ -81,7 +75,6 @@ func executeTest(ctx context.Context, provider, method, reqURL string, headers m
 		}
 	}
 
-	g.Log().Infof(ctx, "[ChannelProbe]%s | 测试成功 | HTTP %d | 响应: %s", provider, resp.StatusCode, truncateStr(respStr, 200))
 	return testResult{
 		Success:  true,
 		Response: truncateStr(respStr, 500),
@@ -101,7 +94,7 @@ func testOpenAI(ctx context.Context, baseURL, apiKey, modelName string, useProxy
 		"Authorization": "Bearer " + apiKey,
 		"Content-Type":  "application/json",
 	}
-	return executeTest(ctx, "OpenAI", "POST", reqURL, headers, bodyJSON, useProxy)
+	return executeTest(ctx, "POST", reqURL, headers, bodyJSON, useProxy)
 }
 
 func testClaude(ctx context.Context, baseURL, apiKey, modelName string, useProxy bool) testResult {
@@ -117,7 +110,7 @@ func testClaude(ctx context.Context, baseURL, apiKey, modelName string, useProxy
 		"anthropic-version": "2023-06-01",
 		"Content-Type":      "application/json",
 	}
-	return executeTest(ctx, "Claude", "POST", reqURL, headers, bodyJSON, useProxy)
+	return executeTest(ctx, "POST", reqURL, headers, bodyJSON, useProxy)
 }
 
 func testGemini(ctx context.Context, baseURL, apiKey, modelName string, useProxy bool) testResult {
@@ -135,7 +128,7 @@ func testGemini(ctx context.Context, baseURL, apiKey, modelName string, useProxy
 		"x-goog-api-key": apiKey,
 		"Content-Type":   "application/json",
 	}
-	return executeTest(ctx, "Gemini", "POST", reqURL, headers, bodyJSON, useProxy)
+	return executeTest(ctx, "POST", reqURL, headers, bodyJSON, useProxy)
 }
 
 func testZhipu(ctx context.Context, baseURL, apiKey, modelName string, useProxy bool) testResult {
@@ -150,7 +143,7 @@ func testZhipu(ctx context.Context, baseURL, apiKey, modelName string, useProxy 
 		"Authorization": "Bearer " + apiKey,
 		"Content-Type":  "application/json",
 	}
-	return executeTest(ctx, "Zhipu", "POST", reqURL, headers, bodyJSON, useProxy)
+	return executeTest(ctx, "POST", reqURL, headers, bodyJSON, useProxy)
 }
 
 func buildReqDetail(method, url string, headers map[string]string, body string) *v1.ChannelTestReqDetail {
