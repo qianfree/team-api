@@ -128,7 +128,7 @@ function goToTask(taskId: string) {
 }
 
 const columns: TableColumnData[] = [
-	{ title: 'ID', dataIndex: 'id', width: 100 },
+	{ title: '时间', dataIndex: 'created_at', width: 180 },
 	{ title: '租户', dataIndex: 'tenant_name', width: 120, ellipsis: true, render({ record }) {
 			return record.tenant_name || record.tenant_id
 		}},
@@ -180,7 +180,6 @@ const columns: TableColumnData[] = [
 			return h(Tag, { color: auditLevelTagColor[record.audit_level] || 'gray', size: 'small' }, () => auditLevelLabel[record.audit_level] || record.audit_level)
 		},
 	},
-	{ title: '时间', dataIndex: 'created_at', width: 180 },
 	{
 		title: '操作', dataIndex: 'actions', width: 80, fixed: 'right',
 		render({ record }) {
