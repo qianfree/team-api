@@ -10,7 +10,7 @@ import (
 
 func retryPol() RetryPolicy { return DefaultRoutingPolicy().Retry }
 
-func TestDecide_硬规则优先(t *testing.T) {
+func TestDecide_HardRulesTakePrecedence(t *testing.T) {
 	p := retryPol()
 
 	// 已向客户端写出响应：任何类别都终止
@@ -33,7 +33,7 @@ func TestDecide_硬规则优先(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_客户端错误不重试(t *testing.T) {
+func TestDecide_ClientErrorNoRetry(t *testing.T) {
 	p := retryPol()
 	d, _ := Decide(ErrClassClient, DeliveryResponseReceived, ReplaySafe, 0, AttemptState{}, p)
 	assert.Equal(t, DecisionAbort, d)
@@ -41,7 +41,7 @@ func TestDecide_客户端错误不重试(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_瞬时错误原地重试与退避(t *testing.T) {
+func TestDecide_TransientInPlaceRetryWithBackoff(t *testing.T) {
 	p := retryPol() // inPlaceBudget=2, base=100ms, max=1000ms
 
 	d, backoff := Decide(ErrClassTransient, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{InPlaceUsed: 0}, p)
@@ -61,14 +61,14 @@ func TestDecide_瞬时错误原地重试与退避(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_MaybeSent禁止原地(t *testing.T) {
+func TestDecide_MaybeSentForbidsInPlace(t *testing.T) {
 	p := retryPol()
 	// TRANSIENT + MaybeSent：可能已送达，原地重发有重复风险 → 直接 failover
 	d, _ := Decide(ErrClassTransient, DeliveryMaybeSent, ReplayCostly, 0, AttemptState{}, p)
 	assert.Equal(t, DecisionFailover, d)
 }
 
-func TestDecide_超时不原地重试(t *testing.T) {
+func TestDecide_TimeoutNoInPlaceRetry(t *testing.T) {
 	p := retryPol()
 	// TIMEOUT（含 504）不原地重试
 	d, _ := Decide(ErrClassTimeout, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{}, p)
@@ -82,7 +82,7 @@ func TestDecide_超时不原地重试(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_限流RetryAfter(t *testing.T) {
+func TestDecide_RateLimitRetryAfter(t *testing.T) {
 	p := retryPol() // rateLimitWaitMax=2000ms
 
 	// Retry-After 短 → 原地等待，退避 = Retry-After
@@ -99,7 +99,7 @@ func TestDecide_限流RetryAfter(t *testing.T) {
 	assert.Equal(t, DecisionFailover, d)
 }
 
-func TestDecide_凭证轮换(t *testing.T) {
+func TestDecide_CredentialRotation(t *testing.T) {
 	p := retryPol() // credRotateBudget=1
 
 	// 有备用 Key 且预算未耗尽 → 轮换
@@ -120,13 +120,13 @@ func TestDecide_凭证轮换(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_渠道致命零原地(t *testing.T) {
+func TestDecide_ChannelFatalZeroInPlace(t *testing.T) {
 	p := retryPol()
 	d, _ := Decide(ErrClassChannelFatal, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{}, p)
 	assert.Equal(t, DecisionFailover, d)
 }
 
-func TestDecide_模型致命直接failover(t *testing.T) {
+func TestDecide_ModelFatalFailsOverDirectly(t *testing.T) {
 	p := retryPol()
 	// 模型致命与渠道致命同语义：零原地重试、立即 failover
 	d, _ := Decide(ErrClassModelFatal, DeliveryResponseReceived, ReplayCostly, 0, AttemptState{}, p)
@@ -137,7 +137,7 @@ func TestDecide_模型致命直接failover(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d)
 }
 
-func TestDecide_ReplayUnsafe预算收紧(t *testing.T) {
+func TestDecide_ReplayUnsafeTightensBudget(t *testing.T) {
 	p := retryPol() // unsafe 预算默认 0/0
 
 	// 已收到错误响应（非 NotSent）→ Abort
@@ -156,9 +156,9 @@ func TestDecide_ReplayUnsafe预算收紧(t *testing.T) {
 	assert.Equal(t, DecisionAbort, d, "非 NotSent 即使有预算也不允许 failover")
 }
 
-// TestDecide_属性_任意错误序列不突破预算 属性测试：模拟协调器的预算记账，
+// TestDecide_Property_AnyErrorSequenceStaysWithinBudget 属性测试：模拟协调器的预算记账，
 // 用随机错误序列驱动 FSM，断言任何序列都不会突破预算且必然终止。
-func TestDecide_属性_任意错误序列不突破预算(t *testing.T) {
+func TestDecide_Property_AnyErrorSequenceStaysWithinBudget(t *testing.T) {
 	p := retryPol()
 	classes := []ErrorClass{ErrClassClient, ErrClassTransient, ErrClassRateLimit, ErrClassCredential, ErrClassChannelFatal, ErrClassModelFatal, ErrClassTimeout}
 	deliveries := []DeliveryState{DeliveryNotSent, DeliveryMaybeSent, DeliveryResponseReceived}
@@ -203,7 +203,7 @@ func TestDecide_属性_任意错误序列不突破预算(t *testing.T) {
 	}
 }
 
-func TestBackoffMs_封顶(t *testing.T) {
+func TestBackoffMs_Capped(t *testing.T) {
 	p := retryPol() // base=100, max=1000
 	assert.Equal(t, int64(100), backoffMs(0, p))
 	assert.Equal(t, int64(200), backoffMs(1, p))
@@ -213,11 +213,11 @@ func TestBackoffMs_封顶(t *testing.T) {
 	assert.Equal(t, int64(1000), backoffMs(60, p), "大次数不溢出")
 }
 
-func TestRoutingPolicy_默认值合法(t *testing.T) {
+func TestRoutingPolicy_DefaultsAreValid(t *testing.T) {
 	assert.NoError(t, DefaultRoutingPolicy().Validate())
 }
 
-func TestRoutingPolicy_校验拒绝非法配置(t *testing.T) {
+func TestRoutingPolicy_ValidateRejectsInvalidConfig(t *testing.T) {
 	mutate := func(f func(*RoutingPolicy)) *RoutingPolicy {
 		p := DefaultRoutingPolicy()
 		f(p)

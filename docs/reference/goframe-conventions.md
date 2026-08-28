@@ -786,7 +786,7 @@ err := g.DB().Transaction(dbCtx, func(txCtx context.Context, tx gdb.TX) error {
 
 **原因**：`g.Redis().Do(ctx, "HMGET", key, "f1", "f2")` 对**不存在的 key/字段**，经 gf redis contrib 驱动转换后返回的是 `[]string{"", ""}`（空字符串），`.Vars()` 后每个元素 **`IsNil()==false`**、`Float64()==0`。`ReadRuntime` 用 `!vals[0].IsNil()` 判「有数据才覆盖乐观默认值 1」，判断永远为真 → 默认值被 0 覆盖。调度打分侧 `healthFactor` 恰好有 `succ<=0 && lat==0 视为满分` 的兜底所以转发不受影响，但快照聚合没有兜底，展示值被拖垮。`readBreaker` 同模式（空串 state 恰好 Int()==0==CLOSED 侥幸正确）。
 
-**修复**：`internal/dispatchadapter/state_redis.go` `ReadRuntime`/`readBreaker` 改为 `vals[i].String() != ""` 判有无数据；空串一律按无数据处理保留默认值。回归测试 `Test缺失健康键读默认值`。
+**修复**：`internal/dispatchadapter/state_redis.go` `ReadRuntime`/`readBreaker` 改为 `vals[i].String() != ""` 判有无数据；空串一律按无数据处理保留默认值。回归测试 `TestMissingHealthKey_ReadsDefault`。
 
 **正确做法（通用规则）**：判断 gf redis `HMGET`/批量读的字段是否存在，**不要依赖 `IsNil()`**（驱动转换后 nil 会变空字符串）；用 `String() != ""` 判断，或改用 Lua 脚本内 `HGET ... or '默认值'` 在 Redis 侧兜底。单 key `HGET` 缺失返回的是真 nil（`IsNil()==true`），两者行为不一致，混用时尤其注意。
 

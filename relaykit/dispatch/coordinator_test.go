@@ -113,7 +113,7 @@ func testProfile() RequestProfile {
 // 场景测试
 // ---------------------------------------------------------------------------
 
-func TestCoordinator_首次选择与绑定命中(t *testing.T) {
+func TestCoordinator_FirstSelectionAndBindingHit(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
@@ -143,7 +143,7 @@ func TestCoordinator_首次选择与绑定命中(t *testing.T) {
 	assert.Equal(t, d1.Channel.ID, d2.Channel.ID)
 }
 
-func TestCoordinator_守卫_健康跌破重绑(t *testing.T) {
+func TestCoordinator_Guard_RebindsOnHealthDrop(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -160,7 +160,7 @@ func TestCoordinator_守卫_健康跌破重绑(t *testing.T) {
 	assert.Equal(t, 1, state.setBinds, "重绑写入新绑定")
 }
 
-func TestCoordinator_守卫_饱和渠道重绑(t *testing.T) {
+func TestCoordinator_Guard_RebindsOnSaturatedChannel(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -178,9 +178,9 @@ func TestCoordinator_守卫_饱和渠道重绑(t *testing.T) {
 	assert.NotEqual(t, ReasonBind, d.Reason)
 }
 
-// TestCoordinator_守卫_glm缺陷回归 溢出到 secondary 建立的绑定必须保持稳定：
+// TestCoordinator_Guard_GLMDefectRegression 溢出到 secondary 建立的绑定必须保持稳定：
 // 守卫判据与 tier/cost 解耦，不得因 tierFactor 低而每请求重绑（规避 keepThreshold 缺陷）。
-func TestCoordinator_守卫_glm缺陷回归(t *testing.T) {
+func TestCoordinator_Guard_GLMDefectRegression(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
@@ -201,7 +201,7 @@ func TestCoordinator_守卫_glm缺陷回归(t *testing.T) {
 	assert.Zero(t, state.setBinds, "不得发生任何重绑")
 }
 
-func TestCoordinator_502原地重试与预算耗尽(t *testing.T) {
+func TestCoordinator_502InPlaceRetryUntilBudgetExhausted(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
@@ -245,7 +245,7 @@ func TestCoordinator_502原地重试与预算耗尽(t *testing.T) {
 	}
 }
 
-func TestCoordinator_401凭证轮换链路(t *testing.T) {
+func TestCoordinator_401CredentialRotationPath(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -284,7 +284,7 @@ func TestCoordinator_401凭证轮换链路(t *testing.T) {
 	assert.Equal(t, int64(21), d.KeyID)
 }
 
-func TestCoordinator_单Key渠道401直接failover(t *testing.T) {
+func TestCoordinator_SingleKeyChannel401FailsOverDirectly(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -301,7 +301,7 @@ func TestCoordinator_单Key渠道401直接failover(t *testing.T) {
 	assert.True(t, state.cooled[11])
 }
 
-func TestCoordinator_全Key冷却渠道跳过(t *testing.T) {
+func TestCoordinator_SkipsChannelWithAllKeysCooled(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	state.cooled[11] = true
@@ -320,10 +320,10 @@ func TestCoordinator_全Key冷却渠道跳过(t *testing.T) {
 	assert.Equal(t, 1, d.Excluded.Request)
 }
 
-// TestCoordinator_无可用渠道诊断带冷却KeyID 凭证冷却只存在于 Redis 且只靠 TTL 自愈，
+// TestCoordinator_NoChannelDiagIncludesCooledKeyIDs 凭证冷却只存在于 Redis 且只靠 TTL 自愈，
 // 诊断不给出 keyID 的话运维无从判断该等 TTL 还是该去解除（换 Key 不改 keyID，
 // 陈旧标记会让新 Key 被整段跳过，且期间连上游请求都不会发）。
-func TestCoordinator_无可用渠道诊断带冷却KeyID(t *testing.T) {
+func TestCoordinator_NoChannelDiagIncludesCooledKeyIDs(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	state.cooled[11] = true
@@ -344,7 +344,7 @@ func TestCoordinator_无可用渠道诊断带冷却KeyID(t *testing.T) {
 	assert.Contains(t, diag.Summary(), "凭证全部冷却×2(key=11,21)")
 }
 
-func TestCoordinator_租约拒绝不扣预算(t *testing.T) {
+func TestCoordinator_LeaseDenialDoesNotConsumeBudget(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	state.leaseDeny[1] = true
@@ -364,7 +364,7 @@ func TestCoordinator_租约拒绝不扣预算(t *testing.T) {
 	assert.Zero(t, s.attempt.FailoverUsed, "租约失败不扣 failover 预算")
 }
 
-func TestCoordinator_熔断排除与探测放行(t *testing.T) {
+func TestCoordinator_BreakerExclusionAndProbeAdmission(t *testing.T) {
 	ctx := context.Background()
 
 	open := healthyChannel(1, TierPrimary, 100)
@@ -393,7 +393,7 @@ func TestCoordinator_熔断排除与探测放行(t *testing.T) {
 	assert.Equal(t, ReasonProbe, d2.Reason)
 }
 
-func TestCoordinator_模型级熔断排除(t *testing.T) {
+func TestCoordinator_ModelBreakerExclusion(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -407,9 +407,9 @@ func TestCoordinator_模型级熔断排除(t *testing.T) {
 	assert.Equal(t, int64(2), d.Channel.ID)
 }
 
-// TestCoordinator_模型级半开探测 模型级熔断冷却期满（HALF_OPEN）走模型级探测令牌：
+// TestCoordinator_ModelHalfOpenProbe 模型级熔断冷却期满（HALF_OPEN）走模型级探测令牌：
 // 渠道级熔断 CLOSED 时不再被渠道级令牌误拒（修复模型级熔断无法靠流量恢复的死锁）。
-func TestCoordinator_模型级半开探测(t *testing.T) {
+func TestCoordinator_ModelHalfOpenProbe(t *testing.T) {
 	ctx := context.Background()
 
 	modelHalf := healthyChannel(1, TierPrimary, 100)
@@ -436,9 +436,9 @@ func TestCoordinator_模型级半开探测(t *testing.T) {
 	assert.Equal(t, 1, d2.Excluded.Breaker, "模型级探测拒绝计入 Breaker 排除")
 }
 
-// TestCoordinator_双级别半开组合 渠道级与模型级同时 HALF_OPEN：两枚令牌都取，
+// TestCoordinator_DualLevelHalfOpenCombination 渠道级与模型级同时 HALF_OPEN：两枚令牌都取，
 // 任一被拒即排除；模型级令牌先取（被拒不消耗渠道级令牌）。
-func TestCoordinator_双级别半开组合(t *testing.T) {
+func TestCoordinator_DualLevelHalfOpenCombination(t *testing.T) {
 	ctx := context.Background()
 
 	both := healthyChannel(1, TierPrimary, 100)
@@ -467,7 +467,7 @@ func TestCoordinator_双级别半开组合(t *testing.T) {
 	assert.Equal(t, ReasonProbe, d2.Reason)
 }
 
-func TestCoordinator_tier扩组兜底(t *testing.T) {
+func TestCoordinator_TierExpansionFallback(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -488,7 +488,7 @@ func TestCoordinator_tier扩组兜底(t *testing.T) {
 	assert.Equal(t, int64(2), d.Channel.ID)
 }
 
-func TestCoordinator_溢出reason(t *testing.T) {
+func TestCoordinator_OverflowReason(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -504,7 +504,7 @@ func TestCoordinator_溢出reason(t *testing.T) {
 	assert.Equal(t, ReasonOverflow, d.Reason, "primary 在场但饱和 → 溢出")
 }
 
-func TestCoordinator_ReplayUnsafe_MaybeSent必Abort(t *testing.T) {
+func TestCoordinator_ReplayUnsafe_MaybeSentMustAbort(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state, healthyChannel(1, TierPrimary, 10))
@@ -519,7 +519,7 @@ func TestCoordinator_ReplayUnsafe_MaybeSent必Abort(t *testing.T) {
 	assert.Nil(t, s.Next(ctx))
 }
 
-func TestCoordinator_504不原地重试(t *testing.T) {
+func TestCoordinator_504NoInPlaceRetry(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
@@ -538,7 +538,7 @@ func TestCoordinator_504不原地重试(t *testing.T) {
 	assert.NotEqual(t, first, d.Channel.ID)
 }
 
-func TestCoordinator_429RetryAfter原地等待(t *testing.T) {
+func TestCoordinator_429RetryAfterWaitsInPlace(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state, healthyChannel(1, TierPrimary, 10))
@@ -551,7 +551,7 @@ func TestCoordinator_429RetryAfter原地等待(t *testing.T) {
 	assert.Equal(t, 1500*time.Millisecond, backoff, "遵从 Retry-After（entropy=0 无 jitter）")
 }
 
-func TestCoordinator_客户端错误Abort且不上报(t *testing.T) {
+func TestCoordinator_ClientErrorAbortsWithoutReporting(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state, healthyChannel(1, TierPrimary, 10))
@@ -564,7 +564,7 @@ func TestCoordinator_客户端错误Abort且不上报(t *testing.T) {
 	assert.Empty(t, state.outcomes, "客户端错误不计渠道健康")
 }
 
-func TestCoordinator_总时限耗尽Abort(t *testing.T) {
+func TestCoordinator_TotalDeadlineExhaustedAborts(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, clock := newTestCoordinator(state,
@@ -580,7 +580,7 @@ func TestCoordinator_总时限耗尽Abort(t *testing.T) {
 	assert.Equal(t, DecisionAbort, dec)
 }
 
-func TestCoordinator_全渠道耗尽返回nil(t *testing.T) {
+func TestCoordinator_ReturnsNilWhenAllChannelsExhausted(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
@@ -605,7 +605,7 @@ func TestCoordinator_全渠道耗尽返回nil(t *testing.T) {
 	s.Finish(ctx, false, 0)
 }
 
-func TestCoordinator_jitter叠加(t *testing.T) {
+func TestCoordinator_JitterApplied(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	clock := &fakeClock{t: time.UnixMilli(0)}
@@ -622,7 +622,7 @@ func TestCoordinator_jitter叠加(t *testing.T) {
 	assert.Equal(t, 150*time.Millisecond, backoff, "100ms + 50% jitter")
 }
 
-func TestCoordinator_RefreshLease透传(t *testing.T) {
+func TestCoordinator_RefreshLeasePassThrough(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state, healthyChannel(1, TierPrimary, 10))
@@ -634,7 +634,7 @@ func TestCoordinator_RefreshLease透传(t *testing.T) {
 	assert.Equal(t, 1, state.refreshed[d.Channel.ID])
 }
 
-func TestCoordinator_Finish幂等且失败不续绑(t *testing.T) {
+func TestCoordinator_FinishIdempotentAndNoTouchOnFailure(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state, healthyChannel(1, TierPrimary, 10))
@@ -651,7 +651,7 @@ func TestCoordinator_Finish幂等且失败不续绑(t *testing.T) {
 	assert.Nil(t, s.Next(ctx), "Finish 后不再返回决策")
 }
 
-func TestCoordinator_策略热更新(t *testing.T) {
+func TestCoordinator_PolicyHotReload(t *testing.T) {
 	co, _ := newTestCoordinator(newFakeState(), healthyChannel(1, TierPrimary, 10))
 	p2 := DefaultRoutingPolicy()
 	p2.Version = 2
@@ -661,9 +661,9 @@ func TestCoordinator_策略热更新(t *testing.T) {
 	assert.Equal(t, 2, co.Policy().Version, "nil 策略不生效")
 }
 
-// TestCoordinator_防抖_headroom抖动 绑定守卫防抖：被绑渠道余量在守卫线上方抖动时，
+// TestCoordinator_Debounce_HeadroomJitter 绑定守卫防抖：被绑渠道余量在守卫线上方抖动时，
 // 绑定必须保持稳定（重绑次数为 0）——纯 HRW 会横跳，守卫是防抖层。
-func TestCoordinator_防抖_headroom抖动(t *testing.T) {
+func TestCoordinator_Debounce_HeadroomJitter(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 
@@ -699,8 +699,8 @@ func TestCoordinator_防抖_headroom抖动(t *testing.T) {
 	assert.Equal(t, rebinds, state.setBinds, "抖动期间重绑次数必须为 0")
 }
 
-// TestCoordinator_租户级策略覆盖 profile.Policy 非空时本会话使用租户策略而非全局策略。
-func TestCoordinator_租户级策略覆盖(t *testing.T) {
+// TestCoordinator_TenantPolicyOverride profile.Policy 非空时本会话使用租户策略而非全局策略。
+func TestCoordinator_TenantPolicyOverride(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()
 	co, _ := newTestCoordinator(state,
