@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
 	Message, Tag, Tooltip, Space, Button,
 } from '@arco-design/web-vue'
-import { IconArchive, IconSave } from '@arco-design/web-vue/es/icon'
+import { IconSave, IconFile, IconBarChart, IconCamera, IconExclamationCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
-import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
@@ -160,6 +159,8 @@ const billingSourceLabel: Record<string, string> = {
 }
 
 const detailVisible = ref(false)
+// 计费快照默认折叠，需要时展开查看定价/倍率等审计细节
+const snapshotCollapsed = ref(true)
 const detailLog = ref<any>(null)
 const router = useRouter()
 
@@ -171,6 +172,25 @@ function formatCost(n: number): string {
 function formatMs(n: number): string {
 	if (n == null || n <= 0) return '-'
 	return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(2)}s`
+}
+
+// 耗时分级着色：按三档阈值返回 绿/蓝/橙，超出最大档返回红色（输入毫秒）
+function durationColor(ms: number, thresholds: [number, number, number]): string {
+	if (ms == null || ms <= 0) return 'inherit'
+	if (ms < thresholds[0]) return '#00b42a' // 绿色：优
+	if (ms < thresholds[1]) return '#165dff' // 蓝色：良
+	if (ms < thresholds[2]) return '#ff7d00' // 橙色：中
+	return '#f53f3f' // 红色：差
+}
+
+// 延迟分级：<30s 绿 / <60s 蓝 / <180s 橙 / ≥180s 红
+function latencyColor(ms: number): string {
+	return durationColor(ms, [30000, 60000, 180000])
+}
+
+// TTFT 分级：<3s 绿 / <10s 蓝 / <30s 橙 / ≥30s 红
+function ttftColor(ms: number): string {
+	return durationColor(ms, [3000, 10000, 30000])
 }
 
 function formatTime(s: string): string {
@@ -203,13 +223,84 @@ function totalTokens(log: any): number {
 }
 
 function parseSnapshot(log: any): any {
-	if (!log.billing_snapshot) return null
+	if (!log?.billing_snapshot) return null
 	try {
 		return typeof log.billing_snapshot === 'string' ? JSON.parse(log.billing_snapshot) : log.billing_snapshot
 	} catch {
 		return null
 	}
 }
+
+// 计费快照解析结果：computed 只解析一次，避免模板里几十处调用反复 JSON.parse
+const snapshot = computed(() => parseSnapshot(detailLog.value))
+
+// 快照 token_costs 的 key → 中文标签
+const tokenCostLabels: Record<string, string> = {
+	input: '输入',
+	output: '输出',
+	cache_read: '缓存读取',
+	cache_creation: '缓存创建',
+	cache_creation_5m: '缓存创建(5分钟)',
+	cache_creation_1h: '缓存创建(1小时)',
+}
+
+// 消费明细小票行：divider=true 渲染分隔线，strong=true 渲染小计行，total=true 渲染合计行
+interface ReceiptRow {
+	label?: string
+	value?: string
+	sub?: string
+	valueClass?: string
+	strong?: boolean
+	total?: boolean
+	divider?: boolean
+}
+
+function tokenRow(label: string, tokens: number | null | undefined): ReceiptRow {
+	return { label, value: (tokens || 0).toLocaleString() }
+}
+
+// 小票行数据驱动生成，替代手写重复模板
+const receiptRows = computed<ReceiptRow[]>(() => {
+	const d = detailLog.value
+	if (!d) return []
+	const rows: ReceiptRow[] = [
+		tokenRow('输入 Token', d.input_tokens),
+		tokenRow('输出 Token', d.output_tokens),
+	]
+	if ((d.cache_read_tokens || 0) > 0) rows.push(tokenRow('缓存读取', d.cache_read_tokens))
+	if ((d.cache_creation_tokens || 0) > 0) rows.push(tokenRow('缓存创建', d.cache_creation_tokens))
+	if ((d.cache_creation_5m_tokens || 0) > 0) rows.push(tokenRow('缓存创建(5分钟)', d.cache_creation_5m_tokens))
+	if ((d.cache_creation_1h_tokens || 0) > 0) rows.push(tokenRow('缓存创建(1小时)', d.cache_creation_1h_tokens))
+	if ((d.reasoning_tokens || 0) > 0) rows.push(tokenRow('推理 Token', d.reasoning_tokens))
+	if ((d.audio_input_tokens || 0) > 0) rows.push(tokenRow('音频输入', d.audio_input_tokens))
+	if ((d.audio_output_tokens || 0) > 0) rows.push(tokenRow('音频输出', d.audio_output_tokens))
+	if ((d.image_output_tokens || 0) > 0) rows.push(tokenRow('图像输出', d.image_output_tokens))
+	if ((d.image_count || 0) > 0) rows.push({ label: '生成图片', value: `${d.image_count} 张`, sub: d.image_size ? `(${d.image_size})` : '' })
+	// Token 合计行
+	rows.push({ label: 'Token 合计', value: totalTokens(d).toLocaleString(), strong: true })
+	rows.push({ divider: true })
+	rows.push({ label: '输入费用', value: formatCost(d.input_cost || 0) })
+	rows.push({ label: '输出费用', value: formatCost(d.output_cost || 0) })
+	if ((d.cache_creation_cost || 0) > 0) rows.push({ label: '缓存创建费用', value: formatCost(d.cache_creation_cost) })
+	if ((d.cache_read_cost || 0) > 0) rows.push({ label: '缓存读取费用', value: formatCost(d.cache_read_cost) })
+	const rm = d.rate_multiplier
+	rows.push({
+		label: '费率倍率',
+		value: rm && rm !== 1 ? `${rm.toFixed(4)}x` : '-',
+		valueClass: rm && rm !== 1 ? (rm < 1 ? 'text-success' : 'text-warning') : undefined,
+	})
+	rows.push({ label: '基础费用', value: formatCost(d.total_cost || 0) })
+	rows.push({ label: '定价来源', value: billingSourceLabel[d.billing_source] || d.billing_source || '-' })
+	if ((d.pre_deduct_amount || 0) > 0 || (d.refund_amount || 0) > 0 || (d.supplement_amount || 0) > 0) {
+		rows.push({ divider: true })
+		rows.push({ label: '预扣金额', value: formatCost(d.pre_deduct_amount) })
+		if ((d.refund_amount || 0) > 0) rows.push({ label: '退回金额', value: formatCost(d.refund_amount), valueClass: 'text-success' })
+		if ((d.supplement_amount || 0) > 0) rows.push({ label: '补扣金额', value: formatCost(d.supplement_amount), valueClass: 'text-warning' })
+	}
+	rows.push({ divider: true })
+	rows.push({ label: '实际费用', value: formatCost(d.actual_cost || 0), total: true })
+	return rows
+})
 
 function copyText(text: string) {
 	navigator.clipboard.writeText(text).then(() => {
@@ -224,32 +315,11 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
-// 转发路径追踪（从审计日志按 request_id 懒加载，用量日志表不存 trace）
-const forwardingTrace = ref<any>(null)
-const forwardingTraceLoading = ref(false)
-const forwardingTraceFound = ref(false)
-
-async function fetchForwardingTrace(requestId: string) {
-	forwardingTrace.value = null
-	forwardingTraceFound.value = false
-	if (!requestId) return
-	forwardingTraceLoading.value = true
-	try {
-		const res: any = await request.get(`/admin/audit/forwarding-trace/${encodeURIComponent(requestId)}`)
-		const d = res.data?.data
-		forwardingTraceFound.value = !!d?.found
-		forwardingTrace.value = d?.forwarding_trace || null
-	} catch {
-		/* 静默：trace 为辅助信息，失败不打扰用户 */
-	} finally {
-		forwardingTraceLoading.value = false
-	}
-}
-
 function openDetail(record: any) {
 	detailLog.value = record
+	// 每次打开重置为折叠，避免上一条记录的快照展开状态带入
+	snapshotCollapsed.value = true
 	detailVisible.value = true
-	fetchForwardingTrace(record.request_id)
 }
 
 function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
@@ -260,7 +330,12 @@ function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-val
 }
 
 const columns: TableColumnData[] = [
-	{ title: 'ID', dataIndex: 'id', width: 100 },
+	{
+		title: '时间', dataIndex: 'created_at', width: 160,
+		render({ record }) {
+			return h('span', { style: 'white-space: nowrap' }, formatTime(record.created_at))
+		},
+	},
 	{
 		title: '租户', dataIndex: 'tenant_name', width: 120, ellipsis: true,
 		render({ record }) { return record.tenant_name || record.tenant_id },
@@ -338,14 +413,15 @@ const columns: TableColumnData[] = [
 							h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '↓'),
 							h('span', { class: 'token-value' }, (record.output_tokens || 0).toLocaleString()),
 						]),
+            h('span', { class: 'token-item', style: 'color: #0fc6c2', 'aria-label': `缓存读取 ${(record.cache_read_tokens || 0).toLocaleString()}` }, [
+              h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '⚡'),
+              h('span', { class: 'token-value' }, (record.cache_read_tokens || 0).toLocaleString()),
+            ]),
 						h('span', { class: 'token-item', style: 'color: #ff7d00', 'aria-label': `缓存写入 ${(record.cache_creation_tokens || 0).toLocaleString()}` }, [
 							h(IconSave, { size: 13, 'aria-hidden': 'true' }),
 							h('span', { class: 'token-value' }, (record.cache_creation_tokens || 0).toLocaleString()),
 						]),
-						h('span', { class: 'token-item', style: 'color: #0fc6c2', 'aria-label': `缓存读取 ${(record.cache_read_tokens || 0).toLocaleString()}` }, [
-							h('span', { class: 'token-symbol', 'aria-hidden': 'true' }, '⚡'),
-							h('span', { class: 'token-value' }, (record.cache_read_tokens || 0).toLocaleString()),
-						]),
+
 					]),
 				]),
 				content: () => h('div', { class: 'dark-tooltip' }, tooltipContent),
@@ -391,16 +467,16 @@ const columns: TableColumnData[] = [
 		title: '延迟', dataIndex: 'latency_ms', width: 100,
 		render({ record }) {
 			const items: any[] = [
-				h('div', { class: 'time-text' }, formatMs(record.latency_ms)),
+				h('div', { class: 'time-text', style: { color: latencyColor(record.latency_ms) } }, formatMs(record.latency_ms)),
 			]
 			if (record.first_token_ms > 0) {
-				items.push(h('div', { class: 'sub-text', style: 'font-size: 11px' }, `TTFT ${formatMs(record.first_token_ms)}`))
+				items.push(h('div', { class: 'sub-text', style: { fontSize: '11px', color: ttftColor(record.first_token_ms) } }, `TTFT ${formatMs(record.first_token_ms)}`))
 			}
 			return h('div', { style: 'line-height: 1.4' }, items)
 		},
 	},
 	{
-		title: '状态', dataIndex: 'status', width: 80,
+		title: '状态', dataIndex: 'status', width: 130,
 		render({ record }) {
 			const items: any[] = [
 				h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusLabel[record.status] || record.status),
@@ -409,12 +485,6 @@ const columns: TableColumnData[] = [
 				items.push(h('span', { class: 'retry-badge' }, `R${record.retry_index}`))
 			}
 			return h(Space, { size: 4 }, () => items)
-		},
-	},
-	{
-		title: '时间', dataIndex: 'created_at', width: 160,
-		render({ record }) {
-			return h('span', { class: 'time-text' }, formatTime(record.created_at))
 		},
 	},
 	{
@@ -715,18 +785,47 @@ const { exporting, exportFile } = useExport({
 		<a-modal
 			v-model:visible="detailVisible"
 			title="用量详情"
-			:width="720"
+			:width="isMobileView ? '92%' : 720"
 			:footer="false"
+			:body-style="{ maxHeight: '65vh', overflowY: 'auto' }"
 			unmount-on-close
 		>
 			<template v-if="detailLog">
+				<!-- 关键结果摘要：模型 / 状态 / 费用 / 耗时一眼可读 -->
+				<div class="detail-summary">
+					<div class="detail-summary-main">
+						<span class="summary-model">{{ detailLog.model_name }}<span v-if="hasUpstreamModel(detailLog)" class="summary-upstream"> ↳ {{ detailLog.upstream_model }}</span></span>
+						<a-tag :color="statusTagColor[detailLog.status]" size="small">{{ statusLabel[detailLog.status] || detailLog.status }}</a-tag>
+						<span v-if="detailLog.retry_index > 0" class="retry-badge">重试 {{ detailLog.retry_index }} 次</span>
+						<span class="summary-cost">{{ formatCost(detailLog.actual_cost || 0) }}</span>
+					</div>
+					<div class="detail-summary-sub">
+						<span :style="{ color: latencyColor(detailLog.latency_ms) }">总延迟 {{ formatMs(detailLog.latency_ms) }}</span>
+						<template v-if="detailLog.first_token_ms > 0">
+							<span class="summary-dot">·</span>
+							<span :style="{ color: ttftColor(detailLog.first_token_ms) }">首 Token {{ formatMs(detailLog.first_token_ms) }}</span>
+						</template>
+						<span class="summary-dot">·</span>
+						<span>{{ formatTime(detailLog.created_at) }}</span>
+						<a-tag v-if="detailLog.stream_end_reason" :color="detailLog.stream_end_reason === 'done' ? 'green' : 'gray'" size="small">{{ detailLog.stream_end_reason }}</a-tag>
+					</div>
+				</div>
+
+				<div v-if="detailLog.error_message" class="detail-section">
+					<div class="detail-section-title error-title">
+						<span class="detail-icon detail-icon-error"><IconExclamationCircle /></span>
+						错误信息
+					</div>
+					<div class="error-message">{{ detailLog.error_message }}</div>
+				</div>
+
 				<div class="detail-section">
 					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-doc"></span>
+						<span class="detail-icon"><IconFile /></span>
 						基本信息
 					</div>
 					<div class="detail-grid">
-						<div class="detail-item">
+						<div class="detail-item detail-item-full">
 							<span class="detail-label">请求 ID</span>
 							<span class="detail-value mono-text">
 								{{ detailLog.request_id }}
@@ -734,7 +833,7 @@ const { exporting, exportFile } = useExport({
 								<a-link class="copy-btn" @click="viewAuditLog(detailLog.request_id, detailLog.task_id || undefined)">查看审计日志</a-link>
 							</span>
 						</div>
-						<div v-if="detailLog.task_id" class="detail-item">
+						<div v-if="detailLog.task_id" class="detail-item detail-item-full">
 							<span class="detail-label">关联任务</span>
 							<span class="detail-value mono-text">
 								{{ detailLog.task_id }}
@@ -748,9 +847,9 @@ const { exporting, exportFile } = useExport({
 								<span v-if="detailLog.channel_type" class="sub-text">({{ detailLog.channel_type }})</span>
 							</span>
 						</div>
-						<div class="detail-item">
+						<div v-if="detailLog.relay_mode" class="detail-item">
 							<span class="detail-label">代理模式</span>
-							<span class="detail-value mono-text">{{ detailLog.relay_mode || '-' }}</span>
+							<span class="detail-value mono-text">{{ detailLog.relay_mode }}</span>
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">请求类型</span>
@@ -769,17 +868,10 @@ const { exporting, exportFile } = useExport({
 							</span>
 						</div>
 						<div class="detail-item">
-							<span class="detail-label">状态</span>
-							<span class="detail-value">
-								<a-tag :color="statusTagColor[detailLog.status]" size="small">
-									{{ statusLabel[detailLog.status] || detailLog.status }}
-								</a-tag>
-								<span v-if="detailLog.retry_index > 0" class="retry-badge">重试 {{ detailLog.retry_index }} 次</span>
+							<span class="detail-label">API Key</span>
+							<span class="detail-value mono-text">
+								{{ detailLog.api_key_name || detailLog.api_key_id || '-' }}<span v-if="detailLog.api_key_name && detailLog.api_key_id" class="sub-text">({{ detailLog.api_key_id }})</span>
 							</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">API Key ID</span>
-							<span class="detail-value mono-text">{{ detailLog.api_key_id || '-' }}</span>
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">客户端 IP</span>
@@ -799,228 +891,69 @@ const { exporting, exportFile } = useExport({
 						</div>
 						<div v-if="detailLog.user_agent" class="detail-item detail-item-full">
 							<span class="detail-label">User-Agent</span>
-							<span class="detail-value sub-text" :title="detailLog.user_agent">{{ detailLog.user_agent }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">时间</span>
-							<span class="detail-value">{{ formatTime(detailLog.created_at) }}</span>
-						</div>
-					</div>
-				</div>
-
-				<div v-if="hasUpstreamModel(detailLog)" class="detail-section">
-					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-arrow"></span>
-						模型映射
-					</div>
-					<div class="model-mapping">
-						<a-tag>{{ detailLog.model_name }}</a-tag>
-						<span class="mapping-arrow">&rarr;</span>
-						<a-tag color="arcoblue">{{ detailLog.upstream_model }}</a-tag>
-					</div>
-				</div>
-
-				<div class="detail-section">
-					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-chart"></span>
-						Token 使用量
-					</div>
-					<div class="detail-grid">
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-in"></span> 输入 Token</span>
-							<span class="detail-value">{{ (detailLog.input_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-out"></span> 输出 Token</span>
-							<span class="detail-value">{{ (detailLog.output_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-cache-read"></span> 缓存读取</span>
-							<span class="detail-value token-cache-read">{{ (detailLog.cache_read_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-cache-create"></span> 缓存创建</span>
-							<span class="detail-value token-cache-create">{{ (detailLog.cache_creation_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-cache-5m"></span> 缓存创建(5分钟)</span>
-							<span class="detail-value token-cache-5m">{{ (detailLog.cache_creation_5m_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-cache-1h"></span> 缓存创建(1小时)</span>
-							<span class="detail-value token-cache-1h">{{ (detailLog.cache_creation_1h_tokens || 0).toLocaleString() }}</span>
-						</div>
-						<div v-if="detailLog.reasoning_tokens > 0" class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-reasoning"></span> 推理 Token</span>
-							<span class="detail-value token-reasoning">{{ detailLog.reasoning_tokens.toLocaleString() }}</span>
-						</div>
-						<div v-if="detailLog.audio_input_tokens > 0" class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-audio"></span> 音频输入</span>
-							<span class="detail-value token-audio">{{ detailLog.audio_input_tokens.toLocaleString() }}</span>
-						</div>
-						<div v-if="detailLog.audio_output_tokens > 0" class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-audio"></span> 音频输出</span>
-							<span class="detail-value token-audio">{{ detailLog.audio_output_tokens.toLocaleString() }}</span>
-						</div>
-						<div v-if="detailLog.image_output_tokens > 0" class="detail-item">
-							<span class="detail-label"><span class="token-dot token-dot-image"></span> 图像输出</span>
-							<span class="detail-value token-image">{{ detailLog.image_output_tokens.toLocaleString() }}</span>
-						</div>
-						<div v-if="detailLog.image_count > 0" class="detail-item">
-							<span class="detail-label">生成图片</span>
-							<span class="detail-value">
-								{{ detailLog.image_count }} 张
-								<span v-if="detailLog.image_size" class="sub-text">({{ detailLog.image_size }})</span>
-							</span>
+							<span class="detail-value sub-text detail-ellipsis" :title="detailLog.user_agent">{{ detailLog.user_agent }}</span>
 						</div>
 					</div>
 				</div>
 
 				<div class="detail-section">
 					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-credit"></span>
-						费用明细
+						<span class="detail-icon"><IconBarChart /></span>
+						消费明细
 					</div>
-					<div class="detail-grid">
-						<div class="detail-item">
-							<span class="detail-label">输入费用</span>
-							<span class="detail-value">{{ formatCost(detailLog.input_cost || 0) }}</span>
+					<div class="receipt">
+						<div class="receipt-head">
+							<span class="receipt-brand">用量 · 费用 · 结算</span>
+							<span class="receipt-meta">{{ detailLog.currency || 'USD' }}</span>
 						</div>
-						<div class="detail-item">
-							<span class="detail-label">输出费用</span>
-							<span class="detail-value">{{ formatCost(detailLog.output_cost || 0) }}</span>
-						</div>
-						<div v-if="detailLog.cache_creation_cost > 0" class="detail-item">
-							<span class="detail-label">缓存创建费用</span>
-							<span class="detail-value">{{ formatCost(detailLog.cache_creation_cost) }}</span>
-						</div>
-						<div v-if="detailLog.cache_read_cost > 0" class="detail-item">
-							<span class="detail-label">缓存读取费用</span>
-							<span class="detail-value">{{ formatCost(detailLog.cache_read_cost) }}</span>
-						</div>
-					</div>
-					<div class="detail-summary">
-						<div class="detail-item">
-							<span class="detail-label">费率倍率</span>
-							<span
-								v-if="detailLog.rate_multiplier && detailLog.rate_multiplier !== 1"
-								class="detail-value"
-								:class="detailLog.rate_multiplier < 1 ? 'text-success' : 'text-warning'"
-							>
-								{{ detailLog.rate_multiplier.toFixed(4) }}x
-							</span>
-							<span v-else class="detail-value">-</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">基础费用</span>
-							<span class="detail-value">{{ formatCost(detailLog.total_cost || 0) }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">实际费用</span>
-							<span class="detail-value text-success">{{ formatCost(detailLog.actual_cost || 0) }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">定价来源</span>
-							<span class="detail-value">{{ billingSourceLabel[detailLog.billing_source] || detailLog.billing_source || '-' }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">货币</span>
-							<span class="detail-value">{{ detailLog.currency || 'USD' }}</span>
-						</div>
+						<!-- 小票行由 receiptRows 数据驱动生成 -->
+						<template v-for="(row, index) in receiptRows" :key="index">
+							<div v-if="row.divider" class="receipt-divider"></div>
+							<div v-else class="receipt-row" :class="[row.strong ? 'receipt-strong' : '', row.total ? 'receipt-total' : '']">
+								<span class="receipt-label">{{ row.label }}</span>
+								<span class="receipt-value" :class="row.valueClass">
+									{{ row.value }}<span v-if="row.sub" class="receipt-sub">{{ row.sub }}</span>
+								</span>
+							</div>
+						</template>
 					</div>
 				</div>
 
-				<div v-if="detailLog.pre_deduct_amount > 0 || detailLog.refund_amount > 0 || detailLog.supplement_amount > 0" class="detail-section">
+				<div v-if="detailLog.billing_summary || snapshot" class="detail-section">
 					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-refresh"></span>
-						结算明细
-					</div>
-					<div class="detail-grid">
-						<div class="detail-item">
-							<span class="detail-label">预扣金额</span>
-							<span class="detail-value">{{ formatCost(detailLog.pre_deduct_amount) }}</span>
-						</div>
-						<div v-if="detailLog.refund_amount > 0" class="detail-item">
-							<span class="detail-label">退回金额</span>
-							<span class="detail-value text-success">{{ formatCost(detailLog.refund_amount) }}</span>
-						</div>
-						<div v-if="detailLog.supplement_amount > 0" class="detail-item">
-							<span class="detail-label">补扣金额</span>
-							<span class="detail-value text-warning">{{ formatCost(detailLog.supplement_amount) }}</span>
-						</div>
-					</div>
-				</div>
-
-				<div class="detail-section">
-					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-clock"></span>
-						性能指标
-					</div>
-					<div class="detail-grid">
-						<div class="detail-item">
-							<span class="detail-label">总延迟</span>
-							<span class="detail-value">{{ formatMs(detailLog.latency_ms) }}</span>
-						</div>
-						<div class="detail-item">
-							<span class="detail-label">首 Token 延迟</span>
-							<span class="detail-value">{{ formatMs(detailLog.first_token_ms) }}</span>
-						</div>
-						<div v-if="detailLog.stream_end_reason" class="detail-item">
-							<span class="detail-label">流结束原因</span>
-							<span class="detail-value">
-								<a-tag
-									:color="detailLog.stream_end_reason === 'done' ? 'green' : 'gray'"
-									size="medium"
-								>
-									{{ detailLog.stream_end_reason }}
-								</a-tag>
-							</span>
-						</div>
-					</div>
-				</div>
-
-				<div v-if="detailLog.billing_summary || parseSnapshot(detailLog)" class="detail-section">
-					<div class="detail-section-title">
-						<span class="detail-icon detail-icon-clipboard"></span>
+						<span class="detail-icon"><IconCamera /></span>
 						计费快照
+						<a-link class="snapshot-toggle" @click="snapshotCollapsed = !snapshotCollapsed">{{ snapshotCollapsed ? '展开' : '收起' }}</a-link>
 					</div>
 
-					<template v-if="parseSnapshot(detailLog)">
+					<div v-if="snapshot && !snapshotCollapsed">
 						<div class="snapshot-grid">
 							<div class="snapshot-block">
 								<div class="snapshot-block-title">定价信息</div>
 								<div class="snapshot-block-body">
-									<div v-if="parseSnapshot(detailLog).pricing.billing_source" class="snapshot-row">
-										<span class="snapshot-label">价格来源</span>
-										<span class="snapshot-value">{{ billingSourceLabel[parseSnapshot(detailLog).pricing.billing_source] || parseSnapshot(detailLog).pricing.billing_source }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.billing_mode" class="snapshot-row">
-										<span class="snapshot-label">计费模式</span>
-										<span class="snapshot-value">{{ billingModeLabel[parseSnapshot(detailLog).pricing.billing_mode] || parseSnapshot(detailLog).pricing.billing_mode }}</span>
-									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">基础输入价</span>
-										<span class="snapshot-value">${{ (parseSnapshot(detailLog).pricing.base_input_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">${{ (snapshot.pricing.base_input_price || 0).toFixed(6) }}/1M</span>
 									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">基础输出价</span>
-										<span class="snapshot-value">${{ (parseSnapshot(detailLog).pricing.base_output_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">${{ (snapshot.pricing.base_output_price || 0).toFixed(6) }}/1M</span>
 									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.effective_input_price !== parseSnapshot(detailLog).pricing.base_input_price" class="snapshot-row">
+									<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
 										<span class="snapshot-label">实际输入价</span>
-										<span class="snapshot-value text-success">${{ (parseSnapshot(detailLog).pricing.effective_input_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value text-success">${{ (snapshot.pricing.effective_input_price || 0).toFixed(6) }}/1M</span>
 									</div>
-									<div v-if="parseSnapshot(detailLog).pricing.effective_output_price !== parseSnapshot(detailLog).pricing.base_output_price" class="snapshot-row">
+									<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
 										<span class="snapshot-label">实际输出价</span>
-										<span class="snapshot-value text-success">${{ (parseSnapshot(detailLog).pricing.effective_output_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value text-success">${{ (snapshot.pricing.effective_output_price || 0).toFixed(6) }}/1M</span>
 									</div>
-									<div v-if="parseSnapshot(detailLog).cache_prices && parseSnapshot(detailLog).cache_prices.cache_creation_price > 0" class="snapshot-row">
+									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存创建单价</span>
-										<span class="snapshot-value">${{ (parseSnapshot(detailLog).cache_prices.cache_creation_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">${{ (snapshot.cache_prices.cache_creation_price || 0).toFixed(6) }}/1M</span>
 									</div>
-									<div v-if="parseSnapshot(detailLog).cache_prices && parseSnapshot(detailLog).cache_prices.cache_read_price > 0" class="snapshot-row">
+									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_read_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存读取单价</span>
-										<span class="snapshot-value">${{ (parseSnapshot(detailLog).cache_prices.cache_read_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">${{ (snapshot.cache_prices.cache_read_price || 0).toFixed(6) }}/1M</span>
 									</div>
 								</div>
 							</div>
@@ -1028,29 +961,29 @@ const { exporting, exportFile } = useExport({
 							<div class="snapshot-block">
 								<div class="snapshot-block-title">倍率信息</div>
 								<div class="snapshot-block-body">
-									<div v-if="parseSnapshot(detailLog).multipliers.model_multiplier && parseSnapshot(detailLog).multipliers.model_multiplier !== 1" class="snapshot-row">
+									<div v-if="snapshot.multipliers.model_multiplier && snapshot.multipliers.model_multiplier !== 1" class="snapshot-row">
 										<span class="snapshot-label">模型倍率</span>
-										<span class="snapshot-value">{{ (parseSnapshot(detailLog).multipliers.model_multiplier).toFixed(4) }}x</span>
+										<span class="snapshot-value">{{ (snapshot.multipliers.model_multiplier).toFixed(4) }}x</span>
 									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">租户倍率</span>
-										<span class="snapshot-value" :class="(parseSnapshot(detailLog).multipliers.tenant_multiplier || 1) < 1 ? 'text-success' : ''">
-											{{ (parseSnapshot(detailLog).multipliers.tenant_multiplier || 1).toFixed(4) }}x
+										<span class="snapshot-value" :class="(snapshot.multipliers.tenant_multiplier || 1) < 1 ? 'text-success' : ''">
+											{{ (snapshot.multipliers.tenant_multiplier || 1).toFixed(4) }}x
 										</span>
 									</div>
-									<div v-if="parseSnapshot(detailLog).multipliers.discount_ratio && parseSnapshot(detailLog).multipliers.discount_ratio !== 1" class="snapshot-row">
+									<div v-if="snapshot.multipliers.discount_ratio && snapshot.multipliers.discount_ratio !== 1" class="snapshot-row">
 										<span class="snapshot-label">折扣比例</span>
-										<span class="snapshot-value text-success">{{ (parseSnapshot(detailLog).multipliers.discount_ratio).toFixed(4) }}x</span>
+										<span class="snapshot-value text-success">{{ (snapshot.multipliers.discount_ratio).toFixed(4) }}x</span>
 									</div>
 								</div>
 							</div>
 
-							<div v-if="parseSnapshot(detailLog).token_costs" class="snapshot-block snapshot-block-full">
+							<div v-if="snapshot.token_costs" class="snapshot-block snapshot-block-full">
 								<div class="snapshot-block-title">Token 费用计算</div>
 								<div class="snapshot-block-body">
-									<template v-for="(tc, key) in parseSnapshot(detailLog).token_costs" :key="key">
+									<template v-for="(tc, key) in snapshot.token_costs" :key="key">
 										<div v-if="(tc.tokens || 0) > 0" class="snapshot-row">
-											<span class="snapshot-label">{{ { input: '输入', output: '输出', cache_read: '缓存读取', cache_creation: '缓存创建', cache_creation_5m: '缓存创建(5分钟)', cache_creation_1h: '缓存创建(1小时)' }[key] || key }}</span>
+											<span class="snapshot-label">{{ tokenCostLabels[key] || key }}</span>
 											<span class="snapshot-value">
 												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ (tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ (tc.cost || 0).toFixed(6) }}</strong>
 											</span>
@@ -1059,76 +992,15 @@ const { exporting, exportFile } = useExport({
 								</div>
 							</div>
 
-							<div v-if="parseSnapshot(detailLog).settlement" class="snapshot-block">
-								<div class="snapshot-block-title">结算信息</div>
-								<div class="snapshot-block-body">
-									<div class="snapshot-row">
-										<span class="snapshot-label">预扣金额</span>
-										<span class="snapshot-value">{{ formatCost(parseSnapshot(detailLog).settlement.pre_deduct_amount || 0) }}</span>
-									</div>
-									<div class="snapshot-row">
-										<span class="snapshot-label">实际费用</span>
-										<span class="snapshot-value text-success">{{ formatCost(parseSnapshot(detailLog).settlement.actual_cost || 0) }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).settlement.refund_amount > 0" class="snapshot-row">
-										<span class="snapshot-label">退还金额</span>
-										<span class="snapshot-value text-success">{{ formatCost(parseSnapshot(detailLog).settlement.refund_amount) }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).settlement.supplement_amount > 0" class="snapshot-row">
-										<span class="snapshot-label">补扣金额</span>
-										<span class="snapshot-value text-warning">{{ formatCost(parseSnapshot(detailLog).settlement.supplement_amount) }}</span>
-									</div>
-								</div>
-							</div>
-
-							<div v-if="parseSnapshot(detailLog).request_meta" class="snapshot-block">
-								<div class="snapshot-block-title">请求元信息</div>
-								<div class="snapshot-block-body">
-									<div v-if="parseSnapshot(detailLog).request_meta.requested_model" class="snapshot-row">
-										<span class="snapshot-label">请求模型</span>
-										<span class="snapshot-value mono-text">{{ parseSnapshot(detailLog).request_meta.requested_model }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).request_meta.upstream_model" class="snapshot-row">
-										<span class="snapshot-label">上游模型</span>
-										<span class="snapshot-value mono-text">{{ parseSnapshot(detailLog).request_meta.upstream_model }}</span>
-									</div>
-									<div class="snapshot-row">
-										<span class="snapshot-label">流式请求</span>
-										<span class="snapshot-value">{{ parseSnapshot(detailLog).request_meta.is_stream ? '是' : '否' }}</span>
-									</div>
-									<div v-if="parseSnapshot(detailLog).request_meta.first_token_ms" class="snapshot-row">
-										<span class="snapshot-label">首 Token</span>
-										<span class="snapshot-value">{{ parseSnapshot(detailLog).request_meta.first_token_ms }}ms</span>
-									</div>
-								</div>
-							</div>
 						</div>
-					</template>
+					</div>
 
-					<div v-if="detailLog.billing_summary" style="margin-top: 12px;">
+					<div v-if="detailLog.billing_summary && !snapshotCollapsed" style="margin-top: 12px;">
 						<div class="snapshot-text-title">计算过程</div>
 						<pre class="billing-snapshot">{{ detailLog.billing_summary }}</pre>
 					</div>
 				</div>
 
-				<div v-if="detailLog.error_message" class="detail-section">
-					<div class="detail-section-title error-title">
-						<span class="detail-icon detail-icon-error"></span>
-						错误信息
-					</div>
-					<div class="error-message">{{ detailLog.error_message }}</div>
-				</div>
-
-				<div class="detail-section">
-					<div class="detail-section-title">
-						转发路径追踪
-					</div>
-					<a-spin :loading="forwardingTraceLoading" class="w-full">
-						<ForwardingTracePanel v-if="forwardingTrace" :trace="forwardingTrace" />
-						<a-empty v-else-if="!forwardingTraceLoading && !forwardingTraceFound" description="该请求未开启审计，无转发追踪数据" />
-						<a-empty v-else-if="!forwardingTraceLoading && forwardingTraceFound" description="审计已记录，但未捕获转发追踪" />
-					</a-spin>
-				</div>
 			</template>
 		</a-modal>
 	</div>
@@ -1167,6 +1039,8 @@ const { exporting, exportFile } = useExport({
 .token-item > svg,
 .token-symbol {
 	flex-shrink: 0;
+  width: 16px;
+  text-align: center;
 }
 .token-value {
 	min-width: 0;
@@ -1215,7 +1089,6 @@ const { exporting, exportFile } = useExport({
 }
 .cost-value {
 	font-weight: 600;
-	color: #00b42a;
 	font-size: 13px;
 }
 .dark-tooltip {
@@ -1300,9 +1173,6 @@ const { exporting, exportFile } = useExport({
 .detail-section {
 	margin-top: 16px;
 }
-.detail-section:first-child {
-	margin-top: 0;
-}
 .detail-section-title {
 	font-size: 13px;
 	font-weight: 600;
@@ -1314,48 +1184,19 @@ const { exporting, exportFile } = useExport({
 	align-items: center;
 	gap: 6px;
 }
+.snapshot-toggle {
+	margin-left: auto;
+	font-size: 12px;
+}
 .detail-icon {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 16px;
-	height: 16px;
-}
-.detail-icon-doc {
-	content: '';
-	width: 14px;
-	height: 14px;
-	border: 1.5px solid #165dff;
-	border-radius: 2px;
-}
-.detail-icon-arrow {
-	color: #165dff;
-	font-size: 12px;
-	font-weight: 700;
-}
-.detail-icon-chart {
 	color: #165dff;
 	font-size: 14px;
-}
-.detail-icon-credit {
-	color: #165dff;
-	font-size: 14px;
-}
-.detail-icon-refresh {
-	color: #165dff;
-	font-size: 13px;
-}
-.detail-icon-clock {
-	color: #165dff;
-	font-size: 14px;
-}
-.detail-icon-clipboard {
-	color: #165dff;
-	font-size: 13px;
 }
 .detail-icon-error {
 	color: #f53f3f;
-	font-size: 14px;
 }
 .detail-grid {
 	display: grid;
@@ -1385,25 +1226,135 @@ const { exporting, exportFile } = useExport({
 	text-align: right;
 	word-break: break-all;
 }
-.detail-summary {
-	margin-top: 6px;
-	padding-top: 6px;
-	border-top: 1px solid #e5e6eb;
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 6px 24px;
+/* 消费明细小票风格 */
+.receipt {
+	margin-top: 8px;
+	padding: 12px 14px;
+	background: #fafafa;
+	border: 1px dashed #d9dce0;
+	border-radius: 8px;
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 12.5px;
 }
-.model-mapping {
+.receipt-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-bottom: 8px;
+	border-bottom: 1px dashed #d9dce0;
+	margin-bottom: 4px;
+}
+.receipt-brand {
+	font-weight: 600;
+	color: #1d2129;
+	letter-spacing: 0.5px;
+}
+.receipt-meta {
+	color: #86909c;
+	font-size: 11px;
+}
+.receipt-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 16px;
+	padding: 3.5px 0;
+	line-height: 1.5;
+}
+.receipt-label {
+	color: #86909c;
+	flex-shrink: 0;
+}
+.receipt-value {
+	font-weight: 600;
+	color: #1d2129;
+	text-align: right;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.receipt-divider {
+	margin: 6px 0;
+	border-top: 1px dashed #d9dce0;
+}
+.receipt-total {
+	margin-top: 2px;
+	font-size: 14px;
+}
+.receipt-total .receipt-label {
+	color: #1d2129;
+	font-weight: 600;
+}
+.receipt-total .receipt-value {
+	font-size: 15px;
+}
+/* 小票小计行（Token 合计） */
+.receipt-strong .receipt-label {
+	color: #1d2129;
+	font-weight: 600;
+}
+/* 小票值的灰色补充说明（如图片尺寸） */
+.receipt-sub {
+	margin-left: 4px;
+	color: #86909c;
+	font-weight: 400;
+	font-size: 11px;
+}
+/* 关键结果摘要条 */
+.detail-summary {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px 14px;
+	background: #f7f8fa;
+	border-radius: 8px;
+}
+.detail-summary-main {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 8px 12px;
-	background: #f7f8fa;
-	border-radius: 6px;
+	min-width: 0;
 }
-.mapping-arrow {
-	color: #86909c;
+.summary-model {
 	font-size: 14px;
+	font-weight: 600;
+	color: #1d2129;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.summary-upstream {
+	font-size: 12px;
+	font-weight: 400;
+	color: #86909c;
+}
+.summary-cost {
+	margin-left: auto;
+	flex-shrink: 0;
+	font-size: 16px;
+	font-weight: 700;
+	color: #1d2129;
+	font-variant-numeric: tabular-nums;
+}
+.detail-summary-sub {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	font-size: 12px;
+	color: #4e5969;
+}
+.summary-dot {
+	color: #c9cdd4;
+}
+.detail-summary-main .retry-badge {
+	flex-shrink: 0;
+}
+/* 超长值单行省略（配合 title 提示） */
+.detail-ellipsis {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .mono-text {
 	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -1475,10 +1426,8 @@ const { exporting, exportFile } = useExport({
 	margin: 0;
 	line-height: 1.6;
 }
-.error-title {
+.detail-section-title.error-title {
 	border-left-color: #f53f3f;
-}
-.error-title .detail-section-title {
 	color: #f53f3f;
 }
 .error-message {
