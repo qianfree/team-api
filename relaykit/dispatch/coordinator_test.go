@@ -320,6 +320,30 @@ func TestCoordinator_全Key冷却渠道跳过(t *testing.T) {
 	assert.Equal(t, 1, d.Excluded.Request)
 }
 
+// TestCoordinator_无可用渠道诊断带冷却KeyID 凭证冷却只存在于 Redis 且只靠 TTL 自愈，
+// 诊断不给出 keyID 的话运维无从判断该等 TTL 还是该去解除（换 Key 不改 keyID，
+// 陈旧标记会让新 Key 被整段跳过，且期间连上游请求都不会发）。
+func TestCoordinator_无可用渠道诊断带冷却KeyID(t *testing.T) {
+	ctx := context.Background()
+	state := newFakeState()
+	state.cooled[11] = true
+	state.cooled[21] = true
+
+	ch1 := healthyChannel(1, TierPrimary, 100)
+	ch1.KeyIDs = []int64{11}
+	ch2 := healthyChannel(2, TierPrimary, 50)
+	ch2.KeyIDs = []int64{21}
+	co, _ := newTestCoordinator(state, ch1, ch2)
+
+	s := co.Route(ctx, testProfile())
+	require.Nil(t, s.Next(ctx), "两个渠道的 Key 全部冷却 → 无可用渠道")
+
+	diag := s.NoChannelDiagnosis()
+	assert.Equal(t, 2, diag.CredUnavailable)
+	assert.Equal(t, []int64{11, 21}, diag.CredCooledKeys, "去重升序")
+	assert.Contains(t, diag.Summary(), "凭证全部冷却×2(key=11,21)")
+}
+
 func TestCoordinator_租约拒绝不扣预算(t *testing.T) {
 	ctx := context.Background()
 	state := newFakeState()

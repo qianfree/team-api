@@ -150,7 +150,11 @@ type ChannelDetailRes struct {
 	KeyType                  string   `json:"key_type"`
 	KeyStatus                string   `json:"key_status"`
 	KeyName                  string   `json:"key_name"`
-	TokenExpiresAt           string   `json:"token_expires_at"`
+	// KeyCooldownRemaining 凭证冷却剩余秒数（0=未冷却）。冷却期内该 Key 会被调度器
+	// 整段跳过且不发起上游请求，渠道全部 Key 冷却即整体不可用——必须可见，否则
+	// 表现为"健康分正常、探测也正常，但就是无可用渠道"。
+	KeyCooldownRemaining int    `json:"key_cooldown_remaining"`
+	TokenExpiresAt       string `json:"token_expires_at"`
 }
 
 // ChannelKeyCreateReq 添加渠道 Key 请求
@@ -236,6 +240,8 @@ type ChannelKeyItem struct {
 	KeyType        string `json:"key_type"`
 	TokenExpiresAt string `json:"token_expires_at"`
 	CreatedAt      string `json:"created_at"`
+	// CooldownRemaining 凭证冷却剩余秒数（0=未冷却），含义见 ChannelDetailRes.KeyCooldownRemaining
+	CooldownRemaining int `json:"cooldown_remaining"`
 }
 
 // ChannelAbilitiesGetReq 获取渠道模型能力请求

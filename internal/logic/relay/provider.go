@@ -1238,6 +1238,10 @@ func refreshOAuthKeyLocked(ctx context.Context, keyID int64, encKey []byte) (str
 	if err != nil {
 		return "", err
 	}
+	// 凭证已换新即解除冷却（与管理后台换 Key / cron 刷新同一不变量）：冷却按 keyID 打标，
+	// 就地刷新不改 keyID，标记不会自己跟着凭证走。本路径下本请求已被调度选中（说明当时
+	// 未冷却），解除主要防的是并发实例刚因旧令牌 401 冷却、新令牌却要陪等 TTL。
+	dispatchadapter.ClearCredentialCooldownByKey(ctx, keyID)
 
 	return string(jsonData), nil
 }

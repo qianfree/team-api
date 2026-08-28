@@ -472,6 +472,26 @@ func Test凭证冷却(t *testing.T) {
 	assert.False(t, s.IsCredentialCooled(ctx, 101), "冷却到期后必须恢复可用")
 }
 
+// Test凭证冷却可手动解除 覆盖「更换 Key / 重置健康度」的解除路径：冷却按 keyID 打标，
+// 而换 Key 是原地改同一行（keyID 不变），不解除的话新 Key 会被整段跳过直到 TTL 到期。
+func Test凭证冷却可手动解除(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.CoolCredential(ctx, 202, 5*time.Minute)
+	require.True(t, s.IsCredentialCooled(ctx, 202))
+	require.Positive(t, CredentialCooldownRemaining(ctx, 202), "冷却中必须能读到剩余秒数")
+
+	s.ClearCredentialCooldown(ctx, 202)
+	assert.False(t, s.IsCredentialCooled(ctx, 202), "解除后必须立即可用，不等 TTL")
+	assert.Zero(t, CredentialCooldownRemaining(ctx, 202))
+	assert.False(t, s.local.isCredCooled(202), "本地镜像必须一并清除，否则 Redis 降级时仍会跳过该 Key")
+
+	// 解除未冷却的 Key 是幂等空操作
+	s.ClearCredentialCooldown(ctx, 999)
+	assert.False(t, s.IsCredentialCooled(ctx, 999))
+}
+
 func TestReportOutcome异步消费(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
@@ -616,6 +636,15 @@ func TestLocal凭证冷却过期(t *testing.T) {
 	assert.True(t, l.isCredCooled(9))
 	time.Sleep(80 * time.Millisecond)
 	assert.False(t, l.isCredCooled(9))
+}
+
+func TestLocal凭证冷却解除(t *testing.T) {
+	l := newLocalState()
+	l.coolCred(9, time.Hour)
+	require.True(t, l.isCredCooled(9))
+	l.clearCred(9)
+	assert.False(t, l.isCredCooled(9), "解除后不等 TTL 立即可用")
+	l.clearCred(9) // 幂等
 }
 
 func Test429估计器水位收敛(t *testing.T) {
