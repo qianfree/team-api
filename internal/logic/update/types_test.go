@@ -10,7 +10,7 @@ func newTestManager() *UpdateManager {
 	return &UpdateManager{}
 }
 
-func TestUpdateManager_默认状态(t *testing.T) {
+func TestUpdateManager_DefaultState(t *testing.T) {
 	m := newTestManager()
 
 	status := m.GetStatus()
@@ -28,7 +28,7 @@ func TestUpdateManager_默认状态(t *testing.T) {
 	}
 }
 
-func TestUpdateManager_进度状态机(t *testing.T) {
+func TestUpdateManager_ProgressStateMachine(t *testing.T) {
 	m := newTestManager()
 
 	m.setProgress(PhaseDownloading, "正在下载...", 50)
@@ -47,7 +47,7 @@ func TestUpdateManager_进度状态机(t *testing.T) {
 	}
 }
 
-func TestUpdateManager_失败收尾(t *testing.T) {
+func TestUpdateManager_FailureFinalizes(t *testing.T) {
 	m := newTestManager()
 
 	m.setProgress(PhaseDownloading, "正在下载...", 50)
@@ -71,7 +71,7 @@ func TestUpdateManager_失败收尾(t *testing.T) {
 	}
 }
 
-func TestUpdateManager_更新锁互斥(t *testing.T) {
+func TestUpdateManager_UpdateLockMutualExclusion(t *testing.T) {
 	m := newTestManager()
 
 	if !m.updating.CompareAndSwap(false, true) {
@@ -90,7 +90,7 @@ func TestUpdateManager_更新锁互斥(t *testing.T) {
 	}
 }
 
-func TestGetStatus_终态进度过期自动失效(t *testing.T) {
+func TestGetStatus_TerminalProgressExpiresAutomatically(t *testing.T) {
 	m := newTestManager()
 
 	// 上次升级留下的过期 complete 快照：不应再下发
@@ -119,7 +119,7 @@ func TestGetStatus_终态进度过期自动失效(t *testing.T) {
 	}
 }
 
-func TestGetStatus_终态进度窗口内保留(t *testing.T) {
+func TestGetStatus_TerminalProgressKeptWithinWindow(t *testing.T) {
 	m := newTestManager()
 
 	// 刚完成的 complete：管理员仍在轮询确认窗口内，应正常返回
@@ -135,7 +135,7 @@ func TestGetStatus_终态进度窗口内保留(t *testing.T) {
 	}
 }
 
-func TestGetStatus_非终态进度不过期(t *testing.T) {
+func TestGetStatus_NonTerminalProgressDoesNotExpire(t *testing.T) {
 	m := newTestManager()
 
 	// 进行中的进度（无 FinishedAt）不受过期机制影响

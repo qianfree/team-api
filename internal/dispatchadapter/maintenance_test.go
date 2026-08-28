@@ -24,7 +24,7 @@ func staticReader(m map[string]RuntimeReadout) func(string) RuntimeReadout {
 	}
 }
 
-func TestAggregateChannelHealth_只统计有真实上报的模型(t *testing.T) {
+func TestAggregateChannelHealth_CountsOnlyModelsWithRealReports(t *testing.T) {
 	// 20 个模型的渠道死掉 1 个：旧实现把 19 个无数据模型按满分计入均值，
 	// avgSucc≈0.95 → 91 分绿灯，完全掩盖故障。
 	models := make([]string, 0, 20)
@@ -43,7 +43,7 @@ func TestAggregateChannelHealth_只统计有真实上报的模型(t *testing.T) 
 	assert.Contains(t, agg.Detail, "b=无数据")
 }
 
-func TestAggregateChannelHealth_多模型均值(t *testing.T) {
+func TestAggregateChannelHealth_MultiModelAverage(t *testing.T) {
 	agg := aggregateChannelHealth([]string{"m1", "m2", "m3"}, staticReader(map[string]RuntimeReadout{
 		"m1": readoutOf(1.0, 100),
 		"m2": readoutOf(0.6, 300),
@@ -55,7 +55,7 @@ func TestAggregateChannelHealth_多模型均值(t *testing.T) {
 	assert.InDelta(t, 200, agg.AvgLat, 1e-9)
 }
 
-func TestAggregateChannelHealth_全部无数据不产生均值(t *testing.T) {
+func TestAggregateChannelHealth_NoAverageWhenAllModelsLackData(t *testing.T) {
 	agg := aggregateChannelHealth([]string{"m1", "m2"}, staticReader(nil))
 
 	assert.False(t, agg.Degraded)
@@ -63,7 +63,7 @@ func TestAggregateChannelHealth_全部无数据不产生均值(t *testing.T) {
 	assert.Zero(t, agg.AvgSucc, "不得回落成默认满分 1.0 造成 100 分落盘")
 }
 
-func TestAggregateChannelHealth_读失败整体降级(t *testing.T) {
+func TestAggregateChannelHealth_ReadFailureDegradesWhole(t *testing.T) {
 	// Redis 故障时读值既非实测也非"确实无数据"，必须整体作废而非按满分聚合
 	agg := aggregateChannelHealth([]string{"m1", "m2", "m3"}, staticReader(map[string]RuntimeReadout{
 		"m1": readoutOf(0.9, 100),
@@ -75,7 +75,7 @@ func TestAggregateChannelHealth_读失败整体降级(t *testing.T) {
 	assert.Zero(t, agg.Counted, "降级时不得给出任何聚合结论")
 }
 
-func TestAggregateChannelHealth_首模型读值供自动禁用判定(t *testing.T) {
+func TestAggregateChannelHealth_FirstModelReadoutFeedsAutoDisable(t *testing.T) {
 	first := readoutOf(0.5, 100)
 	first.FirstOpenedMs = 12345
 	agg := aggregateChannelHealth([]string{"m1", "m2"}, staticReader(map[string]RuntimeReadout{
@@ -86,9 +86,9 @@ func TestAggregateChannelHealth_首模型读值供自动禁用判定(t *testing.
 	assert.Equal(t, int64(12345), agg.ChannelRt.FirstOpenedMs, "渠道级熔断读值取首个模型")
 }
 
-// TestRequestHealthSnapshot_不阻塞且满时丢弃 调用方是管理后台请求线程（渠道测试 /
+// TestRequestHealthSnapshot_NonBlockingDropsWhenFull 调用方是管理后台请求线程（渠道测试 /
 // 重置健康度），队列满时必须丢弃而非阻塞——下一轮定时维护会兜底重算。
-func TestRequestHealthSnapshot_不阻塞且满时丢弃(t *testing.T) {
+func TestRequestHealthSnapshot_NonBlockingDropsWhenFull(t *testing.T) {
 	drain := func() {
 		for {
 			select {
@@ -119,9 +119,9 @@ func TestRequestHealthSnapshot_不阻塞且满时丢弃(t *testing.T) {
 	assert.Len(t, healthRefresh, cap(healthRefresh), "满队列不应再增长")
 }
 
-// TestRefreshChannelHealth_未组装时静默返回 管理后台可能在首次 relay 请求前就触发重算，
+// TestRefreshChannelHealth_SilentWhenNotWired 管理后台可能在首次 relay 请求前就触发重算，
 // 此时调度引擎尚未组装（catalog / redisState 为 nil），不得 panic。
-func TestRefreshChannelHealth_未组装时静默返回(t *testing.T) {
+func TestRefreshChannelHealth_SilentWhenNotWired(t *testing.T) {
 	require.Nil(t, catalog, "前置条件：本包测试不组装调度引擎")
 	assert.NotPanics(t, func() { refreshChannelHealth(context.Background(), 1) })
 }

@@ -15,7 +15,7 @@ func defaultSessionPolicy() SessionPolicy {
 	return DefaultRoutingPolicy().Session
 }
 
-func TestResolveSessionKey_解析链优先级(t *testing.T) {
+func TestResolveSessionKey_ResolutionChainPriority(t *testing.T) {
 	pol := defaultSessionPolicy()
 
 	tests := []struct {
@@ -38,7 +38,7 @@ func TestResolveSessionKey_解析链优先级(t *testing.T) {
 	}
 }
 
-func TestResolveSessionKey_Anthropic会话段提取(t *testing.T) {
+func TestResolveSessionKey_AnthropicSessionSegmentExtraction(t *testing.T) {
 	pol := defaultSessionPolicy()
 
 	// 含 session UUID：提取段后哈希；两个不同 user 前缀但相同 session → 相同键
@@ -56,7 +56,7 @@ func TestResolveSessionKey_Anthropic会话段提取(t *testing.T) {
 	assert.NotEqual(t, a.Key, c.Key)
 }
 
-func TestResolveSessionKey_策略开关(t *testing.T) {
+func TestResolveSessionKey_PolicyToggles(t *testing.T) {
 	pol := defaultSessionPolicy()
 	pol.ParseAnthropicMetadata = false
 	got := ResolveSessionKey(profileWith(SessionSignals{AnthropicUserID: "user_x_session_11111111-2222-3333-4444-555555555555"}), pol)
@@ -68,7 +68,7 @@ func TestResolveSessionKey_策略开关(t *testing.T) {
 	assert.Equal(t, SourceIdentity, got.Source, "关闭 openai 解析后应回退身份级")
 }
 
-func TestResolveSessionKey_非法信号跳过(t *testing.T) {
+func TestResolveSessionKey_SkipsInvalidSignal(t *testing.T) {
 	pol := defaultSessionPolicy()
 
 	tests := []struct {
@@ -87,7 +87,7 @@ func TestResolveSessionKey_非法信号跳过(t *testing.T) {
 	}
 }
 
-func TestResolveSessionKey_命名空间隔离(t *testing.T) {
+func TestResolveSessionKey_NamespaceIsolation(t *testing.T) {
 	pol := defaultSessionPolicy()
 	sig := SessionSignals{HeaderSessionID: "same-session"}
 
@@ -101,7 +101,7 @@ func TestResolveSessionKey_命名空间隔离(t *testing.T) {
 	assert.NotEqual(t, ResolveSessionKey(p1, pol).Key, ResolveSessionKey(p3, pol).Key, "不同模型的绑定应互相独立")
 }
 
-func TestResolveSessionKey_确定性(t *testing.T) {
+func TestResolveSessionKey_Deterministic(t *testing.T) {
 	pol := defaultSessionPolicy()
 	p := profileWith(SessionSignals{HeaderSessionID: "stable"})
 	first := ResolveSessionKey(p, pol)

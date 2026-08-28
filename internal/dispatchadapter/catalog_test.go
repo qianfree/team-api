@@ -24,7 +24,7 @@ func testCatalog(rows []catalogRow, keys map[int64][]int64, runtime runtimeReade
 	return c
 }
 
-func TestCatalog_快照构建与范围过滤(t *testing.T) {
+func TestCatalog_SnapshotBuildAndScopeFilter(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 0.8},
 		{ChannelID: 2, ChannelName: "B", ModelName: "gpt-4o", Weight: 5, Tier: "secondary", CostRatio: 1.0},
@@ -50,7 +50,7 @@ func TestCatalog_快照构建与范围过滤(t *testing.T) {
 	assert.Empty(t, c.Snapshot(context.Background(), 0, "unknown", nil))
 }
 
-func TestCatalog_转发元数据(t *testing.T) {
+func TestCatalog_ForwardMeta(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 2, ChannelName: "B", ChannelType: 3, BaseURL: "https://up.example.com",
 			ModelName: "claude-sonnet", UpstreamModel: "claude-sonnet-4", Weight: 5, Tier: "secondary",
@@ -76,7 +76,7 @@ func TestCatalog_转发元数据(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestCatalog_运行时读值合并(t *testing.T) {
+func TestCatalog_RuntimeReadoutMerge(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ModelName: "m", Weight: 10, Tier: "primary", MaxConcurrency: 50},
 	}
@@ -96,7 +96,7 @@ func TestCatalog_运行时读值合并(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerHalfOpen, got[0].Breaker)
 }
 
-func TestCatalog_严格容量查询(t *testing.T) {
+func TestCatalog_StrictCapacityLookup(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ModelName: "m", Weight: 10, Tier: "primary", StrictCapacity: true, MaxConcurrency: 30},
 		{ChannelID: 2, ModelName: "m", Weight: 10, Tier: "primary"},
@@ -111,7 +111,7 @@ func TestCatalog_严格容量查询(t *testing.T) {
 	assert.False(t, strict)
 }
 
-func TestCatalog_加载失败保留上一份快照(t *testing.T) {
+func TestCatalog_LoadFailureKeepsPreviousSnapshot(t *testing.T) {
 	pol := dispatch.DefaultRoutingPolicy()
 	calls := 0
 	c := NewCatalog(
@@ -133,10 +133,10 @@ func TestCatalog_加载失败保留上一份快照(t *testing.T) {
 	assert.Len(t, c.Snapshot(ctx, 0, "m", nil), 1, "last-known 快照必须保留")
 }
 
-// TestCatalog_Redis降级沿用上一份健康读值 Redis 读失败时若让乐观默认值 succ=1 落进
+// TestCatalog_RedisDegradedCarriesForwardHealth Redis 读失败时若让乐观默认值 succ=1 落进
 // 新快照，一次 Redis 抖动就会把全渠道的健康记忆清零、healthFactor 集体回满分，
 // 与 Rebuild 声称的 last-known 语义相悖。
-func TestCatalog_Redis降级沿用上一份健康读值(t *testing.T) {
+func TestCatalog_RedisDegradedCarriesForwardHealth(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
 	}
@@ -160,9 +160,9 @@ func TestCatalog_Redis降级沿用上一份健康读值(t *testing.T) {
 	assert.Equal(t, 4000.0, got[0].LatEwmaMs, "延迟读值同样沿用")
 }
 
-// TestCatalog_首次刷新即降级无历史可沿用 新实例启动时 Redis 就不可用：没有 last-known
+// TestCatalog_DegradedOnFirstRefreshHasNoHistory 新实例启动时 Redis 就不可用：没有 last-known
 // 可沿用，保持乐观默认满分（不能让新实例启动即把全渠道判死）。
-func TestCatalog_首次刷新即降级无历史可沿用(t *testing.T) {
+func TestCatalog_DegradedOnFirstRefreshHasNoHistory(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary", CostRatio: 1},
 	}
@@ -191,9 +191,9 @@ func TestRampElapsed(t *testing.T) {
 	assert.Equal(t, int64(-1), rampElapsed(now, now-10, 0, 0))
 }
 
-// TestCatalog_渠道运行状态聚合 验证 ChannelRuntimeStates 按渠道去重、渠道级熔断取同值、
+// TestCatalog_ChannelRuntimeStateAggregation 验证 ChannelRuntimeStates 按渠道去重、渠道级熔断取同值、
 // 模型级熔断按模型计数。
-func TestCatalog_渠道运行状态聚合(t *testing.T) {
+func TestCatalog_ChannelRuntimeStateAggregation(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "gpt-4o", Weight: 10, Tier: "primary"},
 		{ChannelID: 1, ChannelName: "A", ModelName: "claude-sonnet", Weight: 10, Tier: "primary"},
@@ -227,16 +227,16 @@ func TestCatalog_渠道运行状态聚合(t *testing.T) {
 	assert.Equal(t, 0, got[3].BreakerModels)
 }
 
-// TestCatalog_运行状态_未Rebuild返回空 验证目录未构建时返回空 map（而非 nil），
+// TestCatalog_RuntimeState_EmptyBeforeRebuild 验证目录未构建时返回空 map（而非 nil），
 // 调用方遍历时安全。
-func TestCatalog_运行状态_未Rebuild返回空(t *testing.T) {
+func TestCatalog_RuntimeState_EmptyBeforeRebuild(t *testing.T) {
 	c := NewCatalog(func() *dispatch.RoutingPolicy { return dispatch.DefaultRoutingPolicy() }, nil, nil)
 	assert.Empty(t, c.ChannelRuntimeStates())
 }
 
-// TestCatalog_最差模型_单模型故障不被均值摊薄 渠道健康分是均值，10 个健康模型 + 1 个
+// TestCatalog_WorstModel_SingleFailureNotDilutedByAverage 渠道健康分是均值，10 个健康模型 + 1 个
 // 全挂仍能算出 90 分绿灯；最差项要如实报出那个挂掉的模型。
-func TestCatalog_最差模型_单模型故障不被均值摊薄(t *testing.T) {
+func TestCatalog_WorstModel_SingleFailureNotDilutedByAverage(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-a", Weight: 10, Tier: "primary"},
 		{ChannelID: 1, ChannelName: "A", ModelName: "healthy-b", Weight: 10, Tier: "primary"},
@@ -256,9 +256,9 @@ func TestCatalog_最差模型_单模型故障不被均值摊薄(t *testing.T) {
 	assert.InDelta(t, 1.0, got[1].WorstModelScore, 1e-6)
 }
 
-// TestCatalog_最差模型_冷模型不被误报 无真实上报的模型读作满分 1.0，取最小值天然
+// TestCatalog_WorstModel_ColdModelNotReported 无真实上报的模型读作满分 1.0，取最小值天然
 // 不会把它选成最差项——这正是拖垮渠道均值的缺陷在 min 聚合下不存在的原因。
-func TestCatalog_最差模型_冷模型不被误报(t *testing.T) {
+func TestCatalog_WorstModel_ColdModelNotReported(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "cold", Weight: 10, Tier: "primary"},
 		{ChannelID: 1, ChannelName: "A", ModelName: "warm", Weight: 10, Tier: "primary"},
@@ -275,9 +275,9 @@ func TestCatalog_最差模型_冷模型不被误报(t *testing.T) {
 	assert.InDelta(t, 64.0, got[1].WorstModelScore, 1e-6) // 0.8² × 100
 }
 
-// TestCatalog_最差模型_同分时结果稳定 byModel 是 map，遍历顺序随机；同分不做确定性
+// TestCatalog_WorstModel_StableOnTiedScores byModel 是 map，遍历顺序随机；同分不做确定性
 // 打破平局的话，全部模型满分时每次请求返回的模型名都会跳变。
-func TestCatalog_最差模型_同分时结果稳定(t *testing.T) {
+func TestCatalog_WorstModel_StableOnTiedScores(t *testing.T) {
 	rows := []catalogRow{
 		{ChannelID: 1, ChannelName: "A", ModelName: "zeta", Weight: 10, Tier: "primary"},
 		{ChannelID: 1, ChannelName: "A", ModelName: "alpha", Weight: 10, Tier: "primary"},
