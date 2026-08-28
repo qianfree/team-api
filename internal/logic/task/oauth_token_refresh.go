@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common/oauth"
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/model/do"
@@ -131,6 +132,10 @@ func RefreshExpiringOAuthTokens(ctx context.Context) error {
 			g.Log().Warningf(ctx, "[OAuthRefresh] Update failed for key %d: %v", key.ID, err)
 			continue
 		}
+		// 令牌已换新，旧令牌 401 留下的凭证冷却必须一并解除：冷却按 keyID 打标而刷新是
+		// 就地更新（keyID 不变），不解除的话新令牌仍会被调度器跳过直到 TTL 到期
+		// ——OAuth 渠道每次令牌过期都会踩到，表现为刷新成功但渠道仍「无可用渠道」。
+		dispatchadapter.ClearCredentialCooldownByKey(ctx, key.ID)
 
 		refreshed++
 	}

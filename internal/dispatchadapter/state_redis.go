@@ -571,6 +571,21 @@ func (s *RedisState) CoolCredential(ctx context.Context, keyID int64, ttl time.D
 	}
 }
 
+// ClearCredentialCooldown 解除渠道 Key 的凭证冷却（更换 Key / 管理员重置健康度时调用）。
+// 必须连同本地镜像一起清：只删 Redis 的话，Redis 故障降级期间本实例仍会按镜像跳过该 Key。
+func (s *RedisState) ClearCredentialCooldown(ctx context.Context, keyID int64) {
+	s.local.clearCred(keyID)
+	clearCredCooldownKey(ctx, keyID)
+}
+
+// clearCredCooldownKey 删除 Redis 冷却标记。独立于 RedisState：管理后台可能在调度引擎
+// 组装前就更换 Key，而上个进程写下的标记仍在 Redis 里（TTL 未到），此时也必须能清掉。
+func clearCredCooldownKey(ctx context.Context, keyID int64) {
+	if _, err := g.Redis().Do(ctx, "DEL", keyCredCD+strconv.FormatInt(keyID, 10)); err != nil {
+		g.Log().Warningf(ctx, "[Dispatch] 凭证冷却解除失败: key=%d err=%v", keyID, err)
+	}
+}
+
 // CredentialCooldownRemaining 返回渠道 Key 的凭证冷却剩余秒数（0 = 未在冷却）。
 // 凭证冷却是调度器内部的瞬态状态（Redis credcd 标记 + TTL），无任何管理页面出口；
 // 本函数供管理后台 Key 列表/渠道详情展示。读 TTL 而非 EXISTS，让前端能显示剩余时间。

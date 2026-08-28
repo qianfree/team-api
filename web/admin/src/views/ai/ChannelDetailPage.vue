@@ -23,6 +23,13 @@ const breakerTagColor: Record<number, string> = { 0: 'green', 1: 'red', 2: 'oran
 const breakerLabel: Record<number, string> = { 0: '正常', 1: '熔断', 2: '半开' }
 const tierLabel: Record<string, string> = { primary: '首选', secondary: '备用', reserve: '保底' }
 const tierTagColor: Record<string, string> = { primary: 'arcoblue', secondary: 'orange', reserve: 'gray' }
+
+// 凭证冷却剩余秒数 → 人类可读（后端返回 Redis TTL，最长为策略里的 credCooldownSeconds）
+function formatCooldown(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds || 0))
+  if (s < 60) return `${s} 秒`
+  return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`
+}
 const tierOptions = [
   { label: '首选（承接主要流量）', value: 'primary' },
   { label: '备用（零星保温流量，主力饱和时溢出承接）', value: 'secondary' },
@@ -1114,10 +1121,25 @@ function formatHeaders(headers: Record<string, string>): string {
                     {{ detail.key_status === 'active' ? '正常' : detail.key_status || 'N/A' }}
                   </ATag>
                 </ADescriptionsItem>
+                <ADescriptionsItem label="凭证冷却">
+                  <ATag v-if="(detail.key_cooldown_remaining ?? 0) > 0" color="orangered" size="small">
+                    冷却中 · 剩余 {{ formatCooldown(detail.key_cooldown_remaining) }}
+                  </ATag>
+                  <ATag v-else color="green" size="small">正常</ATag>
+                </ADescriptionsItem>
                 <ADescriptionsItem v-if="detail.token_expires_at" label="Token 过期时间">
                   {{ detail.token_expires_at }}
                 </ADescriptionsItem>
               </ADescriptions>
+              <AAlert
+                v-if="(detail.key_cooldown_remaining ?? 0) > 0"
+                type="warning"
+                style="margin-top: 12px;"
+              >
+                该 Key 因认证失败（401/403）被调度器冷却，冷却期内本渠道会被整体跳过且不会发起上游请求
+                —— 此时渠道测试仍会成功（测试不走调度器），但实际调用会返回「无可用渠道」。
+                更新 Key 或点击「重置健康度」都会立即解除冷却。
+              </AAlert>
               <div style="margin-top: 12px;">
                 <AButton type="outline" size="small" @click="showUpdateKeyModal = true">更新 Key</AButton>
               </div>
