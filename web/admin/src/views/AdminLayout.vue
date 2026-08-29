@@ -337,7 +337,6 @@ const menuGroups = [
     label: '财务中心',
     icon: IconIdcard,
     items: [
-      { name: 'AdminPlans', label: '套餐管理', icon: IconIdcard },
       { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
       { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
       { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
