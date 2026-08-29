@@ -64,13 +64,22 @@ type trafficFlowRow struct {
 // normalizeMonitorDateRange 规范化监控类接口的日期范围，返回 YYYY-MM-DD 的 [start, end]（含）。
 // 缺省近 30 天；end 不超过今天；跨度上限 trafficFlowMaxDays。流量桑基图与模型性能共用。
 func normalizeMonitorDateRange(startDate, endDate string) (string, string) {
+	return normalizeMonitorDateRangeAt(startDate, endDate, time.Now())
+}
+
+// normalizeMonitorDateRangeAt is separated for deterministic tests. Date-only
+// filters must be compared as calendar dates in the server's location, rather
+// than against the current instant. Otherwise, on a non-UTC server before its
+// UTC offset, today's parsed midnight can incorrectly fall after time.Now()
+// and the range silently falls back to the default 30 days.
+func normalizeMonitorDateRangeAt(startDate, endDate string, now time.Time) (string, string) {
 	const layout = "2006-01-02"
-	today := time.Now()
-	end, err := time.Parse(layout, endDate)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	end, err := time.ParseInLocation(layout, endDate, now.Location())
 	if err != nil || end.After(today) {
 		end = today
 	}
-	start, err := time.Parse(layout, startDate)
+	start, err := time.ParseInLocation(layout, startDate, now.Location())
 	if err != nil || start.After(end) {
 		start = end.AddDate(0, 0, -29)
 	}
