@@ -114,8 +114,11 @@ func CheckForUpdate(ctx context.Context, force bool) (*CheckResult, error) {
 	// Store ETag for conditional requests
 	manager.lastETag.Store(etag)
 
-	// Cache result
-	setCheckCache(ctx, result)
+	// Cache result。「有更新但没匹配到平台安装包」的结果不写 Redis：TTL 24h 太长，
+	// 会挡住发布窗口期之后的检查拿到完整资产列表（内存结果照常存，供状态展示）
+	if !HasUpdateButNoAsset(result) {
+		setCheckCache(ctx, result)
+	}
 	manager.checkResult.Store(result)
 
 	return result, nil
@@ -185,6 +188,14 @@ func fetchLatestRelease(ctx context.Context, conditional bool) (*GitHubRelease, 
 	return &release, etag, nil
 }
 
+// HasUpdateButNoAsset 判断检查结果是否为「有更新但当前平台没匹配到安装包」。
+// 典型成因：发行版刚发布、CI 尚未上传资产的窗口期拉到的结果（资产几分钟后才就位）。
+// 这类结果不可信：不能写缓存，已入库的脏缓存读到后按无效处理，
+// 执行更新时则强制重查，而不是直接报「没有可用的更新包」。
+func HasUpdateButNoAsset(r *CheckResult) bool {
+	return r != nil && r.HasUpdate && r.DownloadURL == ""
+}
+
 // getCheckCache reads cached check result from Redis.
 // 缓存是纯优化（TTL 24h），Redis 未配置/不可用时应降级为无缓存、走实时检查，
 // 绝不能因 g.Redis() 客户端创建失败而 panic（见 goframe-conventions.md 已修复记录）。
@@ -203,6 +214,11 @@ func getCheckCache(ctx context.Context) (out *CheckResult) {
 
 	var result CheckResult
 	if err := json.Unmarshal(val.Bytes(), &result); err != nil {
+		return nil
+	}
+	// 「有更新但没匹配到平台安装包」的脏缓存（发布窗口期写入，含旧版本遗留数据）按无效处理，
+	// 让调用方 fallthrough 到实时检查拿完整资产列表
+	if HasUpdateButNoAsset(&result) {
 		return nil
 	}
 	return &result

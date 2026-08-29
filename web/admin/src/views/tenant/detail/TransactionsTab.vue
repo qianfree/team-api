@@ -6,6 +6,7 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useIsMobile } from '@/composables/useIsMobile'
+import { formatBilling } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -63,13 +64,13 @@ const txColumns: TableColumnData[] = [
     render({ record }) {
       const val = parseFloat(record.amount) || 0
       const color = val >= 0 ? 'rgb(var(--green-6))' : 'rgb(var(--red-6))'
-      const prefix = val >= 0 ? '+' : ''
-      return h('span', { style: { fontWeight: 600, color } }, `${prefix}${val.toFixed(6)}`)
+      // bil 层本位币金额：showSign 自动带 +/- 符号
+      return h('span', { style: { fontWeight: 600, color } }, formatBilling(val, 6, true))
     },
   },
   {
     title: '变动后余额', dataIndex: 'balance_after', width: 140,
-    render({ record }) { return `$${(parseFloat(record.balance_after) || 0).toFixed(6)}` },
+    render({ record }) { return formatBilling(parseFloat(record.balance_after) || 0, 6) },
   },
   {
     title: '用户', dataIndex: 'username', width: 120,

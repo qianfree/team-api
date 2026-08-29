@@ -1,5 +1,6 @@
 import { h } from 'vue'
 import { NTag } from 'naive-ui'
+import { formatMoney as formatMoneyWithCurrency } from '@/composables/useCurrency'
 
 /**
  * NDataTable 迁移公共渲染工具。
@@ -34,24 +35,22 @@ export function renderBadge(
 }
 
 export interface FormatMoneyOptions {
+	/** 数据存储层币种（按字段所属层传入：bil 层 USD/CNY 由本位币定，订单层 CNY），非显示币种 */
 	currency?: 'USD' | 'CNY'
 	precision?: number
 	showSign?: boolean
 }
 
 /**
- * 统一金额格式化。默认 USD、6 位精度（与 NUMERIC(20,10) 对齐）。
- * currency='CNY' 时用 ¥ 前缀 + 2 位精度（订单/充值层）。
- * showSign 用 +/− 前缀（交易流水）。
+ * 统一金额格式化（委托 useCurrency，跟随系统本位币显示）。
+ * currency 参数语义 = 数据存储层币种：bil 层数据传本位币对应值（USD 部署默认 USD）、
+ * 订单/充值层传 'CNY'（本位币 USD 时自动按汇率折算显示）。
+ * 精度默认按显示币种取 USD 6 位 / CNY 2 位；showSign 用 +/− 前缀（交易流水）。
  * 自动去掉末尾的 0（如 $1.500000 → $1.5）。
  */
 export function formatMoney(value: unknown, opts: FormatMoneyOptions = {}): string {
-	const { currency = 'USD', precision = 6, showSign = false } = opts
-	const num = Number(value ?? 0)
-	const symbol = currency === 'CNY' ? '¥' : '$'
-	const sign = showSign ? (num > 0 ? '+' : num < 0 ? '-' : '') : ''
-	// 先 toFixed 确保精度，再用 Number 去掉末尾的 0
-	return `${sign}${symbol}${Number(Math.abs(num).toFixed(precision))}`
+	const { currency = 'USD', precision, showSign = false } = opts
+	return formatMoneyWithCurrency(value, { source: currency, precision, showSign })
 }
 
 /** 统一日期格式化：ISO T 转空格、截断到分钟；空值显示 -- */

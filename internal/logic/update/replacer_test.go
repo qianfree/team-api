@@ -44,7 +44,7 @@ func createTarball(t *testing.T, files map[string]string) string {
 	return path
 }
 
-func TestExtractBinary_正常提取(t *testing.T) {
+func TestExtractBinary_Success(t *testing.T) {
 	tarball := createTarball(t, map[string]string{
 		"team-api-1.0.0-linux-amd64/team-api":  "new-binary-content",
 		"team-api-1.0.0-linux-amd64/README.md": "docs",
@@ -79,7 +79,7 @@ func TestExtractBinary_正常提取(t *testing.T) {
 	}
 }
 
-func TestExtractBinary_归档中无二进制(t *testing.T) {
+func TestExtractBinary_NoBinaryInArchive(t *testing.T) {
 	tarball := createTarball(t, map[string]string{
 		"team-api-1.0.0-linux-amd64/README.md": "docs",
 	})
@@ -90,7 +90,7 @@ func TestExtractBinary_归档中无二进制(t *testing.T) {
 	}
 }
 
-func TestReplaceBinary_正常替换(t *testing.T) {
+func TestReplaceBinary_Success(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "team-api")
 	newBin := filepath.Join(dir, "team-api.new")
@@ -125,7 +125,7 @@ func TestReplaceBinary_正常替换(t *testing.T) {
 	}
 }
 
-func TestReplaceBinary_残留old文件被清理(t *testing.T) {
+func TestReplaceBinary_StaleOldFileCleaned(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "team-api")
 	newBin := filepath.Join(dir, "team-api.new")
@@ -146,7 +146,7 @@ func TestReplaceBinary_残留old文件被清理(t *testing.T) {
 	}
 }
 
-func TestReplaceBinary_失败时自救恢复(t *testing.T) {
+func TestReplaceBinary_RollbackOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "team-api")
 
@@ -169,7 +169,7 @@ func TestReplaceBinary_失败时自救恢复(t *testing.T) {
 	}
 }
 
-func TestCopyFile_内容与权限一致(t *testing.T) {
+func TestCopyFile_PreservesContentAndPermissions(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
@@ -193,7 +193,7 @@ func TestCopyFile_内容与权限一致(t *testing.T) {
 	}
 }
 
-func TestCopyFile_源文件不存在(t *testing.T) {
+func TestCopyFile_SourceMissing(t *testing.T) {
 	if err := copyFile(filepath.Join(t.TempDir(), "missing"), filepath.Join(t.TempDir(), "dst")); err == nil {
 		t.Fatal("源文件不存在时应返回错误")
 	}

@@ -15,6 +15,7 @@ const form = reactive({
   displayName: '',
   password: '',
   confirmPassword: '',
+  currency: 'USD',
 })
 
 onMounted(async () => {
@@ -51,6 +52,7 @@ async function handleSetup() {
       displayName: form.displayName.trim(),
       password: form.password,
       confirmPassword: form.confirmPassword,
+      currency: form.currency,
     })
     Message.success('初始化成功，正在跳转登录页...')
     markSystemInitialized()
@@ -179,6 +181,16 @@ async function handleSetup() {
               placeholder="再次输入密码"
               @keydown.enter="handleSetup"
             />
+          </AFormItem>
+          <AFormItem
+            field="currency"
+            label="本位币"
+            extra="决定系统内部记账与全站显示货币（模型定价按本位币配置），初始化后不可更改"
+          >
+            <ARadioGroup v-model="form.currency">
+              <ARadio value="USD">USD（美元）· 与上游模型报价对齐</ARadio>
+              <ARadio value="CNY">CNY（人民币）· 面向国内运营</ARadio>
+            </ARadioGroup>
           </AFormItem>
           <AFormItem>
             <AButton

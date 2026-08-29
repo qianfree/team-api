@@ -11,7 +11,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
-func TestClassify_状态码全表(t *testing.T) {
+func TestClassify_StatusCodeTable(t *testing.T) {
 	tests := []struct {
 		code int
 		want ErrorClass
@@ -41,7 +41,7 @@ func TestClassify_状态码全表(t *testing.T) {
 	}
 }
 
-func TestClassify_NewAPIError错误码(t *testing.T) {
+func TestClassify_NewAPIErrorCodes(t *testing.T) {
 	tests := []struct {
 		name string
 		code types.ErrorCode
@@ -66,32 +66,32 @@ func TestClassify_NewAPIError错误码(t *testing.T) {
 	}
 }
 
-func TestClassify_SkipRetry语义(t *testing.T) {
+func TestClassify_SkipRetrySemantics(t *testing.T) {
 	// SkipRetry 标记优先于一切：即使状态码本可重试也归客户端类（不重试）
 	e := types.NewErrorWithStatusCode(errors.New("x"), types.ErrorCodeBadResponse, 502, types.ErrOptionWithSkipRetry())
 	assert.Equal(t, ErrClassClient, Classify(502, e, DeliveryResponseReceived))
 }
 
-func TestClassify_NewAPIError状态码兜底(t *testing.T) {
+func TestClassify_NewAPIErrorStatusCodeFallback(t *testing.T) {
 	// 错误码不能定类时用其携带的状态码
 	e := types.NewErrorWithStatusCode(errors.New("x"), types.ErrorCodeBadResponse, 429)
 	assert.Equal(t, ErrClassRateLimit, Classify(0, e, DeliveryResponseReceived))
 }
 
-func TestClassify_上下文错误(t *testing.T) {
+func TestClassify_ContextErrors(t *testing.T) {
 	assert.Equal(t, ErrClassTimeout, Classify(0, context.DeadlineExceeded, DeliveryMaybeSent))
 	assert.Equal(t, ErrClassClient, Classify(0, context.Canceled, DeliveryMaybeSent), "客户端取消不重试不计健康")
 	wrapped := fmt.Errorf("do request: %w", context.DeadlineExceeded)
 	assert.Equal(t, ErrClassTimeout, Classify(0, wrapped, DeliveryNotSent))
 }
 
-func TestClassify_纯网络错误(t *testing.T) {
+func TestClassify_PureNetworkError(t *testing.T) {
 	err := errors.New("connection refused")
 	assert.Equal(t, ErrClassTransient, Classify(0, err, DeliveryNotSent))
 	assert.Equal(t, ErrClassTransient, Classify(0, err, DeliveryMaybeSent), "MaybeSent 仍归 TRANSIENT，禁止原地由 FSM 硬规则处理")
 }
 
-func TestClassify_无错误(t *testing.T) {
+func TestClassify_NoError(t *testing.T) {
 	assert.Equal(t, ErrClassNone, Classify(0, nil, DeliveryNotSent))
 	assert.Equal(t, ErrClassNone, Classify(200, nil, DeliveryResponseReceived))
 }

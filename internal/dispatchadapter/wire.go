@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
 
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/relaykit/dispatch"
 )
 
@@ -139,6 +140,44 @@ func ResetModelHealth(ctx context.Context, channelID int64, modelName string) {
 		return
 	}
 	redisState.ResetHealth(ctx, channelID, []string{modelName})
+}
+
+// ClearChannelCredentialCooldown 解除渠道下所有 Key 的凭证冷却，返回被解除的 Key 数量。
+//
+// 更换 Key / 重置健康度后必须调用。凭证冷却按 keyID 打标（dispatch:v1:credcd:<keyID>，
+// 401/403 时写入、默认 300s TTL），而管理后台更换 Key 是原地改同一行、keyID 不变：
+// 不清标记的话调度器仍认为该 Key 在冷却中，渠道全部 Key 冷却即整体不可用
+// （日志表现为「无可用渠道 … 凭证全部冷却×N」），且期间从不发起上游请求，
+// 新 Key 一次都得不到验证，只能干等 TTL 自愈。
+//
+// 不按 status 过滤：被禁用后重新启用的 Key 同样需要解除。
+func ClearChannelCredentialCooldown(ctx context.Context, channelID int64) int {
+	var keys []struct {
+		ID int64 `json:"id"`
+	}
+	if err := dao.ChnChannelKeys.Ctx(ctx).
+		Where("channel_id", channelID).
+		Fields("id").
+		Scan(&keys); err != nil {
+		g.Log().Warningf(ctx, "[Dispatch] 解除凭证冷却时查询渠道 Key 失败: channel=%d err=%v", channelID, err)
+		return 0
+	}
+	for _, k := range keys {
+		ClearCredentialCooldownByKey(ctx, k.ID)
+	}
+	return len(keys)
+}
+
+// ClearCredentialCooldownByKey 解除单个 Key 的凭证冷却。
+// 凭证被就地更新（换 Key / OAuth 令牌刷新）后必须调用：keyID 不变，
+// 旧凭证留下的冷却标记会继续把新凭证挡在调度之外，直到 TTL 自然到期。
+func ClearCredentialCooldownByKey(ctx context.Context, keyID int64) {
+	if redisState != nil {
+		redisState.ClearCredentialCooldown(ctx, keyID) // 含本地镜像
+		return
+	}
+	// 调度引擎尚未组装：没有本地镜像可清，只需删 Redis 标记
+	clearCredCooldownKey(ctx, keyID)
 }
 
 // InvalidateChannel 渠道禁用/删除时的联动清理：清绑定 + 跨实例目录失效。

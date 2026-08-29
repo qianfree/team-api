@@ -33,7 +33,7 @@ func serveChecksums(t *testing.T, status int, body string) *httptest.Server {
 	return srv
 }
 
-func TestVerifyChecksum_成功(t *testing.T) {
+func TestVerifyChecksum_Success(t *testing.T) {
 	content := "fake-binary-content"
 	filePath := writeTempFile(t, "team-api-1.0.0-linux-amd64.tar.gz", content)
 
@@ -47,7 +47,7 @@ func TestVerifyChecksum_成功(t *testing.T) {
 	}
 }
 
-func TestVerifyChecksum_哈希不一致须报错(t *testing.T) {
+func TestVerifyChecksum_HashMismatchErrors(t *testing.T) {
 	filePath := writeTempFile(t, "asset.tar.gz", "actual-content")
 
 	wrongHash := strings.Repeat("0", 64)
@@ -62,7 +62,7 @@ func TestVerifyChecksum_哈希不一致须报错(t *testing.T) {
 	}
 }
 
-func TestVerifyChecksum_缺少校验文件地址须拒绝(t *testing.T) {
+func TestVerifyChecksum_MissingChecksumURLRejected(t *testing.T) {
 	filePath := writeTempFile(t, "asset.tar.gz", "content")
 
 	err := VerifyChecksum(context.Background(), filePath, "", "asset.tar.gz")
@@ -74,7 +74,7 @@ func TestVerifyChecksum_缺少校验文件地址须拒绝(t *testing.T) {
 	}
 }
 
-func TestVerifyChecksum_校验文件拉取失败须拒绝(t *testing.T) {
+func TestVerifyChecksum_ChecksumFetchFailureRejected(t *testing.T) {
 	filePath := writeTempFile(t, "asset.tar.gz", "content")
 
 	// 服务返回 500，模拟校验文件不可用
@@ -86,7 +86,7 @@ func TestVerifyChecksum_校验文件拉取失败须拒绝(t *testing.T) {
 	}
 }
 
-func TestFetchExpectedHash_解析格式(t *testing.T) {
+func TestFetchExpectedHash_ParsesFormat(t *testing.T) {
 	content := "aaa  file-a.tar.gz\nbbb *file-b.tar.gz\n"
 	srv := serveChecksums(t, http.StatusOK, content)
 	ctx := context.Background()

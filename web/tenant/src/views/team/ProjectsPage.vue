@@ -9,6 +9,7 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatBilling } from '@/composables/useCurrency'
 
 const { confirm } = useConfirm()
 
@@ -127,7 +128,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 		key: 'budget',
 		width: 140,
 		render: (row) =>
-			h('span', { class: 'font-mono' }, row.budget ? `$${Number(row.budget).toFixed(2)}` : '不限'),
+			h('span', { class: 'font-mono' }, row.budget ? formatBilling(row.budget, 2) : '不限'),
 	},
 	{
 		title: '创建时间',

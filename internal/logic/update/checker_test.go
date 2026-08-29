@@ -46,6 +46,27 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
+func TestHasUpdateButNoAsset(t *testing.T) {
+	cases := []struct {
+		name   string
+		result *CheckResult
+		want   bool
+	}{
+		{"nil 结果", nil, false},
+		{"有更新且有安装包", &CheckResult{HasUpdate: true, DownloadURL: "https://example.com/team-api-0.2.14-linux-amd64.tar.gz"}, false},
+		{"无更新且无安装包", &CheckResult{HasUpdate: false, DownloadURL: ""}, false},
+		{"有更新但缺安装包（发布窗口期脏数据）", &CheckResult{HasUpdate: true, DownloadURL: ""}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := HasUpdateButNoAsset(c.result); got != c.want {
+				t.Errorf("HasUpdateButNoAsset(%+v) = %v, want %v", c.result, got, c.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeSemver(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"0.2.0_39", "0.2.0+39"}, // Makefile git describe 版本：下划线转构建元数据

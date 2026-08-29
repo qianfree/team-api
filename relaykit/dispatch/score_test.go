@@ -16,7 +16,7 @@ func healthyChannel(id int64, tier Tier, weight float64) Channel {
 	}
 }
 
-func TestEffectiveWeight_健康满分基准(t *testing.T) {
+func TestEffectiveWeight_FullHealthBaseline(t *testing.T) {
 	pol := DefaultRoutingPolicy()
 	w, bd := EffectiveWeight(healthyChannel(1, TierPrimary, 10), pol)
 	assert.InDelta(t, 10.0, w, 1e-9)
@@ -27,7 +27,7 @@ func TestEffectiveWeight_健康满分基准(t *testing.T) {
 	assert.Equal(t, 1.0, bd.Ramp)
 }
 
-func TestEffectiveWeight_层级偏置(t *testing.T) {
+func TestEffectiveWeight_TierBias(t *testing.T) {
 	pol := DefaultRoutingPolicy()
 	wp, _ := EffectiveWeight(healthyChannel(1, TierPrimary, 10), pol)
 	ws, _ := EffectiveWeight(healthyChannel(2, TierSecondary, 10), pol)
@@ -40,7 +40,7 @@ func TestEffectiveWeight_层级偏置(t *testing.T) {
 	assert.Zero(t, wu)
 }
 
-func TestEffectiveWeight_健康因子(t *testing.T) {
+func TestEffectiveWeight_HealthFactor(t *testing.T) {
 	pol := DefaultRoutingPolicy() // alpha=2
 
 	c := healthyChannel(1, TierPrimary, 10)
@@ -73,7 +73,7 @@ func TestEffectiveWeight_健康因子(t *testing.T) {
 	assert.Equal(t, 1.0, bd.Health)
 }
 
-func TestEffectiveWeight_负载余量(t *testing.T) {
+func TestEffectiveWeight_HeadroomFactor(t *testing.T) {
 	pol := DefaultRoutingPolicy() // gamma=2
 
 	c := healthyChannel(1, TierPrimary, 10)
@@ -99,7 +99,7 @@ func TestEffectiveWeight_负载余量(t *testing.T) {
 	assert.Equal(t, 1.0, bd.Headroom)
 }
 
-func TestEffectiveWeight_成本因子(t *testing.T) {
+func TestEffectiveWeight_CostFactor(t *testing.T) {
 	pol := DefaultRoutingPolicy() // beta=0.5, clamp [0.5, 2.0]
 
 	c := healthyChannel(1, TierPrimary, 10)
@@ -120,7 +120,7 @@ func TestEffectiveWeight_成本因子(t *testing.T) {
 	assert.Equal(t, 1.0, bd.Cost)
 }
 
-func TestEffectiveWeight_爬坡因子(t *testing.T) {
+func TestEffectiveWeight_RampFactor(t *testing.T) {
 	pol := DefaultRoutingPolicy() // window=120s, floor=0.05
 
 	c := healthyChannel(1, TierPrimary, 10)
@@ -142,7 +142,7 @@ func TestEffectiveWeight_爬坡因子(t *testing.T) {
 	assert.Equal(t, 1.0, bd.Ramp, "非爬坡期恒为 1")
 }
 
-func TestEffectiveWeight_基础权重非正(t *testing.T) {
+func TestEffectiveWeight_NonPositiveBaseWeight(t *testing.T) {
 	pol := DefaultRoutingPolicy()
 	c := healthyChannel(1, TierPrimary, 0)
 	w, _ := EffectiveWeight(c, pol)

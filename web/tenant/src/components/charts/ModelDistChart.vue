@@ -9,6 +9,7 @@ import {
 	type ChartData,
 	type ChartOptions,
 } from 'chart.js'
+import { formatBilling } from '@/composables/useCurrency'
 import Icon from '@/components/common/Icon.vue'
 
 ChartJS.register(ArcElement, Tooltip, Legend)
@@ -28,10 +29,10 @@ const props = withDefaults(defineProps<{
 
 const colors = ['#14b8a6', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899', '#3b82f6', '#10b981', '#ef4444']
 
+// 金额格式化统一走本位币；chartOptions 为 computed，tooltip 回调随 displayCurrency 变化重渲染
 function formatCost(value: number): string {
-	if (value === 0) return '$0.00'
-	if (value >= 1) return `$${value.toFixed(2)}`
-	return `$${value.toFixed(4)}`
+	if (value === 0 || value >= 1) return formatBilling(value, 2)
+	return formatBilling(value, 4)
 }
 
 const totalCost = computed(() => props.data.reduce((sum, item) => sum + Number(item.total_cost || 0), 0))

@@ -66,22 +66,36 @@ func FulfillOrder(ctx context.Context, orderID int64) error {
 
 		case "recharge":
 			// 折扣语义「付折后价、按原价入账」：用户实付 FinalAmount（折后 CNY），
-			// 钱包按订单原价 Amount 换算 USD 入账，折扣让利真实生效；无折扣时两者相等。
-			// 汇率只取一次，保证入账换算与快照使用同一汇率。
-			rate := billing.GetExchangeRateCNYToUSD(ctx)
-			usdAmount := billing.CeilUSD(billing.NewFromFloat(order.Amount).Mul(billing.NewFromFloat(rate)))
-			credited, err := creditWalletTx(ctx, order.TenantID, usdAmount, orderID, fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → USD %.6f)", orderID, order.Amount, order.FinalAmount, usdAmount.InexactFloat64()))
+			// 钱包按订单原价 Amount 入账，折扣让利真实生效；无折扣时两者相等。
+			var creditAmount decimal.Decimal
+			var desc string
+			if billing.IsCNY(ctx) {
+				// 本位币=CNY：订单层与记账层同为人民币，按原价直接入账，无换汇环节
+				creditAmount = billing.NewFromFloat(order.Amount)
+				desc = fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → CNY %.2f)", orderID, order.Amount, order.FinalAmount, creditAmount.InexactFloat64())
+			} else {
+				// 本位币=USD：按原价换算美元入账；汇率只取一次，保证入账换算与快照使用同一汇率。
+				rate := billing.GetExchangeRateCNYToUSD(ctx)
+				creditAmount = billing.CeilUSD(billing.NewFromFloat(order.Amount).Mul(billing.NewFromFloat(rate)))
+				desc = fmt.Sprintf("Recharge: order #%d (CNY %.2f, paid %.2f → USD %.6f)", orderID, order.Amount, order.FinalAmount, creditAmount.InexactFloat64())
+			}
+			credited, err := creditWalletTx(ctx, order.TenantID, creditAmount, orderID, desc)
 			// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
 			redisCreditedTenantID = order.TenantID
 			redisCreditedAmount = credited
 			if err != nil {
 				return gerror.Wrapf(err, "credit wallet failed")
 			}
-			// 汇率结构化快照：持久化「原始 CNY（订单列）+ 当时汇率 + 入账 USD」，
+			// 汇率结构化快照：持久化「原始 CNY（订单列）+ 当时汇率 + 入账金额」，
 			// 使历史换算可重建，汇率配置变更不影响已完成订单的现金对账。
+			// 本位币=CNY 时 exchange_rate=1（无换汇）、credited_usd 存本位币金额。
+			snapRate := billing.One
+			if !billing.IsCNY(ctx) {
+				snapRate = billing.NewFromFloat(billing.GetExchangeRateCNYToUSD(ctx))
+			}
 			if _, err = g.DB().Ctx(ctx).Exec(ctx,
 				"UPDATE ord_orders SET exchange_rate = ?, credited_usd = ? WHERE id = ?",
-				billing.NewFromFloat(rate), usdAmount, orderID); err != nil {
+				snapRate, creditAmount, orderID); err != nil {
 				return gerror.Wrapf(err, "snapshot exchange rate failed")
 			}
 			_ = billing.CheckAndUpgradeLevel(ctx, order.TenantID)
@@ -201,8 +215,8 @@ func SubscribePlan(ctx context.Context, tenantID int64, planID int64, months int
 }
 
 // creditWalletTx 钱包入账（依赖调用方传入携带事务的 ctx，且处于订单行锁保护内）。
-// amount 为 USD（bil_ 层永远 USD）；orderID 写入流水 related_id：退款时靠它精确找回
-// 履约当时入账的 USD（禁止按当前汇率反算）。
+// amount 为本位币金额（bil_ 层币种 = 部署级本位币，USD 或 CNY）；orderID 写入流水
+// related_id：退款时靠它精确找回履约当时入账的本位币金额（禁止按当前汇率反算）。
 //
 // Redis 权威化架构下的职责拆分：
 //   - Redis 加款是资金提交点（实时余额立即生效），在行锁保护内执行，并发回调串行化、天然幂等；

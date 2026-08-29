@@ -26,11 +26,8 @@ function updateCnyToUsd(usdToCny: number | undefined) {
 		<div class="section">
 			<div class="section-title">基础设置</div>
 			<div class="section-grid">
-				<AFormItem label="货币单位">
-					<ASelect v-model="values['payment_currency']">
-						<AOption value="CNY" label="CNY (人民币)" />
-						<AOption value="USD" label="USD (美元)" />
-					</ASelect>
+				<AFormItem label="本位币" help="系统记账与全站显示货币，初始化时选定，不可更改">
+					<AInput :model-value="values['billing_currency'] || 'USD'" disabled style="width: 100%" />
 				</AFormItem>
 				<AFormItem label="最低充值金额">
 					<AInputNumber

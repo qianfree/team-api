@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, computed, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
+import { formatBilling } from '@/composables/useCurrency'
 import Icon from '@/components/common/Icon.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 
@@ -87,9 +88,10 @@ function isBest(item: ComparisonItem, field: keyof ComparisonItem): boolean {
 	return val === Math.min(...values)
 }
 
+// 金额格式化统一走本位币（bil 层数据直显，formatBilling 内部读取响应式 displayCurrency 自动重渲染）
 function formatCost(v: number): string {
-	if (v < 0.01 && v > 0) return v.toFixed(6)
-	return v.toFixed(4)
+	if (v < 0.01 && v > 0) return formatBilling(v, 6)
+	return formatBilling(v, 4)
 }
 
 function formatPct(v: number): string {
@@ -191,7 +193,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 			h(
 				'span',
 				{ class: isBest(row, 'total_cost') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
-				row.requests > 0 ? '$' + formatCost(row.total_cost) : '-'
+				row.requests > 0 ? formatCost(row.total_cost) : '-'
 			),
 	},
 	{
@@ -202,7 +204,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 			h(
 				'span',
 				{ class: isBest(row, 'avg_cost_per_request') && row.requests > 0 ? 'text-emerald-600 font-medium' : '' },
-				row.requests > 0 ? '$' + formatCost(row.avg_cost_per_request) : '-'
+				row.requests > 0 ? formatCost(row.avg_cost_per_request) : '-'
 			),
 	},
 	{
@@ -305,7 +307,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 						<Icon name="creditCard" size="lg" />
 					</div>
 					<div class="min-w-0 flex-1 text-right">
-						<div class="stat-value">${{ formatCost(summary.total_cost) }}</div>
+						<div class="stat-value">{{ formatCost(summary.total_cost) }}</div>
 						<div class="stat-label">总费用</div>
 					</div>
 				</div>
@@ -362,7 +364,7 @@ const columns = computed<DataTableColumns<ComparisonItem>>(() => [
 											height: Math.max(2, (getTrendCost(day, model) / maxTrendCost) * 120) + 'px',
 											backgroundColor: modelColor(mi),
 										}"
-										:title="`${model}: $${getTrendCost(day, model).toFixed(4)}`"
+										:title="`${model}: ${formatBilling(getTrendCost(day, model), 4)}`"
 									></div>
 								</template>
 							</div>

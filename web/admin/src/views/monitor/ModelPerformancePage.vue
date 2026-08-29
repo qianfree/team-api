@@ -8,6 +8,7 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableEmpty from '@/components/TableEmpty.vue'
 import request from '@/utils/request'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -224,7 +225,8 @@ const gradeColor: Record<string, string> = {
   critical: 'red',
 }
 
-const columns: TableColumnData[] = [
+// 列定义为 computed：总成本列头币种跟随本位币（配置异步加载后自动更新）
+const columns = computed<TableColumnData[]>(() => [
   { title: '模型', dataIndex: 'model_name', ellipsis: true, tooltip: true, width: 220, sortable: { sortDirections: ['ascend', 'descend'] } },
   {
     title: '请求数',
@@ -299,14 +301,14 @@ const columns: TableColumnData[] = [
     render: ({ record }: any) => fmtNum(record.total_tokens).toLocaleString(),
   },
   {
-    title: '总成本 (USD)',
+    title: `总成本 (${displayCurrency.value})`,
     dataIndex: 'total_cost',
     width: 140,
     align: 'right',
     sortable: { sortDirections: ['ascend', 'descend'] },
-    render: ({ record }: any) => `$${fmtNum(record.total_cost).toFixed(6)}`,
+    render: ({ record }: any) => formatBilling(fmtNum(record.total_cost), 6),
   },
-]
+])
 
 // 成功率分级（与后端 gradeSuccessRate 同阈值）：excellent≥99 / good≥95 / warning≥90 / critical<90
 function rateGrade(rate: number): string {
@@ -520,7 +522,7 @@ function renderChannelMatrix(record: any) {
         <div class="metric-item">
           <div class="metric-name">总成本</div>
           <div class="metric-body">
-            <p>区间内该模型实际计费成本合计（USD），已含输入、输出与缓存各项费用。</p>
+            <p>区间内该模型实际计费成本合计（{{ displayCurrency }}），已含输入、输出与缓存各项费用。</p>
             <p><code>总成本 = Σ total_cost</code></p>
           </div>
         </div>
@@ -596,8 +598,8 @@ function renderChannelMatrix(record: any) {
         <div class="metric-card__value">{{ stats.overallRate.toFixed(2) }}%</div>
       </div>
       <div class="metric-card metric-card--orange">
-        <div class="metric-card__label">总成本 (USD)</div>
-        <div class="metric-card__value">${{ stats.totalCost.toFixed(6) }}</div>
+        <div class="metric-card__label">总成本 ({{ displayCurrency }})</div>
+        <div class="metric-card__value">{{ formatBilling(stats.totalCost, 6) }}</div>
       </div>
       <div class="metric-card metric-card--green">
         <div class="metric-card__label">请求缓存命中率</div>

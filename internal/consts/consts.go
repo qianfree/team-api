@@ -404,6 +404,15 @@ const (
 	AgreementCodePrivacy = "privacy" // 隐私政策
 )
 
+// 系统配置 key：本位币（系统初始化向导选定后不可更改，bil_ 记账层与全站显示货币）
+const OptionKeyBillingCurrency = "billing_currency"
+
+// 本位币取值
+const (
+	BillingCurrencyUSD = "USD"
+	BillingCurrencyCNY = "CNY"
+)
+
 // ValidAgreementCodes 有效协议标识码集合（创建时校验）
 var ValidAgreementCodes = map[string]string{
 	AgreementCodeTerms:   "用户协议",

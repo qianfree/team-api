@@ -5,6 +5,10 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
+import { displayCurrency } from '@/composables/useCurrency'
+
+// 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
+const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
 
 const props = defineProps<{
   tenantId: string
@@ -488,22 +492,22 @@ defineExpose({ openPreviewModal })
         <div class="grid grid-cols-2 gap-x-3">
           <AFormItem label="输入价格">
             <AInputNumber v-model="editModelForm.custom_input_price" :min="0" :precision="4" placeholder="默认" class="w-full">
-              <template #suffix>$ / 1M</template>
+              <template #suffix>{{ currencySymbol }} / 1M</template>
             </AInputNumber>
           </AFormItem>
           <AFormItem label="输出价格">
             <AInputNumber v-model="editModelForm.custom_output_price" :min="0" :precision="4" placeholder="默认" class="w-full">
-              <template #suffix>$ / 1M</template>
+              <template #suffix>{{ currencySymbol }} / 1M</template>
             </AInputNumber>
           </AFormItem>
           <AFormItem label="缓存读取价格">
             <AInputNumber v-model="editModelForm.custom_cache_read_price" :min="0" :precision="4" placeholder="默认" class="w-full">
-              <template #suffix>$ / 1M</template>
+              <template #suffix>{{ currencySymbol }} / 1M</template>
             </AInputNumber>
           </AFormItem>
           <AFormItem label="缓存创建价格">
             <AInputNumber v-model="editModelForm.custom_cache_creation_price" :min="0" :precision="4" placeholder="默认" class="w-full">
-              <template #suffix>$ / 1M</template>
+              <template #suffix>{{ currencySymbol }} / 1M</template>
             </AInputNumber>
           </AFormItem>
         </div>
@@ -514,7 +518,7 @@ defineExpose({ openPreviewModal })
         <ADivider margin="8px">按次定价</ADivider>
         <AFormItem label="按次单价">
           <AInputNumber v-model="editModelForm.per_request_price" :min="0" :precision="4" placeholder="每次调用价格" class="w-full">
-            <template #suffix>$ / 次</template>
+            <template #suffix>{{ currencySymbol }} / 次</template>
           </AInputNumber>
         </AFormItem>
       </template>
@@ -540,24 +544,24 @@ defineExpose({ openPreviewModal })
           <div class="grid grid-cols-2 gap-x-3 mt-2">
             <AFormItem label="输入价格">
               <AInputNumber v-model="tier.input_price" :min="0" :precision="4" class="w-full">
-                <template #suffix>$/1M</template>
+                <template #suffix>{{ currencySymbol }}/1M</template>
               </AInputNumber>
             </AFormItem>
             <AFormItem label="输出价格">
               <AInputNumber v-model="tier.output_price" :min="0" :precision="4" class="w-full">
-                <template #suffix>$/1M</template>
+                <template #suffix>{{ currencySymbol }}/1M</template>
               </AInputNumber>
             </AFormItem>
           </div>
           <div class="grid grid-cols-2 gap-x-3 mt-2">
             <AFormItem label="缓存读取价格">
               <AInputNumber v-model="tier.cache_read_price" :min="0" :precision="4" class="w-full">
-                <template #suffix>$/1M</template>
+                <template #suffix>{{ currencySymbol }}/1M</template>
               </AInputNumber>
             </AFormItem>
             <AFormItem label="缓存创建价格">
               <AInputNumber v-model="tier.cache_creation_price" :min="0" :precision="4" class="w-full">
-                <template #suffix>$/1M</template>
+                <template #suffix>{{ currencySymbol }}/1M</template>
               </AInputNumber>
             </AFormItem>
           </div>

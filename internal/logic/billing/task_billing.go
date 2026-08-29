@@ -165,7 +165,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 
 	// 2. 获取定价（事务外只读，按任务受理时刻评估时段乘数）
 	pricing, _ := GetModelPriceAt(ctx, tenantID, modelName, billAt)
-	breakdown := buildTaskCostBreakdown(pricing, InexactFloat64(actualCost), totalTokens, completionTokens)
+	breakdown := buildTaskCostBreakdown(ctx, pricing, InexactFloat64(actualCost), totalTokens, completionTokens)
 
 	var billingMode string
 	var discountRatio, effectiveOutputPrice float64
@@ -199,7 +199,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 				InputPrice:   0,
 				OutputPrice:  effectiveOutputPrice,
 				TotalCost:    actualCost,
-				Currency:     "USD",
+				Currency:     Currency(ctx),
 				Status:       "settled",
 				SettledAt:    gtime.NewFromTime(time.Now()),
 				BillingMode:  billingMode,
@@ -311,12 +311,12 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 }
 
 // buildTaskCostBreakdown 构建任务计费的 CostBreakdown
-func buildTaskCostBreakdown(pricing *PricingResult, actualCost float64, totalTokens, _ int) *CostBreakdown {
+func buildTaskCostBreakdown(ctx context.Context, pricing *PricingResult, actualCost float64, totalTokens, _ int) *CostBreakdown {
 	if pricing == nil {
 		return &CostBreakdown{
 			TotalCost: actualCost,
 			BaseCost:  actualCost,
-			Currency:  "USD",
+			Currency:  Currency(ctx),
 		}
 	}
 

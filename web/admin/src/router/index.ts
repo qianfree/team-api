@@ -4,6 +4,7 @@ import adminRoutes from './admin'
 import { useAuthStore } from '@/stores/auth'
 import request, { shouldRefresh, getRefreshToken } from '@/utils/request'
 import { useSiteName } from '@/composables/useSiteName'
+import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useTopProgress } from '@/composables/useTopProgress'
 
 const routes: RouteRecordRaw[] = [
@@ -45,6 +46,7 @@ async function checkSetupStatus(): Promise<boolean> {
 }
 
 const { siteName, fetchSiteName } = useSiteName()
+const { fetchSettings: fetchPublicSettings } = usePublicSettings()
 const { start, done } = useTopProgress()
 
 router.beforeEach(async (to) => {
@@ -54,7 +56,8 @@ router.beforeEach(async (to) => {
   authStore.loadFromStorage()
 
   if (to.meta.title) {
-    await fetchSiteName()
+    // 站点名与公共配置（本位币/汇率，供全站货币显示）并行拉取，30s TTL
+    await Promise.all([fetchSiteName(), fetchPublicSettings()])
     const name = siteName.value || 'Team-API'
     document.title = `${to.meta.title as string} — ${name}`
   }

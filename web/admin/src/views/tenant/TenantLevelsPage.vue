@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, h } from 'vue'
 import {
   Tag, Button, Space, Message, Modal,
 } from '@arco-design/web-vue'
@@ -8,16 +8,18 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const levels = ref<any[]>([])
 
-const columns: TableColumnData[] = [
+// 列定义为 computed：阈值列头币种跟随本位币（配置异步加载后自动更新）
+const columns = computed<TableColumnData[]>(() => [
   { title: '等级号', dataIndex: 'level', width: 80 },
   { title: '名称', dataIndex: 'name', width: 120 },
   {
-    title: '累计充值阈值(USD)', dataIndex: 'cumulative_recharge_threshold', width: 180,
-    render({ record }) { return `$${Number(record.cumulative_recharge_threshold).toFixed(2)}` },
+    title: `累计充值阈值(${displayCurrency.value})`, dataIndex: 'cumulative_recharge_threshold', width: 180,
+    render({ record }) { return formatBilling(record.cumulative_recharge_threshold, 2) },
   },
   {
     title: '最大成员数', dataIndex: 'max_members', width: 100,
@@ -45,7 +47,7 @@ const columns: TableColumnData[] = [
       ])
     },
   },
-]
+])
 
 async function fetchLevels() {
   loading.value = true
@@ -166,7 +168,7 @@ onMounted(fetchLevels)
         <AFormItem label="等级名称" required>
           <AInput v-model="formData.name" placeholder="如：LV2 白银用户" />
         </AFormItem>
-        <AFormItem label="累计充值阈值(USD)" required>
+        <AFormItem :label="`累计充值阈值(${displayCurrency})`" required>
           <AInputNumber v-model="formData.cumulative_recharge_threshold" :min="0" :precision="2" class="w-full" placeholder="达到此金额自动升级" />
         </AFormItem>
         <AFormItem label="最大成员数">
