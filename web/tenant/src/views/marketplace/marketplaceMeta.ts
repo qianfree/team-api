@@ -1,4 +1,5 @@
 import type { MarketplaceModel, TimePriceItem } from '@/api/marketplace'
+import { formatBilling } from '@/composables/useCurrency'
 
 // 分类元数据：卡片磁贴渐变、筛选 pills 与各类徽章共用同一份配置
 export interface CategoryMeta {
@@ -84,8 +85,8 @@ export function formatTokens(tokens?: number | null): string {
 export function formatPrice(price?: number | null): string {
 	const value = Number(price)
 	if (!Number.isFinite(value)) return '—'
-	// 最多保留 6 位小数（与后端 NUMERIC(20,10) 精度对齐），自动去掉末尾的 0
-	return `$${Number(value.toFixed(6))}`
+	// 本位币直显：最多保留 6 位小数（与后端 NUMERIC(20,10) 精度对齐），自动去掉末尾的 0
+	return formatBilling(value, 6)
 }
 
 export function billingModeLabel(mode?: string | null): string {

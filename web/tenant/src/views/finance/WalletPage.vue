@@ -8,14 +8,18 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
+import { formatBilling, formatOrder, displayCurrency, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
 
 const route = useRoute()
 const wallet = ref<any>(null)
 const walletLoading = ref(true)
 
 // Recharge
+// rechargeAmount 统一存"用户输入/选择的显示货币金额"（本位币）；提交与折扣匹配前折回 CNY
 const rechargeAmount = ref<number | null>(null)
 const customAmount = ref<number | null>(null)
+// 当前选中的预设档位（CNY 原面额），自定义输入时清空，仅用于档位选中态展示
+const selectedPresetCny = ref<number | null>(null)
 const rechargeLoading = ref(false)
 const selectedChannel = ref('')
 const selectedPaymentMethod = ref('')
@@ -75,6 +79,12 @@ const payMethods = computed(() => {
 
 const minimumAmount = computed(() => Number(paymentInfo.value?.min_topup) || 1)
 
+// 充值页显示口径换算：minimumAmount 是 CNY 门槛，输入框的最小值需换算为显示货币
+const displayMinAmount = computed(() => cnyToDisplay(minimumAmount.value))
+
+// 提交口径：显示货币金额折回 CNY 订单金额（与 handleRecharge 提交值一致，折扣/门槛校验同口径）
+const rechargeCnyAmount = computed(() => (rechargeAmount.value != null ? displayToCny(rechargeAmount.value) : 0))
+
 const thresholdActive = computed(() => Number(wallet.value?.warning_threshold) > 0)
 
 const thresholdValidationError = computed(() => {
@@ -87,21 +97,24 @@ const thresholdValidationError = computed(() => {
 const selectedDiscount = computed(() => {
 	// 折扣档位仅整数金额精确命中（与后端 RechargeCreate 口径一致）：
 	// 100.99 不享受 100 档折扣，避免前端展示与实际计价不符
-	if (!rechargeAmount.value || !Number.isInteger(rechargeAmount.value)) return 1
-	return Number(paymentInfo.value?.amount_discount?.[rechargeAmount.value]) || 1
+	// 折扣锚定 CNY 整数面额：预设档位（CNY 锚定）可命中，自定义输入折算后非整数不命中（预期行为）
+	const cny = rechargeCnyAmount.value
+	if (!cny || !Number.isInteger(cny)) return 1
+	return Number(paymentInfo.value?.amount_discount?.[cny]) || 1
 })
 
+// 实付金额 = 显示货币金额 × 折扣（显示口径，展示时直接用 formatBilling）
 const finalPayAmount = computed(() => (rechargeAmount.value || 0) * selectedDiscount.value)
 
 const rechargeValidationMessage = computed(() => {
 	if (!rechargeAmount.value) return ''
-	if (rechargeAmount.value < minimumAmount.value) return `最低充值金额为 ¥${minimumAmount.value.toFixed(2)}`
+	if (rechargeCnyAmount.value < minimumAmount.value) return `最低充值金额为 ${formatOrder(minimumAmount.value, 2)}`
 	return ''
 })
 
 const rechargeReady = computed(() =>
 	!!rechargeAmount.value
-	&& rechargeAmount.value >= minimumAmount.value
+	&& rechargeCnyAmount.value >= minimumAmount.value
 	&& !!selectedChannel.value
 	&& !!selectedPaymentMethod.value,
 )
@@ -135,11 +148,15 @@ async function fetchPaymentInfo() {
 }
 
 function selectPresetAmount(amount: number) {
-	rechargeAmount.value = amount
+	// amount 为 CNY 原面额：选中态与折扣匹配锚定 CNY，rechargeAmount 存换算后的显示货币金额
+	selectedPresetCny.value = amount
+	rechargeAmount.value = cnyToDisplay(amount)
 	customAmount.value = null
 }
 
 function onCustomInput() {
+	// 自定义输入按显示货币理解（本位币 USD 时即 USD 金额），提交时统一折回 CNY
+	selectedPresetCny.value = null
 	const val = customAmount.value ?? 0
 	rechargeAmount.value = val <= 0 ? null : val
 }
@@ -160,7 +177,8 @@ async function handleRecharge() {
 	rechargeLoading.value = true
 	try {
 		const res: any = await request.post('/tenant/recharge/create', {
-			amount: rechargeAmount.value,
+			// 订单层恒 CNY：用户输入的显示货币金额折算为 CNY 下单金额（本位币 CNY 时原样）
+			amount: displayToCny(rechargeAmount.value),
 			payment_channel: selectedChannel.value,
 			payment_method: selectedPaymentMethod.value,
 		})
@@ -263,9 +281,10 @@ const redeemHistoryColumns = computed<DataTableColumns<any>>(() => [
 		title: '面值',
 		key: 'value',
 		width: 130,
+		// 兑换码面值属 bil 层（本位币），兑换入账恒为正数
 		render: (row) =>
 			row.type === 'quota'
-				? h('span', { class: 'font-mono' }, `+${Number(row.value).toFixed(6)}`)
+				? h('span', { class: 'font-mono' }, formatBilling(row.value, 6, true))
 				: h('span', { class: 'font-mono' }, '-'),
 	},
 	{
@@ -414,14 +433,13 @@ onBeforeUnmount(() => {
 								<p class="mt-0.5 text-xs text-slate-400">当前可用于模型调用</p>
 							</div>
 						</div>
-						<span class="currency-badge">{{ wallet?.currency || 'USD' }}</span>
+						<span class="currency-badge">{{ displayCurrency }}</span>
 					</div>
 
 					<div class="mt-8">
 						<p class="text-xs font-medium text-slate-400">余额</p>
 						<div class="mt-1 flex items-baseline gap-1.5">
-							<span class="text-xl font-semibold text-slate-400">$</span>
-							<strong class="balance-value">{{ wallet?.balance?.toFixed(2) ?? '0.00' }}</strong>
+							<strong class="balance-value">{{ formatBilling(wallet?.balance, 2) }}</strong>
 						</div>
 					</div>
 
@@ -431,7 +449,7 @@ onBeforeUnmount(() => {
 							<span class="text-sm text-slate-500">冻结金额</span>
 						</div>
 						<div class="flex items-center gap-2">
-							<strong class="text-sm font-semibold tabular-nums text-slate-700">${{ wallet?.frozen_balance?.toFixed(2) ?? '0.00' }}</strong>
+							<strong class="text-sm font-semibold tabular-nums text-slate-700">{{ formatBilling(wallet?.frozen_balance, 2) }}</strong>
 							<Icon name="chevronRight" size="xs" class="text-slate-300" />
 						</div>
 					</button>
@@ -442,7 +460,7 @@ onBeforeUnmount(() => {
 							<span class="text-sm text-slate-500">余额预警</span>
 						</div>
 						<div class="flex items-center gap-2">
-							<strong v-if="thresholdActive" class="text-sm font-semibold tabular-nums text-slate-700">${{ Number(wallet?.warning_threshold).toFixed(2) }}</strong>
+							<strong v-if="thresholdActive" class="text-sm font-semibold tabular-nums text-slate-700">{{ formatBilling(wallet?.warning_threshold, 2) }}</strong>
 							<span v-else class="text-sm text-slate-400">已关闭</span>
 							<Icon name="chevronRight" size="xs" class="text-slate-300" />
 						</div>
@@ -484,25 +502,26 @@ onBeforeUnmount(() => {
 					<div>
 						<div class="flex items-center justify-between">
 							<label class="text-xs font-semibold text-slate-600">充值金额</label>
-							<span class="text-[11px] text-slate-400">最低 ¥{{ minimumAmount.toFixed(2) }}</span>
+							<span class="text-[11px] text-slate-400">最低 {{ formatOrder(minimumAmount, 2) }}</span>
 						</div>
 						<div class="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
 							<button
 								v-for="amount in presetAmounts"
 								:key="amount"
 								class="amount-pill"
-								:class="{ 'amount-pill-active': rechargeAmount === amount && !customAmount }"
+								:class="{ 'amount-pill-active': selectedPresetCny === amount && !customAmount }"
 								@click="selectPresetAmount(amount)"
 							>
-								<span><small>¥</small>{{ amount }}</span>
+								<!-- amount 为 CNY 原面额：本位币 USD 时按汇率折算展示 -->
+								<span><small>{{ displayCurrency === 'CNY' ? '¥' : '$' }}</small>{{ cnyToDisplay(amount) }}</span>
 								<em v-if="discountText(amount)">{{ discountText(amount) }}</em>
 							</button>
 						</div>
 						<div class="relative mt-3">
-							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">¥</span>
+							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ displayCurrency === 'CNY' ? '¥' : '$' }}</span>
 							<n-input-number
 								v-model:value="customAmount"
-								:min="minimumAmount"
+								:min="displayMinAmount"
 								:step="0.01"
 								:status="rechargeValidationMessage ? 'error' : undefined"
 								placeholder="输入其他金额"
@@ -545,10 +564,10 @@ onBeforeUnmount(() => {
 						<div class="min-w-0">
 							<p class="text-[11px] text-slate-400">本次实付</p>
 							<div class="mt-0.5 flex items-baseline gap-2">
-								<strong class="text-xl font-bold tabular-nums text-slate-800">¥{{ finalPayAmount.toFixed(2) }}</strong>
-								<span v-if="selectedDiscount < 1" class="text-xs text-slate-400 line-through">¥{{ rechargeAmount?.toFixed(2) }}</span>
+								<strong class="text-xl font-bold tabular-nums text-slate-800">{{ formatBilling(finalPayAmount, 2) }}</strong>
+								<span v-if="selectedDiscount < 1" class="text-xs text-slate-400 line-through">{{ formatBilling(rechargeAmount, 2) }}</span>
 							</div>
-							<p v-if="selectedDiscount < 1" class="mt-0.5 text-[11px] text-emerald-600">到账仍按 ¥{{ rechargeAmount?.toFixed(2) }} 全额折算</p>
+							<p v-if="selectedDiscount < 1" class="mt-0.5 text-[11px] text-emerald-600">到账仍按 {{ formatBilling(rechargeAmount, 2) }} 全额折算</p>
 						</div>
 						<button class="btn btn-primary min-w-32" :disabled="!rechargeReady || rechargeLoading" @click="handleRecharge">
 							<Icon v-if="rechargeLoading" name="refresh" size="sm" class="animate-spin" />
@@ -559,7 +578,8 @@ onBeforeUnmount(() => {
 
 					<div class="recharge-note mt-3">
 						<Icon name="infoCircle" size="xs" class="mt-0.5 flex-shrink-0" />
-						<p>支付金额为人民币，到账后按平台汇率换算为美元钱包余额。</p>
+						<p v-if="displayCurrency === 'CNY'">支付金额为人民币，直接入账钱包。</p>
+						<p v-else>支付金额为人民币，到账后按平台汇率换算为美元钱包余额。</p>
 					</div>
 				</div>
 			</div>
@@ -598,7 +618,7 @@ onBeforeUnmount(() => {
 						</p>
 					</div>
 					<div class="text-right ml-3 flex-shrink-0">
-						<p class="text-sm font-semibold text-amber-600">${{ item.amount?.toFixed(4) }}</p>
+						<p class="text-sm font-semibold text-amber-600">{{ formatBilling(item.amount, 4) }}</p>
 						<p class="text-xs text-gray-400">剩余 {{ formatRemaining(item.remaining) }}</p>
 					</div>
 				</div>
@@ -718,9 +738,9 @@ onBeforeUnmount(() => {
 					<p>当可用余额低于预警线时，向组织 owner / admin 发送通知。设为 0 可关闭预警。</p>
 				</div>
 				<div>
-					<label class="text-xs font-semibold text-slate-600">预警阈值（USD）</label>
+					<label class="text-xs font-semibold text-slate-600">预警阈值（{{ displayCurrency }}）</label>
 					<div class="relative mt-3">
-						<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
+						<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ displayCurrency === 'CNY' ? '¥' : '$' }}</span>
 						<n-input-number
 							v-model:value="thresholdInput"
 							:min="0"
@@ -735,10 +755,11 @@ onBeforeUnmount(() => {
 					<p v-else class="mt-1.5 text-xs text-slate-400">设为 0 表示关闭预警</p>
 				</div>
 				<div class="flex flex-wrap gap-2">
+					<!-- 快捷按钮展示跟随本位币，thresholdInput 表单值保持存储币种原值不变 -->
 					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 0 }" @click="thresholdInput = 0">关闭</button>
-					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 1 }" @click="thresholdInput = 1">$1</button>
-					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 5 }" @click="thresholdInput = 5">$5</button>
-					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 10 }" @click="thresholdInput = 10">$10</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 1 }" @click="thresholdInput = 1">{{ formatBilling(1) }}</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 5 }" @click="thresholdInput = 5">{{ formatBilling(5) }}</button>
+					<button type="button" class="threshold-quick" :class="{ 'threshold-quick-active': Number(thresholdInput) === 10 }" @click="thresholdInput = 10">{{ formatBilling(10) }}</button>
 				</div>
 			</div>
 			<template #footer>

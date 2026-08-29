@@ -42,7 +42,7 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 			Balance:          billing.Zero,
 			FrozenBalance:    billing.Zero,
 			WarningThreshold: &threshold,
-			Currency:         "USD",
+			Currency:         billing.Currency(ctx),
 		})
 		if err != nil {
 			return nil, err
@@ -52,7 +52,7 @@ func (s *sTenant) Wallet(ctx context.Context, req *v1.TenantWalletReq) (*v1.Tena
 			FrozenBalance:    0,
 			AvailableBalance: 0,
 			WarningThreshold: 0,
-			Currency:         "USD",
+			Currency:         billing.Currency(ctx),
 		}, nil
 	}
 

@@ -9,6 +9,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const router = useRouter()
 const route = useRoute()
@@ -163,8 +164,8 @@ const statCards = computed(() => {
 			icon: 'creditCard',
 			color: '#8b5cf6',
 			soft: '#ede9fe',
-			value: u ? `$${u.month_total_cost.toFixed(2)}` : '--',
-			detail: u ? 'USD' : '',
+			value: u ? formatBilling(u.month_total_cost, 2) : '--',
+			detail: u ? displayCurrency.value : '',
 		},
 		{
 			label: 'API Key 数量',
@@ -606,7 +607,7 @@ onMounted(() => {
 							</div>
 							<div class="flex items-center justify-between py-2 border-b border-gray-100">
 								<span class="text-sm text-gray-500">本月消费</span>
-								<span class="text-sm font-semibold text-primary-600">${{ usage.month_total_cost.toFixed(4) }}</span>
+								<span class="text-sm font-semibold text-primary-600">{{ formatBilling(usage.month_total_cost, 4) }}</span>
 							</div>
 							<div class="flex items-center justify-between py-2">
 								<span class="text-sm text-gray-500">API Key 数量</span>
@@ -648,7 +649,7 @@ onMounted(() => {
 									<template v-if="quota.quota_type === 'periodic'"> · {{ periodLabel[quota.period] }}</template>
 								</span>
 								<span class="text-sm text-gray-500">
-									${{ quota.quota_used.toFixed(6) }} / ${{ quota.quota_limit.toFixed(6) }}
+									{{ formatBilling(quota.quota_used, 6) }} / {{ formatBilling(quota.quota_limit, 6) }}
 								</span>
 							</div>
 							<div class="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -813,7 +814,7 @@ onMounted(() => {
 
 				<!-- Quota Limit -->
 				<div v-if="quotaForm.quota_type !== 'none'">
-					<label class="input-label">额度上限 (USD)</label>
+					<label class="input-label">额度上限 ({{ displayCurrency }})</label>
 					<n-input
 						:value="String(quotaForm.quota_limit)"
 						type="number"

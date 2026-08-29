@@ -4,6 +4,7 @@ import { NInput } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
+import { formatBilling } from '@/composables/useCurrency'
 
 const router = useRouter()
 
@@ -170,9 +171,10 @@ function formatTokens(n: number): string {
 	return String(n)
 }
 
+// 价格格式化统一走本位币（bil 层定价直显，formatBilling 内部读取响应式 displayCurrency 自动重渲染）
 function formatPrice(n: number | null): string {
 	if (n == null || n === 0) return '-'
-	return '$' + n.toFixed(2)
+	return formatBilling(n, 2)
 }
 
 function formatTokenRange(min: number, max: number | null): string {

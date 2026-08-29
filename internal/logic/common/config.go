@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	do "github.com/qianfree/team-api/internal/model/do"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/database/gredis"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
 	"golang.org/x/sync/singleflight"
@@ -218,6 +220,18 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 	count, err := dao.SysOptions.Ctx(ctx).Where("key", key).Count()
 	if err != nil {
 		return err
+	}
+
+	// 本位币只在首次写入（系统初始化向导）时允许设置，此后只读；
+	// 相同值放行，保证设置页保存整个 payment 分类时不被误拒。
+	if key == consts.OptionKeyBillingCurrency && count > 0 {
+		existing, err := dao.SysOptions.Ctx(ctx).Where("key", key).Value()
+		if err != nil {
+			return err
+		}
+		if old := gconv.String(existing); old != "" && old != value {
+			return gerror.New("本位币在系统初始化后不可更改")
+		}
 	}
 
 	if count > 0 {

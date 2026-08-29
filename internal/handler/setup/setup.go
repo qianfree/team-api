@@ -56,9 +56,20 @@ func HandleSetupInitialize(r *ghttp.Request) {
 		DisplayName     string `json:"displayName"`
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirmPassword"`
+		Currency        string `json:"currency"`
 	}
 	if err := json.Unmarshal(r.GetBody(), &req); err != nil {
 		response.ErrorMsg(r, consts.CodeBadRequest, "请求格式错误")
+		return
+	}
+
+	// 本位币：USD/CNY，未选择时默认 USD；初始化写入后不可再更改
+	currency := req.Currency
+	if currency == "" {
+		currency = consts.BillingCurrencyUSD
+	}
+	if currency != consts.BillingCurrencyUSD && currency != consts.BillingCurrencyCNY {
+		response.ErrorMsg(r, consts.CodeBadRequest, "本位币仅支持 USD 或 CNY")
 		return
 	}
 
@@ -92,6 +103,12 @@ func HandleSetupInitialize(r *ghttp.Request) {
 	}
 
 	if err := admin.CreateAdmin(r.Context(), req.Username, req.Password, req.DisplayName); err != nil {
+		response.Error(r, err)
+		return
+	}
+
+	// 本位币随初始化写入（首次落库，此后 SetOption 只读保护拒绝修改）
+	if err := common.Config().SetOption(r.Context(), consts.OptionKeyBillingCurrency, currency); err != nil {
 		response.Error(r, err)
 		return
 	}

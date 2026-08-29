@@ -174,7 +174,7 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 			Balance:          0,
 			FrozenBalance:    0,
 			WarningThreshold: &warningThreshold,
-			Currency:         "USD",
+			Currency:         billing.Currency(ctx),
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create wallet")
