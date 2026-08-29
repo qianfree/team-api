@@ -9,6 +9,7 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { formatOrder } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const plans = ref<any[]>([])
@@ -24,8 +25,8 @@ const columns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
   { title: '名称', dataIndex: 'name', width: 120 },
   { title: '标识', dataIndex: 'identifier', width: 100 },
-  { title: '月价', dataIndex: 'monthly_price', width: 100, render({ record }) { return `¥${Number(record.monthly_price).toFixed(2)}` } },
-  { title: '年价', dataIndex: 'yearly_price', width: 100, render({ record }) { return `¥${Number(record.yearly_price).toFixed(2)}` } },
+  { title: '月价', dataIndex: 'monthly_price', width: 100, render({ record }) { return formatOrder(record.monthly_price, 2) } },
+  { title: '年价', dataIndex: 'yearly_price', width: 100, render({ record }) { return formatOrder(record.yearly_price, 2) } },
   {
     title: '状态', dataIndex: 'status', width: 80,
     render({ record }) { return h(Tag, { color: record.status === 'active' ? 'green' : undefined, size: 'small' }, () => record.status === 'active' ? '上架' : '下架') },

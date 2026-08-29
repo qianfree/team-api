@@ -11,6 +11,7 @@ import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatBilling } from '@/composables/useCurrency'
 
 const { confirm } = useConfirm()
 
@@ -143,10 +144,11 @@ function formatLimit(value: number | null | undefined, suffix = ''): string {
 	return `${value}${suffix}`
 }
 
+// Key 额度展示（bil 层，本位币直显）
 function formatQuota(key: ApiKey): string {
 	const used = key.used_quota || 0
-	if (!key.total_quota || key.total_quota <= 0) return `$${used.toFixed(2)} / 不限`
-	return `$${used.toFixed(2)} / $${key.total_quota.toFixed(2)}`
+	if (!key.total_quota || key.total_quota <= 0) return `${formatBilling(used, 2)} / 不限`
+	return `${formatBilling(used, 2)} / ${formatBilling(key.total_quota, 2)}`
 }
 
 async function disableKey(keyId: number) {

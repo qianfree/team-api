@@ -6,6 +6,7 @@ import { useNotificationCount } from '@/composables/useNotificationCount'
 import { useAnnouncementRead } from '@/composables/useAnnouncementRead'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useWatermark } from '@/composables/useWatermark'
+import { formatBilling } from '@/composables/useCurrency'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
 import MaintenanceBanner from '@/components/common/MaintenanceBanner.vue'
@@ -173,7 +174,7 @@ async function fetchWalletBalance() {
 		const w = res.data?.data
 		if (w) {
 			const bal = w.available_balance ?? w.balance ?? 0
-			walletBalance.value = bal >= 100 ? '$' + bal.toFixed(0) : '$' + bal.toFixed(2)
+			walletBalance.value = bal >= 100 ? formatBilling(bal, 0) : formatBilling(bal, 2)
 		}
 	} catch {
 		// silently ignore
@@ -447,7 +448,7 @@ onBeforeUnmount(() => {
 							title="钱包"
 						>
 							<Icon name="currencyDollar" size="sm" />
-							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || '$0' }}</span>
+							<span class="text-xs font-semibold tracking-tight">{{ walletBalance || formatBilling(0, 2) }}</span>
 						</router-link>
 						<!-- Member Quota Capsule -->
 					<router-link

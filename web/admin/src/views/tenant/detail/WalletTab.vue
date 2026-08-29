@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, h } from 'vue'
+import { ref, reactive, computed, watch, onMounted, h } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 import { useIsMobile } from '@/composables/useIsMobile'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -17,6 +18,21 @@ const emit = defineEmits<{
 }>()
 
 const isMobile = useIsMobile()
+
+// 本位币符号：bil 层表单（调整余额/预警阈值）输入前缀跟随本位币，输入值仍为存储原值不折算
+const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
+
+// 线下充值入账弹窗文案：收款恒为人民币（银行转账），到账按本位币分支说明
+const offlineRechargeIntro = computed(() =>
+  displayCurrency.value === 'CNY'
+    ? '用于线下银行转账入账：输入人民币金额直接入账钱包（本位币为人民币，无需换算），并累计到累计充值（影响租户等级）。'
+    : '用于线下银行转账入账：输入人民币金额，到账按平台汇率换算为美元，并累计到累计充值（影响租户等级）。',
+)
+const offlineRechargeNote = computed(() =>
+  displayCurrency.value === 'CNY'
+    ? '到账金额 = 输入的人民币金额（本位币直接入账）'
+    : '到账金额 = 人民币金额 × 平台汇率，精确到 6 位小数',
+)
 
 // === 钱包信息 ===
 const walletInfo = ref<any>(null)
@@ -63,7 +79,7 @@ const frozenColumns: TableColumnData[] = [
   {
     title: '冻结金额', dataIndex: 'amount', width: 130,
     render({ record }) {
-      return h('span', { style: { color: 'rgb(var(--orange-6))', fontWeight: 600 } }, `$${(parseFloat(record.amount) || 0).toFixed(6)}`)
+      return h('span', { style: { color: 'rgb(var(--orange-6))', fontWeight: 600 } }, formatBilling(parseFloat(record.amount) || 0, 6))
     },
   },
   { title: '冻结时间', dataIndex: 'created_at', width: 280 },
@@ -102,7 +118,7 @@ async function handleRelease(done: (closed: boolean) => void) {
       reason: releaseForm.reason.trim(),
     })
     const amt = parseFloat(res.data?.data?.released_amount || 0)
-    Message.success(`已释放冻结 $${amt.toFixed(6)}`)
+    Message.success(`已释放冻结 ${formatBilling(amt, 6)}`)
     done(true)
     await refreshAll()
   } catch {
@@ -134,7 +150,7 @@ async function handleReleaseAll(done: (closed: boolean) => void) {
     const data = res.data?.data || {}
     const amt = parseFloat(data.released_amount || 0)
     const skipped = parseInt(data.skipped_count || 0, 10)
-    Message.success(`已释放 ${data.released_count || 0} 笔冻结，合计 $${amt.toFixed(6)}${skipped ? `，跳过 ${skipped} 笔` : ''}`)
+    Message.success(`已释放 ${data.released_count || 0} 笔冻结，合计 ${formatBilling(amt, 6)}${skipped ? `，跳过 ${skipped} 笔` : ''}`)
     if (skipped) {
       Message.warning(`跳过原因：${(data.skipped_reasons || []).join('；')}`)
     }
@@ -193,7 +209,8 @@ async function handleOfflineRecharge(done: (closed: boolean) => void) {
       description: offlineRechargeForm.description,
     })
     const data = res.data?.data || {}
-    Message.success(`入账成功，到账 $${parseFloat(data.credited_usd || 0).toFixed(2)}（汇率 ${data.rate}）`)
+    // credited_usd 为 bil 层本位币金额，按本位币符号展示（汇率信息保留）
+    Message.success(`入账成功，到账 ${formatBilling(data.credited_usd, 2)}（汇率 ${data.rate}）`)
     done(true)
     await refreshAll()
     emit('refresh-detail')
@@ -253,16 +270,16 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
         </template>
         <ADescriptions :column="isMobile ? 1 : 3" bordered size="medium">
           <ADescriptionsItem label="可用余额">
-            <span class="money">${{ (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) }}</span>
+            <span class="money">{{ formatBilling(walletInfo.balance - walletInfo.frozen_balance, 6) }}</span>
           </ADescriptionsItem>
           <ADescriptionsItem label="总余额">
-            ${{ parseFloat(walletInfo.balance).toFixed(6) }}
+            {{ formatBilling(walletInfo.balance, 6) }}
           </ADescriptionsItem>
           <ADescriptionsItem label="冻结余额">
-            <span style="color: rgb(var(--orange-6))">${{ parseFloat(walletInfo.frozen_balance).toFixed(6) }}</span>
+            <span style="color: rgb(var(--orange-6))">{{ formatBilling(walletInfo.frozen_balance, 6) }}</span>
           </ADescriptionsItem>
           <ADescriptionsItem label="预警阈值">
-            {{ walletInfo.warning_threshold > 0 ? `$${parseFloat(walletInfo.warning_threshold).toFixed(6)}` : '关闭' }}
+            {{ walletInfo.warning_threshold > 0 ? formatBilling(walletInfo.warning_threshold, 6) : '关闭' }}
           </ADescriptionsItem>
         </ADescriptions>
       </ACard>
@@ -338,16 +355,16 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
   <!-- 调整余额弹窗 -->
   <AModal v-model:visible="showRechargeModal" title="调整余额" :width="440" :on-before-ok="handleRecharge" :ok-loading="rechargeLoading">
     <div class="mb-3 text-sm leading-6" style="color: var(--ta-text-secondary)">
-      手动调整该租户的美元钱包余额（正数增加、负数扣减），用于运营补偿、余额纠错等场景。
+      手动调整该租户的{{ displayCurrency === 'USD' ? '美元' : '人民币' }}钱包余额（正数增加、负数扣减），用于运营补偿、余额纠错等场景。
       <br />
-      总余额 <span class="money">${{ walletInfo ? parseFloat(walletInfo.balance).toFixed(6) : '0.000000' }}</span>
-      ｜ 可用余额 <span class="money">${{ walletInfo ? (walletInfo.balance - walletInfo.frozen_balance).toFixed(6) : '0.000000' }}</span>
+      总余额 <span class="money">{{ walletInfo ? formatBilling(walletInfo.balance, 6) : formatBilling(0, 6) }}</span>
+      ｜ 可用余额 <span class="money">{{ walletInfo ? formatBilling(walletInfo.balance - walletInfo.frozen_balance, 6) : formatBilling(0, 6) }}</span>
       <span style="color: var(--ta-text-tertiary)">（扣减上限）</span>
     </div>
     <AForm :model="rechargeForm" layout="vertical">
-      <AFormItem label="调整金额（USD）" required>
+      <AFormItem :label="`调整金额（${displayCurrency}）`" required>
         <AInputNumber v-model="rechargeForm.amount" :precision="2" :step="1" placeholder="正数=增加余额，负数=扣减余额" class="w-full">
-          <template #prefix>$</template>
+          <template #prefix>{{ currencySymbol }}</template>
         </AInputNumber>
       </AFormItem>
       <AFormItem label="调整说明">
@@ -362,7 +379,7 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
   <!-- 线下充值入账弹窗 -->
   <AModal v-model:visible="showOfflineRechargeModal" title="线下充值入账" :width="440" :on-before-ok="handleOfflineRecharge" :ok-loading="offlineRechargeLoading">
     <div class="mb-3 text-sm" style="color: var(--ta-text-tertiary)">
-      用于线下银行转账入账：输入人民币金额，到账按平台汇率换算为美元，并累计到累计充值（影响租户等级）。
+      {{ offlineRechargeIntro }}
     </div>
     <AForm :model="offlineRechargeForm" layout="vertical">
       <AFormItem label="入账金额（人民币）" required>
@@ -378,7 +395,7 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
       </AFormItem>
     </AForm>
     <div class="mt-2 text-xs" style="color: var(--ta-text-tertiary)">
-      到账金额 = 人民币金额 × 平台汇率，精确到 6 位小数
+      {{ offlineRechargeNote }}
     </div>
   </AModal>
 
@@ -390,7 +407,7 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
     <AForm :model="thresholdForm" layout="vertical">
       <AFormItem label="预警阈值">
         <AInputNumber v-model="thresholdForm.threshold" :precision="2" :min="0" placeholder="设为 0 表示不预警" class="w-full">
-          <template #prefix>$</template>
+          <template #prefix>{{ currencySymbol }}</template>
         </AInputNumber>
       </AFormItem>
     </AForm>
@@ -424,7 +441,7 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
       <div class="mb-3 text-sm leading-6" style="color: var(--ta-text-secondary)">
         请求ID：<span style="font-family: monospace">{{ releaseTarget.request_id }}</span>
         <br />
-        冻结金额：<span style="color: rgb(var(--orange-6)); font-weight: 600">${{ (parseFloat(releaseTarget.amount) || 0).toFixed(6) }}</span>
+        冻结金额：<span style="color: rgb(var(--orange-6)); font-weight: 600">{{ formatBilling(releaseTarget.amount, 6) }}</span>
         ｜ 已冻结 {{ formatFrozenAge(releaseTarget.age_seconds) }}
       </div>
       <AForm :model="releaseForm" layout="vertical">

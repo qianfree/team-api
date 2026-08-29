@@ -12,6 +12,7 @@ import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatBilling } from '@/composables/useCurrency'
 
 const { confirm } = useConfirm()
 
@@ -284,10 +285,11 @@ async function copyKey(keyId: number) {
 	}
 }
 
+// Key 额度展示（bil 层，本位币直显）
 function formatKeyQuota(key: ApiKey): string {
 	const used = key.used_quota || 0
-	if (!key.total_quota || key.total_quota <= 0) return `$${used.toFixed(2)} / 不限`
-	return `$${used.toFixed(2)} / $${key.total_quota.toFixed(2)}`
+	if (!key.total_quota || key.total_quota <= 0) return `${formatBilling(used, 2)} / 不限`
+	return `${formatBilling(used, 2)} / ${formatBilling(key.total_quota, 2)}`
 }
 
 async function deleteKey(keyId: number) {
@@ -329,9 +331,9 @@ async function fetchUsageLogs() {
 	}
 }
 
+// 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(n: number): string {
-	if (!n) return '$0.00'
-	return '$' + n.toFixed(4)
+	return formatBilling(n, 4)
 }
 
 function switchTab(tab: 'overview' | 'keys' | 'usage') {

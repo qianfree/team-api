@@ -54,6 +54,12 @@
             cursor: not-allowed;
         }
 
+        .currency-option.selected {
+            border-color: #2563eb;
+            background-color: rgba(37, 99, 235, 0.04);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+        }
+
         @keyframes fadeUp {
             from { opacity: 0; transform: translateY(12px); }
             to   { opacity: 1; transform: translateY(0); }
@@ -67,6 +73,7 @@
         .delay-4 { animation-delay: 0.2s; }
         .delay-5 { animation-delay: 0.25s; }
         .delay-6 { animation-delay: 0.3s; }
+        .delay-7 { animation-delay: 0.35s; }
 
         @keyframes spin {
             to { transform: rotate(360deg); }
@@ -155,6 +162,31 @@
                             class="input-field w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 outline-none font-mono"
                             placeholder="再次输入密码" autocomplete="new-password">
                     </div>
+
+                    <!-- Base Currency -->
+                    <div class="animate-fade-up delay-6">
+                        <label class="block text-sm font-medium text-gray-700 mb-1.5">
+                            本位币
+                            <span class="text-amber-600 font-normal text-xs ml-1">初始化后不可更改</span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-2.5" id="currencyGroup">
+                            <label class="currency-option cursor-pointer flex items-start gap-2.5 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg transition-colors" data-value="USD">
+                                <input type="radio" name="currency" value="USD" checked class="mt-0.5 accent-[#2563eb]">
+                                <span>
+                                    <span class="block text-sm font-medium text-gray-900">USD（美元）</span>
+                                    <span class="block text-xs text-gray-400 mt-0.5">与上游模型报价对齐</span>
+                                </span>
+                            </label>
+                            <label class="currency-option cursor-pointer flex items-start gap-2.5 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-lg transition-colors" data-value="CNY">
+                                <input type="radio" name="currency" value="CNY" class="mt-0.5 accent-[#2563eb]">
+                                <span>
+                                    <span class="block text-sm font-medium text-gray-900">CNY（人民币）</span>
+                                    <span class="block text-xs text-gray-400 mt-0.5">面向国内运营</span>
+                                </span>
+                            </label>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1.5">决定系统内部记账与全站显示货币，模型定价按本位币配置</p>
+                    </div>
                 </div>
 
                 <!-- Error -->
@@ -168,7 +200,7 @@
                 </div>
 
                 <!-- Submit -->
-                <div class="pt-1.5 animate-fade-up delay-6">
+                <div class="pt-1.5 animate-fade-up delay-7">
                     <button
                         type="submit" id="submitBtn"
                         class="btn-primary w-full text-white py-2.5 rounded-lg text-sm font-medium">
@@ -208,6 +240,19 @@
                 }
             }
 
+            // 本位币选择卡片高亮联动
+            var currencyOptions = document.querySelectorAll('.currency-option');
+            function syncCurrencyHighlight() {
+                var selected = document.querySelector('input[name="currency"]:checked');
+                currencyOptions.forEach(function(opt) {
+                    opt.classList.toggle('selected', opt.querySelector('input').value === selected.value);
+                });
+            }
+            currencyOptions.forEach(function(opt) {
+                opt.querySelector('input').addEventListener('change', syncCurrencyHighlight);
+            });
+            syncCurrencyHighlight();
+
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
                 hideError();
@@ -216,6 +261,7 @@
                 var displayName = document.getElementById('displayName').value.trim();
                 var password = document.getElementById('password').value;
                 var confirmPassword = document.getElementById('confirmPassword').value;
+                var currency = document.querySelector('input[name="currency"]:checked').value;
 
                 if (!username) {
                     showError('请输入用户名');
@@ -242,7 +288,8 @@
                         username: username,
                         displayName: displayName,
                         password: password,
-                        confirmPassword: confirmPassword
+                        confirmPassword: confirmPassword,
+                        currency: currency
                     })
                 })
                 .then(function(res) { return res.json(); })

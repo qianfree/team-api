@@ -396,7 +396,6 @@ const menuGroups = [
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage },
-      { name: 'AdminPaymentSettings', label: '支付设置', icon: IconStorage },
     ],
   },
 ]

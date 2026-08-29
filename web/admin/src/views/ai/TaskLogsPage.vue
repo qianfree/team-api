@@ -10,6 +10,7 @@ import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useDateRange } from '@/composables/useDateRange'
+import { formatBilling } from '@/composables/useCurrency'
 
 const { defaultEnd, defaultTodayRange, quickDateRanges } = useDateRange()
 
@@ -122,10 +123,10 @@ const columns: TableColumnData[] = [
     width: 100,
     render({ record }) {
       if (record.billing_settled && record.actual_cost > 0) {
-        return `$${record.actual_cost.toFixed(6)}`
+        return formatBilling(record.actual_cost, 6)
       }
       if (record.pre_deduct_amount > 0) {
-        return `$${record.pre_deduct_amount.toFixed(6)} (预扣)`
+        return `${formatBilling(record.pre_deduct_amount, 6)} (预扣)`
       }
       return '-'
     },
@@ -363,11 +364,11 @@ onMounted(() => {
             <ADescriptionsItem label="模型">{{ detailData.model_name }}</ADescriptionsItem>
             <ADescriptionsItem label="进度">{{ detailData.progress }}</ADescriptionsItem>
             <ADescriptionsItem label="预扣金额">
-              <span v-if="detailData.pre_deduct_amount > 0">${{ detailData.pre_deduct_amount.toFixed(4) }}</span>
+              <span v-if="detailData.pre_deduct_amount > 0">{{ formatBilling(detailData.pre_deduct_amount, 4) }}</span>
               <span v-else>-</span>
             </ADescriptionsItem>
             <ADescriptionsItem label="实际费用">
-              <span v-if="detailData.billing_settled">${{ detailData.actual_cost.toFixed(4) }}</span>
+              <span v-if="detailData.billing_settled">{{ formatBilling(detailData.actual_cost, 4) }}</span>
               <span v-else>未结算</span>
             </ADescriptionsItem>
             <ADescriptionsItem label="提交时间">{{ detailData.submit_time || '-' }}</ADescriptionsItem>

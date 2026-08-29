@@ -85,10 +85,9 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '订单管理' },
       },
       {
+        // 旧"支付设置"独立页已并入系统设置（payment 分类），URL 保留重定向兼容
         path: 'payment-settings',
-        name: 'AdminPaymentSettings',
-        component: () => import('@/views/finance/PaymentSettingsPage.vue'),
-        meta: { title: '支付设置' },
+        redirect: { name: 'AdminSettings' },
       },
       {
         path: 'redemptions',

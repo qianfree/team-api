@@ -5,6 +5,7 @@ import { NDrawer, NDrawerContent } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
 import type { MarketplaceModel } from '@/api/marketplace'
 import { useIsMobile } from '@/composables/useIsMobile'
+import { displayCurrency } from '@/composables/useCurrency'
 import {
 	billingModeLabel,
 	formatPrice,
@@ -33,22 +34,23 @@ const { isMobile } = useIsMobile()
 const meta = computed(() => getCategoryMeta(props.model?.category))
 
 // 计费瓦片：按计费模式决定展示哪些价格，有值的缓存价附加在后面
+// 价格走 formatPrice（本位币），单位文案跟随 displayCurrency（computed 内读取，配置变化自动重渲染）
 const priceTiles = computed(() => {
 	const model = props.model
 	if (!model) return []
 	if (model.billing_mode === 'per_request') {
-		return [{ label: '单次调用', value: formatPrice(model.per_request_price), unit: 'USD / 次', primary: true, wide: true }]
+		return [{ label: '单次调用', value: formatPrice(model.per_request_price), unit: `${displayCurrency.value} / 次`, primary: true, wide: true }]
 	}
 	const tiles = [
-		{ label: '输入', value: formatPrice(model.input_price), unit: 'USD / 1M tokens', primary: true, wide: false },
-		{ label: '输出', value: formatPrice(model.output_price), unit: 'USD / 1M tokens', primary: false, wide: false },
+		{ label: '输入', value: formatPrice(model.input_price), unit: `${displayCurrency.value} / 1M tokens`, primary: true, wide: false },
+		{ label: '输出', value: formatPrice(model.output_price), unit: `${displayCurrency.value} / 1M tokens`, primary: false, wide: false },
 	]
 	// 后端未设置缓存价时返回 0 而非 null，0 价瓦片属于展示噪音，直接隐藏
 	if (model.cache_read_price) {
-		tiles.push({ label: '缓存读取', value: formatPrice(model.cache_read_price), unit: 'USD / 1M tokens', primary: false, wide: false })
+		tiles.push({ label: '缓存读取', value: formatPrice(model.cache_read_price), unit: `${displayCurrency.value} / 1M tokens`, primary: false, wide: false })
 	}
 	if (model.cache_creation_price) {
-		tiles.push({ label: '缓存创建', value: formatPrice(model.cache_creation_price), unit: 'USD / 1M tokens', primary: false, wide: false })
+		tiles.push({ label: '缓存创建', value: formatPrice(model.cache_creation_price), unit: `${displayCurrency.value} / 1M tokens`, primary: false, wide: false })
 	}
 	return tiles
 })

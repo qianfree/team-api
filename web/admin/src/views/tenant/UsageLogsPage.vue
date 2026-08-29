@@ -13,6 +13,7 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { useExport } from '@/composables/useExport'
 import { useDateRange } from '@/composables/useDateRange'
 import { useIsMobile } from '@/composables/useIsMobile'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const { defaultEnd, defaultTodayRange, quickDateRanges } = useDateRange()
 const isMobileView = useIsMobile()
@@ -164,9 +165,10 @@ const snapshotCollapsed = ref(true)
 const detailLog = ref<any>(null)
 const router = useRouter()
 
+// 费用格式化：bil 层本位币直显，符号跟随 displayCurrency
 function formatCost(n: number): string {
-	if (n == null || isNaN(n)) return '$0.000000'
-	return '$' + n.toFixed(6)
+	if (n == null || isNaN(n)) return formatBilling(0, 6)
+	return formatBilling(n, 6)
 }
 
 function formatMs(n: number): string {
@@ -198,10 +200,10 @@ function formatTime(s: string): string {
 	return s.replace('T', ' ').substring(0, 19)
 }
 
-// 格式化金额（保留2位小数）
+// 格式化金额（bil 层本位币，保留2位小数）
 function formatMoney(amount: number): string {
-	if (amount == null || isNaN(amount)) return '$0.00'
-	return '$' + amount.toFixed(2)
+	if (amount == null || isNaN(amount)) return formatBilling(0, 2)
+	return formatBilling(amount, 2)
 }
 
 // 格式化数字（添加千分位）
@@ -904,7 +906,7 @@ const { exporting, exportFile } = useExport({
 					<div class="receipt">
 						<div class="receipt-head">
 							<span class="receipt-brand">用量 · 费用 · 结算</span>
-							<span class="receipt-meta">{{ detailLog.currency || 'USD' }}</span>
+							<span class="receipt-meta">{{ displayCurrency }}</span>
 						</div>
 						<!-- 小票行由 receiptRows 数据驱动生成 -->
 						<template v-for="(row, index) in receiptRows" :key="index">
@@ -933,27 +935,27 @@ const { exporting, exportFile } = useExport({
 								<div class="snapshot-block-body">
 									<div class="snapshot-row">
 										<span class="snapshot-label">基础输入价</span>
-										<span class="snapshot-value">${{ (snapshot.pricing.base_input_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_input_price || 0, 6) }}/1M</span>
 									</div>
 									<div class="snapshot-row">
 										<span class="snapshot-label">基础输出价</span>
-										<span class="snapshot-value">${{ (snapshot.pricing.base_output_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_output_price || 0, 6) }}/1M</span>
 									</div>
 									<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
 										<span class="snapshot-label">实际输入价</span>
-										<span class="snapshot-value text-success">${{ (snapshot.pricing.effective_input_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_input_price || 0, 6) }}/1M</span>
 									</div>
 									<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
 										<span class="snapshot-label">实际输出价</span>
-										<span class="snapshot-value text-success">${{ (snapshot.pricing.effective_output_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_output_price || 0, 6) }}/1M</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存创建单价</span>
-										<span class="snapshot-value">${{ (snapshot.cache_prices.cache_creation_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.cache_prices.cache_creation_price || 0, 6) }}/1M</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_read_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存读取单价</span>
-										<span class="snapshot-value">${{ (snapshot.cache_prices.cache_read_price || 0).toFixed(6) }}/1M</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.cache_prices.cache_read_price || 0, 6) }}/1M</span>
 									</div>
 								</div>
 							</div>
@@ -985,7 +987,7 @@ const { exporting, exportFile } = useExport({
 										<div v-if="(tc.tokens || 0) > 0" class="snapshot-row">
 											<span class="snapshot-label">{{ tokenCostLabels[key] || key }}</span>
 											<span class="snapshot-value">
-												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; ${{ (tc.unit_price || 0).toFixed(6) }}/1M = <strong>${{ (tc.cost || 0).toFixed(6) }}</strong>
+												{{ (tc.tokens || 0).toLocaleString() }} tokens &times; {{ formatBilling(tc.unit_price || 0, 6) }}/1M = <strong>{{ formatBilling(tc.cost || 0, 6) }}</strong>
 											</span>
 										</div>
 									</template>
