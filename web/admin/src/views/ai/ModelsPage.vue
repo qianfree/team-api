@@ -152,6 +152,12 @@ const statusTagLabel: Record<string, string> = {
   offline: '下线',
 }
 
+const pricingModeTagColor: Record<string, string> = {
+  token: 'arcoblue',
+  per_request: 'orangered',
+  tiered: 'purple',
+}
+
 // ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
 
 // token 数紧凑格式化：128000 → 128K，1500000 → 1.5M，无值返回 '-'
@@ -218,7 +224,7 @@ const columns: TableColumnData[] = [
       }
       const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
       const tags = [
-        h(Tag, { color: 'green', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
+        h(Tag, { color: pricingModeTagColor[record.pricing_mode] || 'gray', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
       if (record.pricing_mode === 'per_request') {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
