@@ -11,9 +11,11 @@ export interface TokenUsage {
 	total_tokens?: number
 }
 
+import { formatBilling } from '@/composables/useCurrency'
+
 /**
  * calculateCost 根据模型定价和 token usage 估算费用
- * @returns 格式化的费用字符串，如 "$0.001234"；无法计算时返回 null
+ * @returns 格式化的费用字符串（跟随本位币），如 "$0.001234"；无法计算时返回 null
  */
 export function calculateCost(
 	model: ModelPricing | undefined,
@@ -27,7 +29,7 @@ export function calculateCost(
 	// 按次计费
 	if (model.billing_mode === 'per_request' && model.per_request_price) {
 		const price = Number(model.per_request_price)
-		if (price > 0) return `$${price.toFixed(6)}`
+		if (price > 0) return formatBilling(price, 6)
 		return null
 	}
 
@@ -40,5 +42,5 @@ export function calculateCost(
 	const cost = (promptTokens * inputPrice + completionTokens * outputPrice) / 1_000_000
 	if (cost <= 0) return null
 
-	return `$${cost.toFixed(6)}`
+	return formatBilling(cost, 6)
 }

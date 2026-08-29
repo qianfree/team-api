@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -50,13 +51,13 @@ const columns: TableColumnData[] = [
     render({ record }) {
       const amount = record.amount || 0
       const color = amount > 0 ? 'rgb(var(--green-6))' : amount < 0 ? 'rgb(var(--red-6))' : undefined
-      const prefix = amount > 0 ? '+' : ''
-      return h('span', { style: { color, fontWeight: 500, fontFamily: 'monospace' } }, `${prefix}$${Math.abs(amount).toFixed(6)}`)
+      // bil 层本位币金额：showSign 自动带 +/- 符号（同时修复负数缺失负号的问题）
+      return h('span', { style: { color, fontWeight: 500, fontFamily: 'monospace' } }, formatBilling(amount, 6, true))
     },
   },
   {
     title: '变动后余额', dataIndex: 'balance_after', width: 130,
-    render({ record }) { return `$${(record.balance_after || 0).toFixed(6)}` },
+    render({ record }) { return formatBilling(record.balance_after || 0, 6) },
   },
   { title: '描述', dataIndex: 'description', width: 180, ellipsis: true, tooltip: true },
   { title: '模型', dataIndex: 'model_name', width: 140, ellipsis: true, tooltip: true },

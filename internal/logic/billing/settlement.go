@@ -166,7 +166,7 @@ func Settle(ctx context.Context, tenantID, userID, apiKeyID, channelID int64,
 			BaseCost:     preDeductAmount,
 			InputTokens:  inputTokens,
 			OutputTokens: outputTokens,
-			Currency:     "USD",
+			Currency:     Currency(ctx),
 		}
 	} else {
 		breakdown = computeCost(pricingResult, inputTokens, outputTokens, nil)
@@ -284,7 +284,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 		fb := &CostBreakdown{
 			TotalCost: preDeductAmount,
 			BaseCost:  preDeductAmount,
-			Currency:  "USD",
+			Currency:  Currency(ctx),
 		}
 		if usage != nil {
 			fb.InputTokens = usage.PromptTokens
@@ -459,7 +459,7 @@ func createBillingRecord(ctx context.Context, tenantID, userID, apiKeyID, channe
 		InputPrice:   inputPrice,
 		OutputPrice:  outputPrice,
 		TotalCost:    totalCost,
-		Currency:     "USD",
+		Currency:     Currency(ctx),
 		Status:       "settled",
 		SettledAt:    gtime.NewFromTime(now),
 	}
@@ -545,7 +545,7 @@ func createBillingRecordWithSnapshot(ctx context.Context, tenantID, userID, apiK
 		InputPrice:   inputPrice,
 		OutputPrice:  outputPrice,
 		TotalCost:    totalCost,
-		Currency:     "USD",
+		Currency:     Currency(ctx),
 		Status:       "settled",
 		SettledAt:    gtime.NewFromTime(now),
 	}

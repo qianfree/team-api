@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common/oauth"
 	relayLogic "github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/internal/model/do"
@@ -246,6 +247,8 @@ func (s *sAdmin) ChannelOAuthRefresh(ctx context.Context, req *v1.ChannelOAuthRe
 	if err != nil {
 		return nil, gerror.Wrap(err, "更新 OAuth 凭证失败")
 	}
+	// 令牌已换新，解除旧令牌 401 留下的凭证冷却（keyID 不变，标记不会自己跟着凭证走）
+	dispatchadapter.ClearCredentialCooldownByKey(ctx, key.ID)
 
 	return &v1.ChannelOAuthRefreshRes{
 		ExpiresAt: expiresAt.String(),

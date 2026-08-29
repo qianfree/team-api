@@ -6,6 +6,7 @@ import Icon from '@/components/common/Icon.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
+import { formatBilling } from '@/composables/useCurrency'
 
 const code = ref('')
 const loading = ref(false)
@@ -69,9 +70,10 @@ const columns = computed<DataTableColumns<any>>(() => [
 		title: '面值',
 		key: 'value',
 		width: 130,
+		// 兑换码面值属 bil 层（本位币），兑换入账恒为正数
 		render: (row) =>
 			row.type === 'quota'
-				? h('span', { class: 'font-mono' }, `+${Number(row.value).toFixed(6)}`)
+				? h('span', { class: 'font-mono' }, formatBilling(row.value, 6, true))
 				: h('span', { class: 'font-mono' }, '-'),
 	},
 	{

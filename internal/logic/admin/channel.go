@@ -456,15 +456,25 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		if err != nil {
 			return nil, gerror.Wrapf(err, "encrypt api key failed")
 		}
+		// 用 g.Map 而非 do 结构体：需要把 token_expires_at 写回 NULL（do 的零值会被 gf 忽略）。
+		// 由 OAuth 改回静态 Key 时旧的 access_token 过期时间必须清掉，否则详情页会显示
+		// 一个与当前 Key 无关的过期时间；last_error 同理属于旧 Key 的历史。
 		_, err = dao.ChnChannelKeys.Ctx(ctx).
 			Where("channel_id", req.ID).
-			Data(do.ChnChannelKeys{
-				EncryptedKey: encrypted,
-				KeyType:      "apikey",
+			Data(g.Map{
+				"encrypted_key":    encrypted,
+				"key_type":         "apikey",
+				"token_expires_at": nil,
+				"last_error":       "",
 			}).
 			Update()
 		if err != nil {
 			return nil, err
+		}
+		// 换 Key 必须解除凭证冷却：冷却按 keyID 打标而这里是原地改同一行（keyID 不变），
+		// 不解除的话新 Key 会被调度器整段跳过直到 TTL 到期，期间连试都不试。
+		if n := dispatchadapter.ClearChannelCredentialCooldown(ctx, req.ID); n > 0 {
+			g.Log().Infof(ctx, "[Channel] 渠道 %d 更换 Key，已解除 %d 个 Key 的凭证冷却", req.ID, n)
 		}
 	}
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
@@ -545,6 +555,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 
 	// 查询 Key 信息
 	var keyInfo *struct {
+		ID             int64       `json:"id"`
 		KeyType        string      `json:"key_type"`
 		Status         string      `json:"status"`
 		Name           string      `json:"name"`
@@ -552,7 +563,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 	}
 	err = dao.ChnChannelKeys.Ctx(ctx).
 		Where("channel_id", req.ID).
-		Fields("key_type, status, name, token_expires_at").
+		Fields("id, key_type, status, name, token_expires_at").
 		Scan(&keyInfo)
 	if err != nil {
 		return nil, err
@@ -592,6 +603,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		KeyType:                  keyInfo.KeyType,
 		KeyStatus:                keyInfo.Status,
 		KeyName:                  keyInfo.Name,
+		KeyCooldownRemaining:     dispatchadapter.CredentialCooldownRemaining(ctx, keyInfo.ID),
 	}
 	if rs, ok := channelRuntimeStates()[req.ID]; ok {
 		res.BreakerState = int(rs.Breaker)
@@ -685,11 +697,12 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 	list := make([]v1.ChannelKeyItem, len(keys))
 	for i, k := range keys {
 		item := v1.ChannelKeyItem{
-			ID:        k.ID,
-			Name:      k.Name,
-			Status:    k.Status,
-			KeyType:   k.KeyType,
-			CreatedAt: k.CreatedAt.String(),
+			ID:                k.ID,
+			Name:              k.Name,
+			Status:            k.Status,
+			KeyType:           k.KeyType,
+			CreatedAt:         k.CreatedAt.String(),
+			CooldownRemaining: dispatchadapter.CredentialCooldownRemaining(ctx, k.ID),
 		}
 		if item.KeyType == "" {
 			item.KeyType = "apikey"
@@ -1009,6 +1022,12 @@ func (s *sAdmin) ResetChannelHealth(ctx context.Context, req *v1.ChannelResetHea
 
 	// 调度层：复位渠道级/模型级熔断 + 成功率恢复，渠道立即恢复被选择能力
 	dispatchadapter.ResetChannelHealth(ctx, req.ID)
+	// 凭证冷却同属"渠道不可用"状态，且只靠 TTL 自愈、无其它人工出口：
+	// 管理员点重置的语义就是"这个渠道我修好了"，只复位熔断不解除冷却等于重置了一半
+	// ——渠道会继续以「凭证全部冷却」被整体跳过，界面上却显示健康已恢复。
+	if n := dispatchadapter.ClearChannelCredentialCooldown(ctx, req.ID); n > 0 {
+		g.Log().Infof(ctx, "[Channel] 渠道 %d 重置健康度，已解除 %d 个 Key 的凭证冷却", req.ID, n)
+	}
 	// 请求按 Redis 实际读值重算落盘：上面写死的 80 只是调度引擎未组装时的兜底，
 	// 重算后会收敛到与调度同源的 0.9^α×100
 	dispatchadapter.RequestHealthSnapshot(req.ID)

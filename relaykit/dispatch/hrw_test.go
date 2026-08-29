@@ -17,7 +17,7 @@ func scoredSet(weights map[int64]float64) []ScoredChannel {
 	return out
 }
 
-func TestPickHRW_粘性稳定(t *testing.T) {
+func TestPickHRW_StickyStability(t *testing.T) {
 	cands := scoredSet(map[int64]float64{1: 5, 2: 3, 3: 2})
 	first := PickHRW(cands, "session-abc")
 	require.NotNil(t, first)
@@ -27,7 +27,7 @@ func TestPickHRW_粘性稳定(t *testing.T) {
 	}
 }
 
-func TestPickHRW_候选顺序无关(t *testing.T) {
+func TestPickHRW_CandidateOrderIndependent(t *testing.T) {
 	a := []ScoredChannel{
 		{Channel: Channel{ID: 1}, Weight: 5},
 		{Channel: Channel{ID: 2}, Weight: 3},
@@ -41,7 +41,7 @@ func TestPickHRW_候选顺序无关(t *testing.T) {
 	}
 }
 
-func TestPickHRW_权重比例分布(t *testing.T) {
+func TestPickHRW_WeightProportionalDistribution(t *testing.T) {
 	// 权重 5:3:2 → 期望占比 50%/30%/20%，10 万采样误差 < 2 个百分点
 	cands := scoredSet(map[int64]float64{1: 5, 2: 3, 3: 2})
 	const n = 100_000
@@ -57,7 +57,7 @@ func TestPickHRW_权重比例分布(t *testing.T) {
 	}
 }
 
-func TestPickHRW_权重非正不参与(t *testing.T) {
+func TestPickHRW_NonPositiveWeightExcluded(t *testing.T) {
 	cands := scoredSet(map[int64]float64{1: 0, 2: -1, 3: 2})
 	for i := range 1000 {
 		p := PickHRW(cands, fmt.Sprintf("s-%d", i))
@@ -68,7 +68,7 @@ func TestPickHRW_权重非正不参与(t *testing.T) {
 	assert.Nil(t, PickHRW(nil, "s"))
 }
 
-func TestPickHRW_单调性(t *testing.T) {
+func TestPickHRW_Monotonicity(t *testing.T) {
 	// 增加一个渠道只迁移有限比例会话：不含新渠道时选中 A 的会话，
 	// 加入新渠道后要么仍选 A，要么选新渠道，绝不迁到其它旧渠道。
 	oldSet := scoredSet(map[int64]float64{1: 5, 2: 3, 3: 2})
@@ -87,7 +87,7 @@ func TestPickHRW_单调性(t *testing.T) {
 	assert.InDelta(t, 3.0/13.0, float64(moved)/n, 0.02)
 }
 
-func TestUniformHash_值域(t *testing.T) {
+func TestUniformHash_Range(t *testing.T) {
 	for i := range 10_000 {
 		u := uniformHash(fmt.Sprintf("k-%d", i), int64(i))
 		require.Greater(t, u, 0.0)

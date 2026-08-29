@@ -10,6 +10,7 @@ import BaseSelect from '../../components/common/BaseSelect.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
+import { formatBilling } from '@/composables/useCurrency'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 
 // 日期辅助（native，避免引入 dayjs 依赖）
@@ -110,9 +111,9 @@ const platformLabel: Record<string, string> = {
 	ali: '阿里',
 }
 
+// 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(n: number | undefined): string {
-	if (!n) return '$0.000000'
-	return '$' + n.toFixed(6)
+	return formatBilling(n, 6)
 }
 
 function formatTime(s: string | undefined): string {

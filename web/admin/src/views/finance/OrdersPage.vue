@@ -9,6 +9,7 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { formatOrder } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const orders = ref<any[]>([])
@@ -45,7 +46,7 @@ const columns: TableColumnData[] = [
   },
   {
     title: '金额', dataIndex: 'final_amount', width: 100,
-    render({ record }) { return `¥${Number(record.final_amount).toFixed(2)}` },
+    render({ record }) { return formatOrder(record.final_amount, 2) },
   },
   { title: '支付渠道', dataIndex: 'payment_channel', width: 90 },
   {
@@ -161,7 +162,7 @@ const { exporting, exportFile } = useExport({
     <AModal v-model:visible="showRefundModal" title="发起退款" :width="450" :mask-closable="false" :on-before-ok="handleRefund" :ok-loading="refundLoading">
       <AForm :model="refundForm" :auto-label-width="true" layout="vertical">
         <AFormItem label="退款金额">
-          <span class="text-red-500 font-medium">¥{{ refundAmount.toFixed(2) }}</span>
+          <span class="text-red-500 font-medium">{{ formatOrder(refundAmount, 2) }}</span>
         </AFormItem>
         <AFormItem label="退款原因" required>
           <AInput v-model="refundForm.reason" type="textarea" :auto-size="{ minRows: 3, maxRows: 5 }" placeholder="请填写退款原因" />

@@ -322,7 +322,7 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		DiscountRatio:        discountRatio,
 		TenantMultiplier:     tenantMultiplier,
 		ModelMultiplier:      modelMultiplier,
-		Currency:             "USD",
+		Currency:             Currency(ctx),
 		CacheReadPrice:       cacheReadPrice,
 		CacheCreationPrice:   cacheCreationPrice,
 		CacheCreation5mPrice: cacheCreationPrice,       // 5m TTL = cache_creation_price 基础价（对应官方 1.25× 输入价）

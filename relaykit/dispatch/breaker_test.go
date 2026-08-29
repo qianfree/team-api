@@ -8,7 +8,7 @@ import (
 
 func breakerPol() BreakerPolicy { return DefaultRoutingPolicy().Breaker }
 
-func TestEffectiveBreakerState_惰性转移(t *testing.T) {
+func TestEffectiveBreakerState_LazyTransition(t *testing.T) {
 	p := breakerPol()
 	s := BreakerSnapshot{State: BreakerOpen, OpenedAtMs: 0, CooldownMs: int64(p.CooldownSeconds) * 1000}
 
@@ -17,7 +17,7 @@ func TestEffectiveBreakerState_惰性转移(t *testing.T) {
 	assert.Equal(t, BreakerClosed, EffectiveBreakerState(BreakerSnapshot{State: BreakerClosed}, 0))
 }
 
-func TestBreakerOnFailure_窗口阈值熔断(t *testing.T) {
+func TestBreakerOnFailure_WindowThresholdOpens(t *testing.T) {
 	p := breakerPol() // failThreshold=8
 
 	s := BreakerSnapshot{State: BreakerClosed, FailWindowCount: 7}
@@ -31,14 +31,14 @@ func TestBreakerOnFailure_窗口阈值熔断(t *testing.T) {
 	assert.Equal(t, int64(30_000), s.CooldownMs)
 }
 
-func TestBreakerOnFailure_致命一次直达(t *testing.T) {
+func TestBreakerOnFailure_FatalOpensImmediately(t *testing.T) {
 	p := breakerPol()
 	s := BreakerSnapshot{State: BreakerClosed, FailWindowCount: 0}
 	s = BreakerOnFailure(s, true, 1000, p)
 	assert.Equal(t, BreakerOpen, s.State, "CHANNEL_FATAL 一次直达熔断")
 }
 
-func TestBreakerOnFailure_探测失败冷却翻倍(t *testing.T) {
+func TestBreakerOnFailure_ProbeFailureDoublesCooldown(t *testing.T) {
 	p := breakerPol() // cooldown 30s, max 300s
 
 	// OPEN 冷却期满（有效态 HALF_OPEN）时失败 = 探测失败 → 回 OPEN，冷却翻倍
@@ -60,7 +60,7 @@ func TestBreakerOnFailure_探测失败冷却翻倍(t *testing.T) {
 	assert.Equal(t, s2, got)
 }
 
-func TestBreakerOnSuccess_探测成功复位(t *testing.T) {
+func TestBreakerOnSuccess_ProbeSuccessResets(t *testing.T) {
 	// HALF_OPEN（有效态）成功 → CLOSED 并复位
 	s := BreakerSnapshot{State: BreakerOpen, OpenedAtMs: 0, CooldownMs: 30_000, FailWindowCount: 9}
 	s = BreakerOnSuccess(s, 30_000)
@@ -79,7 +79,7 @@ func TestBreakerOnSuccess_探测成功复位(t *testing.T) {
 	assert.Zero(t, s.FailWindowCount, "成功清失败计数")
 }
 
-func TestBreaker_全转移路径(t *testing.T) {
+func TestBreaker_AllTransitionPaths(t *testing.T) {
 	p := breakerPol()
 
 	// CLOSED → OPEN → HALF_OPEN(探测失败) → OPEN → HALF_OPEN(探测成功) → CLOSED

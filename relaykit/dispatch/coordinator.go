@@ -3,6 +3,8 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -92,6 +94,9 @@ type NoChannelDiag struct {
 	LeaseFull       int // 容量租约满（渠道并发已达 softLimit / max_concurrency）
 	RequestExcluded int // 本请求内先前已失败而被排除的渠道
 	CredUnavailable int // 渠道全部 Key 处于冷却/已排除
+	// CredCooledKeys 上述渠道中不可用的 Key ID（去重、升序）。凭证冷却只存在于 Redis
+	// 且只靠 TTL 自愈，没有 keyID 就无从判断该等 TTL 还是该去解除，故直接打进日志。
+	CredCooledKeys []int64
 }
 
 // Summary 人类可读的原因摘要（仅列出非零项），供无可用渠道时的日志定位。
@@ -110,7 +115,15 @@ func (d NoChannelDiag) Summary() string {
 		parts = append(parts, fmt.Sprintf("容量租约满×%d", d.LeaseFull))
 	}
 	if d.CredUnavailable > 0 {
-		parts = append(parts, fmt.Sprintf("凭证全部冷却×%d", d.CredUnavailable))
+		part := fmt.Sprintf("凭证全部冷却×%d", d.CredUnavailable)
+		if len(d.CredCooledKeys) > 0 {
+			ids := make([]string, len(d.CredCooledKeys))
+			for i, id := range d.CredCooledKeys {
+				ids[i] = strconv.FormatInt(id, 10)
+			}
+			part += "(key=" + strings.Join(ids, ",") + ")"
+		}
+		parts = append(parts, part)
 	}
 	if d.RequestExcluded > 0 {
 		parts = append(parts, fmt.Sprintf("本请求已排除×%d", d.RequestExcluded))
@@ -259,6 +272,7 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 	// 本轮选择中被探测令牌 / 租约 / 凭证拒绝的渠道（不进入 excludedChans，不影响绑定守卫语义）
 	roundExcluded := make(map[int64]struct{})
 	var probeDenied, leaseDenied, credDenied int
+	var credCooledKeys []int64
 
 	for range len(snapshot) + 3 { // 每轮至少排除一个渠道，防御性上限
 		scored, halfOpen, exclRound := s.buildCandidates(snapshot, roundExcluded, pol)
@@ -275,6 +289,7 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 			LeaseFull:       leaseDenied,
 			RequestExcluded: exclRound.Request,
 			CredUnavailable: credDenied,
+			CredCooledKeys:  credCooledKeys,
 		}
 
 		if len(scored) == 0 {
@@ -303,6 +318,7 @@ func (s *RouteSession) selectChannel(ctx context.Context) *Decision {
 		if !keyOK {
 			roundExcluded[chosen.ID] = struct{}{}
 			credDenied++
+			credCooledKeys = appendMissingIDs(credCooledKeys, chosen.Channel.KeyIDs)
 			continue
 		}
 
@@ -482,6 +498,17 @@ func (s *RouteSession) alternateKeyAvailable(ctx context.Context) bool {
 		return true
 	}
 	return false
+}
+
+// appendMissingIDs 把 src 中尚未出现的 ID 并入 dst 并保持升序（诊断用，规模仅候选渠道的 Key 数）。
+func appendMissingIDs(dst, src []int64) []int64 {
+	for _, id := range src {
+		if !slices.Contains(dst, id) {
+			dst = append(dst, id)
+		}
+	}
+	slices.Sort(dst)
+	return dst
 }
 
 func (s *RouteSession) excludeCurrent(ctx context.Context) {

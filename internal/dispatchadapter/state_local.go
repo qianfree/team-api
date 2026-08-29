@@ -106,6 +106,13 @@ func (l *localState) coolCred(keyID int64, ttl time.Duration) {
 	l.credCD[keyID] = time.Now().Add(ttl)
 }
 
+// clearCred 解除本地凭证冷却镜像（更换 Key / 管理员重置时调用）。
+func (l *localState) clearCred(keyID int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.credCD, keyID)
+}
+
 func (l *localState) isCredCooled(keyID int64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -282,15 +282,15 @@ cmd（路由注册）
 
 ### 系统货币规则
 
-平台采用**内部统一 USD + 充值入口 CNY**策略，系统内除充值/支付外的所有金额均为 USD：
+平台采用**本位币制 + 充值入口 CNY**策略：系统在初始化向导（setup）时选定**本位币**（`billing_currency`，USD 或 CNY，**选定后不可更改**，存量部署默认 USD），内部记账与全站显示统一使用本位币：
 
 | 业务场景 | 货币 | 说明 |
 |----------|------|------|
-| 大模型价格展示和计费 | **USD（美元）** | 模型定价、Token 单价、计费扣费统一使用美元，与上游供应商（OpenAI/Anthropic/Google）报价币种一致 |
-| 用户钱包余额 | **USD（美元）** | 钱包存储 USD 余额，充值时 CNY 按汇率转换为 USD 入账 |
-| 计费记录 / 交易流水 | **USD（美元）** | 所有 bil_records、bil_transactions 金额均为 USD |
+| 大模型价格展示和计费 | **本位币** | 模型定价、Token 单价、计费扣费统一使用本位币（本位币=CNY 的部署按人民币配价） |
+| 用户钱包余额 | **本位币** | 本位币=USD 时充值 CNY 按汇率转换为 USD 入账；本位币=CNY 时直接入账无换汇 |
+| 计费记录 / 交易流水 | **本位币** | 所有 bil_records、bil_transactions 金额均为本位币 |
 | 套餐价格 | **CNY（人民币）** | 管理后台创建套餐时设置的价格为人民币，用户购买套餐使用人民币支付 |
-| 充值/支付 | **CNY（人民币）** | 用户通过支付渠道（支付宝/微信/Stripe）充值为人民币，履约时转换为 USD 入账钱包 |
+| 充值/支付 | **CNY（人民币）** | 用户通过支付渠道（支付宝/微信/Stripe）充值为人民币（收款渠道物理现实），履约时按本位币入账钱包 |
 
 #### 三层币种固定规则（强约束，写新代码必须遵守）
 
@@ -299,25 +299,29 @@ cmd（路由注册）
 | 层 | 表前缀 | 币种 | 说明 |
 |----|--------|------|------|
 | **订单 / 支付层** | `ord_` | **永远 CNY** | 充值订单、套餐订单、退款，金额一律人民币。`ord_orders.currency` 默认值必须为 `CNY` |
-| **钱包 / 计费 / 账本层** | `bil_` | **永远 USD** | 钱包余额、冻结余额、累计充值、交易流水、计费记录、用量、预扣/结算/退款，一律美元 |
-| **套餐定价** | `pln_` | **CNY** | 套餐卖的是 token 额度（`monthly_quota_tokens`），价格用人民币，不与 USD 钱包直接比较 |
-| **租户等级阈值** | `tnt_tenant_level_configs.cumulative_recharge_threshold` | **USD** | 与 `bil_wallets.cumulative_recharge`（USD）同币种比较 |
+| **钱包 / 计费 / 账本层** | `bil_` | **本位币** | 钱包余额、冻结余额、累计充值、交易流水、计费记录、用量、预扣/结算/退款，一律本位币（部署级常量，`billing.Currency(ctx)` 读取；初始化选定后不可切换，账本永远单币种） |
+| **套餐定价** | `pln_` | **CNY** | 套餐卖的是 token 额度（`monthly_quota_tokens`），价格用人民币，不与钱包余额直接比较 |
+| **租户等级阈值** | `tnt_tenant_level_configs.cumulative_recharge_threshold` | **本位币** | 与 `bil_wallets.cumulative_recharge`（本位币）同币种比较 |
 
-**唯一换汇点**：CNY → USD 的转换**只允许发生在充值履约**（`payment.FulfillOrder` 的 `recharge` 分支，调用 `billing.ConvertCNYToUSD`）。除此之外任何地方都不得做币种换算——套餐购买不入钱包不换算，计费引擎全程 USD 不换算。
+**唯一换汇点**：CNY → 本位币的转换**只允许发生在充值履约**（`payment.FulfillOrder` 的 `recharge` 分支与线下充值 `OfflineRecharge`，本位币=USD 时调用 `billing.ConvertCNYToUSD`；本位币=CNY 时直接入账，`exchange_rate` 快照存 1）。除此之外任何地方都不得做币种换算——套餐购买不入钱包不换算，计费引擎全程本位币不换算。
 
 **新增带金额字段的代码前，先确认它属于哪一层**，按上表取币种；跨层传递金额（如订单金额入钱包）必须经过唯一换汇点。
 
 #### 汇率规则
 
-- 只维护**单一方向**汇率 `payment_exchange_rate_cny_to_usd`（管理后台支付设置配置，默认 0.14）。需要反向（USD→CNY）时**取倒数**，禁止再配置第二个独立汇率，避免两个汇率漂移导致往返不闭合。
-- **充值时必须快照汇率**：履约入账时除了写入换算后的 USD，还要持久化「原始 CNY 金额 + 当时汇率 + 入账 USD」，使历史换算可重建。汇率配置变更不得影响已完成订单的对账。
-- **退款认原始 CNY 金额**：退款按订单原始人民币金额退回支付渠道，**禁止**用钱包当前 USD 余额按当前汇率反向折算（防止汇率波动产生套利/亏损）。
+- 只维护**单一方向**汇率 `payment_exchange_rate_cny_to_usd`（管理后台支付设置配置，默认 0.14，已 IsPublic 暴露给前端做展示折算）。需要反向（USD→CNY）时**取倒数**，禁止再配置第二个独立汇率，避免两个汇率漂移导致往返不闭合。
+- **充值时必须快照汇率**：履约入账时除了写入换算后的本位币金额（`credited_usd` 列，语义为入账本位币金额），还要持久化「原始 CNY 金额 + 当时汇率 + 入账金额」，使历史换算可重建（本位币=CNY 时 `exchange_rate` 存 1）。汇率配置变更不得影响已完成订单的对账。
+- **退款认原始 CNY 金额**：退款按订单原始人民币金额退回支付渠道，**禁止**用钱包当前本位币余额按当前汇率反向折算（防止汇率波动产生套利/亏损）。
 
 #### 前端展示规则
 
-- 钱包余额 / 交易流水 / 计费 / 用量 / Token 单价 → `$`（USD）
-- 套餐价格 / 充值金额 / 订单金额 / 退款金额 → `¥`（CNY）
-- ⚠️ 营收类指标（`total_cost`、`revenue` 等来自 `bil_usage_logs` 的统计）是 **USD**，用 `$`，不要因为面向中国区运营就标成 `¥`。需要人民币营收报表时，在**出报表时**按快照汇率折算，账本本身仍存 USD。
+全站显示货币 = 本位币（`/settings/public` 暴露 `billing_currency` + 汇率，两端 `composables/useCurrency.ts` 统一格式化）：
+
+- bil 层数据（钱包 / 交易流水 / 计费 / 用量 / Token 单价 / 阈值 / 兑换码面值）→ 本位币符号直显，**不折算**
+- ord_/pln_ 层数据（套餐价格 / 充值金额 / 订单金额 / 退款金额 / 优惠码折扣，存 CNY）→ 本位币=CNY 直显 `¥`；本位币=USD 时按汇率折算显示 `$`（**唯一折算场景**）
+- **编辑表单保持存储币种原值输入**（模型定价按本位币、套餐价格按 CNY），label 标注存储币种；折算仅用于只读展示
+- 充值页锚定 CNY（订单/履约/折扣口径），本位币=USD 时档位与输入按汇率折算显示、提交时换算回 CNY
+- ⚠️ 营收类指标（`total_cost`、`revenue` 等来自 `bil_usage_logs` 的统计）是本位币，跟随本位币符号；需要另一币种营收报表时，在**出报表时**按快照汇率折算，账本本身仍存本位币。
 
 #### 人民币对账 / 导出规则
 
@@ -378,7 +382,7 @@ cmd（路由注册）
 		- **DB 落库**：decimal 直传 ORM（`.Insert(do)`/`.Update(map)`）或原生 SQL 参数（`balance + ?`）——shopspring decimal 实现 `driver.Valuer`，写出精确 NUMERIC 字符串，**这条路径不要转 float64**。
 		- **JSONB 陷阱**：decimal 默认 marshal 成**带引号的字符串**，写进「读取方期望 number」的 JSONB blob（如快照）会破坏整个 unmarshal——JSONB 缝隙处必须先 `.InexactFloat64()`。（注意：DB 列 ≠ JSONB，前者走 Valuer 精确直传，后者走 JSON 需转 float64。）
 		- **Redis 钱包**：用整数 micro-USD（`int64` + `HINCRBY`），`billing.ToMicro`/`FromMicro` 转换，杜绝 `HINCRBYFLOAT` 漂移。
-	- **唯一换汇点**：CNY→USD 仅在 `payment.FulfillOrder` recharge 分支调 `billing.ConvertCNYToUSD`（返回 decimal），其余地方不换算（见《系统货币规则》三层币种固定规则）。
+	- **唯一换汇点**：CNY→本位币仅在 `payment.FulfillOrder` recharge 分支与 `OfflineRecharge` 调 `billing.ConvertCNYToUSD`（返回 decimal，本位币=CNY 时直接入账无换算），其余地方不换算（见《系统货币规则》三层币种固定规则）。
 - GoFrame 标准项目结构，不要偏离。框架使用规范（时间处理、错误处理、ORM 模式、日志等）详见 [`docs/reference/goframe-conventions.md`](docs/reference/goframe-conventions.md)，遇到不确定的 GoFrame 用法时善用 `/goframe-v2` skill 查询框架规范
 - **修复 GoFrame 框架使用 bug 时**，必须在 `docs/reference/goframe-conventions.md` 末尾的「已修复的框架使用错误记录」章节追加记录（问题描述、原因、修复方式），防止同类问题重现
 - 数据库迁移用 goose，脚本按六位序号递增编号（`migrations/000001_xxx.sql`）

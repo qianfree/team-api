@@ -45,9 +45,9 @@ func newTestState(t *testing.T, mutate func(*dispatch.RoutingPolicy)) *RedisStat
 	return NewRedisState(func() *dispatch.RoutingPolicy { return pol }, nil)
 }
 
-// Test并发健康EWMA原子性 H1 修复验证：100 并发失败经 Lua 原子读-算-写，
+// TestHealthEwma_ConcurrentAtomicity H1 修复验证：100 并发失败经 Lua 原子读-算-写，
 // EWMA 精确等于 0.93^100，熔断窗口计数精确 =100（读改写竞态会导致丢失更新）。
-func Test并发健康EWMA原子性(t *testing.T) {
+func TestHealthEwma_ConcurrentAtomicity(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
 		p.Breaker.FailThreshold = 1000      // 阈值调高，只验证计数不触发熔断
@@ -76,7 +76,7 @@ func Test并发健康EWMA原子性(t *testing.T) {
 	assert.Equal(t, 100, v.Int(), "熔断窗口失败计数必须精确 =100")
 }
 
-func Test健康衰减分档(t *testing.T) {
+func TestHealthDecay_Tiers(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -104,10 +104,10 @@ func Test健康衰减分档(t *testing.T) {
 	assert.InEpsilon(t, 800, rt.LatEwmaMs, 1e-9)
 }
 
-// Test探测失败不衰减健康EWMA 探测类（Probe）失败只喂熔断窗口，健康分不变——
+// TestProbeFailure_DoesNotDecayHealthEwma 探测类（Probe）失败只喂熔断窗口，健康分不变——
 // 防止每 5 分钟的自动探测持续失败把无流量渠道健康分指数拖垮（0.93^N → 个位数）；
 // 探测成功照常回升健康并记录延迟。
-func Test探测失败不衰减健康EWMA(t *testing.T) {
+func TestProbeFailure_DoesNotDecayHealthEwma(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
 		p.Breaker.FailThreshold = 1000 // 阈值调高，只验证窗口计数不触发熔断
@@ -139,10 +139,10 @@ func Test探测失败不衰减健康EWMA(t *testing.T) {
 	assert.InEpsilon(t, 500, rt.LatEwmaMs, 1e-9)
 }
 
-// Test缺失健康键读默认值 gf 驱动对 HMGET 缺失字段返回空字符串而非 nil（IsNil()==false）。
+// TestMissingHealthKey_ReadsDefault gf 驱动对 HMGET 缺失字段返回空字符串而非 nil（IsNil()==false）。
 // ReadRuntime 必须按无数据处理保留乐观默认（succ=1）：无流量模型或 TTL（24h）过期键
 // 若读成 succ=0，健康快照取平均会把渠道健康度拖到个位数。
-func Test缺失健康键读默认值(t *testing.T) {
+func TestMissingHealthKey_ReadsDefault(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -153,7 +153,7 @@ func Test缺失健康键读默认值(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerClosed, rt.ModelBreaker)
 }
 
-func Test限流不喂熔断窗口(t *testing.T) {
+func TestRateLimit_DoesNotFeedBreakerWindow(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -168,7 +168,7 @@ func Test限流不喂熔断窗口(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerClosed, rt.Breaker)
 }
 
-func Test熔断转移与探测令牌(t *testing.T) {
+func TestBreaker_TransitionAndProbeToken(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, func(p *dispatch.RoutingPolicy) {
 		p.Breaker.ModelFailThreshold = 100 // 调高模型级阈值，聚焦验证渠道级 8 次语义
@@ -201,7 +201,7 @@ func Test熔断转移与探测令牌(t *testing.T) {
 	assert.Greater(t, rt.RecoveredMs, int64(0), "恢复时间必须记录")
 }
 
-func Test熔断探测失败冷却翻倍(t *testing.T) {
+func TestBreaker_ProbeFailureDoublesCooldown(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -225,9 +225,9 @@ func Test熔断探测失败冷却翻倍(t *testing.T) {
 // 模型级隔离（错误作用域分流 + 去重守卫）
 // ---------------------------------------------------------------------------
 
-// Test模型致命一次直达模型级 404/模型不存在：模型级 fatal 直达 OPEN，
+// TestModelFatal_SingleHitOpensModelBreaker 404/模型不存在：模型级 fatal 直达 OPEN，
 // 渠道级仅窗口计 1 票；模型级已 OPEN 后同模型后续失败不再污染渠道级。
-func Test模型致命一次直达模型级(t *testing.T) {
+func TestModelFatal_SingleHitOpensModelBreaker(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -248,9 +248,9 @@ func Test模型致命一次直达模型级(t *testing.T) {
 	assert.Equal(t, 1, v.Int(), "模型 OPEN 后渠道级不再计数")
 }
 
-// Test模型级窗口阈值与渠道级隔离 单模型慢性故障（瞬时类）：模型级阈值 4 先打开，
+// TestModelBreaker_WindowThresholdIsolatedFromChannel 单模型慢性故障（瞬时类）：模型级阈值 4 先打开，
 // 渠道级贡献封顶在 4 票（< 8），渠道级永不熔断——单模型故障不误伤其它模型。
-func Test模型级窗口阈值与渠道级隔离(t *testing.T) {
+func TestModelBreaker_WindowThresholdIsolatedFromChannel(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil) // failThreshold=8, modelFailThreshold=4
 
@@ -274,9 +274,9 @@ func Test模型级窗口阈值与渠道级隔离(t *testing.T) {
 	assert.Equal(t, 4, v.Int(), "单模型对渠道级贡献封顶在 modelFailThreshold")
 }
 
-// Test跨模型共识渠道级熔断 两个模型各恶化 4 次（4+4=8）→ 渠道级 OPEN：
+// TestChannelBreaker_CrossModelConsensus 两个模型各恶化 4 次（4+4=8）→ 渠道级 OPEN：
 // 渠道级熔断保留给真正的多模型同时恶化（整渠道故障）。
-func Test跨模型共识渠道级熔断(t *testing.T) {
+func TestChannelBreaker_CrossModelConsensus(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -290,9 +290,9 @@ func Test跨模型共识渠道级熔断(t *testing.T) {
 	assert.Equal(t, dispatch.BreakerOpen, rt.ModelBreaker, "两模型各自也达阈值 4")
 }
 
-// Test渠道致命不喂模型级 402/Key 耗尽等渠道级信号：fatal 只打渠道级，模型级 key 不被触碰
+// TestChannelFatal_DoesNotFeedModelBreaker 402/Key 耗尽等渠道级信号：fatal 只打渠道级，模型级 key 不被触碰
 // （渠道恢复后模型无残留熔断）。
-func Test渠道致命不喂模型级(t *testing.T) {
+func TestChannelFatal_DoesNotFeedModelBreaker(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -305,9 +305,9 @@ func Test渠道致命不喂模型级(t *testing.T) {
 	assert.Equal(t, 0, v.Int(), "渠道级致命不创建/触碰模型级 key")
 }
 
-// Test模型级探测成功复位 模型级 OPEN 冷却期满 → HALF_OPEN → 成功 → CLOSED + recovered_ms
+// TestModelBreaker_ProbeSuccessResets 模型级 OPEN 冷却期满 → HALF_OPEN → 成功 → CLOSED + recovered_ms
 // （模型级熔断可靠流量探测恢复，不再死锁到 24h TTL）。
-func Test模型级探测成功复位(t *testing.T) {
+func TestModelBreaker_ProbeSuccessResets(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -321,9 +321,9 @@ func Test模型级探测成功复位(t *testing.T) {
 	assert.Greater(t, v.Int64(), int64(0), "模型级恢复时间必须记录")
 }
 
-// Test模型级探测令牌与探测失败翻倍 模型级令牌按渠道×模型 key 独立限流；
+// TestModelBreaker_ProbeTokenAndFailureDoublesCooldown 模型级令牌按渠道×模型 key 独立限流；
 // 冷却期满后的失败走 HALF_OPEN 探测失败分支（模型级回 OPEN 冷却翻倍，渠道级不计数）。
-func Test模型级探测令牌与探测失败翻倍(t *testing.T) {
+func TestModelBreaker_ProbeTokenAndFailureDoublesCooldown(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -346,7 +346,7 @@ func Test模型级探测令牌与探测失败翻倍(t *testing.T) {
 	assert.Equal(t, 1, v.Int(), "渠道级不因探测失败新增计数")
 }
 
-func Test绑定CAS与反向索引(t *testing.T) {
+func TestBinding_CASAndReverseIndex(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -389,7 +389,7 @@ func Test绑定CAS与反向索引(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func Test绑定续期(t *testing.T) {
+func TestBinding_Touch(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -402,7 +402,7 @@ func Test绑定续期(t *testing.T) {
 	s.TouchBinding(ctx, "sk:test:none", time.Hour)
 }
 
-func Test容量租约(t *testing.T) {
+func TestLease_Capacity(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -441,7 +441,7 @@ func Test容量租约(t *testing.T) {
 	assert.Equal(t, 20, rt.Inflight)
 }
 
-func Test租约过期自愈(t *testing.T) {
+func TestLease_ExpirySelfHeals(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -459,7 +459,7 @@ func Test租约过期自愈(t *testing.T) {
 	assert.True(t, v.IsNil(), "已释放的租约不得被续租复活")
 }
 
-func Test凭证冷却(t *testing.T) {
+func TestCredentialCooldown(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -472,7 +472,27 @@ func Test凭证冷却(t *testing.T) {
 	assert.False(t, s.IsCredentialCooled(ctx, 101), "冷却到期后必须恢复可用")
 }
 
-func TestReportOutcome异步消费(t *testing.T) {
+// TestCredentialCooldown_ManualClear 覆盖「更换 Key / 重置健康度」的解除路径：冷却按 keyID 打标，
+// 而换 Key 是原地改同一行（keyID 不变），不解除的话新 Key 会被整段跳过直到 TTL 到期。
+func TestCredentialCooldown_ManualClear(t *testing.T) {
+	ctx := context.Background()
+	s := newTestState(t, nil)
+
+	s.CoolCredential(ctx, 202, 5*time.Minute)
+	require.True(t, s.IsCredentialCooled(ctx, 202))
+	require.Positive(t, CredentialCooldownRemaining(ctx, 202), "冷却中必须能读到剩余秒数")
+
+	s.ClearCredentialCooldown(ctx, 202)
+	assert.False(t, s.IsCredentialCooled(ctx, 202), "解除后必须立即可用，不等 TTL")
+	assert.Zero(t, CredentialCooldownRemaining(ctx, 202))
+	assert.False(t, s.local.isCredCooled(202), "本地镜像必须一并清除，否则 Redis 降级时仍会跳过该 Key")
+
+	// 解除未冷却的 Key 是幂等空操作
+	s.ClearCredentialCooldown(ctx, 999)
+	assert.False(t, s.IsCredentialCooled(ctx, 999))
+}
+
+func TestReportOutcome_AsyncConsumption(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 	s.Start(ctx)
@@ -486,11 +506,11 @@ func TestReportOutcome异步消费(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond, "后台 worker 必须消费上报事件")
 }
 
-// TestReadRuntime无数据回落默认值 从未被访问过的渠道×模型（Redis key 不存在）必须回落
+// TestReadRuntime_FallsBackToDefaultWhenNoData 从未被访问过的渠道×模型（Redis key 不存在）必须回落
 // 默认满分 1.0。HMGET 缺失字段经 gredis 包装成非 nil 空 gvar（IsNil() 恒为 false、
 // Float64() 静默返回 0），旧代码用 IsNil() 判空失效，把全部冷模型读成 0 分，
 // 拖垮渠道聚合健康分与调度 healthFactor。
-func TestReadRuntime无数据回落默认值(t *testing.T) {
+func TestReadRuntime_FallsBackToDefaultWhenNoData(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -507,8 +527,8 @@ func TestReadRuntime无数据回落默认值(t *testing.T) {
 	assert.Equal(t, 100.0, rt.LatEwmaMs)
 }
 
-// TestReadRuntime异常值防御 succ_ewma 为空串/非法值/精确 0 时视为无数据（保持默认 1.0）。
-func TestReadRuntime异常值防御(t *testing.T) {
+// TestReadRuntime_GuardsAgainstOutOfRangeValues succ_ewma 为空串/非法值/精确 0 时视为无数据（保持默认 1.0）。
+func TestReadRuntime_GuardsAgainstOutOfRangeValues(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -533,10 +553,10 @@ func TestReadRuntime异常值防御(t *testing.T) {
 	assert.Equal(t, 0.0, rt.LatEwmaMs)
 }
 
-// TestReadRuntime区分无数据与读失败 「没读到」与「读失败」必须可区分：前者是真实的
+// TestReadRuntime_DistinguishesNoDataFromReadFailure 「没读到」与「读失败」必须可区分：前者是真实的
 // 「该模型没有流量」，后者是 Redis 不可用。二者都会回落成默认满分，若调用方无法区分，
 // Redis 抖动期间维护快照会把全渠道健康分刷成 100，事故现场被销毁。
-func TestReadRuntime区分无数据与读失败(t *testing.T) {
+func TestReadRuntime_DistinguishesNoDataFromReadFailure(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -563,9 +583,9 @@ func TestReadRuntime区分无数据与读失败(t *testing.T) {
 	assert.Equal(t, 1.0, rt.SuccEwma)
 }
 
-// TestReadRuntime脏值不算有效数据 精确 0 / 非法值视为无数据，HasHealth 保持 false，
+// TestReadRuntime_DirtyValueIsNotValidData 精确 0 / 非法值视为无数据，HasHealth 保持 false，
 // 避免脏数据以「实测值」身份参与渠道聚合（2026-08-27 全渠道健康分坍缩事故的读侧防线）。
-func TestReadRuntime脏值不算有效数据(t *testing.T) {
+func TestReadRuntime_DirtyValueIsNotValidData(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -589,7 +609,7 @@ func TestLocalFallbackLimit(t *testing.T) {
 	assert.Equal(t, 10, localFallbackLimit(10, 0), "副本数缺省按 1")
 }
 
-func TestLocal严格容量租约(t *testing.T) {
+func TestLocal_StrictCapacityLease(t *testing.T) {
 	l := newLocalState()
 	require.True(t, l.acquireLease(1, "a", 2, 60_000))
 	require.True(t, l.acquireLease(1, "b", 2, 60_000))
@@ -602,7 +622,7 @@ func TestLocal严格容量租约(t *testing.T) {
 	require.False(t, l.acquireLease(2, "x", 0, 60_000))
 }
 
-func TestLocal探测限流(t *testing.T) {
+func TestLocal_ProbeThrottle(t *testing.T) {
 	l := newLocalState()
 	assert.True(t, l.tryProbe(1, "", 10_000))
 	assert.False(t, l.tryProbe(1, "", 10_000), "同窗口本实例只放行一个")
@@ -610,7 +630,7 @@ func TestLocal探测限流(t *testing.T) {
 	assert.True(t, l.tryProbe(1, "gpt-4o", 10_000), "同渠道的模型级令牌与渠道级互不影响")
 }
 
-func TestLocal凭证冷却过期(t *testing.T) {
+func TestLocal_CredentialCooldownExpiry(t *testing.T) {
 	l := newLocalState()
 	l.coolCred(9, 50*time.Millisecond)
 	assert.True(t, l.isCredCooled(9))
@@ -618,7 +638,16 @@ func TestLocal凭证冷却过期(t *testing.T) {
 	assert.False(t, l.isCredCooled(9))
 }
 
-func Test429估计器水位收敛(t *testing.T) {
+func TestLocal_CredentialCooldownClear(t *testing.T) {
+	l := newLocalState()
+	l.coolCred(9, time.Hour)
+	require.True(t, l.isCredCooled(9))
+	l.clearCred(9)
+	assert.False(t, l.isCredCooled(9), "解除后不等 TTL 立即可用")
+	l.clearCred(9) // 幂等
+}
+
+func TestRateLimit429Estimator_OnsetConverges(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 
@@ -648,7 +677,7 @@ func TestEffectiveSoftLimit(t *testing.T) {
 	assert.Equal(t, 4, effectiveSoftLimit(0, 2), "下限保护 max(4, ...)")
 }
 
-func Test手动恢复复位熔断并开启爬坡(t *testing.T) {
+func TestManualRecovery_ResetsBreakerAndStartsRamp(t *testing.T) {
 	ctx := context.Background()
 	s := newTestState(t, nil)
 

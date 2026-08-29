@@ -5,10 +5,21 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
+
+func TestNormalizeMonitorDateRangeKeepsTodayInNonUTCTimezone(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.August, 29, 0, 10, 0, 0, location)
+
+	start, end := normalizeMonitorDateRangeAt("2026-08-29", "2026-08-29", now)
+	if start != "2026-08-29" || end != "2026-08-29" {
+		t.Fatalf("same-day range = [%s, %s], want [2026-08-29, 2026-08-29]", start, end)
+	}
+}
 
 // perfFieldValue 按 JSON 字段名（snake_case）从结构体取值，整数统一归一为 int64、
 // 浮点统一为 float64，与旧的 []map[string]any 断言口径保持一致。

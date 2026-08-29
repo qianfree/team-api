@@ -8,6 +8,7 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const transactions = ref<any[]>([])
@@ -87,9 +88,9 @@ const txTypeBadgeClass: Record<string, string> = {
 	unfreeze: 'badge-gray',
 }
 
+// 流水金额：bil 层数据直显本位币符号，showSign 为正数补 +、负数自带 -
 function formatAmount(amount: number): string {
-	if (amount >= 0) return '+$' + amount.toFixed(6)
-	return '-$' + Math.abs(amount).toFixed(6)
+	return formatBilling(amount, 6, true)
 }
 
 async function fetchTransactions() {
@@ -150,7 +151,7 @@ const columns = computed<DataTableColumns<any>>(() => [
 		title: '余额',
 		key: 'balance_after',
 		width: 120,
-		render: (row) => h('span', { class: 'text-gray-700' }, row.balance_after != null ? `$${row.balance_after.toFixed(6)}` : '--'),
+		render: (row) => h('span', { class: 'text-gray-700' }, row.balance_after != null ? formatBilling(row.balance_after, 6) : '--'),
 	},
 	{ title: '用户', key: 'username', width: 140, render: (row) => h('span', { class: 'text-gray-700 text-sm' }, row.username || '--') },
 	{
