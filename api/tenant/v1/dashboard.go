@@ -11,26 +11,15 @@ type TenantDashboardReq struct {
 }
 
 type TenantDashboardRes struct {
-	Today       map[string]any   `json:"today"`
-	Month       map[string]any   `json:"month"`
-	Wallet      map[string]any   `json:"wallet"`
-	Rpm         int64            `json:"rpm" dc:"最近60秒滑动窗口请求数（本租户）"`
-	Tpm         int64            `json:"tpm" dc:"最近60秒滑动窗口token数（本租户）"`
-	ActiveKeys  int              `json:"active_keys"`
-	MemberCount int              `json:"member_count"`
-	Plan        *TenantPlanQuota `json:"plan" dc:"当前套餐额度；无活跃套餐时为 null"`
-	CostTrend   TenantCostTrend  `json:"cost_trend" dc:"本月消费与上月同期对比"`
-	Waste       TenantWasteStat  `json:"waste" dc:"本月失败请求造成的无效支出"`
-}
-
-type TenantPlanQuota struct {
-	PlanName        string  `json:"plan_name" dc:"套餐名称"`
-	QuotaTokens     int64   `json:"quota_tokens" dc:"套餐月度 Token 额度"`
-	UsedTokens      int64   `json:"used_tokens" dc:"已用 Token"`
-	RemainingTokens int64   `json:"remaining_tokens" dc:"剩余 Token"`
-	UsagePercent    float64 `json:"usage_percent" dc:"已用百分比（0-100）"`
-	CycleStart      string  `json:"cycle_start" dc:"当前计费周期起始日"`
-	CycleEnd        string  `json:"cycle_end" dc:"当前计费周期结束日"`
+	Today       map[string]any  `json:"today"`
+	Month       map[string]any  `json:"month"`
+	Wallet      map[string]any  `json:"wallet"`
+	Rpm         int64           `json:"rpm" dc:"最近60秒滑动窗口请求数（本租户）"`
+	Tpm         int64           `json:"tpm" dc:"最近60秒滑动窗口token数（本租户）"`
+	ActiveKeys  int             `json:"active_keys"`
+	MemberCount int             `json:"member_count"`
+	CostTrend   TenantCostTrend `json:"cost_trend" dc:"本月消费与上月同期对比"`
+	Waste       TenantWasteStat `json:"waste" dc:"本月失败请求造成的无效支出"`
 }
 
 type TenantCostTrend struct {

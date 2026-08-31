@@ -33,6 +33,7 @@ interface Project {
 	active_keys: number
 	total_keys: number
 	month_cost: number
+	budget_used: number
 	month_requests: number
 }
 const project = ref<Partial<Project>>({})
@@ -171,7 +172,10 @@ const relayModeLabel: Record<string, string> = {
 const budgetUsage = computed(() => {
 	const budget = project.value.budget ? Number(project.value.budget) : 0
 	if (!budget || budget <= 0) return 0
-	const cost = project.value.month_cost || 0
+	// 必须用 budget_used（累计实扣，与 CheckProjectBudget 同源），不能用 month_cost：
+	// 后者是「本月」「列表价」，拿它除以「累计」预算得到的百分比没有意义，
+	// 会出现页面显示 20%、项目其实已因超预算被停用的错位。
+	const cost = project.value.budget_used || 0
 	return Math.min(Math.round((cost / budget) * 10000) / 100, 100)
 })
 

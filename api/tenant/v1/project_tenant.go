@@ -69,7 +69,8 @@ type TenantProjectGetRes struct {
 	CreatedBy     int64   `json:"created_by"`
 	ActiveKeys    int     `json:"active_keys"`
 	TotalKeys     int     `json:"total_keys"`
-	MonthCost     float64 `json:"month_cost"`
+	MonthCost     float64 `json:"month_cost" dc:"本月用量成本（列表价口径，非预算口径）"`
+	BudgetUsed    float64 `json:"budget_used" dc:"预算已用（累计实扣，与预算强制执行同源）"`
 	MonthRequests int64   `json:"month_requests"`
 }
 

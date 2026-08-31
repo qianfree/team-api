@@ -22,16 +22,6 @@ interface WalletInfo {
 	warning_threshold: number
 }
 
-interface PlanQuota {
-	plan_name: string
-	quota_tokens: number
-	used_tokens: number
-	remaining_tokens: number
-	usage_percent: number
-	cycle_start: string
-	cycle_end: string
-}
-
 interface CostTrend {
 	current_cost: number
 	previous_cost: number
@@ -54,7 +44,6 @@ interface DashboardData {
 	tpm: number
 	active_keys: number
 	member_count: number
-	plan: PlanQuota | null
 	cost_trend: CostTrend
 	waste: WasteStat
 }
@@ -209,75 +198,60 @@ const coreStats = computed(() => {
 		label: '钱包可用余额',
 		value: formatCost(wallet.available),
 		sub: `另有 ${formatCost(wallet.frozen_balance)} 处于预扣冻结`,
-		badge: '实时',
 		icon: 'wallet',
 		color: '#0d9488',
-		soft: 'rgba(13, 148, 136, 0.14)',
+		soft: 'rgba(13, 148, 136, 0.13)',
 	})
 
-	if (data.plan) {
-		const plan = data.plan
-		cards.push({
-			key: 'plan',
-			label: '套餐额度剩余',
-			value: plan.quota_tokens > 0 ? `${formatNumber(plan.remaining_tokens)} Token` : '不限量',
-			sub: plan.quota_tokens > 0
-				? `已用 ${plan.usage_percent.toFixed(0)}% · 周期 ${plan.cycle_start} 至 ${plan.cycle_end}`
-				: `${plan.plan_name} · 未设 Token 上限`,
-			badge: plan.plan_name || '套餐',
-			icon: 'package',
-			color: '#8b5cf6',
-			soft: 'rgba(139, 92, 246, 0.14)',
-			progress: plan.quota_tokens > 0 ? { percent: Math.min(plan.usage_percent, 100), tone: toneOf(plan.usage_percent) } : null,
-		})
-	} else {
-		cards.push({
-			key: 'today',
-			label: '今日请求',
-			value: formatNumber(data.today?.requests ?? 0),
-			sub: `今日消费 ${formatCost(data.today?.total_cost ?? 0)}`,
-			badge: '今日',
-			icon: 'play',
-			color: '#8b5cf6',
-			soft: 'rgba(139, 92, 246, 0.14)',
-		})
-	}
+	cards.push({
+		key: 'today',
+		label: '今日消费',
+		value: formatCost(data.today?.total_cost ?? 0),
+		sub: `${formatNumber(data.today?.requests ?? 0)} 次调用`,
+		icon: 'play',
+		color: '#8b5cf6',
+		soft: 'rgba(139, 92, 246, 0.13)',
+	})
 
 	cards.push({
 		key: 'cost',
 		label: '本月消费',
 		value: formatCost(trend?.current_cost ?? data.month?.total_cost ?? 0),
 		sub: trend?.has_previous
-			? `环比上月同期 ${trend.delta_percent > 0 ? '↑' : trend.delta_percent < 0 ? '↓' : '→'} ${Math.abs(trend.delta_percent).toFixed(1)}% · ${formatNumber(data.month?.requests ?? 0)} 次调用`
+			? `${formatNumber(data.month?.requests ?? 0)} 次调用 · 上月同期 ${formatCost(trend.previous_cost)}`
 			: `${formatNumber(data.month?.requests ?? 0)} 次调用 · 上月同期无数据`,
-		badge: '本月',
 		icon: 'currencyDollar',
 		color: '#f59e0b',
-		soft: 'rgba(245, 158, 11, 0.14)',
-		deltaTone: trend?.has_previous ? (trend.delta_percent > 0 ? 'up' : trend.delta_percent < 0 ? 'down' : '') : '',
+		soft: 'rgba(245, 158, 11, 0.13)',
+		delta: trend?.has_previous
+			? {
+				text: `${trend.delta_percent > 0 ? '↑' : trend.delta_percent < 0 ? '↓' : '→'} ${Math.abs(trend.delta_percent).toFixed(1)}%`,
+				tone: trend.delta_percent > 0 ? 'up' : trend.delta_percent < 0 ? 'down' : 'flat',
+			}
+			: null,
 	})
 
 	let forecastValue = '充足'
 	let forecastSub = prediction?.message || '按当前速度余额稳定'
-	let forecastBadge = '预测'
 	let forecastColor = '#10b981'
-	let forecastSoft = 'rgba(16, 185, 129, 0.14)'
+	let forecastSoft = 'rgba(16, 185, 129, 0.13)'
+	let forecastState = ''
 	if (prediction?.will_exhaust && prediction.days_until_exhaust !== undefined) {
 		forecastValue = `${prediction.days_until_exhaust} 天`
 		forecastSub = `按日均 ${formatCost(prediction.daily_avg_cost)} 估算 · 预计 ${prediction.exhaust_date || '近期'} 耗尽`
-		forecastBadge = prediction.days_until_exhaust <= 7 ? '需处理' : '需关注'
+		forecastState = prediction.days_until_exhaust <= 7 ? 'crit' : 'warn'
 		forecastColor = prediction.days_until_exhaust <= 7 ? '#ef4444' : '#f59e0b'
-		forecastSoft = prediction.days_until_exhaust <= 7 ? 'rgba(239, 68, 68, 0.14)' : 'rgba(245, 158, 11, 0.14)'
+		forecastSoft = prediction.days_until_exhaust <= 7 ? 'rgba(239, 68, 68, 0.13)' : 'rgba(245, 158, 11, 0.13)'
 	}
 	cards.push({
 		key: 'forecast',
 		label: '余额可支撑',
 		value: forecastValue,
 		sub: forecastSub,
-		badge: forecastBadge,
 		icon: 'hourglass',
 		color: forecastColor,
 		soft: forecastSoft,
+		state: forecastState,
 	})
 
 	return cards
@@ -464,13 +438,13 @@ onBeforeUnmount(() => {
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-			<div v-for="index in 4" :key="index" class="stat-card h-[152px]">
-				<div class="flex items-center justify-between">
-					<div class="skeleton h-10 w-10 rounded-xl"></div>
-					<div class="skeleton h-5 w-16 rounded-full"></div>
+			<div v-for="index in 4" :key="index" class="metric-card">
+				<div class="metric-head">
+					<div class="skeleton h-4 w-24 rounded"></div>
+					<div class="skeleton h-[1.85rem] w-[1.85rem] rounded-[0.6rem]"></div>
 				</div>
-				<div class="skeleton mt-4 h-8 w-28"></div>
-				<div class="skeleton mt-3 h-3.5 w-40"></div>
+				<div class="skeleton mt-[0.85rem] h-8 w-32 rounded"></div>
+				<div class="skeleton mt-auto h-3.5 w-40 rounded"></div>
 			</div>
 		</section>
 
@@ -478,27 +452,21 @@ onBeforeUnmount(() => {
 			<article
 				v-for="stat in coreStats"
 				:key="stat.key"
-				class="stat-card metric-card group"
+				class="metric-card"
+				:class="stat.state ? `metric-${stat.state}` : ''"
 				:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
 			>
-				<div class="metric-accent" aria-hidden="true"></div>
-				<div class="flex items-center justify-between gap-3">
-					<div class="flex min-w-0 items-center gap-3">
-						<div class="metric-icon">
-							<Icon :name="stat.icon" size="md" />
-						</div>
-						<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
-					</div>
-					<span class="metric-badge">{{ stat.badge }}</span>
+				<div class="metric-head">
+					<p class="metric-label">{{ stat.label }}</p>
+					<span class="metric-icon"><Icon :name="stat.icon" size="sm" /></span>
 				</div>
-				<p class="metric-value" :title="stat.value">{{ stat.value }}</p>
-				<div v-if="stat.progress" class="progress mt-3">
-					<div class="progress-bar" :class="`bar-${stat.progress.tone}`" :style="{ width: `${stat.progress.percent}%` }"></div>
+
+				<div class="metric-figure">
+					<span class="metric-value" :title="stat.value">{{ stat.value }}</span>
+					<span v-if="stat.delta" class="metric-delta" :class="`delta-${stat.delta.tone}`">{{ stat.delta.text }}</span>
 				</div>
-				<div class="metric-detail">
-					<span class="metric-detail-dot" aria-hidden="true"></span>
-					<span class="truncate" :class="stat.deltaTone === 'up' ? 'text-red-500' : stat.deltaTone === 'down' ? 'text-emerald-600' : ''">{{ stat.sub }}</span>
-				</div>
+
+				<p class="metric-sub" :title="stat.sub">{{ stat.sub }}</p>
 			</article>
 		</section>
 
@@ -804,85 +772,154 @@ onBeforeUnmount(() => {
 	background: #e2e8f0;
 }
 
+/* ── 指标卡 ──────────────────────────────────────────────
+   设计取舍：
+   1) 去掉顶部渐变装饰条——它不承载任何信息，四张卡并排时四条彩线互相抢；
+   2) 去掉右上角徽标——「本月消费」配「本月」徽标是同义重复，位置让给数值；
+   3) 颜色只用来表达状态：常态下仅图标底色带一点品牌色相，只有真正需要
+      关注的卡（余额将耗尽、额度将用满）才亮起左侧状态条与状态色数值。
+   这样四张卡平时是安静的，出问题的那张才会跳出来。 */
 .metric-card {
+	position: relative;
+	display: flex;
 	min-height: 152px;
-	padding: 1.125rem 1.25rem;
+	flex-direction: column;
+	overflow: hidden;
+	padding: 1.15rem 1.25rem 1.2rem;
+	border: 1px solid var(--glass-border);
+	border-radius: var(--radius-card);
+	background: var(--glass-bg-strong);
+	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+	box-shadow: var(--shadow-card);
 	transition: transform 220ms ease, box-shadow 220ms ease;
 }
 
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+	.metric-card {
+		background: rgba(255, 255, 255, 0.97);
+	}
+}
+
 .metric-card:hover {
-	transform: translateY(-3px);
-	box-shadow: 0 20px 45px rgba(81, 94, 143, 0.14);
+	transform: translateY(-2px);
+	box-shadow: 0 18px 40px rgba(81, 94, 143, 0.13);
 }
 
-.metric-accent {
+/* 状态条：四张卡都有，常态是极淡的中性色，只有进入告警态才变色。
+   之前是"告警才出现"，结果一排卡里凭空多出一根线，读起来像没对齐的缺陷
+   而不是提示——现在它是恒定的结构元素在变色，异常感消失，信号仍在。 */
+.metric-card::before {
 	position: absolute;
-	top: 0;
-	right: 1.25rem;
-	left: 1.25rem;
-	height: 2px;
-	border-radius: 0 0 9999px 9999px;
-	background: linear-gradient(90deg, transparent, var(--metric-color), transparent);
-	opacity: 0.7;
+	top: 1.15rem;
+	bottom: 1.2rem;
+	left: 0;
+	width: 3px;
+	border-radius: 0 3px 3px 0;
+	background: rgba(148, 163, 184, 0.22);
+	content: '';
+	transition: background 220ms ease;
 }
 
+.metric-warn::before {
+	background: #f59e0b;
+}
+
+.metric-crit::before {
+	background: #ef4444;
+}
+
+.metric-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.75rem;
+}
+
+.metric-label {
+	min-width: 0;
+	overflow: hidden;
+	color: #64748b;
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 图标退到右上做定位锚点，不再与标签争夺左侧起始位 */
 .metric-icon {
 	display: flex;
-	height: 2.5rem;
-	width: 2.5rem;
+	height: 1.85rem;
+	width: 1.85rem;
 	flex-shrink: 0;
 	align-items: center;
 	justify-content: center;
-	border: 1px solid rgba(255, 255, 255, 0.82);
-	border-radius: 0.75rem;
+	border-radius: 0.6rem;
 	background: var(--metric-soft);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 	color: var(--metric-color);
 }
 
-.metric-badge {
-	flex-shrink: 0;
-	max-width: 6rem;
-	overflow: hidden;
-	border: 1px solid color-mix(in srgb, var(--metric-color) 20%, transparent);
-	border-radius: 9999px;
-	background: var(--metric-soft);
-	padding: 0.25rem 0.5rem;
-	color: var(--metric-color);
-	font-size: 0.625rem;
-	font-weight: 700;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.metric-figure {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin-top: 0.85rem;
+	min-width: 0;
 }
 
 .metric-value {
-	margin-top: 0.875rem;
+	min-width: 0;
 	overflow: hidden;
 	color: #172033;
-	font-size: 1.75rem;
-	font-weight: 750;
+	font-size: 1.875rem;
+	font-weight: 720;
 	font-variant-numeric: tabular-nums;
-	line-height: 1;
+	letter-spacing: -0.025em;
+	line-height: 1.05;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.metric-detail {
-	display: flex;
-	min-width: 0;
-	align-items: center;
-	gap: 0.5rem;
-	margin-top: 0.75rem;
-	color: #94a3b8;
-	font-size: 0.6875rem;
+.metric-crit .metric-value {
+	color: #dc2626;
 }
 
-.metric-detail-dot {
-	height: 0.375rem;
-	width: 0.375rem;
+/* 环比是信息不是装饰，所以紧贴数值而不是塞进脚注 */
+.metric-delta {
 	flex-shrink: 0;
-	border-radius: 9999px;
-	background: var(--metric-color);
+	border-radius: 0.35rem;
+	padding: 0.1rem 0.35rem;
+	font-size: 0.6875rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.delta-up {
+	background: #fef2f2;
+	color: #dc2626;
+}
+
+.delta-down {
+	background: #ecfdf5;
+	color: #059669;
+}
+
+.delta-flat {
+	background: #f1f5f9;
+	color: #94a3b8;
+}
+
+/* 脚注贴底，保证四张卡在有无进度条时高度一致 */
+.metric-sub {
+	margin-top: auto;
+	overflow: hidden;
+	padding-top: 0.8rem;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+	line-height: 1.4;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* 进度条语义色，配合全局 .progress / .progress-bar 使用 */

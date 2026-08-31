@@ -101,12 +101,6 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		return nil, err
 	}
 
-	// 当前套餐额度（无活跃套餐时 planQuota 为 nil，前端隐藏该卡）
-	planQuota, err := tenantPlanQuota(ctx, tenantID, int64(monthRow.InputTokens)+int64(monthRow.OutputTokens))
-	if err != nil {
-		return nil, err
-	}
-
 	// 消费环比 + 无效支出（同表同租户同区间，合并为一条查询）。
 	//
 	// 上月只截取与本月已过时长相同的窗口，否则月初永远显示"环比大跌"。
@@ -184,7 +178,6 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		Tpm:         tpm,
 		ActiveKeys:  activeKeys,
 		MemberCount: memberCount,
-		Plan:        planQuota,
 		CostTrend:   costTrend,
 		Waste:       waste,
 	}, nil
@@ -653,60 +646,6 @@ func (s *sTenant) ProjectBudget(ctx context.Context, req *v1.TenantProjectBudget
 	}
 
 	return &v1.TenantProjectBudgetRes{List: list}, nil
-}
-
-// tenantPlanQuota 读取租户当前活跃套餐的 Token 额度；无活跃套餐时返回 (nil, nil)。
-//
-// 已用量由调用方传入本自然月的 Token 合计，而不是读 pln_tenant_plans.used_tokens ——
-// 该列自套餐创建后写入 0 便再无任何代码维护（payment/fulfill.go 之外无写入点，
-// 也没有重置它的定时任务），直接读会得到永远 0% 的进度条。
-// 同理，计量周期取自然月（与同屏「本月」卡片同窗口），不用同样从未更新过的 last_reset_at。
-func tenantPlanQuota(ctx context.Context, tenantID int64, usedTokens int64) (*v1.TenantPlanQuota, error) {
-	var row *struct {
-		PlanName    string      `json:"plan_name"`
-		QuotaTokens int64       `json:"monthly_quota_tokens"`
-		StartAt     *gtime.Time `json:"start_at"`
-		EndAt       *gtime.Time `json:"end_at"`
-	}
-	err := dao.PlnTenantPlans.Ctx(ctx).As("tp").
-		Fields("COALESCE(p.name, '') AS plan_name, tp.monthly_quota_tokens, tp.start_at, tp.end_at").
-		LeftJoin("pln_plans p", "p.id = tp.plan_id").
-		Where("tp.tenant_id", tenantID).
-		Where("tp.status", "active").
-		OrderDesc("tp.start_at").
-		Limit(1).
-		Scan(&row)
-	if err != nil || row == nil {
-		return nil, err
-	}
-
-	quota := &v1.TenantPlanQuota{
-		PlanName:    row.PlanName,
-		QuotaTokens: row.QuotaTokens,
-		UsedTokens:  usedTokens,
-	}
-	if row.QuotaTokens > 0 {
-		remaining := row.QuotaTokens - usedTokens
-		if remaining < 0 {
-			remaining = 0
-		}
-		quota.RemainingTokens = remaining
-		quota.UsagePercent = math.Round(float64(usedTokens)/float64(row.QuotaTokens)*10000) / 100
-	}
-
-	// 计量周期 = 自然月与套餐有效期的交集
-	now := gtime.Now()
-	cycleStart := gtime.NewFromStr(now.Format("Y-m") + "-01 00:00:00")
-	cycleEnd := cycleStart.AddDate(0, 1, 0).AddDate(0, 0, -1)
-	if row.StartAt != nil && row.StartAt.After(cycleStart) {
-		cycleStart = row.StartAt
-	}
-	if row.EndAt != nil && row.EndAt.Before(cycleEnd) {
-		cycleEnd = row.EndAt
-	}
-	quota.CycleStart = cycleStart.Format("Y-m-d")
-	quota.CycleEnd = cycleEnd.Format("Y-m-d")
-	return quota, nil
 }
 
 // projectBudgetRow 是项目预算汇总的中间行。
