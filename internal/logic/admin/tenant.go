@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
@@ -424,16 +425,20 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	memberCount, _ := dao.TntUsers.Ctx(ctx).
 		Where("tenant_id", req.Id).Count()
 
-	// Get wallet balance
-	var wallet *struct {
-		Balance string `json:"balance"`
-	}
-	_ = dao.BilWallets.Ctx(ctx).
-		Where("tenant_id", req.Id).Scan(&wallet)
-
+	// Get wallet balance：优先读 Redis 权威值（调整余额/入账后详情页立即可见），DB 物化值兜底
 	walletBalance := "0"
-	if wallet != nil && wallet.Balance != "" {
-		walletBalance = wallet.Balance
+	if w, err := billing.GetWallet(ctx, req.Id); err == nil {
+		walletBalance = strconv.FormatFloat(w.Balance, 'f', -1, 64)
+	} else {
+		var wallet *struct {
+			Balance string `json:"balance"`
+		}
+		_ = dao.BilWallets.Ctx(ctx).
+			Where("tenant_id", req.Id).Scan(&wallet)
+
+		if wallet != nil && wallet.Balance != "" {
+			walletBalance = wallet.Balance
+		}
 	}
 	ownerName := ""
 	if owner != nil {
