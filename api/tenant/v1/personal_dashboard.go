@@ -11,13 +11,14 @@ type PersonalDashboardReq struct {
 }
 
 type PersonalDashboardRes struct {
-	Today        PersonalDayStats      `json:"today"`
-	Month        PersonalDayStats      `json:"month"`
-	ErrorRate    PersonalErrorRate     `json:"error_rate"`
-	Latency      PersonalLatency       `json:"latency"`
-	Cache        PersonalCache         `json:"cache"`
-	RequestTypes []PersonalReqTypeItem `json:"request_types"`
-	Quota        *PersonalQuotaStatus  `json:"quota,omitempty"`
+	Today          PersonalDayStats      `json:"today"`
+	Month          PersonalDayStats      `json:"month"`
+	ErrorRate      PersonalErrorRate     `json:"error_rate"`
+	Latency        PersonalLatency       `json:"latency"`
+	Cache          PersonalCache         `json:"cache"`
+	RequestTypes   []PersonalReqTypeItem `json:"request_types"`
+	Quota          *PersonalQuotaStatus  `json:"quota,omitempty"`
+	RecentFailures []PersonalFailureItem `json:"recent_failures" dc:"本月最近的失败调用，最多 5 条"`
 }
 
 type PersonalDayStats struct {
@@ -49,6 +50,7 @@ type PersonalCache struct {
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalInputTokens    int64   `json:"total_input_tokens"`
 	HitRatio            float64 `json:"hit_ratio"`
+	SavedCost           float64 `json:"saved_cost" dc:"缓存命中相对全价输入所省下的费用（估算）"`
 }
 
 type PersonalReqTypeItem struct {
@@ -65,6 +67,13 @@ type PersonalQuotaStatus struct {
 	Period       string  `json:"period"`
 	UsagePercent float64 `json:"usage_percent"`
 	NextResetAt  string  `json:"next_reset_at,omitempty"`
+}
+
+type PersonalFailureItem struct {
+	Status       string `json:"status" dc:"error / timeout / cancelled"`
+	ModelName    string `json:"model_name"`
+	ErrorMessage string `json:"error_message"`
+	CreatedAt    string `json:"created_at"`
 }
 
 // ---------- 2. Token Trends ----------

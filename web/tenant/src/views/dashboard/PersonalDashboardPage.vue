@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { formatBilling } from '@/composables/useCurrency'
+import { formatNumber } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
 import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
@@ -36,6 +37,7 @@ interface Cache {
 	cache_read_tokens: number
 	total_input_tokens: number
 	hit_ratio: number
+	saved_cost: number
 }
 
 interface ReqTypeItem {
@@ -54,6 +56,13 @@ interface QuotaStatus {
 	next_reset_at?: string
 }
 
+interface FailureItem {
+	status: string
+	model_name: string
+	error_message: string
+	created_at: string
+}
+
 interface OverviewData {
 	today: DayStats
 	month: DayStats
@@ -62,6 +71,7 @@ interface OverviewData {
 	cache: Cache
 	request_types: ReqTypeItem[]
 	quota?: QuotaStatus
+	recent_failures: FailureItem[]
 }
 
 interface TrendPoint {
@@ -99,14 +109,6 @@ const trendData = ref<TrendPoint[]>([])
 const modelData = ref<ModelItem[]>([])
 const apiKeyData = ref<ApiKeyItem[]>([])
 
-function formatNumber(value: unknown): string {
-	const number = Number(value) || 0
-	if (number >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(1)}B`
-	if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`
-	if (number >= 1_000) return `${(number / 1_000).toFixed(1)}K`
-	return number.toLocaleString('zh-CN')
-}
-
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(value: unknown): string {
 	const number = Number(value) || 0
@@ -117,7 +119,7 @@ function formatCost(value: unknown): string {
 
 function formatMs(value: unknown): string {
 	const number = Number(value) || 0
-	if (number >= 1000) return `${(number / 1000).toFixed(1)}s`
+	if (number >= 1000) return `${(number / 1000).toFixed(2)}s`
 	return `${Math.round(number)}ms`
 }
 
@@ -125,7 +127,13 @@ function formatResetAt(value?: string): string {
 	if (!value) return '按额度周期重置'
 	const date = new Date(value.replace(' ', 'T'))
 	if (Number.isNaN(date.getTime())) return value
-	return `${date.getMonth() + 1} 月 ${date.getDate()} 日重置`
+	return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
+const FAILURE_LABELS: Record<string, string> = {
+	error: '失败',
+	timeout: '超时',
+	cancelled: '已取消',
 }
 
 function ensureArray<T>(value: unknown): T[] {
@@ -148,61 +156,6 @@ const formattedDate = computed(() =>
 	}).format(new Date()),
 )
 
-const periodSummary = computed(() =>
-	trendData.value.reduce(
-		(summary, point) => ({
-			requests: summary.requests + Number(point.requests || 0),
-			tokens: summary.tokens + Number(point.input_tokens || 0) + Number(point.output_tokens || 0),
-			cost: summary.cost + Number(point.total_cost || 0),
-		}),
-		{ requests: 0, tokens: 0, cost: 0 },
-	),
-)
-
-const coreStats = computed(() => {
-	if (!overviewData.value) return []
-	const { today, error_rate: errorRate, latency } = overviewData.value
-	const failedRequests = errorRate.error + errorRate.timeout + errorRate.cancelled
-	return [
-		{
-			label: '今日请求',
-			value: formatNumber(today.requests),
-			description: `${formatNumber(today.input_tokens + today.output_tokens)} Token`,
-			badge: '今日',
-			icon: 'play',
-			color: '#7667f6',
-			soft: 'rgba(118, 103, 246, 0.14)',
-		},
-		{
-			label: `近 ${selectedDays.value} 天消费`,
-			value: formatCost(periodSummary.value.cost),
-			description: `${formatNumber(periodSummary.value.requests)} 次调用`,
-			badge: '费用',
-			icon: 'wallet',
-			color: '#3b9df8',
-			soft: 'rgba(59, 157, 248, 0.14)',
-		},
-		{
-			label: '调用成功率',
-			value: `${(errorRate.rate * 100).toFixed(1)}%`,
-			description: failedRequests > 0 ? `${formatNumber(failedRequests)} 次未成功` : '本月调用稳定',
-			badge: '本月',
-			icon: 'checkCircle',
-			color: errorRate.rate >= 0.99 ? '#18b886' : errorRate.rate >= 0.95 ? '#f2aa35' : '#ef6a6a',
-			soft: errorRate.rate >= 0.99 ? 'rgba(24, 184, 134, 0.14)' : errorRate.rate >= 0.95 ? 'rgba(242, 170, 53, 0.14)' : 'rgba(239, 106, 106, 0.14)',
-		},
-		{
-			label: '平均响应',
-			value: formatMs(latency.avg_ms),
-			description: `首 Token ${formatMs(latency.avg_first_token_ms)}`,
-			badge: '本月',
-			icon: 'clock',
-			color: '#22b8b4',
-			soft: 'rgba(34, 184, 180, 0.14)',
-		},
-	]
-})
-
 const quotaPercent = computed(() => Math.min(Math.max(overviewData.value?.quota?.usage_percent || 0, 0), 100))
 
 const quotaRemaining = computed(() => {
@@ -212,20 +165,25 @@ const quotaRemaining = computed(() => {
 
 const quotaState = computed(() => {
 	const percent = overviewData.value?.quota?.usage_percent || 0
-	if (percent >= 90) return { label: '即将用尽', tone: 'quota-danger' }
-	if (percent >= 70) return { label: '需要关注', tone: 'quota-warning' }
-	return { label: '额度充足', tone: 'quota-healthy' }
+	if (percent >= 90) return { label: '即将用尽', tone: 'crit' }
+	if (percent >= 70) return { label: '需要留意', tone: 'warn' }
+	return { label: '额度充足', tone: 'ok' }
 })
 
 const latencyItems = computed(() => {
 	if (!overviewData.value) return []
 	const latency = overviewData.value.latency
 	return [
-		{ label: '平均响应', value: formatMs(latency.avg_ms) },
-		{ label: '首 Token', value: formatMs(latency.avg_first_token_ms) },
+		{ label: 'P50', value: formatMs(latency.p50_ms) },
 		{ label: 'P95', value: formatMs(latency.p95_ms) },
 		{ label: 'P99', value: formatMs(latency.p99_ms) },
 	]
+})
+
+const failures = computed(() => overviewData.value?.recent_failures || [])
+const failedCount = computed(() => {
+	const rate = overviewData.value?.error_rate
+	return rate ? rate.error + rate.timeout + rate.cancelled : 0
 })
 
 const topApiKeys = computed(() => apiKeyData.value.slice(0, 6))
@@ -285,7 +243,7 @@ onMounted(refreshAll)
 				<h1 class="text-2xl font-bold text-slate-900 md:text-[28px]">
 					{{ greeting }}，{{ authStore.user?.username || '用户' }}
 				</h1>
-				<p class="mt-1 text-sm text-slate-400">{{ formattedDate }} · 这是你的 API 使用概况</p>
+				<p class="mt-1 text-sm text-slate-400">{{ formattedDate }} · 这里只统计你自己发起的调用</p>
 			</div>
 			<button class="personal-refresh" :disabled="loading || chartsLoading" @click="refreshAll">
 				<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />
@@ -294,7 +252,8 @@ onMounted(refreshAll)
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-			<div v-for="index in 4" :key="index" class="stat-card h-[148px]">
+			<div class="stat-card h-[240px] sm:col-span-2"></div>
+			<div v-for="index in 2" :key="index" class="stat-card h-[148px]">
 				<div class="flex items-center justify-between">
 					<div class="skeleton h-10 w-10 rounded-xl"></div>
 					<div class="skeleton h-5 w-14 rounded-full"></div>
@@ -306,24 +265,109 @@ onMounted(refreshAll)
 
 		<template v-else-if="overviewData">
 			<section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-				<article
-					v-for="stat in coreStats"
-					:key="stat.label"
-					class="stat-card personal-metric-card"
-					:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
-				>
+				<!-- 额度是使用者最高频的问题，升为首屏主体 -->
+				<div class="card card-prominent quota-card sm:col-span-2">
+					<div class="flex items-start justify-between gap-4">
+						<div class="flex items-center gap-3">
+							<div class="quota-icon"><Icon name="shield" size="md" /></div>
+							<div>
+								<h2 class="text-base font-semibold text-slate-900">
+									{{ overviewData.quota ? '本期可用上限' : '未设置个人上限' }}
+								</h2>
+								<p class="mt-0.5 text-xs text-slate-400">
+									{{ overviewData.quota ? '团队为你设定的消费控制线' : '你的调用直接由团队钱包结算' }}
+								</p>
+							</div>
+						</div>
+						<span v-if="overviewData.quota" class="quota-status" :class="`quota-${quotaState.tone}`">{{ quotaState.label }}</span>
+						<span v-else class="quota-status quota-ok">不受限</span>
+					</div>
+
+					<template v-if="overviewData.quota">
+						<div class="mt-6 flex items-end justify-between gap-4">
+							<div>
+								<p class="text-xs font-medium text-slate-400">剩余可用</p>
+								<p class="mt-1 text-[2rem] font-bold leading-none tabular-nums text-slate-900">{{ formatCost(quotaRemaining) }}</p>
+							</div>
+							<p class="text-right text-sm font-semibold tabular-nums text-slate-600">{{ overviewData.quota.usage_percent.toFixed(1) }}%</p>
+						</div>
+						<div class="progress mt-4">
+							<div class="progress-bar" :class="`bar-${quotaState.tone}`" :style="{ width: `${quotaPercent}%` }"></div>
+						</div>
+						<div class="mt-2.5 flex items-center justify-between text-xs text-slate-400">
+							<span>已用 {{ formatCost(overviewData.quota.quota_used) }}</span>
+							<span>上限 {{ formatCost(overviewData.quota.quota_limit) }}</span>
+						</div>
+						<!-- 语义澄清：额度是控制线不是钱包，超限只会暂停调用，不扣个人资金 -->
+						<p class="quota-explain">
+							这是团队给你划的消费控制线，不是你的钱包余额。用尽后调用会暂停，不会扣除你的个人资金 —— 需要更多额度请联系团队管理员。
+						</p>
+						<div class="quota-meta">
+							<div>
+								<p class="text-[11px] text-slate-400">额度周期</p>
+								<p class="mt-1 text-sm font-semibold text-slate-700">
+									{{ overviewData.quota.period || overviewData.quota.quota_type }}
+								</p>
+							</div>
+							<div class="text-right">
+								<p class="text-[11px] text-slate-400">下次重置</p>
+								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatResetAt(overviewData.quota.next_reset_at) }}</p>
+							</div>
+						</div>
+					</template>
+
+					<template v-else>
+						<div class="mt-6">
+							<p class="text-xs font-medium text-slate-400">本月我的消费</p>
+							<p class="mt-1 text-[2rem] font-bold leading-none tabular-nums text-slate-900">{{ formatCost(overviewData.month.total_cost) }}</p>
+						</div>
+						<p class="quota-explain">
+							团队没有为你设置消费控制线，你的每一次调用都直接从团队钱包扣款。
+						</p>
+						<div class="quota-meta">
+							<div>
+								<p class="text-[11px] text-slate-400">本月请求</p>
+								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatNumber(overviewData.month.requests) }} 次</p>
+							</div>
+							<div class="text-right">
+								<p class="text-[11px] text-slate-400">本月 Token</p>
+								<p class="mt-1 text-sm font-semibold text-slate-700">
+									{{ formatNumber(overviewData.month.input_tokens + overviewData.month.output_tokens) }}
+								</p>
+							</div>
+						</div>
+					</template>
+				</div>
+
+				<article class="stat-card personal-metric-card" style="--metric-color: #f59e0b; --metric-soft: rgba(245, 158, 11, 0.14)">
 					<div class="personal-metric-accent" aria-hidden="true"></div>
 					<div class="flex items-center justify-between gap-3">
 						<div class="flex min-w-0 items-center gap-3">
-							<div class="personal-metric-icon"><Icon :name="stat.icon" size="md" /></div>
-							<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
+							<div class="personal-metric-icon"><Icon name="currencyDollar" size="md" /></div>
+							<p class="truncate text-sm font-semibold text-slate-600">今日消费</p>
 						</div>
-						<span class="personal-metric-badge">{{ stat.badge }}</span>
+						<span class="personal-metric-badge">今天</span>
 					</div>
-					<p class="personal-metric-value" :title="stat.value">{{ stat.value }}</p>
+					<p class="personal-metric-value">{{ formatCost(overviewData.today.total_cost) }}</p>
 					<div class="personal-metric-detail">
 						<span class="personal-metric-detail-dot" aria-hidden="true"></span>
-						<span class="truncate">{{ stat.description }}</span>
+						<span class="truncate">{{ formatNumber(overviewData.today.requests) }} 次调用</span>
+					</div>
+				</article>
+
+				<article class="stat-card personal-metric-card" style="--metric-color: #3b82f6; --metric-soft: rgba(59, 130, 246, 0.14)">
+					<div class="personal-metric-accent" aria-hidden="true"></div>
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-3">
+							<div class="personal-metric-icon"><Icon name="chart" size="md" /></div>
+							<p class="truncate text-sm font-semibold text-slate-600">本月消费</p>
+						</div>
+						<span class="personal-metric-badge">本月</span>
+					</div>
+					<p class="personal-metric-value">{{ formatCost(overviewData.month.total_cost) }}</p>
+					<div class="personal-metric-detail">
+						<span class="personal-metric-detail-dot" aria-hidden="true"></span>
+						<span class="truncate">{{ formatNumber(overviewData.month.requests) }} 次调用</span>
 					</div>
 				</article>
 			</section>
@@ -333,64 +377,46 @@ onMounted(refreshAll)
 					:data="trendData"
 					:loading="chartsLoading"
 					:days="selectedDays"
+					title="我的消费趋势"
+					:subtitle="`近 ${selectedDays} 天，按天聚合`"
 					@change-days="selectedDays = $event"
 				/>
 
-				<div class="card card-prominent quota-card p-5 sm:p-6">
-					<div class="flex items-start justify-between gap-4">
-						<div class="flex items-center gap-3">
-							<div class="section-icon quota-icon"><Icon name="shield" size="md" /></div>
-							<div>
-								<h2 class="text-base font-semibold text-slate-900">个人额度</h2>
-								<p class="mt-0.5 text-xs text-slate-400">消费上限与当前使用状态</p>
-							</div>
+				<!-- 看到成功率之后，使用者的下一个动作一定是「哪几次失败了」 -->
+				<div class="card card-prominent flex flex-col">
+					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
+						<div>
+							<h2 class="text-base font-semibold text-slate-900">最近失败的调用</h2>
+							<p class="mt-0.5 text-xs text-slate-400">
+								本月 {{ formatNumber(failedCount) }} 次未成功，成功率 {{ (overviewData.error_rate.rate * 100).toFixed(1) }}%
+							</p>
 						</div>
-						<span v-if="overviewData.quota" class="quota-status" :class="quotaState.tone">{{ quotaState.label }}</span>
+						<Icon name="exclamationTriangle" size="md" class="flex-shrink-0 text-amber-400" />
 					</div>
 
-					<template v-if="overviewData.quota">
-						<div class="mt-7 flex items-end justify-between gap-4">
-							<div>
-								<p class="text-xs font-medium text-slate-400">剩余额度</p>
-								<p class="mt-1 text-3xl font-bold tabular-nums text-slate-900">{{ formatCost(quotaRemaining) }}</p>
-							</div>
-							<p class="text-right text-sm font-semibold tabular-nums text-slate-600">{{ overviewData.quota.usage_percent.toFixed(1) }}%</p>
+					<div v-if="failures.length === 0" class="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+						<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500">
+							<Icon name="checkCircle" size="lg" />
 						</div>
-						<div class="quota-progress mt-4">
-							<div class="quota-progress-bar" :class="quotaState.tone" :style="{ width: `${quotaPercent}%` }"></div>
-						</div>
-						<div class="mt-3 flex items-center justify-between text-xs text-slate-400">
-							<span>已用 {{ formatCost(overviewData.quota.quota_used) }}</span>
-							<span>总额 {{ formatCost(overviewData.quota.quota_limit) }}</span>
-						</div>
-						<div class="quota-meta mt-6">
-							<div>
-								<p class="text-[11px] text-slate-400">额度周期</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ overviewData.quota.period || overviewData.quota.quota_type }}</p>
-							</div>
-							<div class="text-right">
-								<p class="text-[11px] text-slate-400">下次重置</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatResetAt(overviewData.quota.next_reset_at) }}</p>
+						<p class="mt-3 text-sm font-medium text-slate-600">本月没有失败的调用</p>
+						<p class="mt-1 text-xs text-slate-400">一切正常</p>
+					</div>
+					<div v-else class="divide-y divide-slate-100/80 px-5 sm:px-6">
+						<div v-for="(item, index) in failures" :key="index" class="flex gap-3 py-3">
+							<span class="failure-badge">{{ FAILURE_LABELS[item.status] || item.status }}</span>
+							<div class="min-w-0 flex-1">
+								<p class="truncate font-mono text-xs text-slate-700" :title="item.error_message">
+									{{ item.error_message || '上游未返回错误信息' }}
+								</p>
+								<p class="mt-0.5 text-[11px] text-slate-400">{{ item.created_at }} · {{ item.model_name }}</p>
 							</div>
 						</div>
-					</template>
+					</div>
 
-					<div v-else class="flex min-h-[270px] flex-col justify-between pt-7">
-						<div>
-							<p class="text-xs font-medium text-slate-400">本月消费</p>
-							<p class="mt-1 text-3xl font-bold tabular-nums text-slate-900">{{ formatCost(overviewData.month.total_cost) }}</p>
-							<p class="mt-2 text-sm text-slate-500">当前账户未设置个人额度限制</p>
-						</div>
-						<div class="quota-meta">
-							<div>
-								<p class="text-[11px] text-slate-400">本月请求</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatNumber(overviewData.month.requests) }} 次</p>
-							</div>
-							<div class="text-right">
-								<p class="text-[11px] text-slate-400">本月 Token</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatNumber(overviewData.month.input_tokens + overviewData.month.output_tokens) }}</p>
-							</div>
-						</div>
+					<div v-if="failures.length" class="mt-auto border-t border-slate-100/80 px-5 py-3.5 sm:px-6">
+						<router-link to="/tenant/usage-logs" class="text-xs font-medium text-primary-600 transition-colors hover:text-primary-700">
+							在用量日志里查看全部 →
+						</router-link>
 					</div>
 				</div>
 			</section>
@@ -405,17 +431,36 @@ onMounted(refreshAll)
 								<p class="mt-0.5 text-xs text-slate-400">本月请求可靠性与性能</p>
 							</div>
 						</div>
-						<strong class="text-lg font-bold tabular-nums" :class="overviewData.error_rate.rate >= 0.99 ? 'text-emerald-600' : overviewData.error_rate.rate >= 0.95 ? 'text-amber-600' : 'text-red-500'">
+						<strong
+							class="text-lg font-bold tabular-nums"
+							:class="overviewData.error_rate.rate >= 0.99 ? 'text-emerald-600' : overviewData.error_rate.rate >= 0.95 ? 'text-amber-600' : 'text-red-500'"
+						>
 							{{ (overviewData.error_rate.rate * 100).toFixed(1) }}%
 						</strong>
 					</div>
 
-					<div class="mt-5 grid gap-5 md:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]">
-						<div class="grid grid-cols-2 gap-3">
-							<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
-								<p class="text-[11px] text-slate-400">{{ item.label }}</p>
-								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ item.value }}</p>
+					<div class="mt-5 grid gap-5 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
+						<div>
+							<div class="grid grid-cols-2 gap-3">
+								<div class="quality-metric">
+									<p class="text-[11px] text-slate-400">平均响应</p>
+									<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_ms) }}</p>
+								</div>
+								<div class="quality-metric">
+									<p class="text-[11px] text-slate-400">首 Token</p>
+									<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_first_token_ms) }}</p>
+								</div>
 							</div>
+							<!-- 分位数对普通成员偏技术，默认收起，排障时再展开 -->
+							<details class="latency-details">
+								<summary>展开延迟分位数</summary>
+								<div class="mt-2.5 grid grid-cols-3 gap-2">
+									<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
+										<p class="text-[11px] text-slate-400">{{ item.label }}</p>
+										<p class="mt-1 text-sm font-bold tabular-nums text-slate-700">{{ item.value }}</p>
+									</div>
+								</div>
+							</details>
 						</div>
 
 						<div class="border-t border-slate-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
@@ -438,12 +483,13 @@ onMounted(refreshAll)
 
 					<div class="cache-strip mt-5">
 						<div class="flex items-center gap-2">
-							<Icon name="bolt" size="sm" class="text-cyan-500" />
-							<span class="text-xs font-medium text-slate-600">缓存命中率</span>
-						</div>
-						<div class="text-right">
-							<strong class="text-sm font-bold tabular-nums text-cyan-600">{{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</strong>
-							<p class="mt-0.5 text-[10px] text-slate-400">读取 {{ formatNumber(overviewData.cache.cache_read_tokens) }} Token</p>
+							<Icon name="bolt" size="sm" class="flex-shrink-0 text-cyan-500" />
+							<div>
+								<span class="text-xs font-medium text-slate-600">缓存命中率 {{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</span>
+								<p class="mt-0.5 text-[11px] text-slate-400">
+									已命中 {{ formatNumber(overviewData.cache.cache_read_tokens) }} Token，约省下 {{ formatCost(overviewData.cache.saved_cost) }}
+								</p>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -455,7 +501,7 @@ onMounted(refreshAll)
 				<div class="card card-prominent overflow-hidden">
 					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 						<div>
-							<h2 class="text-base font-semibold text-slate-900">API Key 用量</h2>
+							<h2 class="text-base font-semibold text-slate-900">我的 API Key 用量</h2>
 							<p class="mt-0.5 text-xs text-slate-400">近 {{ selectedDays }} 天个人密钥调用排行</p>
 						</div>
 						<Icon name="key" size="md" class="text-blue-400" />
@@ -511,7 +557,9 @@ onMounted(refreshAll)
 								</div>
 								<div class="mt-1.5 flex items-center gap-3">
 									<div class="usage-progress model-progress"><span :style="{ width: `${(item.total_cost / maxModelCost) * 100}%` }"></span></div>
-									<span class="flex-shrink-0 text-[11px] text-slate-400">{{ formatNumber(item.requests) }} 次 · {{ formatNumber(item.input_tokens + item.output_tokens) }} Token</span>
+									<span class="flex-shrink-0 text-[11px] text-slate-400">
+										{{ formatNumber(item.requests) }} 次 · {{ formatNumber(item.input_tokens + item.output_tokens) }} Token
+									</span>
 								</div>
 							</div>
 						</div>
@@ -565,8 +613,96 @@ onMounted(refreshAll)
 	opacity: 0.65;
 }
 
+/* ── 额度主卡 ── */
+.quota-card {
+	display: flex;
+	flex-direction: column;
+	padding: 1.25rem 1.375rem 1.375rem;
+}
+
+.quota-icon {
+	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
+	background: rgba(13, 148, 136, 0.14);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	color: #0d9488;
+}
+
+.quota-status {
+	display: inline-flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 0.35rem;
+	border-radius: 9999px;
+	padding: 0.3rem 0.6rem;
+	font-size: 0.6875rem;
+	font-weight: 700;
+}
+
+.quota-status::before {
+	height: 0.4rem;
+	width: 0.4rem;
+	border-radius: 9999px;
+	background: currentColor;
+	content: '';
+}
+
+.quota-ok {
+	background: #ecfdf5;
+	color: #10b981;
+}
+
+.quota-warn {
+	background: #fffbeb;
+	color: #f59e0b;
+}
+
+.quota-crit {
+	background: #fef2f2;
+	color: #ef4444;
+}
+
+.bar-ok {
+	background: linear-gradient(90deg, #2dd4bf, #0d9488);
+}
+
+.bar-warn {
+	background: linear-gradient(90deg, #fbbf24, #f59e0b);
+}
+
+.bar-crit {
+	background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.quota-explain {
+	margin-top: 1rem;
+	border-radius: 0.6rem;
+	background: rgba(148, 163, 184, 0.1);
+	padding: 0.6rem 0.75rem;
+	color: #64748b;
+	font-size: 0.6875rem;
+	line-height: 1.65;
+}
+
+.quota-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-top: auto;
+	padding-top: 1rem;
+}
+
+/* ── 指标卡 ── */
 .personal-metric-card {
+	position: relative;
 	min-height: 148px;
+	overflow: hidden;
 	padding: 1.125rem 1.25rem;
 	transition: transform 220ms ease, box-shadow 220ms ease;
 }
@@ -587,19 +723,13 @@ onMounted(refreshAll)
 	opacity: 0.7;
 }
 
-.personal-metric-icon,
-.section-icon,
-.usage-icon,
-.empty-icon {
+.personal-metric-icon {
 	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
 	flex-shrink: 0;
 	align-items: center;
 	justify-content: center;
-}
-
-.personal-metric-icon {
-	height: 2.5rem;
-	width: 2.5rem;
 	border: 1px solid rgba(255, 255, 255, 0.82);
 	border-radius: 0.75rem;
 	background: var(--metric-soft);
@@ -622,10 +752,10 @@ onMounted(refreshAll)
 	margin-top: 0.875rem;
 	overflow: hidden;
 	color: #172033;
-	font-size: 1.75rem;
+	font-size: 1.65rem;
 	font-weight: 750;
 	font-variant-numeric: tabular-nums;
-	line-height: 1;
+	line-height: 1.1;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -635,7 +765,7 @@ onMounted(refreshAll)
 	min-width: 0;
 	align-items: center;
 	gap: 0.5rem;
-	margin-top: 0.75rem;
+	margin-top: 0.65rem;
 	color: #94a3b8;
 	font-size: 0.6875rem;
 }
@@ -648,150 +778,160 @@ onMounted(refreshAll)
 	background: var(--metric-color);
 }
 
-.quota-card {
-	background:
-		radial-gradient(circle at 100% 0, rgba(20, 184, 166, 0.11), transparent 34%),
-		var(--glass-bg-strong);
-}
-
+/* ── 运行质量 ── */
 .section-icon {
+	display: flex;
 	height: 2.5rem;
 	width: 2.5rem;
-	border-radius: 0.8rem;
-}
-
-.quota-icon {
-	background: rgba(20, 184, 166, 0.12);
-	color: #14b8a6;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .quality-icon {
-	background: rgba(24, 184, 134, 0.12);
-	color: #18a979;
+	background: rgba(16, 185, 129, 0.14);
+	color: #10b981;
 }
 
-.quota-status {
-	flex-shrink: 0;
-	border-radius: 9999px;
-	padding: 0.3rem 0.6rem;
-	font-size: 0.6875rem;
-	font-weight: 700;
+.quality-metric {
+	border: 1px solid rgba(255, 255, 255, 0.85);
+	border-radius: 0.85rem;
+	background: rgba(255, 255, 255, 0.6);
+	padding: 0.7rem 0.8rem;
 }
 
-.quota-status.quota-healthy { background: #ecfdf5; color: #10b981; }
-.quota-status.quota-warning { background: #fffbeb; color: #d97706; }
-.quota-status.quota-danger { background: #fef2f2; color: #ef4444; }
+.latency-details {
+	margin-top: 0.7rem;
+}
 
-.quota-progress,
-.mini-progress,
-.usage-progress {
+.latency-details > summary {
+	color: #0d9488;
+	cursor: pointer;
+	font-size: 0.75rem;
+	font-weight: 620;
+	list-style: none;
+}
+
+.latency-details > summary::-webkit-details-marker {
+	display: none;
+}
+
+.latency-details > summary::after {
+	content: ' ▾';
+}
+
+.latency-details[open] > summary::after {
+	content: ' ▴';
+}
+
+.mini-progress {
+	height: 0.35rem;
 	overflow: hidden;
 	border-radius: 9999px;
-	background: rgba(226, 232, 240, 0.7);
+	background: rgba(148, 163, 184, 0.2);
 }
 
-.quota-progress { height: 0.625rem; }
-.quota-progress-bar { height: 100%; border-radius: inherit; transition: width 500ms ease; }
-.quota-progress-bar.quota-healthy { background: linear-gradient(90deg, #2cc5c1, #22b88e); }
-.quota-progress-bar.quota-warning { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
-.quota-progress-bar.quota-danger { background: linear-gradient(90deg, #fb7185, #ef4444); }
+.mini-progress > span {
+	display: block;
+	height: 100%;
+	border-radius: 9999px;
+	background: linear-gradient(90deg, #2dd4bf, #0d9488);
+}
 
-.quota-meta,
 .cache-strip {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 1rem;
-	border: 1px solid rgba(255, 255, 255, 0.86);
-	border-radius: 1rem;
-	background: rgba(255, 255, 255, 0.52);
-	padding: 0.875rem 1rem;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	border-radius: 0.8rem;
+	background: rgba(6, 182, 212, 0.08);
+	padding: 0.7rem 0.85rem;
 }
 
-.quality-metric {
-	border: 1px solid rgba(255, 255, 255, 0.84);
-	border-radius: 1rem;
-	background: rgba(255, 255, 255, 0.5);
-	padding: 0.75rem 0.875rem;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+/* ── 失败列表 ── */
+.failure-badge {
+	align-self: flex-start;
+	flex-shrink: 0;
+	border-radius: 0.35rem;
+	background: #fef2f2;
+	padding: 0.15rem 0.42rem;
+	color: #ef4444;
+	font-size: 0.625rem;
+	font-weight: 700;
+	white-space: nowrap;
 }
 
-.mini-progress { height: 0.375rem; }
-.mini-progress span {
-	display: block;
-	height: 100%;
-	border-radius: inherit;
-	background: linear-gradient(90deg, #06b6d4, #14b8a6);
-}
-
-.cache-strip {
-	background: rgba(236, 254, 255, 0.54);
-}
-
+/* ── 用量列表 ── */
 .usage-row {
-	display: flex;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
 	align-items: center;
-	gap: 0.875rem;
-	padding: 0.9rem 0;
+	gap: 0.75rem;
+	padding: 0.8rem 0;
 }
 
 .usage-icon {
-	height: 2.25rem;
-	width: 2.25rem;
-	border-radius: 0.75rem;
+	display: flex;
+	height: 2rem;
+	width: 2rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.65rem;
 }
 
 .key-usage-icon {
-	background: #eff6ff;
+	background: rgba(59, 130, 246, 0.13);
 	color: #3b82f6;
 }
 
 .model-usage-icon {
-	background: #f5f3ff;
+	background: rgba(139, 92, 246, 0.13);
 	color: #8b5cf6;
 }
 
 .usage-progress {
-	height: 0.3rem;
-	min-width: 3rem;
+	height: 0.35rem;
 	flex: 1;
+	overflow: hidden;
+	border-radius: 9999px;
+	background: rgba(148, 163, 184, 0.2);
 }
 
-.usage-progress span {
+.usage-progress > span {
 	display: block;
 	height: 100%;
-	border-radius: inherit;
-	background: linear-gradient(90deg, #06b6d4, #14b8a6);
+	border-radius: 9999px;
+	background: #3b82f6;
 }
 
-.model-progress span {
-	background: linear-gradient(90deg, #2cc5c1, #67d49d);
+.model-progress > span {
+	background: #8b5cf6;
 }
 
 .empty-icon {
+	display: flex;
 	height: 3.5rem;
 	width: 3.5rem;
+	align-items: center;
+	justify-content: center;
 	border-radius: 1rem;
-	background: #eff6ff;
+	background: rgba(59, 130, 246, 0.1);
 	color: #60a5fa;
 }
 
 .model-empty-icon {
-	background: #f5f3ff;
+	background: rgba(139, 92, 246, 0.1);
 	color: #a78bfa;
 }
 
-@media (max-width: 420px) {
-	.usage-progress {
-		display: none;
-	}
-}
-
 @media (prefers-reduced-motion: reduce) {
-	.personal-refresh,
 	.personal-metric-card,
-	.quota-progress-bar {
+	.personal-refresh {
+		animation: none;
 		transition: none;
 	}
 }

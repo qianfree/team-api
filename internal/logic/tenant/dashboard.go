@@ -14,6 +14,9 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 )
 
+// budgetAlertThreshold 预算/额度使用率达到该比例即进入告警列表
+const budgetAlertThreshold = 0.8
+
 // roundUSD 精确到小数点后 6 位，符合 CLAUDE.md 资金精度规范
 func roundUSD(v float64) float64 {
 	return math.Round(v*1000000) / 1000000
@@ -98,6 +101,63 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		return nil, err
 	}
 
+	// 当前套餐额度（无活跃套餐时 planQuota 为 nil，前端隐藏该卡）
+	planQuota, err := tenantPlanQuota(ctx, tenantID, int64(monthRow.InputTokens)+int64(monthRow.OutputTokens))
+	if err != nil {
+		return nil, err
+	}
+
+	// 消费环比 + 无效支出（同表同租户同区间，合并为一条查询）。
+	//
+	// 上月只截取与本月已过时长相同的窗口，否则月初永远显示"环比大跌"。
+	// 三个边界统一格式化成与上面「本月统计」完全相同的字符串形式再传参：
+	// 本月起点必须与 monthStart 逐字一致，否则服务器时区与数据库会话时区不同时，
+	// 同屏的「本月消费」与 month.total_cost 会对不上。
+	const boundLayout = "2006-01-02 15:04:05"
+	curStartT := time.Date(now.Year(), time.Month(now.Month()), 1, 0, 0, 0, 0, now.Location())
+	curStartStr := monthStart + " 00:00:00"
+	prevStartStr := curStartT.AddDate(0, -1, 0).Format(boundLayout)
+	prevEndStr := curStartT.AddDate(0, -1, 0).Add(now.Time.Sub(curStartT)).Format(boundLayout)
+
+	var trendRow struct {
+		CurCost         float64 `json:"cur_cost"`
+		PrevCost        float64 `json:"prev_cost"`
+		WastedCost      float64 `json:"wasted_cost"`
+		FailedRequests  int64   `json:"failed_requests"`
+		RetriedRequests int64   `json:"retried_requests"`
+	}
+	err = g.DB().Ctx(ctx).Raw(`
+		SELECT
+			COALESCE(SUM(CASE WHEN created_at >= ? THEN total_cost END), 0) AS cur_cost,
+			COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN total_cost END), 0) AS prev_cost,
+			COALESCE(SUM(CASE WHEN created_at >= ? AND status <> 'success' THEN total_cost END), 0) AS wasted_cost,
+			COUNT(*) FILTER (WHERE created_at >= ? AND status <> 'success') AS failed_requests,
+			COUNT(*) FILTER (WHERE created_at >= ? AND retry_index > 0) AS retried_requests
+		FROM bil_usage_logs
+		WHERE tenant_id = ? AND created_at >= ?
+	`, curStartStr, prevStartStr, prevEndStr, curStartStr, curStartStr, curStartStr, tenantID, prevStartStr).Scan(&trendRow)
+	if err != nil {
+		return nil, err
+	}
+
+	costTrend := v1.TenantCostTrend{
+		CurrentCost:  roundUSD(trendRow.CurCost),
+		PreviousCost: roundUSD(trendRow.PrevCost),
+		HasPrevious:  trendRow.PrevCost > 0,
+	}
+	if trendRow.PrevCost > 0 {
+		costTrend.DeltaPercent = math.Round((trendRow.CurCost-trendRow.PrevCost)/trendRow.PrevCost*10000) / 100
+	}
+
+	waste := v1.TenantWasteStat{
+		WastedCost:      roundUSD(trendRow.WastedCost),
+		FailedRequests:  trendRow.FailedRequests,
+		RetriedRequests: trendRow.RetriedRequests,
+	}
+	if trendRow.CurCost > 0 {
+		waste.SharePercent = math.Round(trendRow.WastedCost/trendRow.CurCost*10000) / 100
+	}
+
 	// 实时 RPM/TPM（Redis 滑动窗口，本租户维度；Redis 不可用时为 0）
 	rpm, tpm := common.GetRealtimeMetrics(ctx, tenantID)
 
@@ -124,6 +184,9 @@ func (s *sTenant) Dashboard(ctx context.Context, req *v1.TenantDashboardReq) (*v
 		Tpm:         tpm,
 		ActiveKeys:  activeKeys,
 		MemberCount: memberCount,
+		Plan:        planQuota,
+		CostTrend:   costTrend,
+		Waste:       waste,
 	}, nil
 }
 
@@ -313,19 +376,105 @@ func (s *sTenant) BalancePrediction(ctx context.Context, req *v1.TenantBalancePr
 	return res, nil
 }
 
-// BudgetAlerts checks member and project budget usage and returns those above 80%.
+// BudgetAlerts checks member and project budget usage and returns those above the alert threshold.
 func (s *sTenant) BudgetAlerts(ctx context.Context, req *v1.TenantBudgetAlertsReq) (*v1.TenantBudgetAlertsRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
 		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
 	}
-	return &v1.TenantBudgetAlertsRes{
-		Members:  []map[string]any{},
-		Projects: []map[string]any{},
-	}, nil
+	tenantID := middleware.GetTenantID(ctx)
+
+	// 项目侧：复用与预算执行同源的汇总
+	projectRows, err := tenantProjectBudgets(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	projects := make([]v1.TenantProjectAlert, 0, len(projectRows))
+	for _, r := range projectRows {
+		if r.Budget <= 0 {
+			continue
+		}
+		ratio := r.Used / r.Budget
+		if ratio < budgetAlertThreshold {
+			continue
+		}
+		projects = append(projects, v1.TenantProjectAlert{
+			Id:           r.Id,
+			Name:         r.Name,
+			Budget:       roundUSD(r.Budget),
+			Used:         roundUSD(r.Used),
+			UsagePercent: math.Round(ratio*10000) / 100,
+		})
+	}
+
+	// 成员侧：额度是控制线（超限直接拒绝调用，不走钱包兜底），因此按使用比例预警。
+	// 末尾那段周期守卫不能省：周期额度是「惰性重置」——只在成员下次发起调用时
+	// 由 relay 链路上的 needsReset/resetMemberQuota 清零（internal/logic/billing/member_quota.go）。
+	// 上个周期用满、之后再没调用过的成员，其 quota_used 会一直停在上限，
+	// 不加守卫就会永远出现在告警里。判定口径与 needsReset 一致：按 UTC 比较周期。
+	var memberRows []struct {
+		Id           int64      `json:"id"`
+		Username     string     `json:"username"`
+		DisplayName  string     `json:"display_name"`
+		QuotaLimit   float64    `json:"quota_limit"`
+		QuotaUsed    float64    `json:"quota_used"`
+		QuotaPeriod  string     `json:"quota_period"`
+		QuotaResetAt *time.Time `json:"quota_reset_at"`
+	}
+	err = g.DB().Ctx(ctx).Raw(`
+		SELECT
+			id,
+			username,
+			COALESCE(display_name, '') AS display_name,
+			COALESCE(quota_limit, 0) AS quota_limit,
+			COALESCE(quota_used, 0) AS quota_used,
+			COALESCE(quota_period, '') AS quota_period,
+			quota_reset_at
+		FROM tnt_users
+		WHERE tenant_id = ? AND status = 'active'
+			AND COALESCE(quota_type, 'none') <> 'none'
+			AND COALESCE(quota_limit, 0) > 0
+			AND COALESCE(quota_used, 0) / quota_limit >= ?
+			AND (
+				COALESCE(quota_type, 'none') <> 'periodic'
+				OR quota_period IS NULL OR quota_period = ''
+				OR quota_reset_at IS NULL
+				OR (quota_period = 'day'
+					AND (quota_reset_at AT TIME ZONE 'UTC') >= date_trunc('day',   now() AT TIME ZONE 'UTC'))
+				OR (quota_period = 'week'
+					AND (quota_reset_at AT TIME ZONE 'UTC') >= date_trunc('week',  now() AT TIME ZONE 'UTC'))
+				OR (quota_period = 'month'
+					AND (quota_reset_at AT TIME ZONE 'UTC') >= date_trunc('month', now() AT TIME ZONE 'UTC'))
+			)
+		ORDER BY COALESCE(quota_used, 0) / quota_limit DESC
+	`, tenantID, budgetAlertThreshold).Scan(&memberRows)
+	if err != nil {
+		return nil, err
+	}
+
+	members := make([]v1.TenantMemberAlert, 0, len(memberRows))
+	for _, r := range memberRows {
+		alert := v1.TenantMemberAlert{
+			Id:           r.Id,
+			Username:     r.Username,
+			DisplayName:  r.DisplayName,
+			QuotaLimit:   roundUSD(r.QuotaLimit),
+			QuotaUsed:    roundUSD(r.QuotaUsed),
+			UsagePercent: math.Round(r.QuotaUsed/r.QuotaLimit*10000) / 100,
+		}
+		if r.QuotaPeriod != "" {
+			if next := calcNextReset(r.QuotaResetAt, r.QuotaPeriod); next != nil {
+				alert.NextResetAt = next.Format("2006-01-02 15:04:05")
+			}
+		}
+		members = append(members, alert)
+	}
+
+	return &v1.TenantBudgetAlertsRes{Members: members, Projects: projects}, nil
 }
 
-// GetMemberUsageRanking returns top members by usage cost in a given date range.
+// GetMemberUsageRanking returns top members by usage cost in a given date range,
+// including the change versus the previous window of the same length.
 func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMemberUsageRankingReq) (*v1.TenantMemberUsageRankingRes, error) {
 	role := middleware.GetUserRole(ctx)
 	if role != "owner" && role != "admin" {
@@ -341,35 +490,57 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 		limit = 10
 	}
 
-	startDate := gtime.Now().AddDate(0, 0, -days).Format("Y-m-d")
+	// 当前窗口 [curStart, now)，对比窗口 [prevStart, curStart)，两者等长。
+	// 对比窗口可能落进已被清理的分区（usage_log_cleanup 按 usage_log_retention_days
+	// 丢弃过期分区，默认 90 天），此时上期数据不是"为 0"而是"不存在"——
+	// 若照常相减会显示成 -100% 的假暴跌，因此直接不查、并告诉前端隐藏环比列。
+	now := gtime.Now()
+	curStart := now.AddDate(0, 0, -days).StartOfDay().Time
+	retentionDays := common.Config().GetInt(ctx, "usage_log_retention_days")
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+	prevAvailable := days*2 <= retentionDays
+	prevStart := curStart
+	if prevAvailable {
+		prevStart = now.AddDate(0, 0, -days*2).StartOfDay().Time
+	}
 
 	type memberUsageRow struct {
 		UserId       int64   `json:"user_id"`
 		Username     string  `json:"username"`
 		DisplayName  string  `json:"display_name"`
-		Requests     int     `json:"requests"`
+		Requests     int64   `json:"requests"`
 		InputTokens  int64   `json:"input_tokens"`
 		OutputTokens int64   `json:"output_tokens"`
 		TotalCost    float64 `json:"total_cost"`
+		PrevCost     float64 `json:"prev_cost"`
+		QuotaLimit   float64 `json:"quota_limit"`
+		QuotaUsed    float64 `json:"quota_used"`
+		QuotaType    string  `json:"quota_type"`
 	}
 
 	var records []memberUsageRow
 	err := g.DB().Ctx(ctx).Raw(`
 		SELECT
-			u.id as user_id,
+			u.id AS user_id,
 			u.username,
-			u.display_name,
-			COUNT(*) as requests,
-			COALESCE(SUM(ul.input_tokens), 0) as input_tokens,
-			COALESCE(SUM(ul.output_tokens), 0) as output_tokens,
-			COALESCE(SUM(ul.total_cost), 0) as total_cost
+			COALESCE(u.display_name, '') AS display_name,
+			COUNT(*) FILTER (WHERE ul.created_at >= ?) AS requests,
+			COALESCE(SUM(CASE WHEN ul.created_at >= ? THEN ul.input_tokens END), 0) AS input_tokens,
+			COALESCE(SUM(CASE WHEN ul.created_at >= ? THEN ul.output_tokens END), 0) AS output_tokens,
+			COALESCE(SUM(CASE WHEN ul.created_at >= ? THEN ul.total_cost END), 0) AS total_cost,
+			COALESCE(SUM(CASE WHEN ul.created_at < ? THEN ul.total_cost END), 0) AS prev_cost,
+			COALESCE(u.quota_limit, 0) AS quota_limit,
+			COALESCE(u.quota_used, 0) AS quota_used,
+			COALESCE(u.quota_type, 'none') AS quota_type
 		FROM bil_usage_logs ul
 		JOIN tnt_users u ON u.id = ul.user_id
 		WHERE ul.tenant_id = ? AND ul.created_at >= ?
-		GROUP BY u.id, u.username, u.display_name
+		GROUP BY u.id, u.username, u.display_name, u.quota_limit, u.quota_used, u.quota_type
 		ORDER BY total_cost DESC
 		LIMIT ?
-	`, tenantID, startDate+" 00:00:00", limit).Scan(&records)
+	`, curStart, curStart, curStart, curStart, curStart, tenantID, prevStart, limit).Scan(&records)
 	if err != nil {
 		return nil, err
 	}
@@ -377,20 +548,204 @@ func (s *sTenant) GetMemberUsageRanking(ctx context.Context, req *v1.TenantMembe
 		records = []memberUsageRow{}
 	}
 
-	result := make([]map[string]any, 0, len(records))
+	list := make([]v1.TenantMemberUsageItem, 0, len(records))
 	for _, r := range records {
-		result = append(result, map[string]any{
-			"user_id":       r.UserId,
-			"username":      r.Username,
-			"display_name":  r.DisplayName,
-			"requests":      r.Requests,
-			"input_tokens":  r.InputTokens,
-			"output_tokens": r.OutputTokens,
-			"total_cost":    roundUSD(r.TotalCost),
-		})
+		item := v1.TenantMemberUsageItem{
+			UserId:       r.UserId,
+			Username:     r.Username,
+			DisplayName:  r.DisplayName,
+			Requests:     r.Requests,
+			InputTokens:  r.InputTokens,
+			OutputTokens: r.OutputTokens,
+			TotalCost:    roundUSD(r.TotalCost),
+			HasPrevious:  prevAvailable && r.PrevCost > 0,
+			HasQuota:     r.QuotaType != "none" && r.QuotaLimit > 0,
+		}
+		if item.HasPrevious {
+			item.DeltaPercent = math.Round((r.TotalCost-r.PrevCost)/r.PrevCost*10000) / 100
+		}
+		if item.HasQuota {
+			item.QuotaPercent = math.Round(r.QuotaUsed/r.QuotaLimit*10000) / 100
+		}
+		list = append(list, item)
 	}
 
-	return &v1.TenantMemberUsageRankingRes{
-		List: result,
-	}, nil
+	return &v1.TenantMemberUsageRankingRes{List: list, PrevAvailable: prevAvailable}, nil
+}
+
+// TeamHealth returns tenant-wide reliability and performance metrics for the current month.
+func (s *sTenant) TeamHealth(ctx context.Context, req *v1.TenantTeamHealthReq) (*v1.TenantTeamHealthRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	tenantID := middleware.GetTenantID(ctx)
+	monthStart := gtime.Now().Format("Y-m") + "-01 00:00:00"
+
+	var row struct {
+		Total            int64   `json:"total"`
+		Success          int64   `json:"success"`
+		AvgFirstTokenMs  float64 `json:"avg_first_token_ms"`
+		P95Ms            float64 `json:"p95_ms"`
+		CacheReadTokens  int64   `json:"cache_read_tokens"`
+		TotalInputTokens int64   `json:"total_input_tokens"`
+	}
+	// 分位数在 SQL 端算（照 model_comparison.go 的先例），不把明细拉回 Go —
+	// 租户级数据量远大于个人级，不能照搬 personal_dashboard 的 LIMIT 5000 做法
+	err := g.DB().Ctx(ctx).Raw(`
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE status = 'success') AS success,
+			COALESCE(AVG(first_token_ms), 0) AS avg_first_token_ms,
+			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+				FILTER (WHERE status = 'success' AND latency_ms IS NOT NULL), 0) AS p95_ms,
+			COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+			COALESCE(SUM(input_tokens), 0) AS total_input_tokens
+		FROM bil_usage_logs
+		WHERE tenant_id = ? AND created_at >= ?
+	`, tenantID, monthStart).Scan(&row)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &v1.TenantTeamHealthRes{
+		TotalRequests:   row.Total,
+		P95Ms:           math.Round(row.P95Ms*100) / 100,
+		AvgFirstTokenMs: math.Round(row.AvgFirstTokenMs*100) / 100,
+		CacheReadTokens: row.CacheReadTokens,
+	}
+	if row.Total > 0 {
+		res.SuccessRate = math.Round(float64(row.Success)/float64(row.Total)*10000) / 10000
+	}
+	// input_tokens 已统一为「含缓存总输入」口径，直接作分母
+	if row.TotalInputTokens > 0 {
+		res.CacheHitRatio = math.Round(float64(row.CacheReadTokens)/float64(row.TotalInputTokens)*10000) / 10000
+	}
+	return res, nil
+}
+
+// ProjectBudget returns budget usage for all active projects of the tenant.
+func (s *sTenant) ProjectBudget(ctx context.Context, req *v1.TenantProjectBudgetReq) (*v1.TenantProjectBudgetRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	tenantID := middleware.GetTenantID(ctx)
+
+	rows, err := tenantProjectBudgets(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]v1.TenantProjectBudgetItem, 0, len(rows))
+	for _, r := range rows {
+		item := v1.TenantProjectBudgetItem{
+			Id:        r.Id,
+			Name:      r.Name,
+			Budget:    roundUSD(r.Budget),
+			Used:      roundUSD(r.Used),
+			HasBudget: r.Budget > 0,
+		}
+		if r.Budget > 0 {
+			item.UsagePercent = math.Round(r.Used/r.Budget*10000) / 100
+		}
+		list = append(list, item)
+	}
+
+	return &v1.TenantProjectBudgetRes{List: list}, nil
+}
+
+// tenantPlanQuota 读取租户当前活跃套餐的 Token 额度；无活跃套餐时返回 (nil, nil)。
+//
+// 已用量由调用方传入本自然月的 Token 合计，而不是读 pln_tenant_plans.used_tokens ——
+// 该列自套餐创建后写入 0 便再无任何代码维护（payment/fulfill.go 之外无写入点，
+// 也没有重置它的定时任务），直接读会得到永远 0% 的进度条。
+// 同理，计量周期取自然月（与同屏「本月」卡片同窗口），不用同样从未更新过的 last_reset_at。
+func tenantPlanQuota(ctx context.Context, tenantID int64, usedTokens int64) (*v1.TenantPlanQuota, error) {
+	var row *struct {
+		PlanName    string      `json:"plan_name"`
+		QuotaTokens int64       `json:"monthly_quota_tokens"`
+		StartAt     *gtime.Time `json:"start_at"`
+		EndAt       *gtime.Time `json:"end_at"`
+	}
+	err := dao.PlnTenantPlans.Ctx(ctx).As("tp").
+		Fields("COALESCE(p.name, '') AS plan_name, tp.monthly_quota_tokens, tp.start_at, tp.end_at").
+		LeftJoin("pln_plans p", "p.id = tp.plan_id").
+		Where("tp.tenant_id", tenantID).
+		Where("tp.status", "active").
+		OrderDesc("tp.start_at").
+		Limit(1).
+		Scan(&row)
+	if err != nil || row == nil {
+		return nil, err
+	}
+
+	quota := &v1.TenantPlanQuota{
+		PlanName:    row.PlanName,
+		QuotaTokens: row.QuotaTokens,
+		UsedTokens:  usedTokens,
+	}
+	if row.QuotaTokens > 0 {
+		remaining := row.QuotaTokens - usedTokens
+		if remaining < 0 {
+			remaining = 0
+		}
+		quota.RemainingTokens = remaining
+		quota.UsagePercent = math.Round(float64(usedTokens)/float64(row.QuotaTokens)*10000) / 100
+	}
+
+	// 计量周期 = 自然月与套餐有效期的交集
+	now := gtime.Now()
+	cycleStart := gtime.NewFromStr(now.Format("Y-m") + "-01 00:00:00")
+	cycleEnd := cycleStart.AddDate(0, 1, 0).AddDate(0, 0, -1)
+	if row.StartAt != nil && row.StartAt.After(cycleStart) {
+		cycleStart = row.StartAt
+	}
+	if row.EndAt != nil && row.EndAt.Before(cycleEnd) {
+		cycleEnd = row.EndAt
+	}
+	quota.CycleStart = cycleStart.Format("Y-m-d")
+	quota.CycleEnd = cycleEnd.Format("Y-m-d")
+	return quota, nil
+}
+
+// projectBudgetRow 是项目预算汇总的中间行。
+type projectBudgetRow struct {
+	Id     int64   `json:"id"`
+	Name   string  `json:"name"`
+	Budget float64 `json:"budget"`
+	Used   float64 `json:"used"`
+}
+
+// tenantProjectBudgets 汇总租户全部活跃项目的预算与累计已用。
+//
+// 已用金额取自 bil_transactions，与 CheckProjectBudget 的执行口径保持一致 ——
+// 若改用 bil_usage_logs，会出现「页面显示未超预算、但项目已被系统停用」的错位。
+// 注意 tnt_projects.budget 是累计预算而非月度预算，因此这里不做时间过滤。
+func tenantProjectBudgets(ctx context.Context, tenantID int64) ([]projectBudgetRow, error) {
+	var rows []projectBudgetRow
+	err := g.DB().Ctx(ctx).Raw(`
+		SELECT
+			p.id,
+			p.name,
+			COALESCE(p.budget, 0) AS budget,
+			COALESCE(t.used, 0) AS used
+		FROM tnt_projects p
+		LEFT JOIN (
+			SELECT project_id, SUM(-amount) AS used
+			FROM bil_transactions
+			WHERE tenant_id = ? AND type = 'consume' AND project_id IS NOT NULL
+			GROUP BY project_id
+		) t ON t.project_id = p.id
+		WHERE p.tenant_id = ? AND p.status = 'active'
+		ORDER BY (CASE WHEN COALESCE(p.budget, 0) > 0
+			THEN COALESCE(t.used, 0) / p.budget ELSE 0 END) DESC
+	`, tenantID, tenantID).Scan(&rows)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []projectBudgetRow{}
+	}
+	return rows, nil
 }
