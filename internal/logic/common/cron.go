@@ -370,6 +370,21 @@ func (cs *CronScheduler) Reschedule(ctx context.Context, name, schedule string) 
 	return nil
 }
 
+// ScheduleInterval 解析 cron 表达式，估算两次触发之间的正常间隔。
+// 取「接下来两次触发时刻之差」，对分钟/小时/日级表达式及 @every 描述符均适用
+// （@every 的触发时刻相对计算起点平移，间隔不受影响）。解析失败（非法表达式）返回错误，
+// 由调用方决定兜底策略——工作台的停摆判定靠它把「固定 1 小时」换成「按任务自身周期」。
+func ScheduleInterval(schedule string) (time.Duration, error) {
+	sched, err := cron.ParseStandard(schedule)
+	if err != nil {
+		return 0, gerror.Wrapf(err, "invalid cron schedule %q", schedule)
+	}
+	now := time.Now()
+	next1 := sched.Next(now)
+	next2 := sched.Next(next1)
+	return next2.Sub(next1), nil
+}
+
 // cronLockTTL 分布式锁过期时间：仅用于实例崩溃时的兜底自动释放（正常完成会主动释放）。
 // 取值需大于绝大多数 job 的执行时长；过长则崩溃后会阻塞该 job 至多这么久。
 const cronLockTTL = 10 * time.Minute

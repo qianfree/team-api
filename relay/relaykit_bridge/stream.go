@@ -69,7 +69,8 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	var (
 		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
 		firstChunk         bool
-		transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
+		writeFailed        bool // 写客户端已失败（连接不可达），客户端断开的可靠信号
+		transferredTextLen int  // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	// chunkWriter：将转换器产出的 *dto.ChatCompletionStreamResponse 序列化为 SSE 写出，
@@ -106,7 +107,11 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		if err != nil {
 			return err
 		}
-		return helper.WriteSSEData(safeWriter, string(data))
+		if err := helper.WriteSSEData(safeWriter, string(data)); err != nil {
+			writeFailed = true
+			return err
+		}
+		return nil
 	}
 
 	// writeTerminal 在转换器未产出结束 chunk 时补发一个终止 chunk，保证客户端正常收尾。
@@ -134,9 +139,17 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 
 	if err != nil {
-		if ctx.Err() != nil {
-			// 客户端断开 / 上下文取消：客户端已不可达，不写 [DONE]
-			setEndReason(common.StreamEndReasonClientGone, ctx.Err())
+		// 客户端断开判定：ctx 已取消，或已出现过写客户端失败。后者兜住「写失败先于
+		// ctx 取消被观察到」的竞态与断开信号经代理链路延迟传导的场景——此前仅凭
+		// ctx.Err() 区分，这类情况会被误判为转换失败：跳过中断计费兜底、向死连接
+		// 补写 [DONE]，最终按 0 token 成功结算。
+		if writeFailed || ctx.Err() != nil {
+			endErr := ctx.Err()
+			if endErr == nil {
+				endErr = err
+			}
+			// 客户端已不可达，不写 terminal/[DONE]
+			setEndReason(common.StreamEndReasonClientGone, endErr)
 			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
 			helper.ApplyInterruptedUsageFallback(info, capturedUsage, transferredTextLen)
 			return capturedUsage, true

@@ -240,6 +240,10 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 
 	// relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
+		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
+			return usage, common.ErrStreamInterrupted
+		}
 		return usage, nil
 	}
 

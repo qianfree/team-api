@@ -12,6 +12,7 @@ import (
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/qianfree/team-api/internal/logic/common"
 )
 
 // ============================================================
@@ -235,7 +236,6 @@ func (s *sAdmin) wbCollectMoney(ctx context.Context) []wbItem {
 	items = append(items, s.wbWalletDrift(ctx)...)
 	items = append(items, s.wbFrozenStale(ctx)...)
 	items = append(items, s.wbOrderUnfulfilled(ctx)...)
-	items = append(items, s.wbCostSpike(ctx)...)
 	items = append(items, s.wbLowBalanceTenants(ctx)...)
 	return items
 }
@@ -378,58 +378,6 @@ func (s *sAdmin) wbOrderUnfulfilled(ctx context.Context) []wbItem {
 				r["tenant_name"].String(), r["final_amount"].Float64(), fmtTime(paidAt)),
 			"处理订单", "AdminOrders",
 			map[string]string{"order_no": r["order_no"].String()}, paidAt,
-		))
-	}
-	return items
-}
-
-// wbCostSpike 单笔消费异常。
-// 用途有三：防刷、防客户被恶意调用、防定价配置写错一位（乘数多个 0 的杀伤力最大）。
-// 判据是「相对该租户自身近 7 天均值的倍数」，而非全局绝对值 —— 大客户的正常单笔
-// 对小客户就是天价，全局阈值必然两头不讨好。
-func (s *sAdmin) wbCostSpike(ctx context.Context) []wbItem {
-	rows, err := g.DB().Ctx(ctx).Query(ctx,
-		`WITH recent AS (
-		    SELECT tenant_id, id, total_cost, model_name, created_at
-		      FROM bil_usage_logs
-		     WHERE created_at >= NOW() - INTERVAL '2 hours' AND total_cost > 0
-		 ), baseline AS (
-		    SELECT tenant_id, AVG(total_cost) AS avg_cost
-		      FROM bil_usage_logs
-		     WHERE created_at >= NOW() - INTERVAL '7 days' AND total_cost > 0
-		     GROUP BY tenant_id
-		    HAVING COUNT(*) >= 50
-		 )
-		 SELECT r.id, r.tenant_id, r.total_cost, r.model_name, r.created_at,
-		        b.avg_cost, t.name AS tenant_name
-		   FROM recent r
-		   JOIN baseline b ON b.tenant_id = r.tenant_id
-		   LEFT JOIN tnt_tenants t ON t.id = r.tenant_id
-		  WHERE r.total_cost >= b.avg_cost * ?
-		  ORDER BY r.total_cost DESC
-		  LIMIT 5`, wbCostSpikeMultiple)
-	if err != nil {
-		g.Log().Warningf(ctx, "workbench: 查询消费尖刺失败: %v", err)
-		return nil
-	}
-
-	items := make([]wbItem, 0, len(rows))
-	for _, r := range rows {
-		cost := r["total_cost"].Float64()
-		avg := r["avg_cost"].Float64()
-		mult := 0.0
-		if avg > 0 {
-			mult = cost / avg
-		}
-		items = append(items, wbNew(
-			fmt.Sprintf("usage_cost_spike:%d", r["id"].Int64()),
-			v1.WorkbenchSeverityP1, v1.WorkbenchDomainMoney, "billing:view",
-			fmt.Sprintf("租户「%s」单笔消费异常", r["tenant_name"].String()),
-			fmt.Sprintf("模型 %s 单笔 %.6f，为该租户近 7 天均值的 %.1f 倍。"+
-				"需确认是正常业务、刷量，还是定价配置写错",
-				r["model_name"].String(), cost, mult),
-			"查看用量日志", "AdminUsageLogs",
-			map[string]string{"tenant_id": r["tenant_id"].String()}, r["created_at"].GTime(),
 		))
 	}
 	return items
@@ -606,14 +554,17 @@ func (s *sAdmin) wbCronStalled(ctx context.Context) []wbItem {
 	rows, err := g.DB().Ctx(ctx).Query(ctx,
 		`SELECT job_name, last_status, last_started_at, last_error_message
 		   FROM sys_cron_jobs
-		  WHERE last_status = 'failed'
-		     OR last_started_at IS NULL
-		     OR last_started_at <= NOW() - INTERVAL '1 hour'
-		  ORDER BY last_started_at ASC NULLS FIRST
-		  LIMIT 10`)
+		  ORDER BY last_started_at ASC NULLS FIRST`)
 	if err != nil {
 		g.Log().Warningf(ctx, "workbench: 查询定时任务状态失败: %v", err)
 		return nil
+	}
+
+	// 注册表快照：任务名 → 调度表达式。停摆判定必须按各任务自身的调度周期换算，
+	// 固定 1 小时停摆线会把日任务（日对账、日清理等）一天里 23 个小时都误报成停摆。
+	schedules := make(map[string]string, 16)
+	for _, j := range common.GetCronScheduler().ListJobs() {
+		schedules[j.Name] = j.Schedule
 	}
 
 	items := make([]wbItem, 0, len(rows))
@@ -622,22 +573,34 @@ func (s *sAdmin) wbCronStalled(ctx context.Context) []wbItem {
 		startedAt := r["last_started_at"].GTime()
 		failed := r["last_status"].String() == "failed"
 
+		// 停摆 = 距上次执行超过「正常间隔 × 2」，下限 1 小时——
+		// 下限避免分钟级任务被一次调度抖动（锁等待、实例重启）误报
+		interval := wbCronExpectedInterval(schedules, name)
+		stallAfter := max(2*interval, time.Hour)
+		stalled := startedAt != nil && time.Since(startedAt.Time) > stallAfter
+
+		if !failed && !stalled && startedAt != nil {
+			continue
+		}
+
 		// 资金相关任务提级为 P0：这些停摆会累积资损，不能等到明天
 		sev := v1.WorkbenchSeverityP1
 		if isMoneyCriticalJob(name) {
 			sev = v1.WorkbenchSeverityP0
 		}
 
-		desc := ""
-		if failed {
+		var desc string
+		switch {
+		case failed:
 			desc = "最近一次执行失败"
 			if e := strings.TrimSpace(r["last_error_message"].String()); e != "" {
 				desc += "：" + truncate(e, 150)
 			}
-		} else if startedAt == nil {
+		case startedAt == nil:
 			desc = "自服务启动以来从未执行过，调度器可能未正常注册该任务"
-		} else {
-			desc = fmt.Sprintf("已 %s 未执行，任务可能已停摆", humanizeSince(startedAt))
+		default:
+			desc = fmt.Sprintf("正常约 %s 执行一次，已 %s 未执行，任务可能已停摆",
+				humanizeDuration(interval), humanizeSince(startedAt))
 		}
 		if isMoneyCriticalJob(name) {
 			desc += "。该任务涉及资金结算，停摆会持续累积差错"
@@ -652,6 +615,19 @@ func (s *sAdmin) wbCronStalled(ctx context.Context) []wbItem {
 		))
 	}
 	return items
+}
+
+// wbCronExpectedInterval 从任务注册表查正常执行间隔。
+// 任务不在注册表中（改名/下线后的遗留行）或表达式解析失败时退回保守兜底值：
+// 宁可晚报一条真正死掉的任务，也不要每天误报一串健康任务。
+func wbCronExpectedInterval(schedules map[string]string, name string) time.Duration {
+	interval := wbCronStallFallbackInterval
+	if schedule, ok := schedules[name]; ok {
+		if d, err := common.ScheduleInterval(schedule); err == nil {
+			interval = d
+		}
+	}
+	return interval
 }
 
 // isMoneyCriticalJob 判断任务停摆是否会造成资损。
@@ -922,7 +898,11 @@ func humanizeSince(t *gtime.Time) string {
 	if t == nil {
 		return "未知时长"
 	}
-	d := time.Since(t.Time)
+	return humanizeDuration(time.Since(t.Time))
+}
+
+// humanizeDuration 把时长写成人话（分钟/小时/天）。
+func humanizeDuration(d time.Duration) string {
 	if d < time.Minute {
 		return "不到 1 分钟"
 	}
