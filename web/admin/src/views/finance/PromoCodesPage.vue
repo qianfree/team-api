@@ -9,6 +9,7 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { formatOrder } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const promoCodes = ref<any[]>([])
@@ -164,7 +165,7 @@ const { exporting, exportFile } = useExport({
       <ATable :columns="[
         { title: '租户ID', dataIndex: 'tenant_id', width: 80 },
         { title: '订单ID', dataIndex: 'order_id', width: 80 },
-        { title: '折扣金额', dataIndex: 'discount_amount', width: 100, render({ record }) { return '$' + Number(record.discount_amount).toFixed(2) } },
+        { title: '折扣金额', dataIndex: 'discount_amount', width: 100, render({ record }) { return formatOrder(record.discount_amount, 2) } },
         { title: '时间', dataIndex: 'created_at', width: 160 },
       ]" :data="usages" :loading="usagesLoading" :pagination="false" row-key="id" />
       <div class="mt-4 flex justify-end">

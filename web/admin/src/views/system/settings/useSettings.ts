@@ -1,6 +1,7 @@
 import { ref, reactive, provide, inject, type InjectionKey } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
+import { refreshCurrencySettings } from '@/composables/useCurrency'
 
 const settingsFormKey: InjectionKey<Record<string, any>> = Symbol('settingsFormValues')
 
@@ -35,6 +36,8 @@ export function useSettings(category: () => string) {
 		try {
 			await request.put(`/admin/settings/${category()}`, { settings: formValues })
 			Message.success('保存成功')
+			// 汇率等公共配置变更后强制刷新，已打开页面立即按新值重渲染货币显示
+			refreshCurrencySettings()
 			await refresh()
 		} catch {
 			// error toast already shown by interceptor

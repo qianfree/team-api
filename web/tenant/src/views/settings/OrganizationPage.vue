@@ -6,6 +6,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
+import { formatBilling } from '@/composables/useCurrency'
 
 const authStore = useTenantAuthStore()
 
@@ -210,9 +211,10 @@ function formatDiscount(multiplier: number) {
 	return `${discount === 0 ? '无折扣' : discount + '% 折扣'}`
 }
 
+// 升级门槛属 bil 层（本位币），直显 + 本位币符号
 function formatThreshold(val: number) {
 	if (val === 0) return '—'
-	return '$' + val.toFixed(2)
+	return formatBilling(val, 2)
 }
 
 function getNextLevelThreshold() {
@@ -468,7 +470,7 @@ onMounted(() => {
 						</div>
 						<div class="flex items-center gap-2 text-sm text-gray-600">
 							<Icon name="currencyDollar" size="sm" class="text-gray-400" />
-							<span>累计充值 <strong class="text-gray-900">${{ levelBenefits.cumulative_recharge.toFixed(2) }}</strong></span>
+							<span>累计充值 <strong class="text-gray-900">{{ formatBilling(levelBenefits.cumulative_recharge, 2) }}</strong></span>
 						</div>
 						<div v-if="getNextLevelThreshold() !== null" class="flex-1 w-full sm:w-auto">
 							<div class="flex items-center justify-between text-xs text-gray-500 mb-1">
@@ -482,7 +484,7 @@ onMounted(() => {
 								></div>
 							</div>
 							<p class="text-xs text-gray-400 mt-1">
-								再充值 ${{ (getNextLevelThreshold()! - levelBenefits.cumulative_recharge).toFixed(2) }} 即可升级
+								再充值 {{ formatBilling(getNextLevelThreshold()! - levelBenefits.cumulative_recharge, 2) }} 即可升级
 							</p>
 						</div>
 						<div v-else class="text-xs text-primary-600 font-medium">

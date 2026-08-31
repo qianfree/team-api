@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Tag, Button, Space, Message, InputNumber,
@@ -10,6 +10,7 @@ import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const router = useRouter()
 
@@ -118,7 +119,8 @@ async function handleCreateSubmit(done: () => void) {
   }
 }
 
-const columns: TableColumnData[] = [
+// 列定义为 computed：钱包余额列头币种跟随本位币（配置异步加载后自动更新）
+const columns = computed<TableColumnData[]>(() => [
   { title: 'ID', dataIndex: 'id', width: 70 },
   { title: '租户名', dataIndex: 'name', width: 160, ellipsis: true },
   { title: '代码', dataIndex: 'code', width: 120 },
@@ -171,12 +173,12 @@ const columns: TableColumnData[] = [
     },
   },
   {
-    title: '钱包余额(美元)',
+    title: `钱包余额(${displayCurrency.value})`,
     dataIndex: 'wallet_balance',
     width: 120,
     render({ record }) {
       const val = parseFloat(record.wallet_balance || '0')
-      return `\$${val.toFixed(2)}`
+      return formatBilling(val, 2)
     },
   },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
@@ -192,7 +194,7 @@ const columns: TableColumnData[] = [
       ])
     },
   },
-]
+])
 
 async function fetchData() {
   loading.value = true

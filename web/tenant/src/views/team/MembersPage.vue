@@ -58,7 +58,7 @@ interface Member {
 	// 可用模型数
 	model_count: number
 	model_unlimited: boolean
-	// 本月消费（USD）
+	// 本月消费（本位币）
 	month_cost: number
 	// 最后更新时间
 	updated_at: string

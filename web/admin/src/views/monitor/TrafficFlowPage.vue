@@ -7,6 +7,7 @@ import { TooltipComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import { formatBilling } from '@/composables/useCurrency'
 
 // 桑基图无需 GridComponent（无笛卡尔坐标轴）
 use([CanvasRenderer, SankeyChart, TooltipComponent])
@@ -45,7 +46,8 @@ function defaultRange(days: number): [string, string] {
 }
 
 function formatValue(v: number): string {
-  if (metric.value === 'cost') return `$${Number(v).toFixed(6)}`
+  // 成本指标按 bil 层本位币展示（tooltip formatter 在悬浮时才调用，天然读取最新本位币）
+  if (metric.value === 'cost') return formatBilling(v, 6)
   return Number(v).toLocaleString()
 }
 

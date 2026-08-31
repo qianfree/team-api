@@ -675,9 +675,10 @@ func (s *sAdmin) AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq
 }
 
 // OfflineRecharge 线下充值入账（管理后台）
-// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
+// 场景：用户线下银行转账（人民币 CNY），运营确认到账后入账。
+// 本位币=USD 时按平台汇率换算入账；本位币=CNY 时直接入账（无换汇）。
 // 与 AdjustBalance 的区别：走正规充值链路——余额与累计充值同步累加、触发等级检查、
-// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账 USD + 转账流水号），
+// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账金额 + 转账流水号），
 // 供现金对账与开票追溯。
 func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error) {
 	tenantID := req.TenantID
@@ -686,12 +687,19 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		return nil, common.NewBadRequestError("入账金额必须大于 0")
 	}
 
-	// 唯一换汇点：CNY→USD 只经 billing.ConvertCNYToUSD（与充值履约 FulfillOrder 同一函数），
-	// 汇率取一次用于入账与快照，保证换算可重建。
-	rate := billing.GetExchangeRateCNYToUSD(ctx)
-	usdAmount := billing.ConvertCNYToUSD(ctx, req.Amount)
-	if usdAmount.IsZero() {
-		return nil, common.NewBadRequestError("按当前汇率换算后到账金额为 0，请检查汇率配置")
+	// 本位币=CNY：直接入账；本位币=USD：换汇入账（CNY→USD 只经 billing.ConvertCNYToUSD，
+	// 与充值履约 FulfillOrder 同一函数），汇率取一次用于入账与快照，保证换算可重建。
+	var rate float64
+	var creditAmount decimal.Decimal
+	if billing.IsCNY(ctx) {
+		rate = 1
+		creditAmount = cnyAmount
+	} else {
+		rate = billing.GetExchangeRateCNYToUSD(ctx)
+		creditAmount = billing.ConvertCNYToUSD(ctx, req.Amount)
+		if creditAmount.IsZero() {
+			return nil, common.NewBadRequestError("按当前汇率换算后到账金额为 0，请检查汇率配置")
+		}
 	}
 
 	// 转账流水号软去重（防重复入账）：同一租户下已入账过该流水号则拒绝。
@@ -721,9 +729,9 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		}
 
 		// Redis 加款（资金提交点）；流水快照取 Redis 返回值
-		balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, usdAmount)
+		balanceAfter, frozenAfter, err := billing.CreditWalletRedis(ctx, tenantID, creditAmount)
 		// 先记录已发生的 Redis 加款（可能 >0 即使整体失败），供事务回滚后补偿逆转
-		redisCreditedAmount = usdAmount
+		redisCreditedAmount = creditAmount
 		if err != nil {
 			return err
 		}
@@ -731,12 +739,17 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 		// DB 仅累加累计充值（余额由物化器从 Redis 覆盖）
 		if _, err := g.DB().Ctx(ctx).Exec(ctx,
 			"UPDATE bil_wallets SET cumulative_recharge = cumulative_recharge + ?, updated_at = NOW() WHERE id = ?",
-			usdAmount, walletID); err != nil {
+			creditAmount, walletID); err != nil {
 			return err
 		}
 
 		// 流水（type=recharge）：描述拼装 CNY 快照 + 转账流水号，供现金对账与开票追溯
-		desc := fmt.Sprintf("线下充值入账 CNY %.2f × 汇率 %.6f = USD %s", cnyAmount.InexactFloat64(), rate, usdAmount)
+		var desc string
+		if billing.IsCNY(ctx) {
+			desc = fmt.Sprintf("线下充值入账 CNY %.2f（本位币直接入账）", cnyAmount.InexactFloat64())
+		} else {
+			desc = fmt.Sprintf("线下充值入账 CNY %.2f × 汇率 %.6f = USD %s", cnyAmount.InexactFloat64(), rate, creditAmount)
+		}
 		if req.Description != "" {
 			desc = req.Description + "；" + desc
 		}
@@ -747,7 +760,7 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 			TenantId:     tenantID,
 			WalletId:     walletID,
 			Type:         "recharge",
-			Amount:       usdAmount,
+			Amount:       creditAmount,
 			BalanceAfter: balanceAfter,
 			FrozenAfter:  frozenAfter,
 			Description:  desc,

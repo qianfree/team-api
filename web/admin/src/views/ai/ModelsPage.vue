@@ -10,6 +10,7 @@ import ModelPricingModal from '@/components/ModelPricingModal.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
+import { formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -152,6 +153,12 @@ const statusTagLabel: Record<string, string> = {
   offline: '下线',
 }
 
+const pricingModeTagColor: Record<string, string> = {
+  token: 'arcoblue',
+  per_request: 'orangered',
+  tiered: 'purple',
+}
+
 // ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
 
 // token 数紧凑格式化：128000 → 128K，1500000 → 1.5M，无值返回 '-'
@@ -165,13 +172,13 @@ function formatTokens(n: number | null | undefined): string {
   return String(n)
 }
 
-// 定价主文本：$输入/$输出、$单价/次、未定价
+// 定价主文本：本位币 输入/输出、单价/次、未定价（bil 层定价直显）
 function pricingMain(row: any): string {
   if (!row.pricing_mode) return '未定价'
   if (row.pricing_mode === 'per_request') {
-    return `$${row.per_request_price?.toFixed(4) ?? '0'}/次`
+    return `${formatBilling(row.per_request_price ?? 0, 4)}/次`
   }
-  return `$${row.input_price?.toFixed(2) ?? '0'}/$${row.output_price?.toFixed(2) ?? '0'}`
+  return `${formatBilling(row.input_price ?? 0, 2)}/${formatBilling(row.output_price ?? 0, 2)}`
 }
 
 // 定价模式副文本：按量 / 按次 / 阶梯（未定价返回空串）
@@ -218,14 +225,14 @@ const columns: TableColumnData[] = [
       }
       const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
       const tags = [
-        h(Tag, { color: 'green', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
+        h(Tag, { color: pricingModeTagColor[record.pricing_mode] || 'gray', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
       if (record.pricing_mode === 'per_request') {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
-          `$${record.per_request_price?.toFixed(4) ?? '0'}/次`))
+          `${formatBilling(record.per_request_price ?? 0, 4)}/次`))
       } else {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
-          `$${record.input_price?.toFixed(2) ?? '0'}/$${record.output_price?.toFixed(2) ?? '0'}`))
+          `${formatBilling(record.input_price ?? 0, 2)}/${formatBilling(record.output_price ?? 0, 2)}`))
       }
       return h('span', { style: 'display: inline-flex; gap: 4px; align-items: center;' }, tags)
     },

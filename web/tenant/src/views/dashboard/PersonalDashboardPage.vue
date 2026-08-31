@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { formatBilling } from '@/composables/useCurrency'
 import Icon from '@/components/common/Icon.vue'
 import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
@@ -106,12 +107,12 @@ function formatNumber(value: unknown): string {
 	return number.toLocaleString('zh-CN')
 }
 
+// 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(value: unknown): string {
 	const number = Number(value) || 0
-	if (number === 0) return '$0.00'
-	if (number >= 1) return `$${number.toFixed(2)}`
-	if (number >= 0.01) return `$${number.toFixed(4)}`
-	return `$${number.toFixed(6)}`
+	if (number === 0 || number >= 1) return formatBilling(number, 2)
+	if (number >= 0.01) return formatBilling(number, 4)
+	return formatBilling(number, 6)
 }
 
 function formatMs(value: unknown): string {

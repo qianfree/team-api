@@ -9,6 +9,7 @@ import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { formatBilling } from '@/composables/useCurrency'
 
 const loading = ref(false)
 const redemptions = ref<any[]>([])
@@ -88,7 +89,7 @@ const usageColumns: TableColumnData[] = [
     const colors: any = { quota: 'green', plan: 'blue', duration: 'orangered' }
     return h(Tag, { color: colors[record.type], size: 'small' }, () => labels[record.type] || record.type)
   }},
-  { title: '面值', dataIndex: 'value', width: 100, render({ record }) { return record.type === 'quota' ? `+${Number(record.value).toFixed(6)}` : '-' } },
+  { title: '面值', dataIndex: 'value', width: 100, render({ record }) { return record.type === 'quota' ? formatBilling(record.value, 6, true) : '-' } },
   { title: '组织名称', dataIndex: 'tenant_name', width: 140 },
   { title: '兑换人', dataIndex: 'username', width: 120 },
   { title: '时间', dataIndex: 'created_at', width: 170, render({ record }) { return record.created_at?.substring(0, 19) || '-' } },
