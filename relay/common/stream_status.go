@@ -13,7 +13,7 @@ const (
 	StreamEndReasonClientGone  StreamEndReason = "client_gone"
 	StreamEndReasonError       StreamEndReason = "error"
 	StreamEndReasonPanic       StreamEndReason = "panic"
-	StreamEndReasonHandlerStop StreamEndReason = "handler_stop" // dataHandler 调用了 Stop()
+	StreamEndReasonHandlerStop StreamEndReason = "handler_stop" // dataHandler 调用了 Stop()（写客户端失败/上游 error 主动终止，按中断处理）
 	StreamEndReasonPingFail    StreamEndReason = "ping_fail"    // ping 写入失败
 	StreamEndReasonScannerErr  StreamEndReason = "scanner_err"  // bufio.Scanner 错误
 	StreamEndReasonEOF         StreamEndReason = "eof"          // scanner EOF 未收到 [DONE]
@@ -71,17 +71,23 @@ func (s *StreamStatus) ErrorCount() int {
 }
 
 // IsPartialStreamEnd 流已开始传输但未正常结束，应按已消费 usage 部分结算。
+// handler_stop（dataHandler 调用 Stop）纳入中断判定：正常结束由 sr.Done()/scanner 的
+// done 标记，实际走到 Stop 的只有「写客户端失败」（客户端不可达）与「上游 error 事件
+// 主动终止」两种，均属已向客户端写出部分字节后的非正常结束，应按中断部分结算。
+// 此前 handler_stop 不算中断，客户端断开时写失败若先于 ctx 取消被观察到（first-writer-wins
+// 竞态），流会被误判为正常结束、跳过中断计费兜底，导致 0 token / 0 费用结算。
 func (s *StreamStatus) IsPartialStreamEnd() bool {
 	r := s.GetEndReason()
 	return r == StreamEndReasonClientGone || r == StreamEndReasonScannerErr ||
-		r == StreamEndReasonTimeout || r == StreamEndReasonPingFail
+		r == StreamEndReasonTimeout || r == StreamEndReasonPingFail ||
+		r == StreamEndReasonHandlerStop
 }
 
-// IsNormalEnd 是否正常结束
+// IsNormalEnd 是否正常结束（handler_stop 属异常终止，不算正常结束）
 func (s *StreamStatus) IsNormalEnd() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.reason == StreamEndReasonDone || s.reason == StreamEndReasonHandlerStop || s.reason == ""
+	return s.reason == StreamEndReasonDone || s.reason == ""
 }
 
 // HasErrors 是否有错误

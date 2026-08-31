@@ -798,7 +798,9 @@ func (s *sAdmin) OfflineRecharge(ctx context.Context, req *v1.AdminWalletOffline
 	}, nil
 }
 
-// GetWalletInfo 获取租户钱包信息（管理后台）
+// GetWalletInfo 获取租户钱包信息（管理后台）。
+// balance/frozen_balance 以 Redis 权威值为准（Redis 是资金提交点，调整余额/线下入账后立即可见），
+// DB 侧余额是物化器周期覆盖的滞后副本，仅作钱包行存在性校验与 Redis 不可用时的降级展示。
 func (s *sAdmin) GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (*v1.AdminWalletInfoRes, error) {
 	type walletRow struct {
 		ID               int64    `json:"id"`
@@ -815,11 +817,19 @@ func (s *sAdmin) GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) 
 		return nil, common.NewNotFoundError("钱包")
 	}
 
-	return &v1.AdminWalletInfoRes{
+	res := &v1.AdminWalletInfoRes{
 		Balance:          w.Balance,
 		FrozenBalance:    w.FrozenBalance,
 		WarningThreshold: w.WarningThreshold,
-	}, nil
+	}
+
+	// 覆盖为 Redis 实时余额（钱包 hash 缺失时 GetWallet 内部触发灾难恢复重建）
+	if wallet, err := billing.GetWallet(ctx, req.TenantID); err == nil {
+		res.Balance = wallet.Balance
+		res.FrozenBalance = wallet.FrozenBalance
+	}
+
+	return res, nil
 }
 
 // GetWalletTransactions 获取租户钱包交易流水（管理后台）
@@ -904,6 +914,9 @@ func (s *sAdmin) SetWarningThreshold(ctx context.Context, req *v1.AdminWalletSet
 	if err != nil {
 		return nil, err
 	}
+
+	// 清除钱包静态字段缓存，让 GetWallet 读到新阈值（对齐租户端 UpdateWarningThreshold）
+	billing.InvalidateWalletStaticCache(ctx, req.TenantID)
 
 	// 阈值变更后重置预警标记，使新阈值能触发新的预警
 	billing.ResetLowBalanceNotified(ctx, req.TenantID)

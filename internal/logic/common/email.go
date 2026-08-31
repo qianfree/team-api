@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/qianfree/team-api/internal/dao"
 	"html/template"
+	"net/mail"
 	"strings"
 	"time"
+
+	"github.com/qianfree/team-api/internal/dao"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -23,8 +25,12 @@ type EmailConfig struct {
 	Username string
 	Password string
 	From     string
+	FromName string // 发件人显示名，收件人邮件列表里看到的名字；为空时只显示邮箱地址
 	UseTLS   bool
 }
+
+// emailMaxAttempts 单封邮件的最大投递尝试次数（含首次），失败间隔 2s / 4s。
+const emailMaxAttempts = 3
 
 // BasicEmailSender provides email sending capability with:
 // - SMTP connection
@@ -52,11 +58,12 @@ type EmailMessage struct {
 	UserID       int64
 }
 
-// Send sends an email message with retry logic.
+// Send sends an email message with retry logic (3 attempts, 2s/4s backoff).
+// 重试间隔可被 ctx 取消打断：调用方设了超时（如配置连通性测试）时不会被死等拖满。
 func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
 	var lastErr error
 
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < emailMaxAttempts; attempt++ {
 		lastErr = s.sendWithRetry(ctx, msg, attempt)
 		if lastErr == nil {
 			// Log success
@@ -64,35 +71,49 @@ func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
 			return nil
 		}
 
-		if attempt < 2 {
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		if attempt < emailMaxAttempts-1 {
+			if err := sleepCtx(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
+				// ctx 已取消/超时：不再重试，按失败记录当前已知错误
+				s.logSend(ctx, msg, "failed", lastErr, attempt)
+				return lastErr
+			}
 		}
 	}
 
 	// Log failure
-	s.logSend(ctx, msg, "failed", lastErr, 2)
+	s.logSend(ctx, msg, "failed", lastErr, emailMaxAttempts-1)
 	return lastErr
+}
+
+// SendOnce 只尝试一次投递，不做重试，同样写入 ntf_send_log。
+// 用于配置连通性测试等需要「快速失败并拿到真实 SMTP 错误」的场景——
+// 认证失败、端口不通这类错误重试三次也不会变好，只会让管理员多等十几秒。
+func (s *BasicEmailSender) SendOnce(ctx context.Context, msg *EmailMessage) error {
+	if err := s.sendWithRetry(ctx, msg, 0); err != nil {
+		s.logSend(ctx, msg, "failed", err, 0)
+		return err
+	}
+	s.logSend(ctx, msg, "sent", nil, 0)
+	return nil
+}
+
+// sleepCtx 等待 d 或直到 ctx 结束，ctx 先结束时返回其错误。
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // SendTemplate sends an email using a template from ntf_templates.
 func (s *BasicEmailSender) SendTemplate(ctx context.Context, to, templateCode string, variables map[string]any) error {
-	// Load template
-	var tpl *struct {
-		Subject      string `json:"subject"`
-		BodyTemplate string `json:"body_template"`
-		Channel      string `json:"channel"`
-	}
-
-	err := dao.NtfTemplates.Ctx(ctx).
-		Where("code", templateCode).
-		Where("status", "active").
-		Scan(&tpl)
+	tpl, err := loadNotificationTemplate(ctx, templateCode)
 	if err != nil {
-		return gerror.Wrapf(err, "load template %s", templateCode)
-	}
-
-	if tpl.BodyTemplate == "" {
-		return gerror.Newf("template %s not found", templateCode)
+		return err
 	}
 
 	// Render subject
@@ -121,7 +142,17 @@ func (s *BasicEmailSender) SendTemplate(ctx context.Context, to, templateCode st
 // sendWithRetry performs the actual SMTP send.
 func (s *BasicEmailSender) sendWithRetry(ctx context.Context, msg *EmailMessage, attempt int) error {
 	m := gomail.NewMessage()
-	m.SetHeader("From", s.config.From)
+	// 发件人显示名：SetAddressHeader 会按 RFC 5322 拼成 "aifree" <system@mail.aifree.com>，
+	// 名称含中文时自动做 RFC 2047 编码；FromName 为空时退化为纯地址。
+	// From 若已配成 "名称 <地址>" 形式，先拆出地址避免二次包装。
+	fromAddr, fromName := s.config.From, s.config.FromName
+	if parsed, err := mail.ParseAddress(fromAddr); err == nil {
+		fromAddr = parsed.Address
+		if fromName == "" {
+			fromName = parsed.Name
+		}
+	}
+	m.SetAddressHeader("From", fromAddr, fromName)
 	m.SetHeader("To", msg.To)
 	m.SetHeader("Subject", msg.Subject)
 
@@ -205,11 +236,17 @@ func EmailConfigFromOptions(ctx context.Context) (*EmailConfig, error) {
 		Username: Config().GetString(ctx, "email_smtp_username"),
 		Password: Config().GetString(ctx, "email_smtp_password"),
 		From:     Config().GetString(ctx, "email_smtp_from"),
+		FromName: Config().GetString(ctx, "email_smtp_from_name"),
 		UseTLS:   Config().GetBool(ctx, "email_smtp_tls"),
 	}
 
 	if cfg.Host == "" || cfg.From == "" {
 		return nil, gerror.New("email SMTP config not set (email_smtp_host, email_smtp_from)")
+	}
+
+	// 未单独配置发件人名称时回落到站点名称，避免收件人只看到邮箱地址的本地部分
+	if cfg.FromName == "" {
+		cfg.FromName = Config().GetString(ctx, "site_name")
 	}
 
 	if cfg.Port == 0 {

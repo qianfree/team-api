@@ -60,6 +60,29 @@ async function testStorage() {
 	}
 }
 
+// 邮件配置：发送一封测试邮件验证 SMTP 是否可用。
+// 收件人留空由后端回落到当前管理员邮箱（登录态里不含邮箱，因此不预填，成功后回显实际收件人）。
+const emailTestVisible = ref(false)
+const emailTestTo = ref('')
+async function testEmail(): Promise<boolean> {
+	testing.value = true
+	try {
+		const { default: request } = await import('@/utils/request')
+		const res: any = await request.post('/admin/settings/email/test', {
+			...formValues,
+			to: emailTestTo.value.trim(),
+		})
+		const d = res.data?.data || {}
+		Message.success(d.message || '测试邮件已发送')
+		return true
+	} catch {
+		// 失败提示由响应拦截器统一弹出（后端透出真实 SMTP 错误）；返回 false 保持弹窗打开便于改收件人重试
+		return false
+	} finally {
+		testing.value = false
+	}
+}
+
 async function fetchCategories() {
 	try {
 		const { default: request } = await import('@/utils/request')
@@ -108,16 +131,40 @@ onMounted(() => {
 								:loading="testing"
 								@click="testStorage"
 							>测试连接</AButton>
+							<AButton
+								v-if="activeTab === 'email'"
+								@click="emailTestVisible = true"
+							>发送测试邮件</AButton>
 							<AButton type="primary" :loading="saving" @click="save">保存设置</AButton>
 						</div>
 					</ASpin>
 				</ACard>
 			</div>
 		</div>
+
+		<!-- 发送测试邮件 -->
+		<AModal
+			v-model:visible="emailTestVisible"
+			title="发送测试邮件"
+			:width="480"
+			:ok-loading="testing"
+			:on-before-ok="testEmail"
+			ok-text="发送"
+		>
+			<AFormItem label="收件人">
+				<AInput v-model="emailTestTo" placeholder="留空则发送给当前管理员邮箱" allow-clear />
+			</AFormItem>
+			<p class="email-test-hint">将使用当前表单中的邮件配置发送（无需先保存）；密码留空时使用已保存的值。</p>
+		</AModal>
 	</div>
 </template>
 
 <style scoped>
+.email-test-hint {
+	margin: 8px 0 0;
+	font-size: 12px;
+	color: var(--color-text-3);
+}
 .settings-layout {
 	display: flex;
 	gap: 24px;

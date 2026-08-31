@@ -3,7 +3,7 @@ import { ref, reactive, watch, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconCloudDownload, IconRefresh } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
-import { displayCurrency, formatBilling } from '@/composables/useCurrency'
+import { displayCurrency, formatBilling, cnyToUsd } from '@/composables/useCurrency'
 
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
 const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
@@ -80,6 +80,27 @@ function getOfficialSourceMeta(source: string) {
 	return officialSourceMeta[source] || { label: source, color: 'gray' }
 }
 
+// 官方数据源价格恒为美元；本位币=CNY 时按汇率倒数折算展示与填入（汇率恒为 CNY→USD 单向配置，USD→CNY 取倒数）
+const usdToBaseRatio = computed(() => {
+	if (displayCurrency.value !== 'CNY') return 1
+	return 1 / cnyToUsd.value
+})
+
+// USD 原值 → 本位币值（4 位小数，与定价输入控件精度对齐）
+function toBasePrice(v: number | null | undefined): number {
+	const usd = Number(v ?? 0)
+	if (usd <= 0) return 0
+	return Math.round(usd * usdToBaseRatio.value * 10000) / 10000
+}
+
+// 官方参考价展示：折算为本位币直显；本位币=CNY 时括注美元原值便于核对
+function formatOfficialPrice(v: number | null | undefined): string {
+	const converted = formatBilling(toBasePrice(v), 2)
+	if (displayCurrency.value !== 'CNY') return converted
+	const usd = Number(Number(v ?? 0).toFixed(2))
+	return usd > 0 ? `${converted} ($${usd})` : converted
+}
+
 function resetOfficialData() {
 	officialData.value = null
 	officialError.value = ''
@@ -111,10 +132,11 @@ async function fetchOfficialPricing() {
 function applyOfficialPricing(pricing: any) {
 	if (!pricing) return
 	if (editorItems.length > 0) {
-		editorItems[0].input_price = pricing.input_price
-		editorItems[0].output_price = pricing.output_price
-		editorItems[0].cache_read_price = pricing.cache_read_price
-		editorItems[0].cache_creation_price = pricing.cache_creation_price
+		// 编辑表单按本位币原值输入，官方 USD 价格须先折算为本位币
+		editorItems[0].input_price = toBasePrice(pricing.input_price)
+		editorItems[0].output_price = toBasePrice(pricing.output_price)
+		editorItems[0].cache_read_price = toBasePrice(pricing.cache_read_price)
+		editorItems[0].cache_creation_price = toBasePrice(pricing.cache_creation_price)
 	}
 	if (pricing.billing_mode && pricing.billing_mode !== editorBillingMode.value) {
 		editorBillingMode.value = pricing.billing_mode
@@ -485,47 +507,52 @@ watch(() => props.visible, (val) => {
 										<ASpin />
 									</div>
 									<AAlert v-else-if="officialError" type="error" :title="officialError" />
-									<div v-else-if="officialData" class="official-source-grid">
-										<div v-for="src in officialData.sources" :key="src.source" class="official-source-card">
-											<div class="official-source-header">
-												<ATag size="small" :color="getOfficialSourceMeta(src.source).color">
-													{{ getOfficialSourceMeta(src.source).label }}
-												</ATag>
+									<template v-else-if="officialData">
+										<div v-if="displayCurrency === 'CNY'" class="official-reference-hint">
+											数据源价格单位为美元，已按 1 USD ≈ ¥{{ (1 / cnyToUsd).toFixed(4) }} 折算为人民币，括号内为美元原值
+										</div>
+										<div class="official-source-grid">
+											<div v-for="src in officialData.sources" :key="src.source" class="official-source-card">
+												<div class="official-source-header">
+													<ATag size="small" :color="getOfficialSourceMeta(src.source).color">
+														{{ getOfficialSourceMeta(src.source).label }}
+													</ATag>
+													<template v-if="src.found && src.pricing">
+														<ATag v-if="src.provider" size="small" color="orangered">{{ src.provider }}</ATag>
+														<ATag v-if="src.mode" size="small">{{ src.mode }}</ATag>
+													</template>
+												</div>
 												<template v-if="src.found && src.pricing">
-													<ATag v-if="src.provider" size="small" color="orangered">{{ src.provider }}</ATag>
-													<ATag v-if="src.mode" size="small">{{ src.mode }}</ATag>
+													<div v-if="src.max_context_tokens || src.max_output_tokens" class="official-source-meta">
+														<span v-if="src.max_context_tokens">上下文 {{ (src.max_context_tokens / 1000).toFixed(0) }}K</span>
+														<span v-if="src.max_output_tokens">输出 {{ (src.max_output_tokens / 1000).toFixed(0) }}K</span>
+													</div>
+													<div class="official-prices">
+														<div class="official-price-row">
+															<span class="official-price-label">输入价格</span>
+															<span class="official-price-value">{{ formatOfficialPrice(src.pricing.input_price) }} / 1M</span>
+														</div>
+														<div class="official-price-row">
+															<span class="official-price-label">输出价格</span>
+															<span class="official-price-value">{{ formatOfficialPrice(src.pricing.output_price) }} / 1M</span>
+														</div>
+														<div class="official-price-row">
+															<span class="official-price-label">缓存读取</span>
+															<span class="official-price-value">{{ src.pricing.cache_read_price ? formatOfficialPrice(src.pricing.cache_read_price) + ' / 1M' : '—' }}</span>
+														</div>
+														<div class="official-price-row">
+															<span class="official-price-label">缓存创建</span>
+															<span class="official-price-value">{{ src.pricing.cache_creation_price ? formatOfficialPrice(src.pricing.cache_creation_price) + ' / 1M' : '—' }}</span>
+														</div>
+													</div>
+													<AButton type="primary" size="small" long @click="applyOfficialPricing(src.pricing)">应用此价格</AButton>
 												</template>
-											</div>
-											<template v-if="src.found && src.pricing">
-												<div v-if="src.max_context_tokens || src.max_output_tokens" class="official-source-meta">
-													<span v-if="src.max_context_tokens">上下文 {{ (src.max_context_tokens / 1000).toFixed(0) }}K</span>
-													<span v-if="src.max_output_tokens">输出 {{ (src.max_output_tokens / 1000).toFixed(0) }}K</span>
+												<div v-else class="official-not-found" :class="{ 'official-not-found--error': src.error }">
+													{{ src.error ? '数据源暂时不可用' : '未找到该模型' }}
 												</div>
-												<div class="official-prices">
-													<div class="official-price-row">
-														<span class="official-price-label">输入价格</span>
-														<span class="official-price-value">{{ formatBilling(src.pricing.input_price, 2) }} / 1M</span>
-													</div>
-													<div class="official-price-row">
-														<span class="official-price-label">输出价格</span>
-														<span class="official-price-value">{{ formatBilling(src.pricing.output_price, 2) }} / 1M</span>
-													</div>
-													<div class="official-price-row">
-														<span class="official-price-label">缓存读取</span>
-														<span class="official-price-value">{{ src.pricing.cache_read_price ? formatBilling(src.pricing.cache_read_price, 2) + ' / 1M' : '—' }}</span>
-													</div>
-													<div class="official-price-row">
-														<span class="official-price-label">缓存创建</span>
-														<span class="official-price-value">{{ src.pricing.cache_creation_price ? formatBilling(src.pricing.cache_creation_price, 2) + ' / 1M' : '—' }}</span>
-													</div>
-												</div>
-												<AButton type="primary" size="small" long @click="applyOfficialPricing(src.pricing)">应用此价格</AButton>
-											</template>
-											<div v-else class="official-not-found" :class="{ 'official-not-found--error': src.error }">
-												{{ src.error ? '数据源暂时不可用' : '未找到该模型' }}
 											</div>
 										</div>
-									</div>
+									</template>
 								</div>
 							</template>
 						</APopover>
@@ -986,6 +1013,15 @@ watch(() => props.visible, (val) => {
 	align-items: center;
 	justify-content: center;
 	min-height: 180px;
+}
+
+.official-reference-hint {
+	margin-bottom: 10px;
+	padding: 6px 10px;
+	font-size: 12px;
+	color: var(--ta-text-secondary);
+	background: var(--color-fill-2);
+	border-radius: 4px;
 }
 
 .official-source-grid {

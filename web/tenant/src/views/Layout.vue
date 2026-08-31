@@ -77,10 +77,7 @@ const navItems = computed<NavItem[]>(() => {
 		}))
 })
 
-const canViewWallet = computed(() => {
-	const role = authStore.user?.role
-	return role === 'owner' || role === 'admin'
-})
+const canViewWallet = computed(() => authStore.isManager)
 const activePath = computed(() => route.path)
 const pageTitle = computed(() => {
 		const matched = route.matched

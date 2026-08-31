@@ -79,13 +79,15 @@ func SendVerifyCode(ctx context.Context, email string, purpose VerifyPurpose) er
 		g.Log().Warningf(ctx, "failed to set verify code cooldown: %v", err)
 	}
 
+	// WithoutCancel：脱离请求取消（HTTP 响应先于邮件发出），但保留 request_id 等链路值，
+	// 便于在日志里把「发码请求」和「实际投递结果」串起来。
+	bgCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				g.Log().Errorf(context.Background(), "send verify code email panic: %v", r)
+				g.Log().Errorf(bgCtx, "send verify code email panic: %v", r)
 			}
 		}()
-		bgCtx := context.Background()
 		emailCfg, err := EmailConfigFromOptions(bgCtx)
 		if err != nil {
 			g.Log().Errorf(bgCtx, "load email config: %v", err)

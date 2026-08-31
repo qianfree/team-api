@@ -442,24 +442,25 @@ func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (
 		Fields("COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'active') as active").
 		Scan(&keyStats)
 
-	// 获取项目关联的 API Key ID 列表
-	keyIDs, _ := dao.ApiKeys.Ctx(ctx).
-		Where("project_id", req.Id).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Array()
-
-	// 统计本月用量
+	// 统计本月用量：按写入时快照的 project_id 归因，
+	// 而不是按「当前」密钥归属反推——后者会在密钥换项目后追溯改写历史数字
 	var monthUsage struct {
 		TotalCost    float64 `json:"total_cost"`
 		RequestCount int     `json:"request_count"`
 	}
 	dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		WhereIn("api_key_id", keyIDs).
+		Where("project_id", req.Id).
 		Where("created_at >= date_trunc('month', NOW())").
 		Fields("COALESCE(SUM(total_cost), 0) as total_cost, COUNT(*) as request_count").
 		Scan(&monthUsage)
+
+	// 预算已用：与 CheckProjectBudget 的执行口径同源（bil_transactions 累计实扣）。
+	// month_cost 是「本月·列表价」，不能拿来除累计预算——两者不是一回事。
+	budgetUsed, err := projectTotalCost(ctx, tenantID, req.Id)
+	if err != nil {
+		return nil, err
+	}
 
 	return &v1.TenantProjectGetRes{
 		Id:            p.Id,
@@ -472,6 +473,7 @@ func (s *sTenant) ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (
 		TotalKeys:     keyStats.Total,
 		MonthCost:     monthUsage.TotalCost,
 		MonthRequests: int64(monthUsage.RequestCount),
+		BudgetUsed:    budgetUsed,
 	}, nil
 }
 
@@ -661,26 +663,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 		return nil, common.NewNotFoundError("项目")
 	}
 
-	// 获取项目关联的 API Key ID 列表
-	keyIDs, _ := dao.ApiKeys.Ctx(ctx).
-		Where("project_id", req.Id).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Array()
-	if len(keyIDs) == 0 {
-		return &v1.TenantProjectUsageStatsRes{
-			Data: map[string]any{
-				"total_cost":          0,
-				"total_requests":      0,
-				"total_input_tokens":  0,
-				"total_output_tokens": 0,
-				"daily":               []map[string]any{},
-				"models":              []map[string]any{},
-			},
-		}, nil
-	}
-
-	// 总用量
+	// 总用量（按写入时快照的 project_id 归因，口径与项目详情、仪表盘一致）
 	var totalStats struct {
 		TotalCost    float64 `json:"total_cost"`
 		RequestCount int     `json:"request_count"`
@@ -689,7 +672,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 	}
 	dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		WhereIn("api_key_id", keyIDs).
+		Where("project_id", req.Id).
 		Fields("COALESCE(SUM(total_cost), 0) as total_cost, COUNT(*) as request_count, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens").
 		Scan(&totalStats)
 
@@ -704,7 +687,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 	var dailyStats []dailyStatRow
 	dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		WhereIn("api_key_id", keyIDs).
+		Where("project_id", req.Id).
 		Where("created_at >= NOW() - INTERVAL '30 days'").
 		Fields("DATE(created_at) as date, COUNT(*) as request_count, COALESCE(SUM(total_cost), 0) as total_cost, COALESCE(SUM(input_tokens), 0) as input_tokens, COALESCE(SUM(output_tokens), 0) as output_tokens").
 		Group("DATE(created_at)").
@@ -723,7 +706,7 @@ func (s *sTenant) ProjectUsageStats(ctx context.Context, req *v1.TenantProjectUs
 	var modelStats []modelStatRow
 	dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		WhereIn("api_key_id", keyIDs).
+		Where("project_id", req.Id).
 		Fields("model_name, COUNT(*) as request_count, COALESCE(SUM(total_cost), 0) as total_cost").
 		Group("model_name").
 		OrderDesc("total_cost").
@@ -755,27 +738,14 @@ func (s *sTenant) ProjectUsageLogs(ctx context.Context, req *v1.TenantProjectUsa
 	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	// 获取项目关联的 API Key ID 列表
-	keyIDs, _ := dao.ApiKeys.Ctx(ctx).
-		Where("project_id", req.Id).
-		Where("tenant_id", tenantID).
-		Fields("id").
-		Array()
-	if len(keyIDs) == 0 {
-		return &v1.TenantProjectUsageLogsRes{
-			List:     []map[string]any{},
-			Total:    0,
-			Page:     page,
-			PageSize: pageSize,
-		}, nil
-	}
-
+	// 按写入时快照的 project_id 归因，与项目详情、用量统计、仪表盘保持同一口径。
+	// 空结果自然返回空列表，不需要先查一遍密钥 ID。
 	var logs []usageLogRow
 	var err error
 	var total int
 	err = dao.BilUsageLogs.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		WhereIn("api_key_id", keyIDs).
+		Where("project_id", req.Id).
 		Fields("id, model_name, relay_mode, input_tokens, output_tokens, total_cost, latency_ms, status, error_message, created_at").
 		OrderDesc("created_at").
 		Page(page, pageSize).

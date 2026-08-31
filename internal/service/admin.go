@@ -118,6 +118,8 @@ type (
 		// GetProviderDefaultURLs 获取供应商默认 API 地址
 		GetProviderDefaultURLs(ctx context.Context, _ *v1.ProviderDefaultURLReq) (*v1.ProviderDefaultURLRes, error)
 		// GetChannelHealthTrend 获取渠道健康趋势数据（健康度、延迟在 SQL 层四舍五入取整，避免展示小数）
+		// 不再返回 stability_score / consecutive_failures：健康体系重写后这两列已停止写入，
+		// 返回恒定值只会让前端画出两条毫无意义的常量线。
 		GetChannelHealthTrend(ctx context.Context, req *v1.ChannelHealthTrendReq) (*v1.ChannelHealthTrendRes, error)
 		// ResetChannelHealth 重置渠道健康度（渠道可能已修复、重新可用）：落库健康分 80（展示层），
 		// 并复位熔断 + 成功率 EWMA（调度层），使渠道立即恢复被调度选择的能力。
@@ -182,9 +184,10 @@ type (
 		// 穿透冻结会破坏预扣一致性），DB 侧仅记流水；流水失败时逆转 Redis 已发生的变动。
 		AdjustBalance(ctx context.Context, req *v1.AdminWalletAdjustReq) (*v1.AdminWalletAdjustRes, error)
 		// OfflineRecharge 线下充值入账（管理后台）
-		// 场景：用户线下银行转账（人民币 CNY），运营确认到账后按平台汇率换算为 USD 入账。
+		// 场景：用户线下银行转账（人民币 CNY），运营确认到账后入账。
+		// 本位币=USD 时按平台汇率换算入账；本位币=CNY 时直接入账（无换汇）。
 		// 与 AdjustBalance 的区别：走正规充值链路——余额与累计充值同步累加、触发等级检查、
-		// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账 USD + 转账流水号），
+		// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账金额 + 转账流水号），
 		// 供现金对账与开票追溯。
 		OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error)
 		// GetWalletInfo 获取租户钱包信息（管理后台）
@@ -473,6 +476,15 @@ type (
 		// 的掩码逻辑（config.GetCategoryWithValues）以及 Turnstile 校验的 "******" 处理保持一致，
 		// 从而支持管理员在「未点保存」的状态下直接测试表单中新填/改动的配置。
 		TestStorageConfig(ctx context.Context, req *v1.AdminStorageTestReq) (*v1.AdminStorageTestRes, error)
+		// TestEmailConfig 发送一封测试邮件，验证 SMTP 配置是否可用。
+		//
+		// 与 TestStorageConfig 同构：请求体携带表单中的邮件配置（可能尚未保存），字段为空或为掩码
+		// "******" 时回落到已保存的值，从而支持管理员在「未点保存」的状态下直接测试改动。
+		// 收件人留空时发送给当前登录管理员的邮箱。
+		//
+		// 使用 SendOnce 而非 Send：连通性测试要快速拿到真实 SMTP 错误（认证失败、端口不通重试
+		// 三次也不会变好），不该让管理员多等十几秒的退避。
+		TestEmailConfig(ctx context.Context, req *v1.AdminEmailTestReq) (*v1.AdminEmailTestRes, error)
 		// TaskList 大模型异步任务列表
 		TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error)
 		// TaskDetail 大模型异步任务详情
@@ -497,6 +509,8 @@ type (
 		ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v1.TenantExportRes, error)
 		// TenantApiKeySelect 租户 API Key 下拉选择列表（轻量，不返回密钥原值）。
 		// 供渠道调试目标过滤等管理端选择器使用；user_id > 0 时按创建者过滤。
+		// 注意：Fields 不能挂在 Count 之前的模型上——gdb 会生成 COUNT(col1, col2, ...)，
+		// PostgreSQL 的 count 只接受单参数，会直接报错。
 		TenantApiKeySelect(ctx context.Context, req *v1.TenantApiKeySelectReq) (*v1.TenantApiKeySelectRes, error)
 		ListTenantLevelConfigs(ctx context.Context, _ *v1.TenantLevelConfigListReq) (*v1.TenantLevelConfigListRes, error)
 		CreateTenantLevelConfig(ctx context.Context, req *v1.TenantLevelConfigCreateReq) (*v1.TenantLevelConfigCreateRes, error)
@@ -533,6 +547,10 @@ type (
 		UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogCleanupCreateReq) (*v1.UsageLogCleanupCreateRes, error)
 		UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanupListReq) (*v1.UsageLogCleanupListRes, error)
 		UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error)
+		// GetWorkbenchSummary 工作台汇总。
+		GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSummaryReq) (*v1.AdminWorkbenchSummaryRes, error)
+		// GetWorkbenchBadges 菜单红点计数（与 summary 共用缓存，不额外压库）。
+		GetWorkbenchBadges(ctx context.Context, _ *v1.AdminWorkbenchBadgeReq) (*v1.AdminWorkbenchBadgeRes, error)
 	}
 )
 

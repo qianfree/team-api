@@ -44,6 +44,8 @@ type ITenantV1 interface {
 	TenantBalancePrediction(ctx context.Context, req *v1.TenantBalancePredictionReq) (res *v1.TenantBalancePredictionRes, err error)
 	TenantBudgetAlerts(ctx context.Context, req *v1.TenantBudgetAlertsReq) (res *v1.TenantBudgetAlertsRes, err error)
 	TenantMemberUsageRanking(ctx context.Context, req *v1.TenantMemberUsageRankingReq) (res *v1.TenantMemberUsageRankingRes, err error)
+	TenantTeamHealth(ctx context.Context, req *v1.TenantTeamHealthReq) (res *v1.TenantTeamHealthRes, err error)
+	TenantProjectBudget(ctx context.Context, req *v1.TenantProjectBudgetReq) (res *v1.TenantProjectBudgetRes, err error)
 	TenantSendCode(ctx context.Context, req *v1.TenantSendCodeReq) (res *v1.TenantSendCodeRes, err error)
 	TenantResetPassword(ctx context.Context, req *v1.TenantResetPasswordReq) (res *v1.TenantResetPasswordRes, err error)
 	TenantChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq) (res *v1.TenantChangeEmailRes, err error)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { formatBilling } from '@/composables/useCurrency'
+import { formatNumber } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
 import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
@@ -36,6 +37,7 @@ interface Cache {
 	cache_read_tokens: number
 	total_input_tokens: number
 	hit_ratio: number
+	saved_cost: number
 }
 
 interface ReqTypeItem {
@@ -54,6 +56,13 @@ interface QuotaStatus {
 	next_reset_at?: string
 }
 
+interface FailureItem {
+	status: string
+	model_name: string
+	error_message: string
+	created_at: string
+}
+
 interface OverviewData {
 	today: DayStats
 	month: DayStats
@@ -62,6 +71,7 @@ interface OverviewData {
 	cache: Cache
 	request_types: ReqTypeItem[]
 	quota?: QuotaStatus
+	recent_failures: FailureItem[]
 }
 
 interface TrendPoint {
@@ -99,14 +109,6 @@ const trendData = ref<TrendPoint[]>([])
 const modelData = ref<ModelItem[]>([])
 const apiKeyData = ref<ApiKeyItem[]>([])
 
-function formatNumber(value: unknown): string {
-	const number = Number(value) || 0
-	if (number >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(1)}B`
-	if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`
-	if (number >= 1_000) return `${(number / 1_000).toFixed(1)}K`
-	return number.toLocaleString('zh-CN')
-}
-
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(value: unknown): string {
 	const number = Number(value) || 0
@@ -117,7 +119,7 @@ function formatCost(value: unknown): string {
 
 function formatMs(value: unknown): string {
 	const number = Number(value) || 0
-	if (number >= 1000) return `${(number / 1000).toFixed(1)}s`
+	if (number >= 1000) return `${(number / 1000).toFixed(2)}s`
 	return `${Math.round(number)}ms`
 }
 
@@ -125,7 +127,13 @@ function formatResetAt(value?: string): string {
 	if (!value) return '按额度周期重置'
 	const date = new Date(value.replace(' ', 'T'))
 	if (Number.isNaN(date.getTime())) return value
-	return `${date.getMonth() + 1} 月 ${date.getDate()} 日重置`
+	return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
+const FAILURE_LABELS: Record<string, string> = {
+	error: '失败',
+	timeout: '超时',
+	cancelled: '已取消',
 }
 
 function ensureArray<T>(value: unknown): T[] {
@@ -148,61 +156,6 @@ const formattedDate = computed(() =>
 	}).format(new Date()),
 )
 
-const periodSummary = computed(() =>
-	trendData.value.reduce(
-		(summary, point) => ({
-			requests: summary.requests + Number(point.requests || 0),
-			tokens: summary.tokens + Number(point.input_tokens || 0) + Number(point.output_tokens || 0),
-			cost: summary.cost + Number(point.total_cost || 0),
-		}),
-		{ requests: 0, tokens: 0, cost: 0 },
-	),
-)
-
-const coreStats = computed(() => {
-	if (!overviewData.value) return []
-	const { today, error_rate: errorRate, latency } = overviewData.value
-	const failedRequests = errorRate.error + errorRate.timeout + errorRate.cancelled
-	return [
-		{
-			label: '今日请求',
-			value: formatNumber(today.requests),
-			description: `${formatNumber(today.input_tokens + today.output_tokens)} Token`,
-			badge: '今日',
-			icon: 'play',
-			color: '#7667f6',
-			soft: 'rgba(118, 103, 246, 0.14)',
-		},
-		{
-			label: `近 ${selectedDays.value} 天消费`,
-			value: formatCost(periodSummary.value.cost),
-			description: `${formatNumber(periodSummary.value.requests)} 次调用`,
-			badge: '费用',
-			icon: 'wallet',
-			color: '#3b9df8',
-			soft: 'rgba(59, 157, 248, 0.14)',
-		},
-		{
-			label: '调用成功率',
-			value: `${(errorRate.rate * 100).toFixed(1)}%`,
-			description: failedRequests > 0 ? `${formatNumber(failedRequests)} 次未成功` : '本月调用稳定',
-			badge: '本月',
-			icon: 'checkCircle',
-			color: errorRate.rate >= 0.99 ? '#18b886' : errorRate.rate >= 0.95 ? '#f2aa35' : '#ef6a6a',
-			soft: errorRate.rate >= 0.99 ? 'rgba(24, 184, 134, 0.14)' : errorRate.rate >= 0.95 ? 'rgba(242, 170, 53, 0.14)' : 'rgba(239, 106, 106, 0.14)',
-		},
-		{
-			label: '平均响应',
-			value: formatMs(latency.avg_ms),
-			description: `首 Token ${formatMs(latency.avg_first_token_ms)}`,
-			badge: '本月',
-			icon: 'clock',
-			color: '#22b8b4',
-			soft: 'rgba(34, 184, 180, 0.14)',
-		},
-	]
-})
-
 const quotaPercent = computed(() => Math.min(Math.max(overviewData.value?.quota?.usage_percent || 0, 0), 100))
 
 const quotaRemaining = computed(() => {
@@ -212,20 +165,25 @@ const quotaRemaining = computed(() => {
 
 const quotaState = computed(() => {
 	const percent = overviewData.value?.quota?.usage_percent || 0
-	if (percent >= 90) return { label: '即将用尽', tone: 'quota-danger' }
-	if (percent >= 70) return { label: '需要关注', tone: 'quota-warning' }
-	return { label: '额度充足', tone: 'quota-healthy' }
+	if (percent >= 90) return { label: '即将用尽', tone: 'crit' }
+	if (percent >= 70) return { label: '需要留意', tone: 'warn' }
+	return { label: '额度充足', tone: 'ok' }
 })
 
 const latencyItems = computed(() => {
 	if (!overviewData.value) return []
 	const latency = overviewData.value.latency
 	return [
-		{ label: '平均响应', value: formatMs(latency.avg_ms) },
-		{ label: '首 Token', value: formatMs(latency.avg_first_token_ms) },
+		{ label: 'P50', value: formatMs(latency.p50_ms) },
 		{ label: 'P95', value: formatMs(latency.p95_ms) },
 		{ label: 'P99', value: formatMs(latency.p99_ms) },
 	]
+})
+
+const failures = computed(() => overviewData.value?.recent_failures || [])
+const failedCount = computed(() => {
+	const rate = overviewData.value?.error_rate
+	return rate ? rate.error + rate.timeout + rate.cancelled : 0
 })
 
 const topApiKeys = computed(() => apiKeyData.value.slice(0, 6))
@@ -281,11 +239,10 @@ onMounted(refreshAll)
 	<div class="personal-dashboard">
 		<section class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<p class="mb-1 text-sm font-medium text-primary-500">{{ authStore.tenant?.name || '个人工作台' }}</p>
 				<h1 class="text-2xl font-bold text-slate-900 md:text-[28px]">
 					{{ greeting }}，{{ authStore.user?.username || '用户' }}
 				</h1>
-				<p class="mt-1 text-sm text-slate-400">{{ formattedDate }} · 这是你的 API 使用概况</p>
+				<p class="mt-1 text-sm text-slate-400">{{ formattedDate }} · 这里只统计你自己发起的调用</p>
 			</div>
 			<button class="personal-refresh" :disabled="loading || chartsLoading" @click="refreshAll">
 				<Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />
@@ -294,37 +251,121 @@ onMounted(refreshAll)
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-			<div v-for="index in 4" :key="index" class="stat-card h-[148px]">
-				<div class="flex items-center justify-between">
-					<div class="skeleton h-10 w-10 rounded-xl"></div>
-					<div class="skeleton h-5 w-14 rounded-full"></div>
+			<div class="stat-card h-[240px] sm:col-span-2"></div>
+			<div v-for="index in 2" :key="index" class="metric-card">
+				<div class="metric-head">
+					<div class="skeleton h-4 w-20 rounded"></div>
+					<div class="skeleton h-[1.85rem] w-[1.85rem] rounded-[0.6rem]"></div>
 				</div>
-				<div class="skeleton mt-4 h-8 w-28"></div>
-				<div class="skeleton mt-3 h-3.5 w-36"></div>
+				<div class="skeleton mt-[0.85rem] h-8 w-28 rounded"></div>
+				<div class="skeleton mt-auto h-3.5 w-36 rounded"></div>
 			</div>
 		</section>
 
 		<template v-else-if="overviewData">
 			<section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-				<article
-					v-for="stat in coreStats"
-					:key="stat.label"
-					class="stat-card personal-metric-card"
-					:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
+				<!-- 额度是使用者最高频的问题，升为首屏主体 -->
+				<div
+					class="card card-prominent quota-card sm:col-span-2"
+					:class="overviewData.quota && quotaState.tone !== 'ok' ? `rail-${quotaState.tone}` : ''"
 				>
-					<div class="personal-metric-accent" aria-hidden="true"></div>
-					<div class="flex items-center justify-between gap-3">
+					<div class="quota-head">
 						<div class="flex min-w-0 items-center gap-3">
-							<div class="personal-metric-icon"><Icon :name="stat.icon" size="md" /></div>
-							<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
+							<div class="quota-icon"><Icon name="shield" size="md" /></div>
+							<div class="min-w-0">
+								<h2 class="truncate text-base font-semibold text-slate-900">
+									{{ overviewData.quota ? '本期可用上限' : '未设置个人上限' }}
+								</h2>
+								<p class="mt-0.5 truncate text-xs text-slate-400">
+									{{ overviewData.quota ? '团队为你设定的消费控制线' : '你的调用直接由团队钱包结算' }}
+								</p>
+							</div>
 						</div>
-						<span class="personal-metric-badge">{{ stat.badge }}</span>
+						<span v-if="overviewData.quota" class="quota-status" :class="`quota-${quotaState.tone}`">{{ quotaState.label }}</span>
+						<span v-else class="quota-status quota-ok">不受限</span>
 					</div>
-					<p class="personal-metric-value" :title="stat.value">{{ stat.value }}</p>
-					<div class="personal-metric-detail">
-						<span class="personal-metric-detail-dot" aria-hidden="true"></span>
-						<span class="truncate">{{ stat.description }}</span>
+
+					<!-- 卡内左右分栏：这张卡横跨两列，用宽度承载内容而不是一味往下长 -->
+					<div class="quota-body">
+						<div class="quota-main">
+							<template v-if="overviewData.quota">
+								<div class="flex items-end justify-between gap-3">
+									<div class="min-w-0">
+										<p class="text-xs font-medium text-slate-400">剩余可用</p>
+										<p class="quota-figure">{{ formatCost(quotaRemaining) }}</p>
+									</div>
+									<p class="flex-shrink-0 text-sm font-semibold tabular-nums text-slate-600">
+										{{ overviewData.quota.usage_percent.toFixed(1) }}%
+									</p>
+								</div>
+								<div class="progress mt-3">
+									<div class="progress-bar" :class="`bar-${quotaState.tone}`" :style="{ width: `${quotaPercent}%` }"></div>
+								</div>
+								<div class="mt-2 flex items-center justify-between text-xs text-slate-400">
+									<span>已用 {{ formatCost(overviewData.quota.quota_used) }}</span>
+									<span>上限 {{ formatCost(overviewData.quota.quota_limit) }}</span>
+								</div>
+							</template>
+							<template v-else>
+								<p class="text-xs font-medium text-slate-400">本月我的消费</p>
+								<p class="quota-figure">{{ formatCost(overviewData.month.total_cost) }}</p>
+							</template>
+						</div>
+
+						<div class="quota-side">
+							<div class="quota-tiles">
+								<div class="quota-tile">
+									<p class="text-[11px] text-slate-400">{{ overviewData.quota ? '额度周期' : '本月请求' }}</p>
+									<p class="mt-0.5 truncate text-sm font-semibold text-slate-700">
+										{{ overviewData.quota
+											? (overviewData.quota.period || overviewData.quota.quota_type)
+											: `${formatNumber(overviewData.month.requests)} 次` }}
+									</p>
+								</div>
+								<div class="quota-tile">
+									<p class="text-[11px] text-slate-400">{{ overviewData.quota ? '下次重置' : '本月 Token' }}</p>
+									<p class="mt-0.5 truncate text-sm font-semibold text-slate-700">
+										{{ overviewData.quota
+											? formatResetAt(overviewData.quota.next_reset_at)
+											: formatNumber(overviewData.month.input_tokens + overviewData.month.output_tokens) }}
+									</p>
+								</div>
+							</div>
+
+							<!-- 语义澄清：额度是控制线不是钱包。压成一行，完整说明挂 title。
+								 无额度状态不需要这行——卡片副标题「你的调用直接由团队钱包结算」已经说过了 -->
+							<p
+								v-if="overviewData.quota"
+								class="quota-note"
+								title="这是团队给你划的消费控制线，不是你的钱包余额。用尽后调用会暂停，不会扣除你的个人资金——需要更多额度请联系团队管理员。"
+							>
+								<Icon name="infoCircle" size="xs" class="mt-px flex-shrink-0 text-slate-400" />
+								<span>控制线而非钱包余额，用尽后调用暂停、不扣个人资金</span>
+							</p>
+						</div>
 					</div>
+				</div>
+
+				<article class="metric-card" style="--metric-color: #f59e0b; --metric-soft: rgba(245, 158, 11, 0.13)">
+					<div class="metric-head">
+						<p class="metric-label">今日消费</p>
+						<span class="metric-icon"><Icon name="currencyDollar" size="sm" /></span>
+					</div>
+					<div class="metric-figure">
+						<span class="metric-value">{{ formatCost(overviewData.today.total_cost) }}</span>
+					</div>
+					<p class="metric-sub">{{ formatNumber(overviewData.today.requests) }} 次调用</p>
+				</article>
+
+				<article class="metric-card" style="--metric-color: #3b82f6; --metric-soft: rgba(59, 130, 246, 0.13)">
+					<div class="metric-head">
+						<p class="metric-label">本月消费</p>
+						<span class="metric-icon"><Icon name="chart" size="sm" /></span>
+					</div>
+					<div class="metric-figure">
+						<span class="metric-value">{{ formatCost(overviewData.month.total_cost) }}</span>
+					</div>
+					<p class="metric-sub">{{ formatNumber(overviewData.month.requests) }} 次调用</p>
 				</article>
 			</section>
 
@@ -333,64 +374,46 @@ onMounted(refreshAll)
 					:data="trendData"
 					:loading="chartsLoading"
 					:days="selectedDays"
+					title="我的消费趋势"
+					:subtitle="`近 ${selectedDays} 天，按天聚合`"
 					@change-days="selectedDays = $event"
 				/>
 
-				<div class="card card-prominent quota-card p-5 sm:p-6">
-					<div class="flex items-start justify-between gap-4">
-						<div class="flex items-center gap-3">
-							<div class="section-icon quota-icon"><Icon name="shield" size="md" /></div>
-							<div>
-								<h2 class="text-base font-semibold text-slate-900">个人额度</h2>
-								<p class="mt-0.5 text-xs text-slate-400">消费上限与当前使用状态</p>
-							</div>
+				<!-- 看到成功率之后，使用者的下一个动作一定是「哪几次失败了」 -->
+				<div class="card card-prominent flex flex-col">
+					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
+						<div>
+							<h2 class="text-base font-semibold text-slate-900">最近失败的调用</h2>
+							<p class="mt-0.5 text-xs text-slate-400">
+								本月 {{ formatNumber(failedCount) }} 次未成功，成功率 {{ (overviewData.error_rate.rate * 100).toFixed(1) }}%
+							</p>
 						</div>
-						<span v-if="overviewData.quota" class="quota-status" :class="quotaState.tone">{{ quotaState.label }}</span>
+						<Icon name="exclamationTriangle" size="md" class="flex-shrink-0 text-amber-400" />
 					</div>
 
-					<template v-if="overviewData.quota">
-						<div class="mt-7 flex items-end justify-between gap-4">
-							<div>
-								<p class="text-xs font-medium text-slate-400">剩余额度</p>
-								<p class="mt-1 text-3xl font-bold tabular-nums text-slate-900">{{ formatCost(quotaRemaining) }}</p>
-							</div>
-							<p class="text-right text-sm font-semibold tabular-nums text-slate-600">{{ overviewData.quota.usage_percent.toFixed(1) }}%</p>
+					<div v-if="failures.length === 0" class="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+						<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500">
+							<Icon name="checkCircle" size="lg" />
 						</div>
-						<div class="quota-progress mt-4">
-							<div class="quota-progress-bar" :class="quotaState.tone" :style="{ width: `${quotaPercent}%` }"></div>
-						</div>
-						<div class="mt-3 flex items-center justify-between text-xs text-slate-400">
-							<span>已用 {{ formatCost(overviewData.quota.quota_used) }}</span>
-							<span>总额 {{ formatCost(overviewData.quota.quota_limit) }}</span>
-						</div>
-						<div class="quota-meta mt-6">
-							<div>
-								<p class="text-[11px] text-slate-400">额度周期</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ overviewData.quota.period || overviewData.quota.quota_type }}</p>
-							</div>
-							<div class="text-right">
-								<p class="text-[11px] text-slate-400">下次重置</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatResetAt(overviewData.quota.next_reset_at) }}</p>
+						<p class="mt-3 text-sm font-medium text-slate-600">本月没有失败的调用</p>
+						<p class="mt-1 text-xs text-slate-400">一切正常</p>
+					</div>
+					<div v-else class="divide-y divide-slate-100/80 px-5 sm:px-6">
+						<div v-for="(item, index) in failures" :key="index" class="flex gap-3 py-3">
+							<span class="failure-badge">{{ FAILURE_LABELS[item.status] || item.status }}</span>
+							<div class="min-w-0 flex-1">
+								<p class="truncate font-mono text-xs text-slate-700" :title="item.error_message">
+									{{ item.error_message || '上游未返回错误信息' }}
+								</p>
+								<p class="mt-0.5 text-[11px] text-slate-400">{{ item.created_at }} · {{ item.model_name }}</p>
 							</div>
 						</div>
-					</template>
+					</div>
 
-					<div v-else class="flex min-h-[270px] flex-col justify-between pt-7">
-						<div>
-							<p class="text-xs font-medium text-slate-400">本月消费</p>
-							<p class="mt-1 text-3xl font-bold tabular-nums text-slate-900">{{ formatCost(overviewData.month.total_cost) }}</p>
-							<p class="mt-2 text-sm text-slate-500">当前账户未设置个人额度限制</p>
-						</div>
-						<div class="quota-meta">
-							<div>
-								<p class="text-[11px] text-slate-400">本月请求</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatNumber(overviewData.month.requests) }} 次</p>
-							</div>
-							<div class="text-right">
-								<p class="text-[11px] text-slate-400">本月 Token</p>
-								<p class="mt-1 text-sm font-semibold text-slate-700">{{ formatNumber(overviewData.month.input_tokens + overviewData.month.output_tokens) }}</p>
-							</div>
-						</div>
+					<div v-if="failures.length" class="mt-auto border-t border-slate-100/80 px-5 py-3.5 sm:px-6">
+						<router-link to="/tenant/usage-logs" class="text-xs font-medium text-primary-600 transition-colors hover:text-primary-700">
+							在用量日志里查看全部 →
+						</router-link>
 					</div>
 				</div>
 			</section>
@@ -405,16 +428,23 @@ onMounted(refreshAll)
 								<p class="mt-0.5 text-xs text-slate-400">本月请求可靠性与性能</p>
 							</div>
 						</div>
-						<strong class="text-lg font-bold tabular-nums" :class="overviewData.error_rate.rate >= 0.99 ? 'text-emerald-600' : overviewData.error_rate.rate >= 0.95 ? 'text-amber-600' : 'text-red-500'">
+						<strong
+							class="text-lg font-bold tabular-nums"
+							:class="overviewData.error_rate.rate >= 0.99 ? 'text-emerald-600' : overviewData.error_rate.rate >= 0.95 ? 'text-amber-600' : 'text-red-500'"
+						>
 							{{ (overviewData.error_rate.rate * 100).toFixed(1) }}%
 						</strong>
 					</div>
 
-					<div class="mt-5 grid gap-5 md:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]">
-						<div class="grid grid-cols-2 gap-3">
-							<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
-								<p class="text-[11px] text-slate-400">{{ item.label }}</p>
-								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ item.value }}</p>
+					<div class="mt-5 grid gap-5 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
+						<div class="grid grid-cols-2 gap-3 self-start">
+							<div class="quality-metric">
+								<p class="text-[11px] text-slate-400">平均响应</p>
+								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_ms) }}</p>
+							</div>
+							<div class="quality-metric">
+								<p class="text-[11px] text-slate-400">首 Token</p>
+								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_first_token_ms) }}</p>
 							</div>
 						</div>
 
@@ -436,14 +466,27 @@ onMounted(refreshAll)
 						</div>
 					</div>
 
-					<div class="cache-strip mt-5">
-						<div class="flex items-center gap-2">
-							<Icon name="bolt" size="sm" class="text-cyan-500" />
-							<span class="text-xs font-medium text-slate-600">缓存命中率</span>
+					<!-- 次级指标带：左半延迟分位数，右半缓存命中卡片，命中量与节省金额收进卡片内部 -->
+					<div class="mt-4 grid gap-2.5 md:grid-cols-2">
+						<div class="grid grid-cols-3 gap-2.5">
+							<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
+								<p class="text-[11px] text-slate-400">{{ item.label }}</p>
+								<p class="mt-1 text-sm font-bold tabular-nums text-slate-700">{{ item.value }}</p>
+							</div>
 						</div>
-						<div class="text-right">
-							<strong class="text-sm font-bold tabular-nums text-cyan-600">{{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</strong>
-							<p class="mt-0.5 text-[10px] text-slate-400">读取 {{ formatNumber(overviewData.cache.cache_read_tokens) }} Token</p>
+						<div class="quality-metric quality-metric-cache flex items-center gap-3">
+							<div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
+								<Icon name="bolt" size="sm" />
+							</div>
+							<div class="min-w-0">
+								<div class="flex items-baseline gap-1.5">
+									<span class="text-base font-bold tabular-nums text-cyan-600">{{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</span>
+									<span class="text-[11px] text-slate-400">缓存命中率</span>
+								</div>
+								<p class="mt-0.5 text-[11px] text-slate-400">
+									已命中 {{ formatNumber(overviewData.cache.cache_read_tokens) }} Token，约省下 {{ formatCost(overviewData.cache.saved_cost) }}
+								</p>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -455,7 +498,7 @@ onMounted(refreshAll)
 				<div class="card card-prominent overflow-hidden">
 					<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 						<div>
-							<h2 class="text-base font-semibold text-slate-900">API Key 用量</h2>
+							<h2 class="text-base font-semibold text-slate-900">我的 API Key 用量</h2>
 							<p class="mt-0.5 text-xs text-slate-400">近 {{ selectedDays }} 天个人密钥调用排行</p>
 						</div>
 						<Icon name="key" size="md" class="text-blue-400" />
@@ -511,7 +554,9 @@ onMounted(refreshAll)
 								</div>
 								<div class="mt-1.5 flex items-center gap-3">
 									<div class="usage-progress model-progress"><span :style="{ width: `${(item.total_cost / maxModelCost) * 100}%` }"></span></div>
-									<span class="flex-shrink-0 text-[11px] text-slate-400">{{ formatNumber(item.requests) }} 次 · {{ formatNumber(item.input_tokens + item.output_tokens) }} Token</span>
+									<span class="flex-shrink-0 text-[11px] text-slate-400">
+										{{ formatNumber(item.requests) }} 次 · {{ formatNumber(item.input_tokens + item.output_tokens) }} Token
+									</span>
 								</div>
 							</div>
 						</div>
@@ -565,233 +610,409 @@ onMounted(refreshAll)
 	opacity: 0.65;
 }
 
-.personal-metric-card {
-	min-height: 148px;
-	padding: 1.125rem 1.25rem;
-	transition: transform 220ms ease, box-shadow 220ms ease;
-}
-
-.personal-metric-card:hover {
-	transform: translateY(-3px);
-	box-shadow: 0 20px 45px rgba(81, 94, 143, 0.14);
-}
-
-.personal-metric-accent {
-	position: absolute;
-	top: 0;
-	right: 1.25rem;
-	left: 1.25rem;
-	height: 2px;
-	border-radius: 0 0 9999px 9999px;
-	background: linear-gradient(90deg, transparent, var(--metric-color), transparent);
-	opacity: 0.7;
-}
-
-.personal-metric-icon,
-.section-icon,
-.usage-icon,
-.empty-icon {
-	display: flex;
-	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
-}
-
-.personal-metric-icon {
-	height: 2.5rem;
-	width: 2.5rem;
-	border: 1px solid rgba(255, 255, 255, 0.82);
-	border-radius: 0.75rem;
-	background: var(--metric-soft);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-	color: var(--metric-color);
-}
-
-.personal-metric-badge {
-	flex-shrink: 0;
-	border: 1px solid color-mix(in srgb, var(--metric-color) 20%, transparent);
-	border-radius: 9999px;
-	background: var(--metric-soft);
-	padding: 0.25rem 0.5rem;
-	color: var(--metric-color);
-	font-size: 0.625rem;
-	font-weight: 700;
-}
-
-.personal-metric-value {
-	margin-top: 0.875rem;
-	overflow: hidden;
-	color: #172033;
-	font-size: 1.75rem;
-	font-weight: 750;
-	font-variant-numeric: tabular-nums;
-	line-height: 1;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.personal-metric-detail {
-	display: flex;
-	min-width: 0;
-	align-items: center;
-	gap: 0.5rem;
-	margin-top: 0.75rem;
-	color: #94a3b8;
-	font-size: 0.6875rem;
-}
-
-.personal-metric-detail-dot {
-	height: 0.375rem;
-	width: 0.375rem;
-	flex-shrink: 0;
-	border-radius: 9999px;
-	background: var(--metric-color);
-}
-
+/* ── 额度主卡 ── */
 .quota-card {
-	background:
-		radial-gradient(circle at 100% 0, rgba(20, 184, 166, 0.11), transparent 34%),
-		var(--glass-bg-strong);
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	padding: 1.2rem 1.375rem 1.3rem;
 }
 
-.section-icon {
-	height: 2.5rem;
-	width: 2.5rem;
-	border-radius: 0.8rem;
+/* 与同排的两张小卡共用同一条状态条，颜色跟随额度状态 */
+.quota-card::before {
+	position: absolute;
+	top: 1.25rem;
+	bottom: 1.375rem;
+	left: 0;
+	width: 3px;
+	border-radius: 0 3px 3px 0;
+	background: rgba(148, 163, 184, 0.22);
+	content: '';
+	transition: background 220ms ease;
+}
+
+.quota-card.rail-warn::before {
+	background: #f59e0b;
+}
+
+.quota-card.rail-crit::before {
+	background: #ef4444;
 }
 
 .quota-icon {
-	background: rgba(20, 184, 166, 0.12);
-	color: #14b8a6;
-}
-
-.quality-icon {
-	background: rgba(24, 184, 134, 0.12);
-	color: #18a979;
+	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
+	background: rgba(13, 148, 136, 0.14);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	color: #0d9488;
 }
 
 .quota-status {
+	display: inline-flex;
 	flex-shrink: 0;
+	align-items: center;
+	gap: 0.35rem;
 	border-radius: 9999px;
 	padding: 0.3rem 0.6rem;
 	font-size: 0.6875rem;
 	font-weight: 700;
 }
 
-.quota-status.quota-healthy { background: #ecfdf5; color: #10b981; }
-.quota-status.quota-warning { background: #fffbeb; color: #d97706; }
-.quota-status.quota-danger { background: #fef2f2; color: #ef4444; }
-
-.quota-progress,
-.mini-progress,
-.usage-progress {
-	overflow: hidden;
+.quota-status::before {
+	height: 0.4rem;
+	width: 0.4rem;
 	border-radius: 9999px;
-	background: rgba(226, 232, 240, 0.7);
+	background: currentColor;
+	content: '';
 }
 
-.quota-progress { height: 0.625rem; }
-.quota-progress-bar { height: 100%; border-radius: inherit; transition: width 500ms ease; }
-.quota-progress-bar.quota-healthy { background: linear-gradient(90deg, #2cc5c1, #22b88e); }
-.quota-progress-bar.quota-warning { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
-.quota-progress-bar.quota-danger { background: linear-gradient(90deg, #fb7185, #ef4444); }
+.quota-ok {
+	background: #ecfdf5;
+	color: #10b981;
+}
 
-.quota-meta,
-.cache-strip {
+.quota-warn {
+	background: #fffbeb;
+	color: #f59e0b;
+}
+
+.quota-crit {
+	background: #fef2f2;
+	color: #ef4444;
+}
+
+.bar-ok {
+	background: linear-gradient(90deg, #2dd4bf, #0d9488);
+}
+
+.bar-warn {
+	background: linear-gradient(90deg, #fbbf24, #f59e0b);
+}
+
+.bar-crit {
+	background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.quota-head {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	gap: 1rem;
-	border: 1px solid rgba(255, 255, 255, 0.86);
-	border-radius: 1rem;
-	background: rgba(255, 255, 255, 0.52);
-	padding: 0.875rem 1rem;
+}
+
+/* 左右分栏：左列放数字与进度，右列放周期元信息与说明。
+   这张卡横跨两列，之前却按单列纵向堆叠五个区块，把整行的高度顶了起来。 */
+.quota-body {
+	display: grid;
+	flex: 1;
+	grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+	gap: 1.25rem;
+	margin-top: 1.15rem;
+}
+
+.quota-main {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	justify-content: center;
+}
+
+.quota-figure {
+	margin-top: 0.3rem;
+	overflow: hidden;
+	color: #172033;
+	font-size: 1.875rem;
+	font-weight: 720;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.025em;
+	line-height: 1.05;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.quota-side {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	justify-content: center;
+	gap: 0.7rem;
+	border-left: 1px solid rgba(226, 232, 240, 0.9);
+	padding-left: 1.25rem;
+}
+
+.quota-tiles {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.6rem;
+}
+
+.quota-tile {
+	min-width: 0;
+	border: 1px solid rgba(255, 255, 255, 0.85);
+	border-radius: 0.7rem;
+	background: rgba(255, 255, 255, 0.6);
+	padding: 0.55rem 0.7rem;
+}
+
+.quota-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.35rem;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+	line-height: 1.5;
+}
+
+/* 窄屏回落为上下堆叠，分隔线改到顶部 */
+@media (max-width: 900px) {
+	.quota-body {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1rem;
+	}
+
+	.quota-side {
+		border-top: 1px solid rgba(226, 232, 240, 0.9);
+		border-left: 0;
+		padding-top: 1rem;
+		padding-left: 0;
+	}
+}
+
+/* ── 指标卡：与仪表盘共用同一套视觉，两个页面在导航里相邻，样式必须一致 ── */
+.metric-card {
+	position: relative;
+	display: flex;
+	min-height: 148px;
+	flex-direction: column;
+	overflow: hidden;
+	padding: 1.15rem 1.25rem 1.2rem;
+	border: 1px solid var(--glass-border);
+	border-radius: var(--radius-card);
+	background: var(--glass-bg-strong);
+	backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+	box-shadow: var(--shadow-card);
+	transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+	.metric-card {
+		background: rgba(255, 255, 255, 0.97);
+	}
+}
+
+.metric-card:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 18px 40px rgba(81, 94, 143, 0.13);
+}
+
+/* 状态条与仪表盘同规则：恒定存在，常态中性、告警才变色 */
+.metric-card::before {
+	position: absolute;
+	top: 1.15rem;
+	bottom: 1.2rem;
+	left: 0;
+	width: 3px;
+	border-radius: 0 3px 3px 0;
+	background: rgba(148, 163, 184, 0.22);
+	content: '';
+	transition: background 220ms ease;
+}
+
+.metric-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.75rem;
+}
+
+.metric-label {
+	min-width: 0;
+	overflow: hidden;
+	color: #64748b;
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.metric-icon {
+	display: flex;
+	height: 1.85rem;
+	width: 1.85rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.6rem;
+	background: var(--metric-soft);
+	color: var(--metric-color);
+}
+
+.metric-figure {
+	display: flex;
+	min-width: 0;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin-top: 0.85rem;
+}
+
+.metric-value {
+	min-width: 0;
+	overflow: hidden;
+	color: #172033;
+	font-size: 1.875rem;
+	font-weight: 720;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.025em;
+	line-height: 1.05;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.metric-sub {
+	margin-top: auto;
+	overflow: hidden;
+	padding-top: 0.8rem;
+	color: #94a3b8;
+	font-size: 0.6875rem;
+	line-height: 1.4;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── 运行质量 ── */
+.section-icon {
+	display: flex;
+	height: 2.5rem;
+	width: 2.5rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.82);
+	border-radius: 0.75rem;
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.quality-icon {
+	background: rgba(16, 185, 129, 0.14);
+	color: #10b981;
 }
 
 .quality-metric {
-	border: 1px solid rgba(255, 255, 255, 0.84);
-	border-radius: 1rem;
-	background: rgba(255, 255, 255, 0.5);
-	padding: 0.75rem 0.875rem;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	border: 1px solid rgba(255, 255, 255, 0.85);
+	border-radius: 0.85rem;
+	background: rgba(255, 255, 255, 0.6);
+	padding: 0.7rem 0.8rem;
 }
 
-.mini-progress { height: 0.375rem; }
-.mini-progress span {
+.mini-progress {
+	height: 0.35rem;
+	overflow: hidden;
+	border-radius: 9999px;
+	background: rgba(148, 163, 184, 0.2);
+}
+
+.mini-progress > span {
 	display: block;
 	height: 100%;
-	border-radius: inherit;
-	background: linear-gradient(90deg, #06b6d4, #14b8a6);
+	border-radius: 9999px;
+	background: linear-gradient(90deg, #2dd4bf, #0d9488);
 }
 
-.cache-strip {
-	background: rgba(236, 254, 255, 0.54);
+/* 缓存命中小卡片：在次级指标带里用青色调区分身份 */
+.quality-metric-cache {
+	border-color: rgba(6, 182, 212, 0.2);
+	background: rgba(6, 182, 212, 0.07);
 }
 
+/* ── 失败列表 ── */
+.failure-badge {
+	align-self: flex-start;
+	flex-shrink: 0;
+	border-radius: 0.35rem;
+	background: #fef2f2;
+	padding: 0.15rem 0.42rem;
+	color: #ef4444;
+	font-size: 0.625rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+/* ── 用量列表 ── */
 .usage-row {
-	display: flex;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
 	align-items: center;
-	gap: 0.875rem;
-	padding: 0.9rem 0;
+	gap: 0.75rem;
+	padding: 0.8rem 0;
 }
 
 .usage-icon {
-	height: 2.25rem;
-	width: 2.25rem;
-	border-radius: 0.75rem;
+	display: flex;
+	height: 2rem;
+	width: 2rem;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.65rem;
 }
 
 .key-usage-icon {
-	background: #eff6ff;
+	background: rgba(59, 130, 246, 0.13);
 	color: #3b82f6;
 }
 
 .model-usage-icon {
-	background: #f5f3ff;
+	background: rgba(139, 92, 246, 0.13);
 	color: #8b5cf6;
 }
 
 .usage-progress {
-	height: 0.3rem;
-	min-width: 3rem;
+	height: 0.35rem;
 	flex: 1;
+	overflow: hidden;
+	border-radius: 9999px;
+	background: rgba(148, 163, 184, 0.2);
 }
 
-.usage-progress span {
+.usage-progress > span {
 	display: block;
 	height: 100%;
-	border-radius: inherit;
-	background: linear-gradient(90deg, #06b6d4, #14b8a6);
+	border-radius: 9999px;
+	background: #3b82f6;
 }
 
-.model-progress span {
-	background: linear-gradient(90deg, #2cc5c1, #67d49d);
+.model-progress > span {
+	background: #8b5cf6;
 }
 
 .empty-icon {
+	display: flex;
 	height: 3.5rem;
 	width: 3.5rem;
+	align-items: center;
+	justify-content: center;
 	border-radius: 1rem;
-	background: #eff6ff;
+	background: rgba(59, 130, 246, 0.1);
 	color: #60a5fa;
 }
 
 .model-empty-icon {
-	background: #f5f3ff;
+	background: rgba(139, 92, 246, 0.1);
 	color: #a78bfa;
 }
 
-@media (max-width: 420px) {
-	.usage-progress {
-		display: none;
-	}
-}
-
 @media (prefers-reduced-motion: reduce) {
-	.personal-refresh,
-	.personal-metric-card,
-	.quota-progress-bar {
+	.metric-card,
+	.personal-refresh {
+		animation: none;
 		transition: none;
 	}
 }

@@ -25,3 +25,9 @@ func (c *ControllerV1) TenantBudgetAlerts(ctx context.Context, req *v1.TenantBud
 func (c *ControllerV1) TenantMemberUsageRanking(ctx context.Context, req *v1.TenantMemberUsageRankingReq) (res *v1.TenantMemberUsageRankingRes, err error) {
 	return service.Tenant().GetMemberUsageRanking(ctx, req)
 }
+func (c *ControllerV1) TenantTeamHealth(ctx context.Context, req *v1.TenantTeamHealthReq) (res *v1.TenantTeamHealthRes, err error) {
+	return service.Tenant().TeamHealth(ctx, req)
+}
+func (c *ControllerV1) TenantProjectBudget(ctx context.Context, req *v1.TenantProjectBudgetReq) (res *v1.TenantProjectBudgetRes, err error) {
+	return service.Tenant().ProjectBudget(ctx, req)
+}

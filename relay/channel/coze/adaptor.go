@@ -133,8 +133,12 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 
 // handleStreamResponse 流式模式：逐事件读取 Coze SSE，转换为 OpenAI SSE 格式输出
 func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
-	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（常开）。同格式/无匹配转换器时回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
+		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
+			return usage, common.ErrStreamInterrupted
+		}
 		return usage, nil
 	}
 
@@ -164,7 +168,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 			// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
 			interruptedUsage := &common.Usage{}
 			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-			return interruptedUsage, nil
+			return interruptedUsage, common.ErrStreamInterrupted
 		default:
 		}
 
@@ -207,7 +211,7 @@ func (a *Adaptor) handleStreamResponse(ctx context.Context, resp *http.Response,
 				// 流中断计费兜底：输出按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
 				interruptedUsage := &common.Usage{}
 				helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-				return interruptedUsage, nil
+				return interruptedUsage, common.ErrStreamInterrupted
 			}
 
 		case "conversation.message.completed":

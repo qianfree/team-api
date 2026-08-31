@@ -60,6 +60,18 @@ export function formatDate(value: unknown): string {
 	return s
 }
 
+/**
+ * 大数缩写：B / M / K，千位以下带本地化分隔符。
+ * 各看板页面原先各自复制了一份实现，统一收敛到这里。
+ */
+export function formatNumber(value: unknown): string {
+	const num = Number(value) || 0
+	if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`
+	if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`
+	if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`
+	return num.toLocaleString('zh-CN')
+}
+
 /** Token 数量缩写：K / M */
 export function formatTokens(value: unknown): string {
 	const num = Number(value ?? 0)

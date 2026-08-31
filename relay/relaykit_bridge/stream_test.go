@@ -2,6 +2,8 @@ package relaykit_bridge
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -191,4 +193,75 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// failOnSubstringWriter 写入载荷包含 marker 时返回错误（模拟客户端已断开后的写失败），
+// 其余写入透传到内层 recorder。
+type failOnSubstringWriter struct {
+	rec    *httptest.ResponseRecorder
+	marker string
+}
+
+func (w *failOnSubstringWriter) Header() http.Header  { return w.rec.Header() }
+func (w *failOnSubstringWriter) WriteHeader(code int) { w.rec.WriteHeader(code) }
+func (w *failOnSubstringWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.marker) {
+		return 0, errors.New("write failed: connection reset by peer")
+	}
+	return w.rec.Body.Write(p)
+}
+
+// TestConvertStreamViaRelaykit_ClientWriteFailure 复现中断误判竞态：客户端断开由「写失败」
+// 首先暴露而 ctx 尚未取消（断开信号经代理传导延迟/first-writer-wins 场景）。
+// 此时必须按流中断处理：end reason=client_gone、usage 走中断兜底（已转发文本 2 字符/token
+// 估算），且不向死连接补写 [DONE]——而非误判为转换失败导致 0 token / 0 费用结算。
+func TestConvertStreamViaRelaykit_ClientWriteFailure(t *testing.T) {
+	claudeStream := `data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-opus-20240229","usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":4,"cache_creation_input_tokens":3}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", how can I help you?"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}
+
+data: {"type":"message_stop"}
+
+`
+	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
+	// 与生产一致（relay_handler buildRelayInfo 设置）：流中断时上游 usage 缺失，
+	// 输入 token 按请求侧估算值补齐计费
+	info.SetEstimatePromptTokens(42)
+	// ctx 用 Background（永不取消），精确模拟「写失败先于 ctx 取消被观察到」的竞态
+	w := &failOnSubstringWriter{rec: httptest.NewRecorder(), marker: "how can I help you"}
+
+	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), w)
+	if !ok {
+		t.Fatal("expected ok=true (handled), got false")
+	}
+	if usage == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if reason := info.StreamStatus.GetEndReason(); reason != common.StreamEndReasonClientGone {
+		t.Fatalf("end reason = %q, want %q (client write failure misclassified)", reason, common.StreamEndReasonClientGone)
+	}
+	if !info.StreamStatus.IsPartialStreamEnd() {
+		t.Fatal("IsPartialStreamEnd = false, want true")
+	}
+	// 转换器的 usage chunk 只在流末尾产出，中断时尚未捕获——prompt 按请求侧估算值(42)补齐；
+	// 两个 delta 文本（"Hello"+", how can I help you?" = 5+21 = 26 字节）均在写失败前计入
+	// transferredTextLen（累计发生在写之前），中断估算 completion = (26+1)/2 = 13
+	if usage.PromptTokens != 42 {
+		t.Errorf("PromptTokens = %d, want 42 (request-side estimate fallback)", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 13 {
+		t.Errorf("CompletionTokens = %d, want 13 (interrupted estimate, got 0 => fallback skipped)", usage.CompletionTokens)
+	}
+	// 中断后不得向死连接补写 [DONE]
+	if strings.Contains(w.rec.Body.String(), "[DONE]") {
+		t.Error("output should not contain [DONE] after client disconnect")
+	}
 }
