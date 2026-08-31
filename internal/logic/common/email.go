@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/qianfree/team-api/internal/dao"
 	"html/template"
+	"net/mail"
 	"strings"
 	"time"
+
+	"github.com/qianfree/team-api/internal/dao"
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
@@ -23,6 +25,7 @@ type EmailConfig struct {
 	Username string
 	Password string
 	From     string
+	FromName string // 发件人显示名，收件人邮件列表里看到的名字；为空时只显示邮箱地址
 	UseTLS   bool
 }
 
@@ -121,7 +124,17 @@ func (s *BasicEmailSender) SendTemplate(ctx context.Context, to, templateCode st
 // sendWithRetry performs the actual SMTP send.
 func (s *BasicEmailSender) sendWithRetry(ctx context.Context, msg *EmailMessage, attempt int) error {
 	m := gomail.NewMessage()
-	m.SetHeader("From", s.config.From)
+	// 发件人显示名：SetAddressHeader 会按 RFC 5322 拼成 "aifree" <system@mail.aifree.com>，
+	// 名称含中文时自动做 RFC 2047 编码；FromName 为空时退化为纯地址。
+	// From 若已配成 "名称 <地址>" 形式，先拆出地址避免二次包装。
+	fromAddr, fromName := s.config.From, s.config.FromName
+	if parsed, err := mail.ParseAddress(fromAddr); err == nil {
+		fromAddr = parsed.Address
+		if fromName == "" {
+			fromName = parsed.Name
+		}
+	}
+	m.SetAddressHeader("From", fromAddr, fromName)
 	m.SetHeader("To", msg.To)
 	m.SetHeader("Subject", msg.Subject)
 
@@ -205,11 +218,17 @@ func EmailConfigFromOptions(ctx context.Context) (*EmailConfig, error) {
 		Username: Config().GetString(ctx, "email_smtp_username"),
 		Password: Config().GetString(ctx, "email_smtp_password"),
 		From:     Config().GetString(ctx, "email_smtp_from"),
+		FromName: Config().GetString(ctx, "email_smtp_from_name"),
 		UseTLS:   Config().GetBool(ctx, "email_smtp_tls"),
 	}
 
 	if cfg.Host == "" || cfg.From == "" {
 		return nil, gerror.New("email SMTP config not set (email_smtp_host, email_smtp_from)")
+	}
+
+	// 未单独配置发件人名称时回落到站点名称，避免收件人只看到邮箱地址的本地部分
+	if cfg.FromName == "" {
+		cfg.FromName = Config().GetString(ctx, "site_name")
 	}
 
 	if cfg.Port == 0 {
