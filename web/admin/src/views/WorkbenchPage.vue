@@ -533,6 +533,22 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+/* 卡片固定高度：告警再多也在卡片内部滚动，不无限撑开页面 */
+.wb-flow :deep(.arco-card-body) {
+  height: 640px;
+  overflow-y: auto;
+}
+
+/* 细滚动条，贴合整体视觉 */
+.wb-flow :deep(.arco-card-body)::-webkit-scrollbar {
+  width: 6px;
+}
+
+.wb-flow :deep(.arco-card-body)::-webkit-scrollbar-thumb {
+  background: var(--color-fill-3);
+  border-radius: 3px;
+}
+
 .wb-list {
   display: flex;
   flex-direction: column;
@@ -596,8 +612,13 @@ onBeforeUnmount(() => {
 }
 
 /* ===== 空态：清空是正常状态 ===== */
+/* 卡片 body 定高后，空态在固定高度内垂直居中 */
 .wb-empty {
-  padding: 48px 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
 }
 
@@ -793,6 +814,11 @@ onBeforeUnmount(() => {
   .wb-body {
     grid-template-columns: 1fr;
   }
+
+  /* 单列布局下视口纵向空间更紧张，卡片定高同步收紧 */
+  .wb-flow :deep(.arco-card-body) {
+    height: 560px;
+  }
 }
 
 @media (max-width: 767px) {
@@ -813,6 +839,10 @@ onBeforeUnmount(() => {
 
   .wb-item__title {
     min-width: 100%;
+  }
+
+  .wb-flow :deep(.arco-card-body) {
+    height: 480px;
   }
 }
 </style>

@@ -39,11 +39,14 @@ const (
 	wbOrderUnfulfilledMin = 15   // 已支付超过 15 分钟仍未履约视为卡单
 	wbOAuthExpiryHours    = 24   // OAuth 令牌 24 小时内过期即预警
 	wbHealthDropPoints    = 30   // 健康分 1 小时内跌幅超过 30 分视为骤降
-	wbCostSpikeMultiple   = 8    // 单笔消费超过近期均值 8 倍视为异常
 	wbEmailFailThreshold  = 5    // 1 小时内邮件失败超过 5 封视为链路异常
 	wbPlanExpiringDays    = 7    // 套餐 7 天内到期
 	wbTicketSLAHours      = 2    // 工单首次响应 SLA
 	wbWalletDriftRatio    = 0.02 // Redis↔DB 余额偏差超过 2% 且绝对额可观时告警
+
+	// wbCronStallFallbackInterval 停摆判定的调度周期兜底值：任务不在注册表中
+	// （改名/下线后的遗留行）或 cron 表达式解析失败时按「日任务」保守处理。
+	wbCronStallFallbackInterval = 24 * time.Hour
 )
 
 // wbItem 内部待办结构：比 API 的 v1.WorkbenchItem 多一个 perm 字段。
@@ -61,14 +64,6 @@ type wbCollected struct {
 	Breakers    []v1.WorkbenchBreaker    `json:"breakers"`
 	Metrics     []v1.WorkbenchMetric     `json:"metrics"`
 	GeneratedAt string                   `json:"generated_at"`
-}
-
-// 域 → 前端菜单路由名，供菜单红点直接挂角标。
-var wbDomainMenus = map[string][]string{
-	v1.WorkbenchDomainAvailability: {"AdminChannels"},
-	v1.WorkbenchDomainMoney:        {"AdminOrders", "AdminTransactions"},
-	v1.WorkbenchDomainCustomer:     {"AdminTickets", "AdminFeedback"},
-	v1.WorkbenchDomainSystem:       {"AdminAlertEvents", "AdminErrorLogs", "AdminCronJobs"},
 }
 
 // ============================================================
@@ -126,29 +121,20 @@ func (s *sAdmin) GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSu
 	return res, nil
 }
 
-// GetWorkbenchBadges 菜单红点计数（与 summary 共用缓存，不额外压库）。
+// GetWorkbenchBadges 工作台菜单角标计数（与 summary 共用缓存，不额外压库）。
+//
+// 角标只挂工作台菜单一项：待办的排查线索只存在于工作台的描述文案里，
+// 业务菜单里没有对应的定位入口，往各业务菜单挂数字只会带来
+// 「进去了却找不到问题」的困惑（红点引路却无路可走）。
 func (s *sAdmin) GetWorkbenchBadges(ctx context.Context, _ *v1.AdminWorkbenchBadgeReq) (*v1.AdminWorkbenchBadgeRes, error) {
 	col := s.collectWorkbenchCached(ctx)
 	items := s.filterWorkbenchItems(ctx, col.Items)
 
-	res := &v1.AdminWorkbenchBadgeRes{
-		Domains: map[string]int{},
-		Menus:   map[string]int{},
-	}
+	res := &v1.AdminWorkbenchBadgeRes{}
 	for _, it := range items {
 		res.Total++
 		if it.Severity == v1.WorkbenchSeverityP0 {
 			res.Urgent++
-		}
-		res.Domains[it.Domain]++
-	}
-	for domain, menus := range wbDomainMenus {
-		n := res.Domains[domain]
-		if n == 0 {
-			continue
-		}
-		for _, m := range menus {
-			res.Menus[m] += n
 		}
 	}
 	return res, nil

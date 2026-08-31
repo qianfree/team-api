@@ -9,7 +9,7 @@ import RouteErrorBoundary from '@/components/RouteErrorBoundary.vue'
 import { useWatermark } from '@/composables/useWatermark'
 import { useSiteName } from '@/composables/useSiteName'
 import {
-  IconThunderbolt,
+  IconDesktop,
   IconDashboard,
   IconUserGroup,
   IconApps,
@@ -306,7 +306,7 @@ const menuGroups = [
     label: '数据看板',
     icon: IconDashboard,
     items: [
-      { name: 'AdminWorkbench', label: '工作台', icon: IconThunderbolt },
+      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop },
       { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard },
       { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand },
     ],
@@ -459,15 +459,15 @@ function handleClickOutside(e: MouseEvent) {
 // 工作台是聚合视图，红点才是常驻发现入口：管理员不会每天主动点开工作台，
 // 但会看见菜单上的角标。后端 badges 与 summary 共用同一份 30s Redis 缓存，
 // 60s 轮询不会额外压库。
-const workbenchBadges = ref<Record<string, number>>({})
 const workbenchUrgent = ref(0)
 const workbenchTotal = ref(0)
 let badgeTimer: ReturnType<typeof setInterval> | null = null
 
-// 菜单项角标：工作台本身显示待办总数，其余菜单显示后端映射到该路由的待办数
+// 角标只挂工作台菜单：待办的排查线索只在工作台的描述文案里，
+// 业务菜单里没有对应的定位入口，挂数字只会带来「进去了却找不到问题」的困惑
 function badgeOf(name: string): number {
   if (name === 'AdminWorkbench') return workbenchTotal.value
-  return workbenchBadges.value[name] || 0
+  return 0
 }
 
 async function fetchWorkbenchBadges() {
@@ -475,7 +475,6 @@ async function fetchWorkbenchBadges() {
     const res = await request.get('/admin/workbench/badges')
     const data = res.data?.data
     if (!data) return
-    workbenchBadges.value = data.menus || {}
     workbenchUrgent.value = data.urgent || 0
     workbenchTotal.value = data.total || 0
   } catch {

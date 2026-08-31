@@ -1573,6 +1573,10 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 	helper.WriteSSEData(writer, "[DONE]")
 
 	g.Log().Infof(ctx, "[HandleResponsesStreamToChat] completed: usage=%+v, endReason=%s", totalUsage, info.StreamStatus.GetEndReason())
+	// 流中断（客户端断开/写失败/上游 error 主动终止）：透传中断信号，上层按已传输部分结算
+	if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
+		return &totalUsage, common.ErrStreamInterrupted
+	}
 	return &totalUsage, nil
 }
 

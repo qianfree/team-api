@@ -38,7 +38,7 @@ const values = useFormValues()
 					<AInput v-model="values['email_smtp_from']" placeholder="noreply@example.com" />
 				</AFormItem>
 				<AFormItem label="发件人名称" help="收件人看到的发件人显示名，留空则使用站点名称">
-					<AInput v-model="values['email_smtp_from_name']" placeholder="aifree" />
+					<AInput v-model="values['email_smtp_from_name']" placeholder="team-api" />
 				</AFormItem>
 				<div class="switch-row">
 					<span class="switch-label">启用 TLS</span>

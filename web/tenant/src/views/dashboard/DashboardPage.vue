@@ -130,8 +130,8 @@ const memberUsageLoading = ref(false)
 const alertsLoading = ref(false)
 const healthLoading = ref(false)
 const budgetLoading = ref(false)
-// 管理者看趋势默认看 30 天：经营视角关心的是月度走势，不是最近一周
-const selectedDays = ref(30)
+// 消费趋势默认看最近 7 天
+const selectedDays = ref(7)
 const dashboardData = ref<DashboardData | null>(null)
 const trendData = ref<TrendPoint[]>([])
 const modelData = ref<ModelItem[]>([])
@@ -416,7 +416,6 @@ onBeforeUnmount(() => {
 	<div class="dashboard-shell">
 		<section class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<p class="mb-1 text-sm font-medium text-primary-500">{{ authStore.tenant?.name || '租户控制台' }}</p>
 				<h1 class="text-2xl font-bold tracking-tight text-slate-900 md:text-[28px]">
 					{{ greeting }}，{{ authStore.user?.username || 'Admin' }} <span class="inline-block origin-bottom-right animate-wave">👋</span>
 				</h1>
