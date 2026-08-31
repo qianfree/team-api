@@ -417,7 +417,11 @@ func writeMetricsToDB(s SystemMetricsSnapshot) {
 }
 
 // GetLatestMetrics returns the most recent metrics snapshot.
+// 采集器未初始化时返回 nil（而非 panic）：调用方本就按 nil 处理缺失指标。
 func GetLatestMetrics() *SystemMetricsSnapshot {
+	if systemBuffer == nil {
+		return nil
+	}
 	return systemBuffer.Latest()
 }
 
