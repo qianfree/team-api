@@ -54,7 +54,9 @@ tidy:
 
 # GoFrame code generation
 ctrl:
-	gf gen ctrl
+	# 必须带 -m：本项目 controller 按 api 源文件合并生成，
+	# 裸 gf gen ctrl 会按方法拆分并与现有合并文件产生重复方法定义
+	gf gen ctrl -m
 
 dao:
 	gf gen dao

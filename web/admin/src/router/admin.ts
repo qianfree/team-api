@@ -25,6 +25,12 @@ const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '仪表盘' },
       },
       {
+        path: 'workbench',
+        name: 'AdminWorkbench',
+        component: () => import('@/views/WorkbenchPage.vue'),
+        meta: { title: '工作台' },
+      },
+      {
         path: 'profile',
         name: 'AdminProfile',
         component: () => import('@/views/system/ProfilePage.vue'),

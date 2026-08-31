@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router'
+import { isTenantManager } from '@/utils/permission'
 
 // 'vue-router' 模块类型扩展，让 meta 字段有类型提示
 declare module 'vue-router' {
@@ -59,8 +60,10 @@ const tenantRoutes: RouteRecordRaw[] = [
 				meta: { title: '仪表盘', icon: 'grid', sort: 10, roles: ['owner', 'admin'] },
 			},
 			{
+				// 落地页按角色决定：member 没有仪表盘权限，若无条件重定向到 /tenant/dashboard
+				// 会被角色守卫再弹到「可用模型」，永远进不了本该属于他的个人看板。
 				path: '',
-				redirect: '/tenant/dashboard',
+				redirect: () => (isTenantManager() ? '/tenant/dashboard' : '/tenant/personal-dashboard'),
 			},
 			{
 				path: 'personal-dashboard',

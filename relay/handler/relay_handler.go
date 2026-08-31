@@ -374,6 +374,12 @@ func settleSuccessfulRequest(
 		RetryIndex: info.RetryIndex,
 	}
 
+	// 流式追踪：正常结束也落库（done / eof）。eof（上游未发 [DONE] 即结束）按正常结束
+	// 结算但属上游侧异常信号，记录后可在用量日志直接区分，无需翻应用日志。
+	if info.StreamStatus != nil {
+		usageRecord.StreamEndReason = string(info.StreamStatus.GetEndReason())
+	}
+
 	// 填充结算费用数据
 	if settleResult != nil {
 		usageRecord.TotalCost = settleResult.BaseCost
@@ -692,7 +698,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -710,14 +716,16 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			err = helper.RemapStatusCode(err, info.ChannelMeta.Settings.StatusCodeMapping)
 
 			if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
-				g.Log().Warningf(ctx, "[RelayHandler] Stream interrupted: adaptor=%s, model=%s, reason=%s",
-					adaptor.GetChannelName(), v.modelName, info.StreamStatus.Summary())
+				g.Log().Warningf(ctx, "[RelayHandler] Stream interrupted: request=%s tenant=%d channel=%d(%s) adaptor=%s model=%s attempt=%d reason=%s ctx_err=%v usage=%v pre_deduct=%.6f",
+					rc.RequestID, rc.TenantID, selection.ChannelID, selection.ChannelName, adaptor.GetChannelName(), v.modelName,
+					attempt, info.StreamStatus.Summary(), ctx.Err(), usage, preDeductAmount)
 				// 客户端已收到部分流：不可重试（响应已污染），上报健康后按流中断结算
 				_, _ = sess.Report(settleCtx, dispatchStatusCode(err), err, dispatch.DeliveryResponseStarted, info.LatencyMs(), 0)
 				streamUsage := usage
 				if streamUsage == nil {
 					streamUsage = &common.Usage{}
 				}
+				var interruptSettle *common.SettlementResult
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
@@ -734,8 +742,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}
+					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -783,7 +792,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			if billing != nil && preDeductAmount > 0 {
 				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -952,7 +961,7 @@ func handleChannelUnavailable(
 			"当前模型暂时不可用",
 			constant.ErrAllChannelsFailed,
 		)
-		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr)
+		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil)
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -1027,10 +1036,34 @@ func (e *RelayErrorWithRateLimit) Error() string {
 	return e.Message
 }
 
+// applyStreamEndDiag 把流式结束原因落进失败用量记录，替代无归因价值的哨兵文案。
+// stream_end_reason 区分 client_gone / handler_stop / scanner_err / timeout / ping_fail / eof，
+// error_message 保留真实底层错误（ctx 取消原因、写客户端失败的 TCP 错误等）；
+// 哨兵错误（ErrStreamInterrupted）或状态里已带底层错误时直接用摘要，其余追加在原始错误后。
+// error_message 对租户端可见，全部经 RedactMessage/SafeUpstreamErrorMessage 脱敏：
+// 摘要中的本地连接地址抹 IP，外层错误按传输层归一化，禁止上游域名/URL/IP 落入用量日志。
+func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamStatus, err error) {
+	if streamStatus == nil {
+		return
+	}
+	reason := streamStatus.GetEndReason()
+	if reason == "" {
+		return
+	}
+	record.StreamEndReason = string(reason)
+	summary := helper.RedactMessage(streamStatus.Summary())
+	if err == nil || errors.Is(err, common.ErrStreamInterrupted) || streamStatus.Error() != nil {
+		record.ErrorMessage = summary
+		return
+	}
+	record.ErrorMessage = helper.SafeUpstreamErrorMessage(err) + " [stream: " + summary + "]"
+}
+
 // recordFailedUsage 记录失败用量。
 // selection 非 nil 时记录具体失败渠道（ID/名称/类型/上游模型），便于在用量日志定位失败渠道；
 // nil 表示无单一渠道（全部渠道失败），渠道字段留空，失败详情见 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error) {
+// streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
+func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1043,8 +1076,11 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		Success:        false,
 		RequestID:      rc.RequestID,
 		Status:         "error",
-		ErrorMessage:   err.Error(),
+		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
+		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）
+		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
+	applyStreamEndDiag(record, streamStatus, err)
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName
@@ -1056,7 +1092,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage) {
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1069,8 +1105,11 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		Success:        false,
 		RequestID:      rc.RequestID,
 		Status:         "error",
-		ErrorMessage:   err.Error(),
+		// 租户端用量日志可见 error_message，须经脱敏（上游域名/URL/IP 禁止落库）；
+		// 完整原始错误保留在应用日志与审计 ForwardingTrace（仅管理员可见）
+		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
+	applyStreamEndDiag(record, streamStatus, err)
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName
@@ -1081,6 +1120,17 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		record.PromptTokens = usage.PromptTokens
 		record.CompletionTokens = usage.CompletionTokens
 		record.TotalTokens = usage.TotalTokens
+	}
+	// 流中断结算成功时补充费用字段：中断已按已传输部分实际扣费，用量记录须与账本一致，
+	// 否则后台看到的中断请求永远是 0 费用（结算与用量记录是两条独立写入链路）
+	if settleResult != nil {
+		record.TotalCost = settleResult.BaseCost
+		record.ActualCost = settleResult.ActualCost
+		record.PreDeductAmount = settleResult.PreDeductAmount
+		record.RefundAmount = settleResult.RefundAmount
+		record.SupplementAmount = settleResult.SupplementAmount
+		record.BillingMode = settleResult.BillingMode
+		record.BillingSource = settleResult.BillingSource
 	}
 	provider.RecordUsage(context.Background(), record)
 }

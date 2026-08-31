@@ -30,6 +30,17 @@ export function hasTenantRole(role: string): boolean {
   return currentRole === role
 }
 
+/**
+ * 是否为管理层（owner / admin）。
+ * 读 localStorage 而非 Pinia：路由重定向在组件 setup 之外同步执行，
+ * 此时 store 可能尚未 hydrate，localStorage 是唯一可靠的同步来源。
+ * 组件内做条件渲染请用 store 的 isManager（响应式）。
+ */
+export function isTenantManager(): boolean {
+  const currentRole = getStoredString(TENANT_ROLE_KEY)
+  return currentRole === TENANT_ROLES.OWNER || currentRole === TENANT_ROLES.ADMIN
+}
+
 export function setTenantSession(role: string, permissions: string[]): void {
   localStorage.setItem(TENANT_ROLE_KEY, role)
   localStorage.setItem(TENANT_PERMISSIONS_KEY, JSON.stringify(permissions))

@@ -7,6 +7,8 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
+	"github.com/shopspring/decimal"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/middleware"
@@ -104,56 +106,125 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 		}
 	}
 
-	// Query 3: latency percentiles + cache stats
-	type latencyRow struct {
-		AvgMs             float64 `json:"avg_ms"`
-		AvgFirstTokenMs   float64 `json:"avg_first_token_ms"`
-		CacheCreationTkns int64   `json:"cache_creation_tokens"`
-		CacheReadTkns     int64   `json:"cache_read_tokens"`
-		TotalInputTkns    int64   `json:"total_input_tokens"`
+	// Query 3: 延迟与缓存统计，按模型分组。
+	//
+	// 分组是为了推导「缓存省了多少钱」：input_cost 只给非缓存的基础输入计价
+	// （见 billing/pricing.go），因此模型内的混合输入单价 = input_cost / base_input_tokens；
+	// 用该单价给 cache_read_tokens 重新计价、再减去实际缓存费用，差额即节省额。
+	// 跨模型混算会严重失真（不同模型单价可差十几倍），所以必须逐模型算再求和。
+	//
+	// 分组后把 AVG 换成 SUM/COUNT 在 Go 里重新合并——COUNT(*) FILTER (WHERE x IS NOT NULL)
+	// 与 AVG 的分母口径一致，因此合并结果与原先的整体 AVG 完全相等。
+	type cacheRow struct {
+		LatencyCount      int64           `json:"latency_count"`
+		FirstTokenCount   int64           `json:"first_token_count"`
+		SumLatencyMs      float64         `json:"sum_latency_ms"`
+		SumFirstTokenMs   float64         `json:"sum_first_token_ms"`
+		CacheCreationTkns int64           `json:"cache_creation_tokens"`
+		CacheReadTkns     int64           `json:"cache_read_tokens"`
+		TotalInputTkns    int64           `json:"total_input_tokens"`
+		BaseInputTkns     int64           `json:"base_input_tokens"`
+		InputCost         decimal.Decimal `json:"input_cost"`
+		CacheReadCost     decimal.Decimal `json:"cache_read_cost"`
 	}
-	var lat latencyRow
+	var cacheRows []cacheRow
 	err = g.DB().Ctx(ctx).Raw(`
 		SELECT
-			COALESCE(AVG(latency_ms), 0) as avg_ms,
-			COALESCE(AVG(first_token_ms), 0) as avg_first_token_ms,
-			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
-			COALESCE(SUM(input_tokens), 0) as total_input_tokens
+			COUNT(*) FILTER (WHERE latency_ms IS NOT NULL) AS latency_count,
+			COUNT(*) FILTER (WHERE first_token_ms IS NOT NULL) AS first_token_count,
+			COALESCE(SUM(latency_ms), 0) AS sum_latency_ms,
+			COALESCE(SUM(first_token_ms), 0) AS sum_first_token_ms,
+			COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+			COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+			COALESCE(SUM(GREATEST(input_tokens - cache_read_tokens - cache_creation_tokens, 0)), 0) AS base_input_tokens,
+			COALESCE(SUM(input_cost), 0) AS input_cost,
+			COALESCE(SUM(cache_read_cost), 0) AS cache_read_cost
 		FROM bil_usage_logs
 		WHERE user_id = ? AND tenant_id = ? AND created_at >= ?
-	`, userID, tenantID, monthStart).Scan(&lat)
+		GROUP BY model_name
+	`, userID, tenantID, monthStart).Scan(&cacheRows)
 	if err != nil {
 		return nil, err
 	}
 
-	// Percentile calculation: fetch latency values and compute in Go
-	latency := v1.PersonalLatency{
-		AvgMs:           math.Round(lat.AvgMs*100) / 100,
-		AvgFirstTokenMs: math.Round(lat.AvgFirstTokenMs*100) / 100,
-	}
-	var latencyVals []float64
-	err = g.DB().Ctx(ctx).Raw(`
-		SELECT latency_ms FROM bil_usage_logs
-		WHERE user_id = ? AND tenant_id = ? AND created_at >= ? AND latency_ms IS NOT NULL AND status = 'success'
-		ORDER BY latency_ms ASC
-		LIMIT 5000
-	`, userID, tenantID, monthStart).Scan(&latencyVals)
-	if err == nil && len(latencyVals) > 0 {
-		latency.P50Ms = math.Round(percentile(latencyVals, 0.50)*100) / 100
-		latency.P95Ms = math.Round(percentile(latencyVals, 0.95)*100) / 100
-		latency.P99Ms = math.Round(percentile(latencyVals, 0.99)*100) / 100
+	var (
+		latencyCount      int64
+		firstTokenCount   int64
+		sumLatencyMs      float64
+		sumFirstTokenMs   float64
+		cacheCreationTkns int64
+		cacheReadTkns     int64
+		totalInputTkns    int64
+	)
+	savedCost := billing.Zero
+	for _, r := range cacheRows {
+		latencyCount += r.LatencyCount
+		firstTokenCount += r.FirstTokenCount
+		sumLatencyMs += r.SumLatencyMs
+		sumFirstTokenMs += r.SumFirstTokenMs
+		cacheCreationTkns += r.CacheCreationTkns
+		cacheReadTkns += r.CacheReadTkns
+		totalInputTkns += r.TotalInputTkns
+
+		if r.BaseInputTkns <= 0 || r.CacheReadTkns <= 0 {
+			continue
+		}
+		unitPrice := billing.DivideMoney(r.InputCost, decimal.NewFromInt(r.BaseInputTkns))
+		saved := billing.SubtractMoney(
+			billing.MultiplyMoney(unitPrice, decimal.NewFromInt(r.CacheReadTkns)),
+			r.CacheReadCost,
+		)
+		if billing.IsPositive(saved) {
+			savedCost = billing.AddMoney(savedCost, saved)
+		}
 	}
 
+	// Percentile calculation: fetch latency values and compute in Go
+	latency := v1.PersonalLatency{}
+	if latencyCount > 0 {
+		latency.AvgMs = math.Round(sumLatencyMs/float64(latencyCount)*100) / 100
+	}
+	if firstTokenCount > 0 {
+		latency.AvgFirstTokenMs = math.Round(sumFirstTokenMs/float64(firstTokenCount)*100) / 100
+	}
+	// 分位数交给 SQL 算。
+	//
+	// 原实现是 `ORDER BY latency_ms ASC LIMIT 5000` 再在 Go 里求分位，
+	// 取到的是「最快的 5000 条」——月成功调用超过 5000 次的用户，报出来的 P95
+	// 实际约等于真实分布的第 (5000/N)×95 百分位，而且错在「让人安心」的方向：
+	// 月调 5 万次的用户会看到 P95 几百毫秒，真实值可能是几秒。
+	// PERCENTILE_CONT 在库内对全量排序，无论多少行都是准确值。
+	var latRow struct {
+		P50 float64 `json:"p50"`
+		P95 float64 `json:"p95"`
+		P99 float64 `json:"p99"`
+	}
+	err = g.DB().Ctx(ctx).Raw(`
+		SELECT
+			COALESCE(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latency_ms), 0) AS p50,
+			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) AS p95,
+			COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms), 0) AS p99
+		FROM bil_usage_logs
+		WHERE user_id = ? AND tenant_id = ? AND created_at >= ?
+			AND latency_ms IS NOT NULL AND status = 'success'
+	`, userID, tenantID, monthStart).Scan(&latRow)
+	if err != nil {
+		return nil, err
+	}
+	latency.P50Ms = math.Round(latRow.P50*100) / 100
+	latency.P95Ms = math.Round(latRow.P95*100) / 100
+	latency.P99Ms = math.Round(latRow.P99*100) / 100
+
 	cache := v1.PersonalCache{
-		CacheCreationTokens: lat.CacheCreationTkns,
-		CacheReadTokens:     lat.CacheReadTkns,
-		TotalInputTokens:    lat.TotalInputTkns,
+		CacheCreationTokens: cacheCreationTkns,
+		CacheReadTokens:     cacheReadTkns,
+		TotalInputTokens:    totalInputTkns,
+		SavedCost:           billing.InexactFloat64(billing.RoundMoney(savedCost)),
 	}
 	// input_tokens 已统一为「含缓存总输入」口径（Claude 渠道入库时补加缓存），分母直接取总和
-	totalForRatio := float64(lat.TotalInputTkns)
-	if totalForRatio > 0 {
-		cache.HitRatio = math.Round(float64(lat.CacheReadTkns)/totalForRatio*10000) / 10000
+	if totalInputTkns > 0 {
+		cache.HitRatio = math.Round(float64(cacheReadTkns)/float64(totalInputTkns)*10000) / 10000
 	}
 
 	// Query 4: quota status
@@ -184,6 +255,30 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 		quota = q
 	}
 
+	// Query 5: 最近失败的调用（排障入口）。
+	// created_at >= monthStart 不是装饰：bil_usage_logs 没有 user_id 索引，
+	// 必须靠时间下界把扫描压在 (tenant_id, created_at) 索引的窄区间内。
+	// 这里用 status IN 枚举而非 <> 'success'，以便走 (status, created_at) 索引。
+	var failures []v1.PersonalFailureItem
+	err = g.DB().Ctx(ctx).Raw(`
+		SELECT
+			status,
+			model_name,
+			LEFT(COALESCE(error_message, ''), 500) AS error_message,
+			TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
+		FROM bil_usage_logs
+		WHERE user_id = ? AND tenant_id = ? AND created_at >= ?
+			AND status IN ('error', 'timeout', 'cancelled')
+		ORDER BY created_at DESC
+		LIMIT 5
+	`, userID, tenantID, monthStart).Scan(&failures)
+	if err != nil {
+		return nil, err
+	}
+	if failures == nil {
+		failures = []v1.PersonalFailureItem{}
+	}
+
 	return &v1.PersonalDashboardRes{
 		Today: v1.PersonalDayStats{
 			Requests:     stats.TodayRequests,
@@ -197,11 +292,12 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 			OutputTokens: stats.MonthOutputTokens,
 			TotalCost:    stats.MonthTotalCost,
 		},
-		ErrorRate:    errorRate,
-		Latency:      latency,
-		Cache:        cache,
-		RequestTypes: reqTypeItems,
-		Quota:        quota,
+		ErrorRate:      errorRate,
+		Latency:        latency,
+		Cache:          cache,
+		RequestTypes:   reqTypeItems,
+		Quota:          quota,
+		RecentFailures: failures,
 	}, nil
 }
 
@@ -310,23 +406,4 @@ func (s *sTenant) PersonalApiKeyUsage(ctx context.Context, req *v1.PersonalApiKe
 	}
 
 	return &v1.PersonalApiKeyUsageRes{List: records}, nil
-}
-
-// percentile computes the p-th percentile from a sorted slice of float64 values.
-func percentile(sorted []float64, p float64) float64 {
-	n := len(sorted)
-	if n == 0 {
-		return 0
-	}
-	if n == 1 {
-		return sorted[0]
-	}
-	rank := p * float64(n-1)
-	lower := int(math.Floor(rank))
-	upper := lower + 1
-	if upper >= n {
-		return sorted[n-1]
-	}
-	frac := rank - float64(lower)
-	return sorted[lower]*(1-frac) + sorted[upper]*frac
 }

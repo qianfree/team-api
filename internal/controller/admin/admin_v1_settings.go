@@ -19,3 +19,6 @@ func (c *ControllerV1) AdminSettingsUpdate(ctx context.Context, req *v1.AdminSet
 func (c *ControllerV1) AdminStorageTest(ctx context.Context, req *v1.AdminStorageTestReq) (res *v1.AdminStorageTestRes, err error) {
 	return service.Admin().TestStorageConfig(ctx, req)
 }
+func (c *ControllerV1) AdminEmailTest(ctx context.Context, req *v1.AdminEmailTestReq) (res *v1.AdminEmailTestRes, err error) {
+	return service.Admin().TestEmailConfig(ctx, req)
+}

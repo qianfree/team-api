@@ -9,6 +9,7 @@ import RouteErrorBoundary from '@/components/RouteErrorBoundary.vue'
 import { useWatermark } from '@/composables/useWatermark'
 import { useSiteName } from '@/composables/useSiteName'
 import {
+  IconDesktop,
   IconDashboard,
   IconUserGroup,
   IconApps,
@@ -305,6 +306,7 @@ const menuGroups = [
     label: '数据看板',
     icon: IconDashboard,
     items: [
+      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop },
       { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard },
       { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand },
     ],
@@ -453,6 +455,33 @@ function handleClickOutside(e: MouseEvent) {
   }
 }
 
+// --- 工作台菜单红点 ---
+// 工作台是聚合视图，红点才是常驻发现入口：管理员不会每天主动点开工作台，
+// 但会看见菜单上的角标。后端 badges 与 summary 共用同一份 30s Redis 缓存，
+// 60s 轮询不会额外压库。
+const workbenchUrgent = ref(0)
+const workbenchTotal = ref(0)
+let badgeTimer: ReturnType<typeof setInterval> | null = null
+
+// 角标只挂工作台菜单：待办的排查线索只在工作台的描述文案里，
+// 业务菜单里没有对应的定位入口，挂数字只会带来「进去了却找不到问题」的困惑
+function badgeOf(name: string): number {
+  if (name === 'AdminWorkbench') return workbenchTotal.value
+  return 0
+}
+
+async function fetchWorkbenchBadges() {
+  try {
+    const res = await request.get('/admin/workbench/badges')
+    const data = res.data?.data
+    if (!data) return
+    workbenchUrgent.value = data.urgent || 0
+    workbenchTotal.value = data.total || 0
+  } catch {
+    // 静默：红点拉取失败不该打扰用户，也不该阻塞布局
+  }
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   updateMobile()
@@ -461,6 +490,9 @@ onMounted(() => {
   // Check for updates on mount
   checkUpdate()
   fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
+
+  fetchWorkbenchBadges()
+  badgeTimer = setInterval(fetchWorkbenchBadges, 60000)
 
   axios.get('/api/settings/public').then((res) => {
     const settings = res.data?.data?.settings
@@ -478,6 +510,7 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateMobile)
   clearTimeout(popupHideTimer!)
+  if (badgeTimer) clearInterval(badgeTimer)
   stopPolling()
   unmountWatermark()
 })
@@ -524,6 +557,11 @@ onUnmounted(() => {
               >
                 <component :is="item.icon" class="admin-sidebar__icon" />
                 <span class="admin-sidebar__text">{{ item.label }}</span>
+                <span
+                  v-if="badgeOf(item.name) > 0"
+                  class="admin-sidebar__badge"
+                  :class="{ 'admin-sidebar__badge--urgent': item.name === 'AdminWorkbench' && workbenchUrgent > 0 }"
+                >{{ badgeOf(item.name) > 99 ? '99+' : badgeOf(item.name) }}</span>
               </div>
             </div>
           </Transition>
@@ -590,6 +628,11 @@ onUnmounted(() => {
                   >
                     <component :is="item.icon" class="admin-sidebar__icon" />
                     <span class="admin-sidebar__text">{{ item.label }}</span>
+                    <span
+                      v-if="badgeOf(item.name) > 0"
+                      class="admin-sidebar__badge"
+                      :class="{ 'admin-sidebar__badge--urgent': item.name === 'AdminWorkbench' && workbenchUrgent > 0 }"
+                    >{{ badgeOf(item.name) > 99 ? '99+' : badgeOf(item.name) }}</span>
                   </div>
                 </div>
               </Transition>
@@ -948,6 +991,28 @@ onUnmounted(() => {
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 待办角标：默认中性灰，仅在工作台有 P0 时转红。
+   全部标红会让红点迅速失去意义 —— 红色必须留给「现在就得看」。 */
+.admin-sidebar__badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-fill-3);
+  color: var(--color-text-2);
+}
+
+.admin-sidebar__badge--urgent {
+  background: #f53f3f;
+  color: #fff;
 }
 
 /* ===== Collapsed Sidebar Overrides ===== */
