@@ -188,18 +188,33 @@ func (s *sTenant) PersonalDashboard(ctx context.Context, req *v1.PersonalDashboa
 	if firstTokenCount > 0 {
 		latency.AvgFirstTokenMs = math.Round(sumFirstTokenMs/float64(firstTokenCount)*100) / 100
 	}
-	var latencyVals []float64
-	err = g.DB().Ctx(ctx).Raw(`
-		SELECT latency_ms FROM bil_usage_logs
-		WHERE user_id = ? AND tenant_id = ? AND created_at >= ? AND latency_ms IS NOT NULL AND status = 'success'
-		ORDER BY latency_ms ASC
-		LIMIT 5000
-	`, userID, tenantID, monthStart).Scan(&latencyVals)
-	if err == nil && len(latencyVals) > 0 {
-		latency.P50Ms = math.Round(percentile(latencyVals, 0.50)*100) / 100
-		latency.P95Ms = math.Round(percentile(latencyVals, 0.95)*100) / 100
-		latency.P99Ms = math.Round(percentile(latencyVals, 0.99)*100) / 100
+	// 分位数交给 SQL 算。
+	//
+	// 原实现是 `ORDER BY latency_ms ASC LIMIT 5000` 再在 Go 里求分位，
+	// 取到的是「最快的 5000 条」——月成功调用超过 5000 次的用户，报出来的 P95
+	// 实际约等于真实分布的第 (5000/N)×95 百分位，而且错在「让人安心」的方向：
+	// 月调 5 万次的用户会看到 P95 几百毫秒，真实值可能是几秒。
+	// PERCENTILE_CONT 在库内对全量排序，无论多少行都是准确值。
+	var latRow struct {
+		P50 float64 `json:"p50"`
+		P95 float64 `json:"p95"`
+		P99 float64 `json:"p99"`
 	}
+	err = g.DB().Ctx(ctx).Raw(`
+		SELECT
+			COALESCE(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latency_ms), 0) AS p50,
+			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) AS p95,
+			COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms), 0) AS p99
+		FROM bil_usage_logs
+		WHERE user_id = ? AND tenant_id = ? AND created_at >= ?
+			AND latency_ms IS NOT NULL AND status = 'success'
+	`, userID, tenantID, monthStart).Scan(&latRow)
+	if err != nil {
+		return nil, err
+	}
+	latency.P50Ms = math.Round(latRow.P50*100) / 100
+	latency.P95Ms = math.Round(latRow.P95*100) / 100
+	latency.P99Ms = math.Round(latRow.P99*100) / 100
 
 	cache := v1.PersonalCache{
 		CacheCreationTokens: cacheCreationTkns,
@@ -391,23 +406,4 @@ func (s *sTenant) PersonalApiKeyUsage(ctx context.Context, req *v1.PersonalApiKe
 	}
 
 	return &v1.PersonalApiKeyUsageRes{List: records}, nil
-}
-
-// percentile computes the p-th percentile from a sorted slice of float64 values.
-func percentile(sorted []float64, p float64) float64 {
-	n := len(sorted)
-	if n == 0 {
-		return 0
-	}
-	if n == 1 {
-		return sorted[0]
-	}
-	rank := p * float64(n-1)
-	lower := int(math.Floor(rank))
-	upper := lower + 1
-	if upper >= n {
-		return sorted[n-1]
-	}
-	frac := rank - float64(lower)
-	return sorted[lower]*(1-frac) + sorted[upper]*frac
 }
