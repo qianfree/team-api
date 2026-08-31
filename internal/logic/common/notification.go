@@ -12,7 +12,11 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"golang.org/x/sync/errgroup"
 )
+
+// broadcastEmailConcurrency 广播邮件的并发发送上限。
+const broadcastEmailConcurrency = 5
 
 // NotificationEngine provides unified notification sending across email and in-app channels.
 type NotificationEngine struct{}
@@ -141,7 +145,9 @@ func (e *NotificationEngine) SendBroadcast(ctx context.Context, tenantID int64, 
 	}
 
 	// 4. Send email to all tenant members (async, best-effort)
-	go e.broadcastEmails(ctx, tenantID, subject, body, templateCode, variables)
+	// WithoutCancel：广播在 HTTP 响应返回后仍在发信，直接用请求 ctx 会被取消，
+	// 导致成员查询与投递全部失败；脱离取消但保留 request_id 等链路值。
+	go e.broadcastEmails(context.WithoutCancel(ctx), tenantID, subject, body, templateCode, variables)
 
 	// 5. Log
 	e.logNotification(ctx, tenantID, 0, templateCode, subject, body)
@@ -228,16 +234,22 @@ type notificationTemplate struct {
 
 // loadTemplate loads a notification template by code from ntf_templates.
 func (e *NotificationEngine) loadTemplate(ctx context.Context, code string) (*notificationTemplate, error) {
+	return loadNotificationTemplate(ctx, code)
+}
+
+// loadNotificationTemplate 按 code 加载启用中的通知模板，供通知引擎与 BasicEmailSender.SendTemplate 共用。
+// 无记录时 Scan 返回 sql.ErrNoRows，统一转成可读的业务错误，避免把裸 ErrNoRows 抛给上层。
+func loadNotificationTemplate(ctx context.Context, code string) (*notificationTemplate, error) {
 	var tpl notificationTemplate
 	err := dao.NtfTemplates.Ctx(ctx).
 		Where("code", code).
 		Where("status", "active").
 		Scan(&tpl)
-	if err != nil {
+	if err = IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if tpl.BodyTemplate == "" {
-		return nil, gerror.Newf("template %s not found or inactive", code)
+		return nil, NewNotFoundError("通知模板 " + code)
 	}
 	return &tpl, nil
 }
@@ -387,23 +399,32 @@ func (e *NotificationEngine) broadcastEmails(ctx context.Context, tenantID int64
 		return
 	}
 
+	// 有界并发：串行发送时总耗时 = 成员数 ×（SMTP 往返 + 最坏 6s 重试），
+	// 大租户会让这个 goroutine 挂很久；并发上限压在 broadcastEmailConcurrency 避免打爆 SMTP 服务商限流。
+	var eg errgroup.Group
+	eg.SetLimit(broadcastEmailConcurrency)
 	for _, m := range members {
 		if m.Email == "" || !IsValidEmail(m.Email) {
 			continue
 		}
-		msg := &EmailMessage{
-			To:           m.Email,
-			Subject:      subject,
-			BodyHTML:     body,
-			TemplateCode: templateCode,
-			Variables:    variables,
-			TenantID:     tenantID,
-			UserID:       m.ID,
-		}
-		if err := sender.Send(ctx, msg); err != nil {
-			g.Log().Warningf(ctx, "notification engine broadcast: send to user %d failed: %v", m.ID, err)
-		}
+		eg.Go(func() error {
+			msg := &EmailMessage{
+				To:           m.Email,
+				Subject:      subject,
+				BodyHTML:     body,
+				TemplateCode: templateCode,
+				Variables:    variables,
+				TenantID:     tenantID,
+				UserID:       m.ID,
+			}
+			// 单个成员失败不影响其余成员，仅告警（返回 nil 让 errgroup 继续）
+			if err := sender.Send(ctx, msg); err != nil {
+				g.Log().Warningf(ctx, "notification engine broadcast: send to user %d failed: %v", m.ID, err)
+			}
+			return nil
+		})
 	}
+	_ = eg.Wait()
 }
 
 // buildMetadata constructs a JSONB metadata value for the message.

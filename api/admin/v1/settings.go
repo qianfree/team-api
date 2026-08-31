@@ -70,3 +70,25 @@ type AdminStorageTestRes struct {
 	ElapsedMs  int64  `json:"elapsed_ms"` // 往返耗时(毫秒)
 	Message    string `json:"message"`    // 结果描述
 }
+
+// AdminEmailTestReq 发送测试邮件，验证 SMTP 配置连通性。
+// 携带表单中的邮件配置（可含未保存的改动）；字段为空或为掩码 "******" 时后端回落到
+// 已保存的值，从而支持「未保存直接测试」，与对象存储测试的行为保持一致。
+type AdminEmailTestReq struct {
+	g.Meta   `path:"/settings/email/test" method:"post" mime:"json" tags:"管理后台-系统设置" summary:"发送测试邮件"`
+	Host     string `json:"email_smtp_host" dc:"SMTP 服务器，空则回落已保存值"`
+	Port     int    `json:"email_smtp_port" dc:"SMTP 端口，0 则回落已保存值"`
+	Username string `json:"email_smtp_username" dc:"SMTP 用户名，空则回落已保存值"`
+	Password string `json:"email_smtp_password" dc:"SMTP 密码，空/掩码回落已保存值"`
+	From     string `json:"email_smtp_from" dc:"发件人地址，空则回落已保存值"`
+	FromName string `json:"email_smtp_from_name" dc:"发件人显示名，空则回落已保存值/站点名称"`
+	UseTLS   *bool  `json:"email_smtp_tls" dc:"是否启用 TLS，不传则回落已保存值"`
+	To       string `json:"to" dc:"收件人，留空则发送给当前登录管理员的邮箱"`
+}
+
+type AdminEmailTestRes struct {
+	Sent      bool   `json:"sent"`       // 是否投递成功
+	Recipient string `json:"recipient"`  // 实际收件人
+	ElapsedMs int64  `json:"elapsed_ms"` // 耗时(毫秒)
+	Message   string `json:"message"`    // 结果描述
+}
