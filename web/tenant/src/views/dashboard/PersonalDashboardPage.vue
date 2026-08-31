@@ -239,7 +239,6 @@ onMounted(refreshAll)
 	<div class="personal-dashboard">
 		<section class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<p class="mb-1 text-sm font-medium text-primary-500">{{ authStore.tenant?.name || '个人工作台' }}</p>
 				<h1 class="text-2xl font-bold text-slate-900 md:text-[28px]">
 					{{ greeting }}，{{ authStore.user?.username || '用户' }}
 				</h1>
@@ -438,27 +437,15 @@ onMounted(refreshAll)
 					</div>
 
 					<div class="mt-5 grid gap-5 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
-						<div>
-							<div class="grid grid-cols-2 gap-3">
-								<div class="quality-metric">
-									<p class="text-[11px] text-slate-400">平均响应</p>
-									<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_ms) }}</p>
-								</div>
-								<div class="quality-metric">
-									<p class="text-[11px] text-slate-400">首 Token</p>
-									<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_first_token_ms) }}</p>
-								</div>
+						<div class="grid grid-cols-2 gap-3 self-start">
+							<div class="quality-metric">
+								<p class="text-[11px] text-slate-400">平均响应</p>
+								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_ms) }}</p>
 							</div>
-							<!-- 分位数对普通成员偏技术，默认收起，排障时再展开 -->
-							<details class="latency-details">
-								<summary>展开延迟分位数</summary>
-								<div class="mt-2.5 grid grid-cols-3 gap-2">
-									<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
-										<p class="text-[11px] text-slate-400">{{ item.label }}</p>
-										<p class="mt-1 text-sm font-bold tabular-nums text-slate-700">{{ item.value }}</p>
-									</div>
-								</div>
-							</details>
+							<div class="quality-metric">
+								<p class="text-[11px] text-slate-400">首 Token</p>
+								<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(overviewData.latency.avg_first_token_ms) }}</p>
+							</div>
 						</div>
 
 						<div class="border-t border-slate-100 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
@@ -479,11 +466,23 @@ onMounted(refreshAll)
 						</div>
 					</div>
 
-					<div class="cache-strip mt-5">
-						<div class="flex items-center gap-2">
-							<Icon name="bolt" size="sm" class="flex-shrink-0 text-cyan-500" />
-							<div>
-								<span class="text-xs font-medium text-slate-600">缓存命中率 {{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</span>
+					<!-- 次级指标带：左半延迟分位数，右半缓存命中卡片，命中量与节省金额收进卡片内部 -->
+					<div class="mt-4 grid gap-2.5 md:grid-cols-2">
+						<div class="grid grid-cols-3 gap-2.5">
+							<div v-for="item in latencyItems" :key="item.label" class="quality-metric">
+								<p class="text-[11px] text-slate-400">{{ item.label }}</p>
+								<p class="mt-1 text-sm font-bold tabular-nums text-slate-700">{{ item.value }}</p>
+							</div>
+						</div>
+						<div class="quality-metric quality-metric-cache flex items-center gap-3">
+							<div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
+								<Icon name="bolt" size="sm" />
+							</div>
+							<div class="min-w-0">
+								<div class="flex items-baseline gap-1.5">
+									<span class="text-base font-bold tabular-nums text-cyan-600">{{ (overviewData.cache.hit_ratio * 100).toFixed(1) }}%</span>
+									<span class="text-[11px] text-slate-400">缓存命中率</span>
+								</div>
 								<p class="mt-0.5 text-[11px] text-slate-400">
 									已命中 {{ formatNumber(overviewData.cache.cache_read_tokens) }} Token，约省下 {{ formatCost(overviewData.cache.saved_cost) }}
 								</p>
@@ -913,30 +912,6 @@ onMounted(refreshAll)
 	padding: 0.7rem 0.8rem;
 }
 
-.latency-details {
-	margin-top: 0.7rem;
-}
-
-.latency-details > summary {
-	color: #0d9488;
-	cursor: pointer;
-	font-size: 0.75rem;
-	font-weight: 620;
-	list-style: none;
-}
-
-.latency-details > summary::-webkit-details-marker {
-	display: none;
-}
-
-.latency-details > summary::after {
-	content: ' ▾';
-}
-
-.latency-details[open] > summary::after {
-	content: ' ▴';
-}
-
 .mini-progress {
 	height: 0.35rem;
 	overflow: hidden;
@@ -951,14 +926,10 @@ onMounted(refreshAll)
 	background: linear-gradient(90deg, #2dd4bf, #0d9488);
 }
 
-.cache-strip {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1rem;
-	border-radius: 0.8rem;
-	background: rgba(6, 182, 212, 0.08);
-	padding: 0.7rem 0.85rem;
+/* 缓存命中小卡片：在次级指标带里用青色调区分身份 */
+.quality-metric-cache {
+	border-color: rgba(6, 182, 212, 0.2);
+	background: rgba(6, 182, 212, 0.07);
 }
 
 /* ── 失败列表 ── */
