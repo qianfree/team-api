@@ -240,8 +240,12 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	// relaykit 流式转换（特性开关控制，默认关闭）。未启用/无匹配回退旧路径。
+	// relaykit 流式转换（常开）。同格式/无匹配转换器时回退旧路径。
 	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
+		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
+			return usage, common.ErrStreamInterrupted
+		}
 		return usage, nil
 	}
 

@@ -718,6 +718,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				if streamUsage == nil {
 					streamUsage = &common.Usage{}
 				}
+				var interruptSettle *common.SettlementResult
 				if billing != nil && preDeductAmount > 0 {
 					settleResult, err := billing.SettleStreamInterrupted(settleCtx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
 						v.modelName, rc.RequestID, v.relayModeStr, streamUsage, preDeductAmount, rc.ProjectID, info.StartTime)
@@ -734,8 +735,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						billing.IncrMemberQuotaUsed(settleCtx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 						billing.IncrApiKeyQuotaUsed(settleCtx, rc.ApiKeyID, settleResult.ActualCost)
 					}
+					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -1056,7 +1058,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage) {
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1081,6 +1083,17 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		record.PromptTokens = usage.PromptTokens
 		record.CompletionTokens = usage.CompletionTokens
 		record.TotalTokens = usage.TotalTokens
+	}
+	// 流中断结算成功时补充费用字段：中断已按已传输部分实际扣费，用量记录须与账本一致，
+	// 否则后台看到的中断请求永远是 0 费用（结算与用量记录是两条独立写入链路）
+	if settleResult != nil {
+		record.TotalCost = settleResult.BaseCost
+		record.ActualCost = settleResult.ActualCost
+		record.PreDeductAmount = settleResult.PreDeductAmount
+		record.RefundAmount = settleResult.RefundAmount
+		record.SupplementAmount = settleResult.SupplementAmount
+		record.BillingMode = settleResult.BillingMode
+		record.BillingSource = settleResult.BillingSource
 	}
 	provider.RecordUsage(context.Background(), record)
 }
