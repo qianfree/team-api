@@ -95,15 +95,14 @@ func dispatchAlertNotifications(ctx context.Context, rule map[string]any, eventI
 
 // sendAlertEmailToAdmins sends alert email to specified admin users.
 func sendAlertEmailToAdmins(ctx context.Context, adminIDs []int64, subject, body string) {
-	// Create email sender from config
-	sender := common.NewEmailSender(&common.EmailConfig{
-		Host:     g.Cfg().MustGet(ctx, "email.smtp.host").String(),
-		Port:     g.Cfg().MustGet(ctx, "email.smtp.port").Int(),
-		Username: g.Cfg().MustGet(ctx, "email.smtp.username").String(),
-		Password: g.Cfg().MustGet(ctx, "email.smtp.password").String(),
-		From:     g.Cfg().MustGet(ctx, "email.smtp.from").String(),
-		UseTLS:   g.Cfg().MustGet(ctx, "email.smtp.port").Int() == 587 || g.Cfg().MustGet(ctx, "email.smtp.port").Int() == 465,
-	})
+	// 与其余邮件链路统一走设置注册表（管理后台「邮件配置」），
+	// 而非 config.yaml 的 email.smtp.*（该配置段不存在，会读出空值导致告警邮件必然发送失败）
+	cfg, err := common.EmailConfigFromOptions(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "send alert email: %v", err)
+		return
+	}
+	sender := common.NewEmailSender(cfg)
 
 	for _, adminID := range adminIDs {
 		type adminUser struct {

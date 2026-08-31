@@ -107,6 +107,8 @@ var Registry = []SettingDef{
 		Label: "SMTP 密码", Sensitive: true},
 	{Key: "email_smtp_from", Type: SettingTypeString, Default: "", Category: "email",
 		Label: "发件人地址", Description: "格式: noreply@example.com"},
+	{Key: "email_smtp_from_name", Type: SettingTypeString, Default: "", Category: "email",
+		Label: "发件人名称", Description: "收件人看到的发件人显示名，如 aifree；留空则使用站点名称"},
 	{Key: "email_smtp_tls", Type: SettingTypeBool, Default: "true", Category: "email",
 		Label: "启用 TLS", Description: "587/465 端口建议开启"},
 
