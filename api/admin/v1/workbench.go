@@ -97,13 +97,10 @@ type AdminWorkbenchSummaryRes struct {
 // AdminWorkbenchBadgeReq 轻量计数接口，供左侧菜单红点轮询。
 // 与 summary 共用同一份缓存，不会额外压库。
 type AdminWorkbenchBadgeReq struct {
-	g.Meta `path:"/workbench/badges" method:"get" mime:"json" tags:"管理后台-工作台" summary:"菜单红点计数"`
+	g.Meta `path:"/workbench/badges" method:"get" mime:"json" tags:"管理后台-工作台" summary:"工作台菜单角标计数"`
 }
 
 type AdminWorkbenchBadgeRes struct {
-	Total   int            `json:"total" dc:"待办总数"`
-	Urgent  int            `json:"urgent" dc:"P0 数量"`
-	Domains map[string]int `json:"domains" dc:"各域待办数，键为域标识"`
-	// Menus 前端菜单路由名 → 待办数，直接挂角标，前端不需要自己映射域到菜单。
-	Menus map[string]int `json:"menus" dc:"菜单路由名 → 待办数"`
+	Total  int `json:"total" dc:"待办总数，仅挂在工作台菜单角标"`
+	Urgent int `json:"urgent" dc:"P0 数量，控制角标转红"`
 }
