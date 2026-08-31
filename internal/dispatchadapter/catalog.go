@@ -216,6 +216,59 @@ func (c *Catalog) ChannelRuntimeStates() map[int64]ChannelRuntimeState {
 	return out
 }
 
+// ModelAvail 单个模型的渠道可用性视图（工作台「零可用渠道」检测用）。
+// Total 为目录快照中承载该模型的 active 渠道数（disabled / 无 enabled 能力的渠道不在快照里），
+// Available 为其中渠道级与模型级熔断均为 CLOSED 的渠道数。
+// Available=0 且 Total>0 即「配了渠道但一条都用不了」——最容易被大盘总量掩盖的静默故障。
+type ModelAvail struct {
+	Available int
+	Total     int
+	Breaking  []ModelBreak
+}
+
+// ModelBreak 一条正在熔断的渠道×模型记录。
+type ModelBreak struct {
+	ChannelID   int64
+	ChannelName string
+	Model       string
+	// ChannelLevel 为 true 表示渠道级熔断（该渠道所有模型都受影响），
+	// false 表示仅该模型被隔离（模型级熔断）。
+	ChannelLevel bool
+	HalfOpen     bool // 处于半开探测态
+}
+
+// ModelAvailability 返回目录快照中每个模型的渠道可用性与正在熔断的渠道×模型列表。
+// 目录未初始化时返回 nil，调用方按「无数据」处理，不要当成故障。
+// 并发安全：current 为 atomic.Pointer，Load() 取到的快照不可变，无锁。
+func (c *Catalog) ModelAvailability() map[string]ModelAvail {
+	idx := c.current.Load()
+	if idx == nil {
+		return nil
+	}
+	out := make(map[string]ModelAvail, len(idx.byModel))
+	for model, chans := range idx.byModel {
+		av := ModelAvail{Total: len(chans)}
+		for _, ch := range chans {
+			chOpen := ch.Breaker != dispatch.BreakerClosed
+			mdOpen := ch.ModelBreaker != dispatch.BreakerClosed
+			if !chOpen && !mdOpen {
+				av.Available++
+				continue
+			}
+			av.Breaking = append(av.Breaking, ModelBreak{
+				ChannelID:    ch.ID,
+				ChannelName:  ch.Name,
+				Model:        model,
+				ChannelLevel: chOpen,
+				HalfOpen: (chOpen && ch.Breaker == dispatch.BreakerHalfOpen) ||
+					(!chOpen && ch.ModelBreaker == dispatch.BreakerHalfOpen),
+			})
+		}
+		out[model] = av
+	}
+	return out
+}
+
 // Invalidate 主动触发一次刷新（渠道/能力/Key 管理操作后调用；跨实例走 pub/sub）。
 func (c *Catalog) Invalidate() {
 	select {

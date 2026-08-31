@@ -282,4 +282,6 @@ type IAdminV1 interface {
 	UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogCleanupCreateReq) (res *v1.UsageLogCleanupCreateRes, err error)
 	UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanupListReq) (res *v1.UsageLogCleanupListRes, err error)
 	UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (res *v1.UsageLogCleanupCancelRes, err error)
+	AdminWorkbenchSummary(ctx context.Context, req *v1.AdminWorkbenchSummaryReq) (res *v1.AdminWorkbenchSummaryRes, err error)
+	AdminWorkbenchBadge(ctx context.Context, req *v1.AdminWorkbenchBadgeReq) (res *v1.AdminWorkbenchBadgeRes, err error)
 }
