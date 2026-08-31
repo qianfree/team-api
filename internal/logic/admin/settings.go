@@ -15,9 +15,13 @@ import (
 	"github.com/google/uuid"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/dispatchadapter"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
+
+// emailTestTemplateCode 测试邮件在 ntf_send_log 中的模板编码，便于在「邮件发送记录」里筛出。
+const emailTestTemplateCode = "_test"
 
 // GetSettingsCategories returns all available setting categories.
 func (s *sAdmin) GetSettingsCategories(ctx context.Context, _ *v1.AdminSettingsCategoriesReq) (*v1.AdminSettingsCategoriesRes, error) {
@@ -242,4 +246,125 @@ func (s *sAdmin) TestStorageConfig(ctx context.Context, req *v1.AdminStorageTest
 	res.ElapsedMs = time.Since(start).Milliseconds()
 	res.Message = "对象存储配置正常：测试图片上传、下载校验通过"
 	return res, nil
+}
+
+// TestEmailConfig 发送一封测试邮件，验证 SMTP 配置是否可用。
+//
+// 与 TestStorageConfig 同构：请求体携带表单中的邮件配置（可能尚未保存），字段为空或为掩码
+// "******" 时回落到已保存的值，从而支持管理员在「未点保存」的状态下直接测试改动。
+// 收件人留空时发送给当前登录管理员的邮箱。
+//
+// 使用 SendOnce 而非 Send：连通性测试要快速拿到真实 SMTP 错误（认证失败、端口不通重试
+// 三次也不会变好），不该让管理员多等十几秒的退避。
+func (s *sAdmin) TestEmailConfig(ctx context.Context, req *v1.AdminEmailTestReq) (*v1.AdminEmailTestRes, error) {
+	cfg := &common.EmailConfig{
+		Host:     strings.TrimSpace(req.Host),
+		Port:     req.Port,
+		Username: strings.TrimSpace(req.Username),
+		Password: req.Password,
+		From:     strings.TrimSpace(req.From),
+		FromName: strings.TrimSpace(req.FromName),
+	}
+
+	// 空 / 掩码 → 回落已保存值（邮件配置的唯一来源是 sys_options，不读配置文件）
+	if cfg.Host == "" {
+		cfg.Host = common.Config().GetString(ctx, "email_smtp_host")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = common.Config().GetInt(ctx, "email_smtp_port")
+	}
+	if cfg.Username == "" {
+		cfg.Username = common.Config().GetString(ctx, "email_smtp_username")
+	}
+	if cfg.Password == "" || cfg.Password == "******" {
+		cfg.Password = common.Config().GetString(ctx, "email_smtp_password")
+	}
+	if cfg.From == "" {
+		cfg.From = common.Config().GetString(ctx, "email_smtp_from")
+	}
+	if cfg.FromName == "" {
+		cfg.FromName = common.Config().GetString(ctx, "email_smtp_from_name")
+	}
+	// 未传 TLS 开关时沿用已保存值（*bool 区分「没传」和「显式关闭」）
+	if req.UseTLS != nil {
+		cfg.UseTLS = *req.UseTLS
+	} else {
+		cfg.UseTLS = common.Config().GetBool(ctx, "email_smtp_tls")
+	}
+
+	if cfg.Host == "" || cfg.From == "" {
+		return nil, common.NewBadRequestError("请先填写 SMTP 服务器和发件人地址")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 587
+	}
+	// 与 EmailConfigFromOptions 保持一致：未配置发件人名称时回落站点名称
+	if cfg.FromName == "" {
+		cfg.FromName = common.Config().GetString(ctx, "site_name")
+	}
+
+	recipient, err := s.resolveTestEmailRecipient(ctx, req.To)
+	if err != nil {
+		return nil, err
+	}
+
+	siteName := common.Config().GetString(ctx, "site_name")
+	now := time.Now().Format("2006-01-02 15:04:05")
+	body := fmt.Sprintf(`
+		<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+			<h2>邮件配置测试</h2>
+			<p>这是一封来自 <strong>%s</strong> 的测试邮件，收到即表示 SMTP 配置可用。</p>
+			<p style="color: #666;">发件人：%s<br/>发送时间：%s</p>
+		</div>
+	`, siteName, cfg.From, now)
+
+	// 单次投递 + 20s 上限：Send/SendOnce 内的等待可被 ctx 打断，超时能真正生效
+	testCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	sendErr := common.NewEmailSender(cfg).SendOnce(testCtx, &common.EmailMessage{
+		To:           recipient,
+		Subject:      fmt.Sprintf("[%s] 邮件配置测试", siteName),
+		BodyHTML:     body,
+		TemplateCode: emailTestTemplateCode,
+	})
+	elapsed := time.Since(start).Milliseconds()
+	if sendErr != nil {
+		g.Log().Warningf(ctx, "email config test: send to %s failed: %v", recipient, sendErr)
+		return nil, common.NewBadRequestError("测试邮件发送失败：" + sendErr.Error())
+	}
+
+	return &v1.AdminEmailTestRes{
+		Sent:      true,
+		Recipient: recipient,
+		ElapsedMs: elapsed,
+		Message:   "测试邮件已发送至 " + recipient + "，请查收（含垃圾邮件箱）",
+	}, nil
+}
+
+// resolveTestEmailRecipient 解析测试邮件收件人：显式传入优先，留空则取当前登录管理员的邮箱。
+func (s *sAdmin) resolveTestEmailRecipient(ctx context.Context, to string) (string, error) {
+	recipient := strings.TrimSpace(to)
+	if recipient == "" {
+		var admin *struct {
+			Email string `json:"email"`
+		}
+		if err := dao.SysAdminUsers.Ctx(ctx).
+			Where("id", common.GetCtxUserID(ctx)).
+			Fields("email").
+			Scan(&admin); common.IgnoreScanNoRows(err) != nil {
+			return "", err
+		}
+		if admin != nil {
+			recipient = strings.TrimSpace(admin.Email)
+		}
+	}
+	if recipient == "" {
+		return "", common.NewBadRequestError("请填写收件人，或先为当前管理员账号配置邮箱")
+	}
+	if !common.IsValidEmail(recipient) {
+		return "", common.NewBadRequestError("收件人邮箱格式不正确")
+	}
+	return recipient, nil
 }

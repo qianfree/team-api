@@ -29,6 +29,9 @@ type EmailConfig struct {
 	UseTLS   bool
 }
 
+// emailMaxAttempts 单封邮件的最大投递尝试次数（含首次），失败间隔 2s / 4s。
+const emailMaxAttempts = 3
+
 // BasicEmailSender provides email sending capability with:
 // - SMTP connection
 // - Template rendering (Go templates)
@@ -55,11 +58,12 @@ type EmailMessage struct {
 	UserID       int64
 }
 
-// Send sends an email message with retry logic.
+// Send sends an email message with retry logic (3 attempts, 2s/4s backoff).
+// 重试间隔可被 ctx 取消打断：调用方设了超时（如配置连通性测试）时不会被死等拖满。
 func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
 	var lastErr error
 
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < emailMaxAttempts; attempt++ {
 		lastErr = s.sendWithRetry(ctx, msg, attempt)
 		if lastErr == nil {
 			// Log success
@@ -67,35 +71,49 @@ func (s *BasicEmailSender) Send(ctx context.Context, msg *EmailMessage) error {
 			return nil
 		}
 
-		if attempt < 2 {
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		if attempt < emailMaxAttempts-1 {
+			if err := sleepCtx(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
+				// ctx 已取消/超时：不再重试，按失败记录当前已知错误
+				s.logSend(ctx, msg, "failed", lastErr, attempt)
+				return lastErr
+			}
 		}
 	}
 
 	// Log failure
-	s.logSend(ctx, msg, "failed", lastErr, 2)
+	s.logSend(ctx, msg, "failed", lastErr, emailMaxAttempts-1)
 	return lastErr
+}
+
+// SendOnce 只尝试一次投递，不做重试，同样写入 ntf_send_log。
+// 用于配置连通性测试等需要「快速失败并拿到真实 SMTP 错误」的场景——
+// 认证失败、端口不通这类错误重试三次也不会变好，只会让管理员多等十几秒。
+func (s *BasicEmailSender) SendOnce(ctx context.Context, msg *EmailMessage) error {
+	if err := s.sendWithRetry(ctx, msg, 0); err != nil {
+		s.logSend(ctx, msg, "failed", err, 0)
+		return err
+	}
+	s.logSend(ctx, msg, "sent", nil, 0)
+	return nil
+}
+
+// sleepCtx 等待 d 或直到 ctx 结束，ctx 先结束时返回其错误。
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // SendTemplate sends an email using a template from ntf_templates.
 func (s *BasicEmailSender) SendTemplate(ctx context.Context, to, templateCode string, variables map[string]any) error {
-	// Load template
-	var tpl *struct {
-		Subject      string `json:"subject"`
-		BodyTemplate string `json:"body_template"`
-		Channel      string `json:"channel"`
-	}
-
-	err := dao.NtfTemplates.Ctx(ctx).
-		Where("code", templateCode).
-		Where("status", "active").
-		Scan(&tpl)
+	tpl, err := loadNotificationTemplate(ctx, templateCode)
 	if err != nil {
-		return gerror.Wrapf(err, "load template %s", templateCode)
-	}
-
-	if tpl.BodyTemplate == "" {
-		return gerror.Newf("template %s not found", templateCode)
+		return err
 	}
 
 	// Render subject

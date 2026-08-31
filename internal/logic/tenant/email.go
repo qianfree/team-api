@@ -175,8 +175,9 @@ func (s *sTenant) ChangeEmail(ctx context.Context, req *v1.TenantChangeEmailReq)
 	}
 
 	// Send notification emails (fire and forget)
+	// WithoutCancel：脱离请求取消但保留 request_id 等链路值
+	bgCtx := context.WithoutCancel(ctx)
 	go func() {
-		bgCtx := context.Background()
 		emailCfg, err := common.EmailConfigFromOptions(bgCtx)
 		if err != nil {
 			return

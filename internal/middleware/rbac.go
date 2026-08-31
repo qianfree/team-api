@@ -234,6 +234,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/settings/categories", perm: "system:view"},
 	{method: "GET", prefix: "/api/admin/settings/", perm: "system:view"},
 	{method: "PUT", prefix: "/api/admin/settings/", perm: "system:edit"},
+	// 配置连通性测试（对象存储 / 邮件）：会真实调用外部服务并可能发信，按写权限管控
+	{method: "POST", prefix: "/api/admin/settings/", perm: "system:edit"},
 	// Payment settings & channels (system scope)
 	{method: "GET", path: "/api/admin/payment-channels", perm: "system:view"},
 	{method: "PUT", prefix: "/api/admin/payment-channels/", perm: "system:edit"},

@@ -815,3 +815,29 @@ HMGET 对不存在的 key/字段返回 Redis nil，但 gredis 把它们包装成
 - 同一份状态有多个读取方时（调度用 gconv、管理后台用 Sscanf），**解析方式必须统一**，否则同一数据在不同页面表现不同，故障期误导排查方向。
 
 排查信号：某项指标「本该回落默认值却全是 0」；同一数据 UI 显示"无数据"而后台计算按 0 处理；`grep -n 'IsNil()' ` 命中 Redis 读取路径。
+
+### 2026-08-31：`g.Cfg().MustGet` 读取不存在的配置段静默返回空值，告警邮件长期发送失败
+
+**问题**：监控告警的邮件通知从上线起就没成功发出过，`ntf_send_log` 里堆满 `status=failed` 的记录，错误信息是 SMTP 连接失败——但管理后台「系统设置 → 邮件配置」里 SMTP 配置完全正常，验证码等其他邮件都能正常投递。
+
+**原因**：`internal/logic/monitor/alert_notify.go` 的 `sendAlertEmailToAdmins` 自己拼 `EmailConfig`，读的是配置文件：
+
+```go
+sender := common.NewEmailSender(&common.EmailConfig{
+    Host: g.Cfg().MustGet(ctx, "email.smtp.host").String(),   // ← 配置文件里根本没有 email 段
+    Port: g.Cfg().MustGet(ctx, "email.smtp.port").Int(),
+    ...
+})
+```
+
+`manifest/config/config.yaml` 中并不存在 `email` 段。`MustGet` 的 `Must` 只针对**读取过程出错**（配置文件损坏等）才 panic，**「键不存在」不是错误**：它返回一个空 `*gvar.Var`，`.String()` 得到 `""`、`.Int()` 得到 `0`。于是 Host 为空、Port 为 0，每封告警邮件都要走满 3 次重试才失败，而且失败原因看起来像"SMTP 服务器有问题"，与真正的原因（配置压根没读到）南辕北辙。
+
+**修复**：改为与其余三条发信链路一致，走设置注册表 `common.EmailConfigFromOptions(ctx)`（数据源 `sys_options`），配置缺失时返回明确错误并直接跳过发送。至此邮件配置的唯一来源是数据库，配置文件不再参与。
+
+**正确做法（通用规则）**：
+
+- **`MustGet` 不保证键存在**——它只保证读取过程无错。对必填配置要显式判空并给出可读错误，不要让空值一路流进业务逻辑变成"连不上/额度为 0/超时 0 秒"这类误导性症状。
+- **运行期可由管理员调整的配置一律走设置注册表 `common.Config()`（`sys_options`），不要放配置文件**：配置文件只承载启动期基础设施配置（数据库、Redis、监听端口）。两套来源并存时，改了后台却不生效、或某条链路读到空配置，是最难排查的一类问题。
+- 同一份配置有多个消费方时，**必须收敛到同一个加载函数**（本例为 `EmailConfigFromOptions`），禁止各处自行拼装配置结构体。
+
+排查信号：某个功能"配置明明填了却不生效"，而同类功能正常；`grep -rn "g.Cfg()" ` 命中的键在 `manifest/config/*.yaml` 中搜不到。

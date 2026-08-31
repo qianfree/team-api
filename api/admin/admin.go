@@ -246,6 +246,7 @@ type IAdminV1 interface {
 	AdminSettingsGet(ctx context.Context, req *v1.AdminSettingsGetReq) (res *v1.AdminSettingsGetRes, err error)
 	AdminSettingsUpdate(ctx context.Context, req *v1.AdminSettingsUpdateReq) (res *v1.AdminSettingsUpdateRes, err error)
 	AdminStorageTest(ctx context.Context, req *v1.AdminStorageTestReq) (res *v1.AdminStorageTestRes, err error)
+	AdminEmailTest(ctx context.Context, req *v1.AdminEmailTestReq) (res *v1.AdminEmailTestRes, err error)
 	TaskList(ctx context.Context, req *v1.TaskListReq) (res *v1.TaskListRes, err error)
 	TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (res *v1.TaskDetailRes, err error)
 	TaskCancel(ctx context.Context, req *v1.TaskCancelReq) (res *v1.TaskCancelRes, err error)
