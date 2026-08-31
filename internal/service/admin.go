@@ -547,6 +547,10 @@ type (
 		UsageLogCleanupCreate(ctx context.Context, req *v1.UsageLogCleanupCreateReq) (*v1.UsageLogCleanupCreateRes, error)
 		UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanupListReq) (*v1.UsageLogCleanupListRes, error)
 		UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error)
+		// GetWorkbenchSummary 工作台汇总。
+		GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSummaryReq) (*v1.AdminWorkbenchSummaryRes, error)
+		// GetWorkbenchBadges 菜单红点计数（与 summary 共用缓存，不额外压库）。
+		GetWorkbenchBadges(ctx context.Context, _ *v1.AdminWorkbenchBadgeReq) (*v1.AdminWorkbenchBadgeRes, error)
 	}
 )
 

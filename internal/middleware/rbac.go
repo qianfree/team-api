@@ -306,6 +306,11 @@ var adminPermissionRules = []permissionRule{
 
 	// ── dashboard and async task management ──
 	{method: "GET", prefix: "/api/admin/dashboard", perm: "dashboard:view"},
+	// 工作台读接口只要求 dashboard:view：跨域条目由 logic 层按 channel:view / billing:view /
+	// support:view 等逐条过滤，进得来不等于看得到，权限收敛在数据侧而非路由侧。
+	// 工作台没有写接口 —— 待办由源表实时派生，唯一的处置方式是去源头解决。
+	{method: "GET", path: "/api/admin/workbench/summary", perm: "dashboard:view"},
+	{method: "GET", path: "/api/admin/workbench/badges", perm: "dashboard:view"},
 	{method: "GET", path: "/api/admin/tasks", perm: "task:view"},
 	{method: "GET", prefix: "/api/admin/tasks/", perm: "task:view"},
 	{method: "POST", prefix: "/api/admin/tasks/", suffix: "/cancel", perm: "task:edit"},
