@@ -15,6 +15,7 @@ import (
 	"github.com/qianfree/team-api/internal/logic/relay"
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/taskchannel"
 )
 
@@ -492,21 +493,22 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 	}
 
 	record := &common.UsageRecord{
-		TenantID:         task.TenantID,
-		UserID:           task.UserID,
-		ApiKeyID:         task.ApiKeyID,
-		ChannelID:        task.ChannelID,
-		ChannelName:      channelName,
-		ChannelType:      channelType,
-		ModelName:        task.ModelName,
-		RelayMode:        int(constant.RelayModeVideoGenerations),
-		RequestType:      3, // async
-		LatencyMs:        float64(latencyMs),
-		IsStream:         false,
-		Success:          success,
-		RequestID:        task.RequestID,
-		Status:           status,
-		ErrorMessage:     errMsg,
+		TenantID:    task.TenantID,
+		UserID:      task.UserID,
+		ApiKeyID:    task.ApiKeyID,
+		ChannelID:   task.ChannelID,
+		ChannelName: channelName,
+		ChannelType: channelType,
+		ModelName:   task.ModelName,
+		RelayMode:   int(constant.RelayModeVideoGenerations),
+		RequestType: 3, // async
+		LatencyMs:   float64(latencyMs),
+		IsStream:    false,
+		Success:     success,
+		RequestID:   task.RequestID,
+		Status:      status,
+		// errMsg 可能来自上游 FailReason 原文，租户端用量日志可见，抹除其中的 URL/IP
+		ErrorMessage:     helper.RedactMessage(errMsg),
 		PromptTokens:     task.PromptTokens,
 		CompletionTokens: task.CompletionTokens,
 		TotalTokens:      task.TotalTokens,
