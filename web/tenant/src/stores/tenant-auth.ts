@@ -61,6 +61,11 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
 
   const isOwner = computed(() => user.value?.role === TENANT_ROLES.OWNER)
 
+  // 「管理层」判定：Layout 的侧栏分组、路由落地页都要用，避免各处重复写角色比较
+  const isManager = computed(
+    () => user.value?.role === TENANT_ROLES.OWNER || user.value?.role === TENANT_ROLES.ADMIN,
+  )
+
   function persist(): void {
     try {
       const data = {
@@ -233,6 +238,7 @@ export const useTenantAuthStore = defineStore('tenant-auth', () => {
     rememberMe,
     isLoggedIn,
     isOwner,
+    isManager,
     login,
     applyTokensFrom2FA,
     register,

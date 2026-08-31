@@ -72,8 +72,10 @@ router.beforeEach(async (to) => {
 	const allowedRoles = to.meta.roles
 
 	if (allowedRoles && role && !allowedRoles.includes(role)) {
-		// Redirect member to their first accessible page (models)
-		return { name: 'TenantModels' }
+		// 无权访问时回落到该角色自己的主页：member 回个人看板，
+		// 管理层回仪表盘。原先一律弹到「可用模型」，等于让成员永远错过个人看板。
+		const isManager = role === 'owner' || role === 'admin'
+		return { name: isManager ? 'TenantDashboard' : 'TenantPersonalDashboard' }
 	}
 
 	return true

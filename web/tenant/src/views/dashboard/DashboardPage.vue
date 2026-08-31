@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatBilling } from '@/composables/useCurrency'
+import { formatNumber } from '@/utils/renderUtils'
 import Icon from '@/components/common/Icon.vue'
 import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
@@ -21,6 +22,30 @@ interface WalletInfo {
 	warning_threshold: number
 }
 
+interface PlanQuota {
+	plan_name: string
+	quota_tokens: number
+	used_tokens: number
+	remaining_tokens: number
+	usage_percent: number
+	cycle_start: string
+	cycle_end: string
+}
+
+interface CostTrend {
+	current_cost: number
+	previous_cost: number
+	delta_percent: number
+	has_previous: boolean
+}
+
+interface WasteStat {
+	wasted_cost: number
+	share_percent: number
+	failed_requests: number
+	retried_requests: number
+}
+
 interface DashboardData {
 	today: DayStats | null
 	month: DayStats | null
@@ -29,6 +54,9 @@ interface DashboardData {
 	tpm: number
 	active_keys: number
 	member_count: number
+	plan: PlanQuota | null
+	cost_trend: CostTrend
+	waste: WasteStat
 }
 
 interface TrendPoint {
@@ -55,6 +83,10 @@ interface MemberUsageItem {
 	input_tokens: number
 	output_tokens: number
 	total_cost: number
+	delta_percent: number
+	has_previous: boolean
+	quota_percent: number
+	has_quota: boolean
 }
 
 interface PredictionData {
@@ -66,22 +98,40 @@ interface PredictionData {
 	message?: string
 }
 
-interface BudgetAlert {
-	members: Array<{
-		id: number
-		username: string
-		display_name: string
-		quota_limit: number
-		used_cost: number
-		usage_percent: number
-	}>
-	projects: Array<{
-		id: number
-		name: string
-		budget_limit: number
-		used_cost: number
-		usage_percent: number
-	}>
+interface MemberAlert {
+	id: number
+	username: string
+	display_name: string
+	quota_limit: number
+	quota_used: number
+	usage_percent: number
+	next_reset_at?: string
+}
+
+interface ProjectAlert {
+	id: number
+	name: string
+	budget: number
+	used: number
+	usage_percent: number
+}
+
+interface TeamHealth {
+	total_requests: number
+	success_rate: number
+	p95_ms: number
+	avg_first_token_ms: number
+	cache_hit_ratio: number
+	cache_read_tokens: number
+}
+
+interface ProjectBudgetItem {
+	id: number
+	name: string
+	budget: number
+	used: number
+	usage_percent: number
+	has_budget: boolean
 }
 
 const authStore = useTenantAuthStore()
@@ -89,27 +139,23 @@ const loading = ref(false)
 const chartsLoading = ref(false)
 const memberUsageLoading = ref(false)
 const alertsLoading = ref(false)
-const selectedDays = ref(7)
+const healthLoading = ref(false)
+const budgetLoading = ref(false)
+// 管理者看趋势默认看 30 天：经营视角关心的是月度走势，不是最近一周
+const selectedDays = ref(30)
 const dashboardData = ref<DashboardData | null>(null)
 const trendData = ref<TrendPoint[]>([])
 const modelData = ref<ModelItem[]>([])
 const memberUsageData = ref<MemberUsageItem[]>([])
+const memberPrevAvailable = ref(true)
 const predictionData = ref<PredictionData | null>(null)
-const alertsData = ref<BudgetAlert | null>(null)
-
-const safeDay = (day: DayStats | null | undefined): DayStats =>
-	day || { requests: 0, input_tokens: 0, output_tokens: 0, total_cost: 0 }
+const memberAlerts = ref<MemberAlert[]>([])
+const projectAlerts = ref<ProjectAlert[]>([])
+const teamHealth = ref<TeamHealth | null>(null)
+const projectBudgets = ref<ProjectBudgetItem[]>([])
 
 const safeWallet = (wallet: WalletInfo | null | undefined): WalletInfo =>
 	wallet || { balance: 0, frozen_balance: 0, available: 0, warning_threshold: 0 }
-
-function formatNumber(value: unknown): string {
-	const number = Number(value) || 0
-	if (number >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(1)}B`
-	if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`
-	if (number >= 1_000) return `${(number / 1_000).toFixed(1)}K`
-	return number.toLocaleString('zh-CN')
-}
 
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(value: unknown): string {
@@ -117,6 +163,12 @@ function formatCost(value: unknown): string {
 	if (number === 0 || number >= 1) return formatBilling(number, 2)
 	if (number >= 0.01) return formatBilling(number, 4)
 	return formatBilling(number, 6)
+}
+
+function formatMs(value: unknown): string {
+	const number = Number(value) || 0
+	if (number >= 1000) return `${(number / 1000).toFixed(2)}s`
+	return `${Math.round(number)}ms`
 }
 
 const greeting = computed(() => {
@@ -136,88 +188,122 @@ const formattedDate = computed(() =>
 	}).format(new Date()),
 )
 
+function toneOf(percent: number): 'ok' | 'warn' | 'crit' {
+	if (percent >= 90) return 'crit'
+	if (percent >= 70) return 'warn'
+	return 'ok'
+}
+
+// 首屏四卡：管理者先看钱——余额、套餐额度、消费与环比、还能撑几天。
+// 请求数与 Token 降级为脚注，不再占据主位。
 const coreStats = computed(() => {
 	if (!dashboardData.value) return []
-	const today = safeDay(dashboardData.value.today)
-	const month = safeDay(dashboardData.value.month)
-	const monthTokens = month.input_tokens + month.output_tokens
-	return [
-		{
-			label: '今日请求',
-			value: formatNumber(today.requests),
-			sub: `输入 ${formatNumber(today.input_tokens)} · 输出 ${formatNumber(today.output_tokens)}`,
-			trend: '实时统计',
-				icon: 'play',
-				color: '#7667f6',
-				soft: 'rgba(118, 103, 246, 0.14)',
-		},
-		{
-			label: '本月请求',
-			value: formatNumber(month.requests),
-			sub: `日均 ${formatNumber(month.requests / Math.max(new Date().getDate(), 1))} 次`,
-			trend: '本月累计',
-				icon: 'chart',
-				color: '#3b9df8',
-				soft: 'rgba(59, 157, 248, 0.14)',
-		},
-		{
-			label: '本月 Token',
-			value: formatNumber(monthTokens),
-			sub: `输入 ${formatNumber(month.input_tokens)} · 输出 ${formatNumber(month.output_tokens)}`,
-			trend: '调用消耗',
-				icon: 'bolt',
-				color: '#22c7b7',
-				soft: 'rgba(34, 199, 183, 0.14)',
-		},
-		{
-			label: '本月消费',
-			value: formatCost(month.total_cost),
-			sub: `今日 ${formatCost(today.total_cost)}`,
-			trend: '费用明细',
-				icon: 'creditCard',
-				color: '#9a58ee',
-				soft: 'rgba(154, 88, 238, 0.14)',
-		},
-	]
-})
-
-const accountStats = computed(() => {
-	if (!dashboardData.value) return []
-	const wallet = safeWallet(dashboardData.value.wallet)
+	const data = dashboardData.value
+	const wallet = safeWallet(data.wallet)
+	const trend = data.cost_trend
 	const prediction = predictionData.value
-	let predictionValue = '安全'
-	let predictionTone = 'text-emerald-600'
-	let predictionDescription = prediction?.message || '余额状态稳定'
+	const cards: Array<Record<string, any>> = []
 
-	if (prediction?.will_exhaust && prediction.days_until_exhaust !== undefined) {
-		predictionValue = `${prediction.days_until_exhaust} 天`
-		predictionTone = prediction.days_until_exhaust <= 7 ? 'text-red-500' : 'text-amber-500'
-		predictionDescription = `预计 ${prediction.exhaust_date || '近期'} 耗尽`
+	cards.push({
+		key: 'balance',
+		label: '钱包可用余额',
+		value: formatCost(wallet.available),
+		sub: `另有 ${formatCost(wallet.frozen_balance)} 处于预扣冻结`,
+		badge: '实时',
+		icon: 'wallet',
+		color: '#0d9488',
+		soft: 'rgba(13, 148, 136, 0.14)',
+	})
+
+	if (data.plan) {
+		const plan = data.plan
+		cards.push({
+			key: 'plan',
+			label: '套餐额度剩余',
+			value: plan.quota_tokens > 0 ? `${formatNumber(plan.remaining_tokens)} Token` : '不限量',
+			sub: plan.quota_tokens > 0
+				? `已用 ${plan.usage_percent.toFixed(0)}% · 周期 ${plan.cycle_start} 至 ${plan.cycle_end}`
+				: `${plan.plan_name} · 未设 Token 上限`,
+			badge: plan.plan_name || '套餐',
+			icon: 'package',
+			color: '#8b5cf6',
+			soft: 'rgba(139, 92, 246, 0.14)',
+			progress: plan.quota_tokens > 0 ? { percent: Math.min(plan.usage_percent, 100), tone: toneOf(plan.usage_percent) } : null,
+		})
+	} else {
+		cards.push({
+			key: 'today',
+			label: '今日请求',
+			value: formatNumber(data.today?.requests ?? 0),
+			sub: `今日消费 ${formatCost(data.today?.total_cost ?? 0)}`,
+			badge: '今日',
+			icon: 'play',
+			color: '#8b5cf6',
+			soft: 'rgba(139, 92, 246, 0.14)',
+		})
 	}
 
-	return [
-		{ label: '可用余额', value: formatCost(wallet.available), description: `冻结 ${formatCost(wallet.frozen_balance)}`, icon: 'wallet', tone: 'text-violet-600', background: 'bg-violet-50' },
-		{ label: '活跃密钥', value: String(dashboardData.value.active_keys || 0), description: '个 API Key', icon: 'key', tone: 'text-blue-600', background: 'bg-blue-50' },
-		{ label: '团队成员', value: String(dashboardData.value.member_count || 0), description: '位活跃成员', icon: 'users', tone: 'text-cyan-600', background: 'bg-cyan-50' },
-		{ label: '余额预测', value: predictionValue, description: predictionDescription, icon: 'trendingUp', tone: predictionTone, background: 'bg-emerald-50' },
-	]
+	cards.push({
+		key: 'cost',
+		label: '本月消费',
+		value: formatCost(trend?.current_cost ?? data.month?.total_cost ?? 0),
+		sub: trend?.has_previous
+			? `环比上月同期 ${trend.delta_percent > 0 ? '↑' : trend.delta_percent < 0 ? '↓' : '→'} ${Math.abs(trend.delta_percent).toFixed(1)}% · ${formatNumber(data.month?.requests ?? 0)} 次调用`
+			: `${formatNumber(data.month?.requests ?? 0)} 次调用 · 上月同期无数据`,
+		badge: '本月',
+		icon: 'currencyDollar',
+		color: '#f59e0b',
+		soft: 'rgba(245, 158, 11, 0.14)',
+		deltaTone: trend?.has_previous ? (trend.delta_percent > 0 ? 'up' : trend.delta_percent < 0 ? 'down' : '') : '',
+	})
+
+	let forecastValue = '充足'
+	let forecastSub = prediction?.message || '按当前速度余额稳定'
+	let forecastBadge = '预测'
+	let forecastColor = '#10b981'
+	let forecastSoft = 'rgba(16, 185, 129, 0.14)'
+	if (prediction?.will_exhaust && prediction.days_until_exhaust !== undefined) {
+		forecastValue = `${prediction.days_until_exhaust} 天`
+		forecastSub = `按日均 ${formatCost(prediction.daily_avg_cost)} 估算 · 预计 ${prediction.exhaust_date || '近期'} 耗尽`
+		forecastBadge = prediction.days_until_exhaust <= 7 ? '需处理' : '需关注'
+		forecastColor = prediction.days_until_exhaust <= 7 ? '#ef4444' : '#f59e0b'
+		forecastSoft = prediction.days_until_exhaust <= 7 ? 'rgba(239, 68, 68, 0.14)' : 'rgba(245, 158, 11, 0.14)'
+	}
+	cards.push({
+		key: 'forecast',
+		label: '余额可支撑',
+		value: forecastValue,
+		sub: forecastSub,
+		badge: forecastBadge,
+		icon: 'hourglass',
+		color: forecastColor,
+		soft: forecastSoft,
+	})
+
+	return cards
 })
 
 const alertItems = computed(() => {
-	const members = (alertsData.value?.members || []).map((item) => ({
-		id: `member-${item.id}`,
-		name: item.display_name || item.username,
-		percent: item.usage_percent,
-		type: '成员额度',
-	}))
-	const projects = (alertsData.value?.projects || []).map((item) => ({
+	const projects = projectAlerts.value.map((item) => ({
 		id: `project-${item.id}`,
 		name: item.name,
 		percent: item.usage_percent,
 		type: '项目预算',
+		detail: `${formatCost(item.used)} / ${formatCost(item.budget)}`,
 	}))
-	return [...members, ...projects].slice(0, 3)
+	const members = memberAlerts.value.map((item) => ({
+		id: `member-${item.id}`,
+		name: item.display_name || item.username,
+		percent: item.usage_percent,
+		type: '成员额度',
+		detail: `${formatCost(item.quota_used)} / ${formatCost(item.quota_limit)}`,
+	}))
+	return [...projects, ...members].sort((a, b) => b.percent - a.percent)
 })
+
+const visibleAlerts = computed(() => alertItems.value.slice(0, 4))
+
+const budgetedProjects = computed(() => projectBudgets.value.filter((item) => item.has_budget))
 
 function ensureArray<T>(value: unknown): T[] {
 	return Array.isArray(value) ? value : []
@@ -265,9 +351,11 @@ async function fetchAlerts() {
 	alertsLoading.value = true
 	try {
 		const response: any = await request.get('/tenant/dashboard/budget-alerts')
-		alertsData.value = response.data?.data || null
+		memberAlerts.value = ensureArray(response.data?.data?.members)
+		projectAlerts.value = ensureArray(response.data?.data?.projects)
 	} catch {
-		alertsData.value = null
+		memberAlerts.value = []
+		projectAlerts.value = []
 	} finally {
 		alertsLoading.value = false
 	}
@@ -280,10 +368,36 @@ async function fetchMemberUsage() {
 			params: { days: selectedDays.value, limit: 8 },
 		})
 		memberUsageData.value = ensureArray(response.data?.data?.list)
+		memberPrevAvailable.value = response.data?.data?.prev_available !== false
 	} catch {
 		memberUsageData.value = []
+		memberPrevAvailable.value = false
 	} finally {
 		memberUsageLoading.value = false
+	}
+}
+
+async function fetchTeamHealth() {
+	healthLoading.value = true
+	try {
+		const response: any = await request.get('/tenant/dashboard/team-health')
+		teamHealth.value = response.data?.data || null
+	} catch {
+		teamHealth.value = null
+	} finally {
+		healthLoading.value = false
+	}
+}
+
+async function fetchProjectBudgets() {
+	budgetLoading.value = true
+	try {
+		const response: any = await request.get('/tenant/dashboard/project-budget')
+		projectBudgets.value = ensureArray(response.data?.data?.list)
+	} catch {
+		projectBudgets.value = []
+	} finally {
+		budgetLoading.value = false
 	}
 }
 
@@ -293,6 +407,8 @@ function refreshAll() {
 	void fetchPrediction()
 	void fetchAlerts()
 	void fetchMemberUsage()
+	void fetchTeamHealth()
+	void fetchProjectBudgets()
 }
 
 watch(selectedDays, () => {
@@ -330,7 +446,7 @@ onBeforeUnmount(() => {
 				<h1 class="text-2xl font-bold tracking-tight text-slate-900 md:text-[28px]">
 					{{ greeting }}，{{ authStore.user?.username || 'Admin' }} <span class="inline-block origin-bottom-right animate-wave">👋</span>
 				</h1>
-				<p class="mt-1 text-sm text-slate-400">今天是 {{ formattedDate }}，查看团队 API 的最新运行状态。</p>
+				<p class="mt-1 text-sm text-slate-400">今天是 {{ formattedDate }}，以下是整个组织的用量与开支。</p>
 			</div>
 			<div class="flex items-center gap-3">
 				<div v-if="dashboardData" class="rate-pill" title="最近 60 秒滑动窗口实时速率">
@@ -348,69 +464,114 @@ onBeforeUnmount(() => {
 		</section>
 
 		<section v-if="loading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-				<div v-for="index in 4" :key="index" class="stat-card h-[152px]">
-					<div class="flex items-center justify-between">
-						<div class="skeleton h-10 w-10 rounded-xl"></div>
-						<div class="skeleton h-5 w-16 rounded-full"></div>
-					</div>
-					<div class="skeleton mt-4 h-8 w-28"></div>
-					<div class="skeleton mt-3 h-3.5 w-40"></div>
+			<div v-for="index in 4" :key="index" class="stat-card h-[152px]">
+				<div class="flex items-center justify-between">
+					<div class="skeleton h-10 w-10 rounded-xl"></div>
+					<div class="skeleton h-5 w-16 rounded-full"></div>
+				</div>
+				<div class="skeleton mt-4 h-8 w-28"></div>
+				<div class="skeleton mt-3 h-3.5 w-40"></div>
 			</div>
 		</section>
 
 		<section v-else-if="dashboardData" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 			<article
 				v-for="stat in coreStats"
-				:key="stat.label"
+				:key="stat.key"
 				class="stat-card metric-card group"
 				:style="{ '--metric-color': stat.color, '--metric-soft': stat.soft }"
 			>
-					<div class="metric-accent" aria-hidden="true"></div>
-					<div class="flex items-center justify-between gap-3">
-						<div class="flex min-w-0 items-center gap-3">
-							<div class="metric-icon">
-								<Icon :name="stat.icon" size="md" />
-							</div>
-							<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
+				<div class="metric-accent" aria-hidden="true"></div>
+				<div class="flex items-center justify-between gap-3">
+					<div class="flex min-w-0 items-center gap-3">
+						<div class="metric-icon">
+							<Icon :name="stat.icon" size="md" />
 						</div>
-						<span class="metric-badge">{{ stat.trend }}</span>
+						<p class="truncate text-sm font-semibold text-slate-600">{{ stat.label }}</p>
 					</div>
-					<p class="metric-value" :title="stat.value">{{ stat.value }}</p>
-					<div class="metric-detail">
-						<span class="metric-detail-dot" aria-hidden="true"></span>
-						<span class="truncate">{{ stat.sub }}</span>
-					</div>
+					<span class="metric-badge">{{ stat.badge }}</span>
+				</div>
+				<p class="metric-value" :title="stat.value">{{ stat.value }}</p>
+				<div v-if="stat.progress" class="progress mt-3">
+					<div class="progress-bar" :class="`bar-${stat.progress.tone}`" :style="{ width: `${stat.progress.percent}%` }"></div>
+				</div>
+				<div class="metric-detail">
+					<span class="metric-detail-dot" aria-hidden="true"></span>
+					<span class="truncate" :class="stat.deltaTone === 'up' ? 'text-red-500' : stat.deltaTone === 'down' ? 'text-emerald-600' : ''">{{ stat.sub }}</span>
+				</div>
 			</article>
 		</section>
 
 		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
-			<TokenTrendChart :data="trendData" :loading="chartsLoading" :days="selectedDays" @change-days="selectedDays = $event" />
-			<div class="card card-prominent p-5 sm:p-6">
-				<div class="mb-4 flex items-center justify-between">
+			<TokenTrendChart
+				:data="trendData"
+				:loading="chartsLoading"
+				:days="selectedDays"
+				title="消费趋势"
+				:subtitle="`近 ${selectedDays} 天，按天聚合`"
+				@change-days="selectedDays = $event"
+			/>
+
+			<div class="card card-prominent flex flex-col">
+				<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 					<div>
-						<h2 class="text-base font-semibold text-slate-900">账户概览</h2>
-						<p class="mt-0.5 text-xs text-slate-400">余额、成员与密钥状态</p>
+						<h2 class="text-base font-semibold text-slate-900">需要处理</h2>
+						<p class="mt-0.5 text-xs text-slate-400">超阈预算与被浪费掉的支出</p>
 					</div>
-					<span v-if="!alertsLoading" class="status-dot" :class="alertItems.length ? 'status-warning' : 'status-ok'">{{ alertItems.length ? '需关注' : '运行正常' }}</span>
+					<span v-if="!alertsLoading" class="status-dot" :class="alertItems.length ? 'status-warning' : 'status-ok'">
+						{{ alertItems.length ? `${alertItems.length} 项` : '运行正常' }}
+					</span>
 				</div>
-				<div class="grid grid-cols-2 gap-3">
-					<div v-for="item in accountStats" :key="item.label" class="rounded-2xl border border-white/80 bg-white/55 p-3.5">
-						<div class="mb-3 flex h-8 w-8 items-center justify-center rounded-xl" :class="[item.background, item.tone]">
-							<Icon :name="item.icon" size="sm" />
-						</div>
-						<p class="text-xs text-slate-400">{{ item.label }}</p>
-						<p class="mt-1 truncate text-base font-bold" :class="item.tone">{{ item.value }}</p>
-						<p class="mt-1 truncate text-[11px] text-slate-400">{{ item.description }}</p>
+
+				<div class="px-5 py-4 sm:px-6">
+					<div v-if="alertsLoading" class="space-y-2">
+						<div v-for="index in 3" :key="index" class="skeleton h-12 rounded-xl"></div>
 					</div>
-				</div>
-				<div v-if="alertItems.length" class="mt-4 space-y-2 border-t border-slate-100 pt-4">
-					<div v-for="alert in alertItems" :key="alert.id" class="flex items-center gap-3 rounded-xl bg-amber-50/80 px-3 py-2.5">
-						<Icon name="exclamationTriangle" size="sm" class="flex-shrink-0 text-amber-500" />
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-xs font-medium text-slate-700">{{ alert.name }}</p>
-							<p class="text-[10px] text-slate-400">{{ alert.type }}</p>
+					<div v-else-if="visibleAlerts.length" class="space-y-2">
+						<div
+							v-for="alert in visibleAlerts"
+							:key="alert.id"
+							class="flex items-center gap-3 rounded-xl px-3 py-2.5"
+							:class="alert.percent >= 90 ? 'bg-red-50/80' : 'bg-amber-50/80'"
+						>
+							<Icon
+								name="exclamationTriangle"
+								size="sm"
+								class="flex-shrink-0"
+								:class="alert.percent >= 90 ? 'text-red-500' : 'text-amber-500'"
+							/>
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-xs font-medium text-slate-700">{{ alert.name }}</p>
+								<p class="text-[10px] text-slate-400">{{ alert.type }} · {{ alert.detail }}</p>
+							</div>
+							<span class="text-xs font-bold tabular-nums" :class="alert.percent >= 90 ? 'text-red-600' : 'text-amber-600'">
+								{{ alert.percent.toFixed(0) }}%
+							</span>
 						</div>
-						<span class="text-xs font-bold text-amber-600">{{ alert.percent }}%</span>
+					</div>
+					<p v-else class="py-3 text-center text-xs text-slate-400">暂无超阈的项目预算或成员额度</p>
+				</div>
+
+				<div v-if="dashboardData" class="mt-auto border-t border-slate-100/80 px-5 py-4 sm:px-6">
+					<div class="flex items-center justify-between gap-3">
+						<div>
+							<p class="text-sm font-semibold text-slate-700">无效支出</p>
+							<p class="mt-0.5 text-[11px] text-slate-400">本月失败请求已产生的费用</p>
+						</div>
+						<div class="text-right">
+							<p class="text-base font-bold tabular-nums text-red-500">{{ formatCost(dashboardData.waste.wasted_cost) }}</p>
+							<p class="mt-0.5 text-[11px] text-slate-400">占本月 {{ dashboardData.waste.share_percent.toFixed(1) }}%</p>
+						</div>
+					</div>
+					<div class="mt-3 grid grid-cols-2 gap-2.5">
+						<div class="mini-tile">
+							<p class="text-[11px] text-slate-400">失败请求</p>
+							<p class="mt-0.5 text-sm font-bold tabular-nums text-slate-700">{{ formatNumber(dashboardData.waste.failed_requests) }}</p>
+						</div>
+						<div class="mini-tile">
+							<p class="text-[11px] text-slate-400">触发重试</p>
+							<p class="mt-0.5 text-sm font-bold tabular-nums text-slate-700">{{ formatNumber(dashboardData.waste.retried_requests) }}</p>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -421,7 +582,9 @@ onBeforeUnmount(() => {
 				<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
 					<div>
 						<h2 class="text-base font-semibold text-slate-900">成员用量排行</h2>
-						<p class="mt-0.5 text-xs text-slate-400">近 {{ selectedDays }} 天团队调用费用</p>
+						<p class="mt-0.5 text-xs text-slate-400">
+							近 {{ selectedDays }} 天团队调用费用{{ memberPrevAvailable ? '，含环比' : '' }}
+						</p>
 					</div>
 					<router-link to="/tenant/members" class="text-xs font-medium text-primary-600 transition-colors hover:text-primary-700">查看全部 →</router-link>
 				</div>
@@ -437,21 +600,130 @@ onBeforeUnmount(() => {
 					<p class="mt-1 text-xs text-slate-400">成员产生调用后将在这里展示</p>
 				</div>
 				<div v-else class="divide-y divide-slate-100/80 px-5 sm:px-6">
-					<div v-for="(member, index) in memberUsageData" :key="member.user_id" class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-3.5">
-						<span class="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold" :class="index < 3 ? 'bg-primary-50 text-primary-600' : 'bg-slate-50 text-slate-400'">{{ index + 1 }}</span>
+					<div
+						v-for="(member, index) in memberUsageData"
+						:key="member.user_id"
+						class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-3.5"
+					>
+						<span
+							class="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold"
+							:class="index < 3 ? 'bg-primary-50 text-primary-600' : 'bg-slate-50 text-slate-400'"
+						>{{ index + 1 }}</span>
 						<div class="flex min-w-0 items-center gap-3">
-							<div class="member-avatar" :style="{ '--avatar-hue': `${(member.user_id * 43) % 360}` }">{{ (member.display_name || member.username).charAt(0).toUpperCase() }}</div>
+							<div class="member-avatar" :style="{ '--avatar-hue': `${(member.user_id * 43) % 360}` }">
+								{{ (member.display_name || member.username).charAt(0).toUpperCase() }}
+							</div>
 							<div class="min-w-0">
-								<p class="truncate text-sm font-medium text-slate-700">{{ member.display_name || member.username }}</p>
-								<p class="truncate text-xs text-slate-400">{{ formatNumber(member.requests) }} 次请求 · {{ formatNumber(member.input_tokens + member.output_tokens) }} Token</p>
+								<div class="flex items-center gap-2">
+									<p class="truncate text-sm font-medium text-slate-700">{{ member.display_name || member.username }}</p>
+									<span v-if="member.has_quota && member.quota_percent >= 80" class="quota-flag">
+										额度 {{ member.quota_percent.toFixed(0) }}%
+									</span>
+								</div>
+								<p class="truncate text-xs text-slate-400">
+									{{ formatNumber(member.requests) }} 次请求 · {{ formatNumber(member.input_tokens + member.output_tokens) }} Token
+								</p>
 							</div>
 						</div>
-						<span class="text-sm font-semibold tabular-nums text-slate-700">{{ formatCost(member.total_cost) }}</span>
+						<div class="flex items-center gap-2.5">
+							<span
+								v-if="memberPrevAvailable && member.has_previous"
+								class="trend-chip"
+								:class="member.delta_percent > 5 ? 'chip-up' : member.delta_percent < -5 ? 'chip-down' : 'chip-flat'"
+							>
+								{{ member.delta_percent > 0 ? '+' : '' }}{{ member.delta_percent.toFixed(1) }}%
+							</span>
+							<span class="min-w-[5rem] text-right text-sm font-semibold tabular-nums text-slate-700">{{ formatCost(member.total_cost) }}</span>
+						</div>
 					</div>
 				</div>
 			</div>
 
 			<ModelDistChart :data="modelData" :loading="chartsLoading" />
+		</section>
+
+		<section class="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.9fr)]">
+			<div class="card card-prominent overflow-hidden">
+				<div class="flex items-center justify-between border-b border-slate-100/80 px-5 py-4 sm:px-6">
+					<div>
+						<h2 class="text-base font-semibold text-slate-900">项目预算</h2>
+						<!-- 预算是累计口径（与 CheckProjectBudget 同源），不随上方时间窗变化 -->
+						<p class="mt-0.5 text-xs text-slate-400">各项目累计已用与预算上限</p>
+					</div>
+					<router-link to="/tenant/projects" class="text-xs font-medium text-primary-600 transition-colors hover:text-primary-700">项目管理 →</router-link>
+				</div>
+
+				<div v-if="budgetLoading" class="space-y-3 p-5 sm:p-6">
+					<div v-for="index in 4" :key="index" class="skeleton h-12 rounded-xl"></div>
+				</div>
+				<div v-else-if="budgetedProjects.length === 0" class="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+					<div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-400">
+						<Icon name="project" size="lg" />
+					</div>
+					<p class="mt-3 text-sm font-medium text-slate-600">暂无设置预算的项目</p>
+					<p class="mt-1 text-xs text-slate-400">为项目设置预算后可在这里跟踪消耗</p>
+				</div>
+				<div v-else class="divide-y divide-slate-100/80 px-5 sm:px-6">
+					<div v-for="project in budgetedProjects" :key="project.id" class="py-3.5">
+						<div class="flex items-center justify-between gap-3">
+							<span class="truncate text-sm font-medium text-slate-700">{{ project.name }}</span>
+							<span class="flex-shrink-0 text-xs tabular-nums text-slate-500">
+								{{ formatCost(project.used) }} / {{ formatCost(project.budget) }}
+								<b
+									class="ml-1.5"
+									:class="project.usage_percent >= 90 ? 'text-red-500' : project.usage_percent >= 70 ? 'text-amber-500' : 'text-slate-600'"
+								>{{ project.usage_percent.toFixed(0) }}%</b>
+							</span>
+						</div>
+						<div class="progress mt-2">
+							<div
+								class="progress-bar"
+								:class="`bar-${toneOf(project.usage_percent)}`"
+								:style="{ width: `${Math.min(project.usage_percent, 100)}%` }"
+							></div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="card card-prominent p-5 sm:p-6">
+				<div class="mb-4 flex items-center justify-between">
+					<div>
+						<h2 class="text-base font-semibold text-slate-900">团队运行质量</h2>
+						<p class="mt-0.5 text-xs text-slate-400">本月整体可靠性与性能</p>
+					</div>
+					<span
+						v-if="teamHealth"
+						class="status-dot"
+						:class="teamHealth.success_rate >= 0.99 ? 'status-ok' : teamHealth.success_rate >= 0.95 ? 'status-warning' : 'status-danger'"
+					>
+						{{ teamHealth.success_rate >= 0.99 ? '运行正常' : teamHealth.success_rate >= 0.95 ? '需关注' : '需处理' }}
+					</span>
+				</div>
+
+				<div v-if="healthLoading" class="grid grid-cols-2 gap-3">
+					<div v-for="index in 4" :key="index" class="skeleton h-[72px] rounded-2xl"></div>
+				</div>
+				<div v-else-if="teamHealth && teamHealth.total_requests > 0" class="grid grid-cols-2 gap-3">
+					<div class="mini-tile">
+						<p class="text-[11px] text-slate-400">调用成功率</p>
+						<p class="mt-1 text-base font-bold tabular-nums text-emerald-600">{{ (teamHealth.success_rate * 100).toFixed(1) }}%</p>
+					</div>
+					<div class="mini-tile">
+						<p class="text-[11px] text-slate-400">P95 响应</p>
+						<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(teamHealth.p95_ms) }}</p>
+					</div>
+					<div class="mini-tile">
+						<p class="text-[11px] text-slate-400">缓存命中率</p>
+						<p class="mt-1 text-base font-bold tabular-nums text-cyan-600">{{ (teamHealth.cache_hit_ratio * 100).toFixed(1) }}%</p>
+					</div>
+					<div class="mini-tile">
+						<p class="text-[11px] text-slate-400">平均首 Token</p>
+						<p class="mt-1 text-base font-bold tabular-nums text-slate-700">{{ formatMs(teamHealth.avg_first_token_ms) }}</p>
+					</div>
+				</div>
+				<p v-else class="py-8 text-center text-xs text-slate-400">本月暂无调用记录</p>
+			</div>
 		</section>
 
 		<div v-if="!loading && !dashboardData" class="card">
@@ -570,6 +842,8 @@ onBeforeUnmount(() => {
 
 .metric-badge {
 	flex-shrink: 0;
+	max-width: 6rem;
+	overflow: hidden;
 	border: 1px solid color-mix(in srgb, var(--metric-color) 20%, transparent);
 	border-radius: 9999px;
 	background: var(--metric-soft);
@@ -577,6 +851,8 @@ onBeforeUnmount(() => {
 	color: var(--metric-color);
 	font-size: 0.625rem;
 	font-weight: 700;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .metric-value {
@@ -609,6 +885,26 @@ onBeforeUnmount(() => {
 	background: var(--metric-color);
 }
 
+/* 进度条语义色，配合全局 .progress / .progress-bar 使用 */
+.bar-ok {
+	background: linear-gradient(90deg, #2dd4bf, #0d9488);
+}
+
+.bar-warn {
+	background: linear-gradient(90deg, #fbbf24, #f59e0b);
+}
+
+.bar-crit {
+	background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+.mini-tile {
+	border: 1px solid rgba(255, 255, 255, 0.85);
+	border-radius: 0.85rem;
+	background: rgba(255, 255, 255, 0.6);
+	padding: 0.7rem 0.8rem;
+}
+
 .member-avatar {
 	display: flex;
 	height: 2.25rem;
@@ -622,6 +918,42 @@ onBeforeUnmount(() => {
 	color: white;
 	font-size: 0.75rem;
 	font-weight: 700;
+}
+
+.quota-flag {
+	flex-shrink: 0;
+	border-radius: 0.35rem;
+	background: #fffbeb;
+	padding: 0.1rem 0.35rem;
+	color: #d97706;
+	font-size: 0.625rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.trend-chip {
+	flex-shrink: 0;
+	border-radius: 0.35rem;
+	padding: 0.15rem 0.4rem;
+	font-size: 0.6875rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.chip-up {
+	background: #fef2f2;
+	color: #dc2626;
+}
+
+.chip-down {
+	background: #ecfdf5;
+	color: #10b981;
+}
+
+.chip-flat {
+	background: #f1f5f9;
+	color: #94a3b8;
 }
 
 .status-dot {
@@ -650,6 +982,11 @@ onBeforeUnmount(() => {
 .status-warning {
 	background: #fffbeb;
 	color: #f59e0b;
+}
+
+.status-danger {
+	background: #fef2f2;
+	color: #ef4444;
 }
 
 @keyframes wave {

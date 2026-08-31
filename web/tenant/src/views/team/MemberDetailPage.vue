@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatNumber } from '@/utils/renderUtils'
 import { ref, computed, onMounted } from 'vue'
 import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter, useRoute } from 'vue-router'
@@ -120,12 +121,6 @@ const isLocked = computed(() => {
 	if (!member.value?.locked_until) return false
 	return new Date(member.value.locked_until).getTime() > Date.now()
 })
-
-function formatNumber(n: number): string {
-	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-	if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-	return String(n)
-}
 
 function formatDate(d: string | null | undefined): string {
 	if (!d) return '--'

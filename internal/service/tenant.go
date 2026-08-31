@@ -82,10 +82,15 @@ type (
 		ModelDistribution(ctx context.Context, req *v1.TenantModelDistributionReq) (*v1.TenantModelDistributionRes, error)
 		// BalancePrediction predicts when the balance will be exhausted.
 		BalancePrediction(ctx context.Context, req *v1.TenantBalancePredictionReq) (*v1.TenantBalancePredictionRes, error)
-		// BudgetAlerts checks member and project budget usage and returns those above 80%.
+		// BudgetAlerts checks member and project budget usage and returns those above the alert threshold.
 		BudgetAlerts(ctx context.Context, req *v1.TenantBudgetAlertsReq) (*v1.TenantBudgetAlertsRes, error)
-		// GetMemberUsageRanking returns top members by usage cost in a given date range.
+		// GetMemberUsageRanking returns top members by usage cost in a given date range,
+		// including the change versus the previous window of the same length.
 		GetMemberUsageRanking(ctx context.Context, req *v1.TenantMemberUsageRankingReq) (*v1.TenantMemberUsageRankingRes, error)
+		// TeamHealth returns tenant-wide reliability and performance metrics for the current month.
+		TeamHealth(ctx context.Context, req *v1.TenantTeamHealthReq) (*v1.TenantTeamHealthRes, error)
+		// ProjectBudget returns budget usage for all active projects of the tenant.
+		ProjectBudget(ctx context.Context, req *v1.TenantProjectBudgetReq) (*v1.TenantProjectBudgetRes, error)
 		// SendCode sends a verification code email.
 		SendCode(ctx context.Context, req *v1.TenantSendCodeReq) (*v1.TenantSendCodeRes, error)
 		// ResetPassword handles password reset.
