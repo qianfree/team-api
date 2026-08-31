@@ -148,13 +148,13 @@ func runMaintenance(ctx context.Context) {
 
 	// 覆盖摘要：目录只装载 active × 有启用能力行的渠道，未覆盖渠道的健康分不会落盘
 	// （探测却正常的渠道长期停在历史分数时，先看这里是否被跳过）
-	g.Log().Infof(ctx, "[ChannelHealth] 健康快照维护轮次完成: 覆盖渠道 %d 个 %v", len(covered), covered)
+	g.Log().Debugf(ctx, "[ChannelHealth] 健康快照维护轮次完成: 覆盖渠道 %d 个 %v", len(covered), covered)
 	if len(skippedDegraded) > 0 {
 		g.Log().Warningf(ctx, "[ChannelHealth] 本轮 %d 个渠道因 Redis 健康读取失败跳过落盘（保留库中旧值）: %v",
 			len(skippedDegraded), skippedDegraded)
 	}
 	if len(skippedNoData) > 0 {
-		g.Log().Infof(ctx, "[ChannelHealth] 本轮 %d 个渠道全部模型无真实上报，保留库中旧值: %v",
+		g.Log().Debugf(ctx, "[ChannelHealth] 本轮 %d 个渠道全部模型无真实上报，保留库中旧值: %v",
 			len(skippedNoData), skippedNoData)
 	}
 }
@@ -258,7 +258,7 @@ func snapshotHealthScore(ctx context.Context, channelID int64, succ, latMs, alph
 	// 分数有实际变化才记 Info；稳态渠道降为 Debug（避免每 5 分钟 × 渠道数的固定噪音）。
 	// 两种情况都带各模型 succ 明细：排查"健康分不符合预期"时可直接定位是哪个模型拉低了均值。
 	if math.Abs(healthScore-prevScore) >= 0.05 {
-		g.Log().Infof(ctx, "[ChannelHealth] 渠道 %d 健康分落盘: %.1f → %.1f | avg_succ %.4f | 模型: %s",
+		g.Log().Debugf(ctx, "[ChannelHealth] 渠道 %d 健康分落盘: %.1f → %.1f | avg_succ %.4f | 模型: %s",
 			channelID, prevScore, healthScore, succ, modelDetail)
 	} else {
 		g.Log().Debugf(ctx, "[ChannelHealth] 渠道 %d 健康快照无变化: %.1f | avg_succ %.4f | 模型: %s",

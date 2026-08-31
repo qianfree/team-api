@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,6 +92,32 @@ func TestReschedule_ValidExprReplacesEntry(t *testing.T) {
 	assert.Equal(t, "@every 90m", cs.ListJobs()[0].Schedule)
 	assert.Len(t, cs.cron.Entries(), 1, "旧条目必须被摘除，否则会双倍触发")
 	assert.NotEqual(t, oldID, cs.entryIDs["job_c"], "条目 ID 应已更新")
+}
+
+// TestScheduleInterval 停摆判定靠它把「固定 1 小时」换成「按任务自身周期」，
+// 各类表达式的间隔必须算准——尤其日任务（24h），算错就会退回误报。
+func TestScheduleInterval(t *testing.T) {
+	cases := []struct {
+		schedule string
+		want     time.Duration
+	}{
+		{"* * * * *", time.Minute},         // 每分钟
+		{"*/5 * * * *", 5 * time.Minute},   // 每 5 分钟
+		{"*/10 * * * *", 10 * time.Minute}, // 每 10 分钟
+		{"0 */6 * * *", 6 * time.Hour},     // 每 6 小时（update_check）
+		{"0 3 * * *", 24 * time.Hour},      // 每日 3 点（各类日清理）
+		{"20 5 * * *", 24 * time.Hour},     // 每日 5:20（计费日对账）
+		{"@every 5m", 5 * time.Minute},     // @every 描述符（渠道自动探测默认）
+		{"@every 90m", 90 * time.Minute},   // @every 大间隔（*/N 在 N>=60 时会失真，故用 @every）
+	}
+	for _, c := range cases {
+		got, err := ScheduleInterval(c.schedule)
+		require.NoError(t, err, "schedule %q 应可解析", c.schedule)
+		assert.Equal(t, c.want, got, "schedule %q 的正常间隔不符", c.schedule)
+	}
+
+	_, err := ScheduleInterval("不是合法表达式")
+	assert.Error(t, err, "非法表达式应返回错误，由调用方兜底")
 }
 
 // TestOnSettingsChanged_CallbackPanicDoesNotAffectOthers 回调在订阅 goroutine 内串行执行，
