@@ -4,11 +4,23 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gctx"
 )
 
 const (
 	maxActiveRequestsInResponse = 200
-	historyCapacity             = 100 // ~5 min at 3s polling
+
+	// 采样周期与保留窗口：后台采样器固定 5s 采一次，环形缓冲保留 120 个点 = 10 分钟。
+	samplerInterval = 5 * time.Second
+	historyCapacity = 120
+	historyWindow   = time.Duration(historyCapacity) * samplerInterval
+
+	// 悬挂条目清扫阈值：普通 relay 请求受 HTTP 超时约束，异步任务由轮询器 30min 超时兜底。
+	// 超过该时长仍留在 map 中的一定是漏调 Unregister（如任务被另一实例的轮询器终结）。
+	staleRequestTTL = 30 * time.Minute
+	staleTaskTTL    = 60 * time.Minute
 )
 
 // TrackedRequest represents a single active relay request.
@@ -99,6 +111,29 @@ func (r *snapshotRing[T]) All() []T {
 	return result
 }
 
+// Last 返回最新一个样本（无样本时 ok=false）。
+func (r *snapshotRing[T]) Last() (T, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var zero T
+	if r.size == 0 {
+		return zero, false
+	}
+	return r.items[(r.head-1+r.cap)%r.cap], true
+}
+
+// filterRecent 裁掉早于 cutoff 的样本。环形缓冲按时间升序返回，命中首个在窗口内的点即可整体切片。
+// 采样器正常运行时不会有过期点，此处是采样器停摆（如进程挂起）后的兜底，
+// 避免把陈旧曲线当成当前流量画出来。
+func filterRecent[T any](items []T, cutoff time.Time, at func(T) time.Time) []T {
+	for i := range items {
+		if !at(items[i]).Before(cutoff) {
+			return items[i:]
+		}
+	}
+	return nil
+}
+
 // requestTracker is the global singleton for tracking active requests.
 type requestTracker struct {
 	mu             sync.RWMutex
@@ -118,15 +153,99 @@ type requestTracker struct {
 	bwHistory   *snapshotRing[BandwidthSnapshot]
 }
 
-var tracker *requestTracker
+var (
+	tracker     *requestTracker
+	trackerStop chan struct{}
+)
 
-// InitRequestTracker initializes the global request tracker.
+// InitRequestTracker initializes the global request tracker and starts its sampler.
+//
+// 采样必须由后台定时器驱动、与管理页轮询解耦：早期实现只在 /monitor/realtime 被调用时
+// 才往环形缓冲写点，页面关闭期间既不采样也不过期，再次打开时读到的仍是上一次会话遗留的
+// 旧曲线（前端 x 轴只显示 mm:ss，看起来就像"刚刚还有并发/带宽"）。
 func InitRequestTracker() {
-	tracker = &requestTracker{
+	StopRequestTracker()
+
+	t := &requestTracker{
 		activeRequests: make(map[string]*TrackedRequest),
 		concHistory:    newSnapshotRing[ConcurrencySnapshot](historyCapacity),
 		bwHistory:      newSnapshotRing[BandwidthSnapshot](historyCapacity),
 	}
+	// 带宽基线置为启动时刻，避免首个样本把「进程启动至今累计字节」算成瞬时速率
+	t.lastBwTime = time.Now()
+
+	tracker = t
+	trackerStop = make(chan struct{})
+	go t.runSampler(trackerStop)
+}
+
+// StopRequestTracker stops the background sampler (idempotent).
+func StopRequestTracker() {
+	if trackerStop != nil {
+		close(trackerStop)
+		trackerStop = nil
+	}
+}
+
+func (t *requestTracker) runSampler(stop chan struct{}) {
+	ticker := time.NewTicker(samplerInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			t.sample(now)
+		}
+	}
+}
+
+// sample 采一次并发 + 带宽快照。带宽差值只在这里计算（固定 5s 间隔），
+// 不再由 HTTP 轮询触发——否则多个管理页同时打开会互相偷走增量，
+// 两次轮询间隔极短时还会算出「字节数 / 几毫秒」的假尖峰。
+func (t *requestTracker) sample(now time.Time) {
+	total, streaming := t.sweepStale(now)
+	t.concHistory.Push(ConcurrencySnapshot{
+		Timestamp:          now,
+		TotalActive:        total,
+		StreamingActive:    streaming,
+		NonStreamingActive: total - streaming,
+	})
+	t.bwHistory.Push(t.snapshotBandwidth(now))
+}
+
+// sweepStale 清扫超时仍未反注册的悬挂条目，并以 map 为唯一真相重算计数。
+// 漏减场景确实存在：异步任务由轮询器终结，多实例部署下终结它的实例未必是当初受理提交的实例，
+// 受理实例内存里的条目就再也没人删——表现为并发数永远回不到 0。
+func (t *requestTracker) sweepStale(now time.Time) (total, streaming int) {
+	var swept int
+
+	t.mu.Lock()
+	for key, req := range t.activeRequests {
+		ttl := staleRequestTTL
+		if req.IsAsyncTask {
+			ttl = staleTaskTTL
+		}
+		if now.Sub(req.StartTime) > ttl {
+			delete(t.activeRequests, key)
+			swept++
+			continue
+		}
+		total++
+		if req.IsStream {
+			streaming++
+		}
+	}
+	t.mu.Unlock()
+
+	// 计数以 map 为准回写，顺带修正任何漏减/多减造成的漂移
+	t.totalActive.Store(int64(total))
+	t.streamingActive.Store(int64(streaming))
+
+	if swept > 0 {
+		g.Log().Warningf(gctx.New(), "monitor: 清扫 %d 条悬挂的活跃请求记录（注册后未反注册）", swept)
+	}
+	return total, streaming
 }
 
 // RegisterRequest adds a new request to the tracker.
@@ -191,9 +310,12 @@ func UnregisterRequestByTaskID(taskID string) {
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	if _, ok := tracker.activeRequests[taskID]; ok {
+	if req, ok := tracker.activeRequests[taskID]; ok {
 		delete(tracker.activeRequests, taskID)
 		tracker.totalActive.Add(-1)
+		if req.IsStream {
+			tracker.streamingActive.Add(-1)
+		}
 	}
 }
 
@@ -214,14 +336,17 @@ func RecordBytesOut(n int) {
 }
 
 // GetRealtimeData builds the combined realtime snapshot.
+// 纯读：历史点与带宽速率均由后台采样器产出，此处不再推进任何采样状态，
+// 因此多个管理页同时打开互不干扰，页面不打开时曲线也照常滚动过期。
 func GetRealtimeData() *RealtimeData {
 	if tracker == nil {
 		return &RealtimeData{}
 	}
 
 	now := time.Now()
+	cutoff := now.Add(-historyWindow)
 
-	// Concurrency snapshot
+	// 当前并发：取实时计数（比最近一个样本更新）
 	total := int(tracker.totalActive.Load())
 	streaming := int(tracker.streamingActive.Load())
 	concSnap := ConcurrencySnapshot{
@@ -230,11 +355,12 @@ func GetRealtimeData() *RealtimeData {
 		StreamingActive:    streaming,
 		NonStreamingActive: total - streaming,
 	}
-	tracker.concHistory.Push(concSnap)
 
-	// Bandwidth snapshot (delta between calls)
-	bwSnap := tracker.snapshotBandwidth(now)
-	tracker.bwHistory.Push(bwSnap)
+	// 当前带宽：取最近一个样本；样本过旧（采样器停摆）则视为 0，不展示陈旧速率
+	bwSnap := BandwidthSnapshot{Timestamp: now}
+	if last, ok := tracker.bwHistory.Last(); ok && !last.Timestamp.Before(now.Add(-2*samplerInterval)) {
+		bwSnap = last
+	}
 
 	// Build breakdowns
 	tracker.mu.RLock()
@@ -260,17 +386,19 @@ func GetRealtimeData() *RealtimeData {
 	}
 
 	return &RealtimeData{
-		Concurrency:      concSnap,
-		Bandwidth:        bwSnap,
-		Runtime:          rt,
-		GoRuntime:        GetGoRuntimeInfo(),
-		History:          tracker.concHistory.All(),
-		BandwidthHistory: tracker.bwHistory.All(),
-		ActiveRequests:   activeReqs,
-		ByModel:          byModel,
-		ByChannel:        byChannel,
-		ByTenant:         byTenant,
-		SyncImagePool:    GetSyncImagePoolSnapshot(),
+		Concurrency: concSnap,
+		Bandwidth:   bwSnap,
+		Runtime:     rt,
+		GoRuntime:   GetGoRuntimeInfo(),
+		History: filterRecent(tracker.concHistory.All(), cutoff,
+			func(s ConcurrencySnapshot) time.Time { return s.Timestamp }),
+		BandwidthHistory: filterRecent(tracker.bwHistory.All(), cutoff,
+			func(s BandwidthSnapshot) time.Time { return s.Timestamp }),
+		ActiveRequests: activeReqs,
+		ByModel:        byModel,
+		ByChannel:      byChannel,
+		ByTenant:       byTenant,
+		SyncImagePool:  GetSyncImagePoolSnapshot(),
 	}
 }
 
