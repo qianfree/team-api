@@ -6,6 +6,7 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import Icon from '@/components/common/Icon.vue'
 import request from '@/utils/request'
 import { toast } from '@/utils/toast'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 export interface ApiKeyData {
 	id: number
@@ -374,7 +375,7 @@ const isFormMode = computed(() => {
 							style="width: 100%"
 						/>
 					</n-form-item>
-					<n-form-item label="总额度 (USD)" class="!mb-0">
+					<n-form-item :label="`总额度 (${displayCurrency})`" class="!mb-0">
 						<n-input-number
 							v-model:value="form.total_quota"
 							:min="0"
@@ -385,7 +386,7 @@ const isFormMode = computed(() => {
 						/>
 					</n-form-item>
 				</div>
-				<p v-if="apiKey && apiKey.used_quota" class="input-hint mb-2">已使用 ${{ apiKey.used_quota?.toFixed(4) }}</p>
+				<p v-if="apiKey && apiKey.used_quota" class="input-hint mb-2">已使用 {{ formatBilling(apiKey.used_quota, 4) }}</p>
 
 				<n-form-item label="IP 白名单">
 					<div class="w-full">

@@ -1,11 +1,12 @@
 package billing
 
 import (
+	"context"
 	"testing"
 )
 
 func TestBuildTaskCostBreakdown_NilPricing(t *testing.T) {
-	bd := buildTaskCostBreakdown(nil, 0.5, 1000, 500)
+	bd := buildTaskCostBreakdown(context.Background(), nil, 0.5, 1000, 500)
 	if bd == nil {
 		t.Fatal("expected non-nil breakdown")
 	}
@@ -25,7 +26,7 @@ func TestBuildTaskCostBreakdown_PerRequestMode(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 0.10, 0, 0)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.10, 0, 0)
 	assertFloat(t, bd.BaseCost, 0.10, "BaseCost")
 	assertFloat(t, bd.TotalCost, 0.10, "TotalCost")
 	assertFloat(t, bd.PerRequestPrice, 0.10, "PerRequestPrice")
@@ -43,7 +44,7 @@ func TestBuildTaskCostBreakdown_TokenMode(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 0.024, 10000, 5000)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.024, 10000, 5000)
 	if bd.OutputTokens != 10000 {
 		t.Errorf("OutputTokens = %d, want 10000", bd.OutputTokens)
 	}
@@ -61,7 +62,7 @@ func TestBuildTaskCostBreakdown_TokenMode_ZeroTenantMultiplier(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 0.01, 1000, 500)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.01, 1000, 500)
 	// tenantMul == 0 → BaseCost = actualCost (no division)
 	assertFloat(t, bd.BaseCost, 0.01, "BaseCost")
 	assertFloat(t, bd.TotalCost, 0.01, "TotalCost")
@@ -75,7 +76,7 @@ func TestBuildTaskCostBreakdown_TokenMode_TotalTokens(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 0.05, 10000, 3000)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.05, 10000, 3000)
 	if bd.OutputTokens != 10000 {
 		t.Errorf("OutputTokens = %d, want 10000", bd.OutputTokens)
 	}
@@ -90,7 +91,7 @@ func TestBuildTaskCostBreakdown_CarriesPricingFields(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 0.50, 0, 0)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.50, 0, 0)
 	assertFloat(t, bd.DiscountRatio, 0.85, "DiscountRatio")
 	assertFloat(t, bd.TenantMultiplier, 0.85, "TenantMultiplier")
 	if bd.Currency != "USD" {
@@ -109,7 +110,7 @@ func TestBuildTaskCostBreakdown_TokenMode_ZeroTokens(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	bd := buildTaskCostBreakdown(pricing, 3.375, 0, 0)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 3.375, 0, 0)
 	if bd.OutputTokens != 0 {
 		t.Errorf("OutputTokens = %d, want 0", bd.OutputTokens)
 	}
@@ -130,12 +131,12 @@ func TestBuildTaskCostBreakdown_TokenMode_TimeMultiplier(t *testing.T) {
 	}
 
 	// 0.4 / (0.8 × 0.5) = 1.0
-	bd := buildTaskCostBreakdown(pricing, 0.4, 10000, 5000)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.4, 10000, 5000)
 	assertFloat(t, bd.BaseCost, 1.0, "BaseCost (tenant × time)")
 	assertFloat(t, bd.TotalCost, 0.4, "TotalCost")
 
 	// 无 token 用量分支同样按双乘数还原：0.08 / (0.8 × 0.5) = 0.2
-	bd = buildTaskCostBreakdown(pricing, 0.08, 0, 0)
+	bd = buildTaskCostBreakdown(context.Background(), pricing, 0.08, 0, 0)
 	assertFloat(t, bd.BaseCost, 0.2, "BaseCost zero-token (tenant × time)")
 	assertFloat(t, bd.TotalCost, 0.08, "TotalCost zero-token")
 }
@@ -152,7 +153,7 @@ func TestBuildTaskCostBreakdown_ZeroTimeMultiplierFallback(t *testing.T) {
 	}
 
 	// 0.024 / (0.8 × 1.0) = 0.03
-	bd := buildTaskCostBreakdown(pricing, 0.024, 1000, 500)
+	bd := buildTaskCostBreakdown(context.Background(), pricing, 0.024, 1000, 500)
 	assertFloat(t, bd.BaseCost, 0.03, "BaseCost (time fallback 1.0)")
 }
 

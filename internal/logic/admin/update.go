@@ -115,7 +115,9 @@ func (s *sAdmin) UpdateExecute(ctx context.Context, req *v1.UpdateExecuteReq) (*
 
 	// Get check result to find download URL
 	cached := update.GetManager().GetCheckResult()
-	if cached == nil {
+	// 缓存里有更新但没匹配到平台安装包时强制重查，而不是直接报「没有可用的更新包」：
+	// 典型场景是发行版刚发布、CI 尚未上传资产窗口期的检查结果被缓存，资产几分钟后就位
+	if cached == nil || update.HasUpdateButNoAsset(cached) {
 		// Force a check first
 		result, err := update.CheckForUpdate(ctx, true)
 		if err != nil {

@@ -3,6 +3,10 @@ import { ref, reactive, watch, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconCloudDownload, IconRefresh } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
+
+// 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
+const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
 
 const props = defineProps<{
 	visible: boolean
@@ -243,18 +247,18 @@ const previewBase = computed(() => {
 function segmentPreview(seg: TimeSegmentRow): string {
 	const m = (seg.percent || 0) / 100
 	if (previewBase.value.kind === 'per_request') {
-		return `$${(previewBase.value.perRequest * m).toFixed(4)} /次`
+		return `${formatBilling(previewBase.value.perRequest * m, 4)} /次`
 	}
 	const prefix = previewBase.value.kind === 'tiered' ? '首档 ' : ''
-	return `${prefix}输入 $${(previewBase.value.input * m).toFixed(4)} · 输出 $${(previewBase.value.output * m).toFixed(4)}`
+	return `${prefix}输入 ${formatBilling(previewBase.value.input * m, 4)} · 输出 ${formatBilling(previewBase.value.output * m, 4)}`
 }
 
 function defaultPreviewText(): string {
 	if (previewBase.value.kind === 'per_request') {
-		return `$${previewBase.value.perRequest.toFixed(4)} /次`
+		return `${formatBilling(previewBase.value.perRequest, 4)} /次`
 	}
 	const prefix = previewBase.value.kind === 'tiered' ? '首档 ' : ''
-	return `${prefix}输入 $${previewBase.value.input.toFixed(4)} · 输出 $${previewBase.value.output.toFixed(4)}`
+	return `${prefix}输入 ${formatBilling(previewBase.value.input, 4)} · 输出 ${formatBilling(previewBase.value.output, 4)}`
 }
 
 function segmentDesc(seg: TimeSegmentRow): string {
@@ -500,19 +504,19 @@ watch(() => props.visible, (val) => {
 												<div class="official-prices">
 													<div class="official-price-row">
 														<span class="official-price-label">输入价格</span>
-														<span class="official-price-value">${{ src.pricing.input_price.toFixed(2) }} / 1M</span>
+														<span class="official-price-value">{{ formatBilling(src.pricing.input_price, 2) }} / 1M</span>
 													</div>
 													<div class="official-price-row">
 														<span class="official-price-label">输出价格</span>
-														<span class="official-price-value">${{ src.pricing.output_price.toFixed(2) }} / 1M</span>
+														<span class="official-price-value">{{ formatBilling(src.pricing.output_price, 2) }} / 1M</span>
 													</div>
 													<div class="official-price-row">
 														<span class="official-price-label">缓存读取</span>
-														<span class="official-price-value">{{ src.pricing.cache_read_price ? '$' + src.pricing.cache_read_price.toFixed(2) + ' / 1M' : '—' }}</span>
+														<span class="official-price-value">{{ src.pricing.cache_read_price ? formatBilling(src.pricing.cache_read_price, 2) + ' / 1M' : '—' }}</span>
 													</div>
 													<div class="official-price-row">
 														<span class="official-price-label">缓存创建</span>
-														<span class="official-price-value">{{ src.pricing.cache_creation_price ? '$' + src.pricing.cache_creation_price.toFixed(2) + ' / 1M' : '—' }}</span>
+														<span class="official-price-value">{{ src.pricing.cache_creation_price ? formatBilling(src.pricing.cache_creation_price, 2) + ' / 1M' : '—' }}</span>
 													</div>
 												</div>
 												<AButton type="primary" size="small" long @click="applyOfficialPricing(src.pricing)">应用此价格</AButton>
@@ -543,7 +547,7 @@ watch(() => props.visible, (val) => {
 									placeholder="每次调用价格"
 									class="w-full"
 								>
-									<template #suffix>$ / 次</template>
+									<template #suffix>{{ currencySymbol }} / 次</template>
 								</AInputNumber>
 							</AFormItem>
 						</div>
@@ -555,7 +559,7 @@ watch(() => props.visible, (val) => {
 					<div class="editor-section">
 						<div class="editor-section-header">
 							<h3>按量定价</h3>
-							<span class="section-hint">价格单位为 $ / 1M Token</span>
+							<span class="section-hint">价格单位为 {{ currencySymbol }} / 1M Token</span>
 						</div>
 						<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
 							<AFormItem label="输入价格">
@@ -566,7 +570,7 @@ watch(() => props.visible, (val) => {
 									placeholder="0"
 									class="w-full"
 								>
-									<template #suffix>$ / 1M</template>
+									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
 							<AFormItem label="输出价格">
@@ -577,7 +581,7 @@ watch(() => props.visible, (val) => {
 									placeholder="0"
 									class="w-full"
 								>
-									<template #suffix>$ / 1M</template>
+									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
 							<AFormItem label="缓存读取">
@@ -588,7 +592,7 @@ watch(() => props.visible, (val) => {
 									placeholder="0"
 									class="w-full"
 								>
-									<template #suffix>$ / 1M</template>
+									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
 							<AFormItem label="缓存创建">
@@ -599,7 +603,7 @@ watch(() => props.visible, (val) => {
 									placeholder="0"
 									class="w-full"
 								>
-									<template #suffix>$ / 1M</template>
+									<template #suffix>{{ currencySymbol }} / 1M</template>
 								</AInputNumber>
 							</AFormItem>
 						</div>
@@ -651,7 +655,7 @@ watch(() => props.visible, (val) => {
 										:precision="4"
 										class="w-full"
 									>
-										<template #suffix>$/1M</template>
+										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
 								<AFormItem label="输出价格">
@@ -661,7 +665,7 @@ watch(() => props.visible, (val) => {
 										:precision="4"
 										class="w-full"
 									>
-										<template #suffix>$/1M</template>
+										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
 							</div>
@@ -673,7 +677,7 @@ watch(() => props.visible, (val) => {
 										:precision="4"
 										class="w-full"
 									>
-										<template #suffix>$/1M</template>
+										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
 								<AFormItem label="缓存创建价格">
@@ -683,7 +687,7 @@ watch(() => props.visible, (val) => {
 										:precision="4"
 										class="w-full"
 									>
-										<template #suffix>$/1M</template>
+										<template #suffix>{{ currencySymbol }}/1M</template>
 									</AInputNumber>
 								</AFormItem>
 							</div>

@@ -3,12 +3,35 @@ package billing
 import (
 	"context"
 
+	"github.com/qianfree/team-api/internal/consts"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/shopspring/decimal"
 )
 
 const defaultCNYToUSD = 0.14
 const defaultUSDToCNY = 7.142857142857143 // 1 / 0.14，确保互为倒数
+
+// Currency 返回系统本位币（bil_ 记账层的记账币种与全站显示货币）。
+// 本位币在系统初始化向导选定后不可更改；存量部署与未初始化系统默认 USD。
+// 配置基础设施不可用（如单测环境无 DB 驱动，g.DB() 直接 panic）时回退 USD，
+// 与存量部署行为一致，保证纯函数单测可运行。
+func Currency(ctx context.Context) (cur string) {
+	defer func() {
+		if r := recover(); r != nil {
+			cur = consts.BillingCurrencyUSD
+		}
+	}()
+	c := lcommon.Config().GetString(ctx, consts.OptionKeyBillingCurrency)
+	if c == consts.BillingCurrencyCNY {
+		return consts.BillingCurrencyCNY
+	}
+	return consts.BillingCurrencyUSD
+}
+
+// IsCNY 当前本位币是否为人民币（此时充值履约直接入账、无换汇环节）
+func IsCNY(ctx context.Context) bool {
+	return Currency(ctx) == consts.BillingCurrencyCNY
+}
 
 // ConvertCNYToUSD 将人民币金额转换为美元，向上取整到小数点后 6 位（decimal 原生版）。
 // 用 decimal 精确乘法替代 float64 链式运算，避免 cnyAmount×rate 的浮点误差。

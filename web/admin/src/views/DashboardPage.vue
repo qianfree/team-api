@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   IconThunderbolt,
@@ -13,6 +13,7 @@ import {
 import type { TableColumnData } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import * as echarts from 'echarts'
+import { displayCurrency, formatBilling } from '@/composables/useCurrency'
 
 const router = useRouter()
 
@@ -43,10 +44,9 @@ function calcGrowth(current: number, previous: number): { value: number; positiv
   return { value: Math.round(growth * 10) / 10, positive: growth >= 0 }
 }
 
+// 金额格式化走全局本位币（bil 层数据直显 + 本位币符号）
 function formatMoney(val: any) {
-  const n = Number(val)
-  if (!n && n !== 0) return '$0.00'
-  return '$' + n.toFixed(2)
+  return formatBilling(val, 2)
 }
 
 function formatNumber(val: any) {
@@ -253,18 +253,19 @@ function renderTrendChart() {
   const revenues = trends.value.map((r: any) => Number(r.revenue) || 0)
   const requests = trends.value.map((r: any) => Number(r.requests) || 0)
 
+  // 图例/轴名带币种代码，跟随本位币（由下方 watch 触发重渲染）
   trendChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    legend: { data: ['收入 ($)', '请求数'], bottom: 0 },
+    legend: { data: [`收入 (${displayCurrency.value})`, '请求数'], bottom: 0 },
     grid: { left: 60, right: 60, top: 15, bottom: 36 },
     xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 11 } },
     yAxis: [
-      { type: 'value', name: '收入 ($)', axisLabel: { formatter: (v: number) => '$' + v } },
+      { type: 'value', name: `收入 (${displayCurrency.value})`, axisLabel: { formatter: (v: number) => formatBilling(v) } },
       { type: 'value', name: '请求数', splitLine: { show: false } },
     ],
     series: [
       {
-        name: '收入 ($)',
+        name: `收入 (${displayCurrency.value})`,
         type: 'bar',
         data: revenues,
         barWidth: 12,
@@ -331,7 +332,7 @@ function renderModelChart() {
   modelChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     grid: { left: 130, right: 50, top: 10, bottom: 36 },
-    xAxis: { type: 'value', name: '费用 ($)', nameLocation: 'middle', nameGap: 22 },
+    xAxis: { type: 'value', name: `费用 (${displayCurrency.value})`, nameLocation: 'middle', nameGap: 22 },
     yAxis: {
       type: 'category',
       data: names,
@@ -361,7 +362,7 @@ function renderModelHourlyChart() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      valueFormatter: (v: number) => '$' + Number(v).toFixed(4),
+      valueFormatter: (v: number) => formatBilling(v, 4),
     },
     legend: { data: data.models, bottom: 0, type: 'scroll' },
     grid: { left: 60, right: 20, top: 15, bottom: 46 },
@@ -372,8 +373,8 @@ function renderModelHourlyChart() {
     },
     yAxis: {
       type: 'value',
-      name: '费用 ($)',
-      axisLabel: { formatter: (v: number) => '$' + v },
+      name: `费用 (${displayCurrency.value})`,
+      axisLabel: { formatter: (v: number) => formatBilling(v) },
     },
     series: data.series.map((s: any) => ({
       name: s.model,
@@ -384,6 +385,12 @@ function renderModelHourlyChart() {
     })),
   }, true)
 }
+
+// 本位币变化（配置异步加载/后台切换）时重绘全部图表：echarts option 在命令式渲染函数中拼装，
+// 不在 Vue 渲染树内，需显式 watch 触发重绘；metricCards/表格 render 经 formatBilling 自动建立依赖
+watch(displayCurrency, () => {
+  renderAllCharts()
+})
 
 // === Resize ===
 const resizeObserver = new ResizeObserver(() => {

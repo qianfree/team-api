@@ -10,6 +10,7 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
+import { formatBilling } from '@/composables/useCurrency'
 
 // timestamp(ms) ↔ 后端字符串 YYYY-MM-DD HH:mm:ss
 function tsToStr(ts: number): string {
@@ -186,10 +187,11 @@ function openDetail(log: any) {
 	detailModal.value = true
 }
 
+// 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
 function formatCost(n: any): string {
 	const v = Number(n)
-	if (n == null || isNaN(v)) return '$0.000000'
-	return '$' + v.toFixed(6)
+	if (n == null || isNaN(v)) return formatBilling(0, 6)
+	return formatBilling(v, 6)
 }
 
 function formatMs(n: any): string {

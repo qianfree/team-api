@@ -3,6 +3,7 @@ import { ref, reactive, watch, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import request from '@/utils/request'
 import { useIsMobile } from '@/composables/useIsMobile'
+import { formatBilling } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -105,7 +106,7 @@ onMounted(fetchLevelOptions)
           <ATag v-if="detail.max_members != null" size="small" color="arcoblue" style="margin-left: 4px">自定义</ATag>
         </ADescriptionsItem>
         <ADescriptionsItem label="钱包余额">
-          <span class="money">${{ parseFloat(detail.wallet_balance || '0').toFixed(2) }}</span>
+          <span class="money">{{ formatBilling(detail.wallet_balance, 2) }}</span>
         </ADescriptionsItem>
         <ADescriptionsItem label="并发上限">
           {{ getEffectiveMaxConcurrency() ?? '不限' }}

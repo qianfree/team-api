@@ -8,6 +8,8 @@ import (
 )
 
 // GetGlobalPaymentSettings loads global payment settings from ConfigService.
+// Currency 固定返回 "CNY"：订单/支付层币种由收款渠道决定（epay 收人民币），
+// 系统计账与显示货币由本位币 billing_currency 决定（初始化选定，不在此配置）。
 func GetGlobalPaymentSettings(ctx context.Context) (*GlobalPaymentSettings, error) {
 	cfg := common.Config()
 	settings := &GlobalPaymentSettings{
@@ -26,22 +28,19 @@ func GetGlobalPaymentSettings(ctx context.Context) (*GlobalPaymentSettings, erro
 	if n := cfg.GetFloat(ctx, "payment_min_topup"); n > 0 {
 		settings.MinTopUp = n
 	}
-	if val := cfg.GetString(ctx, "payment_currency"); val != "" {
-		settings.Currency = val
-	}
 	settings.CallbackBaseURL = cfg.GetString(ctx, "payment_callback_base_url")
 
 	return settings, nil
 }
 
 // SaveGlobalPaymentSettings persists global payment settings via ConfigService.
+// Currency 字段不落库（订单层币种恒 CNY，不接受配置）。
 func SaveGlobalPaymentSettings(ctx context.Context, settings *GlobalPaymentSettings) error {
 	cfg := common.Config()
 	items := map[string]string{
 		"payment_amount_options":    mustJSON(settings.AmountOptions),
 		"payment_amount_discount":   mustJSON(settings.AmountDiscount),
 		"payment_min_topup":         mustJSON(settings.MinTopUp),
-		"payment_currency":          settings.Currency,
 		"payment_callback_base_url": settings.CallbackBaseURL,
 	}
 	for key, value := range items {

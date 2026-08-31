@@ -528,7 +528,7 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		record.OutputCost = settleResult.OutputCost
 		record.RefundAmount = settleResult.RefundAmount
 		record.SupplementAmount = settleResult.SupplementAmount
-		record.Currency = "USD"
+		record.Currency = billing.Currency(context.Background())
 	} else {
 		// 失败/超时任务：从定价中获取计费模式
 		billingMode := "per_request"
