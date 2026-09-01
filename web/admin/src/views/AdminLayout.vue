@@ -37,7 +37,7 @@ import {
   IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
-import { hasPermission } from '@/utils/permission'
+import { hasPermission, isSuperAdmin } from '@/utils/permission'
 
 const router = useRouter()
 const route = useRoute()
@@ -356,7 +356,6 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
-      { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, perm: 'user:view' },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
     ],
   },
@@ -398,6 +397,7 @@ const ALL_MENU_GROUPS = [
     icon: IconSettings,
     items: [
       { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup, perm: 'user:view' },
+      { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, superOnly: true },
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock, perm: 'system:plugin' },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
@@ -411,7 +411,12 @@ const menuGroups = computed(() =>
   ALL_MENU_GROUPS
     .map(group => ({
       ...group,
-      items: group.items.filter(item => !item.perm || hasPermission(item.perm)),
+      items: group.items.filter(item => {
+        // superOnly 的条目不参与权限点判定：它们是权限体系本身的元操作，
+        // 无法通过授予权限点下放（后端 superAdminOnlyRules 同样硬性拦截）
+        if ((item as any).superOnly) return isSuperAdmin()
+        return !item.perm || hasPermission(item.perm)
+      }),
     }))
     .filter(group => group.items.length > 0)
 )

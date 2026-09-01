@@ -337,6 +337,46 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", prefix: "/api/admin/usage-logs/cleanup/tasks/", suffix: "/cancel", perm: "system:edit"},
 }
 
+// superAdminOnlyRules 列出仅超级管理员可访问的路由。
+//
+// 角色管理不走「权限点授权」而是硬性限定超管，理由是它是权限体系的元操作：
+// 谁能改角色，谁就能决定所有人的权限。一旦把它下放出去（哪怕只给 user:edit），
+// 被下放者就能给自己挂上更高权限的角色——权限体系当场失效。
+//
+// 这条限制让提权路径根本不存在，而不是靠「只能授予自己已有的权限」这类兜底去堵。
+// 普通账号管理（创建/禁用/改密/删除）不受影响，仍按 user:* 授权，可以正常下放。
+var superAdminOnlyRules = []permissionRule{
+	// 角色的增删改查与启停
+	{method: "GET", path: "/api/admin/roles"},
+	{method: "POST", path: "/api/admin/roles"},
+	{method: "GET", prefix: "/api/admin/roles/"},
+	{method: "POST", prefix: "/api/admin/roles/"},
+	{method: "PUT", prefix: "/api/admin/roles/"},
+	{method: "DELETE", prefix: "/api/admin/roles/"},
+	// 给账号分配角色 —— 这是最直接的提权入口
+	{method: "GET", prefix: "/api/admin/users/", suffix: "/roles"},
+	{method: "PUT", prefix: "/api/admin/users/", suffix: "/roles"},
+}
+
+// isSuperAdminOnly 判断路由是否仅限超级管理员。
+// 任一规则命中即为真，不需要优先级判定。
+func isSuperAdminOnly(method, path string) bool {
+	for _, rule := range superAdminOnlyRules {
+		if rule.method != method {
+			continue
+		}
+		if rule.path != "" && path == rule.path {
+			return true
+		}
+		if rule.prefix != "" && strings.HasPrefix(path, rule.prefix) {
+			if rule.suffix == "" || suffixMatches(path, rule.suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type permissionRule struct {
 	method string // HTTP method
 	path   string // exact path match (mutually exclusive with prefix)
@@ -364,6 +404,12 @@ func AdminPermissionGuard(r *ghttp.Request) {
 	role := GetUserRole(r.Context())
 	if role == "super_admin" {
 		r.Middleware.Next()
+		return
+	}
+
+	// 角色管理是权限体系的元操作，硬性限定超管，不参与权限点授权
+	if isSuperAdminOnly(r.Method, r.URL.Path) {
+		response.ErrorMsg(r, consts.CodeForbidden, "角色权限管理仅超级管理员可用")
 		return
 	}
 

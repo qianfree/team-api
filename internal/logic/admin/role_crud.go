@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/model/do"
@@ -81,8 +82,23 @@ var builtinRoleDefaults = map[string][]string{
 	},
 }
 
+// assertSuperAdmin 校验调用者是超级管理员。
+//
+// 与 middleware 的 superAdminOnlyRules 是两道独立的闸门：中间件按路由拦截，这里按方法拦截。
+// 双重校验不是冗余 —— 路由表漏配、内部调用绕过 HTTP 层、将来有人给角色接口加了新路径，
+// 任何一种情况下都还有一道守住。权限体系的元操作值得这个代价。
+func assertSuperAdmin(ctx context.Context) error {
+	if lcommon.GetCtxUserRole(ctx) == "super_admin" {
+		return nil
+	}
+	return lcommon.NewBusinessError(consts.CodeForbidden, "角色权限管理仅超级管理员可用")
+}
+
 // ListRoles 返回角色列表（角色数量少，不分页）。
 func (s *sAdmin) ListRoles(ctx context.Context, _ *v1.AdminRoleListReq) (*v1.AdminRoleListRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	var roles []struct {
 		ID          int64  `json:"id"`
 		Code        string `json:"code"`
@@ -144,6 +160,9 @@ func countByRole(ctx context.Context, model *gdb.Model) (map[int64]int, error) {
 
 // GetRoleDetail 返回角色详情，同时给出权限点全集与按模块归纳的档位视图。
 func (s *sAdmin) GetRoleDetail(ctx context.Context, req *v1.AdminRoleDetailReq) (*v1.AdminRoleDetailRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	role, err := loadRole(ctx, req.ID)
 	if err != nil {
 		return nil, err
@@ -191,6 +210,9 @@ func buildModuleTiers(perms []string) []v1.AdminRoleModuleTier {
 
 // CreateRole 新建角色。权限可直接给出，也可从现有角色复制。
 func (s *sAdmin) CreateRole(ctx context.Context, req *v1.AdminRoleCreateReq) (*v1.AdminRoleCreateRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	code := strings.ToLower(strings.TrimSpace(req.Code))
 	if code == reservedRoleCode {
 		return nil, lcommon.NewBadRequestError("super_admin 是保留标识，超级管理员由账号属性判定，不能作为角色")
@@ -258,6 +280,9 @@ func (s *sAdmin) CreateRole(ctx context.Context, req *v1.AdminRoleCreateReq) (*v
 
 // UpdateRole 更新角色的名称、说明、排序与权限（code 不可修改）。
 func (s *sAdmin) UpdateRole(ctx context.Context, req *v1.AdminRoleUpdateReq) (*v1.AdminRoleUpdateRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := loadRole(ctx, req.ID); err != nil {
 		return nil, err
 	}
@@ -310,6 +335,9 @@ func (s *sAdmin) UpdateRole(ctx context.Context, req *v1.AdminRoleUpdateReq) (*v
 
 // UpdateRoleStatus 启用/禁用角色。禁用后该角色的权限对全部关联用户立即失效。
 func (s *sAdmin) UpdateRoleStatus(ctx context.Context, req *v1.AdminRoleStatusUpdateReq) (*v1.AdminRoleStatusUpdateRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := loadRole(ctx, req.ID); err != nil {
 		return nil, err
 	}
@@ -332,6 +360,9 @@ func (s *sAdmin) UpdateRoleStatus(ctx context.Context, req *v1.AdminRoleStatusUp
 // 不存在把自己锁死的风险 —— 超级管理员由 sys_admin_users.role 判定并短路鉴权，
 // 不依赖任何角色记录，即便角色被删光也能登录并重建，因此不设「至少保留一个角色」的约束。
 func (s *sAdmin) DeleteRole(ctx context.Context, req *v1.AdminRoleDeleteReq) (*v1.AdminRoleDeleteRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := loadRole(ctx, req.ID); err != nil {
 		return nil, err
 	}
@@ -361,6 +392,9 @@ func (s *sAdmin) DeleteRole(ctx context.Context, req *v1.AdminRoleDeleteReq) (*v
 
 // ResetRoleDefaults 把预置角色的权限恢复为出厂默认值。
 func (s *sAdmin) ResetRoleDefaults(ctx context.Context, req *v1.AdminRoleResetReq) (*v1.AdminRoleResetRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	role, err := loadRole(ctx, req.ID)
 	if err != nil {
 		return nil, err

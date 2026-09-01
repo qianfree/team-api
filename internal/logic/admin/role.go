@@ -391,6 +391,9 @@ func replaceUserRoles(ctx context.Context, userID int64, roleIDs []int64) error 
 
 // AssignUserRoles 为管理员分配角色（全量覆盖）。
 func (s *sAdmin) AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssignReq) (*v1.AdminUserRoleAssignRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	user, err := loadAdminUserRole(ctx, req.Id)
 	if err != nil {
 		return nil, err
@@ -412,6 +415,9 @@ func (s *sAdmin) AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssig
 
 // GetUserRoles 查询管理员已分配的角色。
 func (s *sAdmin) GetUserRoles(ctx context.Context, req *v1.AdminUserRoleListReq) (*v1.AdminUserRoleListRes, error) {
+	if err := assertSuperAdmin(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := loadAdminUserRole(ctx, req.Id); err != nil {
 		return nil, err
 	}

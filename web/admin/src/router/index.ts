@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import adminRoutes from './admin'
 import { useAuthStore } from '@/stores/auth'
-import { hasPermission } from '@/utils/permission'
+import { hasPermission, isSuperAdmin } from '@/utils/permission'
 import request, { shouldRefresh, getRefreshToken } from '@/utils/request'
 import { useSiteName } from '@/composables/useSiteName'
 import { usePublicSettings } from '@/composables/usePublicSettings'
@@ -103,6 +103,9 @@ router.beforeEach(async (to) => {
 
   // 页面级权限校验。菜单已按权限过滤，这里拦的是直接输 URL 的情况。
   // 接口层本就会 403，但没有这道守卫，用户会先看到一个空白页再看到一片报错。
+  if (to.meta.superOnly && !isSuperAdmin()) {
+    return { name: 'AdminForbidden' }
+  }
   const requiredPerm = to.meta.perm as string | undefined
   if (requiredPerm && !hasPermission(requiredPerm)) {
     return { name: 'AdminForbidden' }

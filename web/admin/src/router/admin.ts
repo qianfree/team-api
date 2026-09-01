@@ -125,7 +125,7 @@ const adminRoutes: RouteRecordRaw[] = [
         path: 'permissions',
         name: 'AdminPermissions',
         component: () => import('@/views/security/PermissionsPage.vue'),
-        meta: { title: '角色权限', perm: 'user:view' },
+        meta: { title: '角色权限', superOnly: true },
       },
       {
         path: 'login-history',
