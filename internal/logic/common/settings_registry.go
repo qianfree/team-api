@@ -113,16 +113,11 @@ var Registry = []SettingDef{
 		Label: "启用 TLS", Description: "587/465 端口建议开启"},
 
 	// ── Security ──
-	{Key: "max_sessions_per_user", Type: SettingTypeInt, Default: "10", Category: "security",
-		Label: "租户用户最大会话数", Validation: "min:1,max:100"},
-	{Key: "admin_max_sessions", Type: SettingTypeInt, Default: "5", Category: "security",
-		Label: "管理员最大会话数", Validation: "min:1,max:50"},
+	// 会话数上限不入注册表：并发会话限制由配置文件 jwt.adminMaxSessions / jwt.tenantMaxSessions 管理
 	{Key: "login_max_attempts", Type: SettingTypeInt, Default: "5", Category: "security",
-		Label: "登录最大尝试次数", Validation: "min:1,max:30"},
+		Label: "登录最大尝试次数", Description: "连续密码错误达到该次数后锁定账号（管理后台 + 租户控制台）", Validation: "min:1,max:30"},
 	{Key: "login_lockout_minutes", Type: SettingTypeInt, Default: "30", Category: "security",
-		Label: "登录锁定时长(分钟)", Validation: "min:1,max:1440"},
-	{Key: "password_min_length", Type: SettingTypeInt, Default: "8", Category: "security",
-		Label: "密码最小长度", Validation: "min:6,max:32"},
+		Label: "登录锁定时长(分钟)", Description: "触发锁定后的持续时长（管理后台 + 租户控制台）", Validation: "min:1,max:1440"},
 	{Key: "turnstile_enabled", Type: SettingTypeBool, Default: "false", Category: "security",
 		Label: "启用 Turnstile 人机验证", IsPublic: true},
 	{Key: "turnstile_site_key", Type: SettingTypeString, Default: "", Category: "security",
@@ -131,8 +126,6 @@ var Registry = []SettingDef{
 		Label: "Turnstile Secret Key", Sensitive: true},
 	{Key: "captcha_expire_seconds", Type: SettingTypeInt, Default: "300", Category: "security",
 		Label: "验证码有效期(秒)", Validation: "min:60,max:600"},
-	{Key: "new_device_notification", Type: SettingTypeBool, Default: "true", Category: "security",
-		Label: "新设备登录通知"},
 	{Key: "register_forbidden_words", Type: SettingTypeString, Default: "admin,system,root,api,test,administrator,管理员,系统", Category: "security",
 		Label: "注册禁用词", Description: "组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔"},
 	{Key: "sandbox_enabled", Type: SettingTypeBool, Default: "true", Category: "performance",

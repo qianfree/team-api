@@ -84,12 +84,13 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
 		_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "密码错误")
 
-		// 原子递增失败次数
+		// 原子递增失败次数；锁定阈值与时长取自安全配置（sys_options）
 		updateData := do.SysAdminUsers{FailedAttempts: gdb.Raw("failed_attempts + 1")}
 		failedAttempts := user.FailedAttempts + 1
+		maxAttempts, lockoutMinutes := common.LoginLockoutPolicy(ctx)
 
-		if failedAttempts >= 5 {
-			lockedUntil := time.Now().Add(30 * time.Minute)
+		if failedAttempts >= maxAttempts {
+			lockedUntil := time.Now().Add(time.Duration(lockoutMinutes) * time.Minute)
 			updateData.LockedUntil = gtime.NewFromTime(lockedUntil)
 			_, err := dao.SysAdminUsers.Ctx(ctx).
 				Where("id", user.Id).
@@ -98,7 +99,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 				g.Log().Errorf(ctx, "更新管理员账号锁定状态失败: %v", err)
 			}
 			return nil, common.NewBusinessError(consts.CodeAccountLocked,
-				"连续 5 次密码错误，账号已锁定 30 分钟")
+				fmt.Sprintf("连续 %d 次密码错误，账号已锁定 %d 分钟", maxAttempts, lockoutMinutes))
 		}
 
 		_, err := dao.SysAdminUsers.Ctx(ctx).
