@@ -152,6 +152,13 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 	},
 }
 
+// PermissionGroups 返回全部预定义权限点分组。
+// 供 middleware 的权限规则覆盖测试校验「规则引用的权限点确实存在」，
+// 避免规则里的拼写错误造成接口对所有非超管角色永久 403。
+func PermissionGroups() []v1.PermissionGroup {
+	return predefinedPermissionGroups
+}
+
 // GetUserPermissions returns permission points and data scopes for an admin user.
 func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermissionListReq) (*v1.AdminPermissionListRes, error) {
 	// Get permission points
@@ -255,6 +262,9 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 		return nil, err
 	}
 
+	// 特批权限参与有效权限计算，变更后必须让该用户的权限缓存失效
+	InvalidateUserPermCache(ctx, req.Id)
+
 	return nil, nil
 }
 
@@ -311,29 +321,67 @@ func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScop
 	return nil, nil
 }
 
-// GetAllPermissions returns all predefined permission groups.
+// tierLabels 是档位的中文标签，随元数据下发给前端，避免前端硬编码一份。
+var tierLabels = map[string]string{
+	TierNone:    "无",
+	TierRead:    "只读",
+	TierOperate: "操作",
+	TierFull:    "完全",
+}
+
+// GetAllPermissions returns all predefined permission groups plus tier metadata.
+//
+// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
+// 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
 func (s *sAdmin) GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error) {
+	modules := make([]v1.PermissionModuleMeta, 0, len(predefinedPermissionGroups))
+	for _, grp := range predefinedPermissionGroups {
+		tiers := ModuleTiers(grp.Name)
+		opts := make([]v1.TierOption, 0, len(tiers))
+		for _, tier := range tiers {
+			opts = append(opts, v1.TierOption{
+				Tier:        tier,
+				Label:       tierLabels[tier],
+				Permissions: TierPermissions(grp.Name, tier),
+			})
+		}
+		modules = append(modules, v1.PermissionModuleMeta{
+			Module: grp.Name,
+			Label:  grp.Label,
+			Tiers:  opts,
+		})
+	}
+
 	return &v1.AdminAllPermissionsRes{
-		Groups: predefinedPermissionGroups,
+		Groups:    predefinedPermissionGroups,
+		Modules:   modules,
+		Dangerous: dangerousPermissions,
 	}, nil
 }
 
 // HasPermission checks if an admin user has a specific permission point.
-// super_admin always returns true.
+//
+// 有效权限 = ∪(已启用角色的权限) ∪ 用户特批权限，详见 GetEffectivePermissions。
+// 结果走 300s 双层缓存：鉴权在每个请求上都跑，此前每次一条 COUNT 查询。
+//
+// 签名保持不变，middleware/rbac.go 无需改动。
+// super_admin 直接放行，不查表也不进缓存。
 func HasPermission(ctx context.Context, userID int64, role string, permission string) bool {
 	if role == "super_admin" {
 		return true
 	}
 
-	count, err := dao.SysAdminRolePerms.Ctx(ctx).
-		Where("admin_user_id", userID).
-		Where("permission_point", permission).
-		Count()
+	perms, err := GetEffectivePermissions(ctx, userID, role)
 	if err != nil {
+		// 查询失败时 fail-closed：宁可误拒也不误放，鉴权失败不应静默放行
 		return false
 	}
-
-	return count > 0
+	for _, p := range perms {
+		if p == permission {
+			return true
+		}
+	}
+	return false
 }
 
 // GetDataScopes returns data scopes for an admin user.

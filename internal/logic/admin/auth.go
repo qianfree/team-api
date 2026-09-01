@@ -200,6 +200,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	res.User.Username = user.Username
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
+	res.Permissions, res.Roles = loadSessionPermissions(ctx, user.Id, user.Role)
 
 	// 检查待接受协议
 	if common.Config().GetBool(ctx, "agreement_enabled") {
@@ -446,4 +447,68 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 	common.RevokeAllSessions(ctx, "admin", userID)
 
 	return nil, nil
+}
+
+// loadSessionPermissions 装载登录响应所需的有效权限与角色。
+//
+// 权限查询失败不阻断登录：鉴权以服务端为准，前端权限集只影响菜单与按钮渲染。
+// 此时返回空集合，用户会看到一个空菜单，刷新页面（走 /auth/me）即可恢复，
+// 好过因为一次查询抖动把人挡在登录页外。
+func loadSessionPermissions(ctx context.Context, userID int64, role string) ([]string, []v1.AdminRoleBrief) {
+	perms, err := GetEffectivePermissions(ctx, userID, role)
+	if err != nil {
+		g.Log().Warningf(ctx, "加载管理员 %d 有效权限失败: %v", userID, err)
+		perms = []string{}
+	}
+	if perms == nil {
+		perms = []string{}
+	}
+
+	roles := []v1.AdminRoleBrief{}
+	// 超级管理员不通过角色获得权限，不查关联表
+	if role != "super_admin" {
+		if briefs, err := GetUserRoleBriefs(ctx, userID); err != nil {
+			g.Log().Warningf(ctx, "加载管理员 %d 角色失败: %v", userID, err)
+		} else if briefs != nil {
+			roles = briefs
+		}
+	}
+	return perms, roles
+}
+
+// GetMe 返回当前登录用户的信息与有效权限。
+//
+// 权限此前只在登录响应里下发一次，之后前端从 localStorage 恢复：管理员改了某人的权限，
+// 对方不重新登录就一直按旧权限渲染菜单。前端在应用启动与 token 刷新后调用本接口刷新。
+func (s *sAdmin) GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, error) {
+	userID := common.GetCtxUserID(ctx)
+	if userID == 0 {
+		return nil, common.NewBusinessError(consts.CodeUnauthorized, consts.MsgUnauthorized)
+	}
+
+	var user *struct {
+		Id          int64  `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Role        string `json:"role"`
+	}
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
+	}
+
+	perms, roles := loadSessionPermissions(ctx, user.Id, user.Role)
+	return &v1.AdminMeRes{
+		ID:          user.Id,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Email:       user.Email,
+		Role:        user.Role,
+		Permissions: perms,
+		Roles:       roles,
+	}, nil
 }

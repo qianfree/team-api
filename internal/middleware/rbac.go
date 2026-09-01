@@ -79,6 +79,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/channels", perm: "channel:create"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/test", perm: "channel:test"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/clone", perm: "channel:create"},
+	{method: "POST", prefix: "/api/admin/channels/", suffix: "/reset-health", perm: "channel:edit"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/keys", perm: "channel:edit"},
 	{method: "DELETE", prefix: "/api/admin/channels/", suffix: "/keys/", perm: "channel:edit"},
 	{method: "GET", prefix: "/api/admin/channels/", suffix: "/keys", perm: "channel:view"},
@@ -199,6 +200,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/audit/operation-logs/export", perm: "audit:export"},
 	{method: "GET", path: "/api/admin/audit/request-logs", perm: "audit:view"},
 	{method: "GET", prefix: "/api/admin/audit/request-logs/", perm: "audit:view"},
+	{method: "GET", prefix: "/api/admin/audit/forwarding-trace/", perm: "audit:view"},
 	{method: "GET", path: "/api/admin/audit/sensitive-logs", perm: "audit:read_sensitive"},
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
 
@@ -249,7 +251,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", prefix: "/api/admin/plugins", perm: "system:plugin"},
 	{method: "POST", prefix: "/api/admin/plugins/", perm: "system:plugin"},
 	{method: "PUT", prefix: "/api/admin/plugins/", perm: "system:plugin"},
-	{method: "GET", prefix: "/api/admin/email/", perm: "system:view"},
+	// 邮件发送记录是运营查看通知触达效果的手段，与通知模板同属内容运营，不归系统设置
+	{method: "GET", prefix: "/api/admin/email/", perm: "operation:view"},
 
 	// ── tenant level config 租户等级配置 ──
 	{method: "GET", path: "/api/admin/tenant-level-configs", perm: "tenant:view"},
@@ -279,6 +282,19 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/redemptions", perm: "redemption:create"},
 	{method: "PUT", prefix: "/api/admin/redemptions/", perm: "redemption:edit"},
 
+	// ── role 角色管理（复用 user 组权限点） ──
+	// 账号管理与角色管理是同一件事的两面（谁能进后台、能干什么），拆成两组权限没有实际场景：
+	// 「能建角色但不能分配给人」毫无意义，「能分配角色但不能建角色」用禁用角色即可表达。
+	{method: "GET", path: "/api/admin/roles", perm: "user:view"},
+	{method: "POST", path: "/api/admin/roles", perm: "user:create"},
+	{method: "POST", prefix: "/api/admin/roles/", suffix: "/reset", perm: "user:edit"},
+	{method: "GET", prefix: "/api/admin/roles/", perm: "user:view"},
+	{method: "PUT", prefix: "/api/admin/roles/", suffix: "/status", perm: "user:edit"},
+	{method: "PUT", prefix: "/api/admin/roles/", perm: "user:edit"},
+	{method: "DELETE", prefix: "/api/admin/roles/", perm: "user:delete"},
+	{method: "GET", prefix: "/api/admin/users/", suffix: "/roles", perm: "user:view"},
+	{method: "PUT", prefix: "/api/admin/users/", suffix: "/roles", perm: "user:edit"},
+
 	// ── permission 权限管理（仅 user 组） ──
 	{method: "GET", path: "/api/admin/permissions", perm: "user:view"},
 	{method: "GET", prefix: "/api/admin/users/", suffix: "/permissions", perm: "user:view"},
@@ -287,6 +303,8 @@ var adminPermissionRules = []permissionRule{
 
 	// ── admin session and security ──
 	{method: "POST", path: "/api/admin/auth/logout", perm: "self:access"},
+	// 当前用户信息与有效权限：登录即可访问自己的资料，不需要任何业务权限点
+	{method: "GET", path: "/api/admin/auth/me", perm: "self:access"},
 	{method: "GET", path: "/api/admin/auth/sessions", perm: "self:access"},
 	{method: "DELETE", prefix: "/api/admin/auth/sessions/user/", perm: "user:edit"},
 	{method: "DELETE", prefix: "/api/admin/auth/sessions/", perm: "self:access"},
@@ -328,9 +346,15 @@ type permissionRule struct {
 }
 
 // AdminPermissionGuard enforces RBAC permission checks for admin routes.
-// 当前策略：未匹配到权限规则的接口默认放行（仅对已认证 admin）。
-// 已配置规则的接口仍按权限点鉴权；漏配的接口不至于直接 403，降低上线回归风险。
-// 待 adminPermissionRules 全量补齐后，可将下方 perm=="" 分支改回返回 403 以收紧权限。
+//
+// 策略：默认拒绝 —— 未匹配到权限规则的接口一律 403。
+//
+// 早期为降低上线回归风险曾采用「未匹配即放行」，那在只有 super_admin / admin 两种可信
+// 身份时无害；引入运营、技术支持等低权限角色后，放行等同于越权：任何漏配规则的接口对
+// 所有角色都是敞开的。改为默认拒绝后，遗漏会立刻表现为 403 而不是静默的权限缺口。
+//
+// 兜底保证：super_admin 在规则匹配之前短路放行，因此即便规则有遗漏也不会把系统锁死，
+// 超管始终可以进入并修复。规则的完整性由 rbac_coverage_test.go 在 CI 阶段保证。
 func AdminPermissionGuard(r *ghttp.Request) {
 	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
@@ -345,8 +369,8 @@ func AdminPermissionGuard(r *ghttp.Request) {
 
 	perm := matchPermission(r.Method, r.URL.Path)
 	if perm == "" {
-		// 默认放行：未配置权限规则的接口，对已认证 admin 放行
-		r.Middleware.Next()
+		// 默认拒绝：未配置权限规则的接口不放行（super_admin 已在上方短路）
+		response.ErrorMsg(r, consts.CodeForbidden, "接口未配置权限规则，请联系管理员")
 		return
 	}
 

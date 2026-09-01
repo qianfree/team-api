@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
@@ -46,6 +47,16 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 		return nil, err
 	}
 
+	// 批量取角色，避免逐个账号各查一次（N+1）
+	userIDs := make([]int64, len(users))
+	for i, u := range users {
+		userIDs[i] = u.Id
+	}
+	rolesByUser, err := loadRolesByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]v1.AdminUserItem, len(users))
 	for i, u := range users {
 		lockedUntil := ""
@@ -63,6 +74,7 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 			LastLoginIp: u.LastLoginIp,
 			LockedUntil: lockedUntil,
 			CreatedAt:   u.CreatedAt.String(),
+			Roles:       rolesByUser[u.Id],
 		}
 	}
 
@@ -127,25 +139,43 @@ func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v
 		return nil, common.NewBadRequestError(err.Error())
 	}
 
-	result, err := dao.SysAdminUsers.Ctx(ctx).Data(do.SysAdminUsers{
-		Username:     username,
-		PasswordHash: passwordHash,
-		Email:        email,
-		DisplayName:  username,
-		Role:         role,
-		Status:       "active",
-	}).Insert()
-	if err != nil {
-		// Race condition: another request inserted a colliding username/email
-		// between our pre-check and this insert. Translate the DB unique
-		// violation into a friendly business error.
-		if common.IsDuplicateKeyError(err) {
-			return nil, common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+	// 账号与角色关联同事务写入：此前新建的 admin 账号不带任何权限，登录后处处 403，
+	// 是「系统缺乏角色管理」最直接的体感来源。
+	var id int64
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := dao.SysAdminUsers.Ctx(ctx).Data(do.SysAdminUsers{
+			Username:     username,
+			PasswordHash: passwordHash,
+			Email:        email,
+			DisplayName:  username,
+			Role:         role,
+			Status:       "active",
+		}).Insert()
+		if err != nil {
+			// Race condition: another request inserted a colliding username/email
+			// between our pre-check and this insert. Translate the DB unique
+			// violation into a friendly business error.
+			if common.IsDuplicateKeyError(err) {
+				return common.NewBusinessError(consts.CodeEmailExists, consts.MsgEmailExists)
+			}
+			return err
 		}
+
+		id, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+
+		// 超级管理员权限来自账号属性而非角色，忽略传入的 role_ids
+		if role == "super_admin" || len(req.RoleIDs) == 0 {
+			return nil
+		}
+		return replaceUserRoles(ctx, id, req.RoleIDs)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	id, _ := result.LastInsertId()
 	return &v1.AdminUserCreateRes{ID: id}, nil
 }
 
@@ -228,10 +258,27 @@ func (s *sAdmin) DeleteUser(ctx context.Context, req *v1.AdminUserDeleteReq) (*v
 
 	// Delete user first, then revoke sessions to avoid leaving the user
 	// in a state where sessions are gone but the user still exists.
-	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Delete()
+	//
+	// 权限相关记录同事务清理：这些表都没有外键，数据库不会代劳，
+	// 漏删会留下悬空的角色关联与特批权限。
+	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		if _, err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Delete(); err != nil {
+			return err
+		}
+		if _, err := dao.SysAdminUserRoles.Ctx(ctx).Where("admin_user_id", req.Id).Delete(); err != nil {
+			return err
+		}
+		if _, err := dao.SysAdminRolePerms.Ctx(ctx).Where("admin_user_id", req.Id).Delete(); err != nil {
+			return err
+		}
+		_, err := dao.SysAdminDataScopes.Ctx(ctx).Where("admin_user_id", req.Id).Delete()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
+
+	InvalidateUserPermCache(ctx, req.Id)
 
 	// Revoke all sessions
 	common.RevokeAllSessions(ctx, "admin", req.Id)

@@ -264,6 +264,20 @@ func GetCtxUserID(ctx context.Context) int64 {
 	return 0
 }
 
+// GetCtxUserRole extracts the admin privilege flag ("super_admin" / "admin") from context.
+// 注意它是特权标记而非业务角色：业务角色存放在 sys_admin_user_roles，
+// 这里只用于判断是否走超级管理员短路。
+func GetCtxUserRole(ctx context.Context) string {
+	val := ctx.Value("role")
+	if val == nil {
+		return ""
+	}
+	if role, ok := val.(string); ok {
+		return role
+	}
+	return ""
+}
+
 // GetCtxSessionID extracts session ID from context.
 func GetCtxSessionID(ctx context.Context) int64 {
 	val := ctx.Value("sessionId")

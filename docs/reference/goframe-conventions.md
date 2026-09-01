@@ -841,3 +841,35 @@ sender := common.NewEmailSender(&common.EmailConfig{
 - 同一份配置有多个消费方时，**必须收敛到同一个加载函数**（本例为 `EmailConfigFromOptions`），禁止各处自行拼装配置结构体。
 
 排查信号：某个功能"配置明明填了却不生效"，而同类功能正常；`grep -rn "g.Cfg()" ` 命中的键在 `manifest/config/*.yaml` 中搜不到。
+
+### 2026-09-01：测试里用 `gtest.DataPath()` 当 server 名，Windows 下 `Start()` 静默失败
+
+**问题**：`internal/middleware` 的 `request_id_test.go` 三个用例在 Windows 上全部失败，断言形如 `EXPECT 0 == 10`、`EXPECT 0 == 100`，或客户端报 `EOF`——看起来像中间件没生成 RequestId，实则请求根本没发出去。
+
+**原因**：测试用路径当服务器名：
+
+```go
+s := g.Server(gtest.DataPath("request-id-test"))   // 名字是 D:\...\testdata\request-id-test
+s.Start()                                          // 返回值被丢弃
+```
+
+GoFrame 用**服务器名**拼 session 存储目录：`%TEMP%\gsessions\<server-name>`。名字里带盘符冒号时路径非法，`os.MkdirAll` 失败，`Start()` 返回 error——但测试没接这个返回值，于是服务器没监听，`GetListenedPort()` 返回 `-1`，客户端请求 `http://127.0.0.1:-1` 直接 EOF。Linux 下 `gtest.DataPath` 返回的路径不含冒号，同样的代码能跑通，所以问题只在 Windows 暴露。
+
+同一文件还继承了 `manifest/config/config.yaml` 的 `server.address: :18888`（真实应用端口），即便名字合法也会与本机运行中的服务抢端口。
+
+**修复**：服务器名改用普通标识符，并显式绑定空闲端口：
+
+```go
+s := g.Server("mw-request-id-dual")   // 纯名字，不是路径
+s.SetAddr("127.0.0.1:0")             // 不继承配置文件端口，让系统分配
+s.SetDumpRouterMap(false)
+s.Start()
+```
+
+**正确做法（通用规则）**：
+
+- **`g.Server(name)` 的参数是「服务器名」不是「路径」**：它会参与 session 目录等文件路径拼接，只能用普通标识符（字母/数字/连字符）。`gtest.DataPath()` 是用来定位测试数据文件的，不要拿来当名字。
+- **测试里起 server 必须 `SetAddr("127.0.0.1:0")`**：`g.Server()` 会读取项目配置，默认继承生产监听端口，在本机跑着服务时必然冲突。
+- **不要丢弃 `s.Start()` 的 error**：Start 失败后测试仍会继续跑，症状表现为断言数值不对或 EOF，与真正原因（服务器没起来）完全无关，极易误导排查方向。
+
+排查信号：测试断言"期望 N 实际 0"且伴随 `EOF`；`GetListenedPort()` 返回 `-1`；同一测试在 Linux CI 通过但本地 Windows 失败。

@@ -37,6 +37,7 @@ import {
   IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
+import { hasPermission } from '@/utils/permission'
 
 const router = useRouter()
 const route = useRoute()
@@ -240,7 +241,7 @@ function onGroupMouseEnter(groupKey: string, event: MouseEvent) {
   clearTimeout(popupHideTimer!)
   hoveredGroup.value = groupKey
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const groupData = menuGroups.find(g => g.key === groupKey)
+  const groupData = menuGroups.value.find(g => g.key === groupKey)
   const estimatedHeight = 32 + (groupData?.items.length || 0) * 36
   popupTop.value = Math.max(8, Math.min(rect.top, window.innerHeight - estimatedHeight - 8))
 }
@@ -262,7 +263,7 @@ function onPopupMouseLeave() {
 }
 
 const hoveredGroupData = computed(() => {
-  return menuGroups.find(g => g.key === hoveredGroup.value)
+  return menuGroups.value.find(g => g.key === hoveredGroup.value)
 })
 
 function handlePopupItemClick(key: string) {
@@ -300,15 +301,17 @@ function onCollapseAfterLeave(el: Element) {
   e.style.overflow = ''
 }
 
-const menuGroups = [
+// 菜单的完整定义。每项声明它需要的权限点，实际显隐由下方 menuGroups 派生 ——
+// 菜单是权限的投影，不存在独立的「菜单权限」配置。
+const ALL_MENU_GROUPS = [
   {
     key: 'dashboard',
     label: '数据看板',
     icon: IconDashboard,
     items: [
-      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop },
-      { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard },
-      { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand },
+      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop, perm: 'dashboard:view' },
+      { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard, perm: 'dashboard:view' },
+      { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand, perm: 'monitor:view' },
     ],
   },
   {
@@ -316,12 +319,12 @@ const menuGroups = [
     label: '大模型',
     icon: IconApps,
     items: [
-      { name: 'AdminModels', label: '模型列表', icon: IconApps },
-      { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage },
-      { name: 'AdminChannels', label: '渠道管理', icon: IconBranch },
-      { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar },
-      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
-      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
+      { name: 'AdminModels', label: '模型列表', icon: IconApps, perm: 'model:view' },
+      { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage, perm: 'model:view' },
+      { name: 'AdminChannels', label: '渠道管理', icon: IconBranch, perm: 'channel:view' },
+      { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar, perm: 'task:view' },
+      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile, perm: 'billing:view' },
+      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand, perm: 'audit:view' },
     ],
   },
   {
@@ -329,9 +332,9 @@ const menuGroups = [
     label: '租户管理',
     icon: IconUserGroup,
     items: [
-      { name: 'AdminTenants', label: '租户列表', icon: IconHome },
-      { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers },
-      { name: 'AdminMembers', label: '成员列表', icon: IconUser },
+      { name: 'AdminTenants', label: '租户列表', icon: IconHome, perm: 'tenant:view' },
+      { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers, perm: 'tenant:view' },
+      { name: 'AdminMembers', label: '成员列表', icon: IconUser, perm: 'member:view' },
     ],
   },
   {
@@ -339,10 +342,10 @@ const menuGroups = [
     label: '财务中心',
     icon: IconIdcard,
     items: [
-      { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
-      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
-      { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
-      { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag },
+      { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock, perm: 'order:view' },
+      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand, perm: 'billing:view' },
+      { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift, perm: 'redemption:view' },
+      { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag, perm: 'promo:view' },
     ],
   },
   {
@@ -350,11 +353,11 @@ const menuGroups = [
     label: '安全审计',
     icon: IconSafe,
     items: [
-      { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle },
-      { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle },
+      { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle, perm: 'audit:view' },
+      { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
-      { name: 'AdminPermissions', label: '权限管理', icon: IconSafe },
-      { name: 'AdminAudit', label: '操作日志', icon: IconFile },
+      { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, perm: 'user:view' },
+      { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
     ],
   },
   {
@@ -362,15 +365,15 @@ const menuGroups = [
     label: '运营管理',
     icon: IconNotification,
     items: [
-      { name: 'AdminNotificationTemplates', label: '通知模板', icon: IconNotification },
-      { name: 'AdminMessages', label: '消息管理', icon: IconSend },
-      { name: 'AdminEmailLogs', label: '邮件发送记录', icon: IconFile },
-      { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage },
-      { name: 'AdminTickets', label: '工单管理', icon: IconCommand },
-      { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage },
-      { name: 'AdminAgreements', label: '用户协议', icon: IconFile },
-      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
-      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
+      { name: 'AdminNotificationTemplates', label: '通知模板', icon: IconNotification, perm: 'operation:view' },
+      { name: 'AdminMessages', label: '消息管理', icon: IconSend, perm: 'operation:view' },
+      { name: 'AdminEmailLogs', label: '邮件发送记录', icon: IconFile, perm: 'operation:view' },
+      { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage, perm: 'operation:view' },
+      { name: 'AdminTickets', label: '工单管理', icon: IconCommand, perm: 'support:view' },
+      { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage, perm: 'support:view' },
+      { name: 'AdminAgreements', label: '用户协议', icon: IconFile, perm: 'system:view' },
+      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers, perm: 'support:view' },
+      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile, perm: 'support:view' },
     ],
   },
   {
@@ -378,15 +381,15 @@ const menuGroups = [
     label: '运维监控',
     icon: IconCommand,
     items: [
-      { name: 'AdminMonitor', label: '系统监控', icon: IconCommand },
-      { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand },
-      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand },
-      { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
-      { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
-      { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },
-      { name: 'AdminChannelErrors', label: '渠道错误监控', icon: IconFile },
-      { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile },
-      { name: 'AdminCronJobs', label: '定时任务', icon: IconFile },
+      { name: 'AdminMonitor', label: '系统监控', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification, perm: 'monitor:view' },
+      { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminChannelErrors', label: '渠道错误监控', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile, perm: 'audit:view' },
+      { name: 'AdminCronJobs', label: '定时任务', icon: IconFile, perm: 'system:view' },
     ],
   },
   {
@@ -394,13 +397,24 @@ const menuGroups = [
     label: '系统',
     icon: IconSettings,
     items: [
-      { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup },
-      { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock },
-      { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
-      { name: 'AdminFiles', label: '文件管理', icon: IconStorage },
+      { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup, perm: 'user:view' },
+      { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock, perm: 'system:plugin' },
+      { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
+      { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
     ],
   },
 ]
+
+// 按当前用户权限过滤菜单：整组条目都被过滤掉时，分组本身也不再渲染，
+// 避免出现点开是空的分组。super_admin 在 hasPermission 内直接放行。
+const menuGroups = computed(() =>
+  ALL_MENU_GROUPS
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => !item.perm || hasPermission(item.perm)),
+    }))
+    .filter(group => group.items.length > 0)
+)
 
 const breadcrumbItems = computed(() => {
   return route.matched

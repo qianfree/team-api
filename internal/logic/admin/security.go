@@ -98,6 +98,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	res.User.Username = user.Username
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
+	res.Permissions, res.Roles = loadSessionPermissions(ctx, user.Id, user.Role)
 	return res, nil
 }
 
