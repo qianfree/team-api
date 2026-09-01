@@ -150,18 +150,17 @@ const (
 	CodeInvalidConfirmToken = 10046
 
 	// Security errors (10047+)
-	CodeTotpRequired         = 10047
-	CodeTotpInvalid          = 10048
-	CodeTotpAlreadyEnabled   = 10049
-	CodeTotpNotEnabled       = 10050
-	CodeBackupCodeInvalid    = 10051
-	CodeTurnstileFailed      = 10052
-	CodeIpRestricted         = 10053
-	CodeHighRisk2FARequired  = 10054
-	CodeNoAvailableApiKey    = 10055
-	CodeSandboxQuotaExceeded = 10056
-	CodeCaptchaRequired      = 10057
-	CodeCaptchaFailed        = 10058
+	CodeTotpRequired        = 10047
+	CodeTotpInvalid         = 10048
+	CodeTotpAlreadyEnabled  = 10049
+	CodeTotpNotEnabled      = 10050
+	CodeBackupCodeInvalid   = 10051
+	CodeTurnstileFailed     = 10052
+	CodeIpRestricted        = 10053
+	CodeHighRisk2FARequired = 10054
+	CodeNoAvailableApiKey   = 10055
+	CodeCaptchaRequired     = 10057
+	CodeCaptchaFailed       = 10058
 
 	// OAuth errors (10059+)
 	CodeOAuthDisabled      = 10059

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/response"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+	relaycommon "github.com/qianfree/team-api/relay/common"
 
 	adminHandler "github.com/qianfree/team-api/internal/handler/admin"
 	"github.com/qianfree/team-api/internal/handler/landing"
@@ -120,7 +122,7 @@ var (
 			common.InitChannelErrorWriter()
 
 			// Initialize async audit log writer
-			common.InitAuditLogWriter()
+			common.InitAuditLogWriter(ctx)
 
 			// Initialize async channel debug log writer + 注入 relay 层提交钩子
 			common.InitChannelDebugLogWriter()
@@ -129,11 +131,31 @@ var (
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
 
+			// 按配置拉起 pprof 调试端口(「性能配置-调试」):仅监听本机回环,禁止公网暴露;
+			// 端口在进程启动时读取,变更后需重启生效
+			if port := common.Config().GetInt(ctx, "pprof_port"); port > 0 && port <= 65535 {
+				go func() {
+					mux := http.NewServeMux()
+					mux.HandleFunc("/debug/pprof/", pprof.Index)
+					mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+					mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+					mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+					mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+					if listenErr := http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), mux); listenErr != nil {
+						g.Log().Warningf(ctx, "pprof server exited: %v", listenErr)
+					}
+				}()
+				g.Log().Infof(ctx, "pprof listening on 127.0.0.1:%d", port)
+			}
+
 			// Register cron jobs
 			common.InitCronScheduler()
 			cs := common.GetCronScheduler()
 			registerCronJobs(cs)
 			cs.StartBackground(ctx)
+
+			// 全局超时配置注入 relay 层(渠道级 settings.timeout_seconds 仍优先,此处为未配置渠道的兜底)
+			syncGlobalRelayTimeouts(ctx)
 
 			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
 			billing.StartWalletMaterializer(ctx)
@@ -360,6 +382,25 @@ func watchChannelAutoTestInterval(cs *common.CronScheduler) {
 		if err := cs.Reschedule(ctx, "channel_auto_test", channelAutoTestSchedule(ctx)); err != nil {
 			g.Log().Errorf(ctx, "渠道自动探测重排失败，沿用原间隔: %v", err)
 		}
+	})
+}
+
+// syncGlobalRelayTimeouts 将系统设置中的全局超时注入 relay 层，并在配置变更时动态刷新（免重启）。
+// 优先级：渠道级 settings.timeout_seconds > 此处注入的全局值 > relay 层内置默认（180s/300s）。
+// relay 包不反向 import internal（会循环依赖），故由本函数桥接注入。
+func syncGlobalRelayTimeouts(ctx context.Context) {
+	apply := func(ctx context.Context) {
+		relaycommon.SetGlobalRequestTimeoutSeconds(common.Config().GetInt(ctx, "request_timeout_seconds"))
+		relaycommon.SetGlobalStreamIdleTimeoutSeconds(common.Config().GetInt(ctx, "streaming_timeout_seconds"))
+	}
+	apply(ctx)
+	common.OnSettingsChanged(func(ctx context.Context, key string) {
+		if key != "request_timeout_seconds" && key != "streaming_timeout_seconds" {
+			return
+		}
+		apply(ctx)
+		g.Log().Infof(ctx, "全局 relay 超时已刷新: request=%ds stream_idle=%ds",
+			relaycommon.GlobalRequestTimeoutSeconds(), relaycommon.GlobalStreamIdleTimeoutSeconds())
 	})
 }
 

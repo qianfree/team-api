@@ -54,24 +54,8 @@ function set(key: string, v: number | undefined): void {
 				<AInputNumber :model-value="num('request_timeout_seconds')" @change="(v: number | undefined) => set('request_timeout_seconds', v)" :min="5" :max="600" />
 			</div>
 			<div class="compact-row">
-				<label>流式超时(秒)</label>
+				<label>流式空闲超时(秒)</label>
 				<AInputNumber :model-value="num('streaming_timeout_seconds')" @change="(v: number | undefined) => set('streaming_timeout_seconds', v)" :min="30" :max="3600" />
-			</div>
-		</div>
-
-		<!-- 缓存设置 -->
-		<div class="group">
-			<div class="group-title">缓存设置</div>
-			<div class="compact-row">
-				<label>启用缓存</label>
-				<ASwitch
-					:model-value="!!values['cache_enabled']"
-					@change="(v: string | number | boolean) => values['cache_enabled'] = v"
-				/>
-			</div>
-			<div class="compact-row">
-				<label>过期时间(秒)</label>
-				<AInputNumber :model-value="num('cache_ttl_seconds')" @change="(v: number | undefined) => set('cache_ttl_seconds', v)" :min="30" :max="86400" />
 			</div>
 		</div>
 
@@ -85,35 +69,6 @@ function set(key: string, v: number | undefined): void {
 			<div class="compact-row">
 				<label>写入间隔(ms)</label>
 				<AInputNumber :model-value="num('batch_write_interval_ms')" @change="(v: number | undefined) => set('batch_write_interval_ms', v)" :min="100" :max="30000" />
-			</div>
-		</div>
-
-		<!-- 渠道调度 -->
-		<div class="group">
-			<div class="group-title">渠道调度</div>
-			<div class="compact-row">
-				<label>亲和性 TTL(秒)</label>
-				<AInputNumber :model-value="num('channel_affinity_ttl')" @change="(v: number | undefined) => set('channel_affinity_ttl', v)" :min="0" :max="3600" />
-			</div>
-			<div class="compact-row">
-				<label>测试间隔(秒)</label>
-				<AInputNumber :model-value="num('auto_test_interval')" @change="(v: number | undefined) => set('auto_test_interval', v)" :min="60" :max="86400" />
-			</div>
-		</div>
-
-		<!-- 沙箱模式 -->
-		<div class="group">
-			<div class="group-title">沙箱模式</div>
-			<div class="compact-row">
-				<label>启用沙箱</label>
-				<ASwitch
-					:model-value="!!values['sandbox_enabled']"
-					@change="(v: string | number | boolean) => values['sandbox_enabled'] = v"
-				/>
-			</div>
-			<div class="compact-row">
-				<label>月默认额度</label>
-				<AInputNumber :model-value="num('sandbox_default_quota')" @change="(v: number | undefined) => set('sandbox_default_quota', v)" :min="0" :max="100000" />
 			</div>
 		</div>
 
