@@ -5,6 +5,18 @@ import { refreshCurrencySettings } from '@/composables/useCurrency'
 
 const settingsFormKey: InjectionKey<Record<string, any>> = Symbol('settingsFormValues')
 
+// 各分类保存前校验器：返回错误文案则中断保存（与后端 validateCrossFieldSettings 口径保持一致）
+const categoryValidators: Record<string, (values: Record<string, any>) => string | null> = {
+	general: (values) => {
+		// 维护时长必须是 Go duration 格式（2h/30m/1h30m），否则后端 API 维护的 Retry-After 解析会回退默认值
+		const v = (values['maintenance_duration'] ?? '').toString().trim()
+		if (v && !/^(\d+(\.\d+)?(ms|s|m|h))+$/.test(v)) {
+			return '维护时长格式不正确，请使用如 2h、30m、1h30m 的时长格式'
+		}
+		return null
+	},
+}
+
 export function useSettings(category: () => string) {
 	const formValues = reactive<Record<string, any>>({})
 	const loading = ref(false)
@@ -32,6 +44,15 @@ export function useSettings(category: () => string) {
 	}
 
 	async function save() {
+		// 先跑分类校验器，非法值直接拦截，避免把脏数据发到后端
+		const validator = categoryValidators[category()]
+		if (validator) {
+			const errMsg = validator(formValues)
+			if (errMsg) {
+				Message.error(errMsg)
+				return
+			}
+		}
 		saving.value = true
 		try {
 			await request.put(`/admin/settings/${category()}`, { settings: formValues })

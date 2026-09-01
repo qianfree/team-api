@@ -70,7 +70,7 @@ var Registry = []SettingDef{
 	{Key: "maintenance_message", Type: SettingTypeString, Default: "", Category: "general",
 		Label: "维护提示信息", Description: "维护模式下显示的提示文字", IsPublic: true},
 	{Key: "maintenance_duration", Type: SettingTypeString, Default: "", Category: "general",
-		Label: "预计维护时长", Description: "维护模式预计持续时间，展示给用户", IsPublic: true},
+		Label: "预计维护时长", Description: "维护模式预计持续时间（Go 时长格式，如 2h、30m、1h30m），展示给用户", IsPublic: true},
 	{Key: "api_maintenance_enabled", Type: SettingTypeBool, Default: "false", Category: "general",
 		Label: "全局 API 维护", Description: "开启后 API 代理返回 503，叠加维护模式使用", IsPublic: true},
 	{Key: "tenant_console_url", Type: SettingTypeString, Default: "", Category: "general",

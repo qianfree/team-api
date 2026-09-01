@@ -158,17 +158,23 @@ func TestGetRegisterRateLimitStatus(t *testing.T) {
 	status := GetRegisterRateLimitStatus(ctx, testIP)
 
 	// 验证状态
-	if hourlyLimit, ok := status["hourly_limit"].(int); !ok || hourlyLimit != 5 {
-		t.Errorf("期望每小时限制为5，得到: %v", status["hourly_limit"])
+	if status.HourlyLimit != 5 {
+		t.Errorf("期望每小时限制为5，得到: %d", status.HourlyLimit)
 	}
-	if hourlyRemaining, ok := status["hourly_remaining"].(int); !ok || hourlyRemaining != 3 {
-		t.Errorf("期望每小时剩余3次，得到: %v", status["hourly_remaining"])
+	if status.HourlyRemaining != 3 {
+		t.Errorf("期望每小时剩余3次，得到: %d", status.HourlyRemaining)
 	}
-	if dailyLimit, ok := status["daily_limit"].(int); !ok || dailyLimit != 20 {
-		t.Errorf("期望每天限制为20，得到: %v", status["daily_limit"])
+	if status.HourlyResetSeconds <= 0 {
+		t.Errorf("期望小时窗口重置秒数大于0，得到: %d", status.HourlyResetSeconds)
 	}
-	if dailyRemaining, ok := status["daily_remaining"].(int); !ok || dailyRemaining != 18 {
-		t.Errorf("期望每天剩余18次，得到: %v", status["daily_remaining"])
+	if status.DailyLimit != 20 {
+		t.Errorf("期望每天限制为20，得到: %d", status.DailyLimit)
+	}
+	if status.DailyRemaining != 18 {
+		t.Errorf("期望每天剩余18次，得到: %d", status.DailyRemaining)
+	}
+	if status.DailyResetSeconds <= 0 {
+		t.Errorf("期望天窗口重置秒数大于0，得到: %d", status.DailyResetSeconds)
 	}
 
 	// 清理测试数据

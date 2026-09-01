@@ -23,6 +23,19 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
+// GetRegisterRateLimitStatus 查询当前 IP 的注册限流状态（注册页提示用，公开端点，只读不计数）。
+func (s *sTenant) GetRegisterRateLimitStatus(ctx context.Context, _ *v1.TenantRegisterRateLimitReq) (*v1.TenantRegisterRateLimitRes, error) {
+	status := common.GetRegisterRateLimitStatus(ctx, g.RequestFromCtx(ctx).GetClientIp())
+	return &v1.TenantRegisterRateLimitRes{
+		HourlyLimit:        status.HourlyLimit,
+		HourlyRemaining:    status.HourlyRemaining,
+		HourlyResetSeconds: status.HourlyResetSeconds,
+		DailyLimit:         status.DailyLimit,
+		DailyRemaining:     status.DailyRemaining,
+		DailyResetSeconds:  status.DailyResetSeconds,
+	}, nil
+}
+
 // Register handles tenant registration.
 func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error) {
 	// Check if registration is enabled
