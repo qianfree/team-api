@@ -83,6 +83,11 @@ type (
 		ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error)
 		// ChangePassword handles admin password change.
 		ChangePassword(ctx context.Context, req *v1.AdminChangePasswordReq) (*v1.AdminChangePasswordRes, error)
+		// GetMe 返回当前登录用户的信息与有效权限。
+		//
+		// 权限此前只在登录响应里下发一次，之后前端从 localStorage 恢复：管理员改了某人的权限，
+		// 对方不重新登录就一直按旧权限渲染菜单。前端在应用启动与 token 刷新后调用本接口刷新。
+		GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, error)
 		// CreateChangelog 创建更新日志
 		CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq) (*v1.ChangelogCreateRes, error)
 		// ListChangelogs 更新日志列表（管理后台，含草稿）
@@ -190,7 +195,9 @@ type (
 		// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账金额 + 转账流水号），
 		// 供现金对账与开票追溯。
 		OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error)
-		// GetWalletInfo 获取租户钱包信息（管理后台）
+		// GetWalletInfo 获取租户钱包信息（管理后台）。
+		// balance/frozen_balance 以 Redis 权威值为准（Redis 是资金提交点，调整余额/线下入账后立即可见），
+		// DB 侧余额是物化器周期覆盖的滞后副本，仅作钱包行存在性校验与 Redis 不可用时的降级展示。
 		GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (*v1.AdminWalletInfoRes, error)
 		// GetWalletTransactions 获取租户钱包交易流水（管理后台）
 		GetWalletTransactions(ctx context.Context, req *v1.AdminWalletTransactionListReq) (*v1.AdminWalletTransactionListRes, error)
@@ -402,7 +409,10 @@ type (
 		UpdateUserPermissions(ctx context.Context, req *v1.AdminPermissionUpdateReq) (*v1.AdminPermissionUpdateRes, error)
 		// UpdateUserDataScopes updates data scopes for an admin user.
 		UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (*v1.AdminDataScopeUpdateRes, error)
-		// GetAllPermissions returns all predefined permission groups.
+		// GetAllPermissions returns all predefined permission groups plus tier metadata.
+		//
+		// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
+		// 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
 		GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error)
 		// ListPlans 获取套餐列表
 		ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanListRes, error)
@@ -447,6 +457,30 @@ type (
 		ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsagesReq) (*v1.RedemptionUsagesRes, error)
 		// ExportRedemptions exports redemption list to CSV or Excel.
 		ExportRedemptions(ctx context.Context, req *v1.RedemptionExportReq) (*v1.RedemptionExportRes, error)
+		// AssignUserRoles 为管理员分配角色（全量覆盖）。
+		AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssignReq) (*v1.AdminUserRoleAssignRes, error)
+		// GetUserRoles 查询管理员已分配的角色。
+		GetUserRoles(ctx context.Context, req *v1.AdminUserRoleListReq) (*v1.AdminUserRoleListRes, error)
+		// ListRoles 返回角色列表（角色数量少，不分页）。
+		ListRoles(ctx context.Context, _ *v1.AdminRoleListReq) (*v1.AdminRoleListRes, error)
+		// GetRoleDetail 返回角色详情，同时给出权限点全集与按模块归纳的档位视图。
+		GetRoleDetail(ctx context.Context, req *v1.AdminRoleDetailReq) (*v1.AdminRoleDetailRes, error)
+		// CreateRole 新建角色。权限可直接给出，也可从现有角色复制。
+		CreateRole(ctx context.Context, req *v1.AdminRoleCreateReq) (*v1.AdminRoleCreateRes, error)
+		// UpdateRole 更新角色的名称、说明、排序与权限（code 不可修改）。
+		UpdateRole(ctx context.Context, req *v1.AdminRoleUpdateReq) (*v1.AdminRoleUpdateRes, error)
+		// UpdateRoleStatus 启用/禁用角色。禁用后该角色的权限对全部关联用户立即失效。
+		UpdateRoleStatus(ctx context.Context, req *v1.AdminRoleStatusUpdateReq) (*v1.AdminRoleStatusUpdateRes, error)
+		// DeleteRole 删除角色，并在同一事务内级联清理其权限行与用户关联。
+		//
+		// 无外键，级联必须由业务层完成，否则会留下悬空的权限行与用户关联。
+		// 预置角色同样可删：is_builtin 只标识来源，不构成删除保护。
+		//
+		// 不存在把自己锁死的风险 —— 超级管理员由 sys_admin_users.role 判定并短路鉴权，
+		// 不依赖任何角色记录，即便角色被删光也能登录并重建，因此不设「至少保留一个角色」的约束。
+		DeleteRole(ctx context.Context, req *v1.AdminRoleDeleteReq) (*v1.AdminRoleDeleteRes, error)
+		// ResetRoleDefaults 把预置角色的权限恢复为出厂默认值。
+		ResetRoleDefaults(ctx context.Context, req *v1.AdminRoleResetReq) (*v1.AdminRoleResetRes, error)
 		// Verify2FA handles the 2FA verification step during admin login.
 		Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.Admin2FAVerifyRes, error)
 		// Setup2FA starts the 2FA setup process for the current admin user.
@@ -549,7 +583,11 @@ type (
 		UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error)
 		// GetWorkbenchSummary 工作台汇总。
 		GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSummaryReq) (*v1.AdminWorkbenchSummaryRes, error)
-		// GetWorkbenchBadges 菜单红点计数（与 summary 共用缓存，不额外压库）。
+		// GetWorkbenchBadges 工作台菜单角标计数（与 summary 共用缓存，不额外压库）。
+		//
+		// 角标只挂工作台菜单一项：待办的排查线索只存在于工作台的描述文案里，
+		// 业务菜单里没有对应的定位入口，往各业务菜单挂数字只会带来
+		// 「进去了却找不到问题」的困惑（红点引路却无路可走）。
 		GetWorkbenchBadges(ctx context.Context, _ *v1.AdminWorkbenchBadgeReq) (*v1.AdminWorkbenchBadgeRes, error)
 	}
 )

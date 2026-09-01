@@ -66,6 +66,10 @@ type Admin2FAVerifyRes struct {
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 	} `json:"user"`
+	// 与 AdminLoginRes 保持一致：2FA 是登录的第二段，同样要下发权限，
+	// 否则开了两步验证的账号前端权限集为空，菜单全不显示。
+	Permissions []string         `json:"permissions"`
+	Roles       []AdminRoleBrief `json:"roles"`
 }
 
 // ============================================================

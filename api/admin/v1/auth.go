@@ -23,7 +23,30 @@ type AdminLoginRes struct {
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 	} `json:"user"`
+	// Permissions 是该账号的有效权限点（角色并集 ∪ 特批）。前端据此渲染菜单与按钮；
+	// 后端鉴权始终以数据库/缓存为准，这里只影响展示。
+	Permissions       []string                 `json:"permissions"`
+	Roles             []AdminRoleBrief         `json:"roles"`                        // 已分配角色（超管为空数组）
 	PendingAgreements []*LoginPendingAgreement `json:"pending_agreements,omitempty"` // 待接受协议列表
+}
+
+// AdminMeReq 当前登录用户信息（权限刷新用）
+//
+// 权限变更后，已登录用户此前需要重新登录才能拿到新权限。前端在应用启动与 token 刷新后
+// 调用本接口刷新，使菜单与按钮跟上最新权限。
+type AdminMeReq struct {
+	g.Meta `path:"/auth/me" method:"get" mime:"json" tags:"管理后台-认证" summary:"当前登录用户信息与有效权限"`
+}
+
+// AdminMeRes 当前登录用户信息响应
+type AdminMeRes struct {
+	ID          int64            `json:"id"`
+	Username    string           `json:"username"`
+	DisplayName string           `json:"display_name"`
+	Email       string           `json:"email"`
+	Role        string           `json:"role"`
+	Permissions []string         `json:"permissions"`
+	Roles       []AdminRoleBrief `json:"roles"`
 }
 
 // LoginPendingAgreement 登录时返回的待接受协议信息

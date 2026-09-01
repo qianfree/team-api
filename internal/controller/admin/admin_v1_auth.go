@@ -28,3 +28,6 @@ func (c *ControllerV1) AdminForceLogout(ctx context.Context, req *v1.AdminForceL
 func (c *ControllerV1) AdminChangePassword(ctx context.Context, req *v1.AdminChangePasswordReq) (res *v1.AdminChangePasswordRes, err error) {
 	return service.Admin().ChangePassword(ctx, req)
 }
+func (c *ControllerV1) AdminMe(ctx context.Context, req *v1.AdminMeReq) (res *v1.AdminMeRes, err error) {
+	return service.Admin().GetMe(ctx, req)
+}

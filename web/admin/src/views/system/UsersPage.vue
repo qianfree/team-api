@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, h } from 'vue'
 import {
   Tag, Button, Space, Popconfirm, Message, Modal,
 } from '@arco-design/web-vue'
@@ -38,7 +38,54 @@ const form = reactive({
   password: '',
   role: 'admin',
   status: 'active',
+  role_ids: [] as number[],
 })
+
+// 可分配的角色（来自 sys_admin_roles，用户可自由增删改）
+const availableRoles = ref<any[]>([])
+const roleSelectOptions = computed(() =>
+  availableRoles.value.map(r => ({
+    label: r.is_enabled ? r.name : `${r.name}（已禁用）`,
+    value: r.id,
+  }))
+)
+
+// 角色分配弹窗（已有账号的快捷入口）
+const showRoleModal = ref(false)
+const roleTarget = ref<any>(null)
+const roleAssignIds = ref<number[]>([])
+const roleAssignLoading = ref(false)
+
+async function fetchRoles() {
+  try {
+    const res: any = await request.get('/admin/roles')
+    availableRoles.value = res.data?.data?.list || res.data?.list || []
+  } catch {
+    availableRoles.value = []
+  }
+}
+
+function openAssignRoles(row: any) {
+  roleTarget.value = row
+  roleAssignIds.value = (row.roles || []).map((r: any) => r.id)
+  showRoleModal.value = true
+}
+
+async function submitAssignRoles(done: (closed?: boolean) => void) {
+  roleAssignLoading.value = true
+  try {
+    await request.put(`/admin/users/${roleTarget.value.id}/roles`, {
+      role_ids: roleAssignIds.value,
+    })
+    Message.success('角色已更新')
+    done()
+    fetchData()
+  } catch {
+    return false
+  } finally {
+    roleAssignLoading.value = false
+  }
+}
 
 const roleOptions = [
   { label: '超级管理员', value: 'super_admin' },
@@ -80,9 +127,31 @@ const columns: TableColumnData[] = [
   },
   { title: '最后登录', dataIndex: 'last_login_at', width: 180 },
   {
+    title: '角色',
+    dataIndex: 'roles',
+    width: 200,
+    render({ record }) {
+      // 超管权限来自账号属性而非角色，不展示角色标签
+      if (record.role === 'super_admin') {
+        return h(Tag, { color: 'red', size: 'small' }, () => '全部权限')
+      }
+      const list = record.roles || []
+      // 未分配角色 = 零权限，只能访问自助接口。这是安全的默认值，但要让人一眼看见
+      if (list.length === 0) {
+        return h(Tag, { color: 'orange', size: 'small' }, () => '未分配角色')
+      }
+      return h(Space, { size: [4, 4], wrap: true }, () =>
+        list.map((r: any) =>
+          h(Tag, { size: 'small', color: r.is_enabled ? 'arcoblue' : 'gray' },
+            () => r.is_enabled ? r.name : `${r.name}（已禁用）`)
+        )
+      )
+    },
+  },
+  {
     title: '操作',
     dataIndex: 'actions',
-    width: 260,
+    width: 330,
     fixed: 'right',
     render({ record }) {
       const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
@@ -94,6 +163,10 @@ const columns: TableColumnData[] = [
         }, () => h(Button, { size: 'small' }, () => record.status === 'active' ? '禁用' : '启用')),
         h(Button, { size: 'small', onClick: () => openResetPassword(record) }, () => '重置密码'),
       ]
+      if (record.role !== 'super_admin') {
+        actions.splice(1, 0,
+          h(Button, { size: 'small', onClick: () => openAssignRoles(record) }, () => '分配角色'))
+      }
       if (locked) {
         actions.push(h(Popconfirm, {
           content: '确定解除该用户的登录锁定？',
@@ -133,6 +206,7 @@ function openCreate() {
   form.password = ''
   form.role = 'admin'
   form.status = 'active'
+  form.role_ids = []
   showModal.value = true
 }
 
@@ -144,6 +218,7 @@ function openEdit(row: any) {
   form.password = ''
   form.role = row.role
   form.status = row.status
+  form.role_ids = (row.roles || []).map((r: any) => r.id)
   showModal.value = true
 }
 
@@ -158,9 +233,15 @@ async function handleSubmit(done: () => void) {
   formLoading.value = true
   try {
     if (editingId.value) {
-      await request.put(`/admin/users/${editingId.value}`, form)
+      // 账号属性与角色关联是两个接口：前者改 sys_admin_users，后者改 sys_admin_user_roles
+      const { role_ids, ...userForm } = form
+      await request.put(`/admin/users/${editingId.value}`, userForm)
+      if (form.role !== 'super_admin') {
+        await request.put(`/admin/users/${editingId.value}/roles`, { role_ids })
+      }
       Message.success('更新成功')
     } else {
+      // 创建时角色随账号一起写入，避免新账号短暂处于零权限状态
       await request.post('/admin/users', form)
       Message.success('创建成功')
     }
@@ -252,6 +333,7 @@ async function deleteUser(row: any) {
 
 onMounted(() => {
   fetchData()
+  fetchRoles()
 })
 
 const { exporting, exportFile } = useExport({
@@ -325,11 +407,60 @@ const { exporting, exportFile } = useExport({
         <AFormItem v-if="!editingId" field="password" label="密码">
           <AInput v-model="form.password" type="password" placeholder="请输入密码" />
         </AFormItem>
-        <AFormItem field="role" label="角色" :rules="[{ required: true, message: '请选择角色' }]">
-          <ASelect v-model="form.role" :options="roleOptions" placeholder="请选择角色" />
+        <AFormItem field="role" label="账号类型" :rules="[{ required: true, message: '请选择账号类型' }]">
+          <ASelect v-model="form.role" :options="roleOptions" placeholder="请选择账号类型" />
+          <template #extra>
+            <span v-if="form.role === 'super_admin'">超级管理员拥有全部权限，不需要也不使用角色</span>
+          </template>
+        </AFormItem>
+        <AFormItem v-if="form.role !== 'super_admin'" field="role_ids" label="角色">
+          <ASelect
+            v-model="form.role_ids"
+            :options="roleSelectOptions"
+            multiple
+            allow-clear
+            placeholder="请选择角色（可多选）"
+          />
+          <template #extra>
+            <span v-if="form.role_ids.length === 0" class="role-empty-hint">
+              未分配角色的账号没有任何权限，登录后只能访问个人信息
+            </span>
+            <span v-else>权限取所选角色的并集</span>
+          </template>
         </AFormItem>
         <AFormItem label="状态">
           <ASelect v-model="form.status" :options="statusOptions" placeholder="请选择状态" />
+        </AFormItem>
+      </AForm>
+    </AModal>
+
+    <!-- 分配角色 -->
+    <AModal
+      v-model:visible="showRoleModal"
+      title="分配角色"
+      :mask-closable="false"
+      :width="460"
+      :on-before-ok="submitAssignRoles"
+      :ok-loading="roleAssignLoading"
+    >
+      <AForm :model="{}" layout="vertical">
+        <AFormItem label="账号">
+          <span>{{ roleTarget?.username }}</span>
+        </AFormItem>
+        <AFormItem label="角色">
+          <ASelect
+            v-model="roleAssignIds"
+            :options="roleSelectOptions"
+            multiple
+            allow-clear
+            placeholder="请选择角色（可多选）"
+          />
+          <template #extra>
+            <span v-if="roleAssignIds.length === 0" class="role-empty-hint">
+              清空角色后该账号将失去全部权限，登录后只能访问个人信息
+            </span>
+            <span v-else>权限取所选角色的并集</span>
+          </template>
         </AFormItem>
       </AForm>
     </AModal>
@@ -370,5 +501,9 @@ const { exporting, exportFile } = useExport({
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ta-border-light);
+}
+
+.role-empty-hint {
+  color: rgb(var(--orange-6));
 }
 </style>
