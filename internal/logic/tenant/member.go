@@ -1085,12 +1085,13 @@ var memberPeriodLabels = map[string]string{
 	"month": "按月",
 }
 
-// formatMemberUSD 格式化金额为 $ 前缀、最多两位小数（去掉末尾 0），与前端 formatMoney(precision: 2) 输出一致
-func formatMemberUSD(v float64) string {
+// formatMemberMoney 格式化金额为「本位币符号 + 最多两位小数（去掉末尾 0）」，与前端 formatMoney(precision: 2) 输出一致。
+// 成员额度/消费属 bil_ 记账层，币种 = 系统本位币，符号由调用方一次性取好（billing.CurrencySymbol）避免逐行读配置。
+func formatMemberMoney(sym string, v float64) string {
 	s := strconv.FormatFloat(v, 'f', 2, 64)
 	s = strings.TrimRight(s, "0")
 	s = strings.TrimSuffix(s, ".")
-	return "$" + s
+	return sym + s
 }
 
 // ExportMembers exports the tenant member list as CSV or Excel.
@@ -1105,6 +1106,10 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
+	// 额度/消费属 bil_ 记账层，币种 = 系统本位币；符号与币种码取一次供表头和逐行格式化复用
+	moneyCurrency := billing.Currency(ctx)
+	moneySym := billing.CurrencySymbol(ctx)
+
 	columns := []export.Column{
 		{Field: "username", Header: "用户名"},
 		{Field: "display_name", Header: "显示名称"},
@@ -1113,7 +1118,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 		{Field: "status", Header: "状态"},
 		{Field: "quota", Header: "额度限制"},
 		{Field: "model_count", Header: "可用模型"},
-		{Field: "month_cost", Header: "本月消费(USD)"},
+		{Field: "month_cost", Header: "本月消费(" + moneyCurrency + ")"},
 		{Field: "created_at", Header: "加入时间"},
 		{Field: "updated_at", Header: "最后更新"},
 	}
@@ -1202,7 +1207,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 				// 额度限制：不限制 / 金额（周期性追加周期文案），与列表页渲染一致
 				quota := "不限制"
 				if u.QuotaType != "" && u.QuotaType != "none" {
-					quota = formatMemberUSD(u.QuotaLimit)
+					quota = formatMemberMoney(moneySym, u.QuotaLimit)
 					if u.QuotaType == "periodic" && u.QuotaPeriod != "" {
 						quota += "（" + memberPeriodLabels[u.QuotaPeriod] + "）"
 					}
@@ -1221,7 +1226,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 					"status":       memberStatusLabels[u.Status],
 					"quota":        quota,
 					"model_count":  modelCount,
-					"month_cost":   formatMemberUSD(monthCostMap[u.Id]),
+					"month_cost":   formatMemberMoney(moneySym, monthCostMap[u.Id]),
 					"created_at":   u.CreatedAt,
 					"updated_at":   u.UpdatedAt,
 				}) {

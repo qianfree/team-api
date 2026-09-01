@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -268,9 +269,9 @@ func TestGenerateBillingSnapshot_WithRelayInfo(t *testing.T) {
 }
 
 func TestGenerateBillingSummary_Nil(t *testing.T) {
-	got := GenerateBillingSummary(nil)
+	got := GenerateBillingSummary(context.Background(), nil)
 	if got != "" {
-		t.Errorf("GenerateBillingSummary(nil) = %q, want empty", got)
+		t.Errorf("GenerateBillingSummary(context.Background(), nil) = %q, want empty", got)
 	}
 }
 
@@ -293,7 +294,7 @@ func TestGenerateBillingSummary_PerRequest(t *testing.T) {
 		},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "按次计费") {
 		t.Error("summary should contain 按次计费")
 	}
@@ -330,7 +331,7 @@ func TestGenerateBillingSummary_TokenMode(t *testing.T) {
 		},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "按量计费") {
 		t.Error("summary should contain 按量计费")
 	}
@@ -371,7 +372,7 @@ func TestGenerateBillingSummary_SupplementAmount(t *testing.T) {
 		},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "补扣") {
 		t.Error("summary should contain 补扣")
 	}
@@ -399,7 +400,7 @@ func TestGenerateBillingSummary_NoDiff(t *testing.T) {
 		},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "无差额") {
 		t.Error("summary should contain 无差额")
 	}
@@ -416,7 +417,7 @@ func TestGenerateBillingSummary_UnknownSourcePassthrough(t *testing.T) {
 		RequestMeta: BillingSnapshotRequestMeta{},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "custom_source") {
 		t.Error("unknown source should be passed through as-is")
 	}
@@ -486,7 +487,7 @@ func TestGenerateBillingSummary_TimeRule(t *testing.T) {
 		RequestMeta: BillingSnapshotRequestMeta{RequestedModel: "gpt-4o"},
 	}
 
-	text := GenerateBillingSummary(snapshot)
+	text := GenerateBillingSummary(context.Background(), snapshot)
 	if !strings.Contains(text, "闲时") {
 		t.Errorf("summary should contain time rule name, got:\n%s", text)
 	}

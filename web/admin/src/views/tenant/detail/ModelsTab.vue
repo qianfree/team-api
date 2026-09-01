@@ -5,10 +5,8 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
-import { displayCurrency } from '@/composables/useCurrency'
-
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
-const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
+import { currencySymbol } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
