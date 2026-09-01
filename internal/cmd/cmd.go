@@ -154,8 +154,8 @@ var (
 			registerCronJobs(cs)
 			cs.StartBackground(ctx)
 
-			// 全局超时配置注入 relay 层(渠道级 settings.timeout_seconds 仍优先,此处为未配置渠道的兜底)
-			syncGlobalRelayTimeouts(ctx)
+			// relay 层运行时配置注入（全局超时兜底/系统代理；渠道级 settings 仍优先）
+			syncGlobalRelaySettings(ctx)
 
 			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
 			billing.StartWalletMaterializer(ctx)
@@ -385,22 +385,27 @@ func watchChannelAutoTestInterval(cs *common.CronScheduler) {
 	})
 }
 
-// syncGlobalRelayTimeouts 将系统设置中的全局超时注入 relay 层，并在配置变更时动态刷新（免重启）。
-// 优先级：渠道级 settings.timeout_seconds > 此处注入的全局值 > relay 层内置默认（180s/300s）。
+// syncGlobalRelaySettings 将系统设置中 relay 层的运行时配置注入 relay 层，并在配置变更时动态刷新（免重启）：
+//   - 全局超时：优先级 渠道级 settings.timeout_seconds > 此处注入的全局值 > relay 层内置默认（180s/300s）
+//   - 系统代理：channel_proxy_url，渠道编辑中开启「使用代理」的请求经此代理转发
+//
 // relay 包不反向 import internal（会循环依赖），故由本函数桥接注入。
-func syncGlobalRelayTimeouts(ctx context.Context) {
+func syncGlobalRelaySettings(ctx context.Context) {
 	apply := func(ctx context.Context) {
 		relaycommon.SetGlobalRequestTimeoutSeconds(common.Config().GetInt(ctx, "request_timeout_seconds"))
 		relaycommon.SetGlobalStreamIdleTimeoutSeconds(common.Config().GetInt(ctx, "streaming_timeout_seconds"))
+		relaycommon.SetSystemProxyURL(common.Config().GetString(ctx, "channel_proxy_url"))
 	}
 	apply(ctx)
 	common.OnSettingsChanged(func(ctx context.Context, key string) {
-		if key != "request_timeout_seconds" && key != "streaming_timeout_seconds" {
+		if key != "request_timeout_seconds" && key != "streaming_timeout_seconds" && key != "channel_proxy_url" {
 			return
 		}
 		apply(ctx)
-		g.Log().Infof(ctx, "全局 relay 超时已刷新: request=%ds stream_idle=%ds",
-			relaycommon.GlobalRequestTimeoutSeconds(), relaycommon.GlobalStreamIdleTimeoutSeconds())
+		// 代理 URL 可能含认证凭据，只记录是否已配置，不落日志
+		g.Log().Infof(ctx, "全局 relay 配置已刷新: request=%ds stream_idle=%ds proxy_configured=%v",
+			relaycommon.GlobalRequestTimeoutSeconds(), relaycommon.GlobalStreamIdleTimeoutSeconds(),
+			relaycommon.GetSystemProxyURL() != "")
 	})
 }
 
