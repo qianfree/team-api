@@ -35,9 +35,6 @@ function set(key: string, v: number | undefined): void {
 				<AFormItem label="导出文件保留天数">
 					<AInputNumber :model-value="num('data_export_expiry_days')" @change="(v: number | undefined) => set('data_export_expiry_days', v)" :min="1" :max="30" style="width: 100%" />
 				</AFormItem>
-				<AFormItem label="GDPR 删除请求完成天数">
-					<AInputNumber :model-value="num('data_deletion_completion_days')" @change="(v: number | undefined) => set('data_deletion_completion_days', v)" :min="7" :max="90" style="width: 100%" />
-				</AFormItem>
 			</div>
 		</div>
 

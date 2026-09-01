@@ -260,8 +260,6 @@ type (
 		PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (*v1.TenantPlanCurrentRes, error)
 		// PlanCancelAutoRenew 取消自动续费
 		PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (*v1.TenantPlanCancelAutoRenewRes, error)
-		SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (*v1.SandboxChatRes, error)
-		SandboxQuota(ctx context.Context, req *v1.SandboxQuotaReq) (*v1.SandboxQuotaRes, error)
 		TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (*v1.TenantPluginListRes, error)
 		TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDetailReq) (*v1.TenantPluginDetailRes, error)
 		TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPluginConfigUpdateReq) (*v1.TenantPluginConfigUpdateRes, error)

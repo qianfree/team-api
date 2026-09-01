@@ -39,6 +39,9 @@ function handleMaintenanceModeChange(enabled: boolean) {
 				<AFormItem label="租户控制台地址" help="用于生成邀请链接等，如 https://console.example.com" class="field-full">
 					<AInput v-model="values['tenant_console_url']" placeholder="https://console.example.com" />
 				</AFormItem>
+				<AFormItem label="站点后端地址" help="后端 API 对外地址，构造 OAuth 登录回调用，须与 GitHub/Google 应用后台登记的回调域名一致；为空时按当前请求 Host 推断" class="field-full">
+					<AInput v-model="values['site_url']" placeholder="https://api.example.com" />
+				</AFormItem>
 				<AFormItem label="计费时区" help="模型时段定价（峰谷/促销）按此时区解释，IANA 时区名" class="field-full">
 					<AInput v-model="values['pricing_time_timezone']" placeholder="Asia/Shanghai" />
 				</AFormItem>

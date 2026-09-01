@@ -133,8 +133,6 @@ type ITenantV1 interface {
 	TenantPlanList(ctx context.Context, req *v1.TenantPlanListReq) (res *v1.TenantPlanListRes, err error)
 	TenantPlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (res *v1.TenantPlanCurrentRes, err error)
 	TenantPlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (res *v1.TenantPlanCancelAutoRenewRes, err error)
-	SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (res *v1.SandboxChatRes, err error)
-	SandboxQuota(ctx context.Context, req *v1.SandboxQuotaReq) (res *v1.SandboxQuotaRes, err error)
 	TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (res *v1.TenantPluginListRes, err error)
 	TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDetailReq) (res *v1.TenantPluginDetailRes, err error)
 	TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPluginConfigUpdateReq) (res *v1.TenantPluginConfigUpdateRes, err error)
