@@ -873,3 +873,22 @@ s.Start()
 - **不要丢弃 `s.Start()` 的 error**：Start 失败后测试仍会继续跑，症状表现为断言数值不对或 EOF，与真正原因（服务器没起来）完全无关，极易误导排查方向。
 
 排查信号：测试断言"期望 N 实际 0"且伴随 `EOF`；`GetListenedPort()` 返回 `-1`；同一测试在 Linux CI 通过但本地 Windows 失败。
+
+### 2026-09-01（二）：channel_proxy_url 双数据源分裂——设置页保存的代理对 relay 渠道转发不生效
+
+**问题**：管理后台「系统设置 → 渠道配置 → 代理地址」保存后，渠道编辑中开启「使用代理」的请求并不走该代理。设置页把 `channel_proxy_url` 写入 `sys_options`，但 relay 层（`relay/common/http_client.go` 的 `GetSystemProxyURL`）读的是 `g.Cfg().MustGet(ctx, "channel_proxy_url")`——即 `manifest/config/config.yaml` 配置文件里的**同名 key**。两套数据源互不相通：设置页的值只被 `oauth/client.go`（OAuth 出站）读到，它宣称的主要用途（渠道转发代理、Realtime WebSocket 拨号）从未读到过。
+
+**原因**：同一配置 key 被两个模块各自实现了读取逻辑，一个走设置注册表（`sys_options`），一个走 `g.Cfg()`（配置文件），没有收敛到同一加载入口。`g.Cfg().MustGet` 对键不存在不报错、静默返回空串（见 2026-08-31 记录），掩盖了分裂——渠道一直"代理未配置"，无人察觉。
+
+**修复**：
+
+1. `relay/common/http_client.go`：`GetSystemProxyURL` 不再读 `g.Cfg()`（含 10s TTL 轮询缓存一并删除），改为读包内 atomic 值，新增 `SetSystemProxyURL` setter；
+2. `internal/cmd/cmd.go`：沿用 `SetGlobalRequestTimeoutSeconds` 的桥接注入模式（relay 不反向 import internal，会循环依赖）——启动时 + `OnSettingsChanged("channel_proxy_url")` 时从 `sys_options` 读取并注入，免重启、多实例经 Redis pub/sub 各自刷新；
+3. `config.example.yaml` 删除已失效的 `channel_proxy_url` key，配置文件不再承载该配置。
+
+**正确做法（通用规则）**：
+
+- **一个配置 key 只能有一个数据源、一个加载入口**。凡注册进设置注册表（`sys_options`，管理员可改）的 key，所有消费方——包括 relay 这类不 import internal 的独立模块——都必须经同一加载函数取值；独立模块用「setter 注入 + OnSettingsChanged 刷新」桥接（本项目既有模式：全局超时 `SetGlobalRequestTimeoutSeconds`）。
+- **禁止用 `g.Cfg()` 读取任何注册表里的 key**：同名 key 在配置文件里恰好存在时会造成"双真相源"，配置文件的值会静默覆盖管理员在后台设置的值（或反之），且 `MustGet` 对键缺失不报错，分裂长期不可见。
+
+排查信号：设置页某配置"保存了但不生效"；`grep -rn "g.Cfg()"` 命中的 key 同时出现在 `settings_registry.go` 中。

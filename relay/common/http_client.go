@@ -62,33 +62,29 @@ var (
 
 // proxiedState 管理带代理的 HTTP 客户端，按需初始化并在代理 URL 变更时重建。
 var proxiedState struct {
-	mu             sync.RWMutex
-	proxyURL       string
-	transport      *http.Transport // ResponseHeaderTimeout=defaultResponseHeaderTimeout（普通）
-	longRun        *http.Transport // ResponseHeaderTimeout=0（长耗时同步）
-	nonStream      *http.Client
-	stream         *http.Client
-	proxyURLCached atomic.Value // string
-	cacheTime      atomic.Int64 // 上次读取配置的 unix 时间戳（秒）
+	mu            sync.RWMutex
+	proxyURL      string
+	transport     *http.Transport // ResponseHeaderTimeout=defaultResponseHeaderTimeout（普通）
+	longRun       *http.Transport // ResponseHeaderTimeout=0（长耗时同步）
+	nonStream     *http.Client
+	stream        *http.Client
+	proxyURLValue atomic.Value // string，系统代理 URL（sys_options channel_proxy_url，由 internal 注入）
 }
 
-const proxyCacheTTL = 10 // seconds
+// SetSystemProxyURL 注入系统代理 URL（sys_options 的 channel_proxy_url）。
+// relay 包不 import internal（会循环依赖），由 internal 侧在启动时与配置变更时
+// （OnSettingsChanged，免重启）注入，模式同 SetGlobalRequestTimeoutSeconds。
+func SetSystemProxyURL(proxyURL string) {
+	proxiedState.proxyURLValue.Store(proxyURL)
+}
 
-// GetSystemProxyURL 从系统配置读取 channel_proxy_url（带本地缓存）。
+// GetSystemProxyURL 返回系统代理 URL（sys_options 的 channel_proxy_url，空串=未配置）。
 // 导出供 WebSocket 拨号器等非 HTTP 客户端调用方使用。
 func GetSystemProxyURL() string {
-	now := time.Now().Unix()
-	last := proxiedState.cacheTime.Load()
-	if now-last < proxyCacheTTL {
-		if v, ok := proxiedState.proxyURLCached.Load().(string); ok {
-			return v
-		}
+	if v, ok := proxiedState.proxyURLValue.Load().(string); ok {
+		return v
 	}
-
-	proxyURL := g.Cfg().MustGet(context.Background(), "channel_proxy_url").String()
-	proxiedState.proxyURLCached.Store(proxyURL)
-	proxiedState.cacheTime.Store(now)
-	return proxyURL
+	return ""
 }
 
 // buildProxiedTransport 构建一个带（可选）代理的传输层，ResponseHeaderTimeout 由 rht 决定。
