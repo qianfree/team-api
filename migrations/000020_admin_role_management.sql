@@ -170,6 +170,30 @@ CROSS JOIN sys_admin_roles r
 WHERE u.role <> 'super_admin' AND r.code = 'admin'
 ON CONFLICT (admin_user_id, role_id) DO NOTHING;
 
+
+-- 移除不再使用的配置项
+DELETE FROM sys_options
+WHERE "key" IN (
+    -- 安全
+    'max_sessions_per_user',
+    'admin_max_sessions',
+    'new_device_notification',
+    'password_min_length',
+    -- 性能
+    'cache_enabled',
+    'cache_ttl_seconds',
+    'channel_affinity_ttl',
+    'auto_test_interval',
+    -- 审计/数据治理
+    'audit_retention_days',
+    'operation_log_retention_days',
+    'data_deletion_completion_days',
+    -- 沙箱
+    'sandbox_enabled',
+    'sandbox_default_quota'
+);
+
+
 -- +goose Down
 -- 删除角色体系三张表。存量用户权限不受影响：它们本就存放在 sys_admin_role_perms，
 -- 回滚后 HasPermission 退回「仅查用户特批权限」的旧语义。
