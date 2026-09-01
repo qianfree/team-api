@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/billing"
 	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/utility/export"
@@ -227,6 +228,9 @@ func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) 
 		"suno":       "Suno",
 	}
 
+	// 预扣/实际费用属 bil_ 记账层，币种 = 系统本位币
+	moneyCurrency := billing.Currency(ctx)
+
 	columns := []export.Column{
 		{Field: "public_task_id", Header: "任务ID"},
 		{Field: "platform_name", Header: "平台"},
@@ -235,8 +239,8 @@ func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) 
 		{Field: "model_name", Header: "模型"},
 		{Field: "progress", Header: "进度"},
 		{Field: "username", Header: "用户"},
-		{Field: "pre_deduct_amount", Header: "预扣金额(USD)"},
-		{Field: "actual_cost", Header: "实际费用(USD)"},
+		{Field: "pre_deduct_amount", Header: "预扣金额(" + moneyCurrency + ")"},
+		{Field: "actual_cost", Header: "实际费用(" + moneyCurrency + ")"},
 		{Field: "billing_settled", Header: "是否已结算"},
 		{Field: "fail_reason", Header: "失败原因"},
 		{Field: "submit_time", Header: "提交时间"},

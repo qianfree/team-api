@@ -26,6 +26,12 @@ export const cnyToUsd = computed(() => {
 	return r > 0 ? r : FALLBACK_CNY_TO_USD
 })
 
+/**
+ * 全站显示货币符号（= 本位币符号），供模板直接插值。
+ * 仅用于 bil_ 记账层金额与已折算为显示币种的金额；订单层原始 CNY 金额请写死 ¥。
+ */
+export const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
+
 export interface FormatMoneyOptions {
 	/** 数据存储层币种：'USD' | 'CNY'（按字段所属数据层传入，非显示币种） */
 	source?: CurrencyCode
@@ -48,7 +54,7 @@ export function formatMoney(value: unknown, opts: FormatMoneyOptions = {}): stri
 	if (source === 'CNY' && display === 'USD') {
 		num = num * cnyToUsd.value
 	}
-	const symbol = display === 'CNY' ? '¥' : '$'
+	const symbol = currencySymbol.value
 	const p = precision ?? (display === 'CNY' ? 2 : 6)
 	const sign = showSign ? (num > 0 ? '+' : num < 0 ? '-' : '') : ''
 	// 先 toFixed 确保精度，再用 Number 去掉末尾的 0

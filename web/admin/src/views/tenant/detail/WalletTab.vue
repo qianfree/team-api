@@ -6,7 +6,7 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 import { useIsMobile } from '@/composables/useIsMobile'
-import { displayCurrency, formatBilling } from '@/composables/useCurrency'
+import { displayCurrency, currencySymbol, formatBilling } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -20,7 +20,6 @@ const emit = defineEmits<{
 const isMobile = useIsMobile()
 
 // 本位币符号：bil 层表单（调整余额/预警阈值）输入前缀跟随本位币，输入值仍为存储原值不折算
-const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
 
 // 线下充值入账弹窗文案：收款恒为人民币（银行转账），到账按本位币分支说明
 const offlineRechargeIntro = computed(() =>

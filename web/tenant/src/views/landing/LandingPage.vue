@@ -96,7 +96,7 @@
                     </div>
                     <div class="mock-footer">
                       <span>额度总计</span>
-                      <span class="mock-footer-value">$128.50 / $200.00</span>
+                      <span class="mock-footer-value">{{ currencySymbol }}128.50 / {{ currencySymbol }}200.00</span>
                     </div>
                   </div>
 
@@ -231,6 +231,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSeo } from '@/composables/useSeo'
 import { useHead } from '@unhead/vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import { currencySymbol } from '@/composables/useCurrency'
 import { marked } from 'marked'
 import request from '@/utils/request'
 

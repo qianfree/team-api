@@ -301,7 +301,7 @@ func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantI
 		snapshot := GenerateBillingSnapshot(pricing, breakdown, nil, internalSettlement, nil)
 		snapshot.RequestMeta.RequestedModel = modelName
 		result.BillingSnapshot = SnapshotToJSON(snapshot)
-		result.BillingSummary = GenerateBillingSummary(snapshot)
+		result.BillingSummary = GenerateBillingSummary(ctx, snapshot)
 		result.BillingMode = pricing.BillingMode
 		result.BillingSource = pricing.BillingSource
 		result.RateMultiplier = pricing.DiscountRatio
