@@ -28,6 +28,7 @@ type ITenantV1 interface {
 	TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (res *v1.TenantRequestAuditLogsRes, err error)
 	TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (res *v1.TenantRequestAuditLogDetailRes, err error)
 	TenantRegister(ctx context.Context, req *v1.TenantRegisterReq) (res *v1.TenantRegisterRes, err error)
+	TenantRegisterRateLimit(ctx context.Context, req *v1.TenantRegisterRateLimitReq) (res *v1.TenantRegisterRateLimitRes, err error)
 	TenantLogin(ctx context.Context, req *v1.TenantLoginReq) (res *v1.TenantLoginRes, err error)
 	TenantLogout(ctx context.Context, req *v1.TenantLogoutReq) (res *v1.TenantLogoutRes, err error)
 	TenantRefresh(ctx context.Context, req *v1.TenantRefreshReq) (res *v1.TenantRefreshRes, err error)

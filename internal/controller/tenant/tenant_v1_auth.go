@@ -28,3 +28,6 @@ func (c *ControllerV1) TenantSessionList(ctx context.Context, req *v1.TenantSess
 func (c *ControllerV1) TenantRevokeSession(ctx context.Context, req *v1.TenantRevokeSessionReq) (res *v1.TenantRevokeSessionRes, err error) {
 	return service.Tenant().RevokeSession(ctx, req)
 }
+func (c *ControllerV1) TenantRegisterRateLimit(ctx context.Context, req *v1.TenantRegisterRateLimitReq) (res *v1.TenantRegisterRateLimitRes, err error) {
+	return service.Tenant().GetRegisterRateLimitStatus(ctx, req)
+}

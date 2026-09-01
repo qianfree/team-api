@@ -46,6 +46,8 @@ type (
 		// TenantRequestAuditLogs 分页查询租户的请求审计日志（不含 body，性能优先）
 		TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (*v1.TenantRequestAuditLogsRes, error)
 		TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (*v1.TenantRequestAuditLogDetailRes, error)
+		// GetRegisterRateLimitStatus 查询当前 IP 的注册限流状态（注册页提示用，公开端点，只读不计数）。
+		GetRegisterRateLimitStatus(ctx context.Context, _ *v1.TenantRegisterRateLimitReq) (*v1.TenantRegisterRateLimitRes, error)
 		// Register handles tenant registration.
 		Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error)
 		// Login handles tenant user login.

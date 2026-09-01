@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
@@ -35,6 +35,50 @@ const userForm = reactive({
 
 const userErrors = reactive<Record<string, string>>({})
 
+// 注册限流状态（按 IP 统计的小时/天窗口剩余次数，来自公开端点）
+interface RateLimitStatus {
+	hourly_limit: number
+	hourly_remaining: number
+	hourly_reset_seconds: number
+	daily_limit: number
+	daily_remaining: number
+	daily_reset_seconds: number
+}
+const rateLimit = ref<RateLimitStatus | null>(null)
+
+async function fetchRateLimit() {
+	try {
+		const res: any = await request.get('/tenant/auth/register-rate-limit')
+		rateLimit.value = res.data?.data || null
+	} catch {
+		// 限流状态查询失败不影响注册流程
+	}
+}
+
+function formatReset(seconds: number): string {
+	if (seconds <= 0) return '稍后'
+	if (seconds < 3600) return `约 ${Math.ceil(seconds / 60)} 分钟`
+	return `约 ${Math.ceil(seconds / 3600)} 小时`
+}
+
+const rateLimitNotice = computed<{ type: 'blocked' | 'info'; text: string } | null>(() => {
+	const s = rateLimit.value
+	if (!s) return null
+	if (s.daily_limit > 0 && s.daily_remaining <= 0) {
+		return { type: 'blocked', text: `今日注册次数已达上限（每日 ${s.daily_limit} 次），${formatReset(s.daily_reset_seconds)}后重置` }
+	}
+	if (s.hourly_limit > 0 && s.hourly_remaining <= 0) {
+		return { type: 'blocked', text: `注册已达每小时上限（${s.hourly_limit} 次/小时），${formatReset(s.hourly_reset_seconds)}后重置` }
+	}
+	if (s.hourly_limit > 0 || s.daily_limit > 0) {
+		const parts: string[] = []
+		if (s.hourly_limit > 0) parts.push(`本小时 ${s.hourly_remaining}/${s.hourly_limit} 次`)
+		if (s.daily_limit > 0) parts.push(`今日 ${s.daily_remaining}/${s.daily_limit} 次`)
+		return { type: 'info', text: `剩余注册次数：${parts.join('，')}` }
+	}
+	return null
+})
+
 // Agreement view modal
 const showAgreementModal = ref(false)
 const agreementModalCode = ref('')
@@ -57,6 +101,7 @@ onMounted(async () => {
 
 	await fetchSettings()
 	emailVerification.value = settings.value.register_email_verification === true
+	fetchRateLimit()
 })
 
 function validateUser(): boolean {
@@ -173,6 +218,8 @@ async function handleRegister() {
 		proceedAfterRegister()
 	} catch (err: any) {
 		captchaRef.value?.resetCaptcha()
+		// 本次尝试已消耗限流计数，刷新剩余次数提示
+		fetchRateLimit()
 		const apiErr = extractApiError(err)
 		const msg = apiErr?.message || '注册失败'
 		if (msg.includes('邮箱') || msg.includes('email')) {
@@ -212,6 +259,22 @@ async function handleRegister() {
 			<div class="mb-6 text-center">
 				<h2 class="text-xl font-bold text-gray-900">创建账号</h2>
 				<p class="mt-1.5 text-sm text-gray-500">几分钟即可开始使用，团队功能可后续开启</p>
+			</div>
+
+			<!-- 注册限流提示 -->
+			<div
+				v-if="rateLimitNotice"
+				class="mb-4 flex items-start gap-2 rounded-xl border px-4 py-2.5 text-xs"
+				:class="rateLimitNotice.type === 'blocked'
+					? 'border-red-200 bg-red-50 text-red-600'
+					: 'border-amber-200 bg-amber-50 text-amber-700'"
+			>
+				<Icon
+					:name="rateLimitNotice.type === 'blocked' ? 'exclamationTriangle' : 'infoCircle'"
+					size="sm"
+					class="mt-0.5 shrink-0"
+				/>
+				<span>{{ rateLimitNotice.text }}</span>
 			</div>
 
 			<form @submit.prevent="handleRegister" class="space-y-4">
@@ -319,7 +382,7 @@ async function handleRegister() {
 				</div>
 
 				<!-- Submit -->
-				<button type="submit" :disabled="loading || !userForm.agreed" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
+				<button type="submit" :disabled="loading || !userForm.agreed || rateLimitNotice?.type === 'blocked'" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '创建中...' : '创建账号' }}
 				</button>

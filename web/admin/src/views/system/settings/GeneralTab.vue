@@ -1,6 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
+
+// 维护时长必须是 Go duration 格式（如 2h、30m、1h30m）：
+// API 维护中间件按此格式解析 Retry-After，输入中文（如「2小时」）会静默回退默认 300s
+const DURATION_PATTERN = /^(\d+(\.\d+)?(ms|s|m|h))+$/
+const durationInvalid = computed(() => {
+	const v = (values['maintenance_duration'] ?? '').toString().trim()
+	return v !== '' && !DURATION_PATTERN.test(v)
+})
+const durationHelp = computed(() =>
+	durationInvalid.value ? '维护时长格式不正确，示例：2h、30m、1h30m' : 'Go 时长格式，如 2h、30m、1h30m'
+)
 
 // 关闭维护模式时自动清空提示信息和时长
 function handleMaintenanceModeChange(enabled: boolean) {
@@ -92,8 +104,8 @@ function handleMaintenanceModeChange(enabled: boolean) {
 				<AFormItem label="维护提示信息">
 					<AInput v-model="values['maintenance_message']" placeholder="系统维护中，请稍后访问" />
 				</AFormItem>
-				<AFormItem label="预计维护时长">
-					<AInput v-model="values['maintenance_duration']" placeholder="如：2小时" />
+				<AFormItem label="预计维护时长" :validate-status="durationInvalid ? 'error' : undefined" :help="durationHelp">
+					<AInput v-model="values['maintenance_duration']" placeholder="如：2h、30m、1h30m" allow-clear />
 				</AFormItem>
 			</div>
 			<div class="switch-row" style="margin-top: 8px">
