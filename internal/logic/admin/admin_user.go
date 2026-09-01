@@ -139,6 +139,14 @@ func (s *sAdmin) CreateUser(ctx context.Context, req *v1.AdminUserCreateReq) (*v
 		return nil, common.NewBadRequestError(err.Error())
 	}
 
+	// 创建账号时附带角色属于角色分配，与角色管理同级：仅超管可用。
+	// 否则拥有 user:create 的人可以造一个挂着高权限角色、密码由自己设定的账号，
+	// 等价于给自己提权。这里明确报错而非静默忽略——静默会造出一个零权限账号，
+	// 使用者以为分配成功了。
+	if len(req.RoleIDs) > 0 && common.GetCtxUserRole(ctx) != "super_admin" {
+		return nil, common.NewBusinessError(consts.CodeForbidden, "分配角色仅超级管理员可用，请先创建账号再由超级管理员分配角色")
+	}
+
 	// 账号与角色关联同事务写入：此前新建的 admin 账号不带任何权限，登录后处处 403，
 	// 是「系统缺乏角色管理」最直接的体感来源。
 	var id int64

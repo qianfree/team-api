@@ -219,3 +219,51 @@ func TestMatchedPermissionsAreGrantable(t *testing.T) {
 		}
 	}
 }
+
+// TestRoleManagementIsSuperAdminOnly 保证角色管理的每个端点都被限定为超级管理员专属。
+//
+// 角色管理是权限体系的元操作：谁能改角色，谁就能决定所有人的权限。若某个角色端点漏了这条
+// 限制，一个被下放了 user:edit 的账号就能给自己挂上更高权限的角色，整套角色体系当场失效。
+// 新增角色相关路由时，本测试会强制你同步登记 superAdminOnlyRules。
+func TestRoleManagementIsSuperAdminOnly(t *testing.T) {
+	var leaked []string
+
+	for _, r := range collectAdminRoutes(t) {
+		path := concreteFromPattern(r.Path)
+		isRoleRoute := strings.HasPrefix(r.Path, "/api/admin/roles") ||
+			strings.HasSuffix(r.Path, "/roles")
+		if !isRoleRoute {
+			continue
+		}
+		if !isSuperAdminOnly(r.Method, path) {
+			leaked = append(leaked, r.Method+" "+r.Path+"  ("+r.Source+")")
+		}
+	}
+
+	if len(leaked) > 0 {
+		t.Fatalf("以下角色管理接口未限定为超级管理员专属（请补入 superAdminOnlyRules）：\n  %s",
+			strings.Join(leaked, "\n  "))
+	}
+}
+
+// TestSuperAdminOnlyRulesDoNotOverreach 反向确认：超管专属清单不应误伤普通账号管理。
+//
+// 账号管理（创建/禁用/改密/删除）按 user:* 授权、可以正常下放，只有「分配角色」才是
+// 权限体系的元操作。两者路径相邻（都在 /api/admin/users/ 下），容易被前缀规则误伤。
+func TestSuperAdminOnlyRulesDoNotOverreach(t *testing.T) {
+	shouldStayDelegatable := []struct{ method, path string }{
+		{"GET", "/api/admin/users"},
+		{"POST", "/api/admin/users"},
+		{"PUT", "/api/admin/users/1"},
+		{"PUT", "/api/admin/users/1/status"},
+		{"PUT", "/api/admin/users/1/reset-password"},
+		{"PUT", "/api/admin/users/1/unlock"},
+		{"DELETE", "/api/admin/users/1"},
+		{"GET", "/api/admin/users/1/permissions"},
+	}
+	for _, c := range shouldStayDelegatable {
+		if isSuperAdminOnly(c.method, c.path) {
+			t.Errorf("%s %s 属于普通账号管理，不应被限定为超管专属", c.method, c.path)
+		}
+	}
+}

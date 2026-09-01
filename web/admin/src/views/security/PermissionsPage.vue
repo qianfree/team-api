@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
-import { Message, Modal } from '@arco-design/web-vue'
+import { ref, computed, onMounted, reactive, h } from 'vue'
+import { Message, Modal, Tag, Button, Space, Dropdown, Doption } from '@arco-design/web-vue'
+import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import TableStats from '@/components/TableStats.vue'
+import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
-import { hasPermission } from '@/utils/permission'
+import { isSuperAdmin } from '@/utils/permission'
 
 interface TierOption {
   tier: string
@@ -33,9 +36,10 @@ const roles = ref<RoleItem[]>([])
 const modules = ref<ModuleMeta[]>([])
 const dangerous = ref<Record<string, string>>({})
 
-const canEdit = computed(() => hasPermission('user:edit'))
-const canCreate = computed(() => hasPermission('user:create'))
-const canDelete = computed(() => hasPermission('user:delete'))
+// 角色管理是权限体系的元操作，硬性限定超管，不参与权限点授权。
+// 后端 superAdminOnlyRules + assertSuperAdmin 两道闸门同样拦截，
+// 这里的判断只用于隐藏操作入口，不构成安全边界。
+const canManage = computed(() => isSuperAdmin())
 
 // ── 编辑态 ─────────────────────────────────────────────────────────────────
 const editorVisible = ref(false)
@@ -289,6 +293,117 @@ function confirmReset(row: RoleItem) {
 }
 
 const selectedCount = computed(() => selected.value.size)
+
+// 超级管理员不入角色表（由 sys_admin_users.role 判定），但它是事实上的一个身份，
+// 在列表里缺席反而让人以为漏了。作为固定首行呈现，标记为不可配置。
+const SUPER_ADMIN_ROW: any = {
+  id: -1,
+  code: 'super_admin',
+  name: '超级管理员',
+  description: '拥有全部权限，由账号属性直接判定，不通过角色授予',
+  is_builtin: true,
+  is_enabled: true,
+  sort: -1,
+  user_count: null,
+  perm_count: null,
+  __fixed: true,
+}
+
+const tableData = computed<any[]>(() => [SUPER_ADMIN_ROW, ...roles.value])
+
+const columns: TableColumnData[] = [
+  {
+    title: '角色',
+    dataIndex: 'name',
+    width: 200,
+    render({ record }) {
+      return h('div', {}, [
+        h('div', { class: 'role-name' }, record.name),
+        h('div', { class: 'role-code' }, record.code),
+      ])
+    },
+  },
+  { title: '说明', dataIndex: 'description', ellipsis: true, tooltip: true },
+  {
+    title: '类型',
+    dataIndex: 'is_builtin',
+    width: 100,
+    render({ record }) {
+      if (record.__fixed) return h(Tag, { color: 'red', size: 'small' }, () => '系统内置')
+      return record.is_builtin
+        ? h(Tag, { color: 'arcoblue', size: 'small' }, () => '预置')
+        : h(Tag, { size: 'small' }, () => '自定义')
+    },
+  },
+  {
+    title: '状态',
+    dataIndex: 'is_enabled',
+    width: 90,
+    render({ record }) {
+      if (record.__fixed) return h('span', { class: 'text-muted' }, '—')
+      return record.is_enabled
+        ? h(Tag, { color: 'green', size: 'small' }, () => '启用')
+        : h(Tag, { color: 'gray', size: 'small' }, () => '已禁用')
+    },
+  },
+  {
+    title: '账号数',
+    dataIndex: 'user_count',
+    width: 90,
+    render({ record }) {
+      if (record.__fixed) return h('span', { class: 'text-muted' }, '—')
+      return h('span', {}, String(record.user_count))
+    },
+  },
+  {
+    title: '权限数',
+    dataIndex: 'perm_count',
+    width: 90,
+    render({ record }) {
+      if (record.__fixed) return h('span', { class: 'text-muted' }, '全部')
+      return h('span', {}, String(record.perm_count))
+    },
+  },
+  {
+    title: '操作',
+    dataIndex: 'actions',
+    width: 180,
+    fixed: 'right',
+    render({ record }) {
+      // 超管行不可配置：它的权限不来自角色表，改不了也没有可改的东西
+      if (record.__fixed) {
+        return h('span', { class: 'text-muted' }, '不可配置')
+      }
+
+      const primary = h(Button, { size: 'small', type: 'primary', onClick: () => openEdit(record) },
+        () => canManage.value ? '配置权限' : '查看权限')
+      if (!canManage.value) {
+        return primary
+      }
+
+      // 「配置权限」是日常操作，常驻；复制/启停/恢复默认/删除都是低频动作，收进「更多」，
+      // 免得五个按钮把操作列撑到换行
+      const items = [
+        h(Doption, { onClick: () => openCreate(record) }, () => '复制'),
+        h(Doption, { onClick: () => toggleStatus(record) },
+          () => record.is_enabled ? '禁用' : '启用'),
+      ]
+      if (record.is_builtin) {
+        items.push(h(Doption, { onClick: () => confirmReset(record) }, () => '恢复默认'))
+      }
+      // 删除会连带清掉该角色下所有账号的权限，标红
+      items.push(h(Doption, { class: 'doption-danger', onClick: () => confirmDelete(record) }, () => '删除'))
+
+      return h(Space, { size: 4 }, () => [
+        primary,
+        h(Dropdown, { trigger: 'click' }, {
+          default: () => h(Button, { size: 'small' }, () => '更多'),
+          content: () => items,
+        }),
+      ])
+    },
+  },
+]
 </script>
 
 <template>
@@ -297,63 +412,31 @@ const selectedCount = computed(() => selected.value.size)
       <template #actions>
         <ASpace>
           <AButton size="small" @click="fetchRoles">刷新</AButton>
-          <AButton v-if="canCreate" type="primary" size="small" @click="openCreate()">新建角色</AButton>
+          <AButton v-if="canManage" type="primary" size="small" @click="openCreate()">新建角色</AButton>
         </ASpace>
       </template>
     </PageHeader>
 
-    <ASpin :loading="loading" style="display: block">
-      <div class="role-grid">
-        <!-- 超级管理员：由账号属性判定，不入角色表，因此不可配置 -->
-        <ACard class="role-card role-card--super" :bordered="true">
-          <div class="role-card__head">
-            <div>
-              <div class="role-card__name">超级管理员</div>
-              <div class="role-card__code">super_admin</div>
-            </div>
-            <ATag color="red" size="small">系统内置</ATag>
-          </div>
-          <div class="role-card__desc">拥有全部权限，由账号属性直接判定，不通过角色授予</div>
-          <div class="role-card__meta">
-            <span>权限：全部</span>
-          </div>
-          <div class="role-card__actions">
-            <span class="role-card__hint">不可配置</span>
-          </div>
-        </ACard>
-
-        <ACard v-for="row in roles" :key="row.id" class="role-card" :bordered="true">
-          <div class="role-card__head">
-            <div>
-              <div class="role-card__name">{{ row.name }}</div>
-              <div class="role-card__code">{{ row.code }}</div>
-            </div>
-            <ASpace size="mini">
-              <ATag v-if="row.is_builtin" color="arcoblue" size="small">预置</ATag>
-              <ATag v-if="!row.is_enabled" color="gray" size="small">已禁用</ATag>
-            </ASpace>
-          </div>
-          <div class="role-card__desc">{{ row.description || '—' }}</div>
-          <div class="role-card__meta">
-            <span>{{ row.user_count }} 个账号</span>
-            <span>{{ row.perm_count }} 项权限</span>
-          </div>
-          <div class="role-card__actions">
-            <ASpace size="mini" wrap>
-              <AButton size="mini" @click="openEdit(row)">
-                {{ canEdit ? '配置权限' : '查看权限' }}
-              </AButton>
-              <AButton v-if="canCreate" size="mini" @click="openCreate(row)">复制</AButton>
-              <AButton v-if="canEdit" size="mini" @click="toggleStatus(row)">
-                {{ row.is_enabled ? '禁用' : '启用' }}
-              </AButton>
-              <AButton v-if="canEdit && row.is_builtin" size="mini" @click="confirmReset(row)">恢复默认</AButton>
-              <AButton v-if="canDelete" size="mini" status="danger" @click="confirmDelete(row)">删除</AButton>
-            </ASpace>
-          </div>
-        </ACard>
+    <ACard :bordered="false">
+      <ResponsiveTable
+        :columns="columns"
+        :data="tableData"
+        :loading="loading"
+        :scroll="{ x: 1100 }"
+        :bordered="false"
+        :stripe="true"
+        row-key="id"
+        card-title-key="name"
+        card-subtitle-key="description"
+        card-badge-key="is_enabled"
+        :card-fields="['is_builtin', 'user_count', 'perm_count']"
+      />
+      <div class="table-footer">
+        <TableStats :total="roles.length">
+          <span>{{ roles.filter(r => r.is_enabled).length }} 个已启用</span>
+        </TableStats>
       </div>
-    </ASpin>
+    </ACard>
 
     <!-- 权限配置 -->
     <AModal
@@ -361,7 +444,7 @@ const selectedCount = computed(() => selected.value.size)
       :title="isCreating ? '新建角色' : `配置角色：${form.name}`"
       :width="760"
       :ok-loading="saving"
-      :ok-button-props="{ disabled: !canEdit }"
+      :ok-button-props="{ disabled: !canManage }"
       ok-text="保存"
       cancel-text="取消"
       @ok="save"
@@ -382,12 +465,12 @@ const selectedCount = computed(() => selected.value.size)
           </ACol>
           <ACol :span="12">
             <AFormItem label="角色名称">
-              <AInput v-model="form.name" placeholder="如 客户运营" :disabled="!canEdit" />
+              <AInput v-model="form.name" placeholder="如 客户运营" :disabled="!canManage" />
             </AFormItem>
           </ACol>
         </ARow>
         <AFormItem label="角色说明">
-          <AInput v-model="form.description" placeholder="这个角色负责什么" :disabled="!canEdit" />
+          <AInput v-model="form.description" placeholder="这个角色负责什么" :disabled="!canManage" />
         </AFormItem>
       </AForm>
 
@@ -406,7 +489,7 @@ const selectedCount = computed(() => selected.value.size)
           <div class="tier-row__label">{{ mod.label }}</div>
           <ARadioGroup
             :model-value="currentTier(mod)"
-            :disabled="!canEdit"
+            :disabled="!canManage"
             @change="(v: any) => setTier(mod, v)"
           >
             <ARadio v-for="opt in mod.tiers" :key="opt.tier" :value="opt.tier">
@@ -429,7 +512,7 @@ const selectedCount = computed(() => selected.value.size)
               v-for="perm in (mod.tiers[mod.tiers.length - 1]?.permissions || [])"
               :key="perm"
               :model-value="selected.has(perm)"
-              :disabled="!canEdit"
+              :disabled="!canManage"
               @change="(c: any) => togglePerm(perm, c)"
             >
               <span :class="{ 'perm-danger': isDangerous(perm) }">
@@ -447,66 +530,28 @@ const selectedCount = computed(() => selected.value.size)
 </template>
 
 <style scoped>
-.role-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.role-card {
-  display: flex;
-  flex-direction: column;
-}
-
-.role-card--super {
-  border-color: rgb(var(--red-3));
-}
-
-.role-card__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.role-card__name {
-  font-size: 15px;
+.role-name {
   font-weight: 600;
   color: var(--color-text-1);
 }
 
-.role-card__code {
+.role-code {
   margin-top: 2px;
   font-family: var(--font-family-mono, monospace);
   font-size: 12px;
   color: var(--color-text-3);
 }
 
-.role-card__desc {
-  margin-top: 10px;
-  min-height: 40px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--color-text-2);
+.text-muted {
+  color: var(--color-text-3);
 }
 
-.role-card__meta {
+.table-footer {
   display: flex;
-  gap: 16px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--color-text-3);
-}
-
-.role-card__actions {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-neutral-3);
-}
-
-.role-card__hint {
-  font-size: 12px;
-  color: var(--color-text-3);
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ta-border-light);
 }
 
 .perm-toolbar {
@@ -555,6 +600,11 @@ const selectedCount = computed(() => selected.value.size)
 
 .danger-mark {
   margin-left: 2px;
+  color: rgb(var(--red-6));
+}
+
+/* 下拉里的危险动作：颜色是唯一的视觉区分，必须标出来 */
+:deep(.doption-danger) {
   color: rgb(var(--red-6));
 }
 </style>

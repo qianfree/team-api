@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Popconfirm, Message, Modal,
+  Tag, Button, Space, Message, Modal, Dropdown, Doption,
 } from '@arco-design/web-vue'
 import type { TableColumnData, FormInstance } from '@arco-design/web-vue'
 import { IconSync } from '@arco-design/web-vue/es/icon'
@@ -9,6 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { isSuperAdmin } from '@/utils/permission'
 import { useExport } from '@/composables/useExport'
 
 const loading = ref(false)
@@ -41,6 +42,10 @@ const form = reactive({
   role_ids: [] as number[],
 })
 
+// 分配角色属于角色管理，仅超管可用（后端同样硬性拦截）。
+// 非超管仍可管理账号本身：创建、禁用、改密、删除。
+const canAssignRoles = computed(() => isSuperAdmin())
+
 // 可分配的角色（来自 sys_admin_roles，用户可自由增删改）
 const availableRoles = ref<any[]>([])
 const roleSelectOptions = computed(() =>
@@ -57,6 +62,8 @@ const roleAssignIds = ref<number[]>([])
 const roleAssignLoading = ref(false)
 
 async function fetchRoles() {
+  // 角色列表接口本身就是超管专属，非超管调用只会拿到 403
+  if (!canAssignRoles.value) return
   try {
     const res: any = await request.get('/admin/roles')
     availableRoles.value = res.data?.data?.list || res.data?.list || []
@@ -102,30 +109,17 @@ const columns: TableColumnData[] = [
   { title: '用户名', dataIndex: 'username', width: 120 },
   { title: '邮箱', dataIndex: 'email', width: 200 },
   {
-    title: '角色',
+    // 特权标记（sys_admin_users.role），不是业务角色 —— 业务角色在下一列。
+    // 与编辑表单的 label 保持一致，避免表格里出现两个「角色」列。
+    title: '账号类型',
     dataIndex: 'role',
-    width: 120,
+    width: 110,
     render({ record }) {
       const color = record.role === 'super_admin' ? 'red' : 'arcoblue'
-      const label = record.role === 'super_admin' ? '超级管理员' : '管理员'
+      const label = record.role === 'super_admin' ? '超级管理员' : '普通账号'
       return h(Tag, { color, size: 'small' }, () => label)
     },
   },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    width: 80,
-    render({ record }) {
-      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
-      if (locked) {
-        return h(Tag, { color: 'red', size: 'small' }, () => '锁定')
-      }
-      const color = record.status === 'active' ? 'green' : undefined
-      const label = record.status === 'active' ? '启用' : '禁用'
-      return h(Tag, { color, size: 'small' }, () => label)
-    },
-  },
-  { title: '最后登录', dataIndex: 'last_login_at', width: 180 },
   {
     title: '角色',
     dataIndex: 'roles',
@@ -149,38 +143,78 @@ const columns: TableColumnData[] = [
     },
   },
   {
+    title: '状态',
+    dataIndex: 'status',
+    width: 80,
+    render({ record }) {
+      const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
+      if (locked) {
+        return h(Tag, { color: 'red', size: 'small' }, () => '锁定')
+      }
+      const color = record.status === 'active' ? 'green' : undefined
+      const label = record.status === 'active' ? '启用' : '禁用'
+      return h(Tag, { color, size: 'small' }, () => label)
+    },
+  },
+  { title: '最后登录', dataIndex: 'last_login_at', width: 180 },
+  {
     title: '操作',
     dataIndex: 'actions',
-    width: 330,
+    width: 170,
     fixed: 'right',
     render({ record }) {
       const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
-      const actions = [
-        h(Button, { size: 'small', type: 'primary', onClick: () => openEdit(record) }, () => '编辑'),
-        h(Popconfirm, {
-          content: `确定${record.status === 'active' ? '禁用' : '启用'}该用户？`,
-          onOk: () => toggleStatus(record),
-        }, () => h(Button, { size: 'small' }, () => record.status === 'active' ? '禁用' : '启用')),
-        h(Button, { size: 'small', onClick: () => openResetPassword(record) }, () => '重置密码'),
-      ]
-      if (record.role !== 'super_admin') {
-        actions.splice(1, 0,
-          h(Button, { size: 'small', onClick: () => openAssignRoles(record) }, () => '分配角色'))
+
+      // 只有「编辑」常驻，其余收进「更多」：这一列最多能有 6 个动作
+      // （编辑/分配角色/禁用/重置密码/解锁/删除），平铺必然换行、把行高撑成两倍。
+      const items = []
+      if (record.role !== 'super_admin' && canAssignRoles.value) {
+        items.push(h(Doption, { onClick: () => openAssignRoles(record) }, () => '分配角色'))
       }
+      items.push(h(Doption, {
+        onClick: () => confirmAction(
+          `确定${record.status === 'active' ? '禁用' : '启用'}该用户？`,
+          () => toggleStatus(record)),
+      }, () => record.status === 'active' ? '禁用' : '启用'))
+      items.push(h(Doption, { onClick: () => openResetPassword(record) }, () => '重置密码'))
       if (locked) {
-        actions.push(h(Popconfirm, {
-          content: '确定解除该用户的登录锁定？',
-          onOk: () => handleUnlock(record),
-        }, () => h(Button, { size: 'small', status: 'success' }, () => '解锁')))
+        items.push(h(Doption, {
+          onClick: () => confirmAction('确定解除该用户的登录锁定？', () => handleUnlock(record)),
+        }, () => '解锁'))
       }
-      actions.push(h(Popconfirm, {
-        content: '确定删除该用户？此操作不可撤销。',
-        onOk: () => deleteUser(record),
-      }, () => h(Button, { size: 'small', status: 'danger' }, () => '删除')))
-      return h(Space, { size: 4 }, () => actions)
+      // 删除不可逆，在下拉里标红，避免顺手点到
+      items.push(h(Doption, {
+        class: 'doption-danger',
+        onClick: () => confirmAction('确定删除该用户？此操作不可撤销。', () => deleteUser(record), true),
+      }, () => '删除'))
+
+      return h(Space, { size: 4 }, () => [
+        h(Button, { size: 'small', type: 'primary', onClick: () => openEdit(record) }, () => '编辑'),
+        h(Dropdown, { trigger: 'click' }, {
+          default: () => h(Button, { size: 'small' }, () => '更多'),
+          content: () => items,
+        }),
+      ])
     },
   },
 ]
+
+/**
+ * 下拉菜单里的二次确认。
+ *
+ * 原先这些动作用 Popconfirm 包按钮，但 Popconfirm 依附于触发元素，
+ * 放进下拉里会随菜单收起一起消失。改用 Modal.confirm，与页面其他确认框一致。
+ */
+function confirmAction(content: string, onOk: () => void, danger = false) {
+  Modal.confirm({
+    title: '确认操作',
+    content,
+    okText: '确定',
+    cancelText: '取消',
+    okButtonProps: danger ? { status: 'danger' } : undefined,
+    onOk,
+  })
+}
 
 async function fetchData() {
   loading.value = true
@@ -236,7 +270,7 @@ async function handleSubmit(done: () => void) {
       // 账号属性与角色关联是两个接口：前者改 sys_admin_users，后者改 sys_admin_user_roles
       const { role_ids, ...userForm } = form
       await request.put(`/admin/users/${editingId.value}`, userForm)
-      if (form.role !== 'super_admin') {
+      if (form.role !== 'super_admin' && canAssignRoles.value) {
         await request.put(`/admin/users/${editingId.value}/roles`, { role_ids })
       }
       Message.success('更新成功')
@@ -413,7 +447,7 @@ const { exporting, exportFile } = useExport({
             <span v-if="form.role === 'super_admin'">超级管理员拥有全部权限，不需要也不使用角色</span>
           </template>
         </AFormItem>
-        <AFormItem v-if="form.role !== 'super_admin'" field="role_ids" label="角色">
+        <AFormItem v-if="form.role !== 'super_admin' && canAssignRoles" field="role_ids" label="角色">
           <ASelect
             v-model="form.role_ids"
             :options="roleSelectOptions"
@@ -505,5 +539,10 @@ const { exporting, exportFile } = useExport({
 
 .role-empty-hint {
   color: rgb(var(--orange-6));
+}
+
+/* 下拉里的危险动作：颜色是唯一的视觉区分，必须标出来 */
+:deep(.doption-danger) {
+  color: rgb(var(--red-6));
 }
 </style>
