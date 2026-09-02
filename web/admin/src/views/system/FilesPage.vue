@@ -415,7 +415,9 @@ async function submitExport() {
 onMounted(() => {
   fetchStats()
   fetchList()
-  fetchRetention()
+  // 保留策略读的是系统设置接口（system:view/system:edit 权限域），
+  // 页面本身只要求 file:view —— 无权限时不请求，避免进页面就弹 403
+  if (hasPermission('system:edit')) fetchRetention()
 })
 </script>
 
@@ -442,7 +444,7 @@ onMounted(() => {
           </template>
         </APopover>
         <AButton v-if="hasPermission('file:cleanup')" :loading="cleanupLoading" @click="manualCleanup">手动清理过期文件</AButton>
-        <AButton type="primary" @click="openExportDialog">
+        <AButton v-if="hasPermission('system:edit')" type="primary" @click="openExportDialog">
           <template #icon><IconExport /></template>
           触发数据导出
         </AButton>

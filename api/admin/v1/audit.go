@@ -142,3 +142,13 @@ type ContentFilterLogListRes struct {
 	Page     int              `json:"page"`
 	PageSize int              `json:"page_size"`
 }
+
+// ContentFilterLogClearReq 清空全部内容过滤拦截日志（硬删除，用于日志大量堆积时快速释放数据库空间）
+type ContentFilterLogClearReq struct {
+	g.Meta `path:"/audit/content-filter-logs/clear" method:"delete" mime:"json" tags:"管理后台-审计" summary:"清空内容过滤拦截日志（硬删除全部）"`
+}
+
+// ContentFilterLogClearRes 清空内容过滤拦截日志响应
+type ContentFilterLogClearRes struct {
+	Deleted int64 `json:"deleted" dc:"删除的记录数"`
+}

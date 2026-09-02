@@ -69,6 +69,11 @@ type (
 		// ContentFilterLogList returns a paginated list of content filter interception logs.
 		// 审计数据从审计库查询，关联信息从主库批量查询后在应用层合并。
 		ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error)
+		// ContentFilterLogClear 硬删除全部内容过滤拦截日志。
+		// 拦截日志为追加型审计流水，堆积后用 TRUNCATE 秒级清空并立即归还磁盘空间
+		// （DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，故先取删除前条数作为反馈。
+		// 表无数据库级外键，TRUNCATE 安全。
+		ContentFilterLogClear(ctx context.Context, _ *v1.ContentFilterLogClearReq) (*v1.ContentFilterLogClearRes, error)
 		// Login handles admin login.
 		Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error)
 		// Logout handles admin logout.
@@ -151,6 +156,11 @@ type (
 		ChannelErrorTopChannels(ctx context.Context, req *v1.ChannelErrorTopChannelsReq) (*v1.ChannelErrorTopChannelsRes, error)
 		// ChannelErrorCategories 错误分类选项
 		ChannelErrorCategories(ctx context.Context, req *v1.ChannelErrorCategoriesReq) (*v1.ChannelErrorCategoriesRes, error)
+		// ChannelErrorClear 硬删除全部渠道错误事件。
+		// 错误风暴时事件表堆积很快，用 TRUNCATE 而非逐行 DELETE 秒级清空并立即归还磁盘空间。
+		// TRUNCATE 不返回行数，故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+		// 注意异步写入器（DefaultChannelErrorWriter）清空后继续写入新事件，属预期行为。
+		ChannelErrorClear(ctx context.Context, _ *v1.ChannelErrorClearReq) (*v1.ChannelErrorClearRes, error)
 		// ChannelOAuthAuthURL 生成 OAuth 授权链接
 		ChannelOAuthAuthURL(ctx context.Context, req *v1.ChannelOAuthAuthURLReq) (*v1.ChannelOAuthAuthURLRes, error)
 		// ChannelOAuthExchange OAuth 授权码换取令牌

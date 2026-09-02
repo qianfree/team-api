@@ -110,7 +110,7 @@ var tierPermissions = map[string]map[string][]string{
 	"audit": {
 		TierRead:    {"audit:view"},
 		TierOperate: {"audit:view", "audit:export"},
-		TierFull:    {"audit:view", "audit:export", "audit:read_sensitive"},
+		TierFull:    {"audit:view", "audit:export", "audit:read_sensitive", "audit:clear"},
 	},
 	"user": {
 		TierRead:    {"user:view"},
@@ -120,7 +120,8 @@ var tierPermissions = map[string]map[string][]string{
 	"system": {
 		TierRead:    {"system:view"},
 		TierOperate: {"system:view", "system:edit"},
-		TierFull:    {"system:view", "system:edit", "system:update", "system:plugin"},
+		// 在线自更新硬性限定超管、无权限点，「完全」档与「操作」档的差异只剩插件
+		TierFull: {"system:view", "system:edit", "system:plugin"},
 	},
 }
 
@@ -130,8 +131,8 @@ var dangerousPermissions = map[string]string{
 	"billing:refund":       "可对任意租户钱包退款/调账",
 	"order:refund":         "可对订单发起退款到支付渠道",
 	"audit:read_sensitive": "可查看敏感数据访问日志",
+	"audit:clear":          "可硬删除全部拦截日志（不可恢复）",
 	"system:edit":          "可修改支付、汇率、存储、邮件等全站配置",
-	"system:update":        "可触发系统版本更新",
 	"system:plugin":        "可安装/启停插件（等同于部署代码）",
 	"user:create":          "可创建管理员账号",
 	"user:edit":            "可修改管理员账号与其角色（含提权）",

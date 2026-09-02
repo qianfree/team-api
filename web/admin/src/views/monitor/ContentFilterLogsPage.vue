@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { Tag } from '@arco-design/web-vue'
+import { Message, Modal, Tag } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -223,6 +224,27 @@ function handleReset() {
 	fetchData()
 }
 
+// 清空全部拦截日志（硬删除）：日志大量堆积时快速释放数据库空间，需二次确认。
+function clearLogs() {
+	Modal.confirm({
+		title: '清空全部拦截日志',
+		content: '将硬删除全部内容过滤拦截日志记录，此操作不可恢复，确定继续？',
+		okText: '清空',
+		okButtonProps: { status: 'danger' },
+		cancelText: '取消',
+		onOk: async () => {
+			try {
+				await request.delete('/admin/audit/content-filter-logs/clear')
+				Message.success('拦截日志已清空')
+				pagination.current = 1
+				fetchData()
+			} catch {
+				// error auto-shown by Axios interceptor
+			}
+		},
+	})
+}
+
 onMounted(() => {
 	fetchData()
 })
@@ -230,7 +252,13 @@ onMounted(() => {
 
 <template>
 	<div class="page-table">
-		<PageHeader title="过滤拦截日志" description="查看内容过滤拦截记录，分析敏感词触发趋势" />
+		<PageHeader title="过滤拦截日志" description="查看内容过滤拦截记录，分析敏感词触发趋势">
+			<template #actions>
+				<a-button v-if="hasPermission('audit:clear')" status="danger" @click="clearLogs">
+					清空日志
+				</a-button>
+			</template>
+		</PageHeader>
 
 		<a-card :bordered="false" class="mb-4">
 			<a-space wrap>

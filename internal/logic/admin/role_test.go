@@ -159,9 +159,9 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 		}
 	}
 
-	// 插件是代码执行面、更新是版本变更，仅限超管
+	// 插件是代码执行面、敏感日志是隐私面，仅限超管（在线自更新无权限点，超管专属）
 	for code := range builtinRoleDefaults {
-		for _, perm := range []string{"system:plugin", "system:update", "audit:read_sensitive"} {
+		for _, perm := range []string{"system:plugin", "audit:read_sensitive"} {
 			if has(code, perm) {
 				t.Errorf("预置角色 %s 不应拥有 %s（仅限超级管理员）", code, perm)
 			}

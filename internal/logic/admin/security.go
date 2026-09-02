@@ -255,6 +255,8 @@ func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq)
 type adminUserBrief struct {
 	Username    string
 	DisplayName string
+	// Role 用于会话列表标记超管会话（前端隐藏撤销入口），其他场景可为空
+	Role string
 }
 
 func adminUserIdsByUsername(ctx context.Context, keyword string) ([]int64, error) {

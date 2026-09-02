@@ -128,6 +128,8 @@ async function fetchUpdateStatus() {
 }
 
 function openUpdateModal() {
+  // 在线更新是超管专属能力（后端 superAdminOnlyRules 拦截），非超管不打开弹窗也不发请求
+  if (!isSuperAdminUser.value) return
   updateModalVisible.value = true
   fetchUpdateStatus()
   checkUpdate() // 打开弹窗时刷新版本检查，确保当前版本/最新版本为最新
@@ -356,7 +358,7 @@ const ALL_MENU_GROUPS = [
     items: [
       { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle, perm: 'audit:view' },
       { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
-      { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
+      { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle, perm: 'user:edit' },
       { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
     ],
   },
@@ -515,9 +517,12 @@ onMounted(() => {
   updateMobile()
   window.addEventListener('resize', updateMobile)
 
-  // Check for updates on mount
-  checkUpdate()
-  fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
+  // 在线更新是超管专属能力（后端 superAdminOnlyRules 拦截），
+  // 非超管不发请求，避免每次刷新页面都弹「缺少权限」错误提示
+  if (isSuperAdminUser.value) {
+    checkUpdate()
+    fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
+  }
 
   fetchWorkbenchBadges()
   badgeTimer = setInterval(fetchWorkbenchBadges, 60000)

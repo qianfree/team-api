@@ -203,6 +203,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", prefix: "/api/admin/audit/forwarding-trace/", perm: "audit:view"},
 	{method: "GET", path: "/api/admin/audit/sensitive-logs", perm: "audit:read_sensitive"},
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
+	{method: "DELETE", path: "/api/admin/audit/content-filter-logs/clear", perm: "audit:clear"},
 
 	// ── file 文件管理 ──
 	{method: "GET", path: "/api/admin/files", perm: "file:view"},
@@ -228,6 +229,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/error-logs/", perm: "monitor:edit"},
 	{method: "PUT", path: "/api/admin/error-logs/batch-resolve", perm: "monitor:edit"},
 	{method: "DELETE", path: "/api/admin/error-logs/clear", perm: "monitor:edit"},
+	{method: "DELETE", path: "/api/admin/monitor/channel-errors/clear", perm: "monitor:edit"},
 	{method: "GET", path: "/api/admin/error-logs/stats", perm: "monitor:view"},
 	{method: "GET", path: "/api/admin/cron-jobs", perm: "system:view"},
 	{method: "POST", prefix: "/api/admin/cron-jobs/", suffix: "/trigger", perm: "system:edit"},
@@ -243,8 +245,6 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/payment-channels/", perm: "system:edit"},
 	{method: "GET", path: "/api/admin/payment-settings", perm: "system:view"},
 	{method: "PUT", path: "/api/admin/payment-settings", perm: "system:edit"},
-	{method: "GET", prefix: "/api/admin/update/", perm: "system:update"},
-	{method: "POST", prefix: "/api/admin/update/", perm: "system:update"},
 	{method: "GET", path: "/api/admin/data-governance/settings", perm: "system:view"},
 	{method: "PUT", path: "/api/admin/data-governance/settings", perm: "system:edit"},
 	{method: "POST", prefix: "/api/admin/data-governance/", perm: "system:edit"},
@@ -305,9 +305,11 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/auth/logout", perm: "self:access"},
 	// 当前用户信息与有效权限：登录即可访问自己的资料，不需要任何业务权限点
 	{method: "GET", path: "/api/admin/auth/me", perm: "self:access"},
-	{method: "GET", path: "/api/admin/auth/sessions", perm: "self:access"},
-	{method: "DELETE", prefix: "/api/admin/auth/sessions/user/", perm: "user:edit"},
-	{method: "DELETE", prefix: "/api/admin/auth/sessions/", perm: "self:access"},
+	// 会话管理列出并处置的是【全部管理员】的登录态，属于账号管理（user 域）的操作能力：
+	// 按用户管理模块的操作档位（user:edit）授权，只读档位不可见。
+	// 超管会话的额外保护在 logic 层（assertCanOperateSessions）：仅账号本人可操作。
+	{method: "GET", path: "/api/admin/auth/sessions", perm: "user:edit"},
+	{method: "DELETE", prefix: "/api/admin/auth/sessions/", perm: "user:edit"},
 	{method: "PUT", path: "/api/admin/auth/change-password", perm: "self:access"},
 	{method: "POST", prefix: "/api/admin/security/2fa/", perm: "self:access"},
 	{method: "GET", path: "/api/admin/security/login-history", perm: "audit:view"},
@@ -356,6 +358,13 @@ var superAdminOnlyRules = []permissionRule{
 	// 给账号分配角色 —— 这是最直接的提权入口
 	{method: "GET", prefix: "/api/admin/users/", suffix: "/roles"},
 	{method: "PUT", prefix: "/api/admin/users/", suffix: "/roles"},
+
+	// 在线自更新（版本状态 / 检查 / 执行 / 回滚）：替换平台二进制并重启服务，
+	// 等同于在服务器上执行代码，是比角色管理更根本的平台级元操作，不下放。
+	// 版本检查（GET）看似只读，但前端每次刷新都会请求，若走权限点授权，
+	// 未授权角色会持续收到 403 —— 硬性限定超管后非超管前端不再发起请求。
+	{method: "GET", prefix: "/api/admin/update/"},
+	{method: "POST", prefix: "/api/admin/update/"},
 }
 
 // isSuperAdminOnly 判断路由是否仅限超级管理员。
@@ -407,9 +416,9 @@ func AdminPermissionGuard(r *ghttp.Request) {
 		return
 	}
 
-	// 角色管理是权限体系的元操作，硬性限定超管，不参与权限点授权
+	// 角色管理与在线自更新是平台级元操作，硬性限定超管，不参与权限点授权
 	if isSuperAdminOnly(r.Method, r.URL.Path) {
-		response.ErrorMsg(r, consts.CodeForbidden, "角色权限管理仅超级管理员可用")
+		response.ErrorMsg(r, consts.CodeForbidden, "该操作仅超级管理员可用")
 		return
 	}
 

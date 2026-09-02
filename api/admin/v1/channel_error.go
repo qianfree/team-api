@@ -64,3 +64,13 @@ type ChannelErrorCategoriesReq struct {
 type ChannelErrorCategoriesRes struct {
 	Data []map[string]string `json:"data"`
 }
+
+// ChannelErrorClearReq 清空全部渠道错误事件（硬删除，用于错误大量堆积时快速释放数据库空间）
+type ChannelErrorClearReq struct {
+	g.Meta `path:"/monitor/channel-errors/clear" method:"delete" mime:"json" tags:"管理后台-监控" summary:"清空渠道错误事件（硬删除全部）"`
+}
+
+// ChannelErrorClearRes 清空渠道错误事件响应
+type ChannelErrorClearRes struct {
+	Deleted int64 `json:"deleted" dc:"删除的记录数"`
+}

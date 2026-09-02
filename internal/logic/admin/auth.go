@@ -344,9 +344,9 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 			ids = append(ids, id)
 		}
 		var users []entity.SysAdminUsers
-		_ = dao.SysAdminUsers.Ctx(ctx).Fields("id, username, display_name").WhereIn("id", ids).Scan(&users)
+		_ = dao.SysAdminUsers.Ctx(ctx).Fields("id, username, display_name, role").WhereIn("id", ids).Scan(&users)
 		for _, u := range users {
-			userMap[u.Id] = adminUserBrief{Username: u.Username, DisplayName: u.DisplayName}
+			userMap[u.Id] = adminUserBrief{Username: u.Username, DisplayName: u.DisplayName, Role: u.Role}
 		}
 	}
 
@@ -357,6 +357,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 			UserId:      sess.UserId,
 			Username:    userMap[sess.UserId].Username,
 			DisplayName: userMap[sess.UserId].DisplayName,
+			Role:        userMap[sess.UserId].Role,
 			IpAddress:   sess.IpAddress,
 			DeviceInfo:  sess.DeviceInfo,
 			IsCurrent:   sess.Id == currentSessionID,
@@ -377,6 +378,31 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 	}, nil
 }
 
+// assertCanOperateSessions 校验当前调用者能否处置目标管理员账号的会话。
+//
+// 超级管理员的登录态任何人都不能代为操作（包括其他超管）：踢掉超管会话等同于
+// 掐断平台最高权限入口，一旦下放就存在「借会话管理打击超管」的滥用路径。
+// 唯一例外是账号本人管理自己的登录设备（等同在其他设备登出）。
+// 查看不受限：会话列表对超管账号仍然展示，只是不可操作。
+func assertCanOperateSessions(ctx context.Context, targetUserID int64) error {
+	if targetUserID == 0 {
+		return nil
+	}
+	var user *entity.SysAdminUsers
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", targetUserID).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return err
+	}
+	// 目标账号不存在或不是超管：无可保护对象，交由路由层 user:edit 把关
+	if user == nil || user.Role != "super_admin" {
+		return nil
+	}
+	if common.GetCtxUserID(ctx) == targetUserID {
+		return nil
+	}
+	return common.NewBusinessError(consts.CodeForbidden, "超级管理员的会话仅限本人管理，其他人只能查看")
+}
+
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
 	// Look up session to get jti for Redis revocation
@@ -385,6 +411,9 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 		return nil, err
 	}
 	if sess != nil {
+		if err := assertCanOperateSessions(ctx, sess.UserId); err != nil {
+			return nil, err
+		}
 		common.MarkSessionRevoked(ctx, sess.Jti)
 	}
 	err = common.RevokeSession(ctx, "admin", req.Id)
@@ -396,6 +425,9 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 
 // ForceLogout revokes all sessions for a specific user.
 func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error) {
+	if err := assertCanOperateSessions(ctx, req.Id); err != nil {
+		return nil, err
+	}
 	err := common.RevokeAllSessions(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err

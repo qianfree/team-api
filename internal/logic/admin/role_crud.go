@@ -22,7 +22,8 @@ import (
 //
 // 注意这些只是初始值而非系统契约：用户可以任意修改，甚至删掉预置角色自建一套。
 var builtinRoleDefaults = map[string][]string{
-	// 管理员：除 user:*（账号与角色）、system:update/plugin 外的全部权限。
+	// 管理员：除 user:*（账号与角色）与 system:plugin 外的全部权限
+	//（在线自更新为超管专属，不设权限点）。
 	// 与运营的区别就是「能碰钱（退款）和系统配置」—— 去掉这两项，两个角色就没有分开的必要。
 	"admin": {
 		"dashboard:view",

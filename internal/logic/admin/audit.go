@@ -600,3 +600,18 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 		PageSize: pageSize,
 	}, nil
 }
+
+// ContentFilterLogClear 硬删除全部内容过滤拦截日志。
+// 拦截日志为追加型审计流水，堆积后用 TRUNCATE 秒级清空并立即归还磁盘空间
+// （DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，故先取删除前条数作为反馈。
+// 表无数据库级外键，TRUNCATE 安全。
+func (s *sAdmin) ContentFilterLogClear(ctx context.Context, _ *v1.ContentFilterLogClearReq) (*v1.ContentFilterLogClearRes, error) {
+	count, err := dao.AudContentFilterLogs.Ctx(ctx).Count()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := g.DB().Ctx(ctx).Exec(ctx, "TRUNCATE TABLE aud_content_filter_logs RESTART IDENTITY"); err != nil {
+		return nil, err
+	}
+	return &v1.ContentFilterLogClearRes{Deleted: int64(count)}, nil
+}
