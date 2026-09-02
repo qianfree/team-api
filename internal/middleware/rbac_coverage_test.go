@@ -170,6 +170,11 @@ func TestEveryAdminRouteHasPermissionRule(t *testing.T) {
 		if isAdminPublicPath(path) {
 			continue
 		}
+		// 超管专属路由（角色管理、在线自更新）由 superAdminOnlyRules 硬性拦截，
+		// 先于权限规则判定，不走权限点授权，因此不要求出现在 adminPermissionRules 里。
+		if isSuperAdminOnly(r.Method, path) {
+			continue
+		}
 		if perm := matchPermission(r.Method, path); perm == "" {
 			missing = append(missing, r.Method+" "+r.Path+"  ("+r.Source+")")
 		}

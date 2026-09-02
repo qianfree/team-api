@@ -69,7 +69,7 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Name:  "audit",
 		Label: "审计日志",
 		Permissions: []string{
-			"audit:view", "audit:export", "audit:read_sensitive",
+			"audit:view", "audit:export", "audit:read_sensitive", "audit:clear",
 		},
 	},
 	{
@@ -97,7 +97,8 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Name:  "system",
 		Label: "系统设置",
 		Permissions: []string{
-			"system:view", "system:edit", "system:update", "system:plugin",
+			// 注：在线自更新无权限点 —— 整个 update 域硬性限定超管（superAdminOnlyRules）
+			"system:view", "system:edit", "system:plugin",
 		},
 	},
 	{

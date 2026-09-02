@@ -97,11 +97,14 @@ type AdminSessionItem struct {
 	UserId      int64  `json:"user_id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
-	IpAddress   string `json:"ip_address"`
-	DeviceInfo  string `json:"device_info"`
-	ExpiresAt   string `json:"expires_at"`
-	CreatedAt   string `json:"created_at"`
-	IsCurrent   bool   `json:"is_current"`
+	// Role 是会话所属账号的角色（super_admin / admin），
+	// 前端据此隐藏非本人超管会话的撤销入口（后端另有 assertCanOperateSessions 兜底）
+	Role       string `json:"role"`
+	IpAddress  string `json:"ip_address"`
+	DeviceInfo string `json:"device_info"`
+	ExpiresAt  string `json:"expires_at"`
+	CreatedAt  string `json:"created_at"`
+	IsCurrent  bool   `json:"is_current"`
 }
 
 // AdminRevokeSessionReq 踢出指定会话请求

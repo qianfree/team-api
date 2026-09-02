@@ -119,7 +119,7 @@ const adminRoutes: RouteRecordRaw[] = [
         path: 'sessions',
         name: 'AdminSessions',
         component: () => import('@/views/security/SessionsPage.vue'),
-        meta: { title: '会话管理' },
+        meta: { title: '会话管理', perm: 'user:edit' },
       },
       {
         path: 'permissions',

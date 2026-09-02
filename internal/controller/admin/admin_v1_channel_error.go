@@ -22,3 +22,6 @@ func (c *ControllerV1) ChannelErrorTopChannels(ctx context.Context, req *v1.Chan
 func (c *ControllerV1) ChannelErrorCategories(ctx context.Context, req *v1.ChannelErrorCategoriesReq) (res *v1.ChannelErrorCategoriesRes, err error) {
 	return service.Admin().ChannelErrorCategories(ctx, req)
 }
+func (c *ControllerV1) ChannelErrorClear(ctx context.Context, req *v1.ChannelErrorClearReq) (res *v1.ChannelErrorClearRes, err error) {
+	return service.Admin().ChannelErrorClear(ctx, req)
+}
