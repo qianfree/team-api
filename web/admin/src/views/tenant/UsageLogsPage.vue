@@ -49,6 +49,7 @@ const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
+const channelOptions = ref<{ label: string; value: number }[]>([])
 
 const statusOptions = [
 	{ label: '成功', value: 'success' },
@@ -105,6 +106,22 @@ async function fetchModelOptions(search = '') {
 function handleModelSearch(value: string) {
 	if (modelSearchTimer) clearTimeout(modelSearchTimer)
 	modelSearchTimer = setTimeout(() => fetchModelOptions(value), 300)
+}
+
+// 渠道下拉数据：渠道量级为几十，一次性拉全量（后端分页限制最大 100），本地过滤即可
+async function fetchChannelOptions() {
+	try {
+		const res: any = await request.get('/admin/channels', {
+			params: { page: 1, page_size: 100 }
+		})
+		const list = res.data?.data?.list || res.data?.list || []
+		channelOptions.value = list.map((c: any) => ({
+			label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
+			value: c.id,
+		}))
+	} catch {
+		channelOptions.value = []
+	}
 }
 
 const statusTagColor: Record<string, string> = {
@@ -600,6 +617,7 @@ function handleRefresh() {
 onMounted(() => {
 	fetchTenantOptions()
 	fetchModelOptions()
+	fetchChannelOptions()
 	fetchData()
 	fetchSummary() // 初始加载时获取统计数据
 })
@@ -639,7 +657,8 @@ const { exporting, exportFile } = useExport({
 		</PageHeader>
 
 		<a-card :bordered="false" class="mb-4">
-			<a-space wrap>
+			<div class="filter-bar">
+				<!-- 时间范围恒为首个筛选条件 -->
 				<a-range-picker
 					v-model="filterDateRange"
 					show-time
@@ -648,71 +667,38 @@ const { exporting, exportFile } = useExport({
 					style="width: 340px"
 					@change="handleFilter"
 				/>
-				<a-input-number
-					v-model="filterId"
-					placeholder="记录ID"
-					:min="1"
+				<!-- 常用筛选：租户/渠道/模型/状态/类型 -->
+				<a-select
+					v-model="filterTenantId"
+					:options="tenantOptions"
+					placeholder="租户"
+					allow-search
 					allow-clear
-					style="width: 120px"
+					:filter-option="false"
+					style="width: 200px"
+					@search="handleTenantSearch"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
 				<a-select
-						v-model="filterTenantId"
-						:options="tenantOptions"
-						placeholder="租户ID"
-						allow-search
-						allow-clear
-						:filter-option="false"
-						style="width: 200px"
-						@search="handleTenantSearch"
-						@change="handleFilter"
-						@clear="handleFilter"
-					/>
-				<a-input-number
-					v-model="filterUserId"
-					placeholder="用户ID"
-					:min="1"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-					@clear="handleFilter"
-				/>
-				<a-select
-						v-model="filterModel"
-						:options="modelOptions"
-						placeholder="搜索模型"
-						allow-search
-						allow-clear
-						:filter-option="false"
-						style="width: 200px"
-						@search="handleModelSearch"
-						@change="handleFilter"
-						@clear="handleFilter"
-					/>
-				<a-input-number
-					v-model="filterApiKeyId"
-					placeholder="API Key ID"
-					:min="1"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-					@clear="handleFilter"
-				/>
-				<a-select
-					v-model="filterRequestType"
-					:options="requestTypeOptions"
-					placeholder="请求类型"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-				/>
-				<a-input-number
 					v-model="filterChannelId"
-					placeholder="渠道ID"
-					:min="1"
+					:options="channelOptions"
+					placeholder="渠道"
+					allow-search
 					allow-clear
-					style="width: 120px"
+					style="width: 200px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-select
+					v-model="filterModel"
+					:options="modelOptions"
+					placeholder="模型"
+					allow-search
+					allow-clear
+					:filter-option="false"
+					style="width: 220px"
+					@search="handleModelSearch"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
@@ -724,8 +710,45 @@ const { exporting, exportFile } = useExport({
 					style="width: 120px"
 					@change="handleFilter"
 				/>
-				<a-button type="primary" @click="handleFilter">搜索</a-button>
-			</a-space>
+				<a-select
+					v-model="filterRequestType"
+					:options="requestTypeOptions"
+					placeholder="请求类型"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+				/>
+				<!-- 精确 ID 排查条件 -->
+				<a-input-number
+					v-model="filterId"
+					placeholder="记录ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterUserId"
+					placeholder="用户ID"
+					:min="1"
+					allow-clear
+					style="width: 120px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterApiKeyId"
+					placeholder="API Key ID"
+					:min="1"
+					allow-clear
+					style="width: 130px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<!-- 搜索按钮恒为最后一项，行尾靠右 -->
+				<a-button type="primary" class="filter-search-btn" @click="handleFilter">搜索</a-button>
+			</div>
 		</a-card>
 
 		<a-card :bordered="false">
@@ -1523,5 +1546,26 @@ const { exporting, exportFile } = useExport({
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
 	margin-bottom: 0;
+}
+
+/* 筛选栏：flex 换行布局，搜索按钮恒为最后一项并靠其所在行行尾 */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+.filter-search-btn {
+	margin-left: auto;
+}
+/* 移动端：筛选控件铺满整行（覆盖 inline 定宽），主按钮同样全宽便于点按 */
+@media (max-width: 768px) {
+	.filter-bar > * {
+		flex: 1 1 100%;
+		width: 100% !important;
+	}
+	.filter-search-btn {
+		margin-left: 0;
+	}
 }
 </style>
