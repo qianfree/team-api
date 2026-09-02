@@ -54,12 +54,13 @@ type TenantTicketGetReq struct {
 }
 
 type TenantTicketReplyItem struct {
-	Id        int64       `json:"id"`
-	TicketId  int64       `json:"ticket_id"`
-	UserId    int64       `json:"user_id"`
-	UserType  string      `json:"user_type"`
-	Content   string      `json:"content"`
-	CreatedAt *gtime.Time `json:"created_at"`
+	Id         int64       `json:"id"`
+	TicketId   int64       `json:"ticket_id"`
+	UserId     int64       `json:"user_id"`
+	UserType   string      `json:"user_type"`
+	AuthorName string      `json:"author_name"`
+	Content    string      `json:"content"`
+	CreatedAt  *gtime.Time `json:"created_at"`
 }
 
 type TenantTicketAttachmentItem struct {
