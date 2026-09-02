@@ -399,6 +399,8 @@ make migrate-status  # 查看迁移状态
 
 请遵循项目现有代码风格和 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/) 提交规范。
 
+项目当前由 qianfree 单独维护。未来如接受外部贡献，将在合并贡献前提供贡献者许可协议（CLA），以确保 AGPL 与商业授权的权利链清晰完整。
+
 ## 在线交流
 欢迎加QQ群聊天吹水：1095286563
 
@@ -407,7 +409,7 @@ make migrate-status  # 查看迁移状态
 
 ## 许可证
 
-Copyright (C) 2026 qianfree. 本项目采用 [GNU Affero General Public License v3.0](LICENSE) 许可证。
+Copyright (C) 2026 qianfree。本项目社区版采用 [AGPL v3.0 或更高版本](LICENSE) 许可证。
 
 ### 核心要求
 
@@ -417,7 +419,9 @@ Copyright (C) 2026 qianfree. 本项目采用 [GNU Affero General Public License 
 
 ### 商业授权
 
-如果你想将本项目代码用于闭源商业产品，AGPL-3.0 许可证不适用。需要单独获取商业授权，请联系：**406615373@qq.com**
+如果你希望在不履行 AGPL 开源义务的情况下闭源使用本项目，需要单独获取商业授权，请联系：**406615373@qq.com**。
+商业授权不转让本项目的著作权、专利权、商标权或其他知识产权，具体权利以双方签署的书面协议为准。
+
 
 ## 致谢
 

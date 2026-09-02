@@ -354,7 +354,7 @@ func printBanner() {
 	fmt.Printf("  %sTeam-API%s %s%s%s  %s|  %s%s企业级大模型 API 网关系统%s\n", cyan, reset, green, consts.Version, reset, dim, reset, dim, reset)
 	fmt.Printf("  %shttps://github.com/qianfree/team-api%s\n", dim, reset)
 	fmt.Println()
-	fmt.Printf("  %sAGPL v3.0 开源协议  |  Copyright © 2025-2026 Team-API Contributors%s\n", dim, reset)
+	fmt.Printf("  %sAGPL-3.0-or-later  |  Copyright © 2026 qianfree%s\n", dim, reset)
 	fmt.Println()
 }
 

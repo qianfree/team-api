@@ -198,7 +198,7 @@ async function handle2FAVerify() {
       </div>
 
       <div class="login-brand__footer">
-        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
+        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0-or-later.</span>
       </div>
     </div>
 
@@ -307,7 +307,7 @@ async function handle2FAVerify() {
       <!-- Mobile Footer (hidden on desktop) -->
       <div class="login-mobile-footer">
         <a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer" class="login-mobile-footer__link">Powered by Team-API</a>
-        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
+        <span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0-or-later.</span>
       </div>
     </div>
 
