@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, reactive, h, onMounted } from 'vue'
+import { ref, reactive, computed, h, onMounted } from 'vue'
 import { Tag, Button, Space, Message, Modal } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
+
+const canEdit = hasPermission('support:edit')
 
 const loading = ref(false)
 const articles = ref<any[]>([])
@@ -40,6 +43,7 @@ const columns: TableColumnData[] = [
   {
     title: '操作', dataIndex: 'actions', width: 200, fixed: 'right',
     render({ record }) {
+      if (!canEdit) return '-'
       return h(Space, { size: 'small' }, () => [
         h(Button, { size: 'small', type: 'text', onClick: () => openEdit(record) }, () => '编辑'),
         record.status === 'draft'
@@ -51,15 +55,29 @@ const columns: TableColumnData[] = [
   },
 ]
 
+// 分类下拉选项：顶级在前，子分类带前缀缩进（两级结构）
+const categoryOptions = computed(() => {
+  const tops = categories.value.filter((c: any) => c.parent_id === 0)
+  const opts: { value: number; label: string }[] = tops.map((t: any) => ({ value: t.id, label: t.name }))
+  for (const c of categories.value) {
+    if (c.parent_id !== 0 && tops.some((t: any) => t.id === c.parent_id)) {
+      opts.push({ value: c.id, label: `└ ${c.name}` })
+    }
+  }
+  return opts
+})
+
 async function fetchCategories() {
   try {
-    const res = await request.get('/admin/help-categories', { params: { page: 1, page_size: 100, parent_id: -1 } })
+    const res = await request.get('/admin/help-categories', { params: { page: 1, page_size: 500, parent_id: -1 } })
     categories.value = res.data?.data?.list || []
+  } catch {} finally {
+    // 无论有无分类都加载列表：无分类时应展示空态而非不加载
     if (categories.value.length > 0 && !categoryFilter.value) {
       categoryFilter.value = categories.value[0].id
-      fetchList()
     }
-  } catch {}
+    fetchList()
+  }
 }
 
 async function fetchList() {
@@ -129,7 +147,19 @@ async function handleSubmit() {
 
 async function publishArticle(row: any) {
   Modal.confirm({ title: '确认发布', content: `确定发布文章「${row.title}」？`, okText: '发布', cancelText: '取消', onOk: async () => {
-    try { await request.put(`/admin/help-articles/${row.id}`, { ...row, status: 'published' }); Message.success('发布成功'); fetchList() } catch {}
+    try {
+      // 显式传更新所需字段：不展开整行（列表行不含 content，且避免把无关字段一并回传）
+      await request.put(`/admin/help-articles/${row.id}`, {
+        category_id: row.category_id,
+        title: row.title,
+        slug: row.slug,
+        summary: row.summary || '',
+        status: 'published',
+        sort_order: row.sort_order || 0,
+        keywords: row.keywords || [],
+      })
+      Message.success('发布成功'); fetchList()
+    } catch {}
   }})
 }
 
@@ -146,7 +176,7 @@ onMounted(() => { fetchCategories() })
   <div class="page-table">
     <PageHeader title="帮助文章" description="管理帮助中心的文章内容">
       <template #actions>
-        <AButton type="primary" @click="openCreate">创建文章</AButton>
+        <AButton v-if="canEdit" type="primary" @click="openCreate">创建文章</AButton>
       </template>
     </PageHeader>
 
@@ -155,7 +185,7 @@ onMounted(() => { fetchCategories() })
         <div class="flex items-center justify-between w-full">
           <span>文章列表</span>
           <Space>
-            <ASelect v-model="categoryFilter" :options="categories.map((c: any) => ({ value: c.id, label: c.name }))" style="width: 140px" allow-clear placeholder="按分类筛选" @change="() => { pagination.current = 1; fetchList() }" />
+            <ASelect v-model="categoryFilter" :options="categoryOptions" style="width: 140px" allow-clear placeholder="按分类筛选" @change="() => { pagination.current = 1; fetchList() }" />
             <ASelect v-model="statusFilter" :options="statusOptions" style="width: 120px" allow-clear placeholder="状态筛选" @change="() => { pagination.current = 1; fetchList() }" />
           </Space>
         </div>
@@ -174,7 +204,7 @@ onMounted(() => { fetchCategories() })
           <AFormItem label="Slug" required><AInput v-model="form.slug" placeholder="url-friendly-identifier" /></AFormItem>
           <div class="flex gap-4">
             <AFormItem label="分类" required class="flex-1 min-w-[160px]">
-              <ASelect v-model="form.category_id" :options="categories.map((c: any) => ({ value: c.id, label: c.name }))" placeholder="选择分类" allow-clear />
+              <ASelect v-model="form.category_id" :options="categoryOptions" placeholder="选择分类" allow-clear />
             </AFormItem>
             <AFormItem label="状态" class="w-40">
               <ASelect v-model="form.status" :options="[{ label: '草稿', value: 'draft' }, { label: '已发布', value: 'published' }]" />

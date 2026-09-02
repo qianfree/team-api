@@ -2,8 +2,13 @@ package common
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/qianfree/team-api/internal/consts"
 	"github.com/qianfree/team-api/internal/dao"
 )
 
@@ -65,10 +70,12 @@ func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error
 		countMap[cr.CategoryId] = cr.ArticleCount
 	}
 
-	// 构建所有节点
-	nodeMap := make(map[int64]*HelpPublicCategoryItem)
+	// 构建所有节点（rows 已按 sort_order 排序，同时维护有序切片保证树节点顺序稳定，
+	// 不能遍历 map 组装——Go map 遍历顺序随机，会导致分类顺序每次请求都变）
+	nodeMap := make(map[int64]*HelpPublicCategoryItem, len(rows))
+	orderedNodes := make([]*HelpPublicCategoryItem, 0, len(rows))
 	for _, r := range rows {
-		nodeMap[r.Id] = &HelpPublicCategoryItem{
+		node := &HelpPublicCategoryItem{
 			Id:           r.Id,
 			ParentId:     r.ParentId,
 			Name:         r.Name,
@@ -78,11 +85,13 @@ func ListPublicCategories(ctx context.Context) ([]*HelpPublicCategoryItem, error
 			ArticleCount: countMap[r.Id],
 			Children:     make([]*HelpPublicCategoryItem, 0),
 		}
+		nodeMap[r.Id] = node
+		orderedNodes = append(orderedNodes, node)
 	}
 
-	// 组装树结构
+	// 组装树结构（按 sort_order 顺序遍历，roots 与 children 均保持稳定排序）
 	var roots []*HelpPublicCategoryItem
-	for _, node := range nodeMap {
+	for _, node := range orderedNodes {
 		if node.ParentId == 0 {
 			roots = append(roots, node)
 		} else if parent, ok := nodeMap[node.ParentId]; ok {
@@ -120,18 +129,19 @@ func ListPublicArticles(ctx context.Context, categorySlug string, page, pageSize
 		return nil, 0, 0, 0, err
 	}
 	if cat == nil {
-		return nil, 0, 0, 0, NewBusinessError(10073, "帮助分类不存在")
+		return nil, 0, 0, 0, NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
 	}
 
 	var total int
 	rows := make([]*HelpPublicArticleItem, 0)
+	// 排序与管理后台列表保持一致：sort_order 优先，其次发布时间倒序
 	err = dao.SptArticles.Ctx(ctx).
 		Where("category_id", cat.Id).
 		Where("status", "published").
 		Where("published_at IS NOT NULL").
 		Where("published_at <=", gtime.Now()).
-		OrderDesc("published_at").
 		OrderAsc("sort_order").
+		OrderDesc("published_at").
 		Page(page, pageSize).
 		ScanAndCount(&rows, &total, false)
 	if err != nil {
@@ -177,16 +187,18 @@ func GetPublicArticle(ctx context.Context, slug string) (*HelpPublicArticleDetai
 		return nil, err
 	}
 	if row.Id == 0 {
-		return nil, NewBusinessError(10075, "帮助文章不存在")
+		return nil, NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 	if row.Status != "published" || row.PublishedAt == nil || row.PublishedAt.Timestamp() > gtime.Now().Timestamp() {
-		return nil, NewBusinessError(10075, "帮助文章不存在")
+		return nil, NewBusinessError(consts.CodeHelpArticleNotFound, consts.MsgHelpArticleNotFound)
 	}
 
-	// 增加浏览计数
-	dao.SptArticles.Ctx(ctx).
+	// 增加浏览计数（失败仅记日志，不影响详情返回）
+	if _, err = dao.SptArticles.Ctx(ctx).
 		Where("id", row.Id).
-		Increment("view_count", 1)
+		Increment("view_count", 1); err != nil {
+		g.Log().Warningf(ctx, "帮助文章浏览计数失败 id=%d: %v", row.Id, err)
+	}
 
 	return &HelpPublicArticleDetail{
 		Id:          row.Id,
@@ -201,18 +213,23 @@ func GetPublicArticle(ctx context.Context, slug string) (*HelpPublicArticleDetai
 	}, nil
 }
 
-// SearchPublicArticles 全文搜索已发布文章
+// SearchPublicArticles 搜索已发布文章
+// 用 ILIKE 模糊匹配而非 to_tsvector 全文检索：PostgreSQL 'simple' 分词配置不做中文分词，
+// 连续中文会被切成单个长 token，中文关键词几乎无法命中（帮助文档以中文内容为主）。
+// 帮助文章量级通常为百级，ILIKE 顺序扫描性能足够。
 func SearchPublicArticles(ctx context.Context, query string, page, pageSize int) ([]*HelpPublicArticleItem, int, int, int, error) {
 	page, pageSize = NormalizePagination(page, pageSize)
 
+	likePat := "%" + escapeLikePattern(query) + "%"
 	var total int
 	rows := make([]*HelpPublicArticleItem, 0)
 	err := dao.SptArticles.Ctx(ctx).
 		Where("status", "published").
 		Where("published_at IS NOT NULL").
 		Where("published_at <=", gtime.Now()).
-		Where("to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(content,'')) @@ plainto_tsquery('simple', ?)", query).
+		Where("(title ILIKE ? ESCAPE '\\' OR content ILIKE ? ESCAPE '\\')", likePat, likePat).
 		OrderDesc("published_at").
+		OrderAsc("sort_order").
 		Page(page, pageSize).
 		ScanAndCount(&rows, &total, false)
 	if err != nil {
@@ -220,4 +237,34 @@ func SearchPublicArticles(ctx context.Context, query string, page, pageSize int)
 	}
 
 	return rows, total, page, pageSize, nil
+}
+
+// escapeLikePattern 转义 ILIKE 模式中的通配符（配合 ESCAPE '\' 使用），防止用户输入 % _ \ 干扰匹配
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// CheckHelpCenterRateLimit 帮助中心公开接口 IP 限流（公开无认证端点，防刷浏览量/搜索滥用）
+// 默认每 IP 每分钟 60 次，可通过配置 help_center_rate_limit_per_minute 调整；Redis 不可用时放行（帮助中心为公开只读内容）
+func CheckHelpCenterRateLimit(ctx context.Context, ipAddress string) error {
+	if ipAddress == "" {
+		return nil
+	}
+	limit := Config().GetInt(ctx, "help_center_rate_limit_per_minute")
+	if limit <= 0 {
+		limit = 60
+	}
+	key := fmt.Sprintf("help:center:rl:%s:%d", ipAddress, time.Now().Unix()/60)
+	count, err := incrementWithExpire(ctx, key, 120)
+	if err != nil {
+		g.Log().Warningf(ctx, "帮助中心限流检查失败: %v", err)
+		return nil
+	}
+	if count > int64(limit) {
+		return NewBusinessError(consts.CodeHelpRateLimitExceeded, consts.MsgHelpRateLimitExceeded)
+	}
+	return nil
 }
