@@ -37,7 +37,7 @@ import {
   IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
-import { hasPermission, isSuperAdmin } from '@/utils/permission'
+import { ADMIN_ROLES } from '@/utils/permission'
 
 const router = useRouter()
 const route = useRoute()
@@ -405,8 +405,15 @@ const ALL_MENU_GROUPS = [
   },
 ]
 
+// 权限判定读 store 而不是 utils/permission 里的 localStorage 版本：
+// localStorage 不是响应式数据源，computed 求值一次后就再也不会失效，
+// fetchMe() 拉到新权限、或切换账号后菜单不会跟着变。
+// utils 版本仍用于按钮级 v-if（每次渲染都会重新调用，不依赖响应式追踪）。
+const isSuperAdminUser = computed(() => authStore.user?.role === ADMIN_ROLES.SUPER_ADMIN)
+const permissionSet = computed(() => new Set(authStore.permissions))
+
 // 按当前用户权限过滤菜单：整组条目都被过滤掉时，分组本身也不再渲染，
-// 避免出现点开是空的分组。super_admin 在 hasPermission 内直接放行。
+// 避免出现点开是空的分组。super_admin 拥有全部权限，直接放行。
 const menuGroups = computed(() =>
   ALL_MENU_GROUPS
     .map(group => ({
@@ -414,8 +421,9 @@ const menuGroups = computed(() =>
       items: group.items.filter(item => {
         // superOnly 的条目不参与权限点判定：它们是权限体系本身的元操作，
         // 无法通过授予权限点下放（后端 superAdminOnlyRules 同样硬性拦截）
-        if ((item as any).superOnly) return isSuperAdmin()
-        return !item.perm || hasPermission(item.perm)
+        if ((item as any).superOnly) return isSuperAdminUser.value
+        if (isSuperAdminUser.value) return true
+        return !item.perm || permissionSet.value.has(item.perm)
       }),
     }))
     .filter(group => group.items.length > 0)

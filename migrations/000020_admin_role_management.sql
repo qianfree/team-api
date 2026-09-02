@@ -160,16 +160,6 @@ SELECT r.id, unnest(ARRAY[
 FROM sys_admin_roles r WHERE r.code = 'support'
 ON CONFLICT (role_id, permission_point) DO NOTHING;
 
--- ── 存量账号回填 ──
--- 非超管账号一律挂到「管理员」角色，保持升级前后的可用权限不缩水
--- （升级前 admin 账号的实际权限来自 sys_admin_role_perms，特批权限继续并集生效）。
-INSERT INTO sys_admin_user_roles (admin_user_id, role_id)
-SELECT u.id, r.id
-FROM sys_admin_users u
-CROSS JOIN sys_admin_roles r
-WHERE u.role <> 'super_admin' AND r.code = 'admin'
-ON CONFLICT (admin_user_id, role_id) DO NOTHING;
-
 
 -- 移除不再使用的配置项
 DELETE FROM sys_options
