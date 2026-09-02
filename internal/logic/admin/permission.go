@@ -6,7 +6,6 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 	do "github.com/qianfree/team-api/internal/model/do"
 
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
@@ -222,6 +221,18 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("超级管理员无需配置权限")
 	}
+	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+		return nil, err
+	}
+
+	// 特批权限与角色权限一样进有效权限的并集，因此必须走同一道 sanitize：
+	// 校验权限点存在 + 去重排序 + 禁止授予自己不具备的权限。
+	// 此前这里只做「权限点是否存在」的校验，一个拿到 user:edit 的账号可以给自己
+	// 特批 system:plugin / billing:refund，绕开「角色管理仅超管」的全部管控。
+	perms, err := sanitizeGrantedPermissions(ctx, req.Permissions)
+	if err != nil {
+		return nil, err
+	}
 
 	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -233,18 +244,10 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 			return err
 		}
 
-		// Validate permission points against predefined set
-		validPerms := buildValidPermissionSet()
-		for _, p := range req.Permissions {
-			if !validPerms[p] {
-				return gerror.Newf("无效的权限点: %s", p)
-			}
-		}
-
 		// Insert new permissions
-		if len(req.Permissions) > 0 {
-			data := make([]do.SysAdminRolePerms, len(req.Permissions))
-			for i, p := range req.Permissions {
+		if len(perms) > 0 {
+			data := make([]do.SysAdminRolePerms, len(perms))
+			for i, p := range perms {
 				data[i] = do.SysAdminRolePerms{
 					AdminUserId:     req.Id,
 					PermissionPoint: p,
@@ -284,6 +287,9 @@ func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScop
 	}
 	if user.Role == "super_admin" {
 		return nil, common.NewBadRequestError("超级管理员无需配置数据范围")
+	}
+	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+		return nil, err
 	}
 
 	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
