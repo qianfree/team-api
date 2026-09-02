@@ -36,6 +36,7 @@ type ITenantV1 interface {
 	TenantSessionList(ctx context.Context, req *v1.TenantSessionListReq) (res *v1.TenantSessionListRes, err error)
 	TenantRevokeSession(ctx context.Context, req *v1.TenantRevokeSessionReq) (res *v1.TenantRevokeSessionRes, err error)
 	TenantUsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (res *v1.TenantUsageLogsRes, err error)
+	TenantUsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsSummaryReq) (res *v1.TenantUsageLogsSummaryRes, err error)
 	TenantUsageLogsExport(ctx context.Context, req *v1.TenantUsageLogsExportReq) (res *v1.TenantUsageLogsExportRes, err error)
 	TenantRequestClosure(ctx context.Context, req *v1.TenantRequestClosureReq) (res *v1.TenantRequestClosureRes, err error)
 	TenantCancelClosure(ctx context.Context, req *v1.TenantCancelClosureReq) (res *v1.TenantCancelClosureRes, err error)

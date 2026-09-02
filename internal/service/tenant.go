@@ -68,6 +68,9 @@ type (
 		WalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsReq) (*v1.TenantWalletTransactionsRes, error)
 		// UsageLogs 获取租户用量日志
 		UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error)
+		// UsageLogsSummary 用量日志统计汇总（与 UsageLogs 共用筛选口径：强制 tenant_id 隔离，
+		// member 角色只能统计自己的日志；总费用与租户端列表费用列同口径：actual_cost 优先，0/NULL 回退 total_cost）
+		UsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsSummaryReq) (*v1.TenantUsageLogsSummaryRes, error)
 		// ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 		ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error)
 		// ExportWalletTransactions exports the tenant wallet transactions as CSV or Excel.

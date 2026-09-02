@@ -274,6 +274,103 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	}, nil
 }
 
+// UsageLogsSummary 用量日志统计汇总（与 UsageLogs 共用筛选口径：强制 tenant_id 隔离，
+// member 角色只能统计自己的日志；总费用与租户端列表费用列同口径：actual_cost 优先，0/NULL 回退 total_cost）
+func (s *sTenant) UsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsSummaryReq) (*v1.TenantUsageLogsSummaryRes, error) {
+	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
+		return nil, err
+	}
+	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
+		return nil, err
+	}
+
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
+
+	var conditions []string
+	var args []any
+
+	conditions = append(conditions, "u.tenant_id = ?")
+	args = append(args, tenantID)
+
+	// member 角色只能查看自己的用量日志
+	if role == "member" {
+		conditions = append(conditions, "u.user_id = ?")
+		args = append(args, userID)
+	} else if req.Username != "" {
+		conditions = append(conditions, "t.username LIKE ?")
+		args = append(args, "%"+req.Username+"%")
+	}
+	if req.Model != "" {
+		conditions = append(conditions, "u.model_name = ?")
+		args = append(args, req.Model)
+	}
+	if req.Status != "" {
+		conditions = append(conditions, "u.status = ?")
+		args = append(args, req.Status)
+	}
+	if req.RequestType > 0 {
+		conditions = append(conditions, "u.request_type = ?")
+		args = append(args, req.RequestType)
+	}
+	if req.StartDate != "" {
+		conditions = append(conditions, "u.created_at >= ?")
+		args = append(args, common.StartOfRange(req.StartDate))
+	}
+	if req.EndDate != "" {
+		conditions = append(conditions, "u.created_at <= ?")
+		args = append(args, common.EndOfRange(req.EndDate))
+	}
+
+	// 统计聚合不展示名称，仅在按用户名筛选时才 JOIN 用户表，避免大表 SUM 背负无关 JOIN
+	fromClause := "bil_usage_logs u"
+	if role != "member" && req.Username != "" {
+		fromClause += " LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id"
+	}
+
+	summarySQL := `SELECT
+		COALESCE(SUM(COALESCE(NULLIF(u.actual_cost, 0), u.total_cost)), 0) AS total_cost,
+		COALESCE(SUM(u.output_tokens), 0) AS total_output_tokens,
+		COALESCE(SUM(u.input_tokens), 0) AS total_input_tokens,
+		COALESCE(SUM(u.cache_read_tokens), 0) AS total_cache_read
+		FROM ` + fromClause + ` WHERE ` + strings.Join(conditions, " AND ")
+
+	summaryResult, err := g.DB().Ctx(ctx).Query(ctx, summarySQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	// 无 GROUP BY 的聚合必返回一行；空结果兜底为零值
+	if len(summaryResult) == 0 {
+		return &v1.TenantUsageLogsSummaryRes{}, nil
+	}
+
+	var row struct {
+		TotalCost         float64 `json:"total_cost"`
+		TotalOutputTokens int64   `json:"total_output_tokens"`
+		TotalInputTokens  int64   `json:"total_input_tokens"`
+		TotalCacheRead    int64   `json:"total_cache_read"`
+	}
+	if err := summaryResult[0].Struct(&row); err != nil {
+		return nil, err
+	}
+
+	// 缓存读取占比 = cache_read / input_tokens。
+	// input_tokens 入库口径为「含缓存的总输入」（见 relay/common/usage.go TotalInputTokens），
+	// cache_read 是其子集，分母直接取总和即可，禁止再加 cache_read（会重复计入导致占比偏低）。
+	// 口径与 admin 侧 GetUsageLogSummary 保持一致。
+	var cacheReadRatio float64
+	if row.TotalInputTokens > 0 {
+		cacheReadRatio = float64(row.TotalCacheRead) / float64(row.TotalInputTokens) * 100
+	}
+
+	return &v1.TenantUsageLogsSummaryRes{
+		TotalCost:         row.TotalCost,
+		TotalOutputTokens: row.TotalOutputTokens,
+		CacheReadRatio:    cacheReadRatio,
+	}, nil
+}
+
 // ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error) {
 	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
