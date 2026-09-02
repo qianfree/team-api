@@ -34,6 +34,7 @@ import {
   IconLayers,
   IconHome,
   IconUser,
+  IconBook,
   IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
@@ -690,6 +691,17 @@ onUnmounted(() => {
         </div>
 
         <div class="admin-header__right">
+          <!-- 帮助文档：新窗口打开文档站 -->
+          <a
+            class="admin-header__docs-btn"
+            href="https://docs.team-api.net"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="帮助文档"
+          >
+            <IconBook class="admin-header__docs-icon" />
+            <span class="admin-header__docs-text">帮助文档</span>
+          </a>
           <div class="admin-header__user-wrapper" style="position: relative;">
             <div class="admin-header__user" @click.stop="toggleUserMenu">
               <div class="admin-header__avatar">{{ displayLabel.charAt(0) }}</div>
@@ -1142,6 +1154,49 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+/* ===== 帮助文档胶囊入口 ===== */
+.admin-header__docs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  margin-right: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--ta-border);
+  border-radius: 999px;
+  color: var(--ta-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+}
+
+.admin-header__docs-btn:hover {
+  color: var(--ta-primary);
+  border-color: var(--ta-primary);
+  background: rgba(13, 148, 136, 0.06);
+}
+
+.admin-header__docs-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+/* 窄屏收起文字，退化为纯图标小胶囊（与右侧用户名在移动端隐藏的处理一致） */
+@media (max-width: 480px) {
+  .admin-header__docs-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+    margin-right: 8px;
+  }
+
+  .admin-header__docs-text {
+    display: none;
+  }
 }
 
 .admin-header__user {
