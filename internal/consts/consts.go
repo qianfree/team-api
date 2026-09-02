@@ -182,6 +182,7 @@ const (
 	CodeHelpCategorySlugExists = 10074
 	CodeHelpArticleNotFound    = 10075
 	CodeHelpArticleSlugExists  = 10076
+	CodeHelpRateLimitExceeded  = 10099
 
 	// Registration errors
 	CodeRegistrationDisabled      = 10077
@@ -337,6 +338,7 @@ const (
 	MsgHelpCategorySlugExists = "分类标识已存在"
 	MsgHelpArticleNotFound    = "帮助文章不存在"
 	MsgHelpArticleSlugExists  = "文章标识已存在"
+	MsgHelpRateLimitExceeded  = "访问过于频繁，请稍后再试"
 	// Registration errors
 	MsgRegistrationDisabled      = "注册功能已关闭"
 	MsgEmailVerificationDisabled = "注册邮箱验证未启用"
