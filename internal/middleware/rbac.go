@@ -10,42 +10,11 @@ import (
 	"github.com/qianfree/team-api/internal/response"
 )
 
-// RequirePermission returns middleware that checks if the admin user has the required permission.
-func RequirePermission(permission string) func(r *ghttp.Request) {
-	return func(r *ghttp.Request) {
-		role := GetUserRole(r.Context())
-		userID := GetUserID(r.Context())
-
-		if role == "super_admin" {
-			r.Middleware.Next()
-			return
-		}
-
-		if !admin.HasPermission(r.Context(), userID, role, permission) {
-			response.ErrorMsg(r, consts.CodeForbidden, "缺少权限："+permission)
-			return
-		}
-
-		r.Middleware.Next()
-	}
-}
-
-// RequireTenantRole returns middleware that checks if the tenant user has the required role.
-func RequireTenantRole(roles ...string) func(r *ghttp.Request) {
-	roleSet := make(map[string]bool)
-	for _, r := range roles {
-		roleSet[r] = true
-	}
-
-	return func(r *ghttp.Request) {
-		role := GetUserRole(r.Context())
-		if !roleSet[role] {
-			response.ErrorMsg(r, consts.CodeForbidden, consts.MsgForbidden)
-			return
-		}
-		r.Middleware.Next()
-	}
-}
+// 说明：曾有 RequirePermission / RequireTenantRole 两个「按路由挂载」的中间件，
+// 均无任何调用方，已删除。管理后台的授权统一由 AdminPermissionGuard + adminPermissionRules
+// 集中判定（默认拒绝、规则完整性由 rbac_coverage_test.go 保证）；租户控制台的角色校验
+// 在 logic 层逐方法进行。留着一个从未挂载的 RequireTenantRole 会让人误以为
+// /api/tenant 有路由级角色闸门，实际并没有。
 
 // adminPermissionRules defines the mapping from route patterns to permission points.
 // Unmapped admin routes are denied by default in AdminPermissionGuard.
@@ -139,7 +108,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/offline-recharge", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release-all", perm: "billing:refund"},
-	{method: "PUT", prefix: "/api/admin/wallets/", suffix: "/warning-threshold", perm: "billing:view"},
+	{method: "PUT", prefix: "/api/admin/wallets/", suffix: "/warning-threshold", perm: "billing:refund"},
 
 	// ── plan 套餐管理 ──
 	{method: "GET", path: "/api/admin/plans", perm: "plan:view"},
@@ -154,7 +123,9 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/orders/export", perm: "order:view"},
 	{method: "GET", prefix: "/api/admin/orders/", perm: "order:view"},
 	{method: "POST", prefix: "/api/admin/orders/", suffix: "/refund", perm: "order:refund"},
-	{method: "POST", prefix: "/api/admin/orders/", suffix: "/complete", perm: "order:view"},
+	// 手动完成订单会走 markOrderPaidByAdmin + payment.FulfillOrder：无支付凭证直接履约
+	// （充值入钱包 / 发放套餐），是资金动作而非订单查看，按退款同级管控。
+	{method: "POST", prefix: "/api/admin/orders/", suffix: "/complete", perm: "order:refund"},
 
 	// ── operation 内容运营 ──
 	{method: "GET", path: "/api/admin/changelogs", perm: "operation:view"},
@@ -195,7 +166,9 @@ var adminPermissionRules = []permissionRule{
 
 	// ── audit 审计日志 ──
 	{method: "GET", path: "/api/admin/audit/config", perm: "audit:view"},
-	{method: "PUT", path: "/api/admin/audit/config", perm: "audit:view"},
+	// 写 sys_options.audit_level（全局审计级别，可设为 none 关闭全站审计采集）：
+	// 属于系统配置而非审计查看，否则只读档的技术支持可以自行关掉审计留痕。
+	{method: "PUT", path: "/api/admin/audit/config", perm: "system:edit"},
 	{method: "GET", path: "/api/admin/audit/operation-logs", perm: "audit:view"},
 	{method: "GET", path: "/api/admin/audit/operation-logs/export", perm: "audit:export"},
 	{method: "GET", path: "/api/admin/audit/request-logs", perm: "audit:view"},
@@ -270,10 +243,12 @@ var adminPermissionRules = []permissionRule{
 	// ── member 成员管理（管理后台维度） ──
 	{method: "GET", path: "/api/admin/members", perm: "member:view"},
 	{method: "POST", path: "/api/admin/members", perm: "member:import"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/disable", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/enable", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/reset-password", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/unlock", perm: "member:view"},
+	// 禁用/启用/改密/解锁都是对租户成员账号的处置（改密等于接管该成员账号，
+	// 进而可用其 API Key 消耗租户余额），必须走写权限点，不能沿用只读的 member:view。
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/disable", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/enable", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/reset-password", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/unlock", perm: "member:manage"},
 
 	// ── redemption 兑换码管理 ──
 	{method: "GET", path: "/api/admin/redemptions", perm: "redemption:view"},
@@ -299,7 +274,6 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/permissions", perm: "user:view"},
 	{method: "GET", prefix: "/api/admin/users/", suffix: "/permissions", perm: "user:view"},
 	{method: "PUT", prefix: "/api/admin/users/", suffix: "/permissions", perm: "user:edit"},
-	{method: "PUT", prefix: "/api/admin/users/", suffix: "/data-scopes", perm: "user:edit"},
 
 	// ── admin session and security ──
 	{method: "POST", path: "/api/admin/auth/logout", perm: "self:access"},
@@ -405,6 +379,16 @@ type permissionRule struct {
 // 兜底保证：super_admin 在规则匹配之前短路放行，因此即便规则有遗漏也不会把系统锁死，
 // 超管始终可以进入并修复。规则的完整性由 rbac_coverage_test.go 在 CI 阶段保证。
 func AdminPermissionGuard(r *ghttp.Request) {
+	// 路径必须是规范形式：GoFrame 不会归一化重复斜杠，/api/admin//roles 会带着原样路径
+	// 进到 handler，而规则表按精确路径/前缀匹配，同一个 handler 就有了两种匹配结果。
+	// 目前默认拒绝把这类变体都挡在外面，但那是「恰好安全」——只要将来某条前缀规则的
+	// 权限点比精确规则弱，加一个斜杠就能降档。与其依赖这个巧合，不如直接拒收非规范路径：
+	// 正常客户端不会产生它，攻击者才需要它。
+	if !isCanonicalPath(r.URL.Path) {
+		response.ErrorMsg(r, consts.CodeForbidden, "非法的请求路径")
+		return
+	}
+
 	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
 		return
@@ -441,6 +425,22 @@ func AdminPermissionGuard(r *ghttp.Request) {
 	}
 
 	r.Middleware.Next()
+}
+
+// isCanonicalPath 判断路径是否为规范形式：不含空路径段（"//"）与 "." / ".." 段。
+//
+// 只做判定不做重写：重写会把「当前被默认拒绝挡住的变体」变成放行，等于放宽；
+// 直接拒收既不放宽也不留下将来被利用的缝隙。
+func isCanonicalPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // matchPermission finds the permission required for the given method and path.

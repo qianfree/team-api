@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
+import { hasPermission } from '@/utils/permission'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 
 const loading = ref(false)
@@ -174,6 +175,11 @@ const columns: TableColumnData[] = [
     width: 180,
     fixed: 'right',
     render({ record }) {
+      // 禁用/启用/改密/解锁四个动作在后端要求 member:manage（只读的 member:view
+      // 只能看列表）。无权限时不渲染按钮，避免点了才拿到 403。
+      if (!hasPermission('member:manage')) {
+        return h('span', { style: 'color: var(--color-text-3)' }, '—')
+      }
       const isDisabled = record.status === 'disabled'
       const locked = !!record.locked_until && new Date(record.locked_until) > new Date()
       const actions = [

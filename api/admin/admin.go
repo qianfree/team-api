@@ -209,7 +209,6 @@ type IAdminV1 interface {
 	PaymentSettingsUpdate(ctx context.Context, req *v1.PaymentSettingsUpdateReq) (res *v1.PaymentSettingsUpdateRes, err error)
 	AdminPermissionList(ctx context.Context, req *v1.AdminPermissionListReq) (res *v1.AdminPermissionListRes, err error)
 	AdminPermissionUpdate(ctx context.Context, req *v1.AdminPermissionUpdateReq) (res *v1.AdminPermissionUpdateRes, err error)
-	AdminDataScopeUpdate(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (res *v1.AdminDataScopeUpdateRes, err error)
 	AdminAllPermissions(ctx context.Context, req *v1.AdminAllPermissionsReq) (res *v1.AdminAllPermissionsRes, err error)
 	PlanList(ctx context.Context, req *v1.PlanListReq) (res *v1.PlanListRes, err error)
 	PlanCreate(ctx context.Context, req *v1.PlanCreateReq) (res *v1.PlanCreateRes, err error)

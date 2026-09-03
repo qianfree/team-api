@@ -225,6 +225,42 @@ func TestMatchedPermissionsAreGrantable(t *testing.T) {
 	}
 }
 
+// writeOnViewPermExceptions 列出「写方法但语义上是读」的接口白名单。
+//
+// 加白之前先问一句：这个接口有没有改变任何持久状态？只有答案是「没有，用 POST 纯粹是
+// 因为查询参数太复杂放不进 query string」时才可以加，并写明理由。
+var writeOnViewPermExceptions = map[string]string{
+	// 导出模型配置为 JSON：只读取并序列化现有配置，不写库。用 POST 是因为筛选条件是
+	// 一个可能很大的模型 ID 数组。
+	"POST /api/admin/models/export-json": "纯导出，不改变任何状态",
+}
+
+// TestWriteRoutesDoNotUseViewPermissions 保证写接口不会挂在只读权限点上。
+//
+// 这是本次权限审计里出现最多的一类缺陷：接口按 :view 配置，于是「技术支持」这类被明确
+// 定位成只读的角色，实际拥有了改密、改配置、履约订单的能力。权限点的档位语义
+// （read/operate/full）只有在规则表遵守它时才成立，靠人工 review 守不住这条线。
+func TestWriteRoutesDoNotUseViewPermissions(t *testing.T) {
+	for _, r := range collectAdminRoutes(t) {
+		if r.Method == "GET" || r.Method == "HEAD" || r.Method == "OPTIONS" {
+			continue
+		}
+		path := concreteFromPattern(r.Path)
+		if isAdminPublicPath(path) || isSuperAdminOnly(r.Method, path) {
+			continue
+		}
+		if _, ok := writeOnViewPermExceptions[r.Method+" "+r.Path]; ok {
+			continue
+		}
+		perm := matchPermission(r.Method, path)
+		if strings.HasSuffix(perm, ":view") {
+			t.Errorf("写接口 %s %s 挂在只读权限点 %q 上：只读角色会因此获得写能力。"+
+				"请改挂对应的操作/完全档权限点；若该接口确实不改变任何状态，"+
+				"把它加进 writeOnViewPermExceptions 并说明理由", r.Method, r.Path, perm)
+		}
+	}
+}
+
 // TestRoleManagementIsSuperAdminOnly 保证角色管理的每个端点都被限定为超级管理员专属。
 //
 // 角色管理是权限体系的元操作：谁能改角色，谁就能决定所有人的权限。若某个角色端点漏了这条

@@ -47,8 +47,8 @@ var tierPermissions = map[string]map[string][]string{
 	},
 	"member": {
 		TierRead:    {"member:view"},
-		TierOperate: {"member:view", "member:import"},
-		TierFull:    {"member:view", "member:import", "member:model_scope"},
+		TierOperate: {"member:view", "member:import", "member:manage"},
+		TierFull:    {"member:view", "member:import", "member:manage", "member:model_scope"},
 	},
 	"channel": {
 		TierRead:    {"channel:view"},
@@ -137,6 +137,7 @@ var dangerousPermissions = map[string]string{
 	"user:create":          "可创建管理员账号",
 	"user:edit":            "可修改管理员账号与其角色（含提权）",
 	"user:delete":          "可删除管理员账号",
+	"member:manage":        "可重置任意租户成员的密码（等同接管该成员账号）",
 }
 
 // tierOrder 定义档位由低到高的顺序，用于「权限点集合 → 档位」的反向推导。
