@@ -133,7 +133,7 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		Name:  "member",
 		Label: "成员管理",
 		Permissions: []string{
-			"member:view", "member:import", "member:model_scope",
+			"member:view", "member:import", "member:manage", "member:model_scope",
 		},
 	},
 	{
@@ -272,62 +272,6 @@ func (s *sAdmin) UpdateUserPermissions(ctx context.Context, req *v1.AdminPermiss
 	return nil, nil
 }
 
-// UpdateUserDataScopes updates data scopes for an admin user.
-func (s *sAdmin) UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (*v1.AdminDataScopeUpdateRes, error) {
-	// Check if target is super_admin
-	var user *struct {
-		Role string `json:"role"`
-	}
-	err := dao.SysAdminUsers.Ctx(ctx).
-		Where("id", req.Id).Scan(&user)
-	if err = common.IgnoreScanNoRows(err); err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, common.NewNotFoundError("用户")
-	}
-	if user.Role == "super_admin" {
-		return nil, common.NewBadRequestError("超级管理员无需配置数据范围")
-	}
-	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
-		return nil, err
-	}
-
-	// 事务采用 ctx 传播式写法：闭包内统一使用 dao.Xxx.Ctx(ctx)，事务由 ctx 自动挂载。
-	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// Delete existing data scopes
-		_, err := dao.SysAdminDataScopes.Ctx(ctx).
-			Where("admin_user_id", req.Id).
-			Delete()
-		if err != nil {
-			return err
-		}
-
-		// Insert new data scopes
-		if len(req.DataScopes) > 0 {
-			data := make([]do.SysAdminDataScopes, len(req.DataScopes))
-			for i, sc := range req.DataScopes {
-				data[i] = do.SysAdminDataScopes{
-					AdminUserId: req.Id,
-					ScopeType:   sc.ScopeType,
-					ScopeValue:  sc.ScopeValue,
-				}
-			}
-			_, err = dao.SysAdminDataScopes.Ctx(ctx).Data(data).Insert()
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return nil, nil
-}
-
 // tierLabels 是档位的中文标签，随元数据下发给前端，避免前端硬编码一份。
 var tierLabels = map[string]string{
 	TierNone:    "无",
@@ -393,6 +337,11 @@ func HasPermission(ctx context.Context, userID int64, role string, permission st
 
 // GetDataScopes returns data scopes for an admin user.
 // super_admin always returns "all".
+//
+// ⚠️ 当前无调用方：数据范围只被存储与回显，没有任何查询按它过滤，配置了也不生效。
+// 写接口已随之下线（见 api/admin/v1/permission.go）。要让这个特性真正成立，
+// 必须先把它接进各列表查询的 WHERE 条件，再恢复配置入口 —— 在那之前不要仅凭
+// 本函数存在就认为数据范围已被强制执行。
 func GetDataScopes(ctx context.Context, userID int64, role string) ([]v1.DataScopeItem, error) {
 	if role == "super_admin" {
 		return []v1.DataScopeItem{{ScopeType: "all"}}, nil

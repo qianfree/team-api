@@ -411,16 +411,23 @@ func (s *sAdmin) UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateSt
 }
 
 // UnlockUser 清除管理员的登录锁定状态（重置失败计数与锁定截止时间）。
+//
+// 解锁是本文件里唯一漏掉 assertCanManageAdminUser 的账号处置动作：锁定本身是暴力破解
+// 的防线，非超管若能解锁超级管理员账号，就等于可以无限次重置对方的失败计数继续爆破。
 func (s *sAdmin) UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v1.AdminUserUnlockRes, error) {
 	var user *struct {
-		Id int64 `json:"id"`
+		Id   int64  `json:"id"`
+		Role string `json:"role"`
 	}
-	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Scan(&user)
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Fields("id, role").Scan(&user)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 	if user == nil {
 		return nil, common.NewNotFoundError("管理员")
+	}
+	if err := assertCanManageAdminUser(ctx, req.Id, user.Role); err != nil {
+		return nil, err
 	}
 
 	_, err = dao.SysAdminUsers.Ctx(ctx).Where("id", req.Id).Data(map[string]interface{}{

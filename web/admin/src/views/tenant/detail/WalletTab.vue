@@ -262,9 +262,10 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
       <ACard :bordered="false" title="钱包信息" class="mb-4">
         <template #extra>
           <ASpace :wrap="isMobile" :size="isMobile ? 'small' : 'medium'">
-            <AButton type="primary" @click="openRecharge">调整余额</AButton>
-            <AButton status="success" @click="openOfflineRecharge">线下入账</AButton>
-            <AButton @click="openThreshold">预警设置</AButton>
+            <!-- 三个动作在后端都要求 billing:refund（billing:view 只能看余额），按权限点渲染 -->
+            <AButton v-if="hasPermission('billing:refund')" type="primary" @click="openRecharge">调整余额</AButton>
+            <AButton v-if="hasPermission('billing:refund')" status="success" @click="openOfflineRecharge">线下入账</AButton>
+            <AButton v-if="hasPermission('billing:refund')" @click="openThreshold">预警设置</AButton>
           </ASpace>
         </template>
         <ADescriptions :column="isMobile ? 1 : 3" bordered size="medium">

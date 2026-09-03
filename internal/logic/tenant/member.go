@@ -815,7 +815,15 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 }
 
 // ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
+//
+// 角色校验此前缺失：只挡了「不能重置自己」和「不能重置 owner」，任意 member 都能改掉
+// 同组织 admin 的密码并登录该账号，等于组织内横向提权。与相邻的 UnlockMember /
+// RemoveMember / UpdateMemberRole 保持同一道闸门。
 func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	if err := requireTeamEnabled(ctx); err != nil {
 		return nil, err
 	}

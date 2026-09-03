@@ -417,8 +417,6 @@ type (
 		GetUserPermissions(ctx context.Context, req *v1.AdminPermissionListReq) (*v1.AdminPermissionListRes, error)
 		// UpdateUserPermissions updates permission points for an admin user.
 		UpdateUserPermissions(ctx context.Context, req *v1.AdminPermissionUpdateReq) (*v1.AdminPermissionUpdateRes, error)
-		// UpdateUserDataScopes updates data scopes for an admin user.
-		UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (*v1.AdminDataScopeUpdateRes, error)
 		// GetAllPermissions returns all predefined permission groups plus tier metadata.
 		//
 		// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
