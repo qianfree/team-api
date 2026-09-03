@@ -277,9 +277,13 @@ var (
 			})
 
 			// Open Platform API — HMAC-SHA256 authentication
+			// 中间件与 /api/tenant 对齐：演示模式同样要拦住写操作（否则演示部署可经开放平台
+			// 真实改数据），维护模式头同样要下发，幂等同样要生效 —— 开放平台是对外的、
+			// 天然会重试的接口，没有幂等语义比控制台更危险。
+			// Idempotency 必须排在 OpenPlatformAuth 之后：它按认证主体隔离幂等键。
 			s.Group("/api/open", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.MiddlewareHandlerResponse)
-				group.Middleware(middleware.OpenPlatformAuth)
+				group.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.OpenPlatformAuth, middleware.Idempotency)
 				group.Bind(openController.NewV1())
 			})
 

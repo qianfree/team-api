@@ -142,6 +142,8 @@ type OpenKeyItem struct {
 type OpenKeyCreateReq struct {
 	g.Meta      `path:"/v1/keys" method:"post" mime:"json" tags:"开放平台API" summary:"创建API Key"`
 	Name        string   `json:"name" v:"required|length:2,100#请输入Key名称|名称长度2-100" dc:"Key名称"`
+	ProjectID   int64    `json:"project_id" dc:"关联项目 ID（可选；填写后该 Key 随项目归档一并失效）"`
+	Scope       string   `json:"scope" d:"full" v:"in:full,chat_only,embeddings_only,images_only,read_only#权限范围无效" dc:"权限范围"`
 	ModelScopes []string `json:"model_scopes" dc:"可用模型列表（为空则不限）"`
 	QuotaLimit  float64  `json:"quota_limit" d:"0" dc:"额度上限（0=不限）"`
 }

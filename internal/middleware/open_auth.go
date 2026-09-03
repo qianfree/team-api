@@ -38,7 +38,6 @@ const (
 	ctxKeyOpenAppID       openContextKey = "openAppId"
 	ctxKeyOpenTenantID    openContextKey = "openTenantId"
 	ctxKeyOpenPermissions openContextKey = "openPermissions"
-	ctxKeyOpenIsSandbox   openContextKey = "openIsSandbox"
 )
 
 var openAppCache = lcommon.NewCache("open_app", 60*time.Second)
@@ -90,6 +89,15 @@ func OpenPlatformAuth(r *ghttp.Request) {
 		return
 	}
 
+	// 租户状态校验：应用只是租户的一条独立入口，租户被停服/销户后必须一并失效。
+	// 控制台走 ValidateTenantPrincipal、relay 走 ValidateApiKey，两处都会拦下停服租户；
+	// 开放平台此前是唯一缺口 —— 停服后仍可继续建成员、建 Key、读账单，停服动作形同虚设。
+	// 不加缓存：这是一次主键查询，而开放平台是低频管理接口，缓存只会换来「停服延迟生效」的窗口。
+	if !isOpenTenantActive(r.Context(), app.TenantId) {
+		response.Error(r, consts.ErrTenantSuspended)
+		return
+	}
+
 	// Check IP whitelist
 	if err := checkOpenAppIPWhitelist(r, app); err != nil {
 		response.Error(r, err)
@@ -132,10 +140,29 @@ func OpenPlatformAuth(r *ghttp.Request) {
 	ctx = context.WithValue(ctx, ctxKeyOpenAppID, app.Id)
 	ctx = context.WithValue(ctx, ctxKeyOpenTenantID, app.TenantId)
 	ctx = context.WithValue(ctx, ctxKeyOpenPermissions, app.Permissions)
-	ctx = context.WithValue(ctx, ctxKeyOpenIsSandbox, app.IsSandbox)
 	r.SetCtx(ctx)
 
 	r.Middleware.Next()
+}
+
+// isOpenTenantActive 校验应用所属租户处于 active 状态。
+// 查询失败或租户不存在时一律 fail-closed —— 鉴权环节宁可误拒，不可误放。
+func isOpenTenantActive(ctx context.Context, tenantID int64) bool {
+	if tenantID <= 0 {
+		return false
+	}
+	var tenant *struct {
+		Status string `json:"status"`
+	}
+	err := dao.TntTenants.Ctx(ctx).
+		Where("id", tenantID).
+		Fields("status").
+		Scan(&tenant)
+	if err = lcommon.IgnoreScanNoRows(err); err != nil {
+		g.Log().Warningf(ctx, "[OpenAuth] tenant status lookup failed tenant=%d: %v", tenantID, err)
+		return false
+	}
+	return tenant != nil && tenant.Status == "active"
 }
 
 // checkOpenAppNonce enforces replay protection by recording each nonce in Redis.
