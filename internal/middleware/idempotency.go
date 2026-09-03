@@ -43,6 +43,17 @@ func Idempotency(r *ghttp.Request) {
 	tenantID := r.GetCtxVar(CtxKeyTenantID).Int64()
 	userID := r.GetCtxVar(CtxKeyUserID).Int64()
 	userType := r.GetCtxVar(CtxKeyUserType).String()
+
+	// 开放平台不走 TenantAuth，身份存在 OpenPlatformAuth 注入的 typed context key 里，
+	// 上面三个 CtxVar 全是零值。若不单独取，所有应用会共用同一个 ":0:0:" 前缀 ——
+	// 不同租户复用同一个 Idempotency-Key 就会读到彼此缓存的响应体（跨租户数据泄漏）。
+	// 主体取「应用」而非「用户」：开放平台请求由应用发起，重试也以应用为单位。
+	if appID := GetOpenAppID(r.Context()); appID > 0 {
+		userType = "open"
+		tenantID = GetOpenTenantID(r.Context())
+		userID = appID
+	}
+
 	idempotencyKey := buildIdempotencyKey(userType, tenantID, userID, clientKey)
 
 	// Check if this key has been processed before

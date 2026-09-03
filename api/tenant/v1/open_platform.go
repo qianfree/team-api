@@ -21,6 +21,12 @@ type OpenAppListRes struct {
 	PageSize int           `json:"page_size"`
 }
 
+// OpenAppItem 是应用列表项。
+//
+// 注：opn_apps.is_sandbox 列仍在，但整个系统没有任何一处读它，创建/更新接口也从未提供过
+// 入参 —— 它恒为 false，是一个只在界面上挂着「沙箱」徽标、实际拿的却是生产权限的假承诺，
+// 故不在此暴露。要让沙箱成立，必须先定义其语义（独立数据域？只读？独立配额？）并在
+// CheckOpenPermission / 各 handler 中真正强制，再恢复该字段与配置入口。
 type OpenAppItem struct {
 	ID          int64    `json:"id"`
 	Name        string   `json:"name"`
@@ -28,7 +34,6 @@ type OpenAppItem struct {
 	AppID       string   `json:"app_id"`
 	Permissions []string `json:"permissions"`
 	Status      string   `json:"status"`
-	IsSandbox   bool     `json:"is_sandbox"`
 	RateLimit   int      `json:"rate_limit"`
 	LastUsedAt  string   `json:"last_used_at,omitempty"`
 	CreatedAt   string   `json:"created_at"`

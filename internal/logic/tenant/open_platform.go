@@ -27,6 +27,45 @@ import (
 // 开放平台应用管理
 // ============================================================
 
+// openAppPermissionPoints 是开放平台应用可授予的全部权限点。
+//
+// 与 internal/logic/open 中各 handler 实际校验的字符串一一对应（models:read 目前尚无
+// handler 使用，保留以免存量授权在编辑时被判为非法）。此前创建/更新只校验 required，
+// 任意字符串都能入库：判定是精确匹配且 fail-closed，写错不会越权，但会静默失效 ——
+// 写成 members:wirte 的应用在任何接口上都拿不到权限，且排查时毫无线索。
+var openAppPermissionPoints = map[string]bool{
+	"members:read":   true,
+	"members:write":  true,
+	"keys:read":      true,
+	"keys:write":     true,
+	"projects:read":  true,
+	"projects:write": true,
+	"models:read":    true,
+	"usage:read":     true,
+	"billing:read":   true,
+}
+
+// sanitizeOpenAppPermissions 校验并规整应用权限点：去重去空、拒绝未定义的权限点。
+func sanitizeOpenAppPermissions(perms []string) ([]string, error) {
+	seen := make(map[string]bool, len(perms))
+	out := make([]string, 0, len(perms))
+	for _, p := range perms {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		if !openAppPermissionPoints[p] {
+			return nil, common.NewBadRequestError("无效的权限点：" + p)
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, common.NewBadRequestError("请至少选择一个权限点")
+	}
+	return out, nil
+}
+
 type opnAppEncryptedSecretData struct {
 	EncryptedSecret any `json:"encrypted_secret"`
 }
@@ -71,7 +110,6 @@ func (s *sTenant) OpenAppList(ctx context.Context, req *v1.OpenAppListReq) (*v1.
 			AppID:       app.AppId,
 			Permissions: perms,
 			Status:      app.Status,
-			IsSandbox:   app.IsSandbox,
 			RateLimit:   app.RateLimit,
 		}
 		if app.LastUsedAt != nil {
@@ -138,7 +176,11 @@ func (s *sTenant) OpenAppCreate(ctx context.Context, req *v1.OpenAppCreateReq) (
 		return nil, err
 	}
 
-	permsJSON, _ := json.Marshal(req.Permissions)
+	perms, err := sanitizeOpenAppPermissions(req.Permissions)
+	if err != nil {
+		return nil, err
+	}
+	permsJSON, _ := json.Marshal(perms)
 	ipJSON, _ := json.Marshal(req.IPWhitelist)
 	if req.IPWhitelist == nil {
 		ipJSON = []byte("[]")
@@ -203,7 +245,11 @@ func (s *sTenant) OpenAppUpdate(ctx context.Context, req *v1.OpenAppUpdateReq) (
 		hasUpdate = true
 	}
 	if req.Permissions != nil {
-		permsJSON, _ := json.Marshal(req.Permissions)
+		perms, err := sanitizeOpenAppPermissions(req.Permissions)
+		if err != nil {
+			return nil, err
+		}
+		permsJSON, _ := json.Marshal(perms)
 		data.Permissions = string(permsJSON)
 		hasUpdate = true
 	}
