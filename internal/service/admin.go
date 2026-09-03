@@ -527,6 +527,8 @@ type (
 		// 使用 SendOnce 而非 Send：连通性测试要快速拿到真实 SMTP 错误（认证失败、端口不通重试
 		// 三次也不会变好），不该让管理员多等十几秒的退避。
 		TestEmailConfig(ctx context.Context, req *v1.AdminEmailTestReq) (*v1.AdminEmailTestRes, error)
+		// GetSupportPendingSummary 顶栏铃铛待办计数。
+		GetSupportPendingSummary(ctx context.Context, _ *v1.AdminSupportPendingSummaryReq) (*v1.AdminSupportPendingSummaryRes, error)
 		// TaskList 大模型异步任务列表
 		TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error)
 		// TaskDetail 大模型异步任务详情
