@@ -152,6 +152,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/tickets/", suffix: "/assign", perm: "support:edit"},
 	{method: "POST", prefix: "/api/admin/tickets/", suffix: "/reply", perm: "support:reply"},
 	{method: "PUT", prefix: "/api/admin/tickets/", suffix: "/status", perm: "support:edit"},
+	// 顶栏铃铛待办计数（工单 + 反馈聚合，权限收敛在 support:view）
+	{method: "GET", path: "/api/admin/support/pending-summary", perm: "support:view"},
 
 	// ── help center 帮助中心 ──
 	{method: "GET", path: "/api/admin/help-categories", perm: "support:view"},

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, provide } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import axios from 'axios'
@@ -483,7 +483,68 @@ function handleClickOutside(e: MouseEvent) {
   if (!target.closest('.admin-header__user-wrapper')) {
     userMenuVisible.value = false
   }
+  if (!target.closest('.admin-header__bell-wrapper')) {
+    bellVisible.value = false
+  }
 }
+
+// --- 顶栏铃铛（客服支持待办） ---
+// 与工作台红点分工：工作台只报异常项（超 SLA / 未分配），铃铛报全量待处理
+// （pending + reopened 工单、pending 反馈）—— 有客户在等回复就挂着数字，
+// 处理一条少一条，归零即安静。仅对有 support:view 权限的管理员显示和轮询。
+const canSeeBell = computed(() =>
+  isSuperAdminUser.value || permissionSet.value.has('support:view'),
+)
+const bellVisible = ref(false)
+const bellData = ref<{
+  tickets: number
+  tickets_overdue: number
+  feedbacks: number
+  feedbacks_wait: string
+  total: number
+} | null>(null)
+let bellTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchBellSummary() {
+  try {
+    const res: any = await request.get('/admin/support/pending-summary', {
+      _suppressErrorMsg: true,
+    } as any)
+    bellData.value = res.data?.data || null
+  } catch {
+    // 静默：铃铛拉取失败不打扰用户，保留上一次数值
+  }
+}
+
+function startBellPolling() {
+  fetchBellSummary()
+  if (!bellTimer) {
+    bellTimer = setInterval(fetchBellSummary, 60000)
+  }
+}
+
+function stopBellPolling() {
+  if (bellTimer) {
+    clearInterval(bellTimer)
+    bellTimer = null
+  }
+}
+
+function toggleBell() {
+  bellVisible.value = !bellVisible.value
+  // 打开面板时立即刷新，避免展示 60s 轮询间隙里的旧数字
+  if (bellVisible.value) fetchBellSummary()
+}
+
+function goFromBell(name: string) {
+  bellVisible.value = false
+  router.push({ name })
+}
+
+// 权限可能晚于挂载就绪（fetchMe 异步），用 watch 而不是 onMounted 一次性判断
+watch(canSeeBell, (visible) => {
+  if (visible) startBellPolling()
+}, { immediate: true })
 
 // --- 工作台菜单红点 ---
 // 工作台是聚合视图，红点才是常驻发现入口：管理员不会每天主动点开工作台，
@@ -544,6 +605,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateMobile)
   clearTimeout(popupHideTimer!)
   if (badgeTimer) clearInterval(badgeTimer)
+  stopBellPolling()
   stopPolling()
   unmountWatermark()
 })
@@ -696,6 +758,50 @@ onUnmounted(() => {
         </div>
 
         <div class="admin-header__right">
+          <!-- 待办铃铛：客服支持待办（工单 + 反馈），有 support:view 权限才显示 -->
+          <div v-if="canSeeBell" class="admin-header__bell-wrapper" style="position: relative;">
+            <button
+              type="button"
+              class="admin-header__bell-btn"
+              :class="{ 'admin-header__bell-btn--active': bellVisible }"
+              @click.stop="toggleBell"
+              title="待办提醒"
+            >
+              <IconNotification class="admin-header__bell-icon" />
+              <span
+                v-if="bellData && bellData.total > 0"
+                class="admin-header__bell-badge"
+                :class="{ 'admin-header__bell-badge--urgent': bellData.tickets_overdue > 0 }"
+              >{{ bellData.total > 99 ? '99+' : bellData.total }}</span>
+            </button>
+            <Transition name="fade">
+              <div v-if="bellVisible" class="admin-header__bell-panel">
+                <div class="admin-header__bell-panel-head">待办提醒</div>
+                <template v-if="bellData && bellData.total > 0">
+                  <div class="admin-header__bell-item" @click="goFromBell('AdminTickets')">
+                    <div class="admin-header__bell-item-main">
+                      <span>工单待处理</span>
+                      <span class="admin-header__bell-item-count">{{ bellData.tickets }}</span>
+                    </div>
+                    <div v-if="bellData.tickets_overdue > 0" class="admin-header__bell-item-sub admin-header__bell-item-sub--danger">
+                      {{ bellData.tickets_overdue }} 条已超 SLA 未响应
+                    </div>
+                  </div>
+                  <div class="admin-header__bell-item" @click="goFromBell('AdminFeedback')">
+                    <div class="admin-header__bell-item-main">
+                      <span>反馈待处理</span>
+                      <span class="admin-header__bell-item-count">{{ bellData.feedbacks }}</span>
+                    </div>
+                    <div v-if="bellData.feedbacks_wait" class="admin-header__bell-item-sub">
+                      最早 1 条已等待 {{ bellData.feedbacks_wait }}
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="admin-header__bell-empty">暂无待办，一切安静</div>
+              </div>
+            </Transition>
+          </div>
+
           <!-- 帮助文档：新窗口打开文档站 -->
           <a
             class="admin-header__docs-btn"
@@ -1161,6 +1267,117 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* ===== 待办铃铛 ===== */
+.admin-header__bell-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 12px;
+  border: none;
+  border-radius: 8px;
+  color: var(--ta-text-secondary);
+  cursor: pointer;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+  background: none;
+}
+
+.admin-header__bell-btn:hover,
+.admin-header__bell-btn--active {
+  background: var(--ta-bg-secondary);
+  color: var(--ta-text-primary);
+}
+
+.admin-header__bell-icon {
+  font-size: 17px;
+}
+
+.admin-header__bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-fill-3);
+  color: var(--color-text-2);
+}
+
+/* 红色只留给「现在就得看」：有超 SLA 工单才转红，与工作台角标策略一致 */
+.admin-header__bell-badge--urgent {
+  background: #f53f3f;
+  color: #fff;
+}
+
+.admin-header__bell-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  background: var(--ta-bg-card);
+  border: 1px solid var(--ta-border-light);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 100;
+}
+
+.admin-header__bell-panel-head {
+  padding: 8px 12px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ta-text-tertiary);
+}
+
+.admin-header__bell-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+}
+
+.admin-header__bell-item:hover {
+  background: var(--ta-bg-secondary);
+}
+
+.admin-header__bell-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--ta-text-secondary);
+}
+
+.admin-header__bell-item-count {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ta-text-primary);
+}
+
+.admin-header__bell-item-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ta-text-tertiary);
+}
+
+.admin-header__bell-item-sub--danger {
+  color: #f53f3f;
+}
+
+.admin-header__bell-empty {
+  padding: 20px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ta-text-tertiary);
+}
+
 /* ===== 帮助文档胶囊入口 ===== */
 .admin-header__docs-btn {
   display: inline-flex;
@@ -1192,6 +1409,10 @@ onUnmounted(() => {
 
 /* 窄屏收起文字，退化为纯图标小胶囊（与右侧用户名在移动端隐藏的处理一致） */
 @media (max-width: 480px) {
+  .admin-header__bell-btn {
+    margin-right: 8px;
+  }
+
   .admin-header__docs-btn {
     width: 34px;
     padding: 0;
