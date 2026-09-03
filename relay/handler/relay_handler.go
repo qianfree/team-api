@@ -261,6 +261,14 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	return sig
 }
 
+// newSettleContext 创建结算/退款/调度上报专用上下文：脱离请求取消（客户端断开不得影响结算），
+// 且超时预算从调用时刻起算。不可在请求发出前创建后跨 DoRequest/DoResponse 复用——
+// 上游请求与流式转发全程可能远超 30s，提前起算的预算会在结算前耗尽，
+// 导致计费记录写入、预扣退款、渠道健康上报拿到已过期的 ctx 而失败。
+func newSettleContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+}
+
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
 	rc *RelayContext,
@@ -289,7 +297,10 @@ func settleSuccessfulRequest(
 		} else {
 			g.Log().Warningf(postCtx, "[RelayHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
 				rc.RequestID, v.modelName, preDeductAmount)
-			_ = billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+			if rErr := billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+				g.Log().Errorf(postCtx, "[RelayHandler] Refund pre-deduct failed after settlement failure (needs reconciliation): request=%s tenant=%d err=%v",
+					rc.RequestID, rc.TenantID, rErr)
+			}
 		}
 	}
 
@@ -668,8 +679,6 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		leaseRefresh := startDispatchLeaseRefresher(d.Channel.ID, rc.RequestID)
 
 		upstreamCtx := context.WithoutCancel(attemptCtx)
-		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer settleCancel()
 
 		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
@@ -678,6 +687,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 送达状态标注：连接拒绝/DNS/TLS 建连失败 = 确定未送达；
 			// 写出后 EOF/RST/读超时 = 可能已送达。ReplayUnsafe+MaybeSent 由 FSM 硬规则终止。
 			delivery := deliveryStateOfRequestErr(err)
+			// 结算/上报 ctx 此刻新建：上游挂死可耗时数分钟，请求开始时起算的预算早已耗尽
+			settleCtx, settleCancel := newSettleContext(ctx)
+			defer settleCancel()
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
@@ -696,7 +708,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				// 退款失败意味着预扣冻结需等 2h TTL 清扫才释放，留痕供对账
+				if rErr := billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(settleCtx, "[RelayHandler] Refund pre-deduct failed after upstream request failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
 			}
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
@@ -720,6 +736,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					rc.RequestID, rc.TenantID, selection.ChannelID, selection.ChannelName, adaptor.GetChannelName(), v.modelName,
 					attempt, info.StreamStatus.Summary(), ctx.Err(), usage, preDeductAmount)
 				// 客户端已收到部分流：不可重试（响应已污染），上报健康后按流中断结算
+				// 结算 ctx 此刻新建：流式转发全程可能远超 30s，且请求 ctx 已随客户端断开而取消
+				settleCtx, settleCancel := newSettleContext(ctx)
+				defer settleCancel()
 				_, _ = sess.Report(settleCtx, dispatchStatusCode(err), err, dispatch.DeliveryResponseStarted, info.LatencyMs(), 0)
 				streamUsage := usage
 				if streamUsage == nil {
@@ -764,6 +783,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				// GetEndReason() != ""：流已开始传输后出错，字节已提交给客户端，必须终止
 				delivery = dispatch.DeliveryResponseStarted
 			}
+			// 结算/上报 ctx 此刻新建：DoResponse（含长流式转发）可能已消耗任意时长
+			settleCtx, settleCancel := newSettleContext(ctx)
+			defer settleCancel()
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
@@ -790,7 +812,11 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				// 退款失败意味着预扣冻结需等 2h TTL 清扫才释放，留痕供对账
+				if rErr := billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(settleCtx, "[RelayHandler] Refund pre-deduct failed after response failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
 			}
 			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
@@ -801,7 +827,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 		// 成功路径：绑定续期 + 健康上报由 Finish 完成
 		dbgAttempt.MarkFinal(nil)
-		sess.Finish(settleCtx, true, info.LatencyMs())
+		finishCtx, finishCancel := newSettleContext(ctx)
+		defer finishCancel()
+		sess.Finish(finishCtx, true, info.LatencyMs())
 		appendHop(trace, hop, true, "", info.LatencyMs())
 		trace.TotalAttempts = attempt + 1
 		trace.UpstreamModel = selection.UpstreamModelName
