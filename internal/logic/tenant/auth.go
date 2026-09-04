@@ -244,6 +244,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, ownerUserID, "tenant", "owner", tenantID, sessionID, jti)
 	if err != nil {
@@ -490,6 +491,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, tenant.Id, sessionID, jti)
 	if err != nil {
@@ -565,11 +567,13 @@ func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.Tena
 
 // Refresh handles token refresh for tenant users.
 func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.TenantRefreshRes, error) {
-	refreshTokenHash := common.HashRefreshToken(req.RefreshToken)
-
-	session, err := common.GetSessionByRefreshHash(ctx, refreshTokenHash)
+	// 定位会话并做重放检测：已轮换的旧令牌再次出现时，会话在内部被整体吊销
+	session, replayed, err := common.GetSessionByRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, common.NewUnauthorizedError("会话不存在")
+	}
+	if replayed {
+		return nil, common.NewUnauthorizedError("登录状态已失效，请重新登录")
 	}
 	if session == nil {
 		return nil, common.NewUnauthorizedError("会话已过期或不存在")
@@ -592,15 +596,10 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, common.NewUnauthorizedError(consts.MsgUnauthorized)
 	}
 
-	newRefreshToken, err := common.GenerateRefreshToken()
-	if err != nil {
-		return nil, err
-	}
-	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
-
+	// 轮换令牌（新令牌内嵌会话 ID，供下次重放检测定位）
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := common.ExtractDeviceInfo(ctx)
-	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
+	newRefreshToken, err := common.RotateSessionRefreshToken(ctx, session.Id, req.RefreshToken, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
 	}

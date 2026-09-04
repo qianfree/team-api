@@ -336,6 +336,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	if err != nil {
 		return nil, err
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// 生成 JWT token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", user.Role, tenantID, sessionID, jti)

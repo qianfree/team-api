@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -260,24 +259,6 @@ func (s *sAdmin) ListSensitiveAccessLogs(ctx context.Context, req *v1.SensitiveL
 	}, nil
 }
 
-// LogSensitiveAccess inserts a sensitive data access log entry.
-func LogSensitiveAccess(ctx context.Context, userID int64, userType, resourceType string, resourceID int64, action, reason, ip, userAgent string) error {
-	_, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Data(do.AudSensitiveAccessLogs{
-		UserId:       userID,
-		UserType:     userType,
-		ResourceType: resourceType,
-		ResourceId:   resourceID,
-		Action:       action,
-		Reason:       reason,
-		IpAddress:    ip,
-		UserAgent:    userAgent,
-	}).Insert()
-	if err != nil {
-		return gerror.Wrapf(err, "记录敏感数据访问日志失败")
-	}
-	return nil
-}
-
 // MaskSensitiveData 委托给 common.MaskSensitiveData
 func MaskSensitiveData(data string) string {
 	return common.MaskSensitiveData(data)
@@ -397,6 +378,9 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 	if record == nil {
 		return nil, common.NewNotFoundError("审计日志")
 	}
+	// 详情含请求/响应体（full 级别下为明文对话内容），属敏感读取，落留痕
+	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log", req.Id, "view", "查看请求审计日志详情")
+
 	b, _ := json.Marshal(record)
 	var detail map[string]any
 	_ = json.Unmarshal(b, &detail)

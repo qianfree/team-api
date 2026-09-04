@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -157,6 +159,36 @@ func GenerateRefreshToken() (string, error) {
 		return "", gerror.Wrapf(err, "generate refresh token")
 	}
 	return hex.EncodeToString(bytes), nil
+}
+
+// BindSessionIDToRefreshToken 在刷新令牌尾部附加会话 ID（格式：random.sessionID）。
+// 附加段不参与哈希存储（库中存的是随机段的哈希），仅用于令牌被轮换后仍能定位
+// 所属会话 —— 重放检测的前提。随机段为纯 hex，"." 是无歧义分隔符。
+func BindSessionIDToRefreshToken(token string, sessionID int64) string {
+	return fmt.Sprintf("%s.%d", token, sessionID)
+}
+
+// SplitRefreshToken 拆出刷新令牌的随机段与内嵌会话 ID。
+// ok=false 表示存量旧格式令牌（纯随机段、无会话 ID），调用方需走兼容路径。
+func SplitRefreshToken(token string) (randomPart string, sessionID int64, ok bool) {
+	idx := strings.LastIndex(token, ".")
+	if idx <= 0 || idx == len(token)-1 {
+		return "", 0, false
+	}
+	sid, err := strconv.ParseInt(token[idx+1:], 10, 64)
+	if err != nil || sid <= 0 {
+		return "", 0, false
+	}
+	return token[:idx], sid, true
+}
+
+// HashRefreshTokenForCompare 计算用于与库中哈希比对的值：
+// 新格式令牌哈希随机段，存量令牌哈希全文（历史版本的存储口径）。
+func HashRefreshTokenForCompare(token string) string {
+	if randomPart, _, ok := SplitRefreshToken(token); ok {
+		return HashRefreshToken(randomPart)
+	}
+	return HashRefreshToken(token)
 }
 
 // GenerateJti generates a new UUID-based JWT ID for session revocation tracking.

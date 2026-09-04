@@ -7,7 +7,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gogf/gf/v2/frame/g"
+
 	"github.com/qianfree/team-api/internal/dao"
+	do "github.com/qianfree/team-api/internal/model/do"
 )
 
 // Audit levels
@@ -31,6 +34,29 @@ func GetAuditLevel(ctx context.Context) string {
 // GetAuditConfig 获取全局审计级别（兼容别名）
 func GetAuditConfig(ctx context.Context) (string, error) {
 	return GetAuditLevel(ctx), nil
+}
+
+// LogSensitiveAccess 记录敏感数据访问（查看 Key 明文、审计详情等"读取"行为）。
+// OperationLog 只覆盖写操作，敏感读取靠本函数留痕；IP/UA 从请求上下文自动提取。
+// 写入失败只记应用日志不阻断业务 —— 留痕是辅助防线，不影响主流程。
+func LogSensitiveAccess(ctx context.Context, userID int64, userType, resourceType string, resourceID int64, action, reason string) {
+	ip, ua := "", ""
+	if r := g.RequestFromCtx(ctx); r != nil {
+		ip = r.GetClientIp()
+		ua = r.GetHeader("User-Agent")
+	}
+	if _, err := AuditModelCtx(ctx, "aud_sensitive_access_logs").Data(do.AudSensitiveAccessLogs{
+		UserId:       userID,
+		UserType:     userType,
+		ResourceType: resourceType,
+		ResourceId:   resourceID,
+		Action:       action,
+		Reason:       reason,
+		IpAddress:    ip,
+		UserAgent:    ua,
+	}).Insert(); err != nil {
+		g.Log().Warningf(ctx, "记录敏感数据访问日志失败: %v", err)
+	}
 }
 
 // GetAuditLevels 返回全局审计级别和租户审计级别，两者完全独立。

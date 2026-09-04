@@ -90,12 +90,19 @@ func OperationLog(r *ghttp.Request) {
 		return
 	}
 
-	// Get auth info
+	// Get auth info；开放平台请求没有用户身份，以应用身份（open_app + 应用ID）留痕，
+	// 否则 /api/open 的建成员/建删 Key 等写操作在三张审计表里都不存在
 	userID := GetUserID(r.Context())
 	userType := GetUserType(r.Context())
-
+	tenantID := GetTenantID(r.Context())
 	if userID == 0 {
-		return
+		if appID := GetOpenAppID(r.Context()); appID > 0 {
+			userID = appID
+			userType = "open_app"
+			tenantID = GetOpenTenantID(r.Context())
+		} else {
+			return
+		}
 	}
 
 	// Parse resource info from URL path
@@ -134,7 +141,6 @@ func OperationLog(r *ghttp.Request) {
 		logData.ResourceId = resourceID
 	}
 
-	tenantID := GetTenantID(r.Context())
 	if tenantID > 0 {
 		logData.TenantId = tenantID
 	}
@@ -169,9 +175,9 @@ func parseResourceFromPath(path string) (resourceType string, resourceID int64) 
 	path = strings.TrimPrefix(path, "/api/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 
-	// Skip prefix like "admin" or "tenant"
+	// Skip prefix like "admin", "tenant" or "open"
 	idx := 0
-	if len(parts) > 0 && (parts[0] == "admin" || parts[0] == "tenant") {
+	if len(parts) > 0 && (parts[0] == "admin" || parts[0] == "tenant" || parts[0] == "open") {
 		idx = 1
 	}
 
