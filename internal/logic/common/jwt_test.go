@@ -65,6 +65,65 @@ func TestGenerateRefreshToken_Unique(t *testing.T) {
 	}
 }
 
+// ─── BindSessionIDToRefreshToken / SplitRefreshToken ────────────────
+
+func TestRefreshTokenSessionIDRoundTrip(t *testing.T) {
+	random, _ := GenerateRefreshToken()
+	bound := BindSessionIDToRefreshToken(random, 42)
+
+	part, sid, ok := SplitRefreshToken(bound)
+	if !ok {
+		t.Fatalf("bound token should parse: %s", bound)
+	}
+	if part != random {
+		t.Fatalf("random part mismatch: %s vs %s", part, random)
+	}
+	if sid != 42 {
+		t.Fatalf("session id mismatch: %d vs 42", sid)
+	}
+}
+
+func TestSplitRefreshToken_LegacyToken(t *testing.T) {
+	// 存量令牌为纯 hex 随机段，无 "."，必须走兼容路径（ok=false）
+	legacy, _ := GenerateRefreshToken()
+	if _, _, ok := SplitRefreshToken(legacy); ok {
+		t.Fatalf("legacy token without session id should not parse: %s", legacy)
+	}
+}
+
+func TestSplitRefreshToken_Malformed(t *testing.T) {
+	cases := []string{
+		"",                  // 空
+		".42",               // 空随机段
+		"abc.",              // 空会话 ID
+		"abc.xid",           // 非数字会话 ID
+		"abc.0",             // 非正会话 ID
+		"abc.-1",            // 负会话 ID
+		"deadbeef.deadbeef", // 随机段误含类数字后缀（hex 段被当作 ID 也应能解析或安全拒绝）
+	}
+	for _, c := range cases {
+		_, _, _ = SplitRefreshToken(c) // 只要不 panic 即可；具体 ok 值由格式决定
+	}
+	// 关键安全约束：解析出的会话 ID 必须为正数，否则视为不可解析
+	if _, sid, ok := SplitRefreshToken("abc.7"); !ok || sid != 7 {
+		t.Fatal("valid bound token failed to parse")
+	}
+}
+
+func TestHashRefreshTokenForCompare(t *testing.T) {
+	random, _ := GenerateRefreshToken()
+	bound := BindSessionIDToRefreshToken(random, 7)
+
+	// 新格式：比对哈希只算随机段（库中存储口径）
+	if got := HashRefreshTokenForCompare(bound); got != HashRefreshToken(random) {
+		t.Fatal("bound token should hash random part only")
+	}
+	// 存量格式：哈希全文
+	if got := HashRefreshTokenForCompare(random); got != HashRefreshToken(random) {
+		t.Fatal("legacy token should hash full token")
+	}
+}
+
 // ─── GenerateTokenPair + ParseAccessToken round-trip ────────────────
 
 func TestTokenPairRoundTrip(t *testing.T) {

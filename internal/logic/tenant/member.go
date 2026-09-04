@@ -428,6 +428,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "创建会话失败")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", invitation.Role, tenantID, sessionID, jti)
 	if err != nil {
@@ -917,6 +918,12 @@ func (s *sTenant) UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockRe
 
 // GetMember returns a single member's detail.
 func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error) {
+	// 成员详情含邮箱等 PII，属管理视角数据：member 不得窥视他人信息，
+	// 自身资料走个人设置（GetProfile）
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	var user *struct {
@@ -956,6 +963,12 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 
 // GetMemberUsage returns usage statistics for a single member.
 func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageReq) (*v1.TenantMemberUsageRes, error) {
+	// 成员用量属于成员管理视角的数据：member 角色不得窥视他人消费明细，
+	// 自身用量走个人工作台/用量日志（已强制过滤本人）
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Verify member exists in tenant
@@ -1009,6 +1022,12 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 
 // ListMemberApiKeys returns a paginated list of API keys belonging to a specific member.
 func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApiKeysReq) (*v1.TenantMemberApiKeysRes, error) {
+	// 同 GetMemberUsage：他人 Key 清单（名称/额度/状态）是管理视角数据，
+	// member 只管理自己的 Key（个人 Key 列表已强制过滤本人），明文另有属主校验
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)

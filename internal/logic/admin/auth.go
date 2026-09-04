@@ -161,6 +161,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// Generate token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)
@@ -241,12 +242,13 @@ func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLog
 
 // Refresh handles token refresh.
 func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.AdminRefreshRes, error) {
-	refreshTokenHash := common.HashRefreshToken(req.RefreshToken)
-
-	// Find session by refresh token hash
-	session, err := common.GetSessionByRefreshHash(ctx, refreshTokenHash)
+	// 定位会话并做重放检测：已轮换的旧令牌再次出现时，会话在内部被整体吊销
+	session, replayed, err := common.GetSessionByRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, common.NewUnauthorizedError("会话不存在")
+	}
+	if replayed {
+		return nil, common.NewUnauthorizedError("登录状态已失效，请重新登录")
 	}
 	if session == nil {
 		return nil, common.NewUnauthorizedError("会话已过期或不存在")
@@ -261,17 +263,10 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
-	// Generate new refresh token
-	newRefreshToken, err := common.GenerateRefreshToken()
-	if err != nil {
-		return nil, err
-	}
-	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
-
-	// Rotate session
+	// Rotate session（新令牌内嵌会话 ID，供下次重放检测定位）
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := common.ExtractDeviceInfo(ctx)
-	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
+	newRefreshToken, err := common.RotateSessionRefreshToken(ctx, session.Id, req.RefreshToken, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
 	}

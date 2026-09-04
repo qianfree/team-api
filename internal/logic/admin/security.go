@@ -69,6 +69,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// Generate token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)

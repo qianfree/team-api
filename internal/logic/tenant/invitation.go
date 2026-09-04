@@ -16,6 +16,14 @@ import (
 
 // InvitationList returns a paginated list of invitation records for the tenant.
 func (s *sTenant) InvitationList(ctx context.Context, req *v1.TenantInvitationListReq) (*v1.TenantInvitationListRes, error) {
+	// 邀请码可直接兑换账号，active 邀请的完整 code 会随 invite_url 返回，
+	// member 拿到即可自助注册出邀请角色（可为 admin）的账号 —— 必须与
+	// 邀请创建/撤销同门槛，限 owner/admin。
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 

@@ -245,7 +245,10 @@ var (
 
 				// Tenant — public endpoints use g.Meta middleware:"-" to skip auth
 				group.Group("/tenant", func(g *ghttp.RouterGroup) {
-					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth, middleware.Idempotency)
+					// OperationLog 与管理后台共用：中间件按 ctx 的 userType/tenantId 落
+					// aud_operation_logs，租户写操作（成员/Key/工单等）此前完全无留痕，
+					// 且租户端"操作日志"页因 tenant_id 恒为 0 永远为空，挂上后一并修复。
+					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth, middleware.Idempotency, middleware.OperationLog)
 					g.Bind(tenantController.NewV1())
 				})
 
@@ -283,7 +286,8 @@ var (
 			// Idempotency 必须排在 OpenPlatformAuth 之后：它按认证主体隔离幂等键。
 			s.Group("/api/open", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.MiddlewareHandlerResponse)
-				group.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.OpenPlatformAuth, middleware.Idempotency)
+				// OperationLog 以应用身份（open_app + 应用ID）记录写操作，与管理/租户端共用
+				group.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.OpenPlatformAuth, middleware.Idempotency, middleware.OperationLog)
 				group.Bind(openController.NewV1())
 			})
 
