@@ -11,6 +11,8 @@
 --   · 三个预置角色（管理员/运营/技术支持）只是安装时的初始数据，不是系统契约：
 --     用户可以改权限、改名、禁用，也可以直接删掉自建一套。
 --   · 有效权限 = ∪(已启用角色的权限) ∪ 用户特批权限(sys_admin_role_perms)，只做并集不做否定。
+--
+-- 本迁移另含两笔独立变更：删除帮助中心不再使用的全文检索索引；新增 member:manage 权限点并回填存量授权。
 
 -- ── 角色定义 ──
 CREATE TABLE IF NOT EXISTS sys_admin_roles (
@@ -184,7 +186,48 @@ WHERE "key" IN (
 );
 
 
+-- ── 帮助中心搜索：删除不再使用的全文检索索引 ──
+-- 搜索已从 to_tsvector 全文检索改为 ILIKE 模糊匹配：PostgreSQL 'simple' 分词配置不做中文分词，
+-- 连续中文被切成单个长 token，中文关键词几乎无法命中（帮助文档以中文内容为主）。
+-- 该 GIN 索引不再被查询使用，删除以释放空间。
+DROP INDEX IF EXISTS idx_spt_articles_search;
+
+
+-- ── member:manage 权限点与存量回填 ──
+-- 成员禁用/启用/重置密码/解锁四个写接口此前挂在只读的 member:view 上（internal/middleware/rbac.go），
+-- 「技术支持」这类只读定位的角色可重置任意租户成员的密码 —— 改密等于接管该成员账号，
+-- 进而可用其 API Key 消耗租户余额，档位与动作不匹配，已改为要求 member:manage。
+--
+-- 上方预置角色种子已直接带上 member:manage；下面两条回填覆盖「执行过早期版本本迁移
+-- （种子未含该权限点）」的部署：给【已持有 member:import 的角色/用户】补 member:manage ——
+-- member:import 本就在 member 模块的操作档，持有它的角色已经能创建成员，补上「管理成员」
+-- 不扩大其实际能力边界；仅持 member:view 的只读角色（如预置 support）不补。
+-- 幂等：ON CONFLICT DO NOTHING，可重复执行。
+
+INSERT INTO sys_admin_role_permissions (role_id, permission_point)
+SELECT DISTINCT rp.role_id, 'member:manage'
+FROM sys_admin_role_permissions rp
+WHERE rp.permission_point = 'member:import'
+ON CONFLICT (role_id, permission_point) DO NOTHING;
+
+-- 用户特批权限同理：特批过 member:import 的账号一并补 member:manage，
+-- 否则依赖特批权限工作的账号会在升级后突然失去成员管理能力。
+INSERT INTO sys_admin_role_perms (admin_user_id, permission_point)
+SELECT DISTINCT p.admin_user_id, 'member:manage'
+FROM sys_admin_role_perms p
+WHERE p.permission_point = 'member:import'
+ON CONFLICT DO NOTHING;
+
+
 -- +goose Down
+-- 移除 member:manage 权限点。回滚后 rbac.go 若仍要求 member:manage，相关接口对非超管一律 403，
+-- 因此代码与迁移需要同步回退。
+DELETE FROM sys_admin_role_permissions WHERE permission_point = 'member:manage';
+DELETE FROM sys_admin_role_perms WHERE permission_point = 'member:manage';
+
+-- 恢复帮助中心全文检索索引（仅回滚迁移时使用，此时搜索已退回 to_tsvector 方案）
+CREATE INDEX idx_spt_articles_search ON spt_articles USING gin (to_tsvector('simple'::regconfig, (((COALESCE(title, ''::character varying))::text || ' '::text) || COALESCE(content, ''::text))));
+
 -- 删除角色体系三张表。存量用户权限不受影响：它们本就存放在 sys_admin_role_perms，
 -- 回滚后 HasPermission 退回「仅查用户特批权限」的旧语义。
 DROP TABLE IF EXISTS sys_admin_user_roles;
