@@ -225,7 +225,9 @@ func (s *ConfigService) SetOption(ctx context.Context, key, value string) error 
 	// 本位币只在首次写入（系统初始化向导）时允许设置，此后只读；
 	// 相同值放行，保证设置页保存整个 payment 分类时不被误拒。
 	if key == consts.OptionKeyBillingCurrency && count > 0 {
-		existing, err := dao.SysOptions.Ctx(ctx).Where("key", key).Value()
+		// 必须显式 Fields("value")：不带字段的 Value() 返回结果集第一列（即 id），
+		// 会导致"相同值放行"判断永远失败，支付分类保存必报"本位币不可更改"
+		existing, err := dao.SysOptions.Ctx(ctx).Where("key", key).Fields("value").Value()
 		if err != nil {
 			return err
 		}
