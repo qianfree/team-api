@@ -32,14 +32,22 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 
 	since := gtime.Now().AddDate(0, 0, -req.Days).Format("Y-m-d")
 
-	// Build args for parameterized query
+	// 聚合与趋势两段查询共用同一份 WHERE 和参数（占位符顺序必须一致）。
+	// member 角色只能对比自己的用量，避免普通成员看到组织级成本聚合
+	// —— 与用量日志的 member 过滤口径一致。
+	whereClause := "tenant_id = ? AND created_at >= ?"
 	args := []any{tenantID, since}
+	if middleware.GetUserRole(ctx) == "member" {
+		whereClause += " AND user_id = ?"
+		args = append(args, middleware.GetUserID(ctx))
+	}
 	for _, m := range models {
 		args = append(args, m)
 	}
 
 	// Aggregate per-model stats (parameterized IN clause, no fmt.Sprintf)
 	inClause := strings.Repeat("?,", len(models)-1) + "?"
+	whereClause += " AND model_name IN (" + inClause + ")"
 	aggQuery := `
 			SELECT
 				model_name,
@@ -51,7 +59,7 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 				COALESCE(SUM(input_tokens), 0) as input_tokens,
 				COALESCE(SUM(output_tokens), 0) as output_tokens
 			FROM bil_usage_logs
-			WHERE tenant_id = ? AND created_at >= ? AND model_name IN (` + inClause + `)
+			WHERE ` + whereClause + `
 			GROUP BY model_name
 		`
 
@@ -132,8 +140,8 @@ func (s *sTenant) ModelComparison(ctx context.Context, req *v1.ModelComparisonRe
 		items[i].IsRecommended = items[i].ModelName == recommended
 	}
 
-	// Daily trends
-	trends := fetchTrends(ctx, tenantID, since, models, args)
+	// Daily trends（与主查询共用 WHERE/参数，member 过滤口径一致）
+	trends := fetchTrends(whereClause, args)
 
 	return &v1.ModelComparisonRes{
 		Summary: v1.ModelComparisonSummary{
@@ -209,8 +217,7 @@ func recommendBest(items []v1.ModelComparisonItem) (string, string) {
 	return best, fmt.Sprintf("综合评分 %.1f（费用40%% + 延迟30%% + 成功率30%%）", bestScore)
 }
 
-func fetchTrends(ctx context.Context, tenantID int64, since string, models []string, baseArgs []any) []v1.ModelTrendDay {
-	inClause := strings.Repeat("?,", len(models)-1) + "?"
+func fetchTrends(whereClause string, args []any) []v1.ModelTrendDay {
 	trendQuery := `
 			SELECT
 				DATE(created_at) as day,
@@ -219,12 +226,12 @@ func fetchTrends(ctx context.Context, tenantID int64, since string, models []str
 				COALESCE(SUM(total_cost), 0) as cost,
 				COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as latency
 			FROM bil_usage_logs
-			WHERE tenant_id = ? AND created_at >= ? AND model_name IN (` + inClause + `)
+			WHERE ` + whereClause + `
 			GROUP BY DATE(created_at), model_name
 			ORDER BY day
 		`
 
-	records, err := g.DB().Raw(trendQuery, baseArgs...).All()
+	records, err := g.DB().Raw(trendQuery, args...).All()
 	if err != nil {
 		return nil
 	}

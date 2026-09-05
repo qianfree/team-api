@@ -37,7 +37,7 @@
 
 			<!-- Copyright -->
 			<footer class="auth-footer flex flex-shrink-0 items-center justify-between gap-2 px-6 pb-5 text-xs text-slate-400 sm:px-8">
-				<span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0.</span>
+				<span>&copy; {{ new Date().getFullYear() }} qianfree. Licensed under AGPL-3.0-or-later.</span>
 				<a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer" class="text-slate-400 transition-colors hover:text-slate-600">Powered by Team-API</a>
 			</footer>
 		</div>

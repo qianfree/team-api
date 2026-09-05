@@ -16,15 +16,14 @@ import (
 )
 
 const (
-	defaultStreamTimeout = 300 * time.Second // 两个 chunk 之间的最大空闲间隔（非总超时）
-	defaultPingInterval  = 15 * time.Second
-	dataChanSize         = 10
-	stopChanSize         = 3
-	shutdownWaitTimeout  = 5 * time.Second
-	minLineLength        = 6
-	scannerInitialBuf    = 64 * 1024
-	scannerMaxBuf        = 10 * 1024 * 1024
-	resetChanSize        = 8
+	defaultPingInterval = 15 * time.Second
+	dataChanSize        = 10
+	stopChanSize        = 3
+	shutdownWaitTimeout = 5 * time.Second
+	minLineLength       = 6
+	scannerInitialBuf   = 64 * 1024
+	scannerMaxBuf       = 10 * 1024 * 1024
+	resetChanSize       = 8
 )
 
 // DataHandlerFunc data 处理回调
@@ -246,15 +245,17 @@ shutdown:
 	}
 }
 
-// getStreamTimeout 获取流式空闲超时时间（两个 chunk 之间的最大间隔），不低于 defaultStreamTimeout。
+// getStreamTimeout 获取流式空闲超时时间（两个 chunk 之间的最大间隔）。
+// 优先级：渠道自定义（须大于全局值才生效）> 全局配置（系统设置 streaming_timeout_seconds）> 内置默认。
 func getStreamTimeout(info *common.RelayInfo) time.Duration {
+	global := time.Duration(common.GlobalStreamIdleTimeoutSeconds()) * time.Second
 	if info.ChannelMeta != nil && info.ChannelMeta.Settings.TimeoutSeconds > 0 {
 		t := time.Duration(info.ChannelMeta.Settings.TimeoutSeconds) * time.Second
-		if t > defaultStreamTimeout {
+		if t > global {
 			return t
 		}
 	}
-	return defaultStreamTimeout
+	return global
 }
 
 // safeSendBool 安全发送到 stopChan（recover 避免向已关闭 channel 写入）

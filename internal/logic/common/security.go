@@ -418,6 +418,20 @@ func RegenerateBackupCodes(ctx context.Context, userType string, userID int64, c
 	return plainCodes, nil
 }
 
+// LoginLockoutPolicy 返回登录锁定策略（安全配置 sys_options：login_max_attempts / login_lockout_minutes）。
+// 未配置或非法值（<=0）时回退默认 5 次 / 30 分钟，管理后台与租户控制台共用同一策略。
+func LoginLockoutPolicy(ctx context.Context) (maxAttempts, lockoutMinutes int) {
+	maxAttempts = Config().GetInt(ctx, "login_max_attempts")
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+	lockoutMinutes = Config().GetInt(ctx, "login_lockout_minutes")
+	if lockoutMinutes <= 0 {
+		lockoutMinutes = 30
+	}
+	return maxAttempts, lockoutMinutes
+}
+
 // Is2FAEnabled checks if 2FA is enabled for a user.
 func Is2FAEnabled(ctx context.Context, userType string, userID int64) (bool, error) {
 	if userType == "admin" {

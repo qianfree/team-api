@@ -428,6 +428,7 @@ func (s *sTenant) JoinByInvite(ctx context.Context, req *v1.TenantMemberJoinReq)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "创建会话失败")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", invitation.Role, tenantID, sessionID, jti)
 	if err != nil {
@@ -815,7 +816,15 @@ func (s *sTenant) UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpda
 }
 
 // ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
+//
+// 角色校验此前缺失：只挡了「不能重置自己」和「不能重置 owner」，任意 member 都能改掉
+// 同组织 admin 的密码并登录该账号，等于组织内横向提权。与相邻的 UnlockMember /
+// RemoveMember / UpdateMemberRole 保持同一道闸门。
 func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	if err := requireTeamEnabled(ctx); err != nil {
 		return nil, err
 	}
@@ -856,11 +865,17 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 		return nil, err
 	}
 
+	// 重置密码时同步清空失败计数与锁定：成员多半是因忘记密码连错被锁才找管理员重置，
+	// 只改哈希不清锁会导致新密码在锁定期内依然登不进（与 admin 端/邮箱自助重置行为对齐）。
+	// 注意必须用 map 而非 do 结构体：do 字段为 interface{}，nil 表示「未设置」会被跳过，
+	// locked_until 置 NULL 必须通过 map 显式传递。
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", memberID).
 		Where("tenant_id", tenantID).
-		Data(do.TntUsers{
-			PasswordHash: passwordHash,
+		Data(map[string]interface{}{
+			"password_hash":   passwordHash,
+			"failed_attempts": 0,
+			"locked_until":    nil,
 		}).Update()
 	if err != nil {
 		return nil, err
@@ -909,6 +924,12 @@ func (s *sTenant) UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockRe
 
 // GetMember returns a single member's detail.
 func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v1.TenantMemberGetRes, error) {
+	// 成员详情含邮箱等 PII，属管理视角数据：member 不得窥视他人信息，
+	// 自身资料走个人设置（GetProfile）
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	var user *struct {
@@ -948,6 +969,12 @@ func (s *sTenant) GetMember(ctx context.Context, req *v1.TenantMemberGetReq) (*v
 
 // GetMemberUsage returns usage statistics for a single member.
 func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageReq) (*v1.TenantMemberUsageRes, error) {
+	// 成员用量属于成员管理视角的数据：member 角色不得窥视他人消费明细，
+	// 自身用量走个人工作台/用量日志（已强制过滤本人）
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Verify member exists in tenant
@@ -1001,6 +1028,12 @@ func (s *sTenant) GetMemberUsage(ctx context.Context, req *v1.TenantMemberUsageR
 
 // ListMemberApiKeys returns a paginated list of API keys belonging to a specific member.
 func (s *sTenant) ListMemberApiKeys(ctx context.Context, req *v1.TenantMemberApiKeysReq) (*v1.TenantMemberApiKeysRes, error) {
+	// 同 GetMemberUsage：他人 Key 清单（名称/额度/状态）是管理视角数据，
+	// member 只管理自己的 Key（个人 Key 列表已强制过滤本人），明文另有属主校验
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
@@ -1085,12 +1118,13 @@ var memberPeriodLabels = map[string]string{
 	"month": "按月",
 }
 
-// formatMemberUSD 格式化金额为 $ 前缀、最多两位小数（去掉末尾 0），与前端 formatMoney(precision: 2) 输出一致
-func formatMemberUSD(v float64) string {
+// formatMemberMoney 格式化金额为「本位币符号 + 最多两位小数（去掉末尾 0）」，与前端 formatMoney(precision: 2) 输出一致。
+// 成员额度/消费属 bil_ 记账层，币种 = 系统本位币，符号由调用方一次性取好（billing.CurrencySymbol）避免逐行读配置。
+func formatMemberMoney(sym string, v float64) string {
 	s := strconv.FormatFloat(v, 'f', 2, 64)
 	s = strings.TrimRight(s, "0")
 	s = strings.TrimSuffix(s, ".")
-	return "$" + s
+	return sym + s
 }
 
 // ExportMembers exports the tenant member list as CSV or Excel.
@@ -1105,6 +1139,10 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	}
 	tenantID := middleware.GetTenantID(ctx)
 
+	// 额度/消费属 bil_ 记账层，币种 = 系统本位币；符号与币种码取一次供表头和逐行格式化复用
+	moneyCurrency := billing.Currency(ctx)
+	moneySym := billing.CurrencySymbol(ctx)
+
 	columns := []export.Column{
 		{Field: "username", Header: "用户名"},
 		{Field: "display_name", Header: "显示名称"},
@@ -1113,7 +1151,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 		{Field: "status", Header: "状态"},
 		{Field: "quota", Header: "额度限制"},
 		{Field: "model_count", Header: "可用模型"},
-		{Field: "month_cost", Header: "本月消费(USD)"},
+		{Field: "month_cost", Header: "本月消费(" + moneyCurrency + ")"},
 		{Field: "created_at", Header: "加入时间"},
 		{Field: "updated_at", Header: "最后更新"},
 	}
@@ -1202,7 +1240,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 				// 额度限制：不限制 / 金额（周期性追加周期文案），与列表页渲染一致
 				quota := "不限制"
 				if u.QuotaType != "" && u.QuotaType != "none" {
-					quota = formatMemberUSD(u.QuotaLimit)
+					quota = formatMemberMoney(moneySym, u.QuotaLimit)
 					if u.QuotaType == "periodic" && u.QuotaPeriod != "" {
 						quota += "（" + memberPeriodLabels[u.QuotaPeriod] + "）"
 					}
@@ -1221,7 +1259,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 					"status":       memberStatusLabels[u.Status],
 					"quota":        quota,
 					"model_count":  modelCount,
-					"month_cost":   formatMemberUSD(monthCostMap[u.Id]),
+					"month_cost":   formatMemberMoney(moneySym, monthCostMap[u.Id]),
 					"created_at":   u.CreatedAt,
 					"updated_at":   u.UpdatedAt,
 				}) {

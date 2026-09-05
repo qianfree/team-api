@@ -86,6 +86,8 @@ func (s *sAdmin) UpdateSettings(ctx context.Context, req *v1.AdminSettingsUpdate
 // validateCrossFieldSettings validates interdependent settings within a category.
 func (s *sAdmin) validateCrossFieldSettings(ctx context.Context, category string, values map[string]string) error {
 	switch category {
+	case "general":
+		return s.validateGeneralSettings(ctx, values)
 	case "security":
 		return s.validateSecuritySettings(ctx, values)
 	case "channel":
@@ -93,6 +95,20 @@ func (s *sAdmin) validateCrossFieldSettings(ctx context.Context, category string
 	default:
 		return nil
 	}
+}
+
+// validateGeneralSettings 校验基础配置项：维护时长必须为 Go 时长格式（如 2h、30m、1h30m）。
+// API 维护中间件按该格式解析 Retry-After，格式非法会静默回退 300s，故在保存入口拦截。
+func (s *sAdmin) validateGeneralSettings(_ context.Context, values map[string]string) error {
+	durationStr, ok := values["maintenance_duration"]
+	if !ok || strings.TrimSpace(durationStr) == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(durationStr))
+	if err != nil || d <= 0 {
+		return common.NewBadRequestError("维护时长格式不正确，请使用如 2h、30m、1h30m 的时长格式")
+	}
+	return nil
 }
 
 // validateSecuritySettings 校验安全配置项之间的依赖：启用 Turnstile 前必须已配置密钥。

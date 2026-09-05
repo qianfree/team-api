@@ -68,6 +68,27 @@ func getOAuthSetting(ctx context.Context, key string) string {
 	return common.Config().GetOption(ctx, key)
 }
 
+// getOAuthRedirectBase 返回构造 OAuth redirect_uri 的基址。
+// 优先级：site_url（管理后台「基础配置-站点后端地址」，应与 GitHub/Google 应用后台
+// 登记的回调域名一致）> 按当前 API 请求自身 Host 推断。
+// 授权跳转与 token 交换两个阶段的 redirect_uri 必须完全一致（OAuth 规范强制校验），
+// 因此兜底取后端 API 请求的 Host 而非前端 Origin——授权与回调都是打向后端的请求，
+// 同一部署下 Host 推断结果天然一致。
+func getOAuthRedirectBase(ctx context.Context) string {
+	base := strings.TrimRight(getOAuthSetting(ctx, "site_url"), "/")
+	if base != "" {
+		return base
+	}
+	if r := g.RequestFromCtx(ctx); r != nil {
+		scheme := "https"
+		if r.GetHeader("X-Forwarded-Proto") == "http" || strings.HasPrefix(r.GetHost(), "localhost") || strings.HasPrefix(r.GetHost(), "127.0.0.1") {
+			scheme = "http"
+		}
+		return fmt.Sprintf("%s://%s", scheme, r.GetHost())
+	}
+	return ""
+}
+
 // encryptOAuthToken encrypts a token string for secure storage.
 func encryptOAuthToken(ctx context.Context, token string) string {
 	if token == "" {
@@ -113,10 +134,7 @@ func (s *sTenant) GetOAuthAuthorizeURL(ctx context.Context, req *v1.OAuthAuthori
 		return nil, common.NewBusinessError(10059, "该 OAuth 供应商未启用")
 	}
 
-	siteURL := getOAuthSetting(ctx, "site_url")
-	if siteURL == "" {
-		siteURL = "http://localhost:3000"
-	}
+	siteURL := getOAuthRedirectBase(ctx)
 	redirectURI := siteURL + fmt.Sprintf("/api/tenant/oauth/%s/callback", req.Provider)
 
 	state := generateState()
@@ -318,6 +336,7 @@ func (s *sTenant) OAuthCallback(ctx context.Context, req *v1.OAuthCallbackReq) (
 	if err != nil {
 		return nil, err
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// 生成 JWT token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, userID, "tenant", user.Role, tenantID, sessionID, jti)
@@ -599,10 +618,7 @@ func (p *GoogleProvider) ExchangeToken(ctx context.Context, code string) (*OAuth
 	v.Set("code", code)
 	v.Set("client_id", getOAuthSetting(ctx, "oauth_google_client_id"))
 	v.Set("client_secret", getOAuthSetting(ctx, "oauth_google_client_secret"))
-	siteURL := getOAuthSetting(ctx, "site_url")
-	if siteURL == "" {
-		siteURL = "http://localhost:3000"
-	}
+	siteURL := getOAuthRedirectBase(ctx)
 	v.Set("redirect_uri", siteURL+"/api/tenant/oauth/google/callback")
 	v.Set("grant_type", "authorization_code")
 

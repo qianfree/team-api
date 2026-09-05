@@ -5,6 +5,7 @@ import (
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/dao"
+	"github.com/qianfree/team-api/internal/logic/common"
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/plugin"
 
@@ -76,7 +77,23 @@ func (s *sTenant) TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDe
 	}, nil
 }
 
+// assertPluginManager 校验插件的写操作权限。
+//
+// 插件配置与启停是【组织级】设置：一次改动对整个租户的全部成员生效，配置里还可能包含
+// 第三方凭据。此前三个写接口只取了 tenantID 就直接落库，任意 member 都能改掉或关停
+// 全组织的插件，与 List/Detail（读）同权。读保持全员可见，写收敛到 owner/admin。
+func assertPluginManager(ctx context.Context) error {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+	return nil
+}
+
 func (s *sTenant) TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPluginConfigUpdateReq) (*v1.TenantPluginConfigUpdateRes, error) {
+	if err := assertPluginManager(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.UpdatePluginConfigForTenant(ctx, req.Name, tenantID, req.Config); err != nil {
 		return nil, err
@@ -85,6 +102,9 @@ func (s *sTenant) TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPl
 }
 
 func (s *sTenant) TenantPluginEnable(ctx context.Context, req *v1.TenantPluginEnableReq) (*v1.TenantPluginEnableRes, error) {
+	if err := assertPluginManager(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.EnableForTenant(ctx, req.Name, tenantID); err != nil {
 		return nil, err
@@ -93,6 +113,9 @@ func (s *sTenant) TenantPluginEnable(ctx context.Context, req *v1.TenantPluginEn
 }
 
 func (s *sTenant) TenantPluginDisable(ctx context.Context, req *v1.TenantPluginDisableReq) (*v1.TenantPluginDisableRes, error) {
+	if err := assertPluginManager(ctx); err != nil {
+		return nil, err
+	}
 	tenantID := middleware.GetTenantID(ctx)
 	if err := plugin.DisableForTenant(ctx, req.Name, tenantID); err != nil {
 		return nil, err

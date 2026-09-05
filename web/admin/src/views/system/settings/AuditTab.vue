@@ -21,26 +21,7 @@ const values = useFormValues()
 			</div>
 		</div>
 
-		<!-- 日志保留 -->
-		<div class="section">
-			<div class="section-title">日志保留</div>
-			<div class="section-grid">
-				<AFormItem label="审计日志保留天数" class="field-full">
-					<AInputNumber
-						:model-value="values['audit_retention_days'] as number"
-						@change="(v: number | undefined) => values['audit_retention_days'] = v"
-						:min="7" :max="3650" style="width: 100%"
-					/>
-				</AFormItem>
-				<AFormItem label="操作日志保留天数" class="field-full">
-					<AInputNumber
-						:model-value="values['operation_log_retention_days'] as number"
-						@change="(v: number | undefined) => values['operation_log_retention_days'] = v"
-						:min="30" :max="3650" style="width: 100%"
-					/>
-				</AFormItem>
-			</div>
-		</div>
+		<!-- 日志保留期在「数据治理」页统一配置（data_retention_api_logs_days / data_retention_operation_logs_days） -->
 	</div>
 </template>
 

@@ -3,14 +3,26 @@ package tenant
 import (
 	"context"
 
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
 
+// helpRateLimit 帮助中心公开接口统一入口限流（非 HTTP 上下文跳过）
+func helpRateLimit(ctx context.Context) error {
+	if r := g.RequestFromCtx(ctx); r != nil {
+		return common.CheckHelpCenterRateLimit(ctx, r.GetClientIp())
+	}
+	return nil
+}
+
 // ListHelpPublicCategories 公开帮助分类列表（树结构）
 func (s *sTenant) ListHelpPublicCategories(ctx context.Context, _ *v1.HelpPublicCategoryListReq) (*v1.HelpPublicCategoryListRes, error) {
+	if err := helpRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	items, err := common.ListPublicCategories(ctx)
 	if err != nil {
 		return nil, err
@@ -22,6 +34,9 @@ func (s *sTenant) ListHelpPublicCategories(ctx context.Context, _ *v1.HelpPublic
 
 // ListHelpPublicArticles 分类下的文章列表
 func (s *sTenant) ListHelpPublicArticles(ctx context.Context, req *v1.HelpPublicArticleListReq) (*v1.HelpPublicArticleListRes, error) {
+	if err := helpRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	items, total, page, pageSize, err := common.ListPublicArticles(ctx, req.CategorySlug, req.Page, req.PageSize)
 	if err != nil {
 		return nil, err
@@ -50,6 +65,9 @@ func (s *sTenant) ListHelpPublicArticles(ctx context.Context, req *v1.HelpPublic
 
 // GetHelpPublicArticle 文章详情
 func (s *sTenant) GetHelpPublicArticle(ctx context.Context, req *v1.HelpPublicArticleGetReq) (*v1.HelpPublicArticleGetRes, error) {
+	if err := helpRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	detail, err := common.GetPublicArticle(ctx, req.Slug)
 	if err != nil {
 		return nil, err
@@ -75,6 +93,9 @@ func (s *sTenant) GetHelpPublicArticle(ctx context.Context, req *v1.HelpPublicAr
 
 // SearchHelpPublicArticles 搜索文章
 func (s *sTenant) SearchHelpPublicArticles(ctx context.Context, req *v1.HelpPublicSearchReq) (*v1.HelpPublicSearchRes, error) {
+	if err := helpRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	items, total, page, pageSize, err := common.SearchPublicArticles(ctx, req.Query, req.Page, req.PageSize)
 	if err != nil {
 		return nil, err

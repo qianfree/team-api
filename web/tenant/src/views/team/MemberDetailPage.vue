@@ -472,7 +472,7 @@ onMounted(() => {
 									{{ statusLabel[member.status] || member.status }}
 								</span>
 							</div>
-							<p class="text-sm text-gray-500 mt-0.5">@{{ member.username }}</p>
+							<p class="text-sm text-gray-500 mt-0.5">@{{ authStore.tenant?.code }}</p>
 						</div>
 					</div>
 

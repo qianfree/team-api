@@ -10,6 +10,13 @@ export interface AdminUser {
   role: string
 }
 
+export interface AdminRoleBrief {
+  id: number
+  code: string
+  name: string
+  is_enabled: boolean
+}
+
 export interface PendingAgreement {
   id: number
   code: string
@@ -23,6 +30,7 @@ interface LoginResponse {
   expires_at: number
   user: AdminUser
   permissions: string[]
+  roles?: AdminRoleBrief[]
   pending_agreements?: PendingAgreement[]
 }
 
@@ -34,6 +42,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
   const expiresAt = ref<number | null>(null)
   const user = ref<AdminUser | null>(null)
   const permissions = ref<string[]>([])
+  const roles = ref<AdminRoleBrief[]>([])
   const pendingAgreements = ref<PendingAgreement[]>([])
   const rememberMe = ref<boolean>(getRememberMe())
 
@@ -48,6 +57,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
       expiresAt: expiresAt.value,
       user: user.value,
       permissions: permissions.value,
+      roles: roles.value,
     }
     localStorage.setItem(STORE_KEY, JSON.stringify(data))
   }
@@ -62,12 +72,17 @@ export const useAuthStore = defineStore('admin-auth', () => {
         expiresAt: number | null
         user: AdminUser | null
         permissions: string[]
+        roles?: AdminRoleBrief[]
       }
       token.value = data.token
       refreshToken.value = data.refreshToken
       expiresAt.value = data.expiresAt
       user.value = data.user
       permissions.value = data.permissions ?? []
+      roles.value = data.roles ?? []
+      // 恢复 permission.ts 读取的镜像副本：hasPermission() 走 localStorage，
+      // 只恢复 Pinia 而不同步这份镜像，会让刷新后的按钮级权限全部失效
+      setAdminSession(data.user?.role ?? '', permissions.value)
     } catch {
       // corrupted data — ignore
     }
@@ -79,6 +94,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     expiresAt.value = loginRes.expires_at
     user.value = loginRes.user
     permissions.value = loginRes.permissions ?? []
+    roles.value = loginRes.roles ?? []
 
     setTokens({
       accessToken: loginRes.access_token,
@@ -120,6 +136,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     expiresAt.value = null
     user.value = null
     permissions.value = []
+    roles.value = []
     pendingAgreements.value = []
 
     clearTokens()
@@ -152,6 +169,36 @@ export const useAuthStore = defineStore('admin-auth', () => {
     hydrate()
   }
 
+  /**
+   * 从服务端拉取当前用户的最新权限。
+   *
+   * 权限此前只在登录响应里下发一次，之后由 localStorage 恢复：管理员改了某人的权限，
+   * 对方不重新登录就一直按旧权限渲染菜单。在应用启动与 token 刷新后调用本方法即可跟上。
+   *
+   * 失败时保持现有权限不变 —— 后端鉴权以服务端为准，前端权限只影响展示，
+   * 一次网络抖动不该把用户的菜单清空。
+   */
+  async function fetchMe(): Promise<void> {
+    if (!token.value) return
+    try {
+      const { data } = await request.get('/admin/auth/me')
+      const me = data?.data
+      if (!me) return
+      user.value = {
+        id: me.id,
+        username: me.username,
+        display_name: me.display_name,
+        role: me.role,
+      }
+      permissions.value = me.permissions ?? []
+      roles.value = me.roles ?? []
+      setAdminSession(me.role, permissions.value)
+      persist()
+    } catch {
+      // 保持现有权限
+    }
+  }
+
   // Sync Pinia store when Axios interceptor refreshes tokens
   onTokenRefreshed((tokens) => {
     token.value = tokens.accessToken
@@ -176,6 +223,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     expiresAt,
     user,
     permissions,
+    roles,
     pendingAgreements,
     rememberMe,
     isLoggedIn,
@@ -186,6 +234,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     logoutLocal,
     refreshTokens,
     loadFromStorage,
+    fetchMe,
     clearPendingAgreements,
   }
 })

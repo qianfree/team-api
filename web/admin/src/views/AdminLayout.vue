@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, provide } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import axios from 'axios'
@@ -34,9 +34,11 @@ import {
   IconLayers,
   IconHome,
   IconUser,
+  IconBook,
   IconCheckCircleFill,
 } from '@arco-design/web-vue/es/icon'
 import { useAuthStore } from '@/stores/auth'
+import { ADMIN_ROLES } from '@/utils/permission'
 
 const router = useRouter()
 const route = useRoute()
@@ -126,6 +128,8 @@ async function fetchUpdateStatus() {
 }
 
 function openUpdateModal() {
+  // 在线更新是超管专属能力（后端 superAdminOnlyRules 拦截），非超管不打开弹窗也不发请求
+  if (!isSuperAdminUser.value) return
   updateModalVisible.value = true
   fetchUpdateStatus()
   checkUpdate() // 打开弹窗时刷新版本检查，确保当前版本/最新版本为最新
@@ -240,7 +244,7 @@ function onGroupMouseEnter(groupKey: string, event: MouseEvent) {
   clearTimeout(popupHideTimer!)
   hoveredGroup.value = groupKey
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const groupData = menuGroups.find(g => g.key === groupKey)
+  const groupData = menuGroups.value.find(g => g.key === groupKey)
   const estimatedHeight = 32 + (groupData?.items.length || 0) * 36
   popupTop.value = Math.max(8, Math.min(rect.top, window.innerHeight - estimatedHeight - 8))
 }
@@ -262,7 +266,7 @@ function onPopupMouseLeave() {
 }
 
 const hoveredGroupData = computed(() => {
-  return menuGroups.find(g => g.key === hoveredGroup.value)
+  return menuGroups.value.find(g => g.key === hoveredGroup.value)
 })
 
 function handlePopupItemClick(key: string) {
@@ -300,15 +304,17 @@ function onCollapseAfterLeave(el: Element) {
   e.style.overflow = ''
 }
 
-const menuGroups = [
+// 菜单的完整定义。每项声明它需要的权限点，实际显隐由下方 menuGroups 派生 ——
+// 菜单是权限的投影，不存在独立的「菜单权限」配置。
+const ALL_MENU_GROUPS = [
   {
     key: 'dashboard',
     label: '数据看板',
     icon: IconDashboard,
     items: [
-      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop },
-      { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard },
-      { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand },
+      { name: 'AdminWorkbench', label: '工作台', icon: IconDesktop, perm: 'dashboard:view' },
+      { name: 'AdminDashboard', label: '仪表盘', icon: IconDashboard, perm: 'dashboard:view' },
+      { name: 'AdminRealtimeMonitor', label: '实时监控', icon: IconCommand, perm: 'monitor:view' },
     ],
   },
   {
@@ -316,12 +322,12 @@ const menuGroups = [
     label: '大模型',
     icon: IconApps,
     items: [
-      { name: 'AdminModels', label: '模型列表', icon: IconApps },
-      { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage },
-      { name: 'AdminChannels', label: '渠道管理', icon: IconBranch },
-      { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar },
-      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile },
-      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand },
+      { name: 'AdminModels', label: '模型列表', icon: IconApps, perm: 'model:view' },
+      { name: 'AdminModelGroups', label: '模型分组', icon: IconStorage, perm: 'model:view' },
+      { name: 'AdminChannels', label: '渠道管理', icon: IconBranch, perm: 'channel:view' },
+      { name: 'AdminTaskLogs', label: '任务日志', icon: IconCalendar, perm: 'task:view' },
+      { name: 'AdminUsageLogs', label: '用量日志', icon: IconFile, perm: 'billing:view' },
+      { name: 'AdminRequestAuditLogs', label: '请求审计日志', icon: IconCommand, perm: 'audit:view' },
     ],
   },
   {
@@ -329,9 +335,9 @@ const menuGroups = [
     label: '租户管理',
     icon: IconUserGroup,
     items: [
-      { name: 'AdminTenants', label: '租户列表', icon: IconHome },
-      { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers },
-      { name: 'AdminMembers', label: '成员列表', icon: IconUser },
+      { name: 'AdminTenants', label: '租户列表', icon: IconHome, perm: 'tenant:view' },
+      { name: 'AdminTenantLevels', label: '租户级别', icon: IconLayers, perm: 'tenant:view' },
+      { name: 'AdminMembers', label: '成员列表', icon: IconUser, perm: 'member:view' },
     ],
   },
   {
@@ -339,10 +345,10 @@ const menuGroups = [
     label: '财务中心',
     icon: IconIdcard,
     items: [
-      { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock },
-      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand },
-      { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift },
-      { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag },
+      { name: 'AdminOrders', label: '订单管理', icon: IconCodeBlock, perm: 'order:view' },
+      { name: 'AdminTransactions', label: '交易流水', icon: IconCommand, perm: 'billing:view' },
+      { name: 'AdminRedemptions', label: '兑换码管理', icon: IconGift, perm: 'redemption:view' },
+      { name: 'AdminPromoCodes', label: '优惠码管理', icon: IconTag, perm: 'promo:view' },
     ],
   },
   {
@@ -350,11 +356,10 @@ const menuGroups = [
     label: '安全审计',
     icon: IconSafe,
     items: [
-      { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle },
-      { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle },
-      { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle },
-      { name: 'AdminPermissions', label: '权限管理', icon: IconSafe },
-      { name: 'AdminAudit', label: '操作日志', icon: IconFile },
+      { name: 'AdminLoginHistory', label: '登录历史', icon: IconClockCircle, perm: 'audit:view' },
+      { name: 'AdminTenantLoginHistory', label: '租户登录历史', icon: IconClockCircle, perm: 'audit:view' },
+      { name: 'AdminSessions', label: '会话管理', icon: IconClockCircle, perm: 'user:edit' },
+      { name: 'AdminAudit', label: '操作日志', icon: IconFile, perm: 'audit:view' },
     ],
   },
   {
@@ -362,15 +367,15 @@ const menuGroups = [
     label: '运营管理',
     icon: IconNotification,
     items: [
-      { name: 'AdminNotificationTemplates', label: '通知模板', icon: IconNotification },
-      { name: 'AdminMessages', label: '消息管理', icon: IconSend },
-      { name: 'AdminEmailLogs', label: '邮件发送记录', icon: IconFile },
-      { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage },
-      { name: 'AdminTickets', label: '工单管理', icon: IconCommand },
-      { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage },
-      { name: 'AdminAgreements', label: '用户协议', icon: IconFile },
-      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers },
-      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile },
+      { name: 'AdminNotificationTemplates', label: '通知模板', icon: IconNotification, perm: 'operation:view' },
+      { name: 'AdminMessages', label: '消息管理', icon: IconSend, perm: 'operation:view' },
+      { name: 'AdminEmailLogs', label: '邮件发送记录', icon: IconFile, perm: 'operation:view' },
+      { name: 'AdminAnnouncements', label: '公告管理', icon: IconMessage, perm: 'operation:view' },
+      { name: 'AdminTickets', label: '工单管理', icon: IconCommand, perm: 'support:view' },
+      { name: 'AdminFeedback', label: '反馈管理', icon: IconMessage, perm: 'support:view' },
+      { name: 'AdminAgreements', label: '用户协议', icon: IconFile, perm: 'system:view' },
+      { name: 'AdminHelpCategories', label: '帮助分类', icon: IconLayers, perm: 'support:view' },
+      { name: 'AdminHelpArticles', label: '帮助文章', icon: IconFile, perm: 'support:view' },
     ],
   },
   {
@@ -378,15 +383,15 @@ const menuGroups = [
     label: '运维监控',
     icon: IconCommand,
     items: [
-      { name: 'AdminMonitor', label: '系统监控', icon: IconCommand },
-      { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand },
-      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand },
-      { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification },
-      { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile },
-      { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile },
-      { name: 'AdminChannelErrors', label: '渠道错误监控', icon: IconFile },
-      { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile },
-      { name: 'AdminCronJobs', label: '定时任务', icon: IconFile },
+      { name: 'AdminMonitor', label: '系统监控', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminTrafficFlow', label: '流量流向', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminModelPerformance', label: '模型性能', icon: IconCommand, perm: 'monitor:view' },
+      { name: 'AdminAlertRules', label: '告警规则', icon: IconNotification, perm: 'monitor:view' },
+      { name: 'AdminAlertEvents', label: '告警记录', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminErrorLogs', label: '错误日志', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminChannelErrors', label: '渠道错误监控', icon: IconFile, perm: 'monitor:view' },
+      { name: 'AdminContentFilterLogs', label: '拦截日志', icon: IconFile, perm: 'audit:view' },
+      { name: 'AdminCronJobs', label: '定时任务', icon: IconFile, perm: 'system:view' },
     ],
   },
   {
@@ -394,13 +399,38 @@ const menuGroups = [
     label: '系统',
     icon: IconSettings,
     items: [
-      { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup },
-      { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock },
-      { name: 'AdminSettings', label: '系统设置', icon: IconSettings },
-      { name: 'AdminFiles', label: '文件管理', icon: IconStorage },
+      { name: 'AdminUsers', label: '用户管理', icon: IconUserGroup, perm: 'user:view' },
+      { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, superOnly: true },
+      { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock, perm: 'system:plugin' },
+      { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
+      { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
     ],
   },
 ]
+
+// 权限判定读 store 而不是 utils/permission 里的 localStorage 版本：
+// localStorage 不是响应式数据源，computed 求值一次后就再也不会失效，
+// fetchMe() 拉到新权限、或切换账号后菜单不会跟着变。
+// utils 版本仍用于按钮级 v-if（每次渲染都会重新调用，不依赖响应式追踪）。
+const isSuperAdminUser = computed(() => authStore.user?.role === ADMIN_ROLES.SUPER_ADMIN)
+const permissionSet = computed(() => new Set(authStore.permissions))
+
+// 按当前用户权限过滤菜单：整组条目都被过滤掉时，分组本身也不再渲染，
+// 避免出现点开是空的分组。super_admin 拥有全部权限，直接放行。
+const menuGroups = computed(() =>
+  ALL_MENU_GROUPS
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => {
+        // superOnly 的条目不参与权限点判定：它们是权限体系本身的元操作，
+        // 无法通过授予权限点下放（后端 superAdminOnlyRules 同样硬性拦截）
+        if ((item as any).superOnly) return isSuperAdminUser.value
+        if (isSuperAdminUser.value) return true
+        return !item.perm || permissionSet.value.has(item.perm)
+      }),
+    }))
+    .filter(group => group.items.length > 0)
+)
 
 const breadcrumbItems = computed(() => {
   return route.matched
@@ -453,7 +483,68 @@ function handleClickOutside(e: MouseEvent) {
   if (!target.closest('.admin-header__user-wrapper')) {
     userMenuVisible.value = false
   }
+  if (!target.closest('.admin-header__bell-wrapper')) {
+    bellVisible.value = false
+  }
 }
+
+// --- 顶栏铃铛（客服支持待办） ---
+// 与工作台红点分工：工作台只报异常项（超 SLA / 未分配），铃铛报全量待处理
+// （pending + reopened 工单、pending 反馈）—— 有客户在等回复就挂着数字，
+// 处理一条少一条，归零即安静。仅对有 support:view 权限的管理员显示和轮询。
+const canSeeBell = computed(() =>
+  isSuperAdminUser.value || permissionSet.value.has('support:view'),
+)
+const bellVisible = ref(false)
+const bellData = ref<{
+  tickets: number
+  tickets_overdue: number
+  feedbacks: number
+  feedbacks_wait: string
+  total: number
+} | null>(null)
+let bellTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchBellSummary() {
+  try {
+    const res: any = await request.get('/admin/support/pending-summary', {
+      _suppressErrorMsg: true,
+    } as any)
+    bellData.value = res.data?.data || null
+  } catch {
+    // 静默：铃铛拉取失败不打扰用户，保留上一次数值
+  }
+}
+
+function startBellPolling() {
+  fetchBellSummary()
+  if (!bellTimer) {
+    bellTimer = setInterval(fetchBellSummary, 60000)
+  }
+}
+
+function stopBellPolling() {
+  if (bellTimer) {
+    clearInterval(bellTimer)
+    bellTimer = null
+  }
+}
+
+function toggleBell() {
+  bellVisible.value = !bellVisible.value
+  // 打开面板时立即刷新，避免展示 60s 轮询间隙里的旧数字
+  if (bellVisible.value) fetchBellSummary()
+}
+
+function goFromBell(name: string) {
+  bellVisible.value = false
+  router.push({ name })
+}
+
+// 权限可能晚于挂载就绪（fetchMe 异步），用 watch 而不是 onMounted 一次性判断
+watch(canSeeBell, (visible) => {
+  if (visible) startBellPolling()
+}, { immediate: true })
 
 // --- 工作台菜单红点 ---
 // 工作台是聚合视图，红点才是常驻发现入口：管理员不会每天主动点开工作台，
@@ -487,9 +578,12 @@ onMounted(() => {
   updateMobile()
   window.addEventListener('resize', updateMobile)
 
-  // Check for updates on mount
-  checkUpdate()
-  fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
+  // 在线更新是超管专属能力（后端 superAdminOnlyRules 拦截），
+  // 非超管不发请求，避免每次刷新页面都弹「缺少权限」错误提示
+  if (isSuperAdminUser.value) {
+    checkUpdate()
+    fetchUpdateStatus() // 取后端实时版本，用于准确的"是否可更新"判断
+  }
 
   fetchWorkbenchBadges()
   badgeTimer = setInterval(fetchWorkbenchBadges, 60000)
@@ -511,6 +605,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateMobile)
   clearTimeout(popupHideTimer!)
   if (badgeTimer) clearInterval(badgeTimer)
+  stopBellPolling()
   stopPolling()
   unmountWatermark()
 })
@@ -663,6 +758,61 @@ onUnmounted(() => {
         </div>
 
         <div class="admin-header__right">
+          <!-- 待办铃铛：客服支持待办（工单 + 反馈），有 support:view 权限才显示 -->
+          <div v-if="canSeeBell" class="admin-header__bell-wrapper" style="position: relative;">
+            <button
+              type="button"
+              class="admin-header__bell-btn"
+              :class="{ 'admin-header__bell-btn--active': bellVisible }"
+              @click.stop="toggleBell"
+              title="待办提醒"
+            >
+              <IconNotification class="admin-header__bell-icon" />
+              <span
+                v-if="bellData && bellData.total > 0"
+                class="admin-header__bell-badge"
+                :class="{ 'admin-header__bell-badge--urgent': bellData.tickets_overdue > 0 }"
+              >{{ bellData.total > 99 ? '99+' : bellData.total }}</span>
+            </button>
+            <Transition name="fade">
+              <div v-if="bellVisible" class="admin-header__bell-panel">
+                <div class="admin-header__bell-panel-head">待办提醒</div>
+                <template v-if="bellData && bellData.total > 0">
+                  <div class="admin-header__bell-item" @click="goFromBell('AdminTickets')">
+                    <div class="admin-header__bell-item-main">
+                      <span>工单待处理</span>
+                      <span class="admin-header__bell-item-count">{{ bellData.tickets }}</span>
+                    </div>
+                    <div v-if="bellData.tickets_overdue > 0" class="admin-header__bell-item-sub admin-header__bell-item-sub--danger">
+                      {{ bellData.tickets_overdue }} 条已超 SLA 未响应
+                    </div>
+                  </div>
+                  <div class="admin-header__bell-item" @click="goFromBell('AdminFeedback')">
+                    <div class="admin-header__bell-item-main">
+                      <span>反馈待处理</span>
+                      <span class="admin-header__bell-item-count">{{ bellData.feedbacks }}</span>
+                    </div>
+                    <div v-if="bellData.feedbacks_wait" class="admin-header__bell-item-sub">
+                      最早 1 条已等待 {{ bellData.feedbacks_wait }}
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="admin-header__bell-empty">暂无待办，一切安静</div>
+              </div>
+            </Transition>
+          </div>
+
+          <!-- 帮助文档：新窗口打开文档站 -->
+          <a
+            class="admin-header__docs-btn"
+            href="https://docs.team-api.net"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="帮助文档"
+          >
+            <IconBook class="admin-header__docs-icon" />
+            <span class="admin-header__docs-text">帮助文档</span>
+          </a>
           <div class="admin-header__user-wrapper" style="position: relative;">
             <div class="admin-header__user" @click.stop="toggleUserMenu">
               <div class="admin-header__avatar">{{ displayLabel.charAt(0) }}</div>
@@ -1115,6 +1265,164 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+/* ===== 待办铃铛 ===== */
+.admin-header__bell-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 12px;
+  border: none;
+  border-radius: 8px;
+  color: var(--ta-text-secondary);
+  cursor: pointer;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+  background: none;
+}
+
+.admin-header__bell-btn:hover,
+.admin-header__bell-btn--active {
+  background: var(--ta-bg-secondary);
+  color: var(--ta-text-primary);
+}
+
+.admin-header__bell-icon {
+  font-size: 17px;
+}
+
+.admin-header__bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--color-fill-3);
+  color: var(--color-text-2);
+}
+
+/* 红色只留给「现在就得看」：有超 SLA 工单才转红，与工作台角标策略一致 */
+.admin-header__bell-badge--urgent {
+  background: #f53f3f;
+  color: #fff;
+}
+
+.admin-header__bell-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  background: var(--ta-bg-card);
+  border: 1px solid var(--ta-border-light);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 100;
+}
+
+.admin-header__bell-panel-head {
+  padding: 8px 12px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ta-text-tertiary);
+}
+
+.admin-header__bell-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+}
+
+.admin-header__bell-item:hover {
+  background: var(--ta-bg-secondary);
+}
+
+.admin-header__bell-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--ta-text-secondary);
+}
+
+.admin-header__bell-item-count {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ta-text-primary);
+}
+
+.admin-header__bell-item-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ta-text-tertiary);
+}
+
+.admin-header__bell-item-sub--danger {
+  color: #f53f3f;
+}
+
+.admin-header__bell-empty {
+  padding: 20px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ta-text-tertiary);
+}
+
+/* ===== 帮助文档胶囊入口 ===== */
+.admin-header__docs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  margin-right: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--ta-border);
+  border-radius: 999px;
+  color: var(--ta-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all var(--ta-duration-fast) var(--ta-ease);
+}
+
+.admin-header__docs-btn:hover {
+  color: var(--ta-primary);
+  border-color: var(--ta-primary);
+  background: rgba(13, 148, 136, 0.06);
+}
+
+.admin-header__docs-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+/* 窄屏收起文字，退化为纯图标小胶囊（与右侧用户名在移动端隐藏的处理一致） */
+@media (max-width: 480px) {
+  .admin-header__bell-btn {
+    margin-right: 8px;
+  }
+
+  .admin-header__docs-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+    margin-right: 8px;
+  }
+
+  .admin-header__docs-text {
+    display: none;
+  }
 }
 
 .admin-header__user {

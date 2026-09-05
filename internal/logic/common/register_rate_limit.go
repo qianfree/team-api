@@ -107,9 +107,19 @@ func incrementWithExpire(ctx context.Context, key string, expireSeconds int) (in
 	return result.Int64(), nil
 }
 
-// GetRegisterRateLimitStatus 获取当前IP的注册限流状态（用于前端提示）
-func GetRegisterRateLimitStatus(ctx context.Context, ipAddress string) map[string]any {
-	status := make(map[string]any)
+// RegisterRateLimitStatus 当前IP的注册限流状态（注册页提示用）
+type RegisterRateLimitStatus struct {
+	HourlyLimit        int `json:"hourly_limit"`         // 每小时注册上限（0=未启用）
+	HourlyRemaining    int `json:"hourly_remaining"`     // 本小时剩余次数
+	HourlyResetSeconds int `json:"hourly_reset_seconds"` // 小时窗口重置剩余秒数（0=无计数记录）
+	DailyLimit         int `json:"daily_limit"`          // 每天注册上限（0=未启用）
+	DailyRemaining     int `json:"daily_remaining"`      // 今日剩余次数
+	DailyResetSeconds  int `json:"daily_reset_seconds"`  // 天窗口重置剩余秒数（0=无计数记录）
+}
+
+// GetRegisterRateLimitStatus 获取当前IP的注册限流状态（用于前端提示，只读不计数）
+func GetRegisterRateLimitStatus(ctx context.Context, ipAddress string) RegisterRateLimitStatus {
+	var status RegisterRateLimitStatus
 
 	if ipAddress == "" {
 		return status
@@ -118,36 +128,30 @@ func GetRegisterRateLimitStatus(ctx context.Context, ipAddress string) map[strin
 	// 查询IP每小时限制
 	hourlyLimit := Config().GetInt(ctx, "register_ip_limit_per_hour")
 	if hourlyLimit > 0 {
+		status.HourlyLimit = hourlyLimit
+		status.HourlyRemaining = hourlyLimit
 		hourlyKey := fmt.Sprintf("register:ip:hourly:%s", ipAddress)
 		hourlyCount, _ := g.Redis().Do(ctx, "GET", hourlyKey)
 		if !hourlyCount.IsNil() {
-			remaining := hourlyLimit - hourlyCount.Int()
-			status["hourly_remaining"] = remaining
-			status["hourly_limit"] = hourlyLimit
+			status.HourlyRemaining = hourlyLimit - hourlyCount.Int()
 			if ttl, err := g.Redis().Do(ctx, "TTL", hourlyKey); err == nil {
-				status["hourly_reset_seconds"] = ttl.Int()
+				status.HourlyResetSeconds = ttl.Int()
 			}
-		} else {
-			status["hourly_remaining"] = hourlyLimit
-			status["hourly_limit"] = hourlyLimit
 		}
 	}
 
 	// 查询IP每天限制
 	dailyLimit := Config().GetInt(ctx, "register_ip_limit_per_day")
 	if dailyLimit > 0 {
+		status.DailyLimit = dailyLimit
+		status.DailyRemaining = dailyLimit
 		dailyKey := fmt.Sprintf("register:ip:daily:%s", ipAddress)
 		dailyCount, _ := g.Redis().Do(ctx, "GET", dailyKey)
 		if !dailyCount.IsNil() {
-			remaining := dailyLimit - dailyCount.Int()
-			status["daily_remaining"] = remaining
-			status["daily_limit"] = dailyLimit
+			status.DailyRemaining = dailyLimit - dailyCount.Int()
 			if ttl, err := g.Redis().Do(ctx, "TTL", dailyKey); err == nil {
-				status["daily_reset_seconds"] = ttl.Int()
+				status.DailyResetSeconds = ttl.Int()
 			}
-		} else {
-			status["daily_remaining"] = dailyLimit
-			status["daily_limit"] = dailyLimit
 		}
 	}
 

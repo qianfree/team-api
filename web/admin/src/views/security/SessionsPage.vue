@@ -8,6 +8,9 @@ import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -71,6 +74,8 @@ const columns: TableColumnData[] = [
     fixed: 'right',
     render({ record }) {
       if (record.is_current) return null
+      // 超管会话仅账号本人可撤销（后端 assertCanOperateSessions 同规则兜底），其他人只能查看
+      if (record.role === 'super_admin' && record.user_id !== authStore.user?.id) return null
       return h(Popconfirm, {
         content: '确定撤销该会话？',
         onOk: () => revokeSession(record.id),

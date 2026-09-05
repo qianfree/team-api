@@ -23,6 +23,19 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 )
 
+// GetRegisterRateLimitStatus 查询当前 IP 的注册限流状态（注册页提示用，公开端点，只读不计数）。
+func (s *sTenant) GetRegisterRateLimitStatus(ctx context.Context, _ *v1.TenantRegisterRateLimitReq) (*v1.TenantRegisterRateLimitRes, error) {
+	status := common.GetRegisterRateLimitStatus(ctx, g.RequestFromCtx(ctx).GetClientIp())
+	return &v1.TenantRegisterRateLimitRes{
+		HourlyLimit:        status.HourlyLimit,
+		HourlyRemaining:    status.HourlyRemaining,
+		HourlyResetSeconds: status.HourlyResetSeconds,
+		DailyLimit:         status.DailyLimit,
+		DailyRemaining:     status.DailyRemaining,
+		DailyResetSeconds:  status.DailyResetSeconds,
+	}, nil
+}
+
 // Register handles tenant registration.
 func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error) {
 	// Check if registration is enabled
@@ -231,6 +244,7 @@ func (s *sTenant) Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, ownerUserID, "tenant", "owner", tenantID, sessionID, jti)
 	if err != nil {
@@ -399,12 +413,13 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
 		_ = common.RecordLoginHistory(ctx, "tenant", user.Id, tenant.Id, "password", ipAddress, ua, deviceFP, false, "密码错误")
 
-		// 原子递增失败次数
+		// 原子递增失败次数；锁定阈值与时长取自安全配置（sys_options）
 		updateData := do.TntUsers{FailedAttempts: gdb.Raw("failed_attempts + 1")}
 		failedAttempts := user.FailedAttempts + 1
+		maxAttempts, lockoutMinutes := common.LoginLockoutPolicy(ctx)
 
-		if failedAttempts >= 5 {
-			lockedUntil := time.Now().Add(30 * time.Minute)
+		if failedAttempts >= maxAttempts {
+			lockedUntil := time.Now().Add(time.Duration(lockoutMinutes) * time.Minute)
 			updateData.LockedUntil = gtime.NewFromTime(lockedUntil)
 			_, err := dao.TntUsers.Ctx(ctx).
 				Where("id", user.Id).
@@ -413,7 +428,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 				g.Log().Errorf(ctx, "更新账号锁定状态失败: %v", err)
 			}
 			return nil, common.NewBusinessError(consts.CodeAccountLocked,
-				"连续 5 次密码错误，账号已锁定 30 分钟")
+				fmt.Sprintf("连续 %d 次密码错误，账号已锁定 %d 分钟", maxAttempts, lockoutMinutes))
 		}
 
 		_, err := dao.TntUsers.Ctx(ctx).
@@ -476,6 +491,7 @@ func (s *sTenant) Login(ctx context.Context, req *v1.TenantLoginReq) (*v1.Tenant
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, tenant.Id, sessionID, jti)
 	if err != nil {
@@ -551,11 +567,13 @@ func (s *sTenant) Logout(ctx context.Context, req *v1.TenantLogoutReq) (*v1.Tena
 
 // Refresh handles token refresh for tenant users.
 func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.TenantRefreshRes, error) {
-	refreshTokenHash := common.HashRefreshToken(req.RefreshToken)
-
-	session, err := common.GetSessionByRefreshHash(ctx, refreshTokenHash)
+	// 定位会话并做重放检测：已轮换的旧令牌再次出现时，会话在内部被整体吊销
+	session, replayed, err := common.GetSessionByRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, common.NewUnauthorizedError("会话不存在")
+	}
+	if replayed {
+		return nil, common.NewUnauthorizedError("登录状态已失效，请重新登录")
 	}
 	if session == nil {
 		return nil, common.NewUnauthorizedError("会话已过期或不存在")
@@ -578,15 +596,10 @@ func (s *sTenant) Refresh(ctx context.Context, req *v1.TenantRefreshReq) (*v1.Te
 		return nil, common.NewUnauthorizedError(consts.MsgUnauthorized)
 	}
 
-	newRefreshToken, err := common.GenerateRefreshToken()
-	if err != nil {
-		return nil, err
-	}
-	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
-
+	// 轮换令牌（新令牌内嵌会话 ID，供下次重放检测定位）
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := common.ExtractDeviceInfo(ctx)
-	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
+	newRefreshToken, err := common.RotateSessionRefreshToken(ctx, session.Id, req.RefreshToken, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
 	}

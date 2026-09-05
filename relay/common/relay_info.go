@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
@@ -38,15 +39,60 @@ func (m *ChannelMeta) UpstreamSpeaksResponses() bool {
 }
 
 const (
-	// DefaultTimeoutSeconds 非流式请求的默认总超时（http.Client.Timeout）。
+	// DefaultTimeoutSeconds 非流式请求的内置默认总超时（http.Client.Timeout）。
 	// 推理模型（GLM-4.5/4.6 thinking、Claude thinking 等）非流式调用需跑完整段生成才回响应头，
 	// 60s 会误杀；放宽到 180s。个别仍超时的模型建议在渠道级 settings.timeout_seconds 配 >180（自动切 longRun 传输层）。
+	// 该常量仅作系统设置 request_timeout_seconds 未配置时的最终兜底。
 	DefaultTimeoutSeconds       = 180
 	ImagesGenerationTimeoutSecs = 600
+
+	// DefaultStreamIdleTimeoutSeconds 流式响应的内置默认空闲超时（两个 chunk 之间的最大间隔，非总时长）。
+	// 仅作系统设置 streaming_timeout_seconds 未配置时的最终兜底。
+	DefaultStreamIdleTimeoutSeconds = 300
 )
 
+// 全局超时配置（sys_options request_timeout_seconds / streaming_timeout_seconds），
+// 0 表示未配置、回落内置默认。relay 包不 import internal（会循环依赖），
+// 由 internal 侧在启动时与配置变更时（OnSettingsChanged，免重启）注入。
+var (
+	globalRequestTimeoutSeconds    atomic.Int64
+	globalStreamIdleTimeoutSeconds atomic.Int64
+)
+
+// SetGlobalRequestTimeoutSeconds 注入全局非流式请求超时（<=0 视为未配置）。
+func SetGlobalRequestTimeoutSeconds(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	globalRequestTimeoutSeconds.Store(int64(seconds))
+}
+
+// GlobalRequestTimeoutSeconds 返回全局非流式请求超时（未配置返回内置默认 180s）。
+func GlobalRequestTimeoutSeconds() int {
+	if v := int(globalRequestTimeoutSeconds.Load()); v > 0 {
+		return v
+	}
+	return DefaultTimeoutSeconds
+}
+
+// SetGlobalStreamIdleTimeoutSeconds 注入全局流式空闲超时（<=0 视为未配置）。
+func SetGlobalStreamIdleTimeoutSeconds(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	globalStreamIdleTimeoutSeconds.Store(int64(seconds))
+}
+
+// GlobalStreamIdleTimeoutSeconds 返回全局流式空闲超时（未配置返回内置默认 300s）。
+func GlobalStreamIdleTimeoutSeconds() int {
+	if v := int(globalStreamIdleTimeoutSeconds.Load()); v > 0 {
+		return v
+	}
+	return DefaultStreamIdleTimeoutSeconds
+}
+
 // GetTimeoutSeconds 返回请求超时秒数。
-// 图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时），其余模式渠道自定义优先。
+// 优先级：渠道自定义 > 全局配置（系统设置）> 内置默认。图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时）。
 func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
 	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
 		if s.TimeoutSeconds > ImagesGenerationTimeoutSecs {
@@ -57,7 +103,7 @@ func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
 	if s.TimeoutSeconds > 0 {
 		return s.TimeoutSeconds
 	}
-	return DefaultTimeoutSeconds
+	return GlobalRequestTimeoutSeconds()
 }
 
 // ChannelSettings 渠道配置（来自 chn_channels.settings JSONB）

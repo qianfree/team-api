@@ -17,6 +17,12 @@ import (
 )
 
 func (s *sTenant) MemberQuota(ctx context.Context, req *v1.TenantMemberQuotaReq) (*v1.TenantMemberQuotaRes, error) {
+	// 成员额度配置是管理员设定的控制线，属管理视角数据：member 不得窥视他人额度，
+	// 自身额度进度走个人工作台（personal-dashboard）。与 MemberQuotaSet 同门槛。
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	var row *struct {

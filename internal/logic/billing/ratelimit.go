@@ -26,6 +26,7 @@ type RateLimitConfig struct {
 	TenantQPS  int // 租户级 QPS 限制（默认 1000）
 	UserQPS    int // 用户级 QPS 限制（默认 100）
 	KeyQPS     int // Key 级 QPS 限制（默认 60）
+	SystemConc int // 系统级并发限制（默认 0，不限制）——全平台在途请求总闸门
 	TenantConc int // 租户级并发限制（默认 0，不限制）
 }
 
@@ -35,6 +36,7 @@ var DefaultRateLimitConfig = RateLimitConfig{
 	TenantQPS:  1000,
 	UserQPS:    100,
 	KeyQPS:     60,
+	SystemConc: 0,
 	TenantConc: 0,
 }
 
@@ -63,6 +65,9 @@ func LoadRateLimitConfig(ctx context.Context) RateLimitConfig {
 	}
 	if v := cfg.GetInt(ctx, "key_qps_limit"); v > 0 {
 		c.KeyQPS = v
+	}
+	if v := cfg.GetInt(ctx, "global_concurrency_limit"); v > 0 {
+		c.SystemConc = v
 	}
 	if v := cfg.GetInt(ctx, "tenant_concurrency_limit"); v > 0 {
 		c.TenantConc = v
@@ -207,20 +212,20 @@ func withKeyQPS(config RateLimitConfig, keyQPS int) RateLimitConfig {
 }
 
 // ---------------------------------------------------------------------------
-// 并发限流：单个 Lua 脚本完成 2 级获取 + 失败回滚（租户 + 模型）
+// 并发限流：单个 Lua 脚本完成 3 级获取 + 失败回滚（系统 + 租户 + 模型）
 // ---------------------------------------------------------------------------
 
-// acquireConcurrentLua 一次 EVAL 完成 2 级并发许可获取（租户 + 模型）。
-// KEYS[1..2]: tenant/model 的 Redis key
-// ARGV[1..2]: 各级并发限制（0 表示不检查该级）
-// ARGV[3]: EXPIRE 秒数
+// acquireConcurrentLua 一次 EVAL 完成 3 级并发许可获取（系统 + 租户 + 模型）。
+// KEYS[1..3]: system/tenant/model 的 Redis key
+// ARGV[1..3]: 各级并发限制（0 表示不检查该级）
+// ARGV[4]: EXPIRE 秒数
 //
 // 逐级尝试获取，任一级失败则回滚已获取的许可。
 // 返回 1=成功, 0=失败。
 var acquireConcurrentLua = `
-local keys = {KEYS[1], KEYS[2]}
-local limits = {tonumber(ARGV[1]), tonumber(ARGV[2])}
-local expire = tonumber(ARGV[3])
+local keys = {KEYS[1], KEYS[2], KEYS[3]}
+local limits = {tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])}
+local expire = tonumber(ARGV[4])
 local acquired = {}
 
 local function tryAcquire(i)
@@ -243,16 +248,17 @@ local function tryAcquire(i)
     return true
 end
 
-if not tryAcquire(1) then return 0 end
-if not tryAcquire(2) then return 0 end
+for i = 1, 3 do
+    if not tryAcquire(i) then return 0 end
+end
 return 1
 `
 
-// releaseConcurrentLua 一次 EVAL 释放 2 级并发许可（租户 + 模型）。
+// releaseConcurrentLua 一次 EVAL 释放 3 级并发许可（系统 + 租户 + 模型）。
 // ARGV[1] = expire 秒数（用于 SET 后恢复 TTL）
 var releaseConcurrentLua = `
 local expire = tonumber(ARGV[1])
-for i = 1, 2 do
+for i = 1, 3 do
     local v = redis.call("DECR", KEYS[i])
     if v < 0 then
         redis.call("SET", KEYS[i], 0)
@@ -262,11 +268,14 @@ end
 return 1
 `
 
-// AcquireConcurrent 获取并发许可（两级：租户→模型）
+// AcquireConcurrent 获取并发许可（三级：系统→租户→模型）
+// 系统级并发限制来自全局配置 global_concurrency_limit（0 表示不限），
+// 是全平台在途请求总闸门（Redis 计数跨实例共享，多副本天然生效）；
 // 租户级并发限制优先使用 tnt_tenants.max_concurrency，0 表示不限；
 // 模型级并发限制使用 mdl_tenant_models.max_concurrency，NULL 表示不限；
 // 若未设置则回退到全局配置 tenant_concurrency_limit。
 func AcquireConcurrent(ctx context.Context, config RateLimitConfig, tenantID, userID, apiKeyID int64, modelName string) bool {
+	systemKey := "conc:system"
 	tenantKey := fmt.Sprintf("conc:tenant:%d", tenantID)
 	modelKey := fmt.Sprintf("conc:tenant:%d:model:%s", tenantID, modelName)
 
@@ -274,9 +283,9 @@ func AcquireConcurrent(ctx context.Context, config RateLimitConfig, tenantID, us
 	tenantLimit := getTenantConcurrencyLimit(ctx, tenantID)
 	modelLimit := getModelConcurrencyLimit(ctx, tenantID, modelName)
 
-	result, err := g.Redis().Do(ctx, "EVAL", acquireConcurrentLua, 2,
-		tenantKey, modelKey,
-		tenantLimit, modelLimit,
+	result, err := g.Redis().Do(ctx, "EVAL", acquireConcurrentLua, 3,
+		systemKey, tenantKey, modelKey,
+		config.SystemConc, tenantLimit, modelLimit,
 		300) // EXPIRE 秒数
 	if err != nil {
 		return true // Redis 不可用，允许通过
@@ -285,14 +294,15 @@ func AcquireConcurrent(ctx context.Context, config RateLimitConfig, tenantID, us
 	return result.Int() == 1
 }
 
-// ReleaseConcurrent 释放并发许可（租户 + 模型两级）
-// 单次 EVAL 释放所有 2 个 key。
+// ReleaseConcurrent 释放并发许可（系统 + 租户 + 模型三级）
+// 单次 EVAL 释放所有 3 个 key。
 func ReleaseConcurrent(ctx context.Context, tenantID, userID, apiKeyID int64, modelName string) {
+	systemKey := "conc:system"
 	tenantKey := fmt.Sprintf("conc:tenant:%d", tenantID)
 	modelKey := fmt.Sprintf("conc:tenant:%d:model:%s", tenantID, modelName)
 
-	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 2,
-		tenantKey, modelKey,
+	g.Redis().Do(ctx, "EVAL", releaseConcurrentLua, 3,
+		systemKey, tenantKey, modelKey,
 		300) // EXPIRE 秒数
 }
 

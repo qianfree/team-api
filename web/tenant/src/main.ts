@@ -17,11 +17,11 @@ console.log(
   'background: #4b58c0; color: white; padding: 4px 8px; border-radius: 0 4px 4px 0;',
 )
 console.log(
-  '%cAGPL v3.0 开源协议',
+  '%cAGPL-3.0-or-later 开源协议',
   'color: #666;',
 )
 console.log(
-  '%cCopyright © 2025-2026 Team-API Contributors',
+  '%cCopyright © 2026 qianfree',
   'color: #666;',
 )
 console.log(

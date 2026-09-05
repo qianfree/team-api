@@ -230,7 +230,7 @@ func deductWalletForRefundTx(ctx context.Context, orderID int64, tenantID int64)
 		}
 	}
 	if credit == nil {
-		return billing.Zero, common.NewBadRequestError("未找到该订单的充值入账流水，无法确定应扣回的美元金额")
+		return billing.Zero, common.NewBadRequestError("未找到该订单的充值入账流水，无法确定应扣回的入账金额")
 	}
 	if !credit.Amount.GreaterThan(billing.Zero) {
 		return billing.Zero, common.NewBadRequestError("充值入账流水金额异常，无法退款")

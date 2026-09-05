@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h, computed } from 'vue'
-import { Tag, Button, Select, Input, DatePicker } from '@arco-design/web-vue'
+import { Message, Modal, Tag, Button, Select, Input, DatePicker } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
+import { hasPermission } from '@/utils/permission'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -202,6 +203,28 @@ function handlePageSizeChange(pageSize: number) {
   fetchData()
 }
 
+// 清空全部渠道错误事件（硬删除）：错误风暴时事件表堆积很快，需二次确认。
+function clearErrors() {
+  Modal.confirm({
+    title: '清空全部渠道错误事件',
+    content: '将硬删除全部渠道错误事件记录（含全部统计依据的历史数据），此操作不可恢复，确定继续？',
+    okText: '清空',
+    okButtonProps: { status: 'danger' },
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await request.delete('/admin/monitor/channel-errors/clear')
+        Message.success('渠道错误事件已清空')
+        pagination.current = 1
+        fetchData()
+        fetchStats()
+      } catch {
+        // error auto-shown by Axios interceptor
+      }
+    },
+  })
+}
+
 const statsCards = computed(() => {
   if (!stats.value) return []
   const rateLimitCount = stats.value.by_category?.find((c: any) => c.error_category === 'rate_limit')?.count || 0
@@ -224,7 +247,13 @@ onMounted(() => {
 
 <template>
   <div class="page-table">
-    <PageHeader title="渠道错误监控" description="上游渠道错误事件记录与趋势分析" />
+    <PageHeader title="渠道错误监控" description="上游渠道错误事件记录与趋势分析">
+      <template #actions>
+        <a-button v-if="hasPermission('monitor:edit')" status="danger" @click="clearErrors">
+          清空日志
+        </a-button>
+      </template>
+    </PageHeader>
 
     <!-- Stats Cards -->
     <div class="stats-row">

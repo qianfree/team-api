@@ -99,36 +99,6 @@ func CreateSession(ctx context.Context, userType string, userID, tenantID int64,
 	return sessionID, err
 }
 
-// RefreshSession rotates a refresh token: invalidates the old one and creates a new session.
-func RefreshSession(ctx context.Context, sessionID int64, oldRefreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo string) error {
-	refreshExpire := getRefreshExpire(ctx)
-	expiresAt := gtime.New(time.Now().Add(refreshExpire))
-
-	result, err := dao.SysSessions.Ctx(ctx).
-		Where("id", sessionID).
-		Where("refresh_token_hash", oldRefreshTokenHash).
-		Where("expires_at > NOW()").
-		Data(do.SysSessions{
-			RefreshTokenHash: newRefreshTokenHash,
-			IpAddress:        ipAddress,
-			DeviceInfo:       deviceInfo,
-			ExpiresAt:        expiresAt,
-		}).Update()
-	if err != nil {
-		return gerror.Wrapf(err, "update session")
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return gerror.Wrapf(err, "check rows affected")
-	}
-	if rowsAffected == 0 {
-		return NewUnauthorizedError("会话不存在或已过期")
-	}
-
-	return nil
-}
-
 // RevokeSession revokes a single session by ID (DB only; use MarkSessionRevoked for Redis).
 // userType 限定会话所属用户体系（admin/tenant），防止跨控制台按 ID 吊销他人会话。
 func RevokeSession(ctx context.Context, userType string, sessionID int64) error {
@@ -225,6 +195,111 @@ func GetSessionByID(ctx context.Context, userType string, sessionID int64) (*ent
 	return session, nil
 }
 
+// GetSessionByRefreshToken 按刷新令牌定位活跃会话，并检测"已轮换令牌重放"。
+//
+// 新格式令牌内嵌会话 ID（random.sessionID）：按 ID 定位会话后与随机段哈希比对，
+// 命中即正常返回；会话仍在但哈希不匹配 = 该令牌已被轮换过 = 重放（典型场景：
+// 令牌被盗、攻击者抢先刷新，受害者手里成了旧令牌）。重放直接吊销整个会话
+// （攻击者手中的新令牌一并作废，迫使用户重新登录）并写登录历史留痕。
+// 存量旧格式令牌（无会话 ID）退化为按哈希直查，行为与历史版本一致。
+//
+// 返回 (session, replayed, err)：replayed=true 时会话已在内部吊销，调用方返回 401 即可。
+func GetSessionByRefreshToken(ctx context.Context, refreshToken string) (*entity.SysSessions, bool, error) {
+	if randomPart, sessionID, ok := SplitRefreshToken(refreshToken); ok {
+		var sess *entity.SysSessions
+		err := dao.SysSessions.Ctx(ctx).
+			Where("id", sessionID).
+			Where("expires_at > NOW()").
+			Scan(&sess)
+		if err != nil {
+			return nil, false, err
+		}
+		if sess == nil {
+			// 会话已过期/被清理，按不存在拒绝，无重放可言
+			return nil, false, nil
+		}
+		if sess.RefreshTokenHash == HashRefreshToken(randomPart) {
+			return sess, false, nil
+		}
+
+		// 哈希不匹配 ≠ 重放：只有随机段哈希命中上一代令牌（轮换时记入 Redis）
+		// 才判定为重放。若仅凭"会话存在但哈希不匹配"就吊销，会话 ID 是顺序
+		// bigint，任何人拼 {垃圾串}.{受害者会话ID} 即可恶意吊销他人会话（DoS）。
+		if prev, rErr := g.Redis().Do(ctx, "GET", refreshPrevKey(sessionID)); rErr == nil && !prev.IsNil() && prev.String() == HashRefreshToken(randomPart) {
+			// 重放：吊销会话（Redis jti 黑名单 + 删会话行），留痕后拒绝
+			MarkSessionRevoked(ctx, sess.Jti)
+			if _, delErr := dao.SysSessions.Ctx(ctx).Where("id", sessionID).Delete(); delErr != nil {
+				g.Log().Errorf(ctx, "revoke replayed session %d: %v", sessionID, delErr)
+			}
+			ip, ua := "", ""
+			if r := g.RequestFromCtx(ctx); r != nil {
+				ip = r.GetClientIp()
+				ua = r.GetHeader("User-Agent")
+			}
+			_ = RecordLoginHistory(ctx, sess.UserType, sess.UserId, sess.TenantId, "refresh", ip, ua, "", false, "刷新令牌重放，会话已吊销")
+			g.Log().Warningf(ctx, "refresh token replay detected: user_type=%s user_id=%d session=%d", sess.UserType, sess.UserId, sessionID)
+			return nil, true, nil
+		}
+
+		// 既不是当前令牌也不是上一代：普通无效令牌，拒绝但不吊销
+		return nil, false, nil
+	}
+
+	// 存量旧格式令牌：按哈希直查（无法定位轮换来源，退化为普通拒绝）
+	sess, err := GetSessionByRefreshHash(ctx, HashRefreshTokenForCompare(refreshToken))
+	return sess, false, err
+}
+
+// refreshPrevKey 是上一代刷新令牌哈希的 Redis key（重放检测用，见 RotateSessionRefreshToken）。
+func refreshPrevKey(sessionID int64) string {
+	return fmt.Sprintf("session:refresh_prev:%d", sessionID)
+}
+
+// RotateSessionRefreshToken 轮换会话刷新令牌：生成新随机段并原子替换库中哈希。
+// 返回绑定会话 ID 后的新令牌（返回给客户端的最终形态）。
+// UPDATE 同时校验旧哈希，并发下同一旧令牌只有一个请求能成功。
+func RotateSessionRefreshToken(ctx context.Context, sessionID int64, oldRefreshToken, ipAddress, deviceInfo string) (string, error) {
+	newRandom, err := GenerateRefreshToken()
+	if err != nil {
+		return "", err
+	}
+	oldHash := HashRefreshTokenForCompare(oldRefreshToken)
+
+	refreshExpire := getRefreshExpire(ctx)
+	expiresAt := gtime.New(time.Now().Add(refreshExpire))
+
+	result, err := dao.SysSessions.Ctx(ctx).
+		Where("id", sessionID).
+		Where("refresh_token_hash", oldHash).
+		Where("expires_at > NOW()").
+		Data(do.SysSessions{
+			RefreshTokenHash: HashRefreshToken(newRandom),
+			IpAddress:        ipAddress,
+			DeviceInfo:       deviceInfo,
+			ExpiresAt:        expiresAt,
+		}).Update()
+	if err != nil {
+		return "", gerror.Wrapf(err, "update session")
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return "", gerror.Wrapf(err, "check rows affected")
+	}
+	if rowsAffected == 0 {
+		return "", NewUnauthorizedError("会话不存在或已过期")
+	}
+
+	// 记录上一代令牌哈希（TTL 对齐刷新周期）：重放检测必须能证明"这个随机段
+	// 曾经属于该会话"，否则顺序会话 ID 会被用来恶意吊销他人会话。Redis 不可用
+	// 时仅损失检测能力（降级为普通拒绝），不产生误吊销。
+	if _, rErr := g.Redis().Do(ctx, "SETEX", refreshPrevKey(sessionID), 7*24*3600, oldHash); rErr != nil {
+		g.Log().Warningf(ctx, "record prev refresh hash for session %d: %v", sessionID, rErr)
+	}
+
+	return BindSessionIDToRefreshToken(newRandom, sessionID), nil
+}
+
 // GetSessionByRefreshHash retrieves an active session by refresh token hash.
 func GetSessionByRefreshHash(ctx context.Context, refreshTokenHash string) (*entity.SysSessions, error) {
 	var session *entity.SysSessions
@@ -262,6 +337,20 @@ func GetCtxUserID(ctx context.Context) int64 {
 		return id
 	}
 	return 0
+}
+
+// GetCtxUserRole extracts the admin privilege flag ("super_admin" / "admin") from context.
+// 注意它是特权标记而非业务角色：业务角色存放在 sys_admin_user_roles，
+// 这里只用于判断是否走超级管理员短路。
+func GetCtxUserRole(ctx context.Context) string {
+	val := ctx.Value("role")
+	if val == nil {
+		return ""
+	}
+	if role, ok := val.(string); ok {
+		return role
+	}
+	return ""
 }
 
 // GetCtxSessionID extracts session ID from context.

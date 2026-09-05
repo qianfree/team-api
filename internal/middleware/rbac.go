@@ -10,42 +10,11 @@ import (
 	"github.com/qianfree/team-api/internal/response"
 )
 
-// RequirePermission returns middleware that checks if the admin user has the required permission.
-func RequirePermission(permission string) func(r *ghttp.Request) {
-	return func(r *ghttp.Request) {
-		role := GetUserRole(r.Context())
-		userID := GetUserID(r.Context())
-
-		if role == "super_admin" {
-			r.Middleware.Next()
-			return
-		}
-
-		if !admin.HasPermission(r.Context(), userID, role, permission) {
-			response.ErrorMsg(r, consts.CodeForbidden, "缺少权限："+permission)
-			return
-		}
-
-		r.Middleware.Next()
-	}
-}
-
-// RequireTenantRole returns middleware that checks if the tenant user has the required role.
-func RequireTenantRole(roles ...string) func(r *ghttp.Request) {
-	roleSet := make(map[string]bool)
-	for _, r := range roles {
-		roleSet[r] = true
-	}
-
-	return func(r *ghttp.Request) {
-		role := GetUserRole(r.Context())
-		if !roleSet[role] {
-			response.ErrorMsg(r, consts.CodeForbidden, consts.MsgForbidden)
-			return
-		}
-		r.Middleware.Next()
-	}
-}
+// 说明：曾有 RequirePermission / RequireTenantRole 两个「按路由挂载」的中间件，
+// 均无任何调用方，已删除。管理后台的授权统一由 AdminPermissionGuard + adminPermissionRules
+// 集中判定（默认拒绝、规则完整性由 rbac_coverage_test.go 保证）；租户控制台的角色校验
+// 在 logic 层逐方法进行。留着一个从未挂载的 RequireTenantRole 会让人误以为
+// /api/tenant 有路由级角色闸门，实际并没有。
 
 // adminPermissionRules defines the mapping from route patterns to permission points.
 // Unmapped admin routes are denied by default in AdminPermissionGuard.
@@ -79,6 +48,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/channels", perm: "channel:create"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/test", perm: "channel:test"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/clone", perm: "channel:create"},
+	{method: "POST", prefix: "/api/admin/channels/", suffix: "/reset-health", perm: "channel:edit"},
 	{method: "POST", prefix: "/api/admin/channels/", suffix: "/keys", perm: "channel:edit"},
 	{method: "DELETE", prefix: "/api/admin/channels/", suffix: "/keys/", perm: "channel:edit"},
 	{method: "GET", prefix: "/api/admin/channels/", suffix: "/keys", perm: "channel:view"},
@@ -138,7 +108,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/offline-recharge", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release", perm: "billing:refund"},
 	{method: "POST", prefix: "/api/admin/wallets/", suffix: "/frozen-items/release-all", perm: "billing:refund"},
-	{method: "PUT", prefix: "/api/admin/wallets/", suffix: "/warning-threshold", perm: "billing:view"},
+	{method: "PUT", prefix: "/api/admin/wallets/", suffix: "/warning-threshold", perm: "billing:refund"},
 
 	// ── plan 套餐管理 ──
 	{method: "GET", path: "/api/admin/plans", perm: "plan:view"},
@@ -153,7 +123,9 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/orders/export", perm: "order:view"},
 	{method: "GET", prefix: "/api/admin/orders/", perm: "order:view"},
 	{method: "POST", prefix: "/api/admin/orders/", suffix: "/refund", perm: "order:refund"},
-	{method: "POST", prefix: "/api/admin/orders/", suffix: "/complete", perm: "order:view"},
+	// 手动完成订单会走 markOrderPaidByAdmin + payment.FulfillOrder：无支付凭证直接履约
+	// （充值入钱包 / 发放套餐），是资金动作而非订单查看，按退款同级管控。
+	{method: "POST", prefix: "/api/admin/orders/", suffix: "/complete", perm: "order:refund"},
 
 	// ── operation 内容运营 ──
 	{method: "GET", path: "/api/admin/changelogs", perm: "operation:view"},
@@ -180,6 +152,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/tickets/", suffix: "/assign", perm: "support:edit"},
 	{method: "POST", prefix: "/api/admin/tickets/", suffix: "/reply", perm: "support:reply"},
 	{method: "PUT", prefix: "/api/admin/tickets/", suffix: "/status", perm: "support:edit"},
+	// 顶栏铃铛待办计数（工单 + 反馈聚合，权限收敛在 support:view）
+	{method: "GET", path: "/api/admin/support/pending-summary", perm: "support:view"},
 
 	// ── help center 帮助中心 ──
 	{method: "GET", path: "/api/admin/help-categories", perm: "support:view"},
@@ -194,13 +168,17 @@ var adminPermissionRules = []permissionRule{
 
 	// ── audit 审计日志 ──
 	{method: "GET", path: "/api/admin/audit/config", perm: "audit:view"},
-	{method: "PUT", path: "/api/admin/audit/config", perm: "audit:view"},
+	// 写 sys_options.audit_level（全局审计级别，可设为 none 关闭全站审计采集）：
+	// 属于系统配置而非审计查看，否则只读档的技术支持可以自行关掉审计留痕。
+	{method: "PUT", path: "/api/admin/audit/config", perm: "system:edit"},
 	{method: "GET", path: "/api/admin/audit/operation-logs", perm: "audit:view"},
 	{method: "GET", path: "/api/admin/audit/operation-logs/export", perm: "audit:export"},
 	{method: "GET", path: "/api/admin/audit/request-logs", perm: "audit:view"},
 	{method: "GET", prefix: "/api/admin/audit/request-logs/", perm: "audit:view"},
+	{method: "GET", prefix: "/api/admin/audit/forwarding-trace/", perm: "audit:view"},
 	{method: "GET", path: "/api/admin/audit/sensitive-logs", perm: "audit:read_sensitive"},
 	{method: "GET", path: "/api/admin/audit/content-filter-logs", perm: "audit:view"},
+	{method: "DELETE", path: "/api/admin/audit/content-filter-logs/clear", perm: "audit:clear"},
 
 	// ── file 文件管理 ──
 	{method: "GET", path: "/api/admin/files", perm: "file:view"},
@@ -226,6 +204,7 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/error-logs/", perm: "monitor:edit"},
 	{method: "PUT", path: "/api/admin/error-logs/batch-resolve", perm: "monitor:edit"},
 	{method: "DELETE", path: "/api/admin/error-logs/clear", perm: "monitor:edit"},
+	{method: "DELETE", path: "/api/admin/monitor/channel-errors/clear", perm: "monitor:edit"},
 	{method: "GET", path: "/api/admin/error-logs/stats", perm: "monitor:view"},
 	{method: "GET", path: "/api/admin/cron-jobs", perm: "system:view"},
 	{method: "POST", prefix: "/api/admin/cron-jobs/", suffix: "/trigger", perm: "system:edit"},
@@ -241,15 +220,14 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/payment-channels/", perm: "system:edit"},
 	{method: "GET", path: "/api/admin/payment-settings", perm: "system:view"},
 	{method: "PUT", path: "/api/admin/payment-settings", perm: "system:edit"},
-	{method: "GET", prefix: "/api/admin/update/", perm: "system:update"},
-	{method: "POST", prefix: "/api/admin/update/", perm: "system:update"},
 	{method: "GET", path: "/api/admin/data-governance/settings", perm: "system:view"},
 	{method: "PUT", path: "/api/admin/data-governance/settings", perm: "system:edit"},
 	{method: "POST", prefix: "/api/admin/data-governance/", perm: "system:edit"},
 	{method: "GET", prefix: "/api/admin/plugins", perm: "system:plugin"},
 	{method: "POST", prefix: "/api/admin/plugins/", perm: "system:plugin"},
 	{method: "PUT", prefix: "/api/admin/plugins/", perm: "system:plugin"},
-	{method: "GET", prefix: "/api/admin/email/", perm: "system:view"},
+	// 邮件发送记录是运营查看通知触达效果的手段，与通知模板同属内容运营，不归系统设置
+	{method: "GET", prefix: "/api/admin/email/", perm: "operation:view"},
 
 	// ── tenant level config 租户等级配置 ──
 	{method: "GET", path: "/api/admin/tenant-level-configs", perm: "tenant:view"},
@@ -267,10 +245,12 @@ var adminPermissionRules = []permissionRule{
 	// ── member 成员管理（管理后台维度） ──
 	{method: "GET", path: "/api/admin/members", perm: "member:view"},
 	{method: "POST", path: "/api/admin/members", perm: "member:import"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/disable", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/enable", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/reset-password", perm: "member:view"},
-	{method: "PUT", prefix: "/api/admin/members/", suffix: "/unlock", perm: "member:view"},
+	// 禁用/启用/改密/解锁都是对租户成员账号的处置（改密等于接管该成员账号，
+	// 进而可用其 API Key 消耗租户余额），必须走写权限点，不能沿用只读的 member:view。
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/disable", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/enable", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/reset-password", perm: "member:manage"},
+	{method: "PUT", prefix: "/api/admin/members/", suffix: "/unlock", perm: "member:manage"},
 
 	// ── redemption 兑换码管理 ──
 	{method: "GET", path: "/api/admin/redemptions", perm: "redemption:view"},
@@ -279,17 +259,33 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", path: "/api/admin/redemptions", perm: "redemption:create"},
 	{method: "PUT", prefix: "/api/admin/redemptions/", perm: "redemption:edit"},
 
+	// ── role 角色管理（复用 user 组权限点） ──
+	// 账号管理与角色管理是同一件事的两面（谁能进后台、能干什么），拆成两组权限没有实际场景：
+	// 「能建角色但不能分配给人」毫无意义，「能分配角色但不能建角色」用禁用角色即可表达。
+	{method: "GET", path: "/api/admin/roles", perm: "user:view"},
+	{method: "POST", path: "/api/admin/roles", perm: "user:create"},
+	{method: "POST", prefix: "/api/admin/roles/", suffix: "/reset", perm: "user:edit"},
+	{method: "GET", prefix: "/api/admin/roles/", perm: "user:view"},
+	{method: "PUT", prefix: "/api/admin/roles/", suffix: "/status", perm: "user:edit"},
+	{method: "PUT", prefix: "/api/admin/roles/", perm: "user:edit"},
+	{method: "DELETE", prefix: "/api/admin/roles/", perm: "user:delete"},
+	{method: "GET", prefix: "/api/admin/users/", suffix: "/roles", perm: "user:view"},
+	{method: "PUT", prefix: "/api/admin/users/", suffix: "/roles", perm: "user:edit"},
+
 	// ── permission 权限管理（仅 user 组） ──
 	{method: "GET", path: "/api/admin/permissions", perm: "user:view"},
 	{method: "GET", prefix: "/api/admin/users/", suffix: "/permissions", perm: "user:view"},
 	{method: "PUT", prefix: "/api/admin/users/", suffix: "/permissions", perm: "user:edit"},
-	{method: "PUT", prefix: "/api/admin/users/", suffix: "/data-scopes", perm: "user:edit"},
 
 	// ── admin session and security ──
 	{method: "POST", path: "/api/admin/auth/logout", perm: "self:access"},
-	{method: "GET", path: "/api/admin/auth/sessions", perm: "self:access"},
-	{method: "DELETE", prefix: "/api/admin/auth/sessions/user/", perm: "user:edit"},
-	{method: "DELETE", prefix: "/api/admin/auth/sessions/", perm: "self:access"},
+	// 当前用户信息与有效权限：登录即可访问自己的资料，不需要任何业务权限点
+	{method: "GET", path: "/api/admin/auth/me", perm: "self:access"},
+	// 会话管理列出并处置的是【全部管理员】的登录态，属于账号管理（user 域）的操作能力：
+	// 按用户管理模块的操作档位（user:edit）授权，只读档位不可见。
+	// 超管会话的额外保护在 logic 层（assertCanOperateSessions）：仅账号本人可操作。
+	{method: "GET", path: "/api/admin/auth/sessions", perm: "user:edit"},
+	{method: "DELETE", prefix: "/api/admin/auth/sessions/", perm: "user:edit"},
 	{method: "PUT", path: "/api/admin/auth/change-password", perm: "self:access"},
 	{method: "POST", prefix: "/api/admin/security/2fa/", perm: "self:access"},
 	{method: "GET", path: "/api/admin/security/login-history", perm: "audit:view"},
@@ -319,6 +315,53 @@ var adminPermissionRules = []permissionRule{
 	{method: "POST", prefix: "/api/admin/usage-logs/cleanup/tasks/", suffix: "/cancel", perm: "system:edit"},
 }
 
+// superAdminOnlyRules 列出仅超级管理员可访问的路由。
+//
+// 角色管理不走「权限点授权」而是硬性限定超管，理由是它是权限体系的元操作：
+// 谁能改角色，谁就能决定所有人的权限。一旦把它下放出去（哪怕只给 user:edit），
+// 被下放者就能给自己挂上更高权限的角色——权限体系当场失效。
+//
+// 这条限制让提权路径根本不存在，而不是靠「只能授予自己已有的权限」这类兜底去堵。
+// 普通账号管理（创建/禁用/改密/删除）不受影响，仍按 user:* 授权，可以正常下放。
+var superAdminOnlyRules = []permissionRule{
+	// 角色的增删改查与启停
+	{method: "GET", path: "/api/admin/roles"},
+	{method: "POST", path: "/api/admin/roles"},
+	{method: "GET", prefix: "/api/admin/roles/"},
+	{method: "POST", prefix: "/api/admin/roles/"},
+	{method: "PUT", prefix: "/api/admin/roles/"},
+	{method: "DELETE", prefix: "/api/admin/roles/"},
+	// 给账号分配角色 —— 这是最直接的提权入口
+	{method: "GET", prefix: "/api/admin/users/", suffix: "/roles"},
+	{method: "PUT", prefix: "/api/admin/users/", suffix: "/roles"},
+
+	// 在线自更新（版本状态 / 检查 / 执行 / 回滚）：替换平台二进制并重启服务，
+	// 等同于在服务器上执行代码，是比角色管理更根本的平台级元操作，不下放。
+	// 版本检查（GET）看似只读，但前端每次刷新都会请求，若走权限点授权，
+	// 未授权角色会持续收到 403 —— 硬性限定超管后非超管前端不再发起请求。
+	{method: "GET", prefix: "/api/admin/update/"},
+	{method: "POST", prefix: "/api/admin/update/"},
+}
+
+// isSuperAdminOnly 判断路由是否仅限超级管理员。
+// 任一规则命中即为真，不需要优先级判定。
+func isSuperAdminOnly(method, path string) bool {
+	for _, rule := range superAdminOnlyRules {
+		if rule.method != method {
+			continue
+		}
+		if rule.path != "" && path == rule.path {
+			return true
+		}
+		if rule.prefix != "" && strings.HasPrefix(path, rule.prefix) {
+			if rule.suffix == "" || suffixMatches(path, rule.suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type permissionRule struct {
 	method string // HTTP method
 	path   string // exact path match (mutually exclusive with prefix)
@@ -328,10 +371,26 @@ type permissionRule struct {
 }
 
 // AdminPermissionGuard enforces RBAC permission checks for admin routes.
-// 当前策略：未匹配到权限规则的接口默认放行（仅对已认证 admin）。
-// 已配置规则的接口仍按权限点鉴权；漏配的接口不至于直接 403，降低上线回归风险。
-// 待 adminPermissionRules 全量补齐后，可将下方 perm=="" 分支改回返回 403 以收紧权限。
+//
+// 策略：默认拒绝 —— 未匹配到权限规则的接口一律 403。
+//
+// 早期为降低上线回归风险曾采用「未匹配即放行」，那在只有 super_admin / admin 两种可信
+// 身份时无害；引入运营、技术支持等低权限角色后，放行等同于越权：任何漏配规则的接口对
+// 所有角色都是敞开的。改为默认拒绝后，遗漏会立刻表现为 403 而不是静默的权限缺口。
+//
+// 兜底保证：super_admin 在规则匹配之前短路放行，因此即便规则有遗漏也不会把系统锁死，
+// 超管始终可以进入并修复。规则的完整性由 rbac_coverage_test.go 在 CI 阶段保证。
 func AdminPermissionGuard(r *ghttp.Request) {
+	// 路径必须是规范形式：GoFrame 不会归一化重复斜杠，/api/admin//roles 会带着原样路径
+	// 进到 handler，而规则表按精确路径/前缀匹配，同一个 handler 就有了两种匹配结果。
+	// 目前默认拒绝把这类变体都挡在外面，但那是「恰好安全」——只要将来某条前缀规则的
+	// 权限点比精确规则弱，加一个斜杠就能降档。与其依赖这个巧合，不如直接拒收非规范路径：
+	// 正常客户端不会产生它，攻击者才需要它。
+	if !isCanonicalPath(r.URL.Path) {
+		response.ErrorMsg(r, consts.CodeForbidden, "非法的请求路径")
+		return
+	}
+
 	if isAdminPublicPath(r.URL.Path) {
 		r.Middleware.Next()
 		return
@@ -343,10 +402,16 @@ func AdminPermissionGuard(r *ghttp.Request) {
 		return
 	}
 
+	// 角色管理与在线自更新是平台级元操作，硬性限定超管，不参与权限点授权
+	if isSuperAdminOnly(r.Method, r.URL.Path) {
+		response.ErrorMsg(r, consts.CodeForbidden, "该操作仅超级管理员可用")
+		return
+	}
+
 	perm := matchPermission(r.Method, r.URL.Path)
 	if perm == "" {
-		// 默认放行：未配置权限规则的接口，对已认证 admin 放行
-		r.Middleware.Next()
+		// 默认拒绝：未配置权限规则的接口不放行（super_admin 已在上方短路）
+		response.ErrorMsg(r, consts.CodeForbidden, "接口未配置权限规则，请联系管理员")
 		return
 	}
 
@@ -362,6 +427,22 @@ func AdminPermissionGuard(r *ghttp.Request) {
 	}
 
 	r.Middleware.Next()
+}
+
+// isCanonicalPath 判断路径是否为规范形式：不含空路径段（"//"）与 "." / ".." 段。
+//
+// 只做判定不做重写：重写会把「当前被默认拒绝挡住的变体」变成放行，等于放宽；
+// 直接拒收既不放宽也不留下将来被利用的缝隙。
+func isCanonicalPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // matchPermission finds the permission required for the given method and path.

@@ -18,7 +18,7 @@ interface Ticket {
 	urgency: string
 	status: string
 	description: string
-	assigned_admin: string
+	assigned_admin_name: string
 	created_at: string
 	updated_at: string
 }
@@ -26,7 +26,7 @@ interface Ticket {
 interface Reply {
 	id: number
 	content: string
-	is_admin: boolean
+	user_type: string
 	author_name: string
 	created_at: string
 }
@@ -228,7 +228,7 @@ const columns = computed<DataTableColumns<Ticket>>(() => [
 	},
 	{ title: '优先级', key: 'urgency', width: 100, render: (row) => renderBadge(row.urgency, urgencyLabel, urgencyBadgeClass) },
 	{ title: '状态', key: 'status', width: 110, render: (row) => renderBadge(row.status, statusLabel, statusBadgeClass) },
-	{ title: '处理人', key: 'assigned_admin', width: 140, render: (row) => h('span', { class: 'text-sm text-gray-500' }, row.assigned_admin || '暂未分配') },
+	{ title: '处理人', key: 'assigned_admin_name', width: 140, render: (row) => h('span', { class: 'text-sm text-gray-500' }, row.assigned_admin_name || '暂未分配') },
 	{
 		title: '创建时间',
 		key: 'created_at',
@@ -290,7 +290,7 @@ onMounted(() => {
 				card-title-key="title"
 				card-badge-key="status"
 				card-subtitle-key="created_at"
-				:card-fields="['id', 'category', 'urgency', 'assigned_admin']"
+				:card-fields="['id', 'category', 'urgency', 'assigned_admin_name']"
 				:row-click="openDetail"
 				@update:page="fetchTickets"
 				@update:page-size="handlePageSizeChange"
@@ -382,7 +382,7 @@ onMounted(() => {
 								{{ urgencyLabel[detailTicket.urgency] || detailTicket.urgency }}
 							</span>
 						</span>
-						<span>处理人: {{ detailTicket.assigned_admin || '暂未分配' }}</span>
+						<span>处理人: {{ detailTicket.assigned_admin_name || '暂未分配' }}</span>
 					</div>
 					<div class="text-xs text-gray-500">
 						创建: {{ detailTicket.created_at ? new Date(detailTicket.created_at).toLocaleString() : '-' }}
@@ -420,25 +420,25 @@ onMounted(() => {
 						v-for="reply in detailReplies"
 						:key="reply.id"
 						class="flex gap-3"
-						:class="reply.is_admin ? 'flex-row-reverse' : 'flex-row'"
+						:class="reply.user_type === 'admin' ? 'flex-row-reverse' : 'flex-row'"
 					>
 						<!-- Avatar -->
 						<div
 							class="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0"
-							:class="reply.is_admin ? 'bg-gradient-to-r from-primary-500 to-primary-600' : 'bg-gradient-to-r from-gray-400 to-gray-500'"
+							:class="reply.user_type === 'admin' ? 'bg-gradient-to-r from-primary-500 to-primary-600' : 'bg-gradient-to-r from-gray-400 to-gray-500'"
 						>
-							{{ reply.is_admin ? (reply.author_name || '客').charAt(0) : '我' }}
+							{{ reply.user_type === 'admin' ? (reply.author_name || '客').charAt(0) : '我' }}
 						</div>
 						<!-- Bubble -->
 						<div
 							class="max-w-[75%] rounded-2xl px-4 py-2.5"
-							:class="reply.is_admin
+							:class="reply.user_type === 'admin'
 								? 'bg-primary-50 border border-primary-100 rounded-tl-md'
 								: 'bg-white border border-gray-200 rounded-tr-md'"
 						>
 							<div class="flex items-center gap-2 mb-1">
-								<span class="text-xs font-medium" :class="reply.is_admin ? 'text-primary-600' : 'text-gray-600'">
-									{{ reply.is_admin ? (reply.author_name || '客服') : '我' }}
+								<span class="text-xs font-medium" :class="reply.user_type === 'admin' ? 'text-primary-600' : 'text-gray-600'">
+									{{ reply.user_type === 'admin' ? (reply.author_name || '客服') : '我' }}
 								</span>
 								<span class="text-xs text-gray-400">{{ reply.created_at ? new Date(reply.created_at).toLocaleString() : '' }}</span>
 							</div>

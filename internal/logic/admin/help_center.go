@@ -28,6 +28,13 @@ func (s *sAdmin) CreateHelpCategory(ctx context.Context, req *v1.HelpCategoryCre
 		return nil, common.NewBusinessError(consts.CodeHelpCategorySlugExists, consts.MsgHelpCategorySlugExists)
 	}
 
+	// 父分类校验：必须存在、必须是顶级分类（仅支持两级）
+	if req.ParentId > 0 {
+		if err = s.validateHelpCategoryParent(ctx, 0, req.ParentId); err != nil {
+			return nil, err
+		}
+	}
+
 	isVisible := true
 	if req.IsVisible != nil {
 		isVisible = *req.IsVisible
@@ -77,6 +84,13 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 		return nil, common.NewBusinessError(consts.CodeBadRequest, "不能将分类设置为自己的子分类")
 	}
 
+	// 父分类校验：必须存在、必须是顶级分类（仅支持两级），且祖先链中不能出现自己（防环导致分类互相锁定无法删除）
+	if req.ParentId > 0 {
+		if err = s.validateHelpCategoryParent(ctx, req.Id, req.ParentId); err != nil {
+			return nil, err
+		}
+	}
+
 	updateData := do.SptCategories{
 		ParentId:    req.ParentId,
 		Name:        req.Name,
@@ -98,6 +112,45 @@ func (s *sAdmin) UpdateHelpCategory(ctx context.Context, req *v1.HelpCategoryUpd
 	}
 
 	return &v1.HelpCategoryUpdateRes{}, nil
+}
+
+// validateHelpCategoryParent 校验父分类：必须存在、必须是顶级分类（仅支持两级结构），
+// 且父分类的祖先链中不能出现 selfId（否则会形成 A→B→A 的环，环上分类因互为父子被删除校验拦截，永远无法删除）
+func (s *sAdmin) validateHelpCategoryParent(ctx context.Context, selfId, parentId int64) error {
+	var parent *struct {
+		Id       int64 `json:"id"`
+		ParentId int64 `json:"parent_id"`
+	}
+	err := dao.SptCategories.Ctx(ctx).Where("id", parentId).Scan(&parent)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return err
+	}
+	if parent == nil {
+		return common.NewBusinessError(consts.CodeHelpCategoryNotFound, consts.MsgHelpCategoryNotFound)
+	}
+	if parent.ParentId != 0 {
+		return common.NewBusinessError(consts.CodeBadRequest, "仅支持两级分类，父分类必须是顶级分类")
+	}
+
+	// 沿祖先链向上检查是否会出现自己（数据异常时用深度上限兜底）
+	current := parent.ParentId
+	for i := 0; i < 50 && current != 0; i++ {
+		if current == selfId {
+			return common.NewBusinessError(consts.CodeBadRequest, "不能将分类挂到自身或其子分类下")
+		}
+		var ancestor *struct {
+			ParentId int64 `json:"parent_id"`
+		}
+		err = dao.SptCategories.Ctx(ctx).Where("id", current).Scan(&ancestor)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return err
+		}
+		if ancestor == nil {
+			return nil
+		}
+		current = ancestor.ParentId
+	}
+	return nil
 }
 
 // DeleteHelpCategory 删除帮助分类
@@ -223,9 +276,10 @@ func (s *sAdmin) CreateHelpArticle(ctx context.Context, req *v1.HelpArticleCreat
 // UpdateHelpArticle 更新帮助文章
 func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdateReq) (*v1.HelpArticleUpdateRes, error) {
 	var article *struct {
-		Id         int64  `json:"id"`
-		CategoryId int64  `json:"category_id"`
-		Status     string `json:"status"`
+		Id          int64       `json:"id"`
+		CategoryId  int64       `json:"category_id"`
+		Status      string      `json:"status"`
+		PublishedAt *gtime.Time `json:"published_at"`
 	}
 	err := dao.SptArticles.Ctx(ctx).Where("id", req.Id).Scan(&article)
 	if err = common.IgnoreScanNoRows(err); err != nil {
@@ -269,8 +323,8 @@ func (s *sAdmin) UpdateHelpArticle(ctx context.Context, req *v1.HelpArticleUpdat
 		data.Content = req.Content
 	}
 
-	// 从草稿发布时设置发布时间
-	if req.Status == "published" && article.Status != "published" {
+	// 从草稿发布时设置发布时间（仅首次发布固定；下架再上架不重置，保持原始发布时间与排序位置）
+	if req.Status == "published" && article.Status != "published" && article.PublishedAt == nil {
 		data.PublishedAt = gtime.Now()
 	}
 

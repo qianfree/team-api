@@ -14,7 +14,6 @@ interface OpenApp {
   app_id: string
   permissions: string[]
   status: string
-  is_sandbox: boolean
   rate_limit: number
   last_used_at: string
   created_at: string
@@ -209,7 +208,6 @@ function copyToClipboard(text: string) {
             <div class="flex-1">
               <div class="flex items-center gap-3 mb-1">
                 <h3 class="text-lg font-semibold text-gray-900">{{ app.name }}</h3>
-                <span v-if="app.is_sandbox" class="badge badge-warning">沙箱</span>
                 <span :class="app.status === 'active' ? 'badge-success' : 'badge-danger'" class="badge">
                   {{ app.status === 'active' ? '已启用' : '已禁用' }}
                 </span>

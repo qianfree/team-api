@@ -75,6 +75,12 @@ function catIcon(idx: number): string {
 	return categoryIconList[idx % categoryIconList.length]
 }
 
+// 解析分类图标：配置的图标名不在支持列表时（历史数据/手工录入），回退到按索引的默认图标
+function resolveIcon(name: string | undefined, idx: number): string {
+	if (name && categoryIconList.includes(name)) return name
+	return catIcon(idx)
+}
+
 const categoryIndexMap = computed(() => {
 	const map = new Map<string, number>()
 	categories.value.forEach((cat, idx) => {
@@ -135,7 +141,7 @@ async function loadList() {
 			})
 			raw = res.data?.data
 		} else if (activeCategorySlug.value) {
-			const res: any = await request.get(`/tenant/help/categories/${activeCategorySlug.value}/articles`, {
+			const res: any = await request.get(`/tenant/help/categories/${encodeURIComponent(activeCategorySlug.value)}/articles`, {
 				params: { page: listPage.value, page_size: pageSize.value },
 			})
 			raw = res.data?.data
@@ -163,7 +169,7 @@ async function fetchArticleDetail(slug: string) {
 	articleLoading.value = true
 	activeArticleSlug.value = slug
 	try {
-		const res: any = await request.get(`/tenant/help/articles/${slug}`)
+		const res: any = await request.get(`/tenant/help/articles/${encodeURIComponent(slug)}`)
 		articleDetail.value = res.data?.data || null
 	} catch {
 		articleDetail.value = null
@@ -200,6 +206,12 @@ function goBackToLanding() {
 	isSearchMode.value = false
 }
 
+// 清空搜索词并退出搜索模式，回到分类落地页（否则清空输入框后仍停留在旧搜索结果）
+function clearSearch() {
+	searchQuery.value = ''
+	if (isSearchMode.value) goBackToLanding()
+}
+
 onMounted(fetchCategories)
 </script>
 
@@ -223,7 +235,7 @@ onMounted(fetchCategories)
 						<button
 							v-if="searchQuery"
 							class="text-gray-400 hover:text-gray-600 transition-colors"
-							@click="searchQuery = ''"
+							@click="clearSearch"
 						>
 							<Icon name="x" size="xs" />
 						</button>
@@ -232,7 +244,7 @@ onMounted(fetchCategories)
 			</div>
 		</div>
 
-		<!-- Mobile: horizontal category pills -->
+		<!-- Mobile: horizontal category pills（顶级 + 子分类平铺，子分类用描边样式区分层级） -->
 		<div v-if="categories.length" class="lg:hidden flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1">
 			<button
 				:class="[
@@ -245,20 +257,37 @@ onMounted(fetchCategories)
 			>
 				全部
 			</button>
-			<button
-				v-for="(cat, idx) in categories"
-				:key="cat.id"
-				:class="[
-					'flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5',
-					activeCategorySlug === cat.slug && !isSearchMode
-						? 'bg-primary-500 text-white'
-						: 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-				]"
-				@click="fetchArticles(cat.slug)"
-			>
-				<span class="w-1.5 h-1.5 rounded-full" :class="catColor(idx).dot" />
-				{{ cat.name }}
-			</button>
+			<template v-for="(cat, idx) in categories" :key="cat.id">
+				<button
+					:class="[
+						'flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5',
+						activeCategorySlug === cat.slug && !isSearchMode
+							? 'bg-primary-500 text-white'
+							: 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+					]"
+					@click="fetchArticles(cat.slug)"
+				>
+					<span class="w-1.5 h-1.5 rounded-full" :class="catColor(idx).dot" />
+					{{ cat.name }}
+				</button>
+				<button
+					v-for="child in cat.children || []"
+					:key="child.id"
+					:class="[
+						'flex-shrink-0 px-2.5 py-1.5 rounded-full text-xs transition-colors flex items-center gap-1 border',
+						activeCategorySlug === child.slug && !isSearchMode
+							? 'bg-primary-500 text-white border-primary-500'
+							: 'bg-white border-gray-200 text-gray-500 hover:border-primary-300 hover:text-primary-600'
+					]"
+					@click="fetchArticles(child.slug)"
+				>
+					<span
+						class="w-1 h-1 rounded-full"
+						:class="activeCategorySlug === child.slug && !isSearchMode ? 'bg-white/80' : 'bg-gray-300'"
+					/>
+					{{ child.name }}
+				</button>
+			</template>
 		</div>
 
 		<!-- Main Layout -->
@@ -367,7 +396,12 @@ onMounted(fetchCategories)
 
 				<!-- Landing: Category Cards -->
 				<template v-else-if="isLanding">
-					<div v-if="categories.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+					<!-- 分类加载中先显示骨架，避免闪现"暂无帮助文档"空态 -->
+					<div v-if="loading" class="card p-12 text-center">
+						<div class="spinner mx-auto mb-3" />
+						<p class="text-sm text-gray-500">加载中...</p>
+					</div>
+					<div v-else-if="categories.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<div
 							v-for="(cat, idx) in categories"
 							:key="cat.id"
@@ -378,7 +412,7 @@ onMounted(fetchCategories)
 								class="h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0"
 								:class="catColor(idx).bg"
 							>
-								<Icon :name="cat.icon || catIcon(idx)" size="md" :class="catColor(idx).text" />
+								<Icon :name="resolveIcon(cat.icon, idx)" size="md" :class="catColor(idx).text" />
 							</div>
 							<div class="flex-1 min-w-0">
 								<h3 class="text-sm font-semibold text-gray-900 group-hover:text-primary-600 transition-colors">
@@ -388,6 +422,17 @@ onMounted(fetchCategories)
 								<div class="flex items-center gap-1 mt-2 text-xs text-gray-400">
 									<Icon name="document" size="xs" />
 									{{ cat.article_count }} 篇文章
+								</div>
+								<!-- 子分类入口（桌面端落地卡片此前也只有顶级可点） -->
+								<div v-if="cat.children?.length" class="flex flex-wrap gap-1.5 mt-2.5">
+									<button
+										v-for="child in cat.children"
+										:key="child.id"
+										class="px-2 py-0.5 rounded-full text-xs text-gray-500 bg-gray-50 border border-gray-200 hover:border-primary-300 hover:text-primary-600 transition-colors"
+										@click.stop="fetchArticles(child.slug)"
+									>
+										{{ child.name }} · {{ child.article_count }}
+									</button>
 								</div>
 							</div>
 						</div>

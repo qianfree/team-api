@@ -13,3 +13,6 @@ func (c *ControllerV1) TenantUsageLogs(ctx context.Context, req *v1.TenantUsageL
 func (c *ControllerV1) TenantUsageLogsExport(ctx context.Context, req *v1.TenantUsageLogsExportReq) (res *v1.TenantUsageLogsExportRes, err error) {
 	return service.Tenant().ExportUsageLogs(ctx, req)
 }
+func (c *ControllerV1) TenantUsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsSummaryReq) (res *v1.TenantUsageLogsSummaryRes, err error) {
+	return service.Tenant().UsageLogsSummary(ctx, req)
+}

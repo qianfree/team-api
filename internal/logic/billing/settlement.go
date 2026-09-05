@@ -389,7 +389,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	if pricingResult != nil {
 		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, usage, settlementResult, relayInfo)
 		snapshotJSON = SnapshotToJSON(snapshot)
-		summaryText = GenerateBillingSummary(snapshot)
+		summaryText = GenerateBillingSummary(ctx, snapshot)
 		settlementResult.BillingMode = pricingResult.BillingMode
 		settlementResult.BillingSource = pricingResult.BillingSource
 		settlementResult.RateMultiplier = pricingResult.DiscountRatio

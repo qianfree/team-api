@@ -659,6 +659,9 @@ func (s *sTenant) ApiKeyReveal(ctx context.Context, req *v1.TenantApiKeyRevealRe
 		return nil, lcommon.NewBusinessError(consts.CodeBadRequest, "密钥解密失败")
 	}
 
+	// 查看明文属于敏感读取（Key 可长期调用计费接口），落敏感访问日志留痕
+	lcommon.LogSensitiveAccess(ctx, userID, "tenant", "api_key", req.Id, "reveal", "查看 API Key 明文")
+
 	return &v1.TenantApiKeyRevealRes{
 		Key:       plainKey,
 		KeyPrefix: info.KeyPrefix,

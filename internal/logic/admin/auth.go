@@ -84,12 +84,13 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	if !crypto.VerifyPassword(req.Password, user.PasswordHash) {
 		_ = common.RecordLoginHistory(ctx, "admin", user.Id, 0, "password", ipAddress, ua, deviceFP, false, "密码错误")
 
-		// 原子递增失败次数
+		// 原子递增失败次数；锁定阈值与时长取自安全配置（sys_options）
 		updateData := do.SysAdminUsers{FailedAttempts: gdb.Raw("failed_attempts + 1")}
 		failedAttempts := user.FailedAttempts + 1
+		maxAttempts, lockoutMinutes := common.LoginLockoutPolicy(ctx)
 
-		if failedAttempts >= 5 {
-			lockedUntil := time.Now().Add(30 * time.Minute)
+		if failedAttempts >= maxAttempts {
+			lockedUntil := time.Now().Add(time.Duration(lockoutMinutes) * time.Minute)
 			updateData.LockedUntil = gtime.NewFromTime(lockedUntil)
 			_, err := dao.SysAdminUsers.Ctx(ctx).
 				Where("id", user.Id).
@@ -98,7 +99,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 				g.Log().Errorf(ctx, "更新管理员账号锁定状态失败: %v", err)
 			}
 			return nil, common.NewBusinessError(consts.CodeAccountLocked,
-				"连续 5 次密码错误，账号已锁定 30 分钟")
+				fmt.Sprintf("连续 %d 次密码错误，账号已锁定 %d 分钟", maxAttempts, lockoutMinutes))
 		}
 
 		_, err := dao.SysAdminUsers.Ctx(ctx).
@@ -160,6 +161,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// Generate token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)
@@ -200,6 +202,7 @@ func (s *sAdmin) Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLog
 	res.User.Username = user.Username
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
+	res.Permissions, res.Roles = loadSessionPermissions(ctx, user.Id, user.Role)
 
 	// 检查待接受协议
 	if common.Config().GetBool(ctx, "agreement_enabled") {
@@ -239,12 +242,13 @@ func (s *sAdmin) Logout(ctx context.Context, _ *v1.AdminLogoutReq) (*v1.AdminLog
 
 // Refresh handles token refresh.
 func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.AdminRefreshRes, error) {
-	refreshTokenHash := common.HashRefreshToken(req.RefreshToken)
-
-	// Find session by refresh token hash
-	session, err := common.GetSessionByRefreshHash(ctx, refreshTokenHash)
+	// 定位会话并做重放检测：已轮换的旧令牌再次出现时，会话在内部被整体吊销
+	session, replayed, err := common.GetSessionByRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, common.NewUnauthorizedError("会话不存在")
+	}
+	if replayed {
+		return nil, common.NewUnauthorizedError("登录状态已失效，请重新登录")
 	}
 	if session == nil {
 		return nil, common.NewUnauthorizedError("会话已过期或不存在")
@@ -259,17 +263,10 @@ func (s *sAdmin) Refresh(ctx context.Context, req *v1.AdminRefreshReq) (*v1.Admi
 		return nil, common.NewBusinessError(consts.CodeTokenRevoked, consts.MsgTokenRevoked)
 	}
 
-	// Generate new refresh token
-	newRefreshToken, err := common.GenerateRefreshToken()
-	if err != nil {
-		return nil, err
-	}
-	newRefreshTokenHash := common.HashRefreshToken(newRefreshToken)
-
-	// Rotate session
+	// Rotate session（新令牌内嵌会话 ID，供下次重放检测定位）
 	ipAddress := g.RequestFromCtx(ctx).GetClientIp()
 	deviceInfo := common.ExtractDeviceInfo(ctx)
-	err = common.RefreshSession(ctx, session.Id, refreshTokenHash, newRefreshTokenHash, ipAddress, deviceInfo)
+	newRefreshToken, err := common.RotateSessionRefreshToken(ctx, session.Id, req.RefreshToken, ipAddress, deviceInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -342,9 +339,9 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 			ids = append(ids, id)
 		}
 		var users []entity.SysAdminUsers
-		_ = dao.SysAdminUsers.Ctx(ctx).Fields("id, username, display_name").WhereIn("id", ids).Scan(&users)
+		_ = dao.SysAdminUsers.Ctx(ctx).Fields("id, username, display_name, role").WhereIn("id", ids).Scan(&users)
 		for _, u := range users {
-			userMap[u.Id] = adminUserBrief{Username: u.Username, DisplayName: u.DisplayName}
+			userMap[u.Id] = adminUserBrief{Username: u.Username, DisplayName: u.DisplayName, Role: u.Role}
 		}
 	}
 
@@ -355,6 +352,7 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 			UserId:      sess.UserId,
 			Username:    userMap[sess.UserId].Username,
 			DisplayName: userMap[sess.UserId].DisplayName,
+			Role:        userMap[sess.UserId].Role,
 			IpAddress:   sess.IpAddress,
 			DeviceInfo:  sess.DeviceInfo,
 			IsCurrent:   sess.Id == currentSessionID,
@@ -375,6 +373,31 @@ func (s *sAdmin) ListSessions(ctx context.Context, req *v1.AdminSessionListReq) 
 	}, nil
 }
 
+// assertCanOperateSessions 校验当前调用者能否处置目标管理员账号的会话。
+//
+// 超级管理员的登录态任何人都不能代为操作（包括其他超管）：踢掉超管会话等同于
+// 掐断平台最高权限入口，一旦下放就存在「借会话管理打击超管」的滥用路径。
+// 唯一例外是账号本人管理自己的登录设备（等同在其他设备登出）。
+// 查看不受限：会话列表对超管账号仍然展示，只是不可操作。
+func assertCanOperateSessions(ctx context.Context, targetUserID int64) error {
+	if targetUserID == 0 {
+		return nil
+	}
+	var user *entity.SysAdminUsers
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", targetUserID).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return err
+	}
+	// 目标账号不存在或不是超管：无可保护对象，交由路由层 user:edit 把关
+	if user == nil || user.Role != "super_admin" {
+		return nil
+	}
+	if common.GetCtxUserID(ctx) == targetUserID {
+		return nil
+	}
+	return common.NewBusinessError(consts.CodeForbidden, "超级管理员的会话仅限本人管理，其他人只能查看")
+}
+
 // RevokeSession revokes a specific session.
 func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionReq) (*v1.AdminRevokeSessionRes, error) {
 	// Look up session to get jti for Redis revocation
@@ -383,6 +406,9 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 		return nil, err
 	}
 	if sess != nil {
+		if err := assertCanOperateSessions(ctx, sess.UserId); err != nil {
+			return nil, err
+		}
 		common.MarkSessionRevoked(ctx, sess.Jti)
 	}
 	err = common.RevokeSession(ctx, "admin", req.Id)
@@ -394,6 +420,9 @@ func (s *sAdmin) RevokeSession(ctx context.Context, req *v1.AdminRevokeSessionRe
 
 // ForceLogout revokes all sessions for a specific user.
 func (s *sAdmin) ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error) {
+	if err := assertCanOperateSessions(ctx, req.Id); err != nil {
+		return nil, err
+	}
 	err := common.RevokeAllSessions(ctx, "admin", req.Id)
 	if err != nil {
 		return nil, err
@@ -446,4 +475,68 @@ func (s *sAdmin) ChangePassword(ctx context.Context, req *v1.AdminChangePassword
 	common.RevokeAllSessions(ctx, "admin", userID)
 
 	return nil, nil
+}
+
+// loadSessionPermissions 装载登录响应所需的有效权限与角色。
+//
+// 权限查询失败不阻断登录：鉴权以服务端为准，前端权限集只影响菜单与按钮渲染。
+// 此时返回空集合，用户会看到一个空菜单，刷新页面（走 /auth/me）即可恢复，
+// 好过因为一次查询抖动把人挡在登录页外。
+func loadSessionPermissions(ctx context.Context, userID int64, role string) ([]string, []v1.AdminRoleBrief) {
+	perms, err := GetEffectivePermissions(ctx, userID, role)
+	if err != nil {
+		g.Log().Warningf(ctx, "加载管理员 %d 有效权限失败: %v", userID, err)
+		perms = []string{}
+	}
+	if perms == nil {
+		perms = []string{}
+	}
+
+	roles := []v1.AdminRoleBrief{}
+	// 超级管理员不通过角色获得权限，不查关联表
+	if role != "super_admin" {
+		if briefs, err := GetUserRoleBriefs(ctx, userID); err != nil {
+			g.Log().Warningf(ctx, "加载管理员 %d 角色失败: %v", userID, err)
+		} else if briefs != nil {
+			roles = briefs
+		}
+	}
+	return perms, roles
+}
+
+// GetMe 返回当前登录用户的信息与有效权限。
+//
+// 权限此前只在登录响应里下发一次，之后前端从 localStorage 恢复：管理员改了某人的权限，
+// 对方不重新登录就一直按旧权限渲染菜单。前端在应用启动与 token 刷新后调用本接口刷新。
+func (s *sAdmin) GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, error) {
+	userID := common.GetCtxUserID(ctx)
+	if userID == 0 {
+		return nil, common.NewBusinessError(consts.CodeUnauthorized, consts.MsgUnauthorized)
+	}
+
+	var user *struct {
+		Id          int64  `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Role        string `json:"role"`
+	}
+	err := dao.SysAdminUsers.Ctx(ctx).Where("id", userID).Scan(&user)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, common.NewNotFoundError("用户")
+	}
+
+	perms, roles := loadSessionPermissions(ctx, user.Id, user.Role)
+	return &v1.AdminMeRes{
+		ID:          user.Id,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Email:       user.Email,
+		Role:        user.Role,
+		Permissions: perms,
+		Roles:       roles,
+	}, nil
 }

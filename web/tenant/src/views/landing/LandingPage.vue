@@ -96,7 +96,7 @@
                     </div>
                     <div class="mock-footer">
                       <span>额度总计</span>
-                      <span class="mock-footer-value">$128.50 / $200.00</span>
+                      <span class="mock-footer-value">{{ currencySymbol }}128.50 / {{ currencySymbol }}200.00</span>
                     </div>
                   </div>
 
@@ -165,7 +165,7 @@
     <footer aria-label="页脚" class="landing-footer">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
         <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
-          <span class="text-xs text-gray-400">&copy; 2026 qianfree. Released under AGPL-3.0.</span>
+          <span class="text-xs text-gray-400">&copy; 2026 qianfree. Released under: AGPL-3.0-or-later.</span>
           <a href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer"
              class="text-xs text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1.5">
             Powered by <span class="font-medium text-gray-500">Team-API</span>
@@ -231,6 +231,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useSeo } from '@/composables/useSeo'
 import { useHead } from '@unhead/vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import { currencySymbol } from '@/composables/useCurrency'
 import { marked } from 'marked'
 import request from '@/utils/request'
 
@@ -392,7 +393,7 @@ useHead({
         url: 'https://github.com/qianfree/team-api',
         applicationCategory: 'DeveloperApplication',
         operatingSystem: 'Linux, macOS, Windows',
-        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '开源免费，AGPL-3.0 协议' },
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '社区版开源免费，采用 AGPL-3.0-or-later 协议' },
         featureList: [
           '多租户与团队协作（RBAC 权限）',
           '统一 AI 代理层（40+ 供应商适配器）',
