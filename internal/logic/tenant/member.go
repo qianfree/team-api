@@ -865,11 +865,17 @@ func (s *sTenant) ResetMemberPassword(ctx context.Context, req *v1.TenantMemberR
 		return nil, err
 	}
 
+	// 重置密码时同步清空失败计数与锁定：成员多半是因忘记密码连错被锁才找管理员重置，
+	// 只改哈希不清锁会导致新密码在锁定期内依然登不进（与 admin 端/邮箱自助重置行为对齐）。
+	// 注意必须用 map 而非 do 结构体：do 字段为 interface{}，nil 表示「未设置」会被跳过，
+	// locked_until 置 NULL 必须通过 map 显式传递。
 	_, err = dao.TntUsers.Ctx(ctx).
 		Where("id", memberID).
 		Where("tenant_id", tenantID).
-		Data(do.TntUsers{
-			PasswordHash: passwordHash,
+		Data(map[string]interface{}{
+			"password_hash":   passwordHash,
+			"failed_attempts": 0,
+			"locked_until":    nil,
 		}).Update()
 	if err != nil {
 		return nil, err
