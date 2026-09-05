@@ -917,3 +917,13 @@ s.Start()
 - 尾部斜杠已由框架处理，无需自行 trim，**也不要因此把 `/xxx/` 当作合法输入去写规则**——handler 永远看不到它。
 
 排查信号：某接口"多加一个斜杠就能绕过权限/限流"；中间件按路径匹配的规则表里出现了同一 handler 的两条规则。
+
+### 2026-09-05：`Model.Value()` 不带 Fields 返回结果集第一列（id），不是想要的业务列
+
+**问题**：`internal/logic/common/config.go` 的 `SetOption` 中，本位币只读保护用 `dao.SysOptions.Ctx(ctx).Where("key", key).Value()` 读取已存的 `billing_currency` 值，与提交值比对实现"相同值放行"。但 `Model.Value()` 不指定字段时，GoFrame 生成 `SELECT * ... LIMIT 1` 并取**结果集第一列**（`gdb_core_underlying.go` 中 `FirstResultColumn = columnTypes[0].Name()`），对 `sys_options` 来说是 `id`。于是 `old` 永远是行 id（如 `"42"`），与 `"USD"/"CNY"` 永不相等——系统初始化后，设置页保存整个 payment 分类必报"本位币在系统初始化后不可更改"，即使用户根本没改本位币。
+
+**原因**：`Value()` 的语义是"返回查询结果第一行第一列的值"，取哪一列完全由 `Fields()`（或 `Value(fieldsAndWhere...)` 参数）决定；不带字段调用时落到表的第一列（通常是 `id`），且不报错，属于静默取错列。
+
+**修复方式**：显式指定列 `dao.SysOptions.Ctx(ctx).Where("key", key).Fields("value").Value()`，与代码库其余 5 处 `Fields("xxx").Value()` 的既有写法保持一致。
+
+**正确做法（通用规则）**：`Value()` / `Array()` 这类取单列的快捷方法**必须**显式 `Fields("列名")`，否则取到的是 `id`。评审信号：`grep -rn '\.Value()'` 命中且前面没有 `.Fields(` 的调用。
