@@ -137,6 +137,15 @@ func (s *sOpen) OpenMemberCreate(ctx context.Context, req *v1.OpenMemberCreateRe
 		return nil, err
 	}
 
+	// 团队开关与席位上限：控制台的 InviteMember 两者都校验，开放平台此前一项都没有，
+	// 于是买 10 个席位的租户可以从这里建出任意多成员，套餐限制被整条绕开。
+	if err := requireOpenTeamEnabled(ctx, tenantID); err != nil {
+		return nil, err
+	}
+	if err := requireOpenMemberSeat(ctx, tenantID); err != nil {
+		return nil, err
+	}
+
 	count, _ := dao.TntUsers.Ctx(ctx).Where("tenant_id", tenantID).Where("email", req.Email).Count()
 	if count > 0 {
 		return nil, errOpen(consts.CodeUsernameExists, "邮箱已存在")
@@ -173,17 +182,44 @@ func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateRe
 		return nil, err
 	}
 
+	// 必须先取目标成员的角色：同文件的 OpenMemberDelete 挡了 owner，这里此前没挡。
+	// 请求校验 v:"in:admin,member" 只拦住了「把别人提升为 owner」，没拦住「把 owner 降为
+	// member」或「把 owner 置为 disabled」—— 而租户 admin 本就能建带 members:write 的应用，
+	// 于是 admin 可以经由开放平台把组织所有者踢出去，控制台的四处 owner 保护全被绕过。
+	var target *struct {
+		Role string `json:"role"`
+	}
+	err := dao.TntUsers.Ctx(ctx).
+		Where("id", req.Id).
+		Where("tenant_id", tenantID).
+		Fields("role").
+		Scan(&target)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, errOpen(consts.CodeNotFound, "用户不存在")
+	}
+
 	data := do.TntUsers{}
 	hasUpdate := false
+	roleChanged := false
 	if req.Role != nil {
+		if target.Role == "owner" {
+			return nil, errOpen(consts.CodeForbidden, "不能修改所有者的角色")
+		}
 		data.Role = *req.Role
 		hasUpdate = true
+		roleChanged = *req.Role != target.Role
 	}
 	if req.DisplayName != nil {
 		data.DisplayName = *req.DisplayName
 		hasUpdate = true
 	}
 	if req.Status != nil {
+		if target.Role == "owner" && *req.Status != "active" {
+			return nil, errOpen(consts.CodeForbidden, "不能禁用组织所有者")
+		}
 		data.Status = *req.Status
 		hasUpdate = true
 	}
@@ -192,8 +228,19 @@ func (s *sOpen) OpenMemberUpdate(ctx context.Context, req *v1.OpenMemberUpdateRe
 		return nil, nil
 	}
 
-	_, err := dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).OmitNil().Data(data).Update()
-	return nil, err
+	if _, err = dao.TntUsers.Ctx(ctx).Where("id", req.Id).Where("tenant_id", tenantID).OmitNil().Data(data).Update(); err != nil {
+		return nil, err
+	}
+
+	// 与控制台 UpdateMemberRole 对齐：角色变更或停用后撤销该成员的活跃会话。
+	// 租户角色本就每请求从库重读，这一步是纵深防御 —— 失败只记日志，不回滚已生效的变更。
+	if roleChanged || (req.Status != nil && *req.Status != "active") {
+		if revokeErr := common.RevokeAllSessions(ctx, "tenant", req.Id); revokeErr != nil {
+			g.Log().Warningf(ctx, "[OpenMemberUpdate] 撤销成员会话失败 user=%d: %v", req.Id, revokeErr)
+		}
+	}
+
+	return nil, nil
 }
 
 func (s *sOpen) OpenMemberDelete(ctx context.Context, req *v1.OpenMemberDeleteReq) (*v1.OpenMemberDeleteRes, error) {
@@ -449,6 +496,30 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 		return nil, err
 	}
 
+	// 权限范围此前被硬编码为 "full" —— 开放平台签发的每一把 Key 都是最大权限，
+	// 应用方连「只发一把 chat_only 的 Key」都做不到。改为按请求取值（默认仍是 full，
+	// 保持既有调用方行为不变），取值集合与 OpenProjectKeyCreate 对齐。
+	scope := req.Scope
+	if scope == "" {
+		scope = "full"
+	}
+
+	// project_id 可选，填写时必须是本租户下的活跃项目。
+	// relay 的项目状态闸门是 `if k.ProjectID > 0`，只有真正写入 project_id，项目归档/停用
+	// 才会连带吊销这把 Key；此前这里恒不写 project_id，签出的 Key 完全不受项目生命周期约束。
+	// 不填则是租户级集成密钥（无项目、无成员归属），仍按 key_type=project 存储 —— 控制台
+	// 的项目密钥列表正是按 key_type 过滤，改成 personal 反而会因缺少 user_id 而在界面上
+	// 彻底消失、无法吊销。
+	if req.ProjectID > 0 {
+		project, perr := s.getProjectOrError(ctx, req.ProjectID, tenantID)
+		if perr != nil {
+			return nil, perr
+		}
+		if project.Status != "active" {
+			return nil, errOpen(consts.CodeProjectNotActive, "项目状态不可用")
+		}
+	}
+
 	rawKey, prefix, encryptedKey, err := relay.GenerateApiKey(ctx)
 	if err != nil {
 		return nil, err
@@ -460,16 +531,21 @@ func (s *sOpen) OpenKeyCreate(ctx context.Context, req *v1.OpenKeyCreateReq) (*v
 	}
 	quotaLimitDecimal := billing.NewFromFloat(quotaLimit)
 
-	result, err := dao.ApiKeys.Ctx(ctx).Data(do.ApiKeys{
+	insertData := do.ApiKeys{
 		TenantId:     tenantID,
 		Name:         req.Name,
 		EncryptedKey: encryptedKey,
 		KeyPrefix:    prefix,
-		Scope:        "full",
+		Scope:        scope,
 		Status:       "active",
 		TotalQuota:   &quotaLimitDecimal,
 		KeyType:      "project",
-	}).Insert()
+	}
+	if req.ProjectID > 0 {
+		insertData.ProjectId = req.ProjectID
+	}
+
+	result, err := dao.ApiKeys.Ctx(ctx).Data(insertData).Insert()
 	if err != nil {
 		return nil, err
 	}
@@ -686,6 +762,41 @@ func (s *sOpen) OpenBillingQuery(ctx context.Context, req *v1.OpenBillingQueryRe
 	}
 
 	return &v1.OpenBillingQueryRes{List: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// requireOpenTeamEnabled 校验租户已启用团队功能。
+// 与 internal/logic/tenant 的 requireTeamEnabled 同义；那个是包内私有函数，
+// 此处不便跨包复用（tenant 包体量大且反向依赖会形成环），故按同一判据本地实现。
+func requireOpenTeamEnabled(ctx context.Context, tenantID int64) error {
+	enabled, err := dao.TntTenants.Ctx(ctx).
+		Where("id", tenantID).Fields("team_enabled").Value()
+	if err != nil {
+		return err
+	}
+	if !enabled.Bool() {
+		return errOpen(consts.CodeTeamNotEnabled, consts.MsgTeamNotEnabled)
+	}
+	return nil
+}
+
+// requireOpenMemberSeat 校验租户仍有可用席位，判据与控制台 InviteMember 完全一致：
+// 活跃成员数 < 生效上限（上限为 0 表示不限）。
+func requireOpenMemberSeat(ctx context.Context, tenantID int64) error {
+	memberCount, err := dao.TntUsers.Ctx(ctx).
+		Where("tenant_id", tenantID).
+		Where("status", "active").
+		Count()
+	if err != nil {
+		return err
+	}
+	effectiveMaxMembers, _, err := billing.GetTenantEffectiveLimits(ctx, tenantID)
+	if err != nil {
+		return gerror.Wrapf(err, "查询租户限制信息失败")
+	}
+	if effectiveMaxMembers > 0 && memberCount >= effectiveMaxMembers {
+		return errOpen(consts.CodeMemberLimitReached, consts.MsgMemberLimitReached)
+	}
+	return nil
 }
 
 // errOpen is a helper to create open platform errors with proper gerror codes.

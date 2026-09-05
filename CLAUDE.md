@@ -99,8 +99,6 @@ team-api/
 ├── docs/                       # 项目文档
 │   ├── 开发计划-v2/            #   分周期开发计划（周期一～六）
 │   └── 协议文档/               #   协议相关文档
-├── new-api/                    # 参考项目（只读，不修改）
-├── sub2api/                    # 参考项目（只读，不修改）
 ├── main.go                     # 应用入口
 ├── go.mod
 └── Makefile
@@ -223,7 +221,7 @@ cmd（路由注册）
 
 ### 多租户隔离
 
-行级隔离：所有业务表包含 `tenant_id` 字段，GoFrame ORM 中间件全局注入 `WHERE tenant_id = ?`。请求链路通过 Context 传递 tenant_id。
+行级隔离：所有业务表包含 `tenant_id` 字段。**没有 ORM 全局注入/hook 这类安全网**——隔离完全靠 logic 层手写过滤：租户身份一律取 `middleware.GetTenantID(ctx)`（来自 TenantAuth 注入的 ctx，客户端无法伪造），所有涉及租户数据的查询/更新必须显式带 `tenant_id` 条件；按 ID 取对象时用双键校验（`WHERE id = ? AND tenant_id = ?`）。新增查询漏写该条件即直接跨租户，评审时必须逐条核对。
 
 ### 路由前缀
 
@@ -491,3 +489,7 @@ cmd（路由注册）
 | `gf gen pb` | 生成 protobuf 文件 | 需要时 |
 | `gf run` | 热编译运行开发服务器 | 开发调试 |
 | `gf build` | 编译生产二进制 | 构建部署 |
+
+
+## AI工具要求
+不允许在提交内容中加入AI工具相关的身份表示和内容，不允许将AI作为仓库贡献者提交

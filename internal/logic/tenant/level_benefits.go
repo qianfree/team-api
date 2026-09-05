@@ -11,6 +11,12 @@ import (
 
 // GetLevelBenefits returns all level configurations and the tenant's current level info.
 func (s *sTenant) GetLevelBenefits(ctx context.Context, req *v1.TenantLevelBenefitsReq) (*v1.TenantLevelBenefitsRes, error) {
+	// 返回值含组织累计充值额（bil_wallets.cumulative_recharge，财务数据），
+	// member 角色不应看到；组织页面前端本就限 owner，此处与组织管理同门槛
+	if role := middleware.GetUserRole(ctx); role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
+
 	tenantID := middleware.GetTenantID(ctx)
 
 	// Query all level configs ordered by level

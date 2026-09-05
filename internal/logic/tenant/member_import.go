@@ -34,7 +34,14 @@ type ImportResult struct {
 }
 
 // MemberImport parses CSV content, validates, creates an import record.
+//
+// 角色校验此前缺失：批量导入会直接创建租户成员账号（并按套餐占用席位），
+// 与 MemberCreate / MemberInvite 是同一类动作，必须同为 owner/admin。
 func (s *sTenant) MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	if err := requireTeamEnabled(ctx); err != nil {
 		return nil, err
 	}

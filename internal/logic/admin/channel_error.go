@@ -9,6 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 
 	v1 "github.com/qianfree/team-api/api/admin/v1"
+	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
 )
 
@@ -194,4 +195,19 @@ func (s *sAdmin) ChannelErrorCategories(ctx context.Context, req *v1.ChannelErro
 			{"value": "unknown", "label": "未知错误"},
 		},
 	}, nil
+}
+
+// ChannelErrorClear 硬删除全部渠道错误事件。
+// 错误风暴时事件表堆积很快，用 TRUNCATE 而非逐行 DELETE 秒级清空并立即归还磁盘空间。
+// TRUNCATE 不返回行数，故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+// 注意异步写入器（DefaultChannelErrorWriter）清空后继续写入新事件，属预期行为。
+func (s *sAdmin) ChannelErrorClear(ctx context.Context, _ *v1.ChannelErrorClearReq) (*v1.ChannelErrorClearRes, error) {
+	count, err := dao.ChnErrorEvents.Ctx(ctx).Count()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := g.DB().Ctx(ctx).Exec(ctx, "TRUNCATE TABLE chn_error_events RESTART IDENTITY"); err != nil {
+		return nil, err
+	}
+	return &v1.ChannelErrorClearRes{Deleted: int64(count)}, nil
 }

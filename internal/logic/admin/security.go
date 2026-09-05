@@ -69,6 +69,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	// Generate token pair
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "admin", user.Role, 0, sessionID, jti)
@@ -98,6 +99,7 @@ func (s *sAdmin) Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.
 	res.User.Username = user.Username
 	res.User.DisplayName = user.DisplayName
 	res.User.Role = user.Role
+	res.Permissions, res.Roles = loadSessionPermissions(ctx, user.Id, user.Role)
 	return res, nil
 }
 
@@ -254,6 +256,8 @@ func (s *sAdmin) LoginHistory(ctx context.Context, req *v1.AdminLoginHistoryReq)
 type adminUserBrief struct {
 	Username    string
 	DisplayName string
+	// Role 用于会话列表标记超管会话（前端隐藏撤销入口），其他场景可为空
+	Role string
 }
 
 func adminUserIdsByUsername(ctx context.Context, keyword string) ([]int64, error) {

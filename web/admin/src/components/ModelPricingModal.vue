@@ -3,10 +3,9 @@ import { ref, reactive, watch, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconCloudDownload, IconRefresh } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
-import { displayCurrency, formatBilling, cnyToUsd } from '@/composables/useCurrency'
+import { displayCurrency, currencySymbol, formatBilling, cnyToUsd } from '@/composables/useCurrency'
 
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
-const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
 
 const props = defineProps<{
 	visible: boolean

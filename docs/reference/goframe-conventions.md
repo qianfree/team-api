@@ -841,3 +841,79 @@ sender := common.NewEmailSender(&common.EmailConfig{
 - 同一份配置有多个消费方时，**必须收敛到同一个加载函数**（本例为 `EmailConfigFromOptions`），禁止各处自行拼装配置结构体。
 
 排查信号：某个功能"配置明明填了却不生效"，而同类功能正常；`grep -rn "g.Cfg()" ` 命中的键在 `manifest/config/*.yaml` 中搜不到。
+
+### 2026-09-01：测试里用 `gtest.DataPath()` 当 server 名，Windows 下 `Start()` 静默失败
+
+**问题**：`internal/middleware` 的 `request_id_test.go` 三个用例在 Windows 上全部失败，断言形如 `EXPECT 0 == 10`、`EXPECT 0 == 100`，或客户端报 `EOF`——看起来像中间件没生成 RequestId，实则请求根本没发出去。
+
+**原因**：测试用路径当服务器名：
+
+```go
+s := g.Server(gtest.DataPath("request-id-test"))   // 名字是 D:\...\testdata\request-id-test
+s.Start()                                          // 返回值被丢弃
+```
+
+GoFrame 用**服务器名**拼 session 存储目录：`%TEMP%\gsessions\<server-name>`。名字里带盘符冒号时路径非法，`os.MkdirAll` 失败，`Start()` 返回 error——但测试没接这个返回值，于是服务器没监听，`GetListenedPort()` 返回 `-1`，客户端请求 `http://127.0.0.1:-1` 直接 EOF。Linux 下 `gtest.DataPath` 返回的路径不含冒号，同样的代码能跑通，所以问题只在 Windows 暴露。
+
+同一文件还继承了 `manifest/config/config.yaml` 的 `server.address: :18888`（真实应用端口），即便名字合法也会与本机运行中的服务抢端口。
+
+**修复**：服务器名改用普通标识符，并显式绑定空闲端口：
+
+```go
+s := g.Server("mw-request-id-dual")   // 纯名字，不是路径
+s.SetAddr("127.0.0.1:0")             // 不继承配置文件端口，让系统分配
+s.SetDumpRouterMap(false)
+s.Start()
+```
+
+**正确做法（通用规则）**：
+
+- **`g.Server(name)` 的参数是「服务器名」不是「路径」**：它会参与 session 目录等文件路径拼接，只能用普通标识符（字母/数字/连字符）。`gtest.DataPath()` 是用来定位测试数据文件的，不要拿来当名字。
+- **测试里起 server 必须 `SetAddr("127.0.0.1:0")`**：`g.Server()` 会读取项目配置，默认继承生产监听端口，在本机跑着服务时必然冲突。
+- **不要丢弃 `s.Start()` 的 error**：Start 失败后测试仍会继续跑，症状表现为断言数值不对或 EOF，与真正原因（服务器没起来）完全无关，极易误导排查方向。
+
+排查信号：测试断言"期望 N 实际 0"且伴随 `EOF`；`GetListenedPort()` 返回 `-1`；同一测试在 Linux CI 通过但本地 Windows 失败。
+
+### 2026-09-01（二）：channel_proxy_url 双数据源分裂——设置页保存的代理对 relay 渠道转发不生效
+
+**问题**：管理后台「系统设置 → 渠道配置 → 代理地址」保存后，渠道编辑中开启「使用代理」的请求并不走该代理。设置页把 `channel_proxy_url` 写入 `sys_options`，但 relay 层（`relay/common/http_client.go` 的 `GetSystemProxyURL`）读的是 `g.Cfg().MustGet(ctx, "channel_proxy_url")`——即 `manifest/config/config.yaml` 配置文件里的**同名 key**。两套数据源互不相通：设置页的值只被 `oauth/client.go`（OAuth 出站）读到，它宣称的主要用途（渠道转发代理、Realtime WebSocket 拨号）从未读到过。
+
+**原因**：同一配置 key 被两个模块各自实现了读取逻辑，一个走设置注册表（`sys_options`），一个走 `g.Cfg()`（配置文件），没有收敛到同一加载入口。`g.Cfg().MustGet` 对键不存在不报错、静默返回空串（见 2026-08-31 记录），掩盖了分裂——渠道一直"代理未配置"，无人察觉。
+
+**修复**：
+
+1. `relay/common/http_client.go`：`GetSystemProxyURL` 不再读 `g.Cfg()`（含 10s TTL 轮询缓存一并删除），改为读包内 atomic 值，新增 `SetSystemProxyURL` setter；
+2. `internal/cmd/cmd.go`：沿用 `SetGlobalRequestTimeoutSeconds` 的桥接注入模式（relay 不反向 import internal，会循环依赖）——启动时 + `OnSettingsChanged("channel_proxy_url")` 时从 `sys_options` 读取并注入，免重启、多实例经 Redis pub/sub 各自刷新；
+3. `config.example.yaml` 删除已失效的 `channel_proxy_url` key，配置文件不再承载该配置。
+
+**正确做法（通用规则）**：
+
+- **一个配置 key 只能有一个数据源、一个加载入口**。凡注册进设置注册表（`sys_options`，管理员可改）的 key，所有消费方——包括 relay 这类不 import internal 的独立模块——都必须经同一加载函数取值；独立模块用「setter 注入 + OnSettingsChanged 刷新」桥接（本项目既有模式：全局超时 `SetGlobalRequestTimeoutSeconds`）。
+- **禁止用 `g.Cfg()` 读取任何注册表里的 key**：同名 key 在配置文件里恰好存在时会造成"双真相源"，配置文件的值会静默覆盖管理员在后台设置的值（或反之），且 `MustGet` 对键缺失不报错，分裂长期不可见。
+
+排查信号：设置页某配置"保存了但不生效"；`grep -rn "g.Cfg()"` 命中的 key 同时出现在 `settings_registry.go` 中。
+
+### 2026-09-03（三）：ghttp 归一化尾部斜杠但不归一化中间的重复斜杠
+
+**问题**：管理后台的授权（`AdminPermissionGuard`）按 `r.URL.Path` 做精确路径 / 前缀 / 前缀+后缀三段匹配。若框架对路径的归一化范围与预期不符，同一个 handler 就可能有多种匹配结果——加一个斜杠就绕到另一条（可能更弱的）规则上。
+
+**框架实测行为**（GoFrame v2，`ghttp` 路由，实测端口探针验证）：
+
+| 请求路径 | 是否匹配到路由 | handler 里的 `r.URL.Path` |
+|----------|----------------|---------------------------|
+| `/api/admin/roles` | ✅ | `/api/admin/roles` |
+| `/api/admin/roles/` | ✅ | `/api/admin/roles`（**尾部斜杠已被去掉**） |
+| `/api/admin/roles//` | ✅ | `/api/admin/roles`（同上） |
+| `/api/admin//roles` | ✅ | `/api/admin//roles`（**中间的重复斜杠原样保留**） |
+| `/api/admin/./roles`、`/api/x/../admin/roles` | ❌ 404 | — |
+| `/api/admin/ROLES` | ❌ 404 | — |
+
+即：**尾部斜杠会被归一化，路径中间的空段不会**；`.` / `..` 段与大小写变体压根匹配不到路由。
+
+**正确做法（通用规则）**：
+
+- **任何按 `r.URL.Path` 做字符串匹配的中间件（鉴权、限流、审计采样、灰度路由），都不能假设路径已规范化**。中间的 `//` 会带着原样路径进到 handler，字符串规则却按规范形式书写，两者对不上。
+- 处理方式选**拒收**而非**重写**：重写会把原本因规则不匹配而被拒的变体变成放行（等于放宽授权面），拒收既不放宽也不留缝隙。本项目在 `AdminPermissionGuard` 入口用 `isCanonicalPath` 直接 403，正常客户端不会产生这类路径。
+- 尾部斜杠已由框架处理，无需自行 trim，**也不要因此把 `/xxx/` 当作合法输入去写规则**——handler 永远看不到它。
+
+排查信号：某接口"多加一个斜杠就能绕过权限/限流"；中间件按路径匹配的规则表里出现了同一 handler 的两条规则。

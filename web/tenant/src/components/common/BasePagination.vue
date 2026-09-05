@@ -8,9 +8,11 @@ const props = withDefaults(defineProps<{
 	total: number
 	pageSizeOptions?: number[]
 	showSizeChanger?: boolean
+	pageSlot?: number // 显示的页码个数（默认 7，比 naive-ui 默认的 9 更紧凑）
 }>(), {
 	pageSizeOptions: () => [10, 20, 50, 100],
 	showSizeChanger: true,
+	pageSlot: 7,
 })
 
 const emit = defineEmits<{
@@ -51,8 +53,10 @@ function handlePageSize(size: number) {
 			:page-size="pageSize"
 			:item-count="total"
 			:page-sizes="sizeOptions"
+			:page-slot="pageSlot"
 			:simple="isMobile"
 			:show-size-picker="showSizeChanger && !isMobile"
+			:show-quick-jumper="!isMobile"
 			@update:page="handlePage"
 			@update:page-size="handlePageSize"
 		/>

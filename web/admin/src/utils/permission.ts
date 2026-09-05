@@ -28,6 +28,18 @@ export function hasPermission(permission: string): boolean {
   return permissions.includes(permission)
 }
 
+/**
+ * 是否超级管理员。
+ *
+ * 用于「不参与权限点授权、硬性限定超管」的功能（如角色权限管理）：
+ * 这类功能是权限体系的元操作，不能通过授予权限点下放，否则被下放者
+ * 能给自己挂上更高权限的角色。后端有对应的 superAdminOnlyRules 拦截，
+ * 前端这份判断只用于隐藏入口，不构成安全边界。
+ */
+export function isSuperAdmin(): boolean {
+  return hasRole(ADMIN_ROLES.SUPER_ADMIN)
+}
+
 export function hasRole(role: string): boolean {
   const currentRole = getStoredString(ADMIN_ROLE_KEY)
   return currentRole === role

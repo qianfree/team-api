@@ -33,6 +33,16 @@ func IsCNY(ctx context.Context) bool {
 	return Currency(ctx) == consts.BillingCurrencyCNY
 }
 
+// CurrencySymbol 返回本位币的货币符号，用于服务端生成的展示文本
+// （计费摘要、CSV/Excel 导出等前端拿不到结构化金额、无法走 useCurrency 的场景）。
+// 仅适用于 bil_ 记账层金额；ord_/pln_ 层金额恒为 CNY，直接写 ¥，不要用本函数。
+func CurrencySymbol(ctx context.Context) string {
+	if Currency(ctx) == consts.BillingCurrencyCNY {
+		return "¥"
+	}
+	return "$"
+}
+
 // ConvertCNYToUSD 将人民币金额转换为美元，向上取整到小数点后 6 位（decimal 原生版）。
 // 用 decimal 精确乘法替代 float64 链式运算，避免 cnyAmount×rate 的浮点误差。
 func ConvertCNYToUSD(ctx context.Context, cnyAmount float64) decimal.Decimal {

@@ -7,6 +7,7 @@ import Icon from '@/components/common/Icon.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import DateTimeRangePicker from '@/components/common/DateTimeRangePicker.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
+import BasePagination from '@/components/common/BasePagination.vue'
 import request from '@/utils/request'
 import { tableScrollX } from '@/utils/renderUtils'
 import { useExport } from '@/composables/useExport'
@@ -142,7 +143,35 @@ const billingSourceLabel: Record<string, string> = {
 	task: '异步任务',
 }
 
+// 统计汇总（表格左下角）：与列表共用筛选条件；筛选未变化时不重复请求
+const summary = ref<{ total_cost: number; total_output_tokens: number; cache_read_ratio: number } | null>(null)
+let lastSummaryFilters = ''
+
+async function fetchSummary() {
+	const params: any = {}
+	if (filters.value.username) params.username = filters.value.username
+	if (filters.value.model) params.model = filters.value.model
+	if (filters.value.status) params.status = filters.value.status
+	if (filters.value.requestType) params.request_type = filters.value.requestType
+	if (filters.value.start_date) params.start_date = filters.value.start_date
+	if (filters.value.end_date) params.end_date = filters.value.end_date
+
+	// 筛选条件没变就不重复拉统计（翻页刷新列表但统计不变）
+	const currentFilters = JSON.stringify(params)
+	if (currentFilters === lastSummaryFilters && summary.value !== null) return
+
+	try {
+		const res: any = await request.get('/tenant/usage-logs/summary', { params })
+		summary.value = res.data?.data || null
+		lastSummaryFilters = currentFilters
+	} catch {
+		summary.value = null
+	}
+}
+
 async function fetchLogs() {
+	// 统计与列表并行拉取，不阻塞列表渲染
+	fetchSummary()
 	loading.value = true
 	try {
 		const params: any = { page: page.value, page_size: pageSize.value }
@@ -301,25 +330,26 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: 'Token',
 		key: 'token',
-		width: 280,
+		width: 200,
 		render: (row) =>
 			h('div', { class: 'flex items-center gap-1.5' }, [
-				h('div', { class: 'flex items-center gap-2' }, [
-					h('div', { class: 'inline-flex items-center gap-1' }, [
-						h(Icon, { name: 'arrowUp', size: 'sm', class: 'h-3.5 w-3.5 text-violet-500' }),
-						h('span', { class: 'font-medium text-gray-900' }, (row.input_tokens || 0).toLocaleString()),
+				// 两行网格排列（与管理后台用量日志页一致）：上行输入/输出，下行缓存读取/创建
+				h('div', { class: 'grid flex-1 grid-cols-2 gap-x-3' }, [
+					h('div', { class: 'inline-flex min-w-0 items-center gap-1' }, [
+						h(Icon, { name: 'arrowUp', size: 'sm', class: 'h-3.5 w-3.5 shrink-0 text-violet-500' }),
+						h('span', { class: 'min-w-0 truncate font-medium text-gray-900' }, (row.input_tokens || 0).toLocaleString()),
 					]),
-					h('div', { class: 'inline-flex items-center gap-1' }, [
-						h(Icon, { name: 'arrowDown', size: 'sm', class: 'h-3.5 w-3.5 text-emerald-500' }),
-						h('span', { class: 'font-medium text-gray-900' }, (row.output_tokens || 0).toLocaleString()),
+					h('div', { class: 'inline-flex min-w-0 items-center gap-1' }, [
+						h(Icon, { name: 'arrowDown', size: 'sm', class: 'h-3.5 w-3.5 shrink-0 text-emerald-500' }),
+						h('span', { class: 'min-w-0 truncate font-medium text-gray-900' }, (row.output_tokens || 0).toLocaleString()),
 					]),
-					h('div', { class: 'inline-flex items-center gap-1' }, [
-						h(Icon, { name: 'edit', size: 'xs', class: 'h-3.5 w-3.5 text-amber-500' }),
-						h('span', { class: 'font-medium text-amber-600' }, (row.cache_creation_tokens || 0).toLocaleString()),
+					h('div', { class: 'inline-flex min-w-0 items-center gap-1' }, [
+						h(Icon, { name: 'bookOpen', size: 'xs', class: 'h-3.5 w-3.5 shrink-0 text-sky-500' }),
+						h('span', { class: 'min-w-0 truncate text-xs font-medium text-sky-600' }, (row.cache_read_tokens || 0).toLocaleString()),
 					]),
-					h('div', { class: 'inline-flex items-center gap-1' }, [
-						h(Icon, { name: 'bookOpen', size: 'xs', class: 'h-3.5 w-3.5 text-sky-500' }),
-						h('span', { class: 'font-medium text-sky-600' }, (row.cache_read_tokens || 0).toLocaleString()),
+					h('div', { class: 'inline-flex min-w-0 items-center gap-1' }, [
+						h(Icon, { name: 'edit', size: 'xs', class: 'h-3.5 w-3.5 shrink-0 text-amber-500' }),
+						h('span', { class: 'min-w-0 truncate text-xs font-medium text-amber-600' }, (row.cache_creation_tokens || 0).toLocaleString()),
 					]),
 				]),
 				h(
@@ -419,15 +449,22 @@ const columns = computed<DataTableColumns<any>>(() => [
 	{
 		title: '操作',
 		key: 'actions',
-		width: 60,
+		width: 80,
 		fixed: 'right',
 		align: 'right',
 		render: (row) =>
-			h(NButton, { size: 'small', onClick: () => openDetail(row) }, { icon: () => h(Icon, { name: 'eye', size: 'sm' }) }),
+			h(NButton, { text: true, type: 'primary', size: 'small', onClick: () => openDetail(row) }, { default: () => '详情' }),
 	},
 ])
 
 // pageSize 变化回第 1 页并刷新
+function handlePageChange(p: number) {
+	// pageSize 变化时 BasePagination 会先发 update:page-size 再补发 update:model-value(1)，避免重复请求
+	if (page.value === p) return
+	page.value = p
+	fetchLogs()
+}
+
 function handlePageSizeChange() {
 	page.value = 1
 	fetchLogs()
@@ -509,11 +546,10 @@ onMounted(() => {
 			<ResponsiveDataTable
 				remote
 				fill-height
-				v-model:page="page"
-				v-model:page-size="pageSize"
 				:item-count="total"
 				:page-sizes="[10, 20, 50, 100]"
 				show-size-picker
+				:show-pagination="false"
 				:loading="loading"
 				:columns="columns"
 				:scroll-x="tableScrollX(columns)"
@@ -532,8 +568,6 @@ onMounted(() => {
 				]"
 				card-actions-key="actions"
 				:row-click="openDetail"
-				@update:page="fetchLogs"
-				@update:page-size="handlePageSizeChange"
 			>
 				<template #empty>
 					<div class="empty-state">
@@ -543,6 +577,28 @@ onMounted(() => {
 					</div>
 				</template>
 			</ResponsiveDataTable>
+
+			<!-- 底部栏：左统计汇总、右分页（PC 同一行，窄屏自动换行；与列表共用筛选口径） -->
+			<div class="flex flex-shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-t border-gray-100 px-4 py-1.5">
+				<div v-if="summary" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+					<span>总费用：<span class="font-semibold tabular-nums text-primary-600">{{ formatCost(summary.total_cost) }}</span></span>
+					<span class="hidden h-3 w-px bg-gray-200 sm:block" />
+					<span>总输出 Token：<span class="font-semibold tabular-nums text-emerald-600">{{ (summary.total_output_tokens || 0).toLocaleString() }}</span></span>
+					<span class="hidden h-3 w-px bg-gray-200 sm:block" />
+					<span>缓存读取占比：<span class="font-semibold tabular-nums text-amber-600">{{ (summary.cache_read_ratio || 0).toFixed(2) }}%</span></span>
+				</div>
+				<BasePagination
+					:model-value="page"
+					:page-size="pageSize"
+					:total="total"
+					:page-size-options="[10, 20, 50, 100]"
+					show-size-changer
+					class="mx-auto sm:mx-0 sm:ml-auto"
+					style="width: auto"
+					@update:model-value="handlePageChange"
+					@update:page-size="handlePageSizeChange"
+				/>
+			</div>
 		</div>
 
 		<!-- Token Tooltip -->

@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -172,11 +173,16 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 	return costs
 }
 
-// GenerateBillingSummary 生成人类可读的计费摘要文本（中文）
-func GenerateBillingSummary(snapshot *BillingSnapshot) string {
+// GenerateBillingSummary 生成人类可读的计费摘要文本（中文）。
+// 金额符号取系统本位币（billing_currency），摘要为写入时快照，货币在初始化后不可更改。
+func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) string {
 	if snapshot == nil {
 		return ""
 	}
+
+	// 货币符号跟随本位币；money 统一拼接符号 + 价格
+	sym := CurrencySymbol(ctx)
+	money := func(v float64) string { return sym + formatPrice(v) }
 
 	// 价格来源中文映射
 	sourceMap := map[string]string{
@@ -212,24 +218,24 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 
 	// 按次计费特殊处理
 	if snapshot.Pricing.BillingMode == "per_request" {
-		lines = append(lines, fmt.Sprintf("按次单价: $%.6f", snapshot.Pricing.EffectiveInputPrice))
+		lines = append(lines, fmt.Sprintf("按次单价: %s%.6f", sym, snapshot.Pricing.EffectiveInputPrice))
 	} else {
 		// 各类 token 费用明细
 		if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("输入: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("输入: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("输出: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("输出: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("缓存读取: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("缓存读取: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("缓存创建: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("缓存创建: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 
 		// 小计 × 倍率：展开各项费用明细，乘法链 = 租户倍率 × 时段乘数
@@ -242,16 +248,16 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 			// 收集各项费用明细
 			var costParts []string
 			if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 
 			// 构建倍率描述（租户倍率和时段乘数是并列关系，带文字标签）
@@ -269,8 +275,8 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 			}
 
 			if costsExpr != "" {
-				lines = append(lines, fmt.Sprintf("小计: %s × %s = $%s",
-					costsExpr, multDesc, formatPrice(snapshot.Settlement.ActualCost)))
+				lines = append(lines, fmt.Sprintf("小计: %s × %s = %s",
+					costsExpr, multDesc, money(snapshot.Settlement.ActualCost)))
 			}
 		}
 	}
@@ -285,17 +291,17 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 	s := snapshot.Settlement
 	if s.PreDeductAmount > 0 {
 		if s.RefundAmount > 0 {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s → 退还: $%s",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost), formatPrice(s.RefundAmount)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s → 退还: %s",
+				money(s.PreDeductAmount), money(s.ActualCost), money(s.RefundAmount)))
 		} else if s.SupplementAmount > 0 {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s → 补扣: $%s",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost), formatPrice(s.SupplementAmount)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s → 补扣: %s",
+				money(s.PreDeductAmount), money(s.ActualCost), money(s.SupplementAmount)))
 		} else {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s（无差额）",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s（无差额）",
+				money(s.PreDeductAmount), money(s.ActualCost)))
 		}
 	} else if s.ActualCost > 0 {
-		lines = append(lines, fmt.Sprintf("实际费用: $%s", formatPrice(s.ActualCost)))
+		lines = append(lines, fmt.Sprintf("实际费用: %s", money(s.ActualCost)))
 	}
 
 	result := ""

@@ -30,8 +30,7 @@ const categoryOptions = [
   { label: '全部类型', value: '' },
   { label: '技术支持', value: 'technical' },
   { label: '账单问题', value: 'billing' },
-  { label: '账号问题', value: 'account' },
-  { label: '功能建议', value: 'feature' },
+  { label: '功能建议', value: 'feature_request' },
   { label: '其他', value: 'other' },
 ]
 
@@ -54,21 +53,20 @@ const statusLabel: Record<string, string> = {
 const categoryLabel: Record<string, string> = {
   technical: '技术支持',
   billing: '账单问题',
-  account: '账号问题',
-  feature: '功能建议',
+  feature_request: '功能建议',
   other: '其他',
 }
 
 const urgencyLabel: Record<string, string> = {
   low: '低',
-  medium: '中',
+  normal: '普通',
   high: '高',
   urgent: '紧急',
 }
 
 const urgencyColor: Record<string, string> = {
   low: undefined,
-  medium: 'arcoblue',
+  normal: 'arcoblue',
   high: 'orangered',
   urgent: 'red',
 }
@@ -81,10 +79,19 @@ const changeStatusOptions = [
   { label: '已重开', value: 'reopened' },
 ]
 
+// 状态机：与后端 validTransitions（internal/logic/admin/ticket.go）保持一致
+const statusTransitions: Record<string, string[]> = {
+  pending: ['processing', 'closed'],
+  processing: ['replied', 'closed'],
+  replied: ['processing', 'closed'],
+  closed: ['reopened'],
+  reopened: ['processing', 'closed'],
+}
+
 const columns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
   { title: '租户名称', dataIndex: 'tenant_name', width: 120, ellipsis: true },
-  { title: '用户名称', dataIndex: 'user_name', width: 100, ellipsis: true },
+  { title: '用户名称', dataIndex: 'user_display_name', width: 100, ellipsis: true },
   {
     title: '类型', dataIndex: 'category', width: 100,
     render({ record }) { return h(Tag, { size: 'small' }, () => categoryLabel[record.category] || record.category) },
@@ -138,6 +145,11 @@ const showDetailModal = ref(false)
 const detailLoading = ref(false)
 const detailTicket = ref<any>(null)
 const detailReplies = ref<any[]>([])
+
+// 按当前工单状态过滤出允许变更的目标状态，避免选到被后端状态机拒绝的组合
+const availableStatusOptions = computed(() =>
+  changeStatusOptions.filter(opt => (statusTransitions[detailTicket.value?.status || ''] || []).includes(opt.value))
+)
 
 async function openDetail(row: any) {
   detailTicket.value = row
@@ -220,17 +232,6 @@ async function handleReply(done: () => void) {
   }
 }
 
-// === Change Status ===
-async function changeStatus(ticketId: number, status: string) {
-  try {
-    await request.put(`/admin/tickets/${ticketId}/status`, { status })
-    Message.success('状态已更新')
-    fetchTickets()
-  } catch {
-    // error auto-displayed by Axios interceptor
-  }
-}
-
 // === Detail Reply (from detail modal) ===
 const detailReplyContent = ref('')
 const detailReplyLoading = ref(false)
@@ -295,7 +296,7 @@ onMounted(fetchTickets)
         :loading="loading"
         row-key="id"
         :scroll="{ x: 1300 }"
-        :card-fields="['category', 'user_name', 'assigned_admin_name', 'created_at']"
+        :card-fields="['category', 'user_display_name', 'assigned_admin_name', 'created_at']"
       >
         <template #card-header="{ row }">
           <div class="flex items-start justify-between gap-3">
@@ -337,7 +338,7 @@ onMounted(fetchTickets)
               <ADropdown trigger="hover">
                 <AButton size="mini">修改状态</AButton>
                 <template #content>
-                  <ADoption v-for="opt in changeStatusOptions" :key="opt.value" @click="handleDetailChangeStatus(opt.value)">{{ opt.label }}</ADoption>
+                  <ADoption v-for="opt in availableStatusOptions" :key="opt.value" @click="handleDetailChangeStatus(opt.value)">{{ opt.label }}</ADoption>
                 </template>
               </ADropdown>
             </ASpace>
@@ -347,7 +348,7 @@ onMounted(fetchTickets)
             <div>类型: {{ categoryLabel[detailTicket.category] || detailTicket.category }}</div>
             <div>紧急度: <ATag :color="urgencyColor[detailTicket.urgency]" size="small">{{ urgencyLabel[detailTicket.urgency] || detailTicket.urgency }}</ATag></div>
             <div>租户: {{ detailTicket.tenant_name || '-' }}</div>
-            <div>用户: {{ detailTicket.user_name || '-' }}</div>
+            <div>用户: {{ detailTicket.user_display_name || '-' }}</div>
             <div>处理人: {{ detailTicket.assigned_admin_name || '未分配' }}</div>
           </div>
           <div class="text-sm text-gray-700 mt-2 whitespace-pre-wrap">{{ detailTicket.description }}</div>
@@ -357,10 +358,10 @@ onMounted(fetchTickets)
         <div class="space-y-3">
           <h4 class="text-sm font-medium text-gray-700">回复记录 ({{ detailReplies.length }})</h4>
           <div v-if="detailReplies.length === 0" class="text-sm text-gray-400 text-center py-4">暂无回复</div>
-          <div v-for="reply in detailReplies" :key="reply.id" class="p-3 border rounded-lg" :class="reply.is_admin ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'">
+          <div v-for="reply in detailReplies" :key="reply.id" class="p-3 border rounded-lg" :class="reply.user_type === 'admin' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'">
             <div class="flex items-center justify-between mb-1">
-              <span class="text-xs font-medium" :class="reply.is_admin ? 'text-blue-700' : 'text-gray-700'">
-                {{ reply.author_name || (reply.is_admin ? '管理员' : '用户') }}
+              <span class="text-xs font-medium" :class="reply.user_type === 'admin' ? 'text-blue-700' : 'text-gray-700'">
+                {{ reply.user_name || (reply.user_type === 'admin' ? '管理员' : '用户') }}
               </span>
               <span class="text-xs text-gray-400">{{ reply.created_at ? new Date(reply.created_at).toLocaleString() : '' }}</span>
             </div>

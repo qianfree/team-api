@@ -34,6 +34,20 @@ type TenantRegisterRes struct {
 	PendingAgreements []*TenantLoginPendingAgreement `json:"pending_agreements,omitempty"` // 待接受协议列表
 }
 
+// TenantRegisterRateLimitReq 查询当前 IP 的注册限流状态
+type TenantRegisterRateLimitReq struct {
+	g.Meta `path:"/auth/register-rate-limit" method:"get" mime:"json" tags:"租户控制台-认证" summary:"查询注册限流状态" group:"public" middleware:"-"`
+}
+
+type TenantRegisterRateLimitRes struct {
+	HourlyLimit        int `json:"hourly_limit" dc:"每小时注册上限（0=未启用）"`
+	HourlyRemaining    int `json:"hourly_remaining" dc:"本小时剩余注册次数"`
+	HourlyResetSeconds int `json:"hourly_reset_seconds" dc:"小时窗口重置剩余秒数（0=无计数记录）"`
+	DailyLimit         int `json:"daily_limit" dc:"每天注册上限（0=未启用）"`
+	DailyRemaining     int `json:"daily_remaining" dc:"今日剩余注册次数"`
+	DailyResetSeconds  int `json:"daily_reset_seconds" dc:"天窗口重置剩余秒数（0=无计数记录）"`
+}
+
 // TenantLoginReq 租户登录请求
 type TenantLoginReq struct {
 	g.Meta         `path:"/auth/login" method:"post" mime:"json" tags:"租户控制台-认证" summary:"租户登录" group:"public" middleware:"-"`
