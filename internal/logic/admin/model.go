@@ -443,18 +443,18 @@ func parseCapabilities(raw string) map[string]bool {
 // GetModelPricing 获取模型定价
 func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error) {
 	var rows []struct {
-		BillingMode        string   `json:"billing_mode"`
-		MinTokens          int64    `json:"min_tokens"`
-		MaxTokens          *int64   `json:"max_tokens"`
-		InputPrice         float64  `json:"input_price"`
-		OutputPrice        float64  `json:"output_price"`
-		PerRequestPrice    *float64 `json:"per_request_price"`
-		CacheReadPrice     float64  `json:"cache_read_price"`
-		CacheCreationPrice float64  `json:"cache_creation_price"`
-		TimeSegments       string   `json:"time_segments"`
-		PriceNote          *string  `json:"price_note"`
-		DiscountLabel      *string  `json:"discount_label"`
-		PriceChangeNote    *string  `json:"price_change_note"`
+		BillingMode        string   `json:"billing_mode" orm:"billing_mode"`
+		MinTokens          int64    `json:"min_tokens" orm:"min_tokens"`
+		MaxTokens          *int64   `json:"max_tokens" orm:"max_tokens"`
+		InputPrice         float64  `json:"input_price" orm:"input_price"`
+		OutputPrice        float64  `json:"output_price" orm:"output_price"`
+		PerRequestPrice    *float64 `json:"per_request_price" orm:"per_request_price"`
+		CacheReadPrice     float64  `json:"cache_read_price" orm:"cache_read_price"`
+		CacheCreationPrice float64  `json:"cache_creation_price" orm:"cache_creation_price"`
+		TimeSegments       string   `json:"time_segments" orm:"time_segments"`
+		PriceNote          *string  `json:"price_note" orm:"price_note"`
+		DiscountLabel      *string  `json:"discount_label" orm:"discount_label"`
+		PriceChangeNote    *string  `json:"price_change_note" orm:"price_change_note"`
 	}
 
 	err := dao.MdlPricing.Ctx(ctx).

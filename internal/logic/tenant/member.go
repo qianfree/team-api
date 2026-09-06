@@ -49,18 +49,18 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 	}
 
 	var users []struct {
-		Id          int64   `json:"id"`
-		Username    string  `json:"username"`
-		Email       string  `json:"email"`
-		DisplayName string  `json:"display_name"`
-		Role        string  `json:"role"`
-		Status      string  `json:"status"`
-		LockedUntil string  `json:"locked_until"`
-		CreatedAt   string  `json:"created_at"`
-		QuotaType   string  `json:"quota_type"`
-		QuotaLimit  float64 `json:"quota_limit"`
-		QuotaPeriod string  `json:"quota_period"`
-		UpdatedAt   string  `json:"updated_at"`
+		Id          int64   `json:"id" orm:"id"`
+		Username    string  `json:"username" orm:"username"`
+		Email       string  `json:"email" orm:"email"`
+		DisplayName string  `json:"display_name" orm:"display_name"`
+		Role        string  `json:"role" orm:"role"`
+		Status      string  `json:"status" orm:"status"`
+		LockedUntil string  `json:"locked_until" orm:"locked_until"`
+		CreatedAt   string  `json:"created_at" orm:"created_at"`
+		QuotaType   string  `json:"quota_type" orm:"quota_type"`
+		QuotaLimit  float64 `json:"quota_limit" orm:"quota_limit"`
+		QuotaPeriod string  `json:"quota_period" orm:"quota_period"`
+		UpdatedAt   string  `json:"updated_at" orm:"updated_at"`
 	}
 	err = model.OrderDesc("id").
 		Page(page, pageSize).
@@ -81,8 +81,8 @@ func (s *sTenant) ListMembers(ctx context.Context, req *v1.TenantMemberListReq) 
 	hasScopeMap := make(map[int64]bool)
 	if len(userIds) > 0 {
 		var scopeRows []struct {
-			UserId  int64 `json:"user_id"`
-			ModelId int64 `json:"model_id"`
+			UserId  int64 `json:"user_id" orm:"user_id"`
+			ModelId int64 `json:"model_id" orm:"model_id"`
 		}
 		if err = dao.TntMemberModelScopes.Ctx(ctx).
 			Where("tenant_id", tenantID).
@@ -1176,17 +1176,17 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 			}
 
 			var users []struct {
-				Id          int64   `json:"id"`
-				Username    string  `json:"username"`
-				Email       string  `json:"email"`
-				DisplayName string  `json:"display_name"`
-				Role        string  `json:"role"`
-				Status      string  `json:"status"`
-				CreatedAt   string  `json:"created_at"`
-				QuotaType   string  `json:"quota_type"`
-				QuotaLimit  float64 `json:"quota_limit"`
-				QuotaPeriod string  `json:"quota_period"`
-				UpdatedAt   string  `json:"updated_at"`
+				Id          int64   `json:"id" orm:"id"`
+				Username    string  `json:"username" orm:"username"`
+				Email       string  `json:"email" orm:"email"`
+				DisplayName string  `json:"display_name" orm:"display_name"`
+				Role        string  `json:"role" orm:"role"`
+				Status      string  `json:"status" orm:"status"`
+				CreatedAt   string  `json:"created_at" orm:"created_at"`
+				QuotaType   string  `json:"quota_type" orm:"quota_type"`
+				QuotaLimit  float64 `json:"quota_limit" orm:"quota_limit"`
+				QuotaPeriod string  `json:"quota_period" orm:"quota_period"`
+				UpdatedAt   string  `json:"updated_at" orm:"updated_at"`
 			}
 			err := model.OrderDesc("id").Limit(1000).Offset(offset).Scan(&users)
 			if err = common.IgnoreScanNoRows(err); err != nil {
@@ -1203,8 +1203,8 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 			monthCostMap := make(map[int64]float64)
 			if len(userIds) > 0 {
 				var scopeRows []struct {
-					UserId  int64 `json:"user_id"`
-					ModelId int64 `json:"model_id"`
+					UserId  int64 `json:"user_id" orm:"user_id"`
+					ModelId int64 `json:"model_id" orm:"model_id"`
 				}
 				if err = dao.TntMemberModelScopes.Ctx(ctx).
 					Where("tenant_id", tenantID).

@@ -101,14 +101,14 @@ func (s *sAdmin) ListRoles(ctx context.Context, _ *v1.AdminRoleListReq) (*v1.Adm
 		return nil, err
 	}
 	var roles []struct {
-		ID          int64  `json:"id"`
-		Code        string `json:"code"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		IsBuiltin   bool   `json:"is_builtin"`
-		IsEnabled   bool   `json:"is_enabled"`
-		Sort        int    `json:"sort"`
-		CreatedAt   string `json:"created_at"`
+		ID          int64  `json:"id" orm:"id"`
+		Code        string `json:"code" orm:"code"`
+		Name        string `json:"name" orm:"name"`
+		Description string `json:"description" orm:"description"`
+		IsBuiltin   bool   `json:"is_builtin" orm:"is_builtin"`
+		IsEnabled   bool   `json:"is_enabled" orm:"is_enabled"`
+		Sort        int    `json:"sort" orm:"sort"`
+		CreatedAt   string `json:"created_at" orm:"created_at"`
 	}
 	err := dao.SysAdminRoles.Ctx(ctx).OrderAsc("sort").OrderAsc("id").Scan(&roles)
 	if err = lcommon.IgnoreScanNoRows(err); err != nil {

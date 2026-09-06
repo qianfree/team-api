@@ -34,7 +34,7 @@ func (s *sTenant) MemberModelScopes(ctx context.Context, req *v1.TenantMemberMod
 	}
 
 	var rows []struct {
-		ModelID int64 `json:"model_id"`
+		ModelID int64 `json:"model_id" orm:"model_id"`
 	}
 	err = dao.TntMemberModelScopes.Ctx(ctx).
 		Where("tenant_id", tenantID).

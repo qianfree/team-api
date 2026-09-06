@@ -927,3 +927,32 @@ s.Start()
 **修复方式**：显式指定列 `dao.SysOptions.Ctx(ctx).Where("key", key).Fields("value").Value()`，与代码库其余 5 处 `Fields("xxx").Value()` 的既有写法保持一致。
 
 **正确做法（通用规则）**：`Value()` / `Array()` 这类取单列的快捷方法**必须**显式 `Fields("列名")`，否则取到的是 `id`。评审信号：`grep -rn '\.Value()'` 命中且前面没有 `.Fields(` 的调用。
+
+### 2026-09-05：Scan 进无 orm 标签的匿名结构体——TableFields 元数据查询失败时帕斯卡列名裸进 SQL
+
+**问题**：管理后台租户列表接口 `/api/admin/tenants` 偶发报 `pq: column "Id" does not exist`，SQL 里出现 `"Id","Name","LogoURL"` 等帕斯卡命名列。PostgreSQL 引号标识符大小写敏感，真实列是 `id`/`logo_url`，查询必然失败。
+
+**原因**：`internal/logic/admin/tenant.go` 的 `ListTenants` 把查询结果 `Scan` 进一个**只有 json 标签、没有 orm 标签的匿名结构体**。gf 的 `Model.Scan`（`doStructs`）有个内置行为 *"Auto selecting fields by struct attributes"*：模型未显式 `Fields()` 时，会用**扫描结构体的字段名**自动生成 SELECT 字段列表。字段解析链路（`gdb_func.go` 的 `getFieldsFromStructOrMap`）：有 orm 标签取标签值，**没有则取 Go 字段名原样**；随后 `mappingAndFilterToTableFields` 尝试用真实表结构把 `Id→id`、`LogoURL→logo_url` 纠偏，但它对元数据查询失败的容忍方式是（`gdb_model_utility.go`）：
+
+```go
+fieldsMap, _ := m.TableFields(fieldsTable) // 错误被静默吞掉
+if len(fieldsMap) == 0 {
+    return fields // 元数据拿不到就原样透传 Go 字段名
+}
+```
+
+pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名'::regclass`）。远程数据库瞬时抖动一次、这条目录查询失败，帕斯卡字段名就直接进了 SQL。**平时不炸的原因**：TableFields 成功结果进程内永久缓存（`gcache.DurationNoExpire`），启动后第一次查成功就一直复用；失败不缓存，所以重试通常即恢复。同请求内先执行的 `Count()` 走数据链路成功，进一步印证只有目录查询那一步挂了。
+
+**修复方式**：给匿名结构体补上 orm 标签（`json:"id" orm:"id"` 等 13 个字段）。orm 标签值直接成为 SELECT 字段名——即使 TableFields 失败、字段名原样透传，透传出去的也是正确的小写蛇形列名，SQL 依然成立，彻底消除对运行时元数据的依赖。随后用 go/AST 脚本全仓排查同款写法，批量修复 24 处（幂等中间件、admin/tenant/open 列表与导出、成员模型范围、预算巡检等）。
+
+**不受影响的两种同貌写法（排查时排除）**：
+
+- **模型链上有显式 `.Fields(...)`**：`doStructs` 的自动投影有前置条件 `len(fields)==0 && len(fieldsEx)==0`，显式 Fields 时不触发，SELECT 列已固定。
+- **`Raw(sql).Scan(&x)` 与 `result[0].Struct(&x)`**：Raw 路径在 `getFormattedSqlAndArgs` 里直接透传 rawSql、不拼接 Fields；`Record.Struct` 是内存行→结构体转换，根本不生成 SQL。
+
+**正确做法（通用规则）**：
+
+- **凡 `Scan`/`Struct`/`Structs` 进非 `model/entity` 生成的结构体（匿名结构体、手写 DTO），每个字段必须带 `orm` 标签**，列名写死不依赖运行时映射；`entity.Xxx` 自带 orm 标签天然安全。
+- 判断风险的方法：`grep -rn 'var .* \[\]struct {' internal/` 找到匿名结构体，再看它是否被传给 `dao.Xxx.Ctx(ctx)...Scan(&x)` 链路且链上无 `Fields(...)`/`Raw(...)`——是则全部依赖这条元数据映射，远程 DB 抖动哪个请求撞上哪个接口炸，且报错完全看不出是网络问题。
+
+排查信号：`pq: column "Xxx" does not exist` 且 SQL 列名是帕斯卡命名；偶发、重试即好、与网络抖动时间点吻合。

@@ -719,13 +719,13 @@ func (s *sAdmin) GetChannelKeys(ctx context.Context, req *v1.ChannelKeyListReq) 
 // GetChannelAbilities 获取渠道模型能力列表
 func (s *sAdmin) GetChannelAbilities(ctx context.Context, req *v1.ChannelAbilitiesGetReq) (*v1.ChannelAbilitiesGetRes, error) {
 	var abilities []struct {
-		ID                int64   `json:"id"`
-		ModelName         string  `json:"model_name"`
-		UpstreamModel     string  `json:"upstream_model"`
-		Enabled           bool    `json:"enabled"`
-		CostRatio         float64 `json:"cost_ratio"`
-		SupportsResponses bool    `json:"supports_responses"`
-		ChatViaResponses  bool    `json:"chat_via_responses"`
+		ID                int64   `json:"id" orm:"id"`
+		ModelName         string  `json:"model_name" orm:"model_name"`
+		UpstreamModel     string  `json:"upstream_model" orm:"upstream_model"`
+		Enabled           bool    `json:"enabled" orm:"enabled"`
+		CostRatio         float64 `json:"cost_ratio" orm:"cost_ratio"`
+		SupportsResponses bool    `json:"supports_responses" orm:"supports_responses"`
+		ChatViaResponses  bool    `json:"chat_via_responses" orm:"chat_via_responses"`
 	}
 
 	err := dao.ChnAbilities.Ctx(ctx).
