@@ -399,9 +399,9 @@ func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUna
 func CheckBudgetExhausted(ctx context.Context) error {
 	// Find active projects with budget set
 	var projects []struct {
-		ID       int64   `json:"id"`
-		TenantID int64   `json:"tenant_id"`
-		Budget   float64 `json:"budget"`
+		ID       int64   `json:"id" orm:"id"`
+		TenantID int64   `json:"tenant_id" orm:"tenant_id"`
+		Budget   float64 `json:"budget" orm:"budget"`
 	}
 	err := dao.TntProjects.Ctx(ctx).
 		Where("status", "active").

@@ -29,16 +29,16 @@ func (s *sAdmin) ListUsers(ctx context.Context, req *v1.AdminUserListReq) (*v1.A
 	m := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status)
 
 	var users []struct {
-		Id          int64       `json:"id"`
-		Username    string      `json:"username"`
-		Email       string      `json:"email"`
-		DisplayName string      `json:"display_name"`
-		Role        string      `json:"role"`
-		Status      string      `json:"status"`
-		LastLoginAt *gtime.Time `json:"last_login_at"`
-		LastLoginIp string      `json:"last_login_ip"`
-		LockedUntil *gtime.Time `json:"locked_until"`
-		CreatedAt   *gtime.Time `json:"created_at"`
+		Id          int64       `json:"id" orm:"id"`
+		Username    string      `json:"username" orm:"username"`
+		Email       string      `json:"email" orm:"email"`
+		DisplayName string      `json:"display_name" orm:"display_name"`
+		Role        string      `json:"role" orm:"role"`
+		Status      string      `json:"status" orm:"status"`
+		LastLoginAt *gtime.Time `json:"last_login_at" orm:"last_login_at"`
+		LastLoginIp string      `json:"last_login_ip" orm:"last_login_ip"`
+		LockedUntil *gtime.Time `json:"locked_until" orm:"locked_until"`
+		CreatedAt   *gtime.Time `json:"created_at" orm:"created_at"`
 	}
 	err = m.OrderDesc("id").
 		Page(page, pageSize).
@@ -517,15 +517,15 @@ func (s *sAdmin) ExportUsers(ctx context.Context, req *v1.AdminUserExportReq) (*
 		for {
 			m := buildUserFilters(dao.SysAdminUsers.Ctx(ctx), req.Keyword, req.Role, req.Status)
 			var batch []struct {
-				Id          int64       `json:"id"`
-				Username    string      `json:"username"`
-				Email       string      `json:"email"`
-				DisplayName string      `json:"display_name"`
-				Role        string      `json:"role"`
-				Status      string      `json:"status"`
-				LastLoginAt *gtime.Time `json:"last_login_at"`
-				LastLoginIp string      `json:"last_login_ip"`
-				CreatedAt   *gtime.Time `json:"created_at"`
+				Id          int64       `json:"id" orm:"id"`
+				Username    string      `json:"username" orm:"username"`
+				Email       string      `json:"email" orm:"email"`
+				DisplayName string      `json:"display_name" orm:"display_name"`
+				Role        string      `json:"role" orm:"role"`
+				Status      string      `json:"status" orm:"status"`
+				LastLoginAt *gtime.Time `json:"last_login_at" orm:"last_login_at"`
+				LastLoginIp string      `json:"last_login_ip" orm:"last_login_ip"`
+				CreatedAt   *gtime.Time `json:"created_at" orm:"created_at"`
 			}
 			if err := m.OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return

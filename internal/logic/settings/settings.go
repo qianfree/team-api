@@ -65,13 +65,13 @@ func (s *sSettings) PublicAnnouncements(ctx context.Context, req *v1.PublicAnnou
 	}
 
 	var items []struct {
-		Id              int64  `json:"id"`
-		Title           string `json:"title"`
-		Type            string `json:"type"`
-		Content         string `json:"content"`
-		IsPinned        int    `json:"is_pinned"`
-		DisplayPosition string `json:"display_position"`
-		CreatedAt       string `json:"created_at"`
+		Id              int64  `json:"id" orm:"id"`
+		Title           string `json:"title" orm:"title"`
+		Type            string `json:"type" orm:"type"`
+		Content         string `json:"content" orm:"content"`
+		IsPinned        int    `json:"is_pinned" orm:"is_pinned"`
+		DisplayPosition string `json:"display_position" orm:"display_position"`
+		CreatedAt       string `json:"created_at" orm:"created_at"`
 	}
 	err := m.OrderDesc("is_pinned").OrderDesc("created_at").
 		Limit(20).

@@ -290,20 +290,23 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		m = m.Where("status", req.Status)
 	}
 
+	// 扫描结构体必须带 orm 标签：gf 的 Scan 会用「结构体字段名」自动生成 SELECT 字段列表，
+	// 无 orm 标签时靠运行时查表结构（TableFields）做 Id→id 映射；该元数据查询失败会被框架静默吞掉，
+	// 帕斯卡字段名将原样进 SQL，PostgreSQL 引号列名大小写敏感，报 column "Id" does not exist。
 	var tenants []struct {
-		Id                  int64       `json:"id"`
-		Name                string      `json:"name"`
-		Code                string      `json:"code"`
-		LogoURL             string      `json:"logo_url"`
-		OwnerUserID         int64       `json:"owner_user_id"`
-		Status              string      `json:"status"`
-		MaxMembers          *int        `json:"max_members"`
-		MaxConcurrency      *int        `json:"max_concurrency"`
-		DefaultChannelScope string      `json:"default_channel_scope"`
-		Settings            string      `json:"settings"`
-		Level               int         `json:"level"`
-		CreatedAt           *gtime.Time `json:"created_at"`
-		UpdatedAt           *gtime.Time `json:"updated_at"`
+		Id                  int64       `json:"id" orm:"id"`
+		Name                string      `json:"name" orm:"name"`
+		Code                string      `json:"code" orm:"code"`
+		LogoURL             string      `json:"logo_url" orm:"logo_url"`
+		OwnerUserID         int64       `json:"owner_user_id" orm:"owner_user_id"`
+		Status              string      `json:"status" orm:"status"`
+		MaxMembers          *int        `json:"max_members" orm:"max_members"`
+		MaxConcurrency      *int        `json:"max_concurrency" orm:"max_concurrency"`
+		DefaultChannelScope string      `json:"default_channel_scope" orm:"default_channel_scope"`
+		Settings            string      `json:"settings" orm:"settings"`
+		Level               int         `json:"level" orm:"level"`
+		CreatedAt           *gtime.Time `json:"created_at" orm:"created_at"`
+		UpdatedAt           *gtime.Time `json:"updated_at" orm:"updated_at"`
 	}
 	err = m.OrderDesc("id").
 		Page(page, pageSize).

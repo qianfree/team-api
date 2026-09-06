@@ -58,9 +58,9 @@ func Idempotency(r *ghttp.Request) {
 
 	// Check if this key has been processed before
 	var record struct {
-		Id           int64  `json:"id"`
-		Status       string `json:"status"`
-		ResponseBody string `json:"response_body"`
+		Id           int64  `json:"id" orm:"id"`
+		Status       string `json:"status" orm:"status"`
+		ResponseBody string `json:"response_body" orm:"response_body"`
 	}
 
 	err := dao.SysIdempotencyRecords.Ctx(ctx).

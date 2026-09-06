@@ -101,12 +101,12 @@ func (s *sOpen) OpenMemberList(ctx context.Context, req *v1.OpenMemberListReq) (
 	}
 
 	var users []struct {
-		Id        int64  `json:"id"`
-		Username  string `json:"username"`
-		Email     string `json:"email"`
-		Role      string `json:"role"`
-		Status    string `json:"status"`
-		CreatedAt string `json:"created_at"`
+		Id        int64  `json:"id" orm:"id"`
+		Username  string `json:"username" orm:"username"`
+		Email     string `json:"email" orm:"email"`
+		Role      string `json:"role" orm:"role"`
+		Status    string `json:"status" orm:"status"`
+		CreatedAt string `json:"created_at" orm:"created_at"`
 	}
 	err = m.OrderDesc("id").Page(page, pageSize).Scan(&users)
 	if err != nil {
@@ -354,7 +354,7 @@ func (s *sOpen) OpenMemberModels(ctx context.Context, req *v1.OpenMemberModelsRe
 	}
 
 	var scopes []struct {
-		ModelID string `json:"model_id"`
+		ModelID string `json:"model_id" orm:"model_id"`
 	}
 	err := dao.TntMemberModelScopes.Ctx(ctx).
 		Where("tenant_id", tenantID).
@@ -460,11 +460,11 @@ func (s *sOpen) OpenKeyList(ctx context.Context, req *v1.OpenKeyListReq) (*v1.Op
 	}
 
 	var keys []struct {
-		Id        int64       `json:"id"`
-		Name      string      `json:"name"`
-		KeyPrefix string      `json:"key_prefix"`
-		Status    string      `json:"status"`
-		CreatedAt *gtime.Time `json:"created_at"`
+		Id        int64       `json:"id" orm:"id"`
+		Name      string      `json:"name" orm:"name"`
+		KeyPrefix string      `json:"key_prefix" orm:"key_prefix"`
+		Status    string      `json:"status" orm:"status"`
+		CreatedAt *gtime.Time `json:"created_at" orm:"created_at"`
 	}
 	err = m.OrderDesc("id").Page(page, pageSize).Scan(&keys)
 	if err != nil {

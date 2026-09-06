@@ -163,7 +163,7 @@ func PermissionGroups() []v1.PermissionGroup {
 func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermissionListReq) (*v1.AdminPermissionListRes, error) {
 	// Get permission points
 	var perms []struct {
-		PermissionPoint string `json:"permission_point"`
+		PermissionPoint string `json:"permission_point" orm:"permission_point"`
 	}
 	err := dao.SysAdminRolePerms.Ctx(ctx).
 		Where("admin_user_id", req.Id).
@@ -179,9 +179,9 @@ func (s *sAdmin) GetUserPermissions(ctx context.Context, req *v1.AdminPermission
 
 	// Get data scopes
 	var scopes []struct {
-		ID         int64  `json:"id"`
-		ScopeType  string `json:"scope_type"`
-		ScopeValue string `json:"scope_value"`
+		ID         int64  `json:"id" orm:"id"`
+		ScopeType  string `json:"scope_type" orm:"scope_type"`
+		ScopeValue string `json:"scope_value" orm:"scope_value"`
 	}
 	err = dao.SysAdminDataScopes.Ctx(ctx).
 		Where("admin_user_id", req.Id).
@@ -348,9 +348,9 @@ func GetDataScopes(ctx context.Context, userID int64, role string) ([]v1.DataSco
 	}
 
 	var scopes []struct {
-		ID         int64  `json:"id"`
-		ScopeType  string `json:"scope_type"`
-		ScopeValue string `json:"scope_value"`
+		ID         int64  `json:"id" orm:"id"`
+		ScopeType  string `json:"scope_type" orm:"scope_type"`
+		ScopeValue string `json:"scope_value" orm:"scope_value"`
 	}
 	err := dao.SysAdminDataScopes.Ctx(ctx).
 		Where("admin_user_id", userID).
