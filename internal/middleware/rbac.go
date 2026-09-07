@@ -215,11 +215,12 @@ var adminPermissionRules = []permissionRule{
 	{method: "PUT", prefix: "/api/admin/settings/", perm: "system:edit"},
 	// 配置连通性测试（对象存储 / 邮件）：会真实调用外部服务并可能发信，按写权限管控
 	{method: "POST", prefix: "/api/admin/settings/", perm: "system:edit"},
-	// Payment settings & channels (system scope)
-	{method: "GET", path: "/api/admin/payment-channels", perm: "system:view"},
-	{method: "PUT", prefix: "/api/admin/payment-channels/", perm: "system:edit"},
-	{method: "GET", path: "/api/admin/payment-settings", perm: "system:view"},
-	{method: "PUT", path: "/api/admin/payment-settings", perm: "system:edit"},
+	// Payment settings & channels：渠道配置含商户密钥明文，使用独立的 payment:*
+	// 权限点，与 system:*（系统设置）解耦，必须显式授予才能访问
+	{method: "GET", path: "/api/admin/payment-channels", perm: "payment:view"},
+	{method: "PUT", prefix: "/api/admin/payment-channels/", perm: "payment:edit"},
+	{method: "GET", path: "/api/admin/payment-settings", perm: "payment:view"},
+	{method: "PUT", path: "/api/admin/payment-settings", perm: "payment:edit"},
 	{method: "GET", path: "/api/admin/data-governance/settings", perm: "system:view"},
 	{method: "PUT", path: "/api/admin/data-governance/settings", perm: "system:edit"},
 	{method: "POST", prefix: "/api/admin/data-governance/", perm: "system:edit"},
