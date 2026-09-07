@@ -53,7 +53,7 @@ func (s *sAdmin) ListAllTickets(ctx context.Context, req *v1.TicketListReq) (*v1
 		LeftJoin("tnt_tenants tt", "spt_tickets.tenant_id = tt.id").
 		LeftJoin("tnt_users tu", "spt_tickets.user_id = tu.id").
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
-		Fields("spt_tickets.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name, COALESCE(sa.username, '') as assigned_admin_name").
+		Fields("spt_tickets.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name, COALESCE(sa.display_name, '') as assigned_admin_name").
 		OrderDesc("spt_tickets.created_at").
 		Page(page, pageSize).
 		ScanAndCount(&rows, &total, false)
@@ -102,7 +102,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 		LeftJoin("tnt_tenants tt", "spt_tickets.tenant_id = tt.id").
 		LeftJoin("tnt_users tu", "spt_tickets.user_id = tu.id").
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
-		Fields("spt_tickets.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name, COALESCE(sa.username, '') as assigned_admin_name").
+		Fields("spt_tickets.*, COALESCE(tt.name, '') as tenant_name, COALESCE(tu.display_name, '') as user_display_name, COALESCE(sa.display_name, '') as assigned_admin_name").
 		Where("spt_tickets.id", req.Id).
 		Scan(&ticket)
 	if err != nil {
@@ -120,7 +120,7 @@ func (s *sAdmin) GetTicketAdmin(ctx context.Context, req *v1.TicketGetReq) (*v1.
 	err = dao.SptReplies.Ctx(ctx).
 		LeftJoin("sys_admin_users sa", "spt_replies.user_type = 'admin' AND spt_replies.user_id = sa.id").
 		LeftJoin("tnt_users tu", "spt_replies.user_type = 'tenant' AND spt_replies.user_id = tu.id").
-		Fields("spt_replies.*, CASE WHEN spt_replies.user_type = 'admin' THEN COALESCE(sa.username, '') ELSE COALESCE(tu.display_name, '') END as user_name").
+		Fields("spt_replies.*, CASE WHEN spt_replies.user_type = 'admin' THEN COALESCE(sa.display_name, '') ELSE COALESCE(tu.display_name, '') END as user_name").
 		Where("spt_replies.ticket_id", req.Id).
 		OrderAsc("spt_replies.created_at").
 		Scan(&replyRows)
