@@ -104,6 +104,12 @@ const adminRoutes: RouteRecordRaw[] = [
         redirect: { name: 'AdminSettings' },
       },
       {
+        path: 'payment-channels',
+        name: 'AdminPaymentChannels',
+        component: () => import('@/views/finance/PaymentChannelsPage.vue'),
+        meta: { title: '支付渠道', perm: 'payment:view' },
+      },
+      {
         path: 'redemptions',
         name: 'AdminRedemptions',
         component: () => import('@/views/finance/RedemptionsPage.vue'),

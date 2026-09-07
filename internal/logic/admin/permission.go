@@ -66,6 +66,15 @@ var predefinedPermissionGroups = []v1.PermissionGroup{
 		},
 	},
 	{
+		Name:  "payment",
+		Label: "支付渠道",
+		Permissions: []string{
+			// 渠道配置含商户密钥明文，独立于 system:* 权限点：必须显式授予才能
+			// 查看/修改支付渠道，避免"能进系统设置就能拿到收款密钥"
+			"payment:view", "payment:edit",
+		},
+	},
+	{
 		Name:  "audit",
 		Label: "审计日志",
 		Permissions: []string{

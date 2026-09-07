@@ -74,6 +74,11 @@ var tierPermissions = map[string]map[string][]string{
 		TierRead: {"order:view"},
 		TierFull: {"order:view", "order:refund"},
 	},
+	// 支付渠道只有查看/编辑两个动作，无删除档：密钥类配置宁可少放开
+	"payment": {
+		TierRead:    {"payment:view"},
+		TierOperate: {"payment:view", "payment:edit"},
+	},
 	"promo": {
 		TierRead:    {"promo:view"},
 		TierOperate: {"promo:view", "promo:create", "promo:edit"},
@@ -130,6 +135,7 @@ var tierPermissions = map[string]map[string][]string{
 var dangerousPermissions = map[string]string{
 	"billing:refund":       "可对任意租户钱包退款/调账",
 	"order:refund":         "可对订单发起退款到支付渠道",
+	"payment:edit":         "可修改支付渠道配置与商户密钥，直接影响线上收款",
 	"audit:read_sensitive": "可查看敏感数据访问日志",
 	"audit:clear":          "可硬删除全部拦截日志（不可恢复）",
 	"system:edit":          "可修改支付、汇率、存储、邮件等全站配置",

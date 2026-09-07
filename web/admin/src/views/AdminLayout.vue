@@ -403,6 +403,7 @@ const ALL_MENU_GROUPS = [
       { name: 'AdminPermissions', label: '角色权限', icon: IconSafe, superOnly: true },
       { name: 'AdminPlugins', label: '插件管理', icon: IconCodeBlock, perm: 'system:plugin' },
       { name: 'AdminSettings', label: '系统设置', icon: IconSettings, perm: 'system:view' },
+      { name: 'AdminPaymentChannels', label: '支付渠道', icon: IconIdcard, perm: 'payment:view' },
       { name: 'AdminFiles', label: '文件管理', icon: IconStorage, perm: 'file:view' },
     ],
   },
