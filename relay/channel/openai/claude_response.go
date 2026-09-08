@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gogf/gf/v2/frame/g"
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -473,10 +476,14 @@ func openAIToClaudeResponse(openaiResp *dto.ChatCompletionResponse, info *common
 	}
 }
 
-// writeClaudeSSE 写入 Claude 格式的 SSE 事件
+// writeClaudeSSE 写入 Claude 格式的 SSE 事件（池化缓冲，整帧单次写出，零分配）。
+// 序列化失败时跳过该事件并记日志：写出的会是 `event: X\ndata: \n\n`，客户端拿到 data 为空的
+// 事件后 JSON.parse("") 直接抛错并中止整个请求（网关侧只会看到 ctx 取消，记成 client_gone）。
+// 写客户端失败沿用既有行为不逐事件记录 —— 由主循环的 ctx 检查与上层中断结算统一处理。
 func writeClaudeSSE(w http.ResponseWriter, eventType string, data any) {
-	dataJSON, _ := json.Marshal(data)
-	_ = helper.WriteSSEEvent(w, eventType, string(dataJSON))
+	if err := helper.WriteSSEEventJSON(w, eventType, data); errors.Is(err, helper.ErrSSEPayloadMarshal) {
+		g.Log().Errorf(context.Background(), "[ClaudeSSE] marshal %s event failed, event skipped: %v", eventType, err)
+	}
 }
 
 // intPtr 返回 int 的指针

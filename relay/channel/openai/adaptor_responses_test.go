@@ -260,6 +260,81 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream(t *testing.T) {
 	}
 }
 
+// sseFrameRecorder 记录每次 Write 的内容，用于断言「一次 Write = 一个完整 SSE 帧」。
+// 帧原子是保活 ping 不会劈开帧的前提：只要每次 Write 都落在帧边界上，
+// 并发 ping 自带的空行就只能插在帧与帧之间，客户端不会派发出 data 为空的事件。
+type sseFrameRecorder struct {
+	header http.Header
+	chunks []string
+	body   strings.Builder
+}
+
+func (r *sseFrameRecorder) Header() http.Header {
+	if r.header == nil {
+		r.header = http.Header{}
+	}
+	return r.header
+}
+
+func (r *sseFrameRecorder) WriteHeader(int) {}
+
+func (r *sseFrameRecorder) Write(p []byte) (int, error) {
+	r.chunks = append(r.chunks, string(p))
+	r.body.Write(p)
+	return len(p), nil
+}
+
+func (r *sseFrameRecorder) Flush() {}
+
+// TestAdaptor_DoResponse_ResponsesUpstreamStream_FrameAtomic Responses 透传必须按帧写出。
+// 该协议每个事件都是 `event:` + `data:` 两行，旧实现把两行分成两次 Write（且 event 行不 Flush），
+// 并发的保活 ping 会把空行插进两行之间 —— 客户端派发出 data 为空的事件，JSON.parse("") 抛错
+// 并中止请求，网关侧只看到 ctx 取消、被记成 client_gone。
+func TestAdaptor_DoResponse_ResponsesUpstreamStream_FrameAtomic(t *testing.T) {
+	ss := strings.Join([]string{
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"Hello"}`,
+		"",
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(ss)),
+	}
+
+	info := responsesUpstreamInfo(constant.RelayModeResponses, true)
+	rec := &sseFrameRecorder{}
+	a := &Adaptor{}
+	if _, err := a.DoResponse(context.Background(), resp, info, rec); err != nil {
+		t.Fatalf("DoResponse error: %v", err)
+	}
+
+	if len(rec.chunks) == 0 {
+		t.Fatal("没有任何写出")
+	}
+	for i, c := range rec.chunks {
+		if !strings.HasSuffix(c, "\n\n") {
+			t.Errorf("第 %d 次 Write 未落在帧边界，保活 ping 可插入其中:\n%q", i, c)
+		}
+	}
+
+	out := rec.body.String()
+	// [DONE] 必须是完整终止帧：只写 data 行会把它留在缓冲里发不出去
+	if !strings.HasSuffix(out, "data: [DONE]\n\n") {
+		t.Errorf("[DONE] 帧未以空行终止:\n%q", out)
+	}
+	for _, want := range []string{"event: response.output_text.delta", `"delta":"Hello"`, "event: response.completed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stream output missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 // fakeResponseRouteStore 路由存储 fake，用于断言 Record 调用
 type fakeResponseRouteStore struct {
 	calls []fakeRouteCall
