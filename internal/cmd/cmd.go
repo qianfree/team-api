@@ -531,6 +531,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/responses/{id}/cancel", relay.HandleResponsesCancel)
 		group.DELETE("/responses/{id}", relay.HandleResponsesDelete)
 		group.POST("/messages", relay.HandleMessages)
+		group.POST("/messages/count_tokens", relay.HandleCountTokens)
 		group.POST("/audio/speech", relay.HandleAudioSpeech)
 		group.POST("/audio/transcriptions", relay.HandleAudioTranscription)
 		group.POST("/audio/translations", relay.HandleAudioTranslation)
