@@ -236,6 +236,38 @@ func HandleMessages(r *ghttp.Request) {
 	recordAudit(r, rc, capture, body, "/messages", latencyMs, firstTokenMs(billingResult))
 }
 
+// HandleCountTokens 处理 /v1/messages/count_tokens（Claude 原生格式）
+// 本地估算输入 token 数：不请求上游、不计费，仅返回 {"input_tokens": N} 供客户端做上下文窗口管理参考。
+func HandleCountTokens(r *ghttp.Request) {
+	body := r.GetBody()
+	if len(body) == 0 {
+		writeClaudeCountTokensError(r, http.StatusBadRequest, "request body is empty")
+		return
+	}
+
+	monitor.RecordBytesIn(len(body))
+
+	tokens, err := handler.CountClaudeTokens(body)
+	if err != nil {
+		writeClaudeCountTokensError(r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	r.Response.WriteJsonExit(g.Map{"input_tokens": tokens})
+}
+
+// writeClaudeCountTokensError 以 Claude 原生错误格式回写 count_tokens 的校验错误。
+func writeClaudeCountTokensError(r *ghttp.Request, status int, message string) {
+	r.Response.WriteHeader(status)
+	r.Response.WriteJsonExit(g.Map{
+		"type": "error",
+		"error": g.Map{
+			"type":    "invalid_request_error",
+			"message": message,
+		},
+	})
+}
+
 // HandleGeminiGenerateContent 处理 /v1beta/models/{model}:generateContent（Gemini 原生格式）
 func HandleGeminiGenerateContent(r *ghttp.Request) {
 	g.Log().Debugf(r.Context(), "[HandleGeminiGenerateContent] Entry: method=%s, path=%s, uri=%s",
