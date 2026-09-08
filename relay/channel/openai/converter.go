@@ -1369,11 +1369,9 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 		if chunk == nil {
 			return true
 		}
-		data, err := json.Marshal(chunk)
-		if err != nil {
-			return false
-		}
-		return helper.WriteSSEData(writer, string(data)) == nil
+		// 池化缓冲 + 绑定 encoder：序列化与拼帧零分配，整帧单次写出。
+		// 序列化失败与写失败都返回 false（同旧行为），由调用方终止流。
+		return helper.WriteSSEDataJSON(writer, chunk) == nil
 	}
 
 	sendStartIfNeeded := func() bool {
