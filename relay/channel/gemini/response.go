@@ -100,11 +100,17 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 	isCA := a.isCodeAssistActive()
 	reader := bufio.NewReader(resp.Body)
 
+	// 按帧攒齐再写：本路径当前没有并发的保活 ping，但逐行写既不是帧原子（将来接入 ping
+	// 或多行 data 时会被空行劈开），也会按行 Flush 产生多余系统调用；统一走帧写入器。
+	frame := helper.NewSSEFrameWriter(writer)
+
 	var totalUsage dto.GeminiUsageMetadata
 
 	for {
 		select {
 		case <-ctx.Done():
+			// 未完成的半帧尚未出网，丢弃即可
+			frame.Discard()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
 			interruptedUsage := geminiUsageToCommon(&totalUsage)
@@ -127,10 +133,12 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 				}
 
 				if data == "[DONE]" {
-					_, _ = io.WriteString(writer, outputLine)
-					if f, ok := writer.(http.Flusher); ok {
-						f.Flush()
+					if werr := frame.WriteLine(outputLine); werr != nil {
+						info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, werr)
+						break
 					}
+					// [DONE] 后直接收尾，须冲刷缓冲，否则这一行发不出去
+					_ = frame.FlushPartial()
 					break
 				}
 
@@ -153,17 +161,21 @@ func (a *Adaptor) handleGeminiNativeStream(ctx context.Context, resp *http.Respo
 				}
 			}
 
-			// 输出 SSE 行（解包后的）
-			_, _ = io.WriteString(writer, outputLine)
-			if f, ok := writer.(http.Flusher); ok {
-				f.Flush()
+			// 输出 SSE 行（解包后的），遇帧分隔空行整帧写出
+			if werr := frame.WriteLine(outputLine); werr != nil {
+				info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, werr)
+				break
 			}
 		}
 
 		if err == io.EOF {
+			// 上游未以空行结尾时冲刷残留，避免丢掉最后一帧
+			_ = frame.FlushPartial()
 			break
 		}
 		if err != nil {
+			// 上游读取出错：缓冲里的残留是不完整的帧，写给客户端只会造成非法 SSE，丢弃
+			frame.Discard()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
 			break
 		}

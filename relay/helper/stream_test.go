@@ -1,12 +1,16 @@
 package helper
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/qianfree/team-api/relay/dto"
 )
 
 // TestSetEventStreamHeaders_Idempotency 测试 SSE 头幂等性保护
@@ -437,6 +441,466 @@ func TestSSEFrameWriter_MaxBufDegrades(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Error("超过上限后仍未向客户端写出任何数据")
+	}
+}
+
+// ===== 池化帧写入器 =====
+
+// benchClaudeDelta 构造一个典型的 Claude 流式增量事件，作为基准与парity 测试的载荷
+func benchClaudeDelta() *dto.ClaudeResponse {
+	text := "这是一段典型长度的流式增量文本内容"
+	idx := 0
+	return &dto.ClaudeResponse{
+		Type:  "content_block_delta",
+		Index: &idx,
+		Delta: &dto.ClaudeDelta{Type: "text_delta", Text: &text},
+	}
+}
+
+// TestWriteSSEEventJSON_ByteParityWithMarshalFprintf 池化路径的输出必须与
+// 「json.Marshal → string → WriteSSEEvent」逐字节一致（含 HTML 转义行为），
+// 否则等于悄悄改了对外协议。
+func TestWriteSSEEventJSON_ByteParityWithMarshalFprintf(t *testing.T) {
+	payloads := []any{
+		benchClaudeDelta(),
+		&dto.ClaudeResponse{Type: "message_stop"},
+		// HTML 字符：json.Marshal 与 json.Encoder 默认都转义，此处锁定该行为
+		map[string]any{"text": `a<b>c&d`, "n": 1.5, "null": nil},
+		map[string]any{"empty": ""},
+	}
+
+	for i, p := range payloads {
+		old := httptest.NewRecorder()
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("payload #%d marshal failed: %v", i, err)
+		}
+		if err := WriteSSEEvent(old, "content_block_delta", string(data)); err != nil {
+			t.Fatalf("WriteSSEEvent failed: %v", err)
+		}
+
+		pooled := httptest.NewRecorder()
+		if err := WriteSSEEventJSON(pooled, "content_block_delta", p); err != nil {
+			t.Fatalf("WriteSSEEventJSON failed: %v", err)
+		}
+
+		if old.Body.String() != pooled.Body.String() {
+			t.Errorf("payload #%d 输出不一致:\nold:    %q\npooled: %q", i, old.Body.String(), pooled.Body.String())
+		}
+	}
+}
+
+// TestWriteSSEDataJSON_ByteParity data-only 帧同样要求逐字节一致。
+func TestWriteSSEDataJSON_ByteParity(t *testing.T) {
+	p := benchClaudeDelta()
+
+	old := httptest.NewRecorder()
+	data, _ := json.Marshal(p)
+	if err := WriteSSEData(old, string(data)); err != nil {
+		t.Fatalf("WriteSSEData failed: %v", err)
+	}
+
+	pooled := httptest.NewRecorder()
+	if err := WriteSSEDataJSON(pooled, p); err != nil {
+		t.Fatalf("WriteSSEDataJSON failed: %v", err)
+	}
+
+	if old.Body.String() != pooled.Body.String() {
+		t.Errorf("输出不一致:\nold:    %q\npooled: %q", old.Body.String(), pooled.Body.String())
+	}
+}
+
+// TestWriteSSEEventJSON_MarshalFailureWritesNothing 序列化失败时必须一个字节都不出网，
+// 且错误可被 errors.Is 识别 —— 半截帧或空 data 帧会让客户端整条请求失败。
+func TestWriteSSEEventJSON_MarshalFailureWritesNothing(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	// chan 无法被 encoding/json 序列化
+	err := WriteSSEEventJSON(rec, "content_block_delta", map[string]any{"bad": make(chan int)})
+	if !errors.Is(err, ErrSSEPayloadMarshal) {
+		t.Fatalf("err = %v, want ErrSSEPayloadMarshal", err)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("序列化失败仍写出了 %q", rec.Body.String())
+	}
+
+	// 失败后缓冲归池，不得污染后续事件
+	rec2 := httptest.NewRecorder()
+	if err := WriteSSEEventJSON(rec2, "content_block_delta", benchClaudeDelta()); err != nil {
+		t.Fatalf("后续写入失败: %v", err)
+	}
+	if !strings.HasPrefix(rec2.Body.String(), "event: content_block_delta\ndata: {") {
+		t.Errorf("池被上一次失败污染: %q", rec2.Body.String())
+	}
+}
+
+// TestWriteSSEEventJSON_FrameIsSingleWrite 整帧必须单次 Write 写出 ——
+// 这是保活 ping 无法插进帧中间的前提。
+func TestWriteSSEEventJSON_FrameIsSingleWrite(t *testing.T) {
+	w := &countingWriter{}
+	if err := WriteSSEEventJSON(w, "content_block_delta", benchClaudeDelta()); err != nil {
+		t.Fatalf("WriteSSEEventJSON failed: %v", err)
+	}
+	if w.writes != 1 {
+		t.Errorf("Write 调用次数 = %d, want 1（多次写出会给 ping 留出插入窗口）", w.writes)
+	}
+}
+
+// countingWriter 统计 Write 调用次数
+type countingWriter struct {
+	header http.Header
+	writes int
+}
+
+func (c *countingWriter) Header() http.Header {
+	if c.header == nil {
+		c.header = http.Header{}
+	}
+	return c.header
+}
+func (c *countingWriter) WriteHeader(int) {}
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
+
+// discardWriter 丢弃写入内容的 ResponseWriter，让基准只测序列化与拼帧开销
+type discardWriter struct{ header http.Header }
+
+func (d *discardWriter) Header() http.Header {
+	if d.header == nil {
+		d.header = http.Header{}
+	}
+	return d.header
+}
+func (d *discardWriter) WriteHeader(int)             {}
+func (d *discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// BenchmarkSSEEvent_MarshalFprintf 旧路径：json.Marshal → string() → fmt.Fprintf
+func BenchmarkSSEEvent_MarshalFprintf(b *testing.B) {
+	w := &discardWriter{}
+	payload := benchClaudeDelta()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := WriteSSEEvent(w, "content_block_delta", string(data)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSSEEvent_PooledJSON 新路径：池化 buffer + 绑定的 json.Encoder，整帧单次 Write
+func BenchmarkSSEEvent_PooledJSON(b *testing.B) {
+	w := &discardWriter{}
+	payload := benchClaudeDelta()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := WriteSSEEventJSON(w, "content_block_delta", payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSSEEvent_MarshalFprintfParallel 并发下的旧路径（真实场景是多请求同时流式输出）
+func BenchmarkSSEEvent_MarshalFprintfParallel(b *testing.B) {
+	payload := benchClaudeDelta()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		w := &discardWriter{}
+		for pb.Next() {
+			data, err := json.Marshal(payload)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := WriteSSEEvent(w, "content_block_delta", string(data)); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// BenchmarkSSEEvent_PooledJSONParallel 并发下的新路径，验证 sync.Pool 的 per-P 缓存不成为瓶颈
+func BenchmarkSSEEvent_PooledJSONParallel(b *testing.B) {
+	payload := benchClaudeDelta()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		w := &discardWriter{}
+		for pb.Next() {
+			if err := WriteSSEEventJSON(w, "content_block_delta", payload); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// concurrentProbe 并发独立性探针载荷：stream/seq 定位来源，pad 让各流的帧长度不同，
+// 一旦缓冲被跨流复用或 Reset 失效，长度或字段就会对不上。
+type concurrentProbe struct {
+	Stream int    `json:"stream"`
+	Seq    int    `json:"seq"`
+	Pad    string `json:"pad"`
+}
+
+// TestWriteSSEEventJSON_ConcurrentIndependence 100 条流并发输出时，池化缓冲必须完全独占：
+// 每条流的响应里只能有自己的事件，顺序、内容、长度都不得被别的流污染。
+//
+// sync.Pool 的 Get 会把对象从池中取走，两个并发的 Get 不可能拿到同一个对象；
+// 本用例锁死这一点，防止将来有人把 eb 或 eb.buf.Bytes() 的引用泄漏到 Put 之后。
+func TestWriteSSEEventJSON_ConcurrentIndependence(t *testing.T) {
+	const streams = 100
+	const eventsPerStream = 50
+
+	var wg sync.WaitGroup
+	bodies := make([]string, streams)
+	errs := make([]error, streams)
+
+	for s := 0; s < streams; s++ {
+		wg.Add(1)
+		go func(s int) {
+			defer wg.Done()
+			// 每条流一个独立 writer，对应真实场景里每个请求各自的 ResponseWriter
+			rec := httptest.NewRecorder()
+			w := NewSafeWriter(rec)
+			for e := 0; e < eventsPerStream; e++ {
+				payload := concurrentProbe{Stream: s, Seq: e, Pad: strings.Repeat("x", s%64)}
+				if err := WriteSSEEventJSON(w, "content_block_delta", payload); err != nil {
+					errs[s] = err
+					return
+				}
+			}
+			bodies[s] = rec.Body.String()
+		}(s)
+	}
+	wg.Wait()
+
+	for s := 0; s < streams; s++ {
+		if errs[s] != nil {
+			t.Fatalf("stream %d 写入失败: %v", s, errs[s])
+		}
+		events := decodeSSE(bodies[s])
+		if len(events) != eventsPerStream {
+			t.Fatalf("stream %d 事件数 = %d, want %d", s, len(events), eventsPerStream)
+		}
+		for e, ev := range events {
+			var got concurrentProbe
+			if err := json.Unmarshal([]byte(ev.data), &got); err != nil {
+				t.Fatalf("stream %d 事件 #%d 不是合法 JSON（缓冲被跨流复用会产生这种拼接残片）: %v\ndata=%q",
+					s, e, err, ev.data)
+			}
+			if got.Stream != s || got.Seq != e || len(got.Pad) != s%64 {
+				t.Fatalf("stream %d 事件 #%d 内容串流: got %+v, want stream=%d seq=%d padLen=%d",
+					s, e, got, s, e, s%64)
+			}
+		}
+	}
+}
+
+// TestWriteSSEEventJSON_ConcurrentWithPing 并发输出叠加保活 ping：
+// 帧在私有缓冲里拼好后单次写出，ping 只能落在帧边界，客户端不会拿到空 data 事件。
+func TestWriteSSEEventJSON_ConcurrentWithPing(t *testing.T) {
+	const streams = 32
+	const eventsPerStream = 30
+
+	var wg sync.WaitGroup
+	bodies := make([]string, streams)
+
+	for s := 0; s < streams; s++ {
+		wg.Add(1)
+		go func(s int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			w := NewSafeWriter(rec)
+
+			stopPing := make(chan struct{})
+			pingDone := make(chan struct{})
+			go func() {
+				defer close(pingDone)
+				for {
+					select {
+					case <-stopPing:
+						return
+					default:
+						_ = WriteSSEPing(w)
+					}
+				}
+			}()
+
+			for e := 0; e < eventsPerStream; e++ {
+				_ = WriteSSEEventJSON(w, "content_block_delta", concurrentProbe{Stream: s, Seq: e})
+			}
+
+			close(stopPing)
+			<-pingDone
+			bodies[s] = rec.Body.String()
+		}(s)
+	}
+	wg.Wait()
+
+	for s := 0; s < streams; s++ {
+		assertNoEmptyDataEvent(t, bodies[s])
+	}
+}
+
+// TestWriteSSEEventJSON_OversizedPayload 单个事件远超池缓冲的初始容量与回收阈值时，
+// 必须照常完整写出（bytes.Buffer 自动扩容，不截断、不报错）；超阈值的缓冲不回池，
+// 但不影响后续事件的正确性。
+func TestWriteSSEEventJSON_OversizedPayload(t *testing.T) {
+	// 1 MiB 文本，远超 sseEventBufInitCap(2KiB) 与 sseEventBufKeepCap(64KiB)
+	huge := strings.Repeat("你好", 512*1024/6)
+	payload := concurrentProbe{Stream: 1, Seq: 2, Pad: huge}
+
+	rec := httptest.NewRecorder()
+	if err := WriteSSEEventJSON(rec, "content_block_delta", payload); err != nil {
+		t.Fatalf("超大事件写出失败: %v", err)
+	}
+
+	// 与旧路径逐字节一致（即：既没截断也没串位）
+	want := httptest.NewRecorder()
+	data, _ := json.Marshal(payload)
+	_ = WriteSSEEvent(want, "content_block_delta", string(data))
+	if rec.Body.String() != want.Body.String() {
+		t.Fatalf("超大事件输出与 Marshal 路径不一致（len got=%d want=%d）",
+			rec.Body.Len(), want.Body.Len())
+	}
+
+	// 超阈值缓冲被丢弃后，后续事件仍然正确（下一次 Get 会新建）
+	next := httptest.NewRecorder()
+	if err := WriteSSEEventJSON(next, "content_block_delta", concurrentProbe{Stream: 3, Seq: 4}); err != nil {
+		t.Fatalf("后续事件写出失败: %v", err)
+	}
+	events := decodeSSE(next.Body.String())
+	if len(events) != 1 {
+		t.Fatalf("后续事件数 = %d, want 1", len(events))
+	}
+	var got concurrentProbe
+	if err := json.Unmarshal([]byte(events[0].data), &got); err != nil {
+		t.Fatalf("后续事件不是合法 JSON: %v", err)
+	}
+	if got.Stream != 3 || got.Seq != 4 || got.Pad != "" {
+		t.Errorf("后续事件被超大缓冲污染: %+v", got)
+	}
+}
+
+// TestWriteSSEEventJSON_RealWorldFrameSizes 记录真实流式事件的实际帧长度，
+// 用于校准 sseEventBufInitCap（初始容量应覆盖绝大多数事件，避免首次写入扩容）。
+func TestWriteSSEEventJSON_RealWorldFrameSizes(t *testing.T) {
+	text := "这是一段典型长度的流式增量文本内容"
+	idx := 0
+	cases := []struct {
+		name    string
+		event   string
+		payload any
+	}{
+		{"content_block_delta(文本)", "content_block_delta", &dto.ClaudeResponse{
+			Type: "content_block_delta", Index: &idx,
+			Delta: &dto.ClaudeDelta{Type: "text_delta", Text: &text},
+		}},
+		{"message_start", "message_start", &dto.ClaudeResponse{
+			Type: "message_start",
+			Message: &dto.ClaudeMessageInfo{
+				ID: "msg_01ABCDEFGHIJKLMNOPQRSTUV", Type: "message", Role: "assistant",
+				Model: "claude-opus-4-8", Content: []dto.ClaudeContentBlock{},
+				Usage: &dto.ClaudeUsage{InputTokens: 1234, OutputTokens: 0, CacheReadInputTokens: 5678},
+			},
+		}},
+		{"message_delta(含 usage)", "message_delta", &dto.ClaudeResponse{
+			Type:  "message_delta",
+			Delta: &dto.ClaudeDelta{StopReason: &text},
+			Usage: &dto.ClaudeUsage{InputTokens: 1234, OutputTokens: 567},
+		}},
+		{"message_stop", "message_stop", &dto.ClaudeResponse{Type: "message_stop"}},
+	}
+
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		if err := WriteSSEEventJSON(rec, c.event, c.payload); err != nil {
+			t.Fatalf("%s 写出失败: %v", c.name, err)
+		}
+		n := rec.Body.Len()
+		t.Logf("%-28s 整帧 %4d 字节（初始容量 %d）", c.name, n, sseEventBufInitCap)
+		if n > sseEventBufInitCap {
+			t.Errorf("%s 帧长 %d 超过初始容量 %d，每个事件都会触发扩容，应上调 sseEventBufInitCap",
+				c.name, n, sseEventBufInitCap)
+		}
+	}
+}
+
+// TestSSEFrameWriter_MaxBufDegradeSuppressesPing 超大帧降级为分次写出时，写出的这批字节
+// 不含帧尾 —— 此刻放行 ping 依然会把帧劈成两个事件。降级期间必须抑制 ping，直到分隔空行到达。
+func TestSSEFrameWriter_MaxBufDegradeSuppressesPing(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := NewSafeWriter(rec)
+	frame := NewSSEFrameWriter(sw)
+
+	if err := frame.WriteLine("event: content_block_delta\n"); err != nil {
+		t.Fatalf("WriteLine failed: %v", err)
+	}
+	// 帧尚未降级，ping 可以正常写（半帧还在缓冲里，没有出网风险）
+	if written, err := sw.WritePing(); err != nil || !written {
+		t.Fatalf("未降级时 ping 应正常写出: written=%v err=%v", written, err)
+	}
+
+	line := "data: " + strings.Repeat("x", 64*1024) + "\n"
+	for i := 0; i < sseFrameMaxBuf/len(line)+2; i++ {
+		if err := frame.WriteLine(line); err != nil {
+			t.Fatalf("WriteLine failed: %v", err)
+		}
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("超过上限后仍未降级写出，无法验证抑制逻辑")
+	}
+
+	// 降级已发生：帧的一部分已经出网且没有帧尾，此刻 ping 必须让路
+	written, err := sw.WritePing()
+	if err != nil {
+		t.Fatalf("WritePing failed: %v", err)
+	}
+	if written {
+		t.Error("超大帧降级写出期间 ping 未被抑制，空行会把帧劈成两个事件")
+	}
+
+	// 帧结束后恢复：分隔空行到达，ping 重新放行
+	if err := frame.WriteLine("\n"); err != nil {
+		t.Fatalf("WriteLine failed: %v", err)
+	}
+	written, err = sw.WritePing()
+	if err != nil {
+		t.Fatalf("WritePing failed: %v", err)
+	}
+	if !written {
+		t.Error("帧已完整写出，ping 应恢复")
+	}
+
+	assertNoEmptyDataEvent(t, rec.Body.String())
+}
+
+// TestSSEFrameWriter_DiscardClearsPingSuppression 降级后走中断路径（Discard）时，
+// 必须解除 ping 抑制，否则标记会永久留在 writer 上、后续保活全部失效。
+func TestSSEFrameWriter_DiscardClearsPingSuppression(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := NewSafeWriter(rec)
+	frame := NewSSEFrameWriter(sw)
+
+	line := "data: " + strings.Repeat("x", 64*1024) + "\n"
+	for i := 0; i < sseFrameMaxBuf/len(line)+2; i++ {
+		if err := frame.WriteLine(line); err != nil {
+			t.Fatalf("WriteLine failed: %v", err)
+		}
+	}
+	if written, _ := sw.WritePing(); written {
+		t.Fatal("前置条件不成立：降级期间 ping 应被抑制")
+	}
+
+	frame.Discard()
+	if written, err := sw.WritePing(); err != nil || !written {
+		t.Errorf("Discard 后 ping 抑制未解除: written=%v err=%v", written, err)
 	}
 }
 
