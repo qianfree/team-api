@@ -6,7 +6,6 @@ import {
 } from '@arco-design/web-vue'
 import { IconSave, IconFile, IconBarChart, IconCamera, IconExclamationCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
-import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -642,20 +641,6 @@ const { exporting, exportFile } = useExport({
 
 <template>
 	<div class="page-table">
-		<PageHeader title="用量日志" description="查看所有租户的 API 调用记录和消费明细">
-			<template #actions>
-				<ADropdown trigger="hover">
-					<AButton :loading="exporting">导出</AButton>
-					<template #content>
-						<ADoption @click="exportFile('csv')">导出 CSV</ADoption>
-						<ADoption @click="exportFile('xlsx')">导出 Excel</ADoption>
-					</template>
-				</ADropdown>
-				<a-button size="small" @click="handleReset">重置筛选</a-button>
-				<a-button size="small" @click="handleRefresh">刷新</a-button>
-			</template>
-		</PageHeader>
-
 		<a-card :bordered="false" class="mb-4">
 			<div class="filter-bar">
 				<!-- 时间范围恒为首个筛选条件 -->
@@ -707,7 +692,7 @@ const { exporting, exportFile } = useExport({
 					:options="statusOptions"
 					placeholder="状态"
 					allow-clear
-					style="width: 120px"
+					style="width: 140px"
 					@change="handleFilter"
 				/>
 				<a-select
@@ -715,7 +700,7 @@ const { exporting, exportFile } = useExport({
 					:options="requestTypeOptions"
 					placeholder="请求类型"
 					allow-clear
-					style="width: 120px"
+					style="width: 150px"
 					@change="handleFilter"
 				/>
 				<!-- 精确 ID 排查条件 -->
@@ -724,7 +709,7 @@ const { exporting, exportFile } = useExport({
 					placeholder="记录ID"
 					:min="1"
 					allow-clear
-					style="width: 120px"
+					style="width: 150px"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
@@ -733,7 +718,7 @@ const { exporting, exportFile } = useExport({
 					placeholder="用户ID"
 					:min="1"
 					allow-clear
-					style="width: 120px"
+					style="width: 150px"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
@@ -742,12 +727,22 @@ const { exporting, exportFile } = useExport({
 					placeholder="API Key ID"
 					:min="1"
 					allow-clear
-					style="width: 130px"
+					style="width: 160px"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
-				<!-- 搜索按钮恒为最后一项，行尾靠右 -->
-				<a-button type="primary" class="filter-search-btn" @click="handleFilter">搜索</a-button>
+				<div class="filter-actions">
+					<a-button type="primary" @click="handleFilter">搜索</a-button>
+					<a-button @click="handleReset">重置筛选</a-button>
+					<a-button @click="handleRefresh">刷新</a-button>
+					<a-dropdown trigger="hover">
+						<a-button :loading="exporting">导出</a-button>
+						<template #content>
+							<a-doption @click="exportFile('csv')">导出 CSV</a-doption>
+							<a-doption @click="exportFile('xlsx')">导出 Excel</a-doption>
+						</template>
+					</a-dropdown>
+				</div>
 			</div>
 		</a-card>
 
@@ -1548,24 +1543,26 @@ const { exporting, exportFile } = useExport({
 	margin-bottom: 0;
 }
 
-/* 筛选栏：flex 换行布局，搜索按钮恒为最后一项并靠其所在行行尾 */
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
 .filter-bar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 8px;
 }
-.filter-search-btn {
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
 	margin-left: auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
 }
-/* 移动端：筛选控件铺满整行（覆盖 inline 定宽），主按钮同样全宽便于点按 */
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
 @media (max-width: 768px) {
-	.filter-bar > * {
+	.filter-bar > *:not(.filter-actions) {
 		flex: 1 1 100%;
 		width: 100% !important;
-	}
-	.filter-search-btn {
-		margin-left: 0;
 	}
 }
 </style>
