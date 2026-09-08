@@ -5,7 +5,6 @@ import {
 	Tag, Button,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
-import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
@@ -275,10 +274,8 @@ onMounted(() => {
 
 <template>
 	<div class="page-table">
-		<PageHeader title="请求日志" description="查看 LLM 请求审计日志，包含请求体和响应体" />
-
 		<a-card :bordered="false" class="mb-4">
-			<a-space wrap>
+			<div class="filter-bar">
 				<a-range-picker
 					v-model="filter.date_range"
 					show-time
@@ -331,10 +328,12 @@ onMounted(() => {
 					style="width: 100px"
 					@keydown.enter="handleFilter"
 				/>
-				<a-button type="primary" @click="handleFilter">搜索</a-button>
-				<a-button @click="handleReset">重置</a-button>
-				<a-button @click="handleRefresh">刷新</a-button>
-			</a-space>
+				<div class="filter-actions">
+					<a-button type="primary" @click="handleFilter">搜索</a-button>
+					<a-button @click="handleReset">重置</a-button>
+					<a-button @click="handleRefresh">刷新</a-button>
+				</div>
+			</div>
 		</a-card>
 
 		<a-card :bordered="false">
@@ -436,6 +435,28 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
+	margin-left: auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
+@media (max-width: 768px) {
+	.filter-bar > *:not(.filter-actions) {
+		flex: 1 1 100%;
+		width: 100% !important;
+	}
+}
 .table-footer {
 	display: flex;
 	align-items: center;
