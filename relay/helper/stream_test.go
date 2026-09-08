@@ -832,6 +832,33 @@ func TestWriteSSEEventJSON_RealWorldFrameSizes(t *testing.T) {
 	}
 }
 
+// BenchmarkSSEData_PooledJSON_Pointer / _Value 验证「传指针而非结构体值」的理由：
+// 结构体值传进 any 形参需要装箱，会额外堆分配一份拷贝；传指针则不会。
+// 迁移调用点时据此统一传 &chunk。
+func BenchmarkSSEData_PooledJSON_Pointer(b *testing.B) {
+	w := &discardWriter{}
+	payload := benchClaudeDelta() // 已是指针
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := WriteSSEDataJSON(w, payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSSEData_PooledJSON_Value(b *testing.B) {
+	w := &discardWriter{}
+	payload := *benchClaudeDelta() // 解引用成值
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := WriteSSEDataJSON(w, payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // TestSSEFrameWriter_MaxBufDegradeSuppressesPing 超大帧降级为分次写出时，写出的这批字节
 // 不含帧尾 —— 此刻放行 ping 依然会把帧劈成两个事件。降级期间必须抑制 ping，直到分隔空行到达。
 func TestSSEFrameWriter_MaxBufDegradeSuppressesPing(t *testing.T) {
