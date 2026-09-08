@@ -462,8 +462,24 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 	defer stopPing()
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
+	// 按帧攒齐再写：逐行写会让并发的保活 ping 把自带空行插进帧中间，客户端据此派发出
+	// 一个 data 为空的事件（JSON.parse("") 报错并中止请求），网关侧只看到 ctx 取消被记成
+	// client_gone，真实成因被掩盖。SafeWriter 只保证单次 Write 原子，保证不了整帧原子。
+	frame := helper.NewSSEFrameWriter(writer)
 	var usage dto.ClaudeUsage
 	var transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
+
+	// onWriteFail 写客户端失败：立即关闭上游连接，停止 token 生成，按流中断结算
+	onWriteFail := func(writeErr error) (*common.Usage, error) {
+		g.Log().Warningf(context.Background(),
+			"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
+			info.RequestID, writeErr, ctx.Err(), time.Since(info.StartTime))
+		cleanup()
+		info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, writeErr)
+		interruptedUsage := buildUsageFromClaude(&usage)
+		helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+		return interruptedUsage, common.ErrStreamInterrupted
+	}
 
 	for {
 		select {
@@ -472,6 +488,8 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			// 让 SDK 收到"200 + SSE头 + 无事件 + EOF"，Anthropic SDK 进入等待状态，
 			// 后续请求的响应会被误判为当前流的 SSE 数据 → "Failed to parse JSON"。
 			// 发送一个 Claude 格式的 error event，让 SDK 以正常 API Error 退出，而非挂起。
+			// 未完成的半帧尚未出网，先丢弃，避免与 error 帧拼成非法 SSE 输出。
+			frame.Discard()
 			_, _ = fmt.Fprintf(writer,
 				"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream disconnected\"}}\n\n")
 			if f, ok := writer.(http.Flusher); ok {
@@ -485,11 +503,13 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 		default:
 		}
 
+		// ReadString 在上游 EOF 时可能同时返回「最后一段无换行的数据 + io.EOF」，
+		// 必须先处理 line 再判 err，否则会丢掉上游未以换行结尾的最后一行。
 		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
+
+		if err != nil && err != io.EOF {
+			// 上游读取出错：缓冲里的残留是不完整的帧，写给客户端只会造成非法 SSE，丢弃
+			frame.Discard()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
 			// 已有部分输出时按部分成功处理（避免标记为完全失败）
 			interruptedUsage := buildUsageFromClaude(&usage)
@@ -499,75 +519,71 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			return interruptedUsage, fmt.Errorf("upstream stream interrupted: %w", err)
 		}
 
-		if strings.HasPrefix(line, "data:") {
-			data, _ := helper.ExtractSSEData(line)
+		if line != "" {
+			if strings.HasPrefix(line, "data:") {
+				data, _ := helper.ExtractSSEData(line)
 
-			if data != "" && data != "[DONE]" {
-				info.SetFirstResponseTime()
-			}
+				if data != "" && data != "[DONE]" {
+					info.SetFirstResponseTime()
+				}
 
-			var event dto.ClaudeResponse
-			if json.Unmarshal([]byte(data), &event) != nil {
-				// JSON 解析失败：静默跳过
-			} else {
-				switch event.Type {
-				case "message_start":
-					if event.Message != nil && event.Message.Usage != nil {
-						usage = *event.Message.Usage
+				var event dto.ClaudeResponse
+				if json.Unmarshal([]byte(data), &event) != nil {
+					// JSON 解析失败：静默跳过
+				} else {
+					switch event.Type {
+					case "message_start":
+						if event.Message != nil && event.Message.Usage != nil {
+							usage = *event.Message.Usage
+						}
+					case "content_block_delta":
+						// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
+						if event.Delta != nil {
+							if event.Delta.Text != nil {
+								transferredTextLen += len(*event.Delta.Text)
+							}
+							if event.Delta.Thinking != nil {
+								transferredTextLen += len(*event.Delta.Thinking)
+							}
+						}
+					case "message_delta":
+						if event.Usage != nil {
+							if event.Usage.InputTokens > 0 {
+								usage.InputTokens = event.Usage.InputTokens
+							}
+							usage.OutputTokens = event.Usage.OutputTokens
+							if event.Usage.CacheReadInputTokens > 0 {
+								usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+							}
+							if event.Usage.CacheCreationInputTokens > 0 {
+								usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+							}
+							if event.Usage.CacheCreation != nil {
+								usage.CacheCreation = event.Usage.CacheCreation
+							}
+						}
+					case "error":
+						info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("claude upstream stream error"))
 					}
-				case "content_block_delta":
-					// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
-					if event.Delta != nil {
-						if event.Delta.Text != nil {
-							transferredTextLen += len(*event.Delta.Text)
-						}
-						if event.Delta.Thinking != nil {
-							transferredTextLen += len(*event.Delta.Thinking)
-						}
-					}
-				case "message_delta":
-					if event.Usage != nil {
-						if event.Usage.InputTokens > 0 {
-							usage.InputTokens = event.Usage.InputTokens
-						}
-						usage.OutputTokens = event.Usage.OutputTokens
-						if event.Usage.CacheReadInputTokens > 0 {
-							usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
-						}
-						if event.Usage.CacheCreationInputTokens > 0 {
-							usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
-						}
-						if event.Usage.CacheCreation != nil {
-							usage.CacheCreation = event.Usage.CacheCreation
-						}
-					}
-				case "error":
-					info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("claude upstream stream error"))
+				}
+
+				if info.ChannelMeta.IsModelMapped {
+					replaced := string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
+					line = fmt.Sprintf("data: %s\n", replaced)
 				}
 			}
 
-			if info.ChannelMeta.IsModelMapped {
-				replaced := string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
-				line = fmt.Sprintf("data: %s\n", replaced)
+			if werr := frame.WriteLine(line); werr != nil {
+				return onWriteFail(werr)
 			}
 		}
 
-		if _, err := writer.Write([]byte(line)); err != nil {
-			// 写入客户端失败：立即关闭上游连接，停止生成
-			g.Log().Warningf(context.Background(),
-				"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
-				info.RequestID, err, ctx.Err(), time.Since(info.StartTime))
-			cleanup()
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
-			interruptedUsage := buildUsageFromClaude(&usage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-			return interruptedUsage, common.ErrStreamInterrupted
-		}
-
-		if len(line) == 1 && line[0] == '\n' {
-			if f, ok := writer.(http.Flusher); ok {
-				f.Flush()
+		if err == io.EOF {
+			// 上游未以空行结尾时冲刷残留，避免丢掉最后一帧
+			if ferr := frame.FlushPartial(); ferr != nil {
+				return onWriteFail(ferr)
 			}
+			break
 		}
 	}
 

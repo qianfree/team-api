@@ -165,8 +165,10 @@ func ApplyInterruptedUsageFallback(info *common.RelayInfo, usage *common.Usage, 
 // SafeWriter 包装 http.ResponseWriter，用互斥锁串行化 Write/WriteHeader/Flush，
 // 使保活 ping goroutine 与主循环可以安全地并发写同一个 ResponseWriter。
 //
-// 注意：fmt.Fprintf 对单个 SSE 帧只产生一次 Write 调用，因此每个 SSE 帧在锁内是原子写入的；
-// Flush 单独加锁，与其他写入交错也不会破坏帧的字节完整性。
+// 注意：本类型只保证**单次 Write 调用**原子，不保证 SSE 帧原子。
+// 调用方一次 Write 写完整帧时（如 WriteSSEData/WriteSSEEvent 的单次 Fprintf），帧即原子；
+// 而按行转发上游 SSE 的调用方必须改用 SSEFrameWriter 攒齐整帧再写，否则 ping 的空行
+// 会插进帧中间，让客户端派发出 data 为空的事件（详见 SSEFrameWriter 的说明）。
 type SafeWriter struct {
 	w          http.ResponseWriter
 	mu         sync.Mutex
@@ -210,6 +212,84 @@ var (
 	_ http.ResponseWriter = (*SafeWriter)(nil)
 	_ http.Flusher        = (*SafeWriter)(nil)
 )
+
+const (
+	// sseFrameMaxBuf 单帧缓冲上限：超过则先把已缓冲内容写出（降级为逐行写），
+	// 防止上游异常（始终不发空行）把整条流攒进内存。正常 SSE 帧远小于此。
+	sseFrameMaxBuf = 1 << 20 // 1 MiB
+	// sseFrameKeepBuf 帧写出后保留复用的缓冲上限，超过则释放，避免个别大帧长期占用内存
+	sseFrameKeepBuf = 64 * 1024
+)
+
+// IsSSEFrameBoundary 判断一行是否为 SSE 帧分隔空行（兼容 LF / CRLF 两种行尾）。
+func IsSSEFrameBoundary(line string) bool {
+	return line == "\n" || line == "\r\n"
+}
+
+// SSEFrameWriter 为「逐行转发上游 SSE」的场景提供帧级原子写入。
+//
+// SSE 以空行分帧，客户端读到空行即派发事件。若转发方按行写，而保活 ping goroutine
+// 又并发写同一个 writer，ping 自带的空行就可能插进一帧中间，把只写了 `event: X` 的
+// 半帧提前派发出去 —— 客户端拿到 data 为空的事件，对其做 JSON.parse 直接抛错
+// （如 Claude Code 的 "JSON Parse error: Unexpected EOF"）并中止请求，网关侧随后
+// 只观察到 ctx 取消，被记成 client_gone，真实成因被掩盖。
+// SafeWriter 只保证单次 Write 原子，保证不了整帧原子，故需本类型按帧攒齐再写。
+//
+// 用法：逐行 WriteLine（遇空行自动整帧写出并 Flush）；上游 EOF 时 FlushPartial
+// 冲刷无空行结尾的残留；中断或上游读错时 Discard 丢弃半帧（半帧尚未出网，丢弃即可）。
+// 本类型非并发安全，只应由转发主循环单协程使用，底层 w 需为 SafeWriter。
+type SSEFrameWriter struct {
+	w   http.ResponseWriter
+	buf []byte
+}
+
+// NewSSEFrameWriter 创建帧级原子写入器，w 应为并发安全的 writer（如 SafeWriter）。
+func NewSSEFrameWriter(w http.ResponseWriter) *SSEFrameWriter {
+	return &SSEFrameWriter{w: w}
+}
+
+// WriteLine 追加一行（含行尾换行符）。该行为帧分隔空行、或缓冲超过上限时整帧写出。
+func (f *SSEFrameWriter) WriteLine(line string) error {
+	f.buf = append(f.buf, line...)
+	if IsSSEFrameBoundary(line) || len(f.buf) >= sseFrameMaxBuf {
+		return f.flush()
+	}
+	return nil
+}
+
+// FlushPartial 冲刷未以空行结尾的残留内容（上游 EOF 时调用，避免丢掉最后一帧）。
+func (f *SSEFrameWriter) FlushPartial() error {
+	return f.flush()
+}
+
+// Discard 丢弃尚未写出的半帧内容。
+func (f *SSEFrameWriter) Discard() {
+	f.buf = f.buf[:0]
+}
+
+// Buffered 返回当前缓冲的字节数（尚未写给客户端的半帧）。
+func (f *SSEFrameWriter) Buffered() int {
+	return len(f.buf)
+}
+
+func (f *SSEFrameWriter) flush() error {
+	if len(f.buf) == 0 {
+		return nil
+	}
+	_, err := f.w.Write(f.buf)
+	if cap(f.buf) > sseFrameKeepBuf {
+		f.buf = nil
+	} else {
+		f.buf = f.buf[:0]
+	}
+	if err != nil {
+		return err
+	}
+	if fl, ok := f.w.(http.Flusher); ok {
+		fl.Flush()
+	}
+	return nil
+}
 
 // PingTicker 在后台定期发送 SSE 保活注释
 // 调用方必须传入并发安全的 writer（如 SafeWriter），以避免与主循环并发写 ResponseWriter
