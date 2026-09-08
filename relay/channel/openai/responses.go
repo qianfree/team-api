@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -656,15 +657,11 @@ func extractStreamEmbeddedError(data []byte) (json.RawMessage, bool) {
 	return errBody, true
 }
 
-// EmitResponsesSSE 发送一个 Responses API 格式的 SSE 事件（导出供 claude 等适配器的 Responses 桥接复用）
+// EmitResponsesSSE 发送一个 Responses API 格式的 SSE 事件（导出供 claude 等适配器的 Responses 桥接复用）。
+// 池化缓冲，整帧单次写出，零分配；序列化失败时跳过该事件并记日志（空 data 帧会让客户端解析失败）。
 func EmitResponsesSSE(w http.ResponseWriter, eventType string, data any) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(jsonData))
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	if err := helper.WriteSSEEventJSON(w, eventType, data); errors.Is(err, helper.ErrSSEPayloadMarshal) {
+		g.Log().Errorf(context.Background(), "[ResponsesSSE] marshal %s event failed, event skipped: %v", eventType, err)
 	}
 }
 
@@ -851,18 +848,29 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
+	// 按帧攒齐再写：Responses 的每个事件都是 `event:` + `data:` 两行，逐行写会让并发的
+	// 保活 ping 把自带空行插进两行之间，客户端据此派发出一个 data 为空的事件
+	//（JSON.parse("") 报错并中止请求），网关侧只看到 ctx 取消被记成 client_gone。
+	frame := helper.NewSSEFrameWriter(writer)
+
 	var usage common.Usage
 	var contentBuilder strings.Builder
 
-	flush := func() {
-		if f, ok := writer.(http.Flusher); ok {
-			f.Flush()
-		}
+	// onWriteFail 写客户端失败：客户端已不可达，按流中断结算
+	onWriteFail := func(writeErr error) (*common.Usage, error) {
+		g.Log().Warningf(context.Background(),
+			"[ResponsesUpstreamStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v",
+			info.RequestID, writeErr, ctx.Err())
+		info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, writeErr)
+		helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
+		return &usage, common.ErrStreamInterrupted
 	}
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
+			// 未完成的半帧尚未出网，丢弃即可
+			frame.Discard()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
 			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
 			helper.ApplyInterruptedUsageFallback(info, &usage, contentBuilder.Len())
@@ -872,13 +880,16 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 
 		line := scanner.Text()
 		if line == "" {
-			fmt.Fprintf(writer, "\n")
-			flush()
+			if err := frame.WriteLine("\n"); err != nil {
+				return onWriteFail(err)
+			}
 			continue
 		}
 		// 原样透传 event: 行
 		if strings.HasPrefix(line, "event:") {
-			fmt.Fprintf(writer, "%s\n", line)
+			if err := frame.WriteLine(line + "\n"); err != nil {
+				return onWriteFail(err)
+			}
 			continue
 		}
 		if !strings.HasPrefix(line, "data:") {
@@ -918,12 +929,23 @@ func (a *Adaptor) handleResponsesUpstreamStream(ctx context.Context, resp *http.
 			outLine = "data: " + string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
 		}
 
-		fmt.Fprintf(writer, "%s\n", outLine)
-		flush()
+		if err := frame.WriteLine(outLine + "\n"); err != nil {
+			return onWriteFail(err)
+		}
 
 		if data == "[DONE]" {
+			// 补上帧分隔空行再收尾：只写 data 行会把 [DONE] 留在缓冲里发不出去，
+			// 客户端也拿不到完整的终止帧
+			if err := frame.WriteLine("\n"); err != nil {
+				return onWriteFail(err)
+			}
 			break
 		}
+	}
+
+	// 上游未以空行结尾时冲刷残留，避免丢掉最后一帧
+	if err := frame.FlushPartial(); err != nil {
+		return onWriteFail(err)
 	}
 
 	if err := scanner.Err(); err != nil {

@@ -2,7 +2,7 @@ package relaykit_bridge
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,12 +103,13 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 				transferredTextLen += len(*choice.Delta.ReasoningContent)
 			}
 		}
-		data, err := json.Marshal(streamChunk)
-		if err != nil {
-			return err
-		}
-		if err := helper.WriteSSEData(safeWriter, string(data)); err != nil {
-			writeFailed = true
+		// 池化缓冲 + 绑定 encoder：序列化与拼帧零分配，整帧单次写出（帧原子，ping 插不进去）
+		if err := helper.WriteSSEDataJSON(safeWriter, streamChunk); err != nil {
+			// 序列化失败与写客户端失败必须分开：前者是转换器产出了不可序列化的 chunk，
+			// 后者才说明客户端已不可达（writeFailed 驱动上层按流中断结算、不再补写 [DONE]）
+			if !errors.Is(err, helper.ErrSSEPayloadMarshal) {
+				writeFailed = true
+			}
 			return err
 		}
 		return nil
@@ -123,8 +124,7 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			Model:   info.OriginModelName,
 			Choices: []dto.StreamChoice{{Index: 0, FinishReason: &stop}},
 		}
-		data, _ := json.Marshal(terminal)
-		_ = helper.WriteSSEData(safeWriter, string(data))
+		_ = helper.WriteSSEDataJSON(safeWriter, terminal)
 	}
 
 	setEndReason := func(reason common.StreamEndReason, err error) {
