@@ -157,8 +157,8 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 		}
 
 		if len(geminiChunk.Candidates) > 0 {
-			chunkData, _ := json.Marshal(geminiChunk)
-			_ = helper.WriteSSEData(writer, string(chunkData))
+			// 传指针而非结构体值：值传进 any 会额外堆分配一份拷贝用于装箱
+			_ = helper.WriteSSEDataJSON(writer, &geminiChunk)
 		}
 	}
 
@@ -194,10 +194,9 @@ func handleGeminiInboundStream(ctx context.Context, resp *http.Response, info *c
 			finalChunk.UsageMetadata.ThoughtsTokenCount = usage.CompletionTokenDetails.ReasoningTokens
 		}
 	}
-	chunkData, _ := json.Marshal(finalChunk)
-	_ = helper.WriteSSEData(writer, string(chunkData))
+	_ = helper.WriteSSEDataJSON(writer, &finalChunk)
 
-	helper.WriteSSEData(writer, "[DONE]")
+	_ = helper.WriteSSEData(writer, "[DONE]")
 	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
 
 	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
