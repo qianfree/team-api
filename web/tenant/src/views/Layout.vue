@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, provide, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { useNotificationCount } from '@/composables/useNotificationCount'
@@ -84,6 +84,42 @@ const pageTitle = computed(() => {
 		const leaf = matched[matched.length - 1]
 		return (leaf?.meta?.title as string) || navItems.value.find((i) => isActive(i.path))?.label || '仪表盘'
 	})
+
+// 返回按钮注册机制（使用 provide/inject）
+const backButtonConfig = ref<{
+	show: boolean
+	title: string
+	handler: () => void
+} | null>(null)
+
+// 提供给子页面的注册方法
+function registerBackButton(config: { title: string; handler: () => void }) {
+	backButtonConfig.value = {
+		show: true,
+		title: config.title,
+		handler: config.handler,
+	}
+}
+
+// 提供给子页面的取消注册方法
+function unregisterBackButton() {
+	backButtonConfig.value = null
+}
+
+// 通过 provide 暴露给子组件
+provide('registerBackButton', registerBackButton)
+provide('unregisterBackButton', unregisterBackButton)
+
+// 监听路由变化，清空返回按钮配置
+watch(() => route.path, () => {
+	backButtonConfig.value = null
+})
+
+const showBackButton = computed(() => backButtonConfig.value?.show ?? false)
+const backButtonTitle = computed(() => backButtonConfig.value?.title ?? '返回')
+function handleBack() {
+	backButtonConfig.value?.handler()
+}
 
 function isActive(path: string): boolean {
 	return activePath.value === path || activePath.value.startsWith(path + '/')
@@ -329,13 +365,33 @@ onBeforeUnmount(() => {
 				<div class="glass flex h-16 items-center justify-between rounded-2xl border border-white/70 px-3 shadow-glass-sm md:px-5">
 					<!-- Left: Mobile Menu + Title -->
 					<div class="flex min-w-0 items-center gap-3">
+						<!-- Mobile: 返回按钮或菜单按钮 -->
 						<button
+							v-if="showBackButton"
+							@click="handleBack"
+							class="btn-ghost btn-icon lg:hidden"
+							:title="backButtonTitle"
+						>
+							<Icon name="chevronLeft" size="md" />
+						</button>
+						<button
+							v-else
 							@click="toggleMobile"
 							class="btn-ghost btn-icon lg:hidden"
 						>
 							<Icon name="menu" size="md" />
 						</button>
-						<div class="hidden min-w-0 lg:block">
+
+						<!-- Desktop: 返回按钮 + 标题 -->
+						<div class="hidden min-w-0 lg:flex lg:items-center lg:gap-2">
+							<button
+								v-if="showBackButton"
+								@click="handleBack"
+								class="btn-ghost btn-icon flex-shrink-0 text-gray-500 hover:text-gray-700"
+								:title="backButtonTitle"
+							>
+								<Icon name="chevronLeft" size="md" />
+							</button>
 							<h1 class="truncate text-base font-semibold text-slate-800">{{ pageTitle }}</h1>
 						</div>
 					</div>
