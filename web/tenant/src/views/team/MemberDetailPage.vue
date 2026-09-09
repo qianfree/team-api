@@ -472,7 +472,7 @@ onMounted(() => {
 									{{ statusLabel[member.status] || member.status }}
 								</span>
 							</div>
-							<p class="text-sm text-gray-500 mt-0.5">@{{ authStore.tenant?.code }}</p>
+							<p class="text-sm text-gray-500 mt-0.5 font-mono">{{ member.username }}@{{ authStore.tenant?.code }}</p>
 						</div>
 					</div>
 
@@ -541,6 +541,10 @@ onMounted(() => {
 						<h3 class="text-lg font-semibold text-gray-900">个人信息</h3>
 					</div>
 					<div class="card-body space-y-4">
+						<div class="flex items-center justify-between py-2 border-b border-gray-100">
+							<span class="text-sm text-gray-500">账号</span>
+							<span class="text-sm font-medium text-gray-900 font-mono">{{ member.username }}@{{ authStore.tenant?.code }}</span>
+						</div>
 						<div class="flex items-center justify-between py-2 border-b border-gray-100">
 							<span class="text-sm text-gray-500">用户名</span>
 							<span class="text-sm font-medium text-gray-900">{{ member.username }}</span>
