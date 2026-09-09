@@ -62,7 +62,9 @@ func (a *Adaptor) isCodeAssistForcedStream() bool {
 		return false
 	}
 	mode := constant.RelayMode(a.info.RelayMode)
-	return mode == constant.RelayModeChatCompletions || mode == constant.RelayModeGeminiChat
+	return mode == constant.RelayModeChatCompletions || mode == constant.RelayModeGeminiChat ||
+		mode == constant.RelayModeClaudeMessages ||
+		mode == constant.RelayModeResponses || mode == constant.RelayModeResponsesCompact
 }
 
 // getRelayAction 获取当前 relay 模式对应的 Gemini action 名称
@@ -329,16 +331,32 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	switch clientFormat {
 	case constant.RelayFormatGemini:
 		return a.handleGeminiNativeResponse(ctx, resp, info, writer)
+	case constant.RelayFormatClaude:
+		// Claude 入站（请求侧走 ConvertClaudeToGemini）：响应必须转回 Claude Messages 格式，
+		// 否则 Anthropic SDK 拿到 OpenAI chunk 解析失败
+		if info.IsStream {
+			return a.handleStreamToClaude(ctx, resp, info, writer)
+		}
+		return a.handleNonStreamToClaude(ctx, resp, info, writer)
 	case constant.RelayFormatOpenAI:
 		if info.IsStream {
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
-	default:
+	case constant.RelayFormatResponses:
+		// Responses 入站（请求侧走 ConvertResponsesToGemini）：响应必须转回 Responses 格式，
+		// 否则客户端拿到 chat chunk 解析失败
 		if info.IsStream {
-			return a.handleStreamToOpenAI(ctx, resp, info, writer)
+			return a.handleStreamToResponses(ctx, resp, info, writer)
 		}
-		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
+		return a.handleNonStreamToResponses(ctx, resp, info, writer)
+	default:
+		// openai / claude / gemini / responses 四种入站格式均已显式处理
+		//（见 relay_handler.go 的 relayModeToInboundFormat）。走到这里说明新增了客户端格式
+		// 却漏接响应侧转换——显式失败，而不是静默按 OpenAI 格式写出让客户端 SDK 解析失败
+		//（claude / responses 两个缺口此前正是这样被掩盖的）。
+		return nil, constant.NewChannelError(
+			fmt.Sprintf("gemini adaptor: unsupported client format %q", clientFormat), nil)
 	}
 }
 
@@ -489,6 +507,20 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 	switch clientFormat {
 	case constant.RelayFormatGemini:
 		respBody, _ := json.Marshal(aggregated)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
+	case constant.RelayFormatClaude:
+		claudeResp := geminiToClaudeResponse(&aggregated, info)
+		respBody, _ := json.Marshal(claudeResp)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
+	case constant.RelayFormatResponses:
+		respBody, _, err := buildResponsesBodyFromGemini(&aggregated, info)
+		if err != nil {
+			return nil, err
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(respBody)

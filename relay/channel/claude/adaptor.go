@@ -222,12 +222,19 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
-	default:
-		// 兜底：默认 OpenAI 转换
+	case constant.RelayFormatGemini:
+		// Gemini 入站（请求侧走 ConvertGeminiToClaude）：响应必须转回 Gemini 格式，
+		// 否则 Gemini SDK 拿到 OpenAI chunk 解析失败
 		if info.IsStream {
-			return a.handleStreamToOpenAI(ctx, resp, info, writer)
+			return a.handleStreamToGemini(ctx, resp, info, writer)
 		}
-		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
+		return a.handleNonStreamToGemini(ctx, resp, info, writer)
+	default:
+		// openai / claude / gemini / responses 四种入站格式均已显式处理
+		//（见 relay_handler.go 的 relayModeToInboundFormat）。走到这里说明新增了客户端格式
+		// 却漏接响应侧转换——显式失败，而不是静默按 OpenAI 格式写出让客户端 SDK 解析失败。
+		return nil, constant.NewChannelError(
+			fmt.Sprintf("claude adaptor: unsupported client format %q", clientFormat), nil)
 	}
 }
 

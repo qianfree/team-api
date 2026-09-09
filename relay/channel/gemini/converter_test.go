@@ -804,4 +804,3 @@ func TestGeminiDTOJsonMarshal(t *testing.T) {
 
 func float64Ptr(v float64) *float64 { return &v }
 func boolPtr(v bool) *bool          { return &v }
-func intPtr(v int) *int             { return &v }
