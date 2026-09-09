@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, inject, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton, NDropdown, NTag } from 'naive-ui'
 import { renderBadge, formatDate, formatTokens, formatMs, tableScrollX } from '@/utils/renderUtils'
@@ -19,6 +19,10 @@ const { confirm } = useConfirm()
 const route = useRoute()
 const router = useRouter()
 const projectId = computed(() => Number(route.params.id))
+
+// 注入返回按钮注册方法
+const registerBackButton = inject<(config: { title: string; handler: () => void }) => void>('registerBackButton')
+const unregisterBackButton = inject<() => void>('unregisterBackButton')
 
 // Project info
 interface Project {
@@ -116,7 +120,22 @@ async function openScopeModal(keyId: number, keyName: string) {
 }
 
 onMounted(() => {
+	// 注册返回按钮
+	if (registerBackButton) {
+		registerBackButton({
+			title: '返回项目列表',
+			handler: () => router.push('/tenant/projects'),
+		})
+	}
+
 	fetchProject()
+})
+
+onBeforeUnmount(() => {
+	// 取消注册返回按钮
+	if (unregisterBackButton) {
+		unregisterBackButton()
+	}
 })
 
 // Usage stats
