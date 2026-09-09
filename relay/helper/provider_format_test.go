@@ -18,8 +18,6 @@ func TestProviderNativeFormat(t *testing.T) {
 	}{
 		{"claude", int(constant.ProviderClaude), constant.RelayFormatClaude},
 		{"gemini", int(constant.ProviderGemini), constant.RelayFormatGemini},
-		{"coze", int(constant.ProviderCoze), constant.RelayFormatCoze},
-		{"dify", int(constant.ProviderDify), constant.RelayFormatDify},
 		{"ollama", int(constant.ProviderOllama), constant.RelayFormatOllama},
 		{"openai", int(constant.ProviderOpenAI), constant.RelayFormatOpenAI},
 		// OpenAI 兼容供应商无原生格式，默认走 OpenAI

@@ -40,10 +40,6 @@ func relaykitRequestConverterID(inbound, upstream constant.RelayFormat, relayMod
 		return relayconvert.ConverterOpenAIChatToClaudeMessages
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatGemini:
 		return relayconvert.ConverterOpenAIChatToGeminiContent
-	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatCoze:
-		return relayconvert.ConverterOpenAIChatToCoze
-	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatDify:
-		return relayconvert.ConverterOpenAIChatToDify
 	case inbound == constant.RelayFormatOpenAI && upstream == constant.RelayFormatOllama:
 		// 仅 chat 路径迁移；generate（completions）/ embedding 回退旧 adaptor
 		if constant.RelayMode(relayMode) != constant.RelayModeChatCompletions {

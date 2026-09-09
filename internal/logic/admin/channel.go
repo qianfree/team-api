@@ -914,11 +914,7 @@ var defaultProviderURLs = map[int]string{
 	28: "http://localhost:9997",
 	// MiniMax 国内站（海外站为 api.minimaxi.chat），adaptor 自拼 /v1/text/chatcompletion_v2
 	29: "https://api.minimax.chat",
-	// Coze 国内站（海外站为 api.coze.com），adaptor 自拼 /v3/chat
-	32: "https://api.coze.cn",
-	// Dify 云端默认（api.dify.ai/v1/chat-messages）；自部署实例需自行填写。
-	// 填裸域名即可，adaptor 自拼 /v1/chat-messages，带 /v1 会双拼
-	33: "https://api.dify.ai",
+	// 32 = Coze、33 = Dify：渠道已移除，编号永久保留不复用
 	// 即梦：适配器拼 /v2/images/generations，无官方对齐端点可验证，需自行填写
 	34: "",
 	// Codex 直连 chatgpt.com/backend-api/codex/responses（对齐 Codex CLI）

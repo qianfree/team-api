@@ -64,15 +64,13 @@ const openAIRequestBody = `{"model":"gpt-4","max_tokens":256,"messages":[{"role"
 
 func TestConvertRequestViaRelaykit_AllProviders(t *testing.T) {
 	cases := []struct {
-		name      string
-		channel   constant.ProviderType
-		upstream  string
-		wantKeys  []string
+		name     string
+		channel  constant.ProviderType
+		upstream string
+		wantKeys []string
 	}{
 		{"Claude", constant.ProviderClaude, "claude-3-5-sonnet-20241022", []string{"messages", "max_tokens"}},
 		{"Gemini", constant.ProviderGemini, "gemini-2.0-flash", []string{"contents"}},
-		{"Coze", constant.ProviderCoze, "bot-123", []string{"bot_id", "query"}},
-		{"Dify", constant.ProviderDify, "dify-bot", []string{"query", "response_mode"}},
 		{"Ollama", constant.ProviderOllama, "llama3", []string{"model", "messages"}},
 	}
 	for _, c := range cases {

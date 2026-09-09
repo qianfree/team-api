@@ -264,8 +264,6 @@ const providerDefaultURLs: Record<number, string> = {
   28: 'http://localhost:9997',
   29: 'https://api.minimax.chat',
   30: '',
-  32: 'https://api.coze.cn',
-  33: 'https://api.dify.ai',
   34: '',
   35: 'https://chatgpt.com',
 }

@@ -83,8 +83,6 @@ const (
 	ConverterOpenAIChatToGeminiContent        = "openai_chat_completions_to_gemini_generate_content"
 
 	// OpenAI → 原生格式供应商（请求侧）
-	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"
-	ConverterOpenAIChatToDify   = "openai_chat_completions_to_dify_chat_messages"
 	ConverterOpenAIChatToOllama = "openai_chat_completions_to_ollama_chat"
 )
 

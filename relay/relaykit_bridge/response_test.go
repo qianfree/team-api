@@ -20,8 +20,6 @@ func TestRelaykitResponseConverterID(t *testing.T) {
 	}{
 		{constant.RelayFormatClaude, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToClaudeMessages},
 		{constant.RelayFormatGemini, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToGeminiContent},
-		{constant.RelayFormatCoze, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToCoze},
-		{constant.RelayFormatDify, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToDify},
 		{constant.RelayFormatOllama, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToOllama},
 		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""}, // 同格式
 		{constant.RelayFormatClaude, constant.RelayFormatGemini, ""}, // 未知方向
@@ -82,22 +80,10 @@ func TestConvertResponseViaRelaykit_AllProviders(t *testing.T) {
 				`"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}`,
 		},
 		{
-			name:    "Dify",
-			channel: constant.ProviderDify,
-			upstreamBody: `{"answer":"hi","metadata":{"usage":{"total_tokens":8,` +
-				`"prompt_tokens":5,"completion_tokens":3}}}`,
-		},
-		{
 			name:    "Ollama",
 			channel: constant.ProviderOllama,
 			upstreamBody: `{"model":"llama3","message":{"role":"assistant","content":"hi"},` +
 				`"done":true,"prompt_eval_count":5,"eval_count":3}`,
-		},
-		{
-			name:    "Coze",
-			channel: constant.ProviderCoze,
-			upstreamBody: "event: conversation.message.completed\n" +
-				`data: {"role":"assistant","type":"answer","content":"hi"}` + "\n",
 		},
 	}
 
@@ -147,10 +133,8 @@ func TestConvertResponseViaRelaykit_ParseFailureFallback(t *testing.T) {
 
 func TestConvertResponseViaRelaykit_ParseFailureAllStructuredProviders(t *testing.T) {
 	// 结构化响应（需 json.Unmarshal）的供应商：畸形上游体都应回退（覆盖各自的 parse-fail 分支）。
-	// Coze 上游为原始 SSE 字节（无 Unmarshal），不在此列。
 	structured := []constant.ProviderType{
-		constant.ProviderClaude, constant.ProviderGemini,
-		constant.ProviderDify, constant.ProviderOllama,
+		constant.ProviderClaude, constant.ProviderGemini, constant.ProviderOllama,
 	}
 	for _, ch := range structured {
 		info := newStreamTestRelayInfo(ch, constant.RelayFormatOpenAI)

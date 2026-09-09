@@ -29,16 +29,16 @@ const (
 	ProviderXInference  ProviderType = 28
 	ProviderMiniMax     ProviderType = 29
 	ProviderSubmodel    ProviderType = 30
-	ProviderCoze        ProviderType = 32
-	ProviderDify        ProviderType = 33
-	ProviderJimeng      ProviderType = 34
-	ProviderCodex       ProviderType = 35
-	ProviderSora        ProviderType = 37
-	ProviderKling       ProviderType = 38
-	ProviderSuno        ProviderType = 39
-	ProviderMidjourney  ProviderType = 40
-	ProviderNewAPI      ProviderType = 41
-	ProviderSub2API     ProviderType = 42
+	// 32 = Coze（扣子）、33 = Dify：渠道已于 v0.2 移除，编号永久保留不再复用，
+	// 避免历史 bil_usage_logs / aud_request_logs 中的 channel_type 被新渠道串味。
+	ProviderJimeng     ProviderType = 34
+	ProviderCodex      ProviderType = 35
+	ProviderSora       ProviderType = 37
+	ProviderKling      ProviderType = 38
+	ProviderSuno       ProviderType = 39
+	ProviderMidjourney ProviderType = 40
+	ProviderNewAPI     ProviderType = 41
+	ProviderSub2API    ProviderType = 42
 )
 
 // String 返回供应商类型名称
@@ -94,10 +94,6 @@ func (p ProviderType) String() string {
 		return "MiniMax"
 	case ProviderSubmodel:
 		return "Submodel"
-	case ProviderCoze:
-		return "Coze"
-	case ProviderDify:
-		return "Dify"
 	case ProviderJimeng:
 		return "Jimeng"
 	case ProviderCodex:

@@ -7,9 +7,7 @@ import (
 	"github.com/qianfree/team-api/relay/channel/claude"
 	"github.com/qianfree/team-api/relay/channel/cloudflare"
 	"github.com/qianfree/team-api/relay/channel/codex"
-	"github.com/qianfree/team-api/relay/channel/coze"
 	"github.com/qianfree/team-api/relay/channel/deepseek"
-	"github.com/qianfree/team-api/relay/channel/dify"
 	"github.com/qianfree/team-api/relay/channel/gemini"
 	"github.com/qianfree/team-api/relay/channel/jimeng"
 	"github.com/qianfree/team-api/relay/channel/minimax"
@@ -75,10 +73,6 @@ func GetAdaptor(providerType int) common.Adaptor {
 		return &tencent.DispatchAdaptor{}
 	case constant.ProviderXunfei:
 		return &xunfei.Adaptor{}
-	case constant.ProviderCoze:
-		return &coze.Adaptor{}
-	case constant.ProviderDify:
-		return &dify.Adaptor{}
 	case constant.ProviderJimeng:
 		return &jimeng.Adaptor{}
 	case constant.ProviderCodex:

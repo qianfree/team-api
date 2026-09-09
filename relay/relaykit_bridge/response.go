@@ -43,8 +43,7 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	}
 
 	// 解析上游响应体为对应 DTO（Claude → dto.ClaudeResponse；Gemini → dto.GeminiChatResponse；
-	// Dify → dto.DifyBlockingResponse；Ollama → dto.OllamaChatResponse）。
-	// Coze 上游始终为 SSE（非流式客户端也走流式），宿主已缓冲整段 SSE，直接把原始 []byte 交给转换器解析。
+	// Ollama → dto.OllamaChatResponse）。
 	var upstreamResp any
 	switch upstream {
 	case constant.RelayFormatClaude:
@@ -61,16 +60,6 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 			return nil, nil, false
 		}
 		upstreamResp = &geminiResp
-	case constant.RelayFormatCoze:
-		// 原始缓冲 SSE 体，由 CozeToOpenAIResponseConverter 解析
-		upstreamResp = upstreamBody
-	case constant.RelayFormatDify:
-		var difyResp dto.DifyBlockingResponse
-		if err := json.Unmarshal(upstreamBody, &difyResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Dify response failed, fallback to legacy: %v", err)
-			return nil, nil, false
-		}
-		upstreamResp = &difyResp
 	case constant.RelayFormatOllama:
 		var ollamaResp dto.OllamaChatResponse
 		if err := json.Unmarshal(upstreamBody, &ollamaResp); err != nil {
@@ -139,10 +128,6 @@ func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) st
 		return relayconvert.ConverterOpenAIChatToClaudeMessages // 同一个 spec，响应侧是反向（Claude→OpenAI）
 	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatOpenAI:
 		return relayconvert.ConverterOpenAIChatToGeminiContent // 同理，响应侧是 Gemini→OpenAI
-	case upstream == constant.RelayFormatCoze && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToCoze // 响应侧是 Coze→OpenAI
-	case upstream == constant.RelayFormatDify && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToDify // 响应侧是 Dify→OpenAI
 	case upstream == constant.RelayFormatOllama && clientFormat == constant.RelayFormatOpenAI:
 		return relayconvert.ConverterOpenAIChatToOllama // 响应侧是 Ollama→OpenAI
 	default:
