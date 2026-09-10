@@ -72,5 +72,11 @@ func inboundMatchesChannelNative(info *common.RelayInfo) bool {
 		}
 		return false
 	}
+	// Anthropic 兼容端点渠道：主协议是 OpenAI，但 Claude 入站走独立的 Anthropic
+	// 端点且两侧均为 Claude 口径，故 Claude 入站同样算「匹配原生」可直连。
+	if info.InboundFormat == constant.RelayFormatClaude &&
+		constant.HasNativeClaudeEndpoint(info.ChannelMeta.ChannelType) {
+		return true
+	}
 	return helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) == info.InboundFormat
 }
