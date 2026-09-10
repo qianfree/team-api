@@ -26,6 +26,7 @@ func geminiInboundInfo(isStream bool) *common.RelayInfo {
 		StartTime:       time.Now(),
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
+			ChannelType:       int(constant.ProviderClaude),
 			BaseURL:           "https://upstream.example.com",
 			UpstreamModelName: "claude-sonnet-5",
 		},
@@ -93,114 +94,6 @@ func collectParts(chunks []dto.GeminiChatResponse) []dto.GeminiPart {
 }
 
 // ===== 非流式 =====
-
-// TestClaudeToGeminiResponse_BlockMapping text/thinking/tool_use 按原始顺序映射为 parts，
-// redacted_thinking 无对应物被丢弃。
-func TestClaudeToGeminiResponse_BlockMapping(t *testing.T) {
-	thinking := "让我想想"
-	text := "答案是 42"
-	claudeResp := &dto.ClaudeResponse{
-		ID:    "msg_1",
-		Type:  "message",
-		Role:  "assistant",
-		Model: "claude-sonnet-5",
-		Content: []dto.ClaudeContentBlock{
-			{Type: "thinking", Thinking: &thinking, Signature: "sig-abc"},
-			{Type: "redacted_thinking"},
-			{Type: "text", Text: &text},
-			{Type: "tool_use", ID: "toolu_9", Name: "get_weather", Input: map[string]any{"city": "北京"}},
-		},
-		StopReason: common.ClaudeToolUse,
-		Usage: &dto.ClaudeUsage{
-			InputTokens:              40,
-			CacheReadInputTokens:     10,
-			CacheCreationInputTokens: 5,
-			OutputTokens:             20,
-		},
-	}
-
-	got := claudeToGeminiResponse(claudeResp, geminiInboundInfo(false))
-
-	if len(got.Candidates) != 1 || got.Candidates[0].Content == nil {
-		t.Fatalf("candidates 结构不对: %+v", got.Candidates)
-	}
-	parts := got.Candidates[0].Content.Parts
-	if len(parts) != 3 {
-		t.Fatalf("parts 数 = %d, want 3（redacted_thinking 应被丢弃）: %+v", len(parts), parts)
-	}
-
-	// thinking → thought part + thoughtSignature
-	if parts[0].Text != thinking {
-		t.Errorf("首个 part 应为思考文本: %+v", parts[0])
-	}
-	if parts[0].Thought == nil || !*parts[0].Thought {
-		t.Errorf("思考 part 必须带 thought=true: %+v", parts[0])
-	}
-	if parts[0].ThoughtSignature != "sig-abc" {
-		t.Errorf("signature 未搬运到 thoughtSignature: %q", parts[0].ThoughtSignature)
-	}
-
-	// text
-	if parts[1].Text != text || parts[1].Thought != nil {
-		t.Errorf("次个 part 应为普通文本: %+v", parts[1])
-	}
-
-	// tool_use → functionCall（id 可搬运，Gemini 的 functionCall 支持可选 id）
-	if parts[2].FunctionCall == nil {
-		t.Fatalf("第三个 part 应为 functionCall: %+v", parts[2])
-	}
-	fc := parts[2].FunctionCall
-	if fc.FunctionName != "get_weather" || fc.ID != "toolu_9" {
-		t.Errorf("functionCall 不对: %+v", fc)
-	}
-
-	if got.Candidates[0].FinishReason != common.GeminiSTOP {
-		t.Errorf("finishReason = %q, want STOP", got.Candidates[0].FinishReason)
-	}
-
-	// Gemini 口径：prompt 含全部缓存
-	if got.UsageMetadata.PromptTokenCount != 55 {
-		t.Errorf("promptTokenCount = %d, want 55（40+10+5）", got.UsageMetadata.PromptTokenCount)
-	}
-	if got.UsageMetadata.CachedContentTokenCount != 10 {
-		t.Errorf("cachedContentTokenCount = %d, want 10", got.UsageMetadata.CachedContentTokenCount)
-	}
-	if got.UsageMetadata.CandidatesTokenCount != 20 || got.UsageMetadata.ThoughtsTokenCount != 0 {
-		t.Errorf("Claude 不拆分思考 token，应全部计入 candidates: %+v", got.UsageMetadata)
-	}
-	if got.UsageMetadata.TotalTokenCount != 75 {
-		t.Errorf("totalTokenCount = %d, want 75", got.UsageMetadata.TotalTokenCount)
-	}
-}
-
-// TestClaudeToGeminiResponse_NullToolInput Claude 允许 input 为 null，
-// Gemini 的 functionCall.args 期望对象。
-func TestClaudeToGeminiResponse_NullToolInput(t *testing.T) {
-	claudeResp := &dto.ClaudeResponse{
-		Content:    []dto.ClaudeContentBlock{{Type: "tool_use", ID: "t1", Name: "ping"}},
-		StopReason: common.ClaudeToolUse,
-	}
-
-	got := claudeToGeminiResponse(claudeResp, geminiInboundInfo(false))
-
-	fc := got.Candidates[0].Content.Parts[0].FunctionCall
-	if fc.Arguments == nil {
-		t.Fatal("空 input 应回退为空对象，got nil")
-	}
-	if _, ok := fc.Arguments.(map[string]any); !ok {
-		t.Errorf("args 应为对象: %T", fc.Arguments)
-	}
-}
-
-// TestGeminiUsageFromClaude_NilAndEmpty 无用量信息时不应造出全零的 usageMetadata
-func TestGeminiUsageFromClaude_NilAndEmpty(t *testing.T) {
-	if geminiUsageFromClaude(nil) != nil {
-		t.Error("nil usage 应返回 nil")
-	}
-	if geminiUsageFromClaude(&dto.ClaudeUsage{}) != nil {
-		t.Error("全零 usage 应返回 nil，避免向客户端报 0 token")
-	}
-}
 
 // TestHandleNonStreamToGemini_WritesGeminiBody 正常路径：响应体为 Gemini 结构，
 // 计费用量仍为 Claude 口径（input 不含缓存）。

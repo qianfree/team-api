@@ -111,7 +111,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 
 		// 检查 prompt feedback 中的安全拦截
 		if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
-			return fmt.Errorf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason)
+			return fmt.Errorf("request blocked by Gemini safety filter: %s: %w", geminiResp.PromptFeedback.BlockReason, relayconvert.ErrContentBlocked)
 		}
 
 		// 收集模型名

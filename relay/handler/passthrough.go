@@ -19,7 +19,7 @@ func canPassThrough(info *common.RelayInfo) bool {
 	}
 
 	// responses-only 桥接渠道的 chat 入站：chat 体与上游 /v1/responses 端点不兼容，
-	// 必须经 ConvertOpenAIToResponses 桥接转换，即使显式开启直连也不得原样透传。
+	// 必须经 relaykit chat→Responses 桥接转换，即使显式开启直连也不得原样透传。
 	if info.ChannelMeta.ChatViaResponses &&
 		constant.RelayMode(info.RelayMode) == constant.RelayModeChatCompletions {
 		return false
@@ -60,7 +60,7 @@ func canPassThrough(info *common.RelayInfo) bool {
 //   - 多协议原生透传渠道（New API / Sub2API）：OpenAI/Claude/Gemini 三种格式均视为匹配。
 //
 // 注意：chat_via_responses（responses-only 桥接渠道）的 chat 入站由 canPassThrough
-// 前置硬排除——chat 体必须经 ConvertOpenAIToResponses 转换后才能发 /v1/responses。
+// 前置硬排除——chat 体必须经 relaykit chat→Responses 转换后才能发 /v1/responses。
 func inboundMatchesChannelNative(info *common.RelayInfo) bool {
 	if info.ChannelMeta.UpstreamSpeaksResponses() {
 		return info.InboundFormat == constant.RelayFormatResponses

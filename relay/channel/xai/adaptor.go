@@ -57,15 +57,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 //
 // 剥离后缀后再做模型名映射（如果配置了映射）。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	processed, err := postProcessRequest(requestBody, info)
 	if err != nil {
 		return nil, err

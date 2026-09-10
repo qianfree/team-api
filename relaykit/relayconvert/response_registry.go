@@ -108,12 +108,24 @@ const (
 	ResponseConverterOllamaChatToOAIChat       = "ollama_chat_to_oai_chat_resp"
 	ResponseConverterOllamaChatToOAIChatStream = "ollama_chat_to_oai_chat_stream_resp"
 
-	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
-	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
-	responseConverterGeminiToClaude    = "gemini_chat_to_claude_messages_resp"
-	responseConverterGeminiToResponses = "gemini_chat_to_oai_responses_resp"
-	responseConverterResponsesToClaude = "oai_responses_to_claude_messages_resp"
-	responseConverterResponsesToGemini = "oai_responses_to_gemini_chat_resp"
+	// 反向方向（OpenAI 上游 → 非 OpenAI 客户端）与 Responses 双向的流式转换器 ID。
+	// 流式注册表按数据方向 (from=上游格式, to=客户端格式) 登记。
+	ResponseConverterOAIChatToClaudeMessagesStream = "oai_chat_to_claude_messages_stream_resp"
+	ResponseConverterOAIChatToGeminiChatStream     = "oai_chat_to_gemini_chat_stream_resp"
+	ResponseConverterOAIResponsesToOAIChatStream   = "oai_responses_to_oai_chat_stream_resp"
+	ResponseConverterOAIChatToOAIResponsesStream   = "oai_chat_to_oai_responses_stream_resp"
+
+	// 跨原生方向（上游原生 → 另一原生客户端）的非流式转换器 ID（响应侧元数据）。
+	ResponseConverterClaudeMessagesToGeminiChat   = "claude_messages_to_gemini_chat_resp"
+	ResponseConverterGeminiChatToClaudeMessages   = "gemini_chat_to_claude_messages_resp"
+	ResponseConverterClaudeMessagesToOAIResponses = "claude_messages_to_oai_responses_resp"
+	ResponseConverterGeminiChatToOAIResponses     = "gemini_chat_to_oai_responses_resp"
+
+	// 跨原生方向（上游原生 → 另一原生客户端）的流式转换器 ID。
+	ResponseConverterClaudeMessagesToGeminiChatStream   = "claude_messages_to_gemini_chat_stream_resp"
+	ResponseConverterGeminiChatToClaudeMessagesStream   = "gemini_chat_to_claude_messages_stream_resp"
+	ResponseConverterGeminiChatToOAIResponsesStream     = "gemini_chat_to_oai_responses_stream_resp"
+	ResponseConverterClaudeMessagesToOAIResponsesStream = "claude_messages_to_oai_responses_stream_resp"
 )
 
 var (

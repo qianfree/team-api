@@ -370,6 +370,24 @@ func (info *RelayInfo) ConversionChain() []types.RelayFormat {
 	return info.conversionChain
 }
 
+// convmeta.ResponsesStash 能力接口实现：r2c 转换器把解析后的 Responses 入站请求
+// 快照存进 RelayInfo.ResponsesRequest，响应合成侧（chat→Responses 回显）经此读取。
+var _ convmeta.ResponsesStash = (*RelayInfo)(nil)
+
+func (info *RelayInfo) StashResponsesRequest(req *dto.OpenAIResponsesRequest) {
+	if info == nil {
+		return
+	}
+	info.ResponsesRequest = req
+}
+
+func (info *RelayInfo) StashedResponsesRequest() *dto.OpenAIResponsesRequest {
+	if info == nil {
+		return nil
+	}
+	return info.ResponsesRequest
+}
+
 func (info *RelayInfo) ConvOptions() *convmeta.Options {
 	if info == nil {
 		return &convmeta.Options{}

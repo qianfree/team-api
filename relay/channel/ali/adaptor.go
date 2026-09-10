@@ -78,15 +78,6 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return convertMultimodalImageRequest(requestBody, info)
 	}
 
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		c, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = c
-	}
-
 	processed, err := postProcessRequest(requestBody, info)
 	if err != nil {
 		return nil, err

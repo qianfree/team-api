@@ -64,14 +64,6 @@ var (
 )
 
 const (
-	requestConverterClaudeToGemini    = "claude_messages_to_gemini_generate_content"
-	requestConverterClaudeToResponses = "claude_messages_to_openai_responses"
-	requestConverterGeminiToClaude    = "gemini_generate_content_to_claude_messages"
-	requestConverterGeminiToResponses = "gemini_generate_content_to_openai_responses"
-	requestConverterResponsesToClaude = "openai_responses_to_claude_messages"
-)
-
-const (
 	ConverterNone                             = "none"
 	ConverterClaudeMessagesToOpenAIChat       = "anthropic_messages_to_openai_chat_completions"
 	ConverterClaudeMessagesToOpenAIChatStream = "anthropic_messages_to_openai_chat_completions_stream"
@@ -84,6 +76,13 @@ const (
 
 	// OpenAI → 原生格式供应商（请求侧）
 	ConverterOpenAIChatToOllama = "openai_chat_completions_to_ollama_chat"
+
+	// 跨原生方向（请求侧为「经 OpenAI 中枢」步骤链，响应侧为直连转换器）
+	ConverterClaudeMessagesToGeminiContent = "claude_messages_to_gemini_generate_content"
+	ConverterClaudeMessagesToResponses     = "claude_messages_to_openai_responses"
+	ConverterGeminiContentToClaudeMessages = "gemini_generate_content_to_claude_messages"
+	ConverterGeminiContentToResponses      = "gemini_generate_content_to_openai_responses"
+	ConverterResponsesToClaudeMessages     = "openai_responses_to_claude_messages"
 )
 
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。

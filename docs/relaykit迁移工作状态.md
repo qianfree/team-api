@@ -132,10 +132,9 @@ gofmt -l relay/ relaykit/                        ⚠️ 剩 10 个**存量**未�
 `handleCodeAssistAggregatedStream`）复用的非流式装配函数，各文件头注释已写明。
 计费 usage 已确认仍从**原始上游响应体**提取。
 
-### 5.3 【必须】~~收尾清理~~ → 先修回归（已完成），删除待做
+### 5.3 ~~收尾清理~~ ✅ 已完成（2026-09-10，legacy 删除落地）
 
-⚠️ **原计划「删 legacy 转换函数」在动手时挖出 2 个本次迁移引入的回归，已修（见 §3.6）。**
-修完后 legacy 才真正不可达，删除本身**尚未做**，精确清单见 §七。
+删除过程中发现并补齐了 2 处迁移遗漏（见 §七的「删除时补的接线」）。
 
 ### 5.4 提交前检查
 
@@ -203,34 +202,28 @@ relaykit 只补了通用的 `model` / `stream_options` / `reasoning_effort`：
 
 ---
 
-## 七、§5.3 legacy 删除清单（已确认不可达，尚未删）
+## 七、legacy 删除完成记录（2026-09-10 已全部落地）
 
-两个回归修完后，以下均为真死代码。删前注意 `ConvertToOpenAI` 被 **18 个 adaptor**
-在 `if InboundFormat != "" && != RelayFormatOpenAI` 守卫内调用，守卫体现已不可达，
-需连同 18 处调用一起摘除：
+净删约 **6400 行**（git diff --stat：+530 / -6907）。逐项：
 
-| 目标 | 位置 | 备注 |
-|------|------|------|
-| `ConvertToOpenAI` 分发器 | `openai/converter.go:24` | 18 个 adaptor 的守卫体一并删 |
-| `ConvertClaudeToOpenAI` | `openai/converter.go:52` | + c2o 私有助手 |
-| `ConvertGeminiToOpenAI` | `openai/converter.go:347` | + g2o 私有助手 |
-| `ConvertResponsesToOpenAI` | `openai/converter.go:603` | + r2c 助手；测试引用 29 处 |
-| `ConvertOpenAIToResponses` | `openai/converter.go:958` | + c2r 助手；测试引用 14 处 |
-| `handleResponsesInboundStream` | `openai/responses.go:204-643` | 响应侧 |
-| o2c 双实现 | `claude/converter.go`(446 行) | 确认 adaptor.ConvertRequest 已不调用 |
-| o2g 双实现 | `gemini/converter.go`(686 行) | 同上 |
-| `convertResponsesToChatForDeepSeek` | `deepseek/adaptor.go:315` | 现由 relaykit + 后处理钩子接管 |
+| 项 | 结果 |
+|----|------|
+| `openai/converter.go` o2r 段（`ConvertOpenAIToResponses` + c2r 助手） | ✅ 删除（chat→Responses 请求转换由 relaykit `ConverterOpenAIChatToOpenAIResponses` 接管，handler 桥注入 reasoning_effort） |
+| `openai/converter.go` c2o/g2o/r2o（`ConvertClaudeToOpenAI` 等） | ⚠️ **保留**：Ollama 渠道的 Claude/Gemini/Responses 入站走 `ConvertToOpenAI`→OpenAI→Ollama 链（矩阵未注册 Claude→Ollama 方向，属「未迁方向保留」设计） |
+| `openai/responses.go` `handleResponsesInboundStream`/`NonStream`（约 600 行） | ✅ 改为 relaykit 桥接壳（**这是迁移漏掉的接线**——转换器早注册了但 openai adaptor 一直在调 legacy 实现）；孤儿助手 `chatCompletionToResponsesResponse`/`extractStreamEmbeddedError` 删除，`extractResponsesRequestEcho` 保留（`BuildResponsesObjectMap` 导出依赖） |
+| `claude/converter.go`（446 行）+ `converter_test.go` | ✅ 整文件删除（o2c 请求侧全套） |
+| `gemini/converter.go`（686 行）+ `converter_test.go` | ✅ 整文件删除（o2g 请求侧全套） |
+| 18 个 adaptor 的 `ConvertToOpenAI` 守卫 | ✅ 删 17 个（死代码：非 OpenAI 入站→OpenAI 上游已全由矩阵接管）；**ollama 保留**（见上） |
+| claude/gemini/openai adaptor 的入站格式 switch | ✅ 删除，改为同格式路径 + **hard-fail 守卫**（矩阵意外未接管时显式报错，不静默错格式透传） |
+| `deepseek` `convertResponsesToChatForDeepSeek` | ✅ 删除，分支改 hard-fail（relaykit Responses→OpenAI + PostProcess 钩子接管） |
+| stale 注释（passthrough/bridge 头注释中的旧函数名） | ✅ 更新为 relaykit 表述 |
 
-**未迁方向确认保留**（矩阵返回空串即回退，属预期）：Ollama generate/embedding、
-Gemini 图像（`gemini/image.go`）、Code Assist。
+**删除时补的接线**（不做这两步直接删会断链）：
+1. **openai adaptor responses 入站桥接**：迁移只注册了转换器、没改 adaptor 调用点。已把两个 inbound 处理器改为调 `TryConvertStream/ResponseViaRelaykit`（非 200 透传语义保留，计费仍取上游原始 chat 体口径）。
+2. **Responses 客户端流错误收尾**：桥接层在转换器以错误退出且未产出任何终止态事件时补发 `response.failed`（否则 200 SSE 静默结束、codex 等客户端挂起）；转换器已自行收尾的（如 Gemini SAFETY 发 completed 拒答）不追加第二终止事件。相关测试已按新契约改写。
 
-**删除时的风险提示**：本次一个 session 内就发现 2 处「矩阵静默接管导致的断链」。
-legacy 在场时，矩阵判错的后果是「转换口径不对」；legacy 删净后会变成「直接断链」。
-建议删除单独成一个 commit，并优先补齐**按 provider × 入站格式**的矩阵回归测试
-（`relay/handler/passthrough_test.go` 已加 `TestEffectiveUpstreamFormat_NativeClaudeEndpoint`
-可作模板）再动手。
-
----
+**验证**：`go build ./...` ✅、`go vet ./relay/... ./internal/...` ✅、relaykit 模块全绿 ✅、
+relay 测试仅剩 §六.7 既有失败 ✅、触及文件 gofmt 干净 ✅。
 
 ## 六、重要设计约束备忘（重启后容易忘）
 

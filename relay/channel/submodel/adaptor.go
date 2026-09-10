@@ -41,15 +41,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 转换请求体。
 // 仅允许 ChatCompletions 模式，其余模式返回错误。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	if constant.RelayMode(info.RelayMode) != constant.RelayModeChatCompletions {
 		return nil, fmt.Errorf("submodel: endpoint not supported")
 	}

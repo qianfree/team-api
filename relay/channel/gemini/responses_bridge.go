@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,32 +13,20 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
-	"github.com/qianfree/team-api/relay/helper"
+	"github.com/qianfree/team-api/relay/relaykit_bridge"
 )
 
 // ========== Responses 入站桥接：Gemini → OpenAI Responses ==========
 //
-// 请求侧由 ConvertResponsesToGemini 完成（Responses → OpenAI → Gemini），
-// 这里做响应侧：把 Gemini 上游的响应/SSE 转成 Responses 格式。
-// 事件发射器复用 openai 包（EmitResponsesSSE / BuildResponsesObjectMap / BuildResponsesUsageMap），
-// 与 chat→responses（openai/responses.go）、claude→responses（claude/responses_bridge.go）
-// 两条既有桥接的事件序列保持一致。
+// 请求侧由 relaykit 的步骤链完成（Responses → OpenAI 中枢 → Gemini），
+// 响应侧同样由 relaykit 转换器完成（Gemini → Responses，含 SSE 事件序列产出）。
+// 本文件只保留宿主侧接线：HTTP 状态码/安全过滤错误处理、响应写出与计费用量提取，
+// 以及 Code Assist 强制流式聚合路径复用的非流式装配函数（buildResponsesBodyFromGemini
+// 及其助手，由 adaptor.go 的 handleCodeAssistAggregatedStream 调用）。
 //
 // 用量口径：Responses 的客户端可见 usage 与本渠道的计费口径**恰好一致**
-// （都是 OpenAI 语义：input 含缓存、output 含思考），故两者共用 geminiUsageToCommon，
+// （都是 OpenAI 语义：input 含缓存、output 含思考），故计费值直接取 geminiUsageToCommon，
 // 不像 claude→responses 那样需要两套换算。
-//
-// 协议落差：
-//   - Gemini 的 functionCall 未必带 id，Responses 的 function_call 必须有 call_id → 缺失时合成。
-//   - 思考内容在 Responses 非流式响应里没有对应物（沿用 claude→responses 的口径跳过），
-//     流式侧以 response.reasoning_summary_text.delta 透出。
-
-// geminiResponsesToolCall Responses 桥接中聚合的工具调用（Gemini functionCall）
-type geminiResponsesToolCall struct {
-	id   string
-	name string
-	args string
-}
 
 // handleNonStreamToResponses 将 Gemini 非流式响应转换为 Responses 格式
 func (a *Adaptor) handleNonStreamToResponses(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
@@ -54,26 +41,31 @@ func (a *Adaptor) handleNonStreamToResponses(ctx context.Context, resp *http.Res
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
+	// 安全过滤（promptFeedback.blockReason）属上游错误语义，先于协议转换判定
 	var geminiResp dto.GeminiChatResponse
 	if err := json.Unmarshal(body, &geminiResp); err != nil {
 		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
 	}
-
 	if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
 		return nil, constant.NewRequestError(
 			fmt.Sprintf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason), nil,
 		)
 	}
 
-	responsesBody, usage, err := buildResponsesBodyFromGemini(&geminiResp, info)
-	if err != nil {
-		return nil, err
+	// relaykit 响应转换（唯一路径，hard-fail：解析/转换失败即向上返回错误，不再回退旧实现）
+	convertedBody, _, handled, convErr := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !handled {
+		return nil, constant.NewChannelError("gemini adaptor: no relaykit converter for responses client response", nil)
+	}
+	if convErr != nil {
+		return nil, relaykit_bridge.ResponseConvertError(convErr, resp.StatusCode, resp.Header)
 	}
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(responsesBody)
+	_, _ = writer.Write(convertedBody)
 
-	return usage, nil
+	// 计费用量取 Gemini 原生口径（与客户端可见口径一致）
+	return geminiUsageToCommon(geminiResp.UsageMetadata), nil
 }
 
 // buildResponsesBodyFromGemini 构建 Responses 非流式响应体与用量。
@@ -110,326 +102,14 @@ func (a *Adaptor) handleStreamToResponses(ctx context.Context, resp *http.Respon
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	isCA := a.isCodeAssistActive()
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	respID := fmt.Sprintf("resp_%s", info.RequestID)
-	msgID := fmt.Sprintf("msg_%s", info.RequestID)
-	createdAt := int(time.Now().Unix())
-	modelName := info.OriginModelName
-
-	var (
-		totalUsage    dto.GeminiUsageMetadata
-		textBuf       strings.Builder
-		sentCreated   bool
-		sentTextDone  bool
-		sentCompleted bool
-		outputIndex   int
-		contentIndex  int
-		toolIdx       int
-		toolCalls     []*geminiResponsesToolCall
-		toolIndexByID = make(map[string]int)
-	)
-
-	// billingUsage 计费口径（与客户端可见口径一致），输出缺失时按已转发文本估算
-	billingUsage := func() *common.Usage {
-		u := geminiUsageToCommon(&totalUsage)
-		if u.CompletionTokens == 0 && textBuf.Len() > 0 {
-			u.CompletionTokens = helper.EstimateStreamOutputTokens(info, textBuf.Len())
-			u.TotalTokens = u.PromptTokens + u.CompletionTokens
-		}
-		return u
+	// relaykit 流式转换（唯一路径，hard-fail）：写入前失败由桥接层返回未接管，此处显式报错
+	if usage, ok, err := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 桥接层已写出 SSE 并完成收尾裁决：err 非空即流以错误/客户端中断结束
+		//（已带 ResponseWritten，上层只记账与上报调度，不重写响应体、不换渠道重试），
+		// usage 中断兜底亦已在桥接层完成，此处原样上抛即可。
+		return usage, err
 	}
-
-	// ensureCreated 发出 response.created 与首个 message 项的开场事件
-	ensureCreated := func() {
-		if sentCreated {
-			return
-		}
-		openai.EmitResponsesSSE(writer, "response.created", map[string]any{
-			"type":     "response.created",
-			"response": openai.BuildResponsesObjectMap(respID, createdAt, "in_progress", modelName, []any{}, nil, nil, info),
-		})
-		openai.EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
-			"type":         "response.output_item.added",
-			"output_index": outputIndex,
-			"item": map[string]any{
-				"type":    "message",
-				"id":      msgID,
-				"status":  "in_progress",
-				"role":    "assistant",
-				"content": []any{},
-			},
-		})
-		openai.EmitResponsesSSE(writer, "response.content_part.added", map[string]any{
-			"type":          "response.content_part.added",
-			"item_id":       msgID,
-			"output_index":  outputIndex,
-			"content_index": contentIndex,
-			"part": map[string]any{
-				"type":        "output_text",
-				"text":        "",
-				"annotations": []any{},
-			},
-		})
-		sentCreated = true
-	}
-
-	// closeTextPart 关闭文本 content part（进入工具调用或流结束时调用）
-	closeTextPart := func() {
-		if sentTextDone {
-			return
-		}
-		finishedText := textBuf.String()
-		openai.EmitResponsesSSE(writer, "response.output_text.done", map[string]any{
-			"type":          "response.output_text.done",
-			"item_id":       msgID,
-			"output_index":  outputIndex,
-			"content_index": contentIndex,
-			"text":          finishedText,
-		})
-		openai.EmitResponsesSSE(writer, "response.content_part.done", map[string]any{
-			"type":          "response.content_part.done",
-			"item_id":       msgID,
-			"output_index":  outputIndex,
-			"content_index": contentIndex,
-			"part": map[string]any{
-				"type":        "output_text",
-				"text":        finishedText,
-				"annotations": []any{},
-			},
-		})
-		openai.EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
-			"type":         "response.output_item.done",
-			"output_index": outputIndex,
-			"item": map[string]any{
-				"type":   "message",
-				"id":     msgID,
-				"status": "completed",
-				"role":   "assistant",
-				"content": []map[string]any{{
-					"type":        "output_text",
-					"text":        finishedText,
-					"annotations": []any{},
-				}},
-			},
-		})
-		sentTextDone = true
-		outputIndex++
-	}
-
-	// finish 发送各工具调用的收尾事件与 response.completed
-	finish := func() {
-		if sentCompleted {
-			return
-		}
-		ensureCreated()
-		closeTextPart()
-
-		finalOutput := make([]map[string]any, 0)
-		if textBuf.Len() > 0 {
-			finalOutput = append(finalOutput, map[string]any{
-				"type":   "message",
-				"id":     msgID,
-				"status": "completed",
-				"role":   "assistant",
-				"content": []map[string]any{{
-					"type":        "output_text",
-					"text":        textBuf.String(),
-					"annotations": []any{},
-				}},
-			})
-		}
-
-		for _, tc := range toolCalls {
-			openai.EmitResponsesSSE(writer, "response.function_call_arguments.done", map[string]any{
-				"type":         "response.function_call_arguments.done",
-				"item_id":      tc.id,
-				"output_index": toolIndexByID[tc.id],
-				"arguments":    tc.args,
-			})
-			openai.EmitResponsesSSE(writer, "response.output_item.done", map[string]any{
-				"type":         "response.output_item.done",
-				"output_index": toolIndexByID[tc.id],
-				"item": map[string]any{
-					"type":      "function_call",
-					"id":        tc.id,
-					"call_id":   tc.id,
-					"name":      tc.name,
-					"arguments": tc.args,
-					"status":    "completed",
-				},
-			})
-			finalOutput = append(finalOutput, map[string]any{
-				"type":      "function_call",
-				"id":        tc.id,
-				"call_id":   tc.id,
-				"name":      tc.name,
-				"arguments": tc.args,
-				"status":    "completed",
-			})
-		}
-
-		completedAt := int(time.Now().Unix())
-		openai.EmitResponsesSSE(writer, "response.completed", map[string]any{
-			"type": "response.completed",
-			"response": openai.BuildResponsesObjectMap(respID, createdAt, "completed", modelName,
-				finalOutput, openai.BuildResponsesUsageMap(billingUsage()), &completedAt, info),
-		})
-		sentCompleted = true
-
-		if info.StreamStatus.GetEndReason() == "" {
-			info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-		}
-	}
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断：Gemini 每个 chunk 携带累计 usage，缺失部分按已转发文本与请求侧估算补齐
-			interruptedUsage := geminiUsageToCommon(&totalUsage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, textBuf.Len())
-			return interruptedUsage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" || strings.HasPrefix(line, "event:") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data, _ := helper.ExtractSSEData(line)
-		if data == "" {
-			continue
-		}
-		if data == "[DONE]" {
-			break
-		}
-		info.SetFirstResponseTime()
-
-		rawData := []byte(data)
-		if isCA {
-			rawData = unwrapCodeAssistData(rawData)
-		}
-		var geminiResp dto.GeminiChatResponse
-		if err := json.Unmarshal(rawData, &geminiResp); err != nil {
-			continue
-		}
-
-		if geminiResp.UsageMetadata != nil {
-			totalUsage = *geminiResp.UsageMetadata
-		}
-		if geminiResp.ModelName != "" && !info.ChannelMeta.IsModelMapped {
-			modelName = geminiResp.ModelName
-		}
-
-		if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
-			// SSE 头已发送，必须补齐 completed 事件，否则客户端挂起
-			finish()
-			return billingUsage(), constant.NewRequestError(
-				fmt.Sprintf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason), nil,
-			)
-		}
-
-		ensureCreated()
-
-		for _, candidate := range geminiResp.Candidates {
-			if candidate.Content == nil {
-				continue
-			}
-			for i := range candidate.Content.Parts {
-				part := &candidate.Content.Parts[i]
-				isThought := part.Thought != nil && *part.Thought
-
-				if part.Text != "" {
-					if isThought {
-						// 思考内容以 reasoning summary 事件透出（与 claude→responses 口径一致）
-						openai.EmitResponsesSSE(writer, "response.reasoning_summary_text.delta", map[string]any{
-							"type":          "response.reasoning_summary_text.delta",
-							"item_id":       msgID,
-							"output_index":  0,
-							"summary_index": 0,
-							"delta":         part.Text,
-						})
-					} else {
-						textBuf.WriteString(part.Text)
-						openai.EmitResponsesSSE(writer, "response.output_text.delta", map[string]any{
-							"type":          "response.output_text.delta",
-							"item_id":       msgID,
-							"output_index":  0,
-							"content_index": contentIndex,
-							"delta":         part.Text,
-						})
-					}
-				}
-
-				if part.FunctionCall != nil {
-					// 先关闭文本 content part，再开 function_call 项
-					closeTextPart()
-
-					tc := &geminiResponsesToolCall{
-						id:   geminiResponsesCallID(part.FunctionCall, info, toolIdx),
-						name: part.FunctionCall.FunctionName,
-						args: marshalGeminiArgs(part.FunctionCall),
-					}
-					toolIdx++
-					toolCalls = append(toolCalls, tc)
-					toolIndexByID[tc.id] = outputIndex
-
-					openai.EmitResponsesSSE(writer, "response.output_item.added", map[string]any{
-						"type":         "response.output_item.added",
-						"output_index": outputIndex,
-						"item": map[string]any{
-							"type":    "function_call",
-							"id":      tc.id,
-							"call_id": tc.id,
-							"name":    tc.name,
-							"status":  "in_progress",
-						},
-					})
-					// Gemini 一次给全量参数，单条 delta 发完（收尾的 .done 在 finish 中统一发）
-					openai.EmitResponsesSSE(writer, "response.function_call_arguments.delta", map[string]any{
-						"type":         "response.function_call_arguments.delta",
-						"item_id":      tc.id,
-						"output_index": outputIndex,
-						"delta":        tc.args,
-					})
-					outputIndex++
-				}
-
-				// Responses 的 output_text 无对应块类型，按既有 Gemini 出站口径渲染为文本
-				if fallback := geminiPartFallbackText(part); fallback != "" {
-					textBuf.WriteString(fallback)
-					openai.EmitResponsesSSE(writer, "response.output_text.delta", map[string]any{
-						"type":          "response.output_text.delta",
-						"item_id":       msgID,
-						"output_index":  0,
-						"content_index": contentIndex,
-						"delta":         fallback,
-					})
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return billingUsage(), fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	// 上游断流未给收尾：仍合成 completed，避免客户端挂起
-	finish()
-	return billingUsage(), nil
+	return nil, constant.NewChannelError("gemini adaptor: relaykit stream converter unavailable for responses client", nil)
 }
 
 // buildResponsesOutputFromGemini 构建 Responses 非流式响应的 output 数组。

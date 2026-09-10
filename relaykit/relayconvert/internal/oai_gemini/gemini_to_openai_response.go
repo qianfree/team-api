@@ -62,7 +62,7 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 
 	// 检查 prompt feedback 中的安全拦截
 	if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
-		return nil, fmt.Errorf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason)
+		return nil, fmt.Errorf("request blocked by Gemini safety filter: %s: %w", geminiResp.PromptFeedback.BlockReason, relayconvert.ErrContentBlocked)
 	}
 
 	// 将 candidates 转换为 choices

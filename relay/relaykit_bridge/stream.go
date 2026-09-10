@@ -78,10 +78,11 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	// 置 CacheIncludedInPrompt 让计费按明细扣减缓存部分，避免「input 全价 + cache 价」双重计费
 	capturedUsage := &common.Usage{CacheIncludedInPrompt: true}
 	var (
-		gotFinish          bool // 转换器是否已产出带 finish_reason 的结束 chunk
-		firstChunk         bool
-		writeFailed        bool // 写客户端已失败（连接不可达），客户端断开的可靠信号
-		transferredTextLen int  // 已转发的文本/思考内容长度，供流中断输出估算
+		gotFinish           bool // 转换器是否已产出带 finish_reason 的结束 chunk
+		gotResponseTerminal bool // Responses 客户端方向：转换器是否已产出终止态事件（completed/failed）
+		firstChunk          bool
+		writeFailed         bool // 写客户端已失败（连接不可达），客户端断开的可靠信号
+		transferredTextLen  int  // 已转发的文本/思考内容长度，供流中断输出估算
 	)
 
 	// writeChatChunk：OpenAI chat chunk 的写出与状态追踪（Usage 提取、finish 追踪、
@@ -140,6 +141,9 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 			}
 			if c.Usage != nil {
 				captureDtoUsage(capturedUsage, c.Usage)
+			}
+			if c.Event == "response.failed" || c.Event == "response.completed" {
+				gotResponseTerminal = true
 			}
 			var err error
 			if c.Event != "" {
@@ -204,6 +208,24 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 		}
 		if needsDone {
 			_ = helper.WriteSSEData(safeWriter, "[DONE]")
+		}
+		// Responses 客户端：协议要求每个 response 以终止态事件收尾（completed/failed）。
+		// 转换器以错误退出且未产出任何终止态事件时必须补发 failed，否则 200 SSE 静默
+		// 结束、客户端（codex 等）会一直等待终止态而挂起；转换器已自行收尾的
+		//（如 Gemini 安全拦截发 completed 拒答）不得追加第二终止事件。
+		if clientFormat == constant.RelayFormatResponses && !gotResponseTerminal {
+			_ = helper.WriteSSEEventJSON(safeWriter, "response.failed", map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"id":     fmt.Sprintf("resp_%s", info.RequestID),
+					"object": "response",
+					"status": "failed",
+					"error": map[string]any{
+						"code":    "upstream_error",
+						"message": err.Error(),
+					},
+				},
+			})
 		}
 		setEndReason(common.StreamEndReasonError, err)
 		return capturedUsage, true, streamConvertError(err)

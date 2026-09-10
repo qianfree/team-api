@@ -3,8 +3,8 @@ package deepseek
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -61,60 +61,52 @@ func TestGetRequestURL_ResponsesFlagRouting(t *testing.T) {
 
 const deepseekResponsesRequestBody = `{"model":"deepseek-v4-flash","instructions":"You are helpful.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"}]}],"stream":true}`
 
-// TestConvertRequest_ResponsesChatFallback 渠道未开 supports_responses 时，
-// Responses 请求必须转换为 Chat 格式（instructions→system、input→messages、stream 保留），
-// 不能再以 Responses 体直发 chat-only 上游。
-func TestConvertRequest_ResponsesChatFallback(t *testing.T) {
+// TestConvertRequest_ResponsesChatFallback_HardFail chat-only 上游的 Responses→chat
+// 转换已由 relaykit 接管（handler 侧矩阵 Responses→OpenAI + PostProcessConvertedRequest
+// 注入 stream_options/thinking），adaptor.ConvertRequest 不再承载该路径。
+// 此处验证守卫语义：该组合到达 adaptor 时（仅矩阵注册缺失的程序性异常）必须显式报错，
+// 不得把 Responses 体静默透传给 chat-only 端点。
+func TestConvertRequest_ResponsesChatFallback_HardFail(t *testing.T) {
 	a := &Adaptor{}
 	info := deepseekResponsesInfo(false)
-	out, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	_, err := a.ConvertRequest(context.Background(), info, []byte(deepseekResponsesRequestBody))
+	if err == nil {
+		t.Fatal("chat-only 上游的 Responses 入站到达 adaptor 应显式报错，而非静默透传")
+	}
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("want *constant.RelayError, got %T: %v", err, err)
+	}
+}
+
+// TestPostProcessConvertedRequest_ResponsesViaRelaykit Responses 入站经 relaykit
+// 转出的 chat 体（chat-only 上游方向），后处理钩子须补齐 DeepSeek 适配：
+// stream_options 注入（计费需要 usage）+ thinking 对象方言。
+// ResponsesRequest 快照由 relaykit 转换器经 convmeta.ResponsesStash 落 RelayInfo。
+func TestPostProcessConvertedRequest_ResponsesViaRelaykit(t *testing.T) {
+	a := &Adaptor{}
+	info := deepseekResponsesInfo(false)
+	info.IsStream = true
+	info.ThinkingEnabled = true
+	// 模拟 relaykit Responses→chat 转换产物（input→messages、instructions→system 已完成）
+	chatBody := []byte(`{"model":"deepseek-v4-flash","stream":true,"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"你好"}]}`)
+
+	out, err := a.PostProcessConvertedRequest(context.Background(), info, chatBody)
 	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
+		t.Fatalf("PostProcessConvertedRequest error: %v", err)
 	}
-	raw, _ := io.ReadAll(out)
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("converted body is not json: %v, body: %s", err, raw)
-	}
-
-	// Responses 专属字段必须消失，chat 专属字段必须存在
-	if _, ok := m["input"]; ok {
-		t.Error("input field should be converted to messages")
-	}
-	msgsRaw, ok := m["messages"]
-	if !ok {
-		t.Fatalf("messages field missing: %s", raw)
-	}
-
-	// instructions → system 消息，input → user 消息
-	var msgs []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
-		t.Fatalf("unmarshal messages: %v", err)
-	}
-	if len(msgs) != 2 {
-		t.Fatalf("messages len = %d, want 2 (system + user): %s", len(msgs), raw)
-	}
-	if msgs[0].Role != "system" || strings.TrimSpace(string(msgs[0].Content)) != `"You are helpful."` {
-		t.Errorf("first message should be system with instructions, got role=%s content=%s", msgs[0].Role, msgs[0].Content)
-	}
-	if msgs[1].Role != "user" || !strings.Contains(string(msgs[1].Content), "你好") {
-		t.Errorf("second message should be user with input text, got role=%s content=%s", msgs[1].Role, msgs[1].Content)
-	}
-
-	// stream 保留 + 注入 stream_options（usage 计费需要）
-	if string(m["stream"]) != "true" {
-		t.Errorf("stream should be preserved as true, got %s", m["stream"])
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("output is not json: %v, body: %s", err, out)
 	}
 	if _, ok := m["stream_options"]; !ok {
-		t.Errorf("stream_options should be injected for stream request: %s", raw)
+		t.Errorf("stream_options should be injected for stream request: %s", out)
 	}
-
-	// ResponsesRequest 快照需落 RelayInfo，供响应侧合成 Responses 格式时 echo
-	if info.ResponsesRequest == nil {
-		t.Error("info.ResponsesRequest snapshot should be stashed by conversion")
+	if _, ok := m["thinking"]; !ok {
+		t.Errorf("thinking object should be injected for -thinking suffix: %s", out)
+	}
+	if _, ok := m["input"]; ok {
+		t.Errorf("responses-only field must not reappear: %s", out)
 	}
 }
 

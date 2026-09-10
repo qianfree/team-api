@@ -64,15 +64,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // 仅支持图像生成模式，对非图像模式返回错误。
 // 请求体直通，仅做模型名映射。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	if constant.RelayMode(info.RelayMode) != constant.RelayModeImagesGenerations {
 		return nil, fmt.Errorf("Jimeng only supports image generation mode")
 	}

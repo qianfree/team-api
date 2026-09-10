@@ -171,37 +171,15 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return convertImageRequestToChat(requestBody, info)
 	}
 
-	var converted io.Reader
-	switch info.InboundFormat {
-	case constant.RelayFormatGemini:
-		// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
-		cleaned := helper.StripStreamField(requestBody)
-		converted = bytes.NewReader(cleaned)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	default:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+	// OpenAI/Claude/Responses 入站 → Gemini 上游已由 relaykit 转换矩阵接管
+	//（convertRequestBody 在 adaptor 之前完成转换），此处只剩 Gemini 同格式路径
+	//（直连判定未通过时）。矩阵意外未接管时显式报错，避免外格式体静默透传。
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatGemini {
+		return nil, constant.NewChannelError(fmt.Sprintf("gemini adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
+	// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
+	cleaned := helper.StripStreamField(requestBody)
+	var converted io.Reader = bytes.NewReader(cleaned)
 
 	// Thinking 后缀路由
 	if info.ThinkingEnabled || info.ReasoningEffort != "" {
@@ -332,7 +310,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	case constant.RelayFormatGemini:
 		return a.handleGeminiNativeResponse(ctx, resp, info, writer)
 	case constant.RelayFormatClaude:
-		// Claude 入站（请求侧走 ConvertClaudeToGemini）：响应必须转回 Claude Messages 格式，
+		// Claude 入站（请求侧走 relaykit Claude→Gemini 转换）：响应必须转回 Claude Messages 格式，
 		// 否则 Anthropic SDK 拿到 OpenAI chunk 解析失败
 		if info.IsStream {
 			return a.handleStreamToClaude(ctx, resp, info, writer)
@@ -344,7 +322,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 	case constant.RelayFormatResponses:
-		// Responses 入站（请求侧走 ConvertResponsesToGemini）：响应必须转回 Responses 格式，
+		// Responses 入站（请求侧走 relaykit Responses→Gemini 转换）：响应必须转回 Responses 格式，
 		// 否则客户端拿到 chat chunk 解析失败
 		if info.IsStream {
 			return a.handleStreamToResponses(ctx, resp, info, writer)

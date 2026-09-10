@@ -156,44 +156,6 @@ func TestG2oMapRole(t *testing.T) {
 	}
 }
 
-func TestC2rContentToString(t *testing.T) {
-	if got := c2rContentToString(nil); got != "" {
-		t.Errorf("nil => %q, want empty", got)
-	}
-	if got := c2rContentToString("hello"); got != "hello" {
-		t.Errorf("string => %q", got)
-	}
-	// 非字符串 -> JSON 编码
-	got := c2rContentToString([]any{map[string]any{"type": "text", "text": "x"}})
-	var back []any
-	if err := json.Unmarshal([]byte(got), &back); err != nil {
-		t.Errorf("non-string content should be JSON-encoded, got %q (%v)", got, err)
-	}
-}
-
-func TestC2rGetMaxTokens(t *testing.T) {
-	tests := []struct {
-		name    string
-		maxTok  *int
-		maxComp *int
-		want    int
-	}{
-		{"both nil", nil, nil, 0},
-		{"max_tokens only", intPtr(100), nil, 100},
-		{"max_completion larger wins", intPtr(100), intPtr(200), 200},
-		{"max_completion smaller keeps max_tokens", intPtr(300), intPtr(50), 300},
-		{"zero max_tokens ignored", intPtr(0), nil, 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := dto.GeneralOpenAIRequest{MaxTokens: tt.maxTok, MaxCompletionTokens: tt.maxComp}
-			if got := c2rGetMaxTokens(req); got != tt.want {
-				t.Errorf("got %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestConvertClaudeUserMessage_StringContent(t *testing.T) {
 	msgs := convertClaudeUserMessage(dto.ClaudeMessage{Role: "user", Content: "hi there"})
 	if len(msgs) != 1 {
@@ -257,34 +219,6 @@ func TestConvertResponsesToOpenAI_PenaltyPassthrough(t *testing.T) {
 	}
 	if _, ok := m["messages"]; !ok {
 		t.Error("messages should be present")
-	}
-}
-
-// TestConvertOpenAIToResponses_PenaltyDropped chat 入站转 Responses 出站时
-// 丢弃官方不支持的 presence/frequency penalty（透传会被严格上游拒绝），
-// 保留官方参数 prompt_cache_key。
-func TestConvertOpenAIToResponses_PenaltyDropped(t *testing.T) {
-	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.5,"presence_penalty":0.2,"prompt_cache_key":"abc"}`)
-	out, err := ConvertOpenAIToResponses(body, info)
-	if err != nil {
-		t.Fatalf("ConvertOpenAIToResponses: %v", err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatalf("bad json: %v\n%s", err, out)
-	}
-	if _, ok := m["frequency_penalty"]; ok {
-		t.Error("frequency_penalty should be dropped (not official Responses API)")
-	}
-	if _, ok := m["presence_penalty"]; ok {
-		t.Error("presence_penalty should be dropped (not official Responses API)")
-	}
-	if m["prompt_cache_key"] != "abc" {
-		t.Errorf("prompt_cache_key = %v, want abc", m["prompt_cache_key"])
-	}
-	if _, ok := m["input"]; !ok {
-		t.Error("input should be present")
 	}
 }
 
@@ -516,70 +450,5 @@ func TestConvertResponsesToOpenAI_FunctionCallHistory(t *testing.T) {
 		if tool["role"] != "tool" || tool["tool_call_id"] != wantID {
 			t.Errorf("messages[%d] = %v, want tool with tool_call_id=%s", 2+i, tool, wantID)
 		}
-	}
-}
-
-// TestConvertOpenAIToResponses_TextFormatUnpack chat response_format 转 Responses
-// text.format：json_schema 需解包为扁平结构（不能原样塞入嵌套形状）。
-func TestConvertOpenAIToResponses_TextFormatUnpack(t *testing.T) {
-	t.Run("json_schema", func(t *testing.T) {
-		info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
-		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],` +
-			`"response_format":{"type":"json_schema","json_schema":{"name":"out","schema":{"type":"object"},"strict":true}}}`)
-		out, err := ConvertOpenAIToResponses(body, info)
-		if err != nil {
-			t.Fatalf("ConvertOpenAIToResponses: %v", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(out, &m); err != nil {
-			t.Fatalf("bad json: %v\n%s", err, out)
-		}
-		text, _ := m["text"].(map[string]any)
-		format, _ := text["format"].(map[string]any)
-		if format["type"] != "json_schema" {
-			t.Fatalf("format = %v", format)
-		}
-		if format["name"] != "out" {
-			t.Errorf("format.name = %v, want out", format["name"])
-		}
-		if _, nested := format["json_schema"]; nested {
-			t.Error("format should be flat（json_schema 嵌套必须解包）")
-		}
-		if s, _ := format["schema"].(map[string]any); s == nil {
-			t.Errorf("format.schema = %v", format["schema"])
-		}
-	})
-	t.Run("json_object", func(t *testing.T) {
-		info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
-		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`)
-		out, err := ConvertOpenAIToResponses(body, info)
-		if err != nil {
-			t.Fatalf("ConvertOpenAIToResponses: %v", err)
-		}
-		var m map[string]any
-		_ = json.Unmarshal(out, &m)
-		text, _ := m["text"].(map[string]any)
-		format, _ := text["format"].(map[string]any)
-		if format["type"] != "json_object" {
-			t.Errorf("format = %v", format)
-		}
-	})
-}
-
-// TestConvertOpenAIToResponses_StoreFalse 桥接方向显式 store:false：
-// chat 客户端无法经 previous_response_id 引用响应，无需上游存储。
-func TestConvertOpenAIToResponses_StoreFalse(t *testing.T) {
-	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
-	out, err := ConvertOpenAIToResponses(body, info)
-	if err != nil {
-		t.Fatalf("ConvertOpenAIToResponses: %v", err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatalf("bad json: %v\n%s", err, out)
-	}
-	if v, ok := m["store"]; !ok || v != false {
-		t.Errorf("store = %v(%T), want explicit false", m["store"], m["store"])
 	}
 }

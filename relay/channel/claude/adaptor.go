@@ -74,31 +74,14 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 
 // ConvertRequest 根据入站格式转换请求体为 Claude 格式
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	var converted io.Reader
-	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		converted = bytes.NewReader(requestBody)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatGemini:
-		r, err := ConvertGeminiToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	default:
-		converted = bytes.NewReader(requestBody)
+	// OpenAI/Gemini/Responses 入站 → Claude 上游已由 relaykit 转换矩阵接管
+	//（convertRequestBody 在 adaptor 之前完成转换），此处只剩 Claude 同格式路径
+	//（直连判定未通过时：有模型映射/thinking 后缀/参数改写）。矩阵意外未接管时
+	// 显式报错，避免把外格式请求体静默透传给 Anthropic 端点。
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatClaude {
+		return nil, constant.NewChannelError(fmt.Sprintf("claude adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
+	converted := bytes.NewReader(requestBody)
 	result := replaceModelIfNeeded(converted, info)
 
 	// Thinking 后缀路由
@@ -223,7 +206,7 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
 	case constant.RelayFormatGemini:
-		// Gemini 入站（请求侧走 ConvertGeminiToClaude）：响应必须转回 Gemini 格式，
+		// Gemini 入站（请求侧走 relaykit Gemini→Claude 转换）：响应必须转回 Gemini 格式，
 		// 否则 Gemini SDK 拿到 OpenAI chunk 解析失败
 		if info.IsStream {
 			return a.handleStreamToGemini(ctx, resp, info, writer)

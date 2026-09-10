@@ -59,15 +59,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // 对于图像生成请求，将 "size" 映射为 "image_size"，"n" 映射为 "batch_size"
 // 其他请求只做模型名替换
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		c, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = c
-	}
-
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
 		return bytes.NewReader(requestBody), nil

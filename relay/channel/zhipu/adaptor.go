@@ -75,15 +75,6 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return convertClaudeRequestForZhipu(requestBody, info)
 	}
 
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	processed, err := postProcessRequest(requestBody, info)
 	if err != nil {
 		return nil, err
