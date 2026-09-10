@@ -2,6 +2,7 @@
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { NInput } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { createPoller } from '@/composables/usePolling'
 import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
 import Icon from '@/components/common/Icon.vue'
@@ -188,8 +189,9 @@ interface AsyncTask {
 }
 const asyncTask = ref<AsyncTask | null>(null)
 const polling = ref(false)
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-// 轮询上限：100 次 × 3s ≈ 5 分钟，超过判定超时，防止无限轮询。
+// 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
+const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
+// 轮询上限：100 次实际轮询 ≈ 5 分钟（页面隐藏期间不计数），超过判定超时，防止无限轮询。
 const MAX_POLL_ATTEMPTS = 100
 let pollAttempts = 0
 
@@ -312,15 +314,12 @@ async function generateSync(api: ReturnType<typeof createPlaygroundApi>, body: R
 function startPolling() {
 	polling.value = true
 	pollAttempts = 0
-	pollLoop()
+	taskPoller.start()
 }
 
 function stopPolling() {
 	polling.value = false
-	if (pollTimer) {
-		clearTimeout(pollTimer)
-		pollTimer = null
-	}
+	taskPoller.stop()
 }
 
 async function pollLoop() {
@@ -329,7 +328,7 @@ async function pollLoop() {
 	// 轮询次数上限保护：超过上限（约 5 分钟）判定为超时，停止轮询并提示，
 	// 避免上游卡死 / 后端漏推终态时前端无限轮询。
 	if (pollAttempts >= MAX_POLL_ATTEMPTS) {
-		polling.value = false
+		stopPolling()
 		asyncTask.value = {
 			...asyncTask.value,
 			status: 'FAILURE',
@@ -352,7 +351,7 @@ async function pollLoop() {
 		}
 
 		if (data.status === 'SUCCESS') {
-			polling.value = false
+			stopPolling()
 			// 多图：优先用 data 数组渲染全部图片；回退到单 url（向后兼容旧后端）。
 			if (Array.isArray(data.data) && data.data.length > 0) {
 				images.value = data.data
@@ -364,15 +363,11 @@ async function pollLoop() {
 			return
 		}
 		if (data.status === 'FAILURE') {
-			polling.value = false
+			stopPolling()
 			return
 		}
 	} catch {
 		// 轮询失败不中断，继续尝试
-	}
-
-	if (polling.value) {
-		pollTimer = setTimeout(pollLoop, 3000)
 	}
 }
 

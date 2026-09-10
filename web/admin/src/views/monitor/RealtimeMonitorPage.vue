@@ -7,6 +7,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import VChart from 'vue-echarts'
 import PageHeader from '@/components/PageHeader.vue'
 import request from '@/utils/request'
+import { createPoller } from '@/composables/usePolling'
 import { IconThunderbolt, IconSwap, IconClockCircle, IconCode, IconBarChart, IconLayers, IconApps, IconUserGroup, IconFire, IconStorage } from '@arco-design/web-vue/es/icon'
 
 use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
@@ -188,8 +189,9 @@ const poolChannelInflight = computed(() => {
   return entries.map(([k, v]) => ({ channel: k, count: v as number, pct: ((v as number) / max) * 100 }))
 })
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+// 实时指标轮询：页面隐藏时暂停，恢复可见时立即补拉（隐藏期间的监控数据无展示意义）
+const realtimePoller = createPoller(fetchRealtime, 10000)
 
 function onWindowResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
@@ -202,16 +204,13 @@ function onWindowResize() {
 
 onMounted(() => {
   fetchRealtime()
-  pollTimer = setInterval(fetchRealtime, 10000)
+  realtimePoller.start()
   elapsedTimer = setInterval(() => { now.value = Date.now() }, 1000)
   window.addEventListener('resize', onWindowResize)
 })
 
 onUnmounted(() => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+  realtimePoller.stop()
   if (elapsedTimer) {
     clearInterval(elapsedTimer)
     elapsedTimer = null

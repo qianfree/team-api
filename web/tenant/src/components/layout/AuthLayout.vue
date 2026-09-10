@@ -49,11 +49,13 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import AnnouncementBanner from '../common/AnnouncementBanner.vue'
 import request from '@/utils/request'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import { createPoller } from '@/composables/usePolling'
 
 const { settings: publicSettings } = usePublicSettings()
 const siteName = computed(() => publicSettings.value.site_name || 'Team-API')
 const announcements = ref<any[]>([])
-let timer: ReturnType<typeof setInterval> | null = null
+// 登录页公告轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const announcementPoller = createPoller(fetchAnnouncements, 30 * 60 * 1000)
 
 async function fetchAnnouncements() {
 	try {
@@ -66,11 +68,11 @@ async function fetchAnnouncements() {
 
 onMounted(() => {
 	fetchAnnouncements()
-	timer = setInterval(fetchAnnouncements, 30 * 60 * 1000)
+	announcementPoller.start()
 })
 
 onBeforeUnmount(() => {
-	if (timer) clearInterval(timer)
+	announcementPoller.stop()
 })
 </script>
 

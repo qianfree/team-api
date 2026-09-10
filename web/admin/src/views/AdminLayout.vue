@@ -8,6 +8,7 @@ import request from '@/utils/request'
 import RouteErrorBoundary from '@/components/RouteErrorBoundary.vue'
 import { useWatermark } from '@/composables/useWatermark'
 import { useSiteName } from '@/composables/useSiteName'
+import { createPoller } from '@/composables/usePolling'
 import {
   IconDesktop,
   IconDashboard,
@@ -65,7 +66,8 @@ const checking = ref(false)
 const updateStatus = ref<any>(null)
 const releaseNotes = ref('')
 const releaseUrl = ref('')
-const updatePollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+// 更新进度轮询：页面隐藏时暂停，恢复可见时立即补拉进度
+const updatePoller = createPoller(fetchUpdateStatus, 2000)
 
 const releaseNotesHtml = computed(() => {
   if (!releaseNotes.value) return ''
@@ -152,14 +154,11 @@ function closeUpdateModal() {
 
 function startPolling() {
   stopPolling()
-  updatePollTimer.value = setInterval(fetchUpdateStatus, 2000)
+  updatePoller.start()
 }
 
 function stopPolling() {
-  if (updatePollTimer.value) {
-    clearInterval(updatePollTimer.value)
-    updatePollTimer.value = null
-  }
+  updatePoller.stop()
 }
 
 async function executeUpdate() {
@@ -504,7 +503,8 @@ const bellData = ref<{
   feedbacks_wait: string
   total: number
 } | null>(null)
-let bellTimer: ReturnType<typeof setInterval> | null = null
+// 待办铃铛轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const bellPoller = createPoller(fetchBellSummary, 60000)
 
 async function fetchBellSummary() {
   try {
@@ -519,16 +519,11 @@ async function fetchBellSummary() {
 
 function startBellPolling() {
   fetchBellSummary()
-  if (!bellTimer) {
-    bellTimer = setInterval(fetchBellSummary, 60000)
-  }
+  bellPoller.start()
 }
 
 function stopBellPolling() {
-  if (bellTimer) {
-    clearInterval(bellTimer)
-    bellTimer = null
-  }
+  bellPoller.stop()
 }
 
 function toggleBell() {
@@ -553,7 +548,8 @@ watch(canSeeBell, (visible) => {
 // 60s 轮询不会额外压库。
 const workbenchUrgent = ref(0)
 const workbenchTotal = ref(0)
-let badgeTimer: ReturnType<typeof setInterval> | null = null
+// 工作台红点轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const badgePoller = createPoller(fetchWorkbenchBadges, 60000)
 
 // 角标只挂工作台菜单：待办的排查线索只在工作台的描述文案里，
 // 业务菜单里没有对应的定位入口，挂数字只会带来「进去了却找不到问题」的困惑
@@ -587,7 +583,7 @@ onMounted(() => {
   }
 
   fetchWorkbenchBadges()
-  badgeTimer = setInterval(fetchWorkbenchBadges, 60000)
+  badgePoller.start()
 
   axios.get('/api/settings/public').then((res) => {
     const settings = res.data?.data?.settings
@@ -605,7 +601,7 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateMobile)
   clearTimeout(popupHideTimer!)
-  if (badgeTimer) clearInterval(badgeTimer)
+  badgePoller.stop()
   stopBellPolling()
   stopPolling()
   unmountWatermark()

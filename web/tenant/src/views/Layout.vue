@@ -6,6 +6,7 @@ import { useNotificationCount } from '@/composables/useNotificationCount'
 import { useAnnouncementRead } from '@/composables/useAnnouncementRead'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useWatermark } from '@/composables/useWatermark'
+import { createPoller } from '@/composables/usePolling'
 import { formatBilling } from '@/composables/useCurrency'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
@@ -26,9 +27,11 @@ const announcePanelOpen = ref(false)
 const announceDetailItem = ref<any>(null)
 const consoleAnnouncements = ref<any[]>([])
 const { unreadCount: announceUnreadCount, markAsRead: markAnnouncementRead, markAllRead: markAllAnnouncementsRead, isRead: isAnnouncementRead } = useAnnouncementRead(consoleAnnouncements)
-let announcementTimer: ReturnType<typeof setInterval> | null = null
+// 公告轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const announcementPoller = createPoller(fetchAnnouncements, 30 * 60 * 1000)
 const walletBalance = ref<string>('')
-let walletTimer: ReturnType<typeof setInterval> | null = null
+// 钱包余额轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const walletPoller = createPoller(fetchWalletBalance, 5 * 60 * 1000)
 const memberQuota = ref<{ used: number; limit: number } | null>(null)
 const { unreadCount, startPolling: startNotificationPolling, stopPolling: stopNotificationPolling, setOnNewNotification } = useNotificationCount()
 setOnNewNotification((newCount: number) => {
@@ -166,10 +169,7 @@ function renderMarkdown(text: string): string {
 
 async function handleLogout() {
 	stopNotificationPolling()
-	if (announcementTimer) {
-		clearInterval(announcementTimer)
-		announcementTimer = null
-	}
+	announcementPoller.stop()
 	await authStore.logout()
 	router.push('/tenant/login')
 }
@@ -232,11 +232,11 @@ onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
-	announcementTimer = setInterval(fetchAnnouncements, 30 * 60 * 1000)
+	announcementPoller.start()
 	startNotificationPolling()
 	if (canViewWallet.value) {
 		fetchWalletBalance()
-		walletTimer = setInterval(fetchWalletBalance, 5 * 60 * 1000)
+		walletPoller.start()
 	} else {
 		fetchMemberQuota()
 	}
@@ -254,14 +254,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
 	document.removeEventListener('click', handleClickOutside)
 	stopNotificationPolling()
-	if (announcementTimer) {
-		clearInterval(announcementTimer)
-		announcementTimer = null
-	}
-	if (walletTimer) {
-		clearInterval(walletTimer)
-		walletTimer = null
-	}
+	announcementPoller.stop()
+	walletPoller.stop()
 	unmountWatermark()
 })
 </script>
