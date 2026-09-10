@@ -36,15 +36,15 @@ func TestSafeUpstreamErrorMessage_TransportCategories(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"超时-context截止", leakyURLError(context.DeadlineExceeded), "upstream request timed out"},
-		{"超时-i/o timeout", leakyURLError(fakeTimeoutError{}), "upstream request timed out"},
-		{"客户端取消", leakyURLError(context.Canceled), "request canceled"},
-		{"连接拒绝", leakyURLError(syscall.ECONNREFUSED), "upstream connection refused"},
-		{"DNS失败", leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}), "upstream host resolution failed"},
-		{"连接重置", leakyURLError(syscall.ECONNRESET), "upstream connection reset"},
-		{"EOF", leakyURLError(io.EOF), "upstream connection reset"},
-		{"意外EOF", leakyURLError(io.ErrUnexpectedEOF), "upstream connection reset"},
-		{"其余传输层错误", leakyURLError(errors.New("tls: handshake failure")), "upstream connection failed"},
+		{"超时-context截止", leakyURLError(context.DeadlineExceeded), "请求超时，请重试"},
+		{"超时-i/o timeout", leakyURLError(fakeTimeoutError{}), "请求超时，请重试"},
+		{"客户端取消", leakyURLError(context.Canceled), "请求已取消"},
+		{"连接拒绝", leakyURLError(syscall.ECONNREFUSED), "服务暂时不可用，请稍后重试"},
+		{"DNS失败", leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}), "服务暂时不可用，请稍后重试"},
+		{"连接重置", leakyURLError(syscall.ECONNRESET), "连接中断，请重试"},
+		{"EOF", leakyURLError(io.EOF), "连接中断，请重试"},
+		{"意外EOF", leakyURLError(io.ErrUnexpectedEOF), "连接中断，请重试"},
+		{"其余传输层错误", leakyURLError(errors.New("tls: handshake failure")), "服务暂时不可用，请稍后重试"},
 	}
 
 	for _, c := range cases {
@@ -111,7 +111,7 @@ func TestSafeUpstreamErrorMessage_WrappedRelayError(t *testing.T) {
 		leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}))
 
 	got := SafeUpstreamErrorMessage(relayErr)
-	if got != "upstream host resolution failed" {
+	if got != "服务暂时不可用，请稍后重试" {
 		t.Fatalf("经 RelayError 包装后归一化失败，got %q", got)
 	}
 	if strings.Contains(got, "openai.com") || strings.Contains(got, "https") {

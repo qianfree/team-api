@@ -491,7 +491,7 @@ func TestGenerateBillingSummary_TimeRule(t *testing.T) {
 	if !strings.Contains(text, "闲时") {
 		t.Errorf("summary should contain time rule name, got:\n%s", text)
 	}
-	if !strings.Contains(text, "时段(0.50)") {
+	if !strings.Contains(text, "时段乘数(0.50)") {
 		t.Errorf("summary should contain time multiplier in subtotal line, got:\n%s", text)
 	}
 }
