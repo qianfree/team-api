@@ -92,9 +92,30 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = converted
 	}
 
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(processed), nil
+}
+
+// PostProcessConvertedRequest 见 common.RequestPostProcessor：
+// relaykit 完成格式转换后接回 DeepSeek 私有适配（thinking 对象方言注入）。
+//
+// 注意 Claude 入站不走这里：DeepSeek 另挂 /anthropic/v1/messages 原生端点
+// （constant.HasNativeClaudeEndpoint），Claude 入站为同格式直连，仍由
+// ConvertRequest → convertClaudeRequestForDeepSeek 处理。
+func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
+	return postProcessRequest(body, info)
+}
+
+// postProcessRequest DeepSeek 私有请求适配：请求体须已是 OpenAI chat 格式。
+// 与 relaykit 通用处理重叠的部分（model / stream_options）为覆盖写同值，幂等；
+// thinking 对象（V3 的 type + R1 的 reasoning_effort:"none"）是 relaykit 不产出的方言。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
 
 	// 模型名映射
@@ -112,7 +133,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(result), nil
+	return result, nil
 }
 
 // injectStreamOptions 为流式请求注入 stream_options:{include_usage:true}

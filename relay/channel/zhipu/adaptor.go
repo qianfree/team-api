@@ -84,9 +84,25 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = converted
 	}
 
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(processed), nil
+}
+
+// PostProcessConvertedRequest 见 common.RequestPostProcessor：
+// relaykit 完成格式转换后接回智谱私有适配（GLM 参数兼容 + 思考参数方言）。
+func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
+	return postProcessRequest(body, info)
+}
+
+// postProcessRequest 智谱私有请求适配：请求体须已是 OpenAI chat 格式。
+// 与 relaykit 通用处理重叠的部分（model / stream_options）为覆盖写同值，幂等。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
 
 	// GLM 特有的转换（TopP 裁剪、图片前缀剥离）
@@ -107,7 +123,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(result), nil
+	return result, nil
 }
 
 // injectStreamOptions 为流式请求注入 stream_options:{include_usage:true}

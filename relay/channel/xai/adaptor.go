@@ -66,9 +66,27 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = converted
 	}
 
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(processed), nil
+}
+
+// PostProcessConvertedRequest 见 common.RequestPostProcessor：
+// relaykit 完成格式转换后接回 xAI 私有适配（-search/-high/-low 后缀剥离 +
+// search_parameters / reasoning_effort 注入）。
+func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
+	return postProcessRequest(body, info)
+}
+
+// postProcessRequest xAI 私有请求适配：请求体须已是 OpenAI chat 格式。
+// 未配模型映射时 relaykit 写入的 model 仍带 -search/-high/-low 后缀（上游不认），
+// 这里剥离后覆盖写回。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
 
 	// 获取当前模型名
@@ -103,7 +121,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(converted), nil
+	return converted, nil
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

@@ -139,3 +139,6 @@ func TestConvertRequest_ResponsesUpstreamPassthrough(t *testing.T) {
 		t.Errorf("messages field should not appear for responses-native upstream: %s", raw)
 	}
 }
+
+// relaykit 接管转换后，私有请求适配靠这个可选接口接回；断言实现不掉。
+var _ common.RequestPostProcessor = (*Adaptor)(nil)

@@ -77,9 +77,25 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = converted
 	}
 
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(processed), nil
+}
+
+// PostProcessConvertedRequest 见 common.RequestPostProcessor：
+// relaykit 完成格式转换后接回百度私有适配（-search 后缀剥离 + web_search 注入）。
+func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
+	return postProcessRequest(body, info)
+}
+
+// postProcessRequest 百度私有请求适配：请求体须已是 OpenAI chat 格式。
+// relaykit 已写过 model（= GetUpstreamModelName，仍带后缀），这里按后缀重写覆盖。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
 
 	// 确定上游模型名
@@ -111,7 +127,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(converted), nil
+	return converted, nil
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

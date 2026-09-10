@@ -87,6 +87,21 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		requestBody = c
 	}
 
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(processed), nil
+}
+
+// PostProcessConvertedRequest 见 common.RequestPostProcessor：
+// relaykit 完成格式转换后接回 DashScope 私有适配（按上游模型名剥离 thinking_budget）。
+func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
+	return postProcessRequest(body, info)
+}
+
+// postProcessRequest DashScope 私有请求适配：请求体须已是 OpenAI chat 格式。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	// DashScope 参数适配（按上游模型名剥离不支持的 thinking_budget）
 	converted, err := convertRequest(requestBody, info.ChannelMeta.UpstreamModelName)
 	if err != nil {
@@ -97,17 +112,17 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	if info.ChannelMeta.IsModelMapped {
 		var rawMap map[string]json.RawMessage
 		if err := json.Unmarshal(converted, &rawMap); err != nil {
-			return bytes.NewReader(converted), nil
+			return converted, nil
 		}
 		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 		mapped, err := json.Marshal(rawMap)
 		if err != nil {
 			return nil, fmt.Errorf("marshal mapped request failed: %w", err)
 		}
-		return bytes.NewReader(mapped), nil
+		return mapped, nil
 	}
 
-	return bytes.NewReader(converted), nil
+	return converted, nil
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

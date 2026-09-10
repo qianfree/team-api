@@ -898,11 +898,36 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	// relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 转换器路径（唯一路径，hard-fail）：方向命中后解析/转换失败直接拒绝请求；
+	// 未命中方向（同格式直连、非文本模式等）走 adaptor 的原生后处理路径。
 	var convertedBody io.Reader
-	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
+	relaykitBody, handled, relaykitErr := tryConvertRequestViaRelaykit(ctx, info, body)
+	switch {
+	case handled && relaykitErr != nil:
+		if !errors.Is(relaykitErr, constant.ErrStatefulResponsesUnsupported) {
+			g.Log().Errorf(ctx, "[RelayHandler] relaykit ConvertRequest failed: inboundFormat=%s, error=%v",
+				info.InboundFormat, relaykitErr)
+		}
+		return nil, relaykitErr
+	case handled:
 		convertedBody = relaykitBody
-	} else {
+		// 供应商私有后处理：矩阵按格式裁决、与供应商无关，命中后 adaptor.ConvertRequest
+		// 不再被调用，其中的私有请求适配（模型名后缀剥离、search/thinking 方言注入、
+		// 参数兼容裁剪）会随之丢失。此处按可选接口接回，仅 relaykit 路径调用。
+		if pp, ok := adaptor.(common.RequestPostProcessor); ok {
+			relaykitBytes, err := io.ReadAll(convertedBody)
+			if err != nil {
+				return nil, fmt.Errorf("read relaykit converted body: %w", err)
+			}
+			processed, err := pp.PostProcessConvertedRequest(ctx, info, relaykitBytes)
+			if err != nil {
+				g.Log().Errorf(ctx, "[RelayHandler] provider request post-process failed: adaptor=%s, inboundFormat=%s, error=%v",
+					adaptor.GetChannelName(), info.InboundFormat, err)
+				return nil, err
+			}
+			convertedBody = bytes.NewReader(processed)
+		}
+	default:
 		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)
 		if err != nil {
 			// responses 有状态协议不匹配为预期内错误（上层按哨兵驱动换渠道并向客户端返回
