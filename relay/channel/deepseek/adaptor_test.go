@@ -79,21 +79,16 @@ func TestConvertRequest_ResponsesChatFallback_HardFail(t *testing.T) {
 	}
 }
 
-// TestPostProcessConvertedRequest_ResponsesViaRelaykit Responses 入站经 relaykit
-// 转出的 chat 体（chat-only 上游方向），后处理钩子须补齐 DeepSeek 适配：
-// stream_options 注入（计费需要 usage）+ thinking 对象方言。
-// ResponsesRequest 快照由 relaykit 转换器经 convmeta.ResponsesStash 落 RelayInfo。
-func TestPostProcessConvertedRequest_ResponsesViaRelaykit(t *testing.T) {
-	a := &Adaptor{}
+// TestPostProcessRequest_StreamOptions OpenAI 同格式入站的 adaptor 路径：
+// 流式请求须注入 stream_options（计费需要 usage）。
+func TestPostProcessRequest_StreamOptions(t *testing.T) {
 	info := deepseekResponsesInfo(false)
 	info.IsStream = true
-	info.ThinkingEnabled = true
-	// 模拟 relaykit Responses→chat 转换产物（input→messages、instructions→system 已完成）
-	chatBody := []byte(`{"model":"deepseek-v4-flash","stream":true,"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"你好"}]}`)
+	chatBody := []byte(`{"model":"deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"你好"}]}`)
 
-	out, err := a.PostProcessConvertedRequest(context.Background(), info, chatBody)
+	out, err := postProcessRequest(chatBody, info)
 	if err != nil {
-		t.Fatalf("PostProcessConvertedRequest error: %v", err)
+		t.Fatalf("postProcessRequest error: %v", err)
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(out, &m); err != nil {
@@ -101,12 +96,6 @@ func TestPostProcessConvertedRequest_ResponsesViaRelaykit(t *testing.T) {
 	}
 	if _, ok := m["stream_options"]; !ok {
 		t.Errorf("stream_options should be injected for stream request: %s", out)
-	}
-	if _, ok := m["thinking"]; !ok {
-		t.Errorf("thinking object should be injected for -thinking suffix: %s", out)
-	}
-	if _, ok := m["input"]; ok {
-		t.Errorf("responses-only field must not reappear: %s", out)
 	}
 }
 
@@ -131,6 +120,3 @@ func TestConvertRequest_ResponsesUpstreamPassthrough(t *testing.T) {
 		t.Errorf("messages field should not appear for responses-native upstream: %s", raw)
 	}
 }
-
-// relaykit 接管转换后，私有请求适配靠这个可选接口接回；断言实现不掉。
-var _ common.RequestPostProcessor = (*Adaptor)(nil)

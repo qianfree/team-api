@@ -250,3 +250,48 @@ relay 测试仅剩 §六.7 既有失败 ✅、触及文件 gofmt 干净 ✅。
    请求给出不同格式结论。
 10. **provider 后处理钩子只在 relaykit 路径调用**：adaptor 路径的 `ConvertRequest` 内部已含同一段，
     两处都调会双写参数。5 家的实现均把尾段抽成 `postProcessRequest` 与钩子共用，改动时不要只改一处。
+
+---
+
+## 八、模型名后缀（虚拟模型）机制移除（2026-09-10）
+
+经用量核实无任何带后缀模型（`-thinking`/`-nothinking`/`-none`/`-minimal`/`-low`/`-medium`/
+`-high`/`-xhigh`/`-max`/`-search`）在用，整套「模型名后缀 → 虚拟模型」机制作为技术债务移除。
+思考/搜索能力此后一律由**客户端请求参数**表达（`thinking` 对象、`reasoning_effort`、
+`reasoning.effort` 等），网关只做协议转换不做能力注入。
+
+### 删除清单
+
+**宿主侧：**
+- `relay/helper/thinking.go`（`ParseThinkingSuffix` + `ThinkingInfo`）整文件删
+- `resolveRelayModel` 简化为纯目录校验（不再「字面优先 + 剥后缀回退」两段查找）
+- `RelayInfo` 删 `ThinkingEnabled`/`ThinkingDisabled`/`ReasoningEffort` 三字段
+  及 `Get/SetReasoningEffort`（convmeta.Meta 相应方法一并删，本就零调用方）
+- 各注入器删除：claude `injectClaudeThinking/Effort`、gemini `injectGeminiThinking`、
+  openai `injectReasoningEffort/injectResponsesReasoning`、deepseek 三个 inject* +
+  `isDeepSeekV4Model`、zhipu `injectThinkingParams`
+- `canPassThrough` 删 thinking 后缀排除条件；handler 桥删两处 effort 注入（stream_options 保留）
+- xai/baidu_v2 的 `-search`/`-high`/`-low` 剥离删除，两家 + deepseek 的
+  `RequestPostProcessor` 钩子实现删除（剩余职责 relaykit 已覆盖）；**钩子接口保留**，
+  现存实现方仅 zhipu（GLM 参数兼容）与 ali（DashScope 参数裁剪）
+
+**relaykit 侧：**
+- `internal/shared/thinking_adapter.go`、`reasoning/` 包整体删除
+- `convmeta.Options` 删 `PreserveThinkingSuffix`；Claude/Gemini Options 删
+  `ThinkingAdapter*` 字段（宿主侧写死 TODO 的配置一并清）
+- oai_chat 请求转换器不再解析上游模型名后缀
+
+### 保留（勿误删）
+
+- **客户端参数转换线**：`c2oConvertThinkingToReasoningEffort` / `g2oConvertThinkingConfig`
+  （Claude thinking 对象 / Gemini thinkingConfig → chat `reasoning_effort` 字段）——
+  这是协议转换不是后缀注入，宿主 converter.go 与 relaykit oai_chat 各一份
+- `bil_usage_logs.reasoning_effort` 列与 `UsageRecord.ReasoningEffort` 字段保留
+  （dao 生成 + 历史数据），此后恒为空串
+- `RelayInfo.BaseModelName` 字段保留（responses 路由记录在用），现恒等于 OriginModelName
+
+### 行为变化
+
+- 请求带旧后缀名（如 `gpt-4o-thinking`）→ 目录查不到 → **404 model not found**
+  （原为剥后缀回退命中 + 注入思考参数）
+- 名字本身含 `-max` 等字样的真实目录模型（qwen-max）不受影响（本就字面优先）

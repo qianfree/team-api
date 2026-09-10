@@ -139,34 +139,6 @@ func TestAdaptor_ConvertRequest_ResponsesUpstream(t *testing.T) {
 	}
 }
 
-// TestAdaptor_ConvertRequest_ResponsesUpstream_Thinking 上游声明 Responses 协议时，
-// thinking 后缀映射为 reasoning.effort，不注入 chat 的 reasoning_effort。
-func TestAdaptor_ConvertRequest_ResponsesUpstream_Thinking(t *testing.T) {
-	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
-	info.ReasoningEffort = "high"
-
-	body := []byte(`{"model":"gpt-4o","input":"say hi"}`)
-	a := &Adaptor{}
-	out, err := a.ConvertRequest(context.Background(), info, body)
-	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
-	}
-	raw, _ := io.ReadAll(out)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad converted json: %v\n%s", err, raw)
-	}
-	if _, ok := m["reasoning_effort"]; ok {
-		t.Error("should NOT inject chat reasoning_effort for responses upstream")
-	}
-	var reasoning struct {
-		Effort string `json:"effort"`
-	}
-	if err := json.Unmarshal(m["reasoning"], &reasoning); err != nil || reasoning.Effort != "high" {
-		t.Errorf("reasoning.effort = %+v (err=%v), want high", reasoning, err)
-	}
-}
-
 // TestResponsesUsageToCommon 验证 Responses usage → common.Usage 映射。
 func TestResponsesUsageToCommon(t *testing.T) {
 	u := responsesUsageToCommon(&dto.ResponsesUsage{

@@ -83,7 +83,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 }
 
 // PostProcessConvertedRequest 见 common.RequestPostProcessor：
-// relaykit 完成格式转换后接回智谱私有适配（GLM 参数兼容 + 思考参数方言）。
+// relaykit 完成格式转换后接回智谱私有适配（GLM 参数兼容：top_p 裁剪、图片前缀剥离）。
 func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
 	return postProcessRequest(body, info)
 }
@@ -101,9 +101,6 @@ func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, err
 
 	// 注入 stream_options（流式请求需要 usage 信息用于计费）
 	rawMap = injectStreamOptions(rawMap, info)
-
-	// 注入思考模式参数
-	rawMap = injectThinkingParams(rawMap, info)
 
 	// 模型名映射
 	if info.ChannelMeta.IsModelMapped {
@@ -125,37 +122,6 @@ func injectStreamOptions(rawMap map[string]json.RawMessage, info *common.RelayIn
 	if _, exists := rawMap["stream_options"]; !exists {
 		rawMap["stream_options"] = json.RawMessage(`{"include_usage":true}`)
 	}
-	return rawMap
-}
-
-// injectThinkingParams 根据 RelayInfo 中的思考后缀注入 GLM 思考模式参数。
-//
-// GLM 思考模式参数说明（仅 GLM-4.5 及以上模型支持）：
-//   - thinking.type: "enabled"(默认) / "disabled"
-//   - GLM-5.1/5/5v-Turbo/4.7/4.5V：强制思考
-//   - GLM-4.6/4.6V/4.5：模型自动判断是否思考
-//   - thinking.clear_thinking: 控制是否清除历史 reasoning_content（默认 true）
-//
-// 注入优先级：客户端已显式设置 > 后缀路由注入 > 不干预（保留 GLM 默认行为）
-func injectThinkingParams(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
-	// 客户端已显式设置 thinking 参数 → 不干预
-	if _, clientSet := rawMap["thinking"]; clientSet {
-		return rawMap
-	}
-
-	// -nothinking 后缀：显式关闭思考
-	if info.ThinkingDisabled {
-		rawMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
-		return rawMap
-	}
-
-	// -thinking 后缀：显式开启思考
-	if info.ThinkingEnabled {
-		rawMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
-		return rawMap
-	}
-
-	// 无后缀：不干预，保留 GLM 默认行为（默认 enabled）
 	return rawMap
 }
 

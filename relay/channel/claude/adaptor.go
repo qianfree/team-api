@@ -82,16 +82,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return nil, constant.NewChannelError(fmt.Sprintf("claude adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
 	converted := bytes.NewReader(requestBody)
-	result := replaceModelIfNeeded(converted, info)
-
-	// Thinking 后缀路由
-	if info.ThinkingEnabled {
-		result = injectClaudeThinking(result, info)
-	} else if info.ReasoningEffort != "" {
-		result = injectClaudeEffort(result, info)
-	}
-
-	return result, nil
+	return replaceModelIfNeeded(converted, info), nil
 }
 
 // DoRequest 发送请求到上游
@@ -124,67 +115,6 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 	}
 
 	return resp, nil
-}
-
-// injectClaudeThinking 注入 Claude thinking 配置（-thinking 后缀）
-// 设 thinking.type=enabled, budget_tokens=80%*max_tokens, temperature=1.0
-func injectClaudeThinking(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	// 获取 max_tokens
-	var maxTokens int
-	if mt, ok := rawMap["max_tokens"]; ok {
-		_ = json.Unmarshal(mt, &maxTokens)
-	}
-	if maxTokens < 1280 {
-		maxTokens = 16384
-	}
-	budgetTokens := maxTokens * 80 / 100
-	if budgetTokens < 1280 {
-		budgetTokens = 1280
-	}
-
-	// 设置 thinking
-	rawMap["thinking"] = json.RawMessage(fmt.Sprintf(`{"type":"enabled","budget_tokens":%d}`, budgetTokens))
-	// Claude thinking 要求 temperature=1.0
-	rawMap["temperature"] = json.RawMessage(`1.0`)
-
-	result, err := json.Marshal(rawMap)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
-}
-
-// injectClaudeEffort 注入 Claude effort 级别（-high/-low 等后缀）
-// 使用 adaptive thinking 模式
-func injectClaudeEffort(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	// 仅在客户端未显式设置 thinking 时注入
-	if _, exists := rawMap["thinking"]; !exists {
-		rawMap["thinking"] = json.RawMessage(`{"type":"adaptive"}`)
-	}
-
-	result, err := json.Marshal(rawMap)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
 }
 
 // DoResponse 处理上游响应，根据客户端格式分发

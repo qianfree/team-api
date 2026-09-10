@@ -47,10 +47,6 @@ func canPassThrough(info *common.RelayInfo) bool {
 	if settings.SystemPrompt != "" {
 		return false
 	}
-	// 有 thinking 后缀 → 必须经过转换来注入 thinking 参数
-	if info.ThinkingEnabled || info.ThinkingDisabled || info.ReasoningEffort != "" {
-		return false
-	}
 	return true
 }
 

@@ -207,10 +207,7 @@ type RelayInfo struct {
 	ResponsesRequest *dto.OpenAIResponsesRequest
 
 	// Thinking 后缀路由（从模型名解析，供适配器消费）
-	ThinkingEnabled  bool   // 是否有 -thinking 后缀
-	ThinkingDisabled bool   // 是否有 -nothinking 后缀
-	ReasoningEffort  string // effort 级别：low/medium/high/xhigh/max/minimal
-	BaseModelName    string // 去除 thinking/effort 后缀的基础模型名
+	BaseModelName string // 计费/调度用的目录模型名（lookup 口径，现恒等于 OriginModelName）
 
 	// WebSocket 连接（仅 Realtime 模式使用）
 	ClientConn interface{} // *websocket.Conn — 使用 interface{} 避免 relay 层直接依赖 gorilla/websocket
@@ -295,20 +292,6 @@ func (info *RelayInfo) GetIsStream() bool {
 		return false
 	}
 	return info.IsStream
-}
-
-func (info *RelayInfo) GetReasoningEffort() string {
-	if info == nil {
-		return ""
-	}
-	return info.ReasoningEffort
-}
-
-func (info *RelayInfo) SetReasoningEffort(effort string) {
-	if info == nil {
-		return
-	}
-	info.ReasoningEffort = effort
 }
 
 func (info *RelayInfo) GetEstimatePromptTokens() int {
@@ -402,19 +385,14 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 func (info *RelayInfo) buildConvOptions() *convmeta.Options {
 	opts := &convmeta.Options{
 		Claude: convmeta.ClaudeOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			DefaultMaxTokens:                      defaultMaxTokensForClaude,
+			DefaultMaxTokens: defaultMaxTokensForClaude,
 		},
 		Gemini: convmeta.GeminiOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			FunctionCallThoughtSignatureEnabled:   true, // TODO: 从配置读取
-			SupportsImagine:                       supportsImagineModel,
-			SafetySetting:                         nil, // TODO: 从配置读取
+			FunctionCallThoughtSignatureEnabled: true, // TODO: 从配置读取
+			SupportsImagine:                     supportsImagineModel,
+			SafetySetting:                       nil, // TODO: 从配置读取
 		},
-		OpenRouterDialect:      info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
-		PreserveThinkingSuffix: nil, // TODO: 实现黑名单检查
+		OpenRouterDialect: info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
 	}
 	return opts
 }

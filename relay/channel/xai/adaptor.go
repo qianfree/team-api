@@ -64,50 +64,19 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	return bytes.NewReader(processed), nil
 }
 
-// PostProcessConvertedRequest 见 common.RequestPostProcessor：
-// relaykit 完成格式转换后接回 xAI 私有适配（-search/-high/-low 后缀剥离 +
-// search_parameters / reasoning_effort 注入）。
-func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
-	return postProcessRequest(body, info)
-}
-
-// postProcessRequest xAI 私有请求适配：请求体须已是 OpenAI chat 格式。
-// 未配模型映射时 relaykit 写入的 model 仍带 -search/-high/-low 后缀（上游不认），
-// 这里剥离后覆盖写回。
+// postProcessRequest xAI 请求适配：模型名映射。
+// 历史上还承担 -search/-high/-low 模型名后缀的剥离与 search_parameters/
+// reasoning_effort 注入；该后缀语法已于 2026-09 随全局虚拟模型后缀机制一并移除。
+// 模型映射已由 relaykit 覆盖，故不再实现 RequestPostProcessor 钩子。
 func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
+	if !info.ChannelMeta.IsModelMapped {
+		return requestBody, nil
+	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
 		return requestBody, nil
 	}
-
-	// 获取当前模型名
-	modelName := info.OriginModelName
-
-	// 处理 "-search" 后缀
-	if strings.HasSuffix(modelName, "-search") {
-		modelName = strings.TrimSuffix(modelName, "-search")
-		rawMap["search_parameters"] = json.RawMessage(`{"mode":"on"}`)
-	}
-
-	// 处理 "-high" 后缀
-	if strings.HasSuffix(modelName, "-high") {
-		modelName = strings.TrimSuffix(modelName, "-high")
-		rawMap["reasoning_effort"] = json.RawMessage(`"high"`)
-	}
-
-	// 处理 "-low" 后缀
-	if strings.HasSuffix(modelName, "-low") {
-		modelName = strings.TrimSuffix(modelName, "-low")
-		rawMap["reasoning_effort"] = json.RawMessage(`"low"`)
-	}
-
-	// 模型名映射：优先使用上游映射名，否则使用剥离后缀后的名称
-	if info.ChannelMeta.IsModelMapped {
-		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
-	} else {
-		rawMap["model"] = json.RawMessage(`"` + modelName + `"`)
-	}
-
+	rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	converted, err := json.Marshal(rawMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)

@@ -75,45 +75,19 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	return bytes.NewReader(processed), nil
 }
 
-// PostProcessConvertedRequest 见 common.RequestPostProcessor：
-// relaykit 完成格式转换后接回百度私有适配（-search 后缀剥离 + web_search 注入）。
-func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
-	return postProcessRequest(body, info)
-}
-
-// postProcessRequest 百度私有请求适配：请求体须已是 OpenAI chat 格式。
-// relaykit 已写过 model（= GetUpstreamModelName，仍带后缀），这里按后缀重写覆盖。
+// postProcessRequest 百度请求适配：模型名映射。
+// 历史上还承担 -search 模型名后缀的剥离与 web_search 注入；该后缀语法已于
+// 2026-09 随全局虚拟模型后缀机制一并移除。模型映射已由 relaykit 覆盖，
+// 故不再实现 RequestPostProcessor 钩子。
 func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
+	if !info.ChannelMeta.IsModelMapped {
+		return requestBody, nil
+	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
 		return requestBody, nil
 	}
-
-	// 确定上游模型名
-	modelName := info.OriginModelName
-	if info.ChannelMeta.IsModelMapped {
-		modelName = info.ChannelMeta.UpstreamModelName
-	}
-
-	// 检测 "-search" 后缀，启用搜索模式
-	if strings.HasSuffix(modelName, "-search") {
-		modelName = strings.TrimSuffix(modelName, "-search")
-		webSearch := map[string]interface{}{
-			"enable":          true,
-			"enable_citation": true,
-			"enable_trace":    true,
-		}
-		wsJSON, err := json.Marshal(webSearch)
-		if err != nil {
-			return nil, fmt.Errorf("marshal web_search failed: %w", err)
-		}
-		rawMap["web_search"] = json.RawMessage(wsJSON)
-	}
-
-	// 设置模型名
-	modelJSON, _ := json.Marshal(modelName)
-	rawMap["model"] = json.RawMessage(modelJSON)
-
+	rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	converted, err := json.Marshal(rawMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)

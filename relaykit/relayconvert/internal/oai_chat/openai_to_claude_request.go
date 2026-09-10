@@ -47,12 +47,7 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		upstreamModel = info.GetOriginModelName()
 	}
 
-	// 解析 thinking 后缀，若无需保留则从模型名中剥离
-	thinkingInfo := shared.ParseThinkingSuffix(upstreamModel)
 	opts := convmeta.OptionsOf(info)
-	if !opts.ShouldPreserveThinkingSuffix(upstreamModel) {
-		upstreamModel = thinkingInfo.BaseModel
-	}
 
 	claudeReq := &dto.ClaudeRequest{
 		Model:    upstreamModel,
@@ -188,7 +183,6 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	}
 
 	// 应用 thinking 适配器
-	shared.ApplyThinkingToClaude(claudeReq, thinkingInfo, opts.Claude)
 
 	return claudeReq, nil
 }

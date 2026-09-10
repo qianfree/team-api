@@ -179,52 +179,7 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	}
 	// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
 	cleaned := helper.StripStreamField(requestBody)
-	var converted io.Reader = bytes.NewReader(cleaned)
-
-	// Thinking 后缀路由
-	if info.ThinkingEnabled || info.ReasoningEffort != "" {
-		converted = injectGeminiThinking(converted, info)
-	}
-
-	return converted, nil
-}
-
-// injectGeminiThinking 注入 Gemini thinking 配置
-func injectGeminiThinking(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	if info.ThinkingEnabled {
-		// -thinking: 设置 thoughtBudget
-		var maxTokens int
-		if mt, ok := req["maxOutputTokens"]; ok {
-			_ = json.Unmarshal(mt, &maxTokens)
-		}
-		if maxTokens < 128 {
-			maxTokens = 8192
-		}
-		budget := maxTokens * 80 / 100
-		if budget < 128 {
-			budget = 128
-		}
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thoughtBudget":%d,"includeThoughts":true}`, budget))
-	} else if info.ReasoningEffort != "" {
-		// effort 后缀：设置 thinkingLevel
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingLevel":"%s","includeThoughts":true}`,
-			strings.ToUpper(info.ReasoningEffort)))
-	}
-
-	result, err := json.Marshal(req)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
+	return bytes.NewReader(cleaned), nil
 }
 
 // wrapCodeAssistBody 将 Gemini 请求体包装为 Code Assist 格式

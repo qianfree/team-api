@@ -91,19 +91,9 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	return bytes.NewReader(processed), nil
 }
 
-// PostProcessConvertedRequest 见 common.RequestPostProcessor：
-// relaykit 完成格式转换后接回 DeepSeek 私有适配（thinking 对象方言注入）。
-//
-// 注意 Claude 入站不走这里：DeepSeek 另挂 /anthropic/v1/messages 原生端点
-// （constant.HasNativeClaudeEndpoint），Claude 入站为同格式直连，仍由
-// ConvertRequest → convertClaudeRequestForDeepSeek 处理。
-func (a *Adaptor) PostProcessConvertedRequest(ctx context.Context, info *common.RelayInfo, body []byte) ([]byte, error) {
-	return postProcessRequest(body, info)
-}
-
-// postProcessRequest DeepSeek 私有请求适配：请求体须已是 OpenAI chat 格式。
-// 与 relaykit 通用处理重叠的部分（model / stream_options）为覆盖写同值，幂等；
-// thinking 对象（V3 的 type + R1 的 reasoning_effort:"none"）是 relaykit 不产出的方言。
+// postProcessRequest DeepSeek 请求适配：模型映射 + stream_options 注入
+// （OpenAI 同格式入站的 adaptor 路径用；relaykit 路径两者均已由桥接层覆盖，
+// thinking 后缀方言已随全局虚拟模型后缀机制移除，故不再实现 RequestPostProcessor）。
 func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
@@ -117,9 +107,6 @@ func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, err
 
 	// 注入 stream_options（流式请求需要 usage 信息用于计费）
 	rawMap = injectStreamOptions(rawMap, info)
-
-	// 注入思考模式参数
-	rawMap = injectThinkingParams(rawMap, info)
 
 	result, err := json.Marshal(rawMap)
 	if err != nil {
@@ -137,91 +124,6 @@ func injectStreamOptions(rawMap map[string]json.RawMessage, info *common.RelayIn
 		rawMap["stream_options"] = json.RawMessage(`{"include_usage":true}`)
 	}
 	return rawMap
-}
-
-// injectThinkingParams 根据 RelayInfo 中的思考后缀注入 DeepSeek 思考模式参数。
-//
-// DeepSeek 两类模型的参数差异：
-//   - V3 思考版（deepseek-chat）：通过 thinking.type: "enabled"/"disabled" 控制；启用时需要 budget_tokens
-//   - R1 系列（deepseek-reasoner）：不识别 thinking 参数，通过 reasoning_effort: "none"/"low"/"high"/"max" 控制
-//
-// 关闭思考时同时注入两个参数，兼容两类模型：
-//   - thinking.type: "disabled"（V3 识别）
-//   - reasoning_effort: "none"（R1 识别）
-//
-// 注入优先级：客户端已显式设置 > 后缀路由注入 > 不干预（保留 DeepSeek 默认行为）
-func injectThinkingParams(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
-	// 客户端已显式设置 thinking 参数 → 不干预
-	if _, clientSet := rawMap["thinking"]; clientSet {
-		return rawMap
-	}
-
-	// -nothinking 后缀：显式关闭思考
-	// V3 模型：thinking.type: "disabled" 生效
-	// R1 模型：thinking 参数被忽略，需 reasoning_effort: "none" 才能关闭思考
-	if info.ThinkingDisabled {
-		rawMap["thinking"] = json.RawMessage(`{"type":"disabled"}`)
-		rawMap["reasoning_effort"] = json.RawMessage(`"none"`)
-		return rawMap
-	}
-
-	// -thinking 后缀：显式开启思考 + 可选 effort
-	// budget_tokens 为 V3 思考版必需字段，R1 模型忽略此参数
-	if info.ThinkingEnabled {
-		rawMap["thinking"] = json.RawMessage(`{"type":"enabled","budget_tokens":16000}`)
-		rawMap = injectReasoningEffort(rawMap, info)
-		return rawMap
-	}
-
-	// effort 后缀（-high/-low/-medium 等）：开启思考 + 设置 effort
-	if info.ReasoningEffort != "" {
-		// 仅在客户端未显式设置 thinking 时注入
-		rawMap["thinking"] = json.RawMessage(`{"type":"enabled"}`)
-		rawMap = injectReasoningEffort(rawMap, info)
-		return rawMap
-	}
-
-	// 无后缀：不干预，保留 DeepSeek 默认行为（默认 enabled）
-	return rawMap
-}
-
-// injectReasoningEffort 注入 reasoning_effort 参数，映射到 DeepSeek 支持的值
-//
-// DeepSeek V3/R1: 支持 high 和 max，映射 low/medium→high, xhigh→max
-// DeepSeek V4: 仅支持 max，所有非空 effort 统一映射为 max
-func injectReasoningEffort(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
-	if info.ReasoningEffort == "" {
-		return rawMap
-	}
-	// 仅在客户端未显式设置时注入
-	if _, clientSet := rawMap["reasoning_effort"]; clientSet {
-		return rawMap
-	}
-
-	// V4 模型仅支持 max
-	if isDeepSeekV4Model(info.ChannelMeta.UpstreamModelName) {
-		rawMap["reasoning_effort"] = json.RawMessage(`"max"`)
-		return rawMap
-	}
-
-	// V3/R1: 支持 high 和 max，做兼容映射
-	effort := info.ReasoningEffort
-	switch effort {
-	case "low", "medium", "minimal":
-		effort = "high"
-	case "xhigh", "max":
-		effort = "max"
-	default:
-		effort = "high"
-	}
-	rawMap["reasoning_effort"], _ = json.Marshal(effort)
-	return rawMap
-}
-
-// isDeepSeekV4Model 判断是否为 DeepSeek V4 系列模型
-func isDeepSeekV4Model(modelName string) bool {
-	return strings.HasPrefix(modelName, "deepseek-v4") ||
-		strings.HasPrefix(modelName, "deepseek_v4")
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -287,8 +189,6 @@ func convertClaudeRequestForDeepSeek(requestBody []byte, info *common.RelayInfo)
 		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	}
 
-	rawMap = injectThinkingParams(rawMap, info)
-
 	result, err := json.Marshal(rawMap)
 	if err != nil {
 		return bytes.NewReader(requestBody), nil
@@ -310,62 +210,9 @@ func convertResponsesRequestForDeepSeek(requestBody []byte, info *common.RelayIn
 		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	}
 
-	// 将思考后缀参数映射到 reasoning.effort（Responses API 格式）
-	rawMap = injectResponsesReasoningEffort(rawMap, info)
-
 	result, err := json.Marshal(rawMap)
 	if err != nil {
 		return bytes.NewReader(requestBody), nil
 	}
 	return bytes.NewReader(result), nil
-}
-
-// injectResponsesReasoningEffort 为 Responses API 请求注入 DeepSeek reasoning.effort 参数。
-//
-// Responses API 用 reasoning.effort 而非 Chat API 的 reasoning_effort 顶层字段：
-//   - DeepSeek V4：仅支持 "max"，所有非空 effort 统一映射为 "max"
-//   - DeepSeek V3/R1：支持 "none"/"high"/"max"，做兼容映射
-//
-// 注入优先级：客户端已显式设置 reasoning > 后缀路由注入 > 不干预（保留 DeepSeek 默认行为）
-func injectResponsesReasoningEffort(rawMap map[string]json.RawMessage, info *common.RelayInfo) map[string]json.RawMessage {
-	// 客户端已显式设置 reasoning 字段 → 不干预
-	if _, clientSet := rawMap["reasoning"]; clientSet {
-		return rawMap
-	}
-
-	// -nothinking 后缀：显式关闭思考
-	if info.ThinkingDisabled {
-		rawMap["reasoning"] = json.RawMessage(`{"effort":"none"}`)
-		return rawMap
-	}
-
-	// 确定目标 effort（来自 -thinking 或 -high/-low/-medium 后缀）
-	effort := info.ReasoningEffort
-	if info.ThinkingEnabled && effort == "" {
-		effort = "max"
-	}
-	if effort == "" {
-		return rawMap // 无后缀，不干预，保留 DeepSeek 默认行为
-	}
-
-	modelName := info.ChannelMeta.UpstreamModelName
-
-	// V4 模型仅支持 max
-	if isDeepSeekV4Model(modelName) {
-		rawMap["reasoning"] = json.RawMessage(`{"effort":"max"}`)
-		return rawMap
-	}
-
-	// V3/R1：映射到支持的值（low/medium → high，xhigh/max → max）
-	switch effort {
-	case "low", "medium", "minimal":
-		effort = "high"
-	case "xhigh", "max":
-		effort = "max"
-	default:
-		effort = "high"
-	}
-	effortJSON, _ := json.Marshal(effort)
-	rawMap["reasoning"] = json.RawMessage(`{"effort":` + string(effortJSON) + `}`)
-	return rawMap
 }

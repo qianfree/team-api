@@ -165,15 +165,6 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		result = InjectStreamOptions(result, info)
 	}
 
-	// Thinking 后缀路由：Responses 上游映射为 reasoning.effort，其余注入 chat 的 reasoning_effort
-	if info.ReasoningEffort != "" {
-		if responsesUpstream {
-			result = injectResponsesReasoning(result, info.ReasoningEffort)
-		} else {
-			result = injectReasoningEffort(result, info.ReasoningEffort)
-		}
-	}
-
 	return result, nil
 }
 
@@ -426,51 +417,6 @@ func InjectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
 	// 仅在客户端未显式设置 stream_options 时注入
 	if _, exists := rawMap["stream_options"]; !exists {
 		rawMap["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-		result, err := json.Marshal(rawMap)
-		if err != nil {
-			return bytes.NewReader(body)
-		}
-		return bytes.NewReader(result)
-	}
-	return bytes.NewReader(body)
-}
-
-// injectReasoningEffort 注入 reasoning_effort 字段到请求体
-func injectReasoningEffort(r io.Reader, effort string) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-	// 仅在客户端未显式设置时注入
-	if _, exists := rawMap["reasoning_effort"]; !exists {
-		rawMap["reasoning_effort"], _ = json.Marshal(effort)
-		result, err := json.Marshal(rawMap)
-		if err != nil {
-			return bytes.NewReader(body)
-		}
-		return bytes.NewReader(result)
-	}
-	return bytes.NewReader(body)
-}
-
-// injectResponsesReasoning 为 Responses 请求注入 reasoning.effort（对应 chat 的 reasoning_effort）。
-// Responses 协议无 reasoning_effort 字段，thinking 后缀映射为 reasoning: {"effort": ...}。
-func injectResponsesReasoning(r io.Reader, effort string) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-	// 仅在客户端未显式设置 reasoning 时注入
-	if _, exists := rawMap["reasoning"]; !exists {
-		rawMap["reasoning"], _ = json.Marshal(map[string]any{"effort": effort})
 		result, err := json.Marshal(rawMap)
 		if err != nil {
 			return bytes.NewReader(body)

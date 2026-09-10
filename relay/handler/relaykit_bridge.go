@@ -64,14 +64,6 @@ func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body
 		return nil, true, constant.NewRequestError(fmt.Sprintf("请求体解析失败（%s 格式）", inbound), err)
 	}
 
-	// chat 入站 → Responses 上游：thinking 后缀在转换前注入 chat 体（客户端未显式设置时），
-	// 由 c2r 转换器映射为 reasoning.effort（与旧 openai adaptor 的注入顺序一致）
-	if upstream == constant.RelayFormatResponses && inbound == constant.RelayFormatOpenAI && info.ReasoningEffort != "" {
-		if req, ok := parsed.(*dto.GeneralOpenAIRequest); ok && req.ReasoningEffort == "" {
-			req.ReasoningEffort = info.ReasoningEffort
-		}
-	}
-
 	start := time.Now()
 	converted, err := relayconvert.ConvertRequestByID(ctx, info, converterID, parsed)
 	duration := time.Since(start)
@@ -85,12 +77,9 @@ func convertRequestViaRelaykit(ctx context.Context, info *common.RelayInfo, body
 		return nil, true, fmt.Errorf("convert request (%s): %w", converterID, err)
 	}
 
-	// OpenAI chat 上游后处理：补齐旧 openai adaptor 在转换后做的注入（均为「客户端未显式设置时」语义）
+	// OpenAI chat 上游后处理：流式请求补 stream_options（客户端未显式设置时，计费需要 usage）
 	if upstream == constant.RelayFormatOpenAI {
 		if req, ok := converted.(*dto.GeneralOpenAIRequest); ok {
-			if info.ReasoningEffort != "" && req.ReasoningEffort == "" {
-				req.ReasoningEffort = info.ReasoningEffort
-			}
 			if info.IsStream && req.StreamOptions == nil {
 				req.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
 			}
