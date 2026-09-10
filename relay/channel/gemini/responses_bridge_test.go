@@ -26,6 +26,7 @@ func responsesInboundAdaptor(stream bool) (*Adaptor, *common.RelayInfo) {
 		StartTime:       time.Now(),
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
+			ChannelType:       int(constant.ProviderGemini),
 			BaseURL:           "https://upstream.example.com",
 			UpstreamModelName: "gemini-3-pro",
 		},
@@ -187,7 +188,7 @@ func TestHandleNonStreamToResponses_UpstreamErrorNotWritten(t *testing.T) {
 	}
 }
 
-// TestHandleNonStreamToResponses_SafetyBlock 安全过滤命中时返回错误且不写响应体
+// TestHandleNonStreamToResponses_SafetyBlock 安全过滤命中时返回请求类错误且不写响应体
 func TestHandleNonStreamToResponses_SafetyBlock(t *testing.T) {
 	a, info := responsesInboundAdaptor(false)
 	rec := httptest.NewRecorder()
@@ -198,6 +199,7 @@ func TestHandleNonStreamToResponses_SafetyBlock(t *testing.T) {
 	if err == nil {
 		t.Fatal("安全过滤应返回错误")
 	}
+	assertContentBlockedNotUpstream(t, err)
 	if rec.Body.Len() != 0 {
 		t.Errorf("不应写响应体, got %q", rec.Body.String())
 	}
@@ -351,7 +353,7 @@ func TestHandleStreamToResponses_EmptyUpstreamStillCompletes(t *testing.T) {
 }
 
 // TestHandleStreamToResponses_SafetyBlockCompletes 安全过滤命中时 SSE 头已发出，
-// 必须补齐 completed 再返回错误。
+// 必须补齐 completed（否则客户端挂起）并向上返回请求类错误（同 handleStreamToClaude 口径）。
 func TestHandleStreamToResponses_SafetyBlockCompletes(t *testing.T) {
 	a, info := responsesInboundAdaptor(true)
 	rec := httptest.NewRecorder()
@@ -360,6 +362,10 @@ func TestHandleStreamToResponses_SafetyBlockCompletes(t *testing.T) {
 		sseResponse(strings.NewReader("data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\n\n")), info, rec)
 	if err == nil {
 		t.Fatal("安全过滤应返回错误")
+	}
+	assertContentBlockedError(t, err)
+	if got := info.StreamStatus.GetEndReason(); got != common.StreamEndReasonError {
+		t.Errorf("StreamStatus end reason = %v, want %v", got, common.StreamEndReasonError)
 	}
 
 	got := eventTypes(parseResponsesSSE(t, rec.Body.String()))

@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,18 +11,55 @@ import (
 	"time"
 
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
 )
+
+// assertContentBlockedError 断言错误为「内容安全拦截」口径：请求类错误（4xx）而非
+// 上游故障（5xx），且带 ResponseWritten。
+//
+// 分类很关键：安全拦截由客户端提示词触发，若按 5xx 上游错误上报，正常渠道会因用户
+// 发送违规内容被扣健康分乃至熔断；ResponseWritten 则保证上层不重写响应体、不换渠道重试
+// （SSE 头与 200 状态码已提交，且已补齐收尾事件）。
+func assertContentBlockedError(t *testing.T, err error) {
+	t.Helper()
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("want *constant.RelayError, got %T: %v", err, err)
+	}
+	if relayErr.StatusCode >= 500 {
+		t.Errorf("StatusCode = %d, want 4xx（安全拦截属客户端内容问题，不得罚渠道健康）", relayErr.StatusCode)
+	}
+	if !relayErr.ResponseWritten {
+		t.Error("ResponseWritten = false, want true（SSE 头已提交，上层不得重写响应体）")
+	}
+}
+
+// assertContentBlockedNotUpstream 断言非流式安全拦截错误为请求类（4xx）。
+// 不校验 ResponseWritten：非流式在报错前未写出任何字节，上层仍应写标准错误体。
+func assertContentBlockedNotUpstream(t *testing.T, err error) {
+	t.Helper()
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("want *constant.RelayError, got %T: %v", err, err)
+	}
+	if relayErr.StatusCode >= 500 {
+		t.Errorf("StatusCode = %d, want 4xx（安全拦截属客户端内容问题，不得罚渠道健康）", relayErr.StatusCode)
+	}
+}
 
 // claudeInboundInfo 构造 Claude 入站 + Gemini 上游的 RelayInfo
 func claudeInboundInfo(stream bool) *common.RelayInfo {
 	return &common.RelayInfo{
 		IsStream:        stream,
 		RequestID:       "req123",
+		InboundFormat:   constant.RelayFormatClaude,
+		ClientFormat:    constant.RelayFormatClaude,
 		OriginModelName: "gemini-3-pro",
 		StartTime:       time.Now(),
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
+			ChannelType:       int(constant.ProviderGemini),
 			BaseURL:           "https://upstream.example.com",
 			UpstreamModelName: "gemini-3-pro",
 		},
@@ -298,7 +336,7 @@ func TestHandleNonStreamToClaude_WritesClaudeBody(t *testing.T) {
 	}
 }
 
-// TestHandleNonStreamToClaude_SafetyBlock 安全过滤命中时返回错误且不写响应体
+// TestHandleNonStreamToClaude_SafetyBlock 安全过滤命中时返回请求类错误且不写响应体
 func TestHandleNonStreamToClaude_SafetyBlock(t *testing.T) {
 	a, info := claudeInboundAdaptor(false)
 	rec := httptest.NewRecorder()
@@ -308,6 +346,8 @@ func TestHandleNonStreamToClaude_SafetyBlock(t *testing.T) {
 	if err == nil {
 		t.Fatal("安全过滤应返回错误")
 	}
+	// 非流式尚未写出字节，故不置 ResponseWritten；但分类同流式：4xx 而非上游 5xx
+	assertContentBlockedNotUpstream(t, err)
 	if rec.Body.Len() != 0 {
 		t.Errorf("不应写响应体, got %q", rec.Body.String())
 	}
@@ -503,7 +543,9 @@ func TestHandleStreamToClaude_UpstreamErrorNotWritten(t *testing.T) {
 }
 
 // TestHandleStreamToClaude_SafetyBlockClosesSequence 安全过滤命中时 SSE 头已发出，
-// 必须补齐收尾事件再返回错误，否则客户端挂起。
+// 必须补齐收尾事件（否则客户端挂起）并向上返回错误。
+// 安全拦截属客户端内容问题：错误须为请求类（4xx），不得按上游故障罚渠道健康；
+// 且带 ResponseWritten（SSE 头已提交，上层不得重写响应体或换渠道重试）。
 func TestHandleStreamToClaude_SafetyBlockClosesSequence(t *testing.T) {
 	upstream := "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\n\n"
 
@@ -513,6 +555,10 @@ func TestHandleStreamToClaude_SafetyBlockClosesSequence(t *testing.T) {
 	_, err := a.handleStreamToClaude(context.Background(), sseResponse(strings.NewReader(upstream)), info, rec)
 	if err == nil {
 		t.Fatal("安全过滤应返回错误")
+	}
+	assertContentBlockedError(t, err)
+	if got := info.StreamStatus.GetEndReason(); got != common.StreamEndReasonError {
+		t.Errorf("StreamStatus end reason = %v, want %v", got, common.StreamEndReasonError)
 	}
 
 	got := eventTypes(parseClaudeSSE(t, rec.Body.String()))

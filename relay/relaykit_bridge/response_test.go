@@ -13,7 +13,7 @@ import (
 
 // --- 纯辅助函数表驱动 ---
 
-func TestRelaykitResponseConverterID(t *testing.T) {
+func TestResponseConverterIDForRoute(t *testing.T) {
 	cases := []struct {
 		upstream, client constant.RelayFormat
 		want             string
@@ -21,11 +21,11 @@ func TestRelaykitResponseConverterID(t *testing.T) {
 		{constant.RelayFormatClaude, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToClaudeMessages},
 		{constant.RelayFormatGemini, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToGeminiContent},
 		{constant.RelayFormatOllama, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToOllama},
-		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""}, // 同格式
-		{constant.RelayFormatClaude, constant.RelayFormatGemini, ""}, // 未知方向
+		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""},                                                  // 同格式
+		{constant.RelayFormatClaude, constant.RelayFormatGemini, relayconvert.ConverterGeminiContentToClaudeMessages}, // 跨原生：Gemini 客户端·Claude 上游
 	}
 	for _, c := range cases {
-		if got := relaykitResponseConverterID(c.upstream, c.client); got != c.want {
+		if got := ResponseConverterIDForRoute(c.upstream, c.client); got != c.want {
 			t.Errorf("upstream=%s client=%s: got %q, want %q", c.upstream, c.client, got, c.want)
 		}
 	}
@@ -90,9 +90,9 @@ func TestConvertResponseViaRelaykit_AllProviders(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			info := newStreamTestRelayInfo(c.channel, constant.RelayFormatOpenAI)
-			body, usage, ok := convertResponseViaRelaykit(context.Background(), info, []byte(c.upstreamBody))
-			if !ok {
-				t.Fatal("expected conversion to succeed")
+			body, usage, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(c.upstreamBody))
+			if !handled || err != nil {
+				t.Fatalf("expected conversion to succeed, handled=%v err=%v", handled, err)
 			}
 			if body == nil {
 				t.Fatal("expected non-nil converted body")
@@ -118,16 +118,16 @@ func TestConvertResponseViaRelaykit_AllProviders(t *testing.T) {
 func TestConvertResponseViaRelaykit_SameFormatFallback(t *testing.T) {
 	// OpenAI 渠道 + OpenAI 客户端：upstream==client → 无转换器 → false
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
-	if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for same format")
+	if _, _, handled, _ := convertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for same format")
 	}
 }
 
 func TestConvertResponseViaRelaykit_ParseFailureFallback(t *testing.T) {
 	// Claude 渠道但上游体非合法 Claude JSON → 回退
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
-	if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`not-json`)); ok {
-		t.Fatal("expected ok=false for malformed upstream body")
+	if _, _, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(`not-json`)); !handled || err == nil {
+		t.Fatal("expected handled=true with error for malformed upstream body (hard-fail)")
 	}
 }
 
@@ -138,8 +138,8 @@ func TestConvertResponseViaRelaykit_ParseFailureAllStructuredProviders(t *testin
 	}
 	for _, ch := range structured {
 		info := newStreamTestRelayInfo(ch, constant.RelayFormatOpenAI)
-		if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`{not valid json`)); ok {
-			t.Errorf("provider=%v: expected ok=false for malformed body", ch)
+		if _, _, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(`{not valid json`)); !handled || err == nil {
+			t.Errorf("provider=%v: expected handled=true with error for malformed body", ch)
 		}
 	}
 }
@@ -147,12 +147,12 @@ func TestConvertResponseViaRelaykit_ParseFailureAllStructuredProviders(t *testin
 // --- 公开入口 nil 守卫 ---
 
 func TestTryConvertResponseViaRelaykit_NilGuards(t *testing.T) {
-	if _, _, ok := TryConvertResponseViaRelaykit(context.Background(), nil, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for nil info")
+	if _, _, handled, _ := TryConvertResponseViaRelaykit(context.Background(), nil, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for nil info")
 	}
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	info.ChannelMeta = nil
-	if _, _, ok := TryConvertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for nil ChannelMeta")
+	if _, _, handled, _ := TryConvertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for nil ChannelMeta")
 	}
 }
