@@ -1,8 +1,10 @@
 import { ref } from 'vue'
 import request from '@/utils/request'
+import { createPoller } from '@/composables/usePolling'
 
 const unreadCount = ref(0)
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// 未读数轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const poller = createPoller(fetchCount, 10 * 60 * 1000)
 let onNewCallback: ((count: number) => void) | null = null
 
 async function fetchCount() {
@@ -22,16 +24,11 @@ async function fetchCount() {
 
 function startPolling() {
 	fetchCount()
-	if (!pollTimer) {
-		pollTimer = setInterval(fetchCount, 10 * 60 * 1000)
-	}
+	poller.start()
 }
 
 function stopPolling() {
-	if (pollTimer) {
-		clearInterval(pollTimer)
-		pollTimer = null
-	}
+	poller.stop()
 }
 
 function decrement() {

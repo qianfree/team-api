@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
+import { createPoller } from '@/composables/usePolling'
 import Icon from '@/components/common/Icon.vue'
 
 const { settings, fetchSettings } = usePublicSettings()
 const dismissed = ref(false)
-let timer: ReturnType<typeof setInterval> | null = null
+// 每 60 秒强制刷新一次维护状态（绕过缓存）；页面隐藏时暂停，恢复可见时按剩余时间续排
+const maintenancePoller = createPoller(() => fetchSettings(true), 60 * 1000)
 
 onMounted(async () => {
 	await fetchSettings()
-	// 每 60 秒强制刷新一次维护状态（绕过缓存）
-	timer = setInterval(() => fetchSettings(true), 60 * 1000)
+	maintenancePoller.start()
 })
 
 onBeforeUnmount(() => {
-	if (timer) clearInterval(timer)
+	maintenancePoller.stop()
 })
 
 function dismiss() {

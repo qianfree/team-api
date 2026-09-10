@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { createPoller } from '@/composables/usePolling'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -51,7 +52,8 @@ interface TaskInfo {
 }
 const currentTask = ref<TaskInfo | null>(null)
 const polling = ref(false)
-let pollTimer: ReturnType<typeof setTimeout> | null = null
+// 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
+const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
 
 const statusLabel: Record<string, string> = {
 	SUBMITTED: '已提交',
@@ -129,15 +131,12 @@ async function submitTask() {
 
 function startPolling() {
 	polling.value = true
-	pollLoop()
+	taskPoller.start()
 }
 
 function stopPolling() {
 	polling.value = false
-	if (pollTimer) {
-		clearTimeout(pollTimer)
-		pollTimer = null
-	}
+	taskPoller.stop()
 }
 
 async function pollLoop() {
@@ -158,17 +157,18 @@ async function pollLoop() {
 		}
 
 		if (data.status === 'SUCCESS' || data.status === 'FAILURE') {
-			polling.value = false
+			stopPolling()
 			return
 		}
 	} catch {
 		// 轮询失败不中断，继续尝试
 	}
-
-	if (polling.value) {
-		pollTimer = setTimeout(pollLoop, 3000)
-	}
 }
+
+// 组件卸载时停止轮询，避免路由离开后仍持续请求任务状态
+onUnmounted(() => {
+	stopPolling()
+})
 
 function resetTask() {
 	stopPolling()

@@ -9,6 +9,7 @@ import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
 import { formatBilling, formatOrder, displayCurrency, currencySymbol, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
+import { createPoller } from '@/composables/usePolling'
 
 const route = useRoute()
 const wallet = ref<any>(null)
@@ -33,7 +34,8 @@ const payResult = ref<'success' | 'fail' | 'processing' | ''>('')
 const showFrozenModal = ref(false)
 const frozenItems = ref<any[]>([])
 const frozenLoading = ref(false)
-let frozenTimer: ReturnType<typeof setInterval> | null = null
+// 冻结明细轮询：仅弹窗打开期间运行；页面隐藏时暂停，恢复可见时按剩余时间续排
+const frozenPoller = createPoller(fetchFrozenItems, 10000)
 
 // Redeem
 const showRedeemModal = ref(false)
@@ -210,15 +212,12 @@ async function fetchFrozenItems() {
 function openFrozenModal() {
 	showFrozenModal.value = true
 	fetchFrozenItems()
-	frozenTimer = setInterval(fetchFrozenItems, 10000)
+	frozenPoller.start()
 }
 
 function closeFrozenModal() {
 	showFrozenModal.value = false
-	if (frozenTimer) {
-		clearInterval(frozenTimer)
-		frozenTimer = null
-	}
+	frozenPoller.stop()
 }
 
 async function openRedeemModal() {
@@ -357,9 +356,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-	if (frozenTimer) {
-		clearInterval(frozenTimer)
-	}
+	frozenPoller.stop()
 })
 </script>
 

@@ -27,6 +27,7 @@ import {
 } from '@arco-design/web-vue/es/icon'
 import request from '@/utils/request'
 import { formatBilling } from '@/composables/useCurrency'
+import { createPoller } from '@/composables/usePolling'
 
 const router = useRouter()
 
@@ -68,7 +69,8 @@ const onlyUrgent = ref(false)
 const activeDomain = ref<DomainKey | 'all'>('all')
 const lastRefresh = ref<Date | null>(null)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// 静默轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const summaryPoller = createPoller(() => fetchSummary(true), 60000)
 
 // ===== 派生 =====
 const items = computed<any[]>(() => summary.value?.items || [])
@@ -184,11 +186,11 @@ function availClass(m: any) {
 onMounted(() => {
   fetchSummary()
   // 后端整份结果有 30s Redis 缓存，前端 60s 轮询不会额外压库
-  pollTimer = setInterval(() => fetchSummary(true), 60000)
+  summaryPoller.start()
 })
 
 onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  summaryPoller.stop()
 })
 </script>
 
