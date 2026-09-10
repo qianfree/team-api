@@ -1,10 +1,13 @@
-// Package claude_gemini 承载 Claude Messages ↔ Gemini GenerateContent 的跨原生响应桥。
+// Package claude_gemini 承载 Claude Messages ↔ Gemini GenerateContent 的跨原生桥。
 //
-// 请求侧由两段式请求转换完成（Gemini↔OpenAI↔Claude），本包只做响应侧：
-// 把一方上游的响应/SSE 转回另一方客户端格式。代码从宿主
+// 响应侧：把一方上游的响应/SSE 转回另一方客户端格式，双向均为直连转换器。代码从宿主
 // relay/channel/claude/gemini_bridge.go 与 relay/channel/gemini/claude_bridge.go 逐行平移，
 // 宿主侧的 SSE 写出、SetFirstResponseTime、StreamStatus、ping 保活不在本层，
 // 流式输出统一以 relayconvert.StreamEvent 交由宿主桥接层帧化。
+//
+// 请求侧：Claude→Gemini 由本包直连（claude_to_gemini_request.go，不经中枢格式，
+// 可保住 thinking 签名、精确 budget、top_k 等）；Gemini→Claude 仍走
+// 「经 OpenAI 中枢」的两段式步骤链，未在本包实现。
 package claude_gemini
 
 import (

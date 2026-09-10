@@ -272,9 +272,10 @@ func registerOpenAIToResponses() {
 
 // registerCrossNativeDirections 注册跨原生方向（Claude↔Gemini、Responses→Claude/Gemini）。
 //
-// 请求侧走「经 OpenAI 中枢」的步骤链（StepConverters）：如 Claude→Gemini 实际执行
-// Claude→OpenAI→Gemini 两跳，各跳复用已注册的直连转换器，注册时校验 From/To 连续性；
-// 响应侧为直连转换器（保真度高于两跳，thinking 签名等不经中间格式丢失）。
+// 响应侧一律为直连转换器（保真度高于两跳，thinking 签名等不经中间格式丢失）；
+// 请求侧已直连的方向走 Convert，其余走「经 OpenAI 中枢」的步骤链（StepConverters）：
+// 如 Gemini→Claude 实际执行 Gemini→OpenAI→Claude 两跳，各跳复用已注册的直连转换器，
+// 注册时校验 From/To 连续性。
 func registerCrossNativeDirections() {
 	registerClaudeToGemini()
 	registerGeminiToClaude()
@@ -283,8 +284,9 @@ func registerCrossNativeDirections() {
 }
 
 // registerClaudeToGemini 注册 Claude 入站 → Gemini 上游。
-// 请求链 Claude→OpenAI→Gemini；响应直连 Gemini→Claude（含流式）。
+// 请求直连 Claude→Gemini；响应直连 Gemini→Claude（含流式）。
 func registerClaudeToGemini() {
+	reqConv := &claude_gemini.ClaudeToGeminiRequestConverter{}
 	respConv := &claude_gemini.GeminiToClaudeResponseConverter{}
 
 	relayconvert.RegisterTextConverter(relayconvert.TextConverterSpec{
@@ -293,10 +295,7 @@ func registerClaudeToGemini() {
 		To:      types.RelayFormatGemini,
 		Quality: relayconvert.TextConverterQualityFair,
 		Req: relayconvert.TextRequestSide{
-			StepConverters: []string{
-				relayconvert.ConverterClaudeMessagesToOpenAIChat,
-				relayconvert.ConverterOpenAIChatToGeminiContent,
-			},
+			Convert: reqConv.ConvertRequest,
 		},
 		Resp: relayconvert.TextResponseSide{
 			Convert: func(ctx context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {

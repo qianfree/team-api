@@ -82,7 +82,7 @@ func RequestConverterIDForRoute(inbound, upstream constant.RelayFormat, relayMod
 	case inbound == constant.RelayFormatResponses && upstream == constant.RelayFormatOpenAI:
 		return relayconvert.ConverterOpenAIResponsesToOpenAIChat
 
-	// 跨原生方向（请求侧为经 OpenAI 中枢的步骤链）
+	// 跨原生方向（请求侧：Claude→Gemini 为直连，其余为经 OpenAI 中枢的步骤链）
 	case inbound == constant.RelayFormatClaude && upstream == constant.RelayFormatGemini:
 		return relayconvert.ConverterClaudeMessagesToGeminiContent
 	case inbound == constant.RelayFormatGemini && upstream == constant.RelayFormatClaude:

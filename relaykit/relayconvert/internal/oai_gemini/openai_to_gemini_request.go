@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -400,7 +401,7 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 		if t.Type != "function" {
 			continue
 		}
-		cleanedParams := cleanParams(t.Function.Parameters)
+		cleanedParams := shared.CleanGeminiToolParams(t.Function.Parameters)
 		funcDecls = append(funcDecls, functionDecl{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
@@ -411,28 +412,6 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 		return nil, nil
 	}
 	return []geminiTool{{FunctionDeclarations: funcDecls}}, nil
-}
-
-// cleanParams 移除 Gemini 不支持的 JSON Schema 字段
-func cleanParams(params any) any {
-	if params == nil {
-		return nil
-	}
-	m, ok := params.(map[string]any)
-	if !ok {
-		return params
-	}
-	cleaned := make(map[string]any)
-	for k, v := range m {
-		switch k {
-		case "type", "description", "properties", "required", "items",
-			"anyOf", "default", "enum", "format", "maxLength", "minLength",
-			"maximum", "minimum", "pattern", "title", "nullable",
-			"maxItems", "minItems", "maxProperties", "minProperties", "example":
-			cleaned[k] = v
-		}
-	}
-	return cleaned
 }
 
 func convertToolChoice(toolChoice any) any {
