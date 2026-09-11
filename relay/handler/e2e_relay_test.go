@@ -96,11 +96,19 @@ type e2eCase struct {
 	chatViaResponses  bool
 	supportsResponses bool
 
+	// upstreamModel 覆盖上游模型名（默认 "upstream-model"）。
+	// 模型名驱动协议的上游（Vertex：含 "claude" 走 Anthropic 端点、否则走 Gemini 端点）
+	// 必须显式指定，否则测不出该渠道的协议分流。
+	upstreamModel string
+
 	clientBody string
 
 	// 上游侧期望
 	wantUpstreamFormat constant.RelayFormat
 	wantPathContains   string
+	// wantUpstreamShape 覆盖按 wantUpstreamFormat 查表得到的结构签名。
+	// 供应商私有后处理会让体偏离标准格式时使用（如 Vertex 的 Anthropic 端点）。
+	wantUpstreamShape *shapeSpec
 
 	// 假上游返回
 	upstreamStatus      int
@@ -132,6 +140,11 @@ func runE2E(t *testing.T, c e2eCase) e2eResult {
 	up := newFakeUpstream(status, ct, c.upstreamBody)
 	t.Cleanup(up.close)
 
+	upstreamModel := c.upstreamModel
+	if upstreamModel == "" {
+		upstreamModel = "upstream-model"
+	}
+
 	info := &common.RelayInfo{
 		Context:         context.Background(),
 		RequestID:       "e2e-req-1",
@@ -147,7 +160,7 @@ func runE2E(t *testing.T, c e2eCase) e2eResult {
 			ChannelName:       "e2e-channel",
 			BaseURL:           up.srv.URL,
 			ApiKey:            "sk-e2e-test",
-			UpstreamModelName: "upstream-model",
+			UpstreamModelName: upstreamModel,
 			ChatViaResponses:  c.chatViaResponses,
 			SupportsResponses: c.supportsResponses,
 		},
@@ -189,13 +202,16 @@ func runE2E(t *testing.T, c e2eCase) e2eResult {
 
 // ---------- 格式签名断言 ----------
 
-// formatSignature 各协议格式请求体的结构签名：required 为必须存在的顶层 key，
-// forbidden 为「其他格式独有、本格式绝不该出现」的顶层 key。
+// shapeSpec 一种请求/响应体的结构签名：required 为必须存在的顶层 key，
+// forbidden 为「其他格式独有、本形态绝不该出现」的顶层 key。
 // 体与端点错配时（如把 chat 体发到 Gemini 的 :generateContent），forbidden 必然命中。
-var requestSignature = map[constant.RelayFormat]struct {
+type shapeSpec struct {
 	required  []string
 	forbidden []string
-}{
+}
+
+// requestSignature 各协议格式请求体的结构签名。
+var requestSignature = map[constant.RelayFormat]shapeSpec{
 	constant.RelayFormatOpenAI: {
 		required:  []string{"model", "messages"},
 		forbidden: []string{"contents", "generationConfig", "input", "system"},
@@ -218,11 +234,15 @@ var requestSignature = map[constant.RelayFormat]struct {
 	},
 }
 
+// vertexClaudeShape Vertex AI 的 Anthropic 端点（rawPredict）请求体形态：
+// 标准 Claude 体去掉 model（模型由 URL 指定）、加上 anthropic_version（必填）。
+var vertexClaudeShape = shapeSpec{
+	required:  []string{"messages", "max_tokens", "anthropic_version"},
+	forbidden: []string{"model", "contents", "generationConfig", "input"},
+}
+
 // responseSignature 各协议格式响应体的结构签名（客户端可见字节）。
-var responseSignature = map[constant.RelayFormat]struct {
-	required  []string
-	forbidden []string
-}{
+var responseSignature = map[constant.RelayFormat]shapeSpec{
 	constant.RelayFormatOpenAI: {
 		required:  []string{"choices"},
 		forbidden: []string{"candidates", "output", "content"},
@@ -241,34 +261,36 @@ var responseSignature = map[constant.RelayFormat]struct {
 	},
 }
 
+func assertShape(t *testing.T, what string, label string, sig shapeSpec, body []byte) {
+	t.Helper()
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		t.Fatalf("%s: 不是合法 JSON 对象（期望 %s 形态）: %v\n实际内容: %s", what, label, err, truncate(body))
+	}
+
+	for _, k := range sig.required {
+		if _, exists := obj[k]; !exists {
+			t.Errorf("%s: 期望 %s 形态，但缺少必需字段 %q\n实际内容: %s", what, label, k, truncate(body))
+		}
+	}
+	for _, k := range sig.forbidden {
+		if _, exists := obj[k]; exists {
+			t.Errorf("%s: 期望 %s 形态，却出现了不该有的字段 %q——体与端点错配\n实际内容: %s",
+				what, label, k, truncate(body))
+		}
+	}
+}
+
 func assertTopLevelShape(t *testing.T, what string, format constant.RelayFormat, body []byte,
-	sigs map[constant.RelayFormat]struct {
-		required  []string
-		forbidden []string
-	}) {
+	sigs map[constant.RelayFormat]shapeSpec) {
 	t.Helper()
 
 	sig, ok := sigs[format]
 	if !ok {
 		t.Fatalf("%s: 格式 %s 没有登记结构签名", what, format)
 	}
-
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		t.Fatalf("%s: 不是合法 JSON 对象（期望 %s 格式）: %v\n实际内容: %s", what, format, err, truncate(body))
-	}
-
-	for _, k := range sig.required {
-		if _, exists := obj[k]; !exists {
-			t.Errorf("%s: 期望 %s 格式，但缺少必需字段 %q\n实际内容: %s", what, format, k, truncate(body))
-		}
-	}
-	for _, k := range sig.forbidden {
-		if _, exists := obj[k]; exists {
-			t.Errorf("%s: 期望 %s 格式，却出现了其他格式独有的字段 %q——体与端点错配\n实际内容: %s",
-				what, format, k, truncate(body))
-		}
-	}
+	assertShape(t, what, string(format), sig, body)
 }
 
 func truncate(b []byte) string {
@@ -393,7 +415,42 @@ func e2eNonStreamCases() []e2eCase {
 			constant.RelayModeChatCompletions, constant.RelayFormatOpenAI, "/v1/chat/completions"),
 		mk("claude→claude 直连", constant.ProviderClaude, constant.RelayFormatClaude,
 			constant.RelayModeClaudeMessages, constant.RelayFormatClaude, "/v1/messages"),
+
+		// Vertex AI：模型名驱动的双协议上游。协议判定必须跟着模型走，
+		// 否则矩阵按渠道类型判成 openai、把 chat 体发到 Gemini/Anthropic 原生端点。
+		vertexCase("openai→vertex(gemini)", constant.RelayFormatOpenAI, constant.RelayModeChatCompletions, "gemini-2.5-pro"),
+		vertexCase("claude→vertex(gemini)", constant.RelayFormatClaude, constant.RelayModeClaudeMessages, "gemini-2.5-pro"),
+		vertexCase("gemini→vertex(gemini) 同格式", constant.RelayFormatGemini, constant.RelayModeGeminiChat, "gemini-2.5-pro"),
+		vertexCase("responses→vertex(gemini)", constant.RelayFormatResponses, constant.RelayModeResponses, "gemini-2.5-pro"),
+		vertexCase("openai→vertex(claude)", constant.RelayFormatOpenAI, constant.RelayModeChatCompletions, "claude-sonnet-4-5"),
+		vertexCase("claude→vertex(claude) 同格式", constant.RelayFormatClaude, constant.RelayModeClaudeMessages, "claude-sonnet-4-5"),
+		vertexCase("gemini→vertex(claude)", constant.RelayFormatGemini, constant.RelayModeGeminiChat, "claude-sonnet-4-5"),
 	}
+}
+
+// vertexCase 构造 Vertex 渠道的 E2E 用例：按模型名推出上游协议、对应端点与体形态。
+//   - Gemini 模型 → publishers/google/{model}:generateContent，标准 Gemini 体；
+//   - Claude 模型 → publishers/anthropic/{model}:rawPredict，Claude 体去 model、带 anthropic_version。
+func vertexCase(name string, inbound constant.RelayFormat, mode constant.RelayMode, model string) e2eCase {
+	c := e2eCase{
+		name:          name,
+		provider:      constant.ProviderVertex,
+		inbound:       inbound,
+		mode:          mode,
+		upstreamModel: model,
+		clientBody:    e2eClientRequests[inbound],
+	}
+	if strings.Contains(model, "claude") {
+		c.wantUpstreamFormat = constant.RelayFormatClaude
+		c.wantPathContains = "publishers/anthropic/models/" + model + ":rawPredict"
+		c.wantUpstreamShape = &vertexClaudeShape
+		c.upstreamBody = e2eUpstreamResponses[constant.RelayFormatClaude]
+		return c
+	}
+	c.wantUpstreamFormat = constant.RelayFormatGemini
+	c.wantPathContains = "publishers/google/models/" + model + ":generateContent"
+	c.upstreamBody = e2eUpstreamResponses[constant.RelayFormatGemini]
+	return c
 }
 
 // TestE2E_RequestBodyMatchesEndpointFormat 断言 1（体格式 = 端点格式）：
@@ -421,7 +478,11 @@ func TestE2E_RequestBodyMatchesEndpointFormat(t *testing.T) {
 				t.Errorf("上游端点 = %q，期望包含 %q", full, c.wantPathContains)
 			}
 
-			assertTopLevelShape(t, "上游请求体（端点 "+full+"）", c.wantUpstreamFormat, body, requestSignature)
+			if c.wantUpstreamShape != nil {
+				assertShape(t, "上游请求体（端点 "+full+"）", string(c.wantUpstreamFormat)+"@vertex", *c.wantUpstreamShape, body)
+			} else {
+				assertTopLevelShape(t, "上游请求体（端点 "+full+"）", c.wantUpstreamFormat, body, requestSignature)
+			}
 
 			if !strings.Contains(string(body), "Hello") {
 				t.Errorf("用户消息内容在转换链路中丢失\n实际内容: %s", truncate(body))

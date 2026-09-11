@@ -214,6 +214,10 @@ func TestMatrixGuard_NativeClaudeEndpointRegistry(t *testing.T) {
 var expectedPostProcessors = map[constant.ProviderType]bool{
 	constant.ProviderAli:   true,
 	constant.ProviderZhipu: true,
+	// vertex：Claude 模型需注入 anthropic_version 并删除 model 字段
+	//（rawPredict 端点要求）。ConvertRequest 与本接口共用 adaptClaudeBodyForVertex，
+	// 该函数幂等（delete 幂等、anthropic_version 仅在缺失时写入）
+	constant.ProviderVertex: true,
 }
 
 // TestMatrixGuard_RequestPostProcessorRegistry 守卫第 2 类断链：私有后处理的登记漂移。

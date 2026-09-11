@@ -32,7 +32,9 @@ func KitFormat(f constant.RelayFormat) types.RelayFormat {
 //   - UseResponsesAPI：chat 入站经 /v1/responses 桥接（渠道 ChatViaResponses 配置）；
 //   - Responses 入站 + 上游原生支持 Responses：保持 Responses 直连（同格式 → 无转换）。
 func EffectiveUpstreamFormat(info *common.RelayInfo) constant.RelayFormat {
-	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	// 取模型维度的原生格式：Vertex 是模型名驱动的双协议上游（Gemini / Claude），
+	// 按渠道类型判会落到 openai 并让矩阵把体转成 chat 发到原生端点
+	upstream := helper.ProviderNativeFormatFor(info)
 	if upstream != constant.RelayFormatOpenAI {
 		return upstream
 	}

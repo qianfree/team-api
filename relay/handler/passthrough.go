@@ -25,6 +25,15 @@ func canPassThrough(info *common.RelayInfo) bool {
 		return false
 	}
 
+	// Vertex AI 的 Claude 模型：rawPredict 端点要求体内带 anthropic_version、
+	// 且不接受 model 字段（模型由 URL 指定）。这段改写在 adaptor.ConvertRequest 与
+	// PostProcessConvertedRequest 中完成，原样直连会绕过两者、上游直接 400，
+	// 因此即使显式开启直连也不得透传。
+	if constant.ProviderType(info.ChannelMeta.ChannelType) == constant.ProviderVertex &&
+		helper.ProviderNativeFormatFor(info) == constant.RelayFormatClaude {
+		return false
+	}
+
 	// 显式开启：运营者明确配置直连，不做额外检查
 	if settings.PassThroughBodyEnabled {
 		return true
@@ -74,5 +83,5 @@ func inboundMatchesChannelNative(info *common.RelayInfo) bool {
 		constant.HasNativeClaudeEndpoint(info.ChannelMeta.ChannelType) {
 		return true
 	}
-	return helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) == info.InboundFormat
+	return helper.ProviderNativeFormatFor(info) == info.InboundFormat
 }

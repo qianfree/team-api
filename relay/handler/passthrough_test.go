@@ -382,3 +382,75 @@ func TestCanPassThrough_NativeClaudeEndpoint_ClaudeInbound(t *testing.T) {
 		t.Errorf("EffectiveUpstreamFormat = %q, want %q", got, constant.RelayFormatClaude)
 	}
 }
+
+// vertexInfo 构造 Vertex 渠道的 RelayInfo（模型名驱动协议分流）。
+func vertexInfo(model string, inbound constant.RelayFormat, mode constant.RelayMode) *common.RelayInfo {
+	return &common.RelayInfo{
+		InboundFormat:   inbound,
+		ClientFormat:    inbound,
+		RelayMode:       int(mode),
+		OriginModelName: model,
+		ChannelMeta: &common.ChannelMeta{
+			ChannelType:       int(constant.ProviderVertex),
+			UpstreamModelName: model,
+			Settings:          common.ChannelSettings{},
+		},
+	}
+}
+
+// TestEffectiveUpstreamFormat_VertexIsModelDriven Vertex 是模型名驱动的双协议上游：
+// 协议判定必须跟着模型走，否则矩阵按渠道类型判成 openai，把请求体转成 chat
+// 发到 :generateContent / :rawPredict 原生端点，上游必然 400。
+func TestEffectiveUpstreamFormat_VertexIsModelDriven(t *testing.T) {
+	cases := []struct {
+		model string
+		want  constant.RelayFormat
+	}{
+		{"gemini-2.5-pro", constant.RelayFormatGemini},
+		{"claude-sonnet-4-5", constant.RelayFormatClaude},
+	}
+	for _, tc := range cases {
+		// 四种入站格式下有效上游格式都应等于模型对应的原生协议
+		for _, inbound := range []constant.RelayFormat{
+			constant.RelayFormatOpenAI, constant.RelayFormatClaude,
+			constant.RelayFormatGemini, constant.RelayFormatResponses,
+		} {
+			info := vertexInfo(tc.model, inbound, constant.RelayModeChatCompletions)
+			if got := relaykit_bridge.EffectiveUpstreamFormat(info); got != tc.want {
+				t.Errorf("模型 %s / %s 入站: EffectiveUpstreamFormat = %q, want %q",
+					tc.model, inbound, got, tc.want)
+			}
+		}
+	}
+}
+
+// TestCanPassThrough_VertexNativeInboundMatches 与模型协议相同的入站可直连
+// （Gemini 模型 + Gemini 入站：体与 :generateContent 端点天然匹配）。
+func TestCanPassThrough_VertexNativeInboundMatches(t *testing.T) {
+	info := vertexInfo("gemini-2.5-pro", constant.RelayFormatGemini, constant.RelayModeGeminiChat)
+	if !canPassThrough(info) {
+		t.Error("Vertex Gemini 模型的 Gemini 入站应可直连")
+	}
+
+	// OpenAI 入站与 Gemini 端点不匹配，必须经转换
+	info = vertexInfo("gemini-2.5-pro", constant.RelayFormatOpenAI, constant.RelayModeChatCompletions)
+	if canPassThrough(info) {
+		t.Error("Vertex Gemini 模型的 OpenAI 入站不得直连（chat 体发不了 :generateContent）")
+	}
+}
+
+// TestCanPassThrough_VertexClaudeNeverPassesThrough Vertex 的 Claude 模型即使入站
+// 就是 Claude 格式也不得直连：rawPredict 端点要求体内带 anthropic_version、不接受
+// model 字段，这段改写只在 ConvertRequest / PostProcessConvertedRequest 中执行，
+// 直连会绕过两者导致上游 400。显式开启 pass_through_body_enabled 也不例外。
+func TestCanPassThrough_VertexClaudeNeverPassesThrough(t *testing.T) {
+	info := vertexInfo("claude-sonnet-4-5", constant.RelayFormatClaude, constant.RelayModeClaudeMessages)
+	if canPassThrough(info) {
+		t.Error("Vertex Claude 模型的 Claude 入站不得直连（会绕过 anthropic_version 注入）")
+	}
+
+	info.ChannelMeta.Settings.PassThroughBodyEnabled = true
+	if canPassThrough(info) {
+		t.Error("即使显式开启直连，Vertex Claude 模型仍不得原样透传")
+	}
+}

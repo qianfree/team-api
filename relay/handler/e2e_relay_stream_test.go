@@ -326,8 +326,9 @@ func TestE2E_UpstreamErrorMapping(t *testing.T) {
 	}
 
 	for _, c := range e2eNonStreamCases() {
-		// 同格式直连基线不参与（错误原样透传，无映射行为可测）
-		if strings.Contains(c.name, "直连") {
+		// 同格式方向不参与：上游错误原样透传，没有跨协议映射行为可测
+		//（openai→openai / claude→claude 直连基线、gemini→vertex(gemini) 等）
+		if c.inbound == c.wantUpstreamFormat {
 			continue
 		}
 		errBody, ok := upstreamErrBodies[c.wantUpstreamFormat]
