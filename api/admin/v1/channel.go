@@ -67,6 +67,7 @@ type ChannelCreateReq struct {
 	Remark                   string  `json:"remark" dc:"备注"`
 	IsVIP                    bool    `json:"is_vip" d:"false" dc:"是否VIP专属渠道"`
 	UseProxy                 bool    `json:"use_proxy" d:"false" dc:"启用代理"`
+	WebSearchToGoogleSearch  bool    `json:"web_search_to_google_search" d:"false" dc:"web_search→googleSearch 映射（Gemini 渠道，搜索按次另行计价）"`
 	SharingThreshold         float64 `json:"sharing_threshold" d:"0.6" dc:"普通租户借用阈值"`
 	PreemptionThreshold      float64 `json:"preemption_threshold" d:"0.8" dc:"VIP抢占阈值"`
 	BorrowingCooldownSeconds int     `json:"borrowing_cooldown_seconds" d:"30" dc:"被抢占后冷却时间(秒)"`
@@ -95,6 +96,7 @@ type ChannelUpdateReq struct {
 	StrictCapacity           *bool    `json:"strict_capacity" dc:"严格容量（fail-closed）"`
 	IsVIP                    *bool    `json:"is_vip" dc:"是否VIP专属渠道"`
 	UseProxy                 *bool    `json:"use_proxy" dc:"启用代理"`
+	WebSearchToGoogleSearch  *bool    `json:"web_search_to_google_search" dc:"web_search→googleSearch 映射（Gemini 渠道，留空不更新）"`
 	DebugLogEnabled          *bool    `json:"debug_log_enabled" dc:"启用渠道调试日志（记录四段完整报文，排障用，用完及时关闭）"`
 	DebugLogTenantID         *int64   `json:"debug_log_tenant_id" dc:"调试目标租户ID过滤（0=不限）"`
 	DebugLogUserID           *int64   `json:"debug_log_user_id" dc:"调试目标成员ID过滤（0=不限）"`
@@ -133,6 +135,7 @@ type ChannelDetailRes struct {
 	Remark                   string   `json:"remark"`
 	IsVIP                    bool     `json:"is_vip"`
 	UseProxy                 bool     `json:"use_proxy"`
+	WebSearchToGoogleSearch  bool     `json:"web_search_to_google_search"`
 	DebugLogEnabled          bool     `json:"debug_log_enabled"`
 	DebugLogTenantID         int64    `json:"debug_log_tenant_id"`
 	DebugLogUserID           int64    `json:"debug_log_user_id"`

@@ -288,10 +288,19 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 		baseURL = defaultProviderURL(req.Type)
 	}
 
-	// Build settings JSON
+	// Build settings JSON（只写显式开启的布尔项，其余字段用 Parse 时的默认值）
 	settingsJSON := "{}"
-	if req.UseProxy {
-		settingsJSON = `{"use_proxy":true}`
+	if req.UseProxy || req.WebSearchToGoogleSearch {
+		boolFlags := map[string]bool{}
+		if req.UseProxy {
+			boolFlags["use_proxy"] = true
+		}
+		if req.WebSearchToGoogleSearch {
+			boolFlags["web_search_to_google_search"] = true
+		}
+		if b, err := json.Marshal(boolFlags); err == nil {
+			settingsJSON = string(b)
+		}
 	}
 
 	tier := req.Tier
@@ -411,8 +420,8 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 	// Update use_proxy / debug_log_* in settings JSONB。
 	// 必须单块合并处理（读一次旧值 → 同时应用全部字段 → 回写一次）：
 	// 若写成多个同构块，各自从 DB 读旧值再各自 marshal，同请求多字段时会互相覆盖。
-	if req.UseProxy != nil || req.DebugLogEnabled != nil || req.DebugLogTenantID != nil ||
-		req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil {
+	if req.UseProxy != nil || req.WebSearchToGoogleSearch != nil || req.DebugLogEnabled != nil ||
+		req.DebugLogTenantID != nil || req.DebugLogUserID != nil || req.DebugLogApiKeyID != nil {
 		// 注意：读单列字符串必须用 Value()——gdb 的 Model.Scan 只接受 struct 系列，
 		// 传入 *string 会直接报错；此前用 _ = Scan(&string) 吞错导致永远读到空串，
 		// 每次局部更新都会把未提交的 settings 字段静默重置为默认值
@@ -423,6 +432,9 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		settings := relay.ParseChannelSettings(currentSettings)
 		if req.UseProxy != nil {
 			settings.UseProxy = *req.UseProxy
+		}
+		if req.WebSearchToGoogleSearch != nil {
+			settings.WebSearchToGoogleSearch = *req.WebSearchToGoogleSearch
 		}
 		if req.DebugLogEnabled != nil {
 			settings.DebugLogEnabled = *req.DebugLogEnabled
@@ -590,6 +602,7 @@ func (s *sAdmin) GetChannelDetail(ctx context.Context, req *v1.ChannelDetailReq)
 		Remark:                   ch.Remark,
 		IsVIP:                    ch.IsVIP,
 		UseProxy:                 settings.UseProxy,
+		WebSearchToGoogleSearch:  settings.WebSearchToGoogleSearch,
 		DebugLogEnabled:          settings.DebugLogEnabled,
 		DebugLogTenantID:         settings.DebugLogTenantID,
 		DebugLogUserID:           settings.DebugLogUserID,

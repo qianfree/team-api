@@ -131,6 +131,10 @@ type ChannelSettings struct {
 	// UseProxy 启用代理，使用系统配置的代理地址转发请求
 	UseProxy bool `json:"use_proxy,omitempty"`
 
+	// WebSearchToGoogleSearch 将客户端请求的服务端 web_search 工具映射为 Gemini 原生
+	// googleSearch（仅 Gemini 上游生效；grounded 请求 Google 按搜索次数另行计价，默认关闭）
+	WebSearchToGoogleSearch bool `json:"web_search_to_google_search,omitempty"`
+
 	// DebugLogEnabled 启用渠道调试日志：记录经该渠道每次请求尝试的四段完整报文
 	//（客户端↔系统↔上游，body 不截断、凭证脱敏）。数据量大，仅排查问题时开启
 	DebugLogEnabled bool `json:"debug_log_enabled,omitempty"`
@@ -391,6 +395,7 @@ func (info *RelayInfo) buildConvOptions() *convmeta.Options {
 			FunctionCallThoughtSignatureEnabled: true, // TODO: 从配置读取
 			SupportsImagine:                     supportsImagineModel,
 			SafetySetting:                       nil, // TODO: 从配置读取
+			WebSearchToGoogleSearch:             info.ChannelMeta != nil && info.ChannelMeta.Settings.WebSearchToGoogleSearch,
 		},
 		OpenRouterDialect: info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
 	}

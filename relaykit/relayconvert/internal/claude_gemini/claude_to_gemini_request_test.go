@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
+	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_chat"
 	"github.com/qianfree/team-api/relaykit/relayconvert/internal/oai_gemini"
 )
@@ -173,16 +174,16 @@ func TestClaudeToGeminiRequest_ToolsAndToolResult(t *testing.T) {
 	}
 	got := runClaudeToGeminiRequest(t, req)
 
-	var tools struct {
+	var toolEntries []struct {
 		FunctionDeclarations []dto.GeminiFunctionDeclaration `json:"functionDeclarations"`
 	}
-	if err := json.Unmarshal(got.Tools, &tools); err != nil {
-		t.Fatalf("tools 反序列化失败: %v", err)
+	if err := json.Unmarshal(got.Tools, &toolEntries); err != nil {
+		t.Fatalf("tools 应为数组形态（Gemini repeated Tool）, 反序列化失败: %v", err)
 	}
-	if len(tools.FunctionDeclarations) != 1 {
-		t.Fatalf("应只保留 1 个函数声明（内置工具跳过）, got %d", len(tools.FunctionDeclarations))
+	if len(toolEntries) != 1 || len(toolEntries[0].FunctionDeclarations) != 1 {
+		t.Fatalf("应只保留 1 个函数声明（内置工具默认跳过）, got %+v", toolEntries)
 	}
-	params, _ := tools.FunctionDeclarations[0].Parameters.(map[string]any)
+	params, _ := toolEntries[0].FunctionDeclarations[0].Parameters.(map[string]any)
 	if _, ok := params["additionalProperties"]; ok {
 		t.Error("additionalProperties 应被过滤（Gemini 不支持）")
 	}
@@ -340,6 +341,64 @@ func TestClaudeToGeminiRequest_RejectsNonClaudeRequest(t *testing.T) {
 	if _, err := conv.ConvertRequest(context.Background(), claudeInboundMeta(false), "not a request"); err == nil {
 		t.Fatal("非 *dto.ClaudeRequest 入参应返回错误")
 	}
+}
+
+// TestClaudeToGeminiRequest_WebSearchToGoogleSearch 渠道开关控制的
+// web_search → googleSearch 映射（第一档：仅请求侧）。
+func TestClaudeToGeminiRequest_WebSearchToGoogleSearch(t *testing.T) {
+	webSearchReq := func() *dto.ClaudeRequest {
+		return &dto.ClaudeRequest{
+			Tools:    []dto.ClaudeTool{{Name: "web_search", Type: "web_search_20250305"}},
+			Messages: []dto.ClaudeMessage{{Role: "user", Content: "今天有什么新闻"}},
+		}
+	}
+	convertWith := func(t *testing.T, req *dto.ClaudeRequest, mapWebSearch bool) *dto.GeminiChatRequest {
+		t.Helper()
+		meta := claudeInboundMeta(false)
+		meta.Options = &convmeta.Options{Gemini: convmeta.GeminiOptions{WebSearchToGoogleSearch: mapWebSearch}}
+		conv := &ClaudeToGeminiRequestConverter{}
+		got, err := conv.ConvertRequest(context.Background(), meta, req)
+		if err != nil {
+			t.Fatalf("转换失败: %v", err)
+		}
+		return got.(*dto.GeminiChatRequest)
+	}
+
+	t.Run("开关关闭时跳过", func(t *testing.T) {
+		got := convertWith(t, webSearchReq(), false)
+		if got.Tools != nil {
+			t.Errorf("未开启映射时 web_search 应被跳过, got %s", got.Tools)
+		}
+	})
+
+	t.Run("开关开启映射为 googleSearch", func(t *testing.T) {
+		got := convertWith(t, webSearchReq(), true)
+		if !strings.Contains(string(got.Tools), `"googleSearch"`) {
+			t.Errorf("应映射为 googleSearch 工具, got %s", got.Tools)
+		}
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(got.Tools, &entries); err != nil || len(entries) != 1 {
+			t.Fatalf("tools 应为单元素数组, got %s (err=%v)", got.Tools, err)
+		}
+		if got.ToolConfig != nil {
+			t.Errorf("纯 googleSearch 不应附加 toolConfig, got %+v", got.ToolConfig)
+		}
+	})
+
+	t.Run("与自定义函数混用时保守丢弃搜索", func(t *testing.T) {
+		req := webSearchReq()
+		req.Tools = append(req.Tools, dto.ClaudeTool{
+			Name:        "get_weather",
+			InputSchema: map[string]any{"type": "object"},
+		})
+		got := convertWith(t, req, true)
+		if strings.Contains(string(got.Tools), `"googleSearch"`) {
+			t.Errorf("混用时应丢弃 googleSearch 保住函数声明, got %s", got.Tools)
+		}
+		if !strings.Contains(string(got.Tools), `"functionDeclarations"`) {
+			t.Errorf("函数声明应保留, got %s", got.Tools)
+		}
+	})
 }
 
 // TestClaudeToGeminiRequest_ConverterMetadata 转换器 ID / 方向 / 质量声明。

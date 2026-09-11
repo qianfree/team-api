@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -98,13 +99,15 @@ func (c *ClaudeToGeminiRequestConverter) ConvertRequest(
 	geminiReq.SafetySettings = defaultGeminiSafetySettings()
 
 	if len(claudeReq.Tools) > 0 {
-		toolsJSON, err := claudeToolsToGemini(claudeReq.Tools)
+		mapWebSearch := convmeta.OptionsOf(info).Gemini.WebSearchToGoogleSearch
+		toolsJSON, hasFuncDecls, err := claudeToolsToGemini(claudeReq.Tools, mapWebSearch)
 		if err != nil {
 			return nil, fmt.Errorf("convert tools: %w", err)
 		}
 		if len(toolsJSON) > 0 {
 			geminiReq.Tools = toolsJSON
-			if claudeReq.ToolChoice != nil {
+			// toolConfig（functionCallingConfig）只对函数声明有意义，纯 googleSearch 时不附加
+			if hasFuncDecls && claudeReq.ToolChoice != nil {
 				geminiReq.ToolConfig = claudeToolChoiceToGemini(claudeReq.ToolChoice)
 			}
 		}
@@ -148,12 +151,21 @@ func defaultGeminiSafetySettings() []dto.GeminiSafetySetting {
 // ========== tools / tool_choice 映射 ==========
 
 // claudeToolsToGemini 将 Claude tools 序列化为 Gemini 的 tools 字段
-// （json.RawMessage 形态的 {functionDeclarations: [...]}）。
-// Claude 的服务端内置工具（web_search / computer 等）无 input_schema，Gemini 无法表达，跳过。
-func claudeToolsToGemini(tools []dto.ClaudeTool) (json.RawMessage, error) {
+// （json.RawMessage 形态的 [{functionDeclarations: [...]}, ...]——tools 在
+// Gemini API 中是 repeated Tool，必须是数组，单对象形态会被严格解析拒绝）。
+// 自定义工具转为 functionDeclarations；服务端内置工具中，web_search 在渠道开启
+// 映射时转为 Gemini 原生 googleSearch（第一档：仅请求侧，响应侧 grounding 不还原
+// 为工具块），computer 等其余内置工具无对应物，跳过。
+// 第二个返回值表示是否含函数声明（决定 toolConfig 是否有意义）。
+func claudeToolsToGemini(tools []dto.ClaudeTool, mapWebSearch bool) (json.RawMessage, bool, error) {
 	decls := make([]dto.GeminiFunctionDeclaration, 0, len(tools))
+	hasWebSearch := false
 	for _, t := range tools {
 		if t.Name == "" || (t.Type != "" && t.Type != "custom") {
+			// web_search 内置工具带版本后缀（如 web_search_20250305），按前缀识别
+			if strings.HasPrefix(t.Type, "web_search") {
+				hasWebSearch = true
+			}
 			continue
 		}
 		decls = append(decls, dto.GeminiFunctionDeclaration{
@@ -162,14 +174,23 @@ func claudeToolsToGemini(tools []dto.ClaudeTool) (json.RawMessage, error) {
 			Parameters:  shared.CleanGeminiToolParams(t.InputSchema),
 		})
 	}
-	if len(decls) == 0 {
-		return nil, nil
+	entries := make([]map[string]any, 0, 2)
+	if len(decls) > 0 {
+		entries = append(entries, map[string]any{"functionDeclarations": decls})
+	} else if mapWebSearch && hasWebSearch {
+		// 保守策略：仅在无自定义函数时附加 googleSearch——部分模型代际不接受
+		// googleSearch 与 functionDeclarations 同请求，混用时宁可丢搜索也不整请求 400。
+		// Claude 侧的 max_uses / allowed_domains 等参数无 Gemini 对应物，静默降级。
+		entries = append(entries, map[string]any{"googleSearch": map[string]any{}})
 	}
-	raw, err := json.Marshal(map[string]any{"functionDeclarations": decls})
+	if len(entries) == 0 {
+		return nil, false, nil
+	}
+	raw, err := json.Marshal(entries)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return raw, nil
+	return raw, len(decls) > 0, nil
 }
 
 // claudeToolChoiceToGemini 将 Claude tool_choice 转换为 Gemini toolConfig。

@@ -33,6 +33,11 @@ type GeminiOptions struct {
 	// SafetySetting 返回某个类别对应的伤害阈值。
 	// 返回 nil 或空字符串表示不附带 safetySettings。
 	SafetySetting func(category string) string
+	// WebSearchToGoogleSearch 渠道级开关：将入站请求的服务端 web_search 工具
+	// 映射为 Gemini 原生 googleSearch 工具（第一档：仅请求侧；响应中的
+	// groundingMetadata 不还原为工具块，客户端得到被搜索增强的纯文本）。
+	// grounded 请求 Google 在 token 之外按搜索次数单独计价，故默认关闭、按渠道显式开启。
+	WebSearchToGoogleSearch bool
 }
 
 func (o *ClaudeOptions) DefaultMaxTokensFor(modelName string) (int, bool) {
