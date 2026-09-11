@@ -50,6 +50,18 @@ func EffectiveUpstreamFormat(info *common.RelayInfo) constant.RelayFormat {
 	if info.InboundFormat == constant.RelayFormatResponses && info.ChannelMeta.UpstreamSpeaksResponses() {
 		return constant.RelayFormatResponses
 	}
+	// 多协议原生透传渠道覆盖：上游（New API / Sub2API）同时原生支持 OpenAI/Claude/Gemini，
+	// 三种入站一律同格式直达（与 inboundMatchesChannelNative 的判定口径一致）。
+	// 若按主协议判成 OpenAI，配置了模型映射/参数改写等强制走转换路径的场景会把
+	// Claude/Gemini 体转成 chat，而 multinative 按入站格式选原生端点（/v1/messages、
+	// :generateContent），体与端点错配、上游 400。模型名替换等由 multinative 委托的
+	// 原生 adaptor 在同格式内完成（adaptor.ConvertRequest 路径）。
+	if constant.IsMultiNativeProvider(info.ChannelMeta.ChannelType) {
+		switch info.InboundFormat {
+		case constant.RelayFormatOpenAI, constant.RelayFormatClaude, constant.RelayFormatGemini:
+			return info.InboundFormat
+		}
+	}
 	return upstream
 }
 

@@ -70,7 +70,10 @@ func (a *Adaptor) isCodeAssistForcedStream() bool {
 // getRelayAction 获取当前 relay 模式对应的 Gemini action 名称
 func (a *Adaptor) getRelayAction(info *common.RelayInfo) (string, error) {
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	// Claude/Responses 入站：矩阵已把请求体转成 Gemini 原生格式，与 chat 入站同走 generateContent
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeClaudeMessages,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return "streamGenerateContent", nil
 		}
@@ -113,7 +116,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	model := info.ChannelMeta.UpstreamModelName
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	// Claude/Responses 入站：矩阵已把请求体转成 Gemini 原生格式，与 chat 入站同走 generateContent
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeClaudeMessages,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", baseURL, model), nil
 		}

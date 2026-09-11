@@ -55,7 +55,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	prefix := fmt.Sprintf("%s/client/v4/accounts/%s/ai/v1", baseURL, a.accountID)
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions:
+	// Claude/Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return prefix + "/chat/completions", nil
 	case constant.RelayModeCompletions:
 		return prefix + "/completions", nil

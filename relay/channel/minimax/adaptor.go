@@ -33,7 +33,9 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeClaudeMessages:
 		return baseURL + "/anthropic/v1/messages", nil
-	case constant.RelayModeChatCompletions:
+	// Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v1/text/chatcompletion_v2", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/v1/image/generation", nil

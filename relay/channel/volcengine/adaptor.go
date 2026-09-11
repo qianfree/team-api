@@ -31,7 +31,9 @@ func (a *openaiAdaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	}
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions:
+	// Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if strings.HasPrefix(modelName, "bot-") {
 			return baseURL + "/api/v3/bots/chat/completions", nil
 		}
