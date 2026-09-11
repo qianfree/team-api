@@ -49,11 +49,12 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 
 	responseID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	createAt := time.Now().Unix()
-	// 模型名：优先上游模型名（response.created / response.completed 事件可覆盖）
+	// 模型名：未映射时取上游模型名（response.created / response.completed 事件可覆盖）；
+	// 模型映射时一律用原始请求模型名，不向客户端泄漏上游真实模型（与非流式转换器口径一致）
 	model := ""
 	if info != nil {
 		model = info.GetUpstreamModelName()
-		if model == "" {
+		if model == "" || isModelMapped(info) {
 			model = info.GetOriginModelName()
 		}
 	}
@@ -117,7 +118,8 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 		switch streamResp.Type {
 		case "response.created":
 			if streamResp.Response != nil {
-				if streamResp.Response.Model != "" {
+				// 模型映射时不回填上游模型名，避免泄漏给客户端
+				if streamResp.Response.Model != "" && !isModelMapped(info) {
 					model = streamResp.Response.Model
 				}
 				if streamResp.Response.CreatedAt != 0 {
@@ -207,7 +209,8 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 
 		case "response.completed":
 			if streamResp.Response != nil {
-				if streamResp.Response.Model != "" {
+				// 模型映射时不回填上游模型名，避免泄漏给客户端
+				if streamResp.Response.Model != "" && !isModelMapped(info) {
 					model = streamResp.Response.Model
 				}
 				if streamResp.Response.CreatedAt != 0 {

@@ -1,0 +1,79 @@
+[
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Let me think...",
+                "thought": true
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "origin-model"
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "thought": true,
+                "thoughtSignature": "sig_abc123"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "origin-model"
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "The answer is 42."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "origin-model"
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "origin-model",
+      "usageMetadata": {
+        "candidatesTokenCount": 50,
+        "promptTokenCount": 10,
+        "totalTokenCount": 60
+      }
+    },
+    "usage": {
+      "completion_tokens": 50,
+      "prompt_tokens": 10,
+      "prompt_tokens_details": {},
+      "total_tokens": 60
+    }
+  }
+]

@@ -1,0 +1,13 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"in_progress","model":"upstream-model"}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"msg_up","output_index":0,"summary_index":0,"delta":"Let me think..."}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_up","output_index":0,"content_index":0,"delta":"The answer is 42."}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"completed","model":"upstream-model","usage":{"input_tokens":10,"output_tokens":50,"total_tokens":60,"output_tokens_details":{"reasoning_tokens":30}}}}
+
+data: [DONE]

@@ -1,0 +1,35 @@
+{
+  "candidates": [
+    {
+      "index": 0,
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Let me think...",
+            "thought": true,
+            "thoughtSignature": "CtgBAcu98J5kyB0V"
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Shanghai"
+              }
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 10,
+    "candidatesTokenCount": 5,
+    "totalTokenCount": 15,
+    "cachedContentTokenCount": 2,
+    "thoughtsTokenCount": 3
+  },
+  "modelVersion": "gemini-2.5-pro",
+  "responseId": "abc123DEF"
+}

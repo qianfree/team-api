@@ -36,6 +36,19 @@ var wireCases = map[string]func(t *testing.T, data []byte) any{
 	"responses_response_full.json":   decodeInto[dto.OpenAIResponsesResponse],
 	"ollama_chat_request_full.json":  decodeInto[dto.OllamaChatRequest],
 	"ollama_chat_response_full.json": decodeInto[dto.OllamaChatResponse],
+
+	// 流式 chunk / 事件形状（流式转换器逐帧解码的目标类型）
+	"openai_chat_stream_chunk_full.json":            decodeInto[dto.ChatCompletionStreamResponse],
+	"claude_stream_event_message_start.json":        decodeInto[dto.ClaudeResponse],
+	"claude_stream_event_content_block_start.json":  decodeInto[dto.ClaudeResponse],
+	"claude_stream_event_content_block_delta.json":  decodeInto[dto.ClaudeResponse],
+	"claude_stream_event_thinking_delta.json":       decodeInto[dto.ClaudeResponse],
+	"claude_stream_event_signature_delta.json":      decodeInto[dto.ClaudeResponse],
+	"claude_stream_event_message_delta.json":        decodeInto[dto.ClaudeResponse],
+	"gemini_stream_chunk_full.json":                 decodeInto[dto.GeminiChatResponse],
+	"responses_stream_event_text_delta.json":        decodeInto[dto.ResponsesStreamResponse],
+	"responses_stream_event_output_item_added.json": decodeInto[dto.ResponsesStreamResponse],
+	"responses_stream_event_reasoning_part.json":    decodeInto[dto.ResponsesStreamResponse],
 }
 
 func decodeInto[T any](t *testing.T, data []byte) any {

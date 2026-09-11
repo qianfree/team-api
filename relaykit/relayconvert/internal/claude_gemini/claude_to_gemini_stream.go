@@ -135,7 +135,8 @@ func (c *ClaudeToGeminiStreamConverter) ConvertStreamResponse(
 		switch event.Type {
 		case "message_start":
 			if event.Message != nil {
-				if event.Message.Model != "" {
+				// 模型映射时不回填上游模型名，避免泄漏给客户端
+				if event.Message.Model != "" && !isModelMapped(info) {
 					modelName = event.Message.Model
 				}
 				if event.Message.Usage != nil {

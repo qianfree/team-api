@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 
@@ -79,4 +80,36 @@ func LookupStreamConverter(from, to types.RelayFormat) (StreamConverterFunc, str
 		return nil, "", false
 	}
 	return fn, converterID, true
+}
+
+// StreamConverterSpec 一个已注册流式转换方向的元信息（枚举用）。
+// From 是上游流格式，To 是客户端格式（流式方向与请求方向相反）。
+type StreamConverterSpec struct {
+	ID   string
+	From types.RelayFormat
+	To   types.RelayFormat
+}
+
+// ListStreamConverterSpecs 返回全部已注册流式转换方向（按 ID 升序，结果稳定）。
+// 供注册表级测试套件（流式金样本 / 能力守恒）枚举：新注册方向零成本自动纳入。
+func ListStreamConverterSpecs() []StreamConverterSpec {
+	streamConverterMu.RLock()
+	defer streamConverterMu.RUnlock()
+
+	out := make([]StreamConverterSpec, 0, len(streamConverterRoutes))
+	for route, id := range streamConverterRoutes {
+		out = append(out, StreamConverterSpec{ID: id, From: route.from, To: route.to})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// LookupStreamConverterByID 按 converterID 查找流式转换函数。
+// 与 ListStreamConverterSpecs 配套使用；未注册返回 (nil, false)。
+func LookupStreamConverterByID(converterID string) (StreamConverterFunc, bool) {
+	streamConverterMu.RLock()
+	defer streamConverterMu.RUnlock()
+
+	fn, ok := streamConverterFuncs[converterID]
+	return fn, ok
 }
