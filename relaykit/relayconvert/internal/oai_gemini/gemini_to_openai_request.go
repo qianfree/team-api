@@ -282,11 +282,19 @@ func g2oConvertToolConfig(toolConfig any) any {
 }
 
 // g2oConvertThinkingConfig 将 Gemini thinkingConfig 按预算档位映射为 OpenAI reasoning_effort。
+// 未携带 thinkingBudget 时回退读 thinkingLevel（Gemini 3 客户端的表达）。
 func g2oConvertThinkingConfig(tc *dto.GeminiThinkingConfig) string {
-	if tc.ThoughtBudget == nil {
+	if tc.ThinkingBudget == nil {
+		// Gemini 3 客户端可能只带 thinkingLevel，按档位回退
+		switch strings.ToLower(tc.ThinkingLevel) {
+		case "low":
+			return "low"
+		case "high":
+			return "high"
+		}
 		return "medium"
 	}
-	budget := *tc.ThoughtBudget
+	budget := *tc.ThinkingBudget
 	switch {
 	case budget <= 2048:
 		return "low"

@@ -24,7 +24,7 @@ const (
 // 与「Claude→OpenAI→Gemini」步骤链相比，直连不经中枢格式，故能保住 OpenAI 无法承载的信息：
 //   - thinking.signature → part.thoughtSignature：Gemini 多轮思考续传的凭据，
 //     链式在 Claude→OpenAI 跳被丢弃，回传时思考块缺签名会被上游判为非法请求
-//   - thinking.budget_tokens → thoughtBudget 精确值：链式先折叠为 low/medium/high
+//   - thinking.budget_tokens → thinkingBudget 精确值：链式先折叠为 low/medium/high
 //     再展开为 1024/8192/32768，5000 会被放大成 8192
 //   - top_k → generationConfig.topK：OpenAI chat 无该字段，链式直接丢失
 //   - tool_use.id → functionCall.id：链式经 OpenAI tool_calls 后被 Gemini 跳丢弃
@@ -120,37 +120,19 @@ func (c *ClaudeToGeminiRequestConverter) ConvertRequest(
 // ========== generationConfig 映射 ==========
 
 // claudeThinkingToGemini 将 Claude thinking 配置转换为 Gemini thinkingConfig。
-// 与链式（budget→reasoning_effort→budget）不同，此处 budget 原值直传；
-// thinkingLevel 仍按同一套档位阈值给出，供只认 thinkingLevel 的模型使用。
+// 与链式（budget→reasoning_effort→budget）不同，此处 budget 原值直传。
+// 只下发 thinkingBudget、不下发 thinkingLevel：二者互斥（同时携带上游返回 400），
+// 且 Gemini 3 对 thinkingBudget 向后兼容，budget 是各代模型的公共表达。
 // type 非 enabled（disabled / 缺省）时不附加 thinkingConfig，与链式同口径。
 func claudeThinkingToGemini(thinking *dto.ClaudeThinking) *dto.GeminiThinkingConfig {
 	if thinking == nil || thinking.Type != "enabled" {
 		return nil
 	}
-	cfg := &dto.GeminiThinkingConfig{
-		IncludeThoughts: true,
-		ThinkingLevel:   claudeThinkingBudgetToLevel(thinking.BudgetTokens),
-	}
+	cfg := &dto.GeminiThinkingConfig{IncludeThoughts: true}
 	if thinking.BudgetTokens != nil && *thinking.BudgetTokens > 0 {
-		cfg.ThoughtBudget = intPtr(*thinking.BudgetTokens)
+		cfg.ThinkingBudget = intPtr(*thinking.BudgetTokens)
 	}
 	return cfg
-}
-
-// claudeThinkingBudgetToLevel 按 budget 档位给出 Gemini thinkingLevel（LOW/MEDIUM/HIGH）。
-// 阈值与 Claude→OpenAI 跳的 reasoning_effort 折算保持一致。
-func claudeThinkingBudgetToLevel(budget *int) string {
-	if budget == nil {
-		return "MEDIUM"
-	}
-	switch {
-	case *budget <= 2048:
-		return "LOW"
-	case *budget <= 16384:
-		return "MEDIUM"
-	default:
-		return "HIGH"
-	}
 }
 
 // defaultGeminiSafetySettings 返回宽松的默认安全设置。

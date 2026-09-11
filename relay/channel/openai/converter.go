@@ -583,10 +583,17 @@ func g2oConvertToolConfig(toolConfig any) any {
 }
 
 func g2oConvertThinkingConfig(tc *dto.GeminiThinkingConfig) string {
-	if tc.ThoughtBudget == nil {
+	if tc.ThinkingBudget == nil {
+		// Gemini 3 客户端可能只带 thinkingLevel，按档位回退
+		switch strings.ToLower(tc.ThinkingLevel) {
+		case "low":
+			return "low"
+		case "high":
+			return "high"
+		}
 		return "medium"
 	}
-	budget := *tc.ThoughtBudget
+	budget := *tc.ThinkingBudget
 	switch {
 	case budget <= 2048:
 		return "low"

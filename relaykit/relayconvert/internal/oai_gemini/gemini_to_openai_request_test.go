@@ -119,11 +119,13 @@ func TestGeminiToOpenAIRequestConverter_ThinkingConfig(t *testing.T) {
 		effort string
 	}{
 		{"无预算默认 medium", &dto.GeminiThinkingConfig{}, "medium"},
-		{"低预算", &dto.GeminiThinkingConfig{ThoughtBudget: budgetOf(1000)}, "low"},
-		{"低预算边界", &dto.GeminiThinkingConfig{ThoughtBudget: budgetOf(2048)}, "low"},
-		{"中预算", &dto.GeminiThinkingConfig{ThoughtBudget: budgetOf(8192)}, "medium"},
-		{"中预算边界", &dto.GeminiThinkingConfig{ThoughtBudget: budgetOf(16384)}, "medium"},
-		{"高预算", &dto.GeminiThinkingConfig{ThoughtBudget: budgetOf(32768)}, "high"},
+		{"无预算按 thinkingLevel 回退", &dto.GeminiThinkingConfig{ThinkingLevel: "low"}, "low"},
+		{"无预算 thinkingLevel 大写兼容", &dto.GeminiThinkingConfig{ThinkingLevel: "HIGH"}, "high"},
+		{"低预算", &dto.GeminiThinkingConfig{ThinkingBudget: budgetOf(1000)}, "low"},
+		{"低预算边界", &dto.GeminiThinkingConfig{ThinkingBudget: budgetOf(2048)}, "low"},
+		{"中预算", &dto.GeminiThinkingConfig{ThinkingBudget: budgetOf(8192)}, "medium"},
+		{"中预算边界", &dto.GeminiThinkingConfig{ThinkingBudget: budgetOf(16384)}, "medium"},
+		{"高预算", &dto.GeminiThinkingConfig{ThinkingBudget: budgetOf(32768)}, "high"},
 	}
 
 	for _, tt := range tests {

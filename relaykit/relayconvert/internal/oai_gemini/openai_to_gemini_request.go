@@ -446,27 +446,24 @@ func convertToolChoice(toolChoice any) any {
 	return nil
 }
 
+// convertReasoningEffort 将 reasoning_effort 档位展开为 Gemini thinkingBudget。
+// 只下发 thinkingBudget、不下发 thinkingLevel：二者互斥（同时携带上游返回 400），
+// 且 Gemini 3 对 thinkingBudget 向后兼容。
 func convertReasoningEffort(effort string) *dto.GeminiThinkingConfig {
 	var budget int
-	var level string
 	switch effort {
 	case "low":
 		budget = 1024
-		level = "LOW"
 	case "medium":
 		budget = 8192
-		level = "MEDIUM"
 	case "high":
 		budget = 32768
-		level = "HIGH"
 	default:
 		budget = 8192
-		level = "MEDIUM"
 	}
 	return &dto.GeminiThinkingConfig{
 		IncludeThoughts: true,
-		ThoughtBudget:   &budget,
-		ThinkingLevel:   level,
+		ThinkingBudget:  &budget,
 	}
 }
 

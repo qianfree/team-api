@@ -95,7 +95,7 @@ func TestG2oConvertThinkingConfig(t *testing.T) {
 		{intPtr(20000), "high"},
 	}
 	for _, tt := range tests {
-		got := g2oConvertThinkingConfig(&dto.GeminiThinkingConfig{ThoughtBudget: tt.budget})
+		got := g2oConvertThinkingConfig(&dto.GeminiThinkingConfig{ThinkingBudget: tt.budget})
 		if got != tt.want {
 			t.Errorf("budget=%v => %q, want %q", tt.budget, got, tt.want)
 		}

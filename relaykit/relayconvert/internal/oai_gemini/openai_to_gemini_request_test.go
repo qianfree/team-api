@@ -356,11 +356,11 @@ func TestOpenAIToGeminiRequestConverter_ReasoningEffort(t *testing.T) {
 			if !thinkingConfig.IncludeThoughts {
 				t.Error("IncludeThoughts should be true")
 			}
-			if thinkingConfig.ThoughtBudget == nil || *thinkingConfig.ThoughtBudget != tt.want.budget {
-				t.Errorf("ThoughtBudget = %v, want %d", thinkingConfig.ThoughtBudget, tt.want.budget)
+			if thinkingConfig.ThinkingBudget == nil || *thinkingConfig.ThinkingBudget != tt.want.budget {
+				t.Errorf("ThinkingBudget = %v, want %d", thinkingConfig.ThinkingBudget, tt.want.budget)
 			}
-			if thinkingConfig.ThinkingLevel != tt.want.level {
-				t.Errorf("ThinkingLevel = %q, want %q", thinkingConfig.ThinkingLevel, tt.want.level)
+			if thinkingConfig.ThinkingLevel != "" {
+				t.Errorf("不应下发 thinkingLevel（与 thinkingBudget 互斥）, got %q", thinkingConfig.ThinkingLevel)
 			}
 		})
 	}

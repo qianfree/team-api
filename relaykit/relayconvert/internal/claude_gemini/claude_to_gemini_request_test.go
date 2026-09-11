@@ -3,6 +3,7 @@ package claude_gemini
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relaykit/dto"
@@ -98,14 +99,23 @@ func TestClaudeToGeminiRequest_Thinking(t *testing.T) {
 	if tc == nil {
 		t.Fatal("thinkingConfig 未生成")
 	}
-	if tc.ThoughtBudget == nil || *tc.ThoughtBudget != 5000 {
-		t.Errorf("thoughtBudget 应为精确值 5000（链式会放大为 8192）, got %+v", tc.ThoughtBudget)
+	if tc.ThinkingBudget == nil || *tc.ThinkingBudget != 5000 {
+		t.Errorf("thinkingBudget 应为精确值 5000（链式会放大为 8192）, got %+v", tc.ThinkingBudget)
 	}
-	if tc.ThinkingLevel != "MEDIUM" {
-		t.Errorf("5000 应落在 MEDIUM 档, got %q", tc.ThinkingLevel)
+	if tc.ThinkingLevel != "" {
+		t.Errorf("不应下发 thinkingLevel（与 thinkingBudget 互斥，上游 400）, got %q", tc.ThinkingLevel)
 	}
 	if !tc.IncludeThoughts {
 		t.Error("includeThoughts 应为 true")
+	}
+
+	// wire 层校验：官方字段名为 thinkingBudget（thoughtBudget 不存在，上游严格解析会 400）
+	wire, err := json.Marshal(got.GenerationConfig)
+	if err != nil {
+		t.Fatalf("generationConfig 序列化失败: %v", err)
+	}
+	if !strings.Contains(string(wire), `"thinkingBudget":5000`) {
+		t.Errorf("wire 字段名应为 thinkingBudget, got %s", wire)
 	}
 
 	parts := got.Contents[1].Parts
@@ -383,10 +393,10 @@ func TestClaudeToGeminiRequest_PreservesWhatChainLoses(t *testing.T) {
 	chained := chainedAny.(*dto.GeminiChatRequest)
 
 	// thinking budget：直连 5000，链式经 reasoning_effort 档位展开为 8192
-	if b := direct.GenerationConfig.ThinkingConfig.ThoughtBudget; b == nil || *b != 5000 {
+	if b := direct.GenerationConfig.ThinkingConfig.ThinkingBudget; b == nil || *b != 5000 {
 		t.Errorf("直连应保留精确 budget 5000, got %+v", b)
 	}
-	if b := chained.GenerationConfig.ThinkingConfig.ThoughtBudget; b == nil || *b != 8192 {
+	if b := chained.GenerationConfig.ThinkingConfig.ThinkingBudget; b == nil || *b != 8192 {
 		t.Errorf("链式应放大为 8192（本用例前提）, got %+v", b)
 	}
 
