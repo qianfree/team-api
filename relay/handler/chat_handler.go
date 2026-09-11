@@ -171,11 +171,12 @@ func WriteRelayError(w http.ResponseWriter, err error) {
 		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", rateLimitErr.ResetAt))
 	} else if errors.As(err, &relayErr) {
 		statusCode = relayErr.StatusCode
-		errMsg = relayErr.Message
+		// 上游错误的 Message 是上游响应体原文，解包出可读消息再暴露给客户端
+		errMsg = helper.UnwrapUpstreamErrorMessage(relayErr.Message)
 		if relayErr.Cause != nil {
 			// 传输层错误（client.Do 的 *url.Error）的 Cause 含上游域名，必须脱敏后再暴露给用户；
 			// 日志侧仍用 originalError=%v 打印完整错误供运维定位。
-			errMsg = relayErr.Message + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
+			errMsg = errMsg + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
 		}
 		errType = relayErr.Type
 	}
