@@ -1,0 +1,21 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "Prove that sqrt(2) is irrational.",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "max_output_tokens": 4096,
+  "model": "upstream-model",
+  "reasoning": {
+    "effort": "high",
+    "summary": "detailed"
+  },
+  "store": false
+}

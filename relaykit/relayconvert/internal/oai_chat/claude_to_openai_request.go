@@ -68,6 +68,12 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 	if len(claudeReq.Tools) > 0 {
 		openaiReq.Tools = make([]dto.Tool, 0, len(claudeReq.Tools))
 		for _, t := range claudeReq.Tools {
+			// 服务端内置工具（web_search_* / code_execution_* 等，type 非空且非 custom）
+			// 在 chat 协议无对应物：跳过而非伪装成自定义函数——否则上游模型会调用一个
+			// 客户端从未定义、无人执行的假函数（能力守恒测试守护该缺口语义）
+			if t.Type != "" && t.Type != "custom" {
+				continue
+			}
 			openaiReq.Tools = append(openaiReq.Tools, dto.Tool{
 				Type: "function",
 				Function: dto.FunctionDef{
@@ -76,6 +82,9 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 					Parameters:  t.InputSchema,
 				},
 			})
+		}
+		if len(openaiReq.Tools) == 0 {
+			openaiReq.Tools = nil
 		}
 	}
 

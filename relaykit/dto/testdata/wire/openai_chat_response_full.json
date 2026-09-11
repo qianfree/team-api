@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT",
+  "object": "chat.completion",
+  "created": 1741569952,
+  "model": "gpt-4o-2024-08-06",
+  "system_fingerprint": "fp_50cad350e4",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I'll check the weather for you.",
+        "tool_calls": [
+          {"id": "call_6vJDX8ZoWLDIcnatqxwc", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Boston, MA\"}"}}
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1117,
+    "completion_tokens": 46,
+    "total_tokens": 1163,
+    "prompt_tokens_details": {"cached_tokens": 1024},
+    "completion_tokens_details": {"reasoning_tokens": 12}
+  },
+  "service_tier": "default"
+}

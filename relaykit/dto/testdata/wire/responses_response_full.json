@@ -1,0 +1,38 @@
+{
+  "id": "resp_67ccd2bed1ec8190b14f964abc054267",
+  "object": "response",
+  "created_at": 1741476542,
+  "status": "completed",
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": 2048,
+  "model": "gpt-5-2025-08-07",
+  "output": [
+    {"type": "reasoning", "id": "rs_67ccd2bf17f0819081ff3bb2cf6508e6", "summary": [{"type": "summary_text", "text": "Checking the weather for Boston."}]},
+    {"type": "web_search_call", "id": "ws_67ccd2bf17f08190", "status": "completed"},
+    {"type": "function_call", "id": "fc_67ccd2bf17f08190", "call_id": "call_123", "name": "get_weather", "arguments": "{\"location\": \"Boston, MA\"}", "status": "completed"},
+    {"type": "message", "id": "msg_67ccd2bf17f0819081ff3bb2cf6508e6", "status": "completed", "role": "assistant", "content": [
+      {"type": "output_text", "text": "The weather in Boston is 68F.", "annotations": [{"type": "url_citation", "start_index": 4, "end_index": 29, "url": "https://example.com/weather", "title": "Boston Weather"}]}
+    ]}
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "reasoning": {"effort": "medium", "summary": "auto"},
+  "store": true,
+  "temperature": 1,
+  "text": {"format": {"type": "text"}},
+  "tool_choice": "auto",
+  "tools": [{"type": "function", "name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}, "strict": true}],
+  "top_p": 1,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 36,
+    "input_tokens_details": {"cached_tokens": 12},
+    "output_tokens": 87,
+    "output_tokens_details": {"reasoning_tokens": 64},
+    "total_tokens": 123
+  },
+  "user": null,
+  "metadata": {}
+}

@@ -34,7 +34,7 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages, constant.RelayModeGeminiChat:
 		if info.UseResponsesAPI {
 			return baseURL + "/v1/responses", nil
 		}

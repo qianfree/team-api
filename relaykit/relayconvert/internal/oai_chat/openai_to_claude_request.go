@@ -105,17 +105,20 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			Role: msg.Role,
 		}
 
-		// 转换 content
+		// 转换 content：字符串直转文本块；部件列表经 NormalizeContentParts 统一
+		// （兼容宿主裸 unmarshal 的 []any 与链式转换构造的 []dto.ContentPart 两种真实形态）
 		switch content := msg.Content.(type) {
 		case string:
 			text := content
 			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
-		case []dto.ContentPart:
-			claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(content)
 		default:
-			// 兜底：尝试提取文本
-			text := shared.MapTextContent(content)
-			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			if parts, ok := shared.NormalizeContentParts(content); ok {
+				claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(parts)
+			} else {
+				// 兜底：尝试提取文本
+				text := shared.MapTextContent(content)
+				claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			}
 		}
 
 		// 转换 tool calls（带 tool_calls 的 assistant 消息）

@@ -35,14 +35,17 @@ type OllamaMessage struct {
 // 流式（NDJSON）每行一个本结构；非流式为单个本结构。
 // 最后一条（Done==true）携带 PromptEvalCount / EvalCount 用量与 DoneReason 结束原因。
 type OllamaChatResponse struct {
-	Model           string        `json:"model"`
-	CreatedAt       string        `json:"created_at"`
-	Message         OllamaMessage `json:"message"`
-	Done            bool          `json:"done"`
-	DoneReason      string        `json:"done_reason,omitempty"`
-	TotalDuration   int64         `json:"total_duration,omitempty"`
-	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
-	EvalCount       int           `json:"eval_count,omitempty"`
+	Model              string        `json:"model"`
+	CreatedAt          string        `json:"created_at"`
+	Message            OllamaMessage `json:"message"`
+	Done               bool          `json:"done"`
+	DoneReason         string        `json:"done_reason,omitempty"`
+	TotalDuration      int64         `json:"total_duration,omitempty"`
+	LoadDuration       int64         `json:"load_duration,omitempty"`
+	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration int64         `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int           `json:"eval_count,omitempty"`
+	EvalDuration       int64         `json:"eval_duration,omitempty"`
 }
 
 // OllamaTool Ollama 工具定义（OpenAI function 格式一致）。

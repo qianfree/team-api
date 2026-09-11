@@ -95,6 +95,20 @@ func collectParts(chunks []dto.GeminiChatResponse) []dto.GeminiPart {
 
 // ===== 非流式 =====
 
+// TestGetRequestURL_GeminiChatMode Gemini 入站（RelayModeGeminiChat）同样打 /v1/messages
+// （请求侧已由 relaykit 转为 Claude Messages 格式，响应侧转回 Gemini）。
+// 回归：URL switch 漏加该模式时 DoRequest 直接报 unsupported relay mode。
+func TestGetRequestURL_GeminiChatMode(t *testing.T) {
+	a := &Adaptor{}
+	got, err := a.GetRequestURL(geminiInboundInfo(true))
+	if err != nil {
+		t.Fatalf("GetRequestURL(GeminiChat) error: %v", err)
+	}
+	if want := "https://upstream.example.com/v1/messages"; got != want {
+		t.Errorf("GetRequestURL(GeminiChat) = %q, want %q", got, want)
+	}
+}
+
 // TestHandleNonStreamToGemini_WritesGeminiBody 正常路径：响应体为 Gemini 结构，
 // 计费用量仍为 Claude 口径（input 不含缓存）。
 func TestHandleNonStreamToGemini_WritesGeminiBody(t *testing.T) {
@@ -191,11 +205,16 @@ func TestHandleStreamToGemini_TextAndThinking(t *testing.T) {
 	}
 
 	chunks, gotDone := parseGeminiSSE(t, rec.Body.String())
-	if !gotDone {
-		t.Error("流末尾必须发 [DONE]")
+	if gotDone {
+		t.Error("Gemini 客户端不得收到 [DONE]（真实 Gemini API 无此哨兵，官方 SDK 对 data 帧做 JSON.parse 会崩溃）")
 	}
 	if len(chunks) < 2 {
 		t.Fatalf("chunk 数过少: %d", len(chunks))
+	}
+	// 收尾 chunk 的 content 不得带 "parts": null（官方 SDK isValidContent 只判 undefined
+	// 后直接读 .length，null 会崩溃）；键缺失或空数组均可
+	if strings.Contains(rec.Body.String(), `"parts":null`) {
+		t.Error(`响应中出现 "parts":null，Gemini 官方 SDK 会崩溃`)
 	}
 
 	parts := collectParts(chunks)

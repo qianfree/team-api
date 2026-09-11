@@ -265,28 +265,29 @@ func r2cConvertMessage(item r2cInputItem) *dto.Message {
 	if err := json.Unmarshal(item.Content, &parts); err != nil {
 		return nil
 	}
-	chatParts := make([]map[string]any, 0, len(parts))
+	// 产出类型化 []dto.ContentPart（链内规范形态）：本方向常作为步骤链首跳
+	// （Responses→OpenAI→Claude/Gemini），第二跳转换器按 NormalizeContentParts
+	// 归一化处理类型化列表；map 切片等私有形态会导致下游多模态静默丢失。
+	chatParts := make([]dto.ContentPart, 0, len(parts))
 	for _, part := range parts {
 		switch part.Type {
 		case "input_text":
-			chatParts = append(chatParts, map[string]any{"type": "text", "text": part.Text})
+			chatParts = append(chatParts, dto.ContentPart{Type: "text", Text: part.Text})
 		case "input_audio":
 			// 音频输入：chat 的 input_audio 与 Responses 同形（input_audio:{data,format}）
 			if part.InputAudio != nil && part.InputAudio.Data != "" {
-				audio := map[string]any{"data": part.InputAudio.Data}
-				if part.InputAudio.Format != "" {
-					audio["format"] = part.InputAudio.Format
-				}
-				chatParts = append(chatParts, map[string]any{"type": "input_audio", "input_audio": audio})
+				chatParts = append(chatParts, dto.ContentPart{Type: "input_audio", InputAudio: &dto.InputAudio{
+					Data:   part.InputAudio.Data,
+					Format: part.InputAudio.Format,
+				}})
 			}
 		case "input_file":
 			// 文件输入：Responses 扁平 {file_data,filename} → chat 的 file:{file_data,filename}
 			if part.FileData != "" {
-				file := map[string]any{"file_data": part.FileData}
-				if part.Filename != "" {
-					file["filename"] = part.Filename
-				}
-				chatParts = append(chatParts, map[string]any{"type": "file", "file": file})
+				chatParts = append(chatParts, dto.ContentPart{Type: "file", File: &dto.FileData{
+					FileData: part.FileData,
+					Filename: part.Filename,
+				}})
 			}
 		case "input_image":
 			imageURL := part.ImageURL
@@ -294,21 +295,20 @@ func r2cConvertMessage(item r2cInputItem) *dto.Message {
 				imageURL = part.URL
 			}
 			if imageURL != "" {
-				imgPart := map[string]any{"type": "image_url", "image_url": map[string]any{"url": imageURL}}
-				if part.Detail != "" {
-					imgPart["image_url"].(map[string]any)["detail"] = part.Detail
-				}
-				chatParts = append(chatParts, imgPart)
+				chatParts = append(chatParts, dto.ContentPart{Type: "image_url", ImageURL: &dto.ImageURL{
+					URL:    imageURL,
+					Detail: part.Detail,
+				}})
 			}
 		case "output_text":
-			chatParts = append(chatParts, map[string]any{"type": "text", "text": part.Text})
+			chatParts = append(chatParts, dto.ContentPart{Type: "text", Text: part.Text})
 		}
 	}
 	if len(chatParts) == 0 {
 		return nil
 	}
-	if len(chatParts) == 1 && chatParts[0]["type"] == "text" {
-		return &dto.Message{Role: role, Content: chatParts[0]["text"]}
+	if len(chatParts) == 1 && chatParts[0].Type == "text" {
+		return &dto.Message{Role: role, Content: chatParts[0].Text}
 	}
 	return &dto.Message{Role: role, Content: chatParts}
 }
@@ -350,10 +350,16 @@ func r2cConvertToolChoice(tcRaw json.RawMessage) any {
 		return "auto"
 	}
 	if tc["type"] == "function" {
+		// chat 嵌套形状 {"type":"function","function":{"name":...}}（防御性兼容）
 		if fn, ok := tc["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
 				return map[string]any{"type": "function", "function": map[string]any{"name": name}}
 			}
+		}
+		// Responses wire 扁平形状 {"type":"function","name":...}——必须重组为 chat 嵌套形状，
+		// 否则强制工具选择在 chat 上游被静默忽略（能力守恒测试守护）
+		if name, ok := tc["name"].(string); ok && name != "" {
+			return map[string]any{"type": "function", "function": map[string]any{"name": name}}
 		}
 	}
 	return tc

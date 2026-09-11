@@ -10,6 +10,7 @@ package relayconvert
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -134,6 +135,20 @@ var (
 	responseConverterAliases = make(map[string]string)
 	responseConverterRoutes  = make(map[responseConverterRoute]string)
 )
+
+// ListResponseConverterIDs 返回全部已注册响应侧转换器 ID（字典序副本，不含别名）。
+// 供诊断与测试枚举使用，与 ListRequestConverterIDs 配套。
+func ListResponseConverterIDs() []string {
+	responseConverterMu.RLock()
+	defer responseConverterMu.RUnlock()
+
+	ids := make([]string, 0, len(responseConverters))
+	for id := range responseConverters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
 
 // registerBuiltinResponseConverter 注册响应侧转换器到注册表。
 // init() 通过 registerBuiltinTextConverter() 调用本函数。

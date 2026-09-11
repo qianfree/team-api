@@ -32,8 +32,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
 		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
-		// Responses 入站：请求转 Claude Messages 格式打 /v1/messages，响应转回 Responses 格式
+		// Responses/Gemini 入站：请求已由 relaykit 转为 Claude Messages 格式打 /v1/messages，
+		// 响应再转回客户端原生格式
 		return baseURL + "/v1/messages", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode for Claude: %d", info.RelayMode)

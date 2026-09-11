@@ -1,0 +1,17 @@
+{
+  "max_tokens": 256,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Hello, how are you?",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "system": "You are helpful.",
+  "temperature": 0.7
+}

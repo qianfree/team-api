@@ -277,6 +277,19 @@ func convertUserParts(content any) []dto.GeminiPart {
 		}
 		return []dto.GeminiPart{{Text: v}}
 
+	case []dto.ContentPart:
+		// 链式转换（如 Responses→OpenAI→Gemini）产出的类型化部件列表：
+		// 经 JSON 往返降为 []any 复用下方 wire 形态逻辑，避免两套多模态分支漂移
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		var anyParts []any
+		if err := json.Unmarshal(data, &anyParts); err != nil {
+			return nil
+		}
+		return convertUserParts(anyParts)
+
 	case []any:
 		var parts []dto.GeminiPart
 		for _, item := range v {

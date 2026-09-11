@@ -1,0 +1,70 @@
+{
+  "completed_at": 0,
+  "created_at": 0,
+  "error": null,
+  "id": "\u003cscrubbed\u003e",
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "metadata": {},
+  "model": "origin-model",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "annotations": [],
+          "text": "CAP_MARKER_ASSISTANT_TEXT the weather is 68F",
+          "type": "output_text"
+        }
+      ],
+      "id": "\u003cscrubbed\u003e",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"location\":\"Boston\"}",
+      "call_id": "\u003cscrubbed\u003e",
+      "id": "\u003cscrubbed\u003e",
+      "name": "get_weather",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "status": "completed",
+  "store": false,
+  "temperature": 1,
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": 1,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 100,
+    "input_tokens_details": {
+      "audio_tokens": 0,
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 50,
+    "output_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "total_tokens": 150
+  },
+  "user": null
+}

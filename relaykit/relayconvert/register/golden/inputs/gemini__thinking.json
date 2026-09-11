@@ -1,0 +1,4 @@
+{
+  "contents": [{"role": "user", "parts": [{"text": "Prove that sqrt(2) is irrational."}]}],
+  "generationConfig": {"maxOutputTokens": 4096, "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 2048}}
+}

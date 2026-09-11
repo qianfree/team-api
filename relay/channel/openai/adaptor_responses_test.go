@@ -44,6 +44,10 @@ func TestAdaptor_GetRequestURL_ResponsesUpstream(t *testing.T) {
 		{constant.RelayModeResponses, "https://upstream.example.com/v1/responses"},
 		{constant.RelayModeResponsesCompact, "https://upstream.example.com/v1/responses/compact"},
 		{constant.RelayModeChatCompletions, "https://upstream.example.com/v1/chat/completions"},
+		// Gemini/Claude 入站经 relaykit 转为 chat 格式后打 /v1/chat/completions
+		//（回归：URL switch 漏加对应模式时 DoRequest 直接报 unsupported relay mode）
+		{constant.RelayModeGeminiChat, "https://upstream.example.com/v1/chat/completions"},
+		{constant.RelayModeClaudeMessages, "https://upstream.example.com/v1/chat/completions"},
 	}
 	for _, c := range cases {
 		a := &Adaptor{}

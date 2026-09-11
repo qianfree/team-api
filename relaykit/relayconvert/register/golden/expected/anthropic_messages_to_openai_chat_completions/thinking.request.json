@@ -1,0 +1,11 @@
+{
+  "max_tokens": 4096,
+  "messages": [
+    {
+      "content": "Prove that sqrt(2) is irrational.",
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "reasoning_effort": "low"
+}

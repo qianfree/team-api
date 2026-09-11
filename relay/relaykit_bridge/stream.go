@@ -61,11 +61,14 @@ func convertStreamViaRelaykit(ctx context.Context, info *common.RelayInfo, upstr
 	}
 
 	// 收尾语义按客户端格式区分（与各方向旧实现一致）：
-	//   - OpenAI / Gemini 客户端：SSE 流以 data: [DONE] 结束；OpenAI 另需保证存在带
+	//   - OpenAI 客户端：SSE 流以 data: [DONE] 结束，另需保证存在带
 	//     finish_reason 的终止 chunk（转换器未产出时由本层补发）；
+	//   - Gemini 客户端：真实 Gemini API 无 [DONE] 哨兵、流自然结束即收尾；
+	//     官方 SDK（@google/genai）对每个 data 帧做 JSON.parse，写 [DONE] 会直接抛
+	//     SyntaxError 导致客户端报错（gemini 原生透传路径也从不写 [DONE]，口径一致）；
 	//   - Claude / Responses 客户端：终止语义由事件本身承载（message_stop /
 	//     response.completed），不写 [DONE]，补帧也无意义。
-	needsDone := clientFormat == constant.RelayFormatOpenAI || clientFormat == constant.RelayFormatGemini
+	needsDone := clientFormat == constant.RelayFormatOpenAI
 	needsTerminalChunk := clientFormat == constant.RelayFormatOpenAI
 
 	// 设置 SSE 头 + 并发安全 writer + 保活 ping（与旧 handleStreamToOpenAI 一致）

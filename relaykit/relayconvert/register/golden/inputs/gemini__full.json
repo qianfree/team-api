@@ -1,0 +1,25 @@
+{
+  "systemInstruction": {"parts": [{"text": "You are a weather and finance assistant."}]},
+  "contents": [
+    {"role": "user", "parts": [
+      {"text": "Describe this image and check the weather in Boston."},
+      {"inlineData": {"mimeType": "image/jpeg", "data": "/9j/4AAQSkZJRg=="}}
+    ]},
+    {"role": "model", "parts": [
+      {"text": "checking weather"},
+      {"functionCall": {"name": "get_weather", "args": {"location": "Boston"}}}
+    ]},
+    {"role": "user", "parts": [
+      {"functionResponse": {"name": "get_weather", "response": {"result": "68F, sunny"}}}
+    ]},
+    {"role": "user", "parts": [{"text": "Thanks! What about the stock price of ACME?"}]}
+  ],
+  "tools": [
+    {"functionDeclarations": [
+      {"name": "get_weather", "description": "get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}},
+      {"name": "lookup_stock", "description": "stock quote", "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}}}
+    ]}
+  ],
+  "toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": ["get_weather"]}},
+  "generationConfig": {"maxOutputTokens": 1024, "stopSequences": ["END_TOKEN"], "temperature": 0.7}
+}

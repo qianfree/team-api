@@ -10,6 +10,7 @@ package relayconvert
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -159,6 +160,21 @@ func LookupRequestConverter(converter string) (RequestConverterSpec, bool) {
 		return RequestConverterSpec{}, false
 	}
 	return cloneRequestConverterSpec(spec), true
+}
+
+// ListRequestConverterIDs 返回全部已注册请求转换器 ID（字典序副本）。
+// 供诊断与测试枚举使用：能力守恒等注册表级测试据此保证「每个已注册方向都有期望条目」，
+// 新注册方向若未同步补充测试期望会立即被发现。
+func ListRequestConverterIDs() []string {
+	requestConverterMu.RLock()
+	defer requestConverterMu.RUnlock()
+
+	ids := make([]string, 0, len(requestConverters))
+	for id := range requestConverters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func lookupRequestRoute(from types.RelayFormat, to types.RelayFormat) (RequestConverterSpec, bool) {

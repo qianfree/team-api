@@ -1,0 +1,7 @@
+{
+  "systemInstruction": {"parts": [{"text": "You are helpful."}]},
+  "contents": [
+    {"role": "user", "parts": [{"text": "Hello, how are you?"}]}
+  ],
+  "generationConfig": {"maxOutputTokens": 256, "temperature": 0.7}
+}
