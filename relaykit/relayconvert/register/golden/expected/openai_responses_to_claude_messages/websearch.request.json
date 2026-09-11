@@ -11,5 +11,11 @@
       "role": "user"
     }
   ],
-  "model": "upstream-model"
+  "model": "upstream-model",
+  "tools": [
+    {
+      "name": "web_search",
+      "type": "web_search_20250305"
+    }
+  ]
 }

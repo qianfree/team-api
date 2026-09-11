@@ -6,5 +6,6 @@
       "role": "user"
     }
   ],
-  "model": "upstream-model"
+  "model": "upstream-model",
+  "web_search_options": {}
 }

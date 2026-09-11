@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -69,8 +70,9 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 		openaiReq.Tools = make([]dto.Tool, 0, len(claudeReq.Tools))
 		for _, t := range claudeReq.Tools {
 			// 服务端内置工具（web_search_* / code_execution_* 等，type 非空且非 custom）
-			// 在 chat 协议无对应物：跳过而非伪装成自定义函数——否则上游模型会调用一个
-			// 客户端从未定义、无人执行的假函数（能力守恒测试守护该缺口语义）
+			// 不能伪装成自定义函数——否则上游模型会调用一个客户端从未定义、无人执行的假函数。
+			// web_search 在 chat 协议有原生对应物（顶层 web_search_options），在下方单独映射；
+			// 其余内置工具（code_execution / computer 等）chat 确实无对应物，只能跳过。
 			if t.Type != "" && t.Type != "custom" {
 				continue
 			}
@@ -86,6 +88,13 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 		if len(openaiReq.Tools) == 0 {
 			openaiReq.Tools = nil
 		}
+	}
+
+	// 服务端联网搜索：Claude 的 web_search 内置工具 → chat 的 web_search_options。
+	// chat 是跨原生方向的转换中枢（Claude→OpenAI→Gemini/Responses 两跳链），
+	// 这里不承载就等于整条链上的搜索能力全部丢失。
+	if spec := shared.DetectWebSearchFromClaudeTools(claudeReq.Tools); spec != nil {
+		openaiReq.WebSearchOptions = spec.ToOpenAIOptions()
 	}
 
 	if claudeReq.ToolChoice != nil {

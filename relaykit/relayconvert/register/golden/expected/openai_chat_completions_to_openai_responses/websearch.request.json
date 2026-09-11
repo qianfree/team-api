@@ -13,5 +13,10 @@
   ],
   "max_output_tokens": 1024,
   "model": "upstream-model",
-  "store": false
+  "store": false,
+  "tools": [
+    {
+      "type": "web_search"
+    }
+  ]
 }

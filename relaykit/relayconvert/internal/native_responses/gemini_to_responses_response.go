@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -76,10 +77,17 @@ func (c *GeminiToResponsesResponseConverter) ConvertResponse(
 // 文本合并为单个 message 项（居首），functionCall 各成一个 function_call 项。
 func buildResponsesOutputFromGemini(geminiResp *dto.GeminiChatResponse, idBase string) []map[string]any {
 	var textParts []string
+	var thinkingParts []string
+	var citations *shared.GroundingCitations
 	output := make([]map[string]any, 0)
 	toolIdx := 0
 
 	for _, candidate := range geminiResp.Candidates {
+		// 服务端搜索证据：上游真的去搜了，来源必须还原成 Responses 的
+		// web_search_call 动作项 + output_text.annotations 引用
+		if c := shared.ParseGeminiGrounding(candidate.GroundingMetadata); !c.IsEmpty() {
+			citations = c
+		}
 		if candidate.Content == nil {
 			continue
 		}
@@ -90,7 +98,10 @@ func buildResponsesOutputFromGemini(geminiResp *dto.GeminiChatResponse, idBase s
 			if part.Text != "" && !isThought {
 				textParts = append(textParts, part.Text)
 			}
-			// 思考内容无 Responses 非流式对应物，跳过（与 claude→responses 口径一致）
+			// 思考 part → Responses 的 reasoning 输出项（与 claude→responses 口径一致）
+			if part.Text != "" && isThought {
+				thinkingParts = append(thinkingParts, part.Text)
+			}
 
 			if part.FunctionCall != nil {
 				id := geminiResponsesCallID(part.FunctionCall, idBase, toolIdx)
@@ -112,18 +123,46 @@ func buildResponsesOutputFromGemini(geminiResp *dto.GeminiChatResponse, idBase s
 	}
 
 	if len(textParts) > 0 {
+		answer := strings.Join(textParts, "")
+		textContent := map[string]any{
+			"type":        "output_text",
+			"text":        answer,
+			"annotations": []any{},
+		}
+		// 引用挂在正文的 annotations 上（url_citation 形态）
+		if !citations.IsEmpty() {
+			citations.AlignSupports(answer)
+			anns := make([]any, 0)
+			for _, a := range citations.ToResponsesAnnotations() {
+				anns = append(anns, a)
+			}
+			textContent["annotations"] = anns
+		}
 		msgItem := map[string]any{
-			"type":   "message",
-			"id":     fmt.Sprintf("msg_%s", idBase),
-			"status": "completed",
-			"role":   "assistant",
-			"content": []map[string]any{{
-				"type":        "output_text",
-				"text":        strings.Join(textParts, ""),
-				"annotations": []any{},
-			}},
+			"type":    "message",
+			"id":      fmt.Sprintf("msg_%s", idBase),
+			"status":  "completed",
+			"role":    "assistant",
+			"content": []map[string]any{textContent},
 		}
 		output = append([]map[string]any{msgItem}, output...)
+	}
+	// web_search_call 动作项排在最前：它记录「模型发起过搜索」这一事实，
+	// 与 annotations（引用了哪些来源）互补
+	if item := citations.ToResponsesWebSearchCallItem(idBase); item != nil {
+		output = append([]map[string]any{item}, output...)
+	}
+	// reasoning 项排在最前（与 Responses API 的真实输出顺序一致：思考先于回答）
+	if len(thinkingParts) > 0 {
+		reasoningItem := map[string]any{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%s", idBase),
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": strings.Join(thinkingParts, ""),
+			}},
+		}
+		output = append([]map[string]any{reasoningItem}, output...)
 	}
 
 	return output

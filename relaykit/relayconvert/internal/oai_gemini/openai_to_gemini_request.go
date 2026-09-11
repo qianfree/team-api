@@ -152,6 +152,26 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		}
 	}
 
+	// 服务端联网搜索：chat 的 web_search_options → Gemini 原生 googleSearch。
+	//
+	// 与其他目标格式不同，本方向受渠道开关 WebSearchToGoogleSearch 控制：
+	// googleSearch 是**用 Google 的 grounding 替代客户端请求的搜索**，Google 按搜索
+	// 次数另行计价，因此由运营者显式开启（与 Claude→Gemini 方向同一开关、同一理由）。
+	//
+	// 保守策略同样对齐 Claude→Gemini：仅在无 functionDeclarations 时附加——
+	// 部分 Gemini 模型代际不接受 googleSearch 与函数声明同请求，混用时宁可丢搜索
+	// 也不让整个请求 400。
+	if convmeta.OptionsOf(info).Gemini.WebSearchToGoogleSearch && len(geminiReq.Tools) == 0 {
+		if spec := shared.DetectWebSearchFromOpenAI(openaiReq.WebSearchOptions); spec != nil {
+			entries := []map[string]any{shared.GeminiGoogleSearchEntry()}
+			raw, err := json.Marshal(entries)
+			if err != nil {
+				return nil, fmt.Errorf("marshal googleSearch tool: %w", err)
+			}
+			geminiReq.Tools = raw
+		}
+	}
+
 	// Messages conversion
 	toolCallIDs := make(map[string]string) // toolCallID -> functionName
 	var systemParts []dto.GeminiPart

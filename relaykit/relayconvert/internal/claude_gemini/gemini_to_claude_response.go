@@ -3,11 +3,13 @@ package claude_gemini
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -72,11 +74,16 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 		finishReason string
 		hasToolUse   bool
 		toolIdx      int
+		citations    *shared.GroundingCitations
+		answerText   strings.Builder
 	)
 
 	if len(geminiResp.Candidates) > 0 {
 		candidate := geminiResp.Candidates[0]
 		finishReason = candidate.FinishReason
+		// 服务端搜索证据：上游真的去搜了，来源必须还原成 Claude 的搜索工具块，
+		// 否则客户端只拿到一段被搜索增强的纯文本，看不到来源、无法核查
+		citations = shared.ParseGeminiGrounding(candidate.GroundingMetadata)
 
 		if candidate.Content != nil {
 			for i := range candidate.Content.Parts {
@@ -91,6 +98,7 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 							Signature: part.ThoughtSignature,
 						})
 					} else {
+						answerText.WriteString(part.Text)
 						content = append(content, dto.ClaudeContentBlock{
 							Type: "text",
 							Text: strPtr(part.Text),
@@ -119,6 +127,12 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 		}
 	}
 
+	// 搜索块排在正文之前：Claude 的语义是「先发起搜索、拿到结果，再据此作答」
+	if !citations.IsEmpty() {
+		citations.AlignSupports(answerText.String())
+		content = append(citations.ToClaudeSearchBlocks(idBase), content...)
+	}
+
 	// Claude 协议要求 content 非空
 	if len(content) == 0 {
 		content = append(content, dto.ClaudeContentBlock{Type: "text", Text: strPtr("")})
@@ -135,6 +149,13 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 		modelName = originModelName(info)
 	}
 
+	usage := claudeUsageFromGemini(geminiResp.UsageMetadata)
+	// 搜索次数透出到 usage：Google 在 token 之外按搜索次数单独计价，
+	// 不透出则计费层无从得知本次回答发起过几次搜索（定价挂接由宿主计费层完成）
+	if n := citations.SearchRequestCount(); n > 0 {
+		usage.ServerToolUse = &dto.ClaudeServerToolUsage{WebSearchRequests: n}
+	}
+
 	return &dto.ClaudeResponse{
 		ID:           fmt.Sprintf("msg_%s", idBase),
 		Type:         "message",
@@ -143,7 +164,7 @@ func geminiToClaudeResponse(geminiResp *dto.GeminiChatResponse, info convmeta.Me
 		StopReason:   stopReason,
 		StopSequence: nil,
 		Model:        modelName,
-		Usage:        claudeUsageFromGemini(geminiResp.UsageMetadata),
+		Usage:        usage,
 	}
 }
 

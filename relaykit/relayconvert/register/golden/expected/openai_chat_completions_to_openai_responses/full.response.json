@@ -5,6 +5,7 @@
       "index": 0,
       "message": {
         "content": "CAP_MARKER_ASSISTANT_TEXT the weather is 68F",
+        "reasoning_content": "CAP_MARKER_THINKING user asks weather",
         "role": "assistant",
         "tool_calls": [
           {

@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -105,10 +106,17 @@ func responsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 		usage.TotalTokens = usage.PromptTokens + estimated
 	}
 
+	// reasoning 输出项 → chat 的 reasoning_content。此前一律丢弃，
+	// 推理模型经本方向转换后客户端看不到任何思考过程。
+	msg := dto.Message{Role: "assistant", Content: content, ToolCalls: toolCalls}
+	if thinking := shared.ExtractResponsesReasoning(resp.Output); thinking != "" {
+		msg.ReasoningContent = &thinking
+	}
+
 	return &dto.ChatCompletionResponse{
 		ID: id, Object: "chat.completion", Created: time.Now().Unix(), Model: model,
 		Choices: []dto.Choice{{
-			Index: 0, Message: dto.Message{Role: "assistant", Content: content, ToolCalls: toolCalls}, FinishReason: finishReason,
+			Index: 0, Message: msg, FinishReason: finishReason,
 		}},
 		Usage: *usage,
 	}

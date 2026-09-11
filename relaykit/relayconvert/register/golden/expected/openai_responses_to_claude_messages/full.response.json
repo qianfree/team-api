@@ -11,6 +11,16 @@
   "object": "response",
   "output": [
     {
+      "id": "\u003cscrubbed\u003e",
+      "summary": [
+        {
+          "text": "CAP_MARKER_THINKING user asks weather",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
       "content": [
         {
           "annotations": [],

@@ -717,8 +717,8 @@ var respExpectations = map[string]respProfile{
 		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
 	relayconvert.ConverterOpenAIChatToOpenAIResponses: {
-		// 缺口：Responses 上游的 reasoning summary 未回填 chat 的 reasoning_content
-		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: false, UsageIn: true, UsageOut: true,
+		// Responses 上游的 reasoning summary 回填 chat 的 reasoning_content
+		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
 	relayconvert.ConverterClaudeMessagesToOpenAIChat: {
 		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
@@ -732,16 +732,17 @@ var respExpectations = map[string]respProfile{
 	relayconvert.ConverterGeminiContentToClaudeMessages: {
 		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
-	// 缺口（下三条）：Responses 客户端方向未把上游 thinking（chat reasoning_content /
-	// Claude thinking 块 / Gemini thought part）合成为 Responses reasoning 输出项
+	// Responses 客户端方向：上游 thinking（chat reasoning_content / Claude thinking 块 /
+	// Gemini thought part）合成为 Responses 的 reasoning 输出项
+	//（{type:"reasoning", summary:[{type:"summary_text", text:...}]}，排在 message 之前）
 	relayconvert.ConverterOpenAIResponsesToOpenAIChat: {
-		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: false, UsageIn: true, UsageOut: true,
+		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
 	relayconvert.ConverterResponsesToClaudeMessages: {
-		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: false, UsageIn: true, UsageOut: true,
+		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
 	relayconvert.ConverterOpenAIResponsesToGemini: {
-		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: false, UsageIn: true, UsageOut: true,
+		ToolCallNames: []string{"get_weather"}, TextMarker: true, ThinkMarker: true, UsageIn: true, UsageOut: true,
 	},
 }
 
@@ -810,28 +811,33 @@ var webSearchWireRequests = map[types.RelayFormat]string{
 }
 
 // webSearchExpectations 各方向转换后目标格式是否保留了服务端搜索能力。
-// 这是用户最担心的静默丢失能力之一：为 true 的方向（如 Claude→Gemini 的
-// googleSearch 映射）一旦被改坏立即报警；为 false 的方向是已知缺口，
-// 修复缺口后必须同步翻转期望值（此时测试失败提醒登记）。
+//
+// 这是用户最担心的静默丢失能力之一：客户端明确要求联网、请求却以「没搜索」的方式
+// 成功返回，比直接报错更难排查。四种文本协议都有原生构件（chat 的 web_search_options、
+// Claude 的 web_search_* 工具、Gemini 的 googleSearch、Responses 的 web_search 工具），
+// 由 shared/websearch.go 的 WebSearchSpec 做跨协议中间表示；chat 作为两跳链的中枢
+// 承载该能力，因此跨原生方向（Gemini→Claude 等）也能保住。
+//
+// 为 false 的方向必须是**目标协议真实无此能力**，并注明原因；单纯「没实现」不得置 false。
 var webSearchExpectations = map[string]bool{
-	// OpenAI chat 入站 web_search_options：目前所有方向均未映射（已知缺口）
-	relayconvert.ConverterOpenAIChatToClaudeMessages:  false, // 缺口：未映射为 Claude web_search 工具
-	relayconvert.ConverterOpenAIChatToGeminiContent:   false, // 缺口：未映射为 googleSearch
-	relayconvert.ConverterOpenAIChatToOllama:          false, // Ollama 无服务端搜索能力
-	relayconvert.ConverterOpenAIChatToOpenAIResponses: false, // 缺口：未映射为 Responses web_search 工具
+	// OpenAI chat 入站 web_search_options
+	relayconvert.ConverterOpenAIChatToClaudeMessages:  true,  // → Claude web_search 内置工具
+	relayconvert.ConverterOpenAIChatToGeminiContent:   true,  // → googleSearch（渠道开启 WebSearchToGoogleSearch 时；本测试开启）
+	relayconvert.ConverterOpenAIChatToOllama:          false, // Ollama 无服务端搜索能力（协议真实缺失）
+	relayconvert.ConverterOpenAIChatToOpenAIResponses: true,  // → Responses web_search 工具
 
 	// Claude 入站 web_search_* 工具
-	relayconvert.ConverterClaudeMessagesToOpenAIChat:    false, // chat 协议无服务端搜索工具位
-	relayconvert.ConverterClaudeMessagesToGeminiContent: true,  // 渠道开启 WebSearchToGoogleSearch 时映射为 googleSearch（本测试开启）
+	relayconvert.ConverterClaudeMessagesToOpenAIChat:    true, // → chat web_search_options
+	relayconvert.ConverterClaudeMessagesToGeminiContent: true, // → googleSearch（直连方向，渠道开关控制）
 
 	// Gemini 入站 googleSearch 工具
-	relayconvert.ConverterGeminiContentToOpenAIChat:     false, // chat 协议无服务端搜索工具位
-	relayconvert.ConverterGeminiContentToClaudeMessages: false, // 缺口：经 OpenAI 中枢两跳后 googleSearch 丢失
+	relayconvert.ConverterGeminiContentToOpenAIChat:     true, // → chat web_search_options
+	relayconvert.ConverterGeminiContentToClaudeMessages: true, // 两跳链 g2o→o2c，经中枢 web_search_options 保住
 
 	// Responses 入站 web_search 工具
-	relayconvert.ConverterOpenAIResponsesToOpenAIChat: false, // chat 协议无服务端搜索工具位
-	relayconvert.ConverterResponsesToClaudeMessages:   false, // 缺口：经 OpenAI 中枢两跳后 web_search 丢失
-	relayconvert.ConverterOpenAIResponsesToGemini:     false, // 缺口：经 OpenAI 中枢两跳后 web_search 丢失
+	relayconvert.ConverterOpenAIResponsesToOpenAIChat: true, // → chat web_search_options
+	relayconvert.ConverterResponsesToClaudeMessages:   true, // 两跳链 r2o→o2c
+	relayconvert.ConverterOpenAIResponsesToGemini:     true, // 两跳链 r2o→o2g
 }
 
 func TestCapabilityInvariants_WebSearch(t *testing.T) {
@@ -867,4 +873,106 @@ func TestCapabilityInvariants_WebSearch(t *testing.T) {
 			require.True(t, actual.UserMarker, "用户文本在搜索场景转换后丢失")
 		})
 	}
+}
+
+// ---------- 响应侧 grounding 还原 ----------
+
+// geminiGroundedResponse 带 groundingMetadata 的 Gemini 上游响应（满配搜索场景）：
+// 模型真的去搜了，回答附带两条网页来源与一个覆盖片段。
+const geminiGroundedResponse = `{
+	"candidates": [{
+		"content": {"role": "model", "parts": [
+			{"text": "` + mkAssistant + ` the weather is 68F"}
+		]},
+		"finishReason": "STOP",
+		"index": 0,
+		"groundingMetadata": {
+			"webSearchQueries": ["boston weather"],
+			"groundingChunks": [
+				{"web": {"uri": "https://weather.example/boston", "title": "weather.example"}},
+				{"web": {"uri": "https://forecast.example/ma", "title": "forecast.example"}}
+			],
+			"groundingSupports": [{
+				"segment": {"startIndex": 0, "endIndex": 5, "text": "` + mkAssistant + `"},
+				"groundingChunkIndices": [0, 1]
+			}]
+		}
+	}],
+	"usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 50, "totalTokenCount": 150},
+	"modelVersion": "upstream-model"
+}`
+
+// groundingRestoreExpectations 各客户端方向是否把上游的搜索来源还原为本协议的引用构件。
+//
+// 与请求侧（webSearchExpectations）对称：请求侧保住「要求联网」的能力，
+// 响应侧保住「搜到了什么」的证据。只还原请求、不还原响应，客户端拿到的是一段
+// 被搜索增强却无出处的文本——看不到来源、无法核查，联网搜索的主要价值随之丢失。
+//
+// 键为**响应转换方向的配对转换器 ID**（From=客户端格式、To=Gemini 上游）。
+var groundingRestoreExpectations = map[string]bool{
+	relayconvert.ConverterOpenAIChatToGeminiContent:     true, // → chat message.annotations（url_citation）
+	relayconvert.ConverterClaudeMessagesToGeminiContent: true, // → server_tool_use + web_search_tool_result 块
+	relayconvert.ConverterOpenAIResponsesToGemini:       true, // → web_search_call 项 + output_text.annotations
+}
+
+// TestCapabilityInvariants_GroundingRestore 响应侧搜索证据还原：
+// 上游 Gemini 返回带 groundingMetadata 的响应时，来源 URL 必须出现在客户端可见的响应里。
+func TestCapabilityInvariants_GroundingRestore(t *testing.T) {
+	ctx := context.Background()
+
+	for _, id := range relayconvert.ListResponseConverterIDs() {
+		spec, ok := relayconvert.LookupResponseConverter(id)
+		require.True(t, ok)
+		// 只考察上游为 Gemini 的方向（grounding 是 Gemini 侧的构件）
+		if spec.Convert == nil || spec.To != types.RelayFormatGemini {
+			continue
+		}
+
+		t.Run(id, func(t *testing.T) {
+			parsed := parseWireResponse(t, types.RelayFormatGemini, geminiGroundedResponse)
+			converted, _, err := spec.Convert(ctx, capMeta(), parsed)
+			require.NoError(t, err, "响应转换失败")
+
+			raw, err := json.Marshal(converted)
+			require.NoError(t, err)
+			body := string(raw)
+
+			expected, registered := groundingRestoreExpectations[id]
+			if !registered {
+				t.Errorf("响应转换器 %s 未登记 grounding 还原期望（实测含来源=%v），请在 groundingRestoreExpectations 补充",
+					id, strings.Contains(body, "weather.example/boston"))
+				return
+			}
+
+			hasSource := strings.Contains(body, "https://weather.example/boston") &&
+				strings.Contains(body, "https://forecast.example/ma")
+			require.Equal(t, expected, hasSource,
+				"搜索来源还原情况与期望不符（若为有意变更请更新 groundingRestoreExpectations 并注明原因）\n实际响应: %s", body)
+
+			// 回答正文不得丢失（还原引用不能以吞掉正文为代价）
+			require.Contains(t, body, mkAssistant, "回答正文在 grounding 还原后丢失")
+		})
+	}
+}
+
+// TestCapabilityInvariants_GroundingSearchCountForBilling Claude 客户端方向必须把
+// 搜索次数透出到 usage.server_tool_use.web_search_requests：
+// Google 在 token 之外按搜索次数单独计价，不透出则计费层无从得知发起过几次搜索。
+func TestCapabilityInvariants_GroundingSearchCountForBilling(t *testing.T) {
+	ctx := context.Background()
+
+	spec, ok := relayconvert.LookupResponseConverter(relayconvert.ConverterClaudeMessagesToGeminiContent)
+	require.True(t, ok)
+	require.NotNil(t, spec.Convert)
+
+	parsed := parseWireResponse(t, types.RelayFormatGemini, geminiGroundedResponse)
+	converted, _, err := spec.Convert(ctx, capMeta(), parsed)
+	require.NoError(t, err)
+
+	claudeResp, ok := converted.(*dto.ClaudeResponse)
+	require.True(t, ok, "期望 *dto.ClaudeResponse, got %T", converted)
+	require.NotNil(t, claudeResp.Usage, "usage 缺失")
+	require.NotNil(t, claudeResp.Usage.ServerToolUse, "usage.server_tool_use 缺失（按次计费无据可依）")
+	require.Equal(t, 1, claudeResp.Usage.ServerToolUse.WebSearchRequests,
+		"web_search_requests 应等于 webSearchQueries 条数")
 }

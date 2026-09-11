@@ -115,7 +115,13 @@ func TestClaudeToResponsesResponse_Body(t *testing.T) {
 }
 
 // TestClaudeToResponsesResponse_ThinkingSkipped 思考内容无 Responses 非流式对应物，跳过
-func TestClaudeToResponsesResponse_ThinkingSkipped(t *testing.T) {
+// TestClaudeToResponsesResponse_ThinkingBecomesReasoningItem Claude 的 thinking 块
+// 转换为 Responses 的 reasoning 输出项（排在 message 之前），而不是被丢弃或混进正文。
+//
+// 本测试此前名为 ThinkingSkipped、断言 output 只有 1 项——把「思考内容静默丢失」
+// 固化成了期望。Responses 非流式本就有 reasoning 输出项形态（流式侧的
+// response.reasoning_summary_text.delta 只是它的增量表达），跳过是能力失恒。
+func TestClaudeToResponsesResponse_ThinkingBecomesReasoningItem(t *testing.T) {
 	thinking := "想一想"
 	text := "你好"
 	claudeResp := &dto.ClaudeResponse{
@@ -135,10 +141,24 @@ func TestClaudeToResponsesResponse_ThinkingSkipped(t *testing.T) {
 	}
 	m := res.(map[string]any)
 	output := m["output"].([]map[string]any)
-	if len(output) != 1 {
-		t.Fatalf("output 项数 = %d, want 1（思考内容应被跳过）", len(output))
+	if len(output) != 2 {
+		t.Fatalf("output 项数 = %d, want 2（reasoning + message）: %+v", len(output), output)
 	}
-	content := output[0]["content"].([]map[string]any)
+
+	// reasoning 项在最前，与 Responses API 的真实输出顺序一致
+	if output[0]["type"] != "reasoning" {
+		t.Fatalf("首项应为 reasoning, got %v", output[0]["type"])
+	}
+	summary := output[0]["summary"].([]map[string]any)
+	if len(summary) != 1 || summary[0]["type"] != "summary_text" || summary[0]["text"] != "想一想" {
+		t.Errorf("reasoning.summary 形态不符: %+v", summary)
+	}
+
+	// 正文不得混入思考内容
+	if output[1]["type"] != "message" {
+		t.Fatalf("次项应为 message, got %v", output[1]["type"])
+	}
+	content := output[1]["content"].([]map[string]any)
 	if content[0]["text"] != "你好" {
 		t.Errorf("思考内容不得混进正文: %+v", content)
 	}

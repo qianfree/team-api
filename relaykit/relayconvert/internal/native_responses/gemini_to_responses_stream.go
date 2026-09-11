@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -66,6 +67,7 @@ func (c *GeminiToResponsesStreamConverter) ConvertStreamResponse(
 	var (
 		totalUsage    dto.GeminiUsageMetadata
 		textBuf       strings.Builder
+		citations     *shared.GroundingCitations
 		sentCreated   bool
 		sentTextDone  bool
 		sentCompleted bool
@@ -185,6 +187,18 @@ func (c *GeminiToResponsesStreamConverter) ConvertStreamResponse(
 		}
 
 		finalOutput := make([]map[string]any, 0)
+		// 服务端搜索证据：web_search_call 动作项排在最前，引用挂在正文 annotations 上。
+		// 只能在收尾还原：groundingMetadata 随末帧到达，正文增量早已推给客户端。
+		annotations := make([]any, 0)
+		if !citations.IsEmpty() {
+			citations.AlignSupports(textBuf.String())
+			for _, a := range citations.ToResponsesAnnotations() {
+				annotations = append(annotations, a)
+			}
+			if item := citations.ToResponsesWebSearchCallItem(respID); item != nil {
+				finalOutput = append(finalOutput, item)
+			}
+		}
 		if textBuf.Len() > 0 {
 			finalOutput = append(finalOutput, map[string]any{
 				"type":   "message",
@@ -194,7 +208,7 @@ func (c *GeminiToResponsesStreamConverter) ConvertStreamResponse(
 				"content": []map[string]any{{
 					"type":        "output_text",
 					"text":        textBuf.String(),
-					"annotations": []any{},
+					"annotations": annotations,
 				}},
 			})
 		}
@@ -296,6 +310,10 @@ func (c *GeminiToResponsesStreamConverter) ConvertStreamResponse(
 		}
 
 		for _, candidate := range geminiResp.Candidates {
+			// grounding 随末帧（或靠后的帧）到达，先捕获、收尾时统一还原
+			if c := shared.ParseGeminiGrounding(candidate.GroundingMetadata); !c.IsEmpty() {
+				citations = c
+			}
 			if candidate.Content == nil {
 				continue
 			}

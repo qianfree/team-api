@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -61,6 +62,8 @@ func (c *GeminiToClaudeStreamConverter) ConvertStreamResponse(
 		contentIndex     int
 		currentBlockType string
 		toolIdx          int
+		citations        *shared.GroundingCitations
+		answerText       strings.Builder
 	)
 
 	// emitEvent 发出一个 Claude 格式事件帧
@@ -103,10 +106,65 @@ func (c *GeminiToClaudeStreamConverter) ConvertStreamResponse(
 		return nil
 	}
 
+	// emitSearchBlocks 在流末尾补发服务端搜索证据块（server_tool_use + web_search_tool_result）。
+	//
+	// 位置只能在末尾：Gemini 的 groundingMetadata 随末帧（或靠后的帧）到达，而此时正文
+	// 增量早已推给客户端。要还原成 Claude 那样「搜索在前、回答在后」的顺序就得缓冲整段正文，
+	// 那会毁掉流式的首字延迟——宁可顺序不同，也不牺牲流式体验；证据本身不丢即达成守恒。
+	emitSearchBlocks := func() error {
+		if citations.IsEmpty() {
+			return nil
+		}
+		citations.AlignSupports(answerText.String())
+		blocks := citations.ToClaudeSearchBlocks(idBase)
+		for i := range blocks {
+			block := blocks[i]
+			// server_tool_use 的 input 按协议经 input_json_delta 增量下发：
+			// 只放在 content_block_start 里的话，只累加增量的 SDK 会拿到空 input
+			var inputJSON string
+			if block.Type == "server_tool_use" && block.Input != nil {
+				raw, err := json.Marshal(block.Input)
+				if err != nil {
+					return err
+				}
+				inputJSON = string(raw)
+				block.Input = map[string]any{}
+			}
+
+			if err := emitEvent("content_block_start", &dto.ClaudeResponse{
+				Type:         "content_block_start",
+				Index:        intPtr(contentIndex),
+				ContentBlock: &block,
+			}, nil); err != nil {
+				return err
+			}
+			if inputJSON != "" {
+				if err := emitEvent("content_block_delta", &dto.ClaudeResponse{
+					Type:  "content_block_delta",
+					Index: intPtr(contentIndex),
+					Delta: &dto.ClaudeDelta{Type: "input_json_delta", PartialJSON: strPtr(inputJSON)},
+				}, nil); err != nil {
+					return err
+				}
+			}
+			if err := emitEvent("content_block_stop", &dto.ClaudeResponse{
+				Type:  "content_block_stop",
+				Index: intPtr(contentIndex),
+			}, nil); err != nil {
+				return err
+			}
+			contentIndex++
+		}
+		return nil
+	}
+
 	// emitFinal 发送 message_delta（stop_reason + 最终用量）与 message_stop。
 	// attachUsage 控制是否随 message_delta 帧携带计费用量（安全过滤路径与旧桥一致不携带）。
 	emitFinal := func(attachUsage bool) error {
 		if err := closeBlock(); err != nil {
+			return err
+		}
+		if err := emitSearchBlocks(); err != nil {
 			return err
 		}
 
@@ -202,6 +260,10 @@ func (c *GeminiToClaudeStreamConverter) ConvertStreamResponse(
 			if candidate.FinishReason != "" {
 				finishReason = candidate.FinishReason
 			}
+			// grounding 随末帧（或靠后的帧）到达，先捕获、流末尾统一补发证据块
+			if c := shared.ParseGeminiGrounding(candidate.GroundingMetadata); !c.IsEmpty() {
+				citations = c
+			}
 			if candidate.Content == nil {
 				continue
 			}
@@ -233,6 +295,7 @@ func (c *GeminiToClaudeStreamConverter) ConvertStreamResponse(
 						}); err != nil {
 							return err
 						}
+						answerText.WriteString(part.Text)
 						if err := emitEvent("content_block_delta", &dto.ClaudeResponse{
 							Type:  "content_block_delta",
 							Index: intPtr(contentIndex),

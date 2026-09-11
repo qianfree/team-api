@@ -18,6 +18,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -108,6 +109,13 @@ func (c *ResponsesToOpenAIRequestConverter) ConvertRequest(
 	if len(req.Tools) > 0 {
 		if chatTools := r2cConvertTools(req.Tools); len(chatTools) > 0 {
 			chatReq.Tools = chatTools
+		}
+
+		// 服务端联网搜索：Responses 的 web_search 工具 → chat 的 web_search_options。
+		// chat 是跨原生方向的转换中枢（Responses→OpenAI→Claude/Gemini 两跳链），
+		// 这里不承载就等于整条链上的搜索能力全部丢失。
+		if spec := shared.DetectWebSearchFromResponsesTools(req.Tools); spec != nil {
+			chatReq.WebSearchOptions = spec.ToOpenAIOptions()
 		}
 	}
 	if len(req.ToolChoice) > 0 {

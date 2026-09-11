@@ -156,7 +156,6 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 	// 转换 tools
 	if len(openaiReq.Tools) > 0 {
 		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
-
 		// 转换 tool_choice
 		if openaiReq.ToolChoice != nil {
 			switch tc := openaiReq.ToolChoice.(type) {
@@ -183,6 +182,13 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 				}
 			}
 		}
+	}
+
+	// 服务端联网搜索：chat 的 web_search_options 映射为 Claude 的 web_search 内置工具。
+	// 与自定义函数并存（Claude 允许服务端工具与 custom 工具同列），因此独立于上面的
+	// tools 分支——客户端可能只要搜索、不带任何函数。
+	if spec := shared.DetectWebSearchFromOpenAI(openaiReq.WebSearchOptions); spec != nil {
+		claudeReq.Tools = append(claudeReq.Tools, spec.ToClaudeTool())
 	}
 
 	// 应用 thinking 适配器

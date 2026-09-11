@@ -45,8 +45,9 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 		return nil, fmt.Errorf("expected *dto.ClaudeResponse, got %T", response)
 	}
 
-	// 构建 output：文本块 → message 项，tool_use 块 → function_call 项
+	// 构建 output：thinking 块 → reasoning 项，文本块 → message 项，tool_use 块 → function_call 项
 	var textParts []string
+	var thinkingParts []string
 	output := make([]map[string]any, 0)
 	for _, block := range claudeResp.Content {
 		switch block.Type {
@@ -55,7 +56,12 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 				textParts = append(textParts, *block.Text)
 			}
 		case "thinking", "redacted_thinking":
-			// 思考内容无 Responses 非流式对应物，跳过（流式侧以 reasoning summary 事件透出）
+			// Responses 非流式以 reasoning 输出项承载思考内容
+			//（流式侧的 response.reasoning_summary_text.delta 只是它的增量表达）。
+			// 跳过等于让推理模型的思考过程静默消失，且客户端看不出丢过东西。
+			if block.Thinking != nil && *block.Thinking != "" {
+				thinkingParts = append(thinkingParts, *block.Thinking)
+			}
 		case "tool_use":
 			argsJSON, _ := json.Marshal(block.Input)
 			output = append(output, map[string]any{
@@ -81,6 +87,18 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 			}},
 		}
 		output = append([]map[string]any{msgItem}, output...)
+	}
+	// reasoning 项排在最前（与 Responses API 的真实输出顺序一致：思考先于回答）
+	if len(thinkingParts) > 0 {
+		reasoningItem := map[string]any{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%s", claudeResp.ID),
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": strings.Join(thinkingParts, ""),
+			}},
+		}
+		output = append([]map[string]any{reasoningItem}, output...)
 	}
 
 	modelName := claudeResp.Model

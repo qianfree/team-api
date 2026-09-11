@@ -62,8 +62,11 @@ func responsesDataOf(t *testing.T, ev *relayconvert.StreamEvent) map[string]any 
 
 // ===== 非流式 =====
 
-// TestBuildResponsesOutputFromGemini_TextAndTool 文本合并为居首的 message 项，
-// functionCall 各成一个 function_call 项；思考内容在非流式响应中跳过。
+// TestBuildResponsesOutputFromGemini_TextAndTool 思考 part 转为居首的 reasoning 项，
+// 文本合并为 message 项，functionCall 各成一个 function_call 项。
+//
+// 思考内容此前在非流式响应中被跳过（能力失恒：推理模型的思考过程静默消失），
+// 现转为 Responses 的 reasoning 输出项——与 claude→responses 方向同口径。
 func TestBuildResponsesOutputFromGemini_TextAndTool(t *testing.T) {
 	thought := true
 	geminiResp := &dto.GeminiChatResponse{
@@ -86,26 +89,35 @@ func TestBuildResponsesOutputFromGemini_TextAndTool(t *testing.T) {
 
 	output := buildResponsesOutputFromGemini(geminiResp, "req123")
 
-	if len(output) != 2 {
-		t.Fatalf("output 项数 = %d, want 2（message + function_call）: %+v", len(output), output)
+	if len(output) != 3 {
+		t.Fatalf("output 项数 = %d, want 3（reasoning + message + function_call）: %+v", len(output), output)
 	}
 
-	msg := output[0]
+	reasoning := output[0]
+	if reasoning["type"] != "reasoning" {
+		t.Fatalf("首项应为 reasoning: %+v", reasoning)
+	}
+	summary := reasoning["summary"].([]map[string]any)
+	if len(summary) != 1 || summary[0]["type"] != "summary_text" || summary[0]["text"] != "思考中" {
+		t.Errorf("reasoning.summary 形态不符: %+v", summary)
+	}
+
+	msg := output[1]
 	if msg["type"] != "message" || msg["status"] != "completed" || msg["role"] != "assistant" {
-		t.Errorf("首项应为 completed 的 assistant message: %+v", msg)
+		t.Errorf("次项应为 completed 的 assistant message: %+v", msg)
 	}
 	content := msg["content"].([]map[string]any)
 	if len(content) != 1 || content[0]["type"] != "output_text" {
 		t.Fatalf("message content 结构不对: %+v", content)
 	}
-	// 思考内容不得混进正文
+	// 思考内容不得混进正文（它有自己的 reasoning 项）
 	if got := content[0]["text"]; got != "你好世界" {
-		t.Errorf("正文 = %q, want %q（思考内容应被跳过）", got, "你好世界")
+		t.Errorf("正文 = %q, want %q（思考内容应独立成 reasoning 项）", got, "你好世界")
 	}
 
-	fc := output[1]
+	fc := output[2]
 	if fc["type"] != "function_call" || fc["name"] != "get_weather" {
-		t.Errorf("次项应为 function_call: %+v", fc)
+		t.Errorf("末项应为 function_call: %+v", fc)
 	}
 	if fc["id"] != fc["call_id"] {
 		t.Errorf("id 与 call_id 应一致: %+v", fc)

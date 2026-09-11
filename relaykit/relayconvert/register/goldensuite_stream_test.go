@@ -230,3 +230,38 @@ func TestGoldenSuite_StreamInputCorpusRegistered(t *testing.T) {
 		}
 	}
 }
+
+// geminiGroundedStream 带 groundingMetadata 的 Gemini 上游流：
+// grounding 只在**末帧**到达，正文增量此前早已推给客户端。
+const geminiGroundedStream = `data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Boston is 68F"}]}}]}
+
+data: {"candidates":[{"index":0,"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["boston weather"],"groundingChunks":[{"web":{"uri":"https://weather.example/boston","title":"weather.example"}}],"groundingSupports":[{"segment":{"startIndex":0,"endIndex":6,"text":"Boston"},"groundingChunkIndices":[0]}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}
+
+`
+
+// TestStreamInvariants_GroundingRestore 流式响应侧搜索证据还原：
+// Gemini 上游在末帧给出 groundingMetadata 时，来源 URL 必须出现在客户端收到的流里。
+//
+// 这是非流式 grounding 还原（TestCapabilityInvariants_GroundingRestore）的流式对照。
+// 流式的难点在于时序：证据到得比正文晚，转换器必须缓冲并在收尾补发，
+// 漏做就会出现「非流式有引用、流式没有」的不一致——而客户端通常只用流式。
+func TestStreamInvariants_GroundingRestore(t *testing.T) {
+	for _, spec := range relayconvert.ListStreamConverterSpecs() {
+		if spec.From != types.RelayFormatGemini {
+			continue // grounding 是 Gemini 侧构件
+		}
+
+		t.Run(spec.ID, func(t *testing.T) {
+			frames, _ := runStreamConverter(t, spec.ID, []byte(geminiGroundedStream))
+			require.NotEmpty(t, frames)
+
+			raw, err := json.Marshal(frames)
+			require.NoError(t, err)
+			body := string(raw)
+
+			require.Contains(t, body, "https://weather.example/boston",
+				"流式转换后搜索来源丢失（非流式已还原、流式漏做会导致两者行为不一致）\n实际帧序列: %s", body)
+			require.Contains(t, body, "Boston is 68F", "回答正文在 grounding 还原后丢失")
+		})
+	}
+}

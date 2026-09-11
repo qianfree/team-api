@@ -11,6 +11,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -57,6 +58,8 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 		finishReason  string
 		toolCallIdx   int
 		roleChunkSent bool
+		citations     *shared.GroundingCitations
+		answerText    strings.Builder
 	)
 
 	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
@@ -135,6 +138,10 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 			if candidate.FinishReason != "" {
 				finishReason = mapGeminiFinishReason(candidate.FinishReason)
 			}
+			// grounding 随末帧（或靠后的帧）到达，先捕获、末帧统一附带引用
+			if c := shared.ParseGeminiGrounding(candidate.GroundingMetadata); !c.IsEmpty() {
+				citations = c
+			}
 
 			if candidate.Content == nil {
 				continue
@@ -153,6 +160,7 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 							return err
 						}
 					} else {
+						answerText.WriteString(part.Text)
 						if err := chunkWriter(newChunk(dto.Message{
 							Content: part.Text,
 						})); err != nil {
@@ -237,6 +245,14 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 			Index:        0,
 			FinishReason: &reason,
 		}},
+	}
+
+	// 服务端搜索证据 → 末帧 delta 的 annotations。
+	// 只能挂在末帧：groundingMetadata 随末帧到达，此时正文增量早已推给客户端；
+	// 要按来源逐段插入就得缓冲整段正文，那会毁掉流式首字延迟。
+	if !citations.IsEmpty() {
+		citations.AlignSupports(answerText.String())
+		finalChunk.Choices[0].Delta.Annotations = citations.ToOpenAIAnnotations()
 	}
 
 	if totalUsage.PromptTokenCount > 0 || totalUsage.CandidatesTokenCount > 0 {

@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -95,6 +96,23 @@ func (c *OpenAIToResponsesRequestConverter) ConvertRequest(
 			}
 			respReq.Tools = raw
 		}
+	}
+
+	// 服务端联网搜索：chat 的 web_search_options → Responses 的 web_search 工具项。
+	// Responses 把搜索表达为工具，需与已转换的自定义函数合并进同一个 tools 数组。
+	if spec := shared.DetectWebSearchFromOpenAI(req.WebSearchOptions); spec != nil {
+		tools := make([]any, 0, 1)
+		if len(respReq.Tools) > 0 {
+			if err := json.Unmarshal(respReq.Tools, &tools); err != nil {
+				return nil, fmt.Errorf("merge web_search into responses tools: %w", err)
+			}
+		}
+		tools = append(tools, spec.ToResponsesTool())
+		raw, err := json.Marshal(tools)
+		if err != nil {
+			return nil, fmt.Errorf("marshal responses tools: %w", err)
+		}
+		respReq.Tools = raw
 	}
 	if req.ToolChoice != nil {
 		raw, err := json.Marshal(c2rConvertToolChoice(req.ToolChoice))

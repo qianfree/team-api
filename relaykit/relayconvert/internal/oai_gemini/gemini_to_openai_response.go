@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -136,6 +137,13 @@ func (c *GeminiToOpenAIResponseConverter) ConvertResponse(
 		message := dto.Message{
 			Role:    "assistant",
 			Content: strings.Join(textParts, ""),
+		}
+
+		// 服务端搜索证据 → chat 的 url_citation annotations：上游真的去搜了，
+		// 来源不还原则客户端只拿到一段被搜索增强的纯文本，看不到来源、无法核查
+		if citations := shared.ParseGeminiGrounding(candidate.GroundingMetadata); !citations.IsEmpty() {
+			citations.AlignSupports(strings.Join(textParts, ""))
+			message.Annotations = citations.ToOpenAIAnnotations()
 		}
 
 		// 添加 thinking 内容

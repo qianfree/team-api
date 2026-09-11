@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -85,6 +86,13 @@ func (c *GeminiToOpenAIRequestConverter) ConvertRequest(
 
 	if len(geminiReq.Tools) > 0 {
 		openaiReq.Tools = g2oConvertTools(geminiReq.Tools)
+
+		// 服务端联网搜索：Gemini 的 googleSearch → chat 的 web_search_options。
+		// chat 是跨原生方向的转换中枢（Gemini→OpenAI→Claude 两跳链），
+		// 这里不承载就等于整条链上的搜索能力全部丢失。
+		if spec := shared.DetectWebSearchFromGeminiTools(geminiReq.Tools); spec != nil {
+			openaiReq.WebSearchOptions = spec.ToOpenAIOptions()
+		}
 	}
 	if geminiReq.ToolConfig != nil {
 		openaiReq.ToolChoice = g2oConvertToolConfig(geminiReq.ToolConfig)

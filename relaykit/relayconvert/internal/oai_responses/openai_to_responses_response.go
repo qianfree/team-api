@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -92,6 +93,15 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 	// 构建 output
 	output := make([]dto.ResponsesOutput, 0)
 	for _, choice := range chatResp.Choices {
+		// 思考内容 → reasoning 输出项（排在 message 之前，与 Responses API 的真实
+		// 输出顺序一致）。此前一律跳过，推理模型（DeepSeek-R1 / o 系列等）的思考过程
+		// 经本方向转换后会静默消失。
+		if choice.Message.ReasoningContent != nil {
+			if item := shared.BuildResponsesReasoningOutput(chatResp.ID, *choice.Message.ReasoningContent); item != nil {
+				output = append(output, *item)
+			}
+		}
+
 		// 文本内容
 		content := make([]dto.ResponsesOutputContent, 0)
 		if choice.Message.Content != nil {
