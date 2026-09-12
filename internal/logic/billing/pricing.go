@@ -702,10 +702,12 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 		}
 		for _, item := range items {
 			blob.Tiers = append(blob.Tiers, pricingTierRow{
-				MinTokens:   item.MinTokens,
-				MaxTokens:   item.MaxTokens,
-				InputPrice:  item.InputPrice,
-				OutputPrice: item.OutputPrice,
+				MinTokens:          item.MinTokens,
+				MaxTokens:          item.MaxTokens,
+				InputPrice:         item.InputPrice,
+				OutputPrice:        item.OutputPrice,
+				CacheReadPrice:     positivePtr(item.CacheReadPrice),
+				CacheCreationPrice: positivePtr(item.CacheCreationPrice),
 			})
 		}
 		return blob, nil
@@ -776,12 +778,16 @@ func tiersHavePrice(tiers []pricingTierRow) bool {
 	return false
 }
 
-// pricingTierRow 定价阶梯行（绝对价格）
+// pricingTierRow 定价阶梯行（绝对价格）。
+// 逐档缓存价为可选键（omitempty，旧数据缺键 unmarshal 为 nil，无需迁移）：
+// 编辑器逐档缓存价落库于此；计费引擎的缓存 token 计费仍取 blob 顶层锚点缓存价，不读档内字段
 type pricingTierRow struct {
-	MinTokens   int64   `json:"min_tokens"`
-	MaxTokens   *int64  `json:"max_tokens"`
-	InputPrice  float64 `json:"input_price"`
-	OutputPrice float64 `json:"output_price"`
+	MinTokens          int64    `json:"min_tokens"`
+	MaxTokens          *int64   `json:"max_tokens"`
+	InputPrice         float64  `json:"input_price"`
+	OutputPrice        float64  `json:"output_price"`
+	CacheReadPrice     *float64 `json:"cache_read_price,omitempty"`
+	CacheCreationPrice *float64 `json:"cache_creation_price,omitempty"`
 }
 
 // effectiveTimeMultiplier 时段乘数归一化：0/负值视为 1.0。

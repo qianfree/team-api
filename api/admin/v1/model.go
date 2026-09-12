@@ -147,6 +147,11 @@ type PricingGetRes struct {
 	List             []PricingItem         `json:"list"`
 	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表（pricing JSONB 顶层）"`
 	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（pricing JSONB 顶层，横切所有计费模式）"`
+	// 官方参考定价（official_pricing JSONB 还原，结构与计费定价完全一致；OfficialItems nil=未配置）。
+	// 非计费依据，管理端按官方价 × 折扣快速定价 / 计算现价几折以此为准
+	OfficialItems            []PricingItem         `json:"official_items" dc:"官方参考定价项（tiered 展开为多行；nil=未配置）"`
+	OfficialTimeSegments     []TimeSegmentItem     `json:"official_time_segments" dc:"官方参考-时段定价"`
+	OfficialParamMultipliers []ParamMultiplierItem `json:"official_param_multipliers" dc:"官方参考-参数倍率规则"`
 	// 以下为定价行展示字段
 	PriceNote       string `json:"price_note" dc:"价格说明（仅管理后台可见的内部备注）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示，如 7折起）"`
@@ -160,6 +165,11 @@ type PricingSetReq struct {
 	Items            []PricingItem         `json:"items" v:"required" dc:"定价列表"`
 	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价（可选，全量替换；空数组清除时段配置）"`
 	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选，全量替换；空数组清除）"`
+	// 官方参考定价（可选，结构与计费定价完全一致，支持全部四种计费模式 + 时段/倍率）：
+	// OfficialItems nil=本次不动库内官方定价；非 nil=全量替换（三个数组全空=清除）。金额本位币，非计费依据
+	OfficialItems            []PricingItem         `json:"official_items" dc:"官方参考定价项（nil=不修改；非 nil=全量替换，与另两个官方数组全空=清除）"`
+	OfficialTimeSegments     []TimeSegmentItem     `json:"official_time_segments" dc:"官方参考-时段定价（随 official_items 一并全量替换）"`
+	OfficialParamMultipliers []ParamMultiplierItem `json:"official_param_multipliers" dc:"官方参考-参数倍率规则（随 official_items 一并全量替换）"`
 	// 以下为定价行展示字段（全量替换语义：空=清除；price_note 不透出到租户端）
 	PriceNote       string `json:"price_note" dc:"价格说明（仅内部可见）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示）"`
