@@ -1,6 +1,7 @@
 package corpus
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -384,5 +385,52 @@ func TestScrub_CJKFreeText(t *testing.T) {
 	}
 	if len(parsed.CustomField) != len(zh) {
 		t.Errorf("替换应等长: got %d want %d", len(parsed.CustomField), len(zh))
+	}
+}
+
+// TestScrub_RawBase64PayloadPlaceholder 裸 base64 内联数据（无 data: 前缀，如 Claude 的
+// source.data、Gemini 的 inlineData.data）必须换成占位图而非等长填充：
+// 等长填充会让语料体积随原图膨胀（实测单文件 1.2MB），且空格混入后不再是合法 base64。
+func TestScrub_RawBase64PayloadPlaceholder(t *testing.T) {
+	// 构造 4KB 的 base64 形态载荷
+	payload := strings.Repeat("QUJDREVG", 512)
+	body := `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + payload + `"}}`
+	out := scrubJSON(t, body)
+
+	if strings.Contains(out, payload[:64]) {
+		t.Error("裸 base64 载荷未被替换")
+	}
+	if !strings.Contains(out, placeholderPNG) {
+		t.Error("应替换为可解码的占位图")
+	}
+	if len(out) > len(body)/4 {
+		t.Errorf("替换后体积应大幅缩小: got %d want < %d", len(out), len(body)/4)
+	}
+	// 占位图是合法 base64（图片处理路径依赖可解码性）
+	if _, err := base64.StdEncoding.DecodeString(placeholderPNG); err != nil {
+		t.Errorf("占位图不是合法 base64: %v", err)
+	}
+	// 长自由文本（含空格）不受影响，仍走等长填充
+	long := strings.Repeat("这是一段比较长的中文文本内容。", 30)
+	out2 := scrubJSON(t, `{"note":"`+long+`"}`)
+	if !strings.Contains(out2, "scrubbed") || strings.Contains(out2, placeholderPNG) {
+		t.Error("长文本不应被误判为 base64 载荷")
+	}
+}
+
+// TestScrub_MaxTextLen 超长文本按上限截断填充：携带完整会话历史的请求若不设上限，
+// 语料会膨胀到数百 MB（实测），而长度敏感路径只需要量级不需精确字节。
+func TestScrub_MaxTextLen(t *testing.T) {
+	long := strings.Repeat("很长的内容", 2000) // 10KB
+	out := string(NewScrubber(ScrubOptions{Enabled: true, MaxTextLen: 128}).ScrubJSON(
+		[]byte(`{"note":"` + long + `"}`)))
+	var parsed struct {
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("不是合法 JSON: %v", err)
+	}
+	if len(parsed.Note) != 128 {
+		t.Errorf("填充长度 = %d, want 128（上限截断）", len(parsed.Note))
 	}
 }

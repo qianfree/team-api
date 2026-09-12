@@ -32,7 +32,10 @@ import (
 )
 
 // goldenScenarios 请求场景清单；某入站格式缺少某场景语料时该组合自动跳过。
-var goldenScenarios = []string{"basic", "full", "websearch", "thinking"}
+// schema-variants / reasoning-roundtrip 来自线上真实 bug 形状的反哺（2026-09-12 语料战役，
+// 见 docs/codex请求问题排查记录.md）：前者是 Claude Code Grep 工具的 prefixItems 元组
+// + 嵌套数组 + 空 schema 节点，后者是 codex 多轮历史的明文 reasoning 项双形态回传。
+var goldenScenarios = []string{"basic", "full", "websearch", "thinking", "schema-variants", "reasoning-roundtrip"}
 
 // nondeterministicKeys 响应侧转换器合成的非确定字段（任意层级，按 key 名匹配）。
 // 比对前统一置为占位符，保证金样本可重复。

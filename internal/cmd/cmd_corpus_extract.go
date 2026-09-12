@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -26,9 +27,13 @@ import (
 // --no-scrub 可关闭，但那样落盘的是报文原文，仅限确知无敏感数据的测试流量。
 
 const (
-	defaultCorpusOutput = "relaykit/relayconvert/register/golden"
+	// defaultCorpusOutput 语料输出根目录：**仓库外的独立目录**（语料体积由结构决定、
+	// 动辄数百 MB，不进 team-api 仓库）。可用环境变量 TEAM_API_CORPUS_DIR 覆盖，
+	// 下游测试按同一变量发现语料（缺失即跳过）。
+	defaultCorpusOutput = "../team-api-corpus"
 	defaultScanLimit    = 5000
 	defaultMaxInline    = 8192
+	defaultMaxText      = 16384
 )
 
 var corpusExtractCmd = gcmd.Command{
@@ -43,6 +48,7 @@ var corpusExtractCmd = gcmd.Command{
 		{Name: "format", Brief: "客户端格式过滤：openai / claude / gemini / responses"},
 		{Name: "limit", Brief: fmt.Sprintf("最多扫描日志行数（默认 %d）", defaultScanLimit)},
 		{Name: "per-shape", Brief: "每种结构形状保留的样本数（默认 1）"},
+		{Name: "max-text", Brief: fmt.Sprintf("单个字符串值的脱敏填充长度上限（默认 %d，0=等长不截断）", defaultMaxText)},
 		{Name: "max-inline", Brief: fmt.Sprintf("内联 base64 数据超过该字节数则替换为占位，控制语料体积（默认 %d，0=不处理）", defaultMaxInline)},
 		{Name: "no-scrub", Brief: "关闭脱敏，落盘报文原文（仅限确知无敏感数据的测试流量）", Orphan: true},
 		{Name: "keep-tool-names", Brief: "脱敏时保留自定义工具名原值（内置工具名始终保留）", Orphan: true},
@@ -54,7 +60,7 @@ var corpusExtractCmd = gcmd.Command{
 }
 
 func runCorpusExtract(ctx context.Context, parser *gcmd.Parser) error {
-	output := parser.GetOpt("output", defaultCorpusOutput).String()
+	output := corpusOutputDir(parser)
 	limit := parser.GetOpt("limit", defaultScanLimit).Int()
 	perShape := parser.GetOpt("per-shape", 1).Int()
 	maxInline := parser.GetOpt("max-inline", defaultMaxInline).Int()
@@ -62,6 +68,7 @@ func runCorpusExtract(ctx context.Context, parser *gcmd.Parser) error {
 	keepToolNames := parser.GetOpt("keep-tool-names") != nil
 	includeErrors := parser.GetOpt("include-errors") != nil
 	dryRun := parser.GetOpt("dry-run") != nil
+	maxText := parser.GetOpt("max-text", fmt.Sprintf("%d", defaultMaxText)).Int()
 	channelFilter := parser.GetOpt("channel").String()
 	formatFilter := parser.GetOpt("format").String()
 	since := parser.GetOpt("since").String()
@@ -86,7 +93,7 @@ func runCorpusExtract(ctx context.Context, parser *gcmd.Parser) error {
 		return nil
 	}
 
-	scrubOpts := corpus.ScrubOptions{Enabled: !noScrub, KeepToolNames: keepToolNames}
+	scrubOpts := corpus.ScrubOptions{Enabled: !noScrub, KeepToolNames: keepToolNames, MaxTextLen: maxText}
 	collector := corpus.NewCollector(perShape, scrubOpts)
 	for _, row := range rows {
 		collector.Add(row.toRecord(maxInline))
@@ -117,6 +124,17 @@ func runCorpusExtract(ctx context.Context, parser *gcmd.Parser) error {
 
 	printCorpusSummary(output, stats, samples, dryRun, !noScrub)
 	return nil
+}
+
+// corpusOutputDir 语料输出目录：命令行 -o > 环境变量 TEAM_API_CORPUS_DIR > 默认仓库外目录。
+func corpusOutputDir(parser *gcmd.Parser) string {
+	if v := parser.GetOpt("output").String(); v != "" {
+		return v
+	}
+	if v := os.Getenv("TEAM_API_CORPUS_DIR"); v != "" {
+		return v
+	}
+	return defaultCorpusOutput
 }
 
 // printFailedAttempts 打印采集窗口内全部请求的时间线，失败尝试附上游状态、

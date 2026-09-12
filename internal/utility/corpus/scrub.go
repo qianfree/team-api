@@ -32,6 +32,11 @@ type ScrubOptions struct {
 	// 自定义工具名可能泄漏业务逻辑（如 query_internal_crm）。
 	// 协议内置工具名（web_search 等）不受此选项影响，始终保留。
 	KeepToolNames bool
+	// MaxTextLen 单个字符串值的填充长度上限（字节，0=不限制）。
+	// 等长替换本为覆盖「token 估算/截断阈值」等长度敏感路径，但对转换器测试而言
+	// 长度的**量级**即足够；不设上限时，携带完整会话历史的请求（多轮工具循环）
+	// 会让语料膨胀到数百 MB（实测 340MB），此处让超长文本在上限处截断填充。
+	MaxTextLen int
 }
 
 // Scrubber 单条记录范围的脱敏器。
@@ -248,9 +253,18 @@ func (s *Scrubber) scrubString(val, key string, inUserData bool) string {
 	if secretPattern.MatchString(val) {
 		return filler(len(val))
 	}
-	// ⑧ 用户数据子树内一律脱敏；子树外用「短且无空格」启发式放过枚举值
+	// ⑧ 裸 base64 载荷：图片/音频等二进制内联数据（Claude 的 source.data、Gemini 的
+	// inlineData.data——不带 data: 前缀的形态）。等长文本填充有两个问题：体积随原图
+	// 膨胀（实测单文件 1.2MB、语料总量 154MB），且填充含空格后不再是合法 base64，
+	// 图片处理路径会走进解码失败分支。换成可解码的 1×1 占位图（与 data: URL 同款）：
+	// 内容对协议转换毫无影响（转换器只搬运 mimeType 与 data 字段），体积归一。
+	if isBase64Payload(val) {
+		return placeholderPNG
+	}
+	// ⑨ 用户数据子树内一律脱敏；子树外用「短且无空格」启发式放过枚举值。
+	// 超长文本按 MaxTextLen 截断填充（等长原则对量级敏感而非字节敏感，见选项说明）
 	if inUserData || !isEnumLike(key, val) {
-		return filler(len(val))
+		return filler(s.cappedLen(len(val)))
 	}
 	return val
 }
@@ -321,6 +335,19 @@ func isURLLike(key, val string) bool {
 	return strings.HasPrefix(val, "data:") || strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://")
 }
 
+// base64PayloadPattern 裸 base64 载荷形态（标准字母表 + 末尾可选填充）。
+var base64PayloadPattern = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,2}$`)
+
+// base64PayloadMinLen 判定为二进制载荷的最小长度。真实图片/音频的 base64 动辄数千字符，
+// 短于该值的串不可能是二进制载荷（也避免误伤碰巧只含 base64 字符的短文本/ID——
+// 它们仍走等长填充，长度语义不受影响）。
+const base64PayloadMinLen = 256
+
+// isBase64Payload 判断值是否为裸 base64 二进制载荷（无 data: 前缀的内联数据形态）。
+func isBase64Payload(val string) bool {
+	return len(val) >= base64PayloadMinLen && base64PayloadPattern.MatchString(val)
+}
+
 // scrubURL 脱敏 URL。
 //   - data: URL 保留 mime 前缀、载荷换成可解码的 1×1 PNG（图片处理路径仍能工作）
 //   - http(s) URL 换成固定占位域名
@@ -351,4 +378,12 @@ func filler(n int) string {
 		sb.WriteString(word)
 	}
 	return sb.String()[:n]
+}
+
+// cappedLen 应用 MaxTextLen 上限后的填充长度。
+func (s *Scrubber) cappedLen(n int) int {
+	if s.opts.MaxTextLen > 0 && n > s.opts.MaxTextLen {
+		return s.opts.MaxTextLen
+	}
+	return n
 }
