@@ -269,7 +269,7 @@ func (s *sAdmin) DeleteTenantModel(ctx context.Context, req *v1.TenantModelDelet
 
 // ListTenantAvailableModels 预览租户实际可用的所有模型（显式分配 + 分组来源，去重）
 func (s *sAdmin) ListTenantAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsPreviewReq) (*v1.TenantAvailableModelsPreviewRes, error) {
-	models, err := tenantLogic.GetTenantAvailableModels(ctx, req.TenantID, "", "")
+	models, err := tenantLogic.GetTenantAvailableModels(ctx, req.TenantID, "", "", "")
 	if err != nil {
 		return nil, err
 	}

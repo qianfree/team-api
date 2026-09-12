@@ -8,6 +8,7 @@ type MarketplaceListReq struct {
 	g.Meta   `path:"/marketplace/models" method:"get" tags:"公开-模型广场" summary:"获取模型广场列表" group:"public" middleware:"-"`
 	Keyword  string `json:"keyword" dc:"搜索关键词"`
 	Category string `json:"category" dc:"模型类别筛选（chat/embedding/image/audio等）"`
+	Vendor   string `json:"vendor" dc:"研发厂商筛选（openai/anthropic/alibaba等），空=不过滤"`
 	Page     int    `json:"page" d:"1" dc:"页码"`
 	PageSize int    `json:"page_size" d:"20" v:"between:1,100" dc:"每页数量"`
 }
@@ -17,12 +18,16 @@ type MarketplaceListRes struct {
 	Total    int                    `json:"total"`
 	Page     int                    `json:"page"`
 	PageSize int                    `json:"page_size"`
+	// Vendors 当前筛选条件（关键词/分类，忽略厂商筛选本身）下有模型的厂商去重列表，
+	// 供前端只渲染实际有模型的厂商筛选项；顺序不保证，前端按本地字典序展示
+	Vendors []string `json:"vendors"`
 }
 
 type MarketplaceModelItem struct {
 	ModelId            string             `json:"model_id"`                    // 模型标识
 	ModelName          string             `json:"model_name"`                  // 模型显示名称
 	Category           string             `json:"category"`                    // 分类（chat/embedding/image等）
+	Vendor             string             `json:"vendor"`                      // 研发厂商（openai/anthropic/alibaba等，空=未分类）
 	Description        string             `json:"description"`                 // 描述
 	MaxContextTokens   int                `json:"max_context_tokens"`          // 最大上下文 tokens
 	MaxOutputTokens    int                `json:"max_output_tokens"`           // 最大输出 tokens

@@ -155,6 +155,10 @@ type (
 		// UpdateMemberRole updates a member's role.
 		UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (*v1.TenantMemberUpdateRoleRes, error)
 		// ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
+		//
+		// 角色校验此前缺失：只挡了「不能重置自己」和「不能重置 owner」，任意 member 都能改掉
+		// 同组织 admin 的密码并登录该账号，等于组织内横向提权。与相邻的 UnlockMember /
+		// RemoveMember / UpdateMemberRole 保持同一道闸门。
 		ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error)
 		// UnlockMember 解除成员登录锁定。仅 owner/admin 可操作；租户隔离双键校验。
 		UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockReq) (*v1.TenantMemberUnlockRes, error)
@@ -168,6 +172,9 @@ type (
 		// 导出列与成员列表页表格保持一致（用户/角色/状态/额度限制/可用模型/本月消费/加入时间/最后更新）。
 		ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error)
 		// MemberImport parses CSV content, validates, creates an import record.
+		//
+		// 角色校验此前缺失：批量导入会直接创建租户成员账号（并按套餐占用席位），
+		// 与 MemberCreate / MemberInvite 是同一类动作，必须同为 owner/admin。
 		MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error)
 		// ImportRecords returns a paginated list of import records.
 		ImportRecords(ctx context.Context, req *v1.TenantImportRecordsReq) (*v1.TenantImportRecordsRes, error)
@@ -277,6 +284,9 @@ type (
 		// ProjectArchive archives a project and revokes all its keys.
 		ProjectArchive(ctx context.Context, req *v1.TenantProjectArchiveReq) (*v1.TenantProjectArchiveRes, error)
 		// ProjectUnarchive restores an archived project. Keys are NOT auto-restored.
+		//
+		// 角色校验此前缺失：Create/Update/Archive 都要求 owner/admin，唯独恢复归档没拦，
+		// 任意 member 都能把管理员刚归档的项目恢复回来（归档是治理动作，撤销它同样是）。
 		ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUnarchiveReq) (*v1.TenantProjectUnarchiveRes, error)
 		// ProjectGet 根据 ID 获取单个项目详情（含统计摘要）
 		ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (*v1.TenantProjectGetRes, error)

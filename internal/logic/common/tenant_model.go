@@ -14,6 +14,7 @@ type AvailableModelItem struct {
 	ModelId          string `json:"model_id"`
 	ModelName        string `json:"model_name"`
 	Category         string `json:"category"`
+	Vendor           string `json:"vendor"`
 	MaxContextTokens int    `json:"max_context_tokens"`
 	MaxOutputTokens  int    `json:"max_output_tokens"`
 	Description      string `json:"description"`
@@ -24,13 +25,14 @@ type AvailableModelItem struct {
 
 // GetTenantAvailableModels 计算租户实际可用的所有模型（显式分配 + 分组来源，去重）
 // 返回模型基本信息列表，不含价格。可被管理后台和租户控制台共用。
-func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, search string) ([]AvailableModelItem, error) {
+func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, vendor, search string) ([]AvailableModelItem, error) {
 	// 阶段1：获取显式分配的模型
 	var explicitModels []struct {
 		ModelDBID        int64  `json:"model_db_id"`
 		ModelId          string `json:"model_id"`
 		ModelName        string `json:"model_name"`
 		Category         string `json:"category"`
+		Vendor           string `json:"vendor"`
 		MaxContextTokens int    `json:"max_context_tokens"`
 		MaxOutputTokens  int    `json:"max_output_tokens"`
 		Description      string `json:"description"`
@@ -47,12 +49,15 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 	if category != "" {
 		explicitQuery = explicitQuery.Where("m.category", category)
 	}
+	if vendor != "" {
+		explicitQuery = explicitQuery.Where("m.vendor", vendor)
+	}
 	if search != "" {
 		explicitQuery = explicitQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 
 	err := explicitQuery.
-		Fields("mdl_tenant_models.model_id AS model_db_id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities").
+		Fields("mdl_tenant_models.model_id AS model_db_id, m.model_id, m.model_name, m.category, m.vendor, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities").
 		OrderAsc("m.category").
 		OrderAsc("m.model_id").
 		Scan(&explicitModels)
@@ -69,6 +74,7 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 			ModelId:          r.ModelId,
 			ModelName:        r.ModelName,
 			Category:         r.Category,
+			Vendor:           r.Vendor,
 			MaxContextTokens: r.MaxContextTokens,
 			MaxOutputTokens:  r.MaxOutputTokens,
 			Description:      r.Description,
@@ -84,6 +90,7 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 		ModelId          string `json:"model_id"`
 		ModelName        string `json:"model_name"`
 		Category         string `json:"category"`
+		Vendor           string `json:"vendor"`
 		MaxContextTokens int    `json:"max_context_tokens"`
 		MaxOutputTokens  int    `json:"max_output_tokens"`
 		Description      string `json:"description"`
@@ -110,12 +117,15 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 	if category != "" {
 		groupQuery = groupQuery.Where("m.category", category)
 	}
+	if vendor != "" {
+		groupQuery = groupQuery.Where("m.vendor", vendor)
+	}
 	if search != "" {
 		groupQuery = groupQuery.Where("m.model_id LIKE ? OR m.model_name LIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 
 	_ = groupQuery.
-		Fields("DISTINCT m.id AS model_db_id, m.model_id, m.model_name, m.category, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities").
+		Fields("DISTINCT m.id AS model_db_id, m.model_id, m.model_name, m.category, m.vendor, m.max_context_tokens, m.max_output_tokens, m.description, m.tags, m.capabilities").
 		OrderAsc("m.category").
 		OrderAsc("m.model_id").
 		Scan(&groupModels)
@@ -126,6 +136,7 @@ func GetTenantAvailableModels(ctx context.Context, tenantID int64, category, sea
 			ModelId:          gm.ModelId,
 			ModelName:        gm.ModelName,
 			Category:         gm.Category,
+			Vendor:           gm.Vendor,
 			MaxContextTokens: gm.MaxContextTokens,
 			MaxOutputTokens:  gm.MaxOutputTokens,
 			Description:      gm.Description,

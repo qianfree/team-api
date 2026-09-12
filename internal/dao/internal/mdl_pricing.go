@@ -30,6 +30,7 @@ type MdlPricingColumns struct {
 	DiscountLabel   string // 折扣标签（对外展示，如"7折起"、"限时5折"），仅 min_tokens=0 锚点行使用，NULL/空=不展示
 	PriceChangeNote string // 价格调整说明（对外展示，提示用户价格有变动，如"9月1日起输入价下调"），仅 min_tokens=0 锚点行使用，NULL/空=不展示
 	Pricing         string // 计费详情（JSONB，按 billing_mode 单模式存储）：token={input_price,output_price,cache_read_price,cache_creation_price}；tiered={tiers:[{min_tokens,max_tokens,input_price,output_price}],cache_read_price,cache_creation_price}；per_request={price}；per_second={unit:"second",prices:{分辨率规格:每秒单价,"*":兜底价}}；顶层可含 time_segments（时段定价）
+	OfficialPricing string // 官方参考定价 JSONB（结构与 pricing 一致 + billing_mode 键，本位币；仅作定价折扣计算基准与几折展示，非计费依据）
 }
 
 // mdlPricingColumns holds the columns for the table mdl_pricing.
@@ -43,6 +44,7 @@ var mdlPricingColumns = MdlPricingColumns{
 	DiscountLabel:   "discount_label",
 	PriceChangeNote: "price_change_note",
 	Pricing:         "pricing",
+	OfficialPricing: "official_pricing",
 }
 
 // NewMdlPricingDao creates and returns a new DAO object for table data access.

@@ -8,6 +8,7 @@ type ModelListReq struct {
 	Page          int    `json:"page" d:"1" v:"min:1" dc:"页码"`
 	PageSize      int    `json:"page_size" d:"20" v:"min:1|max:100" dc:"每页数量"`
 	Category      string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank/video"`
+	Vendor        string `json:"vendor" dc:"研发厂商筛选：openai/anthropic/google/alibaba/deepseek等，空=不过滤"`
 	Status        string `json:"status" dc:"状态筛选：active/deprecated/offline"`
 	Search        string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 	PricingStatus string `json:"pricing_status" dc:"定价状态筛选：priced/unpriced"`
@@ -34,6 +35,7 @@ type ModelItem struct {
 	ModelId          string          `json:"model_id"`
 	ModelName        string          `json:"model_name"`
 	Category         string          `json:"category"`
+	Vendor           string          `json:"vendor"` // 研发厂商（空=未分类）
 	Status           string          `json:"status"`
 	MaxContext       int             `json:"max_context_tokens"`
 	MaxOutput        int             `json:"max_output_tokens"`
@@ -61,6 +63,7 @@ type ModelCreateReq struct {
 	ModelId      string          `json:"model_id" v:"required|length:1,100#请输入模型标识|模型标识长度1-100" dc:"模型唯一标识"`
 	ModelName    string          `json:"model_name" dc:"模型显示名称"`
 	Category     string          `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类必须是 chat/embedding/image/audio/rerank/video" dc:"模型分类"`
+	Vendor       string          `json:"vendor" v:"in:openai,anthropic,google,xai,mistral,cohere,meta,alibaba,bytedance,deepseek,zhipu,moonshot,minimax,baidu,tencent,xunfei,kuaishou,midjourney,suno#厂商值不合法" dc:"研发厂商（空=未分类）"`
 	MaxContext   int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
 	MaxOutput    int             `json:"max_output_tokens" dc:"最大输出 token 数"`
 	Capabilities map[string]bool `json:"capabilities" dc:"模型能力特性"`
@@ -75,10 +78,12 @@ type ModelCreateRes struct {
 
 // ModelUpdateReq 更新模型请求
 type ModelUpdateReq struct {
-	g.Meta           `path:"/models/{id}" method:"put" mime:"json" tags:"管理后台-模型" summary:"更新模型"`
-	ID               int64           `json:"id" in:"path" v:"required" dc:"模型ID"`
-	ModelName        string          `json:"model_name" dc:"模型显示名称"`
-	Category         string          `json:"category" v:"in:chat,embedding,image,audio,rerank,video" dc:"模型分类"`
+	g.Meta    `path:"/models/{id}" method:"put" mime:"json" tags:"管理后台-模型" summary:"更新模型"`
+	ID        int64  `json:"id" in:"path" v:"required" dc:"模型ID"`
+	ModelName string `json:"model_name" dc:"模型显示名称"`
+	Category  string `json:"category" v:"in:chat,embedding,image,audio,rerank,video" dc:"模型分类"`
+	// Vendor 研发厂商；指针语义：nil=不更新，空串=清空回未分类，非空=设置（枚举校验在 logic 层做）
+	Vendor           *string         `json:"vendor" dc:"研发厂商"`
 	MaxContext       int             `json:"max_context_tokens" dc:"最大上下文 token 数"`
 	MaxOutput        int             `json:"max_output_tokens" dc:"最大输出 token 数"`
 	Capabilities     map[string]bool `json:"capabilities" dc:"模型能力特性"`
@@ -209,6 +214,7 @@ type ModelExportReq struct {
 	g.Meta   `path:"/models/export" method:"get" mime:"json" tags:"管理后台-模型" summary:"导出模型列表"`
 	Format   string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
 	Category string `json:"category" in:"query" dc:"模型分类筛选：chat/embedding/image/audio/rerank"`
+	Vendor   string `json:"vendor" in:"query" dc:"研发厂商筛选，空=不过滤"`
 	Status   string `json:"status" in:"query" dc:"状态筛选：active/deprecated/offline"`
 	Search   string `json:"search" in:"query" dc:"搜索关键词（模型名或显示名）"`
 }
@@ -288,6 +294,7 @@ type ModelImportPreviewItem struct {
 	ModelId          string            `json:"model_id"`
 	ModelName        string            `json:"model_name"`
 	Category         string            `json:"category"`
+	Vendor           string            `json:"vendor"` // 研发厂商（空=未分类）
 	Status           string            `json:"status"`
 	MaxContextTokens int               `json:"max_context_tokens"`
 	MaxOutputTokens  int               `json:"max_output_tokens"`
@@ -312,6 +319,7 @@ type ModelImportItem struct {
 	ModelId          string                `json:"model_id" v:"required" dc:"模型唯一标识"`
 	ModelName        string                `json:"model_name" dc:"模型显示名称"`
 	Category         string                `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
+	Vendor           string                `json:"vendor" v:"in:openai,anthropic,google,xai,mistral,cohere,meta,alibaba,bytedance,deepseek,zhipu,moonshot,minimax,baidu,tencent,xunfei,kuaishou,midjourney,suno#厂商值不合法" dc:"研发厂商（空=未分类）"`
 	Status           string                `json:"status" dc:"状态"`
 	MaxContextTokens int                   `json:"max_context_tokens" dc:"最大上下文 token 数"`
 	MaxOutputTokens  int                   `json:"max_output_tokens" dc:"最大输出 token 数"`

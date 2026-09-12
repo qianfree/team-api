@@ -31,6 +31,7 @@ type BilWalletsColumns struct {
 	UpdatedAt          string // 更新时间
 	CumulativeRecharge string // 累计充值总额（USD）
 	LowBalanceNotified string // 低余额预警是否已推送（充值恢复后重置为 false）
+	TotalConsumed      string // 累计消费总额（本位币；Redis 钱包 hash total_consumed 的物化副本，随结算事件递增/补偿递减）
 }
 
 // bilWalletsColumns holds the columns for the table bil_wallets.
@@ -45,6 +46,7 @@ var bilWalletsColumns = BilWalletsColumns{
 	UpdatedAt:          "updated_at",
 	CumulativeRecharge: "cumulative_recharge",
 	LowBalanceNotified: "low_balance_notified",
+	TotalConsumed:      "total_consumed",
 }
 
 // NewBilWalletsDao creates and returns a new DAO object for table data access.

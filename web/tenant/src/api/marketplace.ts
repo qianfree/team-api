@@ -17,6 +17,8 @@ export interface MarketplaceModel {
   model_id: string
   model_name: string
   category: string
+  /** 研发厂商枚举（openai/anthropic/alibaba 等，空串=未分类） */
+  vendor?: string | null
   description: string
   max_context_tokens: number
   max_output_tokens: number
@@ -36,6 +38,7 @@ export interface MarketplaceModel {
 export interface MarketplaceListParams {
   keyword?: string
   category?: string
+  vendor?: string
   page: number
   page_size: number
 }
@@ -45,6 +48,8 @@ export interface MarketplaceListResponse {
   total: number
   page: number
   page_size: number
+  /** 当前条件下有模型的厂商去重列表（前端只渲染这些厂商筛选项） */
+  vendors?: string[] | null
 }
 
 export const getMarketplaceModels = (params: MarketplaceListParams) => {

@@ -6,6 +6,7 @@ import "github.com/gogf/gf/v2/frame/g"
 type TenantAvailableModelsReq struct {
 	g.Meta   `path:"/models" method:"get" mime:"json" tags:"租户控制台-模型" summary:"租户可用模型列表"`
 	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank"`
+	Vendor   string `json:"vendor" dc:"研发厂商筛选（openai/anthropic/alibaba等），空=不过滤"`
 	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 	// ApiKeyID 按指定 API Key 的模型范围过滤（可选；不传或为 0 时返回租户全部可用模型）
 	ApiKeyID int64 `json:"api_key_id" dc:"API Key ID（可选，传入时按该 Key 的模型范围过滤）"`
@@ -46,6 +47,7 @@ type TenantAvailableModelItem struct {
 	ModelId            string            `json:"model_id"`
 	ModelName          string            `json:"model_name"`
 	Category           string            `json:"category"`
+	Vendor             string            `json:"vendor"` // 研发厂商（空=未分类）
 	MaxContext         int               `json:"max_context_tokens"`
 	MaxOutput          int               `json:"max_output_tokens"`
 	Description        string            `json:"description"`

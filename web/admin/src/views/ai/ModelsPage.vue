@@ -11,6 +11,7 @@ import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { formatBilling } from '@/composables/useCurrency'
+import { vendorOptions, vendorLabelMap, vendorTagColor, filterVendorOption } from '@/constants/vendor'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -23,6 +24,7 @@ const pagination = reactive({
 })
 
 const filterCategory = ref<string | null>(null)
+const filterVendor = ref<string | null>(null)
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
 const filterPricingStatus = ref<string | null>(null)
@@ -48,6 +50,8 @@ const categoryOptions = [
   { label: '重排', value: 'rerank' },
 ]
 
+const vendorFilterOptions = [{ label: '全部厂商', value: '' }, ...vendorOptions]
+
 const statusOptions = [
   { label: '全部状态', value: '' },
   { label: '启用', value: 'active' },
@@ -66,6 +70,7 @@ const form = reactive({
   model_id: '',
   model_name: '',
   category: 'chat',
+  vendor: '',
   max_context_tokens: null as number | null,
   max_output_tokens: null as number | null,
   capabilities: {} as Record<string, boolean>,
@@ -213,6 +218,15 @@ const columns: TableColumnData[] = [
       return h(Tag, { color: categoryTagColor[record.category], size: 'small' }, () => categoryTagLabel[record.category] || record.category)
     },
   },
+  {
+    title: '厂商',
+    dataIndex: 'vendor',
+    width: 100,
+    render({ record }) {
+      if (!record.vendor) return h('span', { style: 'color: var(--color-text-4);' }, '—')
+      return h(Tag, { color: vendorTagColor[record.vendor] || 'gray', size: 'small' }, () => vendorLabelMap[record.vendor] || record.vendor)
+    },
+  },
   { title: '上下文', dataIndex: 'max_context_tokens', width: 100 },
   { title: '输出上限', dataIndex: 'max_output_tokens', width: 100 },
   {
@@ -313,6 +327,7 @@ async function fetchData() {
       page_size: pagination.pageSize,
     }
     if (filterCategory.value) params.category = filterCategory.value
+    if (filterVendor.value) params.vendor = filterVendor.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
     if (filterPricingStatus.value) params.pricing_status = filterPricingStatus.value
@@ -340,6 +355,7 @@ function openCreate() {
   form.model_id = ''
   form.model_name = ''
   form.category = 'chat'
+  form.vendor = ''
   form.max_context_tokens = null
   form.max_output_tokens = null
   form.capabilities = {}
@@ -358,6 +374,7 @@ function openEdit(row: any) {
   form.model_id = row.model_id
   form.model_name = row.model_name || ''
   form.category = row.category
+  form.vendor = row.vendor || ''
   form.max_context_tokens = row.max_context_tokens || null
   form.max_output_tokens = row.max_output_tokens || null
   form.capabilities = row.capabilities || {}
@@ -428,6 +445,7 @@ const { exporting, exportFile } = useExport({
   url: '/admin/models/export',
   getFilters: () => ({
     category: filterCategory.value,
+    vendor: filterVendor.value,
     status: filterStatus.value,
     search: filterSearch.value,
   }),
@@ -509,6 +527,15 @@ const importColumns: TableColumnData[] = [
     width: 80,
     render({ record }) {
       return h(Tag, { color: categoryTagColor[record.category], size: 'small' }, () => categoryTagLabel[record.category] || record.category)
+    },
+  },
+  {
+    title: '厂商',
+    dataIndex: 'vendor',
+    width: 90,
+    render({ record }) {
+      if (!record.vendor) return h('span', { style: 'color: var(--color-text-4);' }, '—')
+      return h(Tag, { color: vendorTagColor[record.vendor] || 'gray', size: 'small' }, () => vendorLabelMap[record.vendor] || record.vendor)
     },
   },
   {
@@ -677,6 +704,16 @@ function resetImport() {
           @change="handleFilter"
         />
         <ASelect
+          v-model="filterVendor"
+          :options="vendorFilterOptions"
+          placeholder="厂商"
+          allow-clear
+          allow-search
+          :filter-option="filterVendorOption"
+          style="width: 150px"
+          @change="handleFilter"
+        />
+        <ASelect
           v-model="filterStatus"
           :options="statusOptions"
           placeholder="状态"
@@ -710,7 +747,7 @@ function resetImport() {
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1500 }"
+        :scroll="{ x: 1600 }"
         :stripe="true"
         row-key="id"
         :row-selection="{ type: 'checkbox', showCheckedAll: true }"
@@ -814,6 +851,15 @@ function resetImport() {
             </AButton>
           </AFormItem>
         </div>
+        <AFormItem label="厂商">
+          <ASelect
+            v-model="form.vendor"
+            :options="[{ label: '未分类', value: '' }, ...vendorOptions]"
+            placeholder="选择研发厂商"
+            allow-search
+            :filter-option="filterVendorOption"
+          />
+        </AFormItem>
         <div style="display: flex; gap: 16px;">
           <AFormItem label="最大上下文" style="flex: 1;">
             <AInputNumber v-model="form.max_context_tokens" :min="0" placeholder="如 128000" class="w-full" />

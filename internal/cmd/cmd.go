@@ -157,6 +157,10 @@ var (
 			// relay 层运行时配置注入（全局超时兜底/系统代理；渠道级 settings 仍优先）
 			syncGlobalRelaySettings(ctx)
 
+			// 累计消费基线种子：为存量钱包 hash 补种 total_consumed 历史基线（幂等），
+			// 必须在 relay 流量进入前完成，防止结算 HINCRBY 从 0 起算丢历史
+			billing.SeedWalletTotalConsumed(ctx)
+
 			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
 			billing.StartWalletMaterializer(ctx)
 

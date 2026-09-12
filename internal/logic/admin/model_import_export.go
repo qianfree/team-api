@@ -28,6 +28,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		ModelId          string      `orm:"model_id" json:"model_id"`
 		ModelName        string      `orm:"model_name" json:"model_name"`
 		Category         string      `orm:"category" json:"category"`
+		Vendor           string      `orm:"vendor" json:"vendor"`
 		Status           string      `orm:"status" json:"status"`
 		MaxContextTokens int         `orm:"max_context_tokens" json:"max_context_tokens"`
 		MaxOutputTokens  int         `orm:"max_output_tokens" json:"max_output_tokens"`
@@ -64,6 +65,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		ModelId          string                   `json:"model_id"`
 		ModelName        string                   `json:"model_name"`
 		Category         string                   `json:"category"`
+		Vendor           string                   `json:"vendor,omitempty"` // 研发厂商（空=未分类，旧文件导入兼容）
 		Status           string                   `json:"status"`
 		MaxContextTokens int                      `json:"max_context_tokens"`
 		MaxOutputTokens  int                      `json:"max_output_tokens"`
@@ -148,6 +150,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			ModelId:          m.ModelId,
 			ModelName:        m.ModelName,
 			Category:         m.Category,
+			Vendor:           m.Vendor,
 			Status:           m.Status,
 			MaxContextTokens: m.MaxContextTokens,
 			MaxOutputTokens:  m.MaxOutputTokens,
@@ -280,6 +283,10 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					MaxOutputTokens:  item.MaxOutputTokens,
 					Description:      item.Description,
 				}
+				// 旧导出文件无 vendor 字段（空串），不覆盖已有厂商配置
+				if item.Vendor != "" {
+					updateData.Vendor = item.Vendor
+				}
 				if item.Tags != nil {
 					updateData.Tags = item.Tags
 				}
@@ -324,6 +331,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					ModelId:          item.ModelId,
 					ModelName:        item.ModelName,
 					Category:         item.Category,
+					Vendor:           item.Vendor,
 					Status:           "active",
 					MaxContextTokens: item.MaxContextTokens,
 					MaxOutputTokens:  item.MaxOutputTokens,
