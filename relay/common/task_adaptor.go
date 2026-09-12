@@ -15,12 +15,16 @@ type TaskAdaptor interface {
 	// ValidateRequest 校验请求参数
 	ValidateRequest(ctx context.Context, info *RelayInfo, body []byte) *TaskError
 
-	// EstimateBilling 估算任务费用（提交前）
-	// 返回计费比率 map，如 {"duration_ratio": 1.5, "resolution_ratio": 2.0}
-	EstimateBilling(ctx context.Context, info *RelayInfo, body []byte) map[string]float64
+	// EstimateBilling 估算任务费用（提交前）。
+	// 返回计费上下文 map，两类键：
+	//   - float64 乘数值：如 {"video_input": 0.6, "quality": 3.5}，引擎按序连乘；
+	//   - string 规格事实值：如 {"spec.duration": 8, "spec.resolution": "720p"}，
+	//     per_second 计费模式据此查定价矩阵（spec.duration 为 float64 秒数，spec.resolution 为规格原值）。
+	// 旧键 duration/resolution 保留 token 伪装估算路径使用，语义随各 adaptor 存量口径，勿混用。
+	EstimateBilling(ctx context.Context, info *RelayInfo, body []byte) map[string]any
 
 	// AdjustBillingOnSubmit 提交后根据上游确认参数调整计费
-	AdjustBillingOnSubmit(info *RelayInfo, taskData []byte) map[string]float64
+	AdjustBillingOnSubmit(info *RelayInfo, taskData []byte) map[string]any
 
 	// BuildRequestURL 构建上游请求 URL
 	BuildRequestURL(info *RelayInfo) (string, error)

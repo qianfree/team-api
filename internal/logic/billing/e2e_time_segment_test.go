@@ -62,13 +62,12 @@ func TestE2ETimeSegmentPricing(t *testing.T) {
 	start := now.Add(-time.Hour).Format("15:04")
 	end := now.Add(time.Hour).Format("15:04")
 	segJSON := fmt.Sprintf(`[{"name":"闲时","start_time":%q,"end_time":%q,"multiplier":0.5}]`, start, end)
+	// pricing JSONB 单模式存储：token 价 + 时段配置（时段并入顶层）
+	pricingJSON := fmt.Sprintf(`{"input_price":3,"output_price":15,"time_segments":%s}`, segJSON)
 	if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-		ModelId:      modelID,
-		BillingMode:  "token",
-		MinTokens:    0,
-		InputPrice:   NewFromFloat(3),
-		OutputPrice:  NewFromFloat(15),
-		TimeSegments: segJSON,
+		ModelId:     modelID,
+		BillingMode: "token",
+		Pricing:     pricingJSON,
 	}); err != nil {
 		t.Fatalf("insert tmp pricing: %v", err)
 	}

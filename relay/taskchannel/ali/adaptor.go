@@ -140,25 +140,27 @@ func (a *AliAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, bod
 	return nil
 }
 
-func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req map[string]any
 	if json.Unmarshal(body, &req) != nil {
 		return ratios
 	}
 
 	if a.isVideo {
-		// duration 影响计费
+		// duration 影响计费：spec.duration 为真实秒数（per_second 用），duration 为存量信号
 		metadata := taskchannel.ExtractMetadata(req)
 		var meta struct {
 			Duration *int `json:"duration"`
 		}
 		if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration != nil && *meta.Duration > 0 {
 			ratios["duration"] = float64(*meta.Duration)
+			ratios["spec.duration"] = float64(*meta.Duration)
 		}
 		if seconds, ok := req["seconds"].(string); ok {
 			if d, err := parseInt(seconds); err == nil && d > 0 {
 				ratios["duration"] = float64(d)
+				ratios["spec.duration"] = float64(d)
 			}
 		}
 	} else {
@@ -171,7 +173,7 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 	return ratios
 }
 
-func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 

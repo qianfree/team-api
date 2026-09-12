@@ -122,7 +122,7 @@ type SyncImageJob struct {
 	Model           string
 	RequestBody     []byte
 	PreDeductAmount decimal.Decimal
-	Ratios          map[string]float64
+	Ratios          map[string]any
 	SubmitTime      time.Time
 }
 

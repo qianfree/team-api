@@ -45,11 +45,12 @@ type ModelItem struct {
 	DeprecatedAt     *string         `json:"deprecated_at"`
 	SunsetDate       *string         `json:"sunset_date"`
 	ReplacementModel string          `json:"replacement_model"`
-	// 定价摘要（来自 mdl_pricing，min_tokens=0 的基准行）
-	PricingMode     string  `json:"pricing_mode"`      // "" | "token" | "per_request" | "tiered"
-	InputPrice      float64 `json:"input_price"`       // $/1M tokens
-	OutputPrice     float64 `json:"output_price"`      // $/1M tokens
-	PerRequestPrice float64 `json:"per_request_price"` // $/request（按次计费模式）
+	// 定价摘要（来自 mdl_pricing 的 pricing JSONB）
+	PricingMode     string             `json:"pricing_mode"`                // "" | "token" | "per_request" | "tiered" | "per_second"
+	InputPrice      float64            `json:"input_price"`                 // $/1M tokens
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"` // 规格→$/秒（仅 per_second 模式）
+	OutputPrice     float64            `json:"output_price"`                // $/1M tokens
+	PerRequestPrice float64            `json:"per_request_price"`           // $/request（按次计费模式）
 	// 可用渠道列表（来自 chn_abilities + chn_channels）
 	Channels []ModelChannelInfo `json:"channels"`
 }
@@ -94,19 +95,20 @@ type ModelDeleteReq struct {
 	ID     int64 `json:"id" in:"path" v:"required" dc:"模型ID"`
 }
 
-// PricingItem 定价项（支持按次/按量/阶梯）
+// PricingItem 定价项（支持按次/按量/阶梯/按秒）
 type PricingItem struct {
-	BillingMode        string   `json:"billing_mode" v:"required|in:token,per_request,tiered" dc:"计费模式"`
-	MinTokens          int64    `json:"min_tokens" dc:"阶梯起始 token 数"`
-	MaxTokens          *int64   `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
-	InputPrice         float64  `json:"input_price" dc:"每 1M input token 价格"`
-	OutputPrice        float64  `json:"output_price" dc:"每 1M output token 价格"`
-	PerRequestPrice    *float64 `json:"per_request_price" dc:"按次单价（仅 per_request）"`
-	CacheReadPrice     float64  `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
-	CacheCreationPrice float64  `json:"cache_creation_price" dc:"缓存创建每 1M token 价格"`
+	BillingMode        string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second" dc:"计费模式"`
+	MinTokens          int64              `json:"min_tokens" dc:"阶梯起始 token 数"`
+	MaxTokens          *int64             `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
+	InputPrice         float64            `json:"input_price" dc:"每 1M input token 价格"`
+	OutputPrice        float64            `json:"output_price" dc:"每 1M output token 价格"`
+	PerRequestPrice    *float64           `json:"per_request_price" dc:"按次单价（仅 per_request）"`
+	CacheReadPrice     float64            `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
+	CacheCreationPrice float64            `json:"cache_creation_price" dc:"缓存创建每 1M token 价格"`
+	PerSecondPrices    map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
 }
 
-// TimeSegmentItem 时段定价项（mdl_pricing.time_segments JSONB 数组元素）。
+// TimeSegmentItem 时段定价项（mdl_pricing.pricing JSONB 顶层 time_segments 数组元素）。
 // 语义：按数组顺序先命中先生效（促销时段放前面覆盖常驻时段），未命中=默认价（乘数 1.0）；
 // 最终费用 = 各项小计 × 租户乘数 × 时段乘数。
 type TimeSegmentItem struct {
@@ -119,6 +121,22 @@ type TimeSegmentItem struct {
 	Multiplier float64 `json:"multiplier" v:"required|min:0.0001|max:10" dc:"价格乘数，0.5=半价"`
 }
 
+// ParamConditionItem 参数倍率匹配条件（mdl_pricing.pricing JSONB 顶层 param_multipliers 数组元素）。
+// 匹配对象为网关归一化后的任务体（{model, prompt, seconds, metadata{...}}），
+// 支持数组通配（[*]，任一元素命中即命中），字符串数字自动强转参与比较。
+type ParamConditionItem struct {
+	Path  string `json:"path" v:"required" dc:"任务体 JSON 路径，如 metadata.image / seconds / metadata.content[*].video_url"`
+	Match string `json:"match" v:"required|in:has_value,equals,gt,gte,lt,lte,between" dc:"匹配方式"`
+	Value any    `json:"value,omitempty" dc:"比对值：equals/gt/gte/lt/lte 单值；between 为 [min,max]；has_value 不填"`
+}
+
+// ParamMultiplierItem 参数倍率规则：conditions 全部满足（隐式与）时倍率计入连乘；规则间连乘。
+type ParamMultiplierItem struct {
+	Conditions []ParamConditionItem `json:"conditions" v:"required" dc:"条件列表（全部满足才命中）"`
+	Multiplier float64              `json:"multiplier" v:"required|min:0.0001|max:100" dc:"命中倍率，1.5=加价50%"`
+	Note       string               `json:"note" dc:"命中说明（写入计费上下文供对账解释）"`
+}
+
 // PricingGetReq 获取模型定价
 type PricingGetReq struct {
 	g.Meta  `path:"/models/{model_id}/pricing" method:"get" mime:"json" tags:"管理后台-模型" summary:"获取模型定价"`
@@ -126,9 +144,10 @@ type PricingGetReq struct {
 }
 
 type PricingGetRes struct {
-	List         []PricingItem     `json:"list"`
-	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价列表（锚点行 time_segments）"`
-	// 以下为锚点行展示字段（仅 min_tokens=0 行生效）
+	List             []PricingItem         `json:"list"`
+	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表（pricing JSONB 顶层）"`
+	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（pricing JSONB 顶层，横切所有计费模式）"`
+	// 以下为定价行展示字段
 	PriceNote       string `json:"price_note" dc:"价格说明（仅管理后台可见的内部备注）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示，如 7折起）"`
 	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示，提示价格有变动）"`
@@ -136,11 +155,12 @@ type PricingGetRes struct {
 
 // PricingSetReq 设置模型定价（全量替换）
 type PricingSetReq struct {
-	g.Meta       `path:"/models/{model_id}/pricing" method:"put" mime:"json" tags:"管理后台-模型" summary:"设置模型定价"`
-	ModelID      int64             `json:"model_id" in:"path" v:"required" dc:"模型ID"`
-	Items        []PricingItem     `json:"items" v:"required" dc:"定价列表"`
-	TimeSegments []TimeSegmentItem `json:"time_segments" dc:"时段定价（可选，全量替换；空数组清除时段配置）"`
-	// 以下为锚点行展示字段（全量替换语义：空=清除；price_note 不透出到租户端）
+	g.Meta           `path:"/models/{model_id}/pricing" method:"put" mime:"json" tags:"管理后台-模型" summary:"设置模型定价"`
+	ModelID          int64                 `json:"model_id" in:"path" v:"required" dc:"模型ID"`
+	Items            []PricingItem         `json:"items" v:"required" dc:"定价列表"`
+	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价（可选，全量替换；空数组清除时段配置）"`
+	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选，全量替换；空数组清除）"`
+	// 以下为定价行展示字段（全量替换语义：空=清除；price_note 不透出到租户端）
 	PriceNote       string `json:"price_note" dc:"价格说明（仅内部可见）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示）"`
 	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示）"`
@@ -277,22 +297,23 @@ type ModelImportReq struct {
 	Models []ModelImportItem `json:"models" v:"required#请至少导入一个模型"`
 }
 
-// ModelImportItem 导入模型项
+// ModelImportItem 导入模型项（含定价/时段/参数倍率，全量替换语义）
 type ModelImportItem struct {
-	ModelId          string            `json:"model_id" v:"required" dc:"模型唯一标识"`
-	ModelName        string            `json:"model_name" dc:"模型显示名称"`
-	Category         string            `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
-	Status           string            `json:"status" dc:"状态"`
-	MaxContextTokens int               `json:"max_context_tokens" dc:"最大上下文 token 数"`
-	MaxOutputTokens  int               `json:"max_output_tokens" dc:"最大输出 token 数"`
-	Capabilities     map[string]bool   `json:"capabilities" dc:"模型能力特性"`
-	Description      string            `json:"description" dc:"模型描述"`
-	Tags             []string          `json:"tags" dc:"标签列表"`
-	SunsetDate       string            `json:"sunset_date" dc:"下线日期"`
-	ReplacementModel string            `json:"replacement_model" dc:"推荐替代模型名"`
-	Pricing          []PricingItem     `json:"pricing" dc:"定价列表"`
-	TimeSegments     []TimeSegmentItem `json:"time_segments" dc:"时段定价列表（可选）"`
-	ConflictAction   string            `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
+	ModelId          string                `json:"model_id" v:"required" dc:"模型唯一标识"`
+	ModelName        string                `json:"model_name" dc:"模型显示名称"`
+	Category         string                `json:"category" v:"required|in:chat,embedding,image,audio,rerank,video#请选择分类|分类无效" dc:"模型分类"`
+	Status           string                `json:"status" dc:"状态"`
+	MaxContextTokens int                   `json:"max_context_tokens" dc:"最大上下文 token 数"`
+	MaxOutputTokens  int                   `json:"max_output_tokens" dc:"最大输出 token 数"`
+	Capabilities     map[string]bool       `json:"capabilities" dc:"模型能力特性"`
+	Description      string                `json:"description" dc:"模型描述"`
+	Tags             []string              `json:"tags" dc:"标签列表"`
+	SunsetDate       string                `json:"sunset_date" dc:"下线日期"`
+	ReplacementModel string                `json:"replacement_model" dc:"推荐替代模型名"`
+	Pricing          []PricingItem         `json:"pricing" dc:"定价列表"`
+	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表（可选）"`
+	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选）"`
+	ConflictAction   string                `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
 }
 
 // ModelImportRes 导入结果响应

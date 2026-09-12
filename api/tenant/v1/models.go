@@ -36,6 +36,8 @@ type TimePriceItem struct {
 	InputPrice      *float64 `json:"input_price"`
 	OutputPrice     *float64 `json:"output_price"`
 	PerRequestPrice *float64 `json:"per_request_price"`
+	// per_second 模型填 PerSecondPrice（兜底档 "*" 的换算价，无 "*" 取矩阵最低档）
+	PerSecondPrice *float64 `json:"per_second_price"`
 }
 
 // TenantAvailableModelItem 租户可用模型信息
@@ -58,6 +60,9 @@ type TenantAvailableModelItem struct {
 	CacheReadPrice     *float64          `json:"cache_read_price"`
 	CacheCreationPrice *float64          `json:"cache_creation_price"`
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
+	// PerSecondPrices 按秒计费矩阵（billing_mode=per_second）：分辨率规格 → 每秒单价（本位币），
+	// "*" 为兜底价。租户倍率/折扣在计费时作用，展示为平台原价。
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
 	// TimePrices 时段价目（平台配置了时段定价的模型才有；价格为换算后的展示价）
 	TimePrices []TimePriceItem `json:"time_prices"`
 	// DiscountLabel 折扣标签（平台定价锚点行配置的营销展示文案，如"7折起"；NULL=不展示）

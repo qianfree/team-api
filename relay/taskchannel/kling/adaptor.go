@@ -116,8 +116,8 @@ func (a *KlingAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, b
 	return nil
 }
 
-func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req map[string]any
 	if json.Unmarshal(body, &req) != nil {
 		return ratios
@@ -145,7 +145,7 @@ func (a *KlingAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, b
 	return ratios
 }
 
-func (a *KlingAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *KlingAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 
