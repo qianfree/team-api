@@ -31,4 +31,6 @@ type TntTenants struct {
 	DefaultChannelScope any         // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               any         // 当前等级（对应 tnt_tenant_level_configs.level）
 	TeamEnabled         any         // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
+	Tags                any         // 租户标签（JSONB 字符串数组，管理后台运营标注，不暴露给租户控制台）
+	Remark              any         // 管理员备注（运营备注，不暴露给租户控制台）
 }

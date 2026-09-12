@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
 
@@ -41,24 +42,32 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			Total:    0,
 			Page:     req.Page,
 			PageSize: req.PageSize,
+			Vendors:  []string{},
 		}, nil
 	}
 
-	// 2. 构建查询：通过分组关联查询模型
-	m := dao.MdlModels.Ctx(ctx).
-		LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
-		Where("mdl_group_models.group_id", defaultGroup.Id).
-		Where("mdl_models.status", "active")
-
-	// 搜索关键词
-	if req.Keyword != "" {
-		keyword := "%" + req.Keyword + "%"
-		m = m.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
+	// 2. 构建查询：通过分组关联查询模型（厂商 facet 与主列表共用同一套基础条件，
+	// 用闭包各自构建链路，避免 gf Model 链式分支共享底层状态的歧义）
+	newQuery := func() *gdb.Model {
+		q := dao.MdlModels.Ctx(ctx).
+			LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
+			Where("mdl_group_models.group_id", defaultGroup.Id).
+			Where("mdl_models.status", "active")
+		if req.Keyword != "" {
+			keyword := "%" + req.Keyword + "%"
+			q = q.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
+		}
+		if req.Category != "" {
+			q = q.Where("mdl_models.category", req.Category)
+		}
+		return q
 	}
 
-	// 分类筛选
-	if req.Category != "" {
-		m = m.Where("mdl_models.category", req.Category)
+	m := newQuery()
+
+	// 厂商筛选
+	if req.Vendor != "" {
+		m = m.Where("mdl_models.vendor", req.Vendor)
 	}
 
 	// 排序：按类别、模型名称
@@ -68,6 +77,23 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 	total, err := m.Count()
 	if err != nil {
 		return nil, err
+	}
+
+	// 3.1 厂商 facet：在当前关键词/分类条件下（忽略厂商筛选本身）有模型的厂商去重列表，
+	// 前端据此只渲染实际有模型的厂商筛选项，保证点任一厂商都有结果
+	var vendorRows []struct {
+		Vendor string `json:"vendor"`
+	}
+	err = newQuery().
+		Where("mdl_models.vendor <> ''").
+		Fields("DISTINCT mdl_models.vendor").
+		Scan(&vendorRows)
+	if err != nil {
+		return nil, err
+	}
+	vendors := make([]string, 0, len(vendorRows))
+	for _, r := range vendorRows {
+		vendors = append(vendors, r.Vendor)
 	}
 
 	// 4. 分页查询模型
@@ -86,6 +112,7 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			Total:    0,
 			Page:     req.Page,
 			PageSize: req.PageSize,
+			Vendors:  vendors,
 		}, nil
 	}
 
@@ -120,6 +147,7 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 		Total:    total,
 		Page:     req.Page,
 		PageSize: req.PageSize,
+		Vendors:  vendors,
 	}, nil
 }
 
@@ -177,6 +205,7 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		ModelId:          model.ModelId,
 		ModelName:        model.ModelName,
 		Category:         model.Category,
+		Vendor:           model.Vendor,
 		Description:      model.Description,
 		MaxContextTokens: model.MaxContextTokens,
 		MaxOutputTokens:  model.MaxOutputTokens,

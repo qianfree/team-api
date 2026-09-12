@@ -33,6 +33,8 @@ const editForm = reactive({
   level: null as number | null,
   max_members: null as number | null,
   max_concurrency: null as number | null,
+  tags: [] as string[],
+  remark: '',
 })
 
 // 等级配置选项（后端接口）
@@ -69,6 +71,8 @@ watch(() => props.detail, (d) => {
   editForm.level = d.level ?? null
   editForm.max_members = d.max_members ?? null
   editForm.max_concurrency = d.max_concurrency ?? null
+  editForm.tags = Array.isArray(d.tags) ? [...d.tags] : []
+  editForm.remark = d.remark || ''
 }, { immediate: true })
 
 async function saveEdit() {
@@ -108,6 +112,18 @@ onMounted(fetchLevelOptions)
         <ADescriptionsItem label="钱包余额">
           <span class="money">{{ formatBilling(detail.wallet_balance, 2) }}</span>
         </ADescriptionsItem>
+        <ADescriptionsItem label="累计消费">
+          <span class="money">{{ formatBilling(detail.total_consumed, 2) }}</span>
+        </ADescriptionsItem>
+        <ADescriptionsItem label="标签" :span="isMobile ? 1 : 2">
+          <template v-if="detail.tags?.length">
+            <ATag v-for="t in detail.tags" :key="t" size="small" color="arcoblue" style="margin: 0 4px 4px 0">{{ t }}</ATag>
+          </template>
+          <template v-else>-</template>
+        </ADescriptionsItem>
+        <ADescriptionsItem label="备注" :span="isMobile ? 1 : 2">
+          {{ detail.remark || '-' }}
+        </ADescriptionsItem>
         <ADescriptionsItem label="并发上限">
           {{ getEffectiveMaxConcurrency() ?? '不限' }}
           <ATag v-if="detail.max_concurrency != null" size="small" color="arcoblue" style="margin-left: 4px">自定义</ATag>
@@ -146,6 +162,12 @@ onMounted(fetchLevelOptions)
               {{ opt.name }}（{{ (opt.price_multiplier * 100).toFixed(0) }}%）
             </AOption>
           </ASelect>
+        </AFormItem>
+        <AFormItem label="标签" extra="最多 10 个，每个不超过 30 字符">
+          <AInputTag v-model="editForm.tags" :max-tag-count="10" placeholder="输入后回车添加标签" allow-clear class="w-full" />
+        </AFormItem>
+        <AFormItem label="备注" extra="仅管理后台可见">
+          <ATextarea v-model="editForm.remark" placeholder="运营备注（最长 1000 字符）" :max-length="1000" show-word-limit :auto-size="{ minRows: 2, maxRows: 5 }" class="w-full" />
         </AFormItem>
         <AFormItem>
           <AButton type="primary" :loading="editLoading" @click="saveEdit">保存</AButton>

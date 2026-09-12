@@ -25,6 +25,8 @@ type TenantListReq struct {
 	PageSize int    `json:"page_size" d:"20" dc:"每页数量"`
 	Keyword  string `json:"keyword" dc:"搜索关键词（名称/代码）"`
 	Status   string `json:"status" dc:"状态筛选：active/suspended/closed"`
+	Tag      string `json:"tag" dc:"标签精确筛选"`
+	Level    *int   `json:"level" dc:"等级筛选（对应 tnt_tenant_level_configs.level）"`
 }
 
 type TenantListRes struct {
@@ -35,24 +37,27 @@ type TenantListRes struct {
 }
 
 type TenantItem struct {
-	ID                      int64  `json:"id"`
-	Name                    string `json:"name"`
-	Code                    string `json:"code"`
-	LogoURL                 string `json:"logo_url"`
-	OwnerUserID             int64  `json:"owner_user_id"`
-	OwnerName               string `json:"owner_name"`
-	Status                  string `json:"status"`
-	MaxMembers              *int   `json:"max_members" dc:"最大成员数上限，NULL表示跟随等级配置"`
-	MaxConcurrency          *int   `json:"max_concurrency" dc:"并发上限，NULL表示跟随等级配置"`
-	EffectiveMaxMembers     int    `json:"effective_max_members" dc:"实际生效的成员数上限"`
-	EffectiveMaxConcurrency int    `json:"effective_max_concurrency" dc:"实际生效的并发上限"`
-	DefaultChannelScope     string `json:"default_channel_scope"`
-	MemberCount             int    `json:"member_count"`
-	WalletBalance           string `json:"wallet_balance"`
-	Level                   int    `json:"level"`
-	LevelName               string `json:"level_name"`
-	CreatedAt               string `json:"created_at"`
-	UpdatedAt               string `json:"updated_at"`
+	ID                      int64    `json:"id"`
+	Name                    string   `json:"name"`
+	Code                    string   `json:"code"`
+	LogoURL                 string   `json:"logo_url"`
+	OwnerUserID             int64    `json:"owner_user_id"`
+	OwnerName               string   `json:"owner_name"`
+	Status                  string   `json:"status"`
+	MaxMembers              *int     `json:"max_members" dc:"最大成员数上限，NULL表示跟随等级配置"`
+	MaxConcurrency          *int     `json:"max_concurrency" dc:"并发上限，NULL表示跟随等级配置"`
+	EffectiveMaxMembers     int      `json:"effective_max_members" dc:"实际生效的成员数上限"`
+	EffectiveMaxConcurrency int      `json:"effective_max_concurrency" dc:"实际生效的并发上限"`
+	DefaultChannelScope     string   `json:"default_channel_scope"`
+	MemberCount             int      `json:"member_count"`
+	WalletBalance           string   `json:"wallet_balance"`
+	Tags                    []string `json:"tags" dc:"租户标签（管理后台运营标注）"`
+	Remark                  string   `json:"remark" dc:"管理员备注"`
+	TotalConsumed           string   `json:"total_consumed" dc:"累计消费（本位币，decimal 字符串；Redis 权威计数的物化副本，≤5s 滞后）"`
+	Level                   int      `json:"level"`
+	LevelName               string   `json:"level_name"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
 }
 
 // TenantGetReq 获取租户详情
@@ -85,11 +90,13 @@ type TenantUpdateStatusRes struct{}
 // TenantUpdateReq 更新租户信息
 type TenantUpdateReq struct {
 	g.Meta         `path:"/tenants/{id}" method:"put" mime:"json" tags:"管理后台-租户管理" summary:"更新租户"`
-	Id             int64  `json:"id" in:"path" v:"required" dc:"租户ID"`
-	Name           string `json:"name" dc:"租户名称"`
-	MaxMembers     *int   `json:"max_members" dc:"最大成员数"`
-	MaxConcurrency *int   `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
-	Level          *int   `json:"level" dc:"租户等级（调整等级会同步更新成员数和并发数为该等级的配置值）"`
+	Id             int64    `json:"id" in:"path" v:"required" dc:"租户ID"`
+	Name           string   `json:"name" dc:"租户名称"`
+	MaxMembers     *int     `json:"max_members" dc:"最大成员数"`
+	MaxConcurrency *int     `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
+	Level          *int     `json:"level" dc:"租户等级（调整等级会同步更新成员数和并发数为该等级的配置值）"`
+	Tags           []string `json:"tags" dc:"租户标签（≤10 个，每项 ≤30 字符，传空数组清空标签）"`
+	Remark         *string  `json:"remark" dc:"管理员备注（≤1000 字符）"`
 }
 
 type TenantUpdateRes struct{}
@@ -138,6 +145,8 @@ type TenantExportReq struct {
 	Format  string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
 	Keyword string `json:"keyword" in:"query" dc:"搜索关键词（名称/代码）"`
 	Status  string `json:"status" in:"query" dc:"状态筛选：active/suspended/closed"`
+	Tag     string `json:"tag" in:"query" dc:"标签筛选"`
+	Level   *int   `json:"level" in:"query" dc:"等级筛选"`
 }
 
 type TenantExportRes struct{}

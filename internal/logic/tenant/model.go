@@ -139,7 +139,7 @@ func fillFromBlob(blob *billing.PricingBlob) (input, output, cacheRead, cacheCre
 func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsReq) (*v1.TenantAvailableModelsRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	models, err := lcommon.GetTenantAvailableModels(ctx, tenantID, req.Category, req.Search)
+	models, err := lcommon.GetTenantAvailableModels(ctx, tenantID, req.Category, req.Vendor, req.Search)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +282,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				ModelId:            m.ModelId,
 				ModelName:          m.ModelName,
 				Category:           m.Category,
+				Vendor:             m.Vendor,
 				MaxContext:         m.MaxContextTokens,
 				MaxOutput:          m.MaxOutputTokens,
 				Description:        m.Description,
@@ -339,6 +340,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				ModelId:            m.ModelId,
 				ModelName:          m.ModelName,
 				Category:           m.Category,
+				Vendor:             m.Vendor,
 				MaxContext:         m.MaxContextTokens,
 				MaxOutput:          m.MaxOutputTokens,
 				Description:        m.Description,

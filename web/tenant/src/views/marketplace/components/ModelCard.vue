@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import VendorLogo from '@/components/common/VendorLogo.vue'
 import type { MarketplaceModel } from '@/api/marketplace'
 import { formatPrice, formatTokens, getCategoryMeta, getCapabilityList } from '../marketplaceMeta'
 
@@ -69,6 +70,7 @@ const cardStyle = computed(() => ({
 				</div>
 				<div class="min-w-0 flex-1">
 					<div class="flex items-start gap-2">
+						<VendorLogo :vendor="model.vendor" size="sm" class="mt-0.5 shrink-0" />
 						<h3 class="line-clamp-1 text-base font-semibold text-gray-900">{{ model.model_name || model.model_id }}</h3>
 						<span v-if="model.discount_label" class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
 							{{ model.discount_label }}

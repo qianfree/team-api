@@ -71,6 +71,9 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	if req.Category != "" {
 		query = query.Where("category", req.Category)
 	}
+	if req.Vendor != "" {
+		query = query.Where("vendor", req.Vendor)
+	}
 	if req.Status != "" {
 		query = query.Where("status", req.Status)
 	}
@@ -98,6 +101,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		ModelId          string      `json:"model_id"`
 		ModelName        string      `json:"model_name"`
 		Category         string      `json:"category"`
+		Vendor           string      `json:"vendor"`
 		Status           string      `json:"status"`
 		MaxContextTokens int         `json:"max_context_tokens"`
 		MaxOutputTokens  int         `json:"max_output_tokens"`
@@ -111,7 +115,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		ReplacementModel string      `json:"replacement_model"`
 	}
 
-	err := query.Fields("id, model_id, model_name, category, status, max_context_tokens, max_output_tokens, capabilities, description, tags, created_at, updated_at, deprecated_at, sunset_date, replacement_model").
+	err := query.Fields("id, model_id, model_name, category, vendor, status, max_context_tokens, max_output_tokens, capabilities, description, tags, created_at, updated_at, deprecated_at, sunset_date, replacement_model").
 		OrderDesc("id").
 		Page(req.Page, req.PageSize).
 		ScanAndCount(&models, &total, false)
@@ -184,6 +188,7 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			ModelId:      m.ModelId,
 			ModelName:    m.ModelName,
 			Category:     m.Category,
+			Vendor:       m.Vendor,
 			Status:       m.Status,
 			MaxContext:   m.MaxContextTokens,
 			MaxOutput:    m.MaxOutputTokens,
@@ -255,6 +260,7 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		ModelId:          req.ModelId,
 		ModelName:        req.ModelName,
 		Category:         req.Category,
+		Vendor:           req.Vendor, // 空串=未分类
 		Status:           "active",
 		MaxContextTokens: req.MaxContext,
 		MaxOutputTokens:  req.MaxOutput,
@@ -288,6 +294,22 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 	return &v1.ModelCreateRes{ID: id}, nil
 }
 
+// validModelVendors 模型研发厂商合法值集合（与 mdl_models.vendor 枚举、API v:"in:" 标签、前端字典对齐）。
+// 注意与 chn_channels.type 的"渠道供应商"是两个维度：研发厂商指模型的开发公司，
+// 例如 Bedrock 上的 Claude 厂商仍是 anthropic。
+var validModelVendors = map[string]struct{}{
+	"openai": {}, "anthropic": {}, "google": {}, "xai": {}, "mistral": {}, "cohere": {},
+	"meta": {}, "alibaba": {}, "bytedance": {}, "deepseek": {}, "zhipu": {}, "moonshot": {},
+	"minimax": {}, "baidu": {}, "tencent": {}, "xunfei": {}, "kuaishou": {}, "midjourney": {},
+	"suno": {},
+}
+
+// isValidModelVendor 校验研发厂商枚举值
+func isValidModelVendor(v string) bool {
+	_, ok := validModelVendors[v]
+	return ok
+}
+
 // UpdateModel 更新模型（含弃用状态管理）
 func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error) {
 	var oldModel *struct {
@@ -309,6 +331,14 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 	}
 	if req.Category != "" {
 		data.Category = req.Category
+		hasUpdate = true
+	}
+	// 厂商指针语义：nil=不更新；空串=清空回未分类（do 字段为 any，空串不会被 ORM 忽略）；非空=校验枚举后设置
+	if req.Vendor != nil {
+		if *req.Vendor != "" && !isValidModelVendor(*req.Vendor) {
+			return nil, common.NewBusinessError(422, "厂商值不合法")
+		}
+		data.Vendor = *req.Vendor
 		hasUpdate = true
 	}
 	data.MaxContextTokens = req.MaxContext
