@@ -1,0 +1,109 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "list files"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": "先用 shell 工具查看目录结构。",
+          "thought": true
+        },
+        {
+          "functionCall": {
+            "args": {
+              "cmd": "ls"
+            },
+            "name": "shell"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "shell",
+            "response": {
+              "result": "Chunk ID: ab12cd\nOutput:\na.go b.go"
+            }
+          }
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": "目录里有两个 Go 文件。"
+        },
+        {
+          "text": "根据目录内容回复用户。",
+          "thought": true
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "text": "open a.go"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {},
+  "safetySettings": [
+    {
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "BLOCK_ONLY_HIGH"
+    },
+    {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "BLOCK_ONLY_HIGH"
+    },
+    {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "BLOCK_ONLY_HIGH"
+    },
+    {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "BLOCK_ONLY_HIGH"
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a coding agent."
+      }
+    ],
+    "role": ""
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "shell",
+          "parameters": {
+            "properties": {
+              "cmd": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cmd"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    }
+  ]
+}
