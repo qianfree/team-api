@@ -1,6 +1,12 @@
 package shared
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/qianfree/team-api/relaykit/dto"
+)
 
 // geminiSchemaAllowedKeys Gemini Schema 支持的 JSON Schema 关键字白名单。
 // OpenAI 的 function.parameters 与 Claude 的 input_schema 同源，都可能携带
@@ -111,4 +117,52 @@ func cleanGeminiSchema(node any) any {
 		}
 	}
 	return out
+}
+
+// ToolResultToGeminiResponse 把工具输出归一化为 Gemini functionResponse.response
+// 可接受的值。Gemini 的该字段是 google.protobuf.Struct——**必须是 JSON 对象**：
+// 纯文本（shell 输出等）、数组、标量一律包成 {"result": ...}，原样传字符串会被
+// protojson 直接 400（线上实测：codex 的 shell 工具输出 "Chunk ID: ...\nOutput:\n{...}"
+// 混合文本 → Invalid value at function_response.response (Struct)）。
+// 对象原样透传；nil / 空串返回空对象。
+func ToolResultToGeminiResponse(content any) any {
+	switch v := content.(type) {
+	case nil:
+		return map[string]any{}
+	case map[string]any:
+		return v
+	case string:
+		if v == "" {
+			return map[string]any{}
+		}
+		var parsed any
+		if json.Unmarshal([]byte(v), &parsed) == nil {
+			if m, ok := parsed.(map[string]any); ok {
+				return m
+			}
+		}
+		return map[string]any{"result": v}
+	case []any:
+		var texts []string
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok || m["type"] != "text" {
+				continue
+			}
+			if text, ok := m["text"].(string); ok {
+				texts = append(texts, text)
+			}
+		}
+		return map[string]any{"result": strings.Join(texts, "\n")}
+	case []dto.ClaudeContentBlock:
+		var texts []string
+		for i := range v {
+			if v[i].Text != nil {
+				texts = append(texts, *v[i].Text)
+			}
+		}
+		return map[string]any{"result": strings.Join(texts, "\n")}
+	default:
+		return map[string]any{"result": fmt.Sprintf("%v", v)}
+	}
 }

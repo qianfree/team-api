@@ -32,7 +32,9 @@
         {
           "functionResponse": {
             "name": "get_weather",
-            "response": "68F, sunny"
+            "response": {
+              "result": "68F, sunny"
+            }
           }
         }
       ],

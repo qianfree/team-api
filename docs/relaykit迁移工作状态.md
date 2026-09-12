@@ -17,7 +17,7 @@
 | 决策点 | 选定方案 |
 |--------|----------|
 | 注册表改造 | **允许单侧注册**（请求侧或响应侧可单独为空），反向方向才注册得进去 |
-| 跨原生方向表达 | **中枢链式 + 直连覆盖**：请求走 `A→OpenAI→B` 步骤链，响应用直连转换器（保真度高） |
+| 跨原生方向表达 | **中枢链式 + 直连覆盖**：请求走 `A→OpenAI→B` 步骤链，响应用直连转换器（保真度高）。<br>后修订：Claude→Gemini 请求侧改为直连（见 §六.11） |
 | legacy 兜底策略 | **立即 hard-fail**：不再"解析失败回退旧实现"，legacy 随迁随删 |
 | 迁移范围 | 全选：4 个跨原生响应桥 + openai/converter.go 反向方向 + o2c/o2g 双实现清理 + 小方向补全 |
 
@@ -53,7 +53,8 @@
 - OpenAI 入站 → Claude / Gemini / Ollama(chat)（原有）
 - 反向：Claude / Gemini / Responses 入站 → OpenAI 上游（新）
 - OpenAI chat → Responses 上游（ChatViaResponses 桥接，新）
-- 跨原生：Claude→Gemini、Gemini→Claude、Responses→Claude、Responses→Gemini（新，请求侧为步骤链）
+- 跨原生：Claude→Gemini、Gemini→Claude、Responses→Claude、Responses→Gemini
+  （新；响应侧全部直连，请求侧 Claude→Gemini 已改直连，其余仍为步骤链）
 
 ### 3.4 宿主桥接层改造
 
@@ -250,6 +251,13 @@ relay 测试仅剩 §六.7 既有失败 ✅、触及文件 gofmt 干净 ✅。
    请求给出不同格式结论。
 10. **provider 后处理钩子只在 relaykit 路径调用**：adaptor 路径的 `ConvertRequest` 内部已含同一段，
     两处都调会双写参数。5 家的实现均把尾段抽成 `postProcessRequest` 与钩子共用，改动时不要只改一处。
+11. **跨原生请求侧优先直连，不要新增中枢步骤链**：Claude→Gemini 已由
+    `internal/claude_gemini/ClaudeToGeminiRequestConverter` 直连。链式（`StepConverters`）会让
+    中间格式承载不了的字段静默消失——实测丢 thinking 签名、精确 thinking budget（5000 被放大成 8192）、
+    `top_k`、`tool_use.id` 四项，见 `claude_to_gemini_request_test.go` 的
+    `TestClaudeToGeminiRequest_PreservesWhatChainLoses`。新增跨原生方向时先写直连转换器，
+    链式只作过渡手段。Gemini 的 JSON Schema 关键字白名单在 `internal/shared.CleanGeminiToolParams`，
+    OpenAI→Gemini 与 Claude→Gemini 两条路径共用一处，改白名单是两边同时生效。
 
 ---
 

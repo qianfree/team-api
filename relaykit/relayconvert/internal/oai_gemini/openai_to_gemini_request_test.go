@@ -415,8 +415,8 @@ func TestOpenAIToGeminiRequestConverter_ResponseFormat(t *testing.T) {
 		t.Fatalf("ResponseSchema is not map[string]any, got %T", geminiReq.GenerationConfig.ResponseSchema)
 	}
 
-	if schemaMap["type"] != "OBJECT" {
-		t.Errorf("Schema type = %v, want %q", schemaMap["type"], "OBJECT")
+	if schemaMap["type"] != "object" {
+		t.Errorf("Schema type = %v, want %q", schemaMap["type"], "object")
 	}
 
 	props, ok := schemaMap["properties"].(map[string]any)
@@ -428,16 +428,16 @@ func TestOpenAIToGeminiRequestConverter_ResponseFormat(t *testing.T) {
 	if !ok {
 		t.Fatal("name property not found")
 	}
-	if nameSchema["type"] != "STRING" {
-		t.Errorf("name type = %v, want %q", nameSchema["type"], "STRING")
+	if nameSchema["type"] != "string" {
+		t.Errorf("name type = %v, want %q", nameSchema["type"], "string")
 	}
 
 	ageSchema, ok := props["age"].(map[string]any)
 	if !ok {
 		t.Fatal("age property not found")
 	}
-	if ageSchema["type"] != "INTEGER" {
-		t.Errorf("age type = %v, want %q", ageSchema["type"], "INTEGER")
+	if ageSchema["type"] != "integer" {
+		t.Errorf("age type = %v, want %q", ageSchema["type"], "integer")
 	}
 }
 
@@ -665,5 +665,45 @@ func TestOpenAIToGeminiRequestConverter_InvalidRequestType(t *testing.T) {
 	_, err := converter.ConvertRequest(ctx, nil, "not a request")
 	if err == nil {
 		t.Fatal("Expected error for invalid request type, got nil")
+	}
+}
+
+// TestOpenAIToGeminiRequestConverter_ToolOutputWrappedAsObject 工具输出必须是
+// JSON 对象（google.protobuf.Struct）：纯文本（shell 输出等）包成 {"result": ...}，
+// 否则 Gemini protojson 直接 400（线上实测 codex 的混合文本工具输出被拒）。
+func TestOpenAIToGeminiRequestConverter_ToolOutputWrappedAsObject(t *testing.T) {
+	converter := &OpenAIToGeminiRequestConverter{}
+
+	run := func(toolContent string) map[string]any {
+		t.Helper()
+		out, err := converter.ConvertRequest(context.Background(), nil, &dto.GeneralOpenAIRequest{
+			Messages: []dto.Message{
+				{Role: "assistant", ToolCalls: []dto.ToolCall{{ID: "call_1", Type: "function", Function: dto.FunctionCall{Name: "shell", Arguments: "{}"}}}},
+				{Role: "tool", ToolCallID: "call_1", Content: toolContent},
+			},
+		})
+		if err != nil {
+			t.Fatalf("ConvertRequest: %v", err)
+		}
+		req := out.(*dto.GeminiChatRequest)
+		last := req.Contents[len(req.Contents)-1]
+		fr := last.Parts[len(last.Parts)-1].FunctionResponse
+		return fr.Response.(map[string]any)
+	}
+
+	// 混合文本（非 JSON）：包装
+	resp := run("Chunk ID: edb420\nOutput:\n{\"temp\": 31}")
+	if resp["result"] != "Chunk ID: edb420\nOutput:\n{\"temp\": 31}" {
+		t.Errorf("非 JSON 工具输出应包成 {result: ...}，实际 %v", resp)
+	}
+	// JSON 对象：原样透传
+	resp = run(`{"temp": 31}`)
+	if resp["temp"] != float64(31) {
+		t.Errorf("JSON 对象工具输出应原样透传，实际 %v", resp)
+	}
+	// JSON 数组：也必须包装（Struct 不接受顶层数组）
+	resp = run(`[1,2]`)
+	if _, ok := resp["result"]; !ok {
+		t.Errorf("顶层数组应包装为 {result: ...}，实际 %v", resp)
 	}
 }

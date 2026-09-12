@@ -401,49 +401,10 @@ func claudeMediaPart(source *dto.ClaudeSource) (dto.GeminiPart, bool) {
 	return dto.GeminiPart{}, false
 }
 
-// claudeToolResultToResponse 归一化 tool_result.content 为 Gemini functionResponse.response。
-// Gemini 要求 response 是对象，而 Claude 允许字符串或内容块数组，
-// 非对象结果统一包成 {"result": ...}（链式原样传字符串会被上游拒绝）。
+// claudeToolResultToResponse 委托 shared.ToolResultToGeminiResponse（单源实现）：
+// Gemini 要求 response 是对象，非对象结果统一包成 {"result": ...}。
 func claudeToolResultToResponse(content any) any {
-	switch v := content.(type) {
-	case nil:
-		return map[string]any{}
-	case map[string]any:
-		return v
-	case string:
-		if v == "" {
-			return map[string]any{}
-		}
-		var parsed any
-		if json.Unmarshal([]byte(v), &parsed) == nil {
-			if m, ok := parsed.(map[string]any); ok {
-				return m
-			}
-		}
-		return map[string]any{"result": v}
-	case []any:
-		var texts []string
-		for _, item := range v {
-			m, ok := item.(map[string]any)
-			if !ok || m["type"] != "text" {
-				continue
-			}
-			if text, ok := m["text"].(string); ok {
-				texts = append(texts, text)
-			}
-		}
-		return map[string]any{"result": c2gJoinText(texts)}
-	case []dto.ClaudeContentBlock:
-		var texts []string
-		for i := range v {
-			if v[i].Text != nil {
-				texts = append(texts, *v[i].Text)
-			}
-		}
-		return map[string]any{"result": c2gJoinText(texts)}
-	default:
-		return map[string]any{"result": fmt.Sprintf("%v", v)}
-	}
+	return shared.ToolResultToGeminiResponse(content)
 }
 
 // ========== 内容块归一化 ==========

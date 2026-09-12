@@ -214,14 +214,9 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 				name = toolCallIDs[msg.ToolCallID]
 			}
 
-			contentStr := extractText(msg.Content)
-			var response any = contentStr
-			if contentStr != "" {
-				var parsed any
-				if json.Unmarshal([]byte(contentStr), &parsed) == nil {
-					response = parsed
-				}
-			}
+			// 工具输出归一化：functionResponse.response 必须是 JSON 对象（Struct），
+			// 纯文本（shell 输出等）会被 protojson 直接 400，统一经 shared 包包装
+			response := shared.ToolResultToGeminiResponse(extractText(msg.Content))
 
 			geminiReq.Contents[lastIdx].Parts = append(geminiReq.Contents[lastIdx].Parts, dto.GeminiPart{
 				FunctionResponse: &dto.GeminiFunctionResponse{
@@ -500,87 +495,19 @@ func convertReasoningEffort(effort string) *dto.GeminiThinkingConfig {
 	}
 }
 
+// convertResponseSchema 把 chat 的 response_format.json_schema 包装（{name,schema,strict}）
+// 解包为 Gemini 的 response_schema——必须是**裸 schema**，带着 name/strict 外壳发出会被
+// protojson 拒绝（线上实测：Unknown name "name" at 'request.generation_config.response_schema'）。
+// 解包后经 CleanGeminiToolParams 归一化：Gemini 对 response_schema 与工具参数 schema
+// 应用同一套约束（白名单关键字、每节点须有 type、数组须带 items）。
 func convertResponseSchema(schema any) any {
 	if schema == nil {
 		return nil
 	}
-
-	// 处理 json_schema 包装结构：{"type":"json_schema","json_schema":{"schema":{...}}}
 	if m, ok := schema.(map[string]any); ok {
-		if js, ok := m["json_schema"].(map[string]any); ok {
-			if innerSchema, ok := js["schema"]; ok {
-				return convertSchemaMap(innerSchema)
-			}
-		}
-		return convertSchemaMap(m)
-	}
-
-	return schema
-}
-
-// convertSchemaMap 递归地将 JSON Schema 类型名转换为 Gemini 格式
-func convertSchemaMap(schema any) any {
-	m, ok := schema.(map[string]any)
-	if !ok {
-		return schema
-	}
-
-	result := make(map[string]any, len(m))
-	for k, v := range m {
-		switch k {
-		case "type":
-			if s, ok := v.(string); ok {
-				result["type"] = mapSchemaType(s)
-			} else {
-				result[k] = v
-			}
-		case "properties":
-			if props, ok := v.(map[string]any); ok {
-				converted := make(map[string]any, len(props))
-				for pk, pv := range props {
-					converted[pk] = convertSchemaMap(pv)
-				}
-				result["properties"] = converted
-			} else {
-				result[k] = v
-			}
-		case "items":
-			result["items"] = convertSchemaMap(v)
-		case "anyOf", "oneOf", "allOf":
-			if arr, ok := v.([]any); ok {
-				converted := make([]any, len(arr))
-				for i, item := range arr {
-					converted[i] = convertSchemaMap(item)
-				}
-				result[k] = converted
-			} else {
-				result[k] = v
-			}
-		default:
-			result[k] = v
+		if inner, ok := m["schema"]; ok {
+			schema = inner
 		}
 	}
-	return result
-}
-
-// mapSchemaType 将 JSON Schema 类型名映射为 Gemini Schema 类型名
-func mapSchemaType(t string) string {
-	switch t {
-	case "string":
-		return "STRING"
-	case "number":
-		return "NUMBER"
-	case "integer":
-		return "INTEGER"
-	case "boolean":
-		return "BOOLEAN"
-	case "object":
-		return "OBJECT"
-	case "array":
-		return "ARRAY"
-	case "null":
-		return "NULL"
-	default:
-		return t
-	}
+	return shared.CleanGeminiToolParams(schema)
 }
