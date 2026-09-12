@@ -14,7 +14,7 @@ type SysAdminRolePerms struct {
 	g.Meta          `orm:"table:sys_admin_role_perms, do:true"`
 	Id              any         // 主键ID
 	AdminUserId     any         // 关联的管理员用户ID
-	PermissionPoint any         // 权限点标识（如 tenant:create、channel:edit）
+	PermissionPoint any         // 特批的权限点标识（独立于角色，角色禁用不影响特批）
 	CreatedAt       *gtime.Time // 创建时间
 	UpdatedAt       *gtime.Time // 更新时间
 }

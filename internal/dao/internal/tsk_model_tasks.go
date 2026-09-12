@@ -46,6 +46,8 @@ type TskModelTasksColumns struct {
 	CreatedAt       string // 记录创建时间
 	UpdatedAt       string // 记录更新时间
 	RequestId       string // 任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id
+	Deleted         string // 软删除标记：true 表示已被客户端删除，查询/下载按不存在处理（计费与审计记录保留）
+	DeletedAt       string // 软删除时间
 }
 
 // tskModelTasksColumns holds the columns for the table tsk_model_tasks.
@@ -75,6 +77,8 @@ var tskModelTasksColumns = TskModelTasksColumns{
 	CreatedAt:       "created_at",
 	UpdatedAt:       "updated_at",
 	RequestId:       "request_id",
+	Deleted:         "deleted",
+	DeletedAt:       "deleted_at",
 }
 
 // NewTskModelTasksDao creates and returns a new DAO object for table data access.

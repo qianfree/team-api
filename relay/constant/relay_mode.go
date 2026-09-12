@@ -31,6 +31,7 @@ const (
 	RelayModeMjFetch          // GET  /mj/task/:id/fetch
 	RelayModeMjImage          // GET  /mj/image/:id
 	RelayModeResponsesCompact // POST /v1/responses/compact
+	RelayModeVideos           // OpenAI Videos 协议 /v1/videos（创建/查询/删除/内容下载）
 )
 
 // Path2RelayMode 根据请求路径判断 RelayMode
@@ -101,6 +102,8 @@ func Path2RelayMode(path string) RelayMode {
 		result = RelayModeVideoGenerations
 	case strings.Contains(path, "/video/generations/"):
 		result = RelayModeVideoFetch
+	case strings.HasSuffix(path, "/videos"), strings.Contains(path, "/videos/"):
+		result = RelayModeVideos
 	case strings.HasSuffix(path, "/moderations"):
 		result = RelayModeModerations
 	default:
@@ -151,6 +154,8 @@ func (m RelayMode) String() string {
 		return "moderations"
 	case RelayModeImagesEdits:
 		return "images_edits"
+	case RelayModeVideos:
+		return "videos"
 	case RelayModeMjSubmit:
 		return "mj_submit"
 	case RelayModeMjFetch:
