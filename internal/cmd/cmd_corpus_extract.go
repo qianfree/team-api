@@ -33,7 +33,7 @@ const (
 var corpusExtractCmd = gcmd.Command{
 	Name:  "corpus-extract",
 	Usage: "corpus-extract [-o <目录>] [--since <时间>] [--channel <ID,...>] [--limit N]",
-	Brief: "从渠道调试日志提取协议转换测试语料（不脱敏，仅限测试流量）",
+	Brief: "从渠道调试日志提取协议转换测试语料（默认脱敏）",
 	Arguments: []gcmd.Argument{
 		{Name: "output", Short: "o", Brief: "语料输出根目录（默认 " + defaultCorpusOutput + "）"},
 		{Name: "since", Brief: "起始时间，如 2026-09-01 或 2026-09-01T10:00:00Z"},
@@ -139,7 +139,12 @@ func printCorpusSummary(output string, stats corpus.ManifestStats, samples []cor
 	}
 	fmt.Printf("\n语料已写入 %s/{real_inputs,real_stream_inputs,real_responses}\n", output)
 	fmt.Printf("清单：%s/corpus_manifest.json\n", output)
-	fmt.Println("\n⚠️ 语料为报文原文、未做脱敏，提交前请确认其中不含真实业务数据。")
+	if scrubbed {
+		fmt.Println("\n语料已脱敏（自由文本等长替换、标识符一致映射、内联数据换占位图）；" +
+			"脱敏是启发式的，提交前建议抽查确认。")
+	} else {
+		fmt.Println("\n⚠️ 语料为报文原文、未做脱敏，提交前请确认其中不含真实业务数据。")
+	}
 }
 
 // ---------- 数据库查询 ----------

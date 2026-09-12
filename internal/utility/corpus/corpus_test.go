@@ -24,6 +24,24 @@ func TestFingerprint_IgnoresFreeText(t *testing.T) {
 	}
 }
 
+// TestFingerprint_IgnoresSessionIDs 会话级标识符随会话变化、与结构无关——
+// 两个会话的同形状请求指纹必须一致，否则跨会话采集时去重会碎片化。
+// 覆盖已知 key（session_id 等）与未知 key（裸 UUID 值形态兜底）、
+// 带轮次后缀的 x-codex-window-id（每轮都变，危害最大）。
+func TestFingerprint_IgnoresSessionIDs(t *testing.T) {
+	a := []byte(`{"session_id":"01a0916c-85ba-7121-8819-8d582bfe20e6","thread_id":"01a0916c-85ba-7121-8819-8d582bfe20e6","prompt_cache_key":"01a0916c-85ba-7121-8819-8d582bfe20e6","x-codex-window-id":"01a0916c-85ba-7121-8819-8d582bfe20e6:0","some_future_id_field":"aa11bb22-cc33-dd44-ee55-ff6677889900","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	b := []byte(`{"session_id":"77c0ffee-dead-beef-0000-123456789abc","thread_id":"77c0ffee-dead-beef-0000-123456789abc","prompt_cache_key":"77c0ffee-dead-beef-0000-123456789abc","x-codex-window-id":"77c0ffee-dead-beef-0000-123456789abc:17","some_future_id_field":"00112233-4455-6677-8899-aabbccddeeff","input":[{"type":"message","role":"user","content":"另一个会话的同样结构"}]}`)
+
+	ha, ok := Fingerprint(a)
+	if !ok {
+		t.Fatal("应能解析")
+	}
+	hb, _ := Fingerprint(b)
+	if ha != hb {
+		t.Error("仅会话标识符不同的请求指纹应一致（跨会话去重会被碎片化）")
+	}
+}
+
 // TestFingerprint_DistinguishesStructure 判别式字段与结构差异必须区分开，
 // 否则不同的转换分支会被折叠成一条语料，覆盖面反而收窄。
 func TestFingerprint_DistinguishesStructure(t *testing.T) {

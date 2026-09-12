@@ -99,8 +99,18 @@ type WriteOptions struct {
 
 // Write 把样本落盘并生成 manifest.json，返回最终统计。
 //
-// 同名文件直接覆盖：文件名含结构指纹，同名即同形状，内容等价。
+// real_* 目录是本工具全域生成的派生物，每次提取先清空重建：文件名含结构指纹，
+// 脱敏/指纹语义变化会改变哈希进而改变文件名，不清空会让旧文件成为孤儿——
+// 目录内容与 manifest 脱节，且会被按目录枚举的下游测试误读。
+// 手写语料目录（inputs / stream_inputs / expected）不在清理范围。
 func Write(samples []Sample, stats ManifestStats, opts WriteOptions) (ManifestStats, error) {
+	if !opts.DryRun {
+		for _, kind := range []SampleKind{KindRequest, KindStreamResponse, KindResponse} {
+			if err := os.RemoveAll(filepath.Join(opts.OutputDir, kind.dirOf())); err != nil {
+				return stats, fmt.Errorf("清理旧语料目录失败: %w", err)
+			}
+		}
+	}
 	manifest := Manifest{
 		GeneratedAt: time.Now().Format(time.RFC3339),
 		Source:      opts.Source,

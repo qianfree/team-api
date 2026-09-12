@@ -235,6 +235,43 @@ func TestScrub_Secrets(t *testing.T) {
 	}
 }
 
+// TestScrub_SessionIdentifiers 会话级标识符必须脱敏：codex 把同一会话 UUID 塞进
+// 大量字段（含 x-codex-* 连字符 key 与任意自定义 key），key 名不可枚举——
+// 已知 key 走 idKeys 表，未知 key 靠裸 UUID 值形态兜底。同值字段映射后仍应相等。
+func TestScrub_SessionIdentifiers(t *testing.T) {
+	const sessionUUID = "01a0916c-85ba-7121-8819-8d582bfe20e6"
+	const installUUID = "aa11bb22-cc33-dd44-ee55-ff6677889900"
+	body := `{"session_id":"` + sessionUUID + `","thread_id":"` + sessionUUID +
+		`","turn_id":"` + sessionUUID + `","root_turn_id":"` + sessionUUID +
+		`","prompt_cache_key":"` + sessionUUID +
+		`","x-codex-window-id":"` + sessionUUID + `:0"` +
+		`,"x-codex-installation-id":"` + installUUID +
+		`","some_future_client_id_field":"` + installUUID +
+		`","model":"gpt-5"}`
+
+	out := scrubJSON(t, body)
+	if strings.Contains(out, sessionUUID) || strings.Contains(out, installUUID) {
+		t.Errorf("会话/安装标识符未被脱敏: %s", out)
+	}
+
+	var parsed struct {
+		SessionID string `json:"session_id"`
+		ThreadID  string `json:"thread_id"`
+		TurnID    string `json:"turn_id"`
+		Model     string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("不是合法 JSON: %v", err)
+	}
+	if parsed.SessionID != parsed.ThreadID || parsed.SessionID != parsed.TurnID {
+		t.Errorf("同值字段映射后应仍相等: session=%s thread=%s turn=%s",
+			parsed.SessionID, parsed.ThreadID, parsed.TurnID)
+	}
+	if parsed.Model != "gpt-5" {
+		t.Errorf("行为字段 model 不应被改写: %s", parsed.Model)
+	}
+}
+
 // TestScrub_InlineImageData 内联图片换成可解码的占位 PNG，
 // data URL 的 mime 前缀保留（图片处理路径靠它判断格式）。
 func TestScrub_InlineImageData(t *testing.T) {

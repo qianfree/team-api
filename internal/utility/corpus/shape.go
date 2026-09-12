@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -34,10 +35,42 @@ var freeTextKeys = map[string]bool{
 	"signature": true, "thought_signature": true, "thoughtSignature": true,
 	"encrypted_content": true, "page_age": true, "thinking": true,
 	"reasoning_content": true, "user": true, "metadata": true,
+	// 会话级标识符（codex 把同一会话 UUID 塞进 prompt_cache_key / session_id /
+	// thread_id / turn_id / root_turn_id / x-codex-* 镜像等大量字段）：值随会话变化、
+	// 与结构无关——不折叠的话跨会话的同形状请求会被判成不同形状，去重碎片化。
+	// key 名无法穷举，裸 UUID 形态的值另由 uuidPattern 按值形态兜底
+	"prompt_cache_key": true, "session_id": true, "thread_id": true,
+	"turn_id": true, "root_turn_id": true,
+	"x-codex-window-id": true, "x-codex-installation-id": true,
 }
 
 // enumLikeMax 判定为枚举值的字符串长度上限（超过视为自由文本）。
 const enumLikeMax = 40
+
+// uuidPattern 标准 UUID 形态（允许尾部 :N 轮次后缀，codex 的 x-codex-window-id 用）。
+// 会话/安装级标识符经常被客户端塞进任意命名的字段（prompt_cache_key、x-codex-* 镜像等），
+// key 名不可枚举，只能按值形态识别——UUID 永远不是决定转换分支的判别式。
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(:[0-9]+)?$`)
+
+// bareHexIDPattern OpenAI 风格的 32 位十六进制 id（无连字符）。
+var bareHexIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+// isIDLikeKey 判断对象 key 是否为「按 id 索引」的动态 key。
+// Responses 的 usage 明细按消息 id 建 map（msg_<uuid> / 32 位十六进制），
+// id 由服务端逐次生成——原样进指纹的话这类报文每次都是新形状，去重永远失效。
+// 仅认 UUID / 32 位十六进制 / 已知 id 前缀 + UUID 三种保守形态，
+// 不敢按前缀宽松匹配（如 item_ 前缀会误伤 item_type 这类正常字段名）。
+func isIDLikeKey(k string) bool {
+	if uuidPattern.MatchString(k) || bareHexIDPattern.MatchString(k) {
+		return true
+	}
+	for _, p := range knownIDPrefixes {
+		if strings.HasPrefix(k, p) && uuidPattern.MatchString(k[len(p):]) {
+			return true
+		}
+	}
+	return false
+}
 
 // Fingerprint 计算 JSON 体的结构指纹。非 JSON 返回 ok=false（流式语料走 FingerprintStream）。
 func Fingerprint(body []byte) (string, bool) {
@@ -91,8 +124,18 @@ func shapeOf(v any, key string) any {
 		}
 		sort.Strings(keys)
 		out := make(map[string]any, len(t))
+		// 按 id 索引的动态 key（usage 明细等）折叠进同一个桶：
+		// 保留条目数量（分桶）与值的形状，抹掉 id 本身
+		var idKeyed []any
 		for _, k := range keys {
+			if isIDLikeKey(k) {
+				idKeyed = append(idKeyed, shapeOf(t[k], k))
+				continue
+			}
 			out[k] = shapeOf(t[k], k)
+		}
+		if idKeyed != nil {
+			out["#id-keyed"] = runLengthCollapse(idKeyed)
 		}
 		return out
 
@@ -125,6 +168,11 @@ func shapeOf(v any, key string) any {
 // isEnumLike 判断字符串值是否为判别式枚举（决定转换分支，须进指纹）。
 func isEnumLike(key, val string) bool {
 	if freeTextKeys[key] {
+		return false
+	}
+	// 裸 UUID 是客户端标识符而非枚举：不同会话的 UUID 各不相同，
+	// 当枚举保留会让跨会话的同形状请求指纹互异、去重碎片化
+	if uuidPattern.MatchString(val) {
 		return false
 	}
 	if val == "" || len(val) > enumLikeMax {

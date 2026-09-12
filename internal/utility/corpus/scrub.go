@@ -61,6 +61,12 @@ var idKeys = map[string]bool{
 	"id": true, "call_id": true, "tool_call_id": true, "tool_use_id": true,
 	"item_id": true, "message_id": true, "response_id": true, "responseId": true,
 	"previous_response_id": true, "container_id": true, "approval_request_id": true,
+	// 会话级标识符（codex 等客户端把同一会话 UUID 塞进大量字段，含
+	// x-codex-* 这类 header 风格的连字符 key）：值随会话变化且属隐私，需脱敏；
+	// 无跨字段引用语义，一致映射即可。key 名无法穷举，裸 UUID 另按值形态兜底
+	"prompt_cache_key": true, "session_id": true, "thread_id": true,
+	"turn_id": true, "root_turn_id": true,
+	"x-codex-window-id": true, "x-codex-installation-id": true,
 }
 
 // nameKeys 承载工具名的字段。Gemini 的 functionCall ↔ functionResponse 仅靠名字关联，
@@ -213,8 +219,9 @@ func (s *Scrubber) scrubString(val, key string, inUserData bool) string {
 		return val
 	}
 
-	// ① 标识符：一致映射，保住跨消息引用
-	if idKeys[key] {
+	// ① 标识符：一致映射，保住跨消息引用。裸 UUID 形态的值无论 key 名一律
+	// 按标识符处理——客户端会把会话/安装标识塞进任意命名的字段，key 不可枚举
+	if idKeys[key] || uuidPattern.MatchString(val) {
 		return s.mapID(val)
 	}
 	// ② 工具名：一致映射（内置名保留）
