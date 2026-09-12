@@ -56,8 +56,8 @@ func (a *MjAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, _ []
 	return nil
 }
 
-func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	action := constant.TaskAction(a.extractAction())
 	switch action {
 	case constant.TaskActionUpscale:
@@ -70,7 +70,7 @@ func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []
 	return ratios
 }
 
-func (a *MjAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *MjAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 

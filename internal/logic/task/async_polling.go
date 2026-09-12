@@ -329,9 +329,9 @@ type privateData struct {
 	UpstreamTaskID string `json:"upstream_task_id"`
 	TaskType       string `json:"task_type"`
 	BillingContext struct {
-		Ratios    map[string]float64 `json:"ratios"`
-		ModelName string             `json:"model_name"`
-		PreDeduct float64            `json:"pre_deduct"`
+		Ratios    map[string]any `json:"ratios"`
+		ModelName string         `json:"model_name"`
+		PreDeduct float64        `json:"pre_deduct"`
 	} `json:"billing_context"`
 }
 
@@ -492,6 +492,22 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		status = "error"
 	}
 
+	// 按秒计费任务的视频时长：取提交时计费上下文里的 spec.duration（真实秒数）。
+	// 只认 spec.* 事实键——旧 duration 键在部分 adaptor 是乘数语义（如 gemini 1.3），不可作为时长
+	durationSeconds := 0
+	if len(task.PrivateData) > 0 {
+		var pdDur struct {
+			BillingContext struct {
+				Ratios map[string]any `json:"ratios"`
+			} `json:"billing_context"`
+		}
+		if json.Unmarshal(task.PrivateData, &pdDur) == nil {
+			if v, ok := pdDur.BillingContext.Ratios["spec.duration"].(float64); ok && v > 0 {
+				durationSeconds = int(v)
+			}
+		}
+	}
+
 	record := &common.UsageRecord{
 		TenantID:    task.TenantID,
 		UserID:      task.UserID,
@@ -517,6 +533,8 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		PreDeductAmount:  billing.InexactFloat64(task.PreDeductAmount),
 		BillingSource:    "task",
 		TaskID:           task.PublicTaskID,
+
+		DurationSeconds: durationSeconds,
 	}
 
 	// 从结算结果填充计费快照

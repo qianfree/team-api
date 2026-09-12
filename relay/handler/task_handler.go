@@ -190,9 +190,10 @@ func HandleTaskSubmit(
 		return
 	}
 
-	// 6. 估算计费 + 预扣
+	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
+	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
 	ratios := adaptor.EstimateBilling(ctx, info, body)
-	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios)
+	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios, body)
 	if err != nil {
 		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
@@ -252,7 +253,7 @@ func HandleTaskSubmit(
 	// 9. 调整计费
 	adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData)
 	if adjustedRatios != nil {
-		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios)
+		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body)
 		preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
 	}
 
@@ -262,7 +263,7 @@ func HandleTaskSubmit(
 		if finalRatios == nil {
 			finalRatios = adjustedRatios
 		} else {
-			merged := make(map[string]float64, len(finalRatios)+len(adjustedRatios))
+			merged := make(map[string]any, len(finalRatios)+len(adjustedRatios))
 			for k, v := range finalRatios {
 				merged[k] = v
 			}

@@ -42,12 +42,20 @@ func (a *GeminiAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, 
 	return nil
 }
 
-func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req openAIVideoRequest
 	if json.Unmarshal(body, &req) == nil {
 		resolution := parseResolution(req.Metadata.Resolution)
 		duration := req.Metadata.Duration
+		// per_second 事实键：真实秒数 + 规格原值（矩阵查价键）
+		if duration > 0 {
+			ratios["spec.duration"] = float64(duration)
+		}
+		if resolution != "" {
+			ratios["spec.resolution"] = resolution
+		}
+		// 存量 token 伪装路径乘数（语义为乘数非秒数，保持原行为）
 		if resolution == "1080p" {
 			ratios["resolution"] = 1.5
 		} else if resolution == "4k" {
@@ -60,7 +68,7 @@ func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, 
 	return ratios
 }
 
-func (a *GeminiAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *GeminiAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 

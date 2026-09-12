@@ -57,15 +57,58 @@ type PricingResult struct {
 	MaxOutputTokens int
 
 	// 租户自定义阶梯定价（JSONB 解析后的原始数据，供 CalculateCost 使用）
-	// 租户未自定义时回落为平台阶梯（mdl_pricing 的 min_tokens 档位行）
+	// 租户未自定义时回落为平台阶梯（pricing JSONB 的 tiers 数组）
 	CustomTiers []pricingTierRow `json:"CustomTiers"`
 
-	// 时段定价配置（mdl_pricing 锚点行 time_segments，随定价缓存存储）
+	// 时段定价配置（pricing JSONB 顶层 time_segments，随定价缓存存储）
 	TimeSegments []TimeSegment `json:"time_segments,omitempty"`
 	// 时段乘数（读取时按定价时刻评估；缓存条目中的值是写入时刻的结果，仅作参考）
 	TimeMultiplier float64 `json:"time_multiplier"`
 	// 命中的时段名（写入计费快照，供账单解释；未命中为空）
 	TimeRuleName string `json:"time_rule_name"`
+
+	// 按秒计费矩阵（billing_mode=per_second，mdl_pricing.pricing JSONB 的 prices 键）：
+	// 分辨率/规格 → 每秒单价（本位币）。"*" 为兜底价，规格未命中时使用。
+	// 旧缓存条目无此字段（zero value = 空 map），token/per_request 模式不受影响。
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
+
+	// 参数倍率规则（pricing JSONB 顶层 param_multipliers，横切所有模式）：
+	// 按归一化任务体参数匹配，命中规则连乘（EvalParamMultipliers）。
+	// 旧缓存条目无此字段（zero value），不受影响。
+	ParamMultipliers []ParamRule `json:"param_multipliers,omitempty"`
+}
+
+// perSecondWildcard 矩阵兜底价键：规格未命中时使用
+const perSecondWildcard = "*"
+
+// maxTaskDurationSeconds per_second 计费的时长上限（秒）。
+// 时长来自用户请求（spec.duration 经 ratios 流入，metadata 路径绕过请求层校验），
+// 钳制防「天价 duration 刷预扣漏洞/恶意配错」；正常视频模型上限远低于此值。
+const maxTaskDurationSeconds = 120.0
+
+// defaultTaskDurationSeconds per_second 计费缺省时长（秒）：请求未携带时长信号时的估算基准
+const defaultTaskDurationSeconds = 5.0
+
+// LookupPerSecondPrice 按秒计费矩阵查价：spec 未命中依次回退 "*" 兜底价、矩阵最低价。
+// 返回 0 表示矩阵为空/全零（调用方按未配价兜底处理）。
+func LookupPerSecondPrice(prices map[string]float64, spec string) float64 {
+	if len(prices) == 0 {
+		return 0
+	}
+	if p, ok := prices[spec]; ok && p > 0 {
+		return p
+	}
+	if p, ok := prices[perSecondWildcard]; ok && p > 0 {
+		return p
+	}
+	// 无 "*" 且未命中：取矩阵最低价兜底，保证新规格上线未配价不 fail
+	min := 0.0
+	for _, p := range prices {
+		if p > 0 && (min == 0 || p < min) {
+			min = p
+		}
+	}
+	return min
 }
 
 // ClearTenantPriceCache 清除租户的所有模型价格缓存
@@ -138,43 +181,18 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		return nil, gerror.Newf("model not found: %s", modelName)
 	}
 
-	// 2. 从 mdl_pricing 获取定价（全行读取：锚点行 min_tokens=0 是默认价与时段配置载体，
-	// 其余行是平台阶梯档位。此前只读锚点行导致平台阶梯不参与计费，退化为第一档平价）
+	// 2. 从 mdl_pricing 获取定价：每模型一行（uk_mdl_pricing_model），pricing JSONB 为唯一真相
 	type pricingRow struct {
-		MinTokens          int64    `json:"min_tokens"`
-		MaxTokens          *int64   `json:"max_tokens"`
-		BillingMode        string   `json:"billing_mode"`
-		InputPrice         float64  `json:"input_price"`
-		OutputPrice        float64  `json:"output_price"`
-		PerRequestPrice    *float64 `json:"per_request_price"`
-		CacheReadPrice     float64  `json:"cache_read_price"`
-		CacheCreationPrice float64  `json:"cache_creation_price"`
-		TimeSegments       string   `json:"time_segments"`
+		BillingMode string `json:"billing_mode"`
+		Pricing     string `json:"pricing"` // JSONB 计费详情（按 billing_mode 单模式存储）
 	}
 
-	var pricingRows []pricingRow
+	var pricing *pricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.ID).
-		OrderAsc("min_tokens").
-		Scan(&pricingRows)
+		Scan(&pricing)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query model pricing")
-	}
-
-	// 锚点行（默认价）与平台阶梯（含锚点行作为第一档，与租户端 buildTiers 口径一致）
-	var pricing *pricingRow
-	var platformTiers []pricingTierRow
-	for i := range pricingRows {
-		row := &pricingRows[i]
-		if row.MinTokens == 0 {
-			pricing = row
-		}
-		platformTiers = append(platformTiers, pricingTierRow{
-			MinTokens:   row.MinTokens,
-			MaxTokens:   row.MaxTokens,
-			InputPrice:  row.InputPrice,
-			OutputPrice: row.OutputPrice,
-		})
 	}
 
 	billingMode := "token"
@@ -185,20 +203,44 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var perRequestPrice float64
 	cacheReadPrice := 0.0
 	cacheCreationPrice := 0.0
+	var platformTiers []pricingTierRow
+	var perSecondPrices map[string]float64
+	var timeSegments []TimeSegment
+	var paramMultipliers []ParamRule
 
 	if pricing != nil {
 		if pricing.BillingMode != "" {
 			billingMode = pricing.BillingMode
 		}
-		inputPrice = pricing.InputPrice
-		outputPrice = pricing.OutputPrice
-		baseInputPrice = pricing.InputPrice
-		baseOutputPrice = pricing.OutputPrice
-		if pricing.PerRequestPrice != nil {
-			perRequestPrice = *pricing.PerRequestPrice
+		// pricing JSONB 解析（唯一真相；空/解析失败按未配价处理，validatePricingConfigured fail-closed 拦截）
+		if pricing.Pricing != "" && pricing.Pricing != "null" {
+			blob := &PricingBlob{}
+			if err := json.Unmarshal([]byte(pricing.Pricing), blob); err != nil {
+				g.Log().Warningf(ctx, "billing: 模型 %s 定价 JSON 解析失败，按未配价处理: %v", modelName, err)
+			} else {
+				if blob.InputPrice != nil {
+					inputPrice = *blob.InputPrice
+					baseInputPrice = *blob.InputPrice
+				}
+				if blob.OutputPrice != nil {
+					outputPrice = *blob.OutputPrice
+					baseOutputPrice = *blob.OutputPrice
+				}
+				if blob.CacheReadPrice != nil {
+					cacheReadPrice = *blob.CacheReadPrice
+				}
+				if blob.CacheCreationPrice != nil {
+					cacheCreationPrice = *blob.CacheCreationPrice
+				}
+				if blob.Price != nil {
+					perRequestPrice = *blob.Price
+				}
+				platformTiers = blob.Tiers
+				perSecondPrices = blob.Prices
+				timeSegments = blob.TimeSegments
+				paramMultipliers = blob.ParamMultipliers
+			}
 		}
-		cacheReadPrice = pricing.CacheReadPrice
-		cacheCreationPrice = pricing.CacheCreationPrice
 	}
 
 	// 3. 查租户独立价格（mdl_tenant_models）
@@ -272,19 +314,10 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		}
 	}
 
-	// 2.5 平台阶梯兜底：租户未自定义阶梯时使用平台阶梯（mdl_pricing 档位行）。
+	// 2.5 平台阶梯兜底：租户未自定义阶梯时使用平台阶梯（pricing JSONB tiers 数组）。
 	// 计费模式非 tiered 时 computeCost 不会读取 CustomTiers，无副作用
 	if len(customTiers) == 0 {
 		customTiers = platformTiers
-	}
-
-	// 2.6 时段定价（锚点行 JSONB；解析失败按默认价处理并告警，不阻断计费）
-	var timeSegments []TimeSegment
-	if pricing != nil && pricing.TimeSegments != "" && pricing.TimeSegments != "null" {
-		if err := json.Unmarshal([]byte(pricing.TimeSegments), &timeSegments); err != nil {
-			g.Log().Warningf(ctx, "billing: 模型 %s 时段定价配置解析失败，按默认价处理: %v", modelName, err)
-			timeSegments = nil
-		}
 	}
 
 	// 3.5 级别折扣 fallback：当租户×模型维度未设置倍率时，使用租户级别的 price_multiplier
@@ -330,6 +363,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		MaxOutputTokens:      model.MaxOutputTokens,
 		CustomTiers:          customTiers,
 		TimeSegments:         timeSegments,
+		PerSecondPrices:      perSecondPrices,
+		ParamMultipliers:     paramMultipliers,
 	}
 
 	// 时段乘数按定价时刻评估后随缓存存储（缓存命中路径会按 billAt 重评估，存储值仅参考）
@@ -588,12 +623,146 @@ func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 		if pricing.PerRequestPrice <= 0 {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_request price not set)", modelName)
 		}
+	case "per_second":
+		if LookupPerSecondPrice(pricing.PerSecondPrices, perSecondWildcard) <= 0 {
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_second prices not set)", modelName)
+		}
 	default: // token / tiered
 		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && !tiersHavePrice(pricing.CustomTiers) {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s", modelName)
 		}
 	}
 	return nil
+}
+
+// PricingItemInput BuildPricingBlob 的输入项（管理端 SetModelPricing / 模型导入共用，
+// 与 api/admin/v1.PricingItem 字段一一对应但避免 billing 反向依赖 api 层）
+type PricingItemInput struct {
+	BillingMode        string
+	MinTokens          int64
+	MaxTokens          *int64
+	InputPrice         float64
+	OutputPrice        float64
+	PerRequestPrice    *float64
+	CacheReadPrice     float64
+	CacheCreationPrice float64
+	PerSecondPrices    map[string]float64
+}
+
+// BuildPricingBlob 从全量替换语义的定价项列表构造 pricing JSONB（按 billing_mode 单模式存储）。
+// 校验规则（设计文档 3.4）：金额非负；per_second 矩阵非空且至少一档正价（建议配 "*" 兜底），
+// 仅允许单锚点行；tiered 阶梯按 min_tokens 升序整理。
+func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
+	if len(items) == 0 {
+		return &PricingBlob{}, nil
+	}
+	mode := items[0].BillingMode
+	anchor := items[0]
+
+	switch mode {
+	case "per_second":
+		if len(items) > 1 {
+			return nil, gerror.New("per_second 计费模式只允许一行定价（分辨率矩阵）")
+		}
+		if anchor.MinTokens != 0 {
+			return nil, gerror.New("per_second 计费模式要求 min_tokens=0 的定价行")
+		}
+		if len(anchor.PerSecondPrices) == 0 {
+			return nil, gerror.New("per_second 计费模式要求配置分辨率单价矩阵（per_second_prices）")
+		}
+		hasPositive := false
+		for spec, price := range anchor.PerSecondPrices {
+			if spec == "" {
+				return nil, gerror.New("per_second_prices 存在空规格键")
+			}
+			if price < 0 {
+				return nil, gerror.Newf("per_second_prices[%s] 单价为负数", spec)
+			}
+			if price > 0 {
+				hasPositive = true
+			}
+		}
+		if !hasPositive {
+			return nil, gerror.New("per_second_prices 至少需要一档正价（建议额外配置 \"*\" 兜底价）")
+		}
+		return &PricingBlob{Unit: "second", Prices: anchor.PerSecondPrices}, nil
+
+	case "per_request":
+		blob := &PricingBlob{}
+		if anchor.PerRequestPrice != nil {
+			blob.Price = anchor.PerRequestPrice
+		}
+		return blob, nil
+
+	case "tiered":
+		blob := &PricingBlob{
+			Tiers:              make([]pricingTierRow, 0, len(items)),
+			CacheReadPrice:     positivePtr(anchor.CacheReadPrice),
+			CacheCreationPrice: positivePtr(anchor.CacheCreationPrice),
+		}
+		for _, item := range items {
+			blob.Tiers = append(blob.Tiers, pricingTierRow{
+				MinTokens:   item.MinTokens,
+				MaxTokens:   item.MaxTokens,
+				InputPrice:  item.InputPrice,
+				OutputPrice: item.OutputPrice,
+			})
+		}
+		return blob, nil
+
+	default: // token
+		return &PricingBlob{
+			InputPrice:         positivePtr(anchor.InputPrice),
+			OutputPrice:        positivePtr(anchor.OutputPrice),
+			CacheReadPrice:     positivePtr(anchor.CacheReadPrice),
+			CacheCreationPrice: positivePtr(anchor.CacheCreationPrice),
+		}, nil
+	}
+}
+
+// positivePtr 正值取指针（0/负值返回 nil，JSONB 中省略该键由旧列兜底语义对齐）
+func positivePtr(v float64) *float64 {
+	if v > 0 {
+		return &v
+	}
+	return nil
+}
+
+// ParsePricingBlob 解析 mdl_pricing.pricing JSONB（管理端/租户端展示路径复用）。
+// 空串/null/解析失败返回 nil，调用方按未配价处理。
+func ParsePricingBlob(raw string) *PricingBlob {
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	blob := &PricingBlob{}
+	if err := json.Unmarshal([]byte(raw), blob); err != nil {
+		return nil
+	}
+	return blob
+}
+
+// PricingBlob mdl_pricing.pricing JSONB 的内存形态（按 billing_mode 单模式存储，单一真相）。
+// 设计约束（docs/模型定价存储JSON化与按秒计费设计.md）：
+//   - 数值一律 float64 number（禁止 decimal 直接 marshal 进 JSONB——会变带引号字符串）；
+//   - time_segments 并入顶层（横切所有模式）；
+//   - 租户覆盖不逐格配：mdl_tenant_models.multiplier 作用于整个矩阵。
+type PricingBlob struct {
+	// token 模式
+	InputPrice         *float64 `json:"input_price,omitempty"`
+	OutputPrice        *float64 `json:"output_price,omitempty"`
+	CacheReadPrice     *float64 `json:"cache_read_price,omitempty"`
+	CacheCreationPrice *float64 `json:"cache_creation_price,omitempty"`
+	// tiered 模式：档位数组（min_tokens 升序，最后一档 max_tokens 可为 null）
+	Tiers []pricingTierRow `json:"tiers,omitempty"`
+	// per_request 模式
+	Price *float64 `json:"price,omitempty"`
+	// per_second 模式：规格 → 每秒单价矩阵，"*" 为兜底价
+	Unit   string             `json:"unit,omitempty"`
+	Prices map[string]float64 `json:"prices,omitempty"`
+	// 横切：时段定价
+	TimeSegments []TimeSegment `json:"time_segments,omitempty"`
+	// 横切：参数倍率（按归一化任务体参数匹配，命中规则连乘；所有计费模式共享）
+	ParamMultipliers []ParamRule `json:"param_multipliers,omitempty"`
 }
 
 // tiersHavePrice 阶梯数组中是否存在任一档正价（输入或输出）。

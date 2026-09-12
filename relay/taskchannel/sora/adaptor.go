@@ -33,14 +33,16 @@ func (a *SoraAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, _ 
 	return nil
 }
 
-func (a *SoraAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *SoraAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req map[string]json.RawMessage
 	if json.Unmarshal(body, &req) == nil {
-		// 按秒数加价
+		// per_second 事实键：真实秒数与规格原值（size 为 OpenAI 四档 "宽x高" 格式，
+		// 矩阵键按同格式配置即可命中）
 		if secs, ok := req["seconds"]; ok {
 			var s string
 			if json.Unmarshal(secs, &s) == nil && s != "" {
+				ratios["spec.duration"] = parseFloatOrZero(s)
 				if s == "10" || s == "15" || s == "20" {
 					ratios["duration"] = 1.5
 				}
@@ -48,15 +50,31 @@ func (a *SoraAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bo
 		}
 		if dur, ok := req["duration"]; ok {
 			var d float64
-			if json.Unmarshal(dur, &d) == nil && d > 10 {
-				ratios["duration"] = 1.5
+			if json.Unmarshal(dur, &d) == nil && d > 0 {
+				ratios["spec.duration"] = d
+				if d > 10 {
+					ratios["duration"] = 1.5
+				}
+			}
+		}
+		if size, ok := req["size"]; ok {
+			var s string
+			if json.Unmarshal(size, &s) == nil && s != "" {
+				ratios["spec.resolution"] = s
 			}
 		}
 	}
 	return ratios
 }
 
-func (a *SoraAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+// parseFloatOrZero 秒数字符串转 float（解析失败返回 0，由引擎按缺省时长兜底）
+func parseFloatOrZero(s string) float64 {
+	var f float64
+	fmt.Sscanf(s, "%g", &f)
+	return f
+}
+
+func (a *SoraAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 

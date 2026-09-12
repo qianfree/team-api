@@ -23,6 +23,7 @@ const (
 // 验证器 App 生成的 SHA-256 码在服务端永远校验失败。要安全切换到 SHA-256 必须先：
 //  1. 在用户表持久化每条 secret 对应的算法；
 //  2. ValidateCode 改用 totp.ValidateCustom 并按存储的算法校验。
+//
 // 这属于涉及 schema 与 2FA 安全路径的较大改动，超出 P3 细节优化范围，故暂保留 SHA-1。
 func GenerateSecret(accountName string) (secret string, uri string, err error) {
 	key, err := totp.Generate(totp.GenerateOpts{

@@ -111,22 +111,26 @@ func (a *VolcengineVideoAdaptor) ValidateRequest(_ context.Context, _ *common.Re
 	return nil
 }
 
-func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common.RelayInfo, body []byte) map[string]float64 {
+func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common.RelayInfo, body []byte) map[string]any {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
-		return map[string]float64{}
+		return map[string]any{}
 	}
 
-	ratios := make(map[string]float64)
+	ratios := make(map[string]any)
 
-	// 提取 duration 用于 token 预估（默认 5s）
+	// 提取 duration：spec.duration 为真实秒数（per_second 矩阵计费用），
+	// duration 为存量 token 伪装路径信号（语义同为秒，行为不变）
 	duration := extractDuration(req)
 	if duration > 0 {
+		ratios["spec.duration"] = float64(duration)
 		ratios["duration"] = float64(duration)
 	}
 
-	// 提取 resolution 用于 token 预估
+	// 提取 resolution：spec.resolution 为规格原值（per_second 矩阵查价键，如 "720p"），
+	// resolution 为存量硬编码乘数（token 伪装路径用，待模型迁移 per_second 后废弃）
 	if resolution := extractResolution(req); resolution != "" {
+		ratios["spec.resolution"] = resolution
 		ratios["resolution"] = resolutionMultiplier(resolution)
 	}
 
@@ -140,7 +144,7 @@ func (a *VolcengineVideoAdaptor) EstimateBilling(_ context.Context, info *common
 	return ratios
 }
 
-func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *VolcengineVideoAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 

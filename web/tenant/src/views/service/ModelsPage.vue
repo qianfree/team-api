@@ -30,6 +30,7 @@ interface TimePriceItem {
 	input_price?: number | null
 	output_price?: number | null
 	per_request_price?: number | null
+	per_second_price?: number | null
 }
 
 interface ModelItem {
@@ -44,6 +45,7 @@ interface ModelItem {
 	capabilities: string
 	billing_mode: string | null
 	per_request_price: number | null
+	per_second_prices?: Record<string, number> | null
 	discount_ratio: number | null
 	max_concurrency: number | null
 	input_price: number | null
@@ -185,9 +187,22 @@ function formatTokenRange(min: number, max: number | null): string {
 
 function hasPricing(m: ModelItem): boolean {
 	if (m.billing_mode === 'per_request' && m.per_request_price != null) return true
+	if (m.billing_mode === 'per_second' && m.per_second_prices && Object.keys(m.per_second_prices).length > 0) return true
 	if (m.billing_mode === 'token' && (m.input_price != null || m.output_price != null)) return true
 	if (m.billing_mode === 'tiered' && m.pricing_tiers?.length > 0) return true
 	return false
+}
+
+// 按秒计费矩阵 → 排序后的规格列表（480p → 720p → 1080p → 数字序，"*" 兜底档排最后）
+function perSecondEntries(m: ModelItem): Array<[string, number]> {
+	if (!m.per_second_prices) return []
+	return Object.entries(m.per_second_prices)
+		.filter(([, v]) => Number(v) > 0)
+		.sort(([a], [b]) => {
+			if (a === '*') return 1
+			if (b === '*') return -1
+			return a.localeCompare(b, undefined, { numeric: true })
+		})
 }
 
 function getTieredStartPrice(m: ModelItem): string {
@@ -220,6 +235,7 @@ function timeWindow(tp: TimePriceItem): string {
 }
 
 function timePriceText(m: ModelItem, tp: TimePriceItem): string {
+	if (m.billing_mode === 'per_second') return `${formatPrice(tp.per_second_price ?? null)} /秒`
 	if (m.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? null)} /次`
 	if (m.billing_mode === 'tiered') return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)} 起`
 	return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)}`
@@ -426,6 +442,20 @@ onMounted(fetchModels)
 								<div class="text-xs">
 									<span class="font-semibold text-gray-800">{{ formatPrice(m.per_request_price) }}</span>
 									<span class="text-gray-400"> /次</span>
+								</div>
+							</template>
+
+							<!-- 按秒计费：分辨率 × 每秒单价矩阵 -->
+							<template v-else-if="m.billing_mode === 'per_second'">
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+									<span
+										v-for="([spec, price], idx) in perSecondEntries(m)"
+										:key="idx"
+									>
+										<span class="text-gray-400">{{ spec === '*' ? '其他' : spec }}</span>
+										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(price) }}</span>
+										<span class="text-gray-400">/秒</span>
+									</span>
 								</div>
 							</template>
 

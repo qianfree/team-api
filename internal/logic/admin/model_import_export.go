@@ -12,7 +12,6 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
-	"github.com/shopspring/decimal"
 
 	"github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/consts"
@@ -50,30 +49,32 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 	}
 
 	type exportPricing struct {
-		BillingMode        string   `json:"billing_mode"`
-		MinTokens          int64    `json:"min_tokens"`
-		MaxTokens          *int64   `json:"max_tokens"`
-		InputPrice         float64  `json:"input_price"`
-		OutputPrice        float64  `json:"output_price"`
-		PerRequestPrice    *float64 `json:"per_request_price"`
-		CacheReadPrice     float64  `json:"cache_read_price"`
-		CacheCreationPrice float64  `json:"cache_creation_price"`
+		BillingMode        string             `json:"billing_mode"`
+		MinTokens          int64              `json:"min_tokens"`
+		MaxTokens          *int64             `json:"max_tokens"`
+		InputPrice         float64            `json:"input_price"`
+		OutputPrice        float64            `json:"output_price"`
+		PerRequestPrice    *float64           `json:"per_request_price"`
+		CacheReadPrice     float64            `json:"cache_read_price"`
+		CacheCreationPrice float64            `json:"cache_creation_price"`
+		PerSecondPrices    map[string]float64 `json:"per_second_prices,omitempty"` // 仅 per_second 模式（锚点行 pricing JSONB）
 	}
 
 	type exportModel struct {
-		ModelId          string               `json:"model_id"`
-		ModelName        string               `json:"model_name"`
-		Category         string               `json:"category"`
-		Status           string               `json:"status"`
-		MaxContextTokens int                  `json:"max_context_tokens"`
-		MaxOutputTokens  int                  `json:"max_output_tokens"`
-		Description      string               `json:"description"`
-		Tags             []string             `json:"tags"`
-		Capabilities     map[string]bool      `json:"capabilities"`
-		SunsetDate       string               `json:"sunset_date,omitempty"`
-		ReplacementModel string               `json:"replacement_model,omitempty"`
-		Pricing          []exportPricing      `json:"pricing"`
-		TimeSegments     []v1.TimeSegmentItem `json:"time_segments,omitempty"`
+		ModelId          string                   `json:"model_id"`
+		ModelName        string                   `json:"model_name"`
+		Category         string                   `json:"category"`
+		Status           string                   `json:"status"`
+		MaxContextTokens int                      `json:"max_context_tokens"`
+		MaxOutputTokens  int                      `json:"max_output_tokens"`
+		Description      string                   `json:"description"`
+		Tags             []string                 `json:"tags"`
+		Capabilities     map[string]bool          `json:"capabilities"`
+		SunsetDate       string                   `json:"sunset_date,omitempty"`
+		ReplacementModel string                   `json:"replacement_model,omitempty"`
+		Pricing          []exportPricing          `json:"pricing"`
+		TimeSegments     []v1.TimeSegmentItem     `json:"time_segments,omitempty"`
+		ParamMultipliers []v1.ParamMultiplierItem `json:"param_multipliers,omitempty"`
 	}
 
 	// 批量查询所有模型的定价行（避免循环内逐模型查询导致 N+1），与 ListModels 的批量模式对齐。
@@ -82,16 +83,9 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		modelIDs = append(modelIDs, m.ID)
 	}
 	type pricingRow struct {
-		ModelId            int64    `orm:"model_id" json:"model_id"`
-		BillingMode        string   `orm:"billing_mode" json:"billing_mode"`
-		MinTokens          int64    `orm:"min_tokens" json:"min_tokens"`
-		MaxTokens          *int64   `orm:"max_tokens" json:"max_tokens"`
-		InputPrice         float64  `orm:"input_price" json:"input_price"`
-		OutputPrice        float64  `orm:"output_price" json:"output_price"`
-		PerRequestPrice    *float64 `orm:"per_request_price" json:"per_request_price"`
-		CacheReadPrice     float64  `orm:"cache_read_price" json:"cache_read_price"`
-		CacheCreationPrice float64  `orm:"cache_creation_price" json:"cache_creation_price"`
-		TimeSegments       string   `orm:"time_segments" json:"time_segments"`
+		ModelId     int64  `orm:"model_id" json:"model_id"`
+		BillingMode string `orm:"billing_mode" json:"billing_mode"`
+		Pricing     string `orm:"pricing" json:"pricing"` // pricing JSONB（唯一真相）
 	}
 	var allPricingRows []pricingRow
 	if len(modelIDs) > 0 {
@@ -99,25 +93,52 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			return nil, err
 		}
 	}
-	// 按 model_id 分组，供后续组装；时段定价只认锚点行（min_tokens=0）
+	// 按 model_id 组装导出数据：pricing JSONB 为唯一真相
+	// （tiered 的 tiers 数组还原为多行 exportPricing，与导入提交的 items 结构互逆）
 	pricingByModel := make(map[int64][]exportPricing, len(allPricingRows))
 	segmentsByModel := make(map[int64][]v1.TimeSegmentItem, len(allPricingRows))
+	paramRulesByModel := make(map[int64][]v1.ParamMultiplierItem, len(allPricingRows))
 	for _, p := range allPricingRows {
-		pricingByModel[p.ModelId] = append(pricingByModel[p.ModelId], exportPricing{
-			BillingMode:        p.BillingMode,
-			MinTokens:          p.MinTokens,
-			MaxTokens:          p.MaxTokens,
-			InputPrice:         p.InputPrice,
-			OutputPrice:        p.OutputPrice,
-			PerRequestPrice:    p.PerRequestPrice,
-			CacheReadPrice:     p.CacheReadPrice,
-			CacheCreationPrice: p.CacheCreationPrice,
-		})
-		if p.MinTokens == 0 && p.TimeSegments != "" && p.TimeSegments != "null" {
-			var segs []billing.TimeSegment
-			if err := json.Unmarshal([]byte(p.TimeSegments), &segs); err == nil {
-				segmentsByModel[p.ModelId] = timeSegmentsToAPI(segs)
+		blob := billing.ParsePricingBlob(p.Pricing)
+		if blob == nil {
+			blob = &billing.PricingBlob{}
+		}
+		// tiered：阶梯数组展开为多行；其余模式单行
+		if len(blob.Tiers) > 0 {
+			for _, tier := range blob.Tiers {
+				pricingByModel[p.ModelId] = append(pricingByModel[p.ModelId], exportPricing{
+					BillingMode: p.BillingMode,
+					MinTokens:   tier.MinTokens,
+					MaxTokens:   tier.MaxTokens,
+					InputPrice:  tier.InputPrice,
+					OutputPrice: tier.OutputPrice,
+				})
 			}
+		} else {
+			ep := exportPricing{
+				BillingMode:     p.BillingMode,
+				PerSecondPrices: blob.Prices,
+			}
+			if blob.InputPrice != nil {
+				ep.InputPrice = *blob.InputPrice
+			}
+			if blob.OutputPrice != nil {
+				ep.OutputPrice = *blob.OutputPrice
+			}
+			ep.PerRequestPrice = blob.Price
+			if blob.CacheReadPrice != nil {
+				ep.CacheReadPrice = *blob.CacheReadPrice
+			}
+			if blob.CacheCreationPrice != nil {
+				ep.CacheCreationPrice = *blob.CacheCreationPrice
+			}
+			pricingByModel[p.ModelId] = append(pricingByModel[p.ModelId], ep)
+		}
+		if len(blob.TimeSegments) > 0 {
+			segmentsByModel[p.ModelId] = timeSegmentsToAPI(blob.TimeSegments)
+		}
+		if len(blob.ParamMultipliers) > 0 {
+			paramRulesByModel[p.ModelId] = paramMultipliersToAPI(blob.ParamMultipliers)
 		}
 	}
 
@@ -135,6 +156,7 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			ReplacementModel: m.ReplacementModel,
 			Pricing:          pricingByModel[m.ID],
 			TimeSegments:     segmentsByModel[m.ID],
+			ParamMultipliers: paramRulesByModel[m.ID],
 		}
 		if em.Pricing == nil {
 			em.Pricing = []exportPricing{}
@@ -280,32 +302,12 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					return err
 				}
 
-				_, err = dao.MdlPricing.Ctx(ctx).Where("model_id", existing.ID).Delete()
-				if err != nil {
-					return err
+				paramRules, pErr := paramMultipliersFromAPI(item.ParamMultipliers)
+				if pErr != nil {
+					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
 				}
-				for _, p := range item.Pricing {
-					// API 边界 float64 → DO decimal 转换
-					var perRequestPriceDecimal *decimal.Decimal
-					if p.PerRequestPrice != nil {
-						d := billing.NewFromFloat(*p.PerRequestPrice)
-						perRequestPriceDecimal = &d
-					}
-
-					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-						ModelId:            existing.ID,
-						BillingMode:        p.BillingMode,
-						MinTokens:          p.MinTokens,
-						MaxTokens:          p.MaxTokens,
-						InputPrice:         billing.NewFromFloat(p.InputPrice),
-						OutputPrice:        billing.NewFromFloat(p.OutputPrice),
-						PerRequestPrice:    perRequestPriceDecimal,
-						CacheReadPrice:     billing.NewFromFloat(p.CacheReadPrice),
-						CacheCreationPrice: billing.NewFromFloat(p.CacheCreationPrice),
-					})
-					if err != nil {
-						return err
-					}
+				if err := writePricingForModel(ctx, existing.ID, item.Pricing, paramRules); err != nil {
+					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 
 				// 时段定价透传（挂锚点行，全量替换语义：导入文件无该字段=清除）
@@ -342,28 +344,13 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 					return err
 				}
 
-				for _, p := range item.Pricing {
-					// API 边界 float64 → DO decimal 转换
-					var perRequestPriceDecimal *decimal.Decimal
-					if p.PerRequestPrice != nil {
-						d := billing.NewFromFloat(*p.PerRequestPrice)
-						perRequestPriceDecimal = &d
-					}
-
-					_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-						ModelId:            id,
-						BillingMode:        p.BillingMode,
-						MinTokens:          p.MinTokens,
-						MaxTokens:          p.MaxTokens,
-						InputPrice:         billing.NewFromFloat(p.InputPrice),
-						OutputPrice:        billing.NewFromFloat(p.OutputPrice),
-						PerRequestPrice:    perRequestPriceDecimal,
-						CacheReadPrice:     billing.NewFromFloat(p.CacheReadPrice),
-						CacheCreationPrice: billing.NewFromFloat(p.CacheCreationPrice),
-					})
-					if err != nil {
-						return err
-					}
+				// 定价写入（pricing JSONB，含参数倍率，与 SetModelPricing 口径一致）
+				paramRules, pErr := paramMultipliersFromAPI(item.ParamMultipliers)
+				if pErr != nil {
+					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
+				}
+				if err := writePricingForModel(ctx, id, item.Pricing, paramRules); err != nil {
+					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 
 				// 时段定价透传（挂锚点行）

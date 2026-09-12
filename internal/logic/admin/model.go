@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 
@@ -76,13 +77,19 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 	if req.Search != "" {
 		query = query.Where("model_id LIKE ? OR model_name LIKE ?", "%"+req.Search+"%", "%"+req.Search+"%")
 	}
-	// 定价状态筛选
+	// 定价状态筛选（pricing JSONB 唯一真相：任一模式有正价即已定价）
+	// 已配价谓词：token 价>0 / per_request 价>0 / per_second 矩阵非空 / tiered 任一档价>0
+	const pricedPredicate = `EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND (
+		(pricing->>'input_price')::numeric > 0
+		OR (pricing->>'output_price')::numeric > 0
+		OR (pricing->>'price')::numeric > 0
+		OR (pricing->'prices' IS NOT NULL AND pricing->'prices' <> '{}'::jsonb)
+		OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(pricing->'tiers', '[]'::jsonb)) tx WHERE (tx->>'input_price')::numeric > 0 OR (tx->>'output_price')::numeric > 0)
+	))`
 	if req.PricingStatus == "priced" {
-		// 已定价：存在 min_tokens=0 的记录，且输入价格或输出价格不为 0
-		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0 AND (mdl_pricing.input_price > 0 OR mdl_pricing.output_price > 0 OR mdl_pricing.per_request_price > 0))")
+		query = query.Where(pricedPredicate)
 	} else if req.PricingStatus == "unpriced" {
-		// 未定价：存在 min_tokens=0 的记录，但所有价格字段都为 0
-		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id AND mdl_pricing.min_tokens = 0 AND mdl_pricing.input_price = 0 AND mdl_pricing.output_price = 0 AND (mdl_pricing.per_request_price IS NULL OR mdl_pricing.per_request_price = 0))")
+		query = query.Where("EXISTS (SELECT 1 FROM mdl_pricing WHERE mdl_pricing.model_id = mdl_models.id) AND NOT " + pricedPredicate)
 	}
 
 	var total int
@@ -118,17 +125,15 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 		modelIDs = append(modelIDs, m.ID)
 	}
 	type pricingRow struct {
-		ModelId         int64    `json:"model_id"`
-		BillingMode     string   `json:"billing_mode"`
-		InputPrice      float64  `json:"input_price"`
-		OutputPrice     float64  `json:"output_price"`
-		PerRequestPrice *float64 `json:"per_request_price"`
+		ModelId     int64  `json:"model_id"`
+		BillingMode string `json:"billing_mode"`
+		Pricing     string `json:"pricing"`
 	}
 	var pricingRows []pricingRow
 	if len(modelIDs) > 0 {
 		err = dao.MdlPricing.Ctx(ctx).
-			Fields("model_id, billing_mode, input_price, output_price, per_request_price").
-			Where("model_id IN (?) AND min_tokens = 0", modelIDs).
+			Fields("model_id, billing_mode, pricing").
+			Where("model_id IN (?)", modelIDs).
 			Scan(&pricingRows)
 		if err = common.IgnoreScanNoRows(err); err != nil {
 			return nil, err
@@ -197,13 +202,28 @@ func (s *sAdmin) ListModels(ctx context.Context, req *v1.ModelListReq) (*v1.Mode
 			item.SunsetDate = &s
 		}
 		item.ReplacementModel = m.ReplacementModel
-		// 填充定价摘要
+		// 填充定价摘要（从 pricing JSONB 解析；tiered 取首档价，与旧列表口径一致）
 		if p, ok := pricingMap[m.ID]; ok {
 			item.PricingMode = p.BillingMode
-			item.InputPrice = p.InputPrice
-			item.OutputPrice = p.OutputPrice
-			if p.PerRequestPrice != nil {
-				item.PerRequestPrice = *p.PerRequestPrice
+			if blob := billing.ParsePricingBlob(p.Pricing); blob != nil {
+				switch {
+				case len(blob.Tiers) > 0:
+					item.InputPrice = blob.Tiers[0].InputPrice
+					item.OutputPrice = blob.Tiers[0].OutputPrice
+				default:
+					if blob.InputPrice != nil {
+						item.InputPrice = *blob.InputPrice
+					}
+					if blob.OutputPrice != nil {
+						item.OutputPrice = *blob.OutputPrice
+					}
+					if blob.Price != nil {
+						item.PerRequestPrice = *blob.Price
+					}
+					if len(blob.Prices) > 0 {
+						item.PerSecondPrices = blob.Prices
+					}
+				}
 			}
 		}
 		// 填充可用渠道
@@ -255,13 +275,11 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		return nil, err
 	}
 
+	// 默认 token 模式空定价行（未配价，SetModelPricing 时覆盖 pricing JSONB）
 	_, err = dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
 		ModelId:     id,
 		BillingMode: "token",
-		MinTokens:   0,
-		MaxTokens:   nil,
-		InputPrice:  0,
-		OutputPrice: 0,
+		Pricing:     "{}",
 	})
 	if err != nil {
 		return nil, err
@@ -440,65 +458,82 @@ func parseCapabilities(raw string) map[string]bool {
 	return caps
 }
 
-// GetModelPricing 获取模型定价
+// GetModelPricing 获取模型定价（pricing JSONB 单行还原为 PricingItem 列表，响应结构与旧多行结构保持兼容）
 func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error) {
-	var rows []struct {
-		BillingMode        string   `json:"billing_mode" orm:"billing_mode"`
-		MinTokens          int64    `json:"min_tokens" orm:"min_tokens"`
-		MaxTokens          *int64   `json:"max_tokens" orm:"max_tokens"`
-		InputPrice         float64  `json:"input_price" orm:"input_price"`
-		OutputPrice        float64  `json:"output_price" orm:"output_price"`
-		PerRequestPrice    *float64 `json:"per_request_price" orm:"per_request_price"`
-		CacheReadPrice     float64  `json:"cache_read_price" orm:"cache_read_price"`
-		CacheCreationPrice float64  `json:"cache_creation_price" orm:"cache_creation_price"`
-		TimeSegments       string   `json:"time_segments" orm:"time_segments"`
-		PriceNote          *string  `json:"price_note" orm:"price_note"`
-		DiscountLabel      *string  `json:"discount_label" orm:"discount_label"`
-		PriceChangeNote    *string  `json:"price_change_note" orm:"price_change_note"`
+	var row *struct {
+		BillingMode     string  `json:"billing_mode" orm:"billing_mode"`
+		Pricing         string  `json:"pricing" orm:"pricing"`
+		PriceNote       *string `json:"price_note" orm:"price_note"`
+		DiscountLabel   *string `json:"discount_label" orm:"discount_label"`
+		PriceChangeNote *string `json:"price_change_note" orm:"price_change_note"`
 	}
 
 	err := dao.MdlPricing.Ctx(ctx).
 		Where("model_id", req.ModelID).
-		OrderAsc("min_tokens").
-		Scan(&rows)
+		Scan(&row)
 	if err = common.IgnoreScanNoRows(err); err != nil {
 		return nil, err
 	}
 
-	result := make([]v1.PricingItem, 0, len(rows))
+	result := make([]v1.PricingItem, 0, 1)
 	var timeSegments []billing.TimeSegment
+	var paramRules []billing.ParamRule
 	var priceNote, discountLabel, priceChangeNote string
-	for i := range rows {
-		r := rows[i]
-		result = append(result, v1.PricingItem{
-			BillingMode:        r.BillingMode,
-			MinTokens:          r.MinTokens,
-			MaxTokens:          r.MaxTokens,
-			InputPrice:         r.InputPrice,
-			OutputPrice:        r.OutputPrice,
-			PerRequestPrice:    r.PerRequestPrice,
-			CacheReadPrice:     r.CacheReadPrice,
-			CacheCreationPrice: r.CacheCreationPrice,
-		})
-		// 时段定价与展示字段只认锚点行（min_tokens=0），阶梯行上的残留忽略
-		if r.MinTokens == 0 {
-			if r.TimeSegments != "" && r.TimeSegments != "null" {
-				if err := json.Unmarshal([]byte(r.TimeSegments), &timeSegments); err != nil {
-					g.Log().Warningf(ctx, "admin: 模型 %d 时段定价解析失败: %v", req.ModelID, err)
-					timeSegments = nil
-				}
-			}
-			priceNote = derefStr(r.PriceNote)
-			discountLabel = derefStr(r.DiscountLabel)
-			priceChangeNote = derefStr(r.PriceChangeNote)
+	if row != nil {
+		mode := row.BillingMode
+		blob := billing.ParsePricingBlob(row.Pricing)
+		if blob != nil {
+			paramRules = blob.ParamMultipliers
 		}
+		switch {
+		case blob != nil && len(blob.Tiers) > 0:
+			// tiered：tiers 数组还原为多行 PricingItem（与旧档位行结构一致）
+			for _, tier := range blob.Tiers {
+				result = append(result, v1.PricingItem{
+					BillingMode: mode,
+					MinTokens:   tier.MinTokens,
+					MaxTokens:   tier.MaxTokens,
+					InputPrice:  tier.InputPrice,
+					OutputPrice: tier.OutputPrice,
+				})
+			}
+		default:
+			item := v1.PricingItem{BillingMode: mode}
+			if blob != nil {
+				if blob.InputPrice != nil {
+					item.InputPrice = *blob.InputPrice
+				}
+				if blob.OutputPrice != nil {
+					item.OutputPrice = *blob.OutputPrice
+				}
+				if blob.CacheReadPrice != nil {
+					item.CacheReadPrice = *blob.CacheReadPrice
+				}
+				if blob.CacheCreationPrice != nil {
+					item.CacheCreationPrice = *blob.CacheCreationPrice
+				}
+				if blob.Price != nil {
+					p := *blob.Price
+					item.PerRequestPrice = &p
+				}
+				if len(blob.Prices) > 0 {
+					item.PerSecondPrices = blob.Prices
+				}
+				timeSegments = blob.TimeSegments
+			}
+			result = append(result, item)
+		}
+		priceNote = derefStr(row.PriceNote)
+		discountLabel = derefStr(row.DiscountLabel)
+		priceChangeNote = derefStr(row.PriceChangeNote)
 	}
 	return &v1.PricingGetRes{
-		List:            result,
-		TimeSegments:    timeSegmentsToAPI(timeSegments),
-		PriceNote:       priceNote,
-		DiscountLabel:   discountLabel,
-		PriceChangeNote: priceChangeNote,
+		List:             result,
+		TimeSegments:     timeSegmentsToAPI(timeSegments),
+		ParamMultipliers: paramMultipliersToAPI(paramRules),
+		PriceNote:        priceNote,
+		DiscountLabel:    discountLabel,
+		PriceChangeNote:  priceChangeNote,
 	}, nil
 }
 
@@ -553,17 +588,112 @@ func timeSegmentsFromAPI(items []v1.TimeSegmentItem) ([]billing.TimeSegment, err
 	return result, nil
 }
 
-// writeTimeSegmentsForModel 把时段定价写到模型定价锚点行（min_tokens=0），空列表=清除（全量替换语义）。
-// 定价保存与模型导入共用。清除时写 "[]" 而非 SQL NULL：避免依赖 ORM 对 nil 值 UPDATE 的默认行为
-// （被省略会让「关闭时段」静默失效），所有读取方（计费/租户/管理端）均已把空数组视为未配置。
-// 用列名直写而非 do 字段：do.MdlPricing 的 TimeSegments 字段需迁移落库后 gf gen dao 重新生成才存在，
-// 直写列名与生成物解耦（wire 格式与 custom_pricing_tiers JSONB 先例一致）。调用方需保证事务 ctx 传播。
+// paramMultipliersFromAPI API 参数倍率规则 → billing 规则（含校验）
+func paramMultipliersFromAPI(items []v1.ParamMultiplierItem) ([]billing.ParamRule, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	rules := make([]billing.ParamRule, 0, len(items))
+	for _, item := range items {
+		rule := billing.ParamRule{
+			Multiplier: item.Multiplier,
+			Note:       strings.TrimSpace(item.Note),
+		}
+		for _, c := range item.Conditions {
+			rule.Conditions = append(rule.Conditions, billing.ParamCondition{
+				Path:  strings.TrimSpace(c.Path),
+				Match: c.Match,
+				Value: c.Value,
+			})
+		}
+		rules = append(rules, rule)
+	}
+	if err := billing.ValidateParamMultipliers(rules); err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// paramMultipliersToAPI billing 规则 → API 参数倍率项
+func paramMultipliersToAPI(rules []billing.ParamRule) []v1.ParamMultiplierItem {
+	if len(rules) == 0 {
+		return nil
+	}
+	items := make([]v1.ParamMultiplierItem, 0, len(rules))
+	for _, rule := range rules {
+		item := v1.ParamMultiplierItem{
+			Multiplier: rule.Multiplier,
+			Note:       rule.Note,
+		}
+		for _, c := range rule.Conditions {
+			item.Conditions = append(item.Conditions, v1.ParamConditionItem{
+				Path:  c.Path,
+				Match: c.Match,
+				Value: c.Value,
+			})
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// pricingItemsToInput API 定价项 → billing 构造输入
+func pricingItemsToInput(items []v1.PricingItem) []billing.PricingItemInput {
+	result := make([]billing.PricingItemInput, 0, len(items))
+	for _, item := range items {
+		result = append(result, billing.PricingItemInput{
+			BillingMode:        item.BillingMode,
+			MinTokens:          item.MinTokens,
+			MaxTokens:          item.MaxTokens,
+			InputPrice:         item.InputPrice,
+			OutputPrice:        item.OutputPrice,
+			PerRequestPrice:    item.PerRequestPrice,
+			CacheReadPrice:     item.CacheReadPrice,
+			CacheCreationPrice: item.CacheCreationPrice,
+			PerSecondPrices:    item.PerSecondPrices,
+		})
+	}
+	return result
+}
+
+// writePricingForModel 全量替换模型定价：单行写 billing_mode + pricing JSONB（每模型一行，
+// uk_mdl_pricing_model 唯一）。SetModelPricing 与模型导入共用；时段定价随后经
+// writeTimeSegmentsForModel 的 jsonb_set 并入 JSON 顶层；参数倍率规则随 blob 顶层写入。
+// 调用方需保证事务 ctx 传播。
+func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.PricingItem, paramRules []billing.ParamRule) error {
+	blob, err := billing.BuildPricingBlob(pricingItemsToInput(items))
+	if err != nil {
+		return err
+	}
+	blob.ParamMultipliers = paramRules
+	blobJSON, err := json.Marshal(blob)
+	if err != nil {
+		return err
+	}
+
+	// 全量替换语义：删旧行插新行（保留展示字段列随 insert 重置为默认，随后由调用方回写）
+	if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", modelDBID).Delete(); err != nil {
+		return err
+	}
+	if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
+		ModelId:     modelDBID,
+		BillingMode: items[0].BillingMode,
+		Pricing:     string(blobJSON),
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeTimeSegmentsForModel 把时段定价并入模型定价行的 pricing JSONB 顶层（time_segments 键），
+// 空列表=清除（全量替换语义，写 "[]" 而非删除键：nil 切片会序列化成 "null"，语义不明确）。
+// 定价保存与模型导入共用。jsonb_set 只更新目标键，不覆盖 JSON 内其他计费字段。
+// 单引号需 SQL 转义（json.Marshal 不转义内容中的单引号）。调用方需保证事务 ctx 传播。
 func writeTimeSegmentsForModel(ctx context.Context, modelDBID int64, items []v1.TimeSegmentItem) error {
 	segs, err := timeSegmentsFromAPI(items)
 	if err != nil {
 		return err
 	}
-	// 空配置显式写 "[]"（nil 切片会序列化成 "null"，语义不明确）
 	segmentsJSON := "[]"
 	if len(segs) > 0 {
 		data, mErr := json.Marshal(segs)
@@ -572,15 +702,18 @@ func writeTimeSegmentsForModel(ctx context.Context, modelDBID int64, items []v1.
 		}
 		segmentsJSON = string(data)
 	}
+	escapedJSON := strings.ReplaceAll(segmentsJSON, "'", "''")
 	_, err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", modelDBID).
-		Where("min_tokens", 0).
-		Data(g.Map{"time_segments": segmentsJSON}).
+		Data(g.Map{
+			"pricing": gdb.Raw(fmt.Sprintf(
+				`jsonb_set(COALESCE(pricing, '{}'::jsonb), '{time_segments}', '%s'::jsonb)`, escapedJSON)),
+		}).
 		Update()
 	return err
 }
 
-// writePricingDisplayFieldsForModel 把展示字段（价格说明/折扣标签/价格调整说明）写到定价锚点行（min_tokens=0）。
+// writePricingDisplayFieldsForModel 把展示字段（价格说明/折扣标签/价格调整说明）写到模型定价行。
 // 全量替换语义：空串=清除（写 NULL）。与 writeTimeSegmentsForModel 同理用列名直写而非 do 字段，
 // 与 gf gen dao 生成物解耦。调用方需保证事务 ctx 传播。
 func writePricingDisplayFieldsForModel(ctx context.Context, modelDBID int64, priceNote, discountLabel, priceChangeNote string) error {
@@ -593,7 +726,6 @@ func writePricingDisplayFieldsForModel(ctx context.Context, modelDBID int64, pri
 	}
 	_, err := dao.MdlPricing.Ctx(ctx).
 		Where("model_id", modelDBID).
-		Where("min_tokens", 0).
 		Data(g.Map{
 			"price_note":        trimOrNull(priceNote),
 			"discount_label":    trimOrNull(discountLabel),
@@ -606,23 +738,14 @@ func writePricingDisplayFieldsForModel(ctx context.Context, modelDBID int64, pri
 // SetModelPricing 设置模型定价（全量替换）
 func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error) {
 	// 时段定价校验（乘数范围/时间格式/星期/日期边界），fail-fast 返回用户可读错误
-	segments, err := timeSegmentsFromAPI(req.TimeSegments)
-	if err != nil {
+	if _, err := timeSegmentsFromAPI(req.TimeSegments); err != nil {
 		return nil, err
 	}
 
-	// 时段配置挂在锚点行（min_tokens=0）上，列表中必须存在锚点行
-	if len(segments) > 0 {
-		hasAnchor := false
-		for _, item := range req.Items {
-			if item.MinTokens == 0 {
-				hasAnchor = true
-				break
-			}
-		}
-		if !hasAnchor {
-			return nil, gerror.New("时段定价要求定价列表包含 min_tokens=0 的基础行")
-		}
+	// 参数倍率规则校验（路径/匹配方式/值形态/倍率区间），fail-fast
+	paramRules, err := paramMultipliersFromAPI(req.ParamMultipliers)
+	if err != nil {
+		return nil, err
 	}
 
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
@@ -635,42 +758,19 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		}
 	}
 
-	// 全量替换：先删旧定价再插新定价，放入同一事务。否则若删除后插入中途失败，
-	// 该模型会残留「无定价」状态，导致计费失败或回退到默认价。
+	// 全量替换：单行写 pricing JSONB（计费详情 + 参数倍率随 blob 顶层），同一事务。
+	// 否则中途失败会残留「无定价」状态，导致计费失败或回退到默认价。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Delete(); err != nil {
+		if err := writePricingForModel(ctx, req.ModelID, req.Items, paramRules); err != nil {
 			return err
 		}
 
-		for _, item := range req.Items {
-			// API 边界 float64 → DO decimal 转换
-			var perRequestPriceDecimal *decimal.Decimal
-			if item.PerRequestPrice != nil {
-				d := billing.NewFromFloat(*item.PerRequestPrice)
-				perRequestPriceDecimal = &d
-			}
-
-			if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-				ModelId:            req.ModelID,
-				BillingMode:        item.BillingMode,
-				MinTokens:          item.MinTokens,
-				MaxTokens:          item.MaxTokens,
-				InputPrice:         billing.NewFromFloat(item.InputPrice),
-				OutputPrice:        billing.NewFromFloat(item.OutputPrice),
-				PerRequestPrice:    perRequestPriceDecimal,
-				CacheReadPrice:     billing.NewFromFloat(item.CacheReadPrice),
-				CacheCreationPrice: billing.NewFromFloat(item.CacheCreationPrice),
-			}); err != nil {
-				return err
-			}
-		}
-
-		// 时段定价写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
+		// 时段定价并入 JSON 顶层（空=清除，全量替换语义；需在定价行插入之后执行）
 		if err := writeTimeSegmentsForModel(ctx, req.ModelID, req.TimeSegments); err != nil {
 			return err
 		}
 
-		// 展示字段写锚点行（空=清除，全量替换语义；需在锚点行插入之后执行）
+		// 展示字段写定价行（空=清除，全量替换语义；需在定价行插入之后执行）
 		if err := writePricingDisplayFieldsForModel(ctx, req.ModelID, req.PriceNote, req.DiscountLabel, req.PriceChangeNote); err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -24,11 +25,19 @@ func NewTaskBillingProvider() common.TaskBillingProvider {
 }
 
 // EstimateTaskCost 估算任务费用
-// ratios 包含计费比率（如 video_input 折扣）和预估参数（如 duration 秒数、resolution 乘数）
-func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]float64) (decimal.Decimal, error) {
+// ratios 包含计费上下文（float64 乘数如 video_input 折扣 + spec.* 规格事实值，见 TaskAdaptor.EstimateBilling）；
+// taskBody 为归一化任务体，参数倍率（param_multipliers）命中时就地注入 ratios 随任务持久化
+func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, taskBody []byte) (decimal.Decimal, error) {
 	pricing, err := GetModelPrice(ctx, tenantID, modelName)
 	if err != nil {
 		return NewFromFloat(0.01), nil
+	}
+	// 参数倍率求值：命中注入 ratios（预扣、per_second 结算、token 重算经 applyRatioMultipliers 自动同口径）
+	if len(pricing.ParamMultipliers) > 0 && len(taskBody) > 0 && ratios != nil {
+		if m, matched := EvalParamMultipliers(pricing.ParamMultipliers, taskBody); len(matched) > 0 && m > 0 {
+			ratios[ratioKeyParamMultiplier] = m
+			ratios[ratioKeyParamMatched] = strings.Join(matched, "|")
+		}
 	}
 	return estimateTaskCost(pricing, ratios), nil
 }
@@ -38,32 +47,55 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 // 返回的真实 token 用量多退少补。仅用于「无有效定价」的兜底，不覆盖已配置的真实按次单价。
 const imagePlaceholderPreDeduct = 0.1
 
-// estimateTaskCost 纯函数：根据定价与计费比率估算任务预扣费用，不依赖数据库/缓存，便于单测。
+// estimateTaskCost 纯函数：根据定价与计费上下文估算任务预扣费用，不依赖数据库/缓存，便于单测。
 //
 // 计费口径按任务类型分流：
+//   - per_second（按秒计费，视频生成）：矩阵查价（spec.resolution 未命中回退 "*"）×
+//     spec.duration 秒 × 租户乘数 × 时段乘数 × 附加乘数（video_input 折扣等）；
 //   - per_request（按次计费，图片/音乐等）：直接取按次单价；
 //   - 时长类任务（视频生成，ratios 携带 duration/resolution 信号）：按
-//     10000 tokens/s × duration × resolution 预估 token 再乘输出单价；
+//     10000 tokens/s × duration × resolution 预估 token 再乘输出单价（存量 token 伪装路径）；
 //   - 其余无时长信号的任务（如未显式配成 per_request 的图片模型）：退回按次单价，
 //     **不再**套用视频 token 估算——图片没有时长/分辨率，套 10000×5×2.25 会凭空估出
 //     11.25 万 token 的天价预扣（$30/1M 输出价即得 $3.375），且与结算的「0 token」自相矛盾。
-func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) decimal.Decimal {
+func estimateTaskCost(pricing *PricingResult, ratios map[string]any) decimal.Decimal {
 	if pricing == nil {
 		return NewFromFloat(0.01)
 	}
 
 	var costD decimal.Decimal
 	switch {
+	case pricing.BillingMode == "per_second":
+		// 按秒计费：矩阵查价 × 时长 × 租户乘数 × 时段乘数
+		duration := defaultTaskDurationSeconds
+		if d, ok := ratioFloat(ratios, "spec.duration"); ok && d > 0 {
+			duration = d
+		}
+		// 时长来自用户请求，钳制上限防天价预扣（正常视频模型远低于该上限）
+		if duration > maxTaskDurationSeconds {
+			duration = maxTaskDurationSeconds
+		}
+		spec, _ := ratioString(ratios, "spec.resolution")
+		price := LookupPerSecondPrice(pricing.PerSecondPrices, spec)
+		if price <= 0 {
+			// 矩阵全零/为空：按未配价占位预扣，结算多退少补
+			costD = NewFromFloat(imagePlaceholderPreDeduct)
+			break
+		}
+		costD = NewFromFloat(price).
+			Mul(NewFromFloat(duration)).
+			Mul(NewFromFloat(pricing.TenantMultiplier)).
+			Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 	case pricing.BillingMode == "per_request":
 		// 按次计费：直接用单价
 		costD = NewFromFloat(pricing.PerRequestPrice)
 	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
 		duration := 5.0 // 默认 5 秒
-		if d, ok := ratios["duration"]; ok && d > 0 {
+		if d, ok := ratioFloat(ratios, "duration"); ok && d > 0 {
 			duration = d
 		}
 		resolutionMul := 2.25 // 默认 720p
-		if r, ok := ratios["resolution"]; ok && r > 0 {
+		if r, ok := ratioFloat(ratios, "resolution"); ok && r > 0 {
 			resolutionMul = r
 		}
 
@@ -90,13 +122,9 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) decimal
 		}
 	}
 
-	// 应用附加比率（video_input 折扣等）
-	for k, ratio := range ratios {
-		if k == "duration" || k == "resolution" {
-			continue
-		}
-		costD = costD.Mul(NewFromFloat(ratio))
-	}
+	// 应用附加比率（video_input 折扣等）：只乘 float 乘数值，
+	// 跳过 duration/resolution（已在时长类分支消费）与 spec.*（规格事实值非乘数）
+	costD = applyRatioMultipliers(costD, ratios, "duration", "resolution")
 
 	minCost := NewFromFloat(0.01)
 	if costD.LessThan(minCost) {
@@ -105,10 +133,59 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]float64) decimal
 	return RoundMoney(costD)
 }
 
-// hasDurationSignal 判断计费比率里是否携带时长类任务（视频）的 duration/resolution 信号。
+// ratioFloat 取计费上下文中的 float 值（JSONB 往返后数字均为 float64）
+func ratioFloat(ratios map[string]any, key string) (float64, bool) {
+	v, ok := ratios[key]
+	if !ok {
+		return 0, false
+	}
+	f, ok := v.(float64)
+	return f, ok
+}
+
+// ratioString 取计费上下文中的 string 值（spec.* 规格原值）
+func ratioString(ratios map[string]any, key string) (string, bool) {
+	v, ok := ratios[key]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
+}
+
+// applyRatioMultipliers 把计费上下文中的 float 乘数按序连乘到 cost 上。
+// spec.*（规格事实值）与 string 值自动跳过；skip 显式追加需跳过的键。
+func applyRatioMultipliers(cost decimal.Decimal, ratios map[string]any, skip ...string) decimal.Decimal {
+	if len(ratios) == 0 {
+		return cost
+	}
+	for k, v := range ratios {
+		if strings.HasPrefix(k, "spec.") {
+			continue
+		}
+		f, ok := v.(float64)
+		if !ok || f <= 0 {
+			continue
+		}
+		skipped := false
+		for _, s := range skip {
+			if k == s {
+				skipped = true
+				break
+			}
+		}
+		if skipped {
+			continue
+		}
+		cost = cost.Mul(NewFromFloat(f))
+	}
+	return cost
+}
+
+// hasDurationSignal 判断计费上下文里是否携带时长类任务（视频）的 duration/resolution 信号。
 // 视频提交管线（VolcengineVideoAdaptor.EstimateBilling）必然写入这两个键；图片等同步/异步
 // 任务传 nil ratios，据此区分「该走视频 token 估算」还是「按次计费」。
-func hasDurationSignal(ratios map[string]float64) bool {
+func hasDurationSignal(ratios map[string]any) bool {
 	if ratios == nil {
 		return false
 	}
@@ -152,9 +229,9 @@ func (b *TaskBillingProviderImpl) CheckApiKeyQuota(ctx context.Context, apiKeyID
 
 // SettleTaskSuccess 任务成功结算（含计费快照）
 // totalTokens/completionTokens: 上游返回的 token 用量
-// ratios: 提交时保存的计费比率（如 video_input 折扣）
+// ratios: 提交时保存的计费上下文（如 video_input 折扣）
 // billAt: 任务受理时刻（时段定价按该时刻评估；零值按当前时刻兜底）
-func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]float64, taskID string, billAt time.Time) (*common.SettlementResult, error) {
+func (b *TaskBillingProviderImpl) SettleTaskSuccess(ctx context.Context, tenantID, userID, apiKeyID, channelID int64, modelName, requestID string, actualCost, preDeductAmount decimal.Decimal, totalTokens, completionTokens int, ratios map[string]any, taskID string, billAt time.Time) (*common.SettlementResult, error) {
 	diff := SubtractMoney(actualCost, preDeductAmount)
 
 	// 1. 获取钱包
@@ -334,6 +411,14 @@ func buildTaskCostBreakdown(ctx context.Context, pricing *PricingResult, actualC
 		return bd
 	}
 
+	// per_second 模式：无 token 语义，费用整体记 BaseCost（折扣前成本），与 per_request 快照口径一致。
+	// 命中档的每秒价在预扣时已消费，此处不重复记录（CostBreakdown 无单价字段先例）
+	if pricing.BillingMode == "per_second" {
+		bd.BaseCost = preMultiplierCost(actualCost, pricing)
+		bd.TotalCost = actualCost
+		return bd
+	}
+
 	// token 模式但没有真实 token 用量（图片等扁平计费任务）：把费用整体记为 BaseCost，
 	// 不摊进 OutputCost。否则快照会生成「0 token 却有 output 费用」的自相矛盾行
 	// （如 0 tokens × $30/1M = $3.375）。真实费用仍由结算的 actual_cost 体现。
@@ -404,13 +489,19 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 // 公式：totalTokens / 1M × output_price × tenant_multiplier × 时段乘数 × 附加比率
 // billAt 为任务受理时刻（时段定价按该时刻评估）；如果模型没有配置 token 单价（纯按次计费），
 // 返回 0 表示不做 token 重算。
-func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]float64, billAt time.Time) (decimal.Decimal, error) {
+func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]any, billAt time.Time) (decimal.Decimal, error) {
 	if totalTokens <= 0 {
 		return Zero, nil
 	}
 
 	pricing, err := GetModelPriceAt(ctx, tenantID, modelName, billAt)
 	if err != nil {
+		return Zero, nil
+	}
+
+	// per_second 模式按秒计价，token 数与费用无关：返回 0 让结算保持预扣金额，
+	// 防止上游附带返回 token 用量时把按秒任务重算成 token 价
+	if pricing.BillingMode == "per_second" {
 		return Zero, nil
 	}
 
@@ -427,13 +518,8 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 
 	// 应用附加比率（视频输入折扣等）
-	// 注意：跳过 duration/resolution，它们已体现在上游返回的 token 数中，不应再乘
-	for k, ratio := range ratios {
-		if k == "duration" || k == "resolution" {
-			continue
-		}
-		costD = costD.Mul(NewFromFloat(ratio))
-	}
+	// 注意：跳过 duration/resolution 与 spec.*——时长/规格已体现在上游返回的 token 数中，不应再乘
+	costD = applyRatioMultipliers(costD, ratios, "duration", "resolution")
 
 	costD = RoundMoney(costD)
 
