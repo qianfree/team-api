@@ -319,3 +319,81 @@ func TestResponsesToOpenAIRequest_ParamMapping(t *testing.T) {
 		t.Errorf("metadata = %v", m["metadata"])
 	}
 }
+
+// TestResponsesToOpenAIRequest_ReasoningPassedBackAsReasoningContent 思考内容回传：
+// DeepSeek 等推理上游的 thinking 模式要求多轮历史携带 reasoning_content，
+// 丢弃 reasoning 项会导致上游 400（线上真实报错：
+// "The `reasoning_content` in the thinking mode must be passed back to the API."）。
+// 覆盖 summary（OpenAI 官方形态）与 content（部分聚合器直连形态）两种携带方式，
+// 以及挂到文本消息 / 聚合到 tool_calls 消息两条路径。
+func TestResponsesToOpenAIRequest_ReasoningPassedBackAsReasoningContent(t *testing.T) {
+	t.Run("summary 形态挂到文本消息", func(t *testing.T) {
+		m := convertResponsesBody(t, &convmeta.Values{}, `{"model":"deepseek-v4-pro","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},`+
+			`{"type":"reasoning","summary":[{"type":"summary_text","text":"思考A"}]},`+
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"答案"}]},`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"and?"}]}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3", msgs)
+		}
+		assistant := msgs[1].(map[string]any)
+		if assistant["reasoning_content"] != "思考A" {
+			t.Errorf("assistant.reasoning_content = %v, want 思考A", assistant["reasoning_content"])
+		}
+		// user 消息不受影响
+		if _, ok := msgs[0].(map[string]any)["reasoning_content"]; ok {
+			t.Error("user 消息不应携带 reasoning_content")
+		}
+	})
+
+	t.Run("content 形态挂到 tool_calls 聚合消息", func(t *testing.T) {
+		m := convertResponsesBody(t, &convmeta.Values{}, `{"model":"deepseek-v4-pro","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"ls"}]},`+
+			`{"type":"reasoning","content":[{"type":"reasoning_text","text":"先用shell"}]},`+
+			`{"type":"function_call","call_id":"call_a","name":"shell","arguments":"{\"cmd\":\"ls\"}"},`+
+			`{"type":"function_call_output","call_id":"call_a","output":"a.go"}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3 (user + assistant[tool_calls] + tool)", msgs)
+		}
+		assistant := msgs[1].(map[string]any)
+		if assistant["reasoning_content"] != "先用shell" {
+			t.Errorf("assistant.reasoning_content = %v, want 先用shell", assistant["reasoning_content"])
+		}
+		if _, ok := assistant["tool_calls"]; !ok {
+			t.Error("reasoning 挂载不应破坏 tool_calls 聚合")
+		}
+	})
+
+	t.Run("加密无明文不产出字段", func(t *testing.T) {
+		// OpenAI 官方加密 reasoning（仅 encrypted_content）无可读文本，
+		// 不应产出空 reasoning_content（部分严格 serde 上游会拒绝空值字段）
+		m := convertResponsesBody(t, &convmeta.Values{}, `{"model":"gpt-5.6","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},`+
+			`{"type":"reasoning","encrypted_content":"gAAAAA"},`+
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		assistant := msgs[1].(map[string]any)
+		if _, ok := assistant["reasoning_content"]; ok {
+			t.Errorf("无可读思考文本时不应携带 reasoning_content: %v", assistant)
+		}
+	})
+}
+
+// TestResponsesToOpenAIRequest_WebSearchOptionsAlwaysEmitted web_search_options 在本层
+// 必须无条件产出：它同时是 Responses→OpenAI→Claude 链的**中间载体**（第二跳据此还原
+// web_search 工具），按模型名裁剪会掐断 claude 原生渠道的搜索能力。
+// 「chat 终端 + claude 系模型」的剥离在 openai 适配器出口做（聚合器场景），
+// 见 relay/channel/openai/adaptor.go 的 stripWebSearchOptionsForClaudeModels。
+func TestResponsesToOpenAIRequest_WebSearchOptionsAlwaysEmitted(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-5", "gpt-4o-search-preview"} {
+		m := convertResponsesBody(t, &convmeta.Values{}, `{"model":"`+model+`","input":"hi","tools":[{"type":"web_search"}]}`)
+		if _, ok := m["web_search_options"]; !ok {
+			t.Errorf("%s: web_search_options 应作为链路中间载体无条件产出", model)
+		}
+	}
+}

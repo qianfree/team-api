@@ -66,9 +66,22 @@
   },
   {
     "data": {
+      "item": {
+        "id": "\u003cscrubbed\u003e",
+        "status": "in_progress",
+        "summary": [],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
       "delta": "Let me think...",
-      "item_id": "msg_chatcmpl-up",
-      "output_index": 0,
+      "item_id": "rs_resp_chatcmpl-up",
+      "output_index": 1,
       "summary_index": 0,
       "type": "response.reasoning_summary_text.delta"
     },
@@ -83,6 +96,34 @@
       "type": "response.output_text.delta"
     },
     "event": "response.output_text.delta"
+  },
+  {
+    "data": {
+      "item_id": "rs_resp_chatcmpl-up",
+      "output_index": 1,
+      "summary_index": 0,
+      "text": "Let me think...",
+      "type": "response.reasoning_summary_text.done"
+    },
+    "event": "response.reasoning_summary_text.done"
+  },
+  {
+    "data": {
+      "item": {
+        "id": "\u003cscrubbed\u003e",
+        "status": "completed",
+        "summary": [
+          {
+            "text": "Let me think...",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
   },
   {
     "data": {
@@ -154,6 +195,17 @@
             "role": "assistant",
             "status": "completed",
             "type": "message"
+          },
+          {
+            "id": "\u003cscrubbed\u003e",
+            "status": "completed",
+            "summary": [
+              {
+                "text": "Let me think...",
+                "type": "summary_text"
+              }
+            ],
+            "type": "reasoning"
           }
         ],
         "parallel_tool_calls": true,

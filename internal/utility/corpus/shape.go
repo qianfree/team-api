@@ -55,21 +55,16 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 // bareHexIDPattern OpenAI 风格的 32 位十六进制 id（无连字符）。
 var bareHexIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 
+// uuidContainsPattern 非锚定的 UUID 形态（用于对象 key 检测）。
+var uuidContainsPattern = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+
 // isIDLikeKey 判断对象 key 是否为「按 id 索引」的动态 key。
-// Responses 的 usage 明细按消息 id 建 map（msg_<uuid> / 32 位十六进制），
-// id 由服务端逐次生成——原样进指纹的话这类报文每次都是新形状，去重永远失效。
-// 仅认 UUID / 32 位十六进制 / 已知 id 前缀 + UUID 三种保守形态，
-// 不敢按前缀宽松匹配（如 item_ 前缀会误伤 item_type 这类正常字段名）。
+// Responses 的 usage 明细按 id 建 map（实测见过 msg_<uuid>、at_<uuid>、
+// 32 位十六进制等形态），id 由服务端逐次生成——原样进指纹的话这类报文
+// 每次都是新形状，去重永远失效。前缀不可枚举（msg_/at_/rs_/未来更多），
+// 按「key 中包含完整 UUID」识别；正常字段名不会包含 UUID，不会误伤。
 func isIDLikeKey(k string) bool {
-	if uuidPattern.MatchString(k) || bareHexIDPattern.MatchString(k) {
-		return true
-	}
-	for _, p := range knownIDPrefixes {
-		if strings.HasPrefix(k, p) && uuidPattern.MatchString(k[len(p):]) {
-			return true
-		}
-	}
-	return false
+	return uuidContainsPattern.MatchString(k) || bareHexIDPattern.MatchString(k)
 }
 
 // Fingerprint 计算 JSON 体的结构指纹。非 JSON 返回 ok=false（流式语料走 FingerprintStream）。
@@ -174,6 +169,14 @@ func isEnumLike(key, val string) bool {
 	// 当枚举保留会让跨会话的同形状请求指纹互异、去重碎片化
 	if uuidPattern.MatchString(val) {
 		return false
+	}
+	// 含 CJK 等表意字符的值是用户内容而非枚举：协议判别式全是英文标识符，
+	// 而中文文本通常**不含空格**，「无空格即枚举」的启发式对 CJK 失效——
+	// 不排除会把短中文（用户输入、思考内容）原样放进语料
+	for _, r := range val {
+		if r >= 0x2E80 {
+			return false
+		}
 	}
 	if val == "" || len(val) > enumLikeMax {
 		return false

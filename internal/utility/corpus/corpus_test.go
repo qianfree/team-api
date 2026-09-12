@@ -367,3 +367,44 @@ func TestShrinkInlineData(t *testing.T) {
 		t.Error("maxBytes=0 应原样返回")
 	}
 }
+
+// TestFingerprint_IgnoresCJKValues 未知 key 下的短中文是用户内容而非枚举
+// （中文不含空格，长度也可能 <40，「无空格即枚举」启发式对 CJK 失效），
+// 折叠后两条内容不同的请求才是同一形状。
+func TestFingerprint_IgnoresCJKValues(t *testing.T) {
+	a := []byte(`{"custom_note":"先看仓库","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	b := []byte(`{"custom_note":"再改代码","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	ha, ok := Fingerprint(a)
+	if !ok {
+		t.Fatal("应能解析")
+	}
+	hb, _ := Fingerprint(b)
+	if ha != hb {
+		t.Error("仅短中文内容不同的请求指纹应一致")
+	}
+}
+
+// TestFingerprint_CollapsesIDKeyedMaps 按 id 索引的对象 key 必须折叠：
+// Responses 的 usage 明细按消息 id 建 map，id 由服务端逐次生成——
+// 原样进指纹的话每个流都是独一无二的形状，去重永远失效。
+// 同时校验正常字段名（如 item_type）不得被误折叠。
+func TestFingerprint_CollapsesIDKeyedMaps(t *testing.T) {
+	a := []byte(`{"usage":{"input_tokens_details":{"at_4aab6a0b-9283-5e0c-b342-a2124032a32e":{"input_tokens":5},"msg_01a0916c-9211-7c20-ad68-2c2cae86a278":{"input_tokens":7}}},"object":"response"}`)
+	b := []byte(`{"usage":{"input_tokens_details":{"ffffffffffffffffffffffffffffffff":{"input_tokens":5},"msg_77c0ffee-dead-beef-0000-123456789abc":{"input_tokens":7}}},"object":"response"}`)
+	ha, ok := Fingerprint(a)
+	if !ok {
+		t.Fatal("应能解析")
+	}
+	hb, _ := Fingerprint(b)
+	if ha != hb {
+		t.Error("仅消息 id 不同的 usage 明细应算同一形状")
+	}
+
+	c := []byte(`{"obj":{"item_type":{"a":1}}}`)
+	d := []byte(`{"obj":{"other_name":{"a":1}}}`)
+	hc, _ := Fingerprint(c)
+	hd, _ := Fingerprint(d)
+	if hc == hd {
+		t.Error("正常字段名是结构差异，不得被 id-keyed 折叠误伤")
+	}
+}

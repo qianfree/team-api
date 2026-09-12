@@ -257,3 +257,22 @@ func isModelMapped(info convmeta.Meta) bool {
 
 // float64Ptr 返回 float64 的指针
 func float64Ptr(v float64) *float64 { return &v }
+
+// claudeWebSearchCallItem 把 claude 的 web_search server_tool_use 构造为 Responses 的
+// web_search_call 输出项。argsJSON 为服务端工具的 input 序列化（{"query":"..."}），
+// 解析失败时 query 留空（codex 等客户端按项类型展示搜索动作，query 缺失可容忍）。
+func claudeWebSearchCallItem(id, argsJSON string) map[string]any {
+	query := ""
+	var input map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &input); err == nil {
+		if q, ok := input["query"].(string); ok {
+			query = q
+		}
+	}
+	return map[string]any{
+		"type":   "web_search_call",
+		"id":     id,
+		"status": "completed",
+		"action": map[string]any{"type": "search", "query": query},
+	}
+}

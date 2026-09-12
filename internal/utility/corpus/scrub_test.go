@@ -363,3 +363,26 @@ func TestScrub_DedupStillWorks(t *testing.T) {
 		t.Errorf("脱敏后同形状仍应去重为 1 条，实际 %d", got)
 	}
 }
+
+// TestScrub_CJKFreeText 短中文必须脱敏：中文通常**不含空格**，「短且无空格即枚举」
+// 的启发式对 CJK 失效，会把用户输入、思考内容原样放进语料。
+func TestScrub_CJKFreeText(t *testing.T) {
+	const zh = "先看仓库结构再改"
+	out := scrubJSON(t, `{"custom_field":"`+zh+`","finish_reason":"stop"}`)
+	if strings.Contains(out, zh) {
+		t.Errorf("短中文未被脱敏: %s", out)
+	}
+	var parsed struct {
+		CustomField  string `json:"custom_field"`
+		FinishReason string `json:"finish_reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("不是合法 JSON: %v", err)
+	}
+	if parsed.FinishReason != "stop" {
+		t.Errorf("ASCII 枚举不应被误伤: %s", parsed.FinishReason)
+	}
+	if len(parsed.CustomField) != len(zh) {
+		t.Errorf("替换应等长: got %d want %d", len(parsed.CustomField), len(zh))
+	}
+}

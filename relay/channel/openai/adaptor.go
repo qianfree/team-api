@@ -165,7 +165,46 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		result = InjectStreamOptions(result, info)
 	}
 
+	// chat 终端 + claude 系模型：剥离 web_search_options（聚合器场景，详见函数注释）
+	if !responsesUpstream {
+		result = stripWebSearchOptionsForClaudeModels(result, info)
+	}
+
 	return result, nil
+}
+
+// stripWebSearchOptionsForClaudeModels 在 chat 终端出口剥离 web_search_options。
+// 该参数在网关内部是 Responses→OpenAI→Claude 链的搜索载体（第二跳据此还原
+// web_search 工具），必须完整通过转换层；但当 chat 上游实际服务的是 claude 系模型
+// （聚合器把 openai chat 转发给 Claude 后端）时，聚合器会把它映射为无法在 chat 协议
+// 表达的原生搜索工具，模型发起的搜索 tool_use 被整个吞掉，返回空内容 + finish stop
+// （线上实测：codex 经 chat 聚合器问天气，0 token 空响应）。
+// claude 原生渠道不走本适配器，不受影响；OpenAI 官方渠道的模型名不含 claude，同样不受影响。
+func stripWebSearchOptionsForClaudeModels(r io.Reader, info *common.RelayInfo) io.Reader {
+	model := info.OriginModelName
+	if info.ChannelMeta != nil && info.ChannelMeta.UpstreamModelName != "" {
+		model = info.ChannelMeta.UpstreamModelName
+	}
+	if !strings.Contains(strings.ToLower(model), "claude") {
+		return r
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return r
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawMap); err != nil {
+		return bytes.NewReader(body)
+	}
+	if _, exists := rawMap["web_search_options"]; !exists {
+		return bytes.NewReader(body)
+	}
+	delete(rawMap, "web_search_options")
+	result, err := json.Marshal(rawMap)
+	if err != nil {
+		return bytes.NewReader(body)
+	}
+	return bytes.NewReader(result)
 }
 
 // DoRequest 发送请求到上游

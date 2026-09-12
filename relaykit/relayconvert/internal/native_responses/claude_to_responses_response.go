@@ -72,6 +72,15 @@ func (c *ClaudeToResponsesResponseConverter) ConvertResponse(
 				"arguments": string(argsJSON),
 				"status":    "completed",
 			})
+		case "server_tool_use":
+			// claude 服务端工具：仅 web_search 有 Responses 对应物（web_search_call），
+			// 其余服务端工具跳过
+			if block.Name == "web_search" {
+				argsJSON, _ := json.Marshal(block.Input)
+				output = append(output, claudeWebSearchCallItem(block.ID, string(argsJSON)))
+			}
+		case "web_search_tool_result":
+			// 搜索结果块无 Responses 对应物——结果已内化为模型的文本回答与引用，跳过
 		}
 	}
 	if len(textParts) > 0 {

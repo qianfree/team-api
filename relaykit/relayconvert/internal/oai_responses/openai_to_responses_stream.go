@@ -69,13 +69,50 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	sentTextDone := false
 	parsedChunks := 0
 	sawChoices := false
-	outputIndex := 0
+	outputIndex := 0 // message 项固定占用 0，文本事件始终挂在这里
+	itemIdx := 1     // 后续输出项（reasoning / tool call）的索引分配器
 	contentIndex := 0
 	toolCallIndexByID := make(map[string]int)
 	toolCallArgsByID := make(map[string]string)
 	toolCallNameByID := make(map[string]string)
 	// 通过 index 追踪 tool call ID（OpenAI 流式中后续 chunk 的 ID 为空，只有 index）
 	toolCallIDByIndex := make(map[int]string)
+
+	// 思考内容：chat 的 reasoning_content 增量必须落成独立的 reasoning 输出项
+	// （output_item.added / .done + summary 文本），客户端才能在下一轮把它放进
+	// input 回传——只发孤儿 delta 的话历史里永远没有 reasoning 项，
+	// DeepSeek 等要求回传 reasoning_content 的 thinking 上游会直接 400。
+	var reasoningText strings.Builder
+	reasoningID := ""
+	reasoningItemIdx := -1
+	closeReasoningItem := func() error {
+		if reasoningItemIdx < 0 {
+			return nil
+		}
+		text := reasoningText.String()
+		if err := emit("response.reasoning_summary_text.done", map[string]any{
+			"type":          "response.reasoning_summary_text.done",
+			"item_id":       reasoningID,
+			"output_index":  reasoningItemIdx,
+			"summary_index": 0,
+			"text":          text,
+		}, nil); err != nil {
+			return err
+		}
+		return emit("response.output_item.done", map[string]any{
+			"type":         "response.output_item.done",
+			"output_index": reasoningItemIdx,
+			"item": map[string]any{
+				"type":   "reasoning",
+				"id":     reasoningID,
+				"status": "completed",
+				"summary": []map[string]any{{
+					"type": "summary_text",
+					"text": text,
+				}},
+			},
+		}, nil)
+	}
 
 	for scanner.Scan() {
 		select {
@@ -204,12 +241,31 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 				}
 			}
 
-			// 推理内容
+			// 推理内容：懒开一个 reasoning 输出项（首个增量到达时），
+			// 后续增量以该项的 id / output_index 挂载
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
+				if reasoningItemIdx < 0 {
+					reasoningItemIdx = itemIdx
+					reasoningID = fmt.Sprintf("rs_%s", respID)
+					itemIdx++
+					if err := emit("response.output_item.added", map[string]any{
+						"type":         "response.output_item.added",
+						"output_index": reasoningItemIdx,
+						"item": map[string]any{
+							"type":    "reasoning",
+							"id":      reasoningID,
+							"status":  "in_progress",
+							"summary": []any{},
+						},
+					}, nil); err != nil {
+						return err
+					}
+				}
+				reasoningText.WriteString(*choice.Delta.ReasoningContent)
 				if err := emit("response.reasoning_summary_text.delta", map[string]any{
 					"type":          "response.reasoning_summary_text.delta",
-					"item_id":       msgID,
-					"output_index":  outputIndex,
+					"item_id":       reasoningID,
+					"output_index":  reasoningItemIdx,
 					"summary_index": 0,
 					"delta":         *choice.Delta.ReasoningContent,
 				}, nil); err != nil {
@@ -223,6 +279,10 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 
 				// 新 tool call：有 ID 和 name
 				if callID != "" && tc.Function.Name != "" {
+					// 前一项若是 reasoning，先收口再开工具项
+					if err := closeReasoningItem(); err != nil {
+						return err
+					}
 					// 记录 index → callID 映射，用于后续参数 chunk 的查找
 					toolCallIDByIndex[tc.Index] = callID
 
@@ -233,16 +293,15 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 							return err
 						}
 						sentTextDone = true
-						outputIndex++
 					}
 
-					toolCallIndexByID[callID] = outputIndex
+					toolCallIndexByID[callID] = itemIdx
 					toolCallNameByID[callID] = tc.Function.Name
 					toolCallArgsByID[callID] = ""
 
 					if err := emit("response.output_item.added", map[string]any{
 						"type":         "response.output_item.added",
-						"output_index": outputIndex,
+						"output_index": itemIdx,
 						"item": map[string]any{
 							"type":    "function_call",
 							"id":      callID,
@@ -253,7 +312,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 					}, nil); err != nil {
 						return err
 					}
-					outputIndex++
+					itemIdx++
 				}
 
 				// 参数 chunk：ID 可能为空，通过 index 查找对应的 callID
@@ -280,6 +339,9 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 
 			// finish_reason
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				if err := closeReasoningItem(); err != nil {
+					return err
+				}
 				finishedText := contentBuilder.String()
 
 				// 关闭文本 content part（如果尚未关闭）
@@ -341,7 +403,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 
-	// 构建 response.completed 的 output 数组（包含文本消息 + 所有 tool call）
+	// 构建 response.completed 的 output 数组（包含文本消息 + reasoning + 所有 tool call）
 	finalOutput := make([]map[string]any, 0)
 	if !sentTextDone || contentBuilder.Len() > 0 {
 		finalOutput = append(finalOutput, map[string]any{
@@ -356,6 +418,19 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 					"annotations": []any{},
 				},
 			},
+		})
+	}
+	// reasoning 项（流中途异常未收口时的兜底；正常路径 closeReasoningItem 已发过 done 事件，
+	// completed 的 output 数组仍需携带完整项，客户端据此重建下一轮的 input 历史）
+	if reasoningItemIdx >= 0 {
+		finalOutput = append(finalOutput, map[string]any{
+			"type":   "reasoning",
+			"id":     reasoningID,
+			"status": "completed",
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": reasoningText.String(),
+			}},
 		})
 	}
 	for tcID := range toolCallIndexByID {

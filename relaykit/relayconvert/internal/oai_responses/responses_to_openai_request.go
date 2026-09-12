@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
@@ -114,6 +115,11 @@ func (c *ResponsesToOpenAIRequestConverter) ConvertRequest(
 		// 服务端联网搜索：Responses 的 web_search 工具 → chat 的 web_search_options。
 		// chat 是跨原生方向的转换中枢（Responses→OpenAI→Claude/Gemini 两跳链），
 		// 这里不承载就等于整条链上的搜索能力全部丢失。
+		//
+		// 注意：web_search_options 同时是 Responses→Claude 链的**中间载体**（第二跳
+		// OpenAI→Claude 据此还原 web_search 工具），此处不得按模型名做任何裁剪；
+		// 「chat 终端 + claude 系模型」的剥离在 openai 适配器出口做（aggregator 场景，
+		// 聚合器会把它映射成无法表达的原生搜索工具，导致空响应）。
 		if spec := shared.DetectWebSearchFromResponsesTools(req.Tools); spec != nil {
 			chatReq.WebSearchOptions = spec.ToOpenAIOptions()
 		}
@@ -164,6 +170,34 @@ type r2cInputItem struct {
 	// function_call 项字段（Responses 历史中的助手工具调用）
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	// reasoning 项的思考文本（OpenAI 官方形态在 summary[]，部分聚合器直连输出放 content[]）
+	Summary []r2cTextPart `json:"summary,omitempty"`
+}
+
+// r2cTextPart Responses 输出项中文本部件的最小读取形态。
+type r2cTextPart struct {
+	Text string `json:"text"`
+}
+
+// r2cReasoningText 提取 reasoning 项的思考文本，summary 与 content 两种形态按序拼接。
+func r2cReasoningText(item r2cInputItem) string {
+	var parts []string
+	for _, s := range item.Summary {
+		if s.Text != "" {
+			parts = append(parts, s.Text)
+		}
+	}
+	if len(item.Content) > 0 {
+		var contentParts []r2cTextPart
+		if err := json.Unmarshal(item.Content, &contentParts); err == nil {
+			for _, c := range contentParts {
+				if c.Text != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type r2cContentPart struct {
@@ -202,11 +236,31 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
 	// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
 	// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息
 	var pendingToolCalls []dto.ToolCall
+	// reasoning 项的思考文本：挂到**下一条** assistant 消息（Responses 的 reasoning 项
+	// 总是排在对应的 message / function_call 之前）。DeepSeek 等推理上游的 thinking 模式
+	// 要求多轮历史把 reasoning_content 传回，丢弃会导致 400：
+	// "The `reasoning_content` in the thinking mode must be passed back to the API."
+	// 仅当历史携带可读思考文本（明文 summary/content）时才会产出该字段——
+	// 上游若从不返回 reasoning_content（如 OpenAI 官方 chat），历史里就没有这类项，天然不触发。
+	var pendingReasoning string
+	takeReasoning := func() *string {
+		if pendingReasoning == "" {
+			return nil
+		}
+		r := pendingReasoning
+		pendingReasoning = ""
+		return &r
+	}
 	flushToolCalls := func() {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
-		messages = append(messages, dto.Message{Role: "assistant", Content: nil, ToolCalls: pendingToolCalls})
+		messages = append(messages, dto.Message{
+			Role:             "assistant",
+			Content:          nil,
+			ToolCalls:        pendingToolCalls,
+			ReasoningContent: takeReasoning(),
+		})
 		pendingToolCalls = nil
 	}
 	for _, raw := range items {
@@ -218,6 +272,11 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
 		case "message":
 			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
+				if msg.Role == "assistant" {
+					msg.ReasoningContent = takeReasoning()
+				} else {
+					pendingReasoning = "" // user 消息前的 reasoning 无人可挂，丢弃
+				}
 				messages = append(messages, *msg)
 			}
 		case "function_call":
@@ -237,12 +296,14 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
 			flushToolCalls()
 			messages = append(messages, dto.Message{Role: "tool", ToolCallID: item.CallID, Content: item.Output})
 		case "reasoning":
-			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
-			continue
+			pendingReasoning = r2cReasoningText(item)
 		default:
 			flushToolCalls()
 			if item.Role != "" {
 				if msg := r2cConvertMessage(item); msg != nil {
+					if msg.Role == "assistant" {
+						msg.ReasoningContent = takeReasoning()
+					}
 					messages = append(messages, *msg)
 				}
 			}

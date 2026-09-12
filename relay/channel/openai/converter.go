@@ -724,6 +724,34 @@ type r2cInputItem struct {
 	// function_call 项字段（Responses 历史中的助手工具调用）
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	// reasoning 项的思考文本（OpenAI 官方形态在 summary[]，部分聚合器直连输出放 content[]）
+	Summary []r2cTextPart `json:"summary,omitempty"`
+}
+
+// r2cTextPart Responses 输出项中文本部件的最小读取形态。
+type r2cTextPart struct {
+	Text string `json:"text"`
+}
+
+// r2cReasoningText 提取 reasoning 项的思考文本，summary 与 content 两种形态按序拼接。
+func r2cReasoningText(item r2cInputItem) string {
+	var parts []string
+	for _, s := range item.Summary {
+		if s.Text != "" {
+			parts = append(parts, s.Text)
+		}
+	}
+	if len(item.Content) > 0 {
+		var contentParts []r2cTextPart
+		if err := json.Unmarshal(item.Content, &contentParts); err == nil {
+			for _, c := range contentParts {
+				if c.Text != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type r2cContentPart struct {
@@ -762,11 +790,26 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 	// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
 	// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息
 	var pendingToolCalls []map[string]any
+	// reasoning 项的思考文本：挂到下一条 assistant 消息。DeepSeek 等推理上游的 thinking
+	// 模式要求多轮历史传回 reasoning_content，丢弃会 400（与 relaykit 侧镜像实现同口径）
+	var pendingReasoning string
+	takeReasoning := func() any {
+		if pendingReasoning == "" {
+			return nil
+		}
+		r := pendingReasoning
+		pendingReasoning = ""
+		return r
+	}
 	flushToolCalls := func() {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
-		messages = append(messages, map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls})
+		msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls}
+		if r := takeReasoning(); r != nil {
+			msg["reasoning_content"] = r
+		}
+		messages = append(messages, msg)
 		pendingToolCalls = nil
 	}
 	for _, raw := range items {
@@ -778,6 +821,13 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		case "message":
 			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
+				if msg["role"] == "assistant" {
+					if r := takeReasoning(); r != nil {
+						msg["reasoning_content"] = r
+					}
+				} else {
+					pendingReasoning = "" // user 消息前的 reasoning 无人可挂，丢弃
+				}
 				messages = append(messages, msg)
 			}
 		case "function_call":
@@ -797,12 +847,16 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 			flushToolCalls()
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": item.CallID, "content": item.Output})
 		case "reasoning":
-			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
-			continue
+			pendingReasoning = r2cReasoningText(item)
 		default:
 			flushToolCalls()
 			if item.Role != "" {
 				if msg := r2cConvertMessage(item); msg != nil {
+					if msg["role"] == "assistant" {
+						if r := takeReasoning(); r != nil {
+							msg["reasoning_content"] = r
+						}
+					}
 					messages = append(messages, msg)
 				}
 			}

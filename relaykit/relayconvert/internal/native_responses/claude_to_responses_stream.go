@@ -68,6 +68,12 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 	toolCalls := make([]*claudeToolCallState, 0) // 有序聚合，completed 的 output 数组按此顺序
 	toolIndexByID := make(map[string]int)        // callID → output_index
 	var currentTool *claudeToolCallState         // 正在接收参数增量的工具调用
+	// 服务端工具（claude 的 web_search）：映射为 Responses 的 web_search_call 项。
+	// 搜索结果块（web_search_tool_result）无 Responses 对应物——结果已内化为模型的
+	// 文本回答与引用，跳过即可
+	serverToolCalls := make([]*claudeToolCallState, 0)
+	serverToolIndexByID := make(map[string]int)
+	var currentServerTool *claudeToolCallState
 
 	// emitEvent 发出一个 Responses 格式事件帧
 	emitEvent := func(eventType string, data map[string]any, u *dto.UsageWithDetails) error {
@@ -183,6 +189,19 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			})
 		}
 
+		// 服务端 web_search 调用收尾：web_search_call 项（query 从聚合参数解析）
+		for _, st := range serverToolCalls {
+			item := claudeWebSearchCallItem(st.id, st.args.String())
+			if err := emitEvent("response.output_item.done", map[string]any{
+				"type":         "response.output_item.done",
+				"output_index": serverToolIndexByID[st.id],
+				"item":         item,
+			}, nil); err != nil {
+				return err
+			}
+			finalOutput = append(finalOutput, item)
+		}
+
 		// 客户端可见 usage 用 OpenAI 语义（input 含缓存，cached 为子集）；
 		// completed 帧同时携带 Claude 计费口径的用量（input 不含缓存、cache 明细独立），
 		// 输出缺失时的估算兜底（EstimateStreamOutputTokens）由宿主桥接层处理
@@ -295,6 +314,31 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 					return err
 				}
 				outputIndex++
+			case "server_tool_use":
+				// claude 服务端工具：仅 web_search 有 Responses 对应物（web_search_call），
+				// 其余服务端工具跳过。参数以 input_json_delta 聚合，收尾在 finish 统一冲刷
+				if event.ContentBlock.Name != "web_search" {
+					continue
+				}
+				if err := closeTextPart(); err != nil {
+					return err
+				}
+				st := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				serverToolCalls = append(serverToolCalls, st)
+				serverToolIndexByID[st.id] = outputIndex
+				currentServerTool = st
+				if err := emitEvent("response.output_item.added", map[string]any{
+					"type":         "response.output_item.added",
+					"output_index": outputIndex,
+					"item": map[string]any{
+						"type":   "web_search_call",
+						"id":     st.id,
+						"status": "in_progress",
+					},
+				}, nil); err != nil {
+					return err
+				}
+				outputIndex++
 			case "text", "thinking", "redacted_thinking":
 				// 文本/思考块：文本复用首个 content part，思考以 reasoning summary 事件透出
 			}
@@ -340,6 +384,9 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 					}, nil); err != nil {
 						return err
 					}
+				} else if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" && currentServerTool != nil {
+					// web_search_call 无参数增量事件形态，仅聚合（query 收尾时解析）
+					currentServerTool.args.WriteString(*event.Delta.PartialJSON)
 				}
 			case "signature_delta":
 				// 思考签名无 Responses 对应物，忽略
@@ -349,6 +396,9 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			// 块级收尾统一延迟到 message_stop / finish，这里仅结束当前工具块的增量定向
 			if currentTool != nil {
 				currentTool = nil
+			}
+			if currentServerTool != nil {
+				currentServerTool = nil
 			}
 
 		case "message_delta":

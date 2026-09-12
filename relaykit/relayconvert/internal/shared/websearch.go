@@ -101,8 +101,7 @@ func DetectWebSearchFromGeminiTools(toolsJSON json.RawMessage) *WebSearchSpec {
 	return nil
 }
 
-// DetectWebSearchFromResponsesTools 从 Responses tools 中探测 web_search 工具
-// （含 web_search_preview / web_search_2025xx 等变体，按前缀识别）。
+// DetectWebSearchFromResponsesTools 从 Responses tools 中探测 web_search 工具// （含 web_search_preview / web_search_2025xx 等变体，按前缀识别）。
 func DetectWebSearchFromResponsesTools(toolsJSON json.RawMessage) *WebSearchSpec {
 	if len(toolsJSON) == 0 {
 		return nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -450,5 +451,77 @@ func TestConvertResponsesToOpenAI_FunctionCallHistory(t *testing.T) {
 		if tool["role"] != "tool" || tool["tool_call_id"] != wantID {
 			t.Errorf("messages[%d] = %v, want tool with tool_call_id=%s", 2+i, tool, wantID)
 		}
+	}
+}
+
+// TestConvertResponsesToOpenAI_ReasoningPassedBack 思考内容回传（与 relaykit 侧镜像实现同口径）：
+// DeepSeek 等推理上游的 thinking 模式要求多轮历史携带 reasoning_content，丢弃会 400。
+func TestConvertResponsesToOpenAI_ReasoningPassedBack(t *testing.T) {
+	info := &common.RelayInfo{ChannelMeta: &common.ChannelMeta{}}
+	body := []byte(`{"model":"deepseek-v4-pro","input":[` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},` +
+		`{"type":"reasoning","content":[{"type":"reasoning_text","text":"思考X"}]},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"答"}]},` +
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":"思考Y"}]},` +
+		`{"type":"function_call","call_id":"call_c","name":"shell","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_c","output":"ok"}` +
+		`]}`)
+	out, err := ConvertResponsesToOpenAI(body, info)
+	if err != nil {
+		t.Fatalf("ConvertResponsesToOpenAI: %v", err)
+	}
+	raw, _ := io.ReadAll(out)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, raw)
+	}
+	msgs, _ := m["messages"].([]any)
+	if len(msgs) != 4 {
+		t.Fatalf("messages = %v, want 4 (user + assistant + assistant[call] + tool)", msgs)
+	}
+	if got := msgs[1].(map[string]any)["reasoning_content"]; got != "思考X" {
+		t.Errorf("messages[1].reasoning_content = %v, want 思考X", got)
+	}
+	if got := msgs[2].(map[string]any)["reasoning_content"]; got != "思考Y" {
+		t.Errorf("messages[2].reasoning_content = %v, want 思考Y（挂到 tool_calls 聚合消息）", got)
+	}
+	if _, ok := msgs[0].(map[string]any)["reasoning_content"]; ok {
+		t.Error("user 消息不应携带 reasoning_content")
+	}
+}
+
+// TestStripWebSearchOptionsForClaudeModels chat 终端出口剥离 web_search_options：
+// 该参数是 Responses→OpenAI→Claude 链的中间载体，必须完整通过转换层；
+// 但 chat 上游实际服务 claude 系模型时（聚合器场景），聚合器会把它映射为无法在
+// chat 协议表达的原生搜索工具，模型发起的搜索被吞成空响应——只在此终端剥离。
+func TestStripWebSearchOptionsForClaudeModels(t *testing.T) {
+	mkInfo := func(model string) *common.RelayInfo {
+		return &common.RelayInfo{
+			OriginModelName: model,
+			ChannelMeta:     &common.ChannelMeta{UpstreamModelName: model},
+		}
+	}
+	body := `{"model":"claude-sonnet-5","messages":[],"web_search_options":{}}`
+
+	// claude 系模型：剥离
+	out, err := io.ReadAll(stripWebSearchOptionsForClaudeModels(strings.NewReader(body), mkInfo("claude-sonnet-5")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("剥离后应仍是合法 JSON: %v", err)
+	}
+	if _, ok := m["web_search_options"]; ok {
+		t.Error("claude 系模型的 chat 终端请求不应携带 web_search_options")
+	}
+
+	// 非 claude 模型：保留（OpenAI 搜索系模型的合法参数）
+	out2, err := io.ReadAll(stripWebSearchOptionsForClaudeModels(strings.NewReader(body), mkInfo("gpt-4o-search-preview")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out2), "web_search_options") {
+		t.Error("非 claude 模型应保留 web_search_options")
 	}
 }

@@ -534,3 +534,34 @@ func (m *mockMeta) AppendRequestConversion(format types.RelayFormat) {
 func (m *mockMeta) ConvOptions() *convmeta.Options {
 	return m.GetOptions()
 }
+
+// TestOpenAIToClaudeRequestConverter_WebSearchOptions chat 的 web_search_options
+// 必须还原为 claude 原生 web_search 工具——它是 Responses→OpenAI→Claude 链上
+// 服务端搜索能力的中间载体（codex 的 web_search 工具依赖这条链触达 claude 渠道）。
+func TestOpenAIToClaudeRequestConverter_WebSearchOptions(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	opts := json.RawMessage(`{"search_context_size":"medium"}`)
+	out, err := converter.ConvertRequest(context.Background(), &convmeta.Values{}, &dto.GeneralOpenAIRequest{
+		Model:            "claude-sonnet-5",
+		Messages:         []dto.Message{{Role: "user", Content: "今天有什么新闻"}},
+		MaxTokens:        intPtr(4096),
+		WebSearchOptions: opts,
+	})
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	claudeReq, ok := out.(*dto.ClaudeRequest)
+	if !ok {
+		t.Fatalf("输出类型 %T", out)
+	}
+	found := false
+	for _, tool := range claudeReq.Tools {
+		if tool.Type == "web_search_20250305" && tool.Name == "web_search" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("web_search_options 应还原为 claude 原生 web_search 工具，实际 tools: %+v", claudeReq.Tools)
+	}
+}
