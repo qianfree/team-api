@@ -256,95 +256,6 @@ func TestOpenAIToClaudeRequestConverter_ToolCalls(t *testing.T) {
 	}
 }
 
-func TestOpenAIToClaudeRequestConverter_ThinkingSuffix(t *testing.T) {
-	converter := &OpenAIToClaudeRequestConverter{}
-	ctx := context.Background()
-
-	maxTokens := 2000
-	openaiReq := &dto.GeneralOpenAIRequest{
-		Model:     "gpt-4",
-		MaxTokens: &maxTokens,
-		Messages: []dto.Message{
-			{Role: "user", Content: "Test"},
-		},
-	}
-
-	tests := []struct {
-		name               string
-		upstreamModel      string
-		adapterEnabled     bool
-		budgetPercentage   float64
-		expectThinking     bool
-		expectBudgetTokens bool
-	}{
-		{
-			name:           "thinking suffix with adapter enabled",
-			upstreamModel:  "claude-3-opus-20240229-thinking",
-			adapterEnabled: true,
-			expectThinking: true,
-		},
-		{
-			name:               "thinking suffix with budget",
-			upstreamModel:      "claude-3-opus-20240229-thinking",
-			adapterEnabled:     true,
-			budgetPercentage:   0.2,
-			expectThinking:     true,
-			expectBudgetTokens: true,
-		},
-		{
-			name:           "thinking suffix with adapter disabled",
-			upstreamModel:  "claude-3-opus-20240229-thinking",
-			adapterEnabled: false,
-			expectThinking: false,
-		},
-		{
-			name:           "nothinking suffix overrides",
-			upstreamModel:  "claude-3-opus-20240229-nothinking",
-			adapterEnabled: true,
-			expectThinking: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			info := &mockMeta{
-				upstreamModel: tt.upstreamModel,
-				opts: &convmeta.Options{
-					Claude: convmeta.ClaudeOptions{
-						ThinkingAdapterEnabled:                tt.adapterEnabled,
-						ThinkingAdapterBudgetTokensPercentage: tt.budgetPercentage,
-					},
-				},
-			}
-
-			result, err := converter.ConvertRequest(ctx, info, openaiReq)
-			if err != nil {
-				t.Fatalf("ConvertRequest failed: %v", err)
-			}
-
-			claudeReq := result.(*dto.ClaudeRequest)
-
-			if tt.expectThinking {
-				if claudeReq.Thinking == nil {
-					t.Error("Expected Thinking to be set, got nil")
-				} else if claudeReq.Thinking.Type != "enabled" {
-					t.Errorf("Thinking.Type = %q, want %q", claudeReq.Thinking.Type, "enabled")
-				}
-
-				if tt.expectBudgetTokens {
-					if claudeReq.Thinking.BudgetTokens == nil {
-						t.Error("Expected BudgetTokens to be set, got nil")
-					}
-				}
-			} else {
-				if claudeReq.Thinking != nil {
-					t.Errorf("Expected Thinking to be nil, got %+v", claudeReq.Thinking)
-				}
-			}
-		})
-	}
-}
-
 func TestOpenAIToClaudeRequestConverter_MaxTokensDefault(t *testing.T) {
 	converter := &OpenAIToClaudeRequestConverter{}
 	ctx := context.Background()
@@ -622,4 +533,35 @@ func (m *mockMeta) AppendRequestConversion(format types.RelayFormat) {
 
 func (m *mockMeta) ConvOptions() *convmeta.Options {
 	return m.GetOptions()
+}
+
+// TestOpenAIToClaudeRequestConverter_WebSearchOptions chat 的 web_search_options
+// 必须还原为 claude 原生 web_search 工具——它是 Responses→OpenAI→Claude 链上
+// 服务端搜索能力的中间载体（codex 的 web_search 工具依赖这条链触达 claude 渠道）。
+func TestOpenAIToClaudeRequestConverter_WebSearchOptions(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	opts := json.RawMessage(`{"search_context_size":"medium"}`)
+	out, err := converter.ConvertRequest(context.Background(), &convmeta.Values{}, &dto.GeneralOpenAIRequest{
+		Model:            "claude-sonnet-5",
+		Messages:         []dto.Message{{Role: "user", Content: "今天有什么新闻"}},
+		MaxTokens:        intPtr(4096),
+		WebSearchOptions: opts,
+	})
+	if err != nil {
+		t.Fatalf("ConvertRequest: %v", err)
+	}
+	claudeReq, ok := out.(*dto.ClaudeRequest)
+	if !ok {
+		t.Fatalf("输出类型 %T", out)
+	}
+	found := false
+	for _, tool := range claudeReq.Tools {
+		if tool.Type == "web_search_20250305" && tool.Name == "web_search" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("web_search_options 应还原为 claude 原生 web_search 工具，实际 tools: %+v", claudeReq.Tools)
+	}
 }

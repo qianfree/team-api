@@ -1,0 +1,72 @@
+[
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Let me think...",
+                "thought": true
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "The answer is 42."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "candidatesTokenCount": 20,
+        "promptTokenCount": 10,
+        "thoughtsTokenCount": 30,
+        "totalTokenCount": 60
+      }
+    },
+    "usage": {
+      "completion_tokens": 50,
+      "completion_tokens_details": {
+        "reasoning_tokens": 30
+      },
+      "prompt_tokens": 10,
+      "total_tokens": 60
+    }
+  }
+]

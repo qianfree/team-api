@@ -97,13 +97,11 @@ func TestHandleGeminiInboundStream_PooledFramesValid(t *testing.T) {
 	}
 
 	var text strings.Builder
-	sawDone := false
 	for i, f := range frames {
 		if f == "[DONE]" {
-			sawDone = true
-			if i != len(frames)-1 {
-				t.Errorf("[DONE] 不在最后一帧（位置 %d/%d）", i, len(frames)-1)
-			}
+			// 真实 Gemini API 无 [DONE] 哨兵；官方 SDK 对每个 data 帧做 JSON.parse，
+			// 写 [DONE] 会直接抛 SyntaxError 导致客户端报错
+			t.Errorf("Gemini 客户端不得收到 [DONE]（第 %d 帧）", i)
 			continue
 		}
 		var chunk dto.GeminiChatResponse
@@ -119,8 +117,10 @@ func TestHandleGeminiInboundStream_PooledFramesValid(t *testing.T) {
 			}
 		}
 	}
-	if !sawDone {
-		t.Error("缺少 [DONE] 终止帧")
+	// 收尾 chunk 的 content 不得带 "parts": null（官方 SDK isValidContent 只判 undefined
+	// 后直接读 .length，null 会崩溃）
+	if strings.Contains(rec.body.String(), `"parts":null`) {
+		t.Error(`响应中出现 "parts":null，Gemini 官方 SDK 会崩溃`)
 	}
 	if got := text.String(); got != "你好世界" {
 		t.Errorf("转发文本 = %q, want %q", got, "你好世界")

@@ -1,0 +1,251 @@
+[
+  {
+    "data": {
+      "response": {
+        "created_at": 0,
+        "error": null,
+        "id": "\u003cscrubbed\u003e",
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "origin-model",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": {
+          "effort": null,
+          "summary": null
+        },
+        "status": "in_progress",
+        "store": false,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [],
+        "top_p": 1,
+        "truncation": "disabled",
+        "user": null
+      },
+      "type": "response.created"
+    },
+    "event": "response.created"
+  },
+  {
+    "data": {
+      "item": {
+        "content": [],
+        "id": "\u003cscrubbed\u003e",
+        "role": "assistant",
+        "status": "in_progress",
+        "type": "message"
+      },
+      "output_index": 0,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 0,
+      "part": {
+        "annotations": [],
+        "text": "",
+        "type": "output_text"
+      },
+      "type": "response.content_part.added"
+    },
+    "event": "response.content_part.added"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "delta": "Let me check the weather.",
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 0,
+      "type": "response.output_text.delta"
+    },
+    "event": "response.output_text.delta"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 0,
+      "text": "Let me check the weather.",
+      "type": "response.output_text.done"
+    },
+    "event": "response.output_text.done"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 0,
+      "part": {
+        "annotations": [],
+        "text": "Let me check the weather.",
+        "type": "output_text"
+      },
+      "type": "response.content_part.done"
+    },
+    "event": "response.content_part.done"
+  },
+  {
+    "data": {
+      "item": {
+        "content": [
+          {
+            "annotations": [],
+            "text": "Let me check the weather.",
+            "type": "output_text"
+          }
+        ],
+        "id": "\u003cscrubbed\u003e",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      "output_index": 0,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
+  },
+  {
+    "data": {
+      "item": {
+        "call_id": "\u003cscrubbed\u003e",
+        "id": "\u003cscrubbed\u003e",
+        "name": "get_weather",
+        "status": "in_progress",
+        "type": "function_call"
+      },
+      "output_index": 1,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
+      "delta": "{\"city\":\"Shanghai\"}",
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 1,
+      "type": "response.function_call_arguments.delta"
+    },
+    "event": "response.function_call_arguments.delta"
+  },
+  {
+    "data": {
+      "arguments": "{\"city\":\"Shanghai\"}",
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 1,
+      "type": "response.function_call_arguments.done"
+    },
+    "event": "response.function_call_arguments.done"
+  },
+  {
+    "data": {
+      "item": {
+        "arguments": "{\"city\":\"Shanghai\"}",
+        "call_id": "\u003cscrubbed\u003e",
+        "id": "\u003cscrubbed\u003e",
+        "name": "get_weather",
+        "status": "completed",
+        "type": "function_call"
+      },
+      "output_index": 1,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
+  },
+  {
+    "data": {
+      "response": {
+        "completed_at": 0,
+        "created_at": 0,
+        "error": null,
+        "id": "\u003cscrubbed\u003e",
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "origin-model",
+        "object": "response",
+        "output": [
+          {
+            "content": [
+              {
+                "annotations": [],
+                "text": "Let me check the weather.",
+                "type": "output_text"
+              }
+            ],
+            "id": "\u003cscrubbed\u003e",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message"
+          },
+          {
+            "arguments": "{\"city\":\"Shanghai\"}",
+            "call_id": "\u003cscrubbed\u003e",
+            "id": "\u003cscrubbed\u003e",
+            "name": "get_weather",
+            "status": "completed",
+            "type": "function_call"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": {
+          "effort": null,
+          "summary": null
+        },
+        "status": "completed",
+        "store": false,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [],
+        "top_p": 1,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 20,
+          "input_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "output_tokens": 9,
+          "output_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          },
+          "total_tokens": 29
+        },
+        "user": null
+      },
+      "type": "response.completed"
+    },
+    "event": "response.completed",
+    "usage": {
+      "completion_tokens": 9,
+      "completion_tokens_details": {},
+      "prompt_tokens": 20,
+      "prompt_tokens_details": {},
+      "total_tokens": 29
+    }
+  }
+]

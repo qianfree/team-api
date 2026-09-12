@@ -123,7 +123,7 @@ func TestTrackConverterCall_LongErrorTruncated(t *testing.T) {
 	// 超过 500 字符的错误信息应被截断，避免撑爆 JSONB payload（覆盖 setLastError 截断分支）。
 	resetTracker()
 	longMsg := strings.Repeat("x", 600)
-	TrackConverterCall("c_long", "openai", "coze", time.Millisecond, errors.New(longMsg))
+	TrackConverterCall("c_long", "openai", "ollama", time.Millisecond, errors.New(longMsg))
 
 	got := GetRelaykitConverterMetrics()
 	var found bool

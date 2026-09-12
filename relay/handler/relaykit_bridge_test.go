@@ -64,23 +64,21 @@ const openAIRequestBody = `{"model":"gpt-4","max_tokens":256,"messages":[{"role"
 
 func TestConvertRequestViaRelaykit_AllProviders(t *testing.T) {
 	cases := []struct {
-		name      string
-		channel   constant.ProviderType
-		upstream  string
-		wantKeys  []string
+		name     string
+		channel  constant.ProviderType
+		upstream string
+		wantKeys []string
 	}{
 		{"Claude", constant.ProviderClaude, "claude-3-5-sonnet-20241022", []string{"messages", "max_tokens"}},
 		{"Gemini", constant.ProviderGemini, "gemini-2.0-flash", []string{"contents"}},
-		{"Coze", constant.ProviderCoze, "bot-123", []string{"bot_id", "query"}},
-		{"Dify", constant.ProviderDify, "dify-bot", []string{"query", "response_mode"}},
 		{"Ollama", constant.ProviderOllama, "llama3", []string{"model", "messages"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			info := newRequestTestRelayInfo(c.channel, c.upstream, constant.RelayModeChatCompletions)
-			r, ok := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody))
-			if !ok {
-				t.Fatal("expected conversion to succeed")
+			r, handled, err := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody))
+			if !handled || err != nil {
+				t.Fatalf("expected conversion to succeed, handled=%v err=%v", handled, err)
 			}
 			body := readAll(t, r)
 			if len(body) == 0 {
@@ -94,33 +92,33 @@ func TestConvertRequestViaRelaykit_AllProviders(t *testing.T) {
 func TestConvertRequestViaRelaykit_OllamaNonChatFallback(t *testing.T) {
 	// Ollama 仅注册 chat 转换器；generate/embedding 模式应回退（ok=false）
 	info := newRequestTestRelayInfo(constant.ProviderOllama, "llama3", constant.RelayModeEmbeddings)
-	if _, ok := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); ok {
-		t.Fatal("expected ok=false for Ollama non-chat mode")
+	if _, handled, _ := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); handled {
+		t.Fatal("expected handled=false for Ollama non-chat mode")
 	}
 }
 
 func TestConvertRequestViaRelaykit_SameFormatFallback(t *testing.T) {
 	// OpenAI 渠道 + OpenAI 入站：同格式 → 无转换器 → false
 	info := newRequestTestRelayInfo(constant.ProviderOpenAI, "gpt-4", constant.RelayModeChatCompletions)
-	if _, ok := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); ok {
-		t.Fatal("expected ok=false for same format")
+	if _, handled, _ := convertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); handled {
+		t.Fatal("expected handled=false for same format")
 	}
 }
 
-func TestConvertRequestViaRelaykit_MalformedBodyFallback(t *testing.T) {
+func TestConvertRequestViaRelaykit_MalformedBodyHardFail(t *testing.T) {
 	info := newRequestTestRelayInfo(constant.ProviderClaude, "claude-x", constant.RelayModeChatCompletions)
-	if _, ok := convertRequestViaRelaykit(context.Background(), info, []byte(`not-json`)); ok {
-		t.Fatal("expected ok=false for malformed body")
+	if _, handled, err := convertRequestViaRelaykit(context.Background(), info, []byte(`not-json`)); !handled || err == nil {
+		t.Fatal("expected handled=true with error for malformed body (hard-fail)")
 	}
 }
 
 func TestTryConvertRequestViaRelaykit_NilGuards(t *testing.T) {
-	if _, ok := tryConvertRequestViaRelaykit(context.Background(), nil, []byte(openAIRequestBody)); ok {
-		t.Fatal("expected ok=false for nil info")
+	if _, handled, _ := tryConvertRequestViaRelaykit(context.Background(), nil, []byte(openAIRequestBody)); handled {
+		t.Fatal("expected handled=false for nil info")
 	}
 	info := newRequestTestRelayInfo(constant.ProviderClaude, "claude-x", constant.RelayModeChatCompletions)
 	info.ChannelMeta = nil
-	if _, ok := tryConvertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); ok {
-		t.Fatal("expected ok=false for nil ChannelMeta")
+	if _, handled, _ := tryConvertRequestViaRelaykit(context.Background(), info, []byte(openAIRequestBody)); handled {
+		t.Fatal("expected handled=false for nil ChannelMeta")
 	}
 }

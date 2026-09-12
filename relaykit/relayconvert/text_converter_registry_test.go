@@ -53,6 +53,30 @@ func TestRegisterAndLookupTextConverter(t *testing.T) {
 	}
 }
 
+// TestRegisterTextConverter_SingleSide 单侧注册：仅请求侧或仅响应侧配置均合法，
+// 且只把已配置的一侧写入对应注册表。
+func TestRegisterTextConverter_SingleSide(t *testing.T) {
+	reqOnly := validTextSpec("text_req_only")
+	reqOnly.Resp = TextResponseSide{}
+	RegisterTextConverter(reqOnly)
+	if _, ok := LookupRequestConverter("text_req_only"); !ok {
+		t.Error("expected request-only spec to register request side")
+	}
+	if _, ok := LookupResponseConverter("text_req_only"); ok {
+		t.Error("request-only spec must not register response side")
+	}
+
+	respOnly := validTextSpec("text_resp_only")
+	respOnly.Req = TextRequestSide{}
+	RegisterTextConverter(respOnly)
+	if _, ok := LookupResponseConverter("text_resp_only"); !ok {
+		t.Error("expected response-only spec to register response side")
+	}
+	if _, ok := LookupRequestConverter("text_resp_only"); ok {
+		t.Error("response-only spec must not register request side")
+	}
+}
+
 func TestRegisterTextConverter_Panics(t *testing.T) {
 	// 空 ID
 	assertPanic(t, func() {
@@ -78,15 +102,10 @@ func TestRegisterTextConverter_Panics(t *testing.T) {
 		s.Quality = ""
 		RegisterTextConverter(s)
 	})
-	// 缺请求侧（Convert 为 nil 且无 StepConverters）
+	// 双侧均缺失才 panic（单侧注册合法）
 	assertPanic(t, func() {
-		s := validTextSpec("text_no_req")
+		s := validTextSpec("text_no_sides")
 		s.Req = TextRequestSide{}
-		RegisterTextConverter(s)
-	})
-	// 缺响应侧（全部为 nil）
-	assertPanic(t, func() {
-		s := validTextSpec("text_no_resp")
 		s.Resp = TextResponseSide{}
 		RegisterTextConverter(s)
 	})

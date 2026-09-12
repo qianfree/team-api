@@ -2,11 +2,13 @@ package helper
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/url"
 	"regexp"
+	"strings"
 	"syscall"
 )
 
@@ -19,6 +21,63 @@ var (
 	// redactIPPattern 匹配 IPv4 地址。版本号偶有误伤，但在错误消息中无害。
 	redactIPPattern = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 )
+
+// UnwrapUpstreamErrorMessage 从「上游错误响应体原文」中提取人类可读的错误消息。
+//
+// 为什么需要：relay 各 adaptor 统一以 NewUpstreamError(status, string(body), nil)
+// 上抛上游故障，Message 里是**整个上游错误响应体**。错误写出器若直接把它塞进
+// 客户端错误体的 message 字段，客户端看到的就是一坨转义 JSON
+// （`{"error":{"message":"{\"error\":{\"message\":\"rate limit exceeded\"...`）
+// 而不是可读消息——对用户是噪音，对按消息匹配的客户端逻辑是破坏。
+//
+// 各协议错误信封形状不同，但消息位置固定：
+//
+//	OpenAI / Responses  {"error":{"message":"...","type":"..."}}
+//	Claude              {"type":"error","error":{"type":"...","message":"..."}}
+//	Gemini              {"error":{"code":N,"message":"...","status":"..."}}（偶为数组包装）
+//	Ollama              {"error":"..."}  ← error 为字符串
+//
+// 非 JSON、或不是可识别的错误信封（例如网关自身的 "convert request (...)" 消息）
+// 时原样返回，调用方可无条件套用。
+func UnwrapUpstreamErrorMessage(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || (!strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[")) {
+		return raw // 非 JSON：网关自身消息等，原样返回
+	}
+
+	// Gemini 偶尔以单元素数组包装错误信封
+	if strings.HasPrefix(trimmed, "[") {
+		var arr []json.RawMessage
+		if err := json.Unmarshal([]byte(trimmed), &arr); err != nil || len(arr) == 0 {
+			return raw
+		}
+		trimmed = string(arr[0])
+	}
+
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil || len(envelope.Error) == 0 {
+		return raw
+	}
+
+	// Ollama 形态：error 直接是字符串
+	var asString string
+	if err := json.Unmarshal(envelope.Error, &asString); err == nil {
+		if asString != "" {
+			return asString
+		}
+		return raw
+	}
+
+	var detail struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(envelope.Error, &detail); err == nil && detail.Message != "" {
+		return detail.Message
+	}
+	return raw
+}
 
 // SafeUpstreamErrorMessage 把可能包含上游渠道域名 / 内部传输细节的错误，
 // 转换为对最终用户安全的消息文本。

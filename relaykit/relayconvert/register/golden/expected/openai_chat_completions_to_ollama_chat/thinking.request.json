@@ -1,0 +1,14 @@
+{
+  "messages": [
+    {
+      "content": "Prove that sqrt(2) is irrational.",
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "options": {
+    "num_predict": 4096
+  },
+  "stream": false,
+  "think": "high"
+}

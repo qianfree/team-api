@@ -110,9 +110,9 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 
 		switch event.Type {
 		case "message_start":
-			// 提取模型名与初始 usage
+			// 提取模型名与初始 usage（模型映射时客户端只能看到原始请求模型名，不泄漏上游真实模型）
 			if event.Message != nil {
-				if event.Message.Model != "" {
+				if event.Message.Model != "" && !isModelMapped(info) {
 					modelName = event.Message.Model
 				}
 				if event.Message.Usage != nil {

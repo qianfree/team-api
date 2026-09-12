@@ -64,6 +64,7 @@ func (c *OpenAIToOllamaRequestConverter) ConvertRequest(
 		om := dto.OllamaMessage{
 			Role:    msg.Role,
 			Content: extractOllamaContent(msg.Content),
+			Images:  extractOllamaImages(msg.Content),
 		}
 		if msg.Role == "tool" {
 			om.ToolCallID = msg.ToolCallID
@@ -132,6 +133,15 @@ func extractOllamaContent(content any) string {
 	switch c := content.(type) {
 	case string:
 		return c
+	case []dto.ContentPart:
+		// 链式转换产出的类型化部件列表
+		var sb strings.Builder
+		for _, part := range c {
+			if part.Type == "text" {
+				sb.WriteString(part.Text)
+			}
+		}
+		return sb.String()
 	case []any:
 		var sb strings.Builder
 		for _, part := range c {
@@ -149,6 +159,61 @@ func extractOllamaContent(content any) string {
 	default:
 		return ""
 	}
+}
+
+// extractOllamaImages 从多模态 content 中提取图片：Ollama 以 base64 数组承载图片
+// （OllamaMessage.Images），data URL 形式的 image_url 剥出 base64 载荷；
+// http(s) 远程图片 Ollama 无法引用，跳过。
+func extractOllamaImages(content any) []string {
+	appendDataURL := func(images []string, url string) []string {
+		if _, data, ok := parseImageDataURL(url); ok {
+			return append(images, data)
+		}
+		return images
+	}
+
+	var images []string
+	switch c := content.(type) {
+	case []dto.ContentPart:
+		for _, part := range c {
+			if part.Type == "image_url" && part.ImageURL != nil {
+				images = appendDataURL(images, part.ImageURL.URL)
+			}
+		}
+	case []any:
+		for _, part := range c {
+			m, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := m["type"].(string); t != "image_url" {
+				continue
+			}
+			if iu, ok := m["image_url"].(map[string]any); ok {
+				if url, ok := iu["url"].(string); ok {
+					images = appendDataURL(images, url)
+				}
+			}
+		}
+	}
+	return images
+}
+
+// parseImageDataURL 解析 data:image/<type>;base64,<data> 形式的 data URL，
+// 返回 MIME 类型与 base64 载荷。
+func parseImageDataURL(dataURL string) (mimeType, data string, ok bool) {
+	if !strings.HasPrefix(dataURL, "data:") {
+		return "", "", false
+	}
+	commaIdx := strings.IndexByte(dataURL, ',')
+	if commaIdx < 0 {
+		return "", "", false
+	}
+	header := dataURL[5:commaIdx]
+	if !strings.HasSuffix(header, ";base64") {
+		return "", "", false
+	}
+	return strings.TrimSuffix(header, ";base64"), dataURL[commaIdx+1:], true
 }
 
 // buildOllamaOptions 从 OpenAI 请求参数构建 Ollama options 映射。

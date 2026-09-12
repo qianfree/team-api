@@ -19,7 +19,5 @@ const (
 	RelayFormatMjProxy = "mj_proxy"
 
 	// 剩余原生格式供应商（非 OpenAI 兼容）
-	RelayFormatCoze   = "coze"   // 字节 Coze v3
-	RelayFormatDify   = "dify"   // Dify chat-messages
 	RelayFormatOllama = "ollama" // Ollama /api/chat
 )

@@ -1,0 +1,257 @@
+[
+  {
+    "data": {
+      "response": {
+        "created_at": 0,
+        "error": null,
+        "id": "\u003cscrubbed\u003e",
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "origin-model",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": {
+          "effort": null,
+          "summary": null
+        },
+        "status": "in_progress",
+        "store": false,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [],
+        "top_p": 1,
+        "truncation": "disabled",
+        "user": null
+      },
+      "type": "response.created"
+    },
+    "event": "response.created"
+  },
+  {
+    "data": {
+      "item": {
+        "content": [],
+        "id": "\u003cscrubbed\u003e",
+        "role": "assistant",
+        "status": "in_progress",
+        "type": "message"
+      },
+      "output_index": 0,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "msg_chatcmpl-up",
+      "output_index": 0,
+      "part": {
+        "annotations": [],
+        "text": "",
+        "type": "output_text"
+      },
+      "type": "response.content_part.added"
+    },
+    "event": "response.content_part.added"
+  },
+  {
+    "data": {
+      "item": {
+        "id": "\u003cscrubbed\u003e",
+        "status": "in_progress",
+        "summary": [],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
+      "delta": "Let me think...",
+      "item_id": "rs_resp_chatcmpl-up",
+      "output_index": 1,
+      "summary_index": 0,
+      "type": "response.reasoning_summary_text.delta"
+    },
+    "event": "response.reasoning_summary_text.delta"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "delta": "The answer is 42.",
+      "item_id": "msg_chatcmpl-up",
+      "output_index": 0,
+      "type": "response.output_text.delta"
+    },
+    "event": "response.output_text.delta"
+  },
+  {
+    "data": {
+      "item_id": "rs_resp_chatcmpl-up",
+      "output_index": 1,
+      "summary_index": 0,
+      "text": "Let me think...",
+      "type": "response.reasoning_summary_text.done"
+    },
+    "event": "response.reasoning_summary_text.done"
+  },
+  {
+    "data": {
+      "item": {
+        "id": "\u003cscrubbed\u003e",
+        "status": "completed",
+        "summary": [
+          {
+            "text": "Let me think...",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "msg_chatcmpl-up",
+      "output_index": 0,
+      "text": "The answer is 42.",
+      "type": "response.output_text.done"
+    },
+    "event": "response.output_text.done"
+  },
+  {
+    "data": {
+      "content_index": 0,
+      "item_id": "msg_chatcmpl-up",
+      "output_index": 0,
+      "part": {
+        "annotations": [],
+        "text": "The answer is 42.",
+        "type": "output_text"
+      },
+      "type": "response.content_part.done"
+    },
+    "event": "response.content_part.done"
+  },
+  {
+    "data": {
+      "item": {
+        "content": [
+          {
+            "annotations": [],
+            "text": "The answer is 42.",
+            "type": "output_text"
+          }
+        ],
+        "id": "\u003cscrubbed\u003e",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      "output_index": 0,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
+  },
+  {
+    "data": {
+      "response": {
+        "completed_at": 0,
+        "created_at": 0,
+        "error": null,
+        "id": "\u003cscrubbed\u003e",
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "origin-model",
+        "object": "response",
+        "output": [
+          {
+            "content": [
+              {
+                "annotations": [],
+                "text": "The answer is 42.",
+                "type": "output_text"
+              }
+            ],
+            "id": "\u003cscrubbed\u003e",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message"
+          },
+          {
+            "id": "\u003cscrubbed\u003e",
+            "status": "completed",
+            "summary": [
+              {
+                "text": "Let me think...",
+                "type": "summary_text"
+              }
+            ],
+            "type": "reasoning"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": {
+          "effort": null,
+          "summary": null
+        },
+        "status": "completed",
+        "store": false,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [],
+        "top_p": 1,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 10,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 50,
+          "output_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 30,
+            "rejected_prediction_tokens": 0
+          },
+          "total_tokens": 60
+        },
+        "user": null
+      },
+      "type": "response.completed"
+    },
+    "event": "response.completed",
+    "usage": {
+      "completion_tokens": 50,
+      "completion_tokens_details": {
+        "reasoning_tokens": 30
+      },
+      "prompt_tokens": 10,
+      "total_tokens": 60
+    }
+  }
+]

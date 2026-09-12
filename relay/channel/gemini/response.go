@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
@@ -200,46 +199,25 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-
-		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Gemini 响应提取
-		var geminiResp dto.GeminiChatResponse
-		if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
-			return geminiUsageToCommon(geminiResp.UsageMetadata), nil
-		}
-		// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
-		return &common.Usage{}, nil
+	// relaykit 响应转换（唯一路径，hard-fail：解析/转换失败即向上返回错误，不再回退旧实现）
+	convertedBody, _, handled, convErr := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !handled {
+		return nil, constant.NewChannelError("gemini adaptor: no relaykit converter for openai client response", nil)
 	}
-
-	// 旧代码路径（relaykit 未启用或失败回退）
-	var geminiResp dto.GeminiChatResponse
-	if err := json.Unmarshal(body, &geminiResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
+	if convErr != nil {
+		return nil, relaykit_bridge.ResponseConvertError(convErr, resp.StatusCode, resp.Header)
 	}
-
-	// 检查 promptFeedback.blockReason（Gemini 安全过滤）
-	if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
-		return nil, constant.NewRequestError(
-			fmt.Sprintf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason), nil,
-		)
-	}
-
-	openaiResp := geminiToOpenAIResponse(&geminiResp, info)
-
-	respBody, _ := json.Marshal(openaiResp)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
+	_, _ = writer.Write(convertedBody)
 
-	usage := &common.Usage{}
-	if geminiResp.UsageMetadata != nil {
-		usage = geminiUsageToCommon(geminiResp.UsageMetadata)
+	// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Gemini 响应提取
+	var geminiResp dto.GeminiChatResponse
+	if err := json.Unmarshal(body, &geminiResp); err == nil && geminiResp.UsageMetadata != nil {
+		return geminiUsageToCommon(geminiResp.UsageMetadata), nil
 	}
-	return usage, nil
+	// 如果 Usage 解析失败，返回空 Usage（已写响应，不能重试）
+	return &common.Usage{}, nil
 }
 
 // handleStreamToOpenAI 将 Gemini 流式响应转换为 OpenAI SSE 格式
@@ -252,315 +230,14 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, buildGeminiUpstreamError(body, resp.StatusCode)
 	}
 
-	// relaykit 流式转换（常开）。同格式/无匹配转换器时回退旧路径。
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
-		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
-			return usage, common.ErrStreamInterrupted
-		}
-		return usage, nil
+	// relaykit 流式转换（唯一路径，hard-fail）：写入前失败由桥接层返回未接管，此处显式报错
+	if usage, ok, err := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 桥接层已写出 SSE 并完成收尾裁决：err 非空即流以错误/客户端中断结束
+		//（已带 ResponseWritten，上层只记账与上报调度，不重写响应体、不换渠道重试），
+		// usage 中断兜底亦已在桥接层完成，此处原样上抛即可。
+		return usage, err
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	isCA := a.isCodeAssistActive()
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	var (
-		totalUsage   dto.GeminiUsageMetadata
-		finishReason string
-		toolCallIdx  int
-		modelName    string
-	)
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断：返回已累计的 usage（Gemini 每个 chunk 携带累计值），输入缺失用请求侧估算补齐
-			interruptedUsage := geminiUsageToCommon(&totalUsage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, 0)
-			return interruptedUsage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data, _ := helper.ExtractSSEData(line)
-
-		if data != "" && data != "[DONE]" {
-			info.SetFirstResponseTime()
-		}
-
-		if data == "[DONE]" {
-			break
-		}
-
-		var geminiResp dto.GeminiChatResponse
-		rawData := []byte(data)
-		if isCA {
-			rawData = unwrapCodeAssistData(rawData)
-		}
-		if err := json.Unmarshal(rawData, &geminiResp); err != nil {
-			continue
-		}
-
-		// 收集用量
-		if geminiResp.UsageMetadata != nil {
-			totalUsage = *geminiResp.UsageMetadata
-		}
-
-		// 检查 promptFeedback.blockReason（流式安全过滤）
-		if geminiResp.PromptFeedback != nil && geminiResp.PromptFeedback.BlockReason != "" {
-			// SSE 头已发送，需先发送结束 chunk 和 [DONE] 避免客户端挂起
-			filterReason := "content_filter"
-			endChunk := dto.ChatCompletionStreamResponse{
-				ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-				Object: "chat.completion.chunk",
-				Model:  info.OriginModelName,
-				Choices: []dto.StreamChoice{{
-					Index:        0,
-					FinishReason: &filterReason,
-				}},
-			}
-			writeStreamChunk(writer, &endChunk)
-			_ = helper.WriteSSEData(writer, "[DONE]")
-			info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-			return nil, constant.NewRequestError(
-				fmt.Sprintf("request blocked by Gemini safety filter: %s", geminiResp.PromptFeedback.BlockReason), nil,
-			)
-		}
-
-		// 收集模型名
-		if geminiResp.ModelName != "" {
-			modelName = geminiResp.ModelName
-		}
-
-		for _, candidate := range geminiResp.Candidates {
-			if candidate.FinishReason != "" {
-				finishReason = common.GeminiFinishReasonToOpenAI(candidate.FinishReason)
-			}
-
-			if candidate.Content == nil {
-				continue
-			}
-
-			for _, part := range candidate.Content.Parts {
-				isThought := part.Thought != nil && *part.Thought
-
-				// 文本内容
-				if part.Text != "" {
-					if isThought {
-						// 思考内容 → reasoning_content
-						text := part.Text
-						chunk := dto.ChatCompletionStreamResponse{
-							ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-							Object: "chat.completion.chunk",
-							Model:  modelName,
-							Choices: []dto.StreamChoice{{
-								Index: 0,
-								Delta: dto.Message{
-									Role:             "assistant",
-									ReasoningContent: &text,
-								},
-							}},
-						}
-						if modelName == "" {
-							chunk.Model = info.OriginModelName
-						}
-						writeStreamChunk(writer, &chunk)
-					} else {
-						chunk := dto.ChatCompletionStreamResponse{
-							ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-							Object: "chat.completion.chunk",
-							Model:  modelName,
-							Choices: []dto.StreamChoice{{
-								Index: 0,
-								Delta: dto.Message{
-									Role:    "assistant",
-									Content: part.Text,
-								},
-							}},
-						}
-						if modelName == "" {
-							chunk.Model = info.OriginModelName
-						}
-						writeStreamChunk(writer, &chunk)
-					}
-				}
-
-				// 内联图片数据
-				if part.InlineData != nil {
-					imageText := fmt.Sprintf("![image](data:%s;base64,%s)", part.InlineData.MimeType, part.InlineData.Data)
-					imageChunk := dto.ChatCompletionStreamResponse{
-						ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-						Object: "chat.completion.chunk",
-						Model:  modelName,
-						Choices: []dto.StreamChoice{{
-							Index: 0,
-							Delta: dto.Message{
-								Role:    "assistant",
-								Content: imageText,
-							},
-						}},
-					}
-					if modelName == "" {
-						imageChunk.Model = info.OriginModelName
-					}
-					writeStreamChunk(writer, &imageChunk)
-				}
-
-				// 可执行代码
-				if part.ExecutableCode != nil {
-					codeText := fmt.Sprintf("```%s\n%s\n```", part.ExecutableCode.Language, part.ExecutableCode.Code)
-					codeChunk := dto.ChatCompletionStreamResponse{
-						ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-						Object: "chat.completion.chunk",
-						Model:  modelName,
-						Choices: []dto.StreamChoice{{
-							Index: 0,
-							Delta: dto.Message{
-								Role:    "assistant",
-								Content: codeText,
-							},
-						}},
-					}
-					if modelName == "" {
-						codeChunk.Model = info.OriginModelName
-					}
-					writeStreamChunk(writer, &codeChunk)
-				}
-
-				// 代码执行结果
-				if part.CodeExecutionResult != nil {
-					resultText := fmt.Sprintf("Execution %s:\n%s", part.CodeExecutionResult.Outcome, part.CodeExecutionResult.Output)
-					resultChunk := dto.ChatCompletionStreamResponse{
-						ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-						Object: "chat.completion.chunk",
-						Model:  modelName,
-						Choices: []dto.StreamChoice{{
-							Index: 0,
-							Delta: dto.Message{
-								Role:    "assistant",
-								Content: resultText,
-							},
-						}},
-					}
-					if modelName == "" {
-						resultChunk.Model = info.OriginModelName
-					}
-					writeStreamChunk(writer, &resultChunk)
-				}
-
-				// 文件数据
-				if part.FileData != nil {
-					fileText := fmt.Sprintf("[file](%s)", part.FileData.FileURI)
-					fileChunk := dto.ChatCompletionStreamResponse{
-						ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-						Object: "chat.completion.chunk",
-						Model:  modelName,
-						Choices: []dto.StreamChoice{{
-							Index: 0,
-							Delta: dto.Message{
-								Role:    "assistant",
-								Content: fileText,
-							},
-						}},
-					}
-					if modelName == "" {
-						fileChunk.Model = info.OriginModelName
-					}
-					writeStreamChunk(writer, &fileChunk)
-				}
-
-				// 函数调用
-				if part.FunctionCall != nil {
-					argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
-					chunk := dto.ChatCompletionStreamResponse{
-						ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-						Object: "chat.completion.chunk",
-						Model:  modelName,
-						Choices: []dto.StreamChoice{{
-							Index: 0,
-							Delta: dto.Message{
-								ToolCalls: []dto.ToolCall{{
-									ID:   fmt.Sprintf("call_%s_%d", info.RequestID, toolCallIdx),
-									Type: "function",
-									Function: dto.FunctionCall{
-										Name:      part.FunctionCall.FunctionName,
-										Arguments: string(argsJSON),
-									},
-								}},
-							},
-						}},
-					}
-					if modelName == "" {
-						chunk.Model = info.OriginModelName
-					}
-					writeStreamChunk(writer, &chunk)
-					toolCallIdx++
-				}
-			}
-		}
-	}
-
-	// 发送结束 chunk
-	reason := finishReason
-	if reason == "" {
-		reason = "stop"
-	}
-	endChunk := dto.ChatCompletionStreamResponse{
-		ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-		Object: "chat.completion.chunk",
-		Model:  modelName,
-		Choices: []dto.StreamChoice{{
-			Index:        0,
-			FinishReason: &reason,
-		}},
-	}
-	if modelName == "" {
-		endChunk.Model = info.OriginModelName
-	}
-
-	if totalUsage.PromptTokenCount > 0 || totalUsage.CandidatesTokenCount > 0 {
-		// OpenAI 口径：prompt 含 cached（子集），completion 含 thoughts（子集），
-		// 与计费用量 geminiUsageToCommon 保持同一换算
-		endChunk.Usage = &dto.UsageWithDetails{
-			PromptTokens:     totalUsage.PromptTokenCount,
-			CompletionTokens: totalUsage.CandidatesTokenCount + totalUsage.ThoughtsTokenCount,
-			TotalTokens:      totalUsage.TotalTokenCount,
-			PromptTokensDetails: &dto.TokenDetails{
-				CachedTokens: totalUsage.CachedContentTokenCount,
-			},
-			CompletionTokenDetails: &dto.TokenDetails{
-				ReasoningTokens: totalUsage.ThoughtsTokenCount,
-			},
-		}
-	}
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		writeStreamChunk(writer, &endChunk)
-		_ = helper.WriteSSEData(writer, "[DONE]")
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return geminiUsageToCommon(&totalUsage), fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	writeStreamChunk(writer, &endChunk)
-	_ = helper.WriteSSEData(writer, "[DONE]")
-	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-
-	return geminiUsageToCommon(&totalUsage), nil
+	return nil, constant.NewChannelError("gemini adaptor: relaykit stream converter unavailable for openai client", nil)
 }
 
 // geminiToOpenAIResponse 将 Gemini 非流式响应转换为 OpenAI ChatCompletion 格式

@@ -57,53 +57,31 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 //
 // 剥离后缀后再做模型名映射（如果配置了映射）。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
 	}
+	return bytes.NewReader(processed), nil
+}
 
+// postProcessRequest xAI 请求适配：模型名映射。
+// 历史上还承担 -search/-high/-low 模型名后缀的剥离与 search_parameters/
+// reasoning_effort 注入；该后缀语法已于 2026-09 随全局虚拟模型后缀机制一并移除。
+// 模型映射已由 relaykit 覆盖，故不再实现 RequestPostProcessor 钩子。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
+	if !info.ChannelMeta.IsModelMapped {
+		return requestBody, nil
+	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
-
-	// 获取当前模型名
-	modelName := info.OriginModelName
-
-	// 处理 "-search" 后缀
-	if strings.HasSuffix(modelName, "-search") {
-		modelName = strings.TrimSuffix(modelName, "-search")
-		rawMap["search_parameters"] = json.RawMessage(`{"mode":"on"}`)
-	}
-
-	// 处理 "-high" 后缀
-	if strings.HasSuffix(modelName, "-high") {
-		modelName = strings.TrimSuffix(modelName, "-high")
-		rawMap["reasoning_effort"] = json.RawMessage(`"high"`)
-	}
-
-	// 处理 "-low" 后缀
-	if strings.HasSuffix(modelName, "-low") {
-		modelName = strings.TrimSuffix(modelName, "-low")
-		rawMap["reasoning_effort"] = json.RawMessage(`"low"`)
-	}
-
-	// 模型名映射：优先使用上游映射名，否则使用剥离后缀后的名称
-	if info.ChannelMeta.IsModelMapped {
-		rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
-	} else {
-		rawMap["model"] = json.RawMessage(`"` + modelName + `"`)
-	}
-
+	rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	converted, err := json.Marshal(rawMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(converted), nil
+	return converted, nil
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

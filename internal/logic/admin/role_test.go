@@ -223,7 +223,7 @@ func TestBuiltinRoleBoundaries(t *testing.T) {
 // 两处各存一份权限清单是必要的（迁移是 SQL、恢复默认是 Go），但漂移后果隐蔽：
 // 新装部署拿到迁移的版本，点了「恢复默认」却变成 Go 的版本，同一个角色在不同部署里权限不同。
 func TestBuiltinRoleDefaultsMatchMigration(t *testing.T) {
-	raw, err := os.ReadFile("../../../migrations/000020_admin_role_management.sql")
+	raw, err := os.ReadFile("../../../migrations/000020_v0_2_17_version.sql")
 	if err != nil {
 		t.Fatalf("读取迁移脚本失败: %v", err)
 	}

@@ -1,0 +1,95 @@
+[
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello",
+            "role": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": ", world!",
+            "role": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": null,
+            "role": ""
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 7,
+        "prompt_tokens": 12,
+        "prompt_tokens_details": {
+          "cached_tokens": 4
+        },
+        "total_tokens": 19
+      }
+    }
+  }
+]

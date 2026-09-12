@@ -19,9 +19,18 @@ func canPassThrough(info *common.RelayInfo) bool {
 	}
 
 	// responses-only 桥接渠道的 chat 入站：chat 体与上游 /v1/responses 端点不兼容，
-	// 必须经 ConvertOpenAIToResponses 桥接转换，即使显式开启直连也不得原样透传。
+	// 必须经 relaykit chat→Responses 桥接转换，即使显式开启直连也不得原样透传。
 	if info.ChannelMeta.ChatViaResponses &&
 		constant.RelayMode(info.RelayMode) == constant.RelayModeChatCompletions {
+		return false
+	}
+
+	// Vertex AI 的 Claude 模型：rawPredict 端点要求体内带 anthropic_version、
+	// 且不接受 model 字段（模型由 URL 指定）。这段改写在 adaptor.ConvertRequest 与
+	// PostProcessConvertedRequest 中完成，原样直连会绕过两者、上游直接 400，
+	// 因此即使显式开启直连也不得透传。
+	if constant.ProviderType(info.ChannelMeta.ChannelType) == constant.ProviderVertex &&
+		helper.ProviderNativeFormatFor(info) == constant.RelayFormatClaude {
 		return false
 	}
 
@@ -47,10 +56,6 @@ func canPassThrough(info *common.RelayInfo) bool {
 	if settings.SystemPrompt != "" {
 		return false
 	}
-	// 有 thinking 后缀 → 必须经过转换来注入 thinking 参数
-	if info.ThinkingEnabled || info.ThinkingDisabled || info.ReasoningEffort != "" {
-		return false
-	}
 	return true
 }
 
@@ -60,7 +65,7 @@ func canPassThrough(info *common.RelayInfo) bool {
 //   - 多协议原生透传渠道（New API / Sub2API）：OpenAI/Claude/Gemini 三种格式均视为匹配。
 //
 // 注意：chat_via_responses（responses-only 桥接渠道）的 chat 入站由 canPassThrough
-// 前置硬排除——chat 体必须经 ConvertOpenAIToResponses 转换后才能发 /v1/responses。
+// 前置硬排除——chat 体必须经 relaykit chat→Responses 转换后才能发 /v1/responses。
 func inboundMatchesChannelNative(info *common.RelayInfo) bool {
 	if info.ChannelMeta.UpstreamSpeaksResponses() {
 		return info.InboundFormat == constant.RelayFormatResponses
@@ -72,5 +77,11 @@ func inboundMatchesChannelNative(info *common.RelayInfo) bool {
 		}
 		return false
 	}
-	return helper.ProviderNativeFormat(info.ChannelMeta.ChannelType) == info.InboundFormat
+	// Anthropic 兼容端点渠道：主协议是 OpenAI，但 Claude 入站走独立的 Anthropic
+	// 端点且两侧均为 Claude 口径，故 Claude 入站同样算「匹配原生」可直连。
+	if info.InboundFormat == constant.RelayFormatClaude &&
+		constant.HasNativeClaudeEndpoint(info.ChannelMeta.ChannelType) {
+		return true
+	}
+	return helper.ProviderNativeFormatFor(info) == info.InboundFormat
 }

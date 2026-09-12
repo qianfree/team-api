@@ -1,0 +1,96 @@
+[
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": null,
+            "reasoning_content": "Let me think...",
+            "role": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "The answer is 42.",
+            "role": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": null,
+            "role": ""
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 50,
+        "completion_tokens_details": {
+          "reasoning_tokens": 30
+        },
+        "prompt_tokens": 10,
+        "total_tokens": 60
+      }
+    }
+  }
+]

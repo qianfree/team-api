@@ -1,0 +1,9 @@
+{
+  "model": "origin-model",
+  "instructions": "You are helpful.",
+  "input": [
+    {"role": "user", "content": [{"type": "input_text", "text": "Hello, how are you?"}]}
+  ],
+  "max_output_tokens": 256,
+  "temperature": 0.7
+}

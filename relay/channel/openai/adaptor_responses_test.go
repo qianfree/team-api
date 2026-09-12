@@ -44,6 +44,10 @@ func TestAdaptor_GetRequestURL_ResponsesUpstream(t *testing.T) {
 		{constant.RelayModeResponses, "https://upstream.example.com/v1/responses"},
 		{constant.RelayModeResponsesCompact, "https://upstream.example.com/v1/responses/compact"},
 		{constant.RelayModeChatCompletions, "https://upstream.example.com/v1/chat/completions"},
+		// Gemini/Claude 入站经 relaykit 转为 chat 格式后打 /v1/chat/completions
+		//（回归：URL switch 漏加对应模式时 DoRequest 直接报 unsupported relay mode）
+		{constant.RelayModeGeminiChat, "https://upstream.example.com/v1/chat/completions"},
+		{constant.RelayModeClaudeMessages, "https://upstream.example.com/v1/chat/completions"},
 	}
 	for _, c := range cases {
 		a := &Adaptor{}
@@ -136,34 +140,6 @@ func TestAdaptor_ConvertRequest_ResponsesUpstream(t *testing.T) {
 	}
 	if _, ok := m["stream_options"]; ok {
 		t.Error("should NOT inject chat stream_options for responses upstream")
-	}
-}
-
-// TestAdaptor_ConvertRequest_ResponsesUpstream_Thinking 上游声明 Responses 协议时，
-// thinking 后缀映射为 reasoning.effort，不注入 chat 的 reasoning_effort。
-func TestAdaptor_ConvertRequest_ResponsesUpstream_Thinking(t *testing.T) {
-	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
-	info.ReasoningEffort = "high"
-
-	body := []byte(`{"model":"gpt-4o","input":"say hi"}`)
-	a := &Adaptor{}
-	out, err := a.ConvertRequest(context.Background(), info, body)
-	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
-	}
-	raw, _ := io.ReadAll(out)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad converted json: %v\n%s", err, raw)
-	}
-	if _, ok := m["reasoning_effort"]; ok {
-		t.Error("should NOT inject chat reasoning_effort for responses upstream")
-	}
-	var reasoning struct {
-		Effort string `json:"effort"`
-	}
-	if err := json.Unmarshal(m["reasoning"], &reasoning); err != nil || reasoning.Effort != "high" {
-		t.Errorf("reasoning.effort = %+v (err=%v), want high", reasoning, err)
 	}
 }
 
@@ -356,72 +332,6 @@ func (f *fakeResponseRouteStore) Lookup(context.Context, int64, string) (common.
 
 func (f *fakeResponseRouteStore) Delete(context.Context, int64, string) {}
 
-// TestChatCompletionToResponsesResponse_StoreFalseAndEcho 合成响应的保真度：
-// store 恒为 false（合成响应不落上游存储，不可 retrieve）；
-// temperature/top_p/max_output_tokens/instructions 从请求快照 echo，快照缺失回退默认值。
-func TestChatCompletionToResponsesResponse_StoreFalseAndEcho(t *testing.T) {
-	buildChatResp := func() *dto.ChatCompletionResponse {
-		return &dto.ChatCompletionResponse{
-			ID:      "abc123",
-			Created: 1700000000,
-			Model:   "gpt-4o",
-			Choices: []dto.Choice{{
-				Index:        0,
-				Message:      dto.Message{Role: "assistant", Content: "hello"},
-				FinishReason: "stop",
-			}},
-			Usage: dto.UsageWithDetails{
-				PromptTokensDetails:    &dto.TokenDetails{},
-				CompletionTokenDetails: &dto.TokenDetails{},
-			},
-		}
-	}
-
-	t.Run("echo from request snapshot", func(t *testing.T) {
-		temp, topP := 0.7, 0.9
-		maxOut := uint(1024)
-		info := &common.RelayInfo{
-			OriginModelName: "gpt-4o",
-			ResponsesRequest: &dto.OpenAIResponsesRequest{
-				Temperature:     &temp,
-				TopP:            &topP,
-				MaxOutputTokens: &maxOut,
-				Instructions:    json.RawMessage(`"be brief"`),
-			},
-		}
-		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
-		if resp.Store {
-			t.Error("store should be false（合成响应不可 retrieve）")
-		}
-		if resp.Temperature == nil || *resp.Temperature != 0.7 {
-			t.Errorf("temperature = %v, want 0.7", resp.Temperature)
-		}
-		if resp.TopP == nil || *resp.TopP != 0.9 {
-			t.Errorf("top_p = %v, want 0.9", resp.TopP)
-		}
-		if resp.MaxOutputTokens == nil || *resp.MaxOutputTokens != 1024 {
-			t.Errorf("max_output_tokens = %v, want 1024", resp.MaxOutputTokens)
-		}
-		if instr, ok := resp.Instructions.(json.RawMessage); !ok || string(instr) != `"be brief"` {
-			t.Errorf("instructions = %v, want echo", resp.Instructions)
-		}
-	})
-
-	t.Run("nil snapshot falls back to defaults", func(t *testing.T) {
-		info := &common.RelayInfo{OriginModelName: "gpt-4o"}
-		resp := chatCompletionToResponsesResponse(buildChatResp(), info)
-		if resp.Store {
-			t.Error("store should be false")
-		}
-		if resp.Temperature == nil || *resp.Temperature != 1.0 {
-			t.Errorf("temperature = %v, want default 1.0", resp.Temperature)
-		}
-		if resp.TopP == nil || *resp.TopP != 1.0 {
-			t.Errorf("top_p = %v, want default 1.0", resp.TopP)
-		}
-	})
-}
-
 // TestBuildResponsesObjectMap_StoreFalseEcho 流式合成 response 对象同样 store:false + echo。
 func TestBuildResponsesObjectMap_StoreFalseEcho(t *testing.T) {
 	temp := 0.5
@@ -605,70 +515,6 @@ func TestAdaptor_DoResponse_ResponsesUpstreamStream_ModelMapped(t *testing.T) {
 	}
 }
 
-// TestAdaptor_ConvertRequest_ChatViaResponsesBridge responses-only 上游桥接：
-// chat 请求体转换为 Responses 格式（messages→input），thinking 后缀映射 reasoning.effort，
-// 不注入 chat 专属 stream_options。
-func TestAdaptor_ConvertRequest_ChatViaResponsesBridge(t *testing.T) {
-	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, true)
-	info.InboundFormat = constant.RelayFormatOpenAI
-	info.ClientFormat = constant.RelayFormatOpenAI
-	info.OriginModelName = "gpt-4o"
-	info.ChannelMeta.SupportsResponses = false
-	info.ChannelMeta.ChatViaResponses = true
-	info.UseResponsesAPI = true
-
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"say hi"}],"stream":true}`)
-	a := &Adaptor{}
-	out, err := a.ConvertRequest(context.Background(), info, body)
-	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
-	}
-	raw, _ := io.ReadAll(out)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad bridged json: %v\n%s", err, raw)
-	}
-	if _, ok := m["messages"]; ok {
-		t.Error("bridge should convert messages to responses input")
-	}
-	if _, ok := m["input"]; !ok {
-		t.Error("bridge output missing input field")
-	}
-	if _, ok := m["stream_options"]; ok {
-		t.Error("bridge should NOT inject chat stream_options")
-	}
-	if stream := string(m["stream"]); stream != "true" {
-		t.Errorf("stream = %s, want true", stream)
-	}
-}
-
-// TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped 桥接 + 模型映射：
-// 转换器应将模型名替换为上游模型名。
-func TestAdaptor_ConvertRequest_ChatViaResponsesBridge_ModelMapped(t *testing.T) {
-	info := responsesUpstreamInfo(constant.RelayModeChatCompletions, false)
-	info.InboundFormat = constant.RelayFormatOpenAI
-	info.ClientFormat = constant.RelayFormatOpenAI
-	info.ChannelMeta.IsModelMapped = true
-	info.ChannelMeta.SupportsResponses = false
-	info.ChannelMeta.ChatViaResponses = true
-	info.UseResponsesAPI = true
-
-	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)
-	a := &Adaptor{}
-	out, err := a.ConvertRequest(context.Background(), info, body)
-	if err != nil {
-		t.Fatalf("ConvertRequest error: %v", err)
-	}
-	raw, _ := io.ReadAll(out)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("bad bridged json: %v", err)
-	}
-	if got := string(m["model"]); got != `"gpt-4o-upstream"` {
-		t.Errorf("model = %s, want gpt-4o-upstream", got)
-	}
-}
-
 // responsesInboundInfo responses 入站 + 上游 chat 渠道（无 responses 协议能力），
 // 响应侧走 chat→responses 桥接（handleResponsesInboundStream）。
 func responsesInboundInfo(isStream bool) *common.RelayInfo {
@@ -676,28 +522,6 @@ func responsesInboundInfo(isStream bool) *common.RelayInfo {
 	info.ChannelMeta.SupportsResponses = false
 	info.ChannelMeta.ChatViaResponses = false
 	return info
-}
-
-// TestExtractStreamEmbeddedError 内嵌错误对象检测：
-// "error":null 与无 error 键不算错误，对象/字符串错误都要识别。
-func TestExtractStreamEmbeddedError(t *testing.T) {
-	if _, ok := extractStreamEmbeddedError([]byte(`{"id":"1","choices":[]}`)); ok {
-		t.Error("chunk without error key should not be detected")
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`{"error":null,"choices":[]}`)); ok {
-		t.Error(`"error":null should not be detected`)
-	}
-	if body, ok := extractStreamEmbeddedError([]byte(`{"error":{"type":"rate_limit_error","message":"limited"}}`)); !ok {
-		t.Error("error object should be detected")
-	} else if !strings.Contains(string(body), "rate_limit_error") {
-		t.Errorf("error body = %s", string(body))
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`{"error":"overloaded"}`)); !ok {
-		t.Error("string error should be detected")
-	}
-	if _, ok := extractStreamEmbeddedError([]byte(`not json`)); ok {
-		t.Error("invalid json should not be detected")
-	}
 }
 
 // TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorBeforeEvents
@@ -729,10 +553,15 @@ func TestAdaptor_DoResponse_ResponsesInboundStream_EmbeddedErrorBeforeEvents(t *
 		t.Fatalf("error should be *constant.RelayError, got %T", err)
 	}
 	if !relayErr.ResponseWritten {
-		t.Error("ResponseWritten should be true after writing error body to client")
+		t.Error("ResponseWritten should be true（SSE 头已提交，上层不得重写响应体）")
+	}
+	// Responses 协议要求终止态事件：桥接层补发 response.failed（含错误信息），
+	// 不得合成假成功的 response.completed
+	if !strings.Contains(rec.Body.String(), "response.failed") {
+		t.Errorf("should emit response.failed on stream error: %s", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "rate_limit_error") {
-		t.Errorf("error body not passed through: %s", rec.Body.String())
+		t.Errorf("failed event should carry upstream error message: %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "response.completed") {
 		t.Errorf("should not synthesize empty response.completed on upstream error: %s", rec.Body.String())
@@ -842,12 +671,12 @@ func TestAdaptor_DoResponse_ResponsesInboundStream_NonSSEJSONBody(t *testing.T) 
 		t.Fatalf("error should be *constant.RelayError, got %T", err)
 	}
 	if !relayErr.ResponseWritten {
-		t.Error("ResponseWritten should be true after writing error body to client")
+		t.Error("ResponseWritten should be true（SSE 头已提交，状态码不可改写）")
 	}
-	// SetEventStreamHeaders 已提前提交 HTTP 200，状态码无法改写为 502；
-	// 但错误体必须写入（客户端可见明确错误而非空 SSE 流）
-	if !strings.Contains(rec.Body.String(), "upstream_protocol_mismatch") {
-		t.Errorf("error body should contain protocol mismatch code: %s", rec.Body.String())
+	// 非 chat 格式的上游体：桥接层补发 response.failed 终止事件
+	//（SetEventStreamHeaders 已提交 HTTP 200，无法改为 502），不得合成假成功
+	if !strings.Contains(rec.Body.String(), "response.failed") {
+		t.Errorf("should emit response.failed on protocol mismatch: %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "response.completed") {
 		t.Errorf("should not synthesize empty response.completed: %s", rec.Body.String())
@@ -885,12 +714,12 @@ func TestAdaptor_DoResponse_ResponsesInboundStream_UnparseableChunks(t *testing.
 		t.Fatalf("error should be *constant.RelayError, got %T", err)
 	}
 	if !relayErr.ResponseWritten {
-		t.Error("ResponseWritten should be true after writing error body to client")
+		t.Error("ResponseWritten should be true（SSE 头已提交，状态码不可改写）")
 	}
 	if strings.Contains(rec.Body.String(), "response.completed") {
 		t.Errorf("should not synthesize empty response.completed:\n%s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "upstream_protocol_mismatch") {
-		t.Errorf("error body should contain protocol mismatch code: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "response.failed") {
+		t.Errorf("should emit response.failed on unparseable stream: %s", rec.Body.String())
 	}
 }

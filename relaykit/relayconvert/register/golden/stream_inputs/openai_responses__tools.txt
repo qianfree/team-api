@@ -1,0 +1,16 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"in_progress","model":"upstream-model"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"call_1","output_index":0,"delta":"{\"city\":"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"call_1","output_index":0,"delta":"\"Shanghai\"}"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"completed","model":"upstream-model","usage":{"input_tokens":20,"output_tokens":9,"total_tokens":29}}}
+
+data: [DONE]
