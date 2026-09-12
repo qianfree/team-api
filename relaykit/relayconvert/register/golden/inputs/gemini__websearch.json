@@ -1,0 +1,5 @@
+{
+  "contents": [{"role": "user", "parts": [{"text": "Search the latest AI news."}]}],
+  "tools": [{"googleSearch": {}}],
+  "generationConfig": {"maxOutputTokens": 1024}
+}

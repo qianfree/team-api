@@ -33,7 +33,9 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeClaudeMessages:
 		return baseURL + "/anthropic/v1/messages", nil
-	case constant.RelayModeChatCompletions:
+	// Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v1/text/chatcompletion_v2", nil
 	case constant.RelayModeImagesGenerations:
 		return baseURL + "/v1/image/generation", nil
@@ -60,15 +62,6 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 	// Claude 入站：仅做模型映射
 	if info.InboundFormat == constant.RelayFormatClaude {
 		return convertClaudeRequest(requestBody, info)
-	}
-
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
 	}
 
 	if info.ChannelMeta.IsModelMapped {

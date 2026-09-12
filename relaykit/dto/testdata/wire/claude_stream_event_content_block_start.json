@@ -1,0 +1,10 @@
+{
+  "type": "content_block_start",
+  "index": 1,
+  "content_block": {
+    "type": "tool_use",
+    "id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+    "name": "get_weather",
+    "input": {}
+  }
+}

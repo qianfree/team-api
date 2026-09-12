@@ -1,0 +1,16 @@
+{
+  "model": "llama3.2",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is in this image and what's the weather in Boston?", "images": ["iVBORw0KGgoAAAANSUhEUg=="]},
+    {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "get_weather", "arguments": {"location": "Boston, MA"}}}]},
+    {"role": "tool", "content": "68F, sunny", "tool_name": "get_weather"}
+  ],
+  "tools": [
+    {"type": "function", "function": {"name": "get_weather", "description": "Get the current weather in a given location", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}
+  ],
+  "stream": false,
+  "format": "json",
+  "think": true,
+  "options": {"temperature": 0.7, "top_p": 0.9, "num_predict": 1024, "stop": ["END"], "seed": 42}
+}

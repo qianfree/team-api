@@ -1,0 +1,6 @@
+{
+  "model": "origin-model",
+  "input": [{"role": "user", "content": [{"type": "input_text", "text": "Search the latest AI news."}]}],
+  "tools": [{"type": "web_search"}],
+  "max_output_tokens": 1024
+}

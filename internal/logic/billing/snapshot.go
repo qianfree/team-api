@@ -266,12 +266,14 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 				multDesc += fmt.Sprintf(" × 时段乘数(%.2f)", effTime)
 			}
 
-			// 展开格式：(abc + def + feg) × 倍率 = 总计
+			// 展开格式：(abc + def + feg) × 倍率 = 总计；无逐项明细时按实际费用反推展示基数（仅用于展示，不影响实际计费）
 			costsExpr := ""
 			if len(costParts) > 1 {
 				costsExpr = fmt.Sprintf("(%s)", joinWithPlus(costParts))
 			} else if len(costParts) == 1 {
 				costsExpr = costParts[0]
+			} else if snapshot.Settlement.ActualCost > 0 {
+				costsExpr = money(snapshot.Settlement.ActualCost / (effTenant * effTime))
 			}
 
 			if costsExpr != "" {

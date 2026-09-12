@@ -83,54 +83,36 @@ func TestParseDataURL(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestMapSchemaType(t *testing.T) {
-	cases := map[string]string{
-		"string": "STRING", "number": "NUMBER", "integer": "INTEGER",
-		"boolean": "BOOLEAN", "object": "OBJECT", "array": "ARRAY", "null": "NULL",
-		"custom": "custom", // default 原样返回
-	}
-	for in, want := range cases {
-		assert.Equal(t, want, mapSchemaType(in), "input=%q", in)
-	}
-}
-
-func TestConvertSchemaMap(t *testing.T) {
-	// 非 map 原样返回
-	assert.Equal(t, "x", convertSchemaMap("x"))
-
-	in := map[string]any{
-		"type":       "string",
-		"properties": map[string]any{"a": map[string]any{"type": "integer"}},
-		"items":      map[string]any{"type": "boolean"},
-		"anyOf":      []any{map[string]any{"type": "null"}},
-		"extra":      "keep",
-	}
-	got := convertSchemaMap(in).(map[string]any)
-	assert.Equal(t, "STRING", got["type"])
-	assert.Equal(t, "keep", got["extra"])
-	props := got["properties"].(map[string]any)
-	assert.Equal(t, "INTEGER", props["a"].(map[string]any)["type"])
-	assert.Equal(t, "BOOLEAN", got["items"].(map[string]any)["type"])
-	anyOf := got["anyOf"].([]any)
-	assert.Equal(t, "NULL", anyOf[0].(map[string]any)["type"])
-}
-
 func TestConvertResponseSchema(t *testing.T) {
-	// nil → nil
 	assert.Nil(t, convertResponseSchema(nil))
 
-	// json_schema 包装
+	// json_schema 包装（{name,schema,strict}）解包为裸 schema：带着 name 外壳发出会被
+	// protojson 拒绝（Unknown name "name" at 'request.generation_config.response_schema'）
 	got := convertResponseSchema(map[string]any{
-		"json_schema": map[string]any{
-			"schema": map[string]any{"type": "object"},
+		"name":   "weather",
+		"schema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}},
+	})
+	m := got.(map[string]any)
+	assert.Equal(t, "object", m["type"])
+	assert.NotContains(t, m, "name")
+	props := m["properties"].(map[string]any)
+	assert.Equal(t, "string", props["city"].(map[string]any)["type"])
+
+	// 裸 schema（无包装）原样归一化
+	got = convertResponseSchema(map[string]any{"type": "string"})
+	assert.Equal(t, "string", got.(map[string]any)["type"])
+
+	// 归一化生效：白名单外关键字剔除、缺 type 节点补全
+	got = convertResponseSchema(map[string]any{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"properties": map[string]any{
+			"n": map[string]any{"type": "integer"},
+			"x": map[string]any{"description": "补 type"},
 		},
 	})
-	assert.Equal(t, "OBJECT", got.(map[string]any)["type"])
-
-	// 裸 schema（无包装）
-	got = convertResponseSchema(map[string]any{"type": "string"})
-	assert.Equal(t, "STRING", got.(map[string]any)["type"])
-
-	// 非 map 原样返回
-	assert.Equal(t, "raw", convertResponseSchema("raw"))
+	m = got.(map[string]any)
+	assert.NotContains(t, m, "$schema")
+	props = m["properties"].(map[string]any)
+	assert.Equal(t, "string", props["x"].(map[string]any)["type"])
 }

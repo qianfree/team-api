@@ -1,0 +1,80 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "Describe this image and check the weather in Boston.",
+          "type": "input_text"
+        },
+        {
+          "image_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+          "type": "input_image"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"location\": \"Boston\"}",
+      "call_id": "call_1",
+      "name": "get_weather",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_1",
+      "output": "68F, sunny",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "Thanks! What about the stock price of ACME?",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "instructions": "You are a weather and finance assistant.",
+  "max_output_tokens": 1024,
+  "model": "upstream-model",
+  "store": false,
+  "stream": true,
+  "temperature": 0.7,
+  "tool_choice": {
+    "name": "get_weather",
+    "type": "function"
+  },
+  "tools": [
+    {
+      "description": "get weather",
+      "name": "get_weather",
+      "parameters": {
+        "properties": {
+          "location": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      },
+      "type": "function"
+    },
+    {
+      "description": "stock quote",
+      "name": "lookup_stock",
+      "parameters": {
+        "properties": {
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}

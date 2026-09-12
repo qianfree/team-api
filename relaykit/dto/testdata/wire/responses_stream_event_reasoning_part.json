@@ -1,0 +1,10 @@
+{
+  "type": "response.reasoning_summary_part.added",
+  "item_id": "rs_67f2a1b3c4d5e6f7",
+  "output_index": 0,
+  "summary_index": 0,
+  "part": {
+    "type": "summary_text",
+    "text": "Let me think..."
+  }
+}

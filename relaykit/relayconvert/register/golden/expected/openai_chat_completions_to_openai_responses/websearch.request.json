@@ -1,0 +1,22 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "Search the latest AI news.",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "max_output_tokens": 1024,
+  "model": "upstream-model",
+  "store": false,
+  "tools": [
+    {
+      "type": "web_search"
+    }
+  ]
+}

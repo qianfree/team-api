@@ -3,6 +3,9 @@ package relaykit_bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -10,76 +13,48 @@ import (
 	"github.com/qianfree/team-api/relay/common"
 	"github.com/qianfree/team-api/relay/constant"
 	"github.com/qianfree/team-api/relay/dto"
-	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 )
 
 // TryConvertResponseViaRelaykit 尝试用 relaykit 转换器转换非流式响应。
-// 成功返回 (转换后的响应体, Usage, true)；无匹配 / 转换失败返回 (nil, nil, false)。
+//
+// 返回值语义（hard-fail 模型，无 legacy 回退）：
+//   - handled=false, err=nil：该方向无 relaykit 转换器（同格式直连 / 未覆盖模式），
+//     调用方走透传或自有处理；
+//   - handled=true, err!=nil：方向匹配但解析/转换失败——协议转换是该方向的唯一路径，
+//     调用方应向上返回错误（不再回退旧实现）；
+//   - handled=true, err=nil：转换成功，converted 为客户端格式响应体。
 //
 // 结构与流式桥接对称：nil 守卫留在公开入口，转换逻辑抽到 config-free 的
 // convertResponseViaRelaykit 核心以便单测直接覆盖。
-func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
+func TryConvertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) (converted []byte, usage *dto.Usage, handled bool, err error) {
 	if info == nil || info.ChannelMeta == nil {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 	return convertResponseViaRelaykit(ctx, info, upstreamBody)
 }
 
-// convertResponseViaRelaykit 是非流式响应转换的 config-free 核心（特性开关已由调用方校验）。
+// convertResponseViaRelaykit 是非流式响应转换的 config-free 核心。
 // info 与 info.ChannelMeta 必须非空。
-func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool) {
+func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, upstreamBody []byte) ([]byte, *dto.Usage, bool, error) {
 	// 响应转换方向：上游格式 → 客户端格式（与请求相反）
-	upstream := helper.ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	upstream := EffectiveUpstreamFormat(info)
 	clientFormat := info.GetOriginalClientFormat()
-	converterID := relaykitResponseConverterID(upstream, clientFormat)
+	converterID := ResponseConverterIDForRoute(upstream, clientFormat)
 	if converterID == "" {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 
 	spec, ok := relayconvert.LookupTextConverter(converterID)
 	if !ok || spec.Resp.Convert == nil {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 
-	// 解析上游响应体为对应 DTO（Claude → dto.ClaudeResponse；Gemini → dto.GeminiChatResponse；
-	// Dify → dto.DifyBlockingResponse；Ollama → dto.OllamaChatResponse）。
-	// Coze 上游始终为 SSE（非流式客户端也走流式），宿主已缓冲整段 SSE，直接把原始 []byte 交给转换器解析。
-	var upstreamResp any
-	switch upstream {
-	case constant.RelayFormatClaude:
-		var claudeResp dto.ClaudeResponse
-		if err := json.Unmarshal(upstreamBody, &claudeResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Claude response failed, fallback to legacy: %v", err)
-			return nil, nil, false
-		}
-		upstreamResp = &claudeResp
-	case constant.RelayFormatGemini:
-		var geminiResp dto.GeminiChatResponse
-		if err := json.Unmarshal(upstreamBody, &geminiResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Gemini response failed, fallback to legacy: %v", err)
-			return nil, nil, false
-		}
-		upstreamResp = &geminiResp
-	case constant.RelayFormatCoze:
-		// 原始缓冲 SSE 体，由 CozeToOpenAIResponseConverter 解析
-		upstreamResp = upstreamBody
-	case constant.RelayFormatDify:
-		var difyResp dto.DifyBlockingResponse
-		if err := json.Unmarshal(upstreamBody, &difyResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Dify response failed, fallback to legacy: %v", err)
-			return nil, nil, false
-		}
-		upstreamResp = &difyResp
-	case constant.RelayFormatOllama:
-		var ollamaResp dto.OllamaChatResponse
-		if err := json.Unmarshal(upstreamBody, &ollamaResp); err != nil {
-			g.Log().Warningf(ctx, "[relaykit] parse Ollama response failed, fallback to legacy: %v", err)
-			return nil, nil, false
-		}
-		upstreamResp = &ollamaResp
-	default:
-		return nil, nil, false
+	// 解析上游响应体为对应格式 DTO。
+	upstreamResp, err := parseUpstreamResponse(upstream, upstreamBody)
+	if err != nil {
+		g.Log().Warningf(ctx, "[relaykit] parse %s response failed (converter=%s): %v", upstream, converterID, err)
+		return nil, nil, true, fmt.Errorf("parse upstream %s response: %w", upstream, err)
 	}
 
 	start := time.Now()
@@ -87,17 +62,55 @@ func convertResponseViaRelaykit(ctx context.Context, info *common.RelayInfo, ups
 	duration := time.Since(start)
 	monitor.TrackConverterCall(converterID, string(upstream), string(clientFormat), duration, err)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, nil, false
+		g.Log().Warningf(ctx, "[relaykit] convert response failed (converter=%s): %v", converterID, err)
+		return nil, nil, true, fmt.Errorf("convert response (%s): %w", converterID, err)
 	}
 
 	out, err := json.Marshal(converted)
 	if err != nil {
-		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s), fallback to legacy: %v", converterID, err)
-		return nil, nil, false
+		g.Log().Warningf(ctx, "[relaykit] marshal converted response failed (converter=%s): %v", converterID, err)
+		return nil, nil, true, fmt.Errorf("marshal converted response (%s): %w", converterID, err)
 	}
 
-	return out, usage, true
+	return out, usage, true, nil
+}
+
+// parseUpstreamResponse 按上游格式把响应体解析为对应 DTO 指针。
+func parseUpstreamResponse(upstream constant.RelayFormat, body []byte) (any, error) {
+	switch upstream {
+	case constant.RelayFormatClaude:
+		var claudeResp dto.ClaudeResponse
+		if err := json.Unmarshal(body, &claudeResp); err != nil {
+			return nil, err
+		}
+		return &claudeResp, nil
+	case constant.RelayFormatGemini:
+		var geminiResp dto.GeminiChatResponse
+		if err := json.Unmarshal(body, &geminiResp); err != nil {
+			return nil, err
+		}
+		return &geminiResp, nil
+	case constant.RelayFormatOllama:
+		var ollamaResp dto.OllamaChatResponse
+		if err := json.Unmarshal(body, &ollamaResp); err != nil {
+			return nil, err
+		}
+		return &ollamaResp, nil
+	case constant.RelayFormatOpenAI:
+		var chatResp dto.ChatCompletionResponse
+		if err := json.Unmarshal(body, &chatResp); err != nil {
+			return nil, err
+		}
+		return &chatResp, nil
+	case constant.RelayFormatResponses:
+		var responsesResp dto.OpenAIResponsesResponse
+		if err := json.Unmarshal(body, &responsesResp); err != nil {
+			return nil, err
+		}
+		return &responsesResp, nil
+	default:
+		return nil, fmt.Errorf("unsupported upstream format %q", upstream)
+	}
 }
 
 // UsageFromConvertedChatResponse 从 relaykit 转换后的 OpenAI ChatCompletionResponse 响应体中提取用量。
@@ -128,24 +141,17 @@ func convertedCacheCreationTokens(details *dto.TokenDetails) int {
 	return details.CachedCreationTokens
 }
 
-// relaykitResponseConverterID 根据 (上游原生格式, 客户端格式) 返回响应转换器 ID。
-// 返回空串表示没有匹配的 relaykit 响应转换器（调用方回退旧路径）。
-func relaykitResponseConverterID(upstream, clientFormat constant.RelayFormat) string {
-	if upstream == clientFormat {
-		return "" // 同格式无需转换
+// ResponseConvertError 把非流式响应转换错误映射为宿主错误类型。
+//
+// 与流式侧 streamConvertError 同一套分类依据，区别是非流式尚未写出任何字节，
+// 因此不置 ResponseWritten（上层仍可写标准错误体，甚至换渠道重试）：
+//   - 内容安全拦截（ErrContentBlocked）是客户端提示词问题，映射为请求类错误，
+//     避免正常渠道因用户违规内容被扣健康分/熔断；
+//   - 其余为上游响应体非法，沿用上游状态码与 Retry-After 头按上游错误上报。
+func ResponseConvertError(convErr error, upstreamStatus int, header http.Header) error {
+	if errors.Is(convErr, relayconvert.ErrContentBlocked) {
+		return constant.NewRequestError(convErr.Error(), convErr)
 	}
-	switch {
-	case upstream == constant.RelayFormatClaude && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToClaudeMessages // 同一个 spec，响应侧是反向（Claude→OpenAI）
-	case upstream == constant.RelayFormatGemini && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToGeminiContent // 同理，响应侧是 Gemini→OpenAI
-	case upstream == constant.RelayFormatCoze && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToCoze // 响应侧是 Coze→OpenAI
-	case upstream == constant.RelayFormatDify && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToDify // 响应侧是 Dify→OpenAI
-	case upstream == constant.RelayFormatOllama && clientFormat == constant.RelayFormatOpenAI:
-		return relayconvert.ConverterOpenAIChatToOllama // 响应侧是 Ollama→OpenAI
-	default:
-		return ""
-	}
+	return constant.NewUpstreamError(upstreamStatus, "invalid response body", convErr).
+		WithRetryAfter(constant.RetryAfterFromHeader(header))
 }

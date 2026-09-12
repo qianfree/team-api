@@ -21,76 +21,42 @@ func (s *modelMappingStub) GetModelMapping(_ context.Context, modelName string) 
 }
 
 func TestResolveRelayModel(t *testing.T) {
-	tests := []struct {
-		name       string
-		model      string
-		models     map[string]bool
-		wantLookup string
-		wantEffort string
-		wantCalls  []string
-		wantErr    bool
-	}{
-		{
-			name:       "literal model ending in effort suffix wins",
-			model:      "qwen3.8-max",
-			models:     map[string]bool{"qwen3.8-max": true, "qwen3.8": true},
-			wantLookup: "qwen3.8-max",
-			wantCalls:  []string{"qwen3.8-max"},
-		},
-		{
-			name:       "virtual effort suffix falls back to base model",
-			model:      "o3-max",
-			models:     map[string]bool{"o3": true},
-			wantLookup: "o3",
-			wantEffort: "max",
-			wantCalls:  []string{"o3-max", "o3"},
-		},
-		{
-			name:       "model without suffix resolves literally",
-			model:      "gpt-4o",
-			models:     map[string]bool{"gpt-4o": true},
-			wantLookup: "gpt-4o",
-			wantCalls:  []string{"gpt-4o"},
-		},
-		{
-			name:      "missing literal and base model returns error",
-			model:     "missing-high",
-			models:    map[string]bool{},
-			wantCalls: []string{"missing-high", "missing"},
-			wantErr:   true,
-		},
-	}
+	// 后缀语法已移除：目录名即请求名，不再有「字面模型优先 / 剥后缀回退」两段查找
+	t.Run("catalog model resolves literally", func(t *testing.T) {
+		provider := &modelMappingStub{models: map[string]bool{"gpt-4o": true}}
+		lookup, err := resolveRelayModel(t.Context(), provider, "gpt-4o")
+		if err != nil {
+			t.Fatalf("resolveRelayModel() error = %v", err)
+		}
+		if lookup != "gpt-4o" {
+			t.Errorf("lookup model = %q, want %q", lookup, "gpt-4o")
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := &modelMappingStub{models: tt.models}
-			lookup, thinking, err := resolveRelayModel(t.Context(), provider, tt.model)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("resolveRelayModel() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if lookup != tt.wantLookup {
-				t.Errorf("lookup model = %q, want %q", lookup, tt.wantLookup)
-			}
-			if !tt.wantErr {
-				if thinking == nil {
-					t.Fatal("thinking info is nil")
-				}
-				if thinking.BaseModel != tt.wantLookup {
-					t.Errorf("thinking base model = %q, want %q", thinking.BaseModel, tt.wantLookup)
-				}
-				if thinking.EffortLevel != tt.wantEffort {
-					t.Errorf("effort level = %q, want %q", thinking.EffortLevel, tt.wantEffort)
-				}
-			}
-			if len(provider.calls) != len(tt.wantCalls) {
-				t.Fatalf("lookup calls = %v, want %v", provider.calls, tt.wantCalls)
-			}
-			for i := range tt.wantCalls {
-				if provider.calls[i] != tt.wantCalls[i] {
-					t.Errorf("lookup calls = %v, want %v", provider.calls, tt.wantCalls)
-					break
-				}
-			}
-		})
-	}
+	// 名字带 -max 等字样的真实目录模型按字面命中，不做任何后缀解释
+	t.Run("literal model ending in effort-like word", func(t *testing.T) {
+		provider := &modelMappingStub{models: map[string]bool{"qwen3.8-max": true}}
+		lookup, err := resolveRelayModel(t.Context(), provider, "qwen3.8-max")
+		if err != nil {
+			t.Fatalf("resolveRelayModel() error = %v", err)
+		}
+		if lookup != "qwen3.8-max" {
+			t.Errorf("lookup model = %q, want %q", lookup, "qwen3.8-max")
+		}
+		if len(provider.calls) != 1 || provider.calls[0] != "qwen3.8-max" {
+			t.Errorf("lookup calls = %v, want exactly one literal lookup", provider.calls)
+		}
+	})
+
+	// 目录中不存在即报错，不再尝试剥后缀回退（"o3-max" 不会命中 "o3"）
+	t.Run("missing model returns error without suffix fallback", func(t *testing.T) {
+		provider := &modelMappingStub{models: map[string]bool{"o3": true}}
+		_, err := resolveRelayModel(t.Context(), provider, "o3-max")
+		if err == nil {
+			t.Fatal("want error for model absent from catalog")
+		}
+		if len(provider.calls) != 1 {
+			t.Errorf("lookup calls = %v, want single literal lookup", provider.calls)
+		}
+	})
 }

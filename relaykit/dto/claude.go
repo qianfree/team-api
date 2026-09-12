@@ -70,6 +70,13 @@ type ClaudeTool struct {
 	InputSchema  any                 `json:"input_schema,omitempty"`
 	Type         string              `json:"type,omitempty"`          // "custom"（默认）或内置类型
 	CacheControl *ClaudeCacheControl `json:"cache_control,omitempty"` // Prompt Caching 断点
+
+	// 服务端内置工具（web_search_* 等）的配置字段。重序列化（如模型名改写）时必须保留，
+	// 否则搜索限制配置会静默丢失（wire 保真测试 dto/wire_fidelity_test.go 守护）。
+	MaxUses        *int     `json:"max_uses,omitempty"`
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
+	UserLocation   any      `json:"user_location,omitempty"`
 }
 
 // ClaudeToolChoice Claude 工具选择

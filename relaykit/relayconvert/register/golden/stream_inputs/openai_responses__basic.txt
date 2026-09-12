@@ -1,0 +1,16 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"in_progress","model":"upstream-model"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_up","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_up","output_index":0,"content_index":0,"delta":"Hello"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_up","output_index":0,"content_index":0,"delta":", world!"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":1700000000,"status":"completed","model":"upstream-model","usage":{"input_tokens":12,"output_tokens":7,"total_tokens":19,"input_tokens_details":{"cached_tokens":4}}}}
+
+data: [DONE]

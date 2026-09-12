@@ -34,7 +34,7 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages, constant.RelayModeGeminiChat:
 		if info.UseResponsesAPI {
 			return baseURL + "/v1/responses", nil
 		}
@@ -144,52 +144,19 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return bytes.NewReader(requestBody), nil
 	}
 
-	var converted io.Reader
+	// 以下方向已由 relaykit 转换矩阵接管（convertRequestBody 在 adaptor 之前完成）：
+	//   - Claude/Gemini 入站 → chat 转换；
+	//   - Responses 入站 + chat-only 上游（Responses→chat）；
+	//   - chat 入站 + UseResponsesAPI（chat→Responses 桥接，含 reasoning_effort 前置注入）。
+	// 此处只剩同格式路径：OpenAI 入站（含空）、Responses 入站 + Responses 原生上游。
+	// 矩阵意外未接管时显式报错，避免外格式体静默透传。
 	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatGemini:
-		r, err := ConvertGeminiToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		if responsesUpstream {
-			// 上游为 Responses 协议：保持 Responses 格式直连，仅做模型映射等后处理
-			converted = bytes.NewReader(requestBody)
-		} else {
-			r, err := ConvertResponsesToOpenAI(requestBody, info)
-			if err != nil {
-				return nil, err
-			}
-			converted = r
-		}
+	case constant.RelayFormatOpenAI, "", constant.RelayFormatResponses:
 	default:
-		converted = bytes.NewReader(requestBody)
+		return nil, constant.NewChannelError(fmt.Sprintf("openai adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
 
-	// responses-only 上游桥接：chat 请求体转换为 Responses 格式发送 /v1/responses。
-	// 转换器自行处理模型映射，并读取 chat 体的 reasoning_effort 映射为 reasoning.effort
-	// （thinking 后缀先注入 chat 体再进转换器），故此分支直接返回、不走后续 chat 后处理。
-	if info.UseResponsesAPI && mode == constant.RelayModeChatCompletions && !responsesUpstream {
-		if info.ReasoningEffort != "" {
-			converted = injectReasoningEffort(converted, info.ReasoningEffort)
-		}
-		body, err := io.ReadAll(converted)
-		if err != nil {
-			return nil, fmt.Errorf("read chat body for responses bridge failed: %w", err)
-		}
-		r, err := ConvertOpenAIToResponses(body, info)
-		if err != nil {
-			return nil, err
-		}
-		return bytes.NewReader(r), nil
-	}
+	converted := bytes.NewReader(requestBody)
 
 	result := replaceModelIfNeeded(converted, info)
 	// stream_options 是 Chat Completions 专属字段，GPT Image 使用 stream/partial_images 原生参数；
@@ -198,16 +165,46 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		result = InjectStreamOptions(result, info)
 	}
 
-	// Thinking 后缀路由：Responses 上游映射为 reasoning.effort，其余注入 chat 的 reasoning_effort
-	if info.ReasoningEffort != "" {
-		if responsesUpstream {
-			result = injectResponsesReasoning(result, info.ReasoningEffort)
-		} else {
-			result = injectReasoningEffort(result, info.ReasoningEffort)
-		}
+	// chat 终端 + claude 系模型：剥离 web_search_options（聚合器场景，详见函数注释）
+	if !responsesUpstream {
+		result = stripWebSearchOptionsForClaudeModels(result, info)
 	}
 
 	return result, nil
+}
+
+// stripWebSearchOptionsForClaudeModels 在 chat 终端出口剥离 web_search_options。
+// 该参数在网关内部是 Responses→OpenAI→Claude 链的搜索载体（第二跳据此还原
+// web_search 工具），必须完整通过转换层；但当 chat 上游实际服务的是 claude 系模型
+// （聚合器把 openai chat 转发给 Claude 后端）时，聚合器会把它映射为无法在 chat 协议
+// 表达的原生搜索工具，模型发起的搜索 tool_use 被整个吞掉，返回空内容 + finish stop
+// （线上实测：codex 经 chat 聚合器问天气，0 token 空响应）。
+// claude 原生渠道不走本适配器，不受影响；OpenAI 官方渠道的模型名不含 claude，同样不受影响。
+func stripWebSearchOptionsForClaudeModels(r io.Reader, info *common.RelayInfo) io.Reader {
+	model := info.OriginModelName
+	if info.ChannelMeta != nil && info.ChannelMeta.UpstreamModelName != "" {
+		model = info.ChannelMeta.UpstreamModelName
+	}
+	if !strings.Contains(strings.ToLower(model), "claude") {
+		return r
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return r
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawMap); err != nil {
+		return bytes.NewReader(body)
+	}
+	if _, exists := rawMap["web_search_options"]; !exists {
+		return bytes.NewReader(body)
+	}
+	delete(rawMap, "web_search_options")
+	result, err := json.Marshal(rawMap)
+	if err != nil {
+		return bytes.NewReader(body)
+	}
+	return bytes.NewReader(result)
 }
 
 // DoRequest 发送请求到上游
@@ -459,51 +456,6 @@ func InjectStreamOptions(r io.Reader, info *common.RelayInfo) io.Reader {
 	// 仅在客户端未显式设置 stream_options 时注入
 	if _, exists := rawMap["stream_options"]; !exists {
 		rawMap["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-		result, err := json.Marshal(rawMap)
-		if err != nil {
-			return bytes.NewReader(body)
-		}
-		return bytes.NewReader(result)
-	}
-	return bytes.NewReader(body)
-}
-
-// injectReasoningEffort 注入 reasoning_effort 字段到请求体
-func injectReasoningEffort(r io.Reader, effort string) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-	// 仅在客户端未显式设置时注入
-	if _, exists := rawMap["reasoning_effort"]; !exists {
-		rawMap["reasoning_effort"], _ = json.Marshal(effort)
-		result, err := json.Marshal(rawMap)
-		if err != nil {
-			return bytes.NewReader(body)
-		}
-		return bytes.NewReader(result)
-	}
-	return bytes.NewReader(body)
-}
-
-// injectResponsesReasoning 为 Responses 请求注入 reasoning.effort（对应 chat 的 reasoning_effort）。
-// Responses 协议无 reasoning_effort 字段，thinking 后缀映射为 reasoning: {"effort": ...}。
-func injectResponsesReasoning(r io.Reader, effort string) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-	// 仅在客户端未显式设置 reasoning 时注入
-	if _, exists := rawMap["reasoning"]; !exists {
-		rawMap["reasoning"], _ = json.Marshal(map[string]any{"effort": effort})
 		result, err := json.Marshal(rawMap)
 		if err != nil {
 			return bytes.NewReader(body)

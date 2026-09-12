@@ -32,10 +32,15 @@ func MapOpenAIToolsToClaudeTools(tools []dto.Tool) []dto.ClaudeTool {
 }
 
 // MapClaudeToolsToOpenAITools 将 Claude ClaudeTool[] 转换为 OpenAI Tool[]。
+// 服务端内置工具（type 非空且非 custom，如 web_search_*）在 chat 协议无对应物，
+// 跳过而非伪装成自定义函数。
 func MapClaudeToolsToOpenAITools(tools []dto.ClaudeTool) []dto.Tool {
 	openaiTools := make([]dto.Tool, 0, len(tools))
 
 	for _, tool := range tools {
+		if tool.Type != "" && tool.Type != "custom" {
+			continue
+		}
 		openaiTool := dto.Tool{
 			Type: "function",
 			Function: dto.FunctionDef{

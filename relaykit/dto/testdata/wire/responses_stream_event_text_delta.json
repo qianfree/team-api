@@ -1,0 +1,7 @@
+{
+  "type": "response.output_text.delta",
+  "item_id": "msg_67f2a1b3c4d5e6f7",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "Hello"
+}

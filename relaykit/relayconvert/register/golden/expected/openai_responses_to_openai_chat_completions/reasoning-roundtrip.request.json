@@ -1,0 +1,65 @@
+{
+  "messages": [
+    {
+      "content": "You are a coding agent.",
+      "role": "system"
+    },
+    {
+      "content": "list files",
+      "role": "user"
+    },
+    {
+      "content": null,
+      "reasoning_content": "先用 shell 工具查看目录结构。",
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"cmd\":\"ls\"}",
+            "name": "shell"
+          },
+          "id": "call_1",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "Chunk ID: ab12cd\nOutput:\na.go b.go",
+      "role": "tool",
+      "tool_call_id": "call_1"
+    },
+    {
+      "content": "目录里有两个 Go 文件。",
+      "reasoning_content": "根据目录内容回复用户。",
+      "role": "assistant"
+    },
+    {
+      "content": "open a.go",
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tools": [
+    {
+      "function": {
+        "name": "shell",
+        "parameters": {
+          "properties": {
+            "cmd": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

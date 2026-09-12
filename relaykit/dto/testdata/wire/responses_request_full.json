@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5",
+  "instructions": "You are a coding assistant.",
+  "input": [
+    {"role": "user", "content": [
+      {"type": "input_text", "text": "What's the weather in Boston?"},
+      {"type": "input_image", "image_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
+    ]},
+    {"type": "function_call", "call_id": "call_123", "name": "get_weather", "arguments": "{\"location\": \"Boston, MA\"}"},
+    {"type": "function_call_output", "call_id": "call_123", "output": "68F, sunny"}
+  ],
+  "tools": [
+    {"type": "function", "name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}, "strict": true},
+    {"type": "web_search"}
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "reasoning": {"effort": "medium", "summary": "auto"},
+  "max_output_tokens": 2048,
+  "temperature": 1,
+  "top_p": 0.95,
+  "stream": true,
+  "store": false,
+  "truncation": "auto",
+  "metadata": {"session": "abc"},
+  "service_tier": "auto",
+  "prompt_cache_key": "cache-key-1",
+  "safety_identifier": "user-1234"
+}

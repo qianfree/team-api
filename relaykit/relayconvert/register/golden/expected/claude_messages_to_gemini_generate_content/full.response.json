@@ -1,0 +1,31 @@
+{
+  "content": [
+    {
+      "thinking": "CAP_MARKER_THINKING user asks weather",
+      "type": "thinking"
+    },
+    {
+      "text": "CAP_MARKER_ASSISTANT_TEXT the weather is 68F",
+      "type": "text"
+    },
+    {
+      "id": "\u003cscrubbed\u003e",
+      "input": {
+        "location": "Boston"
+      },
+      "name": "get_weather",
+      "type": "tool_use"
+    }
+  ],
+  "id": "\u003cscrubbed\u003e",
+  "model": "origin-model",
+  "role": "assistant",
+  "stop_reason": "tool_use",
+  "type": "message",
+  "usage": {
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "input_tokens": 100,
+    "output_tokens": 50
+  }
+}

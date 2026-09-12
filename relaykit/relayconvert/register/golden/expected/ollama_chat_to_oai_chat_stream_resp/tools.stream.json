@@ -1,0 +1,73 @@
+[
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"city\":\"Shanghai\"}",
+                  "name": "get_weather"
+                },
+                "id": "\u003cscrubbed\u003e",
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": null
+    }
+  },
+  {
+    "data": {
+      "choices": [
+        {
+          "delta": {
+            "content": null,
+            "role": ""
+          },
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": 0,
+      "id": "\u003cscrubbed\u003e",
+      "model": "origin-model",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 20,
+        "total_tokens": 29
+      }
+    }
+  }
+]

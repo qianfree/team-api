@@ -1,0 +1,78 @@
+{
+  "max_tokens": 4096,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "list files",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "",
+          "type": "text"
+        },
+        {
+          "id": "call_1",
+          "input": {
+            "cmd": "ls"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": "Chunk ID: ab12cd\nOutput:\na.go b.go",
+          "tool_use_id": "call_1",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "目录里有两个 Go 文件。",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "open a.go",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "stream": true,
+  "system": "You are a coding agent.",
+  "tools": [
+    {
+      "input_schema": {
+        "properties": {
+          "cmd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cmd"
+        ],
+        "type": "object"
+      },
+      "name": "shell"
+    }
+  ]
+}

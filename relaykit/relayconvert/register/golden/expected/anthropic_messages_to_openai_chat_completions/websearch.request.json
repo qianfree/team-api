@@ -1,0 +1,11 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": "Search the latest AI news.",
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "web_search_options": {}
+}

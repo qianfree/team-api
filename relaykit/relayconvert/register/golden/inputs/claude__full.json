@@ -1,0 +1,27 @@
+{
+  "model": "origin-model",
+  "max_tokens": 1024,
+  "system": "You are a weather and finance assistant.",
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "text", "text": "Describe this image and check the weather in Boston."},
+      {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/4AAQSkZJRg=="}}
+    ]},
+    {"role": "assistant", "content": [
+      {"type": "text", "text": "checking weather"},
+      {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"location": "Boston"}}
+    ]},
+    {"role": "user", "content": [
+      {"type": "tool_result", "tool_use_id": "toolu_1", "content": "68F, sunny"}
+    ]},
+    {"role": "user", "content": "Thanks! What about the stock price of ACME?"}
+  ],
+  "tools": [
+    {"name": "get_weather", "description": "get weather", "input_schema": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}},
+    {"name": "lookup_stock", "description": "stock quote", "input_schema": {"type": "object", "properties": {"symbol": {"type": "string"}}}}
+  ],
+  "tool_choice": {"type": "tool", "name": "get_weather"},
+  "stop_sequences": ["END_TOKEN"],
+  "temperature": 0.7,
+  "stream": true
+}

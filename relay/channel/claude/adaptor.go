@@ -32,8 +32,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 
 	switch constant.RelayMode(info.RelayMode) {
 	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
 		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
-		// Responses 入站：请求转 Claude Messages 格式打 /v1/messages，响应转回 Responses 格式
+		// Responses/Gemini 入站：请求已由 relaykit 转为 Claude Messages 格式打 /v1/messages，
+		// 响应再转回客户端原生格式
 		return baseURL + "/v1/messages", nil
 	default:
 		return "", fmt.Errorf("unsupported relay mode for Claude: %d", info.RelayMode)
@@ -74,41 +76,15 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 
 // ConvertRequest 根据入站格式转换请求体为 Claude 格式
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	var converted io.Reader
-	switch info.InboundFormat {
-	case constant.RelayFormatClaude:
-		converted = bytes.NewReader(requestBody)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatGemini:
-		r, err := ConvertGeminiToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToClaude(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	default:
-		converted = bytes.NewReader(requestBody)
+	// OpenAI/Gemini/Responses 入站 → Claude 上游已由 relaykit 转换矩阵接管
+	//（convertRequestBody 在 adaptor 之前完成转换），此处只剩 Claude 同格式路径
+	//（直连判定未通过时：有模型映射/thinking 后缀/参数改写）。矩阵意外未接管时
+	// 显式报错，避免把外格式请求体静默透传给 Anthropic 端点。
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatClaude {
+		return nil, constant.NewChannelError(fmt.Sprintf("claude adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
-	result := replaceModelIfNeeded(converted, info)
-
-	// Thinking 后缀路由
-	if info.ThinkingEnabled {
-		result = injectClaudeThinking(result, info)
-	} else if info.ReasoningEffort != "" {
-		result = injectClaudeEffort(result, info)
-	}
-
-	return result, nil
+	converted := bytes.NewReader(requestBody)
+	return replaceModelIfNeeded(converted, info), nil
 }
 
 // DoRequest 发送请求到上游
@@ -143,67 +119,6 @@ func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, request
 	return resp, nil
 }
 
-// injectClaudeThinking 注入 Claude thinking 配置（-thinking 后缀）
-// 设 thinking.type=enabled, budget_tokens=80%*max_tokens, temperature=1.0
-func injectClaudeThinking(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	// 获取 max_tokens
-	var maxTokens int
-	if mt, ok := rawMap["max_tokens"]; ok {
-		_ = json.Unmarshal(mt, &maxTokens)
-	}
-	if maxTokens < 1280 {
-		maxTokens = 16384
-	}
-	budgetTokens := maxTokens * 80 / 100
-	if budgetTokens < 1280 {
-		budgetTokens = 1280
-	}
-
-	// 设置 thinking
-	rawMap["thinking"] = json.RawMessage(fmt.Sprintf(`{"type":"enabled","budget_tokens":%d}`, budgetTokens))
-	// Claude thinking 要求 temperature=1.0
-	rawMap["temperature"] = json.RawMessage(`1.0`)
-
-	result, err := json.Marshal(rawMap)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
-}
-
-// injectClaudeEffort 注入 Claude effort 级别（-high/-low 等后缀）
-// 使用 adaptive thinking 模式
-func injectClaudeEffort(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	// 仅在客户端未显式设置 thinking 时注入
-	if _, exists := rawMap["thinking"]; !exists {
-		rawMap["thinking"] = json.RawMessage(`{"type":"adaptive"}`)
-	}
-
-	result, err := json.Marshal(rawMap)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
-}
-
 // DoResponse 处理上游响应，根据客户端格式分发
 func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *common.RelayInfo, writer http.ResponseWriter) (*common.Usage, error) {
 	clientFormat := info.GetOriginalClientFormat()
@@ -222,12 +137,19 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
-	default:
-		// 兜底：默认 OpenAI 转换
+	case constant.RelayFormatGemini:
+		// Gemini 入站（请求侧走 relaykit Gemini→Claude 转换）：响应必须转回 Gemini 格式，
+		// 否则 Gemini SDK 拿到 OpenAI chunk 解析失败
 		if info.IsStream {
-			return a.handleStreamToOpenAI(ctx, resp, info, writer)
+			return a.handleStreamToGemini(ctx, resp, info, writer)
 		}
-		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
+		return a.handleNonStreamToGemini(ctx, resp, info, writer)
+	default:
+		// openai / claude / gemini / responses 四种入站格式均已显式处理
+		//（见 relay_handler.go 的 relayModeToInboundFormat）。走到这里说明新增了客户端格式
+		// 却漏接响应侧转换——显式失败，而不是静默按 OpenAI 格式写出让客户端 SDK 解析失败。
+		return nil, constant.NewChannelError(
+			fmt.Sprintf("claude adaptor: unsupported client format %q", clientFormat), nil)
 	}
 }
 

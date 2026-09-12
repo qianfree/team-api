@@ -59,7 +59,6 @@ type relayValidation struct {
 	relayModeStr    string
 	modelName       string
 	lookupModel     string
-	thinkingInfo    *helper.ThinkingInfo
 	isStream        bool
 	estimatedTokens int
 	maxTokens       int
@@ -72,26 +71,15 @@ type modelMappingProvider interface {
 	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
 }
 
-// resolveRelayModel gives a literal catalog model precedence over the optional
-// thinking/effort suffix syntax. This avoids treating names such as
-// "qwen3.8-max" as the virtual model "qwen3.8" with effort=max.
-func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, *helper.ThinkingInfo, error) {
-	parsed := helper.ParseThinkingSuffix(modelName)
-	literal := &helper.ThinkingInfo{BaseModel: modelName}
-
-	_, _, err := provider.GetModelMapping(ctx, modelName)
-	if err == nil {
-		return modelName, literal, nil
+// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名。
+// 历史上此处还承担 thinking/effort 模型名后缀（-thinking/-high 等虚拟模型语法）的
+// 解析回退；该语法已于 2026-09 移除（无存量使用，思考参数一律由客户端请求参数表达），
+// 目录名即请求名。
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, error) {
+	if _, _, err := provider.GetModelMapping(ctx, modelName); err != nil {
+		return "", err
 	}
-	if parsed.BaseModel == modelName {
-		return "", nil, err
-	}
-
-	_, _, err = provider.GetModelMapping(ctx, parsed.BaseModel)
-	if err != nil {
-		return "", nil, err
-	}
-	return parsed.BaseModel, &parsed, nil
+	return modelName, nil
 }
 
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
@@ -161,9 +149,8 @@ func validateRelayRequest(
 		return nil, constant.NewRequestError("model is required", nil)
 	}
 
-	// 2.5 解析 thinking/effort 后缀并验证模型。完整模型名存在时按字面模型处理；
-	// 仅在完整名称不存在时，才尝试将后缀解析为虚拟 thinking/effort 参数。
-	lookupModel, thinkingInfo, modelErr := resolveRelayModel(ctx, provider, modelName)
+	// 2.5 验证模型在目录中存在
+	lookupModel, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
@@ -230,7 +217,6 @@ func validateRelayRequest(
 		relayModeStr:    relayModeStr,
 		modelName:       modelName,
 		lookupModel:     lookupModel,
-		thinkingInfo:    thinkingInfo,
 		isStream:        isStream,
 		estimatedTokens: estimatedInputTokens,
 		maxTokens:       maxTokens,
@@ -374,7 +360,6 @@ func settleSuccessfulRequest(
 		UserAgent:       headers.Get("User-Agent"),
 		ClientIP:        rc.ClientIP,
 		FirstTokenMs:    firstTokenMs,
-		ReasoningEffort: info.ReasoningEffort,
 		InboundEndpoint: path,
 
 		// 渠道详情
@@ -845,25 +830,22 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 // attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
 func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
 	info := &common.RelayInfo{
-		Context:          ctx,
-		TenantID:         rc.TenantID,
-		UserID:           rc.UserID,
-		ApiKeyID:         rc.ApiKeyID,
-		ProjectID:        rc.ProjectID,
-		RequestID:        rc.RequestID,
-		RetryIndex:       attempt,
-		RelayMode:        int(v.relayMode),
-		IsStream:         v.isStream,
-		OriginModelName:  v.modelName,
-		BaseModelName:    v.lookupModel,
-		ThinkingEnabled:  v.thinkingInfo.IsThinking,
-		ThinkingDisabled: v.thinkingInfo.IsNoThinking,
-		ReasoningEffort:  v.thinkingInfo.EffortLevel,
-		RequestURLPath:   path,
-		RequestHeaders:   headers,
-		StartTime:        time.Now(),
-		StreamStatus:     common.NewStreamStatus(),
-		InboundFormat:    relayModeToInboundFormat(v.relayMode),
+		Context:         ctx,
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		RetryIndex:      attempt,
+		RelayMode:       int(v.relayMode),
+		IsStream:        v.isStream,
+		OriginModelName: v.modelName,
+		BaseModelName:   v.lookupModel,
+		RequestURLPath:  path,
+		RequestHeaders:  headers,
+		StartTime:       time.Now(),
+		StreamStatus:    common.NewStreamStatus(),
+		InboundFormat:   relayModeToInboundFormat(v.relayMode),
 		ChannelMeta: &common.ChannelMeta{
 			ChannelID:         selection.ChannelID,
 			ChannelType:       selection.ChannelType,
@@ -898,11 +880,36 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	// relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 转换器路径（唯一路径，hard-fail）：方向命中后解析/转换失败直接拒绝请求；
+	// 未命中方向（同格式直连、非文本模式等）走 adaptor 的原生后处理路径。
 	var convertedBody io.Reader
-	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
+	relaykitBody, handled, relaykitErr := tryConvertRequestViaRelaykit(ctx, info, body)
+	switch {
+	case handled && relaykitErr != nil:
+		if !errors.Is(relaykitErr, constant.ErrStatefulResponsesUnsupported) {
+			g.Log().Errorf(ctx, "[RelayHandler] relaykit ConvertRequest failed: inboundFormat=%s, error=%v",
+				info.InboundFormat, relaykitErr)
+		}
+		return nil, relaykitErr
+	case handled:
 		convertedBody = relaykitBody
-	} else {
+		// 供应商私有后处理：矩阵按格式裁决、与供应商无关，命中后 adaptor.ConvertRequest
+		// 不再被调用，其中的私有请求适配（zhipu GLM 参数兼容、ali DashScope 参数裁剪）
+		// 会随之丢失。此处按可选接口接回，仅 relaykit 路径调用。
+		if pp, ok := adaptor.(common.RequestPostProcessor); ok {
+			relaykitBytes, err := io.ReadAll(convertedBody)
+			if err != nil {
+				return nil, fmt.Errorf("read relaykit converted body: %w", err)
+			}
+			processed, err := pp.PostProcessConvertedRequest(ctx, info, relaykitBytes)
+			if err != nil {
+				g.Log().Errorf(ctx, "[RelayHandler] provider request post-process failed: adaptor=%s, inboundFormat=%s, error=%v",
+					adaptor.GetChannelName(), info.InboundFormat, err)
+				return nil, err
+			}
+			convertedBody = bytes.NewReader(processed)
+		}
+	default:
 		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)
 		if err != nil {
 			// responses 有状态协议不匹配为预期内错误（上层按哨兵驱动换渠道并向客户端返回

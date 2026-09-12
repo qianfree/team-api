@@ -1,0 +1,71 @@
+[
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hello"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": ", world!"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "cachedContentTokenCount": 4,
+        "candidatesTokenCount": 7,
+        "promptTokenCount": 12,
+        "totalTokenCount": 19
+      }
+    },
+    "usage": {
+      "completion_tokens": 7,
+      "prompt_tokens": 12,
+      "prompt_tokens_details": {
+        "cached_tokens": 4
+      },
+      "total_tokens": 19
+    }
+  }
+]

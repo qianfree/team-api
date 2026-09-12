@@ -1,0 +1,97 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Describe this image and check the weather in Boston.",
+          "type": "text"
+        },
+        {
+          "source": {
+            "data": "/9j/4AAQSkZJRg==",
+            "media_type": "image/jpeg",
+            "type": "base64"
+          },
+          "type": "image"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "checking weather",
+          "type": "text"
+        },
+        {
+          "id": "call_0",
+          "input": {
+            "location": "Boston"
+          },
+          "name": "get_weather",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": "{\"result\":\"68F, sunny\"}",
+          "tool_use_id": "call_0",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Thanks! What about the stock price of ACME?",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "stop_sequences": [
+    "END_TOKEN"
+  ],
+  "system": "You are a weather and finance assistant.",
+  "temperature": 0.7,
+  "tool_choice": {
+    "name": "get_weather",
+    "type": "tool"
+  },
+  "tools": [
+    {
+      "description": "get weather",
+      "input_schema": {
+        "properties": {
+          "location": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      },
+      "name": "get_weather"
+    },
+    {
+      "description": "stock quote",
+      "input_schema": {
+        "properties": {
+          "symbol": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "lookup_stock"
+    }
+  ]
+}

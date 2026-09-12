@@ -41,3 +41,10 @@ sub2api/
 hack/config.yaml
 manifest/config/config.yaml
 
+
+# 防误写保险：语料默认输出在仓库外（../team-api-corpus / TEAM_API_CORPUS_DIR），
+# 万一有人 -o 指回仓库内也不至于误提交。见 docs/协议转换语料采集手册.md §4
+relaykit/relayconvert/register/golden/real_inputs/
+relaykit/relayconvert/register/golden/real_stream_inputs/
+relaykit/relayconvert/register/golden/real_responses/
+relaykit/relayconvert/register/golden/corpus_manifest.json

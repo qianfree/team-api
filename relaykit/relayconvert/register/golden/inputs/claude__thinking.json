@@ -1,0 +1,6 @@
+{
+  "model": "origin-model",
+  "max_tokens": 4096,
+  "messages": [{"role": "user", "content": "Prove that sqrt(2) is irrational."}],
+  "thinking": {"type": "enabled", "budget_tokens": 2048}
+}
