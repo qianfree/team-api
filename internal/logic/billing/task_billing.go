@@ -87,8 +87,12 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]any) decimal.Dec
 			Mul(NewFromFloat(pricing.TenantMultiplier)).
 			Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 	case pricing.BillingMode == "per_request":
-		// 按次计费：直接用单价
-		costD = NewFromFloat(pricing.PerRequestPrice)
+		// 按次计费：单价 × 租户乘数 × 时段乘数。与 computeCost / EstimatePreDeductAmount 的
+		// 按次口径对齐——按次任务结算无 token 重算信号，预扣即终价，
+		// 预扣漏乘租户/时段折扣会让折扣租户按原价多扣
+		costD = NewFromFloat(pricing.PerRequestPrice).
+			Mul(NewFromFloat(pricing.TenantMultiplier)).
+			Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
 		duration := 5.0 // 默认 5 秒
 		if d, ok := ratioFloat(ratios, "duration"); ok && d > 0 {
@@ -112,11 +116,14 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]any) decimal.Dec
 			Mul(NewFromFloat(pricing.OutputPrice)).
 			Mul(NewFromFloat(pricing.TenantMultiplier))
 	default:
-		// 无时长信号（图片等扁平计费任务）：优先按次单价；未配按次价时用占位预扣，
+		// 无时长信号（图片等扁平计费任务）：优先按次单价（同样乘租户/时段乘数，
+		// 预扣即终价的口径与 per_request 分支一致）；未配按次价时用占位预扣，
 		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
 		// （见 sync_image_worker.settleSyncImageSuccess）。
 		if pricing.PerRequestPrice > 0 {
-			costD = NewFromFloat(pricing.PerRequestPrice)
+			costD = NewFromFloat(pricing.PerRequestPrice).
+				Mul(NewFromFloat(pricing.TenantMultiplier)).
+				Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
 		} else {
 			costD = NewFromFloat(imagePlaceholderPreDeduct)
 		}

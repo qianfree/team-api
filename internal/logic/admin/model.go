@@ -463,6 +463,7 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 	var row *struct {
 		BillingMode     string  `json:"billing_mode" orm:"billing_mode"`
 		Pricing         string  `json:"pricing" orm:"pricing"`
+		OfficialPricing string  `json:"official_pricing" orm:"official_pricing"`
 		PriceNote       *string `json:"price_note" orm:"price_note"`
 		DiscountLabel   *string `json:"discount_label" orm:"discount_label"`
 		PriceChangeNote *string `json:"price_change_note" orm:"price_change_note"`
@@ -475,66 +476,97 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		return nil, err
 	}
 
-	result := make([]v1.PricingItem, 0, 1)
-	var timeSegments []billing.TimeSegment
-	var paramRules []billing.ParamRule
+	var result []v1.PricingItem
+	var timeSegments []v1.TimeSegmentItem
+	var paramRules []v1.ParamMultiplierItem
+	var officialItems []v1.PricingItem
+	var officialTimeSegments []v1.TimeSegmentItem
+	var officialParamRules []v1.ParamMultiplierItem
 	var priceNote, discountLabel, priceChangeNote string
 	if row != nil {
-		mode := row.BillingMode
-		blob := billing.ParsePricingBlob(row.Pricing)
-		if blob != nil {
-			paramRules = blob.ParamMultipliers
+		// 主定价：pricing JSONB → items + 时段 + 倍率（与官方参考定价共用展开逻辑）
+		result, timeSegments, paramRules = expandPricingBlob(row.BillingMode, billing.ParsePricingBlob(row.Pricing))
+
+		// 官方参考定价：official_pricing JSONB 同构展开；未配置（NULL/解析失败）时三个字段保持 nil
+		offMode, offBlob := officialBlobFromJSON(row.OfficialPricing)
+		if offBlob != nil {
+			officialItems, officialTimeSegments, officialParamRules = expandPricingBlob(offMode, offBlob)
 		}
-		switch {
-		case blob != nil && len(blob.Tiers) > 0:
-			// tiered：tiers 数组还原为多行 PricingItem（与旧档位行结构一致）
-			for _, tier := range blob.Tiers {
-				result = append(result, v1.PricingItem{
-					BillingMode: mode,
-					MinTokens:   tier.MinTokens,
-					MaxTokens:   tier.MaxTokens,
-					InputPrice:  tier.InputPrice,
-					OutputPrice: tier.OutputPrice,
-				})
-			}
-		default:
-			item := v1.PricingItem{BillingMode: mode}
-			if blob != nil {
-				if blob.InputPrice != nil {
-					item.InputPrice = *blob.InputPrice
-				}
-				if blob.OutputPrice != nil {
-					item.OutputPrice = *blob.OutputPrice
-				}
-				if blob.CacheReadPrice != nil {
-					item.CacheReadPrice = *blob.CacheReadPrice
-				}
-				if blob.CacheCreationPrice != nil {
-					item.CacheCreationPrice = *blob.CacheCreationPrice
-				}
-				if blob.Price != nil {
-					p := *blob.Price
-					item.PerRequestPrice = &p
-				}
-				if len(blob.Prices) > 0 {
-					item.PerSecondPrices = blob.Prices
-				}
-				timeSegments = blob.TimeSegments
-			}
-			result = append(result, item)
-		}
+
 		priceNote = derefStr(row.PriceNote)
 		discountLabel = derefStr(row.DiscountLabel)
 		priceChangeNote = derefStr(row.PriceChangeNote)
 	}
 	return &v1.PricingGetRes{
-		List:             result,
-		TimeSegments:     timeSegmentsToAPI(timeSegments),
-		ParamMultipliers: paramMultipliersToAPI(paramRules),
-		PriceNote:        priceNote,
-		DiscountLabel:    discountLabel,
-		PriceChangeNote:  priceChangeNote,
+		List:                     result,
+		TimeSegments:             timeSegments,
+		ParamMultipliers:         paramRules,
+		OfficialItems:            officialItems,
+		OfficialTimeSegments:     officialTimeSegments,
+		OfficialParamMultipliers: officialParamRules,
+		PriceNote:                priceNote,
+		DiscountLabel:            discountLabel,
+		PriceChangeNote:          priceChangeNote,
 	}, nil
+}
+
+// expandPricingBlob pricing JSONB 内存形态 → API 响应结构（items 行 + 时段 + 参数倍率）。
+// tiered 的 tiers 数组还原为多行 PricingItem（与旧档位行结构一致）。blob 为 nil 时
+// 仍返回单行空 item（mode 随入参），保持「无定价」的既有响应形态。主定价与官方参考定价共用。
+func expandPricingBlob(mode string, blob *billing.PricingBlob) ([]v1.PricingItem, []v1.TimeSegmentItem, []v1.ParamMultiplierItem) {
+	if blob == nil {
+		blob = &billing.PricingBlob{}
+	}
+	items := make([]v1.PricingItem, 0, 1)
+	switch {
+	case len(blob.Tiers) > 0:
+		// tiered：tiers 数组还原为多行 PricingItem（与旧档位行结构一致）。
+		// 逐档缓存价随行还原；首档无档内值时回退 blob 顶层锚点缓存价（存量数据兼容）
+		for i, tier := range blob.Tiers {
+			item := v1.PricingItem{
+				BillingMode: mode,
+				MinTokens:   tier.MinTokens,
+				MaxTokens:   tier.MaxTokens,
+				InputPrice:  tier.InputPrice,
+				OutputPrice: tier.OutputPrice,
+			}
+			if tier.CacheReadPrice != nil {
+				item.CacheReadPrice = *tier.CacheReadPrice
+			} else if i == 0 && blob.CacheReadPrice != nil {
+				item.CacheReadPrice = *blob.CacheReadPrice
+			}
+			if tier.CacheCreationPrice != nil {
+				item.CacheCreationPrice = *tier.CacheCreationPrice
+			} else if i == 0 && blob.CacheCreationPrice != nil {
+				item.CacheCreationPrice = *blob.CacheCreationPrice
+			}
+			items = append(items, item)
+		}
+	default:
+		item := v1.PricingItem{BillingMode: mode}
+		if blob.InputPrice != nil {
+			item.InputPrice = *blob.InputPrice
+		}
+		if blob.OutputPrice != nil {
+			item.OutputPrice = *blob.OutputPrice
+		}
+		if blob.CacheReadPrice != nil {
+			item.CacheReadPrice = *blob.CacheReadPrice
+		}
+		if blob.CacheCreationPrice != nil {
+			item.CacheCreationPrice = *blob.CacheCreationPrice
+		}
+		if blob.Price != nil {
+			p := *blob.Price
+			item.PerRequestPrice = &p
+		}
+		if len(blob.Prices) > 0 {
+			item.PerSecondPrices = blob.Prices
+		}
+		items = append(items, item)
+	}
+	// 时段与倍率横切所有计费模式（含 tiered），随 blob 顶层还原
+	return items, timeSegmentsToAPI(blob.TimeSegments), paramMultipliersToAPI(blob.ParamMultipliers)
 }
 
 // derefStr 字符串指针安全解引用（NULL → 空串）
@@ -671,18 +703,123 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 		return err
 	}
 
-	// 全量替换语义：删旧行插新行（保留展示字段列随 insert 重置为默认，随后由调用方回写）
-	if _, err := dao.MdlPricing.Ctx(ctx).Where("model_id", modelDBID).Delete(); err != nil {
-		return err
-	}
-	if _, err := dao.MdlPricing.Ctx(ctx).Insert(do.MdlPricing{
-		ModelId:     modelDBID,
-		BillingMode: items[0].BillingMode,
-		Pricing:     string(blobJSON),
-	}); err != nil {
+	// 全量替换语义改为 upsert：ON CONFLICT (model_id) 命中时只覆盖 billing_mode / pricing，
+	// official_pricing 与展示字段列未涉及时保留原值——模型导入共用本函数，不得误清人工
+	// 核对落库的官方定价；展示字段随后仍由调用方按「空=清除」全量回写，行为与删行重插等价。
+	// 列名直写而非 do 字段，与 gf gen dao 生成物解耦（同 writePricingDisplayFieldsForModel）。
+	if _, err := dao.MdlPricing.Ctx(ctx).
+		Data(g.Map{
+			"model_id":     modelDBID,
+			"billing_mode": items[0].BillingMode,
+			"pricing":      string(blobJSON),
+		}).
+		OnConflict("model_id").
+		OnDuplicate(g.Map{
+			"billing_mode": gdb.Raw("excluded.billing_mode"),
+			"pricing":      gdb.Raw("excluded.pricing"),
+		}).
+		Save(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// officialPricingBlob official_pricing JSONB 的内存形态：billing_mode 键 + PricingBlob 字段平铺
+// （encoding/json 对嵌入结构体平铺序列化），与计费定价 pricing JSONB 完全同构，
+// 仅多 billing_mode 键——官方定价无独立模式列，模式随 JSONB 存储。
+type officialPricingBlob struct {
+	BillingMode string `json:"billing_mode"`
+	billing.PricingBlob
+}
+
+// buildOfficialBlob 官方定价项 + 时段/倍率 → PricingBlob（与计费定价同构，复用同一构建管线）。
+// 全空（价格维度 + tiers + 时段 + 倍率均无）返回 nil，调用方按清除处理（写 NULL）。
+// 官方价是折扣换算的参照基准而非计费依据，是可选配置：per_second 空/全零矩阵属「未配置」
+// 形态，不走计费定价的矩阵强校验（否则未配置形态会报错，连带阻断主定价保存），
+// 直接落成空 blob 交给下方全空判断；其余模式沿用 BuildPricingBlob 结构校验与时段/倍率 FromAPI 校验。
+func buildOfficialBlob(items []v1.PricingItem, segments []v1.TimeSegmentItem, rules []v1.ParamMultiplierItem) (*billing.PricingBlob, error) {
+	segs, err := timeSegmentsFromAPI(segments)
+	if err != nil {
+		return nil, err
+	}
+	paramRules, err := paramMultipliersFromAPI(rules)
+	if err != nil {
+		return nil, err
+	}
+	input := pricingItemsToInput(items)
+	var blob *billing.PricingBlob
+	if len(input) > 0 && input[0].BillingMode == "per_second" && !perSecondMatrixHasPositivePrice(input[0].PerSecondPrices) {
+		blob = &billing.PricingBlob{}
+	} else {
+		blob, err = billing.BuildPricingBlob(input)
+		if err != nil {
+			return nil, err
+		}
+	}
+	blob.TimeSegments = segs
+	blob.ParamMultipliers = paramRules
+	empty := blob.InputPrice == nil && blob.OutputPrice == nil && blob.CacheReadPrice == nil &&
+		blob.CacheCreationPrice == nil && len(blob.Tiers) == 0 && blob.Price == nil &&
+		len(blob.Prices) == 0 && len(blob.TimeSegments) == 0 && len(blob.ParamMultipliers) == 0
+	if empty {
+		return nil, nil
+	}
+	return blob, nil
+}
+
+// perSecondMatrixHasPositivePrice 按秒矩阵是否存在任一正价（空矩阵/全零价=未配置形态）
+func perSecondMatrixHasPositivePrice(prices map[string]float64) bool {
+	for _, p := range prices {
+		if p > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// officialBlobFromJSON 解析 official_pricing JSONB → (billing_mode, PricingBlob)。
+// 空串/null/解析失败返回 ("", nil)，调用方按未配置处理（参照字段，解析失败不阻断定价编辑）。
+func officialBlobFromJSON(raw string) (string, *billing.PricingBlob) {
+	if raw == "" || raw == "null" {
+		return "", nil
+	}
+	wrapped := officialPricingBlob{}
+	if err := json.Unmarshal([]byte(raw), &wrapped); err != nil {
+		return "", nil
+	}
+	mode := wrapped.BillingMode
+	if mode == "" {
+		mode = "token"
+	}
+	return mode, &wrapped.PricingBlob
+}
+
+// writeOfficialPricingForModel 官方参考定价写入模型定价行（official_pricing 列整体替换，
+// 全空=清除写 NULL）。与 pricing 列同构：BuildPricingBlob 构建 + 时段/倍率并入 blob 顶层，
+// 支持全部四种计费模式。列名直写而非 do 字段，与 gf gen dao 生成物解耦
+// （同 writePricingDisplayFieldsForModel）。需在定价行存在之后执行。调用方需保证事务 ctx 传播。
+func writeOfficialPricingForModel(ctx context.Context, modelDBID int64, items []v1.PricingItem, segments []v1.TimeSegmentItem, rules []v1.ParamMultiplierItem) error {
+	blob, err := buildOfficialBlob(items, segments, rules)
+	if err != nil {
+		return err
+	}
+	data := any(gdb.Raw("NULL"))
+	if blob != nil {
+		mode := "token"
+		if len(items) > 0 {
+			mode = items[0].BillingMode
+		}
+		raw, mErr := json.Marshal(officialPricingBlob{BillingMode: mode, PricingBlob: *blob})
+		if mErr != nil {
+			return mErr
+		}
+		data = string(raw)
+	}
+	_, err = dao.MdlPricing.Ctx(ctx).
+		Where("model_id", modelDBID).
+		Data(g.Map{"official_pricing": data}).
+		Update()
+	return err
 }
 
 // writeTimeSegmentsForModel 把时段定价并入模型定价行的 pricing JSONB 顶层（time_segments 键），
@@ -748,6 +885,16 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		return nil, err
 	}
 
+	// 官方参考定价的时段/倍率预校验（与主定价同一套校验；OfficialItems nil=本次不动官方定价）
+	if req.OfficialItems != nil {
+		if _, err := timeSegmentsFromAPI(req.OfficialTimeSegments); err != nil {
+			return nil, gerror.Wrap(err, "官方参考定价")
+		}
+		if _, err := paramMultipliersFromAPI(req.OfficialParamMultipliers); err != nil {
+			return nil, gerror.Wrap(err, "官方参考定价")
+		}
+	}
+
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
 	var model struct {
 		ModelId string `json:"model_id"`
@@ -763,6 +910,15 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if err := writePricingForModel(ctx, req.ModelID, req.Items, paramRules); err != nil {
 			return err
+		}
+
+		// 官方参考定价（OfficialItems nil=本次不动库内值；三个官方数组全空=清除）。
+		// 与 pricing 列同构，支持全部四种计费模式 + 时段/倍率。官方价非计费依据，
+		// 不触发价格缓存失效
+		if req.OfficialItems != nil {
+			if err := writeOfficialPricingForModel(ctx, req.ModelID, req.OfficialItems, req.OfficialTimeSegments, req.OfficialParamMultipliers); err != nil {
+				return gerror.Wrap(err, "官方参考定价")
+			}
 		}
 
 		// 时段定价并入 JSON 顶层（空=清除，全量替换语义；需在定价行插入之后执行）

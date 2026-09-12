@@ -168,6 +168,38 @@ func TestEstimateTaskCost_PerRequest(t *testing.T) {
 	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "per_request cost")
 }
 
+// TestEstimateTaskCost_PerRequestTenantTimeDiscount 按次任务预扣即终价（结算无 token 重算
+// 信号），租户乘数与时段乘数必须在预扣阶段就生效，与 chat 路径 computeCost 的按次口径一致。
+func TestEstimateTaskCost_PerRequestTenantTimeDiscount(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.10,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0.8,
+	}
+	// 0.10 × 0.5 × 0.8 = 0.04
+	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "per_request tenant × time discount")
+
+	// token 模式但仅配按次价的图片任务（default 分支回退）同样生效
+	p2 := &PricingResult{
+		BillingMode:      "token",
+		PerRequestPrice:  0.10,
+		OutputPrice:      30.0,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0.8,
+	}
+	assertDecimal(t, estimateTaskCost(p2, nil), 0.04, "image per-request fallback discount")
+
+	// 时段乘数零值（旧缓存条目缺字段）兜底 1.0，不得把预扣清零
+	p3 := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.10,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0,
+	}
+	assertDecimal(t, estimateTaskCost(p3, nil), 0.05, "zero time multiplier fallback")
+}
+
 // TestEstimateTaskCost_VideoWithDurationSignal 视频任务（ratios 携带 duration/resolution）
 // 才走 10000×duration×resolution 的 token 估算：默认 5s×720p(2.25)×$30/1M = $3.375。
 func TestEstimateTaskCost_VideoWithDurationSignal(t *testing.T) {
