@@ -539,6 +539,11 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/moderations", relay.HandleModerations)
 		group.POST("/images/edits", relay.HandleImagesEdits)
 		group.GET("/realtime", relay.HandleRealtime)
+		// OpenAI Videos 协议端点（官方 SDK 兼容，对接第三方视频模型）
+		group.POST("/videos", relay.HandleVideoCreate)
+		group.GET("/videos/{video_id}", relay.HandleVideoRetrieve)
+		group.GET("/videos/{video_id}/content", relay.HandleVideoContent)
+		group.DELETE("/videos/{video_id}", relay.HandleVideoDelete)
 	})
 
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）

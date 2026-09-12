@@ -37,4 +37,6 @@ type TskModelTasks struct {
 	CreatedAt       *gtime.Time // 记录创建时间
 	UpdatedAt       *gtime.Time // 记录更新时间
 	RequestId       any         // 任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id
+	Deleted         any         // 软删除标记：true 表示已被客户端删除，查询/下载按不存在处理（计费与审计记录保留）
+	DeletedAt       *gtime.Time // 软删除时间
 }

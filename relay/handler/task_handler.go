@@ -44,6 +44,16 @@ type TaskRelayContext struct {
 	KeyTotalQuota   float64
 	KeyUsedQuota    float64
 	ForwardingTrace *common.ForwardingTrace
+
+	// Protocol 入站协议标识："" 默认（legacy 任务响应格式，task_ 前缀 ID）；
+	// videosProtocolOpenAI 切换为 OpenAI Videos 协议（官方 Video 对象响应，video_ 前缀 ID）。
+	Protocol string
+	// RelayMode 任务 relay 模式：0 = 默认 RelayModeVideoGenerations（现有端点），
+	// OpenAI Videos 入站传 RelayModeVideos 以区分审计与监控统计。
+	RelayMode int
+	// RequestEcho 协议层请求回显（OpenAI Videos 的 prompt/seconds/size），
+	// 提交时随 PrivateData 落库，retrieve 时回显给客户端；nil = 无回显。
+	RequestEcho any
 }
 
 func checkTaskIPWhitelist(whitelist string, clientIP string) bool {
@@ -154,13 +164,17 @@ func HandleTaskSubmit(
 	g.Log().Debugf(ctx, "HandleTaskSubmit: modelName=%s, platform=%s, channelID=%d, channelType=%d, baseURL=%s, upstreamModel=%s", modelName, platform, channelMeta.ChannelID, channelMeta.ChannelType, channelMeta.BaseURL, channelMeta.UpstreamModelName)
 
 	// 4. 构建 RelayInfo
+	relayMode := rc.RelayMode
+	if relayMode == 0 {
+		relayMode = int(constant.RelayModeVideoGenerations)
+	}
 	info := &common.RelayInfo{
 		Context:         ctx,
 		TenantID:        rc.TenantID,
 		UserID:          rc.UserID,
 		ApiKeyID:        rc.ApiKeyID,
 		RequestID:       rc.RequestID,
-		RelayMode:       int(constant.RelayModeVideoGenerations),
+		RelayMode:       relayMode,
 		OriginModelName: modelName,
 		RequestURLPath:  path,
 		RequestHeaders:  headers,
@@ -259,11 +273,14 @@ func HandleTaskSubmit(
 		}
 	}
 
-	// 10. 生成公开任务 ID 并创建记录
+	// 10. 生成公开任务 ID 并创建记录（OpenAI Videos 协议用 video_ 前缀对齐官方形态）
 	publicTaskID := generatePublicTaskID()
+	if rc.Protocol == videosProtocolOpenAI {
+		publicTaskID = generatePublicTaskIDWithPrefix("video")
+	}
 	now := time.Now()
 
-	privateData, _ := json.Marshal(map[string]any{
+	privateDataMap := map[string]any{
 		"upstream_task_id": upstreamTaskID,
 		"task_type":        platform,
 		"billing_context": map[string]any{
@@ -274,7 +291,11 @@ func HandleTaskSubmit(
 			// 进而 Ratios 也读不出、轮询判为「invalid private data」。故此处显式转 float64。
 			"pre_deduct": preDeductAmount.InexactFloat64(),
 		},
-	})
+	}
+	if rc.RequestEcho != nil {
+		privateDataMap["request_echo"] = rc.RequestEcho
+	}
+	privateData, _ := json.Marshal(privateDataMap)
 
 	task := &common.AsyncTask{
 		PublicTaskID:    publicTaskID,
@@ -307,7 +328,11 @@ func HandleTaskSubmit(
 	// 设置 TaskID 供外层审计使用
 	rc.TaskID = publicTaskID
 
-	// 11. 返回响应
+	// 11. 返回响应（OpenAI Videos 协议返回官方 Video 对象，legacy 保持原格式）
+	if rc.Protocol == videosProtocolOpenAI {
+		writeVideosSubmitResponse(rc.Writer, publicTaskID, modelName, now, rc.RequestEcho)
+		return
+	}
 	respBody := map[string]any{
 		"id":         publicTaskID,
 		"status":     "SUBMITTED",
@@ -408,6 +433,11 @@ func writeJSON(w http.ResponseWriter, statusCode int, data any) {
 // generatePublicTaskID 生成公开任务 ID
 func generatePublicTaskID() string {
 	return fmt.Sprintf("task_%s", randomHex(32))
+}
+
+// generatePublicTaskIDWithPrefix 生成带指定前缀的公开任务 ID（如 OpenAI Videos 协议的 video_ 前缀）
+func generatePublicTaskIDWithPrefix(prefix string) string {
+	return fmt.Sprintf("%s_%s", prefix, randomHex(32))
 }
 
 func randomHex(n int) string {

@@ -23,7 +23,7 @@ type SysAdminRolePermsDao struct {
 type SysAdminRolePermsColumns struct {
 	Id              string // 主键ID
 	AdminUserId     string // 关联的管理员用户ID
-	PermissionPoint string // 权限点标识（如 tenant:create、channel:edit）
+	PermissionPoint string // 特批的权限点标识（独立于角色，角色禁用不影响特批）
 	CreatedAt       string // 创建时间
 	UpdatedAt       string // 更新时间
 }
