@@ -13,6 +13,7 @@ const (
 	TaskPlatformVolcengine TaskPlatform = "volcengine"
 	TaskPlatformAli        TaskPlatform = "ali"
 	TaskPlatformGemini     TaskPlatform = "gemini"
+	TaskPlatformMiniMax    TaskPlatform = "minimax"
 
 	// TaskPlatformSyncImage 同步图片厂商异步化专用平台标记。
 	// 注意：故意不加入 ProviderTypeToTaskPlatform —— 它由 sync_image worker 池执行，
@@ -94,6 +95,8 @@ func ProviderTypeToTaskPlatform(p ProviderType) (TaskPlatform, bool) {
 		return TaskPlatformAli, true
 	case ProviderGemini:
 		return TaskPlatformGemini, true
+	case ProviderMiniMax:
+		return TaskPlatformMiniMax, true
 	default:
 		return "", false
 	}

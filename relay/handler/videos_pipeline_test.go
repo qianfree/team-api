@@ -173,15 +173,12 @@ func TestHandleTaskSubmit_OpenAIVideosProtocol_FullPipeline(t *testing.T) {
 		t.Fatalf("expected request echo persisted: %+v", pd.RequestEcho)
 	}
 
-	// 6. 断言上游收到映射后的 kling 参数（seconds→duration、size→aspect_ratio）
+	// 6. 断言上游收到映射后的 kling 参数（seconds→duration；size 不换算，kling 不消费该键）
 	if upstreamReceived["model_name"] != "kling-v2-master" {
 		t.Fatalf("upstream model_name: %v", upstreamReceived["model_name"])
 	}
 	if upstreamReceived["duration"] != "8" {
 		t.Fatalf("upstream duration: %v", upstreamReceived["duration"])
-	}
-	if upstreamReceived["aspect_ratio"] != "16:9" {
-		t.Fatalf("upstream aspect_ratio: %v", upstreamReceived["aspect_ratio"])
 	}
 	if upstreamReceived["prompt"] != "a cat surfing" {
 		t.Fatalf("upstream prompt: %v", upstreamReceived["prompt"])
@@ -259,18 +256,19 @@ func TestHandleTaskSubmit_OpenAIVideosProtocol_Seedance(t *testing.T) {
 		t.Fatalf("expected volcengine task record, got %+v", data.created)
 	}
 
-	// 上游收到的 seedance 参数：content 文本+首帧图、duration/ratio/resolution 全部对上
+	// 上游收到的 seedance 参数：content 文本+首帧图、duration 对上；
+	// size 不再换算派生（resolution/ratio 由 volcengine 上游默认值兜底）
 	if upstreamReceived["model"] != "doubao-seedance-2-0-260128" {
 		t.Fatalf("upstream model: %v", upstreamReceived["model"])
 	}
 	if upstreamReceived["duration"] != float64(12) {
 		t.Fatalf("upstream duration: %v (%T)", upstreamReceived["duration"], upstreamReceived["duration"])
 	}
-	if upstreamReceived["ratio"] != "16:9" {
-		t.Fatalf("upstream ratio: %v", upstreamReceived["ratio"])
+	if _, has := upstreamReceived["resolution"]; has {
+		t.Fatalf("size must not derive resolution for volcengine: %v", upstreamReceived["resolution"])
 	}
-	if upstreamReceived["resolution"] != "1080p" {
-		t.Fatalf("upstream resolution: %v", upstreamReceived["resolution"])
+	if _, has := upstreamReceived["ratio"]; has {
+		t.Fatalf("size must not derive ratio for volcengine: %v", upstreamReceived["ratio"])
 	}
 	content, ok := upstreamReceived["content"].([]any)
 	if !ok || len(content) != 2 {

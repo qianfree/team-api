@@ -579,6 +579,22 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
 	})
+
+	// MiniMax 官方视频协议端点（H3 v2，官方 SDK 换 base_url 直连；协议文档 docs/modeldocs/minimax/video/）
+	server.Group("/v2", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoSubmit)
+		group.GET("/query/video_generation/{task_id}", relay.HandleMiniMaxVideoRetrieve)
+		group.DELETE("/video_generation/{task_id}", relay.HandleMiniMaxVideoCancel)
+	})
+
+	// MiniMax 官方视频协议端点（Hailuo 系列 v1，扁平字段协议；查询走 query 参数，
+	// 成品经 files/retrieve 二跳由网关轮询时代取，官方无取消/删除端点）
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoV1Submit)
+		group.GET("/query/video_generation", relay.HandleMiniMaxVideoV1Retrieve)
+	})
 }
 
 // registerLandingPage 在未内嵌前端（非 embedweb 构建）时，为后端根路径注册项目介绍页，

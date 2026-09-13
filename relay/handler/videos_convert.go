@@ -211,25 +211,10 @@ func parseVideosInputReferenceJSON(raw json.RawMessage) (string, *common.TaskErr
 	}
 }
 
-// videosSizeMapping 官方四档分辨率 → 第三方通用参数（aspect_ratio + resolution）。
-// 未命中四档的 size 不做映射（第三方分辨率自由，透传 metadata.size 原值即可）。
-var videosSizeMapping = map[string]struct {
-	AspectRatio string
-	Resolution  string
-}{
-	"720x1280":  {"9:16", "720p"},
-	"1280x720":  {"16:9", "720p"},
-	"1024x1792": {"9:16", "1080p"},
-	"1792x1024": {"16:9", "1080p"},
-}
-
 // BuildVideosTaskBody 把归一后的创建请求转成任务框架通用请求体（JSON 字节）。
-// 顶层保留 seconds + images，metadata 写入 duration/ratio/aspect_ratio/resolution/size/image，
-// 未识别字段一律透传原值，不在此处做模型能力裁剪。
-// 参数采用「双写」策略覆盖两套适配器词汇（未知键互不干扰，json.Unmarshal 自动忽略）：
-//   - kling：顶层 seconds、metadata.aspect_ratio、metadata.image
-//   - volcengine(seedance)：顶层 seconds、images[] 数组（→content[].image_url 首帧）、
-//     metadata.ratio、metadata.duration、metadata.resolution
+// 顶层保留 seconds + images，metadata 写入 duration/size/image。
+// size 只借 OpenAI 协议的字段形态、不做任何档位换算：调用方直接传目标供应商的
+// 原生分辨率词汇（如 MiniMax 的 768P/2K），原值经 metadata.size 透传给适配器。
 func BuildVideosTaskBody(req *videosCreateRequest) ([]byte, error) {
 	body := map[string]any{
 		"model":  req.Model,
@@ -245,12 +230,6 @@ func BuildVideosTaskBody(req *videosCreateRequest) ([]byte, error) {
 	}
 	if req.Size != "" {
 		metadata["size"] = req.Size
-		if m, ok := videosSizeMapping[req.Size]; ok {
-			// aspect_ratio（kling）与 ratio（volcengine）值域同构："16:9"/"9:16"
-			metadata["aspect_ratio"] = m.AspectRatio
-			metadata["ratio"] = m.AspectRatio
-			metadata["resolution"] = m.Resolution
-		}
 	}
 	if req.InputReference != "" {
 		metadata["image"] = req.InputReference
