@@ -76,6 +76,13 @@ type PricingResult struct {
 	// 按归一化任务体参数匹配，命中规则连乘（EvalParamMultipliers）。
 	// 旧缓存条目无此字段（zero value），不受影响。
 	ParamMultipliers []ParamRule `json:"param_multipliers,omitempty"`
+
+	// 计费方案（pricing JSONB 顶层 scheme）：空 = generic 通用引擎；
+	// 特殊方案的估算分发见 estimateTaskCost / LookupScheme。
+	// 旧缓存条目无此字段（空串），不受影响
+	Scheme string `json:"scheme,omitempty"`
+	// 方案私有配置（不透明容器，方案自行解析）。旧缓存条目无此字段（nil）
+	SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
 }
 
 // perSecondWildcard 矩阵兜底价键：规格未命中时使用
@@ -207,6 +214,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 	var perSecondPrices map[string]float64
 	var timeSegments []TimeSegment
 	var paramMultipliers []ParamRule
+	var schemeName string
+	var schemeConfig json.RawMessage
 
 	if pricing != nil {
 		if pricing.BillingMode != "" {
@@ -239,6 +248,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 				perSecondPrices = blob.Prices
 				timeSegments = blob.TimeSegments
 				paramMultipliers = blob.ParamMultipliers
+				schemeName = blob.Scheme
+				schemeConfig = blob.SchemeConfig
 			}
 		}
 	}
@@ -365,6 +376,8 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 		TimeSegments:         timeSegments,
 		PerSecondPrices:      perSecondPrices,
 		ParamMultipliers:     paramMultipliers,
+		Scheme:               schemeName,
+		SchemeConfig:         schemeConfig,
 	}
 
 	// 时段乘数按定价时刻评估后随缓存存储（缓存命中路径会按 billAt 重评估，存储值仅参考）
@@ -765,6 +778,12 @@ type PricingBlob struct {
 	TimeSegments []TimeSegment `json:"time_segments,omitempty"`
 	// 横切：参数倍率（按归一化任务体参数匹配，命中规则连乘；所有计费模式共享）
 	ParamMultipliers []ParamRule `json:"param_multipliers,omitempty"`
+	// 计费方案：特殊计费模型声明引用的方案名（空 = generic 通用引擎），
+	// 前端按此字段分发定价编辑器。导出格式不含该字段（特殊方案定价不随导入导出迁移）
+	Scheme string `json:"scheme,omitempty"`
+	// 方案私有配置（不透明容器）：schema 由方案实现自定义并自行解析校验，
+	// 引擎与通用编辑器不理解其内容，防止主干结构随方案膨胀
+	SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
 }
 
 // tiersHavePrice 阶梯数组中是否存在任一档正价（输入或输出）。

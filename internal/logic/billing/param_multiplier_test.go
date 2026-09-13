@@ -296,9 +296,9 @@ func TestEstimateTaskCost_ParamMultiplierInjection(t *testing.T) {
 		ratios[ratioKeyParamMatched] = matched[0]
 	}
 	// 注入后费用 = 0.5 × 12 × 1.5 × 2.0 = 18
-	assertDecimal(t, estimateTaskCost(pricing, ratios), 18.0, "param multiplier cost")
+	assertDecimal(t, estimateTaskCost(pricing, ratios, nil), 18.0, "param multiplier cost")
 
 	// 未命中的任务体不注入（保持 0.5 × 5 缺省 = 2.5）
 	ratios2 := map[string]any{}
-	assertDecimal(t, estimateTaskCost(pricing, ratios2), 2.5, "no param match cost")
+	assertDecimal(t, estimateTaskCost(pricing, ratios2, nil), 2.5, "no param match cost")
 }

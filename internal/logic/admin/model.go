@@ -513,9 +513,16 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 	var officialTimeSegments []v1.TimeSegmentItem
 	var officialParamRules []v1.ParamMultiplierItem
 	var priceNote, discountLabel, priceChangeNote string
+	var scheme string
+	var schemeConfig json.RawMessage
 	if row != nil {
 		// 主定价：pricing JSONB → items + 时段 + 倍率（与官方参考定价共用展开逻辑）
-		result, timeSegments, paramRules = expandPricingBlob(row.BillingMode, billing.ParsePricingBlob(row.Pricing))
+		blob := billing.ParsePricingBlob(row.Pricing)
+		result, timeSegments, paramRules = expandPricingBlob(row.BillingMode, blob)
+		if blob != nil {
+			scheme = blob.Scheme
+			schemeConfig = blob.SchemeConfig
+		}
 
 		// 官方参考定价：official_pricing JSONB 同构展开；未配置（NULL/解析失败）时三个字段保持 nil
 		offMode, offBlob := officialBlobFromJSON(row.OfficialPricing)
@@ -537,6 +544,8 @@ func (s *sAdmin) GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v
 		PriceNote:                priceNote,
 		DiscountLabel:            discountLabel,
 		PriceChangeNote:          priceChangeNote,
+		Scheme:                   scheme,
+		SchemeConfig:             schemeConfig,
 	}, nil
 }
 
@@ -721,13 +730,17 @@ func pricingItemsToInput(items []v1.PricingItem) []billing.PricingItemInput {
 // writePricingForModel 全量替换模型定价：单行写 billing_mode + pricing JSONB（每模型一行，
 // uk_mdl_pricing_model 唯一）。SetModelPricing 与模型导入共用；时段定价随后经
 // writeTimeSegmentsForModel 的 jsonb_set 并入 JSON 顶层；参数倍率规则随 blob 顶层写入。
+// scheme/schemeConfig 为计费方案声明与私有配置（导入路径恒传空——导出格式不含
+// 方案字段，特殊方案定价需在目标环境用方案编辑器手工配置）。
 // 调用方需保证事务 ctx 传播。
-func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.PricingItem, paramRules []billing.ParamRule) error {
+func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.PricingItem, paramRules []billing.ParamRule, scheme string, schemeConfig json.RawMessage) error {
 	blob, err := billing.BuildPricingBlob(pricingItemsToInput(items))
 	if err != nil {
 		return err
 	}
 	blob.ParamMultipliers = paramRules
+	blob.Scheme = scheme
+	blob.SchemeConfig = schemeConfig
 	blobJSON, err := json.Marshal(blob)
 	if err != nil {
 		return err
@@ -925,6 +938,16 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 		}
 	}
 
+	// 计费方案校验：未注册的方案名不得写入（运行期引擎无从得知正确价格）；
+	// scheme_config 由方案实现自校验（generic 不接受非空配置，拦截「空方案带配置」的错位数据）
+	req.Scheme = strings.TrimSpace(req.Scheme)
+	if req.Scheme != "" && !billing.SchemeRegistered(req.Scheme) {
+		return nil, gerror.Newf("计费方案 %q 未注册", req.Scheme)
+	}
+	if err := billing.LookupScheme(req.Scheme).ValidateSchemeConfig(req.SchemeConfig); err != nil {
+		return nil, err
+	}
+
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存
 	var model struct {
 		ModelId string `json:"model_id"`
@@ -938,7 +961,7 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	// 全量替换：单行写 pricing JSONB（计费详情 + 参数倍率随 blob 顶层），同一事务。
 	// 否则中途失败会残留「无定价」状态，导致计费失败或回退到默认价。
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		if err := writePricingForModel(ctx, req.ModelID, req.Items, paramRules); err != nil {
+		if err := writePricingForModel(ctx, req.ModelID, req.Items, paramRules, req.Scheme, req.SchemeConfig); err != nil {
 			return err
 		}
 

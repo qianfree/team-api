@@ -313,7 +313,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				if pErr != nil {
 					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
 				}
-				if err := writePricingForModel(ctx, existing.ID, item.Pricing, paramRules); err != nil {
+				if err := writePricingForModel(ctx, existing.ID, item.Pricing, paramRules, "", nil); err != nil {
 					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 
@@ -357,7 +357,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				if pErr != nil {
 					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
 				}
-				if err := writePricingForModel(ctx, id, item.Pricing, paramRules); err != nil {
+				if err := writePricingForModel(ctx, id, item.Pricing, paramRules, "", nil); err != nil {
 					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 
