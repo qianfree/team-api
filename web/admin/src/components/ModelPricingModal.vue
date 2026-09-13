@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import { ref, reactive, watch, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconCloudDownload, IconRefresh } from '@arco-design/web-vue/es/icon'
@@ -11,6 +12,7 @@ import PricingTimeSegmentsEditor, {
 	timeSegmentPayloadFrom,
 } from './PricingTimeSegmentsEditor.vue'
 import PricingParamRulesEditor, { type ParamRuleRow, paramRuleRowsFromAPI, paramRulePayloadFrom } from './PricingParamRulesEditor.vue'
+import { resolvePricingSchemeEditor } from './pricingSchemeEditors'
 
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
 
@@ -32,6 +34,12 @@ const editorLoading = ref(false)
 const editorSaving = ref(false)
 const editorBillingMode = ref('token')
 const editorItems = reactive<any[]>([])
+
+// 特殊计费方案分发：命中注册编辑器时内容区整体交给方案组件（加载/校验/保存自治），
+// 内置通用表单不参与；契约见 pricingSchemeEditors.ts
+const schemeEditorComp = ref<Component | null>(null)
+const schemeConfigData = ref<any>(null)
+const schemeEditorRef = ref<any>()
 
 // 展示字段（挂锚点行：内部备注 + 对外营销文案）
 const editorPriceNote = ref('')
@@ -742,6 +750,9 @@ const paramEditorRef = ref<InstanceType<typeof PricingParamRulesEditor>>()
 // ============================================================
 async function loadPricing() {
 	if (!props.modelId) return
+	// 模型切换时先清除上一模型的方案分发状态
+	schemeEditorComp.value = null
+	schemeConfigData.value = null
 	editorItems.length = 0
 	editorBillingMode.value = 'token'
 	paramRules.length = 0
@@ -750,6 +761,13 @@ async function loadPricing() {
 
 	try {
 		const res: any = await request.get(`/admin/models/${props.modelId}/pricing`)
+		// 特殊计费方案：命中注册编辑器则整体交给方案组件，通用表单不初始化
+		// （未登记的方案名同样回落通用表单——后端查询已透出 scheme，前端映射缺失时兜底）
+		schemeEditorComp.value = resolvePricingSchemeEditor(res.data?.data?.scheme)
+		if (schemeEditorComp.value) {
+			schemeConfigData.value = res.data?.data?.scheme_config ?? null
+			return
+		}
 		const list: any[] = res.data?.data?.list || []
 		editorPriceNote.value = res.data?.data?.price_note || ''
 		editorDiscountLabel.value = res.data?.data?.discount_label || ''
@@ -938,6 +956,28 @@ async function savePricing() {
 	}
 }
 
+// 保存统一入口：特殊计费方案交给方案编辑器（自治校验与保存，失败自行提示），
+// 成功提示与关弹窗由本外壳统一处理；否则走通用表单保存
+async function onSave() {
+	if (schemeEditorComp.value) {
+		editorSaving.value = true
+		try {
+			const ok = await schemeEditorRef.value?.save()
+			if (ok) {
+				Message.success('定价已保存')
+				emit('update:visible', false)
+				emit('saved')
+			}
+		} catch {
+			// 方案编辑器内部已提示，此处不重复弹错
+		} finally {
+			editorSaving.value = false
+		}
+		return
+	}
+	await savePricing()
+}
+
 // ============================================================
 // Watchers
 // ============================================================
@@ -951,6 +991,8 @@ watch(() => props.visible, (val) => {
 // 关闭时重置状态
 watch(() => props.visible, (val) => {
 	if (!val) {
+		schemeEditorComp.value = null
+		schemeConfigData.value = null
 		resetEditorDefaults()
 		resetOfficialData()
 	}
@@ -970,10 +1012,18 @@ watch(() => props.visible, (val) => {
 	>
 		<template #footer>
 			<AButton @click="emit('update:visible', false)">取消</AButton>
-			<AButton type="primary" :loading="editorSaving" @click="savePricing">保存定价</AButton>
+			<AButton type="primary" :loading="editorSaving" @click="onSave">保存定价</AButton>
 		</template>
 		<ASpin :loading="editorLoading" style="width: 100%">
-		<AForm :model="{}" layout="vertical">
+		<!-- 特殊计费方案：内容区整体交给方案专属编辑器（契约见 pricingSchemeEditors.ts） -->
+		<component
+			:is="schemeEditorComp"
+			v-if="schemeEditorComp"
+			ref="schemeEditorRef"
+			:model-id="props.modelId"
+			:scheme-config="schemeConfigData"
+		/>
+		<AForm v-else :model="{}" layout="vertical">
 			<div class="pricing-editor">
 				<!-- Billing Mode -->
 				<div class="editor-section">

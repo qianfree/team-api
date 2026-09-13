@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/shopspring/decimal"
@@ -32,6 +33,12 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if err != nil {
 		return NewFromFloat(0.01), nil
 	}
+	// 特殊计费方案 fail-closed：定价引用了未注册的方案（方案代码缺失/被回滚）时
+	// 引擎无从得知正确价格，静默回落 generic 会错价，拒绝任务提交与「未配价模型
+	// 不得放行」的同步路径口径一致
+	if pricing.Scheme != "" && !SchemeRegistered(pricing.Scheme) {
+		return Zero, gerror.Newf("billing scheme %q not registered (model=%s)", pricing.Scheme, modelName)
+	}
 	// 参数倍率求值：命中注入 ratios（预扣、per_second 结算、token 重算经 applyRatioMultipliers 自动同口径）
 	if len(pricing.ParamMultipliers) > 0 && len(taskBody) > 0 && ratios != nil {
 		if m, matched := EvalParamMultipliers(pricing.ParamMultipliers, taskBody); len(matched) > 0 && m > 0 {
@@ -39,7 +46,7 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 			ratios[ratioKeyParamMatched] = strings.Join(matched, "|")
 		}
 	}
-	return estimateTaskCost(pricing, ratios), nil
+	return estimateTaskCost(pricing, ratios, taskBody), nil
 }
 
 // imagePlaceholderPreDeduct 图片等按次任务**未配置按次单价**时的占位预扣（USD）。
@@ -48,86 +55,15 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 const imagePlaceholderPreDeduct = 0.1
 
 // estimateTaskCost 纯函数：根据定价与计费上下文估算任务预扣费用，不依赖数据库/缓存，便于单测。
-//
-// 计费口径按任务类型分流：
-//   - per_second（按秒计费，视频生成）：矩阵查价（spec.resolution 未命中回退 "*"）×
-//     spec.duration 秒 × 租户乘数 × 时段乘数 × 附加乘数（video_input 折扣等）；
-//   - per_request（按次计费，图片/音乐等）：直接取按次单价；
-//   - 时长类任务（视频生成，ratios 携带 duration/resolution 信号）：按
-//     10000 tokens/s × duration × resolution 预估 token 再乘输出单价（存量 token 伪装路径）；
-//   - 其余无时长信号的任务（如未显式配成 per_request 的图片模型）：退回按次单价，
-//     **不再**套用视频 token 估算——图片没有时长/分辨率，套 10000×5×2.25 会凭空估出
-//     11.25 万 token 的天价预扣（$30/1M 输出价即得 $3.375），且与结算的「0 token」自相矛盾。
-func estimateTaskCost(pricing *PricingResult, ratios map[string]any) decimal.Decimal {
+// 骨架只做三件事：按 pricing.Scheme 分发到计费方案实现（未声明走 generic 通用引擎），
+// 再统一应用附加比率与 minCost 钳制——方案实现只负责组件费用（含租户/时段乘数），
+// 附加乘数、钳制、舍入全站收口于此，保证各方案结算口径一致。
+func estimateTaskCost(pricing *PricingResult, ratios map[string]any, taskBody []byte) decimal.Decimal {
 	if pricing == nil {
 		return NewFromFloat(0.01)
 	}
 
-	var costD decimal.Decimal
-	switch {
-	case pricing.BillingMode == "per_second":
-		// 按秒计费：矩阵查价 × 时长 × 租户乘数 × 时段乘数
-		duration := defaultTaskDurationSeconds
-		if d, ok := ratioFloat(ratios, "spec.duration"); ok && d > 0 {
-			duration = d
-		}
-		// 时长来自用户请求，钳制上限防天价预扣（正常视频模型远低于该上限）
-		if duration > maxTaskDurationSeconds {
-			duration = maxTaskDurationSeconds
-		}
-		spec, _ := ratioString(ratios, "spec.resolution")
-		price := LookupPerSecondPrice(pricing.PerSecondPrices, spec)
-		if price <= 0 {
-			// 矩阵全零/为空：按未配价占位预扣，结算多退少补
-			costD = NewFromFloat(imagePlaceholderPreDeduct)
-			break
-		}
-		costD = NewFromFloat(price).
-			Mul(NewFromFloat(duration)).
-			Mul(NewFromFloat(pricing.TenantMultiplier)).
-			Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-	case pricing.BillingMode == "per_request":
-		// 按次计费：单价 × 租户乘数 × 时段乘数。与 computeCost / EstimatePreDeductAmount 的
-		// 按次口径对齐——按次任务结算无 token 重算信号，预扣即终价，
-		// 预扣漏乘租户/时段折扣会让折扣租户按原价多扣
-		costD = NewFromFloat(pricing.PerRequestPrice).
-			Mul(NewFromFloat(pricing.TenantMultiplier)).
-			Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-	case pricing.OutputPrice > 0 && hasDurationSignal(ratios):
-		duration := 5.0 // 默认 5 秒
-		if d, ok := ratioFloat(ratios, "duration"); ok && d > 0 {
-			duration = d
-		}
-		resolutionMul := 2.25 // 默认 720p
-		if r, ok := ratioFloat(ratios, "resolution"); ok && r > 0 {
-			resolutionMul = r
-		}
-
-		// 预估 tokens ≈ base_tokens_per_second × duration × resolution_multiplier
-		// 火山方舟视频生成约 10000 tokens/s (480p 基准)，用于预扣估算
-		// 修复视频预扣三连乘：全程 decimal 避免链式误差
-		baseTokensPerSec := decimal.NewFromInt(10000)
-		durationD := NewFromFloat(duration)
-		resolutionMulD := NewFromFloat(resolutionMul)
-		million := decimal.NewFromInt(1_000_000)
-
-		costD = baseTokensPerSec.Mul(durationD).Mul(resolutionMulD).
-			Div(million).
-			Mul(NewFromFloat(pricing.OutputPrice)).
-			Mul(NewFromFloat(pricing.TenantMultiplier))
-	default:
-		// 无时长信号（图片等扁平计费任务）：优先按次单价（同样乘租户/时段乘数，
-		// 预扣即终价的口径与 per_request 分支一致）；未配按次价时用占位预扣，
-		// 绝不走视频 token 估算。结算阶段再按上游真实 token 用量多退少补
-		// （见 sync_image_worker.settleSyncImageSuccess）。
-		if pricing.PerRequestPrice > 0 {
-			costD = NewFromFloat(pricing.PerRequestPrice).
-				Mul(NewFromFloat(pricing.TenantMultiplier)).
-				Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
-		} else {
-			costD = NewFromFloat(imagePlaceholderPreDeduct)
-		}
-	}
+	costD := LookupScheme(pricing.Scheme).EstimateTaskCost(pricing, ratios, taskBody)
 
 	// 应用附加比率（video_input 折扣等）：只乘 float 乘数值，
 	// 跳过 duration/resolution（已在时长类分支消费）与 spec.*（规格事实值非乘数）

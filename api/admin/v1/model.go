@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // ModelListReq 模型列表请求
 type ModelListReq struct {
@@ -161,6 +165,10 @@ type PricingGetRes struct {
 	PriceNote       string `json:"price_note" dc:"价格说明（仅管理后台可见的内部备注）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示，如 7折起）"`
 	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示，提示价格有变动）"`
+	// 计费方案：空 = 通用引擎（前端渲染内置通用表单）；非空时前端分发到方案专属编辑器
+	Scheme string `json:"scheme" dc:"计费方案名（空=通用引擎）"`
+	// 方案私有配置（不透明容器）：schema 由方案自定义，通用表单不理解其内容
+	SchemeConfig json.RawMessage `json:"scheme_config,omitempty" dc:"计费方案私有配置（随方案编辑器解析）"`
 }
 
 // PricingSetReq 设置模型定价（全量替换）
@@ -179,6 +187,11 @@ type PricingSetReq struct {
 	PriceNote       string `json:"price_note" dc:"价格说明（仅内部可见）"`
 	DiscountLabel   string `json:"discount_label" dc:"折扣标签（对外展示）"`
 	PriceChangeNote string `json:"price_change_note" dc:"价格调整说明（对外展示）"`
+	// 计费方案（全量替换语义：空串=回落通用引擎并清除 scheme_config）。
+	// 必须是已注册方案（后端校验），自定义方案建议 custom: 前缀命名
+	Scheme string `json:"scheme" dc:"计费方案名（空=通用引擎并清除私有配置）"`
+	// 方案私有配置：仅 scheme 非空时允许携带，由方案实现的校验规则把关
+	SchemeConfig json.RawMessage `json:"scheme_config,omitempty" dc:"计费方案私有配置（方案自定义 schema）"`
 }
 
 type PricingSetRes struct{}
