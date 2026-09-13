@@ -23,7 +23,7 @@ type pricingTierRow struct {
 // memberModelScopeNoAccess 表示成员无权访问任何模型的哨兵值
 const memberModelScopeNoAccess = -1
 
-// tenantModelPriceRow 显式分配模型的价格查询结果
+// tenantModelPriceRow 显式分配模型的价格查询结果（平台基础价统一从 pricing JSONB 解析）
 type tenantModelPriceRow struct {
 	ModelDBID                int64    `json:"model_db_id"`
 	ID                       int64    `json:"id"`
@@ -31,12 +31,7 @@ type tenantModelPriceRow struct {
 	PerRequestPrice          *float64 `json:"per_request_price"`
 	DiscountRatio            *float64 `json:"discount_ratio"`
 	MaxConcurrency           *int     `json:"max_concurrency"`
-	BaseInputPrice           float64  `json:"base_input_price"`
-	BaseOutputPrice          float64  `json:"base_output_price"`
-	BaseCacheReadPrice       float64  `json:"base_cache_read_price"`
-	BaseCacheCreationPrice   float64  `json:"base_cache_creation_price"`
 	BaseBillingMode          string   `json:"base_billing_mode"`
-	BasePerRequestPrice      *float64 `json:"base_per_request_price"`
 	BaseDiscountLabel        *string  `json:"base_discount_label"`
 	BasePriceChangeNote      *string  `json:"base_price_change_note"`
 	CustomInputPrice         *float64 `json:"custom_input_price"`
@@ -44,19 +39,16 @@ type tenantModelPriceRow struct {
 	CustomCacheReadPrice     *float64 `json:"custom_cache_read_price"`
 	CustomCacheCreationPrice *float64 `json:"custom_cache_creation_price"`
 	CustomPricingTiers       string   `json:"custom_pricing_tiers"`
+	BasePricing              string   `json:"base_pricing"` // pricing JSONB（唯一真相）
 }
 
 // groupPriceRow 分组模型的 base 价格查询结果
 type groupPriceRow struct {
-	ModelID                int64    `json:"model_id"`
-	BaseBillingMode        string   `json:"base_billing_mode"`
-	BaseInputPrice         float64  `json:"base_input_price"`
-	BaseOutputPrice        float64  `json:"base_output_price"`
-	BaseCacheReadPrice     float64  `json:"base_cache_read_price"`
-	BaseCacheCreationPrice float64  `json:"base_cache_creation_price"`
-	BasePerRequestPrice    *float64 `json:"base_per_request_price"`
-	BaseDiscountLabel      *string  `json:"base_discount_label"`
-	BasePriceChangeNote    *string  `json:"base_price_change_note"`
+	ModelID             int64   `json:"model_id"`
+	BaseBillingMode     string  `json:"base_billing_mode"`
+	BaseDiscountLabel   *string `json:"base_discount_label"`
+	BasePriceChangeNote *string `json:"base_price_change_note"`
+	BasePricing         string  `json:"base_pricing"`
 }
 
 // baseTierRow 阶梯定价查询结果
@@ -74,7 +66,7 @@ type memberScopeRow struct {
 	ModelName string `json:"model_name"`
 }
 
-// priceInfo 显式模型的完整价格信息
+// priceInfo 显式模型的完整价格信息（基础价字段从平台 pricing JSONB 解析而来）
 type priceInfo struct {
 	ID                       int64
 	BillingMode              *string
@@ -94,6 +86,15 @@ type priceInfo struct {
 	CustomCacheReadPrice     *float64
 	CustomCacheCreationPrice *float64
 	CustomPricingTiers       string
+	BaseBlob                 *billing.PricingBlob // 平台 pricing JSONB 解析结果（tiered 阶梯/时段/per_second 矩阵）
+}
+
+// BasePerSecondPrices per_second 矩阵（无 blob 时为 nil）
+func (p *priceInfo) BasePerSecondPrices() map[string]float64 {
+	if p.BaseBlob == nil {
+		return nil
+	}
+	return p.BaseBlob.Prices
 }
 
 // groupPriceInfo 分组模型的价格信息
@@ -106,13 +107,39 @@ type groupPriceInfo struct {
 	BasePerRequestPrice    *float64
 	BaseDiscountLabel      *string
 	BasePriceChangeNote    *string
+	BaseBlob               *billing.PricingBlob
+}
+
+// fillFromBlob 从平台 pricing JSONB 提取展示用基础价（tiered 取首档价，与列表口径一致）
+func fillFromBlob(blob *billing.PricingBlob) (input, output, cacheRead, cacheCreation float64, perRequest *float64) {
+	if blob == nil {
+		return
+	}
+	if len(blob.Tiers) > 0 {
+		input = blob.Tiers[0].InputPrice
+		output = blob.Tiers[0].OutputPrice
+	}
+	if blob.InputPrice != nil {
+		input = *blob.InputPrice
+	}
+	if blob.OutputPrice != nil {
+		output = *blob.OutputPrice
+	}
+	if blob.CacheReadPrice != nil {
+		cacheRead = *blob.CacheReadPrice
+	}
+	if blob.CacheCreationPrice != nil {
+		cacheCreation = *blob.CacheCreationPrice
+	}
+	perRequest = blob.Price
+	return
 }
 
 // ListAvailableModels 获取租户可用的模型列表
 func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsReq) (*v1.TenantAvailableModelsRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
 
-	models, err := lcommon.GetTenantAvailableModels(ctx, tenantID, req.Category, req.Search)
+	models, err := lcommon.GetTenantAvailableModels(ctx, tenantID, req.Category, req.Vendor, req.Search)
 	if err != nil {
 		return nil, err
 	}
@@ -133,31 +160,26 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 
 	if len(explicitDBIDs) > 0 {
 		err = dao.MdlTenantModels.Ctx(ctx).
-			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id AND p.min_tokens = 0").
+			LeftJoin("mdl_pricing p ON p.model_id = mdl_tenant_models.model_id").
 			Where("mdl_tenant_models.tenant_id", tenantID).
 			WhereIn("mdl_tenant_models.model_id", explicitDBIDs).
-			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.input_price AS base_input_price, p.output_price AS base_output_price, p.cache_read_price AS base_cache_read_price, p.cache_creation_price AS base_cache_creation_price, p.billing_mode AS base_billing_mode, p.per_request_price AS base_per_request_price, p.discount_label AS base_discount_label, p.price_change_note AS base_price_change_note, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
+			Fields("mdl_tenant_models.model_id AS model_db_id, mdl_tenant_models.id, mdl_tenant_models.billing_mode, mdl_tenant_models.per_request_price, mdl_tenant_models.discount_ratio, mdl_tenant_models.max_concurrency, p.billing_mode AS base_billing_mode, p.pricing AS base_pricing, p.discount_label AS base_discount_label, p.price_change_note AS base_price_change_note, mdl_tenant_models.custom_input_price, mdl_tenant_models.custom_output_price, mdl_tenant_models.custom_cache_read_price, mdl_tenant_models.custom_cache_creation_price, mdl_tenant_models.custom_pricing_tiers").
 			Scan(&priceResults)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// 构建显式模型价格映射
+	// 构建显式模型价格映射（基础价从 pricing JSONB 解析）
 	priceMap := make(map[int64]*priceInfo, len(priceResults))
 	for _, r := range priceResults {
-		priceMap[r.ModelDBID] = &priceInfo{
+		pi := &priceInfo{
 			ID:                       r.ID,
 			BillingMode:              r.BillingMode,
 			PerRequestPrice:          r.PerRequestPrice,
 			DiscountRatio:            r.DiscountRatio,
 			MaxConcurrency:           r.MaxConcurrency,
-			BaseInputPrice:           r.BaseInputPrice,
-			BaseOutputPrice:          r.BaseOutputPrice,
-			BaseCacheReadPrice:       r.BaseCacheReadPrice,
-			BaseCacheCreationPrice:   r.BaseCacheCreationPrice,
 			BaseBillingMode:          r.BaseBillingMode,
-			BasePerRequestPrice:      r.BasePerRequestPrice,
 			BaseDiscountLabel:        r.BaseDiscountLabel,
 			BasePriceChangeNote:      r.BasePriceChangeNote,
 			CustomInputPrice:         r.CustomInputPrice,
@@ -165,7 +187,11 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			CustomCacheReadPrice:     r.CustomCacheReadPrice,
 			CustomCacheCreationPrice: r.CustomCacheCreationPrice,
 			CustomPricingTiers:       r.CustomPricingTiers,
+			BaseBlob:                 billing.ParsePricingBlob(r.BasePricing),
 		}
+		pi.BaseInputPrice, pi.BaseOutputPrice, pi.BaseCacheReadPrice, pi.BaseCacheCreationPrice, pi.BasePerRequestPrice =
+			fillFromBlob(pi.BaseBlob)
+		priceMap[r.ModelDBID] = pi
 	}
 
 	// 批量查询分组模型的 base 价格
@@ -181,97 +207,53 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 		var groupPrices []groupPriceRow
 		err = dao.MdlPricing.Ctx(ctx).
 			WhereIn("model_id", groupDBIDs).
-			Where("min_tokens", 0).
-			Fields("model_id, billing_mode AS base_billing_mode, input_price AS base_input_price, output_price AS base_output_price, cache_read_price AS base_cache_read_price, cache_creation_price AS base_cache_creation_price, per_request_price AS base_per_request_price, discount_label AS base_discount_label, price_change_note AS base_price_change_note").
+			Fields("model_id, billing_mode AS base_billing_mode, pricing AS base_pricing, discount_label AS base_discount_label, price_change_note AS base_price_change_note").
 			Scan(&groupPrices)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, gp := range groupPrices {
-			groupPriceMap[gp.ModelID] = &groupPriceInfo{
-				BaseBillingMode:        gp.BaseBillingMode,
-				BaseInputPrice:         gp.BaseInputPrice,
-				BaseOutputPrice:        gp.BaseOutputPrice,
-				BaseCacheReadPrice:     gp.BaseCacheReadPrice,
-				BaseCacheCreationPrice: gp.BaseCacheCreationPrice,
-				BasePerRequestPrice:    gp.BasePerRequestPrice,
-				BaseDiscountLabel:      gp.BaseDiscountLabel,
-				BasePriceChangeNote:    gp.BasePriceChangeNote,
+			gpi := &groupPriceInfo{
+				BaseBillingMode:     gp.BaseBillingMode,
+				BaseDiscountLabel:   gp.BaseDiscountLabel,
+				BasePriceChangeNote: gp.BasePriceChangeNote,
+				BaseBlob:            billing.ParsePricingBlob(gp.BasePricing),
 			}
+			gpi.BaseInputPrice, gpi.BaseOutputPrice, gpi.BaseCacheReadPrice, gpi.BaseCacheCreationPrice, gpi.BasePerRequestPrice =
+				fillFromBlob(gpi.BaseBlob)
+			groupPriceMap[gp.ModelID] = gpi
 		}
 	}
 
-	// 收集需要查询阶梯定价的模型：显式模型（无自定义阶梯）与分组模型（走 base 阶梯）都纳入
-	tieredModelDBIDs := make([]int64, 0)
+	// 平台阶梯与时段定价：从已解析的 pricing JSONB 提取（tiered 阶梯随 blob.Tiers，
+	// 时段随 blob.TimeSegments；显式与分组来源统一处理）
+	baseTiersMap := make(map[int64][]v1.PricingTierItem)
+	timeSegmentsMap := make(map[int64][]billing.TimeSegment)
 	for _, m := range models {
+		var blob *billing.PricingBlob
 		if m.Source == "explicit" {
 			if pi, ok := priceMap[m.ModelDBID]; ok {
-				effectiveBillingMode := resolveBillingMode(pi.BillingMode, pi.BaseBillingMode)
-				if effectiveBillingMode == "tiered" && pi.CustomPricingTiers == "" {
-					tieredModelDBIDs = append(tieredModelDBIDs, m.ModelDBID)
-				}
+				blob = pi.BaseBlob
 			}
-		} else {
-			// 分组模型使用 base 定价，tiered 时同样需要返回阶梯明细
-			if gp, ok := groupPriceMap[m.ModelDBID]; ok && gp.BaseBillingMode == "tiered" {
-				tieredModelDBIDs = append(tieredModelDBIDs, m.ModelDBID)
+		} else if gp, ok := groupPriceMap[m.ModelDBID]; ok {
+			blob = gp.BaseBlob
+		}
+		if blob == nil {
+			continue
+		}
+		if len(blob.Tiers) > 0 {
+			for _, tier := range blob.Tiers {
+				baseTiersMap[m.ModelDBID] = append(baseTiersMap[m.ModelDBID], v1.PricingTierItem{
+					MinTokens:   tier.MinTokens,
+					MaxTokens:   tier.MaxTokens,
+					InputPrice:  tier.InputPrice,
+					OutputPrice: tier.OutputPrice,
+				})
 			}
 		}
-	}
-
-	baseTiersMap := make(map[int64][]v1.PricingTierItem)
-	if len(tieredModelDBIDs) > 0 {
-		var baseTiers []baseTierRow
-		err = dao.MdlPricing.Ctx(ctx).
-			WhereIn("model_id", tieredModelDBIDs).
-			Where("billing_mode", "tiered").
-			Where("min_tokens > 0").
-			Fields("model_id, min_tokens, max_tokens, input_price, output_price").
-			OrderAsc("model_id").
-			OrderAsc("min_tokens").
-			Scan(&baseTiers)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, t := range baseTiers {
-			baseTiersMap[t.ModelId] = append(baseTiersMap[t.ModelId], v1.PricingTierItem{
-				MinTokens:   t.MinTokens,
-				MaxTokens:   t.MaxTokens,
-				InputPrice:  t.InputPrice,
-				OutputPrice: t.OutputPrice,
-			})
-		}
-	}
-
-	// 时段定价批量查询（锚点行 JSONB；显式与分组来源模型统一处理，展示换算价目用）
-	allDBIDs := make([]int64, 0, len(models))
-	for _, m := range models {
-		allDBIDs = append(allDBIDs, m.ModelDBID)
-	}
-	timeSegmentsMap := make(map[int64][]billing.TimeSegment)
-	if len(allDBIDs) > 0 {
-		var segRows []struct {
-			ModelId      int64  `json:"model_id"`
-			TimeSegments string `json:"time_segments"`
-		}
-		if err := dao.MdlPricing.Ctx(ctx).
-			WhereIn("model_id", allDBIDs).
-			Where("min_tokens", 0).
-			WhereNotNull("time_segments").
-			Fields("model_id, time_segments").
-			Scan(&segRows); err != nil {
-			return nil, err
-		}
-		for _, r := range segRows {
-			if r.TimeSegments == "" || r.TimeSegments == "null" {
-				continue
-			}
-			var segs []billing.TimeSegment
-			if err := json.Unmarshal([]byte(r.TimeSegments), &segs); err == nil && len(segs) > 0 {
-				timeSegmentsMap[r.ModelId] = segs
-			}
+		if len(blob.TimeSegments) > 0 {
+			timeSegmentsMap[m.ModelDBID] = blob.TimeSegments
 		}
 	}
 
@@ -300,6 +282,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				ModelId:            m.ModelId,
 				ModelName:          m.ModelName,
 				Category:           m.Category,
+				Vendor:             m.Vendor,
 				MaxContext:         m.MaxContextTokens,
 				MaxOutput:          m.MaxOutputTokens,
 				Description:        m.Description,
@@ -320,9 +303,14 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if effectiveBillingMode == "tiered" {
 				item.PricingTiers = buildTiers(pi.CustomPricingTiers, pi.BaseInputPrice, pi.BaseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
+			// 按秒/特殊计费：矩阵来自平台定价（租户不逐格覆盖，倍率在计费时作用）；
+			// special 的矩阵是输出生成组件的参考单价（素材组件单价在方案配置中）
+			if effectiveBillingMode == "per_second" || effectiveBillingMode == billing.BillingModeSpecial {
+				item.PerSecondPrices = pi.BasePerSecondPrices()
+			}
 
 			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], effectiveBillingMode,
-				inputPrice, outputPrice, perRequestPrice, item.PricingTiers)
+				inputPrice, outputPrice, perRequestPrice, item.PricingTiers, item.PerSecondPrices)
 
 			list = append(list, item)
 		} else {
@@ -353,6 +341,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 				ModelId:            m.ModelId,
 				ModelName:          m.ModelName,
 				Category:           m.Category,
+				Vendor:             m.Vendor,
 				MaxContext:         m.MaxContextTokens,
 				MaxOutput:          m.MaxOutputTokens,
 				Description:        m.Description,
@@ -370,8 +359,11 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if billingMode == "tiered" && ok {
 				item.PricingTiers = buildTiers("", baseInputPrice, baseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
+			if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && ok && gp.BaseBlob != nil {
+				item.PerSecondPrices = gp.BaseBlob.Prices
+			}
 			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], billingMode,
-				inputPrice, outputPrice, perRequestPrice, item.PricingTiers)
+				inputPrice, outputPrice, perRequestPrice, item.PricingTiers, item.PerSecondPrices)
 			list = append(list, item)
 		}
 	}
@@ -484,8 +476,13 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	return &v1.TenantAvailableModelsRes{List: list}, nil
 }
 
-// resolveBillingMode 解析有效计费模式
+// resolveBillingMode 解析有效计费模式。
+// 特殊计费方案模型的模式由平台方案决定（special），租户级覆盖无效
+// （与 billing.GetModelPriceAt 的读侧守卫、admin.UpdateTenantModel 的写侧守卫同口径）
 func resolveBillingMode(tenantMode *string, baseMode string) string {
+	if baseMode == billing.BillingModeSpecial {
+		return billing.BillingModeSpecial
+	}
 	if tenantMode != nil && *tenantMode != "" {
 		return *tenantMode
 	}
@@ -506,8 +503,8 @@ func effectivePrice(custom *float64, base float64) *float64 {
 	return nil
 }
 
-// buildTiers 组装阶梯定价明细：自定义阶梯优先，否则用 base 首档价格（min_tokens=0）+ 基础阶梯其余档。
-// 显式模型与分组模型共用；baseTiers 为 min_tokens>0 的其余档，为空时仅返回首档。
+// buildTiers 组装阶梯定价明细：自定义阶梯优先，否则用平台阶梯（pricing JSONB tiers 数组，含首档）。
+// 显式模型与分组模型共用；baseTiers 为空时按锚点价合成单档兜底。
 func buildTiers(customTiersJSON string, baseInputPrice, baseOutputPrice float64, baseTiers []v1.PricingTierItem) []v1.PricingTierItem {
 	if customTiersJSON != "" && customTiersJSON != "null" && customTiersJSON != "[]" {
 		var raw []pricingTierRow
@@ -525,29 +522,26 @@ func buildTiers(customTiersJSON string, baseInputPrice, baseOutputPrice float64,
 		}
 	}
 
-	tiers := make([]v1.PricingTierItem, 0, len(baseTiers)+1)
+	// 平台阶梯已含首档（min_tokens=0）：直接返回
+	if len(baseTiers) > 0 {
+		return baseTiers
+	}
+	// 无阶梯数据：按锚点价合成单档
 	if baseInputPrice > 0 || baseOutputPrice > 0 {
-		tiers = append(tiers, v1.PricingTierItem{
+		return []v1.PricingTierItem{{
 			MinTokens:   0,
 			MaxTokens:   nil,
 			InputPrice:  baseInputPrice,
 			OutputPrice: baseOutputPrice,
-		})
+		}}
 	}
-	if len(baseTiers) > 0 {
-		if len(tiers) > 0 {
-			// 首档与第二档衔接：首档 max_tokens = 第二档 min_tokens
-			tiers[0].MaxTokens = &baseTiers[0].MinTokens
-		}
-		tiers = append(tiers, baseTiers...)
-	}
-	return tiers
+	return nil
 }
 
 // buildTimePrices 构建时段展示价目：每个时段 = 模型当前有效价 × 时段乘数（后端换算，前端直接渲染）。
 // token 模式换算输入/输出价；per_request 换算按次价；tiered 用首档价换算（起价，前端标注「起」）。
 func buildTimePrices(segments []billing.TimeSegment, billingMode string,
-	inputPrice, outputPrice, perRequestPrice *float64, tiers []v1.PricingTierItem) []v1.TimePriceItem {
+	inputPrice, outputPrice, perRequestPrice *float64, tiers []v1.PricingTierItem, perSecondPrices map[string]float64) []v1.TimePriceItem {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -560,6 +554,13 @@ func buildTimePrices(segments []billing.TimeSegment, billingMode string,
 		}
 		tierInput = &tiers[0].InputPrice
 		tierOutput = &tiers[0].OutputPrice
+	}
+	// per_second / special 模式换算基准：兜底档 "*" 单价，无 "*" 取矩阵最低正价
+	var perSecondBase *float64
+	if billingMode == "per_second" || billingMode == billing.BillingModeSpecial {
+		if base := billing.LookupPerSecondPrice(perSecondPrices, "*"); base > 0 {
+			perSecondBase = &base
+		}
 	}
 
 	result := make([]v1.TimePriceItem, 0, len(segments))
@@ -577,6 +578,10 @@ func buildTimePrices(segments []billing.TimeSegment, billingMode string,
 		case "per_request":
 			if perRequestPrice != nil {
 				tp.PerRequestPrice = mulDisplayPrice(*perRequestPrice, seg.Multiplier)
+			}
+		case "per_second", billing.BillingModeSpecial:
+			if perSecondBase != nil {
+				tp.PerSecondPrice = mulDisplayPrice(*perSecondBase, seg.Multiplier)
 			}
 		case "tiered":
 			if tierInput != nil {

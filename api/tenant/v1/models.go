@@ -6,6 +6,7 @@ import "github.com/gogf/gf/v2/frame/g"
 type TenantAvailableModelsReq struct {
 	g.Meta   `path:"/models" method:"get" mime:"json" tags:"租户控制台-模型" summary:"租户可用模型列表"`
 	Category string `json:"category" dc:"模型分类筛选：chat/embedding/image/audio/rerank"`
+	Vendor   string `json:"vendor" dc:"研发厂商筛选（openai/anthropic/alibaba等），空=不过滤"`
 	Search   string `json:"search" dc:"搜索关键词（模型名或显示名）"`
 	// ApiKeyID 按指定 API Key 的模型范围过滤（可选；不传或为 0 时返回租户全部可用模型）
 	ApiKeyID int64 `json:"api_key_id" dc:"API Key ID（可选，传入时按该 Key 的模型范围过滤）"`
@@ -36,6 +37,8 @@ type TimePriceItem struct {
 	InputPrice      *float64 `json:"input_price"`
 	OutputPrice     *float64 `json:"output_price"`
 	PerRequestPrice *float64 `json:"per_request_price"`
+	// per_second 模型填 PerSecondPrice（兜底档 "*" 的换算价，无 "*" 取矩阵最低档）
+	PerSecondPrice *float64 `json:"per_second_price"`
 }
 
 // TenantAvailableModelItem 租户可用模型信息
@@ -44,6 +47,7 @@ type TenantAvailableModelItem struct {
 	ModelId            string            `json:"model_id"`
 	ModelName          string            `json:"model_name"`
 	Category           string            `json:"category"`
+	Vendor             string            `json:"vendor"` // 研发厂商（空=未分类）
 	MaxContext         int               `json:"max_context_tokens"`
 	MaxOutput          int               `json:"max_output_tokens"`
 	Description        string            `json:"description"`
@@ -58,6 +62,9 @@ type TenantAvailableModelItem struct {
 	CacheReadPrice     *float64          `json:"cache_read_price"`
 	CacheCreationPrice *float64          `json:"cache_creation_price"`
 	PricingTiers       []PricingTierItem `json:"pricing_tiers"`
+	// PerSecondPrices 按秒计费矩阵（billing_mode=per_second）：分辨率规格 → 每秒单价（本位币），
+	// "*" 为兜底价。租户倍率/折扣在计费时作用，展示为平台原价。
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
 	// TimePrices 时段价目（平台配置了时段定价的模型才有；价格为换算后的展示价）
 	TimePrices []TimePriceItem `json:"time_prices"`
 	// DiscountLabel 折扣标签（平台定价锚点行配置的营销展示文案，如"7折起"；NULL=不展示）

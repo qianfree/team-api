@@ -22,6 +22,7 @@ import (
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
+	_ "github.com/qianfree/team-api/relay/taskchannel/minimax"
 	_ "github.com/qianfree/team-api/relay/taskchannel/sora"
 	_ "github.com/qianfree/team-api/relay/taskchannel/suno"
 	_ "github.com/qianfree/team-api/relay/taskchannel/volcengine"
@@ -44,6 +45,20 @@ type TaskRelayContext struct {
 	KeyTotalQuota   float64
 	KeyUsedQuota    float64
 	ForwardingTrace *common.ForwardingTrace
+
+	// Protocol 入站协议标识："" 默认（legacy 任务响应格式，task_ 前缀 ID）；
+	// videosProtocolOpenAI 切换为 OpenAI Videos 协议（官方 Video 对象响应，video_ 前缀 ID）。
+	Protocol string
+	// RelayMode 任务 relay 模式：0 = 默认 RelayModeVideoGenerations（现有端点），
+	// OpenAI Videos 入站传 RelayModeVideos 以区分审计与监控统计。
+	RelayMode int
+	// RequestEcho 协议层请求回显（OpenAI Videos 的 prompt/seconds/size），
+	// 提交时随 PrivateData 落库，retrieve 时回显给客户端；nil = 无回显。
+	RequestEcho any
+
+	// Debug 渠道调试日志会话；nil = 渠道未开启调试（所有方法 nil-safe）。
+	// 由 HandleTaskSubmit 在提交前创建，响应写完后经 FinalizeAndSubmit 补段4并提交
+	Debug *common.DebugSession
 }
 
 func checkTaskIPWhitelist(whitelist string, clientIP string) bool {
@@ -92,6 +107,13 @@ func HandleTaskSubmit(
 	billingProvider common.TaskBillingProvider,
 	channelMeta *common.ChannelMeta,
 ) {
+	start := time.Now()
+	// 各出口的响应同步写完后走到 defer：补段4并提交调试记录（幂等、nil-safe）。
+	// 必须用闭包——直接 defer 方法调用会在注册时求值 latency 与 rc.Debug（恒为 0/nil）
+	defer func() {
+		rc.Debug.FinalizeAndSubmit(time.Since(start).Milliseconds(), 0)
+	}()
+
 	// 0. QPS 限流检查（前置：只依赖认证上下文，超限请求在解析请求体之前被拒绝）
 	allowed, limitLevel, _, _, _ := billingProvider.CheckRateLimit(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, rc.KeyRateLimitQps)
 	if !allowed {
@@ -154,13 +176,37 @@ func HandleTaskSubmit(
 	g.Log().Debugf(ctx, "HandleTaskSubmit: modelName=%s, platform=%s, channelID=%d, channelType=%d, baseURL=%s, upstreamModel=%s", modelName, platform, channelMeta.ChannelID, channelMeta.ChannelType, channelMeta.BaseURL, channelMeta.UpstreamModelName)
 
 	// 4. 构建 RelayInfo
+	relayMode := rc.RelayMode
+	if relayMode == 0 {
+		relayMode = int(constant.RelayModeVideoGenerations)
+	}
+
+	// 渠道调试日志：开关开启且匹配目标过滤时创建会话（捕获段1 + 包装段4 writer），
+	// 提交为单次尝试（retry_index=0），捕获器经 attemptCtx 注入传输层镜像段2/3。
+	// writer 层级：审计 capture（外层，入口胶水包）← DebugClientWriter（内层），与同步链路同构
+	var dbgAttempt *common.DebugAttempt
+	if channelMeta.Settings.DebugLogEnabled &&
+		channelMeta.Settings.DebugTargetMatch(rc.TenantID, rc.UserID, rc.ApiKeyID) {
+		rc.Debug = common.NewDebugSession(rc.RequestID, rc.TenantID, rc.UserID, rc.ApiKeyID, path)
+		rc.Debug.CaptureClientRequest(headers, body)
+		dw := common.NewDebugClientWriter(rc.Writer)
+		rc.Debug.SetClientWriter(dw)
+		rc.Writer = dw
+		dbgAttempt = rc.Debug.BeginTaskAttempt(channelMeta, modelName,
+			relayModeString(constant.RelayMode(relayMode)), 0)
+	}
+	attemptCtx := ctx
+	if dbgAttempt != nil {
+		attemptCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
+	}
+
 	info := &common.RelayInfo{
-		Context:         ctx,
+		Context:         attemptCtx,
 		TenantID:        rc.TenantID,
 		UserID:          rc.UserID,
 		ApiKeyID:        rc.ApiKeyID,
 		RequestID:       rc.RequestID,
-		RelayMode:       int(constant.RelayModeVideoGenerations),
+		RelayMode:       relayMode,
 		OriginModelName: modelName,
 		RequestURLPath:  path,
 		RequestHeaders:  headers,
@@ -168,6 +214,7 @@ func HandleTaskSubmit(
 		ChannelMeta:     channelMeta,
 	}
 	adaptor.Init(info)
+	dbgAttempt.CaptureProtocol(info)
 
 	// 5. 校验请求
 	if taskErr := adaptor.ValidateRequest(ctx, info, body); taskErr != nil {
@@ -176,9 +223,10 @@ func HandleTaskSubmit(
 		return
 	}
 
-	// 6. 估算计费 + 预扣
+	// 6. 估算计费 + 预扣（ratios 为计费上下文：float64 乘数 + spec.* 规格事实值；
+	// body 同传给 EstimateTaskCost 供参数倍率按归一化任务体匹配，命中注入 ratios）
 	ratios := adaptor.EstimateBilling(ctx, info, body)
-	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios)
+	estimatedCost, err := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, ratios, body)
 	if err != nil {
 		g.Log().Errorf(ctx, "HandleTaskSubmit: estimate cost failed, model=%s, err=%v", modelName, err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "estimate cost failed: "+err.Error(), "")
@@ -205,11 +253,12 @@ func HandleTaskSubmit(
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: build request failed, model=%s, err=%v", modelName, err)
+		dbgAttempt.MarkFinal(err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "build request failed: "+err.Error(), "")
 		return
 	}
 
-	resp, err := adaptor.DoRequest(ctx, info, requestBody)
+	resp, err := adaptor.DoRequest(attemptCtx, info, requestBody)
 	if err != nil {
 		if err := billingProvider.SettleTaskFailed(ctx, rc.TenantID, rc.RequestID, preDeductAmount); err != nil {
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
@@ -217,6 +266,7 @@ func HandleTaskSubmit(
 		// 上游请求失败（网络/超时/拒绝等）属预期内运营事件，非代码 bug：
 		// 用 Warningf 避免 glog 对 ERROR+ 自动打印调用栈污染日志（与 :229 upstream response error 一致）。
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream request failed, model=%s, err=%v", modelName, err)
+		dbgAttempt.MarkFinal(err)
 		writeTaskError(rc.Writer, http.StatusBadGateway, helper.SafeUpstreamErrorMessage(err), "")
 		return
 	}
@@ -231,6 +281,7 @@ func HandleTaskSubmit(
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Warningf(ctx, "HandleTaskSubmit: upstream response error, model=%s, status=%d, message=%q, body=%s", modelName, taskErr.StatusCode, taskErr.Message, string(taskData))
+		dbgAttempt.MarkFinal(taskErr)
 		writeTaskError(rc.Writer, taskErr.StatusCode, taskErr.Message, taskErr.ErrCode)
 		return
 	}
@@ -238,7 +289,7 @@ func HandleTaskSubmit(
 	// 9. 调整计费
 	adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData)
 	if adjustedRatios != nil {
-		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios)
+		newCost, _ := billingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, adjustedRatios, body)
 		preDeductAmount, _ = billingProvider.AdjustTaskBilling(ctx, rc.TenantID, rc.RequestID, preDeductAmount, newCost)
 	}
 
@@ -248,7 +299,7 @@ func HandleTaskSubmit(
 		if finalRatios == nil {
 			finalRatios = adjustedRatios
 		} else {
-			merged := make(map[string]float64, len(finalRatios)+len(adjustedRatios))
+			merged := make(map[string]any, len(finalRatios)+len(adjustedRatios))
 			for k, v := range finalRatios {
 				merged[k] = v
 			}
@@ -259,11 +310,14 @@ func HandleTaskSubmit(
 		}
 	}
 
-	// 10. 生成公开任务 ID 并创建记录
+	// 10. 生成公开任务 ID 并创建记录（OpenAI Videos 协议用 video_ 前缀对齐官方形态）
 	publicTaskID := generatePublicTaskID()
+	if rc.Protocol == videosProtocolOpenAI {
+		publicTaskID = generatePublicTaskIDWithPrefix("video")
+	}
 	now := time.Now()
 
-	privateData, _ := json.Marshal(map[string]any{
+	privateDataMap := map[string]any{
 		"upstream_task_id": upstreamTaskID,
 		"task_type":        platform,
 		"billing_context": map[string]any{
@@ -274,7 +328,11 @@ func HandleTaskSubmit(
 			// 进而 Ratios 也读不出、轮询判为「invalid private data」。故此处显式转 float64。
 			"pre_deduct": preDeductAmount.InexactFloat64(),
 		},
-	})
+	}
+	if rc.RequestEcho != nil {
+		privateDataMap["request_echo"] = rc.RequestEcho
+	}
+	privateData, _ := json.Marshal(privateDataMap)
 
 	task := &common.AsyncTask{
 		PublicTaskID:    publicTaskID,
@@ -300,14 +358,30 @@ func HandleTaskSubmit(
 			g.Log().Errorf(ctx, "HandleTaskSubmit: SettleTaskFailed error, requestID=%s, amount=%.6f, err=%v", rc.RequestID, preDeductAmount.InexactFloat64(), err)
 		}
 		g.Log().Errorf(ctx, "HandleTaskSubmit: create task record failed, publicTaskID=%s, model=%s, err=%v", publicTaskID, modelName, err)
+		dbgAttempt.MarkFinal(err)
 		writeTaskError(rc.Writer, http.StatusInternalServerError, "create task record failed: "+err.Error(), "")
 		return
 	}
 
 	// 设置 TaskID 供外层审计使用
 	rc.TaskID = publicTaskID
+	// 调试日志：提交成功的最终尝试（段4 由 defer 的 FinalizeAndSubmit 补齐）
+	dbgAttempt.MarkFinal(nil)
 
-	// 11. 返回响应
+	// 11. 返回响应（OpenAI Videos 协议返回官方 Video 对象；MiniMax 官方协议返回 {"task_id"}
+	//（v1 含 base_resp 信封）；legacy 保持原格式）
+	if rc.Protocol == videosProtocolOpenAI {
+		writeVideosSubmitResponse(rc.Writer, publicTaskID, modelName, now, rc.RequestEcho)
+		return
+	}
+	if rc.Protocol == minimaxVideoProtocol {
+		writeMiniMaxSubmitResponse(rc.Writer, publicTaskID)
+		return
+	}
+	if rc.Protocol == minimaxVideoV1Protocol {
+		writeMiniMaxV1SubmitResponse(rc.Writer, publicTaskID)
+		return
+	}
 	respBody := map[string]any{
 		"id":         publicTaskID,
 		"status":     "SUBMITTED",
@@ -408,6 +482,11 @@ func writeJSON(w http.ResponseWriter, statusCode int, data any) {
 // generatePublicTaskID 生成公开任务 ID
 func generatePublicTaskID() string {
 	return fmt.Sprintf("task_%s", randomHex(32))
+}
+
+// generatePublicTaskIDWithPrefix 生成带指定前缀的公开任务 ID（如 OpenAI Videos 协议的 video_ 前缀）
+func generatePublicTaskIDWithPrefix(prefix string) string {
+	return fmt.Sprintf("%s_%s", prefix, randomHex(32))
 }
 
 func randomHex(n int) string {

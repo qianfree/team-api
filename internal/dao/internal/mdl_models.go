@@ -36,6 +36,7 @@ type MdlModelsColumns struct {
 	DeprecatedAt     string // 标记弃用的时间（NULL表示未弃用）
 	SunsetDate       string // 计划下线日期（到达后返回410 Gone，NULL表示未设置）
 	ReplacementModel string // 推荐替代模型名（NULL表示无替代）
+	Vendor           string // 研发厂商枚举：openai/anthropic/google/xai/mistral/cohere/meta/alibaba/bytedance/deepseek/zhipu/moonshot/minimax/baidu/tencent/xunfei/kuaishou/midjourney/suno，空串=未分类
 }
 
 // mdlModelsColumns holds the columns for the table mdl_models.
@@ -55,6 +56,7 @@ var mdlModelsColumns = MdlModelsColumns{
 	DeprecatedAt:     "deprecated_at",
 	SunsetDate:       "sunset_date",
 	ReplacementModel: "replacement_model",
+	Vendor:           "vendor",
 }
 
 // NewMdlModelsDao creates and returns a new DAO object for table data access.

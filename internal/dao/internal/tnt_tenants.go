@@ -40,6 +40,8 @@ type TntTenantsColumns struct {
 	DefaultChannelScope string // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               string // 当前等级（对应 tnt_tenant_level_configs.level）
 	TeamEnabled         string // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
+	Tags                string // 租户标签（JSONB 字符串数组，管理后台运营标注，不暴露给租户控制台）
+	Remark              string // 管理员备注（运营备注，不暴露给租户控制台）
 }
 
 // tntTenantsColumns holds the columns for the table tnt_tenants.
@@ -63,6 +65,8 @@ var tntTenantsColumns = TntTenantsColumns{
 	DefaultChannelScope: "default_channel_scope",
 	Level:               "level",
 	TeamEnabled:         "team_enabled",
+	Tags:                "tags",
+	Remark:              "remark",
 }
 
 // NewTntTenantsDao creates and returns a new DAO object for table data access.

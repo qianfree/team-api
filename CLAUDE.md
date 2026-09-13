@@ -269,8 +269,9 @@ cmd（路由注册）
 
 钱包资金状态采用 **Redis 唯一实时权威 + DB 滞后物化视图** 架构（详见 [`docs/钱包Redis权威化设计.md`](docs/钱包Redis权威化设计.md)）：
 
-- **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
-- **DB 物化**：`bil_wallets.balance / frozen_balance` 只是展示/报表/灾难恢复用的滞后副本，由后台物化器每 `billing_wallet_materialize_interval_ms`（默认 5000ms）从 Redis 全量覆盖。**禁止**把 DB 钱包余额当作实时判断依据（如余额门槛、防超扣闸门）。
+- **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / total_consumed / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
+- **累计消费（total_consumed）只随结算事件变动**：`settleClaimLua` 与扣款同一原子 `HINCRBY` 递增；结算记流水失败的补偿逆转走专用 `ReverseConsumeRedis`（余额与计数同一原子回退）。充值/兑换/调账/退款/预扣/解冻一律**不得**触碰该计数（`CreditWalletRedis`/`DebitWalletRedis` 不感知计数）。字段基线由三层补种保证（boot 种子 `SeedWalletTotalConsumed` / 灾备重建 `rebuildWalletFromDB` / 物化器自愈 `materializeOneWallet`），存量历史从 `bil_transactions(type=consume)` 回填（幂等可重放）。
+- **DB 物化**：`bil_wallets.balance / frozen_balance / total_consumed` 只是展示/报表/灾难恢复用的滞后副本，由后台物化器每 `billing_wallet_materialize_interval_ms`（默认 5000ms）从 Redis 全量覆盖。**禁止**把 DB 钱包余额当作实时判断依据（如余额门槛、防超扣闸门）。
 - **预扣记录纯 Redis**：`bil_prededuct_tracks` 表已废弃（预扣明细 = `prededuct:v2:{request_id}` hash + `prededuct_active:{tenant}` 集合，TTL 2h），孤儿清扫由 cron `prededuct_sweep` 每 2 分钟按「重算 frozen = Σ 幸存预扣」自愈，不再依赖 DB 表。
 - **可用余额** = balance - frozen_balance，预扣/扣款/退款门槛都在 Redis Lua 内原子判断。
 - **幂等闸门**：结算幂等靠 `bil_records.request_id` 唯一约束（DB，先行于任何资金变动）；预扣/解冻幂等靠 Redis hash 认领即删。

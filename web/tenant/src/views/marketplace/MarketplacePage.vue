@@ -5,7 +5,9 @@ import BasePagination from '@/components/common/BasePagination.vue'
 import ModelCard from './components/ModelCard.vue'
 import ModelDetailDrawer from './components/ModelDetailDrawer.vue'
 import { getMarketplaceModelDetail, getMarketplaceModels, type MarketplaceModel } from '@/api/marketplace'
+import VendorLogo from '@/components/common/VendorLogo.vue'
 import { categoryMetaList } from './marketplaceMeta'
+import { vendorMetaList, vendorLabel } from '@/constants/vendor'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useSeo } from '@/composables/useSeo'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
@@ -30,6 +32,9 @@ const categories = categoryMetaList
 
 const keyword = ref('')
 const selectedCategory = ref<string | null>(null)
+const selectedVendor = ref<string | null>(null)
+// 当前条件下有模型的厂商（后端 facet 返回），厂商筛选项据此动态渲染
+const availableVendors = ref<string[]>([])
 const loading = ref(false)
 const loadError = ref(false)
 const modelList = ref<MarketplaceModel[]>([])
@@ -46,7 +51,22 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 let listRequestId = 0
 let detailRequestId = 0
 
-const hasActiveFilters = computed(() => keyword.value.trim() !== '' || selectedCategory.value !== null)
+const hasActiveFilters = computed(() => keyword.value.trim() !== '' || selectedCategory.value !== null || selectedVendor.value !== null)
+
+// 厂商筛选项：只显示当前条件下实际有模型的厂商（按字典序）；已选厂商不在可用列表时保留，
+// 否则筛选条件生效但按钮消失，用户无法取消选择。字典外的厂商值（历史数据）按原值追加，渲染回退头像。
+const visibleVendorOptions = computed(() => {
+	const available = new Set(availableVendors.value)
+	if (selectedVendor.value) available.add(selectedVendor.value)
+	const known = vendorMetaList
+		.filter(v => available.has(v.value))
+		.map(v => ({ value: v.value, label: v.label }))
+	const knownValues = new Set(vendorMetaList.map(v => v.value))
+	const unknown = [...available]
+		.filter(v => !knownValues.has(v))
+		.map(v => ({ value: v, label: vendorLabel(v) }))
+	return [...known, ...unknown]
+})
 
 async function loadModels(): Promise<void> {
 	const requestId = ++listRequestId
@@ -57,12 +77,14 @@ async function loadModels(): Promise<void> {
 		const response = await getMarketplaceModels({
 			keyword: keyword.value.trim() || undefined,
 			category: selectedCategory.value || undefined,
+			vendor: selectedVendor.value || undefined,
 			page: currentPage.value,
 			page_size: pageSize.value,
 		})
 		if (requestId !== listRequestId) return
 		modelList.value = response.list || []
 		total.value = response.total || 0
+		availableVendors.value = response.vendors || []
 	} catch {
 		if (requestId !== listRequestId) return
 		modelList.value = []
@@ -100,9 +122,17 @@ function selectCategory(category: string | null): void {
 	loadModels()
 }
 
+function selectVendor(vendor: string | null): void {
+	if (selectedVendor.value === vendor) return
+	selectedVendor.value = vendor
+	currentPage.value = 1
+	loadModels()
+}
+
 function resetFilters(): void {
 	keyword.value = ''
 	selectedCategory.value = null
+	selectedVendor.value = null
 	currentPage.value = 1
 	loadModels()
 }
@@ -263,7 +293,45 @@ useSeo({
 								</button>
 							</nav>
 
-							<!-- 重置筛选：仅在存在筛选条件时出现 -->
+								<!-- 厂商：只显示当前条件下有模型的厂商；移动端单行横滑 chips，桌面端菜单列表 -->
+								<template v-if="visibleVendorOptions.length">
+									<div class="my-4 h-px bg-gray-200/60"></div>
+
+									<span class="mb-3 hidden text-xs font-semibold uppercase tracking-wider text-gray-400 lg:block">研发厂商</span>
+									<nav class="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:gap-1 lg:overflow-visible lg:px-0 lg:pb-0" aria-label="按厂商筛选">
+									<button
+										type="button"
+										class="inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-[0.98] lg:w-full lg:rounded-xl lg:px-3 lg:py-2"
+										:class="
+											selectedVendor === null
+												? 'border-transparent bg-gray-900 text-white lg:font-semibold'
+												: 'border-gray-200/70 bg-white/70 text-gray-600 hover:border-primary-200 hover:text-primary-700 lg:border-transparent lg:bg-transparent lg:hover:bg-primary-500/5 lg:hover:text-primary-700'
+										"
+										@click="selectVendor(null)"
+									>
+										<span class="inline-flex h-5 w-5 items-center justify-center rounded-md bg-gray-100 text-[10px] font-bold text-gray-400 lg:hidden">全部</span>
+										<span class="hidden lg:inline">全部厂商</span>
+									</button>
+									<button
+										v-for="vendor in visibleVendorOptions"
+										:key="vendor.value"
+										type="button"
+										class="inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-[0.98] lg:w-full lg:rounded-xl lg:px-3 lg:py-2"
+										:class="
+											selectedVendor === vendor.value
+												? 'border-transparent bg-gray-900 text-white lg:font-semibold'
+												: 'border-gray-200/70 bg-white/70 text-gray-600 hover:border-primary-200 hover:text-primary-700 lg:border-transparent lg:bg-transparent lg:hover:bg-primary-500/5 lg:hover:text-primary-700'
+										"
+										@click="selectVendor(vendor.value)"
+									>
+										<VendorLogo :vendor="vendor.value" size="sm" />
+										<span class="whitespace-nowrap">{{ vendor.label }}</span>
+										<Icon v-if="selectedVendor === vendor.value" name="check" size="xs" class="ml-auto hidden shrink-0 lg:block" />
+									</button>
+									</nav>
+								</template>
+
+								<!-- 重置筛选：仅在存在筛选条件时出现 -->
 							<button v-if="hasActiveFilters" type="button" class="btn btn-secondary btn-sm mt-4 w-full" @click="resetFilters">
 								<Icon name="refresh" size="sm" />重置筛选
 							</button>
@@ -313,14 +381,14 @@ useSeo({
 						<div v-else-if="modelList.length === 0" class="empty-state">
 							<Icon name="search" size="xl" class="empty-state-icon" />
 							<p class="empty-state-title">没有找到匹配的模型</p>
-							<p class="empty-state-description">换一个关键词，或者清除当前分类后再试。</p>
+							<p class="empty-state-description">换一个关键词，或者清除当前筛选条件后再试。</p>
 							<button type="button" class="btn btn-secondary btn-sm mt-4" @click="resetFilters">
 								<Icon name="refresh" size="sm" />重置筛选
 							</button>
 						</div>
 
 						<!-- 卡片网格：key 携带分类与页码，翻页 / 切分类时重放入场动画 -->
-						<div v-else :key="`${selectedCategory ?? 'all'}-${currentPage}`" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+						<div v-else :key="`${selectedCategory ?? 'all'}-${selectedVendor ?? 'all'}-${currentPage}`" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 							<ModelCard
 								v-for="(model, index) in modelList"
 								:key="model.model_id"

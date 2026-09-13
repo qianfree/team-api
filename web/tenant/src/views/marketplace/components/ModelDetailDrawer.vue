@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import Icon from '@/components/common/Icon.vue'
+import VendorLogo from '@/components/common/VendorLogo.vue'
 import type { MarketplaceModel } from '@/api/marketplace'
 import { useIsMobile } from '@/composables/useIsMobile'
 import { displayCurrency } from '@/composables/useCurrency'
@@ -97,6 +98,7 @@ const drawerWidth = computed(() => (isMobile.value ? '100%' : 560))
 							<Icon name="copy" size="xs" class="shrink-0 text-gray-400 transition-colors group-hover:text-primary-600" />
 						</button>
 					</div>
+					<VendorLogo :vendor="model.vendor" size="sm" show-name class="shrink-0" />
 					<span class="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium" :style="categoryBadgeStyle">{{ meta.label }}</span>
 				</div>
 			</template>

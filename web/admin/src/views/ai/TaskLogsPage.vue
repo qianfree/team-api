@@ -49,6 +49,7 @@ const platformOptions = [
   { label: 'Suno', value: 'suno' },
   { label: '火山引擎', value: 'volcengine' },
   { label: '阿里', value: 'ali' },
+  { label: 'MiniMax', value: 'minimax' },
 ]
 
 const statusTagColor: Record<string, string | undefined> = {
@@ -74,6 +75,7 @@ const platformLabel: Record<string, string> = {
   suno: 'Suno',
   volcengine: '火山引擎',
   ali: '阿里',
+  minimax: 'MiniMax',
 }
 
 const columns: TableColumnData[] = [

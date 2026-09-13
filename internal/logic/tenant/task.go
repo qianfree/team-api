@@ -226,6 +226,9 @@ func (s *sTenant) ExportTasks(ctx context.Context, req *v1.TenantTaskExportReq) 
 		"kling":      "Kling",
 		"midjourney": "Midjourney",
 		"suno":       "Suno",
+		"volcengine": "火山引擎",
+		"ali":        "阿里",
+		"minimax":    "MiniMax",
 	}
 
 	// 预扣/实际费用属 bil_ 记账层，币种 = 系统本位币

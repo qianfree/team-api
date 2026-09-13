@@ -24,6 +24,9 @@ type (
 		// UpdateUserStatus enables or disables an admin user.
 		UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateStatusReq) (*v1.AdminUserUpdateStatusRes, error)
 		// UnlockUser 清除管理员的登录锁定状态（重置失败计数与锁定截止时间）。
+		//
+		// 解锁是本文件里唯一漏掉 assertCanManageAdminUser 的账号处置动作：锁定本身是暴力破解
+		// 的防线，非超管若能解锁超级管理员账号，就等于可以无限次重置对方的失败计数继续爆破。
 		UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v1.AdminUserUnlockRes, error)
 		// ResetUserPassword resets an admin user's password.
 		ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPasswordReq) (*v1.AdminUserResetPasswordRes, error)
@@ -329,7 +332,7 @@ type (
 		UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error)
 		// DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 		DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error)
-		// GetModelPricing 获取模型定价
+		// GetModelPricing 获取模型定价（pricing JSONB 单行还原为 PricingItem 列表，响应结构与旧多行结构保持兼容）
 		GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error)
 		// SetModelPricing 设置模型定价（全量替换）
 		SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error)

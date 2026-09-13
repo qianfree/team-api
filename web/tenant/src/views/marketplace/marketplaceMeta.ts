@@ -92,6 +92,8 @@ export function formatPrice(price?: number | null): string {
 export function billingModeLabel(mode?: string | null): string {
 	if (mode === 'per_request') return '按次计费'
 	if (mode === 'tiered') return '阶梯计费'
+	if (mode === 'per_second') return '按秒计费'
+	if (mode === 'special') return '特殊计费'
 	return '按量计费'
 }
 
@@ -116,5 +118,9 @@ export function timeWindow(tp: TimePriceItem): string {
 
 export function timePriceText(model: MarketplaceModel, tp: TimePriceItem): string {
 	if (model.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price)} /次`
+	// per_second / special：时段价后端按每秒基准价换算，per_second_price 字段下发
+	if (model.billing_mode === 'per_second' || model.billing_mode === 'special') {
+		return `${formatPrice(tp.per_second_price)} /秒`
+	}
 	return `输入 ${formatPrice(tp.input_price)} · 输出 ${formatPrice(tp.output_price)}${model.billing_mode === 'tiered' ? ' 起' : ''}`
 }

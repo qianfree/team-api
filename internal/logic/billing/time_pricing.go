@@ -14,7 +14,7 @@ import (
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
 )
 
-// TimeSegment 时段定价规则（mdl_pricing.time_segments JSONB 数组元素）。
+// TimeSegment 时段定价规则（mdl_pricing.pricing JSONB 顶层 time_segments 数组元素）。
 // 语义：按数组顺序先命中先生效，可用来表达「促销时段压在常驻时段之上」；
 // 未命中任何时段 → 乘数 1.0（默认价）。最终费用 = 各项小计 × 租户乘数 × 时段乘数。
 type TimeSegment struct {

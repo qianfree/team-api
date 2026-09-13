@@ -56,8 +56,8 @@ func (a *MjAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, _ []
 	return nil
 }
 
-func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	action := constant.TaskAction(a.extractAction())
 	switch action {
 	case constant.TaskActionUpscale:
@@ -70,7 +70,7 @@ func (a *MjAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, _ []
 	return ratios
 }
 
-func (a *MjAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *MjAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 
@@ -90,12 +90,12 @@ func (a *MjAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInfo, 
 	return strings.NewReader(string(body)), nil
 }
 
-func (a *MjAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *MjAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func (a *MjAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *common
 	return result.Result, body, nil
 }
 
-func (a *MjAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *MjAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		UpstreamTaskID string `json:"upstream_task_id"`
 		UseProxy       bool   `json:"use_proxy"`
@@ -157,7 +157,7 @@ func (a *MjAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Re
 	}
 
 	url := fmt.Sprintf("%s/mj/task/%s/fetch", strings.TrimRight(baseURL, "/"), data.UpstreamTaskID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

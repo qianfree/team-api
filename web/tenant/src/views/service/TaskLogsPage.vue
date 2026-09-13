@@ -109,6 +109,7 @@ const platformLabel: Record<string, string> = {
 	suno: 'Suno',
 	volcengine: '火山引擎',
 	ali: '阿里',
+	minimax: 'MiniMax',
 }
 
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
@@ -289,7 +290,7 @@ onMounted(() => {
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">平台</label>
-						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'}]" container-class="w-[120px]" />
+						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'},{value:'minimax',label:'MiniMax'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button type="submit" class="btn btn-primary btn-sm">

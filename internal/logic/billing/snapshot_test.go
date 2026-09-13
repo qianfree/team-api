@@ -275,6 +275,90 @@ func TestGenerateBillingSummary_Nil(t *testing.T) {
 	}
 }
 
+// TestGenerateBillingSnapshot_SchemeField 特殊计费方案：scheme + 按秒矩阵落快照 Pricing 节，
+// 供账单事后追溯该笔走的计费方案与输出单价依据
+func TestGenerateBillingSnapshot_SchemeField(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      BillingModeSpecial,
+		BillingSource:    "base",
+		TenantMultiplier: 1.0,
+		PerSecondPrices:  map[string]float64{"768P": 0.35, "2K": 0.6},
+		Scheme:           SchemeMiniMaxMaterial,
+	}
+	snapshot := GenerateBillingSnapshot(pricing, &CostBreakdown{TotalCost: 2.1}, nil, nil, nil)
+	if snapshot == nil {
+		t.Fatal("expected non-nil snapshot")
+	}
+	if snapshot.Pricing.Scheme != SchemeMiniMaxMaterial {
+		t.Errorf("Pricing.Scheme = %q, want %q", snapshot.Pricing.Scheme, SchemeMiniMaxMaterial)
+	}
+	if snapshot.Pricing.BillingMode != BillingModeSpecial {
+		t.Errorf("Pricing.BillingMode = %q, want %q", snapshot.Pricing.BillingMode, BillingModeSpecial)
+	}
+	if snapshot.Pricing.PerSecondPrices["768P"] != 0.35 {
+		t.Errorf("Pricing.PerSecondPrices lost: %+v", snapshot.Pricing.PerSecondPrices)
+	}
+
+	// JSON 往返保留（bil_usage_logs.billing_snapshot 的真实存取路径）
+	var parsed BillingSnapshot
+	if err := json.Unmarshal([]byte(SnapshotToJSON(snapshot)), &parsed); err != nil {
+		t.Fatalf("roundtrip unmarshal: %v", err)
+	}
+	if parsed.Pricing.Scheme != SchemeMiniMaxMaterial {
+		t.Errorf("roundtrip Scheme lost: %q", parsed.Pricing.Scheme)
+	}
+	if parsed.Pricing.PerSecondPrices["2K"] != 0.6 {
+		t.Errorf("roundtrip PerSecondPrices lost: %+v", parsed.Pricing.PerSecondPrices)
+	}
+
+	// token 模式快照不带矩阵（omitempty，旧结构零变化）
+	tokenSnapshot := GenerateBillingSnapshot(&PricingResult{
+		BillingMode: "token", InputPrice: 0.5, OutputPrice: 1.5, TenantMultiplier: 1.0,
+	}, &CostBreakdown{}, nil, nil, nil)
+	if tokenSnapshot.Pricing.PerSecondPrices != nil {
+		t.Errorf("token snapshot should not carry per_second_prices: %+v", tokenSnapshot.Pricing.PerSecondPrices)
+	}
+}
+
+// TestGenerateBillingSummary_SchemeAndPerSecond 摘要模式中文映射补全：
+// special 显示「特殊计费」并追加「计费方案」行；per_second 显示「按秒计费」
+// （此前两值均直出英文原始串）
+func TestGenerateBillingSummary_SchemeAndPerSecond(t *testing.T) {
+	// special + 方案：含「特殊计费」标签与「计费方案:」行
+	special := &BillingSnapshot{
+		Pricing: BillingSnapshotPricing{
+			BillingMode:   BillingModeSpecial,
+			BillingSource: "base",
+			Scheme:        SchemeMiniMaxMaterial,
+		},
+		Multipliers: BillingSnapshotMultipliers{TenantMultiplier: 1.0},
+		Settlement:  BillingSnapshotSettlement{PreDeductAmount: 2.1, ActualCost: 2.1},
+		RequestMeta: BillingSnapshotRequestMeta{RequestedModel: "MiniMax-H3"},
+	}
+	text := GenerateBillingSummary(context.Background(), special)
+	if !strings.Contains(text, "特殊计费") {
+		t.Error("summary should contain 特殊计费")
+	}
+	if !strings.Contains(text, "计费方案: "+SchemeMiniMaxMaterial) {
+		t.Error("summary should contain scheme line")
+	}
+
+	// per_second：中文标签不再直出原始串
+	perSecond := &BillingSnapshot{
+		Pricing: BillingSnapshotPricing{
+			BillingMode:   "per_second",
+			BillingSource: "base",
+		},
+		Multipliers: BillingSnapshotMultipliers{TenantMultiplier: 1.0},
+		Settlement:  BillingSnapshotSettlement{PreDeductAmount: 4.0, ActualCost: 4.0},
+		RequestMeta: BillingSnapshotRequestMeta{RequestedModel: "kling-v2"},
+	}
+	text = GenerateBillingSummary(context.Background(), perSecond)
+	if !strings.Contains(text, "按秒计费") {
+		t.Error("summary should contain 按秒计费")
+	}
+}
+
 func TestGenerateBillingSummary_PerRequest(t *testing.T) {
 	snapshot := &BillingSnapshot{
 		Pricing: BillingSnapshotPricing{

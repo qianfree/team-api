@@ -74,8 +74,8 @@ func HandleSyncImageSubmit(r *ghttp.Request, body []byte, rc *relay_handler.Task
 	// 2. 强制非流式：剥离 stream 字段，防 DoResponse 走 SSE 分支
 	cleanBody := stripStreamField(body)
 
-	// 3. 估价（图片走 per_request 价）
-	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, nil)
+	// 3. 估价（图片走 per_request 价；nil body = 参数倍率不参与，同步图片链路 ratios 不随任务持久化）
+	estimatedCost, err := taskBillingProvider.EstimateTaskCost(ctx, rc.TenantID, modelName, nil, nil)
 	if err != nil {
 		writeSyncImageError(w, http.StatusInternalServerError, "estimate cost failed: "+err.Error())
 		return

@@ -170,6 +170,9 @@ type UsageRecord struct {
 	// 其他 token
 	ImageOutputTokens int // 图像输出 token（DALL-E）
 
+	// 按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 0
+	DurationSeconds int
+
 	// 请求元数据
 	RequestedModel   string // 用户请求的模型名
 	UpstreamModel    string // 上游实际模型名
