@@ -88,6 +88,12 @@ type PricingResult struct {
 // perSecondWildcard 矩阵兜底价键：规格未命中时使用
 const perSecondWildcard = "*"
 
+// BillingModeSpecial 特殊计费模式（与 per_second 平级）：仅由特殊计费方案使用，
+// pricing JSONB 顶层必须同时声明 scheme 键（写侧双向配对校验）。计费分发只看
+// Scheme 不看此值，它用于展示层区分「按秒计费」与「特殊方案组合计费」，
+// 不出现在通用计费模式下拉中（只由方案专属编辑器提交）。
+const BillingModeSpecial = "special"
+
 // maxTaskDurationSeconds per_second 计费的时长上限（秒）。
 // 时长来自用户请求（spec.duration 经 ratios 流入，metadata 路径绕过请求层校验），
 // 钳制防「天价 duration 刷预扣漏洞/恶意配错」；正常视频模型上限远低于此值。
@@ -285,7 +291,9 @@ func GetModelPriceAt(ctx context.Context, tenantID int64, modelName string, bill
 
 	if tm != nil && tm.Enabled {
 		billingSource = "tenant_custom"
-		if tm.BillingMode != nil && *tm.BillingMode != "" {
+		// 特殊计费方案模型的 billing_mode 由平台方案决定（special），租户级模式覆盖无效：
+		// 方案的输出生成组件消费平台 per_second 矩阵，租户改模式只会造成日志标签与计费口径错位
+		if schemeName == "" && tm.BillingMode != nil && *tm.BillingMode != "" {
 			billingMode = *tm.BillingMode
 		}
 
@@ -636,9 +644,9 @@ func validatePricingConfigured(pricing *PricingResult, modelName string) error {
 		if pricing.PerRequestPrice <= 0 {
 			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_request price not set)", modelName)
 		}
-	case "per_second":
+	case BillingModeSpecial, "per_second":
 		if LookupPerSecondPrice(pricing.PerSecondPrices, perSecondWildcard) <= 0 {
-			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (per_second prices not set)", modelName)
+			return gerror.Wrapf(rcommon.ErrModelPricingNotConfigured, "model=%s (%s prices not set)", modelName, pricing.BillingMode)
 		}
 	default: // token / tiered
 		if pricing.InputPrice <= 0 && pricing.OutputPrice <= 0 && !tiersHavePrice(pricing.CustomTiers) {
@@ -673,15 +681,15 @@ func BuildPricingBlob(items []PricingItemInput) (*PricingBlob, error) {
 	anchor := items[0]
 
 	switch mode {
-	case "per_second":
+	case BillingModeSpecial, "per_second":
 		if len(items) > 1 {
-			return nil, gerror.New("per_second 计费模式只允许一行定价（分辨率矩阵）")
+			return nil, gerror.Newf("%s 计费模式只允许一行定价（分辨率矩阵）", mode)
 		}
 		if anchor.MinTokens != 0 {
-			return nil, gerror.New("per_second 计费模式要求 min_tokens=0 的定价行")
+			return nil, gerror.Newf("%s 计费模式要求 min_tokens=0 的定价行", mode)
 		}
 		if len(anchor.PerSecondPrices) == 0 {
-			return nil, gerror.New("per_second 计费模式要求配置分辨率单价矩阵（per_second_prices）")
+			return nil, gerror.Newf("%s 计费模式要求配置分辨率单价矩阵（per_second_prices）", mode)
 		}
 		hasPositive := false
 		for spec, price := range anchor.PerSecondPrices {

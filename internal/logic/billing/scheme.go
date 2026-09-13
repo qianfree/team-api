@@ -6,6 +6,8 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/shopspring/decimal"
+
+	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
 // ============================================================
@@ -33,7 +35,7 @@ import (
 // SchemeGeneric 通用计费方案名（pricing JSONB 未声明 scheme 时的默认值）
 const SchemeGeneric = "generic"
 
-// BillingScheme 计费方案接口：特殊计费模型的任务预扣估算扩展点。
+// BillingScheme 计费方案接口：特殊计费模型的任务预扣估算与结算重算扩展点。
 // 接口签名视为公共契约（主干与二开方案的边界），保持稳定；修改需评估所有已注册方案。
 type BillingScheme interface {
 	// Name 方案名（唯一，与 pricing JSONB scheme 键对应）
@@ -43,6 +45,12 @@ type BillingScheme interface {
 	// 返回已含租户乘数 × 时段乘数、未应用 ratios 附加乘数的费用；
 	// 附加乘数、minCost 钳制与 RoundMoney 由 estimateTaskCost 骨架统一应用。
 	EstimateTaskCost(pricing *PricingResult, ratios map[string]any, taskBody []byte) decimal.Decimal
+
+	// SettleTaskCost 任务成功结算口径（纯函数）：按上游 usage 的素材计量计算最终费用。
+	// 素材计量是「预扣时未知、生成后官方返回」的计费依据（如输入视频时长、图片张数）；
+	// usage 为 nil 表示上游未提供，方案应回退 EstimateTaskCost 的预扣口径（多退少补兜底）。
+	// 返回值口径与 EstimateTaskCost 一致（含租户/时段乘数，不含 ratios 附加乘数）。
+	SettleTaskCost(pricing *PricingResult, ratios map[string]any, usage *rcommon.TaskMaterialUsage) decimal.Decimal
 
 	// ValidateSchemeConfig 校验方案私有配置（pricing JSONB scheme_config），
 	// 管理端保存定价时 fail-fast 调用；generic 方案不接受非空配置。
@@ -100,6 +108,27 @@ func (GenericScheme) ValidateSchemeConfig(cfg json.RawMessage) error {
 		return gerror.New("通用计费方案不接受 scheme_config（仅特殊方案支持私有配置）")
 	}
 	return nil
+}
+
+// SettleTaskCost 通用引擎无素材计量语义：忽略 usage，回退预扣口径
+// （与 estimateTaskCost 的估算公式一致，结算保持「预扣即终价，token 重算另走 RecalculateByTokens」）。
+func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]any, _ *rcommon.TaskMaterialUsage) decimal.Decimal {
+	return g.EstimateTaskCost(pricing, ratios, nil)
+}
+
+// wrapSchemeCost 方案费用统一收口：应用 ratios 附加乘数 → minCost 钳制 → RoundMoney。
+// 预扣估算（estimateTaskCost）与结算重算（RecalculateByMaterials）共用，
+// 保证两个时点对同一方案的费用处理口径完全一致。
+func wrapSchemeCost(pricing *PricingResult, ratios map[string]any, cost decimal.Decimal) decimal.Decimal {
+	// 应用附加比率（video_input 折扣等）：只乘 float 乘数值，
+	// 跳过 duration/resolution（已在时长类分支消费）与 spec.*（规格事实值非乘数）
+	cost = applyRatioMultipliers(cost, ratios, "duration", "resolution")
+
+	minCost := NewFromFloat(0.01)
+	if cost.LessThan(minCost) {
+		cost = minCost
+	}
+	return RoundMoney(cost)
 }
 
 // EstimateTaskCost 通用引擎的任务预扣估算。计费口径按任务类型分流：

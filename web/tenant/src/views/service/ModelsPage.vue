@@ -217,7 +217,8 @@ function formatTokenRange(min: number, max: number | null): string {
 
 function hasPricing(m: ModelItem): boolean {
 	if (m.billing_mode === 'per_request' && m.per_request_price != null) return true
-	if (m.billing_mode === 'per_second' && m.per_second_prices && Object.keys(m.per_second_prices).length > 0) return true
+	// special（特殊计费）与 per_second 同走输出矩阵判定：矩阵是输出生成组件的参考单价
+	if ((m.billing_mode === 'per_second' || m.billing_mode === 'special') && m.per_second_prices && Object.keys(m.per_second_prices).length > 0) return true
 	if (m.billing_mode === 'token' && (m.input_price != null || m.output_price != null)) return true
 	if (m.billing_mode === 'tiered' && m.pricing_tiers?.length > 0) return true
 	return false
@@ -265,7 +266,7 @@ function timeWindow(tp: TimePriceItem): string {
 }
 
 function timePriceText(m: ModelItem, tp: TimePriceItem): string {
-	if (m.billing_mode === 'per_second') return `${formatPrice(tp.per_second_price ?? null)} /秒`
+	if (m.billing_mode === 'per_second' || m.billing_mode === 'special') return `${formatPrice(tp.per_second_price ?? null)} /秒`
 	if (m.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? null)} /次`
 	if (m.billing_mode === 'tiered') return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)} 起`
 	return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)}`
@@ -509,8 +510,9 @@ onMounted(fetchModels)
 								</div>
 							</template>
 
-							<!-- 按秒计费：分辨率 × 每秒单价矩阵 -->
-							<template v-else-if="m.billing_mode === 'per_second'">
+							<!-- 按秒/特殊计费：分辨率 × 每秒单价矩阵（special 的矩阵为输出生成组件参考单价，
+							     素材组件单价见模型详情的特殊计费说明） -->
+							<template v-else-if="m.billing_mode === 'per_second' || m.billing_mode === 'special'">
 								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
 									<span
 										v-for="([spec, price], idx) in perSecondEntries(m)"

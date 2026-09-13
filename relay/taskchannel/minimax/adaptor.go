@@ -129,18 +129,101 @@ func (a *Adaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, body [
 }
 
 // EstimateBilling 估算计费上下文。
-// 只写 spec.* 规格事实值（per_second 计费矩阵查价键），禁止附加 float 乘数键——
-// ratios 中所有 float64 值会被计费引擎 applyRatioMultipliers 连乘，混入非乘数键会改变费用。
+// 只写 spec.* 规格事实值（per_second 计费矩阵查价键 / 素材计费张数与输入视频存在性），
+// 禁止附加 float 乘数键——ratios 中所有 float64 值会被计费引擎 applyRatioMultipliers 连乘，
+// 混入非乘数键会改变费用（bool/字符串值不受影响，会被自动跳过）。
 // resolveDuration/resolveResolution 与 BuildRequestBody 共用，保证计费规格与实际生成规格一致。
+// spec.input_image_count 为提交可知的输入图片张数（素材计费预扣用；结算以官方 usage 为准）；
+// spec.has_input_video 标记提交含输入视频素材（时长未知，预扣按生成长度上限估，见 minimax-material 方案）。
 func (a *Adaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		req = nil
 	}
 	return map[string]any{
-		"spec.duration":   float64(resolveDuration(req)),
-		"spec.resolution": resolveResolution(req),
+		"spec.duration":          float64(resolveDuration(req)),
+		"spec.resolution":        resolveResolution(req),
+		"spec.input_image_count": float64(countInputImages(req)),
+		"spec.has_input_video":   hasInputVideo(req),
 	}
+}
+
+// countInputImages 统计提交请求中的输入图片张数（与 buildGenericContent 的素材归并同源）：
+// v2 原生形态数 content[] 的 image_url 项；通用形态数 images[] + metadata.image +
+// metadata.last_frame + metadata.content[] 的 image_url 项。图片张数不计音频/视频素材
+// （视频存在性另见 hasInputVideo，时长不可知由结算补）。
+func countInputImages(req map[string]any) int {
+	if req == nil {
+		return 0
+	}
+	// v2 原生形态
+	if content, ok := req["content"].([]any); ok {
+		count := 0
+		for _, item := range content {
+			if m, ok := item.(map[string]any); ok {
+				if t, _ := m["type"].(string); t == "image_url" {
+					count++
+				}
+			}
+		}
+		return count
+	}
+	// 通用形态：与 buildGenericContent 相同的归并口径
+	count := 0
+	if images, ok := req["images"].([]any); ok {
+		count += len(images)
+	}
+	metadata := taskchannel.ExtractMetadata(req)
+	if _, ok := metadata["image"].(string); ok {
+		count++
+	}
+	if _, ok := metadata["last_frame"].(string); ok {
+		count++
+	}
+	var meta struct {
+		Content []map[string]any `json:"content"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil {
+		for _, item := range meta.Content {
+			if t, _ := item["type"].(string); t == "image_url" {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// hasInputVideo 判断提交请求是否含输入视频素材（与 buildGenericContent 的素材归并同源）：
+// v2 原生形态查 content[] 的 video_url 项；通用形态查 metadata.content[] 的 video_url 项。
+// 视频以 URL 提交、时长提交时不可知，素材计费据此在预扣时按生成长度上限冻结（15s，见 minimax-material 方案）。
+func hasInputVideo(req map[string]any) bool {
+	if req == nil {
+		return false
+	}
+	// v2 原生形态
+	if content, ok := req["content"].([]any); ok {
+		for _, item := range content {
+			if m, ok := item.(map[string]any); ok {
+				if t, _ := m["type"].(string); t == "video_url" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	// 通用形态：metadata.content[] 透传项（多模态参考，与 countInputImages 同口径）
+	metadata := taskchannel.ExtractMetadata(req)
+	var meta struct {
+		Content []map[string]any `json:"content"`
+	}
+	if taskchannel.UnmarshalMetadata(metadata, &meta) == nil {
+		for _, item := range meta.Content {
+			if t, _ := item["type"].(string); t == "video_url" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *Adaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
@@ -473,6 +556,18 @@ func parseV2TaskResult(body []byte, task *VideoTask) (*common.TaskInfo, error) {
 		info.TotalTokens = task.Usage.TotalTokens
 		info.CompletionTokens = task.Usage.CompletionTokens
 		info.PromptTokens = task.Usage.PromptTokens
+	}
+
+	// 素材计量（input_seconds/output_seconds/input_image_count 等）：素材计费方案的结算依据。
+	// 官方 usage 携带任一按秒计量或图片张数字段即透出（全零不出，避免无素材任务占用结算链路）
+	if task.Usage != nil && (task.Usage.InputSeconds > 0 || task.Usage.OutputSeconds > 0 ||
+		task.Usage.InputImageCount > 0 || task.Usage.InputAudioSeconds > 0 || task.Usage.TotalSeconds > 0) {
+		info.MaterialUsage = &common.TaskMaterialUsage{
+			InputVideoSeconds: float64(task.Usage.InputSeconds),
+			InputImageCount:   task.Usage.InputImageCount,
+			InputAudioSeconds: float64(task.Usage.InputAudioSeconds),
+			OutputSeconds:     float64(task.Usage.OutputSeconds),
+		}
 	}
 
 	switch task.Status {

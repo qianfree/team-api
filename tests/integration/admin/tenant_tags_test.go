@@ -10,7 +10,7 @@ import (
 )
 
 // TestTenantTagsAndRemark 租户标签/备注管理：更新 → 列表/详情可读 → 标签筛选 → 清空。
-// 运行前置：服务已部署包含 000025 迁移（tnt_tenants.tags/remark 列）。
+// 运行前置：服务已部署包含 000021 迁移（tnt_tenants.tags/remark 列）。
 func TestTenantTagsAndRemark(t *testing.T) {
 	client := testinfra.GetAuthedClient(t)
 

@@ -126,12 +126,16 @@ const billingModeBadge: Record<string, string> = {
 	token: 'bg-gray-100 text-gray-800',
 	per_request: 'bg-blue-100 text-blue-800',
 	tiered: 'bg-indigo-100 text-indigo-800',
+	per_second: 'bg-emerald-100 text-emerald-800',
+	special: 'bg-amber-100 text-amber-800',
 }
 
 const billingModeLabel: Record<string, string> = {
 	token: '按量',
 	per_request: '按次',
 	tiered: '阶梯',
+	per_second: '按秒',
+	special: '特殊计费',
 }
 
 const billingSourceLabel: Record<string, string> = {

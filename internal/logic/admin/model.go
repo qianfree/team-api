@@ -730,8 +730,9 @@ func pricingItemsToInput(items []v1.PricingItem) []billing.PricingItemInput {
 // writePricingForModel 全量替换模型定价：单行写 billing_mode + pricing JSONB（每模型一行，
 // uk_mdl_pricing_model 唯一）。SetModelPricing 与模型导入共用；时段定价随后经
 // writeTimeSegmentsForModel 的 jsonb_set 并入 JSON 顶层；参数倍率规则随 blob 顶层写入。
-// scheme/schemeConfig 为计费方案声明与私有配置（导入路径恒传空——导出格式不含
-// 方案字段，特殊方案定价需在目标环境用方案编辑器手工配置）。
+// scheme/schemeConfig 为计费方案声明与私有配置：导入路径透传导出文件中的方案字段
+// （旧版导出文件无该字段=空串/nil，导入后为通用引擎定价）；两条路径均已在调用前
+// 完成 special ⇔ scheme 配对与 SchemeRegistered 校验。
 // 调用方需保证事务 ctx 传播。
 func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.PricingItem, paramRules []billing.ParamRule, scheme string, schemeConfig json.RawMessage) error {
 	blob, err := billing.BuildPricingBlob(pricingItemsToInput(items))
@@ -791,7 +792,7 @@ func buildOfficialBlob(items []v1.PricingItem, segments []v1.TimeSegmentItem, ru
 	}
 	input := pricingItemsToInput(items)
 	var blob *billing.PricingBlob
-	if len(input) > 0 && input[0].BillingMode == "per_second" && !perSecondMatrixHasPositivePrice(input[0].PerSecondPrices) {
+	if len(input) > 0 && (input[0].BillingMode == "per_second" || input[0].BillingMode == billing.BillingModeSpecial) && !perSecondMatrixHasPositivePrice(input[0].PerSecondPrices) {
 		blob = &billing.PricingBlob{}
 	} else {
 		blob, err = billing.BuildPricingBlob(input)
@@ -946,6 +947,19 @@ func (s *sAdmin) SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v
 	}
 	if err := billing.LookupScheme(req.Scheme).ValidateSchemeConfig(req.SchemeConfig); err != nil {
 		return nil, err
+	}
+
+	// billing_mode 与 scheme 双向配对（special ⇔ 方案声明）：裸 special 会落 generic
+	// 分发走 default 分支（错价口径不可预期），方案挂非 special 模式会造成展示标签
+	// 与计费口径错位（如显示「按秒」实为素材组合计费），两者都在保存时拦截
+	if len(req.Items) > 0 {
+		isSpecial := req.Items[0].BillingMode == billing.BillingModeSpecial
+		if isSpecial && req.Scheme == "" {
+			return nil, gerror.New("特殊计费模式（special）必须声明计费方案（scheme）")
+		}
+		if !isSpecial && req.Scheme != "" {
+			return nil, gerror.New("声明计费方案的模型必须使用特殊计费模式（billing_mode=special）")
+		}
 	}
 
 	// 先查模型编码，供事务提交后按模型清除所有租户的价格缓存

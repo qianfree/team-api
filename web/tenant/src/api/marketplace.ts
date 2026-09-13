@@ -11,6 +11,8 @@ export interface TimePriceItem {
   input_price?: number | null
   output_price?: number | null
   per_request_price?: number | null
+  /** 按秒/特殊计费的时段换算价（每秒基准价 × 时段乘数） */
+  per_second_price?: number | null
 }
 
 export interface MarketplaceModel {
@@ -28,6 +30,8 @@ export interface MarketplaceModel {
   per_request_price?: number
   cache_read_price?: number
   cache_creation_price?: number
+  /** 按秒/特殊计费的输出每秒单价矩阵（规格→单价，"*" 为兜底档） */
+  per_second_prices?: Record<string, number> | null
   discount_label?: string | null
   price_change_note?: string | null
   time_prices?: TimePriceItem[] | null

@@ -89,20 +89,58 @@ func TestValidateRequest(t *testing.T) {
 	}
 }
 
-// TestEstimateBilling_OnlySpecKeys 计费上下文只能包含 spec.* 两个键：
+// TestEstimateBilling_OnlySpecKeys 计费上下文只能包含 spec.* 四个键
+// （duration / resolution / input_image_count / has_input_video）：
 // ratios 里的 float64 值会被计费引擎连乘，混入非乘数键即资损向量。
 func TestEstimateBilling_OnlySpecKeys(t *testing.T) {
 	a := &Adaptor{}
 	ratios := a.EstimateBilling(context.Background(), nil, []byte(`{"model":"MiniMax-H3","prompt":"hi","seconds":"8","metadata":{"size":"2K"}}`))
 
-	if len(ratios) != 2 {
-		t.Fatalf("expected exactly 2 ratio keys, got %d: %v", len(ratios), ratios)
+	if len(ratios) != 4 {
+		t.Fatalf("expected exactly 4 ratio keys, got %d: %v", len(ratios), ratios)
 	}
 	if d, ok := ratios["spec.duration"].(float64); !ok || d != 8 {
 		t.Fatalf("spec.duration = %v (%T), want float64(8)", ratios["spec.duration"], ratios["spec.duration"])
 	}
 	if r := ratios["spec.resolution"]; r != "2K" {
 		t.Fatalf("spec.resolution = %v, want 2K", r)
+	}
+	// 无图请求张数为 0（float64，素材计费方案读）
+	if c, ok := ratios["spec.input_image_count"].(float64); !ok || c != 0 {
+		t.Fatalf("spec.input_image_count = %v (%T), want float64(0)", ratios["spec.input_image_count"], ratios["spec.input_image_count"])
+	}
+	// 无视频请求存在性为 false（bool，非乘数键安全）
+	if has, ok := ratios["spec.has_input_video"].(bool); !ok || has {
+		t.Fatalf("spec.has_input_video = %v (%T), want bool(false)", ratios["spec.has_input_video"], ratios["spec.has_input_video"])
+	}
+}
+
+// TestEstimateBilling_MaterialSignals 素材归并口径（与 buildGenericContent 同源）：
+// 图片张数：原生形态数 content[] 的 image_url 项；通用形态数 images[] + metadata.image/last_frame/content[]。
+// 输入视频存在性：原生形态查 content[] 的 video_url 项；通用形态查 metadata.content[]。
+func TestEstimateBilling_MaterialSignals(t *testing.T) {
+	a := &Adaptor{}
+
+	cases := []struct {
+		name      string
+		body      string
+		wantCount float64
+		wantVideo bool
+	}{
+		{"native content 2 images", `{"model":"MiniMax-H3","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"https://x/a.png"}},{"type":"image_url","image_url":{"url":"https://x/b.png"}}]}`, 2, false},
+		{"native content video", `{"model":"MiniMax-H3","content":[{"type":"text","text":"hi"},{"type":"video_url","video_url":{"url":"https://x/v.mp4"}}]}`, 0, true},
+		{"generic images + last_frame + content", `{"model":"MiniMax-H3","prompt":"hi","images":["https://x/a.png"],"metadata":{"last_frame":"https://x/b.png","content":[{"type":"image_url","image_url":{"url":"https://x/c.png"}},{"type":"video_url","video_url":{"url":"https://x/v.mp4"}}]}}`, 3, true},
+		{"metadata.image only", `{"model":"MiniMax-H3","prompt":"hi","metadata":{"image":"https://x/a.png"}}`, 1, false},
+		{"generic text only", `{"model":"MiniMax-H3","prompt":"hi"}`, 0, false},
+	}
+	for _, c := range cases {
+		ratios := a.EstimateBilling(context.Background(), nil, []byte(c.body))
+		if got := ratios["spec.input_image_count"].(float64); got != c.wantCount {
+			t.Errorf("%s: input_image_count = %v, want %v", c.name, got, c.wantCount)
+		}
+		if got := ratios["spec.has_input_video"].(bool); got != c.wantVideo {
+			t.Errorf("%s: has_input_video = %v, want %v", c.name, got, c.wantVideo)
+		}
 	}
 }
 
@@ -317,6 +355,29 @@ func TestParseTaskResult(t *testing.T) {
 	}
 	if info.ActualCost != 0 {
 		t.Fatalf("ActualCost must stay 0 (per_second 预扣即终价), got %v", info.ActualCost)
+	}
+
+	// 素材计量：官方 usage 携带按秒计量/图片张数时透出（素材计费方案的结算依据）
+	material := `{"task":{"id":"up-2","status":"succeeded","usage":{"input_seconds":8,"output_seconds":6,"input_image_count":8,"input_audio_seconds":12},"resolution":"768P"}}`
+	info, err = a.ParseTaskResult([]byte(material))
+	if err != nil {
+		t.Fatalf("parse material: %v", err)
+	}
+	if info.MaterialUsage == nil {
+		t.Fatal("MaterialUsage should be exported when usage carries material fields")
+	}
+	if info.MaterialUsage.InputVideoSeconds != 8 || info.MaterialUsage.OutputSeconds != 6 ||
+		info.MaterialUsage.InputImageCount != 8 || info.MaterialUsage.InputAudioSeconds != 12 {
+		t.Fatalf("material usage: %+v", info.MaterialUsage)
+	}
+
+	// 素材计量全零/缺失：不透出（generic 结算链不受影响）
+	info, err = a.ParseTaskResult([]byte(succeeded))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if info.MaterialUsage != nil {
+		t.Fatalf("token-only usage should not export MaterialUsage, got %+v", info.MaterialUsage)
 	}
 
 	statuses := map[string]struct {
