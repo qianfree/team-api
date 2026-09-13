@@ -22,6 +22,7 @@ import (
 	_ "github.com/qianfree/team-api/relay/taskchannel/gemini"
 	_ "github.com/qianfree/team-api/relay/taskchannel/kling"
 	"github.com/qianfree/team-api/relay/taskchannel/midjourney"
+	_ "github.com/qianfree/team-api/relay/taskchannel/minimax"
 	_ "github.com/qianfree/team-api/relay/taskchannel/sora"
 	_ "github.com/qianfree/team-api/relay/taskchannel/suno"
 	_ "github.com/qianfree/team-api/relay/taskchannel/volcengine"
@@ -329,9 +330,18 @@ func HandleTaskSubmit(
 	// 设置 TaskID 供外层审计使用
 	rc.TaskID = publicTaskID
 
-	// 11. 返回响应（OpenAI Videos 协议返回官方 Video 对象，legacy 保持原格式）
+	// 11. 返回响应（OpenAI Videos 协议返回官方 Video 对象；MiniMax 官方协议返回 {"task_id"}
+	//（v1 含 base_resp 信封）；legacy 保持原格式）
 	if rc.Protocol == videosProtocolOpenAI {
 		writeVideosSubmitResponse(rc.Writer, publicTaskID, modelName, now, rc.RequestEcho)
+		return
+	}
+	if rc.Protocol == minimaxVideoProtocol {
+		writeMiniMaxSubmitResponse(rc.Writer, publicTaskID)
+		return
+	}
+	if rc.Protocol == minimaxVideoV1Protocol {
+		writeMiniMaxV1SubmitResponse(rc.Writer, publicTaskID)
 		return
 	}
 	respBody := map[string]any{

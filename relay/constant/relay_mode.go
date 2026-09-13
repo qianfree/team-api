@@ -32,6 +32,7 @@ const (
 	RelayModeMjImage          // GET  /mj/image/:id
 	RelayModeResponsesCompact // POST /v1/responses/compact
 	RelayModeVideos           // OpenAI Videos 协议 /v1/videos（创建/查询/删除/内容下载）
+	RelayModeMiniMaxVideo     // MiniMax 官方协议 /v2/video_generation（H3 v2 提交/查询/删除）
 )
 
 // Path2RelayMode 根据请求路径判断 RelayMode
@@ -156,6 +157,8 @@ func (m RelayMode) String() string {
 		return "images_edits"
 	case RelayModeVideos:
 		return "videos"
+	case RelayModeMiniMaxVideo:
+		return "minimax_video"
 	case RelayModeMjSubmit:
 		return "mj_submit"
 	case RelayModeMjFetch:

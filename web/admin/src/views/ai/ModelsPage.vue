@@ -162,6 +162,7 @@ const pricingModeTagColor: Record<string, string> = {
   token: 'arcoblue',
   per_request: 'orangered',
   tiered: 'purple',
+  per_second: 'green',
 }
 
 // ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
@@ -177,18 +178,29 @@ function formatTokens(n: number | null | undefined): string {
   return String(n)
 }
 
-// 定价主文本：本位币 输入/输出、单价/次、未定价（bil 层定价直显）
+// 按秒模式基准单价：优先 "*" 兜底价，否则取矩阵最小正价（与定价弹窗 perSecondBasePrice 口径一致）
+function perSecondBasePrice(row: any): number {
+  const prices = Object.values(row.per_second_prices || {}).map((p) => Number(p) || 0).filter((p) => p > 0)
+  if (prices.length === 0) return 0
+  const wildcard = Number(row.per_second_prices?.['*']) || 0
+  return wildcard > 0 ? wildcard : Math.min(...prices)
+}
+
+// 定价主文本：本位币 输入/输出、单价/次、单价/秒、未定价（bil 层定价直显）
 function pricingMain(row: any): string {
   if (!row.pricing_mode) return '未定价'
   if (row.pricing_mode === 'per_request') {
     return `${formatBilling(row.per_request_price ?? 0, 4)}/次`
   }
+  if (row.pricing_mode === 'per_second') {
+    return `${formatBilling(perSecondBasePrice(row), 4)}/秒`
+  }
   return `${formatBilling(row.input_price ?? 0, 2)}/${formatBilling(row.output_price ?? 0, 2)}`
 }
 
-// 定价模式副文本：按量 / 按次 / 阶梯（未定价返回空串）
+// 定价模式副文本：按量 / 按次 / 阶梯 / 按秒（未定价返回空串）
 function pricingMode(row: any): string {
-  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
+  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒' }
   return row.pricing_mode ? (m[row.pricing_mode] || row.pricing_mode) : ''
 }
 
@@ -237,13 +249,16 @@ const columns: TableColumnData[] = [
       if (!record.pricing_mode) {
         return h(Tag, { color: 'orangered', size: 'small' }, () => '未定价')
       }
-      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
+      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒' }
       const tags = [
         h(Tag, { color: pricingModeTagColor[record.pricing_mode] || 'gray', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
       if (record.pricing_mode === 'per_request') {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(record.per_request_price ?? 0, 4)}/次`))
+      } else if (record.pricing_mode === 'per_second') {
+        tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
+          `${formatBilling(perSecondBasePrice(record), 4)}/秒`))
       } else {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(record.input_price ?? 0, 2)}/${formatBilling(record.output_price ?? 0, 2)}`))

@@ -344,10 +344,16 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		return
 	}
 
-	// 查询上游状态
+	// 查询上游状态（model 供供应商适配器按模型分派协议端点，如 MiniMax v1/v2；
+	// 其余适配器按结构体解析 taskData，自动忽略未知键）
+	upstreamModel := task.UpstreamModel
+	if upstreamModel == "" {
+		upstreamModel = task.ModelName
+	}
 	taskData, _ := json.Marshal(map[string]any{
 		"task_id":   pd.UpstreamTaskID,
 		"use_proxy": parseChannelUseProxy(channel.Settings),
+		"model":     upstreamModel,
 	})
 
 	resp, err := adaptor.FetchTask(channel.BaseURL, channel.ApiKey, taskData)

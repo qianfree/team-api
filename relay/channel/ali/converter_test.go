@@ -127,8 +127,8 @@ func TestConvertRequest_ThinkingBudgetStripping(t *testing.T) {
 // 不影响既有的 top_p 裁剪行为。
 func TestConvertRequest_TopPCappingRegression(t *testing.T) {
 	body := map[string]json.RawMessage{
-		"model":          json.RawMessage(`"qwen-plus"`),
-		"top_p":          json.RawMessage(`1.5`),
+		"model":           json.RawMessage(`"qwen-plus"`),
+		"top_p":           json.RawMessage(`1.5`),
 		"thinking_budget": json.RawMessage(`128`),
 	}
 	requestBody, _ := json.Marshal(body)

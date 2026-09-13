@@ -31,7 +31,9 @@ const duration = ref(5)
 
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
-const resolutionPresets = [
+// MiniMax-H3 系列使用官方分辨率档位（768P/2K，Max 追加 480P；与后端计费矩阵键一致），
+// 其他模型维持像素串词汇——档位词汇不能混入其他厂商（会产生非法 resolution）
+const pixelResolutionPresets = [
 	{ value: '854x480', label: '480p 横' },
 	{ value: '480x854', label: '480p 竖' },
 	{ value: '1280x720', label: '720p 横' },
@@ -40,37 +42,58 @@ const resolutionPresets = [
 	{ value: '1080x1920', label: '1080p 竖' },
 ]
 
+const isMiniMaxH3 = computed(() => selectedModel.value.toLowerCase().startsWith('minimax-h3'))
+
+const resolutionPresets = computed(() => {
+	if (isMiniMaxH3.value) {
+		const presets = [
+			{ value: '768P', label: '768P' },
+			{ value: '2K', label: '2K' },
+		]
+		if (selectedModel.value.toLowerCase().startsWith('minimax-h3-max')) {
+			presets.unshift({ value: '480P', label: '480P' })
+		}
+		return presets
+	}
+	return pixelResolutionPresets
+})
+
+// 模型切换后当前分辨率不在该模型预设内时重置（避免像素串打到 MiniMax 或档位词汇打到其他厂商）
+watch(resolutionPresets, presets => {
+	if (!presets.some(p => p.value === resolution.value)) {
+		resolution.value = presets[0]?.value || ''
+	}
+})
+
 interface TaskInfo {
 	id: string
+	// OpenAI Videos 协议状态机：queued / in_progress / completed / failed
 	status: string
 	progress: string
 	model: string
-	url?: string
 	error?: string
 	createdAt: number
 	completedAt?: number
 }
 const currentTask = ref<TaskInfo | null>(null)
 const polling = ref(false)
+// 成品视频地址：/v1/videos/{id}/content 需带 API Key 拉流，取回后转 blob URL 供播放/下载
+const videoUrl = ref('')
 // 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
 const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
 
 const statusLabel: Record<string, string> = {
-	SUBMITTED: '已提交',
-	IN_PROGRESS: '生成中',
-	NOT_START: '排队中',
-	QUEUED: '排队中',
-	SUCCESS: '已完成',
-	FAILURE: '失败',
+	queued: '排队中',
+	in_progress: '生成中',
+	completed: '已完成',
+	failed: '失败',
 }
 
 const statusColor: Record<string, string> = {
-	SUBMITTED: 'badge-primary',
-	IN_PROGRESS: 'badge-warning',
-	NOT_START: 'badge-gray',
-	QUEUED: 'badge-gray',
-	SUCCESS: 'badge-success',
-	FAILURE: 'badge-danger',
+	queued: 'badge-gray',
+	in_progress: 'badge-warning',
+	completed: 'badge-success',
+	failed: 'badge-danger',
 }
 
 function applyResolutionPreset(val: string) {
@@ -82,43 +105,43 @@ async function submitTask() {
 	submitting.value = true
 	currentTask.value = null
 	stopPolling()
+	releaseVideo()
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const metadata: Record<string, any> = {}
-		if (resolution.value) {
-			metadata.resolution = resolution.value
-		}
-		if (duration.value) {
-			metadata.duration = duration.value
-		}
+		// OpenAI Videos 协议：size 承载分辨率（像素串或命名档位如 768P/2K），seconds 承载时长
 		const body: Record<string, any> = {
 			model: selectedModel.value,
 			prompt: prompt.value,
 		}
-		if (Object.keys(metadata).length > 0) {
-			body.metadata = metadata
+		if (resolution.value) {
+			body.size = resolution.value
+		}
+		if (duration.value) {
+			body.seconds = String(duration.value)
 		}
 
-		const res = await api.post('/v1/video/generations', body, { timeout: 60_000 })
+		const res = await api.post('/v1/videos', body, { timeout: 60_000 })
 		const data = res.data
 
 		currentTask.value = {
 			id: data.id,
-			status: data.status || 'SUBMITTED',
+			status: data.status || 'queued',
 			progress: '',
 			model: data.model || selectedModel.value,
 			createdAt: data.created_at || Math.floor(Date.now() / 1000),
 		}
 
 		// 开始轮询
-		if (data.status !== 'SUCCESS' && data.status !== 'FAILURE') {
+		if (data.status !== 'completed' && data.status !== 'failed') {
 			startPolling()
+		} else if (data.status === 'completed') {
+			loadVideoContent()
 		}
 	} catch (e: any) {
 		currentTask.value = {
 			id: '',
-			status: 'FAILURE',
+			status: 'failed',
 			progress: '',
 			model: selectedModel.value,
 			error: e?.message || '提交失败',
@@ -144,20 +167,23 @@ async function pollLoop() {
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
-		const res = await api.get(`/v1/video/generations/${currentTask.value.id}`)
+		const res = await api.get(`/v1/videos/${currentTask.value.id}`)
 		const data = res.data
 
 		currentTask.value = {
 			...currentTask.value,
 			status: data.status,
-			progress: data.progress || '',
-			url: data.url || undefined,
-			error: data.error || undefined,
+			// OpenAI Videos 的 progress 是 0-100 整数，归一为百分比字符串供模板直用
+			progress: data.progress != null ? `${data.progress}%` : currentTask.value.progress,
+			error: data.error?.message || undefined,
 			completedAt: data.completed_at || undefined,
 		}
 
-		if (data.status === 'SUCCESS' || data.status === 'FAILURE') {
+		if (data.status === 'completed' || data.status === 'failed') {
 			stopPolling()
+			if (data.status === 'completed') {
+				loadVideoContent()
+			}
 			return
 		}
 	} catch {
@@ -165,21 +191,54 @@ async function pollLoop() {
 	}
 }
 
-// 组件卸载时停止轮询，避免路由离开后仍持续请求任务状态
+// loadVideoContent 拉取成品视频：content 端点要求 API Key 鉴权，浏览器无法直接用 URL 播放，
+// 取回二进制后转 blob URL 供 <video> 播放与下载
+async function loadVideoContent() {
+	if (!currentTask.value?.id || videoUrl.value) return
+	try {
+		const api = createPlaygroundApi(props.apiKey)
+		const res = await api.get(`/v1/videos/${currentTask.value.id}/content`, {
+			responseType: 'blob',
+			timeout: 300_000,
+		})
+		videoUrl.value = URL.createObjectURL(res.data)
+	} catch {
+		// 拉取失败不改变任务状态，下载按钮可重试（downloadVideo 内再次触发加载）
+		currentTask.value = {
+			...currentTask.value,
+			error: currentTask.value?.error || '视频加载失败，请点击下载重试',
+		}
+	}
+}
+
+// releaseVideo 释放 blob URL，避免内存泄漏
+function releaseVideo() {
+	if (videoUrl.value) {
+		URL.revokeObjectURL(videoUrl.value)
+		videoUrl.value = ''
+	}
+}
+
+// 组件卸载时停止轮询并释放资源，避免路由离开后仍持续请求任务状态
 onUnmounted(() => {
 	stopPolling()
+	releaseVideo()
 })
 
 function resetTask() {
 	stopPolling()
+	releaseVideo()
 	currentTask.value = null
 }
 
 function downloadVideo() {
-	if (!currentTask.value?.url) return
+	if (!videoUrl.value) {
+		loadVideoContent()
+		return
+	}
 	const a = document.createElement('a')
-	a.href = currentTask.value.url
-	a.download = `video_${currentTask.value.id || 'output'}.mp4`
+	a.href = videoUrl.value
+	a.download = `video_${currentTask.value?.id || 'output'}.mp4`
 	document.body.appendChild(a)
 	a.click()
 	document.body.removeChild(a)
@@ -221,7 +280,8 @@ function downloadVideo() {
 					</div>
 					<div>
 						<label class="input-label">时长（{{ duration }} 秒）</label>
-						<n-input-number v-model:value="duration" :min="5" :max="15" :step="1" class="w-full" />
+						<!-- min=4 覆盖 MiniMax-H3 的 4 秒档；其他模型档位由上游校验 -->
+						<n-input-number v-model:value="duration" :min="4" :max="15" :step="1" class="w-full" />
 					</div>
 					<button class="btn btn-primary w-full" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
 						{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}
@@ -266,7 +326,7 @@ function downloadVideo() {
 						</div>
 
 						<!-- 进度条 -->
-						<div v-if="currentTask.status === 'IN_PROGRESS' || currentTask.status === 'SUBMITTED'" class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+						<div v-if="currentTask.status === 'in_progress' || currentTask.status === 'queued'" class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
 							<div
 								class="h-full rounded-full bg-primary-500 transition-all duration-500"
 								:style="{ width: currentTask.progress || '10%' }"
@@ -274,16 +334,21 @@ function downloadVideo() {
 						</div>
 
 						<!-- 视频结果 -->
-						<div v-if="currentTask.status === 'SUCCESS' && currentTask.url" class="space-y-3">
-							<video controls class="w-full" :src="currentTask.url" />
+						<div v-if="currentTask.status === 'completed' && videoUrl" class="space-y-3">
+							<video controls class="w-full" :src="videoUrl" />
 							<button class="btn btn-secondary btn-sm" @click="downloadVideo">
 								<Icon name="arrowDown" size="sm" />
 								下载视频
 							</button>
 						</div>
+						<!-- 成品加载中（content 端点拉流转 blob） -->
+						<div v-else-if="currentTask.status === 'completed'" class="flex items-center justify-center py-10">
+							<div class="spinner h-6 w-6 text-primary-600"></div>
+							<span class="ml-3 text-sm text-gray-500">视频加载中...</span>
+						</div>
 
 						<!-- 错误信息 -->
-						<div v-if="currentTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
+						<div v-if="currentTask.status === 'failed'" class="rounded-xl border border-red-200 bg-red-50 p-4">
 							<div class="flex items-center gap-2 text-red-700">
 								<Icon name="xCircle" size="sm" />
 								<span class="text-sm font-medium">生成失败</span>

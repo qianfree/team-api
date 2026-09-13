@@ -120,12 +120,14 @@ func TestParseVideosCreateRequest_MultipartStringRef(t *testing.T) {
 	}
 }
 
-func TestBuildVideosTaskBody_FullMapping(t *testing.T) {
+// TestBuildVideosTaskBody_SizePassthrough size 只借协议字段形态、不做档位换算：
+// 原值进 metadata.size，不派生 aspect_ratio/ratio/resolution（值词汇由调用方按目标供应商原生口径提供）。
+func TestBuildVideosTaskBody_SizePassthrough(t *testing.T) {
 	req := &videosCreateRequest{
 		Model:          "kling-v2-master",
 		Prompt:         "a cat",
 		Seconds:        "8",
-		Size:           "1280x720",
+		Size:           "768P",
 		InputReference: "https://example.com/ref.png",
 	}
 	body, err := BuildVideosTaskBody(req)
@@ -151,15 +153,14 @@ func TestBuildVideosTaskBody_FullMapping(t *testing.T) {
 	if meta["duration"] != float64(8) {
 		t.Fatalf("expected metadata.duration 8, got %v", meta["duration"])
 	}
-	if meta["aspect_ratio"] != "16:9" || meta["resolution"] != "720p" {
-		t.Fatalf("expected 16:9/720p, got %v/%v", meta["aspect_ratio"], meta["resolution"])
-	}
-	// 双写：ratio 供 volcengine(seedance) 消费，images 数组供其图生视频读取
-	if meta["ratio"] != "16:9" {
-		t.Fatalf("expected ratio 16:9 for volcengine, got %v", meta["ratio"])
-	}
-	if meta["size"] != "1280x720" {
+	if meta["size"] != "768P" {
 		t.Fatalf("expected raw size passthrough, got %v", meta["size"])
+	}
+	// 不做换算：不从 size 派生任何其他参数键
+	for _, key := range []string{"aspect_ratio", "ratio", "resolution"} {
+		if _, has := meta[key]; has {
+			t.Fatalf("size must not derive %s: %s", key, body)
+		}
 	}
 	if meta["image"] != "https://example.com/ref.png" {
 		t.Fatalf("expected metadata.image, got %v", meta["image"])
@@ -202,6 +203,9 @@ func TestBuildVideosTaskBody_UnknownSizeNoRatio(t *testing.T) {
 	}
 	if _, ok := meta["ratio"]; ok {
 		t.Fatal("unknown size must not map ratio")
+	}
+	if _, ok := meta["resolution"]; ok {
+		t.Fatal("unknown size must not map resolution")
 	}
 	if meta["size"] != "1920x1080" {
 		t.Fatalf("expected raw size passthrough, got %v", meta["size"])
