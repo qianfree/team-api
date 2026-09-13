@@ -11,6 +11,7 @@ import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { formatBilling } from '@/composables/useCurrency'
+import { vendorOptions, vendorLabelMap, vendorTagColor, filterVendorOption } from '@/constants/vendor'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -23,6 +24,7 @@ const pagination = reactive({
 })
 
 const filterCategory = ref<string | null>(null)
+const filterVendor = ref<string | null>(null)
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
 const filterPricingStatus = ref<string | null>(null)
@@ -48,6 +50,8 @@ const categoryOptions = [
   { label: '重排', value: 'rerank' },
 ]
 
+const vendorFilterOptions = [{ label: '全部厂商', value: '' }, ...vendorOptions]
+
 const statusOptions = [
   { label: '全部状态', value: '' },
   { label: '启用', value: 'active' },
@@ -66,6 +70,7 @@ const form = reactive({
   model_id: '',
   model_name: '',
   category: 'chat',
+  vendor: '',
   max_context_tokens: null as number | null,
   max_output_tokens: null as number | null,
   capabilities: {} as Record<string, boolean>,
@@ -157,6 +162,8 @@ const pricingModeTagColor: Record<string, string> = {
   token: 'arcoblue',
   per_request: 'orangered',
   tiered: 'purple',
+  per_second: 'green',
+  special: 'orange',
 }
 
 // ===== 移动端卡片自定义布局用的格式化（仅用于卡片插槽，不改动桌面端列 render）=====
@@ -172,18 +179,30 @@ function formatTokens(n: number | null | undefined): string {
   return String(n)
 }
 
-// 定价主文本：本位币 输入/输出、单价/次、未定价（bil 层定价直显）
+// 按秒模式基准单价：优先 "*" 兜底价，否则取矩阵最小正价（与定价弹窗 perSecondBasePrice 口径一致）
+function perSecondBasePrice(row: any): number {
+  const prices = Object.values(row.per_second_prices || {}).map((p) => Number(p) || 0).filter((p) => p > 0)
+  if (prices.length === 0) return 0
+  const wildcard = Number(row.per_second_prices?.['*']) || 0
+  return wildcard > 0 ? wildcard : Math.min(...prices)
+}
+
+// 定价主文本：本位币 输入/输出、单价/次、单价/秒、未定价（bil 层定价直显）；
+// special（特殊计费）按输出生成组件的每秒基准价展示
 function pricingMain(row: any): string {
   if (!row.pricing_mode) return '未定价'
   if (row.pricing_mode === 'per_request') {
     return `${formatBilling(row.per_request_price ?? 0, 4)}/次`
   }
+  if (row.pricing_mode === 'per_second' || row.pricing_mode === 'special') {
+    return `${formatBilling(perSecondBasePrice(row), 4)}/秒`
+  }
   return `${formatBilling(row.input_price ?? 0, 2)}/${formatBilling(row.output_price ?? 0, 2)}`
 }
 
-// 定价模式副文本：按量 / 按次 / 阶梯（未定价返回空串）
+// 定价模式副文本：按量 / 按次 / 阶梯 / 按秒 / 特殊（未定价返回空串）
 function pricingMode(row: any): string {
-  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
+  const m: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费' }
   return row.pricing_mode ? (m[row.pricing_mode] || row.pricing_mode) : ''
 }
 
@@ -213,6 +232,15 @@ const columns: TableColumnData[] = [
       return h(Tag, { color: categoryTagColor[record.category], size: 'small' }, () => categoryTagLabel[record.category] || record.category)
     },
   },
+  {
+    title: '厂商',
+    dataIndex: 'vendor',
+    width: 100,
+    render({ record }) {
+      if (!record.vendor) return h('span', { style: 'color: var(--color-text-4);' }, '—')
+      return h(Tag, { color: vendorTagColor[record.vendor] || 'gray', size: 'small' }, () => vendorLabelMap[record.vendor] || record.vendor)
+    },
+  },
   { title: '上下文', dataIndex: 'max_context_tokens', width: 100 },
   { title: '输出上限', dataIndex: 'max_output_tokens', width: 100 },
   {
@@ -223,13 +251,16 @@ const columns: TableColumnData[] = [
       if (!record.pricing_mode) {
         return h(Tag, { color: 'orangered', size: 'small' }, () => '未定价')
       }
-      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯' }
+      const modeLabel: Record<string, string> = { token: '按量', per_request: '按次', tiered: '阶梯', per_second: '按秒', special: '特殊计费' }
       const tags = [
         h(Tag, { color: pricingModeTagColor[record.pricing_mode] || 'gray', size: 'small' }, () => modeLabel[record.pricing_mode] || record.pricing_mode),
       ]
       if (record.pricing_mode === 'per_request') {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(record.per_request_price ?? 0, 4)}/次`))
+      } else if (record.pricing_mode === 'per_second' || record.pricing_mode === 'special') {
+        tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
+          `${formatBilling(perSecondBasePrice(record), 4)}/秒`))
       } else {
         tags.push(h('span', { style: 'font-size: 12px; color: var(--color-text-3); margin-left: 4px;' },
           `${formatBilling(record.input_price ?? 0, 2)}/${formatBilling(record.output_price ?? 0, 2)}`))
@@ -313,6 +344,7 @@ async function fetchData() {
       page_size: pagination.pageSize,
     }
     if (filterCategory.value) params.category = filterCategory.value
+    if (filterVendor.value) params.vendor = filterVendor.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.search = filterSearch.value
     if (filterPricingStatus.value) params.pricing_status = filterPricingStatus.value
@@ -340,6 +372,7 @@ function openCreate() {
   form.model_id = ''
   form.model_name = ''
   form.category = 'chat'
+  form.vendor = ''
   form.max_context_tokens = null
   form.max_output_tokens = null
   form.capabilities = {}
@@ -358,6 +391,7 @@ function openEdit(row: any) {
   form.model_id = row.model_id
   form.model_name = row.model_name || ''
   form.category = row.category
+  form.vendor = row.vendor || ''
   form.max_context_tokens = row.max_context_tokens || null
   form.max_output_tokens = row.max_output_tokens || null
   form.capabilities = row.capabilities || {}
@@ -428,6 +462,7 @@ const { exporting, exportFile } = useExport({
   url: '/admin/models/export',
   getFilters: () => ({
     category: filterCategory.value,
+    vendor: filterVendor.value,
     status: filterStatus.value,
     search: filterSearch.value,
   }),
@@ -509,6 +544,15 @@ const importColumns: TableColumnData[] = [
     width: 80,
     render({ record }) {
       return h(Tag, { color: categoryTagColor[record.category], size: 'small' }, () => categoryTagLabel[record.category] || record.category)
+    },
+  },
+  {
+    title: '厂商',
+    dataIndex: 'vendor',
+    width: 90,
+    render({ record }) {
+      if (!record.vendor) return h('span', { style: 'color: var(--color-text-4);' }, '—')
+      return h(Tag, { color: vendorTagColor[record.vendor] || 'gray', size: 'small' }, () => vendorLabelMap[record.vendor] || record.vendor)
     },
   },
   {
@@ -677,6 +721,16 @@ function resetImport() {
           @change="handleFilter"
         />
         <ASelect
+          v-model="filterVendor"
+          :options="vendorFilterOptions"
+          placeholder="厂商"
+          allow-clear
+          allow-search
+          :filter-option="filterVendorOption"
+          style="width: 150px"
+          @change="handleFilter"
+        />
+        <ASelect
           v-model="filterStatus"
           :options="statusOptions"
           placeholder="状态"
@@ -710,7 +764,7 @@ function resetImport() {
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1500 }"
+        :scroll="{ x: 1600 }"
         :stripe="true"
         row-key="id"
         :row-selection="{ type: 'checkbox', showCheckedAll: true }"
@@ -814,6 +868,15 @@ function resetImport() {
             </AButton>
           </AFormItem>
         </div>
+        <AFormItem label="厂商">
+          <ASelect
+            v-model="form.vendor"
+            :options="[{ label: '未分类', value: '' }, ...vendorOptions]"
+            placeholder="选择研发厂商"
+            allow-search
+            :filter-option="filterVendorOption"
+          />
+        </AFormItem>
         <div style="display: flex; gap: 16px;">
           <AFormItem label="最大上下文" style="flex: 1;">
             <AInputNumber v-model="form.max_context_tokens" :min="0" placeholder="如 128000" class="w-full" />

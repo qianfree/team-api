@@ -31,7 +31,7 @@ const (
 )
 
 // walletHashKey 钱包 Redis hash key。
-// v2：balance / frozen_balance 以整数 micro-USD 存储；旧版 float key 随 TTL 过期。
+// v2：balance / frozen_balance / total_consumed 以整数 micro-USD 存储；旧版 float key 随 TTL 过期。
 //
 // 钱包 hash 是资金状态的【唯一实时权威】（Redis 权威化架构）：
 //   - 所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）全部通过 Lua 原子作用于它；
@@ -56,6 +56,7 @@ type WalletInfo struct {
 	TenantID           int64
 	Balance            float64
 	FrozenBalance      float64
+	TotalConsumed      float64
 	WarningThreshold   float64
 	Currency           string
 	LowBalanceNotified bool
@@ -101,7 +102,7 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 		return nil, err
 	}
 
-	balance, frozen, err := getWalletRedisState(ctx, tenantID)
+	balance, frozen, totalConsumed, err := getWalletRedisState(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,44 +112,51 @@ func GetWallet(ctx context.Context, tenantID int64) (*WalletInfo, error) {
 		TenantID:           tenantID,
 		Balance:            balance,
 		FrozenBalance:      frozen,
+		TotalConsumed:      totalConsumed,
 		WarningThreshold:   static.WarningThreshold,
 		Currency:           static.Currency,
 		LowBalanceNotified: static.LowBalanceNotified,
 	}, nil
 }
 
-// getWalletRedisState 读取 Redis 权威余额/冻结（USD float）。hash 缺失时先灾难恢复重建。
-func getWalletRedisState(ctx context.Context, tenantID int64) (balance, frozen float64, err error) {
-	balanceMicro, frozenMicro, exists, err := readWalletHash(ctx, tenantID)
+// getWalletRedisState 读取 Redis 权威余额/冻结/累计消费（USD float）。hash 缺失时先灾难恢复重建。
+func getWalletRedisState(ctx context.Context, tenantID int64) (balance, frozen, totalConsumed float64, err error) {
+	balanceMicro, frozenMicro, consumedMicro, _, exists, err := readWalletHash(ctx, tenantID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if !exists {
 		if err = rebuildWalletFromDB(ctx, tenantID); err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
-		balanceMicro, frozenMicro, _, err = readWalletHash(ctx, tenantID)
+		balanceMicro, frozenMicro, consumedMicro, _, _, err = readWalletHash(ctx, tenantID)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 	}
-	return InexactFloat64(FromMicro(balanceMicro)), InexactFloat64(FromMicro(frozenMicro)), nil
+	return InexactFloat64(FromMicro(balanceMicro)), InexactFloat64(FromMicro(frozenMicro)), InexactFloat64(FromMicro(consumedMicro)), nil
 }
 
-// readWalletHash 读取钱包 hash 的 balance/frozen_balance（micro-USD）。
+// readWalletHash 读取钱包 hash 的 balance/frozen_balance/total_consumed（micro-USD）。
 // exists=false 表示 hash 不存在（灾难恢复场景）。
-func readWalletHash(ctx context.Context, tenantID int64) (balanceMicro, frozenMicro int64, exists bool, err error) {
+// hasConsumed=false 表示 hash 存在但缺 total_consumed 字段（部署前的老 hash / 灾后仅含
+// balance 的重建 hash），调用方（物化器）据此从 DB 补种历史基线，避免计数从 0 起算丢历史。
+func readWalletHash(ctx context.Context, tenantID int64) (balanceMicro, frozenMicro, consumedMicro int64, hasConsumed, exists bool, err error) {
 	res, err := g.Redis().Do(ctx, "HGETALL", walletHashKey(tenantID))
 	if err != nil {
-		return 0, 0, false, gerror.Wrapf(err, "read wallet hash")
+		return 0, 0, 0, false, false, gerror.Wrapf(err, "read wallet hash")
 	}
 	if res.IsNil() || res.IsEmpty() {
-		return 0, 0, false, nil
+		return 0, 0, 0, false, false, nil
 	}
 	m := res.Map()
 	balanceMicro = gconv.Int64(m["balance"])
 	frozenMicro = gconv.Int64(m["frozen_balance"])
-	return balanceMicro, frozenMicro, true, nil
+	if raw, ok := m["total_consumed"]; ok {
+		consumedMicro = gconv.Int64(raw)
+		hasConsumed = true
+	}
+	return balanceMicro, frozenMicro, consumedMicro, hasConsumed, true, nil
 }
 
 // rebuildWalletFromDB 灾难恢复：钱包 hash 缺失时从 DB 物化值重建。
@@ -174,11 +182,12 @@ func doRebuildWalletFromDB(ctx context.Context, tenantID int64) error {
 	}
 
 	var w *struct {
-		Balance decimal.Decimal `json:"balance"`
+		Balance       decimal.Decimal `json:"balance"`
+		TotalConsumed decimal.Decimal `json:"total_consumed"`
 	}
 	err = dao.BilWallets.Ctx(ctx).
 		Where("tenant_id", tenantID).
-		Fields("balance").
+		Fields("balance, total_consumed").
 		Scan(&w)
 	if err != nil {
 		return gerror.Wrapf(err, "rebuild wallet: query db")
@@ -190,18 +199,19 @@ func doRebuildWalletFromDB(ctx context.Context, tenantID int64) error {
 	// 幸存预扣明细重算 frozen（不取 DB frozen_balance：其中可能含已丢失预扣的残留）
 	frozenMicro := sumSurvivingPrededucts(ctx, tenantID)
 
-	// 「检查不存在 + 写入」原子完成，避免并发重建互相覆盖
+	// 「检查不存在 + 写入」原子完成，避免并发重建互相覆盖。
+	// total_consumed 从 DB 物化副本恢复历史基线（丢失的只是物化间隔内的增量，与余额同类风险）
 	rebuildLua := `
 local key = KEYS[1]
 if redis.call("EXISTS", key) == 1 then
     return 0
 end
-redis.call("HSET", key, "balance", ARGV[1], "frozen_balance", ARGV[2], "ver", 0)
-redis.call("SADD", "wallet_dirty_tenants", ARGV[3])
+redis.call("HSET", key, "balance", ARGV[1], "frozen_balance", ARGV[2], "total_consumed", ARGV[3], "ver", 0)
+redis.call("SADD", "wallet_dirty_tenants", ARGV[4])
 return 1
 `
 	ret, err := g.Redis().Do(ctx, "EVAL", rebuildLua, 1, walletRedisKey,
-		ToMicro(w.Balance), frozenMicro, tenantID)
+		ToMicro(w.Balance), frozenMicro, ToMicro(w.TotalConsumed), tenantID)
 	if err != nil {
 		return gerror.Wrapf(err, "rebuild wallet: redis")
 	}
@@ -421,6 +431,8 @@ func UnfreezePreDeduct(ctx context.Context, tenantID int64, requestID string) (d
 // 返回值：{claimed_micro, balance_after_micro, frozen_after_micro}
 // 预扣 hash 不存在（已释放/过期/丢失）时按 claimed=0 处理：只扣 balance 不动 frozen，
 // 与既有「track 丢失只扣 balance」语义一致（调用方据此打告警）。
+// total_consumed 与扣款同一原子递增（累计消费唯一正向变动点；字段缺失按 0 起算——
+// 正常路径由 boot 种子/灾备重建/物化器自愈三层机制保证字段已含历史基线）。
 const settleClaimLua = `
 local wallet_key = KEYS[1]
 local cost = tonumber(ARGV[1])
@@ -444,6 +456,7 @@ if frozen < 0 then
     frozen = 0
 end
 local balance = tonumber(redis.call("HINCRBY", wallet_key, "balance", -cost))
+redis.call("HINCRBY", wallet_key, "total_consumed", cost)
 redis.call("HINCRBY", wallet_key, "ver", 1)
 redis.call("SADD", "wallet_dirty_tenants", tenant_id)
 return {claimed, balance, frozen}
@@ -502,7 +515,8 @@ redis.call("SADD", "wallet_dirty_tenants", ARGV[2])
 return {balance, frozen}
 `
 
-// CreditWalletRedis 钱包加款（Redis 提交点）：充值/兑换/人工充值/结算补偿逆转等场景。
+// CreditWalletRedis 钱包加款（Redis 提交点）：充值/兑换/人工充值/调账等场景。
+// 注意：结算补偿逆转走 ReverseConsumeRedis（需同步回退累计消费），不得用本函数。
 // 返回加款后余额与当前冻结快照（供流水 balance_after/frozen_after）。
 // hash 缺失时 HINCRBY 会新建仅含 balance 的 hash——仅应发生在「新租户首充」等合法场景；
 // 其他场景说明发生了灾难丢失，由后续 rebuild/物化流程收敛。
@@ -535,6 +549,32 @@ func DebitWalletRedis(ctx context.Context, tenantID int64, amount decimal.Decima
 		return Zero, Zero, false, nil
 	}
 	return FromMicro(vals[0]), FromMicro(vals[1]), true, nil
+}
+
+// 结算补偿逆转 Lua：balance 与 total_consumed 同一原子回退。
+// 专用场景：executeSettlement 第 c 步（记流水）失败时逆转扣款——本单最终免费，不构成消费，
+// 累计消费必须与余额同步回退，防止只逆转余额导致计数虚增。
+// 不复用 creditWalletLua：那是充值/调账通用入口，不感知累计消费计数（充值不得动计数）。
+// KEYS[1] = wallet:v2:{tenant_id}
+// ARGV[1] = cost_micro（正数）
+// ARGV[2] = tenant_id
+const reverseConsumeLua = `
+redis.call("HINCRBY", KEYS[1], "balance", ARGV[1])
+redis.call("HINCRBY", KEYS[1], "total_consumed", -tonumber(ARGV[1]))
+redis.call("HINCRBY", KEYS[1], "ver", 1)
+redis.call("SADD", "wallet_dirty_tenants", ARGV[2])
+return 1
+`
+
+// ReverseConsumeRedis 结算补偿逆转（executeSettlement 记流水失败时调用）：
+// 余额与累计消费在同一 Lua 内原子回退。失败由调用方记 Error 日志告警人工对账。
+func ReverseConsumeRedis(ctx context.Context, tenantID int64, cost decimal.Decimal) error {
+	_, err := g.Redis().Do(ctx, "EVAL", reverseConsumeLua, 1,
+		walletHashKey(tenantID), ToMicro(cost), tenantID)
+	if err != nil {
+		return gerror.Wrapf(err, "reverse consume: redis")
+	}
+	return nil
 }
 
 // InvalidateWalletStaticCache 清除钱包静态字段缓存（预警阈值、低余额标记等低频字段变更后调用）。

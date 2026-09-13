@@ -404,6 +404,7 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		AudioOutputTokens: record.AudioOutputTokens,
 		ImageOutputTokens: record.ImageOutputTokens,
 		ReasoningTokens:   record.ReasoningTokens,
+		DurationSeconds:   record.DurationSeconds,
 
 		RequestedModel: sanitizeUTF8(record.RequestedModel),
 		UpstreamModel:  sanitizeUTF8(record.UpstreamModel),

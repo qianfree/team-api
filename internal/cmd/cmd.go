@@ -157,6 +157,10 @@ var (
 			// relay 层运行时配置注入（全局超时兜底/系统代理；渠道级 settings 仍优先）
 			syncGlobalRelaySettings(ctx)
 
+			// 累计消费基线种子：为存量钱包 hash 补种 total_consumed 历史基线（幂等），
+			// 必须在 relay 流量进入前完成，防止结算 HINCRBY 从 0 起算丢历史
+			billing.SeedWalletTotalConsumed(ctx)
+
 			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
 			billing.StartWalletMaterializer(ctx)
 
@@ -539,6 +543,11 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/moderations", relay.HandleModerations)
 		group.POST("/images/edits", relay.HandleImagesEdits)
 		group.GET("/realtime", relay.HandleRealtime)
+		// OpenAI Videos 协议端点（官方 SDK 兼容，对接第三方视频模型）
+		group.POST("/videos", relay.HandleVideoCreate)
+		group.GET("/videos/{video_id}", relay.HandleVideoRetrieve)
+		group.GET("/videos/{video_id}/content", relay.HandleVideoContent)
+		group.DELETE("/videos/{video_id}", relay.HandleVideoDelete)
 	})
 
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）
@@ -569,6 +578,22 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/submit/{action}", relay.HandleTaskSubmit)
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
+	})
+
+	// MiniMax 官方视频协议端点（H3 v2，官方 SDK 换 base_url 直连；协议文档 docs/modeldocs/minimax/video/）
+	server.Group("/v2", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoSubmit)
+		group.GET("/query/video_generation/{task_id}", relay.HandleMiniMaxVideoRetrieve)
+		group.DELETE("/video_generation/{task_id}", relay.HandleMiniMaxVideoCancel)
+	})
+
+	// MiniMax 官方视频协议端点（Hailuo 系列 v1，扁平字段协议；查询走 query 参数，
+	// 成品经 files/retrieve 二跳由网关轮询时代取，官方无取消/删除端点）
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoV1Submit)
+		group.GET("/query/video_generation", relay.HandleMiniMaxVideoV1Retrieve)
 	})
 }
 

@@ -159,12 +159,16 @@ const billingModeLabel: Record<string, string> = {
 	token: '按量',
 	per_request: '按次',
 	tiered: '阶梯',
+	per_second: '按秒',
+	special: '特殊计费',
 }
 
 const billingModeColor: Record<string, string> = {
 	token: 'gray',
 	per_request: 'blue',
 	tiered: 'arcoblue',
+	per_second: 'green',
+	special: 'orange',
 }
 
 const billingSourceLabel: Record<string, string> = {
@@ -173,6 +177,7 @@ const billingSourceLabel: Record<string, string> = {
 	tenant: '租户定价',
 	custom: '自定义',
 	plan: '套餐价',
+	task: '异步任务',
 }
 
 const detailVisible = ref(false)
@@ -260,6 +265,31 @@ const tokenCostLabels: Record<string, string> = {
 	cache_creation: '缓存创建',
 	cache_creation_5m: '缓存创建(5分钟)',
 	cache_creation_1h: '缓存创建(1小时)',
+}
+
+// 快照计费模式是否为 token 语义（token/tiered 展示每 1M 单价行；
+// per_request/per_second/special 的输入输出价恒 0，展示会误导）
+function snapshotIsTokenPricing(sp: any): boolean {
+	const mode = sp?.pricing?.billing_mode
+	return mode === 'token' || mode === 'tiered' || !mode
+}
+
+// 快照按秒矩阵 → 排序后的规格列表（数字序，"*" 兜底档排最后；仅 per_second/special 携带）
+function snapshotPerSecondEntries(sp: any): Array<[string, number]> {
+	const prices = sp?.pricing?.per_second_prices
+	if (!prices) return []
+	return Object.entries(prices)
+		.filter(([, v]) => Number(v) > 0)
+		.sort(([a], [b]) => {
+			if (a === '*') return 1
+			if (b === '*') return -1
+			return a.localeCompare(b, undefined, { numeric: true })
+		})
+}
+
+// 快照是否有 token 费用明细（视频等按秒/特殊任务 token 恒 0，隐藏空块）
+function snapshotHasTokenCosts(sp: any): boolean {
+	return Object.values(sp?.token_costs || {}).some((tc: any) => (tc?.tokens || 0) > 0)
 }
 
 // 消费明细小票行：divider=true 渲染分隔线，strong=true 渲染小计行，total=true 渲染合计行
@@ -389,7 +419,7 @@ const columns: TableColumnData[] = [
 				h(Tag, { color: requestTypeColor[record.request_type], size: 'small' }, () => requestTypeLabel[record.request_type] || '-'),
 			]
 			if (record.billing_mode) {
-				tags.push(h(Tag, { color: billingModeColor[record.billing_mode], size: 'small' }, () => billingModeLabel[record.billing_mode]))
+				tags.push(h(Tag, { color: billingModeColor[record.billing_mode], size: 'small' }, () => billingModeLabel[record.billing_mode] || record.billing_mode))
 			}
 			return h(Space, { size: 4 }, () => tags)
 		},
@@ -952,20 +982,43 @@ const { exporting, exportFile } = useExport({
 								<div class="snapshot-block-title">定价信息</div>
 								<div class="snapshot-block-body">
 									<div class="snapshot-row">
-										<span class="snapshot-label">基础输入价</span>
-										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_input_price || 0, 6) }}/1M</span>
+										<span class="snapshot-label">计费模式</span>
+										<span class="snapshot-value">{{ billingModeLabel[snapshot.pricing.billing_mode] || snapshot.pricing.billing_mode || '-' }}</span>
 									</div>
-									<div class="snapshot-row">
-										<span class="snapshot-label">基础输出价</span>
-										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_output_price || 0, 6) }}/1M</span>
+									<div v-if="snapshot.pricing.scheme" class="snapshot-row">
+										<span class="snapshot-label">计费方案</span>
+										<span class="snapshot-value">{{ snapshot.pricing.scheme }}</span>
 									</div>
-									<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
-										<span class="snapshot-label">实际输入价</span>
-										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_input_price || 0, 6) }}/1M</span>
-									</div>
-									<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
-										<span class="snapshot-label">实际输出价</span>
-										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_output_price || 0, 6) }}/1M</span>
+									<!-- token 语义模式：每 1M 单价行（per_request/per_second/special 的输入输出价恒 0，不展示） -->
+									<template v-if="snapshotIsTokenPricing(snapshot)">
+										<div class="snapshot-row">
+											<span class="snapshot-label">基础输入价</span>
+											<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_input_price || 0, 6) }}/1M</span>
+										</div>
+										<div class="snapshot-row">
+											<span class="snapshot-label">基础输出价</span>
+											<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_output_price || 0, 6) }}/1M</span>
+										</div>
+										<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
+											<span class="snapshot-label">实际输入价</span>
+											<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_input_price || 0, 6) }}/1M</span>
+										</div>
+										<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
+											<span class="snapshot-label">实际输出价</span>
+											<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_output_price || 0, 6) }}/1M</span>
+										</div>
+									</template>
+									<!-- 按秒/特殊计费：输出每秒单价矩阵（special 的矩阵为输出生成组件单价） -->
+									<template v-else-if="snapshotPerSecondEntries(snapshot).length > 0">
+										<div v-for="([spec, price], idx) in snapshotPerSecondEntries(snapshot)" :key="idx" class="snapshot-row">
+											<span class="snapshot-label">{{ spec === '*' ? '其他规格' : spec }} / 秒</span>
+											<span class="snapshot-value">{{ formatBilling(price, 6) }}</span>
+										</div>
+									</template>
+									<!-- 按次计费：单价存 effective_input_price（与摘要口径一致） -->
+									<div v-else-if="snapshot.pricing.billing_mode === 'per_request' && snapshot.pricing.effective_input_price > 0" class="snapshot-row">
+										<span class="snapshot-label">按次单价</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.effective_input_price, 6) }}/次</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存创建单价</span>
@@ -998,7 +1051,7 @@ const { exporting, exportFile } = useExport({
 								</div>
 							</div>
 
-							<div v-if="snapshot.token_costs" class="snapshot-block snapshot-block-full">
+							<div v-if="snapshotHasTokenCosts(snapshot)" class="snapshot-block snapshot-block-full">
 								<div class="snapshot-block-title">Token 费用计算</div>
 								<div class="snapshot-block-body">
 									<template v-for="(tc, key) in snapshot.token_costs" :key="key">

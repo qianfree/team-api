@@ -69,7 +69,7 @@
 | 10003 | `CodeChannelUnavailable` | 没有可用的渠道 |
 | ... | 更多见 `consts.go` | ... |
 
-## 大模型代理接口格式（`/v1/*`、`/v1beta/*`、`/suno/*`）
+## 大模型代理接口格式（`/v1/*`、`/v1beta/*`、`/v2/*`、`/suno/*`）
 
 ### 已注册的代理端点
 
@@ -92,12 +92,65 @@
 | GET | `/v1/realtime` | 实时对话（WebSocket） | OpenAI | WebSocket |
 | POST | `/v1/video/generations` | 视频生成（异步任务） | 自定义 | 否 |
 | GET | `/v1/video/generations/{task_id}` | 视频生成任务查询 | — | 否 |
+| POST | `/v1/videos` | OpenAI Videos 视频生成（multipart/JSON） | OpenAI | 否 |
+| GET | `/v1/videos/{video_id}` | OpenAI Videos 任务查询 | — | 否 |
+| GET | `/v1/videos/{video_id}/content` | OpenAI Videos 成品下载 | — | 否 |
+| DELETE | `/v1/videos/{video_id}` | OpenAI Videos 任务删除（终态软删） | — | 否 |
 | GET | `/v1beta/models` | Gemini 模型列表 | Gemini | 否 |
 | GET | `/v1beta/models/{model}` | Gemini 模型详情 | Gemini | 否 |
 | POST | `/v1beta/models/{model}` | Gemini 内容生成 | Gemini | SSE |
 | POST | `/suno/submit/{action}` | Suno 音乐生成提交 | 自定义 | 否 |
 | POST | `/suno/fetch` | Suno 批量查询 | 自定义 | 否 |
 | GET | `/suno/fetch/{task_id}` | Suno 任务查询 | — | 否 |
+| POST | `/v2/video_generation` | MiniMax H3 视频生成（官方协议 v2） | MiniMax | 否 |
+| GET | `/v2/query/video_generation/{task_id}` | MiniMax H3 任务查询（v2） | — | 否 |
+| DELETE | `/v2/video_generation/{task_id}` | MiniMax H3 任务取消（仅排队中，v2） | — | 否 |
+| POST | `/v1/video_generation` | MiniMax Hailuo 视频生成（官方协议 v1，四形态共用） | MiniMax | 否 |
+| GET | `/v1/query/video_generation?task_id=` | MiniMax Hailuo 任务查询（v1，query 参数） | — | 否 |
+
+### MiniMax 官方视频协议（`/v2/*`，MiniMax-H3/H3-Max）
+
+对 MiniMax v2 视频协议的原生接入：官方 SDK 把 base_url 指向网关即可直连。协议规格见 `docs/modeldocs/minimax/video/`。
+
+**提交** `POST /v2/video_generation`（Bearer 平台 API Key）：
+
+```json
+{
+  "model": "MiniMax-H3",
+  "content": [{ "type": "text", "text": "海浪拍打礁石，慢镜头。" }],
+  "resolution": "768P",
+  "duration": 6,
+  "ratio": "16:9"
+}
+```
+
+- `model` / `content`（含非空 text 项）/ `resolution` / `duration` 四项必填；`ratio` 文生视频时必填（不能为 `adaptive`）
+- `callback_url` **会被剥离**：网关按自身任务体系轮询计费，上游回调携带的上游 task_id 与网关公开 ID 不互通
+- 提交响应为官方形态：`{"task_id": "task_xxx"}`（网关公开任务 ID，非上游 ID）
+
+**查询** `GET /v2/query/video_generation/{task_id}` → `{"task": {官方 VideoTask}}`：
+状态机 `queued/running/succeeded/failed`（上游取消的任务回放为 `failed`）。`content.url` 为上游限时直链；
+`usage/resolution/duration/ratio` 从最近一次上游查询响应回放，任务提交后首拍轮询前（≤15s）可能缺失。
+
+**取消** `DELETE /v2/video_generation/{task_id}`：仅支持取消**排队中**（queued）的任务，取消结果以远程返回为准——
+网关调用上游 DELETE，上游确认 `action=cancelled` 才向客户端返回成功
+（`{"task_id": "...", "action": "cancelled", "status": "cancelled"}`）；上游拒绝时（如任务已进入 running）
+原样透传上游错误。**不支持删除任务记录**（终态任务不可删，软删也不做，任务数据保留用于计费与审计；错误码 `task_not_cancellable`）。
+取消确认后本地状态由轮询循环在下一拍（≤15s）对账收敛为 failed，预扣随之退款。
+
+错误响应为 OpenAI 风格 OaiError（`{"error": {"type": "...", "message": "..."}}`），与官方 v2 一致。
+
+**OpenAI 协议互通**：同一渠道下 `POST /v1/videos`（OpenAI Videos 协议）与 `POST /v1/video/generations`（通用任务体）可直接调用 MiniMax 视频模型（H3 与 Hailuo 系列按模型自动分派 v2/v1 上游协议）。`size` 只借 OpenAI 协议的字段形态、**值原样透传不换算**——请直接传目标供应商的原生分辨率词汇（H3：`768P`/`2K`/`480P`；Hailuo 2.x：`768P`/`1080P`）；非官方档位值会原样送达上游（上游 400 则任务提交失败、预扣全额退款）。时长取 `seconds`/`duration`/`metadata.duration`（缺省 6 秒），`input_reference`/`images[0]` 作为首帧图（v1 转为 `first_frame_image`），纯文生视频时 v2 ratio 默认 `16:9`。
+
+### MiniMax 官方视频协议 v1（`/v1/video_generation`，Hailuo 系列）
+
+Hailuo 2.x 及旧型号（T2V/I2V/S2V-01，传入即转发不拦截）走 v1 扁平字段协议：
+
+- **提交** `POST /v1/video_generation`：文生（`prompt` 必填）/ 图生（`first_frame_image` 必填，支持 URL 或 data URI）/ 首尾帧（`last_frame_image`，仅 Hailuo-02）/ 主体参考（`subject_reference`，S2V-01）四形态共用；`duration`（默认 6，768P 支持 10）/`resolution`（Hailuo 2.x 默认 `768P`，旧型号默认 `720P`）可选；`prompt_optimizer`/`fast_pretreatment`/`aigc_watermark` 透传；`callback_url` 剥离。响应为官方 `{task_id, base_resp}` 形态（task_id 为网关公开 ID）
+- **查询** `GET /v1/query/video_generation?task_id=`：官方 `{task_id, status, file_id, video_width, video_height, base_resp}` 形态，状态机 `Preparing/Queueing/Processing/Success/Fail`；**增补字段** `download_url`（网关轮询时经官方 files/retrieve 二跳解析的限时直链，官方查询响应无此字段）与 `error`（失败原因）
+- **成品二跳由网关代取**：官方流程「file_id → GET /v1/files/retrieve → download_url」在轮询时链式完成，`download_url` 落任务记录并回放到查询响应；不暴露 files/retrieve 代理端点
+- **取消/删除**：v1 上游无此能力，端点不提供（v2 的 DELETE 端点对 v1 任务返回 400）
+- v1 无 usage 返回，计费按请求规格（per_second 矩阵 × 时长），与 v2 口径一致
 
 ### OpenAI 格式端点响应
 

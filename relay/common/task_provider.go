@@ -25,6 +25,10 @@ type TaskDataProvider interface {
 	// GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询（客户端查询）
 	GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64, tenantID int64) (*AsyncTask, error)
 
+	// SoftDeleteTask 软删除任务（DELETE /v1/videos/{id}）：置 deleted 标记，
+	// 计费与审计记录保留，后续客户端查询按不存在处理
+	SoftDeleteTask(ctx context.Context, task *AsyncTask) error
+
 	// GetNonTerminalTasks 获取所有非终态任务（轮询用）
 	GetNonTerminalTasks(ctx context.Context, limit int) ([]*AsyncTask, error)
 
@@ -74,6 +78,10 @@ type AsyncTask struct {
 	FinishTime *time.Time `json:"finish_time,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+
+	// 软删除标记（DELETE /v1/videos/{id}）：true 后客户端查询/下载按 404 处理
+	Deleted   bool       `json:"deleted,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // ChannelBasicInfo 渠道基本信息（轮询时查询）

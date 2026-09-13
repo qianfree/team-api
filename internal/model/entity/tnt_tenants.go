@@ -29,4 +29,6 @@ type TntTenants struct {
 	DefaultChannelScope string      `json:"default_channel_scope" orm:"default_channel_scope" description:"默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）"`                                                                     // 默认渠道范围（NULL或[]表示全部可用，否则为channel_id数组）
 	Level               int         `json:"level"                 orm:"level"                 description:"当前等级（对应 tnt_tenant_level_configs.level）"`                                                                   // 当前等级（对应 tnt_tenant_level_configs.level）
 	TeamEnabled         bool        `json:"team_enabled"          orm:"team_enabled"          description:"团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）"`                                                          // 团队功能是否启用：false=个人模式（默认），true=已激活团队（成员/RAM/邀请/额度）
+	Tags                string      `json:"tags"                  orm:"tags"                  description:"租户标签（JSONB 字符串数组，管理后台运营标注，不暴露给租户控制台）"`                                                                      // 租户标签（JSONB 字符串数组，管理后台运营标注，不暴露给租户控制台）
+	Remark              string      `json:"remark"                orm:"remark"                description:"管理员备注（运营备注，不暴露给租户控制台）"`                                                                                     // 管理员备注（运营备注，不暴露给租户控制台）
 }

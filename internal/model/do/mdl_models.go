@@ -27,4 +27,5 @@ type MdlModels struct {
 	DeprecatedAt     *gtime.Time // 标记弃用的时间（NULL表示未弃用）
 	SunsetDate       *gtime.Time // 计划下线日期（到达后返回410 Gone，NULL表示未设置）
 	ReplacementModel any         // 推荐替代模型名（NULL表示无替代）
+	Vendor           any         // 研发厂商枚举：openai/anthropic/google/xai/mistral/cohere/meta/alibaba/bytedance/deepseek/zhipu/moonshot/minimax/baidu/tencent/xunfei/kuaishou/midjourney/suno，空串=未分类
 }

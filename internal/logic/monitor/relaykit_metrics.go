@@ -25,25 +25,25 @@ import (
 
 // RelayConverterMetrics 是单个转换器的累计指标快照（读取时计算派生字段）。
 type RelayConverterMetrics struct {
-	ConverterID   string  `json:"converter_id"`            // 如 "openai_to_claude"
-	From          string  `json:"from"`                    // 源协议格式
-	To            string  `json:"to"`                      // 目标协议格式
-	Success       int64   `json:"success"`                 // 累计成功次数
-	Failed        int64   `json:"failed"`                  // 累计失败次数
-	TotalMs       int64   `json:"total_ms"`                // 累计耗时（毫秒），用于算均值
-	LastError     string  `json:"last_error,omitempty"`    // 最近一次错误信息（截断）
-	ErrorRate     float64 `json:"error_rate"`              // 派生：失败率 = failed/(success+failed)
-	AvgDurationMs float64 `json:"avg_duration_ms"`         // 派生：平均耗时（毫秒）
+	ConverterID   string  `json:"converter_id"`         // 如 "openai_to_claude"
+	From          string  `json:"from"`                 // 源协议格式
+	To            string  `json:"to"`                   // 目标协议格式
+	Success       int64   `json:"success"`              // 累计成功次数
+	Failed        int64   `json:"failed"`               // 累计失败次数
+	TotalMs       int64   `json:"total_ms"`             // 累计耗时（毫秒），用于算均值
+	LastError     string  `json:"last_error,omitempty"` // 最近一次错误信息（截断）
+	ErrorRate     float64 `json:"error_rate"`           // 派生：失败率 = failed/(success+failed)
+	AvgDurationMs float64 `json:"avg_duration_ms"`      // 派生：平均耗时（毫秒）
 }
 
 // converterCounter 是单个转换器的并发安全计数器。
 // from/to 在创建时写入后只读（无需加锁）；热路径字段用 atomic；lastErr 失败稀疏，用自带互斥锁。
 type converterCounter struct {
-	from     string
-	to       string
-	success  atomic.Int64
-	failed   atomic.Int64
-	totalMs  atomic.Int64
+	from      string
+	to        string
+	success   atomic.Int64
+	failed    atomic.Int64
+	totalMs   atomic.Int64
 	lastErrMu sync.Mutex
 	lastErr   string
 }

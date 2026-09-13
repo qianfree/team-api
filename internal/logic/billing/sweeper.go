@@ -80,7 +80,7 @@ func materializeDirtyWallets(ctx context.Context) {
 // materializeOneWallet 物化单个租户钱包；成功或 hash 缺失时清除脏标记
 func materializeOneWallet(ctx context.Context, tenantID int64) {
 	walletRedisKey := walletHashKey(tenantID)
-	balanceMicro, frozenMicro, exists, err := readWalletHash(ctx, tenantID)
+	balanceMicro, frozenMicro, consumedMicro, hasConsumed, exists, err := readWalletHash(ctx, tenantID)
 	if err != nil {
 		// Redis 故障：保留脏标记，下 tick 重试
 		g.Log().Warningf(ctx, "[WALLET MATERIALIZER] read wallet hash failed: tenant=%d: %v", tenantID, err)
@@ -92,10 +92,27 @@ func materializeOneWallet(ctx context.Context, tenantID int64) {
 		return
 	}
 
-	// decimal 直传 NUMERIC（driver.Valuer 精确字符串），balance/frozen 全量覆盖
+	// 自愈兜底（三层补种之③层）：hash 存在但缺 total_consumed 字段（boot 种子后新出现的
+	// 字段缺失 hash，如灾后经充值路径重建），从 DB 物化副本补种历史基线——否则下方全量
+	// 覆盖会把回填好的历史值写回 0
+	if !hasConsumed {
+		dbConsumed, qErr := queryTotalConsumed(ctx, tenantID)
+		if qErr != nil {
+			// DB 故障：保留脏标记，下 tick 重试
+			g.Log().Warningf(ctx, "[WALLET MATERIALIZER] query total_consumed for seed failed: tenant=%d: %v", tenantID, qErr)
+			return
+		}
+		if sErr := seedTotalConsumedIfMissing(ctx, tenantID, ToMicro(dbConsumed)); sErr != nil {
+			g.Log().Warningf(ctx, "[WALLET MATERIALIZER] seed total_consumed failed: tenant=%d: %v", tenantID, sErr)
+			return
+		}
+		consumedMicro = ToMicro(dbConsumed)
+	}
+
+	// decimal 直传 NUMERIC（driver.Valuer 精确字符串），balance/frozen/total_consumed 全量覆盖
 	_, err = g.DB().Ctx(ctx).Exec(ctx,
-		"UPDATE bil_wallets SET balance = ?, frozen_balance = ?, updated_at = NOW() WHERE tenant_id = ?",
-		FromMicro(balanceMicro), FromMicro(frozenMicro), tenantID)
+		"UPDATE bil_wallets SET balance = ?, frozen_balance = ?, total_consumed = ?, updated_at = NOW() WHERE tenant_id = ?",
+		FromMicro(balanceMicro), FromMicro(frozenMicro), FromMicro(consumedMicro), tenantID)
 	if err != nil {
 		// DB 故障：保留脏标记，下 tick 重试
 		g.Log().Warningf(ctx, "[WALLET MATERIALIZER] update db wallet failed: tenant=%d: %v", tenantID, err)

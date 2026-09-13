@@ -42,12 +42,20 @@ func (a *GeminiAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, 
 	return nil
 }
 
-func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req openAIVideoRequest
 	if json.Unmarshal(body, &req) == nil {
 		resolution := parseResolution(req.Metadata.Resolution)
 		duration := req.Metadata.Duration
+		// per_second 事实键：真实秒数 + 规格原值（矩阵查价键）
+		if duration > 0 {
+			ratios["spec.duration"] = float64(duration)
+		}
+		if resolution != "" {
+			ratios["spec.resolution"] = resolution
+		}
+		// 存量 token 伪装路径乘数（语义为乘数非秒数，保持原行为）
 		if resolution == "1080p" {
 			ratios["resolution"] = 1.5
 		} else if resolution == "4k" {
@@ -60,7 +68,7 @@ func (a *GeminiAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, 
 	return ratios
 }
 
-func (a *GeminiAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *GeminiAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 
@@ -116,12 +124,12 @@ func (a *GeminiAdaptor) BuildRequestBody(_ context.Context, info *common.RelayIn
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *GeminiAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *GeminiAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +171,7 @@ func (a *GeminiAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *co
 	return result.Name, body, nil
 }
 
-func (a *GeminiAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *GeminiAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -173,7 +181,7 @@ func (a *GeminiAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*htt
 	}
 
 	url := fmt.Sprintf("%s/v1beta/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
