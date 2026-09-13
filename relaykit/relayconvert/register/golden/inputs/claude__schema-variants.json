@@ -1,0 +1,40 @@
+{
+  "model": "origin-model",
+  "max_tokens": 512,
+  "messages": [
+    {"role": "user", "content": "Search the repo with the where filter."}
+  ],
+  "tools": [
+    {
+      "name": "grep",
+      "description": "search repo",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "object",
+            "properties": {
+              "pattern": {"type": "string"},
+              "where": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "type": "array",
+                  "prefixItems": [
+                    {"type": "string"},
+                    {"enum": ["AND", "OR"], "type": "string"},
+                    {}
+                  ]
+                }
+              },
+              "paths": {"type": "array"},
+              "tag": {"anyOf": [{"type": "string"}, {"type": "number"}]}
+            },
+            "required": ["pattern"]
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}
