@@ -102,12 +102,12 @@ func (a *SoraAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInfo
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *SoraAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *SoraAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (a *SoraAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *comm
 	return result.ID, body, nil
 }
 
-func (a *SoraAdaptor) FetchTask(baseURL, apiKey string, _ []byte) (*http.Response, error) {
+func (a *SoraAdaptor) FetchTask(_ context.Context, baseURL, apiKey string, _ []byte) (*http.Response, error) {
 	// Sora 的 FetchTask 需要上游任务 ID，通过 taskData 传入
 	return nil, fmt.Errorf("sora: use FetchTaskByID instead")
 }

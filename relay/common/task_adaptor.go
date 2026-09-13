@@ -41,8 +41,9 @@ type TaskAdaptor interface {
 	// DoResponse 解析上游提交响应，返回上游任务 ID 和任务数据
 	DoResponse(ctx context.Context, resp *http.Response, info *RelayInfo) (upstreamTaskID string, taskData []byte, taskErr *TaskError)
 
-	// FetchTask 查询上游任务状态
-	FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error)
+	// FetchTask 查询上游任务状态。ctx 供超时控制与渠道调试日志捕获器传递
+	//（轮询侧经 WithDebugAttempt 注入，未开启调试时透传无额外开销）
+	FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error)
 
 	// ParseTaskResult 解析上游任务查询结果
 	ParseTaskResult(body []byte) (*TaskInfo, error)

@@ -1320,6 +1320,8 @@ func relayModeString(mode constant.RelayMode) string {
 		return "mj_image"
 	case constant.RelayModeVideoGenerations:
 		return "video_generations"
+	case constant.RelayModeVideos:
+		return "videos"
 	default:
 		return ""
 	}

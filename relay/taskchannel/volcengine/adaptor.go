@@ -265,12 +265,12 @@ func (a *VolcengineVideoAdaptor) BuildRequestBody(_ context.Context, info *commo
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *VolcengineVideoAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *VolcengineVideoAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +309,7 @@ func (a *VolcengineVideoAdaptor) DoResponse(_ context.Context, resp *http.Respon
 	return result.ID, body, nil
 }
 
-func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *VolcengineVideoAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -320,7 +320,7 @@ func (a *VolcengineVideoAdaptor) FetchTask(baseURL, apiKey string, taskData []by
 
 	url := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/api"), data.TaskID)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

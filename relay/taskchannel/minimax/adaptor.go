@@ -270,12 +270,12 @@ func buildV1RequestBody(req map[string]any, modelName string) map[string]any {
 	return out
 }
 
-func (a *Adaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	reqURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, reqURL, requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -341,7 +341,7 @@ func (a *Adaptor) DoResponse(_ context.Context, resp *http.Response, info *commo
 	return result.TaskID, body, nil
 }
 
-func (a *Adaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *Adaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -353,15 +353,15 @@ func (a *Adaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Resp
 
 	base := strings.TrimRight(baseURL, "/")
 	if IsV2Model(data.Model) {
-		return fetchV2Task(base, apiKey, data.TaskID, data.UseProxy)
+		return fetchV2Task(ctx, base, apiKey, data.TaskID, data.UseProxy)
 	}
-	return fetchV1Task(base, apiKey, data.TaskID, data.UseProxy)
+	return fetchV1Task(ctx, base, apiKey, data.TaskID, data.UseProxy)
 }
 
 // fetchV2Task v2 单任务查询：GET /v2/query/video_generation/{task_id}
-func fetchV2Task(base, apiKey, taskID string, useProxy bool) (*http.Response, error) {
+func fetchV2Task(ctx context.Context, base, apiKey, taskID string, useProxy bool) (*http.Response, error) {
 	url := fmt.Sprintf("%s/v2/query/video_generation/%s", base, taskID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -376,11 +376,12 @@ func fetchV2Task(base, apiKey, taskID string, useProxy bool) (*http.Response, er
 // v1 协议成功后只给 file_id，需二跳 GET /v1/files/retrieve?file_id=... 换取限时 download_url——
 // 在此链式完成并把 download_url 合并进查询响应体（ParseTaskResult 与原生查询回放共用该字段）。
 // 二跳失败不改变任务状态判定：任务仍按 Success 结算，仅缺下载直链（客户端可稍后重查）。
-func fetchV1Task(base, apiKey, taskID string, useProxy bool) (*http.Response, error) {
+// 调试日志注意：两跳共用同一 ctx 捕获器，调试记录里 URL/headers 为二跳、body 为两跳拼接。
+func fetchV1Task(ctx context.Context, base, apiKey, taskID string, useProxy bool) (*http.Response, error) {
 	client := common.NewPooledClient(30, useProxy)
 
 	queryURL := fmt.Sprintf("%s/v1/query/video_generation?task_id=%s", base, url.QueryEscape(taskID))
-	req, err := http.NewRequest(http.MethodGet, queryURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +405,7 @@ func fetchV1Task(base, apiKey, taskID string, useProxy bool) (*http.Response, er
 	}
 
 	fileURL := fmt.Sprintf("%s/v1/files/retrieve?file_id=%s", base, url.QueryEscape(probe.FileID))
-	fileReq, err := http.NewRequest(http.MethodGet, fileURL, nil)
+	fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
 		return rebuiltResponse(resp.StatusCode, body), nil
 	}

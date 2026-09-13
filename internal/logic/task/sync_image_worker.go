@@ -447,6 +447,10 @@ func processSyncImageJob(job *SyncImageJob) {
 	defer sess.Finish(context.WithoutCancel(ctx), false, 0)
 
 	lastErr := "no available channel"
+	// 渠道调试日志：镜像 RelayHandler 重试循环的接线——首个开启调试且匹配过滤的尝试创建
+	// 会话（段1 = 客户端提交的原始请求体；后台执行无客户端交互，段4 留空）。中间失败尝试
+	// Submit 立即落库（is_final=false），成功尝试 MarkFinal 后提交最终记录
+	var dbgSess *common.DebugSession
 	for attempt := 0; attempt < syncImageMaxAttempts; attempt++ {
 		d := sess.Next(ctx)
 		if d == nil {
@@ -465,15 +469,32 @@ func processSyncImageJob(job *SyncImageJob) {
 			continue
 		}
 
-		ok, memW, perr := runImagePipelineWithRelease(ctx, job, sel)
+		var dbgAttempt *common.DebugAttempt
+		if sel.Settings.DebugLogEnabled && sel.Settings.DebugTargetMatch(job.TenantID, job.UserID, job.ApiKeyID) {
+			if dbgSess == nil {
+				dbgSess = common.NewDebugSession(job.RequestID, job.TenantID, job.UserID, job.ApiKeyID, "/v1/images/generations/async")
+				dbgSess.CaptureClientRequest(http.Header{"Content-Type": []string{"application/json"}}, job.RequestBody)
+			}
+			dbgAttempt = dbgSess.BeginTaskAttempt(&common.ChannelMeta{
+				ChannelID:         sel.ChannelID,
+				ChannelName:       sel.ChannelName,
+				ChannelType:       sel.ChannelType,
+				UpstreamModelName: sel.UpstreamModelName,
+			}, job.Model, "images_generations", attempt)
+		}
+
+		ok, memW, perr := runImagePipelineWithRelease(ctx, job, sel, dbgAttempt)
 		if ok {
 			sess.Finish(context.WithoutCancel(ctx), true, 0)
 			settleSyncImageSuccess(ctx, job, sel, memW)
+			dbgAttempt.MarkFinal(nil)
+			dbgSess.FinalizeAndSubmit(0, 0)
 			return
 		}
 
 		// 失败：上报健康并按 FSM 决策原地重试/换渠道/终止（绑定不删除）
 		lastErr = perr
+		dbgAttempt.Submit(errors.New(perr))
 		dec, backoff := sess.Report(ctx, 0, errors.New(perr), dispatch.DeliveryResponseReceived, 0, 0)
 		monitor.TrackDispatchRetry(dispatch.Classify(0, errors.New(perr), dispatch.DeliveryResponseReceived).String(), dec.String())
 		if dec == dispatch.DecisionAbort {
@@ -491,11 +512,12 @@ func processSyncImageJob(job *SyncImageJob) {
 }
 
 // runImagePipelineWithRelease 管线执行期间保活调度租约（租约获取/释放由调度会话负责）。
-func runImagePipelineWithRelease(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection) (ok bool, memW *memResponseWriter, failReason string) {
+// dbg 为当前尝试的调试捕获器（nil = 渠道未开启调试），注入 ctx 供传输层镜像段2/3。
+func runImagePipelineWithRelease(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection, dbg *common.DebugAttempt) (ok bool, memW *memResponseWriter, failReason string) {
 	stopHeartbeat := make(chan struct{})
 	go refreshSyncImageChannelLease(sel.ChannelID, job.RequestID, stopHeartbeat)
 	defer close(stopHeartbeat)
-	return runImagePipeline(ctx, job, sel)
+	return runImagePipeline(ctx, job, sel, dbg)
 }
 
 func refreshSyncImageChannelLease(channelID int64, requestID string, stop <-chan struct{}) {
@@ -514,9 +536,14 @@ func refreshSyncImageChannelLease(channelID int64, requestID string, stop <-chan
 }
 
 // runImagePipeline 复刻 RelayHandler 的最小管线，把上游响应捕获到内存 writer。
-func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection) (bool, *memResponseWriter, string) {
+func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.ChannelSelection, dbg *common.DebugAttempt) (bool, *memResponseWriter, string) {
+	// 调试捕获器注入 ctx（nil 时透传），同步适配器经 NewRequestWithContext 携带到传输层
+	pipeCtx := ctx
+	if dbg != nil {
+		pipeCtx = common.WithDebugAttempt(ctx, dbg.Capture)
+	}
 	info := &common.RelayInfo{
-		Context:         ctx,
+		Context:         pipeCtx,
 		TenantID:        job.TenantID,
 		UserID:          job.UserID,
 		ApiKeyID:        job.ApiKeyID,
@@ -552,6 +579,7 @@ func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.Channe
 		return false, nil, fmt.Sprintf("no adaptor for channelType %d", sel.ChannelType)
 	}
 	adaptor.Init(info)
+	dbg.CaptureProtocol(info)
 
 	reader, err := adaptor.ConvertRequest(ctx, info, job.RequestBody)
 	if err != nil {
@@ -559,7 +587,8 @@ func runImagePipeline(ctx context.Context, job *SyncImageJob, sel *common.Channe
 	}
 
 	// 上游长连接用后台 context（不随停机被斩断），阻塞 10–60s。
-	resp, err := adaptor.DoRequest(context.WithoutCancel(ctx), info, reader)
+	// WithoutCancel 保留 ctx values，调试捕获器随请求到达传输层
+	resp, err := adaptor.DoRequest(context.WithoutCancel(pipeCtx), info, reader)
 	if err != nil {
 		return false, nil, fmt.Sprintf("do request: %v", err)
 	}
