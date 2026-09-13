@@ -49,4 +49,10 @@ type TaskBillingProvider interface {
 	// totalTokens: 上游返回的 token 计费单位
 	// ratios: 提交时保存的计费上下文（如 video_input 折扣）
 	RecalculateByTokens(ctx context.Context, tenantID int64, modelName string, totalTokens int, ratios map[string]any, billAt time.Time) (decimal.Decimal, error)
+
+	// RecalculateByMaterials 按上游 usage 的素材计量重算任务费用（素材计费方案的结算依据）。
+	// 仅模型配置了素材计费方案（pricing JSONB scheme）时适用：ok=true 返回按方案结算口径
+	// 重算的最终费用；未配置方案、取价失败或 usage 为 nil 时 ok=false，调用方保持既有结算来源
+	// （预扣金额 / token 重算）。billAt 为任务受理时刻（时段定价用），ratios 为提交时持久化的计费上下文
+	RecalculateByMaterials(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, usage *TaskMaterialUsage, billAt time.Time) (cost decimal.Decimal, ok bool, err error)
 }

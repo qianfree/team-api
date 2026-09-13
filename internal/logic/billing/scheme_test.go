@@ -8,6 +8,8 @@ import (
 
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/shopspring/decimal"
+
+	rcommon "github.com/qianfree/team-api/relay/common"
 )
 
 // testConfigScheme 测试用方案：演示方案实现的正确形态——注册实例无状态单例，
@@ -35,6 +37,18 @@ func (testConfigScheme) EstimateTaskCost(pricing *PricingResult, _ map[string]an
 	}
 	_ = json.Unmarshal(pricing.SchemeConfig, &c)
 	return NewFromFloat(c.Base)
+}
+
+// SettleTaskCost 测试方案：usage 携带秒数时按秒 × base 计，否则回退预扣口径
+func (testConfigScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]any, usage *rcommon.TaskMaterialUsage) decimal.Decimal {
+	if usage != nil && usage.OutputSeconds > 0 {
+		var c struct {
+			Base float64 `json:"base"`
+		}
+		_ = json.Unmarshal(pricing.SchemeConfig, &c)
+		return NewFromFloat(c.Base * usage.OutputSeconds)
+	}
+	return testConfigScheme{}.EstimateTaskCost(pricing, ratios, nil)
 }
 
 // TestSchemeRegistry 注册表基础行为：generic 默认注册、空名/未注册回落、SchemeRegistered 判定。
@@ -76,7 +90,7 @@ func TestSchemeDispatch(t *testing.T) {
 	RegisterScheme(testConfigScheme{})
 
 	pricing := &PricingResult{
-		BillingMode:      "per_second", // billing_mode 对特殊方案只是参考字段，分发只看 Scheme
+		BillingMode:      BillingModeSpecial, // 方案模型的标准配对形态；分发只看 Scheme，billing_mode 是参考字段
 		TenantMultiplier: 1.0,
 		Scheme:           "test:config-scheme",
 		SchemeConfig:     json.RawMessage(`{"base":2.0}`),

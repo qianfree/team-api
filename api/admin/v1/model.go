@@ -104,9 +104,9 @@ type ModelDeleteReq struct {
 	ID     int64 `json:"id" in:"path" v:"required" dc:"模型ID"`
 }
 
-// PricingItem 定价项（支持按次/按量/阶梯/按秒）
+// PricingItem 定价项（支持按次/按量/阶梯/按秒/特殊方案）
 type PricingItem struct {
-	BillingMode        string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second" dc:"计费模式"`
+	BillingMode        string             `json:"billing_mode" v:"required|in:token,per_request,tiered,per_second,special" dc:"计费模式（special 仅由特殊计费方案编辑器提交，不进通用模式下拉）"`
 	MinTokens          int64              `json:"min_tokens" dc:"阶梯起始 token 数"`
 	MaxTokens          *int64             `json:"max_tokens" dc:"阶梯结束 token 数（NULL=无上限）"`
 	InputPrice         float64            `json:"input_price" dc:"每 1M input token 价格"`
@@ -302,23 +302,28 @@ type ModelImportPreviewRes struct {
 	Models []ModelImportPreviewItem `json:"models"`
 }
 
-// ModelImportPreviewItem 导入预览项（模型信息 + 冲突标记）
+// ModelImportPreviewItem 导入预览项（模型信息 + 冲突标记）。
+// 前端确认导入时把 preview 返回的 models 原样回传，因此该结构必须携带
+// 全量可还原字段（含参数倍率与计费方案声明），缺字段会在回传链路被静默丢弃
 type ModelImportPreviewItem struct {
-	ModelId          string            `json:"model_id"`
-	ModelName        string            `json:"model_name"`
-	Category         string            `json:"category"`
-	Vendor           string            `json:"vendor"` // 研发厂商（空=未分类）
-	Status           string            `json:"status"`
-	MaxContextTokens int               `json:"max_context_tokens"`
-	MaxOutputTokens  int               `json:"max_output_tokens"`
-	Capabilities     map[string]bool   `json:"capabilities"`
-	Description      string            `json:"description"`
-	Tags             []string          `json:"tags"`
-	SunsetDate       string            `json:"sunset_date"`
-	ReplacementModel string            `json:"replacement_model"`
-	Pricing          []PricingItem     `json:"pricing"`
-	TimeSegments     []TimeSegmentItem `json:"time_segments" dc:"时段定价列表"`
-	Conflict         string            `json:"conflict"` // "" 或 "exists"
+	ModelId          string                `json:"model_id"`
+	ModelName        string                `json:"model_name"`
+	Category         string                `json:"category"`
+	Vendor           string                `json:"vendor"` // 研发厂商（空=未分类）
+	Status           string                `json:"status"`
+	MaxContextTokens int                   `json:"max_context_tokens"`
+	MaxOutputTokens  int                   `json:"max_output_tokens"`
+	Capabilities     map[string]bool       `json:"capabilities"`
+	Description      string                `json:"description"`
+	Tags             []string              `json:"tags"`
+	SunsetDate       string                `json:"sunset_date"`
+	ReplacementModel string                `json:"replacement_model"`
+	Pricing          []PricingItem         `json:"pricing"`
+	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表"`
+	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选）"`
+	Scheme           string                `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
+	SchemeConfig     json.RawMessage       `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
+	Conflict         string                `json:"conflict"` // "" 或 "exists"
 }
 
 // ModelImportReq 确认导入模型请求
@@ -344,6 +349,8 @@ type ModelImportItem struct {
 	Pricing          []PricingItem         `json:"pricing" dc:"定价列表"`
 	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表（可选）"`
 	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选）"`
+	Scheme           string                `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
+	SchemeConfig     json.RawMessage       `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
 	ConflictAction   string                `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
 }
 

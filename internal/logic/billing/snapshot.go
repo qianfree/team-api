@@ -26,6 +26,12 @@ type BillingSnapshotPricing struct {
 	EffectiveOutputPrice float64 `json:"effective_output_price"`
 	BillingMode          string  `json:"billing_mode"`
 	BillingSource        string  `json:"billing_source"`
+	// Scheme 命中的特殊计费方案名（pricing JSONB 顶层 scheme 键）；空 = 通用引擎。
+	// 供账单事后追溯该笔走的计费方案，摘要据此追加「计费方案」行
+	Scheme string `json:"scheme,omitempty"`
+	// PerSecondPrices 按秒单价矩阵（仅 per_second / special 模式填充，其余模式 omitted）：
+	// special 的矩阵是输出生成组件的定价依据，快照携带供账单解释
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
 }
 
 // BillingSnapshotMultipliers 倍率信息
@@ -88,6 +94,8 @@ func GenerateBillingSnapshot(
 			EffectiveOutputPrice: pricing.OutputPrice,
 			BillingMode:          pricing.BillingMode,
 			BillingSource:        pricing.BillingSource,
+			Scheme:               pricing.Scheme,
+			PerSecondPrices:      pricing.PerSecondPrices,
 		},
 		Multipliers: BillingSnapshotMultipliers{
 			ModelMultiplier:  pricing.ModelMultiplier,
@@ -197,9 +205,11 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 
 	// 计费模式中文映射
 	modeMap := map[string]string{
-		"token":       "按量计费",
-		"per_request": "按次计费",
-		"tiered":      "阶梯计费",
+		"token":            "按量计费",
+		"per_request":      "按次计费",
+		"tiered":           "阶梯计费",
+		"per_second":       "按秒计费",
+		BillingModeSpecial: "特殊计费",
 	}
 	mode := modeMap[snapshot.Pricing.BillingMode]
 	if mode == "" {
@@ -214,6 +224,11 @@ func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) stri
 
 	lines := make([]string, 0, 15)
 	lines = append(lines, fmt.Sprintf("模型: %s | 计费模式: %s | 价格来源: %s", modelName, mode, source))
+	// 特殊计费方案行：方案名直出（custom:minimax-material 等），便于账单事后追溯；
+	// 不做后端中文映射表——新增方案不应要求改动本文件（与 scheme 注册表设计一致）
+	if snapshot.Pricing.Scheme != "" {
+		lines = append(lines, fmt.Sprintf("计费方案: %s", snapshot.Pricing.Scheme))
+	}
 	lines = append(lines, "---")
 
 	// 按次计费特殊处理

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -77,6 +78,10 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		Pricing          []exportPricing          `json:"pricing"`
 		TimeSegments     []v1.TimeSegmentItem     `json:"time_segments,omitempty"`
 		ParamMultipliers []v1.ParamMultiplierItem `json:"param_multipliers,omitempty"`
+		// 特殊计费方案声明（pricing JSONB 顶层 scheme/scheme_config，模型级语义）：
+		// 随导出携带，导入侧透传还原，避免跨环境迁移后方案定价退化为通用模式
+		Scheme       string          `json:"scheme,omitempty"`
+		SchemeConfig json.RawMessage `json:"scheme_config,omitempty"`
 	}
 
 	// 批量查询所有模型的定价行（避免循环内逐模型查询导致 N+1），与 ListModels 的批量模式对齐。
@@ -100,6 +105,8 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 	pricingByModel := make(map[int64][]exportPricing, len(allPricingRows))
 	segmentsByModel := make(map[int64][]v1.TimeSegmentItem, len(allPricingRows))
 	paramRulesByModel := make(map[int64][]v1.ParamMultiplierItem, len(allPricingRows))
+	schemeByModel := make(map[int64]string, len(allPricingRows))
+	schemeConfigByModel := make(map[int64]json.RawMessage, len(allPricingRows))
 	for _, p := range allPricingRows {
 		blob := billing.ParsePricingBlob(p.Pricing)
 		if blob == nil {
@@ -142,6 +149,10 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 		if len(blob.ParamMultipliers) > 0 {
 			paramRulesByModel[p.ModelId] = paramMultipliersToAPI(blob.ParamMultipliers)
 		}
+		if blob.Scheme != "" {
+			schemeByModel[p.ModelId] = blob.Scheme
+			schemeConfigByModel[p.ModelId] = blob.SchemeConfig
+		}
 	}
 
 	result := make([]exportModel, 0, len(models))
@@ -160,6 +171,8 @@ func (s *sAdmin) ExportModelsJson(ctx context.Context, req *v1.ModelExportJsonRe
 			Pricing:          pricingByModel[m.ID],
 			TimeSegments:     segmentsByModel[m.ID],
 			ParamMultipliers: paramRulesByModel[m.ID],
+			Scheme:           schemeByModel[m.ID],
+			SchemeConfig:     schemeConfigByModel[m.ID],
 		}
 		if em.Pricing == nil {
 			em.Pricing = []exportPricing{}
@@ -262,6 +275,23 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 	res := &v1.ModelImportRes{}
 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		for _, item := range req.Models {
+			// 计费方案配对校验（与 SetModelPricing 同口径）：special ⇔ scheme 声明，
+			// 且方案必须已注册——导入文件引用本环境不存在的方案时运行期会 fail-closed
+			// 拒绝该模型请求，应在导入时报错而非留隐患
+			scheme := strings.TrimSpace(item.Scheme)
+			if len(item.Pricing) > 0 {
+				isSpecial := item.Pricing[0].BillingMode == billing.BillingModeSpecial
+				if isSpecial && scheme == "" {
+					return gerror.Newf("模型 %s：特殊计费模式（special）缺少计费方案声明", item.ModelId)
+				}
+				if !isSpecial && scheme != "" {
+					return gerror.Newf("模型 %s：计费方案模型必须使用特殊计费模式（billing_mode=special）", item.ModelId)
+				}
+			}
+			if scheme != "" && !billing.SchemeRegistered(scheme) {
+				return gerror.Newf("模型 %s：计费方案 %q 未注册", item.ModelId, scheme)
+			}
+
 			var existing *struct {
 				ID int64 `orm:"id"`
 			}
@@ -313,7 +343,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				if pErr != nil {
 					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
 				}
-				if err := writePricingForModel(ctx, existing.ID, item.Pricing, paramRules, "", nil); err != nil {
+				if err := writePricingForModel(ctx, existing.ID, item.Pricing, paramRules, scheme, item.SchemeConfig); err != nil {
 					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 
@@ -357,7 +387,7 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 				if pErr != nil {
 					return gerror.Wrapf(pErr, "模型 %s 参数倍率", item.ModelId)
 				}
-				if err := writePricingForModel(ctx, id, item.Pricing, paramRules, "", nil); err != nil {
+				if err := writePricingForModel(ctx, id, item.Pricing, paramRules, scheme, item.SchemeConfig); err != nil {
 					return gerror.Wrapf(err, "模型 %s 定价", item.ModelId)
 				}
 

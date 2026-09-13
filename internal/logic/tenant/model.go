@@ -303,8 +303,9 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if effectiveBillingMode == "tiered" {
 				item.PricingTiers = buildTiers(pi.CustomPricingTiers, pi.BaseInputPrice, pi.BaseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
-			// 按秒计费：矩阵来自平台定价（租户不逐格覆盖，倍率在计费时作用）
-			if effectiveBillingMode == "per_second" {
+			// 按秒/特殊计费：矩阵来自平台定价（租户不逐格覆盖，倍率在计费时作用）；
+			// special 的矩阵是输出生成组件的参考单价（素材组件单价在方案配置中）
+			if effectiveBillingMode == "per_second" || effectiveBillingMode == billing.BillingModeSpecial {
 				item.PerSecondPrices = pi.BasePerSecondPrices()
 			}
 
@@ -358,7 +359,7 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 			if billingMode == "tiered" && ok {
 				item.PricingTiers = buildTiers("", baseInputPrice, baseOutputPrice, baseTiersMap[m.ModelDBID])
 			}
-			if billingMode == "per_second" && ok && gp.BaseBlob != nil {
+			if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && ok && gp.BaseBlob != nil {
 				item.PerSecondPrices = gp.BaseBlob.Prices
 			}
 			item.TimePrices = buildTimePrices(timeSegmentsMap[m.ModelDBID], billingMode,
@@ -475,8 +476,13 @@ func (s *sTenant) ListAvailableModels(ctx context.Context, req *v1.TenantAvailab
 	return &v1.TenantAvailableModelsRes{List: list}, nil
 }
 
-// resolveBillingMode 解析有效计费模式
+// resolveBillingMode 解析有效计费模式。
+// 特殊计费方案模型的模式由平台方案决定（special），租户级覆盖无效
+// （与 billing.GetModelPriceAt 的读侧守卫、admin.UpdateTenantModel 的写侧守卫同口径）
 func resolveBillingMode(tenantMode *string, baseMode string) string {
+	if baseMode == billing.BillingModeSpecial {
+		return billing.BillingModeSpecial
+	}
 	if tenantMode != nil && *tenantMode != "" {
 		return *tenantMode
 	}
@@ -549,9 +555,9 @@ func buildTimePrices(segments []billing.TimeSegment, billingMode string,
 		tierInput = &tiers[0].InputPrice
 		tierOutput = &tiers[0].OutputPrice
 	}
-	// per_second 模式换算基准：兜底档 "*" 单价，无 "*" 取矩阵最低正价
+	// per_second / special 模式换算基准：兜底档 "*" 单价，无 "*" 取矩阵最低正价
 	var perSecondBase *float64
-	if billingMode == "per_second" {
+	if billingMode == "per_second" || billingMode == billing.BillingModeSpecial {
 		if base := billing.LookupPerSecondPrice(perSecondPrices, "*"); base > 0 {
 			perSecondBase = &base
 		}
@@ -573,7 +579,7 @@ func buildTimePrices(segments []billing.TimeSegment, billingMode string,
 			if perRequestPrice != nil {
 				tp.PerRequestPrice = mulDisplayPrice(*perRequestPrice, seg.Multiplier)
 			}
-		case "per_second":
+		case "per_second", billing.BillingModeSpecial:
 			if perSecondBase != nil {
 				tp.PerSecondPrice = mulDisplayPrice(*perSecondBase, seg.Multiplier)
 			}

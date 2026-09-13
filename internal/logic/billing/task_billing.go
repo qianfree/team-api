@@ -39,6 +39,11 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 	if pricing.Scheme != "" && !SchemeRegistered(pricing.Scheme) {
 		return Zero, gerror.Newf("billing scheme %q not registered (model=%s)", pricing.Scheme, modelName)
 	}
+	// special 必须与方案配对（写侧已双向校验，此处兜底防手工改库）：裸 special 会落
+	// generic 分发走 default 分支，计费口径不可预期，拒绝任务提交
+	if pricing.BillingMode == BillingModeSpecial && pricing.Scheme == "" {
+		return Zero, gerror.Newf("billing_mode special requires scheme (model=%s)", modelName)
+	}
 	// 参数倍率求值：命中注入 ratios（预扣、per_second 结算、token 重算经 applyRatioMultipliers 自动同口径）
 	if len(pricing.ParamMultipliers) > 0 && len(taskBody) > 0 && ratios != nil {
 		if m, matched := EvalParamMultipliers(pricing.ParamMultipliers, taskBody); len(matched) > 0 && m > 0 {
@@ -55,7 +60,7 @@ func (b *TaskBillingProviderImpl) EstimateTaskCost(ctx context.Context, tenantID
 const imagePlaceholderPreDeduct = 0.1
 
 // estimateTaskCost 纯函数：根据定价与计费上下文估算任务预扣费用，不依赖数据库/缓存，便于单测。
-// 骨架只做三件事：按 pricing.Scheme 分发到计费方案实现（未声明走 generic 通用引擎），
+// 骨架只做两件事：按 pricing.Scheme 分发到计费方案实现（未声明走 generic 通用引擎），
 // 再统一应用附加比率与 minCost 钳制——方案实现只负责组件费用（含租户/时段乘数），
 // 附加乘数、钳制、舍入全站收口于此，保证各方案结算口径一致。
 func estimateTaskCost(pricing *PricingResult, ratios map[string]any, taskBody []byte) decimal.Decimal {
@@ -64,16 +69,7 @@ func estimateTaskCost(pricing *PricingResult, ratios map[string]any, taskBody []
 	}
 
 	costD := LookupScheme(pricing.Scheme).EstimateTaskCost(pricing, ratios, taskBody)
-
-	// 应用附加比率（video_input 折扣等）：只乘 float 乘数值，
-	// 跳过 duration/resolution（已在时长类分支消费）与 spec.*（规格事实值非乘数）
-	costD = applyRatioMultipliers(costD, ratios, "duration", "resolution")
-
-	minCost := NewFromFloat(0.01)
-	if costD.LessThan(minCost) {
-		costD = minCost
-	}
-	return RoundMoney(costD)
+	return wrapSchemeCost(pricing, ratios, costD)
 }
 
 // ratioFloat 取计费上下文中的 float 值（JSONB 往返后数字均为 float64）
@@ -354,9 +350,11 @@ func buildTaskCostBreakdown(ctx context.Context, pricing *PricingResult, actualC
 		return bd
 	}
 
-	// per_second 模式：无 token 语义，费用整体记 BaseCost（折扣前成本），与 per_request 快照口径一致。
-	// 命中档的每秒价在预扣时已消费，此处不重复记录（CostBreakdown 无单价字段先例）
-	if pricing.BillingMode == "per_second" {
+	// per_second / special（特殊方案）模式：无 token 语义，费用整体记 BaseCost（折扣前成本），
+	// 与 per_request 快照口径一致。命中档的每秒价在预扣时已消费，此处不重复记录
+	// （CostBreakdown 无单价字段先例）；special 若漏此分支会落 token 路径，生成
+	// 「N tokens × $0」的自相矛盾快照行
+	if pricing.BillingMode == "per_second" || pricing.BillingMode == BillingModeSpecial {
 		bd.BaseCost = preMultiplierCost(actualCost, pricing)
 		bd.TotalCost = actualCost
 		return bd
@@ -428,6 +426,27 @@ func (b *TaskBillingProviderImpl) AdjustTaskBilling(ctx context.Context, tenantI
 	return newEstimatedCost, nil
 }
 
+// RecalculateByMaterials 按上游 usage 的素材计量重算任务费用（素材计费方案的结算依据）。
+// 模型未配置素材方案 / 取价失败 / usage 为 nil 时 ok=false，调用方保持既有结算来源。
+// billAt 为任务受理时刻（时段定价按该时刻评估，与预扣口径一致）。
+func (b *TaskBillingProviderImpl) RecalculateByMaterials(ctx context.Context, tenantID int64, modelName string, ratios map[string]any, usage *common.TaskMaterialUsage, billAt time.Time) (decimal.Decimal, bool, error) {
+	if usage == nil {
+		return Zero, false, nil
+	}
+	pricing, err := GetModelPriceAt(ctx, tenantID, modelName, billAt)
+	if err != nil || pricing == nil {
+		// 取价失败不阻断结算（调用方回落预扣金额），仅返回 ok=false
+		return Zero, false, err
+	}
+	// 仅显式配置了计费方案的模型适用：generic 任务保持「预扣即终价」不被重估
+	// （素材计费语义由方案声明，未声明素材的模型不应因 usage 附带字段改变结算来源）
+	if pricing.Scheme == "" {
+		return Zero, false, nil
+	}
+	costD := LookupScheme(pricing.Scheme).SettleTaskCost(pricing, ratios, usage)
+	return wrapSchemeCost(pricing, ratios, costD), true, nil
+}
+
 // RecalculateByTokens 根据上游返回的 total_tokens 重算费用。
 // 公式：totalTokens / 1M × output_price × tenant_multiplier × 时段乘数 × 附加比率
 // billAt 为任务受理时刻（时段定价按该时刻评估）；如果模型没有配置 token 单价（纯按次计费），
@@ -442,9 +461,10 @@ func (b *TaskBillingProviderImpl) RecalculateByTokens(ctx context.Context, tenan
 		return Zero, nil
 	}
 
-	// per_second 模式按秒计价，token 数与费用无关：返回 0 让结算保持预扣金额，
-	// 防止上游附带返回 token 用量时把按秒任务重算成 token 价
-	if pricing.BillingMode == "per_second" {
+	// per_second / special（特殊方案）模式按秒计价，token 数与费用无关：返回 0 让结算
+	// 保持预扣金额，防止上游附带返回 token 用量时把按秒任务重算成 token 价
+	// （special 若漏此分支，租户 custom_output_price 覆盖 + 上游返回 token 时会被错误重算）
+	if pricing.BillingMode == "per_second" || pricing.BillingMode == BillingModeSpecial {
 		return Zero, nil
 	}
 

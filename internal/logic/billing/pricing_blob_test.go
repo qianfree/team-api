@@ -64,6 +64,46 @@ func TestBuildPricingBlob_PerSecondValidation(t *testing.T) {
 	}
 }
 
+// TestBuildPricingBlob_Special 特殊计费模式：与 per_second 同构的矩阵校验
+// （special 是方案模型的 billing_mode 标识，定价形态仍是按秒矩阵）
+func TestBuildPricingBlob_Special(t *testing.T) {
+	// 正向：矩阵照常构造
+	blob, err := BuildPricingBlob([]PricingItemInput{{
+		BillingMode:     BillingModeSpecial,
+		PerSecondPrices: map[string]float64{"768P": 0.35, "2K": 0.6, "*": 0.35},
+	}})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if blob.Unit != "second" || blob.Prices["2K"] != 0.6 {
+		t.Fatalf("unexpected blob: %+v", blob)
+	}
+
+	// 多行拒绝
+	if _, err := BuildPricingBlob([]PricingItemInput{
+		{BillingMode: BillingModeSpecial, PerSecondPrices: map[string]float64{"*": 0.5}},
+		{BillingMode: BillingModeSpecial, MinTokens: 100, PerSecondPrices: map[string]float64{"*": 0.5}},
+	}); err == nil {
+		t.Fatal("expected multi-row rejection")
+	}
+	// min_tokens ≠ 0 拒绝
+	if _, err := BuildPricingBlob([]PricingItemInput{
+		{BillingMode: BillingModeSpecial, MinTokens: 100, PerSecondPrices: map[string]float64{"*": 0.5}},
+	}); err == nil {
+		t.Fatal("expected min_tokens rejection")
+	}
+	// 空矩阵拒绝
+	if _, err := BuildPricingBlob([]PricingItemInput{{BillingMode: BillingModeSpecial}}); err == nil {
+		t.Fatal("expected empty matrix rejection")
+	}
+	// 全零/负价拒绝
+	if _, err := BuildPricingBlob([]PricingItemInput{
+		{BillingMode: BillingModeSpecial, PerSecondPrices: map[string]float64{"768P": -0.1}},
+	}); err == nil {
+		t.Fatal("expected non-positive matrix rejection")
+	}
+}
+
 // TestBuildPricingBlob_TokenAndTiered token/tiered 模式构造与阶梯数组
 func TestBuildPricingBlob_TokenAndTiered(t *testing.T) {
 	blob, err := BuildPricingBlob([]PricingItemInput{{

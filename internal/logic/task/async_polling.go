@@ -460,6 +460,14 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			// 优先用上游返回的 ActualCost
 			if taskInfo.ActualCost > 0 {
 				actualCost = billing.NewFromFloat(taskInfo.ActualCost)
+			} else if taskInfo.MaterialUsage != nil {
+				// 素材计费方案：按官方 usage 计量（输入视频时长/图片张数/输出秒数）重算。
+				// 链接素材的时长提交时不可知，此为最终计费依据；模型未配置素材方案时 ok=false 保持预扣
+				if materialCost, ok, mErr := taskBilling.RecalculateByMaterials(ctx, task.TenantID, task.ModelName, pd.BillingContext.Ratios, taskInfo.MaterialUsage, task.CreatedAt); mErr != nil {
+					g.Log().Warningf(ctx, "poll: recalculate by materials task %s: %v", task.PublicTaskID, mErr)
+				} else if ok {
+					actualCost = materialCost
+				}
 			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
 				// 用上游 total_tokens + 保存的 ratios 重算
 				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {

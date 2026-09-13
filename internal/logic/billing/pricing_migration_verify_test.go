@@ -15,7 +15,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// TestPricingJSONComplete contract 迁移（000023）后完整性校验：
+// TestPricingJSONComplete contract 迁移（000021）后完整性校验：
 // 每模型一行、pricing JSONB 非空且可解析、tiered 模式含阶梯数组。
 func TestPricingJSONComplete(t *testing.T) {
 	ctx := context.Background()
@@ -60,9 +60,15 @@ func TestPricingJSONComplete(t *testing.T) {
 				t.Errorf("model_id=%v tiered 模式 tiers 为空", row["model_id"])
 				bad++
 			}
-		case "per_second":
+		case "per_second", BillingModeSpecial:
 			if len(blob.Prices) == 0 {
-				t.Errorf("model_id=%v per_second 模式 prices 矩阵为空", row["model_id"])
+				t.Errorf("model_id=%v %s 模式 prices 矩阵为空", row["model_id"], row["billing_mode"].String())
+				bad++
+			}
+			// special 必须与方案配对（pricing JSONB 顶层 scheme 键），裸 special 会在
+			// 计费入口 fail-closed 拒绝请求
+			if row["billing_mode"].String() == BillingModeSpecial && blob.Scheme == "" {
+				t.Errorf("model_id=%v special 模式缺少 scheme 声明", row["model_id"])
 				bad++
 			}
 		}

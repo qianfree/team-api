@@ -246,8 +246,9 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 	if basePerRequest != nil {
 		item.PerRequestPrice = *basePerRequest
 	}
-	// 按秒计费：矩阵来自平台 pricing JSONB（per_second 模式展示用）
-	if billingMode == "per_second" && blob != nil {
+	// 按秒/特殊计费：矩阵来自平台 pricing JSONB（展示用）；special 的矩阵是
+	// 输出生成组件的参考单价（素材组件单价在方案配置中，不随广场下发）
+	if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && blob != nil {
 		item.PerSecondPrices = blob.Prices
 	}
 	if pricing.DiscountLabel != nil {

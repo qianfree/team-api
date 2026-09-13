@@ -326,6 +326,17 @@ func TestValidatePricingConfigured(t *testing.T) {
 			pricing: &PricingResult{BillingMode: "tiered", CustomTiers: []pricingTierRow{{MinTokens: 0, InputPrice: 0, OutputPrice: 0}, {MinTokens: 100, OutputPrice: 10.0}}},
 			wantErr: false,
 		},
+		{
+			// special 与 per_second 同走矩阵校验：token 价全 0 不构成「已配置」
+			name:    "special 空矩阵拒绝（防 fail-closed 误放行）",
+			pricing: &PricingResult{BillingMode: BillingModeSpecial},
+			wantErr: true,
+		},
+		{
+			name:    "special 有矩阵放行",
+			pricing: &PricingResult{BillingMode: BillingModeSpecial, PerSecondPrices: map[string]float64{"*": 0.35}},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
