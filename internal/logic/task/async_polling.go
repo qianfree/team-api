@@ -356,9 +356,32 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		"model":     upstreamModel,
 	})
 
-	resp, err := adaptor.FetchTask(channel.BaseURL, channel.ApiKey, taskData)
+	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
+	// 节流规则 = 只在「状态/进度相对上一次轮询发生变化」时落库（任务行 CAS 前的值即上一次
+	// 持久化状态，无需额外存储），防止 15s 轮询周期灌爆 chn_debug_logs；
+	// fetch/parse 错误无「上一次」可对比且是轮询排查的主要目标，必记。
+	// request_id 复用提交请求原 ID，管理后台按 request_id 筛选可看到提交 + 全部状态转移。
+	var dbgSess *common.DebugSession
+	var dbgAttempt *common.DebugAttempt
+	if pollDebugLogEnabled(channel.Settings, task) {
+		dbgSess = common.NewDebugSession(task.RequestID, task.TenantID, task.UserID, task.ApiKeyID, "task_poll:"+task.PublicTaskID)
+		dbgAttempt = dbgSess.BeginTaskAttempt(&common.ChannelMeta{
+			ChannelID:         channel.ID,
+			ChannelName:       channel.Name,
+			ChannelType:       channel.Type,
+			UpstreamModelName: upstreamModel,
+		}, task.ModelName, task.Platform, 0)
+	}
+	pollCtx := ctx
+	if dbgAttempt != nil {
+		pollCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
+	}
+
+	resp, err := adaptor.FetchTask(pollCtx, channel.BaseURL, channel.ApiKey, taskData)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: fetch task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -366,6 +389,8 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: read response for task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
 	}
 
@@ -373,7 +398,15 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	taskInfo, err := adaptor.ParseTaskResult(body)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: parse result for task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
+	}
+
+	// 状态变化判定 + 调试记录提交（CAS 更新 task.Status 之前，task 行内即上一次轮询值）
+	if pollStateChanged(taskInfo, task) {
+		dbgAttempt.MarkFinal(nil)
+		dbgSess.FinalizeAndSubmit(0, 0)
 	}
 
 	// CAS 更新状态
@@ -613,4 +646,20 @@ func parseChannelUseProxy(settings json.RawMessage) bool {
 		json.Unmarshal(settings, &s)
 	}
 	return s.UseProxy
+}
+
+// pollDebugLogEnabled 判定轮询渠道是否开启调试日志且匹配任务的租户/成员/密钥过滤
+// （ChannelBasicInfo.Settings 为 JSONB 原文，按需解析；解析失败视为未开启）
+func pollDebugLogEnabled(settings json.RawMessage, task *common.AsyncTask) bool {
+	var s common.ChannelSettings
+	if len(settings) == 0 || json.Unmarshal(settings, &s) != nil {
+		return false
+	}
+	return s.DebugLogEnabled && s.DebugTargetMatch(task.TenantID, task.UserID, task.ApiKeyID)
+}
+
+// pollStateChanged 判定本次轮询结果相对任务行当前持久化状态是否发生变化（状态或进度任一变化）。
+// 独立成纯函数以便回归测试；在 CAS 更新 task 之前调用，task 内即上一次轮询持久化的值
+func pollStateChanged(taskInfo *common.TaskInfo, task *common.AsyncTask) bool {
+	return string(taskInfo.Status) != task.Status || taskInfo.Progress != task.Progress
 }

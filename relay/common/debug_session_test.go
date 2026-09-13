@@ -116,6 +116,50 @@ func TestDebugSessionNilSafe(t *testing.T) {
 	a.MarkFinal(nil)          // 不应 panic
 }
 
+// 任务版构造：ChannelMeta 字段映射、isStream 恒 false；
+// MarkFinal + FinalizeAndSubmit 后提交带段4 的最终记录（任务提交单次尝试形态）
+func TestBeginTaskAttempt(t *testing.T) {
+	var records []*DebugLogRecord
+	origHook := SubmitDebugLog
+	SubmitDebugLog = func(ctx context.Context, r *DebugLogRecord) { records = append(records, r) }
+	defer func() { SubmitDebugLog = origHook }()
+
+	s := NewDebugSession("req-task", 1, 2, 3, "/v1/videos")
+	meta := &ChannelMeta{ChannelID: 7, ChannelName: "ch7", ChannelType: int(constant.ProviderKling), UpstreamModelName: "kling-v2"}
+
+	a := s.BeginTaskAttempt(meta, "kling-v2-master", "videos", 0)
+	if a.isStream {
+		t.Error("任务尝试 isStream 应恒为 false")
+	}
+
+	// 段4 writer（任务提交响应，非流式 JSON）
+	rec := httptest.NewRecorder()
+	dw := NewDebugClientWriter(rec)
+	s.SetClientWriter(dw)
+	dw.WriteHeader(200)
+	_, _ = dw.Write([]byte(`{"id":"video_x"}`))
+
+	a.MarkFinal(nil)
+	s.FinalizeAndSubmit(88, 0)
+
+	if len(records) != 1 {
+		t.Fatalf("应提交 1 条记录，实际 %d", len(records))
+	}
+	r := records[0]
+	if r.ChannelID != 7 || r.ChannelName != "ch7" || r.ChannelType != int(constant.ProviderKling) {
+		t.Errorf("渠道元数据映射错误: %+v", r)
+	}
+	if r.UpstreamModel != "kling-v2" || r.ModelName != "kling-v2-master" || r.RelayMode != "videos" {
+		t.Errorf("模型/协议元数据错误: %+v", r)
+	}
+	if !r.IsFinal || r.IsStream {
+		t.Errorf("任务提交应为 is_final=true 且非流式: %+v", r)
+	}
+	if string(r.ClientRespBody) != `{"id":"video_x"}` || r.ClientStatusCode != 200 {
+		t.Errorf("段4 错误: %q %d", r.ClientRespBody, r.ClientStatusCode)
+	}
+}
+
 // 调试目标过滤：AND 组合，0 = 不限
 func TestDebugTargetMatch(t *testing.T) {
 	s := ChannelSettings{DebugLogEnabled: true}

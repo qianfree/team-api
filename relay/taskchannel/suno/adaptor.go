@@ -74,12 +74,12 @@ func (a *SunoAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInfo
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *SunoAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *SunoAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -121,14 +121,14 @@ func (a *SunoAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *comm
 	return result.Data, body, nil
 }
 
-func (a *SunoAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *SunoAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var meta struct {
 		UseProxy bool `json:"use_proxy"`
 	}
 	_ = json.Unmarshal(taskData, &meta)
 
 	url := fmt.Sprintf("%s/suno/fetch", strings.TrimRight(baseURL, "/"))
-	req, err := http.NewRequest("POST", url, bytes.NewReader(taskData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(taskData))
 	if err != nil {
 		return nil, err
 	}

@@ -362,7 +362,7 @@ func TestFetchTask_URL(t *testing.T) {
 
 	a := &Adaptor{}
 	taskData, _ := json.Marshal(map[string]any{"task_id": "up-1", "use_proxy": false, "model": "MiniMax-H3"})
-	resp, err := a.FetchTask(upstream.URL, "sk-test", taskData)
+	resp, err := a.FetchTask(context.Background(), upstream.URL, "sk-test", taskData)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestFetchTask_V1_TwoHop(t *testing.T) {
 
 	a := &Adaptor{}
 	taskData, _ := json.Marshal(map[string]any{"task_id": "v1-up-1", "use_proxy": false, "model": "MiniMax-Hailuo-2.3"})
-	resp, err := a.FetchTask(upstream.URL, "sk-test", taskData)
+	resp, err := a.FetchTask(context.Background(), upstream.URL, "sk-test", taskData)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestFetchTask_V1_TwoHopFailure(t *testing.T) {
 
 	a := &Adaptor{}
 	taskData, _ := json.Marshal(map[string]any{"task_id": "v1-up-1", "use_proxy": false, "model": "MiniMax-Hailuo-2.3"})
-	resp, err := a.FetchTask(upstream.URL, "sk-test", taskData)
+	resp, err := a.FetchTask(context.Background(), upstream.URL, "sk-test", taskData)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}

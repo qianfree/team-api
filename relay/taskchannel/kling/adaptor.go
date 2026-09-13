@@ -271,7 +271,7 @@ func (a *KlingAdaptor) BuildRequestBody(_ context.Context, info *common.RelayInf
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *KlingAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *KlingAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	baseURL := strings.TrimRight(info.ChannelMeta.BaseURL, "/")
 
 	// 根据 taskType 决定 URL
@@ -285,14 +285,15 @@ func (a *KlingAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requ
 		reqURL = fmt.Sprintf("%s/v1/videos/text2video", baseURL)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, reqURL, requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if err := a.BuildRequestHeader(req.Header, info); err != nil {
 		return nil, fmt.Errorf("setup header: %w", err)
 	}
-	client := &http.Client{Timeout: 120 * 1e9}
+	// 换共享连接池 client：超时语义等价（120s），并带上渠道代理与调试日志传输层包装
+	client := common.NewPooledClient(120, info.ChannelMeta.Settings.UseProxy)
 	return client.Do(req)
 }
 
@@ -322,7 +323,7 @@ func (a *KlingAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *com
 	return result.Data.TaskID, body, nil
 }
 
-func (a *KlingAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *KlingAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		TaskType string `json:"task_type"`
@@ -338,7 +339,7 @@ func (a *KlingAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http
 
 	url := fmt.Sprintf("%s/v1/videos/%s/%s", strings.TrimRight(baseURL, "/"), taskType, data.TaskID)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +351,8 @@ func (a *KlingAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * 1e9}
+	// 换共享连接池 client：超时语义等价（30s），并带上调试日志传输层包装
+	client := common.NewPooledClient(30, false)
 	return client.Do(req)
 }
 

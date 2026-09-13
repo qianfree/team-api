@@ -307,12 +307,12 @@ func (a *AliAdaptor) buildImageRequest(info *common.RelayInfo, req map[string]an
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *AliAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *AliAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -365,7 +365,7 @@ func (a *AliAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *commo
 	return result.Output.TaskID, body, nil
 }
 
-func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *AliAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -375,7 +375,7 @@ func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.R
 	}
 
 	url := fmt.Sprintf("%s/api/v1/tasks/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

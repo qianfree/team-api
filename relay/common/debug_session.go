@@ -66,6 +66,24 @@ func (s *DebugSession) BeginAttempt(selection *ChannelSelection, modelName, rela
 	}
 }
 
+// BeginTaskAttempt 为异步任务提交创建捕获上下文。任务提交为单次尝试（无重试循环），
+// isStream 恒 false，渠道元信息取 ChannelMeta（任务链路经 selectTaskChannel 物化，
+// 无 ChannelSelection）。上游请求经适配器 DoRequest(ctx) 携带的捕获器镜像段2/3。
+func (s *DebugSession) BeginTaskAttempt(meta *ChannelMeta, modelName, relayModeStr string, retryIndex int) *DebugAttempt {
+	return &DebugAttempt{
+		session:       s,
+		Capture:       &DebugAttemptCapture{},
+		channelID:     meta.ChannelID,
+		channelName:   meta.ChannelName,
+		channelType:   meta.ChannelType,
+		modelName:     modelName,
+		upstreamModel: meta.UpstreamModelName,
+		relayMode:     relayModeStr,
+		isStream:      false,
+		retryIndex:    retryIndex,
+	}
+}
+
 // DebugAttempt 单次尝试的调试上下文：会话引用 + 渠道元数据 + 传输层捕获器。
 // Capture 经 WithDebugAttempt 挂入 ctx，由 DebugRoundTripper 填充段2/段3。
 type DebugAttempt struct {

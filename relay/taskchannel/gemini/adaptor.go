@@ -124,12 +124,12 @@ func (a *GeminiAdaptor) BuildRequestBody(_ context.Context, info *common.RelayIn
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *GeminiAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *GeminiAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, requestBody)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (a *GeminiAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *co
 	return result.Name, body, nil
 }
 
-func (a *GeminiAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+func (a *GeminiAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -181,7 +181,7 @@ func (a *GeminiAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*htt
 	}
 
 	url := fmt.Sprintf("%s/v1beta/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
