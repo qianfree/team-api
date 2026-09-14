@@ -326,12 +326,13 @@ onMounted(() => {
       :on-before-ok="handleSaveModels"
       :ok-loading="modelsLoading"
     >
-      <ASpin :loading="modelsLoading">
+      <ASpin :loading="modelsLoading" class="models-transfer-wrap">
         <ATransfer
           v-model="selectedModelIds"
           :data="transferOptions"
           :title="['可选模型', '已选模型']"
           searchable
+          class="models-transfer"
         />
       </ASpin>
     </AModal>
@@ -347,7 +348,6 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 16px;
 }
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
@@ -355,5 +355,13 @@ onMounted(() => {
 }
 .mb-4 {
   margin-bottom: 16px;
+}
+/* 模型穿梭框：弹窗内水平居中，两侧列表加高 */
+.models-transfer-wrap {
+  display: flex;
+  justify-content: center;
+}
+.models-transfer :deep(.arco-transfer-view) {
+  height: 420px;
 }
 </style>

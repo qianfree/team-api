@@ -1551,9 +1551,7 @@ const { exporting, exportFile } = useExport({
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px;
-	margin-top: 16px;
 	padding-top: 16px;
-	border-top: 1px solid var(--color-border-light, #e5e6eb);
 }
 
 .table-footer-left {

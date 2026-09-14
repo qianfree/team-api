@@ -242,6 +242,17 @@ body {
   color: #64748b;
 }
 
+/* 表格横向滚动条细化：Arco 默认轨道 15px、滑块 9px，列多时悬停表头会出现粗滚动条遮住表头文字。
+   压成 3px 细线贴在底部，仅作「可横向滚动」的提示；拖拽/点击滚动同步逻辑不变，表头表体通用 */
+.arco-table .arco-scrollbar-track-direction-horizontal {
+  height: 3px;
+}
+
+.arco-table .arco-scrollbar-thumb-direction-horizontal .arco-scrollbar-thumb-bar {
+  height: 3px;
+  margin: 0;
+}
+
 .arco-table-td {
   border-bottom: 1px solid var(--ta-border-light);
 }
@@ -257,6 +268,40 @@ body {
   padding: 0 16px;
   text-align: center;
   vertical-align: middle;
+}
+
+/* page-table 布局下表体被拉伸为滚动容器，固定 240px 的空态行会顶在表体上方。
+   空数据时把表体区域（含固定列触发的表头/表体分离结构：Scrollbar 根 → arco-table-body →
+   table）逐层拉满表头以下的剩余高度，再让空态行撑满表格，「暂无数据」即在整个表体
+   可视区内垂直居中，表头行高度不变 */
+.page-table .arco-table-content:has(.arco-table-tr-empty) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表体区域的 Scrollbar 根（表头是第一个子节点，取 last-child 只拉伸表体） */
+.page-table .arco-table-content:has(.arco-table-tr-empty) > .arco-scrollbar:last-child {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表体滚动容器（Arco 把 body 类挂在 scrollbar-container 上） */
+.page-table .arco-table-content:has(.arco-table-tr-empty) .arco-table-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-table .arco-table-content:has(.arco-table-tr-empty) .arco-table-body .arco-table-element {
+  flex: 1;
+}
+
+/* 空态行撑满拉高后的表格（此表只剩该行，无表头行分高） */
+.page-table .arco-table-content:has(.arco-table-tr-empty) .arco-table-tr-empty {
+  height: 100%;
 }
 
 /* Card */
@@ -464,16 +509,16 @@ body {
   z-index: 12;
 }
 
-/* 右下角分页栏 */
+/* 右下角分页栏：表格底线（末行 td 的 border-bottom）即分隔线，
+   footer 不再画 border-top / 留 margin-top，避免表格底部出现两条临近分割线，
+   仅用 padding-top 与表格保持间距 */
 .page-table .table-footer {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--ta-border-light);
 }
 
 /* 统计总数从表格左上角移到底部后：footer 内存在统计栏时两端对齐（统计居左、分页居右），

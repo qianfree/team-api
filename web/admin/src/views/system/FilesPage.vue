@@ -615,7 +615,6 @@ onMounted(() => {
 .table-footer {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
 }
 .retention-pop {
   width: 260px;

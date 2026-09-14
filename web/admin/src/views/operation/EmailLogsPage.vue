@@ -312,9 +312,7 @@ onMounted(() => {
 .table-footer {
 	display: flex;
 	justify-content: flex-end;
-	margin-top: 16px;
 	padding-top: 16px;
-	border-top: 1px solid var(--color-border-light, #e5e6eb);
 }
 .email-body {
 	background: var(--color-fill-2, #f7f8fa);
