@@ -4,6 +4,7 @@ import { NInput, NInputNumber } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { createPoller } from '@/composables/usePolling'
 import Icon from '@/components/common/Icon.vue'
+import GenerationProgressCard from './GenerationProgressCard.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
 interface ModelItem {
@@ -87,13 +88,6 @@ const statusLabel: Record<string, string> = {
 	in_progress: '生成中',
 	completed: '已完成',
 	failed: '失败',
-}
-
-const statusColor: Record<string, string> = {
-	queued: 'badge-gray',
-	in_progress: 'badge-warning',
-	completed: 'badge-success',
-	failed: 'badge-danger',
 }
 
 function applyResolutionPreset(val: string) {
@@ -305,33 +299,19 @@ function downloadVideo() {
 						<p class="empty-state-description">输入提示词并点击生成</p>
 					</div>
 
-					<!-- 提交中 -->
-					<div v-if="submitting" class="flex items-center justify-center py-12">
-						<div class="spinner h-8 w-8 text-primary-600"></div>
-						<span class="ml-3 text-sm text-gray-500">提交视频生成任务中...</span>
-					</div>
+					<!-- 提交中：卡片式占位 -->
+					<GenerationProgressCard v-if="submitting" kind="video" label="正在提交生成任务..." />
 
 					<!-- 任务状态 -->
 					<div v-if="currentTask" class="space-y-4">
-						<!-- 状态信息 -->
-						<div class="flex items-center gap-3">
-							<span class="badge" :class="statusColor[currentTask.status] || 'badge-gray'">
-								{{ statusLabel[currentTask.status] || currentTask.status }}
-							</span>
-							<span v-if="currentTask.progress" class="text-xs text-gray-500">进度: {{ currentTask.progress }}</span>
-							<span v-if="polling" class="text-xs text-primary-600 flex items-center gap-1">
-								<div class="spinner h-3 w-3"></div>
-								轮询中
-							</span>
-						</div>
-
-						<!-- 进度条 -->
-						<div v-if="currentTask.status === 'in_progress' || currentTask.status === 'queued'" class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-							<div
-								class="h-full rounded-full bg-primary-500 transition-all duration-500"
-								:style="{ width: currentTask.progress || '10%' }"
-							/>
-						</div>
+						<!-- 任务进行中：按成品 16:9 形状的卡片式进度占位 -->
+						<GenerationProgressCard
+							v-if="currentTask.status === 'queued' || currentTask.status === 'in_progress'"
+							kind="video"
+							:progress="currentTask.progress"
+							:label="statusLabel[currentTask.status] || currentTask.status"
+							:sublabel="currentTask.id ? 'task_id: ' + currentTask.id : ''"
+						/>
 
 						<!-- 视频结果 -->
 						<div v-if="currentTask.status === 'completed' && videoUrl" class="space-y-3">
@@ -342,10 +322,11 @@ function downloadVideo() {
 							</button>
 						</div>
 						<!-- 成品加载中（content 端点拉流转 blob） -->
-						<div v-else-if="currentTask.status === 'completed'" class="flex items-center justify-center py-10">
-							<div class="spinner h-6 w-6 text-primary-600"></div>
-							<span class="ml-3 text-sm text-gray-500">视频加载中...</span>
-						</div>
+						<GenerationProgressCard
+							v-else-if="currentTask.status === 'completed'"
+							kind="video"
+							label="视频加载中..."
+						/>
 
 						<!-- 错误信息 -->
 						<div v-if="currentTask.status === 'failed'" class="rounded-xl border border-red-200 bg-red-50 p-4">

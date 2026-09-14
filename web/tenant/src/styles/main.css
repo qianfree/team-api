@@ -459,6 +459,16 @@ body.modal-open {
 		flex: 0 0 auto;
 	}
 }
+
+/* Naive UI flex-height 表格空态垂直居中：空态节点 .n-data-table-empty 自带 flex-grow:1 + 居中，
+   但其父级滚动 content（.n-scrollbar-content）默认高度塌成内容高且非 flex 容器，flex-grow 无从生效，
+   「暂无数据」会顶在表体上方。空数据时把 content 拉满表体高度并转纵向 flex 即可；
+   限定 :has(空态节点) 保证有数据时表格布局零影响 */
+.n-data-table--flex-height .n-data-table-base-table-body .n-scrollbar-content:has(> .n-data-table-empty) {
+	min-height: 100%;
+	display: flex;
+	flex-direction: column;
+}
 .table-container-flush {
 	border: 0;
 	border-radius: 0;

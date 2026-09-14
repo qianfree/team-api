@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, type Component } from 'vue'
 import { NSelect } from 'naive-ui'
 import request from '@/utils/request'
 import ChatTab from './playground/ChatTab.vue'
@@ -39,8 +39,21 @@ const allModels = ref<ModelItem[]>([])
 
 const { apiKeys, selectedKeyId, revealedKey, loading: keyLoading, error: keyError, selectKey } = usePlaygroundApiKey()
 
-const modelsByCategory = (category: string) =>
-	computed(() => allModels.value.filter(m => m.category === category))
+// Tab 与组件的映射：六个 Tab 的 props 签名一致（models + apiKey），配合 KeepAlive
+// 按 key 缓存实例，切换 Tab 不销毁组件，对话/任务/参数等状态全部保留。
+const tabComponents: Record<string, Component> = {
+	chat: ChatTab,
+	image: ImageTab,
+	video: VideoTab,
+	audio: AudioTab,
+	embedding: EmbeddingTab,
+	rerank: RerankTab,
+}
+
+// 当前 Tab 对应分类的模型列表（传给 KeepAlive 缓存的组件，切换回来时 props 保持响应）
+const activeTabModels = computed(() =>
+	allModels.value.filter(m => m.category === activeTab.value),
+)
 
 const modelsLoading = ref(false)
 let loadingTimer: number | null = null
@@ -131,12 +144,15 @@ watch(selectedKeyId, loadModels, { immediate: true })
 		</div>
 
 		<template v-if="revealedKey">
-			<ChatTab v-if="activeTab === 'chat'" :models="modelsByCategory('chat').value" :api-key="revealedKey" />
-			<ImageTab v-if="activeTab === 'image'" :models="modelsByCategory('image').value" :api-key="revealedKey" />
-			<VideoTab v-if="activeTab === 'video'" :models="modelsByCategory('video').value" :api-key="revealedKey" />
-			<AudioTab v-if="activeTab === 'audio'" :models="modelsByCategory('audio').value" :api-key="revealedKey" />
-			<EmbeddingTab v-if="activeTab === 'embedding'" :models="modelsByCategory('embedding').value" :api-key="revealedKey" />
-			<RerankTab v-if="activeTab === 'rerank'" :models="modelsByCategory('rerank').value" :api-key="revealedKey" />
+			<!-- KeepAlive 缓存各 Tab 实例：切换不销毁，切回即恢复（含进行中的任务轮询与已生成的结果） -->
+			<KeepAlive>
+				<component
+					:is="tabComponents[activeTab]"
+					:key="activeTab"
+					:models="activeTabModels"
+					:api-key="revealedKey"
+				/>
+			</KeepAlive>
 		</template>
 	</div>
 </template>
