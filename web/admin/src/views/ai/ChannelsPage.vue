@@ -692,9 +692,7 @@ const { exporting, exportFile } = useExport({
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid var(--ta-border-light);
 }
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {

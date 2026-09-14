@@ -7,9 +7,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid var(--ta-border-light);
 }
 .table-footer .table-stats {
   margin-bottom: 0;
