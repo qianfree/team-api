@@ -843,46 +843,68 @@ function resetImport() {
       v-model:visible="showModal"
       :title="modalTitle"
       :mask-closable="false"
-      :width="550"
+      :width="720"
+      modal-class="model-edit-modal"
       :on-before-ok="handleSubmit"
       :ok-loading="formLoading"
     >
       <AForm ref="formRef" :model="form" :auto-label-width="true" layout="vertical">
-        <AFormItem field="model_id" label="模型标识" :rules="[{ required: true, message: '请输入模型标识' }]">
-          <AInput v-model="form.model_id" placeholder="gpt-4o" :disabled="!!editingId" />
+        <!-- 首行：分类单选（分段按钮式），等宽铺满整行 -->
+        <AFormItem field="category" label="分类" :rules="[{ required: true, message: '请选择分类' }]">
+          <ARadioGroup v-model="form.category" type="button" class="cat-seg">
+            <ARadio v-for="opt in categoryOptions.filter(o => o.value)" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </ARadio>
+          </ARadioGroup>
         </AFormItem>
-        <AFormItem label="显示名">
-          <AInput v-model="form.model_name" placeholder="GPT-4o" />
-        </AFormItem>
-        <div style="display: flex; gap: 16px;">
-          <AFormItem field="category" label="分类" :rules="[{ required: true, message: '请选择分类' }]" style="flex: 1;">
+        <!-- 第二行：模型标识 / 显示名称 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4">
+          <AFormItem field="model_id" label="模型标识" :rules="[{ required: true, message: '请输入模型标识' }]">
+            <AInput v-model="form.model_id" placeholder="gpt-4o" :disabled="!!editingId" />
+          </AFormItem>
+          <AFormItem label="显示名称">
+            <AInput v-model="form.model_name" placeholder="GPT-4o" />
+          </AFormItem>
+        </div>
+        <!-- 第三行：厂商 / 状态 / 官方数据 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4">
+          <AFormItem label="厂商">
             <ASelect
-              v-model="form.category"
-              :options="categoryOptions.filter(o => o.value)"
-              placeholder="请选择分类"
+              v-model="form.vendor"
+              :options="[{ label: '未分类', value: '' }, ...vendorOptions]"
+              placeholder="选择研发厂商"
+              allow-search
+              :filter-option="filterVendorOption"
             />
           </AFormItem>
-          <AFormItem label="官方数据" style="flex: 1;">
+          <AFormItem label="状态">
+            <ASelect v-model="form.status" :options="statusOptions.filter(o => o.value)" />
+          </AFormItem>
+          <AFormItem label="官方数据">
             <AButton type="outline" :loading="fetchingInfo" long @click="fetchOfficialInfo">
               拉取官方数据
             </AButton>
           </AFormItem>
         </div>
-        <AFormItem label="厂商">
-          <ASelect
-            v-model="form.vendor"
-            :options="[{ label: '未分类', value: '' }, ...vendorOptions]"
-            placeholder="选择研发厂商"
-            allow-search
-            :filter-option="filterVendorOption"
-          />
-        </AFormItem>
-        <div style="display: flex; gap: 16px;">
-          <AFormItem label="最大上下文" style="flex: 1;">
+        <!-- 第四行：最大上下文 / 最大输出 / 标签 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4">
+          <AFormItem label="最大上下文">
             <AInputNumber v-model="form.max_context_tokens" :min="0" placeholder="如 128000" class="w-full" />
           </AFormItem>
-          <AFormItem label="最大输出" style="flex: 1;">
+          <AFormItem label="最大输出">
             <AInputNumber v-model="form.max_output_tokens" :min="0" placeholder="如 16384" class="w-full" />
+          </AFormItem>
+          <AFormItem label="标签">
+            <AInputTag v-model="form.tags" placeholder="输入后回车添加标签" allow-clear />
+          </AFormItem>
+        </div>
+        <!-- 弃用时展示：下线日期 / 替代模型 -->
+        <div v-if="editingId && form.status === 'deprecated'" class="grid grid-cols-1 md:grid-cols-2 gap-x-4">
+          <AFormItem label="下线日期">
+            <ADatePicker v-model="form.sunset_date" style="width: 100%" placeholder="模型将在此日期自动下线" />
+          </AFormItem>
+          <AFormItem label="替代模型">
+            <AInput v-model="form.replacement_model" placeholder="推荐用户迁移到的模型名" />
           </AFormItem>
         </div>
         <AFormItem label="模型能力">
@@ -896,18 +918,6 @@ function resetImport() {
               {{ cap.label }}
             </ACheckbox>
           </div>
-        </AFormItem>
-        <AFormItem v-if="editingId" label="状态">
-          <ASelect v-model="form.status" :options="statusOptions.filter(o => o.value)" />
-        </AFormItem>
-        <AFormItem v-if="editingId && form.status === 'deprecated'" label="下线日期">
-          <ADatePicker v-model="form.sunset_date" style="width: 100%" placeholder="模型将在此日期自动下线" />
-        </AFormItem>
-        <AFormItem v-if="editingId && form.status === 'deprecated'" label="替代模型">
-          <AInput v-model="form.replacement_model" placeholder="推荐用户迁移到的模型名" />
-        </AFormItem>
-        <AFormItem label="标签">
-          <AInputTag v-model="form.tags" placeholder="输入后回车添加标签" allow-clear />
         </AFormItem>
         <AFormItem label="描述">
           <AInput v-model="form.description" type="textarea" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="模型描述（选填）" />
@@ -1010,9 +1020,24 @@ function resetImport() {
 }
 .cap-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 8px 0;
   width: 100%;
+}
+/* 分类分段按钮组：等宽铺满表单整行 */
+.cat-seg {
+  display: flex;
+  width: 100%;
+}
+.cat-seg :deep(.arco-radio-button) {
+  flex: 1;
+}
+.cat-seg :deep(.arco-radio-button-content) {
+  text-align: center;
+}
+/* 弹窗 teleport 到 body，scoped 属性选择器不生效，用 :global 兜底移动端宽度 */
+:global(.model-edit-modal) {
+  max-width: calc(100vw - 24px);
 }
 .import-upload-area {
   border: 1px dashed var(--color-border-2);
