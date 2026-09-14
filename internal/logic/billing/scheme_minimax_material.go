@@ -18,7 +18,11 @@ import (
 //	总费用 = 输出生成费 + 输入图片费 + 输入视频费（输入音频免费，不配置即不计费）
 //	  输出生成费 = 输出秒数 × pricing JSONB per_second 矩阵[生成分辨率]
 //	  输入图片费 = max(0, 图片张数 - free_count) × price_per_unit
-//	  输入视频费 = 输入视频秒数 × price_per_second（官方 usage 无输入视频分辨率，按秒单一单价）
+//	  输入视频费 = 输入视频秒数 × per_second 矩阵[生成分辨率]
+//
+// 输入视频不单独定价：官方规则为「输入视频按时长、以输出分辨率对应单价计费」
+// （与生成视频同价），单价复用输出生成矩阵按生成分辨率查取，scheme_config 无
+// input_video 节（存量配置残留该节在保存时被校验拒绝，提示移除）。
 //
 // 预扣 vs 结算：
 //   - 图片张数提交时可知（adaptor 上报 ratios 的 spec.input_image_count）→ 预扣即精确；
@@ -28,11 +32,11 @@ import (
 // 结算时 usage 某字段缺失（上游未返回）则回退 ratios 中提交时刻的对应 spec.* 事实值，
 // 官方完全不返回素材计量时整体回退预扣口径（多退少补兜底）。
 //
-// scheme_config（pricing JSONB 不透明容器，金额本位币）：
+// scheme_config（pricing JSONB 不透明容器，金额本位币；可不配置 = 图片免费，
+// 输出与输入视频均按 per_second 矩阵计费）：
 //
 //	{
-//	  "image":       {"free_count": 5, "price_per_unit": 0.20},
-//	  "input_video": {"price_per_second": 0.50}
+//	  "image": {"free_count": 5, "price_per_unit": 0.20}
 //	}
 
 // SchemeMiniMaxMaterial MiniMax 素材计费方案名（模型 pricing JSONB scheme 键引用）
@@ -47,22 +51,15 @@ const inputVideoMaxSeconds = 600.0
 // 避免 URL 素材时长未知导致预扣少冻结。
 const inputVideoEstimateSeconds = 15.0
 
-// minimaxMaterialConfig 方案私有配置
+// minimaxMaterialConfig 方案私有配置（输入视频按生成分辨率单价计费，无独立配置）
 type minimaxMaterialConfig struct {
-	Image      *minimaxImagePrice      `json:"image,omitempty"`
-	InputVideo *minimaxInputVideoPrice `json:"input_video,omitempty"`
+	Image *minimaxImagePrice `json:"image,omitempty"`
 }
 
 // minimaxImagePrice 输入图片单价：请求级免费额度 + 超出部分单价
 type minimaxImagePrice struct {
 	FreeCount    int     `json:"free_count"`     // 免费张数（0 = 无免费额度）
 	PricePerUnit float64 `json:"price_per_unit"` // 超出部分单价（本位币/张）
-}
-
-// minimaxInputVideoPrice 输入视频按秒单一单价：官方 usage 只有 input_seconds
-// （无输入视频分辨率信息），不做规格区分
-type minimaxInputVideoPrice struct {
-	PricePerSecond float64 `json:"price_per_second"`
 }
 
 // minimaxMaterialScheme MiniMax 素材计费方案（无状态单例，配置从 pricing.SchemeConfig 读取）
@@ -87,16 +84,24 @@ func (minimaxMaterialScheme) parseConfig(pricing *PricingResult) *minimaxMateria
 }
 
 // ValidateSchemeConfig 校验 scheme_config（管理端保存 fail-fast）：
-// 单价非负、免费额度非负、输入视频矩阵至少一档正价且规格键非空、至少配置一个计费节。
+// 配置可空（图片免费、仅按秒矩阵计费输出与输入视频的合法形态）；配置时校验图片
+// 单价与免费额度非负；input_video 节已废弃（输入视频改按生成分辨率单价计费），
+// 残留即拒绝，提示管理员移除后重存，避免旧单价静默失效造成计费口径突变。
 func (minimaxMaterialScheme) ValidateSchemeConfig(cfg json.RawMessage) error {
 	if len(cfg) == 0 || string(cfg) == "null" {
-		return gerror.New("素材计费方案必须配置 scheme_config（图片单价 / 输入视频单价至少一项）")
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(cfg, &raw); err != nil {
+		return gerror.Wrap(err, "scheme_config 解析失败")
+	}
+	if _, ok := raw["input_video"]; ok {
+		return gerror.New("输入视频不再单独定价（按生成分辨率单价计费），请移除 scheme_config 中的 input_video 配置")
 	}
 	var c minimaxMaterialConfig
 	if err := json.Unmarshal(cfg, &c); err != nil {
 		return gerror.Wrap(err, "scheme_config 解析失败")
 	}
-	hasPricedSection := false
 	if c.Image != nil {
 		if c.Image.PricePerUnit < 0 {
 			return gerror.New("输入图片单价不能为负")
@@ -104,32 +109,18 @@ func (minimaxMaterialScheme) ValidateSchemeConfig(cfg json.RawMessage) error {
 		if c.Image.FreeCount < 0 {
 			return gerror.New("输入图片免费张数不能为负")
 		}
-		if c.Image.PricePerUnit > 0 {
-			hasPricedSection = true
-		}
-	}
-	if c.InputVideo != nil {
-		if c.InputVideo.PricePerSecond < 0 {
-			return gerror.New("输入视频每秒单价不能为负")
-		}
-		if c.InputVideo.PricePerSecond == 0 {
-			return gerror.New("输入视频计费必须配置正的每秒单价（音频免费无需配置，视频不免费请填正数）")
-		}
-		hasPricedSection = true
-	}
-	if !hasPricedSection {
-		return gerror.New("素材计费方案至少配置图片单价或输入视频单价之一")
 	}
 	return nil
 }
 
-// EstimateTaskCost 预扣估算：输出组件 + 提交可知的素材组件（图片张数精确、输入视频按 0 估）。
+// EstimateTaskCost 预扣估算：按秒组件（输出生成 + 输入视频，共用生成分辨率单价）+
+// 提交可知的图片组件（张数精确）。
 func (s minimaxMaterialScheme) EstimateTaskCost(pricing *PricingResult, ratios map[string]any, _ []byte) decimal.Decimal {
 	cfg := s.parseConfig(pricing)
 	spec, _ := ratioString(ratios, "spec.resolution")
 	total := decimal.Zero
 
-	// 输出生成组件：per_second 矩阵（与通用按秒引擎共用查价与兜底链），矩阵未配置时为 0
+	// 按秒组件（与通用按秒引擎共用查价与兜底链），矩阵未配置时输出与输入视频均不计费
 	if price := LookupPerSecondPrice(pricing.PerSecondPrices, spec); price > 0 {
 		duration := defaultTaskDurationSeconds
 		if d, ok := ratioFloat(ratios, "spec.duration"); ok && d > 0 {
@@ -138,14 +129,15 @@ func (s minimaxMaterialScheme) EstimateTaskCost(pricing *PricingResult, ratios m
 		if duration > maxTaskDurationSeconds {
 			duration = maxTaskDurationSeconds
 		}
+		// 输出生成：时长 × 单价
 		total = total.Add(NewFromFloat(price).Mul(NewFromFloat(duration)))
+		// 输入视频：估算时长（确知时长 > 含视频按生成长度上限 15s 估 > 0）× 同一单价，
+		// 结算以官方 usage 补差
+		total = total.Add(inputVideoCost(price, estimateInputVideoSeconds(ratios)))
 	}
 
 	// 输入图片：请求级免费额度扣减
 	total = total.Add(s.imageCost(cfg, ratioFloatOr(ratios, "spec.input_image_count", 0)))
-
-	// 输入视频：时长 × 按秒单价（提交含输入视频按生成长度上限 15s 冻结，结算以官方 usage 补扣）
-	total = total.Add(s.inputVideoCost(cfg, estimateInputVideoSeconds(ratios)))
 
 	return total.Mul(NewFromFloat(pricing.TenantMultiplier)).
 		Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
@@ -162,8 +154,11 @@ func (s minimaxMaterialScheme) SettleTaskCost(pricing *PricingResult, ratios map
 	spec, _ := ratioString(ratios, "spec.resolution")
 	total := decimal.Zero
 
+	// 按秒组件单价：生成分辨率矩阵查价（输出与输入视频同价），矩阵未配置时为 0
+	price := LookupPerSecondPrice(pricing.PerSecondPrices, spec)
+
 	// 输出生成组件：优先官方 output_seconds，缺失回退请求时长信号（与预扣同源）
-	if price := LookupPerSecondPrice(pricing.PerSecondPrices, spec); price > 0 {
+	if price > 0 {
 		outputSecs := usage.OutputSeconds
 		if outputSecs <= 0 {
 			outputSecs = ratioFloatOr(ratios, "spec.duration", defaultTaskDurationSeconds)
@@ -186,7 +181,7 @@ func (s minimaxMaterialScheme) SettleTaskCost(pricing *PricingResult, ratios map
 	if inputSecs <= 0 {
 		inputSecs = estimateInputVideoSeconds(ratios)
 	}
-	total = total.Add(s.inputVideoCost(cfg, inputSecs))
+	total = total.Add(inputVideoCost(price, inputSecs))
 
 	return total.Mul(NewFromFloat(pricing.TenantMultiplier)).
 		Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
@@ -201,16 +196,17 @@ func (minimaxMaterialScheme) imageCost(cfg *minimaxMaterialConfig, count float64
 	return NewFromFloat(charged).Mul(NewFromFloat(cfg.Image.PricePerUnit))
 }
 
-// inputVideoCost 输入视频费用：时长（钳制上限）× 按秒单一单价
-// （官方 usage 无输入视频分辨率信息，不做规格区分）
-func (minimaxMaterialScheme) inputVideoCost(cfg *minimaxMaterialConfig, seconds float64) decimal.Decimal {
-	if cfg == nil || cfg.InputVideo == nil || cfg.InputVideo.PricePerSecond <= 0 || seconds <= 0 {
+// inputVideoCost 输入视频费用：时长（钳制上限）× 生成分辨率单价。
+// 官方规则：输入视频按时长、以输出分辨率对应单价计费（与生成视频同价），
+// 不单独定价、不区分输入视频自身分辨率（官方 usage 无该信息）。
+func inputVideoCost(price, seconds float64) decimal.Decimal {
+	if price <= 0 || seconds <= 0 {
 		return decimal.Zero
 	}
 	if seconds > inputVideoMaxSeconds {
 		seconds = inputVideoMaxSeconds
 	}
-	return NewFromFloat(seconds).Mul(NewFromFloat(cfg.InputVideo.PricePerSecond))
+	return NewFromFloat(seconds).Mul(NewFromFloat(price))
 }
 
 // estimateInputVideoSeconds 输入视频预扣估算时长（秒）：
