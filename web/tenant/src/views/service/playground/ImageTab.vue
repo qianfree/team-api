@@ -5,6 +5,7 @@ import { createPlaygroundApi } from '@/utils/playgroundApi'
 import { createPoller } from '@/composables/usePolling'
 import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
+import GenerationProgressCard from './GenerationProgressCard.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -202,14 +203,6 @@ const statusLabel: Record<string, string> = {
 	QUEUED: '排队中',
 	SUCCESS: '已完成',
 	FAILURE: '失败',
-}
-const statusColor: Record<string, string> = {
-	SUBMITTED: 'badge-primary',
-	IN_PROGRESS: 'badge-warning',
-	NOT_START: 'badge-gray',
-	QUEUED: 'badge-gray',
-	SUCCESS: 'badge-success',
-	FAILURE: 'badge-danger',
 }
 
 // 切换模型时停止上一模型的轮询并清空结果，重置模式为默认（异步）
@@ -578,34 +571,29 @@ function closeZoom() {
 						<h3 class="empty-state-title">等待生成</h3>
 						<p class="empty-state-description">输入提示词并点击生成</p>
 					</div>
-					<div v-if="sending" class="flex items-center justify-center py-12">
-						<div class="spinner h-8 w-8 text-primary-600"></div>
-						<span class="ml-3 text-sm text-gray-500">{{ effectiveMode === 'async' ? '提交图片生成任务中...' : '图片生成中...' }}</span>
-					</div>
+					<!-- 提交中 / 同步生成中：卡片式加载占位 -->
+					<GenerationProgressCard
+						v-if="sending"
+						kind="image"
+						:label="effectiveMode === 'async' ? '正在提交生成任务...' : '图片生成中...'"
+					/>
 
-					<!-- 异步任务状态 -->
-					<div v-if="asyncTask && !sending" class="mb-4 space-y-3">
-						<div class="flex items-center gap-3">
-							<span class="badge" :class="statusColor[asyncTask.status] || 'badge-gray'">
-								{{ statusLabel[asyncTask.status] || asyncTask.status }}
-							</span>
-							<span v-if="asyncTask.progress" class="text-xs text-gray-500">进度: {{ asyncTask.progress }}</span>
-							<span v-if="polling" class="text-xs text-primary-600 flex items-center gap-1">
-								<div class="spinner h-3 w-3"></div>
-								轮询中
-							</span>
-							<span v-if="asyncTask.id" class="text-xs text-gray-400 ml-auto">task_id: {{ asyncTask.id }}</span>
+					<!-- 异步任务进行中：卡片式进度占位（成功由下方图片区接管） -->
+					<GenerationProgressCard
+						v-else-if="asyncTask && asyncTask.status !== 'SUCCESS' && asyncTask.status !== 'FAILURE'"
+						kind="image"
+						:progress="asyncTask.progress"
+						:label="statusLabel[asyncTask.status] || asyncTask.status"
+						:sublabel="asyncTask.id ? 'task_id: ' + asyncTask.id : ''"
+					/>
+
+					<!-- 任务失败 -->
+					<div v-if="asyncTask && asyncTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
+						<div class="flex items-center gap-2 text-red-700">
+							<Icon name="xCircle" size="sm" />
+							<span class="text-sm font-medium">生成失败</span>
 						</div>
-						<div v-if="asyncTask.status === 'IN_PROGRESS' || asyncTask.status === 'SUBMITTED' || asyncTask.status === 'QUEUED'" class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-							<div class="h-full rounded-full bg-primary-500 transition-all duration-500" :style="{ width: asyncTask.progress || '10%' }" />
-						</div>
-						<div v-if="asyncTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
-							<div class="flex items-center gap-2 text-red-700">
-								<Icon name="xCircle" size="sm" />
-								<span class="text-sm font-medium">生成失败</span>
-							</div>
-							<p v-if="asyncTask.error" class="mt-2 text-sm text-red-600">{{ asyncTask.error }}</p>
-						</div>
+						<p v-if="asyncTask.error" class="mt-2 text-sm text-red-600">{{ asyncTask.error }}</p>
 					</div>
 
 					<div v-if="images.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">

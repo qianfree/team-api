@@ -110,34 +110,40 @@ const tenantRoutes: RouteRecordRaw[] = [
 				meta: { title: '可用模型', icon: 'cube', sort: 30, roles: ['owner', 'admin', 'member'] },
 			},
 			{
+				path: 'playground',
+				name: 'TenantPlayground',
+				component: () => import('@/views/service/PlaygroundPage.vue'),
+				meta: { title: '在线体验', icon: 'terminal', sort: 31, roles: ['owner', 'admin', 'member'], badge: '⚡' },
+			},
+			{
 				path: 'model-comparison',
 				name: 'TenantModelComparison',
 				component: () => import('@/views/service/ModelComparisonPage.vue'),
-				meta: { title: '模型对比', icon: 'chart', sort: 31, roles: ['owner', 'admin', 'member'] },
+				meta: { title: '模型对比', icon: 'chart', sort: 32, roles: ['owner', 'admin', 'member'] },
 			},
 			{
 				path: 'api-keys',
 				name: 'TenantApiKeys',
 				component: () => import('@/views/service/ApiKeysPage.vue'),
-				meta: { title: 'API 密钥', icon: 'key', sort: 32, roles: ['owner', 'admin', 'member'], viewportTable: true },
+				meta: { title: 'API 密钥', icon: 'key', sort: 33, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'usage-logs',
 				name: 'TenantUsageLogs',
 				component: () => import('@/views/service/UsageLogsPage.vue'),
-				meta: { title: '用量日志', icon: 'chart', sort: 33, roles: ['owner', 'admin', 'member'], viewportTable: true },
+				meta: { title: '用量日志', icon: 'chart', sort: 34, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			{
 				path: 'request-audit-logs',
 				name: 'TenantRequestAuditLogs',
 				component: () => import('@/views/service/RequestAuditLogsPage.vue'),
-				meta: { title: '请求审计日志', icon: 'clipboard', sort: 34, roles: ['owner', 'admin'], viewportTable: true },
+				meta: { title: '请求审计日志', icon: 'clipboard', sort: 35, roles: ['owner', 'admin'], viewportTable: true },
 			},
 			{
 				path: 'task-logs',
 				name: 'TenantTaskLogs',
 				component: () => import('@/views/service/TaskLogsPage.vue'),
-				meta: { title: '任务日志', icon: 'clock', sort: 35, roles: ['owner', 'admin', 'member'], viewportTable: true },
+				meta: { title: '任务日志', icon: 'clock', sort: 36, roles: ['owner', 'admin', 'member'], viewportTable: true },
 			},
 			// 财务 (40-49)
 			{
@@ -176,12 +182,6 @@ const tenantRoutes: RouteRecordRaw[] = [
 				name: 'TenantNotificationPreferences',
 				component: () => import('@/views/notification/NotificationPreferencesPage.vue'),
 				meta: { title: '通知偏好', roles: ['owner', 'admin'] },
-			},
-			{
-				path: 'playground',
-				name: 'TenantPlayground',
-				component: () => import('@/views/service/PlaygroundPage.vue'),
-				meta: { title: '在线体验', icon: 'terminal', sort: 50, roles: ['owner', 'admin', 'member'], badge: '⚡' },
 			},
 			{
 				path: 'tickets',
