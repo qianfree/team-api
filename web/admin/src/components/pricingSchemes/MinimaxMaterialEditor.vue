@@ -6,9 +6,11 @@ import { currencySymbol } from '@/composables/useCurrency'
 
 // MiniMax 素材计费方案编辑器（scheme = custom:minimax-material，契约见 pricingSchemeEditors.ts）：
 //   费用 = 输出生成（per_second 矩阵，存 pricing JSONB prices）
+//        + 输入视频（按输入时长 × 生成分辨率单价，复用输出生成矩阵，无需单独配置）
 //        + 输入图片（免费额度 + 单价，存 scheme_config.image）
-//        + 输入视频（按秒单一单价，存 scheme_config.input_video.price_per_second）
 //   输入音频免费（无需配置）。时段定价 / 参数倍率不适用于素材计费，保存时恒清除。
+//   展示字段（折扣标签 / 价格调整说明 / 价格说明）与通用表单同源，随保存全量替换提交
+//   （后端空串=清除，缺省不传同样清空，故必须显式回传）。
 // 金额单位均为本位币（bil 层存储原值，不折算）。
 
 const props = defineProps<{
@@ -26,8 +28,10 @@ const outputRows = reactive<PriceRow[]>([])
 // 输入图片素材
 const imageFreeCount = ref<number>(5)
 const imagePrice = ref<number>(0)
-// 输入视频按秒单一单价（官方 usage 无输入视频分辨率信息，不做规格区分）
-const inputVideoPrice = ref<number>(0)
+// 展示字段（挂锚点行：对外营销文案 + 内部备注，与通用定价表单同源）
+const discountLabel = ref('')
+const priceChangeNote = ref('')
+const priceNote = ref('')
 
 const outputSpecPresets = ['480P', '768P', '2K', '*']
 
@@ -78,21 +82,19 @@ onMounted(async () => {
 		const cfg = data?.scheme_config || props.schemeConfig || {}
 		imageFreeCount.value = cfg.image?.free_count ?? 5
 		imagePrice.value = Number(cfg.image?.price_per_unit) || 0
-		inputVideoPrice.value = Number(cfg.input_video?.price_per_second) || 0
+		// 展示字段（锚点行直存列，与通用表单同源）
+		discountLabel.value = data?.discount_label || ''
+		priceChangeNote.value = data?.price_change_note || ''
+		priceNote.value = data?.price_note || ''
 	} catch {
 		// error handled by interceptor；回显留空可手工填写
 	}
 })
 
 async function save(): Promise<boolean> {
-	// 输出生成矩阵：至少一档正价
+	// 输出生成矩阵：至少一档正价（该矩阵同时用于输出生成与输入视频按秒计费）
 	const outputMap = buildMatrix(outputRows, true)
 	if (!outputMap) return false
-	// 输入视频按秒单价：可选配置（0 = 不对输入视频计费）
-	if (inputVideoPrice.value < 0) {
-		Message.warning('输入视频单价不能为负')
-		return false
-	}
 	// 图片参数
 	if (imageFreeCount.value < 0) {
 		Message.warning('输入图片免费张数不能为负')
@@ -102,19 +104,12 @@ async function save(): Promise<boolean> {
 		Message.warning('输入图片单价不能为负')
 		return false
 	}
-	// 素材配置至少一项（与后端 scheme_config 校验一致）
-	if (imagePrice.value <= 0 && inputVideoPrice.value <= 0) {
-		Message.warning('至少配置输入图片单价或输入视频单价之一（输入音频免费无需配置）')
-		return false
-	}
 	// 时段 / 参数倍率不适用于素材计费，恒传空数组清除（全量替换语义）
 
+	// scheme_config 仅含图片配置（0 = 图片免费；输入视频按输出生成矩阵计费，无需配置）
 	const schemeConfig: any = {}
 	if (imagePrice.value > 0) {
 		schemeConfig.image = { free_count: imageFreeCount.value, price_per_unit: imagePrice.value }
-	}
-	if (inputVideoPrice.value > 0) {
-		schemeConfig.input_video = { price_per_second: inputVideoPrice.value }
 	}
 
 	await request.put(`/admin/models/${props.modelId}/pricing`, {
@@ -137,6 +132,10 @@ async function save(): Promise<boolean> {
 		scheme_config: schemeConfig,
 		time_segments: [],
 		param_multipliers: [],
+		// 展示字段全量替换提交（后端空串=清除；缺省不传同样清空，必须显式回传）
+		price_note: priceNote.value.trim(),
+		discount_label: discountLabel.value.trim(),
+		price_change_note: priceChangeNote.value.trim(),
 	})
 	return true
 }
@@ -175,7 +174,7 @@ defineExpose({ save })
 		<div class="editor-section">
 			<div class="section-header">
 				<h3>输入素材计费</h3>
-				<span class="section-hint">音频免费；图片按张（含免费额度）；输入视频按其时长 × 生成分辨率单价（结算以官方 usage 为准）</span>
+				<span class="section-hint">音频免费；图片按张（含免费额度）；输入视频自动按输出生成矩阵单价 × 输入时长计费（结算以官方 usage 为准，无需单独配置）</span>
 			</div>
 			<div class="image-config">
 				<div class="field-item">
@@ -190,11 +189,32 @@ defineExpose({ save })
 						<template #suffix>{{ currencySymbol }} / 张</template>
 					</AInputNumber>
 				</div>
+			</div>
+		</div>
+
+		<div class="editor-section">
+			<div class="section-header">
+				<h3>展示信息</h3>
+				<span class="section-hint">折扣标签与调整说明会展示给租户；价格说明仅管理后台可见</span>
+			</div>
+			<div class="display-config">
 				<div class="field-item">
-					<span class="field-label">输入视频单价（按秒）</span>
-					<AInputNumber v-model="inputVideoPrice" :min="0" :step="0.01" size="small" class="field-input">
-						<template #suffix>{{ currencySymbol }} / 秒</template>
-					</AInputNumber>
+					<span class="field-label">折扣标签（对外展示）</span>
+					<AInput v-model="discountLabel" :maxlength="50" placeholder="如：7折起、限时5折" allow-clear size="small" class="field-input-flex" />
+				</div>
+				<div class="field-item">
+					<span class="field-label">价格调整说明（对外展示）</span>
+					<AInput v-model="priceChangeNote" :maxlength="200" placeholder="如：9月1日起价格下调 20%" allow-clear size="small" class="field-input-flex" />
+				</div>
+				<div class="field-item field-item-top">
+					<span class="field-label">价格说明（仅内部可见）</span>
+					<ATextarea
+						v-model="priceNote"
+						:max-length="500"
+						:auto-size="{ minRows: 2, maxRows: 4 }"
+						placeholder="调价背景、渠道成本等内部备注，不对外展示"
+						class="field-input-flex"
+					/>
 				</div>
 			</div>
 		</div>
@@ -269,6 +289,26 @@ defineExpose({ save })
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+.display-config {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.field-input-flex {
+	flex: 1;
+	min-width: 0;
+}
+
+/* 多行文本行：标签顶对齐，避免 textarea 垂直居中错位 */
+.field-item-top {
+	align-items: flex-start;
+}
+
+.field-item-top .field-label {
+	margin-top: 4px;
 }
 
 .field-item {
