@@ -751,45 +751,8 @@ function clearChat() {
 </template>
 
 <style scoped>
-/* ── 输入容器：把附件片、输入框、操作按钮收进同一个圆角盒子 ── */
-.input-shell {
-	border: 1px solid #e5e7eb;
-	border-radius: 1rem;
-	background: #fff;
-	padding: 0.625rem 0.75rem 0.5rem;
-	transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
-}
-/* 聚焦与拖拽时整块高亮，而不是只高亮里面的 textarea */
-.input-shell:focus-within {
-	border-color: rgba(20, 184, 166, 0.55);
-	box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.09);
-}
-.input-shell-dragging {
-	border-color: #2dd4bf;
-	border-style: dashed;
-	background: rgba(240, 253, 250, 0.6);
-}
-
-/* ── 输入区内的小工具按钮 ── */
-.input-tool {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	border-radius: 0.5rem;
-	padding: 0.25rem 0.5rem;
-	color: #6b7280;
-	font-size: 0.75rem;
-	line-height: 1.25rem;
-	transition: background-color 150ms ease, color 150ms ease;
-}
-.input-tool:hover:not(:disabled) {
-	background: #f3f4f6;
-	color: #0d9488;
-}
-.input-tool:disabled {
-	cursor: not-allowed;
-	color: #d1d5db;
-}
+/* 输入容器（.input-shell / .input-tool）已提到 styles/main.css，
+   与视频 Tab 共用一份定义 */
 
 /* ── Temperature 滑块：替换浏览器默认的紫色原生样式 ── */
 .range-slider {
