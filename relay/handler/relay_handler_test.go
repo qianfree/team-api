@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -59,4 +60,60 @@ func TestResolveRelayModel(t *testing.T) {
 			t.Errorf("lookup calls = %v, want single literal lookup", provider.calls)
 		}
 	})
+}
+
+// TestEstimateInputTokens 多模态请求体的预扣估算：base64 内联媒体必须按固定成本计入，
+// 不能按字节折算——一张 2MB 的图按 len/4 会被估成约 70 万 token，预扣直接冻穿余额。
+func TestEstimateInputTokens(t *testing.T) {
+	// 模拟 2MB 的 base64 图片载荷
+	payload := strings.Repeat("A", 2<<20)
+
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{
+			"纯文本按字节折算",
+			strings.Repeat("x", 400),
+			100,
+		},
+		{
+			"空体",
+			"",
+			0,
+		},
+		{
+			// 文本骨架 40 字节 + 1 个媒体
+			"单图不按字节折算",
+			`{"url":"data:image/png;base64,` + payload + `"}`,
+			(len(`{"url":"data:image/png;base64,`+`"}`))/4 + inlineMediaTokenCost,
+		},
+		{
+			"双图按个数累加",
+			`{"a":"data:image/png;base64,` + payload + `","b":"data:image/png;base64,` + payload + `"}`,
+			(len(`{"a":"data:image/png;base64,`+`","b":"data:image/png;base64,`+`"}`))/4 + 2*inlineMediaTokenCost,
+		},
+		{
+			// 畸形 data URL（无 base64 标记）退化为纯文本路径
+			"畸形 data URL",
+			`{"url":"data:image/png,` + strings.Repeat("A", 400) + `"}`,
+			len(`{"url":"data:image/png,`+`"}`)/4 + 100,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := estimateInputTokens([]byte(c.body)); got != c.want {
+				t.Errorf("estimateInputTokens() = %d, want %d", got, c.want)
+			}
+		})
+	}
+
+	// 回归保护：2MB 图片的估算必须远低于按字节折算的量级
+	naive := len(`{"url":"data:image/png;base64,`+payload+`"}`) / 4
+	got := estimateInputTokens([]byte(`{"url":"data:image/png;base64,` + payload + `"}`))
+	if got >= naive/10 {
+		t.Errorf("2MB 图片估算 %d tokens，与按字节折算的 %d 处于同一量级，预扣仍会冻穿余额", got, naive)
+	}
 }
