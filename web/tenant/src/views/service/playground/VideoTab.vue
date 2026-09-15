@@ -6,6 +6,10 @@ import { createPoller } from '@/composables/usePolling'
 import Icon from '@/components/common/Icon.vue'
 import GenerationProgressCard from './GenerationProgressCard.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
+import AttachmentBar from './AttachmentBar.vue'
+import PromptInput from './PromptInput.vue'
+import { useAttachments } from './useAttachments'
+import { compileVideoPrompt } from './attachmentParts'
 
 interface ModelItem {
 	model_id: string
@@ -29,6 +33,25 @@ watch(
 const prompt = ref('')
 const resolution = ref('1280x720')
 const duration = ref(5)
+
+// ── 参考素材 ──
+// 前端按多素材形态实现（图/视/音皆可上传、@ 列表按类型命名），但本期只有首帧参考图
+// 能随请求发出：/v1/videos 的 input_reference 仅承载一张图，其余素材待后端扩协议。
+const {
+	list: attachmentList,
+	accept: acceptTypes,
+	max: attachmentMax,
+	addFiles: addAttachments,
+	remove: removeAttachment,
+} = useAttachments({ kinds: ['image', 'video', 'audio'], max: 6 })
+
+const promptInput = ref<InstanceType<typeof PromptInput> | null>(null)
+// 提交时未能随请求发出的素材名，用于结果区提示
+const deferredNames = ref<string[]>([])
+
+function insertMention(name: string) {
+	promptInput.value?.insertMention(name)
+}
 
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
 
@@ -98,15 +121,20 @@ async function submitTask() {
 	if (!prompt.value.trim() || !selectedModel.value) return
 	submitting.value = true
 	currentTask.value = null
+	deferredNames.value = []
 	stopPolling()
 	releaseVideo()
 
 	try {
 		const api = createPlaygroundApi(props.apiKey)
+		// 正文里的 [@图片1] 换成纯文字标签；首帧参考图取第一张图片附件
+		const compiled = compileVideoPrompt(prompt.value, attachmentList.value)
+		deferredNames.value = compiled.deferred.map(a => a.name)
+
 		// OpenAI Videos 协议：size 承载分辨率（像素串或命名档位如 768P/2K），seconds 承载时长
 		const body: Record<string, any> = {
 			model: selectedModel.value,
-			prompt: prompt.value,
+			prompt: compiled.prompt,
 		}
 		if (resolution.value) {
 			body.size = resolution.value
@@ -114,8 +142,13 @@ async function submitTask() {
 		if (duration.value) {
 			body.seconds = String(duration.value)
 		}
+		if (compiled.inputReference) {
+			// 走 JSON 引用对象形态：后端 parseVideosInputReferenceJSON 接受 data URL，
+			// 无需切 multipart，也不用跟 createPlaygroundApi 固定的 Content-Type 打架
+			body.input_reference = { image_url: compiled.inputReference }
+		}
 
-		const res = await api.post('/v1/videos', body, { timeout: 60_000 })
+		const res = await api.post('/v1/videos', body, { timeout: 120_000 })
 		const data = res.data
 
 		currentTask.value = {
@@ -252,8 +285,26 @@ function downloadVideo() {
 						<BaseSelect v-model="selectedModel" :options="modelOptions" />
 					</div>
 					<div>
+						<label class="input-label">参考素材</label>
+						<AttachmentBar
+							:attachments="attachmentList"
+							:accept="acceptTypes"
+							:max="attachmentMax"
+							@add="addAttachments"
+							@remove="removeAttachment"
+							@insert="insertMention"
+						/>
+					</div>
+					<div>
 						<label class="input-label">提示词</label>
-						<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的视频..." />
+						<PromptInput
+							ref="promptInput"
+							v-model="prompt"
+							:attachments="attachmentList"
+							:min-rows="4"
+							placeholder="描述你想生成的视频，输入 @ 引用已上传的素材..."
+							@paste="addAttachments"
+						/>
 					</div>
 					<div>
 						<label class="input-label">分辨率</label>
@@ -297,6 +348,17 @@ function downloadVideo() {
 						<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
 						<h3 class="empty-state-title">等待生成</h3>
 						<p class="empty-state-description">输入提示词并点击生成</p>
+					</div>
+
+					<!-- 本期协议带不动的素材：提交后明确告知，避免用户以为已生效 -->
+					<div v-if="deferredNames.length" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+						<div class="flex items-center gap-2 text-amber-700">
+							<Icon name="exclamationTriangle" size="sm" />
+							<span class="text-sm font-medium">部分素材未随本次请求发送</span>
+						</div>
+						<p class="mt-1 text-xs text-amber-600">
+							{{ deferredNames.join('、') }} — 当前仅支持一张首帧参考图，多素材引用待后端支持
+						</p>
 					</div>
 
 					<!-- 提交中：卡片式占位 -->
