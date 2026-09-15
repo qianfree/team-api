@@ -1212,9 +1212,23 @@ func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, mo
 	commonlogic.DefaultChannelErrorWriter.Submit(event)
 }
 
-// estimateInputTokens 粗略估算输入 token 数（按字符数 / 4）
+// inlineMediaTokenCost 单个内联媒体（base64 图片/音频）在预扣估算中的固定 token 成本。
+// 视觉输入的真实 token 数与分辨率/切片策略强相关（OpenAI 1024px 约 765~1105，Gemini 约 258），
+// 这里取保守上界即可——预扣只是闸门，最终以上游 usage 结算，多退少补。
+const inlineMediaTokenCost = 1500
+
+// estimateInputTokens 粗略估算输入 token 数（仅用于预扣，结算以上游 usage 为准）。
+//
+// 文本部分按字符数 / 4；base64 内联媒体不能按字节折算——一张 2MB 的图按 len/4
+// 会被估成约 70 万 token，预扣直接冻穿余额，余额略少的租户根本发不出请求。
+// 故先扫出内联媒体载荷的字节数从长度中扣除，再按每个媒体的固定成本计入。
 func estimateInputTokens(body []byte) int {
-	return len(body) / 4
+	mediaBytes, mediaCount := commonlogic.ScanInlineMediaBytes(body)
+	textBytes := len(body) - mediaBytes
+	if textBytes < 0 {
+		textBytes = 0
+	}
+	return textBytes/4 + mediaCount*inlineMediaTokenCost
 }
 
 // tokenDetailField 安全提取 TokenDetails 中的字段值

@@ -100,13 +100,18 @@ func GetTenantAuditLevel(ctx context.Context, tenantID int64) string {
 
 // ApplyAuditLevel 根据审计级别处理请求体和响应体，返回处理后的内容。
 func ApplyAuditLevel(level string, requestBody, responseBody string, isStream bool, path string) (req, resp string) {
-	req = requestBody
-	resp = responseBody
+	// 多模态请求（对话内联图片/音频、视频参考图）的 base64 载荷先剥离成长度占位：
+	// multipart 体已在 relay handler 侧被挡成 "[binary body omitted]"，但内联在 JSON
+	// 里的 data URL 会原样落库，单条就能把 aud_request_logs 撑到几 MB。
+	// 此处是对话与异步任务两条审计链路的唯一收口点（DataProviderImpl.RecordAudit），
+	// 在这里剥离即可同时覆盖。none 级别直接丢弃，无需白做一次剥离。
+	if level == AuditLevelNone {
+		return "", ""
+	}
+	req = StripInlineMedia(requestBody)
+	resp = StripInlineMedia(responseBody)
 
 	switch level {
-	case AuditLevelNone:
-		req = ""
-		resp = ""
 	case AuditLevelQuestionOnly:
 		resp = ""
 	case AuditLevelMasked:
