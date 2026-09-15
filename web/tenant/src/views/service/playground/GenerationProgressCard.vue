@@ -5,18 +5,24 @@ import Icon from '@/components/common/Icon.vue'
 // 卡片式异步任务加载占位：按成品形状（图片 1:1 / 视频 16:9）占位的动效卡片，
 // 中央进度环展示百分比（无进度数值时转为旋转弧的不确定态），
 // 底层为浅色渐变底 + 双色光斑漂移 + 斜向扫光，视觉对齐 OpenAI / Gemini 生成中的占位效果。
+//
+// compact：消息气泡式的小卡片。整块宽度按 16:9 反推，只占容器左半侧，
+// 高度随宽度线性缩小——提示词输入区在其下方展开时不会再把它挤出视口。
 const props = withDefaults(
 	defineProps<{
 		kind?: 'image' | 'video'
 		progress?: string
 		label?: string
 		sublabel?: string
+		/** 紧凑形态：占位尺寸由「宽度撑满」改为「左半侧小卡片」 */
+		compact?: boolean
 	}>(),
 	{
 		kind: 'image',
 		progress: '',
 		label: '生成中...',
 		sublabel: '',
+		compact: false,
 	},
 )
 
@@ -40,7 +46,13 @@ const gradId = `gen-grad-${++seq}`
 </script>
 
 <template>
-	<div class="gen-card animate-scale-in" :class="kind === 'video' ? 'gen-card--video' : 'gen-card--image'">
+	<div
+		class="gen-card animate-scale-in"
+		:class="[
+			kind === 'video' ? 'gen-card--video' : 'gen-card--image',
+			compact ? 'gen-card--compact' : '',
+		]"
+	>
 		<!-- 底层：浅色渐变底 + 光斑漂移 + 斜向扫光 -->
 		<div class="gen-card__bg"></div>
 		<div class="gen-blob gen-blob--a"></div>
@@ -81,7 +93,7 @@ const gradId = `gen-grad-${++seq}`
 				</svg>
 				<div class="gen-ring__text">
 					<span v-if="pct !== null" class="gen-pct">{{ pct }}<small>%</small></span>
-					<Icon v-else name="hourglass" size="lg" class="animate-pulse text-primary-500" />
+					<Icon v-else name="hourglass" :size="compact ? 'sm' : 'lg'" class="animate-pulse text-primary-500" />
 				</div>
 			</div>
 			<p class="gen-label">{{ label }}</p>
@@ -106,6 +118,38 @@ const gradId = `gen-grad-${++seq}`
 }
 .gen-card--video {
 	aspect-ratio: 16 / 9;
+}
+
+/* 紧凑形态：宽度收成左半侧（16:9 反推高度，约 146px @ 260px 宽），
+   让下方展开的提示词输入区不再挤压生成态与预览窗口 */
+.gen-card--compact {
+	width: min(100%, 260px);
+}
+.gen-card--compact.gen-card--video,
+.gen-card--compact.gen-card--image {
+	max-width: 260px;
+	margin-inline: 0;
+	aspect-ratio: 16 / 9;
+}
+/* 小卡片下进度环与文案同比缩小，避免视觉上「字比卡片大」 */
+.gen-card--compact .gen-center {
+	gap: 8px;
+}
+.gen-card--compact .gen-ring {
+	width: 56px;
+	height: 56px;
+}
+.gen-card--compact .gen-pct {
+	font-size: 16px;
+}
+.gen-card--compact .gen-pct small {
+	font-size: 10px;
+}
+.gen-card--compact .gen-label {
+	font-size: 12px;
+}
+.gen-card--compact .gen-sublabel {
+	font-size: 10px;
 }
 
 /* 底层浅色渐变 */

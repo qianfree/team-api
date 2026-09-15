@@ -223,3 +223,126 @@ func TestValidateVideosCreateRequest(t *testing.T) {
 		t.Fatalf("expected prompt required, got %+v", taskErr)
 	}
 }
+
+// TestParseVideosCreateRequest_JSONAspectRatioAndSound 扩展字段（aspect_ratio/sound）解析与归一
+func TestParseVideosCreateRequest_JSONAspectRatioAndSound(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		ratio   string
+		sound   string
+		wantErr bool
+	}{
+		{name: "string on", body: `{"model":"m","prompt":"p","aspect_ratio":"9:16","sound":"on"}`, ratio: "9:16", sound: "on"},
+		{name: "string off", body: `{"model":"m","prompt":"p","sound":"off"}`, sound: "off"},
+		{name: "bool true", body: `{"model":"m","prompt":"p","sound":true}`, sound: "on"},
+		{name: "bool false", body: `{"model":"m","prompt":"p","sound":false}`, sound: "off"},
+		{name: "generate_audio fallback", body: `{"model":"m","prompt":"p","generate_audio":true}`, sound: "on"},
+		// sound 更明确，同时存在时 sound 优先
+		{name: "sound wins over generate_audio", body: `{"model":"m","prompt":"p","sound":"off","generate_audio":true}`, sound: "off"},
+		{name: "absent", body: `{"model":"m","prompt":"p"}`},
+		{name: "invalid sound", body: `{"model":"m","prompt":"p","sound":"loud"}`, wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req, taskErr := ParseVideosCreateRequest([]byte(c.body), "application/json")
+			if c.wantErr {
+				if taskErr == nil || taskErr.StatusCode != 400 {
+					t.Fatalf("expected 400, got %+v", taskErr)
+				}
+				return
+			}
+			if taskErr != nil {
+				t.Fatalf("unexpected error: %+v", taskErr)
+			}
+			if req.AspectRatio != c.ratio {
+				t.Fatalf("expected aspect_ratio %q, got %q", c.ratio, req.AspectRatio)
+			}
+			if req.Sound != c.sound {
+				t.Fatalf("expected sound %q, got %q", c.sound, req.Sound)
+			}
+		})
+	}
+}
+
+// TestParseVideosCreateRequest_MultipartAspectRatioAndSound multipart 裸字符串 part 走同一归一逻辑
+func TestParseVideosCreateRequest_MultipartAspectRatioAndSound(t *testing.T) {
+	body, ct := buildMultipartVideosBody(t, map[string]string{
+		"model":        "kling-v2-master",
+		"prompt":       "a cat",
+		"aspect_ratio": "1:1",
+		"sound":        "true",
+	}, "", "", nil)
+
+	req, taskErr := ParseVideosCreateRequest(body, ct)
+	if taskErr != nil {
+		t.Fatalf("parse: %+v", taskErr)
+	}
+	if req.AspectRatio != "1:1" || req.Sound != "on" {
+		t.Fatalf("unexpected request: %+v", req)
+	}
+}
+
+// TestBuildVideosTaskBody_AspectRatioAndSoundDualWrite 比例与音频开关需按各上游词汇双写
+func TestBuildVideosTaskBody_AspectRatioAndSoundDualWrite(t *testing.T) {
+	req := &videosCreateRequest{
+		Model:       "kling-v2-master",
+		Prompt:      "a cat",
+		AspectRatio: "9:16",
+		Sound:       "on",
+	}
+	body, err := BuildVideosTaskBody(req)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// minimax 的 resolveRatio 顶层 ratio 优先，必须写
+	if parsed["ratio"] != "9:16" {
+		t.Fatalf("expected top-level ratio, got %v", parsed["ratio"])
+	}
+
+	meta := parsed["metadata"].(map[string]any)
+	if meta["ratio"] != "9:16" || meta["aspect_ratio"] != "9:16" {
+		t.Fatalf("expected metadata ratio + aspect_ratio, got %v", meta)
+	}
+	if meta["sound"] != "on" {
+		t.Fatalf("expected metadata.sound on, got %v", meta["sound"])
+	}
+	if meta["generate_audio"] != true {
+		t.Fatalf("expected metadata.generate_audio true, got %v", meta["generate_audio"])
+	}
+}
+
+// TestBuildVideosTaskBody_SoundOff 关闭音频时 generate_audio 必须为 false（而非缺省）
+func TestBuildVideosTaskBody_SoundOff(t *testing.T) {
+	body, _ := BuildVideosTaskBody(&videosCreateRequest{Model: "m", Prompt: "p", Sound: "off"})
+	var parsed map[string]any
+	json.Unmarshal(body, &parsed)
+	meta := parsed["metadata"].(map[string]any)
+	if meta["generate_audio"] != false {
+		t.Fatalf("expected generate_audio false, got %v", meta["generate_audio"])
+	}
+	if _, ok := parsed["ratio"]; ok {
+		t.Fatal("expected no ratio without aspect_ratio")
+	}
+}
+
+// TestNewVideosRequestEcho_ExtendedFields 回显需带上扩展字段（submit/retrieve 回填与排障用）
+func TestNewVideosRequestEcho_ExtendedFields(t *testing.T) {
+	echo := NewVideosRequestEcho(&videosCreateRequest{
+		Prompt: "p", Seconds: "8", Size: "768P", AspectRatio: "16:9", Sound: "off",
+	})
+	b, err := json.Marshal(echo)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	json.Unmarshal(b, &got)
+	if got["aspect_ratio"] != "16:9" || got["sound"] != "off" {
+		t.Fatalf("unexpected echo: %s", b)
+	}
+}
