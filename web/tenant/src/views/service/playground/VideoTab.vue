@@ -8,7 +8,7 @@ import GenerationProgressCard from './GenerationProgressCard.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 import AttachmentBar from './AttachmentBar.vue'
 import PromptInput from './PromptInput.vue'
-import { useAttachments } from './useAttachments'
+import { useAttachments, formatBytes } from './useAttachments'
 import { compileVideoPrompt } from './attachmentParts'
 
 interface ModelItem {
@@ -39,18 +39,38 @@ const duration = ref(5)
 // 能随请求发出：/v1/videos 的 input_reference 仅承载一张图，其余素材待后端扩协议。
 const {
 	list: attachmentList,
+	totalBytes: attachmentBytes,
 	accept: acceptTypes,
 	max: attachmentMax,
 	addFiles: addAttachments,
 	remove: removeAttachment,
+	clear: clearAttachments,
 } = useAttachments({ kinds: ['image', 'video', 'audio'], max: 6 })
 
 const promptInput = ref<InstanceType<typeof PromptInput> | null>(null)
+// bare 变体的附件片不自带上传入口，文件选择器由输入区的「素材」按钮通过 ref 触发
+const attachmentBar = ref<InstanceType<typeof AttachmentBar> | null>(null)
+// 输入容器的拖拽高亮状态（与对话 Tab 一致，拖放由 input-shell 承接）
+const dragging = ref(false)
 // 提交时未能随请求发出的素材名，用于结果区提示
 const deferredNames = ref<string[]>([])
 
 function insertMention(name: string) {
 	promptInput.value?.insertMention(name)
+}
+
+function openFilePicker() {
+	attachmentBar.value?.pick()
+}
+
+function clearAllAttachments() {
+	clearAttachments()
+}
+
+// 输入容器承接拖放：与粘贴共用同一条上传链路
+function onDropFiles(e: DragEvent) {
+	dragging.value = false
+	if (e.dataTransfer?.files?.length) addAttachments(Array.from(e.dataTransfer.files))
 }
 
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
@@ -289,7 +309,8 @@ function downloadVideo() {
 </script>
 
 <template>
-	<!-- 与对话 Tab 同一套等高布局：左参数栏内部滚动，底部主操作常驻，右结果区撑满 -->
+	<!-- 与对话 Tab 同一套等高布局：左参数栏内部滚动，右侧结果区撑满、
+	     提示词与素材入口收在结果卡底部，主操作按钮落在输入区操作行 -->
 	<div class="flex flex-col lg:h-[calc(100vh-15rem)] lg:overflow-hidden">
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:min-h-0 lg:flex-1">
 			<!-- Left: 参数 -->
@@ -308,32 +329,6 @@ function downloadVideo() {
 								<span class="text-[11px] text-gray-400">共 {{ models.length }} 个可用</span>
 							</div>
 							<BaseSelect v-model="selectedModel" :options="modelOptions" />
-						</div>
-
-						<!-- 输入：参考素材 + 提示词 -->
-						<div class="space-y-4 border-t border-gray-100 pt-4">
-							<div>
-								<label class="mb-2 block text-xs font-semibold text-gray-500">参考素材</label>
-								<AttachmentBar
-									:attachments="attachmentList"
-									:accept="acceptTypes"
-									:max="attachmentMax"
-									@add="addAttachments"
-									@remove="removeAttachment"
-									@insert="insertMention"
-								/>
-							</div>
-							<div>
-								<label class="mb-2 block text-xs font-semibold text-gray-500">提示词</label>
-								<PromptInput
-									ref="promptInput"
-									v-model="prompt"
-									:attachments="attachmentList"
-									:min-rows="4"
-									placeholder="描述你想生成的视频，输入 @ 引用已上传的素材..."
-									@paste="addAttachments"
-								/>
-							</div>
 						</div>
 
 						<!-- 输出规格 -->
@@ -371,24 +366,12 @@ function downloadVideo() {
 							</div>
 						</div>
 					</div>
-
-					<!-- 主操作常驻卡片底部：参数再长也不用来回滚动找按钮 -->
-					<div class="shrink-0 space-y-2 border-t border-gray-100 px-4 py-3">
-						<button class="btn btn-primary w-full" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
-							<Icon name="play" size="sm" />
-							{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}
-						</button>
-						<button v-if="currentTask" class="btn btn-secondary w-full" @click="resetTask">
-							<Icon name="refresh" size="sm" />
-							重新生成
-						</button>
-					</div>
 				</div>
 			</div>
 
-			<!-- Right: 结果 -->
-			<div class="lg:min-h-0">
-				<div class="card flex min-h-[420px] flex-col overflow-hidden lg:h-full">
+			<!-- Right: 结果 + 输入（提示词与素材入口贴卡片底部，与对话 Tab 同构） -->
+			<div class="h-[62vh] min-h-[420px] lg:h-auto lg:min-h-0">
+				<div class="card flex h-full flex-col overflow-hidden">
 					<div class="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-5 py-3">
 						<div class="flex items-center gap-2">
 							<Icon name="photo" size="sm" class="text-primary-500" />
@@ -408,7 +391,7 @@ function downloadVideo() {
 							<h3 class="text-lg font-semibold text-gray-900">等待生成</h3>
 							<p class="mt-1.5 max-w-sm text-sm text-gray-500">
 								<template v-if="selectedModel">
-									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，填写提示词后点击「生成视频」
+									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，在下方输入提示词后点击「生成视频」
 								</template>
 								<template v-else>请先在左侧选择一个视频模型</template>
 							</p>
@@ -472,6 +455,78 @@ function downloadVideo() {
 								<div class="flex items-center justify-between">
 									<span>任务 ID: {{ currentTask.id }}</span>
 									<span>模型: {{ currentTask.model }}</span>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- 输入区：参考素材片 + 提示词 + 操作行整合进同一个圆角盒子（与对话 Tab 同构） -->
+					<div class="shrink-0 border-t border-gray-100 p-3 lg:p-4">
+						<div
+							class="input-shell"
+							:class="{ 'input-shell-dragging': dragging }"
+							@dragover.prevent="dragging = true"
+							@dragleave="dragging = false"
+							@drop.prevent="onDropFiles"
+						>
+							<!-- 素材片（bare：无边框无上传按钮，融入本容器）；
+							     文件选择器仍挂载于此，由下方「素材」按钮通过 ref 触发 -->
+							<AttachmentBar
+								ref="attachmentBar"
+								variant="bare"
+								:class="attachmentList.length ? 'mb-2' : ''"
+								:attachments="attachmentList"
+								:accept="acceptTypes"
+								:max="attachmentMax"
+								@add="addAttachments"
+								@remove="removeAttachment"
+								@insert="insertMention"
+							/>
+
+							<PromptInput
+								ref="promptInput"
+								v-model="prompt"
+								bare
+								:attachments="attachmentList"
+								:max-rows="6"
+								placeholder="描述你想生成的视频，输入 @ 引用已上传的素材..."
+								@submit="submitTask"
+								@paste="addAttachments"
+							/>
+
+							<!-- 操作行 -->
+							<div class="mt-1.5 flex items-center justify-between gap-3">
+								<div class="flex min-w-0 items-center gap-1">
+									<button
+										class="input-tool"
+										title="添加参考素材（图片/视频/音频，也可拖拽到此处或直接粘贴）"
+										@click="openFilePicker"
+									>
+										<Icon name="paperclip" size="xs" />
+										素材
+									</button>
+									<button
+										v-if="attachmentList.length"
+										class="input-tool"
+										title="清空已选素材"
+										@click="clearAllAttachments"
+									>
+										<Icon name="x" size="xs" />
+										清空素材
+									</button>
+									<span class="ml-1 hidden truncate text-[11px] text-gray-400 sm:inline">
+										Enter 生成 · Shift + Enter 换行<template v-if="attachmentList.length"> · 素材 {{ formatBytes(attachmentBytes) }}</template>
+									</span>
+								</div>
+								<div class="flex shrink-0 items-center gap-2">
+									<button v-if="currentTask" class="btn btn-ghost btn-sm text-gray-500" :disabled="submitting || polling" @click="resetTask">
+										<Icon name="refresh" size="xs" />
+										重新生成
+									</button>
+									<button class="btn btn-primary btn-sm px-4" :disabled="submitting || polling || !prompt.trim()" @click="submitTask">
+										<Icon name="play" size="xs" />
+										{{ submitting ? '提交中...' : polling ? '生成中...' : '生成视频' }}
+									</button>
 								</div>
 							</div>
 						</div>
