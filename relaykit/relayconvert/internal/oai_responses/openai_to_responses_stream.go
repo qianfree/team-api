@@ -276,6 +276,11 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 			// 工具调用
 			for _, tc := range choice.Delta.ToolCalls {
 				callID := tc.ID
+				// index 缺失时按 0 处理（单工具调用流的兼容兜底）
+				tcIdx := 0
+				if tc.Index != nil {
+					tcIdx = *tc.Index
+				}
 
 				// 新 tool call：有 ID 和 name
 				if callID != "" && tc.Function.Name != "" {
@@ -284,7 +289,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 						return err
 					}
 					// 记录 index → callID 映射，用于后续参数 chunk 的查找
-					toolCallIDByIndex[tc.Index] = callID
+					toolCallIDByIndex[tcIdx] = callID
 
 					// 先关闭文本 content part
 					if !sentTextDone {
@@ -317,7 +322,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 
 				// 参数 chunk：ID 可能为空，通过 index 查找对应的 callID
 				if callID == "" {
-					callID = toolCallIDByIndex[tc.Index]
+					callID = toolCallIDByIndex[tcIdx]
 				}
 				if callID == "" {
 					continue

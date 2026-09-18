@@ -424,7 +424,7 @@ func TestOllamaToOpenAIStreamConverter_ToolCalls(t *testing.T) {
 		t.Fatalf("tool delta = %+v", toolDelta.ToolCalls)
 	}
 	tc := toolDelta.ToolCalls[0]
-	if tc.Index != 0 || tc.ID != "call_1" || tc.Type != "function" {
+	if tc.Index == nil || *tc.Index != 0 || tc.ID != "call_1" || tc.Type != "function" {
 		t.Errorf("tool call = %+v", tc)
 	}
 	if tc.Function.Name != "get_weather" || tc.Function.Arguments != `{"city":"Paris"}` {

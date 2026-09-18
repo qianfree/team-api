@@ -1360,7 +1360,7 @@ func r2cSendToolCallChunk(responseID string, createAt int64, model string, callI
 	if nameByID[callID] != "" {
 		name = nameByID[callID]
 	}
-	tool := dto.ToolCall{ID: callID, Type: "function", Index: idx, Function: dto.FunctionCall{Arguments: argsDelta}}
+	tool := dto.ToolCall{ID: callID, Type: "function", Index: &idx, Function: dto.FunctionCall{Arguments: argsDelta}}
 	if name != "" && !nameSent[callID] {
 		tool.Function.Name = name
 		nameSent[callID] = true
