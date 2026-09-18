@@ -956,3 +956,23 @@ pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名':
 - 判断风险的方法：`grep -rn 'var .* \[\]struct {' internal/` 找到匿名结构体，再看它是否被传给 `dao.Xxx.Ctx(ctx)...Scan(&x)` 链路且链上无 `Fields(...)`/`Raw(...)`——是则全部依赖这条元数据映射，远程 DB 抖动哪个请求撞上哪个接口炸，且报错完全看不出是网络问题。
 
 排查信号：`pq: column "Xxx" does not exist` 且 SQL 列名是帕斯卡命名；偶发、重试即好、与网络抖动时间点吻合。
+
+### 2026-09-18：请求体超过 ClientMaxBodySize 时 gf 直接 panic，客户端收到裸 500 "Internal Error"
+
+**问题**：线上 ZCode 客户端 POST `/v1/messages` 报 500 "Internal Error"（访问日志错误码 `50, "Internal Error"`，错误栈 `Read from request Body failed` → `http: request body too large`），请求耗时 53 秒——客户端慢速上传超大请求体（agent 长上下文 + 内联 base64 媒体），读满上限后被拒。
+
+**原因**：三层机制叠加：
+
+1. gf 在 `ServeHTTP` 里给每个请求体包 `http.MaxBytesReader`，上限取 `server.clientMaxBodySize`，**默认 8MB**（`ghttp_server_config.go`），未配置时即 8MB 生效。
+2. 任何代码调 `r.GetBody()`（内部 `MakeBodyRepeatableRead`）读取超限时，gf **直接 `panic(gerror.WrapCode(gcode.CodeInternalError(50, "Internal Error"), err, "Read from request Body failed"))`**——不是返回错误。
+3. 该 panic 会被 gf `middleware.Next()` 里逐层包裹的 `gutil.TryCatch` **先于自定义 Recovery 中间件**捕获（`ghttp_request_middleware.go` 的 catch 分支 `WriteStatus(500, exception)`），所以项目统一的 JSON 错误格式与 Recovery 兜底全都接不到，客户端拿到框架裸 500 文本。
+
+**修复方式**：`manifest/config/config.yaml` 显式配置 `server.clientMaxBodySize: "32MB"`（支持 "32MB"/"512KB" 字符串，gf 用 `gfile.StrToSize` 解析）；并新增 `middleware.RelayBodyLimit`（`internal/middleware/body_limit.go`）挂在 relay 路由组 `ApiKeyAuth` 之后、`ContentFilter` 之前：按 `Content-Length` 预检，超限先 `io.Copy(io.Discard, r.Body)` 排空再返回 413 + 协议原生格式错误（`/v1/messages` 前缀走 Claude 格式 `request_too_large`，其余走 OpenAI 格式 `invalid_request_error`）。预检阈值从同一配置键读取，与 `MaxBytesReader` 实际上限天然一致。
+
+**正确做法（通用规则）**：
+
+- **调大上限 ≠ 响应体送达**：拒绝超大请求时必须**先排空请求体再写响应**。客户端上传大 body 往往耗时几十秒，服务端抢先响应并关连接，响应体会在半路被掐掉（实测 body 为空、响应头齐全的竞态）；`r.Body` 已被 `MaxBytesReader` 封顶，排空量有界，不会被恶意大包拖死。
+- 无 `Content-Length` 的分块传输无法预检，超限时仍走 gf 的裸 500 兜底（主流 SDK 均携带 Content-Length，属可接受残留）。
+- 自定义 Recovery 中间件**不是**万能兜底：gf 中间件链每层 handler 自带 TryCatch，handler 内的 panic 到不了最外层自定义中间件。
+
+排查信号：访问日志出现 `50, "Internal Error"` + `Read from request Body failed` + `http: request body too large` 栈；耗时数万毫秒的 500。
