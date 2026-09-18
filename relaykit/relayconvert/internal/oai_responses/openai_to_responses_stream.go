@@ -85,6 +85,10 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	var reasoningText strings.Builder
 	reasoningID := ""
 	reasoningItemIdx := -1
+	reasoningItems := make([]map[string]any, 0) // 已收口的 reasoning 项，completed 输出数组用
+	// closeReasoningItem 收口当前 reasoning 项并重置状态。必须幂等：它在工具调用开始与
+	// finish_reason 两处被调，重复对同一 item 发 done 事件会使客户端状态机崩溃
+	//（item 已被移出进行中集合，再查为 undefined —— zcode 报 "reading 'summaryParts'"）。
 	closeReasoningItem := func() error {
 		if reasoningItemIdx < 0 {
 			return nil
@@ -99,19 +103,39 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		}, nil); err != nil {
 			return err
 		}
-		return emit("response.output_item.done", map[string]any{
+		if err := emit("response.reasoning_summary_part.done", map[string]any{
+			"type":          "response.reasoning_summary_part.done",
+			"item_id":       reasoningID,
+			"output_index":  reasoningItemIdx,
+			"summary_index": 0,
+			"part": map[string]any{
+				"type": "summary_text",
+				"text": text,
+			},
+		}, nil); err != nil {
+			return err
+		}
+		item := map[string]any{
+			"type":   "reasoning",
+			"id":     reasoningID,
+			"status": "completed",
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": text,
+			}},
+		}
+		if err := emit("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": reasoningItemIdx,
-			"item": map[string]any{
-				"type":   "reasoning",
-				"id":     reasoningID,
-				"status": "completed",
-				"summary": []map[string]any{{
-					"type": "summary_text",
-					"text": text,
-				}},
-			},
-		}, nil)
+			"item":         item,
+		}, nil); err != nil {
+			return err
+		}
+		reasoningItems = append(reasoningItems, item)
+		reasoningItemIdx = -1
+		reasoningID = ""
+		reasoningText.Reset()
+		return nil
 	}
 
 	for scanner.Scan() {
@@ -246,7 +270,8 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 			if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
 				if reasoningItemIdx < 0 {
 					reasoningItemIdx = itemIdx
-					reasoningID = fmt.Sprintf("rs_%s", respID)
+					// id 带 output_index 后缀保证多段 reasoning（收口后重开）不撞 id
+					reasoningID = fmt.Sprintf("rs_%s_%d", respID, reasoningItemIdx)
 					itemIdx++
 					if err := emit("response.output_item.added", map[string]any{
 						"type":         "response.output_item.added",
@@ -256,6 +281,18 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 							"id":      reasoningID,
 							"status":  "in_progress",
 							"summary": []any{},
+						},
+					}, nil); err != nil {
+						return err
+					}
+					if err := emit("response.reasoning_summary_part.added", map[string]any{
+						"type":          "response.reasoning_summary_part.added",
+						"item_id":       reasoningID,
+						"output_index":  reasoningItemIdx,
+						"summary_index": 0,
+						"part": map[string]any{
+							"type": "summary_text",
+							"text": "",
 						},
 					}, nil); err != nil {
 						return err
@@ -408,6 +445,11 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 
+	// 流在 finish_reason 之前被掐断时 reasoning 项可能仍未收口，此处兜底（幂等，正常路径为 no-op）
+	if err := closeReasoningItem(); err != nil {
+		return err
+	}
+
 	// 构建 response.completed 的 output 数组（包含文本消息 + reasoning + 所有 tool call）
 	finalOutput := make([]map[string]any, 0)
 	if !sentTextDone || contentBuilder.Len() > 0 {
@@ -425,19 +467,8 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 			},
 		})
 	}
-	// reasoning 项（流中途异常未收口时的兜底；正常路径 closeReasoningItem 已发过 done 事件，
-	// completed 的 output 数组仍需携带完整项，客户端据此重建下一轮的 input 历史）
-	if reasoningItemIdx >= 0 {
-		finalOutput = append(finalOutput, map[string]any{
-			"type":   "reasoning",
-			"id":     reasoningID,
-			"status": "completed",
-			"summary": []map[string]any{{
-				"type": "summary_text",
-				"text": reasoningText.String(),
-			}},
-		})
-	}
+	// reasoning 项：completed 的 output 数组需携带完整项，客户端据此重建下一轮的 input 历史
+	finalOutput = append(finalOutput, reasoningItems...)
 	for tcID := range toolCallIndexByID {
 		finalOutput = append(finalOutput, map[string]any{
 			"type":      "function_call",
