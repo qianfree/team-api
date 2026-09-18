@@ -136,6 +136,7 @@
   {
     "data": {
       "item": {
+        "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
         "id": "\u003cscrubbed\u003e",
         "status": "completed",
         "summary": [
@@ -223,6 +224,7 @@
             "type": "message"
           },
           {
+            "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
             "id": "\u003cscrubbed\u003e",
             "status": "completed",
             "summary": [

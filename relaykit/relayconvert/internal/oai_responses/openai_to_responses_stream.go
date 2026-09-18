@@ -13,6 +13,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -86,6 +87,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	reasoningID := ""
 	reasoningItemIdx := -1
 	reasoningItems := make([]map[string]any, 0) // 已收口的 reasoning 项，completed 输出数组用
+	var allReasoning strings.Builder            // 全部思考文本累计（跨轮携带 stash 用，不随收口重置）
 	// closeReasoningItem 收口当前 reasoning 项并重置状态。必须幂等：它在工具调用开始与
 	// finish_reason 两处被调，重复对同一 item 发 done 事件会使客户端状态机崩溃
 	//（item 已被移出进行中集合，再查为 undefined —— zcode 报 "reading 'summaryParts'"）。
@@ -124,6 +126,11 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 				"text": text,
 			}},
 		}
+		// 客户端 SDK 只回传带 encrypted_content 的 reasoning 项（无状态多轮机制），
+		// 缺失时 DeepSeek 等 thinking 上游下一轮 400（reasoning_content must be passed back）
+		if enc := shared.EncodeReasoningEncryptedContent(text); enc != "" {
+			item["encrypted_content"] = enc
+		}
 		if err := emit("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": reasoningItemIdx,
@@ -132,6 +139,7 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		reasoningItems = append(reasoningItems, item)
+		allReasoning.WriteString(text)
 		reasoningItemIdx = -1
 		reasoningID = ""
 		reasoningText.Reset()
@@ -448,6 +456,17 @@ func (c *OpenAIToResponsesStreamConverter) ConvertStreamResponse(
 	// 流在 finish_reason 之前被掐断时 reasoning 项可能仍未收口，此处兜底（幂等，正常路径为 no-op）
 	if err := closeReasoningItem(); err != nil {
 		return err
+	}
+
+	// 思考文本跨轮携带：按本轮工具调用 call_id 存进宿主缓存，下一轮请求转换时
+	// 若客户端剥掉了 reasoning 项（ai-sdk 系不回传 encrypted_content），按 call_id 捞回
+	// 挂回 assistant.reasoning_content（DeepSeek 等 thinking 上游的多轮硬性要求）
+	if carry, ok := info.(convmeta.ReasoningCarry); ok && allReasoning.Len() > 0 && len(toolCallIndexByID) > 0 {
+		callIDs := make([]string, 0, len(toolCallIndexByID))
+		for id := range toolCallIndexByID {
+			callIDs = append(callIDs, id)
+		}
+		carry.StoreReasoningForCalls(callIDs, allReasoning.String())
 	}
 
 	// 构建 response.completed 的 output 数组（包含文本消息 + reasoning + 所有 tool call）
