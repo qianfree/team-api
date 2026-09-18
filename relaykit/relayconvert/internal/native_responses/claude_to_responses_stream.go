@@ -12,6 +12,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -124,6 +125,11 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				"type": "summary_text",
 				"text": text,
 			}},
+		}
+		// 客户端 SDK 只回传带 encrypted_content 的 reasoning 项（无状态多轮机制），
+		// 网关自编自解，供下一轮还原思考文本（与 chat→responses 桥接口径一致）
+		if enc := shared.EncodeReasoningEncryptedContent(text); enc != "" {
+			item["encrypted_content"] = enc
 		}
 		if err := emitEvent("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",

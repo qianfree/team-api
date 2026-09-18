@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -27,6 +28,40 @@ const responsesReasoningItemType = "reasoning"
 // responsesSummaryTextType reasoning.summary 数组元素的 type 值。
 const responsesSummaryTextType = "summary_text"
 
+// reasoningEncryptedPrefix 网关自产 encrypted_content 的明文前缀标记。
+// 解码时校验它，避免把真正的 OpenAI 官方加密黑盒（同为 base64、解出是密文）误当思考文本。
+const reasoningEncryptedPrefix = "tapi-rc1:"
+
+// EncodeReasoningEncryptedContent 把思考文本编码进 reasoning 项的 encrypted_content。
+//
+// 为什么需要它：OpenAI 无状态多轮的设计里，客户端 SDK（ai-sdk/codex 等）只回传带
+// encrypted_content 的 reasoning 项——只有 summary 的项会被丢弃。而 DeepSeek 等
+// thinking 上游要求多轮历史必须带回 reasoning_content，链路断在客户端不回传这一环。
+// 该字段对客户端是不透明黑盒，正好由网关自编自解完成回传。
+func EncodeReasoningEncryptedContent(thinking string) string {
+	if thinking == "" {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString([]byte(reasoningEncryptedPrefix + thinking))
+}
+
+// DecodeReasoningEncryptedContent 解出网关自产 encrypted_content 中的思考文本。
+// 非网关自产（解码失败或无前缀标记，如 OpenAI 官方密文）返回 ok=false。
+func DecodeReasoningEncryptedContent(enc string) (string, bool) {
+	if enc == "" {
+		return "", false
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return "", false
+	}
+	s := string(raw)
+	if !strings.HasPrefix(s, reasoningEncryptedPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(s, reasoningEncryptedPrefix), true
+}
+
 // BuildResponsesReasoningOutput 把一段思考文本构造为 Responses 的 reasoning 输出项。
 // thinking 为空时返回 nil（调用方据此不追加输出项，避免产出空 reasoning 壳）。
 //
@@ -43,6 +78,9 @@ func BuildResponsesReasoningOutput(idSeed, thinking string) *dto.ResponsesOutput
 			Type: responsesSummaryTextType,
 			Text: thinking,
 		}},
+		// 客户端 SDK 只回传带 encrypted_content 的 reasoning 项（无状态多轮机制），
+		// 网关据此在下一轮把思考文本还原成 chat 的 reasoning_content
+		EncryptedContent: EncodeReasoningEncryptedContent(thinking),
 	}
 }
 

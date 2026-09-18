@@ -27,3 +27,28 @@ func (m *stashMeta) StashResponsesRequest(req *dto.OpenAIResponsesRequest) {
 func (m *stashMeta) StashedResponsesRequest() *dto.OpenAIResponsesRequest {
 	return m.stashed
 }
+
+// carryMeta 测试用 Meta 实现：附带 ReasoningCarry 能力（对应宿主 RelayInfo 的进程内 TTL 缓存）。
+type carryMeta struct {
+	*convmeta.Values
+	store map[string]string
+}
+
+func newCarryMeta() *carryMeta {
+	return &carryMeta{Values: &convmeta.Values{OriginModelName: "deepseek-v4-flash"}, store: map[string]string{}}
+}
+
+func (m *carryMeta) StoreReasoningForCalls(callIDs []string, reasoning string) {
+	for _, id := range callIDs {
+		m.store[id] = reasoning
+	}
+}
+
+func (m *carryMeta) LookupReasoningForCalls(callIDs []string) string {
+	for _, id := range callIDs {
+		if text, ok := m.store[id]; ok {
+			return text
+		}
+	}
+	return ""
+}

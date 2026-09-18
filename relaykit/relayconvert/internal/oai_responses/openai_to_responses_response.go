@@ -142,6 +142,18 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 				Status:    "completed",
 			})
 		}
+
+		// 思考文本跨轮携带：按本轮工具调用 call_id 存进宿主缓存（与流式路径同口径），
+		// 供客户端剥掉 reasoning 项时下一轮按 call_id 还原 reasoning_content
+		if carry, ok := info.(convmeta.ReasoningCarry); ok &&
+			choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" &&
+			len(choice.Message.ToolCalls) > 0 {
+			callIDs := make([]string, 0, len(choice.Message.ToolCalls))
+			for _, tc := range choice.Message.ToolCalls {
+				callIDs = append(callIDs, tc.ID)
+			}
+			carry.StoreReasoningForCalls(callIDs, *choice.Message.ReasoningContent)
+		}
 	}
 
 	// usage 明细：上游 chat 响应可能不携带 details（nil 指针），缺失时按零值合成

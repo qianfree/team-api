@@ -255,6 +255,28 @@ func TestOpenAIToResponsesStream_ReasoningDelta(t *testing.T) {
 	}
 }
 
+// TestOpenAIToResponsesStream_ReasoningStashedByCallID 响应侧把本轮思考文本按工具调用
+// call_id 存进宿主缓存（ReasoningCarry），供客户端剥掉 reasoning 项时下一轮请求捞回。
+func TestOpenAIToResponsesStream_ReasoningStashedByCallID(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"想一下"}}]}`,
+		``,
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_s1","type":"function","function":{"name":"shell","arguments":"{}"}}]}}]}`,
+		``,
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	meta := newCarryMeta()
+	if _, err := runChatToResponsesStream(t, meta, sse); err != nil {
+		t.Fatalf("ConvertStreamResponse: %v", err)
+	}
+	if got := meta.LookupReasoningForCalls([]string{"call_s1"}); got != "想一下" {
+		t.Errorf("stash 的思考文本 = %q, want 想一下", got)
+	}
+}
+
 // TestOpenAIToResponsesStream_ReasoningClosedOnce 复现线上 bug（chn_debug_logs #330）：
 // reasoning + 工具调用 + finish_reason 的流中，closeReasoningItem 在工具调用开始与
 // finish_reason 两处被调，防重失效时同一 reasoning 项会发两份 done 事件——
