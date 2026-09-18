@@ -63,8 +63,10 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 	sentCreated := false
 	sentTextDone := false
 	sentCompleted := false
-	outputIndex := 0
 	contentIndex := 0
+	// 输出项索引：message 项固定占 0，其余输出项（reasoning / tool call / server tool）
+	// 由 itemIdx 从 1 起分配——与 chat→responses 桥接的口径一致
+	itemIdx := 1
 	toolCalls := make([]*claudeToolCallState, 0) // 有序聚合，completed 的 output 数组按此顺序
 	toolIndexByID := make(map[string]int)        // callID → output_index
 	var currentTool *claudeToolCallState         // 正在接收参数增量的工具调用
@@ -80,7 +82,64 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		return chunkWriter(&relayconvert.StreamEvent{Event: eventType, Data: data, Usage: u})
 	}
 
-	// closeTextPart 关闭文本 content part（进入工具调用或流结束时调用）
+	// 思考内容：必须落成独立的 reasoning 输出项（output_item.added → summary_part.added →
+	// summary 增量 → done 收口）。把 summary 增量挂在 message 项上是协议违规——OpenAI SDK
+	// 的流式状态机按 item 类型校验事件归属，错挂会使客户端解析失败并主动断流（client_gone）。
+	// Claude 的 interleaved thinking 会出现多个 thinking 块，收口后重开新项。
+	var reasoningBuf strings.Builder
+	reasoningID := ""
+	reasoningItemIdx := -1
+	reasoningItems := make([]map[string]any, 0) // 已收口的 reasoning 项，completed 输出数组用
+	closeReasoningItem := func() error {
+		if reasoningItemIdx < 0 {
+			return nil
+		}
+		text := reasoningBuf.String()
+		if err := emitEvent("response.reasoning_summary_text.done", map[string]any{
+			"type":          "response.reasoning_summary_text.done",
+			"item_id":       reasoningID,
+			"output_index":  reasoningItemIdx,
+			"summary_index": 0,
+			"text":          text,
+		}, nil); err != nil {
+			return err
+		}
+		if err := emitEvent("response.reasoning_summary_part.done", map[string]any{
+			"type":          "response.reasoning_summary_part.done",
+			"item_id":       reasoningID,
+			"output_index":  reasoningItemIdx,
+			"summary_index": 0,
+			"part": map[string]any{
+				"type": "summary_text",
+				"text": text,
+			},
+		}, nil); err != nil {
+			return err
+		}
+		item := map[string]any{
+			"type":   "reasoning",
+			"id":     reasoningID,
+			"status": "completed",
+			"summary": []map[string]any{{
+				"type": "summary_text",
+				"text": text,
+			}},
+		}
+		if err := emitEvent("response.output_item.done", map[string]any{
+			"type":         "response.output_item.done",
+			"output_index": reasoningItemIdx,
+			"item":         item,
+		}, nil); err != nil {
+			return err
+		}
+		reasoningItems = append(reasoningItems, item)
+		reasoningItemIdx = -1
+		reasoningID = ""
+		reasoningBuf.Reset()
+		return nil
+	}
+
+	// closeTextPart 关闭文本 content part（进入工具调用或流结束时调用）；message 项固定占 output_index 0
 	closeTextPart := func() error {
 		if sentTextDone {
 			return nil
@@ -89,7 +148,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		if err := emitEvent("response.output_text.done", map[string]any{
 			"type":          "response.output_text.done",
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  0,
 			"content_index": contentIndex,
 			"text":          finishedText,
 		}, nil); err != nil {
@@ -98,7 +157,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		if err := emitEvent("response.content_part.done", map[string]any{
 			"type":          "response.content_part.done",
 			"item_id":       msgID,
-			"output_index":  outputIndex,
+			"output_index":  0,
 			"content_index": contentIndex,
 			"part": map[string]any{
 				"type":        "output_text",
@@ -110,7 +169,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		}
 		if err := emitEvent("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
-			"output_index": outputIndex,
+			"output_index": 0,
 			"item": map[string]any{
 				"type":   "message",
 				"id":     msgID,
@@ -126,7 +185,6 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			return err
 		}
 		sentTextDone = true
-		outputIndex++
 		return nil
 	}
 
@@ -135,12 +193,15 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 		if sentCompleted {
 			return nil
 		}
+		if err := closeReasoningItem(); err != nil {
+			return err
+		}
 		if err := closeTextPart(); err != nil {
 			return err
 		}
 
 		// 输出数组：文本消息（closeTextPart 已置 sentTextDone，此处等价于有文本才保留，
-		// 与 chat→responses 桥接的 finalOutput 构建口径一致）
+		// 与 chat→responses 桥接的 finalOutput 构建口径一致）+ reasoning 项 + 工具调用
 		finalOutput := make([]map[string]any, 0)
 		if textBuf.Len() > 0 {
 			finalOutput = append(finalOutput, map[string]any{
@@ -155,6 +216,8 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}},
 			})
 		}
+		// reasoning 项：completed 的 output 数组需携带完整项，客户端据此重建下一轮 input 历史
+		finalOutput = append(finalOutput, reasoningItems...)
 
 		for _, tc := range toolCalls {
 			if err := emitEvent("response.function_call_arguments.done", map[string]any{
@@ -260,7 +323,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}
 			if err := emitEvent("response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
-				"output_index": outputIndex,
+				"output_index": 0,
 				"item": map[string]any{
 					"type":    "message",
 					"id":      msgID,
@@ -274,7 +337,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			if err := emitEvent("response.content_part.added", map[string]any{
 				"type":          "response.content_part.added",
 				"item_id":       msgID,
-				"output_index":  outputIndex,
+				"output_index":  0,
 				"content_index": contentIndex,
 				"part": map[string]any{
 					"type":        "output_text",
@@ -292,17 +355,20 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 			}
 			switch event.ContentBlock.Type {
 			case "tool_use":
-				// 先关闭文本 content part，再开 function_call 项
+				// 先收口 reasoning 项与文本 content part，再开 function_call 项
+				if err := closeReasoningItem(); err != nil {
+					return err
+				}
 				if err := closeTextPart(); err != nil {
 					return err
 				}
 				tc := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
 				toolCalls = append(toolCalls, tc)
-				toolIndexByID[tc.id] = outputIndex
+				toolIndexByID[tc.id] = itemIdx
 				currentTool = tc
 				if err := emitEvent("response.output_item.added", map[string]any{
 					"type":         "response.output_item.added",
-					"output_index": outputIndex,
+					"output_index": itemIdx,
 					"item": map[string]any{
 						"type":    "function_call",
 						"id":      tc.id,
@@ -313,23 +379,26 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}, nil); err != nil {
 					return err
 				}
-				outputIndex++
+				itemIdx++
 			case "server_tool_use":
 				// claude 服务端工具：仅 web_search 有 Responses 对应物（web_search_call），
 				// 其余服务端工具跳过。参数以 input_json_delta 聚合，收尾在 finish 统一冲刷
 				if event.ContentBlock.Name != "web_search" {
 					continue
 				}
+				if err := closeReasoningItem(); err != nil {
+					return err
+				}
 				if err := closeTextPart(); err != nil {
 					return err
 				}
 				st := &claudeToolCallState{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
 				serverToolCalls = append(serverToolCalls, st)
-				serverToolIndexByID[st.id] = outputIndex
+				serverToolIndexByID[st.id] = itemIdx
 				currentServerTool = st
 				if err := emitEvent("response.output_item.added", map[string]any{
 					"type":         "response.output_item.added",
-					"output_index": outputIndex,
+					"output_index": itemIdx,
 					"item": map[string]any{
 						"type":   "web_search_call",
 						"id":     st.id,
@@ -338,7 +407,7 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}, nil); err != nil {
 					return err
 				}
-				outputIndex++
+				itemIdx++
 			case "text", "thinking", "redacted_thinking":
 				// 文本/思考块：文本复用首个 content part，思考以 reasoning summary 事件透出
 			}
@@ -363,10 +432,42 @@ func (c *ClaudeToResponsesStreamConverter) ConvertStreamResponse(
 				}
 			case "thinking_delta":
 				if event.Delta.Thinking != nil && *event.Delta.Thinking != "" {
+					// 懒开 reasoning 输出项：首个增量到达时发 output_item.added +
+					// summary_part.added，后续增量挂在该项的 id / output_index 上
+					if reasoningItemIdx < 0 {
+						reasoningItemIdx = itemIdx
+						itemIdx++
+						reasoningID = fmt.Sprintf("rs_%s_%d", respID, reasoningItemIdx)
+						if err := emitEvent("response.output_item.added", map[string]any{
+							"type":         "response.output_item.added",
+							"output_index": reasoningItemIdx,
+							"item": map[string]any{
+								"type":    "reasoning",
+								"id":      reasoningID,
+								"status":  "in_progress",
+								"summary": []any{},
+							},
+						}, nil); err != nil {
+							return err
+						}
+						if err := emitEvent("response.reasoning_summary_part.added", map[string]any{
+							"type":          "response.reasoning_summary_part.added",
+							"item_id":       reasoningID,
+							"output_index":  reasoningItemIdx,
+							"summary_index": 0,
+							"part": map[string]any{
+								"type": "summary_text",
+								"text": "",
+							},
+						}, nil); err != nil {
+							return err
+						}
+					}
+					reasoningBuf.WriteString(*event.Delta.Thinking)
 					if err := emitEvent("response.reasoning_summary_text.delta", map[string]any{
 						"type":          "response.reasoning_summary_text.delta",
-						"item_id":       msgID,
-						"output_index":  0,
+						"item_id":       reasoningID,
+						"output_index":  reasoningItemIdx,
 						"summary_index": 0,
 						"delta":         *event.Delta.Thinking,
 					}, nil); err != nil {
