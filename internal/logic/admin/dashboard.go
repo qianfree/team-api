@@ -358,7 +358,10 @@ func validateUsageLogDateRange(start, end string) error {
 }
 
 // buildUsageLogFilter 构建用量日志查询的 WHERE 条件与绑定参数（列表 / 统计 / 导出共用，保证筛选口径一致）。
-// 注意：Username 筛选条件引用 t.username，调用方需按需 JOIN tnt_users（别名 t）。
+// 条件只引用主表别名 u，不依赖任何 JOIN —— 计数与统计路径因此可以完全不联表，
+// 只有需要展示名称的列表 / 导出才挂 LEFT JOIN。
+// 用户维度只支持 user_id 精确筛选（前端从下拉选择带出 ID），不提供用户名模糊匹配：
+// 前导通配 LIKE 在分区大表的筛选路径上无法走索引，且前端本就没有该查询条件。
 func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 	var conditions []string
 
@@ -373,10 +376,6 @@ func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 	if f.UserID > 0 {
 		conditions = append(conditions, "u.user_id = ?")
 		args = append(args, f.UserID)
-	}
-	if f.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+f.Username+"%")
 	}
 	if f.ApiKeyID > 0 {
 		conditions = append(conditions, "u.api_key_id = ?")
@@ -422,9 +421,15 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 	where, args := buildUsageLogFilter(req.AdminUsageLogFilter)
 
-	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
+	// 展示用联表：只有列表需要租户 / 成员 / 项目 / Key 名称。四个联表目标都是主键列
+	// （1:1，不放大行数），但仍会被分区大表实打实执行 4 次 —— 所以只给列表用。
+	joinedFrom := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
-	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + where
+	// 计数不展示任何名称，且 buildUsageLogFilter 的条件只引用 u.*，
+	// 因此 4 个 LEFT JOIN 可以整体剥离。
+	// 这是本接口最重的一次查询：bil_usage_logs 是分区大表、created_at 上只有 BRIN
+	// 索引（不支持精确计数），每翻一页都要重算一次，少 4 次 join 探测收益最大。
+	countSQL := "SELECT COUNT(*) AS total FROM bil_usage_logs u" + where
 	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
 	if err != nil {
 		return nil, err
@@ -435,7 +440,7 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	}
 
 	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.created_at
-		 FROM ` + fromClause + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
+		 FROM ` + joinedFrom + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	dataArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
 	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, dataArgs...)
 	if err != nil {
@@ -466,18 +471,14 @@ func (s *sAdmin) GetUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSu
 	}
 	where, args := buildUsageLogFilter(req.AdminUsageLogFilter)
 
-	// 统计聚合不展示名称，仅在按用户名筛选时才 JOIN 用户表，避免大表 SUM 背负无关 JOIN
-	fromClause := "bil_usage_logs u"
-	if req.Username != "" {
-		fromClause += " LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id"
-	}
-
+	// 统计聚合不展示名称，筛选条件也只引用 u.*，全程无需联表：
+	// 大表 SUM 不再背负任何 join。
 	summarySQL := `SELECT
 		COALESCE(SUM(u.total_cost), 0) AS total_cost,
 		COALESCE(SUM(u.output_tokens), 0) AS total_output_tokens,
 		COALESCE(SUM(u.input_tokens), 0) AS total_input_tokens,
 		COALESCE(SUM(u.cache_read_tokens), 0) AS total_cache_read
-	FROM ` + fromClause + where
+	FROM bil_usage_logs u` + where
 
 	summaryResult, err := g.DB().Ctx(ctx).Query(ctx, summarySQL, args...)
 	if err != nil {
