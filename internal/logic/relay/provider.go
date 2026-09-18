@@ -178,10 +178,14 @@ func checkGroupModelAccess(ctx context.Context, tenantID int64, modelName string
 		}
 	}
 
-	// 缓存未命中：查询数据库
-	groupCount, _ := dao.MdlTenantGroups.Ctx(ctx).
+	// 缓存未命中：查询数据库。错误必须上抛：若把查询失败当成 count=0 并缓存"无分组"负结果，
+	// 一次瞬断会让后续 300s（TTL）内所有模型权限校验和 /v1/models 都把该租户当成无分组
+	groupCount, err := dao.MdlTenantGroups.Ctx(ctx).
 		Where("tenant_id", tenantID).
 		Count()
+	if err != nil {
+		return false, nil, err
+	}
 
 	if groupCount == 0 {
 		lcommon.TenantGroupModelCache.Set(ctx, cacheKey, nil)
@@ -226,19 +230,19 @@ func queryTenantGroupModels(ctx context.Context, tenantID int64) (map[string]boo
 	return result, nil
 }
 
-// GetTenantGroupModelIDs 获取租户通过分组可访问的模型内部ID集合（用于 GetAvailableModels）
-func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) map[int64]bool {
+// GetTenantGroupModelIDs 获取租户通过分组可访问的模型内部ID集合（用于 GetAvailableModels）。
+// DB 查询错误原样上抛：调用方必须区分"无分组"（nil, nil）与"查询失败"（err），
+// 吞错会让数据库瞬断被当成无分配，/v1/models 静默返回空列表。
+func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) (map[int64]bool, error) {
 	cacheKey := fmt.Sprintf("%d", tenantID)
 
-	// 尝试从缓存获取 model_id string 集合
+	// 缓存 nil 表示该租户无任何分组（checkGroupModelAccess 写入的负结果），直接短路
 	cachedSet, found := lcommon.TenantGroupModelCache.Get(ctx, cacheKey)
-	if found {
-		if cachedSet == nil {
-			return nil
-		}
-		// 缓存中存的是 map[string]bool，需要转换为 map[int64]bool
-		// 这里直接查数据库获取 int64 版本
+	if found && cachedSet == nil {
+		return nil, nil
 	}
+	// 正结果缓存存的是模型名集合（map[string]bool），与本函数的内部 ID 集合类型不同，
+	// 无法直接复用，仍需查库
 
 	// 查询模型内部 ID
 	var models []struct {
@@ -253,15 +257,18 @@ func GetTenantGroupModelIDs(ctx context.Context, tenantID int64) map[int64]bool 
 		Where("m.status", "active").
 		Fields("m.id").
 		Scan(&models)
-	if err != nil || len(models) == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, nil
 	}
 
 	result := make(map[int64]bool, len(models))
 	for _, m := range models {
 		result[m.Id] = true
 	}
-	return result
+	return result, nil
 }
 
 // GetModelMapping 实现 DataProvider.GetModelMapping
@@ -719,18 +726,24 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 	}
 
 	var models []modelRow
-	var err error
 
 	fieldsNoAlias := "model_id, model_name, category, status, max_context_tokens, max_output_tokens, capabilities"
 
 	if tenantID > 0 {
-		// 获取显式分配的模型
-		tenantModelCount, _ := dao.MdlTenantModels.Ctx(ctx).
+		// 获取显式分配的模型。DB 错误必须上抛：此处吞错会把"查询失败"当成"无分配"，
+		// 数据库瞬断时 /v1/models 会静默返回空列表（200）且无任何日志
+		tenantModelCount, err := dao.MdlTenantModels.Ctx(ctx).
 			Where("tenant_id", tenantID).
 			Count()
+		if err != nil {
+			return nil, err
+		}
 
-		// 获取分组分配的模型
-		groupModelIDs := GetTenantGroupModelIDs(ctx, tenantID)
+		// 获取分组分配的模型（错误同样上抛，理由同上）
+		groupModelIDs, err := GetTenantGroupModelIDs(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
 
 		hasExplicit := tenantModelCount > 0
 		hasGroup := len(groupModelIDs) > 0
@@ -749,7 +762,7 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 				if err := dao.MdlTenantModels.Ctx(ctx).
 					Where("tenant_id", tenantID).Where("enabled", true).
 					Fields("model_id").Scan(&explicitIDs); err != nil {
-					g.Log().Warningf(ctx, "[DataProvider] GetAvailableModels scan tenant models failed: tenantID=%d, err=%v", tenantID, err)
+					return nil, err
 				}
 				for _, id := range explicitIDs {
 					allModelIDs = append(allModelIDs, id.ModelID)
@@ -761,27 +774,27 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 			}
 
 			if len(allModelIDs) > 0 {
-				err = dao.MdlModels.Ctx(ctx).
+				if err := dao.MdlModels.Ctx(ctx).
 					WhereIn("id", allModelIDs).
 					Where("status", "active").
 					Fields(fieldsNoAlias).
 					OrderAsc("category").
 					OrderAsc("model_id").
-					Scan(&models)
+					Scan(&models); err != nil {
+					return nil, err
+				}
 			}
 		}
 	} else {
 		// tenantID == 0：返回所有活跃模型（公开端点场景）
-		err = dao.MdlModels.Ctx(ctx).
+		if err := dao.MdlModels.Ctx(ctx).
 			Where("status", "active").
 			Fields(fieldsNoAlias).
 			OrderAsc("category").
 			OrderAsc("model_id").
-			Scan(&models)
-	}
-
-	if err != nil {
-		return nil, err
+			Scan(&models); err != nil {
+			return nil, err
+		}
 	}
 
 	// 按 API Key 的模型范围过滤
@@ -789,10 +802,12 @@ func (p *DataProviderImpl) GetAvailableModels(ctx context.Context, tenantID, api
 		var keyScopes []struct {
 			ModelName string `json:"model_name"`
 		}
-		_ = dao.ApiKeyModelScopes.Ctx(ctx).
+		if err := dao.ApiKeyModelScopes.Ctx(ctx).
 			Where("api_key_id", apiKeyID).
 			Fields("model_name").
-			Scan(&keyScopes)
+			Scan(&keyScopes); err != nil {
+			return nil, err
+		}
 
 		if len(keyScopes) > 0 {
 			allowed := make(map[string]bool, len(keyScopes))
@@ -1286,10 +1301,18 @@ func ClearTenantModelAccessCache(ctx context.Context, tenantID int64) {
 }
 
 // memberModelCache 成员模型范围缓存（TTL 60s）。
-// 这是该缓存唯一的生产者（Get/Set），tenant 与 open 业务包通过
-// InvalidateMemberModelScopeCache 显式失效本缓存（写操作后调用），
-// 共享 "member_model" 前缀是故意的跨包失效机制，并非命名冲突——
-// 详见 InvalidateMemberModelScopeCache。
+// tenant 与 open 业务包通过 InvalidateMemberModelScopeCache 显式失效本缓存（写操作后调用），
+// 共享 "member_model" 前缀是故意的跨包失效机制，并非命名冲突——详见 InvalidateMemberModelScopeCache。
+//
+// 本包内有且仅有两个写者：GetMemberAllowedModelNames 与 CheckMemberModelAccess，二者共用
+// 同一 key（{tenantID}:{userID}），必须遵循统一编码，修改任一侧前务必同步另一侧：
+//   - []              = 无范围记录（不限制）
+//   - [__none__]      = 全部禁止（tnt_member_model_scopes.model_id = -1 哨兵）
+//
+// 历史上两写者编码不一致（列表路径曾用 [] 表示全禁），导致 chat 请求后 60s 内
+// /v1/models 间歇性返回空列表、全禁成员反而被放行，2026-09 已统一。
+const memberScopeNoneSentinel = "__none__"
+
 var memberModelCache = lcommon.NewCache("member_model", 60*time.Second)
 
 // InvalidateMemberModelScopeCache 失效指定成员的模型范围缓存。
@@ -1310,7 +1333,8 @@ func GetMemberAllowedModelNames(ctx context.Context, tenantID, userID int64) ([]
 
 	var cachedNames []string
 	if memberModelCache.GetJSON(ctx, cacheKey, &cachedNames) {
-		return cachedNames, nil
+		// 缓存可能由 CheckMemberModelAccess 写入，必须走统一编码解码（见 memberScopeNoneSentinel 注释）
+		return decodeMemberScopeNames(cachedNames), nil
 	}
 
 	type scopeRow struct {
@@ -1335,7 +1359,7 @@ func GetMemberAllowedModelNames(ctx context.Context, tenantID, userID int64) ([]
 	names := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if r.ModelID == -1 {
-			memberModelCache.Set(ctx, cacheKey, []string{})
+			memberModelCache.Set(ctx, cacheKey, []string{memberScopeNoneSentinel})
 			return []string{}, nil
 		}
 		if r.ModelName != "" {
@@ -1343,8 +1367,30 @@ func GetMemberAllowedModelNames(ctx context.Context, tenantID, userID int64) ([]
 		}
 	}
 
+	// scope 记录存在但关联模型已全部从目录删除：fail-closed 按全禁处理。
+	// 注意不能写空切片——统一编码里 [] 表示"无记录不限"
+	if len(names) == 0 {
+		memberModelCache.Set(ctx, cacheKey, []string{memberScopeNoneSentinel})
+		return []string{}, nil
+	}
+
 	memberModelCache.Set(ctx, cacheKey, names)
 	return names, nil
+}
+
+// decodeMemberScopeNames 解码 memberModelCache 中的成员模型范围（与 CheckMemberModelAccess
+// 编码对齐，见 memberScopeNoneSentinel 注释）：
+// 含 __none__ 哨兵 → 全部禁止（空非 nil 切片）；[] = 无范围记录（nil，不限制）；其余原样返回
+func decodeMemberScopeNames(cached []string) []string {
+	for _, n := range cached {
+		if n == memberScopeNoneSentinel {
+			return []string{}
+		}
+	}
+	if len(cached) == 0 {
+		return nil
+	}
+	return cached
 }
 
 // CheckMemberModelAccess 检查成员是否有权使用指定模型。
@@ -1360,7 +1406,7 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 		}
 		// 哨兵值：表示该成员被限制使用所有模型
 		for _, name := range cachedModelNames {
-			if name == "__none__" {
+			if name == memberScopeNoneSentinel {
 				return false, nil
 			}
 		}
@@ -1390,7 +1436,7 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	names := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if r.ModelID == -1 {
-			names = append(names, "__none__")
+			names = append(names, memberScopeNoneSentinel)
 		} else if r.ModelName != "" {
 			names = append(names, r.ModelName)
 		}
@@ -1403,7 +1449,7 @@ func (p *DataProviderImpl) CheckMemberModelAccess(ctx context.Context, tenantID,
 	}
 	// 哨兵值：表示该成员被限制使用所有模型
 	for _, name := range names {
-		if name == "__none__" {
+		if name == memberScopeNoneSentinel {
 			return false, nil
 		}
 	}
