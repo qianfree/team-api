@@ -184,6 +184,19 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		maxConcurrencyVal = req.MaxConcurrency
 	}
 
+	// 标签与备注：可选字段，校验规则与更新接口一致；空值落库为列默认（[] / ''）
+	tagsJSON, err := marshalTenantTags(req.Tags)
+	if err != nil {
+		return nil, err
+	}
+	remarkVal := ""
+	if req.Remark != nil {
+		remarkVal = strings.TrimSpace(*req.Remark)
+		if utf8.RuneCountInString(remarkVal) > tenantRemarkMaxRunes {
+			return nil, common.NewBadRequestError("备注最长 1000 字符")
+		}
+	}
+
 	var tenantID int64
 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -194,6 +207,8 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 			MaxConcurrency: maxConcurrencyVal,
 			Level:          1,
 			Settings:       "{}",
+			Tags:           tagsJSON,
+			Remark:         remarkVal,
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create tenant")
