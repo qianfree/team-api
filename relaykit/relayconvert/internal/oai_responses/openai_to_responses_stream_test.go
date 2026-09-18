@@ -255,6 +255,67 @@ func TestOpenAIToResponsesStream_ReasoningDelta(t *testing.T) {
 	}
 }
 
+// TestOpenAIToResponsesStream_ReasoningClosedOnce 复现线上 bug（chn_debug_logs #330）：
+// reasoning + 工具调用 + finish_reason 的流中，closeReasoningItem 在工具调用开始与
+// finish_reason 两处被调，防重失效时同一 reasoning 项会发两份 done 事件——
+// 客户端状态机对已完成 item 再收口即崩（zcode: "reading 'summaryParts'"）。
+func TestOpenAIToResponsesStream_ReasoningClosedOnce(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"mull"}}]}`,
+		``,
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hi"}}]}`,
+		``,
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}}]}`,
+		``,
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	events, err := runChatToResponsesStream(t, &convmeta.Values{OriginModelName: "gpt-4o"}, sse)
+	if err != nil {
+		t.Fatalf("ConvertStreamResponse: %v", err)
+	}
+
+	counts := map[string]int{}
+	reasoningDone := 0
+	for _, ev := range events {
+		counts[ev.Event]++
+		if ev.Event == "response.output_item.done" {
+			data := eventData(t, ev)
+			if item, _ := data["item"].(map[string]any); item != nil && item["type"] == "reasoning" {
+				reasoningDone++
+			}
+		}
+	}
+	if counts["response.reasoning_summary_text.done"] != 1 {
+		t.Errorf("reasoning_summary_text.done 次数 = %d, want 1", counts["response.reasoning_summary_text.done"])
+	}
+	if counts["response.reasoning_summary_part.added"] != 1 || counts["response.reasoning_summary_part.done"] != 1 {
+		t.Errorf("summary_part added/done = %d/%d, want 1/1",
+			counts["response.reasoning_summary_part.added"], counts["response.reasoning_summary_part.done"])
+	}
+	if reasoningDone != 1 {
+		t.Errorf("reasoning 项 output_item.done 次数 = %d, want 1", reasoningDone)
+	}
+	// completed 的 output 数组仍需携带 reasoning 项（客户端重建下一轮 input 历史）
+	last := events[len(events)-1]
+	if last.Event != "response.completed" {
+		t.Fatalf("末事件 = %s, want response.completed", last.Event)
+	}
+	respObj, _ := eventData(t, last)["response"].(map[string]any)
+	output, _ := respObj["output"].([]map[string]any)
+	hasReasoning := false
+	for _, o := range output {
+		if o["type"] == "reasoning" {
+			hasReasoning = true
+		}
+	}
+	if !hasReasoning {
+		t.Errorf("completed output 缺 reasoning 项: %+v", output)
+	}
+}
+
 // TestOpenAIToResponsesStream_EchoFromStash 已 stash 的请求快照 echo 进 response 对象。
 func TestOpenAIToResponsesStream_EchoFromStash(t *testing.T) {
 	info := newStashMeta("gpt-4o", "", false)
