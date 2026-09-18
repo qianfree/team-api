@@ -141,6 +141,53 @@ func TestResponsesToOpenAIStream_ToolCalls(t *testing.T) {
 	}
 }
 
+// TestResponsesToOpenAIStream_ToolCallItemIDDiffersFromCallID 复现线上 bug（chn_debug_logs #357）：
+// function_call 项的 item.id（OpenAI 为 fc_xxx、DeepSeek 为 UUID）与 call_id 是两个不同的值，
+// 而 arguments 增量事件只带 item_id。不做 item_id→call_id 映射会把同一工具调用拆成两个
+// index（续块无 name），ai-sdk 客户端报 "Expected 'function.name' to be a string"。
+func TestResponsesToOpenAIStream_ToolCallItemIDDiffersFromCallID(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"9abf972b-39ee-431d-b452-1aedef3f6762","call_id":"call_00_abc","name":"Bash","arguments":""}}`,
+		``,
+		`data: {"type":"response.function_call_arguments.delta","item_id":"9abf972b-39ee-431d-b452-1aedef3f6762","output_index":0,"delta":"{\"cmd\":"}`,
+		``,
+		`data: {"type":"response.function_call_arguments.delta","item_id":"9abf972b-39ee-431d-b452-1aedef3f6762","output_index":0,"delta":"\"ls\"}"}`,
+		``,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"9abf972b-39ee-431d-b452-1aedef3f6762","call_id":"call_00_abc","name":"Bash","arguments":"{\"cmd\":\"ls\"}"}}`,
+		``,
+		`data: {"type":"response.completed","response":{"id":"resp_up","object":"response","created_at":123,"status":"completed","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	chunks, err := runResponsesToChatStream(t, &convmeta.Values{OriginModelName: "gpt-4o"}, sse)
+	if err != nil {
+		t.Fatalf("ConvertStreamResponse: %v", err)
+	}
+
+	var args strings.Builder
+	for _, c := range chunks {
+		if len(c.Choices) == 0 {
+			continue
+		}
+		for _, tc := range c.Choices[0].Delta.ToolCalls {
+			// 所有分片必须归并到同一个调用：index 恒 0、id 恒为 call_id
+			if tc.Index == nil || *tc.Index != 0 {
+				t.Errorf("tool call index = %v, want 0（同一调用被拆成多个 index）", tc.Index)
+			}
+			if tc.ID != "" && tc.ID != "call_00_abc" {
+				t.Errorf("tool call id = %q, want call_00_abc（item_id 泄漏成了调用 id）", tc.ID)
+			}
+			args.WriteString(tc.Function.Arguments)
+		}
+	}
+	// output_item.done 的累计 arguments 与已发增量做差，不得重复下发
+	if args.String() != `{"cmd":"ls"}` {
+		t.Errorf("聚合 arguments = %q, want {\"cmd\":\"ls\"}", args.String())
+	}
+}
+
 // TestResponsesToOpenAIStream_ReasoningDelta 推理摘要 delta 转 reasoning_content。
 func TestResponsesToOpenAIStream_ReasoningDelta(t *testing.T) {
 	sse := strings.Join([]string{

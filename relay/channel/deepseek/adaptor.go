@@ -38,6 +38,12 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 		}
 		return betaURL + "/completions", nil
 	case constant.RelayModeChatCompletions:
+		// chat_via_responses 桥接：请求体已由 relaykit 转成 Responses 格式，URL 必须同步
+		// 切到 /v1/responses——否则 Responses 体打到 chat 端点，上游按 chat 格式反序列化
+		// 直接 400（tools[0] missing field `function`）
+		if info.UseResponsesAPI {
+			return baseURL + "/v1/responses", nil
+		}
 		return baseURL + "/v1/chat/completions", nil
 	case constant.RelayModeClaudeMessages:
 		return baseURL + "/anthropic/v1/messages", nil
