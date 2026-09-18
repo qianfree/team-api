@@ -123,7 +123,6 @@ type AdminUsageLogFilter struct {
 	ID          int64  `json:"id" dc:"用量记录ID"`
 	TenantID    int64  `json:"tenant_id" dc:"租户ID"`
 	UserID      int64  `json:"user_id" dc:"用户ID"`
-	Username    string `json:"username" dc:"用户名（模糊匹配）"`
 	ApiKeyID    int64  `json:"api_key_id" dc:"API Key ID"`
 	ChannelID   int64  `json:"channel_id" dc:"渠道ID"`
 	Model       string `json:"model" dc:"模型名称"`

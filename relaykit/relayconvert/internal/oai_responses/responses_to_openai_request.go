@@ -79,7 +79,7 @@ func (c *ResponsesToOpenAIRequestConverter) ConvertRequest(
 			messages = append(messages, dto.Message{Role: "system", Content: instructions})
 		}
 	}
-	inputMessages, err := r2cConvertInputToMessages(req.Input)
+	inputMessages, err := r2cConvertInputToMessages(req.Input, reasoningCarryOf(info))
 	if err != nil {
 		return nil, fmt.Errorf("convert input to messages: %w", err)
 	}
@@ -172,6 +172,9 @@ type r2cInputItem struct {
 	Arguments string `json:"arguments,omitempty"`
 	// reasoning 项的思考文本（OpenAI 官方形态在 summary[]，部分聚合器直连输出放 content[]）
 	Summary []r2cTextPart `json:"summary,omitempty"`
+	// reasoning 项的 encrypted_content：网关自产黑盒（见 shared.EncodeReasoningEncryptedContent），
+	// ai-sdk 等客户端只回传带该字段的 reasoning 项，summary 可能被剥掉，此为主要回传载体
+	EncryptedContent string `json:"encrypted_content,omitempty"`
 }
 
 // r2cTextPart Responses 输出项中文本部件的最小读取形态。
@@ -179,7 +182,9 @@ type r2cTextPart struct {
 	Text string `json:"text"`
 }
 
-// r2cReasoningText 提取 reasoning 项的思考文本，summary 与 content 两种形态按序拼接。
+// r2cReasoningText 提取 reasoning 项的思考文本，summary 与 content 两种形态按序拼接；
+// 两者皆空时解码网关自产的 encrypted_content（客户端只回传带该字段的项，
+// summary 常被剥掉，它是跨轮回传思考文本的主要载体）。
 func r2cReasoningText(item r2cInputItem) string {
 	var parts []string
 	for _, s := range item.Summary {
@@ -195,6 +200,11 @@ func r2cReasoningText(item r2cInputItem) string {
 					parts = append(parts, c.Text)
 				}
 			}
+		}
+	}
+	if len(parts) == 0 {
+		if text, ok := shared.DecodeReasoningEncryptedContent(item.EncryptedContent); ok {
+			return text
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -220,7 +230,15 @@ type r2cInputAudio struct {
 	Format string `json:"format,omitempty"`
 }
 
-func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
+// reasoningCarryOf 提取宿主的思考文本跨轮携带能力，未实现返回 nil。
+func reasoningCarryOf(info convmeta.Meta) convmeta.ReasoningCarry {
+	if carry, ok := info.(convmeta.ReasoningCarry); ok {
+		return carry
+	}
+	return nil
+}
+
+func r2cConvertInputToMessages(input json.RawMessage, carry convmeta.ReasoningCarry) ([]dto.Message, error) {
 	if len(input) == 0 {
 		return nil, nil
 	}
@@ -255,11 +273,37 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]dto.Message, error) {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
+		rc := takeReasoning()
+		if rc == nil && carry != nil {
+			// 客户端剥掉了 reasoning 项（ai-sdk 系）：按 call_id 从宿主缓存捞回响应侧
+			// 存下的思考文本（DeepSeek 等 thinking 上游要求 tool_calls 消息带回 reasoning_content）
+			callIDs := make([]string, 0, len(pendingToolCalls))
+			for _, tc := range pendingToolCalls {
+				callIDs = append(callIDs, tc.ID)
+			}
+			if text := carry.LookupReasoningForCalls(callIDs); text != "" {
+				rc = &text
+			}
+		}
+		// Responses 把同一助手轮拆成 message（文本）+ function_call 两类项，chat 协议的
+		// 规范形态是单条 assistant 消息同时带 content + tool_calls。拆成两条连续 assistant
+		// 消息时，DeepSeek thinking 模式会校验当前轮每条 assistant 消息的 reasoning_content，
+		// 纯文本那条无处挂 → 400（chn_debug_logs #389），因此紧跟文本消息的工具调用合并进该消息
+		if n := len(messages); n > 0 && messages[n-1].Role == "assistant" &&
+			len(messages[n-1].ToolCalls) == 0 && messages[n-1].ToolCallID == "" {
+			last := &messages[n-1]
+			last.ToolCalls = pendingToolCalls
+			if last.ReasoningContent == nil {
+				last.ReasoningContent = rc
+			}
+			pendingToolCalls = nil
+			return
+		}
 		messages = append(messages, dto.Message{
 			Role:             "assistant",
 			Content:          nil,
 			ToolCalls:        pendingToolCalls,
-			ReasoningContent: takeReasoning(),
+			ReasoningContent: rc,
 		})
 		pendingToolCalls = nil
 	}

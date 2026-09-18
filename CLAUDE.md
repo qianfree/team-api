@@ -473,6 +473,7 @@ cmd（路由注册）
 | 对比分析 | `docs/new-api-vs-sub2api对比分析报告.md` | 两者差异 |
 | 大模型实施方案 | `docs/大模型完整实施方案-v2.1.md` | 大模型代理层设计 |
 | API 格式参考 | `docs/reference/api-format-reference.md` | JSON 示例、SSE 格式、错误映射、中间件差异 |
+| 协议转换语料采集 | `docs/协议转换语料采集手册.md` | `corpus-extract` 命令用法：从渠道调试日志提取真实流量语料喂给协议转换测试 |
 | GoFrame 使用规范 | `docs/reference/goframe-conventions.md` | 框架使用规范 + 已修复的框架 bug 记录 |
 
 

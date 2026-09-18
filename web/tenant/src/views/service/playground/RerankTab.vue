@@ -79,80 +79,145 @@ function scoreColor(score: number) {
 	if (score >= 0.5) return 'bg-amber-500'
 	return 'bg-red-400'
 }
+
+// 空态里展示的模型名（列表由父组件异步加载，可能暂时查不到）
+const selectedModelName = computed(() => selectedModelItem.value?.model_name || selectedModel.value)
+
+// 结果卡右上角的状态徽标（无任务且无错误时不渲染）
+const resultStatus = computed<{ label: string; cls: string } | null>(() => {
+	if (errorMessage.value) return { label: '失败', cls: 'badge-danger' }
+	if (sending.value) return { label: '排序中', cls: 'badge-primary' }
+	if (results.value.length) return { label: '已完成', cls: 'badge-success' }
+	return null
+})
 </script>
 
 <template>
-	<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-		<div class="lg:col-span-1">
-			<div class="card sticky top-6">
-				<div class="card-header">
-					<h3 class="text-sm font-semibold text-gray-900">重排序参数</h3>
-				</div>
-				<div class="card-body space-y-4">
-					<div>
-						<label class="input-label">模型</label>
-						<BaseSelect v-model="selectedModel" :options="modelOptions" />
+	<!-- 与其余 Tab 同一套等高布局：左参数栏内部滚动，主操作常驻底部，右结果区撑满 -->
+	<div class="flex flex-col lg:h-[calc(100vh-15rem)] lg:overflow-hidden">
+		<div class="grid grid-cols-1 gap-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:min-h-0 lg:flex-1">
+			<!-- Left: 参数 -->
+			<div class="flex lg:min-h-0">
+				<div class="card flex w-full flex-col overflow-hidden lg:h-full">
+					<div class="flex shrink-0 items-center gap-2 border-b border-gray-100 px-4 py-3">
+						<Icon name="chart" size="sm" class="text-primary-500" />
+						<h3 class="text-sm font-semibold text-gray-900">重排序参数</h3>
 					</div>
-					<div>
-						<label class="input-label">查询文本</label>
-						<n-input v-model:value="query" type="textarea" :rows="2" placeholder="输入查询..." />
+
+					<div class="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+						<!-- 模型 -->
+						<div>
+							<div class="mb-2 flex items-center justify-between">
+								<label class="text-xs font-semibold text-gray-500">模型</label>
+								<span class="text-[11px] text-gray-400">共 {{ models.length }} 个可用</span>
+							</div>
+							<BaseSelect v-model="selectedModel" :options="modelOptions" />
+						</div>
+
+						<!-- 输入 -->
+						<div class="space-y-4 border-t border-gray-100 pt-4">
+							<div>
+								<label class="mb-2 block text-xs font-semibold text-gray-500">查询文本</label>
+								<n-input v-model:value="query" type="textarea" :rows="2" placeholder="输入查询..." />
+							</div>
+							<div>
+								<div class="mb-2 flex items-center justify-between">
+									<label class="text-xs font-semibold text-gray-500">文档列表</label>
+									<span class="text-[11px] text-gray-400">每行一个文档</span>
+								</div>
+								<n-input v-model:value="documentsText" type="textarea" :rows="6" placeholder="文档 1&#10;文档 2&#10;文档 3" />
+							</div>
+						</div>
+
+						<!-- 输出参数 -->
+						<div class="border-t border-gray-100 pt-4">
+							<div class="mb-2 flex items-center justify-between">
+								<label class="text-xs font-semibold text-gray-500">Top N</label>
+								<span class="text-[11px] text-gray-400">留空返回全部</span>
+							</div>
+							<n-input-number v-model:value="topN" :min="1" class="w-full" placeholder="留空返回全部" />
+						</div>
 					</div>
-					<div>
-						<label class="input-label">文档列表（每行一个）</label>
-						<n-input v-model:value="documentsText" type="textarea" :rows="6" placeholder="文档 1&#10;文档 2&#10;文档 3" />
+
+					<!-- 主操作常驻卡片底部 -->
+					<div class="shrink-0 border-t border-gray-100 px-4 py-3">
+						<button class="btn btn-primary w-full" :disabled="sending || !query.trim() || !documentsText.trim()" @click="rerank">
+							<Icon name="chart" size="sm" />
+							{{ sending ? '排序中...' : '重排序' }}
+						</button>
 					</div>
-					<div>
-						<label class="input-label">Top N（可选）</label>
-						<n-input-number v-model:value="topN" :min="1" class="w-full" placeholder="留空返回全部" />
-					</div>
-					<button class="btn btn-primary w-full" :disabled="sending || !query.trim() || !documentsText.trim()" @click="rerank">
-						{{ sending ? '排序中...' : '重排序' }}
-					</button>
 				</div>
 			</div>
-		</div>
 
-		<div class="lg:col-span-3">
-			<div class="card" style="min-height: 400px">
-				<div class="card-header">
-					<h3 class="text-sm font-semibold text-gray-900">排序结果</h3>
-				</div>
-				<div class="card-body">
-					<!-- 错误提示 -->
-					<div
-						v-if="errorMessage"
-						class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
-					>
-						<div class="flex items-center gap-2 text-red-700">
-							<Icon name="xCircle" size="sm" />
-							<span class="text-sm font-medium">排序失败</span>
+			<!-- Right: 结果 -->
+			<div class="lg:min-h-0">
+				<div class="card flex min-h-[420px] flex-col overflow-hidden lg:h-full">
+					<div class="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-5 py-3">
+						<div class="flex items-center gap-2">
+							<Icon name="chart" size="sm" class="text-primary-500" />
+							<h3 class="text-sm font-semibold text-gray-900">排序结果</h3>
 						</div>
-						<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
+						<span v-if="resultStatus" class="badge" :class="resultStatus.cls">{{ resultStatus.label }}</span>
 					</div>
 
-					<div v-if="results.length === 0 && !sending && !errorMessage" class="empty-state">
-						<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
-						<h3 class="empty-state-title">等待排序</h3>
-						<p class="empty-state-description">输入查询和文档并点击重排序</p>
-					</div>
-					<div v-if="sending" class="flex items-center justify-center py-12">
-						<div class="spinner h-8 w-8 text-primary-600"></div>
-						<span class="ml-3 text-sm text-gray-500">重排序中...</span>
-					</div>
-					<div v-if="results.length > 0" class="space-y-3">
-						<div v-for="r in results" :key="r.index" class="rounded-xl border border-gray-200 p-4">
-							<div class="flex items-center gap-3 mb-2">
-								<span class="badge badge-gray">#{{ r.index }}</span>
-								<div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-									<div class="h-full rounded-full transition-all" :class="scoreColor(r.relevance_score)" :style="{ width: Math.max(r.relevance_score * 100, 2) + '%' }" />
-								</div>
-								<span class="text-sm font-medium text-gray-700">{{ (r.relevance_score * 100).toFixed(1) }}%</span>
+					<div class="min-h-0 flex-1 overflow-y-auto p-5">
+						<!-- 错误提示 -->
+						<div
+							v-if="errorMessage"
+							class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
+						>
+							<div class="flex items-center gap-2 text-red-700">
+								<Icon name="xCircle" size="sm" />
+								<span class="text-sm font-medium">排序失败</span>
 							</div>
-							<p v-if="r.document" class="text-sm text-gray-600 whitespace-pre-wrap">{{ r.document.text }}</p>
+							<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
 						</div>
-						<div class="text-xs text-gray-500 flex items-center justify-between pt-3 border-t border-gray-100">
-							<span>Tokens: {{ tokenUsage.promptTokens }} / {{ tokenUsage.totalTokens }}</span>
-							<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
+
+						<!-- 空态：图标磁贴 + 说明，给首屏一个视觉锚点 -->
+						<div v-if="results.length === 0 && !sending && !errorMessage" class="flex h-full min-h-[320px] flex-col items-center justify-center px-4 text-center">
+							<div class="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-400 via-primary-500 to-emerald-500 text-white shadow-glow">
+								<Icon name="chart" size="lg" />
+							</div>
+							<h3 class="text-lg font-semibold text-gray-900">等待排序</h3>
+							<p class="mt-1.5 max-w-sm text-sm text-gray-500">
+								<template v-if="selectedModel">
+									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，填好查询与文档后点击「重排序」
+								</template>
+								<template v-else>请先在左侧选择一个重排模型</template>
+							</p>
+							<p class="mt-6 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-700">
+								<Icon name="exclamationTriangle" size="xs" />
+								排序将真实调用模型并产生费用
+							</p>
+						</div>
+
+						<!-- 排序中 -->
+						<div v-if="sending" class="flex h-full min-h-[320px] flex-col items-center justify-center gap-3">
+							<div class="spinner h-8 w-8 text-primary-600"></div>
+							<span class="text-sm text-gray-500">重排序中...</span>
+						</div>
+
+						<!-- 结果 -->
+						<div v-if="results.length > 0" class="space-y-3">
+							<div v-for="r in results" :key="r.index" class="rounded-xl border border-gray-200 p-4">
+								<div class="mb-2 flex items-center gap-3">
+									<span class="badge badge-gray">#{{ r.index }}</span>
+									<div class="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
+										<div class="h-full rounded-full transition-all" :class="scoreColor(r.relevance_score)" :style="{ width: Math.max(r.relevance_score * 100, 2) + '%' }" />
+									</div>
+									<span class="text-sm font-medium text-gray-700">{{ (r.relevance_score * 100).toFixed(1) }}%</span>
+								</div>
+								<p v-if="r.document" class="text-sm whitespace-pre-wrap text-gray-600">{{ r.document.text }}</p>
+							</div>
+
+							<!-- 用量条：与其余 Tab 保持同一排版 -->
+							<div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs text-gray-500">
+								<div class="flex items-center gap-4">
+									<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ tokenUsage.promptTokens }}</span></span>
+									<span class="flex items-center gap-1.5">Total <span class="font-medium text-gray-700">{{ tokenUsage.totalTokens }}</span></span>
+								</div>
+								<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
+							</div>
 						</div>
 					</div>
 				</div>

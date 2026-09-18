@@ -9,6 +9,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 )
 
 // convertResponsesBody 解析 Responses 请求 JSON、执行转换并把结果 chat 请求重新序列化为 map
@@ -380,6 +381,87 @@ func TestResponsesToOpenAIRequest_ReasoningPassedBackAsReasoningContent(t *testi
 		assistant := msgs[1].(map[string]any)
 		if _, ok := assistant["reasoning_content"]; ok {
 			t.Errorf("无可读思考文本时不应携带 reasoning_content: %v", assistant)
+		}
+	})
+
+	t.Run("网关自产 encrypted_content 往返回传", func(t *testing.T) {
+		// 线上链路（chn_debug_logs #374）：ai-sdk 只回传带 encrypted_content 的
+		// reasoning 项（summary 被剥掉），网关自产黑盒必须能解回 reasoning_content，
+		// 否则 DeepSeek thinking 模式多轮工具调用 400
+		enc := shared.EncodeReasoningEncryptedContent("先查天气")
+		m := convertResponsesBody(t, &convmeta.Values{}, `{"model":"deepseek-v4-flash","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"天气"}]},`+
+			`{"type":"reasoning","encrypted_content":"`+enc+`"},`+
+			`{"type":"function_call","call_id":"call_w","name":"get_weather","arguments":"{}"},`+
+			`{"type":"function_call_output","call_id":"call_w","output":"晴"}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3", msgs)
+		}
+		assistant := msgs[1].(map[string]any)
+		if assistant["reasoning_content"] != "先查天气" {
+			t.Errorf("assistant.reasoning_content = %v, want 先查天气", assistant["reasoning_content"])
+		}
+	})
+
+	t.Run("客户端剥掉 reasoning 项时按 call_id 从宿主缓存捞回", func(t *testing.T) { // 线上链路（chn_debug_logs #377）：ai-sdk 重建历史时把 reasoning 项整个剥掉
+		//（连 encrypted_content 一起丢），唯一兜底是响应侧按 call_id 存进宿主缓存、
+		// 请求侧按 function_call 的 call_id 捞回
+		meta := newCarryMeta()
+		meta.StoreReasoningForCalls([]string{"call_x"}, "缓存的思考")
+		m := convertResponsesBody(t, meta, `{"model":"deepseek-v4-flash","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"ls"}]},`+
+			`{"type":"function_call","call_id":"call_x","name":"shell","arguments":"{}"},`+
+			`{"type":"function_call_output","call_id":"call_x","output":"a.go"}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3", msgs)
+		}
+		assistant := msgs[1].(map[string]any)
+		if assistant["reasoning_content"] != "缓存的思考" {
+			t.Errorf("assistant.reasoning_content = %v, want 缓存的思考", assistant["reasoning_content"])
+		}
+		// input 自带 reasoning 项时优先用客户端回传的，不覆盖
+		m2 := convertResponsesBody(t, meta, `{"model":"deepseek-v4-flash","input":[`+
+			`{"type":"reasoning","summary":[{"type":"summary_text","text":"客户端回传的思考"}]},`+
+			`{"type":"function_call","call_id":"call_x","name":"shell","arguments":"{}"},`+
+			`{"type":"function_call_output","call_id":"call_x","output":"a.go"}`+
+			`]}`)
+		msgs2, _ := m2["messages"].([]any)
+		assistant2 := msgs2[0].(map[string]any)
+		if assistant2["reasoning_content"] != "客户端回传的思考" {
+			t.Errorf("客户端回传优先: reasoning_content = %v", assistant2["reasoning_content"])
+		}
+	})
+
+	t.Run("同轮文本消息与工具调用合并为单条 assistant 消息", func(t *testing.T) {
+		// 线上 chn_debug_logs #389：Responses 把同一助手轮拆成 message + function_call
+		// 两类项，转成两条连续 assistant 消息时文本那条无 reasoning_content，
+		// DeepSeek thinking 校验当前轮每条 assistant 消息 → 400。
+		// chat 规范形态是单条 assistant 消息带 content + tool_calls + reasoning_content。
+		meta := newCarryMeta()
+		meta.StoreReasoningForCalls([]string{"call_m"}, "合并的思考")
+		m := convertResponsesBody(t, meta, `{"model":"deepseek-v4-flash","input":[`+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"查一下"}]},`+
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"我来查"}]},`+
+			`{"type":"function_call","call_id":"call_m","name":"search","arguments":"{}"},`+
+			`{"type":"function_call_output","call_id":"call_m","output":"结果"}`+
+			`]}`)
+		msgs, _ := m["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %d 条, want 3（user + 合并 assistant + tool）: %v", len(msgs), msgs)
+		}
+		assistant := msgs[1].(map[string]any)
+		if assistant["content"] != "我来查" {
+			t.Errorf("合并后 content = %v, want 我来查", assistant["content"])
+		}
+		if _, ok := assistant["tool_calls"]; !ok {
+			t.Error("合并后应带 tool_calls")
+		}
+		if assistant["reasoning_content"] != "合并的思考" {
+			t.Errorf("合并后 reasoning_content = %v, want 合并的思考", assistant["reasoning_content"])
 		}
 	})
 }

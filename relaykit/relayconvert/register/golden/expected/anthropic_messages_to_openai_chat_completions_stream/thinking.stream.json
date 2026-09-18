@@ -24,8 +24,7 @@
         {
           "delta": {
             "content": null,
-            "reasoning_content": "Let me think...",
-            "role": ""
+            "reasoning_content": "Let me think..."
           },
           "finish_reason": null,
           "index": 0
@@ -43,8 +42,7 @@
       "choices": [
         {
           "delta": {
-            "content": "The answer is 42.",
-            "role": ""
+            "content": "The answer is 42."
           },
           "finish_reason": null,
           "index": 0
@@ -62,8 +60,7 @@
       "choices": [
         {
           "delta": {
-            "content": null,
-            "role": ""
+            "content": null
           },
           "finish_reason": "stop",
           "index": 0

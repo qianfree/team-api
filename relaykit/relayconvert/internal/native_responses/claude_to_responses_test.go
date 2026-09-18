@@ -324,18 +324,37 @@ func TestClaudeToResponsesStream_ThinkingAsReasoningSummary(t *testing.T) {
 	got := responsesEventTypes(t, events)
 	want := []string{
 		"response.created",
-		"response.output_item.added",
+		"response.output_item.added", // message 项（固定 output_index 0）
 		"response.content_part.added",
+		"response.output_item.added", // reasoning 项（懒开，独立 output_index）
+		"response.reasoning_summary_part.added",
 		"response.reasoning_summary_text.delta", // signature_delta 无对应物被忽略
+		"response.reasoning_summary_text.done",
+		"response.reasoning_summary_part.done",
+		"response.output_item.done", // reasoning 项收口
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",
+		"response.output_item.done", // message 项收口
 		"response.completed",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("事件序列不符\ngot:  %v\nwant: %v", got, want)
 	}
-	if responsesDataOf(t, events[3])["delta"] != "推理中" {
-		t.Errorf("reasoning delta 不对: %+v", responsesDataOf(t, events[3]))
+	// reasoning 增量必须挂在独立 reasoning 项上（rs_ 前缀 id），不得错挂 message 项——
+	// OpenAI SDK 流式状态机按 item 归属校验，错挂会使客户端解析失败断流
+	reasoningAdded := responsesDataOf(t, events[3])
+	item, _ := reasoningAdded["item"].(map[string]any)
+	if item == nil || item["type"] != "reasoning" {
+		t.Fatalf("第二个 output_item.added 必须是 reasoning 项: %+v", reasoningAdded)
+	}
+	delta := responsesDataOf(t, events[5])
+	if delta["delta"] != "推理中" {
+		t.Errorf("reasoning delta 不对: %+v", delta)
+	}
+	if delta["item_id"] != item["id"] {
+		t.Errorf("reasoning delta 的 item_id 应指向 reasoning 项: delta=%+v item=%+v", delta, item)
+	}
+	if delta["output_index"] != reasoningAdded["output_index"] {
+		t.Errorf("reasoning delta 的 output_index 应与 reasoning 项一致: delta=%+v added=%+v", delta, reasoningAdded)
 	}
 }

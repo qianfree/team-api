@@ -79,8 +79,21 @@
   },
   {
     "data": {
+      "item_id": "rs_resp_chatcmpl-up_1",
+      "output_index": 1,
+      "part": {
+        "text": "",
+        "type": "summary_text"
+      },
+      "summary_index": 0,
+      "type": "response.reasoning_summary_part.added"
+    },
+    "event": "response.reasoning_summary_part.added"
+  },
+  {
+    "data": {
       "delta": "Let me think...",
-      "item_id": "rs_resp_chatcmpl-up",
+      "item_id": "rs_resp_chatcmpl-up_1",
       "output_index": 1,
       "summary_index": 0,
       "type": "response.reasoning_summary_text.delta"
@@ -99,7 +112,7 @@
   },
   {
     "data": {
-      "item_id": "rs_resp_chatcmpl-up",
+      "item_id": "rs_resp_chatcmpl-up_1",
       "output_index": 1,
       "summary_index": 0,
       "text": "Let me think...",
@@ -109,7 +122,21 @@
   },
   {
     "data": {
+      "item_id": "rs_resp_chatcmpl-up_1",
+      "output_index": 1,
+      "part": {
+        "text": "Let me think...",
+        "type": "summary_text"
+      },
+      "summary_index": 0,
+      "type": "response.reasoning_summary_part.done"
+    },
+    "event": "response.reasoning_summary_part.done"
+  },
+  {
+    "data": {
       "item": {
+        "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
         "id": "\u003cscrubbed\u003e",
         "status": "completed",
         "summary": [
@@ -197,6 +224,7 @@
             "type": "message"
           },
           {
+            "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
             "id": "\u003cscrubbed\u003e",
             "status": "completed",
             "summary": [

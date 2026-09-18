@@ -212,10 +212,14 @@ func (c *GeminiToOpenAIStreamConverter) ConvertStreamResponse(
 				// 函数调用
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
+					// Gemini 每个函数调用整体到达，但 OpenAI 流式契约要求每个
+					// tool_call 增量都带 index（0 也要发），客户端按 index 归并分片
+					idx := toolCallIdx
 					if err := chunkWriter(newChunk(dto.Message{
 						ToolCalls: []dto.ToolCall{{
-							ID:   fmt.Sprintf("call_%s_%d", responseID, toolCallIdx),
-							Type: "function",
+							Index: &idx,
+							ID:    fmt.Sprintf("call_%s_%d", responseID, toolCallIdx),
+							Type:  "function",
 							Function: dto.FunctionCall{
 								Name:      part.FunctionCall.FunctionName,
 								Arguments: string(argsJSON),
