@@ -36,7 +36,11 @@ func BuildTransactionQuery(ctx context.Context, params TransactionQueryParams) *
 		query = query.Where("bil_transactions.created_at <= ?", params.EndDate+" 23:59:59")
 	}
 	if params.Username != "" {
-		query = query.Where("tu.username LIKE ?", "%"+params.Username+"%")
+		// 用 EXISTS 子查询而非引用调用方 JOIN 的别名（tu.username）：
+		// ① 筛选条件因此不依赖任何 JOIN，调用方的 COUNT / 聚合路径可以完全不联表；
+		// ② 避免把 tnt_users 拖成驱动表（EXISTS 内是主键等值探测，代价低）。
+		// 语义与 LEFT JOIN 后过滤一致：user_id 无对应用户的行同样被过滤掉。
+		query = query.Where("EXISTS (SELECT 1 FROM tnt_users ut WHERE ut.id = bil_transactions.user_id AND ut.tenant_id = bil_transactions.tenant_id AND ut.username LIKE ?)", "%"+params.Username+"%")
 	}
 	if params.ModelName != "" {
 		query = query.Where("bil_transactions.model_name LIKE ?", "%"+params.ModelName+"%")

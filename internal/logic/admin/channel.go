@@ -1064,7 +1064,14 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 	}
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset 翻页：导出按优先级倒序展示，游标取 (priority, id) 复合键 ——
+		// priority 大量重复，必须带 id 作 tiebreaker，否则同优先级的行会被跳过或重复。
+		// PostgreSQL 行值比较 (a, b) < (?, ?) 按字典序逐列比较，与排序方向一致。
+		var (
+			hasCursor      bool
+			cursorPriority int
+			cursorID       int64
+		)
 		for {
 			query := dao.ChnChannels.Ctx(ctx).
 				LeftJoin("chn_health_scores h ON chn_channels.id = h.channel_id")
@@ -1087,6 +1094,9 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 				// 与 ListChannels 保持一致：EXISTS 相关子查询避免 JOIN 重复行
 				query = query.Where("EXISTS (SELECT 1 FROM chn_abilities WHERE chn_abilities.channel_id = chn_channels.id AND (chn_abilities.model_name LIKE ? OR chn_abilities.upstream_model LIKE ?))", "%"+req.Model+"%", "%"+req.Model+"%")
 			}
+			if hasCursor {
+				query = query.Where("(chn_channels.priority, chn_channels.id) < (?, ?)", cursorPriority, cursorID)
+			}
 			var batch []struct {
 				ID          int64       `json:"id"`
 				Name        string      `json:"name"`
@@ -1097,8 +1107,8 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 				CreatedAt   *gtime.Time `json:"created_at"`
 				HealthScore *float64    `json:"health_score"`
 			}
-			if err := query.Fields(channelFields).OrderDesc("chn_channels.priority").Limit(1000).Offset(offset).Scan(&batch); err != nil {
-				g.Log().Errorf(ctx, "ExportChannels: query batch at offset %d failed: %v", offset, err)
+			if err := query.Fields(channelFields).OrderDesc("chn_channels.priority").OrderDesc("chn_channels.id").Limit(1000).Scan(&batch); err != nil {
+				g.Log().Errorf(ctx, "ExportChannels: query batch failed (cursor priority=%d id=%d): %v", cursorPriority, cursorID, err)
 				return
 			}
 			for _, ch := range batch {
@@ -1122,11 +1132,12 @@ func (s *sAdmin) ExportChannels(ctx context.Context, req *v1.ChannelExportReq) (
 				}) {
 					return
 				}
+				cursorPriority, cursorID = ch.Priority, ch.ID
 			}
 			if len(batch) < 1000 {
 				break
 			}
-			offset += 1000
+			hasCursor = true
 		}
 	})
 }

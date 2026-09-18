@@ -1163,7 +1163,8 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 	}
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset 翻页：id 游标替代 OFFSET，避免深翻页时重复扫弃前面的行（排序本就是 id DESC）
+		var cursorID int64
 		for {
 			model := dao.TntUsers.Ctx(ctx).
 				Where("tenant_id", tenantID)
@@ -1173,6 +1174,9 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 			}
 			if req.Role != "" {
 				model = model.Where("role", req.Role)
+			}
+			if cursorID > 0 {
+				model = model.Where("id < ?", cursorID)
 			}
 
 			var users []struct {
@@ -1188,7 +1192,7 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 				QuotaPeriod string  `json:"quota_period" orm:"quota_period"`
 				UpdatedAt   string  `json:"updated_at" orm:"updated_at"`
 			}
-			err := model.OrderDesc("id").Limit(1000).Offset(offset).Scan(&users)
+			err := model.OrderDesc("id").Limit(1000).Scan(&users)
 			if err = common.IgnoreScanNoRows(err); err != nil {
 				return
 			}
@@ -1265,11 +1269,11 @@ func (s *sTenant) ExportMembers(ctx context.Context, req *v1.TenantMemberExportR
 				}) {
 					return
 				}
+				cursorID = u.Id
 			}
 			if len(users) < 1000 {
 				break
 			}
-			offset += 1000
 		}
 	})
 }
