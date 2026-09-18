@@ -20,6 +20,27 @@ import (
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
+// dashboardCache 仪表盘聚合接口的短缓存（L1 内存 + L2 Redis）。
+// 趋势 / 租户排行 / 模型分布 / 小时费用这几个接口都是对 bil_usage_logs
+// 的多天窗口聚合扫描，且数据本身不要求秒级新鲜 —— 5 分钟缓存能消除
+// 仪表盘反复打开 / 多管理员同时在线造成的绝大部分重复扫表。
+var dashboardCache = common.NewCache("admin:dashboard", 5*time.Minute)
+
+// cachedDashboard 按 key 读仪表盘缓存，miss 时回源并写缓存。
+// key 必须编入全部查询参数（如天数 / TopN），避免不同参数共享一份结果。
+func cachedDashboard[T any](ctx context.Context, key string, load func() (*T, error)) (*T, error) {
+	var cached T
+	if dashboardCache.GetJSON(ctx, key, &cached) {
+		return &cached, nil
+	}
+	res, err := load()
+	if err != nil {
+		return nil, err
+	}
+	dashboardCache.Set(ctx, key, res)
+	return res, nil
+}
+
 // GetDashboardStats 获取管理后台仪表盘统计
 func (s *sAdmin) GetDashboardStats(ctx context.Context, req *v1.AdminDashboardReq) (*v1.AdminDashboardRes, error) {
 	today := time.Now().Format("2006-01-02")
@@ -133,25 +154,27 @@ func (s *sAdmin) GetDashboardTrends(ctx context.Context, req *v1.AdminDashboardT
 		days = 30
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	return cachedDashboard(ctx, fmt.Sprintf("trends:%d", days), func() (*v1.AdminDashboardTrendsRes, error) {
+		startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(`
-		SELECT
-			DATE(created_at) as date,
-			COUNT(*) as requests,
-			COUNT(DISTINCT tenant_id) as active_tenants,
-			COALESCE(SUM(total_cost), 0) as revenue
-		FROM bil_usage_logs
-		WHERE created_at >= ?
-		GROUP BY DATE(created_at)
-		ORDER BY date ASC
-	`, startDate+" 00:00:00").All()
-	if err != nil {
-		return nil, err
-	}
+		result, err := g.DB().Ctx(ctx).Raw(`
+			SELECT
+				DATE(created_at) as date,
+				COUNT(*) as requests,
+				COUNT(DISTINCT tenant_id) as active_tenants,
+				COALESCE(SUM(total_cost), 0) as revenue
+			FROM bil_usage_logs
+			WHERE created_at >= ?
+			GROUP BY DATE(created_at)
+			ORDER BY date ASC
+		`, startDate+" 00:00:00").All()
+		if err != nil {
+			return nil, err
+		}
 
-	records := result.List()
-	return &v1.AdminDashboardTrendsRes{List: records}, nil
+		records := result.List()
+		return &v1.AdminDashboardTrendsRes{List: records}, nil
+	})
 }
 
 // GetTopTenants returns the top 10 tenants by revenue.
@@ -161,28 +184,30 @@ func (s *sAdmin) GetTopTenants(ctx context.Context, req *v1.AdminDashboardTopTen
 		days = 30
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	return cachedDashboard(ctx, fmt.Sprintf("top-tenants:%d", days), func() (*v1.AdminDashboardTopTenantsRes, error) {
+		startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(`
-		SELECT
-			t.id as tenant_id,
-			t.name as tenant_name,
-			COALESCE(SUM(ul.total_cost), 0) as total_cost,
-			COUNT(*) as requests,
-			COUNT(DISTINCT ul.user_id) as active_members
-		FROM bil_usage_logs ul
-		JOIN tnt_tenants t ON t.id = ul.tenant_id
-		WHERE ul.created_at >= ?
-		GROUP BY t.id, t.name
-		ORDER BY total_cost DESC
-		LIMIT 10
-	`, startDate+" 00:00:00").All()
-	if err != nil {
-		return nil, err
-	}
+		result, err := g.DB().Ctx(ctx).Raw(`
+			SELECT
+				t.id as tenant_id,
+				t.name as tenant_name,
+				COALESCE(SUM(ul.total_cost), 0) as total_cost,
+				COUNT(*) as requests,
+				COUNT(DISTINCT ul.user_id) as active_members
+			FROM bil_usage_logs ul
+			JOIN tnt_tenants t ON t.id = ul.tenant_id
+			WHERE ul.created_at >= ?
+			GROUP BY t.id, t.name
+			ORDER BY total_cost DESC
+			LIMIT 10
+		`, startDate+" 00:00:00").All()
+		if err != nil {
+			return nil, err
+		}
 
-	records := result.List()
-	return &v1.AdminDashboardTopTenantsRes{List: records}, nil
+		records := result.List()
+		return &v1.AdminDashboardTopTenantsRes{List: records}, nil
+	})
 }
 
 // GetModelDistribution returns the model usage distribution.
@@ -192,27 +217,29 @@ func (s *sAdmin) GetModelDistribution(ctx context.Context, req *v1.AdminDashboar
 		days = 30
 	}
 
-	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	return cachedDashboard(ctx, fmt.Sprintf("model-dist:%d", days), func() (*v1.AdminDashboardModelDistributionRes, error) {
+		startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 
-	result, err := g.DB().Ctx(ctx).Raw(`
-		SELECT
-			model_name,
-			COUNT(*) as requests,
-			COALESCE(SUM(input_tokens), 0) as input_tokens,
-			COALESCE(SUM(output_tokens), 0) as output_tokens,
-			COALESCE(SUM(total_cost), 0) as total_cost
-		FROM bil_usage_logs
-		WHERE created_at >= ?
-		GROUP BY model_name
-		ORDER BY total_cost DESC
-		LIMIT 20
-	`, startDate+" 00:00:00").All()
-	if err != nil {
-		return nil, err
-	}
+		result, err := g.DB().Ctx(ctx).Raw(`
+			SELECT
+				model_name,
+				COUNT(*) as requests,
+				COALESCE(SUM(input_tokens), 0) as input_tokens,
+				COALESCE(SUM(output_tokens), 0) as output_tokens,
+				COALESCE(SUM(total_cost), 0) as total_cost
+			FROM bil_usage_logs
+			WHERE created_at >= ?
+			GROUP BY model_name
+			ORDER BY total_cost DESC
+			LIMIT 20
+		`, startDate+" 00:00:00").All()
+		if err != nil {
+			return nil, err
+		}
 
-	records := result.List()
-	return &v1.AdminDashboardModelDistributionRes{List: records}, nil
+		records := result.List()
+		return &v1.AdminDashboardModelDistributionRes{List: records}, nil
+	})
 }
 
 // GetModelHourlyCost 模型费用按小时堆叠统计，用于仪表盘堆叠柱状图：
@@ -227,6 +254,13 @@ func (s *sAdmin) GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardM
 		topN = 8
 	}
 
+	return cachedDashboard(ctx, fmt.Sprintf("model-hourly:%d:%d", hours, topN), func() (*v1.AdminDashboardModelHourlyRes, error) {
+		return s.queryModelHourlyCost(ctx, hours, topN)
+	})
+}
+
+// queryModelHourlyCost 实际执行小时费用聚合（GetModelHourlyCost 的缓存回源路径）。
+func (s *sAdmin) queryModelHourlyCost(ctx context.Context, hours, topN int) (*v1.AdminDashboardModelHourlyRes, error) {
 	// 步骤1：取费用最高的 TopN 个模型名
 	topResult, err := g.DB().Ctx(ctx).Raw(`
 		SELECT model_name
@@ -1179,6 +1213,15 @@ func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactio
 		EndDate:   req.EndDate,
 	})
 
+	// COUNT 与列表拆开执行：计数不需要租户/用户名称列，筛选条件也不依赖 JOIN
+	//（Username 过滤在 BuildTransactionQuery 内是 EXISTS 子查询），大表
+	// bil_transactions 的计数因此免背 2 个联表。不用 ScanAndCount —— 它的
+	// COUNT 会携带模型上的全部 JOIN（gf v2.10.2 源码确认：Clone 保留 join）。
+	total, err := query.Count()
+	if err != nil {
+		return nil, err
+	}
+
 	type transactionRow struct {
 		Id           int64       `json:"id"`
 		TenantId     int64       `json:"tenant_id"`
@@ -1194,19 +1237,16 @@ func (s *sAdmin) GetAllTransactions(ctx context.Context, req *v1.AdminTransactio
 		CreatedAt    *gtime.Time `json:"created_at"`
 	}
 
-	var records []*transactionRow
-	var total int
-	err := query.Fields("bil_transactions.id, bil_transactions.tenant_id, COALESCE(tn.name, '') AS tenant_name, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.created_at").
-		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
-		LeftJoin("tnt_tenants tn", "bil_transactions.tenant_id = tn.id").
-		OrderDesc("bil_transactions.created_at").
-		Page(page, pageSize).
-		ScanAndCount(&records, &total, false)
-	if err != nil {
-		return nil, err
-	}
-	if records == nil {
-		records = make([]*transactionRow, 0)
+	records := make([]*transactionRow, 0)
+	if total > 0 {
+		if err := query.Fields("bil_transactions.id, bil_transactions.tenant_id, COALESCE(tn.name, '') AS tenant_name, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.created_at").
+			LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
+			LeftJoin("tnt_tenants tn", "bil_transactions.tenant_id = tn.id").
+			OrderDesc("bil_transactions.created_at").
+			Page(page, pageSize).
+			Scan(&records); err != nil {
+			return nil, err
+		}
 	}
 
 	list := make([]*v1.AdminTransactionItem, 0, len(records))
@@ -1279,6 +1319,9 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	if err := validateUsageLogDateRange(req.StartDate, req.EndDate); err != nil {
 		return nil, err
 	}
+	if err := common.ValidateExportTimeWindow(req.StartDate, req.EndDate, common.UsageLogExportMaxWindowDays); err != nil {
+		return nil, err
+	}
 
 	columns := []export.Column{
 		{Field: "id", Header: "ID"},
@@ -1305,14 +1348,29 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset（游标）翻页替代 OFFSET：OFFSET 每翻一批都要重新扫过并丢弃前面的
+		// 所有行，深翻页代价线性上涨；游标条件让每批从上一批断点直接续读。
+		// 游标取 id（bigserial 单调递增，PK 索引可直接定位）：排序从 created_at DESC
+		// 改为 id DESC，两者在追加写表上近似同序（同为「新的在前」），却避免了
+		// 时间戳做游标时亚秒精度在驱动往返中丢失导致的跳行/重行问题。
+		var cursorID int64
 		for {
-			sql := "SELECT " + selectFields + " FROM " + fromClause + where + " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
-			// 复制一份再追加分页参数，避免污染循环外构建的共用筛选参数
-			batchArgs := append(append([]any{}, filterArgs...), 1000, offset)
+			sql := "SELECT " + selectFields + " FROM " + fromClause + where
+			batchArgs := append([]any{}, filterArgs...)
+			if cursorID > 0 {
+				// 时间窗必填保证 where 非空，这里安全起见仍处理空 where 的情况
+				if where == "" {
+					sql += " WHERE u.id < ?"
+				} else {
+					sql += " AND u.id < ?"
+				}
+				batchArgs = append(batchArgs, cursorID)
+			}
+			sql += " ORDER BY u.id DESC LIMIT ?"
+			batchArgs = append(batchArgs, 1000)
 			result, err := g.DB().Ctx(ctx).Query(ctx, sql, batchArgs...)
 			if err != nil {
-				g.Log().Errorf(ctx, "ExportUsageLogs: query batch at offset %d failed: %v", offset, err)
+				g.Log().Errorf(ctx, "ExportUsageLogs: query batch failed (cursor id=%d): %v", cursorID, err)
 				return
 			}
 			for _, row := range result {
@@ -1334,11 +1392,11 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 				}) {
 					return
 				}
+				cursorID = row["id"].Int64()
 			}
 			if len(result) < 1000 {
 				break
 			}
-			offset += 1000
 		}
 	})
 }
@@ -1364,10 +1422,16 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 		Columns:  columns,
 	}
 
-	fetchRecords := func(offset, limit int) ([]map[string]any, error) {
+	// fetchRecords 取一批记录并返回本批末行 id 作为下一批游标（0 表示无数据）
+	fetchRecords := func(cursorID int64, limit int) ([]map[string]any, int64, error) {
 		query := dao.BilRecords.Ctx(ctx)
 		if req.TenantID > 0 {
 			query = query.Where("tenant_id", req.TenantID)
+		}
+		// keyset 翻页：id 游标替代 OFFSET，避免深翻页时重复扫弃前面的行；
+		// 排序取 id DESC（追加写表上与 created_at DESC 近似同序）
+		if cursorID > 0 {
+			query = query.Where("id < ?", cursorID)
 		}
 		var records []struct {
 			Id           int64       `json:"id"`
@@ -1382,8 +1446,8 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 			CreatedAt    *gtime.Time `json:"created_at"`
 		}
 		if err := query.Fields("id, tenant_id, user_id, channel_id, model_name, input_tokens, output_tokens, total_cost, status, created_at").
-			OrderDesc("created_at").Limit(limit).Offset(offset).Scan(&records); err != nil {
-			return nil, err
+			OrderDesc("id").Limit(limit).Scan(&records); err != nil {
+			return nil, 0, err
 		}
 
 		// Batch resolve names
@@ -1434,6 +1498,7 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 		}
 
 		data := make([]map[string]any, len(records))
+		var lastID int64
 		for i, r := range records {
 			data[i] = map[string]any{
 				"id":            r.Id,
@@ -1447,16 +1512,17 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 				"status":        r.Status,
 				"created_at":    r.CreatedAt.String(),
 			}
+			lastID = r.Id
 		}
-		return data, nil
+		return data, lastID, nil
 	}
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		var cursorID int64
 		for {
-			batch, err := fetchRecords(offset, 1000)
+			batch, lastID, err := fetchRecords(cursorID, 1000)
 			if err != nil {
-				g.Log().Errorf(ctx, "ExportBillingRecords: query batch at offset %d failed: %v", offset, err)
+				g.Log().Errorf(ctx, "ExportBillingRecords: query batch failed (cursor id=%d): %v", cursorID, err)
 				return
 			}
 			for _, row := range batch {
@@ -1467,7 +1533,7 @@ func (s *sAdmin) ExportBillingRecords(ctx context.Context, req *v1.AdminBillingR
 			if len(batch) < 1000 {
 				break
 			}
-			offset += 1000
+			cursorID = lastID
 		}
 	})
 }

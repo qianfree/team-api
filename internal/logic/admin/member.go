@@ -130,17 +130,15 @@ func (s *sAdmin) CreateMember(ctx context.Context, req *v1.AdminMemberCreateReq)
 func (s *sAdmin) ListAllMembers(ctx context.Context, req *v1.AdminMemberListReq) (*v1.AdminMemberListRes, error) {
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	m := dao.TntUsers.Ctx(ctx).
-		LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id")
-	m = buildMemberFilters(m, req.Keyword, req.Status, req.Role, req.TenantID)
-
-	total, err := m.Count()
+	// COUNT 不需要租户名称列，且 buildMemberFilters 的条件只引用 tnt_users.* ——
+	// 计数免联表（联表目标是 tnt_tenants 主键，1:1 不影响行数）
+	total, err := buildMemberFilters(dao.TntUsers.Ctx(ctx), req.Keyword, req.Status, req.Role, req.TenantID).Count()
 	if err != nil {
 		return nil, err
 	}
 
-	// Rebuild model for data query (Count() modifies internal state)
-	m = dao.TntUsers.Ctx(ctx).
+	// 列表查询才需要 JOIN 补租户名称/代码
+	m := dao.TntUsers.Ctx(ctx).
 		LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id")
 	m = buildMemberFilters(m, req.Keyword, req.Status, req.Role, req.TenantID)
 
@@ -393,12 +391,16 @@ func (s *sAdmin) ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq
 	}
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset 翻页：id 游标替代 OFFSET，避免深翻页时重复扫弃前面的行（排序本就是 id DESC）
+		var cursorID int64
 		for {
 			m := buildMemberFilters(
 				dao.TntUsers.Ctx(ctx).LeftJoin("tnt_tenants t ON tnt_users.tenant_id = t.id"),
 				req.Keyword, req.Status, req.Role, req.TenantID,
 			)
+			if cursorID > 0 {
+				m = m.Where("tnt_users.id < ?", cursorID)
+			}
 			var batch []struct {
 				Id          int64       `json:"id"`
 				TenantName  string      `json:"tenant_name"`
@@ -410,7 +412,7 @@ func (s *sAdmin) ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq
 				LastLoginAt *gtime.Time `json:"last_login_at"`
 				CreatedAt   *gtime.Time `json:"created_at"`
 			}
-			if err := m.Fields(memberFields).OrderDesc("tnt_users.id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+			if err := m.Fields(memberFields).OrderDesc("tnt_users.id").Limit(1000).Scan(&batch); err != nil {
 				return
 			}
 			for _, m := range batch {
@@ -427,11 +429,11 @@ func (s *sAdmin) ExportMembers(ctx context.Context, req *v1.AdminMemberExportReq
 				}) {
 					return
 				}
+				cursorID = m.Id
 			}
 			if len(batch) < 1000 {
 				break
 			}
-			offset += 1000
 		}
 	})
 }

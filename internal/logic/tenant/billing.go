@@ -116,19 +116,24 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 		CreatedAt    *gtime.Time `json:"created_at"`
 	}
 
-	var records []transactionRow
-	var err error
-	var total int
-	err = query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_id, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.project_id, bil_transactions.api_key_id, bil_transactions.task_id, bil_transactions.created_at").
-		LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
-		OrderDesc("bil_transactions.created_at").
-		Page(page, pageSize).
-		ScanAndCount(&records, &total, false)
+	// COUNT 与列表拆开执行：计数不需要用户名称列，筛选条件也不依赖 JOIN
+	//（Username 过滤在 BuildTransactionQuery 内是 EXISTS 子查询），大表
+	// bil_transactions 的计数免背联表。不用 ScanAndCount —— 它的 COUNT
+	// 会携带模型上的全部 JOIN。
+	total, err := query.Count()
 	if err != nil {
 		return nil, err
 	}
-	if records == nil {
-		records = []transactionRow{}
+
+	records := []transactionRow{}
+	if total > 0 {
+		if err := query.Fields("bil_transactions.id, bil_transactions.type, bil_transactions.amount, bil_transactions.balance_after, bil_transactions.frozen_after, bil_transactions.related_id, bil_transactions.related_type, bil_transactions.description, bil_transactions.user_id, COALESCE(tu.username, '') AS username, bil_transactions.request_id, bil_transactions.model_name, bil_transactions.project_id, bil_transactions.api_key_id, bil_transactions.task_id, bil_transactions.created_at").
+			LeftJoin("tnt_users tu", "bil_transactions.user_id = tu.id AND bil_transactions.tenant_id = tu.tenant_id").
+			OrderDesc("bil_transactions.created_at").
+			Page(page, pageSize).
+			Scan(&records); err != nil {
+			return nil, err
+		}
 	}
 
 	list := make([]map[string]any, 0, len(records))
@@ -161,6 +166,63 @@ func (s *sTenant) WalletTransactions(ctx context.Context, req *v1.TenantWalletTr
 	}, nil
 }
 
+// tenantUsageLogFilter 用量日志查询的筛选参数（列表 / 统计 / 导出三个入口共用）。
+type tenantUsageLogFilter struct {
+	TenantID    int64
+	UserID      int64
+	Role        string
+	Username    string
+	Model       string
+	Status      string
+	RequestType int
+	StartDate   string
+	EndDate     string
+}
+
+// buildTenantUsageLogFilter 构建用量日志查询的 WHERE 条件与绑定参数（不含 WHERE 前缀；
+// tenant_id 恒在条件里，结果必非空）。三个入口共用，保证筛选口径一致。
+//
+// 条件只引用主表别名 u，不依赖任何 JOIN —— 计数与统计路径因此可以完全不联表，
+// 只有需要展示名称的列表 / 导出才挂 LEFT JOIN。租户隔离（u.tenant_id）与
+// member 角色只见自己（u.user_id）在此统一强制，调用方不得绕过。
+func buildTenantUsageLogFilter(f tenantUsageLogFilter) (where string, args []any) {
+	conditions := []string{"u.tenant_id = ?"}
+	args = append(args, f.TenantID)
+
+	// member 角色只能查看自己的用量日志
+	if f.Role == "member" {
+		conditions = append(conditions, "u.user_id = ?")
+		args = append(args, f.UserID)
+	} else if f.Username != "" {
+		// EXISTS 子查询替代对 JOIN 别名 t.username 的引用：条件不再依赖联表，
+		// 且避免把 tnt_users 拖成驱动表（EXISTS 内是主键等值探测，代价低）。
+		// 语义与 LEFT JOIN 后过滤一致：用户不存在的行同样被过滤掉。
+		conditions = append(conditions, "EXISTS (SELECT 1 FROM tnt_users ut WHERE ut.id = u.user_id AND ut.tenant_id = u.tenant_id AND ut.username LIKE ?)")
+		args = append(args, "%"+f.Username+"%")
+	}
+	if f.Model != "" {
+		conditions = append(conditions, "u.model_name = ?")
+		args = append(args, f.Model)
+	}
+	if f.Status != "" {
+		conditions = append(conditions, "u.status = ?")
+		args = append(args, f.Status)
+	}
+	if f.RequestType > 0 {
+		conditions = append(conditions, "u.request_type = ?")
+		args = append(args, f.RequestType)
+	}
+	if f.StartDate != "" {
+		conditions = append(conditions, "u.created_at >= ?")
+		args = append(args, common.StartOfRange(f.StartDate))
+	}
+	if f.EndDate != "" {
+		conditions = append(conditions, "u.created_at <= ?")
+		args = append(args, common.EndOfRange(f.EndDate))
+	}
+	return strings.Join(conditions, " AND "), args
+}
+
 // UsageLogs 获取租户用量日志
 func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error) {
 	if err := common.ValidateDateTimeParam(req.StartDate, "开始时间"); err != nil {
@@ -175,46 +237,25 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 	role := middleware.GetUserRole(ctx)
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 
-	var conditions []string
-	var args []any
+	where, args := buildTenantUsageLogFilter(tenantUsageLogFilter{
+		TenantID:    tenantID,
+		UserID:      userID,
+		Role:        role,
+		Username:    req.Username,
+		Model:       req.Model,
+		Status:      req.Status,
+		RequestType: req.RequestType,
+		StartDate:   req.StartDate,
+		EndDate:     req.EndDate,
+	})
 
-	conditions = append(conditions, "u.tenant_id = ?")
-	args = append(args, tenantID)
-
-	// member 角色只能查看自己的用量日志
-	if role == "member" {
-		conditions = append(conditions, "u.user_id = ?")
-		args = append(args, userID)
-	} else if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
-	}
-	if req.Model != "" {
-		conditions = append(conditions, "u.model_name = ?")
-		args = append(args, req.Model)
-	}
-	if req.Status != "" {
-		conditions = append(conditions, "u.status = ?")
-		args = append(args, req.Status)
-	}
-	if req.RequestType > 0 {
-		conditions = append(conditions, "u.request_type = ?")
-		args = append(args, req.RequestType)
-	}
-	if req.StartDate != "" {
-		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, common.StartOfRange(req.StartDate))
-	}
-	if req.EndDate != "" {
-		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, common.EndOfRange(req.EndDate))
-	}
-
-	where := strings.Join(conditions, " AND ")
 	// 列表查询不 JOIN mdl_models（model_display_name 仅导出使用）
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
-	countSQL := "SELECT COUNT(*) AS total FROM " + fromClause + " WHERE " + where
+	// 计数不展示任何名称，且筛选条件只引用 u.*（Username 过滤是 EXISTS 子查询），
+	// 3 个展示用 LEFT JOIN 整体剥离 —— bil_usage_logs 是分区大表，列表每翻一页
+	// 都要重算一次计数，这里是本接口最重的一次查询。
+	countSQL := "SELECT COUNT(*) AS total FROM bil_usage_logs u WHERE " + where
 	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
 	if err != nil {
 		return nil, err
@@ -288,53 +329,26 @@ func (s *sTenant) UsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsS
 	userID := middleware.GetUserID(ctx)
 	role := middleware.GetUserRole(ctx)
 
-	var conditions []string
-	var args []any
+	where, args := buildTenantUsageLogFilter(tenantUsageLogFilter{
+		TenantID:    tenantID,
+		UserID:      userID,
+		Role:        role,
+		Username:    req.Username,
+		Model:       req.Model,
+		Status:      req.Status,
+		RequestType: req.RequestType,
+		StartDate:   req.StartDate,
+		EndDate:     req.EndDate,
+	})
 
-	conditions = append(conditions, "u.tenant_id = ?")
-	args = append(args, tenantID)
-
-	// member 角色只能查看自己的用量日志
-	if role == "member" {
-		conditions = append(conditions, "u.user_id = ?")
-		args = append(args, userID)
-	} else if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
-	}
-	if req.Model != "" {
-		conditions = append(conditions, "u.model_name = ?")
-		args = append(args, req.Model)
-	}
-	if req.Status != "" {
-		conditions = append(conditions, "u.status = ?")
-		args = append(args, req.Status)
-	}
-	if req.RequestType > 0 {
-		conditions = append(conditions, "u.request_type = ?")
-		args = append(args, req.RequestType)
-	}
-	if req.StartDate != "" {
-		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, common.StartOfRange(req.StartDate))
-	}
-	if req.EndDate != "" {
-		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, common.EndOfRange(req.EndDate))
-	}
-
-	// 统计聚合不展示名称，仅在按用户名筛选时才 JOIN 用户表，避免大表 SUM 背负无关 JOIN
-	fromClause := "bil_usage_logs u"
-	if role != "member" && req.Username != "" {
-		fromClause += " LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id"
-	}
-
+	// 统计聚合不展示名称，Username 过滤已由 EXISTS 子查询承担，全程无需联表：
+	// 大表 SUM 不再背负任何 join。
 	summarySQL := `SELECT
 		COALESCE(SUM(COALESCE(NULLIF(u.actual_cost, 0), u.total_cost)), 0) AS total_cost,
 		COALESCE(SUM(u.output_tokens), 0) AS total_output_tokens,
 		COALESCE(SUM(u.input_tokens), 0) AS total_input_tokens,
 		COALESCE(SUM(u.cache_read_tokens), 0) AS total_cache_read
-		FROM ` + fromClause + ` WHERE ` + strings.Join(conditions, " AND ")
+		FROM bil_usage_logs u WHERE ` + where
 
 	summaryResult, err := g.DB().Ctx(ctx).Query(ctx, summarySQL, args...)
 	if err != nil {
@@ -379,6 +393,10 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 	if err := common.ValidateDateTimeParam(req.EndDate, "结束时间"); err != nil {
 		return nil, err
 	}
+	// 导出护栏：时间窗必填且不超上限（与管理后台导出同一规则）
+	if err := common.ValidateExportTimeWindow(req.StartDate, req.EndDate, common.UsageLogExportMaxWindowDays); err != nil {
+		return nil, err
+	}
 
 	tenantID := middleware.GetTenantID(ctx)
 	userID := middleware.GetUserID(ctx)
@@ -403,58 +421,39 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 		Columns:  columns,
 	}
 
-	var conditions []string
-	var args []any
+	where, args := buildTenantUsageLogFilter(tenantUsageLogFilter{
+		TenantID:    tenantID,
+		UserID:      userID,
+		Role:        role,
+		Username:    req.Username,
+		Model:       req.Model,
+		Status:      req.Status,
+		RequestType: req.RequestType,
+		StartDate:   req.StartDate,
+		EndDate:     req.EndDate,
+	})
 
-	conditions = append(conditions, "u.tenant_id = ?")
-	args = append(args, tenantID)
-
-	// member 角色只能导出自己的用量日志
-	if role == "member" {
-		conditions = append(conditions, "u.user_id = ?")
-		args = append(args, userID)
-	} else if req.Username != "" {
-		conditions = append(conditions, "t.username LIKE ?")
-		args = append(args, "%"+req.Username+"%")
-	}
-	if req.Model != "" {
-		conditions = append(conditions, "u.model_name = ?")
-		args = append(args, req.Model)
-	}
-	if req.Status != "" {
-		conditions = append(conditions, "u.status = ?")
-		args = append(args, req.Status)
-	}
-	if req.RequestType > 0 {
-		conditions = append(conditions, "u.request_type = ?")
-		args = append(args, req.RequestType)
-	}
-	if req.StartDate != "" {
-		conditions = append(conditions, "u.created_at >= ?")
-		args = append(args, common.StartOfRange(req.StartDate))
-	}
-	if req.EndDate != "" {
-		conditions = append(conditions, "u.created_at <= ?")
-		args = append(args, common.EndOfRange(req.EndDate))
-	}
-
-	where := strings.Join(conditions, " AND ")
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id LEFT JOIN mdl_models mdl ON u.model_name = mdl.model_id"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset（游标）翻页替代 OFFSET：OFFSET 每翻一批都要重新扫过并丢弃前面的
+		// 所有行，深翻页代价线性上涨；id 游标（bigserial 单调递增，走 PK 索引）
+		// 让每批从上一批断点续读。排序 created_at DESC → id DESC，追加写表近似同序，
+		// 且避免时间戳做游标时亚秒精度在驱动往返中丢失导致的跳行/重行。
+		var cursorID int64
 		for {
-			dataSQL := fmt.Sprintf(
-				`SELECT u.id, COALESCE(t.username, '') AS username, COALESCE(mdl.model_name, '') AS model_display_name, u.model_name, u.request_type,
-				        u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at
-				 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT 1000 OFFSET ?`,
-				fromClause, where,
-			)
-			exportArgs := make([]any, len(args)+1)
-			copy(exportArgs, args)
-			exportArgs[len(args)] = offset
+			dataSQL := `SELECT u.id, COALESCE(t.username, '') AS username, COALESCE(mdl.model_name, '') AS model_display_name, u.model_name, u.request_type,
+			        u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at
+			 FROM ` + fromClause + ` WHERE ` + where
+			exportArgs := append([]any{}, args...)
+			if cursorID > 0 {
+				dataSQL += " AND u.id < ?"
+				exportArgs = append(exportArgs, cursorID)
+			}
+			dataSQL += " ORDER BY u.id DESC LIMIT 1000"
 			result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, exportArgs...)
 			if err != nil {
+				g.Log().Errorf(ctx, "ExportUsageLogs: query batch failed (cursor id=%d): %v", cursorID, err)
 				return
 			}
 			for _, row := range result {
@@ -475,11 +474,11 @@ func (s *sTenant) ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsEx
 				if !yield(m) {
 					return
 				}
+				cursorID = row["id"].Int64()
 			}
 			if len(result) < 1000 {
 				break
 			}
-			offset += 1000
 		}
 	})
 }
@@ -509,7 +508,9 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 	}
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
-		offset := 0
+		// keyset 翻页：id 游标替代 OFFSET，避免深翻页时重复扫弃前面的行；
+		// 排序取 id DESC（追加写表上与 created_at DESC 近似同序）
+		var cursorID int64
 		for {
 			type transactionRow struct {
 				Id           int64       `json:"id"`
@@ -544,11 +545,14 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 			if req.ModelName != "" {
 				q = q.Where("model_name LIKE ?", "%"+req.ModelName+"%")
 			}
+			if cursorID > 0 {
+				q = q.Where("id < ?", cursorID)
+			}
 
 			var records []transactionRow
 			err := q.Fields("id, type, amount, balance_after, user_id, request_id, model_name, description, created_at").
-				OrderDesc("created_at").
-				Limit(1000).Offset(offset).
+				OrderDesc("id").
+				Limit(1000).
 				Scan(&records)
 			if err != nil {
 				return
@@ -564,11 +568,11 @@ func (s *sTenant) ExportWalletTransactions(ctx context.Context, req *v1.TenantWa
 				}) {
 					return
 				}
+				cursorID = r.Id
 			}
 			if len(records) < 1000 {
 				break
 			}
-			offset += 1000
 		}
 	})
 }
