@@ -59,6 +59,38 @@ func TestGetRequestURL_ResponsesFlagRouting(t *testing.T) {
 	}
 }
 
+// TestGetRequestURL_ChatViaResponsesBridge chat 入站 + chat_via_responses 桥接：
+// 请求体已被 relaykit 转成 Responses 格式，URL 必须同步切到 /v1/responses——
+// 回归 chn_debug_logs #356：URL 不切时 Responses 体打到 chat 端点，
+// 上游 400 "tools[0]: missing field `function`"。
+func TestGetRequestURL_ChatViaResponsesBridge(t *testing.T) {
+	a := &Adaptor{}
+	info := deepseekResponsesInfo(false)
+	info.RelayMode = int(constant.RelayModeChatCompletions)
+	info.InboundFormat = constant.RelayFormatOpenAI
+	info.ClientFormat = constant.RelayFormatOpenAI
+	info.ChannelMeta.ChatViaResponses = true
+	info.UseResponsesAPI = true
+
+	got, err := a.GetRequestURL(info)
+	if err != nil {
+		t.Fatalf("GetRequestURL error: %v", err)
+	}
+	if want := "https://api.deepseek.example.com/v1/responses"; got != want {
+		t.Errorf("chat via responses bridge: URL = %q, want %q", got, want)
+	}
+
+	// 未开桥接的 chat 请求仍走 chat 端点
+	info.UseResponsesAPI = false
+	got, err = a.GetRequestURL(info)
+	if err != nil {
+		t.Fatalf("GetRequestURL error: %v", err)
+	}
+	if want := "https://api.deepseek.example.com/v1/chat/completions"; got != want {
+		t.Errorf("plain chat: URL = %q, want %q", got, want)
+	}
+}
+
 const deepseekResponsesRequestBody = `{"model":"deepseek-v4-flash","instructions":"You are helpful.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"}]}],"stream":true}`
 
 // TestConvertRequest_ResponsesChatFallback_HardFail chat-only 上游的 Responses→chat
