@@ -80,6 +80,8 @@ const createForm = reactive({
   password: '',
   max_members: 10 as number | null,
   max_concurrency: 0 as number | null,
+  tags: [] as string[],
+  remark: '',
 })
 
 function openCreate() {
@@ -90,6 +92,8 @@ function openCreate() {
   createForm.password = ''
   createForm.max_members = null
   createForm.max_concurrency = null
+  createForm.tags = []
+  createForm.remark = ''
   showCreateModal.value = true
 }
 
@@ -109,6 +113,8 @@ async function handleCreateSubmit(done: () => void) {
       username: createForm.username,
       email: createForm.email,
       password: createForm.password,
+      tags: createForm.tags,
+      remark: createForm.remark,
     }
     if (createForm.max_members != null) payload.max_members = createForm.max_members
     if (createForm.max_concurrency != null) payload.max_concurrency = createForm.max_concurrency
@@ -483,6 +489,12 @@ const { exporting, exportFile } = useExport({
             <AInputNumber v-model="createForm.max_concurrency" :min="0" placeholder="留空跟随等级" allow-clear class="w-full" />
           </AFormItem>
         </ASpace>
+        <AFormItem field="tags" label="标签" extra="最多 10 个，每个不超过 30 字符">
+          <AInputTag v-model="createForm.tags" :max-tag-count="10" placeholder="输入后回车添加标签" allow-clear />
+        </AFormItem>
+        <AFormItem field="remark" label="备注" extra="仅管理后台可见">
+          <ATextarea v-model="createForm.remark" placeholder="运营备注（最长 1000 字符）" :max-length="1000" show-word-limit :auto-size="{ minRows: 2, maxRows: 5 }" />
+        </AFormItem>
       </AForm>
     </AModal>
   </div>
