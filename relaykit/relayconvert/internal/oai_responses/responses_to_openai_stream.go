@@ -306,7 +306,7 @@ func sendToolCallChunk(chunkWriter func(chunk any) error, responseID string, cre
 	if nameByID[callID] != "" {
 		name = nameByID[callID]
 	}
-	tool := dto.ToolCall{ID: callID, Type: "function", Index: idx, Function: dto.FunctionCall{Arguments: argsDelta}}
+	tool := dto.ToolCall{ID: callID, Type: "function", Index: &idx, Function: dto.FunctionCall{Arguments: argsDelta}}
 	if name != "" && !nameSent[callID] {
 		tool.Function.Name = name
 		nameSent[callID] = true

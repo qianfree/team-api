@@ -470,8 +470,9 @@ func legacyOllamaStreamToolCalls(toolCalls []OllamaToolCall, nextIndex *int) []d
 				argsBytes = b
 			}
 		}
+		idx := *nextIndex
 		out = append(out, dto.ToolCall{
-			Index: *nextIndex,
+			Index: &idx,
 			ID:    id,
 			Type:  "function",
 			Function: dto.FunctionCall{

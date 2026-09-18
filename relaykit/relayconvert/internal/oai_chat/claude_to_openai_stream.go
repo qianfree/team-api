@@ -146,7 +146,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			case "tool_use":
 				// tool_use 块开始
 				toolCall := dto.ToolCall{
-					Index: toolCallIdx,
+					Index: intPtr(toolCallIdx),
 					ID:    event.ContentBlock.ID,
 					Type:  "function",
 					Function: dto.FunctionCall{
@@ -188,7 +188,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" {
 					if err := chunkWriter(newChunk(dto.Message{
 						ToolCalls: []dto.ToolCall{{
-							Index: toolCallIdx - 1,
+							Index: intPtr(toolCallIdx - 1),
 							Function: dto.FunctionCall{
 								Arguments: *event.Delta.PartialJSON,
 							},

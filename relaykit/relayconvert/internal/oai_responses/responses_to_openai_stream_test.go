@@ -120,7 +120,7 @@ func TestResponsesToOpenAIStream_ToolCalls(t *testing.T) {
 		t.Fatalf("tool chunks = %d, want 3", len(toolChunks))
 	}
 	first := toolChunks[0].Choices[0].Delta.ToolCalls[0]
-	if first.ID != "call_1" || first.Type != "function" || first.Function.Name != "get_weather" || first.Index != 0 {
+	if first.ID != "call_1" || first.Type != "function" || first.Function.Name != "get_weather" || first.Index == nil || *first.Index != 0 {
 		t.Errorf("first tool chunk = %+v", first)
 	}
 	// name 只在首个 chunk 下发一次
