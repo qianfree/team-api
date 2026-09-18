@@ -94,7 +94,12 @@ func ContentFilter(r *ghttp.Request) {
 		return
 	}
 
-	result := common.ContentFilter().Check(body)
+	// 多模态请求体里的 base64 内联媒体先剥离再匹配：几 MB 的 base64 白扫一遍纯属浪费，
+	// 且 base64 字母表可能恰好拼出敏感词，导致正常的带图请求被误 block。
+	// 纯文本请求体原样返回，不额外拷贝。
+	checkBody := common.StripInlineMediaBytes(body)
+
+	result := common.ContentFilter().Check(checkBody)
 	if !result.Matched {
 		r.Middleware.Next()
 		return
@@ -105,7 +110,7 @@ func ContentFilter(r *ghttp.Request) {
 	r.SetCtxVar(CtxKeyContentFilterWords, result.MatchedWords)
 
 	// Queue async log write
-	queueContentFilterLog(r, mode, result.MatchedWords, string(body))
+	queueContentFilterLog(r, mode, result.MatchedWords, string(checkBody))
 
 	switch mode {
 	case "log":
@@ -115,8 +120,10 @@ func ContentFilter(r *ghttp.Request) {
 	case "replace":
 		g.Log().Infof(r.Context(), "[ContentFilter] replaced words: %v", result.MatchedWords)
 		r.SetCtxVar(CtxKeyContentFilterReplaced, true)
-		r.SetCtxVar(CtxKeyContentFilterOriginal, string(body))
-		r.SetCtxVar(CtxKeyContentFilterFiltered, result.FilteredText)
+		r.SetCtxVar(CtxKeyContentFilterOriginal, string(checkBody))
+		// 替换后的请求体必须作用在原始 body 上——剥离版本丢了内联媒体，
+		// 一旦被下游拿去改写上游请求就会把图片/音频弄没。命中才多跑这一次，代价可接受。
+		r.SetCtxVar(CtxKeyContentFilterFiltered, common.ContentFilter().Check(body).FilteredText)
 		r.Middleware.Next()
 
 	case "block":

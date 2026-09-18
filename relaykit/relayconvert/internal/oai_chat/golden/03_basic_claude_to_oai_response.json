@@ -22,7 +22,7 @@
   "expected_response": {
     "id": "msg_001",
     "object": "chat.completion",
-    "created": 1785291101,
+    "created": 1789717794,
     "model": "claude-3-5-sonnet-20241022",
     "choices": [
       {

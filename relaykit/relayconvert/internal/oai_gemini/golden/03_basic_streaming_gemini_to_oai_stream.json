@@ -30,7 +30,6 @@
         {
           "index": 0,
           "delta": {
-            "role": "",
             "content": "Hello!"
           },
           "finish_reason": null
@@ -47,7 +46,6 @@
         {
           "index": 0,
           "delta": {
-            "role": "",
             "content": " How are you?"
           },
           "finish_reason": null
@@ -64,7 +62,6 @@
         {
           "index": 0,
           "delta": {
-            "role": "",
             "content": null
           },
           "finish_reason": "stop"

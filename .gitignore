@@ -16,6 +16,11 @@ build/
 # IDE
 .idea/
 
+# AI
+.claude
+.codegraph
+.workbuddy
+
 # Environment files with sensitive data
 .env
 .env.local

@@ -480,10 +480,11 @@ func appendToolCall(toolCalls []dto.ToolCall, idx *int, part dto.GeminiPart) []d
 		return toolCalls
 	}
 	argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
+	i := *idx
 	tc := dto.ToolCall{
 		ID:    fmt.Sprintf("call_%d", *idx),
 		Type:  "function",
-		Index: *idx,
+		Index: &i,
 		Function: dto.FunctionCall{
 			Name:      part.FunctionCall.FunctionName,
 			Arguments: string(argsJSON),

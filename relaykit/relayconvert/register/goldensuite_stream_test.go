@@ -125,9 +125,9 @@ func TestGoldenSuite_Streams(t *testing.T) {
 }
 
 // synthesizedStreamID 流式转换器按时间戳合成的 ID 形态（resp_/msg_/fc_/chatcmpl- 前缀
-// 接毫秒/纳秒时间戳，或 call_<ts>[_<idx>]）。透传自语料的短 ID（msg_up / toolu_1 /
-// call_1 等）不匹配、不清洗，保持可断言。
-var synthesizedStreamID = regexp.MustCompile(`^(?:resp_|msg_|fc_|chatcmpl-)\d{10,}$|^call_\d{10,}(?:_\d+)?$`)
+// 接毫秒/纳秒时间戳，call_<ts>[_<idx>]，或 reasoning 项的 rs_resp_<ts>[_<idx>]）。
+// 透传自语料的短 ID（msg_up / toolu_1 / call_1 等）不匹配、不清洗，保持可断言。
+var synthesizedStreamID = regexp.MustCompile(`^(?:resp_|msg_|fc_|chatcmpl-)\d{10,}$|^(?:call_|rs_resp_)\d{10,}(?:_\d+)?$`)
 
 // scrubStreamNondeterministic 递归清洗流式帧树中的非确定字段：
 //   - 命中 nondeterministicKeys 的 key（id/created/created_at/completed_at 等）按类型置占位；

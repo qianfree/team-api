@@ -23,8 +23,7 @@
       "choices": [
         {
           "delta": {
-            "content": "Let me check the weather.",
-            "role": ""
+            "content": "Let me check the weather."
           },
           "finish_reason": null,
           "index": 0
@@ -43,7 +42,6 @@
         {
           "delta": {
             "content": null,
-            "role": "",
             "tool_calls": [
               {
                 "function": {
@@ -51,6 +49,7 @@
                   "name": "get_weather"
                 },
                 "id": "\u003cscrubbed\u003e",
+                "index": 0,
                 "type": "function"
               }
             ]
@@ -72,15 +71,12 @@
         {
           "delta": {
             "content": null,
-            "role": "",
             "tool_calls": [
               {
                 "function": {
-                  "arguments": "{\"city\":",
-                  "name": ""
+                  "arguments": "{\"city\":"
                 },
-                "id": "\u003cscrubbed\u003e",
-                "type": ""
+                "index": 0
               }
             ]
           },
@@ -101,15 +97,12 @@
         {
           "delta": {
             "content": null,
-            "role": "",
             "tool_calls": [
               {
                 "function": {
-                  "arguments": "\"Shanghai\"}",
-                  "name": ""
+                  "arguments": "\"Shanghai\"}"
                 },
-                "id": "\u003cscrubbed\u003e",
-                "type": ""
+                "index": 0
               }
             ]
           },
@@ -129,8 +122,7 @@
       "choices": [
         {
           "delta": {
-            "content": null,
-            "role": ""
+            "content": null
           },
           "finish_reason": "tool_calls",
           "index": 0

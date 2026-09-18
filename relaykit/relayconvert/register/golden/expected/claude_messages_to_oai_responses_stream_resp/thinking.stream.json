@@ -66,9 +66,35 @@
   },
   {
     "data": {
+      "item": {
+        "id": "\u003cscrubbed\u003e",
+        "status": "in_progress",
+        "summary": [],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.added"
+    },
+    "event": "response.output_item.added"
+  },
+  {
+    "data": {
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 1,
+      "part": {
+        "text": "",
+        "type": "summary_text"
+      },
+      "summary_index": 0,
+      "type": "response.reasoning_summary_part.added"
+    },
+    "event": "response.reasoning_summary_part.added"
+  },
+  {
+    "data": {
       "delta": "Let me think...",
       "item_id": "\u003cscrubbed\u003e",
-      "output_index": 0,
+      "output_index": 1,
       "summary_index": 0,
       "type": "response.reasoning_summary_text.delta"
     },
@@ -83,6 +109,48 @@
       "type": "response.output_text.delta"
     },
     "event": "response.output_text.delta"
+  },
+  {
+    "data": {
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 1,
+      "summary_index": 0,
+      "text": "Let me think...",
+      "type": "response.reasoning_summary_text.done"
+    },
+    "event": "response.reasoning_summary_text.done"
+  },
+  {
+    "data": {
+      "item_id": "\u003cscrubbed\u003e",
+      "output_index": 1,
+      "part": {
+        "text": "Let me think...",
+        "type": "summary_text"
+      },
+      "summary_index": 0,
+      "type": "response.reasoning_summary_part.done"
+    },
+    "event": "response.reasoning_summary_part.done"
+  },
+  {
+    "data": {
+      "item": {
+        "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
+        "id": "\u003cscrubbed\u003e",
+        "status": "completed",
+        "summary": [
+          {
+            "text": "Let me think...",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      },
+      "output_index": 1,
+      "type": "response.output_item.done"
+    },
+    "event": "response.output_item.done"
   },
   {
     "data": {
@@ -154,6 +222,18 @@
             "role": "assistant",
             "status": "completed",
             "type": "message"
+          },
+          {
+            "encrypted_content": "dGFwaS1yYzE6TGV0IG1lIHRoaW5rLi4u",
+            "id": "\u003cscrubbed\u003e",
+            "status": "completed",
+            "summary": [
+              {
+                "text": "Let me think...",
+                "type": "summary_text"
+              }
+            ],
+            "type": "reasoning"
           }
         ],
         "parallel_tool_calls": true,

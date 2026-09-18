@@ -70,6 +70,10 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 	toolCallNameByID := make(map[string]string)
 	toolCallArgsByID := make(map[string]string)
 	toolCallNameSent := make(map[string]bool)
+	// item_id → call_id 映射：function_call 项的 item.id（OpenAI 为 fc_xxx、DeepSeek 为 UUID）
+	// 与 call_id 是两个不同的值，而 arguments 增量事件只带 item_id。不做映射会把同一
+	// 工具调用拆成两个 index，客户端在无 name 的新 index 上报错
+	callIDByItemID := make(map[string]string)
 
 	sendStartIfNeeded := func() error {
 		if sentStart {
@@ -172,6 +176,9 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 			if callID == "" {
 				continue
 			}
+			if itemID := strings.TrimSpace(streamResp.Item.ID); itemID != "" {
+				callIDByItemID[itemID] = callID
+			}
 			name := strings.TrimSpace(streamResp.Item.Name)
 			if name != "" {
 				toolCallNameByID[callID] = name
@@ -196,9 +203,14 @@ func (c *ResponsesToOpenAIStreamConverter) ConvertStreamResponse(
 			usageText.WriteString(argsDelta)
 
 		case "response.function_call_arguments.delta":
-			callID := strings.TrimSpace(streamResp.ItemID)
-			if callID == "" {
+			itemID := strings.TrimSpace(streamResp.ItemID)
+			if itemID == "" {
 				continue
+			}
+			// 增量事件只带 item_id，先映射回 call_id（无 added 事件先行的上游按原值兜底）
+			callID := callIDByItemID[itemID]
+			if callID == "" {
+				callID = itemID
 			}
 			toolCallArgsByID[callID] += streamResp.Delta
 			if err := sendToolCallChunk(chunkWriter, responseID, createAt, model, callID, "", streamResp.Delta, toolCallIndexByID, toolCallNameByID, toolCallNameSent); err != nil {
@@ -306,7 +318,7 @@ func sendToolCallChunk(chunkWriter func(chunk any) error, responseID string, cre
 	if nameByID[callID] != "" {
 		name = nameByID[callID]
 	}
-	tool := dto.ToolCall{ID: callID, Type: "function", Index: idx, Function: dto.FunctionCall{Arguments: argsDelta}}
+	tool := dto.ToolCall{ID: callID, Type: "function", Index: &idx, Function: dto.FunctionCall{Arguments: argsDelta}}
 	if name != "" && !nameSent[callID] {
 		tool.Function.Name = name
 		nameSent[callID] = true

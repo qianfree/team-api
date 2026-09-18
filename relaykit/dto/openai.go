@@ -49,7 +49,7 @@ type ImageConfigDTO struct {
 
 // Message OpenAI 消息格式
 type Message struct {
-	Role             string     `json:"role"`
+	Role             string     `json:"role,omitempty"`              // 请求/非流式恒有值；流式仅首帧带 role，续帧空值不序列化
 	Content          any        `json:"content"`                     // string 或 []ContentPart
 	Refusal          *string    `json:"refusal,omitempty"`           // 结构化输出拒绝原因
 	ReasoningContent *string    `json:"reasoning_content,omitempty"` // 推理模型（DeepSeek/o1）的思考内容
@@ -103,15 +103,19 @@ type FunctionDef struct {
 
 // ToolCall 工具调用
 type ToolCall struct {
-	Index    int          `json:"index,omitempty"`
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
+	// Index 用指针：流式增量中 index 是客户端归并分片的唯一依据，首个调用的 0 也必须
+	// 序列化（int+omitempty 会把 0 吞掉，客户端把续块当成 name 为空的新调用）；
+	// 请求侧与非流式响应不含该字段，留 nil 不序列化。
+	Index    *int         `json:"index,omitempty"`
+	ID       string       `json:"id,omitempty"`
+	Type     string       `json:"type,omitempty"`
 	Function FunctionCall `json:"function"`
 }
 
-// FunctionCall 函数调用
+// FunctionCall 函数调用（流式续块只带 arguments，id/type/name 空值不得序列化为 ""；
+// arguments 恒带键：codex 等严格 serde 客户端要求首块 "arguments":"" 存在）
 type FunctionCall struct {
-	Name      string `json:"name"`
+	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments"`
 }
 
