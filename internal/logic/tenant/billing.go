@@ -265,19 +265,18 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 		total = countResult[0]["total"].Int()
 	}
 
-	// 白名单查询：仅返回租户端展示所需字段。
+	// 白名单查询：仅返回租户端列表展示字段（表格列 + Token / 费用悬浮明细）。
 	// 禁止改回 SELECT u.* —— bil_usage_logs 含平台侧敏感字段，曾因此泄露
 	// upstream_model（模型映射）、account_cost（上游成本/利润）、upstream_endpoint、
-	// billing_snapshot（含上游模型与模型倍率）给租户。新增展示需求时在此追加列。
+	// billing_snapshot（含上游模型与模型倍率）给租户。billing_summary / error_message /
+	// user_agent 等大字段只进详情接口（UsageLogDetail）。新增展示需求时在此追加列。
 	dataSQL := fmt.Sprintf(
-		`SELECT u.id, u.request_id, u.task_id, u.api_key_id, u.model_name, u.relay_mode, u.inbound_endpoint,
-		       u.request_type, u.billing_mode, u.billing_source, u.rate_multiplier, u.status, u.retry_index,
-		       u.stream_end_reason, u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort,
+		`SELECT u.id, u.api_key_id, u.model_name, u.request_type, u.billing_mode, u.rate_multiplier, u.status, u.retry_index,
 		       u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens,
 		       u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens,
-		       u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.image_count, u.image_size,
+		       u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens,
 		       u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost,
-		       u.latency_ms, u.first_token_ms, u.created_at, u.billing_summary,
+		       u.latency_ms, u.first_token_ms, u.created_at,
 		       COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
 		 FROM %s WHERE %s ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
 		fromClause, where,
@@ -313,6 +312,62 @@ func (s *sTenant) UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// UsageLogDetail 获取单条用量日志详情：列表白名单 + 仅详情展示的字段
+// （request_id / task_id / billing_summary / error_message / user_agent 等）。
+// 平台侧敏感字段（upstream_model、account_cost、upstream_endpoint、billing_snapshot）
+// 与列表同样禁止返回。member 角色只能查看自己的记录。
+// 性能：bil_usage_logs 按 created_at 月分区，仅按 id 查询无法分区裁剪，为各分区
+// Append 索引探测（见管理后台 GetUsageLogDetail 注释），当前量级可接受。
+func (s *sTenant) UsageLogDetail(ctx context.Context, req *v1.TenantUsageLogDetailReq) (*v1.TenantUsageLogDetailRes, error) {
+	tenantID := middleware.GetTenantID(ctx)
+	userID := middleware.GetUserID(ctx)
+	role := middleware.GetUserRole(ctx)
+
+	// 双键校验：id + tenant_id 强制隔离；member 只能看自己的记录
+	conditions := "u.id = ? AND u.tenant_id = ?"
+	args := []any{req.Id, tenantID}
+	if role == "member" {
+		conditions += " AND u.user_id = ?"
+		args = append(args, userID)
+	}
+
+	dataSQL := `SELECT u.id, u.api_key_id, u.model_name, u.request_type, u.billing_mode, u.rate_multiplier, u.status, u.retry_index,
+		       u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens,
+		       u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens,
+		       u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens,
+		       u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost,
+		       u.latency_ms, u.first_token_ms, u.created_at,
+		       u.request_id, u.task_id, u.relay_mode, u.inbound_endpoint, u.billing_source, u.stream_end_reason,
+		       u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort,
+		       u.image_count, u.image_size, u.billing_summary,
+		       COALESCE(t.username, '') AS username, COALESCE(p.name, '') AS project_name, COALESCE(ak.name, '') AS api_key_name
+		 FROM bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id
+		 WHERE ` + conditions + ` LIMIT 1`
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, common.NewNotFoundError("用量日志")
+	}
+
+	m := make(map[string]any, len(result[0]))
+	for k, v := range result[0] {
+		switch raw := v.Val().(type) {
+		case []byte:
+			s := string(raw)
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				m[k] = f
+			} else {
+				m[k] = s
+			}
+		default:
+			m[k] = raw
+		}
+	}
+	return &v1.TenantUsageLogDetailRes{Data: m}, nil
 }
 
 // UsageLogsSummary 用量日志统计汇总（与 UsageLogs 共用筛选口径：强制 tenant_id 隔离，

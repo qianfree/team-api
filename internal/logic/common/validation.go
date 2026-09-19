@@ -198,7 +198,7 @@ func ValidateTenantName(name string) error {
 }
 
 // TruncateToDisplayWidth 按显示宽度截断字符串，使结果宽度不超过 max。
-// 用于自动生成的组织名称兜底（如“xxx 的组织”），避免用户名过长导致存入超长数据。
+// 用于自动生成的组织名称兜底（默认取用户名），避免用户名过长导致存入超长数据。
 func TruncateToDisplayWidth(s string, max int) string {
 	width := 0
 	out := make([]rune, 0, len(s))

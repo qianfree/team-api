@@ -67,6 +67,42 @@ func TestSafeUTF8Truncate(t *testing.T) {
 	}
 }
 
+// TestDecodeMemberScopeNames 验证成员模型范围缓存的统一编码解码
+// （__none__ 哨兵 = 全禁；空数组 = 无范围记录不限制；白名单原样返回）。
+// 该编码被 GetMemberAllowedModelNames / CheckMemberModelAccess 两个写者共用，
+// 解码错误会直接导致 /v1/models 间歇性返回空列表，回归必测。
+func TestDecodeMemberScopeNames(t *testing.T) {
+	tests := []struct {
+		name   string
+		cached []string
+		want   []string
+		wantN  bool // 期望返回 nil（不限制）
+	}{
+		{"全禁哨兵解码为空非nil切片", []string{memberScopeNoneSentinel}, []string{}, false},
+		{"脏数据哨兵混入白名单仍全禁", []string{"gpt-4o", memberScopeNoneSentinel}, []string{}, false},
+		{"空数组表示无记录不限制", []string{}, nil, true},
+		{"nil表示无记录不限制", nil, nil, true},
+		{"白名单原样返回", []string{"gpt-4o", "claude-3-5-sonnet"}, []string{"gpt-4o", "claude-3-5-sonnet"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeMemberScopeNames(tt.cached)
+			if tt.wantN {
+				if got != nil {
+					t.Fatalf("期望 nil（不限制），实际 %v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("期望非 nil %v，实际 nil", tt.want)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("期望 %v，实际 %v", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestTruncateBody_ShortReturnedVerbatim(t *testing.T) {
 	s := "short body"
 	if got := truncateBody(s, 100); got != s {

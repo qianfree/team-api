@@ -44,6 +44,7 @@ const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
 const filterChannelId = ref<number | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
+const filterUpstreamRequestId = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
@@ -363,11 +364,24 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
-function openDetail(record: any) {
-	detailLog.value = record
+// 详情弹窗改为按 id 拉取：列表接口只返回表格展示字段，
+// billing_snapshot / billing_summary / user_agent / error_message 等大字段经详情接口按需加载
+const detailLoading = ref(false)
+
+async function openDetail(record: any) {
 	// 每次打开重置为折叠，避免上一条记录的快照展开状态带入
 	snapshotCollapsed.value = true
 	detailVisible.value = true
+	detailLoading.value = true
+	detailLog.value = null
+	try {
+		const res: any = await request.get(`/admin/usage-logs/${record.id}`)
+		detailLog.value = res.data?.data || null
+	} catch {
+		detailLog.value = null
+	} finally {
+		detailLoading.value = false
+	}
 }
 
 function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
@@ -558,6 +572,7 @@ async function fetchData() {
 		if (filterRequestType.value) params.request_type = filterRequestType.value
 		if (filterChannelId.value) params.channel_id = filterChannelId.value
 		if (filterStatus.value) params.status = filterStatus.value
+		if (filterUpstreamRequestId.value) params.upstream_request_id = filterUpstreamRequestId.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -632,6 +647,7 @@ function handleReset() {
 	filterRequestType.value = undefined
 	filterChannelId.value = undefined
 	filterStatus.value = undefined
+	filterUpstreamRequestId.value = undefined
 	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
@@ -662,6 +678,7 @@ const { exporting, exportFile } = useExport({
 		request_type: filterRequestType.value,
 		channel_id: filterChannelId.value,
 		status: filterStatus.value,
+		upstream_request_id: filterUpstreamRequestId.value,
 		start_date: filterDateRange.value?.[0],
 		// 与列表查询一致：默认截止「现在」不传截止时间，按「到现在」实时导出
 		end_date: filterDateRange.value?.[1] && filterDateRange.value[1] !== defaultEnd ? filterDateRange.value[1] : undefined,
@@ -761,6 +778,14 @@ const { exporting, exportFile } = useExport({
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
+				<a-input
+					v-model="filterUpstreamRequestId"
+					placeholder="上游请求ID"
+					allow-clear
+					style="width: 180px"
+					@keydown.enter="handleFilter"
+					@clear="handleFilter"
+				/>
 				<div class="filter-actions">
 					<a-button type="primary" @click="handleFilter">搜索</a-button>
 					<a-button @click="handleReset">重置筛选</a-button>
@@ -840,6 +865,7 @@ const { exporting, exportFile } = useExport({
 			:body-style="{ maxHeight: '65vh', overflowY: 'auto' }"
 			unmount-on-close
 		>
+			<a-spin :loading="detailLoading" class="w-full">
 			<template v-if="detailLog">
 				<!-- 关键结果摘要：模型 / 状态 / 费用 / 耗时一眼可读 -->
 				<div class="detail-summary">
@@ -888,6 +914,13 @@ const { exporting, exportFile } = useExport({
 							<span class="detail-value mono-text">
 								{{ detailLog.task_id }}
 								<a-link class="copy-btn" @click="$router.push({ path: '/admin/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</a-link>
+							</span>
+						</div>
+						<div v-if="detailLog.upstream_request_id" class="detail-item detail-item-full">
+							<span class="detail-label">上游请求 ID</span>
+							<span class="detail-value mono-text">
+								{{ detailLog.upstream_request_id }}
+								<a-link class="copy-btn" @click="copyText(detailLog.upstream_request_id)">复制</a-link>
 							</span>
 						</div>
 						<div class="detail-item">
@@ -1075,6 +1108,7 @@ const { exporting, exportFile } = useExport({
 				</div>
 
 			</template>
+			</a-spin>
 		</a-modal>
 	</div>
 </template>
