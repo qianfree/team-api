@@ -23,6 +23,18 @@ type TenantUsageLogsRes struct {
 	PageSize int              `json:"page_size"`
 }
 
+// TenantUsageLogDetailReq 用量日志详情：列表只返回表格展示字段，
+// billing_summary / error_message / user_agent 等大字段经此接口按需获取。
+// 租户隔离：member 角色仅能查看自己的记录。
+type TenantUsageLogDetailReq struct {
+	g.Meta `path:"/usage-logs/{id}" method:"get" mime:"json" tags:"租户控制台-用量" summary:"用量日志详情"`
+	Id     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
+}
+
+type TenantUsageLogDetailRes struct {
+	Data map[string]any `json:"data"`
+}
+
 // TenantUsageLogsSummaryReq 用量日志统计请求（复用列表筛选条件，不含分页）
 type TenantUsageLogsSummaryReq struct {
 	g.Meta      `path:"/usage-logs/summary" method:"get" mime:"json" tags:"租户控制台-用量" summary:"用量日志统计汇总"`

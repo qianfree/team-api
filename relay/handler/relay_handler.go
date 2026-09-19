@@ -354,13 +354,14 @@ func settleSuccessfulRequest(
 		ImageOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
 
 		// 请求元数据
-		RequestedModel:  v.modelName,
-		UpstreamModel:   selection.UpstreamModelName,
-		RequestType:     requestType(v.isStream),
-		UserAgent:       headers.Get("User-Agent"),
-		ClientIP:        rc.ClientIP,
-		FirstTokenMs:    firstTokenMs,
-		InboundEndpoint: path,
+		RequestedModel:    v.modelName,
+		UpstreamModel:     selection.UpstreamModelName,
+		RequestType:       requestType(v.isStream),
+		UserAgent:         headers.Get("User-Agent"),
+		ClientIP:          rc.ClientIP,
+		FirstTokenMs:      firstTokenMs,
+		InboundEndpoint:   path,
+		UpstreamRequestID: info.UpstreamRequestID,
 
 		// 渠道详情
 		ChannelName: selection.ChannelName,
@@ -699,7 +700,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -709,6 +710,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if !v.isStream {
 			info.SetFirstResponseTime()
 		}
+
+		// 捕获上游请求 ID（所有对话类渠道适配器的响应统一经过此处）：
+		// 流式/非流式响应头在首帧/响应体之前就已就位。存入 info 使失败路径
+		// （DoResponse 出错、流中断）的用量记录同样携带，排障错误请求往往更有价值；
+		// 重试时每次尝试覆盖，终值 = 最后一次尝试。
+		info.UpstreamRequestID = helper.ExtractUpstreamRequestID(resp.Header)
 
 		// 处理上游响应
 		usage, err := adaptor.DoResponse(ctx, resp, info, rc.Writer)
@@ -748,7 +755,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -803,7 +810,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 						rc.RequestID, rc.TenantID, rErr)
 				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -996,7 +1003,7 @@ func handleChannelUnavailable(
 			"当前模型暂时不可用",
 			constant.ErrAllChannelsFailed,
 		)
-		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil)
+		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "")
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -1098,7 +1105,7 @@ func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamS
 // selection 非 nil 时记录具体失败渠道（ID/名称/类型/上游模型），便于在用量日志定位失败渠道；
 // nil 表示无单一渠道（全部渠道失败），渠道字段留空，失败详情见 error_message。
 // streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus) {
+func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1116,6 +1123,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
 	applyStreamEndDiag(record, streamStatus, err)
+	record.UpstreamRequestID = upstreamRequestID
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName
@@ -1127,7 +1135,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus) {
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1145,6 +1153,7 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
 	applyStreamEndDiag(record, streamStatus, err)
+	record.UpstreamRequestID = upstreamRequestID
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName

@@ -520,7 +520,7 @@ func registerPaymentCallbacks(group *ghttp.RouterGroup) {
 // registerRelayRoutes registers AI proxy routes (/v1/xxx).
 func registerRelayRoutes(server *ghttp.Server) {
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 
 		group.POST("/chat/completions", relay.HandleChatCompletions)
 		group.GET("/models", relay.HandleModels)
@@ -552,7 +552,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）
 	server.Group("/v1beta", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.GET("/models", relay.HandleGeminiModels)
 		group.GET("/models/{model}", relay.HandleGeminiModelDetail)
 		group.POST("/models/{model}", relay.HandleGeminiGenerateContent)
@@ -560,21 +560,21 @@ func registerRelayRoutes(server *ghttp.Server) {
 
 	// 异步任务端点（视频/音乐生成）
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/video/generations", relay.HandleTaskSubmit)
 		group.GET("/video/generations/{task_id}", relay.HandleTaskFetch)
 	})
 
 	// 异步图片生成端点（阿里云 DashScope 等）
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/images/generations/async", relay.HandleAliImageSubmit)
 		group.GET("/images/generations/async/{task_id}", relay.HandleTaskFetch)
 	})
 
 	// Suno 端点
 	server.Group("/suno", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/submit/{action}", relay.HandleTaskSubmit)
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
@@ -582,7 +582,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 
 	// MiniMax 官方视频协议端点（H3 v2，官方 SDK 换 base_url 直连；协议文档 docs/modeldocs/minimax/video/）
 	server.Group("/v2", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/video_generation", relay.HandleMiniMaxVideoSubmit)
 		group.GET("/query/video_generation/{task_id}", relay.HandleMiniMaxVideoRetrieve)
 		group.DELETE("/video_generation/{task_id}", relay.HandleMiniMaxVideoCancel)
@@ -591,7 +591,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 	// MiniMax 官方视频协议端点（Hailuo 系列 v1，扁平字段协议；查询走 query 参数，
 	// 成品经 files/retrieve 二跳由网关轮询时代取，官方无取消/删除端点）
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/video_generation", relay.HandleMiniMaxVideoV1Submit)
 		group.GET("/query/video_generation", relay.HandleMiniMaxVideoV1Retrieve)
 	})

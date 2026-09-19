@@ -541,14 +541,18 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 
 	// 按秒计费任务的视频时长：取提交时计费上下文里的 spec.duration（真实秒数）。
 	// 只认 spec.* 事实键——旧 duration 键在部分 adaptor 是乘数语义（如 gemini 1.3），不可作为时长
+	// 同时提取 upstream_task_id 作为上游请求 ID 落用量日志（排障时凭它在上游定位任务）。
 	durationSeconds := 0
+	upstreamRequestID := ""
 	if len(task.PrivateData) > 0 {
 		var pdDur struct {
+			UpstreamTaskID string `json:"upstream_task_id"`
 			BillingContext struct {
 				Ratios map[string]any `json:"ratios"`
 			} `json:"billing_context"`
 		}
 		if json.Unmarshal(task.PrivateData, &pdDur) == nil {
+			upstreamRequestID = pdDur.UpstreamTaskID
 			if v, ok := pdDur.BillingContext.Ratios["spec.duration"].(float64); ok && v > 0 {
 				durationSeconds = int(v)
 			}
@@ -582,6 +586,9 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		TaskID:           task.PublicTaskID,
 
 		DurationSeconds: durationSeconds,
+
+		// 任务的上游请求 ID = 上游提交响应体中的任务 ID（轮询同款标识）
+		UpstreamRequestID: upstreamRequestID,
 	}
 
 	// 从结算结果填充计费快照

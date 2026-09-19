@@ -191,6 +191,11 @@ type RelayInfo struct {
 	StreamStatus      *StreamStatus
 	FirstResponseTime time.Time
 
+	// 上游请求 ID（从上游响应头提取，见 helper.ExtractUpstreamRequestID）。
+	// 重试时每次尝试覆盖，终值为最后一次尝试的 ID；用于排障时在上游日志中
+	// 定位同一次调用。Realtime（WebSocket）链路无 HTTP 响应头，恒为空。
+	UpstreamRequestID string
+
 	// 入站格式：openai / claude / gemini / responses
 	// 决定适配器是否需要做格式转换
 	InboundFormat constant.RelayFormat

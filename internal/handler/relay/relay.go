@@ -369,9 +369,10 @@ func HandleModels(r *ghttp.Request) {
 
 	resp, err := handler.HandleModels(r.Context(), rc.TenantID, rc.ApiKeyID, rc.UserID, dataProvider)
 	if err != nil {
-		r.Response.WriteJsonExit(g.Map{
-			"error": g.Map{"type": "internal_error", "message": err.Error()},
-		})
+		// 统一走 WriteRelayError：OpenAI 原生错误格式 + 500 状态码 + 服务端日志。
+		// 此前 200 + 裸 error body，客户端无法感知失败（GetAvailableModels 内部错误
+		// 一度被吞掉后更是直接返回空列表）
+		handler.WriteRelayError(r.Response.Writer, err)
 		return
 	}
 
