@@ -58,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_aud_request_logs_task_id
     ON aud_request_logs (task_id) WHERE task_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
     ON aud_request_logs (model_name, created_at);
+-- created_at 单列 btree（对应迁移 000024）：服务无租户条件的全局倒序分页
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_bt
+    ON aud_request_logs USING btree (created_at);
 
 COMMENT ON TABLE  aud_request_logs IS '请求审计日志（记录所有 API 代理请求）';
 COMMENT ON COLUMN aud_request_logs.id IS '主键ID';
@@ -97,7 +100,7 @@ COMMENT ON COLUMN aud_request_logs.model_name IS '请求使用的模型名（用
 --
 -- 本脚本整体幂等（IF NOT EXISTS），存量审计库升级时直接重跑全脚本即可；
 -- 也可只执行下方对应版本的增量语句。主库的同等变更由 goose 迁移
--- migrations/000022 管理，两边需保持同步。
+-- migrations/000022、000024 管理，两边需保持同步。
 -- ============================================================
 
 -- 000022：补记模型名（存量行无法回填，模型名自升级后开始记录）
@@ -105,3 +108,5 @@ ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
 COMMENT ON COLUMN aud_request_logs.model_name IS '请求使用的模型名（用户请求体中的原始模型，未经渠道映射）';
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
     ON aud_request_logs (model_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_bt
+    ON aud_request_logs USING btree (created_at);

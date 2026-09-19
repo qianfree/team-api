@@ -140,7 +140,7 @@ const columns: TableColumnData[] = [
 	{ title: 'API Key', dataIndex: 'api_key_name', width: 120, ellipsis: true, render({ record }) {
 			return record.api_key_name || record.api_key_id || '-'
 		}},
-	{ title: 'Request ID', dataIndex: 'request_id', width: 150, ellipsis: true },
+	// Request ID 不在表格展示（体积长、噪声大），需要时可通过「详情」抽屉或上方筛选框查看
 	{
 		title: '方法', dataIndex: 'method', width: 70,
 		render({ record }) {
@@ -354,14 +354,14 @@ onMounted(() => {
 				:columns="columns"
 				:data="data"
 				:loading="loading"
-				:scroll="{ x: 1550 }"
+				:scroll="{ x: 1400 }"
 				:stripe="true"
 				size="small"
 				row-key="id"
-				card-title-key="request_id"
-				card-subtitle-key="path"
+				card-title-key="path"
+				card-subtitle-key="created_at"
 				card-badge-key="status_code"
-				:card-fields="['tenant_name', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip', 'created_at']"
+				:card-fields="['tenant_name', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip']"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />

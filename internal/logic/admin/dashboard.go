@@ -450,6 +450,29 @@ func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 	return where, args
 }
 
+// usageLogJoinedFrom 用量日志展示用联表：租户 / 成员 / 项目 / Key 名称。
+// 四个联表目标都是主键列（1:1，不放大行数），但仍会被分区大表实打实执行 4 次 —— 只给需要名称的查询用。
+const usageLogJoinedFrom = "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
+
+// usageLogListFields 列表展示字段白名单：表格列 + 悬浮明细（Token / 费用分解）所需。
+// 大字段（billing_snapshot、billing_summary、user_agent、error_message 等）只进详情接口，
+// 禁止改回全字段 —— 列表每页最多 100 行，快照 JSONB 会成倍放大响应体积。
+const usageLogListFields = `u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username,
+		u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name,
+		u.channel_id, u.channel_name, u.model_name, u.upstream_model, u.request_type, u.billing_mode,
+		u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens,
+		u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens,
+		u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens,
+		u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost,
+		u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.retry_index, u.created_at`
+
+// usageLogDetailFields 详情字段：列表白名单 + 仅详情展示的大字段（错误信息、UA、计费快照等）
+const usageLogDetailFields = usageLogListFields + `,
+		u.channel_type, u.requested_model, u.relay_mode, u.currency, u.billing_source,
+		u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason,
+		u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount,
+		u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.upstream_request_id`
+
 // GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error) {
 	if err := validateUsageLogDateRange(req.StartDate, req.EndDate); err != nil {
@@ -459,10 +482,6 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	page, pageSize := common.NormalizePagination(req.Page, req.PageSize)
 	where, args := buildUsageLogFilter(req.AdminUsageLogFilter)
 
-	// 展示用联表：只有列表需要租户 / 成员 / 项目 / Key 名称。四个联表目标都是主键列
-	// （1:1，不放大行数），但仍会被分区大表实打实执行 4 次 —— 所以只给列表用。
-	joinedFrom := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
-
 	// 计数不展示任何名称，且 buildUsageLogFilter 的条件只引用 u.*，
 	// 4 个 LEFT JOIN 对计数整体剥离。大范围查询走 bil_usage_daily 日汇总拆段
 	// （详见 usage_log_count.go），短窗口仍为明细精确 COUNT。
@@ -471,8 +490,8 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		return nil, err
 	}
 
-	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.upstream_request_id, u.created_at
-		 FROM ` + joinedFrom + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
+	dataSQL := `SELECT ` + usageLogListFields + `
+		 FROM ` + usageLogJoinedFrom + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	dataArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
 	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, dataArgs...)
 	if err != nil {
@@ -494,6 +513,30 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		PageSize: pageSize,
 		List:     logs,
 	}, nil
+}
+
+// GetUsageLogDetail 获取单条用量日志详情（含 billing_snapshot / billing_summary /
+// user_agent / error_message 等列表不返回的大字段）。
+// bil_usage_logs 按 created_at 月分区且 PK 为 (id, created_at)：仅按 id 查询无法
+// 分区裁剪，计划为对各月分区的 Append 索引探测（每分区走本地 PK 前缀命中 id），
+// 分区数随月份线性增长但单次探测为微秒级，与 upstream_request_id 反查（000023）
+// 同一模式；若日后分区数显著增大，可让调用方携带 created_at 提示做裁剪。
+func (s *sAdmin) GetUsageLogDetail(ctx context.Context, req *v1.AdminUsageLogDetailReq) (*v1.AdminUsageLogDetailRes, error) {
+	dataSQL := `SELECT ` + usageLogDetailFields + `
+		 FROM ` + usageLogJoinedFrom + ` WHERE u.id = ? LIMIT 1`
+	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, common.NewNotFoundError("用量日志")
+	}
+
+	item := &v1.AdminUsageLogItem{}
+	if err := result[0].Struct(item); err != nil {
+		return nil, err
+	}
+	return &v1.AdminUsageLogDetailRes{Data: item}, nil
 }
 
 // GetUsageLogSummary 获取用量日志统计汇总（独立接口，与列表共用筛选口径）

@@ -23,6 +23,27 @@ function todayEnd(): string {
 	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 23:59:59`
 }
 
+// 时间列统一显示为 `YYYY-MM-DD HH:mm:ss`（用 - 连接，不再用 toLocaleString 的斜杠/逗号格式）。
+// 后端存的是 Asia/Shanghai 墙钟时间，序列化后为 "YYYY-MM-DD HH:mm:ss" 或 "YYYY-MM-DDTHH:mm:ss"，
+// 这类不带时区标记的字符串直接截取前 19 位替换分隔符，避免 new Date() 解析后按浏览器时区二次换算；
+// 若字符串带 Z / ±HH:MM 时区标记，则仍按本地时区换算显示。
+const TZ_SUFFIX = /(Z|[+-]\d{2}:?\d{2})$/
+
+function formatDateTime(s?: string | number | null): string {
+	if (s == null || s === '') return '-'
+	const raw = String(s)
+	const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/)
+	if (m && !TZ_SUFFIX.test(raw)) {
+		if (m[1] === '0000') return '-'
+		return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`
+	}
+	// 兜底：带时区标记的字符串、秒/毫秒时间戳或其它可解析格式，统一解析后按本地时区格式化
+	const n = Number(raw)
+	const d = /^\d{10,13}$/.test(raw) ? new Date(raw.length <= 10 ? n * 1000 : n) : new Date(raw)
+	if (isNaN(d.getTime())) return raw
+	return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
 interface RequestLog {
 	id: number
 	request_id: string
@@ -196,12 +217,14 @@ function handleReset() {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<RequestLog>>(() => [
+	// 时间列置于首列，便于按时间快速浏览
 	{
-		title: 'Request ID',
-		key: 'request_id',
-		width: 180,
-		render: (row) => h('span', { class: 'font-mono text-xs text-gray-500' }, row.request_id),
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) => h('span', { class: 'text-xs text-gray-500 whitespace-nowrap' }, formatDateTime(row.created_at)),
 	},
+	// Request ID 不在表格展示（体积长、噪声大），需要时可通过「详情」弹窗或上方筛选框查看
 	{
 		title: '用户/项目',
 		key: 'user',
@@ -237,6 +260,12 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 		key: 'status_code',
 		width: 110,
 		render: (row) => h('span', { class: ['badge text-xs', statusBadgeClass(row.status_code)] }, String(row.status_code)),
+	},
+	{
+		title: 'IP 地址',
+		key: 'client_ip',
+		width: 150,
+		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.client_ip || '-'),
 	},
 	{
 		title: '客户端',
@@ -292,13 +321,6 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 						taskStatusLabel[row.task_status] || row.task_status || '-'
 				  )
 				: h('span', { class: 'text-xs text-gray-300' }, '-'),
-	},
-	{
-		title: '时间',
-		key: 'created_at',
-		width: 170,
-		render: (row) =>
-			h('span', { class: 'text-xs text-gray-500' }, row.created_at ? new Date(row.created_at).toLocaleString() : '-'),
 	},
 	{
 		title: '操作',
@@ -393,10 +415,10 @@ onMounted(() => {
 				:scroll-x="tableScrollX(columns)"
 				:data="logs"
 				:row-key="(row: RequestLog) => row.id"
-				card-title-key="request_id"
+				card-title-key="path"
 				card-badge-key="status_code"
 				card-subtitle-key="created_at"
-				:card-fields="[{ key: 'path', full: true }, 'user', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'audit_level', 'task_id']"
+				:card-fields="['user', 'method', 'model_name', 'client_ip', 'latency_ms', 'first_token_ms', 'audit_level', 'task_id']"
 				card-actions-key="actions"
 				:row-click="(row: RequestLog) => fetchDetail(row.id)"
 				@update:page="fetchRequestLogs"
@@ -440,7 +462,7 @@ onMounted(() => {
 										</div>
 										<div>
 											<span class="text-gray-500">时间</span>
-											<p class="text-gray-700 mt-0.5">{{ detailRecord.created_at }}</p>
+											<p class="text-gray-700 mt-0.5">{{ formatDateTime(detailRecord.created_at) }}</p>
 										</div>
 										<div>
 											<span class="text-gray-500">方法 / 路径</span>
@@ -497,7 +519,7 @@ onMounted(() => {
 										</div>
 										<div v-if="detailRecord.task_completed_at" class="flex items-center justify-between">
 											<span class="text-gray-500">完成时间</span>
-											<span class="text-xs text-gray-700">{{ detailRecord.task_completed_at }}</span>
+											<span class="text-xs text-gray-700">{{ formatDateTime(detailRecord.task_completed_at) }}</span>
 										</div>
 									</div>
 									<div v-if="detailRecord.task_result" class="mt-3">
