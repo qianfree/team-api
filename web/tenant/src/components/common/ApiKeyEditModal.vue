@@ -245,7 +245,7 @@ async function handleSubmit() {
 				? `/tenant/projects/${props.projectId}/api-keys`
 				: '/tenant/api-keys'
 			const res: any = await request.post(url, body)
-			createdKey.value = (res.data?.data?.data || res.data?.data)?.key || ''
+			createdKey.value = res.data?.data?.key || ''
 		} else {
 			const body: any = {
 				name: form.name,

@@ -612,7 +612,7 @@ async function openDebugDetail(row: any) {
   debugDetail.value = null
   try {
     const res: any = await request.get(`/admin/channels/${channelId}/debug-logs/${row.id}`)
-    debugDetail.value = res.data?.data?.data || null
+    debugDetail.value = res.data?.data || null
   } catch {
     debugDetail.value = null
   } finally {

@@ -58,8 +58,14 @@ type ErrorLogStatsReq struct {
 	g.Meta `path:"/error-logs/stats" method:"get" mime:"json" tags:"管理后台-系统错误" summary:"错误统计"`
 }
 
+// ErrorLogStatsRes 统计对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON），
+// 避免统一包装后再多包一层 data
 type ErrorLogStatsRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *ErrorLogStatsRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // ErrorLogClearReq 清空全部错误日志（硬删除，用于错误大量堆积时快速释放数据库空间）

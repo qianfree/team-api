@@ -329,8 +329,7 @@ async function fetchUsageStats() {
 	usageLoading.value = true
 	try {
 		const res: any = await request.get(`/tenant/projects/${projectId.value}/usage-stats`)
-		const raw = res.data?.data
-		usageStats.value = raw?.data || raw
+		usageStats.value = res.data?.data || null
 	} catch {
 		usageStats.value = null
 	} finally {

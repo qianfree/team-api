@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // 渠道调试日志：调试开关开启的渠道，per-attempt 记录客户端↔系统↔上游四段完整报文。
 // 端点全部为 GET/DELETE，路径在 /channels/ 下，自动命中 rbac 前缀规则
@@ -50,9 +54,14 @@ type ChannelDebugLogDetailReq struct {
 	ID        int64 `json:"id" in:"path" v:"required" dc:"记录ID"`
 }
 
-// ChannelDebugLogDetailRes 渠道调试日志详情响应
+// ChannelDebugLogDetailRes 渠道调试日志详情响应：详情对象平铺进统一响应的 data 字段
+// （json:"-" + 自定义 MarshalJSON），避免统一包装后再多包一层 data
 type ChannelDebugLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *ChannelDebugLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // ChannelDebugLogDeleteReq 删除单条调试日志请求（硬删除）

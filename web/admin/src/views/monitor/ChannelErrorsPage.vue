@@ -128,7 +128,7 @@ const columns: TableColumnData[] = [
 async function fetchCategories() {
   try {
     const res = await request.get('/admin/monitor/channel-errors/categories')
-    categoryOptions.value = res.data?.data?.data || []
+    categoryOptions.value = res.data?.data || []
   } catch {
     categoryOptions.value = []
   }

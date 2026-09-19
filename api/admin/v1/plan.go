@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -59,8 +61,14 @@ type PlanDetailReq struct {
 	Id     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
+// PlanDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON），
+// 避免统一包装后再多包一层 data
 type PlanDetailRes struct {
-	Data *PlanItem `json:"data"`
+	Data *PlanItem `json:"-"`
+}
+
+func (r *PlanDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type PlanUpdateReq struct {

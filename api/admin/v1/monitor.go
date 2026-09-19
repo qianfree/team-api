@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 监控仪表盘 ===
 
@@ -9,8 +13,14 @@ type MonitorDashboardReq struct {
 	Minutes int `json:"minutes" in:"query" d:"5"`
 }
 
+// MonitorDashboardRes 数据对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON），
+// 避免统一包装后再多包一层 data（monitor 包下带 Data 的 Res 均为此模式）
 type MonitorDashboardRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *MonitorDashboardRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type MonitorTrafficReq struct {
@@ -19,7 +29,11 @@ type MonitorTrafficReq struct {
 }
 
 type MonitorTrafficRes struct {
-	Data any `json:"data"`
+	Data any `json:"-"`
+}
+
+func (r *MonitorTrafficRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type MonitorTrafficFlowReq struct {
@@ -30,7 +44,11 @@ type MonitorTrafficFlowReq struct {
 }
 
 type MonitorTrafficFlowRes struct {
-	Data any `json:"data"`
+	Data any `json:"-"`
+}
+
+func (r *MonitorTrafficFlowRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type MonitorModelPerformanceReq struct {
@@ -102,7 +120,11 @@ type MonitorLatencyReq struct {
 }
 
 type MonitorLatencyRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *MonitorLatencyRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type MonitorSystemReq struct {
@@ -111,7 +133,11 @@ type MonitorSystemReq struct {
 }
 
 type MonitorSystemRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *MonitorSystemRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // MonitorDispatchReq 渠道调度引擎指标请求
@@ -176,7 +202,11 @@ type MonitorRealtimeReq struct {
 }
 
 type MonitorRealtimeRes struct {
-	Data any `json:"data"`
+	Data any `json:"-"`
+}
+
+func (r *MonitorRealtimeRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // === 告警规则 ===
@@ -202,7 +232,11 @@ type AlertOptionsReq struct {
 }
 
 type AlertOptionsRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *AlertOptionsRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type AlertRuleCreateReq struct {
