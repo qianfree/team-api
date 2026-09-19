@@ -364,11 +364,24 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
-function openDetail(record: any) {
-	detailLog.value = record
+// 详情弹窗改为按 id 拉取：列表接口只返回表格展示字段，
+// billing_snapshot / billing_summary / user_agent / error_message 等大字段经详情接口按需加载
+const detailLoading = ref(false)
+
+async function openDetail(record: any) {
 	// 每次打开重置为折叠，避免上一条记录的快照展开状态带入
 	snapshotCollapsed.value = true
 	detailVisible.value = true
+	detailLoading.value = true
+	detailLog.value = null
+	try {
+		const res: any = await request.get(`/admin/usage-logs/${record.id}`)
+		detailLog.value = res.data?.data || null
+	} catch {
+		detailLog.value = null
+	} finally {
+		detailLoading.value = false
+	}
 }
 
 function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
@@ -852,6 +865,7 @@ const { exporting, exportFile } = useExport({
 			:body-style="{ maxHeight: '65vh', overflowY: 'auto' }"
 			unmount-on-close
 		>
+			<a-spin :loading="detailLoading" class="w-full">
 			<template v-if="detailLog">
 				<!-- 关键结果摘要：模型 / 状态 / 费用 / 耗时一眼可读 -->
 				<div class="detail-summary">
@@ -1094,6 +1108,7 @@ const { exporting, exportFile } = useExport({
 				</div>
 
 			</template>
+			</a-spin>
 		</a-modal>
 	</div>
 </template>

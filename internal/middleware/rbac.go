@@ -101,6 +101,8 @@ var adminPermissionRules = []permissionRule{
 	{method: "GET", path: "/api/admin/usage-logs", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/usage-logs/summary", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/usage-logs/export", perm: "billing:export"},
+	// 用量日志详情（/usage-logs/{id}）：前缀兜底匹配，summary/export/cleanup 等精确规则优先
+	{method: "GET", prefix: "/api/admin/usage-logs/", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/transactions", perm: "billing:view"},
 	{method: "GET", path: "/api/admin/wallets", perm: "billing:view"},
 	{method: "GET", prefix: "/api/admin/wallets/", perm: "billing:view"},

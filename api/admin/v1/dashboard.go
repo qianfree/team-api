@@ -211,6 +211,17 @@ type AdminUsageLogListRes struct {
 	PageSize int                  `json:"page_size"`
 }
 
+// AdminUsageLogDetailReq 用量日志详情（列表只返回表格展示字段，
+// billing_snapshot / billing_summary / user_agent / error_message 等大字段经此接口按需获取）
+type AdminUsageLogDetailReq struct {
+	g.Meta `path:"/usage-logs/{id}" method:"get" mime:"json" tags:"管理后台-用量" summary:"用量日志详情"`
+	Id     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
+}
+
+type AdminUsageLogDetailRes struct {
+	Data *AdminUsageLogItem `json:"data"`
+}
+
 // AdminUsageLogSummaryReq 用量日志统计请求（复用筛选条件，不包含分页）
 type AdminUsageLogSummaryReq struct {
 	g.Meta              `path:"/usage-logs/summary" method:"get" mime:"json" tags:"管理后台-用量" summary:"用量日志统计汇总"`

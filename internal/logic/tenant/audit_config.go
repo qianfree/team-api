@@ -243,8 +243,11 @@ func (s *sTenant) TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequ
 		}, nil
 	}
 
+	// 列表白名单：表格列 + EnrichAuditRecords 回填名称所需的关联 ID；
+	// user_agent 供「客户端」列解析展示。request_id / query_params / task_completed_at
+	// 等列表不展示的字段经详情接口获取。
 	dataM := auditDB.Ctx(ctx).Model("aud_request_logs").Safe().
-		Fields("id, request_id, tenant_id, user_id, project_id, api_key_id, method, path, model_name, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, tenant_audit_level as audit_level, task_id, task_status, task_completed_at, created_at").
+		Fields("id, tenant_id, user_id, project_id, api_key_id, method, path, model_name, status_code, client_ip, user_agent, latency_ms, first_token_ms, tenant_audit_level as audit_level, task_id, task_status, created_at").
 		OrderDesc("created_at").
 		Page(page, pageSize)
 	if where != "" {

@@ -77,8 +77,10 @@ const { exporting, exportFile } = useExport({
 	},
 })
 
-// 详情弹窗
+// 详情弹窗：列表接口只返回表格展示字段，billing_summary / error_message /
+// user_agent / request_id 等大字段经详情接口按 id 按需加载
 const detailModal = ref(false)
+const detailLoading = ref(false)
 const detailLog = ref<any>(null)
 const router = useRouter()
 
@@ -215,9 +217,18 @@ function resetFilters() {
 	fetchLogs()
 }
 
-function openDetail(log: any) {
-	detailLog.value = log
+async function openDetail(log: any) {
 	detailModal.value = true
+	detailLoading.value = true
+	detailLog.value = null
+	try {
+		const res: any = await request.get(`/tenant/usage-logs/${log.id}`)
+		detailLog.value = res.data?.data || null
+	} catch {
+		detailLog.value = null
+	} finally {
+		detailLoading.value = false
+	}
 }
 
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
@@ -276,6 +287,14 @@ function hideTokenTooltip() {
 
 // NDataTable 列定义
 const columns = computed<DataTableColumns<any>>(() => [
+	// 时间列置于首列，便于按时间快速浏览
+	{
+		title: '时间',
+		key: 'created_at',
+		width: 170,
+		render: (row) =>
+			h('span', { class: 'text-sm text-gray-600 whitespace-nowrap' }, formatTime(row.created_at)),
+	},
 	{
 		title: '用户/项目',
 		key: 'user',
@@ -442,13 +461,6 @@ const columns = computed<DataTableColumns<any>>(() => [
 			}
 			return h('div', { class: 'flex items-center gap-1' }, children)
 		},
-	},
-	{
-		title: '时间',
-		key: 'created_at',
-		width: 170,
-		render: (row) =>
-			h('span', { class: 'text-sm text-gray-600 whitespace-nowrap' }, formatTime(row.created_at)),
 	},
 	{
 		title: '操作',
@@ -720,7 +732,11 @@ onMounted(() => {
 			width="extra-wide"
 			@close="detailModal = false"
 		>
-			<div v-if="detailLog" class="space-y-5">
+			<!-- 详情按 id 懒加载：加载中显示 spinner -->
+			<div v-if="detailLoading" class="flex justify-center py-12">
+				<div class="spinner h-5 w-5 text-primary-500"></div>
+			</div>
+			<div v-else-if="detailLog" class="space-y-5">
 				<!-- 基本信息 -->
 				<div>
 					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
