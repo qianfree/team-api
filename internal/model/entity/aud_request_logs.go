@@ -40,4 +40,5 @@ type AudRequestLogs struct {
 	TaskResult          string      `json:"task_result"           orm:"task_result"           description:"异步任务完成时上游返回的原始响应体"`                                              // 异步任务完成时上游返回的原始响应体
 	TaskUpstreamHeaders string      `json:"task_upstream_headers" orm:"task_upstream_headers" description:"异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）"`                               // 异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）
 	TaskCompletedAt     *gtime.Time `json:"task_completed_at"     orm:"task_completed_at"     description:"异步任务达到终态的时间"`                                                    // 异步任务达到终态的时间
+	ModelName           string      `json:"model_name"            orm:"model_name"            description:"请求使用的模型名（用户请求体中的原始模型，未经渠道映射）"`                                   // 请求使用的模型名（用户请求体中的原始模型，未经渠道映射）
 }

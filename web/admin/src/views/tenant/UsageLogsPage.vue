@@ -44,6 +44,7 @@ const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
 const filterChannelId = ref<number | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
+const filterUpstreamRequestId = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
@@ -558,6 +559,7 @@ async function fetchData() {
 		if (filterRequestType.value) params.request_type = filterRequestType.value
 		if (filterChannelId.value) params.channel_id = filterChannelId.value
 		if (filterStatus.value) params.status = filterStatus.value
+		if (filterUpstreamRequestId.value) params.upstream_request_id = filterUpstreamRequestId.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -632,6 +634,7 @@ function handleReset() {
 	filterRequestType.value = undefined
 	filterChannelId.value = undefined
 	filterStatus.value = undefined
+	filterUpstreamRequestId.value = undefined
 	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
@@ -662,6 +665,7 @@ const { exporting, exportFile } = useExport({
 		request_type: filterRequestType.value,
 		channel_id: filterChannelId.value,
 		status: filterStatus.value,
+		upstream_request_id: filterUpstreamRequestId.value,
 		start_date: filterDateRange.value?.[0],
 		// 与列表查询一致：默认截止「现在」不传截止时间，按「到现在」实时导出
 		end_date: filterDateRange.value?.[1] && filterDateRange.value[1] !== defaultEnd ? filterDateRange.value[1] : undefined,
@@ -759,6 +763,14 @@ const { exporting, exportFile } = useExport({
 					allow-clear
 					style="width: 160px"
 					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input
+					v-model="filterUpstreamRequestId"
+					placeholder="上游请求ID"
+					allow-clear
+					style="width: 180px"
+					@keydown.enter="handleFilter"
 					@clear="handleFilter"
 				/>
 				<div class="filter-actions">
@@ -888,6 +900,13 @@ const { exporting, exportFile } = useExport({
 							<span class="detail-value mono-text">
 								{{ detailLog.task_id }}
 								<a-link class="copy-btn" @click="$router.push({ path: '/admin/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</a-link>
+							</span>
+						</div>
+						<div v-if="detailLog.upstream_request_id" class="detail-item detail-item-full">
+							<span class="detail-label">上游请求 ID</span>
+							<span class="detail-value mono-text">
+								{{ detailLog.upstream_request_id }}
+								<a-link class="copy-btn" @click="copyText(detailLog.upstream_request_id)">复制</a-link>
 							</span>
 						</div>
 						<div class="detail-item">

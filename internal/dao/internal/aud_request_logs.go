@@ -51,6 +51,7 @@ type AudRequestLogsColumns struct {
 	TaskResult          string // 异步任务完成时上游返回的原始响应体
 	TaskUpstreamHeaders string // 异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）
 	TaskCompletedAt     string // 异步任务达到终态的时间
+	ModelName           string // 请求使用的模型名（用户请求体中的原始模型，未经渠道映射）
 }
 
 // audRequestLogsColumns holds the columns for the table aud_request_logs.
@@ -85,6 +86,7 @@ var audRequestLogsColumns = AudRequestLogsColumns{
 	TaskResult:          "task_result",
 	TaskUpstreamHeaders: "task_upstream_headers",
 	TaskCompletedAt:     "task_completed_at",
+	ModelName:           "model_name",
 }
 
 // NewAudRequestLogsDao creates and returns a new DAO object for table data access.

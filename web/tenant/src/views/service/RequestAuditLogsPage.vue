@@ -28,6 +28,7 @@ interface RequestLog {
 	request_id: string
 	method: string
 	path: string
+	model_name?: string
 	status_code: number
 	client_ip: string
 	user_agent: string
@@ -53,6 +54,7 @@ const logFilter = reactive({
 	request_id: '',
 	task_id: '',
 	path: '',
+	model: '',
 	status_code: '',
 	start_date: todayStart(),
 	end_date: todayEnd(),
@@ -143,6 +145,7 @@ async function fetchRequestLogs() {
 		if (logFilter.request_id) params.request_id = logFilter.request_id
 		if (logFilter.task_id) params.task_id = logFilter.task_id
 		if (logFilter.path) params.path = logFilter.path
+		if (logFilter.model) params.model = logFilter.model
 		if (logFilter.status_code) params.status_code = parseInt(logFilter.status_code)
 		if (logFilter.start_date) params.start_date = logFilter.start_date
 		if (logFilter.end_date) params.end_date = logFilter.end_date
@@ -183,6 +186,7 @@ function handleReset() {
 	logFilter.request_id = ''
 	logFilter.task_id = ''
 	logFilter.path = ''
+	logFilter.model = ''
 	logFilter.status_code = ''
 	logFilter.start_date = todayStart()
 	logFilter.end_date = todayEnd()
@@ -218,6 +222,15 @@ const columns = computed<DataTableColumns<RequestLog>>(() => [
 		key: 'path',
 		width: 240,
 		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.path),
+	},
+	{
+		title: '模型',
+		key: 'model_name',
+		width: 160,
+		render: (row) =>
+			row.model_name
+				? h('span', { class: 'font-mono text-xs text-gray-600' }, row.model_name)
+				: h('span', { class: 'text-xs text-gray-300' }, '-'),
 	},
 	{
 		title: '状态码',
@@ -348,6 +361,10 @@ onMounted(() => {
 							<n-input v-model:value="logFilter.path" placeholder="例如：/v1/chat" style="width:160px" @keydown.enter="handleFilter" />
 						</div>
 						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-500 whitespace-nowrap">模型</label>
+							<n-input v-model:value="logFilter.model" placeholder="精确匹配" style="width:140px" @keydown.enter="handleFilter" />
+						</div>
+						<div class="flex items-center gap-2">
 							<label class="text-sm text-gray-500 whitespace-nowrap">状态码</label>
 							<n-input v-model:value="logFilter.status_code" placeholder="200" style="width:80px" @keydown.enter="handleFilter" />
 						</div>
@@ -379,7 +396,7 @@ onMounted(() => {
 				card-title-key="request_id"
 				card-badge-key="status_code"
 				card-subtitle-key="created_at"
-				:card-fields="[{ key: 'path', full: true }, 'user', 'method', 'latency_ms', 'first_token_ms', 'audit_level', 'task_id']"
+				:card-fields="[{ key: 'path', full: true }, 'user', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'audit_level', 'task_id']"
 				card-actions-key="actions"
 				:row-click="(row: RequestLog) => fetchDetail(row.id)"
 				@update:page="fetchRequestLogs"
@@ -428,6 +445,10 @@ onMounted(() => {
 										<div>
 											<span class="text-gray-500">方法 / 路径</span>
 											<p class="font-mono text-xs text-gray-700 mt-0.5">{{ detailRecord.method }} {{ detailRecord.path }}</p>
+										</div>
+										<div>
+											<span class="text-gray-500">模型</span>
+											<p class="font-mono text-xs text-gray-700 mt-0.5">{{ detailRecord.model_name || '-' }}</p>
 										</div>
 										<div>
 											<span class="text-gray-500">状态码</span>
