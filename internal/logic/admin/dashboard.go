@@ -431,6 +431,10 @@ func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 		conditions = append(conditions, "u.request_type = ?")
 		args = append(args, f.RequestType)
 	}
+	if f.UpstreamRequestId != "" {
+		conditions = append(conditions, "u.upstream_request_id = ?")
+		args = append(args, f.UpstreamRequestId)
+	}
 	if f.StartDate != "" {
 		conditions = append(conditions, "u.created_at >= ?")
 		args = append(args, common.StartOfRange(f.StartDate))
@@ -460,20 +464,14 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 	joinedFrom := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
 	// 计数不展示任何名称，且 buildUsageLogFilter 的条件只引用 u.*，
-	// 因此 4 个 LEFT JOIN 可以整体剥离。
-	// 这是本接口最重的一次查询：bil_usage_logs 是分区大表、created_at 上只有 BRIN
-	// 索引（不支持精确计数），每翻一页都要重算一次，少 4 次 join 探测收益最大。
-	countSQL := "SELECT COUNT(*) AS total FROM bil_usage_logs u" + where
-	countResult, err := g.DB().Ctx(ctx).Query(ctx, countSQL, args...)
+	// 4 个 LEFT JOIN 对计数整体剥离。大范围查询走 bil_usage_daily 日汇总拆段
+	// （详见 usage_log_count.go），短窗口仍为明细精确 COUNT。
+	total, err := countUsageLogs(ctx, req.AdminUsageLogFilter)
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	if len(countResult) > 0 {
-		total = countResult[0]["total"].Int()
-	}
 
-	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.created_at
+	dataSQL := `SELECT u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username, u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name, u.channel_id, u.channel_name, u.channel_type, u.model_name, u.requested_model, u.upstream_model, u.relay_mode, u.request_type, u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens, u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens, u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens, u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost, u.currency, u.billing_mode, u.billing_source, u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.error_message, u.retry_index, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason, u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount, u.billing_summary, u.billing_snapshot, u.inbound_endpoint, u.request_id, u.task_id, u.upstream_request_id, u.created_at
 		 FROM ` + joinedFrom + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	dataArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
 	result, err := g.DB().Ctx(ctx).Query(ctx, dataSQL, dataArgs...)
@@ -1333,6 +1331,8 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 		{Field: "output_tokens", Header: "输出Token"},
 		{Field: "total_cost", Header: "费用"},
 		{Field: "status", Header: "状态"},
+		{Field: "request_id", Header: "请求ID"},
+		{Field: "upstream_request_id", Header: "上游请求ID"},
 		{Field: "created_at", Header: "创建时间"},
 	}
 
@@ -1345,7 +1345,7 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 	where, filterArgs := buildUsageLogFilter(req.AdminUsageLogFilter)
 
 	fromClause := "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id"
-	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.total_cost, u.status, u.created_at"
+	selectFields := "u.id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username, u.model_name, u.request_type, u.input_tokens, u.output_tokens, u.total_cost, u.status, u.request_id, u.upstream_request_id, u.created_at"
 
 	return nil, export.GenericExport(ctx, config, func(yield func(map[string]any) bool) {
 		// keyset（游标）翻页替代 OFFSET：OFFSET 每翻一批都要重新扫过并丢弃前面的
@@ -1379,16 +1379,18 @@ func (s *sAdmin) ExportUsageLogs(ctx context.Context, req *v1.AdminUsageLogExpor
 					createdAt = fmt.Sprintf("%v", t.Val())
 				}
 				if !yield(map[string]any{
-					"id":            row["id"].Val(),
-					"tenant_name":   row["tenant_name"].Val(),
-					"username":      row["username"].Val(),
-					"model_name":    row["model_name"].Val(),
-					"request_type":  row["request_type"].Val(),
-					"input_tokens":  row["input_tokens"].Val(),
-					"output_tokens": row["output_tokens"].Val(),
-					"total_cost":    row["total_cost"].Val(),
-					"status":        row["status"].Val(),
-					"created_at":    createdAt,
+					"id":                  row["id"].Val(),
+					"tenant_name":         row["tenant_name"].Val(),
+					"username":            row["username"].Val(),
+					"model_name":          row["model_name"].Val(),
+					"request_type":        row["request_type"].Val(),
+					"input_tokens":        row["input_tokens"].Val(),
+					"output_tokens":       row["output_tokens"].Val(),
+					"total_cost":          row["total_cost"].Val(),
+					"status":              row["status"].Val(),
+					"request_id":          row["request_id"].Val(),
+					"upstream_request_id": row["upstream_request_id"].Val(),
+					"created_at":          createdAt,
 				}) {
 					return
 				}

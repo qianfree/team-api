@@ -30,6 +30,7 @@ const filter = reactive({
 	tenant_id: null as number | null,
 	user_id: null as number | null,
 	api_key_id: '',
+	model: '',
 	date_range: defaultTodayRange(),
 })
 
@@ -148,6 +149,9 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{ title: '路径', dataIndex: 'path', width: 160, ellipsis: true },
+	{ title: '模型', dataIndex: 'model_name', width: 150, ellipsis: true, render({ record }) {
+			return record.model_name || '-'
+		}},
 	{
 		title: '状态码', dataIndex: 'status_code', width: 80,
 		render({ record }) {
@@ -202,6 +206,7 @@ async function fetchData() {
 		if (filter.tenant_id) params.tenant_id = filter.tenant_id
 		if (filter.user_id) params.user_id = filter.user_id
 		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
+		if (filter.model) params.model = filter.model
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -252,6 +257,7 @@ function handleReset() {
 	filter.tenant_id = null
 	filter.user_id = null
 	filter.api_key_id = ''
+	filter.model = ''
 	filter.date_range = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
@@ -328,6 +334,13 @@ onMounted(() => {
 					style="width: 100px"
 					@keydown.enter="handleFilter"
 				/>
+				<a-input
+					v-model="filter.model"
+					placeholder="模型名称"
+					allow-clear
+					style="width: 160px"
+					@keydown.enter="handleFilter"
+				/>
 				<div class="filter-actions">
 					<a-button type="primary" @click="handleFilter">搜索</a-button>
 					<a-button @click="handleReset">重置</a-button>
@@ -341,14 +354,14 @@ onMounted(() => {
 				:columns="columns"
 				:data="data"
 				:loading="loading"
-				:scroll="{ x: 1400 }"
+				:scroll="{ x: 1550 }"
 				:stripe="true"
 				size="small"
 				row-key="id"
 				card-title-key="request_id"
 				card-subtitle-key="path"
 				card-badge-key="status_code"
-				:card-fields="['tenant_name', 'method', 'latency_ms', 'first_token_ms', 'client_ip', 'created_at']"
+				:card-fields="['tenant_name', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip', 'created_at']"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />
@@ -373,6 +386,7 @@ onMounted(() => {
 						<a-descriptions-item label="租户/用户/Key">{{ detailRecord.tenant_id }} / {{ detailRecord.user_id }} / {{ detailRecord.api_key_id }}</a-descriptions-item>
 						<a-descriptions-item label="方法">{{ detailRecord.method }}</a-descriptions-item>
 						<a-descriptions-item label="路径">{{ detailRecord.path }}</a-descriptions-item>
+						<a-descriptions-item label="模型">{{ detailRecord.model_name || '-' }}</a-descriptions-item>
 						<a-descriptions-item v-if="detailRecord.query_params" label="查询参数">{{ detailRecord.query_params }}</a-descriptions-item>
 						<a-descriptions-item label="状态码">{{ detailRecord.status_code }}</a-descriptions-item>
 						<a-descriptions-item label="客户端IP">{{ detailRecord.client_ip }}</a-descriptions-item>

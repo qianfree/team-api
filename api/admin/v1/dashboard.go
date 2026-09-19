@@ -128,8 +128,11 @@ type AdminUsageLogFilter struct {
 	Model       string `json:"model" dc:"模型名称"`
 	Status      string `json:"status" dc:"状态"`
 	RequestType int    `json:"request_type" dc:"请求类型: 1=同步, 2=流式, 3=异步, 4=WebSocket"`
-	StartDate   string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
-	EndDate     string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+
+	UpstreamRequestId string `json:"upstream_request_id" dc:"上游请求ID（精确匹配，排障反查用）"`
+
+	StartDate string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
+	EndDate   string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 }
 
 type AdminUsageLogListReq struct {
@@ -197,6 +200,7 @@ type AdminUsageLogItem struct {
 	InboundEndpoint       string      `json:"inbound_endpoint"`
 	RequestId             string      `json:"request_id"`
 	TaskId                string      `json:"task_id"`
+	UpstreamRequestId     string      `json:"upstream_request_id"`
 	CreatedAt             *gtime.Time `json:"created_at"`
 }
 

@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS aud_request_logs (
     task_status                              VARCHAR(20),
     task_result                              TEXT,
     task_upstream_headers                    JSONB,
-    task_completed_at                        TIMESTAMPTZ
+    task_completed_at                        TIMESTAMPTZ,
+    model_name                               VARCHAR(100)
 );
 
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_created_brin
@@ -55,6 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_aud_request_logs_project
     ON aud_request_logs USING btree (project_id) WHERE project_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_aud_request_logs_task_id
     ON aud_request_logs (task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
+    ON aud_request_logs (model_name, created_at);
 
 COMMENT ON TABLE  aud_request_logs IS '请求审计日志（记录所有 API 代理请求）';
 COMMENT ON COLUMN aud_request_logs.id IS '主键ID';
@@ -87,3 +90,18 @@ COMMENT ON COLUMN aud_request_logs.task_status IS '异步任务终态：SUCCESS 
 COMMENT ON COLUMN aud_request_logs.task_result IS '异步任务完成时上游返回的原始响应体';
 COMMENT ON COLUMN aud_request_logs.task_upstream_headers IS '异步任务完成时上游返回的响应头（仅审计级别为 full 时记录）';
 COMMENT ON COLUMN aud_request_logs.task_completed_at IS '异步任务达到终态的时间';
+COMMENT ON COLUMN aud_request_logs.model_name IS '请求使用的模型名（用户请求体中的原始模型，未经渠道映射）';
+
+-- ============================================================
+-- 增量变更（存量审计库升级用）
+--
+-- 本脚本整体幂等（IF NOT EXISTS），存量审计库升级时直接重跑全脚本即可；
+-- 也可只执行下方对应版本的增量语句。主库的同等变更由 goose 迁移
+-- migrations/000022 管理，两边需保持同步。
+-- ============================================================
+
+-- 000022：补记模型名（存量行无法回填，模型名自升级后开始记录）
+ALTER TABLE aud_request_logs ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
+COMMENT ON COLUMN aud_request_logs.model_name IS '请求使用的模型名（用户请求体中的原始模型，未经渠道映射）';
+CREATE INDEX IF NOT EXISTS idx_aud_request_logs_model
+    ON aud_request_logs (model_name, created_at);

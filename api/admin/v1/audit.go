@@ -71,6 +71,7 @@ type RequestAuditLogListReq struct {
 	TaskId     string `json:"task_id" dc:"异步任务ID（精确匹配）"`
 	Method     string `json:"method" dc:"HTTP 方法"`
 	Path       string `json:"path" dc:"请求路径"`
+	Model      string `json:"model" dc:"模型名称（精确匹配）"`
 	StatusCode int    `json:"status_code" dc:"状态码"`
 	StartDate  string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 	EndDate    string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`

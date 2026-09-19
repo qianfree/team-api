@@ -44,6 +44,7 @@ type TenantRequestAuditLogsReq struct {
 	RequestId  string `json:"request_id" in:"query" dc:"Request ID（精确匹配）"`
 	TaskId     string `json:"task_id" in:"query" dc:"异步任务ID（精确匹配）"`
 	Path       string `json:"path" in:"query" dc:"请求路径（模糊匹配）"`
+	Model      string `json:"model" in:"query" dc:"模型名称（精确匹配）"`
 	StatusCode int    `json:"status_code" in:"query" dc:"HTTP 状态码"`
 	StartDate  string `json:"start_date" in:"query" dc:"开始日期"`
 	EndDate    string `json:"end_date" in:"query" dc:"结束日期"`

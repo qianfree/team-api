@@ -337,6 +337,10 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		conditions = append(conditions, "path LIKE ?")
 		args = append(args, "%"+req.Path+"%")
 	}
+	if req.Model != "" {
+		conditions = append(conditions, "model_name = ?")
+		args = append(args, req.Model)
+	}
 	if req.StatusCode > 0 {
 		conditions = append(conditions, "status_code = ?")
 		args = append(args, req.StatusCode)
@@ -351,7 +355,7 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	}
 
 	where := strings.Join(conditions, " AND ")
-	auditFields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at"
+	auditFields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, model_name, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at"
 
 	items, total, err := queryAuditPage(ctx, common.GetAuditDB(), "aud_request_logs", auditFields, where, args, page, pageSize)
 	if err != nil {

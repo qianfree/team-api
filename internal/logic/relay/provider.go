@@ -416,6 +416,8 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		RequestedModel: sanitizeUTF8(record.RequestedModel),
 		UpstreamModel:  sanitizeUTF8(record.UpstreamModel),
 
+		UpstreamRequestId: sanitizeUTF8(record.UpstreamRequestID),
+
 		RequestType:     requestType,
 		UserAgent:       sanitizeUTF8(record.UserAgent),
 		FirstTokenMs:    record.FirstTokenMs,
@@ -513,6 +515,13 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			}
 		}
 
+		// 模型名超长会导致 INSERT 失败、整条审计丢失：按列宽 100 字节截断，
+		// 截断可能切碎多字节字符，需再清洗一次保证 UTF-8 合法
+		modelName := sanitizeUTF8(record.Model)
+		if len(modelName) > 100 {
+			modelName = sanitizeUTF8(modelName[:100])
+		}
+
 		insertData := do.AudRequestLogs{
 			TenantId:           record.TenantID,
 			UserId:             record.UserID,
@@ -525,6 +534,7 @@ func (p *DataProviderImpl) RecordAudit(ctx context.Context, record *common.Audit
 			StatusCode:         record.StatusCode,
 			ClientIp:           record.ClientIP,
 			UserAgent:          record.UserAgent,
+			ModelName:          modelName,
 			RequestBody:        sysReq,
 			ResponseBody:       sysResp,
 			TenantRequestBody:  tntReq,
