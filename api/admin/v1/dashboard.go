@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -142,6 +144,54 @@ type AdminUsageLogListReq struct {
 	AdminUsageLogFilter `json:",inline"` // 嵌入共用筛选条件
 }
 
+// AdminUsageLogListItem 用量日志列表项：仅表格列与悬浮明细（Token / 费用分解）所需字段。
+// 纯关联 ID（user_id / project_id / channel_id）与排查大字段（billing_snapshot、
+// user_agent、error_message、request_id 等）不进列表，统一经详情接口按需获取。
+type AdminUsageLogListItem struct {
+	Id                    int64       `json:"id"`
+	TenantId              int64       `json:"tenant_id"`
+	TenantName            string      `json:"tenant_name"`
+	Username              string      `json:"username"`
+	ProjectName           string      `json:"project_name"`
+	ApiKeyId              int64       `json:"api_key_id"`
+	ApiKeyName            string      `json:"api_key_name"`
+	ChannelName           string      `json:"channel_name"`
+	ModelName             string      `json:"model_name"`
+	UpstreamModel         string      `json:"upstream_model"`
+	RequestType           int         `json:"request_type"`
+	BillingMode           string      `json:"billing_mode"`
+	InputTokens           int         `json:"input_tokens"`
+	OutputTokens          int         `json:"output_tokens"`
+	CacheCreationTokens   int         `json:"cache_creation_tokens"`
+	CacheReadTokens       int         `json:"cache_read_tokens"`
+	CacheCreation5mTokens int         `json:"cache_creation_5m_tokens"`
+	CacheCreation1hTokens int         `json:"cache_creation_1h_tokens"`
+	ReasoningTokens       int         `json:"reasoning_tokens"`
+	AudioInputTokens      int         `json:"audio_input_tokens"`
+	AudioOutputTokens     int         `json:"audio_output_tokens"`
+	ImageOutputTokens     int         `json:"image_output_tokens"`
+	InputCost             float64     `json:"input_cost"`
+	OutputCost            float64     `json:"output_cost"`
+	CacheCreationCost     float64     `json:"cache_creation_cost"`
+	CacheReadCost         float64     `json:"cache_read_cost"`
+	TotalCost             float64     `json:"total_cost"`
+	ActualCost            float64     `json:"actual_cost"`
+	RateMultiplier        float64     `json:"rate_multiplier"`
+	LatencyMs             int         `json:"latency_ms"`
+	FirstTokenMs          int         `json:"first_token_ms"`
+	Status                string      `json:"status"`
+	RetryIndex            int         `json:"retry_index"`
+	CreatedAt             *gtime.Time `json:"created_at"`
+}
+
+type AdminUsageLogListRes struct {
+	List     []*AdminUsageLogListItem `json:"list"`
+	Total    int                      `json:"total"`
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+}
+
+// AdminUsageLogItem 用量日志全量字段结构体（详情接口专用，列表用上方的精简 ListItem）
 type AdminUsageLogItem struct {
 	Id                    int64       `json:"id"`
 	TenantId              int64       `json:"tenant_id"`
@@ -204,13 +254,6 @@ type AdminUsageLogItem struct {
 	CreatedAt             *gtime.Time `json:"created_at"`
 }
 
-type AdminUsageLogListRes struct {
-	List     []*AdminUsageLogItem `json:"list"`
-	Total    int                  `json:"total"`
-	Page     int                  `json:"page"`
-	PageSize int                  `json:"page_size"`
-}
-
 // AdminUsageLogDetailReq 用量日志详情（列表只返回表格展示字段，
 // billing_snapshot / billing_summary / user_agent / error_message 等大字段经此接口按需获取）
 type AdminUsageLogDetailReq struct {
@@ -218,8 +261,14 @@ type AdminUsageLogDetailReq struct {
 	Id     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
 }
 
+// AdminUsageLogDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义 MarshalJSON，
+// 与 RequestAuditLogDetailRes 同一模式），避免统一包装后再多包一层 data
 type AdminUsageLogDetailRes struct {
-	Data *AdminUsageLogItem `json:"data"`
+	Data *AdminUsageLogItem `json:"-"`
+}
+
+func (r *AdminUsageLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // AdminUsageLogSummaryReq 用量日志统计请求（复用筛选条件，不包含分页）

@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 渠道错误监控 ===
 
@@ -61,8 +65,14 @@ type ChannelErrorCategoriesReq struct {
 	g.Meta `path:"/monitor/channel-errors/categories" method:"get" mime:"json" tags:"管理后台-监控" summary:"错误分类选项"`
 }
 
+// ChannelErrorCategoriesRes 分类选项平铺进统一响应的 data 字段（json:"-" + 自定义
+// MarshalJSON），避免统一包装后再多包一层 data
 type ChannelErrorCategoriesRes struct {
-	Data []map[string]string `json:"data"`
+	Data []map[string]string `json:"-"`
+}
+
+func (r *ChannelErrorCategoriesRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // ChannelErrorClearReq 清空全部渠道错误事件（硬删除，用于错误大量堆积时快速释放数据库空间）

@@ -455,19 +455,22 @@ func buildUsageLogFilter(f v1.AdminUsageLogFilter) (where string, args []any) {
 const usageLogJoinedFrom = "bil_usage_logs u LEFT JOIN tnt_users t ON u.user_id = t.id AND u.tenant_id = t.tenant_id LEFT JOIN tnt_projects p ON u.project_id = p.id LEFT JOIN tnt_tenants tn ON u.tenant_id = tn.id LEFT JOIN api_keys ak ON u.api_key_id = ak.id"
 
 // usageLogListFields 列表展示字段白名单：表格列 + 悬浮明细（Token / 费用分解）所需。
-// 大字段（billing_snapshot、billing_summary、user_agent、error_message 等）只进详情接口，
+// 纯关联 ID（user_id / project_id / channel_id）列表不展示（名称经 JOIN 回填，
+// tenant_id / api_key_id 保留作名称为空时的兜底展示），只进详情接口；
+// 大字段（billing_snapshot、billing_summary、user_agent、error_message 等）同样只进详情，
 // 禁止改回全字段 —— 列表每页最多 100 行，快照 JSONB 会成倍放大响应体积。
-const usageLogListFields = `u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, u.user_id, COALESCE(t.username, '') AS username,
-		u.project_id, COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name,
-		u.channel_id, u.channel_name, u.model_name, u.upstream_model, u.request_type, u.billing_mode,
+const usageLogListFields = `u.id, u.tenant_id, COALESCE(tn.name, '') AS tenant_name, COALESCE(t.username, '') AS username,
+		COALESCE(p.name, '') AS project_name, u.api_key_id, COALESCE(ak.name, '') AS api_key_name,
+		u.channel_name, u.model_name, u.upstream_model, u.request_type, u.billing_mode,
 		u.input_tokens, u.output_tokens, u.cache_creation_tokens, u.cache_read_tokens,
 		u.cache_creation_5m_tokens, u.cache_creation_1h_tokens, u.reasoning_tokens,
 		u.audio_input_tokens, u.audio_output_tokens, u.image_output_tokens,
 		u.input_cost, u.output_cost, u.cache_creation_cost, u.cache_read_cost, u.total_cost, u.actual_cost,
 		u.rate_multiplier, u.latency_ms, u.first_token_ms, u.status, u.retry_index, u.created_at`
 
-// usageLogDetailFields 详情字段：列表白名单 + 仅详情展示的大字段（错误信息、UA、计费快照等）
+// usageLogDetailFields 详情字段：列表白名单 + 纯关联 ID + 仅详情展示的大字段（错误信息、UA、计费快照等）
 const usageLogDetailFields = usageLogListFields + `,
+		u.user_id, u.project_id, u.channel_id,
 		u.channel_type, u.requested_model, u.relay_mode, u.currency, u.billing_source,
 		u.error_message, u.client_ip, u.user_agent, u.service_tier, u.reasoning_effort, u.stream_end_reason,
 		u.image_count, u.image_size, u.pre_deduct_amount, u.refund_amount, u.supplement_amount,
@@ -498,9 +501,9 @@ func (s *sAdmin) GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListR
 		return nil, err
 	}
 
-	logs := make([]*v1.AdminUsageLogItem, 0, len(result))
+	logs := make([]*v1.AdminUsageLogListItem, 0, len(result))
 	for _, row := range result {
-		item := &v1.AdminUsageLogItem{}
+		item := &v1.AdminUsageLogListItem{}
 		if err := row.Struct(item); err != nil {
 			continue
 		}

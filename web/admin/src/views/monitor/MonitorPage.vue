@@ -173,7 +173,7 @@ function updateCharts() {
 async function fetchDashboard() {
   try {
     const res = await request.get('/admin/monitor/dashboard', { params: { minutes: timeRange.value } })
-    dashboardData.value = res.data?.data?.data || {}
+    dashboardData.value = res.data?.data || {}
   } catch {
     // error auto-shown by Axios interceptor
   }
@@ -182,7 +182,7 @@ async function fetchDashboard() {
 async function fetchSystemHistory() {
   try {
     const res = await request.get('/admin/monitor/system', { params: { minutes: timeRange.value } })
-    systemHistory.value = res.data?.data?.data?.history || []
+    systemHistory.value = res.data?.data?.history || []
   } catch {
     // keep previous data
   }
@@ -191,7 +191,7 @@ async function fetchSystemHistory() {
 async function fetchTraffic() {
   try {
     const res = await request.get('/admin/monitor/traffic', { params: { minutes: timeRange.value } })
-    trafficData.value = res.data?.data?.data || []
+    trafficData.value = res.data?.data || []
   } catch {
     // keep previous data
   }

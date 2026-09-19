@@ -25,7 +25,7 @@ const gcPauseOption = shallowRef({})
 async function fetchRealtime() {
   try {
     const res = await request.get('/admin/monitor/realtime')
-    data.value = res.data?.data?.data || {}
+    data.value = res.data?.data || {}
     lastUpdated.value = new Date()
     updateCharts()
   } catch {

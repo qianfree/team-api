@@ -95,7 +95,7 @@ async function fetchFlow() {
       params.end_date = dateRange.value[1]
     }
     const res = await request.get('/admin/monitor/traffic-flow', { params })
-    const payload = res.data?.data?.data || {}
+    const payload = res.data?.data || {}
     nodes.value = payload.nodes || []
     links.value = payload.links || []
     if (nodes.value.length > 0) {

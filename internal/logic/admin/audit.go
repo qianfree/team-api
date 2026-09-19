@@ -355,13 +355,18 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	}
 
 	where := strings.Join(conditions, " AND ")
-	// 列表白名单：表格列 + EnrichAuditRecords 回填名称所需的关联 ID。
+	// 列表白名单：表格列 + EnrichAuditRecords 回填名称所需的关联键。
+	// user_id / project_id 仅作关联查询键（username / project_name 据此回填），表格不展示，出参剔除；
 	// request_id / query_params / user_agent 等列表不展示的字段经详情接口获取。
 	auditFields := "id, tenant_id, user_id, api_key_id, project_id, method, path, model_name, status_code, client_ip, latency_ms, first_token_ms, audit_level, created_at"
 
 	items, total, err := queryAuditPage(ctx, common.GetAuditDB(), "aud_request_logs", auditFields, where, args, page, pageSize)
 	if err != nil {
 		return nil, err
+	}
+	for _, item := range items {
+		delete(item, "user_id")
+		delete(item, "project_id")
 	}
 
 	return &v1.RequestAuditLogListRes{

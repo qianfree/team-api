@@ -1,6 +1,10 @@
 package v1
 
-import "github.com/gogf/gf/v2/frame/g"
+import (
+	"encoding/json"
+
+	"github.com/gogf/gf/v2/frame/g"
+)
 
 // === 租户用量与账单 ===
 
@@ -31,8 +35,14 @@ type TenantUsageLogDetailReq struct {
 	Id     int64 `json:"id" in:"path" v:"min:1" dc:"用量记录ID"`
 }
 
+// TenantUsageLogDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义
+// MarshalJSON），避免统一包装后再多包一层 data（与 admin 端详情接口同一模式）
 type TenantUsageLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *TenantUsageLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 // TenantUsageLogsSummaryReq 用量日志统计请求（复用列表筛选条件，不含分页）

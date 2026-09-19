@@ -189,7 +189,7 @@ async function fetchDetail(id: number) {
 	detailRecord.value = null
 	try {
 		const res: any = await request.get(`/tenant/audit/request-logs/${id}`)
-		detailRecord.value = res.data?.data?.data || null
+		detailRecord.value = res.data?.data || null
 	} catch {
 		detailRecord.value = null
 	} finally {

@@ -45,21 +45,19 @@ func TestPlanCRUD(t *testing.T) {
 	detailResp.AssertSuccess(t)
 
 	var detail struct {
-		Data struct {
-			Id         int64  `json:"id"`
-			Name       string `json:"name"`
-			Identifier string `json:"identifier"`
-			Status     string `json:"status"`
-		} `json:"data"`
+		Id         int64  `json:"id"`
+		Name       string `json:"name"`
+		Identifier string `json:"identifier"`
+		Status     string `json:"status"`
 	}
 	detailResp.DecodeData(t, &detail)
 
-	if detail.Data.Id != planID {
-		t.Fatalf("expected plan id=%d, got %d", planID, detail.Data.Id)
+	if detail.Id != planID {
+		t.Fatalf("expected plan id=%d, got %d", planID, detail.Id)
 	}
 
 	t.Logf("Plan detail: name=%s, identifier=%s, status=%s",
-		detail.Data.Name, detail.Data.Identifier, detail.Data.Status)
+		detail.Name, detail.Identifier, detail.Status)
 
 	// Update
 	updateResp := client.Put(fmt.Sprintf("/api/admin/plans/%d", planID), map[string]any{
@@ -76,15 +74,13 @@ func TestPlanCRUD(t *testing.T) {
 	verifyResp.AssertSuccess(t)
 
 	var verifyData struct {
-		Data struct {
-			Description string `json:"description"`
-		} `json:"data"`
+		Description string `json:"description"`
 	}
 	verifyResp.DecodeData(t, &verifyData)
 
-	if verifyData.Data.Description != "updated by integration test" {
+	if verifyData.Description != "updated by integration test" {
 		t.Fatalf("expected description 'updated by integration test', got %q",
-			verifyData.Data.Description)
+			verifyData.Description)
 	}
 
 	t.Logf("Plan update verified")
@@ -105,13 +101,11 @@ func TestPlanToggleRecommend(t *testing.T) {
 	detailResp.AssertSuccess(t)
 
 	var detail struct {
-		Data struct {
-			IsRecommended bool `json:"is_recommended"`
-		} `json:"data"`
+		IsRecommended bool `json:"is_recommended"`
 	}
 	detailResp.DecodeData(t, &detail)
 
-	t.Logf("Plan %d is_recommended=%v after first toggle", planID, detail.Data.IsRecommended)
+	t.Logf("Plan %d is_recommended=%v after first toggle", planID, detail.IsRecommended)
 
 	// Toggle again to revert
 	resp2 := client.Put(fmt.Sprintf("/api/admin/plans/%d/toggle-recommend", planID), nil)

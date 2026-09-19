@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+
 	"github.com/gogf/gf/v2/frame/g"
 )
 
@@ -62,6 +64,12 @@ type TenantRequestAuditLogDetailReq struct {
 	Id     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
+// TenantRequestAuditLogDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义
+// MarshalJSON），避免统一包装后再多包一层 data（与 admin 端审计详情接口同一模式）
 type TenantRequestAuditLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *TenantRequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
