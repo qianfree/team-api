@@ -314,6 +314,9 @@ func createOAuthChannelAndKey(ctx context.Context, oauthData *oauth.OAuthKeyData
 		return 0, 0, err
 	}
 
+	// OAuth 建渠道同样要让渠道下拉缓存失效（新建渠道不出现/不失效会滞后一个 TTL）
+	InvalidateChannelOptionsCache(ctx)
+
 	g.Log().Infof(ctx, "[OAuth] 创建 OAuth 渠道: platform=%s, channel_id=%d, key_id=%d, email=%s",
 		platform, channelID, keyID, oauthData.EmailAddress)
 

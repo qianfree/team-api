@@ -55,6 +55,58 @@ func channelRuntimeStates() map[int64]dispatchadapter.ChannelRuntimeState {
 	return cat.ChannelRuntimeStates()
 }
 
+// channelOptionsCache 渠道下拉选项缓存（全量渠道，单个条目）。
+// 日志 / 统计页的渠道筛选每次打开都要拉一次全量渠道，而渠道量级为几十且极少变动，
+// 反复对 chn_channels 全表扫描纯属浪费；整表结果缓存为一个条目，写侧主动失效。
+var channelOptionsCache = common.NewCache("channel_options", 300*time.Second)
+
+// channelOptionsCacheKey 渠道下拉是全量结果，只有一个缓存条目。
+const channelOptionsCacheKey = "all"
+
+// InvalidateChannelOptionsCache 失效渠道下拉选项缓存（渠道增 / 删 / 改 / 克隆后调用）。
+func InvalidateChannelOptionsCache(ctx context.Context) {
+	channelOptionsCache.Delete(ctx, channelOptionsCacheKey)
+}
+
+// ListChannelOptions 渠道下拉选项（不分页，返回全部渠道）。
+// 刻意不做状态过滤：日志 / 统计页的渠道筛选项要覆盖历史数据里出现过的全部渠道，
+// 已停用渠道同样需要能作为筛选条件；status 原样返回，由前端决定是否标记。
+// 注意与 /admin/channels 的区别：后者是渠道管理列表（分页 + 健康度联表 + 运行态），
+// 下拉场景不要用它 —— 那是本接口存在的意义。
+func (s *sAdmin) ListChannelOptions(ctx context.Context, _ *v1.ChannelOptionsReq) (*v1.ChannelOptionsRes, error) {
+	list := make([]v1.ChannelOptionItem, 0)
+	if channelOptionsCache.GetJSON(ctx, channelOptionsCacheKey, &list) {
+		return &v1.ChannelOptionsRes{List: list}, nil
+	}
+
+	var rows []struct {
+		ID     int64  `json:"id"`
+		Name   string `json:"name"`
+		Type   int    `json:"type"`
+		Status string `json:"status"`
+	}
+	err := dao.ChnChannels.Ctx(ctx).
+		Fields("id, name, type, status").
+		OrderAsc("id").
+		Scan(&rows)
+	if err = common.IgnoreScanNoRows(err); err != nil {
+		return nil, err
+	}
+
+	list = make([]v1.ChannelOptionItem, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, v1.ChannelOptionItem{
+			ID:     r.ID,
+			Name:   r.Name,
+			Type:   r.Type,
+			Status: r.Status,
+		})
+	}
+
+	channelOptionsCache.Set(ctx, channelOptionsCacheKey, list)
+	return &v1.ChannelOptionsRes{List: list}, nil
+}
+
 // ListChannels 获取渠道列表
 func (s *sAdmin) ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.ChannelListRes, error) {
 	query := dao.ChnChannels.Ctx(ctx).
@@ -277,6 +329,8 @@ func (s *sAdmin) CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1
 		g.Log().Warningf(ctx, "init health score for channel %d failed: %v", newID, err)
 	}
 
+	InvalidateChannelOptionsCache(ctx)
+
 	return &v1.ChannelCloneRes{ID: newID}, nil
 }
 
@@ -349,6 +403,8 @@ func (s *sAdmin) CreateChannel(ctx context.Context, req *v1.ChannelCreateReq) (*
 	if err := relay.InitHealthScore(ctx, id); err != nil {
 		g.Log().Warningf(ctx, "init health score for channel %d failed: %v", id, err)
 	}
+
+	InvalidateChannelOptionsCache(ctx)
 
 	return &v1.ChannelCreateRes{ID: id}, nil
 }
@@ -490,6 +546,7 @@ func (s *sAdmin) UpdateChannel(ctx context.Context, req *v1.ChannelUpdateReq) (*
 		}
 	}
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
+	InvalidateChannelOptionsCache(ctx)
 	if req.Status == "active" {
 		// 手动启用/恢复：复位熔断并开启爬坡窗口，恢复初期小流量验证（rampFactor）
 		dispatchadapter.MarkChannelRecovered(ctx, req.ID)
@@ -519,6 +576,7 @@ func (s *sAdmin) DeleteChannel(ctx context.Context, req *v1.ChannelDeleteReq) (*
 		return nil, err
 	}
 	dispatchadapter.InvalidateChannel(ctx, req.ID)
+	InvalidateChannelOptionsCache(ctx)
 
 	return nil, nil
 }

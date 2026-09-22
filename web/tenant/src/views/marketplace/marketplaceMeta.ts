@@ -28,6 +28,7 @@ export const categoryMetaList: CategoryMeta[] = [
 	{ key: 'embedding', value: 'embedding', label: '向量嵌入', shortLabel: '向量', description: '语义检索与知识库构建', icon: 'cube', from: '#a78bfa', to: '#8b5cf6', glow: '139, 92, 246' },
 	{ key: 'image', value: 'image', label: '图像生成', shortLabel: '图像', description: '文生图、图像理解与编辑', icon: 'eye', from: '#f472b6', to: '#ec4899', glow: '236, 72, 153' },
 	{ key: 'audio', value: 'audio', label: '音频处理', shortLabel: '音频', description: '语音识别、合成与音乐生成', icon: 'bell', from: '#fbbf24', to: '#f59e0b', glow: '245, 158, 11' },
+	{ key: 'video', value: 'video', label: '视频生成', shortLabel: '视频', description: '文生视频与视频处理', icon: 'film', from: '#fb7185', to: '#f43f5e', glow: '244, 63, 94' },
 	{ key: 'rerank', value: 'rerank', label: '重排序', shortLabel: '重排', description: '检索结果相关性排序', icon: 'trendingUp', from: '#22d3ee', to: '#06b6d4', glow: '6, 182, 212' },
 ]
 
