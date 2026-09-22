@@ -369,7 +369,8 @@ func HandleTaskSubmit(
 	dbgAttempt.MarkFinal(nil)
 
 	// 11. 返回响应（OpenAI Videos 协议返回官方 Video 对象；MiniMax 官方协议返回 {"task_id"}
-	//（v1 含 base_resp 信封）；legacy 保持原格式）
+	//（v1 含 base_resp 信封）；阿里 DashScope 官方协议返回 {"output":{"task_id":...}}；
+	// legacy 保持原格式）
 	if rc.Protocol == videosProtocolOpenAI {
 		writeVideosSubmitResponse(rc.Writer, publicTaskID, modelName, now, rc.RequestEcho)
 		return
@@ -380,6 +381,10 @@ func HandleTaskSubmit(
 	}
 	if rc.Protocol == minimaxVideoV1Protocol {
 		writeMiniMaxV1SubmitResponse(rc.Writer, publicTaskID)
+		return
+	}
+	if rc.Protocol == aliVideoProtocol {
+		writeAliVideoSubmitResponse(rc.Writer, publicTaskID, rc.RequestID, now)
 		return
 	}
 	respBody := map[string]any{

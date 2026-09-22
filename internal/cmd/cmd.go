@@ -595,6 +595,14 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/video_generation", relay.HandleMiniMaxVideoV1Submit)
 		group.GET("/query/video_generation", relay.HandleMiniMaxVideoV1Retrieve)
 	})
+
+	// 阿里 DashScope 官方视频协议端点（wan2.x / wan3.0 通用，阿里 SDK 换 base_url 直连；
+	// 查询回放官方响应形态，轮询计费由网关后台完成）
+	server.Group("/api/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
+		group.POST("/services/aigc/video-generation/video-synthesis", relay.HandleAliVideoSubmit)
+		group.GET("/tasks/{task_id}", relay.HandleAliVideoRetrieve)
+	})
 }
 
 // registerLandingPage 在未内嵌前端（非 embedweb 构建）时，为后端根路径注册项目介绍页，
