@@ -153,9 +153,11 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		claudeReq.System = strings.Join(systemPrompts, "\n\n")
 	}
 
-	// 转换 tools
-	if len(openaiReq.Tools) > 0 {
-		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
+	// 转换 tools。非 function 类型（如 OpenAI 的 custom 自由格式工具）会被过滤掉，
+	// 过滤后可能为空——此时 tool_choice 必须一并跳过：tools 空数组本身由 omitempty 省略，
+	// 但残留的 tool_choice 会形成「有 tool_choice 无 tools」的孤儿请求体，被 Claude 拒绝。
+	if claudeTools := shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools); len(claudeTools) > 0 {
+		claudeReq.Tools = claudeTools
 		// 转换 tool_choice
 		if openaiReq.ToolChoice != nil {
 			switch tc := openaiReq.ToolChoice.(type) {

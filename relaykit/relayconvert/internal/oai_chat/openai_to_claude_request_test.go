@@ -565,3 +565,78 @@ func TestOpenAIToClaudeRequestConverter_WebSearchOptions(t *testing.T) {
 		t.Errorf("web_search_options 应还原为 claude 原生 web_search 工具，实际 tools: %+v", claudeReq.Tools)
 	}
 }
+
+// 无参函数工具转换后必须携带 input_schema：Claude 的 custom tool 要求该字段必填。
+func TestOpenAIToClaudeRequestConverter_ToolWithoutParameters(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	maxTokens := 1024
+	openaiReq := &dto.GeneralOpenAIRequest{
+		Model:     "gpt-4",
+		MaxTokens: &maxTokens,
+		Messages:  []dto.Message{{Role: "user", Content: "现在几点"}},
+		Tools: []dto.Tool{{
+			Type:     "function",
+			Function: dto.FunctionDef{Name: "get_current_time", Description: "无参数"},
+		}},
+	}
+
+	result, err := converter.ConvertRequest(context.Background(), &mockMeta{upstreamModel: "claude-3-opus-20240229"}, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var body struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if len(body.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1: %s", len(body.Tools), data)
+	}
+	if _, ok := body.Tools[0]["input_schema"]; !ok {
+		t.Errorf("input_schema missing in %s", data)
+	}
+}
+
+// 工具全部为非 function 类型时被过滤空，tools 与 tool_choice 都不得出现在请求体中：
+// 只发 tool_choice 会形成孤儿字段，被 Claude 拒绝。
+func TestOpenAIToClaudeRequestConverter_AllToolsFilteredDropsToolChoice(t *testing.T) {
+	converter := &OpenAIToClaudeRequestConverter{}
+	maxTokens := 1024
+	openaiReq := &dto.GeneralOpenAIRequest{
+		Model:      "gpt-4",
+		MaxTokens:  &maxTokens,
+		Messages:   []dto.Message{{Role: "user", Content: "hi"}},
+		Tools:      []dto.Tool{{Type: "custom", Function: dto.FunctionDef{Name: "freeform"}}},
+		ToolChoice: "required",
+	}
+
+	result, err := converter.ConvertRequest(context.Background(), &mockMeta{upstreamModel: "claude-3-opus-20240229"}, openaiReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if _, ok := body["tools"]; ok {
+		t.Errorf("tools should be absent, got %s", data)
+	}
+	if _, ok := body["tool_choice"]; ok {
+		t.Errorf("tool_choice should be absent without tools, got %s", data)
+	}
+}

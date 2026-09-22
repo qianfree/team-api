@@ -20,9 +20,16 @@ func MapOpenAIToolsToClaudeTools(tools []dto.Tool) []dto.ClaudeTool {
 			Description: tool.Function.Description,
 		}
 
-		// 转换参数（JSON Schema）
+		// 转换参数（JSON Schema）。Claude 要求 custom tool 必须携带 input_schema，
+		// 而 OpenAI 允许无参函数省略 parameters——缺省时补一个空对象 schema，
+		// 否则 InputSchema 为 nil 被 omitempty 抹掉，上游直接 400。
 		if tool.Function.Parameters != nil {
 			claudeTool.InputSchema = tool.Function.Parameters
+		} else {
+			claudeTool.InputSchema = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
 		}
 
 		claudeTools = append(claudeTools, claudeTool)

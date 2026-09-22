@@ -430,3 +430,32 @@ func TestConvertClaudeAssistantMessage(t *testing.T) {
 		t.Errorf("arguments = %q", tc.Function.Arguments)
 	}
 }
+
+// Claude 侧只带服务端内置工具（web_search）时，函数工具列表为空，
+// tool_choice 必须一并丢弃——OpenAI 同样拒绝「有 tool_choice 无 tools」的请求体。
+func TestClaudeToOpenAIRequestConverter_BuiltinOnlyToolsDropsToolChoice(t *testing.T) {
+	converter := &ClaudeToOpenAIRequestConverter{}
+	claudeReq := &dto.ClaudeRequest{
+		Model:      "claude-sonnet-4",
+		Tools:      []dto.ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}},
+		ToolChoice: map[string]any{"type": "any"},
+		Messages:   []dto.ClaudeMessage{{Role: "user", Content: "搜一下"}},
+	}
+
+	result, err := converter.ConvertRequest(context.Background(), newClaudeInboundMeta(), claudeReq)
+	if err != nil {
+		t.Fatalf("ConvertRequest error: %v", err)
+	}
+	openaiReq := result.(*dto.GeneralOpenAIRequest)
+
+	if len(openaiReq.Tools) != 0 {
+		t.Errorf("Tools = %+v, want empty", openaiReq.Tools)
+	}
+	if openaiReq.ToolChoice != nil {
+		t.Errorf("ToolChoice = %v, want nil without tools", openaiReq.ToolChoice)
+	}
+	// 搜索能力本身不能丢：走 web_search_options 承载
+	if openaiReq.WebSearchOptions == nil {
+		t.Error("WebSearchOptions is nil, web search capability lost")
+	}
+}
