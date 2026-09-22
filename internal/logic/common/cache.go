@@ -83,6 +83,95 @@ func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Dura
 	}
 }
 
+// SetMany 批量写入 L1（内存）+ L2（Redis），语义与逐 key 调用 Set 一致。
+// L1 逐 key 写本进程内存；L2 逐 key SETEX —— Redis 没有「批量且带过期」的原生命令
+// （MSET 不支持 TTL），故写侧仍是 N 次往返。该方法只服务于「缓存未命中后回填」，
+// 调用频次受 TTL 约束，不在热路径上；热路径的批量读走 GetMany（单次 MGET）。
+func (c *Cache) SetMany(ctx context.Context, values map[string]any) {
+	if len(values) == 0 {
+		return
+	}
+	expire := jitterTTL(c.ttl)
+	ttlSeconds := int64(math.Ceil(expire.Seconds()))
+	if ttlSeconds <= 0 {
+		// 兜底：ttl ≤ 0 时使用 24h 兜底 TTL，避免产生永久 key（与 Set 一致）
+		g.Log().Warningf(ctx, "[Cache] TTL <= 0 for prefix=%s, using fallback 24h TTL", c.prefix)
+		ttlSeconds = 86400
+	}
+
+	// L1 先整体落地：即使 L2 写入失败，本进程后续读取也能立即命中
+	for key, value := range values {
+		gcache.Set(ctx, c.fullKey(key), value, expire)
+	}
+
+	for key, value := range values {
+		fullKey := c.fullKey(key)
+		jsonBytes, err := json.Marshal(value)
+		if err != nil {
+			g.Log().Warningf(ctx, "[Cache] JSON marshal failed key=%s: %v", fullKey, err)
+			continue
+		}
+		if _, err = g.Redis().Do(ctx, "SETEX", fullKey, ttlSeconds, string(jsonBytes)); err != nil {
+			g.Log().Warningf(ctx, "[Cache] SETEX failed key=%s: %v", fullKey, err)
+		}
+	}
+}
+
+// GetMany 批量读取：先逐 key 查 L1（gcache，命中即零网络开销），
+// 未命中的 key 用一次 MGET 走 L2（Redis），命中 L2 的值回填 L1。
+// 返回「命中的原始 key → 值」，未命中的 key 不出现在结果中。
+// key 为不含前缀的原始 key（与 Get/Set 一致）。
+//
+// 为什么必须批量：审计/日志列表每页要回填几十个关联名称，逐 key Get 会让冷路径
+// 产生 N 次 Redis 往返，反而比直接查库更慢；MGET 把冷路径压成 1 次往返。
+// Redis 不可用或 MGET 失败时只返回 L1 命中部分，未命中部分由调用方回落查库。
+func (c *Cache) GetMany(ctx context.Context, keys []string) map[string]any {
+	result := make(map[string]any, len(keys))
+	if len(keys) == 0 {
+		return result
+	}
+
+	missKeys := make([]string, 0, len(keys))
+	missFullKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		fullKey := c.fullKey(key)
+		if val, err := gcache.Get(ctx, fullKey); err == nil && val != nil {
+			result[key] = val.Interface()
+			continue
+		}
+		missKeys = append(missKeys, key)
+		missFullKeys = append(missFullKeys, fullKey)
+	}
+	if len(missFullKeys) == 0 {
+		return result
+	}
+
+	// L2：一次 MGET 取回全部未命中 key（缺失 key 在返回 map 中为 nil 值）
+	l2Values, err := g.Redis().MGet(ctx, missFullKeys...)
+	if err != nil {
+		g.Log().Warningf(ctx, "[Cache] MGET failed prefix=%s: %v", c.prefix, err)
+		return result
+	}
+	for i, fullKey := range missFullKeys {
+		v, ok := l2Values[fullKey]
+		if !ok || v == nil || v.IsNil() {
+			continue
+		}
+		jsonStr := v.String()
+		if jsonStr == "" {
+			continue
+		}
+		// 与 Get 一致：优先按 JSON 反序列化还原原始类型，非 JSON 的历史值按纯字符串兜底
+		var raw any
+		if unmarshalErr := json.Unmarshal([]byte(jsonStr), &raw); unmarshalErr != nil {
+			raw = jsonStr
+		}
+		gcache.Set(ctx, fullKey, raw, jitterTTL(c.ttl))
+		result[missKeys[i]] = raw
+	}
+	return result
+}
+
 // Get retrieves a value: L1 → L2 → miss.
 // L1 returns native Go types. L2 deserializes JSON back to the original type.
 func (c *Cache) Get(ctx context.Context, key string) (any, bool) {

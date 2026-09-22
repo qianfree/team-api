@@ -72,6 +72,8 @@ type (
 		// （request_id / task_id / billing_summary / error_message / user_agent 等）。
 		// 平台侧敏感字段（upstream_model、account_cost、upstream_endpoint、billing_snapshot）
 		// 与列表同样禁止返回。member 角色只能查看自己的记录。
+		// 性能：bil_usage_logs 按 created_at 月分区，仅按 id 查询无法分区裁剪，为各分区
+		// Append 索引探测（见管理后台 GetUsageLogDetail 注释），当前量级可接受。
 		UsageLogDetail(ctx context.Context, req *v1.TenantUsageLogDetailReq) (*v1.TenantUsageLogDetailRes, error)
 		// UsageLogsSummary 用量日志统计汇总（与 UsageLogs 共用筛选口径：强制 tenant_id 隔离，
 		// member 角色只能统计自己的日志；总费用与租户端列表费用列同口径：actual_cost 优先，0/NULL 回退 total_cost）
