@@ -106,7 +106,12 @@ type (
 		DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq) (*v1.ChangelogDeleteRes, error)
 		// PublishChangelog 发布更新日志
 		PublishChangelog(ctx context.Context, req *v1.ChangelogPublishReq) (*v1.ChangelogPublishRes, error)
-		// ListChannels 获取渠道列表
+		// ListChannelOptions 渠道下拉选项（不分页，返回全部渠道）。
+		// 刻意不做状态过滤：日志 / 统计页的渠道筛选项要覆盖历史数据里出现过的全部渠道，
+		// 已停用渠道同样需要能作为筛选条件；status 原样返回，由前端决定是否标记。
+		// 注意与 /admin/channels 的区别：后者是渠道管理列表（分页 + 健康度联表 + 运行态），
+		// 下拉场景不要用它 —— 那是本接口存在的意义。
+		ListChannelOptions(ctx context.Context, _ *v1.ChannelOptionsReq) (*v1.ChannelOptionsRes, error)
 		ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.ChannelListRes, error)
 		// CloneChannel 克隆渠道
 		CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1.ChannelCloneRes, error)
@@ -192,7 +197,11 @@ type (
 		// GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 		GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error)
 		// GetUsageLogDetail 获取单条用量日志详情（含 billing_snapshot / billing_summary /
-		// user_agent / error_message 等列表不返回的大字段）
+		// user_agent / error_message 等列表不返回的大字段）。
+		// bil_usage_logs 按 created_at 月分区且 PK 为 (id, created_at)：仅按 id 查询无法
+		// 分区裁剪，计划为对各月分区的 Append 索引探测（每分区走本地 PK 前缀命中 id），
+		// 分区数随月份线性增长但单次探测为微秒级，与 upstream_request_id 反查（000023）
+		// 同一模式；若日后分区数显著增大，可让调用方携带 created_at 提示做裁剪。
 		GetUsageLogDetail(ctx context.Context, req *v1.AdminUsageLogDetailReq) (*v1.AdminUsageLogDetailRes, error)
 		// GetUsageLogSummary 获取用量日志统计汇总（独立接口，与列表共用筛选口径）
 		GetUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSummaryReq) (*v1.AdminUsageLogSummaryRes, error)

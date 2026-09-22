@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -24,40 +25,67 @@ import (
 	"github.com/qianfree/team-api/internal/utility/export"
 )
 
+// modelOptionsCache 模型下拉选项缓存（全量模型，单个条目）。
+// 下拉接口是若干管理页每次打开都要调的，而模型表极少变动；
+// 整表结果缓存为一个条目、按 status/category 在内存里过滤，写侧主动失效。
+var modelOptionsCache = common.NewCache("model_options", 300*time.Second)
+
+// modelOptionsCacheKey 模型下拉是全量结果，只有一个缓存条目。
+const modelOptionsCacheKey = "all"
+
+// InvalidateModelOptionsCache 失效模型下拉选项缓存（模型增 / 删 / 改后调用）。
+// 注：task 包的模型下线定时任务改 status 时不经此处，下拉最多滞后一个 TTL（300s）；
+// 对「按状态筛模型」的下拉而言可接受，故不为此在 task 包反向依赖 admin。
+func InvalidateModelOptionsCache(ctx context.Context) {
+	modelOptionsCache.Delete(ctx, modelOptionsCacheKey)
+}
+
+// modelOptionRow 下拉缓存行：比出参多一个 status，供内存过滤。
+// 缓存存全量（不过滤），避免 status / category 的每个组合各占一个缓存条目。
+type modelOptionRow struct {
+	ID        int64  `json:"id"`
+	ModelId   string `json:"model_id"`
+	ModelName string `json:"model_name"`
+	Category  string `json:"category"`
+	Status    string `json:"status"`
+}
+
 // ListModelOptions 获取模型选项列表（不分页，用于下拉选择）
 func (s *sAdmin) ListModelOptions(ctx context.Context, req *v1.ModelOptionsReq) (*v1.ModelOptionsRes, error) {
-	query := dao.MdlModels.Ctx(ctx)
-
-	if req.Status != "" {
-		query = query.Where("status", req.Status)
-	} else {
-		query = query.Where("status", "active")
-	}
-	if req.Category != "" {
-		query = query.Where("category", req.Category)
-	}
-
-	var models []struct {
-		ID        int64  `json:"id"`
-		ModelId   string `json:"model_id"`
-		ModelName string `json:"model_name"`
-		Category  string `json:"category"`
+	rows := make([]modelOptionRow, 0)
+	if !modelOptionsCache.GetJSON(ctx, modelOptionsCacheKey, &rows) {
+		err := dao.MdlModels.Ctx(ctx).
+			Fields("id, model_id, model_name, category, status").
+			OrderAsc("category").OrderAsc("model_id").
+			Scan(&rows)
+		if err = common.IgnoreScanNoRows(err); err != nil {
+			return nil, err
+		}
+		if rows == nil {
+			rows = make([]modelOptionRow, 0)
+		}
+		modelOptionsCache.Set(ctx, modelOptionsCacheKey, rows)
 	}
 
-	err := query.Fields("id, model_id, model_name, category").
-		OrderAsc("category").OrderAsc("model_id").
-		Scan(&models)
-	if err = common.IgnoreScanNoRows(err); err != nil {
-		return nil, err
+	// 沿用原接口语义：不传 status 即只要可用模型
+	status := req.Status
+	if status == "" {
+		status = "active"
 	}
 
-	list := make([]v1.ModelOptionItem, 0, len(models))
-	for _, m := range models {
+	list := make([]v1.ModelOptionItem, 0, len(rows))
+	for _, r := range rows {
+		if r.Status != status {
+			continue
+		}
+		if req.Category != "" && r.Category != req.Category {
+			continue
+		}
 		list = append(list, v1.ModelOptionItem{
-			ID:        m.ID,
-			ModelId:   m.ModelId,
-			ModelName: m.ModelName,
-			Category:  m.Category,
+			ID:        r.ID,
+			ModelId:   r.ModelId,
+			ModelName: r.ModelName,
+			Category:  r.Category,
 		})
 	}
 
@@ -291,6 +319,8 @@ func (s *sAdmin) CreateModel(ctx context.Context, req *v1.ModelCreateReq) (*v1.M
 		return nil, err
 	}
 
+	InvalidateModelOptionsCache(ctx)
+
 	return &v1.ModelCreateRes{ID: id}, nil
 }
 
@@ -397,6 +427,10 @@ func (s *sAdmin) UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.M
 		return nil, err
 	}
 
+	// 下拉缓存按全量存、内存过滤 status/category，故改名 / 改分类同样要失效，
+	// 不能只在 statusChanged 时清。
+	InvalidateModelOptionsCache(ctx)
+
 	if statusChanged {
 		// 状态变更时清除模型缓存和租户分组缓存
 		relay.NewDataProvider().InvalidateModelCache(oldModel.ModelId)
@@ -473,6 +507,7 @@ func (s *sAdmin) DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.M
 	if model.ModelId != "" {
 		billing.ClearModelPriceCache(ctx, model.ModelId)
 	}
+	InvalidateModelOptionsCache(ctx)
 
 	return nil, nil
 }

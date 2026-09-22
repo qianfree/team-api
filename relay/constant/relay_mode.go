@@ -33,6 +33,7 @@ const (
 	RelayModeResponsesCompact // POST /v1/responses/compact
 	RelayModeVideos           // OpenAI Videos 协议 /v1/videos（创建/查询/删除/内容下载）
 	RelayModeMiniMaxVideo     // MiniMax 官方协议 /v2/video_generation（H3 v2 提交/查询/删除）
+	RelayModeAliVideo         // 阿里 DashScope 官方协议 /api/v1/services/aigc/video-generation/video-synthesis（提交/查询）
 )
 
 // Path2RelayMode 根据请求路径判断 RelayMode
@@ -159,6 +160,8 @@ func (m RelayMode) String() string {
 		return "videos"
 	case RelayModeMiniMaxVideo:
 		return "minimax_video"
+	case RelayModeAliVideo:
+		return "ali_video"
 	case RelayModeMjSubmit:
 		return "mj_submit"
 	case RelayModeMjFetch:

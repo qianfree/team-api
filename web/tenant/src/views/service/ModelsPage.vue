@@ -149,6 +149,7 @@ const categories = [
 	{ value: 'embedding', label: '嵌入' },
 	{ value: 'image', label: '图像' },
 	{ value: 'audio', label: '语音' },
+	{ value: 'video', label: '视频' },
 	{ value: 'rerank', label: '重排' },
 ]
 
@@ -157,6 +158,7 @@ const categoryLabel: Record<string, string> = {
 	embedding: '嵌入',
 	image: '图像',
 	audio: '语音',
+	video: '视频',
 	rerank: '重排',
 }
 
@@ -165,6 +167,7 @@ const categoryBadgeStyle: Record<string, string> = {
 	embedding: 'background:rgba(139,92,246,0.1);color:#7c3aed',
 	image: 'background:rgba(245,158,11,0.1);color:#d97706',
 	audio: 'background:rgba(16,185,129,0.1);color:#059669',
+	video: 'background:rgba(244,63,94,0.1);color:#e11d48',
 	rerank: 'background:rgba(107,114,128,0.1);color:#4b5563',
 }
 

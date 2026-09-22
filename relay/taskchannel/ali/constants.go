@@ -5,6 +5,8 @@ const channelName = "Ali"
 // ModelList 阿里云 DashScope 支持异步生成的模型列表（图片 + 视频）
 var ModelList = []string{
 	// 视频生成
+	"wan3.0-video",
+	"wan3.0-video-prime",
 	"wan2.7-t2v-2026-04-25",
 	"wan2.6-t2v",
 	"wan2.6-t2v-us",

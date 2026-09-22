@@ -52,6 +52,7 @@ type IAdminV1 interface {
 	ChangelogDelete(ctx context.Context, req *v1.ChangelogDeleteReq) (res *v1.ChangelogDeleteRes, err error)
 	ChangelogPublish(ctx context.Context, req *v1.ChangelogPublishReq) (res *v1.ChangelogPublishRes, err error)
 	ChannelList(ctx context.Context, req *v1.ChannelListReq) (res *v1.ChannelListRes, err error)
+	ChannelOptions(ctx context.Context, req *v1.ChannelOptionsReq) (res *v1.ChannelOptionsRes, err error)
 	ChannelCreate(ctx context.Context, req *v1.ChannelCreateReq) (res *v1.ChannelCreateRes, err error)
 	ChannelUpdate(ctx context.Context, req *v1.ChannelUpdateReq) (res *v1.ChannelUpdateRes, err error)
 	ChannelDelete(ctx context.Context, req *v1.ChannelDeleteReq) (res *v1.ChannelDeleteRes, err error)

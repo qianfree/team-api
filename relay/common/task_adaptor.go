@@ -55,6 +55,16 @@ type TaskAdaptor interface {
 	GetChannelName() string
 }
 
+// UpstreamRequestIDExtractor 供应商私有的「上游调用追踪 ID 提取」可选能力。
+// 为什么需要：部分异步上游（如阿里 DashScope）不在响应头返回请求 ID，而是放在
+// 提交响应体顶层（request_id 字段），通用管线无法用统一键提取。实现方从提交
+// 响应体解析自家私有的追踪 ID，与 output.task_id（任务句柄）互补——提工单或
+// 在上游日志定位一次提交调用时用它。未实现的上游走响应头提取或为空。
+type UpstreamRequestIDExtractor interface {
+	// ExtractUpstreamRequestID 从上游提交响应体提取调用追踪 ID，未返回时为空串
+	ExtractUpstreamRequestID(body []byte) string
+}
+
 // TaskInfo 异步任务查询结果
 type TaskInfo struct {
 	Status     TaskStatusEnum
@@ -84,6 +94,7 @@ type TaskMaterialUsage struct {
 	InputImageCount   int     // 输入图片张数
 	InputAudioSeconds float64 // 输入音频时长（秒）
 	OutputSeconds     float64 // 输出（生成）时长（秒）
+	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
 }
 
 // TaskStatusEnum 任务状态枚举
