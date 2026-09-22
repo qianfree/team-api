@@ -326,9 +326,10 @@ func processChannelTasks(ctx context.Context, channelID int64, tasks []*common.A
 
 // privateData PrivateData 反序列化结构
 type privateData struct {
-	UpstreamTaskID string `json:"upstream_task_id"`
-	TaskType       string `json:"task_type"`
-	BillingContext struct {
+	UpstreamTaskID    string `json:"upstream_task_id"`
+	UpstreamRequestID string `json:"upstream_request_id"` // 上游提交调用追踪 ID（部分上游返回，可空）
+	TaskType          string `json:"task_type"`
+	BillingContext    struct {
 		Ratios    map[string]any `json:"ratios"`
 		ModelName string         `json:"model_name"`
 		PreDeduct float64        `json:"pre_deduct"`
@@ -541,18 +542,24 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 
 	// 按秒计费任务的视频时长：取提交时计费上下文里的 spec.duration（真实秒数）。
 	// 只认 spec.* 事实键——旧 duration 键在部分 adaptor 是乘数语义（如 gemini 1.3），不可作为时长
-	// 同时提取 upstream_task_id 作为上游请求 ID 落用量日志（排障时凭它在上游定位任务）。
+	// 提取上游请求 ID 落用量日志（排障时凭它在上游定位任务）：
+	// 优先 upstream_request_id（上游调用追踪 ID，如 DashScope 顶层 request_id），
+	// 未记录时回退 upstream_task_id（任务句柄，轮询同款标识）
 	durationSeconds := 0
 	upstreamRequestID := ""
 	if len(task.PrivateData) > 0 {
 		var pdDur struct {
-			UpstreamTaskID string `json:"upstream_task_id"`
-			BillingContext struct {
+			UpstreamTaskID    string `json:"upstream_task_id"`
+			UpstreamRequestID string `json:"upstream_request_id"`
+			BillingContext    struct {
 				Ratios map[string]any `json:"ratios"`
 			} `json:"billing_context"`
 		}
 		if json.Unmarshal(task.PrivateData, &pdDur) == nil {
-			upstreamRequestID = pdDur.UpstreamTaskID
+			upstreamRequestID = pdDur.UpstreamRequestID
+			if upstreamRequestID == "" {
+				upstreamRequestID = pdDur.UpstreamTaskID
+			}
 			if v, ok := pdDur.BillingContext.Ratios["spec.duration"].(float64); ok && v > 0 {
 				durationSeconds = int(v)
 			}
@@ -587,7 +594,7 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 
 		DurationSeconds: durationSeconds,
 
-		// 任务的上游请求 ID = 上游提交响应体中的任务 ID（轮询同款标识）
+		// 任务的上游请求 ID = 调用追踪 ID（上游返回时），否则为任务句柄（轮询同款标识）
 		UpstreamRequestID: upstreamRequestID,
 	}
 

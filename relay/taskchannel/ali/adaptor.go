@@ -173,9 +173,15 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 		metadata := taskchannel.ExtractMetadata(req)
 		var meta aliMetadata
 		if taskchannel.UnmarshalMetadata(metadata, &meta) == nil {
-			// 分辨率事实值：per_second 矩阵查价键（480P/720P/1080P 原值）
+			// 分辨率事实值：per_second 矩阵查价键（480P/720P/1080P 原值）。
+			// OpenAI Videos 路径无 resolution 字段，wan3.0 按 size 归一档位上报，
+			// 与 buildVideoRequest 的折算口径同源
 			if meta.Resolution != "" {
 				ratios["spec.resolution"] = meta.Resolution
+			} else if strings.HasPrefix(strings.ToLower(modelName), "wan3.") && meta.Size != "" {
+				if r := normalizeWan3Resolution(meta.Size); r != "" {
+					ratios["spec.resolution"] = r
+				}
 			}
 			// 时长事实值：duration>0 用请求值；duration=-1（wan3.0 智能时长）按输出上限冻结，
 			// 结算以 usage.output_video_duration 多退少补
@@ -293,8 +299,13 @@ func (a *AliAdaptor) buildVideoRequest(info *common.RelayInfo, req map[string]an
 			params.Audio = &audio
 		}
 		if params.Resolution == "" && meta.Size != "" {
-			params.Resolution = resolutionFromSize(meta.Size)
+			if r := normalizeWan3Resolution(meta.Size); r != "" {
+				params.Resolution = r
+			}
 		}
+		// wan3.0 协议无 size 参数：size 只作档位折算源，任何情况不透传上游
+		//（wan2.x 的 size 是原生尺寸语义，不进本分支、不受影响）
+		params.Size = ""
 		// ratio 兜底：通用词汇 aspect_ratio（OpenAI Videos 双写键，部分链路只写该键）
 		if params.Ratio == "" {
 			if ar, ok := metadata["aspect_ratio"].(string); ok {
@@ -353,6 +364,18 @@ func buildWan3Media(req map[string]any, metadata map[string]any) []dashScopeMedi
 		}
 	}
 	return nil
+}
+
+// normalizeWan3Resolution 把 size 值归一为 wan3.0 分辨率档位：
+// 裸档位词汇（"720P"/"480p"）直接归一为大写档位；WxH 尺寸（"1280x720"）按短边归档；
+// 其余返回空串（上游取默认 1080P）。wan2.x 的 size 是原生尺寸语义，不得走此函数。
+func normalizeWan3Resolution(size string) string {
+	upper := strings.ToUpper(strings.TrimSpace(size))
+	switch upper {
+	case "480P", "720P", "1080P":
+		return upper
+	}
+	return resolutionFromSize(size)
 }
 
 // resolutionFromSize 从尺寸字符串（如 "1280x720"）按短边映射 wan3.0 分辨率档位。
@@ -483,6 +506,19 @@ func (a *AliAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *commo
 
 	return result.Output.TaskID, body, nil
 }
+
+// ExtractUpstreamRequestID 从 DashScope 提交响应体顶层提取 request_id（调用追踪 ID）。
+// 与 output.task_id（任务句柄，轮询查询用）互补：在阿里云日志/工单中定位一次提交调用时用它
+func (a *AliAdaptor) ExtractUpstreamRequestID(body []byte) string {
+	var resp dashScopeSubmitResponse
+	if json.Unmarshal(body, &resp) != nil {
+		return ""
+	}
+	return resp.RequestID
+}
+
+// 确保实现上游调用追踪 ID 提取可选能力
+var _ common.UpstreamRequestIDExtractor = (*AliAdaptor)(nil)
 
 func (a *AliAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
