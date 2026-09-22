@@ -97,7 +97,10 @@ func (c *ClaudeToOpenAIRequestConverter) ConvertRequest(
 		openaiReq.WebSearchOptions = spec.ToOpenAIOptions()
 	}
 
-	if claudeReq.ToolChoice != nil {
+	// tool_choice 依附于 tools：内置工具被过滤后 tools 可能为空（如客户端只带 web_search），
+	// 此时残留的 tool_choice 会形成「有 tool_choice 无 tools」的孤儿请求体，OpenAI 同样拒绝。
+	// 与 o2c 方向对称处理。
+	if claudeReq.ToolChoice != nil && len(openaiReq.Tools) > 0 {
 		openaiReq.ToolChoice = c2oConvertToolChoice(claudeReq.ToolChoice)
 	}
 
