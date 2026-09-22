@@ -352,4 +352,15 @@ func TestLookupPerSecondPrice(t *testing.T) {
 	if p := LookupPerSecondPrice(map[string]float64{"720p": 0}, "720p"); p != 0 {
 		t.Errorf("zero price entry = %v", p)
 	}
+	// 大小写不敏感兜底：同档不同形态（配置小写/上报大写，或反之）优先于 "*" 通配回退
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "*": 0.9}, "720P"); p != 0.5 {
+		t.Errorf("case-insensitive hit = %v", p)
+	}
+	if p := LookupPerSecondPrice(map[string]float64{"768P": 0.35}, "768p"); p != 0.35 {
+		t.Errorf("case-insensitive hit (uppercase key) = %v", p)
+	}
+	// 大小写不敏感未命中（"2k"）仍回退 "*"
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "1080p": 1.0, "*": 0.9}, "2K"); p != 0.9 {
+		t.Errorf("wildcard after case-insensitive miss = %v", p)
+	}
 }

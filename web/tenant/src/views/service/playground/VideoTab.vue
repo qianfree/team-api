@@ -388,8 +388,8 @@ function downloadVideo() {
 										{{ duration }} 秒
 									</span>
 								</div>
-								<!-- min=4 覆盖 MiniMax-H3 的 4 秒档；其他模型档位由上游校验 -->
-								<n-input-number v-model:value="duration" :min="4" :max="15" :step="1" class="w-full" />
+								<!-- min=2 覆盖短时长档位模型；其他模型档位由上游校验 -->
+								<n-input-number v-model:value="duration" :min="2" :max="30" :step="1" class="w-full" />
 							</div>
 
 							<div class="flex items-start justify-between gap-3">

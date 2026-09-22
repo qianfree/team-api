@@ -317,6 +317,16 @@ func HandleTaskSubmit(
 	}
 	now := time.Now()
 
+	// 上游调用追踪 ID：优先响应头（与同步对话链路 helper.ExtractUpstreamRequestID 同源，
+	// 覆盖 OpenAI/Anthropic 等返回标准头的上游）；无候选头时由供应商可选能力从提交
+	// 响应体提取（如 DashScope 顶层 request_id）。与 upstream_task_id（任务句柄）互补
+	upstreamRequestID := helper.ExtractUpstreamRequestID(resp.Header)
+	if upstreamRequestID == "" {
+		if ex, ok := adaptor.(common.UpstreamRequestIDExtractor); ok {
+			upstreamRequestID = ex.ExtractUpstreamRequestID(taskData)
+		}
+	}
+
 	privateDataMap := map[string]any{
 		"upstream_task_id": upstreamTaskID,
 		"task_type":        platform,
@@ -328,6 +338,9 @@ func HandleTaskSubmit(
 			// 进而 Ratios 也读不出、轮询判为「invalid private data」。故此处显式转 float64。
 			"pre_deduct": preDeductAmount.InexactFloat64(),
 		},
+	}
+	if upstreamRequestID != "" {
+		privateDataMap["upstream_request_id"] = upstreamRequestID
 	}
 	if rc.RequestEcho != nil {
 		privateDataMap["request_echo"] = rc.RequestEcho

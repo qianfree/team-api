@@ -598,7 +598,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 
 	// 阿里 DashScope 官方视频协议端点（wan2.x / wan3.0 通用，阿里 SDK 换 base_url 直连；
 	// 查询回放官方响应形态，轮询计费由网关后台完成）
-	server.Group("/api/v1", func(group *ghttp.RouterGroup) {
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
 		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/services/aigc/video-generation/video-synthesis", relay.HandleAliVideoSubmit)
 		group.GET("/tasks/{task_id}", relay.HandleAliVideoRetrieve)

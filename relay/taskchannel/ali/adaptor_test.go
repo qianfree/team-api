@@ -3,6 +3,7 @@ package ali
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -65,6 +66,25 @@ func TestEstimateBilling_VideoSpecSignals(t *testing.T) {
 		`{"model":"wan3.0-video","prompt":"p","seconds":"12","metadata":{"duration":5}}`))
 	if ratios["spec.duration"] != 12.0 {
 		t.Fatalf("seconds should override metadata duration: %v", ratios)
+	}
+
+	// OpenAI Videos 路径无 resolution 字段：wan3.0 按 size 归一档位上报（裸档位/WxH 均可）
+	ratios = a.EstimateBilling(context.Background(), newTestRelayInfo(), []byte(
+		`{"model":"wan3.0-video","prompt":"p","metadata":{"size":"720P","duration":5}}`))
+	if ratios["spec.resolution"] != "720P" {
+		t.Fatalf("size tier vocabulary should report spec.resolution: %v", ratios)
+	}
+	ratios = a.EstimateBilling(context.Background(), newTestRelayInfo(), []byte(
+		`{"model":"wan3.0-video","prompt":"p","metadata":{"size":"1280x720","duration":5}}`))
+	if ratios["spec.resolution"] != "720P" {
+		t.Fatalf("size WxH should report spec.resolution: %v", ratios)
+	}
+
+	// wan2.x 的 size 是原生尺寸语义，不得折算档位（预扣按矩阵兜底档走）
+	ratios = a.EstimateBilling(context.Background(), newTestRelayInfo(), []byte(
+		`{"model":"wan2.2-t2v-plus","prompt":"p","metadata":{"size":"1024x576","duration":5}}`))
+	if _, has := ratios["spec.resolution"]; has {
+		t.Fatalf("wan2 size must not derive spec.resolution: %v", ratios)
 	}
 
 	// 未传时长：不产出 spec.duration（引擎按默认 5s 估）
@@ -141,6 +161,9 @@ func TestBuildVideoRequest_OpenAIVocabulary(t *testing.T) {
 	}
 	if req.Parameters.Resolution != "720P" {
 		t.Fatalf("size short-edge → resolution lost: %+v", req.Parameters)
+	}
+	if req.Parameters.Size != "" {
+		t.Fatalf("wan3.0 must not carry size after resolution derived: %+v", req.Parameters)
 	}
 	if req.Parameters.Ratio != "9:16" {
 		t.Fatalf("aspect_ratio → ratio lost: %+v", req.Parameters)
@@ -235,6 +258,27 @@ func TestParseTaskResult_Wan3MaterialUsage(t *testing.T) {
 	}
 }
 
+func TestExtractUpstreamRequestID(t *testing.T) {
+	a := &AliAdaptor{}
+	// DashScope 提交成功响应：顶层 request_id 提取，与 output.task_id 互不干扰
+	if got := a.ExtractUpstreamRequestID([]byte(
+		`{"output":{"task_id":"tsk-abc","task_status":"PENDING"},"request_id":"req-123","code":null,"message":""}`)); got != "req-123" {
+		t.Fatalf("request_id lost: %q", got)
+	}
+	// 错误响应同样带顶层 request_id（DashScope 错误时 code/message 非空）
+	if got := a.ExtractUpstreamRequestID([]byte(
+		`{"request_id":"req-err","code":"InvalidApiKey","message":"Invalid API-key"}`)); got != "req-err" {
+		t.Fatalf("error response request_id lost: %q", got)
+	}
+	// 缺失/非法 body：返回空串不报错
+	if got := a.ExtractUpstreamRequestID([]byte(`{"output":{"task_id":"t"}}`)); got != "" {
+		t.Fatalf("missing request_id should yield empty: %q", got)
+	}
+	if got := a.ExtractUpstreamRequestID([]byte(`not json`)); got != "" {
+		t.Fatalf("invalid body should yield empty: %q", got)
+	}
+}
+
 func TestResolutionFromSize(t *testing.T) {
 	cases := map[string]string{
 		"1280x720":  "720P",
@@ -250,5 +294,69 @@ func TestResolutionFromSize(t *testing.T) {
 		if got := resolutionFromSize(size); got != want {
 			t.Errorf("resolutionFromSize(%q) = %q, want %q", size, got, want)
 		}
+	}
+}
+
+// 裸档位词汇（OpenAI 端点 size 直传 wan3.0 原生词汇）归一；
+// WxH 尺寸走短边归档，无效值返回空串
+func TestNormalizeWan3Resolution(t *testing.T) {
+	cases := map[string]string{
+		"720P":      "720P",
+		"480p":      "480P", // 小写归一为大写档位
+		" 1080p ":   "1080P",
+		"1280x720":  "720P",
+		"1024x576":  "720P",
+		"4K":        "", // 非法键必须返回空串，防止把 "4K" 之类键透传上游
+		"768P":      "", // MiniMax 档位非 wan3.0 词汇，不归一
+		"not-a-tie": "",
+	}
+	for size, want := range cases {
+		if got := normalizeWan3Resolution(size); got != want {
+			t.Errorf("normalizeWan3Resolution(%q) = %q, want %q", size, got, want)
+		}
+	}
+}
+
+// OpenAI 端点 size 直传 wan3.0 原生档位词汇（"720P"/"480p"）：
+// 直接作为 resolution 下发上游，且不再透传 wan3.0 不认识的 size 参数
+func TestBuildVideoRequest_SizeTierVocabulary(t *testing.T) {
+	for _, size := range []string{"720P", "480p", "1080p"} {
+		a := &AliAdaptor{}
+		body := []byte(`{"model":"wan3.0-video","prompt":"p","metadata":{"size":"` + size + `"}}`)
+		r, err := a.BuildRequestBody(context.Background(), newTestRelayInfo(), body)
+		if err != nil {
+			t.Fatalf("build (%s): %v", size, err)
+		}
+		var req dashScopeVideoRequest
+		if err := json.NewDecoder(r).Decode(&req); err != nil {
+			t.Fatalf("decode (%s): %v", size, err)
+		}
+		want := strings.ToUpper(size)
+		if req.Parameters == nil || req.Parameters.Resolution != want {
+			t.Fatalf("size=%s should derive resolution=%s: %+v", size, want, req.Parameters)
+		}
+		if req.Parameters.Size != "" {
+			t.Fatalf("wan3.0 request must not carry size param (input %s): %+v", size, req.Parameters)
+		}
+	}
+}
+
+// 回归：metadata.size 无法归一为档位（如 MiniMax 词汇误传给 wan3.0）时，
+// resolution 留空走上游默认 1080P，原 size 值不再透传
+func TestBuildVideoRequest_SizeUnrecognized(t *testing.T) {
+	a := &AliAdaptor{}
+	body := []byte(`{"model":"wan3.0-video","prompt":"p","metadata":{"size":"768P"}}`)
+	r, err := a.BuildRequestBody(context.Background(), newTestRelayInfo(), body)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var req dashScopeVideoRequest
+	if err := json.NewDecoder(r).Decode(&req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// 归一失败且无其他参数时 Parameters 整体为 nil（不下发 parameters 节点），
+	// 非 nil 时 resolution/size 必须为空（上游默认 1080P）
+	if req.Parameters != nil && (req.Parameters.Resolution != "" || req.Parameters.Size != "") {
+		t.Fatalf("unrecognized size should leave resolution/size empty: %+v", req.Parameters)
 	}
 }
