@@ -66,7 +66,6 @@ const requestTypeOptions = [
 ]
 
 let tenantSearchTimer: ReturnType<typeof setTimeout> | null = null
-let modelSearchTimer: ReturnType<typeof setTimeout> | null = null
 
 async function fetchTenantOptions(keyword = '') {
 	try {
@@ -88,11 +87,12 @@ function handleTenantSearch(value: string) {
 	tenantSearchTimer = setTimeout(() => fetchTenantOptions(value), 300)
 }
 
-async function fetchModelOptions(search = '') {
+// 模型下拉数据：专用不分页接口 /admin/models/options，一次拉回全部 active 模型后本地过滤。
+// 不用 /admin/models 列表接口——那是模型管理页的重接口（分页 + 定价 JSONB 展开 +
+// 渠道能力联表），仅取 model_id / model_name 做下拉纯属浪费。
+async function fetchModelOptions() {
 	try {
-		const res: any = await request.get('/admin/models', {
-			params: { page: 1, page_size: 50, status: 'active', search }
-		})
+		const res: any = await request.get('/admin/models/options')
 		const list = res.data?.data?.list || []
 		modelOptions.value = list.map((m: any) => ({
 			label: m.model_name || m.model_id,
@@ -103,18 +103,22 @@ async function fetchModelOptions(search = '') {
 	}
 }
 
-function handleModelSearch(value: string) {
-	if (modelSearchTimer) clearTimeout(modelSearchTimer)
-	modelSearchTimer = setTimeout(() => fetchModelOptions(value), 300)
+// 模型下拉本地过滤：候选是全量模型，label 用的是 model_name、value 是 model_id，
+// 只在 label 上匹配会让「显示名不含 model_id」的模型（如中文显示名）搜不到。
+// 这里对齐原先服务端 model_id LIKE ? OR model_name LIKE ? 的口径，name 与 id 任一命中即可。
+function filterModelOption(input: string, option: any): boolean {
+	const keyword = input.toLowerCase()
+	return String(option?.label ?? '').toLowerCase().includes(keyword)
+		|| String(option?.value ?? '').toLowerCase().includes(keyword)
 }
 
-// 渠道下拉数据：渠道量级为几十，一次性拉全量（后端分页限制最大 100），本地过滤即可
+// 渠道下拉数据：专用不分页接口 /admin/channels/options，返回全部渠道（含已停用，
+// 历史日志要能按停用渠道筛选），一次拉全量后本地过滤。
+// 不用 /admin/channels——那是渠道管理列表（分页 + 健康度联表 + 运行态 + 上限 100 条）。
 async function fetchChannelOptions() {
 	try {
-		const res: any = await request.get('/admin/channels', {
-			params: { page: 1, page_size: 100 }
-		})
-		const list = res.data?.data?.list || res.data?.list || []
+		const res: any = await request.get('/admin/channels/options')
+		const list = res.data?.data?.list || []
 		channelOptions.value = list.map((c: any) => ({
 			label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
 			value: c.id,
@@ -634,8 +638,9 @@ async function fetchSummary() {
 
 function handleFilter() {
 	pagination.current = 1
-	fetchData()
-	fetchSummary() // 筛选条件变化时重新加载统计数据
+	// 表格数据加载完成后再刷新统计：summary 是对明细表的全量聚合，
+	// 与列表查询并发会争抽数据库资源、拖慢表格首屏
+	fetchData().then(() => fetchSummary())
 }
 
 function handleReset() {
@@ -650,8 +655,8 @@ function handleReset() {
 	filterUpstreamRequestId.value = undefined
 	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
-	fetchData()
-	fetchSummary() // 重置后重新加载统计数据
+	// 与 handleFilter 同口径：先加载表格数据，完成后再刷新统计
+	fetchData().then(() => fetchSummary())
 }
 
 // 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
@@ -663,8 +668,9 @@ onMounted(() => {
 	fetchTenantOptions()
 	fetchModelOptions()
 	fetchChannelOptions()
-	fetchData()
-	fetchSummary() // 初始加载时获取统计数据
+	// 表格数据加载完成后再拉统计汇总，避免 summary 的全量聚合
+	// 与列表首查并发争抽数据库资源（fetchData 内部已捕获异常，必 resolve）
+	fetchData().then(() => fetchSummary())
 })
 
 const { exporting, exportFile } = useExport({
@@ -728,9 +734,8 @@ const { exporting, exportFile } = useExport({
 					placeholder="模型"
 					allow-search
 					allow-clear
-					:filter-option="false"
+					:filter-option="filterModelOption"
 					style="width: 220px"
-					@search="handleModelSearch"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>

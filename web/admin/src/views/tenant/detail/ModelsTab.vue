@@ -71,10 +71,12 @@ async function fetchTenantModels() {
   }
 }
 
+// 候选模型走专用不分页接口 /admin/models/options：一次拉回全部 active 模型，
+// 不受 /admin/models 的 page_size=100 上限约束（平台模型超 100 个时旧写法会漏模型）
 async function fetchAllModels() {
   try {
-    const res: any = await request.get('/admin/models', { params: { page: 1, page_size: 100, status: 'active' } })
-    allModels.value = res.data?.data?.list || res.data?.list || []
+    const res: any = await request.get('/admin/models/options')
+    allModels.value = res.data?.data?.list || []
   } catch (err: any) {
     console.error('fetchAllModels failed:', err)
   }

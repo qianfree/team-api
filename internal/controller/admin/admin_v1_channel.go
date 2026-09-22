@@ -52,3 +52,6 @@ func (c *ControllerV1) ChannelClone(ctx context.Context, req *v1.ChannelCloneReq
 func (c *ControllerV1) ChannelResetHealth(ctx context.Context, req *v1.ChannelResetHealthReq) (res *v1.ChannelResetHealthRes, err error) {
 	return service.Admin().ResetChannelHealth(ctx, req)
 }
+func (c *ControllerV1) ChannelOptions(ctx context.Context, req *v1.ChannelOptionsReq) (res *v1.ChannelOptionsRes, err error) {
+	return service.Admin().ListChannelOptions(ctx, req)
+}

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -132,6 +133,8 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 		ResultUrl       string      `json:"result_url"`
 		TenantId        int64       `json:"tenant_id"`
 		UserId          int64       `json:"user_id"`
+		PrivateData     string      `json:"private_data"`
+		RequestId       string      `json:"request_id"`
 		SubmitTime      *gtime.Time `json:"submit_time"`
 		StartTime       *gtime.Time `json:"start_time"`
 		FinishTime      *gtime.Time `json:"finish_time"`
@@ -153,6 +156,7 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 		Status:          task.Status,
 		Progress:        task.Progress,
 		ModelName:       task.ModelName,
+		UpstreamModel:   task.UpstreamModel,
 		FailReason:      task.FailReason,
 		PreDeductAmount: task.PreDeductAmount,
 		ActualCost:      task.ActualCost,
@@ -160,13 +164,30 @@ func (s *sAdmin) TaskDetail(ctx context.Context, req *v1.TaskDetailReq) (*v1.Tas
 		ResultURL:       task.ResultUrl,
 		TenantID:        task.TenantId,
 		UserID:          task.UserId,
+		RequestID:       task.RequestId,
 		CreatedAt:       task.CreatedAt.Format("Y-m-d H:i:s"),
 	}
 	if task.SubmitTime != nil {
 		item.SubmitTime = task.SubmitTime.Format("Y-m-d H:i:s")
 	}
+	if task.StartTime != nil {
+		item.StartTime = task.StartTime.Format("Y-m-d H:i:s")
+	}
 	if task.FinishTime != nil {
 		item.FinishTime = task.FinishTime.Format("Y-m-d H:i:s")
+	}
+
+	// 从 private_data 提取上游排障标识：仅取 upstream_task_id / upstream_request_id 两个键，
+	// 计费上下文等其余内部数据不外露（同步图片任务无上游任务 ID，两字段为空）
+	if task.PrivateData != "" {
+		var pd struct {
+			UpstreamTaskID    string `json:"upstream_task_id"`
+			UpstreamRequestID string `json:"upstream_request_id"`
+		}
+		if json.Unmarshal([]byte(task.PrivateData), &pd) == nil {
+			item.UpstreamTaskID = pd.UpstreamTaskID
+			item.UpstreamRequestID = pd.UpstreamRequestID
+		}
 	}
 
 	// 对 re-host 到对象存储的结果图，生成新鲜的缩略图 URL 供详情弹窗内联预览，并刷新原图 URL

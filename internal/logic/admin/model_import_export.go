@@ -401,6 +401,12 @@ func (s *sAdmin) ImportModels(ctx context.Context, req *v1.ModelImportReq) (*v1.
 		}
 		return nil
 	})
+	if err != nil {
+		return res, err
+	}
 
-	return res, err
+	// 导入含新建 / 更新模型，逐条失效太碎，事务提交后整体失效一次下拉缓存
+	InvalidateModelOptionsCache(ctx)
+
+	return res, nil
 }

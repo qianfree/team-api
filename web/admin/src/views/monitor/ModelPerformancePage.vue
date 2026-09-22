@@ -27,11 +27,12 @@ const modelOptions = ref<{ label: string; value: string }[]>([])
 const expandedRows = ref<Set<string>>(new Set())
 const expandLoading = ref<Set<string>>(new Set())
 const channelData = ref<Map<string, any[]>>(new Map())
-// 渠道下拉数据：渠道量级为几十，一次性拉全量（后端分页限制最大 100）
+// 渠道下拉数据：专用不分页接口 /admin/channels/options，返回全部渠道（含已停用）。
+// 不用 /admin/channels——那是渠道管理列表（分页 + 健康度联表 + 运行态 + 上限 100 条）。
 async function fetchChannelOptions() {
   try {
-    const res: any = await request.get('/admin/channels', { params: { page: 1, page_size: 100 } })
-    channelOptions.value = (res.data?.data?.list || res.data?.list || []).map((c: any) => ({
+    const res: any = await request.get('/admin/channels/options')
+    channelOptions.value = (res.data?.data?.list || []).map((c: any) => ({
       label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
       value: c.id,
     }))

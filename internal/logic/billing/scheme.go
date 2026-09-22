@@ -110,9 +110,33 @@ func (GenericScheme) ValidateSchemeConfig(cfg json.RawMessage) error {
 	return nil
 }
 
-// SettleTaskCost 通用引擎无素材计量语义：忽略 usage，回退预扣口径
-// （与 estimateTaskCost 的估算公式一致，结算保持「预扣即终价，token 重算另走 RecalculateByTokens」）。
-func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]any, _ *rcommon.TaskMaterialUsage) decimal.Decimal {
+// SettleTaskCost 通用引擎的结算口径：
+//   - per_second（按秒计费）：上游返回实际输出秒数（usage.OutputSeconds > 0）时按
+//     「实际秒数 × 矩阵单价 × 租户乘数 × 时段乘数」结算，多退少补——查价键优先
+//     usage.Resolution（实际输出分辨率，如阿里 wan3.0 usage.SR），回退 ratios 的
+//     spec.resolution（提交时请求档位）。实际时长与请求时长不一致（智能时长模式、
+//     上游按内容微调）时以官方计量为准；usage 缺失回退预扣口径。
+//   - 其余模式（token / per_request / tiered）无素材计量语义：忽略 usage，回退预扣口径
+//     （与 estimateTaskCost 的估算公式一致，结算保持「预扣即终价，token 重算另走 RecalculateByTokens」）。
+func (g GenericScheme) SettleTaskCost(pricing *PricingResult, ratios map[string]any, usage *rcommon.TaskMaterialUsage) decimal.Decimal {
+	if pricing.BillingMode == "per_second" && usage != nil && usage.OutputSeconds > 0 {
+		duration := usage.OutputSeconds
+		// 结算秒数钳制上限与预扣一致，防御异常大值刷扣
+		if duration > maxTaskDurationSeconds {
+			duration = maxTaskDurationSeconds
+		}
+		spec, _ := ratioString(ratios, "spec.resolution")
+		if usage.Resolution != "" {
+			spec = usage.Resolution
+		}
+		if price := LookupPerSecondPrice(pricing.PerSecondPrices, spec); price > 0 {
+			return NewFromFloat(price).
+				Mul(NewFromFloat(duration)).
+				Mul(NewFromFloat(pricing.TenantMultiplier)).
+				Mul(NewFromFloat(effectiveTimeMultiplier(pricing)))
+		}
+		// 矩阵为空/全零：落到下方回退（占位/预扣口径），与预扣分支的兜底行为一致
+	}
 	return g.EstimateTaskCost(pricing, ratios, nil)
 }
 

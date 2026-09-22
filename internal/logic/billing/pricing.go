@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -110,6 +111,15 @@ func LookupPerSecondPrice(prices map[string]float64, spec string) float64 {
 	}
 	if p, ok := prices[spec]; ok && p > 0 {
 		return p
+	}
+	// 大小写不敏感兜底：配置键形态因供应商词汇而异（"720p" vs "720P"），
+	// 语义同档应优先于 "*" 通配回退，防止大写上报查不中而按兜底价计费
+	if lower := strings.ToLower(spec); lower != "" {
+		for k, p := range prices {
+			if strings.ToLower(k) == lower && p > 0 {
+				return p
+			}
+		}
 	}
 	if p, ok := prices[perSecondWildcard]; ok && p > 0 {
 		return p

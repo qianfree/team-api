@@ -51,6 +51,24 @@ type ChannelItem struct {
 	WorstModelScore          float64  `json:"worst_model_score"`
 }
 
+// ChannelOptionsReq 渠道选项列表请求（下拉选择专用，不分页）
+type ChannelOptionsReq struct {
+	g.Meta `path:"/channels/options" method:"get" mime:"json" tags:"管理后台-渠道" summary:"渠道选项列表（不分页）"`
+}
+
+// ChannelOptionsRes 渠道选项列表响应
+type ChannelOptionsRes struct {
+	List []ChannelOptionItem `json:"list"`
+}
+
+// ChannelOptionItem 渠道选项项（精简字段）
+type ChannelOptionItem struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Type   int    `json:"type"`
+	Status string `json:"status"`
+}
+
 // ChannelCreateReq 创建渠道请求
 type ChannelCreateReq struct {
 	g.Meta                   `path:"/channels" method:"post" mime:"json" tags:"管理后台-渠道" summary:"创建渠道"`
