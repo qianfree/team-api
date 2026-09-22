@@ -438,9 +438,11 @@ func (b *TaskBillingProviderImpl) RecalculateByMaterials(ctx context.Context, te
 		// 取价失败不阻断结算（调用方回落预扣金额），仅返回 ok=false
 		return Zero, false, err
 	}
-	// 仅显式配置了计费方案的模型适用：generic 任务保持「预扣即终价」不被重估
-	// （素材计费语义由方案声明，未声明素材的模型不应因 usage 附带字段改变结算来源）
-	if pricing.Scheme == "" {
+	// 仅显式配置了计费方案、或 generic per_second（消费上游实际输出秒数结算）的模型适用：
+	// 其余 generic 任务保持「预扣即终价」不被重估（素材计费语义由方案声明，未声明素材的
+	// 模型不应因 usage 附带字段改变结算来源）。per_second 放行是安全的：存量按秒渠道
+	// （kling/volcengine/sora）适配器均不产出 MaterialUsage，结算链路到不了这里，行为不变
+	if pricing.Scheme == "" && pricing.BillingMode != "per_second" {
 		return Zero, false, nil
 	}
 	costD := LookupScheme(pricing.Scheme).SettleTaskCost(pricing, ratios, usage)

@@ -84,6 +84,7 @@ type TaskMaterialUsage struct {
 	InputImageCount   int     // 输入图片张数
 	InputAudioSeconds float64 // 输入音频时长（秒）
 	OutputSeconds     float64 // 输出（生成）时长（秒）
+	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
 }
 
 // TaskStatusEnum 任务状态枚举
