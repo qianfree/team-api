@@ -29,12 +29,12 @@
           </svg>
           模型广场
         </router-link>
-        <router-link class="nav__link" :to="{ name: 'TenantHelpCenter' }">
+        <a class="nav__link" href="https://docs.team-api.net" target="_blank" rel="noopener noreferrer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
           </svg>
           文档
-        </router-link>
+        </a>
         <a class="nav__link" href="https://github.com/qianfree/team-api" target="_blank" rel="noopener noreferrer">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.02 3.26 9.28 7.78 10.79.57.1.78-.25.78-.55v-2.1c-3.17.69-3.84-1.35-3.84-1.35-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.7.08-.7 1.14.08 1.74 1.17 1.74 1.17 1.02 1.75 2.67 1.24 3.32.95.1-.74.4-1.24.72-1.53-2.53-.29-5.2-1.27-5.2-5.63 0-1.24.44-2.26 1.17-3.06-.12-.29-.51-1.45.11-3.02 0 0 .95-.3 3.13 1.17a10.9 10.9 0 015.7 0c2.17-1.47 3.12-1.17 3.12-1.17.62 1.57.23 2.73.12 3.02.73.8 1.17 1.82 1.17 3.06 0 4.37-2.68 5.34-5.22 5.62.41.35.77 1.05.77 2.12v3.14c0 .3.2.66.79.55A11.51 11.51 0 0023.5 12C23.5 5.73 18.27.5 12 .5z"/>
@@ -93,7 +93,7 @@
               <path d="M5 12h13M12.5 5.5L19 12l-6.5 6.5"/>
             </svg>
           </router-link>
-          <router-link class="btn btn--ghost btn--lg" :to="{ name: 'TenantHelpCenter' }">查看接入文档</router-link>
+          <a class="btn btn--ghost btn--lg" href="https://docs.team-api.net" target="_blank" rel="noopener noreferrer">查看接入文档</a>
           <span class="hint">无需信用卡</span>
         </div>
 
@@ -971,9 +971,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   width: 34px; height: 34px; border-radius: 10px;
   display: grid; place-items: center;
   border: 1px solid var(--panel-line); color: var(--text-dim);
-  transition: color .2s, border-color .2s, background .2s, transform .3s var(--ease-out);
+  transition: color .2s, background .2s;
 }
-.icon-btn:hover { color: var(--text); background: var(--panel); border-color: rgba(var(--glow-a), .45); transform: rotate(22deg); }
+/* 悬停只做轻微高亮：不加边框色、不旋转 */
+.icon-btn:hover { color: var(--text); background: var(--panel); }
 .icon-btn svg { width: 16px; height: 16px; }
 
 .btn {
