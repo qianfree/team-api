@@ -13,9 +13,9 @@ const routes: RouteRecordRaw[] = [
 		component: () => import('@/views/landing/LandingPage.vue'),
 		meta: {
 				requiresAuth: false,
-				title: 'Team-API — 企业级多租户大模型 API 网关平台 | 开源自托管',
-				description: '开源自托管的企业级多租户大模型 API 网关平台，聚合 40+ 供应商，内置计费引擎、团队管理与渠道调度。',
-				keywords: 'Team-API, 大模型网关, API Gateway, 多租户, OpenAI, Claude, 开源',
+				title: 'Team-API — 团队统一充值、按人分额、用量实时入账 | 企业级多租户 AI 网关',
+				description: '开源自托管的企业级多租户 AI 网关：团队统一充值、按成员与项目分配额度、用量实时入账，预算触线自动熔断。完全兼容 OpenAI SDK，一个 Key 接入所有大模型。',
+				keywords: 'Team-API, 大模型网关, API Gateway, 多租户, 额度管控, 预算熔断, 团队管理, 用量计费, RBAC, 开源, OpenAI 兼容',
 			},
 	},
 	...tenantRoutes,
@@ -42,7 +42,7 @@ router.beforeEach(async (to) => {
 	if (to.meta.title) {
 		await fetchSettings()
 		const siteName = publicSettings.value.site_name || 'Team-API'
-		document.title = to.name === 'TenantHome' ? `${siteName} — 企业级多租户大模型 API 网关平台 | 开源自托管` : `${to.meta.title} — ${siteName}`
+		document.title = to.name === 'TenantHome' ? `${siteName} — 团队统一充值、按人分额、用量实时入账 | 企业级多租户 AI 网关` : `${to.meta.title} — ${siteName}`
 	}
 
 	// Auth pages — always allow
