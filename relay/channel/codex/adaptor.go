@@ -66,15 +66,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // 做模型名映射，并对齐 Codex CLI 剥离官方不兼容字段（store/max_output_tokens/temperature）、补默认 instructions。
 // 以 map 形式操作，保留 Responses 其余字段（input/tools/reasoning 等）原样透传，避免结构体 round-trip 丢字段。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	if constant.RelayMode(info.RelayMode) != constant.RelayModeResponses {
 		return nil, fmt.Errorf("codex only supports Responses mode, got relay mode: %d", info.RelayMode)
 	}

@@ -46,6 +46,8 @@ type (
 		// TenantRequestAuditLogs 分页查询租户的请求审计日志（不含 body，性能优先）
 		TenantRequestAuditLogs(ctx context.Context, req *v1.TenantRequestAuditLogsReq) (*v1.TenantRequestAuditLogsRes, error)
 		TenantRequestAuditLogDetail(ctx context.Context, req *v1.TenantRequestAuditLogDetailReq) (*v1.TenantRequestAuditLogDetailRes, error)
+		// GetRegisterRateLimitStatus 查询当前 IP 的注册限流状态（注册页提示用，公开端点，只读不计数）。
+		GetRegisterRateLimitStatus(ctx context.Context, _ *v1.TenantRegisterRateLimitReq) (*v1.TenantRegisterRateLimitRes, error)
 		// Register handles tenant registration.
 		Register(ctx context.Context, req *v1.TenantRegisterReq) (*v1.TenantRegisterRes, error)
 		// Login handles tenant user login.
@@ -66,6 +68,16 @@ type (
 		WalletTransactions(ctx context.Context, req *v1.TenantWalletTransactionsReq) (*v1.TenantWalletTransactionsRes, error)
 		// UsageLogs 获取租户用量日志
 		UsageLogs(ctx context.Context, req *v1.TenantUsageLogsReq) (*v1.TenantUsageLogsRes, error)
+		// UsageLogDetail 获取单条用量日志详情：列表白名单 + 仅详情展示的字段
+		// （request_id / task_id / billing_summary / error_message / user_agent 等）。
+		// 平台侧敏感字段（upstream_model、account_cost、upstream_endpoint、billing_snapshot）
+		// 与列表同样禁止返回。member 角色只能查看自己的记录。
+		// 性能：bil_usage_logs 按 created_at 月分区，仅按 id 查询无法分区裁剪，为各分区
+		// Append 索引探测（见管理后台 GetUsageLogDetail 注释），当前量级可接受。
+		UsageLogDetail(ctx context.Context, req *v1.TenantUsageLogDetailReq) (*v1.TenantUsageLogDetailRes, error)
+		// UsageLogsSummary 用量日志统计汇总（与 UsageLogs 共用筛选口径：强制 tenant_id 隔离，
+		// member 角色只能统计自己的日志；总费用与租户端列表费用列同口径：actual_cost 优先，0/NULL 回退 total_cost）
+		UsageLogsSummary(ctx context.Context, req *v1.TenantUsageLogsSummaryReq) (*v1.TenantUsageLogsSummaryRes, error)
 		// ExportUsageLogs exports the tenant usage logs as CSV or Excel.
 		ExportUsageLogs(ctx context.Context, req *v1.TenantUsageLogsExportReq) (*v1.TenantUsageLogsExportRes, error)
 		// ExportWalletTransactions exports the tenant wallet transactions as CSV or Excel.
@@ -150,6 +162,10 @@ type (
 		// UpdateMemberRole updates a member's role.
 		UpdateMemberRole(ctx context.Context, req *v1.TenantMemberUpdateRoleReq) (*v1.TenantMemberUpdateRoleRes, error)
 		// ResetMemberPassword resets a member's password. Only admins can reset other members' passwords.
+		//
+		// 角色校验此前缺失：只挡了「不能重置自己」和「不能重置 owner」，任意 member 都能改掉
+		// 同组织 admin 的密码并登录该账号，等于组织内横向提权。与相邻的 UnlockMember /
+		// RemoveMember / UpdateMemberRole 保持同一道闸门。
 		ResetMemberPassword(ctx context.Context, req *v1.TenantMemberResetPasswordReq) (*v1.TenantMemberResetPasswordRes, error)
 		// UnlockMember 解除成员登录锁定。仅 owner/admin 可操作；租户隔离双键校验。
 		UnlockMember(ctx context.Context, req *v1.TenantMemberUnlockReq) (*v1.TenantMemberUnlockRes, error)
@@ -163,6 +179,9 @@ type (
 		// 导出列与成员列表页表格保持一致（用户/角色/状态/额度限制/可用模型/本月消费/加入时间/最后更新）。
 		ExportMembers(ctx context.Context, req *v1.TenantMemberExportReq) (*v1.TenantMemberExportRes, error)
 		// MemberImport parses CSV content, validates, creates an import record.
+		//
+		// 角色校验此前缺失：批量导入会直接创建租户成员账号（并按套餐占用席位），
+		// 与 MemberCreate / MemberInvite 是同一类动作，必须同为 owner/admin。
 		MemberImport(ctx context.Context, req *v1.TenantMemberImportReq) (*v1.TenantMemberImportRes, error)
 		// ImportRecords returns a paginated list of import records.
 		ImportRecords(ctx context.Context, req *v1.TenantImportRecordsReq) (*v1.TenantImportRecordsRes, error)
@@ -258,8 +277,6 @@ type (
 		PlanCurrent(ctx context.Context, req *v1.TenantPlanCurrentReq) (*v1.TenantPlanCurrentRes, error)
 		// PlanCancelAutoRenew 取消自动续费
 		PlanCancelAutoRenew(ctx context.Context, req *v1.TenantPlanCancelAutoRenewReq) (*v1.TenantPlanCancelAutoRenewRes, error)
-		SandboxChat(ctx context.Context, req *v1.SandboxChatReq) (*v1.SandboxChatRes, error)
-		SandboxQuota(ctx context.Context, req *v1.SandboxQuotaReq) (*v1.SandboxQuotaRes, error)
 		TenantPluginList(ctx context.Context, req *v1.TenantPluginListReq) (*v1.TenantPluginListRes, error)
 		TenantPluginDetail(ctx context.Context, req *v1.TenantPluginDetailReq) (*v1.TenantPluginDetailRes, error)
 		TenantPluginConfigUpdate(ctx context.Context, req *v1.TenantPluginConfigUpdateReq) (*v1.TenantPluginConfigUpdateRes, error)
@@ -274,6 +291,9 @@ type (
 		// ProjectArchive archives a project and revokes all its keys.
 		ProjectArchive(ctx context.Context, req *v1.TenantProjectArchiveReq) (*v1.TenantProjectArchiveRes, error)
 		// ProjectUnarchive restores an archived project. Keys are NOT auto-restored.
+		//
+		// 角色校验此前缺失：Create/Update/Archive 都要求 owner/admin，唯独恢复归档没拦，
+		// 任意 member 都能把管理员刚归档的项目恢复回来（归档是治理动作，撤销它同样是）。
 		ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUnarchiveReq) (*v1.TenantProjectUnarchiveRes, error)
 		// ProjectGet 根据 ID 获取单个项目详情（含统计摘要）
 		ProjectGet(ctx context.Context, req *v1.TenantProjectGetReq) (*v1.TenantProjectGetRes, error)

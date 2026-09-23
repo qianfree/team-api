@@ -8,7 +8,8 @@ import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
 import request from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
-import { formatBilling, formatOrder, displayCurrency, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
+import { formatBilling, formatOrder, displayCurrency, currencySymbol, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
+import { createPoller } from '@/composables/usePolling'
 
 const route = useRoute()
 const wallet = ref<any>(null)
@@ -33,7 +34,8 @@ const payResult = ref<'success' | 'fail' | 'processing' | ''>('')
 const showFrozenModal = ref(false)
 const frozenItems = ref<any[]>([])
 const frozenLoading = ref(false)
-let frozenTimer: ReturnType<typeof setInterval> | null = null
+// 冻结明细轮询：仅弹窗打开期间运行；页面隐藏时暂停，恢复可见时按剩余时间续排
+const frozenPoller = createPoller(fetchFrozenItems, 10000)
 
 // Redeem
 const showRedeemModal = ref(false)
@@ -210,15 +212,12 @@ async function fetchFrozenItems() {
 function openFrozenModal() {
 	showFrozenModal.value = true
 	fetchFrozenItems()
-	frozenTimer = setInterval(fetchFrozenItems, 10000)
+	frozenPoller.start()
 }
 
 function closeFrozenModal() {
 	showFrozenModal.value = false
-	if (frozenTimer) {
-		clearInterval(frozenTimer)
-		frozenTimer = null
-	}
+	frozenPoller.stop()
 }
 
 async function openRedeemModal() {
@@ -357,9 +356,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-	if (frozenTimer) {
-		clearInterval(frozenTimer)
-	}
+	frozenPoller.stop()
 })
 </script>
 
@@ -513,12 +510,12 @@ onBeforeUnmount(() => {
 								@click="selectPresetAmount(amount)"
 							>
 								<!-- amount 为 CNY 原面额：本位币 USD 时按汇率折算展示 -->
-								<span><small>{{ displayCurrency === 'CNY' ? '¥' : '$' }}</small>{{ cnyToDisplay(amount) }}</span>
+								<span><small>{{ currencySymbol }}</small>{{ cnyToDisplay(amount) }}</span>
 								<em v-if="discountText(amount)">{{ discountText(amount) }}</em>
 							</button>
 						</div>
 						<div class="relative mt-3">
-							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ displayCurrency === 'CNY' ? '¥' : '$' }}</span>
+							<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ currencySymbol }}</span>
 							<n-input-number
 								v-model:value="customAmount"
 								:min="displayMinAmount"
@@ -740,7 +737,7 @@ onBeforeUnmount(() => {
 				<div>
 					<label class="text-xs font-semibold text-slate-600">预警阈值（{{ displayCurrency }}）</label>
 					<div class="relative mt-3">
-						<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ displayCurrency === 'CNY' ? '¥' : '$' }}</span>
+						<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{{ currencySymbol }}</span>
 						<n-input-number
 							v-model:value="thresholdInput"
 							:min="0"

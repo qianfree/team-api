@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 )
@@ -124,8 +126,14 @@ type TenantProjectUsageStatsReq struct {
 	Id     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
+// TenantProjectUsageStatsRes 统计对象平铺进统一响应的 data 字段（json:"-" + 自定义
+// MarshalJSON），避免统一包装后再多包一层 data
 type TenantProjectUsageStatsRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *TenantProjectUsageStatsRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }
 
 type TenantProjectUsageLogsReq struct {

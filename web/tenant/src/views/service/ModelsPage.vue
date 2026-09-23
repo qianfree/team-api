@@ -3,8 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { NInput } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
+import VendorLogo from '@/components/common/VendorLogo.vue'
 import request from '@/utils/request'
 import { formatBilling } from '@/composables/useCurrency'
+import { vendorMetaList, vendorLabel } from '@/constants/vendor'
 
 const router = useRouter()
 
@@ -30,6 +32,7 @@ interface TimePriceItem {
 	input_price?: number | null
 	output_price?: number | null
 	per_request_price?: number | null
+	per_second_price?: number | null
 }
 
 interface ModelItem {
@@ -37,6 +40,8 @@ interface ModelItem {
 	model_id: string
 	model_name: string
 	category: string
+	/** 研发厂商枚举（openai/anthropic/alibaba 等，空串/未设置=未分类） */
+	vendor?: string | null
 	max_context_tokens: number
 	max_output_tokens: number
 	description: string
@@ -44,6 +49,7 @@ interface ModelItem {
 	capabilities: string
 	billing_mode: string | null
 	per_request_price: number | null
+	per_second_prices?: Record<string, number> | null
 	discount_ratio: number | null
 	max_concurrency: number | null
 	input_price: number | null
@@ -108,7 +114,30 @@ const models = ref<ModelItem[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const activeCategory = ref('')
+// 厂商多选：选中的厂商按 OR 过滤，空数组 = 不过滤（全部）
+const activeVendors = ref<string[]>([])
 const expandedPricingId = ref<number | null>(null)
+
+function toggleVendor(vendor: string) {
+	activeVendors.value = activeVendors.value.includes(vendor)
+		? activeVendors.value.filter(v => v !== vendor)
+		: [...activeVendors.value, vendor]
+}
+
+// 平铺厂商项：当前分类+搜索（忽略厂商筛选本身）下有模型的厂商，字典序在前、字典外原值追加；
+// 已选厂商即使当前无匹配模型也保留，避免筛选生效但按钮消失导致无法取消
+const vendorChips = computed(() => {
+	const q = searchQuery.value.toLowerCase()
+	const pool = models.value.filter(m =>
+		(!activeCategory.value || m.category === activeCategory.value)
+		&& (!q || m.model_id.toLowerCase().includes(q) || m.model_name.toLowerCase().includes(q)))
+	const available = new Set(pool.map(m => m.vendor).filter((v): v is string => !!v))
+	for (const v of activeVendors.value) available.add(v)
+	const knownValues = new Set(vendorMetaList.map(v => v.value))
+	const known = vendorMetaList.filter(v => available.has(v.value)).map(v => ({ value: v.value, label: v.label }))
+	const unknown = [...available].filter(v => !knownValues.has(v)).map(v => ({ value: v, label: vendorLabel(v) }))
+	return [...known, ...unknown]
+})
 
 function togglePricingExpand(id: number) {
 	expandedPricingId.value = expandedPricingId.value === id ? null : id
@@ -120,6 +149,7 @@ const categories = [
 	{ value: 'embedding', label: '嵌入' },
 	{ value: 'image', label: '图像' },
 	{ value: 'audio', label: '语音' },
+	{ value: 'video', label: '视频' },
 	{ value: 'rerank', label: '重排' },
 ]
 
@@ -128,6 +158,7 @@ const categoryLabel: Record<string, string> = {
 	embedding: '嵌入',
 	image: '图像',
 	audio: '语音',
+	video: '视频',
 	rerank: '重排',
 }
 
@@ -136,6 +167,7 @@ const categoryBadgeStyle: Record<string, string> = {
 	embedding: 'background:rgba(139,92,246,0.1);color:#7c3aed',
 	image: 'background:rgba(245,158,11,0.1);color:#d97706',
 	audio: 'background:rgba(16,185,129,0.1);color:#059669',
+	video: 'background:rgba(244,63,94,0.1);color:#e11d48',
 	rerank: 'background:rgba(107,114,128,0.1);color:#4b5563',
 }
 
@@ -143,6 +175,9 @@ const filteredModels = computed(() => {
 	let result = models.value
 	if (activeCategory.value) {
 		result = result.filter((m) => m.category === activeCategory.value)
+	}
+	if (activeVendors.value.length) {
+		result = result.filter((m) => !!m.vendor && activeVendors.value.includes(m.vendor))
 	}
 	if (searchQuery.value) {
 		const q = searchQuery.value.toLowerCase()
@@ -185,9 +220,23 @@ function formatTokenRange(min: number, max: number | null): string {
 
 function hasPricing(m: ModelItem): boolean {
 	if (m.billing_mode === 'per_request' && m.per_request_price != null) return true
+	// special（特殊计费）与 per_second 同走输出矩阵判定：矩阵是输出生成组件的参考单价
+	if ((m.billing_mode === 'per_second' || m.billing_mode === 'special') && m.per_second_prices && Object.keys(m.per_second_prices).length > 0) return true
 	if (m.billing_mode === 'token' && (m.input_price != null || m.output_price != null)) return true
 	if (m.billing_mode === 'tiered' && m.pricing_tiers?.length > 0) return true
 	return false
+}
+
+// 按秒计费矩阵 → 排序后的规格列表（480p → 720p → 1080p → 数字序，"*" 兜底档排最后）
+function perSecondEntries(m: ModelItem): Array<[string, number]> {
+	if (!m.per_second_prices) return []
+	return Object.entries(m.per_second_prices)
+		.filter(([, v]) => Number(v) > 0)
+		.sort(([a], [b]) => {
+			if (a === '*') return 1
+			if (b === '*') return -1
+			return a.localeCompare(b, undefined, { numeric: true })
+		})
 }
 
 function getTieredStartPrice(m: ModelItem): string {
@@ -220,6 +269,7 @@ function timeWindow(tp: TimePriceItem): string {
 }
 
 function timePriceText(m: ModelItem, tp: TimePriceItem): string {
+	if (m.billing_mode === 'per_second' || m.billing_mode === 'special') return `${formatPrice(tp.per_second_price ?? null)} /秒`
 	if (m.billing_mode === 'per_request') return `${formatPrice(tp.per_request_price ?? null)} /次`
 	if (m.billing_mode === 'tiered') return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)} 起`
 	return `输入 ${formatPrice(tp.input_price ?? null)} · 输出 ${formatPrice(tp.output_price ?? null)}`
@@ -280,6 +330,39 @@ onMounted(fetchModels)
 					</n-input>
 				</div>
 			</div>
+
+			<!-- 厂商平铺多选：只显示当前条件下有模型的厂商，点选过滤（OR），「全部」清空 -->
+			<div v-if="vendorChips.length" class="flex flex-wrap items-center gap-2 border-t border-gray-100 px-6 pb-4 pt-3">
+				<span class="mr-1 text-xs font-medium text-gray-400">厂商</span>
+				<button
+					type="button"
+					class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-[0.98]"
+					:class="
+						activeVendors.length === 0
+							? 'border-transparent bg-gray-900 text-white'
+							: 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 hover:text-primary-700'
+					"
+					@click="activeVendors = []"
+				>
+					全部
+				</button>
+				<button
+					v-for="vendor in vendorChips"
+					:key="vendor.value"
+					type="button"
+					class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200 active:scale-[0.98]"
+					:class="
+						activeVendors.includes(vendor.value)
+							? 'border-transparent bg-gray-900 text-white'
+							: 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 hover:text-primary-700'
+					"
+					@click="toggleVendor(vendor.value)"
+				>
+					<VendorLogo :vendor="vendor.value" size="xs" />
+					{{ vendor.label }}
+					<Icon v-if="activeVendors.includes(vendor.value)" name="check" size="xs" />
+				</button>
+			</div>
 		</div>
 
 		<!-- Loading -->
@@ -329,8 +412,9 @@ onMounted(fetchModels)
 							</span>
 						</div>
 
-						<!-- Header: Category badge + Model name -->
+						<!-- Header: Vendor logo + Category badge + Model name -->
 						<div class="flex items-center gap-2" :class="{ 'pr-14': m.discount_ratio && m.discount_ratio < 1 }">
+							<VendorLogo :vendor="m.vendor" size="sm" class="shrink-0" />
 							<span
 								class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded"
 								:style="categoryBadgeStyle[m.category] || categoryBadgeStyle.rerank"
@@ -426,6 +510,21 @@ onMounted(fetchModels)
 								<div class="text-xs">
 									<span class="font-semibold text-gray-800">{{ formatPrice(m.per_request_price) }}</span>
 									<span class="text-gray-400"> /次</span>
+								</div>
+							</template>
+
+							<!-- 按秒/特殊计费：分辨率 × 每秒单价矩阵（special 的矩阵为输出生成组件参考单价，
+							     素材组件单价见模型详情的特殊计费说明） -->
+							<template v-else-if="m.billing_mode === 'per_second' || m.billing_mode === 'special'">
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+									<span
+										v-for="([spec, price], idx) in perSecondEntries(m)"
+										:key="idx"
+									>
+										<span class="text-gray-400">{{ spec === '*' ? '其他' : spec }}</span>
+										<span class="ml-1 font-semibold text-gray-800">{{ formatPrice(price) }}</span>
+										<span class="text-gray-400">/秒</span>
+									</span>
 								</div>
 							</template>
 

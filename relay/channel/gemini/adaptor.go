@@ -62,13 +62,18 @@ func (a *Adaptor) isCodeAssistForcedStream() bool {
 		return false
 	}
 	mode := constant.RelayMode(a.info.RelayMode)
-	return mode == constant.RelayModeChatCompletions || mode == constant.RelayModeGeminiChat
+	return mode == constant.RelayModeChatCompletions || mode == constant.RelayModeGeminiChat ||
+		mode == constant.RelayModeClaudeMessages ||
+		mode == constant.RelayModeResponses || mode == constant.RelayModeResponsesCompact
 }
 
 // getRelayAction 获取当前 relay 模式对应的 Gemini action 名称
 func (a *Adaptor) getRelayAction(info *common.RelayInfo) (string, error) {
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	// Claude/Responses 入站：矩阵已把请求体转成 Gemini 原生格式，与 chat 入站同走 generateContent
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeClaudeMessages,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return "streamGenerateContent", nil
 		}
@@ -111,7 +116,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	model := info.ChannelMeta.UpstreamModelName
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat:
+	// Claude/Responses 入站：矩阵已把请求体转成 Gemini 原生格式，与 chat 入站同走 generateContent
+	case constant.RelayModeChatCompletions, constant.RelayModeGeminiChat,
+		constant.RelayModeClaudeMessages,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		if info.IsStream {
 			return fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", baseURL, model), nil
 		}
@@ -169,82 +177,15 @@ func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, re
 		return convertImageRequestToChat(requestBody, info)
 	}
 
-	var converted io.Reader
-	switch info.InboundFormat {
-	case constant.RelayFormatGemini:
-		// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
-		cleaned := helper.StripStreamField(requestBody)
-		converted = bytes.NewReader(cleaned)
-	case constant.RelayFormatOpenAI:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatClaude:
-		r, err := ConvertClaudeToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	case constant.RelayFormatResponses:
-		r, err := ConvertResponsesToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
-	default:
-		r, err := ConvertOpenAIToGemini(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		converted = r
+	// OpenAI/Claude/Responses 入站 → Gemini 上游已由 relaykit 转换矩阵接管
+	//（convertRequestBody 在 adaptor 之前完成转换），此处只剩 Gemini 同格式路径
+	//（直连判定未通过时）。矩阵意外未接管时显式报错，避免外格式体静默透传。
+	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatGemini {
+		return nil, constant.NewChannelError(fmt.Sprintf("gemini adaptor: relaykit converter unavailable for %s inbound", info.InboundFormat), nil)
 	}
-
-	// Thinking 后缀路由
-	if info.ThinkingEnabled || info.ReasoningEffort != "" {
-		converted = injectGeminiThinking(converted, info)
-	}
-
-	return converted, nil
-}
-
-// injectGeminiThinking 注入 Gemini thinking 配置
-func injectGeminiThinking(r io.Reader, info *common.RelayInfo) io.Reader {
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return r
-	}
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
-		return bytes.NewReader(body)
-	}
-
-	if info.ThinkingEnabled {
-		// -thinking: 设置 thoughtBudget
-		var maxTokens int
-		if mt, ok := req["maxOutputTokens"]; ok {
-			_ = json.Unmarshal(mt, &maxTokens)
-		}
-		if maxTokens < 128 {
-			maxTokens = 8192
-		}
-		budget := maxTokens * 80 / 100
-		if budget < 128 {
-			budget = 128
-		}
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thoughtBudget":%d,"includeThoughts":true}`, budget))
-	} else if info.ReasoningEffort != "" {
-		// effort 后缀：设置 thinkingLevel
-		req["thinkingConfig"] = json.RawMessage(fmt.Sprintf(`{"thinkingLevel":"%s","includeThoughts":true}`,
-			strings.ToUpper(info.ReasoningEffort)))
-	}
-
-	result, err := json.Marshal(req)
-	if err != nil {
-		return bytes.NewReader(body)
-	}
-	return bytes.NewReader(result)
+	// Gemini 原生格式通过 URL 路径控制流式，body 中的 "stream" 字段会导致上游报错
+	cleaned := helper.StripStreamField(requestBody)
+	return bytes.NewReader(cleaned), nil
 }
 
 // wrapCodeAssistBody 将 Gemini 请求体包装为 Code Assist 格式
@@ -329,16 +270,32 @@ func (a *Adaptor) DoResponse(ctx context.Context, resp *http.Response, info *com
 	switch clientFormat {
 	case constant.RelayFormatGemini:
 		return a.handleGeminiNativeResponse(ctx, resp, info, writer)
+	case constant.RelayFormatClaude:
+		// Claude 入站（请求侧走 relaykit Claude→Gemini 转换）：响应必须转回 Claude Messages 格式，
+		// 否则 Anthropic SDK 拿到 OpenAI chunk 解析失败
+		if info.IsStream {
+			return a.handleStreamToClaude(ctx, resp, info, writer)
+		}
+		return a.handleNonStreamToClaude(ctx, resp, info, writer)
 	case constant.RelayFormatOpenAI:
 		if info.IsStream {
 			return a.handleStreamToOpenAI(ctx, resp, info, writer)
 		}
 		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
-	default:
+	case constant.RelayFormatResponses:
+		// Responses 入站（请求侧走 relaykit Responses→Gemini 转换）：响应必须转回 Responses 格式，
+		// 否则客户端拿到 chat chunk 解析失败
 		if info.IsStream {
-			return a.handleStreamToOpenAI(ctx, resp, info, writer)
+			return a.handleStreamToResponses(ctx, resp, info, writer)
 		}
-		return a.handleNonStreamToOpenAI(ctx, resp, info, writer)
+		return a.handleNonStreamToResponses(ctx, resp, info, writer)
+	default:
+		// openai / claude / gemini / responses 四种入站格式均已显式处理
+		//（见 relay_handler.go 的 relayModeToInboundFormat）。走到这里说明新增了客户端格式
+		// 却漏接响应侧转换——显式失败，而不是静默按 OpenAI 格式写出让客户端 SDK 解析失败
+		//（claude / responses 两个缺口此前正是这样被掩盖的）。
+		return nil, constant.NewChannelError(
+			fmt.Sprintf("gemini adaptor: unsupported client format %q", clientFormat), nil)
 	}
 }
 
@@ -492,6 +449,20 @@ func (a *Adaptor) handleCodeAssistAggregatedStream(ctx context.Context, resp *ht
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(respBody)
+	case constant.RelayFormatClaude:
+		claudeResp := geminiToClaudeResponse(&aggregated, info)
+		respBody, _ := json.Marshal(claudeResp)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
+	case constant.RelayFormatResponses:
+		respBody, _, err := buildResponsesBodyFromGemini(&aggregated, info)
+		if err != nil {
+			return nil, err
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(respBody)
 	default:
 		openaiResp := geminiToOpenAIResponse(&aggregated, info)
 		respBody, _ := json.Marshal(openaiResp)
@@ -509,10 +480,11 @@ func appendToolCall(toolCalls []dto.ToolCall, idx *int, part dto.GeminiPart) []d
 		return toolCalls
 	}
 	argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
+	i := *idx
 	tc := dto.ToolCall{
 		ID:    fmt.Sprintf("call_%d", *idx),
 		Type:  "function",
-		Index: *idx,
+		Index: &i,
 		Function: dto.FunctionCall{
 			Name:      part.FunctionCall.FunctionName,
 			Arguments: string(argsJSON),

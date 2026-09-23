@@ -170,6 +170,9 @@ type UsageRecord struct {
 	// 其他 token
 	ImageOutputTokens int // 图像输出 token（DALL-E）
 
+	// 按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 0
+	DurationSeconds int
+
 	// 请求元数据
 	RequestedModel   string // 用户请求的模型名
 	UpstreamModel    string // 上游实际模型名
@@ -181,6 +184,11 @@ type UsageRecord struct {
 	ReasoningEffort  string
 	InboundEndpoint  string // 客户端请求路径
 	UpstreamEndpoint string // 上游实际请求路径
+
+	// 上游请求 ID：对话=上游响应头中的请求 ID（ExtractUpstreamRequestID 提取）；
+	// 任务=上游提交响应体中的任务 ID（tsk_model_tasks.private_data 的 upstream_task_id）。
+	// 排障时凭此 ID 在上游日志中定位同一次调用；上游未返回时为空。
+	UpstreamRequestID string
 
 	// 渠道详情
 	ChannelName string

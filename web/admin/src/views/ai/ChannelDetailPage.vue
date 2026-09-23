@@ -75,6 +75,7 @@ const editForm = reactive({
   status: 'active',
   is_vip: false,
   use_proxy: false,
+  web_search_to_google_search: false,
   sharing_threshold: null as number | null,
   preemption_threshold: null as number | null,
   borrowing_cooldown_seconds: null as number | null,
@@ -96,6 +97,7 @@ function openEditModal() {
     status: detail.value.status || 'active',
     is_vip: detail.value.is_vip || false,
     use_proxy: detail.value.use_proxy || false,
+    web_search_to_google_search: detail.value.web_search_to_google_search || false,
     sharing_threshold: detail.value.sharing_threshold ?? null,
     preemption_threshold: detail.value.preemption_threshold ?? null,
     borrowing_cooldown_seconds: detail.value.borrowing_cooldown_seconds ?? null,
@@ -337,7 +339,7 @@ function renderHealthBadge(record: any) {
 // 新增：重置模型级健康
 async function handleResetModelHealth(record: any) {
   try {
-    await request.post(`/admin/channels/${channelId}/reset_health`, {
+    await request.post(`/admin/channels/${channelId}/reset-health`, {
       model_name: record.model_name,
     })
     Message.success(`模型 ${record.model_name} 健康已重置`)
@@ -610,7 +612,7 @@ async function openDebugDetail(row: any) {
   debugDetail.value = null
   try {
     const res: any = await request.get(`/admin/channels/${channelId}/debug-logs/${row.id}`)
-    debugDetail.value = res.data?.data?.data || null
+    debugDetail.value = res.data?.data || null
   } catch {
     debugDetail.value = null
   } finally {
@@ -1104,6 +1106,12 @@ function formatHeaders(headers: Record<string, string>): string {
                   <ATag v-if="detail.use_proxy" color="arcoblue" size="small">已启用</ATag>
                   <span v-else>-</span>
                 </ADescriptionsItem>
+                <ADescriptionsItem label="搜索映射">
+                  <ATooltip content="将客户端的 web_search 工具映射为 Gemini 原生 googleSearch（仅 Gemini 上游生效，搜索按次另行计价）">
+                    <ATag v-if="detail.web_search_to_google_search" color="arcoblue" size="small">googleSearch</ATag>
+                    <span v-else>-</span>
+                  </ATooltip>
+                </ADescriptionsItem>
                 <ADescriptionsItem label="创建时间">{{ detail.created_at }}</ADescriptionsItem>
                 <ADescriptionsItem label="更新时间">{{ detail.updated_at }}</ADescriptionsItem>
                 <ADescriptionsItem v-if="detail.remark" label="备注" :span="2">{{ detail.remark }}</ADescriptionsItem>
@@ -1520,6 +1528,11 @@ function formatHeaders(headers: Record<string, string>): string {
           <ACol :span="12">
             <AFormItem label="使用代理">
               <ASwitch v-model="editForm.use_proxy" />
+            </AFormItem>
+          </ACol>
+          <ACol :span="12">
+            <AFormItem label="web_search → googleSearch" tooltip="将客户端的 web_search 工具映射为 Gemini 原生 googleSearch。仅 Gemini 上游生效；搜索在 token 之外按次计价，确认上游账单口径后再开启">
+              <ASwitch v-model="editForm.web_search_to_google_search" />
             </AFormItem>
           </ACol>
         </ARow>

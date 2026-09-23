@@ -2,8 +2,10 @@
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { NInput } from 'naive-ui'
 import { createPlaygroundApi } from '@/utils/playgroundApi'
+import { createPoller } from '@/composables/usePolling'
 import { calculateCost } from './calculateCost'
 import ParamRefModal from './ParamRefModal.vue'
+import GenerationProgressCard from './GenerationProgressCard.vue'
 import Icon from '@/components/common/Icon.vue'
 import BaseSelect from '../../../components/common/BaseSelect.vue'
 
@@ -42,6 +44,9 @@ const selectedModelItem = computed(() =>
 )
 const prompt = ref('')
 const modelOptions = computed(() => props.models.map(m => ({ value: m.model_id, label: m.model_name || m.model_id })))
+
+// 空态里展示的模型名（列表由父组件异步加载，可能暂时查不到）
+const selectedModelName = computed(() => selectedModelItem.value?.model_name || selectedModel.value)
 
 // ── 自定义参数系统 ──
 
@@ -144,6 +149,21 @@ function applyDefaults() {
 	}
 }
 
+// 参数值输入框的引导占位：无预设时默认给的是空值，直接显示「值」用户不知道填什么，
+// 按参数名给出常见取值示例
+const PARAM_HINTS: Record<string, string> = {
+	size: '如 1024x1024',
+	quality: '如 high / medium / low',
+	style: '如 vivid / natural',
+	response_format: '如 url / b64_json',
+	output_format: '如 png / jpeg / webp',
+	background: '如 transparent / opaque',
+}
+
+function paramPlaceholder(key: string) {
+	return PARAM_HINTS[key.trim()] || '值'
+}
+
 // 切换模型时自动应用预设，无预设则显示默认参数项
 watch(selectedModel, () => {
 	const preset = currentPreset.value
@@ -188,8 +208,9 @@ interface AsyncTask {
 }
 const asyncTask = ref<AsyncTask | null>(null)
 const polling = ref(false)
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-// 轮询上限：100 次 × 3s ≈ 5 分钟，超过判定超时，防止无限轮询。
+// 任务状态轮询：页面隐藏时暂停（任务在服务端继续执行），恢复可见时立即补拉
+const taskPoller = createPoller(pollLoop, 3000, { immediate: true })
+// 轮询上限：100 次实际轮询 ≈ 5 分钟（页面隐藏期间不计数），超过判定超时，防止无限轮询。
 const MAX_POLL_ATTEMPTS = 100
 let pollAttempts = 0
 
@@ -201,14 +222,20 @@ const statusLabel: Record<string, string> = {
 	SUCCESS: '已完成',
 	FAILURE: '失败',
 }
-const statusColor: Record<string, string> = {
-	SUBMITTED: 'badge-primary',
-	IN_PROGRESS: 'badge-warning',
-	NOT_START: 'badge-gray',
-	QUEUED: 'badge-gray',
-	SUCCESS: 'badge-success',
-	FAILURE: 'badge-danger',
-}
+
+// 结果卡右上角的状态徽标（无任务且无错误时不渲染）
+const resultStatus = computed<{ label: string; cls: string } | null>(() => {
+	if (errorMessage.value) return { label: '失败', cls: 'badge-danger' }
+	if (sending.value) {
+		return { label: effectiveMode.value === 'async' ? '提交中' : '生成中', cls: 'badge-primary' }
+	}
+	if (asyncTask.value) {
+		if (asyncTask.value.status === 'SUCCESS') return { label: '已完成', cls: 'badge-success' }
+		if (asyncTask.value.status === 'FAILURE') return { label: '失败', cls: 'badge-danger' }
+		return { label: statusLabel[asyncTask.value.status] || asyncTask.value.status, cls: 'badge-warning' }
+	}
+	return null
+})
 
 // 切换模型时停止上一模型的轮询并清空结果，重置模式为默认（异步）
 watch(selectedModel, () => {
@@ -312,15 +339,12 @@ async function generateSync(api: ReturnType<typeof createPlaygroundApi>, body: R
 function startPolling() {
 	polling.value = true
 	pollAttempts = 0
-	pollLoop()
+	taskPoller.start()
 }
 
 function stopPolling() {
 	polling.value = false
-	if (pollTimer) {
-		clearTimeout(pollTimer)
-		pollTimer = null
-	}
+	taskPoller.stop()
 }
 
 async function pollLoop() {
@@ -329,7 +353,7 @@ async function pollLoop() {
 	// 轮询次数上限保护：超过上限（约 5 分钟）判定为超时，停止轮询并提示，
 	// 避免上游卡死 / 后端漏推终态时前端无限轮询。
 	if (pollAttempts >= MAX_POLL_ATTEMPTS) {
-		polling.value = false
+		stopPolling()
 		asyncTask.value = {
 			...asyncTask.value,
 			status: 'FAILURE',
@@ -352,7 +376,7 @@ async function pollLoop() {
 		}
 
 		if (data.status === 'SUCCESS') {
-			polling.value = false
+			stopPolling()
 			// 多图：优先用 data 数组渲染全部图片；回退到单 url（向后兼容旧后端）。
 			if (Array.isArray(data.data) && data.data.length > 0) {
 				images.value = data.data
@@ -364,15 +388,11 @@ async function pollLoop() {
 			return
 		}
 		if (data.status === 'FAILURE') {
-			polling.value = false
+			stopPolling()
 			return
 		}
 	} catch {
 		// 轮询失败不中断，继续尝试
-	}
-
-	if (polling.value) {
-		pollTimer = setTimeout(pollLoop, 3000)
 	}
 }
 
@@ -414,232 +434,261 @@ function closeZoom() {
 </script>
 
 <template>
-	<div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
-		<div class="lg:col-span-2">
-			<div class="card sticky top-6">
-				<div class="card-header">
-					<h3 class="text-sm font-semibold text-gray-900">图片生成参数</h3>
-				</div>
-				<div class="card-body space-y-4">
-					<!-- 模型 -->
-					<div>
-						<label class="input-label">模型</label>
-						<BaseSelect v-model="selectedModel" :options="modelOptions" />
-						<!-- 调用模式：两种都可用时让用户切换，否则锁定唯一可用模式 -->
-						<div class="mt-2">
-							<div v-if="canToggleMode" class="flex items-center gap-2">
-								<div class="tabs">
-									<button
-										class="tab"
-										:class="{ 'tab-active': imageMode === 'async' }"
-										@click="imageMode = 'async'"
-									>异步</button>
-									<button
-										class="tab"
-										:class="{ 'tab-active': imageMode === 'sync' }"
-										@click="imageMode = 'sync'"
-									>同步</button>
+	<!-- 与对话/视频 Tab 同一套等高布局：左参数栏内部滚动，主操作常驻底部，右结果区撑满 -->
+	<div class="flex flex-col lg:h-[calc(100vh-15rem)] lg:overflow-hidden">
+		<div class="grid grid-cols-1 gap-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:min-h-0 lg:flex-1">
+			<!-- Left: 参数 -->
+			<div class="flex lg:min-h-0">
+				<div class="card flex w-full flex-col overflow-hidden lg:h-full">
+					<div class="flex shrink-0 items-center gap-2 border-b border-gray-100 px-4 py-3">
+						<Icon name="photo" size="sm" class="text-primary-500" />
+						<h3 class="text-sm font-semibold text-gray-900">图片生成参数</h3>
+					</div>
+
+					<div class="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+						<!-- 模型 + 调用模式 -->
+						<div>
+							<div class="mb-2 flex items-center justify-between">
+								<label class="text-xs font-semibold text-gray-500">模型</label>
+								<span class="text-[11px] text-gray-400">共 {{ models.length }} 个可用</span>
+							</div>
+							<BaseSelect v-model="selectedModel" :options="modelOptions" />
+
+							<!-- 调用模式：两种都可用时让用户切换，否则锁定唯一可用模式 -->
+							<div class="mt-2">
+								<div v-if="canToggleMode" class="flex items-center justify-between gap-2">
+									<div class="tabs">
+										<button
+											class="tab"
+											:class="{ 'tab-active': imageMode === 'async' }"
+											@click="imageMode = 'async'"
+										>异步</button>
+										<button
+											class="tab"
+											:class="{ 'tab-active': imageMode === 'sync' }"
+											@click="imageMode = 'sync'"
+										>同步</button>
+									</div>
+									<span class="text-[11px] text-gray-400">
+										{{ imageMode === 'async' ? '提交后轮询取图' : '一次性返回' }}
+									</span>
 								</div>
-								<span class="text-xs text-gray-500">
-									{{ imageMode === 'async' ? '提交后轮询取图' : '一次性返回，等待较久' }}
-								</span>
-							</div>
-							<div v-else class="flex items-center gap-1.5">
-								<span class="badge" :class="effectiveMode === 'async' ? 'badge-warning' : 'badge-gray'">
-									{{ effectiveMode === 'async' ? '异步' : '同步' }}
-								</span>
-								<span class="text-xs text-gray-500">
-									{{ effectiveMode === 'async' ? '该模型仅支持异步（提交后轮询）' : '该模型仅支持同步（一次性返回）' }}
-								</span>
-							</div>
-						</div>
-					</div>
-
-					<!-- 提示词 -->
-					<div>
-						<label class="input-label">提示词</label>
-						<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的图片..." />
-					</div>
-
-					<!-- 自定义参数 -->
-					<div class="border-t border-gray-100 pt-4">
-						<div class="flex items-center justify-between mb-3">
-							<div class="flex items-center gap-2">
-								<h4 class="text-sm font-semibold text-gray-900">自定义参数</h4>
-								<span v-if="validParamsCount > 0" class="badge badge-primary">{{ validParamsCount }}</span>
-							</div>
-							<div class="flex items-center gap-1.5">
-								<button
-									class="text-xs px-2.5 py-1.5 rounded-lg text-gray-600 hover:border-primary-300 hover:text-primary-600 transition-colors duration-150 cursor-pointer flex items-center gap-1.5 border border-gray-200"
-									@click="showParamRef = true"
-								>
-									<Icon name="bookOpen" size="xs" />
-									参数参考
-								</button>
-								<button
-									v-if="currentPreset && customParams.length > 0"
-									class="text-xs px-2 py-1 rounded-lg text-primary-600 hover:bg-primary-50 transition-colors duration-150 cursor-pointer"
-									@click="applyPreset"
-								>
-									重置预设
-								</button>
+								<div v-else class="flex items-start gap-1.5">
+									<span class="badge mt-0.5 shrink-0" :class="effectiveMode === 'async' ? 'badge-warning' : 'badge-gray'">
+										{{ effectiveMode === 'async' ? '异步' : '同步' }}
+									</span>
+									<span class="text-[11px] leading-relaxed text-gray-400">
+										{{ effectiveMode === 'async' ? '该模型仅支持异步（提交后轮询取图）' : '该模型仅支持同步（一次性返回，等待较久）' }}
+									</span>
+								</div>
 							</div>
 						</div>
 
-						<!-- 空状态 -->
-						<div
-							v-if="customParams.length === 0"
-							class="rounded-xl border-2 border-dashed border-gray-200 py-6 text-center cursor-pointer hover:border-primary-300 hover:bg-primary-50/30 transition-colors duration-200"
-							@click="currentPreset ? applyPreset() : applyDefaults()"
-						>
-							<Icon name="plus" size="sm" class="text-gray-300 mx-auto mb-2" />
-							<p class="text-xs text-gray-400">
-								{{ currentPreset ? '点击应用 ' + currentPresetLabel + ' 预设' : '点击添加自定义参数' }}
-							</p>
+						<!-- 提示词 -->
+						<div class="border-t border-gray-100 pt-4">
+							<label class="mb-2 block text-xs font-semibold text-gray-500">提示词</label>
+							<n-input v-model:value="prompt" type="textarea" :rows="4" placeholder="描述你想生成的图片..." />
 						</div>
 
-						<!-- 参数行 -->
-						<div v-else class="space-y-2">
+						<!-- 自定义参数 -->
+						<div class="border-t border-gray-100 pt-4">
+							<div class="mb-3 flex items-center justify-between gap-2">
+								<div class="flex items-center gap-2">
+									<span class="text-xs font-semibold text-gray-500">自定义参数</span>
+									<span v-if="validParamsCount > 0" class="badge badge-primary">{{ validParamsCount }}</span>
+								</div>
+								<div class="flex items-center gap-1">
+									<button
+										v-if="currentPreset && customParams.length > 0"
+										class="rounded-md px-2 py-1 text-[11px] text-primary-600 transition-colors duration-150 hover:bg-primary-50"
+										@click="applyPreset"
+									>
+										重置预设
+									</button>
+									<button
+										class="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] text-gray-600 transition-colors duration-150 hover:border-primary-300 hover:text-primary-600"
+										@click="showParamRef = true"
+									>
+										<Icon name="bookOpen" size="xs" />
+										参数参考
+									</button>
+								</div>
+							</div>
+
+							<!-- 空状态 -->
 							<div
-								v-for="param in customParams"
-								:key="param.id"
-								class="flex items-center gap-2 group"
+								v-if="customParams.length === 0"
+								class="cursor-pointer rounded-xl border-2 border-dashed border-gray-200 py-6 text-center transition-colors duration-200 hover:border-primary-300 hover:bg-primary-50/30"
+								@click="currentPreset ? applyPreset() : applyDefaults()"
 							>
-								<n-input
-									v-model:value="param.key"
-									class="flex-1"
-									placeholder="参数名"
-								/>
-								<n-input
-									v-model:value="param.value"
-									class="flex-1"
-									placeholder="值"
-								/>
-								<button
-									class="h-9 w-9 rounded-xl flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors duration-150 flex-shrink-0 cursor-pointer"
-									@click="removeParam(param.id)"
+								<Icon name="plus" size="sm" class="mx-auto mb-2 text-gray-300" />
+								<p class="text-xs text-gray-400">
+									{{ currentPreset ? '点击应用 ' + currentPresetLabel + ' 预设' : '点击添加自定义参数' }}
+								</p>
+							</div>
+
+							<!-- 参数行 -->
+							<div v-else class="space-y-2">
+								<div
+									v-for="param in customParams"
+									:key="param.id"
+									class="group flex items-center gap-1.5"
 								>
-									<Icon name="x" size="sm" />
+									<n-input
+										v-model:value="param.key"
+										class="flex-1"
+										placeholder="参数名"
+									/>
+									<n-input
+										v-model:value="param.value"
+										class="flex-1"
+										:placeholder="paramPlaceholder(param.key)"
+									/>
+									<button
+										class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-300 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
+										title="删除该参数"
+										@click="removeParam(param.id)"
+									>
+										<Icon name="x" size="sm" />
+									</button>
+								</div>
+								<button
+									class="w-full rounded-lg border border-dashed border-gray-200 py-1.5 text-xs text-gray-400 transition-colors duration-150 hover:border-primary-300 hover:text-primary-600"
+									@click="addParam()"
+								>
+									+ 添加参数
 								</button>
 							</div>
-							<button
-								class="w-full text-xs py-1.5 rounded-lg border border-dashed border-gray-200 text-gray-400 hover:border-primary-300 hover:text-primary-600 transition-colors duration-150 cursor-pointer"
-								@click="addParam()"
-							>
-								+ 添加参数
-							</button>
 						</div>
 					</div>
 
-					<button class="btn btn-primary w-full" :disabled="sending || polling || !prompt.trim()" @click="generate">
-						{{ sending ? (effectiveMode === 'async' ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
-					</button>
+					<!-- 主操作常驻卡片底部 -->
+					<div class="shrink-0 border-t border-gray-100 px-4 py-3">
+						<button class="btn btn-primary w-full" :disabled="sending || polling || !prompt.trim()" @click="generate">
+							<Icon name="photo" size="sm" />
+							{{ sending ? (effectiveMode === 'async' ? '提交中...' : '生成中...') : polling ? '生成中...' : '生成图片' }}
+						</button>
+					</div>
 				</div>
 			</div>
-		</div>
 
-		<div class="lg:col-span-3">
-			<div class="card" style="min-height: 400px">
-				<div class="card-header">
-					<h3 class="text-sm font-semibold text-gray-900">生成结果</h3>
-				</div>
-				<div class="card-body">
-					<!-- 异步模式说明 -->
-					<div v-if="effectiveMode === 'async'" class="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
-						<div class="flex items-start gap-2">
-							<Icon name="infoCircle" size="sm" class="text-primary-500 flex-shrink-0 mt-0.5" />
-							<p class="text-xs text-gray-600 leading-relaxed">
-								<span class="font-medium text-gray-700">异步任务模型</span>：提交至
-								<code class="code text-[11px]">POST /v1/images/generations/async</code>
-								拿到 task_id 后轮询
-								<code class="code text-[11px]">GET /v1/images/generations/async/{task_id}</code>
-								取图。
+			<!-- Right: 结果 -->
+			<div class="lg:min-h-0">
+				<div class="card flex min-h-[420px] flex-col overflow-hidden lg:h-full">
+					<div class="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-5 py-3">
+						<div class="flex items-center gap-2">
+							<Icon name="photo" size="sm" class="text-primary-500" />
+							<h3 class="text-sm font-semibold text-gray-900">生成结果</h3>
+						</div>
+						<span v-if="resultStatus" class="badge" :class="resultStatus.cls">{{ resultStatus.label }}</span>
+					</div>
+
+					<div class="min-h-0 flex-1 overflow-y-auto p-5">
+						<!-- 异步端点说明：轻量单行，不再用整块彩底卡片占高度 -->
+						<div v-if="effectiveMode === 'async'" class="mb-4 flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2">
+							<Icon name="infoCircle" size="xs" class="mt-0.5 shrink-0 text-gray-400" />
+							<p class="text-[11px] leading-relaxed text-gray-500">
+								异步任务模型：提交至 <code class="code text-[10px]">POST /v1/images/generations/async</code>
+								拿到 task_id 后轮询 <code class="code text-[10px]">GET /v1/images/generations/async/{task_id}</code> 取图
 							</p>
 						</div>
-					</div>
 
-					<!-- 优雅降级提示 -->
-					<div v-if="fallbackNotice" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-						<div class="flex items-center gap-2 text-amber-700">
-							<Icon name="infoCircle" size="sm" class="flex-shrink-0" />
-							<span class="text-xs">{{ fallbackNotice }}</span>
+						<!-- 优雅降级提示 -->
+						<div v-if="fallbackNotice" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+							<div class="flex items-center gap-2 text-amber-700">
+								<Icon name="infoCircle" size="sm" class="flex-shrink-0" />
+								<span class="text-xs">{{ fallbackNotice }}</span>
+							</div>
 						</div>
-					</div>
 
-					<!-- 错误提示 -->
-					<div
-						v-if="errorMessage"
-						class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
-					>
-						<div class="flex items-center gap-2 text-red-700">
-							<Icon name="xCircle" size="sm" />
-							<span class="text-sm font-medium">生成失败</span>
+						<!-- 错误提示 -->
+						<div
+							v-if="errorMessage"
+							class="mb-4 rounded-xl border border-red-200 bg-red-50 p-4"
+						>
+							<div class="flex items-center gap-2 text-red-700">
+								<Icon name="xCircle" size="sm" />
+								<span class="text-sm font-medium">生成失败</span>
+							</div>
+							<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
 						</div>
-						<p class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
-					</div>
 
-					<div v-if="images.length === 0 && !sending && !errorMessage && !asyncTask" class="empty-state">
-						<div class="empty-state-icon"><Icon name="bookOpen" size="xl" /></div>
-						<h3 class="empty-state-title">等待生成</h3>
-						<p class="empty-state-description">输入提示词并点击生成</p>
-					</div>
-					<div v-if="sending" class="flex items-center justify-center py-12">
-						<div class="spinner h-8 w-8 text-primary-600"></div>
-						<span class="ml-3 text-sm text-gray-500">{{ effectiveMode === 'async' ? '提交图片生成任务中...' : '图片生成中...' }}</span>
-					</div>
+						<!-- 空态：图标磁贴 + 说明，给首屏一个视觉锚点 -->
+						<div v-if="images.length === 0 && !sending && !errorMessage && !asyncTask" class="flex h-full min-h-[320px] flex-col items-center justify-center px-4 text-center">
+							<div class="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-400 via-primary-500 to-emerald-500 text-white shadow-glow">
+								<Icon name="photo" size="lg" />
+							</div>
+							<h3 class="text-lg font-semibold text-gray-900">等待生成</h3>
+							<p class="mt-1.5 max-w-sm text-sm text-gray-500">
+								<template v-if="selectedModel">
+									当前模型 <span class="font-medium text-gray-700">{{ selectedModelName }}</span>，填写提示词后点击「生成图片」
+								</template>
+								<template v-else>请先在左侧选择一个图片模型</template>
+							</p>
+							<p class="mt-6 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-700">
+								<Icon name="exclamationTriangle" size="xs" />
+								生成将真实调用模型并产生费用
+							</p>
+						</div>
 
-					<!-- 异步任务状态 -->
-					<div v-if="asyncTask && !sending" class="mb-4 space-y-3">
-						<div class="flex items-center gap-3">
-							<span class="badge" :class="statusColor[asyncTask.status] || 'badge-gray'">
-								{{ statusLabel[asyncTask.status] || asyncTask.status }}
-							</span>
-							<span v-if="asyncTask.progress" class="text-xs text-gray-500">进度: {{ asyncTask.progress }}</span>
-							<span v-if="polling" class="text-xs text-primary-600 flex items-center gap-1">
-								<div class="spinner h-3 w-3"></div>
-								轮询中
-							</span>
-							<span v-if="asyncTask.id" class="text-xs text-gray-400 ml-auto">task_id: {{ asyncTask.id }}</span>
-						</div>
-						<div v-if="asyncTask.status === 'IN_PROGRESS' || asyncTask.status === 'SUBMITTED' || asyncTask.status === 'QUEUED'" class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-							<div class="h-full rounded-full bg-primary-500 transition-all duration-500" :style="{ width: asyncTask.progress || '10%' }" />
-						</div>
-						<div v-if="asyncTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
+						<!-- 提交中 / 同步生成中：卡片式加载占位 -->
+						<GenerationProgressCard
+							v-if="sending"
+							kind="image"
+							:label="effectiveMode === 'async' ? '正在提交生成任务...' : '图片生成中...'"
+						/>
+
+						<!-- 异步任务进行中：卡片式进度占位（成功由下方图片区接管） -->
+						<GenerationProgressCard
+							v-else-if="asyncTask && asyncTask.status !== 'SUCCESS' && asyncTask.status !== 'FAILURE'"
+							kind="image"
+							:progress="asyncTask.progress"
+							:label="statusLabel[asyncTask.status] || asyncTask.status"
+							:sublabel="asyncTask.id ? 'task_id: ' + asyncTask.id : ''"
+						/>
+
+						<!-- 任务失败 -->
+						<div v-if="asyncTask && asyncTask.status === 'FAILURE'" class="rounded-xl border border-red-200 bg-red-50 p-4">
 							<div class="flex items-center gap-2 text-red-700">
 								<Icon name="xCircle" size="sm" />
 								<span class="text-sm font-medium">生成失败</span>
 							</div>
 							<p v-if="asyncTask.error" class="mt-2 text-sm text-red-600">{{ asyncTask.error }}</p>
 						</div>
-					</div>
 
-					<div v-if="images.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-						<div v-for="(img, idx) in images" :key="idx" class="rounded-xl overflow-hidden border border-gray-200 relative group">
-							<img :src="imageSrc(img)" class="w-full cursor-zoom-in" alt="Generated image" @click="openZoom(img)" />
-							<div class="absolute top-2 right-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-								<button
-									class="btn btn-sm bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm"
-									title="放大查看"
-									@click="openZoom(img)"
-								>
-									<Icon name="expand" size="sm" />
-									放大
-								</button>
-								<button
-									class="btn btn-sm bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm"
-									title="下载图片"
-									@click="downloadImage(img, idx)"
-								>
-									<Icon name="arrowDown" size="sm" />
-									下载
-								</button>
+						<div v-if="images.length > 0" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+							<div v-for="(img, idx) in images" :key="idx" class="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+								<img :src="imageSrc(img)" class="w-full cursor-zoom-in" alt="Generated image" @click="openZoom(img)" />
+								<div class="absolute right-2 top-2 flex items-center gap-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+									<button
+										class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
+										title="放大查看"
+										@click="openZoom(img)"
+									>
+										<Icon name="expand" size="sm" />
+										放大
+									</button>
+									<button
+										class="btn btn-sm border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm"
+										title="下载图片"
+										@click="downloadImage(img, idx)"
+									>
+										<Icon name="arrowDown" size="sm" />
+										下载
+									</button>
+								</div>
+								<p v-if="img.revised_prompt" class="border-t border-gray-100 bg-white p-3 text-xs text-gray-500">{{ img.revised_prompt }}</p>
 							</div>
-							<p v-if="img.revised_prompt" class="text-xs text-gray-500 p-3">{{ img.revised_prompt }}</p>
 						</div>
-					</div>
-					<div v-if="tokenUsage.totalTokens > 0" class="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between">
-						<span>Tokens: {{ tokenUsage.promptTokens }} / {{ tokenUsage.totalTokens }}</span>
-						<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
+
+						<!-- 用量条：与对话 Tab 保持同一排版 -->
+						<div v-if="tokenUsage.totalTokens > 0" class="mt-4 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs text-gray-500">
+							<div class="flex items-center gap-4">
+								<span class="flex items-center gap-1.5">Prompt <span class="font-medium text-gray-700">{{ tokenUsage.promptTokens }}</span></span>
+								<span class="flex items-center gap-1.5">Total <span class="font-medium text-gray-700">{{ tokenUsage.totalTokens }}</span></span>
+							</div>
+							<span v-if="tokenUsage.cost" class="font-medium text-amber-600">{{ tokenUsage.cost }}</span>
+						</div>
 					</div>
 				</div>
 			</div>

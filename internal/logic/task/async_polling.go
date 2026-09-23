@@ -326,12 +326,13 @@ func processChannelTasks(ctx context.Context, channelID int64, tasks []*common.A
 
 // privateData PrivateData 反序列化结构
 type privateData struct {
-	UpstreamTaskID string `json:"upstream_task_id"`
-	TaskType       string `json:"task_type"`
-	BillingContext struct {
-		Ratios    map[string]float64 `json:"ratios"`
-		ModelName string             `json:"model_name"`
-		PreDeduct float64            `json:"pre_deduct"`
+	UpstreamTaskID    string `json:"upstream_task_id"`
+	UpstreamRequestID string `json:"upstream_request_id"` // 上游提交调用追踪 ID（部分上游返回，可空）
+	TaskType          string `json:"task_type"`
+	BillingContext    struct {
+		Ratios    map[string]any `json:"ratios"`
+		ModelName string         `json:"model_name"`
+		PreDeduct float64        `json:"pre_deduct"`
 	} `json:"billing_context"`
 }
 
@@ -344,15 +345,44 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 		return
 	}
 
-	// 查询上游状态
+	// 查询上游状态（model 供供应商适配器按模型分派协议端点，如 MiniMax v1/v2；
+	// 其余适配器按结构体解析 taskData，自动忽略未知键）
+	upstreamModel := task.UpstreamModel
+	if upstreamModel == "" {
+		upstreamModel = task.ModelName
+	}
 	taskData, _ := json.Marshal(map[string]any{
 		"task_id":   pd.UpstreamTaskID,
 		"use_proxy": parseChannelUseProxy(channel.Settings),
+		"model":     upstreamModel,
 	})
 
-	resp, err := adaptor.FetchTask(channel.BaseURL, channel.ApiKey, taskData)
+	// 渠道调试日志（轮询记录，仅段2/段3——后台轮询无客户端交互）：
+	// 节流规则 = 只在「状态/进度相对上一次轮询发生变化」时落库（任务行 CAS 前的值即上一次
+	// 持久化状态，无需额外存储），防止 15s 轮询周期灌爆 chn_debug_logs；
+	// fetch/parse 错误无「上一次」可对比且是轮询排查的主要目标，必记。
+	// request_id 复用提交请求原 ID，管理后台按 request_id 筛选可看到提交 + 全部状态转移。
+	var dbgSess *common.DebugSession
+	var dbgAttempt *common.DebugAttempt
+	if pollDebugLogEnabled(channel.Settings, task) {
+		dbgSess = common.NewDebugSession(task.RequestID, task.TenantID, task.UserID, task.ApiKeyID, "task_poll:"+task.PublicTaskID)
+		dbgAttempt = dbgSess.BeginTaskAttempt(&common.ChannelMeta{
+			ChannelID:         channel.ID,
+			ChannelName:       channel.Name,
+			ChannelType:       channel.Type,
+			UpstreamModelName: upstreamModel,
+		}, task.ModelName, task.Platform, 0)
+	}
+	pollCtx := ctx
+	if dbgAttempt != nil {
+		pollCtx = common.WithDebugAttempt(ctx, dbgAttempt.Capture)
+	}
+
+	resp, err := adaptor.FetchTask(pollCtx, channel.BaseURL, channel.ApiKey, taskData)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: fetch task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -360,6 +390,8 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: read response for task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
 	}
 
@@ -367,7 +399,15 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 	taskInfo, err := adaptor.ParseTaskResult(body)
 	if err != nil {
 		g.Log().Warningf(ctx, "poll: parse result for task %s: %v", task.PublicTaskID, err)
+		dbgAttempt.MarkFinal(err)
+		dbgSess.FinalizeAndSubmit(0, 0)
 		return
+	}
+
+	// 状态变化判定 + 调试记录提交（CAS 更新 task.Status 之前，task 行内即上一次轮询值）
+	if pollStateChanged(taskInfo, task) {
+		dbgAttempt.MarkFinal(nil)
+		dbgSess.FinalizeAndSubmit(0, 0)
 	}
 
 	// CAS 更新状态
@@ -421,6 +461,14 @@ func pollSingleTask(ctx context.Context, adaptor common.TaskAdaptor, channel *co
 			// 优先用上游返回的 ActualCost
 			if taskInfo.ActualCost > 0 {
 				actualCost = billing.NewFromFloat(taskInfo.ActualCost)
+			} else if taskInfo.MaterialUsage != nil {
+				// 素材计费方案：按官方 usage 计量（输入视频时长/图片张数/输出秒数）重算。
+				// 链接素材的时长提交时不可知，此为最终计费依据；模型未配置素材方案时 ok=false 保持预扣
+				if materialCost, ok, mErr := taskBilling.RecalculateByMaterials(ctx, task.TenantID, task.ModelName, pd.BillingContext.Ratios, taskInfo.MaterialUsage, task.CreatedAt); mErr != nil {
+					g.Log().Warningf(ctx, "poll: recalculate by materials task %s: %v", task.PublicTaskID, mErr)
+				} else if ok {
+					actualCost = materialCost
+				}
 			} else if taskInfo.TotalTokens > 0 && pd.BillingContext.Ratios != nil {
 				// 用上游 total_tokens + 保存的 ratios 重算
 				if tokenCost, err := taskBilling.RecalculateByTokens(ctx, task.TenantID, task.ModelName, taskInfo.TotalTokens, pd.BillingContext.Ratios, task.CreatedAt); err == nil && tokenCost.GreaterThan(billing.Zero) {
@@ -492,6 +540,32 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		status = "error"
 	}
 
+	// 按秒计费任务的视频时长：取提交时计费上下文里的 spec.duration（真实秒数）。
+	// 只认 spec.* 事实键——旧 duration 键在部分 adaptor 是乘数语义（如 gemini 1.3），不可作为时长
+	// 提取上游请求 ID 落用量日志（排障时凭它在上游定位任务）：
+	// 优先 upstream_request_id（上游调用追踪 ID，如 DashScope 顶层 request_id），
+	// 未记录时回退 upstream_task_id（任务句柄，轮询同款标识）
+	durationSeconds := 0
+	upstreamRequestID := ""
+	if len(task.PrivateData) > 0 {
+		var pdDur struct {
+			UpstreamTaskID    string `json:"upstream_task_id"`
+			UpstreamRequestID string `json:"upstream_request_id"`
+			BillingContext    struct {
+				Ratios map[string]any `json:"ratios"`
+			} `json:"billing_context"`
+		}
+		if json.Unmarshal(task.PrivateData, &pdDur) == nil {
+			upstreamRequestID = pdDur.UpstreamRequestID
+			if upstreamRequestID == "" {
+				upstreamRequestID = pdDur.UpstreamTaskID
+			}
+			if v, ok := pdDur.BillingContext.Ratios["spec.duration"].(float64); ok && v > 0 {
+				durationSeconds = int(v)
+			}
+		}
+	}
+
 	record := &common.UsageRecord{
 		TenantID:    task.TenantID,
 		UserID:      task.UserID,
@@ -517,6 +591,11 @@ func recordTaskUsage(task *common.AsyncTask, channel *common.ChannelBasicInfo, s
 		PreDeductAmount:  billing.InexactFloat64(task.PreDeductAmount),
 		BillingSource:    "task",
 		TaskID:           task.PublicTaskID,
+
+		DurationSeconds: durationSeconds,
+
+		// 任务的上游请求 ID = 调用追踪 ID（上游返回时），否则为任务句柄（轮询同款标识）
+		UpstreamRequestID: upstreamRequestID,
 	}
 
 	// 从结算结果填充计费快照
@@ -589,4 +668,20 @@ func parseChannelUseProxy(settings json.RawMessage) bool {
 		json.Unmarshal(settings, &s)
 	}
 	return s.UseProxy
+}
+
+// pollDebugLogEnabled 判定轮询渠道是否开启调试日志且匹配任务的租户/成员/密钥过滤
+// （ChannelBasicInfo.Settings 为 JSONB 原文，按需解析；解析失败视为未开启）
+func pollDebugLogEnabled(settings json.RawMessage, task *common.AsyncTask) bool {
+	var s common.ChannelSettings
+	if len(settings) == 0 || json.Unmarshal(settings, &s) != nil {
+		return false
+	}
+	return s.DebugLogEnabled && s.DebugTargetMatch(task.TenantID, task.UserID, task.ApiKeyID)
+}
+
+// pollStateChanged 判定本次轮询结果相对任务行当前持久化状态是否发生变化（状态或进度任一变化）。
+// 独立成纯函数以便回归测试；在 CAS 更新 task 之前调用，task 内即上一次轮询持久化的值
+func pollStateChanged(taskInfo *common.TaskInfo, task *common.AsyncTask) bool {
+	return string(taskInfo.Status) != task.Status || taskInfo.Progress != task.Progress
 }

@@ -13,21 +13,19 @@ import (
 
 // --- 纯辅助函数表驱动 ---
 
-func TestRelaykitResponseConverterID(t *testing.T) {
+func TestResponseConverterIDForRoute(t *testing.T) {
 	cases := []struct {
 		upstream, client constant.RelayFormat
 		want             string
 	}{
 		{constant.RelayFormatClaude, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToClaudeMessages},
 		{constant.RelayFormatGemini, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToGeminiContent},
-		{constant.RelayFormatCoze, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToCoze},
-		{constant.RelayFormatDify, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToDify},
 		{constant.RelayFormatOllama, constant.RelayFormatOpenAI, relayconvert.ConverterOpenAIChatToOllama},
-		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""}, // 同格式
-		{constant.RelayFormatClaude, constant.RelayFormatGemini, ""}, // 未知方向
+		{constant.RelayFormatOpenAI, constant.RelayFormatOpenAI, ""},                                                  // 同格式
+		{constant.RelayFormatClaude, constant.RelayFormatGemini, relayconvert.ConverterGeminiContentToClaudeMessages}, // 跨原生：Gemini 客户端·Claude 上游
 	}
 	for _, c := range cases {
-		if got := relaykitResponseConverterID(c.upstream, c.client); got != c.want {
+		if got := ResponseConverterIDForRoute(c.upstream, c.client); got != c.want {
 			t.Errorf("upstream=%s client=%s: got %q, want %q", c.upstream, c.client, got, c.want)
 		}
 	}
@@ -82,31 +80,19 @@ func TestConvertResponseViaRelaykit_AllProviders(t *testing.T) {
 				`"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}`,
 		},
 		{
-			name:    "Dify",
-			channel: constant.ProviderDify,
-			upstreamBody: `{"answer":"hi","metadata":{"usage":{"total_tokens":8,` +
-				`"prompt_tokens":5,"completion_tokens":3}}}`,
-		},
-		{
 			name:    "Ollama",
 			channel: constant.ProviderOllama,
 			upstreamBody: `{"model":"llama3","message":{"role":"assistant","content":"hi"},` +
 				`"done":true,"prompt_eval_count":5,"eval_count":3}`,
-		},
-		{
-			name:    "Coze",
-			channel: constant.ProviderCoze,
-			upstreamBody: "event: conversation.message.completed\n" +
-				`data: {"role":"assistant","type":"answer","content":"hi"}` + "\n",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			info := newStreamTestRelayInfo(c.channel, constant.RelayFormatOpenAI)
-			body, usage, ok := convertResponseViaRelaykit(context.Background(), info, []byte(c.upstreamBody))
-			if !ok {
-				t.Fatal("expected conversion to succeed")
+			body, usage, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(c.upstreamBody))
+			if !handled || err != nil {
+				t.Fatalf("expected conversion to succeed, handled=%v err=%v", handled, err)
 			}
 			if body == nil {
 				t.Fatal("expected non-nil converted body")
@@ -132,30 +118,28 @@ func TestConvertResponseViaRelaykit_AllProviders(t *testing.T) {
 func TestConvertResponseViaRelaykit_SameFormatFallback(t *testing.T) {
 	// OpenAI 渠道 + OpenAI 客户端：upstream==client → 无转换器 → false
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
-	if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for same format")
+	if _, _, handled, _ := convertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for same format")
 	}
 }
 
 func TestConvertResponseViaRelaykit_ParseFailureFallback(t *testing.T) {
 	// Claude 渠道但上游体非合法 Claude JSON → 回退
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
-	if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`not-json`)); ok {
-		t.Fatal("expected ok=false for malformed upstream body")
+	if _, _, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(`not-json`)); !handled || err == nil {
+		t.Fatal("expected handled=true with error for malformed upstream body (hard-fail)")
 	}
 }
 
 func TestConvertResponseViaRelaykit_ParseFailureAllStructuredProviders(t *testing.T) {
 	// 结构化响应（需 json.Unmarshal）的供应商：畸形上游体都应回退（覆盖各自的 parse-fail 分支）。
-	// Coze 上游为原始 SSE 字节（无 Unmarshal），不在此列。
 	structured := []constant.ProviderType{
-		constant.ProviderClaude, constant.ProviderGemini,
-		constant.ProviderDify, constant.ProviderOllama,
+		constant.ProviderClaude, constant.ProviderGemini, constant.ProviderOllama,
 	}
 	for _, ch := range structured {
 		info := newStreamTestRelayInfo(ch, constant.RelayFormatOpenAI)
-		if _, _, ok := convertResponseViaRelaykit(context.Background(), info, []byte(`{not valid json`)); ok {
-			t.Errorf("provider=%v: expected ok=false for malformed body", ch)
+		if _, _, handled, err := convertResponseViaRelaykit(context.Background(), info, []byte(`{not valid json`)); !handled || err == nil {
+			t.Errorf("provider=%v: expected handled=true with error for malformed body", ch)
 		}
 	}
 }
@@ -163,12 +147,12 @@ func TestConvertResponseViaRelaykit_ParseFailureAllStructuredProviders(t *testin
 // --- 公开入口 nil 守卫 ---
 
 func TestTryConvertResponseViaRelaykit_NilGuards(t *testing.T) {
-	if _, _, ok := TryConvertResponseViaRelaykit(context.Background(), nil, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for nil info")
+	if _, _, handled, _ := TryConvertResponseViaRelaykit(context.Background(), nil, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for nil info")
 	}
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	info.ChannelMeta = nil
-	if _, _, ok := TryConvertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); ok {
-		t.Fatal("expected ok=false for nil ChannelMeta")
+	if _, _, handled, _ := TryConvertResponseViaRelaykit(context.Background(), info, []byte(`{}`)); handled {
+		t.Fatal("expected handled=false for nil ChannelMeta")
 	}
 }

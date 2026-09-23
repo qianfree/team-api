@@ -24,6 +24,9 @@ type (
 		// UpdateUserStatus enables or disables an admin user.
 		UpdateUserStatus(ctx context.Context, req *v1.AdminUserUpdateStatusReq) (*v1.AdminUserUpdateStatusRes, error)
 		// UnlockUser 清除管理员的登录锁定状态（重置失败计数与锁定截止时间）。
+		//
+		// 解锁是本文件里唯一漏掉 assertCanManageAdminUser 的账号处置动作：锁定本身是暴力破解
+		// 的防线，非超管若能解锁超级管理员账号，就等于可以无限次重置对方的失败计数继续爆破。
 		UnlockUser(ctx context.Context, req *v1.AdminUserUnlockReq) (*v1.AdminUserUnlockRes, error)
 		// ResetUserPassword resets an admin user's password.
 		ResetUserPassword(ctx context.Context, req *v1.AdminUserResetPasswordReq) (*v1.AdminUserResetPasswordRes, error)
@@ -69,6 +72,11 @@ type (
 		// ContentFilterLogList returns a paginated list of content filter interception logs.
 		// 审计数据从审计库查询，关联信息从主库批量查询后在应用层合并。
 		ContentFilterLogList(ctx context.Context, req *v1.ContentFilterLogListReq) (*v1.ContentFilterLogListRes, error)
+		// ContentFilterLogClear 硬删除全部内容过滤拦截日志。
+		// 拦截日志为追加型审计流水，堆积后用 TRUNCATE 秒级清空并立即归还磁盘空间
+		// （DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，故先取删除前条数作为反馈。
+		// 表无数据库级外键，TRUNCATE 安全。
+		ContentFilterLogClear(ctx context.Context, _ *v1.ContentFilterLogClearReq) (*v1.ContentFilterLogClearRes, error)
 		// Login handles admin login.
 		Login(ctx context.Context, req *v1.AdminLoginReq) (*v1.AdminLoginRes, error)
 		// Logout handles admin logout.
@@ -83,6 +91,11 @@ type (
 		ForceLogout(ctx context.Context, req *v1.AdminForceLogoutReq) (*v1.AdminForceLogoutRes, error)
 		// ChangePassword handles admin password change.
 		ChangePassword(ctx context.Context, req *v1.AdminChangePasswordReq) (*v1.AdminChangePasswordRes, error)
+		// GetMe 返回当前登录用户的信息与有效权限。
+		//
+		// 权限此前只在登录响应里下发一次，之后前端从 localStorage 恢复：管理员改了某人的权限，
+		// 对方不重新登录就一直按旧权限渲染菜单。前端在应用启动与 token 刷新后调用本接口刷新。
+		GetMe(ctx context.Context, _ *v1.AdminMeReq) (*v1.AdminMeRes, error)
 		// CreateChangelog 创建更新日志
 		CreateChangelog(ctx context.Context, req *v1.ChangelogCreateReq) (*v1.ChangelogCreateRes, error)
 		// ListChangelogs 更新日志列表（管理后台，含草稿）
@@ -93,7 +106,12 @@ type (
 		DeleteChangelog(ctx context.Context, req *v1.ChangelogDeleteReq) (*v1.ChangelogDeleteRes, error)
 		// PublishChangelog 发布更新日志
 		PublishChangelog(ctx context.Context, req *v1.ChangelogPublishReq) (*v1.ChangelogPublishRes, error)
-		// ListChannels 获取渠道列表
+		// ListChannelOptions 渠道下拉选项（不分页，返回全部渠道）。
+		// 刻意不做状态过滤：日志 / 统计页的渠道筛选项要覆盖历史数据里出现过的全部渠道，
+		// 已停用渠道同样需要能作为筛选条件；status 原样返回，由前端决定是否标记。
+		// 注意与 /admin/channels 的区别：后者是渠道管理列表（分页 + 健康度联表 + 运行态），
+		// 下拉场景不要用它 —— 那是本接口存在的意义。
+		ListChannelOptions(ctx context.Context, _ *v1.ChannelOptionsReq) (*v1.ChannelOptionsRes, error)
 		ListChannels(ctx context.Context, req *v1.ChannelListReq) (*v1.ChannelListRes, error)
 		// CloneChannel 克隆渠道
 		CloneChannel(ctx context.Context, req *v1.ChannelCloneReq) (*v1.ChannelCloneRes, error)
@@ -146,6 +164,11 @@ type (
 		ChannelErrorTopChannels(ctx context.Context, req *v1.ChannelErrorTopChannelsReq) (*v1.ChannelErrorTopChannelsRes, error)
 		// ChannelErrorCategories 错误分类选项
 		ChannelErrorCategories(ctx context.Context, req *v1.ChannelErrorCategoriesReq) (*v1.ChannelErrorCategoriesRes, error)
+		// ChannelErrorClear 硬删除全部渠道错误事件。
+		// 错误风暴时事件表堆积很快，用 TRUNCATE 而非逐行 DELETE 秒级清空并立即归还磁盘空间。
+		// TRUNCATE 不返回行数，故先取删除前条数作为反馈。表无数据库级外键，TRUNCATE 安全。
+		// 注意异步写入器（DefaultChannelErrorWriter）清空后继续写入新事件，属预期行为。
+		ChannelErrorClear(ctx context.Context, _ *v1.ChannelErrorClearReq) (*v1.ChannelErrorClearRes, error)
 		// ChannelOAuthAuthURL 生成 OAuth 授权链接
 		ChannelOAuthAuthURL(ctx context.Context, req *v1.ChannelOAuthAuthURLReq) (*v1.ChannelOAuthAuthURLRes, error)
 		// ChannelOAuthExchange OAuth 授权码换取令牌
@@ -173,6 +196,13 @@ type (
 		GetModelHourlyCost(ctx context.Context, req *v1.AdminDashboardModelHourlyReq) (*v1.AdminDashboardModelHourlyRes, error)
 		// GetAllUsageLogs 获取所有租户的用量日志（管理后台）
 		GetAllUsageLogs(ctx context.Context, req *v1.AdminUsageLogListReq) (*v1.AdminUsageLogListRes, error)
+		// GetUsageLogDetail 获取单条用量日志详情（含 billing_snapshot / billing_summary /
+		// user_agent / error_message 等列表不返回的大字段）。
+		// bil_usage_logs 按 created_at 月分区且 PK 为 (id, created_at)：仅按 id 查询无法
+		// 分区裁剪，计划为对各月分区的 Append 索引探测（每分区走本地 PK 前缀命中 id），
+		// 分区数随月份线性增长但单次探测为微秒级，与 upstream_request_id 反查（000023）
+		// 同一模式；若日后分区数显著增大，可让调用方携带 created_at 提示做裁剪。
+		GetUsageLogDetail(ctx context.Context, req *v1.AdminUsageLogDetailReq) (*v1.AdminUsageLogDetailRes, error)
 		// GetUsageLogSummary 获取用量日志统计汇总（独立接口，与列表共用筛选口径）
 		GetUsageLogSummary(ctx context.Context, req *v1.AdminUsageLogSummaryReq) (*v1.AdminUsageLogSummaryRes, error)
 		// GetAllBillingRecords 获取所有计费记录（管理后台）
@@ -190,7 +220,9 @@ type (
 		// 流水类型为 recharge，并在描述中携带 CNY 快照（原始人民币 + 汇率 + 入账金额 + 转账流水号），
 		// 供现金对账与开票追溯。
 		OfflineRecharge(ctx context.Context, req *v1.AdminWalletOfflineRechargeReq) (*v1.AdminWalletOfflineRechargeRes, error)
-		// GetWalletInfo 获取租户钱包信息（管理后台）
+		// GetWalletInfo 获取租户钱包信息（管理后台）。
+		// balance/frozen_balance 以 Redis 权威值为准（Redis 是资金提交点，调整余额/线下入账后立即可见），
+		// DB 侧余额是物化器周期覆盖的滞后副本，仅作钱包行存在性校验与 Redis 不可用时的降级展示。
 		GetWalletInfo(ctx context.Context, req *v1.AdminWalletInfoReq) (*v1.AdminWalletInfoRes, error)
 		// GetWalletTransactions 获取租户钱包交易流水（管理后台）
 		GetWalletTransactions(ctx context.Context, req *v1.AdminWalletTransactionListReq) (*v1.AdminWalletTransactionListRes, error)
@@ -312,7 +344,7 @@ type (
 		UpdateModel(ctx context.Context, req *v1.ModelUpdateReq) (*v1.ModelUpdateRes, error)
 		// DeleteModel 删除模型（同时删除定价记录、租户分配记录和分组关联）
 		DeleteModel(ctx context.Context, req *v1.ModelDeleteReq) (*v1.ModelDeleteRes, error)
-		// GetModelPricing 获取模型定价
+		// GetModelPricing 获取模型定价（pricing JSONB 单行还原为 PricingItem 列表，响应结构与旧多行结构保持兼容）
 		GetModelPricing(ctx context.Context, req *v1.PricingGetReq) (*v1.PricingGetRes, error)
 		// SetModelPricing 设置模型定价（全量替换）
 		SetModelPricing(ctx context.Context, req *v1.PricingSetReq) (*v1.PricingSetRes, error)
@@ -400,9 +432,10 @@ type (
 		GetUserPermissions(ctx context.Context, req *v1.AdminPermissionListReq) (*v1.AdminPermissionListRes, error)
 		// UpdateUserPermissions updates permission points for an admin user.
 		UpdateUserPermissions(ctx context.Context, req *v1.AdminPermissionUpdateReq) (*v1.AdminPermissionUpdateRes, error)
-		// UpdateUserDataScopes updates data scopes for an admin user.
-		UpdateUserDataScopes(ctx context.Context, req *v1.AdminDataScopeUpdateReq) (*v1.AdminDataScopeUpdateRes, error)
-		// GetAllPermissions returns all predefined permission groups.
+		// GetAllPermissions returns all predefined permission groups plus tier metadata.
+		//
+		// 同时返回权限点分组（高级模式用）与「模块 × 档位」元数据（默认配置界面用）：
+		// 二者是同一份数据的两个视图，由后端统一给出，避免前端复刻一份档位定义造成漂移。
 		GetAllPermissions(ctx context.Context, _ *v1.AdminAllPermissionsReq) (*v1.AdminAllPermissionsRes, error)
 		// ListPlans 获取套餐列表
 		ListPlans(ctx context.Context, req *v1.PlanListReq) (*v1.PlanListRes, error)
@@ -447,6 +480,30 @@ type (
 		ListRedemptionUsages(ctx context.Context, req *v1.RedemptionUsagesReq) (*v1.RedemptionUsagesRes, error)
 		// ExportRedemptions exports redemption list to CSV or Excel.
 		ExportRedemptions(ctx context.Context, req *v1.RedemptionExportReq) (*v1.RedemptionExportRes, error)
+		// AssignUserRoles 为管理员分配角色（全量覆盖）。
+		AssignUserRoles(ctx context.Context, req *v1.AdminUserRoleAssignReq) (*v1.AdminUserRoleAssignRes, error)
+		// GetUserRoles 查询管理员已分配的角色。
+		GetUserRoles(ctx context.Context, req *v1.AdminUserRoleListReq) (*v1.AdminUserRoleListRes, error)
+		// ListRoles 返回角色列表（角色数量少，不分页）。
+		ListRoles(ctx context.Context, _ *v1.AdminRoleListReq) (*v1.AdminRoleListRes, error)
+		// GetRoleDetail 返回角色详情，同时给出权限点全集与按模块归纳的档位视图。
+		GetRoleDetail(ctx context.Context, req *v1.AdminRoleDetailReq) (*v1.AdminRoleDetailRes, error)
+		// CreateRole 新建角色。权限可直接给出，也可从现有角色复制。
+		CreateRole(ctx context.Context, req *v1.AdminRoleCreateReq) (*v1.AdminRoleCreateRes, error)
+		// UpdateRole 更新角色的名称、说明、排序与权限（code 不可修改）。
+		UpdateRole(ctx context.Context, req *v1.AdminRoleUpdateReq) (*v1.AdminRoleUpdateRes, error)
+		// UpdateRoleStatus 启用/禁用角色。禁用后该角色的权限对全部关联用户立即失效。
+		UpdateRoleStatus(ctx context.Context, req *v1.AdminRoleStatusUpdateReq) (*v1.AdminRoleStatusUpdateRes, error)
+		// DeleteRole 删除角色，并在同一事务内级联清理其权限行与用户关联。
+		//
+		// 无外键，级联必须由业务层完成，否则会留下悬空的权限行与用户关联。
+		// 预置角色同样可删：is_builtin 只标识来源，不构成删除保护。
+		//
+		// 不存在把自己锁死的风险 —— 超级管理员由 sys_admin_users.role 判定并短路鉴权，
+		// 不依赖任何角色记录，即便角色被删光也能登录并重建，因此不设「至少保留一个角色」的约束。
+		DeleteRole(ctx context.Context, req *v1.AdminRoleDeleteReq) (*v1.AdminRoleDeleteRes, error)
+		// ResetRoleDefaults 把预置角色的权限恢复为出厂默认值。
+		ResetRoleDefaults(ctx context.Context, req *v1.AdminRoleResetReq) (*v1.AdminRoleResetRes, error)
 		// Verify2FA handles the 2FA verification step during admin login.
 		Verify2FA(ctx context.Context, req *v1.Admin2FAVerifyReq) (*v1.Admin2FAVerifyRes, error)
 		// Setup2FA starts the 2FA setup process for the current admin user.
@@ -485,6 +542,8 @@ type (
 		// 使用 SendOnce 而非 Send：连通性测试要快速拿到真实 SMTP 错误（认证失败、端口不通重试
 		// 三次也不会变好），不该让管理员多等十几秒的退避。
 		TestEmailConfig(ctx context.Context, req *v1.AdminEmailTestReq) (*v1.AdminEmailTestRes, error)
+		// GetSupportPendingSummary 顶栏铃铛待办计数。
+		GetSupportPendingSummary(ctx context.Context, _ *v1.AdminSupportPendingSummaryReq) (*v1.AdminSupportPendingSummaryRes, error)
 		// TaskList 大模型异步任务列表
 		TaskList(ctx context.Context, req *v1.TaskListReq) (*v1.TaskListRes, error)
 		// TaskDetail 大模型异步任务详情
@@ -549,7 +608,11 @@ type (
 		UsageLogCleanupCancel(ctx context.Context, req *v1.UsageLogCleanupCancelReq) (*v1.UsageLogCleanupCancelRes, error)
 		// GetWorkbenchSummary 工作台汇总。
 		GetWorkbenchSummary(ctx context.Context, _ *v1.AdminWorkbenchSummaryReq) (*v1.AdminWorkbenchSummaryRes, error)
-		// GetWorkbenchBadges 菜单红点计数（与 summary 共用缓存，不额外压库）。
+		// GetWorkbenchBadges 工作台菜单角标计数（与 summary 共用缓存，不额外压库）。
+		//
+		// 角标只挂工作台菜单一项：待办的排查线索只存在于工作台的描述文案里，
+		// 业务菜单里没有对应的定位入口，往各业务菜单挂数字只会带来
+		// 「进去了却找不到问题」的困惑（红点引路却无路可走）。
 		GetWorkbenchBadges(ctx context.Context, _ *v1.AdminWorkbenchBadgeReq) (*v1.AdminWorkbenchBadgeRes, error)
 	}
 )

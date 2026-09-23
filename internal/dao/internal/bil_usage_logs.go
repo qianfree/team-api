@@ -78,6 +78,8 @@ type BilUsageLogsColumns struct {
 	BillingSnapshot       string // 完整计费计算过程快照（JSONB）
 	ProjectId             string // 关联项目ID（通过API Key关联，NULL表示个人密钥无项目）
 	TaskId                string // 异步任务公开ID（task_xxxxx），关联 tsk_model_tasks.public_task_id，普通请求为空
+	DurationSeconds       string // 按秒计费任务的视频时长（秒），来自任务提交时的 spec.duration；非时长类任务为 NULL
+	UpstreamRequestId     string // 上游请求ID：对话=上游响应头请求ID（X-Oneapi-Request-Id等），任务=上游任务ID；排障反查用
 }
 
 // bilUsageLogsColumns holds the columns for the table bil_usage_logs.
@@ -139,6 +141,8 @@ var bilUsageLogsColumns = BilUsageLogsColumns{
 	BillingSnapshot:       "billing_snapshot",
 	ProjectId:             "project_id",
 	TaskId:                "task_id",
+	DurationSeconds:       "duration_seconds",
+	UpstreamRequestId:     "upstream_request_id",
 }
 
 // NewBilUsageLogsDao creates and returns a new DAO object for table data access.

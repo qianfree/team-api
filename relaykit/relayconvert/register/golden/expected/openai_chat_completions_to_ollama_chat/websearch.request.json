@@ -1,0 +1,13 @@
+{
+  "messages": [
+    {
+      "content": "Search the latest AI news.",
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "options": {
+    "num_predict": 1024
+  },
+  "stream": false
+}

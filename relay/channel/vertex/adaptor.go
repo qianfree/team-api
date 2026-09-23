@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"github.com/qianfree/team-api/relay/channel/claude"
 	"github.com/qianfree/team-api/relay/channel/gemini"
 	"github.com/qianfree/team-api/relay/common"
+	"github.com/qianfree/team-api/relay/constant"
+	"github.com/qianfree/team-api/relay/helper"
 	"github.com/qianfree/team-api/relay/override"
 )
 
@@ -56,9 +59,10 @@ func (a *Adaptor) Init(info *common.RelayInfo) {
 	// 默认区域
 	a.region = "us-central1"
 
-	// 检测模型类型
-	model := info.ChannelMeta.UpstreamModelName
-	if strings.Contains(strings.ToLower(model), "claude") {
+	// 检测模型类型。判据复用 helper 的权威实现——矩阵的协议判定
+	//（EffectiveUpstreamFormat / inboundMatchesChannelNative）走的是同一个函数，
+	// 两侧一旦漂移就会出现「矩阵按 A 格式转换、adaptor 按 B 格式选端点」的错配。
+	if helper.ProviderNativeFormatFor(info) == constant.RelayFormatClaude {
 		a.detectedType = modelTypeClaude
 	} else {
 		a.detectedType = modelTypeGemini
@@ -124,14 +128,35 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	return nil
 }
 
-// ConvertRequest 转换请求体（委托给对应的供应商适配器）
+// ConvertRequest 转换请求体（委托给对应的供应商适配器）。
+// Claude 模型另需把体改写为 Vertex rawPredict 端点的形态。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
 	switch a.detectedType {
 	case modelTypeClaude:
-		return a.claudeAdaptor.ConvertRequest(ctx, info, requestBody)
+		converted, err := a.claudeAdaptor.ConvertRequest(ctx, info, requestBody)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(converted)
+		if err != nil {
+			return nil, fmt.Errorf("read converted claude body: %w", err)
+		}
+		return bytes.NewReader(adaptClaudeBodyForVertex(body)), nil
 	default:
 		return a.geminiAdaptor.ConvertRequest(ctx, info, requestBody)
 	}
+}
+
+// PostProcessConvertedRequest 供应商私有后处理（common.RequestPostProcessor）。
+//
+// relaykit 接管转换时 ConvertRequest 整个不会被调用，上面那段 Vertex 专属的体改写
+// 会随之丢失（缺 anthropic_version 直接 400）。此处按接口契约接回，与 ConvertRequest
+// 共用 adaptClaudeBodyForVertex；函数幂等，重复执行无副作用。
+func (a *Adaptor) PostProcessConvertedRequest(_ context.Context, _ *common.RelayInfo, body []byte) ([]byte, error) {
+	if a.detectedType != modelTypeClaude {
+		return body, nil
+	}
+	return adaptClaudeBodyForVertex(body), nil
 }
 
 // DoRequest 发送请求到上游

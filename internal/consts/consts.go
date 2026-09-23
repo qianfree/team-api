@@ -150,18 +150,17 @@ const (
 	CodeInvalidConfirmToken = 10046
 
 	// Security errors (10047+)
-	CodeTotpRequired         = 10047
-	CodeTotpInvalid          = 10048
-	CodeTotpAlreadyEnabled   = 10049
-	CodeTotpNotEnabled       = 10050
-	CodeBackupCodeInvalid    = 10051
-	CodeTurnstileFailed      = 10052
-	CodeIpRestricted         = 10053
-	CodeHighRisk2FARequired  = 10054
-	CodeNoAvailableApiKey    = 10055
-	CodeSandboxQuotaExceeded = 10056
-	CodeCaptchaRequired      = 10057
-	CodeCaptchaFailed        = 10058
+	CodeTotpRequired        = 10047
+	CodeTotpInvalid         = 10048
+	CodeTotpAlreadyEnabled  = 10049
+	CodeTotpNotEnabled      = 10050
+	CodeBackupCodeInvalid   = 10051
+	CodeTurnstileFailed     = 10052
+	CodeIpRestricted        = 10053
+	CodeHighRisk2FARequired = 10054
+	CodeNoAvailableApiKey   = 10055
+	CodeCaptchaRequired     = 10057
+	CodeCaptchaFailed       = 10058
 
 	// OAuth errors (10059+)
 	CodeOAuthDisabled      = 10059
@@ -183,6 +182,7 @@ const (
 	CodeHelpCategorySlugExists = 10074
 	CodeHelpArticleNotFound    = 10075
 	CodeHelpArticleSlugExists  = 10076
+	CodeHelpRateLimitExceeded  = 10099
 
 	// Registration errors
 	CodeRegistrationDisabled      = 10077
@@ -338,6 +338,7 @@ const (
 	MsgHelpCategorySlugExists = "分类标识已存在"
 	MsgHelpArticleNotFound    = "帮助文章不存在"
 	MsgHelpArticleSlugExists  = "文章标识已存在"
+	MsgHelpRateLimitExceeded  = "访问过于频繁，请稍后再试"
 	// Registration errors
 	MsgRegistrationDisabled      = "注册功能已关闭"
 	MsgEmailVerificationDisabled = "注册邮箱验证未启用"

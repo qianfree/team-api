@@ -85,11 +85,12 @@ func WriteGeminiRelayError(w http.ResponseWriter, err error) {
 		errStatus = "RESOURCE_EXHAUSTED"
 	} else if errors.As(err, &relayErr) {
 		statusCode = relayErr.StatusCode
-		errMsg = relayErr.Message
+		// 上游错误的 Message 是上游响应体原文，解包出可读消息再暴露给客户端
+		errMsg = helper.UnwrapUpstreamErrorMessage(relayErr.Message)
 		if relayErr.Cause != nil {
 			// 传输层错误（client.Do 的 *url.Error）的 Cause 含上游域名，必须脱敏后再暴露给用户；
 			// 日志侧仍用 originalError=%v 打印完整错误供运维定位。
-			errMsg = relayErr.Message + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
+			errMsg = errMsg + ": " + helper.SafeUpstreamErrorMessage(relayErr.Cause)
 		}
 		switch statusCode {
 		case 401:
@@ -100,6 +101,14 @@ func WriteGeminiRelayError(w http.ResponseWriter, err error) {
 			errStatus = "INVALID_ARGUMENT"
 		case 404:
 			errStatus = "NOT_FOUND"
+		case 429:
+			// 限流：与 rateLimitErr 分支同口径。缺这条会让 429 带上 INTERNAL，
+			// 客户端（按 status 字符串判重试的 SDK）把可退避的限流当成服务端故障
+			errStatus = "RESOURCE_EXHAUSTED"
+		case 503:
+			errStatus = "UNAVAILABLE"
+		case 504:
+			errStatus = "DEADLINE_EXCEEDED"
 		default:
 			errStatus = "INTERNAL"
 		}

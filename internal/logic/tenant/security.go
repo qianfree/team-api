@@ -67,6 +67,7 @@ func (s *sTenant) Verify2FA(ctx context.Context, req *v1.Tenant2FAVerifyReq) (*v
 	if err != nil {
 		return nil, gerror.Wrapf(err, "create session")
 	}
+	refreshToken = common.BindSessionIDToRefreshToken(refreshToken, sessionID)
 
 	tokenPair, err := common.GenerateTokenPair(ctx, user.Id, "tenant", user.Role, user.TenantId, sessionID, jti)
 	if err != nil {

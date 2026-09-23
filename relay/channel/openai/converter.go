@@ -583,10 +583,17 @@ func g2oConvertToolConfig(toolConfig any) any {
 }
 
 func g2oConvertThinkingConfig(tc *dto.GeminiThinkingConfig) string {
-	if tc.ThoughtBudget == nil {
+	if tc.ThinkingBudget == nil {
+		// Gemini 3 客户端可能只带 thinkingLevel，按档位回退
+		switch strings.ToLower(tc.ThinkingLevel) {
+		case "low":
+			return "low"
+		case "high":
+			return "high"
+		}
 		return "medium"
 	}
-	budget := *tc.ThoughtBudget
+	budget := *tc.ThinkingBudget
 	switch {
 	case budget <= 2048:
 		return "low"
@@ -717,6 +724,34 @@ type r2cInputItem struct {
 	// function_call 项字段（Responses 历史中的助手工具调用）
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	// reasoning 项的思考文本（OpenAI 官方形态在 summary[]，部分聚合器直连输出放 content[]）
+	Summary []r2cTextPart `json:"summary,omitempty"`
+}
+
+// r2cTextPart Responses 输出项中文本部件的最小读取形态。
+type r2cTextPart struct {
+	Text string `json:"text"`
+}
+
+// r2cReasoningText 提取 reasoning 项的思考文本，summary 与 content 两种形态按序拼接。
+func r2cReasoningText(item r2cInputItem) string {
+	var parts []string
+	for _, s := range item.Summary {
+		if s.Text != "" {
+			parts = append(parts, s.Text)
+		}
+	}
+	if len(item.Content) > 0 {
+		var contentParts []r2cTextPart
+		if err := json.Unmarshal(item.Content, &contentParts); err == nil {
+			for _, c := range contentParts {
+				if c.Text != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type r2cContentPart struct {
@@ -755,11 +790,26 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 	// 连续的 function_call 项聚合为一条 assistant 消息（chat 协议的 tool_calls 数组语义），
 	// 其后的 function_call_output 转为引用对应 tool_call_id 的 tool 消息
 	var pendingToolCalls []map[string]any
+	// reasoning 项的思考文本：挂到下一条 assistant 消息。DeepSeek 等推理上游的 thinking
+	// 模式要求多轮历史传回 reasoning_content，丢弃会 400（与 relaykit 侧镜像实现同口径）
+	var pendingReasoning string
+	takeReasoning := func() any {
+		if pendingReasoning == "" {
+			return nil
+		}
+		r := pendingReasoning
+		pendingReasoning = ""
+		return r
+	}
 	flushToolCalls := func() {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
-		messages = append(messages, map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls})
+		msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": pendingToolCalls}
+		if r := takeReasoning(); r != nil {
+			msg["reasoning_content"] = r
+		}
+		messages = append(messages, msg)
 		pendingToolCalls = nil
 	}
 	for _, raw := range items {
@@ -771,6 +821,13 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 		case "message":
 			flushToolCalls()
 			if msg := r2cConvertMessage(item); msg != nil {
+				if msg["role"] == "assistant" {
+					if r := takeReasoning(); r != nil {
+						msg["reasoning_content"] = r
+					}
+				} else {
+					pendingReasoning = "" // user 消息前的 reasoning 无人可挂，丢弃
+				}
 				messages = append(messages, msg)
 			}
 		case "function_call":
@@ -790,12 +847,16 @@ func r2cConvertInputToMessages(input json.RawMessage) ([]map[string]any, error) 
 			flushToolCalls()
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": item.CallID, "content": item.Output})
 		case "reasoning":
-			// reasoning 项（含加密思考内容）无 chat 协议对应物，跳过
-			continue
+			pendingReasoning = r2cReasoningText(item)
 		default:
 			flushToolCalls()
 			if item.Role != "" {
 				if msg := r2cConvertMessage(item); msg != nil {
+					if msg["role"] == "assistant" {
+						if r := takeReasoning(); r != nil {
+							msg["reasoning_content"] = r
+						}
+					}
 					messages = append(messages, msg)
 				}
 			}
@@ -952,297 +1013,6 @@ func r2cParseTextFormat(raw json.RawMessage) map[string]any {
 	}
 }
 
-// ===== OpenAI → Responses 请求转换（Responses API Bridge） =====
-
-// ConvertOpenAIToResponses 将 Chat Completions 请求体转换为 Responses API 请求体
-func ConvertOpenAIToResponses(body []byte, info *common.RelayInfo) ([]byte, error) {
-	var req dto.GeneralOpenAIRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("parse chat completions request: %w", err)
-	}
-
-	respReq := make(map[string]any)
-	if info.ChannelMeta.IsModelMapped {
-		respReq["model"] = info.ChannelMeta.UpstreamModelName
-	} else {
-		respReq["model"] = req.Model
-	}
-
-	if instructions := c2rExtractInstructions(req.Messages); instructions != "" {
-		respReq["instructions"] = instructions
-	}
-	respReq["input"] = c2rConvertMessagesToInput(req.Messages)
-
-	if req.Stream != nil {
-		respReq["stream"] = *req.Stream
-	}
-	if req.Temperature != nil {
-		respReq["temperature"] = *req.Temperature
-	}
-	if req.TopP != nil {
-		respReq["top_p"] = *req.TopP
-	}
-	// prompt_cache_key 是官方 Responses API 参数，原样透传；
-	// presence/frequency penalty 不属于官方 Responses API，透传会被严格上游
-	// （如 api.openai.com）以未知参数拒绝，chat 入站时不注入、静默丢弃。
-	if req.PromptCacheKey != "" {
-		respReq["prompt_cache_key"] = req.PromptCacheKey
-	}
-	if maxTokens := c2rGetMaxTokens(req); maxTokens > 0 {
-		respReq["max_output_tokens"] = maxTokens
-	}
-	if req.ResponseFormat != nil {
-		if tf := c2rBuildTextFormat(req.ResponseFormat); tf != nil {
-			respReq["text"] = tf
-		}
-	}
-	// 桥接的响应不可被 chat 客户端经 previous_response_id 引用（chat 协议无此概念），
-	// 显式 store:false 避免上游无谓存储；渠道配置 DisableStore 时 SanitizeFields 会删掉该字段
-	respReq["store"] = false
-	if req.ReasoningEffort != "" {
-		respReq["reasoning"] = map[string]any{"effort": req.ReasoningEffort, "summary": "detailed"}
-	}
-	if len(req.Tools) > 0 {
-		if respTools := c2rConvertTools(req.Tools); len(respTools) > 0 {
-			respReq["tools"] = respTools
-		}
-	}
-	if req.ToolChoice != nil {
-		respReq["tool_choice"] = c2rConvertToolChoice(req.ToolChoice)
-	}
-	if req.User != "" {
-		respReq["user"] = req.User
-	}
-	if req.ParallelToolCalls != nil {
-		respReq["parallel_tool_calls"] = *req.ParallelToolCalls
-	}
-
-	result, err := json.Marshal(respReq)
-	if err != nil {
-		return nil, fmt.Errorf("marshal responses request: %w", err)
-	}
-	return result, nil
-}
-
-func c2rExtractInstructions(messages []dto.Message) string {
-	var parts []string
-	for _, msg := range messages {
-		if msg.Role == "system" || msg.Role == "developer" {
-			if text, ok := msg.Content.(string); ok && text != "" {
-				parts = append(parts, text)
-			}
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	instructions := parts[0]
-	for i := 1; i < len(parts); i++ {
-		instructions += "\n\n" + parts[i]
-	}
-	return instructions
-}
-
-func c2rConvertMessagesToInput(messages []dto.Message) []any {
-	var input []any
-	for _, msg := range messages {
-		if msg.Role == "system" || msg.Role == "developer" {
-			continue
-		}
-		switch msg.Role {
-		case "user":
-			input = append(input, c2rMakeMessageItem("user", msg.Content))
-		case "assistant":
-			if len(msg.ToolCalls) > 0 {
-				if msg.Content != nil {
-					if text, ok := msg.Content.(string); ok && text != "" {
-						input = append(input, c2rMakeMessageItem("assistant", text))
-					}
-				}
-				for _, tc := range msg.ToolCalls {
-					input = append(input, map[string]any{
-						"type": "function_call", "call_id": tc.ID, "name": tc.Function.Name, "arguments": tc.Function.Arguments,
-					})
-				}
-			} else {
-				input = append(input, c2rMakeMessageItem("assistant", msg.Content))
-			}
-		case "tool":
-			input = append(input, map[string]any{
-				"type": "function_call_output", "call_id": msg.ToolCallID, "output": c2rContentToString(msg.Content),
-			})
-		}
-	}
-	if len(input) == 0 {
-		return []any{}
-	}
-	return input
-}
-
-func c2rMakeMessageItem(role string, content any) map[string]any {
-	if content == nil {
-		return map[string]any{"type": "message", "role": role, "content": []any{}}
-	}
-	switch v := content.(type) {
-	case string:
-		textType := "input_text"
-		if role == "assistant" {
-			textType = "output_text"
-		}
-		return map[string]any{"type": "message", "role": role, "content": []any{map[string]any{"type": textType, "text": v}}}
-	case []any:
-		parts := make([]any, 0, len(v))
-		for _, item := range v {
-			part, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if converted := c2rConvertContentPart(part, role); converted != nil {
-				parts = append(parts, converted)
-			}
-		}
-		return map[string]any{"type": "message", "role": role, "content": parts}
-	default:
-		b, err := json.Marshal(content)
-		if err != nil {
-			return map[string]any{"type": "message", "role": role, "content": []any{}}
-		}
-		var parts []any
-		if err := json.Unmarshal(b, &parts); err == nil {
-			converted := make([]any, 0, len(parts))
-			for _, item := range parts {
-				part, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				if c := c2rConvertContentPart(part, role); c != nil {
-					converted = append(converted, c)
-				}
-			}
-			return map[string]any{"type": "message", "role": role, "content": converted}
-		}
-		return map[string]any{"type": "message", "role": role, "content": []any{}}
-	}
-}
-
-func c2rConvertContentPart(part map[string]any, role string) map[string]any {
-	partType, _ := part["type"].(string)
-	switch partType {
-	case "text":
-		text, _ := part["text"].(string)
-		textType := "input_text"
-		if role == "assistant" {
-			textType = "output_text"
-		}
-		return map[string]any{"type": textType, "text": text}
-	case "image_url":
-		imgURL, _ := part["image_url"].(map[string]any)
-		if imgURL != nil {
-			result := map[string]any{"type": "input_image"}
-			if url, ok := imgURL["url"].(string); ok {
-				result["image_url"] = url
-			}
-			if detail, ok := imgURL["detail"].(string); ok {
-				result["detail"] = detail
-			}
-			return result
-		}
-	case "input_audio":
-		data, _ := part["data"].(string)
-		format, _ := part["format"].(string)
-		return map[string]any{"type": "input_audio", "data": data, "format": format}
-	case "file":
-		result := map[string]any{"type": "input_file"}
-		if fileData, ok := part["file_data"].(string); ok {
-			result["file_data"] = fileData
-		}
-		if filename, ok := part["filename"].(string); ok {
-			result["filename"] = filename
-		}
-		return result
-	}
-	return nil
-}
-
-func c2rConvertTools(tools []dto.Tool) []any {
-	result := make([]any, 0, len(tools))
-	for _, tool := range tools {
-		if tool.Type == "function" {
-			result = append(result, map[string]any{
-				"type": "function", "name": tool.Function.Name, "description": tool.Function.Description, "parameters": tool.Function.Parameters,
-			})
-		}
-	}
-	return result
-}
-
-func c2rConvertToolChoice(toolChoice any) any {
-	b, err := json.Marshal(toolChoice)
-	if err != nil {
-		return toolChoice
-	}
-	var tc map[string]any
-	if err := json.Unmarshal(b, &tc); err != nil {
-		return toolChoice
-	}
-	if tc["type"] == "function" {
-		if fn, ok := tc["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok {
-				return map[string]any{"type": "function", "name": name}
-			}
-		}
-	}
-	return tc
-}
-
-func c2rContentToString(content any) string {
-	if content == nil {
-		return ""
-	}
-	if s, ok := content.(string); ok {
-		return s
-	}
-	b, _ := json.Marshal(content)
-	return string(b)
-}
-
-func c2rGetMaxTokens(req dto.GeneralOpenAIRequest) int {
-	max := 0
-	if req.MaxTokens != nil && *req.MaxTokens > 0 {
-		max = *req.MaxTokens
-	}
-	if req.MaxCompletionTokens != nil && *req.MaxCompletionTokens > max {
-		max = *req.MaxCompletionTokens
-	}
-	return max
-}
-
-// c2rBuildTextFormat 将 chat 的 response_format 转换为 Responses 的 text 配置。
-// chat 的 json_schema 为嵌套 {type,json_schema:{name,schema,strict}}，
-// Responses 的 format 为扁平 {type,name,schema,strict}——需解包提升，不能原样塞入。
-// 其余类型（json_object）两侧同形；无法识别时返回 nil 不映射。
-func c2rBuildTextFormat(rf *dto.ResponseFormat) map[string]any {
-	if rf == nil {
-		return nil
-	}
-	switch rf.Type {
-	case "json_object":
-		return map[string]any{"format": map[string]any{"type": "json_object"}}
-	case "json_schema":
-		format := map[string]any{"type": "json_schema"}
-		if js, ok := rf.JSONSchema.(map[string]any); ok {
-			for _, k := range []string{"name", "schema", "strict"} {
-				if v, ok := js[k]; ok {
-					format[k] = v
-				}
-			}
-		}
-		return map[string]any{"format": format}
-	default:
-		return nil
-	}
-}
-
 // ===== Responses → Chat 响应转换 =====
 
 // ResponsesResponseToChatCompletions 将 Responses API 非流式响应转换为 Chat Completions 响应
@@ -1364,16 +1134,18 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 	toolCallNameByID := make(map[string]string)
 	toolCallArgsByID := make(map[string]string)
 	toolCallNameSent := make(map[string]bool)
+	// item_id → call_id 映射：function_call 项的 item.id（OpenAI 为 fc_xxx、DeepSeek 为 UUID）
+	// 与 call_id 是两个不同的值，而 arguments 增量事件只带 item_id。不做映射会把同一
+	// 工具调用拆成两个 index，客户端在无 name 的新 index 上报错
+	callIDByItemID := make(map[string]string)
 
 	sendChatChunk := func(chunk *dto.ChatCompletionStreamResponse) bool {
 		if chunk == nil {
 			return true
 		}
-		data, err := json.Marshal(chunk)
-		if err != nil {
-			return false
-		}
-		return helper.WriteSSEData(writer, string(data)) == nil
+		// 池化缓冲 + 绑定 encoder：序列化与拼帧零分配，整帧单次写出。
+		// 序列化失败与写失败都返回 false（同旧行为），由调用方终止流。
+		return helper.WriteSSEDataJSON(writer, chunk) == nil
 	}
 
 	sendStartIfNeeded := func() bool {
@@ -1458,6 +1230,9 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 			if callID == "" {
 				return
 			}
+			if itemID := strings.TrimSpace(streamResp.Item.ID); itemID != "" {
+				callIDByItemID[itemID] = callID
+			}
 			name := strings.TrimSpace(streamResp.Item.Name)
 			if name != "" {
 				toolCallNameByID[callID] = name
@@ -1483,9 +1258,13 @@ func HandleResponsesStreamToChat(ctx context.Context, resp *http.Response, info 
 
 		case "response.function_call_arguments.delta":
 			itemID := strings.TrimSpace(streamResp.ItemID)
-			callID := itemID
-			if callID == "" {
+			if itemID == "" {
 				return
+			}
+			// 增量事件只带 item_id，先映射回 call_id（无 added 事件先行的上游按原值兜底）
+			callID := callIDByItemID[itemID]
+			if callID == "" {
+				callID = itemID
 			}
 			toolCallArgsByID[callID] += streamResp.Delta
 			if !r2cSendToolCallChunk(responseID, createAt, model, callID, "", streamResp.Delta, toolCallIndexByID, toolCallNameByID, toolCallNameSent, writer, sendChatChunk) {
@@ -1592,7 +1371,7 @@ func r2cSendToolCallChunk(responseID string, createAt int64, model string, callI
 	if nameByID[callID] != "" {
 		name = nameByID[callID]
 	}
-	tool := dto.ToolCall{ID: callID, Type: "function", Index: idx, Function: dto.FunctionCall{Arguments: argsDelta}}
+	tool := dto.ToolCall{ID: callID, Type: "function", Index: &idx, Function: dto.FunctionCall{Arguments: argsDelta}}
 	if name != "" && !nameSent[callID] {
 		tool.Function.Name = name
 		nameSent[callID] = true
@@ -1648,3 +1427,6 @@ func HandleResponsesNonStreamToChat(ctx context.Context, resp *http.Response, in
 	writer.Write(resultBody)
 	return usage, nil
 }
+
+// intPtr 供测试构造 *int 参数（c2o 边界值测试用）
+func intPtr(v int) *int { return &v }

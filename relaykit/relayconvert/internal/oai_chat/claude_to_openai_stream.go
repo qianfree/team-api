@@ -110,9 +110,9 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 
 		switch event.Type {
 		case "message_start":
-			// 提取模型名与初始 usage
+			// 提取模型名与初始 usage（模型映射时客户端只能看到原始请求模型名，不泄漏上游真实模型）
 			if event.Message != nil {
-				if event.Message.Model != "" {
+				if event.Message.Model != "" && !isModelMapped(info) {
 					modelName = event.Message.Model
 				}
 				if event.Message.Usage != nil {
@@ -146,7 +146,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 			case "tool_use":
 				// tool_use 块开始
 				toolCall := dto.ToolCall{
-					Index: toolCallIdx,
+					Index: intPtr(toolCallIdx),
 					ID:    event.ContentBlock.ID,
 					Type:  "function",
 					Function: dto.FunctionCall{
@@ -188,7 +188,7 @@ func (c *ClaudeToOpenAIStreamConverter) ConvertStreamResponse(
 				if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" {
 					if err := chunkWriter(newChunk(dto.Message{
 						ToolCalls: []dto.ToolCall{{
-							Index: toolCallIdx - 1,
+							Index: intPtr(toolCallIdx - 1),
 							Function: dto.FunctionCall{
 								Arguments: *event.Delta.PartialJSON,
 							},

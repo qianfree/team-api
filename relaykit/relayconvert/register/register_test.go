@@ -28,18 +28,6 @@ func TestBuiltinConvertersRegistered(t *testing.T) {
 			wantResp:    true,
 		},
 		{
-			name:        "OpenAI→Coze",
-			converterID: relayconvert.ConverterOpenAIChatToCoze,
-			wantReq:     true,
-			wantResp:    true,
-		},
-		{
-			name:        "OpenAI→Dify",
-			converterID: relayconvert.ConverterOpenAIChatToDify,
-			wantReq:     true,
-			wantResp:    true,
-		},
-		{
 			name:        "OpenAI→Ollama",
 			converterID: relayconvert.ConverterOpenAIChatToOllama,
 			wantReq:     true,
@@ -83,18 +71,6 @@ func TestBuiltinStreamConvertersRegistered(t *testing.T) {
 			from:   types.RelayFormatGemini,
 			to:     types.RelayFormatOpenAI,
 			wantID: relayconvert.ResponseConverterGeminiChatToOAIChatStream,
-		},
-		{
-			name:   "Coze→OpenAI",
-			from:   types.RelayFormatCoze,
-			to:     types.RelayFormatOpenAI,
-			wantID: relayconvert.ResponseConverterCozeChatToOAIChatStream,
-		},
-		{
-			name:   "Dify→OpenAI",
-			from:   types.RelayFormatDify,
-			to:     types.RelayFormatOpenAI,
-			wantID: relayconvert.ResponseConverterDifyChatToOAIChatStream,
 		},
 		{
 			name:   "Ollama→OpenAI",

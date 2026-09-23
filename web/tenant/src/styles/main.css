@@ -257,6 +257,48 @@ body.modal-open {
 	@apply mt-1 text-xs text-red-500;
 }
 
+/* ============ Playground 输入容器 ============ */
+/* 把附件片、输入框、操作按钮收进同一个圆角盒子，聚焦时整块高亮。
+   对话、视频两个 Tab 共用，故放在全局而非某个组件的 scoped 里。 */
+.input-shell {
+	border: 1px solid #e5e7eb;
+	border-radius: 1rem;
+	background: #fff;
+	padding: 0.625rem 0.75rem 0.5rem;
+	transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+/* 聚焦与拖拽时整块高亮，而不是只高亮里面的 textarea */
+.input-shell:focus-within {
+	border-color: rgba(20, 184, 166, 0.55);
+	box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.09);
+}
+.input-shell-dragging {
+	border-color: #2dd4bf;
+	border-style: dashed;
+	background: rgba(240, 253, 250, 0.6);
+}
+
+/* 输入区内的小工具按钮（附件 / 清空 等） */
+.input-tool {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	border-radius: 0.5rem;
+	padding: 0.25rem 0.5rem;
+	color: #6b7280;
+	font-size: 0.75rem;
+	line-height: 1.25rem;
+	transition: background-color 150ms ease, color 150ms ease;
+}
+.input-tool:hover:not(:disabled) {
+	background: #f3f4f6;
+	color: #0d9488;
+}
+.input-tool:disabled {
+	cursor: not-allowed;
+	color: #d1d5db;
+}
+
 /* ============ 液态玻璃效果 ============ */
 /* 大面积磨砂（header、sticky 栏） */
 .glass {
@@ -458,6 +500,16 @@ body.modal-open {
 	.viewport-table-content > .table-pagination {
 		flex: 0 0 auto;
 	}
+}
+
+/* Naive UI flex-height 表格空态垂直居中：空态节点 .n-data-table-empty 自带 flex-grow:1 + 居中，
+   但其父级滚动 content（.n-scrollbar-content）默认高度塌成内容高且非 flex 容器，flex-grow 无从生效，
+   「暂无数据」会顶在表体上方。空数据时把 content 拉满表体高度并转纵向 flex 即可；
+   限定 :has(空态节点) 保证有数据时表格布局零影响 */
+.n-data-table--flex-height .n-data-table-base-table-body .n-scrollbar-content:has(> .n-data-table-empty) {
+	min-height: 100%;
+	display: flex;
+	flex-direction: column;
 }
 .table-container-flush {
 	border: 0;

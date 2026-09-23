@@ -59,7 +59,6 @@ type relayValidation struct {
 	relayModeStr    string
 	modelName       string
 	lookupModel     string
-	thinkingInfo    *helper.ThinkingInfo
 	isStream        bool
 	estimatedTokens int
 	maxTokens       int
@@ -72,26 +71,15 @@ type modelMappingProvider interface {
 	GetModelMapping(ctx context.Context, modelName string) (standardName string, category string, err error)
 }
 
-// resolveRelayModel gives a literal catalog model precedence over the optional
-// thinking/effort suffix syntax. This avoids treating names such as
-// "qwen3.8-max" as the virtual model "qwen3.8" with effort=max.
-func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, *helper.ThinkingInfo, error) {
-	parsed := helper.ParseThinkingSuffix(modelName)
-	literal := &helper.ThinkingInfo{BaseModel: modelName}
-
-	_, _, err := provider.GetModelMapping(ctx, modelName)
-	if err == nil {
-		return modelName, literal, nil
+// resolveRelayModel 校验模型在目录中存在，返回计费/调度用的目录模型名。
+// 历史上此处还承担 thinking/effort 模型名后缀（-thinking/-high 等虚拟模型语法）的
+// 解析回退；该语法已于 2026-09 移除（无存量使用，思考参数一律由客户端请求参数表达），
+// 目录名即请求名。
+func resolveRelayModel(ctx context.Context, provider modelMappingProvider, modelName string) (string, error) {
+	if _, _, err := provider.GetModelMapping(ctx, modelName); err != nil {
+		return "", err
 	}
-	if parsed.BaseModel == modelName {
-		return "", nil, err
-	}
-
-	_, _, err = provider.GetModelMapping(ctx, parsed.BaseModel)
-	if err != nil {
-		return "", nil, err
-	}
-	return parsed.BaseModel, &parsed, nil
+	return modelName, nil
 }
 
 // validateRelayRequest 校验请求合法性：relay mode、QPS 限流（前置）、模型存在性、弃用状态、成员/API Key 模型范围。
@@ -161,9 +149,8 @@ func validateRelayRequest(
 		return nil, constant.NewRequestError("model is required", nil)
 	}
 
-	// 2.5 解析 thinking/effort 后缀并验证模型。完整模型名存在时按字面模型处理；
-	// 仅在完整名称不存在时，才尝试将后缀解析为虚拟 thinking/effort 参数。
-	lookupModel, thinkingInfo, modelErr := resolveRelayModel(ctx, provider, modelName)
+	// 2.5 验证模型在目录中存在
+	lookupModel, modelErr := resolveRelayModel(ctx, provider, modelName)
 	if modelErr != nil {
 		if modelErr == common.ErrModelNotFound {
 			return nil, constant.NewRequestError("model not found: "+modelName, modelErr)
@@ -230,7 +217,6 @@ func validateRelayRequest(
 		relayModeStr:    relayModeStr,
 		modelName:       modelName,
 		lookupModel:     lookupModel,
-		thinkingInfo:    thinkingInfo,
 		isStream:        isStream,
 		estimatedTokens: estimatedInputTokens,
 		maxTokens:       maxTokens,
@@ -261,6 +247,14 @@ func extractSessionSignals(rawRequest map[string]json.RawMessage) dispatch.Sessi
 	return sig
 }
 
+// newSettleContext 创建结算/退款/调度上报专用上下文：脱离请求取消（客户端断开不得影响结算），
+// 且超时预算从调用时刻起算。不可在请求发出前创建后跨 DoRequest/DoResponse 复用——
+// 上游请求与流式转发全程可能远超 30s，提前起算的预算会在结算前耗尽，
+// 导致计费记录写入、预扣退款、渠道健康上报拿到已过期的 ctx 而失败。
+func newSettleContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+}
+
 // settleSuccessfulRequest 成功路径的计费结算、健康度更新和用量记录。
 func settleSuccessfulRequest(
 	rc *RelayContext,
@@ -289,7 +283,10 @@ func settleSuccessfulRequest(
 		} else {
 			g.Log().Warningf(postCtx, "[RelayHandler] Settlement failed for request=%s model=%s, refunding pre-deduct amount=%.6f",
 				rc.RequestID, v.modelName, preDeductAmount)
-			_ = billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+			if rErr := billing.SettleFailed(postCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+				g.Log().Errorf(postCtx, "[RelayHandler] Refund pre-deduct failed after settlement failure (needs reconciliation): request=%s tenant=%d err=%v",
+					rc.RequestID, rc.TenantID, rErr)
+			}
 		}
 	}
 
@@ -357,14 +354,14 @@ func settleSuccessfulRequest(
 		ImageOutputTokens: tokenDetailField(usage.CompletionTokenDetails, func(d *common.TokenDetails) int { return d.ImageTokens }),
 
 		// 请求元数据
-		RequestedModel:  v.modelName,
-		UpstreamModel:   selection.UpstreamModelName,
-		RequestType:     requestType(v.isStream),
-		UserAgent:       headers.Get("User-Agent"),
-		ClientIP:        rc.ClientIP,
-		FirstTokenMs:    firstTokenMs,
-		ReasoningEffort: info.ReasoningEffort,
-		InboundEndpoint: path,
+		RequestedModel:    v.modelName,
+		UpstreamModel:     selection.UpstreamModelName,
+		RequestType:       requestType(v.isStream),
+		UserAgent:         headers.Get("User-Agent"),
+		ClientIP:          rc.ClientIP,
+		FirstTokenMs:      firstTokenMs,
+		InboundEndpoint:   path,
+		UpstreamRequestID: info.UpstreamRequestID,
 
 		// 渠道详情
 		ChannelName: selection.ChannelName,
@@ -668,8 +665,6 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		leaseRefresh := startDispatchLeaseRefresher(d.Channel.ID, rc.RequestID)
 
 		upstreamCtx := context.WithoutCancel(attemptCtx)
-		settleCtx, settleCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer settleCancel()
 
 		// 发送请求到上游
 		resp, err := adaptor.DoRequest(upstreamCtx, info, convertedBody)
@@ -678,6 +673,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			// 送达状态标注：连接拒绝/DNS/TLS 建连失败 = 确定未送达；
 			// 写出后 EOF/RST/读超时 = 可能已送达。ReplayUnsafe+MaybeSent 由 FSM 硬规则终止。
 			delivery := deliveryStateOfRequestErr(err)
+			// 结算/上报 ctx 此刻新建：上游挂死可耗时数分钟，请求开始时起算的预算早已耗尽
+			settleCtx, settleCancel := newSettleContext(ctx)
+			defer settleCancel()
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), 0)
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
@@ -696,9 +694,13 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				// 退款失败意味着预扣冻结需等 2h TTL 清扫才释放，留痕供对账
+				if rErr := billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(settleCtx, "[RelayHandler] Refund pre-deduct failed after upstream request failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -708,6 +710,12 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 		if !v.isStream {
 			info.SetFirstResponseTime()
 		}
+
+		// 捕获上游请求 ID（所有对话类渠道适配器的响应统一经过此处）：
+		// 流式/非流式响应头在首帧/响应体之前就已就位。存入 info 使失败路径
+		// （DoResponse 出错、流中断）的用量记录同样携带，排障错误请求往往更有价值；
+		// 重试时每次尝试覆盖，终值 = 最后一次尝试。
+		info.UpstreamRequestID = helper.ExtractUpstreamRequestID(resp.Header)
 
 		// 处理上游响应
 		usage, err := adaptor.DoResponse(ctx, resp, info, rc.Writer)
@@ -720,6 +728,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					rc.RequestID, rc.TenantID, selection.ChannelID, selection.ChannelName, adaptor.GetChannelName(), v.modelName,
 					attempt, info.StreamStatus.Summary(), ctx.Err(), usage, preDeductAmount)
 				// 客户端已收到部分流：不可重试（响应已污染），上报健康后按流中断结算
+				// 结算 ctx 此刻新建：流式转发全程可能远超 30s，且请求 ctx 已随客户端断开而取消
+				settleCtx, settleCancel := newSettleContext(ctx)
+				defer settleCancel()
 				_, _ = sess.Report(settleCtx, dispatchStatusCode(err), err, dispatch.DeliveryResponseStarted, info.LatencyMs(), 0)
 				streamUsage := usage
 				if streamUsage == nil {
@@ -744,7 +755,7 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 					}
 					interruptSettle = settleResult
 				}
-				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus)
+				recordFailedUsageWithTokens(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, streamUsage, interruptSettle, info.StreamStatus, info.UpstreamRequestID)
 				finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 				dbgAttempt.MarkFinal(err)
 				return usage, v.billingResult, err
@@ -764,6 +775,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 				// GetEndReason() != ""：流已开始传输后出错，字节已提交给客户端，必须终止
 				delivery = dispatch.DeliveryResponseStarted
 			}
+			// 结算/上报 ctx 此刻新建：DoResponse（含长流式转发）可能已消耗任意时长
+			settleCtx, settleCancel := newSettleContext(ctx)
+			defer settleCancel()
 			decision, backoff := sess.Report(settleCtx, dispatchStatusCode(err), err, delivery, info.LatencyMs(), retryAfterOf(err))
 			trackRetryDecision(dispatchStatusCode(err), err, delivery, decision)
 
@@ -790,9 +804,13 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 			}
 
 			if billing != nil && preDeductAmount > 0 {
-				_ = billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount)
+				// 退款失败意味着预扣冻结需等 2h TTL 清扫才释放，留痕供对账
+				if rErr := billing.SettleFailed(settleCtx, rc.TenantID, rc.RequestID, preDeductAmount); rErr != nil {
+					g.Log().Errorf(settleCtx, "[RelayHandler] Refund pre-deduct failed after response failure (needs reconciliation): request=%s tenant=%d err=%v",
+						rc.RequestID, rc.TenantID, rErr)
+				}
 			}
-			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus)
+			recordFailedUsage(provider, rc, selection, v.modelName, v.relayMode, v.isStream, err, info.StreamStatus, info.UpstreamRequestID)
 			recordChannelError(rc, selection, v.modelName, attempt, true, err, info.LatencyMs())
 			finalizeTrace(trace, rc, hop, false, attempt, selection, err.Error(), info.LatencyMs())
 			dbgAttempt.MarkFinal(err)
@@ -801,7 +819,9 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 
 		// 成功路径：绑定续期 + 健康上报由 Finish 完成
 		dbgAttempt.MarkFinal(nil)
-		sess.Finish(settleCtx, true, info.LatencyMs())
+		finishCtx, finishCancel := newSettleContext(ctx)
+		defer finishCancel()
+		sess.Finish(finishCtx, true, info.LatencyMs())
 		appendHop(trace, hop, true, "", info.LatencyMs())
 		trace.TotalAttempts = attempt + 1
 		trace.UpstreamModel = selection.UpstreamModelName
@@ -817,25 +837,22 @@ func RelayHandler(ctx context.Context, body []byte, path string, headers http.He
 // attempt 为当前重试轮次（0=首次），写入 RetryIndex 供 ParamOverride「是否重试」规则与 bil_usage_logs.retry_index 使用（C3）。
 func buildRelayInfo(ctx context.Context, rc *RelayContext, v *relayValidation, selection *common.ChannelSelection, path string, headers http.Header, attempt int) *common.RelayInfo {
 	info := &common.RelayInfo{
-		Context:          ctx,
-		TenantID:         rc.TenantID,
-		UserID:           rc.UserID,
-		ApiKeyID:         rc.ApiKeyID,
-		ProjectID:        rc.ProjectID,
-		RequestID:        rc.RequestID,
-		RetryIndex:       attempt,
-		RelayMode:        int(v.relayMode),
-		IsStream:         v.isStream,
-		OriginModelName:  v.modelName,
-		BaseModelName:    v.lookupModel,
-		ThinkingEnabled:  v.thinkingInfo.IsThinking,
-		ThinkingDisabled: v.thinkingInfo.IsNoThinking,
-		ReasoningEffort:  v.thinkingInfo.EffortLevel,
-		RequestURLPath:   path,
-		RequestHeaders:   headers,
-		StartTime:        time.Now(),
-		StreamStatus:     common.NewStreamStatus(),
-		InboundFormat:    relayModeToInboundFormat(v.relayMode),
+		Context:         ctx,
+		TenantID:        rc.TenantID,
+		UserID:          rc.UserID,
+		ApiKeyID:        rc.ApiKeyID,
+		ProjectID:       rc.ProjectID,
+		RequestID:       rc.RequestID,
+		RetryIndex:      attempt,
+		RelayMode:       int(v.relayMode),
+		IsStream:        v.isStream,
+		OriginModelName: v.modelName,
+		BaseModelName:   v.lookupModel,
+		RequestURLPath:  path,
+		RequestHeaders:  headers,
+		StartTime:       time.Now(),
+		StreamStatus:    common.NewStreamStatus(),
+		InboundFormat:   relayModeToInboundFormat(v.relayMode),
 		ChannelMeta: &common.ChannelMeta{
 			ChannelID:         selection.ChannelID,
 			ChannelType:       selection.ChannelType,
@@ -870,11 +887,36 @@ func convertRequestBody(ctx context.Context, info *common.RelayInfo, body []byte
 		return bytes.NewReader(body), nil
 	}
 
-	// relaykit 转换器路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
+	// relaykit 转换器路径（唯一路径，hard-fail）：方向命中后解析/转换失败直接拒绝请求；
+	// 未命中方向（同格式直连、非文本模式等）走 adaptor 的原生后处理路径。
 	var convertedBody io.Reader
-	if relaykitBody, ok := tryConvertRequestViaRelaykit(ctx, info, body); ok {
+	relaykitBody, handled, relaykitErr := tryConvertRequestViaRelaykit(ctx, info, body)
+	switch {
+	case handled && relaykitErr != nil:
+		if !errors.Is(relaykitErr, constant.ErrStatefulResponsesUnsupported) {
+			g.Log().Errorf(ctx, "[RelayHandler] relaykit ConvertRequest failed: inboundFormat=%s, error=%v",
+				info.InboundFormat, relaykitErr)
+		}
+		return nil, relaykitErr
+	case handled:
 		convertedBody = relaykitBody
-	} else {
+		// 供应商私有后处理：矩阵按格式裁决、与供应商无关，命中后 adaptor.ConvertRequest
+		// 不再被调用，其中的私有请求适配（zhipu GLM 参数兼容、ali DashScope 参数裁剪）
+		// 会随之丢失。此处按可选接口接回，仅 relaykit 路径调用。
+		if pp, ok := adaptor.(common.RequestPostProcessor); ok {
+			relaykitBytes, err := io.ReadAll(convertedBody)
+			if err != nil {
+				return nil, fmt.Errorf("read relaykit converted body: %w", err)
+			}
+			processed, err := pp.PostProcessConvertedRequest(ctx, info, relaykitBytes)
+			if err != nil {
+				g.Log().Errorf(ctx, "[RelayHandler] provider request post-process failed: adaptor=%s, inboundFormat=%s, error=%v",
+					adaptor.GetChannelName(), info.InboundFormat, err)
+				return nil, err
+			}
+			convertedBody = bytes.NewReader(processed)
+		}
+	default:
 		legacyBody, err := adaptor.ConvertRequest(ctx, info, body)
 		if err != nil {
 			// responses 有状态协议不匹配为预期内错误（上层按哨兵驱动换渠道并向客户端返回
@@ -961,7 +1003,7 @@ func handleChannelUnavailable(
 			"当前模型暂时不可用",
 			constant.ErrAllChannelsFailed,
 		)
-		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil)
+		recordFailedUsage(provider, rc, nil, v.modelName, v.relayMode, v.isStream, allFailedErr, nil, "")
 		return &channelUnavailableResult{nil, v.billingResult, allFailedErr}
 	}
 
@@ -1063,7 +1105,7 @@ func applyStreamEndDiag(record *common.UsageRecord, streamStatus *common.StreamS
 // selection 非 nil 时记录具体失败渠道（ID/名称/类型/上游模型），便于在用量日志定位失败渠道；
 // nil 表示无单一渠道（全部渠道失败），渠道字段留空，失败详情见 error_message。
 // streamStatus 非 nil 且已有结束原因时，同步落 stream_end_reason 并修正 error_message。
-func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus) {
+func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1081,6 +1123,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
 	applyStreamEndDiag(record, streamStatus, err)
+	record.UpstreamRequestID = upstreamRequestID
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName
@@ -1092,7 +1135,7 @@ func recordFailedUsage(provider common.DataProvider, rc *RelayContext, selection
 
 // recordFailedUsageWithTokens 记录失败用量（含 token 明细，用于流中断等已有部分 usage 的场景）。
 // 与 recordFailedUsage 的区别：此函数会填充 token 字段，避免报表中流中断记录的 token 全为 0。
-func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus) {
+func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext, selection *common.ChannelSelection, modelName string, relayMode constant.RelayMode, isStream bool, err error, usage *common.Usage, settleResult *common.SettlementResult, streamStatus *common.StreamStatus, upstreamRequestID string) {
 	record := &common.UsageRecord{
 		TenantID:       rc.TenantID,
 		UserID:         rc.UserID,
@@ -1110,6 +1153,7 @@ func recordFailedUsageWithTokens(provider common.DataProvider, rc *RelayContext,
 		ErrorMessage: helper.SafeUpstreamErrorMessage(err),
 	}
 	applyStreamEndDiag(record, streamStatus, err)
+	record.UpstreamRequestID = upstreamRequestID
 	if selection != nil {
 		record.ChannelID = selection.ChannelID
 		record.ChannelName = selection.ChannelName
@@ -1177,9 +1221,23 @@ func recordChannelError(rc *RelayContext, selection *common.ChannelSelection, mo
 	commonlogic.DefaultChannelErrorWriter.Submit(event)
 }
 
-// estimateInputTokens 粗略估算输入 token 数（按字符数 / 4）
+// inlineMediaTokenCost 单个内联媒体（base64 图片/音频）在预扣估算中的固定 token 成本。
+// 视觉输入的真实 token 数与分辨率/切片策略强相关（OpenAI 1024px 约 765~1105，Gemini 约 258），
+// 这里取保守上界即可——预扣只是闸门，最终以上游 usage 结算，多退少补。
+const inlineMediaTokenCost = 1500
+
+// estimateInputTokens 粗略估算输入 token 数（仅用于预扣，结算以上游 usage 为准）。
+//
+// 文本部分按字符数 / 4；base64 内联媒体不能按字节折算——一张 2MB 的图按 len/4
+// 会被估成约 70 万 token，预扣直接冻穿余额，余额略少的租户根本发不出请求。
+// 故先扫出内联媒体载荷的字节数从长度中扣除，再按每个媒体的固定成本计入。
 func estimateInputTokens(body []byte) int {
-	return len(body) / 4
+	mediaBytes, mediaCount := commonlogic.ScanInlineMediaBytes(body)
+	textBytes := len(body) - mediaBytes
+	if textBytes < 0 {
+		textBytes = 0
+	}
+	return textBytes/4 + mediaCount*inlineMediaTokenCost
 }
 
 // tokenDetailField 安全提取 TokenDetails 中的字段值
@@ -1285,6 +1343,8 @@ func relayModeString(mode constant.RelayMode) string {
 		return "mj_image"
 	case constant.RelayModeVideoGenerations:
 		return "video_generations"
+	case constant.RelayModeVideos:
+		return "videos"
 	default:
 		return ""
 	}

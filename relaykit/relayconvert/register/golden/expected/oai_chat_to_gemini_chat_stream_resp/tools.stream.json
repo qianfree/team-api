@@ -1,0 +1,92 @@
+[
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "id": "\u003cscrubbed\u003e",
+                  "name": "get_weather"
+                }
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {},
+                  "name": ""
+                }
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {},
+                  "name": ""
+                }
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "data": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "candidatesTokenCount": 9,
+        "promptTokenCount": 20,
+        "totalTokenCount": 29
+      }
+    },
+    "usage": {
+      "completion_tokens": 9,
+      "prompt_tokens": 20,
+      "total_tokens": 29
+    }
+  }
+]

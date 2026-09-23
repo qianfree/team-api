@@ -30,6 +30,9 @@ type AdminUserItem struct {
 	LastLoginIp string `json:"last_login_ip"`
 	LockedUntil string `json:"locked_until"`
 	CreatedAt   string `json:"created_at"`
+	// Roles 是该账号已分配的角色。role=super_admin 时为空数组（超管权限来自账号属性，
+	// 不通过角色授予）；非超管且为空数组表示「未分配角色」＝零权限，界面应醒目提示。
+	Roles []AdminRoleBrief `json:"roles"`
 }
 
 // AdminUserCreateReq 创建管理员请求
@@ -39,6 +42,9 @@ type AdminUserCreateReq struct {
 	Password string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"密码"`
 	Email    string `json:"email" v:"email#邮箱格式不正确" dc:"邮箱"`
 	Role     string `json:"role" d:"admin" v:"in:super_admin,admin#角色只能是 super_admin 或 admin" dc:"角色：super_admin / admin"`
+	// RoleIDs 在创建时一并分配角色。不传则账号无任何角色（0 权限，只能访问自助接口），
+	// 这是安全的默认值，但界面应提示「未分配角色」。role=super_admin 时本字段忽略。
+	RoleIDs []int64 `json:"role_ids" dc:"分配的角色ID列表"`
 }
 
 type AdminUserCreateRes struct {

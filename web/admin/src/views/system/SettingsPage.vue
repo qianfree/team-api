@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, type Component } from 'vue'
+import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useSettings } from './settings/useSettings'
@@ -41,6 +42,7 @@ const categoryMap: Record<string, Component> = {
 
 const categories = ref<SettingCategory[]>([])
 const activeTab = ref('')
+const route = useRoute()
 
 const { formValues, loading, saving, refresh, save } = useSettings(() => activeTab.value)
 
@@ -89,7 +91,9 @@ async function fetchCategories() {
 		const res: any = await request.get('/admin/settings/categories')
 		categories.value = (res.data?.data?.list || []).sort((a: SettingCategory, b: SettingCategory) => a.order - b.order)
 		if (categories.value.length > 0 && !activeTab.value) {
-			activeTab.value = categories.value[0].key
+			// 支持 ?tab=xxx 直达指定分类（如支付渠道页引导跳转支付分类）
+			const fromQuery = String(route.query.tab || '')
+			activeTab.value = categories.value.some(c => c.key === fromQuery) ? fromQuery : categories.value[0].key
 			await refresh()
 		}
 	} catch {

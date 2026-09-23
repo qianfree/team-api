@@ -47,7 +47,7 @@ func (s *sTenant) TicketList(ctx context.Context, req *v1.TenantTicketListReq) (
 	items := make([]*v1.TenantTicketItem, 0)
 	listQuery := dao.SptTickets.Ctx(ctx).
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
-		Fields("spt_tickets.*, COALESCE(sa.username, '') as assigned_admin_name").
+		Fields("spt_tickets.*, COALESCE(sa.display_name, '') as assigned_admin_name").
 		Where("spt_tickets.tenant_id", tenantID).
 		Where("spt_tickets.user_id", userID)
 	if req.Status != "" {
@@ -92,7 +92,7 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 	var ticket *ticketRow
 	err := dao.SptTickets.Ctx(ctx).
 		LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
-		Fields("spt_tickets.*, COALESCE(sa.username, '') as assigned_admin_name").
+		Fields("spt_tickets.*, COALESCE(sa.display_name, '') as assigned_admin_name").
 		Where("spt_tickets.id", req.Id).
 		Where("spt_tickets.tenant_id", tenantID).
 		Where("spt_tickets.user_id", userID).
@@ -104,13 +104,34 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 		return nil, common.NewNotFoundError("工单")
 	}
 
-	var replyRows []*v1.TenantTicketReplyItem
+	// 回复按 user_type 分别关联管理员/租户用户表取作者名
+	type replyRow struct {
+		entity.SptReplies
+		AuthorName string `json:"author_name" orm:"author_name"`
+	}
+	var replyRows []*replyRow
 	err = dao.SptReplies.Ctx(ctx).
-		Where("ticket_id", req.Id).
-		OrderAsc("created_at").
+		LeftJoin("sys_admin_users sa", "spt_replies.user_type = 'admin' AND spt_replies.user_id = sa.id").
+		LeftJoin("tnt_users tu", "spt_replies.user_type = 'tenant' AND spt_replies.user_id = tu.id").
+		Fields("spt_replies.*, CASE WHEN spt_replies.user_type = 'admin' THEN COALESCE(sa.display_name, '') ELSE COALESCE(tu.display_name, '') END as author_name").
+		Where("spt_replies.ticket_id", req.Id).
+		OrderAsc("spt_replies.created_at").
 		Scan(&replyRows)
 	if err != nil {
 		return nil, err
+	}
+
+	replies := make([]*v1.TenantTicketReplyItem, 0, len(replyRows))
+	for _, r := range replyRows {
+		replies = append(replies, &v1.TenantTicketReplyItem{
+			Id:         r.Id,
+			TicketId:   r.TicketId,
+			UserId:     r.UserId,
+			UserType:   r.UserType,
+			AuthorName: r.AuthorName,
+			Content:    r.Content,
+			CreatedAt:  r.CreatedAt,
+		})
 	}
 
 	var attachRows []*entity.SptAttachments
@@ -149,7 +170,7 @@ func (s *sTenant) TicketGet(ctx context.Context, req *v1.TenantTicketGetReq) (*v
 		AssignedAdminName: ticket.AssignedAdminName,
 		CreatedAt:         ticket.CreatedAt,
 		UpdatedAt:         ticket.UpdatedAt,
-		Replies:           replyRows,
+		Replies:           replies,
 		Attachments:       attachments,
 	}, nil
 }
@@ -282,7 +303,7 @@ func (s *sTenant) ExportTickets(ctx context.Context, req *v1.TenantTicketExportR
 	buildQuery := func() *gdb.Model {
 		query := dao.SptTickets.Ctx(ctx).
 			LeftJoin("sys_admin_users sa", "spt_tickets.assigned_admin_id = sa.id").
-			Fields("spt_tickets.id, spt_tickets.category, spt_tickets.title, spt_tickets.urgency, spt_tickets.status, COALESCE(sa.username, '') as assigned_admin_name, spt_tickets.created_at").
+			Fields("spt_tickets.id, spt_tickets.category, spt_tickets.title, spt_tickets.urgency, spt_tickets.status, COALESCE(sa.display_name, '') as assigned_admin_name, spt_tickets.created_at").
 			Where("spt_tickets.tenant_id", tenantID).
 			Where("spt_tickets.user_id", userID)
 		if req.Status != "" {

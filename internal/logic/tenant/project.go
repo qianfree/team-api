@@ -355,7 +355,14 @@ func (s *sTenant) ProjectArchive(ctx context.Context, req *v1.TenantProjectArchi
 }
 
 // ProjectUnarchive restores an archived project. Keys are NOT auto-restored.
+//
+// 角色校验此前缺失：Create/Update/Archive 都要求 owner/admin，唯独恢复归档没拦，
+// 任意 member 都能把管理员刚归档的项目恢复回来（归档是治理动作，撤销它同样是）。
 func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUnarchiveReq) (*v1.TenantProjectUnarchiveRes, error) {
+	role := middleware.GetUserRole(ctx)
+	if role != "owner" && role != "admin" {
+		return nil, common.NewForbiddenError("需要 owner 或 admin 权限")
+	}
 	tenantID := middleware.GetTenantID(ctx)
 
 	var project *struct {
@@ -392,9 +399,9 @@ func (s *sTenant) ProjectUnarchive(ctx context.Context, req *v1.TenantProjectUna
 func CheckBudgetExhausted(ctx context.Context) error {
 	// Find active projects with budget set
 	var projects []struct {
-		ID       int64   `json:"id"`
-		TenantID int64   `json:"tenant_id"`
-		Budget   float64 `json:"budget"`
+		ID       int64   `json:"id" orm:"id"`
+		TenantID int64   `json:"tenant_id" orm:"tenant_id"`
+		Budget   float64 `json:"budget" orm:"budget"`
 	}
 	err := dao.TntProjects.Ctx(ctx).
 		Where("status", "active").

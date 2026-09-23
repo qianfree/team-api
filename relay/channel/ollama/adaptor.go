@@ -167,66 +167,21 @@ func (a *Adaptor) handleChatNonStreamResponse(ctx context.Context, resp *http.Re
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
-	// relaykit 响应转换路径（仅 chat；generate/embedding 不迁移，走旧路径）
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-		if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
-			return usage, nil
-		}
-		return &common.Usage{}, nil
+	// relaykit 响应转换（chat 唯一路径，hard-fail：解析/转换失败即向上返回错误）
+	convertedBody, _, handled, convErr := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !handled {
+		return nil, constant.NewChannelError("ollama adaptor: no relaykit converter for chat response", nil)
 	}
-
-	var ollamaResp OllamaChatResponse
-	if err := json.Unmarshal(body, &ollamaResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err)
+	if convErr != nil {
+		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", convErr)
 	}
-
-	// 转换为 OpenAI ChatCompletion 格式
-	message := dto.Message{
-		Role:    ollamaResp.Message.Role,
-		Content: ollamaResp.Message.Content,
-	}
-	if reasoning := ollamaThinkingToOpenAI(ollamaResp.Message.Thinking); reasoning != nil {
-		message.ReasoningContent = reasoning
-	}
-	if toolCalls := legacyOllamaToolCallsToOpenAI(ollamaResp.Message.ToolCalls); len(toolCalls) > 0 {
-		message.ToolCalls = toolCalls
-	}
-	finishReason := ollamaDoneReasonToFinishReason(ollamaResp.DoneReason)
-	if len(message.ToolCalls) > 0 {
-		finishReason = "tool_calls"
-	}
-	openaiResp := dto.ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-%s", info.RequestID),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   info.OriginModelName,
-		Choices: []dto.Choice{
-			{
-				Index:        0,
-				Message:      message,
-				FinishReason: finishReason,
-			},
-		},
-		Usage: dto.UsageWithDetails{
-			PromptTokens:     ollamaResp.PromptEvalCount,
-			CompletionTokens: ollamaResp.EvalCount,
-			TotalTokens:      ollamaResp.PromptEvalCount + ollamaResp.EvalCount,
-		},
-	}
-
-	respBody, _ := json.Marshal(openaiResp)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
-
-	return &common.Usage{
-		PromptTokens:     ollamaResp.PromptEvalCount,
-		CompletionTokens: ollamaResp.EvalCount,
-		TotalTokens:      ollamaResp.PromptEvalCount + ollamaResp.EvalCount,
-	}, nil
+	_, _ = writer.Write(convertedBody)
+	if usage, ok := relaykit_bridge.UsageFromConvertedChatResponse(convertedBody); ok {
+		return usage, nil
+	}
+	return &common.Usage{}, nil
 }
 
 // handleChatStreamResponse 处理 Ollama Chat 流式响应（NDJSON → SSE 转换）
@@ -238,119 +193,14 @@ func (a *Adaptor) handleChatStreamResponse(ctx context.Context, resp *http.Respo
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil)
 	}
 
-	// relaykit 流式转换（仅 chat；generate/embedding 不迁移，走旧路径）
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
-		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
-			return usage, common.ErrStreamInterrupted
-		}
-		return usage, nil
+	// relaykit 流式转换（chat 唯一路径，hard-fail）：写入前失败由桥接层返回未接管，此处显式报错
+	if usage, ok, err := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 桥接层已写出 SSE 并完成收尾裁决：err 非空即流以错误/客户端中断结束
+		//（已带 ResponseWritten，上层只记账与上报调度，不重写响应体、不换渠道重试），
+		// usage 中断兜底亦已在桥接层完成，此处原样上抛即可。
+		return usage, err
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	var usage common.Usage
-	var transferredTextLen int // 已转发的文本长度，供流中断输出估算
-
-	sawToolCalls := false
-	nextToolCallIndex := 0
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			helper.ApplyInterruptedUsageFallback(info, &usage, transferredTextLen)
-			return &usage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var ollamaResp OllamaChatResponse
-		if err := json.Unmarshal([]byte(line), &ollamaResp); err != nil {
-			continue
-		}
-
-		info.SetFirstResponseTime()
-
-		if ollamaResp.Done {
-			// 最后一条消息包含用量信息
-			usage.PromptTokens = ollamaResp.PromptEvalCount
-			usage.CompletionTokens = ollamaResp.EvalCount
-			usage.TotalTokens = ollamaResp.PromptEvalCount + ollamaResp.EvalCount
-
-			// 发送带 finish_reason 的结束 chunk
-			finishReason := ollamaDoneReasonToFinishReason(ollamaResp.DoneReason)
-			if sawToolCalls {
-				finishReason = "tool_calls"
-			}
-			endChunk := dto.ChatCompletionStreamResponse{
-				ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-				Object: "chat.completion.chunk",
-				Model:  info.OriginModelName,
-				Choices: []dto.StreamChoice{
-					{
-						Index:        0,
-						Delta:        dto.Message{},
-						FinishReason: &finishReason,
-					},
-				},
-				Usage: &dto.UsageWithDetails{
-					PromptTokens:     usage.PromptTokens,
-					CompletionTokens: usage.CompletionTokens,
-					TotalTokens:      usage.TotalTokens,
-				},
-			}
-			writeStreamChunk(writer, &endChunk)
-			break
-		}
-
-		// 构建 OpenAI 流式 chunk
-		transferredTextLen += len(ollamaResp.Message.Content)
-		delta := dto.Message{
-			Role:    ollamaResp.Message.Role,
-			Content: ollamaResp.Message.Content,
-		}
-		if thinking := ollamaThinkingToOpenAI(ollamaResp.Message.Thinking); thinking != nil {
-			delta.ReasoningContent = thinking
-		}
-		if toolCalls := legacyOllamaStreamToolCalls(ollamaResp.Message.ToolCalls, &nextToolCallIndex); len(toolCalls) > 0 {
-			delta.ToolCalls = toolCalls
-			sawToolCalls = true
-		}
-		chunk := dto.ChatCompletionStreamResponse{
-			ID:     fmt.Sprintf("chatcmpl-%s", info.RequestID),
-			Object: "chat.completion.chunk",
-			Model:  info.OriginModelName,
-			Choices: []dto.StreamChoice{
-				{
-					Index: 0,
-					Delta: delta,
-				},
-			},
-		}
-		writeStreamChunk(writer, &chunk)
-	}
-
-	// 发送 [DONE]
-	_ = helper.WriteSSEData(writer, "[DONE]")
-	info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &usage, fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	return &usage, nil
+	return nil, constant.NewChannelError("ollama adaptor: relaykit stream converter unavailable for chat", nil)
 }
 
 // handleGenerateNonStreamResponse 处理 Ollama Generate 非流式响应，转换为 OpenAI Completions 格式
@@ -620,8 +470,9 @@ func legacyOllamaStreamToolCalls(toolCalls []OllamaToolCall, nextIndex *int) []d
 				argsBytes = b
 			}
 		}
+		idx := *nextIndex
 		out = append(out, dto.ToolCall{
-			Index: *nextIndex,
+			Index: &idx,
 			ID:    id,
 			Type:  "function",
 			Function: dto.FunctionCall{

@@ -32,56 +32,37 @@ func (a *Adaptor) handleNonStreamToOpenAI(ctx context.Context, resp *http.Respon
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// relaykit 响应转换路径（特性开关控制，默认关闭）。失败/未启用回退旧代码路径。
-	if convertedBody, _, ok := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body); ok {
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write(convertedBody)
-
-		// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
-		var claudeResp dto.ClaudeResponse
-		if err := json.Unmarshal(body, &claudeResp); err != nil {
-			// Usage 解析失败，返回空 Usage（已写响应，不能重试）
-			// 静默处理：非致命错误，响应已正确写入
-			return &common.Usage{}, nil
-		}
-		if claudeResp.Usage != nil {
-			usage := &common.Usage{
-				PromptTokens:        claudeResp.Usage.InputTokens,
-				CompletionTokens:    claudeResp.Usage.OutputTokens,
-				TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
-				CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
-				PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
-			}
-			return usage, nil
-		}
-		// Usage 为 nil，返回空 Usage
-		return &common.Usage{}, nil
+	// relaykit 响应转换（唯一路径，hard-fail：解析/转换失败即向上返回错误，不再回退旧实现）
+	convertedBody, _, handled, convErr := relaykit_bridge.TryConvertResponseViaRelaykit(ctx, info, body)
+	if !handled {
+		return nil, constant.NewChannelError("claude adaptor: no relaykit converter for openai client response", nil)
 	}
-
-	// 旧代码路径（relaykit 未启用或失败回退）
-	var claudeResp dto.ClaudeResponse
-	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", err).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
+	if convErr != nil {
+		return nil, constant.NewUpstreamError(resp.StatusCode, "invalid response body", convErr).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
-
-	// 转换为 OpenAI 格式
-	openaiResp := claudeToOpenAIResponse(&claudeResp, info)
-
-	respBody, _ := json.Marshal(openaiResp)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(respBody)
+	_, _ = writer.Write(convertedBody)
 
-	usage := &common.Usage{}
-	if claudeResp.Usage != nil {
-		usage.PromptTokens = claudeResp.Usage.InputTokens
-		usage.CompletionTokens = claudeResp.Usage.OutputTokens
-		usage.TotalTokens = claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens
-		usage.CacheCreationTokens = claudeResp.Usage.CacheCreationInputTokens
-		usage.PromptTokensDetails = claudeUsageToTokenDetails(claudeResp.Usage)
+	// relaykit 转换器返回的 Usage 为 nil（ResponseConverterFunc 签名约束），从原始 Claude 响应提取
+	var claudeResp dto.ClaudeResponse
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		// Usage 解析失败，返回空 Usage（已写响应，不能重试）
+		// 静默处理：非致命错误，响应已正确写入
+		return &common.Usage{}, nil
 	}
-	return usage, nil
+	if claudeResp.Usage != nil {
+		usage := &common.Usage{
+			PromptTokens:        claudeResp.Usage.InputTokens,
+			CompletionTokens:    claudeResp.Usage.OutputTokens,
+			TotalTokens:         claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
+			CacheCreationTokens: claudeResp.Usage.CacheCreationInputTokens,
+			PromptTokensDetails: claudeUsageToTokenDetails(claudeResp.Usage),
+		}
+		return usage, nil
+	}
+	// Usage 为 nil，返回空 Usage
+	return &common.Usage{}, nil
 }
 
 // handleStreamToOpenAI 将 Claude 流式响应转换为 OpenAI SSE 格式
@@ -93,286 +74,14 @@ func (a *Adaptor) handleStreamToOpenAI(ctx context.Context, resp *http.Response,
 		return nil, constant.NewUpstreamError(resp.StatusCode, string(body), nil).WithRetryAfter(constant.RetryAfterFromHeader(resp.Header))
 	}
 
-	// relaykit 流式转换（常开）。同格式/无匹配转换器时回退旧路径。
-	if usage, ok := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
-		// 流中断（客户端断开/写失败）：桥接层已完成 usage 兜底，透传中断信号供上层按中断结算
-		if info.StreamStatus != nil && info.StreamStatus.IsPartialStreamEnd() {
-			return usage, common.ErrStreamInterrupted
-		}
-		return usage, nil
+	// relaykit 流式转换（唯一路径，hard-fail）：写入前失败由桥接层返回未接管，此处显式报错
+	if usage, ok, err := relaykit_bridge.TryConvertStreamViaRelaykit(ctx, info, resp.Body, writer); ok {
+		// 桥接层已写出 SSE 并完成收尾裁决：err 非空即流以错误/客户端中断结束
+		//（已带 ResponseWritten，上层只记账与上报调度，不重写响应体、不换渠道重试），
+		// usage 中断兜底亦已在桥接层完成，此处原样上抛即可。
+		return usage, err
 	}
-
-	helper.SetEventStreamHeaders(writer)
-	writer = helper.NewSafeWriter(writer)
-	defer helper.PingTicker(writer, 15*time.Second)()
-
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	responseID := fmt.Sprintf("chatcmpl-%s", info.RequestID)
-	createdAt := time.Now().Unix()
-
-	var (
-		usage           dto.ClaudeUsage
-		modelName       string
-		finishReason    string
-		toolCallIdx     int
-		roleChunkSent   bool
-		responseTextBuf strings.Builder
-	)
-
-	newChunk := func(delta dto.Message) *dto.ChatCompletionStreamResponse {
-		m := modelName
-		if m == "" {
-			m = info.OriginModelName
-		}
-		return &dto.ChatCompletionStreamResponse{
-			ID:      responseID,
-			Object:  "chat.completion.chunk",
-			Created: createdAt,
-			Model:   m,
-			Choices: []dto.StreamChoice{{
-				Index: 0,
-				Delta: delta,
-			}},
-		}
-	}
-
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, ctx.Err())
-			// 流中断计费兜底：输出缺失按已转发文本 2 字符/token 估算，输入用请求侧估算值补齐
-			interruptedUsage := buildUsageFromClaude(&usage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, responseTextBuf.Len())
-			return interruptedUsage, common.ErrStreamInterrupted
-		default:
-		}
-
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data, _ := helper.ExtractSSEData(line)
-
-		if data != "" && data != "[DONE]" {
-			info.SetFirstResponseTime()
-		}
-
-		var event dto.ClaudeResponse
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			// JSON 解析失败：静默跳过（允许部分格式异常）
-			continue
-		}
-
-		switch event.Type {
-		case "message_start":
-			if event.Message != nil {
-				modelName = event.Message.Model
-				if modelName == "" {
-					modelName = info.OriginModelName
-				}
-				if event.Message.Usage != nil {
-					usage = *event.Message.Usage
-				}
-			}
-
-			if !roleChunkSent {
-				emptyContent := ""
-				writeStreamChunk(writer, newChunk(dto.Message{
-					Role:    "assistant",
-					Content: &emptyContent,
-				}))
-				roleChunkSent = true
-			}
-
-		case "content_block_start":
-			if event.ContentBlock == nil {
-				continue
-			}
-			switch event.ContentBlock.Type {
-			case "text":
-			case "thinking":
-			case "redacted_thinking":
-				// 脱敏思考，OpenAI 格式无等价物，忽略
-			case "tool_use":
-				toolCall := dto.ToolCall{
-					Index: toolCallIdx,
-					ID:    event.ContentBlock.ID,
-					Type:  "function",
-					Function: dto.FunctionCall{
-						Name:      event.ContentBlock.Name,
-						Arguments: "",
-					},
-				}
-				writeStreamChunk(writer, newChunk(dto.Message{
-					ToolCalls: []dto.ToolCall{toolCall},
-				}))
-				toolCallIdx++
-			}
-
-		case "content_block_delta":
-			if event.Delta == nil {
-				continue
-			}
-			switch event.Delta.Type {
-			case "text_delta":
-				if event.Delta.Text != nil && *event.Delta.Text != "" {
-					responseTextBuf.WriteString(*event.Delta.Text)
-					writeStreamChunk(writer, newChunk(dto.Message{
-						Content: *event.Delta.Text,
-					}))
-				}
-			case "thinking_delta":
-				if event.Delta.Thinking != nil && *event.Delta.Thinking != "" {
-					writeStreamChunk(writer, newChunk(dto.Message{
-						ReasoningContent: event.Delta.Thinking,
-					}))
-				}
-			case "input_json_delta":
-				if event.Delta.PartialJSON != nil && *event.Delta.PartialJSON != "" {
-					writeStreamChunk(writer, newChunk(dto.Message{
-						ToolCalls: []dto.ToolCall{{
-							Index: toolCallIdx - 1,
-							Function: dto.FunctionCall{
-								Arguments: *event.Delta.PartialJSON,
-							},
-						}},
-					}))
-				}
-			case "signature_delta":
-			}
-
-		case "content_block_stop":
-
-		case "error":
-			errMsg := "claude stream error"
-			if event.Error != nil {
-				if b, err := json.Marshal(event.Error); err == nil {
-					errMsg = fmt.Sprintf("claude stream error: %s", string(b))
-				}
-			}
-			info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("%s", errMsg))
-
-		case "message_delta":
-			if event.Delta != nil {
-				if event.Delta.StopReason != nil {
-					finishReason = common.ClaudeStopReasonToOpenAI(*event.Delta.StopReason)
-				}
-			}
-			if event.Usage != nil {
-				if event.Usage.InputTokens > 0 {
-					usage.InputTokens = event.Usage.InputTokens
-				}
-				usage.OutputTokens = event.Usage.OutputTokens
-				if event.Usage.CacheReadInputTokens > 0 {
-					usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
-				}
-				if event.Usage.CacheCreationInputTokens > 0 {
-					usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
-				}
-				if event.Usage.CacheCreation != nil {
-					usage.CacheCreation = event.Usage.CacheCreation
-				}
-			}
-
-		case "message_stop":
-			reason := finishReason
-			if reason == "" {
-				reason = "stop"
-			}
-			// Claude 的 input_tokens 不含缓存（三项并列），OpenAI 的 prompt_tokens 含缓存
-			//（cached 是其子集），客户端可见 usage 做加法；计费返回值另行按 Claude 口径构建
-			promptTotal := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-			usageObj := &dto.UsageWithDetails{
-				PromptTokens:        promptTotal,
-				CompletionTokens:    usage.OutputTokens,
-				TotalTokens:         promptTotal + usage.OutputTokens,
-				PromptTokensDetails: common.CommonTokenDetailsToDto(claudeUsageToTokenDetails(&usage)),
-			}
-			if usageObj.CompletionTokens == 0 {
-				estimated := responseTextBuf.Len() / 4
-				if estimated > 0 {
-					usageObj.CompletionTokens = estimated
-					usageObj.TotalTokens = usageObj.PromptTokens + usageObj.CompletionTokens
-				}
-			}
-
-			chunk := &dto.ChatCompletionStreamResponse{
-				ID:      responseID,
-				Object:  "chat.completion.chunk",
-				Created: createdAt,
-				Model:   modelName,
-				Choices: []dto.StreamChoice{{
-					Index:        0,
-					FinishReason: &reason,
-				}},
-				Usage: usageObj,
-			}
-			if chunk.Model == "" {
-				chunk.Model = info.OriginModelName
-			}
-			writeStreamChunk(writer, chunk)
-			helper.WriteSSEData(writer, "[DONE]")
-			info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-		}
-	}
-
-	if err := scanner.Err(); err != nil && err != io.EOF && ctx.Err() == nil {
-		info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
-		return &common.Usage{}, fmt.Errorf("stream scanner error: %w", err)
-	}
-
-	if info.StreamStatus.GetEndReason() == "" {
-		reason := "stop"
-		if finishReason != "" {
-			reason = finishReason
-		}
-		usageObj := &dto.UsageWithDetails{
-			PromptTokens:        usage.InputTokens,
-			CompletionTokens:    usage.OutputTokens,
-			TotalTokens:         usage.InputTokens + usage.OutputTokens,
-			PromptTokensDetails: common.CommonTokenDetailsToDto(claudeUsageToTokenDetails(&usage)),
-		}
-		if usageObj.CompletionTokens == 0 {
-			estimated := responseTextBuf.Len() / 4
-			if estimated > 0 {
-				usageObj.CompletionTokens = estimated
-				usageObj.TotalTokens = usageObj.PromptTokens + usageObj.CompletionTokens
-			}
-		}
-		chunk := &dto.ChatCompletionStreamResponse{
-			ID:      responseID,
-			Object:  "chat.completion.chunk",
-			Created: createdAt,
-			Model:   modelName,
-			Choices: []dto.StreamChoice{{
-				Index:        0,
-				FinishReason: &reason,
-			}},
-			Usage: usageObj,
-		}
-		if chunk.Model == "" {
-			chunk.Model = info.OriginModelName
-		}
-		writeStreamChunk(writer, chunk)
-		helper.WriteSSEData(writer, "[DONE]")
-		info.StreamStatus.SetEndReason(common.StreamEndReasonDone, nil)
-	}
-
-	return &common.Usage{
-		PromptTokens:        usage.InputTokens,
-		CompletionTokens:    usage.OutputTokens,
-		TotalTokens:         usage.InputTokens + usage.OutputTokens,
-		CacheCreationTokens: usage.CacheCreationInputTokens,
-		PromptTokensDetails: claudeUsageToTokenDetails(&usage),
-	}, nil
+	return nil, constant.NewChannelError("claude adaptor: relaykit stream converter unavailable for openai client", nil)
 }
 
 // handleClaudeNativeResponse 直通 Claude 原生格式响应
@@ -462,8 +171,24 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 	defer stopPing()
 
 	reader := bufio.NewReaderSize(resp.Body, 64*1024)
+	// 按帧攒齐再写：逐行写会让并发的保活 ping 把自带空行插进帧中间，客户端据此派发出
+	// 一个 data 为空的事件（JSON.parse("") 报错并中止请求），网关侧只看到 ctx 取消被记成
+	// client_gone，真实成因被掩盖。SafeWriter 只保证单次 Write 原子，保证不了整帧原子。
+	frame := helper.NewSSEFrameWriter(writer)
 	var usage dto.ClaudeUsage
 	var transferredTextLen int // 已转发的文本/思考内容长度，供流中断输出估算
+
+	// onWriteFail 写客户端失败：立即关闭上游连接，停止 token 生成，按流中断结算
+	onWriteFail := func(writeErr error) (*common.Usage, error) {
+		g.Log().Warningf(context.Background(),
+			"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
+			info.RequestID, writeErr, ctx.Err(), time.Since(info.StartTime))
+		cleanup()
+		info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, writeErr)
+		interruptedUsage := buildUsageFromClaude(&usage)
+		helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
+		return interruptedUsage, common.ErrStreamInterrupted
+	}
 
 	for {
 		select {
@@ -472,6 +197,8 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			// 让 SDK 收到"200 + SSE头 + 无事件 + EOF"，Anthropic SDK 进入等待状态，
 			// 后续请求的响应会被误判为当前流的 SSE 数据 → "Failed to parse JSON"。
 			// 发送一个 Claude 格式的 error event，让 SDK 以正常 API Error 退出，而非挂起。
+			// 未完成的半帧尚未出网，先丢弃，避免与 error 帧拼成非法 SSE 输出。
+			frame.Discard()
 			_, _ = fmt.Fprintf(writer,
 				"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream disconnected\"}}\n\n")
 			if f, ok := writer.(http.Flusher); ok {
@@ -485,11 +212,13 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 		default:
 		}
 
+		// ReadString 在上游 EOF 时可能同时返回「最后一段无换行的数据 + io.EOF」，
+		// 必须先处理 line 再判 err，否则会丢掉上游未以换行结尾的最后一行。
 		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
+
+		if err != nil && err != io.EOF {
+			// 上游读取出错：缓冲里的残留是不完整的帧，写给客户端只会造成非法 SSE，丢弃
+			frame.Discard()
 			info.StreamStatus.SetEndReason(common.StreamEndReasonError, err)
 			// 已有部分输出时按部分成功处理（避免标记为完全失败）
 			interruptedUsage := buildUsageFromClaude(&usage)
@@ -499,75 +228,71 @@ func (a *Adaptor) handleClaudeNativeStream(ctx context.Context, resp *http.Respo
 			return interruptedUsage, fmt.Errorf("upstream stream interrupted: %w", err)
 		}
 
-		if strings.HasPrefix(line, "data:") {
-			data, _ := helper.ExtractSSEData(line)
+		if line != "" {
+			if strings.HasPrefix(line, "data:") {
+				data, _ := helper.ExtractSSEData(line)
 
-			if data != "" && data != "[DONE]" {
-				info.SetFirstResponseTime()
-			}
+				if data != "" && data != "[DONE]" {
+					info.SetFirstResponseTime()
+				}
 
-			var event dto.ClaudeResponse
-			if json.Unmarshal([]byte(data), &event) != nil {
-				// JSON 解析失败：静默跳过
-			} else {
-				switch event.Type {
-				case "message_start":
-					if event.Message != nil && event.Message.Usage != nil {
-						usage = *event.Message.Usage
+				var event dto.ClaudeResponse
+				if json.Unmarshal([]byte(data), &event) != nil {
+					// JSON 解析失败：静默跳过
+				} else {
+					switch event.Type {
+					case "message_start":
+						if event.Message != nil && event.Message.Usage != nil {
+							usage = *event.Message.Usage
+						}
+					case "content_block_delta":
+						// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
+						if event.Delta != nil {
+							if event.Delta.Text != nil {
+								transferredTextLen += len(*event.Delta.Text)
+							}
+							if event.Delta.Thinking != nil {
+								transferredTextLen += len(*event.Delta.Thinking)
+							}
+						}
+					case "message_delta":
+						if event.Usage != nil {
+							if event.Usage.InputTokens > 0 {
+								usage.InputTokens = event.Usage.InputTokens
+							}
+							usage.OutputTokens = event.Usage.OutputTokens
+							if event.Usage.CacheReadInputTokens > 0 {
+								usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+							}
+							if event.Usage.CacheCreationInputTokens > 0 {
+								usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+							}
+							if event.Usage.CacheCreation != nil {
+								usage.CacheCreation = event.Usage.CacheCreation
+							}
+						}
+					case "error":
+						info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("claude upstream stream error"))
 					}
-				case "content_block_delta":
-					// 累计已转发文本长度，供流中断（message_delta 未到达时）输出估算
-					if event.Delta != nil {
-						if event.Delta.Text != nil {
-							transferredTextLen += len(*event.Delta.Text)
-						}
-						if event.Delta.Thinking != nil {
-							transferredTextLen += len(*event.Delta.Thinking)
-						}
-					}
-				case "message_delta":
-					if event.Usage != nil {
-						if event.Usage.InputTokens > 0 {
-							usage.InputTokens = event.Usage.InputTokens
-						}
-						usage.OutputTokens = event.Usage.OutputTokens
-						if event.Usage.CacheReadInputTokens > 0 {
-							usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
-						}
-						if event.Usage.CacheCreationInputTokens > 0 {
-							usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
-						}
-						if event.Usage.CacheCreation != nil {
-							usage.CacheCreation = event.Usage.CacheCreation
-						}
-					}
-				case "error":
-					info.StreamStatus.SetEndReason(common.StreamEndReasonError, fmt.Errorf("claude upstream stream error"))
+				}
+
+				if info.ChannelMeta.IsModelMapped {
+					replaced := string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
+					line = fmt.Sprintf("data: %s\n", replaced)
 				}
 			}
 
-			if info.ChannelMeta.IsModelMapped {
-				replaced := string(helper.ReplaceModelName([]byte(data), info.OriginModelName))
-				line = fmt.Sprintf("data: %s\n", replaced)
+			if werr := frame.WriteLine(line); werr != nil {
+				return onWriteFail(werr)
 			}
 		}
 
-		if _, err := writer.Write([]byte(line)); err != nil {
-			// 写入客户端失败：立即关闭上游连接，停止生成
-			g.Log().Warningf(context.Background(),
-				"[ClaudeNativeStream] 写入客户端失败 request_id=%s writeErr=%v ctx.Err=%v elapsed=%v",
-				info.RequestID, err, ctx.Err(), time.Since(info.StartTime))
-			cleanup()
-			info.StreamStatus.SetEndReason(common.StreamEndReasonClientGone, err)
-			interruptedUsage := buildUsageFromClaude(&usage)
-			helper.ApplyInterruptedUsageFallback(info, interruptedUsage, transferredTextLen)
-			return interruptedUsage, common.ErrStreamInterrupted
-		}
-
-		if len(line) == 1 && line[0] == '\n' {
-			if f, ok := writer.(http.Flusher); ok {
-				f.Flush()
+		if err == io.EOF {
+			// 上游未以空行结尾时冲刷残留，避免丢掉最后一帧
+			if ferr := frame.FlushPartial(); ferr != nil {
+				return onWriteFail(ferr)
 			}
+			break
 		}
 	}
 

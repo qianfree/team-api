@@ -202,6 +202,120 @@ func buildOpenAPISpec(ctx context.Context) map[string]any {
 					},
 				},
 			},
+			"/v1/videos": map[string]any{
+				"post": map[string]any{
+					"summary":     "Create Video",
+					"description": "创建视频生成任务（OpenAI Videos 协议，兼容 openai-python / openai-node SDK 的 client.videos.create）。请求体支持 multipart/form-data（官方 SDK 形态，input_reference 可为文件 part）与 application/json 两种编码。返回官方 Video 对象（status: queued），轮询 GET /v1/videos/{video_id} 直到 completed，再经 GET /v1/videos/{video_id}/content 获取视频二进制。",
+					"operationId": "createVideo",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"multipart/form-data": map[string]any{
+								"schema": map[string]any{
+									"type":     "object",
+									"required": []string{"model", "prompt"},
+									"properties": map[string]any{
+										"model":           map[string]any{"type": "string", "example": "kling-v2-master"},
+										"prompt":          map[string]any{"type": "string"},
+										"seconds":         map[string]any{"type": "string", "enum": []string{"4", "8", "12"}, "default": "4"},
+										"size":            map[string]any{"type": "string", "enum": []string{"720x1280", "1280x720", "1024x1792", "1792x1024"}, "default": "720x1280"},
+										"aspect_ratio":    map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1；取值原样透传上游，不传由模型取默认档"},
+										"sound":           map[string]any{"type": "string", "enum": []string{"on", "off"}, "description": "扩展字段：是否包含声音；仅部分模型支持（可灵 / 豆包），其余模型忽略"},
+										"input_reference": map[string]any{"type": "string", "format": "binary", "description": "可选参考图（图生视频），文件上传或 {\"image_url\": \"...\"} 引用对象；file_id 形态不支持"},
+									},
+								},
+							},
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"type":     "object",
+									"required": []string{"model", "prompt"},
+									"properties": map[string]any{
+										"model":           map[string]any{"type": "string"},
+										"prompt":          map[string]any{"type": "string"},
+										"seconds":         map[string]any{"type": "string"},
+										"size":            map[string]any{"type": "string"},
+										"aspect_ratio":    map[string]any{"type": "string", "description": "扩展字段：屏幕比例，如 16:9 / 9:16 / 1:1"},
+										"sound":           map[string]any{"type": "string", "enum": []string{"on", "off"}, "description": "扩展字段：是否包含声音（也可用布尔形态 generate_audio）"},
+										"generate_audio":  map[string]any{"type": "boolean", "description": "扩展字段：sound 的等价布尔形态，sound 缺省时生效"},
+										"input_reference": map[string]any{"type": "object", "properties": map[string]any{"image_url": map[string]any{"type": "string"}}},
+									},
+								},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Video 对象（object: video，status: queued）"},
+					},
+				},
+			},
+			"/v1/videos/{video_id}": map[string]any{
+				"get": map[string]any{
+					"summary":     "Retrieve Video",
+					"description": "查询视频生成任务，返回官方 Video 对象。status: queued / in_progress / completed / failed；非终态响应携带 openai-poll-after-ms 轮询间隔建议头。生成失败以 status=failed + error 对象表达（HTTP 仍为 200）。",
+					"operationId": "retrieveVideo",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"parameters": []map[string]any{
+						{
+							"name":     "video_id",
+							"in":       "path",
+							"required": true,
+							"schema":   map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Video 对象（含 progress 百分比、completed_at、失败时的 error）"},
+						"404": map[string]any{"description": "视频不存在或已被删除"},
+					},
+				},
+				"delete": map[string]any{
+					"summary":     "Delete Video",
+					"description": "删除已完成或已失败的视频任务（软删除，计费与审计记录保留），删除后查询与下载均返回 404。进行中的任务不可删除。",
+					"operationId": "deleteVideo",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"parameters": []map[string]any{
+						{
+							"name":     "video_id",
+							"in":       "path",
+							"required": true,
+							"schema":   map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "删除确认（object: video.deleted，deleted: true）"},
+						"400": map[string]any{"description": "任务非终态或计费未结算，不可删除"},
+						"404": map[string]any{"description": "视频不存在或已被删除"},
+					},
+				},
+			},
+			"/v1/videos/{video_id}/content": map[string]any{
+				"get": map[string]any{
+					"summary":     "Download Video Content",
+					"description": "下载已生成完成的视频二进制流（mp4）。仅 status=completed 的任务可下载；variant 仅支持默认 video（thumbnail / spritesheet 暂不支持）。",
+					"operationId": "downloadVideoContent",
+					"security":    []map[string]any{{"BearerAuth": []any{}}},
+					"parameters": []map[string]any{
+						{
+							"name":     "video_id",
+							"in":       "path",
+							"required": true,
+							"schema":   map[string]any{"type": "string"},
+						},
+						{
+							"name":     "variant",
+							"in":       "query",
+							"required": false,
+							"schema":   map[string]any{"type": "string", "enum": []string{"video"}, "default": "video"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "视频二进制流（video/mp4）"},
+						"400": map[string]any{"description": "任务未完成或无可用内容"},
+						"404": map[string]any{"description": "视频不存在或已被删除"},
+						"502": map[string]any{"description": "上游内容拉取失败"},
+					},
+				},
+			},
 			"/v1/messages": map[string]any{
 				"post": map[string]any{
 					"summary":     "Claude Messages",

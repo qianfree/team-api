@@ -3,8 +3,38 @@
 package shared
 
 import (
+	"encoding/json"
+
 	"github.com/qianfree/team-api/relaykit/dto"
 )
+
+// NormalizeContentParts 将 OpenAI 消息 content 的各种真实形态统一为类型化 ContentPart 列表。
+//
+// 线上存在两种多模态形态：宿主对入站请求裸 json.Unmarshal 产生的 []any（元素为
+// map[string]any），以及链式转换（如 Responses→OpenAI→Claude）中上游转换器构造的
+// []dto.ContentPart。任一形态缺失处理都会导致多模态内容（文本/图片/音频）静默丢失，
+// 由 register 包的能力守恒测试守护。ok=false 表示 content 不是部件列表（如纯字符串）。
+func NormalizeContentParts(content any) ([]dto.ContentPart, bool) {
+	switch v := content.(type) {
+	case []dto.ContentPart:
+		return v, true
+	case []any:
+		parts := make([]dto.ContentPart, 0, len(v))
+		for _, item := range v {
+			switch it := item.(type) {
+			case dto.ContentPart:
+				parts = append(parts, it)
+			case map[string]any:
+				var p dto.ContentPart
+				if data, err := json.Marshal(it); err == nil && json.Unmarshal(data, &p) == nil && p.Type != "" {
+					parts = append(parts, p)
+				}
+			}
+		}
+		return parts, true
+	}
+	return nil, false
+}
 
 // MapTextContent 从多种内容格式中抽取纯文本内容。
 // 未找到文本时返回空字符串。
@@ -20,8 +50,18 @@ func MapTextContent(content any) string {
 		}
 	case []any:
 		for _, item := range v {
-			if part, ok := item.(dto.ContentPart); ok && part.Type == "text" {
-				return part.Text
+			switch part := item.(type) {
+			case dto.ContentPart:
+				if part.Type == "text" {
+					return part.Text
+				}
+			case map[string]any:
+				// 宿主裸 unmarshal 的 wire 形态
+				if t, _ := part["type"].(string); t == "text" {
+					if text, ok := part["text"].(string); ok {
+						return text
+					}
+				}
 			}
 		}
 	}

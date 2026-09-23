@@ -36,15 +36,15 @@ func TestSafeUpstreamErrorMessage_TransportCategories(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"超时-context截止", leakyURLError(context.DeadlineExceeded), "upstream request timed out"},
-		{"超时-i/o timeout", leakyURLError(fakeTimeoutError{}), "upstream request timed out"},
-		{"客户端取消", leakyURLError(context.Canceled), "request canceled"},
-		{"连接拒绝", leakyURLError(syscall.ECONNREFUSED), "upstream connection refused"},
-		{"DNS失败", leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}), "upstream host resolution failed"},
-		{"连接重置", leakyURLError(syscall.ECONNRESET), "upstream connection reset"},
-		{"EOF", leakyURLError(io.EOF), "upstream connection reset"},
-		{"意外EOF", leakyURLError(io.ErrUnexpectedEOF), "upstream connection reset"},
-		{"其余传输层错误", leakyURLError(errors.New("tls: handshake failure")), "upstream connection failed"},
+		{"超时-context截止", leakyURLError(context.DeadlineExceeded), "请求超时，请重试"},
+		{"超时-i/o timeout", leakyURLError(fakeTimeoutError{}), "请求超时，请重试"},
+		{"客户端取消", leakyURLError(context.Canceled), "请求已取消"},
+		{"连接拒绝", leakyURLError(syscall.ECONNREFUSED), "服务暂时不可用，请稍后重试"},
+		{"DNS失败", leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}), "服务暂时不可用，请稍后重试"},
+		{"连接重置", leakyURLError(syscall.ECONNRESET), "连接中断，请重试"},
+		{"EOF", leakyURLError(io.EOF), "连接中断，请重试"},
+		{"意外EOF", leakyURLError(io.ErrUnexpectedEOF), "连接中断，请重试"},
+		{"其余传输层错误", leakyURLError(errors.New("tls: handshake failure")), "服务暂时不可用，请稍后重试"},
 	}
 
 	for _, c := range cases {
@@ -111,7 +111,7 @@ func TestSafeUpstreamErrorMessage_WrappedRelayError(t *testing.T) {
 		leakyURLError(&net.DNSError{Err: "no such host", Name: "api.openai.com"}))
 
 	got := SafeUpstreamErrorMessage(relayErr)
-	if got != "upstream host resolution failed" {
+	if got != "服务暂时不可用，请稍后重试" {
 		t.Fatalf("经 RelayError 包装后归一化失败，got %q", got)
 	}
 	if strings.Contains(got, "openai.com") || strings.Contains(got, "https") {
@@ -143,6 +143,95 @@ func TestRedactMessage(t *testing.T) {
 		got := RedactMessage(c.in)
 		if got != c.want {
 			t.Errorf("RedactMessage(%q)\n  got  %q\n  want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestUnwrapUpstreamErrorMessage 上游错误信封解包：各协议形状都应提取出可读消息，
+// 非错误信封的文本（网关自身消息）必须原样返回。
+func TestUnwrapUpstreamErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "OpenAI 信封",
+			raw:  `{"error":{"message":"rate limit exceeded","type":"rate_limit_error","code":"rate_limit"}}`,
+			want: "rate limit exceeded",
+		},
+		{
+			name: "Claude 信封（顶层带 type）",
+			raw:  `{"type":"error","error":{"type":"rate_limit_error","message":"number of request tokens has exceeded"}}`,
+			want: "number of request tokens has exceeded",
+		},
+		{
+			name: "Gemini 信封",
+			raw:  `{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED"}}`,
+			want: "Resource has been exhausted",
+		},
+		{
+			name: "Gemini 数组包装",
+			raw:  `[{"error":{"code":400,"message":"API key not valid","status":"INVALID_ARGUMENT"}}]`,
+			want: "API key not valid",
+		},
+		{
+			name: "Ollama 信封（error 为字符串）",
+			raw:  `{"error":"model 'llama3' not found"}`,
+			want: "model 'llama3' not found",
+		},
+		{
+			name: "网关自身消息（非 JSON）原样返回",
+			raw:  "convert request (openai_to_claude): unexpected content part",
+			want: "convert request (openai_to_claude): unexpected content part",
+		},
+		{
+			name: "空字符串",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "畸形 JSON 原样返回",
+			raw:  `{"error":{"message":`,
+			want: `{"error":{"message":`,
+		},
+		{
+			name: "无 error 字段的 JSON 原样返回",
+			raw:  `{"detail":"something else"}`,
+			want: `{"detail":"something else"}`,
+		},
+		{
+			name: "HTML 错误页原样返回",
+			raw:  "<html><body>502 Bad Gateway</body></html>",
+			want: "<html><body>502 Bad Gateway</body></html>",
+		},
+		{
+			name: "error.message 为空时回退原文",
+			raw:  `{"error":{"type":"server_error"}}`,
+			want: `{"error":{"type":"server_error"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnwrapUpstreamErrorMessage(tt.raw); got != tt.want {
+				t.Errorf("UnwrapUpstreamErrorMessage(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestUnwrapUpstreamErrorMessage_NotDoubleEncoded 回归守卫：解包结果不得再是 JSON 信封。
+// 这是本函数存在的原因——客户端曾收到 message 字段里嵌一整个转义的上游错误 JSON。
+func TestUnwrapUpstreamErrorMessage_NotDoubleEncoded(t *testing.T) {
+	for _, raw := range []string{
+		`{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}`,
+		`{"type":"error","error":{"type":"rate_limit_error","message":"rate limit exceeded"}}`,
+		`{"error":{"code":429,"message":"rate limit exceeded","status":"RESOURCE_EXHAUSTED"}}`,
+	} {
+		got := UnwrapUpstreamErrorMessage(raw)
+		if strings.Contains(got, `"error"`) || strings.Contains(got, "{") {
+			t.Errorf("解包后仍含 JSON 信封结构: %q（输入 %q）", got, raw)
 		}
 	}
 }

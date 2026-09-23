@@ -1,0 +1,6 @@
+{
+  "model": "origin-model",
+  "input": [{"role": "user", "content": [{"type": "input_text", "text": "Prove that sqrt(2) is irrational."}]}],
+  "reasoning": {"effort": "high"},
+  "max_output_tokens": 4096
+}

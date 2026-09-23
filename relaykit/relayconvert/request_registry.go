@@ -10,6 +10,7 @@ package relayconvert
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -64,14 +65,6 @@ var (
 )
 
 const (
-	requestConverterClaudeToGemini    = "claude_messages_to_gemini_generate_content"
-	requestConverterClaudeToResponses = "claude_messages_to_openai_responses"
-	requestConverterGeminiToClaude    = "gemini_generate_content_to_claude_messages"
-	requestConverterGeminiToResponses = "gemini_generate_content_to_openai_responses"
-	requestConverterResponsesToClaude = "openai_responses_to_claude_messages"
-)
-
-const (
 	ConverterNone                             = "none"
 	ConverterClaudeMessagesToOpenAIChat       = "anthropic_messages_to_openai_chat_completions"
 	ConverterClaudeMessagesToOpenAIChatStream = "anthropic_messages_to_openai_chat_completions_stream"
@@ -83,9 +76,14 @@ const (
 	ConverterOpenAIChatToGeminiContent        = "openai_chat_completions_to_gemini_generate_content"
 
 	// OpenAI → 原生格式供应商（请求侧）
-	ConverterOpenAIChatToCoze   = "openai_chat_completions_to_coze_chat"
-	ConverterOpenAIChatToDify   = "openai_chat_completions_to_dify_chat_messages"
 	ConverterOpenAIChatToOllama = "openai_chat_completions_to_ollama_chat"
+
+	// 跨原生方向（请求侧为「经 OpenAI 中枢」步骤链，响应侧为直连转换器）
+	ConverterClaudeMessagesToGeminiContent = "claude_messages_to_gemini_generate_content"
+	ConverterClaudeMessagesToResponses     = "claude_messages_to_openai_responses"
+	ConverterGeminiContentToClaudeMessages = "gemini_generate_content_to_claude_messages"
+	ConverterGeminiContentToResponses      = "gemini_generate_content_to_openai_responses"
+	ConverterResponsesToClaudeMessages     = "openai_responses_to_claude_messages"
 )
 
 // registerBuiltinRequestConverter 注册一个请求转换器 spec。
@@ -162,6 +160,21 @@ func LookupRequestConverter(converter string) (RequestConverterSpec, bool) {
 		return RequestConverterSpec{}, false
 	}
 	return cloneRequestConverterSpec(spec), true
+}
+
+// ListRequestConverterIDs 返回全部已注册请求转换器 ID（字典序副本）。
+// 供诊断与测试枚举使用：能力守恒等注册表级测试据此保证「每个已注册方向都有期望条目」，
+// 新注册方向若未同步补充测试期望会立即被发现。
+func ListRequestConverterIDs() []string {
+	requestConverterMu.RLock()
+	defer requestConverterMu.RUnlock()
+
+	ids := make([]string, 0, len(requestConverters))
+	for id := range requestConverters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func lookupRequestRoute(from types.RelayFormat, to types.RelayFormat) (RequestConverterSpec, bool) {

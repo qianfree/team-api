@@ -1,0 +1,32 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {"text": "Thinking about the request.", "thought": true},
+          {"text": "The weather in Boston is 68F.", "thoughtSignature": "CrgBAXLI2nHzExample"},
+          {"functionCall": {"name": "get_weather", "args": {"location": "Boston, MA"}}}
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "groundingMetadata": {
+        "webSearchQueries": ["Boston weather today"],
+        "groundingChunks": [{"web": {"uri": "https://example.com/weather", "title": "Boston Weather"}}],
+        "groundingSupports": [{"segment": {"startIndex": 0, "endIndex": 30, "text": "The weather in Boston is 68F."}, "groundingChunkIndices": [0]}]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 264,
+    "candidatesTokenCount": 100,
+    "totalTokenCount": 1500,
+    "thoughtsTokenCount": 1136,
+    "cachedContentTokenCount": 50,
+    "toolUsePromptTokenCount": 10,
+    "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 264}]
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "abc123def456"
+}

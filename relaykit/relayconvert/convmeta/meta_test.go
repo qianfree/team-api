@@ -18,12 +18,10 @@ func TestValuesTypedNilMetaIsSafe(t *testing.T) {
 	assert.Zero(t, meta.GetChannelID())
 	assert.Zero(t, meta.GetChannelType())
 	assert.False(t, meta.GetIsStream())
-	assert.Empty(t, meta.GetReasoningEffort())
 	assert.Zero(t, meta.GetEstimatePromptTokens())
 	assert.Zero(t, meta.GetSendResponseCount())
 
 	require.NotPanics(t, func() {
-		meta.SetReasoningEffort("high")
 		meta.IncrSendResponseCount()
 		meta.AppendRequestConversion(types.RelayFormatClaude)
 	})
@@ -82,18 +80,6 @@ func TestGeminiOptions_SafetySettingFor(t *testing.T) {
 	assert.Empty(t, opts.SafetySettingFor("other"))
 }
 
-func TestOptions_ShouldPreserveThinkingSuffix(t *testing.T) {
-	var nilOpts *Options
-	assert.False(t, nilOpts.ShouldPreserveThinkingSuffix("m"))
-
-	opts := &Options{}
-	assert.False(t, opts.ShouldPreserveThinkingSuffix("m"))
-
-	opts.PreserveThinkingSuffix = func(model string) bool { return model == "keep-me" }
-	assert.True(t, opts.ShouldPreserveThinkingSuffix("keep-me"))
-	assert.False(t, opts.ShouldPreserveThinkingSuffix("other"))
-}
-
 // --- Values 行为 ---
 
 func TestValues_AppendRequestConversion_Dedup(t *testing.T) {
@@ -123,10 +109,8 @@ func TestValues_ConvOptions_Lazy(t *testing.T) {
 	assert.Same(t, opts, v.ConvOptions())
 }
 
-func TestValues_SetReasoningEffortAndIncr(t *testing.T) {
+func TestValues_IncrSendResponseCount(t *testing.T) {
 	v := &Values{}
-	v.SetReasoningEffort("high")
-	assert.Equal(t, "high", v.GetReasoningEffort())
 	assert.Zero(t, v.GetSendResponseCount())
 	v.IncrSendResponseCount()
 	v.IncrSendResponseCount()

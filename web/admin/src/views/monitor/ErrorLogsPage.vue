@@ -142,7 +142,7 @@ async function fetchStats() {
   statsLoading.value = true
   try {
     const res = await request.get('/admin/error-logs/stats')
-    stats.value = res.data?.data?.data
+    stats.value = res.data?.data
   } catch {
     // error auto-shown
   } finally {

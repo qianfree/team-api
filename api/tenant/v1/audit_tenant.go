@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+
 	"github.com/gogf/gf/v2/frame/g"
 )
 
@@ -44,6 +46,7 @@ type TenantRequestAuditLogsReq struct {
 	RequestId  string `json:"request_id" in:"query" dc:"Request ID（精确匹配）"`
 	TaskId     string `json:"task_id" in:"query" dc:"异步任务ID（精确匹配）"`
 	Path       string `json:"path" in:"query" dc:"请求路径（模糊匹配）"`
+	Model      string `json:"model" in:"query" dc:"模型名称（精确匹配）"`
 	StatusCode int    `json:"status_code" in:"query" dc:"HTTP 状态码"`
 	StartDate  string `json:"start_date" in:"query" dc:"开始日期"`
 	EndDate    string `json:"end_date" in:"query" dc:"结束日期"`
@@ -61,6 +64,12 @@ type TenantRequestAuditLogDetailReq struct {
 	Id     int64 `json:"id" in:"path" v:"required|min:1"`
 }
 
+// TenantRequestAuditLogDetailRes 详情对象平铺进统一响应的 data 字段（json:"-" + 自定义
+// MarshalJSON），避免统一包装后再多包一层 data（与 admin 端审计详情接口同一模式）
 type TenantRequestAuditLogDetailRes struct {
-	Data map[string]any `json:"data"`
+	Data map[string]any `json:"-"`
+}
+
+func (r *TenantRequestAuditLogDetailRes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Data)
 }

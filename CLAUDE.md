@@ -99,8 +99,6 @@ team-api/
 ├── docs/                       # 项目文档
 │   ├── 开发计划-v2/            #   分周期开发计划（周期一～六）
 │   └── 协议文档/               #   协议相关文档
-├── new-api/                    # 参考项目（只读，不修改）
-├── sub2api/                    # 参考项目（只读，不修改）
 ├── main.go                     # 应用入口
 ├── go.mod
 └── Makefile
@@ -223,7 +221,7 @@ cmd（路由注册）
 
 ### 多租户隔离
 
-行级隔离：所有业务表包含 `tenant_id` 字段，GoFrame ORM 中间件全局注入 `WHERE tenant_id = ?`。请求链路通过 Context 传递 tenant_id。
+行级隔离：所有业务表包含 `tenant_id` 字段。**没有 ORM 全局注入/hook 这类安全网**——隔离完全靠 logic 层手写过滤：租户身份一律取 `middleware.GetTenantID(ctx)`（来自 TenantAuth 注入的 ctx，客户端无法伪造），所有涉及租户数据的查询/更新必须显式带 `tenant_id` 条件；按 ID 取对象时用双键校验（`WHERE id = ? AND tenant_id = ?`）。新增查询漏写该条件即直接跨租户，评审时必须逐条核对。
 
 ### 路由前缀
 
@@ -271,8 +269,9 @@ cmd（路由注册）
 
 钱包资金状态采用 **Redis 唯一实时权威 + DB 滞后物化视图** 架构（详见 [`docs/钱包Redis权威化设计.md`](docs/钱包Redis权威化设计.md)）：
 
-- **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
-- **DB 物化**：`bil_wallets.balance / frozen_balance` 只是展示/报表/灾难恢复用的滞后副本，由后台物化器每 `billing_wallet_materialize_interval_ms`（默认 5000ms）从 Redis 全量覆盖。**禁止**把 DB 钱包余额当作实时判断依据（如余额门槛、防超扣闸门）。
+- **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / total_consumed / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
+- **累计消费（total_consumed）只随结算事件变动**：`settleClaimLua` 与扣款同一原子 `HINCRBY` 递增；结算记流水失败的补偿逆转走专用 `ReverseConsumeRedis`（余额与计数同一原子回退）。充值/兑换/调账/退款/预扣/解冻一律**不得**触碰该计数（`CreditWalletRedis`/`DebitWalletRedis` 不感知计数）。字段基线由三层补种保证（boot 种子 `SeedWalletTotalConsumed` / 灾备重建 `rebuildWalletFromDB` / 物化器自愈 `materializeOneWallet`），存量历史从 `bil_transactions(type=consume)` 回填（幂等可重放）。
+- **DB 物化**：`bil_wallets.balance / frozen_balance / total_consumed` 只是展示/报表/灾难恢复用的滞后副本，由后台物化器每 `billing_wallet_materialize_interval_ms`（默认 5000ms）从 Redis 全量覆盖。**禁止**把 DB 钱包余额当作实时判断依据（如余额门槛、防超扣闸门）。
 - **预扣记录纯 Redis**：`bil_prededuct_tracks` 表已废弃（预扣明细 = `prededuct:v2:{request_id}` hash + `prededuct_active:{tenant}` 集合，TTL 2h），孤儿清扫由 cron `prededuct_sweep` 每 2 分钟按「重算 frozen = Σ 幸存预扣」自愈，不再依赖 DB 表。
 - **可用余额** = balance - frozen_balance，预扣/扣款/退款门槛都在 Redis Lua 内原子判断。
 - **幂等闸门**：结算幂等靠 `bil_records.request_id` 唯一约束（DB，先行于任何资金变动）；预扣/解冻幂等靠 Redis hash 认领即删。
@@ -474,6 +473,7 @@ cmd（路由注册）
 | 对比分析 | `docs/new-api-vs-sub2api对比分析报告.md` | 两者差异 |
 | 大模型实施方案 | `docs/大模型完整实施方案-v2.1.md` | 大模型代理层设计 |
 | API 格式参考 | `docs/reference/api-format-reference.md` | JSON 示例、SSE 格式、错误映射、中间件差异 |
+| 协议转换语料采集 | `docs/协议转换语料采集手册.md` | `corpus-extract` 命令用法：从渠道调试日志提取真实流量语料喂给协议转换测试 |
 | GoFrame 使用规范 | `docs/reference/goframe-conventions.md` | 框架使用规范 + 已修复的框架 bug 记录 |
 
 
@@ -491,3 +491,7 @@ cmd（路由注册）
 | `gf gen pb` | 生成 protobuf 文件 | 需要时 |
 | `gf run` | 热编译运行开发服务器 | 开发调试 |
 | `gf build` | 编译生产二进制 | 构建部署 |
+
+
+## AI工具要求
+不允许在提交内容中加入AI工具相关的身份表示和内容，不允许将AI作为仓库贡献者提交

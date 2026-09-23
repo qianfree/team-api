@@ -42,7 +42,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages:
+	// Claude/Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v2/chat/completions", nil
 	case constant.RelayModeEmbeddings:
 		return baseURL + "/v2/embeddings", nil
@@ -68,50 +71,31 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 转换请求体。
 // 如果模型名以 "-search" 结尾，去掉后缀并注入 web_search 配置。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
+	processed, err := postProcessRequest(requestBody, info)
+	if err != nil {
+		return nil, err
 	}
+	return bytes.NewReader(processed), nil
+}
 
+// postProcessRequest 百度请求适配：模型名映射。
+// 历史上还承担 -search 模型名后缀的剥离与 web_search 注入；该后缀语法已于
+// 2026-09 随全局虚拟模型后缀机制一并移除。模型映射已由 relaykit 覆盖，
+// 故不再实现 RequestPostProcessor 钩子。
+func postProcessRequest(requestBody []byte, info *common.RelayInfo) ([]byte, error) {
+	if !info.ChannelMeta.IsModelMapped {
+		return requestBody, nil
+	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
-		return bytes.NewReader(requestBody), nil
+		return requestBody, nil
 	}
-
-	// 确定上游模型名
-	modelName := info.OriginModelName
-	if info.ChannelMeta.IsModelMapped {
-		modelName = info.ChannelMeta.UpstreamModelName
-	}
-
-	// 检测 "-search" 后缀，启用搜索模式
-	if strings.HasSuffix(modelName, "-search") {
-		modelName = strings.TrimSuffix(modelName, "-search")
-		webSearch := map[string]interface{}{
-			"enable":          true,
-			"enable_citation": true,
-			"enable_trace":    true,
-		}
-		wsJSON, err := json.Marshal(webSearch)
-		if err != nil {
-			return nil, fmt.Errorf("marshal web_search failed: %w", err)
-		}
-		rawMap["web_search"] = json.RawMessage(wsJSON)
-	}
-
-	// 设置模型名
-	modelJSON, _ := json.Marshal(modelName)
-	rawMap["model"] = json.RawMessage(modelJSON)
-
+	rawMap["model"] = json.RawMessage(`"` + info.ChannelMeta.UpstreamModelName + `"`)
 	converted, err := json.Marshal(rawMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal converted request failed: %w", err)
 	}
-	return bytes.NewReader(converted), nil
+	return converted, nil
 }
 
 func (a *Adaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

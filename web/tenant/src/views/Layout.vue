@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, provide, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import { useNotificationCount } from '@/composables/useNotificationCount'
 import { useAnnouncementRead } from '@/composables/useAnnouncementRead'
 import { usePublicSettings } from '@/composables/usePublicSettings'
 import { useWatermark } from '@/composables/useWatermark'
+import { createPoller } from '@/composables/usePolling'
 import { formatBilling } from '@/composables/useCurrency'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
@@ -26,9 +27,11 @@ const announcePanelOpen = ref(false)
 const announceDetailItem = ref<any>(null)
 const consoleAnnouncements = ref<any[]>([])
 const { unreadCount: announceUnreadCount, markAsRead: markAnnouncementRead, markAllRead: markAllAnnouncementsRead, isRead: isAnnouncementRead } = useAnnouncementRead(consoleAnnouncements)
-let announcementTimer: ReturnType<typeof setInterval> | null = null
+// 公告轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const announcementPoller = createPoller(fetchAnnouncements, 30 * 60 * 1000)
 const walletBalance = ref<string>('')
-let walletTimer: ReturnType<typeof setInterval> | null = null
+// 钱包余额轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
+const walletPoller = createPoller(fetchWalletBalance, 5 * 60 * 1000)
 const memberQuota = ref<{ used: number; limit: number } | null>(null)
 const { unreadCount, startPolling: startNotificationPolling, stopPolling: stopNotificationPolling, setOnNewNotification } = useNotificationCount()
 setOnNewNotification((newCount: number) => {
@@ -85,6 +88,42 @@ const pageTitle = computed(() => {
 		return (leaf?.meta?.title as string) || navItems.value.find((i) => isActive(i.path))?.label || '仪表盘'
 	})
 
+// 返回按钮注册机制（使用 provide/inject）
+const backButtonConfig = ref<{
+	show: boolean
+	title: string
+	handler: () => void
+} | null>(null)
+
+// 提供给子页面的注册方法
+function registerBackButton(config: { title: string; handler: () => void }) {
+	backButtonConfig.value = {
+		show: true,
+		title: config.title,
+		handler: config.handler,
+	}
+}
+
+// 提供给子页面的取消注册方法
+function unregisterBackButton() {
+	backButtonConfig.value = null
+}
+
+// 通过 provide 暴露给子组件
+provide('registerBackButton', registerBackButton)
+provide('unregisterBackButton', unregisterBackButton)
+
+// 监听路由变化，清空返回按钮配置
+watch(() => route.path, () => {
+	backButtonConfig.value = null
+})
+
+const showBackButton = computed(() => backButtonConfig.value?.show ?? false)
+const backButtonTitle = computed(() => backButtonConfig.value?.title ?? '返回')
+function handleBack() {
+	backButtonConfig.value?.handler()
+}
+
 function isActive(path: string): boolean {
 	return activePath.value === path || activePath.value.startsWith(path + '/')
 }
@@ -130,10 +169,7 @@ function renderMarkdown(text: string): string {
 
 async function handleLogout() {
 	stopNotificationPolling()
-	if (announcementTimer) {
-		clearInterval(announcementTimer)
-		announcementTimer = null
-	}
+	announcementPoller.stop()
 	await authStore.logout()
 	router.push('/tenant/login')
 }
@@ -196,11 +232,11 @@ onMounted(async () => {
 	authStore.loadFromStorage()
 	document.addEventListener('click', handleClickOutside)
 	fetchAnnouncements()
-	announcementTimer = setInterval(fetchAnnouncements, 30 * 60 * 1000)
+	announcementPoller.start()
 	startNotificationPolling()
 	if (canViewWallet.value) {
 		fetchWalletBalance()
-		walletTimer = setInterval(fetchWalletBalance, 5 * 60 * 1000)
+		walletPoller.start()
 	} else {
 		fetchMemberQuota()
 	}
@@ -218,14 +254,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
 	document.removeEventListener('click', handleClickOutside)
 	stopNotificationPolling()
-	if (announcementTimer) {
-		clearInterval(announcementTimer)
-		announcementTimer = null
-	}
-	if (walletTimer) {
-		clearInterval(walletTimer)
-		walletTimer = null
-	}
+	announcementPoller.stop()
+	walletPoller.stop()
 	unmountWatermark()
 })
 </script>
@@ -329,13 +359,33 @@ onBeforeUnmount(() => {
 				<div class="glass flex h-16 items-center justify-between rounded-2xl border border-white/70 px-3 shadow-glass-sm md:px-5">
 					<!-- Left: Mobile Menu + Title -->
 					<div class="flex min-w-0 items-center gap-3">
+						<!-- Mobile: 返回按钮或菜单按钮 -->
 						<button
+							v-if="showBackButton"
+							@click="handleBack"
+							class="btn-ghost btn-icon lg:hidden"
+							:title="backButtonTitle"
+						>
+							<Icon name="chevronLeft" size="md" />
+						</button>
+						<button
+							v-else
 							@click="toggleMobile"
 							class="btn-ghost btn-icon lg:hidden"
 						>
 							<Icon name="menu" size="md" />
 						</button>
-						<div class="hidden min-w-0 lg:block">
+
+						<!-- Desktop: 返回按钮 + 标题 -->
+						<div class="hidden min-w-0 lg:flex lg:items-center lg:gap-2">
+							<button
+								v-if="showBackButton"
+								@click="handleBack"
+								class="btn-ghost btn-icon flex-shrink-0 text-gray-500 hover:text-gray-700"
+								:title="backButtonTitle"
+							>
+								<Icon name="chevronLeft" size="md" />
+							</button>
 							<h1 class="truncate text-base font-semibold text-slate-800">{{ pageTitle }}</h1>
 						</div>
 					</div>

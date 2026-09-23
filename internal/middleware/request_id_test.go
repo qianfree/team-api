@@ -16,7 +16,7 @@ import (
 // TestRequestId_DualIDMechanism 测试双 ID 机制
 func TestRequestId_DualIDMechanism(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		s := g.Server(gtest.DataPath("request-id-test"))
+		s := g.Server("mw-request-id-dual")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -28,6 +28,7 @@ func TestRequestId_DualIDMechanism(t *testing.T) {
 				})
 			})
 		})
+		s.SetAddr("127.0.0.1:0")
 		s.SetDumpRouterMap(false)
 		s.Start()
 		defer s.Shutdown()
@@ -98,7 +99,7 @@ func TestRequestId_SecurityIsolation(t *testing.T) {
 		serverIDs := make(map[string]bool)
 		var mu sync.Mutex
 
-		s := g.Server(gtest.DataPath("request-id-security"))
+		s := g.Server("mw-request-id-isolation")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -111,6 +112,7 @@ func TestRequestId_SecurityIsolation(t *testing.T) {
 				})
 			})
 		})
+		s.SetAddr("127.0.0.1:0")
 		s.SetDumpRouterMap(false)
 		s.Start()
 		defer s.Shutdown()
@@ -138,7 +140,7 @@ func TestRequestId_IdempotencyKeyUniqueness(t *testing.T) {
 		const concurrency = 100
 		serverIDs := make(chan string, concurrency)
 
-		s := g.Server(gtest.DataPath("request-id-idempotency"))
+		s := g.Server("mw-request-id-idempotency")
 		s.Group("/", func(group *ghttp.RouterGroup) {
 			group.Middleware(RequestId)
 			group.ALL("/test", func(r *ghttp.Request) {
@@ -148,6 +150,7 @@ func TestRequestId_IdempotencyKeyUniqueness(t *testing.T) {
 				})
 			})
 		})
+		s.SetAddr("127.0.0.1:0")
 		s.SetDumpRouterMap(false)
 		s.Start()
 		defer s.Shutdown()

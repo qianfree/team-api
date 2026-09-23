@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/qianfree/team-api/internal/middleware"
 	"github.com/qianfree/team-api/internal/response"
 	"github.com/qianfree/team-api/internal/utility/crypto"
+	relaycommon "github.com/qianfree/team-api/relay/common"
 
 	adminHandler "github.com/qianfree/team-api/internal/handler/admin"
 	"github.com/qianfree/team-api/internal/handler/landing"
@@ -120,7 +122,7 @@ var (
 			common.InitChannelErrorWriter()
 
 			// Initialize async audit log writer
-			common.InitAuditLogWriter()
+			common.InitAuditLogWriter(ctx)
 
 			// Initialize async channel debug log writer + 注入 relay 层提交钩子
 			common.InitChannelDebugLogWriter()
@@ -129,11 +131,35 @@ var (
 			// Initialize async error log writer
 			response.InitErrorLogWriter()
 
+			// 按配置拉起 pprof 调试端口(「性能配置-调试」):仅监听本机回环,禁止公网暴露;
+			// 端口在进程启动时读取,变更后需重启生效
+			if port := common.Config().GetInt(ctx, "pprof_port"); port > 0 && port <= 65535 {
+				go func() {
+					mux := http.NewServeMux()
+					mux.HandleFunc("/debug/pprof/", pprof.Index)
+					mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+					mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+					mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+					mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+					if listenErr := http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), mux); listenErr != nil {
+						g.Log().Warningf(ctx, "pprof server exited: %v", listenErr)
+					}
+				}()
+				g.Log().Infof(ctx, "pprof listening on 127.0.0.1:%d", port)
+			}
+
 			// Register cron jobs
 			common.InitCronScheduler()
 			cs := common.GetCronScheduler()
 			registerCronJobs(cs)
 			cs.StartBackground(ctx)
+
+			// relay 层运行时配置注入（全局超时兜底/系统代理；渠道级 settings 仍优先）
+			syncGlobalRelaySettings(ctx)
+
+			// 累计消费基线种子：为存量钱包 hash 补种 total_consumed 历史基线（幂等），
+			// 必须在 relay 流量进入前完成，防止结算 HINCRBY 从 0 起算丢历史
+			billing.SeedWalletTotalConsumed(ctx)
 
 			// 启动钱包物化器（boot goroutine，秒级刷新 Redis 权威钱包状态到 DB；不走 cron）
 			billing.StartWalletMaterializer(ctx)
@@ -223,7 +249,10 @@ var (
 
 				// Tenant — public endpoints use g.Meta middleware:"-" to skip auth
 				group.Group("/tenant", func(g *ghttp.RouterGroup) {
-					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth, middleware.Idempotency)
+					// OperationLog 与管理后台共用：中间件按 ctx 的 userType/tenantId 落
+					// aud_operation_logs，租户写操作（成员/Key/工单等）此前完全无留痕，
+					// 且租户端"操作日志"页因 tenant_id 恒为 0 永远为空，挂上后一并修复。
+					g.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.TenantAuth, middleware.Idempotency, middleware.OperationLog)
 					g.Bind(tenantController.NewV1())
 				})
 
@@ -255,9 +284,14 @@ var (
 			})
 
 			// Open Platform API — HMAC-SHA256 authentication
+			// 中间件与 /api/tenant 对齐：演示模式同样要拦住写操作（否则演示部署可经开放平台
+			// 真实改数据），维护模式头同样要下发，幂等同样要生效 —— 开放平台是对外的、
+			// 天然会重试的接口，没有幂等语义比控制台更危险。
+			// Idempotency 必须排在 OpenPlatformAuth 之后：它按认证主体隔离幂等键。
 			s.Group("/api/open", func(group *ghttp.RouterGroup) {
 				group.Middleware(middleware.MiddlewareHandlerResponse)
-				group.Middleware(middleware.OpenPlatformAuth)
+				// OperationLog 以应用身份（open_app + 应用ID）记录写操作，与管理/租户端共用
+				group.Middleware(middleware.DemoMode, middleware.MaintenanceMode, middleware.OpenPlatformAuth, middleware.Idempotency, middleware.OperationLog)
 				group.Bind(openController.NewV1())
 			})
 
@@ -332,7 +366,7 @@ func printBanner() {
 	fmt.Printf("  %sTeam-API%s %s%s%s  %s|  %s%s企业级大模型 API 网关系统%s\n", cyan, reset, green, consts.Version, reset, dim, reset, dim, reset)
 	fmt.Printf("  %shttps://github.com/qianfree/team-api%s\n", dim, reset)
 	fmt.Println()
-	fmt.Printf("  %sAGPL v3.0 开源协议  |  Copyright © 2025-2026 Team-API Contributors%s\n", dim, reset)
+	fmt.Printf("  %sAGPL-3.0-or-later  |  Copyright © 2026 qianfree%s\n", dim, reset)
 	fmt.Println()
 }
 
@@ -360,6 +394,30 @@ func watchChannelAutoTestInterval(cs *common.CronScheduler) {
 		if err := cs.Reschedule(ctx, "channel_auto_test", channelAutoTestSchedule(ctx)); err != nil {
 			g.Log().Errorf(ctx, "渠道自动探测重排失败，沿用原间隔: %v", err)
 		}
+	})
+}
+
+// syncGlobalRelaySettings 将系统设置中 relay 层的运行时配置注入 relay 层，并在配置变更时动态刷新（免重启）：
+//   - 全局超时：优先级 渠道级 settings.timeout_seconds > 此处注入的全局值 > relay 层内置默认（180s/300s）
+//   - 系统代理：channel_proxy_url，渠道编辑中开启「使用代理」的请求经此代理转发
+//
+// relay 包不反向 import internal（会循环依赖），故由本函数桥接注入。
+func syncGlobalRelaySettings(ctx context.Context) {
+	apply := func(ctx context.Context) {
+		relaycommon.SetGlobalRequestTimeoutSeconds(common.Config().GetInt(ctx, "request_timeout_seconds"))
+		relaycommon.SetGlobalStreamIdleTimeoutSeconds(common.Config().GetInt(ctx, "streaming_timeout_seconds"))
+		relaycommon.SetSystemProxyURL(common.Config().GetString(ctx, "channel_proxy_url"))
+	}
+	apply(ctx)
+	common.OnSettingsChanged(func(ctx context.Context, key string) {
+		if key != "request_timeout_seconds" && key != "streaming_timeout_seconds" && key != "channel_proxy_url" {
+			return
+		}
+		apply(ctx)
+		// 代理 URL 可能含认证凭据，只记录是否已配置，不落日志
+		g.Log().Infof(ctx, "全局 relay 配置已刷新: request=%ds stream_idle=%ds proxy_configured=%v",
+			relaycommon.GlobalRequestTimeoutSeconds(), relaycommon.GlobalStreamIdleTimeoutSeconds(),
+			relaycommon.GetSystemProxyURL() != "")
 	})
 }
 
@@ -462,7 +520,7 @@ func registerPaymentCallbacks(group *ghttp.RouterGroup) {
 // registerRelayRoutes registers AI proxy routes (/v1/xxx).
 func registerRelayRoutes(server *ghttp.Server) {
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 
 		group.POST("/chat/completions", relay.HandleChatCompletions)
 		group.GET("/models", relay.HandleModels)
@@ -477,6 +535,7 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/responses/{id}/cancel", relay.HandleResponsesCancel)
 		group.DELETE("/responses/{id}", relay.HandleResponsesDelete)
 		group.POST("/messages", relay.HandleMessages)
+		group.POST("/messages/count_tokens", relay.HandleCountTokens)
 		group.POST("/audio/speech", relay.HandleAudioSpeech)
 		group.POST("/audio/transcriptions", relay.HandleAudioTranscription)
 		group.POST("/audio/translations", relay.HandleAudioTranslation)
@@ -484,11 +543,16 @@ func registerRelayRoutes(server *ghttp.Server) {
 		group.POST("/moderations", relay.HandleModerations)
 		group.POST("/images/edits", relay.HandleImagesEdits)
 		group.GET("/realtime", relay.HandleRealtime)
+		// OpenAI Videos 协议端点（官方 SDK 兼容，对接第三方视频模型）
+		group.POST("/videos", relay.HandleVideoCreate)
+		group.GET("/videos/{video_id}", relay.HandleVideoRetrieve)
+		group.GET("/videos/{video_id}/content", relay.HandleVideoContent)
+		group.DELETE("/videos/{video_id}", relay.HandleVideoDelete)
 	})
 
 	// Gemini 兼容路由（/v1beta/models/{model}:generateContent）
 	server.Group("/v1beta", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.GET("/models", relay.HandleGeminiModels)
 		group.GET("/models/{model}", relay.HandleGeminiModelDetail)
 		group.POST("/models/{model}", relay.HandleGeminiGenerateContent)
@@ -496,24 +560,48 @@ func registerRelayRoutes(server *ghttp.Server) {
 
 	// 异步任务端点（视频/音乐生成）
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/video/generations", relay.HandleTaskSubmit)
 		group.GET("/video/generations/{task_id}", relay.HandleTaskFetch)
 	})
 
 	// 异步图片生成端点（阿里云 DashScope 等）
 	server.Group("/v1", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/images/generations/async", relay.HandleAliImageSubmit)
 		group.GET("/images/generations/async/{task_id}", relay.HandleTaskFetch)
 	})
 
 	// Suno 端点
 	server.Group("/suno", func(group *ghttp.RouterGroup) {
-		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.ContentFilter)
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
 		group.POST("/submit/{action}", relay.HandleTaskSubmit)
 		group.POST("/fetch", relay.HandleSunoFetchBatch)
 		group.GET("/fetch/{task_id}", relay.HandleTaskFetch)
+	})
+
+	// MiniMax 官方视频协议端点（H3 v2，官方 SDK 换 base_url 直连；协议文档 docs/modeldocs/minimax/video/）
+	server.Group("/v2", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoSubmit)
+		group.GET("/query/video_generation/{task_id}", relay.HandleMiniMaxVideoRetrieve)
+		group.DELETE("/video_generation/{task_id}", relay.HandleMiniMaxVideoCancel)
+	})
+
+	// MiniMax 官方视频协议端点（Hailuo 系列 v1，扁平字段协议；查询走 query 参数，
+	// 成品经 files/retrieve 二跳由网关轮询时代取，官方无取消/删除端点）
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
+		group.POST("/video_generation", relay.HandleMiniMaxVideoV1Submit)
+		group.GET("/query/video_generation", relay.HandleMiniMaxVideoV1Retrieve)
+	})
+
+	// 阿里 DashScope 官方视频协议端点（wan2.x / wan3.0 通用，阿里 SDK 换 base_url 直连；
+	// 查询回放官方响应形态，轮询计费由网关后台完成）
+	server.Group("/v1", func(group *ghttp.RouterGroup) {
+		group.Middleware(middleware.ApiMaintenance, middleware.MaintenanceMode, middleware.ApiKeyAuth, middleware.RelayBodyLimit, middleware.ContentFilter)
+		group.POST("/services/aigc/video-generation/video-synthesis", relay.HandleAliVideoSubmit)
+		group.GET("/tasks/{task_id}", relay.HandleAliVideoRetrieve)
 	})
 }
 

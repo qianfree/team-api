@@ -26,6 +26,8 @@ const pagination = reactive({
 
 const filterStatus = ref<string | null>(null)
 const filterSearch = ref('')
+const filterTag = ref('')
+const filterLevel = ref<number | null>(null)
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -61,6 +63,8 @@ const form = reactive({
   max_members: null as number | null,
   max_concurrency: null as number | null,
   level: null as number | null,
+  tags: [] as string[],
+  remark: '',
 })
 
 // Create modal
@@ -76,6 +80,8 @@ const createForm = reactive({
   password: '',
   max_members: 10 as number | null,
   max_concurrency: 0 as number | null,
+  tags: [] as string[],
+  remark: '',
 })
 
 function openCreate() {
@@ -86,6 +92,8 @@ function openCreate() {
   createForm.password = ''
   createForm.max_members = null
   createForm.max_concurrency = null
+  createForm.tags = []
+  createForm.remark = ''
   showCreateModal.value = true
 }
 
@@ -105,6 +113,8 @@ async function handleCreateSubmit(done: () => void) {
       username: createForm.username,
       email: createForm.email,
       password: createForm.password,
+      tags: createForm.tags,
+      remark: createForm.remark,
     }
     if (createForm.max_members != null) payload.max_members = createForm.max_members
     if (createForm.max_concurrency != null) payload.max_concurrency = createForm.max_concurrency
@@ -124,34 +134,30 @@ const columns = computed<TableColumnData[]>(() => [
   { title: 'ID', dataIndex: 'id', width: 70 },
   { title: '租户名', dataIndex: 'name', width: 160, ellipsis: true },
   { title: '代码', dataIndex: 'code', width: 120 },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    width: 80,
-    render({ record }) {
-      return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusTagLabel[record.status] || record.status)
-    },
-  },
   { title: '所有者', dataIndex: 'owner_name', width: 100, ellipsis: true },
-  { title: '成员', dataIndex: 'member_count', width: 70 },
   {
-    title: '成员上限',
-    dataIndex: 'effective_max_members',
+    title: '成员数',
+    dataIndex: 'member_count',
     width: 100,
     render({ record }) {
-      const val = record.effective_max_members ?? record.max_members
-      const custom = record.max_members != null ? ' (自定义)' : ''
-      return `${val}${custom}`
+      const limit = record.effective_max_members ?? record.max_members
+      return `${record.member_count || 0}/${limit ? limit : '不限'}`
     },
   },
   {
     title: '并发上限',
     dataIndex: 'effective_max_concurrency',
-    width: 100,
+    width: 110,
     render({ record }) {
       const val = record.effective_max_concurrency ?? record.max_concurrency
-      const custom = record.max_concurrency != null ? ' (自定义)' : ''
-      return val ? `${val}${custom}` : `不限${custom}`
+      const text = val ? `${val}` : '不限'
+      if (record.max_concurrency != null) {
+        return h(Space, { size: 4 }, () => [
+          h('span', text),
+          h(Tag, { color: 'arcoblue', size: 'small' }, () => '自定义'),
+        ])
+      }
+      return text
     },
   },
   {
@@ -181,6 +187,35 @@ const columns = computed<TableColumnData[]>(() => [
       return formatBilling(val, 2)
     },
   },
+  {
+    title: `累计消费(${displayCurrency.value})`,
+    dataIndex: 'total_consumed',
+    width: 130,
+    render({ record }) {
+      const val = parseFloat(record.total_consumed || '0')
+      return formatBilling(val, 2)
+    },
+  },
+  {
+    title: '标签',
+    dataIndex: 'tags',
+    width: 140,
+    render({ record }) {
+      const tags: string[] = record.tags || []
+      if (!tags.length) return '-'
+      return h(Space, { size: 4, wrap: 'wrap' }, () => tags.slice(0, 3).map((t) =>
+        h(Tag, { color: 'arcoblue', size: 'small' }, () => t),
+      ).concat(tags.length > 3 ? [h('span', { class: 'text-xs text-gray-400' }, `+${tags.length - 3}`)] : []))
+    },
+  },
+  {
+    title: '状态',
+    dataIndex: 'status',
+    width: 80,
+    render({ record }) {
+      return h(Tag, { color: statusTagColor[record.status], size: 'small' }, () => statusTagLabel[record.status] || record.status)
+    },
+  },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
   {
     title: '操作',
@@ -205,6 +240,8 @@ async function fetchData() {
     }
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSearch.value) params.keyword = filterSearch.value
+    if (filterTag.value.trim()) params.tag = filterTag.value.trim()
+    if (filterLevel.value != null) params.level = filterLevel.value
 
     const res: any = await request.get('/admin/tenants', { params })
     data.value = res.data?.data?.list || res.data?.list || []
@@ -230,6 +267,8 @@ function openEdit(row: any) {
   form.max_members = row.max_members ?? null
   form.max_concurrency = row.max_concurrency ?? null
   form.level = row.level ?? null
+  form.tags = Array.isArray(row.tags) ? [...row.tags] : []
+  form.remark = row.remark || ''
   showModal.value = true
 }
 
@@ -248,6 +287,8 @@ async function handleSubmit(done: () => void) {
       max_members: form.max_members,
       max_concurrency: form.max_concurrency,
       level: form.level,
+      tags: form.tags,
+      remark: form.remark,
     })
     Message.success('更新成功')
     done()
@@ -282,6 +323,8 @@ const { exporting, exportFile } = useExport({
   getFilters: () => ({
     status: filterStatus.value,
     keyword: filterSearch.value,
+    tag: filterTag.value.trim() || undefined,
+    level: filterLevel.value ?? undefined,
   }),
 })
 </script>
@@ -312,11 +355,30 @@ const { exporting, exportFile } = useExport({
           style="width: 120px"
           @change="handleFilter"
         />
+        <ASelect
+          v-model="filterLevel"
+          placeholder="等级"
+          allow-clear
+          style="width: 140px"
+          @change="handleFilter"
+        >
+          <AOption v-for="opt in levelOptions" :key="opt.level" :value="opt.level">
+            {{ opt.name }}
+          </AOption>
+        </ASelect>
         <AInput
           v-model="filterSearch"
           placeholder="搜索租户名/代码..."
           allow-clear
           style="width: 220px"
+          @keydown.enter="handleFilter"
+          @clear="handleFilter"
+        />
+        <AInput
+          v-model="filterTag"
+          placeholder="按标签筛选..."
+          allow-clear
+          style="width: 160px"
           @keydown.enter="handleFilter"
           @clear="handleFilter"
         />
@@ -330,13 +392,13 @@ const { exporting, exportFile } = useExport({
         :columns="columns"
         :data="data"
         :loading="loading"
-        :scroll="{ x: 1300 }"
+        :scroll="{ x: 1530 }"
         :stripe="true"
         row-key="id"
         card-title-key="name"
         card-subtitle-key="code"
         card-badge-key="status"
-        :card-fields="['owner_name', 'member_count', 'level', 'wallet_balance']"
+        :card-fields="['owner_name', 'member_count', 'level', 'wallet_balance', 'total_consumed']"
       />
       <div class="table-footer">
         <TableStats :total="pagination.total" />
@@ -357,7 +419,7 @@ const { exporting, exportFile } = useExport({
       v-model:visible="showModal"
       :title="modalTitle"
       :mask-closable="false"
-      :width="480"
+      :width="540"
       :on-before-ok="handleSubmit"
       :ok-loading="formLoading"
     >
@@ -385,6 +447,12 @@ const { exporting, exportFile } = useExport({
             <AInputNumber v-model="form.max_concurrency" :min="0" placeholder="并发上限" allow-clear class="w-full" />
           </AFormItem>
         </ASpace>
+        <AFormItem field="tags" label="标签" extra="最多 10 个，每个不超过 30 字符">
+          <AInputTag v-model="form.tags" :max-tag-count="10" placeholder="输入后回车添加标签" allow-clear />
+        </AFormItem>
+        <AFormItem field="remark" label="备注" extra="仅管理后台可见">
+          <ATextarea v-model="form.remark" placeholder="运营备注（最长 1000 字符）" :max-length="1000" show-word-limit :auto-size="{ minRows: 2, maxRows: 5 }" />
+        </AFormItem>
       </AForm>
     </AModal>
 
@@ -421,6 +489,12 @@ const { exporting, exportFile } = useExport({
             <AInputNumber v-model="createForm.max_concurrency" :min="0" placeholder="留空跟随等级" allow-clear class="w-full" />
           </AFormItem>
         </ASpace>
+        <AFormItem field="tags" label="标签" extra="最多 10 个，每个不超过 30 字符">
+          <AInputTag v-model="createForm.tags" :max-tag-count="10" placeholder="输入后回车添加标签" allow-clear />
+        </AFormItem>
+        <AFormItem field="remark" label="备注" extra="仅管理后台可见">
+          <ATextarea v-model="createForm.remark" placeholder="运营备注（最长 1000 字符）" :max-length="1000" show-word-limit :auto-size="{ minRows: 2, maxRows: 5 }" />
+        </AFormItem>
       </AForm>
     </AModal>
   </div>
@@ -430,8 +504,6 @@ const { exporting, exportFile } = useExport({
 .table-footer {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid var(--ta-border-light);
 }
 </style>

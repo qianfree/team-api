@@ -52,15 +52,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // ConvertRequest 转换请求体。讯飞 OpenAI 兼容接口格式与 OpenAI 一致，
 // 只需做模型名映射。
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		converted, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = converted
-	}
-
 	if info.ChannelMeta.IsModelMapped {
 		var rawMap map[string]json.RawMessage
 		if err := json.Unmarshal(requestBody, &rawMap); err != nil {

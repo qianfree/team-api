@@ -15,12 +15,16 @@ type TaskAdaptor interface {
 	// ValidateRequest 校验请求参数
 	ValidateRequest(ctx context.Context, info *RelayInfo, body []byte) *TaskError
 
-	// EstimateBilling 估算任务费用（提交前）
-	// 返回计费比率 map，如 {"duration_ratio": 1.5, "resolution_ratio": 2.0}
-	EstimateBilling(ctx context.Context, info *RelayInfo, body []byte) map[string]float64
+	// EstimateBilling 估算任务费用（提交前）。
+	// 返回计费上下文 map，两类键：
+	//   - float64 乘数值：如 {"video_input": 0.6, "quality": 3.5}，引擎按序连乘；
+	//   - string 规格事实值：如 {"spec.duration": 8, "spec.resolution": "720p"}，
+	//     per_second 计费模式据此查定价矩阵（spec.duration 为 float64 秒数，spec.resolution 为规格原值）。
+	// 旧键 duration/resolution 保留 token 伪装估算路径使用，语义随各 adaptor 存量口径，勿混用。
+	EstimateBilling(ctx context.Context, info *RelayInfo, body []byte) map[string]any
 
 	// AdjustBillingOnSubmit 提交后根据上游确认参数调整计费
-	AdjustBillingOnSubmit(info *RelayInfo, taskData []byte) map[string]float64
+	AdjustBillingOnSubmit(info *RelayInfo, taskData []byte) map[string]any
 
 	// BuildRequestURL 构建上游请求 URL
 	BuildRequestURL(info *RelayInfo) (string, error)
@@ -37,8 +41,9 @@ type TaskAdaptor interface {
 	// DoResponse 解析上游提交响应，返回上游任务 ID 和任务数据
 	DoResponse(ctx context.Context, resp *http.Response, info *RelayInfo) (upstreamTaskID string, taskData []byte, taskErr *TaskError)
 
-	// FetchTask 查询上游任务状态
-	FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error)
+	// FetchTask 查询上游任务状态。ctx 供超时控制与渠道调试日志捕获器传递
+	//（轮询侧经 WithDebugAttempt 注入，未开启调试时透传无额外开销）
+	FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error)
 
 	// ParseTaskResult 解析上游任务查询结果
 	ParseTaskResult(body []byte) (*TaskInfo, error)
@@ -48,6 +53,16 @@ type TaskAdaptor interface {
 
 	// GetChannelName 返回适配器名称
 	GetChannelName() string
+}
+
+// UpstreamRequestIDExtractor 供应商私有的「上游调用追踪 ID 提取」可选能力。
+// 为什么需要：部分异步上游（如阿里 DashScope）不在响应头返回请求 ID，而是放在
+// 提交响应体顶层（request_id 字段），通用管线无法用统一键提取。实现方从提交
+// 响应体解析自家私有的追踪 ID，与 output.task_id（任务句柄）互补——提工单或
+// 在上游日志定位一次提交调用时用它。未实现的上游走响应头提取或为空。
+type UpstreamRequestIDExtractor interface {
+	// ExtractUpstreamRequestID 从上游提交响应体提取调用追踪 ID，未返回时为空串
+	ExtractUpstreamRequestID(body []byte) string
 }
 
 // TaskInfo 异步任务查询结果
@@ -60,10 +75,26 @@ type TaskInfo struct {
 	SubTasks   []SubTask // 子任务结果（如多图/多视频场景）
 	ActualCost float64   // 上游返回的实际费用（0 表示未提供，使用预扣金额）
 
+	// 素材计量（部分任务上游 usage 返回，如 MiniMax H3 的 input_seconds/input_image_count）：
+	// 「预扣时未知、生成后官方返回」的计费依据，素材计费方案（BillingScheme.SettleTaskCost）的结算输入。
+	// nil = 上游未提供
+	MaterialUsage *TaskMaterialUsage
+
 	// Token 用量（部分异步任务上游会返回，如火山引擎视频模型）
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+}
+
+// TaskMaterialUsage 上游任务 usage 中的素材计量。
+// 与 TaskInfo.TotalTokens 同级的结算信号：链接素材（视频/音频）的时长在提交时不可知，
+// 以生成成功后官方返回为准；各字段零值表示该计量上游未返回（方案自行回退）。
+type TaskMaterialUsage struct {
+	InputVideoSeconds float64 // 输入视频时长（秒）
+	InputImageCount   int     // 输入图片张数
+	InputAudioSeconds float64 // 输入音频时长（秒）
+	OutputSeconds     float64 // 输出（生成）时长（秒）
+	Resolution        string  // 实际输出分辨率规格（如 "720P"，对齐 per_second 矩阵键）；空 = 上游未返回
 }
 
 // TaskStatusEnum 任务状态枚举

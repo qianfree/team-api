@@ -5,13 +5,15 @@ import "github.com/gogf/gf/v2/frame/g"
 // TenantCreateReq 创建租户请求
 type TenantCreateReq struct {
 	g.Meta         `path:"/tenants" method:"post" mime:"json" tags:"管理后台-租户管理" summary:"创建租户"`
-	TenantName     string `json:"tenant_name" v:"required#请输入租户名称" dc:"租户名称（汉字最多8个，字母最多16个）"`
-	TenantCode     string `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入租户代码|租户代码为3-30位|租户代码仅允许小写字母、数字、中划线" dc:"租户代码"`
-	Username       string `json:"username" v:"required|length:3,50#请输入管理员用户名|用户名长度为3-50位" dc:"管理员用户名"`
-	Email          string `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"管理员邮箱"`
-	Password       string `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"管理员密码"`
-	MaxMembers     *int   `json:"max_members" dc:"最大成员数（默认10）"`
-	MaxConcurrency *int   `json:"max_concurrency" dc:"并发上限，0不限（默认0）"`
+	TenantName     string   `json:"tenant_name" v:"required#请输入租户名称" dc:"租户名称（汉字最多8个，字母最多16个）"`
+	TenantCode     string   `json:"tenant_code" v:"required|length:3,30|regex:^[a-z0-9][a-z0-9-]*[a-z0-9]$#请输入租户代码|租户代码为3-30位|租户代码仅允许小写字母、数字、中划线" dc:"租户代码"`
+	Username       string   `json:"username" v:"required|length:3,50#请输入管理员用户名|用户名长度为3-50位" dc:"管理员用户名"`
+	Email          string   `json:"email" v:"required|email#请输入邮箱|邮箱格式不正确" dc:"管理员邮箱"`
+	Password       string   `json:"password" v:"required|length:8,64#请输入密码|密码长度为8-64位" dc:"管理员密码"`
+	MaxMembers     *int     `json:"max_members" dc:"最大成员数（默认10）"`
+	MaxConcurrency *int     `json:"max_concurrency" dc:"并发上限，0不限（默认0）"`
+	Tags           []string `json:"tags" dc:"租户标签（≤10 个，每项 ≤30 字符）"`
+	Remark         *string  `json:"remark" dc:"管理员备注（≤1000 字符）"`
 }
 
 type TenantCreateRes struct {
@@ -25,6 +27,8 @@ type TenantListReq struct {
 	PageSize int    `json:"page_size" d:"20" dc:"每页数量"`
 	Keyword  string `json:"keyword" dc:"搜索关键词（名称/代码）"`
 	Status   string `json:"status" dc:"状态筛选：active/suspended/closed"`
+	Tag      string `json:"tag" dc:"标签精确筛选"`
+	Level    *int   `json:"level" dc:"等级筛选（对应 tnt_tenant_level_configs.level）"`
 }
 
 type TenantListRes struct {
@@ -35,24 +39,27 @@ type TenantListRes struct {
 }
 
 type TenantItem struct {
-	ID                      int64  `json:"id"`
-	Name                    string `json:"name"`
-	Code                    string `json:"code"`
-	LogoURL                 string `json:"logo_url"`
-	OwnerUserID             int64  `json:"owner_user_id"`
-	OwnerName               string `json:"owner_name"`
-	Status                  string `json:"status"`
-	MaxMembers              *int   `json:"max_members" dc:"最大成员数上限，NULL表示跟随等级配置"`
-	MaxConcurrency          *int   `json:"max_concurrency" dc:"并发上限，NULL表示跟随等级配置"`
-	EffectiveMaxMembers     int    `json:"effective_max_members" dc:"实际生效的成员数上限"`
-	EffectiveMaxConcurrency int    `json:"effective_max_concurrency" dc:"实际生效的并发上限"`
-	DefaultChannelScope     string `json:"default_channel_scope"`
-	MemberCount             int    `json:"member_count"`
-	WalletBalance           string `json:"wallet_balance"`
-	Level                   int    `json:"level"`
-	LevelName               string `json:"level_name"`
-	CreatedAt               string `json:"created_at"`
-	UpdatedAt               string `json:"updated_at"`
+	ID                      int64    `json:"id"`
+	Name                    string   `json:"name"`
+	Code                    string   `json:"code"`
+	LogoURL                 string   `json:"logo_url"`
+	OwnerUserID             int64    `json:"owner_user_id"`
+	OwnerName               string   `json:"owner_name"`
+	Status                  string   `json:"status"`
+	MaxMembers              *int     `json:"max_members" dc:"最大成员数上限，NULL表示跟随等级配置"`
+	MaxConcurrency          *int     `json:"max_concurrency" dc:"并发上限，NULL表示跟随等级配置"`
+	EffectiveMaxMembers     int      `json:"effective_max_members" dc:"实际生效的成员数上限"`
+	EffectiveMaxConcurrency int      `json:"effective_max_concurrency" dc:"实际生效的并发上限"`
+	DefaultChannelScope     string   `json:"default_channel_scope"`
+	MemberCount             int      `json:"member_count"`
+	WalletBalance           string   `json:"wallet_balance"`
+	Tags                    []string `json:"tags" dc:"租户标签（管理后台运营标注）"`
+	Remark                  string   `json:"remark" dc:"管理员备注"`
+	TotalConsumed           string   `json:"total_consumed" dc:"累计消费（本位币，decimal 字符串；Redis 权威计数的物化副本，≤5s 滞后）"`
+	Level                   int      `json:"level"`
+	LevelName               string   `json:"level_name"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
 }
 
 // TenantGetReq 获取租户详情
@@ -85,11 +92,13 @@ type TenantUpdateStatusRes struct{}
 // TenantUpdateReq 更新租户信息
 type TenantUpdateReq struct {
 	g.Meta         `path:"/tenants/{id}" method:"put" mime:"json" tags:"管理后台-租户管理" summary:"更新租户"`
-	Id             int64  `json:"id" in:"path" v:"required" dc:"租户ID"`
-	Name           string `json:"name" dc:"租户名称"`
-	MaxMembers     *int   `json:"max_members" dc:"最大成员数"`
-	MaxConcurrency *int   `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
-	Level          *int   `json:"level" dc:"租户等级（调整等级会同步更新成员数和并发数为该等级的配置值）"`
+	Id             int64    `json:"id" in:"path" v:"required" dc:"租户ID"`
+	Name           string   `json:"name" dc:"租户名称"`
+	MaxMembers     *int     `json:"max_members" dc:"最大成员数"`
+	MaxConcurrency *int     `json:"max_concurrency" dc:"租户总并发上限（0表示不限制）"`
+	Level          *int     `json:"level" dc:"租户等级（调整等级会同步更新成员数和并发数为该等级的配置值）"`
+	Tags           []string `json:"tags" dc:"租户标签（≤10 个，每项 ≤30 字符，传空数组清空标签）"`
+	Remark         *string  `json:"remark" dc:"管理员备注（≤1000 字符）"`
 }
 
 type TenantUpdateRes struct{}
@@ -138,6 +147,8 @@ type TenantExportReq struct {
 	Format  string `json:"format" in:"query" d:"csv" v:"in:csv,xlsx" dc:"导出格式：csv / xlsx"`
 	Keyword string `json:"keyword" in:"query" dc:"搜索关键词（名称/代码）"`
 	Status  string `json:"status" in:"query" dc:"状态筛选：active/suspended/closed"`
+	Tag     string `json:"tag" in:"query" dc:"标签筛选"`
+	Level   *int   `json:"level" in:"query" dc:"等级筛选"`
 }
 
 type TenantExportRes struct{}

@@ -51,9 +51,12 @@ data: {"type":"message_stop"}
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
+	}
+	if err != nil {
+		t.Fatalf("expected nil err on clean stream, got %v", err)
 	}
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
@@ -108,9 +111,12 @@ data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"prompt
 	info := newStreamTestRelayInfo(constant.ProviderGemini, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(geminiStream), rec)
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(geminiStream), rec)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
+	}
+	if err != nil {
+		t.Fatalf("expected nil err on clean stream, got %v", err)
 	}
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
@@ -143,7 +149,10 @@ func TestConvertStreamViaRelaykit_SameFormatFallback(t *testing.T) {
 	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatOpenAI)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	if err != nil {
+		t.Fatalf("expected nil err on fallback, got %v", err)
+	}
 	if ok {
 		t.Fatal("expected ok=false for same format, got true")
 	}
@@ -155,12 +164,16 @@ func TestConvertStreamViaRelaykit_SameFormatFallback(t *testing.T) {
 	}
 }
 
-// TestConvertStreamViaRelaykit_NoMatchingRoute 无匹配流式转换器的方向（OpenAI→Gemini）应回退。
+// TestConvertStreamViaRelaykit_NoMatchingRoute 无匹配流式转换器的方向应回退。
+// Ollama 上游 → Claude 客户端未注册（Ollama 仅覆盖 OpenAI 客户端方向）。
 func TestConvertStreamViaRelaykit_NoMatchingRoute(t *testing.T) {
-	info := newStreamTestRelayInfo(constant.ProviderOpenAI, constant.RelayFormatGemini)
+	info := newStreamTestRelayInfo(constant.ProviderOllama, constant.RelayFormatClaude)
 	rec := httptest.NewRecorder()
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec)
+	if err != nil {
+		t.Fatalf("expected nil err on fallback, got %v", err)
+	}
 	if ok {
 		t.Fatal("expected ok=false for unmatched route, got true")
 	}
@@ -176,13 +189,13 @@ func TestConvertStreamViaRelaykit_NoMatchingRoute(t *testing.T) {
 // （nil 守卫位于公开入口；core convertStreamViaRelaykit 由调用方保证 info 非空。）
 func TestTryConvertStreamViaRelaykit_NilGuards(t *testing.T) {
 	rec := httptest.NewRecorder()
-	if _, ok := TryConvertStreamViaRelaykit(context.Background(), nil, strings.NewReader(""), rec); ok {
+	if _, ok, _ := TryConvertStreamViaRelaykit(context.Background(), nil, strings.NewReader(""), rec); ok {
 		t.Fatal("expected ok=false for nil info")
 	}
 
 	info := newStreamTestRelayInfo(constant.ProviderClaude, constant.RelayFormatOpenAI)
 	info.ChannelMeta = nil
-	if _, ok := TryConvertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec); ok {
+	if _, ok, _ := TryConvertStreamViaRelaykit(context.Background(), info, strings.NewReader(""), rec); ok {
 		t.Fatal("expected ok=false for nil ChannelMeta")
 	}
 }
@@ -238,12 +251,16 @@ data: {"type":"message_stop"}
 	// ctx 用 Background（永不取消），精确模拟「写失败先于 ctx 取消被观察到」的竞态
 	w := &failOnSubstringWriter{rec: httptest.NewRecorder(), marker: "how can I help you"}
 
-	usage, ok := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), w)
+	usage, ok, err := convertStreamViaRelaykit(context.Background(), info, strings.NewReader(claudeStream), w)
 	if !ok {
 		t.Fatal("expected ok=true (handled), got false")
 	}
 	if usage == nil {
 		t.Fatal("expected non-nil usage")
+	}
+	// 中断信号必须由桥接层直接透出：调用方据此按流中断结算，不再自行读 StreamStatus 判定
+	if !errors.Is(err, common.ErrStreamInterrupted) {
+		t.Fatalf("err = %v, want common.ErrStreamInterrupted", err)
 	}
 	if reason := info.StreamStatus.GetEndReason(); reason != common.StreamEndReasonClientGone {
 		t.Fatalf("end reason = %q, want %q (client write failure misclassified)", reason, common.StreamEndReasonClientGone)

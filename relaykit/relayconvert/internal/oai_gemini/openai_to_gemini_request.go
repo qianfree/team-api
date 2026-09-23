@@ -8,6 +8,7 @@ import (
 	"github.com/qianfree/team-api/relaykit/dto"
 	"github.com/qianfree/team-api/relaykit/relayconvert"
 	"github.com/qianfree/team-api/relaykit/relayconvert/convmeta"
+	"github.com/qianfree/team-api/relaykit/relayconvert/internal/shared"
 	"github.com/qianfree/team-api/relaykit/types"
 )
 
@@ -151,6 +152,26 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 		}
 	}
 
+	// 服务端联网搜索：chat 的 web_search_options → Gemini 原生 googleSearch。
+	//
+	// 与其他目标格式不同，本方向受渠道开关 WebSearchToGoogleSearch 控制：
+	// googleSearch 是**用 Google 的 grounding 替代客户端请求的搜索**，Google 按搜索
+	// 次数另行计价，因此由运营者显式开启（与 Claude→Gemini 方向同一开关、同一理由）。
+	//
+	// 保守策略同样对齐 Claude→Gemini：仅在无 functionDeclarations 时附加——
+	// 部分 Gemini 模型代际不接受 googleSearch 与函数声明同请求，混用时宁可丢搜索
+	// 也不让整个请求 400。
+	if convmeta.OptionsOf(info).Gemini.WebSearchToGoogleSearch && len(geminiReq.Tools) == 0 {
+		if spec := shared.DetectWebSearchFromOpenAI(openaiReq.WebSearchOptions); spec != nil {
+			entries := []map[string]any{shared.GeminiGoogleSearchEntry()}
+			raw, err := json.Marshal(entries)
+			if err != nil {
+				return nil, fmt.Errorf("marshal googleSearch tool: %w", err)
+			}
+			geminiReq.Tools = raw
+		}
+	}
+
 	// Messages conversion
 	toolCallIDs := make(map[string]string) // toolCallID -> functionName
 	var systemParts []dto.GeminiPart
@@ -193,14 +214,9 @@ func (c *OpenAIToGeminiRequestConverter) ConvertRequest(
 				name = toolCallIDs[msg.ToolCallID]
 			}
 
-			contentStr := extractText(msg.Content)
-			var response any = contentStr
-			if contentStr != "" {
-				var parsed any
-				if json.Unmarshal([]byte(contentStr), &parsed) == nil {
-					response = parsed
-				}
-			}
+			// 工具输出归一化：functionResponse.response 必须是 JSON 对象（Struct），
+			// 纯文本（shell 输出等）会被 protojson 直接 400，统一经 shared 包包装
+			response := shared.ToolResultToGeminiResponse(extractText(msg.Content))
 
 			geminiReq.Contents[lastIdx].Parts = append(geminiReq.Contents[lastIdx].Parts, dto.GeminiPart{
 				FunctionResponse: &dto.GeminiFunctionResponse{
@@ -275,6 +291,19 @@ func convertUserParts(content any) []dto.GeminiPart {
 			return nil
 		}
 		return []dto.GeminiPart{{Text: v}}
+
+	case []dto.ContentPart:
+		// 链式转换（如 Responses→OpenAI→Gemini）产出的类型化部件列表：
+		// 经 JSON 往返降为 []any 复用下方 wire 形态逻辑，避免两套多模态分支漂移
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		var anyParts []any
+		if err := json.Unmarshal(data, &anyParts); err != nil {
+			return nil
+		}
+		return convertUserParts(anyParts)
 
 	case []any:
 		var parts []dto.GeminiPart
@@ -400,7 +429,7 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 		if t.Type != "function" {
 			continue
 		}
-		cleanedParams := cleanParams(t.Function.Parameters)
+		cleanedParams := shared.CleanGeminiToolParams(t.Function.Parameters)
 		funcDecls = append(funcDecls, functionDecl{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
@@ -411,28 +440,6 @@ func convertTools(tools []dto.Tool) ([]geminiTool, error) {
 		return nil, nil
 	}
 	return []geminiTool{{FunctionDeclarations: funcDecls}}, nil
-}
-
-// cleanParams 移除 Gemini 不支持的 JSON Schema 字段
-func cleanParams(params any) any {
-	if params == nil {
-		return nil
-	}
-	m, ok := params.(map[string]any)
-	if !ok {
-		return params
-	}
-	cleaned := make(map[string]any)
-	for k, v := range m {
-		switch k {
-		case "type", "description", "properties", "required", "items",
-			"anyOf", "default", "enum", "format", "maxLength", "minLength",
-			"maximum", "minimum", "pattern", "title", "nullable",
-			"maxItems", "minItems", "maxProperties", "minProperties", "example":
-			cleaned[k] = v
-		}
-	}
-	return cleaned
 }
 
 func convertToolChoice(toolChoice any) any {
@@ -467,111 +474,40 @@ func convertToolChoice(toolChoice any) any {
 	return nil
 }
 
+// convertReasoningEffort 将 reasoning_effort 档位展开为 Gemini thinkingBudget。
+// 只下发 thinkingBudget、不下发 thinkingLevel：二者互斥（同时携带上游返回 400），
+// 且 Gemini 3 对 thinkingBudget 向后兼容。
 func convertReasoningEffort(effort string) *dto.GeminiThinkingConfig {
 	var budget int
-	var level string
 	switch effort {
 	case "low":
 		budget = 1024
-		level = "LOW"
 	case "medium":
 		budget = 8192
-		level = "MEDIUM"
 	case "high":
 		budget = 32768
-		level = "HIGH"
 	default:
 		budget = 8192
-		level = "MEDIUM"
 	}
 	return &dto.GeminiThinkingConfig{
 		IncludeThoughts: true,
-		ThoughtBudget:   &budget,
-		ThinkingLevel:   level,
+		ThinkingBudget:  &budget,
 	}
 }
 
+// convertResponseSchema 把 chat 的 response_format.json_schema 包装（{name,schema,strict}）
+// 解包为 Gemini 的 response_schema——必须是**裸 schema**，带着 name/strict 外壳发出会被
+// protojson 拒绝（线上实测：Unknown name "name" at 'request.generation_config.response_schema'）。
+// 解包后经 CleanGeminiToolParams 归一化：Gemini 对 response_schema 与工具参数 schema
+// 应用同一套约束（白名单关键字、每节点须有 type、数组须带 items）。
 func convertResponseSchema(schema any) any {
 	if schema == nil {
 		return nil
 	}
-
-	// 处理 json_schema 包装结构：{"type":"json_schema","json_schema":{"schema":{...}}}
 	if m, ok := schema.(map[string]any); ok {
-		if js, ok := m["json_schema"].(map[string]any); ok {
-			if innerSchema, ok := js["schema"]; ok {
-				return convertSchemaMap(innerSchema)
-			}
-		}
-		return convertSchemaMap(m)
-	}
-
-	return schema
-}
-
-// convertSchemaMap 递归地将 JSON Schema 类型名转换为 Gemini 格式
-func convertSchemaMap(schema any) any {
-	m, ok := schema.(map[string]any)
-	if !ok {
-		return schema
-	}
-
-	result := make(map[string]any, len(m))
-	for k, v := range m {
-		switch k {
-		case "type":
-			if s, ok := v.(string); ok {
-				result["type"] = mapSchemaType(s)
-			} else {
-				result[k] = v
-			}
-		case "properties":
-			if props, ok := v.(map[string]any); ok {
-				converted := make(map[string]any, len(props))
-				for pk, pv := range props {
-					converted[pk] = convertSchemaMap(pv)
-				}
-				result["properties"] = converted
-			} else {
-				result[k] = v
-			}
-		case "items":
-			result["items"] = convertSchemaMap(v)
-		case "anyOf", "oneOf", "allOf":
-			if arr, ok := v.([]any); ok {
-				converted := make([]any, len(arr))
-				for i, item := range arr {
-					converted[i] = convertSchemaMap(item)
-				}
-				result[k] = converted
-			} else {
-				result[k] = v
-			}
-		default:
-			result[k] = v
+		if inner, ok := m["schema"]; ok {
+			schema = inner
 		}
 	}
-	return result
-}
-
-// mapSchemaType 将 JSON Schema 类型名映射为 Gemini Schema 类型名
-func mapSchemaType(t string) string {
-	switch t {
-	case "string":
-		return "STRING"
-	case "number":
-		return "NUMBER"
-	case "integer":
-		return "INTEGER"
-	case "boolean":
-		return "BOOLEAN"
-	case "object":
-		return "OBJECT"
-	case "array":
-		return "ARRAY"
-	case "null":
-		return "NULL"
-	default:
-		return t
-	}
+	return shared.CleanGeminiToolParams(schema)
 }

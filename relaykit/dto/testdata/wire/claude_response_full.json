@@ -1,0 +1,22 @@
+{
+  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-20250514",
+  "content": [
+    {"type": "thinking", "thinking": "Let me analyze the request.", "signature": "EuYBCkQYAiJAexample"},
+    {"type": "text", "text": "The weather in Boston is 68F and sunny."},
+    {"type": "tool_use", "id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6", "name": "get_weather", "input": {"location": "Boston, MA"}}
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 472,
+    "output_tokens": 91,
+    "cache_creation_input_tokens": 130,
+    "cache_read_input_tokens": 50,
+    "cache_creation": {"ephemeral_5m_input_tokens": 100, "ephemeral_1h_input_tokens": 30},
+    "server_tool_use": {"web_search_requests": 2},
+    "service_tier": "standard"
+  }
+}

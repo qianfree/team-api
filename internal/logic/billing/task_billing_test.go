@@ -165,7 +165,39 @@ func TestEstimateTaskCost_PerRequest(t *testing.T) {
 		OutputPrice:      30.0, // 即使配了 output_price 也不应走 token 估算
 		TenantMultiplier: 1.0,
 	}
-	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "per_request cost")
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 0.04, "per_request cost")
+}
+
+// TestEstimateTaskCost_PerRequestTenantTimeDiscount 按次任务预扣即终价（结算无 token 重算
+// 信号），租户乘数与时段乘数必须在预扣阶段就生效，与 chat 路径 computeCost 的按次口径一致。
+func TestEstimateTaskCost_PerRequestTenantTimeDiscount(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.10,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0.8,
+	}
+	// 0.10 × 0.5 × 0.8 = 0.04
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 0.04, "per_request tenant × time discount")
+
+	// token 模式但仅配按次价的图片任务（default 分支回退）同样生效
+	p2 := &PricingResult{
+		BillingMode:      "token",
+		PerRequestPrice:  0.10,
+		OutputPrice:      30.0,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0.8,
+	}
+	assertDecimal(t, estimateTaskCost(p2, nil, nil), 0.04, "image per-request fallback discount")
+
+	// 时段乘数零值（旧缓存条目缺字段）兜底 1.0，不得把预扣清零
+	p3 := &PricingResult{
+		BillingMode:      "per_request",
+		PerRequestPrice:  0.10,
+		TenantMultiplier: 0.5,
+		TimeMultiplier:   0,
+	}
+	assertDecimal(t, estimateTaskCost(p3, nil, nil), 0.05, "zero time multiplier fallback")
 }
 
 // TestEstimateTaskCost_VideoWithDurationSignal 视频任务（ratios 携带 duration/resolution）
@@ -176,8 +208,8 @@ func TestEstimateTaskCost_VideoWithDurationSignal(t *testing.T) {
 		OutputPrice:      30.0,
 		TenantMultiplier: 1.0,
 	}
-	ratios := map[string]float64{"duration": 5, "resolution": 2.25}
-	assertDecimal(t, estimateTaskCost(pricing, ratios), 3.375, "video cost")
+	ratios := map[string]any{"duration": 5.0, "resolution": 2.25}
+	assertDecimal(t, estimateTaskCost(pricing, ratios, nil), 3.375, "video cost")
 }
 
 // TestEstimateTaskCost_ImageNoDurationSignal 图片任务（token 模式、有 output_price、但 ratios 无
@@ -190,7 +222,7 @@ func TestEstimateTaskCost_ImageNoDurationSignal(t *testing.T) {
 		PerRequestPrice:  0, // 未配按次价
 		TenantMultiplier: 1.0,
 	}
-	assertDecimal(t, estimateTaskCost(pricing, nil), 0.1, "image placeholder pre-deduct")
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 0.1, "image placeholder pre-deduct")
 }
 
 // TestEstimateTaskCost_PerRequestBelowPlaceholder 已配置的真实按次单价（低于占位值）必须被尊重，
@@ -201,7 +233,7 @@ func TestEstimateTaskCost_PerRequestBelowPlaceholder(t *testing.T) {
 		PerRequestPrice:  0.04, // DALL·E 类真实单价，低于 0.1 占位
 		TenantMultiplier: 1.0,
 	}
-	assertDecimal(t, estimateTaskCost(pricing, nil), 0.04, "configured per_request price respected")
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 0.04, "configured per_request price respected")
 }
 
 // TestEstimateTaskCost_ImageUsesPerRequestPrice 图片模型即便 billing_mode 仍是 token，只要配了
@@ -213,7 +245,7 @@ func TestEstimateTaskCost_ImageUsesPerRequestPrice(t *testing.T) {
 		PerRequestPrice:  0.05,
 		TenantMultiplier: 1.0,
 	}
-	assertDecimal(t, estimateTaskCost(pricing, nil), 0.05, "image per_request cost")
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 0.05, "image per_request cost")
 }
 
 // TestEstimateTaskCost_VideoInputDiscount 附加比率（video_input 折扣）在时长估算之上叠加。
@@ -223,14 +255,14 @@ func TestEstimateTaskCost_VideoInputDiscount(t *testing.T) {
 		OutputPrice:      30.0,
 		TenantMultiplier: 1.0,
 	}
-	ratios := map[string]float64{"duration": 5, "resolution": 2.25, "video_input": 0.5}
+	ratios := map[string]any{"duration": 5.0, "resolution": 2.25, "video_input": 0.5}
 	// 3.375 × 0.5 = 1.6875
-	assertDecimal(t, estimateTaskCost(pricing, ratios), 1.6875, "video discounted cost")
+	assertDecimal(t, estimateTaskCost(pricing, ratios, nil), 1.6875, "video discounted cost")
 }
 
 // TestEstimateTaskCost_NilPricing 定价缺失时按最低消费兜底。
 func TestEstimateTaskCost_NilPricing(t *testing.T) {
-	assertDecimal(t, estimateTaskCost(nil, nil), 0.01, "nil pricing floor")
+	assertDecimal(t, estimateTaskCost(nil, nil, nil), 0.01, "nil pricing floor")
 }
 
 // TestHasDurationSignal 区分视频（有 duration/resolution）与图片（nil）。
@@ -238,13 +270,97 @@ func TestHasDurationSignal(t *testing.T) {
 	if hasDurationSignal(nil) {
 		t.Error("nil ratios should not signal duration")
 	}
-	if hasDurationSignal(map[string]float64{"video_input": 0.5}) {
+	if hasDurationSignal(map[string]any{"video_input": 0.5}) {
 		t.Error("video_input alone should not signal duration")
 	}
-	if !hasDurationSignal(map[string]float64{"duration": 5}) {
+	if !hasDurationSignal(map[string]any{"duration": 5.0}) {
 		t.Error("duration key should signal")
 	}
-	if !hasDurationSignal(map[string]float64{"resolution": 2.25}) {
+	if !hasDurationSignal(map[string]any{"resolution": 2.25}) {
 		t.Error("resolution key should signal")
+	}
+}
+
+// TestEstimateTaskCost_PerSecond 按秒计费：矩阵查价 × 秒数 × 租户乘数。
+// spec.resolution 命中矩阵档位；未命中回退 "*"；无 "*" 回退矩阵最低价。
+func TestEstimateTaskCost_PerSecond(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_second",
+		TenantMultiplier: 1.0,
+		PerSecondPrices:  map[string]float64{"480p": 0.25, "720p": 0.5, "1080p": 1.0, "*": 0.5},
+	}
+
+	// 720p × 8s × 1.0 = 4.0
+	assertDecimal(t, estimateTaskCost(pricing, map[string]any{
+		"spec.duration": 8.0, "spec.resolution": "720p",
+	}, nil), 4.0, "per_second 720p")
+
+	// 未配规格（2k）→ "*" 兜底 0.5 × 8s = 4.0
+	assertDecimal(t, estimateTaskCost(pricing, map[string]any{
+		"spec.duration": 8.0, "spec.resolution": "2k",
+	}, nil), 4.0, "per_second wildcard fallback")
+
+	// 无时长信号 → 缺省 5s × "*" 0.5 = 2.5
+	assertDecimal(t, estimateTaskCost(pricing, nil, nil), 2.5, "per_second default duration")
+
+	// 租户乘数与附加折扣叠加：1080p × 10s × 0.8(租户) × 0.6(video_input) = 4.8
+	p2 := &PricingResult{
+		BillingMode:      "per_second",
+		TenantMultiplier: 0.8,
+		PerSecondPrices:  map[string]float64{"1080p": 1.0, "*": 1.0},
+	}
+	assertDecimal(t, estimateTaskCost(p2, map[string]any{
+		"spec.duration": 10.0, "spec.resolution": "1080p", "video_input": 0.6,
+	}, nil), 4.8, "per_second with multipliers")
+}
+
+// TestEstimateTaskCost_PerSecondDurationClamp 天价时长钳制到上限，防 metadata 伪造刷预扣漏洞。
+func TestEstimateTaskCost_PerSecondDurationClamp(t *testing.T) {
+	pricing := &PricingResult{
+		BillingMode:      "per_second",
+		TenantMultiplier: 1.0,
+		PerSecondPrices:  map[string]float64{"*": 0.5},
+	}
+	// 999999s 钳到 120s × 0.5 = 60
+	assertDecimal(t, estimateTaskCost(pricing, map[string]any{
+		"spec.duration": 999999.0,
+	}, nil), 60.0, "per_second duration clamp")
+}
+
+// TestEstimateTaskCost_PerSecondEmptyMatrix 矩阵为空/全零：占位预扣 $0.1 兜底（结算多退少补）。
+func TestEstimateTaskCost_PerSecondEmptyMatrix(t *testing.T) {
+	pricing := &PricingResult{BillingMode: "per_second", TenantMultiplier: 1.0}
+	assertDecimal(t, estimateTaskCost(pricing, map[string]any{"spec.duration": 8.0}, nil), 0.1, "per_second empty matrix placeholder")
+}
+
+// TestLookupPerSecondPrice 矩阵查价回退链：命中档 → "*" → 矩阵最低价 → 0。
+func TestLookupPerSecondPrice(t *testing.T) {
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "*": 0.3}, "720p"); p != 0.5 {
+		t.Errorf("exact hit = %v", p)
+	}
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "*": 0.3}, "4k"); p != 0.3 {
+		t.Errorf("wildcard = %v", p)
+	}
+	// 无 "*"：回退最低价
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "1080p": 1.0}, "4k"); p != 0.5 {
+		t.Errorf("min fallback = %v", p)
+	}
+	if p := LookupPerSecondPrice(nil, "720p"); p != 0 {
+		t.Errorf("empty matrix = %v", p)
+	}
+	// 零价档位不参与回退
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0}, "720p"); p != 0 {
+		t.Errorf("zero price entry = %v", p)
+	}
+	// 大小写不敏感兜底：同档不同形态（配置小写/上报大写，或反之）优先于 "*" 通配回退
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "*": 0.9}, "720P"); p != 0.5 {
+		t.Errorf("case-insensitive hit = %v", p)
+	}
+	if p := LookupPerSecondPrice(map[string]float64{"768P": 0.35}, "768p"); p != 0.35 {
+		t.Errorf("case-insensitive hit (uppercase key) = %v", p)
+	}
+	// 大小写不敏感未命中（"2k"）仍回退 "*"
+	if p := LookupPerSecondPrice(map[string]float64{"720p": 0.5, "1080p": 1.0, "*": 0.9}, "2K"); p != 0.9 {
+		t.Errorf("wildcard after case-insensitive miss = %v", p)
 	}
 }

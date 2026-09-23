@@ -185,7 +185,7 @@ func reconcileFrozenBalance(ctx context.Context) {
 
 // checkOneWalletFrozenDrift 比对单个租户的 Redis/DB 冻结值，超窗漂移告警
 func checkOneWalletFrozenDrift(ctx context.Context, tenantID int64, materializeLag time.Duration) {
-	_, frozenMicro, exists, err := readWalletHash(ctx, tenantID)
+	_, frozenMicro, _, _, exists, err := readWalletHash(ctx, tenantID)
 	if err != nil || !exists {
 		return
 	}

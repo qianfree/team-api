@@ -7,6 +7,7 @@ import ModelDistChart from '@/components/charts/ModelDistChart.vue'
 import TokenTrendChart from '@/components/charts/TokenTrendChart.vue'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
 import request from '@/utils/request'
+import { createPoller } from '@/composables/usePolling'
 
 interface DayStats {
 	requests: number
@@ -391,7 +392,8 @@ watch(selectedDays, () => {
 })
 
 // 实时 RPM/TPM 依赖 60 秒滑动窗口，仅静默轮询 /tenant/dashboard 保持指标新鲜（30s 一次）
-let dashboardTimer: ReturnType<typeof setInterval> | null = null
+// 页面隐藏时暂停轮询，恢复可见时已超间隔则立即补拉
+const dashboardPoller = createPoller(refreshDashboardSilently, 30000)
 
 async function refreshDashboardSilently() {
 	try {
@@ -404,11 +406,11 @@ async function refreshDashboardSilently() {
 
 onMounted(() => {
 	refreshAll()
-	dashboardTimer = setInterval(refreshDashboardSilently, 30000)
+	dashboardPoller.start()
 })
 
 onBeforeUnmount(() => {
-	if (dashboardTimer) clearInterval(dashboardTimer)
+	dashboardPoller.stop()
 })
 </script>
 

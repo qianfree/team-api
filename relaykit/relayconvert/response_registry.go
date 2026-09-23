@@ -10,6 +10,7 @@ package relayconvert
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -105,19 +106,27 @@ const (
 	ResponseConverterGeminiChatToOAIChatStream     = "gemini_chat_to_oai_chat_stream_resp"
 
 	// 原生格式供应商 → OpenAI（响应侧，含流式）
-	ResponseConverterCozeChatToOAIChat         = "coze_chat_to_oai_chat_resp"
-	ResponseConverterCozeChatToOAIChatStream   = "coze_chat_to_oai_chat_stream_resp"
-	ResponseConverterDifyChatToOAIChat         = "dify_chat_to_oai_chat_resp"
-	ResponseConverterDifyChatToOAIChatStream   = "dify_chat_to_oai_chat_stream_resp"
 	ResponseConverterOllamaChatToOAIChat       = "ollama_chat_to_oai_chat_resp"
 	ResponseConverterOllamaChatToOAIChatStream = "ollama_chat_to_oai_chat_stream_resp"
 
-	responseConverterClaudeToGemini    = "claude_messages_to_gemini_chat_resp"
-	responseConverterClaudeToResponses = "claude_messages_to_oai_responses_resp"
-	responseConverterGeminiToClaude    = "gemini_chat_to_claude_messages_resp"
-	responseConverterGeminiToResponses = "gemini_chat_to_oai_responses_resp"
-	responseConverterResponsesToClaude = "oai_responses_to_claude_messages_resp"
-	responseConverterResponsesToGemini = "oai_responses_to_gemini_chat_resp"
+	// 反向方向（OpenAI 上游 → 非 OpenAI 客户端）与 Responses 双向的流式转换器 ID。
+	// 流式注册表按数据方向 (from=上游格式, to=客户端格式) 登记。
+	ResponseConverterOAIChatToClaudeMessagesStream = "oai_chat_to_claude_messages_stream_resp"
+	ResponseConverterOAIChatToGeminiChatStream     = "oai_chat_to_gemini_chat_stream_resp"
+	ResponseConverterOAIResponsesToOAIChatStream   = "oai_responses_to_oai_chat_stream_resp"
+	ResponseConverterOAIChatToOAIResponsesStream   = "oai_chat_to_oai_responses_stream_resp"
+
+	// 跨原生方向（上游原生 → 另一原生客户端）的非流式转换器 ID（响应侧元数据）。
+	ResponseConverterClaudeMessagesToGeminiChat   = "claude_messages_to_gemini_chat_resp"
+	ResponseConverterGeminiChatToClaudeMessages   = "gemini_chat_to_claude_messages_resp"
+	ResponseConverterClaudeMessagesToOAIResponses = "claude_messages_to_oai_responses_resp"
+	ResponseConverterGeminiChatToOAIResponses     = "gemini_chat_to_oai_responses_resp"
+
+	// 跨原生方向（上游原生 → 另一原生客户端）的流式转换器 ID。
+	ResponseConverterClaudeMessagesToGeminiChatStream   = "claude_messages_to_gemini_chat_stream_resp"
+	ResponseConverterGeminiChatToClaudeMessagesStream   = "gemini_chat_to_claude_messages_stream_resp"
+	ResponseConverterGeminiChatToOAIResponsesStream     = "gemini_chat_to_oai_responses_stream_resp"
+	ResponseConverterClaudeMessagesToOAIResponsesStream = "claude_messages_to_oai_responses_stream_resp"
 )
 
 var (
@@ -126,6 +135,20 @@ var (
 	responseConverterAliases = make(map[string]string)
 	responseConverterRoutes  = make(map[responseConverterRoute]string)
 )
+
+// ListResponseConverterIDs 返回全部已注册响应侧转换器 ID（字典序副本，不含别名）。
+// 供诊断与测试枚举使用，与 ListRequestConverterIDs 配套。
+func ListResponseConverterIDs() []string {
+	responseConverterMu.RLock()
+	defer responseConverterMu.RUnlock()
+
+	ids := make([]string, 0, len(responseConverters))
+	for id := range responseConverters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
 
 // registerBuiltinResponseConverter 注册响应侧转换器到注册表。
 // init() 通过 registerBuiltinTextConverter() 调用本函数。

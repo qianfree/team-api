@@ -123,10 +123,11 @@ func executeSettlement(ctx context.Context, p settlementTxParams) (int64, error)
 	_, err = dao.BilTransactions.Ctx(ctx).Data(p.buildTransaction(billingID,
 		InexactFloat64(balanceAfterD), InexactFloat64(frozenAfterD))).Insert()
 	if err != nil {
-		// 逆转扣款 + 删除计费记录，回到「未结算」状态（预扣已随认领释放，本单免费）
-		if _, _, creditErr := CreditWalletRedis(ctx, p.tenantID, actualCostD); creditErr != nil {
+		// 逆转扣款 + 删除计费记录，回到「未结算」状态（预扣已随认领释放，本单免费）。
+		// 用 ReverseConsumeRedis 而非 CreditWalletRedis：余额与累计消费必须同一原子回退
+		if reverseErr := ReverseConsumeRedis(ctx, p.tenantID, actualCostD); reverseErr != nil {
 			g.Log().Errorf(ctx, "%s: compensate reverse charge failed: tenant=%d request=%v cost=%.6f: %v",
-				p.logPrefix, p.tenantID, p.predeductRequestIDs, p.actualCost, creditErr)
+				p.logPrefix, p.tenantID, p.predeductRequestIDs, p.actualCost, reverseErr)
 		}
 		if delErr := deleteBillingRecord(ctx, billingID); delErr != nil {
 			g.Log().Errorf(ctx, "%s: compensate delete billing record %d failed: %v", p.logPrefix, billingID, delErr)
@@ -389,7 +390,7 @@ func SettleWithUsage(ctx context.Context, tenantID, userID, apiKeyID, channelID 
 	if pricingResult != nil {
 		snapshot := GenerateBillingSnapshot(pricingResult, breakdown, usage, settlementResult, relayInfo)
 		snapshotJSON = SnapshotToJSON(snapshot)
-		summaryText = GenerateBillingSummary(snapshot)
+		summaryText = GenerateBillingSummary(ctx, snapshot)
 		settlementResult.BillingMode = pricingResult.BillingMode
 		settlementResult.BillingSource = pricingResult.BillingSource
 		settlementResult.RateMultiplier = pricingResult.DiscountRatio

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, type Component } from 'vue'
 import { NSelect } from 'naive-ui'
 import request from '@/utils/request'
 import ChatTab from './playground/ChatTab.vue'
@@ -23,15 +23,18 @@ interface ModelItem {
 	async_image?: boolean
 	// 图片模型同步端点是否可用（「仅异步」厂商为 false）
 	image_sync_supported?: boolean
+	// 模型能力特性 JSON（如 {"vision":true,"audio_input":true}），用于门控附件上传
+	capabilities?: string
 }
 
+// 每个 Tab 的图标，用于分段控件左侧的视觉锚点
 const tabs = [
-	{ key: 'chat', label: '对话' },
-	{ key: 'image', label: '图像' },
-	{ key: 'video', label: '视频' },
-	{ key: 'audio', label: '语音' },
-	{ key: 'embedding', label: '嵌入' },
-	{ key: 'rerank', label: '重排' },
+	{ key: 'chat', label: '对话', icon: 'chat' },
+	{ key: 'image', label: '图像', icon: 'photo' },
+	{ key: 'video', label: '视频', icon: 'film' },
+	{ key: 'audio', label: '语音', icon: 'musicalNote' },
+	{ key: 'embedding', label: '嵌入', icon: 'cube' },
+	{ key: 'rerank', label: '重排', icon: 'chart' },
 ]
 
 const activeTab = ref('chat')
@@ -39,12 +42,32 @@ const allModels = ref<ModelItem[]>([])
 
 const { apiKeys, selectedKeyId, revealedKey, loading: keyLoading, error: keyError, selectKey } = usePlaygroundApiKey()
 
-const modelsByCategory = (category: string) =>
-	computed(() => allModels.value.filter(m => m.category === category))
+// Tab 与组件的映射：六个 Tab 的 props 签名一致（models + apiKey），配合 KeepAlive
+// 按 key 缓存实例，切换 Tab 不销毁组件，对话/任务/参数等状态全部保留。
+const tabComponents: Record<string, Component> = {
+	chat: ChatTab,
+	image: ImageTab,
+	video: VideoTab,
+	audio: AudioTab,
+	embedding: EmbeddingTab,
+	rerank: RerankTab,
+}
+
+// 当前 Tab 对应分类的模型列表（传给 KeepAlive 缓存的组件，切换回来时 props 保持响应）
+const activeTabModels = computed(() =>
+	allModels.value.filter(m => m.category === activeTab.value),
+)
 
 const modelsLoading = ref(false)
 let loadingTimer: number | null = null
 let loadSeq = 0
+
+// 当前 Key 的显示名与掩码前缀，供工具栏的 Key 胶囊展示
+const selectedKeyLabel = computed(() => {
+	const key = apiKeys.value.find(k => k.id === selectedKeyId.value)
+	if (!key) return ''
+	return `${key.name} · ${key.key_prefix}···`
+})
 
 // 按右上角选中的 API Key 拉取其可用模型，使左侧模型列表跟随 Key 切换。
 // 切换期间保留旧列表避免空白闪烁；加载提示延迟 200ms 才出现，请求更快时
@@ -80,15 +103,19 @@ watch(selectedKeyId, loadModels, { immediate: true })
 
 <template>
 	<div>
-		<!-- 紧凑工具栏：左侧模型类型标签 + 右侧 API Key 单行收纳 -->
+		<!-- 统一工具栏：左侧模型类型分段控件，右侧调用身份（API Key）与计费提示。
+		     计费提示从原对话区黄色横幅迁移至此，不再占用对话区高度。 -->
 		<div class="card mb-3">
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
-				<!-- 左侧：模型类型标签 -->
-				<div class="tabs flex-wrap">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-4">
+				<!-- 左侧：模型类型分段控件 -->
+				<div class="tabs flex-wrap" role="tablist">
 					<button v-for="tab in tabs" :key="tab.key"
-						class="tab"
+						role="tab"
+						class="tab flex items-center gap-1.5"
 						:class="{ 'tab-active': activeTab === tab.key }"
+						:aria-selected="activeTab === tab.key"
 						@click="activeTab = tab.key">
+						<Icon :name="tab.icon" size="xs" />
 						{{ tab.label }}
 					</button>
 				</div>
@@ -103,6 +130,15 @@ watch(selectedKeyId, loadModels, { immediate: true })
 
 				<!-- 右侧：API Key 区域 -->
 				<div class="ml-auto flex shrink-0 items-center gap-2">
+					<!-- 真实计费提示：悬停展示完整说明 -->
+					<span
+						class="hidden items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 xl:inline-flex"
+						title="Playground 模式 — 使用真实 API Key 调用，产生实际费用"
+					>
+						<Icon name="bolt" size="xs" />
+						真实计费
+					</span>
+
 					<!-- 加载中 -->
 					<template v-if="keyLoading">
 						<div class="spinner h-4 w-4 text-primary-600"></div>
@@ -116,12 +152,15 @@ watch(selectedKeyId, loadModels, { immediate: true })
 					</div>
 					<!-- Key 选择器 -->
 					<template v-else>
-						<span class="text-xs font-medium text-gray-400">API Key</span>
-						<div class="w-56">
+						<div class="key-picker">
+							<Icon name="key" size="xs" class="key-picker-icon" />
 							<n-select
 								:value="selectedKeyId"
 								:options="apiKeys.map(k => ({ label: `${k.name} (${k.key_prefix}...)`, value: k.id }))"
 								placeholder="选择 API Key"
+								size="small"
+								class="key-picker-select"
+								:title="selectedKeyLabel"
 								@update:value="selectKey"
 							/>
 						</div>
@@ -131,12 +170,69 @@ watch(selectedKeyId, loadModels, { immediate: true })
 		</div>
 
 		<template v-if="revealedKey">
-			<ChatTab v-if="activeTab === 'chat'" :models="modelsByCategory('chat').value" :api-key="revealedKey" />
-			<ImageTab v-if="activeTab === 'image'" :models="modelsByCategory('image').value" :api-key="revealedKey" />
-			<VideoTab v-if="activeTab === 'video'" :models="modelsByCategory('video').value" :api-key="revealedKey" />
-			<AudioTab v-if="activeTab === 'audio'" :models="modelsByCategory('audio').value" :api-key="revealedKey" />
-			<EmbeddingTab v-if="activeTab === 'embedding'" :models="modelsByCategory('embedding').value" :api-key="revealedKey" />
-			<RerankTab v-if="activeTab === 'rerank'" :models="modelsByCategory('rerank').value" :api-key="revealedKey" />
+			<!-- KeepAlive 缓存各 Tab 实例：切换不销毁，切回即恢复（含进行中的任务轮询与已生成的结果） -->
+			<KeepAlive>
+				<component
+					:is="tabComponents[activeTab]"
+					:key="activeTab"
+					:models="activeTabModels"
+					:api-key="revealedKey"
+				/>
+			</KeepAlive>
 		</template>
 	</div>
 </template>
+
+<style scoped>
+/* 分段控件：激活项用主色文字与更清晰的投影，提升可辨识度 */
+.tab {
+	display: inline-flex;
+	align-items: center;
+}
+.tab-active {
+	color: #0d9488;
+	box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(20, 184, 166, 0.18);
+}
+
+/* API Key 胶囊：key 图标 + 紧凑下拉，与左侧分段控件在同一视觉高度上 */
+.key-picker {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	height: 2.25rem;
+	border: 1px solid #e5e7eb;
+	border-radius: 0.75rem;
+	background: #fff;
+	padding-left: 0.55rem;
+	padding-right: 0.25rem;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+	transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+.key-picker:hover,
+.key-picker:focus-within {
+	border-color: rgba(20, 184, 166, 0.45);
+	box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.08);
+}
+.key-picker-icon {
+	color: #f59e0b;
+	flex-shrink: 0;
+}
+.key-picker-select {
+	width: 12.5rem;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+	transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+	opacity: 0;
+}
+
+@media (max-width: 639px) {
+	.key-picker-select {
+		width: 9rem;
+	}
+}
+</style>

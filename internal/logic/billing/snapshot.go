@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -25,6 +26,12 @@ type BillingSnapshotPricing struct {
 	EffectiveOutputPrice float64 `json:"effective_output_price"`
 	BillingMode          string  `json:"billing_mode"`
 	BillingSource        string  `json:"billing_source"`
+	// Scheme 命中的特殊计费方案名（pricing JSONB 顶层 scheme 键）；空 = 通用引擎。
+	// 供账单事后追溯该笔走的计费方案，摘要据此追加「计费方案」行
+	Scheme string `json:"scheme,omitempty"`
+	// PerSecondPrices 按秒单价矩阵（仅 per_second / special 模式填充，其余模式 omitted）：
+	// special 的矩阵是输出生成组件的定价依据，快照携带供账单解释
+	PerSecondPrices map[string]float64 `json:"per_second_prices,omitempty"`
 }
 
 // BillingSnapshotMultipliers 倍率信息
@@ -87,6 +94,8 @@ func GenerateBillingSnapshot(
 			EffectiveOutputPrice: pricing.OutputPrice,
 			BillingMode:          pricing.BillingMode,
 			BillingSource:        pricing.BillingSource,
+			Scheme:               pricing.Scheme,
+			PerSecondPrices:      pricing.PerSecondPrices,
 		},
 		Multipliers: BillingSnapshotMultipliers{
 			ModelMultiplier:  pricing.ModelMultiplier,
@@ -172,11 +181,16 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 	return costs
 }
 
-// GenerateBillingSummary 生成人类可读的计费摘要文本（中文）
-func GenerateBillingSummary(snapshot *BillingSnapshot) string {
+// GenerateBillingSummary 生成人类可读的计费摘要文本（中文）。
+// 金额符号取系统本位币（billing_currency），摘要为写入时快照，货币在初始化后不可更改。
+func GenerateBillingSummary(ctx context.Context, snapshot *BillingSnapshot) string {
 	if snapshot == nil {
 		return ""
 	}
+
+	// 货币符号跟随本位币；money 统一拼接符号 + 价格
+	sym := CurrencySymbol(ctx)
+	money := func(v float64) string { return sym + formatPrice(v) }
 
 	// 价格来源中文映射
 	sourceMap := map[string]string{
@@ -191,9 +205,11 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 
 	// 计费模式中文映射
 	modeMap := map[string]string{
-		"token":       "按量计费",
-		"per_request": "按次计费",
-		"tiered":      "阶梯计费",
+		"token":            "按量计费",
+		"per_request":      "按次计费",
+		"tiered":           "阶梯计费",
+		"per_second":       "按秒计费",
+		BillingModeSpecial: "特殊计费",
 	}
 	mode := modeMap[snapshot.Pricing.BillingMode]
 	if mode == "" {
@@ -208,28 +224,33 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 
 	lines := make([]string, 0, 15)
 	lines = append(lines, fmt.Sprintf("模型: %s | 计费模式: %s | 价格来源: %s", modelName, mode, source))
+	// 特殊计费方案行：方案名直出（custom:minimax-material 等），便于账单事后追溯；
+	// 不做后端中文映射表——新增方案不应要求改动本文件（与 scheme 注册表设计一致）
+	if snapshot.Pricing.Scheme != "" {
+		lines = append(lines, fmt.Sprintf("计费方案: %s", snapshot.Pricing.Scheme))
+	}
 	lines = append(lines, "---")
 
 	// 按次计费特殊处理
 	if snapshot.Pricing.BillingMode == "per_request" {
-		lines = append(lines, fmt.Sprintf("按次单价: $%.6f", snapshot.Pricing.EffectiveInputPrice))
+		lines = append(lines, fmt.Sprintf("按次单价: %s%.6f", sym, snapshot.Pricing.EffectiveInputPrice))
 	} else {
 		// 各类 token 费用明细
 		if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("输入: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("输入: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("输出: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("输出: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("缓存读取: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("缓存读取: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 		if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Tokens > 0 {
-			lines = append(lines, fmt.Sprintf("缓存创建: %s tokens × $%s/1M = $%s",
-				formatInt(tc.Tokens), formatPrice(tc.UnitPrice), formatPrice(tc.Cost)))
+			lines = append(lines, fmt.Sprintf("缓存创建: %s tokens × %s/1M = %s",
+				formatInt(tc.Tokens), money(tc.UnitPrice), money(tc.Cost)))
 		}
 
 		// 小计 × 倍率：展开各项费用明细，乘法链 = 租户倍率 × 时段乘数
@@ -242,16 +263,16 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 			// 收集各项费用明细
 			var costParts []string
 			if tc, ok := snapshot.TokenCosts["input"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["output"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["cache_read"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 			if tc, ok := snapshot.TokenCosts["cache_creation"]; ok && tc.Cost > 0 {
-				costParts = append(costParts, fmt.Sprintf("$%s", formatPrice(tc.Cost)))
+				costParts = append(costParts, money(tc.Cost))
 			}
 
 			// 构建倍率描述（租户倍率和时段乘数是并列关系，带文字标签）
@@ -260,17 +281,19 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 				multDesc += fmt.Sprintf(" × 时段乘数(%.2f)", effTime)
 			}
 
-			// 展开格式：(abc + def + feg) × 倍率 = 总计
+			// 展开格式：(abc + def + feg) × 倍率 = 总计；无逐项明细时按实际费用反推展示基数（仅用于展示，不影响实际计费）
 			costsExpr := ""
 			if len(costParts) > 1 {
 				costsExpr = fmt.Sprintf("(%s)", joinWithPlus(costParts))
 			} else if len(costParts) == 1 {
 				costsExpr = costParts[0]
+			} else if snapshot.Settlement.ActualCost > 0 {
+				costsExpr = money(snapshot.Settlement.ActualCost / (effTenant * effTime))
 			}
 
 			if costsExpr != "" {
-				lines = append(lines, fmt.Sprintf("小计: %s × %s = $%s",
-					costsExpr, multDesc, formatPrice(snapshot.Settlement.ActualCost)))
+				lines = append(lines, fmt.Sprintf("小计: %s × %s = %s",
+					costsExpr, multDesc, money(snapshot.Settlement.ActualCost)))
 			}
 		}
 	}
@@ -285,17 +308,17 @@ func GenerateBillingSummary(snapshot *BillingSnapshot) string {
 	s := snapshot.Settlement
 	if s.PreDeductAmount > 0 {
 		if s.RefundAmount > 0 {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s → 退还: $%s",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost), formatPrice(s.RefundAmount)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s → 退还: %s",
+				money(s.PreDeductAmount), money(s.ActualCost), money(s.RefundAmount)))
 		} else if s.SupplementAmount > 0 {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s → 补扣: $%s",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost), formatPrice(s.SupplementAmount)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s → 补扣: %s",
+				money(s.PreDeductAmount), money(s.ActualCost), money(s.SupplementAmount)))
 		} else {
-			lines = append(lines, fmt.Sprintf("预扣: $%s → 实际: $%s（无差额）",
-				formatPrice(s.PreDeductAmount), formatPrice(s.ActualCost)))
+			lines = append(lines, fmt.Sprintf("预扣: %s → 实际: %s（无差额）",
+				money(s.PreDeductAmount), money(s.ActualCost)))
 		}
 	} else if s.ActualCost > 0 {
-		lines = append(lines, fmt.Sprintf("实际费用: $%s", formatPrice(s.ActualCost)))
+		lines = append(lines, fmt.Sprintf("实际费用: %s", money(s.ActualCost)))
 	}
 
 	result := ""

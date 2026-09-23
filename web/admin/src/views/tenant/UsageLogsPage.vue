@@ -6,7 +6,6 @@ import {
 } from '@arco-design/web-vue'
 import { IconSave, IconFile, IconBarChart, IconCamera, IconExclamationCircle } from '@arco-design/web-vue/es/icon'
 import type { TableColumnData } from '@arco-design/web-vue'
-import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -45,10 +44,12 @@ const filterApiKeyId = ref<number | undefined>(undefined)
 const filterRequestType = ref<string | undefined>(undefined)
 const filterChannelId = ref<number | undefined>(undefined)
 const filterStatus = ref<string | undefined>(undefined)
+const filterUpstreamRequestId = ref<string | undefined>(undefined)
 const filterDateRange = ref<string[]>(defaultTodayRange())
 
 const tenantOptions = ref<{ label: string; value: number }[]>([])
 const modelOptions = ref<{ label: string; value: string }[]>([])
+const channelOptions = ref<{ label: string; value: number }[]>([])
 
 const statusOptions = [
 	{ label: '成功', value: 'success' },
@@ -65,7 +66,6 @@ const requestTypeOptions = [
 ]
 
 let tenantSearchTimer: ReturnType<typeof setTimeout> | null = null
-let modelSearchTimer: ReturnType<typeof setTimeout> | null = null
 
 async function fetchTenantOptions(keyword = '') {
 	try {
@@ -87,11 +87,12 @@ function handleTenantSearch(value: string) {
 	tenantSearchTimer = setTimeout(() => fetchTenantOptions(value), 300)
 }
 
-async function fetchModelOptions(search = '') {
+// 模型下拉数据：专用不分页接口 /admin/models/options，一次拉回全部 active 模型后本地过滤。
+// 不用 /admin/models 列表接口——那是模型管理页的重接口（分页 + 定价 JSONB 展开 +
+// 渠道能力联表），仅取 model_id / model_name 做下拉纯属浪费。
+async function fetchModelOptions() {
 	try {
-		const res: any = await request.get('/admin/models', {
-			params: { page: 1, page_size: 50, status: 'active', search }
-		})
+		const res: any = await request.get('/admin/models/options')
 		const list = res.data?.data?.list || []
 		modelOptions.value = list.map((m: any) => ({
 			label: m.model_name || m.model_id,
@@ -102,9 +103,29 @@ async function fetchModelOptions(search = '') {
 	}
 }
 
-function handleModelSearch(value: string) {
-	if (modelSearchTimer) clearTimeout(modelSearchTimer)
-	modelSearchTimer = setTimeout(() => fetchModelOptions(value), 300)
+// 模型下拉本地过滤：候选是全量模型，label 用的是 model_name、value 是 model_id，
+// 只在 label 上匹配会让「显示名不含 model_id」的模型（如中文显示名）搜不到。
+// 这里对齐原先服务端 model_id LIKE ? OR model_name LIKE ? 的口径，name 与 id 任一命中即可。
+function filterModelOption(input: string, option: any): boolean {
+	const keyword = input.toLowerCase()
+	return String(option?.label ?? '').toLowerCase().includes(keyword)
+		|| String(option?.value ?? '').toLowerCase().includes(keyword)
+}
+
+// 渠道下拉数据：专用不分页接口 /admin/channels/options，返回全部渠道（含已停用，
+// 历史日志要能按停用渠道筛选），一次拉全量后本地过滤。
+// 不用 /admin/channels——那是渠道管理列表（分页 + 健康度联表 + 运行态 + 上限 100 条）。
+async function fetchChannelOptions() {
+	try {
+		const res: any = await request.get('/admin/channels/options')
+		const list = res.data?.data?.list || []
+		channelOptions.value = list.map((c: any) => ({
+			label: c.name ? `${c.name} (#${c.id})` : `#${c.id}`,
+			value: c.id,
+		}))
+	} catch {
+		channelOptions.value = []
+	}
 }
 
 const statusTagColor: Record<string, string> = {
@@ -143,12 +164,16 @@ const billingModeLabel: Record<string, string> = {
 	token: '按量',
 	per_request: '按次',
 	tiered: '阶梯',
+	per_second: '按秒',
+	special: '特殊计费',
 }
 
 const billingModeColor: Record<string, string> = {
 	token: 'gray',
 	per_request: 'blue',
 	tiered: 'arcoblue',
+	per_second: 'green',
+	special: 'orange',
 }
 
 const billingSourceLabel: Record<string, string> = {
@@ -157,6 +182,7 @@ const billingSourceLabel: Record<string, string> = {
 	tenant: '租户定价',
 	custom: '自定义',
 	plan: '套餐价',
+	task: '异步任务',
 }
 
 const detailVisible = ref(false)
@@ -246,6 +272,31 @@ const tokenCostLabels: Record<string, string> = {
 	cache_creation_1h: '缓存创建(1小时)',
 }
 
+// 快照计费模式是否为 token 语义（token/tiered 展示每 1M 单价行；
+// per_request/per_second/special 的输入输出价恒 0，展示会误导）
+function snapshotIsTokenPricing(sp: any): boolean {
+	const mode = sp?.pricing?.billing_mode
+	return mode === 'token' || mode === 'tiered' || !mode
+}
+
+// 快照按秒矩阵 → 排序后的规格列表（数字序，"*" 兜底档排最后；仅 per_second/special 携带）
+function snapshotPerSecondEntries(sp: any): Array<[string, number]> {
+	const prices = sp?.pricing?.per_second_prices
+	if (!prices) return []
+	return Object.entries(prices)
+		.filter(([, v]) => Number(v) > 0)
+		.sort(([a], [b]) => {
+			if (a === '*') return 1
+			if (b === '*') return -1
+			return a.localeCompare(b, undefined, { numeric: true })
+		})
+}
+
+// 快照是否有 token 费用明细（视频等按秒/特殊任务 token 恒 0，隐藏空块）
+function snapshotHasTokenCosts(sp: any): boolean {
+	return Object.values(sp?.token_costs || {}).some((tc: any) => (tc?.tokens || 0) > 0)
+}
+
 // 消费明细小票行：divider=true 渲染分隔线，strong=true 渲染小计行，total=true 渲染合计行
 interface ReceiptRow {
 	label?: string
@@ -317,11 +368,24 @@ function viewAuditLog(requestId: string, taskId?: string) {
 	router.push({ name: 'AdminRequestAuditLogs', query })
 }
 
-function openDetail(record: any) {
-	detailLog.value = record
+// 详情弹窗改为按 id 拉取：列表接口只返回表格展示字段，
+// billing_snapshot / billing_summary / user_agent / error_message 等大字段经详情接口按需加载
+const detailLoading = ref(false)
+
+async function openDetail(record: any) {
 	// 每次打开重置为折叠，避免上一条记录的快照展开状态带入
 	snapshotCollapsed.value = true
 	detailVisible.value = true
+	detailLoading.value = true
+	detailLog.value = null
+	try {
+		const res: any = await request.get(`/admin/usage-logs/${record.id}`)
+		detailLog.value = res.data?.data || null
+	} catch {
+		detailLog.value = null
+	} finally {
+		detailLoading.value = false
+	}
 }
 
 function tooltipRow(label: string, value: string, valueClass = 'dark-tooltip-value') {
@@ -373,7 +437,7 @@ const columns: TableColumnData[] = [
 				h(Tag, { color: requestTypeColor[record.request_type], size: 'small' }, () => requestTypeLabel[record.request_type] || '-'),
 			]
 			if (record.billing_mode) {
-				tags.push(h(Tag, { color: billingModeColor[record.billing_mode], size: 'small' }, () => billingModeLabel[record.billing_mode]))
+				tags.push(h(Tag, { color: billingModeColor[record.billing_mode], size: 'small' }, () => billingModeLabel[record.billing_mode] || record.billing_mode))
 			}
 			return h(Space, { size: 4 }, () => tags)
 		},
@@ -512,6 +576,7 @@ async function fetchData() {
 		if (filterRequestType.value) params.request_type = filterRequestType.value
 		if (filterChannelId.value) params.channel_id = filterChannelId.value
 		if (filterStatus.value) params.status = filterStatus.value
+		if (filterUpstreamRequestId.value) params.upstream_request_id = filterUpstreamRequestId.value
 		if (filterDateRange.value && filterDateRange.value.length === 2) {
 			params.start_date = filterDateRange.value[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -573,8 +638,9 @@ async function fetchSummary() {
 
 function handleFilter() {
 	pagination.current = 1
-	fetchData()
-	fetchSummary() // 筛选条件变化时重新加载统计数据
+	// 表格数据加载完成后再刷新统计：summary 是对明细表的全量聚合，
+	// 与列表查询并发会争抽数据库资源、拖慢表格首屏
+	fetchData().then(() => fetchSummary())
 }
 
 function handleReset() {
@@ -586,10 +652,11 @@ function handleReset() {
 	filterRequestType.value = undefined
 	filterChannelId.value = undefined
 	filterStatus.value = undefined
+	filterUpstreamRequestId.value = undefined
 	filterDateRange.value = defaultTodayRange()
 	pagination.current = 1
-	fetchData()
-	fetchSummary() // 重置后重新加载统计数据
+	// 与 handleFilter 同口径：先加载表格数据，完成后再刷新统计
+	fetchData().then(() => fetchSummary())
 }
 
 // 刷新：清空所有筛选条件，仅按当天起始时间查询最新记录（截止留空 = 到现在）
@@ -600,8 +667,10 @@ function handleRefresh() {
 onMounted(() => {
 	fetchTenantOptions()
 	fetchModelOptions()
-	fetchData()
-	fetchSummary() // 初始加载时获取统计数据
+	fetchChannelOptions()
+	// 表格数据加载完成后再拉统计汇总，避免 summary 的全量聚合
+	// 与列表首查并发争抽数据库资源（fetchData 内部已捕获异常，必 resolve）
+	fetchData().then(() => fetchSummary())
 })
 
 const { exporting, exportFile } = useExport({
@@ -615,6 +684,7 @@ const { exporting, exportFile } = useExport({
 		request_type: filterRequestType.value,
 		channel_id: filterChannelId.value,
 		status: filterStatus.value,
+		upstream_request_id: filterUpstreamRequestId.value,
 		start_date: filterDateRange.value?.[0],
 		// 与列表查询一致：默认截止「现在」不传截止时间，按「到现在」实时导出
 		end_date: filterDateRange.value?.[1] && filterDateRange.value[1] !== defaultEnd ? filterDateRange.value[1] : undefined,
@@ -624,22 +694,9 @@ const { exporting, exportFile } = useExport({
 
 <template>
 	<div class="page-table">
-		<PageHeader title="用量日志" description="查看所有租户的 API 调用记录和消费明细">
-			<template #actions>
-				<ADropdown trigger="hover">
-					<AButton :loading="exporting">导出</AButton>
-					<template #content>
-						<ADoption @click="exportFile('csv')">导出 CSV</ADoption>
-						<ADoption @click="exportFile('xlsx')">导出 Excel</ADoption>
-					</template>
-				</ADropdown>
-				<a-button size="small" @click="handleReset">重置筛选</a-button>
-				<a-button size="small" @click="handleRefresh">刷新</a-button>
-			</template>
-		</PageHeader>
-
 		<a-card :bordered="false" class="mb-4">
-			<a-space wrap>
+			<div class="filter-bar">
+				<!-- 时间范围恒为首个筛选条件 -->
 				<a-range-picker
 					v-model="filterDateRange"
 					show-time
@@ -648,71 +705,37 @@ const { exporting, exportFile } = useExport({
 					style="width: 340px"
 					@change="handleFilter"
 				/>
-				<a-input-number
-					v-model="filterId"
-					placeholder="记录ID"
-					:min="1"
+				<!-- 常用筛选：租户/渠道/模型/状态/类型 -->
+				<a-select
+					v-model="filterTenantId"
+					:options="tenantOptions"
+					placeholder="租户"
+					allow-search
 					allow-clear
-					style="width: 120px"
+					:filter-option="false"
+					style="width: 200px"
+					@search="handleTenantSearch"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
 				<a-select
-						v-model="filterTenantId"
-						:options="tenantOptions"
-						placeholder="租户ID"
-						allow-search
-						allow-clear
-						:filter-option="false"
-						style="width: 200px"
-						@search="handleTenantSearch"
-						@change="handleFilter"
-						@clear="handleFilter"
-					/>
-				<a-input-number
-					v-model="filterUserId"
-					placeholder="用户ID"
-					:min="1"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-					@clear="handleFilter"
-				/>
-				<a-select
-						v-model="filterModel"
-						:options="modelOptions"
-						placeholder="搜索模型"
-						allow-search
-						allow-clear
-						:filter-option="false"
-						style="width: 200px"
-						@search="handleModelSearch"
-						@change="handleFilter"
-						@clear="handleFilter"
-					/>
-				<a-input-number
-					v-model="filterApiKeyId"
-					placeholder="API Key ID"
-					:min="1"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-					@clear="handleFilter"
-				/>
-				<a-select
-					v-model="filterRequestType"
-					:options="requestTypeOptions"
-					placeholder="请求类型"
-					allow-clear
-					style="width: 120px"
-					@change="handleFilter"
-				/>
-				<a-input-number
 					v-model="filterChannelId"
-					placeholder="渠道ID"
-					:min="1"
+					:options="channelOptions"
+					placeholder="渠道"
+					allow-search
 					allow-clear
-					style="width: 120px"
+					style="width: 200px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-select
+					v-model="filterModel"
+					:options="modelOptions"
+					placeholder="模型"
+					allow-search
+					allow-clear
+					:filter-option="filterModelOption"
+					style="width: 220px"
 					@change="handleFilter"
 					@clear="handleFilter"
 				/>
@@ -721,11 +744,66 @@ const { exporting, exportFile } = useExport({
 					:options="statusOptions"
 					placeholder="状态"
 					allow-clear
-					style="width: 120px"
+					style="width: 140px"
 					@change="handleFilter"
 				/>
-				<a-button type="primary" @click="handleFilter">搜索</a-button>
-			</a-space>
+				<a-select
+					v-model="filterRequestType"
+					:options="requestTypeOptions"
+					placeholder="请求类型"
+					allow-clear
+					style="width: 150px"
+					@change="handleFilter"
+				/>
+				<!-- 精确 ID 排查条件 -->
+				<a-input-number
+					v-model="filterId"
+					placeholder="记录ID"
+					:min="1"
+					allow-clear
+					style="width: 150px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterUserId"
+					placeholder="用户ID"
+					:min="1"
+					allow-clear
+					style="width: 150px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input-number
+					v-model="filterApiKeyId"
+					placeholder="API Key ID"
+					:min="1"
+					allow-clear
+					style="width: 160px"
+					@change="handleFilter"
+					@clear="handleFilter"
+				/>
+				<a-input
+					v-model="filterUpstreamRequestId"
+					placeholder="上游请求ID"
+					allow-clear
+					style="width: 180px"
+					@keydown.enter="handleFilter"
+					@clear="handleFilter"
+				/>
+				<div class="filter-actions">
+					<a-button type="primary" @click="handleFilter">搜索</a-button>
+					<a-button @click="handleReset">重置筛选</a-button>
+					<a-button @click="handleRefresh">刷新</a-button>
+					<a-dropdown trigger="hover">
+						<a-button :loading="exporting">导出</a-button>
+						<template #content>
+							<a-doption @click="exportFile('csv')">导出 CSV</a-doption>
+							<a-doption @click="exportFile('xlsx')">导出 Excel</a-doption>
+						</template>
+					</a-dropdown>
+				</div>
+			</div>
 		</a-card>
 
 		<a-card :bordered="false">
@@ -792,6 +870,7 @@ const { exporting, exportFile } = useExport({
 			:body-style="{ maxHeight: '65vh', overflowY: 'auto' }"
 			unmount-on-close
 		>
+			<a-spin :loading="detailLoading" class="w-full">
 			<template v-if="detailLog">
 				<!-- 关键结果摘要：模型 / 状态 / 费用 / 耗时一眼可读 -->
 				<div class="detail-summary">
@@ -840,6 +919,13 @@ const { exporting, exportFile } = useExport({
 							<span class="detail-value mono-text">
 								{{ detailLog.task_id }}
 								<a-link class="copy-btn" @click="$router.push({ path: '/admin/task-logs', query: { public_task_id: detailLog.task_id } })">查看任务</a-link>
+							</span>
+						</div>
+						<div v-if="detailLog.upstream_request_id" class="detail-item detail-item-full">
+							<span class="detail-label">上游请求 ID</span>
+							<span class="detail-value mono-text">
+								{{ detailLog.upstream_request_id }}
+								<a-link class="copy-btn" @click="copyText(detailLog.upstream_request_id)">复制</a-link>
 							</span>
 						</div>
 						<div class="detail-item">
@@ -934,20 +1020,43 @@ const { exporting, exportFile } = useExport({
 								<div class="snapshot-block-title">定价信息</div>
 								<div class="snapshot-block-body">
 									<div class="snapshot-row">
-										<span class="snapshot-label">基础输入价</span>
-										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_input_price || 0, 6) }}/1M</span>
+										<span class="snapshot-label">计费模式</span>
+										<span class="snapshot-value">{{ billingModeLabel[snapshot.pricing.billing_mode] || snapshot.pricing.billing_mode || '-' }}</span>
 									</div>
-									<div class="snapshot-row">
-										<span class="snapshot-label">基础输出价</span>
-										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_output_price || 0, 6) }}/1M</span>
+									<div v-if="snapshot.pricing.scheme" class="snapshot-row">
+										<span class="snapshot-label">计费方案</span>
+										<span class="snapshot-value">{{ snapshot.pricing.scheme }}</span>
 									</div>
-									<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
-										<span class="snapshot-label">实际输入价</span>
-										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_input_price || 0, 6) }}/1M</span>
-									</div>
-									<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
-										<span class="snapshot-label">实际输出价</span>
-										<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_output_price || 0, 6) }}/1M</span>
+									<!-- token 语义模式：每 1M 单价行（per_request/per_second/special 的输入输出价恒 0，不展示） -->
+									<template v-if="snapshotIsTokenPricing(snapshot)">
+										<div class="snapshot-row">
+											<span class="snapshot-label">基础输入价</span>
+											<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_input_price || 0, 6) }}/1M</span>
+										</div>
+										<div class="snapshot-row">
+											<span class="snapshot-label">基础输出价</span>
+											<span class="snapshot-value">{{ formatBilling(snapshot.pricing.base_output_price || 0, 6) }}/1M</span>
+										</div>
+										<div v-if="snapshot.pricing.effective_input_price !== snapshot.pricing.base_input_price" class="snapshot-row">
+											<span class="snapshot-label">实际输入价</span>
+											<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_input_price || 0, 6) }}/1M</span>
+										</div>
+										<div v-if="snapshot.pricing.effective_output_price !== snapshot.pricing.base_output_price" class="snapshot-row">
+											<span class="snapshot-label">实际输出价</span>
+											<span class="snapshot-value text-success">{{ formatBilling(snapshot.pricing.effective_output_price || 0, 6) }}/1M</span>
+										</div>
+									</template>
+									<!-- 按秒/特殊计费：输出每秒单价矩阵（special 的矩阵为输出生成组件单价） -->
+									<template v-else-if="snapshotPerSecondEntries(snapshot).length > 0">
+										<div v-for="([spec, price], idx) in snapshotPerSecondEntries(snapshot)" :key="idx" class="snapshot-row">
+											<span class="snapshot-label">{{ spec === '*' ? '其他规格' : spec }} / 秒</span>
+											<span class="snapshot-value">{{ formatBilling(price, 6) }}</span>
+										</div>
+									</template>
+									<!-- 按次计费：单价存 effective_input_price（与摘要口径一致） -->
+									<div v-else-if="snapshot.pricing.billing_mode === 'per_request' && snapshot.pricing.effective_input_price > 0" class="snapshot-row">
+										<span class="snapshot-label">按次单价</span>
+										<span class="snapshot-value">{{ formatBilling(snapshot.pricing.effective_input_price, 6) }}/次</span>
 									</div>
 									<div v-if="snapshot.cache_prices && snapshot.cache_prices.cache_creation_price > 0" class="snapshot-row">
 										<span class="snapshot-label">缓存创建单价</span>
@@ -980,7 +1089,7 @@ const { exporting, exportFile } = useExport({
 								</div>
 							</div>
 
-							<div v-if="snapshot.token_costs" class="snapshot-block snapshot-block-full">
+							<div v-if="snapshotHasTokenCosts(snapshot)" class="snapshot-block snapshot-block-full">
 								<div class="snapshot-block-title">Token 费用计算</div>
 								<div class="snapshot-block-body">
 									<template v-for="(tc, key) in snapshot.token_costs" :key="key">
@@ -1004,6 +1113,7 @@ const { exporting, exportFile } = useExport({
 				</div>
 
 			</template>
+			</a-spin>
 		</a-modal>
 	</div>
 </template>
@@ -1480,9 +1590,7 @@ const { exporting, exportFile } = useExport({
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px;
-	margin-top: 16px;
 	padding-top: 16px;
-	border-top: 1px solid var(--color-border-light, #e5e6eb);
 }
 
 .table-footer-left {
@@ -1523,5 +1631,28 @@ const { exporting, exportFile } = useExport({
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {
 	margin-bottom: 0;
+}
+
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
+	margin-left: auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
+@media (max-width: 768px) {
+	.filter-bar > *:not(.filter-actions) {
+		flex: 1 1 100%;
+		width: 100% !important;
+	}
 }
 </style>

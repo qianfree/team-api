@@ -15,10 +15,10 @@ func TestOpenaiAdaptorStreamOptionsInjection(t *testing.T) {
 	body := []byte(`{"model":"doubao-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 
 	tests := []struct {
-		name      string
-		mode      constant.RelayMode
-		isStream  bool
-		wantInj   bool
+		name     string
+		mode     constant.RelayMode
+		isStream bool
+		wantInj  bool
 	}{
 		{"流式 chat 注入 stream_options", constant.RelayModeChatCompletions, true, true},
 		{"非流式 chat 不注入", constant.RelayModeChatCompletions, false, false},

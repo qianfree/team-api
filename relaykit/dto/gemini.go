@@ -19,8 +19,11 @@ type GeminiChatRequest struct {
 
 // GeminiContent Gemini 内容（角色 + 部分）
 type GeminiContent struct {
-	Role  string       `json:"role"`
-	Parts []GeminiPart `json:"parts"`
+	Role string `json:"role"`
+	// Parts 必须 omitempty：nil 序列化为 "parts":null 会使 Gemini 官方 SDK/CLI 崩溃
+	//（isValidContent 只判 undefined 后直接读 .length）；真实 Gemini API 的收尾 chunk
+	// 形态是 {"role":"model"} 不带 parts 键，SDK 对该形态有显式容忍分支
+	Parts []GeminiPart `json:"parts,omitempty"`
 }
 
 // GeminiPart Gemini 内容部分
@@ -115,7 +118,7 @@ type GeminiImageConfig struct {
 // GeminiThinkingConfig Gemini 思考配置
 type GeminiThinkingConfig struct {
 	IncludeThoughts bool   `json:"includeThoughts"`
-	ThoughtBudget   *int   `json:"thoughtBudget,omitempty"`
+	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
 	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
 }
 

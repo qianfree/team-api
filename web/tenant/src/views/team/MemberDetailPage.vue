@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatNumber } from '@/utils/renderUtils'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject, onBeforeUnmount } from 'vue'
 import { NInput, NCheckbox } from 'naive-ui'
 import { useRouter, useRoute } from 'vue-router'
 import { useTenantAuthStore } from '@/stores/tenant-auth'
@@ -16,6 +16,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useTenantAuthStore()
 const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
+
+// 注入返回按钮注册方法
+const registerBackButton = inject<(config: { title: string; handler: () => void }) => void>('registerBackButton')
+const unregisterBackButton = inject<() => void>('unregisterBackButton')
 
 const memberId = computed(() => Number(route.params.id))
 
@@ -340,6 +344,7 @@ const categoryLabel: Record<string, string> = {
 	embedding: '嵌入',
 	image: '图像',
 	audio: '语音',
+	video: '视频',
 	rerank: '重排',
 }
 
@@ -348,6 +353,7 @@ const categoryBadgeClass: Record<string, string> = {
 	embedding: 'badge-purple',
 	image: 'badge-warning',
 	audio: 'badge-success',
+	video: 'badge-purple',
 	rerank: 'badge-gray',
 }
 
@@ -412,11 +418,15 @@ async function handleSaveModels() {
 	}
 }
 
-function goBack() {
-	router.push('/tenant/members')
-}
-
 onMounted(() => {
+	// 注册返回按钮
+	if (registerBackButton) {
+		registerBackButton({
+			title: '返回成员列表',
+			handler: () => router.push('/tenant/members'),
+		})
+	}
+
 	fetchMemberDetail()
 	fetchUsage()
 	fetchApiKeyCount()
@@ -424,20 +434,18 @@ onMounted(() => {
 	fetchAllModels()
 	fetchMemberModels()
 })
+
+onBeforeUnmount(() => {
+	// 取消注册返回按钮
+	if (unregisterBackButton) {
+		unregisterBackButton()
+	}
+})
 </script>
 
 <template>
 	<TeamLockedBanner v-if="!teamEnabled" />
 	<div v-else class="space-y-8">
-		<!-- Back navigation -->
-		<button
-			@click="goBack"
-			class="btn btn-ghost btn-sm text-gray-500 hover:text-gray-700 -ml-2"
-		>
-			<Icon name="chevronLeft" size="sm" />
-			返回成员列表
-		</button>
-
 		<!-- Loading state -->
 		<div v-if="loading" class="flex justify-center py-12">
 			<div class="spinner h-8 w-8 border-primary-500"></div>
@@ -472,7 +480,7 @@ onMounted(() => {
 									{{ statusLabel[member.status] || member.status }}
 								</span>
 							</div>
-							<p class="text-sm text-gray-500 mt-0.5">@{{ member.username }}</p>
+							<p class="text-sm text-gray-500 mt-0.5 font-mono">{{ member.username }}@{{ authStore.tenant?.code }}</p>
 						</div>
 					</div>
 
@@ -541,6 +549,10 @@ onMounted(() => {
 						<h3 class="text-lg font-semibold text-gray-900">个人信息</h3>
 					</div>
 					<div class="card-body space-y-4">
+						<div class="flex items-center justify-between py-2 border-b border-gray-100">
+							<span class="text-sm text-gray-500">账号</span>
+							<span class="text-sm font-medium text-gray-900 font-mono">{{ member.username }}@{{ authStore.tenant?.code }}</span>
+						</div>
 						<div class="flex items-center justify-between py-2 border-b border-gray-100">
 							<span class="text-sm text-gray-500">用户名</span>
 							<span class="text-sm font-medium text-gray-900">{{ member.username }}</span>

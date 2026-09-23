@@ -1,0 +1,35 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "CAP_MARKER_THINKING user asks weather",
+            "thought": true,
+            "thoughtSignature": "sig_abc"
+          },
+          {
+            "text": "CAP_MARKER_ASSISTANT_TEXT the weather is 68F"
+          },
+          {
+            "functionCall": {
+              "args": {
+                "location": "Boston"
+              },
+              "id": "\u003cscrubbed\u003e",
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "modelVersion": "origin-model",
+  "usageMetadata": {
+    "candidatesTokenCount": 50,
+    "promptTokenCount": 100,
+    "totalTokenCount": 150
+  }
+}

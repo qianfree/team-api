@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/qianfree/team-api/relay/common"
@@ -21,6 +22,10 @@ func init() {
 
 // ==================== 请求/响应结构体 ====================
 
+// wan3MaxDurationSeconds wan3.0 智能时长模式（duration=-1）的输出上限（秒）。
+// 智能时长下输出长度不可预知，预扣按该上限冻结，结算按上游 usage.output_video_duration 多退少补
+const wan3MaxDurationSeconds = 30.0
+
 // dashScopeVideoRequest DashScope 视频生成请求
 type dashScopeVideoRequest struct {
 	Model      string                `json:"model"`
@@ -29,9 +34,18 @@ type dashScopeVideoRequest struct {
 }
 
 type dashScopeVideoInput struct {
-	Prompt         string `json:"prompt"`
+	Prompt         string `json:"prompt,omitempty"`
 	NegativePrompt string `json:"negative_prompt,omitempty"`
 	AudioURL       string `json:"audio_url,omitempty"`
+	// Media wan3.0 全能参考模式的媒体素材数组（first_frame/last_frame/reference_image/
+	// reference_video/reference_audio/file/link）；wan2.x 旧格式不填
+	Media []dashScopeMedia `json:"media,omitempty"`
+}
+
+// dashScopeMedia wan3.0 input.media 数组元素
+type dashScopeMedia struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 type dashScopeVideoParams struct {
@@ -42,6 +56,8 @@ type dashScopeVideoParams struct {
 	PromptExtend *bool  `json:"prompt_extend,omitempty"`
 	Watermark    *bool  `json:"watermark,omitempty"`
 	Seed         *int   `json:"seed,omitempty"`
+	// Audio wan3.0 输出视频是否包含音频（开关价格相同）
+	Audio *bool `json:"audio,omitempty"`
 }
 
 // aliMetadata Ali DashScope metadata 参数结构体（用于 UnmarshalMetadata 映射）
@@ -55,6 +71,7 @@ type aliMetadata struct {
 	PromptExtend   *bool  `json:"prompt_extend,omitempty"`
 	Watermark      *bool  `json:"watermark,omitempty"`
 	Seed           *int   `json:"seed,omitempty"`
+	// Audio wan3.0 输出音频开关（"on"/"off" 通用词汇由 buildVideoRequest 归一，此处不承载）
 }
 
 // dashScopeImageRequest DashScope 图片生成请求
@@ -95,7 +112,7 @@ type dashScopeTaskResponse struct {
 	Usage struct {
 		Duration            float64 `json:"duration"`
 		VideoCount          int     `json:"video_count"`
-		OutputVideoDuration int     `json:"output_video_duration"`
+		OutputVideoDuration float64 `json:"output_video_duration"`
 		SR                  int     `json:"SR"`
 		Ratio               string  `json:"ratio"`
 		ImageCount          int     `json:"image_count"`
@@ -119,14 +136,14 @@ func (a *AliAdaptor) Init(info *common.RelayInfo) {
 }
 
 // detectVideo 根据模型名判断是否为视频生成。
-// 注意：万相图片模型（-t2i 文生图、-i2i 图像编辑）即使以 wan2. 开头也不是视频，必须先排除，
+// 注意：万相图片模型（-t2i 文生图、-i2i 图像编辑）即使以 wan2./wan3. 开头也不是视频，必须先排除，
 // 否则会被误判为视频而 POST 到 video-synthesis 端点，被上游以 "url error" 拒绝。
 func (a *AliAdaptor) detectVideo(modelName string) bool {
 	m := strings.ToLower(modelName)
 	if strings.Contains(m, "-t2i") || strings.Contains(m, "-i2i") {
 		return false
 	}
-	return strings.HasPrefix(m, "wan2.") || strings.HasPrefix(m, "wanx2.1-t2v")
+	return strings.HasPrefix(m, "wan2.") || strings.HasPrefix(m, "wan3.") || strings.HasPrefix(m, "wanx2.1-t2v")
 }
 
 func (a *AliAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, body []byte) *common.TaskError {
@@ -140,25 +157,50 @@ func (a *AliAdaptor) ValidateRequest(_ context.Context, _ *common.RelayInfo, bod
 	return nil
 }
 
-func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]float64 {
-	ratios := map[string]float64{"base": 1.0}
+// EstimateBilling 估算任务费用（提交前）。
+// 注意：此处自行从 body 提取模型名判定视频/图片，不依赖 BuildRequestBody 的 a.isVideo 副作用——
+// 管线中 EstimateBilling（第 6 步）先于 BuildRequestBody（第 7 步）执行，旧实现读 a.isVideo
+// 恒为 false，视频时长信号从未上报（预扣恒按引擎默认 5s 估），本次修复。
+func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, body []byte) map[string]any {
+	ratios := map[string]any{"base": 1.0}
 	var req map[string]any
 	if json.Unmarshal(body, &req) != nil {
 		return ratios
 	}
 
-	if a.isVideo {
-		// duration 影响计费
+	modelName, _ := req["model"].(string)
+	if a.detectVideo(modelName) {
 		metadata := taskchannel.ExtractMetadata(req)
-		var meta struct {
-			Duration *int `json:"duration"`
+		var meta aliMetadata
+		if taskchannel.UnmarshalMetadata(metadata, &meta) == nil {
+			// 分辨率事实值：per_second 矩阵查价键（480P/720P/1080P 原值）。
+			// OpenAI Videos 路径无 resolution 字段，wan3.0 按 size 归一档位上报，
+			// 与 buildVideoRequest 的折算口径同源
+			if meta.Resolution != "" {
+				ratios["spec.resolution"] = meta.Resolution
+			} else if strings.HasPrefix(strings.ToLower(modelName), "wan3.") && meta.Size != "" {
+				if r := normalizeWan3Resolution(meta.Size); r != "" {
+					ratios["spec.resolution"] = r
+				}
+			}
+			// 时长事实值：duration>0 用请求值；duration=-1（wan3.0 智能时长）按输出上限冻结，
+			// 结算以 usage.output_video_duration 多退少补
+			if meta.Duration != nil {
+				d := float64(*meta.Duration)
+				if d == -1 {
+					d = wan3MaxDurationSeconds
+				}
+				if d > 0 {
+					ratios["duration"] = d
+					ratios["spec.duration"] = d
+				}
+			}
 		}
-		if taskchannel.UnmarshalMetadata(metadata, &meta) == nil && meta.Duration != nil && *meta.Duration > 0 {
-			ratios["duration"] = float64(*meta.Duration)
-		}
+		// 顶层 seconds（OpenAI Videos 通用词汇）优先于 metadata
 		if seconds, ok := req["seconds"].(string); ok {
 			if d, err := parseInt(seconds); err == nil && d > 0 {
 				ratios["duration"] = float64(d)
+				ratios["spec.duration"] = float64(d)
 			}
 		}
 	} else {
@@ -171,7 +213,7 @@ func (a *AliAdaptor) EstimateBilling(_ context.Context, _ *common.RelayInfo, bod
 	return ratios
 }
 
-func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]float64 {
+func (a *AliAdaptor) AdjustBillingOnSubmit(_ *common.RelayInfo, _ []byte) map[string]any {
 	return nil
 }
 
@@ -248,8 +290,33 @@ func (a *AliAdaptor) buildVideoRequest(info *common.RelayInfo, req map[string]an
 		}
 	}
 
+	// wan3.0 专属适配：媒体素材数组 + 音频开关 + size 档位映射。
+	// wan2.x 保持旧格式不动（其 size 是原生尺寸语义，不可参与档位映射）
+	if strings.HasPrefix(strings.ToLower(modelName), "wan3.") {
+		dsReq.Input.Media = buildWan3Media(req, metadata)
+		if sound, ok := metadata["sound"].(string); ok && sound != "" {
+			audio := sound == "on"
+			params.Audio = &audio
+		}
+		if params.Resolution == "" && meta.Size != "" {
+			if r := normalizeWan3Resolution(meta.Size); r != "" {
+				params.Resolution = r
+			}
+		}
+		// wan3.0 协议无 size 参数：size 只作档位折算源，任何情况不透传上游
+		//（wan2.x 的 size 是原生尺寸语义，不进本分支、不受影响）
+		params.Size = ""
+		// ratio 兜底：通用词汇 aspect_ratio（OpenAI Videos 双写键，部分链路只写该键）
+		if params.Ratio == "" {
+			if ar, ok := metadata["aspect_ratio"].(string); ok {
+				params.Ratio = ar
+			}
+		}
+	}
+
 	if params.Resolution != "" || params.Ratio != "" || params.Size != "" ||
-		params.Duration != nil || params.PromptExtend != nil || params.Watermark != nil || params.Seed != nil {
+		params.Duration != nil || params.PromptExtend != nil || params.Watermark != nil ||
+		params.Seed != nil || params.Audio != nil {
 		dsReq.Parameters = params
 	}
 
@@ -258,6 +325,83 @@ func (a *AliAdaptor) buildVideoRequest(info *common.RelayInfo, req map[string]an
 		return nil, fmt.Errorf("marshal dashscope video request: %w", err)
 	}
 	return strings.NewReader(string(data)), nil
+}
+
+// buildWan3Media 构建 wan3.0 input.media 数组（全能参考模式）。
+// 优先级：顶层 media（阿里原生入站原样透传）> metadata.image（OpenAI input_reference，
+// 首帧语义对齐 Sora）> 顶层 images[]（通用多图词汇 → 参考图）。均无则返回 nil（纯文生视频）
+func buildWan3Media(req map[string]any, metadata map[string]any) []dashScopeMedia {
+	if raw, ok := req["media"].([]any); ok && len(raw) > 0 {
+		media := make([]dashScopeMedia, 0, len(raw))
+		for _, item := range raw {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			t, _ := m["type"].(string)
+			u, _ := m["url"].(string)
+			if t == "" || u == "" {
+				continue
+			}
+			media = append(media, dashScopeMedia{Type: t, URL: u})
+		}
+		if len(media) > 0 {
+			return media
+		}
+	}
+	if img, ok := metadata["image"].(string); ok && img != "" {
+		return []dashScopeMedia{{Type: "first_frame", URL: img}}
+	}
+	if imgs, ok := req["images"].([]any); ok && len(imgs) > 0 {
+		media := make([]dashScopeMedia, 0, len(imgs))
+		for _, item := range imgs {
+			if u, ok := item.(string); ok && u != "" {
+				media = append(media, dashScopeMedia{Type: "reference_image", URL: u})
+			}
+		}
+		if len(media) > 0 {
+			return media
+		}
+	}
+	return nil
+}
+
+// normalizeWan3Resolution 把 size 值归一为 wan3.0 分辨率档位：
+// 裸档位词汇（"720P"/"480p"）直接归一为大写档位；WxH 尺寸（"1280x720"）按短边归档；
+// 其余返回空串（上游取默认 1080P）。wan2.x 的 size 是原生尺寸语义，不得走此函数。
+func normalizeWan3Resolution(size string) string {
+	upper := strings.ToUpper(strings.TrimSpace(size))
+	switch upper {
+	case "480P", "720P", "1080P":
+		return upper
+	}
+	return resolutionFromSize(size)
+}
+
+// resolutionFromSize 从尺寸字符串（如 "1280x720"）按短边映射 wan3.0 分辨率档位。
+// 竖版尺寸（720x1280）同样按短边归档；解析失败返回空串（上游取默认 1080P）
+func resolutionFromSize(size string) string {
+	parts := strings.SplitN(strings.ToLower(strings.TrimSpace(size)), "x", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return ""
+	}
+	short := w
+	if h < short {
+		short = h
+	}
+	switch {
+	case short <= 500:
+		return "480P"
+	case short <= 800:
+		return "720P"
+	default:
+		return "1080P"
+	}
 }
 
 func (a *AliAdaptor) buildImageRequest(info *common.RelayInfo, req map[string]any, modelName string) (io.Reader, error) {
@@ -305,12 +449,12 @@ func (a *AliAdaptor) buildImageRequest(info *common.RelayInfo, req map[string]an
 	return strings.NewReader(string(data)), nil
 }
 
-func (a *AliAdaptor) DoRequest(_ context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+func (a *AliAdaptor) DoRequest(ctx context.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	url, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -363,7 +507,20 @@ func (a *AliAdaptor) DoResponse(_ context.Context, resp *http.Response, _ *commo
 	return result.Output.TaskID, body, nil
 }
 
-func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.Response, error) {
+// ExtractUpstreamRequestID 从 DashScope 提交响应体顶层提取 request_id（调用追踪 ID）。
+// 与 output.task_id（任务句柄，轮询查询用）互补：在阿里云日志/工单中定位一次提交调用时用它
+func (a *AliAdaptor) ExtractUpstreamRequestID(body []byte) string {
+	var resp dashScopeSubmitResponse
+	if json.Unmarshal(body, &resp) != nil {
+		return ""
+	}
+	return resp.RequestID
+}
+
+// 确保实现上游调用追踪 ID 提取可选能力
+var _ common.UpstreamRequestIDExtractor = (*AliAdaptor)(nil)
+
+func (a *AliAdaptor) FetchTask(ctx context.Context, baseURL, apiKey string, taskData []byte) (*http.Response, error) {
 	var data struct {
 		TaskID   string `json:"task_id"`
 		UseProxy bool   `json:"use_proxy"`
@@ -373,7 +530,7 @@ func (a *AliAdaptor) FetchTask(baseURL, apiKey string, taskData []byte) (*http.R
 	}
 
 	url := fmt.Sprintf("%s/api/v1/tasks/%s", strings.TrimRight(baseURL, "/"), data.TaskID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -406,6 +563,14 @@ func (a *AliAdaptor) ParseTaskResult(body []byte) (*common.TaskInfo, error) {
 		// 视频结果
 		if resp.Output.VideoURL != "" {
 			info.ResultURL = resp.Output.VideoURL
+		}
+		// 素材计量（wan3.0 按秒计费）：实际输出秒数 + 实际分辨率，
+		// 供 generic per_second 结算按「实际秒数 × 实际档位单价」多退少补（方案 A）
+		if resp.Usage.OutputVideoDuration > 0 {
+			info.MaterialUsage = &common.TaskMaterialUsage{
+				OutputSeconds: resp.Usage.OutputVideoDuration,
+				Resolution:    resolutionFromSR(resp.Usage.SR),
+			}
 		}
 		// 图片结果
 		if len(resp.Output.Results) > 0 {
@@ -445,4 +610,13 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+// resolutionFromSR 上游 usage.SR（分辨率短边整数，如 720）→ per_second 矩阵键（"720P"）。
+// 0/异常值返回空串（结算查价回退 ratios 的 spec.resolution）
+func resolutionFromSR(sr int) string {
+	if sr <= 0 {
+		return ""
+	}
+	return strconv.Itoa(sr) + "P"
 }

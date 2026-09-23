@@ -15,7 +15,10 @@ func InjectSystemPrompt(body []byte, info *common.RelayInfo) []byte {
 		return body
 	}
 
-	nativeFormat := ProviderNativeFormat(info.ChannelMeta.ChannelType)
+	// 注入格式必须与**转换后**的请求体格式一致（本函数在格式转换之后调用）。
+	// 用模型维度判定：Vertex 渠道的体是 Gemini / Claude 原生格式，按渠道类型
+	// 判成 openai 会把 messages 数组注进一个根本没有 messages 字段的体里
+	nativeFormat := ProviderNativeFormatFor(info)
 	switch nativeFormat {
 	case constant.RelayFormatClaude:
 		return injectSystemPromptClaude(body, prompt, info.ChannelMeta.Settings.SystemPromptOverride)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -21,6 +22,64 @@ import (
 	"github.com/qianfree/team-api/internal/utility/crypto"
 	"github.com/qianfree/team-api/internal/utility/export"
 )
+
+// 租户标签约束：数量与单项长度上限（字符数，非字节数）
+const (
+	tenantTagsMaxCount   = 10
+	tenantTagsMaxRunes   = 30
+	tenantRemarkMaxRunes = 1000
+)
+
+// marshalTagFilter 把单个标签序列化为 JSONB 包含查询参数（tags @> '["vip"]'）。
+// 序列化不会失败（输入为字符串），错误时返回空数组条件（匹配不到任何行，安全降级）。
+func marshalTagFilter(tag string) string {
+	b, err := json.Marshal([]string{strings.TrimSpace(tag)})
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// parseTenantTags 解析租户标签 JSONB（空/非法输入返回空切片，不报错——展示路径容错）
+func parseTenantTags(raw string) []string {
+	if raw == "" {
+		return []string{}
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
+		return []string{}
+	}
+	return tags
+}
+
+// marshalTenantTags 校验并序列化租户标签为 JSONB 字符串：
+// 去首尾空白、跳过空项、去重，≤ tenantTagsMaxCount 个、每项 ≤ tenantTagsMaxRunes 字符。
+func marshalTenantTags(tags []string) (string, error) {
+	cleaned := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if utf8.RuneCountInString(tag) > tenantTagsMaxRunes {
+			return "", common.NewBadRequestError("单个标签最长 30 字符")
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		cleaned = append(cleaned, tag)
+	}
+	if len(cleaned) > tenantTagsMaxCount {
+		return "", common.NewBadRequestError("标签数量最多 10 个")
+	}
+	b, err := json.Marshal(cleaned)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
 
 // TenantSelect returns a lightweight paginated tenant list for dropdown selectors.
 func (s *sAdmin) TenantSelect(ctx context.Context, req *v1.TenantSelectReq) (*v1.TenantSelectRes, error) {
@@ -125,6 +184,19 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 		maxConcurrencyVal = req.MaxConcurrency
 	}
 
+	// 标签与备注：可选字段，校验规则与更新接口一致；空值落库为列默认（[] / ''）
+	tagsJSON, err := marshalTenantTags(req.Tags)
+	if err != nil {
+		return nil, err
+	}
+	remarkVal := ""
+	if req.Remark != nil {
+		remarkVal = strings.TrimSpace(*req.Remark)
+		if utf8.RuneCountInString(remarkVal) > tenantRemarkMaxRunes {
+			return nil, common.NewBadRequestError("备注最长 1000 字符")
+		}
+	}
+
 	var tenantID int64
 
 	err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -135,6 +207,8 @@ func (s *sAdmin) CreateTenant(ctx context.Context, req *v1.TenantCreateReq) (*v1
 			MaxConcurrency: maxConcurrencyVal,
 			Level:          1,
 			Settings:       "{}",
+			Tags:           tagsJSON,
+			Remark:         remarkVal,
 		}).Insert()
 		if err != nil {
 			return gerror.Wrapf(err, "create tenant")
@@ -217,10 +291,12 @@ func batchTenantAggregates(ctx context.Context, tenantIDs, ownerIDs []int64) (
 	ownerNames map[int64]string,
 	memberCounts map[int64]int,
 	walletBalances map[int64]string,
+	walletTotalConsumed map[int64]string,
 ) {
 	ownerNames = make(map[int64]string, len(ownerIDs))
 	memberCounts = make(map[int64]int, len(tenantIDs))
 	walletBalances = make(map[int64]string, len(tenantIDs))
+	walletTotalConsumed = make(map[int64]string, len(tenantIDs))
 
 	// owner 名称：按 owner_user_id 批量取
 	if len(ownerIDs) > 0 {
@@ -246,15 +322,17 @@ func batchTenantAggregates(ctx context.Context, tenantIDs, ownerIDs []int64) (
 			memberCounts[c.TenantID] = c.Count
 		}
 
-		// 钱包余额：按 tenant_id 批量取
+		// 钱包余额 / 累计消费：按 tenant_id 批量取（DB 物化副本，累计消费随物化器 ≤5s 滞后）
 		var wallets []struct {
-			TenantID int64  `json:"tenant_id"`
-			Balance  string `json:"balance"`
+			TenantID      int64  `json:"tenant_id"`
+			Balance       string `json:"balance"`
+			TotalConsumed string `json:"total_consumed"`
 		}
-		_ = dao.BilWallets.Ctx(ctx).Fields("tenant_id, balance").
+		_ = dao.BilWallets.Ctx(ctx).Fields("tenant_id, balance, total_consumed").
 			WhereIn("tenant_id", tenantIDs).Scan(&wallets)
 		for _, w := range wallets {
 			walletBalances[w.TenantID] = w.Balance
+			walletTotalConsumed[w.TenantID] = w.TotalConsumed
 		}
 	}
 
@@ -274,6 +352,12 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 	if req.Status != "" {
 		m = m.Where("status", req.Status)
 	}
+	if req.Tag != "" {
+		m = m.Where("tags @> ?::jsonb", marshalTagFilter(req.Tag))
+	}
+	if req.Level != nil {
+		m = m.Where("level", *req.Level)
+	}
 
 	total, err := m.Count()
 	if err != nil {
@@ -289,21 +373,32 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 	if req.Status != "" {
 		m = m.Where("status", req.Status)
 	}
+	if req.Tag != "" {
+		m = m.Where("tags @> ?::jsonb", marshalTagFilter(req.Tag))
+	}
+	if req.Level != nil {
+		m = m.Where("level", *req.Level)
+	}
 
+	// 扫描结构体必须带 orm 标签：gf 的 Scan 会用「结构体字段名」自动生成 SELECT 字段列表，
+	// 无 orm 标签时靠运行时查表结构（TableFields）做 Id→id 映射；该元数据查询失败会被框架静默吞掉，
+	// 帕斯卡字段名将原样进 SQL，PostgreSQL 引号列名大小写敏感，报 column "Id" does not exist。
 	var tenants []struct {
-		Id                  int64       `json:"id"`
-		Name                string      `json:"name"`
-		Code                string      `json:"code"`
-		LogoURL             string      `json:"logo_url"`
-		OwnerUserID         int64       `json:"owner_user_id"`
-		Status              string      `json:"status"`
-		MaxMembers          *int        `json:"max_members"`
-		MaxConcurrency      *int        `json:"max_concurrency"`
-		DefaultChannelScope string      `json:"default_channel_scope"`
-		Settings            string      `json:"settings"`
-		Level               int         `json:"level"`
-		CreatedAt           *gtime.Time `json:"created_at"`
-		UpdatedAt           *gtime.Time `json:"updated_at"`
+		Id                  int64       `json:"id" orm:"id"`
+		Name                string      `json:"name" orm:"name"`
+		Code                string      `json:"code" orm:"code"`
+		LogoURL             string      `json:"logo_url" orm:"logo_url"`
+		OwnerUserID         int64       `json:"owner_user_id" orm:"owner_user_id"`
+		Status              string      `json:"status" orm:"status"`
+		MaxMembers          *int        `json:"max_members" orm:"max_members"`
+		MaxConcurrency      *int        `json:"max_concurrency" orm:"max_concurrency"`
+		DefaultChannelScope string      `json:"default_channel_scope" orm:"default_channel_scope"`
+		Settings            string      `json:"settings" orm:"settings"`
+		Level               int         `json:"level" orm:"level"`
+		Tags                string      `json:"tags" orm:"tags"`
+		Remark              string      `json:"remark" orm:"remark"`
+		CreatedAt           *gtime.Time `json:"created_at" orm:"created_at"`
+		UpdatedAt           *gtime.Time `json:"updated_at" orm:"updated_at"`
 	}
 	err = m.OrderDesc("id").
 		Page(page, pageSize).
@@ -333,7 +428,7 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 		tenantIDs[i] = t.Id
 		ownerIDs[i] = t.OwnerUserID
 	}
-	ownerNameMap, memberCountMap, walletBalanceMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
+	ownerNameMap, memberCountMap, walletBalanceMap, walletConsumedMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
 
 	for i, t := range tenants {
 		item := v1.TenantItem{
@@ -348,6 +443,8 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 			DefaultChannelScope: t.DefaultChannelScope,
 			Level:               t.Level,
 			LevelName:           levelNameMap[t.Level],
+			Tags:                parseTenantTags(t.Tags),
+			Remark:              t.Remark,
 			CreatedAt:           t.CreatedAt.String(),
 			UpdatedAt:           t.UpdatedAt.String(),
 		}
@@ -368,13 +465,18 @@ func (s *sAdmin) ListTenants(ctx context.Context, req *v1.TenantListReq) (*v1.Te
 			item.EffectiveMaxConcurrency = 0
 		}
 
-		// 从批量结果中取 owner 名称 / 成员数 / 钱包余额
+		// 从批量结果中取 owner 名称 / 成员数 / 钱包余额 / 累计消费
 		item.OwnerName = ownerNameMap[t.OwnerUserID]
 		item.MemberCount = memberCountMap[t.Id]
 		if bal, ok := walletBalanceMap[t.Id]; ok && bal != "" {
 			item.WalletBalance = bal
 		} else {
 			item.WalletBalance = "0"
+		}
+		if tc, ok := walletConsumedMap[t.Id]; ok && tc != "" {
+			item.TotalConsumed = tc
+		} else {
+			item.TotalConsumed = "0"
 		}
 
 		items[i] = item
@@ -402,6 +504,8 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 		DefaultChannelScope string      `json:"default_channel_scope"`
 		Settings            string      `json:"settings"`
 		Level               int         `json:"level"`
+		Tags                string      `json:"tags"`
+		Remark              string      `json:"remark"`
 		CreatedAt           *gtime.Time `json:"created_at"`
 		UpdatedAt           *gtime.Time `json:"updated_at"`
 	}
@@ -425,19 +529,27 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 	memberCount, _ := dao.TntUsers.Ctx(ctx).
 		Where("tenant_id", req.Id).Count()
 
-	// Get wallet balance：优先读 Redis 权威值（调整余额/入账后详情页立即可见），DB 物化值兜底
+	// Get wallet balance / 累计消费：优先读 Redis 权威值（调整余额/入账/结算后详情页立即可见），DB 物化值兜底
 	walletBalance := "0"
+	totalConsumed := "0"
 	if w, err := billing.GetWallet(ctx, req.Id); err == nil {
 		walletBalance = strconv.FormatFloat(w.Balance, 'f', -1, 64)
+		totalConsumed = strconv.FormatFloat(w.TotalConsumed, 'f', -1, 64)
 	} else {
 		var wallet *struct {
-			Balance string `json:"balance"`
+			Balance       string `json:"balance"`
+			TotalConsumed string `json:"total_consumed"`
 		}
 		_ = dao.BilWallets.Ctx(ctx).
 			Where("tenant_id", req.Id).Scan(&wallet)
 
-		if wallet != nil && wallet.Balance != "" {
-			walletBalance = wallet.Balance
+		if wallet != nil {
+			if wallet.Balance != "" {
+				walletBalance = wallet.Balance
+			}
+			if wallet.TotalConsumed != "" {
+				totalConsumed = wallet.TotalConsumed
+			}
 		}
 	}
 	ownerName := ""
@@ -483,6 +595,9 @@ func (s *sAdmin) GetTenant(ctx context.Context, req *v1.TenantGetReq) (*v1.Tenan
 			DefaultChannelScope:     tenant.DefaultChannelScope,
 			MemberCount:             memberCount,
 			WalletBalance:           walletBalance,
+			Tags:                    parseTenantTags(tenant.Tags),
+			Remark:                  tenant.Remark,
+			TotalConsumed:           totalConsumed,
 			Level:                   tenant.Level,
 			LevelName:               levelName,
 			CreatedAt:               tenant.CreatedAt.String(),
@@ -553,6 +668,22 @@ func (s *sAdmin) UpdateTenant(ctx context.Context, req *v1.TenantUpdateReq) (*v1
 		data.Level = *req.Level
 	}
 
+	// 标签：nil 表示未传（不更新）；空数组表示清空（序列化为 []）
+	if req.Tags != nil {
+		tagsJSON, err := marshalTenantTags(req.Tags)
+		if err != nil {
+			return nil, err
+		}
+		data.Tags = tagsJSON
+	}
+	if req.Remark != nil {
+		remark := strings.TrimSpace(*req.Remark)
+		if utf8.RuneCountInString(remark) > tenantRemarkMaxRunes {
+			return nil, common.NewBadRequestError("备注最长 1000 字符")
+		}
+		data.Remark = remark
+	}
+
 	_, err := dao.TntTenants.Ctx(ctx).Where("id", req.Id).Update(data)
 	if err != nil {
 		return nil, err
@@ -590,8 +721,11 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 		{Field: "code", Header: "代码"},
 		{Field: "owner_name", Header: "所有者"},
 		{Field: "status", Header: "状态"},
+		{Field: "tags", Header: "标签"},
+		{Field: "remark", Header: "备注"},
 		{Field: "member_count", Header: "成员数"},
 		{Field: "wallet_balance", Header: "钱包余额"},
+		{Field: "total_consumed", Header: "累计消费"},
 		{Field: "created_at", Header: "创建时间"},
 	}
 
@@ -612,31 +746,43 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 			if req.Status != "" {
 				m = m.Where("status", req.Status)
 			}
+			if req.Tag != "" {
+				m = m.Where("tags @> ?::jsonb", marshalTagFilter(req.Tag))
+			}
+			if req.Level != nil {
+				m = m.Where("level", *req.Level)
+			}
 			var batch []struct {
 				Id          int64       `json:"id"`
 				Name        string      `json:"name"`
 				Code        string      `json:"code"`
 				OwnerUserID int64       `json:"owner_user_id"`
 				Status      string      `json:"status"`
+				Tags        string      `json:"tags"`
+				Remark      string      `json:"remark"`
 				CreatedAt   *gtime.Time `json:"created_at"`
 			}
-			if err := m.Fields("id, name, code, owner_user_id, status, created_at").OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
+			if err := m.Fields("id, name, code, owner_user_id, status, tags, remark, created_at").OrderDesc("id").Limit(1000).Offset(offset).Scan(&batch); err != nil {
 				return
 			}
 
-			// 批量查询本页的 owner 名称 / 成员数 / 钱包余额（避免逐行 N+1）
+			// 批量查询本页的 owner 名称 / 成员数 / 钱包余额 / 累计消费（避免逐行 N+1）
 			tenantIDs := make([]int64, len(batch))
 			ownerIDs := make([]int64, len(batch))
 			for i, t := range batch {
 				tenantIDs[i] = t.Id
 				ownerIDs[i] = t.OwnerUserID
 			}
-			ownerNameMap, memberCountMap, walletBalanceMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
+			ownerNameMap, memberCountMap, walletBalanceMap, walletConsumedMap := batchTenantAggregates(ctx, tenantIDs, ownerIDs)
 
 			for _, t := range batch {
 				walletBalance := "0"
 				if bal, ok := walletBalanceMap[t.Id]; ok && bal != "" {
 					walletBalance = bal
+				}
+				totalConsumed := "0"
+				if tc, ok := walletConsumedMap[t.Id]; ok && tc != "" {
+					totalConsumed = tc
 				}
 				row := map[string]any{
 					"id":             t.Id,
@@ -644,8 +790,11 @@ func (s *sAdmin) ExportTenants(ctx context.Context, req *v1.TenantExportReq) (*v
 					"code":           t.Code,
 					"owner_name":     ownerNameMap[t.OwnerUserID],
 					"status":         t.Status,
+					"tags":           strings.Join(parseTenantTags(t.Tags), ","),
+					"remark":         t.Remark,
 					"member_count":   memberCountMap[t.Id],
 					"wallet_balance": walletBalance,
+					"total_consumed": totalConsumed,
 					"created_at":     t.CreatedAt.String(),
 				}
 				if !yield(row) {

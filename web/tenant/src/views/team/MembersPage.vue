@@ -18,6 +18,7 @@ import { useExport } from '@/composables/useExport'
 const router = useRouter()
 const authStore = useTenantAuthStore()
 const teamEnabled = computed(() => !!authStore.tenant?.team_enabled)
+const tenantCode = computed(() => authStore.tenant?.code || '')
 
 // 查询表单数据
 const filters = ref({
@@ -302,6 +303,13 @@ const columns = computed<DataTableColumns<Member>>(() => [
 			]),
 	},
 	{
+		title: '账号',
+		key: 'account',
+		width: 180,
+		render: (row) =>
+			h('span', { class: 'text-sm font-mono text-gray-700' }, `${row.username}@${tenantCode.value}`),
+	},
+	{
 		title: '角色',
 		key: 'role',
 		width: 110,
@@ -496,7 +504,7 @@ onMounted(() => {
 				card-title-key="user"
 				card-badge-key="status"
 				card-subtitle-key="created_at"
-				:card-fields="['role', 'quota_type', 'model_count', 'month_cost', 'updated_at']"
+				:card-fields="['account', 'role', 'quota_type', 'model_count', 'month_cost', 'updated_at']"
 				card-actions-key="actions"
 				:row-click="(row: Member) => goDetail(row.id)"
 				@update:page="fetchMembers"

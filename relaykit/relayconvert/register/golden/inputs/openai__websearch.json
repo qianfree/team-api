@@ -1,0 +1,6 @@
+{
+  "model": "origin-model",
+  "messages": [{"role": "user", "content": "Search the latest AI news."}],
+  "web_search_options": {},
+  "max_tokens": 1024
+}

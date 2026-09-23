@@ -60,19 +60,6 @@ func TestRegisteredConverters_Roundtrip(t *testing.T) {
 			},
 		},
 		{
-			name: "Coze", converterID: relayconvert.ConverterOpenAIChatToCoze, upstream: "bot-123",
-			// Coze 上游始终为 SSE，非流式客户端也由桥接缓冲整段后交给转换器解析。
-			nativeResp: []byte("event: conversation.message.completed\n" +
-				`data: {"role":"assistant","type":"answer","content":"hi"}` + "\n"),
-		},
-		{
-			name: "Dify", converterID: relayconvert.ConverterOpenAIChatToDify, upstream: "dify-bot",
-			nativeResp: &dto.DifyBlockingResponse{
-				Answer:   "hi",
-				Metadata: dto.DifyMeta{Usage: dto.DifyUsage{TotalTokens: 8, PromptTokens: 5, CompletionTokens: 3}},
-			},
-		},
-		{
 			name: "Ollama", converterID: relayconvert.ConverterOpenAIChatToOllama, upstream: "llama3",
 			nativeResp: &dto.OllamaChatResponse{
 				Model: "llama3", Message: dto.OllamaMessage{Role: "assistant", Content: "hi"},

@@ -841,3 +841,138 @@ sender := common.NewEmailSender(&common.EmailConfig{
 - 同一份配置有多个消费方时，**必须收敛到同一个加载函数**（本例为 `EmailConfigFromOptions`），禁止各处自行拼装配置结构体。
 
 排查信号：某个功能"配置明明填了却不生效"，而同类功能正常；`grep -rn "g.Cfg()" ` 命中的键在 `manifest/config/*.yaml` 中搜不到。
+
+### 2026-09-01：测试里用 `gtest.DataPath()` 当 server 名，Windows 下 `Start()` 静默失败
+
+**问题**：`internal/middleware` 的 `request_id_test.go` 三个用例在 Windows 上全部失败，断言形如 `EXPECT 0 == 10`、`EXPECT 0 == 100`，或客户端报 `EOF`——看起来像中间件没生成 RequestId，实则请求根本没发出去。
+
+**原因**：测试用路径当服务器名：
+
+```go
+s := g.Server(gtest.DataPath("request-id-test"))   // 名字是 D:\...\testdata\request-id-test
+s.Start()                                          // 返回值被丢弃
+```
+
+GoFrame 用**服务器名**拼 session 存储目录：`%TEMP%\gsessions\<server-name>`。名字里带盘符冒号时路径非法，`os.MkdirAll` 失败，`Start()` 返回 error——但测试没接这个返回值，于是服务器没监听，`GetListenedPort()` 返回 `-1`，客户端请求 `http://127.0.0.1:-1` 直接 EOF。Linux 下 `gtest.DataPath` 返回的路径不含冒号，同样的代码能跑通，所以问题只在 Windows 暴露。
+
+同一文件还继承了 `manifest/config/config.yaml` 的 `server.address: :18888`（真实应用端口），即便名字合法也会与本机运行中的服务抢端口。
+
+**修复**：服务器名改用普通标识符，并显式绑定空闲端口：
+
+```go
+s := g.Server("mw-request-id-dual")   // 纯名字，不是路径
+s.SetAddr("127.0.0.1:0")             // 不继承配置文件端口，让系统分配
+s.SetDumpRouterMap(false)
+s.Start()
+```
+
+**正确做法（通用规则）**：
+
+- **`g.Server(name)` 的参数是「服务器名」不是「路径」**：它会参与 session 目录等文件路径拼接，只能用普通标识符（字母/数字/连字符）。`gtest.DataPath()` 是用来定位测试数据文件的，不要拿来当名字。
+- **测试里起 server 必须 `SetAddr("127.0.0.1:0")`**：`g.Server()` 会读取项目配置，默认继承生产监听端口，在本机跑着服务时必然冲突。
+- **不要丢弃 `s.Start()` 的 error**：Start 失败后测试仍会继续跑，症状表现为断言数值不对或 EOF，与真正原因（服务器没起来）完全无关，极易误导排查方向。
+
+排查信号：测试断言"期望 N 实际 0"且伴随 `EOF`；`GetListenedPort()` 返回 `-1`；同一测试在 Linux CI 通过但本地 Windows 失败。
+
+### 2026-09-01（二）：channel_proxy_url 双数据源分裂——设置页保存的代理对 relay 渠道转发不生效
+
+**问题**：管理后台「系统设置 → 渠道配置 → 代理地址」保存后，渠道编辑中开启「使用代理」的请求并不走该代理。设置页把 `channel_proxy_url` 写入 `sys_options`，但 relay 层（`relay/common/http_client.go` 的 `GetSystemProxyURL`）读的是 `g.Cfg().MustGet(ctx, "channel_proxy_url")`——即 `manifest/config/config.yaml` 配置文件里的**同名 key**。两套数据源互不相通：设置页的值只被 `oauth/client.go`（OAuth 出站）读到，它宣称的主要用途（渠道转发代理、Realtime WebSocket 拨号）从未读到过。
+
+**原因**：同一配置 key 被两个模块各自实现了读取逻辑，一个走设置注册表（`sys_options`），一个走 `g.Cfg()`（配置文件），没有收敛到同一加载入口。`g.Cfg().MustGet` 对键不存在不报错、静默返回空串（见 2026-08-31 记录），掩盖了分裂——渠道一直"代理未配置"，无人察觉。
+
+**修复**：
+
+1. `relay/common/http_client.go`：`GetSystemProxyURL` 不再读 `g.Cfg()`（含 10s TTL 轮询缓存一并删除），改为读包内 atomic 值，新增 `SetSystemProxyURL` setter；
+2. `internal/cmd/cmd.go`：沿用 `SetGlobalRequestTimeoutSeconds` 的桥接注入模式（relay 不反向 import internal，会循环依赖）——启动时 + `OnSettingsChanged("channel_proxy_url")` 时从 `sys_options` 读取并注入，免重启、多实例经 Redis pub/sub 各自刷新；
+3. `config.example.yaml` 删除已失效的 `channel_proxy_url` key，配置文件不再承载该配置。
+
+**正确做法（通用规则）**：
+
+- **一个配置 key 只能有一个数据源、一个加载入口**。凡注册进设置注册表（`sys_options`，管理员可改）的 key，所有消费方——包括 relay 这类不 import internal 的独立模块——都必须经同一加载函数取值；独立模块用「setter 注入 + OnSettingsChanged 刷新」桥接（本项目既有模式：全局超时 `SetGlobalRequestTimeoutSeconds`）。
+- **禁止用 `g.Cfg()` 读取任何注册表里的 key**：同名 key 在配置文件里恰好存在时会造成"双真相源"，配置文件的值会静默覆盖管理员在后台设置的值（或反之），且 `MustGet` 对键缺失不报错，分裂长期不可见。
+
+排查信号：设置页某配置"保存了但不生效"；`grep -rn "g.Cfg()"` 命中的 key 同时出现在 `settings_registry.go` 中。
+
+### 2026-09-03（三）：ghttp 归一化尾部斜杠但不归一化中间的重复斜杠
+
+**问题**：管理后台的授权（`AdminPermissionGuard`）按 `r.URL.Path` 做精确路径 / 前缀 / 前缀+后缀三段匹配。若框架对路径的归一化范围与预期不符，同一个 handler 就可能有多种匹配结果——加一个斜杠就绕到另一条（可能更弱的）规则上。
+
+**框架实测行为**（GoFrame v2，`ghttp` 路由，实测端口探针验证）：
+
+| 请求路径 | 是否匹配到路由 | handler 里的 `r.URL.Path` |
+|----------|----------------|---------------------------|
+| `/api/admin/roles` | ✅ | `/api/admin/roles` |
+| `/api/admin/roles/` | ✅ | `/api/admin/roles`（**尾部斜杠已被去掉**） |
+| `/api/admin/roles//` | ✅ | `/api/admin/roles`（同上） |
+| `/api/admin//roles` | ✅ | `/api/admin//roles`（**中间的重复斜杠原样保留**） |
+| `/api/admin/./roles`、`/api/x/../admin/roles` | ❌ 404 | — |
+| `/api/admin/ROLES` | ❌ 404 | — |
+
+即：**尾部斜杠会被归一化，路径中间的空段不会**；`.` / `..` 段与大小写变体压根匹配不到路由。
+
+**正确做法（通用规则）**：
+
+- **任何按 `r.URL.Path` 做字符串匹配的中间件（鉴权、限流、审计采样、灰度路由），都不能假设路径已规范化**。中间的 `//` 会带着原样路径进到 handler，字符串规则却按规范形式书写，两者对不上。
+- 处理方式选**拒收**而非**重写**：重写会把原本因规则不匹配而被拒的变体变成放行（等于放宽授权面），拒收既不放宽也不留缝隙。本项目在 `AdminPermissionGuard` 入口用 `isCanonicalPath` 直接 403，正常客户端不会产生这类路径。
+- 尾部斜杠已由框架处理，无需自行 trim，**也不要因此把 `/xxx/` 当作合法输入去写规则**——handler 永远看不到它。
+
+排查信号：某接口"多加一个斜杠就能绕过权限/限流"；中间件按路径匹配的规则表里出现了同一 handler 的两条规则。
+
+### 2026-09-05：`Model.Value()` 不带 Fields 返回结果集第一列（id），不是想要的业务列
+
+**问题**：`internal/logic/common/config.go` 的 `SetOption` 中，本位币只读保护用 `dao.SysOptions.Ctx(ctx).Where("key", key).Value()` 读取已存的 `billing_currency` 值，与提交值比对实现"相同值放行"。但 `Model.Value()` 不指定字段时，GoFrame 生成 `SELECT * ... LIMIT 1` 并取**结果集第一列**（`gdb_core_underlying.go` 中 `FirstResultColumn = columnTypes[0].Name()`），对 `sys_options` 来说是 `id`。于是 `old` 永远是行 id（如 `"42"`），与 `"USD"/"CNY"` 永不相等——系统初始化后，设置页保存整个 payment 分类必报"本位币在系统初始化后不可更改"，即使用户根本没改本位币。
+
+**原因**：`Value()` 的语义是"返回查询结果第一行第一列的值"，取哪一列完全由 `Fields()`（或 `Value(fieldsAndWhere...)` 参数）决定；不带字段调用时落到表的第一列（通常是 `id`），且不报错，属于静默取错列。
+
+**修复方式**：显式指定列 `dao.SysOptions.Ctx(ctx).Where("key", key).Fields("value").Value()`，与代码库其余 5 处 `Fields("xxx").Value()` 的既有写法保持一致。
+
+**正确做法（通用规则）**：`Value()` / `Array()` 这类取单列的快捷方法**必须**显式 `Fields("列名")`，否则取到的是 `id`。评审信号：`grep -rn '\.Value()'` 命中且前面没有 `.Fields(` 的调用。
+
+### 2026-09-05：Scan 进无 orm 标签的匿名结构体——TableFields 元数据查询失败时帕斯卡列名裸进 SQL
+
+**问题**：管理后台租户列表接口 `/api/admin/tenants` 偶发报 `pq: column "Id" does not exist`，SQL 里出现 `"Id","Name","LogoURL"` 等帕斯卡命名列。PostgreSQL 引号标识符大小写敏感，真实列是 `id`/`logo_url`，查询必然失败。
+
+**原因**：`internal/logic/admin/tenant.go` 的 `ListTenants` 把查询结果 `Scan` 进一个**只有 json 标签、没有 orm 标签的匿名结构体**。gf 的 `Model.Scan`（`doStructs`）有个内置行为 *"Auto selecting fields by struct attributes"*：模型未显式 `Fields()` 时，会用**扫描结构体的字段名**自动生成 SELECT 字段列表。字段解析链路（`gdb_func.go` 的 `getFieldsFromStructOrMap`）：有 orm 标签取标签值，**没有则取 Go 字段名原样**；随后 `mappingAndFilterToTableFields` 尝试用真实表结构把 `Id→id`、`LogoURL→logo_url` 纠偏，但它对元数据查询失败的容忍方式是（`gdb_model_utility.go`）：
+
+```go
+fieldsMap, _ := m.TableFields(fieldsTable) // 错误被静默吞掉
+if len(fieldsMap) == 0 {
+    return fields // 元数据拿不到就原样透传 Go 字段名
+}
+```
+
+pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名'::regclass`）。远程数据库瞬时抖动一次、这条目录查询失败，帕斯卡字段名就直接进了 SQL。**平时不炸的原因**：TableFields 成功结果进程内永久缓存（`gcache.DurationNoExpire`），启动后第一次查成功就一直复用；失败不缓存，所以重试通常即恢复。同请求内先执行的 `Count()` 走数据链路成功，进一步印证只有目录查询那一步挂了。
+
+**修复方式**：给匿名结构体补上 orm 标签（`json:"id" orm:"id"` 等 13 个字段）。orm 标签值直接成为 SELECT 字段名——即使 TableFields 失败、字段名原样透传，透传出去的也是正确的小写蛇形列名，SQL 依然成立，彻底消除对运行时元数据的依赖。随后用 go/AST 脚本全仓排查同款写法，批量修复 24 处（幂等中间件、admin/tenant/open 列表与导出、成员模型范围、预算巡检等）。
+
+**不受影响的两种同貌写法（排查时排除）**：
+
+- **模型链上有显式 `.Fields(...)`**：`doStructs` 的自动投影有前置条件 `len(fields)==0 && len(fieldsEx)==0`，显式 Fields 时不触发，SELECT 列已固定。
+- **`Raw(sql).Scan(&x)` 与 `result[0].Struct(&x)`**：Raw 路径在 `getFormattedSqlAndArgs` 里直接透传 rawSql、不拼接 Fields；`Record.Struct` 是内存行→结构体转换，根本不生成 SQL。
+
+**正确做法（通用规则）**：
+
+- **凡 `Scan`/`Struct`/`Structs` 进非 `model/entity` 生成的结构体（匿名结构体、手写 DTO），每个字段必须带 `orm` 标签**，列名写死不依赖运行时映射；`entity.Xxx` 自带 orm 标签天然安全。
+- 判断风险的方法：`grep -rn 'var .* \[\]struct {' internal/` 找到匿名结构体，再看它是否被传给 `dao.Xxx.Ctx(ctx)...Scan(&x)` 链路且链上无 `Fields(...)`/`Raw(...)`——是则全部依赖这条元数据映射，远程 DB 抖动哪个请求撞上哪个接口炸，且报错完全看不出是网络问题。
+
+排查信号：`pq: column "Xxx" does not exist` 且 SQL 列名是帕斯卡命名；偶发、重试即好、与网络抖动时间点吻合。
+
+### 2026-09-18：请求体超过 ClientMaxBodySize 时 gf 直接 panic，客户端收到裸 500 "Internal Error"
+
+**问题**：线上 ZCode 客户端 POST `/v1/messages` 报 500 "Internal Error"（访问日志错误码 `50, "Internal Error"`，错误栈 `Read from request Body failed` → `http: request body too large`），请求耗时 53 秒——客户端慢速上传超大请求体（agent 长上下文 + 内联 base64 媒体），读满上限后被拒。
+
+**原因**：三层机制叠加：
+
+1. gf 在 `ServeHTTP` 里给每个请求体包 `http.MaxBytesReader`，上限取 `server.clientMaxBodySize`，**默认 8MB**（`ghttp_server_config.go`），未配置时即 8MB 生效。
+2. 任何代码调 `r.GetBody()`（内部 `MakeBodyRepeatableRead`）读取超限时，gf **直接 `panic(gerror.WrapCode(gcode.CodeInternalError(50, "Internal Error"), err, "Read from request Body failed"))`**——不是返回错误。
+3. 该 panic 会被 gf `middleware.Next()` 里逐层包裹的 `gutil.TryCatch` **先于自定义 Recovery 中间件**捕获（`ghttp_request_middleware.go` 的 catch 分支 `WriteStatus(500, exception)`），所以项目统一的 JSON 错误格式与 Recovery 兜底全都接不到，客户端拿到框架裸 500 文本。
+
+**修复方式**：`manifest/config/config.yaml` 显式配置 `server.clientMaxBodySize: "32MB"`（支持 "32MB"/"512KB" 字符串，gf 用 `gfile.StrToSize` 解析）；并新增 `middleware.RelayBodyLimit`（`internal/middleware/body_limit.go`）挂在 relay 路由组 `ApiKeyAuth` 之后、`ContentFilter` 之前：按 `Content-Length` 预检，超限先 `io.Copy(io.Discard, r.Body)` 排空再返回 413 + 协议原生格式错误（`/v1/messages` 前缀走 Claude 格式 `request_too_large`，其余走 OpenAI 格式 `invalid_request_error`）。预检阈值从同一配置键读取，与 `MaxBytesReader` 实际上限天然一致。
+
+**正确做法（通用规则）**：
+
+- **调大上限 ≠ 响应体送达**：拒绝超大请求时必须**先排空请求体再写响应**。客户端上传大 body 往往耗时几十秒，服务端抢先响应并关连接，响应体会在半路被掐掉（实测 body 为空、响应头齐全的竞态）；`r.Body` 已被 `MaxBytesReader` 封顶，排空量有界，不会被恶意大包拖死。
+- 无 `Content-Length` 的分块传输无法预检，超限时仍走 gf 的裸 500 兜底（主流 SDK 均携带 Content-Length，属可接受残留）。
+- 自定义 Recovery 中间件**不是**万能兜底：gf 中间件链每层 handler 自带 TryCatch，handler 内的 panic 到不了最外层自定义中间件。
+
+排查信号：访问日志出现 `50, "Internal Error"` + `Read from request Body failed` + `http: request body too large` 栈；耗时数万毫秒的 500。

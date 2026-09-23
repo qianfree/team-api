@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, h } from 'vue'
+import { ref, onMounted, computed, watch, onUnmounted, h } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { NButton, NTag, NInput, NDropdown } from 'naive-ui'
 import { useRoute } from 'vue-router'
@@ -84,13 +84,14 @@ const { exporting, exportFile } = useExport({
 	}),
 })
 
-const statusBadge: Record<string, string> = {
-	NOT_START: 'bg-gray-100 text-gray-800',
-	SUBMITTED: 'bg-blue-100 text-blue-800',
-	IN_PROGRESS: 'bg-amber-100 text-amber-800',
-	SUCCESS: 'bg-emerald-100 text-emerald-800',
-	FAILURE: 'bg-red-100 text-red-800',
-	TIMEOUT: 'bg-orange-100 text-orange-800',
+// 状态语义色：详情抬头区的状态点与进度条共用（列表徽章另走 taskStatusType 的 NTag）
+const statusColor: Record<string, string> = {
+	NOT_START: '#9ca3af',
+	SUBMITTED: '#3b82f6',
+	IN_PROGRESS: '#f59e0b',
+	SUCCESS: '#10b981',
+	FAILURE: '#ef4444',
+	TIMEOUT: '#f97316',
 }
 
 const statusLabel: Record<string, string> = {
@@ -109,6 +110,18 @@ const platformLabel: Record<string, string> = {
 	suno: 'Suno',
 	volcengine: '火山引擎',
 	ali: '阿里',
+	minimax: 'MiniMax',
+}
+
+// 平台 → 任务类型，用于详情抬头区的类型标签（覆盖范围与筛选项一致）
+const platformKind: Record<string, string> = {
+	sora: '视频',
+	kling: '视频',
+	volcengine: '视频',
+	ali: '视频',
+	minimax: '视频',
+	midjourney: '图片',
+	suno: '音乐',
 }
 
 // 金额格式化统一走本位币（formatBilling 内部读取响应式 displayCurrency，配置变化自动重渲染）
@@ -119,6 +132,31 @@ function formatCost(n: number | undefined): string {
 function formatTime(s: string | undefined): string {
 	if (!s) return '-'
 	return s.replace('T', ' ').substring(0, 19)
+}
+
+// 后端时间为 Asia/Shanghai 墙钟（YYYY-MM-DD HH:mm:ss），此处只用来算时间差，不做时区换算；
+// 把 - 换成 / 以兼容 Safari 的 Date 解析
+function parseTs(s: string | undefined): number | null {
+	if (!s) return null
+	const t = new Date(s.replace('T', ' ').substring(0, 19).replace(/-/g, '/')).getTime()
+	return Number.isNaN(t) ? null : t
+}
+
+function diffMs(start?: string, end?: string): number | null {
+	const a = parseTs(start)
+	const b = parseTs(end)
+	if (a === null || b === null) return null
+	return b >= a ? b - a : null
+}
+
+function formatDuration(ms: number): string {
+	const s = Math.floor(ms / 1000)
+	if (s < 60) return `${s} 秒`
+	const m = Math.floor(s / 60)
+	if (m < 60) return `${m} 分 ${s % 60} 秒`
+	const h = Math.floor(m / 60)
+	if (h < 24) return `${h} 小时 ${m % 60} 分`
+	return `${Math.floor(h / 24)} 天 ${h % 24} 小时`
 }
 
 async function fetchTasks() {
@@ -154,12 +192,137 @@ async function openDetail(task: TaskItem) {
 		const res: any = await request.get(`/tenant/tasks/${task.id}`)
 		const raw = res.data?.data
 		if (raw?.task) {
-			detailTask.value = raw.task
+			// 详情接口不返回 username（只有列表接口 join 得到），整体替换会把它抹掉，故显式回落
+			detailTask.value = { ...task, ...raw.task, username: raw.task.username || task.username }
 		}
 	} catch {
 		// keep the list-level data
 	} finally {
 		detailLoading.value = false
+	}
+}
+
+// === 详情弹窗展示 ===
+
+const detailStatusColor = computed(() => statusColor[detailTask.value?.status || ''] || statusColor.NOT_START)
+
+// 进度百分比：解析后端 "50%" 字符串；成功一律补满，保证终态视觉一致
+const progressPercent = computed(() => {
+	if (detailTask.value?.status === 'SUCCESS') return 100
+	const n = parseInt(String(detailTask.value?.progress || '').replace('%', ''), 10)
+	return Number.isNaN(n) ? 0 : Math.min(100, Math.max(0, n))
+})
+
+// 结果资源类型：图片走缩略图、视频/音频内联播放，其余才回退成链接
+const resultKind = computed<'image' | 'video' | 'audio' | 'file'>(() => {
+	const url = detailTask.value?.result_url || ''
+	if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)([?#]|$)/i.test(url)) return 'image'
+	if (/\.(mp4|mov|webm|m4v|mkv)([?#]|$)/i.test(url)) return 'video'
+	if (/\.(mp3|wav|m4a|aac|ogg|flac)([?#]|$)/i.test(url)) return 'audio'
+	return 'file'
+})
+
+const resultKindLabel = computed(() => ({ image: '图片', video: '视频', audio: '音频', file: '文件' }[resultKind.value]))
+
+// Icon 组件按名取 path，取不到会渲染空图标并留下空白占位，故需按类型给出真实存在的图标名
+const resultIconName = computed(
+	() => ({ image: 'photo', video: 'film', audio: 'musicalNote', file: 'link' }[resultKind.value]),
+)
+
+// 结果文件名：取 URL 路径末段（去掉查询串），供下载按钮落盘用
+const resultFileName = computed(() => {
+	const path = (detailTask.value?.result_url || '').split('?')[0]
+	const base = path.substring(path.lastIndexOf('/') + 1)
+	try {
+		return base ? decodeURIComponent(base) : ''
+	} catch {
+		return base
+	}
+})
+
+// 进行中任务抬头区的「已运行」按秒刷新
+const nowTs = ref(Date.now())
+let heroTicker: ReturnType<typeof setInterval> | undefined
+
+function startHeroTicker() {
+	stopHeroTicker()
+	heroTicker = setInterval(() => { nowTs.value = Date.now() }, 1000)
+}
+
+function stopHeroTicker() {
+	if (heroTicker) {
+		clearInterval(heroTicker)
+		heroTicker = undefined
+	}
+}
+
+watch(
+	[showDetail, () => detailTask.value?.status],
+	([visible, status]) => {
+		const running = visible && ['NOT_START', 'SUBMITTED', 'IN_PROGRESS'].includes(String(status || ''))
+		if (running) startHeroTicker()
+		else stopHeroTicker()
+	},
+	{ immediate: true },
+)
+
+onUnmounted(stopHeroTicker)
+
+// 抬头区右侧文案：终态给总耗时与完成时刻，进行中给已运行时长
+const detailTimingText = computed(() => {
+	const t = detailTask.value
+	if (!t) return ''
+	if (t.status === 'SUCCESS' || t.status === 'FAILURE' || t.status === 'TIMEOUT') {
+		const total = diffMs(t.created_at, t.finish_time)
+		if (total === null) return ''
+		return `总耗时 ${formatDuration(total)}${t.finish_time ? ' · ' + formatTime(t.finish_time) + ' 完成' : ''}`
+	}
+	const since = parseTs(t.submit_time) ?? parseTs(t.created_at)
+	if (since === null) return ''
+	return `已运行 ${formatDuration(Math.max(0, nowTs.value - since))}`
+})
+
+// 执行耗时 = 提交上游 → 完成，无完成时间（进行中）时显示「-」
+const detailDurationText = computed(() => {
+	const ms = diffMs(detailTask.value?.submit_time, detailTask.value?.finish_time)
+	return ms === null ? '-' : formatDuration(ms)
+})
+
+// 复制反馈：按 key 区分触发源，短暂显示「已复制」后复位（可编辑文本行内提示，不额外引 toast）
+const copiedKey = ref('')
+async function copyText(text: string, key = 'default') {
+	if (!text) return
+	try {
+		await navigator.clipboard.writeText(text)
+		copiedKey.value = key
+		setTimeout(() => {
+			if (copiedKey.value === key) copiedKey.value = ''
+		}, 1500)
+	} catch (e) {
+		console.error(e)
+	}
+}
+
+// 下载结果：跨域直链的 download 属性会被浏览器忽略，故先取 blob 落盘；
+// 对象存储未开 CORS 时 fetch 会失败，降级为新标签打开（与「打开原文件」一致）
+async function downloadResult() {
+	const url = detailTask.value?.result_url
+	if (!url) return
+	try {
+		const res = await fetch(url)
+		if (!res.ok) throw new Error(String(res.status))
+		const blob = await res.blob()
+		const href = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = href
+		a.download = resultFileName.value || 'task-result'
+		document.body.appendChild(a)
+		a.click()
+		a.remove()
+		URL.revokeObjectURL(href)
+	} catch (e) {
+		console.error('[task-result] 下载失败，改为新标签打开', e)
+		window.open(url, '_blank', 'noopener')
 	}
 }
 
@@ -178,12 +341,7 @@ function resetFilters() {
 	fetchTasks()
 }
 
-function isImageResult(url: string | undefined): boolean {
-	if (!url) return false
-	return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)
-}
-
-// 任务状态 → NTag type 映射（statusBadge 为 bg-* 类，无法映射到 renderBadge，改为直接渲染 NTag）
+// 任务状态 → NTag type 映射（statusColor 为语义色，无法映射到 renderBadge，改为直接渲染 NTag）
 const taskStatusType: Record<string, 'default' | 'success' | 'info' | 'warning' | 'error' | 'primary'> = {
 	NOT_START: 'default',
 	SUBMITTED: 'info',
@@ -198,19 +356,19 @@ const columns = computed<DataTableColumns<TaskItem>>(() => [
 	{
 		title: '任务 ID',
 		key: 'public_task_id',
-		width: 160,
+		width: 200,
 		render: (row) => h('span', { class: 'font-mono text-xs text-gray-600' }, row.public_task_id),
 	},
 	{
 		title: '平台',
 		key: 'platform',
-		width: 110,
+		width: 100,
 		render: (row) => h('span', { class: 'text-sm font-medium text-gray-700' }, platformLabel[row.platform] || row.platform),
 	},
 	{
 		title: '状态',
 		key: 'status',
-		width: 110,
+		width: 60,
 		render: (row) =>
 			h(NTag, { type: taskStatusType[row.status] || 'default', size: 'small' }, { default: () => statusLabel[row.status] || row.status }),
 	},
@@ -234,13 +392,13 @@ const columns = computed<DataTableColumns<TaskItem>>(() => [
 	{
 		title: '提交时间',
 		key: 'submit_time',
-		width: 170,
+		width: 150,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.submit_time)),
 	},
 	{
 		title: '完成时间',
 		key: 'finish_time',
-		width: 170,
+		width: 150,
 		render: (row) => h('span', { class: 'text-xs text-gray-500' }, formatTime(row.finish_time)),
 	},
 	{
@@ -289,7 +447,7 @@ onMounted(() => {
 					</div>
 					<div class="flex items-center gap-2">
 						<label class="text-sm text-gray-500 whitespace-nowrap">平台</label>
-						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'}]" container-class="w-[120px]" />
+						<BaseSelect v-model="filterPlatform" :options="[{value:'',label:'全部'},{value:'sora',label:'Sora'},{value:'kling',label:'Kling'},{value:'midjourney',label:'Midjourney'},{value:'suno',label:'Suno'},{value:'volcengine',label:'火山引擎'},{value:'ali',label:'阿里'},{value:'minimax',label:'MiniMax'}]" container-class="w-[120px]" />
 					</div>
 					<div class="ml-auto flex items-center gap-2">
 						<button type="submit" class="btn btn-primary btn-sm">
@@ -353,54 +511,99 @@ onMounted(() => {
 			</div>
 
 			<div v-else-if="detailTask" class="space-y-5">
+				<!-- 状态抬头区：打开弹窗第一眼即可判断结果与耗时 -->
+				<div class="rounded-xl bg-gray-50 px-4 py-3">
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-2">
+							<span class="h-2 w-2 shrink-0 rounded-full" :style="{ background: detailStatusColor }"></span>
+							<span class="shrink-0 text-base font-semibold text-gray-800">{{ statusLabel[detailTask.status] || detailTask.status }}</span>
+							<span class="truncate text-xs text-gray-500">{{ detailTask.model_name || '-' }} · {{ detailTask.action || '-' }}</span>
+						</div>
+						<div class="flex shrink-0 items-center gap-1.5">
+							<span v-if="platformKind[detailTask.platform]" class="rounded-md bg-white px-2 py-0.5 text-xs font-medium text-gray-600">
+								{{ platformKind[detailTask.platform] }}
+							</span>
+							<span class="rounded-md bg-white px-2 py-0.5 text-xs font-medium text-primary-700">
+								{{ platformLabel[detailTask.platform] || detailTask.platform }}
+							</span>
+						</div>
+					</div>
+					<div class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-gray-200">
+						<div
+							class="h-full rounded-full transition-all duration-500"
+							:style="{ width: progressPercent + '%', background: detailStatusColor }"
+						></div>
+					</div>
+					<div class="mt-1.5 flex items-center justify-between gap-3 text-xs text-gray-500">
+						<span>进度 {{ detailTask.progress || '0%' }}</span>
+						<span v-if="detailTimingText">{{ detailTimingText }}</span>
+					</div>
+				</div>
+
+				<!-- 失败原因：紧跟抬头区，避免埋在字段末尾被忽略 -->
+				<div v-if="detailTask.fail_reason" class="flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 px-4 py-3">
+					<Icon name="xCircle" size="sm" class="mt-0.5 shrink-0 text-red-500" />
+					<div class="min-w-0 text-sm text-red-700">
+						<p class="mb-1 font-semibold">任务失败</p>
+						<p class="break-all leading-relaxed">{{ detailTask.fail_reason }}</p>
+					</div>
+				</div>
+
 				<!-- Basic Info -->
 				<div>
 					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
 						<Icon name="document" size="sm" class="text-primary-500" />
 						基本信息
 					</h4>
-					<div class="grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
-						<div class="flex justify-between">
-							<span class="text-gray-500">任务 ID</span>
-							<span class="font-mono text-xs">{{ detailTask.public_task_id }}</span>
+
+					<!-- 任务 ID 独占一行：等宽 + 单行省略，长 ID 不再折行挤乱右侧字段的对齐 -->
+					<div class="flex items-center gap-2 text-sm">
+						<span class="w-[60px] shrink-0 text-gray-500">任务 ID</span>
+						<span class="min-w-0 flex-1 truncate font-mono text-xs text-gray-700" :title="detailTask.public_task_id">
+							{{ detailTask.public_task_id }}
+						</span>
+						<button
+							class="shrink-0 text-gray-400 transition-colors hover:text-primary-500"
+							title="复制任务 ID"
+							@click="copyText(detailTask.public_task_id, 'task')"
+						>
+							<Icon :name="copiedKey === 'task' ? 'check' : 'copy'" size="xs" />
+						</button>
+					</div>
+
+					<!-- label 固定宽 + 值左对齐：两端对齐留下的中间空洞会让 label 与值难以对照 -->
+					<div class="mt-2.5 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">平台</span>
+							<span class="min-w-0 truncate text-gray-700">{{ platformLabel[detailTask.platform] || detailTask.platform || '-' }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">状态</span>
-							<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium" :class="statusBadge[detailTask.status] || 'bg-gray-100 text-gray-800'">
-								{{ statusLabel[detailTask.status] || detailTask.status }}
-							</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">动作</span>
+							<span class="min-w-0 truncate text-gray-700">{{ detailTask.action || '-' }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">平台</span>
-							<span class="text-sm">{{ platformLabel[detailTask.platform] || detailTask.platform }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">模型</span>
+							<span class="min-w-0 truncate font-mono text-xs text-gray-700">{{ detailTask.model_name || '-' }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">动作</span>
-							<span class="text-sm">{{ detailTask.action || '-' }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">成员</span>
+							<span class="min-w-0 truncate text-gray-700">{{ detailTask.username || '-' }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">模型</span>
-							<span class="text-sm font-mono">{{ detailTask.model_name }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">提交时间</span>
+							<span class="min-w-0 truncate text-xs text-gray-700">{{ formatTime(detailTask.submit_time) }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">进度</span>
-							<span class="text-sm">{{ detailTask.progress || '-' }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">完成时间</span>
+							<span class="min-w-0 truncate text-xs text-gray-700">{{ formatTime(detailTask.finish_time) }}</span>
 						</div>
-						<div v-if="detailTask.username" class="flex justify-between">
-							<span class="text-gray-500">用户</span>
-							<span class="text-sm">{{ detailTask.username }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">创建时间</span>
+							<span class="min-w-0 truncate text-xs text-gray-700">{{ formatTime(detailTask.created_at) }}</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">提交时间</span>
-							<span class="text-xs">{{ formatTime(detailTask.submit_time) }}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">完成时间</span>
-							<span class="text-xs">{{ formatTime(detailTask.finish_time) }}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-500">创建时间</span>
-							<span class="text-xs">{{ formatTime(detailTask.created_at) }}</span>
+						<div class="flex items-center gap-2">
+							<span class="w-[60px] shrink-0 text-gray-500">执行耗时</span>
+							<span class="min-w-0 truncate text-xs text-gray-700">{{ detailDurationText }}</span>
 						</div>
 					</div>
 				</div>
@@ -411,29 +614,44 @@ onMounted(() => {
 						<Icon name="creditCard" size="sm" class="text-primary-500" />
 						费用信息
 					</h4>
-					<div class="space-y-2 text-sm">
-						<div class="flex items-center justify-between">
-							<span class="text-gray-500">预扣金额</span>
-							<span>{{ formatCost(detailTask.pre_deduct_amount) }}</span>
+					<div class="grid grid-cols-2 gap-3">
+						<div class="rounded-xl bg-gray-50 px-4 py-3">
+							<p class="text-xs text-gray-500">预扣金额</p>
+							<p class="mt-1 text-base font-semibold text-gray-800">{{ formatCost(detailTask.pre_deduct_amount) }}</p>
 						</div>
-						<div class="flex items-center justify-between border-t border-gray-200 pt-2 font-semibold">
-							<span class="text-gray-700">实际费用</span>
-							<span v-if="detailTask.billing_settled" class="text-emerald-600">{{ formatCost(detailTask.actual_cost) }}</span>
-							<span v-else class="text-gray-400">未结算</span>
+						<div class="rounded-xl bg-gray-50 px-4 py-3">
+							<div class="flex items-center gap-1.5">
+								<p class="text-xs text-gray-500">实际费用</p>
+								<span v-if="detailTask.billing_settled" class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-emerald-600">已结算</span>
+							</div>
+							<p v-if="detailTask.billing_settled" class="mt-1 text-base font-semibold text-emerald-600">
+								{{ formatCost(detailTask.actual_cost) }}
+							</p>
+							<p v-else class="mt-1 text-base font-semibold text-gray-400">未结算</p>
 						</div>
 					</div>
 				</div>
 
 				<!-- Result -->
 				<div v-if="detailTask.result_url">
-					<h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-						<Icon name="image" size="sm" class="text-primary-500" />
-						生成结果
-					</h4>
-					<div class="bg-gray-50 rounded-xl p-4">
+					<div class="mb-3 flex items-center justify-between gap-3">
+						<h4 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+							<Icon :name="resultIconName" size="sm" class="text-primary-500" />
+							生成结果
+							<span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-gray-500">{{ resultKindLabel }}</span>
+						</h4>
+						<div class="flex shrink-0 items-center gap-3 text-xs">
+							<a :href="detailTask.result_url" target="_blank" rel="noopener" class="text-primary-600 hover:text-primary-700">打开原文件</a>
+							<button class="text-primary-600 hover:text-primary-700" @click="downloadResult">下载</button>
+							<button class="text-primary-600 hover:text-primary-700" @click="copyText(detailTask.result_url || '', 'result')">
+								{{ copiedKey === 'result' ? '已复制' : '复制链接' }}
+							</button>
+						</div>
+					</div>
+					<div class="bg-gray-50 rounded-xl p-3">
 						<!-- 图片：内联展示缩略图（省流量），点击在新标签打开原图 -->
 						<a
-							v-if="isImageResult(detailTask.result_url)"
+							v-if="resultKind === 'image'"
 							:href="detailTask.result_url"
 							target="_blank"
 							rel="noopener"
@@ -445,27 +663,28 @@ onMounted(() => {
 								class="max-w-full rounded-lg cursor-zoom-in"
 							/>
 						</a>
-						<a v-else :href="detailTask.result_url" target="_blank" class="text-primary-600 hover:text-primary-700 text-sm break-all">
+						<!-- 视频/音频：内联播放，客户不必再另开签名链接 -->
+						<video
+							v-else-if="resultKind === 'video'"
+							:src="detailTask.result_url"
+							class="w-full max-h-[420px] rounded-lg bg-black"
+							controls
+							preload="metadata"
+						></video>
+						<audio
+							v-else-if="resultKind === 'audio'"
+							:src="detailTask.result_url"
+							class="w-full"
+							controls
+							preload="metadata"
+						></audio>
+						<a v-else :href="detailTask.result_url" target="_blank" rel="noopener" class="text-primary-600 hover:text-primary-700 text-sm break-all">
 							{{ detailTask.result_url }}
 						</a>
 					</div>
 				</div>
-
-				<!-- Fail Reason -->
-				<div v-if="detailTask.fail_reason">
-					<h4 class="text-sm font-semibold text-red-600 mb-3 flex items-center gap-2">
-						<Icon name="xCircle" size="sm" />
-						失败原因
-					</h4>
-					<div class="rounded-lg bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-700">
-						{{ detailTask.fail_reason }}
-					</div>
-				</div>
 			</div>
 
-			<template #footer>
-				<button class="btn btn-secondary" @click="showDetail = false">关闭</button>
-			</template>
 		</BaseModal>
 	</div>
 </template>

@@ -5,7 +5,6 @@ import {
 	Tag, Button,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
-import PageHeader from '@/components/PageHeader.vue'
 import TableStats from '@/components/TableStats.vue'
 import ForwardingTracePanel from '@/components/ForwardingTracePanel.vue'
 import request from '@/utils/request'
@@ -31,6 +30,7 @@ const filter = reactive({
 	tenant_id: null as number | null,
 	user_id: null as number | null,
 	api_key_id: '',
+	model: '',
 	date_range: defaultTodayRange(),
 })
 
@@ -140,7 +140,7 @@ const columns: TableColumnData[] = [
 	{ title: 'API Key', dataIndex: 'api_key_name', width: 120, ellipsis: true, render({ record }) {
 			return record.api_key_name || record.api_key_id || '-'
 		}},
-	{ title: 'Request ID', dataIndex: 'request_id', width: 150, ellipsis: true },
+	// Request ID 不在表格展示（体积长、噪声大），需要时可通过「详情」抽屉或上方筛选框查看
 	{
 		title: '方法', dataIndex: 'method', width: 70,
 		render({ record }) {
@@ -149,6 +149,9 @@ const columns: TableColumnData[] = [
 		},
 	},
 	{ title: '路径', dataIndex: 'path', width: 160, ellipsis: true },
+	{ title: '模型', dataIndex: 'model_name', width: 150, ellipsis: true, render({ record }) {
+			return record.model_name || '-'
+		}},
 	{
 		title: '状态码', dataIndex: 'status_code', width: 80,
 		render({ record }) {
@@ -203,6 +206,7 @@ async function fetchData() {
 		if (filter.tenant_id) params.tenant_id = filter.tenant_id
 		if (filter.user_id) params.user_id = filter.user_id
 		if (filter.api_key_id) params.api_key_id = parseInt(filter.api_key_id)
+		if (filter.model) params.model = filter.model
 		if (filter.date_range.length === 2) {
 			params.start_date = filter.date_range[0]
 			// 截止时间为默认「现在」时不传 end_date（后端按「到现在」实时处理），仅手动选择后才显式下发
@@ -253,6 +257,7 @@ function handleReset() {
 	filter.tenant_id = null
 	filter.user_id = null
 	filter.api_key_id = ''
+	filter.model = ''
 	filter.date_range = defaultTodayRange()
 	pagination.current = 1
 	fetchData()
@@ -275,10 +280,8 @@ onMounted(() => {
 
 <template>
 	<div class="page-table">
-		<PageHeader title="请求日志" description="查看 LLM 请求审计日志，包含请求体和响应体" />
-
 		<a-card :bordered="false" class="mb-4">
-			<a-space wrap>
+			<div class="filter-bar">
 				<a-range-picker
 					v-model="filter.date_range"
 					show-time
@@ -331,10 +334,19 @@ onMounted(() => {
 					style="width: 100px"
 					@keydown.enter="handleFilter"
 				/>
-				<a-button type="primary" @click="handleFilter">搜索</a-button>
-				<a-button @click="handleReset">重置</a-button>
-				<a-button @click="handleRefresh">刷新</a-button>
-			</a-space>
+				<a-input
+					v-model="filter.model"
+					placeholder="模型名称"
+					allow-clear
+					style="width: 160px"
+					@keydown.enter="handleFilter"
+				/>
+				<div class="filter-actions">
+					<a-button type="primary" @click="handleFilter">搜索</a-button>
+					<a-button @click="handleReset">重置</a-button>
+					<a-button @click="handleRefresh">刷新</a-button>
+				</div>
+			</div>
 		</a-card>
 
 		<a-card :bordered="false">
@@ -346,10 +358,10 @@ onMounted(() => {
 				:stripe="true"
 				size="small"
 				row-key="id"
-				card-title-key="request_id"
-				card-subtitle-key="path"
+				card-title-key="path"
+				card-subtitle-key="created_at"
 				card-badge-key="status_code"
-				:card-fields="['tenant_name', 'method', 'latency_ms', 'first_token_ms', 'client_ip', 'created_at']"
+				:card-fields="['tenant_name', 'method', 'model_name', 'latency_ms', 'first_token_ms', 'client_ip']"
 			/>
 			<div class="table-footer">
 				<TableStats :total="pagination.total" />
@@ -374,6 +386,7 @@ onMounted(() => {
 						<a-descriptions-item label="租户/用户/Key">{{ detailRecord.tenant_id }} / {{ detailRecord.user_id }} / {{ detailRecord.api_key_id }}</a-descriptions-item>
 						<a-descriptions-item label="方法">{{ detailRecord.method }}</a-descriptions-item>
 						<a-descriptions-item label="路径">{{ detailRecord.path }}</a-descriptions-item>
+						<a-descriptions-item label="模型">{{ detailRecord.model_name || '-' }}</a-descriptions-item>
 						<a-descriptions-item v-if="detailRecord.query_params" label="查询参数">{{ detailRecord.query_params }}</a-descriptions-item>
 						<a-descriptions-item label="状态码">{{ detailRecord.status_code }}</a-descriptions-item>
 						<a-descriptions-item label="客户端IP">{{ detailRecord.client_ip }}</a-descriptions-item>
@@ -436,14 +449,34 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 筛选栏：条件与按钮同流排布——空间足够时同行显示；不足时条件自动换行，按钮组始终落在末行右侧（右下角） */
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 按钮组：margin-left:auto 在所在行内靠右；换行独占末行时仍靠右，形成右下角对齐 */
+.filter-actions {
+	margin-left: auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+/* 移动端：筛选条件各占整行，按钮组落到最后一行并靠右 */
+@media (max-width: 768px) {
+	.filter-bar > *:not(.filter-actions) {
+		flex: 1 1 100%;
+		width: 100% !important;
+	}
+}
 .table-footer {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	margin-top: 16px;
 	padding-top: 16px;
-	border-top: 1px solid var(--color-border-light, #e5e6eb);
 }
 /* 统计栏移入底部后，去掉全局样式的下边距，与分页栏垂直居中 */
 .table-footer :deep(.table-stats) {

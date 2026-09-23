@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gogf/gf/v2/database/gdb"
-	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 
@@ -260,24 +259,6 @@ func (s *sAdmin) ListSensitiveAccessLogs(ctx context.Context, req *v1.SensitiveL
 	}, nil
 }
 
-// LogSensitiveAccess inserts a sensitive data access log entry.
-func LogSensitiveAccess(ctx context.Context, userID int64, userType, resourceType string, resourceID int64, action, reason, ip, userAgent string) error {
-	_, err := common.AuditModelCtx(ctx, "aud_sensitive_access_logs").Data(do.AudSensitiveAccessLogs{
-		UserId:       userID,
-		UserType:     userType,
-		ResourceType: resourceType,
-		ResourceId:   resourceID,
-		Action:       action,
-		Reason:       reason,
-		IpAddress:    ip,
-		UserAgent:    userAgent,
-	}).Insert()
-	if err != nil {
-		return gerror.Wrapf(err, "记录敏感数据访问日志失败")
-	}
-	return nil
-}
-
 // MaskSensitiveData 委托给 common.MaskSensitiveData
 func MaskSensitiveData(data string) string {
 	return common.MaskSensitiveData(data)
@@ -356,6 +337,10 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 		conditions = append(conditions, "path LIKE ?")
 		args = append(args, "%"+req.Path+"%")
 	}
+	if req.Model != "" {
+		conditions = append(conditions, "model_name = ?")
+		args = append(args, req.Model)
+	}
 	if req.StatusCode > 0 {
 		conditions = append(conditions, "status_code = ?")
 		args = append(args, req.StatusCode)
@@ -370,11 +355,18 @@ func (s *sAdmin) ListRequestAuditLogs(ctx context.Context, req *v1.RequestAuditL
 	}
 
 	where := strings.Join(conditions, " AND ")
-	auditFields := "id, tenant_id, user_id, api_key_id, project_id, request_id, method, path, query_params, status_code, client_ip, user_agent, latency_ms, first_token_ms, audit_level, created_at"
+	// 列表白名单：表格列 + EnrichAuditRecords 回填名称所需的关联键。
+	// user_id / project_id 仅作关联查询键（username / project_name 据此回填），表格不展示，出参剔除；
+	// request_id / query_params / user_agent 等列表不展示的字段经详情接口获取。
+	auditFields := "id, tenant_id, user_id, api_key_id, project_id, method, path, model_name, status_code, client_ip, latency_ms, first_token_ms, audit_level, created_at"
 
 	items, total, err := queryAuditPage(ctx, common.GetAuditDB(), "aud_request_logs", auditFields, where, args, page, pageSize)
 	if err != nil {
 		return nil, err
+	}
+	for _, item := range items {
+		delete(item, "user_id")
+		delete(item, "project_id")
 	}
 
 	return &v1.RequestAuditLogListRes{
@@ -397,6 +389,9 @@ func (s *sAdmin) GetRequestAuditLogDetail(ctx context.Context, req *v1.RequestAu
 	if record == nil {
 		return nil, common.NewNotFoundError("审计日志")
 	}
+	// 详情含请求/响应体（full 级别下为明文对话内容），属敏感读取，落留痕
+	common.LogSensitiveAccess(ctx, common.GetCtxUserID(ctx), "admin", "request_log", req.Id, "view", "查看请求审计日志详情")
+
 	b, _ := json.Marshal(record)
 	var detail map[string]any
 	_ = json.Unmarshal(b, &detail)
@@ -599,4 +594,19 @@ func (s *sAdmin) ContentFilterLogList(ctx context.Context, req *v1.ContentFilter
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// ContentFilterLogClear 硬删除全部内容过滤拦截日志。
+// 拦截日志为追加型审计流水，堆积后用 TRUNCATE 秒级清空并立即归还磁盘空间
+// （DELETE 需等 VACUUM 回收）。TRUNCATE 不返回行数，故先取删除前条数作为反馈。
+// 表无数据库级外键，TRUNCATE 安全。
+func (s *sAdmin) ContentFilterLogClear(ctx context.Context, _ *v1.ContentFilterLogClearReq) (*v1.ContentFilterLogClearRes, error) {
+	count, err := dao.AudContentFilterLogs.Ctx(ctx).Count()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := g.DB().Ctx(ctx).Exec(ctx, "TRUNCATE TABLE aud_content_filter_logs RESTART IDENTITY"); err != nil {
+		return nil, err
+	}
+	return &v1.ContentFilterLogClearRes{Deleted: int64(count)}, nil
 }

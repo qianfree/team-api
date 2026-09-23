@@ -53,6 +53,8 @@ func asyncTaskFromEntity(row *entity.TskModelTasks) *common.AsyncTask {
 		FinishTime:      timePtrFromGTime(row.FinishTime),
 		CreatedAt:       timeFromGTime(row.CreatedAt),
 		UpdatedAt:       timeFromGTime(row.UpdatedAt),
+		Deleted:         row.Deleted,
+		DeletedAt:       timePtrFromGTime(row.DeletedAt),
 	}
 }
 
@@ -187,11 +189,12 @@ func (p *AsyncProvider) UpdateTaskCAS(ctx context.Context, task *common.AsyncTas
 	return nil
 }
 
-// GetTaskByPublicID 根据公开任务 ID 查询
+// GetTaskByPublicID 根据公开任务 ID 查询（软删除的任务视为不存在）
 func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID string) (*common.AsyncTask, error) {
 	var row *entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
+		Where("deleted", false).
 		Scan(&row)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s", publicTaskID)
@@ -199,13 +202,14 @@ func (p *AsyncProvider) GetTaskByPublicID(ctx context.Context, publicTaskID stri
 	return asyncTaskFromEntity(row), nil
 }
 
-// GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询
+// GetTaskByPublicIDAndUser 根据公开任务 ID + 用户 ID 查询（软删除的任务视为不存在）
 func (p *AsyncProvider) GetTaskByPublicIDAndUser(ctx context.Context, publicTaskID string, userID int64, tenantID int64) (*common.AsyncTask, error) {
 	var row *entity.TskModelTasks
 	err := dao.TskModelTasks.Ctx(ctx).
 		Where("public_task_id", publicTaskID).
 		Where("user_id", userID).
 		Where("tenant_id", tenantID).
+		Where("deleted", false).
 		Scan(&row)
 	if err != nil {
 		return nil, gerror.Wrapf(err, "query async task failed: public_id=%s user_id=%d", publicTaskID, userID)
@@ -260,6 +264,30 @@ func (p *AsyncProvider) GetUnsettledTasks(ctx context.Context, limit int) ([]*co
 	}
 
 	return asyncTasksFromEntities(rows), nil
+}
+
+// SoftDeleteTask 软删除任务（DELETE /v1/videos/{id}）。
+// 仅标记 deleted，不动 status/计费字段：调用方保证只有终态且已结算的任务可删，
+// 轮询 cron 的 GetNonTerminalTasks/GetUnsettledTasks 查询不感知 deleted 列。
+func (p *AsyncProvider) SoftDeleteTask(ctx context.Context, task *common.AsyncTask) error {
+	result, err := dao.TskModelTasks.Ctx(ctx).
+		Where("id", task.ID).
+		Where("tenant_id", task.TenantID).
+		Update(map[string]any{
+			"deleted":    true,
+			"deleted_at": gtime.Now(),
+			"result_url": "", // 清掉成品直链，避免软删后内部路径仍可寻址
+			"updated_at": time.Now(),
+		})
+	if err != nil {
+		return gerror.Wrapf(err, "soft delete async task failed: id=%d", task.ID)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("soft delete no rows affected: id=%d", task.ID)
+	}
+	g.Log().Infof(ctx, "[AsyncProvider] SoftDeleteTask: public_id=%s, tenant=%d", task.PublicTaskID, task.TenantID)
+	return nil
 }
 
 // GetChannelByID 获取渠道基本信息（含从 chn_channel_keys 解密的 API Key）

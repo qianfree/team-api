@@ -2,12 +2,14 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"github.com/gogf/gf/v2/os/gtime"
 
 	"github.com/qianfree/team-api/internal/consts"
 )
@@ -111,6 +113,37 @@ func EndOfRange(value string) string {
 	return value
 }
 
+// UsageLogExportMaxWindowDays 用量日志类导出的时间窗上限（天），管理后台与租户控制台共用。
+const UsageLogExportMaxWindowDays = 31
+
+// ValidateExportTimeWindow 校验导出必须限定时间窗：开始时间必填，结束时间缺省按
+// 「现在」计（与前端「截止留空 = 到现在」的口径一致），窗口不得超过 maxDays 天。
+//
+// 列表接口天然有分页 LIMIT 兜底，导出没有 —— 不限窗口等于允许一次请求扫全量大表。
+// 更长跨度的取数应按窗口分多次导出。
+func ValidateExportTimeWindow(start, end string, maxDays int) error {
+	if start == "" {
+		return NewBadRequestError(fmt.Sprintf("导出必须指定开始时间，且时间跨度不超过 %d 天", maxDays))
+	}
+	startAt := gtime.NewFromStr(StartOfRange(start))
+	if startAt == nil {
+		return NewBadRequestError("开始时间格式不正确")
+	}
+	endAt := gtime.Now()
+	if end != "" {
+		if endAt = gtime.NewFromStr(EndOfRange(end)); endAt == nil {
+			return NewBadRequestError("结束时间格式不正确")
+		}
+	}
+	if endAt.Before(startAt) {
+		return NewBadRequestError("结束时间不能早于开始时间")
+	}
+	if endAt.Sub(startAt) > time.Duration(maxDays)*24*time.Hour {
+		return NewBadRequestError(fmt.Sprintf("导出时间跨度不能超过 %d 天，请缩小范围后分批导出", maxDays))
+	}
+	return nil
+}
+
 // ValidateForbiddenWords 校验名称是否包含系统禁用词
 // 从系统配置 register_forbidden_words 读取逗号分隔的禁用词列表，对 value 做大小写不敏感的包含检查
 func ValidateForbiddenWords(ctx context.Context, value, fieldName string) error {
@@ -165,7 +198,7 @@ func ValidateTenantName(name string) error {
 }
 
 // TruncateToDisplayWidth 按显示宽度截断字符串，使结果宽度不超过 max。
-// 用于自动生成的组织名称兜底（如“xxx 的组织”），避免用户名过长导致存入超长数据。
+// 用于自动生成的组织名称兜底（默认取用户名），避免用户名过长导致存入超长数据。
 func TruncateToDisplayWidth(s string, max int) string {
 	width := 0
 	out := make([]rune, 0, len(s))

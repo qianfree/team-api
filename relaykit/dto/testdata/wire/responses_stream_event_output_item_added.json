@@ -1,0 +1,12 @@
+{
+  "type": "response.output_item.added",
+  "output_index": 1,
+  "item": {
+    "type": "function_call",
+    "id": "fc_67f2a1b3c4d5e6f7",
+    "call_id": "call_abc123",
+    "name": "get_weather",
+    "arguments": "{\"city\":\"Shanghai\"}",
+    "status": "in_progress"
+  }
+}

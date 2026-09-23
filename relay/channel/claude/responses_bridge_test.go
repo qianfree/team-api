@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ func responsesInboundInfo(isStream bool) *common.RelayInfo {
 		OriginModelName: "glm-5.3",
 		StreamStatus:    common.NewStreamStatus(),
 		ChannelMeta: &common.ChannelMeta{
+			ChannelType:       int(constant.ProviderClaude),
 			BaseURL:           "https://upstream.example.com",
 			UpstreamModelName: "glm-5.3",
 			IsModelMapped:     false,
@@ -144,7 +146,8 @@ func TestDoResponse_ResponsesInboundStream_TextAndToolCall(t *testing.T) {
 }
 
 // TestDoResponse_ResponsesInboundStream_UpstreamErrorBeforeEvents
-// 首个事件即 error：返回 upstream error 并写入错误体，不合成假成功的 response.completed。
+// 首个事件即 error：SSE 头已提交，须向上返回上游错误（502 + ResponseWritten，
+// 供调度 FSM 收到上游故障信号且不重写响应体/不换渠道重试），且不合成假成功的 response.completed。
 func TestDoResponse_ResponsesInboundStream_UpstreamErrorBeforeEvents(t *testing.T) {
 	ss := strings.Join([]string{
 		`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
@@ -160,11 +163,23 @@ func TestDoResponse_ResponsesInboundStream_UpstreamErrorBeforeEvents(t *testing.
 	rec := httptest.NewRecorder()
 	a := &Adaptor{}
 	_, err := a.DoResponse(context.Background(), resp, info, rec)
+	// SSE 响应头已提交：状态码不可再改，故错误带 ResponseWritten；
+	// 但错误本身必须上抛，否则调度 FSM 收不到上游故障信号、且会按成功结算
 	if err == nil {
 		t.Fatal("upstream error event should return an upstream error, got nil")
 	}
-	if !strings.Contains(rec.Body.String(), "overloaded_error") {
-		t.Errorf("error body not written to client: %s", rec.Body.String())
+	var relayErr *constant.RelayError
+	if !errors.As(err, &relayErr) {
+		t.Fatalf("want *constant.RelayError, got %T: %v", err, err)
+	}
+	if relayErr.StatusCode != http.StatusBadGateway {
+		t.Errorf("StatusCode = %d, want %d", relayErr.StatusCode, http.StatusBadGateway)
+	}
+	if !relayErr.ResponseWritten {
+		t.Error("ResponseWritten = false, want true（SSE 头已提交，上层不得重写响应体）")
+	}
+	if got := info.StreamStatus.GetEndReason(); got != common.StreamEndReasonError {
+		t.Errorf("StreamStatus end reason = %v, want %v", got, common.StreamEndReasonError)
 	}
 	if strings.Contains(rec.Body.String(), "response.completed") {
 		t.Errorf("should not synthesize response.completed on upstream error: %s", rec.Body.String())

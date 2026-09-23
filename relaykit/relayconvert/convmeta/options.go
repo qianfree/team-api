@@ -11,20 +11,9 @@ type Options struct {
 	// 该接口接受转换器仅在该方言下才会输出的额外字段（reasoning 配置、system parts 上的 cache_control）。
 	// 宿主根据渠道类型设置此项。
 	OpenRouterDialect bool
-
-	// PreserveThinkingSuffix 返回哪些模型在发出的模型名上必须保留
-	// -thinking/-nothinking/effort 后缀（宿主黑名单查询）。
-	// Nil 表示"从不保留"。
-	PreserveThinkingSuffix func(modelName string) bool
 }
 
 type ClaudeOptions struct {
-	// ThinkingAdapterEnabled 将带 "-thinking" 后缀的 OpenAI 模型名
-	// 转换为 Claude 扩展思考请求。
-	ThinkingAdapterEnabled bool
-	// ThinkingAdapterBudgetTokensPercentage 在适配器触发时，
-	// 按 max_tokens 的一定比例确定 thinking budget_tokens 的大小。
-	ThinkingAdapterBudgetTokensPercentage float64
 	// DefaultMaxTokens 返回当源请求未携带 max_tokens 时要注入的 max_tokens 值。
 	// Claude Messages API 要求必须提供 max_tokens（省略会返回 400），
 	// 因此当该 hook 为 nil 且没有其他路径提供该值时，
@@ -35,12 +24,6 @@ type ClaudeOptions struct {
 }
 
 type GeminiOptions struct {
-	// ThinkingAdapterEnabled 将 -thinking/-nothinking/effort 后缀映射到
-	// Gemini 的 thinkingConfig。
-	ThinkingAdapterEnabled bool
-	// ThinkingAdapterBudgetTokensPercentage 在适配器触发时，
-	// 按 maxOutputTokens 的一定比例确定 thinkingBudget 的大小。
-	ThinkingAdapterBudgetTokensPercentage float64
 	// FunctionCallThoughtSignatureEnabled 将 thoughtSignature 绕过值
 	// 附带在 function-call parts 上。
 	FunctionCallThoughtSignatureEnabled bool
@@ -50,6 +33,11 @@ type GeminiOptions struct {
 	// SafetySetting 返回某个类别对应的伤害阈值。
 	// 返回 nil 或空字符串表示不附带 safetySettings。
 	SafetySetting func(category string) string
+	// WebSearchToGoogleSearch 渠道级开关：将入站请求的服务端 web_search 工具
+	// 映射为 Gemini 原生 googleSearch 工具（第一档：仅请求侧；响应中的
+	// groundingMetadata 不还原为工具块，客户端得到被搜索增强的纯文本）。
+	// grounded 请求 Google 在 token 之外按搜索次数单独计价，故默认关闭、按渠道显式开启。
+	WebSearchToGoogleSearch bool
 }
 
 func (o *ClaudeOptions) DefaultMaxTokensFor(modelName string) (int, bool) {
@@ -68,8 +56,4 @@ func (o *GeminiOptions) SafetySettingFor(category string) string {
 		return ""
 	}
 	return o.SafetySetting(category)
-}
-
-func (o *Options) ShouldPreserveThinkingSuffix(modelName string) bool {
-	return o != nil && o.PreserveThinkingSuffix != nil && o.PreserveThinkingSuffix(modelName)
 }

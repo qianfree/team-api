@@ -36,4 +36,6 @@ type TskModelTasks struct {
 	CreatedAt       *gtime.Time     `json:"created_at"        orm:"created_at"        description:"记录创建时间"`                                                                 // 记录创建时间
 	UpdatedAt       *gtime.Time     `json:"updated_at"        orm:"updated_at"        description:"记录更新时间"`                                                                 // 记录更新时间
 	RequestId       string          `json:"request_id"        orm:"request_id"        description:"任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id"`                // 任务提交时的原始请求 ID（req_xxxxx），关联 aud_request_logs.request_id
+	Deleted         bool            `json:"deleted"           orm:"deleted"           description:"软删除标记：true 表示已被客户端删除，查询/下载按不存在处理（计费与审计记录保留）"`                            // 软删除标记：true 表示已被客户端删除，查询/下载按不存在处理（计费与审计记录保留）
+	DeletedAt       *gtime.Time     `json:"deleted_at"        orm:"deleted_at"        description:"软删除时间"`                                                                  // 软删除时间
 }

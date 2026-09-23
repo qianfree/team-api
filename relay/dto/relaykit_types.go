@@ -75,16 +75,7 @@ type GeminiImageParameters = relaykitdto.GeminiImageParameters
 type GeminiImageResponse = relaykitdto.GeminiImageResponse
 type GeminiImagePrediction = relaykitdto.GeminiImagePrediction
 
-// ==================== Coze / Dify / Ollama 类型别名 ====================
-
-type CozeCreateRequest = relaykitdto.CozeCreateRequest
-type CozeMessage = relaykitdto.CozeMessage
-
-type DifyRequest = relaykitdto.DifyRequest
-type DifyUsage = relaykitdto.DifyUsage
-type DifyBlockingResponse = relaykitdto.DifyBlockingResponse
-type DifyMeta = relaykitdto.DifyMeta
-type DifyStreamEvent = relaykitdto.DifyStreamEvent
+// ==================== Ollama 类型别名 ====================
 
 type OllamaChatRequest = relaykitdto.OllamaChatRequest
 type OllamaMessage = relaykitdto.OllamaMessage

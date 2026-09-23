@@ -77,11 +77,15 @@ func AdminAuth(r *ghttp.Request) {
 		return
 	}
 
-	// Verify user still exists and is active
+	// Verify user still exists and is active.
+	// role 一并取出：super_admin 会短路整套鉴权（HasPermission 直接放行、
+	// assertSuperAdmin 与 superAdminOnlyRules 都只看它），是全站最高权级的判据，
+	// 因此必须以数据库为准，不能沿用签发时写进 token 的 claims.Role —— 否则给某人
+	// 临时提为超管再降回来后，其旧 token 在有效期内仍是超管（降权无法即时生效）。
 	var user *entity.SysAdminUsers
 	err = dao.SysAdminUsers.Ctx(r.Context()).
 		Where("id", claims.UserID).
-		Fields("status").
+		Fields("status, role").
 		Scan(&user)
 	if err != nil {
 		response.ErrorMsg(r, consts.CodeUnauthorized, consts.MsgUnauthorized)
@@ -95,7 +99,7 @@ func AdminAuth(r *ghttp.Request) {
 	// Set auth context
 	r.SetCtxVar(CtxKeyUserID, claims.UserID)
 	r.SetCtxVar(CtxKeyUserType, claims.UserType)
-	r.SetCtxVar(CtxKeyRole, claims.Role)
+	r.SetCtxVar(CtxKeyRole, user.Role)
 	r.SetCtxVar(CtxKeySessionID, claims.SessionID)
 	r.SetCtxVar(CtxKeyJti, claims.ID)
 

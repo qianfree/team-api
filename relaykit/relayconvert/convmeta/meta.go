@@ -20,10 +20,6 @@ type Meta interface {
 	GetChannelID() int
 	GetChannelType() int
 	GetIsStream() bool
-	GetReasoningEffort() string
-	// SetReasoningEffort 记录转换器从模型名后缀推导出的 effort 级别，
-	// 以便下游计费/日志能够看到。
-	SetReasoningEffort(effort string)
 	GetEstimatePromptTokens() int
 
 	// EnsureClaudeConvertInfo 懒创建并返回可变的 OpenAI→Claude 流式转换状态。
@@ -72,7 +68,6 @@ type Values struct {
 	ChannelID            int
 	ChannelType          int
 	IsStream             bool
-	ReasoningEffort      string
 	EstimatePromptTokens int
 
 	ClaudeConvertInfo *ClaudeConvertInfo
@@ -118,19 +113,6 @@ func (v *Values) GetChannelType() int {
 
 func (v *Values) GetIsStream() bool {
 	return v != nil && v.IsStream
-}
-
-func (v *Values) GetReasoningEffort() string {
-	if v == nil {
-		return ""
-	}
-	return v.ReasoningEffort
-}
-
-func (v *Values) SetReasoningEffort(effort string) {
-	if v != nil {
-		v.ReasoningEffort = effort
-	}
 }
 
 func (v *Values) GetEstimatePromptTokens() int {

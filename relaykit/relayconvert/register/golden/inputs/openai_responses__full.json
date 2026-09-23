@@ -1,0 +1,21 @@
+{
+  "model": "origin-model",
+  "instructions": "You are a weather and finance assistant.",
+  "input": [
+    {"role": "user", "content": [
+      {"type": "input_text", "text": "Describe this image and check the weather in Boston."},
+      {"type": "input_image", "image_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}
+    ]},
+    {"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"location\": \"Boston\"}"},
+    {"type": "function_call_output", "call_id": "call_1", "output": "68F, sunny"},
+    {"role": "user", "content": [{"type": "input_text", "text": "Thanks! What about the stock price of ACME?"}]}
+  ],
+  "tools": [
+    {"type": "function", "name": "get_weather", "description": "get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}},
+    {"type": "function", "name": "lookup_stock", "description": "stock quote", "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}}}
+  ],
+  "tool_choice": {"type": "function", "name": "get_weather"},
+  "max_output_tokens": 1024,
+  "temperature": 0.7,
+  "stream": true
+}

@@ -82,14 +82,14 @@ func (s *sAdmin) UsageLogCleanupList(ctx context.Context, req *v1.UsageLogCleanu
 	}
 
 	var tasks []struct {
-		Id           int64      `json:"id"`
-		Name         string     `json:"name"`
-		Status       string     `json:"status"`
-		ErrorMessage string     `json:"error_message"`
-		Result       string     `json:"result"`
-		StartedAt    *time.Time `json:"started_at"`
-		FinishedAt   *time.Time `json:"finished_at"`
-		CreatedAt    *time.Time `json:"created_at"`
+		Id           int64      `json:"id" orm:"id"`
+		Name         string     `json:"name" orm:"name"`
+		Status       string     `json:"status" orm:"status"`
+		ErrorMessage string     `json:"error_message" orm:"error_message"`
+		Result       string     `json:"result" orm:"result"`
+		StartedAt    *time.Time `json:"started_at" orm:"started_at"`
+		FinishedAt   *time.Time `json:"finished_at" orm:"finished_at"`
+		CreatedAt    *time.Time `json:"created_at" orm:"created_at"`
 	}
 	err = m.Page(page, pageSize).Scan(&tasks)
 	if err != nil {

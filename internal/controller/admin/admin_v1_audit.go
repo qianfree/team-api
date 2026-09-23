@@ -34,3 +34,6 @@ func (c *ControllerV1) ContentFilterLogList(ctx context.Context, req *v1.Content
 func (c *ControllerV1) ForwardingTraceGet(ctx context.Context, req *v1.ForwardingTraceGetReq) (res *v1.ForwardingTraceGetRes, err error) {
 	return service.Admin().ForwardingTraceGet(ctx, req)
 }
+func (c *ControllerV1) ContentFilterLogClear(ctx context.Context, req *v1.ContentFilterLogClearReq) (res *v1.ContentFilterLogClearRes, err error) {
+	return service.Admin().ContentFilterLogClear(ctx, req)
+}

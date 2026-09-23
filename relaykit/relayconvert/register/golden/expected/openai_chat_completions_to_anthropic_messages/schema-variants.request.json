@@ -1,0 +1,73 @@
+{
+  "max_tokens": 512,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Search the repo with the where filter.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "upstream-model",
+  "tools": [
+    {
+      "description": "search repo",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "properties": {
+              "paths": {
+                "type": "array"
+              },
+              "pattern": {
+                "type": "string"
+              },
+              "tag": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "where": {
+                "items": {
+                  "prefixItems": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "enum": [
+                        "AND",
+                        "OR"
+                      ],
+                      "type": "string"
+                    },
+                    {}
+                  ],
+                  "type": "array"
+                },
+                "maxItems": 10,
+                "type": "array"
+              }
+            },
+            "required": [
+              "pattern"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "grep"
+    }
+  ]
+}

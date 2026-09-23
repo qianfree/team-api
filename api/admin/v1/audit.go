@@ -71,6 +71,7 @@ type RequestAuditLogListReq struct {
 	TaskId     string `json:"task_id" dc:"异步任务ID（精确匹配）"`
 	Method     string `json:"method" dc:"HTTP 方法"`
 	Path       string `json:"path" dc:"请求路径"`
+	Model      string `json:"model" dc:"模型名称（精确匹配）"`
 	StatusCode int    `json:"status_code" dc:"状态码"`
 	StartDate  string `json:"start_date" dc:"开始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
 	EndDate    string `json:"end_date" dc:"结束时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss）"`
@@ -141,4 +142,14 @@ type ContentFilterLogListRes struct {
 	Total    int              `json:"total"`
 	Page     int              `json:"page"`
 	PageSize int              `json:"page_size"`
+}
+
+// ContentFilterLogClearReq 清空全部内容过滤拦截日志（硬删除，用于日志大量堆积时快速释放数据库空间）
+type ContentFilterLogClearReq struct {
+	g.Meta `path:"/audit/content-filter-logs/clear" method:"delete" mime:"json" tags:"管理后台-审计" summary:"清空内容过滤拦截日志（硬删除全部）"`
+}
+
+// ContentFilterLogClearRes 清空内容过滤拦截日志响应
+type ContentFilterLogClearRes struct {
+	Deleted int64 `json:"deleted" dc:"删除的记录数"`
 }

@@ -328,12 +328,18 @@ func (s *RedisState) processOutcome(ctx context.Context, o dispatch.Outcome) {
 	if o.Success {
 		success = "1"
 	}
-	// 健康观察成功即静默：本函数消费每个请求的结果事件，任何逐请求日志都会在生产流量下
-	// 淹没日志；健康分轨迹排查走维护轮落盘日志 + ReadRuntime 直接读值。
-	if _, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
-		success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
-		s.local.observe(o) // 降级：实例本地健康镜像
-		return
+	// 探测失败不衰减健康 EWMA：cron 自动探测每 5 分钟一次，若持续失败按 0.93^N 衰减会把
+	// 无真实流量的渠道健康分指数级拖垮，跟真实故障没有区别地互相污染。探测成功仍照常
+	// 记录（回升健康 + 采样延迟），只跳过失败这一侧；熔断窗口不受影响，下方正常计数。
+	skipHealthObserve := o.Probe && !o.Success
+	if !skipHealthObserve {
+		// 健康观察成功即静默：本函数消费每个请求的结果事件，任何逐请求日志都会在生产流量下
+		// 淹没日志；健康分轨迹排查走维护轮落盘日志 + ReadRuntime 直接读值。
+		if _, err := g.Redis().Do(ctx, "EVAL", luaHealthObserve, 1, healthKey,
+			success, o.LatencyMs, healthDecayFor(o.Class), now, stateKeyTTLMs); err != nil {
+			s.local.observe(o) // 降级：实例本地健康镜像
+			return
+		}
 	}
 
 	// 429 → softLimit 自动估计器（基线方案 §8.2）

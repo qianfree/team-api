@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/qianfree/team-api/relay/constant"
@@ -38,15 +39,60 @@ func (m *ChannelMeta) UpstreamSpeaksResponses() bool {
 }
 
 const (
-	// DefaultTimeoutSeconds 非流式请求的默认总超时（http.Client.Timeout）。
+	// DefaultTimeoutSeconds 非流式请求的内置默认总超时（http.Client.Timeout）。
 	// 推理模型（GLM-4.5/4.6 thinking、Claude thinking 等）非流式调用需跑完整段生成才回响应头，
 	// 60s 会误杀；放宽到 180s。个别仍超时的模型建议在渠道级 settings.timeout_seconds 配 >180（自动切 longRun 传输层）。
+	// 该常量仅作系统设置 request_timeout_seconds 未配置时的最终兜底。
 	DefaultTimeoutSeconds       = 180
 	ImagesGenerationTimeoutSecs = 600
+
+	// DefaultStreamIdleTimeoutSeconds 流式响应的内置默认空闲超时（两个 chunk 之间的最大间隔，非总时长）。
+	// 仅作系统设置 streaming_timeout_seconds 未配置时的最终兜底。
+	DefaultStreamIdleTimeoutSeconds = 300
 )
 
+// 全局超时配置（sys_options request_timeout_seconds / streaming_timeout_seconds），
+// 0 表示未配置、回落内置默认。relay 包不 import internal（会循环依赖），
+// 由 internal 侧在启动时与配置变更时（OnSettingsChanged，免重启）注入。
+var (
+	globalRequestTimeoutSeconds    atomic.Int64
+	globalStreamIdleTimeoutSeconds atomic.Int64
+)
+
+// SetGlobalRequestTimeoutSeconds 注入全局非流式请求超时（<=0 视为未配置）。
+func SetGlobalRequestTimeoutSeconds(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	globalRequestTimeoutSeconds.Store(int64(seconds))
+}
+
+// GlobalRequestTimeoutSeconds 返回全局非流式请求超时（未配置返回内置默认 180s）。
+func GlobalRequestTimeoutSeconds() int {
+	if v := int(globalRequestTimeoutSeconds.Load()); v > 0 {
+		return v
+	}
+	return DefaultTimeoutSeconds
+}
+
+// SetGlobalStreamIdleTimeoutSeconds 注入全局流式空闲超时（<=0 视为未配置）。
+func SetGlobalStreamIdleTimeoutSeconds(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	globalStreamIdleTimeoutSeconds.Store(int64(seconds))
+}
+
+// GlobalStreamIdleTimeoutSeconds 返回全局流式空闲超时（未配置返回内置默认 300s）。
+func GlobalStreamIdleTimeoutSeconds() int {
+	if v := int(globalStreamIdleTimeoutSeconds.Load()); v > 0 {
+		return v
+	}
+	return DefaultStreamIdleTimeoutSeconds
+}
+
 // GetTimeoutSeconds 返回请求超时秒数。
-// 图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时），其余模式渠道自定义优先。
+// 优先级：渠道自定义 > 全局配置（系统设置）> 内置默认。图片生成模式强制最低 600s（即使渠道配置了更短的自定义超时）。
 func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
 	if constant.RelayMode(relayMode) == constant.RelayModeImagesGenerations {
 		if s.TimeoutSeconds > ImagesGenerationTimeoutSecs {
@@ -57,7 +103,7 @@ func (s ChannelSettings) GetTimeoutSeconds(relayMode int) int {
 	if s.TimeoutSeconds > 0 {
 		return s.TimeoutSeconds
 	}
-	return DefaultTimeoutSeconds
+	return GlobalRequestTimeoutSeconds()
 }
 
 // ChannelSettings 渠道配置（来自 chn_channels.settings JSONB）
@@ -84,6 +130,10 @@ type ChannelSettings struct {
 
 	// UseProxy 启用代理，使用系统配置的代理地址转发请求
 	UseProxy bool `json:"use_proxy,omitempty"`
+
+	// WebSearchToGoogleSearch 将客户端请求的服务端 web_search 工具映射为 Gemini 原生
+	// googleSearch（仅 Gemini 上游生效；grounded 请求 Google 按搜索次数另行计价，默认关闭）
+	WebSearchToGoogleSearch bool `json:"web_search_to_google_search,omitempty"`
 
 	// DebugLogEnabled 启用渠道调试日志：记录经该渠道每次请求尝试的四段完整报文
 	//（客户端↔系统↔上游，body 不截断、凭证脱敏）。数据量大，仅排查问题时开启
@@ -141,6 +191,11 @@ type RelayInfo struct {
 	StreamStatus      *StreamStatus
 	FirstResponseTime time.Time
 
+	// 上游请求 ID（从上游响应头提取，见 helper.ExtractUpstreamRequestID）。
+	// 重试时每次尝试覆盖，终值为最后一次尝试的 ID；用于排障时在上游日志中
+	// 定位同一次调用。Realtime（WebSocket）链路无 HTTP 响应头，恒为空。
+	UpstreamRequestID string
+
 	// 入站格式：openai / claude / gemini / responses
 	// 决定适配器是否需要做格式转换
 	InboundFormat constant.RelayFormat
@@ -161,10 +216,7 @@ type RelayInfo struct {
 	ResponsesRequest *dto.OpenAIResponsesRequest
 
 	// Thinking 后缀路由（从模型名解析，供适配器消费）
-	ThinkingEnabled  bool   // 是否有 -thinking 后缀
-	ThinkingDisabled bool   // 是否有 -nothinking 后缀
-	ReasoningEffort  string // effort 级别：low/medium/high/xhigh/max/minimal
-	BaseModelName    string // 去除 thinking/effort 后缀的基础模型名
+	BaseModelName string // 计费/调度用的目录模型名（lookup 口径，现恒等于 OriginModelName）
 
 	// WebSocket 连接（仅 Realtime 模式使用）
 	ClientConn interface{} // *websocket.Conn — 使用 interface{} 避免 relay 层直接依赖 gorilla/websocket
@@ -251,20 +303,6 @@ func (info *RelayInfo) GetIsStream() bool {
 	return info.IsStream
 }
 
-func (info *RelayInfo) GetReasoningEffort() string {
-	if info == nil {
-		return ""
-	}
-	return info.ReasoningEffort
-}
-
-func (info *RelayInfo) SetReasoningEffort(effort string) {
-	if info == nil {
-		return
-	}
-	info.ReasoningEffort = effort
-}
-
 func (info *RelayInfo) GetEstimatePromptTokens() int {
 	if info == nil {
 		return 0
@@ -324,6 +362,24 @@ func (info *RelayInfo) ConversionChain() []types.RelayFormat {
 	return info.conversionChain
 }
 
+// convmeta.ResponsesStash 能力接口实现：r2c 转换器把解析后的 Responses 入站请求
+// 快照存进 RelayInfo.ResponsesRequest，响应合成侧（chat→Responses 回显）经此读取。
+var _ convmeta.ResponsesStash = (*RelayInfo)(nil)
+
+func (info *RelayInfo) StashResponsesRequest(req *dto.OpenAIResponsesRequest) {
+	if info == nil {
+		return
+	}
+	info.ResponsesRequest = req
+}
+
+func (info *RelayInfo) StashedResponsesRequest() *dto.OpenAIResponsesRequest {
+	if info == nil {
+		return nil
+	}
+	return info.ResponsesRequest
+}
+
 func (info *RelayInfo) ConvOptions() *convmeta.Options {
 	if info == nil {
 		return &convmeta.Options{}
@@ -338,19 +394,15 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 func (info *RelayInfo) buildConvOptions() *convmeta.Options {
 	opts := &convmeta.Options{
 		Claude: convmeta.ClaudeOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			DefaultMaxTokens:                      defaultMaxTokensForClaude,
+			DefaultMaxTokens: defaultMaxTokensForClaude,
 		},
 		Gemini: convmeta.GeminiOptions{
-			ThinkingAdapterEnabled:                true, // TODO: 从配置读取
-			ThinkingAdapterBudgetTokensPercentage: 0.5,  // TODO: 从配置读取
-			FunctionCallThoughtSignatureEnabled:   true, // TODO: 从配置读取
-			SupportsImagine:                       supportsImagineModel,
-			SafetySetting:                         nil, // TODO: 从配置读取
+			FunctionCallThoughtSignatureEnabled: true, // TODO: 从配置读取
+			SupportsImagine:                     supportsImagineModel,
+			SafetySetting:                       nil, // TODO: 从配置读取
+			WebSearchToGoogleSearch:             info.ChannelMeta != nil && info.ChannelMeta.Settings.WebSearchToGoogleSearch,
 		},
-		OpenRouterDialect:      info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
-		PreserveThinkingSuffix: nil, // TODO: 实现黑名单检查
+		OpenRouterDialect: info.ChannelMeta != nil && info.ChannelMeta.ChannelType == int(constant.ProviderOpenRouter),
 	}
 	return opts
 }

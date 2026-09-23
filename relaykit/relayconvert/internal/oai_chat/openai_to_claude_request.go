@@ -47,12 +47,7 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		upstreamModel = info.GetOriginModelName()
 	}
 
-	// 解析 thinking 后缀，若无需保留则从模型名中剥离
-	thinkingInfo := shared.ParseThinkingSuffix(upstreamModel)
 	opts := convmeta.OptionsOf(info)
-	if !opts.ShouldPreserveThinkingSuffix(upstreamModel) {
-		upstreamModel = thinkingInfo.BaseModel
-	}
 
 	claudeReq := &dto.ClaudeRequest{
 		Model:    upstreamModel,
@@ -110,17 +105,20 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 			Role: msg.Role,
 		}
 
-		// 转换 content
+		// 转换 content：字符串直转文本块；部件列表经 NormalizeContentParts 统一
+		// （兼容宿主裸 unmarshal 的 []any 与链式转换构造的 []dto.ContentPart 两种真实形态）
 		switch content := msg.Content.(type) {
 		case string:
 			text := content
 			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
-		case []dto.ContentPart:
-			claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(content)
 		default:
-			// 兜底：尝试提取文本
-			text := shared.MapTextContent(content)
-			claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			if parts, ok := shared.NormalizeContentParts(content); ok {
+				claudeMsg.Content = shared.MapOpenAIContentPartsToClaude(parts)
+			} else {
+				// 兜底：尝试提取文本
+				text := shared.MapTextContent(content)
+				claudeMsg.Content = []dto.ClaudeContentBlock{{Type: "text", Text: &text}}
+			}
 		}
 
 		// 转换 tool calls（带 tool_calls 的 assistant 消息）
@@ -155,10 +153,11 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		claudeReq.System = strings.Join(systemPrompts, "\n\n")
 	}
 
-	// 转换 tools
-	if len(openaiReq.Tools) > 0 {
-		claudeReq.Tools = shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools)
-
+	// 转换 tools。非 function 类型（如 OpenAI 的 custom 自由格式工具）会被过滤掉，
+	// 过滤后可能为空——此时 tool_choice 必须一并跳过：tools 空数组本身由 omitempty 省略，
+	// 但残留的 tool_choice 会形成「有 tool_choice 无 tools」的孤儿请求体，被 Claude 拒绝。
+	if claudeTools := shared.MapOpenAIToolsToClaudeTools(openaiReq.Tools); len(claudeTools) > 0 {
+		claudeReq.Tools = claudeTools
 		// 转换 tool_choice
 		if openaiReq.ToolChoice != nil {
 			switch tc := openaiReq.ToolChoice.(type) {
@@ -187,8 +186,14 @@ func (c *OpenAIToClaudeRequestConverter) ConvertRequest(
 		}
 	}
 
+	// 服务端联网搜索：chat 的 web_search_options 映射为 Claude 的 web_search 内置工具。
+	// 与自定义函数并存（Claude 允许服务端工具与 custom 工具同列），因此独立于上面的
+	// tools 分支——客户端可能只要搜索、不带任何函数。
+	if spec := shared.DetectWebSearchFromOpenAI(openaiReq.WebSearchOptions); spec != nil {
+		claudeReq.Tools = append(claudeReq.Tools, spec.ToClaudeTool())
+	}
+
 	// 应用 thinking 适配器
-	shared.ApplyThinkingToClaude(claudeReq, thinkingInfo, opts.Claude)
 
 	return claudeReq, nil
 }

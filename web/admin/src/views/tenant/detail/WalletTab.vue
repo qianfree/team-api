@@ -6,7 +6,7 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { hasPermission } from '@/utils/permission'
 import { useIsMobile } from '@/composables/useIsMobile'
-import { displayCurrency, formatBilling } from '@/composables/useCurrency'
+import { displayCurrency, currencySymbol, formatBilling } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -20,7 +20,6 @@ const emit = defineEmits<{
 const isMobile = useIsMobile()
 
 // 本位币符号：bil 层表单（调整余额/预警阈值）输入前缀跟随本位币，输入值仍为存储原值不折算
-const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
 
 // 线下充值入账弹窗文案：收款恒为人民币（银行转账），到账按本位币分支说明
 const offlineRechargeIntro = computed(() =>
@@ -263,9 +262,10 @@ watch(() => props.active, (v) => { if (v) refreshAll() })
       <ACard :bordered="false" title="钱包信息" class="mb-4">
         <template #extra>
           <ASpace :wrap="isMobile" :size="isMobile ? 'small' : 'medium'">
-            <AButton type="primary" @click="openRecharge">调整余额</AButton>
-            <AButton status="success" @click="openOfflineRecharge">线下入账</AButton>
-            <AButton @click="openThreshold">预警设置</AButton>
+            <!-- 三个动作在后端都要求 billing:refund（billing:view 只能看余额），按权限点渲染 -->
+            <AButton v-if="hasPermission('billing:refund')" type="primary" @click="openRecharge">调整余额</AButton>
+            <AButton v-if="hasPermission('billing:refund')" status="success" @click="openOfflineRecharge">线下入账</AButton>
+            <AButton v-if="hasPermission('billing:refund')" @click="openThreshold">预警设置</AButton>
           </ASpace>
         </template>
         <ADescriptions :column="isMobile ? 1 : 3" bordered size="medium">

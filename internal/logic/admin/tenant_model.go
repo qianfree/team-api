@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/shopspring/decimal"
 	v1 "github.com/qianfree/team-api/api/admin/v1"
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/billing"
@@ -13,6 +13,7 @@ import (
 	tenantLogic "github.com/qianfree/team-api/internal/logic/common"
 	relay "github.com/qianfree/team-api/internal/logic/relay"
 	do "github.com/qianfree/team-api/internal/model/do"
+	"github.com/shopspring/decimal"
 )
 
 // ListTenantModels 列出租户已分配的模型
@@ -190,6 +191,20 @@ func (s *sAdmin) UpdateTenantModel(ctx context.Context, req *v1.TenantModelUpdat
 		data.Enabled = *req.Enabled
 	}
 	if req.BillingMode != nil {
+		// 特殊计费方案模型不允许租户级 billing_mode 覆盖：计费模式由平台方案决定（special），
+		// 租户改模式只会造成日志标签与计费口径错位（读取侧 GetModelPriceAt 同口径忽略覆盖）。
+		// 置空（恢复平台默认）不受限
+		if *req.BillingMode != "" {
+			var pricingRow struct {
+				Pricing string `json:"pricing"`
+			}
+			if err := dao.MdlPricing.Ctx(ctx).Where("model_id", req.ModelID).Fields("pricing").Scan(&pricingRow); err != nil {
+				return nil, gerror.Wrap(err, "查询模型定价")
+			}
+			if blob := billing.ParsePricingBlob(pricingRow.Pricing); blob != nil && blob.Scheme != "" {
+				return nil, gerror.New("该模型使用特殊计费方案，计费模式由平台方案决定，不允许租户级覆盖")
+			}
+		}
 		data.BillingMode = *req.BillingMode
 	}
 	if req.PerRequestPrice != nil {
@@ -269,7 +284,7 @@ func (s *sAdmin) DeleteTenantModel(ctx context.Context, req *v1.TenantModelDelet
 
 // ListTenantAvailableModels 预览租户实际可用的所有模型（显式分配 + 分组来源，去重）
 func (s *sAdmin) ListTenantAvailableModels(ctx context.Context, req *v1.TenantAvailableModelsPreviewReq) (*v1.TenantAvailableModelsPreviewRes, error) {
-	models, err := tenantLogic.GetTenantAvailableModels(ctx, req.TenantID, "", "")
+	models, err := tenantLogic.GetTenantAvailableModels(ctx, req.TenantID, "", "", "")
 	if err != nil {
 		return nil, err
 	}

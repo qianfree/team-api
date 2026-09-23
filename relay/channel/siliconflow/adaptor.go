@@ -34,7 +34,10 @@ func (a *Adaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	baseURL := strings.TrimSuffix(info.ChannelMeta.BaseURL, "/")
 
 	switch constant.RelayMode(info.RelayMode) {
-	case constant.RelayModeChatCompletions:
+	// Claude/Gemini/Responses 入站：矩阵已把请求体转成 OpenAI chat 格式，走 chat 端点
+	case constant.RelayModeChatCompletions, constant.RelayModeClaudeMessages,
+		constant.RelayModeGeminiChat,
+		constant.RelayModeResponses, constant.RelayModeResponsesCompact:
 		return baseURL + "/v1/chat/completions", nil
 	case constant.RelayModeCompletions:
 		return baseURL + "/v1/completions", nil
@@ -59,15 +62,6 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 // 对于图像生成请求，将 "size" 映射为 "image_size"，"n" 映射为 "batch_size"
 // 其他请求只做模型名替换
 func (a *Adaptor) ConvertRequest(ctx context.Context, info *common.RelayInfo, requestBody []byte) (io.Reader, error) {
-	// 非 OpenAI 格式先转换为 OpenAI
-	if info.InboundFormat != "" && info.InboundFormat != constant.RelayFormatOpenAI {
-		c, err := openai.ConvertToOpenAI(requestBody, info)
-		if err != nil {
-			return nil, err
-		}
-		requestBody = c
-	}
-
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(requestBody, &rawMap); err != nil {
 		return bytes.NewReader(requestBody), nil

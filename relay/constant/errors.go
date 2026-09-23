@@ -15,7 +15,7 @@ import (
 )
 
 // Relay 层哨兵错误
-var ErrAllChannelsFailed = gerror.New("all channels failed")
+var ErrAllChannelsFailed = gerror.New("no available channels")
 
 // ErrStatefulResponsesUnsupported responses 有状态请求（previous_response_id）落在
 // 不支持 Responses 协议的 chat-only 渠道上，降级转换会静默丢失会话上下文，必须快速失败。

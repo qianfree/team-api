@@ -5,10 +5,8 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableStats from '@/components/TableStats.vue'
 import request from '@/utils/request'
-import { displayCurrency } from '@/composables/useCurrency'
-
 // 本位币符号：定价输入控件后缀跟随本位币，输入值仍为 bil 层存储原值不折算
-const currencySymbol = computed(() => (displayCurrency.value === 'CNY' ? '¥' : '$'))
+import { currencySymbol } from '@/composables/useCurrency'
 
 const props = defineProps<{
   tenantId: string
@@ -73,10 +71,12 @@ async function fetchTenantModels() {
   }
 }
 
+// 候选模型走专用不分页接口 /admin/models/options：一次拉回全部 active 模型，
+// 不受 /admin/models 的 page_size=100 上限约束（平台模型超 100 个时旧写法会漏模型）
 async function fetchAllModels() {
   try {
-    const res: any = await request.get('/admin/models', { params: { page: 1, page_size: 100, status: 'active' } })
-    allModels.value = res.data?.data?.list || res.data?.list || []
+    const res: any = await request.get('/admin/models/options')
+    allModels.value = res.data?.data?.list || []
   } catch (err: any) {
     console.error('fetchAllModels failed:', err)
   }

@@ -18,8 +18,8 @@ export const providerTypeOptions: { label: string; value: number }[] = [
   { label: 'SiliconFlow (硅基流动)', value: 25 }, { label: 'Xunfei (讯飞)', value: 26 },
   { label: 'OpenRouter', value: 27 }, { label: 'XInference', value: 28 },
   { label: 'MiniMax', value: 29 }, { label: 'Submodel', value: 30 },
-  { label: 'Coze (扣子)', value: 32 },
-  { label: 'Dify', value: 33 }, { label: 'Jimeng (即梦)', value: 34 },
+  // 32 = Coze、33 = Dify：渠道已移除，编号永久保留不复用
+  { label: 'Jimeng (即梦)', value: 34 },
   { label: 'Codex', value: 35 },
   { label: 'New API', value: 41 }, { label: 'Sub2API', value: 42 },
 ]

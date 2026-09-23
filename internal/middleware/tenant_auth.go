@@ -14,19 +14,21 @@ import (
 // tenantPublicPaths lists tenant routes that skip JWT auth.
 // Keep in sync with api/tenant/v1/ structs tagged group:"public" middleware:"-".
 var tenantPublicPaths = map[string]bool{
-	"/api/tenant/auth/register":        true,
-	"/api/tenant/auth/login":           true,
-	"/api/tenant/auth/refresh":         true,
-	"/api/tenant/auth/2fa/verify":      true,
-	"/api/tenant/email/send-code":      true,
-	"/api/tenant/email/reset-password": true,
-	"/api/tenant/members/join":         true,
-	"/api/tenant/members/invite-info":  true,
-	"/api/tenant/agreements/current":   true,
-	"/api/tenant/oauth/authorize":      true,
-	"/api/tenant/marketplace/models":   true,
-	"/api/tenant/help/categories":      true,
-	"/api/tenant/help/search":          true,
+	"/api/tenant/auth/register": true,
+	// 注册页在提交前展示剩余注册次数，必须匿名可访问（只读不计数）
+	"/api/tenant/auth/register-rate-limit": true,
+	"/api/tenant/auth/login":               true,
+	"/api/tenant/auth/refresh":             true,
+	"/api/tenant/auth/2fa/verify":          true,
+	"/api/tenant/email/send-code":          true,
+	"/api/tenant/email/reset-password":     true,
+	"/api/tenant/members/join":             true,
+	"/api/tenant/members/invite-info":      true,
+	"/api/tenant/agreements/current":       true,
+	"/api/tenant/oauth/authorize":          true,
+	"/api/tenant/marketplace/models":       true,
+	"/api/tenant/help/categories":          true,
+	"/api/tenant/help/search":              true,
 }
 
 // tenantPublicPrefixes lists path prefixes that skip JWT auth (for dynamic routes like /current/{code}).

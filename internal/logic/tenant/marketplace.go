@@ -2,9 +2,9 @@ package tenant
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/util/gconv"
 
@@ -14,20 +14,14 @@ import (
 	"github.com/qianfree/team-api/internal/model/entity"
 )
 
-// marketplacePricingRow 定价锚点行（min_tokens=0）：全部计费模式的基础价载体
-// （token 默认价 / tiered 首档价 / per_request 单价），另带时段定价与对外展示字段。
-// 显式列名扫描进独立结构体，与 do/entity 生成物解耦（新展示列需迁移落库 + gf gen dao 后才进生成物）。
+// marketplacePricingRow 模型定价行（每模型一行）：billing_mode + pricing JSONB 为计费真相，
+// 另带对外展示字段。显式列名扫描进独立结构体，与 do/entity 生成物解耦。
 type marketplacePricingRow struct {
-	ModelID            int64    `json:"model_id"`
-	BillingMode        string   `json:"billing_mode"`
-	InputPrice         float64  `json:"input_price"`
-	OutputPrice        float64  `json:"output_price"`
-	PerRequestPrice    *float64 `json:"per_request_price"`
-	CacheReadPrice     float64  `json:"cache_read_price"`
-	CacheCreationPrice float64  `json:"cache_creation_price"`
-	TimeSegments       string   `json:"time_segments"`
-	DiscountLabel      *string  `json:"discount_label"`
-	PriceChangeNote    *string  `json:"price_change_note"`
+	ModelID         int64   `json:"model_id"`
+	BillingMode     string  `json:"billing_mode"`
+	Pricing         string  `json:"pricing"` // pricing JSONB（唯一真相）
+	DiscountLabel   *string `json:"discount_label"`
+	PriceChangeNote *string `json:"price_change_note"`
 }
 
 // GetModelList 获取模型广场列表（从默认模型分组加载）
@@ -48,24 +42,32 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			Total:    0,
 			Page:     req.Page,
 			PageSize: req.PageSize,
+			Vendors:  []string{},
 		}, nil
 	}
 
-	// 2. 构建查询：通过分组关联查询模型
-	m := dao.MdlModels.Ctx(ctx).
-		LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
-		Where("mdl_group_models.group_id", defaultGroup.Id).
-		Where("mdl_models.status", "active")
-
-	// 搜索关键词
-	if req.Keyword != "" {
-		keyword := "%" + req.Keyword + "%"
-		m = m.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
+	// 2. 构建查询：通过分组关联查询模型（厂商 facet 与主列表共用同一套基础条件，
+	// 用闭包各自构建链路，避免 gf Model 链式分支共享底层状态的歧义）
+	newQuery := func() *gdb.Model {
+		q := dao.MdlModels.Ctx(ctx).
+			LeftJoin("mdl_group_models", "mdl_group_models.model_id = mdl_models.id").
+			Where("mdl_group_models.group_id", defaultGroup.Id).
+			Where("mdl_models.status", "active")
+		if req.Keyword != "" {
+			keyword := "%" + req.Keyword + "%"
+			q = q.Where("(mdl_models.model_id LIKE ? OR mdl_models.model_name LIKE ? OR mdl_models.description LIKE ?)", keyword, keyword, keyword)
+		}
+		if req.Category != "" {
+			q = q.Where("mdl_models.category", req.Category)
+		}
+		return q
 	}
 
-	// 分类筛选
-	if req.Category != "" {
-		m = m.Where("mdl_models.category", req.Category)
+	m := newQuery()
+
+	// 厂商筛选
+	if req.Vendor != "" {
+		m = m.Where("mdl_models.vendor", req.Vendor)
 	}
 
 	// 排序：按类别、模型名称
@@ -75,6 +77,23 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 	total, err := m.Count()
 	if err != nil {
 		return nil, err
+	}
+
+	// 3.1 厂商 facet：在当前关键词/分类条件下（忽略厂商筛选本身）有模型的厂商去重列表，
+	// 前端据此只渲染实际有模型的厂商筛选项，保证点任一厂商都有结果
+	var vendorRows []struct {
+		Vendor string `json:"vendor"`
+	}
+	err = newQuery().
+		Where("mdl_models.vendor <> ''").
+		Fields("DISTINCT mdl_models.vendor").
+		Scan(&vendorRows)
+	if err != nil {
+		return nil, err
+	}
+	vendors := make([]string, 0, len(vendorRows))
+	for _, r := range vendorRows {
+		vendors = append(vendors, r.Vendor)
 	}
 
 	// 4. 分页查询模型
@@ -93,6 +112,7 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 			Total:    0,
 			Page:     req.Page,
 			PageSize: req.PageSize,
+			Vendors:  vendors,
 		}, nil
 	}
 
@@ -104,7 +124,6 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 	var pricings []marketplacePricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		WhereIn("model_id", modelIds).
-		Where("min_tokens", 0). // 锚点行承载全部计费模式的基础价与展示字段
 		Scan(&pricings)
 	if err != nil {
 		return nil, err
@@ -128,6 +147,7 @@ func (s *sTenant) GetModelList(ctx context.Context, req *v1.MarketplaceListReq) 
 		Total:    total,
 		Page:     req.Page,
 		PageSize: req.PageSize,
+		Vendors:  vendors,
 	}, nil
 }
 
@@ -162,11 +182,10 @@ func (s *sTenant) GetModelDetail(ctx context.Context, req *v1.MarketplaceDetailR
 		return nil, fmt.Errorf("模型不存在或未公开")
 	}
 
-	// 3. 查询价格（锚点行：全部计费模式的基础价 + 时段/展示字段）
+	// 3. 查询价格（每模型一行：billing_mode + pricing JSONB + 展示字段）
 	var pricing *marketplacePricingRow
 	err = dao.MdlPricing.Ctx(ctx).
 		Where("model_id", model.Id).
-		Where("min_tokens", 0).
 		Scan(&pricing)
 	if err != nil {
 		return nil, err
@@ -186,6 +205,7 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		ModelId:          model.ModelId,
 		ModelName:        model.ModelName,
 		Category:         model.Category,
+		Vendor:           model.Vendor,
 		Description:      model.Description,
 		MaxContextTokens: model.MaxContextTokens,
 		MaxOutputTokens:  model.MaxOutputTokens,
@@ -215,14 +235,21 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		billingMode = "token"
 	}
 	item.BillingMode = billingMode
-	// 锚点行价即对外展示价（数据库存的就是每 1M token 美元价，直接返回）：
-	// token=默认价，tiered=首档价（前端标「起」），per_request=按次单价
-	item.InputPrice = pricing.InputPrice
-	item.OutputPrice = pricing.OutputPrice
-	item.CacheReadPrice = pricing.CacheReadPrice
-	item.CacheCreationPrice = pricing.CacheCreationPrice
-	if pricing.PerRequestPrice != nil {
-		item.PerRequestPrice = *pricing.PerRequestPrice
+
+	// pricing JSONB 解析（唯一真相）：token=默认价，tiered=首档价（前端标「起」），per_request=按次单价
+	blob := billing.ParsePricingBlob(pricing.Pricing)
+	baseInput, baseOutput, baseCacheRead, baseCacheCreation, basePerRequest := fillFromBlob(blob)
+	item.InputPrice = baseInput
+	item.OutputPrice = baseOutput
+	item.CacheReadPrice = baseCacheRead
+	item.CacheCreationPrice = baseCacheCreation
+	if basePerRequest != nil {
+		item.PerRequestPrice = *basePerRequest
+	}
+	// 按秒/特殊计费：矩阵来自平台 pricing JSONB（展示用）；special 的矩阵是
+	// 输出生成组件的参考单价（素材组件单价在方案配置中，不随广场下发）
+	if (billingMode == "per_second" || billingMode == billing.BillingModeSpecial) && blob != nil {
+		item.PerSecondPrices = blob.Prices
 	}
 	if pricing.DiscountLabel != nil {
 		item.DiscountLabel = *pricing.DiscountLabel
@@ -231,16 +258,14 @@ func (s *sTenant) convertToMarketplaceItem(ctx context.Context, model *entity.Md
 		item.PriceChangeNote = *pricing.PriceChangeNote
 	}
 
-	// 时段价目：平台基础价 × 时段乘数换算（tiered 用锚点首档价换算，与 buildTiers 首档口径一致）
-	if pricing.TimeSegments != "" && pricing.TimeSegments != "null" {
-		var segments []billing.TimeSegment
-		if err := json.Unmarshal([]byte(pricing.TimeSegments), &segments); err == nil && len(segments) > 0 {
-			var tiers []v1.PricingTierItem
-			if billingMode == "tiered" {
-				tiers = append(tiers, v1.PricingTierItem{InputPrice: pricing.InputPrice, OutputPrice: pricing.OutputPrice})
-			}
-			item.TimePrices = buildTimePrices(segments, billingMode, &pricing.InputPrice, &pricing.OutputPrice, pricing.PerRequestPrice, tiers)
+	// 时段价目：平台基础价 × 时段乘数换算（tiered 用首档价换算，与 buildTiers 首档口径一致）
+	if blob != nil && len(blob.TimeSegments) > 0 {
+		var tiers []v1.PricingTierItem
+		if billingMode == "tiered" && len(blob.Tiers) > 0 {
+			tiers = append(tiers, v1.PricingTierItem{InputPrice: blob.Tiers[0].InputPrice, OutputPrice: blob.Tiers[0].OutputPrice})
 		}
+		in, out := baseInput, baseOutput
+		item.TimePrices = buildTimePrices(blob.TimeSegments, billingMode, &in, &out, basePerRequest, tiers, item.PerSecondPrices)
 	}
 
 	return item

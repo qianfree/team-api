@@ -42,7 +42,7 @@ func testCtx() context.Context { return context.Background() }
 // readWallet 读取租户钱包余额/冻结（micro → decimal）
 func readWallet(t *testing.T, tenantID int64) (balance, frozen decimal.Decimal) {
 	t.Helper()
-	b, f, exists, err := readWalletHash(testCtx(), tenantID)
+	b, f, _, _, exists, err := readWalletHash(testCtx(), tenantID)
 	if err != nil {
 		t.Fatalf("read wallet hash: %v", err)
 	}
@@ -50,6 +50,22 @@ func readWallet(t *testing.T, tenantID int64) (balance, frozen decimal.Decimal) 
 		t.Fatalf("wallet hash missing for tenant %d", tenantID)
 	}
 	return FromMicro(b), FromMicro(f)
+}
+
+// readWalletConsumed 读取租户累计消费计数（micro → decimal；hash 缺字段按 0）
+func readWalletConsumed(t *testing.T, tenantID int64) decimal.Decimal {
+	t.Helper()
+	_, _, c, hasConsumed, exists, err := readWalletHash(testCtx(), tenantID)
+	if err != nil {
+		t.Fatalf("read wallet hash: %v", err)
+	}
+	if !exists {
+		t.Fatalf("wallet hash missing for tenant %d", tenantID)
+	}
+	if !hasConsumed {
+		return decimal.Zero
+	}
+	return FromMicro(c)
 }
 
 // seedWallet 用加款创建指定余额的钱包 hash（顺带校验 CreditWalletRedis 自身）
@@ -249,6 +265,7 @@ func TestWalletConcurrency(t *testing.T) {
 	bal, frozen := readWallet(t, tenant)
 	assertDecimalEqual(t, bal, NewFromFloat(100).Sub(NewFromFloat(0.5).Mul(NewFromFloat(n))), "balance conserved (100 - n*0.5)")
 	assertDecimalEqual(t, frozen, decimal.Zero, "frozen converges to zero")
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(0.5).Mul(NewFromFloat(n)), "total_consumed conserved (n*0.5)")
 }
 
 // TestPredeductSweep_RecomputesFrozen 孤儿清扫重算：某预扣 hash 丢失（TTL 过期/崩溃残留）后，
@@ -295,5 +312,105 @@ func TestCleanupPreDeduct_RemovesHash(t *testing.T) {
 	CleanupPreDeduct(testCtx(), tenant, "req-cl1")
 	if _, exists := GetPreDeductAmount(testCtx(), "req-cl1"); exists {
 		t.Fatal("prededuct hash should be cleaned")
+	}
+}
+
+// TestSettleClaim_IncrementsTotalConsumed 累计消费随结算扣款同一原子递增；
+// 重复结算（预扣已认领、claimed=0 只补扣）时计数仍按实际扣款额累计。
+func TestSettleClaim_IncrementsTotalConsumed(t *testing.T) {
+	tenant := int64(11)
+	seedWallet(t, tenant, NewFromFloat(10))
+	if ok, _ := PreDeduct(testCtx(), tenant, 4, "req-tc1", "gpt-4o"); !ok {
+		t.Fatal("prededuct failed")
+	}
+
+	// 首次结算：新 hash 无 total_consumed 字段，HINCRBY 从 0 起算（正常路径由三层补种保证含基线）
+	if _, _, _, err := SettleClaim(testCtx(), tenant, NewFromFloat(1.5), []string{"req-tc1"}); err != nil {
+		t.Fatalf("settle claim: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(1.5), "total_consumed after first settle")
+
+	// 重复结算走补扣路径：计数继续累计实际扣款
+	if _, _, _, err := SettleClaim(testCtx(), tenant, NewFromFloat(0.5), []string{"req-tc1"}); err != nil {
+		t.Fatalf("second settle claim: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(2), "total_consumed accumulates supplement")
+}
+
+// TestReverseConsumeRedis_ReversesBalanceAndCount 结算补偿逆转：余额与累计消费同一原子回退
+func TestReverseConsumeRedis_ReversesBalanceAndCount(t *testing.T) {
+	tenant := int64(12)
+	seedWallet(t, tenant, NewFromFloat(10))
+	if ok, _ := PreDeduct(testCtx(), tenant, 4, "req-tc2", "gpt-4o"); !ok {
+		t.Fatal("prededuct failed")
+	}
+	if _, _, _, err := SettleClaim(testCtx(), tenant, NewFromFloat(3), []string{"req-tc2"}); err != nil {
+		t.Fatalf("settle claim: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(3), "total_consumed after settle")
+
+	// 模拟 executeSettlement 第 c 步失败补偿：本单免费，计数与余额同步回退
+	if err := ReverseConsumeRedis(testCtx(), tenant, NewFromFloat(3)); err != nil {
+		t.Fatalf("reverse consume: %v", err)
+	}
+	bal, _ := readWallet(t, tenant)
+	assertDecimalEqual(t, bal, NewFromFloat(10), "balance restored after reverse")
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), decimal.Zero, "total_consumed reversed with balance")
+}
+
+// TestNonConsumeOps_DoNotTouchTotalConsumed 回归保护：
+// 预扣/解冻/扣款（退款调账）/加款（充值）均不得触碰累计消费计数。
+func TestNonConsumeOps_DoNotTouchTotalConsumed(t *testing.T) {
+	tenant := int64(13)
+	seedWallet(t, tenant, NewFromFloat(10))
+
+	if ok, _ := PreDeduct(testCtx(), tenant, 2, "req-nc1", "gpt-4o"); !ok {
+		t.Fatal("prededuct failed")
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), decimal.Zero, "prededuct must not touch total_consumed")
+
+	if _, err := UnfreezePreDeduct(testCtx(), tenant, "req-nc1"); err != nil {
+		t.Fatalf("unfreeze: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), decimal.Zero, "unfreeze must not touch total_consumed")
+
+	if _, _, ok, err := DebitWalletRedis(testCtx(), tenant, NewFromFloat(3)); err != nil || !ok {
+		t.Fatalf("debit failed: ok=%v err=%v", ok, err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), decimal.Zero, "debit (refund/adjust) must not touch total_consumed")
+
+	if _, _, err := CreditWalletRedis(testCtx(), tenant, NewFromFloat(5)); err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), decimal.Zero, "credit (recharge) must not touch total_consumed")
+}
+
+// TestSeedTotalConsumedIfMissing 三层补种之①③层共用 Lua 的行为：
+// hash 存在且缺字段 → 写入基线；字段已存在 → 不覆盖（幂等）；hash 不存在 → no-op。
+func TestSeedTotalConsumedIfMissing(t *testing.T) {
+	tenant := int64(14)
+	seedWallet(t, tenant, NewFromFloat(10)) // creditLua 创建的 hash 不含 total_consumed 字段
+
+	if err := seedTotalConsumedIfMissing(testCtx(), tenant, ToMicro(NewFromFloat(7.25))); err != nil {
+		t.Fatalf("seed total_consumed: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(7.25), "seeded from db baseline")
+
+	// 字段已存在后发生结算 → 重复种子不得回退结算增量
+	if _, _, _, err := SettleClaim(testCtx(), tenant, NewFromFloat(1), nil); err != nil {
+		t.Fatalf("settle claim: %v", err)
+	}
+	if err := seedTotalConsumedIfMissing(testCtx(), tenant, ToMicro(NewFromFloat(7.25))); err != nil {
+		t.Fatalf("re-seed: %v", err)
+	}
+	assertDecimalEqual(t, readWalletConsumed(t, tenant), NewFromFloat(8.25), "re-seed must not overwrite post-settle value")
+
+	// hash 不存在的租户 → no-op（不得凭空创建 hash，由 rebuild 流程负责）
+	missing := int64(15)
+	if err := seedTotalConsumedIfMissing(testCtx(), missing, ToMicro(NewFromFloat(9))); err != nil {
+		t.Fatalf("seed on missing hash: %v", err)
+	}
+	if _, _, _, hasConsumed, exists, err := readWalletHash(testCtx(), missing); err != nil || exists || hasConsumed {
+		t.Fatalf("seed must not create hash: exists=%v hasConsumed=%v err=%v", exists, hasConsumed, err)
 	}
 }
