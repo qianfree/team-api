@@ -61,20 +61,15 @@ function formatReset(seconds: number): string {
 	return `约 ${Math.ceil(seconds / 3600)} 小时`
 }
 
-const rateLimitNotice = computed<{ type: 'blocked' | 'info'; text: string } | null>(() => {
+// 仅在注册被限流（次数耗尽）时提示，平时不展示剩余次数
+const rateLimitNotice = computed<string | null>(() => {
 	const s = rateLimit.value
 	if (!s) return null
 	if (s.daily_limit > 0 && s.daily_remaining <= 0) {
-		return { type: 'blocked', text: `今日注册次数已达上限（每日 ${s.daily_limit} 次），${formatReset(s.daily_reset_seconds)}后重置` }
+		return `今日注册次数已达上限（每日 ${s.daily_limit} 次），${formatReset(s.daily_reset_seconds)}后重置`
 	}
 	if (s.hourly_limit > 0 && s.hourly_remaining <= 0) {
-		return { type: 'blocked', text: `注册已达每小时上限（${s.hourly_limit} 次/小时），${formatReset(s.hourly_reset_seconds)}后重置` }
-	}
-	if (s.hourly_limit > 0 || s.daily_limit > 0) {
-		const parts: string[] = []
-		if (s.hourly_limit > 0) parts.push(`本小时 ${s.hourly_remaining}/${s.hourly_limit} 次`)
-		if (s.daily_limit > 0) parts.push(`今日 ${s.daily_remaining}/${s.daily_limit} 次`)
-		return { type: 'info', text: `剩余注册次数：${parts.join('，')}` }
+		return `注册已达每小时上限（${s.hourly_limit} 次/小时），${formatReset(s.hourly_reset_seconds)}后重置`
 	}
 	return null
 })
@@ -218,7 +213,7 @@ async function handleRegister() {
 		proceedAfterRegister()
 	} catch (err: any) {
 		captchaRef.value?.resetCaptcha()
-		// 本次尝试已消耗限流计数，刷新剩余次数提示
+		// 本次尝试已消耗限流计数，刷新限流状态
 		fetchRateLimit()
 		const apiErr = extractApiError(err)
 		const msg = apiErr?.message || '注册失败'
@@ -261,20 +256,13 @@ async function handleRegister() {
 				<p class="mt-1.5 text-sm text-gray-500">几分钟即可开始使用，团队功能可后续开启</p>
 			</div>
 
-			<!-- 注册限流提示 -->
+			<!-- 注册限流提示（仅被限流时展示） -->
 			<div
 				v-if="rateLimitNotice"
-				class="mb-4 flex items-start gap-2 rounded-xl border px-4 py-2.5 text-xs"
-				:class="rateLimitNotice.type === 'blocked'
-					? 'border-red-200 bg-red-50 text-red-600'
-					: 'border-amber-200 bg-amber-50 text-amber-700'"
+				class="mb-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-600"
 			>
-				<Icon
-					:name="rateLimitNotice.type === 'blocked' ? 'exclamationTriangle' : 'infoCircle'"
-					size="sm"
-					class="mt-0.5 shrink-0"
-				/>
-				<span>{{ rateLimitNotice.text }}</span>
+				<Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0" />
+				<span>{{ rateLimitNotice }}</span>
 			</div>
 
 			<form @submit.prevent="handleRegister" class="space-y-4">
@@ -382,7 +370,7 @@ async function handleRegister() {
 				</div>
 
 				<!-- Submit -->
-				<button type="submit" :disabled="loading || !userForm.agreed || rateLimitNotice?.type === 'blocked'" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
+				<button type="submit" :disabled="loading || !userForm.agreed || !!rateLimitNotice" class="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed">
 					<div v-if="loading" class="spinner h-4 w-4 border-white"></div>
 					{{ loading ? '创建中...' : '创建账号' }}
 				</button>
