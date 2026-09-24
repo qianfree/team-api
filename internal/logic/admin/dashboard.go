@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -144,7 +145,37 @@ func (s *sAdmin) GetDashboardStats(ctx context.Context, req *v1.AdminDashboardRe
 			TotalCost:    monthRow.TotalCost,
 			Revenue:      revenue.Total,
 		},
+		IpBlacklist: buildIpBlacklistStats(ctx),
 	}, nil
+}
+
+// buildIpBlacklistStats 汇总 IP 黑名单拦截统计（缓存数据）：
+// Redis 读取失败时降级为仅返回启用状态，不影响仪表盘其余统计的正常返回。
+func buildIpBlacklistStats(ctx context.Context) *v1.IpBlacklistStats {
+	stats := &v1.IpBlacklistStats{
+		Enabled: common.Config().GetBool(ctx, common.OptionKeyIpBlacklistEnabled),
+		List:    []v1.IpBlacklistBlockedItem{},
+	}
+
+	counts, err := common.GetIpBlacklistBlockStats(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "buildIpBlacklistStats: read blocked stats failed: %v", err)
+		return stats
+	}
+
+	items := make([]v1.IpBlacklistBlockedItem, 0, len(counts))
+	for ip, count := range counts {
+		stats.Total += count
+		items = append(items, v1.IpBlacklistBlockedItem{Ip: ip, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Count > items[j].Count })
+	// 看板只展示 TOP 20，长尾 IP 的拦截量对运营无观测价值，避免极端脏数据撑爆响应
+	const topN = 20
+	if len(items) > topN {
+		items = items[:topN]
+	}
+	stats.List = items
+	return stats
 }
 
 // GetDashboardTrends returns daily revenue and request trends for the past N days.

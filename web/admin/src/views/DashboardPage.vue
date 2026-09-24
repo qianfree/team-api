@@ -29,6 +29,7 @@ const modelDist = ref<any[]>([])
 const channelHealth = ref<any[]>([])
 const recentAlerts = ref<any[]>([])
 const modelHourly = ref<any>(null)
+const ipBlacklist = computed(() => dashboard.value?.ip_blacklist)
 
 // === Charts ===
 let trendChart: echarts.ECharts | null = null
@@ -560,6 +561,26 @@ onBeforeUnmount(() => {
           <AEmpty v-else description="暂无告警" />
         </ACard>
       </div>
+
+      <!-- Row 5: IP 黑名单拦截统计（数据存 Redis 缓存） -->
+      <ACard :bordered="false" class="mb-6" title="IP 黑名单拦截">
+        <template #extra>
+          <ATag v-if="ipBlacklist?.enabled" color="red" size="small">黑名单已启用</ATag>
+          <ATag v-else color="gray" size="small">黑名单未启用</ATag>
+        </template>
+        <div v-if="ipBlacklist && (ipBlacklist.total > 0 || (ipBlacklist.list && ipBlacklist.list.length > 0))">
+          <div class="ipbl-total">
+            累计拦截 <strong>{{ formatNumber(ipBlacklist.total) }}</strong> 次
+          </div>
+          <div class="info-list">
+            <div v-for="item in ipBlacklist.list" :key="item.ip" class="info-item">
+              <span class="ipbl-ip">{{ item.ip }}</span>
+              <ATag color="red" size="small">{{ formatNumber(item.count) }} 次</ATag>
+            </div>
+          </div>
+        </div>
+        <AEmpty v-else description="暂无拦截记录" />
+      </ACard>
     </div>
   </ASpin>
 </template>
@@ -667,6 +688,24 @@ onBeforeUnmount(() => {
   color: var(--color-text-3);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.ipbl-total {
+  font-size: 13px;
+  color: var(--color-text-2);
+  margin-bottom: 14px;
+}
+
+.ipbl-total strong {
+  font-size: 18px;
+  color: var(--color-text-1);
+  margin: 0 2px;
+}
+
+.ipbl-ip {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--color-text-1);
 }
 
 @keyframes cardAppear {
