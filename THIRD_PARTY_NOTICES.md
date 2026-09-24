@@ -176,5 +176,3 @@ go list -m -f "{{if not .Main}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}" all
 # 前端依赖（在各 web/* 目录下）：
 # bunx license-checker --summary  /  npx license-checker --json
 ```
-
-> ⚠️ 本文件列出版本为生成时快照。每次发布商业版本前应重新扫描，重点核对**新增依赖**是否引入 copyleft 类许可证。
