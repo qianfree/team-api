@@ -14,9 +14,7 @@
     <nav class="nav">
       <div class="brand">
         <div class="brand__mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
-            <path d="M12 3v18M3 12h18"/>
-          </svg>
+          <img src="/favicon.svg" alt="Team-API logo" />
         </div>
         <span class="brand__name">{{ siteName }}</span>
         <span class="brand__tag">AI Gateway</span>
@@ -219,9 +217,9 @@
                   <circle cx="330" cy="230" r="72" fill="none" stroke="url(#coreFill)" stroke-width="1.8"/>
                   <circle cx="330" cy="230" r="72" fill="none" stroke="url(#coreFill)" stroke-width="9" opacity=".2" filter="url(#soft)"/>
 
-                  <!-- 品牌 mark：与顶部导航 logo 同一套语言 -->
-                  <rect x="316" y="194" width="28" height="28" rx="9" fill="url(#coreFill)"/>
-                  <path d="M330 201.5v13M323.5 208h13" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+                  <!-- 品牌 mark：项目轨道 logo（public/favicon.svg），与顶部导航同源。
+                       34px 见方，使轨道的实际显示宽度与原 28px 底砖相当（logo 自身留白约 26%）。 -->
+                  <image href="/favicon.svg" x="313" y="191" width="34" height="34"/>
 
                   <text x="330" y="248" text-anchor="middle" class="core__label">Team-API</text>
                   <text x="330" y="266" text-anchor="middle" class="core__sub">AI GATEWAY</text>
@@ -346,9 +344,13 @@
 
     <!-- ===================== 能力带 =====================
          原为「支持的供应商」名单。但「支持 N 家供应商」是同类产品的通用能力，
-         不构成差异点；改成本项目的真实能力清单，重心落在团队管理与预算掌控上。 -->
-    <footer class="band" aria-label="平台能力">
+         不构成差异点；改成本项目的真实能力清单，重心落在团队管理与预算掌控上。
+
+         跑马灯占中间，版权信息挂在右端做固定锚点 ——
+         不新增行高，因此不会挤压 hero / 面板那一屏的空间。 -->
+    <footer class="band" aria-label="平台能力与版权信息">
       <span class="band__label">Capabilities</span>
+      <span class="band__sep" aria-hidden="true"></span>
       <div class="band__viewport">
         <div class="band__track" data-band>
           <span class="vendor"><i></i>团队统一充值</span>
@@ -371,6 +373,14 @@
           <span class="vendor"><i></i>自托管部署</span>
         </div>
       </div>
+      <span class="band__sep" aria-hidden="true"></span>
+      <a
+        class="band__copy"
+        href="https://github.com/qianfree/team-api"
+        target="_blank"
+        rel="noopener noreferrer"
+      >© {{ currentYear }} qianfree</a>
+      <span class="band__lic">AGPL-3.0</span>
     </footer>
 
     <!-- Announcement Popup Modal -->
@@ -438,6 +448,9 @@ const { settings: publicSettings, fetchSettings } = usePublicSettings()
 const siteName = computed(() => publicSettings.value.site_name || 'Team-API')
 // 快速开始示例里展示的真实接入地址（取当前访问域名，OpenAI 兼容端点固定为 /v1）
 const apiBaseUrl = `${window.location.origin}/v1`
+
+/* 版权信息：年份取运行时当前年 —— 构建期写死会在跨年后过期 */
+const currentYear = new Date().getFullYear()
 
 const rootEl = ref<HTMLElement | null>(null)
 
@@ -933,13 +946,17 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 
 .brand { display: flex; align-items: center; gap: 12px; }
+/* 项目 logo（三色轨道，public/favicon.svg）自带紫/绿/橙配色，
+   直接陈列在深色页面上即可 —— 不再垫渐变底砖（两套彩色会互相打架）。
+   发光改用 drop-shadow 让光晕贴合轨道形状，脉冲外环保留。 */
 .brand__mark {
-  position: relative; width: 36px; height: 36px; border-radius: 11px;
+  position: relative; width: 36px; height: 36px;
   display: grid; place-items: center;
-  background: linear-gradient(140deg, var(--teal), var(--cyan) 55%, var(--violet));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16), 0 10px 28px -8px rgba(var(--glow-a), .8);
 }
-.brand__mark svg { width: 19px; height: 19px; }
+.brand__mark img {
+  width: 34px; height: 34px; display: block;
+  filter: drop-shadow(0 6px 18px rgba(var(--glow-a), .35));
+}
 .brand__mark::after {
   content: ""; position: absolute; inset: -7px; border-radius: 18px;
   border: 1px solid rgba(var(--glow-a), .3);
@@ -1418,10 +1435,34 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
   color: var(--text-mute); text-transform: uppercase;
 }
+/* 竖分隔线：跑马灯两端的静态文字（左 Capabilities 标签 / 右版权）与
+   滚动词之间用它划清边界，否则静态文字会和滚出来的能力词黏成一段。 */
+.band__sep {
+  flex: none; width: 1px; height: 15px;
+  background: linear-gradient(180deg, transparent, var(--panel-line), transparent);
+}
+/* 版权署名同时是指向 GitHub 仓库的链接：默认保持安静的原色，
+   悬停提亮一档给出可点的暗示（与跑马灯词条同一套 hover 语言）。 */
+.band__copy {
+  flex: none; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-mute); letter-spacing: .01em;
+  text-decoration: none; transition: color .25s;
+}
+.band__copy:hover { color: var(--text-dim); }
+.band__lic {
+  flex: none; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .07em;
+  color: var(--teal);
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid rgba(var(--glow-a), .34);
+  background: rgba(var(--glow-a), .09);
+}
 .band__viewport {
   position: relative; flex: 1; min-width: 0; overflow: hidden;
-  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  /* 左端不再淡出 —— 首词要有完整的出现，只保留右端渐隐 */
+  mask-image: linear-gradient(90deg, #000 0%, #000 93%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 93%, transparent 100%);
 }
 .band__track {
   display: flex; gap: clamp(30px, 3.6vw, 62px); width: max-content;
@@ -1497,6 +1538,12 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   }
   .dash__col + .dash__col::before { display: none; }
   .dash__col:nth-child(3) { border-top: 1px solid var(--panel-line-soft); padding-top: 12px; }
+
+  /* 窄屏能力带：版权锚点会抢掉跑马灯的空间，收掉次要信息（版本号、许可胶囊），
+     只留一行简短的版权署名。 */
+  .band { gap: 14px; }
+  .band__lic { display: none; }
+  .band__sep { display: none; }
 }
 
 @media (max-width: 620px) {
@@ -1505,6 +1552,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .brand__tag { display: none; }
   .toast { right: 10px; left: 10px; bottom: 118px; justify-content: center; }
   .snippet { font-size: 11.5px; }
+  /* 更窄时 Capabilities 标签也撤掉，版权 + 跑马灯并排 */
+  .band__label { display: none; }
+  .band__copy { font-size: 10.5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
