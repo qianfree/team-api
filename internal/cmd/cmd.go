@@ -184,6 +184,10 @@ var (
 			s.Use(middleware.RequestId)
 			s.Use(middleware.ServiceName)
 
+			// IP 黑名单：业务链路第一道闸门（Recovery/RequestId/ServiceName 就绪之后、
+			// setup 守卫与所有路由组之前），命中黑名单的请求在任何路由之前直接 403
+			s.Use(middleware.IpBlacklist)
+
 			// Setup mode guard: block all requests until initialization is complete
 			s.Use(func(r *ghttp.Request) {
 				if !setupHandler.IsSetupMode() {

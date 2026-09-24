@@ -28,77 +28,50 @@ team-api/
 │   ├── docs/v1/                #   OpenAPI 文档 API
 │   ├── open/v1/                #   开放平台 API
 │   ├── payment/v1/             #   支付回调 API
+│   └── settings/v1/            #   公开设置 API（IsPublic 设置项、公开公告，无需认证）
 ├── hack/
 │   └── config.yaml             # gf CLI 脚手架配置（gen dao 等工具的数据库连接和生成规则）
 ├── internal/
 │   ├── cmd/                    # 入口命令、服务启动、路由注册
-│   │   ├── cmd.go              #   main 包注册，路由分组定义
-│   │   └── cmd_reset_pwd.go    #   密码重置命令
 │   ├── consts/                 # 常量定义（业务状态码、枚举等）
 │   ├── controller/             # 控制器（由 gf gen ctrl 从 api/ 自动生成，禁止手动修改）
-│   │   ├── admin/              #   管理后台控制器
-│   │   ├── tenant/             #   租户控制台控制器
-│   │   ├── captcha/            #   验证码控制器
-│   │   ├── docs/               #   文档控制器
-│   │   ├── open/               #   开放平台控制器
-│   ├── handler/                # 特殊端点处理器（不走 Controller 链路，见下方说明）
-│   │   ├── relay/              #   AI 代理端点处理器
-│   │   ├── public/             #   支付回调端点处理器
-│   │   └── setup/              #   系统初始化向导处理器
-│   ├── logic/                  # 业务逻辑实现（核心代码所在）
-│   │   ├── admin/              #   管理后台业务逻辑
-│   │   ├── tenant/             #   租户控制台业务逻辑
-│   │   ├── billing/            #   计费引擎
-│   │   ├── common/             #   公共逻辑（缓存、配置、安全、邮件、验证码、JWT 等）
-│   │   ├── docs/               #   OpenAPI 文档生成
-│   │   ├── monitor/            #   监控告警引擎
-│   │   ├── notification/       #   通知服务
-│   │   ├── open/               #   开放平台业务逻辑
-│   │   ├── payment/            #   支付逻辑（回调处理、订单履约）
-│   │   ├── relay/              #   Relay 业务逻辑（亲和性、健康检查、缓存）
-│   │   └── task/               #   异步任务框架
-│   ├── model/                  # 数据模型（由 gf gen dao 自动生成，禁止手动修改）
-│   │   ├── do/                 #   Domain Objects（查询条件、输入结构体）
-│   │   └── entity/             #   Entity（与数据库表 1:1 映射的数据实体）
-│   ├── packed/                 # 打包资源（内嵌静态文件、编译时生成）
 │   ├── dao/                    # 数据访问对象（由 gf gen dao 自动生成，禁止手动修改）
+│   ├── dispatchadapter/        # 渠道调度适配层（桥接 relaykit/dispatch 与宿主：渠道目录、调度配置、Redis/本地健康状态）
+│   ├── handler/                # 特殊端点处理器（不走 Controller 链路，见下方说明）
+│   ├── logic/                  # 业务逻辑实现（核心代码所在）
+│   ├── middleware/             # 中间件
+│   ├── model/                  # 数据模型（由 gf gen dao 自动生成，禁止手动修改）
+│   ├── packed/                 # 打包资源（内嵌静态文件、编译时生成）
+│   ├── plugin/                 # 插件框架（接口定义、注册表、生命周期、钩子、引导）
 │   ├── response/               # 统一响应工具包（Success/Error 封装）
 │   ├── service/                # 业务接口定义（由 gf gen service 从 logic/ 自动生成，禁止手动修改）
-│   ├── middleware/             # 中间件
+│   ├── testutil/               # 测试工具（GoFrame 测试服务器封装）
 │   └── utility/                # 工具函数
-│       ├── crypto/             #   加密工具
-│       ├── export/             #   数据导出
-│       ├── totp/               #   TOTP 两步验证
-│       └── turnstile/          #   Cloudflare Turnstile 验证
 ├── relay/                      # AI 模型代理层（顶级模块，独立于 GoFrame 脚手架生成目录）
-│   ├── channel/                #   供应商适配器（registry.go + 24 个子目录，每个供应商一个）
-│   │   └── openai/ claude/ gemini/ ...
+│   ├── channel/                #   供应商适配器（registry.go + 23 个子目录，每个供应商一个）
+│   │   └── openai/ claude/ gemini/ vertex/ codex/ ali/ ...
 │   ├── common/                 #   Relay 层共享类型和工具
 │   ├── constant/               #   Relay 层常量（供应商类型、模式、错误码）
-│   ├── dto/                    #   数据传输对象（OpenAI/Claude/Gemini/Realtime/Task 等格式定义）
-│   ├── handler/                #   Relay 请求处理器（chat/claude/gemini/audio/rerank/task/realtime 等）
-│   ├── helper/                 #   Relay 辅助函数（流式处理、状态码映射、系统提示词、thinking 处理）
+│   ├── dto/                    #   兼容层 DTO（主体已迁 relaykit/dto，余 Responses DTO 与 relaykit 类型桥接）
+│   ├── handler/                #   Relay 请求处理器（chat/claude/gemini/audio/rerank/task/realtime/videos/responses/passthrough 等）
+│   ├── helper/                 #   Relay 辅助函数（错误信息、状态码映射、模型名处理、供应商原生格式判定、脱敏）
 │   ├── override/               #   请求/响应覆盖（Header 改写、参数覆盖）
-│   ├── scheduler/              #   渠道调度器（调度、亲和性、重试）
-│   └── taskchannel/            #   异步任务渠道适配器
-│       ├── registry.go         #     任务渠道注册表
-│       ├── kling/              #     可灵视频生成
-│       ├── midjourney/         #     Midjourney 图像生成
-│       ├── sora/               #     Sora 视频生成
-│       └── suno/               #     Suno 音乐生成
-├── manifest/
-│   ├── config/                 # 应用运行时配置（GoFrame 标准路径）
-│   ├── deploy/                 # 部署配置（K8s/Compose 等）
-│   ├── docker/                 # Docker 构建配置
-│   ├── i18n/                   # 国际化资源文件
-│   └── protobuf/               # Protobuf 定义文件
+│   ├── relaykit_bridge/        #   relaykit 协议转换桥（格式路由分发、响应/流式回接）
+│   └── taskchannel/            #   异步任务渠道适配器（registry.go + helpers.go + 8 个子目录）
+│       └── kling/ midjourney/ sora/ suno/ ali/ gemini/ minimax/ volcengine/
+├── relaykit/                   # 协议转换 + 渠道调度（独立 Go module，不依赖 GoFrame）
+├── plugins/                    # 插件实现目录（registry.go 汇总注册，当前含 example 示例插件）
+├── scripts/                    # 辅助脚本（wrk 压测、Turnstile 测试、渠道测试缓存清理）
+├── tests/
+│   └── integration/            # 集成测试（admin/ tenant/，起真实服务做端到端断言）
+├── manifest/                   # GoFrame相关配置
 ├── migrations/                 # goose 数据库迁移脚本（六位序号编号：000001_xxx.sql）
 ├── web/                        # 前端
 │   ├── admin/                  # 管理后台
-│   └── tenant/                 # 租户控制台
+│   ├── tenant/                 # 租户控制台
+│   ├── embed.go                #   前端打包产物内嵌（embedweb 构建标签）
+│   └── embed_stub.go           #   非 embedweb 构建的空实现
 ├── docs/                       # 项目文档
-│   ├── 开发计划-v2/            #   分周期开发计划（周期一～六）
-│   └── 协议文档/               #   协议相关文档
 ├── main.go                     # 应用入口
 ├── go.mod
 └── Makefile
@@ -107,11 +80,17 @@ team-api/
 ### Relay 层设计说明
 
 Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`internal/` 下的 `controller/service/dao/model`），原因：
-- **文件量大**：24 个供应商适配器 + 4 个异步任务适配器 + 共享模块，放在 `internal/logic/` 下层级过深
+- **文件量大**：23 个供应商适配器 + 8 个异步任务适配器 + 共享模块，放在 `internal/logic/` 下层级过深
 - **职责独立**：Relay 是纯粹的代理转发层，不依赖 GoFrame ORM/DAO，与 `internal/` 下的业务逻辑解耦
-- **参考对齐**：目录结构与 new-api 的 `relay/` 保持一致，降低移植和理解成本
 
-`internal/logic/` 中的业务逻辑（如计费、渠道调度）通过 Go import 调用 `relay/` 包，而非将 relay 嵌入 logic 内部。
+`internal/logic/` 中的业务逻辑（如计费）通过 Go import 调用 `relay/` 包，而非将 relay 嵌入 logic 内部。
+
+### relaykit 独立模块（协议转换 + 渠道调度）
+
+`relaykit/` 是自带 go.mod 的独立 Go module（`github.com/qianfree/team-api/relaykit`，不依赖 GoFrame），承载两块核心能力，`relay/` 下已不再有 scheduler：
+
+- **协议转换**（`relayconvert/`）：12 方向协议互转的注册表 + 引擎，`relay/handler` 经 `relay/relaykit_bridge` 调用；原 `relay/dto` 主体已迁入 `relaykit/dto`
+- **渠道调度**（`dispatch/`）：渠道选择（HRW 一致性哈希）、错误分类、熔断、健康分、会话亲和；`internal/dispatchadapter` 负责桥接宿主的渠道目录/调度配置/Redis 健康状态
 
 ### GoFrame 代码生成与手动编写分界
 
@@ -133,6 +112,10 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 | `internal/utility/` | 手动编写 | 是（工具函数：加密、导出、TOTP、Turnstile） |
 | `manifest/config/` | 手动编写 | 是（运行时配置） |
 | `relay/` | 手动编写 | 是（AI 模型代理层，独立于 GoFrame 脚手架） |
+| `relaykit/` | 手动编写 | 是（独立 Go module：协议转换 + 渠道调度） |
+| `internal/dispatchadapter/` | 手动编写 | 是（渠道调度适配层，桥接 relaykit/dispatch） |
+| `internal/plugin/` `plugins/` | 手动编写 | 是（插件框架与插件实现） |
+| `internal/testutil/` `scripts/` `tests/` | 手动编写 | 是（测试与辅助脚本） |
 
 ### internal/handler/ 目录说明
 
@@ -143,6 +126,8 @@ Relay 层作为顶级 `relay/` 模块独立于 GoFrame 脚手架生成目录（`
 | `handler/relay/` | `/v1/*` AI 代理端点（OpenAI/Claude/Gemini 兼容格式）- 需要直接操作 `http.ResponseWriter` 进行流式转发 |
 | `handler/public/` | `/api/payment/*` 支付回调端点 - 需要返回非 JSON 格式的响应（如支付宝的表单重定向） |
 | `handler/setup/` | `/api/setup/*` 系统初始化向导端点 - 首次部署时的系统配置页面和初始化接口 |
+| `handler/admin/` | `/api/admin/files/*` 管理后台文件服务 - 应用层代理下载（local 存储无预签名 URL 时），直写二进制流 |
+| `handler/landing/` | `/` 后端根路径落地页 - 非 embedweb 构建时返回项目介绍页，引导进入两套控制台 |
 
 **为什么不用 Controller**：
 - **流式响应**：AI 代理端点需要实时转发上游的 SSE 流，Controller 的响应包装会破坏流式传输
@@ -194,28 +179,18 @@ cmd（路由注册）
       ← controller 格式化响应（Res 结构体）
 ```
 
-## 参考项目（只读，禁止修改）
+## 参考项目（本地可选，当前未放置）
 
-项目根目录下有 `new-api/` 和 `sub2api/` 两个参考项目，它们是大模型网关领域的成熟实现。
-大多数情况下不需要查看这2个目录下的代码，除非我主动提及或者涉及到大模型相关的实现逻辑。
+`new-api/` 和 `sub2api/` 是大模型网关领域的成熟实现，曾作为只读参考放在项目根目录（gitignore 未跟踪，不随仓库分发），**当前本地已移除**；需要参考时自行克隆回来即可。三项目渠道调度的横向对比结论沉淀在 `docs/reference/多项目渠道调度对比.md`（注意：其 team-api 侧描述为调度重写前的旧实现，现行调度以 `relaykit/dispatch` 为准）。
 
-### new-api 重点参考
+### 参考要点
 
-- **Relay 代理层架构**：`controller/relay/`，适配器模式、请求转发、响应解析
-- **供应商适配器**：`relay/channel/` 下 40+ 供应商的适配器实现，优先复用
-- **协议转换**：OpenAI ↔ Claude ↔ Gemini 消息格式互转
-- **渠道调度**：优先级/权重选择、自动重试、Key 轮询
-- **计费模型**：预扣/结算/退款、梯度定价、Token 计量
-
-### sub2api 重点参考
-
-- **渠道亲和性**：用户+模型→渠道映射缓存策略
-- **运维监控**：仪表盘设计、健康监控页面
-- **用户体系**：前端布局和组件设计
+- **new-api**：Relay 代理层架构（适配器模式、请求转发、响应解析）、40+ 供应商适配器、协议转换、渠道调度（优先级/权重选择、自动重试、Key 轮询）、计费模型（预扣/结算/退款、梯度定价、Token 计量）
+- **sub2api**：渠道亲和性（用户+模型→渠道映射缓存策略）、运维监控（仪表盘设计、健康监控页面）、用户体系（前端布局和组件设计）
 
 ### 参考原则
 
-参考不等于照搬。new-api 使用 Gin + GORM，我们需要适配到 GoFrame 框架。接口设计和核心算法可以参考，但代码需要重新组织以符合 GoFrame 标准结构（`api → controller → service → logic → dao` 分层）和项目的多租户架构。注意 GoFrame 的 `model/do/`、`model/entity/`、`dao/`、`service/`、`controller/` 均由脚手架自动生成，业务代码只写在 `api/`、`logic/`、`cmd/`、`handler/`、`middleware/`、`response/`、`utility/`、`consts/` 和顶级 `relay/` 中。
+参考不等于照搬。new-api 使用 Gin + GORM，需适配到 GoFrame 框架，代码重新组织以符合 GoFrame 标准结构（`api → controller → service → logic → dao` 分层）和项目的多租户架构。注意 GoFrame 的 `model/do/`、`model/entity/`、`dao/`、`service/`、`controller/` 均由脚手架自动生成，业务代码只写在 `api/`、`logic/`、`cmd/`、`handler/`、`middleware/`、`response/`、`utility/`、`consts/`、顶级 `relay/` 和独立模块 `relaykit/` 中；协议转换与渠道调度已沉淀为自有实现，优先复用 `relaykit/`。
 
 ## 核心架构决策
 
@@ -267,7 +242,7 @@ cmd（路由注册）
 
 ### 钱包状态：Redis 权威 + DB 物化（强约束）
 
-钱包资金状态采用 **Redis 唯一实时权威 + DB 滞后物化视图** 架构（详见 [`docs/钱包Redis权威化设计.md`](docs/钱包Redis权威化设计.md)）：
+钱包资金状态采用 **Redis 唯一实时权威 + DB 滞后物化视图** 架构：
 
 - **Redis 权威**：`wallet:v2:{tenant_id}` hash（balance / frozen_balance / total_consumed / ver，整数 micro-USD）是余额的唯一实时真相。所有资金变动（预扣冻结、结算扣款、解冻、充值/退款/调账）一律通过 `internal/logic/billing/wallet.go` 的 Lua 脚本原子完成，**任何 Go 代码不得直接读改写 Redis 钱包 hash 或从 DB 反向重建它**。
 - **累计消费（total_consumed）只随结算事件变动**：`settleClaimLua` 与扣款同一原子 `HINCRBY` 递增；结算记流水失败的补偿逆转走专用 `ReverseConsumeRedis`（余额与计数同一原子回退）。充值/兑换/调账/退款/预扣/解冻一律**不得**触碰该计数（`CreditWalletRedis`/`DebitWalletRedis` 不感知计数）。字段基线由三层补种保证（boot 种子 `SeedWalletTotalConsumed` / 灾备重建 `rebuildWalletFromDB` / 物化器自愈 `materializeOneWallet`），存量历史从 `bil_transactions(type=consume)` 回填（幂等可重放）。
@@ -374,7 +349,7 @@ cmd（路由注册）
 ### Go 后端
 
 - **缩进统一使用 tab**：所有 Go 代码的缩进必须使用 tab，与 `go fmt` 自动格式化保持一致，禁止混用空格和 tab 缩进
-- **金额用 `decimal.Decimal`，不用 `float64`（强约束）**：所有资金列（`NUMERIC(20,10)`）在 Go 层映射为 `github.com/shopspring/decimal` 的 `decimal.Decimal`（gf 全局 `typeMapping: numeric → decimal.Decimal`）。**多步金额运算（加/减/乘/除、循环累加、倍率×折扣链）一律用 decimal**，禁止用 float64 做中间计算——IEEE double 会在链式运算中累积漂移。工具函数在 `internal/logic/billing/money.go`（`AddMoney`/`SubtractMoney`/`MultiplyMoney`/`DivideMoney`/`RoundMoney`/`Max`/`Min`/`IsPositive` 等），比较用 `.GreaterThan(billing.Zero)`/`.IsZero()`/`.Equal()`，不要用 `== 0`。判断非金额小数（评分/利用率/延迟/告警阈值）保持 `float64`——判据见 [`docs/float64-decimal-field-classification.md`](docs/float64-decimal-field-classification.md)（「这个数最终会不会变成钱」）。
+- **金额用 `decimal.Decimal`，不用 `float64`（强约束）**：所有资金列（`NUMERIC(20,10)`）在 Go 层映射为 `github.com/shopspring/decimal` 的 `decimal.Decimal`（gf 全局 `typeMapping: numeric → decimal.Decimal`）。**多步金额运算（加/减/乘/除、循环累加、倍率×折扣链）一律用 decimal**，禁止用 float64 做中间计算——IEEE double 会在链式运算中累积漂移。工具函数在 `internal/logic/billing/money.go`（`AddMoney`/`SubtractMoney`/`MultiplyMoney`/`DivideMoney`/`RoundMoney`/`Max`/`Min`/`IsPositive` 等），比较用 `.GreaterThan(billing.Zero)`/`.IsZero()`/`.Equal()`，不要用 `== 0`。判断非金额小数（评分/利用率/延迟/告警阈值）保持 `float64`——判据是「这个数最终会不会变成钱」。
 	- **边界转换（只在出入口调用，禁止用于计算链路）**：
 		- **出口 → float64**：API `Res` 响应、内存缓存结构体、遗留 float64 接口，用 `billing.InexactFloat64(d)`（前端 JSON number 契约不变）。
 		- **入口 ← float64**：API `Req` 里的 float64 金额，用 `billing.NewFromFloat(f)` 转进 decimal 再运算。
@@ -466,12 +441,10 @@ cmd（路由注册）
 
 | 文档 | 路径 | 用途 |
 |------|------|------|
-| 产品需求文档 | `docs/team-api产品需求文档.md` | 功能需求的最终依据 |
-| 原始开发计划 | `docs/team-api开发计划.md` | S01-S26 迭代拆分 |
-| new-api 调研 | `docs/new-api调研报告.md` | 参考项目能力盘点 |
-| sub2api 调研 | `docs/sub2api调研报告.md` | 参考项目能力盘点 |
-| 对比分析 | `docs/new-api-vs-sub2api对比分析报告.md` | 两者差异 |
-| 大模型实施方案 | `docs/大模型完整实施方案-v2.1.md` | 大模型代理层设计 |
+| relaykit 迁移状态 | `docs/relaykit迁移工作状态.md` | relay/ → relaykit 协议转换迁移进度、覆盖矩阵与守卫说明 |
+| 渠道调度对比 | `docs/reference/多项目渠道调度对比.md` | new-api/sub2api/team-api 调度方案对比（team-api 侧描述已过时，以 relaykit/dispatch 为准） |
+| Docker 部署 | `docs/deployment-docker.md` | Docker 部署指引 |
+| 协议文档 | `docs/协议文档/` | 各供应商官方协议参考（OpenAI/Claude/Gemini/智谱/豆包/阿里等系列） |
 | API 格式参考 | `docs/reference/api-format-reference.md` | JSON 示例、SSE 格式、错误映射、中间件差异 |
 | 协议转换语料采集 | `docs/协议转换语料采集手册.md` | `corpus-extract` 命令用法：从渠道调试日志提取真实流量语料喂给协议转换测试 |
 | GoFrame 使用规范 | `docs/reference/goframe-conventions.md` | 框架使用规范 + 已修复的框架 bug 记录 |

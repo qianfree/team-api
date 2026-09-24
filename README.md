@@ -4,7 +4,7 @@
 
 **多租户 大模型 API 网关 SaaS 平台**
 
-统一接入 OpenAI、Claude、Gemini 等 25+ 大模型供应商，提供计费、限流、监控和多租户管理能力。
+统一接入 OpenAI、Claude、Gemini 等大模型供应商，提供计费、限流、监控和多租户管理能力。
 
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go)](https://go.dev/)
 [![GoFrame](https://img.shields.io/badge/GoFrame-v2.10-blue?style=flat-square)](https://goframe.org/)
@@ -20,18 +20,18 @@
 ## 功能特性
 
 - **多租户架构** — 行级租户隔离，管理后台与租户控制台双独立用户体系
-- **25+ 大模型供应商** — OpenAI、Claude、Gemini、DeepSeek、通义千问、智谱、Ollama 等
+- **适配多家大模型供应商** — OpenAI、Claude、Gemini、DeepSeek、通义千问、智谱、Ollama 等
 - **OpenAI 兼容 API** — 无缝替换 OpenAI API，支持对话补全、向量嵌入、图像生成、语音、实时通信等
 - **智能渠道调度** — 优先级/权重路由、自动故障转移、健康监控、渠道亲和性
-- **五层额度模型** — 租户钱包 → 套餐额度 → 成员额度 → 项目预算 → Key 额度
+- **三层额度模型** — 租户钱包 → 项目预算/成员额度 →  Key 额度
 - **实时计费引擎** — 预扣 → 转发 → 结算 → 退款，Redis 原子操作保证并发安全
-- **双控制台** — 管理后台（Naive UI）用于平台运营 + 租户控制台（TailwindCSS）面向终端用户
+- **双控制台** — 管理后台用于平台运营 + 租户控制台面向终端用户
 - **全链路可观测** — 请求日志、操作审计、监控告警，Request ID 贯穿全链路
 
 
 > 在线演示地址：
 > 
-> 管理端：https://team-api.net/admin/, 为做好数据安全措施，暂不公开登录方式
+> 管理端：https://team-api.net/admin/, 未做好数据安全措施，暂不公开登录方式
 > 
 > 用户端：https://team-api.net, 用户名：liu@163.com, 密码：Demo123456
 
@@ -383,8 +383,8 @@ make migrate-status  # 查看迁移状态
 1. ~~在线升级（已完成）~~
 2. ~~支付模块（Easy Pay 已支持）~~
 3. ~~图片生成同步转异步~~
-4. 完善大模型支持，特别是图像和视频的支持
-5. 角色管理，方便运营团队内部协作，预设角色（管理员，销售，技术支持）
+4. ~~完善大模型支持，特别是图像和视频的支持~~
+5. ~~角色管理，方便运营团队内部协作，预设角色（管理员，销售，技术支持）~~
 6. 插件功能（定制功能通过插件实现，确保不与主线代码冲突）
 7. 开放平台（对接OA的能力，方便企业对接管理）
 
@@ -399,7 +399,7 @@ make migrate-status  # 查看迁移状态
 
 请遵循项目现有代码风格和 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/) 提交规范。
 
-项目当前由 qianfree 单独维护。未来如接受外部贡献，将在合并贡献前提供贡献者许可协议（CLA），以确保 AGPL 与商业授权的权利链清晰完整。
+项目当前由 qianfree 进行维护。未来如接受外部贡献，将在合并贡献前提供贡献者许可协议（CLA），以确保 AGPL 与商业授权的权利链清晰完整。
 
 ## 在线交流
 欢迎加QQ群聊天吹水：1095286563
@@ -409,7 +409,7 @@ make migrate-status  # 查看迁移状态
 
 ## 许可证
 
-Copyright (C) 2026 qianfree。本项目社区版采用 [AGPL v3.0 或更高版本](LICENSE) 许可证。
+Copyright (C) 2026 qianfree。 本项目社区版采用 [AGPL v3.0 或更高版本](LICENSE) 许可证。
 
 ### 核心要求
 

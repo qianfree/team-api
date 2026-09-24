@@ -111,8 +111,15 @@ func (s *sAdmin) validateGeneralSettings(_ context.Context, values map[string]st
 	return nil
 }
 
-// validateSecuritySettings 校验安全配置项之间的依赖：启用 Turnstile 前必须已配置密钥。
+// validateSecuritySettings 校验安全配置项之间的依赖：启用 Turnstile 前必须已配置密钥；
+// IP 黑名单每个条目必须是合法 IP / CIDR（坏条目入库后中间件会静默跳过，必须保存时拦下）。
 func (s *sAdmin) validateSecuritySettings(ctx context.Context, values map[string]string) error {
+	if raw, ok := values["ip_blacklist_list"]; ok && strings.TrimSpace(raw) != "" {
+		if err := common.ValidateIpBlacklistRaw(raw); err != nil {
+			return common.NewBadRequestError(err.Error())
+		}
+	}
+
 	enabled, ok := values["turnstile_enabled"]
 	if !ok || (enabled != "true" && enabled != "1") {
 		return nil

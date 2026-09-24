@@ -130,6 +130,10 @@ var Registry = []SettingDef{
 		Label: "验证码有效期(秒)", Validation: "min:60,max:600"},
 	{Key: "register_forbidden_words", Type: SettingTypeString, Default: "admin,system,root,api,test,administrator,管理员,系统", Category: "security",
 		Label: "注册禁用词", Description: "组织名称、组织代码、用户名中包含这些词时禁止注册（不区分大小写），多个禁用词用英文逗号分隔"},
+	{Key: "ip_blacklist_enabled", Type: SettingTypeBool, Default: "false", Category: "security",
+		Label: "启用 IP 黑名单", Description: "开启后，命中黑名单的 IP 访问任何端点（控制台 / AI 代理）都会被直接拒绝，保存后即时生效"},
+	{Key: "ip_blacklist_list", Type: SettingTypeJSON, Default: "[]", Category: "security",
+		Label: "IP 黑名单列表", Description: "JSON 字符串数组，支持精确 IP 与 CIDR 网段，如 [\"1.2.3.4\", \"10.0.0.0/8\"]；拦截次数统计在仪表盘展示（存于缓存，不落库）"},
 
 	// ── Audit ──
 	{Key: "audit_level", Type: SettingTypeString, Default: "full", Category: "audit",

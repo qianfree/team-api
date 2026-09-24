@@ -1,6 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
+
+// 黑名单列表在表单里以「每行一个 IP/网段」编辑，存库为 JSON 字符串数组
+const ipBlacklistText = computed<string>({
+  get: () => {
+    const raw = (values['ip_blacklist_list'] as string) || '[]'
+    try {
+      const arr = JSON.parse(raw)
+      return Array.isArray(arr) ? arr.join('\n') : String(raw)
+    } catch {
+      return String(raw)
+    }
+  },
+  set: (v: string) => {
+    const arr = v
+      .split(/\r?\n|,/)
+      .map(s => s.trim())
+      .filter(Boolean)
+    values['ip_blacklist_list'] = JSON.stringify(arr)
+  },
+})
 </script>
 
 <template>
@@ -81,6 +102,32 @@ const values = useFormValues()
 						@update:model-value="(v: string) => values['register_forbidden_words'] = v"
 						placeholder="admin,system,root,api,test,administrator,管理员,系统"
 						:auto-size="{ minRows: 3, maxRows: 6 }"
+					/>
+				</AFormItem>
+			</div>
+		</div>
+
+		<!-- IP 黑名单 -->
+		<div class="section">
+			<div class="section-title">IP 黑名单</div>
+			<div class="section-desc">
+				开启后，命中黑名单的 IP 访问任何端点（管理后台 / 租户控制台 / AI 代理）都会被直接拒绝，保存后即时生效。
+				支持精确 IP 与 CIDR 网段；拦截次数统计在仪表盘展示（存于缓存，不落库）
+			</div>
+			<div class="section-grid">
+				<AFormItem label="启用 IP 黑名单">
+					<ASwitch
+						:model-value="!!values['ip_blacklist_enabled']"
+						@change="(v: string | number | boolean) => values['ip_blacklist_enabled'] = v"
+					/>
+				</AFormItem>
+			</div>
+			<div class="section-grid" style="grid-template-columns: 1fr">
+				<AFormItem label="黑名单列表">
+					<ATextarea
+						v-model="ipBlacklistText"
+						:placeholder="'1.2.3.4\n10.0.0.0/8\n2001:db8::/32'"
+						:auto-size="{ minRows: 4, maxRows: 12 }"
 					/>
 				</AFormItem>
 			</div>

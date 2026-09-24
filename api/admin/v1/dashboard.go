@@ -14,12 +14,25 @@ type AdminDashboardReq struct {
 }
 
 type AdminDashboardRes struct {
-	Tenants        int         `json:"tenants"`
-	Members        int         `json:"members"`
-	ActiveChannels int         `json:"active_channels"`
-	Today          *DayStats   `json:"today"`
-	Yesterday      *DayStats   `json:"yesterday"`
-	Month          *MonthStats `json:"month"`
+	Tenants        int               `json:"tenants"`
+	Members        int               `json:"members"`
+	ActiveChannels int               `json:"active_channels"`
+	Today          *DayStats         `json:"today"`
+	Yesterday      *DayStats         `json:"yesterday"`
+	Month          *MonthStats       `json:"month"`
+	IpBlacklist    *IpBlacklistStats `json:"ip_blacklist"`
+}
+
+// IpBlacklistStats IP 黑名单拦截统计（数据存 Redis 缓存，不落库；读取失败时仅回 enabled）
+type IpBlacklistStats struct {
+	Enabled bool                     `json:"enabled"` // 黑名单当前是否启用
+	Total   int64                    `json:"total"`   // 累计拦截总次数
+	List    []IpBlacklistBlockedItem `json:"list"`    // 按拦截次数倒序，最多 TOP 20
+}
+
+type IpBlacklistBlockedItem struct {
+	Ip    string `json:"ip"`
+	Count int64  `json:"count"`
 }
 
 type DayStats struct {
