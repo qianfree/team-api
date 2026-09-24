@@ -11,7 +11,6 @@ import { formatBilling } from '@/composables/useCurrency'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/common/Icon.vue'
 import MaintenanceBanner from '@/components/common/MaintenanceBanner.vue'
-import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
 import RouteErrorBoundary from '@/components/common/RouteErrorBoundary.vue'
 import { marked } from 'marked'
 import request from '@/utils/request'
@@ -264,7 +263,6 @@ onBeforeUnmount(() => {
 	<div class="tenant-layout min-h-screen overflow-x-clip">
 	<!-- Maintenance Banner -->
 		<MaintenanceBanner />
-			<AnnouncementBanner v-if="consoleAnnouncements.length" :announcements="consoleAnnouncements" />
 
 		<!-- Background Decoration -->
 		<div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
@@ -410,17 +408,13 @@ onBeforeUnmount(() => {
 							class="topbar-icon-button relative flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/65 text-slate-400 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:text-primary-600"
 								title="平台公告"
 							>
-								<Icon name="megaphone" size="md" />
+								<Icon name="megaphone" size="md" :class="{ 'motion-safe:animate-swing': announceUnreadCount > 0 }" />
+								<!-- 存在未读公告时喇叭摇摆 + 红点标记 -->
 								<span
 									v-if="announceUnreadCount > 0"
 									class="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"
 								></span>
 							</button>
-							<!-- Pulse animation layer -->
-							<div
-								v-if="announceUnreadCount > 0"
-								class="absolute inset-0 rounded-xl animate-pulse-soft  pointer-events-none"
-							></div>
 
 							<!-- Announcement Dropdown Panel -->
 							<transition name="fade">
@@ -583,7 +577,7 @@ onBeforeUnmount(() => {
 	<Teleport to="body">
 		<Transition name="fade">
 			<div v-if="announceDetailItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click.self="closeAnnouncementDetail">
-				<div class="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-gray-200 animate-scale-in" @click.stop>
+				<div class="w-full max-w-3xl flex min-h-[24rem] flex-col rounded-2xl bg-white shadow-2xl border border-gray-200 animate-scale-in" @click.stop>
 					<div class="flex items-start gap-3 px-6 py-4 border-b border-gray-100">
 						<div class="flex-1 min-w-0">
 							<h3 class="text-lg font-semibold text-gray-900">{{ announceDetailItem.title }}</h3>
@@ -593,7 +587,8 @@ onBeforeUnmount(() => {
 							<Icon name="x" size="md" />
 						</button>
 					</div>
-					<div class="px-6 py-5 max-h-[60vh] overflow-y-auto">
+					<!-- 内容区 flex-1 撑满弹窗最小高度，长内容超过 60vh 后内部滚动 -->
+					<div class="flex-1 min-h-0 px-6 py-5 max-h-[60vh] overflow-y-auto">
 						<div class="announcement-content prose prose-sm max-w-none text-gray-700" v-html="renderMarkdown(announceDetailItem.content)"></div>
 					</div>
 					<div class="px-6 py-3 border-t border-gray-100 flex justify-end">

@@ -57,6 +57,7 @@
 	--animate-scale-in: scale-in 0.2s ease-out;
 	--animate-shimmer: shimmer 2s linear infinite;
 	--animate-glow: glow 2s ease-in-out infinite alternate;
+	--animate-swing: swing 2.4s ease-in-out infinite;
 
 	@keyframes fade-in {
 		from { opacity: 0; }
@@ -85,6 +86,15 @@
 	@keyframes glow {
 		from { box-shadow: 0 0 20px rgba(20, 184, 166, 0.22); }
 		to { box-shadow: 0 0 30px rgba(20, 184, 166, 0.38); }
+	}
+	/* 喇叭图标摇摆：静止过半周期后快速晃动几下，用于未读公告提醒 */
+	@keyframes swing {
+		0%, 55%, 100% { transform: rotate(0deg); }
+		60% { transform: rotate(-14deg); }
+		66% { transform: rotate(11deg); }
+		72% { transform: rotate(-8deg); }
+		78% { transform: rotate(5deg); }
+		84% { transform: rotate(0deg); }
 	}
 }
 

@@ -1,12 +1,5 @@
 <template>
 	<div class="auth-layout relative min-h-[100dvh] overflow-x-hidden">
-		<!-- Announcement Banner (teleported to body, fixed top) -->
-		<Teleport to="body">
-			<div v-if="announcements.length" class="fixed top-0 left-0 right-0 z-50">
-				<AnnouncementBanner :announcements="announcements" />
-			</div>
-		</Teleport>
-
 		<div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
 		<div class="relative z-10 flex min-h-[100dvh] flex-col">
@@ -45,35 +38,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
-import AnnouncementBanner from '../common/AnnouncementBanner.vue'
-import request from '@/utils/request'
+import { computed } from 'vue'
 import { usePublicSettings } from '@/composables/usePublicSettings'
-import { createPoller } from '@/composables/usePolling'
 
 const { settings: publicSettings } = usePublicSettings()
 const siteName = computed(() => publicSettings.value.site_name || 'Team-API')
-const announcements = ref<any[]>([])
-// 登录页公告轮询：页面隐藏时暂停，恢复可见时按剩余时间续排
-const announcementPoller = createPoller(fetchAnnouncements, 30 * 60 * 1000)
-
-async function fetchAnnouncements() {
-	try {
-		const res = await request.get('/settings/announcements', { params: { position: 'login' }, _suppressErrorMsg: true } as any)
-		announcements.value = res.data?.data?.list || []
-	} catch {
-		// silently ignore
-	}
-}
-
-onMounted(() => {
-	fetchAnnouncements()
-	announcementPoller.start()
-})
-
-onBeforeUnmount(() => {
-	announcementPoller.stop()
-})
 </script>
 
 <style scoped>
