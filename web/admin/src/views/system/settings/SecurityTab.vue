@@ -1,26 +1,32 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useFormValues } from './useSettings'
 const values = useFormValues()
 
-// 黑名单列表在表单里以「每行一个 IP/网段」编辑，存库为 JSON 字符串数组
-const ipBlacklistText = computed<string>({
-  get: () => {
-    const raw = (values['ip_blacklist_list'] as string) || '[]'
-    try {
-      const arr = JSON.parse(raw)
-      return Array.isArray(arr) ? arr.join('\n') : String(raw)
-    } catch {
-      return String(raw)
-    }
-  },
-  set: (v: string) => {
-    const arr = v
-      .split(/\r?\n|,/)
-      .map(s => s.trim())
-      .filter(Boolean)
-    values['ip_blacklist_list'] = JSON.stringify(arr)
-  },
+// 黑名单列表以标签形式编辑（一条规则一个标签），存库为 JSON 字符串数组。
+// 标签数组与库值之间单向同步：输入只写回表单值，库值变化（加载/保存刷新）才反向同步。
+const ipBlacklistTags = ref<string[]>([])
+
+// 存库 JSON → 标签数组（脏格式容错为空）
+function parseBlacklistTags(raw: unknown): string[] {
+  try {
+    const arr = JSON.parse(String(raw ?? '[]'))
+    return Array.isArray(arr) ? arr.map(String) : []
+  } catch {
+    return []
+  }
+}
+
+// 服务器加载/保存刷新时把库值同步进标签；与当前标签一致时跳过（自己写回的回环）
+watch(() => values['ip_blacklist_list'], (raw) => {
+  const tags = parseBlacklistTags(raw)
+  if (JSON.stringify(tags) === JSON.stringify(ipBlacklistTags.value)) return
+  ipBlacklistTags.value = tags
+}, { immediate: true })
+
+// 输入单向写回表单值
+watch(ipBlacklistTags, (tags) => {
+  values['ip_blacklist_list'] = JSON.stringify(tags)
 })
 </script>
 
@@ -112,7 +118,7 @@ const ipBlacklistText = computed<string>({
 			<div class="section-title">IP 黑名单</div>
 			<div class="section-desc">
 				开启后，命中黑名单的 IP 访问任何端点（管理后台 / 租户控制台 / AI 代理）都会被直接拒绝，保存后即时生效。
-				支持精确 IP 与 CIDR 网段；拦截次数统计在仪表盘展示（存于缓存，不落库）
+				拦截次数统计在仪表盘展示（存于缓存，不落库）
 			</div>
 			<div class="section-grid">
 				<AFormItem label="启用 IP 黑名单">
@@ -124,11 +130,16 @@ const ipBlacklistText = computed<string>({
 			</div>
 			<div class="section-grid" style="grid-template-columns: 1fr">
 				<AFormItem label="黑名单列表">
-					<ATextarea
-						v-model="ipBlacklistText"
-						:placeholder="'1.2.3.4\n10.0.0.0/8\n2001:db8::/32'"
-						:auto-size="{ minRows: 4, maxRows: 12 }"
+					<AInputTag
+						v-model="ipBlacklistTags"
+						class="w-full"
+						placeholder="输入 IP 或网段后回车添加，如 1.2.3.4、10.0.0.0/8"
+						unique-value
+						allow-clear
 					/>
+					<template #extra>
+						<span class="field-help">输入后回车添加为标签，点标签上的 × 删除；支持精确 IP（1.2.3.4）与 CIDR 网段（10.0.0.0/8），保存时校验格式</span>
+					</template>
 				</AFormItem>
 			</div>
 		</div>
@@ -141,5 +152,9 @@ const ipBlacklistText = computed<string>({
 	font-size: 12px;
 	color: var(--color-text-3);
 	margin-bottom: 12px;
+}
+.field-help {
+	color: var(--color-text-3);
+	font-size: 12px;
 }
 </style>
