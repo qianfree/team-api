@@ -407,7 +407,11 @@ function downloadImage(img: ImageResult, idx: number) {
 	if (!src) return
 	const a = document.createElement('a')
 	a.href = src
-	a.download = `image_${idx + 1}.png`
+	// 文件名带时间戳，避免不同批次的生成结果重名（序号保留，防止同秒内多张图冲突）
+	const now = new Date()
+	const pad = (n: number) => String(n).padStart(2, '0')
+	const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+	a.download = `image_${stamp}_${idx + 1}.png`
 	document.body.appendChild(a)
 	a.click()
 	document.body.removeChild(a)
