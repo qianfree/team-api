@@ -428,3 +428,4 @@ Copyright (C) 2026 qianfree。 本项目社区版采用 [AGPL v3.0 或更高版�
 - [GoFrame](https://goframe.org/) — Go 应用开发框架
 - [new-api](https://github.com/Calcium-Ion/new-api) — AI 网关参考实现
 - [Naive UI](https://www.naiveui.com/) — Vue 3 组件库
+- [linux.do](https://linux.do) - 新的理想型社区
