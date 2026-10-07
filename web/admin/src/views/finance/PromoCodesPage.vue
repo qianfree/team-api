@@ -91,11 +91,12 @@ function openCreate() {
 async function handleSubmit(done: () => void) {
   formLoading.value = true
   try {
+    const payload = { ...form, valid_from: form.valid_from || null, valid_to: form.valid_to || null }
     if (editingId.value) {
-      await request.put(`/admin/promo-codes/${editingId.value}`, { ...form, valid_from: form.valid_from || null, valid_to: form.valid_to || null })
+      await request.put(`/admin/promo-codes/${editingId.value}`, payload)
       Message.success('更新成功')
     } else {
-      await request.post('/admin/promo-codes', { ...form, valid_from: form.valid_from || null, valid_to: form.valid_to || null })
+      await request.post('/admin/promo-codes', payload)
       Message.success('创建成功')
     }
     done(); fetchList()
@@ -143,20 +144,23 @@ const { exporting, exportFile } = useExport({
     </ACard>
 
     <!-- Create/Edit Modal -->
-    <AModal v-model:visible="showFormModal" :title="editingId ? '编辑优惠码' : '创建优惠码'" :width="500" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
-      <AForm :model="form" :auto-label-width="true" layout="vertical">
-        <AFormItem label="名称" required><AInput v-model="form.name" /></AFormItem>
-        <AFormItem label="优惠码" required><AInput v-model="form.code" :disabled="!!editingId" placeholder="留空自动生成" /></AFormItem>
-        <AFormItem label="类型">
-          <ASelect v-model="form.type" :options="[{ label: '折扣百分比', value: 'percentage' }, { label: '立减固定金额', value: 'fixed' }]" />
-        </AFormItem>
-        <AFormItem label="折扣值"><AInputNumber v-model="form.discount_value" :min="0" class="w-full" placeholder="百分比时 0-100" /></AFormItem>
-        <AFormItem label="最低金额"><AInputNumber v-model="form.min_amount" :min="0" class="w-full" /></AFormItem>
-        <AFormItem label="最大折扣"><AInputNumber v-model="form.max_discount" :min="0" class="w-full" placeholder="0=不限" /></AFormItem>
-        <AFormItem label="总次数"><AInputNumber v-model="form.total_count" :min="0" class="w-full" placeholder="0=不限" /></AFormItem>
-        <AFormItem label="每人限用"><AInputNumber v-model="form.per_user_limit" :min="0" /></AFormItem>
-        <AFormItem label="开始日期"><AInput type="date" v-model="form.valid_from" /></AFormItem>
-        <AFormItem label="结束日期"><AInput type="date" v-model="form.valid_to" /></AFormItem>
+    <AModal v-model:visible="showFormModal" :title="editingId ? '编辑优惠码' : '创建优惠码'" :width="640" :mask-closable="false" :on-before-ok="handleSubmit" :ok-loading="formLoading">
+      <AForm :model="form" layout="vertical">
+        <!-- 双列布局：同维度字段左右配对，缩短表单高度 -->
+        <div class="grid grid-cols-2 gap-x-4">
+          <AFormItem label="名称" required><AInput v-model="form.name" /></AFormItem>
+          <AFormItem label="优惠码"><AInput v-model="form.code" :disabled="!!editingId" placeholder="留空自动生成" /></AFormItem>
+          <AFormItem label="类型">
+            <ASelect v-model="form.type" :options="[{ label: '折扣百分比', value: 'percentage' }, { label: '立减固定金额', value: 'fixed' }]" />
+          </AFormItem>
+          <AFormItem label="折扣值"><AInputNumber v-model="form.discount_value" :min="0" class="w-full" placeholder="百分比时 0-100" /></AFormItem>
+          <AFormItem label="最低金额"><AInputNumber v-model="form.min_amount" :min="0" class="w-full" /></AFormItem>
+          <AFormItem label="最大折扣"><AInputNumber v-model="form.max_discount" :min="0" class="w-full" placeholder="0=不限" /></AFormItem>
+          <AFormItem label="总次数"><AInputNumber v-model="form.total_count" :min="0" class="w-full" placeholder="0=不限" /></AFormItem>
+          <AFormItem label="每人限用"><AInputNumber v-model="form.per_user_limit" :min="0" class="w-full" /></AFormItem>
+          <AFormItem label="开始日期"><AInput type="date" v-model="form.valid_from" /></AFormItem>
+          <AFormItem label="结束日期"><AInput type="date" v-model="form.valid_to" /></AFormItem>
+        </div>
       </AForm>
     </AModal>
 

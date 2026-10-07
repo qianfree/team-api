@@ -31,6 +31,10 @@ type EpayConfig struct {
 	MerchantID  string          `json:"merchant_id"`
 	MerchantKey string          `json:"merchant_key"`
 	PayMethods  []EpayPayMethod `json:"pay_methods"`
+	// SubmitMethod 提交订单到网关 submit.php 的方式："post"（默认，前端隐藏
+	// 表单提交）或 "get"（参数拼查询串整页跳转，兼容仅支持 GET 的网关）。
+	// 零值视为 post，旧配置无需迁移。
+	SubmitMethod string `json:"submit_method,omitempty"`
 }
 
 // EpayPayMethod 易支付子支付方式。

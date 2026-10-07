@@ -2,9 +2,10 @@ package admin
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gogf/gf/v2/os/gtime"
-	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/grand"
 
 	"github.com/qianfree/team-api/internal/dao"
 	"github.com/qianfree/team-api/internal/logic/common"
@@ -38,40 +39,24 @@ func (s *sAdmin) ListPromoCodes(ctx context.Context, req *v1.PromoCodeListReq) (
 
 // CreatePromoCode 创建优惠码
 func (s *sAdmin) CreatePromoCode(ctx context.Context, req *v1.PromoCodeCreateReq) (*v1.PromoCodeCreateRes, error) {
-	// 字段白名单：req.Data 是原始 map，直接 Insert 会把 used_count / id / created_at 等
-	// 非预期字段一并写入。此处仅放行显式列出的列（与 UpdatePromoCode 的白名单口径一致），
-	// 杜绝请求体越权注入内部字段。
-	data := do.OrdPromoCodes{}
-	for k, v := range req.Data {
-		switch k {
-		case "code":
-			data.Code = v
-		case "name":
-			data.Name = v
-		case "type":
-			data.Type = v
-		case "discount_value":
-			data.DiscountValue = v
-		case "min_amount":
-			data.MinAmount = v
-		case "max_discount":
-			data.MaxDiscount = v
-		case "total_count":
-			data.TotalCount = v
-		case "per_user_limit":
-			data.PerUserLimit = v
-		case "status":
-			data.Status = v
-		case "valid_from":
-			data.ValidFrom = gconv.GTime(v)
-		case "valid_to":
-			data.ValidTo = gconv.GTime(v)
-		case "plan_ids":
-			data.PlanIds = gconv.Int64s(v)
-		}
+	// code 留空时自动生成 12 位随机码（与前端「留空自动生成」提示对应）
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		code = strings.ToUpper(grand.S(12))
 	}
-	if data.Code == nil || gconv.String(data.Code) == "" {
-		return nil, common.NewBadRequestError("优惠码 code 不能为空")
+	data := do.OrdPromoCodes{
+		Code:          code,
+		Name:          req.Name,
+		Type:          req.Type,
+		DiscountValue: req.DiscountValue,
+		MinAmount:     req.MinAmount,
+		MaxDiscount:   req.MaxDiscount,
+		TotalCount:    req.TotalCount,
+		PerUserLimit:  req.PerUserLimit,
+		Status:        req.Status,
+		ValidFrom:     req.ValidFrom,
+		ValidTo:       req.ValidTo,
+		PlanIds:       req.PlanIds,
 	}
 
 	result, err := dao.OrdPromoCodes.Ctx(ctx).Insert(data)
@@ -95,33 +80,41 @@ func (s *sAdmin) UpdatePromoCode(ctx context.Context, req *v1.PromoCodeUpdateReq
 		return nil, common.NewNotFoundError("优惠码")
 	}
 
+	// 指针字段非 nil 才更新（留空不更新），code 创建后不可改，
+	// 可更新字段即 Req 结构体定义，天然防越权注入
 	data := do.OrdPromoCodes{}
-	allowedFields := map[string]bool{
-		"name": true, "type": true, "discount_value": true,
-		"min_amount": true, "total_count": true,
-		"max_discount": true, "status": true,
-		"starts_at": true, "expires_at": true,
+	if req.Name != nil {
+		data.Name = *req.Name
 	}
-	for k, v := range req.Update {
-		if !allowedFields[k] {
-			continue
-		}
-		switch k {
-		case "name":
-			data.Name = v.(string)
-		case "type":
-			data.Type = v.(string)
-		case "discount_value":
-			data.DiscountValue = v
-		case "min_amount":
-			data.MinAmount = v
-		case "total_count":
-			data.TotalCount = v
-		case "max_discount":
-			data.MaxDiscount = v
-		case "status":
-			data.Status = v.(string)
-		}
+	if req.Type != nil {
+		data.Type = *req.Type
+	}
+	if req.DiscountValue != nil {
+		data.DiscountValue = *req.DiscountValue
+	}
+	if req.MinAmount != nil {
+		data.MinAmount = *req.MinAmount
+	}
+	if req.MaxDiscount != nil {
+		data.MaxDiscount = *req.MaxDiscount
+	}
+	if req.TotalCount != nil {
+		data.TotalCount = *req.TotalCount
+	}
+	if req.PerUserLimit != nil {
+		data.PerUserLimit = *req.PerUserLimit
+	}
+	if req.Status != nil {
+		data.Status = *req.Status
+	}
+	if req.ValidFrom != nil {
+		data.ValidFrom = req.ValidFrom
+	}
+	if req.ValidTo != nil {
+		data.ValidTo = req.ValidTo
+	}
+	if len(req.PlanIds) > 0 {
+		data.PlanIds = req.PlanIds
 	}
 
 	_, err = dao.OrdPromoCodes.Ctx(ctx).

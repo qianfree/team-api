@@ -12,6 +12,7 @@ const props = defineProps<{
 		merchant_id: string
 		merchant_key: string
 		pay_methods: { name: string; type: string; color: string }[]
+		submit_method?: string
 	}
 }>()
 
@@ -23,7 +24,13 @@ const form = reactive({
 	pay_address: props.initialConfig.pay_address ?? '',
 	merchant_id: props.initialConfig.merchant_id ?? '',
 	merchant_key: props.initialConfig.merchant_key ?? '',
+	submit_method: props.initialConfig.submit_method ?? 'post',
 })
+
+const submitMethodOptions = [
+	{ label: 'POST 表单（推荐）', value: 'post' },
+	{ label: 'GET 跳转（仅支持 GET 的网关）', value: 'get' },
+]
 
 // 支付方式以 JSON 编辑：各上游网关的 type 取值不一（alipay/wxpay 或站点自定义值），
 // 固定下拉无法穷举，直接编辑 JSON 数组最灵活
@@ -109,6 +116,12 @@ async function save() {
 				</AFormItem>
 				<AFormItem label="商户密钥" help="易支付商户密钥（KEY），用于 MD5 签名与回调验签">
 					<AInputPassword v-model="form.merchant_key" placeholder="商户密钥" allow-clear />
+				</AFormItem>
+				<AFormItem
+					label="提交方式"
+					help="提交订单到网关 submit.php 的方式。默认 POST 隐藏表单（签名与订单参数不落 URL 和日志）；仅当上游网关只接受 GET 请求时才切换为 GET 跳转"
+				>
+					<ASelect v-model="form.submit_method" :options="submitMethodOptions" />
 				</AFormItem>
 				<AFormItem
 					label="支付方式"

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,12 +44,27 @@ func (p *EpayProvider) CreatePayment(ctx context.Context, order *PaymentOrder, c
 	params["sign"] = sign
 	params["sign_type"] = "MD5"
 
-	// 采用 POST 表单提交：这里只返回 submit.php 的 action 地址，签名后的全部
+	actionURL := fmt.Sprintf("%s/submit.php", strings.TrimRight(cfg.PayAddress, "/"))
+
+	// GET 模式（兼容仅支持 GET 的网关）：签名参数拼进查询串，返回完整跳转
+	// URL 且不带 Params，前端走整页跳转。签名口径与 POST 一致——对未编码的
+	// 原始值计算，url.Values.Encode 只做传输层 percent-encoding，网关收到
+	// 解码后再验签，两边口径一致。
+	if strings.EqualFold(cfg.SubmitMethod, "get") {
+		q := url.Values{}
+		for k, v := range params {
+			q.Set(k, v)
+		}
+		return &PaymentResult{
+			PaymentURL: actionURL + "?" + q.Encode(),
+			IsRedirect: true,
+		}, nil
+	}
+
+	// POST 表单提交（默认）：这里只返回 submit.php 的 action 地址，签名后的全部
 	// 参数放入 Params，由前端构造 <form method="POST"> 隐藏域提交。
 	// 相比拼 GET 查询串更安全：sign 与订单参数不进入 URL（不落浏览器历史/服务器
 	// 日志），也规避 URL 长度限制和中文/特殊字符的编码边界问题。
-	actionURL := fmt.Sprintf("%s/submit.php", strings.TrimRight(cfg.PayAddress, "/"))
-
 	return &PaymentResult{
 		PaymentURL: actionURL,
 		Params:     params,
