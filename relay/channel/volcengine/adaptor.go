@@ -105,8 +105,17 @@ func (a *claudeAdaptor) GetRequestURL(info *common.RelayInfo) (string, error) {
 	}
 }
 
+// SetupRequestHeader 设置上游请求头。Anthropic 兼容端点除统一鉴权头外还需携带
+// Anthropic 协议头：anthropic-version 声明协议版本，anthropic-beta 透传客户端的
+// 能力协商值（不透传会静默丢失 interleaved thinking 等能力请求）。
 func (a *claudeAdaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo) error {
 	setupHeader(header, info)
+	header.Set("anthropic-version", "2023-06-01")
+	if info.RequestHeaders != nil {
+		if v := info.RequestHeaders.Get("anthropic-beta"); v != "" {
+			header.Set("anthropic-beta", v)
+		}
+	}
 	return nil
 }
 

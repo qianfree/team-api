@@ -40,6 +40,8 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 	statusCode := http.StatusInternalServerError
 	errMsg := helper.SafeUpstreamErrorMessage(err)
 	errType := "api_error"
+	// 上游错误响应体原文（Anthropic 信封时可从中还原原始 error.type）
+	upstreamBody := ""
 
 	if errors.As(err, &rateLimitErr) {
 		statusCode = rateLimitErr.StatusCode
@@ -48,6 +50,7 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 	} else if errors.As(err, &relayErr) {
 		statusCode = relayErr.StatusCode
 		// 上游错误的 Message 是上游响应体原文，解包出可读消息再暴露给客户端
+		upstreamBody = relayErr.Message
 		errMsg = helper.UnwrapUpstreamErrorMessage(relayErr.Message)
 		if relayErr.Cause != nil {
 			// 传输层错误（client.Do 的 *url.Error）的 Cause 含上游域名，必须脱敏后再暴露给用户；
@@ -61,6 +64,10 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 		statusCode = http.StatusInternalServerError
 	}
 
+	// error.type 必须取自 Claude 官方词表：内部口径（upstream_error 等）对
+	// Anthropic SDK 不可识别；上游为 Anthropic 信封时优先还原其原始 type
+	errType = helper.ClaudeErrorType(statusCode, errType, upstreamBody)
+
 	// 无可用渠道是正常业务条件，已在 handleChannelUnavailable 中以 Warning 记录，此处跳过避免重复日志；
 	// 其余 5xx 为真实错误，保留 ERROR 但禁用堆栈打印（此处调用栈固定，无调试价值）
 	if statusCode >= 500 && !errors.Is(err, common.ErrChannelUnavailable) {
@@ -69,6 +76,13 @@ func WriteClaudeRelayError(w http.ResponseWriter, err error) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// x-should-retry：告知客户端该错误是否值得重试。429/5xx 置 true（退避或换
+	// 渠道后可能成功），其余 4xx 置 false（如 402 余额不足，重试必然同结果）
+	if helper.ShouldRetryStatus(statusCode) {
+		w.Header().Set("x-should-retry", "true")
+	} else {
+		w.Header().Set("x-should-retry", "false")
+	}
 	w.WriteHeader(statusCode)
 
 	errBody, _ := json.Marshal(map[string]any{

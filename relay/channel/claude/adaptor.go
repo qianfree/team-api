@@ -54,6 +54,7 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 			header.Set("anthropic-version", "2023-06-01")
 			header.Set("Content-Type", "application/json")
 			header.Set("Accept", "application/json")
+			forwardClientProtocolHeaders(header, info)
 			return nil
 		}
 	}
@@ -63,15 +64,24 @@ func (a *Adaptor) SetupRequestHeader(header http.Header, info *common.RelayInfo)
 	header.Set("Content-Type", "application/json")
 	header.Set("Accept", "application/json")
 
-	if info.RequestHeaders != nil {
-		for _, h := range []string{"X-Request-Id", "anthropic-beta"} {
-			if v := info.RequestHeaders.Get(h); v != "" {
-				header.Set(h, v)
-			}
-		}
-	}
+	forwardClientProtocolHeaders(header, info)
 
 	return nil
+}
+
+// forwardClientProtocolHeaders 透传客户端的 Anthropic 协议头。
+// anthropic-beta 携带能力协商值（context management、interleaved thinking 等），
+// 不透传会静默丢失能力、或使配对的 body 字段被上游 400 拒绝；X-Request-Id 用于
+// 上游侧请求追踪对账。API Key 与 OAuth 两种鉴权模式均需透传。
+func forwardClientProtocolHeaders(header http.Header, info *common.RelayInfo) {
+	if info.RequestHeaders == nil {
+		return
+	}
+	for _, h := range []string{"X-Request-Id", "anthropic-beta"} {
+		if v := info.RequestHeaders.Get(h); v != "" {
+			header.Set(h, v)
+		}
+	}
 }
 
 // ConvertRequest 根据入站格式转换请求体为 Claude 格式
