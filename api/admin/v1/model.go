@@ -321,9 +321,18 @@ type ModelImportPreviewItem struct {
 	Pricing          []PricingItem         `json:"pricing"`
 	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表"`
 	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选）"`
-	Scheme           string                `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
-	SchemeConfig     json.RawMessage       `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
-	Conflict         string                `json:"conflict"` // "" 或 "exists"
+	// 官方参考定价（official_pricing JSONB 还原）：nil=文件未携带（旧导出文件/null），
+	// 导入时不动作库内人工核对值；非 nil=全量替换（三个官方数组全空=清除），与 PricingSetReq 同口径
+	OfficialItems            []PricingItem         `json:"official_items" dc:"官方参考定价项（nil=导入时不动库内值）"`
+	OfficialTimeSegments     []TimeSegmentItem     `json:"official_time_segments" dc:"官方参考-时段定价"`
+	OfficialParamMultipliers []ParamMultiplierItem `json:"official_param_multipliers" dc:"官方参考-参数倍率规则"`
+	// 定价行展示字段（全量替换语义：空串=清除）
+	PriceNote       string          `json:"price_note" dc:"价格说明（仅内部可见）"`
+	DiscountLabel   string          `json:"discount_label" dc:"折扣标签（对外展示）"`
+	PriceChangeNote string          `json:"price_change_note" dc:"价格调整说明（对外展示）"`
+	Scheme          string          `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
+	SchemeConfig    json.RawMessage `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
+	Conflict        string          `json:"conflict"` // "" 或 "exists"
 }
 
 // ModelImportReq 确认导入模型请求
@@ -349,9 +358,18 @@ type ModelImportItem struct {
 	Pricing          []PricingItem         `json:"pricing" dc:"定价列表"`
 	TimeSegments     []TimeSegmentItem     `json:"time_segments" dc:"时段定价列表（可选）"`
 	ParamMultipliers []ParamMultiplierItem `json:"param_multipliers" dc:"参数倍率规则（可选）"`
-	Scheme           string                `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
-	SchemeConfig     json.RawMessage       `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
-	ConflictAction   string                `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
+	// 官方参考定价（可选）：OfficialItems nil=本次不动库内官方定价（旧导出文件兼容）；
+	// 非 nil=全量替换（三个官方数组全空=清除），与 PricingSetReq 同口径
+	OfficialItems            []PricingItem         `json:"official_items" dc:"官方参考定价项（nil=不修改；非 nil=全量替换）"`
+	OfficialTimeSegments     []TimeSegmentItem     `json:"official_time_segments" dc:"官方参考-时段定价（随 official_items 一并全量替换）"`
+	OfficialParamMultipliers []ParamMultiplierItem `json:"official_param_multipliers" dc:"官方参考-参数倍率规则（随 official_items 一并全量替换）"`
+	// 定价行展示字段（全量替换语义：空串=清除）
+	PriceNote       string          `json:"price_note" dc:"价格说明（仅内部可见）"`
+	DiscountLabel   string          `json:"discount_label" dc:"折扣标签（对外展示）"`
+	PriceChangeNote string          `json:"price_change_note" dc:"价格调整说明（对外展示）"`
+	Scheme          string          `json:"scheme,omitempty" dc:"特殊计费方案名（特殊方案模型导出时携带）"`
+	SchemeConfig    json.RawMessage `json:"scheme_config,omitempty" dc:"方案私有配置（scheme 非空时随方案透传）"`
+	ConflictAction  string          `json:"conflict_action" v:"in:skip,overwrite" dc:"冲突处理策略：skip/overwrite"`
 }
 
 // ModelImportRes 导入结果响应

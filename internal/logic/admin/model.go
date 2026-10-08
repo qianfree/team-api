@@ -782,6 +782,13 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 		return err
 	}
 
+	// 空 items（导出文件中未配价模型的 pricing:[]）时 billing_mode 兜底 token，
+	// 避免越界；空 blob 与无定价行同义（未配价），行为与 writeOfficialPricingForModel 的兜底一致
+	mode := "token"
+	if len(items) > 0 {
+		mode = items[0].BillingMode
+	}
+
 	// 全量替换语义改为 upsert：ON CONFLICT (model_id) 命中时只覆盖 billing_mode / pricing，
 	// official_pricing 与展示字段列未涉及时保留原值——模型导入共用本函数，不得误清人工
 	// 核对落库的官方定价；展示字段随后仍由调用方按「空=清除」全量回写，行为与删行重插等价。
@@ -789,7 +796,7 @@ func writePricingForModel(ctx context.Context, modelDBID int64, items []v1.Prici
 	if _, err := dao.MdlPricing.Ctx(ctx).
 		Data(g.Map{
 			"model_id":     modelDBID,
-			"billing_mode": items[0].BillingMode,
+			"billing_mode": mode,
 			"pricing":      string(blobJSON),
 		}).
 		OnConflict("model_id").
