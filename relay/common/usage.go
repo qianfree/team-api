@@ -4,13 +4,14 @@ import "github.com/qianfree/team-api/relay/dto"
 
 // TokenDetails Token 使用量细分
 type TokenDetails struct {
-	CachedTokens           int `json:"cached_tokens,omitempty"`
-	CachedCreationTokens   int `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens int `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens int `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
-	// CacheWriteTokens 本次写入缓存的 token（OpenAI Responses cache_write_tokens，观测字段）。
-	// 注意：OpenAI 缓存写入按普通输入价计费（含于 PromptTokens），不得并入 CachedCreationTokens
-	// 计费桶（Claude 写入才有独立 CacheCreationPrice），计费引擎不读取本字段
+	CachedTokens           int                 `json:"cached_tokens,omitempty"`
+	CachedTokensDetails    *CachedTokenDetails `json:"cached_tokens_details,omitempty"`     // cached_tokens 的模态细分（OpenAI 新结构，观测字段）
+	CachedCreationTokens   int                 `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
+	CachedCreation5mTokens int                 `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
+	CachedCreation1hTokens int                 `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	// CacheWriteTokens 本次写入缓存的 token（OpenAI cache_write_tokens）。
+	// 与 Claude 缓存创建是同一物理事件的不同协议报法（互斥出现）：
+	// 计费侧 resolveTokenCounts 合并桶 max(cached_creation, cache_write) 统一按 CacheCreationPrice 计价
 	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`
 	AudioTokens              int `json:"audio_tokens,omitempty"`
 	TextTokens               int `json:"text_tokens,omitempty"`
@@ -18,6 +19,15 @@ type TokenDetails struct {
 	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
 	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
 	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+}
+
+// CachedTokenDetails cached_tokens 的模态细分（OpenAI 新 usage 结构，观测字段）。
+// 指针字段区分「上游未报该模态」与「显式报 0」；计费引擎不读取，
+// 为后续缓存图像/文本分价计费预留解析与透传口
+type CachedTokenDetails struct {
+	TextTokens  *int `json:"text_tokens,omitempty"`
+	ImageTokens *int `json:"image_tokens,omitempty"`
+	AudioTokens *int `json:"audio_tokens,omitempty"`
 }
 
 // Usage Token 使用量信息
@@ -55,6 +65,7 @@ func DtoTokenDetailsToCommon(d *dto.TokenDetails) *TokenDetails {
 	}
 	return &TokenDetails{
 		CachedTokens:             d.CachedTokens,
+		CachedTokensDetails:      (*CachedTokenDetails)(d.CachedTokensDetails),
 		CachedCreationTokens:     d.CachedCreationTokens,
 		CachedCreation5mTokens:   d.CachedCreation5mTokens,
 		CachedCreation1hTokens:   d.CachedCreation1hTokens,
@@ -75,6 +86,7 @@ func CommonTokenDetailsToDto(c *TokenDetails) *dto.TokenDetails {
 	}
 	return &dto.TokenDetails{
 		CachedTokens:             c.CachedTokens,
+		CachedTokensDetails:      (*dto.CachedTokenDetails)(c.CachedTokensDetails),
 		CachedCreationTokens:     c.CachedCreationTokens,
 		CachedCreation5mTokens:   c.CachedCreation5mTokens,
 		CachedCreation1hTokens:   c.CachedCreation1hTokens,

@@ -338,8 +338,8 @@ func settleSuccessfulRequest(
 		Status:          "success",
 
 		// Cache token 明细。cache_creation_tokens 列统一记录「写入缓存的 token」：
-		// Claude 为 cache_creation_input_tokens，OpenAI Responses 为 cache_write_tokens（两者物理语义相同，
-		// 仅计价不同——后者按普通输入价计费且已含于 input_tokens，不参与计费扣减，仅作观测）
+		// Claude 为 cache_creation_input_tokens，OpenAI 为 cache_write_tokens（同一物理事件，
+		// 计费侧 resolveTokenCounts 合并桶按 CacheCreationPrice 计价）
 		CacheCreationTokens: usage.CacheCreationTokens +
 			tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CacheWriteTokens }),
 		CacheCreation5mTokens: tokenDetailField(usage.PromptTokensDetails, func(d *common.TokenDetails) int { return d.CachedCreation5mTokens }),

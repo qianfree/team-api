@@ -204,11 +204,22 @@ func (p *RealtimeProxy) Proxy(ctx context.Context) (*common.Usage, error) {
 
 	usageMu.Lock()
 	defer usageMu.Unlock()
-	return &common.Usage{
+	usage := &common.Usage{
 		PromptTokens:     sumUsage.InputTokens,
 		CompletionTokens: sumUsage.OutputTokens,
 		TotalTokens:      sumUsage.TotalTokens,
-	}, nil
+		// OpenAI Realtime 的 input_tokens 已含缓存（cached_tokens 为其子集），
+		// 置 true 让计费按明细扣减缓存部分，避免「input 全价 + cache 价」双重计费
+		CacheIncludedInPrompt: true,
+	}
+	if sumUsage.InputTokenDetails != nil {
+		usage.PromptTokensDetails = &common.TokenDetails{
+			CachedTokens: sumUsage.InputTokenDetails.CachedTokens,
+			AudioTokens:  sumUsage.InputTokenDetails.AudioTokens,
+			TextTokens:   sumUsage.InputTokenDetails.TextTokens,
+		}
+	}
+	return usage, nil
 }
 
 // accumulateUsage 累加 Realtime 使用量
@@ -216,6 +227,15 @@ func accumulateUsage(sum *dto.RealtimeUsage, u *dto.RealtimeUsage) {
 	sum.TotalTokens += u.TotalTokens
 	sum.InputTokens += u.InputTokens
 	sum.OutputTokens += u.OutputTokens
+	// 缓存读明细参与计费扣减，缺失时保持累计值不变
+	if u.InputTokenDetails != nil {
+		if sum.InputTokenDetails == nil {
+			sum.InputTokenDetails = &dto.RealtimeTokenDetails{}
+		}
+		sum.InputTokenDetails.CachedTokens += u.InputTokenDetails.CachedTokens
+		sum.InputTokenDetails.AudioTokens += u.InputTokenDetails.AudioTokens
+		sum.InputTokenDetails.TextTokens += u.InputTokenDetails.TextTokens
+	}
 }
 
 // estimateInputFromEvent 从客户端事件粗略估算 input tokens

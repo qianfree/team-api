@@ -525,3 +525,37 @@ func TestStripWebSearchOptionsForClaudeModels(t *testing.T) {
 		t.Error("非 claude 模型应保留 web_search_options")
 	}
 }
+
+// TestResponsesResponseToChatCompletions_UsageDetails Responses→Chat 转换的计费用量：
+// 必须携带缓存明细（cached/cache_write）并置 CacheIncludedInPrompt=true——
+// Responses 上游 input_tokens 已含缓存子集，漏标记会导致缓存 token 双重计费
+func TestResponsesResponseToChatCompletions_UsageDetails(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		ID: "resp_1", Object: "response", Status: json.RawMessage(`"completed"`),
+		Model: "gpt-4o",
+		Usage: &dto.ResponsesUsage{
+			InputTokens:  100,
+			OutputTokens: 50,
+			TotalTokens:  150,
+			InputTokensDetails: &dto.InputTokenDetails{
+				CachedTokens:     40,
+				CacheWriteTokens: 10,
+			},
+		},
+	}
+	_, usage, err := ResponsesResponseToChatCompletions(resp, "chatcmpl-1", "gpt-4o")
+	if err != nil {
+		t.Fatalf("convert error: %v", err)
+	}
+	if usage.PromptTokens != 100 || usage.CompletionTokens != 50 {
+		t.Errorf("usage = %+v, want prompt=100 completion=50", usage)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true (input_tokens 已含缓存子集)")
+	}
+	if usage.PromptTokensDetails == nil ||
+		usage.PromptTokensDetails.CachedTokens != 40 ||
+		usage.PromptTokensDetails.CacheWriteTokens != 10 {
+		t.Errorf("cache details not carried: %+v", usage.PromptTokensDetails)
+	}
+}

@@ -1425,7 +1425,7 @@ watch(() => props.visible, (val) => {
 							</AInputNumber>
 						</AFormItem>
 					</div>
-					<div class="grid grid-cols-2 gap-x-4 mt-1">
+					<div class="grid grid-cols-2 md:grid-cols-3 gap-x-4 mt-1">
 						<AFormItem label="缓存读取价格">
 							<AInputNumber v-model="tier.cache_read_price" :min="0" :precision="6" class="w-full">
 								<template #suffix>{{ currencySymbol }}/1M</template>
@@ -1443,7 +1443,7 @@ watch(() => props.visible, (val) => {
 
 			<!-- 官方按量定价 -->
 			<template v-else>
-				<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
+				<div class="grid grid-cols-2 md:grid-cols-5 gap-x-4">
 					<AFormItem label="输入价格">
 						<AInputNumber
 							v-model="officialItems[0].input_price"

@@ -69,7 +69,7 @@ type ModelAssignment struct {
 	CustomInputPrice         *float64       `json:"custom_input_price" dc:"自定义输入价格"`
 	CustomOutputPrice        *float64       `json:"custom_output_price" dc:"自定义输出价格"`
 	CustomCacheReadPrice     *float64       `json:"custom_cache_read_price" dc:"自定义缓存读取价格"`
-	CustomCacheCreationPrice *float64       `json:"custom_cache_creation_price" dc:"自定义缓存创建价格"`
+	CustomCacheCreationPrice *float64       `json:"custom_cache_creation_price" dc:"自定义缓存创建/写入价格"`
 	CustomPricingTiers       []*PricingTier `json:"custom_pricing_tiers" dc:"自定义阶梯定价"`
 }
 
@@ -93,7 +93,7 @@ type TenantModelUpdateReq struct {
 	CustomInputPrice         **float64       `json:"custom_input_price" dc:"自定义输入价格"`
 	CustomOutputPrice        **float64       `json:"custom_output_price" dc:"自定义输出价格"`
 	CustomCacheReadPrice     **float64       `json:"custom_cache_read_price" dc:"自定义缓存读取价格"`
-	CustomCacheCreationPrice **float64       `json:"custom_cache_creation_price" dc:"自定义缓存创建价格"`
+	CustomCacheCreationPrice **float64       `json:"custom_cache_creation_price" dc:"自定义缓存创建/写入价格：省略=不动；null=清除恢复继承"`
 	CustomPricingTiers       *[]*PricingTier `json:"custom_pricing_tiers" dc:"自定义阶梯定价"`
 	// 扩展计费覆盖（custom_pricing 补丁三键，覆盖语义：非空整体替换平台）
 	CustomPerSecondPrices  **map[string]float64    `json:"custom_per_second_prices" dc:"按秒矩阵覆盖：省略=不动；null=清除恢复继承；非null=整体替换"`

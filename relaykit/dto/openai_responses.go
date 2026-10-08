@@ -118,11 +118,12 @@ type ResponsesTextFormat struct {
 
 // InputTokenDetails 输入 token 细分
 type InputTokenDetails struct {
-	CachedTokens     int `json:"cached_tokens"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"` // 本次写入缓存的 token（input_tokens 子集，按普通输入价计费）
-	TextTokens       int `json:"text_tokens,omitempty"`
-	AudioTokens      int `json:"audio_tokens,omitempty"`
-	ImageTokens      int `json:"image_tokens,omitempty"`
+	CachedTokens        int                 `json:"cached_tokens"`
+	CachedTokensDetails *CachedTokenDetails `json:"cached_tokens_details,omitempty"` // cached_tokens 的模态细分（观测字段，计费引擎不读取）
+	CacheWriteTokens    int                 `json:"cache_write_tokens,omitempty"`    // 本次写入缓存的 token（input_tokens 子集，与 Claude 写入同语义，按创建价计费）
+	TextTokens          int                 `json:"text_tokens,omitempty"`
+	AudioTokens         int                 `json:"audio_tokens,omitempty"`
+	ImageTokens         int                 `json:"image_tokens,omitempty"`
 }
 
 // OutputTokenDetails 输出 token 细分

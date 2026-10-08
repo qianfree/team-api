@@ -160,6 +160,7 @@ func chatCompletionToResponsesResponse(chatResp *dto.ChatCompletionResponse, inf
 	inputDetails := &dto.InputTokenDetails{}
 	if d := chatResp.Usage.PromptTokensDetails; d != nil {
 		inputDetails.CachedTokens = d.CachedTokens
+		inputDetails.CachedTokensDetails = d.CachedTokensDetails
 		inputDetails.CacheWriteTokens = d.CacheWriteTokens
 		inputDetails.AudioTokens = d.AudioTokens
 	}

@@ -57,16 +57,19 @@ func (a *Adaptor) handleResponsesInboundNonStream(ctx context.Context, resp *htt
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(convertedBody)
 
-	// 计费用量按上游原始 chat 体（OpenAI 口径 prompt 含缓存，置 CacheIncludedInPrompt 按明细扣减）
+	// 计费用量按上游原始 chat 体（OpenAI 口径 prompt 含缓存，置 CacheIncludedInPrompt 按明细扣减；
+	// PromptTokensDetails 必须携带——丢了明细 cached/cache_write 会被按输入全价计费）
 	var chatResp dto.ChatCompletionResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		return &common.Usage{CacheIncludedInPrompt: true}, nil
 	}
 	return &common.Usage{
-		PromptTokens:          chatResp.Usage.PromptTokens,
-		CompletionTokens:      chatResp.Usage.CompletionTokens,
-		TotalTokens:           chatResp.Usage.TotalTokens,
-		CacheIncludedInPrompt: true,
+		PromptTokens:           chatResp.Usage.PromptTokens,
+		CompletionTokens:       chatResp.Usage.CompletionTokens,
+		TotalTokens:            chatResp.Usage.TotalTokens,
+		PromptTokensDetails:    common.DtoTokenDetailsToCommon(chatResp.Usage.PromptTokensDetails),
+		CompletionTokenDetails: common.DtoTokenDetailsToCommon(chatResp.Usage.CompletionTokenDetails),
+		CacheIncludedInPrompt:  true,
 	}, nil
 }
 
@@ -183,6 +186,10 @@ func BuildResponsesUsageMap(usage *common.Usage) map[string]any {
 			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
 			"audio_tokens":       usage.PromptTokensDetails.AudioTokens,
 		}
+		// cached_tokens_details 模态细分：观测字段，上游报了才透传（omitempty 同构）
+		if usage.PromptTokensDetails.CachedTokensDetails != nil {
+			inputDetails["cached_tokens_details"] = usage.PromptTokensDetails.CachedTokensDetails
+		}
 	}
 	if usage.CompletionTokenDetails != nil {
 		outputDetails = map[string]any{
@@ -220,11 +227,12 @@ func responsesUsageToCommon(u *dto.ResponsesUsage) *common.Usage {
 	usage.TotalTokens = u.TotalTokens
 	if d := u.InputTokensDetails; d != nil {
 		usage.PromptTokensDetails = &common.TokenDetails{
-			CachedTokens:     d.CachedTokens,
-			CacheWriteTokens: d.CacheWriteTokens,
-			TextTokens:       d.TextTokens,
-			AudioTokens:      d.AudioTokens,
-			ImageTokens:      d.ImageTokens,
+			CachedTokens:        d.CachedTokens,
+			CachedTokensDetails: (*common.CachedTokenDetails)(d.CachedTokensDetails),
+			CacheWriteTokens:    d.CacheWriteTokens,
+			TextTokens:          d.TextTokens,
+			AudioTokens:         d.AudioTokens,
+			ImageTokens:         d.ImageTokens,
 		}
 	}
 	if d := u.OutputTokenDetails; d != nil {

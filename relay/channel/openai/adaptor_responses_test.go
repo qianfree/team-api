@@ -145,14 +145,20 @@ func TestAdaptor_ConvertRequest_ResponsesUpstream(t *testing.T) {
 
 // TestResponsesUsageToCommon 验证 Responses usage → common.Usage 映射。
 func TestResponsesUsageToCommon(t *testing.T) {
+	ptrInt := func(v int) *int { return &v }
 	u := responsesUsageToCommon(&dto.ResponsesUsage{
 		InputTokens:  100,
 		OutputTokens: 50,
 		TotalTokens:  150,
 		InputTokensDetails: &dto.InputTokenDetails{
-			CachedTokens: 40,
-			AudioTokens:  10,
-			ImageTokens:  5,
+			CachedTokens:     40,
+			CacheWriteTokens: 15,
+			AudioTokens:      10,
+			ImageTokens:      5,
+			CachedTokensDetails: &dto.CachedTokenDetails{
+				TextTokens:  ptrInt(30),
+				ImageTokens: ptrInt(10),
+			},
 		},
 		OutputTokenDetails: &dto.OutputTokenDetails{
 			ReasoningTokens: 20,
@@ -168,8 +174,47 @@ func TestResponsesUsageToCommon(t *testing.T) {
 	if u.PromptTokensDetails == nil || u.PromptTokensDetails.CachedTokens != 40 {
 		t.Errorf("cached tokens not mapped: %+v", u.PromptTokensDetails)
 	}
+	if u.PromptTokensDetails == nil || u.PromptTokensDetails.CacheWriteTokens != 15 {
+		t.Errorf("cache write tokens not mapped: %+v", u.PromptTokensDetails)
+	}
+	if cd := u.PromptTokensDetails.CachedTokensDetails; cd == nil ||
+		cd.TextTokens == nil || *cd.TextTokens != 30 || cd.ImageTokens == nil || *cd.ImageTokens != 10 || cd.AudioTokens != nil {
+		t.Errorf("cached_tokens_details not mapped: %+v", u.PromptTokensDetails.CachedTokensDetails)
+	}
 	if u.CompletionTokenDetails == nil || u.CompletionTokenDetails.ReasoningTokens != 20 {
 		t.Errorf("reasoning tokens not mapped: %+v", u.CompletionTokenDetails)
+	}
+}
+
+// TestAdaptor_DoResponse_ResponsesInboundNonStream Responses 客户端 + Chat 上游非流式：
+// 计费用量必须携带 PromptTokensDetails（cached/cache_write），否则缓存 token 按输入全价计费
+func TestAdaptor_DoResponse_ResponsesInboundNonStream(t *testing.T) {
+	respBody := `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o-upstream","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(respBody)),
+	}
+
+	info := responsesUpstreamInfo(constant.RelayModeResponses, false)
+	info.ChannelMeta.SupportsResponses = false // 上游为 chat 协议，走 inbound 转换
+	rec := httptest.NewRecorder()
+	a := &Adaptor{}
+	usage, err := a.DoResponse(context.Background(), resp, info, rec)
+	if err != nil {
+		t.Fatalf("DoResponse error: %v", err)
+	}
+	if usage.PromptTokens != 100 || usage.CompletionTokens != 50 {
+		t.Errorf("usage = %+v, want prompt=100 completion=50", usage)
+	}
+	if !usage.CacheIncludedInPrompt {
+		t.Error("CacheIncludedInPrompt = false, want true (OpenAI chat 口径 prompt 含缓存)")
+	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 40 {
+		t.Errorf("cached tokens not carried into billing usage: %+v", usage.PromptTokensDetails)
+	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CacheWriteTokens != 10 {
+		t.Errorf("cache write tokens not carried into billing usage: %+v", usage.PromptTokensDetails)
 	}
 }
 

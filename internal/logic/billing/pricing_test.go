@@ -741,6 +741,105 @@ func TestComputeCost_CacheWithTenantMultiplier(t *testing.T) {
 	assertFloat(t, cb.TotalCost, 0.01, "TotalCost (cache only)")
 }
 
+// TestComputeCost_WithCacheWriteTokens OpenAI cache_write_tokens 独立计价：
+// TestComputeCost_WithCacheWriteTokens OpenAI cache_write 并入创建桶计费（GPT-6 缓存写入场景）：
+// 写 token 从 baseInput 扣减，按 CacheCreationPrice（5m 基础价）计价
+func TestComputeCost_WithCacheWriteTokens(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice:         10.0,
+		OutputPrice:        0.0,
+		CacheReadPrice:     1.0,
+		CacheCreationPrice: 3.0, // $3/1M 创建/写入价（5m 基础价）
+		BillingMode:        "token",
+		TenantMultiplier:   1.0,
+		Currency:           "USD",
+	}
+	pricing.CacheCreation5mPrice = pricing.CacheCreationPrice
+	pricing.CacheCreation1hPrice = pricing.CacheCreationPrice * 1.6
+
+	usage := &rcommon.Usage{
+		PromptTokens:     10_000,
+		CompletionTokens: 0,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens:     4_000,
+			CacheWriteTokens: 2_000,
+		},
+		CacheIncludedInPrompt: true,
+	}
+
+	cb := computeCost(pricing, 10_000, 0, usage)
+
+	// base input = 10K - 4K cache_read - 2K cache_write = 4K → 4K/1M×10 = 0.04
+	assertFloat(t, cb.InputCost, 0.04, "InputCost (after cache write deduction)")
+	if cb.InputTokens != 4000 {
+		t.Errorf("InputTokens = %d, want 4000", cb.InputTokens)
+	}
+	// cache write 并入创建桶: 2K/1M × 3.0 = 0.006
+	assertFloat(t, cb.CacheCreationCost, 0.006, "CacheCreationCost (merged write bucket)")
+	if cb.CacheCreationTokens != 2000 {
+		t.Errorf("CacheCreationTokens = %d, want 2000 (write merged)", cb.CacheCreationTokens)
+	}
+	// cache read: 4K/1M × 1.0 = 0.004
+	assertFloat(t, cb.CacheReadCost, 0.004, "CacheReadCost")
+	// total = 0.04 + 0.004 + 0.006 = 0.05
+	assertFloat(t, cb.TotalCost, 0.05, "TotalCost (with cache write)")
+}
+
+// TestComputeCost_CacheWriteUnconfigured 未配置创建价（=0）时写 token 扣减后免费
+// （与缓存读「未配置=扣减后免费」语义一致，用户选定口径）
+func TestComputeCost_CacheWriteUnconfigured(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice:         10.0,
+		OutputPrice:        0.0,
+		CacheReadPrice:     0.0,
+		CacheCreationPrice: 0, // 未配置
+		BillingMode:        "token",
+		TenantMultiplier:   1.0,
+		Currency:           "USD",
+	}
+
+	usage := &rcommon.Usage{
+		PromptTokens: 10_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CacheWriteTokens: 2_000,
+		},
+		CacheIncludedInPrompt: true,
+	}
+
+	cb := computeCost(pricing, 10_000, 0, usage)
+
+	// base input = 10K - 2K = 8K → 0.08；写 token 免费
+	assertFloat(t, cb.InputCost, 0.08, "InputCost (cache write deducted)")
+	assertFloat(t, cb.CacheCreationCost, 0.0, "CacheCreationCost (unconfigured = free)")
+	assertFloat(t, cb.TotalCost, 0.08, "TotalCost")
+}
+
+// TestComputeCost_CacheWriteWithMultiplier 写入（并入创建桶）同样乘租户乘数（与读/创建口径一致）
+func TestComputeCost_CacheWriteWithMultiplier(t *testing.T) {
+	pricing := &PricingResult{
+		InputPrice:         0.0,
+		OutputPrice:        0.0,
+		CacheCreationPrice: 2.0,
+		BillingMode:        "token",
+		TenantMultiplier:   0.5,
+		Currency:           "USD",
+	}
+	pricing.CacheCreation5mPrice = pricing.CacheCreationPrice
+
+	usage := &rcommon.Usage{
+		PromptTokens: 5_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CacheWriteTokens: 5_000,
+		},
+		CacheIncludedInPrompt: true,
+	}
+
+	cb := computeCost(pricing, 5_000, 0, usage)
+	// 5K/1M × 2.0 × 0.5 = 0.005
+	assertFloat(t, cb.CacheCreationCost, 0.005, "CacheCreationCost (with 0.5 multiplier)")
+	assertFloat(t, cb.TotalCost, 0.005, "TotalCost")
+}
+
 // ─── resolveTokenCounts ─────────────────────────────────────────────
 
 func TestResolveTokenCounts_NoUsage(t *testing.T) {
@@ -831,6 +930,41 @@ func TestResolveTokenCounts_NilTokenDetails(t *testing.T) {
 	baseIn, out, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 1000, 500, usage)
 	if baseIn != 1000 || out != 500 || cr != 0 || cc5m != 0 || cc1h != 0 {
 		t.Errorf("expected (1000,500,0,0,0), got (%d,%d,%d,%d,%d)", baseIn, out, cr, cc5m, cc1h)
+	}
+}
+
+// TestResolveTokenCounts_CacheWriteMergedBucket OpenAI cache_write_tokens 合并桶：
+// 写 token 并入 creation 桶（无 TTL 细分走 5m 兜底），CacheIncludedInPrompt=true 时参与扣减
+func TestResolveTokenCounts_CacheWriteMergedBucket(t *testing.T) {
+	usage := &rcommon.Usage{
+		PromptTokens: 10_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens:     3_000,
+			CacheWriteTokens: 2_000,
+		},
+		CacheIncludedInPrompt: true,
+	}
+	baseIn, _, cr, cc5m, cc1h := resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	if baseIn != 5_000 {
+		t.Errorf("baseInput = %d, want 5000 (10000 - 3000 - 2000)", baseIn)
+	}
+	// cache_write 并入 creation 5m 桶（按 CacheCreationPrice 计价的合并桶）
+	if cr != 3_000 || cc5m != 2_000 || cc1h != 0 {
+		t.Errorf("cache: read=%d creation5m=%d creation1h=%d, want 3000, 2000, 0", cr, cc5m, cc1h)
+	}
+
+	// 双报异常防御：cached_creation 与 cache_write 同时存在取大者，不重复计费
+	usage.PromptTokensDetails.CachedCreationTokens = 1_500
+	_, _, _, cc5m, _ = resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	if cc5m != 2_000 {
+		t.Errorf("merged creation5m = %d, want 2000 (max(1500, 2000))", cc5m)
+	}
+
+	// Claude 口径（false）：不扣减（该口径下 input_tokens 不含缓存）
+	usage.CacheIncludedInPrompt = false
+	baseIn, _, _, _, _ = resolveTokenCounts(&PricingResult{}, 10_000, 500, usage)
+	if baseIn != 10_000 {
+		t.Errorf("baseInput = %d, want 10000 (no deduction)", baseIn)
 	}
 }
 

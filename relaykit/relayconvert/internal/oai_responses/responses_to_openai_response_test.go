@@ -44,7 +44,8 @@ func TestResponsesToOpenAIResponse_TextAndToolCalls(t *testing.T) {
 			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"sh\"}"}
 		],
 		"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,
-			"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1,"audio_tokens":0,"text_tokens":8},
+			"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1,"audio_tokens":0,"text_tokens":8,
+				"cached_tokens_details":{"text_tokens":1,"image_tokens":1}},
 			"output_tokens_details":{"reasoning_tokens":3,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}
 	}`)
 
@@ -74,6 +75,11 @@ func TestResponsesToOpenAIResponse_TextAndToolCalls(t *testing.T) {
 	}
 	if d := chatResp.Usage.PromptTokensDetails; d == nil || d.CachedTokens != 2 || d.CacheWriteTokens != 1 || d.TextTokens != 8 {
 		t.Errorf("prompt details = %+v", chatResp.Usage.PromptTokensDetails)
+	}
+	// cached_tokens_details 模态细分透传（观测字段，指针区分未报/报零）
+	if cd := chatResp.Usage.PromptTokensDetails.CachedTokensDetails; cd == nil ||
+		cd.TextTokens == nil || *cd.TextTokens != 1 || cd.ImageTokens == nil || *cd.ImageTokens != 1 || cd.AudioTokens != nil {
+		t.Errorf("cached_tokens_details = %+v, want text=1 image=1 audio 未报", chatResp.Usage.PromptTokensDetails.CachedTokensDetails)
 	}
 	if d := chatResp.Usage.CompletionTokenDetails; d == nil || d.ReasoningTokens != 3 {
 		t.Errorf("completion details = %+v", chatResp.Usage.CompletionTokenDetails)

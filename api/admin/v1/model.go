@@ -113,7 +113,7 @@ type PricingItem struct {
 	OutputPrice        float64            `json:"output_price" dc:"每 1M output token 价格"`
 	PerRequestPrice    *float64           `json:"per_request_price" dc:"按次单价（仅 per_request）"`
 	CacheReadPrice     float64            `json:"cache_read_price" dc:"缓存读取每 1M token 价格"`
-	CacheCreationPrice float64            `json:"cache_creation_price" dc:"缓存创建每 1M token 价格"`
+	CacheCreationPrice float64            `json:"cache_creation_price" dc:"缓存创建/写入每 1M token 价格（Claude cache_creation 与 OpenAI cache_write 合并计费）"`
 	PerSecondPrices    map[string]float64 `json:"per_second_prices" dc:"按秒单价矩阵（仅 per_second）：分辨率规格→每秒单价（本位币），\"*\"为兜底价，如 {\"480p\":0.25,\"720p\":0.5,\"*\":0.5}"`
 }
 
@@ -263,7 +263,7 @@ type OfficialPricingItem struct {
 	InputPrice         float64 `json:"input_price"`          // $/1M tokens
 	OutputPrice        float64 `json:"output_price"`         // $/1M tokens
 	CacheReadPrice     float64 `json:"cache_read_price"`     // $/1M tokens
-	CacheCreationPrice float64 `json:"cache_creation_price"` // $/1M tokens
+	CacheCreationPrice float64 `json:"cache_creation_price"` // $/1M tokens（含 OpenAI cache_write 口径）
 	BillingMode        string  `json:"billing_mode"`         // 建议计费模式
 }
 

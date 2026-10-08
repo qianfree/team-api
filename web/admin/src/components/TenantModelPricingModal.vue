@@ -370,7 +370,7 @@ async function onSave() {
 
                   <!-- 模式价格 -->
                   <template v-if="platformItem">
-                    <!-- token：四价 -->
+                    <!-- token：四价（cache_creation_price 兼容 Claude 创建与 OpenAI 写入口径） -->
                     <div v-if="!platformItem.billing_mode || platformItem.billing_mode === 'token'" class="platform-ref-grid platform-ref-section">
                       <div class="platform-ref-item"><span class="platform-ref-label">输入价</span><span>{{ fmtPrice(platformItem.input_price) }} {{ currencySymbol }}/1M</span></div>
                       <div class="platform-ref-item"><span class="platform-ref-label">输出价</span><span>{{ fmtPrice(platformItem.output_price) }} {{ currencySymbol }}/1M</span></div>

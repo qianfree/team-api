@@ -48,7 +48,7 @@ type PricingResult struct {
 
 	// Cache 直接定价
 	CacheReadPrice       float64 // 缓存读取每 1M token 价格
-	CacheCreationPrice   float64 // 缓存创建每 1M token 价格（5m TTL 基础价）
+	CacheCreationPrice   float64 // 缓存创建/写入每 1M token 价格（5m TTL 基础价；Claude 创建与 OpenAI 写入共用，同一物理事件）
 	CacheCreation5mPrice float64 // 5 分钟缓存创建价格（1.25× 基础价）
 	CacheCreation1hPrice float64 // 1 小时缓存创建价格（2× 基础价）
 
@@ -635,7 +635,8 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 
 	cacheReadCostD := decimal.NewFromInt(int64(cacheReadTokens)).Div(million).Mul(NewFromFloat(pricing.CacheReadPrice))
 
-	// 缓存创建按 TTL 分别计价：5m 按 1.25×，1h 按 2×
+	// 缓存创建按 TTL 分别计价：5m 按 1.25×，1h 按 2×。
+	// OpenAI cache_write 并入 5m 基础价桶（resolveTokenCounts 合并，无 TTL 分档）
 	cacheCreation5mCostD := decimal.NewFromInt(int64(cacheCreation5mTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation5mPrice))
 	cacheCreation1hCostD := decimal.NewFromInt(int64(cacheCreation1hTokens)).Div(million).Mul(NewFromFloat(pricing.CacheCreation1hPrice))
 	cacheCreationCostD := cacheCreation5mCostD.Add(cacheCreation1hCostD)
@@ -665,6 +666,9 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 
 // resolveTokenCounts 根据 usage 信息解析最终的 token 计数。
 // 处理 cacheIncludedInPrompt 逻辑：如果 PromptTokens 包含 cache tokens，则扣减以避免重复计费。
+// 缓存写入合并桶：Claude cached_creation 与 OpenAI cache_write 是同一物理事件的不同协议报法，
+// 互斥出现（Claude 路径只填 CachedCreation*、OpenAI 路径只填 CacheWriteTokens）；
+// max 防御上游异常双报时重复计费，统一按 CacheCreationPrice 计价（5m/1h 分档仅 Claude 触发）。
 // 返回：baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h
 func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, usage *rcommon.Usage) (baseInput, output, cacheRead, cacheCreation5m, cacheCreation1h int) {
 	baseInput = inputTokens
@@ -677,9 +681,10 @@ func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, u
 			if usage.PromptTokensDetails.CachedCreation5mTokens > 0 || usage.PromptTokensDetails.CachedCreation1hTokens > 0 {
 				cacheCreation5m = usage.PromptTokensDetails.CachedCreation5mTokens
 				cacheCreation1h = usage.PromptTokensDetails.CachedCreation1hTokens
-			} else if usage.PromptTokensDetails.CachedCreationTokens > 0 {
-				// 旧协议无 TTL 细分：全部按 5m 兜底（保守计费）
-				cacheCreation5m = usage.PromptTokensDetails.CachedCreationTokens
+			} else {
+				// 无 TTL 细分：Claude 旧协议 cached_creation 与 OpenAI cache_write 合并取大，
+				// 全部按 5m 基础价兜底（保守计费）
+				cacheCreation5m = max(usage.PromptTokensDetails.CachedCreationTokens, usage.PromptTokensDetails.CacheWriteTokens)
 			}
 		}
 		if usage.CacheIncludedInPrompt {

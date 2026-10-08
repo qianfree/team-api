@@ -619,6 +619,10 @@ func buildResponsesUsageMap(usage *dto.UsageWithDetails) map[string]any {
 			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
 			"audio_tokens":       usage.PromptTokensDetails.AudioTokens,
 		}
+		// cached_tokens_details 模态细分：观测字段，上游报了才透传（omitempty 同构）
+		if usage.PromptTokensDetails.CachedTokensDetails != nil {
+			inputDetails["cached_tokens_details"] = usage.PromptTokensDetails.CachedTokensDetails
+		}
 	}
 	if usage.CompletionTokenDetails != nil {
 		outputDetails = map[string]any{

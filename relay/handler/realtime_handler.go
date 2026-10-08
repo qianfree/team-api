@@ -224,6 +224,7 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 		RequestURLPath:  "/realtime",
 		RequestHeaders:  r.Header,
 		StartTime:       time.Now(),
+		ProjectID:       rc.ProjectID,
 		InboundFormat:   constant.RelayFormatOpenAI,
 		ClientFormat:    constant.RelayFormatOpenAI,
 		ChannelMeta: &common.ChannelMeta{
@@ -327,8 +328,10 @@ func HandleRealtime(w http.ResponseWriter, r *http.Request, rc *RealtimeContext,
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)
 			}
 		} else if usage != nil {
-			settleResult, _ := billing.Settle(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
-				modelName, rc.RequestID, "realtime", usage, preDeductAmount, rc.ProjectID, info.StartTime)
+			// 走 SettleWithUsage 完整 Usage 结算：realtime usage 携带缓存明细
+			//（input_token_details.cached_tokens），plain Settle 只取 input/output 会把缓存按全价计费
+			settleResult := billing.SettleWithUsage(ctx, rc.TenantID, rc.UserID, rc.ApiKeyID, selection.ChannelID,
+				modelName, rc.RequestID, "realtime", usage, preDeductAmount, info)
 			if settleResult != nil && settleResult.ActualCost > 0 && !settleResult.DuplicateSkip {
 				billing.IncrMemberQuotaUsed(ctx, rc.TenantID, rc.UserID, settleResult.ActualCost)
 				billing.IncrApiKeyQuotaUsed(ctx, rc.ApiKeyID, settleResult.ActualCost)

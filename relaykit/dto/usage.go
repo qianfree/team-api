@@ -20,17 +20,28 @@ type UsageWithDetails struct {
 
 // TokenDetails Token 类型细分
 type TokenDetails struct {
-	CachedTokens             int `json:"cached_tokens,omitempty"`
-	CachedCreationTokens     int `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
-	CachedCreation5mTokens   int `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
-	CachedCreation1hTokens   int `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
-	CacheWriteTokens         int `json:"cache_write_tokens,omitempty"`        // OpenAI Responses cache_write_tokens（观测字段，prompt_tokens 子集）
-	AudioTokens              int `json:"audio_tokens,omitempty"`
-	TextTokens               int `json:"text_tokens,omitempty"`
-	ImageTokens              int `json:"image_tokens,omitempty"`
-	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
-	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
-	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+	CachedTokens             int                 `json:"cached_tokens,omitempty"`
+	CachedTokensDetails      *CachedTokenDetails `json:"cached_tokens_details,omitempty"`     // cached_tokens 的模态细分（OpenAI 新结构，观测字段）
+	CachedCreationTokens     int                 `json:"cached_creation_tokens,omitempty"`    // Claude cache_creation_input_tokens
+	CachedCreation5mTokens   int                 `json:"cached_creation_5m_tokens,omitempty"` // Claude 5分钟缓存创建
+	CachedCreation1hTokens   int                 `json:"cached_creation_1h_tokens,omitempty"` // Claude 1小时缓存创建
+	CacheWriteTokens         int                 `json:"cache_write_tokens,omitempty"`        // OpenAI cache_write_tokens（与 Claude 写入同一物理事件，计费并入 CachedCreation 桶按创建价计）
+	AudioTokens              int                 `json:"audio_tokens,omitempty"`
+	TextTokens               int                 `json:"text_tokens,omitempty"`
+	ImageTokens              int                 `json:"image_tokens,omitempty"`
+	ReasoningTokens          int                 `json:"reasoning_tokens,omitempty"`
+	AcceptedPredictionTokens int                 `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int                 `json:"rejected_prediction_tokens,omitempty"`
+}
+
+// CachedTokenDetails cached_tokens 的模态细分（OpenAI 新 usage 结构，
+// prompt_tokens_details.cached_tokens_details / input_tokens_details.cached_tokens_details）。
+// 指针字段区分「上游未报该模态」与「显式报 0」——后续若做缓存图像/文本分价计费
+// （img_cr 类），聚合合法性校验依赖这个区分。当前为观测字段，计费引擎不读取
+type CachedTokenDetails struct {
+	TextTokens  *int `json:"text_tokens,omitempty"`
+	ImageTokens *int `json:"image_tokens,omitempty"`
+	AudioTokens *int `json:"audio_tokens,omitempty"`
 }
 
 // CompletionsRequest 文本补全请求

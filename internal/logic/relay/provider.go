@@ -404,8 +404,10 @@ func buildUsageLogDO(record *common.UsageRecord) do.BilUsageLogs {
 		RefundAmount:      record.RefundAmount,
 		SupplementAmount:  record.SupplementAmount,
 
-		CacheCreationTokens: record.CacheCreationTokens,
-		CacheReadTokens:     record.CacheReadTokens,
+		CacheCreationTokens:   record.CacheCreationTokens,
+		CacheCreation5MTokens: record.CacheCreation5mTokens,
+		CacheCreation1HTokens: record.CacheCreation1hTokens,
+		CacheReadTokens:       record.CacheReadTokens,
 
 		AudioInputTokens:  record.AudioInputTokens,
 		AudioOutputTokens: record.AudioOutputTokens,

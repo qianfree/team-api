@@ -1038,10 +1038,12 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 		}
 		if resp.Usage.InputTokensDetails != nil {
 			usage.PromptTokensDetails = &dto.TokenDetails{
-				CachedTokens: resp.Usage.InputTokensDetails.CachedTokens,
-				AudioTokens:  resp.Usage.InputTokensDetails.AudioTokens,
-				TextTokens:   resp.Usage.InputTokensDetails.TextTokens,
-				ImageTokens:  resp.Usage.InputTokensDetails.ImageTokens,
+				CachedTokens:        resp.Usage.InputTokensDetails.CachedTokens,
+				CachedTokensDetails: resp.Usage.InputTokensDetails.CachedTokensDetails,
+				CacheWriteTokens:    resp.Usage.InputTokensDetails.CacheWriteTokens,
+				AudioTokens:         resp.Usage.InputTokensDetails.AudioTokens,
+				TextTokens:          resp.Usage.InputTokensDetails.TextTokens,
+				ImageTokens:         resp.Usage.InputTokensDetails.ImageTokens,
 			}
 		}
 		if resp.Usage.OutputTokenDetails != nil {
@@ -1068,9 +1070,12 @@ func ResponsesResponseToChatCompletions(resp *dto.OpenAIResponsesResponse, id st
 	}
 
 	return chatResp, &common.Usage{
-		PromptTokens:           usage.PromptTokens,
-		CompletionTokens:       usage.CompletionTokens,
-		TotalTokens:            usage.TotalTokens,
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+		// Responses 上游 input_tokens 已含缓存（cached/cache_write 为其子集），
+		// 必须置 CacheIncludedInPrompt 让计费扣减缓存部分，否则缓存 token 双重计费
+		CacheIncludedInPrompt:  true,
 		PromptTokensDetails:    common.DtoTokenDetailsToCommon(usage.PromptTokensDetails),
 		CompletionTokenDetails: common.DtoTokenDetailsToCommon(usage.CompletionTokenDetails),
 	}, nil

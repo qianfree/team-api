@@ -342,11 +342,12 @@ func responsesUsageToUsageWithDetails(u *dto.ResponsesUsage) dto.UsageWithDetail
 	usage.TotalTokens = u.TotalTokens
 	if d := u.InputTokensDetails; d != nil {
 		usage.PromptTokensDetails = &dto.TokenDetails{
-			CachedTokens:     d.CachedTokens,
-			CacheWriteTokens: d.CacheWriteTokens,
-			TextTokens:       d.TextTokens,
-			AudioTokens:      d.AudioTokens,
-			ImageTokens:      d.ImageTokens,
+			CachedTokens:        d.CachedTokens,
+			CachedTokensDetails: d.CachedTokensDetails,
+			CacheWriteTokens:    d.CacheWriteTokens,
+			TextTokens:          d.TextTokens,
+			AudioTokens:         d.AudioTokens,
+			ImageTokens:         d.ImageTokens,
 		}
 	}
 	if d := u.OutputTokenDetails; d != nil {

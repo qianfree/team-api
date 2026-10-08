@@ -229,7 +229,7 @@ func buildTokenCosts(pricing *PricingResult, breakdown *CostBreakdown) map[strin
 	}
 
 	if breakdown.CacheCreationTokens > 0 {
-		// direct cache creation price
+		// direct cache creation price（含 OpenAI cache_write 并入的写入 token，合并桶）
 		costs["cache_creation"] = detail(breakdown.CacheCreationTokens, pricing.CacheCreationPrice, breakdown.CacheCreationCost)
 	}
 
