@@ -12,6 +12,7 @@ import { useExport } from '@/composables/useExport'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { formatBilling } from '@/composables/useCurrency'
 import { vendorOptions, vendorLabelMap, vendorTagColor, filterVendorOption } from '@/constants/vendor'
+import { modelCategoryOptions, modelCategoryLabelMap as categoryTagLabel, modelCategoryTagColor as categoryTagColor } from '@/constants/modelCategory'
 
 const loading = ref(false)
 const data = ref<any[]>([])
@@ -40,15 +41,8 @@ const pricingDrawerVisible = ref(false)
 const pricingDrawerModelId = ref<number | null>(null)
 const pricingDrawerModelIdStr = ref('')
 
-const categoryOptions = [
-  { label: '全部分类', value: '' },
-  { label: '对话', value: 'chat' },
-  { label: '向量', value: 'embedding' },
-  { label: '图像', value: 'image' },
-  { label: '音频', value: 'audio' },
-  { label: '视频', value: 'video' },
-  { label: '重排', value: 'rerank' },
-]
+// 筛选下拉带「全部分类」项；表单分类单选用 categoryOptions.filter(o => o.value) 排除
+const categoryOptions = [{ label: '全部分类', value: '' }, ...modelCategoryOptions]
 
 const vendorFilterOptions = [{ label: '全部厂商', value: '' }, ...vendorOptions]
 
@@ -128,28 +122,10 @@ async function fetchOfficialInfo() {
   }
 }
 
-const categoryTagColor: Record<string, string> = {
-  chat: 'arcoblue',
-  embedding: 'green',
-  image: 'orangered',
-  audio: 'red',
-  video: 'purple',
-  rerank: 'arcoblue',
-}
-
 const statusTagColor: Record<string, string | undefined> = {
   active: 'green',
   deprecated: 'orangered',
   offline: undefined,
-}
-
-const categoryTagLabel: Record<string, string> = {
-  chat: '对话',
-  embedding: '向量',
-  image: '图像',
-  audio: '音频',
-  video: '视频',
-  rerank: '重排',
 }
 
 const statusTagLabel: Record<string, string> = {

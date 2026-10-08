@@ -5,6 +5,7 @@ import type { TableColumnData } from '@arco-design/web-vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import TableStats from '@/components/TableStats.vue'
 import TenantModelPricingModal from '@/components/TenantModelPricingModal.vue'
+import { modelCategoryLabelMap, modelCategoryTagColor } from '@/constants/modelCategory'
 import request from '@/utils/request'
 
 const props = defineProps<{
@@ -32,7 +33,12 @@ function hasAnyOverride(r: any): boolean {
 const modelColumns: TableColumnData[] = [
   { title: '模型标识', dataIndex: 'model_code', width: 180, ellipsis: true },
   { title: '显示名', dataIndex: 'model_name', width: 150, ellipsis: true },
-  { title: '分类', dataIndex: 'category', width: 80 },
+  {
+    title: '分类', dataIndex: 'category', width: 80,
+    render({ record }) {
+      return h(Tag, { color: modelCategoryTagColor[record.category], size: 'small' }, () => modelCategoryLabelMap[record.category] || record.category)
+    },
+  },
   {
     title: '启用', dataIndex: 'enabled', width: 70,
     render({ record }) {
@@ -250,7 +256,12 @@ const previewData = ref<any[]>([])
 const previewColumns: TableColumnData[] = [
   { title: '模型标识', dataIndex: 'model_id', width: 180, ellipsis: true },
   { title: '显示名', dataIndex: 'model_name', width: 150, ellipsis: true },
-  { title: '分类', dataIndex: 'category', width: 80 },
+  {
+    title: '分类', dataIndex: 'category', width: 80,
+    render({ record }) {
+      return h(Tag, { color: modelCategoryTagColor[record.category], size: 'small' }, () => modelCategoryLabelMap[record.category] || record.category)
+    },
+  },
   { title: '上下文', dataIndex: 'max_context_tokens', width: 100,
     render({ record }) { return record.max_context_tokens ? record.max_context_tokens.toLocaleString() : '-' },
   },
@@ -363,6 +374,7 @@ defineExpose({ openPreviewModal })
       :data="groupTransferOptions"
       :title="['可选分组', '已选分组']"
       searchable
+      class="tall-transfer"
     />
   </AModal>
 
@@ -379,6 +391,7 @@ defineExpose({ openPreviewModal })
       :data="transferOptions"
       :title="['可分配模型', '已选模型']"
       searchable
+      class="tall-transfer"
     />
   </AModal>
 
@@ -410,4 +423,12 @@ defineExpose({ openPreviewModal })
 
 <style scoped>
 @import './common.css';
+/* 分配弹窗穿梭框：默认 224px 过矮、200px 过窄，加高加宽以显示更多选项，并在弹窗内水平居中 */
+.tall-transfer {
+  justify-content: center;
+}
+.tall-transfer :deep(.arco-transfer-view) {
+  width: 260px;
+  height: 460px;
+}
 </style>
