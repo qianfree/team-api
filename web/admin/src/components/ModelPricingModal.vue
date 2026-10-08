@@ -1443,52 +1443,54 @@ watch(() => props.visible, (val) => {
 
 			<!-- 官方按量定价 -->
 			<template v-else>
-				<div class="grid grid-cols-2 md:grid-cols-5 gap-x-4">
-					<AFormItem label="输入价格">
-						<AInputNumber
-							v-model="officialItems[0].input_price"
-							:min="0"
-							:precision="6"
-							placeholder="0"
-							class="w-full"
-						>
-							<template #suffix>{{ currencySymbol }} / 1M</template>
-						</AInputNumber>
-					</AFormItem>
-					<AFormItem label="输出价格">
-						<AInputNumber
-							v-model="officialItems[0].output_price"
-							:min="0"
-							:precision="6"
-							placeholder="0"
-							class="w-full"
-						>
-							<template #suffix>{{ currencySymbol }} / 1M</template>
-						</AInputNumber>
-					</AFormItem>
-					<AFormItem label="缓存读取">
-						<AInputNumber
-							v-model="officialItems[0].cache_read_price"
-							:min="0"
-							:precision="6"
-							placeholder="0"
-							class="w-full"
-						>
-							<template #suffix>{{ currencySymbol }} / 1M</template>
-						</AInputNumber>
-					</AFormItem>
-					<AFormItem label="缓存创建">
-						<AInputNumber
-							v-model="officialItems[0].cache_creation_price"
-							:min="0"
-							:precision="6"
-							placeholder="0"
-							class="w-full"
-						>
-							<template #suffix>{{ currencySymbol }} / 1M</template>
-						</AInputNumber>
-					</AFormItem>
-				</div>
+				<AForm :model="{}" layout="vertical" class="official-token-pricing-form">
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-x-4">
+						<AFormItem label="输入价格">
+							<AInputNumber
+								v-model="officialItems[0].input_price"
+								:min="0"
+								:precision="6"
+								placeholder="0"
+								class="w-full"
+							>
+								<template #suffix>{{ currencySymbol }} / 1M</template>
+							</AInputNumber>
+						</AFormItem>
+						<AFormItem label="输出价格">
+							<AInputNumber
+								v-model="officialItems[0].output_price"
+								:min="0"
+								:precision="6"
+								placeholder="0"
+								class="w-full"
+							>
+								<template #suffix>{{ currencySymbol }} / 1M</template>
+							</AInputNumber>
+						</AFormItem>
+						<AFormItem label="缓存读取">
+							<AInputNumber
+								v-model="officialItems[0].cache_read_price"
+								:min="0"
+								:precision="6"
+								placeholder="0"
+								class="w-full"
+							>
+								<template #suffix>{{ currencySymbol }} / 1M</template>
+							</AInputNumber>
+						</AFormItem>
+						<AFormItem label="缓存创建">
+							<AInputNumber
+								v-model="officialItems[0].cache_creation_price"
+								:min="0"
+								:precision="6"
+								placeholder="0"
+								class="w-full"
+							>
+								<template #suffix>{{ currencySymbol }} / 1M</template>
+							</AInputNumber>
+						</AFormItem>
+					</div>
+				</AForm>
 			</template>
 			</template>
 
