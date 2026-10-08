@@ -130,17 +130,17 @@ func TestCalculateTieredCostFromTiers_TwoTiers(t *testing.T) {
 		{MinTokens: 100_000, MaxTokens: ptrInt64(500_000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
 
-	// 50K: entirely in first tier
+	// 50K: 命中第一档，全量按 $5/1M
 	got := calculateTieredCostFromTiers(tiers, 50_000, true)
 	assertFloat(t, got, 50_000.0/1_000_000*5.0, "50K input")
 
-	// 200K: 100K at $5 + 100K at $3
+	// 200K: 命中第二档，全量按 $3/1M（非分段累进）
 	got = calculateTieredCostFromTiers(tiers, 200_000, true)
-	assertFloat(t, got, 100_000.0/1_000_000*5.0+100_000.0/1_000_000*3.0, "200K input")
+	assertFloat(t, got, 200_000.0/1_000_000*3.0, "200K input")
 
-	// 500K: 100K at $5 + 400K at $3
+	// 500K: 命中第二档，全量按 $3/1M
 	got = calculateTieredCostFromTiers(tiers, 500_000, true)
-	assertFloat(t, got, 100_000.0/1_000_000*5.0+400_000.0/1_000_000*3.0, "500K input")
+	assertFloat(t, got, 500_000.0/1_000_000*3.0, "500K input")
 }
 
 func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
@@ -152,17 +152,17 @@ func TestCalculateTieredCostFromTiers_ThreeTiers_WithOpenEnd(t *testing.T) {
 		{MinTokens: max1M, MaxTokens: nil, InputPrice: 1.0, OutputPrice: 5.0},
 	}
 
-	// 50K: all in first tier
+	// 50K: 命中第一档，全量按 $3/1M
 	got := calculateTieredCostFromTiers(tiers, 50_000, true)
 	assertFloat(t, got, 50_000.0/1_000_000*3.0, "50K")
 
-	// 500K: 128K at $3 + 372K at $2
+	// 500K: 命中第二档，全量按 $2/1M
 	got = calculateTieredCostFromTiers(tiers, 500_000, true)
-	assertFloat(t, got, 128_000.0/1_000_000*3.0+372_000.0/1_000_000*2.0, "500K")
+	assertFloat(t, got, 500_000.0/1_000_000*2.0, "500K")
 
-	// 2M: 128K at $3 + 872K at $2 + 1M at $1
+	// 2M: 命中第三档，全量按 $1/1M
 	got = calculateTieredCostFromTiers(tiers, 2_000_000, true)
-	assertFloat(t, got, 128_000.0/1_000_000*3.0+872_000.0/1_000_000*2.0+1_000_000.0/1_000_000*1.0, "2M")
+	assertFloat(t, got, 2_000_000.0/1_000_000*1.0, "2M")
 }
 
 func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
@@ -171,11 +171,13 @@ func TestCalculateTieredCostFromTiers_ExactBoundary(t *testing.T) {
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
 
+	// 恰好等于第二档 min_tokens=1000：区间 [min, max) 语义命中第二档，全量按 $3/1M
 	got := calculateTieredCostFromTiers(tiers, 1000, true)
-	assertFloat(t, got, 1000.0/1_000_000*5.0, "1000 boundary")
+	assertFloat(t, got, 1000.0/1_000_000*3.0, "1000 boundary")
 
+	// 5000: 命中第二档，全量按 $3/1M
 	got = calculateTieredCostFromTiers(tiers, 5000, true)
-	assertFloat(t, got, 1000.0/1_000_000*5.0+4000.0/1_000_000*3.0, "5000 boundary")
+	assertFloat(t, got, 5000.0/1_000_000*3.0, "5000 boundary")
 }
 
 func TestCalculateTieredCostFromTiers_InputVsOutput(t *testing.T) {
@@ -200,8 +202,9 @@ func TestCalculateTieredCostFromTiers_SkipDegenerateTier(t *testing.T) {
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
 
+	// 3000: 命中第三档（同 min_tokens=1000 的退化档被后档覆盖），全量按 $3/1M
 	got := calculateTieredCostFromTiers(tiers, 3000, true)
-	assertFloat(t, got, 1000.0/1_000_000*5.0+2000.0/1_000_000*3.0, "3000 tokens")
+	assertFloat(t, got, 3000.0/1_000_000*3.0, "3000 tokens")
 }
 
 func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
@@ -210,8 +213,9 @@ func TestCalculateTieredCostFromTiers_TokensExceedAllTiers(t *testing.T) {
 		{MinTokens: 1000, MaxTokens: ptrInt64(5000), InputPrice: 3.0, OutputPrice: 10.0},
 	}
 
+	// 10K 超出末档 max_tokens=5000（配置缺口）：仍按命中的最后一档全量计费，不漏计
 	got := calculateTieredCostFromTiers(tiers, 10_000, true)
-	assertFloat(t, got, 1000.0/1_000_000*5.0+4000.0/1_000_000*3.0, "10K exceeds all")
+	assertFloat(t, got, 10_000.0/1_000_000*3.0, "10K exceeds all")
 }
 
 func TestCalculateTieredCostFromTiers_SingleToken(t *testing.T) {
@@ -239,13 +243,13 @@ func TestCalculateTieredCostFromTiers_MixedZeroAndNonZeroTiers(t *testing.T) {
 		{MinTokens: 10_000, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
 	}
 
-	// 5K: all free
+	// 5K: 命中免费档，全量免费
 	got := calculateTieredCostFromTiers(tiers, 5_000, true)
 	assertFloat(t, got, 0.0, "5K all free")
 
-	// 50K: 10K free + 40K at $5
+	// 50K: 命中付费档，全量 50K 按 $5/1M（不再有 10K 免费部分）
 	got = calculateTieredCostFromTiers(tiers, 50_000, true)
-	assertFloat(t, got, 40_000.0/1_000_000*5.0, "50K mixed")
+	assertFloat(t, got, 50_000.0/1_000_000*5.0, "50K mixed")
 }
 
 func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
@@ -264,12 +268,12 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 		want    float64
 	}{
 		{"1 token input", 1, true, 1.0 / 1e6 * 10},
-		{"1K exactly input", 1000, true, 1000.0 / 1e6 * 10},
-		{"3K input spans two", 3000, true, 1000.0/1e6*10 + 2000.0/1e6*5},
-		{"5K boundary input", 5000, true, 1000.0/1e6*10 + 4000.0/1e6*5},
-		{"20K input spans three", 20000, true, 1000.0/1e6*10 + 4000.0/1e6*5 + 15000.0/1e6*2},
-		{"1K output", 1000, false, 1000.0 / 1e6 * 30},
-		{"3K output", 3000, false, 1000.0/1e6*30 + 2000.0/1e6*15},
+		{"1K exactly input hits tier2", 1000, true, 1000.0 / 1e6 * 5},
+		{"3K input hits tier2 all at tier2", 3000, true, 3000.0 / 1e6 * 5},
+		{"5K boundary input hits tier3", 5000, true, 5000.0 / 1e6 * 2},
+		{"20K input hits tier3 all at tier3", 20000, true, 20000.0 / 1e6 * 2},
+		{"1K output hits tier2", 1000, false, 1000.0 / 1e6 * 15},
+		{"3K output hits tier2 all at tier2", 3000, false, 3000.0 / 1e6 * 15},
 		{"0 tokens", 0, true, 0},
 		{"negative tokens", -100, true, 0},
 	}
@@ -277,6 +281,41 @@ func TestCalculateTieredCostFromTiers_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := calculateTieredCostFromTiers(tiers, tt.tokens, tt.isInput)
+			assertFloat(t, got, tt.want, "cost")
+		})
+	}
+}
+
+// TestCalculateTieredCostFromTiersByInput 选档依据与计费数量分离语义：
+// 档位由完整输入长度（tierInputTokens）决定，计费按实际 token 数（tokens）。
+func TestCalculateTieredCostFromTiersByInput(t *testing.T) {
+	tiers := []pricingTierRow{
+		{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
+		{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
+	}
+
+	tests := []struct {
+		name            string
+		tokens          int
+		tierInputTokens int
+		isInput         bool
+		want            float64
+	}{
+		// 长输入短输出：输出也按第二档计价（旧逻辑误按输出数命中第一档）
+		{"200K prompt bills 50K output at tier2", 50_000, 200_000, false, 50_000.0 / 1e6 * 10.0},
+		// 短输入长输出：输出长度不参与选档，仍按第一档计价
+		{"10K prompt keeps 150K output at tier1", 150_000, 10_000, false, 150_000.0 / 1e6 * 15.0},
+		// 缓存扣减后 baseInput 很小，选档仍按完整输入长度命中第二档
+		{"50K base input within 200K prompt hits tier2", 50_000, 200_000, true, 50_000.0 / 1e6 * 3.0},
+		// 选档依据恰好等于档位 min_tokens：[min, max) 区间语义命中该档
+		{"tierInput exactly at tier2 min hits tier2", 100_000, 100_000, true, 100_000.0 / 1e6 * 3.0},
+		// 计费数量为 0 不计费（即便选档依据命中高档）
+		{"zero billed tokens costs nothing", 0, 200_000, false, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateTieredCostFromTiersByInput(tiers, tt.tokens, tt.tierInputTokens, tt.isInput)
 			assertFloat(t, got, tt.want, "cost")
 		})
 	}
@@ -594,10 +633,10 @@ func TestComputeCost_WithTimeMultiplier(t *testing.T) {
 			{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
 		},
 	}
-	// 输入 200K：第一档 100K×$5/1M=0.5 + 第二档 100K×$3/1M=0.3 = 0.8，半价 0.4
+	// 输入 200K：命中第二档全量按 $3/1M = 0.6，半价 0.3
 	cb = computeCost(tiered, 200_000, 0, nil)
-	assertFloat(t, cb.InputCost, 0.4, "tiered InputCost (time 0.5)")
-	assertFloat(t, cb.TotalCost, 0.4, "tiered TotalCost (time 0.5)")
+	assertFloat(t, cb.InputCost, 0.3, "tiered InputCost (time 0.5)")
+	assertFloat(t, cb.TotalCost, 0.3, "tiered TotalCost (time 0.5)")
 }
 
 func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {
@@ -613,12 +652,59 @@ func TestComputeCost_TieredMode_WithCustomTiers(t *testing.T) {
 
 	cb := computeCost(pricing, 200_000, 50_000, nil)
 
-	// Input: 100K * 5 + 100K * 3 = 0.5 + 0.3 = 0.8 per 1M = $0.8
-	// Output: 50K * 15 = $0.75
-	// Total: 0.8 + 0.75 = $1.55
-	assertFloat(t, cb.InputCost, 0.8, "InputCost (tiered)")
-	assertFloat(t, cb.OutputCost, 0.75, "OutputCost (tiered)")
-	assertFloat(t, cb.TotalCost, 1.55, "TotalCost")
+	// 输入长度 200K 使输入、输出都命中第二档；各自按实际 token 数计费。
+	// Input: 200K × $3/1M = $0.6；Output: 50K × $10/1M = $0.5
+	// Total: $1.1
+	assertFloat(t, cb.InputCost, 0.6, "InputCost (tiered)")
+	assertFloat(t, cb.OutputCost, 0.5, "OutputCost (tiered)")
+	assertFloat(t, cb.TotalCost, 1.1, "TotalCost")
+}
+
+// TestComputeCost_TieredMode_CacheTokensCountTowardTier 阶梯选档按完整输入长度：
+// 缓存 token 虽单独计价，但计入选档依据；两种协议口径下都应还原出完整 prompt 长度命中高档。
+// 若选档漏加缓存 token（只按 baseInput），两协议都会误命中第一档（$5/$15），断言即失败。
+func TestComputeCost_TieredMode_CacheTokensCountTowardTier(t *testing.T) {
+	newTieredPricing := func() *PricingResult {
+		return &PricingResult{
+			BillingMode:      "tiered",
+			TenantMultiplier: 1.0,
+			Currency:         "USD",
+			CacheReadPrice:   1.0,
+			CustomTiers: []pricingTierRow{
+				{MinTokens: 0, MaxTokens: ptrInt64(100_000), InputPrice: 5.0, OutputPrice: 15.0},
+				{MinTokens: 100_000, MaxTokens: nil, InputPrice: 3.0, OutputPrice: 10.0},
+			},
+		}
+	}
+
+	// OpenAI 协议（CacheIncludedInPrompt=true）：prompt_tokens=200K 已含 150K 缓存读取，
+	// baseInput 扣减为 50K，选档依据 = 50K + 150K = 200K 命中第二档
+	usageOpenAI := &rcommon.Usage{
+		PromptTokens:     200_000,
+		CompletionTokens: 1_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens: 150_000,
+		},
+		CacheIncludedInPrompt: true,
+	}
+	cb := computeCost(newTieredPricing(), 200_000, 1_000, usageOpenAI)
+	// input: 50K × $3/1M（第二档）；output: 1K × $10/1M（第二档）
+	assertFloat(t, cb.InputCost, 50_000.0/1e6*3.0, "InputCost (openai: tier by full prompt)")
+	assertFloat(t, cb.OutputCost, 1_000.0/1e6*10.0, "OutputCost (openai: tier by full prompt)")
+
+	// Claude 协议（CacheIncludedInPrompt=false）：input_tokens=50K 不含缓存，cacheRead=150K，
+	// 选档依据 = 50K + 150K = 200K 同样命中第二档
+	usageClaude := &rcommon.Usage{
+		PromptTokens:     50_000,
+		CompletionTokens: 1_000,
+		PromptTokensDetails: &rcommon.TokenDetails{
+			CachedTokens: 150_000,
+		},
+		CacheIncludedInPrompt: false,
+	}
+	cb = computeCost(newTieredPricing(), 50_000, 1_000, usageClaude)
+	assertFloat(t, cb.InputCost, 50_000.0/1e6*3.0, "InputCost (claude: cache added to tier basis)")
+	assertFloat(t, cb.OutputCost, 1_000.0/1e6*10.0, "OutputCost (claude: cache added to tier basis)")
 }
 
 func TestComputeCost_ZeroTokens(t *testing.T) {

@@ -623,10 +623,12 @@ func computeCost(pricing *PricingResult, inputTokens, outputTokens int, usage *r
 	}
 
 	// 基础输入费用（已改为 decimal）
-	baseInputCostD := computeInputCost(pricing, baseInputTokens)
+	// 阶梯档位由完整输入长度决定，包括单独计价的缓存 token。
+	tierInputTokens := baseInputTokens + cacheReadTokens + cacheCreation5mTokens + cacheCreation1hTokens
+	baseInputCostD := computeInputCost(pricing, baseInputTokens, tierInputTokens)
 
 	// 输出费用（已改为 decimal）
-	outputCostD := computeOutputCost(pricing, outputTokens)
+	outputCostD := computeOutputCost(pricing, outputTokens, tierInputTokens)
 
 	// A8：token 成本链式计算（÷1e6 × 单价 × 租户倍率 × 时段乘数 + 各项求和）改用 decimal 精确运算，
 	// 最终四舍五入到 10 位（NUMERIC(20,10)）再返回 float64，消除 float64 累计误差。
@@ -699,10 +701,10 @@ func resolveTokenCounts(pricing *PricingResult, inputTokens, outputTokens int, u
 
 // computeInputCost 计算输入费用（token 或 tiered 模式）
 // 返回 decimal.Decimal 避免 float64 链式运算误差
-func computeInputCost(pricing *PricingResult, tokens int) decimal.Decimal {
+func computeInputCost(pricing *PricingResult, tokens, tierInputTokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
 		// 阶梯定价仍返回 float64，需要转换
-		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, true))
+		return NewFromFloat(calculateTieredCostFromTiersByInput(pricing.CustomTiers, tokens, tierInputTokens, true))
 	}
 	// token / 1M × 单价，全程 decimal 精确运算
 	million := decimal.NewFromInt(1_000_000)
@@ -711,10 +713,10 @@ func computeInputCost(pricing *PricingResult, tokens int) decimal.Decimal {
 
 // computeOutputCost 计算输出费用（token 或 tiered 模式）
 // 返回 decimal.Decimal 避免 float64 链式运算误差
-func computeOutputCost(pricing *PricingResult, tokens int) decimal.Decimal {
+func computeOutputCost(pricing *PricingResult, tokens, tierInputTokens int) decimal.Decimal {
 	if pricing.BillingMode == "tiered" && len(pricing.CustomTiers) > 0 {
 		// 阶梯定价仍返回 float64，需要转换
-		return NewFromFloat(calculateTieredCostFromTiers(pricing.CustomTiers, tokens, false))
+		return NewFromFloat(calculateTieredCostFromTiersByInput(pricing.CustomTiers, tokens, tierInputTokens, false))
 	}
 	// token / 1M × 单价，全程 decimal 精确运算
 	million := decimal.NewFromInt(1_000_000)
@@ -1009,49 +1011,44 @@ func effectiveTimeMultiplier(p *PricingResult) float64 {
 	return p.TimeMultiplier
 }
 
-// calculateTieredCostFromTiers 从给定的阶梯数组计算费用（租户自定义阶梯或平台阶梯共用；
-// 平台阶梯随 GetModelPrice 加载进 PricingResult.CustomTiers，走 600s 定价缓存）
+// calculateTieredCostFromTiers 兼容包装：选档依据 = 计费数量自身（tokens 双写）。
+// 生产路径已全部改走 calculateTieredCostFromTiersByInput（按完整输入长度选档），本函数仅存量单测使用。
 func calculateTieredCostFromTiers(tiers []pricingTierRow, tokens int, isInput bool) float64 {
+	return calculateTieredCostFromTiersByInput(tiers, tokens, tokens, isInput)
+}
+
+// calculateTieredCostFromTiersByInput 按「选档依据与计费数量分离」计算阶梯费用
+// （租户自定义阶梯或平台阶梯共用；平台阶梯随 GetModelPrice 加载进 PricingResult.CustomTiers，走 600s 定价缓存）：
+// 用完整输入长度（tierInputTokens，含单独计价的缓存 token）命中唯一档位，
+// 输入与输出费用各自按实际计费 token 数（tokens）× 命中档单价计算。
+//
+// 计费语义：全量按命中档单价（对齐上游长上下文定价口径，如 Gemini >200K / gpt-4.1 >32K 时
+// 输入输出单价都随 prompt 总长度跳档，与输出长度无关），而非分段累进
+// （分段累进只有超出部分按新档价，长上下文场景会显著少收费）。
+// 命中规则：min_tokens <= tierInputTokens 的档中 min_tokens 最大者（区间语义 [min_tokens, max_tokens)，
+// tierInputTokens 恰好等于某档 min_tokens 时命中该档）；零价档同样参与命中（免费档语义）。
+// 不依赖数组存储顺序（BuildPricingBlob 未排序），同 min_tokens 时数组靠后者胜（退化档被后档覆盖）
+func calculateTieredCostFromTiersByInput(tiers []pricingTierRow, tokens, tierInputTokens int, isInput bool) float64 {
 	if tokens <= 0 || len(tiers) == 0 {
 		return 0
 	}
 
-	// 修复阶梯定价循环累加：用 decimal 精确计算避免每次 ÷1M × price 的误差累积
-	million := decimal.NewFromInt(1_000_000)
-	totalCostD := decimal.Zero
-	remaining := int64(tokens)
-
+	// 输入和输出价格都按完整输入长度选择档位。
+	price := 0.0
+	hitMin := int64(-1)
 	for _, tier := range tiers {
-		if remaining <= 0 {
-			break
-		}
-
-		price := tier.InputPrice
-		if !isInput {
-			price = tier.OutputPrice
-		}
-
-		if tier.MaxTokens == nil {
-			// 最后一档：消耗所有剩余 token
-			totalCostD = totalCostD.Add(
-				decimal.NewFromInt(remaining).Div(million).Mul(NewFromFloat(price)),
-			)
-			remaining = 0
-		} else {
-			available := *tier.MaxTokens - tier.MinTokens
-			if available <= 0 {
-				continue
+		if int64(tierInputTokens) >= tier.MinTokens && tier.MinTokens >= hitMin {
+			hitMin = tier.MinTokens
+			if isInput {
+				price = tier.InputPrice
+			} else {
+				price = tier.OutputPrice
 			}
-			useTokens := remaining
-			if useTokens > available {
-				useTokens = available
-			}
-			totalCostD = totalCostD.Add(
-				decimal.NewFromInt(useTokens).Div(million).Mul(NewFromFloat(price)),
-			)
-			remaining -= useTokens
 		}
 	}
 
+	// 全量 token × 命中档单价：tokens ÷ 1M × price，decimal 精确计算
+	million := decimal.NewFromInt(1_000_000)
+	totalCostD := decimal.NewFromInt(int64(tokens)).Div(million).Mul(NewFromFloat(price))
 	return InexactFloat64(RoundMoney(totalCostD))
 }
