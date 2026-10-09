@@ -29,16 +29,21 @@ const columns: TableColumnData[] = [
   { title: '时长(天)', dataIndex: 'duration_days', width: 80 },
   { title: '批次', dataIndex: 'batch_no', width: 120 },
   { title: '已用/总', dataIndex: 'usage', width: 90, render({ record }) { return `${record.used_count || 0}/${record.max_uses}` } },
+  { title: '过期时间', dataIndex: 'expires_at', width: 170, render({ record }) { return record.expires_at?.substring(0, 19) || '-' } },
   { title: '状态', dataIndex: 'status', width: 80, render({ record }) {
     const map: any = { active: 'green', disabled: 'orangered', expired: undefined }
     return h(Tag, { color: map[record.status], size: 'small' }, () => record.status)
   }},
   {
-    title: '操作', dataIndex: 'actions', width: 100, fixed: 'right',
+    title: '操作', dataIndex: 'actions', width: 160, fixed: 'right',
     render({ record }) {
-      return record.status === 'active'
-        ? h(Button, { size: 'small', status: 'warning', onClick: () => disableCode(record) }, () => '禁用')
-        : null
+      const btns = [
+        h(Button, { size: 'small', onClick: () => viewUsages(record) }, () => '兑换名单'),
+      ]
+      if (record.status === 'active') {
+        btns.push(h(Button, { size: 'small', status: 'warning', onClick: () => disableCode(record) }, () => '禁用'))
+      }
+      return h('div', { class: 'flex gap-2' }, btns)
     },
   },
 ]
@@ -64,7 +69,7 @@ function disableCode(row: any) {
 
 // Batch Create
 const showCreateModal = ref(false)
-const createForm = reactive({ count: 10, type: 'quota', value: 100, plan_id: null, duration_days: 30 })
+const createForm = reactive({ count: 10, type: 'quota', value: 100, plan_id: null, duration_days: 30, max_uses: 1, expires_days: 90 })
 const createLoading = ref(false)
 
 async function handleCreate(done: () => void) {
@@ -80,6 +85,24 @@ async function handleCreate(done: () => void) {
 const usageLoading = ref(false)
 const usages = ref<any[]>([])
 const usagePagination = reactive({ current: 1, pageSize: 20, total: 0, showPageSize: true, pageSizeOptions: [10, 20, 50] })
+// 使用记录按兑换码筛选（从「兑换名单」入口进入）
+const usageFilterRedemptionId = ref<number | null>(null)
+const usageFilterCode = ref('')
+
+function viewUsages(row: any) {
+  usageFilterRedemptionId.value = row.id
+  usageFilterCode.value = row.code
+  activeTab.value = 'usages'
+  usagePagination.current = 1
+  fetchUsages()
+}
+
+function clearUsageFilter() {
+  usageFilterRedemptionId.value = null
+  usageFilterCode.value = ''
+  usagePagination.current = 1
+  fetchUsages()
+}
 
 const usageColumns: TableColumnData[] = [
   { title: 'ID', dataIndex: 'id', width: 70 },
@@ -98,8 +121,10 @@ const usageColumns: TableColumnData[] = [
 async function fetchUsages() {
   usageLoading.value = true
   try {
+    const params: any = { page: usagePagination.current, page_size: usagePagination.pageSize }
+    if (usageFilterRedemptionId.value) params.redemption_id = usageFilterRedemptionId.value
     const res = await request.get('/admin/redemptions/usages', {
-      params: { page: usagePagination.current, page_size: usagePagination.pageSize }
+      params
     })
     const payload = res.data?.data
     usages.value = payload?.list || []
@@ -152,7 +177,7 @@ const { exporting, exportFile } = useExport({
             :data="redemptions"
             :loading="loading"
             row-key="id"
-            :scroll="{ x: 1100 }"
+            :scroll="{ x: 1270 }"
             card-title-key="code"
             card-subtitle-key="type"
             card-badge-key="status"
@@ -165,6 +190,10 @@ const { exporting, exportFile } = useExport({
         </ATabPane>
 
         <ATabPane key="usages" title="使用记录">
+          <div v-if="usageFilterRedemptionId" class="mb-4 flex items-center gap-2">
+            <span class="text-sm text-gray-500">筛选兑换码:</span>
+            <ATag closable @close="clearUsageFilter"><span class="font-mono text-xs">{{ usageFilterCode }}</span></ATag>
+          </div>
           <ResponsiveTable
             :columns="usageColumns"
             :data="usages"
@@ -195,6 +224,10 @@ const { exporting, exportFile } = useExport({
         <AFormItem v-if="createForm.type === 'quota'" label="额度值"><AInputNumber v-model="createForm.value" :min="0" class="w-full" /></AFormItem>
         <AFormItem v-if="createForm.type === 'plan'" label="套餐ID"><AInputNumber v-model="createForm.plan_id" :min="1" class="w-full" placeholder="套餐ID" /></AFormItem>
         <AFormItem v-if="createForm.type === 'duration'" label="天数"><AInputNumber v-model="createForm.duration_days" :min="1" class="w-full" /></AFormItem>
+        <AFormItem label="单码可用次数" extra="大于 1 为多人共享码，每个组织限兑一次">
+          <AInputNumber v-model="createForm.max_uses" :min="1" :max="100000" class="w-full" />
+        </AFormItem>
+        <AFormItem label="有效期(天)"><AInputNumber v-model="createForm.expires_days" :min="1" :max="730" class="w-full" /></AFormItem>
       </AForm>
     </AModal>
   </div>
