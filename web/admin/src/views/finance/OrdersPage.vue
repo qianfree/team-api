@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import {
-  Tag, Button, Space, Message,
+  Tag, Button, Space, Message, Modal,
 } from '@arco-design/web-vue'
 import type { TableColumnData } from '@arco-design/web-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -10,6 +10,7 @@ import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import request from '@/utils/request'
 import { useExport } from '@/composables/useExport'
 import { formatOrder } from '@/composables/useCurrency'
+import { hasPermission } from '@/utils/permission'
 
 const loading = ref(false)
 const orders = ref<any[]>([])
@@ -61,8 +62,14 @@ const columns: TableColumnData[] = [
     title: '操作', dataIndex: 'actions', width: 120, fixed: 'right',
     render({ record }) {
       const btns: any[] = []
-      if (record.status === 'paid' || record.status === 'fulfilled') {
-        btns.push(h(Button, { size: 'small', status: 'warning', onClick: () => openRefundModal(record) }, () => '退款'))
+      // 退款/手动完成同一权限点（服务端 rbac 对 /refund 与 /complete 均映射 order:refund）
+      if (hasPermission('order:refund')) {
+        if (record.status === 'pending') {
+          btns.push(h(Button, { size: 'small', status: 'success', onClick: () => handleComplete(record) }, () => '手动完成'))
+        }
+        if (record.status === 'paid' || record.status === 'fulfilled') {
+          btns.push(h(Button, { size: 'small', status: 'warning', onClick: () => openRefundModal(record) }, () => '退款'))
+        }
       }
       return h(Space, { size: 'small' }, () => btns)
     },
@@ -104,6 +111,26 @@ async function handleRefund(done: () => void) {
     Message.success('退款已发起')
     done(); fetchOrders()
   } catch { return false } finally { refundLoading.value = false }
+}
+
+// 手动完成订单：标记已支付并立即履约（充值按原价入账 / 套餐立即生效），
+// 适用于线下收款等已实际收款的场景，操作会以 ADMIN_管理员ID 记入支付流水号
+function handleComplete(row: any) {
+  const typeText = orderTypeLabel[row.order_type] || row.order_type
+  Modal.confirm({
+    title: '手动完成订单',
+    content: `订单 ${row.order_no}（${typeText}，实付 ${formatOrder(row.final_amount, 2)}）将标记为已支付并立即履约。请确认已通过线下等方式实际收到款项。`,
+    okText: '确认完成',
+    okButtonProps: { status: 'warning' },
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await request.post(`/admin/orders/${row.id}/complete`)
+        Message.success('订单已完成并履约')
+        fetchOrders()
+      } catch { /* interceptor handles error toast */ }
+    },
+  })
 }
 
 onMounted(fetchOrders)

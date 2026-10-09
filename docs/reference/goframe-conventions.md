@@ -976,3 +976,22 @@ pgsql 驱动的 `TableFields` 要实时查 `pg_attribute` 系统表（`'表名':
 - 自定义 Recovery 中间件**不是**万能兜底：gf 中间件链每层 handler 自带 TryCatch，handler 内的 panic 到不了最外层自定义中间件。
 
 排查信号：访问日志出现 `50, "Internal Error"` + `Read from request Body failed` + `http: request body too large` 栈；耗时数万毫秒的 500。
+
+### 2026-10-09：WriteStatus(code) 不带内容会写入状态文本，污染后续响应体
+
+**问题**：支付回调端点返回的响应体是 `"OKsuccess"`/`"OKfail"` 而非协议要求的 `success`/`fail`；幂等中间件的 409 响应体是 `Conflict{"error":...}`，JSON 无法解析。
+
+**原因**：gf 的 `Response.WriteStatus(status, content...)` 在 **content 为空时写入 `http.StatusText(status)`**（200→"OK"、409→"Conflict"），先落进响应缓冲区，随后的 `Write(...)`/`WriteJson(...)` 只能追加在其后。分两次调用 `WriteStatus(code)` + `Write(body)` 是错误写法，状态文本会拼在正文前面。
+
+**修复方式**：
+
+- `internal/handler/public/payment.go`：三处 `WriteStatus(code); Write(text)` 改为 `WriteStatus(code, text)`——易支付协议要求回调应答**精确等于** `success`，被污染的 `OKsuccess` 会被网关判定通知失败而反复重推。
+- `internal/middleware/idempotency.go`：`WriteStatus(409)` + `WriteJson` 改为 `WriteHeader(409)` + `WriteJson`（WriteHeader 不写内容，专用于只设状态码的场景）。
+
+**正确做法（通用规则）**：
+
+- 要"状态码 + 纯文本体"：一次调 `WriteStatus(code, text)`；
+- 要"状态码 + JSON 体"：`WriteHeader(code)` 后 `WriteJson(...)`；
+- **永远不要**调不带内容的 `WriteStatus(code)` 再接其他 Write——那是给"只要状态文本作为响应体"的场景用的。
+
+排查信号：响应体以 `OK`/`Conflict`/`Bad Request` 等状态文本开头；第三方网关按协议精确比对应答时判定失败并持续重推回调。
