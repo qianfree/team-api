@@ -6,7 +6,7 @@ import { useRoute } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import ResponsiveDataTable from '@/components/common/ResponsiveDataTable.vue'
 import { renderBadge, tableScrollX } from '@/utils/renderUtils'
-import request from '@/utils/request'
+import request, { extractApiError } from '@/utils/request'
 import { dispatchPayment } from '@/utils/payment'
 import { formatBilling, formatOrder, displayCurrency, currencySymbol, displayToCny, cnyToDisplay } from '@/composables/useCurrency'
 import { createPoller } from '@/composables/usePolling'
@@ -26,6 +26,12 @@ const selectedChannel = ref('')
 const selectedPaymentMethod = ref('')
 const paymentInfo = ref<any>(null)
 const paymentLoading = ref(true)
+
+// Promo（充值优惠码）：promoResult 为后端预检结果（CNY 口径），仅作展示预览；下单后端行锁重验为权威
+const promoCode = ref('')
+const promoChecking = ref(false)
+const promoResult = ref<{ type: string; discount: number; final_amount: number } | null>(null)
+const promoError = ref('')
 
 // Pay result notification
 const payResult = ref<'success' | 'fail' | 'processing' | ''>('')
@@ -105,8 +111,15 @@ const selectedDiscount = computed(() => {
 	return Number(paymentInfo.value?.amount_discount?.[cny]) || 1
 })
 
-// 实付金额 = 显示货币金额 × 折扣（显示口径，展示时直接用 formatBilling）
-const finalPayAmount = computed(() => (rechargeAmount.value || 0) * selectedDiscount.value)
+// 实付金额 = 显示货币金额 × 折扣（显示口径，展示时直接用 formatBilling）；
+// 已验证优惠码时以后端预检实付金额（CNY）折算回显示货币展示（后端口径为权威）
+const finalPayAmount = computed(() => {
+	if (promoResult.value) return cnyToDisplay(promoResult.value.final_amount)
+	return (rechargeAmount.value || 0) * selectedDiscount.value
+})
+
+// 档位折扣或优惠码任一生效即视为有折扣（控制划线原价与到账提示的展示）
+const hasPayDiscount = computed(() => selectedDiscount.value < 1 || !!promoResult.value)
 
 const rechargeValidationMessage = computed(() => {
 	if (!rechargeAmount.value) return ''
@@ -154,6 +167,7 @@ function selectPresetAmount(amount: number) {
 	selectedPresetCny.value = amount
 	rechargeAmount.value = cnyToDisplay(amount)
 	customAmount.value = null
+	resetPromo()
 }
 
 function onCustomInput() {
@@ -161,6 +175,13 @@ function onCustomInput() {
 	selectedPresetCny.value = null
 	const val = customAmount.value ?? 0
 	rechargeAmount.value = val <= 0 ? null : val
+	resetPromo()
+}
+
+// 优惠码折扣依赖充值金额：金额变化后已验证结果失效，需重新验证
+function resetPromo() {
+	promoResult.value = null
+	promoError.value = ''
 }
 
 function selectPayMethod(method: { channel: string; type: string }) {
@@ -173,6 +194,33 @@ function discountText(amount: number): string {
 	return ratio < 1 ? `省 ${Math.round((1 - ratio) * 100)}%` : ''
 }
 
+async function handleValidatePromo() {
+	const code = promoCode.value.trim()
+	if (!code || promoChecking.value) return
+	promoChecking.value = true
+	promoError.value = ''
+	promoResult.value = null
+	try {
+		// 静默调用：验证失败内联展示（不打全局 toast）；amount 传充值原价 CNY 口径，
+		// 后端先应用档位折扣再计算优惠码折扣，返回的 final_amount 即预期实付
+		const res: any = await request.post('/tenant/promo-codes/validate', {
+			code,
+			amount: displayToCny(rechargeAmount.value || 0),
+		}, { _suppressErrorMsg: true })
+		promoResult.value = res.data?.data
+	} catch (err) {
+		promoError.value = extractApiError(err)?.message || '优惠码验证失败，请稍后再试'
+	} finally {
+		promoChecking.value = false
+	}
+}
+
+function clearPromo() {
+	promoCode.value = ''
+	promoResult.value = null
+	promoError.value = ''
+}
+
 async function handleRecharge() {
 	if (!rechargeReady.value || !rechargeAmount.value) return
 
@@ -183,6 +231,8 @@ async function handleRecharge() {
 			amount: displayToCny(rechargeAmount.value),
 			payment_channel: selectedChannel.value,
 			payment_method: selectedPaymentMethod.value,
+			// 已验证的优惠码随单提交；后端下单时行锁重验为权威，前端结果仅预览
+			promo_code: promoResult.value ? promoCode.value.trim() : '',
 		})
 		const data = res.data?.data
 		if (data?.payment_url) {
@@ -557,14 +607,51 @@ onBeforeUnmount(() => {
 						</div>
 					</div>
 
+					<div class="my-5 border-t border-slate-100"></div>
+
+					<div>
+						<div class="flex items-center justify-between">
+							<label class="text-xs font-semibold text-slate-600">优惠码</label>
+							<span class="text-[11px] text-slate-400">可选</span>
+						</div>
+						<div class="mt-3 flex gap-2.5">
+							<div class="min-w-0 flex-1">
+								<n-input
+									v-model:value="promoCode"
+									placeholder="输入优惠码享受折扣"
+									class="font-mono"
+									:maxlength="64"
+									:disabled="!!promoResult"
+									@keyup.enter="handleValidatePromo"
+									@update:value="promoError = ''"
+								/>
+							</div>
+							<button v-if="!promoResult" class="btn btn-secondary flex-shrink-0" :disabled="!promoCode.trim() || promoChecking" @click="handleValidatePromo">
+								<Icon v-if="promoChecking" name="refresh" size="sm" class="animate-spin" />
+								{{ promoChecking ? '验证中' : '验证' }}
+							</button>
+							<button v-else class="btn btn-secondary flex-shrink-0" @click="clearPromo">
+								<Icon name="x" size="sm" />
+								清除
+							</button>
+						</div>
+						<p v-if="promoError" class="mt-1.5 text-xs text-red-500">{{ promoError }}</p>
+						<div v-if="promoResult" class="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600">
+							<Icon name="checkCircle" size="xs" />
+							已抵扣 {{ formatOrder(promoResult.discount, 2) }}
+						</div>
+						<p v-else class="mt-1.5 text-[11px] text-slate-400">折扣作用于实付金额，到账金额不受影响</p>
+					</div>
+
 					<div class="recharge-summary mt-5">
 						<div class="min-w-0">
 							<p class="text-[11px] text-slate-400">本次实付</p>
 							<div class="mt-0.5 flex items-baseline gap-2">
 								<strong class="text-xl font-bold tabular-nums text-slate-800">{{ formatBilling(finalPayAmount, 2) }}</strong>
-								<span v-if="selectedDiscount < 1" class="text-xs text-slate-400 line-through">{{ formatBilling(rechargeAmount, 2) }}</span>
+								<span v-if="hasPayDiscount" class="text-xs text-slate-400 line-through">{{ formatBilling(rechargeAmount, 2) }}</span>
 							</div>
-							<p v-if="selectedDiscount < 1" class="mt-0.5 text-[11px] text-emerald-600">到账仍按 {{ formatBilling(rechargeAmount, 2) }} 全额折算</p>
+							<p v-if="promoResult" class="mt-0.5 text-[11px] text-emerald-600">优惠码已抵扣 {{ formatOrder(promoResult.discount, 2) }}</p>
+							<p v-if="hasPayDiscount" class="mt-0.5 text-[11px] text-emerald-600">到账仍按 {{ formatBilling(rechargeAmount, 2) }} 全额折算</p>
 						</div>
 						<button class="btn btn-primary min-w-32" :disabled="!rechargeReady || rechargeLoading" @click="handleRecharge">
 							<Icon v-if="rechargeLoading" name="refresh" size="sm" class="animate-spin" />

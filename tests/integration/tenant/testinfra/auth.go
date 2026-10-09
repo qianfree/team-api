@@ -107,9 +107,10 @@ func RegisterTestTenant(t *testing.T) *TenantRegisterResult {
 
 	client := admintest.NewAPIClient(DefaultBaseURL)
 	resp := client.Post("/api/tenant/auth/register", map[string]any{
-		"email":       email,
-		"password":    TestPassword,
-		"tenant_name": fmt.Sprintf("测试租户 %s", suffix),
+		"email":    email,
+		"password": TestPassword,
+		// 租户名校验：汉字按2计、总宽度≤16——"测试租户"+8位hex=16 恰好达标，不能再加空格
+		"tenant_name": fmt.Sprintf("测试租户%s", suffix),
 		"tenant_code": tenantCode,
 		"username":    username,
 		"captcha_key": captchaKey,

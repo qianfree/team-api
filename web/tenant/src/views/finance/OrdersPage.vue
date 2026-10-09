@@ -120,8 +120,16 @@ const columns = computed<DataTableColumns<any>>(() => [
   {
     title: '金额',
     key: 'final_amount',
-    width: 130,
-    render: (row) => h('span', { class: 'font-medium' }, formatMoney(row.final_amount, { currency: 'CNY', precision: 2 })),
+    width: 150,
+    // 有折扣时补充划线原价，说明实付为何低于面额（档位折扣 + 优惠码均计入 discount_amount）
+    render: (row) => {
+      const final = h('span', { class: 'font-medium' }, formatMoney(row.final_amount, { currency: 'CNY', precision: 2 }))
+      if (!(Number(row.discount_amount) > 0)) return final
+      return h('div', { class: 'leading-tight' }, [
+        final,
+        h('div', { class: 'text-xs text-gray-400 line-through' }, formatMoney(row.amount, { currency: 'CNY', precision: 2 })),
+      ])
+    },
   },
   {
     title: '状态',

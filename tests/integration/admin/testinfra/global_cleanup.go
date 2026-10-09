@@ -45,7 +45,7 @@ func cleanupTestTenants(ctx context.Context) {
 		var ids []int64
 		err := db.Model("tnt_tenants").Ctx(ctx).
 			Fields("id").
-			Where("tenant_code LIKE ?", pattern).
+			Where("code LIKE ?", pattern).
 			Scan(&ids)
 		if err != nil {
 			log.Printf("global cleanup: query test tenants (%s): %v", pattern, err)

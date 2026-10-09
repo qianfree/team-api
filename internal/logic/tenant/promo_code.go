@@ -13,6 +13,7 @@ import (
 
 	"github.com/qianfree/team-api/internal/logic/billing"
 	lcommon "github.com/qianfree/team-api/internal/logic/common"
+	"github.com/qianfree/team-api/internal/logic/payment"
 	"github.com/qianfree/team-api/internal/middleware"
 
 	v1 "github.com/qianfree/team-api/api/tenant/v1"
@@ -27,10 +28,14 @@ type promoValidationResult struct {
 	FinalAmount decimal.Decimal // 折后金额（CNY）
 }
 
-// ValidatePromoCode 校验优惠码并返回折扣金额（只读预检端点，不加锁、不消耗用量）
+// ValidatePromoCode 校验优惠码并返回折扣金额（充值场景只读预检，不加锁、不消耗用量）。
+// 入参 amount 为充值原价（CNY）：先应用档位折扣得实付基数，优惠码再作用于该基数，
+// 与 RechargeCreate 下单口径一致；返回的 FinalAmount 即预期实付金额。
 func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidatePromoCodeReq) (*v1.TenantValidatePromoCodeRes, error) {
 	tenantID := middleware.GetTenantID(ctx)
-	result, err := validatePromoCode(ctx, tenantID, req.Code, billing.NewFromFloat(req.Amount), 0, false)
+	settings, _ := payment.GetGlobalPaymentSettings(ctx)
+	finalBase, _ := computeTierDiscount(settings, billing.NewFromFloat(req.Amount))
+	result, err := validatePromoCode(ctx, tenantID, req.Code, finalBase, 0, true, false)
 	if err != nil {
 		return nil, err
 	}
@@ -47,8 +52,9 @@ func (s *sTenant) ValidatePromoCode(ctx context.Context, req *v1.TenantValidateP
 //   - forUpdate=true 时对优惠码行加 FOR UPDATE 锁（须在事务 ctx 内调用）：下单扣用量前
 //     锁定，与 recordPromoUsageTx 的条件递增配合杜绝并发超用；
 //   - planID > 0 时校验 plan_ids 限制（优惠码限定可用套餐，NULL/空数组表示不限）；
+//   - forRecharge=true 时为充值场景：plan_ids 非空的套餐限定券不可用于充值；
 //   - 金额运算全程 decimal。
-func validatePromoCode(ctx context.Context, tenantID int64, code string, amount decimal.Decimal, planID int64, forUpdate bool) (*promoValidationResult, error) {
+func validatePromoCode(ctx context.Context, tenantID int64, code string, amount decimal.Decimal, planID int64, forRecharge bool, forUpdate bool) (*promoValidationResult, error) {
 	var promo *struct {
 		ID            int64           `json:"id"`
 		Type          string          `json:"type"`
@@ -95,6 +101,20 @@ func validatePromoCode(ctx context.Context, tenantID int64, code string, amount 
 		}
 		if userUsageCount >= promo.PerUserLimit {
 			return nil, lcommon.NewBusinessError(422, fmt.Sprintf("优惠码使用次数已达上限(%d次)", userUsageCount))
+		}
+	}
+
+	// 场景限制：充值场景下套餐限定券（plan_ids 非空）不可用，NULL/空数组表示不限场景。
+	if forRecharge {
+		matched, err := dao.OrdPromoCodes.Ctx(ctx).
+			Where("id", promo.ID).
+			Where("(plan_ids IS NULL OR cardinality(plan_ids) = 0)").
+			Count()
+		if err != nil {
+			return nil, fmt.Errorf("check promo scene restriction: %w", err)
+		}
+		if matched == 0 {
+			return nil, lcommon.NewBusinessError(422, "优惠码不适用于充值")
 		}
 	}
 
